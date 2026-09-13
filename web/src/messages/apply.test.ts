@@ -16,6 +16,7 @@ function msg(id: string, channel = "c1"): Message {
     content: id,
     created_at: "2026-09-13T18:00:00.000Z",
     edited_at: null,
+    attachments: [],
   };
 }
 
