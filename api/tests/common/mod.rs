@@ -145,6 +145,15 @@ impl Client {
         }
     }
 
+    /// Same as [`Self::new`] but with a live Redis (ticket mint / gateway).
+    pub fn with_redis(pool: PgPool) -> Self {
+        Self {
+            app: app(ws_state(pool)),
+            jar: BTreeMap::new(),
+            csrf: None,
+        }
+    }
+
     pub async fn send(&mut self, method: Method, path: &str, body: Option<Value>) -> Response {
         self.send_with(method, path, body, |_| {}).await
     }

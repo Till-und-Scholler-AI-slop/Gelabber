@@ -1,6 +1,6 @@
-// Local voice state + native RTCPeerConnection (issue #10).
-// Join updates the store immediately; ICE / getUserMedia run afterwards.
-// Own protocol only — no product video SDK, no foreign media JWT.
+// Local voice state + native RTCPeerConnection.
+// Join updates the store immediately; ticket / ICE / getUserMedia run after.
+// Chat WS: presence (j/l/p/u). Media WS: SDP/ICE + RTP. No product SDK.
 
 import { create } from "zustand";
 
@@ -10,6 +10,15 @@ import { useSession } from "../auth/session.ts";
 import { notifyError } from "../components/toasts.ts";
 import { getGateway, type Gateway } from "../ws/client.ts";
 import type { ErrFrame, SigEvent, TrackKind } from "../ws/protocol.ts";
+import {
+  type IceServer,
+  type MediaServerFrame,
+  type MediaSocket,
+  type OpenMedia,
+  mediaWsUrl,
+  openMediaSocket,
+  requestMediaTicket,
+} from "./media.ts";
 
 export type VoiceStatus = "idle" | "joined";
 
@@ -39,8 +48,10 @@ export type PeerConnection = {
   onicecandidate: ((event: {
     candidate: { candidate: string; sdpMid: string | null } | null;
   }) => void) | null;
+  ontrack: ((event: { streams: MediaStream[]; track: MediaStreamTrack }) => void) | null;
   addTrack?(track: MediaStreamTrack, stream: MediaStream): void;
   createOffer(): Promise<{ type: string; sdp?: string }>;
+  createAnswer(): Promise<{ type: string; sdp?: string }>;
   setLocalDescription(desc: { type: string; sdp?: string }): Promise<void>;
   setRemoteDescription(desc: { type: string; sdp?: string }): Promise<void>;
   addIceCandidate(candidate: {
@@ -56,8 +67,15 @@ export type VoiceGateway = Pick<Gateway, "send" | "onSig" | "onErr" | "onReady">
 export type VoiceDeps = {
   gateway: VoiceGateway;
   userId: () => string | null;
-  createPeer: () => PeerConnection;
+  createPeer: (iceServers: IceServer[]) => PeerConnection;
   getUserMedia: (constraints: MediaStreamConstraints) => Promise<MediaStream>;
+  fetchTicket?: (channelId: string) => Promise<{
+    ticket: string;
+    media_path: string;
+    ice_servers: IceServer[];
+  }>;
+  openMedia?: OpenMedia;
+  attachRemote?: (stream: MediaStream) => void;
   onError?: (error: unknown) => void;
 };
 
@@ -65,7 +83,10 @@ type IceCand = { candidate: string; sdpMid: string | null };
 
 let deps: VoiceDeps | null = null;
 let peer: PeerConnection | null = null;
+let media: MediaSocket | null = null;
+let unbindMedia: (() => void) | null = null;
 let localStream: MediaStream | null = null;
+let remoteAudio: HTMLAudioElement | null = null;
 let bound = false;
 let generation = 0;
 let pendingIce: IceCand[] = [];
@@ -77,14 +98,23 @@ function currentUserId(): string | null {
     : useSession.getState().user?.id ?? null;
 }
 
-function defaultCreatePeer(): PeerConnection {
-  return new RTCPeerConnection({ iceServers: [] }) as unknown as PeerConnection;
+function defaultCreatePeer(iceServers: IceServer[]): PeerConnection {
+  return new RTCPeerConnection({ iceServers }) as unknown as PeerConnection;
 }
 
 async function defaultGetUserMedia(
   constraints: MediaStreamConstraints,
 ): Promise<MediaStream> {
   return navigator.mediaDevices.getUserMedia(constraints);
+}
+
+function defaultAttachRemote(stream: MediaStream): void {
+  if (typeof Audio === "undefined") return;
+  if (!remoteAudio) {
+    remoteAudio = new Audio();
+    remoteAudio.autoplay = true;
+  }
+  remoteAudio.srcObject = stream;
 }
 
 export function configureVoice(next: Partial<VoiceDeps>): void {
@@ -94,6 +124,9 @@ export function configureVoice(next: Partial<VoiceDeps>): void {
     userId: next.userId ?? deps?.userId ?? currentUserId,
     createPeer: next.createPeer ?? deps?.createPeer ?? defaultCreatePeer,
     getUserMedia: next.getUserMedia ?? deps?.getUserMedia ?? defaultGetUserMedia,
+    fetchTicket: next.fetchTicket ?? deps?.fetchTicket ?? requestMediaTicket,
+    openMedia: next.openMedia ?? deps?.openMedia ?? openMediaSocket,
+    attachRemote: next.attachRemote ?? deps?.attachRemote ?? defaultAttachRemote,
     onError: next.onError ?? deps?.onError ?? notifyError,
   };
   ensureBound();
@@ -108,6 +141,9 @@ function ensureBound(): void {
       userId: currentUserId,
       createPeer: defaultCreatePeer,
       getUserMedia: defaultGetUserMedia,
+      fetchTicket: requestMediaTicket,
+      openMedia: openMediaSocket,
+      attachRemote: defaultAttachRemote,
       onError: notifyError,
     };
   }
@@ -171,19 +207,6 @@ function onSig(event: SigEvent): void {
       });
       return;
     }
-    case "a":
-      if (event.u !== currentUserId() && event.sdp) {
-        void applyRemoteAnswer(event.sdp);
-      }
-      return;
-    case "i":
-      if (event.u !== currentUserId() && event.ice) {
-        void applyRemoteIce({
-          candidate: event.ice,
-          sdpMid: event.mid ?? null,
-        });
-      }
-      return;
     default:
       return;
   }
@@ -232,19 +255,36 @@ function onReady(): void {
 function stopPeer(): void {
   generation += 1;
   pendingIce = [];
+  unbindMedia?.();
+  unbindMedia = null;
+  media?.close();
+  media = null;
   peer?.close();
   peer = null;
   localStream?.getTracks().forEach((track) => track.stop());
   localStream = null;
+  if (remoteAudio) {
+    remoteAudio.srcObject = null;
+  }
 }
 
-async function applyRemoteAnswer(sdp: string): Promise<void> {
+async function applyRemoteDescription(
+  type: "offer" | "answer",
+  sdp: string,
+): Promise<void> {
   if (!peer) return;
-  await peer.setRemoteDescription({ type: "answer", sdp });
+  await peer.setRemoteDescription({ type, sdp });
   const queued = pendingIce;
   pendingIce = [];
   for (const candidate of queued) {
     await peer.addIceCandidate(candidate);
+  }
+  if (type === "offer") {
+    const answer = await peer.createAnswer();
+    await peer.setLocalDescription(answer);
+    if (answer.sdp) {
+      media?.send({ op: "a", sdp: answer.sdp });
+    }
   }
 }
 
@@ -256,9 +296,26 @@ async function applyRemoteIce(candidate: IceCand): Promise<void> {
   pendingIce.push(candidate);
 }
 
+function onMediaFrame(frame: MediaServerFrame): void {
+  if (frame.op === "a" && frame.sdp) {
+    void applyRemoteDescription("answer", frame.sdp);
+    return;
+  }
+  if (frame.op === "o" && frame.sdp) {
+    void applyRemoteDescription("offer", frame.sdp);
+    return;
+  }
+  if (frame.op === "i" && frame.ice) {
+    void applyRemoteIce({
+      candidate: frame.ice,
+      sdpMid: frame.mid ?? null,
+    });
+  }
+}
+
 /**
  * Join a voice channel. Local state flips first so the click feels instant;
- * the socket frame and ICE run after.
+ * the socket frame, ticket, and ICE run after.
  */
 export function joinVoice(input: {
   serverId: string;
@@ -331,22 +388,44 @@ async function startPeer(serverId: string, channelId: string): Promise<void> {
   const mine = generation + 1;
   stopPeer();
   generation = mine;
+  const fetchTicket = deps?.fetchTicket ?? requestMediaTicket;
+  const openMedia = deps?.openMedia ?? openMediaSocket;
   const createPeer = deps?.createPeer ?? defaultCreatePeer;
   const getUserMedia = deps?.getUserMedia ?? defaultGetUserMedia;
-  const pc = createPeer();
+
+  let iceServers: IceServer[] = [];
+  try {
+    const ticket = await fetchTicket(channelId);
+    if (generation !== mine) return;
+    iceServers = ticket.ice_servers ?? [];
+    const socket = openMedia(mediaWsUrl(ticket.media_path));
+    media = socket;
+    unbindMedia = socket.onFrame(onMediaFrame);
+    socket.send({ op: "j", tk: ticket.ticket });
+  } catch (error) {
+    if (generation !== mine) return;
+    deps?.onError?.(error);
+    return;
+  }
+
+  const pc = createPeer(iceServers);
   peer = pc;
 
   pc.onicecandidate = (event) => {
     if (generation !== mine) return;
     if (!event.candidate) return;
-    deps?.gateway.send({
-      op: "sig",
-      t: "i",
-      s: serverId,
-      c: channelId,
+    media?.send({
+      op: "i",
       ice: event.candidate.candidate,
       ...(event.candidate.sdpMid ? { mid: event.candidate.sdpMid } : {}),
     });
+  };
+  pc.ontrack = (event) => {
+    if (generation !== mine) return;
+    const stream = event.streams[0];
+    if (stream) {
+      (deps?.attachRemote ?? defaultAttachRemote)(stream);
+    }
   };
 
   try {
@@ -389,13 +468,7 @@ async function startPeer(serverId: string, channelId: string): Promise<void> {
     if (generation !== mine) return;
     await pc.setLocalDescription(offer);
     if (generation !== mine || !offer.sdp) return;
-    deps?.gateway.send({
-      op: "sig",
-      t: "o",
-      s: serverId,
-      c: channelId,
-      sdp: offer.sdp,
-    });
+    media?.send({ op: "o", sdp: offer.sdp });
   } catch (error) {
     deps?.onError?.(error);
   }

@@ -5,6 +5,8 @@ use std::fmt;
 use std::net::SocketAddr;
 use std::time::Duration;
 
+use crate::media::{IceServer, parse_ice_servers};
+
 pub const API_ADDR: &str = "API_ADDR";
 pub const DATABASE_URL: &str = "DATABASE_URL";
 pub const REDIS_URL: &str = "REDIS_URL";
@@ -18,6 +20,10 @@ pub const API_WS_REPLAY: &str = "API_WS_REPLAY";
 pub const API_WS_IDLE_MS: &str = "API_WS_IDLE_MS";
 pub const API_WS_PRESENCE_TTL_MS: &str = "API_WS_PRESENCE_TTL_MS";
 pub const API_WS_TYPING_TTL_MS: &str = "API_WS_TYPING_TTL_MS";
+pub const TURN_URLS: &str = "TURN_URLS";
+pub const TURN_USERNAME: &str = "TURN_USERNAME";
+pub const TURN_PASSWORD: &str = "TURN_PASSWORD";
+pub const MEDIA_TICKET_TTL_SECS: &str = "MEDIA_TICKET_TTL_SECS";
 /// Read by `telemetry::init`, not by `Config`, because the subscriber has to
 /// exist before anything else can be logged.
 pub const RUST_LOG: &str = "RUST_LOG";
@@ -32,6 +38,7 @@ const DEFAULT_WS_REPLAY: usize = 256;
 const DEFAULT_WS_IDLE_MS: u64 = 300_000;
 const DEFAULT_WS_PRESENCE_TTL_MS: u64 = 45_000;
 const DEFAULT_WS_TYPING_TTL_MS: u64 = 6_000;
+const DEFAULT_MEDIA_TICKET_TTL_SECS: u64 = 30;
 
 #[derive(Debug, Clone)]
 pub struct Config {
@@ -60,6 +67,10 @@ pub struct Config {
     pub ws_presence_ttl: Duration,
     /// Redis TTL for a typing key. Clients also hide locally after this.
     pub ws_typing_ttl: Duration,
+    /// Browser-facing STUN/TURN (coturn). Empty if TURN is not configured.
+    pub ice_servers: Vec<IceServer>,
+    /// How long an SFU join ticket lives in Redis.
+    pub media_ticket_ttl: Duration,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -162,6 +173,16 @@ impl Config {
             None => DEFAULT_WS_TYPING_TTL_MS,
         };
 
+        let ice_servers = parse_ice_servers(
+            get(TURN_URLS).as_deref(),
+            get(TURN_USERNAME).as_deref(),
+            get(TURN_PASSWORD).as_deref(),
+        );
+        let media_ticket_ttl_secs = match get(MEDIA_TICKET_TTL_SECS) {
+            Some(raw) => parse_positive::<u64>(MEDIA_TICKET_TTL_SECS, &raw)?,
+            None => DEFAULT_MEDIA_TICKET_TTL_SECS,
+        };
+
         Ok(Self {
             api_addr,
             database_url,
@@ -176,6 +197,8 @@ impl Config {
             ws_idle: Duration::from_millis(ws_idle_ms),
             ws_presence_ttl: Duration::from_millis(ws_presence_ttl_ms),
             ws_typing_ttl: Duration::from_millis(ws_typing_ttl_ms),
+            ice_servers,
+            media_ticket_ttl: Duration::from_secs(media_ticket_ttl_secs),
         })
     }
 }
@@ -243,6 +266,8 @@ mod tests {
         assert_eq!(config.ws_idle, Duration::from_millis(300_000));
         assert_eq!(config.ws_presence_ttl, Duration::from_millis(45_000));
         assert_eq!(config.ws_typing_ttl, Duration::from_millis(6_000));
+        assert!(config.ice_servers.is_empty());
+        assert_eq!(config.media_ticket_ttl, Duration::from_secs(30));
     }
 
     #[test]

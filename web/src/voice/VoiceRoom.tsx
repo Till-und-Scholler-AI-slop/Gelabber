@@ -60,8 +60,8 @@ export function VoiceRoom({
         ) : allowed ? (
           <>
             <p className="mt-2 text-sm">
-              Beitreten setzt dich sofort in den Kanal. ICE läuft im
-              Hintergrund — eigener SFU folgt, kein LiveKit.
+              Beitreten setzt dich sofort in den Kanal. Ton läuft über
+              den eigenen SFU — ICE im Hintergrund, kein LiveKit.
             </p>
             <button
               type="button"

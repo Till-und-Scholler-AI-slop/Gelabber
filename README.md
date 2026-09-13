@@ -2,7 +2,7 @@
 
 Web-App für Chat, Video-Calls und internes Streaming. Eigenes WS-Protokoll, eigenes WebRTC-Signaling, eigener SFU/Medienpfad.
 
-**v1 verbietet** LiveKit, mediasoup-as-a-product, Daily, Agora, Twilio Video, Stream und Socket.IO als Event-Layer. Kein Chat-/Video-Produkt-SDK. Dateien über MinIO; Live-Medien über unseren SFU + TURN (TURN folgt später).
+**v1 verbietet** LiveKit, mediasoup-as-a-product, Daily, Agora, Twilio Video, Stream und Socket.IO als Event-Layer. Kein Chat-/Video-Produkt-SDK. Dateien über MinIO; Live-Medien über unseren SFU + coturn.
 
 ## Lokal starten
 
@@ -24,7 +24,7 @@ Dann [http://localhost](http://localhost) (Caddy, TCP :80). Postgres, Redis und 
 
 Nach dem ersten Publish auf `main` ist das GHCR-Paket **privat**. Ein Maintainer muss es einmal öffentlich machen: Organisation → Packages → `gelabber/minio` → Package settings → Change visibility → Public. Sonst fällt ein anonymer `docker compose up` auf den Source-Build zurück. Bis dahin: `echo "$GITHUB_TOKEN" | docker login ghcr.io -u USER --password-stdin`.
 
-UDP für späteres coturn läuft **nicht** durch Caddy.
+UDP für coturn (3478 + Relay) und SFU-ICE läuft **nicht** durch Caddy.
 
 ## Schnitt
 
@@ -32,8 +32,8 @@ UDP für späteres coturn läuft **nicht** durch Caddy.
 |---|---|
 | `api/` | Rust-API: Axum 0.8.9, Tokio 1.53.1, **sqlx 0.9.0** (Postgres, gelockt für v1), Redis-Client, Tracing als JSON (Docker: `rust:1.98.1-slim-trixie` → `debian:trixie-slim`) |
 | `web/` | React + Vite (Build: `node:26.8.2-trixie`, Runtime: `nginx:1.31.5-alpine`) |
-| `media/` | Medien-Stub, dieselben Rust-Images wie die API |
-| `deploy/compose` | Compose-Kern: Caddy 2.11.4, Postgres 18.6, Redis 8.10.1, MinIO CE `RELEASE.2025-10-15T17-29-55Z` (GHCR, Source-Build als Fallback) |
+| `media/` | Eigener SFU (webrtc **0.20.5**, gelockt; 0.21 ist RC): Room = Sprachkanal, RTP-Forward, kurze Join-Tickets. Dieselben Rust-Images wie die API |
+| `deploy/compose` | Compose-Kern: Caddy 2.11.4, Postgres 18.6, Redis 8.10.1, MinIO CE `RELEASE.2025-10-15T17-29-55Z`, **coturn 4.18.0** (UDP nicht durch Caddy) |
 
 Env-Beispiele: `deploy/compose/.env.example`, `api/.env.example`, `web/.env.example`, `media/.env.example`.
 
@@ -46,6 +46,7 @@ Config ausschließlich aus Env (`API_ADDR`, `DATABASE_URL`, `REDIS_URL`; optiona
 | `GET /health` | `200 {"status":"ok"}` — ohne Abhängigkeiten |
 | `GET /ready` | `200 {"status":"ready", ...}` nur wenn Postgres **und** Redis antworten; sonst `503 {"status":"not_ready", ...}` |
 | `GET /ws` | Native WebSocket (issue 6). Session-Cookie, kein Socket.IO. `401` ohne Session; Browser-`Origin` muss zu `Host` passen. |
+| `POST /api/channels/{id}/media-ticket` | Session + `join_voice` + Sprachkanal → `200 {ticket, expires_in, media_path, ice_servers}`; 12-Zeichen-Code in Redis (`gb:mt:{code}`, 30 s). Textkanal: `400`, fremd: `404` |
 | `GET /api/auth/session` | `200 {"user": User\|null, "csrf_token"}` — Bootstrap für den Client, setzt das CSRF-Cookie falls es fehlt |
 | `POST /api/auth/register` | `{email, password, name}` → `201 {"user", "csrf_token"}` + Session-Cookie; `409 email_taken`, `422 validation_failed` |
 | `POST /api/auth/login` | `{email, password}` → `200 {"user", "csrf_token"}` + Session-Cookie; `401 invalid_credentials` |
@@ -93,7 +94,7 @@ Client → Server zusätzlich:
 | `{"op":"sig","t":"i","s":"…","c":"…","ice":"…","mid?"}` | Trickle-ICE |
 | `{"op":"sig","t":"p\|u","s":"…","c":"…","k":"a\|v"}` | Pub / unpub (`v` braucht `go_live`) |
 
-Topics: Server `gb:s:{id}` und Kanal `gb:c:{id}` sind getrennt. Signaling hängt an `gb:v:{channel}` (Pub/Sub, kein Replay). Join nur mit gültiger Session und `join_voice`; Textkanäle: `bad_request`, fremde IDs: `not_found`. Der Web-Client spricht natives `RTCPeerConnection` — Join-Klick setzt den lokalen State sofort, ICE läuft im Hintergrund. Kein LiveKit, kein fremdes Medien-JWT; der SFU-Forward (issue 11) ist nicht Teil dieses Tickets. Chat-Events nur an passende Subscribes. Heartbeat alle `API_WS_HEARTBEAT_MS` (15 s); ohne Client-Frame für `API_WS_DEAD_MS` (30 s) schließt der Server (stiller Tod). Reconnect schickt `s` mit letzter Seq — der Server spielt `n+1…` nach, ohne Doppelte. Issue 5 (REST-Nachrichten) publiziert nach einem erfolgreichen Write über `publish_channel` / `publish_server`; dieses Ticket legt keine Message-Tabellen an.
+Topics: Server `gb:s:{id}` und Kanal `gb:c:{id}` sind getrennt. Signaling hängt an `gb:v:{channel}` (Pub/Sub, kein Replay). Join nur mit gültiger Session und `join_voice`; Textkanäle: `bad_request`, fremde IDs: `not_found`. Der Web-Client spricht natives `RTCPeerConnection` — Join-Klick setzt den lokalen State sofort, ICE läuft im Hintergrund. Kein LiveKit, kein fremdes Medien-JWT. SDP/ICE und RTP gehen über den **media**-WS (`/media/ws`) mit kurzem internem Ticket; der Chat-WS bleibt bei Presence (`j/l/p/u`). Chat-Events nur an passende Subscribes. Heartbeat alle `API_WS_HEARTBEAT_MS` (15 s); ohne Client-Frame für `API_WS_DEAD_MS` (30 s) schließt der Server (stiller Tod). Reconnect schickt `s` mit letzter Seq — der Server spielt `n+1…` nach, ohne Doppelte. Issue 5 (REST-Nachrichten) publiziert nach einem erfolgreichen Write über `publish_channel` / `publish_server`; dieses Ticket legt keine Message-Tabellen an.
 
 **Presence / Typing (issue 8).** Ephemeral, eigenes `op`, kein Chat-Seq. Redis-Keys mit TTL: `gb:p:c:{user}:{conn}` (Status pro Client), `gb:p:u:{user}` (Aggregat), `gb:p:s:{server}` (wer auf dem Server sichtbar ist), `gb:y:{channel}:{user}` (Typing). Fan-out über Pub/Sub `gb:p:{server}` / `gb:y:{channel}` — nicht über das Replay-Log. Idle ist **pro Client** (`API_WS_IDLE_MS`, Default 5 min); Heartbeat zählt nicht als Aktivität. User ist online, solange ein Client online ist, idle wenn alle verbliebenen idle sind, offline wenn der letzte Socket weg ist oder der Key abläuft. Typing ist in unter 100 ms sichtbar und verschwindet per Stop-Event plus Client-/Key-Timeout (`API_WS_TYPING_TTL_MS`, 6 s). Presence-Punkte leben in der Mitgliederliste, nicht in der Message-Pane — kein Relayout des Chats.
 
@@ -158,13 +159,34 @@ set -a; . api/.env.example; set +a
 cargo run -p gelabber-api
 ```
 
+```bash
+set -a; . media/.env.example; set +a
+cargo run -p gelabber-media
+```
+
+## Media / SFU (issue 11)
+
+`media/` ist die Binary, nicht mehr nur ein Stub. **webrtc 0.20.5** ist gelockt (0.21 ist RC; str0m wurde nicht gewählt). Room = Sprachkanal. Join nur mit internem 12-Zeichen-Ticket aus Redis (`GETDEL`). RTP wird von Publishern an die anderen Peers im Room weitergereicht. Ein Prozess, kein Mesh, kein Recording, kein LiveKit.
+
+coturn **4.18.0** (`coturn/coturn:4.18.0`) hängt in Compose an 3478/udp+tcp und 49160–49200/udp. Caddy bleibt TCP-only.
+
+Media-WS (nicht der Chat-WS):
+
+| Frame | Bedeutung |
+|---|---|
+| `{"op":"j","tk":"…"}` | Join mit Ticket |
+| `{"op":"o\|a","sdp":"…"}` | SDP offer / answer |
+| `{"op":"i","ice":"…","mid?"}` | Trickle-ICE |
+| `{"op":"ok","c":"…","u":"…"}` | Ticket akzeptiert |
+| `{"op":"err","e":"unauthorized\|bad_request\|…"}` | Abgelehnt |
+
 Persistenz ist auf **sqlx 0.9.0** festgelegt (kein zweites ORM, kein Query-Builder-Mix in v1).
 
 ## Web
 
-`npm run dev` in `web/` proxyt `/api` und `/ws` nach `127.0.0.1:8080` (Vite-Proxy), damit das httpOnly-Cookie same-origin bleibt — genau wie hinter Caddy im Compose. `VITE_API_BASE_URL` ist deshalb relativ (`/api`).
+`npm run dev` in `web/` proxyt `/api` und `/ws` nach `127.0.0.1:8080` und `/media` nach `127.0.0.1:8081` (Vite-Proxy), damit das httpOnly-Cookie same-origin bleibt — genau wie hinter Caddy im Compose. `VITE_API_BASE_URL` ist deshalb relativ (`/api`).
 
-Login-Flow: `GET /api/auth/session` einmal beim Start (parallel zum ersten Render), danach hält ein Zustand-Store den User und der API-Client das CSRF-Token im Speicher. Mit Session öffnet der Tab ein natives WebSocket auf `/ws` (kein Socket.IO); Server- und Kanal-Subscribe folgen der URL, Reconnect nimmt die letzte Seq mit. Voice-Join geht über `op:"sig"` und natives `RTCPeerConnection` — der Klick setzt den lokalen State sofort, ICE und Offer laufen danach. Login/Register schreiben den Store **vor** der clientseitigen Navigation, Logout und Profil-Änderungen sind optimistisch — kein Full-Reload. Feld- und Formfehler erscheinen inline (Client-Regeln spiegeln `api/src/auth/validate.rs`, Server-Feld-Codes werden auf dieselben Texte gemappt). Requests haben 10 s Timeout, Buttons wechseln nur das Label — kein hängender Spinner. Routen: `/`, `/s/…` und `/profile` verlangen einen User, `/login` und `/register` schicken angemeldete User weiter (`?redirect=` für Deep-Links). Stirbt die Session außerhalb des Tabs (Logout woanders, TTL), kippt ein `401 unauthenticated` oder ein Bootstrap mit `user: null` den Store sofort auf anonym und die Seite springt nach `/login?redirect=…`.
+Login-Flow: `GET /api/auth/session` einmal beim Start (parallel zum ersten Render), danach hält ein Zustand-Store den User und der API-Client das CSRF-Token im Speicher. Mit Session öffnet der Tab ein natives WebSocket auf `/ws` (kein Socket.IO); Server- und Kanal-Subscribe folgen der URL, Reconnect nimmt die letzte Seq mit. Voice-Join setzt den lokalen State sofort; Presence bleibt auf `op:"sig"`, SDP/ICE und RTP laufen über `/media/ws` (kurzes Ticket, webrtc 0.20.5). Login/Register schreiben den Store **vor** der clientseitigen Navigation, Logout und Profil-Änderungen sind optimistisch — kein Full-Reload. Feld- und Formfehler erscheinen inline (Client-Regeln spiegeln `api/src/auth/validate.rs`, Server-Feld-Codes werden auf dieselben Texte gemappt). Requests haben 10 s Timeout, Buttons wechseln nur das Label — kein hängender Spinner. Routen: `/`, `/s/…` und `/profile` verlangen einen User, `/login` und `/register` schicken angemeldete User weiter (`?redirect=` für Deep-Links). Stirbt die Session außerhalb des Tabs (Logout woanders, TTL), kippt ein `401 unauthenticated` oder ein Bootstrap mit `user: null` den Store sofort auf anonym und die Seite springt nach `/login?redirect=…`.
 
 Workspace (issue 4): drei Spalten — Server-Rail, Kanal-Sidebar, Seite. Beide Listen sind mit TanStack Virtual virtualisiert (die Sidebar als eine flache Liste aus Kategorie- und Kanalzeilen), damit auch hunderte Einträge ohne Ruckler scrollen. Die Auswahl **ist** die URL (`/s/$serverId/c/$channelId`): Klick → Highlight sofort, Details kommen aus dem Query-Cache (`staleTime` 60 s, Prefetch beim Hover über eine Kachel). Umbenennen, Verschieben, Löschen, Rechte-Toggles und Verlassen/Löschen schreiben zuerst in den Cache und rollen bei einem Fehler mit Toast zurück; Anlegen zeigt eine `tmp:`-Zeile, bis der Server die echte ID liefert. Der zuletzt offene Kanal je Server bleibt lokal gemerkt (`localStorage`). `/s/$serverId/settings`: Name, Mitglieder-Rechte (Checkbox = sofort gespeichert), Einladungen, Mitglieder, Löschen bzw. Verlassen — die Verwaltungs-Sektionen nur mit `manage_server`. `/invite/$code` zeigt Vorschau und „Beitreten“; nicht angemeldete Besucher gehen über Login/Register zurück zum Link. Redirects laufen über `components/Redirect.tsx` (einmal pro Ziel), nicht über `<Navigate>`, das bei jedem Re-Render mit neuem Props-Objekt erneut navigiert.
 
