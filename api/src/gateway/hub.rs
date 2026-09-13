@@ -37,6 +37,30 @@ end
 return 0
 "#;
 
+/// Claim the single Go Live slot for a voice channel. Same user may refresh.
+/// 1 = newly claimed, 2 = already held, 0 = taken by someone else.
+const CLAIM_LIVE_LUA: &str = r#"
+local cur = redis.call('HGET', KEYS[1], ARGV[1])
+if not cur then
+  redis.call('HSET', KEYS[1], ARGV[1], ARGV[2])
+  return 1
+end
+if cur == ARGV[2] then
+  return 2
+end
+return 0
+"#;
+
+/// Drop the Go Live slot only if this user still holds it.
+const RELEASE_LIVE_LUA: &str = r#"
+local cur = redis.call('HGET', KEYS[1], ARGV[1])
+if cur == ARGV[2] then
+  redis.call('HDEL', KEYS[1], ARGV[1])
+  return 1
+end
+return 0
+"#;
+
 const PUBLISH_LUA: &str = r#"
 local n = redis.call('INCR', KEYS[1])
 local event = cjson.decode(ARGV[1])
@@ -85,6 +109,13 @@ struct VoiceSeat {
 enum VoiceFlag {
     Mute,
     Deafen,
+}
+
+#[derive(Clone, Copy, PartialEq, Eq)]
+enum LiveClaim {
+    Taken,
+    New,
+    Held,
 }
 
 struct Occupancy {
@@ -756,6 +787,7 @@ impl Gateway {
 
     pub async fn voice_snapshot(&self, server_id: Uuid) -> Result<Vec<VoiceEntry>, ApiError> {
         let occupancy = self.redis_occupancy(server_id).await?;
+        let lives = self.redis_lives(server_id).await?;
         let mut rows: Vec<VoiceEntry> = occupancy
             .into_iter()
             .map(|(u, row)| VoiceEntry {
@@ -763,6 +795,7 @@ impl Gateway {
                 c: row.channel_id,
                 m: row.muted,
                 d: row.deafened,
+                l: lives.get(&row.channel_id) == Some(&u),
             })
             .collect();
         rows.sort_by_key(|row| row.u);
@@ -777,14 +810,38 @@ impl Gateway {
         channel_id: Uuid,
         kind: TrackKind,
         on: bool,
-    ) -> Result<bool, ApiError> {
+    ) -> Result<Option<bool>, ApiError> {
+        {
+            let sockets = self.inner.sockets.read().await;
+            if !sockets
+                .get(&id)
+                .is_some_and(|socket| socket.rooms.contains_key(&channel_id))
+            {
+                return Ok(None);
+            }
+        }
+        let mut live_started = false;
+        if kind == TrackKind::L {
+            if on {
+                match self.claim_live(server_id, channel_id, user_id).await? {
+                    LiveClaim::Taken => return Ok(None),
+                    LiveClaim::New => live_started = true,
+                    LiveClaim::Held => {}
+                }
+            } else {
+                self.release_live(server_id, channel_id, user_id).await?;
+            }
+        }
         {
             let mut sockets = self.inner.sockets.write().await;
             let Some(seat) = sockets
                 .get_mut(&id)
                 .and_then(|socket| socket.rooms.get_mut(&channel_id))
             else {
-                return Ok(false);
+                if kind == TrackKind::L && on && live_started {
+                    let _ = self.release_live(server_id, channel_id, user_id).await;
+                }
+                return Ok(None);
             };
             if on {
                 seat.pubs.insert(kind);
@@ -801,7 +858,7 @@ impl Gateway {
             self.publish_sig(SigEvent::unpublished(server_id, channel_id, user_id, kind))
                 .await?;
         }
-        Ok(true)
+        Ok(Some(live_started))
     }
 
     /// Fan-out a live signaling frame. No seq, no replay list.
@@ -876,6 +933,7 @@ impl Gateway {
             .map_err(redis_err)?;
         if last == 1 {
             self.redis_drop_occupancy(server_id, user_id).await?;
+            self.release_live(server_id, channel_id, user_id).await?;
         }
         Ok(last == 1)
     }
@@ -980,6 +1038,87 @@ impl Gateway {
         Ok(occupancy)
     }
 
+    async fn redis_lives(&self, server_id: Uuid) -> Result<HashMap<Uuid, Uuid>, ApiError> {
+        let key = lives_key(server_id);
+        let rows: HashMap<String, String> = self
+            .with_conn(|mut conn| {
+                let key = key.clone();
+                async move { redis::cmd("HGETALL").arg(key).query_async(&mut conn).await }
+            })
+            .await
+            .map_err(redis_err)?;
+        let mut lives = HashMap::with_capacity(rows.len());
+        for (channel, user) in rows {
+            let Ok(channel_id) = Uuid::parse_str(&channel) else {
+                continue;
+            };
+            let Ok(user_id) = Uuid::parse_str(&user) else {
+                continue;
+            };
+            lives.insert(channel_id, user_id);
+        }
+        Ok(lives)
+    }
+
+    async fn claim_live(
+        &self,
+        server_id: Uuid,
+        channel_id: Uuid,
+        user_id: Uuid,
+    ) -> Result<LiveClaim, ApiError> {
+        let key = lives_key(server_id);
+        let channel = channel_id.to_string();
+        let user = user_id.to_string();
+        let ok: i32 = self
+            .with_conn(|mut conn| {
+                let key = key.clone();
+                let channel = channel.clone();
+                let user = user.clone();
+                async move {
+                    redis::Script::new(CLAIM_LIVE_LUA)
+                        .key(key)
+                        .arg(channel)
+                        .arg(user)
+                        .invoke_async(&mut conn)
+                        .await
+                }
+            })
+            .await
+            .map_err(redis_err)?;
+        Ok(match ok {
+            1 => LiveClaim::New,
+            2 => LiveClaim::Held,
+            _ => LiveClaim::Taken,
+        })
+    }
+
+    async fn release_live(
+        &self,
+        server_id: Uuid,
+        channel_id: Uuid,
+        user_id: Uuid,
+    ) -> Result<(), ApiError> {
+        let key = lives_key(server_id);
+        let channel = channel_id.to_string();
+        let user = user_id.to_string();
+        self.with_conn(|mut conn| {
+            let key = key.clone();
+            let channel = channel.clone();
+            let user = user.clone();
+            async move {
+                redis::Script::new(RELEASE_LIVE_LUA)
+                    .key(key)
+                    .arg(channel)
+                    .arg(user)
+                    .invoke_async::<i32>(&mut conn)
+                    .await
+                    .map(|_| ())
+            }
+        })
+        .await
+        .map_err(redis_err)
+    }
+
     async fn redis_add_pub(
         &self,
         channel_id: Uuid,
@@ -1068,6 +1207,7 @@ impl Gateway {
                     "a" => Some(TrackKind::A),
                     "v" => Some(TrackKind::V),
                     "s" => Some(TrackKind::S),
+                    "l" => Some(TrackKind::L),
                     _ => None,
                 })
                 .collect();
@@ -1106,6 +1246,11 @@ fn pubs_key(channel_id: Uuid, user_id: Uuid) -> String {
 /// Server-wide voice occupancy for the member list (`user` → channel + flags).
 fn occupancy_key(server_id: Uuid) -> String {
     format!("{REDIS_PREFIX}vo:{server_id}")
+}
+
+/// Server-wide Go Live holders (`channel` → user). One live track per voice channel.
+fn lives_key(server_id: Uuid) -> String {
+    format!("{REDIS_PREFIX}gs:{server_id}")
 }
 
 fn encode_occupancy(channel_id: Uuid, muted: bool, deafened: bool) -> String {

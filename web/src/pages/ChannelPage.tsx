@@ -10,6 +10,7 @@ import { MessagePane } from "../components/MessagePane.tsx";
 import { Redirect } from "../components/Redirect.tsx";
 import { TypingBar } from "../components/TypingBar.tsx";
 import { VoiceRoom } from "../voice/VoiceRoom.tsx";
+import { LiveHint } from "../voice/LiveHint.tsx";
 import { useLastChannel } from "../servers/lastChannel.ts";
 import { can } from "../servers/permissions.ts";
 import { useServer } from "../servers/queries.ts";
@@ -56,6 +57,7 @@ export function ChannelPage() {
               data-testid="message-pane"
               className="absolute inset-0 flex min-h-0 flex-col"
             >
+              <LiveHint server={server} />
               <TextChat server={server} channel={channel} />
             </div>
           </div>

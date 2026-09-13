@@ -1,5 +1,6 @@
 // Server-wide voice occupancy for the member list (issue 12).
 // Join/leave/mute/deafen live on `op: "sig"` — not chat events, no SDK.
+// Go Live holders (`live`) are one user per voice channel (issue 14).
 
 import { create } from "zustand";
 
@@ -11,14 +12,19 @@ export type VoiceFlags = {
   deafened: boolean;
 };
 
+/** channelId → userId. At most one live track per voice channel. */
+export type LiveMap = Record<string, string>;
+
 export const VOICE_ICON_SLOT_PX = 32;
 
 type RosterState = {
   byServer: Record<string, Record<string, VoiceFlags>>;
+  live: Record<string, LiveMap>;
 };
 
 export const useVoiceRoster = create<RosterState>(() => ({
   byServer: {},
+  live: {},
 }));
 
 export function applyVoiceJoin(
@@ -44,6 +50,7 @@ export function applyVoiceJoin(
       return state;
     }
     return {
+      ...state,
       byServer: {
         ...state.byServer,
         [serverId]: { ...current, [userId]: next },
@@ -55,10 +62,22 @@ export function applyVoiceJoin(
 export function applyVoiceLeave(serverId: string, userId: string): void {
   useVoiceRoster.setState((state) => {
     const current = state.byServer[serverId];
-    if (!current || !(userId in current)) return state;
-    const next = { ...current };
-    delete next[userId];
-    return { byServer: { ...state.byServer, [serverId]: next } };
+    const lives = state.live[serverId] ?? {};
+    const flags = current?.[userId];
+    let nextLive = lives;
+    if (flags && lives[flags.channelId] === userId) {
+      nextLive = { ...lives };
+      delete nextLive[flags.channelId];
+    }
+    if ((!current || !(userId in current)) && nextLive === lives) {
+      return state;
+    }
+    const nextOccupancy = current ? { ...current } : {};
+    delete nextOccupancy[userId];
+    return {
+      byServer: { ...state.byServer, [serverId]: nextOccupancy },
+      live: { ...state.live, [serverId]: nextLive },
+    };
   });
 }
 
@@ -81,6 +100,39 @@ export function applyVoiceDeafen(
   });
 }
 
+export function applyLiveStart(
+  serverId: string,
+  channelId: string,
+  userId: string,
+): void {
+  useVoiceRoster.setState((state) => {
+    const current = state.live[serverId] ?? {};
+    if (current[channelId] === userId) return state;
+    return {
+      ...state,
+      live: {
+        ...state.live,
+        [serverId]: { ...current, [channelId]: userId },
+      },
+    };
+  });
+}
+
+export function applyLiveEnd(
+  serverId: string,
+  channelId: string,
+  userId?: string,
+): void {
+  useVoiceRoster.setState((state) => {
+    const current = state.live[serverId];
+    if (!current || !(channelId in current)) return state;
+    if (userId && current[channelId] !== userId) return state;
+    const next = { ...current };
+    delete next[channelId];
+    return { ...state, live: { ...state.live, [serverId]: next } };
+  });
+}
+
 function patchFlags(
   serverId: string,
   userId: string,
@@ -95,6 +147,7 @@ function patchFlags(
       return state;
     }
     return {
+      ...state,
       byServer: {
         ...state.byServer,
         [serverId]: { ...current, [userId]: next },
@@ -105,15 +158,20 @@ function patchFlags(
 
 export function applyVoiceSnap(serverId: string, entries: VoiceEntry[]): void {
   const next: Record<string, VoiceFlags> = {};
+  const live: LiveMap = {};
   for (const entry of entries) {
     next[entry.u] = {
       channelId: entry.c,
       muted: entry.m === true,
       deafened: entry.d === true,
     };
+    if (entry.l) {
+      live[entry.c] = entry.u;
+    }
   }
   useVoiceRoster.setState((state) => ({
     byServer: { ...state.byServer, [serverId]: next },
+    live: { ...state.live, [serverId]: live },
   }));
 }
 
@@ -141,6 +199,12 @@ export function applyVoiceSig(event: SigEvent): void {
     case "d":
       applyVoiceDeafen(event.s, userId, event.on === true);
       return;
+    case "p":
+      if (event.k === "l") applyLiveStart(event.s, channelId, userId);
+      return;
+    case "u":
+      if (event.k === "l") applyLiveEnd(event.s, channelId, userId);
+      return;
     default:
       return;
   }
@@ -154,6 +218,14 @@ export function voiceOf(
   return byServer[serverId]?.[userId] ?? null;
 }
 
+export function liveOf(
+  live: Record<string, LiveMap>,
+  serverId: string,
+  channelId: string,
+): string | null {
+  return live[serverId]?.[channelId] ?? null;
+}
+
 export function resetVoiceRoster(): void {
-  useVoiceRoster.setState({ byServer: {} });
+  useVoiceRoster.setState({ byServer: {}, live: {} });
 }

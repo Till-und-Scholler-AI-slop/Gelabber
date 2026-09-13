@@ -190,14 +190,16 @@ impl SigKind {
     }
 }
 
-/// Audio / camera / screen track on pub/unpub.
-/// Camera (`v`) and screen (`s`) are in-channel (issue 13). Go Live is issue 14.
+/// Audio / camera / screen / live track on pub/unpub.
+/// Camera (`v`) and screen (`s`) are in-channel (issue 13).
+/// Go Live (`l`) is one track per voice channel (issue 14).
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize, Deserialize)]
 #[serde(rename_all = "lowercase")]
 pub enum TrackKind {
     A,
     V,
     S,
+    L,
 }
 
 impl TrackKind {
@@ -206,6 +208,7 @@ impl TrackKind {
             Self::A => "a",
             Self::V => "v",
             Self::S => "s",
+            Self::L => "l",
         }
     }
 }
@@ -219,6 +222,9 @@ pub struct VoiceEntry {
     pub m: bool,
     #[serde(default, skip_serializing_if = "std::ops::Not::not")]
     pub d: bool,
+    /// Occupant holds the channel's Go Live track.
+    #[serde(default, skip_serializing_if = "std::ops::Not::not")]
+    pub l: bool,
 }
 
 /// Compact signaling payload. Redis Pub/Sub carries this as `{"op":"sig",…}`.
@@ -802,6 +808,7 @@ mod tests {
                 c: Uuid::from_u128(2),
                 m: true,
                 d: false,
+                l: false,
             }],
         )
         .to_json()
@@ -835,5 +842,16 @@ mod tests {
         assert!(json.contains(r#""k":"s""#));
         assert!(!json.contains("livekit"));
         assert!(!json.contains("go_live"));
+        let json = ServerFrame::sig(SigEvent::published(
+            Uuid::from_u128(1),
+            Uuid::from_u128(2),
+            Uuid::from_u128(3),
+            TrackKind::L,
+        ))
+        .to_json()
+        .unwrap();
+        assert!(json.contains(r#""k":"l""#));
+        assert!(!json.contains("livekit"));
+        assert!(!json.contains("\"go_live\""));
     }
 }

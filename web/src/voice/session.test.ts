@@ -15,8 +15,11 @@ import {
   resetVoiceForTests,
   toggleCamera,
   toggleDeafen,
+  toggleGoLive,
   toggleMute,
   toggleShare,
+  watchLive,
+  stopWatching,
   useVoice,
   type PeerConnection,
 } from "./session.ts";
@@ -144,6 +147,8 @@ function install(opts?: {
   let onMedia: ((frame: MediaServerFrame) => void) | undefined;
   const peers: FakePeer[] = [];
   const errors: unknown[] = [];
+  let getUserMediaCalls = 0;
+  let getDisplayMediaCalls = 0;
 
   configureVoice({
     userId: () => opts?.userId ?? "u-self",
@@ -174,12 +179,14 @@ function install(opts?: {
       return peer;
     },
     getUserMedia: async (constraints) => {
+      getUserMediaCalls += 1;
       if (opts?.holdMedia) await opts.holdMedia;
       if (opts?.media === false) throw new Error("denied");
       if (constraints.video) return fakeVideoStream("local-cam");
       return fakeStream();
     },
     getDisplayMedia: async () => {
+      getDisplayMediaCalls += 1;
       if (opts?.holdDisplay) await opts.holdDisplay;
       if (opts?.display === false) throw new Error("denied");
       return fakeVideoStream("local-scr", true);
@@ -217,6 +224,8 @@ function install(opts?: {
     emitErr: (err: ErrFrame) => onErr?.(err),
     emitReady: () => onReady?.(),
     emitMedia: (frame: MediaServerFrame) => onMedia?.(frame),
+    getUserMediaCalls: () => getUserMediaCalls,
+    getDisplayMediaCalls: () => getDisplayMediaCalls,
   };
 }
 
@@ -524,5 +533,75 @@ describe("voice session", () => {
       streams: [stream],
     });
     expect(useVoice.getState().remote["u-bob"]?.v).toBe(stream);
+  });
+
+  it("shows the Live badge immediately and publishes after display capture", async () => {
+    const { sent, mediaSent, peers } = install();
+    joinVoice({ serverId: "srv", channelId: "voice", channelName: "Lounge" });
+    await vi.waitFor(() => expect(peers.length).toBe(1));
+    toggleGoLive();
+    expect(useVoice.getState().live).toBe(true);
+    expect(useVoice.getState().localLive).toBeNull();
+    expect(useVoiceRoster.getState().live.srv?.voice).toBe("u-self");
+    await vi.waitFor(() =>
+      expect(useVoice.getState().localLive).toBeTruthy(),
+    );
+    expect(useVoice.getState().participants["u-self"]?.pubs).toContain("l");
+    expect(sent.some((frame) => "sdp" in frame && frame.sdp)).toBe(false);
+    expect(
+      sent.filter((frame) => frame.op === "sig" && frame.t === "p" && "k" in frame && frame.k === "l"),
+    ).toEqual([{ op: "sig", t: "p", s: "srv", c: "voice", k: "l" }]);
+    await vi.waitFor(() =>
+      expect(
+        mediaSent.some((frame) => frame.op === "p" && frame.k === "l"),
+      ).toBe(true),
+    );
+  });
+
+  it("rolls back Go Live locally when the server forbids it", async () => {
+    const { emitErr, emitSig, errors, peers } = install();
+    joinVoice({ serverId: "srv", channelId: "voice", channelName: "Lounge" });
+    await vi.waitFor(() => expect(peers.length).toBe(1));
+    emitSig({ op: "sig", t: "j", s: "srv", c: "voice", u: "u-self" });
+    toggleGoLive();
+    expect(useVoice.getState().live).toBe(true);
+    emitErr({ op: "err", e: "forbidden", s: "srv", c: "voice" });
+    expect(useVoice.getState().live).toBe(false);
+    expect(useVoiceRoster.getState().live.srv?.voice).toBeUndefined();
+    expect(errors).toHaveLength(1);
+    expect(useVoice.getState().status).toBe("joined");
+  });
+
+  it("watches a live track without requesting a microphone", async () => {
+    const { peers, mediaSent, sent, getUserMediaCalls } = install();
+    watchLive({
+      serverId: "srv",
+      channelId: "voice",
+      channelName: "Lounge",
+    });
+    expect(useVoice.getState().watching).toBe(true);
+    expect(useVoice.getState().status).toBe("idle");
+    await vi.waitFor(() => expect(peers.length).toBe(1));
+    expect(getUserMediaCalls()).toBe(0);
+    expect(sent.some((frame) => frame.op === "sig" && frame.t === "j")).toBe(
+      false,
+    );
+    expect(mediaSent.some((frame) => frame.op === "j")).toBe(true);
+    const stream = fakeVideoStream("u-bob:l");
+    peers[0]?.ontrack?.({
+      track: stream.getVideoTracks()[0]!,
+      streams: [stream],
+    });
+    expect(useVoice.getState().watchStream).toBe(stream);
+    expect(useVoice.getState().remote["u-bob"]?.l).toBe(stream);
+    stopWatching();
+    expect(useVoice.getState().watching).toBe(false);
+  });
+
+  it("parses SFU stream ids for a live track", () => {
+    expect(parseRemoteStreamId("u-bob:l")).toEqual({
+      userId: "u-bob",
+      k: "l",
+    });
   });
 });

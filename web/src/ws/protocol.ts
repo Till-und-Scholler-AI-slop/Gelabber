@@ -10,13 +10,14 @@ export type Topic = {
 };
 
 export type SigType = "j" | "l" | "o" | "a" | "i" | "p" | "u" | "m" | "d" | "r";
-export type TrackKind = "a" | "v" | "s";
+export type TrackKind = "a" | "v" | "s" | "l";
 
 export type VoiceEntry = {
   u: string;
   c: string;
   m?: boolean;
   d?: boolean;
+  l?: boolean;
 };
 
 export type SigClientFrame = {

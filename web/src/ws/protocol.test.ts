@@ -101,6 +101,9 @@ describe("ws protocol", () => {
     expect(encode({ op: "sig", t: "p", s: "srv", c: "voice", k: "s" })).toBe(
       '{"op":"sig","t":"p","s":"srv","c":"voice","k":"s"}',
     );
+    expect(encode({ op: "sig", t: "p", s: "srv", c: "voice", k: "l" })).toBe(
+      '{"op":"sig","t":"p","s":"srv","c":"voice","k":"l"}',
+    );
     expect(encode({ op: "sig", t: "m", s: "srv", c: "voice", on: true })).toBe(
       '{"op":"sig","t":"m","s":"srv","c":"voice","on":true}',
     );

@@ -7,6 +7,7 @@ import { useVirtualizer } from "@tanstack/react-virtual";
 import { useMemo, useRef, useState, type ReactNode } from "react";
 
 import { useVoice } from "../voice/session.ts";
+import { useVoiceRoster } from "../voice/roster.ts";
 import { VoiceControls } from "./VoiceControls.tsx";
 import { can } from "../servers/permissions.ts";
 import { buildRows, rowHeight, type Row } from "../servers/rows.ts";
@@ -42,7 +43,9 @@ export function ChannelSidebar({
 }) {
   const manageChannels = can(server, "manage_channels");
   const manageServer = can(server, "manage_server");
+  const canGoLive = can(server, "go_live");
   const voice = useVoice();
+  const live = useVoiceRoster((s) => s.live[server.id] ?? {});
   const [channelDialog, setChannelDialog] = useState<ChannelDialogState | null>(
     null,
   );
@@ -86,6 +89,7 @@ export function ChannelSidebar({
         rows={rows}
         activeChannelId={activeChannelId}
         voiceChannelId={voice.channelId}
+        liveChannels={live}
         manageChannels={manageChannels}
         onEditChannel={(channel) => setChannelDialog({ mode: "edit", channel })}
         onCreateChannel={(categoryId) =>
@@ -104,7 +108,7 @@ export function ChannelSidebar({
               {voice.channelName ?? "Voice"}
             </p>
           </div>
-          <VoiceControls compact />
+          <VoiceControls compact canGoLive={canGoLive} />
         </div>
       ) : null}
 
@@ -147,6 +151,7 @@ function ChannelList({
   rows,
   activeChannelId,
   voiceChannelId,
+  liveChannels,
   manageChannels,
   onEditChannel,
   onCreateChannel,
@@ -156,6 +161,7 @@ function ChannelList({
   rows: Row[];
   activeChannelId: string | undefined;
   voiceChannelId: string | null;
+  liveChannels: Record<string, string>;
   manageChannels: boolean;
   onEditChannel: (channel: Channel) => void;
   onCreateChannel: (categoryId: string | null) => void;
@@ -216,6 +222,7 @@ function ChannelList({
                   channel={row.channel}
                   active={row.channel.id === activeChannelId}
                   inVoice={row.channel.id === voiceChannelId}
+                  live={Boolean(liveChannels[row.channel.id])}
                   manage={manageChannels}
                   onEdit={() => onEditChannel(row.channel)}
                   onDelete={() => {
@@ -286,6 +293,7 @@ function ChannelRow({
   channel,
   active,
   inVoice,
+  live,
   manage,
   onEdit,
   onDelete,
@@ -293,6 +301,7 @@ function ChannelRow({
   channel: Channel;
   active: boolean;
   inVoice: boolean;
+  live: boolean;
   manage: boolean;
   onEdit: () => void;
   onDelete: () => void;
@@ -303,7 +312,11 @@ function ChannelRow({
     <>
       <Icon size={16} className="shrink-0 text-neutral-400" />
       <span className="truncate">{channel.name}</span>
-      {inVoice ? (
+      {live ? (
+        <span className="ml-auto shrink-0 rounded bg-red-600 px-1 py-px text-[10px] font-semibold tracking-wide text-white uppercase">
+          Live
+        </span>
+      ) : inVoice ? (
         <span
           className="ml-auto h-2 w-2 shrink-0 rounded-full bg-emerald-500"
           title="Verbunden"

@@ -7,8 +7,8 @@ import type { ServerDetail } from "../servers/types.ts";
 import { VoiceControls } from "../components/VoiceControls.tsx";
 import { VoiceStateIcons } from "../components/VoiceStateIcons.tsx";
 import { useSession } from "../auth/session.ts";
-import { joinVoice, useVoice } from "./session.ts";
-import { useVoiceRoster } from "./roster.ts";
+import { joinVoice, stopWatching, useVoice, watchLive } from "./session.ts";
+import { liveOf, useVoiceRoster } from "./roster.ts";
 import { VoiceTile } from "./VoiceTile.tsx";
 
 export function VoiceRoom({
@@ -21,10 +21,13 @@ export function VoiceRoom({
   channelName: string;
 }) {
   const allowed = can(server, "join_voice");
+  const canStartLive = can(server, "go_live");
   const voice = useVoice();
   const me = useSession((s) => s.user?.id);
   const roster = useVoiceRoster((s) => s.byServer[server.id] ?? {});
+  const liveUser = useVoiceRoster((s) => liveOf(s.live, server.id, channelId));
   const here = voice.status === "joined" && voice.channelId === channelId;
+  const watching = voice.watching && voice.watchChannelId === channelId;
   const members = new Map(
     server.members.map((member) => [member.user_id, member]),
   );
@@ -45,6 +48,11 @@ export function VoiceRoom({
     name: string;
     mirror: boolean;
   }[] = [];
+  let liveTile: {
+    id: string;
+    stream: MediaStream | null;
+    name: string;
+  } | null = null;
   for (const [id] of occupants) {
     const pubs = voice.participants[id]?.pubs ?? [];
     const self = id === me;
@@ -53,6 +61,16 @@ export function VoiceRoom({
       : (members.get(id)?.name ?? "Mitglied");
     const cameraOn = self ? voice.camera : pubs.includes("v");
     const sharing = self ? voice.sharing : pubs.includes("s");
+    const isLive = self ? voice.live : pubs.includes("l") || liveUser === id;
+    if (isLive && !liveTile) {
+      liveTile = {
+        id: `${id}-l`,
+        stream: self
+          ? voice.localLive
+          : (voice.remote[id]?.l ?? voice.watchStream),
+        name: `${name} — Live`,
+      };
+    }
     if (sharing) {
       screens.push({
         id: `${id}-s`,
@@ -70,7 +88,23 @@ export function VoiceRoom({
     }
   }
 
-  const showStage = screens.length > 0 || cameras.length > 0;
+  if (!liveTile && liveUser) {
+    const name =
+      liveUser === me
+        ? `${members.get(liveUser)?.name ?? "Du"} (du)`
+        : (members.get(liveUser)?.name ?? "Mitglied");
+    liveTile = {
+      id: `${liveUser}-l`,
+      stream:
+        liveUser === me
+          ? voice.localLive
+          : (voice.remote[liveUser]?.l ?? voice.watchStream),
+      name: `${name} — Live`,
+    };
+  }
+
+  const showStage = Boolean(liveTile) || screens.length > 0 || cameras.length > 0;
+  const liveOn = Boolean(liveUser) || (here && voice.live);
 
   return (
     <div className="flex flex-1 flex-col items-center justify-center p-8 text-center">
@@ -80,9 +114,25 @@ export function VoiceRoom({
           showStage ? "max-w-3xl" : "max-w-sm",
         ].join(" ")}
       >
-        <p className="text-lg font-medium text-neutral-800">{channelName}</p>
+        <p className="flex items-center justify-center gap-2 text-lg font-medium text-neutral-800">
+          {channelName}
+          {liveOn ? (
+            <span className="rounded bg-red-600 px-1.5 py-0.5 text-[10px] font-semibold tracking-wide text-white uppercase">
+              Live
+            </span>
+          ) : null}
+        </p>
         {showStage ? (
           <div className="mt-4 flex flex-col gap-3">
+            {liveTile ? (
+              <VoiceTile
+                key={liveTile.id}
+                stream={liveTile.stream}
+                label={liveTile.name}
+                screen
+                live
+              />
+            ) : null}
             {screens.map((tile) => (
               <VoiceTile
                 key={tile.id}
@@ -110,15 +160,18 @@ export function VoiceRoom({
             {occupants.map(([id, flags]) => {
               const member = members.get(id);
               const pubs = voice.participants[id]?.pubs ?? [];
+              const isLive = (here && id === me && voice.live) || liveUser === id;
               const liveAudio =
                 pubs.includes("a") && !flags.muted && !flags.deafened;
-              const mediaLabel = pubs.includes("s")
-                ? "Screen"
-                : pubs.includes("v")
-                  ? "Kamera"
-                  : liveAudio
-                    ? "Audio"
-                    : "\u00a0";
+              const mediaLabel = isLive
+                ? "Live"
+                : pubs.includes("s")
+                  ? "Screen"
+                  : pubs.includes("v")
+                    ? "Kamera"
+                    : liveAudio
+                      ? "Audio"
+                      : "\u00a0";
               return (
                 <li
                   key={id}
@@ -147,7 +200,7 @@ export function VoiceRoom({
         )}
         {here ? (
           <div className="mt-5">
-            <VoiceControls />
+            <VoiceControls canGoLive={canStartLive} />
           </div>
         ) : allowed ? (
           <>
@@ -155,14 +208,49 @@ export function VoiceRoom({
               Beitreten setzt dich sofort in den Kanal. Mute und Deafen gelten
               nur für diese Session.
             </p>
-            <button
-              type="button"
-              onClick={onJoin}
-              className="mt-5 rounded-lg bg-neutral-900 px-4 py-2 text-sm font-medium text-white transition hover:bg-neutral-700"
-            >
-              Beitreten
-            </button>
+            <div className="mt-5 flex flex-wrap items-center justify-center gap-2">
+              <button
+                type="button"
+                onClick={onJoin}
+                className="rounded-lg bg-neutral-900 px-4 py-2 text-sm font-medium text-white transition hover:bg-neutral-700"
+              >
+                Beitreten
+              </button>
+              {liveOn ? (
+                watching ? (
+                  <button
+                    type="button"
+                    onClick={() => stopWatching()}
+                    className="rounded-lg bg-red-50 px-4 py-2 text-sm font-medium text-red-700 transition hover:bg-red-100"
+                  >
+                    Nicht mehr zuschauen
+                  </button>
+                ) : (
+                  <button
+                    type="button"
+                    onClick={() =>
+                      watchLive({
+                        serverId: server.id,
+                        channelId,
+                        channelName,
+                      })
+                    }
+                    className="rounded-lg bg-red-600 px-4 py-2 text-sm font-medium text-white transition hover:bg-red-700"
+                  >
+                    Zuschauen
+                  </button>
+                )
+              ) : null}
+            </div>
           </>
+        ) : liveOn && watching ? (
+          <button
+            type="button"
+            onClick={() => stopWatching()}
+            className="mt-5 rounded-lg bg-red-50 px-4 py-2 text-sm font-medium text-red-700 transition hover:bg-red-100"
+          >
+            Nicht mehr zuschauen
+          </button>
         ) : (
           <p className="mt-2 text-sm">
             Du hast in diesem Server kein Recht, Voice beizutreten.

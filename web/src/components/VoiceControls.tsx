@@ -5,6 +5,7 @@ import {
   CameraOffIcon,
   HeadsetIcon,
   HeadsetOffIcon,
+  LiveIcon,
   MicIcon,
   MicOffIcon,
   ScreenIcon,
@@ -13,20 +14,41 @@ import {
   leaveVoice,
   toggleCamera,
   toggleDeafen,
+  toggleGoLive,
   toggleMute,
   toggleShare,
   useVoice,
 } from "../voice/session.ts";
 
-export function VoiceControls({ compact = false }: { compact?: boolean }) {
+export function VoiceControls({
+  compact = false,
+  canGoLive = false,
+}: {
+  compact?: boolean;
+  canGoLive?: boolean;
+}) {
   const muted = useVoice((s) => s.muted);
   const deafened = useVoice((s) => s.deafened);
   const camera = useVoice((s) => s.camera);
   const sharing = useVoice((s) => s.sharing);
+  const live = useVoice((s) => s.live);
   const micOff = muted || deafened;
   const btn = compact
     ? "inline-flex items-center rounded-md p-1.5 text-neutral-600 hover:bg-neutral-100 hover:text-neutral-900"
     : "inline-flex items-center rounded-lg bg-neutral-200 px-3 py-2 text-sm font-medium text-neutral-800 transition hover:bg-neutral-300";
+  const liveBtn = compact
+    ? [
+        "inline-flex items-center rounded-md p-1.5",
+        live
+          ? "bg-red-600 text-white hover:bg-red-700"
+          : "text-red-600 hover:bg-red-50 hover:text-red-700",
+      ].join(" ")
+    : [
+        "inline-flex items-center rounded-lg px-3 py-2 text-sm font-medium transition",
+        live
+          ? "bg-red-600 text-white hover:bg-red-700"
+          : "bg-neutral-200 text-neutral-800 hover:bg-neutral-300",
+      ].join(" ");
   const leave = compact
     ? "inline-flex items-center rounded-md px-2 py-1 text-xs text-neutral-600 hover:bg-neutral-100 hover:text-neutral-900"
     : "inline-flex items-center rounded-lg bg-neutral-900 px-4 py-2 text-sm font-medium text-white transition hover:bg-neutral-700";
@@ -91,6 +113,21 @@ export function VoiceControls({ compact = false }: { compact?: boolean }) {
           <span className="ml-1.5">{sharing ? "Stopp" : "Bildschirm"}</span>
         )}
       </button>
+      {canGoLive ? (
+        <button
+          type="button"
+          aria-pressed={live}
+          aria-label={live ? "Live beenden" : "Go Live"}
+          title={live ? "Live beenden" : "Go Live"}
+          onClick={() => toggleGoLive()}
+          className={liveBtn}
+        >
+          <LiveIcon size={16} />
+          {compact ? null : (
+            <span className="ml-1.5">{live ? "Live aus" : "Go Live"}</span>
+          )}
+        </button>
+      ) : null}
       <button type="button" onClick={() => leaveVoice()} className={leave}>
         Verlassen
       </button>

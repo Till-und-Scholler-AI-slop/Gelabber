@@ -132,6 +132,15 @@ export function ScreenIcon(props: IconProps) {
   );
 }
 
+export function LiveIcon(props: IconProps) {
+  return (
+    <svg {...base(props)}>
+      <circle cx="12" cy="12" r="3" fill="currentColor" stroke="none" />
+      <path d="M5 12a7 7 0 0 1 2-4.9M19 12a7 7 0 0 0-2-4.9M8.5 7.5a9 9 0 0 1 7 0M8.5 16.5a9 9 0 0 0 7 0" />
+    </svg>
+  );
+}
+
 export function CameraIcon(props: IconProps) {
   return (
     <svg {...base(props)}>
