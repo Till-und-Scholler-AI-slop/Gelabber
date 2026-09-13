@@ -13,7 +13,10 @@ export type ApiErrorCode =
   | "unauthenticated"
   | "invalid_credentials"
   | "csrf_invalid"
+  | "forbidden"
+  | "not_found"
   | "email_taken"
+  | "invite_invalid"
   | "internal"
   | "network"
   | "timeout";
@@ -86,7 +89,10 @@ const KNOWN_CODES: ReadonlySet<string> = new Set<ApiErrorCode>([
   "unauthenticated",
   "invalid_credentials",
   "csrf_invalid",
+  "forbidden",
+  "not_found",
   "email_taken",
+  "invite_invalid",
   "internal",
 ]);
 

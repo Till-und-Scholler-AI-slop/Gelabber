@@ -2,6 +2,7 @@ import { Link, Outlet, useNavigate } from "@tanstack/react-router";
 
 import { logout, useSession } from "../auth/session.ts";
 import { Avatar } from "./Avatar.tsx";
+import { Toasts } from "./Toasts.tsx";
 
 export function AppShell() {
   const user = useSession((state) => state.user);
@@ -16,8 +17,8 @@ export function AppShell() {
 
   return (
     <div className="min-h-dvh bg-neutral-50 text-neutral-900">
-      <header className="border-b border-neutral-200 bg-white">
-        <div className="mx-auto flex h-14 max-w-3xl items-center justify-between px-6">
+      <header className="h-14 border-b border-neutral-200 bg-white">
+        <div className="flex h-full items-center justify-between px-4">
           <Link to="/" className="text-lg font-semibold tracking-tight">
             Gelabber
           </Link>
@@ -44,9 +45,8 @@ export function AppShell() {
           ) : null}
         </div>
       </header>
-      <main className="mx-auto max-w-3xl px-6 py-10">
-        <Outlet />
-      </main>
+      <Outlet />
+      <Toasts />
     </div>
   );
 }

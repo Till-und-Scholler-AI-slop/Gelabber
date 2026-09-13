@@ -11,7 +11,7 @@ import { SubmitButton } from "../components/SubmitButton.tsx";
 
 export function LoginPage() {
   const navigate = useNavigate();
-  const { redirect } = useSearch({ from: "/login" });
+  const { redirect } = useSearch({ from: "/centered/login" });
   const [email, setEmail] = useState("");
   const [password, setPassword] = useState("");
   const { errors, clearField, setFields, fromError } = useFormErrors();

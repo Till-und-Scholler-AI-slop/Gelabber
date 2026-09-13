@@ -57,13 +57,27 @@ export function validateAvatarUrl(raw: string): FieldCode | null {
   return null;
 }
 
-type FieldName = "email" | "password" | "name" | "avatar_url";
+type FieldName =
+  | "email"
+  | "password"
+  | "name"
+  | "avatar_url"
+  | "kind"
+  | "category_id"
+  | "member_permissions"
+  | "max_uses"
+  | "expires_in_hours";
 
 const FIELD_LABEL: Record<FieldName, string> = {
   email: "E-Mail-Adresse",
   password: "Passwort",
   name: "Name",
   avatar_url: "Avatar-URL",
+  kind: "Kanaltyp",
+  category_id: "Kategorie",
+  member_permissions: "Rechte",
+  max_uses: "Maximale Nutzungen",
+  expires_in_hours: "Gültigkeit",
 };
 
 /** German inline copy for a field code. Unknown fields fall back to generic text. */
@@ -103,6 +117,12 @@ export function errorMessage(code: ApiErrorCode): string {
       return "Bitte melde dich erneut an.";
     case "csrf_invalid":
       return "Sicherheits-Token abgelaufen. Bitte noch einmal versuchen.";
+    case "forbidden":
+      return "Dafür fehlt dir die Berechtigung.";
+    case "not_found":
+      return "Das gibt es nicht (mehr).";
+    case "invite_invalid":
+      return "Diese Einladung ist abgelaufen oder aufgebraucht.";
     case "validation_failed":
       return "Bitte die markierten Felder prüfen.";
     case "timeout":
