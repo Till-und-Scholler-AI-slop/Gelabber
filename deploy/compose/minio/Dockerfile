@@ -9,9 +9,9 @@ FROM golang:1.24.8-alpine AS compile
 RUN apk add --no-cache git ca-certificates
 WORKDIR /src
 ARG MINIO_RELEASE
-ADD https://github.com/minio/minio/archive/refs/tags/${MINIO_RELEASE}.tar.gz /tmp/minio.tar.gz
-RUN tar -xzf /tmp/minio.tar.gz --strip-components=1
+RUN git clone --depth 1 --branch "${MINIO_RELEASE}" https://github.com/minio/minio.git .
 ENV CGO_ENABLED=0
+ENV MINIO_RELEASE=RELEASE
 RUN LDFLAGS="$(go run buildscripts/gen-ldflags.go)" \
     && go build -tags kqueue -trimpath -ldflags "$LDFLAGS" -o /out/minio . \
     && cp dockerscripts/docker-entrypoint.sh /out/docker-entrypoint.sh
