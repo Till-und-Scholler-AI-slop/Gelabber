@@ -57,9 +57,16 @@ export async function putPresigned(
 ): Promise<void> {
   let response: Response;
   try {
+    const putHeaders = new Headers();
+    for (const [name, value] of Object.entries(headers)) {
+      // Forbidden request header; the browser (and curl) set it from the body.
+      // The URL is signed for this length — a bigger body will not match.
+      if (name.toLowerCase() === "content-length") continue;
+      putHeaders.set(name, value);
+    }
     response = await fetch(url, {
       method: "PUT",
-      headers,
+      headers: putHeaders,
       body: file,
       signal: AbortSignal.timeout(UPLOAD_TIMEOUT_MS),
     });

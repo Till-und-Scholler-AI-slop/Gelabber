@@ -235,6 +235,7 @@ async fn message_carries_attachment_after_upload(pool: PgPool) {
     .await;
     assert!(signed["upload_url"].as_str().unwrap().contains("gelabber/"));
     assert_eq!(signed["headers"]["Content-Type"], "image/png");
+    assert_eq!(signed["headers"]["Content-Length"], png.len().to_string());
     assert_eq!(signed["attachment"]["filename"], "cat.png");
     let attachment_id = signed["id"].as_str().unwrap().to_owned();
 

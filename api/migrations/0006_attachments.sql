@@ -2,6 +2,7 @@
 -- only. A row is created at presign (`message_id` null) and bound when the
 -- chat message is posted. Hard-delete of the message drops the row.
 -- No public object URLs — the API is the auth gate.
+-- Version 6: 0004 is reserved for #29 DMs / #30 moderation on sibling PRs.
 
 CREATE TABLE attachments (
     id            UUID        PRIMARY KEY DEFAULT gen_random_uuid(),

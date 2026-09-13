@@ -135,7 +135,7 @@ async fn presign(
     let object_key = format!("att/{id}");
     let signed = state
         .store
-        .presign_put(&object_key, &content_type)
+        .presign_put(&object_key, &content_type, size)
         .map_err(store_internal)?;
 
     sqlx::query(

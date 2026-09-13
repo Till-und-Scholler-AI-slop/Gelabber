@@ -82,10 +82,15 @@ impl ObjectStore {
         }
     }
 
-    pub fn presign_put(&self, key: &str, content_type: &str) -> Result<PresignedPut, StoreError> {
+    pub fn presign_put(
+        &self,
+        key: &str,
+        content_type: &str,
+        size: i64,
+    ) -> Result<PresignedPut, StoreError> {
         match self {
-            Self::Memory(store) => store.presign_put(key, content_type),
-            Self::Minio(store) => store.presign_put(key, content_type),
+            Self::Memory(store) => store.presign_put(key, content_type, size),
+            Self::Minio(store) => store.presign_put(key, content_type, size),
         }
     }
 
@@ -137,10 +142,18 @@ pub struct MemoryStore {
 }
 
 impl MemoryStore {
-    fn presign_put(&self, key: &str, content_type: &str) -> Result<PresignedPut, StoreError> {
+    fn presign_put(
+        &self,
+        key: &str,
+        content_type: &str,
+        size: i64,
+    ) -> Result<PresignedPut, StoreError> {
         Ok(PresignedPut {
             url: format!("http://127.0.0.1:1/gelabber/{key}"),
-            headers: vec![("Content-Type".to_owned(), content_type.to_owned())],
+            headers: vec![
+                ("Content-Type".to_owned(), content_type.to_owned()),
+                ("Content-Length".to_owned(), size.to_string()),
+            ],
         })
     }
 
@@ -242,15 +255,27 @@ impl MinioStore {
         )))
     }
 
-    fn presign_put(&self, key: &str, content_type: &str) -> Result<PresignedPut, StoreError> {
+    fn presign_put(
+        &self,
+        key: &str,
+        content_type: &str,
+        size: i64,
+    ) -> Result<PresignedPut, StoreError> {
         let mut action = self.inner.public.put_object(Some(&self.inner.creds), key);
         action
             .headers_mut()
             .insert("content-type", content_type.to_owned());
+        // Signed so MinIO rejects a PUT whose Content-Length is not this size.
+        action
+            .headers_mut()
+            .insert("content-length", size.to_string());
         let url = action.sign(PUT_TTL);
         Ok(PresignedPut {
             url: url.to_string(),
-            headers: vec![("Content-Type".to_owned(), content_type.to_owned())],
+            headers: vec![
+                ("Content-Type".to_owned(), content_type.to_owned()),
+                ("Content-Length".to_owned(), size.to_string()),
+            ],
         })
     }
 
@@ -293,7 +318,7 @@ impl MinioStore {
     }
 
     async fn put(&self, key: &str, content_type: &str, bytes: Vec<u8>) -> Result<(), StoreError> {
-        let signed = self.presign_put(key, content_type)?;
+        let signed = self.presign_put(key, content_type, bytes.len() as i64)?;
         let mut request = self.inner.http.put(&signed.url);
         for (name, value) in &signed.headers {
             request = request.header(name.as_str(), value.as_str());
@@ -334,5 +359,50 @@ impl MinioStore {
                 response.status()
             )))
         }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::config::MinioConfig;
+
+    fn header<'a>(signed: &'a PresignedPut, name: &str) -> Option<&'a str> {
+        signed
+            .headers
+            .iter()
+            .find(|(k, _)| k.eq_ignore_ascii_case(name))
+            .map(|(_, v)| v.as_str())
+    }
+
+    #[test]
+    fn memory_presign_lists_content_length() {
+        let store = ObjectStore::from_minio(None).expect("memory store");
+        let signed = store
+            .presign_put("att/x", "image/png", 12)
+            .expect("presign");
+        assert_eq!(header(&signed, "content-type"), Some("image/png"));
+        assert_eq!(header(&signed, "content-length"), Some("12"));
+    }
+
+    #[test]
+    fn minio_presign_signs_content_length() {
+        let store = ObjectStore::from_minio(Some(&MinioConfig {
+            endpoint: "http://minio:9000".into(),
+            public_endpoint: "http://localhost:9000".into(),
+            access_key: "gelabber".into(),
+            secret_key: "gelabbergelabber".into(),
+            bucket: "gelabber".into(),
+        }))
+        .expect("minio store");
+        let signed = store
+            .presign_put("att/x", "image/png", 12)
+            .expect("presign");
+        assert_eq!(header(&signed, "content-length"), Some("12"));
+        let url = signed.url.to_ascii_lowercase();
+        assert!(
+            url.contains("content-length"),
+            "signed headers must include content-length: {url}"
+        );
     }
 }

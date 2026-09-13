@@ -512,6 +512,7 @@ function Composer({
   const [fileError, setFileError] = useState<string | null>(null);
   const [preview, setPreview] = useState<string | null>(null);
   const fileInput = useRef<HTMLInputElement>(null);
+  const fileRef = useRef<File | null>(null);
   const error = draft.length === 0 ? null : validateContent(draft);
   const remaining = CONTENT_MAX - Array.from(normalisedLength(draft)).length;
   const emptyText = draft.trim().length === 0;
@@ -523,15 +524,18 @@ function Composer({
     setPreview(null);
     setFileError(null);
     if (!next) {
+      fileRef.current = null;
       setFile(null);
       return;
     }
     const invalid = validateAttachment(next);
     if (invalid) {
+      fileRef.current = null;
       setFile(null);
       setFileError(fieldMessage(invalid.field, invalid.code));
       return;
     }
+    fileRef.current = next;
     setFile(next);
     if (isImageType(inferContentType(next))) {
       setPreview(URL.createObjectURL(next));
@@ -552,7 +556,9 @@ function Composer({
             if (next) onDraftChange?.(next);
             return next;
           });
-          if (attached && !file) pickFile(attached);
+          // `file` from this render is `attached` — do not use it. pickFile(null)
+          // already cleared the ref; restore unless the user picked another file.
+          if (!fileRef.current && attached) pickFile(attached);
         },
       },
     );
