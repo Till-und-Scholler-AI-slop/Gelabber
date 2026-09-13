@@ -324,10 +324,27 @@ async fn invites_expire_and_run_out(pool: PgPool) {
     let single = create_invite(&mut owner, &id, json!({ "max_uses": 1 })).await;
     assert_eq!(single["max_uses"], 1);
     let code = single["code"].as_str().unwrap().to_owned();
+    let listed =
+        |body: &Value, code: &str| body.as_array().unwrap().iter().any(|i| i["code"] == code);
+    let invites = owner
+        .send(Method::GET, &format!("/api/servers/{id}/invites"), None)
+        .await;
+    assert!(listed(&invites.body, &code), "unused link is active");
+
     let res = member
         .send(Method::POST, &format!("/api/invites/{code}/join"), None)
         .await;
     assert_eq!(res.status, StatusCode::OK, "{}", res.body);
+
+    // Used up: no longer among the active links a manager could hand out.
+    let invites = owner
+        .send(Method::GET, &format!("/api/servers/{id}/invites"), None)
+        .await;
+    assert!(
+        !listed(&invites.body, &code),
+        "exhausted links drop out of the list: {}",
+        invites.body
+    );
 
     let mut third = Client::new(pool.clone());
     third.bootstrap().await;
@@ -364,12 +381,7 @@ async fn invites_expire_and_run_out(pool: PgPool) {
         .send(Method::GET, &format!("/api/servers/{id}/invites"), None)
         .await;
     assert!(
-        invites
-            .body
-            .as_array()
-            .unwrap()
-            .iter()
-            .all(|i| i["code"] != code),
+        !listed(&invites.body, &code),
         "expired links drop out of the list"
     );
 

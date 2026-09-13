@@ -9,6 +9,7 @@ import { fieldMessage } from "../auth/rules.ts";
 import { useFormErrors } from "../auth/useFormErrors.ts";
 import { useLastChannel } from "../servers/lastChannel.ts";
 import {
+  isPendingId,
   useCreateCategory,
   useCreateChannel,
   useCreateServer,
@@ -237,6 +238,14 @@ function ChannelForm({
   const create = useCreateChannel(server.id);
   const update = useUpdateChannel(server.id);
 
+  // Only categories the API knows about can be a parent: a `tmp:` row from an
+  // optimistic create has no real id yet, and a category deleted while this
+  // dialog was open is gone. Anything else falls back to "Ohne Kategorie".
+  const categories = server.categories.filter((c) => !isPendingId(c.id));
+  const parentId = categories.some((c) => c.id === categoryId)
+    ? categoryId
+    : "";
+
   const preview = kind === "text" ? slugifyChannelName(name) : name.trim();
 
   const onSubmit = (event: FormEvent<HTMLFormElement>) => {
@@ -249,10 +258,10 @@ function ChannelForm({
     if (editing) {
       update.mutate({
         id: editing.id,
-        patch: { name, category_id: categoryId || null },
+        patch: { name, category_id: parentId || null },
       });
     } else {
-      create.mutate({ name, kind, category_id: categoryId || null });
+      create.mutate({ name, kind, category_id: parentId || null });
     }
     onClose();
   };
@@ -335,12 +344,12 @@ function ChannelForm({
         </label>
         <select
           id="channel-category"
-          value={categoryId}
+          value={parentId}
           onChange={(event) => setCategoryId(event.target.value)}
           className="rounded-lg border border-neutral-300 bg-white px-3 py-2 text-base text-neutral-900 outline-none transition focus:border-neutral-500 focus:ring-2 focus:ring-neutral-200"
         >
           <option value="">Ohne Kategorie</option>
-          {server.categories.map((category) => (
+          {categories.map((category) => (
             <option key={category.id} value={category.id}>
               {category.name}
             </option>

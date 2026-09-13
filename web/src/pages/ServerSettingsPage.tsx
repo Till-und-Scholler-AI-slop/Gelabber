@@ -2,6 +2,7 @@
 // leave/delete. Open to every member; the editing sections need
 // `manage_server`, deletion the owner.
 
+import { useQueryClient } from "@tanstack/react-query";
 import { useNavigate, useParams } from "@tanstack/react-router";
 import { useState, type FormEvent, type ReactNode } from "react";
 
@@ -23,6 +24,7 @@ import {
   normalisePermissions,
 } from "../servers/permissions.ts";
 import {
+  readServer,
   useCreateInvite,
   useDeleteServer,
   useInvites,
@@ -125,11 +127,16 @@ function NameSection({ server }: { server: ServerDetail }) {
 
 /** Toggling a checkbox saves immediately (optimistic, rolled back on error). */
 function PermissionsSection({ server }: { server: ServerDetail }) {
+  const client = useQueryClient();
   const update = useUpdateServer(server.id);
   const current = new Set<Permission>(server.member_permissions);
 
   const toggle = (permission: Permission) => {
-    const next = new Set(current);
+    // Start from the cache, not from this render's props: a second click
+    // before the first PATCH returns must build on the first click's
+    // optimistic mask, or the later request would restore the flag.
+    const latest = readServer(client, server.id) ?? server;
+    const next = new Set<Permission>(latest.member_permissions);
     if (next.has(permission)) next.delete(permission);
     else next.add(permission);
     update.mutate({ member_permissions: normalisePermissions(next) });

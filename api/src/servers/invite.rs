@@ -113,9 +113,14 @@ async fn list_invites(
     let member = membership::load(&state.db, server_id, user.id).await?;
     member.require(Permission::ManageServer)?;
 
+    // Same liveness rule as `Invite::is_usable`: a link nobody can redeem
+    // any more (expired or used up) is not "active" and must not be copied
+    // out of the settings page.
     let invites = sqlx::query_as::<_, Invite>(
         "SELECT code, server_id, created_by, created_at, expires_at, max_uses, uses FROM invites \
-         WHERE server_id = $1 AND (expires_at IS NULL OR expires_at > now()) \
+         WHERE server_id = $1 \
+           AND (expires_at IS NULL OR expires_at > now()) \
+           AND (max_uses IS NULL OR uses < max_uses) \
          ORDER BY created_at DESC, code",
     )
     .bind(server_id)

@@ -12,6 +12,7 @@ import {
   useQueryClient,
   type QueryClient,
 } from "@tanstack/react-query";
+import { useRef } from "react";
 
 import { notifyError } from "../components/toasts.ts";
 import * as remote from "./api.ts";
@@ -210,9 +211,29 @@ export function useCreateServer() {
   });
 }
 
+/** The cached detail, if any — the freshest state including optimistic writes. */
+export function readServer(
+  client: QueryClient,
+  serverId: string,
+): ServerDetail | undefined {
+  return client.getQueryData<ServerDetail>(serverKeys.detail(serverId));
+}
+
+/**
+ * Consecutive PATCHes on one server (six permission checkboxes clicked in a
+ * row) overlap. Each is applied optimistically at once; only the *last* one
+ * in flight may write the server's answer back, otherwise an earlier reply
+ * would undo a later click. If any PATCH in such a burst fails, the burst
+ * ends with a refetch instead of a rollback, because the snapshot of the
+ * failed one would also wipe the clicks that came after it.
+ */
 export function useUpdateServer(serverId: string) {
   const client = useQueryClient();
+  const mutationKey = ["servers", "update", serverId];
+  const resync = useRef(false);
+  const lastInFlight = () => client.isMutating({ mutationKey }) <= 1;
   return useMutation({
+    mutationKey,
     mutationFn: (patch: UpdateServerInput) =>
       remote.updateServer(serverId, patch),
     onMutate: (patch) => {
@@ -234,10 +255,19 @@ export function useUpdateServer(serverId: string) {
       return snap;
     },
     onError: (error, _patch, snap) => {
-      restore(client, serverId, snap);
+      if (lastInFlight() && !resync.current) restore(client, serverId, snap);
+      else resync.current = true;
       notifyError(error);
     },
-    onSuccess: (server) => mergeServer(client, server),
+    onSuccess: (server) => {
+      if (lastInFlight()) mergeServer(client, server);
+    },
+    onSettled: () => {
+      if (!lastInFlight() || !resync.current) return;
+      resync.current = false;
+      void client.invalidateQueries({ queryKey: serverKeys.detail(serverId) });
+      void client.invalidateQueries({ queryKey: serverKeys.list() });
+    },
   });
 }
 
