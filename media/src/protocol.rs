@@ -14,7 +14,7 @@ pub struct ClientFrame {
     pub ice: Option<String>,
     #[serde(default)]
     pub mid: Option<String>,
-    /// Next inbound track kind from this peer: `v` (camera) or `s` (screen).
+    /// Next inbound track kind from this peer: `v` (camera), `s` (screen), `l` (live).
     #[serde(default)]
     pub k: Option<String>,
 }
@@ -72,5 +72,7 @@ mod tests {
         assert_eq!(frame.op, "p");
         assert_eq!(frame.k.as_deref(), Some("s"));
         assert!(frame.sdp.is_none());
+        let live: ClientFrame = serde_json::from_str(r#"{"op":"p","k":"l"}"#).unwrap();
+        assert_eq!(live.k.as_deref(), Some("l"));
     }
 }

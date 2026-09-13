@@ -340,6 +340,72 @@ async fn fanout(
     }
 }
 
+/// Best-effort notice in the server's oldest text channel when Go Live starts.
+/// The badge is already local; this must not fail the signaling frame.
+pub(crate) async fn post_live_hint(state: &AppState, user: &User, server_id: Uuid, voice_id: Uuid) {
+    let voice_name = match sqlx::query_scalar::<_, String>(
+        "SELECT name FROM channels WHERE id = $1 AND server_id = $2 AND kind = 'voice'",
+    )
+    .bind(voice_id)
+    .bind(server_id)
+    .fetch_optional(&state.db)
+    .await
+    {
+        Ok(name) => name,
+        Err(err) => {
+            warn!(error = %err, "live hint: voice name");
+            return;
+        }
+    };
+    let Some(voice_name) = voice_name else {
+        return;
+    };
+    let text_id = match sqlx::query_scalar::<_, Uuid>(
+        "SELECT id FROM channels WHERE server_id = $1 AND kind = 'text' \
+         ORDER BY created_at ASC LIMIT 1",
+    )
+    .bind(server_id)
+    .fetch_optional(&state.db)
+    .await
+    {
+        Ok(id) => id,
+        Err(err) => {
+            warn!(error = %err, "live hint: text channel");
+            return;
+        }
+    };
+    let Some(text_id) = text_id else {
+        return;
+    };
+    let content = format!("{} ist live in {voice_name}.", user.name);
+    let row = match sqlx::query_as::<_, MessageInsert>(
+        "INSERT INTO messages (channel_id, author_id, content) VALUES ($1, $2, $3) \
+         RETURNING id, channel_id, content, created_at, edited_at",
+    )
+    .bind(text_id)
+    .bind(user.id)
+    .bind(&content)
+    .fetch_one(&state.db)
+    .await
+    {
+        Ok(row) => row,
+        Err(err) => {
+            warn!(error = %err, "live hint: insert");
+            return;
+        }
+    };
+    let message = row.into_message(user);
+    fanout(
+        state,
+        server_id,
+        text_id,
+        EventKind::C,
+        Some(message.id),
+        serde_json::to_value(&message).ok(),
+    )
+    .await;
+}
+
 /// Text channel (via server membership) or 1:1 DM (via channel_members).
 /// Voice is not a message resource.
 pub(crate) enum MessagingChannel {

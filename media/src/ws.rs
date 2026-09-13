@@ -151,7 +151,7 @@ async fn handle(
                 .k
                 .as_deref()
                 .map(str::trim)
-                .filter(|s| *s == "v" || *s == "s")
+                .filter(|s| *s == "v" || *s == "s" || *s == "l")
                 .ok_or("bad_request")?;
             state
                 .sfu

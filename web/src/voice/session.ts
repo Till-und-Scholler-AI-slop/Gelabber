@@ -1,7 +1,8 @@
 // Local voice state + native RTCPeerConnection.
 // Join updates the store immediately; ticket / ICE / getUserMedia run after.
-// Camera / screen: local preview first, publish on the media path after.
-// Chat WS: presence (j/l/p/u). Media WS: SDP/ICE + RTP. No product SDK.
+// Camera / screen / Go Live: local preview first, publish on the media path.
+// Watch is subscribe-only — no getUserMedia. Chat WS: presence (j/l/p/u).
+// Media WS: SDP/ICE + RTP. No product SDK.
 
 import { create } from "zustand";
 
@@ -11,7 +12,14 @@ import { useSession } from "../auth/session.ts";
 import { notifyError } from "../components/toasts.ts";
 import { getGateway, type Gateway } from "../ws/client.ts";
 import type { ErrFrame, SigEvent, TrackKind } from "../ws/protocol.ts";
-import { applyVoiceJoin, applyVoiceLeave } from "./roster.ts";
+import {
+  applyLiveEnd,
+  applyLiveStart,
+  applyVoiceJoin,
+  applyVoiceLeave,
+  liveOf,
+  useVoiceRoster,
+} from "./roster.ts";
 import {
   type IceServer,
   type MediaServerFrame,
@@ -31,6 +39,7 @@ export type VoiceParticipant = {
 export type RemoteVideo = {
   v?: MediaStream;
   s?: MediaStream;
+  l?: MediaStream;
 };
 
 export type VoiceState = {
@@ -42,8 +51,13 @@ export type VoiceState = {
   deafened: boolean;
   camera: boolean;
   sharing: boolean;
+  live: boolean;
   localCamera: MediaStream | null;
   localScreen: MediaStream | null;
+  localLive: MediaStream | null;
+  watching: boolean;
+  watchChannelId: string | null;
+  watchStream: MediaStream | null;
   remote: Record<string, RemoteVideo>;
   participants: Record<string, VoiceParticipant>;
 };
@@ -57,8 +71,13 @@ const idle: VoiceState = {
   deafened: false,
   camera: false,
   sharing: false,
+  live: false,
   localCamera: null,
   localScreen: null,
+  localLive: null,
+  watching: false,
+  watchChannelId: null,
+  watchStream: null,
   remote: {},
   participants: {},
 };
@@ -124,18 +143,32 @@ let unbindMedia: (() => void) | null = null;
 let localStream: MediaStream | null = null;
 let cameraStream: MediaStream | null = null;
 let screenStream: MediaStream | null = null;
+let liveStream: MediaStream | null = null;
 let remoteAudio: HTMLAudioElement | null = null;
+let watchAudio: HTMLAudioElement | null = null;
 let remoteMix: MediaStream | null = null;
 let bound = false;
 let generation = 0;
 let cameraEpoch = 0;
 let screenEpoch = 0;
+let liveEpoch = 0;
 let pendingIce: IceCand[] = [];
 let awaitingJoin: { serverId: string; channelId: string } | null = null;
+let awaitingLive: { serverId: string; channelId: string } | null = null;
 let sdpChain: Promise<void> = Promise.resolve();
 let makingOffer = false;
 let sfuOffered = false;
 let needOffer = false;
+
+let watchPeer: PeerConnection | null = null;
+let watchMedia: MediaSocket | null = null;
+let unbindWatch: (() => void) | null = null;
+let watchGeneration = 0;
+let watchPendingIce: IceCand[] = [];
+let watchSdpChain: Promise<void> = Promise.resolve();
+let watchMakingOffer = false;
+let watchSfuOffered = false;
+let watchNeedOffer = false;
 
 function currentUserId(): string | null {
   return deps?.userId && deps.userId !== currentUserId
@@ -235,7 +268,7 @@ function setPub(userId: string, kind: TrackKind, on: boolean): void {
   });
 }
 
-function dropRemote(userId: string, kind?: "v" | "s"): void {
+function dropRemote(userId: string, kind?: "v" | "s" | "l"): void {
   const state = useVoice.getState();
   if (!state.remote[userId]) return;
   if (!kind) {
@@ -245,9 +278,9 @@ function dropRemote(userId: string, kind?: "v" | "s"): void {
     return;
   }
   const current = { ...state.remote[userId] };
-  delete current[kind];
+  if (kind) delete current[kind];
   const next = { ...state.remote };
-  if (!current.v && !current.s) {
+  if (!current.v && !current.s && !current.l) {
     delete next[userId];
   } else {
     next[userId] = current;
@@ -255,15 +288,15 @@ function dropRemote(userId: string, kind?: "v" | "s"): void {
   useVoice.setState({ remote: next });
 }
 
-/** SFU stream id is `{userId}:{v|s}` so tiles attach without a product SDK. */
+/** SFU stream id is `{userId}:{v|s|l}` so tiles attach without a product SDK. */
 export function parseRemoteStreamId(
   id: string,
-): { userId: string; k: "v" | "s" } | null {
+): { userId: string; k: "v" | "s" | "l" } | null {
   const i = id.lastIndexOf(":");
   if (i <= 0) return null;
   const userId = id.slice(0, i);
   const k = id.slice(i + 1);
-  if ((k === "v" || k === "s") && userId.length > 0) {
+  if ((k === "v" || k === "s" || k === "l") && userId.length > 0) {
     return { userId, k };
   }
   return null;
@@ -271,7 +304,24 @@ export function parseRemoteStreamId(
 
 function onSig(event: SigEvent): void {
   const state = useVoice.getState();
-  if (state.status === "idle" || event.c !== state.channelId) {
+  const watchingHere =
+    state.watching && event.c === state.watchChannelId;
+  const inRoom = state.status === "joined" && event.c === state.channelId;
+  if (
+    watchingHere &&
+    ((event.t === "u" && event.k === "l") || event.t === "l")
+  ) {
+    const liveUser = event.c
+      ? liveOf(useVoiceRoster.getState().live, event.s, event.c)
+      : null;
+    if (
+      event.t === "u" ||
+      (event.t === "l" && event.u && liveUser === event.u)
+    ) {
+      stopWatching();
+    }
+  }
+  if (!inRoom) {
     return;
   }
   const userId = event.u;
@@ -303,6 +353,9 @@ function onSig(event: SigEvent): void {
     case "p":
     case "u": {
       if (!event.k) return;
+      if (event.t === "p" && event.k === "l" && userId === currentUserId()) {
+        awaitingLive = null;
+      }
       const current = state.participants[userId] ?? { pubs: [] };
       const pubs =
         event.t === "p"
@@ -319,7 +372,7 @@ function onSig(event: SigEvent): void {
       if (
         event.t === "u" &&
         userId !== currentUserId() &&
-        (event.k === "v" || event.k === "s")
+        (event.k === "v" || event.k === "s" || event.k === "l")
       ) {
         dropRemote(userId, event.k);
       }
@@ -332,25 +385,39 @@ function onSig(event: SigEvent): void {
 
 function onErr(err: ErrFrame): void {
   const pending = awaitingJoin;
-  if (!pending) return;
-  if (err.c !== pending.channelId) return;
   if (
-    err.e !== "forbidden" &&
-    err.e !== "not_found" &&
-    err.e !== "bad_request"
+    pending &&
+    err.c === pending.channelId &&
+    (err.e === "forbidden" || err.e === "not_found" || err.e === "bad_request")
   ) {
+    const state = useVoice.getState();
+    if (state.channelId === pending.channelId) {
+      awaitingJoin = null;
+      awaitingLive = null;
+      stopPeer();
+      useVoice.setState({ ...idle });
+      const code: ApiErrorCode =
+        err.e === "forbidden" || err.e === "not_found" || err.e === "bad_request"
+          ? err.e
+          : "bad_request";
+      deps?.onError?.(new ApiError(code, 0, errorMessage(code)));
+    }
     return;
   }
-  const state = useVoice.getState();
-  if (state.channelId !== pending.channelId) return;
-  awaitingJoin = null;
-  stopPeer();
-  useVoice.setState({ ...idle });
-  const code: ApiErrorCode =
-    err.e === "forbidden" || err.e === "not_found" || err.e === "bad_request"
-      ? err.e
-      : "bad_request";
-  deps?.onError?.(new ApiError(code, 0, errorMessage(code)));
+  if (
+    awaitingLive &&
+    !awaitingJoin &&
+    err.c === awaitingLive.channelId &&
+    (err.e === "forbidden" || err.e === "bad_request")
+  ) {
+    awaitingLive = null;
+    if (useVoice.getState().live) {
+      stopLocalVideo("l");
+    }
+    const code: ApiErrorCode =
+      err.e === "forbidden" || err.e === "bad_request" ? err.e : "bad_request";
+    deps?.onError?.(new ApiError(code, 0, errorMessage(code)));
+  }
 }
 
 function onReady(): void {
@@ -384,6 +451,7 @@ function stopPeer(): void {
   generation += 1;
   cameraEpoch += 1;
   screenEpoch += 1;
+  liveEpoch += 1;
   pendingIce = [];
   sdpChain = Promise.resolve();
   makingOffer = false;
@@ -398,14 +466,21 @@ function stopPeer(): void {
   stopTracks(localStream);
   stopTracks(cameraStream);
   stopTracks(screenStream);
+  stopTracks(liveStream);
   localStream = null;
   cameraStream = null;
   screenStream = null;
+  liveStream = null;
   remoteMix = null;
   if (remoteAudio) {
     remoteAudio.srcObject = null;
   }
-  useVoice.setState({ localCamera: null, localScreen: null, remote: {} });
+  useVoice.setState({
+    localCamera: null,
+    localScreen: null,
+    localLive: null,
+    remote: {},
+  });
 }
 
 function enqueueSdp(job: () => Promise<void>): Promise<void> {
@@ -422,9 +497,18 @@ function rollbackSeat(error?: unknown): void {
   const serverId = state.serverId;
   const channelId = state.channelId;
   awaitingJoin = null;
+  awaitingLive = null;
+  if (state.live && serverId && channelId) {
+    applyLiveEnd(serverId, channelId, currentUserId() ?? undefined);
+  }
   stopPeer();
   vacateSelf(serverId, channelId);
-  useVoice.setState({ ...idle });
+  useVoice.setState({
+    ...idle,
+    watching: state.watching,
+    watchChannelId: state.watchChannelId,
+    watchStream: state.watchStream,
+  });
   if (serverId && channelId) {
     deps?.gateway.send({
       op: "sig",
@@ -588,6 +672,9 @@ export function joinVoice(input: {
     });
   }
   stopPeer();
+  if (useVoice.getState().watchChannelId === input.channelId) {
+    stopWatching();
+  }
   const self = userId;
   useVoice.setState({
     status: "joined",
@@ -598,8 +685,10 @@ export function joinVoice(input: {
     deafened: false,
     camera: false,
     sharing: false,
+    live: false,
     localCamera: null,
     localScreen: null,
+    localLive: null,
     remote: {},
     participants: { [self]: { pubs: [] } },
   });
@@ -622,9 +711,18 @@ export function leaveVoice(): void {
   const serverId = state.serverId;
   const channelId = state.channelId;
   awaitingJoin = null;
+  awaitingLive = null;
+  if (state.live && serverId && channelId) {
+    applyLiveEnd(serverId, channelId, currentUserId() ?? undefined);
+  }
   stopPeer();
   vacateSelf(serverId, channelId);
-  useVoice.setState({ ...idle });
+  useVoice.setState({
+    ...idle,
+    watching: state.watching,
+    watchChannelId: state.watchChannelId,
+    watchStream: state.watchStream,
+  });
   if (serverId && channelId) {
     deps?.gateway.send({
       op: "sig",
@@ -720,32 +818,111 @@ export function toggleShare(): void {
   void startLocalVideo("s");
 }
 
+/**
+ * Go Live badge flips immediately; display capture and SFU publish follow.
+ * One live track per voice channel. Needs `go_live` on the server.
+ */
+export function toggleGoLive(): void {
+  ensureBound();
+  const state = useVoice.getState();
+  if (state.status !== "joined" || !state.serverId || !state.channelId) {
+    return;
+  }
+  if (state.live) {
+    awaitingLive = null;
+    stopLocalVideo("l");
+    return;
+  }
+  const self = currentUserId();
+  if (!self) return;
+  const holder = liveOf(
+    useVoiceRoster.getState().live,
+    state.serverId,
+    state.channelId,
+  );
+  if (holder && holder !== self) {
+    return;
+  }
+  useVoice.setState({ live: true });
+  applyLiveStart(state.serverId, state.channelId, self);
+  awaitingLive = { serverId: state.serverId, channelId: state.channelId };
+  void startLocalVideo("l");
+}
+
+/**
+ * Subscribe to a live track without publishing. No mic permission prompt.
+ */
+export function watchLive(input: {
+  serverId: string;
+  channelId: string;
+  channelName: string;
+}): void {
+  ensureBound();
+  const state = useVoice.getState();
+  if (state.status === "joined" && state.channelId === input.channelId) {
+    return;
+  }
+  if (state.watching && state.watchChannelId === input.channelId) {
+    return;
+  }
+  useVoice.setState({
+    watching: true,
+    watchChannelId: input.channelId,
+    watchStream: null,
+  });
+  void startWatchPeer(input.channelId);
+}
+
+export function stopWatching(): void {
+  stopWatchPeer();
+  useVoice.setState({
+    watching: false,
+    watchChannelId: null,
+    watchStream: null,
+  });
+}
+
 export function resetVoiceForTests(): void {
   awaitingJoin = null;
+  awaitingLive = null;
   pendingIce = [];
+  stopWatchPeer();
   stopPeer();
   useVoice.setState({ ...idle });
   deps = null;
   bound = false;
 }
 
-function endedListener(kind: "v" | "s"): () => void {
+function endedListener(kind: "v" | "s" | "l"): () => void {
   return () => {
     const state = useVoice.getState();
     if (kind === "v" && state.camera) stopLocalVideo("v");
     if (kind === "s" && state.sharing) stopLocalVideo("s");
+    if (kind === "l" && state.live) stopLocalVideo("l");
   };
 }
 
-function bindEnded(stream: MediaStream, kind: "v" | "s"): void {
+function bindEnded(stream: MediaStream, kind: "v" | "s" | "l"): void {
   const onEnded = endedListener(kind);
   for (const track of stream.getTracks()) {
     track.addEventListener("ended", onEnded);
   }
 }
 
-async function startLocalVideo(kind: "v" | "s"): Promise<void> {
-  const epoch = kind === "v" ? ++cameraEpoch : ++screenEpoch;
+function videoEpoch(kind: "v" | "s" | "l"): number {
+  if (kind === "v") return cameraEpoch;
+  if (kind === "s") return screenEpoch;
+  return liveEpoch;
+}
+
+function bumpVideoEpoch(kind: "v" | "s" | "l"): number {
+  if (kind === "v") return ++cameraEpoch;
+  if (kind === "s") return ++screenEpoch;
+  return ++liveEpoch;
+}
+
+async function startLocalVideo(kind: "v" | "s" | "l"): Promise<void> {
+  const epoch = bumpVideoEpoch(kind);
   const mine = generation;
   const getMedia =
     kind === "v"
@@ -763,12 +940,17 @@ async function startLocalVideo(kind: "v" | "s"): Promise<void> {
     if (kind === "s" && screenEpoch === epoch) {
       useVoice.setState({ sharing: false });
     }
+    if (kind === "l" && liveEpoch === epoch) {
+      const state = useVoice.getState();
+      awaitingLive = null;
+      useVoice.setState({ live: false, localLive: null });
+      if (state.serverId && state.channelId) {
+        applyLiveEnd(state.serverId, state.channelId, currentUserId() ?? undefined);
+      }
+    }
     return;
   }
-  if (
-    generation !== mine ||
-    (kind === "v" ? cameraEpoch : screenEpoch) !== epoch
-  ) {
+  if (generation !== mine || videoEpoch(kind) !== epoch) {
     stopTracks(stream);
     return;
   }
@@ -778,37 +960,47 @@ async function startLocalVideo(kind: "v" | "s"): Promise<void> {
     stopTracks(cameraStream);
     cameraStream = stream;
     useVoice.setState({ camera: true, localCamera: stream });
-  } else {
+  } else if (kind === "s") {
     stopTracks(screenStream);
     screenStream = stream;
     useVoice.setState({ sharing: true, localScreen: stream });
+  } else {
+    stopTracks(liveStream);
+    liveStream = stream;
+    useVoice.setState({ live: true, localLive: stream });
   }
   if (self) setPub(self, kind, true);
   // Yield so the local tile paints before addTrack / offer.
   await Promise.resolve();
-  if (
-    generation !== mine ||
-    (kind === "v" ? cameraEpoch : screenEpoch) !== epoch
-  ) {
+  if (generation !== mine || videoEpoch(kind) !== epoch) {
     return;
   }
   await publishLocal(kind, stream);
 }
 
-function stopLocalVideo(kind: "v" | "s"): void {
+function stopLocalVideo(kind: "v" | "s" | "l"): void {
   const state = useVoice.getState();
   if (kind === "v" && !state.camera && !state.localCamera) return;
   if (kind === "s" && !state.sharing && !state.localScreen) return;
+  if (kind === "l" && !state.live && !state.localLive) return;
   if (kind === "v") cameraEpoch += 1;
-  else screenEpoch += 1;
-  const stream = kind === "v" ? cameraStream : screenStream;
+  else if (kind === "s") screenEpoch += 1;
+  else liveEpoch += 1;
+  const stream =
+    kind === "v" ? cameraStream : kind === "s" ? screenStream : liveStream;
   const senders = peer?.getSenders?.() ?? [];
   if (kind === "v") {
     cameraStream = null;
     useVoice.setState({ camera: false, localCamera: null });
-  } else {
+  } else if (kind === "s") {
     screenStream = null;
     useVoice.setState({ sharing: false, localScreen: null });
+  } else {
+    liveStream = null;
+    useVoice.setState({ live: false, localLive: null });
+    if (state.serverId && state.channelId) {
+      applyLiveEnd(state.serverId, state.channelId, currentUserId() ?? undefined);
+    }
   }
   const self = currentUserId();
   if (self) setPub(self, kind, false);
@@ -823,7 +1015,7 @@ function stopLocalVideo(kind: "v" | "s"): void {
 }
 
 async function publishLocal(
-  kind: "v" | "s",
+  kind: "v" | "s" | "l",
   stream: MediaStream,
 ): Promise<void> {
   if (!peer) return;
@@ -908,10 +1100,12 @@ async function startPeer(serverId: string, channelId: string): Promise<void> {
   const mine = generation + 1;
   const resumeCamera = useVoice.getState().camera;
   const resumeShare = useVoice.getState().sharing;
+  const resumeLive = useVoice.getState().live;
   stopPeer();
   generation = mine;
   if (resumeCamera) useVoice.setState({ camera: true });
   if (resumeShare) useVoice.setState({ sharing: true });
+  if (resumeLive) useVoice.setState({ live: true });
   const fetchTicket = deps?.fetchTicket ?? requestMediaTicket;
   const openMedia = deps?.openMedia ?? openMediaSocket;
   const createPeer = deps?.createPeer ?? defaultCreatePeer;
@@ -983,12 +1177,212 @@ async function startPeer(serverId: string, channelId: string): Promise<void> {
   if (pending.localScreen) {
     await publishLocal("s", pending.localScreen);
   }
+  if (pending.localLive) {
+    await publishLocal("l", pending.localLive);
+  }
   if ((pending.camera || resumeCamera) && !useVoice.getState().localCamera) {
     void startLocalVideo("v");
   }
   if ((pending.sharing || resumeShare) && !useVoice.getState().localScreen) {
     void startLocalVideo("s");
   }
+  if ((pending.live || resumeLive) && !useVoice.getState().localLive) {
+    void startLocalVideo("l");
+  }
   if (generation !== mine) return;
   await offerIfStable(mine, { initial: true });
+}
+
+function stopWatchPeer(): void {
+  watchGeneration += 1;
+  watchPendingIce = [];
+  watchSdpChain = Promise.resolve();
+  watchMakingOffer = false;
+  watchSfuOffered = false;
+  watchNeedOffer = false;
+  unbindWatch?.();
+  unbindWatch = null;
+  watchMedia?.close();
+  watchMedia = null;
+  watchPeer?.close();
+  watchPeer = null;
+  if (watchAudio) {
+    watchAudio.srcObject = null;
+  }
+}
+
+function enqueueWatchSdp(job: () => Promise<void>): Promise<void> {
+  const run = watchSdpChain.then(job, job);
+  watchSdpChain = run.then(
+    () => undefined,
+    () => undefined,
+  );
+  return run;
+}
+
+function watchSignalingState(): string {
+  return (
+    watchPeer?.signalingState ??
+    (watchPeer?.remoteDescription ? "have-remote-offer" : "stable")
+  );
+}
+
+function attachWatchIncoming(
+  track: MediaStreamTrack,
+  stream?: MediaStream,
+): void {
+  if (track.kind === "audio") {
+    if (typeof Audio === "undefined") return;
+    if (!watchAudio) {
+      watchAudio = new Audio();
+      watchAudio.autoplay = true;
+    }
+    const mix = stream ?? new MediaStream([track]);
+    watchAudio.srcObject = mix;
+    return;
+  }
+  const id = stream?.id ?? track.id;
+  const parsed = parseRemoteStreamId(id);
+  if (!parsed) return;
+  const attached = stream ?? new MediaStream([track]);
+  const state = useVoice.getState();
+  const current = state.remote[parsed.userId] ?? {};
+  useVoice.setState({
+    watchStream: parsed.k === "l" ? attached : state.watchStream,
+    remote: {
+      ...state.remote,
+      [parsed.userId]: { ...current, [parsed.k]: attached },
+    },
+  });
+}
+
+async function applyWatchRemote(
+  type: "offer" | "answer",
+  sdp: string,
+): Promise<void> {
+  if (!watchPeer) return;
+  if (type === "offer") watchSfuOffered = true;
+  await watchPeer.setRemoteDescription({ type, sdp });
+  const queued = watchPendingIce;
+  watchPendingIce = [];
+  for (const candidate of queued) {
+    await watchPeer.addIceCandidate(candidate);
+  }
+  if (type === "offer") {
+    const answer = await watchPeer.createAnswer();
+    await watchPeer.setLocalDescription(answer);
+    if (answer.sdp) {
+      watchMedia?.send({ op: "a", sdp: answer.sdp });
+    }
+  }
+  if (watchNeedOffer) {
+    void watchOfferIfStable(watchGeneration);
+  }
+}
+
+function onWatchFrame(frame: MediaServerFrame): void {
+  if (frame.op === "err") {
+    stopWatching();
+    const code: ApiErrorCode =
+      frame.e === "unauthorized" ? "unauthenticated" : "bad_request";
+    deps?.onError?.(new ApiError(code, 0, errorMessage(code)));
+    return;
+  }
+  if (frame.op === "a" && frame.sdp) {
+    void enqueueWatchSdp(() => applyWatchRemote("answer", frame.sdp));
+    return;
+  }
+  if (frame.op === "o" && frame.sdp) {
+    void enqueueWatchSdp(() => applyWatchRemote("offer", frame.sdp));
+    return;
+  }
+  if (frame.op === "i" && frame.ice) {
+    const candidate = { candidate: frame.ice, sdpMid: frame.mid ?? null };
+    if (watchPeer?.remoteDescription) {
+      void watchPeer.addIceCandidate(candidate);
+    } else {
+      watchPendingIce.push(candidate);
+    }
+  }
+}
+
+async function watchOfferIfStable(
+  mine: number,
+  opts?: { initial?: boolean },
+): Promise<void> {
+  await enqueueWatchSdp(async () => {
+    if (watchGeneration !== mine || !watchPeer) return;
+    if (opts?.initial && watchSfuOffered) return;
+    if (watchMakingOffer || watchSignalingState() !== "stable") {
+      if (!opts?.initial) watchNeedOffer = true;
+      return;
+    }
+    watchMakingOffer = true;
+    watchNeedOffer = false;
+    try {
+      if (watchSignalingState() !== "stable") {
+        if (!opts?.initial) watchNeedOffer = true;
+        return;
+      }
+      if (opts?.initial && watchSfuOffered) return;
+      const offer = await watchPeer.createOffer();
+      if (watchGeneration !== mine || watchSignalingState() !== "stable") {
+        if (!opts?.initial) watchNeedOffer = true;
+        return;
+      }
+      await watchPeer.setLocalDescription(offer);
+      if (watchGeneration !== mine || !offer.sdp) return;
+      watchMedia?.send({ op: "o", sdp: offer.sdp });
+    } catch (error) {
+      if (watchGeneration === mine) {
+        deps?.onError?.(error);
+      }
+    } finally {
+      watchMakingOffer = false;
+    }
+  });
+}
+
+async function startWatchPeer(channelId: string): Promise<void> {
+  const mine = watchGeneration + 1;
+  stopWatchPeer();
+  watchGeneration = mine;
+  const fetchTicket = deps?.fetchTicket ?? requestMediaTicket;
+  const openMedia = deps?.openMedia ?? openMediaSocket;
+  const createPeer = deps?.createPeer ?? defaultCreatePeer;
+
+  let iceServers: IceServer[];
+  try {
+    const ticket = await fetchTicket(channelId);
+    if (watchGeneration !== mine) return;
+    iceServers = ticket.ice_servers ?? [];
+    const socket = openMedia(mediaWsUrl(ticket.media_path));
+    watchMedia = socket;
+    unbindWatch = socket.onFrame(onWatchFrame);
+    socket.send({ op: "j", tk: ticket.ticket });
+  } catch (error) {
+    if (watchGeneration !== mine) return;
+    stopWatching();
+    deps?.onError?.(error);
+    return;
+  }
+
+  const pc = createPeer(iceServers);
+  watchPeer = pc;
+  pc.onicecandidate = (event) => {
+    if (watchGeneration !== mine) return;
+    if (!event.candidate) return;
+    watchMedia?.send({
+      op: "i",
+      ice: event.candidate.candidate,
+      ...(event.candidate.sdpMid ? { mid: event.candidate.sdpMid } : {}),
+    });
+  };
+  pc.ontrack = (event) => {
+    if (watchGeneration !== mine) return;
+    attachWatchIncoming(event.track, event.streams[0]);
+  };
+
+  if (watchGeneration !== mine) return;
+  await watchOfferIfStable(mine, { initial: true });
 }

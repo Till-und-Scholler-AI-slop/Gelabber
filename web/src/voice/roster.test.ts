@@ -2,12 +2,14 @@ import { afterEach, describe, expect, it } from "vitest";
 
 import {
   VOICE_ICON_SLOT_PX,
+  applyLiveStart,
   applyVoiceJoin,
   applyVoiceLeave,
   applyVoiceMute,
   applyVoiceDeafen,
   applyVoiceSig,
   applyVoiceSnap,
+  liveOf,
   resetVoiceRoster,
   useVoiceRoster,
   voiceOf,
@@ -38,6 +40,40 @@ describe("voice roster", () => {
     applyVoiceLeave("s1", "u1");
     expect(voiceOf(useVoiceRoster.getState().byServer, "s1", "u1")).toBeNull();
     expect(VOICE_ICON_SLOT_PX).toBe(32);
+  });
+
+  it("tracks one live holder per voice channel immediately", () => {
+    applyLiveStart("s1", "voice", "u1");
+    expect(liveOf(useVoiceRoster.getState().live, "s1", "voice")).toBe("u1");
+    applyVoiceSig({
+      op: "sig",
+      t: "p",
+      s: "s1",
+      c: "voice",
+      u: "u1",
+      k: "l",
+    });
+    expect(liveOf(useVoiceRoster.getState().live, "s1", "voice")).toBe("u1");
+    applyVoiceSig({
+      op: "sig",
+      t: "u",
+      s: "s1",
+      c: "voice",
+      u: "u1",
+      k: "l",
+    });
+    expect(liveOf(useVoiceRoster.getState().live, "s1", "voice")).toBeNull();
+  });
+
+  it("clears live when the streamer leaves and restores it from a snap", () => {
+    applyVoiceJoin("s1", "u1", "voice");
+    applyLiveStart("s1", "voice", "u1");
+    applyVoiceLeave("s1", "u1");
+    expect(liveOf(useVoiceRoster.getState().live, "s1", "voice")).toBeNull();
+    applyVoiceSnap("s1", [
+      { u: "u2", c: "lounge", l: true },
+    ]);
+    expect(liveOf(useVoiceRoster.getState().live, "s1", "lounge")).toBe("u2");
   });
 
   it("replaces occupancy on a snapshot so reconnects drop ghosts", () => {

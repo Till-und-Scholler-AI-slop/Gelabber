@@ -8,11 +8,13 @@ export function VoiceTile({
   label,
   mirror,
   screen,
+  live,
 }: {
   stream: MediaStream | null;
   label: string;
   mirror?: boolean;
   screen?: boolean;
+  live?: boolean;
 }) {
   const ref = useRef<HTMLVideoElement>(null);
   useEffect(() => {
@@ -50,6 +52,11 @@ export function VoiceTile({
       <figcaption className="absolute inset-x-0 bottom-0 truncate bg-black/50 px-2 py-1 text-left text-xs">
         {label}
       </figcaption>
+      {live ? (
+        <span className="absolute top-2 left-2 rounded bg-red-600 px-1.5 py-0.5 text-[10px] font-semibold tracking-wide uppercase">
+          Live
+        </span>
+      ) : null}
     </figure>
   );
 }

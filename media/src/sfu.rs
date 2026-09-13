@@ -173,7 +173,7 @@ struct Peer {
     out: mpsc::UnboundedSender<ServerFrame>,
     gathered: watch::Receiver<u64>,
     sdp: Arc<Mutex<PeerSdp>>,
-    /// Camera (`v`) / screen (`s`) tags for the next inbound tracks.
+    /// Camera (`v`) / screen (`s`) / live (`l`) tags for the next inbound tracks.
     next_kind: VecDeque<String>,
 }
 
@@ -325,15 +325,15 @@ impl Sfu {
         Ok(())
     }
 
-    /// Tag the next inbound track(s) as camera (`v`) or screen (`s`) so
-    /// subscribers can attach the forwarded stream to the right tile.
+    /// Tag the next inbound track(s) as camera (`v`), screen (`s`), or
+    /// Go Live (`l`) so subscribers can attach the forwarded stream.
     pub async fn announce(
         &self,
         peer_id: PeerId,
         channel_id: Uuid,
         kind: &str,
     ) -> Result<(), String> {
-        if kind != "v" && kind != "s" {
+        if kind != "v" && kind != "s" && kind != "l" {
             return Err("bad_request".into());
         }
         let room = self.room(channel_id).await;
