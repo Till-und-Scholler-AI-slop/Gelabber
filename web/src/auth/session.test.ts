@@ -168,6 +168,66 @@ describe("session store", () => {
     expect(useSession.getState().user).toEqual(fromServer);
   });
 
+  it("a 401 from any request flips the tab to anonymous", async () => {
+    fakeApi({
+      "POST /api/auth/login": () => json(200, { user: ada, csrf_token: "c2" }),
+      "PATCH /api/me": () =>
+        json(401, { error: "unauthenticated", message: "Sign in required." }),
+    });
+    await login("ada@example.com", "password123");
+    expect(useSession.getState().status).toBe("authenticated");
+
+    await expect(updateProfile({ name: "X" })).rejects.toMatchObject({
+      code: "unauthenticated",
+    });
+    expect(useSession.getState()).toEqual({ status: "anonymous", user: null });
+  });
+
+  it("a csrf re-bootstrap without a user flips the tab to anonymous", async () => {
+    let attempt = 0;
+    fakeApi({
+      "POST /api/auth/login": () => json(200, { user: ada, csrf_token: "c2" }),
+      "GET /api/auth/session": () =>
+        json(200, { user: null, csrf_token: "c9" }),
+      "PATCH /api/me": () => {
+        attempt += 1;
+        return attempt === 1
+          ? json(403, { error: "csrf_invalid", message: "stale" })
+          : json(401, { error: "unauthenticated", message: "gone" });
+      },
+    });
+    await login("ada@example.com", "password123");
+
+    await expect(updateProfile({ name: "X" })).rejects.toMatchObject({
+      code: "unauthenticated",
+    });
+    expect(useSession.getState()).toEqual({ status: "anonymous", user: null });
+    expect(getCsrfToken()).toBe("c9");
+  });
+
+  it("a csrf re-bootstrap that still has the user keeps the tab signed in", async () => {
+    let attempt = 0;
+    const renamed = { ...ada, name: "Ada (other tab)" };
+    fakeApi({
+      "POST /api/auth/login": () => json(200, { user: ada, csrf_token: "c2" }),
+      "GET /api/auth/session": () =>
+        json(200, { user: renamed, csrf_token: "c9" }),
+      "PATCH /api/me": () => {
+        attempt += 1;
+        return attempt === 1
+          ? json(403, { error: "csrf_invalid", message: "stale" })
+          : json(200, { ...renamed, name: "X" });
+      },
+    });
+    await login("ada@example.com", "password123");
+
+    await updateProfile({ name: "X" });
+    expect(useSession.getState()).toEqual({
+      status: "authenticated",
+      user: { ...renamed, name: "X" },
+    });
+  });
+
   it("profile update rolls back on error", async () => {
     fakeApi({
       "POST /api/auth/login": () => json(200, { user: ada, csrf_token: "c2" }),

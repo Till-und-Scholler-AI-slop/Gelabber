@@ -52,7 +52,8 @@ export function validateAvatarUrl(raw: string): FieldCode | null {
   const value = raw.trim();
   if (value.length === 0) return null;
   if (chars(value) > AVATAR_URL_MAX) return "too_long";
-  if (!/^https?:\/\/\S+$/i.test(value)) return "invalid";
+  // https only: an http image would be mixed content behind TLS.
+  if (!/^https:\/\/[^\s/.?#]\S*$/i.test(value)) return "invalid";
   return null;
 }
 
@@ -84,7 +85,7 @@ export function fieldMessage(field: string, code: FieldCode): string {
         case "email":
           return "Das sieht nicht wie eine E-Mail-Adresse aus.";
         case "avatar_url":
-          return "Bitte eine vollständige http(s)-URL angeben.";
+          return "Bitte eine vollständige https-URL angeben.";
         default:
           return `${label} ist ungültig.`;
       }

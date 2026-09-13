@@ -48,6 +48,20 @@ export function setCsrfToken(token: string | null): void {
   csrfToken = token;
 }
 
+/**
+ * Where the client reports what the server says about the session outside
+ * of an explicit auth call: `null` on `401 unauthenticated` or when the
+ * silent CSRF re-bootstrap comes back without a user. The session store
+ * registers itself here (keeps this module free of a store import).
+ */
+export type SessionSink = (user: unknown) => void;
+
+let sessionSink: SessionSink | null = null;
+
+export function setSessionSink(sink: SessionSink | null): void {
+  sessionSink = sink;
+}
+
 export function getCsrfToken(): string | null {
   return csrfToken;
 }
@@ -96,8 +110,15 @@ export async function api<T>(
 
   if (!response.ok) {
     const body = (payload ?? {}) as ErrorBody;
+    const code = toErrorCode(body.error);
+    if (code === "unauthenticated") {
+      // The cookie is gone or expired (other tab logged out, TTL, server
+      // restart): tell the store so the UI flips instead of staying stuck
+      // on a page that no longer works.
+      sessionSink?.(null);
+    }
     throw new ApiError(
-      toErrorCode(body.error),
+      code,
       response.status,
       body.message ?? `Request failed with status ${response.status}`,
       body.fields ?? {},
@@ -124,7 +145,12 @@ async function requestWithCsrfRetry(
     return first;
   }
   const session = await send("/auth/session", { signal: options.signal });
-  rememberCsrf(await readJson(session));
+  const payload = await readJson(session);
+  rememberCsrf(payload);
+  if (session.ok && payload !== null && typeof payload === "object") {
+    // The bootstrap is authoritative about who we are, not just the token.
+    sessionSink?.("user" in payload ? payload.user : null);
+  }
   return send(path, options);
 }
 

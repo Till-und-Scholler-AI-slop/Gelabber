@@ -4,7 +4,7 @@
 
 import { create } from "zustand";
 
-import { api, setCsrfToken } from "../api/client.ts";
+import { api, setCsrfToken, setSessionSink } from "../api/client.ts";
 import type {
   LogoutResponse,
   ProfilePatch,
@@ -30,6 +30,24 @@ function applySession(user: User | null): void {
     user,
   });
 }
+
+function isUser(value: unknown): value is User {
+  return (
+    value !== null &&
+    typeof value === "object" &&
+    "id" in value &&
+    typeof value.id === "string" &&
+    "email" in value &&
+    typeof value.email === "string" &&
+    "name" in value &&
+    typeof value.name === "string"
+  );
+}
+
+// Anything the API client learns about the session on the side (a 401, a
+// re-bootstrap) lands here, so a session that died in another tab flips
+// this tab to anonymous as instantly as an explicit logout would.
+setSessionSink((value) => applySession(isUser(value) ? value : null));
 
 let bootstrap: Promise<void> | null = null;
 
@@ -116,7 +134,10 @@ export async function updateProfile(patch: ProfilePatch): Promise<User> {
     useSession.setState({ status: "authenticated", user });
     return user;
   } catch (error) {
-    if (previous) {
+    // Roll back the optimistic write — unless the failure was the session
+    // itself ending, in which case the store is already anonymous and must
+    // stay that way.
+    if (previous && useSession.getState().status === "authenticated") {
       useSession.setState({ user: previous });
     }
     throw error;
@@ -127,5 +148,6 @@ export async function updateProfile(patch: ProfilePatch): Promise<User> {
 export function resetSessionForTests(): void {
   bootstrap = null;
   setCsrfToken(null);
+  setSessionSink((value) => applySession(isUser(value) ? value : null));
   useSession.setState({ status: "unknown", user: null });
 }

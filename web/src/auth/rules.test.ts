@@ -40,14 +40,17 @@ describe("validation rules (mirror of api/src/auth/validate.rs)", () => {
     expect(validateName("x".repeat(65))).toBe("too_long");
   });
 
-  it("avatar url accepts http(s) or empty", () => {
+  it("avatar url accepts https only, or empty", () => {
     expect(validateAvatarUrl("")).toBeNull();
     expect(validateAvatarUrl("  ")).toBeNull();
     expect(validateAvatarUrl("https://cdn.example/a.png")).toBeNull();
+    expect(validateAvatarUrl("HTTPS://cdn.example/a.png")).toBeNull();
     expect(validateAvatarUrl("javascript:alert(1)")).toBe("invalid");
     expect(validateAvatarUrl("ftp://x/y")).toBe("invalid");
     expect(validateAvatarUrl("https://")).toBe("invalid");
-    expect(validateAvatarUrl("http://a b")).toBe("invalid");
+    expect(validateAvatarUrl("https:///etc")).toBe("invalid");
+    expect(validateAvatarUrl("http://cdn.example/a.png")).toBe("invalid");
+    expect(validateAvatarUrl("https://a b")).toBe("invalid");
   });
 });
 
@@ -56,7 +59,7 @@ describe("copy", () => {
     expect(fieldMessage("email", "required")).toBe("E-Mail-Adresse fehlt.");
     expect(fieldMessage("password", "too_short")).toBe("Mindestens 8 Zeichen.");
     expect(fieldMessage("email", "taken")).toMatch(/schon registriert/);
-    expect(fieldMessage("avatar_url", "invalid")).toMatch(/http\(s\)-URL/);
+    expect(fieldMessage("avatar_url", "invalid")).toMatch(/https-URL/);
     expect(fieldMessage("unknown_field", "invalid")).toBe(
       "Eingabe ist ungültig.",
     );

@@ -7,6 +7,7 @@ import {
 
 import { ensureSession, useSession } from "./auth/session.ts";
 import { AppShell } from "./components/AppShell.tsx";
+import { RequireUser } from "./components/RequireUser.tsx";
 import { HomePage } from "./pages/HomePage.tsx";
 import { LoginPage } from "./pages/LoginPage.tsx";
 import { ProfilePage } from "./pages/ProfilePage.tsx";
@@ -56,14 +57,22 @@ const indexRoute = createRoute({
   getParentRoute: () => rootRoute,
   path: "/",
   beforeLoad: requireUser,
-  component: HomePage,
+  component: () => (
+    <RequireUser>
+      <HomePage />
+    </RequireUser>
+  ),
 });
 
 const profileRoute = createRoute({
   getParentRoute: () => rootRoute,
   path: "/profile",
   beforeLoad: requireUser,
-  component: ProfilePage,
+  component: () => (
+    <RequireUser>
+      <ProfilePage />
+    </RequireUser>
+  ),
 });
 
 const loginRoute = createRoute({
