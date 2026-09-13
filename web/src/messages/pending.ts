@@ -5,6 +5,10 @@ import { create } from "zustand";
 
 import type { Message } from "./types.ts";
 
+/** Stable empty list so a Zustand selector does not return a new `[]` every
+ *  time a channel has no in-flight send (that looped MessagePane on mount). */
+export const nonePending: Message[] = [];
+
 type PendingState = {
   byChannel: Record<string, Message[]>;
   add: (channelId: string, message: Message) => void;

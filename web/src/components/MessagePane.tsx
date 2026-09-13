@@ -19,7 +19,7 @@ import {
 import { useSession } from "../auth/session.ts";
 import { fieldMessage } from "../auth/rules.ts";
 import { isContinued, visibleMessages } from "../messages/pages.ts";
-import { usePendingMessages } from "../messages/pending.ts";
+import { nonePending, usePendingMessages } from "../messages/pending.ts";
 import {
   isPendingId,
   useDeleteMessage,
@@ -44,7 +44,9 @@ export function MessagePane({
   const user = useSession((s) => s.user);
   const canSend = can(server, "send_messages");
   const query = useMessages(channel.id, true);
-  const pending = usePendingMessages((s) => s.byChannel[channel.id] ?? []);
+  const pending = usePendingMessages(
+    (s) => s.byChannel[channel.id] ?? nonePending,
+  );
   const items = useMemo(
     () => visibleMessages(query.data?.pages ?? [], pending),
     [query.data?.pages, pending],
@@ -144,6 +146,9 @@ function MessageList({
   const firstId = items[0]?.id;
   useEffect(() => {
     if (!ready || !hasOlder || loadingOlder) return;
+    // First paint is pinned to the newest row; do not walk older pages
+    // until the user actually scrolls up.
+    if (stickToBottom.current) return;
     if (firstVisible > 4) return;
     olderAnchor.current = firstId ?? null;
     onLoadOlder();
