@@ -51,6 +51,30 @@ Config ausschließlich aus Env (`API_ADDR`, `DATABASE_URL`, `REDIS_URL`; optiona
 | `POST /api/auth/logout` | löscht die Session, leert das Cookie → `200 {"csrf_token"}` |
 | `GET /api/me` | `200 User` oder `401 unauthenticated` |
 | `PATCH /api/me` | `{name?, avatar_url?}` (`avatar_url: ""` entfernt das Bild) → `200 User` |
+| `GET /api/servers` | `200 [Server]` — die Server des Users in Beitrittsreihenfolge, je mit `role`, `permissions` (effektiv) und `member_permissions` |
+| `POST /api/servers` | `{name}` → `201 ServerDetail` (Owner-Mitgliedschaft, Kategorie „Textkanäle“, Kanal `#allgemein`) |
+| `GET /api/servers/{id}` | `200 ServerDetail` = Server + `categories`, `channels`, `members`; fremder/unbekannter Server → `404 not_found` |
+| `PATCH /api/servers/{id}` | `{name?, member_permissions?: [flag]}` → `200 Server` (`manage_server`) |
+| `DELETE /api/servers/{id}` | `204` (nur Owner, kaskadiert) |
+| `POST /api/servers/{id}/leave` | `204` (Member; Owner bekommt `403`) |
+| `POST /api/servers/{id}/categories` | `{name}` → `201 Category` (`manage_channels`) |
+| `PATCH` / `DELETE /api/categories/{id}` | `{name}` → `200 Category` / `204`, Kanäle bleiben ohne Kategorie (`manage_channels`) |
+| `POST /api/servers/{id}/channels` | `{name, kind?: "text"\|"voice", category_id?}` → `201 Channel` (`manage_channels`); Textkanal-Namen werden zu `off-topic`-Slugs |
+| `PATCH` / `DELETE /api/channels/{id}` | `{name?, category_id?}` (`""` = ohne Kategorie) → `200 Channel` / `204` (`manage_channels`) |
+| `GET /api/servers/{id}/invites` | `200 [Invite]` aktive Links (`manage_server`) |
+| `POST /api/servers/{id}/invites` | `{max_uses?, expires_in_hours?}` → `201 Invite` (jedes Mitglied) |
+| `GET /api/invites/{code}` | `200 {code, server: {id, name, member_count}, expires_at, member}`; `404 not_found`, `410 invite_invalid` |
+| `POST /api/invites/{code}/join` | `200 Server` — tritt bei (idempotent, verbraucht nur beim ersten Mal eine Nutzung) |
+| `DELETE /api/invites/{code}` | `204` (`manage_server` oder Ersteller) |
+
+### Server, Kanäle, Rechte (issue 4)
+
+- **Struktur**: Server → Kategorien → Kanäle (`text`/`voice`). Löschen einer Kategorie lässt die Kanäle stehen (`category_id = NULL`). Keine Positionen/Reorder, keine Threads/Foren/Stages in v1.
+- **Rollen grob**: Owner = `servers.owner_id`, jede andere Zeile in `server_members` ist Member. Kein Ownership-Transfer, kein Kick/Ban in v1.
+- **Rechte-Flags** (`api/src/servers/permissions.rs`): `manage_server`, `manage_channels`, `send_messages`, `send_files`, `join_voice`, `go_live`. Pro Server **eine** Maske für alle Member (`member_permissions`, Default: alles außer verwalten); der Owner hat immer alles. Keine Channel-Overwrites. Handler prüfen mit `Membership::require(Permission::…)` — Chat, Dateien, Voice und Live hängen sich später an genau diesen Haken.
+- **Sichtbarkeit**: Jeder Lesezugriff läuft über die Mitgliedschaft. Ein Server, in dem man nicht ist, antwortet `404 not_found` (nicht `403`), ungültige UUIDs im Pfad ebenso — die API bestätigt keine fremden IDs. Fehlende Rechte sind `403 forbidden`.
+- **Einladungen**: Code = 12 Zeichen aus einem eindeutig lesbaren Klein-Alphabet (kein `0/o`, `1/l/i`), Groß-/Kleinschreibung beim Einlösen egal. Link = `/invite/{code}` in der Web-App. Beitritt läuft in einer Transaktion mit `FOR UPDATE`, damit `max_uses` auch bei gleichzeitigen Klicks hält. Abgelaufene Links fallen aus der Liste; unbekannte sind `404`, tote `410 invite_invalid`.
+- Fehler-Codes zusätzlich zu Auth: `forbidden`, `not_found`, `invite_invalid`. Feld-Codes wie bisher; neue Felder: `kind`, `category_id`, `member_permissions`, `max_uses`, `expires_in_hours`.
 
 ### Auth (issue 3)
 
@@ -60,7 +84,7 @@ Config ausschließlich aus Env (`API_ADDR`, `DATABASE_URL`, `REDIS_URL`; optiona
 - **Fehler** kommen immer als `{"error": <code>, "message": <text>, "fields"?: {<feld>: <code>}}`. Codes: `validation_failed`, `bad_request`, `unauthenticated`, `invalid_credentials`, `csrf_invalid`, `email_taken`, `internal`. Feld-Codes: `required`, `invalid`, `too_short`, `too_long`, `taken`. Interne Ursachen stehen nur im Log.
 - **Nicht in v1**: OAuth, fremdes JWT, Magic Links, 2FA, SSO, Passkeys, E2E. Avatar ist in v1 eine `https://`-URL (kein `http://`, kein Mixed Content hinter TLS); Datei-Upload kommt mit dem Dateien-/MinIO-Ticket.
 
-Tests gegen echtes Postgres: `DATABASE_URL=postgres://gelabber:gelabber@127.0.0.1:5432/gelabber cargo test -p gelabber-api` (`#[sqlx::test]` legt pro Test eine Wegwerf-Datenbank an; ohne `DATABASE_URL` schlagen die `tests/auth.rs`-Tests fehl, `/health`- und `/ready`-Tests laufen ohne).
+Tests gegen echtes Postgres: `DATABASE_URL=postgres://gelabber:gelabber@127.0.0.1:5432/gelabber cargo test -p gelabber-api` (`#[sqlx::test]` legt pro Test eine Wegwerf-Datenbank an; ohne `DATABASE_URL` schlagen die `tests/auth.rs`- und `tests/servers.rs`-Tests fehl, `/health`- und `/ready`-Tests laufen ohne). Der In-Process-HTTP-Client mit Cookie-Jar liegt in `tests/common/mod.rs`.
 
 `/ready` prüft beide Abhängigkeiten parallel, jede mit hartem Deadline (`API_READY_TIMEOUT_MS`, Default 2000 ms). Der Body nennt pro Check Status, Latenz und eine grobe Fehlerklasse (`connection_refused`, `auth_failed`, `timed_out`, sonst `unavailable`), weil `/ready` über Caddy öffentlich erreichbar ist. Die vollständige Treiber-Fehlermeldung steht nur in der `WARN`-Logzeile (`check`, `error_class`, `error`).
 
@@ -83,4 +107,6 @@ Persistenz ist auf **sqlx 0.9.0** festgelegt (kein zweites ORM, kein Query-Build
 
 `npm run dev` in `web/` proxyt `/api` nach `127.0.0.1:8080` (Vite-Proxy), damit das httpOnly-Cookie same-origin bleibt — genau wie hinter Caddy im Compose. `VITE_API_BASE_URL` ist deshalb relativ (`/api`).
 
-Login-Flow: `GET /api/auth/session` einmal beim Start (parallel zum ersten Render), danach hält ein Zustand-Store den User und der API-Client das CSRF-Token im Speicher. Login/Register schreiben den Store **vor** der clientseitigen Navigation, Logout und Profil-Änderungen sind optimistisch — kein Full-Reload. Feld- und Formfehler erscheinen inline (Client-Regeln spiegeln `api/src/auth/validate.rs`, Server-Feld-Codes werden auf dieselben Texte gemappt). Requests haben 10 s Timeout, Buttons wechseln nur das Label — kein hängender Spinner. Routen: `/` und `/profile` verlangen einen User, `/login` und `/register` schicken angemeldete User weiter (`?redirect=` für Deep-Links). Stirbt die Session außerhalb des Tabs (Logout woanders, TTL), kippt ein `401 unauthenticated` oder ein Bootstrap mit `user: null` den Store sofort auf anonym und die Seite springt nach `/login?redirect=…`.
+Login-Flow: `GET /api/auth/session` einmal beim Start (parallel zum ersten Render), danach hält ein Zustand-Store den User und der API-Client das CSRF-Token im Speicher. Login/Register schreiben den Store **vor** der clientseitigen Navigation, Logout und Profil-Änderungen sind optimistisch — kein Full-Reload. Feld- und Formfehler erscheinen inline (Client-Regeln spiegeln `api/src/auth/validate.rs`, Server-Feld-Codes werden auf dieselben Texte gemappt). Requests haben 10 s Timeout, Buttons wechseln nur das Label — kein hängender Spinner. Routen: `/`, `/s/…` und `/profile` verlangen einen User, `/login` und `/register` schicken angemeldete User weiter (`?redirect=` für Deep-Links). Stirbt die Session außerhalb des Tabs (Logout woanders, TTL), kippt ein `401 unauthenticated` oder ein Bootstrap mit `user: null` den Store sofort auf anonym und die Seite springt nach `/login?redirect=…`.
+
+Workspace (issue 4): drei Spalten — Server-Rail, Kanal-Sidebar, Seite. Beide Listen sind mit TanStack Virtual virtualisiert (die Sidebar als eine flache Liste aus Kategorie- und Kanalzeilen), damit auch hunderte Einträge ohne Ruckler scrollen. Die Auswahl **ist** die URL (`/s/$serverId/c/$channelId`): Klick → Highlight sofort, Details kommen aus dem Query-Cache (`staleTime` 60 s, Prefetch beim Hover über eine Kachel). Umbenennen, Verschieben, Löschen, Rechte-Toggles und Verlassen/Löschen schreiben zuerst in den Cache und rollen bei einem Fehler mit Toast zurück; Anlegen zeigt eine `tmp:`-Zeile, bis der Server die echte ID liefert. Der zuletzt offene Kanal je Server bleibt lokal gemerkt (`localStorage`). `/s/$serverId/settings`: Name, Mitglieder-Rechte (Checkbox = sofort gespeichert), Einladungen, Mitglieder, Löschen bzw. Verlassen — die Verwaltungs-Sektionen nur mit `manage_server`. `/invite/$code` zeigt Vorschau und „Beitreten“; nicht angemeldete Besucher gehen über Login/Register zurück zum Link. Redirects laufen über `components/Redirect.tsx` (einmal pro Ziel), nicht über `<Navigate>`, das bei jedem Re-Render mit neuem Props-Objekt erneut navigiert.
