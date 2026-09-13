@@ -5,7 +5,9 @@
 import {
   type ChatEvent,
   type ClientFrame,
+  type ErrFrame,
   type ServerFrame,
+  type SigEvent,
   type Topic,
   decode,
   encode,
@@ -73,6 +75,9 @@ export class Gateway {
   private lastServerAt = 0;
   private stopped = true;
   private eventListeners = new Set<(event: ChatEvent) => void>();
+  private sigListeners = new Set<(event: SigEvent) => void>();
+  private errListeners = new Set<(err: ErrFrame) => void>();
+  private readyListeners = new Set<() => void>();
   private gapListeners = new Set<(gap: GapNotice) => void>();
 
   constructor(opts: GatewayOptions = {}) {
@@ -102,6 +107,36 @@ export class Gateway {
     return () => {
       this.gapListeners.delete(listener);
     };
+  }
+
+  onSig(listener: (event: SigEvent) => void): () => void {
+    this.sigListeners.add(listener);
+    return () => {
+      this.sigListeners.delete(listener);
+    };
+  }
+
+  onErr(listener: (err: ErrFrame) => void): () => void {
+    this.errListeners.add(listener);
+    return () => {
+      this.errListeners.delete(listener);
+    };
+  }
+
+  onReady(listener: () => void): () => void {
+    this.readyListeners.add(listener);
+    return () => {
+      this.readyListeners.delete(listener);
+    };
+  }
+
+  /** Send a frame on the live socket (signaling, subscribe). */
+  send(frame: ClientFrame): void {
+    try {
+      this.socket?.send(encode(frame));
+    } catch {
+      // Closing / already gone — reconnect will resend.
+    }
   }
 
   start(): void {
@@ -158,6 +193,9 @@ export class Gateway {
       for (const [key, topic] of this.desired) {
         this.send(resumeFrame(topic, this.cursors.get(key)));
       }
+      for (const listener of this.readyListeners) {
+        listener();
+      }
     };
     const onMessage = (event: { data?: string }) => {
       if (typeof event.data !== "string") {
@@ -206,21 +244,21 @@ export class Gateway {
         }
         return;
       }
+      case "sig":
+        for (const listener of this.sigListeners) {
+          listener(frame);
+        }
+        return;
       case "gap":
         for (const listener of this.gapListeners) {
           listener({ s: frame.s, c: frame.c });
         }
         return;
       case "err":
+        for (const listener of this.errListeners) {
+          listener(frame);
+        }
         return;
-    }
-  }
-
-  private send(frame: ClientFrame): void {
-    try {
-      this.socket?.send(encode(frame));
-    } catch {
-      // Closing / already gone — reconnect will resend.
     }
   }
 

@@ -16,7 +16,7 @@ use crate::servers::channel::Channel;
 use crate::servers::membership;
 use crate::state::AppState;
 
-const MAX_CLIENT_BYTES: usize = 8 * 1024;
+const MAX_CLIENT_BYTES: usize = 16 * 1024;
 
 pub async fn run(socket: WebSocket, state: AppState, user: User) {
     let (tx, mut rx) = mpsc::unbounded_channel();
@@ -107,6 +107,7 @@ async fn handle_text(
     match frame.op.as_str() {
         "s" => subscribe(state, user, conn, frame, sink).await,
         "u" => unsubscribe(state, conn, frame).await,
+        "sig" => super::signal::handle(state, user, conn, frame, sink).await,
         _ => {
             send(sink, ServerFrame::error("bad_request", frame.s, frame.c)).await?;
             Ok(())
@@ -128,7 +129,11 @@ async fn subscribe(
     match authorize(&state.db, user.id, server_id, frame.c).await {
         Ok(()) => {}
         Err(ApiError::NotFound) => {
-            send(sink, ServerFrame::error("not_found", Some(server_id), frame.c)).await?;
+            send(
+                sink,
+                ServerFrame::error("not_found", Some(server_id), frame.c),
+            )
+            .await?;
             return Ok(());
         }
         Err(other) => return Err(other),
@@ -157,11 +162,7 @@ async fn subscribe(
     Ok(())
 }
 
-async fn unsubscribe(
-    state: &AppState,
-    conn: ConnId,
-    frame: ClientFrame,
-) -> Result<(), ApiError> {
+async fn unsubscribe(state: &AppState, conn: ConnId, frame: ClientFrame) -> Result<(), ApiError> {
     let Some(server_id) = frame.s else {
         return Ok(());
     };
@@ -195,7 +196,7 @@ async fn authorize(
     found.ok_or(ApiError::NotFound).map(|_| ())
 }
 
-async fn send(
+pub(super) async fn send(
     sink: &mut futures_util::stream::SplitSink<WebSocket, Message>,
     frame: ServerFrame,
 ) -> Result<(), ApiError> {

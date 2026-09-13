@@ -57,7 +57,7 @@ Config ausschließlich aus Env (`API_ADDR`, `DATABASE_URL`, `REDIS_URL`; optiona
 
 Dieselbe Axum-App, natives WebSocket auf `/ws` (Caddy und Vite-Proxy leiten durch). Auth ist die bestehende Session (`gelabber_session`). CSRF gilt nicht: der Handshake ist GET. Fan-out über Redis **8.10.1** Pub/Sub (`PSUBSCRIBE gb:*`); Catch-up liegt in einer begrenzten Redis-Liste pro Topic (`API_WS_REPLAY`, Default 256) — Pub/Sub selbst speichert nichts.
 
-Kompaktes JSON, kurze Keys. Signaling (issue 10) bekommt später ein eigenes `op` und mischt sich nicht in den Chat-Strom (`op:"e"`).
+Kompaktes JSON, kurze Keys. Signaling (issue 10) nutzt `op:"sig"` und mischt sich nicht in den Chat-Strom (`op:"e"`).
 
 Client → Server:
 
@@ -75,9 +75,20 @@ Server → Client:
 | `{"op":"ok","s":"…","c?":"…","n":<seq>}` | Subscribe steht; `n` ist der aktuelle Kopf |
 | `{"op":"e","t":"c\|e\|d","s":"…","c?":"…","n":<seq>,"i?":"<id>","d?":{…}}` | Event: create / edit (Delta in `d`) / delete |
 | `{"op":"gap","s":"…","c?":"…"}` | Lücke größer als der Replay-Puffer — History kommt per REST |
-| `{"op":"err","e":"not_found\|bad_request\|…"}` | Subscribe abgelehnt (fremde Server/Kanäle: `not_found`, wie REST) |
+| `{"op":"err","e":"not_found\|bad_request\|…"}` | Subscribe oder Signaling abgelehnt (fremde Server/Kanäle: `not_found`, wie REST) |
+| `{"op":"sig","t":"j\|l\|o\|a\|i\|p\|u","s":"…","c":"…","u":"…",…}` | Voice-Signaling (issue 10), live, ohne Seq |
 
-Topics: Server `gb:s:{id}` und Kanal `gb:c:{id}` sind getrennt. Events nur an passende Subscribes. Heartbeat alle `API_WS_HEARTBEAT_MS` (15 s); ohne Client-Frame für `API_WS_DEAD_MS` (30 s) schließt der Server (stiller Tod). Reconnect schickt `s` mit letzter Seq — der Server spielt `n+1…` nach, ohne Doppelte. Issue 5 (REST-Nachrichten) publiziert nach einem erfolgreichen Write über `publish_channel` / `publish_server`; dieses Ticket legt keine Message-Tabellen an.
+Client → Server zusätzlich:
+
+| Frame | Bedeutung |
+|---|---|
+| `{"op":"sig","t":"j","s":"…","c":"…"}` | Voice-Join (Session + `join_voice` + Sprachkanal) |
+| `{"op":"sig","t":"l","s":"…","c":"…"}` | Leave |
+| `{"op":"sig","t":"o\|a","s":"…","c":"…","sdp":"…"}` | SDP offer / answer |
+| `{"op":"sig","t":"i","s":"…","c":"…","ice":"…","mid?"}` | Trickle-ICE |
+| `{"op":"sig","t":"p\|u","s":"…","c":"…","k":"a\|v"}` | Pub / unpub (`v` braucht `go_live`) |
+
+Topics: Server `gb:s:{id}` und Kanal `gb:c:{id}` sind getrennt. Signaling hängt an `gb:v:{channel}` (Pub/Sub, kein Replay). Join nur mit gültiger Session und `join_voice`; Textkanäle: `bad_request`, fremde IDs: `not_found`. Der Web-Client spricht natives `RTCPeerConnection` — Join-Klick setzt den lokalen State sofort, ICE läuft im Hintergrund. Kein LiveKit, kein fremdes Medien-JWT; der SFU-Forward (issue 11) ist nicht Teil dieses Tickets. Chat-Events nur an passende Subscribes. Heartbeat alle `API_WS_HEARTBEAT_MS` (15 s); ohne Client-Frame für `API_WS_DEAD_MS` (30 s) schließt der Server (stiller Tod). Reconnect schickt `s` mit letzter Seq — der Server spielt `n+1…` nach, ohne Doppelte. Issue 5 (REST-Nachrichten) publiziert nach einem erfolgreichen Write über `publish_channel` / `publish_server`; dieses Ticket legt keine Message-Tabellen an.
 
 Der Web-Client hält eine Socket-Instanz pro Tab, subscribed Server/Kanal aus der URL und dedupliziert über Seq.
 | `GET /api/servers` | `200 [Server]` — die Server des Users in Beitrittsreihenfolge, je mit `role`, `permissions` (effektiv) und `member_permissions` |
@@ -136,6 +147,6 @@ Persistenz ist auf **sqlx 0.9.0** festgelegt (kein zweites ORM, kein Query-Build
 
 `npm run dev` in `web/` proxyt `/api` und `/ws` nach `127.0.0.1:8080` (Vite-Proxy), damit das httpOnly-Cookie same-origin bleibt — genau wie hinter Caddy im Compose. `VITE_API_BASE_URL` ist deshalb relativ (`/api`).
 
-Login-Flow: `GET /api/auth/session` einmal beim Start (parallel zum ersten Render), danach hält ein Zustand-Store den User und der API-Client das CSRF-Token im Speicher. Mit Session öffnet der Tab ein natives WebSocket auf `/ws` (kein Socket.IO); Server- und Kanal-Subscribe folgen der URL, Reconnect nimmt die letzte Seq mit. Login/Register schreiben den Store **vor** der clientseitigen Navigation, Logout und Profil-Änderungen sind optimistisch — kein Full-Reload. Feld- und Formfehler erscheinen inline (Client-Regeln spiegeln `api/src/auth/validate.rs`, Server-Feld-Codes werden auf dieselben Texte gemappt). Requests haben 10 s Timeout, Buttons wechseln nur das Label — kein hängender Spinner. Routen: `/`, `/s/…` und `/profile` verlangen einen User, `/login` und `/register` schicken angemeldete User weiter (`?redirect=` für Deep-Links). Stirbt die Session außerhalb des Tabs (Logout woanders, TTL), kippt ein `401 unauthenticated` oder ein Bootstrap mit `user: null` den Store sofort auf anonym und die Seite springt nach `/login?redirect=…`.
+Login-Flow: `GET /api/auth/session` einmal beim Start (parallel zum ersten Render), danach hält ein Zustand-Store den User und der API-Client das CSRF-Token im Speicher. Mit Session öffnet der Tab ein natives WebSocket auf `/ws` (kein Socket.IO); Server- und Kanal-Subscribe folgen der URL, Reconnect nimmt die letzte Seq mit. Voice-Join geht über `op:"sig"` und natives `RTCPeerConnection` — der Klick setzt den lokalen State sofort, ICE und Offer laufen danach. Login/Register schreiben den Store **vor** der clientseitigen Navigation, Logout und Profil-Änderungen sind optimistisch — kein Full-Reload. Feld- und Formfehler erscheinen inline (Client-Regeln spiegeln `api/src/auth/validate.rs`, Server-Feld-Codes werden auf dieselben Texte gemappt). Requests haben 10 s Timeout, Buttons wechseln nur das Label — kein hängender Spinner. Routen: `/`, `/s/…` und `/profile` verlangen einen User, `/login` und `/register` schicken angemeldete User weiter (`?redirect=` für Deep-Links). Stirbt die Session außerhalb des Tabs (Logout woanders, TTL), kippt ein `401 unauthenticated` oder ein Bootstrap mit `user: null` den Store sofort auf anonym und die Seite springt nach `/login?redirect=…`.
 
 Workspace (issue 4): drei Spalten — Server-Rail, Kanal-Sidebar, Seite. Beide Listen sind mit TanStack Virtual virtualisiert (die Sidebar als eine flache Liste aus Kategorie- und Kanalzeilen), damit auch hunderte Einträge ohne Ruckler scrollen. Die Auswahl **ist** die URL (`/s/$serverId/c/$channelId`): Klick → Highlight sofort, Details kommen aus dem Query-Cache (`staleTime` 60 s, Prefetch beim Hover über eine Kachel). Umbenennen, Verschieben, Löschen, Rechte-Toggles und Verlassen/Löschen schreiben zuerst in den Cache und rollen bei einem Fehler mit Toast zurück; Anlegen zeigt eine `tmp:`-Zeile, bis der Server die echte ID liefert. Der zuletzt offene Kanal je Server bleibt lokal gemerkt (`localStorage`). `/s/$serverId/settings`: Name, Mitglieder-Rechte (Checkbox = sofort gespeichert), Einladungen, Mitglieder, Löschen bzw. Verlassen — die Verwaltungs-Sektionen nur mit `manage_server`. `/invite/$code` zeigt Vorschau und „Beitreten“; nicht angemeldete Besucher gehen über Login/Register zurück zum Link. Redirects laufen über `components/Redirect.tsx` (einmal pro Ziel), nicht über `<Navigate>`, das bei jedem Re-Render mit neuem Props-Objekt erneut navigiert.

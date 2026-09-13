@@ -8,18 +8,19 @@
 //! successful write it should call [`publish_channel`]. This module does
 //! not add message tables or `/api/.../messages` routes.
 //!
-//! **Issue 10 (signaling)** will add a separate `op` (planned: `sig`). Do
-//! not mix those frames into the chat event stream (`op: "e"`).
+//! **Issue 10 (signaling)** uses `op: "sig"` (join/leave, offer/answer,
+//! ice, pub/unpub). Those frames are not mixed into `op: "e"`.
 
 mod conn;
 mod hub;
 pub mod protocol;
+mod signal;
 
 use axum::Router;
-use axum::extract::ws::WebSocketUpgrade;
 use axum::extract::State;
-use axum::http::header::{HOST, ORIGIN};
+use axum::extract::ws::WebSocketUpgrade;
 use axum::http::HeaderMap;
+use axum::http::header::{HOST, ORIGIN};
 use axum::response::Response;
 use axum::routing::get;
 use serde_json::Value;

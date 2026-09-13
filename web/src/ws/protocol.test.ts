@@ -19,7 +19,7 @@ describe("ws protocol", () => {
     });
   });
 
-  it("decodes events and rejects unknown ops (signaling stays off this stream)", () => {
+  it("decodes chat and signaling on separate ops", () => {
     const event = decode(
       '{"op":"e","t":"c","s":"srv","c":"ch","n":3,"i":"m1","d":{"b":"hi"}}',
     );
@@ -32,8 +32,36 @@ describe("ws protocol", () => {
       i: "m1",
       d: { b: "hi" },
     });
-    expect(decode('{"op":"sig","t":"offer"}')).toBeNull();
+    const sig = decode(
+      '{"op":"sig","t":"j","s":"srv","c":"voice","u":"u1"}',
+    );
+    expect(sig).toEqual({
+      op: "sig",
+      t: "j",
+      s: "srv",
+      c: "voice",
+      u: "u1",
+    });
+    expect(decode('{"op":"lk","t":"offer"}')).toBeNull();
     expect(decode("not-json")).toBeNull();
+  });
+
+  it("keeps signaling frames small", () => {
+    expect(
+      encode({ op: "sig", t: "j", s: "srv", c: "voice" }),
+    ).toBe('{"op":"sig","t":"j","s":"srv","c":"voice"}');
+    expect(
+      encode({
+        op: "sig",
+        t: "i",
+        s: "srv",
+        c: "voice",
+        ice: "cand",
+        mid: "0",
+      }),
+    ).toBe(
+      '{"op":"sig","t":"i","s":"srv","c":"voice","ice":"cand","mid":"0"}',
+    );
   });
 
   it("resumes with last seq and drops duplicates", () => {

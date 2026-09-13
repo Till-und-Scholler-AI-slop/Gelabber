@@ -130,4 +130,40 @@ describe("gateway client", () => {
 
     gateway.stop();
   });
+
+  it("routes signaling off the chat event stream", () => {
+    const sockets: FakeSocket[] = [];
+    const gateway = new Gateway({
+      url: "ws://test/ws",
+      open: () => {
+        const socket = new FakeSocket();
+        sockets.push(socket);
+        return socket;
+      },
+    });
+
+    const chat: ChatEvent[] = [];
+    const sigs: { t: string }[] = [];
+    gateway.onEvent((event) => chat.push(event));
+    gateway.onSig((event) => sigs.push(event));
+    gateway.start();
+    sockets[0]?.emit("open");
+    gateway.send({ op: "sig", t: "j", s: "srv", c: "voice" });
+    expect(sockets[0]?.sent).toContain(
+      '{"op":"sig","t":"j","s":"srv","c":"voice"}',
+    );
+
+    sockets[0]?.emit(
+      "message",
+      '{"op":"sig","t":"j","s":"srv","c":"voice","u":"u1"}',
+    );
+    sockets[0]?.emit(
+      "message",
+      '{"op":"e","t":"c","s":"srv","c":"ch","n":1}',
+    );
+    expect(sigs).toEqual([{ op: "sig", t: "j", s: "srv", c: "voice", u: "u1" }]);
+    expect(chat).toHaveLength(1);
+
+    gateway.stop();
+  });
 });
