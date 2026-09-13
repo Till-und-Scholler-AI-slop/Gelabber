@@ -1,7 +1,8 @@
-import { Navigate, useLocation } from "@tanstack/react-router";
-import type { ReactNode } from "react";
+import { useLocation } from "@tanstack/react-router";
+import { useState, type ReactNode } from "react";
 
 import { useSession } from "../auth/session.ts";
+import { Redirect } from "./Redirect.tsx";
 
 /**
  * Renders `children` only while the store holds a user. The route guard
@@ -14,6 +15,14 @@ export function RequireUser({ children }: { children: ReactNode }) {
   const status = useSession((state) => state.status);
   const location = useLocation();
 
+  // The post-login target is the last page seen *while signed in*. Once the
+  // redirect starts, `location` already reflects `/login?redirect=…`; using
+  // it live would nest the redirect into itself on every render.
+  const [target, setTarget] = useState(location.href);
+  if (status === "authenticated" && target !== location.href) {
+    setTarget(location.href);
+  }
+
   if (status === "authenticated") {
     return children;
   }
@@ -21,10 +30,6 @@ export function RequireUser({ children }: { children: ReactNode }) {
     return null;
   }
   return (
-    <Navigate
-      to="/login"
-      search={location.href === "/" ? {} : { redirect: location.href }}
-      replace
-    />
+    <Redirect to="/login" search={target === "/" ? {} : { redirect: target }} />
   );
 }

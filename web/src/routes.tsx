@@ -1,4 +1,5 @@
 import {
+  Outlet,
   createRootRoute,
   createRoute,
   createRouter,
@@ -8,10 +9,15 @@ import {
 import { ensureSession, useSession } from "./auth/session.ts";
 import { AppShell } from "./components/AppShell.tsx";
 import { RequireUser } from "./components/RequireUser.tsx";
-import { HomePage } from "./pages/HomePage.tsx";
+import { ChannelPage } from "./pages/ChannelPage.tsx";
+import { InvitePage } from "./pages/InvitePage.tsx";
 import { LoginPage } from "./pages/LoginPage.tsx";
 import { ProfilePage } from "./pages/ProfilePage.tsx";
 import { RegisterPage } from "./pages/RegisterPage.tsx";
+import { ServerPage } from "./pages/ServerPage.tsx";
+import { ServerSettingsPage } from "./pages/ServerSettingsPage.tsx";
+import { WorkspaceIndexPage } from "./pages/WorkspaceIndexPage.tsx";
+import { WorkspaceLayout } from "./pages/WorkspaceLayout.tsx";
 
 const rootRoute = createRootRoute({
   component: AppShell,
@@ -53,19 +59,21 @@ async function requireAnonymous({ search }: { search: AuthSearch }) {
   }
 }
 
-const indexRoute = createRoute({
+// ---------------------------------------------------------------------------
+// Centered pages: auth, profile, invite landing.
+
+const centeredLayout = createRoute({
   getParentRoute: () => rootRoute,
-  path: "/",
-  beforeLoad: requireUser,
+  id: "centered",
   component: () => (
-    <RequireUser>
-      <HomePage />
-    </RequireUser>
+    <main className="mx-auto max-w-3xl px-6 py-10">
+      <Outlet />
+    </main>
   ),
 });
 
 const profileRoute = createRoute({
-  getParentRoute: () => rootRoute,
+  getParentRoute: () => centeredLayout,
   path: "/profile",
   beforeLoad: requireUser,
   component: () => (
@@ -76,7 +84,7 @@ const profileRoute = createRoute({
 });
 
 const loginRoute = createRoute({
-  getParentRoute: () => rootRoute,
+  getParentRoute: () => centeredLayout,
   path: "/login",
   validateSearch: validateAuthSearch,
   beforeLoad: requireAnonymous,
@@ -84,18 +92,71 @@ const loginRoute = createRoute({
 });
 
 const registerRoute = createRoute({
-  getParentRoute: () => rootRoute,
+  getParentRoute: () => centeredLayout,
   path: "/register",
   validateSearch: validateAuthSearch,
   beforeLoad: requireAnonymous,
   component: RegisterPage,
 });
 
+const inviteRoute = createRoute({
+  getParentRoute: () => centeredLayout,
+  path: "/invite/$code",
+  beforeLoad: requireUser,
+  component: () => (
+    <RequireUser>
+      <InvitePage />
+    </RequireUser>
+  ),
+});
+
+// ---------------------------------------------------------------------------
+// Workspace: server rail + channel sidebar + page.
+
+const workspaceLayout = createRoute({
+  getParentRoute: () => rootRoute,
+  id: "workspace",
+  beforeLoad: requireUser,
+  component: WorkspaceLayout,
+});
+
+const indexRoute = createRoute({
+  getParentRoute: () => workspaceLayout,
+  path: "/",
+  component: WorkspaceIndexPage,
+});
+
+const serverRoute = createRoute({
+  getParentRoute: () => workspaceLayout,
+  path: "/s/$serverId",
+  component: ServerPage,
+});
+
+const channelRoute = createRoute({
+  getParentRoute: () => workspaceLayout,
+  path: "/s/$serverId/c/$channelId",
+  component: ChannelPage,
+});
+
+const serverSettingsRoute = createRoute({
+  getParentRoute: () => workspaceLayout,
+  path: "/s/$serverId/settings",
+  component: ServerSettingsPage,
+});
+
 const routeTree = rootRoute.addChildren([
-  indexRoute,
-  profileRoute,
-  loginRoute,
-  registerRoute,
+  centeredLayout.addChildren([
+    profileRoute,
+    loginRoute,
+    registerRoute,
+    inviteRoute,
+  ]),
+  workspaceLayout.addChildren([
+    indexRoute,
+    serverRoute,
+    channelRoute,
+    serverSettingsRoute,
+  ]),
 ]);
 
 export const router = createRouter({

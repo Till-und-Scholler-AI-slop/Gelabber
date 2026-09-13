@@ -6,7 +6,9 @@ pub mod error;
 pub mod health;
 pub mod json;
 pub mod password;
+pub mod path;
 pub mod profile;
+pub mod servers;
 pub mod state;
 pub mod telemetry;
 pub mod token;
@@ -28,6 +30,7 @@ pub fn app(state: AppState) -> Router {
     let api = Router::new()
         .merge(auth::router())
         .merge(profile::router())
+        .merge(servers::router())
         .layer(middleware::from_fn(csrf::require));
 
     Router::new()
