@@ -1,0 +1,9 @@
+[package]
+name = "gelabber-media"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+description = "Gelabber media/SFU worker stub (same Rust images as the API)"
+
+[dependencies]

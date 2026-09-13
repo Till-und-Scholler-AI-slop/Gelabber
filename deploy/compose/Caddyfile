@@ -1,0 +1,27 @@
+{
+	auto_https off
+}
+
+# TCP only. Later coturn/TURN (issue 11) binds its own UDP — do not force
+# media UDP through this proxy.
+:80 {
+	handle /health {
+		reverse_proxy api:8080
+	}
+
+	handle /ready {
+		reverse_proxy api:8080
+	}
+
+	handle /api* {
+		reverse_proxy api:8080
+	}
+
+	handle /media* {
+		reverse_proxy media:8081
+	}
+
+	handle {
+		reverse_proxy web:80
+	}
+}
