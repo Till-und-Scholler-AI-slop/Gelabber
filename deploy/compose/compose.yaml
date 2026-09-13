@@ -1,7 +1,7 @@
 name: gelabber
 
-# One Compose file, one reverse proxy (Caddy). UDP for later coturn is
-# not bound here — TURN waits for issue 11. No LiveKit, no product SFU.
+# One Compose file, one reverse proxy (Caddy). coturn and the SFU bind
+# their own UDP — never through Caddy. No LiveKit, no product SFU.
 
 services:
   proxy:
@@ -36,6 +36,10 @@ services:
       MINIO_ROOT_USER: ${MINIO_ROOT_USER:-gelabber}
       MINIO_ROOT_PASSWORD: ${MINIO_ROOT_PASSWORD:-gelabbergelabber}
       MINIO_BUCKET: ${MINIO_BUCKET:-gelabber}
+      TURN_URLS: stun:${TURN_PUBLIC_HOST:-127.0.0.1}:${TURN_PORT:-3478},turn:${TURN_PUBLIC_HOST:-127.0.0.1}:${TURN_PORT:-3478}
+      TURN_USERNAME: ${TURN_USERNAME:-gelabber}
+      TURN_PASSWORD: ${TURN_PASSWORD:-gelabberturn}
+      MEDIA_TICKET_TTL_SECS: "30"
     expose:
       - "8080"
     depends_on:
@@ -53,8 +57,46 @@ services:
       dockerfile: media/Dockerfile
     environment:
       MEDIA_ADDR: 0.0.0.0:8081
+      REDIS_URL: redis://redis:6379
+      MEDIA_ICE_BIND: 0.0.0.0:10000
+      MEDIA_ICE_PORT_MAX: "10031"
+      MEDIA_ADVERTISED_IP: ${MEDIA_ADVERTISED_IP:-127.0.0.1}
+      TURN_URLS: stun:coturn:3478,turn:coturn:3478
+      TURN_USERNAME: ${TURN_USERNAME:-gelabber}
+      TURN_PASSWORD: ${TURN_PASSWORD:-gelabberturn}
     expose:
       - "8081"
+    ports:
+      - "10000-10031:10000-10031/udp"
+    depends_on:
+      redis:
+        condition: service_healthy
+      coturn:
+        condition: service_started
+    restart: unless-stopped
+
+  # UDP/TCP 3478 + relay range. Not behind Caddy.
+  coturn:
+    image: coturn/coturn:4.18.0
+    command:
+      - -n
+      - --log-file=stdout
+      - --listening-port=3478
+      - --min-port=49160
+      - --max-port=49200
+      - --fingerprint
+      - --lt-cred-mech
+      - --user=${TURN_USERNAME:-gelabber}:${TURN_PASSWORD:-gelabberturn}
+      - --realm=${TURN_REALM:-gelabber.local}
+      - --no-cli
+      - --no-tls
+      - --no-dtls
+      - --listening-ip=0.0.0.0
+      - --external-ip=${TURN_EXTERNAL_IP:-127.0.0.1}
+    ports:
+      - "${TURN_PORT:-3478}:3478/udp"
+      - "${TURN_PORT:-3478}:3478/tcp"
+      - "49160-49200:49160-49200/udp"
     restart: unless-stopped
 
   postgres:

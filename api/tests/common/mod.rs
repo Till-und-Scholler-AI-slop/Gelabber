@@ -145,6 +145,16 @@ impl Client {
         }
     }
 
+    /// Same as [`Self::new`] but with a live Redis (ticket mint / gateway).
+    pub fn with_redis(pool: PgPool) -> Self {
+        Self {
+            app: app(ws_state(pool)),
+            jar: BTreeMap::new(),
+            csrf: None,
+            user_id: None,
+        }
+    }
+
     pub async fn send(&mut self, method: Method, path: &str, body: Option<Value>) -> Response {
         self.send_with(method, path, body, |_| {}).await
     }
@@ -234,7 +244,9 @@ impl Client {
     }
 
     pub fn user_id(&self) -> &str {
-        self.user_id.as_deref().expect("user id after register/login")
+        self.user_id
+            .as_deref()
+            .expect("user id after register/login")
     }
 
     pub async fn login(&mut self, email: &str, password: &str) -> Response {

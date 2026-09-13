@@ -6,6 +6,7 @@ pub mod error;
 pub mod gateway;
 pub mod health;
 pub mod json;
+pub mod media;
 pub mod messages;
 pub mod password;
 pub mod path;
@@ -37,6 +38,7 @@ pub fn app(state: AppState) -> Router {
         .merge(profile::router())
         .merge(servers::router())
         .merge(messages::router())
+        .merge(media::router())
         .layer(middleware::from_fn(csrf::require));
 
     // `/ws` is a GET upgrade, not a JSON mutation — it stays outside the

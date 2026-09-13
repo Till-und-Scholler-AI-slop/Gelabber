@@ -7,6 +7,7 @@ use sqlx::postgres::{PgConnectOptions, PgPoolOptions};
 
 use crate::config::Config;
 use crate::gateway::Gateway;
+use crate::media::IceServer;
 
 /// Shared handles for request handlers. Both clients are created lazily so
 /// the process boots even while Postgres/Redis are still starting; `/ready`
@@ -29,6 +30,8 @@ pub struct AppState {
     pub ws_dead: Duration,
     pub ws_idle: Duration,
     pub ws_replay: usize,
+    pub ice_servers: Vec<IceServer>,
+    pub media_ticket_ttl: Duration,
 }
 
 #[derive(Debug)]
@@ -85,6 +88,8 @@ impl AppState {
             ws_dead: config.ws_dead,
             ws_idle: config.ws_idle,
             ws_replay: config.ws_replay,
+            ice_servers: config.ice_servers.clone(),
+            media_ticket_ttl: config.media_ticket_ttl,
         })
     }
 

@@ -17,6 +17,11 @@ export default defineConfig({
         changeOrigin: false,
         ws: true,
       },
+      "/media": {
+        target: "http://127.0.0.1:8081",
+        changeOrigin: false,
+        ws: true,
+      },
     },
   },
 });

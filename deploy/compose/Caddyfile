@@ -2,8 +2,8 @@
 	auto_https off
 }
 
-# TCP only. Later coturn/TURN (issue 11) binds its own UDP — do not force
-# media UDP through this proxy.
+# TCP only. coturn (3478/udp + relay) and SFU host ICE bind their own
+# UDP — do not force media UDP through this proxy.
 :80 {
 	handle /health {
 		reverse_proxy api:8080
