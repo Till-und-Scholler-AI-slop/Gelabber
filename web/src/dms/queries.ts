@@ -31,11 +31,11 @@ export function useDms() {
   });
 }
 
-export function useDm(id: string | undefined) {
+export function useDm(id: string | undefined, enabled = true) {
   return useQuery({
     queryKey: dmKeys.detail(id ?? ""),
     queryFn: ({ signal }) => remote.getDm(id ?? "", signal),
-    enabled: id !== undefined,
+    enabled: id !== undefined && enabled,
     staleTime: STALE_MS,
     retry: (count, error) =>
       count < 2 &&
@@ -83,8 +83,19 @@ export function useOpenDm() {
   });
 }
 
-export function forgetDm(client: QueryClient, id: string): void {
-  client.removeQueries({ queryKey: dmKeys.detail(id) });
+/**
+ * Drop a DM the caller can no longer see. `keepDetail` leaves the (failed)
+ * detail query alone while a page still observes it — removing it would
+ * refetch and 404 again.
+ */
+export function forgetDm(
+  client: QueryClient,
+  id: string,
+  options: { keepDetail?: boolean } = {},
+): void {
+  if (!options.keepDetail) {
+    client.removeQueries({ queryKey: dmKeys.detail(id) });
+  }
   client.setQueryData<DirectMessage[]>(dmKeys.list(), (current) =>
     current?.filter((dm) => dm.id !== id),
   );

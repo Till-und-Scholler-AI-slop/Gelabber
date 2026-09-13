@@ -7,7 +7,8 @@ import { Link } from "@tanstack/react-router";
 import { useVirtualizer } from "@tanstack/react-virtual";
 import { useRef, useState } from "react";
 
-import { prefetchDms } from "../dms/queries.ts";
+import { lastDmStillListed } from "../dms/open.ts";
+import { prefetchDms, useDms } from "../dms/queries.ts";
 import { useLastDm } from "../dms/lastDm.ts";
 import { useLastChannel } from "../servers/lastChannel.ts";
 import { prefetchServer, useServers } from "../servers/queries.ts";
@@ -54,6 +55,8 @@ export function ServerRail({
 function HomeTile({ active }: { active: boolean }) {
   const client = useQueryClient();
   const lastDmId = useLastDm((s) => s.channelId);
+  const { data: dms } = useDms();
+  const openId = lastDmStillListed(lastDmId, dms) ? lastDmId : null;
 
   return (
     <div className="relative flex h-14 items-center">
@@ -65,8 +68,8 @@ function HomeTile({ active }: { active: boolean }) {
         ].join(" ")}
       />
       <Link
-        to={lastDmId ? "/d/$channelId" : "/d"}
-        params={lastDmId ? { channelId: lastDmId } : undefined}
+        to={openId ? "/d/$channelId" : "/d"}
+        params={openId ? { channelId: openId } : undefined}
         title="Direktnachrichten"
         aria-label="Direktnachrichten"
         aria-current={active ? "page" : undefined}
