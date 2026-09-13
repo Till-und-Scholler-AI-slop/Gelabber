@@ -1,16 +1,21 @@
-// Three columns: server rail, channel sidebar for the selected server, and
-// the page. Selection is the URL (`/s/$serverId/c/$channelId`), so both
-// sidebars re-highlight synchronously with the click; data fills in from the
-// query cache (usually already warm from the hover prefetch).
+// Three columns: server rail, channel (or DM) sidebar, and the page.
+// Selection is the URL (`/s/$serverId/c/$channelId` or `/d/$channelId`).
 
 import { useQueryClient } from "@tanstack/react-query";
-import { Outlet, useNavigate, useParams } from "@tanstack/react-router";
+import {
+  Outlet,
+  useNavigate,
+  useParams,
+  useRouterState,
+} from "@tanstack/react-router";
 import { useEffect } from "react";
 
 import { ApiError } from "../api/client.ts";
 import { ChannelSidebar } from "../components/ChannelSidebar.tsx";
+import { DmSidebar } from "../components/DmSidebar.tsx";
 import { RequireUser } from "../components/RequireUser.tsx";
 import { ServerRail } from "../components/ServerRail.tsx";
+import { useDms } from "../dms/queries.ts";
 import { forgetServer, useServer } from "../servers/queries.ts";
 import { useGatewayTopics } from "../ws/useGateway.ts";
 import { useLiveBridge } from "../ws/useLive.ts";
@@ -25,14 +30,19 @@ export function WorkspaceLayout() {
 
 function Workspace() {
   const { serverId, channelId } = useParams({ strict: false });
+  const pathname = useRouterState({ select: (s) => s.location.pathname });
+  const onDms = pathname === "/d" || pathname.startsWith("/d/");
   useGatewayTopics(serverId, channelId);
   useLiveBridge();
+  useDms();
 
   return (
     <div className="flex h-[calc(100dvh-3.5rem)] overflow-hidden bg-neutral-50">
-      <ServerRail activeId={serverId} />
+      <ServerRail activeId={serverId} dmActive={onDms} />
       {serverId ? (
         <SelectedServer serverId={serverId} channelId={channelId} />
+      ) : onDms ? (
+        <SelectedDms channelId={channelId} />
       ) : (
         <main className="flex-1 overflow-y-auto">
           <Outlet />
@@ -73,6 +83,23 @@ function SelectedServer({
     <>
       {server ? (
         <ChannelSidebar server={server} activeChannelId={channelId} />
+      ) : (
+        <SidebarSkeleton />
+      )}
+      <main className="flex min-h-0 min-w-0 flex-1 flex-col overflow-hidden">
+        <Outlet />
+      </main>
+    </>
+  );
+}
+
+function SelectedDms({ channelId }: { channelId: string | undefined }) {
+  const { data: dms } = useDms();
+
+  return (
+    <>
+      {dms ? (
+        <DmSidebar dms={dms} activeChannelId={channelId} />
       ) : (
         <SidebarSkeleton />
       )}

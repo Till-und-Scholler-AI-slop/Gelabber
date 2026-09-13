@@ -70,7 +70,8 @@ type FieldName =
   | "content"
   | "before"
   | "after"
-  | "limit";
+  | "limit"
+  | "user_id";
 
 const FIELD_LABEL: Record<FieldName, string> = {
   email: "E-Mail-Adresse",
@@ -86,6 +87,7 @@ const FIELD_LABEL: Record<FieldName, string> = {
   before: "Cursor",
   after: "Cursor",
   limit: "Anzahl",
+  user_id: "Nutzer",
 };
 
 /** German inline copy for a field code. Unknown fields fall back to generic text. */

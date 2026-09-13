@@ -78,8 +78,9 @@ function TextChat({
   return (
     <MessagePane
       key={channel.id}
-      server={server}
-      channel={channel}
+      channelId={channel.id}
+      channelName={channel.name}
+      canSend={canWrite}
       footer={<TypingBar channelId={channel.id} members={server.members} />}
       onDraftChange={typing.onChange}
       onDraftStop={typing.stop}

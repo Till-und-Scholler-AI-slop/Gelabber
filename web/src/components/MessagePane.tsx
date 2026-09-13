@@ -37,29 +37,31 @@ import {
 } from "../messages/queries.ts";
 import { CONTENT_MAX, validateContent } from "../messages/rules.ts";
 import type { Message } from "../messages/types.ts";
-import { can } from "../servers/permissions.ts";
-import type { Channel, ServerDetail } from "../servers/types.ts";
 import { Avatar } from "./Avatar.tsx";
 import { PencilIcon, TrashIcon } from "./Icons.tsx";
 
 export function MessagePane({
-  server,
-  channel,
+  channelId,
+  channelName,
+  canSend,
+  mention = "#",
   footer,
   onDraftChange,
   onDraftStop,
 }: {
-  server: ServerDetail;
-  channel: Channel;
+  channelId: string;
+  channelName: string;
+  canSend: boolean;
+  /** `#` for a server channel, `@` for a DM. */
+  mention?: "#" | "@";
   footer?: ReactNode;
   onDraftChange?: (value: string) => void;
   onDraftStop?: () => void;
 }) {
   const user = useSession((s) => s.user);
-  const canSend = can(server, "send_messages");
-  const query = useMessages(channel.id, true);
+  const query = useMessages(channelId, true);
   const pending = usePendingMessages(
-    (s) => s.byChannel[channel.id] ?? nonePending,
+    (s) => s.byChannel[channelId] ?? nonePending,
   );
   const items = useMemo(
     () => visibleMessages(query.data?.pages ?? [], pending),
@@ -69,9 +71,9 @@ export function MessagePane({
   useEffect(() => {
     const pages = query.data?.pages ?? [];
     for (const id of confirmedPendingIds(pages, pending)) {
-      removePending(channel.id, id);
+      removePending(channelId, id);
     }
-  }, [channel.id, pending, query.data?.pages]);
+  }, [channelId, pending, query.data?.pages]);
   const fetchNextPage = query.fetchNextPage;
   const hasNextPage = query.hasNextPage;
   const isFetchingNextPage = query.isFetchingNextPage;
@@ -82,7 +84,7 @@ export function MessagePane({
   return (
     <div className="flex min-h-0 flex-1 flex-col">
       <MessageList
-        channelId={channel.id}
+        channelId={channelId}
         items={items}
         meId={user?.id}
         hasOlder={Boolean(hasNextPage)}
@@ -92,9 +94,10 @@ export function MessagePane({
       />
       {footer}
       <Composer
-        channelId={channel.id}
-        channelName={channel.name}
+        channelId={channelId}
+        channelName={channelName}
         canSend={canSend}
+        mention={mention}
         author={
           user
             ? { id: user.id, name: user.name, avatar_url: user.avatar_url }
@@ -414,6 +417,7 @@ function Composer({
   channelId,
   channelName,
   canSend,
+  mention,
   author,
   onDraftChange,
   onDraftStop,
@@ -421,6 +425,7 @@ function Composer({
   channelId: string;
   channelName: string;
   canSend: boolean;
+  mention: "#" | "@";
   author: { id: string; name: string; avatar_url: string | null } | null;
   onDraftChange?: (value: string) => void;
   onDraftStop?: () => void;
@@ -466,7 +471,7 @@ function Composer({
   if (!canSend) {
     return (
       <p className="border-t border-neutral-200 px-4 py-3 text-sm text-neutral-500">
-        Du hast in diesem Server kein Schreibrecht.
+        Du kannst in diesem Kanal nicht schreiben.
       </p>
     );
   }
@@ -477,7 +482,8 @@ function Composer({
       className="border-t border-neutral-200 bg-white px-4 py-3"
     >
       <label className="sr-only" htmlFor={`compose-${channelId}`}>
-        Nachricht in #{channelName}
+        Nachricht in {mention}
+        {channelName}
       </label>
       <div className="flex items-end gap-2">
         <textarea
@@ -490,7 +496,7 @@ function Composer({
           onBlur={() => onDraftStop?.()}
           onKeyDown={onKeyDown}
           rows={1}
-          placeholder={`Nachricht an #${channelName}`}
+          placeholder={`Nachricht an ${mention}${channelName}`}
           className="max-h-40 min-h-10 flex-1 resize-none rounded-lg border border-neutral-300 bg-neutral-50 px-3 py-2 text-sm outline-none focus:border-neutral-500 focus:bg-white focus:ring-2 focus:ring-neutral-200"
         />
         <button

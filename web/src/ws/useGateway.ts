@@ -21,18 +21,26 @@ export function useGatewaySession(authenticated: boolean): void {
   }, [authenticated]);
 }
 
+/** Server channel, or a DM whose protocol `s` is the channel id. */
+export function workspaceTopics(
+  serverId: string | undefined,
+  channelId: string | undefined,
+): Topic[] {
+  if (serverId) {
+    const topics: Topic[] = [{ s: serverId }];
+    if (channelId) topics.push({ s: serverId, c: channelId });
+    return topics;
+  }
+  if (channelId) return [{ s: channelId, c: channelId }];
+  return [];
+}
+
 export function useGatewayTopics(
   serverId: string | undefined,
   channelId: string | undefined,
 ): void {
   useEffect(() => {
-    const topics: Topic[] = [];
-    if (serverId) {
-      topics.push({ s: serverId });
-      if (channelId) {
-        topics.push({ s: serverId, c: channelId });
-      }
-    }
+    const topics = workspaceTopics(serverId, channelId);
     getGateway().setTopics(topics);
     return () => {
       getGateway().setTopics([]);

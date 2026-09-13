@@ -137,8 +137,12 @@ pub struct Client {
 
 impl Client {
     pub fn new(pool: PgPool) -> Self {
+        Self::with_state(state(pool))
+    }
+
+    pub fn with_state(state: AppState) -> Self {
         Self {
-            app: app(state(pool)),
+            app: app(state),
             jar: BTreeMap::new(),
             csrf: None,
             user_id: None,

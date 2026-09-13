@@ -10,6 +10,8 @@ import { ensureSession, useSession } from "./auth/session.ts";
 import { AppShell } from "./components/AppShell.tsx";
 import { RequireUser } from "./components/RequireUser.tsx";
 import { ChannelPage } from "./pages/ChannelPage.tsx";
+import { DmChannelPage } from "./pages/DmChannelPage.tsx";
+import { DmIndexPage } from "./pages/DmIndexPage.tsx";
 import { InvitePage } from "./pages/InvitePage.tsx";
 import { LoginPage } from "./pages/LoginPage.tsx";
 import { ProfilePage } from "./pages/ProfilePage.tsx";
@@ -144,6 +146,18 @@ const serverSettingsRoute = createRoute({
   component: ServerSettingsPage,
 });
 
+const dmIndexRoute = createRoute({
+  getParentRoute: () => workspaceLayout,
+  path: "/d",
+  component: DmIndexPage,
+});
+
+const dmRoute = createRoute({
+  getParentRoute: () => workspaceLayout,
+  path: "/d/$channelId",
+  component: DmChannelPage,
+});
+
 const routeTree = rootRoute.addChildren([
   centeredLayout.addChildren([
     profileRoute,
@@ -156,6 +170,8 @@ const routeTree = rootRoute.addChildren([
     serverRoute,
     channelRoute,
     serverSettingsRoute,
+    dmIndexRoute,
+    dmRoute,
   ]),
 ]);
 

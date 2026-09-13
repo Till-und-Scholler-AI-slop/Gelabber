@@ -92,7 +92,9 @@ async fn issue_ticket(
     Id(channel_id): Id,
 ) -> Result<Json<MediaTicket>, ApiError> {
     let channel = load_channel(&state.db, channel_id).await?;
-    let member = membership::load(&state.db, channel.server_id, user.id).await?;
+    // DMs have no server — same 404 as `channel_for` / `messaging_channel`.
+    let server_id = channel.server_id.ok_or(ApiError::NotFound)?;
+    let member = membership::load(&state.db, server_id, user.id).await?;
     member.require(Permission::JoinVoice)?;
     if channel.kind != ChannelKind::Voice {
         return Err(ApiError::BadRequest(
@@ -103,7 +105,7 @@ async fn issue_ticket(
     let ticket = mint(
         &state.redis,
         user.id,
-        channel.server_id,
+        server_id,
         channel.id,
         state.media_ticket_ttl,
     )
