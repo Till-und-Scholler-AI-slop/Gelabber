@@ -20,6 +20,8 @@ pub struct AppState {
     pub pg_connect: PgConnectOptions,
     pub redis: redis::Client,
     pub ready_timeout: Duration,
+    pub cookie_secure: bool,
+    pub session_ttl: Duration,
 }
 
 #[derive(Debug)]
@@ -49,6 +51,14 @@ impl AppState {
             .acquire_timeout(config.ready_timeout)
             .connect_lazy_with(pg_connect.clone());
 
+        Self::with_pool(config, db)
+    }
+
+    /// Like `from_config` but with a caller-supplied pool. Integration tests
+    /// use it to point the app at a per-test database from `#[sqlx::test]`.
+    pub fn with_pool(config: &Config, db: PgPool) -> Result<Self, StateError> {
+        let pg_connect =
+            PgConnectOptions::from_str(&config.database_url).map_err(StateError::Database)?;
         let redis = redis::Client::open(config.redis_url.as_str()).map_err(StateError::Redis)?;
 
         Ok(Self {
@@ -56,6 +66,14 @@ impl AppState {
             pg_connect,
             redis,
             ready_timeout: config.ready_timeout,
+            cookie_secure: config.cookie_secure,
+            session_ttl: config.session_ttl,
         })
+    }
+
+    /// Applies pending `api/migrations` to the configured database. Called
+    /// once at boot, before the listener accepts traffic.
+    pub async fn migrate(&self) -> Result<(), sqlx::migrate::MigrateError> {
+        sqlx::migrate!("./migrations").run(&self.db).await
     }
 }

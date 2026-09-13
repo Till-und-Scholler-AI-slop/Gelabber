@@ -25,6 +25,18 @@ async fn run() -> Result<(), Box<dyn std::error::Error>> {
     let config = Config::from_env()?;
     let state = AppState::from_config(&config)?;
 
+    // Schema first, traffic second. Compose only starts the API once
+    // Postgres is healthy, so a failure here is a real misconfiguration.
+    state
+        .migrate()
+        .await
+        .map_err(|err| format!("database migration failed: {err}"))?;
+    info!("database migrations applied");
+
+    gelabber_api::password::warm_up()
+        .await
+        .map_err(|err| format!("password hasher warm-up failed: {}", err.code()))?;
+
     let listener = TcpListener::bind(config.api_addr)
         .await
         .map_err(|err| format!("failed to bind {}: {err}", config.api_addr))?;
