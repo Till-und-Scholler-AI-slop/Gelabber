@@ -3,7 +3,9 @@
 //! recording, no second node.
 
 use std::collections::HashMap;
+use std::net::SocketAddr;
 use std::sync::Arc;
+use std::sync::atomic::{AtomicU16, Ordering};
 use std::time::Duration;
 
 use rtc::media_stream::MediaStreamTrack;
@@ -88,7 +90,43 @@ async fn local_sdp_after_gather(
     if *rx.borrow() <= before {
         let _ = tokio::time::timeout(Duration::from_secs(3), rx.wait_for(|n| *n > before)).await;
     }
-    pc.local_description().await.map(|desc| desc.sdp)
+    let sdp = pc.local_description().await.map(|desc| desc.sdp)?;
+    sdp.contains("ice-ufrag").then_some(sdp)
+}
+
+/// Published host UDP ports. Port `0` stays ephemeral (in-process tests).
+struct IcePorts {
+    ip: std::net::IpAddr,
+    min: u16,
+    max: u16,
+    next: AtomicU16,
+}
+
+impl IcePorts {
+    fn from_config(config: &Config) -> Self {
+        let addr: SocketAddr = config
+            .ice_bind
+            .parse()
+            .unwrap_or_else(|_| "0.0.0.0:0".parse().unwrap());
+        let min = addr.port();
+        let max = config.ice_port_max.unwrap_or(min).max(min);
+        Self {
+            ip: addr.ip(),
+            min,
+            max,
+            next: AtomicU16::new(0),
+        }
+    }
+
+    fn take(&self) -> String {
+        if self.min == 0 {
+            return SocketAddr::new(self.ip, 0).to_string();
+        }
+        let span = u32::from(self.max - self.min) + 1;
+        let i = u32::from(self.next.fetch_add(1, Ordering::Relaxed));
+        let port = self.min + (i % span) as u16;
+        SocketAddr::new(self.ip, port).to_string()
+    }
 }
 
 struct Published {
@@ -96,6 +134,31 @@ struct Published {
     kind: RtpCodecKind,
     codec: RTCRtpCodec,
     packets: broadcast::Sender<rtp::Packet>,
+}
+
+struct PendingPub {
+    pub_id: String,
+    kind: RtpCodecKind,
+    codec: RTCRtpCodec,
+    packets: broadcast::Sender<rtp::Packet>,
+}
+
+struct PeerSdp {
+    /// First remote offer has been answered — safe to renegotiate.
+    negotiated: bool,
+    /// Local offer in flight; skip further `create_offer` until the answer.
+    have_local_offer: bool,
+    pending: Vec<PendingPub>,
+}
+
+impl PeerSdp {
+    fn new() -> Self {
+        Self {
+            negotiated: false,
+            have_local_offer: false,
+            pending: Vec::new(),
+        }
+    }
 }
 
 struct Peer {
@@ -108,6 +171,7 @@ struct Peer {
     pc: Arc<dyn PeerConnection>,
     out: mpsc::UnboundedSender<ServerFrame>,
     gathered: watch::Receiver<u64>,
+    sdp: Arc<Mutex<PeerSdp>>,
 }
 
 struct Room {
@@ -119,6 +183,7 @@ struct Forward {
     pc: Arc<dyn PeerConnection>,
     out: mpsc::UnboundedSender<ServerFrame>,
     gathered: watch::Receiver<u64>,
+    sdp: Arc<Mutex<PeerSdp>>,
     pub_id: String,
     kind: RtpCodecKind,
     codec: RTCRtpCodec,
@@ -127,7 +192,7 @@ struct Forward {
 
 pub struct Sfu {
     ice_servers: Vec<RTCIceServer>,
-    ice_bind: String,
+    ice_ports: IcePorts,
     advertised_ip: Option<String>,
     rooms: RwLock<HashMap<Uuid, Arc<Mutex<Room>>>>,
 }
@@ -140,7 +205,7 @@ impl Sfu {
                 .iter()
                 .map(super::ice::IceServer::to_rtc)
                 .collect(),
-            ice_bind: config.ice_bind.clone(),
+            ice_ports: IcePorts::from_config(config),
             advertised_ip: config.advertised_ip.clone(),
             rooms: RwLock::new(HashMap::new()),
         }
@@ -174,6 +239,7 @@ impl Sfu {
                     pc: pc.clone(),
                     out: out.clone(),
                     gathered,
+                    sdp: Arc::new(Mutex::new(PeerSdp::new())),
                 },
             );
         }
@@ -206,11 +272,23 @@ impl Sfu {
             RTCSessionDescription::answer(sdp).map_err(|err| err.to_string())?
         };
         let room = self.room(channel_id).await;
-        let (pc, out, gathered) = {
+        let (pc, out, gathered, sdp) = {
             let room = room.lock().await;
             let peer = room.peers.get(&peer_id).ok_or("not in room")?;
-            (peer.pc.clone(), peer.out.clone(), peer.gathered.clone())
+            (
+                peer.pc.clone(),
+                peer.out.clone(),
+                peer.gathered.clone(),
+                peer.sdp.clone(),
+            )
         };
+
+        let mut gate = sdp.lock().await;
+        if as_offer && gate.have_local_offer {
+            // Impolite: our offer is in flight. The polite client answers it.
+            return Ok(());
+        }
+
         pc.set_remote_description(desc)
             .await
             .map_err(|err| err.to_string())?;
@@ -227,7 +305,17 @@ impl Sfu {
             if let Some(sdp) = local_sdp_after_gather(&pc, &gathered, before).await {
                 let _ = out.send(ServerFrame::Answer { sdp });
             }
+            gate.negotiated = true;
+            gate.have_local_offer = false;
+            let pending = std::mem::take(&mut gate.pending);
+            drop(gate);
             self.attach_existing_pubs(peer_id, channel_id).await;
+            self.flush_pending(pc, out, gathered, sdp, pending).await;
+        } else {
+            gate.have_local_offer = false;
+            let pending = std::mem::take(&mut gate.pending);
+            drop(gate);
+            self.flush_pending(pc, out, gathered, sdp, pending).await;
         }
         Ok(())
     }
@@ -247,8 +335,8 @@ impl Sfu {
         let mid = mid.filter(|m| !m.is_empty());
         pc.add_ice_candidate(RTCIceCandidateInit {
             candidate: ice,
-            sdp_mid: mid,
-            sdp_mline_index: Some(0),
+            sdp_mid: mid.clone(),
+            sdp_mline_index: if mid.is_some() { None } else { Some(0) },
             username_fragment: None,
             url: None,
         })
@@ -323,7 +411,7 @@ impl Sfu {
                 tx,
                 gathered: gather_tx,
             }))
-            .with_udp_addrs(vec![self.ice_bind.clone()])
+            .with_udp_addrs(vec![self.ice_ports.take()])
             .build()
             .await?;
         Ok((Arc::new(pc), rx, gather_rx))
@@ -405,14 +493,23 @@ impl Sfu {
             room.peers
                 .iter()
                 .filter(|(id, _)| **id != publisher)
-                .map(|(id, p)| (*id, p.pc.clone(), p.out.clone(), p.gathered.clone()))
+                .map(|(id, p)| {
+                    (
+                        *id,
+                        p.pc.clone(),
+                        p.out.clone(),
+                        p.gathered.clone(),
+                        p.sdp.clone(),
+                    )
+                })
                 .collect::<Vec<_>>()
         };
-        for (_peer_id, pc, out, gathered) in subscribers {
+        for (_peer_id, pc, out, gathered, sdp) in subscribers {
             self.forward_to(Forward {
                 pc,
                 out,
                 gathered,
+                sdp,
                 pub_id: pub_id.clone(),
                 kind,
                 codec: codec.clone(),
@@ -436,7 +533,7 @@ impl Sfu {
     }
 
     async fn attach_existing_pubs(&self, subscriber: PeerId, channel_id: Uuid) {
-        let (pc, out, gathered, pubs) = {
+        let (pc, out, gathered, sdp, pubs) = {
             let room = self.room(channel_id).await;
             let room = room.lock().await;
             let Some(peer) = room.peers.get(&subscriber) else {
@@ -452,6 +549,7 @@ impl Sfu {
                 peer.pc.clone(),
                 peer.out.clone(),
                 peer.gathered.clone(),
+                peer.sdp.clone(),
                 pubs,
             )
         };
@@ -460,10 +558,34 @@ impl Sfu {
                 pc: pc.clone(),
                 out: out.clone(),
                 gathered: gathered.clone(),
+                sdp: sdp.clone(),
                 pub_id: id,
                 kind,
                 codec,
                 packets,
+            })
+            .await;
+        }
+    }
+
+    async fn flush_pending(
+        &self,
+        pc: Arc<dyn PeerConnection>,
+        out: mpsc::UnboundedSender<ServerFrame>,
+        gathered: watch::Receiver<u64>,
+        sdp: Arc<Mutex<PeerSdp>>,
+        pending: Vec<PendingPub>,
+    ) {
+        for pub_ in pending {
+            self.forward_to(Forward {
+                pc: pc.clone(),
+                out: out.clone(),
+                gathered: gathered.clone(),
+                sdp: sdp.clone(),
+                pub_id: pub_.pub_id,
+                kind: pub_.kind,
+                codec: pub_.codec,
+                packets: pub_.packets,
             })
             .await;
         }
@@ -474,11 +596,25 @@ impl Sfu {
             pc,
             out,
             gathered,
+            sdp,
             pub_id,
             kind,
             codec,
             packets,
         } = job;
+        {
+            let mut gate = sdp.lock().await;
+            if !gate.negotiated || gate.have_local_offer {
+                gate.pending.push(PendingPub {
+                    pub_id,
+                    kind,
+                    codec,
+                    packets,
+                });
+                return;
+            }
+            gate.have_local_offer = true;
+        }
         let ssrc = rand::random::<u32>();
         let local = Arc::new(TrackLocalStaticRTP::new(MediaStreamTrack::new(
             format!("gb-{pub_id}"),
@@ -499,6 +635,7 @@ impl Sfu {
             .await
         {
             warn!(error = %err, "add_track failed");
+            sdp.lock().await.have_local_offer = false;
             return;
         }
 
@@ -522,12 +659,17 @@ impl Sfu {
             Ok(offer) => {
                 let before = *gathered.borrow();
                 if pc.set_local_description(offer).await.is_ok()
-                    && let Some(sdp) = local_sdp_after_gather(&pc, &gathered, before).await
+                    && let Some(local) = local_sdp_after_gather(&pc, &gathered, before).await
                 {
-                    let _ = out.send(ServerFrame::Offer { sdp });
+                    let _ = out.send(ServerFrame::Offer { sdp: local });
+                } else {
+                    sdp.lock().await.have_local_offer = false;
                 }
             }
-            Err(err) => warn!(error = %err, "renegotiation offer failed"),
+            Err(err) => {
+                warn!(error = %err, "renegotiation offer failed");
+                sdp.lock().await.have_local_offer = false;
+            }
         }
     }
 }

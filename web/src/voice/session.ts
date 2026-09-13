@@ -60,6 +60,7 @@ export type PeerConnection = {
   }): Promise<void>;
   close(): void;
   remoteDescription?: { type: string } | null;
+  signalingState?: string;
 };
 
 export type VoiceGateway = Pick<Gateway, "send" | "onSig" | "onErr" | "onReady">;
@@ -91,6 +92,9 @@ let bound = false;
 let generation = 0;
 let pendingIce: IceCand[] = [];
 let awaitingJoin: { serverId: string; channelId: string } | null = null;
+let sdpChain: Promise<void> = Promise.resolve();
+let makingOffer = false;
+let sfuOffered = false;
 
 function currentUserId(): string | null {
   return deps?.userId && deps.userId !== currentUserId
@@ -255,6 +259,9 @@ function onReady(): void {
 function stopPeer(): void {
   generation += 1;
   pendingIce = [];
+  sdpChain = Promise.resolve();
+  makingOffer = false;
+  sfuOffered = false;
   unbindMedia?.();
   unbindMedia = null;
   media?.close();
@@ -268,11 +275,47 @@ function stopPeer(): void {
   }
 }
 
+function enqueueSdp(job: () => Promise<void>): Promise<void> {
+  const run = sdpChain.then(job, job);
+  sdpChain = run.then(
+    () => undefined,
+    () => undefined,
+  );
+  return run;
+}
+
+function rollbackSeat(error?: unknown): void {
+  const state = useVoice.getState();
+  const serverId = state.serverId;
+  const channelId = state.channelId;
+  awaitingJoin = null;
+  stopPeer();
+  useVoice.setState({ ...idle });
+  if (serverId && channelId) {
+    deps?.gateway.send({
+      op: "sig",
+      t: "l",
+      s: serverId,
+      c: channelId,
+    });
+  }
+  if (error !== undefined) {
+    deps?.onError?.(error);
+  }
+}
+
+function signalingState(): string {
+  return peer?.signalingState ?? (peer?.remoteDescription ? "have-remote-offer" : "stable");
+}
+
 async function applyRemoteDescription(
   type: "offer" | "answer",
   sdp: string,
 ): Promise<void> {
   if (!peer) return;
+  if (type === "offer") {
+    sfuOffered = true;
+  }
   await peer.setRemoteDescription({ type, sdp });
   const queued = pendingIce;
   pendingIce = [];
@@ -297,12 +340,18 @@ async function applyRemoteIce(candidate: IceCand): Promise<void> {
 }
 
 function onMediaFrame(frame: MediaServerFrame): void {
+  if (frame.op === "err") {
+    const code: ApiErrorCode =
+      frame.e === "unauthorized" ? "unauthenticated" : "bad_request";
+    rollbackSeat(new ApiError(code, 0, errorMessage(code)));
+    return;
+  }
   if (frame.op === "a" && frame.sdp) {
-    void applyRemoteDescription("answer", frame.sdp);
+    void enqueueSdp(() => applyRemoteDescription("answer", frame.sdp));
     return;
   }
   if (frame.op === "o" && frame.sdp) {
-    void applyRemoteDescription("offer", frame.sdp);
+    void enqueueSdp(() => applyRemoteDescription("offer", frame.sdp));
     return;
   }
   if (frame.op === "i" && frame.ice) {
@@ -404,7 +453,7 @@ async function startPeer(serverId: string, channelId: string): Promise<void> {
     socket.send({ op: "j", tk: ticket.ticket });
   } catch (error) {
     if (generation !== mine) return;
-    deps?.onError?.(error);
+    rollbackSeat(error);
     return;
   }
 
@@ -463,13 +512,25 @@ async function startPeer(serverId: string, channelId: string): Promise<void> {
   }
 
   if (generation !== mine) return;
-  try {
-    const offer = await pc.createOffer();
-    if (generation !== mine) return;
-    await pc.setLocalDescription(offer);
-    if (generation !== mine || !offer.sdp) return;
-    media?.send({ op: "o", sdp: offer.sdp });
-  } catch (error) {
-    deps?.onError?.(error);
-  }
+  await enqueueSdp(async () => {
+    if (generation !== mine || !peer) return;
+    if (sfuOffered || makingOffer || signalingState() !== "stable") return;
+    makingOffer = true;
+    try {
+      if (sfuOffered || signalingState() !== "stable") return;
+      const offer = await pc.createOffer();
+      if (generation !== mine || sfuOffered || signalingState() !== "stable") {
+        return;
+      }
+      await pc.setLocalDescription(offer);
+      if (generation !== mine || !offer.sdp) return;
+      media?.send({ op: "o", sdp: offer.sdp });
+    } catch (error) {
+      if (generation === mine) {
+        deps?.onError?.(error);
+      }
+    } finally {
+      makingOffer = false;
+    }
+  });
 }

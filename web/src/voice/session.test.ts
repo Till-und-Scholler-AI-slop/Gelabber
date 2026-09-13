@@ -15,6 +15,7 @@ class FakePeer implements PeerConnection {
   onicecandidate: PeerConnection["onicecandidate"] = null;
   ontrack: PeerConnection["ontrack"] = null;
   remoteDescription: { type: string } | null = null;
+  signalingState = "stable";
   closed = false;
   tracks = 0;
   ice: { candidate: string; sdpMid: string | null }[] = [];
@@ -29,6 +30,9 @@ class FakePeer implements PeerConnection {
   }
 
   async createOffer(): Promise<{ type: string; sdp?: string }> {
+    if (this.signalingState !== "stable") {
+      throw new Error("InvalidStateError");
+    }
     return { type: "offer", sdp: "v=0\r\no=- 1 1 IN IP4 127.0.0.1\r\n" };
   }
 
@@ -36,7 +40,9 @@ class FakePeer implements PeerConnection {
     return { type: "answer", sdp: "v=0\r\no=- 2 2 IN IP4 127.0.0.1\r\n" };
   }
 
-  async setLocalDescription(): Promise<void> {
+  async setLocalDescription(desc?: { type: string }): Promise<void> {
+    if (desc?.type === "offer") this.signalingState = "have-local-offer";
+    if (desc?.type === "answer") this.signalingState = "stable";
     this.onicecandidate?.({
       candidate: { candidate: "candidate:1 1 UDP 1 127.0.0.1 9 typ host", sdpMid: "0" },
     });
@@ -45,6 +51,7 @@ class FakePeer implements PeerConnection {
 
   async setRemoteDescription(desc: { type: string }): Promise<void> {
     this.remoteDescription = desc;
+    this.signalingState = desc.type === "offer" ? "have-remote-offer" : "stable";
   }
 
   async addIceCandidate(candidate: {
@@ -68,7 +75,12 @@ function fakeStream(): MediaStream {
   } as MediaStream;
 }
 
-function install(opts?: { media?: boolean; userId?: string; ticketFail?: boolean }) {
+function install(opts?: {
+  media?: boolean;
+  userId?: string;
+  ticketFail?: boolean;
+  holdMedia?: Promise<void>;
+}) {
   const sent: ClientFrame[] = [];
   const mediaSent: MediaClientFrame[] = [];
   let onSig: ((event: SigEvent) => void) | undefined;
@@ -107,6 +119,7 @@ function install(opts?: { media?: boolean; userId?: string; ticketFail?: boolean
       return peer;
     },
     getUserMedia: async () => {
+      if (opts?.holdMedia) await opts.holdMedia;
       if (opts?.media === false) throw new Error("denied");
       return fakeStream();
     },
@@ -183,6 +196,43 @@ describe("voice session", () => {
     expect(sent.some((frame) => frame.op === "sig" && frame.t === "o")).toBe(
       false,
     );
+  });
+
+  it("rolls back the seat when the media ticket fails", async () => {
+    const { sent, errors } = install({ ticketFail: true });
+    joinVoice({ serverId: "srv", channelId: "voice", channelName: "Lounge" });
+    expect(useVoice.getState().status).toBe("joined");
+    await vi.waitFor(() => expect(useVoice.getState().status).toBe("idle"));
+    expect(errors).toHaveLength(1);
+    expect(sent.at(-1)).toEqual({ op: "sig", t: "l", s: "srv", c: "voice" });
+  });
+
+  it("rolls back the seat on a media-path err", async () => {
+    const { emitMedia, errors, sent } = install();
+    joinVoice({ serverId: "srv", channelId: "voice", channelName: "Lounge" });
+    await vi.waitFor(() => expect(useVoice.getState().status).toBe("joined"));
+    emitMedia({ op: "err", e: "unauthorized" });
+    expect(useVoice.getState().status).toBe("idle");
+    expect(errors).toHaveLength(1);
+    expect(sent.at(-1)).toEqual({ op: "sig", t: "l", s: "srv", c: "voice" });
+  });
+
+  it("answers an SFU offer instead of offering when the SFU spoke first", async () => {
+    let release!: () => void;
+    const holdMedia = new Promise<void>((resolve) => {
+      release = resolve;
+    });
+    const { mediaSent, emitMedia, peers } = install({ holdMedia });
+    joinVoice({ serverId: "srv", channelId: "voice", channelName: "Lounge" });
+    await vi.waitFor(() => expect(peers.length).toBe(1));
+    emitMedia({ op: "o", sdp: "v=0\r\no=- 9 9 IN IP4 127.0.0.1\r\n" });
+    await vi.waitFor(() =>
+      expect(mediaSent.some((frame) => frame.op === "a")).toBe(true),
+    );
+    release();
+    await vi.waitFor(() => expect(peers[0]?.tracks).toBe(1));
+    expect(mediaSent.some((frame) => frame.op === "o")).toBe(false);
+    expect(peers[0]?.signalingState).not.toBe("have-local-offer");
   });
 
   it("rolls back local join when the server forbids it", () => {

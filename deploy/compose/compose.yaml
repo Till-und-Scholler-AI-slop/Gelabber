@@ -58,13 +58,16 @@ services:
     environment:
       MEDIA_ADDR: 0.0.0.0:8081
       REDIS_URL: redis://redis:6379
-      MEDIA_ICE_BIND: 0.0.0.0:0
+      MEDIA_ICE_BIND: 0.0.0.0:10000
+      MEDIA_ICE_PORT_MAX: "10031"
       MEDIA_ADVERTISED_IP: ${MEDIA_ADVERTISED_IP:-127.0.0.1}
       TURN_URLS: stun:coturn:3478,turn:coturn:3478
       TURN_USERNAME: ${TURN_USERNAME:-gelabber}
       TURN_PASSWORD: ${TURN_PASSWORD:-gelabberturn}
     expose:
       - "8081"
+    ports:
+      - "10000-10031:10000-10031/udp"
     depends_on:
       redis:
         condition: service_healthy

@@ -11,6 +11,7 @@ pub const MEDIA_ADDR: &str = "MEDIA_ADDR";
 pub const REDIS_URL: &str = "REDIS_URL";
 pub const MEDIA_READY_TIMEOUT_MS: &str = "MEDIA_READY_TIMEOUT_MS";
 pub const MEDIA_ICE_BIND: &str = "MEDIA_ICE_BIND";
+pub const MEDIA_ICE_PORT_MAX: &str = "MEDIA_ICE_PORT_MAX";
 pub const MEDIA_ADVERTISED_IP: &str = "MEDIA_ADVERTISED_IP";
 pub const TURN_URLS: &str = "TURN_URLS";
 pub const TURN_USERNAME: &str = "TURN_USERNAME";
@@ -26,9 +27,11 @@ pub struct Config {
     pub media_addr: SocketAddr,
     pub redis_url: String,
     pub ready_timeout: Duration,
-    /// Host ICE bind (`ip:port`). Port `0` is ephemeral. UDP does not go
-    /// through Caddy — browsers reach the SFU via this bind and/or coturn.
+    /// Host ICE bind (`ip:port`). Port `0` is ephemeral (tests). A non-zero
+    /// port is the first host UDP port; [`ice_port_max`] is the last.
     pub ice_bind: String,
+    /// Inclusive end of the published host UDP range. `None` = only `ice_bind`.
+    pub ice_port_max: Option<u16>,
     /// 1:1 NAT advertised address for host candidates. Empty = bind only.
     pub advertised_ip: Option<String>,
     pub ice_servers: Vec<IceServer>,
@@ -78,13 +81,38 @@ impl Config {
         };
 
         let ice_bind = get(MEDIA_ICE_BIND).unwrap_or_else(|| DEFAULT_ICE_BIND.to_owned());
-        if ice_bind.parse::<SocketAddr>().is_err() {
-            return Err(invalid(
+        let ice_addr = ice_bind.parse::<SocketAddr>().map_err(|_| {
+            invalid(
                 MEDIA_ICE_BIND,
                 &ice_bind,
                 "expected ip:port (port 0 is ephemeral)",
-            ));
-        }
+            )
+        })?;
+
+        let ice_port_max = match get(MEDIA_ICE_PORT_MAX) {
+            Some(raw) => {
+                let max = raw
+                    .trim()
+                    .parse::<u16>()
+                    .map_err(|err| invalid(MEDIA_ICE_PORT_MAX, &raw, err))?;
+                if ice_addr.port() == 0 {
+                    return Err(invalid(
+                        MEDIA_ICE_PORT_MAX,
+                        &raw,
+                        "requires a non-zero MEDIA_ICE_BIND port",
+                    ));
+                }
+                if max < ice_addr.port() {
+                    return Err(invalid(
+                        MEDIA_ICE_PORT_MAX,
+                        &raw,
+                        "must be >= MEDIA_ICE_BIND port",
+                    ));
+                }
+                Some(max)
+            }
+            None => None,
+        };
 
         let advertised_ip = get(MEDIA_ADVERTISED_IP);
         let ice_servers = parse_ice_servers(
@@ -98,6 +126,7 @@ impl Config {
             redis_url,
             ready_timeout: Duration::from_millis(ready_timeout_ms),
             ice_bind,
+            ice_port_max,
             advertised_ip,
             ice_servers,
         })
@@ -149,6 +178,7 @@ mod tests {
             "0.0.0.0:8081".parse::<SocketAddr>().unwrap()
         );
         assert_eq!(config.ice_bind, "0.0.0.0:0");
+        assert!(config.ice_port_max.is_none());
         assert!(config.ice_servers.is_empty());
         assert!(config.advertised_ip.is_none());
     }
@@ -165,9 +195,23 @@ mod tests {
         ]))
         .expect("valid");
         assert_eq!(config.ice_bind, "127.0.0.1:0");
+        assert!(config.ice_port_max.is_none());
         assert_eq!(config.advertised_ip.as_deref(), Some("127.0.0.1"));
         assert_eq!(config.ice_servers.len(), 2);
         assert!(config.ice_servers[1].username.is_some());
+    }
+
+    #[test]
+    fn parses_published_udp_range() {
+        let config = Config::from_source(source(&[
+            (REDIS_URL, "redis://localhost"),
+            (MEDIA_ICE_BIND, "0.0.0.0:10000"),
+            (MEDIA_ICE_PORT_MAX, "10031"),
+            (MEDIA_ADVERTISED_IP, "127.0.0.1"),
+        ]))
+        .expect("valid");
+        assert_eq!(config.ice_bind, "0.0.0.0:10000");
+        assert_eq!(config.ice_port_max, Some(10031));
     }
 
     #[test]

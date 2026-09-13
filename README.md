@@ -24,7 +24,7 @@ Dann [http://localhost](http://localhost) (Caddy, TCP :80). Postgres, Redis und 
 
 Nach dem ersten Publish auf `main` ist das GHCR-Paket **privat**. Ein Maintainer muss es einmal öffentlich machen: Organisation → Packages → `gelabber/minio` → Package settings → Change visibility → Public. Sonst fällt ein anonymer `docker compose up` auf den Source-Build zurück. Bis dahin: `echo "$GITHUB_TOKEN" | docker login ghcr.io -u USER --password-stdin`.
 
-UDP für coturn (3478 + Relay) und SFU-ICE läuft **nicht** durch Caddy.
+UDP für coturn (3478 + Relay) und SFU-ICE (10000–10031) läuft **nicht** durch Caddy.
 
 ## Schnitt
 
@@ -168,7 +168,7 @@ cargo run -p gelabber-media
 
 `media/` ist die Binary, nicht mehr nur ein Stub. **webrtc 0.20.5** ist gelockt (0.21 ist RC; str0m wurde nicht gewählt). Room = Sprachkanal. Join nur mit internem 12-Zeichen-Ticket aus Redis (`GETDEL`). RTP wird von Publishern an die anderen Peers im Room weitergereicht. Ein Prozess, kein Mesh, kein Recording, kein LiveKit.
 
-coturn **4.18.0** (`coturn/coturn:4.18.0`) hängt in Compose an 3478/udp+tcp und 49160–49200/udp. Caddy bleibt TCP-only.
+coturn **4.18.0** (`coturn/coturn:4.18.0`) hängt in Compose an 3478/udp+tcp und 49160–49200/udp. Der SFU published 10000–10031/udp (ICE-Lite Host, `MEDIA_ADVERTISED_IP`). Caddy bleibt TCP-only.
 
 Media-WS (nicht der Chat-WS):
 

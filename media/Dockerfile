@@ -12,5 +12,7 @@ RUN apt-get update \
     && rm -rf /var/lib/apt/lists/*
 COPY --from=build /src/target/release/gelabber-media /usr/local/bin/gelabber-media
 EXPOSE 8081
+# Host ICE UDP (published by Compose, not Caddy).
+EXPOSE 10000-10031/udp
 USER nobody
 CMD ["gelabber-media"]

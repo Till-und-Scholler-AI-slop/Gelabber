@@ -151,6 +151,7 @@ impl Client {
             app: app(ws_state(pool)),
             jar: BTreeMap::new(),
             csrf: None,
+            user_id: None,
         }
     }
 
@@ -243,7 +244,9 @@ impl Client {
     }
 
     pub fn user_id(&self) -> &str {
-        self.user_id.as_deref().expect("user id after register/login")
+        self.user_id
+            .as_deref()
+            .expect("user id after register/login")
     }
 
     pub async fn login(&mut self, email: &str, password: &str) -> Response {

@@ -330,3 +330,52 @@ async fn forwards_rtp_between_two_peers() {
     }
     assert!(got.is_some(), "subscriber should receive forwarded RTP");
 }
+
+#[tokio::test]
+async fn concurrent_first_offers_do_not_glare() {
+    let config = Config::from_source(|key| match key {
+        "REDIS_URL" => Some("redis://127.0.0.1:1".to_owned()),
+        "MEDIA_ICE_BIND" => Some("127.0.0.1:0".to_owned()),
+        _ => None,
+    })
+    .unwrap();
+    let sfu = Arc::new(Sfu::new(&config));
+    let channel = Uuid::from_u128(3);
+
+    let (a_out, mut a_rx) = mpsc::unbounded_channel();
+    let (b_out, mut b_rx) = mpsc::unbounded_channel();
+    let a_id = sfu.join(claim(1, 3), a_out).await.expect("join a");
+    let b_id = sfu.join(claim(2, 3), b_out).await.expect("join b");
+
+    let (a_conn_tx, _a_conn_rx) = mpsc::unbounded_channel();
+    let (b_conn_tx, _b_conn_rx) = mpsc::unbounded_channel();
+    let (a_pkt_tx, _a_pkt_rx) = mpsc::unbounded_channel();
+    let (b_pkt_tx, _b_pkt_rx) = mpsc::unbounded_channel();
+
+    let a = client_pc(a_conn_tx, a_pkt_tx).await;
+    let b = client_pc(b_conn_tx, b_pkt_tx).await;
+    a.pc.add_track(Arc::clone(&opus_track(0x1111_0001)) as Arc<dyn TrackLocal>)
+        .await
+        .unwrap();
+    b.pc.add_track(Arc::clone(&opus_track(0x2222_0001)) as Arc<dyn TrackLocal>)
+        .await
+        .unwrap();
+
+    let (a_res, b_res) = tokio::join!(
+        async {
+            pump_offer(&a, &sfu, a_id, channel, &mut a_rx).await;
+        },
+        async {
+            pump_offer(&b, &sfu, b_id, channel, &mut b_rx).await;
+        },
+    );
+    let _ = (a_res, b_res);
+    assert!(
+        a.pc.remote_description().await.is_some(),
+        "A should have an SFU answer"
+    );
+    assert!(
+        b.pc.remote_description().await.is_some(),
+        "B should have an SFU answer"
+    );
+}
