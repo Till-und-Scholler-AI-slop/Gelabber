@@ -19,6 +19,9 @@ export type MessagePage = {
   /** Oldest → newest within the page. */
   messages: Message[];
   has_more: boolean;
+  /** `{created_at}|{id}` of the oldest row when this page arrived — kept
+   *  after optimistic deletes so `has_more` can still page. */
+  older?: string;
 };
 
 export type ListMessagesParams = {

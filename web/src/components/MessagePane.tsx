@@ -18,8 +18,16 @@ import {
 
 import { useSession } from "../auth/session.ts";
 import { fieldMessage } from "../auth/rules.ts";
-import { isContinued, visibleMessages } from "../messages/pages.ts";
-import { nonePending, usePendingMessages } from "../messages/pending.ts";
+import {
+  confirmedPendingIds,
+  isContinued,
+  visibleMessages,
+} from "../messages/pages.ts";
+import {
+  nonePending,
+  removePending,
+  usePendingMessages,
+} from "../messages/pending.ts";
 import {
   isPendingId,
   useDeleteMessage,
@@ -37,9 +45,15 @@ import { PencilIcon, TrashIcon } from "./Icons.tsx";
 export function MessagePane({
   server,
   channel,
+  footer,
+  onDraftChange,
+  onDraftStop,
 }: {
   server: ServerDetail;
   channel: Channel;
+  footer?: ReactNode;
+  onDraftChange?: (value: string) => void;
+  onDraftStop?: () => void;
 }) {
   const user = useSession((s) => s.user);
   const canSend = can(server, "send_messages");
@@ -51,6 +65,13 @@ export function MessagePane({
     () => visibleMessages(query.data?.pages ?? [], pending),
     [query.data?.pages, pending],
   );
+
+  useEffect(() => {
+    const pages = query.data?.pages ?? [];
+    for (const id of confirmedPendingIds(pages, pending)) {
+      removePending(channel.id, id);
+    }
+  }, [channel.id, pending, query.data?.pages]);
   const fetchNextPage = query.fetchNextPage;
   const hasNextPage = query.hasNextPage;
   const isFetchingNextPage = query.isFetchingNextPage;
@@ -69,6 +90,7 @@ export function MessagePane({
         onLoadOlder={onLoadOlder}
         ready={!query.isPending}
       />
+      {footer}
       <Composer
         channelId={channel.id}
         channelName={channel.name}
@@ -78,6 +100,8 @@ export function MessagePane({
             ? { id: user.id, name: user.name, avatar_url: user.avatar_url }
             : null
         }
+        onDraftChange={onDraftChange}
+        onDraftStop={onDraftStop}
       />
     </div>
   );
@@ -391,11 +415,15 @@ function Composer({
   channelName,
   canSend,
   author,
+  onDraftChange,
+  onDraftStop,
 }: {
   channelId: string;
   channelName: string;
   canSend: boolean;
   author: { id: string; name: string; avatar_url: string | null } | null;
+  onDraftChange?: (value: string) => void;
+  onDraftStop?: () => void;
 }) {
   const send = useSendMessage(
     channelId,
@@ -410,8 +438,18 @@ function Composer({
   const submit = (event?: FormEvent) => {
     event?.preventDefault();
     if (disabled) return;
-    send.mutate(draft);
+    const text = draft;
+    send.mutate(text, {
+      onError: () => {
+        setDraft((current) => {
+          const next = current.trim().length === 0 ? text : current;
+          if (next) onDraftChange?.(next);
+          return next;
+        });
+      },
+    });
     setDraft("");
+    onDraftStop?.();
   };
 
   const onKeyDown = (event: KeyboardEvent<HTMLTextAreaElement>) => {
@@ -445,7 +483,11 @@ function Composer({
         <textarea
           id={`compose-${channelId}`}
           value={draft}
-          onChange={(e) => setDraft(e.target.value)}
+          onChange={(e) => {
+            setDraft(e.target.value);
+            onDraftChange?.(e.target.value);
+          }}
+          onBlur={() => onDraftStop?.()}
           onKeyDown={onKeyDown}
           rows={1}
           placeholder={`Nachricht an #${channelName}`}

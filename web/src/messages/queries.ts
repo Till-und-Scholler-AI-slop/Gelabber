@@ -17,8 +17,8 @@ import {
 import { notifyError } from "../components/toasts.ts";
 import { isPendingId } from "../servers/queries.ts";
 import * as remote from "./api.ts";
-import { olderCursor } from "./pages.ts";
-import { addPending, removePending } from "./pending.ts";
+import { olderCursor, stampOlder } from "./pages.ts";
+import { addPending, confirmPending, removePending } from "./pending.ts";
 import { PAGE_SIZE, normaliseContent } from "./rules.ts";
 import type { Message, MessageAuthor, MessagePage } from "./types.ts";
 
@@ -71,11 +71,13 @@ function mapMessages(
 export function useMessages(channelId: string | undefined, enabled: boolean) {
   return useInfiniteQuery({
     queryKey: messageKeys.channel(channelId ?? ""),
-    queryFn: ({ pageParam, signal }) =>
-      remote.listMessages(
-        channelId ?? "",
-        { before: pageParam, limit: PAGE_SIZE },
-        signal,
+    queryFn: async ({ pageParam, signal }) =>
+      stampOlder(
+        await remote.listMessages(
+          channelId ?? "",
+          { before: pageParam, limit: PAGE_SIZE },
+          signal,
+        ),
       ),
     initialPageParam: undefined as string | undefined,
     getNextPageParam: (page) => olderCursor(page),
@@ -92,7 +94,6 @@ export function useMessages(channelId: string | undefined, enabled: boolean) {
 }
 
 export function useSendMessage(channelId: string, author: MessageAuthor) {
-  const client = useQueryClient();
   return useMutation({
     mutationFn: (content: string) =>
       remote.createMessage(channelId, normaliseContent(content)),
@@ -110,17 +111,11 @@ export function useSendMessage(channelId: string, author: MessageAuthor) {
       return tmp;
     },
     onSuccess: (message, _content, tmp) => {
-      patchPages(client, channelId, (pages) => {
-        if (pages.length === 0) {
-          return [{ messages: [message], has_more: false }];
-        }
-        const next = pages.slice();
-        const newest = next[0];
-        if (!newest) return [{ messages: [message], has_more: false }];
-        next[0] = { ...newest, messages: [...newest.messages, message] };
-        return next;
-      });
-      if (tmp) removePending(channelId, tmp);
+      // Stay in the overlay until a fetched page already contains this id.
+      // Blind append + drop races the in-flight first-page GET: duplicate
+      // if GET includes the row, or a successful send vanishes if GET
+      // lands without it and replaces an emptyCache write.
+      if (tmp) confirmPending(channelId, tmp, message);
     },
     onError: (error, _content, tmp) => {
       if (tmp) removePending(channelId, tmp);

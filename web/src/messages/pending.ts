@@ -12,6 +12,7 @@ export const nonePending: Message[] = [];
 type PendingState = {
   byChannel: Record<string, Message[]>;
   add: (channelId: string, message: Message) => void;
+  confirm: (channelId: string, tmpId: string, message: Message) => void;
   remove: (channelId: string, id: string) => void;
   clear: (channelId: string) => void;
 };
@@ -23,6 +24,15 @@ export const usePendingMessages = create<PendingState>((set) => ({
       byChannel: {
         ...state.byChannel,
         [channelId]: [...(state.byChannel[channelId] ?? []), message],
+      },
+    })),
+  confirm: (channelId, tmpId, message) =>
+    set((state) => ({
+      byChannel: {
+        ...state.byChannel,
+        [channelId]: (state.byChannel[channelId] ?? []).map((row) =>
+          row.id === tmpId ? message : row,
+        ),
       },
     })),
   remove: (channelId, id) =>
@@ -45,6 +55,15 @@ export const usePendingMessages = create<PendingState>((set) => ({
 
 export function addPending(channelId: string, message: Message): void {
   usePendingMessages.getState().add(channelId, message);
+}
+
+/** Swap the `tmp:` row for the server message — same overlay, new id. */
+export function confirmPending(
+  channelId: string,
+  tmpId: string,
+  message: Message,
+): void {
+  usePendingMessages.getState().confirm(channelId, tmpId, message);
 }
 
 export function removePending(channelId: string, id: string): void {

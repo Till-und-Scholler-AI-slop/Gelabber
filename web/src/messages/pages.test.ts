@@ -1,9 +1,12 @@
 import { describe, expect, it } from "vitest";
 
 import {
+  confirmedPendingIds,
+  encodeCursor,
   flattenPages,
   isContinued,
   olderCursor,
+  stampOlder,
   visibleMessages,
 } from "./pages.ts";
 import type { Message, MessagePage } from "./types.ts";
@@ -31,8 +34,18 @@ describe("message pages", () => {
       "b",
       "c",
     ]);
-    expect(olderCursor(newest)).toBe("b");
+    expect(olderCursor(newest)).toBe(encodeCursor(msg("b")));
     expect(olderCursor(older)).toBeUndefined();
+  });
+
+  it("keeps paging after the oldest row was deleted from the page", () => {
+    const stamped = stampOlder({
+      messages: [msg("b"), msg("c")],
+      has_more: true,
+    });
+    expect(olderCursor({ ...stamped, messages: [] })).toBe(
+      encodeCursor(msg("b")),
+    );
   });
 
   it("appends pending rows that are not already in a page", () => {
@@ -42,6 +55,13 @@ describe("message pages", () => {
       "a",
       "tmp:1",
     ]);
+    expect(confirmedPendingIds(pages, [msg("a"), msg("tmp:1")])).toEqual(["a"]);
+  });
+
+  it("does not show a confirmed overlay row next to the same GET id", () => {
+    const real = msg("real-1");
+    const pages: MessagePage[] = [{ messages: [real], has_more: false }];
+    expect(visibleMessages(pages, [real]).map((m) => m.id)).toEqual(["real-1"]);
   });
 
   it("groups the same author inside a five-minute window", () => {

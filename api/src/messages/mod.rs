@@ -291,7 +291,7 @@ async fn load_page(
 ) -> Result<MessagePage, ApiError> {
     let take = limit + 1;
     let rows = if let Some(cursor) = before {
-        let (at, id) = resolve_bound(db, channel_id, cursor, Bound::Before).await?;
+        let (at, id) = resolve_bound(db, channel_id, cursor, Bound::Before, "before").await?;
         sqlx::query_as::<_, MessageRow>(
             "SELECT m.id, m.channel_id, m.author_id, u.name AS author_name, \
                     u.avatar_url AS author_avatar_url, m.content, m.created_at, m.edited_at \
@@ -307,7 +307,7 @@ async fn load_page(
         .fetch_all(db)
         .await?
     } else if let Some(cursor) = after {
-        let (at, id) = resolve_bound(db, channel_id, cursor, Bound::After).await?;
+        let (at, id) = resolve_bound(db, channel_id, cursor, Bound::After, "after").await?;
         let mut newer = sqlx::query_as::<_, MessageRow>(
             "SELECT m.id, m.channel_id, m.author_id, u.name AS author_name, \
                     u.avatar_url AS author_avatar_url, m.content, m.created_at, m.edited_at \
@@ -366,15 +366,18 @@ enum Bound {
 }
 
 /// Turns a cursor into the exclusive `(created_at, id)` pair used in SQL.
-/// A missing id (deleted while paging) becomes a sentinel that yields no
-/// rows rather than a 404 — the client just sees an empty page.
+/// A `{time}|{id}` bound is used as-is — the row may already be gone.
+/// A bare id that does not exist is a field error, not an empty page
+/// with `has_more: false` (that would stop channel-local history).
 async fn resolve_bound(
     db: &PgPool,
     channel_id: Uuid,
     cursor: Cursor,
     bound: Bound,
+    field: &'static str,
 ) -> Result<(DateTime<Utc>, Uuid), ApiError> {
     match cursor {
+        Cursor::Bound { at, id } => Ok((at, id)),
         Cursor::Id(id) => {
             let row: Option<(DateTime<Utc>, Uuid)> = sqlx::query_as(
                 "SELECT created_at, id FROM messages WHERE id = $1 AND channel_id = $2",
@@ -383,13 +386,7 @@ async fn resolve_bound(
             .bind(channel_id)
             .fetch_optional(db)
             .await?;
-            match row {
-                Some(pair) => Ok(pair),
-                None => Ok(match bound {
-                    Bound::Before => (DateTime::<Utc>::MIN_UTC, Uuid::nil()),
-                    Bound::After => (DateTime::<Utc>::MAX_UTC, Uuid::from_u128(u128::MAX)),
-                }),
-            }
+            row.ok_or_else(|| ApiError::Validation(FieldErrors::from([(field, "invalid")])))
         }
         Cursor::Time(at) => Ok(match bound {
             // Exclusive of everything at `at`: pad with nil / max id.

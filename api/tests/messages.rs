@@ -435,3 +435,65 @@ async fn history_pages_by_id_cursor_and_time(pool: PgPool) {
     assert_eq!(both.status, StatusCode::UNPROCESSABLE_ENTITY);
     assert_eq!(both.body["fields"]["before"], "invalid");
 }
+
+#[sqlx::test]
+async fn dead_id_cursor_still_pages_with_time_bound(pool: PgPool) {
+    let (mut owner, _) = two_users(pool).await;
+    let server = create_server(&mut owner, "Team").await;
+    let channel_id = text_channel_id(&server);
+
+    let a = post_message(&mut owner, &channel_id, "eins").await;
+    let b = post_message(&mut owner, &channel_id, "zwei").await;
+    let c = post_message(&mut owner, &channel_id, "drei").await;
+    let b_id = b["id"].as_str().unwrap();
+    let b_at = b["created_at"].as_str().unwrap();
+
+    let deleted = owner
+        .send(Method::DELETE, &format!("/api/messages/{b_id}"), None)
+        .await;
+    assert_eq!(deleted.status, StatusCode::NO_CONTENT);
+
+    // Bare deleted id must not pretend the channel ends.
+    let dead = owner
+        .send(
+            Method::GET,
+            &format!("/api/channels/{channel_id}/messages?before={b_id}&limit=10"),
+            None,
+        )
+        .await;
+    assert_eq!(dead.status, StatusCode::UNPROCESSABLE_ENTITY);
+    assert_eq!(dead.body["fields"]["before"], "invalid");
+
+    // `{created_at}|{id}` still walks older than the deleted row.
+    let older = owner
+        .send(
+            Method::GET,
+            &format!("/api/channels/{channel_id}/messages?before={b_at}%7C{b_id}&limit=10"),
+            None,
+        )
+        .await;
+    assert_eq!(older.status, StatusCode::OK, "{}", older.body);
+    let older_ids: Vec<&str> = older.body["messages"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .map(|m| m["id"].as_str().unwrap())
+        .collect();
+    assert_eq!(older_ids, vec![a["id"].as_str().unwrap()]);
+    assert_eq!(older.body["has_more"], false);
+
+    let newer = owner
+        .send(
+            Method::GET,
+            &format!("/api/channels/{channel_id}/messages?after={b_at}%7C{b_id}&limit=10"),
+            None,
+        )
+        .await;
+    let newer_ids: Vec<&str> = newer.body["messages"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .map(|m| m["id"].as_str().unwrap())
+        .collect();
+    assert_eq!(newer_ids, vec![c["id"].as_str().unwrap()]);
+}
