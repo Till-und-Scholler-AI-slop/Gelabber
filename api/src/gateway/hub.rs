@@ -23,9 +23,6 @@ use crate::error::ApiError;
 
 const SUBSCRIBER_RETRY: Duration = Duration::from_millis(200);
 
-/// One Redis turn: assign seq, append the replay list, PUBLISH.
-/// `ARGV[1]` is the compact event JSON with `n` as a placeholder (0).
-/// Seq is substituted in the JSON string — Lua cjson would turn `[]` into `{}`.
 /// Last seat for a user: drop the roster field and their pubs. Returns 1
 /// when the caller should broadcast leave.
 const LEAVE_SEAT_LUA: &str = r#"
@@ -62,10 +59,12 @@ end
 return 0
 "#;
 
+/// One Redis turn: assign seq, append the replay list, PUBLISH.
+/// `ARGV[1]` is compact event JSON with `n` as placeholder 0 (serde order
+/// is `t`,`n`,`d`). Seq is string-substituted — Lua cjson would turn `[]`
+/// into `{}`.
 const PUBLISH_LUA: &str = r#"
 local n = redis.call('INCR', KEYS[1])
--- Do not cjson.decode/encode: empty JSON arrays become {} because Lua has
--- one table type. Inject seq on the placeholder instead.
 local raw = string.gsub(ARGV[1], '"n":0', '"n":' .. n, 1)
 redis.call('LPUSH', KEYS[2], raw)
 redis.call('LTRIM', KEYS[2], 0, tonumber(ARGV[2]))
