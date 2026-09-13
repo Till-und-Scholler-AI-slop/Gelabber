@@ -32,9 +32,9 @@ pub async fn create(db: &PgPool, user_id: Uuid, ttl: Duration) -> Result<String,
 }
 
 /// Resolves a raw cookie token to its user. Expired rows are treated as
-/// absent (and cleaned up opportunistically by `delete`).
+/// absent (and cleaned up opportunistically by `revoke`).
 pub async fn resolve(db: &PgPool, raw: &str) -> Result<Option<User>, ApiError> {
-    if raw.len() != 64 || !raw.bytes().all(|c| c.is_ascii_hexdigit()) {
+    if !token::is_valid(raw) {
         return Ok(None);
     }
     Ok(sqlx::query_as::<_, User>(
@@ -47,9 +47,13 @@ pub async fn resolve(db: &PgPool, raw: &str) -> Result<Option<User>, ApiError> {
     .await?)
 }
 
-pub async fn delete(db: &PgPool, raw: &str) -> Result<(), ApiError> {
+/// Removes the session behind `raw` (if any) and, in the same statement,
+/// every expired row. Called on logout and before a new login/register so a
+/// browser never accumulates more than one live row per sign-in.
+pub async fn revoke(db: &PgPool, raw: Option<&str>) -> Result<(), ApiError> {
+    let hash = raw.filter(|raw| token::is_valid(raw)).map(token::hash);
     sqlx::query("DELETE FROM sessions WHERE token_hash = $1 OR expires_at <= now()")
-        .bind(token::hash(raw))
+        .bind(hash)
         .execute(db)
         .await?;
     Ok(())

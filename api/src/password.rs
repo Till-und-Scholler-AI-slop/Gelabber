@@ -3,6 +3,8 @@
 //! Hashing takes tens of milliseconds by design, so both operations run on
 //! Tokio's blocking pool and never stall the request executor.
 
+use std::sync::OnceLock;
+
 use argon2::password_hash::{PasswordHasher, PasswordVerifier, phc::PasswordHash};
 use argon2::{Algorithm, Argon2, Params, Version};
 use tokio::task::spawn_blocking;
@@ -27,32 +29,48 @@ pub async fn hash(password: String) -> Result<String, ApiError> {
     .await?
 }
 
-/// Verifies `password` against a stored PHC string. A malformed stored hash
-/// counts as "does not match" so a corrupt row cannot open an account.
-pub async fn verify(password: String, stored: String) -> Result<bool, ApiError> {
+/// Verifies `password` against a stored PHC string, or — when there is no
+/// account — against the dummy hash, so both paths cost one Argon2 run on
+/// the blocking pool. A malformed stored hash counts as "does not match"
+/// so a corrupt row cannot open an account. Always `false` for `None`.
+pub async fn verify(password: String, stored: Option<String>) -> Result<bool, ApiError> {
     Ok(spawn_blocking(move || {
+        let has_account = stored.is_some();
+        let stored = stored.unwrap_or_else(|| dummy_hash().to_owned());
         let Ok(parsed) = PasswordHash::new(&stored) else {
             return false;
         };
-        hasher()
+        let matches = hasher()
             .verify_password(password.as_bytes(), &parsed)
-            .is_ok()
+            .is_ok();
+        matches && has_account
     })
     .await?)
 }
 
+static DUMMY: OnceLock<String> = OnceLock::new();
+
 /// A valid hash of an unguessable value. Login verifies against it when the
 /// e-mail is unknown, so "no such user" and "wrong password" take the same
 /// time and cannot be told apart by timing.
-pub fn dummy_hash() -> &'static str {
-    use std::sync::OnceLock;
-    static DUMMY: OnceLock<String> = OnceLock::new();
+fn dummy_hash() -> &'static str {
     DUMMY.get_or_init(|| {
         hasher()
             .hash_password(crate::token::generate().as_bytes())
             .expect("hashing a random token cannot fail")
             .to_string()
     })
+}
+
+/// Computes the dummy hash ahead of the first request. Without this the
+/// first unknown-e-mail login would pay for two Argon2 runs — exactly the
+/// timing signal the dummy exists to hide.
+pub async fn warm_up() -> Result<(), ApiError> {
+    spawn_blocking(|| {
+        dummy_hash();
+    })
+    .await?;
+    Ok(())
 }
 
 #[cfg(test)]
@@ -64,25 +82,27 @@ mod tests {
         let stored = hash("correct horse".into()).await.unwrap();
         assert!(stored.starts_with("$argon2id$v=19$m=19456,t=2,p=1$"));
         assert!(
-            verify("correct horse".into(), stored.clone())
+            verify("correct horse".into(), Some(stored.clone()))
                 .await
                 .unwrap()
         );
-        assert!(!verify("wrong".into(), stored).await.unwrap());
+        assert!(!verify("wrong".into(), Some(stored)).await.unwrap());
     }
 
     #[tokio::test]
     async fn malformed_stored_hash_never_matches() {
-        assert!(!verify("x".into(), "not-a-phc-string".into()).await.unwrap());
-    }
-
-    #[tokio::test]
-    async fn dummy_hash_rejects_everything_plausible() {
-        assert!(!verify("".into(), dummy_hash().to_owned()).await.unwrap());
         assert!(
-            !verify("password".into(), dummy_hash().to_owned())
+            !verify("x".into(), Some("not-a-phc-string".into()))
                 .await
                 .unwrap()
         );
+    }
+
+    #[tokio::test]
+    async fn missing_account_never_matches() {
+        warm_up().await.unwrap();
+        assert!(!verify("".into(), None).await.unwrap());
+        assert!(!verify("password".into(), None).await.unwrap());
+        assert!(dummy_hash().starts_with("$argon2id$"));
     }
 }

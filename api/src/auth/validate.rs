@@ -76,8 +76,9 @@ pub fn name(raw: &str, errors: &mut FieldErrors) -> Option<String> {
     Some(value.to_owned())
 }
 
-/// `None` (empty string) clears the avatar; otherwise an absolute http(s)
-/// URL. The API stores the reference only — file upload lands with the
+/// `None` (empty string) clears the avatar; otherwise an absolute `https://`
+/// URL — plain `http://` would be mixed content once the app sits behind
+/// TLS. The API stores the reference only; file upload lands with the
 /// MinIO/files issue, not here.
 pub fn avatar_url(raw: &str, errors: &mut FieldErrors) -> Option<Option<String>> {
     let value = raw.trim();
@@ -88,10 +89,11 @@ pub fn avatar_url(raw: &str, errors: &mut FieldErrors) -> Option<Option<String>>
         errors.insert("avatar_url", "too_long");
         return None;
     }
-    let lower = value.to_ascii_lowercase();
-    let is_http = (lower.starts_with("https://") && value.len() > "https://".len())
-        || (lower.starts_with("http://") && value.len() > "http://".len());
-    if !is_http || value.chars().any(|c| c.is_whitespace() || c.is_control()) {
+    const SCHEME: &str = "https://";
+    let has_host = value.len() > SCHEME.len()
+        && value[..SCHEME.len()].eq_ignore_ascii_case(SCHEME)
+        && !value[SCHEME.len()..].starts_with(['/', '.', '?', '#']);
+    if !has_host || value.chars().any(|c| c.is_whitespace() || c.is_control()) {
         errors.insert("avatar_url", "invalid");
         return None;
     }
@@ -174,13 +176,25 @@ mod tests {
     }
 
     #[test]
-    fn avatar_url_accepts_http_or_clears() {
+    fn avatar_url_accepts_https_only_or_clears() {
         assert_eq!(run(|e| avatar_url("", e)).0, Some(None));
         assert_eq!(
             run(|e| avatar_url("https://cdn.example/a.png", e)).0,
             Some(Some("https://cdn.example/a.png".to_owned()))
         );
-        for raw in ["javascript:alert(1)", "ftp://x/y", "https://", "http://a b"] {
+        assert_eq!(
+            run(|e| avatar_url("HTTPS://cdn.example/a.png", e)).0,
+            Some(Some("HTTPS://cdn.example/a.png".to_owned()))
+        );
+        for raw in [
+            "javascript:alert(1)",
+            "ftp://x/y",
+            "https://",
+            "https:///etc",
+            "https://a b",
+            "http://cdn.example/a.png",
+            "http://a b",
+        ] {
             let (value, errors) = run(|e| avatar_url(raw, e));
             assert!(value.is_none(), "{raw:?}");
             assert_eq!(errors.get("avatar_url"), Some(&"invalid"), "{raw:?}");

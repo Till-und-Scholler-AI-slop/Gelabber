@@ -3,8 +3,9 @@
 
 CREATE TABLE users (
     id            UUID        PRIMARY KEY DEFAULT gen_random_uuid(),
-    -- Stored lower-cased; the unique index is what enforces one account per
-    -- address regardless of how the user typed it.
+    -- The API stores it lower-cased; the index on lower(email) makes the
+    -- schema enforce one account per address on its own, whatever a future
+    -- write path does.
     email         TEXT        NOT NULL,
     name          TEXT        NOT NULL,
     avatar_url    TEXT,
@@ -14,7 +15,7 @@ CREATE TABLE users (
     updated_at    TIMESTAMPTZ NOT NULL DEFAULT now()
 );
 
-CREATE UNIQUE INDEX users_email_unique ON users (email);
+CREATE UNIQUE INDEX users_email_unique ON users (lower(email));
 
 -- One row per browser session. The cookie carries the random token; only
 -- its SHA-256 lands here, so a database dump cannot be replayed as a cookie.

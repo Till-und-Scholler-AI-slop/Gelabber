@@ -271,6 +271,94 @@ async fn register_rejects_duplicate_email_case_insensitively(pool: PgPool) {
 }
 
 #[sqlx::test]
+async fn schema_enforces_email_uniqueness_case_insensitively(pool: PgPool) {
+    let mut client = Client::new(pool.clone());
+    client.bootstrap().await;
+    client
+        .register("ada@example.com", "password123", "Ada")
+        .await;
+
+    // A write path that skips the API's normalisation still cannot create a
+    // second account for the same address.
+    let err = sqlx::query("INSERT INTO users (email, name, password_hash) VALUES ($1, 'x', 'y')")
+        .bind("ADA@Example.com")
+        .execute(&pool)
+        .await
+        .unwrap_err();
+    match err {
+        sqlx::Error::Database(db) => assert_eq!(db.code().as_deref(), Some("23505"), "{db}"),
+        other => panic!("expected unique violation, got {other}"),
+    }
+}
+
+#[sqlx::test]
+async fn signing_in_again_revokes_the_previous_session(pool: PgPool) {
+    let mut client = Client::new(pool.clone());
+    client.bootstrap().await;
+    client
+        .register("ada@example.com", "password123", "Ada")
+        .await;
+    let first_token = client.jar.get(SESSION).unwrap().clone();
+
+    // Same browser logs in twice more without ever logging out.
+    let res = client.login("ada@example.com", "password123").await;
+    assert_eq!(res.status, StatusCode::OK);
+    let res = client.login("ada@example.com", "password123").await;
+    assert_eq!(res.status, StatusCode::OK);
+    let current_token = client.jar.get(SESSION).unwrap().clone();
+    assert_ne!(first_token, current_token);
+
+    let rows: i64 = sqlx::query_scalar("SELECT count(*) FROM sessions")
+        .fetch_one(&pool)
+        .await
+        .unwrap();
+    assert_eq!(rows, 1, "one live row per browser, no orphans");
+
+    client.jar.insert(SESSION.to_owned(), first_token);
+    let replay = client.send(Method::GET, "/api/me", None).await;
+    assert_eq!(replay.status, StatusCode::UNAUTHORIZED, "old token is dead");
+
+    client.jar.insert(SESSION.to_owned(), current_token);
+    let me = client.send(Method::GET, "/api/me", None).await;
+    assert_eq!(me.status, StatusCode::OK);
+
+    // Expired rows from other browsers are swept by the next sign-in.
+    sqlx::query(
+        "INSERT INTO sessions (token_hash, user_id, expires_at) \
+         SELECT decode(repeat('ab', 32), 'hex'), id, now() - interval '1 minute' FROM users",
+    )
+    .execute(&pool)
+    .await
+    .unwrap();
+    client.login("ada@example.com", "password123").await;
+    let rows: i64 = sqlx::query_scalar("SELECT count(*) FROM sessions")
+        .fetch_one(&pool)
+        .await
+        .unwrap();
+    assert_eq!(rows, 1);
+}
+
+#[sqlx::test]
+async fn login_rejects_overlong_passwords_as_invalid_credentials(pool: PgPool) {
+    let mut client = Client::new(pool);
+    client.bootstrap().await;
+    client
+        .register("ada@example.com", "password123", "Ada")
+        .await;
+    client.send(Method::POST, "/api/auth/logout", None).await;
+
+    let res = client.login("ada@example.com", &"x".repeat(129)).await;
+    assert_eq!(res.status, StatusCode::UNAUTHORIZED, "{}", res.body);
+    assert_eq!(res.body["error"], "invalid_credentials");
+    assert!(res.set_cookie(SESSION).is_none());
+
+    // Exactly the maximum is still checked normally.
+    let res = client.login("ada@example.com", &"x".repeat(128)).await;
+    assert_eq!(res.status, StatusCode::UNAUTHORIZED);
+    assert_eq!(res.body["error"], "invalid_credentials");
+}
+
+#[sqlx::test]
 async fn login_logout_round_trip(pool: PgPool) {
     let mut client = Client::new(pool.clone());
     client.bootstrap().await;
@@ -433,6 +521,17 @@ async fn profile_name_and_avatar_are_readable_and_editable(pool: PgPool) {
         .await;
     assert_eq!(res.status, StatusCode::UNPROCESSABLE_ENTITY);
     assert_eq!(res.body["fields"]["name"], "required");
+    assert_eq!(res.body["fields"]["avatar_url"], "invalid");
+
+    // Plain http would be mixed content behind TLS.
+    let res = client
+        .send(
+            Method::PATCH,
+            "/api/me",
+            Some(json!({ "avatar_url": "http://cdn.example/ada.png" })),
+        )
+        .await;
+    assert_eq!(res.status, StatusCode::UNPROCESSABLE_ENTITY);
     assert_eq!(res.body["fields"]["avatar_url"], "invalid");
 
     let me = client.send(Method::GET, "/api/me", None).await;

@@ -70,6 +70,7 @@ pub struct LogoutResponse {
 
 async fn register(
     State(state): State<AppState>,
+    headers: HeaderMap,
     Body(body): Body<RegisterBody>,
 ) -> Result<Response, ApiError> {
     let mut errors = FieldErrors::new();
@@ -87,11 +88,12 @@ async fn register(
     let user = user::insert(&state.db, &email, &name, &hash).await?;
     info!(user_id = %user.id, "user registered");
 
-    signed_in(&state, user, StatusCode::CREATED).await
+    signed_in(&state, &headers, user, StatusCode::CREATED).await
 }
 
 async fn login(
     State(state): State<AppState>,
+    headers: HeaderMap,
     Body(body): Body<LoginBody>,
 ) -> Result<Response, ApiError> {
     let mut errors = FieldErrors::new();
@@ -102,13 +104,17 @@ async fn login(
     validate::finish(errors)?;
     let email = email.expect("validated");
 
-    // Unknown address: verify against a dummy hash anyway so the response
-    // time does not reveal whether the account exists.
+    // Register never stores anything longer, so this cannot match; fail
+    // before the lookup and the hash, with the same answer as a wrong
+    // password.
+    if body.password.chars().count() > validate::PASSWORD_MAX {
+        return Err(ApiError::InvalidCredentials);
+    }
+
+    // Unknown address: `verify` runs Argon2 against a dummy hash anyway so
+    // the response time does not reveal whether the account exists.
     let found = user::credentials_by_email(&state.db, &email).await?;
-    let stored = found.as_ref().map_or_else(
-        || password::dummy_hash().to_owned(),
-        |c| c.password_hash.clone(),
-    );
+    let stored = found.as_ref().map(|c| c.password_hash.clone());
     let ok = password::verify(body.password, stored).await?;
 
     let Some(credentials) = found.filter(|_| ok) else {
@@ -117,11 +123,20 @@ async fn login(
     let user = session::reload(&state.db, credentials.id).await?;
     info!(user_id = %user.id, "user logged in");
 
-    signed_in(&state, user, StatusCode::OK).await
+    signed_in(&state, &headers, user, StatusCode::OK).await
 }
 
 /// Issues a session + fresh CSRF token for `user` and builds the response.
-async fn signed_in(state: &AppState, user: User, status: StatusCode) -> Result<Response, ApiError> {
+/// A session the browser already carries is revoked first: the cookie is
+/// about to be overwritten, so its row would otherwise linger until TTL.
+async fn signed_in(
+    state: &AppState,
+    headers: &HeaderMap,
+    user: User,
+    status: StatusCode,
+) -> Result<Response, ApiError> {
+    let previous = cookies::get(headers, SESSION_COOKIE);
+    session::revoke(&state.db, previous.as_deref()).await?;
     let session_token = session::create(&state.db, user.id, state.session_ttl).await?;
     let csrf_token = token::generate();
 
@@ -139,9 +154,8 @@ async fn signed_in(state: &AppState, user: User, status: StatusCode) -> Result<R
 }
 
 async fn logout(State(state): State<AppState>, headers: HeaderMap) -> Result<Response, ApiError> {
-    if let Some(raw) = cookies::get(&headers, SESSION_COOKIE) {
-        session::delete(&state.db, &raw).await?;
-    }
+    let previous = cookies::get(&headers, SESSION_COOKIE);
+    session::revoke(&state.db, previous.as_deref()).await?;
     let csrf_token = token::generate();
     let cookies = AppendHeaders([
         SetCookie::clear(SESSION_COOKIE)
@@ -159,7 +173,7 @@ async fn current_session(
     headers: HeaderMap,
     MaybeUser(user): MaybeUser,
 ) -> Response {
-    let existing = cookies::get(&headers, CSRF_COOKIE).filter(|value| is_token(value));
+    let existing = cookies::get(&headers, CSRF_COOKIE).filter(|value| token::is_valid(value));
     let (csrf_token, set_cookie) = match existing {
         Some(value) => (value, None),
         None => {
@@ -178,8 +192,4 @@ async fn current_session(
 
 fn csrf_cookie(state: &AppState, value: &str) -> SetCookie {
     SetCookie::new(CSRF_COOKIE, value, CSRF_COOKIE_MAX_AGE_SECS).secure(state.cookie_secure)
-}
-
-fn is_token(value: &str) -> bool {
-    value.len() == 64 && value.bytes().all(|c| c.is_ascii_hexdigit())
 }

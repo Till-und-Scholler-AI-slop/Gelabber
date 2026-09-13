@@ -12,6 +12,13 @@ pub fn generate() -> String {
     hex(&bytes)
 }
 
+/// Shape check for tokens coming back from a cookie: exactly what
+/// `generate` produces. Anything else is rejected before touching the
+/// database.
+pub fn is_valid(raw: &str) -> bool {
+    raw.len() == 64 && raw.bytes().all(|c| c.is_ascii_hexdigit())
+}
+
 /// SHA-256 of the raw token; this is what the `sessions` table stores.
 pub fn hash(token: &str) -> Vec<u8> {
     Sha256::digest(token.as_bytes()).to_vec()
@@ -38,6 +45,16 @@ mod tests {
         assert_eq!(a.len(), 64);
         assert!(a.bytes().all(|c| c.is_ascii_hexdigit()));
         assert_ne!(a, b);
+        assert!(is_valid(&a));
+    }
+
+    #[test]
+    fn is_valid_rejects_other_shapes() {
+        assert!(!is_valid(""));
+        assert!(!is_valid("not-a-real-token"));
+        assert!(!is_valid(&"f".repeat(63)));
+        assert!(!is_valid(&"g".repeat(64)));
+        assert!(is_valid(&"f".repeat(64)));
     }
 
     #[test]

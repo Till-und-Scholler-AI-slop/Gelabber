@@ -33,6 +33,10 @@ async fn run() -> Result<(), Box<dyn std::error::Error>> {
         .map_err(|err| format!("database migration failed: {err}"))?;
     info!("database migrations applied");
 
+    gelabber_api::password::warm_up()
+        .await
+        .map_err(|err| format!("password hasher warm-up failed: {}", err.code()))?;
+
     let listener = TcpListener::bind(config.api_addr)
         .await
         .map_err(|err| format!("failed to bind {}: {err}", config.api_addr))?;
