@@ -40,11 +40,13 @@ Config ausschließlich aus Env (`API_ADDR`, `DATABASE_URL`, `REDIS_URL`; optiona
 | `GET /health` | `200 {"status":"ok"}` — ohne Abhängigkeiten |
 | `GET /ready` | `200 {"status":"ready", ...}` nur wenn Postgres **und** Redis antworten; sonst `503 {"status":"not_ready", ...}` |
 
-`/ready` prüft beide Abhängigkeiten parallel, jede mit hartem Deadline (`API_READY_TIMEOUT_MS`, Default 2000 ms), und nennt pro Check Status, Latenz und die konkrete Ursache:
+`/ready` prüft beide Abhängigkeiten parallel, jede mit hartem Deadline (`API_READY_TIMEOUT_MS`, Default 2000 ms). Der Body nennt pro Check Status, Latenz und eine grobe Fehlerklasse (`connection_refused`, `auth_failed`, `timed_out`, sonst `unavailable`), weil `/ready` über Caddy öffentlich erreichbar ist. Die vollständige Treiber-Fehlermeldung steht nur in der `WARN`-Logzeile (`check`, `error_class`, `error`).
 
 ```json
-{"status":"not_ready","checks":{"postgres":{"status":"ok","latency_ms":3},"redis":{"status":"error","error":"Connection refused (os error 111)","latency_ms":0}}}
+{"status":"not_ready","checks":{"postgres":{"status":"ok","latency_ms":3},"redis":{"status":"error","error":"connection_refused","latency_ms":0}}}
 ```
+
+Jede Antwort erzeugt eine JSON-Access-Log-Zeile auf `INFO` (Methode, Pfad, Status, Latenz). Ein nicht parsbares `RUST_LOG` beendet den Start wie jede andere ungültige Env-Variable.
 
 Lokal ohne Compose:
 

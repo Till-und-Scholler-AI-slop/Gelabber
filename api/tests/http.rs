@@ -77,17 +77,37 @@ async fn ready_reports_each_refused_dependency() {
     assert_eq!(body["status"], "not_ready");
     for check in ["postgres", "redis"] {
         assert_eq!(body["checks"][check]["status"], "error", "{check}: {body}");
-        let error = body["checks"][check]["error"].as_str().unwrap_or_default();
-        assert!(
-            !error.is_empty(),
-            "{check} should explain the failure: {body}"
+        assert_eq!(
+            body["checks"][check]["error"], "connection_refused",
+            "{check}: {body}"
         );
         assert!(body["checks"][check]["latency_ms"].is_u64(), "{body}");
     }
+    assert_no_driver_detail(&body);
     assert!(
         elapsed < Duration::from_secs(1),
         "refused connections must fail fast, took {elapsed:?}"
     );
+}
+
+/// The public body must only carry the coarse class, never the raw driver
+/// message (which can include OS error text, user or database names).
+fn assert_no_driver_detail(body: &Value) {
+    let text = body.to_string().to_lowercase();
+    for needle in [
+        "os error",
+        "connection refused",
+        "error returned",
+        "error communicating",
+        "timed out after",
+        "user \"",
+        "database \"",
+    ] {
+        assert!(
+            !text.contains(needle),
+            "public body leaks driver detail ({needle:?}): {text}"
+        );
+    }
 }
 
 #[tokio::test]
@@ -104,12 +124,12 @@ async fn ready_does_not_hang_on_stalled_dependencies() {
     assert_eq!(body["status"], "not_ready");
     for check in ["postgres", "redis"] {
         assert_eq!(body["checks"][check]["status"], "error", "{check}: {body}");
-        let error = body["checks"][check]["error"].as_str().unwrap_or_default();
-        assert!(
-            error.contains("timed out"),
-            "{check} should report the timeout, got: {error}"
+        assert_eq!(
+            body["checks"][check]["error"], "timed_out",
+            "{check}: {body}"
         );
     }
+    assert_no_driver_detail(&body);
     assert!(
         elapsed < Duration::from_secs(2),
         "stalled dependencies must hit the deadline, took {elapsed:?}"

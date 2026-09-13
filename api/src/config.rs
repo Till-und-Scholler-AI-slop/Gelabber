@@ -10,6 +10,9 @@ pub const DATABASE_URL: &str = "DATABASE_URL";
 pub const REDIS_URL: &str = "REDIS_URL";
 pub const API_READY_TIMEOUT_MS: &str = "API_READY_TIMEOUT_MS";
 pub const API_DB_MAX_CONNECTIONS: &str = "API_DB_MAX_CONNECTIONS";
+/// Read by `telemetry::init`, not by `Config`, because the subscriber has to
+/// exist before anything else can be logged.
+pub const RUST_LOG: &str = "RUST_LOG";
 
 const DEFAULT_API_ADDR: &str = "0.0.0.0:8080";
 const DEFAULT_READY_TIMEOUT_MS: u64 = 2000;

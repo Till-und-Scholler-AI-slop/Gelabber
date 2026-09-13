@@ -1,5 +1,9 @@
 //! `GET /health` (process is up, no dependencies) and `GET /ready`
 //! (Postgres and Redis both answer within the configured timeout).
+//!
+//! `/ready` is proxied unauthenticated by Caddy, so the response body only
+//! carries a coarse error class per check. The full driver error goes to the
+//! `warn!` log line, which is where operators look for the cause.
 
 use std::future::Future;
 use std::time::Instant;
@@ -43,12 +47,77 @@ pub struct Checks {
 #[serde(tag = "status", rename_all = "snake_case")]
 pub enum CheckResult {
     Ok { latency_ms: u64 },
-    Error { error: String, latency_ms: u64 },
+    Error { error: ErrorClass, latency_ms: u64 },
 }
 
 impl CheckResult {
     fn is_ok(&self) -> bool {
         matches!(self, Self::Ok { .. })
+    }
+}
+
+/// Public, coarse failure class. Anything that does not map onto the three
+/// specific classes is reported as `unavailable`.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize)]
+#[serde(rename_all = "snake_case")]
+pub enum ErrorClass {
+    ConnectionRefused,
+    AuthFailed,
+    TimedOut,
+    Unavailable,
+}
+
+impl ErrorClass {
+    fn as_str(self) -> &'static str {
+        match self {
+            Self::ConnectionRefused => "connection_refused",
+            Self::AuthFailed => "auth_failed",
+            Self::TimedOut => "timed_out",
+            Self::Unavailable => "unavailable",
+        }
+    }
+}
+
+/// Internal probe failure: the class that goes to the client plus the full
+/// driver error that only goes to the log.
+struct ProbeError {
+    class: ErrorClass,
+    detail: String,
+}
+
+impl From<sqlx::Error> for ProbeError {
+    fn from(err: sqlx::Error) -> Self {
+        let class = match &err {
+            sqlx::Error::Io(io) if io.kind() == std::io::ErrorKind::ConnectionRefused => {
+                ErrorClass::ConnectionRefused
+            }
+            // SQLSTATE class 28 = invalid authorization specification
+            // (28000) / invalid password (28P01).
+            sqlx::Error::Database(db) if db.code().is_some_and(|c| c.starts_with("28")) => {
+                ErrorClass::AuthFailed
+            }
+            _ => ErrorClass::Unavailable,
+        };
+        Self {
+            class,
+            detail: err.to_string(),
+        }
+    }
+}
+
+impl From<redis::RedisError> for ProbeError {
+    fn from(err: redis::RedisError) -> Self {
+        let class = if err.is_connection_refusal() {
+            ErrorClass::ConnectionRefused
+        } else if err.kind() == redis::ErrorKind::AuthenticationFailed {
+            ErrorClass::AuthFailed
+        } else {
+            ErrorClass::Unavailable
+        };
+        Self {
+            class,
+            detail: err.to_string(),
+        }
     }
 }
 
@@ -77,61 +146,65 @@ async fn ready(State(state): State<AppState>) -> (StatusCode, Json<ReadyResponse
 }
 
 /// Runs one dependency probe with a hard deadline so `/ready` can never hang
-/// on a stalled connection, and reports which check failed and why.
+/// on a stalled connection. Logs which check failed and the full cause;
+/// returns only the coarse class for the response body.
 async fn run_check(
     name: &'static str,
     state: &AppState,
-    probe: impl Future<Output = Result<(), String>>,
+    probe: impl Future<Output = Result<(), ProbeError>>,
 ) -> CheckResult {
     let started = Instant::now();
     let outcome = timeout(state.ready_timeout, probe).await;
     let latency_ms = started.elapsed().as_millis().try_into().unwrap_or(u64::MAX);
 
-    match outcome {
+    let ProbeError { class, detail } = match outcome {
         Ok(Ok(())) => {
             info!(check = name, latency_ms, "ready check passed");
-            CheckResult::Ok { latency_ms }
+            return CheckResult::Ok { latency_ms };
         }
-        Ok(Err(error)) => {
-            warn!(check = name, latency_ms, error = %error, "ready check failed");
-            CheckResult::Error { error, latency_ms }
-        }
-        Err(_elapsed) => {
-            let error = format!("timed out after {}ms", state.ready_timeout.as_millis());
-            warn!(check = name, latency_ms, error = %error, "ready check failed");
-            CheckResult::Error { error, latency_ms }
-        }
+        Ok(Err(err)) => err,
+        Err(_elapsed) => ProbeError {
+            class: ErrorClass::TimedOut,
+            detail: format!("timed out after {}ms", state.ready_timeout.as_millis()),
+        },
+    };
+
+    warn!(
+        check = name,
+        latency_ms,
+        error_class = class.as_str(),
+        error = %detail,
+        "ready check failed"
+    );
+    CheckResult::Error {
+        error: class,
+        latency_ms,
     }
 }
 
-async fn check_postgres(state: &AppState) -> Result<(), String> {
-    let mut conn = PgConnection::connect_with(&state.pg_connect)
-        .await
-        .map_err(|err| err.to_string())?;
-    let value: i32 = sqlx::query_scalar("SELECT 1")
-        .fetch_one(&mut conn)
-        .await
-        .map_err(|err| err.to_string())?;
-    // Best effort: a failed close does not change the verdict.
-    let _ = conn.close().await;
+async fn check_postgres(state: &AppState) -> Result<(), ProbeError> {
+    let mut conn = PgConnection::connect_with(&state.pg_connect).await?;
+    let value: i32 = sqlx::query_scalar("SELECT 1").fetch_one(&mut conn).await?;
+    // Drop instead of `close()`: the probe has succeeded once the query
+    // answered, and a stalled Terminate round-trip must not eat the deadline.
+    drop(conn);
     if value != 1 {
-        return Err(format!("unexpected SELECT 1 result: {value}"));
+        return Err(ProbeError {
+            class: ErrorClass::Unavailable,
+            detail: format!("unexpected SELECT 1 result: {value}"),
+        });
     }
     Ok(())
 }
 
-async fn check_redis(state: &AppState) -> Result<(), String> {
-    let mut conn = state
-        .redis
-        .get_multiplexed_async_connection()
-        .await
-        .map_err(|err| err.to_string())?;
-    let reply: String = redis::cmd("PING")
-        .query_async(&mut conn)
-        .await
-        .map_err(|err| err.to_string())?;
+async fn check_redis(state: &AppState) -> Result<(), ProbeError> {
+    let mut conn = state.redis.get_multiplexed_async_connection().await?;
+    let reply: String = redis::cmd("PING").query_async(&mut conn).await?;
     if reply != "PONG" {
-        return Err(format!("unexpected PING reply: {reply}"));
+        return Err(ProbeError {
+            class: ErrorClass::Unavailable,
+            detail: format!("unexpected PING reply: {reply}"),
+        });
     }
     Ok(())
 }

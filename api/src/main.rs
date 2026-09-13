@@ -7,7 +7,10 @@ use gelabber_api::{AppState, Config, app, telemetry};
 
 #[tokio::main]
 async fn main() -> ExitCode {
-    telemetry::init();
+    if let Err(err) = telemetry::init() {
+        error!(error = %err, "gelabber-api failed to start");
+        return ExitCode::FAILURE;
+    }
 
     match run().await {
         Ok(()) => ExitCode::SUCCESS,

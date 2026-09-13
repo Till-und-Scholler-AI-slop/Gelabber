@@ -5,7 +5,7 @@ pub mod telemetry;
 
 use axum::Router;
 use axum::http::Request;
-use tower_http::trace::{DefaultOnFailure, TraceLayer};
+use tower_http::trace::{DefaultOnResponse, TraceLayer};
 use tracing::{Level, info_span};
 
 pub use config::Config;
@@ -26,9 +26,12 @@ pub fn app(state: AppState) -> Router {
                         version = ?request.version(),
                     )
                 })
-                // A 503 from `/ready` is already explained by the per-check
-                // warnings; do not escalate it to an error on top.
-                .on_failure(DefaultOnFailure::new().level(Level::WARN)),
+                // One INFO access-log line per response (status + latency).
+                // The default on_failure would add a second line for 5xx; a
+                // 503 from `/ready` is already explained by the per-check
+                // warnings, so it is disabled.
+                .on_response(DefaultOnResponse::new().level(Level::INFO))
+                .on_failure(()),
         )
         .with_state(state)
 }
