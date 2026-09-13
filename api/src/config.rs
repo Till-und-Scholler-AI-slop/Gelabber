@@ -24,6 +24,11 @@ pub const TURN_URLS: &str = "TURN_URLS";
 pub const TURN_USERNAME: &str = "TURN_USERNAME";
 pub const TURN_PASSWORD: &str = "TURN_PASSWORD";
 pub const MEDIA_TICKET_TTL_SECS: &str = "MEDIA_TICKET_TTL_SECS";
+pub const MINIO_ENDPOINT: &str = "MINIO_ENDPOINT";
+pub const MINIO_PUBLIC_ENDPOINT: &str = "MINIO_PUBLIC_ENDPOINT";
+pub const MINIO_ROOT_USER: &str = "MINIO_ROOT_USER";
+pub const MINIO_ROOT_PASSWORD: &str = "MINIO_ROOT_PASSWORD";
+pub const MINIO_BUCKET: &str = "MINIO_BUCKET";
 /// Read by `telemetry::init`, not by `Config`, because the subscriber has to
 /// exist before anything else can be logged.
 pub const RUST_LOG: &str = "RUST_LOG";
@@ -71,6 +76,19 @@ pub struct Config {
     pub ice_servers: Vec<IceServer>,
     /// How long an SFU join ticket lives in Redis.
     pub media_ticket_ttl: Duration,
+    /// MinIO / S3-compatible store for attachments. Absent in unit tests.
+    pub minio: Option<MinioConfig>,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct MinioConfig {
+    /// API → MinIO (Compose: `http://minio:9000`).
+    pub endpoint: String,
+    /// Browser-facing host used on presigned URLs (Compose: `http://localhost:9000`).
+    pub public_endpoint: String,
+    pub access_key: String,
+    pub secret_key: String,
+    pub bucket: String,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -182,6 +200,7 @@ impl Config {
             Some(raw) => parse_positive::<u64>(MEDIA_TICKET_TTL_SECS, &raw)?,
             None => DEFAULT_MEDIA_TICKET_TTL_SECS,
         };
+        let minio = parse_minio(&get)?;
 
         Ok(Self {
             api_addr,
@@ -199,7 +218,39 @@ impl Config {
             ws_typing_ttl: Duration::from_millis(ws_typing_ttl_ms),
             ice_servers,
             media_ticket_ttl: Duration::from_secs(media_ticket_ttl_secs),
+            minio,
         })
+    }
+}
+
+fn parse_minio(get: &impl Fn(&str) -> Option<String>) -> Result<Option<MinioConfig>, ConfigError> {
+    let endpoint = get(MINIO_ENDPOINT);
+    let user = get(MINIO_ROOT_USER);
+    let password = get(MINIO_ROOT_PASSWORD);
+    let bucket = get(MINIO_BUCKET);
+    match (endpoint, user, password, bucket) {
+        (None, None, None, None) => Ok(None),
+        (Some(endpoint), Some(access_key), Some(secret_key), Some(bucket)) => {
+            if !endpoint.starts_with("http://") && !endpoint.starts_with("https://") {
+                return Err(invalid(MINIO_ENDPOINT, &endpoint, "must be an http(s) URL"));
+            }
+            let public_endpoint = get(MINIO_PUBLIC_ENDPOINT).unwrap_or_else(|| endpoint.clone());
+            if !public_endpoint.starts_with("http://") && !public_endpoint.starts_with("https://") {
+                return Err(invalid(
+                    MINIO_PUBLIC_ENDPOINT,
+                    &public_endpoint,
+                    "must be an http(s) URL",
+                ));
+            }
+            Ok(Some(MinioConfig {
+                endpoint,
+                public_endpoint,
+                access_key,
+                secret_key,
+                bucket,
+            }))
+        }
+        _ => Err(ConfigError::Missing(MINIO_ENDPOINT)),
     }
 }
 
@@ -268,6 +319,24 @@ mod tests {
         assert_eq!(config.ws_typing_ttl, Duration::from_millis(6_000));
         assert!(config.ice_servers.is_empty());
         assert_eq!(config.media_ticket_ttl, Duration::from_secs(30));
+        assert!(config.minio.is_none());
+    }
+
+    #[test]
+    fn parses_minio_and_defaults_public_endpoint() {
+        let config = Config::from_source(source(&[
+            (DATABASE_URL, "postgres://u:p@localhost/db"),
+            (REDIS_URL, "redis://localhost"),
+            (MINIO_ENDPOINT, "http://minio:9000"),
+            (MINIO_ROOT_USER, "gelabber"),
+            (MINIO_ROOT_PASSWORD, "gelabbergelabber"),
+            (MINIO_BUCKET, "gelabber"),
+        ]))
+        .expect("valid config");
+        let minio = config.minio.expect("minio");
+        assert_eq!(minio.endpoint, "http://minio:9000");
+        assert_eq!(minio.public_endpoint, "http://minio:9000");
+        assert_eq!(minio.bucket, "gelabber");
     }
 
     #[test]

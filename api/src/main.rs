@@ -33,6 +33,11 @@ async fn run() -> Result<(), Box<dyn std::error::Error>> {
         .map_err(|err| format!("database migration failed: {err}"))?;
     info!("database migrations applied");
 
+    match state.store.ensure_ready().await {
+        Ok(()) => info!("object store ready"),
+        Err(err) => tracing::warn!(error = %err, "object store not ready; uploads will retry"),
+    }
+
     gelabber_api::password::warm_up()
         .await
         .map_err(|err| format!("password hasher warm-up failed: {}", err.code()))?;

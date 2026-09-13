@@ -30,9 +30,16 @@ export const usePendingMessages = create<PendingState>((set) => ({
     set((state) => ({
       byChannel: {
         ...state.byChannel,
-        [channelId]: (state.byChannel[channelId] ?? []).map((row) =>
-          row.id === tmpId ? message : row,
-        ),
+        [channelId]: (state.byChannel[channelId] ?? []).map((row) => {
+          if (row.id !== tmpId) return row;
+          return {
+            ...message,
+            attachments: message.attachments.map((attachment, index) => ({
+              ...attachment,
+              preview_url: row.attachments[index]?.preview_url,
+            })),
+          };
+        }),
       },
     })),
   remove: (channelId, id) =>

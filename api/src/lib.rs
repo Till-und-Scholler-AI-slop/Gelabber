@@ -1,3 +1,4 @@
+pub mod attachments;
 pub mod auth;
 pub mod config;
 pub mod cookies;
@@ -14,6 +15,7 @@ pub mod path;
 pub mod profile;
 pub mod servers;
 pub mod state;
+pub mod storage;
 pub mod telemetry;
 pub mod token;
 
@@ -39,6 +41,7 @@ pub fn app(state: AppState) -> Router {
         .merge(dms::router())
         .merge(messages::router())
         .merge(media::router())
+        .merge(attachments::router())
         .layer(middleware::from_fn(csrf::require));
 
     // `/ws` is a GET upgrade, not a JSON mutation — it stays outside the

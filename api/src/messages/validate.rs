@@ -26,12 +26,31 @@ pub enum Cursor {
 }
 
 pub fn content(raw: &str, errors: &mut FieldErrors) -> Option<String> {
-    let value = raw.replace("\r\n", "\n").replace('\r', "\n");
-    let value = value.trim();
+    let value = normalise(raw);
     if value.is_empty() {
         errors.insert("content", "required");
         return None;
     }
+    check_content(&value, errors)
+}
+
+/// Like [`content`] but empty is allowed — a message may be attachment-only.
+pub fn content_optional(raw: &str, errors: &mut FieldErrors) -> Option<String> {
+    let value = normalise(raw);
+    if value.is_empty() {
+        return Some(String::new());
+    }
+    check_content(&value, errors)
+}
+
+fn normalise(raw: &str) -> String {
+    raw.replace("\r\n", "\n")
+        .replace('\r', "\n")
+        .trim()
+        .to_owned()
+}
+
+fn check_content(value: &str, errors: &mut FieldErrors) -> Option<String> {
     if value.chars().count() > CONTENT_MAX {
         errors.insert("content", "too_long");
         return None;
@@ -127,6 +146,8 @@ mod tests {
             run(|e| content("win\r\nline", e)).0.as_deref(),
             Some("win\nline")
         );
+        assert_eq!(run(|e| content_optional("  ", e)).0.as_deref(), Some(""));
+        assert_eq!(run(|e| content_optional("ok", e)).0.as_deref(), Some("ok"));
     }
 
     #[test]

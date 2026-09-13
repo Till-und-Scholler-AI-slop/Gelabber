@@ -81,6 +81,7 @@ function TextChat({
       channelId={channel.id}
       channelName={channel.name}
       canSend={canWrite}
+      canSendFiles={can(server, "send_files")}
       canModerate={can(server, "manage_messages")}
       footer={<TypingBar channelId={channel.id} members={server.members} />}
       onDraftChange={typing.onChange}
