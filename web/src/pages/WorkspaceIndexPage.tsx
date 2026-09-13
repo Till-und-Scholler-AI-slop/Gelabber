@@ -33,7 +33,7 @@ export function WorkspaceIndexPage() {
   }
 
   return (
-    <section className="mx-auto flex max-w-md flex-col gap-4 px-6 py-16">
+    <section className="mx-auto flex max-w-md flex-col gap-4 overflow-y-auto px-6 py-16">
       <h1 className="text-3xl font-semibold tracking-tight">
         {user ? `Hallo ${user.name}` : "Hallo"}
       </h1>

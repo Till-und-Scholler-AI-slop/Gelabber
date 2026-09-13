@@ -1,17 +1,19 @@
-// `/s/$serverId/c/$channelId`: header, isolated message pane, reserved
-// typing strip, composer (local — REST messages are issue 5), members.
+// `/s/$serverId/c/$channelId`: header, virtualised messages, members.
+// Voice uses the own-protocol room, not LiveKit.
 
 import { useParams } from "@tanstack/react-router";
-import { useEffect, useState, type FormEvent } from "react";
+import { useEffect } from "react";
 
-import { Redirect } from "../components/Redirect.tsx";
 import { HashIcon, SpeakerIcon } from "../components/Icons.tsx";
 import { MemberPanel } from "../components/MemberPanel.tsx";
+import { MessagePane } from "../components/MessagePane.tsx";
+import { Redirect } from "../components/Redirect.tsx";
 import { TypingBar } from "../components/TypingBar.tsx";
 import { VoiceRoom } from "../voice/VoiceRoom.tsx";
 import { useLastChannel } from "../servers/lastChannel.ts";
 import { can } from "../servers/permissions.ts";
 import { useServer } from "../servers/queries.ts";
+import type { Channel, ServerDetail } from "../servers/types.ts";
 import { useTypingInput } from "../ws/useLive.ts";
 
 export function ChannelPage() {
@@ -32,10 +34,6 @@ export function ChannelPage() {
   }
 
   const Icon = channel.kind === "voice" ? SpeakerIcon : HashIcon;
-  const canWrite = channel.kind === "text" && can(server, "send_messages");
-  const hint = can(server, "send_messages")
-    ? "Nachrichten kommen mit dem Chat-Ticket."
-    : "Du hast in diesem Server kein Schreibrecht.";
 
   return (
     <div className="flex min-h-0 flex-1 overflow-hidden">
@@ -53,29 +51,14 @@ export function ChannelPage() {
             channelName={channel.name}
           />
         ) : (
-          <>
-            <div className="relative min-h-0 flex-1">
-              <div
-                data-testid="message-pane"
-                className="absolute inset-0 overflow-y-auto"
-              >
-                <div className="flex h-full items-center justify-center p-8 text-center">
-                  <div className="max-w-sm text-neutral-500">
-                    <p className="text-lg font-medium text-neutral-800">
-                      #{channel.name}
-                    </p>
-                    <p className="mt-2 text-sm">{hint}</p>
-                  </div>
-                </div>
-              </div>
+          <div className="relative min-h-0 flex-1">
+            <div
+              data-testid="message-pane"
+              className="absolute inset-0 flex min-h-0 flex-col"
+            >
+              <TextChat server={server} channel={channel} />
             </div>
-            <TypingBar channelId={channel.id} members={server.members} />
-            <Composer
-              serverId={serverId}
-              channelId={channel.id}
-              enabled={canWrite}
-            />
-          </>
+          </div>
         )}
       </div>
       <MemberPanel serverId={serverId} members={server.members} />
@@ -83,44 +66,23 @@ export function ChannelPage() {
   );
 }
 
-function Composer({
-  serverId,
-  channelId,
-  enabled,
+function TextChat({
+  server,
+  channel,
 }: {
-  serverId: string;
-  channelId: string;
-  enabled: boolean;
+  server: ServerDetail;
+  channel: Channel;
 }) {
-  const [value, setValue] = useState("");
-  const typing = useTypingInput(serverId, channelId, enabled);
-
-  const onSubmit = (event: FormEvent) => {
-    event.preventDefault();
-    setValue("");
-    typing.stop();
-  };
-
+  const canWrite = can(server, "send_messages");
+  const typing = useTypingInput(server.id, channel.id, canWrite);
   return (
-    <form
-      onSubmit={onSubmit}
-      className="shrink-0 border-t border-neutral-200 bg-white p-3"
-    >
-      <input
-        value={value}
-        disabled={!enabled}
-        onChange={(event) => {
-          const next = event.target.value;
-          setValue(next);
-          typing.onChange(next);
-        }}
-        onBlur={() => typing.stop()}
-        placeholder={
-          enabled ? "Nachricht schreiben…" : "Kein Schreibrecht in diesem Server."
-        }
-        aria-label="Nachricht"
-        className="w-full rounded-lg border border-neutral-200 bg-neutral-50 px-3 py-2 text-sm outline-none focus:border-neutral-400 disabled:text-neutral-400"
-      />
-    </form>
+    <MessagePane
+      key={channel.id}
+      server={server}
+      channel={channel}
+      footer={<TypingBar channelId={channel.id} members={server.members} />}
+      onDraftChange={typing.onChange}
+      onDraftStop={typing.stop}
+    />
   );
 }

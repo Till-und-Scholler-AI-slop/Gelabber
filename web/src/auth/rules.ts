@@ -66,7 +66,11 @@ type FieldName =
   | "category_id"
   | "member_permissions"
   | "max_uses"
-  | "expires_in_hours";
+  | "expires_in_hours"
+  | "content"
+  | "before"
+  | "after"
+  | "limit";
 
 const FIELD_LABEL: Record<FieldName, string> = {
   email: "E-Mail-Adresse",
@@ -78,6 +82,10 @@ const FIELD_LABEL: Record<FieldName, string> = {
   member_permissions: "Rechte",
   max_uses: "Maximale Nutzungen",
   expires_in_hours: "Gültigkeit",
+  content: "Nachricht",
+  before: "Cursor",
+  after: "Cursor",
+  limit: "Anzahl",
 };
 
 /** German inline copy for a field code. Unknown fields fall back to generic text. */
