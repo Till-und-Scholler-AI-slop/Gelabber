@@ -14,13 +14,15 @@ cd deploy/compose
 docker compose up
 ```
 
-`docker compose up` zieht das gepinnte MinIO-CE-Image `gelabber/minio:RELEASE.2025-10-15T17-29-55Z` von GHCR (`ghcr.io/till-und-scholler-ai-slop/gelabber/minio:RELEASE.2025-10-15T17-29-55Z`, publiziert aus CI). api/web/media werden nur gebaut, wenn lokal noch kein Image da ist. Fehlt das Registry-Image, fällt Compose auf den Source-Build in `deploy/compose/minio` zurück (ldflags bleiben auf dem Pin, kein `FROM minio/minio`).
+`docker compose up` zieht das gepinnte MinIO-CE-Image `ghcr.io/till-und-scholler-ai-slop/gelabber/minio:RELEASE.2025-10-15T17-29-55Z` (publiziert aus CI). `gelabber/minio:RELEASE.2025-10-15T17-29-55Z` ist nur das lokale Alias nach einem Source-Build. api/web/media werden nur gebaut, wenn lokal noch kein Image da ist. Fehlt das Registry-Image, fällt Compose auf den Source-Build in `deploy/compose/minio` zurück (ldflags bleiben auf dem Pin, kein `FROM minio/minio`).
+
+Das CI-Image ist `linux/amd64`. Auf arm64 (Apple Silicon) zieht der Pull das amd64-Image (Emulation oder `exec format error`); Workaround: `docker compose up --build`.
 
 `docker compose up --build` baut alle lokalen Images neu, inklusive MinIO aus Source — das dauert Minuten und ist nur nötig, wenn sich die Dockerfiles ändern.
 
 Dann [http://localhost](http://localhost) (Caddy, TCP :80). Postgres, Redis und MinIO hängen an den Ports aus `.env`. Ohne `.env` gelten dieselben Dev-Defaults wie in `.env.example`.
 
-Privates GHCR-Paket: `echo "$GITHUB_TOKEN" | docker login ghcr.io -u USER --password-stdin`.
+Nach dem ersten Publish auf `main` ist das GHCR-Paket **privat**. Ein Maintainer muss es einmal öffentlich machen: Organisation → Packages → `gelabber/minio` → Package settings → Change visibility → Public. Sonst fällt ein anonymer `docker compose up` auf den Source-Build zurück. Bis dahin: `echo "$GITHUB_TOKEN" | docker login ghcr.io -u USER --password-stdin`.
 
 UDP für späteres coturn läuft **nicht** durch Caddy.
 

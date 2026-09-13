@@ -1,5 +1,7 @@
 # Publish the pinned MinIO CE image so `docker compose up` can pull it.
 # Source-only: deploy/compose/minio/Dockerfile (no FROM minio/minio).
+# Org-owned GHCR packages start private; visibility is a one-time UI flip
+# (Package settings → Change visibility → Public). There is no REST endpoint.
 name: Publish MinIO CE image
 
 on:
@@ -13,6 +15,10 @@ on:
       - deploy/compose/minio/**
       - .github/workflows/publish-minio.yml
   workflow_dispatch:
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: ${{ github.event_name == 'pull_request' }}
 
 env:
   MINIO_RELEASE: RELEASE.2025-10-15T17-29-55Z
@@ -32,8 +38,8 @@ jobs:
           repo="$(echo '${{ github.repository }}' | tr '[:upper:]' '[:lower:]')"
           echo "GHCR_IMAGE=ghcr.io/${repo}/minio" >> "$GITHUB_ENV"
           echo "LOCAL_IMAGE=gelabber/minio" >> "$GITHUB_ENV"
-          if [ '${{ github.event_name }}' = 'workflow_dispatch' ] \
-            || [ '${{ github.ref }}' = 'refs/heads/main' ]; then
+          # Push only from main (includes workflow_dispatch on main).
+          if [ '${{ github.ref }}' = 'refs/heads/main' ]; then
             echo "PUSH=true" >> "$GITHUB_ENV"
           else
             echo "PUSH=false" >> "$GITHUB_ENV"
@@ -42,8 +48,7 @@ jobs:
       - name: Compose pin matches
         run: |
           set -euo pipefail
-          grep -F "ghcr.io/till-und-scholler-ai-slop/gelabber/minio:${MINIO_RELEASE}" \
-            deploy/compose/compose.yaml
+          grep -F "${GHCR_IMAGE}:${MINIO_RELEASE}" deploy/compose/compose.yaml
           grep -F "MINIO_RELEASE: ${MINIO_RELEASE}" deploy/compose/compose.yaml
           grep -F "ARG MINIO_RELEASE=${MINIO_RELEASE}" deploy/compose/minio/Dockerfile
 
@@ -83,14 +88,17 @@ jobs:
           docker tag "${LOCAL_IMAGE}:${MINIO_RELEASE}" "${GHCR_IMAGE}:${MINIO_RELEASE}"
           docker push "${GHCR_IMAGE}:${MINIO_RELEASE}"
 
-      - name: Make package public
+      - name: Check package visibility
         if: env.PUSH == 'true'
-        continue-on-error: true
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         run: |
           encoded='gelabber%2Fminio'
-          gh api --method PUT \
-            -H 'Accept: application/vnd.github+json' \
-            "orgs/${{ github.repository_owner }}/packages/container/${encoded}/visibility" \
-            -f visibility=public
+          vis="$(gh api \
+            "orgs/${{ github.repository_owner }}/packages/container/${encoded}" \
+            --jq .visibility || true)"
+          if [ "$vis" = "public" ]; then
+            echo "GHCR package gelabber/minio is public."
+          else
+            echo "::warning::GHCR package gelabber/minio is ${vis:-unknown/private}. Fresh clones cannot pull until a maintainer sets it Public: org → Packages → gelabber/minio → Package settings → Change visibility → Public. Until then: docker login ghcr.io, or compose falls back to the source build."
+          fi
