@@ -10,6 +10,8 @@ pub const DATABASE_URL: &str = "DATABASE_URL";
 pub const REDIS_URL: &str = "REDIS_URL";
 pub const API_READY_TIMEOUT_MS: &str = "API_READY_TIMEOUT_MS";
 pub const API_DB_MAX_CONNECTIONS: &str = "API_DB_MAX_CONNECTIONS";
+pub const API_COOKIE_SECURE: &str = "API_COOKIE_SECURE";
+pub const API_SESSION_TTL_HOURS: &str = "API_SESSION_TTL_HOURS";
 /// Read by `telemetry::init`, not by `Config`, because the subscriber has to
 /// exist before anything else can be logged.
 pub const RUST_LOG: &str = "RUST_LOG";
@@ -17,6 +19,7 @@ pub const RUST_LOG: &str = "RUST_LOG";
 const DEFAULT_API_ADDR: &str = "0.0.0.0:8080";
 const DEFAULT_READY_TIMEOUT_MS: u64 = 2000;
 const DEFAULT_DB_MAX_CONNECTIONS: u32 = 5;
+const DEFAULT_SESSION_TTL_HOURS: u64 = 24 * 30;
 
 #[derive(Debug, Clone)]
 pub struct Config {
@@ -26,6 +29,11 @@ pub struct Config {
     /// Upper bound for each individual `/ready` dependency check.
     pub ready_timeout: Duration,
     pub db_max_connections: u32,
+    /// Adds `Secure` to the session and CSRF cookies. Off by default because
+    /// the Compose dev entry is plain HTTP on Caddy; set to `true` behind TLS.
+    pub cookie_secure: bool,
+    /// Lifetime of a session cookie and its database row.
+    pub session_ttl: Duration,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -79,13 +87,33 @@ impl Config {
             None => DEFAULT_DB_MAX_CONNECTIONS,
         };
 
+        let cookie_secure = match get(API_COOKIE_SECURE) {
+            Some(raw) => parse_bool(API_COOKIE_SECURE, &raw)?,
+            None => false,
+        };
+
+        let session_ttl_hours = match get(API_SESSION_TTL_HOURS) {
+            Some(raw) => parse_positive::<u64>(API_SESSION_TTL_HOURS, &raw)?,
+            None => DEFAULT_SESSION_TTL_HOURS,
+        };
+
         Ok(Self {
             api_addr,
             database_url,
             redis_url,
             ready_timeout: Duration::from_millis(ready_timeout_ms),
             db_max_connections,
+            cookie_secure,
+            session_ttl: Duration::from_secs(session_ttl_hours * 3600),
         })
+    }
+}
+
+fn parse_bool(key: &'static str, raw: &str) -> Result<bool, ConfigError> {
+    match raw.trim().to_ascii_lowercase().as_str() {
+        "1" | "true" | "yes" | "on" => Ok(true),
+        "0" | "false" | "no" | "off" => Ok(false),
+        _ => Err(invalid(key, raw, "expected true or false")),
     }
 }
 
@@ -136,6 +164,39 @@ mod tests {
         assert_eq!(config.api_addr, "0.0.0.0:8080".parse().unwrap());
         assert_eq!(config.ready_timeout, Duration::from_millis(2000));
         assert_eq!(config.db_max_connections, 5);
+        assert!(!config.cookie_secure);
+        assert_eq!(config.session_ttl, Duration::from_secs(30 * 24 * 3600));
+    }
+
+    #[test]
+    fn parses_cookie_and_session_settings() {
+        let config = Config::from_source(source(&[
+            (DATABASE_URL, "postgres://u:p@localhost/db"),
+            (REDIS_URL, "redis://localhost"),
+            (API_COOKIE_SECURE, "true"),
+            (API_SESSION_TTL_HOURS, "12"),
+        ]))
+        .expect("valid config");
+
+        assert!(config.cookie_secure);
+        assert_eq!(config.session_ttl, Duration::from_secs(12 * 3600));
+    }
+
+    #[test]
+    fn rejects_unparseable_cookie_secure() {
+        let err = Config::from_source(source(&[
+            (DATABASE_URL, "postgres://u:p@localhost/db"),
+            (REDIS_URL, "redis://localhost"),
+            (API_COOKIE_SECURE, "maybe"),
+        ]))
+        .unwrap_err();
+        assert!(matches!(
+            err,
+            ConfigError::Invalid {
+                key: API_COOKIE_SECURE,
+                ..
+            }
+        ));
     }
 
     #[test]
