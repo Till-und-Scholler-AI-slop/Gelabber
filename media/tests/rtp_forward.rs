@@ -1,4 +1,5 @@
 //! Two webrtc-rs "browsers" through the SFU: RTP from A is forwarded to B.
+//! webrtc 0.20.5 only puts `ice-ufrag` on the SDP after ICE gathering.
 
 use std::sync::Arc;
 use std::time::Duration;
@@ -12,23 +13,42 @@ use rtc::rtp::packet::Packet;
 use rtc::rtp_transceiver::rtp_sender::{
     RTCRtpCodec, RTCRtpCodingParameters, RTCRtpEncodingParameters, RtpCodecKind,
 };
-use tokio::sync::mpsc;
+use tokio::sync::{mpsc, watch};
 use uuid::Uuid;
 use webrtc::media_stream::track_local::TrackLocal;
 use webrtc::media_stream::track_local::static_rtp::TrackLocalStaticRTP;
 use webrtc::media_stream::track_remote::{TrackRemote, TrackRemoteEvent};
 use webrtc::peer_connection::{
     MediaEngine, PeerConnection, PeerConnectionBuilder, PeerConnectionEventHandler,
-    RTCPeerConnectionState, RTCSessionDescription, register_default_interceptors,
+    RTCIceCandidateInit, RTCIceGatheringState, RTCPeerConnectionState, RTCSessionDescription,
+    register_default_interceptors,
 };
 
 struct ClientHandler {
+    gathered: watch::Sender<u64>,
     connected: mpsc::UnboundedSender<()>,
     packets: mpsc::UnboundedSender<Packet>,
+    ice: mpsc::UnboundedSender<RTCIceCandidateInit>,
 }
 
 #[async_trait::async_trait]
 impl PeerConnectionEventHandler for ClientHandler {
+    async fn on_ice_gathering_state_change(&self, state: RTCIceGatheringState) {
+        if state == RTCIceGatheringState::Complete {
+            let next = *self.gathered.borrow() + 1;
+            let _ = self.gathered.send(next);
+        }
+    }
+
+    async fn on_ice_candidate(&self, event: webrtc::peer_connection::RTCPeerConnectionIceEvent) {
+        if event.candidate.address.is_empty() {
+            return;
+        }
+        if let Ok(init) = event.candidate.to_json() {
+            let _ = self.ice.send(init);
+        }
+    }
+
     async fn on_connection_state_change(&self, state: RTCPeerConnectionState) {
         if state == RTCPeerConnectionState::Connected {
             let _ = self.connected.send(());
@@ -55,24 +75,41 @@ fn claim(user: u128, channel: u128) -> TicketClaim {
     }
 }
 
+struct Client {
+    pc: Arc<dyn PeerConnection>,
+    gathered: watch::Receiver<u64>,
+    ice_rx: mpsc::UnboundedReceiver<RTCIceCandidateInit>,
+}
+
 async fn client_pc(
     connected: mpsc::UnboundedSender<()>,
     packets: mpsc::UnboundedSender<Packet>,
-) -> Arc<dyn PeerConnection> {
+) -> Client {
     let mut media = MediaEngine::default();
     media.register_default_codecs().unwrap();
     let registry =
         register_default_interceptors(webrtc::peer_connection::Registry::new(), &mut media)
             .unwrap();
+    let (gather_tx, gather_rx) = watch::channel(0);
+    let (ice_tx, ice_rx) = mpsc::unbounded_channel();
     let pc = PeerConnectionBuilder::new()
         .with_media_engine(media)
         .with_interceptor_registry(registry)
-        .with_handler(Arc::new(ClientHandler { connected, packets }))
+        .with_handler(Arc::new(ClientHandler {
+            gathered: gather_tx,
+            connected,
+            packets,
+            ice: ice_tx,
+        }))
         .with_udp_addrs(vec!["127.0.0.1:0".to_owned()])
         .build()
         .await
         .unwrap();
-    Arc::new(pc)
+    Client {
+        pc: Arc::new(pc),
+        gathered: gather_rx,
+        ice_rx,
+    }
 }
 
 fn opus_track(ssrc: u32) -> Arc<TrackLocalStaticRTP> {
@@ -98,34 +135,92 @@ fn opus_track(ssrc: u32) -> Arc<TrackLocalStaticRTP> {
     )))
 }
 
-async fn pump_offer(
+async fn wait_gather(gathered: &watch::Receiver<u64>, before: u64) {
+    let mut rx = gathered.clone();
+    if *rx.borrow() <= before {
+        let _ = tokio::time::timeout(Duration::from_secs(2), rx.wait_for(|n| *n > before)).await;
+    }
+}
+
+async fn apply_sfu_frames(
     client: &Arc<dyn PeerConnection>,
     sfu: &Arc<Sfu>,
     peer: gelabber_media::sfu::PeerId,
     channel: Uuid,
     rx: &mut mpsc::UnboundedReceiver<ServerFrame>,
+    deadline: Duration,
 ) {
-    let offer = client.create_offer(None).await.unwrap();
-    client.set_local_description(offer).await.unwrap();
-    let local = client.local_description().await.unwrap();
+    let start = tokio::time::Instant::now();
+    while start.elapsed() < deadline {
+        match tokio::time::timeout(Duration::from_millis(50), rx.recv()).await {
+            Ok(Some(ServerFrame::Answer { sdp })) => {
+                client
+                    .set_remote_description(RTCSessionDescription::answer(sdp).unwrap())
+                    .await
+                    .unwrap();
+            }
+            Ok(Some(ServerFrame::Offer { sdp })) => {
+                client
+                    .set_remote_description(RTCSessionDescription::offer(sdp).unwrap())
+                    .await
+                    .unwrap();
+                let answer = client.create_answer(None).await.unwrap();
+                client.set_local_description(answer.clone()).await.unwrap();
+                sfu.apply_remote(peer, channel, answer.sdp, false)
+                    .await
+                    .unwrap();
+            }
+            Ok(Some(ServerFrame::Ice { ice, mid })) => {
+                let _ = client
+                    .add_ice_candidate(RTCIceCandidateInit {
+                        candidate: ice,
+                        sdp_mid: mid,
+                        sdp_mline_index: Some(0),
+                        username_fragment: None,
+                        url: None,
+                    })
+                    .await;
+            }
+            Ok(Some(_)) | Err(_) => {}
+            Ok(None) => break,
+        }
+    }
+}
+
+async fn flush_client_ice(
+    ice_rx: &mut mpsc::UnboundedReceiver<RTCIceCandidateInit>,
+    sfu: &Arc<Sfu>,
+    peer: gelabber_media::sfu::PeerId,
+    channel: Uuid,
+) {
+    while let Ok(init) = ice_rx.try_recv() {
+        let _ = sfu
+            .add_ice(peer, channel, init.candidate, init.sdp_mid)
+            .await;
+    }
+}
+
+async fn pump_offer(
+    client: &Client,
+    sfu: &Arc<Sfu>,
+    peer: gelabber_media::sfu::PeerId,
+    channel: Uuid,
+    rx: &mut mpsc::UnboundedReceiver<ServerFrame>,
+) {
+    let before = *client.gathered.borrow();
+    let offer = client.pc.create_offer(None).await.unwrap();
+    client.pc.set_local_description(offer).await.unwrap();
+    wait_gather(&client.gathered, before).await;
+    let local = client.pc.local_description().await.unwrap();
+    assert!(
+        local.sdp.contains("ice-ufrag"),
+        "offer must carry ICE credentials after gather: {}",
+        local.sdp
+    );
     sfu.apply_remote(peer, channel, local.sdp, true)
         .await
         .unwrap();
-    let answer = tokio::time::timeout(Duration::from_secs(5), async {
-        loop {
-            match rx.recv().await {
-                Some(ServerFrame::Answer { sdp }) => return sdp,
-                Some(_) => continue,
-                None => panic!("sfu closed"),
-            }
-        }
-    })
-    .await
-    .expect("sfu answer");
-    client
-        .set_remote_description(RTCSessionDescription::answer(answer).unwrap())
-        .await
-        .unwrap();
+    apply_sfu_frames(&client.pc, sfu, peer, channel, rx, Duration::from_secs(5)).await;
 }
 
 #[tokio::test]
@@ -149,43 +244,89 @@ async fn forwards_rtp_between_two_peers() {
     let (a_pkt_tx, _a_pkt_rx) = mpsc::unbounded_channel();
     let (b_pkt_tx, mut b_pkt_rx) = mpsc::unbounded_channel();
 
-    let a = client_pc(a_conn_tx, a_pkt_tx).await;
-    let b = client_pc(b_conn_tx, b_pkt_tx).await;
+    let mut a = client_pc(a_conn_tx, a_pkt_tx).await;
+    let mut b = client_pc(b_conn_tx, b_pkt_tx).await;
     let track = opus_track(0x1111_0001);
-    a.add_track(Arc::clone(&track) as Arc<dyn TrackLocal>)
+    let sender =
+        a.pc.add_track(Arc::clone(&track) as Arc<dyn TrackLocal>)
+            .await
+            .unwrap();
+    b.pc.add_track(Arc::clone(&opus_track(0x2222_0001)) as Arc<dyn TrackLocal>)
         .await
         .unwrap();
 
     pump_offer(&a, &sfu, a_id, channel, &mut a_rx).await;
     pump_offer(&b, &sfu, b_id, channel, &mut b_rx).await;
-
-    // B may get an SFU renegotiation offer once A's track is forwarded.
-    if let Ok(Some(ServerFrame::Offer { sdp })) =
-        tokio::time::timeout(Duration::from_secs(3), b_rx.recv()).await
-    {
-        b.set_remote_description(RTCSessionDescription::offer(sdp).unwrap())
-            .await
-            .unwrap();
-        let answer = b.create_answer(None).await.unwrap();
-        b.set_local_description(answer.clone()).await.unwrap();
-        sfu.apply_remote(b_id, channel, answer.sdp, false)
-            .await
-            .unwrap();
-    }
+    flush_client_ice(&mut a.ice_rx, &sfu, a_id, channel).await;
+    flush_client_ice(&mut b.ice_rx, &sfu, b_id, channel).await;
+    apply_sfu_frames(
+        &a.pc,
+        &sfu,
+        a_id,
+        channel,
+        &mut a_rx,
+        Duration::from_millis(400),
+    )
+    .await;
+    apply_sfu_frames(
+        &b.pc,
+        &sfu,
+        b_id,
+        channel,
+        &mut b_rx,
+        Duration::from_millis(400),
+    )
+    .await;
 
     let _ = tokio::time::timeout(Duration::from_secs(8), a_conn_rx.recv()).await;
     let _ = tokio::time::timeout(Duration::from_secs(8), b_conn_rx.recv()).await;
 
-    let mut pkt = Packet::default();
-    pkt.header.ssrc = 0x1111_0001;
-    pkt.header.sequence_number = 1;
-    pkt.payload = bytes::Bytes::from_static(&[0xF8, 0xFF, 0xFE]);
-    for seq in 1..=40u16 {
-        pkt.header.sequence_number = seq;
-        let _ = track.write_rtp(pkt.clone()).await;
-        tokio::time::sleep(Duration::from_millis(10)).await;
-    }
+    let pt = sender
+        .get_parameters()
+        .await
+        .ok()
+        .and_then(|p| p.rtp_parameters.codecs.first().map(|c| c.payload_type))
+        .unwrap_or(111);
 
-    let got = tokio::time::timeout(Duration::from_secs(8), b_pkt_rx.recv()).await;
-    assert!(got.is_ok(), "subscriber should receive forwarded RTP");
+    let mut pkt = Packet::default();
+    pkt.header.version = 2;
+    pkt.header.ssrc = 0x1111_0001;
+    pkt.header.payload_type = pt;
+    pkt.payload = bytes::Bytes::from_static(&[0xF8, 0xFF, 0xFE]);
+
+    let deadline = tokio::time::Instant::now() + Duration::from_secs(8);
+    let mut seq = 1u16;
+    let mut got = None;
+    while tokio::time::Instant::now() < deadline && got.is_none() {
+        pkt.header.sequence_number = seq;
+        pkt.header.timestamp = u32::from(seq) * 960;
+        seq = seq.wrapping_add(1);
+        let _ = track.write_rtp(pkt.clone()).await;
+        flush_client_ice(&mut a.ice_rx, &sfu, a_id, channel).await;
+        flush_client_ice(&mut b.ice_rx, &sfu, b_id, channel).await;
+        apply_sfu_frames(
+            &a.pc,
+            &sfu,
+            a_id,
+            channel,
+            &mut a_rx,
+            Duration::from_millis(20),
+        )
+        .await;
+        apply_sfu_frames(
+            &b.pc,
+            &sfu,
+            b_id,
+            channel,
+            &mut b_rx,
+            Duration::from_millis(20),
+        )
+        .await;
+        if let Ok(Some(packet)) =
+            tokio::time::timeout(Duration::from_millis(20), b_pkt_rx.recv()).await
+        {
+            got = Some(packet);
+        }
+    }
+    assert!(got.is_some(), "subscriber should receive forwarded RTP");
 }

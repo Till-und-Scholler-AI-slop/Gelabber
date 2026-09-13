@@ -4,13 +4,14 @@
 
 use std::collections::HashMap;
 use std::sync::Arc;
+use std::time::Duration;
 
 use rtc::media_stream::MediaStreamTrack;
 use rtc::rtp;
 use rtc::rtp_transceiver::rtp_sender::{
     RTCRtpCodec, RTCRtpCodingParameters, RTCRtpEncodingParameters, RtpCodecKind,
 };
-use tokio::sync::{Mutex, RwLock, broadcast, mpsc};
+use tokio::sync::{Mutex, RwLock, broadcast, mpsc, watch};
 use tracing::{debug, info, warn};
 use uuid::Uuid;
 use webrtc::media_stream::track_local::TrackLocal;
@@ -18,8 +19,8 @@ use webrtc::media_stream::track_local::static_rtp::TrackLocalStaticRTP;
 use webrtc::media_stream::track_remote::{TrackRemote, TrackRemoteEvent};
 use webrtc::peer_connection::{
     MediaEngine, PeerConnection, PeerConnectionBuilder, PeerConnectionEventHandler,
-    RTCConfigurationBuilder, RTCIceCandidateInit, RTCIceCandidateType, RTCIceServer,
-    RTCSessionDescription, SettingEngine, register_default_interceptors,
+    RTCConfigurationBuilder, RTCIceCandidateInit, RTCIceCandidateType, RTCIceGatheringState,
+    RTCIceServer, RTCSessionDescription, SettingEngine, register_default_interceptors,
 };
 
 use crate::config::Config;
@@ -39,6 +40,7 @@ enum PcEvent {
 
 struct Handler {
     tx: mpsc::UnboundedSender<PcEvent>,
+    gathered: watch::Sender<u64>,
 }
 
 #[async_trait::async_trait]
@@ -49,6 +51,13 @@ impl PeerConnectionEventHandler for Handler {
         }
         if let Ok(init) = event.candidate.to_json() {
             let _ = self.tx.send(PcEvent::Ice(init));
+        }
+    }
+
+    async fn on_ice_gathering_state_change(&self, state: RTCIceGatheringState) {
+        if state == RTCIceGatheringState::Complete {
+            let next = *self.gathered.borrow() + 1;
+            let _ = self.gathered.send(next);
         }
     }
 
@@ -70,6 +79,18 @@ impl PeerConnectionEventHandler for Handler {
     }
 }
 
+async fn local_sdp_after_gather(
+    pc: &Arc<dyn PeerConnection>,
+    gathered: &watch::Receiver<u64>,
+    before: u64,
+) -> Option<String> {
+    let mut rx = gathered.clone();
+    if *rx.borrow() <= before {
+        let _ = tokio::time::timeout(Duration::from_secs(3), rx.wait_for(|n| *n > before)).await;
+    }
+    pc.local_description().await.map(|desc| desc.sdp)
+}
+
 struct Published {
     id: String,
     kind: RtpCodecKind,
@@ -86,11 +107,22 @@ struct Peer {
     channel_id: Uuid,
     pc: Arc<dyn PeerConnection>,
     out: mpsc::UnboundedSender<ServerFrame>,
+    gathered: watch::Receiver<u64>,
 }
 
 struct Room {
     peers: HashMap<PeerId, Peer>,
     pubs: HashMap<String, Published>,
+}
+
+struct Forward {
+    pc: Arc<dyn PeerConnection>,
+    out: mpsc::UnboundedSender<ServerFrame>,
+    gathered: watch::Receiver<u64>,
+    pub_id: String,
+    kind: RtpCodecKind,
+    codec: RTCRtpCodec,
+    packets: broadcast::Sender<rtp::Packet>,
 }
 
 pub struct Sfu {
@@ -125,7 +157,7 @@ impl Sfu {
         out: mpsc::UnboundedSender<ServerFrame>,
     ) -> Result<PeerId, String> {
         let peer_id = PeerId(Uuid::new_v4());
-        let (pc, mut events) = self
+        let (pc, mut events, gathered) = self
             .build_pc()
             .await
             .map_err(|err| format!("peer connection: {err}"))?;
@@ -141,6 +173,7 @@ impl Sfu {
                     channel_id: claim.c,
                     pc: pc.clone(),
                     out: out.clone(),
+                    gathered,
                 },
             );
         }
@@ -173,10 +206,10 @@ impl Sfu {
             RTCSessionDescription::answer(sdp).map_err(|err| err.to_string())?
         };
         let room = self.room(channel_id).await;
-        let (pc, out) = {
+        let (pc, out, gathered) = {
             let room = room.lock().await;
             let peer = room.peers.get(&peer_id).ok_or("not in room")?;
-            (peer.pc.clone(), peer.out.clone())
+            (peer.pc.clone(), peer.out.clone(), peer.gathered.clone())
         };
         pc.set_remote_description(desc)
             .await
@@ -187,11 +220,12 @@ impl Sfu {
                 .create_answer(None)
                 .await
                 .map_err(|err| err.to_string())?;
+            let before = *gathered.borrow();
             pc.set_local_description(answer)
                 .await
                 .map_err(|err| err.to_string())?;
-            if let Some(local) = pc.local_description().await {
-                let _ = out.send(ServerFrame::Answer { sdp: local.sdp });
+            if let Some(sdp) = local_sdp_after_gather(&pc, &gathered, before).await {
+                let _ = out.send(ServerFrame::Answer { sdp });
             }
             self.attach_existing_pubs(peer_id, channel_id).await;
         }
@@ -258,7 +292,11 @@ impl Sfu {
 
     async fn build_pc(
         &self,
-    ) -> webrtc::error::Result<(Arc<dyn PeerConnection>, mpsc::UnboundedReceiver<PcEvent>)> {
+    ) -> webrtc::error::Result<(
+        Arc<dyn PeerConnection>,
+        mpsc::UnboundedReceiver<PcEvent>,
+        watch::Receiver<u64>,
+    )> {
         let mut media = MediaEngine::default();
         media.register_default_codecs()?;
         let registry =
@@ -275,16 +313,20 @@ impl Sfu {
             .build();
 
         let (tx, rx) = mpsc::unbounded_channel();
+        let (gather_tx, gather_rx) = watch::channel(0);
         let pc = PeerConnectionBuilder::new()
             .with_configuration(config)
             .with_media_engine(media)
             .with_interceptor_registry(registry)
             .with_setting_engine(settings)
-            .with_handler(Arc::new(Handler { tx }))
+            .with_handler(Arc::new(Handler {
+                tx,
+                gathered: gather_tx,
+            }))
             .with_udp_addrs(vec![self.ice_bind.clone()])
             .build()
             .await?;
-        Ok((Arc::new(pc), rx))
+        Ok((Arc::new(pc), rx, gather_rx))
     }
 
     async fn drive(
@@ -363,12 +405,20 @@ impl Sfu {
             room.peers
                 .iter()
                 .filter(|(id, _)| **id != publisher)
-                .map(|(id, p)| (*id, p.pc.clone(), p.out.clone()))
+                .map(|(id, p)| (*id, p.pc.clone(), p.out.clone(), p.gathered.clone()))
                 .collect::<Vec<_>>()
         };
-        for (_peer_id, pc, out) in subscribers {
-            self.forward_to(pc, out, &pub_id, kind, &codec, packets.clone())
-                .await;
+        for (_peer_id, pc, out, gathered) in subscribers {
+            self.forward_to(Forward {
+                pc,
+                out,
+                gathered,
+                pub_id: pub_id.clone(),
+                kind,
+                codec: codec.clone(),
+                packets: packets.clone(),
+            })
+            .await;
         }
 
         tokio::spawn(async move {
@@ -386,7 +436,7 @@ impl Sfu {
     }
 
     async fn attach_existing_pubs(&self, subscriber: PeerId, channel_id: Uuid) {
-        let (pc, out, pubs) = {
+        let (pc, out, gathered, pubs) = {
             let room = self.room(channel_id).await;
             let room = room.lock().await;
             let Some(peer) = room.peers.get(&subscriber) else {
@@ -398,23 +448,37 @@ impl Sfu {
                 .filter(|p| !p.id.starts_with(&subscriber.0.to_string()))
                 .map(|p| (p.id.clone(), p.kind, p.codec.clone(), p.packets.clone()))
                 .collect::<Vec<_>>();
-            (peer.pc.clone(), peer.out.clone(), pubs)
+            (
+                peer.pc.clone(),
+                peer.out.clone(),
+                peer.gathered.clone(),
+                pubs,
+            )
         };
         for (id, kind, codec, packets) in pubs {
-            self.forward_to(pc.clone(), out.clone(), &id, kind, &codec, packets)
-                .await;
+            self.forward_to(Forward {
+                pc: pc.clone(),
+                out: out.clone(),
+                gathered: gathered.clone(),
+                pub_id: id,
+                kind,
+                codec,
+                packets,
+            })
+            .await;
         }
     }
 
-    async fn forward_to(
-        &self,
-        pc: Arc<dyn PeerConnection>,
-        out: mpsc::UnboundedSender<ServerFrame>,
-        pub_id: &str,
-        kind: RtpCodecKind,
-        codec: &RTCRtpCodec,
-        packets: broadcast::Sender<rtp::Packet>,
-    ) {
+    async fn forward_to(&self, job: Forward) {
+        let Forward {
+            pc,
+            out,
+            gathered,
+            pub_id,
+            kind,
+            codec,
+            packets,
+        } = job;
         let ssrc = rand::random::<u32>();
         let local = Arc::new(TrackLocalStaticRTP::new(MediaStreamTrack::new(
             format!("gb-{pub_id}"),
@@ -456,10 +520,11 @@ impl Sfu {
 
         match pc.create_offer(None).await {
             Ok(offer) => {
+                let before = *gathered.borrow();
                 if pc.set_local_description(offer).await.is_ok()
-                    && let Some(local) = pc.local_description().await
+                    && let Some(sdp) = local_sdp_after_gather(&pc, &gathered, before).await
                 {
-                    let _ = out.send(ServerFrame::Offer { sdp: local.sdp });
+                    let _ = out.send(ServerFrame::Offer { sdp });
                 }
             }
             Err(err) => warn!(error = %err, "renegotiation offer failed"),

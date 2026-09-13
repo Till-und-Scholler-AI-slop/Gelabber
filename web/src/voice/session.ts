@@ -393,7 +393,7 @@ async function startPeer(serverId: string, channelId: string): Promise<void> {
   const createPeer = deps?.createPeer ?? defaultCreatePeer;
   const getUserMedia = deps?.getUserMedia ?? defaultGetUserMedia;
 
-  let iceServers: IceServer[] = [];
+  let iceServers: IceServer[];
   try {
     const ticket = await fetchTicket(channelId);
     if (generation !== mine) return;
