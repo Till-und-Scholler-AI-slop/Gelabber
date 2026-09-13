@@ -49,6 +49,10 @@ class FakePeer implements PeerConnection {
     return sender;
   }
 
+  addTransceiver(): void {
+    this.tracks += 1;
+  }
+
   removeTrack(sender: { track: MediaStreamTrack | null }): void {
     sender.track = null;
   }
@@ -583,6 +587,7 @@ describe("voice session", () => {
     expect(useVoice.getState().status).toBe("idle");
     await vi.waitFor(() => expect(peers.length).toBe(1));
     expect(getUserMediaCalls()).toBe(0);
+    expect(peers[0]?.tracks).toBeGreaterThanOrEqual(2);
     expect(sent.some((frame) => frame.op === "sig" && frame.t === "j")).toBe(
       false,
     );
