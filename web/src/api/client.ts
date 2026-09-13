@@ -18,6 +18,8 @@ export type ApiErrorCode =
   | "email_taken"
   | "invite_invalid"
   | "banned"
+  | "rate_limited"
+  | "quota_exceeded"
   | "internal"
   | "network"
   | "timeout";
@@ -26,18 +28,21 @@ export class ApiError extends Error {
   readonly code: ApiErrorCode;
   readonly status: number;
   readonly fields: FieldErrors;
+  readonly retryAfter: number | null;
 
   constructor(
     code: ApiErrorCode,
     status: number,
     message: string,
     fields: FieldErrors = {},
+    retryAfter: number | null = null,
   ) {
     super(message);
     this.name = "ApiError";
     this.code = code;
     this.status = status;
     this.fields = fields;
+    this.retryAfter = retryAfter;
   }
 }
 
@@ -82,6 +87,7 @@ type ErrorBody = {
   error?: string;
   message?: string;
   fields?: FieldErrors;
+  retry_after?: number;
 };
 
 const KNOWN_CODES: ReadonlySet<string> = new Set<ApiErrorCode>([
@@ -95,6 +101,8 @@ const KNOWN_CODES: ReadonlySet<string> = new Set<ApiErrorCode>([
   "email_taken",
   "invite_invalid",
   "banned",
+  "rate_limited",
+  "quota_exceeded",
   "internal",
 ]);
 
@@ -130,6 +138,7 @@ export async function api<T>(
       response.status,
       body.message ?? `Request failed with status ${response.status}`,
       body.fields ?? {},
+      typeof body.retry_after === "number" ? body.retry_after : null,
     );
   }
 

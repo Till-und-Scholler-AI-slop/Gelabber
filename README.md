@@ -22,6 +22,32 @@ Das CI-Image ist `linux/amd64`. Auf arm64 (Apple Silicon) zieht der Pull das amd
 
 Dann [http://localhost](http://localhost) (Caddy, TCP :80). Postgres, Redis und MinIO hängen an den Ports aus `.env`. Ohne `.env` gelten dieselben Dev-Defaults wie in `.env.example`.
 
+Metriken (optional):
+
+```bash
+cd deploy/compose
+docker compose --profile observability up
+```
+
+Prometheus **v3.14.0** scrapt `api:8080/metrics` und `media:8081/metrics` im Compose-Netz (nicht über Caddy). Grafana **13.2.1** liegt auf [http://localhost:3000](http://localhost:3000) (admin / `gelabber`, anonymer Viewer). Kein LiveKit, kein APM-SaaS.
+
+### Volume-Backup
+
+Zwei persistente Volumes: `gelabber_postgres_data` und `gelabber_minio_data`. Redis speichert nichts. Ein Node, kein Multi-Region — Dump plus Object-Store reicht:
+
+```bash
+cd deploy/compose
+docker compose exec -T postgres pg_dump -U gelabber gelabber > gelabber-$(date -u +%Y%m%d).sql
+docker run --rm -v gelabber_postgres_data:/data -v "$PWD":/backup alpine:3.24 \
+  tar czf /backup/postgres-data.tgz -C /data .
+docker run --rm -v gelabber_minio_data:/data -v "$PWD":/backup alpine:3.24 \
+  tar czf /backup/minio-data.tgz -C /data .
+```
+
+Restore analog; Postgres vorher stoppen.
+
+Nach dem ersten Publish auf `main` ist das GHCR-Paket **privat**.
+
 Nach dem ersten Publish auf `main` ist das GHCR-Paket **privat**. Ein Maintainer muss es einmal öffentlich machen: Organisation → Packages → `gelabber/minio` → Package settings → Change visibility → Public. Sonst fällt ein anonymer `docker compose up` auf den Source-Build zurück. Bis dahin: `echo "$GITHUB_TOKEN" | docker login ghcr.io -u USER --password-stdin`.
 
 UDP für coturn (3478 + Relay) und SFU-ICE (10000–10031) läuft **nicht** durch Caddy.
@@ -33,18 +59,19 @@ UDP für coturn (3478 + Relay) und SFU-ICE (10000–10031) läuft **nicht** durc
 | `api/` | Rust-API: Axum 0.8.9, Tokio 1.53.1, **sqlx 0.9.0** (Postgres, gelockt für v1), Redis-Client, Tracing als JSON (Docker: `rust:1.98.1-slim-trixie` → `debian:trixie-slim`) |
 | `web/` | React + Vite (Build: `node:26.8.2-trixie`, Runtime: `nginx:1.31.5-alpine`) |
 | `media/` | Eigener SFU (webrtc **0.20.5**, gelockt; 0.21 ist RC): Room = Sprachkanal, RTP-Forward, kurze Join-Tickets. Dieselben Rust-Images wie die API |
-| `deploy/compose` | Compose-Kern: Caddy 2.11.4, Postgres 18.6, Redis 8.10.1, MinIO CE `RELEASE.2025-10-15T17-29-55Z`, **coturn 4.18.0** (UDP nicht durch Caddy) |
+| `deploy/compose` | Compose-Kern: Caddy 2.11.4, Postgres 18.6, Redis 8.10.1, MinIO CE `RELEASE.2025-10-15T17-29-55Z`, **coturn 4.18.0** (UDP nicht durch Caddy). Optional `--profile observability`: Prometheus 3.14.0 + Grafana 13.2.1 |
 
 Env-Beispiele: `deploy/compose/.env.example`, `api/.env.example`, `web/.env.example`, `media/.env.example`.
 
 ## API
 
-Config ausschließlich aus Env (`API_ADDR`, `DATABASE_URL`, `REDIS_URL`; optional `API_READY_TIMEOUT_MS`, `API_DB_MAX_CONNECTIONS`, `API_COOKIE_SECURE`, `API_SESSION_TTL_HOURS`, `API_WS_HEARTBEAT_MS`, `API_WS_DEAD_MS`, `API_WS_REPLAY`, `API_WS_IDLE_MS`, `API_WS_PRESENCE_TTL_MS`, `API_WS_TYPING_TTL_MS`, `RUST_LOG`). Fehlt eine Pflichtvariable, startet der Prozess nicht und sagt welche. Beim Start laufen die sqlx-Migrationen aus `api/migrations` (Compose startet die API erst, wenn Postgres healthy ist).
+Config ausschließlich aus Env (`API_ADDR`, `DATABASE_URL`, `REDIS_URL`; optional `API_READY_TIMEOUT_MS`, `API_DB_MAX_CONNECTIONS`, `API_COOKIE_SECURE`, `API_SESSION_TTL_HOURS`, `API_WS_HEARTBEAT_MS`, `API_WS_DEAD_MS`, `API_WS_REPLAY`, `API_WS_IDLE_MS`, `API_WS_PRESENCE_TTL_MS`, `API_WS_TYPING_TTL_MS`, `API_RATE_AUTH_PER_MIN`, `API_RATE_API_PER_MIN`, `API_RATE_MSG_PER_MIN`, `API_RATE_UPLOAD_PER_HOUR`, `API_UPLOAD_QUOTA_BYTES_PER_DAY`, `RUST_LOG`). Fehlt eine Pflichtvariable, startet der Prozess nicht und sagt welche. Beim Start laufen die sqlx-Migrationen aus `api/migrations` (Compose startet die API erst, wenn Postgres healthy ist).
 
 | Route | Antwort |
 |---|---|
 | `GET /health` | `200 {"status":"ok"}` — ohne Abhängigkeiten |
 | `GET /ready` | `200 {"status":"ready", ...}` nur wenn Postgres **und** Redis antworten; sonst `503 {"status":"not_ready", ...}` |
+| `GET /metrics` | Prometheus-Text (`gelabber_http_requests_total`, Duration, `gelabber_rate_limited_total`). Nicht über Caddy, nur intern / Compose-Profil. |
 | `GET /ws` | Native WebSocket (issue 6). Session-Cookie, kein Socket.IO. `401` ohne Session; Browser-`Origin` muss zu `Host` passen. |
 | `POST /api/channels/{id}/media-ticket` | Session + `join_voice` + Sprachkanal → `200 {ticket, expires_in, media_path, ice_servers}`; 12-Zeichen-Code in Redis (`gb:mt:{code}`, 30 s). Textkanal: `400`, fremd: `404` |
 | `GET /api/auth/session` | `200 {"user": User\|null, "csrf_token"}` — Bootstrap für den Client, setzt das CSRF-Cookie falls es fehlt |
@@ -162,7 +189,7 @@ Der Web-Client hält eine Socket-Instanz pro Tab, subscribed Server/Kanal aus de
 - **Presign**: `POST /api/channels/{id}/attachments` legt eine Metadaten-Zeile an (`message_id` noch leer) und gibt eine zeitlich begrenzte PUT-URL gegen MinIO zurück. Der Client lädt direkt; die API nimmt den Dateikörper nicht entgegen.
 - **Nachricht**: `attachment_ids` (max. 1 in v1) bindet die Zeile. Der Store macht `Head` — ohne Objekt oder mit anderer Größe ist das `422`. Das WS-Create-Event trägt dasselbe `attachments`-Array wie REST.
 - **Download**: `GET /api/attachments/{id}` prüft die Mitgliedschaft (Pending-Upload nur der Uploader) und streamt oder 302 auf eine kurzlebige Presign-GET. Keine öffentlichen Bucket-URLs.
-- **Limits** (serverseitig): 25 MiB; `image/jpeg|png|gif|webp`, `application/pdf`, `text/plain`, `application/zip`, `audio/mpeg|wav`, `video/mp4`.
+- **Limits** (serverseitig): 25 MiB pro Datei; `image/jpeg|png|gif|webp`, `application/pdf`, `text/plain`, `application/zip`, `audio/mpeg|wav`, `video/mp4`. Zusätzlich: 60 Presigns/Stunde und 1 GiB/Tag und Nutzer (`API_UPLOAD_QUOTA_BYTES_PER_DAY`). Überzug: `429 quota_exceeded`.
 - **Feel**: Bild-Preview steht sofort (Object-URL); der Upload läuft im Hintergrund und blockiert den Composer nicht.
 - **MinIO**: Image bleibt Source-Build `RELEASE.2025-10-15T17-29-55Z`. Compose setzt `MINIO_PUBLIC_ENDPOINT` (Browser) und `MINIO_API_CORS_ALLOW_ORIGIN`. sqlx bleibt 0.9.0. Kein LiveKit.
 
@@ -171,7 +198,7 @@ Der Web-Client hält eine Socket-Instanz pro Tab, subscribed Server/Kanal aus de
 - **E-Mail + Passwort**, Hash **Argon2id** (19 MiB, t=2, p=1, PHC-String). Unbekannte E-Mail wird gegen einen beim Start vorberechneten Dummy-Hash geprüft, damit Login-Zeiten nichts verraten. Passwörter länger als 128 Zeichen lehnt auch der Login sofort ab (`invalid_credentials`).
 - **Session** = Cookie `gelabber_session` (`HttpOnly; SameSite=Lax; Path=/`, `Max-Age` aus `API_SESSION_TTL_HOURS`, Default 30 Tage; `Secure` per `API_COOKIE_SECURE=true`). In Postgres liegt nur der SHA-256 des Tokens. Login/Register widerrufen die Session hinter dem mitgeschickten Cookie und räumen abgelaufene Zeilen weg — pro Browser bleibt eine Zeile.
 - **CSRF**: Cookie `gelabber_csrf` (ebenfalls `HttpOnly`) plus derselbe Wert im JSON-Body von `/api/auth/session`, Login, Register und Logout. Jede Mutation unter `/api` (alles außer `GET`/`HEAD`/`OPTIONS`) braucht den Header `X-CSRF-Token` mit exakt diesem Wert, sonst `403 csrf_invalid`. Requests mit `Sec-Fetch-Site: cross-site` werden unabhängig davon abgelehnt. Login/Register/Logout rotieren das Token.
-- **Fehler** kommen immer als `{"error": <code>, "message": <text>, "fields"?: {<feld>: <code>}}`. Codes: `validation_failed`, `bad_request`, `unauthenticated`, `invalid_credentials`, `csrf_invalid`, `email_taken`, `forbidden`, `not_found`, `invite_invalid`, `banned`, `internal`. Feld-Codes: `required`, `invalid`, `too_short`, `too_long`, `taken`. Interne Ursachen stehen nur im Log.
+- **Fehler** kommen immer als `{"error": <code>, "message": <text>, "fields"?: {<feld>: <code>}, "retry_after"?: <sek>}`. Codes: `validation_failed`, `bad_request`, `unauthenticated`, `invalid_credentials`, `csrf_invalid`, `email_taken`, `forbidden`, `not_found`, `invite_invalid`, `banned`, `rate_limited`, `quota_exceeded`, `internal`. Feld-Codes: `required`, `invalid`, `too_short`, `too_long`, `taken`. Interne Ursachen stehen nur im Log. `429` trägt `Retry-After`; die UI zeigt den Code als Text, kein Spinner.
 - **Nicht in v1**: OAuth, fremdes JWT, Magic Links, 2FA, SSO, Passkeys, E2E. Avatar ist in v1 eine `https://`-URL (kein `http://`, kein Mixed Content hinter TLS); Datei-Upload kommt mit dem Dateien-/MinIO-Ticket.
 
 Tests gegen echtes Postgres: `DATABASE_URL=postgres://gelabber:gelabber@127.0.0.1:5432/gelabber cargo test -p gelabber-api` (`#[sqlx::test]` legt pro Test eine Wegwerf-Datenbank an; ohne `DATABASE_URL` schlagen die `tests/auth.rs`-, `tests/servers.rs`-, `tests/messages.rs`-, `tests/dms.rs`-, `tests/moderation.rs`- und `tests/attachments.rs`-Tests fehl, `/health`- und `/ready`-Tests laufen ohne). Gateway-Tests (`tests/gateway.rs`) brauchen zusätzlich Redis (`REDIS_URL`, Default `redis://127.0.0.1:6379`). Der In-Process-HTTP-Client mit Cookie-Jar liegt in `tests/common/mod.rs`. Attachment-Bytes laufen in den Tests über den In-Memory-Store (kein MinIO).
@@ -183,6 +210,24 @@ Tests gegen echtes Postgres: `DATABASE_URL=postgres://gelabber:gelabber@127.0.0.
 ```
 
 Jede Antwort erzeugt eine JSON-Access-Log-Zeile auf `INFO` (Methode, Pfad, Status, Latenz). Ein nicht parsbares `RUST_LOG` beendet den Start wie jede andere ungültige Env-Variable.
+
+### Rate-Limits und Upload-Quotas (issue 16)
+
+Serverseitig, ein Prozess (kein Multi-Node). `0` in der Env schaltet den jeweiligen Bucket ab.
+
+| Bucket | Default | Schlüssel |
+|---|---|---|
+| Login / Register | 20 / min | Client-IP (`X-Forwarded-For`) |
+| Mutierende `/api`-Calls | 180 / min | Session, sonst IP |
+| Nachrichten-POST | 60 / min | Session |
+| Attachment-Presign | 60 / h | Session |
+| Upload-Bytes | 1 GiB / Tag und Nutzer | `attachments.created_at` (Postgres) |
+
+Nachrichtentext bleibt 2000 Zeichen, Datei 25 MiB. Überzug: `429` + `{"error":"rate_limited"|"quota_exceeded","retry_after"?}` und Header `Retry-After`. Die UI mapped den Code (Toast / FormError) und lässt den Submit-Button nach dem Request zurück — kein Spinner.
+
+Caddy **2.11.4**: Health/Ready 10 s, `/api` 60 s, `/ws` und `/media` ohne Read/Write-Timeout (lange Sockets).
+
+Media exportiert `GET /metrics` mit `gelabber_media_rooms`, `gelabber_media_peers`, `gelabber_media_forwarded_bytes_total`, `gelabber_media_ice_fails_total`. `/health` und `/ready` bleiben JSON.
 
 Lokal ohne Compose:
 
@@ -201,6 +246,8 @@ cargo run -p gelabber-media
 `media/` ist die Binary, nicht mehr nur ein Stub. **webrtc 0.20.5** ist gelockt (0.21 ist RC; str0m wurde nicht gewählt). Room = Sprachkanal. Join nur mit internem 12-Zeichen-Ticket aus Redis (`GETDEL`). RTP wird von Publishern an die anderen Peers im Room weitergereicht. Ein Prozess, kein Mesh, kein Recording, kein LiveKit.
 
 coturn **4.18.0** (`coturn/coturn:4.18.0`) hängt in Compose an 3478/udp+tcp und 49160–49200/udp. Der SFU published 10000–10031/udp (ICE-Lite Host, `MEDIA_ADVERTISED_IP`). Caddy bleibt TCP-only.
+
+`GET /metrics` und `GET /media/metrics`: `gelabber_media_rooms`, `gelabber_media_peers`, `gelabber_media_forwarded_bytes_total`, `gelabber_media_ice_fails_total`.
 
 Media-WS (nicht der Chat-WS):
 

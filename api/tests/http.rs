@@ -138,3 +138,40 @@ async fn ready_does_not_hang_on_stalled_dependencies() {
     pg_task.abort();
     redis_task.abort();
 }
+
+#[tokio::test]
+async fn metrics_is_prometheus_text_and_health_stays_json() {
+    let unreachable = closed_port().await;
+    let state = AppState::from_config(&config(unreachable, unreachable, 500)).unwrap();
+    let app = app(state);
+
+    let health = app
+        .clone()
+        .oneshot(Request::get("/health").body(Body::empty()).unwrap())
+        .await
+        .unwrap();
+    assert_eq!(health.status(), StatusCode::OK);
+    let health_bytes = to_bytes(health.into_body(), 1 << 16).await.unwrap();
+    let health_json: Value = serde_json::from_slice(&health_bytes).unwrap();
+    assert_eq!(health_json["status"], "ok");
+
+    let metrics = app
+        .oneshot(Request::get("/metrics").body(Body::empty()).unwrap())
+        .await
+        .unwrap();
+    assert_eq!(metrics.status(), StatusCode::OK);
+    let content_type = metrics
+        .headers()
+        .get("content-type")
+        .and_then(|v| v.to_str().ok())
+        .unwrap_or("");
+    assert!(
+        content_type.starts_with("text/plain"),
+        "metrics content-type: {content_type}"
+    );
+    let body = to_bytes(metrics.into_body(), 1 << 16).await.unwrap();
+    let text = String::from_utf8(body.to_vec()).unwrap();
+    assert!(text.contains("# TYPE gelabber_http_requests_total counter"));
+    assert!(text.contains("gelabber_http_requests_total{method=\"GET\",status=\"200\"}"));
+    assert!(!text.contains("\"status\":\"ok\""));
+}

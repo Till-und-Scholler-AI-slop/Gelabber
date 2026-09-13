@@ -16,7 +16,8 @@
 
 use std::collections::BTreeMap;
 
-use axum::http::StatusCode;
+use axum::http::header::RETRY_AFTER;
+use axum::http::{HeaderValue, StatusCode};
 use axum::response::{IntoResponse, Json, Response};
 use serde::Serialize;
 use tracing::error;
@@ -47,6 +48,10 @@ pub enum ApiError {
     InviteInvalid,
     /// 403: the caller is banned from this server (invite rejoin included).
     Banned,
+    /// 429: a request window (auth / API / messages / uploads) is exhausted.
+    RateLimited { retry_after: u64 },
+    /// 429: the caller's daily upload byte quota is full.
+    QuotaExceeded,
     /// 500: anything unexpected. The string is logged, not returned.
     Internal(String),
 }
@@ -57,6 +62,8 @@ pub struct ErrorBody {
     pub message: &'static str,
     #[serde(skip_serializing_if = "BTreeMap::is_empty")]
     pub fields: FieldErrors,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub retry_after: Option<u64>,
 }
 
 impl ApiError {
@@ -72,6 +79,8 @@ impl ApiError {
             Self::EmailTaken => "email_taken",
             Self::InviteInvalid => "invite_invalid",
             Self::Banned => "banned",
+            Self::RateLimited { .. } => "rate_limited",
+            Self::QuotaExceeded => "quota_exceeded",
             Self::Internal(_) => "internal",
         }
     }
@@ -85,6 +94,7 @@ impl ApiError {
             Self::NotFound => StatusCode::NOT_FOUND,
             Self::EmailTaken => StatusCode::CONFLICT,
             Self::InviteInvalid => StatusCode::GONE,
+            Self::RateLimited { .. } | Self::QuotaExceeded => StatusCode::TOO_MANY_REQUESTS,
             Self::Internal(_) => StatusCode::INTERNAL_SERVER_ERROR,
         }
     }
@@ -101,6 +111,8 @@ impl ApiError {
             Self::EmailTaken => "This e-mail address is already registered.",
             Self::InviteInvalid => "This invite link has expired or been used up.",
             Self::Banned => "You are banned from this server.",
+            Self::RateLimited { .. } => "Too many requests. Try again in a moment.",
+            Self::QuotaExceeded => "Daily upload quota reached.",
             Self::Internal(_) => "Something went wrong on our side.",
         }
     }
@@ -111,10 +123,15 @@ impl ApiError {
             Self::EmailTaken => BTreeMap::from([("email", "taken")]),
             _ => BTreeMap::new(),
         };
+        let retry_after = match self {
+            Self::RateLimited { retry_after } => Some(*retry_after),
+            _ => None,
+        };
         ErrorBody {
             error: self.code(),
             message: self.message(),
             fields,
+            retry_after,
         }
     }
 }
@@ -126,7 +143,17 @@ impl IntoResponse for ApiError {
             Self::BadRequest(detail) => tracing::debug!(error = %detail, "bad request"),
             _ => {}
         }
-        (self.status(), Json(self.body())).into_response()
+        let retry_after = match &self {
+            Self::RateLimited { retry_after } => Some(*retry_after),
+            _ => None,
+        };
+        let mut response = (self.status(), Json(self.body())).into_response();
+        if let Some(seconds) = retry_after
+            && let Ok(value) = HeaderValue::from_str(&seconds.to_string())
+        {
+            response.headers_mut().insert(RETRY_AFTER, value);
+        }
+        response
     }
 }
 
@@ -162,5 +189,14 @@ mod tests {
         assert_eq!(json["error"], "internal");
         assert!(json.get("fields").is_none());
         assert!(!json.to_string().contains("connection reset"));
+    }
+
+    #[test]
+    fn rate_limited_body_carries_retry_after() {
+        let err = ApiError::RateLimited { retry_after: 12 };
+        let json = serde_json::to_value(err.body()).unwrap();
+        assert_eq!(json["error"], "rate_limited");
+        assert_eq!(json["retry_after"], 12);
+        assert_eq!(err.status(), StatusCode::TOO_MANY_REQUESTS);
     }
 }

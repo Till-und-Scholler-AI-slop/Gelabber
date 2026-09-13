@@ -23,6 +23,7 @@ use uuid::Uuid;
 use crate::auth::session::CurrentUser;
 use crate::error::{ApiError, FieldErrors};
 use crate::json::Body;
+use crate::limits;
 use crate::messages::{self, Message};
 use crate::path::Id;
 use crate::state::AppState;
@@ -126,6 +127,8 @@ async fn presign(
     let filename = filename.expect("validated");
     let content_type = content_type.expect("validated");
     let size = size.expect("validated");
+
+    limits::check_upload_quota(&state, user.id, size).await?;
 
     if let Err(err) = state.store.ensure_ready().await {
         return Err(store_internal(err));

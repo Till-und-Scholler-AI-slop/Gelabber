@@ -149,6 +149,23 @@ describe("api client", () => {
     expect(error.code).toBe("network");
   });
 
+  it("surfaces a 429 rate_limited envelope without hanging", async () => {
+    install(() =>
+      jsonResponse(429, {
+        error: "rate_limited",
+        message: "Too many requests. Try again in a moment.",
+        retry_after: 8,
+      }),
+    );
+    const error = (await api("/auth/login", {
+      method: "POST",
+      body: {},
+    }).catch((e: unknown) => e)) as ApiError;
+    expect(error.code).toBe("rate_limited");
+    expect(error.status).toBe(429);
+    expect(error.retryAfter).toBe(8);
+  });
+
   it("turns a timeout into a timeout ApiError", async () => {
     vi.stubGlobal(
       "fetch",

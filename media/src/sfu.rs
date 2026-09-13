@@ -5,7 +5,7 @@
 use std::collections::{HashMap, VecDeque};
 use std::net::SocketAddr;
 use std::sync::Arc;
-use std::sync::atomic::{AtomicU16, Ordering};
+use std::sync::atomic::{AtomicU16, AtomicU64, Ordering};
 use std::time::Duration;
 
 use rtc::media_stream::MediaStreamTrack;
@@ -37,6 +37,7 @@ pub struct PeerId(pub Uuid);
 enum PcEvent {
     Ice(RTCIceCandidateInit),
     Track(Arc<dyn TrackRemote>),
+    IceFailed,
     Closed,
 }
 
@@ -72,6 +73,9 @@ impl PeerConnectionEventHandler for Handler {
         state: webrtc::peer_connection::RTCPeerConnectionState,
     ) {
         use webrtc::peer_connection::RTCPeerConnectionState;
+        if state == RTCPeerConnectionState::Failed {
+            let _ = self.tx.send(PcEvent::IceFailed);
+        }
         if matches!(
             state,
             RTCPeerConnectionState::Failed | RTCPeerConnectionState::Closed
@@ -199,6 +203,15 @@ pub struct Sfu {
     ice_ports: IcePorts,
     advertised_ip: Option<String>,
     rooms: RwLock<HashMap<Uuid, Arc<Mutex<Room>>>>,
+    stats: Arc<SfuStats>,
+}
+
+#[derive(Default)]
+struct SfuStats {
+    rooms: AtomicU64,
+    peers: AtomicU64,
+    forwarded_bytes: AtomicU64,
+    ice_fails: AtomicU64,
 }
 
 impl Sfu {
@@ -212,12 +225,34 @@ impl Sfu {
             ice_ports: IcePorts::from_config(config),
             advertised_ip: config.advertised_ip.clone(),
             rooms: RwLock::new(HashMap::new()),
+            stats: Arc::new(SfuStats::default()),
         }
     }
 
     pub fn room_count(&self) -> usize {
         // test helper; cheap snapshot
         self.rooms.try_read().map(|g| g.len()).unwrap_or(0)
+    }
+
+    pub fn metrics_text(&self) -> String {
+        let rooms = self.stats.rooms.load(Ordering::Relaxed);
+        let peers = self.stats.peers.load(Ordering::Relaxed);
+        let forwarded = self.stats.forwarded_bytes.load(Ordering::Relaxed);
+        let ice_fails = self.stats.ice_fails.load(Ordering::Relaxed);
+        format!(
+            "# HELP gelabber_media_rooms Active SFU rooms (voice channels with at least one peer).\n\
+             # TYPE gelabber_media_rooms gauge\n\
+             gelabber_media_rooms {rooms}\n\
+             # HELP gelabber_media_peers Connected peers across all rooms.\n\
+             # TYPE gelabber_media_peers gauge\n\
+             gelabber_media_peers {peers}\n\
+             # HELP gelabber_media_forwarded_bytes_total RTP payload bytes forwarded to subscribers.\n\
+             # TYPE gelabber_media_forwarded_bytes_total counter\n\
+             gelabber_media_forwarded_bytes_total {forwarded}\n\
+             # HELP gelabber_media_ice_fails_total Peer connections that entered the ICE failed state.\n\
+             # TYPE gelabber_media_ice_fails_total counter\n\
+             gelabber_media_ice_fails_total {ice_fails}\n"
+        )
     }
 
     pub async fn join(
@@ -234,6 +269,7 @@ impl Sfu {
         let room = self.room(claim.c).await;
         {
             let mut room = room.lock().await;
+            let first = room.peers.is_empty();
             room.peers.insert(
                 peer_id,
                 Peer {
@@ -247,6 +283,10 @@ impl Sfu {
                     next_kind: VecDeque::new(),
                 },
             );
+            if first {
+                self.stats.rooms.fetch_add(1, Ordering::Relaxed);
+            }
+            self.stats.peers.fetch_add(1, Ordering::Relaxed);
         }
 
         info!(
@@ -376,6 +416,7 @@ impl Sfu {
             room.peers.remove(&peer_id)
         };
         if let Some(peer) = peer {
+            saturating_dec(&self.stats.peers);
             let _ = peer.pc.close().await;
             info!(peer = %peer_id.0, channel = %channel_id, "sfu leave");
         }
@@ -383,8 +424,8 @@ impl Sfu {
             let room = room.lock().await;
             room.peers.is_empty()
         };
-        if empty {
-            self.rooms.write().await.remove(&channel_id);
+        if empty && self.rooms.write().await.remove(&channel_id).is_some() {
+            saturating_dec(&self.stats.rooms);
         }
     }
 
@@ -462,6 +503,9 @@ impl Sfu {
                     if let Err(err) = self.publish(peer_id, channel_id, track).await {
                         warn!(peer = %peer_id.0, error = %err, "publish failed");
                     }
+                }
+                PcEvent::IceFailed => {
+                    self.stats.ice_fails.fetch_add(1, Ordering::Relaxed);
                 }
                 PcEvent::Closed => break,
             }
@@ -691,14 +735,17 @@ impl Sfu {
         }
 
         let mut rx = packets.subscribe();
+        let forwarded = Arc::clone(&self.stats);
         tokio::spawn(async move {
             loop {
                 match rx.recv().await {
                     Ok(mut packet) => {
+                        let n = packet.payload.len() as u64;
                         packet.header.ssrc = ssrc;
                         if local.write_rtp(packet).await.is_err() {
                             break;
                         }
+                        forwarded.forwarded_bytes.fetch_add(n, Ordering::Relaxed);
                     }
                     Err(broadcast::error::RecvError::Lagged(_)) => continue,
                     Err(broadcast::error::RecvError::Closed) => break,
@@ -721,6 +768,17 @@ impl Sfu {
                 warn!(error = %err, "renegotiation offer failed");
                 sdp.lock().await.have_local_offer = false;
             }
+        }
+    }
+}
+
+fn saturating_dec(atom: &AtomicU64) {
+    let mut current = atom.load(Ordering::Relaxed);
+    while current > 0 {
+        match atom.compare_exchange_weak(current, current - 1, Ordering::Relaxed, Ordering::Relaxed)
+        {
+            Ok(_) => return,
+            Err(seen) => current = seen,
         }
     }
 }
