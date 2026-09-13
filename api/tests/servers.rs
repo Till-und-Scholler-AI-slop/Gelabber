@@ -691,7 +691,7 @@ async fn member_permission_flags_are_enforced_and_editable(pool: PgPool) {
         "canonical order, independent of input order"
     );
     assert_eq!(res.body["role"], "owner");
-    assert_eq!(res.body["permissions"].as_array().unwrap().len(), 6);
+    assert_eq!(res.body["permissions"].as_array().unwrap().len(), 7);
 
     let res = member
         .send(
