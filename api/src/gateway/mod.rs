@@ -13,7 +13,7 @@
 //! enter the chat replay log.
 //!
 //! **Issue 10 (signaling)** uses `op: "sig"` (join/leave, offer/answer,
-//! ice, pub/unpub). Those frames are not mixed into `op: "e"`.
+//! ice, pub/unpub, mute/deafen). Those frames are not mixed into `op: "e"`.
 
 mod conn;
 mod hub;

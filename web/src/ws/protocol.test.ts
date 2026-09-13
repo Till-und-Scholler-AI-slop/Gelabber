@@ -26,9 +26,7 @@ describe("ws protocol", () => {
       u: "u1",
       st: "o",
     });
-    expect(
-      decode('{"op":"y","s":"srv","c":"ch","u":"u1","on":true}'),
-    ).toEqual({
+    expect(decode('{"op":"y","s":"srv","c":"ch","u":"u1","on":true}')).toEqual({
       op: "y",
       s: "srv",
       c: "ch",
@@ -54,9 +52,7 @@ describe("ws protocol", () => {
       i: "m1",
       d: { b: "hi" },
     });
-    const sig = decode(
-      '{"op":"sig","t":"j","s":"srv","c":"voice","u":"u1"}',
-    );
+    const sig = decode('{"op":"sig","t":"j","s":"srv","c":"voice","u":"u1"}');
     expect(sig).toEqual({
       op: "sig",
       t: "j",
@@ -64,14 +60,34 @@ describe("ws protocol", () => {
       c: "voice",
       u: "u1",
     });
+    expect(
+      decode('{"op":"sig","t":"m","s":"srv","c":"voice","u":"u1","on":true}'),
+    ).toEqual({
+      op: "sig",
+      t: "m",
+      s: "srv",
+      c: "voice",
+      u: "u1",
+      on: true,
+    });
+    expect(
+      decode(
+        '{"op":"sig","t":"r","s":"srv","snap":[{"u":"u1","c":"voice","m":true}]}',
+      ),
+    ).toEqual({
+      op: "sig",
+      t: "r",
+      s: "srv",
+      snap: [{ u: "u1", c: "voice", m: true }],
+    });
     expect(decode('{"op":"lk","t":"offer"}')).toBeNull();
     expect(decode("not-json")).toBeNull();
   });
 
   it("keeps signaling frames small", () => {
-    expect(
-      encode({ op: "sig", t: "j", s: "srv", c: "voice" }),
-    ).toBe('{"op":"sig","t":"j","s":"srv","c":"voice"}');
+    expect(encode({ op: "sig", t: "j", s: "srv", c: "voice" })).toBe(
+      '{"op":"sig","t":"j","s":"srv","c":"voice"}',
+    );
     expect(
       encode({
         op: "sig",
@@ -81,8 +97,9 @@ describe("ws protocol", () => {
         ice: "cand",
         mid: "0",
       }),
-    ).toBe(
-      '{"op":"sig","t":"i","s":"srv","c":"voice","ice":"cand","mid":"0"}',
+    ).toBe('{"op":"sig","t":"i","s":"srv","c":"voice","ice":"cand","mid":"0"}');
+    expect(encode({ op: "sig", t: "m", s: "srv", c: "voice", on: true })).toBe(
+      '{"op":"sig","t":"m","s":"srv","c":"voice","on":true}',
     );
   });
 

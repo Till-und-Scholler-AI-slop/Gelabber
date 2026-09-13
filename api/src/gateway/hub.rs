@@ -17,7 +17,7 @@ use uuid::Uuid;
 
 use super::protocol::{
     CatchUp, Event, EventDraft, LiveTopic, REDIS_PREFIX, ServerFrame, SigEvent, Topic, TrackKind,
-    plan_catch_up,
+    VoiceEntry, plan_catch_up,
 };
 use crate::error::ApiError;
 
@@ -77,6 +77,20 @@ struct Inner {
 struct VoiceSeat {
     server_id: Uuid,
     pubs: HashSet<TrackKind>,
+    muted: bool,
+    deafened: bool,
+}
+
+#[derive(Clone, Copy, PartialEq, Eq)]
+enum VoiceFlag {
+    Mute,
+    Deafen,
+}
+
+struct Occupancy {
+    channel_id: Uuid,
+    muted: bool,
+    deafened: bool,
 }
 
 struct Socket {
@@ -172,7 +186,10 @@ impl Gateway {
     pub async fn detach(&self, id: ConnId) -> Option<(Uuid, HashSet<Uuid>, HashSet<(Uuid, Uuid)>)> {
         let socket = self.inner.sockets.write().await.remove(&id)?;
         for (channel_id, seat) in socket.rooms {
-            match self.redis_leave_member(channel_id, socket.user_id).await {
+            match self
+                .redis_leave_member(seat.server_id, channel_id, socket.user_id)
+                .await
+            {
                 Ok(true) => {
                     let _ = self
                         .publish_sig(SigEvent::leave(seat.server_id, channel_id, socket.user_id))
@@ -314,9 +331,21 @@ impl Gateway {
     }
 
     async fn deliver_sig(&self, channel_id: Uuid, frame: ServerFrame) {
+        let (kind, server_id) = match &frame {
+            ServerFrame::Sig { t, s, .. } => (*t, *s),
+            _ => return,
+        };
+        let media = kind.room_only();
         let sockets = self.inner.sockets.read().await;
         for socket in sockets.values() {
-            if socket.rooms.contains_key(&channel_id) {
+            let in_room = socket.rooms.contains_key(&channel_id);
+            if media {
+                if in_room {
+                    let _ = socket.tx.send(frame.clone());
+                }
+                continue;
+            }
+            if in_room || socket.servers.contains(&server_id) {
                 let _ = socket.tx.send(frame.clone());
             }
         }
@@ -521,6 +550,8 @@ impl Gateway {
                         slot.insert(VoiceSeat {
                             server_id,
                             pubs: HashSet::new(),
+                            muted: false,
+                            deafened: false,
                         });
                         true
                     }
@@ -532,14 +563,23 @@ impl Gateway {
         };
         if inserted {
             self.redis_join_member(channel_id, user_id).await?;
+            self.redis_put_occupancy(server_id, user_id, channel_id, false, false)
+                .await?;
         }
+        let occupancy = self.redis_occupancy(server_id).await?;
         let roster = self.redis_roster(channel_id).await?;
         let mut snapshot = Vec::new();
         for (uid, pubs) in roster {
             if uid == user_id {
                 continue;
             }
-            snapshot.push(SigEvent::join(server_id, channel_id, uid));
+            let (muted, deafened) = occupancy
+                .get(&uid)
+                .map(|row| (row.muted, row.deafened))
+                .unwrap_or((false, false));
+            snapshot.push(SigEvent::join_state(
+                server_id, channel_id, uid, muted, deafened,
+            ));
             for kind in pubs {
                 snapshot.push(SigEvent::published(server_id, channel_id, uid, kind));
             }
@@ -565,11 +605,95 @@ impl Gateway {
         if !was_in {
             return Ok(false);
         }
-        if self.redis_leave_member(channel_id, user_id).await? {
+        if self
+            .redis_leave_member(server_id, channel_id, user_id)
+            .await?
+        {
             self.publish_sig(SigEvent::leave(server_id, channel_id, user_id))
                 .await?;
         }
         Ok(true)
+    }
+
+    pub async fn set_voice_mute(
+        &self,
+        id: ConnId,
+        user_id: Uuid,
+        server_id: Uuid,
+        channel_id: Uuid,
+        on: bool,
+    ) -> Result<bool, ApiError> {
+        self.set_voice_flag(id, user_id, server_id, channel_id, VoiceFlag::Mute, on)
+            .await
+    }
+
+    pub async fn set_voice_deafen(
+        &self,
+        id: ConnId,
+        user_id: Uuid,
+        server_id: Uuid,
+        channel_id: Uuid,
+        on: bool,
+    ) -> Result<bool, ApiError> {
+        self.set_voice_flag(id, user_id, server_id, channel_id, VoiceFlag::Deafen, on)
+            .await
+    }
+
+    async fn set_voice_flag(
+        &self,
+        id: ConnId,
+        user_id: Uuid,
+        server_id: Uuid,
+        channel_id: Uuid,
+        flag: VoiceFlag,
+        on: bool,
+    ) -> Result<bool, ApiError> {
+        let (muted, deafened) = {
+            let mut sockets = self.inner.sockets.write().await;
+            let Some(seat) = sockets
+                .get_mut(&id)
+                .and_then(|socket| socket.rooms.get_mut(&channel_id))
+            else {
+                return Ok(false);
+            };
+            match flag {
+                VoiceFlag::Mute => seat.muted = on,
+                VoiceFlag::Deafen => {
+                    seat.deafened = on;
+                    if on {
+                        seat.muted = true;
+                    }
+                }
+            }
+            (seat.muted, seat.deafened)
+        };
+        self.redis_write_occupancy(server_id, user_id, channel_id, muted, deafened)
+            .await?;
+        let event = match flag {
+            VoiceFlag::Mute => SigEvent::muted(server_id, channel_id, user_id, on),
+            VoiceFlag::Deafen => SigEvent::deafened(server_id, channel_id, user_id, on),
+        };
+        self.publish_sig(event).await?;
+        if flag == VoiceFlag::Deafen && on {
+            self.publish_sig(SigEvent::muted(server_id, channel_id, user_id, true))
+                .await?;
+        }
+        Ok(true)
+    }
+
+    pub async fn voice_snapshot(&self, server_id: Uuid) -> Result<Vec<VoiceEntry>, ApiError> {
+        let occupancy = self.redis_occupancy(server_id).await?;
+        let mut rows: Vec<VoiceEntry> = occupancy
+            .into_iter()
+            .map(|(u, row)| VoiceEntry {
+                u,
+                c: row.channel_id,
+                m: row.muted,
+                d: row.deafened,
+            })
+            .collect();
+        rows.sort_by_key(|row| row.u);
+        Ok(rows)
     }
 
     pub async fn set_voice_pub(
@@ -601,17 +725,8 @@ impl Gateway {
                 .await?;
         } else {
             self.redis_remove_pub(channel_id, user_id, kind).await?;
-            self.publish_sig(SigEvent {
-                t: super::protocol::SigKind::U,
-                s: server_id,
-                c: channel_id,
-                u: user_id,
-                sdp: None,
-                ice: None,
-                mid: None,
-                k: Some(kind),
-            })
-            .await?;
+            self.publish_sig(SigEvent::unpublished(server_id, channel_id, user_id, kind))
+                .await?;
         }
         Ok(true)
     }
@@ -660,8 +775,13 @@ impl Gateway {
     }
 
     /// Decrement the per-user seat count. `true` = last socket left: drop
-    /// the roster row and pubs, caller should broadcast `t:"l"`.
-    async fn redis_leave_member(&self, channel_id: Uuid, user_id: Uuid) -> Result<bool, ApiError> {
+    /// the roster row, pubs, occupancy, caller should broadcast `t:"l"`.
+    async fn redis_leave_member(
+        &self,
+        server_id: Uuid,
+        channel_id: Uuid,
+        user_id: Uuid,
+    ) -> Result<bool, ApiError> {
         let members = room_key(channel_id);
         let pubs = pubs_key(channel_id, user_id);
         let member = user_id.to_string();
@@ -681,7 +801,110 @@ impl Gateway {
             })
             .await
             .map_err(redis_err)?;
+        if last == 1 {
+            self.redis_drop_occupancy(server_id, user_id).await?;
+        }
         Ok(last == 1)
+    }
+
+    async fn redis_put_occupancy(
+        &self,
+        server_id: Uuid,
+        user_id: Uuid,
+        channel_id: Uuid,
+        muted: bool,
+        deafened: bool,
+    ) -> Result<(), ApiError> {
+        // Second tab of the same user must not wipe mute/deafen.
+        let key = occupancy_key(server_id);
+        let member = user_id.to_string();
+        let value = encode_occupancy(channel_id, muted, deafened);
+        self.with_conn(|mut conn| {
+            let key = key.clone();
+            let member = member.clone();
+            let value = value.clone();
+            async move {
+                redis::cmd("HSETNX")
+                    .arg(key)
+                    .arg(member)
+                    .arg(value)
+                    .query_async::<i64>(&mut conn)
+                    .await
+                    .map(|_| ())
+            }
+        })
+        .await
+        .map_err(redis_err)
+    }
+
+    async fn redis_write_occupancy(
+        &self,
+        server_id: Uuid,
+        user_id: Uuid,
+        channel_id: Uuid,
+        muted: bool,
+        deafened: bool,
+    ) -> Result<(), ApiError> {
+        let key = occupancy_key(server_id);
+        let member = user_id.to_string();
+        let value = encode_occupancy(channel_id, muted, deafened);
+        self.with_conn(|mut conn| {
+            let key = key.clone();
+            let member = member.clone();
+            let value = value.clone();
+            async move {
+                redis::cmd("HSET")
+                    .arg(key)
+                    .arg(member)
+                    .arg(value)
+                    .query_async::<i64>(&mut conn)
+                    .await
+                    .map(|_| ())
+            }
+        })
+        .await
+        .map_err(redis_err)
+    }
+
+    async fn redis_drop_occupancy(&self, server_id: Uuid, user_id: Uuid) -> Result<(), ApiError> {
+        let key = occupancy_key(server_id);
+        let member = user_id.to_string();
+        self.with_conn(|mut conn| {
+            let key = key.clone();
+            let member = member.clone();
+            async move {
+                redis::cmd("HDEL")
+                    .arg(key)
+                    .arg(member)
+                    .query_async::<i64>(&mut conn)
+                    .await
+                    .map(|_| ())
+            }
+        })
+        .await
+        .map_err(redis_err)
+    }
+
+    async fn redis_occupancy(&self, server_id: Uuid) -> Result<HashMap<Uuid, Occupancy>, ApiError> {
+        let key = occupancy_key(server_id);
+        let seats: HashMap<String, String> = self
+            .with_conn(|mut conn| {
+                let key = key.clone();
+                async move { redis::cmd("HGETALL").arg(key).query_async(&mut conn).await }
+            })
+            .await
+            .map_err(redis_err)?;
+        let mut occupancy = HashMap::with_capacity(seats.len());
+        for (raw, value) in seats {
+            let Ok(uid) = Uuid::parse_str(&raw) else {
+                continue;
+            };
+            let Some(row) = parse_occupancy(&value) else {
+                continue;
+            };
+            occupancy.insert(uid, row);
+        }
+        Ok(occupancy)
     }
 
     async fn redis_add_pub(
@@ -804,4 +1027,26 @@ fn room_key(channel_id: Uuid) -> String {
 
 fn pubs_key(channel_id: Uuid, user_id: Uuid) -> String {
     format!("{REDIS_PREFIX}vp:{channel_id}:{user_id}")
+}
+
+/// Server-wide voice occupancy for the member list (`user` → channel + flags).
+fn occupancy_key(server_id: Uuid) -> String {
+    format!("{REDIS_PREFIX}vo:{server_id}")
+}
+
+fn encode_occupancy(channel_id: Uuid, muted: bool, deafened: bool) -> String {
+    format!("{channel_id}:{}{}", u8::from(muted), u8::from(deafened))
+}
+
+fn parse_occupancy(raw: &str) -> Option<Occupancy> {
+    let (id, flags) = raw.rsplit_once(':')?;
+    if flags.len() != 2 {
+        return None;
+    }
+    let bytes = flags.as_bytes();
+    Some(Occupancy {
+        channel_id: Uuid::parse_str(id).ok()?,
+        muted: bytes[0] == b'1',
+        deafened: bytes[1] == b'1',
+    })
 }

@@ -6,7 +6,8 @@ import { Link, useNavigate } from "@tanstack/react-router";
 import { useVirtualizer } from "@tanstack/react-virtual";
 import { useMemo, useRef, useState, type ReactNode } from "react";
 
-import { leaveVoice, useVoice } from "../voice/session.ts";
+import { useVoice } from "../voice/session.ts";
+import { VoiceControls } from "./VoiceControls.tsx";
 import { can } from "../servers/permissions.ts";
 import { buildRows, rowHeight, type Row } from "../servers/rows.ts";
 import {
@@ -103,13 +104,7 @@ export function ChannelSidebar({
               {voice.channelName ?? "Voice"}
             </p>
           </div>
-          <button
-            type="button"
-            onClick={() => leaveVoice()}
-            className="shrink-0 rounded-md px-2 py-1 text-xs text-neutral-600 hover:bg-neutral-100 hover:text-neutral-900"
-          >
-            Verlassen
-          </button>
+          <VoiceControls compact />
         </div>
       ) : null}
 

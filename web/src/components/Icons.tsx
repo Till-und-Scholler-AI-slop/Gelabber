@@ -85,6 +85,44 @@ export function ChatIcon(props: IconProps) {
   );
 }
 
+export function MicIcon(props: IconProps) {
+  return (
+    <svg {...base(props)}>
+      <path d="M12 3a3 3 0 0 1 3 3v6a3 3 0 0 1-6 0V6a3 3 0 0 1 3-3Z" />
+      <path d="M19 10v1a7 7 0 0 1-14 0v-1M12 18v3" />
+    </svg>
+  );
+}
+
+export function MicOffIcon(props: IconProps) {
+  return (
+    <svg {...base(props)}>
+      <path d="M9 9v0a3 3 0 0 0 3 3m3-3V6a3 3 0 0 0-4.4-2.6" />
+      <path d="M19 10v1a7 7 0 0 1-9.9 6.4M5 10v1a7 7 0 0 0 4 6.3M12 18v3M4 4l16 16" />
+    </svg>
+  );
+}
+
+export function HeadsetIcon(props: IconProps) {
+  return (
+    <svg {...base(props)}>
+      <path d="M4 14v-2a8 8 0 0 1 16 0v2" />
+      <path d="M4 14a2 2 0 0 0-2 2v1a2 2 0 0 0 2 2h1v-5H4Z" />
+      <path d="M20 14a2 2 0 0 1 2 2v1a2 2 0 0 1-2 2h-1v-5h1Z" />
+    </svg>
+  );
+}
+
+export function HeadsetOffIcon(props: IconProps) {
+  return (
+    <svg {...base(props)}>
+      <path d="M4 14v-2a8 8 0 0 1 12.5-6.6M20 11v3" />
+      <path d="M4 14a2 2 0 0 0-2 2v1a2 2 0 0 0 2 2h1v-5H4Z" />
+      <path d="M20 14h-1v2.5M4 4l16 16" />
+    </svg>
+  );
+}
+
 export function ChevronIcon(props: IconProps) {
   return (
     <svg {...base(props)}>

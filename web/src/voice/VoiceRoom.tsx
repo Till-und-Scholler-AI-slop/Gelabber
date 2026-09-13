@@ -2,7 +2,10 @@
 
 import { can } from "../servers/permissions.ts";
 import type { ServerDetail } from "../servers/types.ts";
-import { joinVoice, leaveVoice, useVoice } from "./session.ts";
+import { VoiceControls } from "../components/VoiceControls.tsx";
+import { VoiceStateIcons } from "../components/VoiceStateIcons.tsx";
+import { joinVoice, useVoice } from "./session.ts";
+import { useVoiceRoster } from "./roster.ts";
 
 export function VoiceRoom({
   server,
@@ -15,8 +18,14 @@ export function VoiceRoom({
 }) {
   const allowed = can(server, "join_voice");
   const voice = useVoice();
+  const roster = useVoiceRoster((s) => s.byServer[server.id] ?? {});
   const here = voice.status === "joined" && voice.channelId === channelId;
-  const members = new Map(server.members.map((member) => [member.user_id, member]));
+  const members = new Map(
+    server.members.map((member) => [member.user_id, member]),
+  );
+  const occupants = Object.entries(roster).filter(
+    ([, flags]) => flags.channelId === channelId,
+  );
 
   const onJoin = () => {
     if (!allowed) return;
@@ -27,41 +36,48 @@ export function VoiceRoom({
     <div className="flex flex-1 flex-col items-center justify-center p-8 text-center">
       <div className="w-full max-w-sm text-neutral-500">
         <p className="text-lg font-medium text-neutral-800">{channelName}</p>
+        {occupants.length > 0 ? (
+          <ul className="mt-4 flex flex-col gap-1 text-left text-sm text-neutral-700">
+            {occupants.map(([id, flags]) => {
+              const member = members.get(id);
+              const pubs = voice.participants[id]?.pubs ?? [];
+              const liveAudio =
+                pubs.includes("a") && !flags.muted && !flags.deafened;
+              return (
+                <li
+                  key={id}
+                  className="flex h-10 items-center justify-between rounded-md bg-neutral-100 px-3"
+                >
+                  <span className="min-w-0 truncate font-medium">
+                    {member?.name ?? "Mitglied"}
+                  </span>
+                  <span className="flex shrink-0 items-center gap-2">
+                    <span className="w-10 text-right text-xs text-neutral-500">
+                      {liveAudio ? "Audio" : "\u00a0"}
+                    </span>
+                    <VoiceStateIcons
+                      inVoice
+                      muted={flags.muted}
+                      deafened={flags.deafened}
+                      channelName={channelName}
+                    />
+                  </span>
+                </li>
+              );
+            })}
+          </ul>
+        ) : (
+          <p className="mt-2 text-sm">Niemand ist in diesem Kanal.</p>
+        )}
         {here ? (
-          <>
-            <p className="mt-2 text-sm text-neutral-800">Verbunden</p>
-            <ul className="mt-4 flex flex-col gap-1 text-left text-sm text-neutral-700">
-              {Object.keys(voice.participants).map((id) => {
-                const member = members.get(id);
-                const pubs = voice.participants[id]?.pubs ?? [];
-                return (
-                  <li
-                    key={id}
-                    className="flex items-center justify-between rounded-md bg-neutral-100 px-3 py-2"
-                  >
-                    <span className="truncate font-medium">
-                      {member?.name ?? "Mitglied"}
-                    </span>
-                    <span className="text-xs text-neutral-500">
-                      {pubs.includes("a") ? "Audio" : "…"}
-                    </span>
-                  </li>
-                );
-              })}
-            </ul>
-            <button
-              type="button"
-              onClick={() => leaveVoice()}
-              className="mt-5 rounded-lg bg-neutral-900 px-4 py-2 text-sm font-medium text-white transition hover:bg-neutral-700"
-            >
-              Verlassen
-            </button>
-          </>
+          <div className="mt-5">
+            <VoiceControls />
+          </div>
         ) : allowed ? (
           <>
             <p className="mt-2 text-sm">
-              Beitreten setzt dich sofort in den Kanal. Ton läuft über
-              den eigenen SFU — ICE im Hintergrund, kein LiveKit.
+              Beitreten setzt dich sofort in den Kanal. Mute und Deafen gelten
+              nur für diese Session.
             </p>
             <button
               type="button"
