@@ -1,5 +1,6 @@
 use std::fmt;
 use std::str::FromStr;
+use std::sync::Arc;
 use std::time::Duration;
 
 use sqlx::PgPool;
@@ -7,7 +8,9 @@ use sqlx::postgres::{PgConnectOptions, PgPoolOptions};
 
 use crate::config::Config;
 use crate::gateway::Gateway;
+use crate::limits::{Limiter, Limits};
 use crate::media::IceServer;
+use crate::metrics::HttpMetrics;
 use crate::storage::ObjectStore;
 
 /// Shared handles for request handlers. Both clients are created lazily so
@@ -35,6 +38,9 @@ pub struct AppState {
     pub media_ticket_ttl: Duration,
     /// MinIO (or in-memory in tests) for attachment bytes.
     pub store: ObjectStore,
+    pub limits: Limits,
+    pub limiter: Arc<Limiter>,
+    pub metrics: Arc<HttpMetrics>,
 }
 
 #[derive(Debug)]
@@ -98,6 +104,9 @@ impl AppState {
             ice_servers: config.ice_servers.clone(),
             media_ticket_ttl: config.media_ticket_ttl,
             store,
+            limits: config.limits,
+            limiter: Arc::new(Limiter::new()),
+            metrics: Arc::new(HttpMetrics::new()),
         })
     }
 

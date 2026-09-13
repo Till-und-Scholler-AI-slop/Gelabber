@@ -5,6 +5,7 @@
 pub mod config;
 pub mod health;
 pub mod ice;
+pub mod metrics;
 pub mod protocol;
 pub mod sfu;
 pub mod state;
@@ -23,6 +24,7 @@ pub use state::AppState;
 pub fn app(state: AppState) -> Router {
     Router::new()
         .merge(health::router())
+        .merge(metrics::router())
         .merge(ws::router())
         .layer(
             TraceLayer::new_for_http()

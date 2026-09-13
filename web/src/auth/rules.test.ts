@@ -78,5 +78,7 @@ describe("copy", () => {
     );
     expect(errorMessage("timeout")).toMatch(/antwortet nicht/);
     expect(errorMessage("network")).toMatch(/Keine Verbindung/);
+    expect(errorMessage("rate_limited")).toMatch(/Zu viele Anfragen/);
+    expect(errorMessage("quota_exceeded")).toMatch(/Tageslimit/);
   });
 });

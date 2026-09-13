@@ -30,3 +30,30 @@ async fn health_is_ok_without_redis() {
         assert_ne!(body["status"], "stub");
     }
 }
+
+#[tokio::test]
+async fn metrics_export_rooms_peers_bytes_and_ice_fails() {
+    let app = app(state());
+    let response = app
+        .oneshot(
+            Request::builder()
+                .uri("/metrics")
+                .body(Body::empty())
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+    assert_eq!(response.status(), StatusCode::OK);
+    let bytes = to_bytes(response.into_body(), 4096).await.unwrap();
+    let text = String::from_utf8(bytes.to_vec()).unwrap();
+    for needle in [
+        "gelabber_media_rooms",
+        "gelabber_media_peers",
+        "gelabber_media_forwarded_bytes_total",
+        "gelabber_media_ice_fails_total",
+    ] {
+        assert!(text.contains(needle), "missing {needle} in {text}");
+    }
+    assert!(text.contains("gelabber_media_rooms 0"));
+    assert!(text.contains("gelabber_media_peers 0"));
+}

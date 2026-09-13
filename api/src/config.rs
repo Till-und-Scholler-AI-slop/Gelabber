@@ -5,6 +5,7 @@ use std::fmt;
 use std::net::SocketAddr;
 use std::time::Duration;
 
+use crate::limits::Limits;
 use crate::media::{IceServer, parse_ice_servers};
 
 pub const API_ADDR: &str = "API_ADDR";
@@ -29,6 +30,11 @@ pub const MINIO_PUBLIC_ENDPOINT: &str = "MINIO_PUBLIC_ENDPOINT";
 pub const MINIO_ROOT_USER: &str = "MINIO_ROOT_USER";
 pub const MINIO_ROOT_PASSWORD: &str = "MINIO_ROOT_PASSWORD";
 pub const MINIO_BUCKET: &str = "MINIO_BUCKET";
+pub const API_RATE_AUTH_PER_MIN: &str = "API_RATE_AUTH_PER_MIN";
+pub const API_RATE_API_PER_MIN: &str = "API_RATE_API_PER_MIN";
+pub const API_RATE_MSG_PER_MIN: &str = "API_RATE_MSG_PER_MIN";
+pub const API_RATE_UPLOAD_PER_HOUR: &str = "API_RATE_UPLOAD_PER_HOUR";
+pub const API_UPLOAD_QUOTA_BYTES_PER_DAY: &str = "API_UPLOAD_QUOTA_BYTES_PER_DAY";
 /// Read by `telemetry::init`, not by `Config`, because the subscriber has to
 /// exist before anything else can be logged.
 pub const RUST_LOG: &str = "RUST_LOG";
@@ -78,6 +84,8 @@ pub struct Config {
     pub media_ticket_ttl: Duration,
     /// MinIO / S3-compatible store for attachments. Absent in unit tests.
     pub minio: Option<MinioConfig>,
+    /// Request windows and daily upload bytes (issue #16).
+    pub limits: Limits,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -201,6 +209,7 @@ impl Config {
             None => DEFAULT_MEDIA_TICKET_TTL_SECS,
         };
         let minio = parse_minio(&get)?;
+        let limits = parse_limits(&get)?;
 
         Ok(Self {
             api_addr,
@@ -219,8 +228,52 @@ impl Config {
             ice_servers,
             media_ticket_ttl: Duration::from_secs(media_ticket_ttl_secs),
             minio,
+            limits,
         })
     }
+}
+
+fn parse_limits(get: &impl Fn(&str) -> Option<String>) -> Result<Limits, ConfigError> {
+    let defaults = Limits::default();
+    let auth_per_min = match get(API_RATE_AUTH_PER_MIN) {
+        Some(raw) => parse_u32_allow_zero(API_RATE_AUTH_PER_MIN, &raw)?,
+        None => defaults.auth_per_min,
+    };
+    let api_per_min = match get(API_RATE_API_PER_MIN) {
+        Some(raw) => parse_u32_allow_zero(API_RATE_API_PER_MIN, &raw)?,
+        None => defaults.api_per_min,
+    };
+    let msg_per_min = match get(API_RATE_MSG_PER_MIN) {
+        Some(raw) => parse_u32_allow_zero(API_RATE_MSG_PER_MIN, &raw)?,
+        None => defaults.msg_per_min,
+    };
+    let upload_per_hour = match get(API_RATE_UPLOAD_PER_HOUR) {
+        Some(raw) => parse_u32_allow_zero(API_RATE_UPLOAD_PER_HOUR, &raw)?,
+        None => defaults.upload_per_hour,
+    };
+    let upload_bytes_per_day = match get(API_UPLOAD_QUOTA_BYTES_PER_DAY) {
+        Some(raw) => parse_u64_allow_zero(API_UPLOAD_QUOTA_BYTES_PER_DAY, &raw)?,
+        None => defaults.upload_bytes_per_day,
+    };
+    Ok(Limits {
+        auth_per_min,
+        api_per_min,
+        msg_per_min,
+        upload_per_hour,
+        upload_bytes_per_day,
+    })
+}
+
+fn parse_u32_allow_zero(key: &'static str, raw: &str) -> Result<u32, ConfigError> {
+    raw.trim()
+        .parse::<u32>()
+        .map_err(|err| invalid(key, raw, err))
+}
+
+fn parse_u64_allow_zero(key: &'static str, raw: &str) -> Result<u64, ConfigError> {
+    raw.trim()
+        .parse::<u64>()
+        .map_err(|err| invalid(key, raw, err))
 }
 
 fn parse_minio(get: &impl Fn(&str) -> Option<String>) -> Result<Option<MinioConfig>, ConfigError> {
@@ -320,6 +373,21 @@ mod tests {
         assert!(config.ice_servers.is_empty());
         assert_eq!(config.media_ticket_ttl, Duration::from_secs(30));
         assert!(config.minio.is_none());
+        assert_eq!(config.limits, Limits::default());
+    }
+
+    #[test]
+    fn parses_limit_overrides_including_zero() {
+        let config = Config::from_source(source(&[
+            (DATABASE_URL, "postgres://u:p@localhost/db"),
+            (REDIS_URL, "redis://localhost"),
+            (API_RATE_AUTH_PER_MIN, "3"),
+            (API_UPLOAD_QUOTA_BYTES_PER_DAY, "0"),
+        ]))
+        .expect("valid config");
+        assert_eq!(config.limits.auth_per_min, 3);
+        assert_eq!(config.limits.upload_bytes_per_day, 0);
+        assert_eq!(config.limits.api_per_min, Limits::default().api_per_min);
     }
 
     #[test]

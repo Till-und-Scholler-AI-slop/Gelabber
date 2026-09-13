@@ -8,8 +8,10 @@ pub mod error;
 pub mod gateway;
 pub mod health;
 pub mod json;
+pub mod limits;
 pub mod media;
 pub mod messages;
+pub mod metrics;
 pub mod password;
 pub mod path;
 pub mod profile;
@@ -33,7 +35,7 @@ pub use state::AppState;
 /// can drive it in-process.
 pub fn app(state: AppState) -> Router {
     // Everything under /api is a browser-facing JSON route and goes through
-    // the CSRF check; /health and /ready stay outside (GET only, no cookies).
+    // the CSRF check; /health, /ready and /metrics stay outside (GET only).
     let api = Router::new()
         .merge(auth::router())
         .merge(profile::router())
@@ -42,12 +44,14 @@ pub fn app(state: AppState) -> Router {
         .merge(messages::router())
         .merge(media::router())
         .merge(attachments::router())
-        .layer(middleware::from_fn(csrf::require));
+        .layer(middleware::from_fn(csrf::require))
+        .layer(middleware::from_fn_with_state(state.clone(), limits::gate));
 
     // `/ws` is a GET upgrade, not a JSON mutation — it stays outside the
     // CSRF layer and uses the session cookie the browser already sends.
     Router::new()
         .merge(health::router())
+        .merge(metrics::router())
         .merge(gateway::router())
         .merge(api)
         .layer(
@@ -67,5 +71,9 @@ pub fn app(state: AppState) -> Router {
                 .on_response(DefaultOnResponse::new().level(Level::INFO))
                 .on_failure(()),
         )
+        .layer(middleware::from_fn_with_state(
+            state.clone(),
+            metrics::track,
+        ))
         .with_state(state)
 }

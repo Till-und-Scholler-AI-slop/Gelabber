@@ -147,6 +147,10 @@ export function errorMessage(code: ApiErrorCode): string {
       return "Diese Einladung ist abgelaufen oder aufgebraucht.";
     case "banned":
       return "Du bist auf diesem Server gesperrt.";
+    case "rate_limited":
+      return "Zu viele Anfragen. Bitte kurz warten und noch einmal versuchen.";
+    case "quota_exceeded":
+      return "Tageslimit für Uploads erreicht.";
     case "validation_failed":
       return "Bitte die markierten Felder prüfen.";
     case "timeout":
