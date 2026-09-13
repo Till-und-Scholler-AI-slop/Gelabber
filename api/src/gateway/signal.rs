@@ -8,11 +8,11 @@ use axum::extract::ws::{Message, WebSocket};
 use uuid::Uuid;
 
 use super::hub::ConnId;
-use super::protocol::{ClientFrame, ServerFrame, SigEvent, SigKind, TrackKind};
+use super::protocol::{ClientFrame, ServerFrame, SigEvent, SigKind};
 use crate::auth::user::User;
 use crate::error::ApiError;
 use crate::servers::channel::{Channel, ChannelKind};
-use crate::servers::membership::{self, Membership};
+use crate::servers::membership;
 use crate::servers::permissions::Permission;
 use crate::state::AppState;
 
@@ -196,12 +196,8 @@ async fn publish(call: &mut Call<'_>, kind: SigKind) -> Result<(), ApiError> {
     let Some(track) = call.frame.k else {
         return bad(call).await;
     };
-    if kind == SigKind::P && track == TrackKind::V {
-        match require_go_live(&call.state.db, call.user.id, call.server_id).await {
-            Ok(()) => {}
-            Err(err) => return reject(call, err).await,
-        }
-    }
+    // Camera (`v`) and screen (`s`) are for anyone already in the voice
+    // room. Go Live (issue 14) is a separate product surface.
     if !call
         .state
         .gateway
@@ -259,15 +255,6 @@ async fn authorize_join(
         ));
     }
     Ok(())
-}
-
-async fn require_go_live(
-    db: &sqlx::PgPool,
-    user_id: Uuid,
-    server_id: Uuid,
-) -> Result<(), ApiError> {
-    let member: Membership = membership::load(db, server_id, user_id).await?;
-    member.require(Permission::GoLive)
 }
 
 async fn load_channel(

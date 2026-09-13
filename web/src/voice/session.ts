@@ -1,5 +1,6 @@
 // Local voice state + native RTCPeerConnection.
 // Join updates the store immediately; ticket / ICE / getUserMedia run after.
+// Camera / screen: local preview first, publish on the media path after.
 // Chat WS: presence (j/l/p/u). Media WS: SDP/ICE + RTP. No product SDK.
 
 import { create } from "zustand";
@@ -27,6 +28,11 @@ export type VoiceParticipant = {
   pubs: TrackKind[];
 };
 
+export type RemoteVideo = {
+  v?: MediaStream;
+  s?: MediaStream;
+};
+
 export type VoiceState = {
   status: VoiceStatus;
   serverId: string | null;
@@ -34,6 +40,11 @@ export type VoiceState = {
   channelName: string | null;
   muted: boolean;
   deafened: boolean;
+  camera: boolean;
+  sharing: boolean;
+  localCamera: MediaStream | null;
+  localScreen: MediaStream | null;
+  remote: Record<string, RemoteVideo>;
   participants: Record<string, VoiceParticipant>;
 };
 
@@ -44,10 +55,17 @@ const idle: VoiceState = {
   channelName: null,
   muted: false,
   deafened: false,
+  camera: false,
+  sharing: false,
+  localCamera: null,
+  localScreen: null,
+  remote: {},
   participants: {},
 };
 
 export const useVoice = create<VoiceState>(() => ({ ...idle }));
+
+export type RtpSender = { track: MediaStreamTrack | null };
 
 export type PeerConnection = {
   onicecandidate:
@@ -58,7 +76,9 @@ export type PeerConnection = {
   ontrack:
     | ((event: { streams: MediaStream[]; track: MediaStreamTrack }) => void)
     | null;
-  addTrack?(track: MediaStreamTrack, stream: MediaStream): void;
+  addTrack?(track: MediaStreamTrack, stream: MediaStream): RtpSender | void;
+  removeTrack?(sender: RtpSender): void;
+  getSenders?(): RtpSender[];
   createOffer(): Promise<{ type: string; sdp?: string }>;
   createAnswer(): Promise<{ type: string; sdp?: string }>;
   setLocalDescription(desc: { type: string; sdp?: string }): Promise<void>;
@@ -82,6 +102,9 @@ export type VoiceDeps = {
   userId: () => string | null;
   createPeer: (iceServers: IceServer[]) => PeerConnection;
   getUserMedia: (constraints: MediaStreamConstraints) => Promise<MediaStream>;
+  getDisplayMedia: (
+    constraints: MediaStreamConstraints,
+  ) => Promise<MediaStream>;
   fetchTicket?: (channelId: string) => Promise<{
     ticket: string;
     media_path: string;
@@ -99,14 +122,20 @@ let peer: PeerConnection | null = null;
 let media: MediaSocket | null = null;
 let unbindMedia: (() => void) | null = null;
 let localStream: MediaStream | null = null;
+let cameraStream: MediaStream | null = null;
+let screenStream: MediaStream | null = null;
 let remoteAudio: HTMLAudioElement | null = null;
+let remoteMix: MediaStream | null = null;
 let bound = false;
 let generation = 0;
+let cameraEpoch = 0;
+let screenEpoch = 0;
 let pendingIce: IceCand[] = [];
 let awaitingJoin: { serverId: string; channelId: string } | null = null;
 let sdpChain: Promise<void> = Promise.resolve();
 let makingOffer = false;
 let sfuOffered = false;
+let needOffer = false;
 
 function currentUserId(): string | null {
   return deps?.userId && deps.userId !== currentUserId
@@ -122,6 +151,12 @@ async function defaultGetUserMedia(
   constraints: MediaStreamConstraints,
 ): Promise<MediaStream> {
   return navigator.mediaDevices.getUserMedia(constraints);
+}
+
+async function defaultGetDisplayMedia(
+  constraints: MediaStreamConstraints,
+): Promise<MediaStream> {
+  return navigator.mediaDevices.getDisplayMedia(constraints);
 }
 
 function defaultAttachRemote(stream: MediaStream): void {
@@ -142,6 +177,8 @@ export function configureVoice(next: Partial<VoiceDeps>): void {
     createPeer: next.createPeer ?? deps?.createPeer ?? defaultCreatePeer,
     getUserMedia:
       next.getUserMedia ?? deps?.getUserMedia ?? defaultGetUserMedia,
+    getDisplayMedia:
+      next.getDisplayMedia ?? deps?.getDisplayMedia ?? defaultGetDisplayMedia,
     fetchTicket: next.fetchTicket ?? deps?.fetchTicket ?? requestMediaTicket,
     openMedia: next.openMedia ?? deps?.openMedia ?? openMediaSocket,
     attachRemote:
@@ -160,6 +197,7 @@ function ensureBound(): void {
       userId: currentUserId,
       createPeer: defaultCreatePeer,
       getUserMedia: defaultGetUserMedia,
+      getDisplayMedia: defaultGetDisplayMedia,
       fetchTicket: requestMediaTicket,
       openMedia: openMediaSocket,
       attachRemote: defaultAttachRemote,
@@ -178,6 +216,57 @@ function upsert(
 ): Record<string, VoiceParticipant> {
   if (participants[userId]) return participants;
   return { ...participants, [userId]: { pubs: [] } };
+}
+
+function setPub(userId: string, kind: TrackKind, on: boolean): void {
+  const state = useVoice.getState();
+  const current = state.participants[userId] ?? { pubs: [] };
+  const has = current.pubs.includes(kind);
+  const pubs = on
+    ? has
+      ? current.pubs
+      : [...current.pubs, kind]
+    : current.pubs.filter((item) => kind !== item);
+  useVoice.setState({
+    participants: {
+      ...state.participants,
+      [userId]: { pubs },
+    },
+  });
+}
+
+function dropRemote(userId: string, kind?: "v" | "s"): void {
+  const state = useVoice.getState();
+  if (!state.remote[userId]) return;
+  if (!kind) {
+    const next = { ...state.remote };
+    delete next[userId];
+    useVoice.setState({ remote: next });
+    return;
+  }
+  const current = { ...state.remote[userId] };
+  delete current[kind];
+  const next = { ...state.remote };
+  if (!current.v && !current.s) {
+    delete next[userId];
+  } else {
+    next[userId] = current;
+  }
+  useVoice.setState({ remote: next });
+}
+
+/** SFU stream id is `{userId}:{v|s}` so tiles attach without a product SDK. */
+export function parseRemoteStreamId(
+  id: string,
+): { userId: string; k: "v" | "s" } | null {
+  const i = id.lastIndexOf(":");
+  if (i <= 0) return null;
+  const userId = id.slice(0, i);
+  const k = id.slice(i + 1);
+  if ((k === "v" || k === "s") && userId.length > 0) {
+    return { userId, k };
+  }
+  return null;
 }
 
 function onSig(event: SigEvent): void {
@@ -208,6 +297,7 @@ function onSig(event: SigEvent): void {
         const next = { ...state.participants };
         delete next[userId];
         useVoice.setState({ participants: next });
+        dropRemote(userId);
       }
       return;
     case "p":
@@ -226,6 +316,13 @@ function onSig(event: SigEvent): void {
           [userId]: { pubs },
         },
       });
+      if (
+        event.t === "u" &&
+        userId !== currentUserId() &&
+        (event.k === "v" || event.k === "s")
+      ) {
+        dropRemote(userId, event.k);
+      }
       return;
     }
     default:
@@ -266,6 +363,7 @@ function onReady(): void {
     participants: self
       ? { [self]: state.participants[self] ?? { pubs: [] } }
       : {},
+    remote: {},
   });
   occupySelf(state);
   awaitingJoin = { serverId: state.serverId, channelId: state.channelId };
@@ -278,23 +376,36 @@ function onReady(): void {
   void startPeer(state.serverId, state.channelId);
 }
 
+function stopTracks(stream: MediaStream | null): void {
+  stream?.getTracks().forEach((track) => track.stop());
+}
+
 function stopPeer(): void {
   generation += 1;
+  cameraEpoch += 1;
+  screenEpoch += 1;
   pendingIce = [];
   sdpChain = Promise.resolve();
   makingOffer = false;
   sfuOffered = false;
+  needOffer = false;
   unbindMedia?.();
   unbindMedia = null;
   media?.close();
   media = null;
   peer?.close();
   peer = null;
-  localStream?.getTracks().forEach((track) => track.stop());
+  stopTracks(localStream);
+  stopTracks(cameraStream);
+  stopTracks(screenStream);
   localStream = null;
+  cameraStream = null;
+  screenStream = null;
+  remoteMix = null;
   if (remoteAudio) {
     remoteAudio.srcObject = null;
   }
+  useVoice.setState({ localCamera: null, localScreen: null, remote: {} });
 }
 
 function enqueueSdp(job: () => Promise<void>): Promise<void> {
@@ -373,6 +484,18 @@ function sendFlag(
   });
 }
 
+function sendPub(kind: TrackKind, on: boolean): void {
+  const state = useVoice.getState();
+  if (!state.serverId || !state.channelId) return;
+  deps?.gateway.send({
+    op: "sig",
+    t: on ? "p" : "u",
+    s: state.serverId,
+    c: state.channelId,
+    k: kind,
+  });
+}
+
 function signalingState(): string {
   return (
     peer?.signalingState ??
@@ -400,6 +523,9 @@ async function applyRemoteDescription(
     if (answer.sdp) {
       media?.send({ op: "a", sdp: answer.sdp });
     }
+  }
+  if (needOffer) {
+    void offerIfStable(generation);
   }
 }
 
@@ -470,6 +596,11 @@ export function joinVoice(input: {
     channelName: input.channelName,
     muted: false,
     deafened: false,
+    camera: false,
+    sharing: false,
+    localCamera: null,
+    localScreen: null,
+    remote: {},
     participants: { [self]: { pubs: [] } },
   });
   applyVoiceJoin(input.serverId, self, input.channelId, {
@@ -554,6 +685,41 @@ export function toggleDeafen(): void {
   }
 }
 
+/**
+ * Camera preview is local and immediate; publish rides the media path.
+ */
+export function toggleCamera(): void {
+  ensureBound();
+  const state = useVoice.getState();
+  if (state.status !== "joined" || !state.serverId || !state.channelId) {
+    return;
+  }
+  if (state.camera) {
+    stopLocalVideo("v");
+    return;
+  }
+  useVoice.setState({ camera: true });
+  void startLocalVideo("v");
+}
+
+/**
+ * Screen-share preview is local; SDP stays off the chat socket so the
+ * message pane does not stutter when share starts.
+ */
+export function toggleShare(): void {
+  ensureBound();
+  const state = useVoice.getState();
+  if (state.status !== "joined" || !state.serverId || !state.channelId) {
+    return;
+  }
+  if (state.sharing) {
+    stopLocalVideo("s");
+    return;
+  }
+  useVoice.setState({ sharing: true });
+  void startLocalVideo("s");
+}
+
 export function resetVoiceForTests(): void {
   awaitingJoin = null;
   pendingIce = [];
@@ -563,10 +729,189 @@ export function resetVoiceForTests(): void {
   bound = false;
 }
 
+function endedListener(kind: "v" | "s"): () => void {
+  return () => {
+    const state = useVoice.getState();
+    if (kind === "v" && state.camera) stopLocalVideo("v");
+    if (kind === "s" && state.sharing) stopLocalVideo("s");
+  };
+}
+
+function bindEnded(stream: MediaStream, kind: "v" | "s"): void {
+  const onEnded = endedListener(kind);
+  for (const track of stream.getTracks()) {
+    track.addEventListener("ended", onEnded);
+  }
+}
+
+async function startLocalVideo(kind: "v" | "s"): Promise<void> {
+  const epoch = kind === "v" ? ++cameraEpoch : ++screenEpoch;
+  const mine = generation;
+  const getMedia =
+    kind === "v"
+      ? (deps?.getUserMedia ?? defaultGetUserMedia)
+      : (deps?.getDisplayMedia ?? defaultGetDisplayMedia);
+  const constraints: MediaStreamConstraints =
+    kind === "v" ? { audio: false, video: true } : { audio: true, video: true };
+  let stream: MediaStream;
+  try {
+    stream = await getMedia(constraints);
+  } catch {
+    if (kind === "v" && cameraEpoch === epoch) {
+      useVoice.setState({ camera: false });
+    }
+    if (kind === "s" && screenEpoch === epoch) {
+      useVoice.setState({ sharing: false });
+    }
+    return;
+  }
+  if (
+    generation !== mine ||
+    (kind === "v" ? cameraEpoch : screenEpoch) !== epoch
+  ) {
+    stopTracks(stream);
+    return;
+  }
+  const self = currentUserId();
+  bindEnded(stream, kind);
+  if (kind === "v") {
+    stopTracks(cameraStream);
+    cameraStream = stream;
+    useVoice.setState({ camera: true, localCamera: stream });
+  } else {
+    stopTracks(screenStream);
+    screenStream = stream;
+    useVoice.setState({ sharing: true, localScreen: stream });
+  }
+  if (self) setPub(self, kind, true);
+  // Yield so the local tile paints before addTrack / offer.
+  await Promise.resolve();
+  if (
+    generation !== mine ||
+    (kind === "v" ? cameraEpoch : screenEpoch) !== epoch
+  ) {
+    return;
+  }
+  await publishLocal(kind, stream);
+}
+
+function stopLocalVideo(kind: "v" | "s"): void {
+  const state = useVoice.getState();
+  if (kind === "v" && !state.camera && !state.localCamera) return;
+  if (kind === "s" && !state.sharing && !state.localScreen) return;
+  if (kind === "v") cameraEpoch += 1;
+  else screenEpoch += 1;
+  const stream = kind === "v" ? cameraStream : screenStream;
+  const senders = peer?.getSenders?.() ?? [];
+  if (kind === "v") {
+    cameraStream = null;
+    useVoice.setState({ camera: false, localCamera: null });
+  } else {
+    screenStream = null;
+    useVoice.setState({ sharing: false, localScreen: null });
+  }
+  const self = currentUserId();
+  if (self) setPub(self, kind, false);
+  sendPub(kind, false);
+  for (const track of stream?.getTracks() ?? []) {
+    const sender = senders.find((item) => item.track === track);
+    if (sender) peer?.removeTrack?.(sender);
+    track.stop();
+  }
+  needOffer = true;
+  void offerIfStable(generation);
+}
+
+async function publishLocal(
+  kind: "v" | "s",
+  stream: MediaStream,
+): Promise<void> {
+  if (!peer) return;
+  const tracks = kind === "v" ? stream.getVideoTracks() : stream.getTracks();
+  if (tracks.length === 0) return;
+  media?.send({ op: "p", k: kind });
+  for (const track of tracks) {
+    peer.addTrack?.(track, stream);
+  }
+  const self = currentUserId();
+  if (self) setPub(self, kind, true);
+  sendPub(kind, true);
+  needOffer = true;
+  await offerIfStable(generation);
+}
+
+function attachIncoming(track: MediaStreamTrack, stream?: MediaStream): void {
+  if (track.kind === "audio") {
+    if (typeof MediaStream === "undefined") {
+      if (stream) (deps?.attachRemote ?? defaultAttachRemote)(stream);
+      return;
+    }
+    if (!remoteMix) remoteMix = new MediaStream();
+    if (!remoteMix.getTracks().includes(track)) {
+      remoteMix.addTrack(track);
+    }
+    (deps?.attachRemote ?? defaultAttachRemote)(remoteMix);
+    return;
+  }
+  const id = stream?.id ?? track.id;
+  const parsed = parseRemoteStreamId(id);
+  if (!parsed) return;
+  const attached = stream ?? new MediaStream([track]);
+  const state = useVoice.getState();
+  const current = state.remote[parsed.userId] ?? {};
+  useVoice.setState({
+    remote: {
+      ...state.remote,
+      [parsed.userId]: { ...current, [parsed.k]: attached },
+    },
+  });
+}
+
+async function offerIfStable(
+  mine: number,
+  opts?: { initial?: boolean },
+): Promise<void> {
+  await enqueueSdp(async () => {
+    if (generation !== mine || !peer) return;
+    if (opts?.initial && sfuOffered) return;
+    if (makingOffer || signalingState() !== "stable") {
+      if (!opts?.initial) needOffer = true;
+      return;
+    }
+    makingOffer = true;
+    needOffer = false;
+    try {
+      if (signalingState() !== "stable") {
+        if (!opts?.initial) needOffer = true;
+        return;
+      }
+      if (opts?.initial && sfuOffered) return;
+      const offer = await peer.createOffer();
+      if (generation !== mine || signalingState() !== "stable") {
+        if (!opts?.initial) needOffer = true;
+        return;
+      }
+      await peer.setLocalDescription(offer);
+      if (generation !== mine || !offer.sdp) return;
+      media?.send({ op: "o", sdp: offer.sdp });
+    } catch (error) {
+      if (generation === mine) {
+        deps?.onError?.(error);
+      }
+    } finally {
+      makingOffer = false;
+    }
+  });
+}
+
 async function startPeer(serverId: string, channelId: string): Promise<void> {
   const mine = generation + 1;
+  const resumeCamera = useVoice.getState().camera;
+  const resumeShare = useVoice.getState().sharing;
   stopPeer();
   generation = mine;
+  if (resumeCamera) useVoice.setState({ camera: true });
+  if (resumeShare) useVoice.setState({ sharing: true });
   const fetchTicket = deps?.fetchTicket ?? requestMediaTicket;
   const openMedia = deps?.openMedia ?? openMediaSocket;
   const createPeer = deps?.createPeer ?? defaultCreatePeer;
@@ -601,10 +946,7 @@ async function startPeer(serverId: string, channelId: string): Promise<void> {
   };
   pc.ontrack = (event) => {
     if (generation !== mine) return;
-    const stream = event.streams[0];
-    if (stream) {
-      (deps?.attachRemote ?? defaultAttachRemote)(stream);
-    }
+    attachIncoming(event.track, event.streams[0]);
   };
 
   try {
@@ -618,20 +960,9 @@ async function startPeer(serverId: string, channelId: string): Promise<void> {
     for (const track of stream.getTracks()) {
       pc.addTrack?.(track, stream);
     }
-    const state = useVoice.getState();
     const self = currentUserId();
-    if (self && state.channelId === channelId) {
-      const current = state.participants[self] ?? { pubs: [] };
-      useVoice.setState({
-        participants: {
-          ...state.participants,
-          [self]: {
-            pubs: current.pubs.includes("a")
-              ? current.pubs
-              : [...current.pubs, "a"],
-          },
-        },
-      });
+    if (self && useVoice.getState().channelId === channelId) {
+      setPub(self, "a", true);
     }
     deps?.gateway.send({
       op: "sig",
@@ -645,25 +976,19 @@ async function startPeer(serverId: string, channelId: string): Promise<void> {
   }
 
   if (generation !== mine) return;
-  await enqueueSdp(async () => {
-    if (generation !== mine || !peer) return;
-    if (sfuOffered || makingOffer || signalingState() !== "stable") return;
-    makingOffer = true;
-    try {
-      if (sfuOffered || signalingState() !== "stable") return;
-      const offer = await pc.createOffer();
-      if (generation !== mine || sfuOffered || signalingState() !== "stable") {
-        return;
-      }
-      await pc.setLocalDescription(offer);
-      if (generation !== mine || !offer.sdp) return;
-      media?.send({ op: "o", sdp: offer.sdp });
-    } catch (error) {
-      if (generation === mine) {
-        deps?.onError?.(error);
-      }
-    } finally {
-      makingOffer = false;
-    }
-  });
+  const pending = useVoice.getState();
+  if (pending.localCamera) {
+    await publishLocal("v", pending.localCamera);
+  }
+  if (pending.localScreen) {
+    await publishLocal("s", pending.localScreen);
+  }
+  if ((pending.camera || resumeCamera) && !useVoice.getState().localCamera) {
+    void startLocalVideo("v");
+  }
+  if ((pending.sharing || resumeShare) && !useVoice.getState().localScreen) {
+    void startLocalVideo("s");
+  }
+  if (generation !== mine) return;
+  await offerIfStable(mine, { initial: true });
 }

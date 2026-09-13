@@ -11,9 +11,12 @@ import {
   configureVoice,
   joinVoice,
   leaveVoice,
+  parseRemoteStreamId,
   resetVoiceForTests,
+  toggleCamera,
   toggleDeafen,
   toggleMute,
+  toggleShare,
   useVoice,
   type PeerConnection,
 } from "./session.ts";
@@ -27,6 +30,7 @@ class FakePeer implements PeerConnection {
   closed = false;
   tracks = 0;
   audio: MediaStreamTrack | null = null;
+  senders: { track: MediaStreamTrack | null }[] = [];
   ice: { candidate: string; sdpMid: string | null }[] = [];
   iceServers: IceServer[];
 
@@ -34,9 +38,20 @@ class FakePeer implements PeerConnection {
     this.iceServers = iceServers;
   }
 
-  addTrack(track?: MediaStreamTrack): void {
+  addTrack(track?: MediaStreamTrack): { track: MediaStreamTrack | null } {
     this.tracks += 1;
-    this.audio = track ?? null;
+    const sender = { track: track ?? null };
+    this.senders.push(sender);
+    if (track && track.kind !== "video") this.audio = track;
+    return sender;
+  }
+
+  removeTrack(sender: { track: MediaStreamTrack | null }): void {
+    sender.track = null;
+  }
+
+  getSenders(): { track: MediaStreamTrack | null }[] {
+    return this.senders;
   }
 
   async createOffer(): Promise<{ type: string; sdp?: string }> {
@@ -80,22 +95,46 @@ class FakePeer implements PeerConnection {
   }
 }
 
-function fakeStream(): MediaStream {
-  const track = {
-    enabled: true,
-    stop() {},
-  } as MediaStreamTrack;
+function fakeTrack(kind: "audio" | "video"): MediaStreamTrack {
   return {
+    kind,
+    enabled: true,
+    id: `${kind}-1`,
+    stop() {},
+    addEventListener() {},
+    removeEventListener() {},
+  } as unknown as MediaStreamTrack;
+}
+
+function fakeStream(): MediaStream {
+  const track = fakeTrack("audio");
+  return {
+    id: "mic",
     getTracks: () => [track],
     getAudioTracks: () => [track],
-  } as MediaStream;
+    getVideoTracks: () => [],
+  } as unknown as MediaStream;
+}
+
+function fakeVideoStream(id: string, withAudio = false): MediaStream {
+  const video = fakeTrack("video");
+  const audio = fakeTrack("audio");
+  const tracks = withAudio ? [video, audio] : [video];
+  return {
+    id,
+    getTracks: () => tracks,
+    getAudioTracks: () => (withAudio ? [audio] : []),
+    getVideoTracks: () => [video],
+  } as unknown as MediaStream;
 }
 
 function install(opts?: {
   media?: boolean;
+  display?: boolean;
   userId?: string;
   ticketFail?: boolean;
   holdMedia?: Promise<void>;
+  holdDisplay?: Promise<void>;
 }) {
   const sent: ClientFrame[] = [];
   const mediaSent: MediaClientFrame[] = [];
@@ -134,10 +173,16 @@ function install(opts?: {
       peers.push(peer);
       return peer;
     },
-    getUserMedia: async () => {
+    getUserMedia: async (constraints) => {
       if (opts?.holdMedia) await opts.holdMedia;
       if (opts?.media === false) throw new Error("denied");
+      if (constraints.video) return fakeVideoStream("local-cam");
       return fakeStream();
+    },
+    getDisplayMedia: async () => {
+      if (opts?.holdDisplay) await opts.holdDisplay;
+      if (opts?.display === false) throw new Error("denied");
+      return fakeVideoStream("local-scr", true);
     },
     fetchTicket: async () => {
       if (opts?.ticketFail) throw new Error("ticket");
@@ -382,5 +427,102 @@ describe("voice session", () => {
     toggleDeafen();
     expect(useVoice.getState().deafened).toBe(false);
     expect(useVoice.getState().muted).toBe(false);
+  });
+
+  it("parses SFU stream ids for camera and screen tiles", () => {
+    expect(
+      parseRemoteStreamId("550e8400-e29b-41d4-a716-446655440000:v"),
+    ).toEqual({
+      userId: "550e8400-e29b-41d4-a716-446655440000",
+      k: "v",
+    });
+    expect(parseRemoteStreamId("u-bob:s")).toEqual({ userId: "u-bob", k: "s" });
+    expect(parseRemoteStreamId("u-bob:a")).toBeNull();
+    expect(parseRemoteStreamId("livekit")).toBeNull();
+  });
+
+  it("shows a local camera preview before any publish offer", async () => {
+    const { sent, mediaSent, peers } = install();
+    joinVoice({ serverId: "srv", channelId: "voice", channelName: "Lounge" });
+    await vi.waitFor(() => expect(peers.length).toBe(1));
+    toggleCamera();
+    expect(useVoice.getState().camera).toBe(true);
+    expect(useVoice.getState().localCamera).toBeNull();
+    await vi.waitFor(() =>
+      expect(useVoice.getState().localCamera).toBeTruthy(),
+    );
+    expect(useVoice.getState().participants["u-self"]?.pubs).toContain("v");
+    expect(sent.some((frame) => "sdp" in frame && frame.sdp)).toBe(false);
+    expect(
+      sent.filter((frame) => frame.op === "sig" && frame.t === "p"),
+    ).toEqual(
+      expect.arrayContaining([
+        { op: "sig", t: "p", s: "srv", c: "voice", k: "a" },
+        { op: "sig", t: "p", s: "srv", c: "voice", k: "v" },
+      ]),
+    );
+    await vi.waitFor(() =>
+      expect(
+        mediaSent.some((frame) => frame.op === "p" && frame.k === "v"),
+      ).toBe(true),
+    );
+  });
+
+  it("starts screen-share without putting SDP on the chat socket", async () => {
+    const { sent, mediaSent, peers } = install();
+    joinVoice({ serverId: "srv", channelId: "voice", channelName: "Lounge" });
+    await vi.waitFor(() => expect(peers.length).toBe(1));
+    toggleShare();
+    expect(useVoice.getState().sharing).toBe(true);
+    await vi.waitFor(() =>
+      expect(useVoice.getState().localScreen).toBeTruthy(),
+    );
+    expect(useVoice.getState().participants["u-self"]?.pubs).toContain("s");
+    for (const frame of sent) {
+      expect(frame).not.toHaveProperty("sdp");
+      expect(frame).not.toHaveProperty("token");
+    }
+    await vi.waitFor(() =>
+      expect(
+        mediaSent.some((frame) => frame.op === "p" && frame.k === "s"),
+      ).toBe(true),
+    );
+  });
+
+  it("stops camera locally first, then unpubs", async () => {
+    const { sent, peers } = install();
+    joinVoice({ serverId: "srv", channelId: "voice", channelName: "Lounge" });
+    await vi.waitFor(() => expect(peers.length).toBe(1));
+    toggleCamera();
+    await vi.waitFor(() =>
+      expect(useVoice.getState().localCamera).toBeTruthy(),
+    );
+    const before = sent.length;
+    toggleCamera();
+    expect(useVoice.getState().camera).toBe(false);
+    expect(useVoice.getState().localCamera).toBeNull();
+    expect(sent.slice(before)).toEqual([
+      { op: "sig", t: "u", s: "srv", c: "voice", k: "v" },
+    ]);
+  });
+
+  it("ignores camera and share while not in a channel", () => {
+    install();
+    toggleCamera();
+    toggleShare();
+    expect(useVoice.getState().camera).toBe(false);
+    expect(useVoice.getState().sharing).toBe(false);
+  });
+
+  it("attaches a remote camera tile from the SFU stream id", async () => {
+    const { peers } = install();
+    joinVoice({ serverId: "srv", channelId: "voice", channelName: "Lounge" });
+    await vi.waitFor(() => expect(peers.length).toBe(1));
+    const stream = fakeVideoStream("u-bob:v");
+    peers[0]?.ontrack?.({
+      track: stream.getVideoTracks()[0]!,
+      streams: [stream],
+    });
+    expect(useVoice.getState().remote["u-bob"]?.v).toBe(stream);
   });
 });

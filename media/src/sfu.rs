@@ -2,7 +2,7 @@
 //! written onto `TrackLocalStaticRTP`s of every other peer. No mesh, no
 //! recording, no second node.
 
-use std::collections::HashMap;
+use std::collections::{HashMap, VecDeque};
 use std::net::SocketAddr;
 use std::sync::Arc;
 use std::sync::atomic::{AtomicU16, Ordering};
@@ -131,6 +131,7 @@ impl IcePorts {
 
 struct Published {
     id: String,
+    stream_id: String,
     kind: RtpCodecKind,
     codec: RTCRtpCodec,
     packets: broadcast::Sender<rtp::Packet>,
@@ -138,6 +139,7 @@ struct Published {
 
 struct PendingPub {
     pub_id: String,
+    stream_id: String,
     kind: RtpCodecKind,
     codec: RTCRtpCodec,
     packets: broadcast::Sender<rtp::Packet>,
@@ -164,7 +166,6 @@ impl PeerSdp {
 struct Peer {
     #[allow(dead_code)]
     id: PeerId,
-    #[allow(dead_code)]
     user_id: Uuid,
     #[allow(dead_code)]
     channel_id: Uuid,
@@ -172,6 +173,8 @@ struct Peer {
     out: mpsc::UnboundedSender<ServerFrame>,
     gathered: watch::Receiver<u64>,
     sdp: Arc<Mutex<PeerSdp>>,
+    /// Camera (`v`) / screen (`s`) tags for the next inbound tracks.
+    next_kind: VecDeque<String>,
 }
 
 struct Room {
@@ -185,6 +188,7 @@ struct Forward {
     gathered: watch::Receiver<u64>,
     sdp: Arc<Mutex<PeerSdp>>,
     pub_id: String,
+    stream_id: String,
     kind: RtpCodecKind,
     codec: RTCRtpCodec,
     packets: broadcast::Sender<rtp::Packet>,
@@ -240,6 +244,7 @@ impl Sfu {
                     out: out.clone(),
                     gathered,
                     sdp: Arc::new(Mutex::new(PeerSdp::new())),
+                    next_kind: VecDeque::new(),
                 },
             );
         }
@@ -317,6 +322,24 @@ impl Sfu {
             drop(gate);
             self.flush_pending(pc, out, gathered, sdp, pending).await;
         }
+        Ok(())
+    }
+
+    /// Tag the next inbound track(s) as camera (`v`) or screen (`s`) so
+    /// subscribers can attach the forwarded stream to the right tile.
+    pub async fn announce(
+        &self,
+        peer_id: PeerId,
+        channel_id: Uuid,
+        kind: &str,
+    ) -> Result<(), String> {
+        if kind != "v" && kind != "s" {
+            return Err("bad_request".into());
+        }
+        let room = self.room(channel_id).await;
+        let mut room = room.lock().await;
+        let peer = room.peers.get_mut(&peer_id).ok_or("not in room")?;
+        peer.next_kind.push_back(kind.to_owned());
         Ok(())
     }
 
@@ -468,6 +491,20 @@ impl Sfu {
         let codec = track.codec(ssrc).await.ok_or("track has no codec")?;
         let kind = track.kind().await;
         let track_id = track.track_id().await;
+        let (user_id, kind_tag) = {
+            let room = self.room(channel_id).await;
+            let mut room = room.lock().await;
+            let peer = room.peers.get_mut(&publisher).ok_or("not in room")?;
+            let tag = match peer.next_kind.pop_front() {
+                Some(tag) => tag,
+                None => match kind {
+                    RtpCodecKind::Video => "v".to_string(),
+                    _ => "a".to_string(),
+                },
+            };
+            (peer.user_id, tag)
+        };
+        let stream_id = format!("{user_id}:{kind_tag}");
         let pub_id = format!("{}:{track_id}", publisher.0);
         let (packets, _) = broadcast::channel(RTP_Q);
 
@@ -478,6 +515,7 @@ impl Sfu {
                 pub_id.clone(),
                 Published {
                     id: pub_id.clone(),
+                    stream_id: stream_id.clone(),
                     kind,
                     codec: codec.clone(),
                     packets: packets.clone(),
@@ -485,7 +523,7 @@ impl Sfu {
             );
         }
 
-        debug!(pub_id, mime = %codec.mime_type, "publisher track");
+        debug!(pub_id, mime = %codec.mime_type, stream_id, "publisher track");
 
         let subscribers = {
             let room = self.room(channel_id).await;
@@ -511,6 +549,7 @@ impl Sfu {
                 gathered,
                 sdp,
                 pub_id: pub_id.clone(),
+                stream_id: stream_id.clone(),
                 kind,
                 codec: codec.clone(),
                 packets: packets.clone(),
@@ -543,7 +582,15 @@ impl Sfu {
                 .pubs
                 .values()
                 .filter(|p| !p.id.starts_with(&subscriber.0.to_string()))
-                .map(|p| (p.id.clone(), p.kind, p.codec.clone(), p.packets.clone()))
+                .map(|p| {
+                    (
+                        p.id.clone(),
+                        p.stream_id.clone(),
+                        p.kind,
+                        p.codec.clone(),
+                        p.packets.clone(),
+                    )
+                })
                 .collect::<Vec<_>>();
             (
                 peer.pc.clone(),
@@ -553,13 +600,14 @@ impl Sfu {
                 pubs,
             )
         };
-        for (id, kind, codec, packets) in pubs {
+        for (id, stream_id, kind, codec, packets) in pubs {
             self.forward_to(Forward {
                 pc: pc.clone(),
                 out: out.clone(),
                 gathered: gathered.clone(),
                 sdp: sdp.clone(),
                 pub_id: id,
+                stream_id,
                 kind,
                 codec,
                 packets,
@@ -583,6 +631,7 @@ impl Sfu {
                 gathered: gathered.clone(),
                 sdp: sdp.clone(),
                 pub_id: pub_.pub_id,
+                stream_id: pub_.stream_id,
                 kind: pub_.kind,
                 codec: pub_.codec,
                 packets: pub_.packets,
@@ -598,6 +647,7 @@ impl Sfu {
             gathered,
             sdp,
             pub_id,
+            stream_id,
             kind,
             codec,
             packets,
@@ -607,6 +657,7 @@ impl Sfu {
             if !gate.negotiated || gate.have_local_offer {
                 gate.pending.push(PendingPub {
                     pub_id,
+                    stream_id,
                     kind,
                     codec,
                     packets,
@@ -617,8 +668,8 @@ impl Sfu {
         }
         let ssrc = rand::random::<u32>();
         let local = Arc::new(TrackLocalStaticRTP::new(MediaStreamTrack::new(
-            format!("gb-{pub_id}"),
-            format!("gb-{pub_id}-{ssrc}"),
+            stream_id.clone(),
+            format!("{stream_id}-{ssrc}"),
             format!("gelabber-{pub_id}"),
             kind,
             vec![RTCRtpEncodingParameters {

@@ -14,6 +14,9 @@ pub struct ClientFrame {
     pub ice: Option<String>,
     #[serde(default)]
     pub mid: Option<String>,
+    /// Next inbound track kind from this peer: `v` (camera) or `s` (screen).
+    #[serde(default)]
+    pub k: Option<String>,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
@@ -61,5 +64,13 @@ mod tests {
         assert!(!json.contains("\"n\""));
         assert!(!json.contains(r#""op":"e""#));
         assert!(!json.contains("livekit"));
+    }
+
+    #[test]
+    fn pub_announce_is_compact() {
+        let frame: ClientFrame = serde_json::from_str(r#"{"op":"p","k":"s"}"#).unwrap();
+        assert_eq!(frame.op, "p");
+        assert_eq!(frame.k.as_deref(), Some("s"));
+        assert!(frame.sdp.is_none());
     }
 }

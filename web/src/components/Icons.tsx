@@ -123,6 +123,33 @@ export function HeadsetOffIcon(props: IconProps) {
   );
 }
 
+export function ScreenIcon(props: IconProps) {
+  return (
+    <svg {...base(props)}>
+      <rect x="3" y="4" width="18" height="12" rx="2" />
+      <path d="M8 20h8M12 16v4" />
+    </svg>
+  );
+}
+
+export function CameraIcon(props: IconProps) {
+  return (
+    <svg {...base(props)}>
+      <path d="M15 9 22 6v12l-7-3" />
+      <rect x="2" y="7" width="13" height="10" rx="2" />
+    </svg>
+  );
+}
+
+export function CameraOffIcon(props: IconProps) {
+  return (
+    <svg {...base(props)}>
+      <path d="M15 9 22 6v12l-7-3M4 4l16 16" />
+      <rect x="2" y="7" width="13" height="10" rx="2" />
+    </svg>
+  );
+}
+
 export function ChevronIcon(props: IconProps) {
   return (
     <svg {...base(props)}>

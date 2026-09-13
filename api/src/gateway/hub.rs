@@ -1067,6 +1067,7 @@ impl Gateway {
                 .filter_map(|name| match name.as_str() {
                     "a" => Some(TrackKind::A),
                     "v" => Some(TrackKind::V),
+                    "s" => Some(TrackKind::S),
                     _ => None,
                 })
                 .collect();
