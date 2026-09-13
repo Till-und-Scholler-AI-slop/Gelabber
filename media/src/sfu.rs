@@ -22,7 +22,7 @@ use webrtc::media_stream::track_remote::{TrackRemote, TrackRemoteEvent};
 use webrtc::peer_connection::{
     MediaEngine, PeerConnection, PeerConnectionBuilder, PeerConnectionEventHandler,
     RTCConfigurationBuilder, RTCIceCandidateInit, RTCIceCandidateType, RTCIceGatheringState,
-    RTCIceServer, RTCSessionDescription, SettingEngine, register_default_interceptors,
+    RTCSessionDescription, SettingEngine, register_default_interceptors,
 };
 
 use crate::config::Config;
@@ -199,7 +199,6 @@ struct Forward {
 }
 
 pub struct Sfu {
-    ice_servers: Vec<RTCIceServer>,
     ice_ports: IcePorts,
     advertised_ip: Option<String>,
     rooms: RwLock<HashMap<Uuid, Arc<Mutex<Room>>>>,
@@ -217,11 +216,6 @@ struct SfuStats {
 impl Sfu {
     pub fn new(config: &Config) -> Self {
         Self {
-            ice_servers: config
-                .ice_servers
-                .iter()
-                .map(super::ice::IceServer::to_rtc)
-                .collect(),
             ice_ports: IcePorts::from_config(config),
             advertised_ip: config.advertised_ip.clone(),
             rooms: RwLock::new(HashMap::new()),
@@ -455,14 +449,15 @@ impl Sfu {
             register_default_interceptors(webrtc::peer_connection::Registry::new(), &mut media)?;
 
         let mut settings = SettingEngine::default();
+        // ICE-lite only emits host candidates. STUN/TURN URLs on this PC
+        // make webrtc-rs fail with "agent does not need URL with selected
+        // candidate types". Browsers get those URLs from the API ticket.
         settings.set_lite(true);
         if let Some(ip) = &self.advertised_ip {
             settings.set_nat_1to1_ips(vec![ip.clone()], RTCIceCandidateType::Host);
         }
 
-        let config = RTCConfigurationBuilder::new()
-            .with_ice_servers(self.ice_servers.clone())
-            .build();
+        let config = RTCConfigurationBuilder::new().build();
 
         let (tx, rx) = mpsc::unbounded_channel();
         let (gather_tx, gather_rx) = watch::channel(0);
