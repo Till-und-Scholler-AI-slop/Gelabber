@@ -6,12 +6,12 @@ import { Link } from "@tanstack/react-router";
 import { can } from "../servers/permissions.ts";
 import type { ServerDetail } from "../servers/types.ts";
 import { useSession } from "../auth/session.ts";
-import { useVoiceRoster } from "./roster.ts";
+import { EMPTY_LIVE, useVoiceRoster } from "./roster.ts";
 import { stopWatching, useVoice, watchLive } from "./session.ts";
 
 export function LiveHint({ server }: { server: ServerDetail }) {
   const me = useSession((s) => s.user?.id);
-  const lives = useVoiceRoster((s) => s.live[server.id] ?? {});
+  const lives = useVoiceRoster((s) => s.live[server.id] ?? EMPTY_LIVE);
   const voice = useVoice();
   const allowed = can(server, "join_voice");
   const names = new Map(server.members.map((m) => [m.user_id, m.name]));

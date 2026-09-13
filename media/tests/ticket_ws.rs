@@ -17,6 +17,9 @@ async fn serve() -> Option<(std::net::SocketAddr, redis::Client)> {
     let config = Config::from_source(|key| match key {
         "REDIS_URL" => Some(redis_url.clone()),
         "MEDIA_ICE_BIND" => Some("127.0.0.1:0".to_owned()),
+        "TURN_URLS" => Some("stun:127.0.0.1:3478,turn:127.0.0.1:3478".to_owned()),
+        "TURN_USERNAME" => Some("gelabber".to_owned()),
+        "TURN_PASSWORD" => Some("gelabberturn".to_owned()),
         _ => None,
     })
     .expect("config");

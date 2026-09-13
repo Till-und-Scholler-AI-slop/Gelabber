@@ -8,7 +8,7 @@ import { VoiceControls } from "../components/VoiceControls.tsx";
 import { VoiceStateIcons } from "../components/VoiceStateIcons.tsx";
 import { useSession } from "../auth/session.ts";
 import { joinVoice, stopWatching, useVoice, watchLive } from "./session.ts";
-import { liveOf, useVoiceRoster } from "./roster.ts";
+import { EMPTY_OCCUPANCY, liveOf, useVoiceRoster } from "./roster.ts";
 import { VoiceTile } from "./VoiceTile.tsx";
 
 export function VoiceRoom({
@@ -24,7 +24,7 @@ export function VoiceRoom({
   const canStartLive = can(server, "go_live");
   const voice = useVoice();
   const me = useSession((s) => s.user?.id);
-  const roster = useVoiceRoster((s) => s.byServer[server.id] ?? {});
+  const roster = useVoiceRoster((s) => s.byServer[server.id] ?? EMPTY_OCCUPANCY);
   const liveUser = useVoiceRoster((s) => liveOf(s.live, server.id, channelId));
   const here = voice.status === "joined" && voice.channelId === channelId;
   const watching = voice.watching && voice.watchChannelId === channelId;

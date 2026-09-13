@@ -45,6 +45,7 @@ import {
   validateContent,
 } from "../messages/rules.ts";
 import type { Attachment, Message } from "../messages/types.ts";
+import { asAttachmentList } from "../messages/types.ts";
 import { Avatar } from "./Avatar.tsx";
 import { PaperclipIcon, PencilIcon, TrashIcon } from "./Icons.tsx";
 
@@ -149,19 +150,8 @@ function MessageList({
   const lastCount = useRef(0);
   const lastTail = useRef<string | undefined>(undefined);
   const pin = useRef<{ id: string; offset: number } | null>(null);
-  const [viewport, setViewport] = useState(0);
   const edit = useEditMessage(channelId);
   const remove = useDeleteMessage(channelId);
-
-  useEffect(() => {
-    const el = scrollRef.current;
-    if (!el) return;
-    const update = () => setViewport(el.clientHeight);
-    update();
-    const ro = new ResizeObserver(update);
-    ro.observe(el);
-    return () => ro.disconnect();
-  }, []);
 
   // Not on the React Compiler; the warning is about memoising its return value.
   // eslint-disable-next-line react-hooks/incompatible-library
@@ -249,7 +239,7 @@ function MessageList({
         stickToBottom.current =
           el.scrollHeight - el.scrollTop - el.clientHeight < 96;
       }}
-      className="min-h-0 flex-1 overflow-y-auto"
+      className="flex min-h-0 flex-1 flex-col overflow-y-auto"
     >
       {ready && items.length === 0 ? (
         <div className="flex h-full items-center justify-center px-6 text-center text-sm text-neutral-500">
@@ -262,14 +252,10 @@ function MessageList({
         </p>
       ) : null}
       <div
-        style={{
-          height: virtualizer.getTotalSize(),
-          marginTop:
-            viewport > virtualizer.getTotalSize()
-              ? viewport - virtualizer.getTotalSize()
-              : 0,
-        }}
-        className="relative w-full"
+        // Pin a short list to the bottom with flex, not a viewport-sized
+        // margin: that ResizeObserver loop (scrollbar on/off) is React #185.
+        style={{ height: virtualizer.getTotalSize() }}
+        className="relative mt-auto w-full"
       >
         {virtualizer.getVirtualItems().map((row) => {
           const message = items[row.index];
@@ -681,10 +667,11 @@ function Composer({
 }
 
 function AttachmentList({ attachments }: { attachments: Attachment[] }) {
-  if (attachments.length === 0) return null;
+  const files = asAttachmentList(attachments);
+  if (files.length === 0) return null;
   return (
     <div className="mt-1 flex flex-col gap-1.5">
-      {attachments.map((attachment) => {
+      {files.map((attachment) => {
         const src = attachment.preview_url ?? attachmentUrl(attachment.id);
         if (isImageType(attachment.content_type)) {
           return (

@@ -36,6 +36,7 @@ import type {
   MessageAuthor,
   MessagePage,
 } from "./types.ts";
+import { asAttachmentList } from "./types.ts";
 
 export const messageKeys = {
   channel: (channelId: string) => ["messages", channelId] as const,
@@ -128,7 +129,7 @@ function localAttachment(file: File): Attachment {
 
 function revokePreviews(message: Message | undefined): void {
   if (!message) return;
-  for (const attachment of message.attachments) {
+  for (const attachment of asAttachmentList(message.attachments)) {
     if (attachment.preview_url?.startsWith("blob:")) {
       URL.revokeObjectURL(attachment.preview_url);
     }
@@ -290,7 +291,7 @@ export function applyChannelEvent(
   if ((event.t === "c" || event.t === "e") && isMessage(event.d)) {
     const message = {
       ...event.d,
-      attachments: event.d.attachments ?? [],
+      attachments: asAttachmentList(event.d.attachments),
     };
     if (event.t === "c") applyMessageCreated(client, channelId, message);
     else applyMessageEdited(client, channelId, message);

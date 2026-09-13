@@ -3,7 +3,7 @@ import { describe, expect, it } from "vitest";
 
 import { applyChatEvent } from "./events.ts";
 import { messageKeys } from "./queries.ts";
-import type { Message, MessagePage } from "./types.ts";
+import { asAttachmentList, type Message, type MessagePage } from "./types.ts";
 
 function msg(id: string): Message {
   return {
@@ -16,6 +16,16 @@ function msg(id: string): Message {
     attachments: [],
   };
 }
+
+describe("asAttachmentList", () => {
+  it("keeps arrays and maps empty objects to []", () => {
+    expect(asAttachmentList([])).toEqual([]);
+    expect(asAttachmentList({})).toEqual([]);
+    expect(asAttachmentList(null)).toEqual([]);
+    const files = [{ id: "a", filename: "a.png", content_type: "image/png", size: 1 }];
+    expect(asAttachmentList(files)).toBe(files);
+  });
+});
 
 describe("applyChatEvent", () => {
   it("appends a create that carries an attachment", () => {
@@ -49,6 +59,30 @@ describe("applyChatEvent", () => {
     const last = cache?.pages[0]?.messages.at(-1);
     expect(last?.id).toBe("b");
     expect(last?.attachments[0]?.filename).toBe("cat.png");
+  });
+
+  it("treats redis-cjson empty attachments {} as no files", () => {
+    const client = new QueryClient();
+    client.setQueryData(messageKeys.channel("c1"), {
+      pages: [{ messages: [], has_more: false } satisfies MessagePage],
+      pageParams: [undefined],
+    });
+    applyChatEvent(client, {
+      op: "e",
+      t: "c",
+      s: "s1",
+      c: "c1",
+      n: 1,
+      i: "b",
+      d: {
+        ...msg("b"),
+        attachments: {} as never,
+      },
+    });
+    const cache = client.getQueryData<{ pages: MessagePage[] }>(
+      messageKeys.channel("c1"),
+    );
+    expect(cache?.pages[0]?.messages[0]?.attachments).toEqual([]);
   });
 
   it("does not duplicate an id already in the page", () => {

@@ -228,6 +228,9 @@ async fn forwards_rtp_between_two_peers() {
     let config = Config::from_source(|key| match key {
         "REDIS_URL" => Some("redis://127.0.0.1:1".to_owned()),
         "MEDIA_ICE_BIND" => Some("127.0.0.1:0".to_owned()),
+        "TURN_URLS" => Some("stun:127.0.0.1:3478,turn:127.0.0.1:3478".to_owned()),
+        "TURN_USERNAME" => Some("gelabber".to_owned()),
+        "TURN_PASSWORD" => Some("gelabberturn".to_owned()),
         _ => None,
     })
     .unwrap();
@@ -336,6 +339,9 @@ async fn concurrent_first_offers_do_not_glare() {
     let config = Config::from_source(|key| match key {
         "REDIS_URL" => Some("redis://127.0.0.1:1".to_owned()),
         "MEDIA_ICE_BIND" => Some("127.0.0.1:0".to_owned()),
+        "TURN_URLS" => Some("stun:127.0.0.1:3478,turn:127.0.0.1:3478".to_owned()),
+        "TURN_USERNAME" => Some("gelabber".to_owned()),
+        "TURN_PASSWORD" => Some("gelabberturn".to_owned()),
         _ => None,
     })
     .unwrap();

@@ -7,7 +7,7 @@ import { useVirtualizer } from "@tanstack/react-virtual";
 import { useMemo, useRef, useState, type ReactNode } from "react";
 
 import { useVoice } from "../voice/session.ts";
-import { useVoiceRoster } from "../voice/roster.ts";
+import { EMPTY_LIVE, useVoiceRoster } from "../voice/roster.ts";
 import { VoiceControls } from "./VoiceControls.tsx";
 import { can } from "../servers/permissions.ts";
 import { buildRows, rowHeight, type Row } from "../servers/rows.ts";
@@ -45,7 +45,7 @@ export function ChannelSidebar({
   const manageServer = can(server, "manage_server");
   const canGoLive = can(server, "go_live");
   const voice = useVoice();
-  const live = useVoiceRoster((s) => s.live[server.id] ?? {});
+  const live = useVoiceRoster((s) => s.live[server.id] ?? EMPTY_LIVE);
   const [channelDialog, setChannelDialog] = useState<ChannelDialogState | null>(
     null,
   );

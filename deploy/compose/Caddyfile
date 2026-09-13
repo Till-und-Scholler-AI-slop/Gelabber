@@ -41,7 +41,10 @@
 		}
 	}
 
-	handle /api /api/* {
+	# `handle` takes one matcher. Two path tokens (`/api /api/*`) are a
+	# parse error on Caddy 2.11. Named matchers keep /api and /api/*.
+	@api path /api /api/*
+	handle @api {
 		reverse_proxy api:8080 {
 			transport http {
 				dial_timeout 5s
@@ -52,7 +55,8 @@
 		}
 	}
 
-	handle /media /media/* {
+	@media path /media /media/*
+	handle @media {
 		reverse_proxy media:8081 {
 			transport http {
 				dial_timeout 5s

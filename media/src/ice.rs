@@ -1,5 +1,6 @@
-//! STUN/TURN list for the SFU PeerConnections. Browser-facing URLs are
-//! minted by the API; this process uses the Compose-internal hostnames.
+//! Parse Compose `TURN_URLS` for logs / future full-ICE. The SFU itself is
+//! ICE-lite (host + advertised IP). Browser-facing STUN/TURN is minted by
+//! the API on the media ticket.
 
 use serde::{Deserialize, Serialize};
 use webrtc::peer_connection::RTCIceServer;

@@ -96,6 +96,10 @@ export type PeerConnection = {
     | ((event: { streams: MediaStream[]; track: MediaStreamTrack }) => void)
     | null;
   addTrack?(track: MediaStreamTrack, stream: MediaStream): RtpSender | void;
+  addTransceiver?(
+    kind: "audio" | "video",
+    init?: { direction?: "recvonly" | "sendonly" | "sendrecv" | "inactive" },
+  ): void;
   removeTrack?(sender: RtpSender): void;
   getSenders?(): RtpSender[];
   createOffer(): Promise<{ type: string; sdp?: string }>;
@@ -1369,6 +1373,10 @@ async function startWatchPeer(channelId: string): Promise<void> {
 
   const pc = createPeer(iceServers);
   watchPeer = pc;
+  // Recvonly m-lines so the offer carries ice-ufrag. webrtc-rs rejects
+  // an empty offer with "set_remote_description called with no ice-ufrag".
+  pc.addTransceiver?.("audio", { direction: "recvonly" });
+  pc.addTransceiver?.("video", { direction: "recvonly" });
   pc.onicecandidate = (event) => {
     if (watchGeneration !== mine) return;
     if (!event.candidate) return;

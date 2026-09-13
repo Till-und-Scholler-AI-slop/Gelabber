@@ -1,6 +1,8 @@
 import { afterEach, describe, expect, it } from "vitest";
 
 import {
+  EMPTY_LIVE,
+  EMPTY_OCCUPANCY,
   VOICE_ICON_SLOT_PX,
   applyLiveStart,
   applyVoiceJoin,
@@ -127,5 +129,16 @@ describe("voice roster", () => {
       u: "u1",
     });
     expect(voiceOf(useVoiceRoster.getState().byServer, "s1", "u1")).toBeNull();
+  });
+
+  it("empty occupancy and live fallbacks stay referentially stable", () => {
+    const occupancy = useVoiceRoster.getState().byServer.missing ?? EMPTY_OCCUPANCY;
+    const live = useVoiceRoster.getState().live.missing ?? EMPTY_LIVE;
+    expect(occupancy).toBe(EMPTY_OCCUPANCY);
+    expect(live).toBe(EMPTY_LIVE);
+    expect(occupancy).toBe(
+      useVoiceRoster.getState().byServer.missing ?? EMPTY_OCCUPANCY,
+    );
+    expect(live).toBe(useVoiceRoster.getState().live.missing ?? EMPTY_LIVE);
   });
 });

@@ -15,6 +15,10 @@ export type VoiceFlags = {
 /** channelId → userId. At most one live track per voice channel. */
 export type LiveMap = Record<string, string>;
 
+/** Stable empties for Zustand selectors. A fresh `{}` each call is React 19 #185. */
+export const EMPTY_OCCUPANCY: Record<string, VoiceFlags> = Object.freeze({});
+export const EMPTY_LIVE: LiveMap = Object.freeze({});
+
 export const VOICE_ICON_SLOT_PX = 32;
 
 type RosterState = {

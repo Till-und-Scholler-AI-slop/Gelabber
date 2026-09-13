@@ -34,6 +34,11 @@ export type MessagePage = {
   older?: string;
 };
 
+/** Redis Lua `cjson.encode` turns `[]` into `{}`. */
+export function asAttachmentList(value: unknown): Attachment[] {
+  return Array.isArray(value) ? value : [];
+}
+
 export type ListMessagesParams = {
   before?: string;
   after?: string;

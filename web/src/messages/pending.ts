@@ -3,7 +3,7 @@
 
 import { create } from "zustand";
 
-import type { Message } from "./types.ts";
+import { asAttachmentList, type Message } from "./types.ts";
 
 /** Stable empty list so a Zustand selector does not return a new `[]` every
  *  time a channel has no in-flight send (that looped MessagePane on mount). */
@@ -34,10 +34,12 @@ export const usePendingMessages = create<PendingState>((set) => ({
           if (row.id !== tmpId) return row;
           return {
             ...message,
-            attachments: message.attachments.map((attachment, index) => ({
-              ...attachment,
-              preview_url: row.attachments[index]?.preview_url,
-            })),
+            attachments: asAttachmentList(message.attachments).map(
+              (attachment, index) => ({
+                ...attachment,
+                preview_url: row.attachments[index]?.preview_url,
+              }),
+            ),
           };
         }),
       },
