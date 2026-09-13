@@ -149,19 +149,8 @@ function MessageList({
   const lastCount = useRef(0);
   const lastTail = useRef<string | undefined>(undefined);
   const pin = useRef<{ id: string; offset: number } | null>(null);
-  const [viewport, setViewport] = useState(0);
   const edit = useEditMessage(channelId);
   const remove = useDeleteMessage(channelId);
-
-  useEffect(() => {
-    const el = scrollRef.current;
-    if (!el) return;
-    const update = () => setViewport(el.clientHeight);
-    update();
-    const ro = new ResizeObserver(update);
-    ro.observe(el);
-    return () => ro.disconnect();
-  }, []);
 
   // Not on the React Compiler; the warning is about memoising its return value.
   // eslint-disable-next-line react-hooks/incompatible-library
@@ -249,7 +238,7 @@ function MessageList({
         stickToBottom.current =
           el.scrollHeight - el.scrollTop - el.clientHeight < 96;
       }}
-      className="min-h-0 flex-1 overflow-y-auto"
+      className="flex min-h-0 flex-1 flex-col overflow-y-auto"
     >
       {ready && items.length === 0 ? (
         <div className="flex h-full items-center justify-center px-6 text-center text-sm text-neutral-500">
@@ -262,14 +251,8 @@ function MessageList({
         </p>
       ) : null}
       <div
-        style={{
-          height: virtualizer.getTotalSize(),
-          marginTop:
-            viewport > virtualizer.getTotalSize()
-              ? viewport - virtualizer.getTotalSize()
-              : 0,
-        }}
-        className="relative w-full"
+        style={{ height: virtualizer.getTotalSize() }}
+        className="relative mt-auto w-full"
       >
         {virtualizer.getVirtualItems().map((row) => {
           const message = items[row.index];
