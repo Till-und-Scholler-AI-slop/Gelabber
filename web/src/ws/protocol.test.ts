@@ -19,6 +19,28 @@ describe("ws protocol", () => {
     });
   });
 
+  it("decodes presence and typing without treating them as chat events", () => {
+    expect(decode('{"op":"p","s":"srv","u":"u1","st":"o"}')).toEqual({
+      op: "p",
+      s: "srv",
+      u: "u1",
+      st: "o",
+    });
+    expect(
+      decode('{"op":"y","s":"srv","c":"ch","u":"u1","on":true}'),
+    ).toEqual({
+      op: "y",
+      s: "srv",
+      c: "ch",
+      u: "u1",
+      on: true,
+    });
+    expect(encode({ op: "p", st: "i" })).toBe('{"op":"p","st":"i"}');
+    expect(encode({ op: "y", s: "srv", c: "ch", on: true })).toBe(
+      '{"op":"y","s":"srv","c":"ch","on":true}',
+    );
+  });
+
   it("decodes chat and signaling on separate ops", () => {
     const event = decode(
       '{"op":"e","t":"c","s":"srv","c":"ch","n":3,"i":"m1","d":{"b":"hi"}}',

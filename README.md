@@ -39,7 +39,7 @@ Env-Beispiele: `deploy/compose/.env.example`, `api/.env.example`, `web/.env.exam
 
 ## API
 
-Config ausschließlich aus Env (`API_ADDR`, `DATABASE_URL`, `REDIS_URL`; optional `API_READY_TIMEOUT_MS`, `API_DB_MAX_CONNECTIONS`, `API_COOKIE_SECURE`, `API_SESSION_TTL_HOURS`, `API_WS_HEARTBEAT_MS`, `API_WS_DEAD_MS`, `API_WS_REPLAY`, `RUST_LOG`). Fehlt eine Pflichtvariable, startet der Prozess nicht und sagt welche. Beim Start laufen die sqlx-Migrationen aus `api/migrations` (Compose startet die API erst, wenn Postgres healthy ist).
+Config ausschließlich aus Env (`API_ADDR`, `DATABASE_URL`, `REDIS_URL`; optional `API_READY_TIMEOUT_MS`, `API_DB_MAX_CONNECTIONS`, `API_COOKIE_SECURE`, `API_SESSION_TTL_HOURS`, `API_WS_HEARTBEAT_MS`, `API_WS_DEAD_MS`, `API_WS_REPLAY`, `API_WS_IDLE_MS`, `API_WS_PRESENCE_TTL_MS`, `API_WS_TYPING_TTL_MS`, `RUST_LOG`). Fehlt eine Pflichtvariable, startet der Prozess nicht und sagt welche. Beim Start laufen die sqlx-Migrationen aus `api/migrations` (Compose startet die API erst, wenn Postgres healthy ist).
 
 | Route | Antwort |
 |---|---|
@@ -66,6 +66,8 @@ Client → Server:
 | `{"op":"h"}` | Heartbeat |
 | `{"op":"s","s":"<server>","c?":"<channel>","n?":<seq>}` | Subscribe; `n` = letzte gesehene Seq (Reconnect) |
 | `{"op":"u","s":"<server>","c?":"<channel>"}` | Unsubscribe |
+| `{"op":"p","st?":"o\|i"}` | Presence-Puls (aktiv) bzw. Idle dieses Clients |
+| `{"op":"y","s":"…","c":"…","on":true\|false}` | Typing start / stop im Kanal |
 
 Server → Client:
 
@@ -76,6 +78,9 @@ Server → Client:
 | `{"op":"e","t":"c\|e\|d","s":"…","c?":"…","n":<seq>,"i?":"<id>","d?":{…}}` | Event: create / edit (Delta in `d`) / delete |
 | `{"op":"gap","s":"…","c?":"…"}` | Lücke größer als der Replay-Puffer — History kommt per REST |
 | `{"op":"err","e":"not_found\|bad_request\|…"}` | Subscribe oder Signaling abgelehnt (fremde Server/Kanäle: `not_found`, wie REST) |
+| `{"op":"p","s":"…","u":"…","st":"o\|i\|x"}` | Presence-Update (online / idle / offline). Kein Seq. |
+| `{"op":"p","s":"…","snap":[{"u":"…","st":"o\|i"},…]}` | Presence-Snapshot nach Subscribe |
+| `{"op":"y","s":"…","c":"…","u":"…","on":true\|false}` | Typing-Broadcast. Kein Seq. |
 | `{"op":"sig","t":"j\|l\|o\|a\|i\|p\|u","s":"…","c":"…","u":"…",…}` | Voice-Signaling (issue 10), live, ohne Seq |
 
 Client → Server zusätzlich:
@@ -89,6 +94,8 @@ Client → Server zusätzlich:
 | `{"op":"sig","t":"p\|u","s":"…","c":"…","k":"a\|v"}` | Pub / unpub (`v` braucht `go_live`) |
 
 Topics: Server `gb:s:{id}` und Kanal `gb:c:{id}` sind getrennt. Signaling hängt an `gb:v:{channel}` (Pub/Sub, kein Replay). Join nur mit gültiger Session und `join_voice`; Textkanäle: `bad_request`, fremde IDs: `not_found`. Der Web-Client spricht natives `RTCPeerConnection` — Join-Klick setzt den lokalen State sofort, ICE läuft im Hintergrund. Kein LiveKit, kein fremdes Medien-JWT; der SFU-Forward (issue 11) ist nicht Teil dieses Tickets. Chat-Events nur an passende Subscribes. Heartbeat alle `API_WS_HEARTBEAT_MS` (15 s); ohne Client-Frame für `API_WS_DEAD_MS` (30 s) schließt der Server (stiller Tod). Reconnect schickt `s` mit letzter Seq — der Server spielt `n+1…` nach, ohne Doppelte. Issue 5 (REST-Nachrichten) publiziert nach einem erfolgreichen Write über `publish_channel` / `publish_server`; dieses Ticket legt keine Message-Tabellen an.
+
+**Presence / Typing (issue 8).** Ephemeral, eigenes `op`, kein Chat-Seq. Redis-Keys mit TTL: `gb:p:c:{user}:{conn}` (Status pro Client), `gb:p:u:{user}` (Aggregat), `gb:p:s:{server}` (wer auf dem Server sichtbar ist), `gb:y:{channel}:{user}` (Typing). Fan-out über Pub/Sub `gb:p:{server}` / `gb:y:{channel}` — nicht über das Replay-Log. Idle ist **pro Client** (`API_WS_IDLE_MS`, Default 5 min); Heartbeat zählt nicht als Aktivität. User ist online, solange ein Client online ist, idle wenn alle verbliebenen idle sind, offline wenn der letzte Socket weg ist oder der Key abläuft. Typing ist in unter 100 ms sichtbar und verschwindet per Stop-Event plus Client-/Key-Timeout (`API_WS_TYPING_TTL_MS`, 6 s). Presence-Punkte leben in der Mitgliederliste, nicht in der Message-Pane — kein Relayout des Chats.
 
 Der Web-Client hält eine Socket-Instanz pro Tab, subscribed Server/Kanal aus der URL und dedupliziert über Seq.
 | `GET /api/servers` | `200 [Server]` — die Server des Users in Beitrittsreihenfolge, je mit `role`, `permissions` (effektiv) und `member_permissions` |

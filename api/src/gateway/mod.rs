@@ -8,11 +8,16 @@
 //! successful write it should call [`publish_channel`]. This module does
 //! not add message tables or `/api/.../messages` routes.
 //!
+//! **Issue 8 (presence / typing)** uses ephemeral `op: "p"` / `op: "y"`
+//! over Redis keys + TTL and Pub/Sub. They are not sequenced and never
+//! enter the chat replay log.
+//!
 //! **Issue 10 (signaling)** uses `op: "sig"` (join/leave, offer/answer,
 //! ice, pub/unpub). Those frames are not mixed into `op: "e"`.
 
 mod conn;
 mod hub;
+mod live;
 pub mod protocol;
 mod signal;
 
@@ -31,7 +36,7 @@ use crate::error::ApiError;
 use crate::state::AppState;
 
 pub use hub::Gateway;
-pub use protocol::{Event, EventDraft, EventKind, Topic};
+pub use protocol::{Event, EventDraft, EventKind, PresenceStatus, Topic};
 
 pub fn router() -> Router<AppState> {
     Router::new().route("/ws", get(upgrade))
