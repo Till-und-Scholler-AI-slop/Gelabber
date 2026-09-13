@@ -13,6 +13,7 @@ import { Avatar } from "../components/Avatar.tsx";
 import { Field } from "../components/Field.tsx";
 import { FormError } from "../components/FormError.tsx";
 import { SubmitButton } from "../components/SubmitButton.tsx";
+import { useDebouncedValue } from "../components/useDebouncedValue.ts";
 
 export function ProfilePage() {
   const user = useSession((state) => state.user);
@@ -56,8 +57,10 @@ function ProfileForm({ user }: { user: User }) {
     mutation.mutate();
   };
 
+  // Preview trails typing so the browser does not fetch every half-typed URL.
+  const settledAvatarUrl = useDebouncedValue(avatarUrl.trim(), 400);
   const previewUrl =
-    validateAvatarUrl(avatarUrl) === null ? avatarUrl.trim() : "";
+    validateAvatarUrl(settledAvatarUrl) === null ? settledAvatarUrl : "";
 
   return (
     <section className="mx-auto max-w-md">

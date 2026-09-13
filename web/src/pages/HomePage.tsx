@@ -8,7 +8,7 @@ export function HomePage() {
   return (
     <section className="flex flex-col gap-4">
       <h1 className="text-3xl font-semibold tracking-tight">
-        Hallo{user ? `, ${user.name}` : ""}.
+        {user ? `Hallo ${user.name}` : "Hallo"}
       </h1>
       <p className="max-w-prose text-neutral-600">
         Du bist angemeldet. Chat, Voice und Live kommen in den nächsten Tickets
