@@ -26,6 +26,7 @@ use crate::state::AppState;
 
 use super::ServerView;
 use super::membership::{self, Membership};
+use super::moderation;
 use super::permissions::Permission;
 use super::validate;
 
@@ -201,6 +202,9 @@ async fn preview_invite(
     Path(code): Path<String>,
 ) -> Result<Json<InvitePreview>, ApiError> {
     let invite = by_code(&state.db, &code).await?;
+    if moderation::is_banned(&state.db, invite.server_id, user.id).await? {
+        return Err(ApiError::Banned);
+    }
     let member = membership::load(&state.db, invite.server_id, user.id)
         .await
         .map(|_| true)
@@ -248,6 +252,16 @@ async fn join(
     .await?;
 
     if !already {
+        let banned: bool = sqlx::query_scalar(
+            "SELECT EXISTS (SELECT 1 FROM server_bans WHERE server_id = $1 AND user_id = $2)",
+        )
+        .bind(invite.server_id)
+        .bind(user.id)
+        .fetch_one(&mut *tx)
+        .await?;
+        if banned {
+            return Err(ApiError::Banned);
+        }
         if !invite.is_usable(Utc::now()) {
             return Err(ApiError::InviteInvalid);
         }

@@ -69,6 +69,7 @@ fn denied_message(permission: Permission) -> &'static str {
     match permission {
         Permission::ManageServer => "You need the manage_server permission.",
         Permission::ManageChannels => "You need the manage_channels permission.",
+        Permission::ManageMessages => "You need the manage_messages permission.",
         Permission::SendMessages => "You need the send_messages permission.",
         Permission::SendFiles => "You need the send_files permission.",
         Permission::JoinVoice => "You need the join_voice permission.",

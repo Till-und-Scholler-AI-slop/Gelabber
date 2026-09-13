@@ -19,6 +19,7 @@ import { useDms } from "../dms/queries.ts";
 import { forgetServer, useServer } from "../servers/queries.ts";
 import { useGatewayTopics } from "../ws/useGateway.ts";
 import { useLiveBridge } from "../ws/useLive.ts";
+import { useRealtimeBridge } from "../ws/useRealtime.ts";
 
 export function WorkspaceLayout() {
   return (
@@ -35,6 +36,7 @@ function Workspace() {
   useGatewayTopics(serverId, channelId);
   useLiveBridge();
   useDms();
+  useRealtimeBridge();
 
   return (
     <div className="flex h-[calc(100dvh-3.5rem)] overflow-hidden bg-neutral-50">

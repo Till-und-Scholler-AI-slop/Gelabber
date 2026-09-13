@@ -17,6 +17,7 @@ export type ApiErrorCode =
   | "not_found"
   | "email_taken"
   | "invite_invalid"
+  | "banned"
   | "internal"
   | "network"
   | "timeout";
@@ -93,6 +94,7 @@ const KNOWN_CODES: ReadonlySet<string> = new Set<ApiErrorCode>([
   "not_found",
   "email_taken",
   "invite_invalid",
+  "banned",
   "internal",
 ]);
 

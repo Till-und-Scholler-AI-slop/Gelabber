@@ -3,12 +3,14 @@
 //! the caller's membership, so a foreign server id is a `404`.
 //!
 //! Permission model, on purpose coarse: the owner may do everything, members
-//! share one flag mask per server (`member_permissions`). No per-channel
-//! overwrites, no further roles in v1.
+//! share one flag mask per server (`member_permissions`). Kick/ban need
+//! `manage_server`; deleting someone else's message needs `manage_messages`.
+//! No per-channel overwrites, no further roles in v1.
 
 pub mod channel;
 pub mod invite;
 pub mod membership;
+pub mod moderation;
 pub mod permissions;
 pub mod validate;
 
@@ -43,6 +45,7 @@ pub fn router() -> Router<AppState> {
         .route("/api/servers/{id}/leave", post(leave_server))
         .merge(channel::router())
         .merge(invite::router())
+        .merge(moderation::router())
 }
 
 /// The `servers` row as stored.

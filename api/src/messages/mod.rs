@@ -1,14 +1,15 @@
-//! `/api/channels/{id}/messages` and `/api/messages/{id}` (issue #5).
+//! `/api/channels/{id}/messages` and `/api/messages/{id}` (issue #5 + #15).
 //!
 //! REST carries history and write rights. The client sends optimistic and
 //! virtualises the list. After a successful write this module calls
 //! [`publish_channel`]; Redis failure is logged and does not fail the request.
 //!
 //! Rights: any member may read a text channel's history. `send_messages` is
-//! required to post or edit. Delete is the author's alone (no moderation
-//! delete in v1). DMs (`kind = dm`) use these same routes; both
-//! participants may write. Voice channels answer `404` — they have no
-//! message resource. A foreign/unknown channel is the same `404`.
+//! required to post or edit. The author may always delete their own row;
+//! `manage_messages` deletes someone else's on a server. DMs (`kind = dm`)
+//! use these same routes; both participants may write. Voice channels
+//! answer `404` — they have no message resource. A foreign/unknown channel
+//! is the same `404`.
 
 pub mod validate;
 
@@ -256,9 +257,7 @@ async fn delete_message(
 ) -> Result<StatusCode, ApiError> {
     let (access, current) = message_for(&state.db, message_id, user.id).await?;
     if current.author.id != user.id {
-        return Err(ApiError::Forbidden(
-            "You can only delete your own messages.",
-        ));
+        access.require_manage_messages()?;
     }
 
     sqlx::query("DELETE FROM messages WHERE id = $1")
@@ -322,6 +321,15 @@ impl MessagingChannel {
         match self {
             Self::Server { member, .. } => member.require(Permission::SendMessages),
             Self::Dm { .. } => Ok(()),
+        }
+    }
+
+    fn require_manage_messages(&self) -> Result<(), ApiError> {
+        match self {
+            Self::Server { member, .. } => member.require(Permission::ManageMessages),
+            Self::Dm { .. } => Err(ApiError::Forbidden(
+                "You can only delete your own messages.",
+            )),
         }
     }
 }

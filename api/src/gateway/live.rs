@@ -8,9 +8,7 @@ use std::collections::HashSet;
 use uuid::Uuid;
 
 use super::hub::{ConnId, Gateway};
-use super::protocol::{
-    LiveTopic, PresenceEntry, PresenceStatus, REDIS_PREFIX, ServerFrame,
-};
+use super::protocol::{LiveTopic, PresenceEntry, PresenceStatus, REDIS_PREFIX, ServerFrame};
 use crate::error::ApiError;
 
 /// Set one connection's status, recompute the user aggregate.
@@ -222,10 +220,7 @@ impl Gateway {
         Ok(())
     }
 
-    pub async fn presence_snapshot(
-        &self,
-        server_id: Uuid,
-    ) -> Result<Vec<PresenceEntry>, ApiError> {
+    pub async fn presence_snapshot(&self, server_id: Uuid) -> Result<Vec<PresenceEntry>, ApiError> {
         let users: Vec<String> = self
             .with_conn(|mut conn| {
                 let key = server_set_key(server_id);
@@ -317,7 +312,12 @@ impl Gateway {
         } else {
             self.with_conn(|mut conn| {
                 let key = key.clone();
-                async move { redis::cmd("DEL").arg(key).query_async::<i64>(&mut conn).await }
+                async move {
+                    redis::cmd("DEL")
+                        .arg(key)
+                        .query_async::<i64>(&mut conn)
+                        .await
+                }
             })
             .await
             .map_err(super::hub::redis_err)?;
@@ -329,6 +329,48 @@ impl Gateway {
         .await
     }
 
+    pub async fn stop_typing(
+        &self,
+        server_id: Uuid,
+        channel_id: Uuid,
+        user_id: Uuid,
+    ) -> Result<(), ApiError> {
+        self.publish_typing_stop(server_id, channel_id, user_id)
+            .await
+    }
+
+    /// Kick/ban: drop this user from one server's presence set and tell
+    /// remaining members they went offline there. Other servers stay.
+    pub async fn forget_server_presence(
+        &self,
+        user_id: Uuid,
+        server_id: Uuid,
+    ) -> Result<(), ApiError> {
+        self.with_conn(|mut conn| {
+            let sk = server_set_key(server_id);
+            let usk = user_servers_key(user_id);
+            let uid = user_id.to_string();
+            let sid = server_id.to_string();
+            async move {
+                let _: i64 = redis::cmd("SREM")
+                    .arg(sk)
+                    .arg(uid)
+                    .query_async(&mut conn)
+                    .await?;
+                let _: i64 = redis::cmd("SREM")
+                    .arg(usk)
+                    .arg(sid)
+                    .query_async(&mut conn)
+                    .await?;
+                Ok(())
+            }
+        })
+        .await
+        .map_err(super::hub::redis_err)?;
+        self.publish_presence(server_id, user_id, PresenceStatus::Offline)
+            .await
+    }
+
     async fn publish_typing_stop(
         &self,
         server_id: Uuid,
@@ -338,7 +380,12 @@ impl Gateway {
         let key = typing_key(channel_id, user_id);
         self.with_conn(|mut conn| {
             let key = key.clone();
-            async move { redis::cmd("DEL").arg(key).query_async::<i64>(&mut conn).await }
+            async move {
+                redis::cmd("DEL")
+                    .arg(key)
+                    .query_async::<i64>(&mut conn)
+                    .await
+            }
         })
         .await
         .map_err(super::hub::redis_err)?;

@@ -44,6 +44,7 @@ export function MessagePane({
   channelId,
   channelName,
   canSend,
+  canModerate = false,
   mention = "#",
   footer,
   onDraftChange,
@@ -52,6 +53,7 @@ export function MessagePane({
   channelId: string;
   channelName: string;
   canSend: boolean;
+  canModerate?: boolean;
   /** `#` for a server channel, `@` for a DM. */
   mention?: "#" | "@";
   footer?: ReactNode;
@@ -87,6 +89,7 @@ export function MessagePane({
         channelId={channelId}
         items={items}
         meId={user?.id}
+        canModerate={canModerate}
         hasOlder={Boolean(hasNextPage)}
         loadingOlder={isFetchingNextPage}
         onLoadOlder={onLoadOlder}
@@ -114,6 +117,7 @@ function MessageList({
   channelId,
   items,
   meId,
+  canModerate,
   hasOlder,
   loadingOlder,
   onLoadOlder,
@@ -122,6 +126,7 @@ function MessageList({
   channelId: string;
   items: Message[];
   meId: string | undefined;
+  canModerate: boolean;
   hasOlder: boolean;
   loadingOlder: boolean;
   onLoadOlder: () => void;
@@ -132,6 +137,7 @@ function MessageList({
   const olderAnchor = useRef<string | null>(null);
   const lastCount = useRef(0);
   const lastTail = useRef<string | undefined>(undefined);
+  const pin = useRef<{ id: string; offset: number } | null>(null);
   const [viewport, setViewport] = useState(0);
   const edit = useEditMessage(channelId);
   const remove = useDeleteMessage(channelId);
@@ -174,10 +180,32 @@ function MessageList({
     ) {
       if (items.length > 0)
         virtualizer.scrollToIndex(items.length - 1, { align: "end" });
+    } else if (
+      items.length < lastCount.current &&
+      pin.current &&
+      scrollRef.current
+    ) {
+      // A row vanished (own delete or WS). Keep the first visible id
+      // at the same offset so the list does not jump.
+      const idx = items.findIndex((m) => m.id === pin.current?.id);
+      if (idx >= 0) {
+        const offset = virtualizer.getOffsetForIndex(idx, "start");
+        if (offset) {
+          scrollRef.current.scrollTop = offset[0] - pin.current.offset;
+        }
+      }
     }
 
     lastCount.current = items.length;
     lastTail.current = tail;
+    const first = virtualizer.getVirtualItems()[0];
+    const firstMessage = first ? items[first.index] : undefined;
+    if (first && firstMessage && scrollRef.current) {
+      pin.current = {
+        id: firstMessage.id,
+        offset: first.start - scrollRef.current.scrollTop,
+      };
+    }
   }, [items, virtualizer]);
 
   const firstVisible = virtualizer.getVirtualItems()[0]?.index ?? 0;
@@ -242,10 +270,16 @@ function MessageList({
                 message={message}
                 continued={continued}
                 mine={message.author.id === meId}
+                canDelete={message.author.id === meId || canModerate}
                 onEdit={(content) => edit.mutate({ id: message.id, content })}
                 onDelete={() => {
-                  if (window.confirm("Diese Nachricht wirklich löschen?"))
-                    remove.mutate(message.id);
+                  const own = message.author.id === meId;
+                  const ok = window.confirm(
+                    own
+                      ? "Diese Nachricht wirklich löschen?"
+                      : `Nachricht von ${message.author.name} löschen?`,
+                  );
+                  if (ok) remove.mutate(message.id);
                 }}
               />
             </div>
@@ -260,12 +294,14 @@ function MessageRow({
   message,
   continued,
   mine,
+  canDelete,
   onEdit,
   onDelete,
 }: {
   message: Message;
   continued: boolean;
   mine: boolean;
+  canDelete: boolean;
   onEdit: (content: string) => void;
   onDelete: () => void;
 }) {
@@ -284,16 +320,22 @@ function MessageRow({
 
   const when = formatWhen(message.created_at);
   const error = editing ? validateContent(draft) : null;
+  const showDelete = canDelete && !pending && !editing;
+  const showEdit = mine && !pending && !editing;
 
   const actions =
-    mine && !pending && !editing ? (
+    showEdit || showDelete ? (
       <span className="flex shrink-0 items-center opacity-70 transition group-hover:opacity-100 group-focus-within:opacity-100">
-        <IconButton label="Nachricht bearbeiten" onClick={startEdit}>
-          <PencilIcon size={14} />
-        </IconButton>
-        <IconButton label="Nachricht löschen" onClick={onDelete}>
-          <TrashIcon size={14} />
-        </IconButton>
+        {showEdit ? (
+          <IconButton label="Nachricht bearbeiten" onClick={startEdit}>
+            <PencilIcon size={14} />
+          </IconButton>
+        ) : null}
+        {showDelete ? (
+          <IconButton label="Nachricht löschen" onClick={onDelete}>
+            <TrashIcon size={14} />
+          </IconButton>
+        ) : null}
       </span>
     ) : null;
 

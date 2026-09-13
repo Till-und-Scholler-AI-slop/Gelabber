@@ -1,0 +1,60 @@
+// Apply sequenced chat/server events and kick/ban errors to the query
+// cache. Message deletes land immediately; the list pin lives in MessagePane.
+
+import { useQueryClient } from "@tanstack/react-query";
+import { useNavigate } from "@tanstack/react-router";
+import { useEffect } from "react";
+
+import { useSession } from "../auth/session.ts";
+import { notify } from "../components/toasts.ts";
+import { applyChannelEvent } from "../messages/queries.ts";
+import { applyMemberRemoved, forgetServer } from "../servers/queries.ts";
+import { getGateway } from "./client.ts";
+
+export function useRealtimeBridge(): void {
+  const client = useQueryClient();
+  const navigate = useNavigate();
+  const me = useSession((s) => s.user?.id);
+
+  useEffect(() => {
+    const leave = (reason: "kicked" | "banned", serverId: string) => {
+      notify(
+        reason === "banned"
+          ? "Du wurdest vom Server gesperrt."
+          : "Du wurdest vom Server entfernt.",
+      );
+      void navigate({ to: "/", replace: true }).then(() =>
+        forgetServer(client, serverId),
+      );
+    };
+
+    const gateway = getGateway();
+    const offEvent = gateway.onEvent((event) => {
+      if (event.c) {
+        applyChannelEvent(client, event);
+        return;
+      }
+      if (event.t === "d" && event.i) {
+        const result = applyMemberRemoved(client, event.s, event.i, me);
+        if (result === "self") {
+          const banned =
+            event.d !== null &&
+            typeof event.d === "object" &&
+            "k" in event.d &&
+            event.d.k === "b";
+          leave(banned ? "banned" : "kicked", event.s);
+        }
+      }
+    });
+    const offErr = gateway.onErr((err) => {
+      if ((err.e === "kicked" || err.e === "banned") && err.s) {
+        forgetServer(client, err.s, { keepDetail: true });
+        leave(err.e, err.s);
+      }
+    });
+    return () => {
+      offEvent();
+      offErr();
+    };
+  }, [client, me, navigate]);
+}

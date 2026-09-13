@@ -155,6 +155,85 @@ export function useEditMessage(channelId: string) {
   });
 }
 
+function isMessage(value: unknown): value is Message {
+  if (value === null || typeof value !== "object") return false;
+  const row = value as Message;
+  return (
+    typeof row.id === "string" &&
+    typeof row.channel_id === "string" &&
+    typeof row.content === "string" &&
+    typeof row.created_at === "string" &&
+    row.author !== null &&
+    typeof row.author === "object" &&
+    typeof row.author.id === "string"
+  );
+}
+
+/** WS create: append if the row is not already in a page. */
+export function applyMessageCreated(
+  client: QueryClient,
+  channelId: string,
+  message: Message,
+): void {
+  patchPages(client, channelId, (pages) => {
+    if (pages.some((page) => page.messages.some((row) => row.id === message.id))) {
+      return pages;
+    }
+    if (pages.length === 0) {
+      return [{ messages: [message], has_more: false }];
+    }
+    const newest = pages[0];
+    if (!newest) return pages;
+    return [
+      { ...newest, messages: [...newest.messages, message] },
+      ...pages.slice(1),
+    ];
+  });
+}
+
+/** WS edit: replace the row in place. */
+export function applyMessageEdited(
+  client: QueryClient,
+  channelId: string,
+  message: Message,
+): void {
+  patchPages(client, channelId, (pages) =>
+    mapMessages(pages, (row) => (row.id === message.id ? message : row)),
+  );
+}
+
+/** WS / optimistic delete: drop the row, keep page cursors. */
+export function applyMessageDeleted(
+  client: QueryClient,
+  channelId: string,
+  messageId: string,
+): void {
+  patchPages(client, channelId, (pages) =>
+    mapMessages(pages, (message) => (message.id === messageId ? null : message)),
+  );
+}
+
+export function applyChannelEvent(
+  client: QueryClient,
+  event: {
+    t: "c" | "e" | "d";
+    c?: string;
+    i?: string;
+    d?: unknown;
+  },
+): void {
+  const channelId = event.c;
+  if (!channelId) return;
+  if (event.t === "d" && event.i) {
+    applyMessageDeleted(client, channelId, event.i);
+    return;
+  }
+  if ((event.t === "c" || event.t === "e") && isMessage(event.d)) {
+    if (event.t === "c") applyMessageCreated(client, channelId, event.d);
+    else applyMessageEdited(client, channelId, event.d);
+  }
+}
+
 export function useDeleteMessage(channelId: string) {
   const client = useQueryClient();
   return useMutation({

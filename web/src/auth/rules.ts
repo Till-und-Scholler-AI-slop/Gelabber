@@ -133,6 +133,8 @@ export function errorMessage(code: ApiErrorCode): string {
       return "Das gibt es nicht (mehr).";
     case "invite_invalid":
       return "Diese Einladung ist abgelaufen oder aufgebraucht.";
+    case "banned":
+      return "Du bist auf diesem Server gesperrt.";
     case "validation_failed":
       return "Bitte die markierten Felder prüfen.";
     case "timeout":

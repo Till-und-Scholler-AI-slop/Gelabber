@@ -20,3 +20,17 @@ impl<S: Send + Sync> FromRequestParts<S> for Id {
         }
     }
 }
+
+/// Two path UUIDs (`/api/servers/{id}/bans/{user_id}`). Same 404 as [`Id`].
+pub struct Ids(pub Uuid, pub Uuid);
+
+impl<S: Send + Sync> FromRequestParts<S> for Ids {
+    type Rejection = ApiError;
+
+    async fn from_request_parts(parts: &mut Parts, state: &S) -> Result<Self, ApiError> {
+        match Path::<(Uuid, Uuid)>::from_request_parts(parts, state).await {
+            Ok(Path((a, b))) => Ok(Self(a, b)),
+            Err(_) => Err(ApiError::NotFound),
+        }
+    }
+}

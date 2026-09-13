@@ -45,6 +45,8 @@ pub enum ApiError {
     EmailTaken,
     /// 410: the invite link exists but is expired or used up.
     InviteInvalid,
+    /// 403: the caller is banned from this server (invite rejoin included).
+    Banned,
     /// 500: anything unexpected. The string is logged, not returned.
     Internal(String),
 }
@@ -69,6 +71,7 @@ impl ApiError {
             Self::NotFound => "not_found",
             Self::EmailTaken => "email_taken",
             Self::InviteInvalid => "invite_invalid",
+            Self::Banned => "banned",
             Self::Internal(_) => "internal",
         }
     }
@@ -78,7 +81,7 @@ impl ApiError {
             Self::Validation(_) => StatusCode::UNPROCESSABLE_ENTITY,
             Self::BadRequest(_) => StatusCode::BAD_REQUEST,
             Self::Unauthenticated | Self::InvalidCredentials => StatusCode::UNAUTHORIZED,
-            Self::Csrf | Self::Forbidden(_) => StatusCode::FORBIDDEN,
+            Self::Csrf | Self::Forbidden(_) | Self::Banned => StatusCode::FORBIDDEN,
             Self::NotFound => StatusCode::NOT_FOUND,
             Self::EmailTaken => StatusCode::CONFLICT,
             Self::InviteInvalid => StatusCode::GONE,
@@ -97,6 +100,7 @@ impl ApiError {
             Self::NotFound => "Not found.",
             Self::EmailTaken => "This e-mail address is already registered.",
             Self::InviteInvalid => "This invite link has expired or been used up.",
+            Self::Banned => "You are banned from this server.",
             Self::Internal(_) => "Something went wrong on our side.",
         }
     }

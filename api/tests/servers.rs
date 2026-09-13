@@ -103,7 +103,7 @@ async fn creating_a_server_makes_the_caller_owner_with_a_first_channel(pool: PgP
     let permissions = server["permissions"].as_array().unwrap();
     assert_eq!(
         permissions.len(),
-        6,
+        7,
         "owner holds every flag: {permissions:?}"
     );
     assert_eq!(

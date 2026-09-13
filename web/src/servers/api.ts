@@ -2,6 +2,7 @@
 
 import { api } from "../api/client.ts";
 import type {
+  Ban,
   Category,
   Channel,
   CreateChannelInput,
@@ -82,6 +83,24 @@ export const previewInvite = (code: string, signal?: AbortSignal) =>
 
 export const joinInvite = (code: string) =>
   api<Server>(`/invites/${encodeURIComponent(code)}/join`, { method: "POST" });
+
+export const kickMember = (serverId: string, userId: string) =>
+  api<null>(`/servers/${serverId}/kick`, {
+    method: "POST",
+    body: { user_id: userId },
+  });
+
+export const banMember = (serverId: string, userId: string) =>
+  api<null>(`/servers/${serverId}/ban`, {
+    method: "POST",
+    body: { user_id: userId },
+  });
+
+export const listBans = (serverId: string, signal?: AbortSignal) =>
+  api<Ban[]>(`/servers/${serverId}/bans`, { signal });
+
+export const unbanMember = (serverId: string, userId: string) =>
+  api<null>(`/servers/${serverId}/bans/${userId}`, { method: "DELETE" });
 
 /** The link people paste: same origin, web route `/invite/{code}`. */
 export function inviteUrl(code: string): string {

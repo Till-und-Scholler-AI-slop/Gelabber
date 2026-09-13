@@ -32,7 +32,9 @@ export function InvitePage() {
     return (
       <section className="mx-auto max-w-sm">
         <h1 className="text-2xl font-semibold tracking-tight">
-          Einladung nicht nutzbar
+          {code === "banned"
+            ? "Kein Zutritt"
+            : "Einladung nicht nutzbar"}
         </h1>
         <p className="mt-2 text-neutral-600">
           {code === "not_found"
