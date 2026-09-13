@@ -1,8 +1,8 @@
 //! Compact JSON frames for the native WS gateway.
 //!
 //! Short field names, no envelope beyond `op`. Chat events are `op: "e"`
-//! with `t` = create/edit/delete. Signaling (issue 10) must use a later,
-//! separate `op` — do not mix it into this stream.
+//! with `t` = create/edit/delete. Voice signaling is `op: "sig"` — live
+//! only, no seq, never mixed into the chat stream.
 
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
@@ -79,6 +79,116 @@ impl EventKind {
     }
 }
 
+/// Voice signaling kind (`op: "sig"`). Short letters, not chat `t`.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "lowercase")]
+pub enum SigKind {
+    /// Join a voice channel.
+    J,
+    /// Leave.
+    L,
+    /// SDP offer (client → room / future SFU).
+    O,
+    /// SDP answer.
+    A,
+    /// Trickle ICE candidate.
+    I,
+    /// Publish a track.
+    P,
+    /// Unpublish a track.
+    U,
+}
+
+impl SigKind {
+    pub fn as_str(self) -> &'static str {
+        match self {
+            Self::J => "j",
+            Self::L => "l",
+            Self::O => "o",
+            Self::A => "a",
+            Self::I => "i",
+            Self::P => "p",
+            Self::U => "u",
+        }
+    }
+}
+
+/// Audio / video track on pub/unpub.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize, Deserialize)]
+#[serde(rename_all = "lowercase")]
+pub enum TrackKind {
+    A,
+    V,
+}
+
+impl TrackKind {
+    pub fn as_str(self) -> &'static str {
+        match self {
+            Self::A => "a",
+            Self::V => "v",
+        }
+    }
+}
+
+/// Compact signaling payload. Redis Pub/Sub carries this as `{"op":"sig",…}`.
+/// No `n` — ICE and SDP go stale; there is no replay.
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+pub struct SigEvent {
+    pub t: SigKind,
+    pub s: Uuid,
+    pub c: Uuid,
+    pub u: Uuid,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub sdp: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub ice: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub mid: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub k: Option<TrackKind>,
+}
+
+impl SigEvent {
+    pub fn join(server_id: Uuid, channel_id: Uuid, user_id: Uuid) -> Self {
+        Self {
+            t: SigKind::J,
+            s: server_id,
+            c: channel_id,
+            u: user_id,
+            sdp: None,
+            ice: None,
+            mid: None,
+            k: None,
+        }
+    }
+
+    pub fn leave(server_id: Uuid, channel_id: Uuid, user_id: Uuid) -> Self {
+        Self {
+            t: SigKind::L,
+            s: server_id,
+            c: channel_id,
+            u: user_id,
+            sdp: None,
+            ice: None,
+            mid: None,
+            k: None,
+        }
+    }
+
+    pub fn published(server_id: Uuid, channel_id: Uuid, user_id: Uuid, kind: TrackKind) -> Self {
+        Self {
+            t: SigKind::P,
+            s: server_id,
+            c: channel_id,
+            u: user_id,
+            sdp: None,
+            ice: None,
+            mid: None,
+            k: Some(kind),
+        }
+    }
+}
+
 /// One compact create/edit/delete event. This is what Redis stores and
 /// what the client sees as `{"op":"e", …}`.
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
@@ -126,6 +236,17 @@ pub struct ClientFrame {
     pub c: Option<Uuid>,
     #[serde(default)]
     pub n: Option<u64>,
+    /// Signaling kind when `op` is `sig`.
+    #[serde(default)]
+    pub t: Option<SigKind>,
+    #[serde(default)]
+    pub sdp: Option<String>,
+    #[serde(default)]
+    pub ice: Option<String>,
+    #[serde(default)]
+    pub mid: Option<String>,
+    #[serde(default)]
+    pub k: Option<TrackKind>,
 }
 
 impl ClientFrame {
@@ -163,6 +284,23 @@ pub enum ServerFrame {
         s: Uuid,
         #[serde(skip_serializing_if = "Option::is_none")]
         c: Option<Uuid>,
+    },
+    /// Voice signaling. Separate `op` so chat clients never see SDP/ICE
+    /// on the sequenced event stream.
+    #[serde(rename = "sig")]
+    Sig {
+        t: SigKind,
+        s: Uuid,
+        c: Uuid,
+        u: Uuid,
+        #[serde(skip_serializing_if = "Option::is_none")]
+        sdp: Option<String>,
+        #[serde(skip_serializing_if = "Option::is_none")]
+        ice: Option<String>,
+        #[serde(skip_serializing_if = "Option::is_none")]
+        mid: Option<String>,
+        #[serde(skip_serializing_if = "Option::is_none")]
+        k: Option<TrackKind>,
     },
     #[serde(rename = "err")]
     Err {
@@ -206,6 +344,19 @@ impl ServerFrame {
             e: code,
             s: server_id,
             c: channel_id,
+        }
+    }
+
+    pub fn sig(event: SigEvent) -> Self {
+        Self::Sig {
+            t: event.t,
+            s: event.s,
+            c: event.c,
+            u: event.u,
+            sdp: event.sdp,
+            ice: event.ice,
+            mid: event.mid,
+            k: event.k,
         }
     }
 
@@ -348,5 +499,21 @@ mod tests {
         assert_eq!(frame.n, Some(12));
         assert_eq!(frame.s, Some(Uuid::from_u128(1)));
         assert_eq!(frame.c, Some(Uuid::from_u128(2)));
+    }
+
+    #[test]
+    fn sig_frame_is_compact_and_not_a_chat_event() {
+        let json = ServerFrame::sig(SigEvent::join(
+            Uuid::from_u128(1),
+            Uuid::from_u128(2),
+            Uuid::from_u128(3),
+        ))
+        .to_json()
+        .unwrap();
+        assert!(json.starts_with(r#"{"op":"sig","t":"j""#));
+        assert!(!json.contains("\"n\""));
+        assert!(!json.contains("offer"));
+        assert!(!json.contains("payload"));
+        assert!(!json.contains(r#""op":"e""#));
     }
 }

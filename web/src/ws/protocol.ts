@@ -1,5 +1,5 @@
-// Compact WS frames (issue #6). Short keys, no extra envelope.
-// Chat events stay on `op: "e"`. Signaling (issue 10) must use another op.
+// Compact WS frames (issue #6 + #10). Short keys, no extra envelope.
+// Chat events stay on `op: "e"`. Signaling is `op: "sig"` — live only.
 
 export type EventType = "c" | "e" | "d";
 
@@ -8,10 +8,25 @@ export type Topic = {
   c?: string;
 };
 
+export type SigType = "j" | "l" | "o" | "a" | "i" | "p" | "u";
+export type TrackKind = "a" | "v";
+
+export type SigClientFrame = {
+  op: "sig";
+  t: SigType;
+  s: string;
+  c: string;
+  sdp?: string;
+  ice?: string;
+  mid?: string;
+  k?: TrackKind;
+};
+
 export type ClientFrame =
   | { op: "h" }
   | { op: "s"; s: string; c?: string; n?: number }
-  | { op: "u"; s: string; c?: string };
+  | { op: "u"; s: string; c?: string }
+  | SigClientFrame;
 
 export type ChatEvent = {
   op: "e";
@@ -23,12 +38,27 @@ export type ChatEvent = {
   d?: unknown;
 };
 
+export type SigEvent = {
+  op: "sig";
+  t: SigType;
+  s: string;
+  c: string;
+  u: string;
+  sdp?: string;
+  ice?: string;
+  mid?: string;
+  k?: TrackKind;
+};
+
+export type ErrFrame = { op: "err"; e: string; s?: string; c?: string };
+
 export type ServerFrame =
   | { op: "h" }
   | { op: "ok"; s: string; c?: string; n: number }
   | ChatEvent
+  | SigEvent
   | { op: "gap"; s: string; c?: string }
-  | { op: "err"; e: string; s?: string; c?: string };
+  | ErrFrame;
 
 export function topicKey(topic: Topic): string {
   return topic.c ? `c:${topic.c}` : `s:${topic.s}`;
@@ -49,7 +79,14 @@ export function decode(raw: string): ServerFrame | null {
     return null;
   }
   const op = (value as { op: unknown }).op;
-  if (op === "h" || op === "ok" || op === "e" || op === "gap" || op === "err") {
+  if (
+    op === "h" ||
+    op === "ok" ||
+    op === "e" ||
+    op === "sig" ||
+    op === "gap" ||
+    op === "err"
+  ) {
     return value as ServerFrame;
   }
   return null;

@@ -6,6 +6,7 @@ import { Link, useNavigate } from "@tanstack/react-router";
 import { useVirtualizer } from "@tanstack/react-virtual";
 import { useMemo, useRef, useState, type ReactNode } from "react";
 
+import { leaveVoice, useVoice } from "../voice/session.ts";
 import { can } from "../servers/permissions.ts";
 import { buildRows, rowHeight, type Row } from "../servers/rows.ts";
 import {
@@ -40,6 +41,7 @@ export function ChannelSidebar({
 }) {
   const manageChannels = can(server, "manage_channels");
   const manageServer = can(server, "manage_server");
+  const voice = useVoice();
   const [channelDialog, setChannelDialog] = useState<ChannelDialogState | null>(
     null,
   );
@@ -82,6 +84,7 @@ export function ChannelSidebar({
         server={server}
         rows={rows}
         activeChannelId={activeChannelId}
+        voiceChannelId={voice.channelId}
         manageChannels={manageChannels}
         onEditChannel={(channel) => setChannelDialog({ mode: "edit", channel })}
         onCreateChannel={(categoryId) =>
@@ -91,6 +94,24 @@ export function ChannelSidebar({
           setCategoryDialog({ mode: "edit", category })
         }
       />
+
+      {voice.status === "joined" ? (
+        <div className="flex items-center justify-between gap-2 border-t border-neutral-200 px-3 py-2 text-sm">
+          <div className="min-w-0 text-left">
+            <p className="text-xs font-medium text-emerald-700">Verbunden</p>
+            <p className="truncate text-neutral-700">
+              {voice.channelName ?? "Voice"}
+            </p>
+          </div>
+          <button
+            type="button"
+            onClick={() => leaveVoice()}
+            className="shrink-0 rounded-md px-2 py-1 text-xs text-neutral-600 hover:bg-neutral-100 hover:text-neutral-900"
+          >
+            Verlassen
+          </button>
+        </div>
+      ) : null}
 
       {manageChannels ? (
         <footer className="flex flex-col gap-1 border-t border-neutral-200 p-2 text-sm">
@@ -130,6 +151,7 @@ function ChannelList({
   server,
   rows,
   activeChannelId,
+  voiceChannelId,
   manageChannels,
   onEditChannel,
   onCreateChannel,
@@ -138,6 +160,7 @@ function ChannelList({
   server: ServerDetail;
   rows: Row[];
   activeChannelId: string | undefined;
+  voiceChannelId: string | null;
   manageChannels: boolean;
   onEditChannel: (channel: Channel) => void;
   onCreateChannel: (categoryId: string | null) => void;
@@ -197,6 +220,7 @@ function ChannelList({
                 <ChannelRow
                   channel={row.channel}
                   active={row.channel.id === activeChannelId}
+                  inVoice={row.channel.id === voiceChannelId}
                   manage={manageChannels}
                   onEdit={() => onEditChannel(row.channel)}
                   onDelete={() => {
@@ -266,12 +290,14 @@ function CategoryRow({
 function ChannelRow({
   channel,
   active,
+  inVoice,
   manage,
   onEdit,
   onDelete,
 }: {
   channel: Channel;
   active: boolean;
+  inVoice: boolean;
   manage: boolean;
   onEdit: () => void;
   onDelete: () => void;
@@ -282,6 +308,12 @@ function ChannelRow({
     <>
       <Icon size={16} className="shrink-0 text-neutral-400" />
       <span className="truncate">{channel.name}</span>
+      {inVoice ? (
+        <span
+          className="ml-auto h-2 w-2 shrink-0 rounded-full bg-emerald-500"
+          title="Verbunden"
+        />
+      ) : null}
     </>
   );
   const rowClass = [
