@@ -24,9 +24,33 @@ UDP für späteres coturn läuft **nicht** durch Caddy.
 
 | Pfad | Rolle |
 |---|---|
-| `api/` | Rust-API (Docker: `rust:1.98.1-slim-trixie` → `debian:trixie-slim`) |
+| `api/` | Rust-API: Axum 0.8.9, Tokio 1.53.1, **sqlx 0.9.0** (Postgres, gelockt für v1), Redis-Client, Tracing als JSON (Docker: `rust:1.98.1-slim-trixie` → `debian:trixie-slim`) |
 | `web/` | React + Vite (Build: `node:26.8.2-trixie`, Runtime: `nginx:1.31.5-alpine`) |
 | `media/` | Medien-Stub, dieselben Rust-Images wie die API |
 | `deploy/compose` | Compose-Kern: Caddy 2.11.4, Postgres 18.6, Redis 8.10.1, MinIO CE `RELEASE.2025-10-15T17-29-55Z` (Source-Build) |
 
 Env-Beispiele: `deploy/compose/.env.example`, `api/.env.example`, `web/.env.example`, `media/.env.example`.
+
+## API
+
+Config ausschließlich aus Env (`API_ADDR`, `DATABASE_URL`, `REDIS_URL`; optional `API_READY_TIMEOUT_MS`, `API_DB_MAX_CONNECTIONS`, `RUST_LOG`). Fehlt eine Pflichtvariable, startet der Prozess nicht und sagt welche.
+
+| Route | Antwort |
+|---|---|
+| `GET /health` | `200 {"status":"ok"}` — ohne Abhängigkeiten |
+| `GET /ready` | `200 {"status":"ready", ...}` nur wenn Postgres **und** Redis antworten; sonst `503 {"status":"not_ready", ...}` |
+
+`/ready` prüft beide Abhängigkeiten parallel, jede mit hartem Deadline (`API_READY_TIMEOUT_MS`, Default 2000 ms), und nennt pro Check Status, Latenz und die konkrete Ursache:
+
+```json
+{"status":"not_ready","checks":{"postgres":{"status":"ok","latency_ms":3},"redis":{"status":"error","error":"Connection refused (os error 111)","latency_ms":0}}}
+```
+
+Lokal ohne Compose:
+
+```bash
+set -a; . api/.env.example; set +a
+cargo run -p gelabber-api
+```
+
+Persistenz ist auf **sqlx 0.9.0** festgelegt (kein zweites ORM, kein Query-Builder-Mix in v1).
