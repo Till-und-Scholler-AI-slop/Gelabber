@@ -83,7 +83,7 @@ async fn server_routes_require_a_session(pool: PgPool) {
     assert_eq!(res.status, StatusCode::UNAUTHORIZED);
 
     let res = client
-        .send(Method::GET, "/api/invites/abcdefghjk", None)
+        .send(Method::GET, "/api/invites/abcdefghjkmn", None)
         .await;
     assert_eq!(res.status, StatusCode::UNAUTHORIZED);
 }
@@ -252,7 +252,8 @@ async fn invite_link_brings_a_signed_in_user_into_the_server(pool: PgPool) {
 
     let invite = create_invite(&mut owner, &id, json!({})).await;
     let code = invite["code"].as_str().unwrap().to_owned();
-    assert_eq!(code.len(), 10);
+    assert_eq!(code.len(), 12);
+    assert_eq!(code, code.to_ascii_lowercase());
     assert_eq!(invite["server_id"], server["id"]);
     assert_eq!(invite["uses"], 0);
     assert_eq!(invite["max_uses"], Value::Null);
@@ -290,11 +291,16 @@ async fn invite_link_brings_a_signed_in_user_into_the_server(pool: PgPool) {
     assert_eq!(detail.body["members"][1]["name"], "Bob");
     assert_eq!(detail.body["members"][1]["role"], "member");
 
-    // Joining again is idempotent and does not burn a use.
+    // Joining again is idempotent and does not burn a use — also when the
+    // code was retyped in capitals.
     let again = member
-        .send(Method::POST, &format!("/api/invites/{code}/join"), None)
+        .send(
+            Method::POST,
+            &format!("/api/invites/{}/join", code.to_ascii_uppercase()),
+            None,
+        )
         .await;
-    assert_eq!(again.status, StatusCode::OK);
+    assert_eq!(again.status, StatusCode::OK, "{}", again.body);
     let preview = member
         .send(Method::GET, &format!("/api/invites/{code}"), None)
         .await;
@@ -368,7 +374,7 @@ async fn invites_expire_and_run_out(pool: PgPool) {
     );
 
     // Unknown or malformed codes are 404.
-    for code in ["abcdefghjk", "nope", "0000000000"] {
+    for code in ["abcdefghjkmn", "nope", "000000000000"] {
         let res = third
             .send(Method::POST, &format!("/api/invites/{code}/join"), None)
             .await;

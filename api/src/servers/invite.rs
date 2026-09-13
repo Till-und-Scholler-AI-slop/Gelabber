@@ -42,9 +42,11 @@ pub fn router() -> Router<AppState> {
         .route("/api/invites/{code}/join", post(join))
 }
 
-/// Unambiguous alphabet (no 0/O, 1/l/I): links get read aloud and typed.
-const ALPHABET: &[u8] = b"abcdefghjkmnpqrstuvwxyzABCDEFGHJKMNPQRSTUVWXYZ23456789";
-pub const CODE_LEN: usize = 10;
+/// Lower-case only and without 0/o, 1/l/i: links get read aloud, typed and
+/// retyped from screenshots, so no character may be confusable with another.
+/// 30 symbols × 12 places ≈ 5·10¹⁷ codes.
+const ALPHABET: &[u8] = b"abcdefghjkmnpqrstuvwxyz23456789";
+pub const CODE_LEN: usize = 12;
 
 pub fn generate_code() -> String {
     let mut rng = rand::rng();
@@ -53,9 +55,11 @@ pub fn generate_code() -> String {
         .collect()
 }
 
-/// Shape check before the database sees a code from the URL.
-pub fn is_valid_code(raw: &str) -> bool {
-    raw.len() == CODE_LEN && raw.bytes().all(|b| ALPHABET.contains(&b))
+/// Shape check before the database sees a code from the URL. Upper-case
+/// input is accepted (someone retyped it) and folded to the stored form.
+pub fn normalise_code(raw: &str) -> Option<String> {
+    let code = raw.trim().to_ascii_lowercase();
+    (code.len() == CODE_LEN && code.bytes().all(|b| ALPHABET.contains(&b))).then_some(code)
 }
 
 #[derive(Debug, Clone, Serialize, FromRow, PartialEq, Eq)]
@@ -137,7 +141,7 @@ async fn create_invite(
         .expect("validated")
         .map(|hours| Utc::now() + Duration::hours(hours));
 
-    // A primary-key collision on a 10-char code is astronomically unlikely;
+    // A primary-key collision on a 12-char code is astronomically unlikely;
     // retrying a couple of times keeps it from ever being a user-facing error.
     for _ in 0..3 {
         let code = generate_code();
@@ -219,9 +223,7 @@ async fn join(
     CurrentUser(user): CurrentUser,
     Path(code): Path<String>,
 ) -> Result<Json<ServerView>, ApiError> {
-    if !is_valid_code(&code) {
-        return Err(ApiError::NotFound);
-    }
+    let code = normalise_code(&code).ok_or(ApiError::NotFound)?;
 
     let mut tx = state.db.begin().await?;
     // Lock the row so two concurrent joins cannot both pass a `max_uses`
@@ -264,9 +266,7 @@ async fn join(
 }
 
 async fn by_code(db: &PgPool, code: &str) -> Result<Invite, ApiError> {
-    if !is_valid_code(code) {
-        return Err(ApiError::NotFound);
-    }
+    let code = normalise_code(code).ok_or(ApiError::NotFound)?;
     sqlx::query_as::<_, Invite>("SELECT code, server_id, created_by, created_at, expires_at, max_uses, uses FROM invites WHERE code = $1")
         .bind(code)
         .fetch_optional(db)
@@ -295,15 +295,21 @@ mod tests {
         let a = generate_code();
         let b = generate_code();
         assert_eq!(a.len(), CODE_LEN);
-        assert!(is_valid_code(&a), "{a}");
+        assert_eq!(normalise_code(&a).as_deref(), Some(a.as_str()), "{a}");
         assert_ne!(a, b);
-        assert!(!is_valid_code(""));
-        assert!(!is_valid_code("abc"));
-        assert!(
-            !is_valid_code(&"0".repeat(CODE_LEN)),
+        assert_eq!(
+            normalise_code(&a.to_ascii_uppercase()).as_deref(),
+            Some(a.as_str()),
+            "retyped in caps still resolves"
+        );
+        assert_eq!(normalise_code(""), None);
+        assert_eq!(normalise_code("abc"), None);
+        assert_eq!(
+            normalise_code(&"0".repeat(CODE_LEN)),
+            None,
             "0 is not in the alphabet"
         );
-        assert!(!is_valid_code(&"a".repeat(CODE_LEN + 1)));
+        assert_eq!(normalise_code(&"a".repeat(CODE_LEN + 1)), None);
     }
 
     #[test]
