@@ -276,6 +276,79 @@ impl Gateway {
         }
     }
 
+    /// Drop a user's live seats on one server after kick/ban: unsubscribe
+    /// chat topics, leave voice rooms, tell their sockets why.
+    pub async fn revoke_server(
+        &self,
+        user_id: Uuid,
+        server_id: Uuid,
+        channel_ids: &[Uuid],
+        reason: &'static str,
+    ) {
+        let conns: Vec<ConnId> = {
+            let sockets = self.inner.sockets.read().await;
+            sockets
+                .iter()
+                .filter(|(_, socket)| socket.user_id == user_id)
+                .map(|(id, _)| *id)
+                .collect()
+        };
+        for id in conns {
+            let rooms: Vec<Uuid> = {
+                let sockets = self.inner.sockets.read().await;
+                sockets
+                    .get(&id)
+                    .map(|socket| {
+                        socket
+                            .rooms
+                            .iter()
+                            .filter(|(_, seat)| seat.server_id == server_id)
+                            .map(|(channel_id, _)| *channel_id)
+                            .collect()
+                    })
+                    .unwrap_or_default()
+            };
+            for channel_id in rooms {
+                if let Err(err) = self.leave_voice(id, user_id, server_id, channel_id).await {
+                    warn!(error = err.code(), "voice leave on revoke failed");
+                }
+            }
+
+            let typing: Vec<(Uuid, Uuid)> = {
+                let mut sockets = self.inner.sockets.write().await;
+                let Some(socket) = sockets.get_mut(&id) else {
+                    continue;
+                };
+                socket.topics.remove(&Topic::Server(server_id));
+                socket.catching_up.remove(&Topic::Server(server_id));
+                for channel_id in channel_ids {
+                    let topic = Topic::Channel(*channel_id);
+                    socket.topics.remove(&topic);
+                    socket.catching_up.remove(&topic);
+                }
+                socket.servers.remove(&server_id);
+                let typing: Vec<(Uuid, Uuid)> = socket
+                    .typing
+                    .iter()
+                    .filter(|(sid, _)| *sid == server_id)
+                    .copied()
+                    .collect();
+                for pair in &typing {
+                    socket.typing.remove(pair);
+                }
+                let _ = socket
+                    .tx
+                    .send(ServerFrame::error(reason, Some(server_id), None));
+                typing
+            };
+            for (sid, channel_id) in typing {
+                if let Err(err) = self.stop_typing(sid, channel_id, user_id).await {
+                    warn!(error = err.code(), "typing stop on revoke failed");
+                }
+            }
+        }
+    }
+
     async fn run_subscriber(&self) {
         loop {
             match self.subscribe_once().await {

@@ -22,6 +22,7 @@ describe("permissions", () => {
       normalisePermissions(["go_live", "send_messages", "go_live"]),
     ).toEqual(["send_messages", "go_live"]);
     expect(normalisePermissions(ALL_PERMISSIONS)).toEqual(ALL_PERMISSIONS);
-    expect(ALL_PERMISSIONS).toHaveLength(6);
+    expect(ALL_PERMISSIONS).toHaveLength(7);
+    expect(ALL_PERMISSIONS).toContain("manage_messages");
   });
 });

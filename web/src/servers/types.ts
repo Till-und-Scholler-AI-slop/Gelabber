@@ -3,6 +3,7 @@
 export type Permission =
   | "manage_server"
   | "manage_channels"
+  | "manage_messages"
   | "send_messages"
   | "send_files"
   | "join_voice"
@@ -93,4 +94,12 @@ export type UpdateServerInput = {
 export type CreateInviteInput = {
   max_uses?: number;
   expires_in_hours?: number;
+};
+
+export type Ban = {
+  user_id: string;
+  name: string;
+  avatar_url: string | null;
+  banned_by: string;
+  banned_at: string;
 };

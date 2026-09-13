@@ -103,7 +103,7 @@ async fn creating_a_server_makes_the_caller_owner_with_a_first_channel(pool: PgP
     let permissions = server["permissions"].as_array().unwrap();
     assert_eq!(
         permissions.len(),
-        6,
+        7,
         "owner holds every flag: {permissions:?}"
     );
     assert_eq!(
@@ -691,7 +691,7 @@ async fn member_permission_flags_are_enforced_and_editable(pool: PgPool) {
         "canonical order, independent of input order"
     );
     assert_eq!(res.body["role"], "owner");
-    assert_eq!(res.body["permissions"].as_array().unwrap().len(), 6);
+    assert_eq!(res.body["permissions"].as_array().unwrap().len(), 7);
 
     let res = member
         .send(

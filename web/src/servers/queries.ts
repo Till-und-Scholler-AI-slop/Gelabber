@@ -18,6 +18,7 @@ import { notifyError } from "../components/toasts.ts";
 import * as remote from "./api.ts";
 import { slugifyChannelName } from "./rules.ts";
 import type {
+  Ban,
   Category,
   Channel,
   CreateChannelInput,
@@ -34,6 +35,7 @@ export const serverKeys = {
   list: () => ["servers", "list"] as const,
   detail: (id: string) => ["servers", "detail", id] as const,
   invites: (id: string) => ["servers", "invites", id] as const,
+  bans: (id: string) => ["servers", "bans", id] as const,
 };
 
 /** Detail data stays fresh for a minute; switching servers is a cache hit. */
@@ -92,6 +94,15 @@ export function useInvites(serverId: string, enabled: boolean) {
   return useQuery({
     queryKey: serverKeys.invites(serverId),
     queryFn: ({ signal }) => remote.listInvites(serverId, signal),
+    enabled,
+    staleTime: STALE_MS,
+  });
+}
+
+export function useBans(serverId: string, enabled: boolean) {
+  return useQuery({
+    queryKey: serverKeys.bans(serverId),
+    queryFn: ({ signal }) => remote.listBans(serverId, signal),
     enabled,
     staleTime: STALE_MS,
   });
@@ -157,6 +168,7 @@ function removeServer(
   if (!options.keepDetail)
     client.removeQueries({ queryKey: serverKeys.detail(serverId) });
   client.removeQueries({ queryKey: serverKeys.invites(serverId) });
+  client.removeQueries({ queryKey: serverKeys.bans(serverId) });
 }
 
 type Snapshot = {
@@ -535,6 +547,81 @@ export function useRevokeInvite(serverId: string) {
     },
     onError: (error, _code, previous) => {
       if (previous) client.setQueryData(serverKeys.invites(serverId), previous);
+      notifyError(error);
+    },
+  });
+}
+
+function dropMember(client: QueryClient, serverId: string, userId: string): void {
+  patchDetail(client, serverId, (detail) => ({
+    ...detail,
+    members: detail.members.filter((member) => member.user_id !== userId),
+  }));
+}
+
+/** Another tab / WS: this user left or was removed. */
+export function applyMemberRemoved(
+  client: QueryClient,
+  serverId: string,
+  userId: string,
+  meId: string | undefined,
+): "self" | "other" {
+  if (meId === userId) {
+    removeServer(client, serverId, { keepDetail: true });
+    return "self";
+  }
+  dropMember(client, serverId, userId);
+  return "other";
+}
+
+export function useKickMember(serverId: string) {
+  const client = useQueryClient();
+  return useMutation({
+    mutationFn: (userId: string) => remote.kickMember(serverId, userId),
+    onMutate: (userId) => {
+      const snap = snapshot(client, serverId);
+      dropMember(client, serverId, userId);
+      return snap;
+    },
+    onError: (error, _userId, snap) => {
+      restore(client, serverId, snap);
+      notifyError(error);
+    },
+  });
+}
+
+export function useBanMember(serverId: string) {
+  const client = useQueryClient();
+  return useMutation({
+    mutationFn: (userId: string) => remote.banMember(serverId, userId),
+    onMutate: (userId) => {
+      const snap = snapshot(client, serverId);
+      dropMember(client, serverId, userId);
+      return snap;
+    },
+    onError: (error, _userId, snap) => {
+      restore(client, serverId, snap);
+      notifyError(error);
+    },
+    onSuccess: () => {
+      void client.invalidateQueries({ queryKey: serverKeys.bans(serverId) });
+    },
+  });
+}
+
+export function useUnbanMember(serverId: string) {
+  const client = useQueryClient();
+  return useMutation({
+    mutationFn: (userId: string) => remote.unbanMember(serverId, userId),
+    onMutate: (userId) => {
+      const previous = client.getQueryData<Ban[]>(serverKeys.bans(serverId));
+      client.setQueryData<Ban[]>(serverKeys.bans(serverId), (current) =>
+        current?.filter((ban) => ban.user_id !== userId),
+      );
+      return previous;
+    },
+    onError: (error, _userId, previous) => {
+      if (previous) client.setQueryData(serverKeys.bans(serverId), previous);
       notifyError(error);
     },
   });

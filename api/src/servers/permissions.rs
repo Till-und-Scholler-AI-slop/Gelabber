@@ -13,7 +13,7 @@ use serde::{Serialize, Serializer};
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
 #[repr(i32)]
 pub enum Permission {
-    /// Rename the server, edit member permissions, manage invites.
+    /// Rename the server, edit member permissions, manage invites, kick/ban.
     ManageServer = 1,
     /// Create, rename, move and delete categories and channels.
     ManageChannels = 2,
@@ -21,12 +21,15 @@ pub enum Permission {
     SendFiles = 8,
     JoinVoice = 16,
     GoLive = 32,
+    /// Delete someone else's message (own delete needs no flag).
+    ManageMessages = 64,
 }
 
 impl Permission {
-    pub const ALL: [Permission; 6] = [
+    pub const ALL: [Permission; 7] = [
         Self::ManageServer,
         Self::ManageChannels,
+        Self::ManageMessages,
         Self::SendMessages,
         Self::SendFiles,
         Self::JoinVoice,
@@ -37,6 +40,7 @@ impl Permission {
         match self {
             Self::ManageServer => "manage_server",
             Self::ManageChannels => "manage_channels",
+            Self::ManageMessages => "manage_messages",
             Self::SendMessages => "send_messages",
             Self::SendFiles => "send_files",
             Self::JoinVoice => "join_voice",
@@ -58,7 +62,7 @@ impl Permissions {
     /// What a fresh server grants its members: talk, share, join voice, go
     /// live — but not manage anything. Mirrored by the column default.
     pub const DEFAULT_MEMBER: Permissions = Permissions(4 | 8 | 16 | 32);
-    pub const ALL: Permissions = Permissions(1 | 2 | 4 | 8 | 16 | 32);
+    pub const ALL: Permissions = Permissions(1 | 2 | 4 | 8 | 16 | 32 | 64);
 
     pub fn contains(self, permission: Permission) -> bool {
         self.0 & permission as i32 != 0

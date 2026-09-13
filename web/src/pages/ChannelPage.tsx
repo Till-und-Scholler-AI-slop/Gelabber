@@ -61,11 +61,7 @@ export function ChannelPage() {
           </div>
         )}
       </div>
-      <MemberPanel
-        serverId={serverId}
-        members={server.members}
-        channels={server.channels}
-      />
+      <MemberPanel server={server} />
     </div>
   );
 }
@@ -85,6 +81,7 @@ function TextChat({
       channelId={channel.id}
       channelName={channel.name}
       canSend={canWrite}
+      canModerate={can(server, "manage_messages")}
       footer={<TypingBar channelId={channel.id} members={server.members} />}
       onDraftChange={typing.onChange}
       onDraftStop={typing.stop}

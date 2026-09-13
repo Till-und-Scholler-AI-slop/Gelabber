@@ -8,23 +8,27 @@ import { useNavigate } from "@tanstack/react-router";
 import { useMemo } from "react";
 
 import { useSession } from "../auth/session.ts";
-import { findCachedDm, prefetchDms, useOpenDm } from "../dms/queries.ts";
-import type { Channel, Member } from "../servers/types.ts";
+import {
+  findCachedDm,
+  prefetchDms,
+  useOpenDm,
+} from "../dms/queries.ts";
+import type { ServerDetail } from "../servers/types.ts";
 import { useVoiceRoster, voiceOf, type VoiceFlags } from "../voice/roster.ts";
 import { useVoice } from "../voice/session.ts";
 import { groupMembers, presenceOf, usePresenceStore } from "../ws/live.ts";
+import { MemberActions } from "./MemberActions.tsx";
 import { PresenceAvatar } from "./PresenceAvatar.tsx";
 import { VoiceStateIcons } from "./VoiceStateIcons.tsx";
 
 export function MemberPanel({
-  serverId,
-  members,
-  channels = [],
+  server,
 }: {
-  serverId: string;
-  members: Member[];
-  channels?: Channel[];
+  server: ServerDetail;
 }) {
+  const serverId = server.id;
+  const members = server.members;
+  const channels = server.channels;
   const me = useSession((s) => s.user?.id);
   const byServer = usePresenceStore((s) => s.byServer);
   const roster = useVoiceRoster((s) => s.byServer);
@@ -88,7 +92,10 @@ export function MemberPanel({
                   session,
                 );
                 return (
-                  <li key={member.user_id}>
+                  <li
+                    key={member.user_id}
+                    className="flex items-center gap-1 rounded-md px-2 py-1.5"
+                  >
                     <button
                       type="button"
                       disabled={self}
@@ -97,7 +104,7 @@ export function MemberPanel({
                       onFocus={() => prefetchDms(client)}
                       onClick={() => goDm(member.user_id)}
                       className={[
-                        "flex h-9 w-full items-center gap-2 rounded-md px-2 text-left",
+                        "flex h-9 min-w-0 flex-1 items-center gap-2 rounded-md px-2 text-left",
                         self ? "cursor-default" : "hover:bg-neutral-100",
                       ].join(" ")}
                     >
@@ -118,6 +125,7 @@ export function MemberPanel({
                         }
                       />
                     </button>
+                    <MemberActions server={server} member={member} />
                   </li>
                 );
               })}

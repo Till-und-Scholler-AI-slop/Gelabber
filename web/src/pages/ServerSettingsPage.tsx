@@ -23,14 +23,17 @@ import {
   can,
   normalisePermissions,
 } from "../servers/permissions.ts";
+import { MemberActions } from "../components/MemberActions.tsx";
 import {
   readServer,
+  useBans,
   useCreateInvite,
   useDeleteServer,
   useInvites,
   useLeaveServer,
   useRevokeInvite,
   useServer,
+  useUnbanMember,
   useUpdateServer,
 } from "../servers/queries.ts";
 import { validateName } from "../servers/rules.ts";
@@ -58,6 +61,7 @@ function Settings({ server }: { server: ServerDetail }) {
         {manage ? <PermissionsSection server={server} /> : null}
         {manage ? <InvitesSection server={server} /> : null}
         <MembersSection server={server} />
+        {manage ? <BansSection server={server} /> : null}
         <DangerSection server={server} />
       </div>
     </div>
@@ -293,9 +297,55 @@ function MembersSection({ server }: { server: ServerDetail }) {
             >
               {member.role === "owner" ? "Owner" : "Mitglied"}
             </span>
+            <MemberActions server={server} member={member} />
           </li>
         ))}
       </ul>
+    </Section>
+  );
+}
+
+function BansSection({ server }: { server: ServerDetail }) {
+  const { data: bans, isPending } = useBans(server.id, true);
+  const unban = useUnbanMember(server.id);
+
+  return (
+    <Section
+      title="Gesperrte Konten"
+      hint="Gesperrte User können auch mit einem Einladungslink nicht wieder beitreten."
+    >
+      {isPending ? (
+        <p className="text-sm text-neutral-500">Lade Sperren…</p>
+      ) : !bans || bans.length === 0 ? (
+        <p className="text-sm text-neutral-500">Niemand ist gesperrt.</p>
+      ) : (
+        <ul className="divide-y divide-neutral-200 rounded-xl border border-neutral-200 bg-white">
+          {bans.map((ban) => (
+            <li
+              key={ban.user_id}
+              className="flex items-center gap-3 px-4 py-2.5"
+            >
+              <PresenceAvatar
+                name={ban.name}
+                url={ban.avatar_url}
+                status="x"
+              />
+              <span className="min-w-0 flex-1 truncate text-sm font-medium">
+                {ban.name}
+              </span>
+              <GhostButton
+                tone="danger"
+                onClick={() => {
+                  if (window.confirm(`${ban.name} wieder zulassen?`))
+                    unban.mutate(ban.user_id);
+                }}
+              >
+                Entsperren
+              </GhostButton>
+            </li>
+          ))}
+        </ul>
+      )}
     </Section>
   );
 }

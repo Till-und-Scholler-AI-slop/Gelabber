@@ -11,12 +11,17 @@ export const PERMISSIONS: ReadonlyArray<{
   {
     id: "manage_server",
     label: "Server verwalten",
-    hint: "Umbenennen, Rechte ändern, Einladungen verwalten.",
+    hint: "Umbenennen, Rechte ändern, Einladungen, Kick und Ban.",
   },
   {
     id: "manage_channels",
     label: "Kanäle verwalten",
     hint: "Kategorien und Kanäle anlegen, umbenennen, löschen.",
+  },
+  {
+    id: "manage_messages",
+    label: "Nachrichten löschen",
+    hint: "Fremde Nachrichten im Chat löschen.",
   },
   {
     id: "send_messages",
