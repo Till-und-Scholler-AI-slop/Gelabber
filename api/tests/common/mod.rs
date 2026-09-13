@@ -1,0 +1,157 @@
+//! Shared in-process HTTP client for the integration tests: one router, a
+//! cookie jar that replays `Set-Cookie` like a browser would, and the CSRF
+//! token from the last JSON body that carried one.
+
+// Each integration-test binary compiles this module on its own and uses a
+// different subset of it.
+#![allow(dead_code)]
+
+use std::collections::BTreeMap;
+
+use axum::Router;
+use axum::body::{Body, to_bytes};
+use axum::http::header::{CONTENT_TYPE, COOKIE, SET_COOKIE};
+use axum::http::{HeaderMap, Method, Request, StatusCode};
+use gelabber_api::{AppState, Config, app};
+use serde_json::{Value, json};
+use sqlx::PgPool;
+use tower::ServiceExt;
+
+pub const SESSION: &str = "gelabber_session";
+pub const CSRF: &str = "gelabber_csrf";
+
+pub fn state(pool: PgPool) -> AppState {
+    let config = Config::from_source(|key| match key {
+        "DATABASE_URL" => Some("postgres://unused:unused@127.0.0.1:1/unused".to_owned()),
+        "REDIS_URL" => Some("redis://127.0.0.1:1".to_owned()),
+        "API_SESSION_TTL_HOURS" => Some("2".to_owned()),
+        _ => None,
+    })
+    .expect("test config");
+    AppState::with_pool(&config, pool).expect("state")
+}
+
+pub struct Response {
+    pub status: StatusCode,
+    pub headers: HeaderMap,
+    pub body: Value,
+}
+
+impl Response {
+    pub fn set_cookie(&self, name: &str) -> Option<String> {
+        self.headers
+            .get_all(SET_COOKIE)
+            .iter()
+            .filter_map(|v| v.to_str().ok())
+            .find(|v| v.starts_with(&format!("{name}=")))
+            .map(str::to_owned)
+    }
+}
+
+/// Browser stand-in: one router, a cookie jar, and the CSRF token from the
+/// last JSON body that carried one.
+pub struct Client {
+    pub app: Router,
+    pub jar: BTreeMap<String, String>,
+    pub csrf: Option<String>,
+}
+
+impl Client {
+    pub fn new(pool: PgPool) -> Self {
+        Self {
+            app: app(state(pool)),
+            jar: BTreeMap::new(),
+            csrf: None,
+        }
+    }
+
+    pub async fn send(&mut self, method: Method, path: &str, body: Option<Value>) -> Response {
+        self.send_with(method, path, body, |_| {}).await
+    }
+
+    pub async fn send_with(
+        &mut self,
+        method: Method,
+        path: &str,
+        body: Option<Value>,
+        tweak: impl FnOnce(&mut axum::http::request::Builder),
+    ) -> Response {
+        let mut builder = Request::builder().method(method.clone()).uri(path);
+        if !self.jar.is_empty() {
+            let cookie = self
+                .jar
+                .iter()
+                .map(|(k, v)| format!("{k}={v}"))
+                .collect::<Vec<_>>()
+                .join("; ");
+            builder = builder.header(COOKIE, cookie);
+        }
+        if method != Method::GET
+            && let Some(token) = &self.csrf
+        {
+            builder = builder.header("x-csrf-token", token);
+        }
+        tweak(&mut builder);
+        let request = match body {
+            Some(json) => builder
+                .header(CONTENT_TYPE, "application/json")
+                .body(Body::from(json.to_string()))
+                .unwrap(),
+            None => builder.body(Body::empty()).unwrap(),
+        };
+
+        let response = self.app.clone().oneshot(request).await.unwrap();
+        let status = response.status();
+        let headers = response.headers().clone();
+        let bytes = to_bytes(response.into_body(), 1 << 20).await.unwrap();
+        let body: Value = if bytes.is_empty() {
+            Value::Null
+        } else {
+            serde_json::from_slice(&bytes)
+                .unwrap_or_else(|_| panic!("non-JSON body: {}", String::from_utf8_lossy(&bytes)))
+        };
+
+        for raw in headers.get_all(SET_COOKIE).iter() {
+            let raw = raw.to_str().unwrap();
+            let (pair, attrs) = raw.split_once(';').unwrap_or((raw, ""));
+            let (name, value) = pair.split_once('=').unwrap();
+            if attrs.contains("Max-Age=0") || value.is_empty() {
+                self.jar.remove(name);
+            } else {
+                self.jar.insert(name.to_owned(), value.to_owned());
+            }
+        }
+        if let Some(token) = body.get("csrf_token").and_then(Value::as_str) {
+            self.csrf = Some(token.to_owned());
+        }
+
+        Response {
+            status,
+            headers,
+            body,
+        }
+    }
+
+    /// `GET /api/auth/session`: what the web client does on first paint.
+    pub async fn bootstrap(&mut self) -> Response {
+        self.send(Method::GET, "/api/auth/session", None).await
+    }
+
+    pub async fn register(&mut self, email: &str, password: &str, name: &str) -> Response {
+        self.send(
+            Method::POST,
+            "/api/auth/register",
+            Some(json!({ "email": email, "password": password, "name": name })),
+        )
+        .await
+    }
+
+    pub async fn login(&mut self, email: &str, password: &str) -> Response {
+        self.send(
+            Method::POST,
+            "/api/auth/login",
+            Some(json!({ "email": email, "password": password })),
+        )
+        .await
+    }
+}

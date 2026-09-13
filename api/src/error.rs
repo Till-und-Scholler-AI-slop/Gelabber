@@ -9,6 +9,10 @@
 //! `taken`) so the UI can render them inline in its own language. `message`
 //! is a short English fallback. Internal failures never leak their cause into
 //! the body; the detail goes to the `error!` log line.
+//!
+//! The `Forbidden` message and `NotFound` are the only per-resource signals:
+//! a server the caller is not a member of answers `404`, never `403`, so the
+//! API does not confirm that a foreign server id exists.
 
 use std::collections::BTreeMap;
 
@@ -31,8 +35,16 @@ pub enum ApiError {
     InvalidCredentials,
     /// 403: mutation without a matching `X-CSRF-Token`.
     Csrf,
+    /// 403: signed in, but the membership/permission does not allow it. The
+    /// string is the public message (static copy, no user data).
+    Forbidden(&'static str),
+    /// 404: the resource does not exist — or exists but the caller is not a
+    /// member, which is deliberately indistinguishable.
+    NotFound,
     /// 409: e-mail already registered.
     EmailTaken,
+    /// 410: the invite link exists but is expired or used up.
+    InviteInvalid,
     /// 500: anything unexpected. The string is logged, not returned.
     Internal(String),
 }
@@ -53,7 +65,10 @@ impl ApiError {
             Self::Unauthenticated => "unauthenticated",
             Self::InvalidCredentials => "invalid_credentials",
             Self::Csrf => "csrf_invalid",
+            Self::Forbidden(_) => "forbidden",
+            Self::NotFound => "not_found",
             Self::EmailTaken => "email_taken",
+            Self::InviteInvalid => "invite_invalid",
             Self::Internal(_) => "internal",
         }
     }
@@ -63,8 +78,10 @@ impl ApiError {
             Self::Validation(_) => StatusCode::UNPROCESSABLE_ENTITY,
             Self::BadRequest(_) => StatusCode::BAD_REQUEST,
             Self::Unauthenticated | Self::InvalidCredentials => StatusCode::UNAUTHORIZED,
-            Self::Csrf => StatusCode::FORBIDDEN,
+            Self::Csrf | Self::Forbidden(_) => StatusCode::FORBIDDEN,
+            Self::NotFound => StatusCode::NOT_FOUND,
             Self::EmailTaken => StatusCode::CONFLICT,
+            Self::InviteInvalid => StatusCode::GONE,
             Self::Internal(_) => StatusCode::INTERNAL_SERVER_ERROR,
         }
     }
@@ -76,7 +93,10 @@ impl ApiError {
             Self::Unauthenticated => "Sign in required.",
             Self::InvalidCredentials => "E-mail or password is wrong.",
             Self::Csrf => "Missing or invalid CSRF token.",
+            Self::Forbidden(message) => message,
+            Self::NotFound => "Not found.",
             Self::EmailTaken => "This e-mail address is already registered.",
+            Self::InviteInvalid => "This invite link has expired or been used up.",
             Self::Internal(_) => "Something went wrong on our side.",
         }
     }
