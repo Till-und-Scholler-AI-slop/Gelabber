@@ -24,6 +24,7 @@ use sqlx::{FromRow, PgPool};
 use tracing::{info, warn};
 use uuid::Uuid;
 
+use crate::attachments::{self, Attachment};
 use crate::auth::session::CurrentUser;
 use crate::auth::user::User;
 use crate::error::{ApiError, FieldErrors};
@@ -64,6 +65,8 @@ pub struct Message {
     pub content: String,
     pub created_at: DateTime<Utc>,
     pub edited_at: Option<DateTime<Utc>>,
+    #[serde(default)]
+    pub attachments: Vec<Attachment>,
 }
 
 #[derive(Debug, Clone, Serialize, PartialEq, Eq)]
@@ -101,6 +104,7 @@ impl From<MessageRow> for Message {
             content: row.content,
             created_at: row.created_at,
             edited_at: row.edited_at,
+            attachments: Vec::new(),
         }
     }
 }
@@ -127,6 +131,7 @@ impl MessageInsert {
             content: self.content,
             created_at: self.created_at,
             edited_at: self.edited_at,
+            attachments: Vec::new(),
         }
     }
 }
@@ -135,6 +140,8 @@ impl MessageInsert {
 pub struct CreateBody {
     #[serde(default)]
     pub content: String,
+    #[serde(default)]
+    pub attachment_ids: Vec<Uuid>,
 }
 
 #[derive(Debug, Deserialize)]
@@ -166,7 +173,8 @@ async fn list_messages(
     validate::both_bounds_rejected(before, after)?;
     let limit = limit.expect("validated");
 
-    let page = load_page(&state.db, channel_id, before, after, limit).await?;
+    let mut page = load_page(&state.db, channel_id, before, after, limit).await?;
+    attachments::for_messages(&state.db, &mut page.messages).await?;
     Ok(Json(page))
 }
 
@@ -180,10 +188,22 @@ async fn create_message(
     access.require_send()?;
 
     let mut errors = FieldErrors::new();
-    let content = validate::content(&body.content, &mut errors);
+    let content = validate::content_optional(&body.content, &mut errors);
+    let attachment_ids =
+        crate::attachments::validate::attachment_ids(&body.attachment_ids, &mut errors);
     validate::finish(errors)?;
     let content = content.expect("validated");
+    let attachment_ids = attachment_ids.expect("validated");
+    if content.is_empty() && attachment_ids.is_empty() {
+        return Err(ApiError::Validation(FieldErrors::from([(
+            "content", "required",
+        )])));
+    }
+    if !attachment_ids.is_empty() {
+        access.require_send_files()?;
+    }
 
+    let mut tx = state.db.begin().await?;
     let row = sqlx::query_as::<_, MessageInsert>(
         "INSERT INTO messages (channel_id, author_id, content) VALUES ($1, $2, $3) \
          RETURNING id, channel_id, content, created_at, edited_at",
@@ -191,9 +211,20 @@ async fn create_message(
     .bind(channel_id)
     .bind(user.id)
     .bind(&content)
-    .fetch_one(&state.db)
+    .fetch_one(&mut *tx)
     .await?;
-    let message = row.into_message(&user);
+    let bound = attachments::bind_to_message(
+        &mut tx,
+        &state.store,
+        row.id,
+        channel_id,
+        user.id,
+        &attachment_ids,
+    )
+    .await?;
+    tx.commit().await?;
+    let mut message = row.into_message(&user);
+    message.attachments = bound;
     info!(channel_id = %channel_id, message_id = %message.id, "message created");
     fanout(
         &state,
@@ -220,9 +251,15 @@ async fn update_message(
     access.require_send()?;
 
     let mut errors = FieldErrors::new();
-    let content = validate::content(&body.content, &mut errors);
+    let content = validate::content_optional(&body.content, &mut errors);
     validate::finish(errors)?;
     let content = content.expect("validated");
+
+    if content.is_empty() && current.attachments.is_empty() {
+        return Err(ApiError::Validation(FieldErrors::from([(
+            "content", "required",
+        )])));
+    }
 
     if content == current.content {
         return Ok(Json(current));
@@ -237,7 +274,8 @@ async fn update_message(
     .fetch_optional(&state.db)
     .await?
     .ok_or(ApiError::NotFound)?;
-    let message = row.into_message(&user);
+    let mut message = row.into_message(&user);
+    message.attachments = attachments::for_message(&state.db, message.id).await?;
     fanout(
         &state,
         access.event_server_id(),
@@ -260,6 +298,7 @@ async fn delete_message(
         access.require_manage_messages()?;
     }
 
+    attachments::drop_objects(&state.store, message_id, &state.db).await;
     sqlx::query("DELETE FROM messages WHERE id = $1")
         .bind(message_id)
         .execute(&state.db)
@@ -303,28 +342,35 @@ async fn fanout(
 
 /// Text channel (via server membership) or 1:1 DM (via channel_members).
 /// Voice is not a message resource.
-enum MessagingChannel {
+pub(crate) enum MessagingChannel {
     Server { member: Membership },
     Dm { channel: channel::Channel },
 }
 
 impl MessagingChannel {
     /// Protocol `s`: the real server, or the DM channel id.
-    fn event_server_id(&self) -> Uuid {
+    pub(crate) fn event_server_id(&self) -> Uuid {
         match self {
             Self::Server { member, .. } => member.server.id,
             Self::Dm { channel } => channel.id,
         }
     }
 
-    fn require_send(&self) -> Result<(), ApiError> {
+    pub(crate) fn require_send(&self) -> Result<(), ApiError> {
         match self {
             Self::Server { member, .. } => member.require(Permission::SendMessages),
             Self::Dm { .. } => Ok(()),
         }
     }
 
-    fn require_manage_messages(&self) -> Result<(), ApiError> {
+    pub(crate) fn require_send_files(&self) -> Result<(), ApiError> {
+        match self {
+            Self::Server { member, .. } => member.require(Permission::SendFiles),
+            Self::Dm { .. } => Ok(()),
+        }
+    }
+
+    pub(crate) fn require_manage_messages(&self) -> Result<(), ApiError> {
         match self {
             Self::Server { member, .. } => member.require(Permission::ManageMessages),
             Self::Dm { .. } => Err(ApiError::Forbidden(
@@ -334,7 +380,7 @@ impl MessagingChannel {
     }
 }
 
-async fn messaging_channel(
+pub(crate) async fn messaging_channel(
     db: &PgPool,
     channel_id: Uuid,
     user_id: Uuid,
@@ -370,7 +416,9 @@ async fn message_for(
     .await?
     .ok_or(ApiError::NotFound)?;
     let access = messaging_channel(db, row.channel_id, user_id).await?;
-    Ok((access, row.into()))
+    let mut message = Message::from(row);
+    message.attachments = attachments::for_message(db, message.id).await?;
+    Ok((access, message))
 }
 
 async fn load_page(

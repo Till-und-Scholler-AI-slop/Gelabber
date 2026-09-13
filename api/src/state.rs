@@ -8,6 +8,7 @@ use sqlx::postgres::{PgConnectOptions, PgPoolOptions};
 use crate::config::Config;
 use crate::gateway::Gateway;
 use crate::media::IceServer;
+use crate::storage::ObjectStore;
 
 /// Shared handles for request handlers. Both clients are created lazily so
 /// the process boots even while Postgres/Redis are still starting; `/ready`
@@ -32,12 +33,15 @@ pub struct AppState {
     pub ws_replay: usize,
     pub ice_servers: Vec<IceServer>,
     pub media_ticket_ttl: Duration,
+    /// MinIO (or in-memory in tests) for attachment bytes.
+    pub store: ObjectStore,
 }
 
 #[derive(Debug)]
 pub enum StateError {
     Database(sqlx::Error),
     Redis(redis::RedisError),
+    Store(String),
 }
 
 impl fmt::Display for StateError {
@@ -45,6 +49,7 @@ impl fmt::Display for StateError {
         match self {
             Self::Database(err) => write!(f, "invalid DATABASE_URL: {err}"),
             Self::Redis(err) => write!(f, "invalid REDIS_URL: {err}"),
+            Self::Store(err) => write!(f, "invalid object store: {err}"),
         }
     }
 }
@@ -70,6 +75,8 @@ impl AppState {
         let pg_connect =
             PgConnectOptions::from_str(&config.database_url).map_err(StateError::Database)?;
         let redis = redis::Client::open(config.redis_url.as_str()).map_err(StateError::Redis)?;
+        let store = ObjectStore::from_minio(config.minio.as_ref())
+            .map_err(|err| StateError::Store(err.to_string()))?;
 
         Ok(Self {
             db,
@@ -90,6 +97,7 @@ impl AppState {
             ws_replay: config.ws_replay,
             ice_servers: config.ice_servers.clone(),
             media_ticket_ttl: config.media_ticket_ttl,
+            store,
         })
     }
 

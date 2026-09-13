@@ -71,7 +71,11 @@ type FieldName =
   | "before"
   | "after"
   | "limit"
-  | "user_id";
+  | "user_id"
+  | "filename"
+  | "content_type"
+  | "size"
+  | "attachment_ids";
 
 const FIELD_LABEL: Record<FieldName, string> = {
   email: "E-Mail-Adresse",
@@ -88,6 +92,10 @@ const FIELD_LABEL: Record<FieldName, string> = {
   after: "Cursor",
   limit: "Anzahl",
   user_id: "Nutzer",
+  filename: "Dateiname",
+  content_type: "Dateityp",
+  size: "Datei",
+  attachment_ids: "Anhang",
 };
 
 /** German inline copy for a field code. Unknown fields fall back to generic text. */
@@ -101,7 +109,9 @@ export function fieldMessage(field: string, code: FieldCode): string {
         ? `Mindestens ${PASSWORD_MIN} Zeichen.`
         : `${label} ist zu kurz.`;
     case "too_long":
-      return `${label} ist zu lang.`;
+      return field === "size"
+        ? "Die Datei ist zu groß (max. 25 MB)."
+        : `${label} ist zu lang.`;
     case "taken":
       return "Diese E-Mail-Adresse ist schon registriert.";
     case "invalid":
@@ -110,6 +120,8 @@ export function fieldMessage(field: string, code: FieldCode): string {
           return "Das sieht nicht wie eine E-Mail-Adresse aus.";
         case "avatar_url":
           return "Bitte eine vollständige https-URL angeben.";
+        case "content_type":
+          return "Dieser Dateityp ist nicht erlaubt.";
         default:
           return `${label} ist ungültig.`;
       }

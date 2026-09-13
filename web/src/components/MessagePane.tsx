@@ -35,15 +35,24 @@ import {
   useMessages,
   useSendMessage,
 } from "../messages/queries.ts";
-import { CONTENT_MAX, validateContent } from "../messages/rules.ts";
-import type { Message } from "../messages/types.ts";
+import { attachmentUrl } from "../messages/api.ts";
+import {
+  ALLOWED_TYPES,
+  CONTENT_MAX,
+  inferContentType,
+  isImageType,
+  validateAttachment,
+  validateContent,
+} from "../messages/rules.ts";
+import type { Attachment, Message } from "../messages/types.ts";
 import { Avatar } from "./Avatar.tsx";
-import { PencilIcon, TrashIcon } from "./Icons.tsx";
+import { PaperclipIcon, PencilIcon, TrashIcon } from "./Icons.tsx";
 
 export function MessagePane({
   channelId,
   channelName,
   canSend,
+  canSendFiles = false,
   canModerate = false,
   mention = "#",
   footer,
@@ -53,6 +62,7 @@ export function MessagePane({
   channelId: string;
   channelName: string;
   canSend: boolean;
+  canSendFiles?: boolean;
   canModerate?: boolean;
   /** `#` for a server channel, `@` for a DM. */
   mention?: "#" | "@";
@@ -100,6 +110,7 @@ export function MessagePane({
         channelId={channelId}
         channelName={channelName}
         canSend={canSend}
+        canSendFiles={canSendFiles}
         mention={mention}
         author={
           user
@@ -157,8 +168,14 @@ function MessageList({
   const virtualizer = useVirtualizer({
     count: items.length,
     getScrollElement: () => scrollRef.current,
-    estimateSize: (index) =>
-      isContinued(items[index - 1], items[index]!) ? 28 : 72,
+    estimateSize: (index) => {
+      const message = items[index]!;
+      const image = (message.attachments ?? []).some((a) =>
+        isImageType(a.content_type),
+      );
+      if (image) return isContinued(items[index - 1], message) ? 168 : 220;
+      return isContinued(items[index - 1], message) ? 28 : 72;
+    },
     getItemKey: (index) => items[index]?.id ?? index,
     overscan: 12,
   });
@@ -319,7 +336,13 @@ function MessageRow({
   };
 
   const when = formatWhen(message.created_at);
-  const error = editing ? validateContent(draft) : null;
+  const error = editing
+    ? draft.length === 0
+      ? message.attachments.length > 0
+        ? null
+        : validateContent(draft)
+      : validateContent(draft)
+    : null;
   const showDelete = canDelete && !pending && !editing;
   const showEdit = mine && !pending && !editing;
 
@@ -349,14 +372,17 @@ function MessageRow({
       >
         <span className="w-8 shrink-0" aria-hidden />
         <div className="min-w-0 flex-1">
-          <p className="whitespace-pre-wrap break-words text-sm text-neutral-800">
-            {message.content}
-            {message.edited_at ? (
-              <span className="ml-1 text-xs text-neutral-400">
-                (bearbeitet)
-              </span>
-            ) : null}
-          </p>
+          {message.content ? (
+            <p className="whitespace-pre-wrap break-words text-sm text-neutral-800">
+              {message.content}
+              {message.edited_at ? (
+                <span className="ml-1 text-xs text-neutral-400">
+                  (bearbeitet)
+                </span>
+              ) : null}
+            </p>
+          ) : null}
+          <AttachmentList attachments={message.attachments ?? []} />
         </div>
         {actions}
       </div>
@@ -449,6 +475,9 @@ function MessageRow({
             ) : null}
           </p>
         )}
+        {!editing ? (
+          <AttachmentList attachments={message.attachments ?? []} />
+        ) : null}
       </div>
       {actions}
     </div>
@@ -459,6 +488,7 @@ function Composer({
   channelId,
   channelName,
   canSend,
+  canSendFiles,
   mention,
   author,
   onDraftChange,
@@ -467,6 +497,7 @@ function Composer({
   channelId: string;
   channelName: string;
   canSend: boolean;
+  canSendFiles: boolean;
   mention: "#" | "@";
   author: { id: string; name: string; avatar_url: string | null } | null;
   onDraftChange?: (value: string) => void;
@@ -477,25 +508,56 @@ function Composer({
     author ?? { id: "", name: "", avatar_url: null },
   );
   const [draft, setDraft] = useState("");
+  const [file, setFile] = useState<File | null>(null);
+  const [fileError, setFileError] = useState<string | null>(null);
+  const [preview, setPreview] = useState<string | null>(null);
+  const fileInput = useRef<HTMLInputElement>(null);
   const error = draft.length === 0 ? null : validateContent(draft);
   const remaining = CONTENT_MAX - Array.from(normalisedLength(draft)).length;
+  const emptyText = draft.trim().length === 0;
   const disabled =
-    !canSend || !author || Boolean(error) || draft.trim().length === 0;
+    !canSend || !author || Boolean(error) || (emptyText && !file);
+
+  const pickFile = (next: File | null) => {
+    if (preview) URL.revokeObjectURL(preview);
+    setPreview(null);
+    setFileError(null);
+    if (!next) {
+      setFile(null);
+      return;
+    }
+    const invalid = validateAttachment(next);
+    if (invalid) {
+      setFile(null);
+      setFileError(fieldMessage(invalid.field, invalid.code));
+      return;
+    }
+    setFile(next);
+    if (isImageType(inferContentType(next))) {
+      setPreview(URL.createObjectURL(next));
+    }
+  };
 
   const submit = (event?: FormEvent) => {
     event?.preventDefault();
     if (disabled) return;
     const text = draft;
-    send.mutate(text, {
-      onError: () => {
-        setDraft((current) => {
-          const next = current.trim().length === 0 ? text : current;
-          if (next) onDraftChange?.(next);
-          return next;
-        });
+    const attached = file;
+    send.mutate(
+      { content: text, file: attached ?? undefined },
+      {
+        onError: () => {
+          setDraft((current) => {
+            const next = current.trim().length === 0 ? text : current;
+            if (next) onDraftChange?.(next);
+            return next;
+          });
+          if (attached && !file) pickFile(attached);
+        },
       },
-    });
+    );
     setDraft("");
+    pickFile(null);
     onDraftStop?.();
   };
 
@@ -527,7 +589,54 @@ function Composer({
         Nachricht in {mention}
         {channelName}
       </label>
+      {file ? (
+        <div className="mb-2 flex items-center gap-2 rounded-lg border border-neutral-200 bg-neutral-50 px-2 py-1.5">
+          {preview ? (
+            <img
+              src={preview}
+              alt=""
+              className="h-12 w-12 rounded object-cover"
+            />
+          ) : null}
+          <div className="min-w-0 flex-1">
+            <p className="truncate text-sm text-neutral-800">{file.name}</p>
+            <p className="text-xs text-neutral-400">
+              {(file.size / 1024).toFixed(0)} KB
+            </p>
+          </div>
+          <button
+            type="button"
+            onClick={() => pickFile(null)}
+            className="rounded-md px-2 py-1 text-xs text-neutral-600 hover:bg-neutral-200"
+          >
+            Entfernen
+          </button>
+        </div>
+      ) : null}
       <div className="flex items-end gap-2">
+        {canSendFiles ? (
+          <>
+            <input
+              ref={fileInput}
+              type="file"
+              accept={ALLOWED_TYPES.join(",")}
+              className="sr-only"
+              onChange={(event) => {
+                pickFile(event.target.files?.[0] ?? null);
+                event.target.value = "";
+              }}
+            />
+            <button
+              type="button"
+              title="Datei anhängen"
+              aria-label="Datei anhängen"
+              onClick={() => fileInput.current?.click()}
+              className="rounded-lg p-2 text-neutral-500 transition hover:bg-neutral-100 hover:text-neutral-900"
+            >
+              <PaperclipIcon size={18} />
+            </button>
+          </>
+        ) : null}
         <textarea
           id={`compose-${channelId}`}
           value={draft}
@@ -559,8 +668,49 @@ function Composer({
         {error ? (
           <span className="text-red-600">{fieldMessage("content", error)}</span>
         ) : null}
+        {fileError ? <span className="text-red-600">{fileError}</span> : null}
       </div>
     </form>
+  );
+}
+
+function AttachmentList({ attachments }: { attachments: Attachment[] }) {
+  if (attachments.length === 0) return null;
+  return (
+    <div className="mt-1 flex flex-col gap-1.5">
+      {attachments.map((attachment) => {
+        const src = attachment.preview_url ?? attachmentUrl(attachment.id);
+        if (isImageType(attachment.content_type)) {
+          return (
+            <a
+              key={attachment.id}
+              href={src}
+              target="_blank"
+              rel="noreferrer"
+              className="block max-w-xs"
+            >
+              <img
+                src={src}
+                alt={attachment.filename}
+                className="max-h-56 max-w-full rounded-lg border border-neutral-200 object-contain"
+              />
+            </a>
+          );
+        }
+        return (
+          <a
+            key={attachment.id}
+            href={attachmentUrl(attachment.id)}
+            className="inline-flex max-w-full items-center gap-2 rounded-md border border-neutral-200 bg-neutral-50 px-2 py-1 text-sm text-neutral-800 hover:bg-neutral-100"
+          >
+            <span className="truncate">{attachment.filename}</span>
+            <span className="shrink-0 text-xs text-neutral-400">
+              {(attachment.size / 1024).toFixed(0)} KB
+            </span>
+          </a>
+        );
+      })}
+    </div>
   );
 }
 

@@ -80,6 +80,7 @@ function DmChat({ dm }: { dm: DirectMessage }) {
               channelId={dm.id}
               channelName={dm.peer.name}
               canSend
+              canSendFiles
               mention="@"
               footer={<TypingBar channelId={dm.id} members={members} />}
               onDraftChange={typing.onChange}

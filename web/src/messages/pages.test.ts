@@ -19,6 +19,7 @@ function msg(id: string, created = "2026-09-13T18:00:00.000Z"): Message {
     content: id,
     created_at: created,
     edited_at: null,
+    attachments: [],
   };
 }
 

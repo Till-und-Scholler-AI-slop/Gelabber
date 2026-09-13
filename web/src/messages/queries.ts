@@ -18,9 +18,24 @@ import { notifyError } from "../components/toasts.ts";
 import { isPendingId } from "../servers/queries.ts";
 import * as remote from "./api.ts";
 import { olderCursor, stampOlder } from "./pages.ts";
-import { addPending, confirmPending, removePending } from "./pending.ts";
-import { PAGE_SIZE, normaliseContent } from "./rules.ts";
-import type { Message, MessageAuthor, MessagePage } from "./types.ts";
+import {
+  addPending,
+  confirmPending,
+  removePending,
+  usePendingMessages,
+} from "./pending.ts";
+import {
+  PAGE_SIZE,
+  inferContentType,
+  isImageType,
+  normaliseContent,
+} from "./rules.ts";
+import type {
+  Attachment,
+  Message,
+  MessageAuthor,
+  MessagePage,
+} from "./types.ts";
 
 export const messageKeys = {
   channel: (channelId: string) => ["messages", channelId] as const,
@@ -93,11 +108,49 @@ export function useMessages(channelId: string | undefined, enabled: boolean) {
   });
 }
 
+export type SendInput = {
+  content: string;
+  file?: File;
+};
+
+function localAttachment(file: File): Attachment {
+  const contentType = inferContentType(file);
+  return {
+    id: `tmp:${crypto.randomUUID()}`,
+    filename: file.name.replace(/^.*[/\\]/, ""),
+    content_type: contentType,
+    size: file.size,
+    preview_url: isImageType(contentType)
+      ? URL.createObjectURL(file)
+      : undefined,
+  };
+}
+
+function revokePreviews(message: Message | undefined): void {
+  if (!message) return;
+  for (const attachment of message.attachments) {
+    if (attachment.preview_url?.startsWith("blob:")) {
+      URL.revokeObjectURL(attachment.preview_url);
+    }
+  }
+}
+
 export function useSendMessage(channelId: string, author: MessageAuthor) {
   return useMutation({
-    mutationFn: (content: string) =>
-      remote.createMessage(channelId, normaliseContent(content)),
-    onMutate: (content) => {
+    mutationFn: async ({ content, file }: SendInput) => {
+      const ids: string[] = [];
+      if (file) {
+        const presign = await remote.presignAttachment(channelId, {
+          filename: file.name,
+          content_type: inferContentType(file),
+          size: file.size,
+        });
+        await remote.putPresigned(presign.upload_url, file, presign.headers);
+        ids.push(presign.id);
+      }
+      return remote.createMessage(channelId, normaliseContent(content), ids);
+    },
+    onMutate: ({ content, file }) => {
       const tmp = tmpId();
       const pending: Message = {
         id: tmp,
@@ -106,19 +159,25 @@ export function useSendMessage(channelId: string, author: MessageAuthor) {
         content: normaliseContent(content),
         created_at: now(),
         edited_at: null,
+        attachments: file ? [localAttachment(file)] : [],
       };
       addPending(channelId, pending);
       return tmp;
     },
-    onSuccess: (message, _content, tmp) => {
+    onSuccess: (message, _input, tmp) => {
       // Stay in the overlay until a fetched page already contains this id.
       // Blind append + drop races the in-flight first-page GET: duplicate
       // if GET includes the row, or a successful send vanishes if GET
       // lands without it and replaces an emptyCache write.
       if (tmp) confirmPending(channelId, tmp, message);
     },
-    onError: (error, _content, tmp) => {
-      if (tmp) removePending(channelId, tmp);
+    onError: (error, _input, tmp) => {
+      if (tmp) {
+        const pending =
+          usePendingMessages.getState().byChannel[channelId] ?? [];
+        revokePreviews(pending.find((row) => row.id === tmp));
+        removePending(channelId, tmp);
+      }
       notifyError(error);
     },
   });
@@ -229,8 +288,12 @@ export function applyChannelEvent(
     return;
   }
   if ((event.t === "c" || event.t === "e") && isMessage(event.d)) {
-    if (event.t === "c") applyMessageCreated(client, channelId, event.d);
-    else applyMessageEdited(client, channelId, event.d);
+    const message = {
+      ...event.d,
+      attachments: event.d.attachments ?? [],
+    };
+    if (event.t === "c") applyMessageCreated(client, channelId, message);
+    else applyMessageEdited(client, channelId, message);
   }
 }
 

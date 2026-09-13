@@ -12,6 +12,7 @@ use axum::Router;
 use axum::body::{Body, to_bytes};
 use axum::http::header::{CONTENT_TYPE, COOKIE, SET_COOKIE};
 use axum::http::{HeaderMap, Method, Request, StatusCode};
+use gelabber_api::storage::ObjectStore;
 use gelabber_api::{AppState, Config, app};
 use serde_json::{Value, json};
 use sqlx::PgPool;
@@ -130,6 +131,7 @@ impl Response {
 /// last JSON body that carried one.
 pub struct Client {
     pub app: Router,
+    pub store: ObjectStore,
     pub jar: BTreeMap<String, String>,
     pub csrf: Option<String>,
     pub user_id: Option<String>,
@@ -142,7 +144,8 @@ impl Client {
 
     pub fn with_state(state: AppState) -> Self {
         Self {
-            app: app(state),
+            app: app(state.clone()),
+            store: state.store.clone(),
             jar: BTreeMap::new(),
             csrf: None,
             user_id: None,
@@ -151,16 +154,50 @@ impl Client {
 
     /// Same as [`Self::new`] but with a live Redis (ticket mint / gateway).
     pub fn with_redis(pool: PgPool) -> Self {
-        Self {
-            app: app(ws_state(pool)),
-            jar: BTreeMap::new(),
-            csrf: None,
-            user_id: None,
-        }
+        Self::with_state(ws_state(pool))
     }
 
     pub async fn send(&mut self, method: Method, path: &str, body: Option<Value>) -> Response {
         self.send_with(method, path, body, |_| {}).await
+    }
+
+    /// Like [`send`] but keeps the raw body (redirects, file bytes).
+    pub async fn send_raw(
+        &mut self,
+        method: Method,
+        path: &str,
+        body: Option<Value>,
+    ) -> (StatusCode, HeaderMap, Vec<u8>) {
+        let mut builder = Request::builder().method(method.clone()).uri(path);
+        if !self.jar.is_empty() {
+            let cookie = self
+                .jar
+                .iter()
+                .map(|(k, v)| format!("{k}={v}"))
+                .collect::<Vec<_>>()
+                .join("; ");
+            builder = builder.header(COOKIE, cookie);
+        }
+        if method != Method::GET
+            && let Some(token) = &self.csrf
+        {
+            builder = builder.header("x-csrf-token", token);
+        }
+        let request = match body {
+            Some(json) => builder
+                .header(CONTENT_TYPE, "application/json")
+                .body(Body::from(json.to_string()))
+                .unwrap(),
+            None => builder.body(Body::empty()).unwrap(),
+        };
+        let response = self.app.clone().oneshot(request).await.unwrap();
+        let status = response.status();
+        let headers = response.headers().clone();
+        let bytes = to_bytes(response.into_body(), 8 << 20)
+            .await
+            .unwrap()
+            .to_vec();
+        (status, headers, bytes)
     }
 
     pub async fn send_with(
