@@ -14,7 +14,9 @@ cd deploy/compose
 docker compose up --build
 ```
 
-Dann [http://localhost](http://localhost) (Caddy, TCP :80). Postgres, Redis und MinIO hängen an den Ports aus `.env`.
+Der **erste** `docker compose up --build` dauert Minuten: MinIO CE wird vom gepinnten Tag `RELEASE.2025-10-15T17-29-55Z` aus Source gebaut, dazu kommen die Rust- und Node-Images. Danach ist `docker compose up` (ohne `--build`) der Sub-Minuten-Pfad.
+
+Dann [http://localhost](http://localhost) (Caddy, TCP :80). Postgres, Redis und MinIO hängen an den Ports aus `.env`. Ohne `.env` gelten dieselben Dev-Defaults wie in `.env.example`.
 
 UDP für späteres coturn läuft **nicht** durch Caddy.
 

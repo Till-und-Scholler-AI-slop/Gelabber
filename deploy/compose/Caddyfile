@@ -13,11 +13,11 @@
 		reverse_proxy api:8080
 	}
 
-	handle /api* {
+	handle /api /api/* {
 		reverse_proxy api:8080
 	}
 
-	handle /media* {
+	handle /media /media/* {
 		reverse_proxy media:8081
 	}
 
