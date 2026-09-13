@@ -10,8 +10,9 @@ import { notify } from "../components/toasts.ts";
 import { applyChannelEvent } from "../messages/queries.ts";
 import { applyMemberRemoved, forgetServer } from "../servers/queries.ts";
 import { getGateway } from "./client.ts";
+import { shouldLeaveView } from "./leaveView.ts";
 
-export function useRealtimeBridge(): void {
+export function useRealtimeBridge(viewingServerId?: string): void {
   const client = useQueryClient();
   const navigate = useNavigate();
   const me = useSession((s) => s.user?.id);
@@ -23,9 +24,14 @@ export function useRealtimeBridge(): void {
           ? "Du wurdest vom Server gesperrt."
           : "Du wurdest vom Server entfernt.",
       );
-      void navigate({ to: "/", replace: true }).then(() =>
-        forgetServer(client, serverId),
-      );
+      if (shouldLeaveView(viewingServerId, serverId)) {
+        forgetServer(client, serverId, { keepDetail: true });
+        void navigate({ to: "/", replace: true }).then(() =>
+          forgetServer(client, serverId),
+        );
+        return;
+      }
+      forgetServer(client, serverId);
     };
 
     const gateway = getGateway();
@@ -48,7 +54,6 @@ export function useRealtimeBridge(): void {
     });
     const offErr = gateway.onErr((err) => {
       if ((err.e === "kicked" || err.e === "banned") && err.s) {
-        forgetServer(client, err.s, { keepDetail: true });
         leave(err.e, err.s);
       }
     });
@@ -56,5 +61,5 @@ export function useRealtimeBridge(): void {
       offEvent();
       offErr();
     };
-  }, [client, me, navigate]);
+  }, [client, me, navigate, viewingServerId]);
 }

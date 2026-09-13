@@ -36,7 +36,7 @@ function Workspace() {
   useGatewayTopics(serverId, channelId);
   useLiveBridge();
   useDms();
-  useRealtimeBridge();
+  useRealtimeBridge(serverId);
 
   return (
     <div className="flex h-[calc(100dvh-3.5rem)] overflow-hidden bg-neutral-50">
