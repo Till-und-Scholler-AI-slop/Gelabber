@@ -61,7 +61,11 @@ export function ChannelPage() {
           </div>
         )}
       </div>
-      <MemberPanel serverId={serverId} members={server.members} />
+      <MemberPanel
+        serverId={serverId}
+        members={server.members}
+        channels={server.channels}
+      />
     </div>
   );
 }

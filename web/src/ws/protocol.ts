@@ -9,18 +9,26 @@ export type Topic = {
   c?: string;
 };
 
-export type SigType = "j" | "l" | "o" | "a" | "i" | "p" | "u";
+export type SigType = "j" | "l" | "o" | "a" | "i" | "p" | "u" | "m" | "d" | "r";
 export type TrackKind = "a" | "v";
+
+export type VoiceEntry = {
+  u: string;
+  c: string;
+  m?: boolean;
+  d?: boolean;
+};
 
 export type SigClientFrame = {
   op: "sig";
-  t: SigType;
+  t: Exclude<SigType, "r">;
   s: string;
   c: string;
   sdp?: string;
   ice?: string;
   mid?: string;
   k?: TrackKind;
+  on?: boolean;
 };
 
 export type PresenceStatus = "o" | "i" | "x";
@@ -47,12 +55,16 @@ export type SigEvent = {
   op: "sig";
   t: SigType;
   s: string;
-  c: string;
-  u: string;
+  c?: string;
+  u?: string;
   sdp?: string;
   ice?: string;
   mid?: string;
   k?: TrackKind;
+  on?: boolean;
+  m?: boolean;
+  d?: boolean;
+  snap?: VoiceEntry[];
 };
 
 export type ErrFrame = { op: "err"; e: string; s?: string; c?: string };
@@ -120,7 +132,10 @@ export function decode(raw: string): ServerFrame | null {
 }
 
 /** Subscribe frame for reconnect: include last seq so the server can fill the hole. */
-export function resumeFrame(topic: Topic, lastSeq: number | undefined): ClientFrame {
+export function resumeFrame(
+  topic: Topic,
+  lastSeq: number | undefined,
+): ClientFrame {
   if (lastSeq === undefined) {
     return { op: "s", s: topic.s, ...(topic.c ? { c: topic.c } : {}) };
   }

@@ -15,6 +15,7 @@ import {
   pruneTyping,
   resetLiveStores,
 } from "./live.ts";
+import { applyVoiceSig, resetVoiceRoster } from "../voice/roster.ts";
 
 export function useLiveBridge(): void {
   useEffect(() => {
@@ -31,10 +32,14 @@ export function useLiveBridge(): void {
     const offTyping = gateway.onTyping((frame) => {
       applyTyping(frame.c, frame.u, frame.on, Date.now());
     });
+    const offSig = gateway.onSig((event) => {
+      applyVoiceSig(event);
+    });
     const tick = window.setInterval(() => pruneTyping(Date.now()), 400);
     return () => {
       offPresence();
       offTyping();
+      offSig();
       window.clearInterval(tick);
     };
   }, []);
@@ -44,6 +49,7 @@ export function useIdlePresence(authenticated: boolean): void {
   useEffect(() => {
     if (!authenticated) {
       resetLiveStores();
+      resetVoiceRoster();
       return undefined;
     }
     const gateway = getGateway();

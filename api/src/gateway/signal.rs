@@ -59,6 +59,8 @@ pub async fn handle(
         SigKind::O | SigKind::A => negotiate(&mut call, kind).await,
         SigKind::I => ice(&mut call).await,
         SigKind::P | SigKind::U => publish(&mut call, kind).await,
+        SigKind::M | SigKind::D => mute_deafen(&mut call, kind).await,
+        SigKind::R => bad(&mut call).await,
     }
 }
 
@@ -141,6 +143,9 @@ async fn negotiate(call: &mut Call<'_>, kind: SigKind) -> Result<(), ApiError> {
             ice: None,
             mid: None,
             k: None,
+            on: None,
+            m: None,
+            d: None,
         })
         .await
 }
@@ -177,6 +182,9 @@ async fn ice(call: &mut Call<'_>) -> Result<(), ApiError> {
             ice: Some(ice.to_owned()),
             mid,
             k: None,
+            on: None,
+            m: None,
+            d: None,
         })
         .await
 }
@@ -207,6 +215,30 @@ async fn publish(call: &mut Call<'_>, kind: SigKind) -> Result<(), ApiError> {
         )
         .await?
     {
+        return bad(call).await;
+    }
+    Ok(())
+}
+
+async fn mute_deafen(call: &mut Call<'_>, kind: SigKind) -> Result<(), ApiError> {
+    if !require_room(call).await? {
+        return Ok(());
+    }
+    let Some(on) = call.frame.on else {
+        return bad(call).await;
+    };
+    let ok = if kind == SigKind::M {
+        call.state
+            .gateway
+            .set_voice_mute(call.conn, call.user.id, call.server_id, call.channel_id, on)
+            .await?
+    } else {
+        call.state
+            .gateway
+            .set_voice_deafen(call.conn, call.user.id, call.server_id, call.channel_id, on)
+            .await?
+    };
+    if !ok {
         return bad(call).await;
     }
     Ok(())

@@ -159,6 +159,12 @@ pub enum SigKind {
     P,
     /// Unpublish a track.
     U,
+    /// Mute (session-local; `on` is the new value).
+    M,
+    /// Deafen (session-local; `on` is the new value).
+    D,
+    /// Occupancy snapshot after a server subscribe (`snap`).
+    R,
 }
 
 impl SigKind {
@@ -171,7 +177,16 @@ impl SigKind {
             Self::I => "i",
             Self::P => "p",
             Self::U => "u",
+            Self::M => "m",
+            Self::D => "d",
+            Self::R => "r",
         }
+    }
+
+    /// SDP / ICE stay in the room. Join/leave/mute/deafen/pub fan out to
+    /// everyone watching the server so the member list can show voice state.
+    pub fn room_only(self) -> bool {
+        matches!(self, Self::O | Self::A | Self::I)
     }
 }
 
@@ -192,6 +207,17 @@ impl TrackKind {
     }
 }
 
+/// One occupant in a voice-state snapshot (`t: "r"`).
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+pub struct VoiceEntry {
+    pub u: Uuid,
+    pub c: Uuid,
+    #[serde(default, skip_serializing_if = "std::ops::Not::not")]
+    pub m: bool,
+    #[serde(default, skip_serializing_if = "std::ops::Not::not")]
+    pub d: bool,
+}
+
 /// Compact signaling payload. Redis Pub/Sub carries this as `{"op":"sig",…}`.
 /// No `n` — ICE and SDP go stale; there is no replay.
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
@@ -208,12 +234,21 @@ pub struct SigEvent {
     pub mid: Option<String>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub k: Option<TrackKind>,
+    /// Mute / deafen: the new value. Omitted on join/leave/media.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub on: Option<bool>,
+    /// Join snapshot: occupant is muted.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub m: Option<bool>,
+    /// Join snapshot: occupant is deafened.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub d: Option<bool>,
 }
 
 impl SigEvent {
-    pub fn join(server_id: Uuid, channel_id: Uuid, user_id: Uuid) -> Self {
+    fn base(kind: SigKind, server_id: Uuid, channel_id: Uuid, user_id: Uuid) -> Self {
         Self {
-            t: SigKind::J,
+            t: kind,
             s: server_id,
             c: channel_id,
             u: user_id,
@@ -221,33 +256,55 @@ impl SigEvent {
             ice: None,
             mid: None,
             k: None,
+            on: None,
+            m: None,
+            d: None,
         }
+    }
+
+    pub fn join(server_id: Uuid, channel_id: Uuid, user_id: Uuid) -> Self {
+        Self::join_state(server_id, channel_id, user_id, false, false)
+    }
+
+    pub fn join_state(
+        server_id: Uuid,
+        channel_id: Uuid,
+        user_id: Uuid,
+        muted: bool,
+        deafened: bool,
+    ) -> Self {
+        let mut event = Self::base(SigKind::J, server_id, channel_id, user_id);
+        event.m = muted.then_some(true);
+        event.d = deafened.then_some(true);
+        event
     }
 
     pub fn leave(server_id: Uuid, channel_id: Uuid, user_id: Uuid) -> Self {
-        Self {
-            t: SigKind::L,
-            s: server_id,
-            c: channel_id,
-            u: user_id,
-            sdp: None,
-            ice: None,
-            mid: None,
-            k: None,
-        }
+        Self::base(SigKind::L, server_id, channel_id, user_id)
     }
 
     pub fn published(server_id: Uuid, channel_id: Uuid, user_id: Uuid, kind: TrackKind) -> Self {
-        Self {
-            t: SigKind::P,
-            s: server_id,
-            c: channel_id,
-            u: user_id,
-            sdp: None,
-            ice: None,
-            mid: None,
-            k: Some(kind),
-        }
+        let mut event = Self::base(SigKind::P, server_id, channel_id, user_id);
+        event.k = Some(kind);
+        event
+    }
+
+    pub fn unpublished(server_id: Uuid, channel_id: Uuid, user_id: Uuid, kind: TrackKind) -> Self {
+        let mut event = Self::base(SigKind::U, server_id, channel_id, user_id);
+        event.k = Some(kind);
+        event
+    }
+
+    pub fn muted(server_id: Uuid, channel_id: Uuid, user_id: Uuid, on: bool) -> Self {
+        let mut event = Self::base(SigKind::M, server_id, channel_id, user_id);
+        event.on = Some(on);
+        event
+    }
+
+    pub fn deafened(server_id: Uuid, channel_id: Uuid, user_id: Uuid, on: bool) -> Self {
+        let mut event = Self::base(SigKind::D, server_id, channel_id, user_id);
+        event.on = Some(on);
+        event
     }
 }
 
@@ -312,7 +369,7 @@ pub struct ClientFrame {
     /// Presence: `o` / `i`. Absent on a `p` frame means "I am active".
     #[serde(default)]
     pub st: Option<PresenceStatus>,
-    /// Typing start / stop.
+    /// Typing start/stop, and mute/deafen (`t: "m"|"d"`).
     #[serde(default)]
     pub on: Option<bool>,
 }
@@ -359,8 +416,10 @@ pub enum ServerFrame {
     Sig {
         t: SigKind,
         s: Uuid,
-        c: Uuid,
-        u: Uuid,
+        #[serde(skip_serializing_if = "Option::is_none")]
+        c: Option<Uuid>,
+        #[serde(skip_serializing_if = "Option::is_none")]
+        u: Option<Uuid>,
         #[serde(skip_serializing_if = "Option::is_none")]
         sdp: Option<String>,
         #[serde(skip_serializing_if = "Option::is_none")]
@@ -369,6 +428,14 @@ pub enum ServerFrame {
         mid: Option<String>,
         #[serde(skip_serializing_if = "Option::is_none")]
         k: Option<TrackKind>,
+        #[serde(skip_serializing_if = "Option::is_none")]
+        on: Option<bool>,
+        #[serde(skip_serializing_if = "Option::is_none")]
+        m: Option<bool>,
+        #[serde(skip_serializing_if = "Option::is_none")]
+        d: Option<bool>,
+        #[serde(skip_serializing_if = "Option::is_none")]
+        snap: Option<Vec<VoiceEntry>>,
     },
     #[serde(rename = "err")]
     Err {
@@ -391,12 +458,7 @@ pub enum ServerFrame {
     },
     /// Typing start / stop in a channel.
     #[serde(rename = "y")]
-    Typing {
-        s: Uuid,
-        c: Uuid,
-        u: Uuid,
-        on: bool,
-    },
+    Typing { s: Uuid, c: Uuid, u: Uuid, on: bool },
 }
 
 impl ServerFrame {
@@ -438,12 +500,33 @@ impl ServerFrame {
         Self::Sig {
             t: event.t,
             s: event.s,
-            c: event.c,
-            u: event.u,
+            c: Some(event.c),
+            u: Some(event.u),
             sdp: event.sdp,
             ice: event.ice,
             mid: event.mid,
             k: event.k,
+            on: event.on,
+            m: event.m,
+            d: event.d,
+            snap: None,
+        }
+    }
+
+    pub fn voice_snap(server_id: Uuid, snap: Vec<VoiceEntry>) -> Self {
+        Self::Sig {
+            t: SigKind::R,
+            s: server_id,
+            c: None,
+            u: None,
+            sdp: None,
+            ice: None,
+            mid: None,
+            k: None,
+            on: None,
+            m: None,
+            d: None,
+            snap: Some(snap),
         }
     }
 
@@ -495,12 +578,7 @@ pub enum LiveFrame {
         snap: Option<Vec<PresenceEntry>>,
     },
     #[serde(rename = "y")]
-    Typing {
-        s: Uuid,
-        c: Uuid,
-        u: Uuid,
-        on: bool,
-    },
+    Typing { s: Uuid, c: Uuid, u: Uuid, on: bool },
 }
 
 impl From<LiveFrame> for ServerFrame {
@@ -698,5 +776,36 @@ mod tests {
         assert!(!json.contains("offer"));
         assert!(!json.contains("payload"));
         assert!(!json.contains(r#""op":"e""#));
+    }
+
+    #[test]
+    fn mute_deafen_and_roster_frames_are_compact() {
+        let json = ServerFrame::sig(SigEvent::muted(
+            Uuid::from_u128(1),
+            Uuid::from_u128(2),
+            Uuid::from_u128(3),
+            true,
+        ))
+        .to_json()
+        .unwrap();
+        assert!(json.starts_with(r#"{"op":"sig","t":"m""#));
+        assert!(json.contains(r#""on":true"#));
+        assert!(!json.contains("mute"));
+
+        let json = ServerFrame::voice_snap(
+            Uuid::from_u128(1),
+            vec![VoiceEntry {
+                u: Uuid::from_u128(3),
+                c: Uuid::from_u128(2),
+                m: true,
+                d: false,
+            }],
+        )
+        .to_json()
+        .unwrap();
+        assert!(json.starts_with(r#"{"op":"sig","t":"r""#));
+        assert!(json.contains(r#""m":true"#));
+        assert!(!json.contains(r#""d""#));
+        assert!(!json.contains("\"n\""));
     }
 }

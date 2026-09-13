@@ -1,15 +1,23 @@
 import { afterEach, describe, expect, it, vi } from "vitest";
 
 import type { ClientFrame, ErrFrame, SigEvent } from "../ws/protocol.ts";
-import type { IceServer, MediaClientFrame, MediaServerFrame, MediaSocket } from "./media.ts";
+import type {
+  IceServer,
+  MediaClientFrame,
+  MediaServerFrame,
+  MediaSocket,
+} from "./media.ts";
 import {
   configureVoice,
   joinVoice,
   leaveVoice,
   resetVoiceForTests,
+  toggleDeafen,
+  toggleMute,
   useVoice,
   type PeerConnection,
 } from "./session.ts";
+import { resetVoiceRoster, useVoiceRoster, voiceOf } from "./roster.ts";
 
 class FakePeer implements PeerConnection {
   onicecandidate: PeerConnection["onicecandidate"] = null;
@@ -18,6 +26,7 @@ class FakePeer implements PeerConnection {
   signalingState = "stable";
   closed = false;
   tracks = 0;
+  audio: MediaStreamTrack | null = null;
   ice: { candidate: string; sdpMid: string | null }[] = [];
   iceServers: IceServer[];
 
@@ -25,8 +34,9 @@ class FakePeer implements PeerConnection {
     this.iceServers = iceServers;
   }
 
-  addTrack(): void {
+  addTrack(track?: MediaStreamTrack): void {
     this.tracks += 1;
+    this.audio = track ?? null;
   }
 
   async createOffer(): Promise<{ type: string; sdp?: string }> {
@@ -44,14 +54,18 @@ class FakePeer implements PeerConnection {
     if (desc?.type === "offer") this.signalingState = "have-local-offer";
     if (desc?.type === "answer") this.signalingState = "stable";
     this.onicecandidate?.({
-      candidate: { candidate: "candidate:1 1 UDP 1 127.0.0.1 9 typ host", sdpMid: "0" },
+      candidate: {
+        candidate: "candidate:1 1 UDP 1 127.0.0.1 9 typ host",
+        sdpMid: "0",
+      },
     });
     this.onicecandidate?.({ candidate: null });
   }
 
   async setRemoteDescription(desc: { type: string }): Promise<void> {
     this.remoteDescription = desc;
-    this.signalingState = desc.type === "offer" ? "have-remote-offer" : "stable";
+    this.signalingState =
+      desc.type === "offer" ? "have-remote-offer" : "stable";
   }
 
   async addIceCandidate(candidate: {
@@ -68,10 +82,12 @@ class FakePeer implements PeerConnection {
 
 function fakeStream(): MediaStream {
   const track = {
+    enabled: true,
     stop() {},
   } as MediaStreamTrack;
   return {
     getTracks: () => [track],
+    getAudioTracks: () => [track],
   } as MediaStream;
 }
 
@@ -162,6 +178,7 @@ function install(opts?: {
 describe("voice session", () => {
   afterEach(() => {
     resetVoiceForTests();
+    resetVoiceRoster();
   });
 
   it("join click sets local state before any ICE work", () => {
@@ -190,9 +207,9 @@ describe("voice session", () => {
     expect(peers[0]?.iceServers[0]?.urls).toEqual(["stun:127.0.0.1:3478"]);
     expect(mediaSent.map((frame) => frame.op)).toEqual(["j", "i", "o"]);
     expect(mediaSent[0]).toEqual({ op: "j", tk: "abcdefghjkmn" });
-    expect(sent.filter((frame) => frame.op === "sig").map((frame) => frame.t)).toEqual(
-      ["j", "p"],
-    );
+    expect(
+      sent.filter((frame) => frame.op === "sig").map((frame) => frame.t),
+    ).toEqual(["j", "p"]);
     expect(sent.some((frame) => frame.op === "sig" && frame.t === "o")).toBe(
       false,
     );
@@ -332,5 +349,38 @@ describe("voice session", () => {
     emitSig({ op: "sig", t: "j", s: "srv", c: "voice", u: "u-cara" });
     expect(useVoice.getState().participants["u-cara"]).toBeDefined();
     expect(useVoice.getState().participants["u-bob"]).toBeUndefined();
+  });
+
+  it("toggles mute immediately, then sends the sync frame", async () => {
+    const { sent, peers } = install();
+    joinVoice({ serverId: "srv", channelId: "voice", channelName: "Lounge" });
+    await vi.waitFor(() => expect(peers[0]?.audio).toBeTruthy());
+    const before = sent.length;
+    toggleMute();
+    expect(useVoice.getState().muted).toBe(true);
+    expect(useVoice.getState().deafened).toBe(false);
+    expect(peers[0]?.audio?.enabled).toBe(false);
+    expect(
+      voiceOf(useVoiceRoster.getState().byServer, "srv", "u-self")?.muted,
+    ).toBe(true);
+    expect(sent.slice(before)).toEqual([
+      { op: "sig", t: "m", s: "srv", c: "voice", on: true },
+    ]);
+  });
+
+  it("deafens immediately and mutes the session without waiting", async () => {
+    const { sent } = install();
+    joinVoice({ serverId: "srv", channelId: "voice", channelName: "Lounge" });
+    const before = sent.length;
+    toggleDeafen();
+    expect(useVoice.getState().deafened).toBe(true);
+    expect(useVoice.getState().muted).toBe(true);
+    expect(sent.slice(before)).toEqual([
+      { op: "sig", t: "m", s: "srv", c: "voice", on: true },
+      { op: "sig", t: "d", s: "srv", c: "voice", on: true },
+    ]);
+    toggleDeafen();
+    expect(useVoice.getState().deafened).toBe(false);
+    expect(useVoice.getState().muted).toBe(false);
   });
 });

@@ -224,6 +224,8 @@ async fn subscribe(
     state.gateway.announce_server(conn, server_id).await?;
     let snap = state.gateway.presence_snapshot(server_id).await?;
     send(sink, ServerFrame::presence_snap(server_id, snap)).await?;
+    let voice = state.gateway.voice_snapshot(server_id).await?;
+    send(sink, ServerFrame::voice_snap(server_id, voice)).await?;
     Ok(())
 }
 

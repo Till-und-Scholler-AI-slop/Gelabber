@@ -10,6 +10,7 @@ import { useSession } from "../auth/session.ts";
 import { notifyError } from "../components/toasts.ts";
 import { getGateway, type Gateway } from "../ws/client.ts";
 import type { ErrFrame, SigEvent, TrackKind } from "../ws/protocol.ts";
+import { applyVoiceJoin, applyVoiceLeave } from "./roster.ts";
 import {
   type IceServer,
   type MediaServerFrame,
@@ -31,6 +32,8 @@ export type VoiceState = {
   serverId: string | null;
   channelId: string | null;
   channelName: string | null;
+  muted: boolean;
+  deafened: boolean;
   participants: Record<string, VoiceParticipant>;
 };
 
@@ -39,16 +42,22 @@ const idle: VoiceState = {
   serverId: null,
   channelId: null,
   channelName: null,
+  muted: false,
+  deafened: false,
   participants: {},
 };
 
 export const useVoice = create<VoiceState>(() => ({ ...idle }));
 
 export type PeerConnection = {
-  onicecandidate: ((event: {
-    candidate: { candidate: string; sdpMid: string | null } | null;
-  }) => void) | null;
-  ontrack: ((event: { streams: MediaStream[]; track: MediaStreamTrack }) => void) | null;
+  onicecandidate:
+    | ((event: {
+        candidate: { candidate: string; sdpMid: string | null } | null;
+      }) => void)
+    | null;
+  ontrack:
+    | ((event: { streams: MediaStream[]; track: MediaStreamTrack }) => void)
+    | null;
   addTrack?(track: MediaStreamTrack, stream: MediaStream): void;
   createOffer(): Promise<{ type: string; sdp?: string }>;
   createAnswer(): Promise<{ type: string; sdp?: string }>;
@@ -63,7 +72,10 @@ export type PeerConnection = {
   signalingState?: string;
 };
 
-export type VoiceGateway = Pick<Gateway, "send" | "onSig" | "onErr" | "onReady">;
+export type VoiceGateway = Pick<
+  Gateway,
+  "send" | "onSig" | "onErr" | "onReady"
+>;
 
 export type VoiceDeps = {
   gateway: VoiceGateway;
@@ -99,7 +111,7 @@ let sfuOffered = false;
 function currentUserId(): string | null {
   return deps?.userId && deps.userId !== currentUserId
     ? deps.userId()
-    : useSession.getState().user?.id ?? null;
+    : (useSession.getState().user?.id ?? null);
 }
 
 function defaultCreatePeer(iceServers: IceServer[]): PeerConnection {
@@ -119,6 +131,7 @@ function defaultAttachRemote(stream: MediaStream): void {
     remoteAudio.autoplay = true;
   }
   remoteAudio.srcObject = stream;
+  applyLocalAudio();
 }
 
 export function configureVoice(next: Partial<VoiceDeps>): void {
@@ -127,10 +140,12 @@ export function configureVoice(next: Partial<VoiceDeps>): void {
     gateway,
     userId: next.userId ?? deps?.userId ?? currentUserId,
     createPeer: next.createPeer ?? deps?.createPeer ?? defaultCreatePeer,
-    getUserMedia: next.getUserMedia ?? deps?.getUserMedia ?? defaultGetUserMedia,
+    getUserMedia:
+      next.getUserMedia ?? deps?.getUserMedia ?? defaultGetUserMedia,
     fetchTicket: next.fetchTicket ?? deps?.fetchTicket ?? requestMediaTicket,
     openMedia: next.openMedia ?? deps?.openMedia ?? openMediaSocket,
-    attachRemote: next.attachRemote ?? deps?.attachRemote ?? defaultAttachRemote,
+    attachRemote:
+      next.attachRemote ?? deps?.attachRemote ?? defaultAttachRemote,
     onError: next.onError ?? deps?.onError ?? notifyError,
   };
   ensureBound();
@@ -170,33 +185,35 @@ function onSig(event: SigEvent): void {
   if (state.status === "idle" || event.c !== state.channelId) {
     return;
   }
+  const userId = event.u;
+  if (!userId) return;
   switch (event.t) {
     case "j":
       if (
-        event.u === currentUserId() &&
+        userId === currentUserId() &&
         awaitingJoin &&
         event.c === awaitingJoin.channelId
       ) {
         awaitingJoin = null;
       }
       useVoice.setState({
-        participants: upsert(state.participants, event.u),
+        participants: upsert(state.participants, userId),
       });
       return;
     case "l":
-      if (event.u === currentUserId()) {
+      if (userId === currentUserId()) {
         return;
       }
       {
         const next = { ...state.participants };
-        delete next[event.u];
+        delete next[userId];
         useVoice.setState({ participants: next });
       }
       return;
     case "p":
     case "u": {
       if (!event.k) return;
-      const current = state.participants[event.u] ?? { pubs: [] };
+      const current = state.participants[userId] ?? { pubs: [] };
       const pubs =
         event.t === "p"
           ? current.pubs.includes(event.k)
@@ -206,7 +223,7 @@ function onSig(event: SigEvent): void {
       useVoice.setState({
         participants: {
           ...state.participants,
-          [event.u]: { pubs },
+          [userId]: { pubs },
         },
       });
       return;
@@ -220,7 +237,11 @@ function onErr(err: ErrFrame): void {
   const pending = awaitingJoin;
   if (!pending) return;
   if (err.c !== pending.channelId) return;
-  if (err.e !== "forbidden" && err.e !== "not_found" && err.e !== "bad_request") {
+  if (
+    err.e !== "forbidden" &&
+    err.e !== "not_found" &&
+    err.e !== "bad_request"
+  ) {
     return;
   }
   const state = useVoice.getState();
@@ -246,6 +267,7 @@ function onReady(): void {
       ? { [self]: state.participants[self] ?? { pubs: [] } }
       : {},
   });
+  occupySelf(state);
   awaitingJoin = { serverId: state.serverId, channelId: state.channelId };
   deps?.gateway.send({
     op: "sig",
@@ -290,6 +312,7 @@ function rollbackSeat(error?: unknown): void {
   const channelId = state.channelId;
   awaitingJoin = null;
   stopPeer();
+  vacateSelf(serverId, channelId);
   useVoice.setState({ ...idle });
   if (serverId && channelId) {
     deps?.gateway.send({
@@ -304,8 +327,57 @@ function rollbackSeat(error?: unknown): void {
   }
 }
 
+function applyLocalAudio(): void {
+  const state = useVoice.getState();
+  const micOff = state.muted || state.deafened;
+  localStream?.getAudioTracks().forEach((track) => {
+    track.enabled = !micOff;
+  });
+  if (remoteAudio) {
+    remoteAudio.muted = state.deafened;
+  }
+}
+
+function occupySelf(state: {
+  serverId: string | null;
+  channelId: string | null;
+  muted: boolean;
+  deafened: boolean;
+}): void {
+  const self = currentUserId();
+  if (!self || !state.serverId || !state.channelId) return;
+  applyVoiceJoin(state.serverId, self, state.channelId, {
+    muted: state.muted,
+    deafened: state.deafened,
+  });
+}
+
+function vacateSelf(serverId: string | null, channelId: string | null): void {
+  const self = currentUserId();
+  if (!self || !serverId || !channelId) return;
+  applyVoiceLeave(serverId, self);
+}
+
+function sendFlag(
+  kind: "m" | "d",
+  serverId: string,
+  channelId: string,
+  on: boolean,
+): void {
+  deps?.gateway.send({
+    op: "sig",
+    t: kind,
+    s: serverId,
+    c: channelId,
+    on,
+  });
+}
+
 function signalingState(): string {
-  return peer?.signalingState ?? (peer?.remoteDescription ? "have-remote-offer" : "stable");
+  return (
+    peer?.signalingState ??
+    (peer?.remoteDescription ? "have-remote-offer" : "stable")
+  );
 }
 
 async function applyRemoteDescription(
@@ -381,6 +453,7 @@ export function joinVoice(input: {
     prev.channelId &&
     prev.channelId !== input.channelId
   ) {
+    vacateSelf(prev.serverId, prev.channelId);
     deps?.gateway.send({
       op: "sig",
       t: "l",
@@ -395,7 +468,13 @@ export function joinVoice(input: {
     serverId: input.serverId,
     channelId: input.channelId,
     channelName: input.channelName,
+    muted: false,
+    deafened: false,
     participants: { [self]: { pubs: [] } },
+  });
+  applyVoiceJoin(input.serverId, self, input.channelId, {
+    muted: false,
+    deafened: false,
   });
   awaitingJoin = { serverId: input.serverId, channelId: input.channelId };
   deps?.gateway.send({
@@ -413,6 +492,7 @@ export function leaveVoice(): void {
   const channelId = state.channelId;
   awaitingJoin = null;
   stopPeer();
+  vacateSelf(serverId, channelId);
   useVoice.setState({ ...idle });
   if (serverId && channelId) {
     deps?.gateway.send({
@@ -421,6 +501,56 @@ export function leaveVoice(): void {
       s: serverId,
       c: channelId,
     });
+  }
+}
+
+/**
+ * Mute toggles immediately; the sig frame is the sync, not the wait.
+ * Unmuting while deafened also undeafens so you can hear yourself speak.
+ */
+export function toggleMute(): void {
+  ensureBound();
+  const state = useVoice.getState();
+  if (state.status !== "joined" || !state.serverId || !state.channelId) {
+    return;
+  }
+  const prevMuted = state.muted;
+  const prevDeafened = state.deafened;
+  const muted = !(state.muted || state.deafened);
+  const deafened = muted ? state.deafened : false;
+  useVoice.setState({ muted, deafened });
+  applyLocalAudio();
+  occupySelf({ ...state, muted, deafened });
+  if (muted !== prevMuted) {
+    sendFlag("m", state.serverId, state.channelId, muted);
+  }
+  if (deafened !== prevDeafened) {
+    sendFlag("d", state.serverId, state.channelId, deafened);
+  }
+}
+
+/**
+ * Deafen toggles immediately. Turning it on also mutes; turning it off
+ * unmutes. The member list is updated before the server round-trip.
+ */
+export function toggleDeafen(): void {
+  ensureBound();
+  const state = useVoice.getState();
+  if (state.status !== "joined" || !state.serverId || !state.channelId) {
+    return;
+  }
+  const prevMuted = state.muted;
+  const prevDeafened = state.deafened;
+  const deafened = !state.deafened;
+  const muted = deafened;
+  useVoice.setState({ muted, deafened });
+  applyLocalAudio();
+  occupySelf({ ...state, muted, deafened });
+  if (muted !== prevMuted) {
+    sendFlag("m", state.serverId, state.channelId, muted);
+  }
+  if (deafened !== prevDeafened) {
+    sendFlag("d", state.serverId, state.channelId, deafened);
   }
 }
 
@@ -484,6 +614,7 @@ async function startPeer(serverId: string, channelId: string): Promise<void> {
       return;
     }
     localStream = stream;
+    applyLocalAudio();
     for (const track of stream.getTracks()) {
       pc.addTrack?.(track, stream);
     }
@@ -495,7 +626,9 @@ async function startPeer(serverId: string, channelId: string): Promise<void> {
         participants: {
           ...state.participants,
           [self]: {
-            pubs: current.pubs.includes("a") ? current.pubs : [...current.pubs, "a"],
+            pubs: current.pubs.includes("a")
+              ? current.pubs
+              : [...current.pubs, "a"],
           },
         },
       });
