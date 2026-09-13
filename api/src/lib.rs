@@ -3,6 +3,7 @@ pub mod config;
 pub mod cookies;
 pub mod csrf;
 pub mod error;
+pub mod gateway;
 pub mod health;
 pub mod json;
 pub mod password;
@@ -20,6 +21,7 @@ use tower_http::trace::{DefaultOnResponse, TraceLayer};
 use tracing::{Level, info_span};
 
 pub use config::Config;
+pub use gateway::{Event, EventDraft, EventKind, publish_channel, publish_server};
 pub use state::AppState;
 
 /// Builds the HTTP router. Kept separate from `main` so integration tests
@@ -33,8 +35,11 @@ pub fn app(state: AppState) -> Router {
         .merge(servers::router())
         .layer(middleware::from_fn(csrf::require));
 
+    // `/ws` is a GET upgrade, not a JSON mutation — it stays outside the
+    // CSRF layer and uses the session cookie the browser already sends.
     Router::new()
         .merge(health::router())
+        .merge(gateway::router())
         .merge(api)
         .layer(
             TraceLayer::new_for_http()

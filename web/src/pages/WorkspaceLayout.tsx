@@ -12,6 +12,7 @@ import { ChannelSidebar } from "../components/ChannelSidebar.tsx";
 import { RequireUser } from "../components/RequireUser.tsx";
 import { ServerRail } from "../components/ServerRail.tsx";
 import { forgetServer, useServer } from "../servers/queries.ts";
+import { useGatewayTopics } from "../ws/useGateway.ts";
 
 export function WorkspaceLayout() {
   return (
@@ -23,6 +24,7 @@ export function WorkspaceLayout() {
 
 function Workspace() {
   const { serverId, channelId } = useParams({ strict: false });
+  useGatewayTopics(serverId, channelId);
 
   return (
     <div className="flex h-[calc(100dvh-3.5rem)] overflow-hidden bg-neutral-50">

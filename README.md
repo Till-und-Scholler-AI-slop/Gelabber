@@ -39,18 +39,47 @@ Env-Beispiele: `deploy/compose/.env.example`, `api/.env.example`, `web/.env.exam
 
 ## API
 
-Config ausschließlich aus Env (`API_ADDR`, `DATABASE_URL`, `REDIS_URL`; optional `API_READY_TIMEOUT_MS`, `API_DB_MAX_CONNECTIONS`, `API_COOKIE_SECURE`, `API_SESSION_TTL_HOURS`, `RUST_LOG`). Fehlt eine Pflichtvariable, startet der Prozess nicht und sagt welche. Beim Start laufen die sqlx-Migrationen aus `api/migrations` (Compose startet die API erst, wenn Postgres healthy ist).
+Config ausschließlich aus Env (`API_ADDR`, `DATABASE_URL`, `REDIS_URL`; optional `API_READY_TIMEOUT_MS`, `API_DB_MAX_CONNECTIONS`, `API_COOKIE_SECURE`, `API_SESSION_TTL_HOURS`, `API_WS_HEARTBEAT_MS`, `API_WS_DEAD_MS`, `API_WS_REPLAY`, `RUST_LOG`). Fehlt eine Pflichtvariable, startet der Prozess nicht und sagt welche. Beim Start laufen die sqlx-Migrationen aus `api/migrations` (Compose startet die API erst, wenn Postgres healthy ist).
 
 | Route | Antwort |
 |---|---|
 | `GET /health` | `200 {"status":"ok"}` — ohne Abhängigkeiten |
 | `GET /ready` | `200 {"status":"ready", ...}` nur wenn Postgres **und** Redis antworten; sonst `503 {"status":"not_ready", ...}` |
+| `GET /ws` | Native WebSocket (issue 6). Session-Cookie, kein Socket.IO. `401` ohne Session; Browser-`Origin` muss zu `Host` passen. |
 | `GET /api/auth/session` | `200 {"user": User\|null, "csrf_token"}` — Bootstrap für den Client, setzt das CSRF-Cookie falls es fehlt |
 | `POST /api/auth/register` | `{email, password, name}` → `201 {"user", "csrf_token"}` + Session-Cookie; `409 email_taken`, `422 validation_failed` |
 | `POST /api/auth/login` | `{email, password}` → `200 {"user", "csrf_token"}` + Session-Cookie; `401 invalid_credentials` |
 | `POST /api/auth/logout` | löscht die Session, leert das Cookie → `200 {"csrf_token"}` |
 | `GET /api/me` | `200 User` oder `401 unauthenticated` |
 | `PATCH /api/me` | `{name?, avatar_url?}` (`avatar_url: ""` entfernt das Bild) → `200 User` |
+
+### WS-Gateway (issue 6)
+
+Dieselbe Axum-App, natives WebSocket auf `/ws` (Caddy und Vite-Proxy leiten durch). Auth ist die bestehende Session (`gelabber_session`). CSRF gilt nicht: der Handshake ist GET. Fan-out über Redis **8.10.1** Pub/Sub (`PSUBSCRIBE gb:*`); Catch-up liegt in einer begrenzten Redis-Liste pro Topic (`API_WS_REPLAY`, Default 256) — Pub/Sub selbst speichert nichts.
+
+Kompaktes JSON, kurze Keys. Signaling (issue 10) bekommt später ein eigenes `op` und mischt sich nicht in den Chat-Strom (`op:"e"`).
+
+Client → Server:
+
+| Frame | Bedeutung |
+|---|---|
+| `{"op":"h"}` | Heartbeat |
+| `{"op":"s","s":"<server>","c?":"<channel>","n?":<seq>}` | Subscribe; `n` = letzte gesehene Seq (Reconnect) |
+| `{"op":"u","s":"<server>","c?":"<channel>"}` | Unsubscribe |
+
+Server → Client:
+
+| Frame | Bedeutung |
+|---|---|
+| `{"op":"h"}` | Heartbeat (Client antwortet mit `h`) |
+| `{"op":"ok","s":"…","c?":"…","n":<seq>}` | Subscribe steht; `n` ist der aktuelle Kopf |
+| `{"op":"e","t":"c\|e\|d","s":"…","c?":"…","n":<seq>,"i?":"<id>","d?":{…}}` | Event: create / edit (Delta in `d`) / delete |
+| `{"op":"gap","s":"…","c?":"…"}` | Lücke größer als der Replay-Puffer — History kommt per REST |
+| `{"op":"err","e":"not_found\|bad_request\|…"}` | Subscribe abgelehnt (fremde Server/Kanäle: `not_found`, wie REST) |
+
+Topics: Server `gb:s:{id}` und Kanal `gb:c:{id}` sind getrennt. Events nur an passende Subscribes. Heartbeat alle `API_WS_HEARTBEAT_MS` (15 s); ohne Client-Frame für `API_WS_DEAD_MS` (30 s) schließt der Server (stiller Tod). Reconnect schickt `s` mit letzter Seq — der Server spielt `n+1…` nach, ohne Doppelte. Issue 5 (REST-Nachrichten) publiziert nach einem erfolgreichen Write über `publish_channel` / `publish_server`; dieses Ticket legt keine Message-Tabellen an.
+
+Der Web-Client hält eine Socket-Instanz pro Tab, subscribed Server/Kanal aus der URL und dedupliziert über Seq.
 | `GET /api/servers` | `200 [Server]` — die Server des Users in Beitrittsreihenfolge, je mit `role`, `permissions` (effektiv) und `member_permissions` |
 | `POST /api/servers` | `{name}` → `201 ServerDetail` (Owner-Mitgliedschaft, Kategorie „Textkanäle“, Kanal `#allgemein`) |
 | `GET /api/servers/{id}` | `200 ServerDetail` = Server + `categories`, `channels`, `members`; fremder/unbekannter Server → `404 not_found` |
@@ -84,7 +113,7 @@ Config ausschließlich aus Env (`API_ADDR`, `DATABASE_URL`, `REDIS_URL`; optiona
 - **Fehler** kommen immer als `{"error": <code>, "message": <text>, "fields"?: {<feld>: <code>}}`. Codes: `validation_failed`, `bad_request`, `unauthenticated`, `invalid_credentials`, `csrf_invalid`, `email_taken`, `internal`. Feld-Codes: `required`, `invalid`, `too_short`, `too_long`, `taken`. Interne Ursachen stehen nur im Log.
 - **Nicht in v1**: OAuth, fremdes JWT, Magic Links, 2FA, SSO, Passkeys, E2E. Avatar ist in v1 eine `https://`-URL (kein `http://`, kein Mixed Content hinter TLS); Datei-Upload kommt mit dem Dateien-/MinIO-Ticket.
 
-Tests gegen echtes Postgres: `DATABASE_URL=postgres://gelabber:gelabber@127.0.0.1:5432/gelabber cargo test -p gelabber-api` (`#[sqlx::test]` legt pro Test eine Wegwerf-Datenbank an; ohne `DATABASE_URL` schlagen die `tests/auth.rs`- und `tests/servers.rs`-Tests fehl, `/health`- und `/ready`-Tests laufen ohne). Der In-Process-HTTP-Client mit Cookie-Jar liegt in `tests/common/mod.rs`.
+Tests gegen echtes Postgres: `DATABASE_URL=postgres://gelabber:gelabber@127.0.0.1:5432/gelabber cargo test -p gelabber-api` (`#[sqlx::test]` legt pro Test eine Wegwerf-Datenbank an; ohne `DATABASE_URL` schlagen die `tests/auth.rs`- und `tests/servers.rs`-Tests fehl, `/health`- und `/ready`-Tests laufen ohne). Gateway-Tests (`tests/gateway.rs`) brauchen zusätzlich Redis (`REDIS_URL`, Default `redis://127.0.0.1:6379`). Der In-Process-HTTP-Client mit Cookie-Jar liegt in `tests/common/mod.rs`.
 
 `/ready` prüft beide Abhängigkeiten parallel, jede mit hartem Deadline (`API_READY_TIMEOUT_MS`, Default 2000 ms). Der Body nennt pro Check Status, Latenz und eine grobe Fehlerklasse (`connection_refused`, `auth_failed`, `timed_out`, sonst `unavailable`), weil `/ready` über Caddy öffentlich erreichbar ist. Die vollständige Treiber-Fehlermeldung steht nur in der `WARN`-Logzeile (`check`, `error_class`, `error`).
 
@@ -105,8 +134,8 @@ Persistenz ist auf **sqlx 0.9.0** festgelegt (kein zweites ORM, kein Query-Build
 
 ## Web
 
-`npm run dev` in `web/` proxyt `/api` nach `127.0.0.1:8080` (Vite-Proxy), damit das httpOnly-Cookie same-origin bleibt — genau wie hinter Caddy im Compose. `VITE_API_BASE_URL` ist deshalb relativ (`/api`).
+`npm run dev` in `web/` proxyt `/api` und `/ws` nach `127.0.0.1:8080` (Vite-Proxy), damit das httpOnly-Cookie same-origin bleibt — genau wie hinter Caddy im Compose. `VITE_API_BASE_URL` ist deshalb relativ (`/api`).
 
-Login-Flow: `GET /api/auth/session` einmal beim Start (parallel zum ersten Render), danach hält ein Zustand-Store den User und der API-Client das CSRF-Token im Speicher. Login/Register schreiben den Store **vor** der clientseitigen Navigation, Logout und Profil-Änderungen sind optimistisch — kein Full-Reload. Feld- und Formfehler erscheinen inline (Client-Regeln spiegeln `api/src/auth/validate.rs`, Server-Feld-Codes werden auf dieselben Texte gemappt). Requests haben 10 s Timeout, Buttons wechseln nur das Label — kein hängender Spinner. Routen: `/`, `/s/…` und `/profile` verlangen einen User, `/login` und `/register` schicken angemeldete User weiter (`?redirect=` für Deep-Links). Stirbt die Session außerhalb des Tabs (Logout woanders, TTL), kippt ein `401 unauthenticated` oder ein Bootstrap mit `user: null` den Store sofort auf anonym und die Seite springt nach `/login?redirect=…`.
+Login-Flow: `GET /api/auth/session` einmal beim Start (parallel zum ersten Render), danach hält ein Zustand-Store den User und der API-Client das CSRF-Token im Speicher. Mit Session öffnet der Tab ein natives WebSocket auf `/ws` (kein Socket.IO); Server- und Kanal-Subscribe folgen der URL, Reconnect nimmt die letzte Seq mit. Login/Register schreiben den Store **vor** der clientseitigen Navigation, Logout und Profil-Änderungen sind optimistisch — kein Full-Reload. Feld- und Formfehler erscheinen inline (Client-Regeln spiegeln `api/src/auth/validate.rs`, Server-Feld-Codes werden auf dieselben Texte gemappt). Requests haben 10 s Timeout, Buttons wechseln nur das Label — kein hängender Spinner. Routen: `/`, `/s/…` und `/profile` verlangen einen User, `/login` und `/register` schicken angemeldete User weiter (`?redirect=` für Deep-Links). Stirbt die Session außerhalb des Tabs (Logout woanders, TTL), kippt ein `401 unauthenticated` oder ein Bootstrap mit `user: null` den Store sofort auf anonym und die Seite springt nach `/login?redirect=…`.
 
 Workspace (issue 4): drei Spalten — Server-Rail, Kanal-Sidebar, Seite. Beide Listen sind mit TanStack Virtual virtualisiert (die Sidebar als eine flache Liste aus Kategorie- und Kanalzeilen), damit auch hunderte Einträge ohne Ruckler scrollen. Die Auswahl **ist** die URL (`/s/$serverId/c/$channelId`): Klick → Highlight sofort, Details kommen aus dem Query-Cache (`staleTime` 60 s, Prefetch beim Hover über eine Kachel). Umbenennen, Verschieben, Löschen, Rechte-Toggles und Verlassen/Löschen schreiben zuerst in den Cache und rollen bei einem Fehler mit Toast zurück; Anlegen zeigt eine `tmp:`-Zeile, bis der Server die echte ID liefert. Der zuletzt offene Kanal je Server bleibt lokal gemerkt (`localStorage`). `/s/$serverId/settings`: Name, Mitglieder-Rechte (Checkbox = sofort gespeichert), Einladungen, Mitglieder, Löschen bzw. Verlassen — die Verwaltungs-Sektionen nur mit `manage_server`. `/invite/$code` zeigt Vorschau und „Beitreten“; nicht angemeldete Besucher gehen über Login/Register zurück zum Link. Redirects laufen über `components/Redirect.tsx` (einmal pro Ziel), nicht über `<Navigate>`, das bei jedem Re-Render mit neuem Props-Objekt erneut navigiert.

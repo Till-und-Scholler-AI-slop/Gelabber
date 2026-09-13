@@ -6,6 +6,7 @@ use sqlx::PgPool;
 use sqlx::postgres::{PgConnectOptions, PgPoolOptions};
 
 use crate::config::Config;
+use crate::gateway::Gateway;
 
 /// Shared handles for request handlers. Both clients are created lazily so
 /// the process boots even while Postgres/Redis are still starting; `/ready`
@@ -22,6 +23,11 @@ pub struct AppState {
     pub ready_timeout: Duration,
     pub cookie_secure: bool,
     pub session_ttl: Duration,
+    /// Native WS gateway (issue #6): Redis Pub/Sub fan-out + local sockets.
+    pub gateway: Gateway,
+    pub ws_heartbeat: Duration,
+    pub ws_dead: Duration,
+    pub ws_replay: usize,
 }
 
 #[derive(Debug)]
@@ -64,10 +70,14 @@ impl AppState {
         Ok(Self {
             db,
             pg_connect,
-            redis,
+            redis: redis.clone(),
             ready_timeout: config.ready_timeout,
             cookie_secure: config.cookie_secure,
             session_ttl: config.session_ttl,
+            gateway: Gateway::new(redis, config.ws_replay),
+            ws_heartbeat: config.ws_heartbeat,
+            ws_dead: config.ws_dead,
+            ws_replay: config.ws_replay,
         })
     }
 

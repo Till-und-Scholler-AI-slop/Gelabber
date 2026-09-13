@@ -12,6 +12,9 @@ pub const API_READY_TIMEOUT_MS: &str = "API_READY_TIMEOUT_MS";
 pub const API_DB_MAX_CONNECTIONS: &str = "API_DB_MAX_CONNECTIONS";
 pub const API_COOKIE_SECURE: &str = "API_COOKIE_SECURE";
 pub const API_SESSION_TTL_HOURS: &str = "API_SESSION_TTL_HOURS";
+pub const API_WS_HEARTBEAT_MS: &str = "API_WS_HEARTBEAT_MS";
+pub const API_WS_DEAD_MS: &str = "API_WS_DEAD_MS";
+pub const API_WS_REPLAY: &str = "API_WS_REPLAY";
 /// Read by `telemetry::init`, not by `Config`, because the subscriber has to
 /// exist before anything else can be logged.
 pub const RUST_LOG: &str = "RUST_LOG";
@@ -20,6 +23,9 @@ const DEFAULT_API_ADDR: &str = "0.0.0.0:8080";
 const DEFAULT_READY_TIMEOUT_MS: u64 = 2000;
 const DEFAULT_DB_MAX_CONNECTIONS: u32 = 5;
 const DEFAULT_SESSION_TTL_HOURS: u64 = 24 * 30;
+const DEFAULT_WS_HEARTBEAT_MS: u64 = 15_000;
+const DEFAULT_WS_DEAD_MS: u64 = 30_000;
+const DEFAULT_WS_REPLAY: usize = 256;
 
 #[derive(Debug, Clone)]
 pub struct Config {
@@ -34,6 +40,12 @@ pub struct Config {
     pub cookie_secure: bool,
     /// Lifetime of a session cookie and its database row.
     pub session_ttl: Duration,
+    /// How often the gateway sends an application heartbeat (`{"op":"h"}`).
+    pub ws_heartbeat: Duration,
+    /// Close a socket that has sent nothing for this long (silent death).
+    pub ws_dead: Duration,
+    /// Bounded Redis replay buffer per topic, for reconnect catch-up.
+    pub ws_replay: usize,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -97,6 +109,26 @@ impl Config {
             None => DEFAULT_SESSION_TTL_HOURS,
         };
 
+        let ws_heartbeat_ms = match get(API_WS_HEARTBEAT_MS) {
+            Some(raw) => parse_positive::<u64>(API_WS_HEARTBEAT_MS, &raw)?,
+            None => DEFAULT_WS_HEARTBEAT_MS,
+        };
+        let ws_dead_ms = match get(API_WS_DEAD_MS) {
+            Some(raw) => parse_positive::<u64>(API_WS_DEAD_MS, &raw)?,
+            None => DEFAULT_WS_DEAD_MS,
+        };
+        if ws_dead_ms <= ws_heartbeat_ms {
+            return Err(invalid(
+                API_WS_DEAD_MS,
+                &ws_dead_ms.to_string(),
+                "must be greater than API_WS_HEARTBEAT_MS",
+            ));
+        }
+        let ws_replay = match get(API_WS_REPLAY) {
+            Some(raw) => parse_positive::<usize>(API_WS_REPLAY, &raw)?,
+            None => DEFAULT_WS_REPLAY,
+        };
+
         Ok(Self {
             api_addr,
             database_url,
@@ -105,6 +137,9 @@ impl Config {
             db_max_connections,
             cookie_secure,
             session_ttl: Duration::from_secs(session_ttl_hours * 3600),
+            ws_heartbeat: Duration::from_millis(ws_heartbeat_ms),
+            ws_dead: Duration::from_millis(ws_dead_ms),
+            ws_replay,
         })
     }
 }
@@ -166,6 +201,9 @@ mod tests {
         assert_eq!(config.db_max_connections, 5);
         assert!(!config.cookie_secure);
         assert_eq!(config.session_ttl, Duration::from_secs(30 * 24 * 3600));
+        assert_eq!(config.ws_heartbeat, Duration::from_millis(15_000));
+        assert_eq!(config.ws_dead, Duration::from_millis(30_000));
+        assert_eq!(config.ws_replay, 256);
     }
 
     #[test]
@@ -228,6 +266,24 @@ mod tests {
             err,
             ConfigError::Invalid {
                 key: API_READY_TIMEOUT_MS,
+                ..
+            }
+        ));
+    }
+
+    #[test]
+    fn rejects_dead_timeout_not_greater_than_heartbeat() {
+        let err = Config::from_source(source(&[
+            (DATABASE_URL, "postgres://u:p@localhost/db"),
+            (REDIS_URL, "redis://localhost"),
+            (API_WS_HEARTBEAT_MS, "100"),
+            (API_WS_DEAD_MS, "100"),
+        ]))
+        .unwrap_err();
+        assert!(matches!(
+            err,
+            ConfigError::Invalid {
+                key: API_WS_DEAD_MS,
                 ..
             }
         ));
