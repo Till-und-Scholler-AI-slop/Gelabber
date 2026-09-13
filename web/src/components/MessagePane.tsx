@@ -105,8 +105,19 @@ function MessageList({
   const olderAnchor = useRef<string | null>(null);
   const lastCount = useRef(0);
   const lastTail = useRef<string | undefined>(undefined);
+  const [viewport, setViewport] = useState(0);
   const edit = useEditMessage(channelId);
   const remove = useDeleteMessage(channelId);
+
+  useEffect(() => {
+    const el = scrollRef.current;
+    if (!el) return;
+    const update = () => setViewport(el.clientHeight);
+    update();
+    const ro = new ResizeObserver(update);
+    ro.observe(el);
+    return () => ro.disconnect();
+  }, []);
 
   // Not on the React Compiler; the warning is about memoising its return value.
   // eslint-disable-next-line react-hooks/incompatible-library
@@ -154,14 +165,6 @@ function MessageList({
     onLoadOlder();
   }, [firstVisible, firstId, hasOlder, loadingOlder, onLoadOlder, ready]);
 
-  if (ready && items.length === 0) {
-    return (
-      <div className="flex flex-1 items-center justify-center px-6 text-center text-sm text-neutral-500">
-        Noch keine Nachrichten. Schreib die erste.
-      </div>
-    );
-  }
-
   return (
     <div
       ref={scrollRef}
@@ -176,13 +179,24 @@ function MessageList({
       }}
       className="min-h-0 flex-1 overflow-y-auto"
     >
+      {ready && items.length === 0 ? (
+        <div className="flex h-full items-center justify-center px-6 text-center text-sm text-neutral-500">
+          Noch keine Nachrichten. Schreib die erste.
+        </div>
+      ) : null}
       {hasOlder || loadingOlder ? (
         <p className="px-4 py-2 text-center text-xs text-neutral-400">
           {loadingOlder ? "Ältere Nachrichten…" : ""}
         </p>
       ) : null}
       <div
-        style={{ height: virtualizer.getTotalSize() }}
+        style={{
+          height: virtualizer.getTotalSize(),
+          marginTop:
+            viewport > virtualizer.getTotalSize()
+              ? viewport - virtualizer.getTotalSize()
+              : 0,
+        }}
         className="relative w-full"
       >
         {virtualizer.getVirtualItems().map((row) => {
@@ -246,7 +260,7 @@ function MessageRow({
 
   const actions =
     mine && !pending && !editing ? (
-      <span className="flex shrink-0 items-center opacity-0 transition group-hover:opacity-100 group-focus-within:opacity-100">
+      <span className="flex shrink-0 items-center opacity-70 transition group-hover:opacity-100 group-focus-within:opacity-100">
         <IconButton label="Nachricht bearbeiten" onClick={startEdit}>
           <PencilIcon size={14} />
         </IconButton>
