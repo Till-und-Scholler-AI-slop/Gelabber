@@ -170,9 +170,7 @@ impl Gateway {
     }
 
     pub async fn detach(&self, id: ConnId) -> Option<(Uuid, HashSet<Uuid>, HashSet<(Uuid, Uuid)>)> {
-        let Some(socket) = self.inner.sockets.write().await.remove(&id) else {
-            return None;
-        };
+        let socket = self.inner.sockets.write().await.remove(&id)?;
         for (channel_id, seat) in socket.rooms {
             match self.redis_leave_member(channel_id, socket.user_id).await {
                 Ok(true) => {
