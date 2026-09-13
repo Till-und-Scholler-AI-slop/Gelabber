@@ -13,7 +13,7 @@ use super::hub::ConnId;
 use super::protocol::{CatchUp, ClientFrame, PresenceStatus, ServerFrame, Topic};
 use crate::auth::user::User;
 use crate::error::ApiError;
-use crate::servers::channel::Channel;
+use crate::servers::channel::{self, ChannelKind};
 use crate::servers::membership;
 use crate::state::AppState;
 
@@ -267,27 +267,34 @@ async fn typing(
         .await
 }
 
-/// Membership + (optional) channel belongs to that server. Same 404
-/// semantics as the REST API: unknown and foreign are indistinguishable.
+/// Membership + (optional) channel belongs to that server — or the caller
+/// is a participant of a 1:1 DM. For DMs the protocol `s` is the channel
+/// id. Same 404 semantics as the REST API: unknown and foreign are
+/// indistinguishable.
 async fn authorize(
     db: &sqlx::PgPool,
     user_id: Uuid,
     server_id: Uuid,
     channel_id: Option<Uuid>,
 ) -> Result<(), ApiError> {
-    membership::load(db, server_id, user_id).await?;
     let Some(channel_id) = channel_id else {
+        membership::load(db, server_id, user_id).await?;
         return Ok(());
     };
-    let found = sqlx::query_as::<_, Channel>(
-        "SELECT id, server_id, category_id, name, kind, created_at \
-         FROM channels WHERE id = $1 AND server_id = $2",
-    )
-    .bind(channel_id)
-    .bind(server_id)
-    .fetch_optional(db)
-    .await?;
-    found.ok_or(ApiError::NotFound).map(|_| ())
+    let channel = channel::get(db, channel_id)
+        .await?
+        .ok_or(ApiError::NotFound)?;
+    if channel.kind == ChannelKind::Dm {
+        if server_id != channel.id {
+            return Err(ApiError::NotFound);
+        }
+        return channel::require_participant(db, channel.id, user_id).await;
+    }
+    if channel.server_id != Some(server_id) {
+        return Err(ApiError::NotFound);
+    }
+    membership::load(db, server_id, user_id).await?;
+    Ok(())
 }
 
 pub(super) async fn send(

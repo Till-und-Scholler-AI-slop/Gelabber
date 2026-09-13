@@ -1,8 +1,16 @@
 // Right-hand member list. Presence lives here so a status flip never
-// reflows the message pane (issue 8).
+// reflows the message pane (issue 8). Click opens a 1:1 DM like a channel.
 
+import { useNavigate } from "@tanstack/react-router";
 import { useMemo } from "react";
+import { useQueryClient } from "@tanstack/react-query";
 
+import { useSession } from "../auth/session.ts";
+import {
+  findCachedDm,
+  prefetchDms,
+  useOpenDm,
+} from "../dms/queries.ts";
 import type { Member } from "../servers/types.ts";
 import {
   groupMembers,
@@ -23,6 +31,29 @@ export function MemberPanel({
     () => groupMembers(members, (id) => presenceOf(byServer, serverId, id)),
     [members, byServer, serverId],
   );
+  const me = useSession((s) => s.user?.id);
+  const client = useQueryClient();
+  const navigate = useNavigate();
+  const openDm = useOpenDm();
+
+  const goDm = (peerId: string) => {
+    if (peerId === me) return;
+    const cached = findCachedDm(client, peerId);
+    if (cached) {
+      void navigate({
+        to: "/d/$channelId",
+        params: { channelId: cached.id },
+      });
+      return;
+    }
+    openDm.mutate(peerId, {
+      onSuccess: (dm) =>
+        void navigate({
+          to: "/d/$channelId",
+          params: { channelId: dm.id },
+        }),
+    });
+  };
 
   return (
     <aside
@@ -41,21 +72,40 @@ export function MemberPanel({
               {group.label} — {group.members.length}
             </p>
             <ul>
-              {group.members.map((member) => (
-                <li
-                  key={member.user_id}
-                  className="flex items-center gap-2 rounded-md px-2 py-1.5"
-                >
-                  <PresenceAvatar
-                    name={member.name}
-                    url={member.avatar_url}
-                    status={group.group}
-                  />
-                  <span className="min-w-0 flex-1 truncate text-sm">
-                    {member.name}
-                  </span>
-                </li>
-              ))}
+              {group.members.map((member) => {
+                const self = member.user_id === me;
+                return (
+                  <li key={member.user_id}>
+                    <button
+                      type="button"
+                      disabled={self}
+                      title={
+                        self
+                          ? member.name
+                          : `Nachricht an ${member.name}`
+                      }
+                      onMouseEnter={() => prefetchDms(client)}
+                      onFocus={() => prefetchDms(client)}
+                      onClick={() => goDm(member.user_id)}
+                      className={[
+                        "flex w-full items-center gap-2 rounded-md px-2 py-1.5 text-left",
+                        self
+                          ? "cursor-default"
+                          : "hover:bg-neutral-100",
+                      ].join(" ")}
+                    >
+                      <PresenceAvatar
+                        name={member.name}
+                        url={member.avatar_url}
+                        status={group.group}
+                      />
+                      <span className="min-w-0 flex-1 truncate text-sm">
+                        {member.name}
+                      </span>
+                    </button>
+                  </li>
+                );
+              })}
             </ul>
           </li>
         ))}

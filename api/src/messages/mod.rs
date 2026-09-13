@@ -6,8 +6,9 @@
 //!
 //! Rights: any member may read a text channel's history. `send_messages` is
 //! required to post or edit. Delete is the author's alone (no moderation
-//! delete in v1). Voice channels answer `404` — they have no message
-//! resource. A foreign/unknown channel is the same `404`.
+//! delete in v1). DMs (`kind = dm`) use these same routes; both
+//! participants may write. Voice channels answer `404` — they have no
+//! message resource. A foreign/unknown channel is the same `404`.
 
 pub mod validate;
 
@@ -29,7 +30,7 @@ use crate::gateway::{EventKind, publish_channel};
 use crate::json::Body;
 use crate::path::Id;
 use crate::servers::channel::{self, ChannelKind};
-use crate::servers::membership::Membership;
+use crate::servers::membership::{self, Membership};
 use crate::servers::permissions::Permission;
 use crate::state::AppState;
 
@@ -154,7 +155,7 @@ async fn list_messages(
     Id(channel_id): Id,
     Query(params): Query<ListParams>,
 ) -> Result<Json<MessagePage>, ApiError> {
-    text_channel(&state.db, channel_id, user.id).await?;
+    messaging_channel(&state.db, channel_id, user.id).await?;
 
     let mut errors = FieldErrors::new();
     let before = validate::cursor(params.before.as_deref(), "before", &mut errors);
@@ -174,8 +175,8 @@ async fn create_message(
     Id(channel_id): Id,
     Body(body): Body<CreateBody>,
 ) -> Result<Response, ApiError> {
-    let (member, channel) = text_channel(&state.db, channel_id, user.id).await?;
-    member.require(Permission::SendMessages)?;
+    let access = messaging_channel(&state.db, channel_id, user.id).await?;
+    access.require_send()?;
 
     let mut errors = FieldErrors::new();
     let content = validate::content(&body.content, &mut errors);
@@ -195,7 +196,7 @@ async fn create_message(
     info!(channel_id = %channel_id, message_id = %message.id, "message created");
     fanout(
         &state,
-        channel.server_id,
+        access.event_server_id(),
         channel_id,
         EventKind::C,
         Some(message.id),
@@ -211,11 +212,11 @@ async fn update_message(
     Id(message_id): Id,
     Body(body): Body<UpdateBody>,
 ) -> Result<Json<Message>, ApiError> {
-    let (member, current) = message_for(&state.db, message_id, user.id).await?;
+    let (access, current) = message_for(&state.db, message_id, user.id).await?;
     if current.author.id != user.id {
         return Err(ApiError::Forbidden("You can only edit your own messages."));
     }
-    member.require(Permission::SendMessages)?;
+    access.require_send()?;
 
     let mut errors = FieldErrors::new();
     let content = validate::content(&body.content, &mut errors);
@@ -238,7 +239,7 @@ async fn update_message(
     let message = row.into_message(&user);
     fanout(
         &state,
-        member.server.id,
+        access.event_server_id(),
         message.channel_id,
         EventKind::E,
         Some(message.id),
@@ -253,7 +254,7 @@ async fn delete_message(
     CurrentUser(user): CurrentUser,
     Id(message_id): Id,
 ) -> Result<StatusCode, ApiError> {
-    let (member, current) = message_for(&state.db, message_id, user.id).await?;
+    let (access, current) = message_for(&state.db, message_id, user.id).await?;
     if current.author.id != user.id {
         return Err(ApiError::Forbidden(
             "You can only delete your own messages.",
@@ -271,7 +272,7 @@ async fn delete_message(
     );
     fanout(
         &state,
-        member.server.id,
+        access.event_server_id(),
         current.channel_id,
         EventKind::D,
         Some(message_id),
@@ -301,24 +302,55 @@ async fn fanout(
     }
 }
 
-/// Membership + text channel, or `404`. Voice is not a message resource.
-async fn text_channel(
+/// Text channel (via server membership) or 1:1 DM (via channel_members).
+/// Voice is not a message resource.
+enum MessagingChannel {
+    Server { member: Membership },
+    Dm { channel: channel::Channel },
+}
+
+impl MessagingChannel {
+    /// Protocol `s`: the real server, or the DM channel id.
+    fn event_server_id(&self) -> Uuid {
+        match self {
+            Self::Server { member, .. } => member.server.id,
+            Self::Dm { channel } => channel.id,
+        }
+    }
+
+    fn require_send(&self) -> Result<(), ApiError> {
+        match self {
+            Self::Server { member, .. } => member.require(Permission::SendMessages),
+            Self::Dm { .. } => Ok(()),
+        }
+    }
+}
+
+async fn messaging_channel(
     db: &PgPool,
     channel_id: Uuid,
     user_id: Uuid,
-) -> Result<(Membership, channel::Channel), ApiError> {
-    let (member, channel) = channel::channel_for(db, channel_id, user_id).await?;
-    if channel.kind != ChannelKind::Text {
+) -> Result<MessagingChannel, ApiError> {
+    let channel = channel::get(db, channel_id)
+        .await?
+        .ok_or(ApiError::NotFound)?;
+    if !channel.kind.is_messaging() {
         return Err(ApiError::NotFound);
     }
-    Ok((member, channel))
+    if channel.kind == ChannelKind::Dm {
+        channel::require_participant(db, channel.id, user_id).await?;
+        return Ok(MessagingChannel::Dm { channel });
+    }
+    let server_id = channel.server_id.ok_or(ApiError::NotFound)?;
+    let member = membership::load(db, server_id, user_id).await?;
+    Ok(MessagingChannel::Server { member })
 }
 
 async fn message_for(
     db: &PgPool,
     message_id: Uuid,
     user_id: Uuid,
-) -> Result<(Membership, Message), ApiError> {
+) -> Result<(MessagingChannel, Message), ApiError> {
     let row = sqlx::query_as::<_, MessageRow>(
         "SELECT m.id, m.channel_id, m.author_id, u.name AS author_name, \
                 u.avatar_url AS author_avatar_url, m.content, m.created_at, m.edited_at \
@@ -329,8 +361,8 @@ async fn message_for(
     .fetch_optional(db)
     .await?
     .ok_or(ApiError::NotFound)?;
-    let (member, _) = text_channel(db, row.channel_id, user_id).await?;
-    Ok((member, row.into()))
+    let access = messaging_channel(db, row.channel_id, user_id).await?;
+    Ok((access, row.into()))
 }
 
 async fn load_page(

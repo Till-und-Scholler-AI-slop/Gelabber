@@ -7,16 +7,24 @@ import { Link } from "@tanstack/react-router";
 import { useVirtualizer } from "@tanstack/react-virtual";
 import { useRef, useState } from "react";
 
+import { prefetchDms } from "../dms/queries.ts";
+import { useLastDm } from "../dms/lastDm.ts";
 import { useLastChannel } from "../servers/lastChannel.ts";
 import { prefetchServer, useServers } from "../servers/queries.ts";
 import type { Server } from "../servers/types.ts";
-import { PlusIcon } from "./Icons.tsx";
+import { ChatIcon, PlusIcon } from "./Icons.tsx";
 import { CreateServerDialog } from "./ServerDialogs.tsx";
 import { initials } from "./initials.ts";
 
 const TILE_PX = 56;
 
-export function ServerRail({ activeId }: { activeId: string | undefined }) {
+export function ServerRail({
+  activeId,
+  dmActive,
+}: {
+  activeId: string | undefined;
+  dmActive: boolean;
+}) {
   const { data: servers } = useServers();
   const [creating, setCreating] = useState(false);
 
@@ -25,6 +33,7 @@ export function ServerRail({ activeId }: { activeId: string | undefined }) {
       aria-label="Server"
       className="flex h-full w-18 shrink-0 flex-col items-center border-r border-neutral-200 bg-neutral-100"
     >
+      <HomeTile active={dmActive} />
       <ServerList servers={servers ?? []} activeId={activeId} />
       <div className="flex w-full justify-center border-t border-neutral-200 py-2">
         <button
@@ -39,6 +48,40 @@ export function ServerRail({ activeId }: { activeId: string | undefined }) {
       </div>
       <CreateServerDialog open={creating} onClose={() => setCreating(false)} />
     </nav>
+  );
+}
+
+function HomeTile({ active }: { active: boolean }) {
+  const client = useQueryClient();
+  const lastDmId = useLastDm((s) => s.channelId);
+
+  return (
+    <div className="relative flex h-14 items-center">
+      <span
+        aria-hidden
+        className={[
+          "absolute -left-3 w-1 rounded-r-full bg-neutral-900 transition-all",
+          active ? "h-8" : "h-0",
+        ].join(" ")}
+      />
+      <Link
+        to={lastDmId ? "/d/$channelId" : "/d"}
+        params={lastDmId ? { channelId: lastDmId } : undefined}
+        title="Direktnachrichten"
+        aria-label="Direktnachrichten"
+        aria-current={active ? "page" : undefined}
+        onMouseEnter={() => prefetchDms(client)}
+        onFocus={() => prefetchDms(client)}
+        className={[
+          "flex size-12 items-center justify-center text-sm font-semibold transition-all select-none",
+          active
+            ? "rounded-xl bg-neutral-900 text-white"
+            : "rounded-2xl bg-white text-neutral-700 shadow-sm hover:rounded-xl hover:bg-neutral-900 hover:text-white",
+        ].join(" ")}
+      >
+        <ChatIcon size={20} />
+      </Link>
+    </div>
   );
 }
 

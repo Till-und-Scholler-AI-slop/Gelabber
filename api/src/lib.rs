@@ -2,6 +2,7 @@ pub mod auth;
 pub mod config;
 pub mod cookies;
 pub mod csrf;
+pub mod dms;
 pub mod error;
 pub mod gateway;
 pub mod health;
@@ -23,9 +24,7 @@ use tower_http::trace::{DefaultOnResponse, TraceLayer};
 use tracing::{Level, info_span};
 
 pub use config::Config;
-pub use gateway::{
-    Event, EventDraft, EventKind, PresenceStatus, publish_channel, publish_server,
-};
+pub use gateway::{Event, EventDraft, EventKind, PresenceStatus, publish_channel, publish_server};
 pub use state::AppState;
 
 /// Builds the HTTP router. Kept separate from `main` so integration tests
@@ -37,6 +36,7 @@ pub fn app(state: AppState) -> Router {
         .merge(auth::router())
         .merge(profile::router())
         .merge(servers::router())
+        .merge(dms::router())
         .merge(messages::router())
         .merge(media::router())
         .layer(middleware::from_fn(csrf::require));

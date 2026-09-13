@@ -549,6 +549,16 @@ async fn categories_and_channels_crud_with_manage_channels(pool: PgPool) {
     assert_eq!(res.status, StatusCode::UNPROCESSABLE_ENTITY);
     assert_eq!(res.body["fields"]["kind"], "invalid");
 
+    let res = owner
+        .send(
+            Method::POST,
+            &format!("/api/servers/{id}/channels"),
+            Some(json!({ "name": "secret", "kind": "dm" })),
+        )
+        .await;
+    assert_eq!(res.status, StatusCode::UNPROCESSABLE_ENTITY);
+    assert_eq!(res.body["fields"]["kind"], "invalid");
+
     // A category from another server is an invalid field, not a hint.
     let other = create_server(&mut member, "Elsewhere").await;
     let res = owner

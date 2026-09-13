@@ -796,3 +796,90 @@ async fn disconnect_stops_typing_immediately(pool: PgPool) {
         start.elapsed()
     );
 }
+
+#[sqlx::test]
+async fn dm_uses_the_same_subscribe_and_message_paths(pool: PgPool) {
+    let (addr, state) = common::serve_ws(pool.clone()).await;
+    let mut ada = Client::with_state(state.clone());
+    ada.bootstrap().await;
+    let res = ada
+        .register("ada-ws@example.com", "password123", "Ada")
+        .await;
+    assert_eq!(res.status, StatusCode::CREATED, "{}", res.body);
+
+    let mut bob = Client::with_state(state.clone());
+    bob.bootstrap().await;
+    let res = bob
+        .register("bob-ws@example.com", "password123", "Bob")
+        .await;
+    assert_eq!(res.status, StatusCode::CREATED, "{}", res.body);
+
+    let opened = ada
+        .send(
+            Method::POST,
+            "/api/dms",
+            Some(json!({ "user_id": bob.user_id() })),
+        )
+        .await;
+    assert_eq!(opened.status, StatusCode::CREATED, "{}", opened.body);
+    let channel_id = opened.body["id"].as_str().unwrap();
+
+    let mut ada_ws = connect(addr, &session_cookie(&ada), None).await;
+    let mut bob_ws = connect(addr, &session_cookie(&bob), None).await;
+    send_json(
+        &mut ada_ws,
+        json!({ "op": "s", "s": channel_id, "c": channel_id }),
+    )
+    .await;
+    send_json(
+        &mut bob_ws,
+        json!({ "op": "s", "s": channel_id, "c": channel_id }),
+    )
+    .await;
+    recv_until(&mut ada_ws, |f| f["op"] == "ok" && f["c"] == channel_id).await;
+    recv_until(&mut bob_ws, |f| f["op"] == "ok" && f["c"] == channel_id).await;
+
+    let posted = ada
+        .send(
+            Method::POST,
+            &format!("/api/channels/{channel_id}/messages"),
+            Some(json!({ "content": "dm ping" })),
+        )
+        .await;
+    assert_eq!(posted.status, StatusCode::CREATED, "{}", posted.body);
+
+    let event = recv_until(&mut bob_ws, |f| {
+        f["op"] == "e" && f["t"] == "c" && f["c"] == channel_id
+    })
+    .await;
+    assert_eq!(event["s"], channel_id);
+    assert_eq!(event["i"], posted.body["id"]);
+    assert_eq!(event["d"]["content"], "dm ping");
+
+    send_json(
+        &mut ada_ws,
+        json!({ "op": "y", "s": channel_id, "c": channel_id, "on": true }),
+    )
+    .await;
+    let typing = recv_until(&mut bob_ws, |f| {
+        f["op"] == "y" && f["on"] == true && f["u"] == ada.user_id()
+    })
+    .await;
+    assert_eq!(typing["s"], channel_id);
+    assert_eq!(typing["c"], channel_id);
+
+    let mut cara = Client::with_state(state);
+    cara.bootstrap().await;
+    let res = cara
+        .register("cara-ws@example.com", "password123", "Cara")
+        .await;
+    assert_eq!(res.status, StatusCode::CREATED, "{}", res.body);
+    let mut cara_ws = connect(addr, &session_cookie(&cara), None).await;
+    send_json(
+        &mut cara_ws,
+        json!({ "op": "s", "s": channel_id, "c": channel_id }),
+    )
+    .await;
+    let err = recv_until(&mut cara_ws, |f| f["op"] == "err").await;
+    assert_eq!(err["e"], "not_found");
+}

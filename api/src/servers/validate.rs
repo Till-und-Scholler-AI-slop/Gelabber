@@ -71,8 +71,9 @@ pub fn kind(raw: Option<&str>, errors: &mut FieldErrors) -> Option<ChannelKind> 
     match raw {
         None => Some(ChannelKind::Text),
         Some(raw) => match ChannelKind::from_name(raw) {
-            Some(kind) => Some(kind),
-            None => {
+            // DMs are opened via `/api/dms`, not as a server channel kind.
+            Some(kind) if kind != ChannelKind::Dm => Some(kind),
+            Some(_) | None => {
                 errors.insert("kind", "invalid");
                 None
             }
@@ -188,6 +189,7 @@ mod tests {
             run(|e| kind(Some("stage"), e)).1.get("kind"),
             Some(&"invalid")
         );
+        assert_eq!(run(|e| kind(Some("dm"), e)).1.get("kind"), Some(&"invalid"));
     }
 
     #[test]

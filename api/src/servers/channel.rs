@@ -41,6 +41,8 @@ pub fn router() -> Router<AppState> {
 pub enum ChannelKind {
     Text,
     Voice,
+    /// 1:1 DM. Not creatable via `/api/servers/{id}/channels`.
+    Dm,
 }
 
 impl ChannelKind {
@@ -48,6 +50,7 @@ impl ChannelKind {
         match self {
             Self::Text => "text",
             Self::Voice => "voice",
+            Self::Dm => "dm",
         }
     }
 
@@ -55,13 +58,19 @@ impl ChannelKind {
         match name {
             "text" => Some(Self::Text),
             "voice" => Some(Self::Voice),
+            "dm" => Some(Self::Dm),
             _ => None,
         }
+    }
+
+    /// Text and DM share the message REST + WS paths. Voice does not.
+    pub fn is_messaging(self) -> bool {
+        matches!(self, Self::Text | Self::Dm)
     }
 }
 
 impl From<String> for ChannelKind {
-    /// Column → enum. The CHECK constraint guarantees one of the two names.
+    /// Column → enum. The CHECK constraint guarantees one of the three names.
     fn from(value: String) -> Self {
         Self::from_name(&value).unwrap_or(Self::Text)
     }
@@ -78,7 +87,7 @@ pub struct Category {
 #[derive(Debug, Clone, Serialize, FromRow, PartialEq, Eq)]
 pub struct Channel {
     pub id: Uuid,
-    pub server_id: Uuid,
+    pub server_id: Option<Uuid>,
     pub category_id: Option<Uuid>,
     pub name: String,
     #[sqlx(try_from = "String")]
@@ -129,6 +138,35 @@ pub async fn insert_channel<'e>(
     .bind(kind.name())
     .fetch_one(db)
     .await?)
+}
+
+pub async fn get(db: &PgPool, channel_id: Uuid) -> Result<Option<Channel>, ApiError> {
+    Ok(sqlx::query_as::<_, Channel>(
+        "SELECT id, server_id, category_id, name, kind, created_at FROM channels WHERE id = $1",
+    )
+    .bind(channel_id)
+    .fetch_optional(db)
+    .await?)
+}
+
+/// The caller is one of the (exactly two) DM participants.
+pub async fn require_participant(
+    db: &PgPool,
+    channel_id: Uuid,
+    user_id: Uuid,
+) -> Result<(), ApiError> {
+    let is_member: bool = sqlx::query_scalar(
+        "SELECT EXISTS (SELECT 1 FROM channel_members WHERE channel_id = $1 AND user_id = $2)",
+    )
+    .bind(channel_id)
+    .bind(user_id)
+    .fetch_one(db)
+    .await?;
+    if is_member {
+        Ok(())
+    } else {
+        Err(ApiError::NotFound)
+    }
 }
 
 /// A category id from the client is only usable if it belongs to the same
@@ -289,7 +327,8 @@ async fn update_channel(
         return Ok(Json(current));
     }
     if let Some(category_id) = category {
-        check_category(&state.db, current.server_id, category_id).await?;
+        let server_id = current.server_id.ok_or(ApiError::NotFound)?;
+        check_category(&state.db, server_id, category_id).await?;
     }
 
     let updated = sqlx::query_as::<_, Channel>(
@@ -351,13 +390,8 @@ pub async fn channel_for(
     channel_id: Uuid,
     user_id: Uuid,
 ) -> Result<(Membership, Channel), ApiError> {
-    let channel = sqlx::query_as::<_, Channel>(
-        "SELECT id, server_id, category_id, name, kind, created_at FROM channels WHERE id = $1",
-    )
-    .bind(channel_id)
-    .fetch_optional(db)
-    .await?
-    .ok_or(ApiError::NotFound)?;
-    let member = membership::load(db, channel.server_id, user_id).await?;
+    let channel = get(db, channel_id).await?.ok_or(ApiError::NotFound)?;
+    let server_id = channel.server_id.ok_or(ApiError::NotFound)?;
+    let member = membership::load(db, server_id, user_id).await?;
     Ok((member, channel))
 }
