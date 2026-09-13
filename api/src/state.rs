@@ -27,6 +27,7 @@ pub struct AppState {
     pub gateway: Gateway,
     pub ws_heartbeat: Duration,
     pub ws_dead: Duration,
+    pub ws_idle: Duration,
     pub ws_replay: usize,
 }
 
@@ -74,9 +75,15 @@ impl AppState {
             ready_timeout: config.ready_timeout,
             cookie_secure: config.cookie_secure,
             session_ttl: config.session_ttl,
-            gateway: Gateway::new(redis, config.ws_replay),
+            gateway: Gateway::new(
+                redis,
+                config.ws_replay,
+                config.ws_presence_ttl,
+                config.ws_typing_ttl,
+            ),
             ws_heartbeat: config.ws_heartbeat,
             ws_dead: config.ws_dead,
+            ws_idle: config.ws_idle,
             ws_replay: config.ws_replay,
         })
     }

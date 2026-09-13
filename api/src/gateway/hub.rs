@@ -16,7 +16,7 @@ use tracing::{debug, warn};
 use uuid::Uuid;
 
 use super::protocol::{
-    CatchUp, Event, EventDraft, REDIS_PREFIX, ServerFrame, SigEvent, Topic, TrackKind,
+    CatchUp, Event, EventDraft, LiveTopic, REDIS_PREFIX, ServerFrame, SigEvent, Topic, TrackKind,
     plan_catch_up,
 };
 use crate::error::ApiError;
@@ -51,10 +51,18 @@ return {n, raw}
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
 pub struct ConnId(u64);
 
+impl ConnId {
+    pub fn as_u64(self) -> u64 {
+        self.0
+    }
+}
+
 #[derive(Clone)]
 pub struct Gateway {
     redis: redis::Client,
     replay: usize,
+    presence_ttl: Duration,
+    typing_ttl: Duration,
     inner: Arc<Inner>,
 }
 
@@ -73,6 +81,10 @@ struct VoiceSeat {
 
 struct Socket {
     user_id: Uuid,
+    /// Servers this socket has subscribed to (channel or server topic).
+    servers: HashSet<Uuid>,
+    /// Channels this socket started typing in (`server`, `channel`).
+    typing: HashSet<(Uuid, Uuid)>,
     topics: HashSet<Topic>,
     /// Voice rooms this socket has joined (`op: "sig"`). Independent of
     /// chat topic subscriptions.
@@ -84,10 +96,17 @@ struct Socket {
 }
 
 impl Gateway {
-    pub fn new(redis: redis::Client, replay: usize) -> Self {
+    pub fn new(
+        redis: redis::Client,
+        replay: usize,
+        presence_ttl: Duration,
+        typing_ttl: Duration,
+    ) -> Self {
         Self {
             redis,
             replay: replay.max(1),
+            presence_ttl,
+            typing_ttl,
             inner: Arc::new(Inner {
                 next_id: AtomicU64::new(1),
                 started: AtomicBool::new(false),
@@ -96,6 +115,14 @@ impl Gateway {
                 sockets: RwLock::new(HashMap::new()),
             }),
         }
+    }
+
+    pub fn presence_ttl(&self) -> Duration {
+        self.presence_ttl
+    }
+
+    pub fn typing_ttl(&self) -> Duration {
+        self.typing_ttl
     }
 
     pub fn ensure_subscriber(&self) {
@@ -131,6 +158,8 @@ impl Gateway {
             id,
             Socket {
                 user_id,
+                servers: HashSet::new(),
+                typing: HashSet::new(),
                 topics: HashSet::new(),
                 rooms: HashMap::new(),
                 catching_up: HashMap::new(),
@@ -140,10 +169,8 @@ impl Gateway {
         id
     }
 
-    pub async fn detach(&self, id: ConnId) {
-        let Some(socket) = self.inner.sockets.write().await.remove(&id) else {
-            return;
-        };
+    pub async fn detach(&self, id: ConnId) -> Option<(Uuid, HashSet<Uuid>, HashSet<(Uuid, Uuid)>)> {
+        let socket = self.inner.sockets.write().await.remove(&id)?;
         for (channel_id, seat) in socket.rooms {
             match self.redis_leave_member(channel_id, socket.user_id).await {
                 Ok(true) => {
@@ -155,6 +182,32 @@ impl Gateway {
                 Err(err) => {
                     warn!(error = err.code(), "voice leave on detach failed");
                 }
+            }
+        }
+        Some((socket.user_id, socket.servers, socket.typing))
+    }
+
+    pub async fn watch_server(&self, id: ConnId, server_id: Uuid) {
+        if let Some(socket) = self.inner.sockets.write().await.get_mut(&id) {
+            socket.servers.insert(server_id);
+        }
+    }
+
+    pub async fn socket_meta(&self, id: ConnId) -> Option<(Uuid, HashSet<Uuid>)> {
+        self.inner
+            .sockets
+            .read()
+            .await
+            .get(&id)
+            .map(|socket| (socket.user_id, socket.servers.clone()))
+    }
+
+    pub async fn note_typing(&self, id: ConnId, server_id: Uuid, channel_id: Uuid, on: bool) {
+        if let Some(socket) = self.inner.sockets.write().await.get_mut(&id) {
+            if on {
+                socket.typing.insert((server_id, channel_id));
+            } else {
+                socket.typing.remove(&(server_id, channel_id));
             }
         }
     }
@@ -243,6 +296,13 @@ impl Gateway {
             }
             return;
         }
+        if let Some(live) = LiveTopic::from_redis_channel(channel) {
+            match serde_json::from_str::<super::protocol::LiveFrame>(raw) {
+                Ok(frame) => self.deliver_live(live, frame.into()).await,
+                Err(err) => warn!(channel, error = %err, "redis payload is not a live frame"),
+            }
+            return;
+        }
         let Some(topic) = Topic::from_redis_channel(channel) else {
             return;
         };
@@ -257,6 +317,21 @@ impl Gateway {
         let sockets = self.inner.sockets.read().await;
         for socket in sockets.values() {
             if socket.rooms.contains_key(&channel_id) {
+                let _ = socket.tx.send(frame.clone());
+            }
+        }
+    }
+
+    async fn deliver_live(&self, live: LiveTopic, frame: ServerFrame) {
+        let sockets = self.inner.sockets.read().await;
+        for socket in sockets.values() {
+            let want = match live {
+                LiveTopic::Presence(server_id) => socket.servers.contains(&server_id),
+                LiveTopic::Typing(channel_id) => {
+                    socket.topics.contains(&Topic::Channel(channel_id))
+                }
+            };
+            if want {
                 let _ = socket.tx.send(frame.clone());
             }
         }
@@ -290,7 +365,7 @@ impl Gateway {
         *self.inner.conn.lock().await = None;
     }
 
-    async fn with_conn<T, F, Fut>(&self, mut op: F) -> Result<T, redis::RedisError>
+    pub(super) async fn with_conn<T, F, Fut>(&self, mut op: F) -> Result<T, redis::RedisError>
     where
         F: FnMut(redis::aio::MultiplexedConnection) -> Fut,
         Fut: std::future::Future<Output = Result<T, redis::RedisError>>,
@@ -705,7 +780,7 @@ impl Gateway {
     }
 }
 
-fn redis_err(err: redis::RedisError) -> ApiError {
+pub(super) fn redis_err(err: redis::RedisError) -> ApiError {
     ApiError::Internal(format!("redis: {err}"))
 }
 

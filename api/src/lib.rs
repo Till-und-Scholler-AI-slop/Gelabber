@@ -21,7 +21,9 @@ use tower_http::trace::{DefaultOnResponse, TraceLayer};
 use tracing::{Level, info_span};
 
 pub use config::Config;
-pub use gateway::{Event, EventDraft, EventKind, publish_channel, publish_server};
+pub use gateway::{
+    Event, EventDraft, EventKind, PresenceStatus, publish_channel, publish_server,
+};
 pub use state::AppState;
 
 /// Builds the HTTP router. Kept separate from `main` so integration tests

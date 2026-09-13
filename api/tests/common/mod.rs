@@ -45,6 +45,9 @@ pub fn ws_state(pool: PgPool) -> AppState {
         "API_WS_HEARTBEAT_MS" => Some("40".to_owned()),
         "API_WS_DEAD_MS" => Some("180".to_owned()),
         "API_WS_REPLAY" => Some("8".to_owned()),
+        "API_WS_IDLE_MS" => Some("30000".to_owned()),
+        "API_WS_PRESENCE_TTL_MS" => Some("2000".to_owned()),
+        "API_WS_TYPING_TTL_MS" => Some("400".to_owned()),
         _ => None,
     })
     .expect("ws test config");
@@ -53,6 +56,43 @@ pub fn ws_state(pool: PgPool) -> AppState {
 
 pub async fn serve_ws(pool: PgPool) -> (std::net::SocketAddr, AppState) {
     let state = ws_state(pool);
+    let listener = tokio::net::TcpListener::bind("127.0.0.1:0")
+        .await
+        .expect("bind test listener");
+    let addr = listener.local_addr().expect("local addr");
+    let router = app(state.clone());
+    tokio::spawn(async move {
+        axum::serve(listener, router).await.expect("serve");
+    });
+    state
+        .gateway
+        .wait_ready(std::time::Duration::from_secs(2))
+        .await
+        .expect("redis pub/sub");
+    (addr, state)
+}
+
+/// Like [`ws_state`] but with a short per-client idle so presence tests finish quickly.
+pub fn ws_state_idle(pool: PgPool, idle_ms: u64) -> AppState {
+    let redis = redis_url();
+    let config = Config::from_source(|key| match key {
+        "DATABASE_URL" => Some("postgres://unused:unused@127.0.0.1:1/unused".to_owned()),
+        "REDIS_URL" => Some(redis.clone()),
+        "API_SESSION_TTL_HOURS" => Some("2".to_owned()),
+        "API_WS_HEARTBEAT_MS" => Some("40".to_owned()),
+        "API_WS_DEAD_MS" => Some("2000".to_owned()),
+        "API_WS_REPLAY" => Some("8".to_owned()),
+        "API_WS_IDLE_MS" => Some(idle_ms.to_string()),
+        "API_WS_PRESENCE_TTL_MS" => Some("2000".to_owned()),
+        "API_WS_TYPING_TTL_MS" => Some("400".to_owned()),
+        _ => None,
+    })
+    .expect("idle ws test config");
+    AppState::with_pool(&config, pool).expect("state")
+}
+
+pub async fn serve_ws_idle(pool: PgPool, idle_ms: u64) -> (std::net::SocketAddr, AppState) {
+    let state = ws_state_idle(pool, idle_ms);
     let listener = tokio::net::TcpListener::bind("127.0.0.1:0")
         .await
         .expect("bind test listener");
@@ -92,6 +132,7 @@ pub struct Client {
     pub app: Router,
     pub jar: BTreeMap<String, String>,
     pub csrf: Option<String>,
+    pub user_id: Option<String>,
 }
 
 impl Client {
@@ -100,6 +141,7 @@ impl Client {
             app: app(state(pool)),
             jar: BTreeMap::new(),
             csrf: None,
+            user_id: None,
         }
     }
 
@@ -162,6 +204,13 @@ impl Client {
         if let Some(token) = body.get("csrf_token").and_then(Value::as_str) {
             self.csrf = Some(token.to_owned());
         }
+        if let Some(id) = body
+            .get("user")
+            .and_then(|user| user.get("id"))
+            .and_then(Value::as_str)
+        {
+            self.user_id = Some(id.to_owned());
+        }
 
         Response {
             status,
@@ -182,6 +231,10 @@ impl Client {
             Some(json!({ "email": email, "password": password, "name": name })),
         )
         .await
+    }
+
+    pub fn user_id(&self) -> &str {
+        self.user_id.as_deref().expect("user id after register/login")
     }
 
     pub async fn login(&mut self, email: &str, password: &str) -> Response {

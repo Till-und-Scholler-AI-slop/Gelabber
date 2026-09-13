@@ -15,6 +15,9 @@ pub const API_SESSION_TTL_HOURS: &str = "API_SESSION_TTL_HOURS";
 pub const API_WS_HEARTBEAT_MS: &str = "API_WS_HEARTBEAT_MS";
 pub const API_WS_DEAD_MS: &str = "API_WS_DEAD_MS";
 pub const API_WS_REPLAY: &str = "API_WS_REPLAY";
+pub const API_WS_IDLE_MS: &str = "API_WS_IDLE_MS";
+pub const API_WS_PRESENCE_TTL_MS: &str = "API_WS_PRESENCE_TTL_MS";
+pub const API_WS_TYPING_TTL_MS: &str = "API_WS_TYPING_TTL_MS";
 /// Read by `telemetry::init`, not by `Config`, because the subscriber has to
 /// exist before anything else can be logged.
 pub const RUST_LOG: &str = "RUST_LOG";
@@ -26,6 +29,9 @@ const DEFAULT_SESSION_TTL_HOURS: u64 = 24 * 30;
 const DEFAULT_WS_HEARTBEAT_MS: u64 = 15_000;
 const DEFAULT_WS_DEAD_MS: u64 = 30_000;
 const DEFAULT_WS_REPLAY: usize = 256;
+const DEFAULT_WS_IDLE_MS: u64 = 300_000;
+const DEFAULT_WS_PRESENCE_TTL_MS: u64 = 45_000;
+const DEFAULT_WS_TYPING_TTL_MS: u64 = 6_000;
 
 #[derive(Debug, Clone)]
 pub struct Config {
@@ -46,6 +52,14 @@ pub struct Config {
     pub ws_dead: Duration,
     /// Bounded Redis replay buffer per topic, for reconnect catch-up.
     pub ws_replay: usize,
+    /// Per-connection idle timeout. Heartbeat is liveness only and does
+    /// not reset this; after it elapses the connection is `idle`.
+    pub ws_idle: Duration,
+    /// Redis TTL for presence keys. Must outlive the heartbeat so an idle
+    /// but connected client does not fall out of Redis.
+    pub ws_presence_ttl: Duration,
+    /// Redis TTL for a typing key. Clients also hide locally after this.
+    pub ws_typing_ttl: Duration,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -128,6 +142,25 @@ impl Config {
             Some(raw) => parse_positive::<usize>(API_WS_REPLAY, &raw)?,
             None => DEFAULT_WS_REPLAY,
         };
+        let ws_idle_ms = match get(API_WS_IDLE_MS) {
+            Some(raw) => parse_positive::<u64>(API_WS_IDLE_MS, &raw)?,
+            None => DEFAULT_WS_IDLE_MS,
+        };
+        let ws_presence_ttl_ms = match get(API_WS_PRESENCE_TTL_MS) {
+            Some(raw) => parse_positive::<u64>(API_WS_PRESENCE_TTL_MS, &raw)?,
+            None => DEFAULT_WS_PRESENCE_TTL_MS,
+        };
+        if ws_presence_ttl_ms <= ws_heartbeat_ms {
+            return Err(invalid(
+                API_WS_PRESENCE_TTL_MS,
+                &ws_presence_ttl_ms.to_string(),
+                "must be greater than API_WS_HEARTBEAT_MS",
+            ));
+        }
+        let ws_typing_ttl_ms = match get(API_WS_TYPING_TTL_MS) {
+            Some(raw) => parse_positive::<u64>(API_WS_TYPING_TTL_MS, &raw)?,
+            None => DEFAULT_WS_TYPING_TTL_MS,
+        };
 
         Ok(Self {
             api_addr,
@@ -140,6 +173,9 @@ impl Config {
             ws_heartbeat: Duration::from_millis(ws_heartbeat_ms),
             ws_dead: Duration::from_millis(ws_dead_ms),
             ws_replay,
+            ws_idle: Duration::from_millis(ws_idle_ms),
+            ws_presence_ttl: Duration::from_millis(ws_presence_ttl_ms),
+            ws_typing_ttl: Duration::from_millis(ws_typing_ttl_ms),
         })
     }
 }
@@ -204,6 +240,9 @@ mod tests {
         assert_eq!(config.ws_heartbeat, Duration::from_millis(15_000));
         assert_eq!(config.ws_dead, Duration::from_millis(30_000));
         assert_eq!(config.ws_replay, 256);
+        assert_eq!(config.ws_idle, Duration::from_millis(300_000));
+        assert_eq!(config.ws_presence_ttl, Duration::from_millis(45_000));
+        assert_eq!(config.ws_typing_ttl, Duration::from_millis(6_000));
     }
 
     #[test]
@@ -266,6 +305,24 @@ mod tests {
             err,
             ConfigError::Invalid {
                 key: API_READY_TIMEOUT_MS,
+                ..
+            }
+        ));
+    }
+
+    #[test]
+    fn rejects_presence_ttl_not_greater_than_heartbeat() {
+        let err = Config::from_source(source(&[
+            (DATABASE_URL, "postgres://u:p@localhost/db"),
+            (REDIS_URL, "redis://localhost"),
+            (API_WS_HEARTBEAT_MS, "100"),
+            (API_WS_PRESENCE_TTL_MS, "100"),
+        ]))
+        .unwrap_err();
+        assert!(matches!(
+            err,
+            ConfigError::Invalid {
+                key: API_WS_PRESENCE_TTL_MS,
                 ..
             }
         ));

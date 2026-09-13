@@ -519,3 +519,280 @@ async fn concurrent_publish_keeps_seq_and_arrival_ordered(pool: PgPool) {
         "PUBLISH order must match INCR so the client never skips a late seq"
     );
 }
+
+#[sqlx::test]
+async fn presence_online_idle_offline_without_bumping_chat_seq(pool: PgPool) {
+    let (mut owner, mut member) = two_users(pool.clone()).await;
+    let server = create_server(&mut owner, "Pres").await;
+    let (server_id, channel_id) = ids(&server);
+    join_member(&mut owner, &mut member, &server_id.to_string()).await;
+
+    let (addr, state) = common::serve_ws_idle(pool, 80).await;
+    let mut owner_ws = connect(addr, &session_cookie(&owner), None).await;
+    let mut member_ws = connect(addr, &session_cookie(&member), None).await;
+
+    send_json(&mut owner_ws, json!({ "op": "s", "s": server_id })).await;
+    let owner_ok = recv_until(&mut owner_ws, |f| f["op"] == "ok").await;
+    assert_eq!(owner_ok["n"], 0);
+    let snap = recv_until(&mut owner_ws, |f| f["op"] == "p" && f.get("snap").is_some()).await;
+    assert_eq!(snap["s"], server_id.to_string());
+    assert!(snap.get("n").is_none(), "{snap}");
+
+    send_json(&mut member_ws, json!({ "op": "s", "s": server_id })).await;
+    recv_until(&mut member_ws, |f| f["op"] == "ok").await;
+    let member_online = recv_until(&mut owner_ws, |f| {
+        f["op"] == "p" && f["u"] == member.user_id() && f["st"] == "o"
+    })
+    .await;
+    assert!(member_online.get("n").is_none(), "{member_online}");
+
+    send_json(&mut member_ws, json!({ "op": "p", "st": "i" })).await;
+    let idle = recv_until(&mut owner_ws, |f| {
+        f["op"] == "p" && f["u"] == member.user_id() && f["st"] == "i"
+    })
+    .await;
+    assert_eq!(idle["s"], server_id.to_string());
+
+    send_json(&mut member_ws, json!({ "op": "p" })).await;
+    recv_until(&mut owner_ws, |f| {
+        f["op"] == "p" && f["u"] == member.user_id() && f["st"] == "o"
+    })
+    .await;
+
+    // Server-side per-client idle: no activity frames, heartbeat still flows.
+    let auto_idle = tokio::time::timeout(Duration::from_millis(400), async {
+        recv_until(&mut owner_ws, |f| {
+            f["op"] == "p" && f["u"] == member.user_id() && f["st"] == "i"
+        })
+        .await
+    })
+    .await
+    .expect("idle timeout");
+    assert_eq!(auto_idle["st"], "i");
+
+    member_ws.close(None).await.ok();
+    let offline = recv_until(&mut owner_ws, |f| {
+        f["op"] == "p" && f["u"] == member.user_id() && f["st"] == "x"
+    })
+    .await;
+    assert_eq!(offline["op"], "p");
+
+    let n = publish(&state, server_id, channel_id, EventKind::C, "chat").await;
+    assert_eq!(n, 1, "presence must not increment the chat seq");
+}
+
+#[sqlx::test]
+async fn two_clients_keep_user_online_until_the_last_goes_idle(pool: PgPool) {
+    let (mut owner, _) = two_users(pool.clone()).await;
+    let server = create_server(&mut owner, "Tabs").await;
+    let (server_id, _) = ids(&server);
+    let cookie = session_cookie(&owner);
+    let (addr, _) = common::serve_ws(pool).await;
+
+    let mut a = connect(addr, &cookie, None).await;
+    let mut b = connect(addr, &cookie, None).await;
+    send_json(&mut a, json!({ "op": "s", "s": server_id })).await;
+    send_json(&mut b, json!({ "op": "s", "s": server_id })).await;
+    recv_until(&mut a, |f| f["op"] == "ok").await;
+    recv_until(&mut b, |f| f["op"] == "ok").await;
+
+    send_json(&mut a, json!({ "op": "p", "st": "i" })).await;
+    // The other tab is still online — aggregate must stay online.
+    let flipped = tokio::time::timeout(Duration::from_millis(150), async {
+        recv_until(&mut b, |f| f["op"] == "p" && f["st"] == "i").await
+    })
+    .await;
+    assert!(
+        flipped.is_err(),
+        "one idle client must not mark the user idle: {:?}",
+        flipped.ok()
+    );
+
+    send_json(&mut b, json!({ "op": "p", "st": "i" })).await;
+    let idle = recv_until(&mut a, |f| f["op"] == "p" && f["st"] == "i").await;
+    assert_eq!(idle["st"], "i");
+}
+
+#[sqlx::test]
+async fn typing_broadcasts_fast_and_clears_on_stop(pool: PgPool) {
+    let (mut owner, mut member) = two_users(pool.clone()).await;
+    let server = create_server(&mut owner, "Type").await;
+    let (server_id, channel_id) = ids(&server);
+    join_member(&mut owner, &mut member, &server_id.to_string()).await;
+
+    let (addr, state) = common::serve_ws(pool).await;
+    let mut owner_ws = connect(addr, &session_cookie(&owner), None).await;
+    let mut member_ws = connect(addr, &session_cookie(&member), None).await;
+    send_json(
+        &mut owner_ws,
+        json!({ "op": "s", "s": server_id, "c": channel_id }),
+    )
+    .await;
+    send_json(
+        &mut member_ws,
+        json!({ "op": "s", "s": server_id, "c": channel_id }),
+    )
+    .await;
+    recv_until(&mut owner_ws, |f| f["op"] == "ok").await;
+    recv_until(&mut member_ws, |f| f["op"] == "ok").await;
+
+    let start = std::time::Instant::now();
+    send_json(
+        &mut member_ws,
+        json!({ "op": "y", "s": server_id, "c": channel_id, "on": true }),
+    )
+    .await;
+    let seen = recv_until(&mut owner_ws, |f| {
+        f["op"] == "y" && f["on"] == true && f["u"] == member.user_id()
+    })
+    .await;
+    assert!(
+        start.elapsed() < Duration::from_millis(100),
+        "typing must be visible in under 100ms, took {:?}",
+        start.elapsed()
+    );
+    assert_eq!(seen["c"], channel_id.to_string());
+    assert!(seen.get("n").is_none(), "{seen}");
+
+    send_json(
+        &mut member_ws,
+        json!({ "op": "y", "s": server_id, "c": channel_id, "on": false }),
+    )
+    .await;
+    let stop = recv_until(&mut owner_ws, |f| {
+        f["op"] == "y" && f["on"] == false && f["u"] == member.user_id()
+    })
+    .await;
+    assert_eq!(stop["on"], false);
+
+    let n = publish(&state, server_id, channel_id, EventKind::C, "hi").await;
+    assert_eq!(n, 1, "typing must not increment the chat seq");
+}
+
+#[sqlx::test]
+async fn last_close_and_idle_reach_every_server_the_user_is_on(pool: PgPool) {
+    let (mut owner, mut watcher) = two_users(pool.clone()).await;
+    let first = create_server(&mut owner, "One").await;
+    let second = create_server(&mut owner, "Two").await;
+    let (s1, _) = ids(&first);
+    let (s2, _) = ids(&second);
+    join_member(&mut owner, &mut watcher, &s1.to_string()).await;
+    join_member(&mut owner, &mut watcher, &s2.to_string()).await;
+
+    let cookie = session_cookie(&owner);
+    let (addr, _) = common::serve_ws(pool).await;
+    let mut tab_a = connect(addr, &cookie, None).await;
+    let mut tab_b = connect(addr, &cookie, None).await;
+    let mut watch_s1 = connect(addr, &session_cookie(&watcher), None).await;
+    let mut watch_s2 = connect(addr, &session_cookie(&watcher), None).await;
+
+    send_json(&mut tab_a, json!({ "op": "s", "s": s1 })).await;
+    send_json(&mut tab_b, json!({ "op": "s", "s": s2 })).await;
+    send_json(&mut watch_s1, json!({ "op": "s", "s": s1 })).await;
+    send_json(&mut watch_s2, json!({ "op": "s", "s": s2 })).await;
+    recv_until(&mut tab_a, |f| f["op"] == "ok").await;
+    recv_until(&mut tab_b, |f| f["op"] == "ok").await;
+    recv_until(&mut watch_s1, |f| f["op"] == "ok").await;
+    recv_until(&mut watch_s2, |f| f["op"] == "ok").await;
+    let snap1 = recv_until(&mut watch_s1, |f| f["op"] == "p" && f.get("snap").is_some()).await;
+    let snap2 = recv_until(&mut watch_s2, |f| f["op"] == "p" && f.get("snap").is_some()).await;
+    assert!(
+        snap1["snap"]
+            .as_array()
+            .into_iter()
+            .flatten()
+            .any(|e| e["u"] == owner.user_id() && e["st"] == "o"),
+        "{snap1}"
+    );
+    assert!(
+        snap2["snap"]
+            .as_array()
+            .into_iter()
+            .flatten()
+            .any(|e| e["u"] == owner.user_id() && e["st"] == "o"),
+        "{snap2}"
+    );
+
+    send_json(&mut tab_a, json!({ "op": "p", "st": "i" })).await;
+    let no_idle = tokio::time::timeout(Duration::from_millis(120), async {
+        recv_until(&mut watch_s2, |f| f["op"] == "p" && f["st"] == "i").await
+    })
+    .await;
+    assert!(
+        no_idle.is_err(),
+        "one idle tab must not flip the user: {:?}",
+        no_idle.ok()
+    );
+
+    send_json(&mut tab_b, json!({ "op": "p", "st": "i" })).await;
+    let idle_s1 = recv_until(&mut watch_s1, |f| {
+        f["op"] == "p" && f["u"] == owner.user_id() && f["st"] == "i"
+    })
+    .await;
+    let idle_s2 = recv_until(&mut watch_s2, |f| {
+        f["op"] == "p" && f["u"] == owner.user_id() && f["st"] == "i"
+    })
+    .await;
+    assert_eq!(idle_s1["s"], s1.to_string());
+    assert_eq!(idle_s2["s"], s2.to_string());
+
+    tab_a.close(None).await.ok();
+    tab_b.close(None).await.ok();
+    let off_s1 = recv_until(&mut watch_s1, |f| {
+        f["op"] == "p" && f["u"] == owner.user_id() && f["st"] == "x"
+    })
+    .await;
+    let off_s2 = recv_until(&mut watch_s2, |f| {
+        f["op"] == "p" && f["u"] == owner.user_id() && f["st"] == "x"
+    })
+    .await;
+    assert_eq!(off_s1["s"], s1.to_string());
+    assert_eq!(off_s2["s"], s2.to_string());
+}
+
+#[sqlx::test]
+async fn disconnect_stops_typing_immediately(pool: PgPool) {
+    let (mut owner, mut member) = two_users(pool.clone()).await;
+    let server = create_server(&mut owner, "Stop").await;
+    let (server_id, channel_id) = ids(&server);
+    join_member(&mut owner, &mut member, &server_id.to_string()).await;
+
+    let (addr, _) = common::serve_ws(pool).await;
+    let mut owner_ws = connect(addr, &session_cookie(&owner), None).await;
+    let mut member_ws = connect(addr, &session_cookie(&member), None).await;
+    send_json(
+        &mut owner_ws,
+        json!({ "op": "s", "s": server_id, "c": channel_id }),
+    )
+    .await;
+    send_json(
+        &mut member_ws,
+        json!({ "op": "s", "s": server_id, "c": channel_id }),
+    )
+    .await;
+    recv_until(&mut owner_ws, |f| f["op"] == "ok").await;
+    recv_until(&mut member_ws, |f| f["op"] == "ok").await;
+
+    send_json(
+        &mut member_ws,
+        json!({ "op": "y", "s": server_id, "c": channel_id, "on": true }),
+    )
+    .await;
+    recv_until(&mut owner_ws, |f| {
+        f["op"] == "y" && f["on"] == true && f["u"] == member.user_id()
+    })
+    .await;
+
+    let start = std::time::Instant::now();
+    member_ws.close(None).await.ok();
+    let stop = recv_until(&mut owner_ws, |f| {
+        f["op"] == "y" && f["on"] == false && f["u"] == member.user_id()
+    })
+    .await;
+    assert_eq!(stop["c"], channel_id.to_string());
+    assert!(
+        start.elapsed() < Duration::from_millis(200),
+        "typing must stop on detach, not wait for TTL, took {:?}",
+        start.elapsed()
+    );
+}

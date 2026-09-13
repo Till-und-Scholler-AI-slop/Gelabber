@@ -13,6 +13,7 @@ import { RequireUser } from "../components/RequireUser.tsx";
 import { ServerRail } from "../components/ServerRail.tsx";
 import { forgetServer, useServer } from "../servers/queries.ts";
 import { useGatewayTopics } from "../ws/useGateway.ts";
+import { useLiveBridge } from "../ws/useLive.ts";
 
 export function WorkspaceLayout() {
   return (
@@ -25,6 +26,7 @@ export function WorkspaceLayout() {
 function Workspace() {
   const { serverId, channelId } = useParams({ strict: false });
   useGatewayTopics(serverId, channelId);
+  useLiveBridge();
 
   return (
     <div className="flex h-[calc(100dvh-3.5rem)] overflow-hidden bg-neutral-50">
@@ -74,7 +76,7 @@ function SelectedServer({
       ) : (
         <SidebarSkeleton />
       )}
-      <main className="flex min-w-0 flex-1 flex-col overflow-y-auto">
+      <main className="flex min-w-0 min-h-0 flex-1 flex-col overflow-hidden">
         <Outlet />
       </main>
     </>

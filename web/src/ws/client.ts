@@ -6,9 +6,11 @@ import {
   type ChatEvent,
   type ClientFrame,
   type ErrFrame,
+  type PresenceFrame,
   type ServerFrame,
   type SigEvent,
   type Topic,
+  type TypingFrame,
   decode,
   encode,
   nextCursor,
@@ -79,6 +81,8 @@ export class Gateway {
   private errListeners = new Set<(err: ErrFrame) => void>();
   private readyListeners = new Set<() => void>();
   private gapListeners = new Set<(gap: GapNotice) => void>();
+  private presenceListeners = new Set<(frame: PresenceFrame) => void>();
+  private typingListeners = new Set<(frame: TypingFrame) => void>();
 
   constructor(opts: GatewayOptions = {}) {
     this.opts = {
@@ -130,13 +134,35 @@ export class Gateway {
     };
   }
 
-  /** Send a frame on the live socket (signaling, subscribe). */
+  onPresence(listener: (frame: PresenceFrame) => void): () => void {
+    this.presenceListeners.add(listener);
+    return () => {
+      this.presenceListeners.delete(listener);
+    };
+  }
+
+  onTyping(listener: (frame: TypingFrame) => void): () => void {
+    this.typingListeners.add(listener);
+    return () => {
+      this.typingListeners.delete(listener);
+    };
+  }
+
+  /** Send a frame on the live socket (signaling, subscribe, presence). */
   send(frame: ClientFrame): void {
     try {
       this.socket?.send(encode(frame));
     } catch {
       // Closing / already gone — reconnect will resend.
     }
+  }
+
+  sendPresence(st?: "o" | "i"): void {
+    this.send(st ? { op: "p", st } : { op: "p" });
+  }
+
+  sendTyping(serverId: string, channelId: string, on: boolean): void {
+    this.send({ op: "y", s: serverId, c: channelId, on });
   }
 
   start(): void {
@@ -252,6 +278,16 @@ export class Gateway {
       case "gap":
         for (const listener of this.gapListeners) {
           listener({ s: frame.s, c: frame.c });
+        }
+        return;
+      case "p":
+        for (const listener of this.presenceListeners) {
+          listener(frame);
+        }
+        return;
+      case "y":
+        for (const listener of this.typingListeners) {
+          listener(frame);
         }
         return;
       case "err":

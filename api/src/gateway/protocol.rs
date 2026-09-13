@@ -58,6 +58,68 @@ impl Topic {
     }
 }
 
+/// Ephemeral Pub/Sub (issue 8). Not sequenced, not in the replay log.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum LiveTopic {
+    Presence(Uuid),
+    Typing(Uuid),
+}
+
+impl LiveTopic {
+    pub fn redis_channel(self) -> String {
+        match self {
+            Self::Presence(id) => format!("{REDIS_PREFIX}p:{id}"),
+            Self::Typing(id) => format!("{REDIS_PREFIX}y:{id}"),
+        }
+    }
+
+    pub fn from_redis_channel(name: &str) -> Option<Self> {
+        let rest = name.strip_prefix(REDIS_PREFIX)?;
+        let (kind, id) = rest.split_once(':')?;
+        let id = Uuid::parse_str(id).ok()?;
+        match kind {
+            "p" => Some(Self::Presence(id)),
+            "y" => Some(Self::Typing(id)),
+            _ => None,
+        }
+    }
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+pub enum PresenceStatus {
+    #[serde(rename = "o")]
+    Online,
+    #[serde(rename = "i")]
+    Idle,
+    #[serde(rename = "x")]
+    Offline,
+}
+
+impl PresenceStatus {
+    pub fn as_str(self) -> &'static str {
+        match self {
+            Self::Online => "o",
+            Self::Idle => "i",
+            Self::Offline => "x",
+        }
+    }
+
+    pub fn parse(raw: &str) -> Option<Self> {
+        match raw {
+            "o" => Some(Self::Online),
+            "i" => Some(Self::Idle),
+            "x" => Some(Self::Offline),
+            _ => None,
+        }
+    }
+}
+
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+pub struct PresenceEntry {
+    pub u: Uuid,
+    pub st: PresenceStatus,
+}
+
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "lowercase")]
 pub enum EventKind {
@@ -247,6 +309,12 @@ pub struct ClientFrame {
     pub mid: Option<String>,
     #[serde(default)]
     pub k: Option<TrackKind>,
+    /// Presence: `o` / `i`. Absent on a `p` frame means "I am active".
+    #[serde(default)]
+    pub st: Option<PresenceStatus>,
+    /// Typing start / stop.
+    #[serde(default)]
+    pub on: Option<bool>,
 }
 
 impl ClientFrame {
@@ -310,6 +378,25 @@ pub enum ServerFrame {
         #[serde(skip_serializing_if = "Option::is_none")]
         c: Option<Uuid>,
     },
+    /// Presence update or snapshot. Never sequenced — not a chat event.
+    #[serde(rename = "p")]
+    Presence {
+        s: Uuid,
+        #[serde(skip_serializing_if = "Option::is_none")]
+        u: Option<Uuid>,
+        #[serde(skip_serializing_if = "Option::is_none")]
+        st: Option<PresenceStatus>,
+        #[serde(skip_serializing_if = "Option::is_none")]
+        snap: Option<Vec<PresenceEntry>>,
+    },
+    /// Typing start / stop in a channel.
+    #[serde(rename = "y")]
+    Typing {
+        s: Uuid,
+        c: Uuid,
+        u: Uuid,
+        on: bool,
+    },
 }
 
 impl ServerFrame {
@@ -360,8 +447,68 @@ impl ServerFrame {
         }
     }
 
+    pub fn presence(server_id: Uuid, user_id: Uuid, status: PresenceStatus) -> Self {
+        Self::Presence {
+            s: server_id,
+            u: Some(user_id),
+            st: Some(status),
+            snap: None,
+        }
+    }
+
+    pub fn presence_snap(server_id: Uuid, snap: Vec<PresenceEntry>) -> Self {
+        Self::Presence {
+            s: server_id,
+            u: None,
+            st: None,
+            snap: Some(snap),
+        }
+    }
+
+    pub fn typing(server_id: Uuid, channel_id: Uuid, user_id: Uuid, on: bool) -> Self {
+        Self::Typing {
+            s: server_id,
+            c: channel_id,
+            u: user_id,
+            on,
+        }
+    }
+
     pub fn to_json(&self) -> Result<String, serde_json::Error> {
         serde_json::to_string(self)
+    }
+}
+
+/// Owned presence/typing payload on Redis Pub/Sub. Separate from
+/// [`ServerFrame`] so we do not deserialize the `'static` `err` variant.
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+#[serde(tag = "op")]
+pub enum LiveFrame {
+    #[serde(rename = "p")]
+    Presence {
+        s: Uuid,
+        #[serde(skip_serializing_if = "Option::is_none")]
+        u: Option<Uuid>,
+        #[serde(skip_serializing_if = "Option::is_none")]
+        st: Option<PresenceStatus>,
+        #[serde(skip_serializing_if = "Option::is_none")]
+        snap: Option<Vec<PresenceEntry>>,
+    },
+    #[serde(rename = "y")]
+    Typing {
+        s: Uuid,
+        c: Uuid,
+        u: Uuid,
+        on: bool,
+    },
+}
+
+impl From<LiveFrame> for ServerFrame {
+    fn from(frame: LiveFrame) -> Self {
+        match frame {
+            LiveFrame::Presence { s, u, st, snap } => Self::Presence { s, u, st, snap },
+            LiveFrame::Typing { s, c, u, on } => Self::Typing { s, c, u, on },
+        }
     }
 }
 
@@ -436,6 +583,12 @@ mod tests {
         );
         assert!(topic.seq_key().starts_with("gb:n:c:"));
         assert!(topic.log_key().starts_with("gb:l:c:"));
+        let live = LiveTopic::Presence(id);
+        assert_eq!(
+            LiveTopic::from_redis_channel(&live.redis_channel()),
+            Some(live)
+        );
+        assert!(Topic::from_redis_channel(&live.redis_channel()).is_none());
     }
 
     #[test]
@@ -453,6 +606,36 @@ mod tests {
         assert!(!json.contains("kind"));
         assert!(!json.contains("server_id"));
         assert!(!json.contains("payload"));
+    }
+
+    #[test]
+    fn presence_and_typing_frames_are_compact_and_unsequenced() {
+        let json = ServerFrame::presence(
+            Uuid::from_u128(1),
+            Uuid::from_u128(2),
+            PresenceStatus::Online,
+        )
+        .to_json()
+        .unwrap();
+        assert_eq!(
+            json,
+            format!(
+                r#"{{"op":"p","s":"{}","u":"{}","st":"o"}}"#,
+                Uuid::from_u128(1),
+                Uuid::from_u128(2)
+            )
+        );
+        let json = ServerFrame::typing(
+            Uuid::from_u128(1),
+            Uuid::from_u128(2),
+            Uuid::from_u128(3),
+            true,
+        )
+        .to_json()
+        .unwrap();
+        assert!(json.starts_with(r#"{"op":"y""#));
+        assert!(!json.contains("\"n\""));
+        assert!(!json.contains("seq"));
     }
 
     #[test]

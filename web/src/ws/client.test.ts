@@ -166,4 +166,48 @@ describe("gateway client", () => {
 
     gateway.stop();
   });
+
+  it("forwards presence and typing without touching chat cursors", () => {
+    const sockets: FakeSocket[] = [];
+    const gateway = new Gateway({
+      url: "ws://test/ws",
+      open: () => {
+        const socket = new FakeSocket();
+        sockets.push(socket);
+        return socket;
+      },
+    });
+    const presence: unknown[] = [];
+    const typing: unknown[] = [];
+    const events: ChatEvent[] = [];
+    gateway.onPresence((frame) => presence.push(frame));
+    gateway.onTyping((frame) => typing.push(frame));
+    gateway.onEvent((event) => events.push(event));
+    gateway.setTopics([{ s: "srv", c: "ch" }]);
+    gateway.start();
+    sockets[0]?.emit("open");
+    sockets[0]?.emit("message", '{"op":"ok","s":"srv","c":"ch","n":2}');
+    sockets[0]?.emit(
+      "message",
+      '{"op":"p","s":"srv","u":"u1","st":"o"}',
+    );
+    sockets[0]?.emit(
+      "message",
+      '{"op":"y","s":"srv","c":"ch","u":"u1","on":true}',
+    );
+    expect(presence).toEqual([{ op: "p", s: "srv", u: "u1", st: "o" }]);
+    expect(typing).toEqual([
+      { op: "y", s: "srv", c: "ch", u: "u1", on: true },
+    ]);
+    expect(events).toHaveLength(0);
+    expect(gateway.cursorsSnapshot.get("c:ch")).toBe(2);
+
+    gateway.sendPresence("i");
+    gateway.sendTyping("srv", "ch", false);
+    expect(sockets[0]?.sent).toContain('{"op":"p","st":"i"}');
+    expect(sockets[0]?.sent).toContain(
+      '{"op":"y","s":"srv","c":"ch","on":false}',
+    );
+    gateway.stop();
+  });
 });

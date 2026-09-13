@@ -3,6 +3,7 @@ import { Link, Outlet, useNavigate } from "@tanstack/react-router";
 import { logout, useSession } from "../auth/session.ts";
 import { leaveVoice } from "../voice/session.ts";
 import { useGatewaySession } from "../ws/useGateway.ts";
+import { useIdlePresence } from "../ws/useLive.ts";
 import { Avatar } from "./Avatar.tsx";
 import { Toasts } from "./Toasts.tsx";
 
@@ -10,6 +11,7 @@ export function AppShell() {
   const user = useSession((state) => state.user);
   const navigate = useNavigate();
   useGatewaySession(user !== null);
+  useIdlePresence(user !== null);
 
   const onLogout = () => {
     // Store flips first, so the header and guards react before the request

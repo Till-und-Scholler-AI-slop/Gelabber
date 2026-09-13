@@ -9,7 +9,7 @@ import { useState, type FormEvent, type ReactNode } from "react";
 import { useSession } from "../auth/session.ts";
 import { fieldMessage } from "../auth/rules.ts";
 import { useFormErrors } from "../auth/useFormErrors.ts";
-import { Avatar } from "../components/Avatar.tsx";
+import { PresenceAvatar } from "../components/PresenceAvatar.tsx";
 import { Field } from "../components/Field.tsx";
 import { FormError } from "../components/FormError.tsx";
 import { GhostButton } from "../components/Modal.tsx";
@@ -35,6 +35,7 @@ import {
 } from "../servers/queries.ts";
 import { validateName } from "../servers/rules.ts";
 import type { Invite, Permission, ServerDetail } from "../servers/types.ts";
+import { presenceOf, usePresenceStore } from "../ws/live.ts";
 
 export function ServerSettingsPage() {
   const { serverId } = useParams({ from: "/workspace/s/$serverId/settings" });
@@ -46,20 +47,20 @@ export function ServerSettingsPage() {
 function Settings({ server }: { server: ServerDetail }) {
   const manage = can(server, "manage_server");
   return (
-    <>
+    <div className="flex min-h-0 flex-1 flex-col overflow-hidden">
       <header className="flex h-12 shrink-0 items-center gap-2 border-b border-neutral-200 bg-white px-4">
         <h1 className="truncate font-semibold tracking-tight">
           Einstellungen · {server.name}
         </h1>
       </header>
-      <div className="mx-auto flex w-full max-w-2xl flex-col gap-10 px-6 py-8">
+      <div className="mx-auto flex w-full max-w-2xl flex-1 flex-col gap-10 overflow-y-auto px-6 py-8">
         {manage ? <NameSection server={server} /> : null}
         {manage ? <PermissionsSection server={server} /> : null}
         {manage ? <InvitesSection server={server} /> : null}
         <MembersSection server={server} />
         <DangerSection server={server} />
       </div>
-    </>
+    </div>
   );
 }
 
@@ -265,6 +266,7 @@ function InviteRow({
 }
 
 function MembersSection({ server }: { server: ServerDetail }) {
+  const byServer = usePresenceStore((s) => s.byServer);
   return (
     <Section title={`Mitglieder (${server.members.length})`}>
       <ul className="divide-y divide-neutral-200 rounded-xl border border-neutral-200 bg-white">
@@ -273,7 +275,11 @@ function MembersSection({ server }: { server: ServerDetail }) {
             key={member.user_id}
             className="flex items-center gap-3 px-4 py-2.5"
           >
-            <Avatar name={member.name} url={member.avatar_url} />
+            <PresenceAvatar
+              name={member.name}
+              url={member.avatar_url}
+              status={presenceOf(byServer, server.id, member.user_id)}
+            />
             <span className="min-w-0 flex-1 truncate text-sm font-medium">
               {member.name}
             </span>
