@@ -31,6 +31,44 @@ pub fn state(pool: PgPool) -> AppState {
     AppState::with_pool(&config, pool).expect("state")
 }
 
+pub fn redis_url() -> String {
+    std::env::var("REDIS_URL").unwrap_or_else(|_| "redis://127.0.0.1:6379".to_owned())
+}
+
+/// Real Redis + short heartbeat so gateway tests finish quickly.
+pub fn ws_state(pool: PgPool) -> AppState {
+    let redis = redis_url();
+    let config = Config::from_source(|key| match key {
+        "DATABASE_URL" => Some("postgres://unused:unused@127.0.0.1:1/unused".to_owned()),
+        "REDIS_URL" => Some(redis.clone()),
+        "API_SESSION_TTL_HOURS" => Some("2".to_owned()),
+        "API_WS_HEARTBEAT_MS" => Some("40".to_owned()),
+        "API_WS_DEAD_MS" => Some("180".to_owned()),
+        "API_WS_REPLAY" => Some("8".to_owned()),
+        _ => None,
+    })
+    .expect("ws test config");
+    AppState::with_pool(&config, pool).expect("state")
+}
+
+pub async fn serve_ws(pool: PgPool) -> (std::net::SocketAddr, AppState) {
+    let state = ws_state(pool);
+    let listener = tokio::net::TcpListener::bind("127.0.0.1:0")
+        .await
+        .expect("bind test listener");
+    let addr = listener.local_addr().expect("local addr");
+    let router = app(state.clone());
+    tokio::spawn(async move {
+        axum::serve(listener, router).await.expect("serve");
+    });
+    state
+        .gateway
+        .wait_ready(std::time::Duration::from_secs(2))
+        .await
+        .expect("redis pub/sub");
+    (addr, state)
+}
+
 pub struct Response {
     pub status: StatusCode,
     pub headers: HeaderMap,

@@ -13,6 +13,11 @@
 		reverse_proxy api:8080
 	}
 
+	# Native WS gateway (issue #6). Caddy upgrades automatically.
+	handle /ws {
+		reverse_proxy api:8080
+	}
+
 	handle /api /api/* {
 		reverse_proxy api:8080
 	}
