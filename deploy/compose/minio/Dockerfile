@@ -2,6 +2,7 @@
 # MinIO CE is source-only. Compile the pinned upstream tag, then apply the
 # same binary + entrypoint layout as minio/minio's Dockerfile at that tag.
 # Do not FROM minio/minio — Hub images are no longer the CE distribution.
+# CI publishes the pin to GHCR (.github/workflows/publish-minio.yml).
 
 ARG MINIO_RELEASE=RELEASE.2025-10-15T17-29-55Z
 

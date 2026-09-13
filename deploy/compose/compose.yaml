@@ -86,13 +86,18 @@ services:
       retries: 10
     restart: unless-stopped
 
+  # Logical tag gelabber/minio:RELEASE.2025-10-15T17-29-55Z — served from GHCR
+  # so `docker compose up` pulls. Source-build is the fallback if the pull misses.
   minio:
-    image: gelabber/minio:RELEASE.2025-10-15T17-29-55Z
+    image: ghcr.io/till-und-scholler-ai-slop/gelabber/minio:RELEASE.2025-10-15T17-29-55Z
+    pull_policy: missing
     build:
       context: ./minio
       dockerfile: Dockerfile
       args:
         MINIO_RELEASE: RELEASE.2025-10-15T17-29-55Z
+      tags:
+        - gelabber/minio:RELEASE.2025-10-15T17-29-55Z
     command: ["server", "/data", "--console-address", ":9001"]
     environment:
       MINIO_ROOT_USER: ${MINIO_ROOT_USER:-gelabber}
