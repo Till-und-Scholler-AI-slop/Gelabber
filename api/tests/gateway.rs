@@ -376,7 +376,16 @@ async fn heartbeat_keeps_the_socket_and_silence_closes_it(pool: PgPool) {
     assert_eq!(beat, json!({ "op": "h" }));
     send_json(&mut ws, json!({ "op": "h" })).await;
 
-    // Still alive after another heartbeat cycle.
+    // Inbound `h` is liveness only — must not echo, or the browser client
+    // (which replies to every server `h`) would ping-pong.
+    let echoed = tokio::time::timeout(Duration::from_millis(20), recv_json(&mut ws)).await;
+    assert!(
+        echoed.is_err(),
+        "server must not reply to a client heartbeat: {:?}",
+        echoed.ok()
+    );
+
+    // Still alive after another server-initiated heartbeat cycle.
     let beat = tokio::time::timeout(Duration::from_millis(400), recv_until(&mut ws, |f| f["op"] == "h"))
         .await
         .expect("second heartbeat");
@@ -426,4 +435,87 @@ async fn server_topic_is_separate_from_channel_events(pool: PgPool) {
     if let Ok(frame) = stray {
         assert_ne!(frame["c"], channel_id.to_string());
     }
+}
+
+#[sqlx::test]
+async fn live_events_during_catch_up_are_queued(pool: PgPool) {
+    let (mut owner, _) = two_users(pool.clone()).await;
+    let server = create_server(&mut owner, "Queue").await;
+    let (server_id, channel_id) = ids(&server);
+    let state = common::ws_state(pool);
+    state
+        .gateway
+        .wait_ready(Duration::from_secs(2))
+        .await
+        .expect("redis pub/sub");
+
+    let first = publish(&state, server_id, channel_id, EventKind::C, "old").await;
+    let topic = gelabber_api::gateway::Topic::Channel(channel_id);
+    let (tx, mut rx) = tokio::sync::mpsc::unbounded_channel();
+    let conn = state.gateway.attach(Uuid::from_u128(1), tx).await;
+    state.gateway.begin_catch_up(conn, topic).await;
+
+    let live = publish(&state, server_id, channel_id, EventKind::C, "live").await;
+    let deadline = tokio::time::Instant::now() + Duration::from_secs(1);
+    while tokio::time::Instant::now() < deadline {
+        tokio::time::sleep(Duration::from_millis(20)).await;
+        if state.gateway.queued_len(conn, topic).await == 1 {
+            break;
+        }
+    }
+    assert_eq!(
+        state.gateway.queued_len(conn, topic).await,
+        1,
+        "live Pub/Sub frame must be queued, not dropped"
+    );
+
+    state.gateway.finish_catch_up(conn, topic, first).await;
+    let frame = tokio::time::timeout(Duration::from_secs(1), rx.recv())
+        .await
+        .expect("flush timeout")
+        .expect("channel closed");
+    let json = serde_json::to_value(&frame).expect("frame json");
+    assert_eq!(json["op"], "e");
+    assert_eq!(json["n"], live);
+    assert_eq!(json["d"]["b"], "live");
+    assert!(rx.try_recv().is_err(), "watermark must drop seq {first}");
+}
+
+#[sqlx::test]
+async fn concurrent_publish_keeps_seq_and_arrival_ordered(pool: PgPool) {
+    let (mut owner, _) = two_users(pool.clone()).await;
+    let server = create_server(&mut owner, "Race").await;
+    let (server_id, channel_id) = ids(&server);
+    let (addr, state) = common::serve_ws(pool).await;
+    let mut ws = connect(addr, &session_cookie(&owner), None).await;
+    send_json(
+        &mut ws,
+        json!({ "op": "s", "s": server_id, "c": channel_id }),
+    )
+    .await;
+    recv_until(&mut ws, |f| f["op"] == "ok").await;
+
+    let mut tasks = Vec::new();
+    for i in 0..16 {
+        let state = state.clone();
+        tasks.push(tokio::spawn(async move {
+            publish(&state, server_id, channel_id, EventKind::C, &format!("m{i}")).await
+        }));
+    }
+    let mut assigned = Vec::new();
+    for task in tasks {
+        assigned.push(task.await.expect("join"));
+    }
+    assigned.sort();
+    assert_eq!(assigned, (1..=16).collect::<Vec<_>>());
+
+    let mut arrived = Vec::new();
+    while arrived.len() < 16 {
+        let frame = recv_until(&mut ws, |f| f["op"] == "e").await;
+        arrived.push(frame["n"].as_u64().unwrap());
+    }
+    assert_eq!(
+        arrived, assigned,
+        "PUBLISH order must match INCR so the client never skips a late seq"
+    );
 }

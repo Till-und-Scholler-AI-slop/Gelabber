@@ -98,7 +98,9 @@ async fn handle_text(
     };
 
     if frame.is_heartbeat() {
-        send(sink, ServerFrame::Heartbeat).await?;
+        // Liveness only — `last_client` was already updated in `run`.
+        // Echoing would ping-pong with the browser client, which replies
+        // to every server `h`.
         return Ok(());
     }
 
@@ -149,18 +151,9 @@ async fn subscribe(
     }
     send(sink, ServerFrame::subscribed(server_id, frame.c, current)).await?;
 
-    // Anything published between the log read and this flag clear is still
-    // in Redis; a second pass fills that window, then live delivery starts.
-    let (head, plan) = state.gateway.catch_up(topic, Some(current)).await?;
-    if let CatchUp::Replay(events) = plan {
-        for event in events {
-            if event.n > current {
-                send(sink, ServerFrame::event(event)).await?;
-            }
-        }
-    }
-    let _ = head;
-    state.gateway.finish_catch_up(conn, topic).await;
+    // Live Pub/Sub frames that arrived while we were reading the log sit
+    // in the per-socket queue. Flush them now (drop dups by `n`).
+    state.gateway.finish_catch_up(conn, topic, current).await;
     Ok(())
 }
 

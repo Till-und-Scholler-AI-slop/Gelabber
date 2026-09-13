@@ -22,6 +22,19 @@ use crate::error::ApiError;
 
 const SUBSCRIBER_RETRY: Duration = Duration::from_millis(200);
 
+/// One Redis turn: assign seq, append the replay list, PUBLISH.
+/// `ARGV[1]` is the compact event JSON with `n` as a placeholder (0).
+const PUBLISH_LUA: &str = r#"
+local n = redis.call('INCR', KEYS[1])
+local event = cjson.decode(ARGV[1])
+event['n'] = tonumber(n)
+local raw = cjson.encode(event)
+redis.call('LPUSH', KEYS[2], raw)
+redis.call('LTRIM', KEYS[2], 0, tonumber(ARGV[2]))
+redis.call('PUBLISH', KEYS[3], raw)
+return {n, raw}
+"#;
+
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
 pub struct ConnId(u64);
 
@@ -42,9 +55,9 @@ struct Inner {
 
 struct Socket {
     topics: HashSet<Topic>,
-    /// Live Redis events for these topics are held back until catch-up
-    /// finishes, so a reconnect never sees seq 10 before 8 and 9.
-    catching_up: HashSet<Topic>,
+    /// Live Pub/Sub frames held until catch-up finishes. Dropping them
+    /// here would punch a hole the replay log can miss.
+    catching_up: HashMap<Topic, Vec<Event>>,
     tx: mpsc::UnboundedSender<ServerFrame>,
 }
 
@@ -96,7 +109,7 @@ impl Gateway {
             id,
             Socket {
                 topics: HashSet::new(),
-                catching_up: HashSet::new(),
+                catching_up: HashMap::new(),
                 tx,
             },
         );
@@ -107,18 +120,44 @@ impl Gateway {
         self.inner.sockets.write().await.remove(&id);
     }
 
-    /// Register the topic but hold live Redis events until [`finish_catch_up`].
+    /// Register the topic and queue live Redis events until [`finish_catch_up`].
     pub async fn begin_catch_up(&self, id: ConnId, topic: Topic) {
         if let Some(socket) = self.inner.sockets.write().await.get_mut(&id) {
             socket.topics.insert(topic);
-            socket.catching_up.insert(topic);
+            socket.catching_up.entry(topic).or_default();
         }
     }
 
-    pub async fn finish_catch_up(&self, id: ConnId, topic: Topic) {
-        if let Some(socket) = self.inner.sockets.write().await.get_mut(&id) {
-            socket.catching_up.remove(&topic);
+    /// Release the topic to live delivery and flush queued frames with
+    /// `n > after_n` (already-replayed seqs are dropped).
+    pub async fn finish_catch_up(&self, id: ConnId, topic: Topic, after_n: u64) {
+        let mut sockets = self.inner.sockets.write().await;
+        let Some(socket) = sockets.get_mut(&id) else {
+            return;
+        };
+        let Some(mut buf) = socket.catching_up.remove(&topic) else {
+            return;
+        };
+        buf.sort_by_key(|event| event.n);
+        let mut seen = after_n;
+        for event in buf {
+            if event.n <= seen {
+                continue;
+            }
+            seen = event.n;
+            let _ = socket.tx.send(ServerFrame::event(event));
         }
+    }
+
+    pub async fn queued_len(&self, id: ConnId, topic: Topic) -> usize {
+        self.inner
+            .sockets
+            .read()
+            .await
+            .get(&id)
+            .and_then(|socket| socket.catching_up.get(&topic))
+            .map(Vec::len)
+            .unwrap_or(0)
     }
 
     pub async fn unsubscribe(&self, id: ConnId, topic: Topic) {
@@ -163,15 +202,20 @@ impl Gateway {
             warn!(channel, "redis payload is not a compact event");
             return;
         };
-        self.deliver(topic, ServerFrame::event(event)).await;
+        self.deliver(topic, event).await;
     }
 
-    async fn deliver(&self, topic: Topic, frame: ServerFrame) {
-        let sockets = self.inner.sockets.read().await;
-        for socket in sockets.values() {
-            if socket.topics.contains(&topic) && !socket.catching_up.contains(&topic) {
-                let _ = socket.tx.send(frame.clone());
+    async fn deliver(&self, topic: Topic, event: Event) {
+        let mut sockets = self.inner.sockets.write().await;
+        for socket in sockets.values_mut() {
+            if !socket.topics.contains(&topic) {
+                continue;
             }
+            if let Some(buf) = socket.catching_up.get_mut(&topic) {
+                buf.push(event.clone());
+                continue;
+            }
+            let _ = socket.tx.send(ServerFrame::event(event.clone()));
         }
     }
 
@@ -206,56 +250,50 @@ impl Gateway {
         }
     }
 
-    /// Assign seq, append the replay buffer, PUBLISH. Returns the stored event.
+    /// Assign seq, append the replay buffer, PUBLISH — one Lua turn so a
+    /// concurrent writer cannot `PUBLISH` 2 before 1.
     pub async fn publish(&self, draft: EventDraft) -> Result<Event, ApiError> {
         self.ensure_subscriber();
         let topic = draft.topic();
-        let n: u64 = self
+        let placeholder = Event {
+            t: draft.kind,
+            s: draft.server_id,
+            c: draft.channel_id,
+            n: 0,
+            i: draft.entity_id,
+            d: draft.delta,
+        };
+        let template = serde_json::to_string(&placeholder)
+            .map_err(|err| ApiError::Internal(format!("serialize event: {err}")))?;
+        let replay_end = (self.replay - 1) as i64;
+        let seq_key = topic.seq_key();
+        let log_key = topic.log_key();
+        let channel = topic.redis_channel();
+
+        let (n, raw): (u64, String) = self
             .with_conn(|mut conn| {
-                let key = topic.seq_key();
-                async move { redis::cmd("INCR").arg(key).query_async(&mut conn).await }
+                let seq_key = seq_key.clone();
+                let log_key = log_key.clone();
+                let channel = channel.clone();
+                let template = template.clone();
+                async move {
+                    redis::Script::new(PUBLISH_LUA)
+                        .key(seq_key)
+                        .key(log_key)
+                        .key(channel)
+                        .arg(template)
+                        .arg(replay_end)
+                        .invoke_async(&mut conn)
+                        .await
+                }
             })
             .await
             .map_err(redis_err)?;
 
-        let event = Event {
-            t: draft.kind,
-            s: draft.server_id,
-            c: draft.channel_id,
-            n,
-            i: draft.entity_id,
-            d: draft.delta,
-        };
-        let raw = serde_json::to_string(&event)
-            .map_err(|err| ApiError::Internal(format!("serialize event: {err}")))?;
-
-        let replay_end = (self.replay - 1) as i64;
-        let log_key = topic.log_key();
-        let channel = topic.redis_channel();
-        self.with_conn(|mut conn| {
-            let log_key = log_key.clone();
-            let channel = channel.clone();
-            let raw = raw.clone();
-            async move {
-                redis::pipe()
-                    .cmd("LPUSH")
-                    .arg(log_key.as_str())
-                    .arg(raw.as_str())
-                    .cmd("LTRIM")
-                    .arg(log_key.as_str())
-                    .arg(0)
-                    .arg(replay_end)
-                    .cmd("PUBLISH")
-                    .arg(channel.as_str())
-                    .arg(raw.as_str())
-                    .query_async::<()>(&mut conn)
-                    .await
-            }
-        })
-        .await
-        .map_err(redis_err)?;
-
-        Ok(event)
+        match serde_json::from_str::<Event>(&raw) {
+            Ok(event) => Ok(event),
+            Err(_) => Ok(Event { n, ..placeholder }),
+        }
     }
 
     pub async fn current_seq(&self, topic: Topic) -> Result<u64, ApiError> {
