@@ -412,3 +412,52 @@ async fn video_pub_requires_go_live(pool: PgPool) {
     let err = recv_until(&mut member_ws, |f| f["op"] == "err").await;
     assert_eq!(err["e"], "forbidden");
 }
+
+#[sqlx::test]
+async fn one_socket_leave_does_not_evict_another_seat(pool: PgPool) {
+    let (mut owner, mut member) = two_users(pool.clone()).await;
+    let server = create_server(&mut owner, "Tabs").await;
+    let (server_id, _) = ids(&server);
+    join_member(&mut owner, &mut member, &server_id.to_string()).await;
+    let voice_id = create_voice(&mut owner, server_id).await;
+    let ada = owner_id(&server);
+
+    let (addr, _) = common::serve_ws(pool).await;
+    let cookie = session_cookie(&owner);
+    let mut tab_a = connect(addr, &cookie).await;
+    let mut tab_b = connect(addr, &cookie).await;
+    let mut member_ws = connect(addr, &session_cookie(&member)).await;
+
+    send_json(
+        &mut tab_a,
+        json!({ "op": "sig", "t": "j", "s": server_id, "c": voice_id }),
+    )
+    .await;
+    recv_until(&mut tab_a, |f| f["op"] == "sig" && f["t"] == "j").await;
+    send_json(
+        &mut tab_b,
+        json!({ "op": "sig", "t": "j", "s": server_id, "c": voice_id }),
+    )
+    .await;
+    recv_until(&mut tab_b, |f| f["op"] == "sig" && f["t"] == "j").await;
+    send_json(
+        &mut member_ws,
+        json!({ "op": "sig", "t": "j", "s": server_id, "c": voice_id }),
+    )
+    .await;
+    recv_until(&mut member_ws, |f| f["op"] == "sig" && f["t"] == "j").await;
+
+    tab_a.close(None).await.ok();
+    let stray = tokio::time::timeout(Duration::from_millis(200), recv_json(&mut member_ws)).await;
+    if let Ok(frame) = stray {
+        let ada = ada.to_string();
+        assert!(
+            !(frame["op"] == "sig" && frame["t"] == "l" && frame["u"] == ada),
+            "first tab must not broadcast leave: {frame}"
+        );
+    }
+
+    tab_b.close(None).await.ok();
+    let left = recv_until(&mut member_ws, |f| f["op"] == "sig" && f["t"] == "l").await;
+    assert_eq!(left["u"], ada.to_string());
+}

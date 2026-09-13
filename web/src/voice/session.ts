@@ -61,11 +61,15 @@ export type VoiceDeps = {
   onError?: (error: unknown) => void;
 };
 
+type IceCand = { candidate: string; sdpMid: string | null };
+
 let deps: VoiceDeps | null = null;
 let peer: PeerConnection | null = null;
 let localStream: MediaStream | null = null;
 let bound = false;
 let generation = 0;
+let pendingIce: IceCand[] = [];
+let awaitingJoin: { serverId: string; channelId: string } | null = null;
 
 function currentUserId(): string | null {
   return deps?.userId && deps.userId !== currentUserId
@@ -128,6 +132,13 @@ function onSig(event: SigEvent): void {
   }
   switch (event.t) {
     case "j":
+      if (
+        event.u === currentUserId() &&
+        awaitingJoin &&
+        event.c === awaitingJoin.channelId
+      ) {
+        awaitingJoin = null;
+      }
       useVoice.setState({
         participants: upsert(state.participants, event.u),
       });
@@ -161,17 +172,13 @@ function onSig(event: SigEvent): void {
       return;
     }
     case "a":
-      if (event.u !== currentUserId() && event.sdp && peer) {
-        void peer.setRemoteDescription({ type: "answer", sdp: event.sdp });
+      if (event.u !== currentUserId() && event.sdp) {
+        void applyRemoteAnswer(event.sdp);
       }
       return;
     case "i":
-      if (
-        event.u !== currentUserId() &&
-        event.ice &&
-        peer?.remoteDescription
-      ) {
-        void peer.addIceCandidate({
+      if (event.u !== currentUserId() && event.ice) {
+        void applyRemoteIce({
           candidate: event.ice,
           sdpMid: event.mid ?? null,
         });
@@ -183,12 +190,15 @@ function onSig(event: SigEvent): void {
 }
 
 function onErr(err: ErrFrame): void {
-  const state = useVoice.getState();
-  if (state.status === "idle") return;
-  if (err.c && state.channelId && err.c !== state.channelId) return;
+  const pending = awaitingJoin;
+  if (!pending) return;
+  if (err.c !== pending.channelId) return;
   if (err.e !== "forbidden" && err.e !== "not_found" && err.e !== "bad_request") {
     return;
   }
+  const state = useVoice.getState();
+  if (state.channelId !== pending.channelId) return;
+  awaitingJoin = null;
   stopPeer();
   useVoice.setState({ ...idle });
   const code: ApiErrorCode =
@@ -203,6 +213,13 @@ function onReady(): void {
   if (state.status !== "joined" || !state.serverId || !state.channelId) {
     return;
   }
+  const self = currentUserId();
+  useVoice.setState({
+    participants: self
+      ? { [self]: state.participants[self] ?? { pubs: [] } }
+      : {},
+  });
+  awaitingJoin = { serverId: state.serverId, channelId: state.channelId };
   deps?.gateway.send({
     op: "sig",
     t: "j",
@@ -214,10 +231,29 @@ function onReady(): void {
 
 function stopPeer(): void {
   generation += 1;
+  pendingIce = [];
   peer?.close();
   peer = null;
   localStream?.getTracks().forEach((track) => track.stop());
   localStream = null;
+}
+
+async function applyRemoteAnswer(sdp: string): Promise<void> {
+  if (!peer) return;
+  await peer.setRemoteDescription({ type: "answer", sdp });
+  const queued = pendingIce;
+  pendingIce = [];
+  for (const candidate of queued) {
+    await peer.addIceCandidate(candidate);
+  }
+}
+
+async function applyRemoteIce(candidate: IceCand): Promise<void> {
+  if (peer?.remoteDescription) {
+    await peer.addIceCandidate(candidate);
+    return;
+  }
+  pendingIce.push(candidate);
 }
 
 /**
@@ -255,6 +291,7 @@ export function joinVoice(input: {
     channelName: input.channelName,
     participants: { [self]: { pubs: [] } },
   });
+  awaitingJoin = { serverId: input.serverId, channelId: input.channelId };
   deps?.gateway.send({
     op: "sig",
     t: "j",
@@ -268,6 +305,7 @@ export function leaveVoice(): void {
   const state = useVoice.getState();
   const serverId = state.serverId;
   const channelId = state.channelId;
+  awaitingJoin = null;
   stopPeer();
   useVoice.setState({ ...idle });
   if (serverId && channelId) {
@@ -281,6 +319,8 @@ export function leaveVoice(): void {
 }
 
 export function resetVoiceForTests(): void {
+  awaitingJoin = null;
+  pendingIce = [];
   stopPeer();
   useVoice.setState({ ...idle });
   deps = null;

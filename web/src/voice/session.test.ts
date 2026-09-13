@@ -15,6 +15,7 @@ class FakePeer implements PeerConnection {
   remoteDescription: { type: string } | null = null;
   closed = false;
   tracks = 0;
+  ice: { candidate: string; sdpMid: string | null }[] = [];
 
   addTrack(): void {
     this.tracks += 1;
@@ -35,8 +36,11 @@ class FakePeer implements PeerConnection {
     this.remoteDescription = desc;
   }
 
-  async addIceCandidate(): Promise<void> {
-    return;
+  async addIceCandidate(candidate: {
+    candidate: string;
+    sdpMid: string | null;
+  }): Promise<void> {
+    this.ice.push(candidate);
   }
 
   close(): void {
@@ -57,6 +61,7 @@ function install(opts?: { media?: boolean; userId?: string }) {
   const sent: ClientFrame[] = [];
   let onSig: ((event: SigEvent) => void) | undefined;
   let onErr: ((err: ErrFrame) => void) | undefined;
+  let onReady: (() => void) | undefined;
   const peers: FakePeer[] = [];
   const errors: unknown[] = [];
 
@@ -76,7 +81,12 @@ function install(opts?: { media?: boolean; userId?: string }) {
           onErr = undefined;
         };
       },
-      onReady: () => () => {},
+      onReady: (listener) => {
+        onReady = listener;
+        return () => {
+          onReady = undefined;
+        };
+      },
     },
     createPeer: () => {
       const peer = new FakePeer();
@@ -96,6 +106,7 @@ function install(opts?: { media?: boolean; userId?: string }) {
     errors,
     emitSig: (event: SigEvent) => onSig?.(event),
     emitErr: (err: ErrFrame) => onErr?.(err),
+    emitReady: () => onReady?.(),
   };
 }
 
@@ -180,5 +191,56 @@ describe("voice session", () => {
       expect(frame).not.toHaveProperty("identity");
       expect(frame.op).toBe("sig");
     }
+  });
+
+  it("queues trickle ICE that arrives before the remote answer", async () => {
+    const { peers, emitSig } = install();
+    joinVoice({ serverId: "srv", channelId: "voice", channelName: "Lounge" });
+    await vi.waitFor(() => expect(peers.length).toBe(1));
+    emitSig({
+      op: "sig",
+      t: "i",
+      s: "srv",
+      c: "voice",
+      u: "sfu",
+      ice: "candidate:1 1 UDP 1 127.0.0.1 9 typ host",
+      mid: "0",
+    });
+    expect(peers[0]?.ice).toEqual([]);
+    emitSig({
+      op: "sig",
+      t: "a",
+      s: "srv",
+      c: "voice",
+      u: "sfu",
+      sdp: "v=0\r\n",
+    });
+    await vi.waitFor(() => expect(peers[0]?.ice).toHaveLength(1));
+    expect(peers[0]?.remoteDescription?.type).toBe("answer");
+    expect(peers[0]?.ice[0]?.candidate).toContain("candidate:1");
+  });
+
+  it("does not leave the seat on a later channel bad_request", () => {
+    const { emitErr, emitSig, errors } = install();
+    joinVoice({ serverId: "srv", channelId: "voice", channelName: "Lounge" });
+    emitSig({ op: "sig", t: "j", s: "srv", c: "voice", u: "u-self" });
+    emitErr({ op: "err", e: "bad_request", s: "srv", c: "voice" });
+    emitErr({ op: "err", e: "bad_request" });
+    expect(useVoice.getState().status).toBe("joined");
+    expect(errors).toHaveLength(0);
+  });
+
+  it("drops users who left while the socket was down", () => {
+    const { emitSig, emitReady } = install();
+    joinVoice({ serverId: "srv", channelId: "voice", channelName: "Lounge" });
+    emitSig({ op: "sig", t: "j", s: "srv", c: "voice", u: "u-self" });
+    emitSig({ op: "sig", t: "j", s: "srv", c: "voice", u: "u-bob" });
+    expect(useVoice.getState().participants["u-bob"]).toBeDefined();
+    emitReady();
+    expect(useVoice.getState().participants["u-bob"]).toBeUndefined();
+    expect(useVoice.getState().participants["u-self"]).toBeDefined();
+    emitSig({ op: "sig", t: "j", s: "srv", c: "voice", u: "u-cara" });
+    expect(useVoice.getState().participants["u-cara"]).toBeDefined();
+    expect(useVoice.getState().participants["u-bob"]).toBeUndefined();
   });
 });

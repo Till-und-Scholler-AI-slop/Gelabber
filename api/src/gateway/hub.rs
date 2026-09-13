@@ -25,6 +25,18 @@ const SUBSCRIBER_RETRY: Duration = Duration::from_millis(200);
 
 /// One Redis turn: assign seq, append the replay list, PUBLISH.
 /// `ARGV[1]` is the compact event JSON with `n` as a placeholder (0).
+/// Last seat for a user: drop the roster field and their pubs. Returns 1
+/// when the caller should broadcast leave.
+const LEAVE_SEAT_LUA: &str = r#"
+local n = redis.call('HINCRBY', KEYS[1], ARGV[1], -1)
+if tonumber(n) <= 0 then
+  redis.call('HDEL', KEYS[1], ARGV[1])
+  redis.call('DEL', KEYS[2])
+  return 1
+end
+return 0
+"#;
+
 const PUBLISH_LUA: &str = r#"
 local n = redis.call('INCR', KEYS[1])
 local event = cjson.decode(ARGV[1])
@@ -133,10 +145,17 @@ impl Gateway {
             return;
         };
         for (channel_id, seat) in socket.rooms {
-            let _ = self.redis_leave_member(channel_id, socket.user_id).await;
-            let _ = self
-                .publish_sig(SigEvent::leave(seat.server_id, channel_id, socket.user_id))
-                .await;
+            match self.redis_leave_member(channel_id, socket.user_id).await {
+                Ok(true) => {
+                    let _ = self
+                        .publish_sig(SigEvent::leave(seat.server_id, channel_id, socket.user_id))
+                        .await;
+                }
+                Ok(false) => {}
+                Err(err) => {
+                    warn!(error = err.code(), "voice leave on detach failed");
+                }
+            }
         }
     }
 
@@ -419,17 +438,26 @@ impl Gateway {
                 .await?;
         }
 
-        {
+        let inserted = {
             let mut sockets = self.inner.sockets.write().await;
             if let Some(socket) = sockets.get_mut(&id) {
-                socket.rooms.entry(channel_id).or_insert(VoiceSeat {
-                    server_id,
-                    pubs: HashSet::new(),
-                });
+                match socket.rooms.entry(channel_id) {
+                    std::collections::hash_map::Entry::Vacant(slot) => {
+                        slot.insert(VoiceSeat {
+                            server_id,
+                            pubs: HashSet::new(),
+                        });
+                        true
+                    }
+                    std::collections::hash_map::Entry::Occupied(_) => false,
+                }
+            } else {
+                false
             }
+        };
+        if inserted {
+            self.redis_join_member(channel_id, user_id).await?;
         }
-
-        self.redis_join_member(channel_id, user_id).await?;
         let roster = self.redis_roster(channel_id).await?;
         let mut snapshot = Vec::new();
         for (uid, pubs) in roster {
@@ -462,9 +490,10 @@ impl Gateway {
         if !was_in {
             return Ok(false);
         }
-        self.redis_leave_member(channel_id, user_id).await?;
-        self.publish_sig(SigEvent::leave(server_id, channel_id, user_id))
-            .await?;
+        if self.redis_leave_member(channel_id, user_id).await? {
+            self.publish_sig(SigEvent::leave(server_id, channel_id, user_id))
+                .await?;
+        }
         Ok(true)
     }
 
@@ -542,40 +571,42 @@ impl Gateway {
             let key = key.clone();
             let member = member.clone();
             async move {
-                redis::cmd("SADD")
+                redis::cmd("HINCRBY")
                     .arg(key)
                     .arg(member)
-                    .query_async::<()>(&mut conn)
+                    .arg(1)
+                    .query_async::<i64>(&mut conn)
                     .await
+                    .map(|_| ())
             }
         })
         .await
         .map_err(redis_err)
     }
 
-    async fn redis_leave_member(&self, channel_id: Uuid, user_id: Uuid) -> Result<(), ApiError> {
+    /// Decrement the per-user seat count. `true` = last socket left: drop
+    /// the roster row and pubs, caller should broadcast `t:"l"`.
+    async fn redis_leave_member(&self, channel_id: Uuid, user_id: Uuid) -> Result<bool, ApiError> {
         let members = room_key(channel_id);
         let pubs = pubs_key(channel_id, user_id);
         let member = user_id.to_string();
-        self.with_conn(|mut conn| {
-            let members = members.clone();
-            let pubs = pubs.clone();
-            let member = member.clone();
-            async move {
-                redis::pipe()
-                    .cmd("SREM")
-                    .arg(members)
-                    .arg(member)
-                    .ignore()
-                    .cmd("DEL")
-                    .arg(pubs)
-                    .ignore()
-                    .query_async::<()>(&mut conn)
-                    .await
-            }
-        })
-        .await
-        .map_err(redis_err)
+        let last: i32 = self
+            .with_conn(|mut conn| {
+                let members = members.clone();
+                let pubs = pubs.clone();
+                let member = member.clone();
+                async move {
+                    redis::Script::new(LEAVE_SEAT_LUA)
+                        .key(members)
+                        .key(pubs)
+                        .arg(member)
+                        .invoke_async(&mut conn)
+                        .await
+                }
+            })
+            .await
+            .map_err(redis_err)?;
+        Ok(last == 1)
     }
 
     async fn redis_add_pub(
@@ -629,15 +660,21 @@ impl Gateway {
         channel_id: Uuid,
     ) -> Result<Vec<(Uuid, Vec<TrackKind>)>, ApiError> {
         let key = room_key(channel_id);
-        let members: Vec<String> = self
+        let seats: HashMap<String, String> = self
             .with_conn(|mut conn| {
                 let key = key.clone();
-                async move { redis::cmd("SMEMBERS").arg(key).query_async(&mut conn).await }
+                async move { redis::cmd("HGETALL").arg(key).query_async(&mut conn).await }
             })
             .await
             .map_err(redis_err)?;
-        let mut roster = Vec::with_capacity(members.len());
-        for raw in members {
+        let mut roster = Vec::with_capacity(seats.len());
+        for (raw, count) in seats {
+            let Ok(count) = count.parse::<i64>() else {
+                continue;
+            };
+            if count <= 0 {
+                continue;
+            }
             let Ok(uid) = Uuid::parse_str(&raw) else {
                 continue;
             };
@@ -685,6 +722,7 @@ fn voice_channel_id(name: &str) -> Option<Uuid> {
     Uuid::parse_str(id).ok()
 }
 
+/// Per-channel hash: user_id → seat count (one increment per socket).
 fn room_key(channel_id: Uuid) -> String {
     format!("{REDIS_PREFIX}vr:{channel_id}")
 }
