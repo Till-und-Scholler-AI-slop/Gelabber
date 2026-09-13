@@ -143,7 +143,10 @@ impl Client {
     }
 
     pub fn with_state(state: AppState) -> Self {
-        Self {
+        Self::from_state(state)
+    }
+
+    pub fn from_state(state: AppState) -> Self {
             app: app(state.clone()),
             store: state.store.clone(),
             jar: BTreeMap::new(),

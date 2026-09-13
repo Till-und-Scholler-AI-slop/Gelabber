@@ -10,14 +10,15 @@ use sqlx::PgPool;
 use common::Client;
 
 async fn two_users(pool: PgPool) -> (Client, Client) {
-    let mut owner = Client::new(pool.clone());
+    let shared = common::state(pool);
+    let mut owner = Client::from_state(shared.clone());
     owner.bootstrap().await;
     let res = owner
         .register("owner@example.com", "password123", "Ada")
         .await;
     assert_eq!(res.status, StatusCode::CREATED, "{}", res.body);
 
-    let mut member = Client::new(pool);
+    let mut member = Client::from_state(shared);
     member.bootstrap().await;
     let res = member
         .register("member@example.com", "password123", "Bob")
