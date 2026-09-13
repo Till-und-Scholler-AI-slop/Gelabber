@@ -8,9 +8,13 @@ import { HashIcon, SpeakerIcon } from "../components/Icons.tsx";
 import { MemberPanel } from "../components/MemberPanel.tsx";
 import { MessagePane } from "../components/MessagePane.tsx";
 import { Redirect } from "../components/Redirect.tsx";
+import { TypingBar } from "../components/TypingBar.tsx";
 import { VoiceRoom } from "../voice/VoiceRoom.tsx";
 import { useLastChannel } from "../servers/lastChannel.ts";
+import { can } from "../servers/permissions.ts";
 import { useServer } from "../servers/queries.ts";
+import type { Channel, ServerDetail } from "../servers/types.ts";
+import { useTypingInput } from "../ws/useLive.ts";
 
 export function ChannelPage() {
   const { serverId, channelId } = useParams({
@@ -52,16 +56,33 @@ export function ChannelPage() {
               data-testid="message-pane"
               className="absolute inset-0 flex min-h-0 flex-col"
             >
-              <MessagePane
-                key={channel.id}
-                server={server}
-                channel={channel}
-              />
+              <TextChat server={server} channel={channel} />
             </div>
           </div>
         )}
       </div>
       <MemberPanel serverId={serverId} members={server.members} />
     </div>
+  );
+}
+
+function TextChat({
+  server,
+  channel,
+}: {
+  server: ServerDetail;
+  channel: Channel;
+}) {
+  const canWrite = can(server, "send_messages");
+  const typing = useTypingInput(server.id, channel.id, canWrite);
+  return (
+    <MessagePane
+      key={channel.id}
+      server={server}
+      channel={channel}
+      footer={<TypingBar channelId={channel.id} members={server.members} />}
+      onDraftChange={typing.onChange}
+      onDraftStop={typing.stop}
+    />
   );
 }

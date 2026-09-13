@@ -1,7 +1,8 @@
 //! `/api/channels/{id}/messages` and `/api/messages/{id}` (issue #5).
 //!
 //! REST carries history and write rights. The client sends optimistic and
-//! virtualises the list; this module does not open a WebSocket (issue #6).
+//! virtualises the list. After a successful write this module calls
+//! [`publish_channel`]; Redis failure is logged and does not fail the request.
 //!
 //! Rights: any member may read a text channel's history. `send_messages` is
 //! required to post or edit. Delete is the author's alone (no moderation
@@ -18,12 +19,13 @@ use axum::routing::{get, patch};
 use chrono::{DateTime, Utc};
 use serde::{Deserialize, Serialize};
 use sqlx::{FromRow, PgPool};
-use tracing::info;
+use tracing::{info, warn};
 use uuid::Uuid;
 
 use crate::auth::session::CurrentUser;
 use crate::auth::user::User;
 use crate::error::{ApiError, FieldErrors};
+use crate::gateway::{EventKind, publish_channel};
 use crate::json::Body;
 use crate::path::Id;
 use crate::servers::channel::{self, ChannelKind};
@@ -172,7 +174,7 @@ async fn create_message(
     Id(channel_id): Id,
     Body(body): Body<CreateBody>,
 ) -> Result<Response, ApiError> {
-    let (member, _) = text_channel(&state.db, channel_id, user.id).await?;
+    let (member, channel) = text_channel(&state.db, channel_id, user.id).await?;
     member.require(Permission::SendMessages)?;
 
     let mut errors = FieldErrors::new();
@@ -189,8 +191,18 @@ async fn create_message(
     .bind(&content)
     .fetch_one(&state.db)
     .await?;
-    info!(channel_id = %channel_id, message_id = %row.id, "message created");
-    Ok((StatusCode::CREATED, Json(row.into_message(&user))).into_response())
+    let message = row.into_message(&user);
+    info!(channel_id = %channel_id, message_id = %message.id, "message created");
+    fanout(
+        &state,
+        channel.server_id,
+        channel_id,
+        EventKind::C,
+        Some(message.id),
+        serde_json::to_value(&message).ok(),
+    )
+    .await;
+    Ok((StatusCode::CREATED, Json(message)).into_response())
 }
 
 async fn update_message(
@@ -223,7 +235,17 @@ async fn update_message(
     .fetch_optional(&state.db)
     .await?
     .ok_or(ApiError::NotFound)?;
-    Ok(Json(row.into_message(&user)))
+    let message = row.into_message(&user);
+    fanout(
+        &state,
+        member.server.id,
+        message.channel_id,
+        EventKind::E,
+        Some(message.id),
+        serde_json::to_value(&message).ok(),
+    )
+    .await;
+    Ok(Json(message))
 }
 
 async fn delete_message(
@@ -231,7 +253,7 @@ async fn delete_message(
     CurrentUser(user): CurrentUser,
     Id(message_id): Id,
 ) -> Result<StatusCode, ApiError> {
-    let (_, current) = message_for(&state.db, message_id, user.id).await?;
+    let (member, current) = message_for(&state.db, message_id, user.id).await?;
     if current.author.id != user.id {
         return Err(ApiError::Forbidden(
             "You can only delete your own messages.",
@@ -247,7 +269,36 @@ async fn delete_message(
         message_id = %message_id,
         "message deleted"
     );
+    fanout(
+        &state,
+        member.server.id,
+        current.channel_id,
+        EventKind::D,
+        Some(message_id),
+        None,
+    )
+    .await;
     Ok(StatusCode::NO_CONTENT)
+}
+
+/// Redis fan-out after a successful write. A down or dummy Redis URL
+/// (`tests` use `127.0.0.1:1`) must not fail the HTTP response — the row
+/// is already persisted.
+async fn fanout(
+    state: &AppState,
+    server_id: Uuid,
+    channel_id: Uuid,
+    kind: EventKind,
+    entity_id: Option<Uuid>,
+    delta: Option<serde_json::Value>,
+) {
+    if let Err(err) = publish_channel(state, server_id, channel_id, kind, entity_id, delta).await {
+        warn!(
+            error = err.code(),
+            %channel_id,
+            "gateway publish after message write failed"
+        );
+    }
 }
 
 /// Membership + text channel, or `404`. Voice is not a message resource.
