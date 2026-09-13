@@ -344,7 +344,9 @@ async fn category_for(
     Ok((member, category))
 }
 
-async fn channel_for(
+/// Resolves a channel to the caller's membership. A channel in a server the
+/// caller is not part of is a plain 404 — same as a missing id.
+pub async fn channel_for(
     db: &PgPool,
     channel_id: Uuid,
     user_id: Uuid,
