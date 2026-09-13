@@ -110,8 +110,11 @@ pub async fn run(socket: WebSocket, state: AppState, user: User) {
         }
     }
 
-    if let Some((user_id, servers)) = state.gateway.detach(conn).await {
-        state.gateway.clear_conn(conn, user_id, &servers).await;
+    if let Some((user_id, servers, typing)) = state.gateway.detach(conn).await {
+        state
+            .gateway
+            .clear_conn(conn, user_id, &servers, &typing)
+            .await;
     }
     debug!(user_id = %user.id, "ws disconnected");
 }
@@ -156,7 +159,7 @@ async fn handle_text(
             _ => FrameEffect::Activity,
         }),
         "y" => {
-            typing(state, user, frame, sink).await?;
+            typing(state, user, conn, frame, sink).await?;
             Ok(FrameEffect::Activity)
         }
         _ => {
@@ -238,6 +241,7 @@ async fn unsubscribe(state: &AppState, conn: ConnId, frame: ClientFrame) -> Resu
 async fn typing(
     state: &AppState,
     user: &User,
+    conn: ConnId,
     frame: ClientFrame,
     sink: &mut futures_util::stream::SplitSink<WebSocket, Message>,
 ) -> Result<(), ApiError> {
@@ -259,7 +263,7 @@ async fn typing(
     }
     state
         .gateway
-        .set_typing(server_id, channel_id, user.id, on)
+        .set_typing(conn, server_id, channel_id, user.id, on)
         .await
 }
 

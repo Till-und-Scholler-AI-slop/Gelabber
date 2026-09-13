@@ -7,6 +7,16 @@ import type { PresenceStatus } from "./protocol.ts";
 
 export const CLIENT_IDLE_MS = 5 * 60 * 1000;
 export const PRESENCE_PULSE_MS = 10_000;
+/** Real user input. `visibilitychange` is not in this list. */
+export const PRESENCE_ACTIVITY_EVENTS = [
+  "pointerdown",
+  "keydown",
+  "mousemove",
+] as const;
+
+export function isPresenceActivityEvent(type: string): boolean {
+  return (PRESENCE_ACTIVITY_EVENTS as readonly string[]).includes(type);
+}
 export const TYPING_TTL_MS = 6_000;
 export const TYPING_REFRESH_MS = 3_000;
 /** Reserved strip under the message pane — typing must not relayout chat. */

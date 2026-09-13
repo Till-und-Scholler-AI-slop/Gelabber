@@ -126,14 +126,15 @@ impl Gateway {
         id: ConnId,
         status: PresenceStatus,
     ) -> Result<PresenceStatus, ApiError> {
-        let Some((user_id, servers)) = self.socket_meta(id).await else {
+        let Some((user_id, local)) = self.socket_meta(id).await else {
             return Ok(status);
         };
         if matches!(status, PresenceStatus::Offline) {
-            return self.drop_conn_presence(id, user_id, &servers).await;
+            return self.drop_conn_presence(id, user_id, &local).await;
         }
         let (prev, agg) = self.write_presence(user_id, id, status).await?;
         if prev != agg {
+            let servers = self.presence_targets(user_id, &local).await?;
             self.broadcast_presence(user_id, agg, &servers).await?;
         }
         Ok(agg)
@@ -168,7 +169,8 @@ impl Gateway {
         if st.is_empty() {
             return Ok(());
         }
-        self.expire_server_sets(user_id, &servers).await?;
+        let targets = self.presence_targets(user_id, &servers).await?;
+        self.expire_server_sets(user_id, &targets).await?;
         Ok(())
     }
 
@@ -264,8 +266,23 @@ impl Gateway {
         Ok(snap)
     }
 
-    /// Clear this connection. Last connection → offline on every announced server.
-    pub async fn clear_conn(&self, id: ConnId, user_id: Uuid, servers: &HashSet<Uuid>) {
+    /// Drop this socket: stop its typing immediately, then recompute presence.
+    /// Offline / idle fan-out uses `gb:p:u:{user}:s`, not only this socket.
+    pub async fn clear_conn(
+        &self,
+        id: ConnId,
+        user_id: Uuid,
+        servers: &HashSet<Uuid>,
+        typing: &HashSet<(Uuid, Uuid)>,
+    ) {
+        for (server_id, channel_id) in typing {
+            if let Err(err) = self
+                .publish_typing_stop(*server_id, *channel_id, user_id)
+                .await
+            {
+                tracing::debug!(error = err.code(), "typing stop on detach failed");
+            }
+        }
         if let Err(err) = self.drop_conn_presence(id, user_id, servers).await {
             tracing::debug!(error = err.code(), "presence cleanup failed");
         }
@@ -273,11 +290,13 @@ impl Gateway {
 
     pub async fn set_typing(
         &self,
+        conn: ConnId,
         server_id: Uuid,
         channel_id: Uuid,
         user_id: Uuid,
         on: bool,
     ) -> Result<(), ApiError> {
+        self.note_typing(conn, server_id, channel_id, on).await;
         let key = typing_key(channel_id, user_id);
         let px = ttl_ms(self.typing_ttl());
         if on {
@@ -310,21 +329,68 @@ impl Gateway {
         .await
     }
 
+    async fn publish_typing_stop(
+        &self,
+        server_id: Uuid,
+        channel_id: Uuid,
+        user_id: Uuid,
+    ) -> Result<(), ApiError> {
+        let key = typing_key(channel_id, user_id);
+        self.with_conn(|mut conn| {
+            let key = key.clone();
+            async move { redis::cmd("DEL").arg(key).query_async::<i64>(&mut conn).await }
+        })
+        .await
+        .map_err(super::hub::redis_err)?;
+        self.publish_live(
+            LiveTopic::Typing(channel_id),
+            &ServerFrame::typing(server_id, channel_id, user_id, false),
+        )
+        .await
+    }
+
     pub async fn drop_conn_presence(
         &self,
         id: ConnId,
         user_id: Uuid,
-        servers: &HashSet<Uuid>,
+        local: &HashSet<Uuid>,
     ) -> Result<PresenceStatus, ApiError> {
         let (prev, agg) = self.delete_presence(user_id, id).await?;
+        let servers = self.presence_targets(user_id, local).await?;
         if agg == PresenceStatus::Offline {
-            self.forget_user_servers(user_id, servers).await?;
-            self.broadcast_presence(user_id, PresenceStatus::Offline, servers)
+            self.forget_user_servers(user_id, &servers).await?;
+            self.broadcast_presence(user_id, PresenceStatus::Offline, &servers)
                 .await?;
         } else if prev != agg {
-            self.broadcast_presence(user_id, agg, servers).await?;
+            self.broadcast_presence(user_id, agg, &servers).await?;
         }
         Ok(agg)
+    }
+
+    /// Every server this user has announced on, plus this socket's set
+    /// (in case Redis has not been written yet).
+    async fn presence_targets(
+        &self,
+        user_id: Uuid,
+        extra: &HashSet<Uuid>,
+    ) -> Result<HashSet<Uuid>, ApiError> {
+        let mut servers = self.load_user_servers(user_id).await?;
+        servers.extend(extra.iter().copied());
+        Ok(servers)
+    }
+
+    async fn load_user_servers(&self, user_id: Uuid) -> Result<HashSet<Uuid>, ApiError> {
+        let raw: Vec<String> = self
+            .with_conn(|mut conn| {
+                let key = user_servers_key(user_id);
+                async move { redis::cmd("SMEMBERS").arg(key).query_async(&mut conn).await }
+            })
+            .await
+            .map_err(super::hub::redis_err)?;
+        Ok(raw
+            .into_iter()
+            .filter_map(|id| id.parse::<Uuid>().ok())
+            .collect())
     }
 
     async fn write_presence(

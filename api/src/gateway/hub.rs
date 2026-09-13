@@ -82,8 +82,9 @@ struct VoiceSeat {
 struct Socket {
     user_id: Uuid,
     /// Servers this socket has subscribed to (channel or server topic).
-    /// Presence fan-out uses this, not the sequenced topic set.
     servers: HashSet<Uuid>,
+    /// Channels this socket started typing in (`server`, `channel`).
+    typing: HashSet<(Uuid, Uuid)>,
     topics: HashSet<Topic>,
     /// Voice rooms this socket has joined (`op: "sig"`). Independent of
     /// chat topic subscriptions.
@@ -158,6 +159,7 @@ impl Gateway {
             Socket {
                 user_id,
                 servers: HashSet::new(),
+                typing: HashSet::new(),
                 topics: HashSet::new(),
                 rooms: HashMap::new(),
                 catching_up: HashMap::new(),
@@ -167,7 +169,7 @@ impl Gateway {
         id
     }
 
-    pub async fn detach(&self, id: ConnId) -> Option<(Uuid, HashSet<Uuid>)> {
+    pub async fn detach(&self, id: ConnId) -> Option<(Uuid, HashSet<Uuid>, HashSet<(Uuid, Uuid)>)> {
         let Some(socket) = self.inner.sockets.write().await.remove(&id) else {
             return None;
         };
@@ -184,7 +186,7 @@ impl Gateway {
                 }
             }
         }
-        Some((socket.user_id, socket.servers))
+        Some((socket.user_id, socket.servers, socket.typing))
     }
 
     pub async fn watch_server(&self, id: ConnId, server_id: Uuid) {
@@ -200,6 +202,16 @@ impl Gateway {
             .await
             .get(&id)
             .map(|socket| (socket.user_id, socket.servers.clone()))
+    }
+
+    pub async fn note_typing(&self, id: ConnId, server_id: Uuid, channel_id: Uuid, on: bool) {
+        if let Some(socket) = self.inner.sockets.write().await.get_mut(&id) {
+            if on {
+                socket.typing.insert((server_id, channel_id));
+            } else {
+                socket.typing.remove(&(server_id, channel_id));
+            }
+        }
     }
 
     /// Register the topic and queue live Redis events until [`finish_catch_up`].

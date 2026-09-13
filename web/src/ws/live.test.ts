@@ -2,6 +2,7 @@ import { afterEach, describe, expect, it, vi } from "vitest";
 
 import {
   TYPING_BAR_PX,
+  isPresenceActivityEvent,
   applyPresence,
   applyPresenceSnap,
   applyTyping,
@@ -90,6 +91,16 @@ describe("typing store", () => {
     expect(
       typingUserIds(useTypingStore.getState().byChannel, "ch", 20, "me"),
     ).toEqual(["u1"]);
+  });
+});
+
+describe("idle activity", () => {
+  it("does not treat visibilitychange as activity", () => {
+    expect(isPresenceActivityEvent("pointerdown")).toBe(true);
+    expect(isPresenceActivityEvent("keydown")).toBe(true);
+    expect(isPresenceActivityEvent("mousemove")).toBe(true);
+    expect(isPresenceActivityEvent("visibilitychange")).toBe(false);
+    expect(isPresenceActivityEvent("focus")).toBe(false);
   });
 });
 

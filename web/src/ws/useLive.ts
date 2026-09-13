@@ -6,6 +6,7 @@ import { useSession } from "../auth/session.ts";
 import { getGateway } from "./client.ts";
 import {
   CLIENT_IDLE_MS,
+  PRESENCE_ACTIVITY_EVENTS,
   PRESENCE_PULSE_MS,
   TYPING_REFRESH_MS,
   applyPresence,
@@ -71,16 +72,14 @@ export function useIdlePresence(authenticated: boolean): void {
 
     goActive();
     const onActivity = () => goActive();
-    window.addEventListener("pointerdown", onActivity);
-    window.addEventListener("keydown", onActivity);
-    window.addEventListener("mousemove", onActivity);
-    document.addEventListener("visibilitychange", onActivity);
+    for (const type of PRESENCE_ACTIVITY_EVENTS) {
+      window.addEventListener(type, onActivity);
+    }
     return () => {
       if (idleTimer) window.clearTimeout(idleTimer);
-      window.removeEventListener("pointerdown", onActivity);
-      window.removeEventListener("keydown", onActivity);
-      window.removeEventListener("mousemove", onActivity);
-      document.removeEventListener("visibilitychange", onActivity);
+      for (const type of PRESENCE_ACTIVITY_EVENTS) {
+        window.removeEventListener(type, onActivity);
+      }
     };
   }, [authenticated]);
 }
