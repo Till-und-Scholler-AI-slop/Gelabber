@@ -10,7 +10,7 @@ export type Topic = {
 };
 
 export type SigType = "j" | "l" | "o" | "a" | "i" | "p" | "u" | "m" | "d" | "r";
-export type TrackKind = "a" | "v";
+export type TrackKind = "a" | "v" | "s";
 
 export type VoiceEntry = {
   u: string;

@@ -97,7 +97,7 @@ export function ChannelSidebar({
       />
 
       {voice.status === "joined" ? (
-        <div className="flex items-center justify-between gap-2 border-t border-neutral-200 px-3 py-2 text-sm">
+        <div className="flex flex-col gap-1 border-t border-neutral-200 px-3 py-2 text-sm">
           <div className="min-w-0 text-left">
             <p className="text-xs font-medium text-emerald-700">Verbunden</p>
             <p className="truncate text-neutral-700">

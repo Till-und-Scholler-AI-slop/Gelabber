@@ -190,12 +190,14 @@ impl SigKind {
     }
 }
 
-/// Audio / video track on pub/unpub.
+/// Audio / camera / screen track on pub/unpub.
+/// Camera (`v`) and screen (`s`) are in-channel (issue 13). Go Live is issue 14.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize, Deserialize)]
 #[serde(rename_all = "lowercase")]
 pub enum TrackKind {
     A,
     V,
+    S,
 }
 
 impl TrackKind {
@@ -203,6 +205,7 @@ impl TrackKind {
         match self {
             Self::A => "a",
             Self::V => "v",
+            Self::S => "s",
         }
     }
 }
@@ -807,5 +810,30 @@ mod tests {
         assert!(json.contains(r#""m":true"#));
         assert!(!json.contains(r#""d""#));
         assert!(!json.contains("\"n\""));
+    }
+
+    #[test]
+    fn camera_and_screen_pub_kinds_are_compact() {
+        let json = ServerFrame::sig(SigEvent::published(
+            Uuid::from_u128(1),
+            Uuid::from_u128(2),
+            Uuid::from_u128(3),
+            TrackKind::V,
+        ))
+        .to_json()
+        .unwrap();
+        assert!(json.contains(r#""t":"p""#));
+        assert!(json.contains(r#""k":"v""#));
+        let json = ServerFrame::sig(SigEvent::published(
+            Uuid::from_u128(1),
+            Uuid::from_u128(2),
+            Uuid::from_u128(3),
+            TrackKind::S,
+        ))
+        .to_json()
+        .unwrap();
+        assert!(json.contains(r#""k":"s""#));
+        assert!(!json.contains("livekit"));
+        assert!(!json.contains("go_live"));
     }
 }

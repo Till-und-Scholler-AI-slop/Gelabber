@@ -380,7 +380,7 @@ async fn offer_before_join_is_rejected_and_disconnect_leaves(pool: PgPool) {
 }
 
 #[sqlx::test]
-async fn video_pub_requires_go_live(pool: PgPool) {
+async fn camera_and_screen_pub_in_voice_without_go_live(pool: PgPool) {
     let (mut owner, mut member) = two_users(pool.clone()).await;
     let server = create_server(&mut owner, "Live").await;
     let (server_id, _) = ids(&server);
@@ -409,8 +409,19 @@ async fn video_pub_requires_go_live(pool: PgPool) {
         json!({ "op": "sig", "t": "p", "s": server_id, "c": voice_id, "k": "v" }),
     )
     .await;
-    let err = recv_until(&mut member_ws, |f| f["op"] == "err").await;
-    assert_eq!(err["e"], "forbidden");
+    let camera = recv_until(&mut member_ws, |f| f["op"] == "sig" && f["t"] == "p").await;
+    assert_eq!(camera["k"], "v");
+
+    send_json(
+        &mut member_ws,
+        json!({ "op": "sig", "t": "p", "s": server_id, "c": voice_id, "k": "s" }),
+    )
+    .await;
+    let screen = recv_until(&mut member_ws, |f| {
+        f["op"] == "sig" && f["t"] == "p" && f["k"] == "s"
+    })
+    .await;
+    assert_eq!(screen["k"], "s");
 }
 
 #[sqlx::test]

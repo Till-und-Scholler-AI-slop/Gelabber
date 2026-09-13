@@ -145,6 +145,21 @@ async fn handle(
                 .map_err(|_| "bad_request")?;
             Ok(None)
         }
+        "p" => {
+            let (peer_id, channel_id) = joined.ok_or("unauthorized")?;
+            let k = frame
+                .k
+                .as_deref()
+                .map(str::trim)
+                .filter(|s| *s == "v" || *s == "s")
+                .ok_or("bad_request")?;
+            state
+                .sfu
+                .announce(peer_id, channel_id, k)
+                .await
+                .map_err(|_| "bad_request")?;
+            Ok(None)
+        }
         "l" => {
             if let Some((peer_id, channel_id)) = joined.take() {
                 state.sfu.leave(peer_id, channel_id).await;
