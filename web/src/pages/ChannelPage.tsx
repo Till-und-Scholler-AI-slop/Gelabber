@@ -1,7 +1,9 @@
 // `/s/$serverId/c/$channelId`: header with the channel, body reserved for
 // the chat/voice tickets. Remembers the channel for the next server switch.
 
-import { Navigate, useParams } from "@tanstack/react-router";
+import { useParams } from "@tanstack/react-router";
+
+import { Redirect } from "../components/Redirect.tsx";
 import { useEffect } from "react";
 
 import { HashIcon, SpeakerIcon } from "../components/Icons.tsx";
@@ -24,7 +26,7 @@ export function ChannelPage() {
   if (!server) return null;
   if (!channel) {
     // Deleted (here or elsewhere): fall back to the server's default.
-    return <Navigate to="/s/$serverId" params={{ serverId }} replace />;
+    return <Redirect to="/s/$serverId" params={{ serverId }} />;
   }
 
   const Icon = channel.kind === "voice" ? SpeakerIcon : HashIcon;

@@ -1,7 +1,9 @@
 // `/s/$serverId`: no channel picked yet — go to the remembered or first text
 // channel as soon as the detail is in the cache.
 
-import { Navigate, useParams } from "@tanstack/react-router";
+import { useParams } from "@tanstack/react-router";
+
+import { Redirect } from "../components/Redirect.tsx";
 
 import { useLastChannel } from "../servers/lastChannel.ts";
 import { useServer } from "../servers/queries.ts";
@@ -16,10 +18,9 @@ export function ServerPage() {
   const channel = pickChannel(server, remembered);
   if (channel) {
     return (
-      <Navigate
+      <Redirect
         to="/s/$serverId/c/$channelId"
         params={{ serverId, channelId: channel.id }}
-        replace
       />
     );
   }

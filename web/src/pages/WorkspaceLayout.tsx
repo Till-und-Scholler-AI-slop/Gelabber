@@ -4,7 +4,8 @@
 // query cache (usually already warm from the hover prefetch).
 
 import { useQueryClient } from "@tanstack/react-query";
-import { Navigate, Outlet, useParams } from "@tanstack/react-router";
+import { Outlet, useNavigate, useParams } from "@tanstack/react-router";
+import { useEffect } from "react";
 
 import { ApiError } from "../api/client.ts";
 import { ChannelSidebar } from "../components/ChannelSidebar.tsx";
@@ -45,16 +46,24 @@ function SelectedServer({
   channelId: string | undefined;
 }) {
   const client = useQueryClient();
+  const navigate = useNavigate();
   const { data: server, error } = useServer(serverId);
-
-  if (
+  const gone =
     error instanceof ApiError &&
-    (error.code === "not_found" || error.code === "forbidden")
-  ) {
-    // Deleted, or we were removed: drop it from the rail and go home.
-    forgetServer(client, serverId);
-    return <Navigate to="/" replace />;
-  }
+    (error.code === "not_found" || error.code === "forbidden");
+
+  useEffect(() => {
+    if (!gone) return;
+    // Deleted, or we were removed: drop it from the rail and go home. The
+    // cached detail is removed only after this component is gone, otherwise
+    // the still-mounted query would refetch and 404 again.
+    forgetServer(client, serverId, { keepDetail: true });
+    void navigate({ to: "/", replace: true }).then(() =>
+      forgetServer(client, serverId),
+    );
+  }, [gone, client, navigate, serverId]);
+
+  if (gone) return null;
 
   return (
     <>

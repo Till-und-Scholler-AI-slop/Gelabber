@@ -147,9 +147,14 @@ function mergeServer(client: QueryClient, server: Server): void {
   patchDetail(client, server.id, (detail) => ({ ...detail, ...server }));
 }
 
-function removeServer(client: QueryClient, serverId: string): void {
+function removeServer(
+  client: QueryClient,
+  serverId: string,
+  options: { keepDetail?: boolean } = {},
+): void {
   patchList(client, (servers) => servers.filter((s) => s.id !== serverId));
-  client.removeQueries({ queryKey: serverKeys.detail(serverId) });
+  if (!options.keepDetail)
+    client.removeQueries({ queryKey: serverKeys.detail(serverId) });
   client.removeQueries({ queryKey: serverKeys.invites(serverId) });
 }
 
@@ -268,9 +273,17 @@ export function useLeaveServer() {
   });
 }
 
-/** Called when a read comes back 404: the server is gone for this user. */
-export function forgetServer(client: QueryClient, serverId: string): void {
-  removeServer(client, serverId);
+/**
+ * Called when a read comes back 404: the server is gone for this user.
+ * `keepDetail` leaves the (failed) detail query alone while a component
+ * still observes it; removing it would trigger an immediate refetch.
+ */
+export function forgetServer(
+  client: QueryClient,
+  serverId: string,
+  options: { keepDetail?: boolean } = {},
+): void {
+  removeServer(client, serverId, options);
 }
 
 // ---------------------------------------------------------------------------

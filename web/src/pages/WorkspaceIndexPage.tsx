@@ -1,6 +1,6 @@
 // `/`: jump into the first server, or explain how to get one.
 
-import { Navigate } from "@tanstack/react-router";
+import { Redirect } from "../components/Redirect.tsx";
 import { useState } from "react";
 
 import { useSession } from "../auth/session.ts";
@@ -18,13 +18,12 @@ export function WorkspaceIndexPage() {
   if (first) {
     const channelId = lastByServer[first.id];
     return channelId ? (
-      <Navigate
+      <Redirect
         to="/s/$serverId/c/$channelId"
         params={{ serverId: first.id, channelId }}
-        replace
       />
     ) : (
-      <Navigate to="/s/$serverId" params={{ serverId: first.id }} replace />
+      <Redirect to="/s/$serverId" params={{ serverId: first.id }} />
     );
   }
 

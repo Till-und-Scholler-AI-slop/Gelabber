@@ -65,18 +65,16 @@ export function ChannelSidebar({
           <IconButton label="Leute einladen" onClick={() => setInviting(true)}>
             <LinkIcon />
           </IconButton>
-          {manageServer ? (
-            <Link
-              to="/s/$serverId/settings"
-              params={{ serverId: server.id }}
-              title="Servereinstellungen"
-              aria-label="Servereinstellungen"
-              className="rounded-md p-1.5 text-neutral-500 transition hover:bg-neutral-100 hover:text-neutral-900"
-              activeProps={{ className: "bg-neutral-100 text-neutral-900" }}
-            >
-              <GearIcon />
-            </Link>
-          ) : null}
+          <Link
+            to="/s/$serverId/settings"
+            params={{ serverId: server.id }}
+            title={manageServer ? "Servereinstellungen" : "Mitglieder"}
+            aria-label={manageServer ? "Servereinstellungen" : "Mitglieder"}
+            className="rounded-md p-1.5 text-neutral-500 transition hover:bg-neutral-100 hover:text-neutral-900"
+            activeProps={{ className: "bg-neutral-100 text-neutral-900" }}
+          >
+            <GearIcon />
+          </Link>
         </div>
       </header>
 

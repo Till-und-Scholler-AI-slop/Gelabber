@@ -2,7 +2,7 @@
 // leave/delete. Open to every member; the editing sections need
 // `manage_server`, deletion the owner.
 
-import { Navigate, useNavigate, useParams } from "@tanstack/react-router";
+import { useNavigate, useParams } from "@tanstack/react-router";
 import { useState, type FormEvent, type ReactNode } from "react";
 
 import { useSession } from "../auth/session.ts";
@@ -295,7 +295,7 @@ function DangerSection({ server }: { server: ServerDetail }) {
   const leave = useLeaveServer();
   const owner = server.role === "owner";
 
-  if (!user) return <Navigate to="/login" replace />;
+  if (!user) return null;
 
   const go = () => {
     forget(server.id);
