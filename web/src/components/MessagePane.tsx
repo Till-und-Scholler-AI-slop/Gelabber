@@ -45,6 +45,7 @@ import {
   validateContent,
 } from "../messages/rules.ts";
 import type { Attachment, Message } from "../messages/types.ts";
+import { asAttachmentList } from "../messages/types.ts";
 import { Avatar } from "./Avatar.tsx";
 import { PaperclipIcon, PencilIcon, TrashIcon } from "./Icons.tsx";
 
@@ -251,6 +252,8 @@ function MessageList({
         </p>
       ) : null}
       <div
+        // Pin a short list to the bottom with flex, not a viewport-sized
+        // margin: that ResizeObserver loop (scrollbar on/off) is React #185.
         style={{ height: virtualizer.getTotalSize() }}
         className="relative mt-auto w-full"
       >
@@ -664,10 +667,11 @@ function Composer({
 }
 
 function AttachmentList({ attachments }: { attachments: Attachment[] }) {
-  if (attachments.length === 0) return null;
+  const files = asAttachmentList(attachments);
+  if (files.length === 0) return null;
   return (
     <div className="mt-1 flex flex-col gap-1.5">
-      {attachments.map((attachment) => {
+      {files.map((attachment) => {
         const src = attachment.preview_url ?? attachmentUrl(attachment.id);
         if (isImageType(attachment.content_type)) {
           return (

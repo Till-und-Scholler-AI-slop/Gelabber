@@ -4,7 +4,7 @@
 import type { QueryClient } from "@tanstack/react-query";
 
 import { messageKeys } from "./queries.ts";
-import type { Message, MessagePage } from "./types.ts";
+import { asAttachmentList, type Message, type MessagePage } from "./types.ts";
 import type { ChatEvent } from "../ws/protocol.ts";
 
 type Cache = {
@@ -31,7 +31,7 @@ function asMessage(delta: unknown): Message | null {
     content: value.content,
     created_at: value.created_at ?? new Date().toISOString(),
     edited_at: value.edited_at ?? null,
-    attachments: value.attachments ?? [],
+    attachments: asAttachmentList(value.attachments),
   };
 }
 
