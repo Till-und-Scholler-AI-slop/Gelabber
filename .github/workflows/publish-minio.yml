@@ -9,10 +9,14 @@ on:
     branches: [main]
     paths:
       - deploy/compose/minio/**
+      - deploy/compose/compose.yaml
+      - Cargo.toml
       - .github/workflows/publish-minio.yml
   pull_request:
     paths:
       - deploy/compose/minio/**
+      - deploy/compose/compose.yaml
+      - Cargo.toml
       - .github/workflows/publish-minio.yml
   workflow_dispatch:
 
