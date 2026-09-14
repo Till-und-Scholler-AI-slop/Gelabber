@@ -46,9 +46,7 @@ docker run --rm -v gelabber_minio_data:/data -v "$PWD":/backup alpine:3.24 \
 
 Restore analog; Postgres vorher stoppen.
 
-Nach dem ersten Publish auf `main` ist das GHCR-Paket **privat**.
-
-Nach dem ersten Publish auf `main` ist das GHCR-Paket **privat**. Ein Maintainer muss es einmal öffentlich machen: Organisation → Packages → `gelabber/minio` → Package settings → Change visibility → Public. Sonst fällt ein anonymer `docker compose up` auf den Source-Build zurück. Bis dahin: `echo "$GITHUB_TOKEN" | docker login ghcr.io -u USER --password-stdin`.
+Aktuell **v0.1.0**. Das MinIO-Paket `gelabber/minio` soll öffentlich sein, damit ein anonymer `docker compose up` das Image zieht. CI setzt die Sichtbarkeit nach dem Publish auf public. Falls der Pull trotzdem 401/denied liefert: [Package settings](https://github.com/orgs/Till-und-Scholler-AI-slop/packages/container/package/gelabber%2Fminio) → Change visibility → Public, oder `echo "$GITHUB_TOKEN" | docker login ghcr.io -u USER --password-stdin`.
 
 UDP für coturn (3478 + Relay) und SFU-ICE (10000–10031) läuft **nicht** durch Caddy.
 
