@@ -1,17 +1,12 @@
-# Existing Caddy (host binary / systemd, or another Compose stack).
-# TLS stays with you — this file does not turn auto_https off.
+# Host Caddy (systemd or another stack). TLS stays with you.
+# Import this site block, or copy it. `header_up Host {host}` is required
+# (`/ws` compares Origin to Host).
 #
-# Host Caddy (defaults below):
-#   import the site block, or copy it into your Caddyfile.
-#
-# Caddy in Docker on network `gelabber`:
+# Caddy container on network `gelabber`:
 #   GELABBER_API_UPSTREAM=api:8080
 #   GELABBER_WEB_UPSTREAM=web:80
 #   GELABBER_MEDIA_UPSTREAM=media:8081
 #   GELABBER_MINIO_UPSTREAM=minio:9000
-#
-# Host MUST be passed through. `/ws` compares browser Origin to Host;
-# Caddy's default Host is the upstream dial address and fails that check.
 
 {$GELABBER_DOMAIN:gelabber.home.arpa} {
 	encode gzip
@@ -89,8 +84,7 @@
 	}
 }
 
-# Optional: browser PUTs go to MINIO_PUBLIC_ENDPOINT. Own subdomain,
-# no path prefix (presigned URLs sign the host).
+# Optional: MINIO_PUBLIC_ENDPOINT on its own host (presigns sign the host).
 # {$GELABBER_MINIO_DOMAIN:minio.home.arpa} {
 # 	reverse_proxy {$GELABBER_MINIO_UPSTREAM:127.0.0.1:9000} {
 # 		header_up Host {host}

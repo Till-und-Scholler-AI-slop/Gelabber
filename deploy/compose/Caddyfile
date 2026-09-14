@@ -2,16 +2,11 @@
 	auto_https off
 }
 
-# TCP only. coturn (3478/udp + relay) and SFU host ICE bind their own
-# UDP — do not force media UDP through this proxy.
-#
-# Timeouts: short on health probes, bounded on JSON /api, unlimited
-# read/write on WebSockets so they are not killed by idle heartbeats.
+# TCP only. coturn and SFU ICE bind UDP themselves.
+# /ws compares Origin to Host — pass Host through or the handshake is 403.
 :80 {
 	handle /health {
 		reverse_proxy api:8080 {
-			# /ws compares Origin to Host. Default Host is the upstream
-			# dial address (`api:8080`) and fails the same-origin check.
 			header_up Host {host}
 			transport http {
 				dial_timeout 2s
@@ -34,7 +29,6 @@
 		}
 	}
 
-	# Native WS gateway (issue #6). Caddy upgrades automatically.
 	handle /ws {
 		reverse_proxy api:8080 {
 			header_up Host {host}
@@ -46,8 +40,6 @@
 		}
 	}
 
-	# `handle` takes one matcher. Two path tokens (`/api /api/*`) are a
-	# parse error on Caddy 2.11. Named matchers keep /api and /api/*.
 	@api path /api /api/*
 	handle @api {
 		reverse_proxy api:8080 {

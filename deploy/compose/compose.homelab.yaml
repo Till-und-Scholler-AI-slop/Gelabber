@@ -1,13 +1,10 @@
-# Overlay: keep the stack, drop the bundled Caddy and (by default) coturn.
-# 3478 is often already taken on a homelab. Point TURN_* at the existing
-# server, or opt back in: COMPOSE_PROFILES=bundled-coturn and a free
-# TURN_PORT / relay range. SFU ICE UDP still publishes on the host.
+# Overlay when the host already has Caddy (and usually coturn).
+#   cp .env.homelab.example .env && docker compose up -d
+#   # or: docker compose -f compose.yaml -f compose.homelab.yaml up -d
 #
-#   cp .env.homelab.example .env
-#   docker compose -f compose.yaml -f compose.homelab.yaml up -d
-#
-# Or set COMPOSE_FILE in `.env` and run `docker compose up -d`.
-# Point your existing Caddy at Caddyfile.homelab.
+# Drops bundled Caddy. Drops bundled coturn unless COMPOSE_PROFILES=bundled-coturn.
+# Publishes web/api/media on loopback for Caddyfile.homelab.
+# SFU ICE UDP still publishes on the host.
 
 networks:
   default:
@@ -35,24 +32,4 @@ services:
     ports:
       - "${GELABBER_MEDIA_BIND:-127.0.0.1}:${GELABBER_MEDIA_PORT:-18081}:8081"
     environment:
-      # Host / existing TURN — not the compose service name (that is gone
-      # unless COMPOSE_PROFILES=bundled-coturn).
       TURN_URLS: ${MEDIA_TURN_URLS:-stun:${TURN_PUBLIC_HOST:-127.0.0.1}:${TURN_PORT:-3478},turn:${TURN_PUBLIC_HOST:-127.0.0.1}:${TURN_PORT:-3478}}
-    extra_hosts:
-      - "host.docker.internal:host-gateway"
-
-  # Do not publish DB / cache / object ports on the LAN. Host Caddy can
-  # still reach MinIO on loopback; a Caddy container on `gelabber` uses
-  # `minio:9000` and does not need the published port.
-  postgres:
-    ports: !override
-      - "${POSTGRES_BIND:-127.0.0.1}:${POSTGRES_PORT:-5432}:5432"
-
-  redis:
-    ports: !override
-      - "${REDIS_BIND:-127.0.0.1}:${REDIS_PORT:-6379}:6379"
-
-  minio:
-    ports: !override
-      - "${MINIO_API_BIND:-127.0.0.1}:${MINIO_API_PORT:-9000}:9000"
-      - "${MINIO_CONSOLE_BIND:-127.0.0.1}:${MINIO_CONSOLE_PORT:-9001}:9001"
