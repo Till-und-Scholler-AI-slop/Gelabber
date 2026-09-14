@@ -132,7 +132,7 @@ services:
   # Pulled from GHCR (Gelabber version tag). The binary inside is still the
   # MinIO pin below. build.tags apply only on a local source-build fallback.
   minio:
-    image: ghcr.io/till-und-scholler-ai-slop/gelabber/minio:v0.1.0
+    image: ghcr.io/till-und-scholler-ai-slop/gelabber/minio:v0.1.1
     pull_policy: missing
     build:
       context: ./minio
@@ -140,7 +140,7 @@ services:
       args:
         MINIO_RELEASE: RELEASE.2025-10-15T17-29-55Z
       tags:
-        - gelabber/minio:v0.1.0
+        - gelabber/minio:v0.1.1
         - gelabber/minio:RELEASE.2025-10-15T17-29-55Z
     command: ["server", "/data", "--console-address", ":9001"]
     environment:

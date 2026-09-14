@@ -12,7 +12,7 @@ on:
       tag:
         description: "Release tag (created on this commit if missing)"
         required: true
-        default: "v0.1.0"
+        default: "v0.1.1"
 
 permissions:
   contents: write
@@ -43,11 +43,11 @@ jobs:
             exit 0
           fi
           python3 <<'PY' > /tmp/notes.md
-          print("""Erste öffentliche Version: Chat, Voice und internes Streaming auf eigenem WS-Protokoll, eigenem WebRTC-Signaling und eigenem SFU. Kein LiveKit, kein fremdes Chat-/Video-SDK.
+          print("""Patch: `docker compose up` baut api/media wieder. Cargo im rust:slim-Image lädt das Debian-CA-Bundle (`CARGO_HTTP_CAINFO` / `SSL_CERT_FILE`); crates.io scheiterte zuvor an OpenSSL-Verify 19 (self-signed certificate in certificate chain).
 
           Lokal: `cp deploy/compose/.env.example deploy/compose/.env && cd deploy/compose && docker compose up`
 
-          MinIO CE kommt von GHCR (`ghcr.io/till-und-scholler-ai-slop/gelabber/minio:v0.1.0`, zusätzlich `latest` und der MinIO-Pin); api/web/media baut Compose lokal.
+          MinIO CE kommt von GHCR (`ghcr.io/till-und-scholler-ai-slop/gelabber/minio:v0.1.1`, zusätzlich `latest` und der MinIO-Pin); api/web/media baut Compose lokal.
 
           ### Enthalten
           - Auth (Cookie-Session, CSRF, Profil)
