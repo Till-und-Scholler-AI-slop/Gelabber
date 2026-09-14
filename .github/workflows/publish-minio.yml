@@ -1,6 +1,7 @@
 # Publish the pinned MinIO CE image so `docker compose up` can pull it.
 # Source-only: deploy/compose/minio/Dockerfile (no FROM minio/minio).
-# After push, PATCH the org package to public so anonymous pulls work.
+# Org packages start private. PATCH visibility is attempted; GitHub returns
+# 404 for org containers, so a maintainer must flip Public once in the UI.
 name: Publish MinIO CE image
 
 on:

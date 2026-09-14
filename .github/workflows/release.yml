@@ -1,5 +1,6 @@
-# First-cut and later tagged releases. Also flips the MinIO GHCR package
-# to public so anonymous `docker compose up` can pull it.
+# Tagged releases. Org GHCR packages start private; GitHub has no REST/GraphQL
+# endpoint to flip visibility (PATCH returns 404 even with packages:write).
+# public-minio records that and links the one-time UI step.
 name: Release
 
 on:
@@ -29,12 +30,13 @@ jobs:
       - name: Create GitHub Release
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          TAG: ${{ github.event_name == 'workflow_dispatch' && inputs.tag || github.ref_name }}
         run: |
           set -euo pipefail
-          if [ '${{ github.event_name }}' = 'workflow_dispatch' ]; then
-            tag='${{ inputs.tag }}'
-          else
-            tag='${GITHUB_REF_NAME}'
+          tag="$TAG"
+          if [ -z "$tag" ] || [ "$tag" = "main" ]; then
+            echo "No version tag on this run (got '${tag:-empty}'). Skipping."
+            exit 0
           fi
           if gh release view "$tag" >/dev/null 2>&1; then
             echo "Release $tag already exists."
@@ -61,15 +63,16 @@ jobs:
           """)
           PY
           gh release create "$tag" \
-            --target '${{ github.sha }}' \
+            --target "${{ github.sha }}" \
             --title "Gelabber ${tag}" \
             --notes-file /tmp/notes.md \
             --generate-notes
 
   public-minio:
     runs-on: ubuntu-latest
+    continue-on-error: true
     steps:
-      - name: Make gelabber/minio public
+      - name: Check gelabber/minio visibility
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         run: |
@@ -81,13 +84,12 @@ jobs:
             echo "GHCR package gelabber/minio is public."
             exit 0
           fi
-          echo "Current visibility: ${vis:-unknown}. Setting public…"
+          echo "Current visibility: ${vis:-unknown}. Trying PATCH (org packages usually 404)…"
           gh api --method PATCH "$path" -f visibility=public || true
-          gh api --method PATCH "${path}/visibility" -f visibility=public || true
           vis="$(gh api "$path" --jq .visibility || true)"
           if [ "$vis" = "public" ]; then
             echo "GHCR package gelabber/minio is public."
             exit 0
           fi
-          echo "::error::GHCR package gelabber/minio is still ${vis:-unknown/private}. Maintainer UI: https://github.com/orgs/${{ github.repository_owner }}/packages/container/package/gelabber%2Fminio → Package settings → Change visibility → Public."
+          echo "::warning::GHCR package gelabber/minio is still ${vis:-unknown/private}. GitHub has no API to make org container packages public. Maintainer UI: https://github.com/orgs/${{ github.repository_owner }}/packages/container/package/gelabber%2Fminio → Package settings → Change visibility → Public."
           exit 1
