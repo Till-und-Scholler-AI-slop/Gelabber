@@ -1,0 +1,47 @@
+# Overlay: keep the stack, drop the bundled Caddy.
+# UDP (coturn + SFU ICE) still publishes on the host — never through Caddy.
+#
+#   cp .env.homelab.example .env
+#   docker compose -f compose.yaml -f compose.homelab.yaml up -d
+#
+# Or set COMPOSE_FILE in `.env` and run `docker compose up -d`.
+# Point your existing Caddy at Caddyfile.homelab.
+
+networks:
+  default:
+    name: ${GELABBER_NETWORK:-gelabber}
+
+services:
+  proxy:
+    profiles: ["bundled-caddy"]
+
+  web:
+    ports:
+      - "${GELABBER_WEB_BIND:-127.0.0.1}:${GELABBER_WEB_PORT:-8088}:80"
+
+  api:
+    ports:
+      - "${GELABBER_API_BIND:-127.0.0.1}:${GELABBER_API_PORT:-18080}:8080"
+    environment:
+      API_COOKIE_SECURE: ${API_COOKIE_SECURE:-true}
+      MINIO_PUBLIC_ENDPOINT: ${MINIO_PUBLIC_ENDPOINT:-http://127.0.0.1:9000}
+
+  media:
+    ports:
+      - "${GELABBER_MEDIA_BIND:-127.0.0.1}:${GELABBER_MEDIA_PORT:-18081}:8081"
+
+  # Do not publish DB / cache / object ports on the LAN. Host Caddy can
+  # still reach MinIO on loopback; a Caddy container on `gelabber` uses
+  # `minio:9000` and does not need the published port.
+  postgres:
+    ports: !override
+      - "${POSTGRES_BIND:-127.0.0.1}:${POSTGRES_PORT:-5432}:5432"
+
+  redis:
+    ports: !override
+      - "${REDIS_BIND:-127.0.0.1}:${REDIS_PORT:-6379}:6379"
+
+  minio:
+    ports: !override
+      - "${MINIO_API_BIND:-127.0.0.1}:${MINIO_API_PORT:-9000}:9000"
+      - "${MINIO_CONSOLE_BIND:-127.0.0.1}:${MINIO_CONSOLE_PORT:-9001}:9001"

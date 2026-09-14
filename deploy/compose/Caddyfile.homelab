@@ -1,0 +1,98 @@
+# Existing Caddy (host binary / systemd, or another Compose stack).
+# TLS stays with you — this file does not turn auto_https off.
+#
+# Host Caddy (defaults below):
+#   import the site block, or copy it into your Caddyfile.
+#
+# Caddy in Docker on network `gelabber`:
+#   GELABBER_API_UPSTREAM=api:8080
+#   GELABBER_WEB_UPSTREAM=web:80
+#   GELABBER_MEDIA_UPSTREAM=media:8081
+#   GELABBER_MINIO_UPSTREAM=minio:9000
+#
+# Host MUST be passed through. `/ws` compares browser Origin to Host;
+# Caddy's default Host is the upstream dial address and fails that check.
+
+{$GELABBER_DOMAIN:gelabber.home.arpa} {
+	encode gzip
+
+	handle /health {
+		reverse_proxy {$GELABBER_API_UPSTREAM:127.0.0.1:18080} {
+			header_up Host {host}
+			transport http {
+				dial_timeout 2s
+				response_header_timeout 5s
+				read_timeout 10s
+				write_timeout 10s
+			}
+		}
+	}
+
+	handle /ready {
+		reverse_proxy {$GELABBER_API_UPSTREAM:127.0.0.1:18080} {
+			header_up Host {host}
+			transport http {
+				dial_timeout 2s
+				response_header_timeout 5s
+				read_timeout 10s
+				write_timeout 10s
+			}
+		}
+	}
+
+	handle /ws {
+		reverse_proxy {$GELABBER_API_UPSTREAM:127.0.0.1:18080} {
+			header_up Host {host}
+			transport http {
+				dial_timeout 5s
+				read_timeout 0
+				write_timeout 0
+			}
+		}
+	}
+
+	@api path /api /api/*
+	handle @api {
+		reverse_proxy {$GELABBER_API_UPSTREAM:127.0.0.1:18080} {
+			header_up Host {host}
+			transport http {
+				dial_timeout 5s
+				response_header_timeout 30s
+				read_timeout 60s
+				write_timeout 60s
+			}
+		}
+	}
+
+	@media path /media /media/*
+	handle @media {
+		reverse_proxy {$GELABBER_MEDIA_UPSTREAM:127.0.0.1:18081} {
+			header_up Host {host}
+			transport http {
+				dial_timeout 5s
+				read_timeout 0
+				write_timeout 0
+			}
+		}
+	}
+
+	handle {
+		reverse_proxy {$GELABBER_WEB_UPSTREAM:127.0.0.1:8088} {
+			header_up Host {host}
+			transport http {
+				dial_timeout 5s
+				response_header_timeout 30s
+				read_timeout 30s
+				write_timeout 30s
+			}
+		}
+	}
+}
+
+# Optional: browser PUTs go to MINIO_PUBLIC_ENDPOINT. Own subdomain,
+# no path prefix (presigned URLs sign the host).
+# {$GELABBER_MINIO_DOMAIN:minio.home.arpa} {
+# 	reverse_proxy {$GELABBER_MINIO_UPSTREAM:127.0.0.1:9000} {
+# 		header_up Host {host}
+# 	}
+# }

@@ -10,6 +10,9 @@
 :80 {
 	handle /health {
 		reverse_proxy api:8080 {
+			# /ws compares Origin to Host. Default Host is the upstream
+			# dial address (`api:8080`) and fails the same-origin check.
+			header_up Host {host}
 			transport http {
 				dial_timeout 2s
 				response_header_timeout 5s
@@ -21,6 +24,7 @@
 
 	handle /ready {
 		reverse_proxy api:8080 {
+			header_up Host {host}
 			transport http {
 				dial_timeout 2s
 				response_header_timeout 5s
@@ -33,6 +37,7 @@
 	# Native WS gateway (issue #6). Caddy upgrades automatically.
 	handle /ws {
 		reverse_proxy api:8080 {
+			header_up Host {host}
 			transport http {
 				dial_timeout 5s
 				read_timeout 0
@@ -46,6 +51,7 @@
 	@api path /api /api/*
 	handle @api {
 		reverse_proxy api:8080 {
+			header_up Host {host}
 			transport http {
 				dial_timeout 5s
 				response_header_timeout 30s
@@ -58,6 +64,7 @@
 	@media path /media /media/*
 	handle @media {
 		reverse_proxy media:8081 {
+			header_up Host {host}
 			transport http {
 				dial_timeout 5s
 				read_timeout 0
@@ -68,6 +75,7 @@
 
 	handle {
 		reverse_proxy web:80 {
+			header_up Host {host}
 			transport http {
 				dial_timeout 5s
 				response_header_timeout 30s

@@ -33,6 +33,44 @@ docker compose --profile observability up
 
 Prometheus **v3.14.0** scrapt `api:8080/metrics` und `media:8081/metrics` im Compose-Netz (nicht über Caddy). Grafana **13.2.1** liegt auf [http://localhost:3000](http://localhost:3000) (admin / `gelabber`, anonymer Viewer). Kein LiveKit, kein APM-SaaS.
 
+## Homelab mit bestehendem Caddy
+
+Die Compose ist schwer wegen Postgres, Redis, MinIO, coturn und dem SFU — nicht wegen des Proxys. Dein Caddy bleibt der TLS-Terminator. UDP (3478 + Relay 49160–49200, SFU-ICE 10000–10031) geht **weiter nicht** durch Caddy; die Ports müssen auf dem Host (und ggf. Router) offen sein.
+
+Zwei Wege:
+
+**1. Compose-Caddy behalten, deinen davor** — kleinster Diff. In `deploy/compose/.env`:
+
+```bash
+GELABBER_HTTP_BIND=127.0.0.1
+GELABBER_HTTP_PORT=8088
+```
+
+Dann `docker compose up -d` und in deiner Caddyfile:
+
+```
+gelabber.example.com {
+	reverse_proxy 127.0.0.1:8088 {
+		header_up Host {host}
+	}
+}
+```
+
+`header_up Host {host}` ist Pflicht: `/ws` vergleicht Browser-`Origin` mit `Host`. Ohne Durchreichen wird `Host` zum Upstream (`127.0.0.1:8088` bzw. `api:8080`) und der Handshake kommt mit `403`.
+
+**2. Compose-Caddy weglassen** — Overlay published web/api/media auf Loopback, dein Caddy routet die Pfade selbst (`deploy/compose/Caddyfile.homelab`):
+
+```bash
+cp deploy/compose/.env.homelab.example deploy/compose/.env
+# Domain, LAN-/WAN-IP, Secrets, MINIO_PUBLIC_ENDPOINT setzen
+cd deploy/compose
+docker compose up -d
+```
+
+`.env.homelab.example` setzt `COMPOSE_FILE=compose.yaml:compose.homelab.yaml`. Postgres, Redis und MinIO hängen im Overlay nur an Loopback. Caddy in Docker: Stack an Netz `gelabber` hängen und die Upstreams auf `web:80`, `api:8080`, `media:8081` stellen (`minio:9000` braucht den Host-Port nicht).
+
+Hinter TLS: `API_COOKIE_SECURE=true`. Uploads: `MINIO_PUBLIC_ENDPOINT` auf die URL, die der Browser wirklich öffnet (eigene Subdomain, kein Path-Prefix — Presigns signieren den Host), plus `MINIO_API_CORS_ALLOW_ORIGIN` auf die Gelabber-Origin. Voice: `TURN_PUBLIC_HOST`, `TURN_EXTERNAL_IP` und `MEDIA_ADVERTISED_IP` auf die IP, die Clients erreichen (hinter NAT oft `WAN/LAN` bei `TURN_EXTERNAL_IP`). Grafana/Prometheus bleiben auf den Host-Ports, nicht hinter Caddy.
+
 ### Volume-Backup
 
 Zwei persistente Volumes: `gelabber_postgres_data` und `gelabber_minio_data`. Redis speichert nichts. Ein Node, kein Multi-Region — Dump plus Object-Store reicht:
@@ -59,9 +97,9 @@ UDP für coturn (3478 + Relay) und SFU-ICE (10000–10031) läuft **nicht** durc
 | `api/` | Rust-API: Axum 0.8.9, Tokio 1.53.1, **sqlx 0.9.0** (Postgres, gelockt für v1), Redis-Client, Tracing als JSON (Docker: `rust:1.98.1-slim-trixie` → `debian:trixie-slim`) |
 | `web/` | React + Vite (Build: `node:26.8.2-trixie`, Runtime: `nginx:1.31.5-alpine`) |
 | `media/` | Eigener SFU (webrtc **0.20.5**, gelockt; 0.21 ist RC): Room = Sprachkanal, RTP-Forward, kurze Join-Tickets. Dieselben Rust-Images wie die API |
-| `deploy/compose` | Compose-Kern: Caddy 2.11.4, Postgres 18.6, Redis 8.10.1, MinIO CE `RELEASE.2025-10-15T17-29-55Z`, **coturn 4.18.0** (UDP nicht durch Caddy). Optional `--profile observability`: Prometheus 3.14.0 + Grafana 13.2.1 |
+| `deploy/compose` | Compose-Kern: Caddy 2.11.4, Postgres 18.6, Redis 8.10.1, MinIO CE `RELEASE.2025-10-15T17-29-55Z`, **coturn 4.18.0** (UDP nicht durch Caddy). Homelab: `compose.homelab.yaml` + `Caddyfile.homelab` (bestehendes Caddy). Optional `--profile observability`: Prometheus 3.14.0 + Grafana 13.2.1 |
 
-Env-Beispiele: `deploy/compose/.env.example`, `api/.env.example`, `web/.env.example`, `media/.env.example`.
+Env-Beispiele: `deploy/compose/.env.example`, `deploy/compose/.env.homelab.example`, `api/.env.example`, `web/.env.example`, `media/.env.example`.
 
 ## API
 
@@ -225,7 +263,7 @@ Serverseitig, ein Prozess (kein Multi-Node). `0` in der Env schaltet den jeweili
 
 Nachrichtentext bleibt 2000 Zeichen, Datei 25 MiB. Überzug: `429` + `{"error":"rate_limited"|"quota_exceeded","retry_after"?}` und Header `Retry-After`. Die UI mapped den Code (Toast / FormError) und lässt den Submit-Button nach dem Request zurück — kein Spinner.
 
-Caddy **2.11.4**: Health/Ready 10 s, `/api` 60 s, `/ws` und `/media` ohne Read/Write-Timeout (lange Sockets).
+Caddy **2.11.4**: Health/Ready 10 s, `/api` 60 s, `/ws` und `/media` ohne Read/Write-Timeout (lange Sockets). Jeder `reverse_proxy` setzt `header_up Host {host}` (Origin-Check auf `/ws`). Dasselbe gilt für ein bestehendes Caddy vor der Compose (`Caddyfile.homelab`).
 
 Media exportiert `GET /metrics` mit `gelabber_media_rooms`, `gelabber_media_peers`, `gelabber_media_forwarded_bytes_total`, `gelabber_media_ice_fails_total`. `/health` und `/ready` bleiben JSON.
 
