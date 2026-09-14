@@ -73,6 +73,10 @@ class FakePeer implements PeerConnection {
   }
 
   async setLocalDescription(desc?: { type: string }): Promise<void> {
+    if (desc?.type === "rollback") {
+      this.signalingState = "stable";
+      return;
+    }
     if (desc?.type === "offer") this.signalingState = "have-local-offer";
     if (desc?.type === "answer") this.signalingState = "stable";
     this.onicecandidate?.({
@@ -85,6 +89,9 @@ class FakePeer implements PeerConnection {
   }
 
   async setRemoteDescription(desc: { type: string }): Promise<void> {
+    if (desc.type === "offer" && this.signalingState === "have-local-offer") {
+      throw new Error("InvalidStateError");
+    }
     this.remoteDescription = desc;
     this.signalingState =
       desc.type === "offer" ? "have-remote-offer" : "stable";
@@ -153,6 +160,7 @@ function install(opts?: {
   const errors: unknown[] = [];
   let getUserMediaCalls = 0;
   let getDisplayMediaCalls = 0;
+  let lastUserMedia: MediaStreamConstraints | undefined;
 
   configureVoice({
     userId: () => opts?.userId ?? "u-self",
@@ -184,6 +192,7 @@ function install(opts?: {
     },
     getUserMedia: async (constraints) => {
       getUserMediaCalls += 1;
+      lastUserMedia = constraints;
       if (opts?.holdMedia) await opts.holdMedia;
       if (opts?.media === false) throw new Error("denied");
       if (constraints.video) return fakeVideoStream("local-cam");
@@ -230,6 +239,7 @@ function install(opts?: {
     emitMedia: (frame: MediaServerFrame) => onMedia?.(frame),
     getUserMediaCalls: () => getUserMediaCalls,
     getDisplayMediaCalls: () => getDisplayMediaCalls,
+    lastUserMedia: () => lastUserMedia,
   };
 }
 
@@ -374,14 +384,33 @@ describe("voice session", () => {
     expect(peers[0]?.ice[0]?.candidate).toContain("candidate:1");
   });
 
-  it("answers an SFU renegotiation offer on the media path", async () => {
-    const { peers, mediaSent, emitMedia } = install();
+  it("captures voice with echo cancellation on a single channel", async () => {
+    const { lastUserMedia, peers } = install();
     joinVoice({ serverId: "srv", channelId: "voice", channelName: "Lounge" });
     await vi.waitFor(() => expect(peers.length).toBe(1));
+    expect(lastUserMedia()).toEqual({
+      audio: {
+        echoCancellation: true,
+        noiseSuppression: true,
+        autoGainControl: true,
+        channelCount: 1,
+      },
+      video: false,
+    });
+  });
+
+  it("answers a colliding SFU offer instead of throwing InvalidStateError", async () => {
+    const { peers, mediaSent, emitMedia, errors } = install();
+    joinVoice({ serverId: "srv", channelId: "voice", channelName: "Lounge" });
+    await vi.waitFor(() =>
+      expect(peers[0]?.signalingState).toBe("have-local-offer"),
+    );
     emitMedia({ op: "o", sdp: "v=0\r\no=- 9 9 IN IP4 127.0.0.1\r\n" });
     await vi.waitFor(() =>
       expect(mediaSent.some((frame) => frame.op === "a")).toBe(true),
     );
+    expect(errors).toHaveLength(0);
+    expect(peers[0]?.signalingState).toBe("stable");
     expect(peers[0]?.remoteDescription?.type).toBe("offer");
   });
 
@@ -500,6 +529,14 @@ describe("voice session", () => {
         mediaSent.some((frame) => frame.op === "p" && frame.k === "s"),
       ).toBe(true),
     );
+    const videoSenders = peers[0]?.senders.filter(
+      (sender) => sender.track?.kind === "video",
+    );
+    const audioSenders = peers[0]?.senders.filter(
+      (sender) => sender.track && sender.track.kind !== "video",
+    );
+    expect(videoSenders).toHaveLength(1);
+    expect(audioSenders).toHaveLength(1);
   });
 
   it("stops camera locally first, then unpubs", async () => {
@@ -547,13 +584,17 @@ describe("voice session", () => {
     expect(useVoice.getState().live).toBe(true);
     expect(useVoice.getState().localLive).toBeNull();
     expect(useVoiceRoster.getState().live.srv?.voice).toBe("u-self");
-    await vi.waitFor(() =>
-      expect(useVoice.getState().localLive).toBeTruthy(),
-    );
+    await vi.waitFor(() => expect(useVoice.getState().localLive).toBeTruthy());
     expect(useVoice.getState().participants["u-self"]?.pubs).toContain("l");
     expect(sent.some((frame) => "sdp" in frame && frame.sdp)).toBe(false);
     expect(
-      sent.filter((frame) => frame.op === "sig" && frame.t === "p" && "k" in frame && frame.k === "l"),
+      sent.filter(
+        (frame) =>
+          frame.op === "sig" &&
+          frame.t === "p" &&
+          "k" in frame &&
+          frame.k === "l",
+      ),
     ).toEqual([{ op: "sig", t: "p", s: "srv", c: "voice", k: "l" }]);
     await vi.waitFor(() =>
       expect(

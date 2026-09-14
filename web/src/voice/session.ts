@@ -28,7 +28,15 @@ import {
   mediaWsUrl,
   openMediaSocket,
   requestMediaTicket,
+  tuneAudioSdp,
 } from "./media.ts";
+
+const MIC_AUDIO: MediaTrackConstraints = {
+  echoCancellation: true,
+  noiseSuppression: true,
+  autoGainControl: true,
+  channelCount: 1,
+};
 
 export type VoiceStatus = "idle" | "joined";
 
@@ -106,6 +114,11 @@ export type PeerConnection = {
   createAnswer(): Promise<{ type: string; sdp?: string }>;
   setLocalDescription(desc: { type: string; sdp?: string }): Promise<void>;
   setRemoteDescription(desc: { type: string; sdp?: string }): Promise<void>;
+  getTransceivers?(): {
+    sender?: { track?: { kind: string } | null };
+    receiver?: { track?: { kind: string } | null };
+    setCodecPreferences?(codecs: { mimeType: string }[]): void;
+  }[];
   addIceCandidate(candidate: {
     candidate: string;
     sdpMid: string | null;
@@ -201,9 +214,44 @@ function defaultAttachRemote(stream: MediaStream): void {
   if (!remoteAudio) {
     remoteAudio = new Audio();
     remoteAudio.autoplay = true;
+    remoteAudio.setAttribute("playsinline", "true");
   }
   remoteAudio.srcObject = stream;
+  void remoteAudio.play()?.catch(() => undefined);
   applyLocalAudio();
+}
+
+function preferOpus(pc: PeerConnection): void {
+  const ctor = (
+    globalThis as unknown as {
+      RTCRtpSender?: {
+        getCapabilities?: (
+          kind: string,
+        ) => { codecs: { mimeType: string }[] } | null;
+      };
+    }
+  ).RTCRtpSender;
+  const caps = ctor?.getCapabilities?.("audio");
+  if (!caps) return;
+  const preferred = [
+    ...caps.codecs.filter((c) => c.mimeType.toLowerCase() === "audio/opus"),
+    ...caps.codecs.filter((c) => c.mimeType.toLowerCase() !== "audio/opus"),
+  ];
+  for (const transceiver of pc.getTransceivers?.() ?? []) {
+    const kind =
+      transceiver.sender?.track?.kind ?? transceiver.receiver?.track?.kind;
+    if (kind === "audio") {
+      transceiver.setCodecPreferences?.(preferred);
+    }
+  }
+}
+
+function withTunedSdp(desc: { type: string; sdp?: string }): {
+  type: string;
+  sdp?: string;
+} {
+  if (!desc.sdp) return desc;
+  return { type: desc.type, sdp: tuneAudioSdp(desc.sdp) };
 }
 
 export function configureVoice(next: Partial<VoiceDeps>): void {
@@ -308,8 +356,7 @@ export function parseRemoteStreamId(
 
 function onSig(event: SigEvent): void {
   const state = useVoice.getState();
-  const watchingHere =
-    state.watching && event.c === state.watchChannelId;
+  const watchingHere = state.watching && event.c === state.watchChannelId;
   const inRoom = state.status === "joined" && event.c === state.channelId;
   if (
     watchingHere &&
@@ -401,7 +448,9 @@ function onErr(err: ErrFrame): void {
       stopPeer();
       useVoice.setState({ ...idle });
       const code: ApiErrorCode =
-        err.e === "forbidden" || err.e === "not_found" || err.e === "bad_request"
+        err.e === "forbidden" ||
+        err.e === "not_found" ||
+        err.e === "bad_request"
           ? err.e
           : "bad_request";
       deps?.onError?.(new ApiError(code, 0, errorMessage(code)));
@@ -597,16 +646,26 @@ async function applyRemoteDescription(
 ): Promise<void> {
   if (!peer) return;
   if (type === "offer") {
+    const collision = makingOffer || signalingState() !== "stable";
+    if (collision) {
+      // Polite peer: drop our in-flight offer so a late-joiner can take
+      // the SFU's video renegotiation instead of throwing InvalidStateError.
+      try {
+        await peer.setLocalDescription({ type: "rollback" });
+      } catch {
+        // Chromium may implicit-rollback inside setRemoteDescription.
+      }
+    }
     sfuOffered = true;
   }
-  await peer.setRemoteDescription({ type, sdp });
+  await peer.setRemoteDescription({ type, sdp: tuneAudioSdp(sdp) });
   const queued = pendingIce;
   pendingIce = [];
   for (const candidate of queued) {
     await peer.addIceCandidate(candidate);
   }
   if (type === "offer") {
-    const answer = await peer.createAnswer();
+    const answer = withTunedSdp(await peer.createAnswer());
     await peer.setLocalDescription(answer);
     if (answer.sdp) {
       media?.send({ op: "a", sdp: answer.sdp });
@@ -932,8 +991,11 @@ async function startLocalVideo(kind: "v" | "s" | "l"): Promise<void> {
     kind === "v"
       ? (deps?.getUserMedia ?? defaultGetUserMedia)
       : (deps?.getDisplayMedia ?? defaultGetDisplayMedia);
+  // Video only for camera / screen / live. Display audio mixed into the
+  // voice m-line (and tagged as a second "a" pub) was echo-y on deploy and
+  // added a video-sized SDP the 12 KiB cap then rejected.
   const constraints: MediaStreamConstraints =
-    kind === "v" ? { audio: false, video: true } : { audio: true, video: true };
+    kind === "v" ? { audio: false, video: true } : { video: true };
   let stream: MediaStream;
   try {
     stream = await getMedia(constraints);
@@ -949,7 +1011,11 @@ async function startLocalVideo(kind: "v" | "s" | "l"): Promise<void> {
       awaitingLive = null;
       useVoice.setState({ live: false, localLive: null });
       if (state.serverId && state.channelId) {
-        applyLiveEnd(state.serverId, state.channelId, currentUserId() ?? undefined);
+        applyLiveEnd(
+          state.serverId,
+          state.channelId,
+          currentUserId() ?? undefined,
+        );
       }
     }
     return;
@@ -1003,7 +1069,11 @@ function stopLocalVideo(kind: "v" | "s" | "l"): void {
     liveStream = null;
     useVoice.setState({ live: false, localLive: null });
     if (state.serverId && state.channelId) {
-      applyLiveEnd(state.serverId, state.channelId, currentUserId() ?? undefined);
+      applyLiveEnd(
+        state.serverId,
+        state.channelId,
+        currentUserId() ?? undefined,
+      );
     }
   }
   const self = currentUserId();
@@ -1023,7 +1093,7 @@ async function publishLocal(
   stream: MediaStream,
 ): Promise<void> {
   if (!peer) return;
-  const tracks = kind === "v" ? stream.getVideoTracks() : stream.getTracks();
+  const tracks = stream.getVideoTracks();
   if (tracks.length === 0) return;
   media?.send({ op: "p", k: kind });
   for (const track of tracks) {
@@ -1082,7 +1152,8 @@ async function offerIfStable(
         return;
       }
       if (opts?.initial && sfuOffered) return;
-      const offer = await peer.createOffer();
+      preferOpus(peer);
+      const offer = withTunedSdp(await peer.createOffer());
       if (generation !== mine || signalingState() !== "stable") {
         if (!opts?.initial) needOffer = true;
         return;
@@ -1148,7 +1219,7 @@ async function startPeer(serverId: string, channelId: string): Promise<void> {
   };
 
   try {
-    const stream = await getUserMedia({ audio: true, video: false });
+    const stream = await getUserMedia({ audio: MIC_AUDIO, video: false });
     if (generation !== mine) {
       stream.getTracks().forEach((track) => track.stop());
       return;
@@ -1158,6 +1229,7 @@ async function startPeer(serverId: string, channelId: string): Promise<void> {
     for (const track of stream.getTracks()) {
       pc.addTrack?.(track, stream);
     }
+    preferOpus(pc);
     const self = currentUserId();
     if (self && useVoice.getState().channelId === channelId) {
       setPub(self, "a", true);
@@ -1240,9 +1312,11 @@ function attachWatchIncoming(
     if (!watchAudio) {
       watchAudio = new Audio();
       watchAudio.autoplay = true;
+      watchAudio.setAttribute("playsinline", "true");
     }
     const mix = stream ?? new MediaStream([track]);
     watchAudio.srcObject = mix;
+    void watchAudio.play()?.catch(() => undefined);
     return;
   }
   const id = stream?.id ?? track.id;
@@ -1265,15 +1339,25 @@ async function applyWatchRemote(
   sdp: string,
 ): Promise<void> {
   if (!watchPeer) return;
-  if (type === "offer") watchSfuOffered = true;
-  await watchPeer.setRemoteDescription({ type, sdp });
+  if (type === "offer") {
+    const collision = watchMakingOffer || watchSignalingState() !== "stable";
+    if (collision) {
+      try {
+        await watchPeer.setLocalDescription({ type: "rollback" });
+      } catch {
+        // implicit rollback
+      }
+    }
+    watchSfuOffered = true;
+  }
+  await watchPeer.setRemoteDescription({ type, sdp: tuneAudioSdp(sdp) });
   const queued = watchPendingIce;
   watchPendingIce = [];
   for (const candidate of queued) {
     await watchPeer.addIceCandidate(candidate);
   }
   if (type === "offer") {
-    const answer = await watchPeer.createAnswer();
+    const answer = withTunedSdp(await watchPeer.createAnswer());
     await watchPeer.setLocalDescription(answer);
     if (answer.sdp) {
       watchMedia?.send({ op: "a", sdp: answer.sdp });
@@ -1329,7 +1413,8 @@ async function watchOfferIfStable(
         return;
       }
       if (opts?.initial && watchSfuOffered) return;
-      const offer = await watchPeer.createOffer();
+      preferOpus(watchPeer);
+      const offer = withTunedSdp(await watchPeer.createOffer());
       if (watchGeneration !== mine || watchSignalingState() !== "stable") {
         if (!opts?.initial) watchNeedOffer = true;
         return;

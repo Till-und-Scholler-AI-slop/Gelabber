@@ -1,6 +1,6 @@
 import { describe, expect, it } from "vitest";
 
-import { isOurTicket } from "./media.ts";
+import { isOurTicket, tuneAudioSdp } from "./media.ts";
 
 describe("media ticket shape", () => {
   it("accepts our 12-char alphabet and rejects product tokens", () => {
@@ -8,5 +8,32 @@ describe("media ticket shape", () => {
     expect(isOurTicket("livekit_jwt_xxx")).toBe(false);
     expect(isOurTicket("SHORT")).toBe(false);
     expect(isOurTicket("abcdefghi0mn")).toBe(false);
+  });
+
+  it("adds Opus FEC and a voice bitrate when fmtp is missing", () => {
+    const sdp = [
+      "v=0",
+      "m=audio 9 UDP/TLS/RTP/SAVPF 111",
+      "a=rtpmap:111 opus/48000/2",
+      "a=mid:0",
+      "",
+    ].join("\r\n");
+    const tuned = tuneAudioSdp(sdp);
+    expect(tuned).toContain("a=fmtp:111 ");
+    expect(tuned).toContain("useinbandfec=1");
+    expect(tuned).toContain("maxaveragebitrate=128000");
+    expect(tuned).toContain("stereo=0");
+  });
+
+  it("raises an existing Opus fmtp to FEC instead of duplicating the line", () => {
+    const sdp = [
+      "a=rtpmap:111 opus/48000/2",
+      "a=fmtp:111 minptime=10;useinbandfec=0",
+      "",
+    ].join("\r\n");
+    const tuned = tuneAudioSdp(sdp);
+    expect(tuned.match(/a=fmtp:111 /g)).toHaveLength(1);
+    expect(tuned).toContain("useinbandfec=1");
+    expect(tuned).toContain("minptime=10");
   });
 });

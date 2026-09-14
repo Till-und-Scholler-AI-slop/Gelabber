@@ -116,3 +116,49 @@ export function openMediaSocket(url: string): MediaSocket {
 export function isOurTicket(ticket: string): boolean {
   return /^[abcdefghjkmnpqrstuvwxyz23456789]{12}$/.test(ticket);
 }
+
+const OPUS_FMTP =
+  "minptime=10;useinbandfec=1;stereo=0;maxaveragebitrate=128000";
+
+/**
+ * Keep voice on Opus with in-band FEC. Default Chrome fmtp is fine on a
+ * LAN; without FEC a few lost packets on a real homelab path sound torn.
+ */
+export function tuneAudioSdp(sdp: string): string {
+  const nl = sdp.includes("\r\n") ? "\r\n" : "\n";
+  const lines = sdp.split(/\r?\n/);
+  const out: string[] = [];
+  for (let i = 0; i < lines.length; i += 1) {
+    const line = lines[i] ?? "";
+    out.push(line);
+    const rtpmap = /^a=rtpmap:(\d+) opus\/48000/i.exec(line);
+    if (!rtpmap) continue;
+    const pt = rtpmap[1] ?? "";
+    const prefix = `a=fmtp:${pt}`;
+    const next = lines[i + 1] ?? "";
+    if (next.toLowerCase().startsWith(prefix.toLowerCase())) {
+      i += 1;
+      const sp = next.indexOf(" ");
+      const params = sp >= 0 ? next.slice(sp + 1).trim() : "";
+      const parts = new Map<string, string>();
+      for (const piece of params.split(";")) {
+        const trimmed = piece.trim();
+        if (!trimmed) continue;
+        const eq = trimmed.indexOf("=");
+        if (eq <= 0) continue;
+        parts.set(trimmed.slice(0, eq).toLowerCase(), trimmed.slice(eq + 1));
+      }
+      if (!parts.has("minptime")) parts.set("minptime", "10");
+      parts.set("useinbandfec", "1");
+      parts.set("stereo", "0");
+      parts.set("maxaveragebitrate", "128000");
+      const body = [...parts.entries()]
+        .map(([key, value]) => `${key}=${value}`)
+        .join(";");
+      out.push(`${prefix} ${body}`);
+    } else {
+      out.push(`${prefix} ${OPUS_FMTP}`);
+    }
+  }
+  return out.join(nl);
+}

@@ -10,10 +10,17 @@ fn redis_url() -> String {
     std::env::var("REDIS_URL").unwrap_or_else(|_| "redis://127.0.0.1:6379".to_owned())
 }
 
-async fn serve() -> Option<(std::net::SocketAddr, redis::Client)> {
+async fn serve() -> (std::net::SocketAddr, redis::Client) {
     let redis_url = redis_url();
-    let redis = redis::Client::open(redis_url.as_str()).ok()?;
-    redis.get_multiplexed_async_connection().await.ok()?;
+    let redis = redis::Client::open(redis_url.as_str()).unwrap_or_else(|err| {
+        panic!("REDIS_URL must be a redis URL ({redis_url}): {err}");
+    });
+    redis
+        .get_multiplexed_async_connection()
+        .await
+        .unwrap_or_else(|err| {
+            panic!("REDIS_URL must be reachable ({redis_url}): {err}");
+        });
     let config = Config::from_source(|key| match key {
         "REDIS_URL" => Some(redis_url.clone()),
         "MEDIA_ICE_BIND" => Some("127.0.0.1:0".to_owned()),
@@ -24,19 +31,19 @@ async fn serve() -> Option<(std::net::SocketAddr, redis::Client)> {
     })
     .expect("config");
     let state = gelabber_media::AppState::from_config(&config).expect("state");
-    let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.ok()?;
-    let addr = listener.local_addr().ok()?;
+    let listener = tokio::net::TcpListener::bind("127.0.0.1:0")
+        .await
+        .expect("bind media test listener");
+    let addr = listener.local_addr().expect("local addr");
     tokio::spawn(async move {
         axum::serve(listener, app(state)).await.expect("serve");
     });
-    Some((addr, redis))
+    (addr, redis)
 }
 
 #[tokio::test]
 async fn rejects_join_without_ticket() {
-    let Some((addr, _)) = serve().await else {
-        return;
-    };
+    let (addr, _) = serve().await;
     let (mut ws, _) = tokio_tungstenite::connect_async(format!("ws://{addr}/media/ws"))
         .await
         .expect("ws");
@@ -54,9 +61,7 @@ async fn rejects_join_without_ticket() {
 
 #[tokio::test]
 async fn accepts_short_ticket_and_binds_room() {
-    let Some((addr, redis)) = serve().await else {
-        return;
-    };
+    let (addr, redis) = serve().await;
     let user = uuid::Uuid::from_u128(1);
     let server = uuid::Uuid::from_u128(2);
     let channel = uuid::Uuid::from_u128(3);
