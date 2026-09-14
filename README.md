@@ -35,7 +35,9 @@ Prometheus **v3.14.0** scrapt `api:8080/metrics` und `media:8081/metrics` im Com
 
 ## Homelab mit bestehendem Caddy
 
-Die Compose ist schwer wegen Postgres, Redis, MinIO, coturn und dem SFU — nicht wegen des Proxys. Dein Caddy bleibt der TLS-Terminator. UDP (3478 + Relay 49160–49200, SFU-ICE 10000–10031) geht **weiter nicht** durch Caddy; die Ports müssen auf dem Host (und ggf. Router) offen sein.
+Die Compose ist schwer wegen Postgres, Redis, MinIO, coturn und dem SFU — nicht wegen des Proxys. Dein Caddy bleibt der TLS-Terminator. UDP (TURN + SFU-ICE 10000–10031) geht **weiter nicht** durch Caddy; die Ports müssen auf dem Host (und ggf. Router) offen sein.
+
+**3478 schon belegt** (`Bind … port is already allocated`): typisch bestehendes coturn. Das Homelab-Overlay startet Gelabbers coturn deshalb nicht. `TURN_PUBLIC_HOST` / `TURN_PORT` / User / Pass auf deinen Server setzen (aus einem Container ist `127.0.0.1` falsch — LAN-IP oder `host.docker.internal`). Zweiter coturn: `COMPOSE_PROFILES=bundled-coturn` plus freien `TURN_PORT` (z. B. 3479) und Relays (`TURN_RELAY_MIN`/`TURN_RELAY_MAX`). Ohne Overlay (Weg 1): in `.env` nur `TURN_PORT=3479` setzen.
 
 Zwei Wege:
 
@@ -283,7 +285,7 @@ cargo run -p gelabber-media
 
 `media/` ist die Binary, nicht mehr nur ein Stub. **webrtc 0.20.5** ist gelockt (0.21 ist RC; str0m wurde nicht gewählt). Room = Sprachkanal. Join nur mit internem 12-Zeichen-Ticket aus Redis (`GETDEL`). RTP wird von Publishern an die anderen Peers im Room weitergereicht. Ein Prozess, kein Mesh, kein Recording, kein LiveKit.
 
-coturn **4.18.0** (`coturn/coturn:4.18.0`) hängt in Compose an 3478/udp+tcp und 49160–49200/udp. Der SFU published 10000–10031/udp (ICE-Lite Host, `MEDIA_ADVERTISED_IP`). Caddy bleibt TCP-only.
+coturn **4.18.0** (`coturn/coturn:4.18.0`) hängt in Compose an `TURN_PORT` (Default 3478/udp+tcp) und `TURN_RELAY_MIN`–`TURN_RELAY_MAX` (Default 49160–49200/udp). Der SFU published 10000–10031/udp (ICE-Lite Host, `MEDIA_ADVERTISED_IP`). Caddy bleibt TCP-only. Homelab-Overlay startet coturn nicht, wenn 3478 schon belegt ist.
 
 `GET /metrics` und `GET /media/metrics`: `gelabber_media_rooms`, `gelabber_media_peers`, `gelabber_media_forwarded_bytes_total`, `gelabber_media_ice_fails_total`.
 

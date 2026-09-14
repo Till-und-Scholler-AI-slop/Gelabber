@@ -1,5 +1,7 @@
-# Overlay: keep the stack, drop the bundled Caddy.
-# UDP (coturn + SFU ICE) still publishes on the host — never through Caddy.
+# Overlay: keep the stack, drop the bundled Caddy and (by default) coturn.
+# 3478 is often already taken on a homelab. Point TURN_* at the existing
+# server, or opt back in: COMPOSE_PROFILES=bundled-coturn and a free
+# TURN_PORT / relay range. SFU ICE UDP still publishes on the host.
 #
 #   cp .env.homelab.example .env
 #   docker compose -f compose.yaml -f compose.homelab.yaml up -d
@@ -15,6 +17,9 @@ services:
   proxy:
     profiles: ["bundled-caddy"]
 
+  coturn:
+    profiles: ["bundled-coturn"]
+
   web:
     ports:
       - "${GELABBER_WEB_BIND:-127.0.0.1}:${GELABBER_WEB_PORT:-8088}:80"
@@ -29,6 +34,12 @@ services:
   media:
     ports:
       - "${GELABBER_MEDIA_BIND:-127.0.0.1}:${GELABBER_MEDIA_PORT:-18081}:8081"
+    environment:
+      # Host / existing TURN — not the compose service name (that is gone
+      # unless COMPOSE_PROFILES=bundled-coturn).
+      TURN_URLS: ${MEDIA_TURN_URLS:-stun:${TURN_PUBLIC_HOST:-127.0.0.1}:${TURN_PORT:-3478},turn:${TURN_PUBLIC_HOST:-127.0.0.1}:${TURN_PORT:-3478}}
+    extra_hosts:
+      - "host.docker.internal:host-gateway"
 
   # Do not publish DB / cache / object ports on the LAN. Host Caddy can
   # still reach MinIO on loopback; a Caddy container on `gelabber` uses

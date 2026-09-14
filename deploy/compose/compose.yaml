@@ -50,7 +50,7 @@ services:
       MINIO_ROOT_USER: ${MINIO_ROOT_USER:-gelabber}
       MINIO_ROOT_PASSWORD: ${MINIO_ROOT_PASSWORD:-gelabbergelabber}
       MINIO_BUCKET: ${MINIO_BUCKET:-gelabber}
-      TURN_URLS: stun:${TURN_PUBLIC_HOST:-127.0.0.1}:${TURN_PORT:-3478},turn:${TURN_PUBLIC_HOST:-127.0.0.1}:${TURN_PORT:-3478}
+      TURN_URLS: ${TURN_URLS:-stun:${TURN_PUBLIC_HOST:-127.0.0.1}:${TURN_PORT:-3478},turn:${TURN_PUBLIC_HOST:-127.0.0.1}:${TURN_PORT:-3478}}
       TURN_USERNAME: ${TURN_USERNAME:-gelabber}
       TURN_PASSWORD: ${TURN_PASSWORD:-gelabberturn}
       MEDIA_TICKET_TTL_SECS: "30"
@@ -79,7 +79,7 @@ services:
       MEDIA_ICE_BIND: 0.0.0.0:10000
       MEDIA_ICE_PORT_MAX: "10031"
       MEDIA_ADVERTISED_IP: ${MEDIA_ADVERTISED_IP:-127.0.0.1}
-      TURN_URLS: stun:coturn:3478,turn:coturn:3478
+      TURN_URLS: ${MEDIA_TURN_URLS:-stun:coturn:3478,turn:coturn:3478}
       TURN_USERNAME: ${TURN_USERNAME:-gelabber}
       TURN_PASSWORD: ${TURN_PASSWORD:-gelabberturn}
     expose:
@@ -91,17 +91,19 @@ services:
         condition: service_healthy
       coturn:
         condition: service_started
+        required: false
     restart: unless-stopped
 
-  # UDP/TCP 3478 + relay range. Not behind Caddy.
+  # UDP/TCP 3478 + relay range. Not behind Caddy. Homelab overlay
+  # drops this service when 3478 is already taken (existing TURN).
   coturn:
     image: coturn/coturn:4.18.0
     command:
       - -n
       - --log-file=stdout
       - --listening-port=3478
-      - --min-port=49160
-      - --max-port=49200
+      - --min-port=${TURN_RELAY_MIN:-49160}
+      - --max-port=${TURN_RELAY_MAX:-49200}
       - --fingerprint
       - --lt-cred-mech
       - --user=${TURN_USERNAME:-gelabber}:${TURN_PASSWORD:-gelabberturn}
@@ -112,9 +114,9 @@ services:
       - --listening-ip=0.0.0.0
       - --external-ip=${TURN_EXTERNAL_IP:-127.0.0.1}
     ports:
-      - "${TURN_PORT:-3478}:3478/udp"
-      - "${TURN_PORT:-3478}:3478/tcp"
-      - "49160-49200:49160-49200/udp"
+      - "${TURN_BIND:-0.0.0.0}:${TURN_PORT:-3478}:3478/udp"
+      - "${TURN_BIND:-0.0.0.0}:${TURN_PORT:-3478}:3478/tcp"
+      - "${TURN_RELAY_MIN:-49160}-${TURN_RELAY_MAX:-49200}:${TURN_RELAY_MIN:-49160}-${TURN_RELAY_MAX:-49200}/udp"
     restart: unless-stopped
 
   postgres:
