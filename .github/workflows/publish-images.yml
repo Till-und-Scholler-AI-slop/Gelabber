@@ -1,0 +1,99 @@
+# Publish api/web/media so `docker compose up` can pull instead of compiling
+# Rust behind Docker Desktop TLS inspection.
+name: Publish app images
+
+on:
+  push:
+    branches: [main]
+    paths:
+      - api/**
+      - media/**
+      - web/**
+      - docker/**
+      - Cargo.toml
+      - Cargo.lock
+      - rust-toolchain.toml
+      - deploy/compose/compose.yaml
+      - .github/workflows/publish-images.yml
+  pull_request:
+    paths:
+      - api/**
+      - media/**
+      - web/**
+      - docker/**
+      - Cargo.toml
+      - Cargo.lock
+      - rust-toolchain.toml
+      - deploy/compose/compose.yaml
+      - .github/workflows/publish-images.yml
+  workflow_dispatch:
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: ${{ github.event_name == 'pull_request' }}
+
+jobs:
+  publish:
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      packages: write
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - name: api
+            context: .
+            file: api/Dockerfile
+          - name: media
+            context: .
+            file: media/Dockerfile
+          - name: web
+            context: web
+            file: web/Dockerfile
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v7
+
+      - name: Image names
+        run: |
+          set -euo pipefail
+          repo="$(echo '${{ github.repository }}' | tr '[:upper:]' '[:lower:]')"
+          ver="v$(sed -n '/^\[workspace.package\]/,/^\[/{s/^version = "\([^"]*\)"/\1/p}' Cargo.toml | head -n 1)"
+          echo "GHCR_IMAGE=ghcr.io/${repo}/${{ matrix.name }}" >> "$GITHUB_ENV"
+          echo "GELABBER_VERSION=${ver}" >> "$GITHUB_ENV"
+          if [ '${{ github.ref }}' = 'refs/heads/main' ]; then
+            echo "PUSH=true" >> "$GITHUB_ENV"
+          else
+            echo "PUSH=false" >> "$GITHUB_ENV"
+          fi
+
+      - name: Compose pin matches
+        run: |
+          set -euo pipefail
+          grep -F "${GHCR_IMAGE}:${GELABBER_VERSION}" deploy/compose/compose.yaml
+
+      - name: Set up Buildx
+        uses: docker/setup-buildx-action@v4
+
+      - name: Login to GHCR
+        if: env.PUSH == 'true'
+        uses: docker/login-action@v4
+        with:
+          registry: ghcr.io
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Build
+        uses: docker/build-push-action@v7
+        with:
+          context: ${{ matrix.context }}
+          file: ${{ matrix.file }}
+          push: ${{ env.PUSH == 'true' }}
+          provenance: false
+          tags: |
+            gelabber/${{ matrix.name }}:${{ env.GELABBER_VERSION }}
+            ${{ env.GHCR_IMAGE }}:${{ env.GELABBER_VERSION }}
+            ${{ env.GHCR_IMAGE }}:latest
+          cache-from: type=gha,scope=${{ matrix.name }}
+          cache-to: type=gha,mode=max,scope=${{ matrix.name }}

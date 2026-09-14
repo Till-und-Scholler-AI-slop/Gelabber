@@ -6,6 +6,7 @@
 **/dist
 **/coverage
 **/target
+vendor
 web
 deploy
 *.md

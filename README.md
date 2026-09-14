@@ -14,7 +14,9 @@ cd deploy/compose
 docker compose up
 ```
 
-`docker compose up` zieht `ghcr.io/till-und-scholler-ai-slop/gelabber/minio:v0.1.0` (CI pusht dieselben Bytes auch als `latest` und `RELEASE.2025-10-15T17-29-55Z`). `gelabber/minio:v0.1.0` ist das lokale Alias nach einem Source-Build. api/web/media werden nur gebaut, wenn lokal noch kein Image da ist. Fehlt das Registry-Image, fällt Compose auf den Source-Build in `deploy/compose/minio` zurück (ldflags bleiben auf dem Pin, kein `FROM minio/minio`).
+`docker compose up` zieht `ghcr.io/till-und-scholler-ai-slop/gelabber/{api,web,media,minio}:v0.1.1` (CI pusht dieselben Bytes auch als `latest`; MinIO zusätzlich `RELEASE.2025-10-15T17-29-55Z`). Fehlt ein Registry-Image, fällt Compose auf den Source-Build zurück. MinIO bleibt der Pin in `deploy/compose/minio` (ldflags, kein `FROM minio/minio`).
+
+Ein lokaler Rust-Build (`docker compose up --build`) setzt `CARGO_HTTP_CAINFO` auf das Debian-CA-Bundle (`docker/rust-build-ca.sh`). Scheitert die Verify gegen crates.io — typisch Docker Desktop / TLS-Inspection, OpenSSL 19 — hängt das Skript die präsentierte Kette an, damit cargo `argon2` und den Rest holen kann.
 
 Das CI-Image ist `linux/amd64`. Auf arm64 (Apple Silicon) zieht der Pull das amd64-Image (Emulation oder `exec format error`); Workaround: `docker compose up --build`.
 
@@ -46,7 +48,7 @@ docker run --rm -v gelabber_minio_data:/data -v "$PWD":/backup alpine:3.24 \
 
 Restore analog; Postgres vorher stoppen.
 
-Aktuell **[v0.1.0](https://github.com/Till-und-Scholler-AI-slop/Gelabber/releases/tag/v0.1.0)**. Image-Tags auf GHCR: `v0.1.0`, `latest`, `RELEASE.2025-10-15T17-29-55Z`. Das Paket startet **privat**. Öffentlich geht nur, wenn die Org unter [Settings → Packages](https://github.com/organizations/Till-und-Scholler-AI-slop/settings/packages) **Package creation → Public** erlaubt; danach [Package settings](https://github.com/orgs/Till-und-Scholler-AI-slop/packages/container/package/gelabber%2Fminio) → Change visibility → Public. Sonst fällt ein anonymer `docker compose up` auf den Source-Build zurück, oder: `echo "$GITHUB_TOKEN" | docker login ghcr.io -u USER --password-stdin`.
+Aktuell **[v0.1.1](https://github.com/Till-und-Scholler-AI-slop/Gelabber/releases/tag/v0.1.1)**. Image-Tags auf GHCR: `v0.1.1`, `latest` (api/web/media/minio; MinIO zusätzlich `RELEASE.2025-10-15T17-29-55Z`). Org-Pakete starten **privat**. Öffentlich geht nur, wenn die Org unter [Settings → Packages](https://github.com/organizations/Till-und-Scholler-AI-slop/settings/packages) **Package creation → Public** erlaubt; danach je Paket [Package settings](https://github.com/orgs/Till-und-Scholler-AI-slop/packages?repo_name=Gelabber) → Change visibility → Public. Sonst fällt ein anonymer `docker compose up` auf den Source-Build zurück, oder: `echo "$GITHUB_TOKEN" | docker login ghcr.io -u USER --password-stdin`.
 
 UDP für coturn (3478 + Relay) und SFU-ICE (10000–10031) läuft **nicht** durch Caddy.
 
@@ -189,7 +191,7 @@ Der Web-Client hält eine Socket-Instanz pro Tab, subscribed Server/Kanal aus de
 - **Download**: `GET /api/attachments/{id}` prüft die Mitgliedschaft (Pending-Upload nur der Uploader) und streamt oder 302 auf eine kurzlebige Presign-GET. Keine öffentlichen Bucket-URLs.
 - **Limits** (serverseitig): 25 MiB pro Datei; `image/jpeg|png|gif|webp`, `application/pdf`, `text/plain`, `application/zip`, `audio/mpeg|wav`, `video/mp4`. Zusätzlich: 60 Presigns/Stunde und 1 GiB/Tag und Nutzer (`API_UPLOAD_QUOTA_BYTES_PER_DAY`). Überzug: `429 quota_exceeded`.
 - **Feel**: Bild-Preview steht sofort (Object-URL); der Upload läuft im Hintergrund und blockiert den Composer nicht.
-- **MinIO**: GHCR-Tag `v0.1.0` (dieselben Bytes wie Pin `RELEASE.2025-10-15T17-29-55Z`). Compose setzt `MINIO_PUBLIC_ENDPOINT` (Browser) und `MINIO_API_CORS_ALLOW_ORIGIN`. sqlx bleibt 0.9.0. Kein LiveKit.
+- **MinIO**: GHCR-Tag `v0.1.1` (dieselben Bytes wie Pin `RELEASE.2025-10-15T17-29-55Z`). Compose setzt `MINIO_PUBLIC_ENDPOINT` (Browser) und `MINIO_API_CORS_ALLOW_ORIGIN`. sqlx bleibt 0.9.0. Kein LiveKit.
 
 ### Auth (issue 3)
 
