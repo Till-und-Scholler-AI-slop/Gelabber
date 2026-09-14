@@ -449,8 +449,28 @@ async fn live_events_during_catch_up_are_queued(pool: PgPool) {
         .await
         .expect("redis pub/sub");
 
-    let first = publish(&state, server_id, channel_id, EventKind::C, "old").await;
     let topic = gelabber_api::gateway::Topic::Channel(channel_id);
+    // Absorb the first Redis PUBLISH on a live socket so a late fan-out
+    // cannot land in the catch-up queue (CI flake: queued_len 2 vs 1).
+    let (drain_tx, mut drain_rx) = tokio::sync::mpsc::unbounded_channel();
+    let drain = state.gateway.attach(Uuid::from_u128(2), drain_tx).await;
+    state.gateway.begin_catch_up(drain, topic).await;
+    state.gateway.finish_catch_up(drain, topic, 0).await;
+
+    let first = publish(&state, server_id, channel_id, EventKind::C, "old").await;
+    tokio::time::timeout(Duration::from_secs(1), async {
+        loop {
+            let frame = drain_rx.recv().await.expect("drain closed");
+            let json = serde_json::to_value(&frame).expect("drain json");
+            if json["op"] == "e" && json["n"] == first {
+                break;
+            }
+        }
+    })
+    .await
+    .expect("first PUBLISH must reach Redis subscribers before catch-up");
+    state.gateway.detach(drain).await;
+
     let (tx, mut rx) = tokio::sync::mpsc::unbounded_channel();
     let conn = state.gateway.attach(Uuid::from_u128(1), tx).await;
     state.gateway.begin_catch_up(conn, topic).await;
