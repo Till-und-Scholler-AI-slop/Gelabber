@@ -14,7 +14,7 @@ cd deploy/compose
 docker compose up
 ```
 
-`docker compose up` zieht das gepinnte MinIO-CE-Image `ghcr.io/till-und-scholler-ai-slop/gelabber/minio:RELEASE.2025-10-15T17-29-55Z` (publiziert aus CI). `gelabber/minio:RELEASE.2025-10-15T17-29-55Z` ist nur das lokale Alias nach einem Source-Build. api/web/media werden nur gebaut, wenn lokal noch kein Image da ist. Fehlt das Registry-Image, fällt Compose auf den Source-Build in `deploy/compose/minio` zurück (ldflags bleiben auf dem Pin, kein `FROM minio/minio`).
+`docker compose up` zieht `ghcr.io/till-und-scholler-ai-slop/gelabber/minio:v0.1.0` (CI pusht dieselben Bytes auch als `latest` und `RELEASE.2025-10-15T17-29-55Z`). `gelabber/minio:v0.1.0` ist das lokale Alias nach einem Source-Build. api/web/media werden nur gebaut, wenn lokal noch kein Image da ist. Fehlt das Registry-Image, fällt Compose auf den Source-Build in `deploy/compose/minio` zurück (ldflags bleiben auf dem Pin, kein `FROM minio/minio`).
 
 Das CI-Image ist `linux/amd64`. Auf arm64 (Apple Silicon) zieht der Pull das amd64-Image (Emulation oder `exec format error`); Workaround: `docker compose up --build`.
 
@@ -46,7 +46,7 @@ docker run --rm -v gelabber_minio_data:/data -v "$PWD":/backup alpine:3.24 \
 
 Restore analog; Postgres vorher stoppen.
 
-Aktuell **[v0.1.0](https://github.com/Till-und-Scholler-AI-slop/Gelabber/releases/tag/v0.1.0)**. Das MinIO-Paket `gelabber/minio` liegt auf GHCR, startet aber **privat** (GitHub hat keine API, um org-Container öffentlich zu schalten). Ein Maintainer muss einmal [Package settings](https://github.com/orgs/Till-und-Scholler-AI-slop/packages/container/package/gelabber%2Fminio) → Change visibility → Public klicken. Sonst fällt ein anonymer `docker compose up` auf den Source-Build zurück, oder: `echo "$GITHUB_TOKEN" | docker login ghcr.io -u USER --password-stdin`.
+Aktuell **[v0.1.0](https://github.com/Till-und-Scholler-AI-slop/Gelabber/releases/tag/v0.1.0)**. Image-Tags auf GHCR: `v0.1.0`, `latest`, `RELEASE.2025-10-15T17-29-55Z`. Das Paket startet **privat**. Öffentlich geht nur, wenn die Org unter [Settings → Packages](https://github.com/organizations/Till-und-Scholler-AI-slop/settings/packages) **Package creation → Public** erlaubt; danach [Package settings](https://github.com/orgs/Till-und-Scholler-AI-slop/packages/container/package/gelabber%2Fminio) → Change visibility → Public. Sonst fällt ein anonymer `docker compose up` auf den Source-Build zurück, oder: `echo "$GITHUB_TOKEN" | docker login ghcr.io -u USER --password-stdin`.
 
 UDP für coturn (3478 + Relay) und SFU-ICE (10000–10031) läuft **nicht** durch Caddy.
 

@@ -36,8 +36,10 @@ jobs:
       - name: Image names
         run: |
           repo="$(echo '${{ github.repository }}' | tr '[:upper:]' '[:lower:]')"
+          ver="v$(sed -n '/^\[workspace.package\]/,/^\[/{s/^version = "\([^"]*\)"/\1/p}' Cargo.toml | head -n 1)"
           echo "GHCR_IMAGE=ghcr.io/${repo}/minio" >> "$GITHUB_ENV"
           echo "LOCAL_IMAGE=gelabber/minio" >> "$GITHUB_ENV"
+          echo "GELABBER_VERSION=${ver}" >> "$GITHUB_ENV"
           # Push only from main (includes workflow_dispatch on main).
           if [ '${{ github.ref }}' = 'refs/heads/main' ]; then
             echo "PUSH=true" >> "$GITHUB_ENV"
@@ -48,9 +50,10 @@ jobs:
       - name: Compose pin matches
         run: |
           set -euo pipefail
-          grep -F "${GHCR_IMAGE}:${MINIO_RELEASE}" deploy/compose/compose.yaml
+          grep -F "${GHCR_IMAGE}:${GELABBER_VERSION}" deploy/compose/compose.yaml
           grep -F "MINIO_RELEASE: ${MINIO_RELEASE}" deploy/compose/compose.yaml
           grep -F "ARG MINIO_RELEASE=${MINIO_RELEASE}" deploy/compose/minio/Dockerfile
+          test "${GELABBER_VERSION}" = "v$(sed -n '/^\[workspace.package\]/,/^\[/{s/^version = "\([^"]*\)"/\1/p}' Cargo.toml | head -n 1)"
 
       - name: Set up Buildx
         uses: docker/setup-buildx-action@v4
@@ -86,7 +89,11 @@ jobs:
         if: env.PUSH == 'true'
         run: |
           docker tag "${LOCAL_IMAGE}:${MINIO_RELEASE}" "${GHCR_IMAGE}:${MINIO_RELEASE}"
+          docker tag "${LOCAL_IMAGE}:${MINIO_RELEASE}" "${GHCR_IMAGE}:${GELABBER_VERSION}"
+          docker tag "${LOCAL_IMAGE}:${MINIO_RELEASE}" "${GHCR_IMAGE}:latest"
           docker push "${GHCR_IMAGE}:${MINIO_RELEASE}"
+          docker push "${GHCR_IMAGE}:${GELABBER_VERSION}"
+          docker push "${GHCR_IMAGE}:latest"
 
       - name: Make package public
         if: env.PUSH == 'true'
