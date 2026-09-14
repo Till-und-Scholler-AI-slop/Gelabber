@@ -1,13 +1,13 @@
 name: gelabber
 
-# One Compose file, one reverse proxy (Caddy). coturn and the SFU bind
-# their own UDP — never through Caddy. No LiveKit, no product SFU.
+# Product stack for one operator. UDP (coturn + SFU ICE) is not on Caddy.
+# No LiveKit. Existing host Caddy: see compose.homelab.yaml.
 
 services:
   proxy:
     image: caddy:2.11.4-alpine
     ports:
-      - "${GELABBER_HTTP_PORT:-80}:80"
+      - "${GELABBER_HTTP_BIND:-0.0.0.0}:${GELABBER_HTTP_PORT:-80}:80"
     volumes:
       - ./Caddyfile:/etc/caddy/Caddyfile:ro
     depends_on:
@@ -41,11 +41,12 @@ services:
       DATABASE_URL: postgres://${POSTGRES_USER:-gelabber}:${POSTGRES_PASSWORD:-gelabber}@postgres:5432/${POSTGRES_DB:-gelabber}
       REDIS_URL: redis://redis:6379
       MINIO_ENDPOINT: http://minio:9000
-      MINIO_PUBLIC_ENDPOINT: http://localhost:${MINIO_API_PORT:-9000}
+      MINIO_PUBLIC_ENDPOINT: ${MINIO_PUBLIC_ENDPOINT:-http://localhost:9000}
       MINIO_ROOT_USER: ${MINIO_ROOT_USER:-gelabber}
       MINIO_ROOT_PASSWORD: ${MINIO_ROOT_PASSWORD:-gelabbergelabber}
       MINIO_BUCKET: ${MINIO_BUCKET:-gelabber}
-      TURN_URLS: stun:${TURN_PUBLIC_HOST:-127.0.0.1}:${TURN_PORT:-3478},turn:${TURN_PUBLIC_HOST:-127.0.0.1}:${TURN_PORT:-3478}
+      API_COOKIE_SECURE: ${API_COOKIE_SECURE:-false}
+      TURN_URLS: ${TURN_URLS:-stun:${TURN_PUBLIC_HOST:-127.0.0.1}:${TURN_PORT:-3478},turn:${TURN_PUBLIC_HOST:-127.0.0.1}:${TURN_PORT:-3478}}
       TURN_USERNAME: ${TURN_USERNAME:-gelabber}
       TURN_PASSWORD: ${TURN_PASSWORD:-gelabberturn}
       MEDIA_TICKET_TTL_SECS: "30"
@@ -74,9 +75,11 @@ services:
       MEDIA_ICE_BIND: 0.0.0.0:10000
       MEDIA_ICE_PORT_MAX: "10031"
       MEDIA_ADVERTISED_IP: ${MEDIA_ADVERTISED_IP:-127.0.0.1}
-      TURN_URLS: stun:coturn:3478,turn:coturn:3478
+      TURN_URLS: ${MEDIA_TURN_URLS:-stun:coturn:3478,turn:coturn:3478}
       TURN_USERNAME: ${TURN_USERNAME:-gelabber}
       TURN_PASSWORD: ${TURN_PASSWORD:-gelabberturn}
+    extra_hosts:
+      - "host.docker.internal:host-gateway"
     expose:
       - "8081"
     ports:
@@ -86,30 +89,29 @@ services:
         condition: service_healthy
       coturn:
         condition: service_started
+        required: false
     restart: unless-stopped
 
-  # UDP/TCP 3478 + relay range. Not behind Caddy.
   coturn:
     image: coturn/coturn:4.18.0
     command:
       - -n
       - --log-file=stdout
       - --listening-port=3478
-      - --min-port=49160
-      - --max-port=49200
+      - --min-port=${TURN_RELAY_MIN:-49160}
+      - --max-port=${TURN_RELAY_MAX:-49200}
       - --fingerprint
       - --lt-cred-mech
       - --user=${TURN_USERNAME:-gelabber}:${TURN_PASSWORD:-gelabberturn}
       - --realm=${TURN_REALM:-gelabber.local}
-      # coturn 4.18.0: CLI and DTLS are off by default (`--cli` / `--dtls`
-      # turn them on). `--no-cli` is an error; `--no-dtls` is unknown.
+      # coturn 4.18.0: CLI/DTLS off by default. `--no-cli` errors; `--no-dtls` unknown.
       - --no-tls
       - --listening-ip=0.0.0.0
       - --external-ip=${TURN_EXTERNAL_IP:-127.0.0.1}
     ports:
-      - "${TURN_PORT:-3478}:3478/udp"
-      - "${TURN_PORT:-3478}:3478/tcp"
-      - "49160-49200:49160-49200/udp"
+      - "${TURN_BIND:-0.0.0.0}:${TURN_PORT:-3478}:3478/udp"
+      - "${TURN_BIND:-0.0.0.0}:${TURN_PORT:-3478}:3478/tcp"
+      - "${TURN_RELAY_MIN:-49160}-${TURN_RELAY_MAX:-49200}:${TURN_RELAY_MIN:-49160}-${TURN_RELAY_MAX:-49200}/udp"
     restart: unless-stopped
 
   postgres:
@@ -119,7 +121,7 @@ services:
       POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:-gelabber}
       POSTGRES_DB: ${POSTGRES_DB:-gelabber}
     ports:
-      - "${POSTGRES_PORT:-5432}:5432"
+      - "${POSTGRES_BIND:-127.0.0.1}:${POSTGRES_PORT:-5432}:5432"
     volumes:
       - postgres_data:/var/lib/postgresql
     healthcheck:
@@ -133,7 +135,7 @@ services:
     image: redis:8.10.1-alpine
     command: ["redis-server", "--save", "", "--appendonly", "no"]
     ports:
-      - "${REDIS_PORT:-6379}:6379"
+      - "${REDIS_BIND:-127.0.0.1}:${REDIS_PORT:-6379}:6379"
     healthcheck:
       test: ["CMD", "redis-cli", "ping"]
       interval: 5s
@@ -141,8 +143,6 @@ services:
       retries: 10
     restart: unless-stopped
 
-  # Pulled from GHCR (Gelabber version tag). The binary inside is still the
-  # MinIO pin below. build.tags apply only on a local source-build fallback.
   minio:
     image: ghcr.io/till-und-scholler-ai-slop/gelabber/minio:v0.1.1
     pull_policy: missing
@@ -158,11 +158,10 @@ services:
     environment:
       MINIO_ROOT_USER: ${MINIO_ROOT_USER:-gelabber}
       MINIO_ROOT_PASSWORD: ${MINIO_ROOT_PASSWORD:-gelabbergelabber}
-      # Browser PUTs the presigned upload from the web origin.
       MINIO_API_CORS_ALLOW_ORIGIN: ${MINIO_API_CORS_ALLOW_ORIGIN:-*}
     ports:
-      - "${MINIO_API_PORT:-9000}:9000"
-      - "${MINIO_CONSOLE_PORT:-9001}:9001"
+      - "${MINIO_API_BIND:-127.0.0.1}:${MINIO_API_PORT:-9000}:9000"
+      - "${MINIO_CONSOLE_BIND:-127.0.0.1}:${MINIO_CONSOLE_PORT:-9001}:9001"
     volumes:
       - minio_data:/data
     healthcheck:
@@ -172,47 +171,6 @@ services:
       retries: 12
     restart: unless-stopped
 
-  # Optional: `docker compose --profile observability up`
-  # Scrapes api:8080/metrics and media:8081/metrics on the compose network.
-  # Not published through Caddy. No LiveKit, no APM SaaS.
-  prometheus:
-    profiles: ["observability"]
-    image: prom/prometheus:v3.14.0
-    command:
-      - --config.file=/etc/prometheus/prometheus.yml
-      - --storage.tsdb.retention.time=15d
-      - --web.enable-lifecycle
-    volumes:
-      - ./prometheus.yml:/etc/prometheus/prometheus.yml:ro
-      - prometheus_data:/prometheus
-    ports:
-      - "${PROMETHEUS_PORT:-9090}:9090"
-    depends_on:
-      - api
-      - media
-    restart: unless-stopped
-
-  grafana:
-    profiles: ["observability"]
-    image: grafana/grafana:13.2.1
-    environment:
-      GF_SECURITY_ADMIN_USER: ${GRAFANA_ADMIN_USER:-admin}
-      GF_SECURITY_ADMIN_PASSWORD: ${GRAFANA_ADMIN_PASSWORD:-gelabber}
-      GF_USERS_ALLOW_SIGN_UP: "false"
-      GF_AUTH_ANONYMOUS_ENABLED: "true"
-      GF_AUTH_ANONYMOUS_ORG_ROLE: Viewer
-    volumes:
-      - ./grafana/provisioning:/etc/grafana/provisioning:ro
-      - ./grafana/dashboards:/etc/grafana/dashboards:ro
-      - grafana_data:/var/lib/grafana
-    ports:
-      - "${GRAFANA_PORT:-3000}:3000"
-    depends_on:
-      - prometheus
-    restart: unless-stopped
-
 volumes:
   postgres_data:
   minio_data:
-  prometheus_data:
-  grafana_data:

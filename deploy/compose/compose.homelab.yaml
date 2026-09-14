@@ -1,0 +1,35 @@
+# Overlay when the host already has Caddy (and usually coturn).
+#   cp .env.homelab.example .env && docker compose up -d
+#   # or: docker compose -f compose.yaml -f compose.homelab.yaml up -d
+#
+# Drops bundled Caddy. Drops bundled coturn unless COMPOSE_PROFILES=bundled-coturn.
+# Publishes web/api/media on loopback for Caddyfile.homelab.
+# SFU ICE UDP still publishes on the host.
+
+networks:
+  default:
+    name: ${GELABBER_NETWORK:-gelabber}
+
+services:
+  proxy:
+    profiles: ["bundled-caddy"]
+
+  coturn:
+    profiles: ["bundled-coturn"]
+
+  web:
+    ports:
+      - "${GELABBER_WEB_BIND:-127.0.0.1}:${GELABBER_WEB_PORT:-8088}:80"
+
+  api:
+    ports:
+      - "${GELABBER_API_BIND:-127.0.0.1}:${GELABBER_API_PORT:-18080}:8080"
+    environment:
+      API_COOKIE_SECURE: ${API_COOKIE_SECURE:-true}
+      MINIO_PUBLIC_ENDPOINT: ${MINIO_PUBLIC_ENDPOINT:-http://127.0.0.1:9000}
+
+  media:
+    ports:
+      - "${GELABBER_MEDIA_BIND:-127.0.0.1}:${GELABBER_MEDIA_PORT:-18081}:8081"
+    environment:
+      TURN_URLS: ${MEDIA_TURN_URLS:-stun:${TURN_PUBLIC_HOST:-127.0.0.1}:${TURN_PORT:-3478},turn:${TURN_PUBLIC_HOST:-127.0.0.1}:${TURN_PORT:-3478}}
