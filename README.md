@@ -189,7 +189,7 @@ Der Web-Client hält eine Socket-Instanz pro Tab, subscribed Server/Kanal aus de
 - **Download**: `GET /api/attachments/{id}` prüft die Mitgliedschaft (Pending-Upload nur der Uploader) und streamt oder 302 auf eine kurzlebige Presign-GET. Keine öffentlichen Bucket-URLs.
 - **Limits** (serverseitig): 25 MiB pro Datei; `image/jpeg|png|gif|webp`, `application/pdf`, `text/plain`, `application/zip`, `audio/mpeg|wav`, `video/mp4`. Zusätzlich: 60 Presigns/Stunde und 1 GiB/Tag und Nutzer (`API_UPLOAD_QUOTA_BYTES_PER_DAY`). Überzug: `429 quota_exceeded`.
 - **Feel**: Bild-Preview steht sofort (Object-URL); der Upload läuft im Hintergrund und blockiert den Composer nicht.
-- **MinIO**: Image bleibt Source-Build `RELEASE.2025-10-15T17-29-55Z`. Compose setzt `MINIO_PUBLIC_ENDPOINT` (Browser) und `MINIO_API_CORS_ALLOW_ORIGIN`. sqlx bleibt 0.9.0. Kein LiveKit.
+- **MinIO**: GHCR-Tag `v0.1.0` (dieselben Bytes wie Pin `RELEASE.2025-10-15T17-29-55Z`). Compose setzt `MINIO_PUBLIC_ENDPOINT` (Browser) und `MINIO_API_CORS_ALLOW_ORIGIN`. sqlx bleibt 0.9.0. Kein LiveKit.
 
 ### Auth (issue 3)
 
