@@ -14,9 +14,9 @@ cd deploy/compose
 docker compose up
 ```
 
-`docker compose up` zieht `ghcr.io/till-und-scholler-ai-slop/gelabber/minio:v0.1.1` (CI pusht dieselben Bytes auch als `latest` und `RELEASE.2025-10-15T17-29-55Z`). `gelabber/minio:v0.1.1` ist das lokale Alias nach einem Source-Build. api/web/media werden nur gebaut, wenn lokal noch kein Image da ist. Fehlt das Registry-Image, fällt Compose auf den Source-Build in `deploy/compose/minio` zurück (ldflags bleiben auf dem Pin, kein `FROM minio/minio`).
+`docker compose up` zieht `ghcr.io/till-und-scholler-ai-slop/gelabber/{api,web,media,minio}:v0.1.1` (CI pusht dieselben Bytes auch als `latest`; MinIO zusätzlich `RELEASE.2025-10-15T17-29-55Z`). Fehlt ein Registry-Image, fällt Compose auf den Source-Build zurück. MinIO bleibt der Pin in `deploy/compose/minio` (ldflags, kein `FROM minio/minio`).
 
-Die Rust-Images (`rust:1.98.1-slim-trixie`) setzen `CARGO_HTTP_CAINFO` / `SSL_CERT_FILE` auf das Debian-CA-Bundle. Ohne das scheitert `cargo` an crates.io mit OpenSSL-Verify 19 (self-signed certificate in certificate chain).
+Ein lokaler Rust-Build (`docker compose up --build`) setzt `CARGO_HTTP_CAINFO` auf das Debian-CA-Bundle (`docker/rust-build-ca.sh`). Scheitert die Verify gegen crates.io — typisch Docker Desktop / TLS-Inspection, OpenSSL 19 — hängt das Skript die präsentierte Kette an, damit cargo `argon2` und den Rest holen kann.
 
 Das CI-Image ist `linux/amd64`. Auf arm64 (Apple Silicon) zieht der Pull das amd64-Image (Emulation oder `exec format error`); Workaround: `docker compose up --build`.
 
@@ -48,7 +48,7 @@ docker run --rm -v gelabber_minio_data:/data -v "$PWD":/backup alpine:3.24 \
 
 Restore analog; Postgres vorher stoppen.
 
-Aktuell **[v0.1.1](https://github.com/Till-und-Scholler-AI-slop/Gelabber/releases/tag/v0.1.1)**. Image-Tags auf GHCR: `v0.1.1`, `latest`, `RELEASE.2025-10-15T17-29-55Z`. Das Paket startet **privat**. Öffentlich geht nur, wenn die Org unter [Settings → Packages](https://github.com/organizations/Till-und-Scholler-AI-slop/settings/packages) **Package creation → Public** erlaubt; danach [Package settings](https://github.com/orgs/Till-und-Scholler-AI-slop/packages/container/package/gelabber%2Fminio) → Change visibility → Public. Sonst fällt ein anonymer `docker compose up` auf den Source-Build zurück, oder: `echo "$GITHUB_TOKEN" | docker login ghcr.io -u USER --password-stdin`.
+Aktuell **[v0.1.1](https://github.com/Till-und-Scholler-AI-slop/Gelabber/releases/tag/v0.1.1)**. Image-Tags auf GHCR: `v0.1.1`, `latest` (api/web/media/minio; MinIO zusätzlich `RELEASE.2025-10-15T17-29-55Z`). Org-Pakete starten **privat**. Öffentlich geht nur, wenn die Org unter [Settings → Packages](https://github.com/organizations/Till-und-Scholler-AI-slop/settings/packages) **Package creation → Public** erlaubt; danach je Paket [Package settings](https://github.com/orgs/Till-und-Scholler-AI-slop/packages?repo_name=Gelabber) → Change visibility → Public. Sonst fällt ein anonymer `docker compose up` auf den Source-Build zurück, oder: `echo "$GITHUB_TOKEN" | docker login ghcr.io -u USER --password-stdin`.
 
 UDP für coturn (3478 + Relay) und SFU-ICE (10000–10031) läuft **nicht** durch Caddy.
 

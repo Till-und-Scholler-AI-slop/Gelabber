@@ -8,6 +8,7 @@ node_modules/
 dist/
 coverage/
 target/
+vendor/
 
 *.log
 .DS_Store
