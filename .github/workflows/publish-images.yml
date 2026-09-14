@@ -91,8 +91,9 @@ jobs:
           file: ${{ matrix.file }}
           push: ${{ env.PUSH == 'true' }}
           provenance: false
+          # Only GHCR names. A `gelabber/…` tag is docker.io/gelabber/…
+          # and `push: true` then 401s (insufficient Docker Hub scopes).
           tags: |
-            gelabber/${{ matrix.name }}:${{ env.GELABBER_VERSION }}
             ${{ env.GHCR_IMAGE }}:${{ env.GELABBER_VERSION }}
             ${{ env.GHCR_IMAGE }}:latest
           cache-from: type=gha,scope=${{ matrix.name }}
