@@ -1,7 +1,6 @@
 # Publish the pinned MinIO CE image so `docker compose up` can pull it.
 # Source-only: deploy/compose/minio/Dockerfile (no FROM minio/minio).
-# Org-owned GHCR packages start private; visibility is a one-time UI flip
-# (Package settings → Change visibility → Public). There is no REST endpoint.
+# After push, PATCH the org package to public so anonymous pulls work.
 name: Publish MinIO CE image
 
 on:
@@ -88,17 +87,26 @@ jobs:
           docker tag "${LOCAL_IMAGE}:${MINIO_RELEASE}" "${GHCR_IMAGE}:${MINIO_RELEASE}"
           docker push "${GHCR_IMAGE}:${MINIO_RELEASE}"
 
-      - name: Check package visibility
+      - name: Make package public
         if: env.PUSH == 'true'
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         run: |
+          set -euo pipefail
           encoded='gelabber%2Fminio'
-          vis="$(gh api \
-            "orgs/${{ github.repository_owner }}/packages/container/${encoded}" \
-            --jq .visibility || true)"
+          path="orgs/${{ github.repository_owner }}/packages/container/${encoded}"
+          vis="$(gh api "$path" --jq .visibility || true)"
           if [ "$vis" = "public" ]; then
             echo "GHCR package gelabber/minio is public."
-          else
-            echo "::warning::GHCR package gelabber/minio is ${vis:-unknown/private}. Fresh clones cannot pull until a maintainer sets it Public: org → Packages → gelabber/minio → Package settings → Change visibility → Public. Until then: docker login ghcr.io, or compose falls back to the source build."
+            exit 0
           fi
+          echo "Current visibility: ${vis:-unknown}. Setting public…"
+          gh api --method PATCH "$path" -f visibility=public || true
+          gh api --method PATCH "${path}/visibility" -f visibility=public || true
+          vis="$(gh api "$path" --jq .visibility || true)"
+          if [ "$vis" = "public" ]; then
+            echo "GHCR package gelabber/minio is public."
+            exit 0
+          fi
+          echo "::warning::GHCR package gelabber/minio is still ${vis:-unknown/private}. Fresh clones cannot pull until a maintainer sets it Public: https://github.com/orgs/${{ github.repository_owner }}/packages/container/package/gelabber%2Fminio → Package settings → Change visibility → Public. Until then: docker login ghcr.io, or compose falls back to the source build."
+

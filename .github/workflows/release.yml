@@ -1,0 +1,93 @@
+# First-cut and later tagged releases. Also flips the MinIO GHCR package
+# to public so anonymous `docker compose up` can pull it.
+name: Release
+
+on:
+  push:
+    tags:
+      - "v*"
+  workflow_dispatch:
+    inputs:
+      tag:
+        description: "Release tag (created on this commit if missing)"
+        required: true
+        default: "v0.1.0"
+
+permissions:
+  contents: write
+  packages: write
+
+jobs:
+  github-release:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v7
+        with:
+          fetch-depth: 0
+
+      - name: Create GitHub Release
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          set -euo pipefail
+          if [ '${{ github.event_name }}' = 'workflow_dispatch' ]; then
+            tag='${{ inputs.tag }}'
+          else
+            tag='${GITHUB_REF_NAME}'
+          fi
+          if gh release view "$tag" >/dev/null 2>&1; then
+            echo "Release $tag already exists."
+            exit 0
+          fi
+          python3 <<'PY' > /tmp/notes.md
+          print("""Erste öffentliche Version: Chat, Voice und internes Streaming auf eigenem WS-Protokoll, eigenem WebRTC-Signaling und eigenem SFU. Kein LiveKit, kein fremdes Chat-/Video-SDK.
+
+          Lokal: `cp deploy/compose/.env.example deploy/compose/.env && cd deploy/compose && docker compose up`
+
+          MinIO CE kommt von GHCR (`ghcr.io/till-und-scholler-ai-slop/gelabber/minio:RELEASE.2025-10-15T17-29-55Z`); api/web/media baut Compose lokal.
+
+          ### Enthalten
+          - Auth (Cookie-Session, CSRF, Profil)
+          - Server, Einladungen, Rollen, Kanäle
+          - Textnachrichten (REST + optimistic UI)
+          - Eigenes WS-Gateway, Presence, Typing
+          - Direktnachrichten 1:1
+          - Anhänge über MinIO
+          - WebRTC-Signaling, eigener SFU + coturn
+          - Sprachkanal, Kamera, Screen-Share, Go Live
+          - Moderation, Limits, Observability
+          - Compose-Kern (Caddy, Postgres, Redis, MinIO, coturn)
+          """)
+          PY
+          gh release create "$tag" \
+            --target '${{ github.sha }}' \
+            --title "Gelabber ${tag}" \
+            --notes-file /tmp/notes.md \
+            --generate-notes
+
+  public-minio:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Make gelabber/minio public
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          set -euo pipefail
+          encoded='gelabber%2Fminio'
+          path="orgs/${{ github.repository_owner }}/packages/container/${encoded}"
+          vis="$(gh api "$path" --jq .visibility || true)"
+          if [ "$vis" = "public" ]; then
+            echo "GHCR package gelabber/minio is public."
+            exit 0
+          fi
+          echo "Current visibility: ${vis:-unknown}. Setting public…"
+          gh api --method PATCH "$path" -f visibility=public || true
+          gh api --method PATCH "${path}/visibility" -f visibility=public || true
+          vis="$(gh api "$path" --jq .visibility || true)"
+          if [ "$vis" = "public" ]; then
+            echo "GHCR package gelabber/minio is public."
+            exit 0
+          fi
+          echo "::error::GHCR package gelabber/minio is still ${vis:-unknown/private}. Maintainer UI: https://github.com/orgs/${{ github.repository_owner }}/packages/container/package/gelabber%2Fminio → Package settings → Change visibility → Public."
+          exit 1
