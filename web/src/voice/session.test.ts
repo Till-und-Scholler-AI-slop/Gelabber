@@ -414,9 +414,9 @@ describe("voice session", () => {
     expect(errors).toHaveLength(0);
     expect(peers[0]?.remoteDescription?.type).toBe("offer");
     await vi.waitFor(() =>
-      expect(mediaSent.filter((frame) => frame.op === "o").length).toBeGreaterThan(
-        offersBefore,
-      ),
+      expect(
+        mediaSent.filter((frame) => frame.op === "o").length,
+      ).toBeGreaterThan(offersBefore),
     );
   });
 
@@ -515,6 +515,10 @@ describe("voice session", () => {
       k: "v",
     });
     expect(parseRemoteStreamId("u-bob:s")).toEqual({ userId: "u-bob", k: "s" });
+    expect(parseRemoteStreamId("u-bob:l-4097")).toEqual({
+      userId: "u-bob",
+      k: "l",
+    });
     expect(parseRemoteStreamId("u-bob:a")).toBeNull();
     expect(parseRemoteStreamId("livekit")).toBeNull();
   });
@@ -610,6 +614,13 @@ describe("voice session", () => {
       streams: [stream],
     });
     expect(useVoice.getState().remote["u-bob"]?.v).toBe(stream);
+    const tagged = fakeVideoStream("ignored");
+    const track = {
+      ...fakeTrack("video"),
+      id: "u-cara:s-77",
+    } as MediaStreamTrack;
+    peers[0]?.ontrack?.({ track, streams: [tagged] });
+    expect(useVoice.getState().remote["u-cara"]?.s).toBe(tagged);
   });
 
   it("shows the Live badge immediately and publishes after display capture", async () => {
@@ -676,6 +687,19 @@ describe("voice session", () => {
     });
     expect(useVoice.getState().watchStream).toBe(stream);
     expect(useVoice.getState().remote["u-bob"]?.l).toBe(stream);
+    const late = fakeVideoStream("u-cara:l-8801");
+    peers[0]?.ontrack?.({
+      track: late.getVideoTracks()[0]!,
+      streams: [late],
+    });
+    expect(useVoice.getState().watchStream).toBe(late);
+    expect(useVoice.getState().remote["u-cara"]?.l).toBe(late);
+    const stray = fakeVideoStream("chrome-msid");
+    peers[0]?.ontrack?.({
+      track: stray.getVideoTracks()[0]!,
+      streams: [stray],
+    });
+    expect(useVoice.getState().watchStream).toBe(stray);
     stopWatching();
     expect(useVoice.getState().watching).toBe(false);
   });

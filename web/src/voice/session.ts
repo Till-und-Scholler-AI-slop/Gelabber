@@ -222,8 +222,14 @@ function defaultAttachRemote(stream: MediaStream): void {
   applyLocalAudio();
 }
 
-function preferOpus(pc: PeerConnection): void {
-  const ctor = (
+function rtpSenderCtor():
+  | {
+      getCapabilities?: (
+        kind: string,
+      ) => { codecs: { mimeType: string }[] } | null;
+    }
+  | undefined {
+  return (
     globalThis as unknown as {
       RTCRtpSender?: {
         getCapabilities?: (
@@ -232,7 +238,10 @@ function preferOpus(pc: PeerConnection): void {
       };
     }
   ).RTCRtpSender;
-  const caps = ctor?.getCapabilities?.("audio");
+}
+
+function preferOpus(pc: PeerConnection): void {
+  const caps = rtpSenderCtor()?.getCapabilities?.("audio");
   if (!caps) return;
   const preferred = [
     ...caps.codecs.filter((c) => c.mimeType.toLowerCase() === "audio/opus"),
@@ -244,6 +253,30 @@ function preferOpus(pc: PeerConnection): void {
     if (kind === "audio") {
       transceiver.setCodecPreferences?.(preferred);
     }
+  }
+}
+
+function preferVp8(pc: PeerConnection): void {
+  const caps = rtpSenderCtor()?.getCapabilities?.("video");
+  if (!caps) return;
+  const preferred = [
+    ...caps.codecs.filter((c) => c.mimeType.toLowerCase() === "video/vp8"),
+    ...caps.codecs.filter((c) => c.mimeType.toLowerCase() !== "video/vp8"),
+  ];
+  for (const transceiver of pc.getTransceivers?.() ?? []) {
+    const kind =
+      transceiver.sender?.track?.kind ?? transceiver.receiver?.track?.kind;
+    if (kind === "video") {
+      transceiver.setCodecPreferences?.(preferred);
+    }
+  }
+}
+
+function hintTrack(track: MediaStreamTrack, hint: "speech" | "detail"): void {
+  try {
+    (track as MediaStreamTrack & { contentHint?: string }).contentHint = hint;
+  } catch {
+    // contentHint is best-effort
   }
 }
 
@@ -341,15 +374,14 @@ function dropRemote(userId: string, kind?: "v" | "s" | "l"): void {
   useVoice.setState({ remote: next });
 }
 
-/** SFU stream id is `{userId}:{v|s|l}` so tiles attach without a product SDK. */
+/** SFU stream id is `{userId}:{v|s|l}`; track id may be `{userId}:{k}-{ssrc}`. */
 export function parseRemoteStreamId(
   id: string,
 ): { userId: string; k: "v" | "s" | "l" } | null {
-  const i = id.lastIndexOf(":");
-  if (i <= 0) return null;
-  const userId = id.slice(0, i);
-  const k = id.slice(i + 1);
-  if ((k === "v" || k === "s" || k === "l") && userId.length > 0) {
+  const match = /^(.*):(v|s|l)(?:[-:].*)?$/.exec(id);
+  const userId = match?.[1];
+  const k = match?.[2];
+  if (userId && (k === "v" || k === "s" || k === "l")) {
     return { userId, k };
   }
   return null;
@@ -998,8 +1030,7 @@ async function startLocalVideo(kind: "v" | "s" | "l"): Promise<void> {
   // Video only for camera / screen / live. Display audio mixed into the
   // voice m-line (and tagged as a second "a" pub) was echo-y on deploy and
   // added a video-sized SDP the 12 KiB cap then rejected.
-  const constraints: MediaStreamConstraints =
-    kind === "v" ? { audio: false, video: true } : { video: true };
+  const constraints: MediaStreamConstraints = { audio: false, video: true };
   let stream: MediaStream;
   try {
     stream = await getMedia(constraints);
@@ -1037,10 +1068,12 @@ async function startLocalVideo(kind: "v" | "s" | "l"): Promise<void> {
   } else if (kind === "s") {
     stopTracks(screenStream);
     screenStream = stream;
+    stream.getVideoTracks().forEach((track) => hintTrack(track, "detail"));
     useVoice.setState({ sharing: true, localScreen: stream });
   } else {
     stopTracks(liveStream);
     liveStream = stream;
+    stream.getVideoTracks().forEach((track) => hintTrack(track, "detail"));
     useVoice.setState({ live: true, localLive: stream });
   }
   if (self) setPub(self, kind, true);
@@ -1110,6 +1143,13 @@ async function publishLocal(
   await offerIfStable(generation);
 }
 
+function parseIncomingVideo(
+  track: MediaStreamTrack,
+  stream?: MediaStream,
+): { userId: string; k: "v" | "s" | "l" } | null {
+  return parseRemoteStreamId(stream?.id ?? "") ?? parseRemoteStreamId(track.id);
+}
+
 function attachIncoming(track: MediaStreamTrack, stream?: MediaStream): void {
   if (track.kind === "audio") {
     if (typeof MediaStream === "undefined") {
@@ -1123,8 +1163,7 @@ function attachIncoming(track: MediaStreamTrack, stream?: MediaStream): void {
     (deps?.attachRemote ?? defaultAttachRemote)(remoteMix);
     return;
   }
-  const id = stream?.id ?? track.id;
-  const parsed = parseRemoteStreamId(id);
+  const parsed = parseIncomingVideo(track, stream);
   if (!parsed) return;
   const attached = stream ?? new MediaStream([track]);
   const state = useVoice.getState();
@@ -1159,6 +1198,7 @@ async function offerIfStable(
       }
       if (opts?.initial && sfuOffered) return;
       preferOpus(peer);
+      preferVp8(peer);
       const offer = withTunedSdp(await peer.createOffer());
       if (generation !== mine || signalingState() !== "stable") {
         if (!opts?.initial && !opts?.fromEvent) needOffer = true;
@@ -1235,11 +1275,13 @@ async function startPeer(serverId: string, channelId: string): Promise<void> {
       return;
     }
     localStream = stream;
+    stream.getAudioTracks().forEach((track) => hintTrack(track, "speech"));
     applyLocalAudio();
     for (const track of stream.getTracks()) {
       pc.addTrack?.(track, stream);
     }
     preferOpus(pc);
+    preferVp8(pc);
     const self = currentUserId();
     if (self && useVoice.getState().channelId === channelId) {
       setPub(self, "a", true);
@@ -1329,14 +1371,18 @@ function attachWatchIncoming(
     void watchAudio.play()?.catch(() => undefined);
     return;
   }
-  const id = stream?.id ?? track.id;
-  const parsed = parseRemoteStreamId(id);
-  if (!parsed) return;
+  const parsed = parseIncomingVideo(track, stream);
   const attached = stream ?? new MediaStream([track]);
   const state = useVoice.getState();
+  if (!parsed) {
+    // Recvonly watch: SFU msid may be missing. Any video is the live tile.
+    useVoice.setState({ watchStream: attached });
+    return;
+  }
   const current = state.remote[parsed.userId] ?? {};
   useVoice.setState({
-    watchStream: parsed.k === "l" ? attached : state.watchStream,
+    watchStream:
+      parsed.k === "l" || !state.watchStream ? attached : state.watchStream,
     remote: {
       ...state.remote,
       [parsed.userId]: { ...current, [parsed.k]: attached },
@@ -1425,6 +1471,7 @@ async function watchOfferIfStable(
       }
       if (opts?.initial && watchSfuOffered) return;
       preferOpus(watchPeer);
+      preferVp8(watchPeer);
       const offer = withTunedSdp(await watchPeer.createOffer());
       if (watchGeneration !== mine || watchSignalingState() !== "stable") {
         if (!opts?.initial && !opts?.fromEvent) watchNeedOffer = true;
