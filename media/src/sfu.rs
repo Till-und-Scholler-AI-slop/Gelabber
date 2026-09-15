@@ -13,8 +13,12 @@ use rtc::rtcp;
 use rtc::rtcp::payload_feedbacks::full_intra_request::FullIntraRequest;
 use rtc::rtcp::payload_feedbacks::picture_loss_indication::PictureLossIndication;
 use rtc::rtp;
+use rtc::peer_connection::configuration::media_engine::{
+    MIME_TYPE_H264, MIME_TYPE_OPUS, MIME_TYPE_VP8,
+};
 use rtc::rtp_transceiver::rtp_sender::{
-    RTCRtpCodec, RTCRtpCodingParameters, RTCRtpEncodingParameters, RtpCodecKind,
+    RTCRtpCodec, RTCRtpCodecParameters, RTCRtpCodingParameters, RTCRtpEncodingParameters,
+    RTCPFeedback, RtpCodecKind,
 };
 use tokio::sync::{Mutex, RwLock, broadcast, mpsc, watch};
 use tracing::{debug, info, warn};
@@ -451,7 +455,7 @@ impl Sfu {
         watch::Receiver<u64>,
     )> {
         let mut media = MediaEngine::default();
-        media.register_default_codecs()?;
+        register_sfu_codecs(&mut media)?;
         let registry =
             register_default_interceptors(webrtc::peer_connection::Registry::new(), &mut media)?;
 
@@ -878,6 +882,93 @@ fn asks_keyframe(packets: &[Box<dyn rtcp::Packet>]) -> bool {
     })
 }
 
+
+/// Register SFU codecs: Opus-only audio, then common video.
+///
+/// `register_default_codecs` lists Opus first in the MediaEngine, but webrtc-rs
+/// SDP answers still put static PTs ahead of Opus (`m=audio 8 0 9 111`). Measured
+/// on #53: active codec became PCMA (~64 kbps telephone). Omit G.711/G.722 so
+/// negotiation cannot pick them.
+fn register_sfu_codecs(media: &mut MediaEngine) -> webrtc::error::Result<()> {
+    media.register_codec(
+        RTCRtpCodecParameters {
+            rtp_codec: RTCRtpCodec {
+                mime_type: MIME_TYPE_OPUS.to_owned(),
+                clock_rate: 48000,
+                channels: 2,
+                sdp_fmtp_line: "minptime=10;useinbandfec=1".to_owned(),
+                rtcp_feedback: vec![],
+            },
+            payload_type: 111,
+            ..Default::default()
+        },
+        RtpCodecKind::Audio,
+    )?;
+
+    let video_rtcp_feedback = vec![
+        RTCPFeedback {
+            typ: "goog-remb".to_owned(),
+            parameter: String::new(),
+        },
+        RTCPFeedback {
+            typ: "ccm".to_owned(),
+            parameter: "fir".to_owned(),
+        },
+        RTCPFeedback {
+            typ: "nack".to_owned(),
+            parameter: String::new(),
+        },
+        RTCPFeedback {
+            typ: "nack".to_owned(),
+            parameter: "pli".to_owned(),
+        },
+    ];
+
+    let rtx = |payload_type: u8, apt: u8| RTCRtpCodecParameters {
+        rtp_codec: RTCRtpCodec {
+            mime_type: "video/rtx".to_owned(),
+            clock_rate: 90000,
+            channels: 0,
+            sdp_fmtp_line: format!("apt={apt}"),
+            rtcp_feedback: vec![],
+        },
+        payload_type,
+        ..Default::default()
+    };
+
+    for codec in [
+        RTCRtpCodecParameters {
+            rtp_codec: RTCRtpCodec {
+                mime_type: MIME_TYPE_VP8.to_owned(),
+                clock_rate: 90000,
+                channels: 0,
+                sdp_fmtp_line: String::new(),
+                rtcp_feedback: video_rtcp_feedback.clone(),
+            },
+            payload_type: 96,
+            ..Default::default()
+        },
+        rtx(97, 96),
+        RTCRtpCodecParameters {
+            rtp_codec: RTCRtpCodec {
+                mime_type: MIME_TYPE_H264.to_owned(),
+                clock_rate: 90000,
+                channels: 0,
+                sdp_fmtp_line:
+                    "level-asymmetry-allowed=1;packetization-mode=1;profile-level-id=42e01f"
+                        .to_owned(),
+                rtcp_feedback: video_rtcp_feedback,
+            },
+            payload_type: 125,
+            ..Default::default()
+        },
+        rtx(105, 125),
+    ] {
+        media.register_codec(codec, RtpCodecKind::Video)?;
+    }
+    Ok(())
+}
+
 /// Chrome always attaches `mid` / transport-cc / audio-level using the
 /// *publisher* extmap ids. webrtc 0.20 `write_rtp` rejects a packet if any
 /// extension id is not negotiated on this sender — which they are not, on
@@ -908,8 +999,71 @@ fn saturating_dec(atom: &AtomicU64) {
 
 #[cfg(test)]
 mod tests {
-    use super::prepare_forwarded_rtp;
+    use super::{Sfu, prepare_forwarded_rtp};
     use rtc::rtp::packet::Packet;
+    use std::sync::Arc;
+
+
+    #[tokio::test]
+    async fn sfu_audio_offer_prefers_opus_not_pcma() {
+        use crate::config::Config;
+        use rtc::media_stream::MediaStreamTrack;
+        use webrtc::media_stream::track_local::TrackLocal;
+        use webrtc::media_stream::track_local::static_rtp::TrackLocalStaticRTP;
+
+        use super::{
+            MIME_TYPE_OPUS, RTCRtpCodec, RTCRtpCodingParameters, RTCRtpEncodingParameters,
+            RtpCodecKind,
+        };
+
+        let config = Config::from_source(|key| match key {
+            "REDIS_URL" => Some("redis://127.0.0.1:1".to_owned()),
+            "MEDIA_ICE_BIND" => Some("127.0.0.1:0".to_owned()),
+            "TURN_URLS" => Some("stun:127.0.0.1:3478".to_owned()),
+            "TURN_USERNAME" => Some("gelabber".to_owned()),
+            "TURN_PASSWORD" => Some("gelabberturn".to_owned()),
+            _ => None,
+        })
+        .unwrap();
+        let sfu = Sfu::new(&config);
+        let (pc, _rx, _gathered) = sfu.build_pc().await.expect("pc");
+        let track = Arc::new(TrackLocalStaticRTP::new(MediaStreamTrack::new(
+            "stream".into(),
+            "audio".into(),
+            "mic".into(),
+            RtpCodecKind::Audio,
+            vec![RTCRtpEncodingParameters {
+                rtp_coding_parameters: RTCRtpCodingParameters {
+                    ssrc: Some(0x1111_0001),
+                    ..Default::default()
+                },
+                codec: RTCRtpCodec {
+                    mime_type: MIME_TYPE_OPUS.into(),
+                    clock_rate: 48000,
+                    channels: 2,
+                    sdp_fmtp_line: String::new(),
+                    rtcp_feedback: vec![],
+                },
+                ..Default::default()
+            }],
+        )));
+        pc.add_track(Arc::clone(&track) as Arc<dyn TrackLocal>)
+            .await
+            .expect("add_track");
+        let offer = pc.create_offer(None).await.expect("offer");
+        let audio_line = offer
+            .sdp
+            .lines()
+            .find(|l| l.starts_with("m=audio"))
+            .expect("m=audio");
+        // Payload list must lead with Opus (111), never PCMA (8) / PCMU (0) / G722 (9).
+        let pts: Vec<&str> = audio_line.split_whitespace().skip(3).collect();
+        assert_eq!(pts.first().copied(), Some("111"), "{audio_line}");
+        assert!(
+            !pts.iter().any(|p| *p == "8" || *p == "0" || *p == "9"),
+            "{audio_line}"
+        );
+    }
 
     #[test]
     fn strips_publisher_header_extensions() {
