@@ -10,7 +10,7 @@ cd deploy/compose
 docker compose up
 ```
 
-Dann [http://localhost](http://localhost). Images: `ghcr.io/till-und-scholler-ai-slop/gelabber/{api,web,media,minio}:v0.1.2`. Fehlt das Paket (GHCR oft privat), baut Compose aus dem Source. `docker compose up --build` erzwingt den Build — auf arm64 nötig, CI ist `linux/amd64`.
+Dann [http://localhost](http://localhost). Images: `ghcr.io/till-und-scholler-ai-slop/gelabber/{api,web,media,minio}:v0.1.3`. Fehlt das Paket (GHCR oft privat), baut Compose aus dem Source. `docker compose up --build` erzwingt den Build — auf arm64 nötig, CI ist `linux/amd64`.
 
 Postgres, Redis und MinIO-Konsole hängen nur an Loopback. UDP für Voice (coturn 3478 + Relay, SFU 10000–10031) geht nicht durch Caddy.
 
@@ -25,7 +25,7 @@ Operator-Doku (bestehendes Caddy, TURN-Port, TLS, Backup): [deploy/README.md](de
 | `media/` | SFU, webrtc 0.20.5 |
 | `deploy/compose` | Caddy 2.11.4, Postgres 18.6, Redis 8.10.1, MinIO CE `RELEASE.2025-10-15T17-29-55Z`, coturn 4.18.0 |
 
-Release: [v0.1.2](https://github.com/Till-und-Scholler-AI-slop/Gelabber/releases/tag/v0.1.2).
+Release: [v0.1.3](https://github.com/Till-und-Scholler-AI-slop/Gelabber/releases/tag/v0.1.3).
 
 ## Dev ohne Compose
 
