@@ -9,6 +9,9 @@ use std::sync::atomic::{AtomicU16, AtomicU64, Ordering};
 use std::time::Duration;
 
 use rtc::media_stream::MediaStreamTrack;
+use rtc::rtcp;
+use rtc::rtcp::payload_feedbacks::full_intra_request::FullIntraRequest;
+use rtc::rtcp::payload_feedbacks::picture_loss_indication::PictureLossIndication;
 use rtc::rtp;
 use rtc::rtp_transceiver::rtp_sender::{
     RTCRtpCodec, RTCRtpCodingParameters, RTCRtpEncodingParameters, RtpCodecKind,
@@ -17,6 +20,7 @@ use tokio::sync::{Mutex, RwLock, broadcast, mpsc, watch};
 use tracing::{debug, info, warn};
 use uuid::Uuid;
 use webrtc::media_stream::track_local::TrackLocal;
+use webrtc::media_stream::track_local::TrackLocalEvent;
 use webrtc::media_stream::track_local::static_rtp::TrackLocalStaticRTP;
 use webrtc::media_stream::track_remote::{TrackRemote, TrackRemoteEvent};
 use webrtc::peer_connection::{
@@ -139,6 +143,7 @@ struct Published {
     kind: RtpCodecKind,
     codec: RTCRtpCodec,
     packets: broadcast::Sender<rtp::Packet>,
+    keyframe: Option<mpsc::UnboundedSender<()>>,
 }
 
 struct PendingPub {
@@ -147,6 +152,7 @@ struct PendingPub {
     kind: RtpCodecKind,
     codec: RTCRtpCodec,
     packets: broadcast::Sender<rtp::Packet>,
+    keyframe: Option<mpsc::UnboundedSender<()>>,
 }
 
 struct PeerSdp {
@@ -196,6 +202,7 @@ struct Forward {
     kind: RtpCodecKind,
     codec: RTCRtpCodec,
     packets: broadcast::Sender<rtp::Packet>,
+    keyframe: Option<mpsc::UnboundedSender<()>>,
 }
 
 pub struct Sfu {
@@ -534,18 +541,28 @@ impl Sfu {
             let room = self.room(channel_id).await;
             let mut room = room.lock().await;
             let peer = room.peers.get_mut(&publisher).ok_or("not in room")?;
-            let tag = match peer.next_kind.pop_front() {
-                Some(tag) => tag,
-                None => match kind {
-                    RtpCodecKind::Video => "v".to_string(),
-                    _ => "a".to_string(),
-                },
+            // Camera / screen / live announces tag the next *video* track.
+            // A re-fired mic after renegotiation must not consume `l` / `s`.
+            let tag = match kind {
+                RtpCodecKind::Video => peer
+                    .next_kind
+                    .pop_front()
+                    .unwrap_or_else(|| "v".to_string()),
+                _ => "a".to_string(),
             };
             (peer.user_id, tag)
         };
         let stream_id = format!("{user_id}:{kind_tag}");
         let pub_id = format!("{}:{track_id}", publisher.0);
         let (packets, _) = broadcast::channel(RTP_Q);
+        let keyframe = if kind == RtpCodecKind::Video {
+            let (tx, rx) = mpsc::unbounded_channel();
+            spawn_publisher_readout(Arc::clone(&track), ssrc, packets.clone(), Some(rx));
+            Some(tx)
+        } else {
+            spawn_publisher_readout(Arc::clone(&track), ssrc, packets.clone(), None);
+            None
+        };
 
         {
             let room = self.room(channel_id).await;
@@ -558,6 +575,7 @@ impl Sfu {
                     kind,
                     codec: codec.clone(),
                     packets: packets.clone(),
+                    keyframe: keyframe.clone(),
                 },
             );
         }
@@ -592,21 +610,10 @@ impl Sfu {
                 kind,
                 codec: codec.clone(),
                 packets: packets.clone(),
+                keyframe: keyframe.clone(),
             })
             .await;
         }
-
-        tokio::spawn(async move {
-            while let Some(evt) = track.poll().await {
-                match evt {
-                    TrackRemoteEvent::OnRtpPacket(packet) => {
-                        let _ = packets.send(packet);
-                    }
-                    TrackRemoteEvent::OnEnded | TrackRemoteEvent::OnError => break,
-                    _ => {}
-                }
-            }
-        });
         Ok(())
     }
 
@@ -628,6 +635,7 @@ impl Sfu {
                         p.kind,
                         p.codec.clone(),
                         p.packets.clone(),
+                        p.keyframe.clone(),
                     )
                 })
                 .collect::<Vec<_>>();
@@ -639,7 +647,7 @@ impl Sfu {
                 pubs,
             )
         };
-        for (id, stream_id, kind, codec, packets) in pubs {
+        for (id, stream_id, kind, codec, packets, keyframe) in pubs {
             self.forward_to(Forward {
                 pc: pc.clone(),
                 out: out.clone(),
@@ -650,6 +658,7 @@ impl Sfu {
                 kind,
                 codec,
                 packets,
+                keyframe,
             })
             .await;
         }
@@ -674,6 +683,7 @@ impl Sfu {
                 kind: pub_.kind,
                 codec: pub_.codec,
                 packets: pub_.packets,
+                keyframe: pub_.keyframe,
             })
             .await;
         }
@@ -690,6 +700,7 @@ impl Sfu {
             kind,
             codec,
             packets,
+            keyframe,
         } = job;
         {
             let mut gate = sdp.lock().await;
@@ -700,6 +711,7 @@ impl Sfu {
                     kind,
                     codec,
                     packets,
+                    keyframe,
                 });
                 return;
             }
@@ -731,16 +743,48 @@ impl Sfu {
 
         let mut rx = packets.subscribe();
         let forwarded = Arc::clone(&self.stats);
+        let local_rtp = Arc::clone(&local);
         tokio::spawn(async move {
+            let mut bound = false;
+            let mut warned = false;
             loop {
                 match rx.recv().await {
-                    Ok(mut packet) => {
+                    Ok(packet) => {
                         let n = packet.payload.len() as u64;
-                        packet.header.ssrc = ssrc;
-                        if local.write_rtp(packet).await.is_err() {
-                            break;
+                        let packet = prepare_forwarded_rtp(packet, ssrc);
+                        // Unbound until the subscriber answers. Skip; do not
+                        // kill the forwarder. PLI only after the first
+                        // successful write — an earlier IDR is dropped.
+                        match local_rtp.write_rtp(packet).await {
+                            Ok(()) => {
+                                forwarded.forwarded_bytes.fetch_add(n, Ordering::Relaxed);
+                                if !bound {
+                                    bound = true;
+                                    if let Some(kf) = keyframe.as_ref() {
+                                        let _ = kf.send(());
+                                        let local_rtcp = Arc::clone(&local_rtp);
+                                        let relay = kf.clone();
+                                        tokio::spawn(async move {
+                                            // Started after bind: None is a
+                                            // closed RTCP channel, not pre-bind.
+                                            while let Some(evt) = local_rtcp.poll().await {
+                                                if let TrackLocalEvent::OnRtcpPacket(pkts) = evt
+                                                    && asks_keyframe(&pkts)
+                                                {
+                                                    let _ = relay.send(());
+                                                }
+                                            }
+                                        });
+                                    }
+                                }
+                            }
+                            Err(err) => {
+                                if !warned {
+                                    debug!(error = %err, "forward write_rtp skipped");
+                                    warned = true;
+                                }
+                            }
                         }
-                        forwarded.forwarded_bytes.fetch_add(n, Ordering::Relaxed);
                     }
                     Err(broadcast::error::RecvError::Lagged(_)) => continue,
                     Err(broadcast::error::RecvError::Closed) => break,
@@ -767,6 +811,90 @@ impl Sfu {
     }
 }
 
+fn spawn_publisher_readout(
+    track: Arc<dyn TrackRemote>,
+    ssrc: u32,
+    packets: broadcast::Sender<rtp::Packet>,
+    mut keyframes: Option<mpsc::UnboundedReceiver<()>>,
+) {
+    tokio::spawn(async move {
+        loop {
+            if let Some(kf) = keyframes.as_mut() {
+                tokio::select! {
+                    evt = track.poll() => {
+                        if !handle_publisher_event(&packets, evt) {
+                            break;
+                        }
+                    }
+                    req = kf.recv() => {
+                        if req.is_none() {
+                            keyframes = None;
+                            continue;
+                        }
+                        request_keyframe(&track, ssrc).await;
+                    }
+                }
+            } else {
+                let evt = track.poll().await;
+                if !handle_publisher_event(&packets, evt) {
+                    break;
+                }
+            }
+        }
+    });
+}
+
+fn handle_publisher_event(
+    packets: &broadcast::Sender<rtp::Packet>,
+    evt: Option<TrackRemoteEvent>,
+) -> bool {
+    match evt {
+        Some(TrackRemoteEvent::OnRtpPacket(packet)) => {
+            let _ = packets.send(packet);
+            true
+        }
+        Some(TrackRemoteEvent::OnEnded | TrackRemoteEvent::OnError) | None => false,
+        Some(_) => true,
+    }
+}
+
+async fn request_keyframe(track: &Arc<dyn TrackRemote>, media_ssrc: u32) {
+    let pli = PictureLossIndication {
+        sender_ssrc: 0,
+        media_ssrc,
+    };
+    if track.write_rtcp(vec![Box::new(pli)]).await.is_err() {
+        debug!(media_ssrc, "pli to publisher failed");
+    }
+}
+
+fn asks_keyframe(packets: &[Box<dyn rtcp::Packet>]) -> bool {
+    packets.iter().any(|packet| {
+        packet
+            .as_any()
+            .downcast_ref::<PictureLossIndication>()
+            .is_some()
+            || packet.as_any().downcast_ref::<FullIntraRequest>().is_some()
+    })
+}
+
+/// Chrome always attaches `mid` / transport-cc / audio-level using the
+/// *publisher* extmap ids. webrtc 0.20 `write_rtp` rejects a packet if any
+/// extension id is not negotiated on this sender — which they are not, on
+/// the subscriber leg. Strip them; SSRC is rewritten for the new track.
+fn prepare_forwarded_rtp(mut packet: rtp::Packet, ssrc: u32) -> rtp::Packet {
+    packet.header.ssrc = ssrc;
+    packet.header.csrc.clear();
+    for id in packet.header.get_extension_ids() {
+        let _ = packet.header.del_extension(id);
+    }
+    if packet.header.extensions.is_empty() {
+        packet.header.extension = false;
+        packet.header.extensions_padding = 0;
+    }
+    packet
+}
+
 fn saturating_dec(atom: &AtomicU64) {
     let mut current = atom.load(Ordering::Relaxed);
     while current > 0 {
@@ -775,5 +903,36 @@ fn saturating_dec(atom: &AtomicU64) {
             Ok(_) => return,
             Err(seen) => current = seen,
         }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::prepare_forwarded_rtp;
+    use rtc::rtp::packet::Packet;
+
+    #[test]
+    fn strips_publisher_header_extensions() {
+        let mut packet = Packet::default();
+        packet.header.version = 2;
+        packet.header.ssrc = 0x1111_0001;
+        packet.header.payload_type = 111;
+        packet
+            .header
+            .set_extension(1, bytes::Bytes::from_static(&[b'0']))
+            .expect("mid");
+        packet
+            .header
+            .set_extension(3, bytes::Bytes::from_static(&[0x01, 0x02]))
+            .expect("transport-cc");
+        assert!(packet.header.extension);
+        assert!(!packet.header.get_extension_ids().is_empty());
+
+        let out = prepare_forwarded_rtp(packet, 0x2222_0002);
+        assert_eq!(out.header.ssrc, 0x2222_0002);
+        assert_eq!(out.header.payload_type, 111);
+        assert!(!out.header.extension);
+        assert!(out.header.get_extension_ids().is_empty());
+        assert!(out.header.csrc.is_empty());
     }
 }

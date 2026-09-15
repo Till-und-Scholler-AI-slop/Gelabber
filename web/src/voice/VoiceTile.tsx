@@ -21,6 +21,22 @@ export function VoiceTile({
     const el = ref.current;
     if (!el) return;
     el.srcObject = stream;
+    if (stream) {
+      const play = () => {
+        void el.play()?.catch(() => undefined);
+      };
+      play();
+      const onUnmute = () => play();
+      stream.getVideoTracks().forEach((track) => {
+        track.addEventListener("unmute", onUnmute);
+      });
+      return () => {
+        stream.getVideoTracks().forEach((track) => {
+          track.removeEventListener("unmute", onUnmute);
+        });
+        el.srcObject = null;
+      };
+    }
     return () => {
       el.srcObject = null;
     };
