@@ -24,8 +24,13 @@ Operator-Doku (bestehendes Caddy, TURN-Port, TLS, Backup): [deploy/README.md](de
 | `web/` | React + Vite (`node:26.8.2-trixie` → `nginx:1.31.5-alpine`) |
 | `media/` | SFU, webrtc 0.20.5 |
 | `deploy/compose` | Caddy 2.11.4, Postgres 18.6, Redis 8.10.1, MinIO CE `RELEASE.2025-10-15T17-29-55Z`, coturn 4.18.0 |
+| `scripts/` | Diagnostics (WebRTC dump parser — see [scripts/README-webrtc-dumps.md](scripts/README-webrtc-dumps.md)) |
 
 Release: [v0.1.3](https://github.com/Till-und-Scholler-AI-slop/Gelabber/releases/tag/v0.1.3).
+
+## Diagnostics
+
+Chrome `chrome://webrtc-internals` dump parser (codec / bitrate / loss / jitter / concealment / audioLevel): [scripts/README-webrtc-dumps.md](scripts/README-webrtc-dumps.md). No audio product changes without measured dump data.
 
 ## Dev ohne Compose
 

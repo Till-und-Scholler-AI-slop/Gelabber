@@ -1,0 +1,156 @@
+{
+  "getUserMedia": [],
+  "PeerConnections": {
+    "1-1": {
+      "configuration": {},
+      "url": "http://localhost/",
+      "updateLog": [],
+      "stats": {
+        "COT_opus_out-mimeType": {
+          "startTime": "2026-09-15T12:00:00.000Z",
+          "endTime": "2026-09-15T12:00:01.000Z",
+          "statsType": "codec",
+          "values": "[\"audio/opus\",\"audio/opus\"]"
+        },
+        "COT_opus_out-sdpFmtpLine": {
+          "startTime": "2026-09-15T12:00:00.000Z",
+          "endTime": "2026-09-15T12:00:01.000Z",
+          "statsType": "codec",
+          "values": "[\"minptime=10;useinbandfec=1;stereo=0;maxaveragebitrate=128000\",\"minptime=10;useinbandfec=1;stereo=0;maxaveragebitrate=128000\"]"
+        },
+        "COT_opus_out-payloadType": {
+          "startTime": "2026-09-15T12:00:00.000Z",
+          "endTime": "2026-09-15T12:00:01.000Z",
+          "statsType": "codec",
+          "values": "[111,111]"
+        },
+        "COT_opus_in-mimeType": {
+          "startTime": "2026-09-15T12:00:00.000Z",
+          "endTime": "2026-09-15T12:00:01.000Z",
+          "statsType": "codec",
+          "values": "[\"audio/opus\",\"audio/opus\"]"
+        },
+        "COT_opus_in-sdpFmtpLine": {
+          "startTime": "2026-09-15T12:00:00.000Z",
+          "endTime": "2026-09-15T12:00:01.000Z",
+          "statsType": "codec",
+          "values": "[\"minptime=10;useinbandfec=1\",\"minptime=10;useinbandfec=1\"]"
+        },
+        "OTA_1-kind": {
+          "startTime": "2026-09-15T12:00:00.000Z",
+          "endTime": "2026-09-15T12:00:01.000Z",
+          "statsType": "outbound-rtp",
+          "values": "[\"audio\",\"audio\"]"
+        },
+        "OTA_1-codecId": {
+          "startTime": "2026-09-15T12:00:00.000Z",
+          "endTime": "2026-09-15T12:00:01.000Z",
+          "statsType": "outbound-rtp",
+          "values": "[\"COT_opus_out\",\"COT_opus_out\"]"
+        },
+        "OTA_1-bytesSent": {
+          "startTime": "2026-09-15T12:00:00.000Z",
+          "endTime": "2026-09-15T12:00:01.000Z",
+          "statsType": "outbound-rtp",
+          "values": "[16000,32000]"
+        },
+        "OTA_1-packetsSent": {
+          "startTime": "2026-09-15T12:00:00.000Z",
+          "endTime": "2026-09-15T12:00:01.000Z",
+          "statsType": "outbound-rtp",
+          "values": "[50,100]"
+        },
+        "ITA_1-kind": {
+          "startTime": "2026-09-15T12:00:00.000Z",
+          "endTime": "2026-09-15T12:00:01.000Z",
+          "statsType": "inbound-rtp",
+          "values": "[\"audio\",\"audio\"]"
+        },
+        "ITA_1-codecId": {
+          "startTime": "2026-09-15T12:00:00.000Z",
+          "endTime": "2026-09-15T12:00:01.000Z",
+          "statsType": "inbound-rtp",
+          "values": "[\"COT_opus_in\",\"COT_opus_in\"]"
+        },
+        "ITA_1-bytesReceived": {
+          "startTime": "2026-09-15T12:00:00.000Z",
+          "endTime": "2026-09-15T12:00:01.000Z",
+          "statsType": "inbound-rtp",
+          "values": "[14000,28000]"
+        },
+        "ITA_1-packetsLost": {
+          "startTime": "2026-09-15T12:00:00.000Z",
+          "endTime": "2026-09-15T12:00:01.000Z",
+          "statsType": "inbound-rtp",
+          "values": "[0,2]"
+        },
+        "ITA_1-jitter": {
+          "startTime": "2026-09-15T12:00:00.000Z",
+          "endTime": "2026-09-15T12:00:01.000Z",
+          "statsType": "inbound-rtp",
+          "values": "[0.004,0.006]"
+        },
+        "ITA_1-concealedSamples": {
+          "startTime": "2026-09-15T12:00:00.000Z",
+          "endTime": "2026-09-15T12:00:01.000Z",
+          "statsType": "inbound-rtp",
+          "values": "[0,480]"
+        },
+        "ITA_1-silentConcealedSamples": {
+          "startTime": "2026-09-15T12:00:00.000Z",
+          "endTime": "2026-09-15T12:00:01.000Z",
+          "statsType": "inbound-rtp",
+          "values": "[0,0]"
+        },
+        "ITA_1-concealmentEvents": {
+          "startTime": "2026-09-15T12:00:00.000Z",
+          "endTime": "2026-09-15T12:00:01.000Z",
+          "statsType": "inbound-rtp",
+          "values": "[0,1]"
+        },
+        "MS_local-kind": {
+          "startTime": "2026-09-15T12:00:00.000Z",
+          "endTime": "2026-09-15T12:00:01.000Z",
+          "statsType": "media-source",
+          "values": "[\"audio\",\"audio\"]"
+        },
+        "MS_local-audioLevel": {
+          "startTime": "2026-09-15T12:00:00.000Z",
+          "endTime": "2026-09-15T12:00:01.000Z",
+          "statsType": "media-source",
+          "values": "[0.12,0.25]"
+        },
+        "MS_local-totalAudioEnergy": {
+          "startTime": "2026-09-15T12:00:00.000Z",
+          "endTime": "2026-09-15T12:00:01.000Z",
+          "statsType": "media-source",
+          "values": "[0.01,0.05]"
+        },
+        "MS_local-totalSamplesDuration": {
+          "startTime": "2026-09-15T12:00:00.000Z",
+          "endTime": "2026-09-15T12:00:01.000Z",
+          "statsType": "media-source",
+          "values": "[1.0,2.0]"
+        },
+        "RIA_1-kind": {
+          "startTime": "2026-09-15T12:00:00.000Z",
+          "endTime": "2026-09-15T12:00:01.000Z",
+          "statsType": "remote-inbound-rtp",
+          "values": "[\"audio\",\"audio\"]"
+        },
+        "RIA_1-packetsLost": {
+          "startTime": "2026-09-15T12:00:00.000Z",
+          "endTime": "2026-09-15T12:00:01.000Z",
+          "statsType": "remote-inbound-rtp",
+          "values": "[0,1]"
+        },
+        "RIA_1-jitter": {
+          "startTime": "2026-09-15T12:00:00.000Z",
+          "endTime": "2026-09-15T12:00:01.000Z",
+          "statsType": "remote-inbound-rtp",
+          "values": "[0.003,0.005]"
+        }
+      }
+    }
+  }
+}
