@@ -882,7 +882,6 @@ fn asks_keyframe(packets: &[Box<dyn rtcp::Packet>]) -> bool {
     })
 }
 
-
 /// Register SFU codecs: Opus-only audio, then common video (VP8/H264 + RTX).
 ///
 /// webrtc-rs 0.20 `set_codec_preferences_from_remote_description` walks the
@@ -1001,21 +1000,33 @@ fn saturating_dec(atom: &AtomicU64) {
 
 #[cfg(test)]
 mod tests {
-    use super::{Sfu, prepare_forwarded_rtp};
+    use super::{
+        MIME_TYPE_OPUS, RTCRtpCodec, RTCRtpCodingParameters, RTCRtpEncodingParameters, RtpCodecKind,
+        Sfu, prepare_forwarded_rtp,
+    };
     use rtc::rtp::packet::Packet;
     use std::sync::Arc;
 
+    struct NoopHandler;
 
+    #[async_trait::async_trait]
+    impl webrtc::peer_connection::PeerConnectionEventHandler for NoopHandler {}
+
+    /// Regression for #53: Chrome-like offer lists Opus then G.711; SFU answer
+    /// must still prefer Opus (first PT), not PCMA/PCMU/G722.
     #[tokio::test]
-    async fn sfu_audio_offer_prefers_opus_not_pcma() {
+    async fn sfu_answer_prefers_opus_when_offer_lists_pcma() {
         use crate::config::Config;
+        use crate::protocol::ServerFrame;
+        use crate::ticket::TicketClaim;
         use rtc::media_stream::MediaStreamTrack;
+        use tokio::sync::mpsc;
+        use uuid::Uuid;
         use webrtc::media_stream::track_local::TrackLocal;
         use webrtc::media_stream::track_local::static_rtp::TrackLocalStaticRTP;
-
-        use super::{
-            MIME_TYPE_OPUS, RTCRtpCodec, RTCRtpCodingParameters, RTCRtpEncodingParameters,
-            RtpCodecKind,
+        use webrtc::peer_connection::{
+            MediaEngine, PeerConnectionBuilder, RTCSessionDescription,
+            register_default_interceptors,
         };
 
         let config = Config::from_source(|key| match key {
@@ -1027,8 +1038,37 @@ mod tests {
             _ => None,
         })
         .unwrap();
-        let sfu = Sfu::new(&config);
-        let (pc, _rx, _gathered) = sfu.build_pc().await.expect("pc");
+        let sfu = Arc::new(Sfu::new(&config));
+        let (out, mut rx) = mpsc::unbounded_channel();
+        let channel = Uuid::from_u128(53);
+        let peer = sfu
+            .join(
+                TicketClaim {
+                    u: Uuid::from_u128(1),
+                    s: Uuid::from_u128(9),
+                    c: channel,
+                },
+                out,
+            )
+            .await
+            .expect("join");
+
+        // Client MediaEngine includes PCMA/PCMU/G722 (Chrome-like).
+        let mut media = MediaEngine::default();
+        media.register_default_codecs().unwrap();
+        let registry = register_default_interceptors(
+            webrtc::peer_connection::Registry::new(),
+            &mut media,
+        )
+        .unwrap();
+        let pc = PeerConnectionBuilder::new()
+            .with_media_engine(media)
+            .with_interceptor_registry(registry)
+            .with_handler(Arc::new(NoopHandler))
+            .with_udp_addrs(vec!["127.0.0.1:0".to_owned()])
+            .build()
+            .await
+            .unwrap();
         let track = Arc::new(TrackLocalStaticRTP::new(MediaStreamTrack::new(
             "stream".into(),
             "audio".into(),
@@ -1040,7 +1080,7 @@ mod tests {
                     ..Default::default()
                 },
                 codec: RTCRtpCodec {
-                    mime_type: MIME_TYPE_OPUS.into(),
+                    mime_type: MIME_TYPE_OPUS.to_owned(),
                     clock_rate: 48000,
                     channels: 2,
                     sdp_fmtp_line: String::new(),
@@ -1051,20 +1091,85 @@ mod tests {
         )));
         pc.add_track(Arc::clone(&track) as Arc<dyn TrackLocal>)
             .await
-            .expect("add_track");
-        let offer = pc.create_offer(None).await.expect("offer");
-        let audio_line = offer
-            .sdp
+            .unwrap();
+        let offer = pc.create_offer(None).await.unwrap();
+        // Track encodings are Opus-only, so inject Chrome-like G.711 PTs into the
+        // offer SDP (order: Opus first, then PCMA/PCMU/G722) — the #53 shape.
+        let offer_sdp = inject_g711_after_opus(&offer.sdp);
+        let offer_audio = offer_sdp
             .lines()
             .find(|l| l.starts_with("m=audio"))
-            .expect("m=audio");
-        // Payload list must lead with Opus (111), never PCMA (8) / PCMU (0) / G722 (9).
+            .expect("client m=audio");
+        assert!(
+            offer_audio.contains(" 8") && offer_audio.contains(" 0"),
+            "precondition: Chrome-like offer must list G.711: {offer_audio}"
+        );
+
+        pc.set_local_description(offer).await.unwrap();
+        sfu.apply_remote(peer, channel, offer_sdp, true)
+            .await
+            .expect("apply offer");
+
+        let answer_sdp = loop {
+            match tokio::time::timeout(std::time::Duration::from_secs(5), rx.recv()).await {
+                Ok(Some(ServerFrame::Answer { sdp })) => break sdp,
+                Ok(Some(_)) => continue,
+                Ok(None) => panic!("sfu closed before answer"),
+                Err(_) => panic!("timeout waiting for SFU answer"),
+            }
+        };
+        let audio_line = answer_sdp
+            .lines()
+            .find(|l| l.starts_with("m=audio"))
+            .expect("answer m=audio");
         let pts: Vec<&str> = audio_line.split_whitespace().skip(3).collect();
-        assert_eq!(pts.first().copied(), Some("111"), "{audio_line}");
+        assert_eq!(
+            pts.first().copied(),
+            Some("111"),
+            "Opus must be first in SFU answer: {audio_line}"
+        );
         assert!(
             !pts.iter().any(|p| *p == "8" || *p == "0" || *p == "9"),
-            "{audio_line}"
+            "G.711/G.722 must not appear in SFU answer: {audio_line}"
         );
+
+        let _ = pc
+            .set_remote_description(RTCSessionDescription::answer(answer_sdp).unwrap())
+            .await;
+    }
+
+    /// Chrome offers Opus then static G.711/G.722; webrtc-rs track encodings with
+    /// Opus-only omit them from create_offer, so splice them in for the regression.
+    fn inject_g711_after_opus(sdp: &str) -> String {
+        let mut out = Vec::new();
+        let mut injected = false;
+        for line in sdp.lines() {
+            if let Some(rest) = line.strip_prefix("m=audio ") {
+                let mut parts: Vec<&str> = rest.split_whitespace().collect();
+                // m=audio <port> <proto> <pts...>
+                if parts.len() >= 3 {
+                    let mut pts: Vec<&str> = parts[3..].to_vec();
+                    for pt in ["8", "0", "9"] {
+                        if !pts.iter().any(|p| *p == pt) {
+                            pts.push(pt);
+                        }
+                    }
+                    parts.truncate(3);
+                    parts.extend(pts);
+                    out.push(format!("m=audio {}", parts.join(" ")));
+                    injected = true;
+                    continue;
+                }
+            }
+            out.push(line.to_owned());
+            if injected && line.starts_with("a=rtpmap:111") {
+                out.push("a=rtpmap:8 PCMA/8000".to_owned());
+                out.push("a=rtpmap:0 PCMU/8000".to_owned());
+                out.push("a=rtpmap:9 G722/8000".to_owned());
+                injected = false;
+            }
+        }
+        out.join("\n") + "\n"
     }
 
     #[test]
