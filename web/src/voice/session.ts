@@ -21,6 +21,13 @@ import {
   useVoiceRoster,
 } from "./roster.ts";
 import {
+  isCaptureDiagEnabled,
+  logCaptureSettings,
+  resetCaptureDiagSession,
+  startLocalAbRecord,
+  startRemoteAbRecord,
+} from "./captureDiag.ts";
+import {
   type IceServer,
   type MediaServerFrame,
   type MediaSocket,
@@ -557,6 +564,7 @@ function stopPeer(): void {
   cameraStream = null;
   screenStream = null;
   liveStream = null;
+  resetCaptureDiagSession();
   remoteMix = null;
   if (remoteAudio) {
     remoteAudio.srcObject = null;
@@ -1160,6 +1168,9 @@ function attachIncoming(track: MediaStreamTrack, stream?: MediaStream): void {
     if (!remoteMix.getTracks().includes(track)) {
       remoteMix.addTrack(track);
     }
+    if (isCaptureDiagEnabled()) {
+      startRemoteAbRecord(track);
+    }
     (deps?.attachRemote ?? defaultAttachRemote)(remoteMix);
     return;
   }
@@ -1276,6 +1287,12 @@ async function startPeer(serverId: string, channelId: string): Promise<void> {
     }
     localStream = stream;
     stream.getAudioTracks().forEach((track) => hintTrack(track, "speech"));
+    if (isCaptureDiagEnabled()) {
+      for (const track of stream.getAudioTracks()) {
+        logCaptureSettings(track, MIC_AUDIO);
+        startLocalAbRecord(track);
+      }
+    }
     applyLocalAudio();
     for (const track of stream.getTracks()) {
       pc.addTrack?.(track, stream);
