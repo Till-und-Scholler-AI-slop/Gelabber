@@ -36,7 +36,8 @@ gelabber.example.com {
 
 ```bash
 cp deploy/compose/.env.homelab.example deploy/compose/.env
-# Domain, IPs, Secrets, MINIO_PUBLIC_ENDPOINT setzen
+# App- und MinIO-Domain, IPs und Secrets setzen; beide Namen müssen in DNS stehen.
+# Caddyfile.homelab enthält dafür zwei aktive vHosts.
 cd deploy/compose
 docker compose up -d
 ```
@@ -54,7 +55,7 @@ Caddy in Docker: Stack-Netz `gelabber`, Upstreams `web:80`, `api:8080`, `media:8
 ## Hinter TLS
 
 - `API_COOKIE_SECURE=true`
-- `MINIO_PUBLIC_ENDPOINT` = URL, die der Browser wirklich öffnet (eigene Subdomain, kein Path-Prefix — Presigns signieren den Host), plus `MINIO_API_CORS_ALLOW_ORIGIN` auf die Gelabber-Origin
+- `GELABBER_MINIO_DOMAIN` und `MINIO_PUBLIC_ENDPOINT` = eigene, in DNS erreichbare MinIO-Subdomain aus `Caddyfile.homelab` (kein Path-Prefix — Presigns signieren Host und Pfad); `MINIO_API_CORS_ALLOW_ORIGIN` = Gelabber-Origin
 - `TURN_PUBLIC_HOST`, `TURN_EXTERNAL_IP`, `MEDIA_ADVERTISED_IP` = Adresse, die Clients erreichen
 
 ## Backup
