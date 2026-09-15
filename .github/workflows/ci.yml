@@ -129,10 +129,23 @@ jobs:
         run: cp .env.example .env
 
       # Issue 37 asks to build api/web/media. `--build` on `up` also compiles
-      # MinIO from source (Go module fetch flakes). Pull the GHCR pin instead.
+      # MinIO from source (Go module fetch flakes). Pull the GHCR CE pin
+      # (not compose.yaml's Gelabber version tag — that is published in
+      # parallel and is missing on the version-bump commit: manifest unknown).
       - name: Pull pinned images
         working-directory: deploy/compose
-        run: docker compose pull minio postgres redis proxy coturn
+        env:
+          MINIO_RELEASE: RELEASE.2025-10-15T17-29-55Z
+        run: |
+          set -euo pipefail
+          docker compose pull postgres redis proxy coturn
+          repo="$(echo '${{ github.repository }}' | tr '[:upper:]' '[:lower:]')"
+          pin="ghcr.io/${repo}/minio:${MINIO_RELEASE}"
+          ver="v$(sed -n '/^\[workspace.package\]/,/^\[/{s/^version = "\([^"]*\)"/\1/p}' ../../Cargo.toml | head -n 1)"
+          grep -F "MINIO_RELEASE: ${MINIO_RELEASE}" compose.yaml
+          grep -F "ghcr.io/${repo}/minio:${ver}" compose.yaml
+          docker pull "$pin"
+          docker tag "$pin" "ghcr.io/${repo}/minio:${ver}"
 
       - name: Build app images
         working-directory: deploy/compose
