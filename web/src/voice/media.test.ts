@@ -36,4 +36,26 @@ describe("media ticket shape", () => {
     expect(tuned).toContain("useinbandfec=1");
     expect(tuned).toContain("minptime=10");
   });
+
+  it("merges Chromium's rtpmap / rtcp-fb / fmtp into one fmtp line", () => {
+    const sdp = [
+      "v=0",
+      "m=audio 9 UDP/TLS/RTP/SAVPF 111",
+      "a=rtpmap:111 opus/48000/2",
+      "a=rtcp-fb:111 transport-cc",
+      "a=fmtp:111 minptime=10;useinbandfec=0;stereo=1;maxaveragebitrate=24000",
+      "a=mid:0",
+      "",
+    ].join("\r\n");
+    const tuned = tuneAudioSdp(sdp);
+    expect(tuned.match(/a=fmtp:111 /g)).toHaveLength(1);
+    expect(tuned).toContain("a=rtcp-fb:111 transport-cc");
+    expect(tuned).toContain("useinbandfec=1");
+    expect(tuned).toContain("stereo=0");
+    expect(tuned).toContain("maxaveragebitrate=128000");
+    expect(tuned).toContain("minptime=10");
+    expect(tuned).not.toContain("useinbandfec=0");
+    expect(tuned).not.toContain("stereo=1");
+    expect(tuned).not.toContain("maxaveragebitrate=24000");
+  });
 });

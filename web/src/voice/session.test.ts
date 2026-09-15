@@ -28,6 +28,7 @@ import { resetVoiceRoster, useVoiceRoster, voiceOf } from "./roster.ts";
 class FakePeer implements PeerConnection {
   onicecandidate: PeerConnection["onicecandidate"] = null;
   ontrack: PeerConnection["ontrack"] = null;
+  onnegotiationneeded: PeerConnection["onnegotiationneeded"] = null;
   remoteDescription: { type: string } | null = null;
   signalingState = "stable";
   closed = false;
@@ -405,13 +406,48 @@ describe("voice session", () => {
     await vi.waitFor(() =>
       expect(peers[0]?.signalingState).toBe("have-local-offer"),
     );
+    const offersBefore = mediaSent.filter((frame) => frame.op === "o").length;
     emitMedia({ op: "o", sdp: "v=0\r\no=- 9 9 IN IP4 127.0.0.1\r\n" });
     await vi.waitFor(() =>
       expect(mediaSent.some((frame) => frame.op === "a")).toBe(true),
     );
     expect(errors).toHaveLength(0);
-    expect(peers[0]?.signalingState).toBe("stable");
     expect(peers[0]?.remoteDescription?.type).toBe("offer");
+    await vi.waitFor(() =>
+      expect(mediaSent.filter((frame) => frame.op === "o").length).toBeGreaterThan(
+        offersBefore,
+      ),
+    );
+  });
+
+  it("re-offers camera after rolling back a colliding SFU offer", async () => {
+    const { peers, mediaSent, emitMedia } = install();
+    joinVoice({ serverId: "srv", channelId: "voice", channelName: "Lounge" });
+    await vi.waitFor(() =>
+      expect(peers[0]?.signalingState).toBe("have-local-offer"),
+    );
+    emitMedia({ op: "a", sdp: "v=0\r\no=- 2 2 IN IP4 127.0.0.1\r\n" });
+    await vi.waitFor(() => expect(peers[0]?.signalingState).toBe("stable"));
+    toggleCamera();
+    await vi.waitFor(() =>
+      expect(useVoice.getState().localCamera).toBeTruthy(),
+    );
+    await vi.waitFor(() =>
+      expect(mediaSent.filter((frame) => frame.op === "o").length).toBe(2),
+    );
+    emitMedia({ op: "o", sdp: "v=0\r\no=- 9 9 IN IP4 127.0.0.1\r\n" });
+    await vi.waitFor(() =>
+      expect(mediaSent.some((frame) => frame.op === "a")).toBe(true),
+    );
+    expect(useVoice.getState().camera).toBe(true);
+    expect(useVoice.getState().localCamera).toBeTruthy();
+    const videoSenders = peers[0]?.senders.filter(
+      (sender) => sender.track?.kind === "video",
+    );
+    expect(videoSenders?.some((sender) => sender.track)).toBe(true);
+    await vi.waitFor(() =>
+      expect(mediaSent.filter((frame) => frame.op === "o").length).toBe(3),
+    );
   });
 
   it("does not leave the seat on a later channel bad_request", () => {

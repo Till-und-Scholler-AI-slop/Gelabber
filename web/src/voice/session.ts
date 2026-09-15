@@ -103,6 +103,7 @@ export type PeerConnection = {
   ontrack:
     | ((event: { streams: MediaStream[]; track: MediaStreamTrack }) => void)
     | null;
+  onnegotiationneeded: (() => void) | null;
   addTrack?(track: MediaStreamTrack, stream: MediaStream): RtpSender | void;
   addTransceiver?(
     kind: "audio" | "video",
@@ -650,6 +651,9 @@ async function applyRemoteDescription(
     if (collision) {
       // Polite peer: drop our in-flight offer so a late-joiner can take
       // the SFU's video renegotiation instead of throwing InvalidStateError.
+      // Rollback undoes the local description, not addTrack — a follow-up
+      // offer is required so a new m-line (camera) actually gets negotiated.
+      needOffer = true;
       try {
         await peer.setLocalDescription({ type: "rollback" });
       } catch {
@@ -1135,27 +1139,29 @@ function attachIncoming(track: MediaStreamTrack, stream?: MediaStream): void {
 
 async function offerIfStable(
   mine: number,
-  opts?: { initial?: boolean },
+  opts?: { initial?: boolean; fromEvent?: boolean },
 ): Promise<void> {
   await enqueueSdp(async () => {
     if (generation !== mine || !peer) return;
     if (opts?.initial && sfuOffered) return;
     if (makingOffer || signalingState() !== "stable") {
-      if (!opts?.initial) needOffer = true;
+      // Sticky only for explicit publish/unpublish. negotiationneeded
+      // fires again once we are stable (W3C perfect negotiation).
+      if (!opts?.initial && !opts?.fromEvent) needOffer = true;
       return;
     }
     makingOffer = true;
     needOffer = false;
     try {
       if (signalingState() !== "stable") {
-        if (!opts?.initial) needOffer = true;
+        if (!opts?.initial && !opts?.fromEvent) needOffer = true;
         return;
       }
       if (opts?.initial && sfuOffered) return;
       preferOpus(peer);
       const offer = withTunedSdp(await peer.createOffer());
       if (generation !== mine || signalingState() !== "stable") {
-        if (!opts?.initial) needOffer = true;
+        if (!opts?.initial && !opts?.fromEvent) needOffer = true;
         return;
       }
       await peer.setLocalDescription(offer);
@@ -1204,6 +1210,10 @@ async function startPeer(serverId: string, channelId: string): Promise<void> {
   const pc = createPeer(iceServers);
   peer = pc;
 
+  pc.onnegotiationneeded = () => {
+    if (generation !== mine) return;
+    void offerIfStable(mine, { fromEvent: true });
+  };
   pc.onicecandidate = (event) => {
     if (generation !== mine) return;
     if (!event.candidate) return;
@@ -1342,6 +1352,7 @@ async function applyWatchRemote(
   if (type === "offer") {
     const collision = watchMakingOffer || watchSignalingState() !== "stable";
     if (collision) {
+      watchNeedOffer = true;
       try {
         await watchPeer.setLocalDescription({ type: "rollback" });
       } catch {
@@ -1396,27 +1407,27 @@ function onWatchFrame(frame: MediaServerFrame): void {
 
 async function watchOfferIfStable(
   mine: number,
-  opts?: { initial?: boolean },
+  opts?: { initial?: boolean; fromEvent?: boolean },
 ): Promise<void> {
   await enqueueWatchSdp(async () => {
     if (watchGeneration !== mine || !watchPeer) return;
     if (opts?.initial && watchSfuOffered) return;
     if (watchMakingOffer || watchSignalingState() !== "stable") {
-      if (!opts?.initial) watchNeedOffer = true;
+      if (!opts?.initial && !opts?.fromEvent) watchNeedOffer = true;
       return;
     }
     watchMakingOffer = true;
     watchNeedOffer = false;
     try {
       if (watchSignalingState() !== "stable") {
-        if (!opts?.initial) watchNeedOffer = true;
+        if (!opts?.initial && !opts?.fromEvent) watchNeedOffer = true;
         return;
       }
       if (opts?.initial && watchSfuOffered) return;
       preferOpus(watchPeer);
       const offer = withTunedSdp(await watchPeer.createOffer());
       if (watchGeneration !== mine || watchSignalingState() !== "stable") {
-        if (!opts?.initial) watchNeedOffer = true;
+        if (!opts?.initial && !opts?.fromEvent) watchNeedOffer = true;
         return;
       }
       await watchPeer.setLocalDescription(offer);
@@ -1458,6 +1469,10 @@ async function startWatchPeer(channelId: string): Promise<void> {
 
   const pc = createPeer(iceServers);
   watchPeer = pc;
+  pc.onnegotiationneeded = () => {
+    if (watchGeneration !== mine) return;
+    void watchOfferIfStable(mine, { fromEvent: true });
+  };
   // Recvonly m-lines so the offer carries ice-ufrag. webrtc-rs rejects
   // an empty offer with "set_remote_description called with no ice-ufrag".
   pc.addTransceiver?.("audio", { direction: "recvonly" });

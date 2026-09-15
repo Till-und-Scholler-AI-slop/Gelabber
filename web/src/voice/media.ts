@@ -117,48 +117,85 @@ export function isOurTicket(ticket: string): boolean {
   return /^[abcdefghjkmnpqrstuvwxyz23456789]{12}$/.test(ticket);
 }
 
-const OPUS_FMTP =
-  "minptime=10;useinbandfec=1;stereo=0;maxaveragebitrate=128000";
-
 /**
  * Keep voice on Opus with in-band FEC. Default Chrome fmtp is fine on a
  * LAN; without FEC a few lost packets on a real homelab path sound torn.
+ *
+ * Chromium puts `a=rtcp-fb` between rtpmap and fmtp. Search the `m=`
+ * section for the existing fmtp of that payload type, merge, emit one line.
  */
 export function tuneAudioSdp(sdp: string): string {
   const nl = sdp.includes("\r\n") ? "\r\n" : "\n";
   const lines = sdp.split(/\r?\n/);
-  const out: string[] = [];
-  for (let i = 0; i < lines.length; i += 1) {
-    const line = lines[i] ?? "";
-    out.push(line);
-    const rtpmap = /^a=rtpmap:(\d+) opus\/48000/i.exec(line);
-    if (!rtpmap) continue;
-    const pt = rtpmap[1] ?? "";
-    const prefix = `a=fmtp:${pt}`;
-    const next = lines[i + 1] ?? "";
-    if (next.toLowerCase().startsWith(prefix.toLowerCase())) {
-      i += 1;
-      const sp = next.indexOf(" ");
-      const params = sp >= 0 ? next.slice(sp + 1).trim() : "";
-      const parts = new Map<string, string>();
-      for (const piece of params.split(";")) {
-        const trimmed = piece.trim();
-        if (!trimmed) continue;
-        const eq = trimmed.indexOf("=");
-        if (eq <= 0) continue;
-        parts.set(trimmed.slice(0, eq).toLowerCase(), trimmed.slice(eq + 1));
-      }
-      if (!parts.has("minptime")) parts.set("minptime", "10");
-      parts.set("useinbandfec", "1");
-      parts.set("stereo", "0");
-      parts.set("maxaveragebitrate", "128000");
-      const body = [...parts.entries()]
-        .map(([key, value]) => `${key}=${value}`)
-        .join(";");
-      out.push(`${prefix} ${body}`);
-    } else {
-      out.push(`${prefix} ${OPUS_FMTP}`);
-    }
+  const firstM = lines.findIndex((line) => line.startsWith("m="));
+  if (firstM < 0) return tuneOpusSection(lines).join(nl);
+  const out = lines.slice(0, firstM);
+  let i = firstM;
+  while (i < lines.length) {
+    const start = i;
+    i += 1;
+    while (i < lines.length && !lines[i]?.startsWith("m=")) i += 1;
+    out.push(...tuneOpusSection(lines.slice(start, i)));
   }
   return out.join(nl);
+}
+
+function tuneOpusSection(section: string[]): string[] {
+  const pts: string[] = [];
+  for (const line of section) {
+    const rtpmap = /^a=rtpmap:(\d+) opus\/48000/i.exec(line);
+    if (rtpmap?.[1]) pts.push(rtpmap[1]);
+  }
+  if (pts.length === 0) return section;
+
+  const lines = [...section];
+  for (const pt of pts) {
+    const prefix = `a=fmtp:${pt}`;
+    const found: number[] = [];
+    for (let i = 0; i < lines.length; i += 1) {
+      if (isFmtpForPt(lines[i] ?? "", pt)) found.push(i);
+    }
+    const parts = new Map<string, string>();
+    for (const idx of found) mergeFmtpParams(parts, lines[idx] ?? "");
+    applyVoiceFmtp(parts);
+    const merged = `${prefix} ${[...parts.entries()]
+      .map(([key, value]) => `${key}=${value}`)
+      .join(";")}`;
+    if (found.length > 0) {
+      const keep = found[0] ?? 0;
+      lines[keep] = merged;
+      for (let k = found.length - 1; k >= 1; k -= 1) {
+        lines.splice(found[k] ?? 0, 1);
+      }
+    } else {
+      const rtpmapIdx = lines.findIndex((line) =>
+        new RegExp(`^a=rtpmap:${pt} opus/48000`, "i").test(line),
+      );
+      lines.splice(rtpmapIdx >= 0 ? rtpmapIdx + 1 : lines.length, 0, merged);
+    }
+  }
+  return lines;
+}
+
+function isFmtpForPt(line: string, pt: string): boolean {
+  return new RegExp(`^a=fmtp:${pt}(?:\\s|$)`, "i").test(line);
+}
+
+function mergeFmtpParams(parts: Map<string, string>, line: string): void {
+  const sp = line.indexOf(" ");
+  const params = sp >= 0 ? line.slice(sp + 1).trim() : "";
+  for (const piece of params.split(";")) {
+    const trimmed = piece.trim();
+    if (!trimmed) continue;
+    const eq = trimmed.indexOf("=");
+    if (eq <= 0) continue;
+    parts.set(trimmed.slice(0, eq).toLowerCase(), trimmed.slice(eq + 1));
+  }
+}
+
+function applyVoiceFmtp(parts: Map<string, string>): void {
+  if (!parts.has("minptime")) parts.set("minptime", "10");
+  parts.set("useinbandfec", "1");
+  parts.set("stereo", "0");
+  parts.set("maxaveragebitrate", "128000");
 }
