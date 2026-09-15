@@ -883,12 +883,14 @@ fn asks_keyframe(packets: &[Box<dyn rtcp::Packet>]) -> bool {
 }
 
 
-/// Register SFU codecs: Opus-only audio, then common video.
+/// Register SFU codecs: Opus-only audio, then common video (VP8/H264 + RTX).
 ///
-/// `register_default_codecs` lists Opus first in the MediaEngine, but webrtc-rs
-/// SDP answers still put static PTs ahead of Opus (`m=audio 8 0 9 111`). Measured
-/// on #53: active codec became PCMA (~64 kbps telephone). Omit G.711/G.722 so
-/// negotiation cannot pick them.
+/// webrtc-rs 0.20 `set_codec_preferences_from_remote_description` walks the
+/// remote offer codecs with `.rev()` and pushes matches, which *reverses*
+/// preference order. Chrome offers `111 … 8` (Opus first); the SFU answer
+/// became `m=audio … 8 0 9 111` (PCMA first) and stats showed audio/PCMA
+/// ~64 kbps — root cause of #53. Omitting PCMA/PCMU/G722 makes the reversed
+/// list still Opus-only.
 fn register_sfu_codecs(media: &mut MediaEngine) -> webrtc::error::Result<()> {
     media.register_codec(
         RTCRtpCodecParameters {
