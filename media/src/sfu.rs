@@ -218,6 +218,9 @@ struct SfuStats {
     peers: AtomicU64,
     forwarded_bytes: AtomicU64,
     ice_fails: AtomicU64,
+    rtp_queue_drops: AtomicU64,
+    forward_write_errors: AtomicU64,
+    rtp_packets_forwarded: AtomicU64,
 }
 
 impl Sfu {
@@ -240,6 +243,9 @@ impl Sfu {
         let peers = self.stats.peers.load(Ordering::Relaxed);
         let forwarded = self.stats.forwarded_bytes.load(Ordering::Relaxed);
         let ice_fails = self.stats.ice_fails.load(Ordering::Relaxed);
+        let queue_drops = self.stats.rtp_queue_drops.load(Ordering::Relaxed);
+        let write_errors = self.stats.forward_write_errors.load(Ordering::Relaxed);
+        let packets = self.stats.rtp_packets_forwarded.load(Ordering::Relaxed);
         format!(
             "# HELP gelabber_media_rooms Active SFU rooms (voice channels with at least one peer).\n\
              # TYPE gelabber_media_rooms gauge\n\
@@ -252,7 +258,16 @@ impl Sfu {
              gelabber_media_forwarded_bytes_total {forwarded}\n\
              # HELP gelabber_media_ice_fails_total Peer connections that entered the ICE failed state.\n\
              # TYPE gelabber_media_ice_fails_total counter\n\
-             gelabber_media_ice_fails_total {ice_fails}\n"
+             gelabber_media_ice_fails_total {ice_fails}\n\
+             # HELP gelabber_media_rtp_queue_drops_total RTP packets dropped because a subscriber lagged the forward broadcast queue.\n\
+             # TYPE gelabber_media_rtp_queue_drops_total counter\n\
+             gelabber_media_rtp_queue_drops_total {queue_drops}\n\
+             # HELP gelabber_media_forward_write_errors_total Failed write_rtp calls while forwarding to a subscriber.\n\
+             # TYPE gelabber_media_forward_write_errors_total counter\n\
+             gelabber_media_forward_write_errors_total {write_errors}\n\
+             # HELP gelabber_media_rtp_packets_forwarded_total RTP packets successfully written to subscribers.\n\
+             # TYPE gelabber_media_rtp_packets_forwarded_total counter\n\
+             gelabber_media_rtp_packets_forwarded_total {packets}\n"
         )
     }
 
@@ -758,6 +773,9 @@ impl Sfu {
                         match local_rtp.write_rtp(packet).await {
                             Ok(()) => {
                                 forwarded.forwarded_bytes.fetch_add(n, Ordering::Relaxed);
+                                forwarded
+                                    .rtp_packets_forwarded
+                                    .fetch_add(1, Ordering::Relaxed);
                                 if !bound {
                                     bound = true;
                                     if let Some(kf) = keyframe.as_ref() {
@@ -779,6 +797,9 @@ impl Sfu {
                                 }
                             }
                             Err(err) => {
+                                forwarded
+                                    .forward_write_errors
+                                    .fetch_add(1, Ordering::Relaxed);
                                 if !warned {
                                     debug!(error = %err, "forward write_rtp skipped");
                                     warned = true;
@@ -786,7 +807,12 @@ impl Sfu {
                             }
                         }
                     }
-                    Err(broadcast::error::RecvError::Lagged(_)) => continue,
+                    Err(broadcast::error::RecvError::Lagged(skipped)) => {
+                        forwarded
+                            .rtp_queue_drops
+                            .fetch_add(skipped, Ordering::Relaxed);
+                        continue;
+                    }
                     Err(broadcast::error::RecvError::Closed) => break,
                 }
             }
@@ -908,8 +934,30 @@ fn saturating_dec(atom: &AtomicU64) {
 
 #[cfg(test)]
 mod tests {
-    use super::prepare_forwarded_rtp;
+    use super::{Sfu, prepare_forwarded_rtp};
     use rtc::rtp::packet::Packet;
+
+    #[test]
+    fn metrics_text_includes_forward_diagnostics() {
+        use crate::config::Config;
+        let config = Config::from_source(|key| match key {
+            "REDIS_URL" => Some("redis://127.0.0.1:1".to_owned()),
+            "MEDIA_ICE_BIND" => Some("127.0.0.1:0".to_owned()),
+            "TURN_URLS" => Some("stun:127.0.0.1:3478".to_owned()),
+            "TURN_USERNAME" => Some("gelabber".to_owned()),
+            "TURN_PASSWORD" => Some("gelabberturn".to_owned()),
+            _ => None,
+        })
+        .unwrap();
+        let text = Sfu::new(&config).metrics_text();
+        for name in [
+            "gelabber_media_rtp_queue_drops_total",
+            "gelabber_media_forward_write_errors_total",
+            "gelabber_media_rtp_packets_forwarded_total",
+        ] {
+            assert!(text.contains(name), "missing {name}");
+        }
+    }
 
     #[test]
     fn strips_publisher_header_extensions() {

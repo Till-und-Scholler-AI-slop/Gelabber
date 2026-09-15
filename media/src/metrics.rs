@@ -1,6 +1,7 @@
 //! Prometheus scrape for the SFU. `GET /metrics` (and `/media/metrics` so
 //! a Caddy `/media/*` prefix still works) exports rooms, peers, forwarded
-//! RTP bytes and ICE failures. `/health` and `/ready` are unchanged.
+//! RTP bytes/packets, ICE failures, queue drops and write errors. `/health`
+//! and `/ready` are unchanged.
 
 use axum::Router;
 use axum::extract::State;
