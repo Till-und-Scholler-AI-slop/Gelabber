@@ -16,8 +16,11 @@ use crate::sfu::PeerId;
 use crate::state::AppState;
 use crate::ticket::{self, TicketClaim};
 
-const MAX_FRAME: usize = 16 * 1024;
-const MAX_SDP: usize = 12_288;
+/// Chrome video answers (VP8/VP9/H264 + ICE + BUNDLE) regularly exceed 12 KiB.
+/// A 12 KiB cap rejected those frames with `bad_request` and kicked the peer
+/// the moment someone published camera / screen / Go Live.
+pub(crate) const MAX_FRAME: usize = 64 * 1024;
+pub(crate) const MAX_SDP: usize = 48 * 1024;
 const MAX_ICE: usize = 800;
 
 pub fn router() -> Router<AppState> {
@@ -200,4 +203,18 @@ async fn send(
     sink.send(Message::Text(Utf8Bytes::from(json)))
         .await
         .map_err(|_| ())
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn chrome_video_sdp_fits() {
+        assert!(MAX_SDP >= 48 * 1024);
+        assert!(MAX_FRAME >= 64 * 1024);
+        assert!(MAX_FRAME > MAX_SDP);
+        assert!(MAX_SDP > 12_288);
+        assert!(MAX_FRAME > 16 * 1024);
+    }
 }

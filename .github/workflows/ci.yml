@@ -1,0 +1,185 @@
+# Verify API, web, and media: existing tests plus a Compose start smoke.
+# No image push. No continue-on-error. Missing Postgres/Redis fail the job.
+name: CI
+
+on:
+  pull_request:
+    paths:
+      - api/**
+      - media/**
+      - web/**
+      - docker/**
+      - deploy/compose/**
+      - Cargo.toml
+      - Cargo.lock
+      - rust-toolchain.toml
+      - .github/workflows/ci.yml
+  push:
+    branches: [main]
+    paths:
+      - api/**
+      - media/**
+      - web/**
+      - docker/**
+      - deploy/compose/**
+      - Cargo.toml
+      - Cargo.lock
+      - rust-toolchain.toml
+      - .github/workflows/ci.yml
+
+concurrency:
+  group: ci-${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: ${{ github.event_name == 'pull_request' }}
+
+env:
+  CARGO_TERM_COLOR: always
+
+jobs:
+  rust:
+    name: Rust tests
+    runs-on: ubuntu-latest
+    services:
+      postgres:
+        image: postgres:18.6-alpine3.24
+        env:
+          POSTGRES_USER: gelabber
+          POSTGRES_PASSWORD: gelabber
+          POSTGRES_DB: gelabber
+        ports:
+          - 5432:5432
+        options: >-
+          --health-cmd "pg_isready -U gelabber -d gelabber"
+          --health-interval 5s
+          --health-timeout 3s
+          --health-retries 10
+      redis:
+        image: redis:8.10.1-alpine
+        ports:
+          - 6379:6379
+        options: >-
+          --health-cmd "redis-cli ping"
+          --health-interval 5s
+          --health-timeout 3s
+          --health-retries 10
+    env:
+      DATABASE_URL: postgres://gelabber:gelabber@127.0.0.1:5432/gelabber
+      REDIS_URL: redis://127.0.0.1:6379
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v7
+
+      - name: Rust toolchain
+        uses: dtolnay/rust-toolchain@1.98.1
+
+      - name: Cache cargo
+        uses: Swatinem/rust-cache@v2
+
+      - name: Test workspace
+        run: cargo test --locked --workspace --all-targets
+
+  web:
+    name: Frontend
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: web
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v7
+
+      - name: Node
+        uses: actions/setup-node@v4
+        with:
+          node-version: 26.8.2
+          cache: npm
+          cache-dependency-path: web/package-lock.json
+
+      - name: Install
+        run: npm ci
+
+      - name: Lint
+        run: npm run lint
+
+      - name: Test
+        run: npm test
+
+      - name: Build
+        run: npm run build
+
+  compose:
+    name: Compose smoke
+    runs-on: ubuntu-latest
+    timeout-minutes: 45
+    permissions:
+      contents: read
+      packages: read
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v7
+
+      - name: Login to GHCR
+        uses: docker/login-action@v4
+        with:
+          registry: ghcr.io
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Env
+        working-directory: deploy/compose
+        run: cp .env.example .env
+
+      # Issue 37 asks to build api/web/media. `--build` on `up` also compiles
+      # MinIO from source (Go module fetch flakes). Pull the GHCR pin instead.
+      - name: Pull pinned images
+        working-directory: deploy/compose
+        run: docker compose pull minio postgres redis proxy coturn
+
+      - name: Build app images
+        working-directory: deploy/compose
+        run: docker compose build api web media
+
+      - name: Start stack
+        working-directory: deploy/compose
+        run: docker compose up -d --no-build --wait --wait-timeout 180
+
+      - name: Reach web, API, and media
+        working-directory: deploy/compose
+        run: |
+          set -euo pipefail
+          deadline=$((SECONDS + 120))
+          until curl -sfS http://127.0.0.1/ready >/tmp/api-ready.json; do
+            if [ "$SECONDS" -ge "$deadline" ]; then
+              echo "API /ready did not become ready within 120s"
+              exit 1
+            fi
+            sleep 2
+          done
+          curl -sfS http://127.0.0.1/health >/tmp/api-health.json
+          curl -sfS http://127.0.0.1/media/health >/tmp/media-health.json
+          curl -sfS http://127.0.0.1/media/ready >/tmp/media-ready.json
+          curl -sfS -o /tmp/index.html http://127.0.0.1/
+          grep -q 'id="root"' /tmp/index.html
+          python3 - <<'PY'
+          import json
+          from pathlib import Path
+          api = json.loads(Path("/tmp/api-ready.json").read_text())
+          media = json.loads(Path("/tmp/media-ready.json").read_text())
+          assert api.get("status") == "ready", api
+          assert media.get("status") == "ready", media
+          health = json.loads(Path("/tmp/api-health.json").read_text())
+          assert health.get("status") == "ok", health
+          mhealth = json.loads(Path("/tmp/media-health.json").read_text())
+          assert mhealth.get("status") == "ok", mhealth
+          PY
+
+      - name: Dump Compose logs
+        if: failure()
+        working-directory: deploy/compose
+        run: |
+          docker compose ps -a
+          docker compose logs --no-color --tail=400
+
+      - name: Stop stack
+        if: always()
+        working-directory: deploy/compose
+        run: docker compose down -v --remove-orphans
