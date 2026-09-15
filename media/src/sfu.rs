@@ -14,7 +14,8 @@ use rtc::rtcp::payload_feedbacks::full_intra_request::FullIntraRequest;
 use rtc::rtcp::payload_feedbacks::picture_loss_indication::PictureLossIndication;
 use rtc::rtp;
 use rtc::peer_connection::configuration::media_engine::{
-    MIME_TYPE_H264, MIME_TYPE_OPUS, MIME_TYPE_VP8,
+    MIME_TYPE_AV1, MIME_TYPE_H264, MIME_TYPE_HEVC, MIME_TYPE_OPUS, MIME_TYPE_RTX,
+    MIME_TYPE_VP8, MIME_TYPE_VP9,
 };
 use rtc::rtp_transceiver::rtp_sender::{
     RTCRtpCodec, RTCRtpCodecParameters, RTCRtpCodingParameters, RTCRtpEncodingParameters,
@@ -882,14 +883,15 @@ fn asks_keyframe(packets: &[Box<dyn rtcp::Packet>]) -> bool {
     })
 }
 
-/// Register SFU codecs: Opus-only audio, then common video (VP8/H264 + RTX).
+/// Register SFU codecs: Opus-only audio, full default video set from rtc 0.20.5.
 ///
 /// webrtc-rs 0.20 `set_codec_preferences_from_remote_description` walks the
 /// remote offer codecs with `.rev()` and pushes matches, which *reverses*
 /// preference order. Chrome offers `111 … 8` (Opus first); the SFU answer
 /// became `m=audio … 8 0 9 111` (PCMA first) and stats showed audio/PCMA
 /// ~64 kbps — root cause of #53. Omitting PCMA/PCMU/G722 makes the reversed
-/// list still Opus-only.
+/// list still Opus-only. Video registrations mirror `MediaEngine::register_default_codecs`
+/// (VP8/VP9/H264 variants/AV1/H265 + RTX) so camera/screenshare parity is kept.
 fn register_sfu_codecs(media: &mut MediaEngine) -> webrtc::error::Result<()> {
     media.register_codec(
         RTCRtpCodecParameters {
@@ -925,9 +927,10 @@ fn register_sfu_codecs(media: &mut MediaEngine) -> webrtc::error::Result<()> {
         },
     ];
 
+    // Mirror rtc 0.20.5 MediaEngine::register_default_codecs video + RTX PTs.
     let rtx = |payload_type: u8, apt: u8| RTCRtpCodecParameters {
         rtp_codec: RTCRtpCodec {
-            mime_type: "video/rtx".to_owned(),
+            mime_type: MIME_TYPE_RTX.to_owned(),
             clock_rate: 90000,
             channels: 0,
             sdp_fmtp_line: format!("apt={apt}"),
@@ -952,18 +955,135 @@ fn register_sfu_codecs(media: &mut MediaEngine) -> webrtc::error::Result<()> {
         rtx(97, 96),
         RTCRtpCodecParameters {
             rtp_codec: RTCRtpCodec {
+                mime_type: MIME_TYPE_VP9.to_owned(),
+                clock_rate: 90000,
+                channels: 0,
+                sdp_fmtp_line: "profile-id=0".to_owned(),
+                rtcp_feedback: video_rtcp_feedback.clone(),
+            },
+            payload_type: 98,
+            ..Default::default()
+        },
+        rtx(99, 98),
+        RTCRtpCodecParameters {
+            rtp_codec: RTCRtpCodec {
+                mime_type: MIME_TYPE_VP9.to_owned(),
+                clock_rate: 90000,
+                channels: 0,
+                sdp_fmtp_line: "profile-id=1".to_owned(),
+                rtcp_feedback: video_rtcp_feedback.clone(),
+            },
+            payload_type: 100,
+            ..Default::default()
+        },
+        rtx(101, 100),
+        RTCRtpCodecParameters {
+            rtp_codec: RTCRtpCodec {
+                mime_type: MIME_TYPE_H264.to_owned(),
+                clock_rate: 90000,
+                channels: 0,
+                sdp_fmtp_line:
+                    "level-asymmetry-allowed=1;packetization-mode=1;profile-level-id=42001f"
+                        .to_owned(),
+                rtcp_feedback: video_rtcp_feedback.clone(),
+            },
+            payload_type: 102,
+            ..Default::default()
+        },
+        rtx(103, 102),
+        RTCRtpCodecParameters {
+            rtp_codec: RTCRtpCodec {
+                mime_type: MIME_TYPE_H264.to_owned(),
+                clock_rate: 90000,
+                channels: 0,
+                sdp_fmtp_line:
+                    "level-asymmetry-allowed=1;packetization-mode=0;profile-level-id=42001f"
+                        .to_owned(),
+                rtcp_feedback: video_rtcp_feedback.clone(),
+            },
+            payload_type: 127,
+            ..Default::default()
+        },
+        rtx(104, 127),
+        RTCRtpCodecParameters {
+            rtp_codec: RTCRtpCodec {
                 mime_type: MIME_TYPE_H264.to_owned(),
                 clock_rate: 90000,
                 channels: 0,
                 sdp_fmtp_line:
                     "level-asymmetry-allowed=1;packetization-mode=1;profile-level-id=42e01f"
                         .to_owned(),
-                rtcp_feedback: video_rtcp_feedback,
+                rtcp_feedback: video_rtcp_feedback.clone(),
             },
             payload_type: 125,
             ..Default::default()
         },
         rtx(105, 125),
+        RTCRtpCodecParameters {
+            rtp_codec: RTCRtpCodec {
+                mime_type: MIME_TYPE_H264.to_owned(),
+                clock_rate: 90000,
+                channels: 0,
+                sdp_fmtp_line:
+                    "level-asymmetry-allowed=1;packetization-mode=0;profile-level-id=42e01f"
+                        .to_owned(),
+                rtcp_feedback: video_rtcp_feedback.clone(),
+            },
+            payload_type: 108,
+            ..Default::default()
+        },
+        rtx(109, 108),
+        RTCRtpCodecParameters {
+            rtp_codec: RTCRtpCodec {
+                mime_type: MIME_TYPE_H264.to_owned(),
+                clock_rate: 90000,
+                channels: 0,
+                sdp_fmtp_line:
+                    "level-asymmetry-allowed=1;packetization-mode=0;profile-level-id=42001f"
+                        .to_owned(),
+                rtcp_feedback: video_rtcp_feedback.clone(),
+            },
+            payload_type: 127,
+            ..Default::default()
+        },
+        RTCRtpCodecParameters {
+            rtp_codec: RTCRtpCodec {
+                mime_type: MIME_TYPE_H264.to_owned(),
+                clock_rate: 90000,
+                channels: 0,
+                sdp_fmtp_line:
+                    "level-asymmetry-allowed=1;packetization-mode=1;profile-level-id=640032"
+                        .to_owned(),
+                rtcp_feedback: video_rtcp_feedback.clone(),
+            },
+            payload_type: 123,
+            ..Default::default()
+        },
+        rtx(124, 123),
+        RTCRtpCodecParameters {
+            rtp_codec: RTCRtpCodec {
+                mime_type: MIME_TYPE_AV1.to_owned(),
+                clock_rate: 90000,
+                channels: 0,
+                sdp_fmtp_line: "profile-id=0".to_owned(),
+                rtcp_feedback: video_rtcp_feedback.clone(),
+            },
+            payload_type: 41,
+            ..Default::default()
+        },
+        rtx(106, 41),
+        RTCRtpCodecParameters {
+            rtp_codec: RTCRtpCodec {
+                mime_type: MIME_TYPE_HEVC.to_owned(),
+                clock_rate: 90000,
+                channels: 0,
+                sdp_fmtp_line: String::new(),
+                rtcp_feedback: video_rtcp_feedback,
+            },
+            payload_type: 126,
+            ..Default::default()
+        },
+        rtx(107, 126),
     ] {
         media.register_codec(codec, RtpCodecKind::Video)?;
     }
@@ -1133,9 +1253,9 @@ mod tests {
             "G.711/G.722 must not appear in SFU answer: {audio_line}"
         );
 
-        let _ = pc
-            .set_remote_description(RTCSessionDescription::answer(answer_sdp).unwrap())
-            .await;
+        pc.set_remote_description(RTCSessionDescription::answer(answer_sdp).unwrap())
+            .await
+            .expect("client accepts SFU answer");
     }
 
     /// Chrome offers Opus then static G.711/G.722; webrtc-rs track encodings with
