@@ -1025,7 +1025,7 @@ mod tests {
         use webrtc::media_stream::track_local::TrackLocal;
         use webrtc::media_stream::track_local::static_rtp::TrackLocalStaticRTP;
         use webrtc::peer_connection::{
-            MediaEngine, PeerConnectionBuilder, RTCSessionDescription,
+            MediaEngine, PeerConnection, PeerConnectionBuilder, RTCSessionDescription,
             register_default_interceptors,
         };
 
