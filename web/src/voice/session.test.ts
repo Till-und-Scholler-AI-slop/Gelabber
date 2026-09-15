@@ -699,9 +699,31 @@ describe("voice session", () => {
       track: stray.getVideoTracks()[0]!,
       streams: [stray],
     });
-    expect(useVoice.getState().watchStream).toBe(stray);
+    expect(useVoice.getState().watchStream).toBe(late);
     stopWatching();
     expect(useVoice.getState().watching).toBe(false);
+  });
+
+  it("uses an untagged watch video only until a parsed live track arrives", async () => {
+    const { peers } = install();
+    watchLive({
+      serverId: "srv",
+      channelId: "voice",
+      channelName: "Lounge",
+    });
+    await vi.waitFor(() => expect(peers.length).toBe(1));
+    const stray = fakeVideoStream("chrome-msid");
+    peers[0]?.ontrack?.({
+      track: stray.getVideoTracks()[0]!,
+      streams: [stray],
+    });
+    expect(useVoice.getState().watchStream).toBe(stray);
+    const live = fakeVideoStream("u-bob:l");
+    peers[0]?.ontrack?.({
+      track: live.getVideoTracks()[0]!,
+      streams: [live],
+    });
+    expect(useVoice.getState().watchStream).toBe(live);
   });
 
   it("parses SFU stream ids for a live track", () => {

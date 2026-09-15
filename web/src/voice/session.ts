@@ -1375,14 +1375,15 @@ function attachWatchIncoming(
   const attached = stream ?? new MediaStream([track]);
   const state = useVoice.getState();
   if (!parsed) {
-    // Recvonly watch: SFU msid may be missing. Any video is the live tile.
-    useVoice.setState({ watchStream: attached });
+    // First untagged video can fill the tile. Do not replace a parsed live.
+    if (!state.watchStream) {
+      useVoice.setState({ watchStream: attached });
+    }
     return;
   }
   const current = state.remote[parsed.userId] ?? {};
   useVoice.setState({
-    watchStream:
-      parsed.k === "l" || !state.watchStream ? attached : state.watchStream,
+    watchStream: parsed.k === "l" ? attached : (state.watchStream ?? attached),
     remote: {
       ...state.remote,
       [parsed.userId]: { ...current, [parsed.k]: attached },
@@ -1524,6 +1525,8 @@ async function startWatchPeer(channelId: string): Promise<void> {
   // an empty offer with "set_remote_description called with no ice-ufrag".
   pc.addTransceiver?.("audio", { direction: "recvonly" });
   pc.addTransceiver?.("video", { direction: "recvonly" });
+  preferOpus(pc);
+  preferVp8(pc);
   pc.onicecandidate = (event) => {
     if (watchGeneration !== mine) return;
     if (!event.candidate) return;

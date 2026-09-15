@@ -745,15 +745,45 @@ impl Sfu {
         let forwarded = Arc::clone(&self.stats);
         let local_rtp = Arc::clone(&local);
         tokio::spawn(async move {
+            let mut bound = false;
+            let mut warned = false;
             loop {
                 match rx.recv().await {
                     Ok(packet) => {
                         let n = packet.payload.len() as u64;
                         let packet = prepare_forwarded_rtp(packet, ssrc);
-                        // Unbound until the subscriber answers; a foreign
-                        // extension/PT is skipped. Do not kill the forwarder.
-                        if local_rtp.write_rtp(packet).await.is_ok() {
-                            forwarded.forwarded_bytes.fetch_add(n, Ordering::Relaxed);
+                        // Unbound until the subscriber answers. Skip; do not
+                        // kill the forwarder. PLI only after the first
+                        // successful write — an earlier IDR is dropped.
+                        match local_rtp.write_rtp(packet).await {
+                            Ok(()) => {
+                                forwarded.forwarded_bytes.fetch_add(n, Ordering::Relaxed);
+                                if !bound {
+                                    bound = true;
+                                    if let Some(kf) = keyframe.as_ref() {
+                                        let _ = kf.send(());
+                                        let local_rtcp = Arc::clone(&local_rtp);
+                                        let relay = kf.clone();
+                                        tokio::spawn(async move {
+                                            // Started after bind: None is a
+                                            // closed RTCP channel, not pre-bind.
+                                            while let Some(evt) = local_rtcp.poll().await {
+                                                if let TrackLocalEvent::OnRtcpPacket(pkts) = evt
+                                                    && asks_keyframe(&pkts)
+                                                {
+                                                    let _ = relay.send(());
+                                                }
+                                            }
+                                        });
+                                    }
+                                }
+                            }
+                            Err(err) => {
+                                if !warned {
+                                    debug!(error = %err, "forward write_rtp skipped");
+                                    warned = true;
+                                }
+                            }
                         }
                     }
                     Err(broadcast::error::RecvError::Lagged(_)) => continue,
@@ -761,22 +791,6 @@ impl Sfu {
                 }
             }
         });
-        if let Some(kf) = keyframe.clone() {
-            let local_rtcp = Arc::clone(&local);
-            let relay = kf.clone();
-            tokio::spawn(async move {
-                loop {
-                    match local_rtcp.poll().await {
-                        Some(TrackLocalEvent::OnRtcpPacket(pkts)) if asks_keyframe(&pkts) => {
-                            let _ = relay.send(());
-                        }
-                        Some(_) => {}
-                        None => break,
-                    }
-                }
-            });
-            let _ = kf.send(());
-        }
 
         match pc.create_offer(None).await {
             Ok(offer) => {
