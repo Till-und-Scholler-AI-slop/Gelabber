@@ -74,6 +74,12 @@ jobs:
       - name: Cache cargo
         uses: Swatinem/rust-cache@v2
 
+      - name: Install Caddy
+        run: |
+          curl -fsSL "https://caddyserver.com/api/download?os=linux&arch=amd64" -o /usr/local/bin/caddy
+          chmod +x /usr/local/bin/caddy
+          caddy version
+
       - name: Test deployment config
         run: python3 -m unittest discover -s deploy/compose/tests -v
 
