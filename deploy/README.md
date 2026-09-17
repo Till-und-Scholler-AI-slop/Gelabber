@@ -30,18 +30,30 @@ gelabber.example.com {
 }
 ```
 
-`header_up Host {host}` ist Pflicht. `/ws` vergleicht Browser-`Origin` mit `Host`; ohne Header wird `Host` zum Upstream und der Handshake ist 403.
+`header_up Host {host}` ist für den App-vHost Pflicht. `/ws` vergleicht Browser-`Origin` mit `Host`. Ohne Override lässt Caddy bei **HTTP**-Upstreams den eingehenden `Host` standardmäßig durch; bei **HTTPS**-Upstreams setzt Caddy (ab v2.11) den Host auf den Upstream. Explizites Forwarding macht die Absicht klar und verhindert Signature-/Origin-Fehler. Siehe [reverse_proxy Headers](https://caddyserver.com/docs/caddyfile/directives/reverse_proxy#headers).
 
-**Ohne Compose-Caddy:** Overlay published web/api/media auf Loopback. Vorlage: `deploy/compose/Caddyfile.homelab`.
+**Ohne Compose-Caddy:** Overlay published web/api/media (und MinIO) auf Loopback. Vorlage: `deploy/compose/Caddyfile.homelab` (zwei aktive Site-Blöcke: App + MinIO).
+
+Wichtig: Die Compose-`.env` exportiert **nicht** automatisch Variablen an einen externen Caddy-Dienst oder einen Caddy-Container in einem anderen Stack. Einrichtung:
+
+1. Beide Site-Blöcke aus `Caddyfile.homelab` in die tatsächlich verwendete Caddy-Konfiguration kopieren/importieren.
+2. Domain und Upstream am Caddy-Dienst/Container setzen **oder** fest in der Caddyfile eintragen. Host und URL unterscheiden:
+   - `GELABBER_MINIO_DOMAIN=minio.example.com` (Caddy-Site / Host)
+   - `MINIO_PUBLIC_ENDPOINT=https://minio.example.com` (API-Presign-URL, inkl. Schema)
+3. Bei geändertem `MINIO_API_PORT` den Upstream anpassen; im Docker-Netz `gelabber` Upstream `minio:9000` (kein Host-Port nötig). App-Upstreams analog: `web:80`, `api:8080`, `media:8081`.
+4. MinIO-Block: `header_up Host {hostport}` (Port erhalten, z. B. `:8443`), URI unverändert — Presigns signieren Host und Pfad.
+5. Konfiguration validieren (`caddy validate` / `caddy adapt`) und Caddy neu laden.
+6. Bei `.home.arpa`: lokale CA auf den Browser-Clients vertrauenswürdig machen ([Local HTTPS](https://caddyserver.com/docs/automatic-https#local-https)).
+
+Umgebungsvariablen in Caddy: [Caddyfile environment variables](https://caddyserver.com/docs/caddyfile/concepts#environment-variables).
 
 ```bash
 cp deploy/compose/.env.homelab.example deploy/compose/.env
-# Domain, IPs, Secrets, MINIO_PUBLIC_ENDPOINT setzen
+# App- und MinIO-Domain, IPs und Secrets setzen; beide Namen müssen in DNS stehen.
+# Caddy separat mit beiden Site-Blöcken + denselben Domain-/Upstream-Werten versorgen.
 cd deploy/compose
 docker compose up -d
 ```
-
-Caddy in Docker: Stack-Netz `gelabber`, Upstreams `web:80`, `api:8080`, `media:8081` (`minio:9000` braucht keinen Host-Port).
 
 ## TURN-Port belegt
 
@@ -54,7 +66,7 @@ Caddy in Docker: Stack-Netz `gelabber`, Upstreams `web:80`, `api:8080`, `media:8
 ## Hinter TLS
 
 - `API_COOKIE_SECURE=true`
-- `MINIO_PUBLIC_ENDPOINT` = URL, die der Browser wirklich öffnet (eigene Subdomain, kein Path-Prefix — Presigns signieren den Host), plus `MINIO_API_CORS_ALLOW_ORIGIN` auf die Gelabber-Origin
+- `GELABBER_MINIO_DOMAIN` (Caddy-Host, z. B. `minio.example.com`) und `MINIO_PUBLIC_ENDPOINT` (volle URL, z. B. `https://minio.example.com`) müssen zur aktiven MinIO-Site in der **echten** Caddy-Config passen (Compose-`.env` allein reicht für externes Caddy nicht); kein Path-Prefix — Presigns signieren Host und Pfad. `MINIO_API_CORS_ALLOW_ORIGIN` = Gelabber-Origin
 - `TURN_PUBLIC_HOST`, `TURN_EXTERNAL_IP`, `MEDIA_ADVERTISED_IP` = Adresse, die Clients erreichen
 
 ## Backup
