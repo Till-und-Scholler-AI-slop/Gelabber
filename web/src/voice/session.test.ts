@@ -22,8 +22,10 @@ import {
   stopWatching,
   useVoice,
   type PeerConnection,
+  type RtpSender,
 } from "./session.ts";
 import { resetVoiceRoster, useVoiceRoster, voiceOf } from "./roster.ts";
+import { resetMediaSettingsForTests, useMediaSettings } from "./settings.ts";
 
 class FakePeer implements PeerConnection {
   onicecandidate: PeerConnection["onicecandidate"] = null;
@@ -34,7 +36,7 @@ class FakePeer implements PeerConnection {
   closed = false;
   tracks = 0;
   audio: MediaStreamTrack | null = null;
-  senders: { track: MediaStreamTrack | null }[] = [];
+  senders: RtpSender[] = [];
   ice: { candidate: string; sdpMid: string | null }[] = [];
   iceServers: IceServer[];
 
@@ -42,9 +44,24 @@ class FakePeer implements PeerConnection {
     this.iceServers = iceServers;
   }
 
-  addTrack(track?: MediaStreamTrack): { track: MediaStreamTrack | null } {
+  addTrack(track?: MediaStreamTrack): RtpSender {
     this.tracks += 1;
-    const sender = { track: track ?? null };
+    const encodings: { maxBitrate?: number }[] = [{}];
+    const transactionId = `tx-${this.tracks}`;
+    const sender: RtpSender = {
+      track: track ?? null,
+      replaceTrack: async (next) => {
+        sender.track = next;
+        if (next && next.kind !== "video") this.audio = next;
+      },
+      getParameters: () => ({ encodings, transactionId }),
+      setParameters: async (params) => {
+        if (params.transactionId !== transactionId) {
+          throw new Error("InvalidModificationError");
+        }
+        encodings.splice(0, encodings.length, ...params.encodings);
+      },
+    };
     this.senders.push(sender);
     if (track && track.kind !== "video") this.audio = track;
     return sender;
@@ -58,7 +75,7 @@ class FakePeer implements PeerConnection {
     sender.track = null;
   }
 
-  getSenders(): { track: MediaStreamTrack | null }[] {
+  getSenders(): RtpSender[] {
     return this.senders;
   }
 
@@ -248,6 +265,7 @@ describe("voice session", () => {
   afterEach(() => {
     resetVoiceForTests();
     resetVoiceRoster();
+    resetMediaSettingsForTests();
   });
 
   it("join click sets local state before any ICE work", () => {
@@ -731,5 +749,193 @@ describe("voice session", () => {
       userId: "u-bob",
       k: "l",
     });
+  });
+
+  it("applies the selected Opus bitrate on the sender encodings", async () => {
+    useMediaSettings.getState().patch({ quality: "high" });
+    const { peers } = install();
+    joinVoice({ serverId: "srv", channelId: "voice", channelName: "Lounge" });
+    await vi.waitFor(() => expect(peers[0]?.senders.length).toBeGreaterThan(0));
+    await vi.waitFor(() =>
+      expect(
+        peers[0]?.senders[0]?.getParameters?.().encodings[0]?.maxBitrate,
+      ).toBe(128_000),
+    );
+    expect(peers[0]?.senders[0]?.getParameters?.().transactionId).toBe("tx-1");
+  });
+
+  it("captures with AEC off when the user turned it off", async () => {
+    useMediaSettings.getState().patch({ echoCancellation: false });
+    const { lastUserMedia, peers } = install();
+    joinVoice({ serverId: "srv", channelId: "voice", channelName: "Lounge" });
+    await vi.waitFor(() => expect(peers.length).toBe(1));
+    expect(lastUserMedia()).toEqual({
+      audio: {
+        echoCancellation: false,
+        noiseSuppression: true,
+        autoGainControl: true,
+        channelCount: 1,
+      },
+      video: false,
+    });
+  });
+
+  it("replaces the mic track when the input device changes, without leaving", async () => {
+    const { peers, getUserMediaCalls } = install();
+    joinVoice({ serverId: "srv", channelId: "voice", channelName: "Lounge" });
+    await vi.waitFor(() => expect(peers[0]?.audio).toBeTruthy());
+    const first = peers[0]?.audio;
+    expect(getUserMediaCalls()).toBe(1);
+    useMediaSettings.getState().patch({ audioInputId: "mic-usb" });
+    await vi.waitFor(() => expect(getUserMediaCalls()).toBe(2));
+    expect(useVoice.getState().status).toBe("joined");
+    expect(peers[0]?.audio).toBeTruthy();
+    expect(peers[0]?.audio).not.toBe(first);
+  });
+
+  it("keeps mute/deafen consistent when output volume changes", async () => {
+    const { peers } = install();
+    joinVoice({ serverId: "srv", channelId: "voice", channelName: "Lounge" });
+    await vi.waitFor(() => expect(peers[0]?.audio).toBeTruthy());
+    toggleMute();
+    expect(peers[0]?.audio?.enabled).toBe(false);
+    useMediaSettings.getState().patch({ outputVolume: 0.2 });
+    expect(useVoice.getState().muted).toBe(true);
+    expect(peers[0]?.audio?.enabled).toBe(false);
+    toggleMute();
+    expect(peers[0]?.audio?.enabled).toBe(true);
+  });
+
+  it("does not recapture the mic when only input gain changes", async () => {
+    const { peers, getUserMediaCalls } = install();
+    joinVoice({ serverId: "srv", channelId: "voice", channelName: "Lounge" });
+    await vi.waitFor(() => expect(peers[0]?.audio).toBeTruthy());
+    expect(getUserMediaCalls()).toBe(1);
+    useMediaSettings.getState().patch({ inputGain: 0.4 });
+    useMediaSettings.getState().patch({ inputGain: 1.6 });
+    await Promise.resolve();
+    expect(getUserMediaCalls()).toBe(1);
+    expect(useVoice.getState().status).toBe("joined");
+    useMediaSettings.getState().patch({ noiseSuppression: false });
+    await vi.waitFor(() => expect(getUserMediaCalls()).toBe(2));
+  });
+
+  it("sets GainNode.value in place and tears the insert down at identity", async () => {
+    class FakeGain {
+      gain = { value: 1 };
+      connect(): void {}
+      disconnect(): void {}
+    }
+    class FakeCtx {
+      state: AudioContextState = "running";
+      gain = new FakeGain();
+      resume = async (): Promise<void> => {
+        this.state = "running";
+      };
+      close = async (): Promise<void> => {
+        this.state = "closed";
+      };
+      createMediaStreamSource(): { connect(): void } {
+        return { connect() {} };
+      }
+      createGain(): FakeGain {
+        return this.gain;
+      }
+      createMediaStreamDestination(): { stream: MediaStream } {
+        return { stream: fakeStream() };
+      }
+    }
+    const created: FakeCtx[] = [];
+    const Prev = (globalThis as unknown as { AudioContext?: unknown })
+      .AudioContext;
+    (globalThis as unknown as { AudioContext: unknown }).AudioContext =
+      class extends FakeCtx {
+        constructor() {
+          super();
+          created.push(this);
+        }
+      };
+    try {
+      const { peers, getUserMediaCalls } = install();
+      joinVoice({
+        serverId: "srv",
+        channelId: "voice",
+        channelName: "Lounge",
+      });
+      await vi.waitFor(() => expect(peers[0]?.audio).toBeTruthy());
+      expect(created).toHaveLength(0);
+      useMediaSettings.getState().patch({ inputGain: 0.5 });
+      await vi.waitFor(() => expect(created).toHaveLength(1));
+      expect(created[0]?.gain.gain.value).toBe(0.5);
+      expect(getUserMediaCalls()).toBe(1);
+      const boosted = peers[0]?.audio;
+      useMediaSettings.getState().patch({ inputGain: 1.5 });
+      await vi.waitFor(() => expect(created[0]?.gain.gain.value).toBe(1.5));
+      expect(created).toHaveLength(1);
+      expect(created[0]?.state).toBe("running");
+      expect(getUserMediaCalls()).toBe(1);
+      expect(peers[0]?.audio).toBe(boosted);
+      useMediaSettings.getState().patch({ inputGain: 1 });
+      await vi.waitFor(() => expect(created[0]?.state).toBe("closed"));
+      expect(getUserMediaCalls()).toBe(1);
+      expect(peers[0]?.audio).not.toBe(boosted);
+    } finally {
+      (globalThis as unknown as { AudioContext?: unknown }).AudioContext = Prev;
+    }
+  });
+
+  it("deafens Go Live watch audio with the same volume as the room mix", async () => {
+    const clips: FakeHtmlAudio[] = [];
+    class FakeHtmlAudio {
+      autoplay = false;
+      muted = false;
+      volume = 1;
+      srcObject: MediaStream | null = null;
+      constructor() {
+        clips.push(this);
+      }
+      setAttribute(): void {}
+      play(): Promise<void> {
+        return Promise.resolve();
+      }
+    }
+    const Prev = globalThis.Audio;
+    (globalThis as unknown as { Audio: typeof FakeHtmlAudio }).Audio =
+      FakeHtmlAudio;
+    try {
+      const { peers } = install();
+      joinVoice({
+        serverId: "srv",
+        channelId: "voice",
+        channelName: "Lounge",
+      });
+      await vi.waitFor(() => expect(peers.length).toBe(1));
+      watchLive({
+        serverId: "srv",
+        channelId: "stage",
+        channelName: "Stage",
+      });
+      await vi.waitFor(() => expect(peers.length).toBe(2));
+      const live = fakeVideoStream("u-bob:l", true);
+      peers[1]?.ontrack?.({
+        track: live.getAudioTracks()[0]!,
+        streams: [live],
+      });
+      const watch = clips.find((el) => el.srcObject === live);
+      expect(watch).toBeTruthy();
+      expect(watch?.muted).toBe(false);
+      expect(watch?.volume).toBe(1);
+      toggleDeafen();
+      expect(watch?.muted).toBe(true);
+      expect(watch?.volume).toBe(0);
+      useMediaSettings.getState().patch({ outputVolume: 0.25 });
+      expect(watch?.muted).toBe(true);
+      expect(watch?.volume).toBe(0);
+      toggleDeafen();
+      expect(watch?.muted).toBe(false);
+      expect(watch?.volume).toBe(0.25);
+    } finally {
+      globalThis.Audio = Prev;
+    }
   });
 });

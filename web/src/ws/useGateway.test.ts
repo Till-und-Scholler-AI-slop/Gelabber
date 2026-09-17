@@ -16,7 +16,18 @@ describe("workspace subscribe set", () => {
     ]);
   });
 
-  it("subscribes nothing on the empty workspace", () => {
-    expect(workspaceTopics(undefined, undefined)).toEqual([]);
+  it("merges extra channel topics without duplicates", () => {
+    expect(
+      workspaceTopics("srv", "ch", [
+        { s: "srv", c: "ch" },
+        { s: "srv", c: "other" },
+        { s: "dm-1", c: "dm-1" },
+      ]),
+    ).toEqual([
+      { s: "srv" },
+      { s: "srv", c: "ch" },
+      { s: "srv", c: "other" },
+      { s: "dm-1", c: "dm-1" },
+    ]);
   });
 });

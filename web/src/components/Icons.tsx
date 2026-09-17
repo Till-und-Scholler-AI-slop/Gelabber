@@ -174,3 +174,19 @@ export function PaperclipIcon(props: IconProps) {
     </svg>
   );
 }
+
+export function ExpandIcon(props: IconProps) {
+  return (
+    <svg {...base(props)}>
+      <path d="M15 3h6v6M9 21H3v-6M21 3l-7 7M3 21l7-7" />
+    </svg>
+  );
+}
+
+export function CollapseIcon(props: IconProps) {
+  return (
+    <svg {...base(props)}>
+      <path d="M21 9h-6V3M3 15h6v6M15 9l6-6M9 15l-6 6" />
+    </svg>
+  );
+}

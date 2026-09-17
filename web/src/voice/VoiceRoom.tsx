@@ -2,12 +2,16 @@
 // Camera and screen tiles render local streams immediately; SFU publish
 // is background work and never rides the chat socket.
 
+import { useState } from "react";
+
 import { can } from "../servers/permissions.ts";
 import type { ServerDetail } from "../servers/types.ts";
 import { VoiceControls } from "../components/VoiceControls.tsx";
 import { VoiceStateIcons } from "../components/VoiceStateIcons.tsx";
+import { GearIcon } from "../components/Icons.tsx";
 import { useSession } from "../auth/session.ts";
 import { joinVoice, stopWatching, useVoice, watchLive } from "./session.ts";
+import { useMediaSettings } from "./settings.ts";
 import { EMPTY_OCCUPANCY, liveOf, useVoiceRoster } from "./roster.ts";
 import { VoiceTile } from "./VoiceTile.tsx";
 
@@ -24,10 +28,14 @@ export function VoiceRoom({
   const canStartLive = can(server, "go_live");
   const voice = useVoice();
   const me = useSession((s) => s.user?.id);
-  const roster = useVoiceRoster((s) => s.byServer[server.id] ?? EMPTY_OCCUPANCY);
+  const roster = useVoiceRoster(
+    (s) => s.byServer[server.id] ?? EMPTY_OCCUPANCY,
+  );
   const liveUser = useVoiceRoster((s) => liveOf(s.live, server.id, channelId));
+  const openSettings = useMediaSettings((s) => s.openDialog);
   const here = voice.status === "joined" && voice.channelId === channelId;
   const watching = voice.watching && voice.watchChannelId === channelId;
+  const [focus, setFocus] = useState<string | null>(null);
   const members = new Map(
     server.members.map((member) => [member.user_id, member]),
   );
@@ -103,15 +111,31 @@ export function VoiceRoom({
     };
   }
 
-  const showStage = Boolean(liveTile) || screens.length > 0 || cameras.length > 0;
+  const showStage =
+    Boolean(liveTile) || screens.length > 0 || cameras.length > 0;
   const liveOn = Boolean(liveUser) || (here && voice.live);
+  const focusLive = liveTile && focus === liveTile.id;
+  const focusScreen = screens.find((tile) => tile.id === focus);
+  const focusCamera = cameras.find((tile) => tile.id === focus);
+  const focused =
+    focusLive && liveTile
+      ? { kind: "live" as const, tile: liveTile }
+      : focusScreen
+        ? { kind: "screen" as const, tile: focusScreen }
+        : focusCamera
+          ? { kind: "camera" as const, tile: focusCamera }
+          : null;
+
+  const toggleFocus = (id: string) => {
+    setFocus((current) => (current === id ? null : id));
+  };
 
   return (
     <div className="flex flex-1 flex-col items-center justify-center p-8 text-center">
       <div
         className={[
           "w-full text-neutral-500",
-          showStage ? "max-w-3xl" : "max-w-sm",
+          showStage ? "max-w-5xl" : "max-w-sm",
         ].join(" ")}
       >
         <p className="flex items-center justify-center gap-2 text-lg font-medium text-neutral-800">
@@ -124,35 +148,85 @@ export function VoiceRoom({
         </p>
         {showStage ? (
           <div className="mt-4 flex flex-col gap-3">
-            {liveTile ? (
-              <VoiceTile
-                key={liveTile.id}
-                stream={liveTile.stream}
-                label={liveTile.name}
-                screen
-                live
+            <div className="flex flex-wrap items-center justify-center gap-1">
+              <FocusChip
+                active={!focused}
+                onClick={() => setFocus(null)}
+                label="Raster"
               />
-            ) : null}
-            {screens.map((tile) => (
+              {liveTile ? (
+                <FocusChip
+                  active={Boolean(focusLive)}
+                  onClick={() => setFocus(liveTile.id)}
+                  label="Live"
+                />
+              ) : null}
+              {screens.length > 0 ? (
+                <FocusChip
+                  active={Boolean(focusScreen)}
+                  onClick={() => setFocus(screens[0]?.id ?? null)}
+                  label="Bildschirm"
+                />
+              ) : null}
+              {cameras.length > 0 ? (
+                <FocusChip
+                  active={Boolean(focusCamera)}
+                  onClick={() => setFocus(cameras[0]?.id ?? null)}
+                  label="Kamera"
+                />
+              ) : null}
+            </div>
+            {focused ? (
               <VoiceTile
-                key={tile.id}
-                stream={tile.stream}
-                label={tile.name}
-                screen
+                key={focused.tile.id}
+                stream={focused.tile.stream}
+                label={focused.tile.name}
+                screen={focused.kind !== "camera"}
+                live={focused.kind === "live"}
+                mirror={
+                  focused.kind === "camera"
+                    ? Boolean("mirror" in focused.tile && focused.tile.mirror)
+                    : false
+                }
+                expanded
+                onToggleExpand={() => toggleFocus(focused.tile.id)}
               />
-            ))}
-            {cameras.length > 0 ? (
-              <div className="grid grid-cols-2 gap-2 sm:grid-cols-3">
-                {cameras.map((tile) => (
+            ) : (
+              <>
+                {liveTile ? (
+                  <VoiceTile
+                    key={liveTile.id}
+                    stream={liveTile.stream}
+                    label={liveTile.name}
+                    screen
+                    live
+                    onToggleExpand={() => toggleFocus(liveTile.id)}
+                  />
+                ) : null}
+                {screens.map((tile) => (
                   <VoiceTile
                     key={tile.id}
                     stream={tile.stream}
                     label={tile.name}
-                    mirror={tile.mirror}
+                    screen
+                    onToggleExpand={() => toggleFocus(tile.id)}
                   />
                 ))}
-              </div>
-            ) : null}
+                {cameras.length > 0 ? (
+                  <div className="grid grid-cols-2 gap-2 sm:grid-cols-3">
+                    {cameras.map((tile) => (
+                      <VoiceTile
+                        key={tile.id}
+                        stream={tile.stream}
+                        label={tile.name}
+                        mirror={tile.mirror}
+                        onToggleExpand={() => toggleFocus(tile.id)}
+                      />
+                    ))}
+                  </div>
+                ) : null}
+              </>
+            )}
           </div>
         ) : null}
         {occupants.length > 0 ? (
@@ -160,7 +234,8 @@ export function VoiceRoom({
             {occupants.map(([id, flags]) => {
               const member = members.get(id);
               const pubs = voice.participants[id]?.pubs ?? [];
-              const isLive = (here && id === me && voice.live) || liveUser === id;
+              const isLive =
+                (here && id === me && voice.live) || liveUser === id;
               const liveAudio =
                 pubs.includes("a") && !flags.muted && !flags.deafened;
               const mediaLabel = isLive
@@ -216,6 +291,14 @@ export function VoiceRoom({
               >
                 Beitreten
               </button>
+              <button
+                type="button"
+                onClick={() => openSettings()}
+                className="inline-flex items-center gap-1.5 rounded-lg bg-neutral-200 px-3 py-2 text-sm font-medium text-neutral-800 transition hover:bg-neutral-300"
+              >
+                <GearIcon size={16} />
+                Einstellungen
+              </button>
               {liveOn ? (
                 watching ? (
                   <button
@@ -258,5 +341,31 @@ export function VoiceRoom({
         )}
       </div>
     </div>
+  );
+}
+
+function FocusChip({
+  active,
+  onClick,
+  label,
+}: {
+  active: boolean;
+  onClick: () => void;
+  label: string;
+}) {
+  return (
+    <button
+      type="button"
+      aria-pressed={active}
+      onClick={onClick}
+      className={[
+        "rounded-full px-3 py-1 text-xs font-medium transition",
+        active
+          ? "bg-neutral-900 text-white"
+          : "bg-neutral-200 text-neutral-700 hover:bg-neutral-300",
+      ].join(" ")}
+    >
+      {label}
+    </button>
   );
 }
