@@ -8,7 +8,7 @@ import {
   useParams,
   useRouterState,
 } from "@tanstack/react-router";
-import { useEffect, useMemo } from "react";
+import { useEffect } from "react";
 
 import { ApiError } from "../api/client.ts";
 import { ChannelSidebar } from "../components/ChannelSidebar.tsx";
@@ -17,10 +17,6 @@ import { RequireUser } from "../components/RequireUser.tsx";
 import { ServerRail } from "../components/ServerRail.tsx";
 import { useDms } from "../dms/queries.ts";
 import { forgetServer, useServer } from "../servers/queries.ts";
-import { useGatewayTopics } from "../ws/useGateway.ts";
-import type { Topic } from "../ws/protocol.ts";
-import { useLiveBridge } from "../ws/useLive.ts";
-import { useRealtimeBridge } from "../ws/useRealtime.ts";
 
 export function WorkspaceLayout() {
   return (
@@ -34,25 +30,6 @@ function Workspace() {
   const { serverId, channelId } = useParams({ strict: false });
   const pathname = useRouterState({ select: (s) => s.location.pathname });
   const onDms = pathname === "/d" || pathname.startsWith("/d/");
-  const { data: dms } = useDms();
-  const { data: server } = useServer(serverId);
-  const extras = useMemo(() => {
-    const topics: Topic[] = [];
-    if (server) {
-      for (const channel of server.channels) {
-        if (channel.kind === "text") {
-          topics.push({ s: server.id, c: channel.id });
-        }
-      }
-    }
-    for (const dm of dms ?? []) {
-      topics.push({ s: dm.id, c: dm.id });
-    }
-    return topics;
-  }, [server, dms]);
-  useGatewayTopics(serverId, channelId, extras);
-  useLiveBridge();
-  useRealtimeBridge(serverId);
 
   return (
     <div className="flex h-[calc(100dvh-3.5rem)] overflow-hidden bg-neutral-50">
