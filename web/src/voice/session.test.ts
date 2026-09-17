@@ -127,21 +127,30 @@ class FakePeer implements PeerConnection {
   }
 }
 
-function fakeTrack(kind: "audio" | "video"): MediaStreamTrack {
-  return {
+let trackSeq = 0;
+
+type FakeTrack = MediaStreamTrack & { stopped: boolean };
+
+function fakeTrack(kind: "audio" | "video", id?: string): FakeTrack {
+  trackSeq += 1;
+  const track = {
     kind,
     enabled: true,
-    id: `${kind}-1`,
-    stop() {},
+    id: id ?? `${kind}-${trackSeq}`,
+    stopped: false,
+    stop() {
+      track.stopped = true;
+    },
     addEventListener() {},
     removeEventListener() {},
-  } as unknown as MediaStreamTrack;
+  };
+  return track as unknown as FakeTrack;
 }
 
-function fakeStream(): MediaStream {
-  const track = fakeTrack("audio");
+function fakeStream(id = "mic"): MediaStream {
+  const track = fakeTrack("audio", `${id}-a`);
   return {
-    id: "mic",
+    id,
     getTracks: () => [track],
     getAudioTracks: () => [track],
     getVideoTracks: () => [],
@@ -149,8 +158,8 @@ function fakeStream(): MediaStream {
 }
 
 function fakeVideoStream(id: string, withAudio = false): MediaStream {
-  const video = fakeTrack("video");
-  const audio = fakeTrack("audio");
+  const video = fakeTrack("video", `${id}-v`);
+  const audio = fakeTrack("audio", `${id}-a`);
   const tracks = withAudio ? [video, audio] : [video];
   return {
     id,
@@ -160,6 +169,22 @@ function fakeVideoStream(id: string, withAudio = false): MediaStream {
   } as unknown as MediaStream;
 }
 
+function trackStopped(track: MediaStreamTrack | null | undefined): boolean {
+  return Boolean(track && (track as FakeTrack).stopped);
+}
+
+function streamStopped(stream: MediaStream | null | undefined): boolean {
+  return Boolean(stream?.getTracks().every((track) => trackStopped(track)));
+}
+
+function deferred(): { promise: Promise<void>; resolve: () => void } {
+  let resolve!: () => void;
+  const promise = new Promise<void>((res) => {
+    resolve = res;
+  });
+  return { promise, resolve };
+}
+
 function install(opts?: {
   media?: boolean;
   display?: boolean;
@@ -167,6 +192,17 @@ function install(opts?: {
   ticketFail?: boolean;
   holdMedia?: Promise<void>;
   holdDisplay?: Promise<void>;
+  /** Per getUserMedia call index (0-based). Controlled promise resolution. */
+  gateMedia?: (
+    callIndex: number,
+    constraints: MediaStreamConstraints,
+  ) => Promise<void> | void;
+  /** Optional stream factory after the gate opens. */
+  mediaStreamFor?: (
+    callIndex: number,
+    constraints: MediaStreamConstraints,
+  ) => MediaStream;
+  holdReplaceTrack?: Promise<void>;
 }) {
   const sent: ClientFrame[] = [];
   const mediaSent: MediaClientFrame[] = [];
@@ -176,6 +212,7 @@ function install(opts?: {
   let onMedia: ((frame: MediaServerFrame) => void) | undefined;
   const peers: FakePeer[] = [];
   const errors: unknown[] = [];
+  const streams: MediaStream[] = [];
   let getUserMediaCalls = 0;
   let getDisplayMediaCalls = 0;
   let lastUserMedia: MediaStreamConstraints | undefined;
@@ -205,16 +242,51 @@ function install(opts?: {
     },
     createPeer: (iceServers) => {
       const peer = new FakePeer(iceServers);
+      if (opts?.holdReplaceTrack) {
+        const hold = opts.holdReplaceTrack;
+        for (const sender of peer.senders) {
+          const prev = sender.replaceTrack?.bind(sender);
+          if (prev) {
+            sender.replaceTrack = async (next) => {
+              await hold;
+              await prev(next);
+            };
+          }
+        }
+        const addTrack = peer.addTrack.bind(peer);
+        peer.addTrack = (track?: MediaStreamTrack) => {
+          const sender = addTrack(track);
+          const prev = sender.replaceTrack?.bind(sender);
+          if (prev) {
+            sender.replaceTrack = async (next) => {
+              await hold;
+              await prev(next);
+            };
+          }
+          return sender;
+        };
+      }
       peers.push(peer);
       return peer;
     },
     getUserMedia: async (constraints) => {
+      const callIndex = getUserMediaCalls;
       getUserMediaCalls += 1;
       lastUserMedia = constraints;
-      if (opts?.holdMedia) await opts.holdMedia;
-      if (opts?.media === false) throw new Error("denied");
-      if (constraints.video) return fakeVideoStream("local-cam");
-      return fakeStream();
+      if (opts?.media === false) {
+        if (opts?.gateMedia) await opts.gateMedia(callIndex, constraints);
+        else if (opts?.holdMedia) await opts.holdMedia;
+        throw new Error("denied");
+      }
+      const stream = opts?.mediaStreamFor
+        ? opts.mediaStreamFor(callIndex, constraints)
+        : constraints.video
+          ? fakeVideoStream(`local-cam-${callIndex}`)
+          : fakeStream(`mic-${callIndex}`);
+      streams[callIndex] = stream;
+      if (opts?.gateMedia) await opts.gateMedia(callIndex, constraints);
+      else if (opts?.holdMedia) await opts.holdMedia;
+      return stream;
     },
     getDisplayMedia: async () => {
       getDisplayMediaCalls += 1;
@@ -251,6 +323,7 @@ function install(opts?: {
     mediaSent,
     peers,
     errors,
+    streams,
     emitSig: (event: SigEvent) => onSig?.(event),
     emitErr: (err: ErrFrame) => onErr?.(err),
     emitReady: () => onReady?.(),
@@ -266,6 +339,7 @@ describe("voice session", () => {
     resetVoiceForTests();
     resetVoiceRoster();
     resetMediaSettingsForTests();
+    trackSeq = 0;
   });
 
   it("join click sets local state before any ICE work", () => {
@@ -788,9 +862,9 @@ describe("voice session", () => {
     expect(getUserMediaCalls()).toBe(1);
     useMediaSettings.getState().patch({ audioInputId: "mic-usb" });
     await vi.waitFor(() => expect(getUserMediaCalls()).toBe(2));
+    await vi.waitFor(() => expect(peers[0]?.audio).not.toBe(first));
     expect(useVoice.getState().status).toBe("joined");
     expect(peers[0]?.audio).toBeTruthy();
-    expect(peers[0]?.audio).not.toBe(first);
   });
 
   it("keeps mute/deafen consistent when output volume changes", async () => {
@@ -818,6 +892,7 @@ describe("voice session", () => {
     expect(useVoice.getState().status).toBe("joined");
     useMediaSettings.getState().patch({ noiseSuppression: false });
     await vi.waitFor(() => expect(getUserMediaCalls()).toBe(2));
+    await vi.waitFor(() => expect(peers[0]?.audio).toBeTruthy());
   });
 
   it("sets GainNode.value in place and tears the insert down at identity", async () => {
@@ -937,5 +1012,180 @@ describe("voice session", () => {
     } finally {
       globalThis.Audio = Prev;
     }
+  });
+
+  it("keeps the newest mic when overlapping device picks finish out of order", async () => {
+    const gates = [deferred(), deferred(), deferred()];
+    const { peers, streams, getUserMediaCalls, errors } = install({
+      gateMedia: async (i) => {
+        await gates[i]?.promise;
+      },
+      mediaStreamFor: (i, constraints) => {
+        if (constraints.video) return fakeVideoStream(`cam-${i}`);
+        return fakeStream(`mic-${i}`);
+      },
+    });
+    joinVoice({ serverId: "srv", channelId: "voice", channelName: "Lounge" });
+    await vi.waitFor(() => expect(getUserMediaCalls()).toBe(1));
+    gates[0]!.resolve();
+    await vi.waitFor(() => expect(peers[0]?.audio).toBeTruthy());
+    const initial = peers[0]?.audio;
+
+    useMediaSettings.getState().patch({ audioInputId: "mic-a" });
+    await vi.waitFor(() => expect(getUserMediaCalls()).toBe(2));
+    useMediaSettings.getState().patch({ audioInputId: "mic-b" });
+    await vi.waitFor(() => expect(getUserMediaCalls()).toBe(3));
+
+    gates[2]!.resolve(); // B first
+    await vi.waitFor(() => expect(peers[0]?.audio).not.toBe(initial));
+    const winner = peers[0]?.audio;
+    expect(winner?.id).toBe("mic-2-a");
+
+    gates[1]!.resolve(); // late A
+    await Promise.resolve();
+    await Promise.resolve();
+    await vi.waitFor(() => expect(streamStopped(streams[1]!)).toBe(true));
+    expect(peers[0]?.audio).toBe(winner);
+    expect(trackStopped(winner)).toBe(false);
+    expect(useVoice.getState().status).toBe("joined");
+    expect(errors).toHaveLength(0);
+  });
+
+  it("stops a late mic capture after leave and does not throw on null peer", async () => {
+    const gates = [deferred(), deferred()];
+    const { peers, streams, getUserMediaCalls, errors } = install({
+      gateMedia: async (i) => {
+        await gates[i]?.promise;
+      },
+      mediaStreamFor: (i, constraints) => {
+        if (constraints.video) return fakeVideoStream(`cam-${i}`);
+        return fakeStream(`mic-${i}`);
+      },
+    });
+    joinVoice({ serverId: "srv", channelId: "voice", channelName: "Lounge" });
+    await vi.waitFor(() => expect(getUserMediaCalls()).toBe(1));
+    gates[0]!.resolve();
+    await vi.waitFor(() => expect(peers[0]?.audio).toBeTruthy());
+
+    useMediaSettings.getState().patch({ audioInputId: "mic-usb" });
+    await vi.waitFor(() => expect(getUserMediaCalls()).toBe(2));
+    leaveVoice();
+    expect(useVoice.getState().status).toBe("idle");
+    expect(peers[0]?.closed).toBe(true);
+
+    gates[1]!.resolve();
+    await Promise.resolve();
+    await Promise.resolve();
+    await vi.waitFor(() => expect(streamStopped(streams[1]!)).toBe(true));
+    expect(useVoice.getState().status).toBe("idle");
+    expect(errors).toHaveLength(0);
+  });
+
+  it("does not turn the camera back on when a device switch finishes after off", async () => {
+    const gates: Array<ReturnType<typeof deferred> | undefined> = [];
+    const { peers, streams, getUserMediaCalls, errors } = install({
+      gateMedia: async (i) => {
+        while (gates.length <= i) gates.push(deferred());
+        await gates[i]!.promise;
+      },
+      mediaStreamFor: (i, constraints) => {
+        if (constraints.video) return fakeVideoStream(`cam-${i}`);
+        return fakeStream(`mic-${i}`);
+      },
+    });
+    joinVoice({ serverId: "srv", channelId: "voice", channelName: "Lounge" });
+    await vi.waitFor(() => expect(getUserMediaCalls()).toBe(1));
+    gates[0]!.resolve();
+    await vi.waitFor(() => expect(peers[0]?.audio).toBeTruthy());
+
+    toggleCamera();
+    await vi.waitFor(() => expect(getUserMediaCalls()).toBe(2));
+    gates[1]!.resolve();
+    await vi.waitFor(() => expect(useVoice.getState().localCamera).toBeTruthy());
+    expect(useVoice.getState().camera).toBe(true);
+
+    useMediaSettings.getState().patch({ videoInputId: "cam-usb" });
+    await vi.waitFor(() => expect(getUserMediaCalls()).toBe(3));
+    toggleCamera();
+    expect(useVoice.getState().camera).toBe(false);
+    expect(useVoice.getState().localCamera).toBeNull();
+
+    gates[2]!.resolve();
+    await Promise.resolve();
+    await Promise.resolve();
+    await vi.waitFor(() => expect(streamStopped(streams[2]!)).toBe(true));
+    expect(useVoice.getState().camera).toBe(false);
+    expect(useVoice.getState().localCamera).toBeNull();
+    expect(errors).toHaveLength(0);
+  });
+
+  it("does not let the initial mic overwrite a device pick that finished first", async () => {
+    const gates = [deferred(), deferred()];
+    const { peers, streams, getUserMediaCalls } = install({
+      gateMedia: async (i) => {
+        await gates[i]?.promise;
+      },
+      mediaStreamFor: (i, constraints) => {
+        if (constraints.video) return fakeVideoStream(`cam-${i}`);
+        return fakeStream(`mic-${i}`);
+      },
+    });
+    joinVoice({ serverId: "srv", channelId: "voice", channelName: "Lounge" });
+    await vi.waitFor(() => expect(getUserMediaCalls()).toBe(1));
+    // Peer exists before initial gum resolves, so a device change can race it.
+    await vi.waitFor(() => expect(peers.length).toBe(1));
+    useMediaSettings.getState().patch({ audioInputId: "mic-usb" });
+    await vi.waitFor(() => expect(getUserMediaCalls()).toBe(2));
+    gates[1]!.resolve();
+    await vi.waitFor(() => expect(peers[0]?.audio?.id).toBe("mic-1-a"));
+    const winner = peers[0]?.audio;
+    gates[0]!.resolve();
+    await Promise.resolve();
+    await Promise.resolve();
+    await vi.waitFor(() => expect(streamStopped(streams[0]!)).toBe(true));
+    expect(peers[0]?.audio).toBe(winner);
+    expect(useVoice.getState().status).toBe("joined");
+  });
+
+  it("keeps the previous mic when replaceTrack rejects", async () => {
+    const { peers, getUserMediaCalls, errors } = install();
+    joinVoice({ serverId: "srv", channelId: "voice", channelName: "Lounge" });
+    await vi.waitFor(() => expect(peers[0]?.audio).toBeTruthy());
+    const first = peers[0]?.audio;
+    const sender = peers[0]?.senders.find((s) => s.track?.kind === "audio");
+    expect(sender?.replaceTrack).toBeTruthy();
+    sender!.replaceTrack = async () => {
+      throw new Error("replace failed");
+    };
+    useMediaSettings.getState().patch({ audioInputId: "mic-usb" });
+    await vi.waitFor(() => expect(getUserMediaCalls()).toBe(2));
+    await vi.waitFor(() => expect(errors.length).toBeGreaterThan(0));
+    expect(peers[0]?.audio).toBe(first);
+    expect(trackStopped(first)).toBe(false);
+    expect(useVoice.getState().status).toBe("joined");
+  });
+
+  it("applies mute to a mic that finishes after mute was toggled", async () => {
+    const gates = [deferred(), deferred()];
+    const { peers, getUserMediaCalls } = install({
+      gateMedia: async (i) => {
+        await gates[i]?.promise;
+      },
+      mediaStreamFor: (i, constraints) => {
+        if (constraints.video) return fakeVideoStream(`cam-${i}`);
+        return fakeStream(`mic-${i}`);
+      },
+    });
+    joinVoice({ serverId: "srv", channelId: "voice", channelName: "Lounge" });
+    await vi.waitFor(() => expect(getUserMediaCalls()).toBe(1));
+    gates[0]!.resolve();
+    await vi.waitFor(() => expect(peers[0]?.audio).toBeTruthy());
+    useMediaSettings.getState().patch({ audioInputId: "mic-usb" });
+    await vi.waitFor(() => expect(getUserMediaCalls()).toBe(2));
+    toggleMute();
+    expect(useVoice.getState().muted).toBe(true);
+    gates[1]!.resolve();
+    await vi.waitFor(() => expect(peers[0]?.audio?.id).toBe("mic-1-a"));
+    expect(peers[0]?.audio?.enabled).toBe(false);
   });
 });
