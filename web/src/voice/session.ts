@@ -167,15 +167,19 @@ export type VoiceDeps = {
 
 type IceCand = { candidate: string; sdpMid: string | null };
 
+type MicGainInsert = {
+  stream: MediaStream;
+  setGain: (gain: number) => void;
+  dispose: () => void;
+};
+
 let deps: VoiceDeps | null = null;
 let peer: PeerConnection | null = null;
 let media: MediaSocket | null = null;
 let unbindMedia: (() => void) | null = null;
 let localStream: MediaStream | null = null;
 let rawMicStream: MediaStream | null = null;
-let micGainCtx: AudioContext | null = null;
-let micGainNode: GainNode | null = null;
-let inputGainChain: Promise<void> = Promise.resolve();
+let activeMicGain: MicGainInsert | null = null;
 let cameraStream: MediaStream | null = null;
 let screenStream: MediaStream | null = null;
 let liveStream: MediaStream | null = null;
@@ -184,6 +188,7 @@ let watchAudio: HTMLAudioElement | null = null;
 let remoteMix: MediaStream | null = null;
 let bound = false;
 let generation = 0;
+let micEpoch = 0;
 let cameraEpoch = 0;
 let screenEpoch = 0;
 let liveEpoch = 0;
@@ -191,9 +196,13 @@ let pendingIce: IceCand[] = [];
 let awaitingJoin: { serverId: string; channelId: string } | null = null;
 let awaitingLive: { serverId: string; channelId: string } | null = null;
 let sdpChain: Promise<void> = Promise.resolve();
+let audioCommitChain: Promise<void> = Promise.resolve();
+let cameraCommitChain: Promise<void> = Promise.resolve();
 let makingOffer = false;
 let sfuOffered = false;
 let needOffer = false;
+const pendingMicRaw = new Set<MediaStream>();
+const pendingCameraStreams = new Set<MediaStream>();
 
 let watchPeer: PeerConnection | null = null;
 let watchMedia: MediaSocket | null = null;
@@ -554,11 +563,14 @@ function stopTracks(stream: MediaStream | null): void {
 
 function stopPeer(): void {
   generation += 1;
+  micEpoch += 1;
   cameraEpoch += 1;
   screenEpoch += 1;
   liveEpoch += 1;
   pendingIce = [];
   sdpChain = Promise.resolve();
+  audioCommitChain = Promise.resolve();
+  cameraCommitChain = Promise.resolve();
   makingOffer = false;
   sfuOffered = false;
   needOffer = false;
@@ -568,12 +580,16 @@ function stopPeer(): void {
   media = null;
   peer?.close();
   peer = null;
+  for (const stream of pendingMicRaw) stopTracks(stream);
+  pendingMicRaw.clear();
+  for (const stream of pendingCameraStreams) stopTracks(stream);
+  pendingCameraStreams.clear();
   stopTracks(localStream);
   stopTracks(rawMicStream);
   stopTracks(cameraStream);
   stopTracks(screenStream);
   stopTracks(liveStream);
-  closeMicGain();
+  disposeMicGain();
   localStream = null;
   rawMicStream = null;
   cameraStream = null;
@@ -696,29 +712,20 @@ function audioContextCtor(): { new (): AudioContext } | undefined {
   ).AudioContext;
 }
 
-function closeMicGain(): void {
-  const node = micGainNode;
-  const ctx = micGainCtx;
-  micGainNode = null;
-  micGainCtx = null;
-  try {
-    node?.disconnect();
-  } catch {
-    // already disconnected
-  }
-  if (ctx && ctx.state !== "closed") {
-    void ctx.close();
-  }
+function disposeMicGain(): void {
+  const insert = activeMicGain;
+  activeMicGain = null;
+  insert?.dispose();
 }
 
+/** Locally owned gain graph — does not touch the active session insert. */
 function createMicGainInsert(
   raw: MediaStream,
   gain: number,
-): MediaStream | null {
+): MicGainInsert | null {
   const Ctx = audioContextCtor();
   if (!Ctx) return null;
   try {
-    closeMicGain();
     const ctx = new Ctx();
     const src = ctx.createMediaStreamSource(raw);
     const node = ctx.createGain();
@@ -726,110 +733,219 @@ function createMicGainInsert(
     const dest = ctx.createMediaStreamDestination();
     src.connect(node);
     node.connect(dest);
-    micGainCtx = ctx;
-    micGainNode = node;
     void ctx.resume();
-    return dest.stream;
+    let disposed = false;
+    return {
+      stream: dest.stream,
+      setGain(next) {
+        if (disposed) return;
+        node.gain.value = next;
+        if (ctx.state === "suspended") void ctx.resume();
+      },
+      dispose() {
+        if (disposed) return;
+        disposed = true;
+        try {
+          node.disconnect();
+        } catch {
+          // already disconnected
+        }
+        if (ctx.state !== "closed") {
+          void ctx.close();
+        }
+      },
+    };
   } catch {
-    closeMicGain();
     return null;
   }
 }
 
-function micSendStream(raw: MediaStream): MediaStream {
-  const gain = useMediaSettings.getState().inputGain;
-  if (gain === 1) {
-    closeMicGain();
-    return raw;
-  }
-  return createMicGainInsert(raw, gain) ?? raw;
+function enqueueAudioCommit(job: () => Promise<void>): Promise<void> {
+  const run = audioCommitChain.then(job, job);
+  audioCommitChain = run.then(
+    () => undefined,
+    () => undefined,
+  );
+  return run;
 }
 
-async function replaceMicSend(send: MediaStream): Promise<void> {
-  send.getAudioTracks().forEach((track) => hintTrack(track, "speech"));
-  applyLocalAudio();
-  const track = send.getAudioTracks()[0];
-  const sender = audioSender();
-  if (sender?.replaceTrack && track) {
-    await sender.replaceTrack(track);
-  }
+function enqueueCameraCommit(job: () => Promise<void>): Promise<void> {
+  const run = cameraCommitChain.then(job, job);
+  cameraCommitChain = run.then(
+    () => undefined,
+    () => undefined,
+  );
+  return run;
 }
 
-async function applyInputGain(): Promise<void> {
-  if (!rawMicStream || useVoice.getState().status !== "joined") return;
-  const gain = useMediaSettings.getState().inputGain;
-  if (micGainNode && micGainCtx) {
-    micGainNode.gain.value = gain;
-    if (micGainCtx.state === "suspended") {
-      void micGainCtx.resume();
-    }
-    if (gain !== 1) return;
-    const dest = localStream;
-    localStream = rawMicStream;
-    await replaceMicSend(rawMicStream);
-    if (dest && dest !== rawMicStream) {
-      stopTracks(dest);
-    }
-    closeMicGain();
-    return;
-  }
-  if (gain === 1) return;
-  const send = createMicGainInsert(rawMicStream, gain);
-  if (!send) return;
-  localStream = send;
-  await replaceMicSend(send);
+function disableAudio(stream: MediaStream): void {
+  stream.getAudioTracks().forEach((track) => {
+    track.enabled = false;
+  });
 }
 
-function queueInputGain(): void {
-  inputGainChain = inputGainChain.then(
-    () => applyInputGain(),
-    () => applyInputGain(),
+function micCurrent(
+  pc: PeerConnection,
+  session: number,
+  request: number,
+): boolean {
+  return (
+    peer === pc &&
+    generation === session &&
+    micEpoch === request &&
+    useVoice.getState().status === "joined"
   );
 }
 
-function audioSender(): RtpSender | undefined {
-  return peer?.getSenders?.().find((sender) => sender.track?.kind === "audio");
+function cameraCurrent(
+  pc: PeerConnection,
+  session: number,
+  epoch: number,
+): boolean {
+  return (
+    peer === pc &&
+    generation === session &&
+    cameraEpoch === epoch &&
+    useVoice.getState().status === "joined" &&
+    useVoice.getState().camera
+  );
 }
 
-function cameraSender(): RtpSender | undefined {
-  const cam = cameraStream?.getVideoTracks()[0];
-  if (!cam) return undefined;
-  return peer?.getSenders?.().find((sender) => sender.track === cam);
+async function replaceSenderTrack(
+  sender: RtpSender | undefined,
+  track: MediaStreamTrack | null,
+): Promise<void> {
+  if (!sender?.replaceTrack) return;
+  await sender.replaceTrack(track);
+}
+
+async function commitMicSend(
+  pc: PeerConnection,
+  send: MediaStream,
+  session: number,
+): Promise<"replaced" | "added" | "none"> {
+  send.getAudioTracks().forEach((track) => hintTrack(track, "speech"));
+  const track = send.getAudioTracks()[0];
+  if (!track) return "none";
+  const sender = audioSender();
+  if (sender?.replaceTrack) {
+    await sender.replaceTrack(track);
+    return "replaced";
+  }
+  if (peer === pc) {
+    pc.addTrack?.(track, send);
+    needOffer = true;
+    void offerIfStable(session);
+    return "added";
+  }
+  return "none";
+}
+
+function buildMicCandidate(raw: MediaStream): {
+  send: MediaStream;
+  insert: MicGainInsert | null;
+} {
+  const gain = useMediaSettings.getState().inputGain;
+  if (gain === 1) {
+    return { send: raw, insert: null };
+  }
+  const insert = createMicGainInsert(raw, gain);
+  if (!insert) return { send: raw, insert: null };
+  disableAudio(insert.stream);
+  return { send: insert.stream, insert };
 }
 
 async function refreshMic(): Promise<void> {
-  if (!peer || useVoice.getState().status !== "joined") return;
+  const pc = peer;
+  if (!pc || useVoice.getState().status !== "joined") return;
+  const session = generation;
+  const request = ++micEpoch;
   const getUserMedia = deps?.getUserMedia ?? defaultGetUserMedia;
-  let stream: MediaStream;
+  let raw: MediaStream;
   try {
-    stream = await getUserMedia({ audio: micConstraints(), video: false });
+    raw = await getUserMedia({ audio: micConstraints(), video: false });
   } catch {
     return;
   }
-  stopTracks(rawMicStream);
-  if (localStream && localStream !== rawMicStream) {
-    stopTracks(localStream);
+  if (!micCurrent(pc, session, request)) {
+    stopTracks(raw);
+    return;
   }
-  closeMicGain();
-  rawMicStream = stream;
-  const send = micSendStream(stream);
-  localStream = send;
-  send.getAudioTracks().forEach((track) => hintTrack(track, "speech"));
-  applyLocalAudio();
-  const track = send.getAudioTracks()[0];
-  const sender = audioSender();
-  if (sender?.replaceTrack && track) {
-    await sender.replaceTrack(track);
-  } else if (track) {
-    peer.addTrack?.(track, send);
-    needOffer = true;
-    void offerIfStable(generation);
-  }
-  await applySendBitrate();
+  disableAudio(raw);
+  pendingMicRaw.add(raw);
+  const { send, insert } = buildMicCandidate(raw);
+  await enqueueAudioCommit(async () => {
+    if (!micCurrent(pc, session, request)) {
+      insert?.dispose();
+      stopTracks(raw);
+      pendingMicRaw.delete(raw);
+      return;
+    }
+    const sender = audioSender();
+    const previous = sender?.track ?? null;
+    let outcome: "replaced" | "added" | "none";
+    try {
+      outcome = await commitMicSend(pc, send, session);
+    } catch (error) {
+      insert?.dispose();
+      stopTracks(raw);
+      pendingMicRaw.delete(raw);
+      if (micCurrent(pc, session, request)) {
+        deps?.onError?.(
+          error instanceof Error
+            ? error
+            : new Error(
+                "Mikrofonwechsel fehlgeschlagen; bisheriges Mikrofon bleibt aktiv",
+              ),
+        );
+      }
+      return;
+    }
+    if (!micCurrent(pc, session, request)) {
+      if (generation === session && peer === pc) {
+        try {
+          if (outcome === "replaced") {
+            await replaceSenderTrack(sender, previous);
+          } else if (outcome === "added" && sender?.replaceTrack) {
+            await replaceSenderTrack(sender, null);
+          }
+        } catch {
+          // peer may already be tearing down
+        }
+      }
+      insert?.dispose();
+      stopTracks(raw);
+      pendingMicRaw.delete(raw);
+      return;
+    }
+    const oldRaw = rawMicStream;
+    const oldSend = localStream;
+    const oldInsert = activeMicGain;
+    rawMicStream = raw;
+    localStream = send;
+    activeMicGain = insert;
+    pendingMicRaw.delete(raw);
+    applyLocalAudio();
+    try {
+      await applySendBitrate();
+    } catch {
+      // bitrate is best-effort
+    }
+    oldInsert?.dispose();
+    if (oldSend && oldSend !== oldRaw && oldSend !== send) {
+      stopTracks(oldSend);
+    }
+    if (oldRaw && oldRaw !== raw) {
+      stopTracks(oldRaw);
+    }
+  });
 }
 
 async function refreshCamera(): Promise<void> {
-  if (!peer || !useVoice.getState().camera) return;
+  const pc = peer;
+  if (!pc || !useVoice.getState().camera) return;
+  const session = generation;
+  const epoch = ++cameraEpoch;
   const getUserMedia = deps?.getUserMedia ?? defaultGetUserMedia;
   let stream: MediaStream;
   try {
@@ -840,21 +956,130 @@ async function refreshCamera(): Promise<void> {
   } catch {
     return;
   }
+  if (!cameraCurrent(pc, session, epoch)) {
+    stopTracks(stream);
+    return;
+  }
   const track = stream.getVideoTracks()[0];
   if (!track) {
     stopTracks(stream);
     return;
   }
-  bindEnded(stream, "v");
-  const sender = cameraSender();
-  stopTracks(cameraStream);
-  cameraStream = stream;
-  useVoice.setState({ camera: true, localCamera: stream });
-  if (sender?.replaceTrack) {
-    await sender.replaceTrack(track);
-    return;
-  }
-  await publishLocal("v", stream);
+  track.enabled = false;
+  pendingCameraStreams.add(stream);
+  await enqueueCameraCommit(async () => {
+    if (!cameraCurrent(pc, session, epoch)) {
+      stopTracks(stream);
+      pendingCameraStreams.delete(stream);
+      return;
+    }
+    bindEnded(stream, "v");
+    const sender = cameraSender();
+    const previous = sender?.track ?? null;
+    try {
+      if (sender?.replaceTrack) {
+        await sender.replaceTrack(track);
+      }
+    } catch (error) {
+      stopTracks(stream);
+      pendingCameraStreams.delete(stream);
+      if (cameraCurrent(pc, session, epoch)) {
+        deps?.onError?.(
+          error instanceof Error
+            ? error
+            : new Error(
+                "Kamerawechsel fehlgeschlagen; bisherige Kamera bleibt aktiv",
+              ),
+        );
+      }
+      return;
+    }
+    if (!cameraCurrent(pc, session, epoch)) {
+      if (generation === session && peer === pc && sender?.replaceTrack) {
+        try {
+          await sender.replaceTrack(previous);
+        } catch {
+          // peer may already be tearing down
+        }
+      }
+      stopTracks(stream);
+      pendingCameraStreams.delete(stream);
+      return;
+    }
+    const old = cameraStream;
+    cameraStream = stream;
+    track.enabled = true;
+    useVoice.setState({ camera: true, localCamera: stream });
+    pendingCameraStreams.delete(stream);
+    stopTracks(old);
+    if (!sender?.replaceTrack) {
+      await publishLocal("v", stream);
+    }
+  });
+}
+
+async function applyInputGain(): Promise<void> {
+  await enqueueAudioCommit(async () => {
+    if (!rawMicStream || useVoice.getState().status !== "joined") return;
+    const pc = peer;
+    if (!pc) return;
+    const session = generation;
+    const request = micEpoch;
+    const gain = useMediaSettings.getState().inputGain;
+    if (activeMicGain) {
+      activeMicGain.setGain(gain);
+      if (gain !== 1) {
+        return;
+      }
+      const dest = localStream;
+      const raw = rawMicStream;
+      localStream = raw;
+      try {
+        await commitMicSend(pc, raw, session);
+      } catch (error) {
+        localStream = dest;
+        if (micCurrent(pc, session, request)) deps?.onError?.(error);
+        return;
+      }
+      if (!micCurrent(pc, session, request)) return;
+      if (dest && dest !== raw) stopTracks(dest);
+      disposeMicGain();
+      applyLocalAudio();
+      return;
+    }
+    if (gain === 1) return;
+    const insert = createMicGainInsert(rawMicStream, gain);
+    if (!insert) return;
+    disableAudio(insert.stream);
+    try {
+      await commitMicSend(pc, insert.stream, session);
+    } catch (error) {
+      insert.dispose();
+      if (micCurrent(pc, session, request)) deps?.onError?.(error);
+      return;
+    }
+    if (!micCurrent(pc, session, request)) {
+      insert.dispose();
+      return;
+    }
+    localStream = insert.stream;
+    activeMicGain = insert;
+    applyLocalAudio();
+  });
+}
+
+function queueInputGain(): void {
+  void applyInputGain();
+}
+
+function audioSender(): RtpSender | undefined {
+  return peer?.getSenders?.().find((sender) => sender.track?.kind === "audio");
+}
+
+function cameraSender(): RtpSender | undefined {
+  const cam = cameraStream?.getVideoTracks()[0];
+  if (!cam) return undefined;
+  return peer?.getSenders?.().find((sender) => sender.track === cam);
 }
 
 function handleSettingsChange(prev: MediaSettings, next: MediaSettings): void {
@@ -1243,7 +1468,8 @@ export function resetVoiceForTests(): void {
   awaitingJoin = null;
   awaitingLive = null;
   pendingIce = [];
-  inputGainChain = Promise.resolve();
+  audioCommitChain = Promise.resolve();
+  cameraCommitChain = Promise.resolve();
   stopWatchPeer();
   stopPeer();
   useVoice.setState({ ...idle });
@@ -1353,8 +1579,11 @@ function stopLocalVideo(kind: "v" | "s" | "l"): void {
   if (kind === "v" && !state.camera && !state.localCamera) return;
   if (kind === "s" && !state.sharing && !state.localScreen) return;
   if (kind === "l" && !state.live && !state.localLive) return;
-  if (kind === "v") cameraEpoch += 1;
-  else if (kind === "s") screenEpoch += 1;
+  if (kind === "v") {
+    cameraEpoch += 1;
+    for (const pending of pendingCameraStreams) stopTracks(pending);
+    pendingCameraStreams.clear();
+  } else if (kind === "s") screenEpoch += 1;
   else liveEpoch += 1;
   const stream =
     kind === "v" ? cameraStream : kind === "s" ? screenStream : liveStream;
@@ -1531,37 +1760,59 @@ async function startPeer(serverId: string, channelId: string): Promise<void> {
     attachIncoming(event.track, event.streams[0]);
   };
 
+  const micRequest = ++micEpoch;
   try {
     const stream = await getUserMedia({
       audio: micConstraints(),
       video: false,
     });
     if (generation !== mine) {
-      stream.getTracks().forEach((track) => track.stop());
+      stopTracks(stream);
       return;
     }
-    rawMicStream = stream;
-    const send = micSendStream(stream);
-    localStream = send;
-    send.getAudioTracks().forEach((track) => hintTrack(track, "speech"));
-    applyLocalAudio();
-    for (const track of send.getTracks()) {
-      pc.addTrack?.(track, send);
+    if (micEpoch !== micRequest) {
+      stopTracks(stream);
+      // A newer refreshMic owns capture; continue without this stream.
+    } else {
+      disableAudio(stream);
+      pendingMicRaw.add(stream);
+      const { send, insert } = buildMicCandidate(stream);
+      await enqueueAudioCommit(async () => {
+        if (generation !== mine || micEpoch !== micRequest || peer !== pc) {
+          insert?.dispose();
+          stopTracks(stream);
+          pendingMicRaw.delete(stream);
+          return;
+        }
+        rawMicStream = stream;
+        localStream = send;
+        activeMicGain = insert;
+        pendingMicRaw.delete(stream);
+        send.getAudioTracks().forEach((track) => hintTrack(track, "speech"));
+        applyLocalAudio();
+        for (const track of send.getTracks()) {
+          pc.addTrack?.(track, send);
+        }
+        try {
+          await applySendBitrate();
+        } catch {
+          // bitrate is best-effort
+        }
+        preferOpus(pc);
+        preferVp8(pc);
+        const self = currentUserId();
+        if (self && useVoice.getState().channelId === channelId) {
+          setPub(self, "a", true);
+        }
+        deps?.gateway.send({
+          op: "sig",
+          t: "p",
+          s: serverId,
+          c: channelId,
+          k: "a",
+        });
+      });
     }
-    await applySendBitrate();
-    preferOpus(pc);
-    preferVp8(pc);
-    const self = currentUserId();
-    if (self && useVoice.getState().channelId === channelId) {
-      setPub(self, "a", true);
-    }
-    deps?.gateway.send({
-      op: "sig",
-      t: "p",
-      s: serverId,
-      c: channelId,
-      k: "a",
-    });
   } catch {
     // No mic — still send an offer so ICE can run.
   }
