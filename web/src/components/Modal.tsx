@@ -5,13 +5,14 @@ type ModalProps = {
   onClose: () => void;
   title: string;
   children: ReactNode;
+  wide?: boolean;
 };
 
 /**
  * Native `<dialog>` so focus trapping, Escape and the backdrop come from the
  * browser. Closes on Escape and on a click outside the panel.
  */
-export function Modal({ open, onClose, title, children }: ModalProps) {
+export function Modal({ open, onClose, title, children, wide }: ModalProps) {
   const ref = useRef<HTMLDialogElement>(null);
 
   useEffect(() => {
@@ -32,7 +33,10 @@ export function Modal({ open, onClose, title, children }: ModalProps) {
       onClick={(event) => {
         if (event.target === event.currentTarget) onClose();
       }}
-      className="m-auto w-[calc(100%-2rem)] max-w-md rounded-2xl border border-neutral-200 bg-white p-0 text-neutral-900 shadow-xl backdrop:bg-neutral-900/40"
+      className={[
+        "m-auto w-[calc(100%-2rem)] rounded-2xl border border-neutral-200 bg-white p-0 text-neutral-900 shadow-xl backdrop:bg-neutral-900/40",
+        wide ? "max-w-lg" : "max-w-md",
+      ].join(" ")}
     >
       {open ? (
         <div className="flex flex-col gap-5 p-6">

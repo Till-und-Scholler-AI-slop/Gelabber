@@ -18,6 +18,7 @@ import { ProfilePage } from "./pages/ProfilePage.tsx";
 import { RegisterPage } from "./pages/RegisterPage.tsx";
 import { ServerPage } from "./pages/ServerPage.tsx";
 import { ServerSettingsPage } from "./pages/ServerSettingsPage.tsx";
+import { UserSettingsPage } from "./pages/UserSettingsPage.tsx";
 import { WorkspaceIndexPage } from "./pages/WorkspaceIndexPage.tsx";
 import { WorkspaceLayout } from "./pages/WorkspaceLayout.tsx";
 
@@ -81,6 +82,17 @@ const profileRoute = createRoute({
   component: () => (
     <RequireUser>
       <ProfilePage />
+    </RequireUser>
+  ),
+});
+
+const userSettingsRoute = createRoute({
+  getParentRoute: () => centeredLayout,
+  path: "/settings",
+  beforeLoad: requireUser,
+  component: () => (
+    <RequireUser>
+      <UserSettingsPage />
     </RequireUser>
   ),
 });
@@ -161,6 +173,7 @@ const dmRoute = createRoute({
 const routeTree = rootRoute.addChildren([
   centeredLayout.addChildren([
     profileRoute,
+    userSettingsRoute,
     loginRoute,
     registerRoute,
     inviteRoute,

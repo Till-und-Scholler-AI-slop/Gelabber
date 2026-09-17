@@ -1,6 +1,7 @@
 import { describe, expect, it } from "vitest";
 
-import { isOurTicket, tuneAudioSdp } from "./media.ts";
+import { isOurTicket, opusMaxAverageBitrate, tuneAudioSdp } from "./media.ts";
+import { AUDIO_QUALITY } from "./settings.ts";
 
 describe("media ticket shape", () => {
   it("accepts our 12-char alphabet and rejects product tokens", () => {
@@ -21,8 +22,25 @@ describe("media ticket shape", () => {
     const tuned = tuneAudioSdp(sdp);
     expect(tuned).toContain("a=fmtp:111 ");
     expect(tuned).toContain("useinbandfec=1");
-    expect(tuned).toContain("maxaveragebitrate=128000");
+    expect(tuned).toContain(
+      `maxaveragebitrate=${AUDIO_QUALITY.normal.bitrate}`,
+    );
     expect(tuned).toContain("stereo=0");
+    expect(opusMaxAverageBitrate(tuned)).toBe(AUDIO_QUALITY.normal.bitrate);
+  });
+
+  it("writes the chosen quality bitrate onto Opus fmtp", () => {
+    const sdp = [
+      "m=audio 9 UDP/TLS/RTP/SAVPF 111",
+      "a=rtpmap:111 opus/48000/2",
+      "",
+    ].join("\r\n");
+    expect(
+      opusMaxAverageBitrate(tuneAudioSdp(sdp, AUDIO_QUALITY.phone.bitrate)),
+    ).toBe(24_000);
+    expect(
+      opusMaxAverageBitrate(tuneAudioSdp(sdp, AUDIO_QUALITY.high.bitrate)),
+    ).toBe(128_000);
   });
 
   it("raises an existing Opus fmtp to FEC instead of duplicating the line", () => {
@@ -52,7 +70,9 @@ describe("media ticket shape", () => {
     expect(tuned).toContain("a=rtcp-fb:111 transport-cc");
     expect(tuned).toContain("useinbandfec=1");
     expect(tuned).toContain("stereo=0");
-    expect(tuned).toContain("maxaveragebitrate=128000");
+    expect(tuned).toContain(
+      `maxaveragebitrate=${AUDIO_QUALITY.normal.bitrate}`,
+    );
     expect(tuned).toContain("minptime=10");
     expect(tuned).not.toContain("useinbandfec=0");
     expect(tuned).not.toContain("stereo=1");

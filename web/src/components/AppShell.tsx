@@ -4,14 +4,19 @@ import { logout, useSession } from "../auth/session.ts";
 import { leaveVoice } from "../voice/session.ts";
 import { useGatewaySession } from "../ws/useGateway.ts";
 import { useIdlePresence } from "../ws/useLive.ts";
+import { useMessageToastsBridge } from "../messages/useMessageToasts.ts";
 import { Avatar } from "./Avatar.tsx";
+import { GearIcon } from "./Icons.tsx";
+import { MessageToasts } from "./MessageToasts.tsx";
 import { Toasts } from "./Toasts.tsx";
+import { VoiceSettingsDialog } from "./VoiceSettingsDialog.tsx";
 
 export function AppShell() {
   const user = useSession((state) => state.user);
   const navigate = useNavigate();
   useGatewaySession(user !== null);
   useIdlePresence(user !== null);
+  useMessageToastsBridge();
 
   const onLogout = () => {
     // Store flips first, so the header and guards react before the request
@@ -30,6 +35,14 @@ export function AppShell() {
           </Link>
           {user ? (
             <nav className="flex items-center gap-3 text-sm">
+              <Link
+                to="/settings"
+                className="inline-flex items-center gap-1.5 rounded-lg px-3 py-1.5 text-neutral-600 hover:bg-neutral-100 hover:text-neutral-900"
+                activeProps={{ className: "bg-neutral-100 text-neutral-900" }}
+              >
+                <GearIcon size={16} />
+                Einstellungen
+              </Link>
               <Link
                 to="/profile"
                 className="flex items-center gap-2 rounded-full py-1 pr-3 pl-1 hover:bg-neutral-100"
@@ -53,6 +66,8 @@ export function AppShell() {
       </header>
       <Outlet />
       <Toasts />
+      <MessageToasts />
+      {user ? <VoiceSettingsDialog /> : null}
     </div>
   );
 }

@@ -22,8 +22,10 @@ import {
   stopWatching,
   useVoice,
   type PeerConnection,
+  type RtpSender,
 } from "./session.ts";
 import { resetVoiceRoster, useVoiceRoster, voiceOf } from "./roster.ts";
+import { resetMediaSettingsForTests, useMediaSettings } from "./settings.ts";
 
 class FakePeer implements PeerConnection {
   onicecandidate: PeerConnection["onicecandidate"] = null;
@@ -34,7 +36,7 @@ class FakePeer implements PeerConnection {
   closed = false;
   tracks = 0;
   audio: MediaStreamTrack | null = null;
-  senders: { track: MediaStreamTrack | null }[] = [];
+  senders: RtpSender[] = [];
   ice: { candidate: string; sdpMid: string | null }[] = [];
   iceServers: IceServer[];
 
@@ -42,9 +44,20 @@ class FakePeer implements PeerConnection {
     this.iceServers = iceServers;
   }
 
-  addTrack(track?: MediaStreamTrack): { track: MediaStreamTrack | null } {
+  addTrack(track?: MediaStreamTrack): RtpSender {
     this.tracks += 1;
-    const sender = { track: track ?? null };
+    const encodings: { maxBitrate?: number }[] = [{}];
+    const sender: RtpSender = {
+      track: track ?? null,
+      replaceTrack: async (next) => {
+        sender.track = next;
+        if (next && next.kind !== "video") this.audio = next;
+      },
+      getParameters: () => ({ encodings }),
+      setParameters: async (params) => {
+        encodings.splice(0, encodings.length, ...params.encodings);
+      },
+    };
     this.senders.push(sender);
     if (track && track.kind !== "video") this.audio = track;
     return sender;
@@ -58,7 +71,7 @@ class FakePeer implements PeerConnection {
     sender.track = null;
   }
 
-  getSenders(): { track: MediaStreamTrack | null }[] {
+  getSenders(): RtpSender[] {
     return this.senders;
   }
 
@@ -248,6 +261,7 @@ describe("voice session", () => {
   afterEach(() => {
     resetVoiceForTests();
     resetVoiceRoster();
+    resetMediaSettingsForTests();
   });
 
   it("join click sets local state before any ICE work", () => {
@@ -731,5 +745,59 @@ describe("voice session", () => {
       userId: "u-bob",
       k: "l",
     });
+  });
+
+  it("applies the selected Opus bitrate on the sender encodings", async () => {
+    useMediaSettings.getState().patch({ quality: "high" });
+    const { peers } = install();
+    joinVoice({ serverId: "srv", channelId: "voice", channelName: "Lounge" });
+    await vi.waitFor(() => expect(peers[0]?.senders.length).toBeGreaterThan(0));
+    await vi.waitFor(() =>
+      expect(
+        peers[0]?.senders[0]?.getParameters?.().encodings[0]?.maxBitrate,
+      ).toBe(128_000),
+    );
+  });
+
+  it("captures with AEC off when the user turned it off", async () => {
+    useMediaSettings.getState().patch({ echoCancellation: false });
+    const { lastUserMedia, peers } = install();
+    joinVoice({ serverId: "srv", channelId: "voice", channelName: "Lounge" });
+    await vi.waitFor(() => expect(peers.length).toBe(1));
+    expect(lastUserMedia()).toEqual({
+      audio: {
+        echoCancellation: false,
+        noiseSuppression: true,
+        autoGainControl: true,
+        channelCount: 1,
+      },
+      video: false,
+    });
+  });
+
+  it("replaces the mic track when the input device changes, without leaving", async () => {
+    const { peers, getUserMediaCalls } = install();
+    joinVoice({ serverId: "srv", channelId: "voice", channelName: "Lounge" });
+    await vi.waitFor(() => expect(peers[0]?.audio).toBeTruthy());
+    const first = peers[0]?.audio;
+    expect(getUserMediaCalls()).toBe(1);
+    useMediaSettings.getState().patch({ audioInputId: "mic-usb" });
+    await vi.waitFor(() => expect(getUserMediaCalls()).toBe(2));
+    expect(useVoice.getState().status).toBe("joined");
+    expect(peers[0]?.audio).toBeTruthy();
+    expect(peers[0]?.audio).not.toBe(first);
+  });
+
+  it("keeps mute/deafen consistent when output volume changes", async () => {
+    const { peers } = install();
+    joinVoice({ serverId: "srv", channelId: "voice", channelName: "Lounge" });
+    await vi.waitFor(() => expect(peers[0]?.audio).toBeTruthy());
+    toggleMute();
+    expect(peers[0]?.audio?.enabled).toBe(false);
+    useMediaSettings.getState().patch({ outputVolume: 0.2 });
+    expect(useVoice.getState().muted).toBe(true);
+    expect(peers[0]?.audio?.enabled).toBe(false);
+    toggleMute();
+    expect(peers[0]?.audio?.enabled).toBe(true);
   });
 });

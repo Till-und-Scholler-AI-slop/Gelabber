@@ -3,6 +3,7 @@
 import {
   CameraIcon,
   CameraOffIcon,
+  GearIcon,
   HeadsetIcon,
   HeadsetOffIcon,
   LiveIcon,
@@ -19,6 +20,7 @@ import {
   toggleShare,
   useVoice,
 } from "../voice/session.ts";
+import { useMediaSettings } from "../voice/settings.ts";
 
 export function VoiceControls({
   compact = false,
@@ -32,6 +34,9 @@ export function VoiceControls({
   const camera = useVoice((s) => s.camera);
   const sharing = useVoice((s) => s.sharing);
   const live = useVoice((s) => s.live);
+  const volume = useMediaSettings((s) => s.outputVolume);
+  const patch = useMediaSettings((s) => s.patch);
+  const openSettings = useMediaSettings((s) => s.openDialog);
   const micOff = muted || deafened;
   const btn = compact
     ? "inline-flex items-center rounded-md p-1.5 text-neutral-600 hover:bg-neutral-100 hover:text-neutral-900"
@@ -128,6 +133,33 @@ export function VoiceControls({
           )}
         </button>
       ) : null}
+      {compact ? null : (
+        <label className="inline-flex items-center gap-1.5 text-sm text-neutral-600">
+          <span className="sr-only">Wiedergabe</span>
+          <input
+            type="range"
+            min={0}
+            max={100}
+            value={Math.round(volume * 100)}
+            aria-label="Wiedergabe-Lautstärke"
+            disabled={deafened}
+            onChange={(event) =>
+              patch({ outputVolume: Number(event.target.value) / 100 })
+            }
+            className="w-24"
+          />
+        </label>
+      )}
+      <button
+        type="button"
+        aria-label="Voice-Einstellungen"
+        title="Voice-Einstellungen"
+        onClick={() => openSettings()}
+        className={btn}
+      >
+        <GearIcon size={16} />
+        {compact ? null : <span className="ml-1.5">Einstellungen</span>}
+      </button>
       <button type="button" onClick={() => leaveVoice()} className={leave}>
         Verlassen
       </button>

@@ -30,13 +30,14 @@ import {
   requestMediaTicket,
   tuneAudioSdp,
 } from "./media.ts";
-
-const MIC_AUDIO: MediaTrackConstraints = {
-  echoCancellation: true,
-  noiseSuppression: true,
-  autoGainControl: true,
-  channelCount: 1,
-};
+import {
+  type MediaSettings,
+  audioBitrate,
+  cameraConstraints,
+  micConstraints,
+  onMediaSettingsChange,
+  useMediaSettings,
+} from "./settings.ts";
 
 export type VoiceStatus = "idle" | "joined";
 
@@ -92,7 +93,14 @@ const idle: VoiceState = {
 
 export const useVoice = create<VoiceState>(() => ({ ...idle }));
 
-export type RtpSender = { track: MediaStreamTrack | null };
+export type RtpEncodingParameters = { maxBitrate?: number };
+
+export type RtpSender = {
+  track: MediaStreamTrack | null;
+  replaceTrack?(track: MediaStreamTrack | null): Promise<void>;
+  getParameters?(): { encodings: RtpEncodingParameters[] };
+  setParameters?(params: { encodings: RtpEncodingParameters[] }): Promise<void>;
+};
 
 export type PeerConnection = {
   onicecandidate:
@@ -159,6 +167,7 @@ let peer: PeerConnection | null = null;
 let media: MediaSocket | null = null;
 let unbindMedia: (() => void) | null = null;
 let localStream: MediaStream | null = null;
+let rawMicStream: MediaStream | null = null;
 let cameraStream: MediaStream | null = null;
 let screenStream: MediaStream | null = null;
 let liveStream: MediaStream | null = null;
@@ -220,6 +229,7 @@ function defaultAttachRemote(stream: MediaStream): void {
   remoteAudio.srcObject = stream;
   void remoteAudio.play()?.catch(() => undefined);
   applyLocalAudio();
+  applyPlayback();
 }
 
 function rtpSenderCtor():
@@ -326,6 +336,7 @@ function ensureBound(): void {
   gateway.onSig(onSig);
   gateway.onErr(onErr);
   gateway.onReady(onReady);
+  onMediaSettingsChange(handleSettingsChange);
   bound = true;
 }
 
@@ -550,10 +561,12 @@ function stopPeer(): void {
   peer?.close();
   peer = null;
   stopTracks(localStream);
+  stopTracks(rawMicStream);
   stopTracks(cameraStream);
   stopTracks(screenStream);
   stopTracks(liveStream);
   localStream = null;
+  rawMicStream = null;
   cameraStream = null;
   screenStream = null;
   liveStream = null;
@@ -614,8 +627,171 @@ function applyLocalAudio(): void {
   localStream?.getAudioTracks().forEach((track) => {
     track.enabled = !micOff;
   });
+  rawMicStream?.getAudioTracks().forEach((track) => {
+    track.enabled = !micOff;
+  });
+  applyPlayback();
+}
+
+function playbackVolume(): number {
+  if (useVoice.getState().deafened) return 0;
+  return useMediaSettings.getState().outputVolume;
+}
+
+function applyPlayback(): void {
+  const volume = playbackVolume();
+  const deafened = useVoice.getState().deafened;
   if (remoteAudio) {
-    remoteAudio.muted = state.deafened;
+    remoteAudio.muted = deafened;
+    remoteAudio.volume = volume;
+    void applySink(remoteAudio);
+  }
+  if (watchAudio) {
+    watchAudio.volume = useMediaSettings.getState().outputVolume;
+    void applySink(watchAudio);
+  }
+}
+
+async function applySink(el: HTMLAudioElement): Promise<void> {
+  const id = useMediaSettings.getState().audioOutputId;
+  const sink = el as HTMLAudioElement & {
+    setSinkId?: (deviceId: string) => Promise<void>;
+  };
+  if (!sink.setSinkId) return;
+  try {
+    await sink.setSinkId(id);
+  } catch {
+    // unplugged / permission
+  }
+}
+
+async function applySendBitrate(): Promise<void> {
+  const bitrate = audioBitrate();
+  for (const sender of peer?.getSenders?.() ?? []) {
+    if (sender.track?.kind !== "audio") continue;
+    const params = sender.getParameters?.();
+    if (!params) continue;
+    const encodings = params.encodings.length > 0 ? params.encodings : [{}];
+    for (const encoding of encodings) {
+      encoding.maxBitrate = bitrate;
+    }
+    try {
+      await sender.setParameters?.({ encodings });
+    } catch {
+      // Chromium rejects setParameters before the first description.
+    }
+  }
+}
+
+function buildSendStream(raw: MediaStream): MediaStream {
+  const gain = useMediaSettings.getState().inputGain;
+  if (gain === 1) return raw;
+  const Ctx = (
+    globalThis as unknown as {
+      AudioContext?: { new (): AudioContext };
+    }
+  ).AudioContext;
+  if (!Ctx) return raw;
+  try {
+    const ctx = new Ctx();
+    const src = ctx.createMediaStreamSource(raw);
+    const node = ctx.createGain();
+    node.gain.value = gain;
+    const dest = ctx.createMediaStreamDestination();
+    src.connect(node);
+    node.connect(dest);
+    return dest.stream;
+  } catch {
+    return raw;
+  }
+}
+
+function audioSender(): RtpSender | undefined {
+  return peer?.getSenders?.().find((sender) => sender.track?.kind === "audio");
+}
+
+function cameraSender(): RtpSender | undefined {
+  const cam = cameraStream?.getVideoTracks()[0];
+  if (!cam) return undefined;
+  return peer?.getSenders?.().find((sender) => sender.track === cam);
+}
+
+async function refreshMic(): Promise<void> {
+  if (!peer || useVoice.getState().status !== "joined") return;
+  const getUserMedia = deps?.getUserMedia ?? defaultGetUserMedia;
+  let stream: MediaStream;
+  try {
+    stream = await getUserMedia({ audio: micConstraints(), video: false });
+  } catch {
+    return;
+  }
+  stopTracks(rawMicStream);
+  if (localStream && localStream !== rawMicStream) {
+    stopTracks(localStream);
+  }
+  rawMicStream = stream;
+  const send = buildSendStream(stream);
+  localStream = send;
+  send.getAudioTracks().forEach((track) => hintTrack(track, "speech"));
+  applyLocalAudio();
+  const track = send.getAudioTracks()[0];
+  const sender = audioSender();
+  if (sender?.replaceTrack && track) {
+    await sender.replaceTrack(track);
+  } else if (track) {
+    peer.addTrack?.(track, send);
+    needOffer = true;
+    void offerIfStable(generation);
+  }
+  await applySendBitrate();
+}
+
+async function refreshCamera(): Promise<void> {
+  if (!peer || !useVoice.getState().camera) return;
+  const getUserMedia = deps?.getUserMedia ?? defaultGetUserMedia;
+  let stream: MediaStream;
+  try {
+    stream = await getUserMedia({
+      audio: false,
+      video: cameraConstraints(),
+    });
+  } catch {
+    return;
+  }
+  const track = stream.getVideoTracks()[0];
+  if (!track) {
+    stopTracks(stream);
+    return;
+  }
+  bindEnded(stream, "v");
+  const sender = cameraSender();
+  stopTracks(cameraStream);
+  cameraStream = stream;
+  useVoice.setState({ camera: true, localCamera: stream });
+  if (sender?.replaceTrack) {
+    await sender.replaceTrack(track);
+    return;
+  }
+  await publishLocal("v", stream);
+}
+
+function handleSettingsChange(prev: MediaSettings, next: MediaSettings): void {
+  applyLocalAudio();
+  const joined = useVoice.getState().status === "joined";
+  const micChanged =
+    prev.audioInputId !== next.audioInputId ||
+    prev.echoCancellation !== next.echoCancellation ||
+    prev.noiseSuppression !== next.noiseSuppression ||
+    prev.autoGainControl !== next.autoGainControl ||
+    prev.inputGain !== next.inputGain;
+  const camChanged = prev.videoInputId !== next.videoInputId;
+  const qualityChanged = prev.quality !== next.quality;
+  if (joined && micChanged) void refreshMic();
+  if (joined && camChanged && useVoice.getState().camera) void refreshCamera();
+  if (joined && qualityChanged) {
+    void applySendBitrate();
+    needOffer = true;
+    void offerIfStable(generation);
   }
 }
 
@@ -990,6 +1166,7 @@ export function resetVoiceForTests(): void {
   useVoice.setState({ ...idle });
   deps = null;
   bound = false;
+  onMediaSettingsChange(null);
 }
 
 function endedListener(kind: "v" | "s" | "l"): () => void {
@@ -1030,7 +1207,10 @@ async function startLocalVideo(kind: "v" | "s" | "l"): Promise<void> {
   // Video only for camera / screen / live. Display audio mixed into the
   // voice m-line (and tagged as a second "a" pub) was echo-y on deploy and
   // added a video-sized SDP the 12 KiB cap then rejected.
-  const constraints: MediaStreamConstraints = { audio: false, video: true };
+  const constraints: MediaStreamConstraints =
+    kind === "v"
+      ? { audio: false, video: cameraConstraints() }
+      : { audio: false, video: true };
   let stream: MediaStream;
   try {
     stream = await getMedia(constraints);
@@ -1269,17 +1449,23 @@ async function startPeer(serverId: string, channelId: string): Promise<void> {
   };
 
   try {
-    const stream = await getUserMedia({ audio: MIC_AUDIO, video: false });
+    const stream = await getUserMedia({
+      audio: micConstraints(),
+      video: false,
+    });
     if (generation !== mine) {
       stream.getTracks().forEach((track) => track.stop());
       return;
     }
-    localStream = stream;
-    stream.getAudioTracks().forEach((track) => hintTrack(track, "speech"));
+    rawMicStream = stream;
+    const send = buildSendStream(stream);
+    localStream = send;
+    send.getAudioTracks().forEach((track) => hintTrack(track, "speech"));
     applyLocalAudio();
-    for (const track of stream.getTracks()) {
-      pc.addTrack?.(track, stream);
+    for (const track of send.getTracks()) {
+      pc.addTrack?.(track, send);
     }
+    await applySendBitrate();
     preferOpus(pc);
     preferVp8(pc);
     const self = currentUserId();
@@ -1369,6 +1555,7 @@ function attachWatchIncoming(
     const mix = stream ?? new MediaStream([track]);
     watchAudio.srcObject = mix;
     void watchAudio.play()?.catch(() => undefined);
+    applyPlayback();
     return;
   }
   const parsed = parseIncomingVideo(track, stream);
