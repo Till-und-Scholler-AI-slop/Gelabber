@@ -84,9 +84,15 @@
 	}
 }
 
-# Optional: MINIO_PUBLIC_ENDPOINT on its own host (presigns sign the host).
-# {$GELABBER_MINIO_DOMAIN:minio.home.arpa} {
-# 	reverse_proxy {$GELABBER_MINIO_UPSTREAM:127.0.0.1:9000} {
-# 		header_up Host {host}
-# 	}
-# }
+# Browser uploads and authenticated attachment redirects use this host.
+# Keep it in sync with MINIO_PUBLIC_ENDPOINT: S3 presigns include both Host
+# and path, so forwarding the upload through the app vhost or rewriting it
+# makes every PUT fail with SignatureDoesNotMatch.
+{$GELABBER_MINIO_DOMAIN:minio.home.arpa} {
+	reverse_proxy {$GELABBER_MINIO_UPSTREAM:127.0.0.1:9000} {
+		# Preserve Host including non-default port (e.g. :8443) for S3 signatures.
+		# {host} strips the port; HTTP upstreams already pass Host by default, but
+		# {hostport} keeps intent clear if the upstream later becomes HTTPS.
+		header_up Host {hostport}
+	}
+}
