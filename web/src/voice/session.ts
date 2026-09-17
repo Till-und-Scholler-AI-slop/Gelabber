@@ -95,11 +95,16 @@ export const useVoice = create<VoiceState>(() => ({ ...idle }));
 
 export type RtpEncodingParameters = { maxBitrate?: number };
 
+export type RtpSenderParameters = {
+  encodings: RtpEncodingParameters[];
+  transactionId?: string;
+};
+
 export type RtpSender = {
   track: MediaStreamTrack | null;
   replaceTrack?(track: MediaStreamTrack | null): Promise<void>;
-  getParameters?(): { encodings: RtpEncodingParameters[] };
-  setParameters?(params: { encodings: RtpEncodingParameters[] }): Promise<void>;
+  getParameters?(): RtpSenderParameters;
+  setParameters?(params: RtpSenderParameters): Promise<void>;
 };
 
 export type PeerConnection = {
@@ -168,6 +173,9 @@ let media: MediaSocket | null = null;
 let unbindMedia: (() => void) | null = null;
 let localStream: MediaStream | null = null;
 let rawMicStream: MediaStream | null = null;
+let micGainCtx: AudioContext | null = null;
+let micGainNode: GainNode | null = null;
+let inputGainChain: Promise<void> = Promise.resolve();
 let cameraStream: MediaStream | null = null;
 let screenStream: MediaStream | null = null;
 let liveStream: MediaStream | null = null;
@@ -565,6 +573,7 @@ function stopPeer(): void {
   stopTracks(cameraStream);
   stopTracks(screenStream);
   stopTracks(liveStream);
+  closeMicGain();
   localStream = null;
   rawMicStream = null;
   cameraStream = null;
@@ -641,14 +650,11 @@ function playbackVolume(): number {
 function applyPlayback(): void {
   const volume = playbackVolume();
   const deafened = useVoice.getState().deafened;
-  if (remoteAudio) {
-    remoteAudio.muted = deafened;
-    remoteAudio.volume = volume;
-    void applySink(remoteAudio);
-  }
-  if (watchAudio) {
-    watchAudio.volume = useMediaSettings.getState().outputVolume;
-    void applySink(watchAudio);
+  for (const el of [remoteAudio, watchAudio]) {
+    if (!el) continue;
+    el.muted = deafened;
+    el.volume = volume;
+    void applySink(el);
   }
 }
 
@@ -670,29 +676,49 @@ async function applySendBitrate(): Promise<void> {
   for (const sender of peer?.getSenders?.() ?? []) {
     if (sender.track?.kind !== "audio") continue;
     const params = sender.getParameters?.();
-    if (!params) continue;
-    const encodings = params.encodings.length > 0 ? params.encodings : [{}];
-    for (const encoding of encodings) {
+    if (!params?.encodings.length) continue;
+    for (const encoding of params.encodings) {
       encoding.maxBitrate = bitrate;
     }
     try {
-      await sender.setParameters?.({ encodings });
+      await sender.setParameters?.(params);
     } catch {
       // Chromium rejects setParameters before the first description.
     }
   }
 }
 
-function buildSendStream(raw: MediaStream): MediaStream {
-  const gain = useMediaSettings.getState().inputGain;
-  if (gain === 1) return raw;
-  const Ctx = (
+function audioContextCtor(): { new (): AudioContext } | undefined {
+  return (
     globalThis as unknown as {
       AudioContext?: { new (): AudioContext };
     }
   ).AudioContext;
-  if (!Ctx) return raw;
+}
+
+function closeMicGain(): void {
+  const node = micGainNode;
+  const ctx = micGainCtx;
+  micGainNode = null;
+  micGainCtx = null;
   try {
+    node?.disconnect();
+  } catch {
+    // already disconnected
+  }
+  if (ctx && ctx.state !== "closed") {
+    void ctx.close();
+  }
+}
+
+function createMicGainInsert(
+  raw: MediaStream,
+  gain: number,
+): MediaStream | null {
+  const Ctx = audioContextCtor();
+  if (!Ctx) return null;
+  try {
+    closeMicGain();
     const ctx = new Ctx();
     const src = ctx.createMediaStreamSource(raw);
     const node = ctx.createGain();
@@ -700,10 +726,65 @@ function buildSendStream(raw: MediaStream): MediaStream {
     const dest = ctx.createMediaStreamDestination();
     src.connect(node);
     node.connect(dest);
+    micGainCtx = ctx;
+    micGainNode = node;
+    void ctx.resume();
     return dest.stream;
   } catch {
+    closeMicGain();
+    return null;
+  }
+}
+
+function micSendStream(raw: MediaStream): MediaStream {
+  const gain = useMediaSettings.getState().inputGain;
+  if (gain === 1) {
+    closeMicGain();
     return raw;
   }
+  return createMicGainInsert(raw, gain) ?? raw;
+}
+
+async function replaceMicSend(send: MediaStream): Promise<void> {
+  send.getAudioTracks().forEach((track) => hintTrack(track, "speech"));
+  applyLocalAudio();
+  const track = send.getAudioTracks()[0];
+  const sender = audioSender();
+  if (sender?.replaceTrack && track) {
+    await sender.replaceTrack(track);
+  }
+}
+
+async function applyInputGain(): Promise<void> {
+  if (!rawMicStream || useVoice.getState().status !== "joined") return;
+  const gain = useMediaSettings.getState().inputGain;
+  if (micGainNode && micGainCtx) {
+    micGainNode.gain.value = gain;
+    if (micGainCtx.state === "suspended") {
+      void micGainCtx.resume();
+    }
+    if (gain !== 1) return;
+    const dest = localStream;
+    localStream = rawMicStream;
+    await replaceMicSend(rawMicStream);
+    if (dest && dest !== rawMicStream) {
+      stopTracks(dest);
+    }
+    closeMicGain();
+    return;
+  }
+  if (gain === 1) return;
+  const send = createMicGainInsert(rawMicStream, gain);
+  if (!send) return;
+  localStream = send;
+  await replaceMicSend(send);
+}
+
+function queueInputGain(): void {
+  inputGainChain = inputGainChain.then(
+    () => applyInputGain(),
+    () => applyInputGain(),
+  );
 }
 
 function audioSender(): RtpSender | undefined {
@@ -729,8 +810,9 @@ async function refreshMic(): Promise<void> {
   if (localStream && localStream !== rawMicStream) {
     stopTracks(localStream);
   }
+  closeMicGain();
   rawMicStream = stream;
-  const send = buildSendStream(stream);
+  const send = micSendStream(stream);
   localStream = send;
   send.getAudioTracks().forEach((track) => hintTrack(track, "speech"));
   applyLocalAudio();
@@ -778,15 +860,15 @@ async function refreshCamera(): Promise<void> {
 function handleSettingsChange(prev: MediaSettings, next: MediaSettings): void {
   applyLocalAudio();
   const joined = useVoice.getState().status === "joined";
-  const micChanged =
+  const recaptureMic =
     prev.audioInputId !== next.audioInputId ||
     prev.echoCancellation !== next.echoCancellation ||
     prev.noiseSuppression !== next.noiseSuppression ||
-    prev.autoGainControl !== next.autoGainControl ||
-    prev.inputGain !== next.inputGain;
+    prev.autoGainControl !== next.autoGainControl;
   const camChanged = prev.videoInputId !== next.videoInputId;
   const qualityChanged = prev.quality !== next.quality;
-  if (joined && micChanged) void refreshMic();
+  if (joined && recaptureMic) void refreshMic();
+  else if (joined && prev.inputGain !== next.inputGain) queueInputGain();
   if (joined && camChanged && useVoice.getState().camera) void refreshCamera();
   if (joined && qualityChanged) {
     void applySendBitrate();
@@ -1161,6 +1243,7 @@ export function resetVoiceForTests(): void {
   awaitingJoin = null;
   awaitingLive = null;
   pendingIce = [];
+  inputGainChain = Promise.resolve();
   stopWatchPeer();
   stopPeer();
   useVoice.setState({ ...idle });
@@ -1458,7 +1541,7 @@ async function startPeer(serverId: string, channelId: string): Promise<void> {
       return;
     }
     rawMicStream = stream;
-    const send = buildSendStream(stream);
+    const send = micSendStream(stream);
     localStream = send;
     send.getAudioTracks().forEach((track) => hintTrack(track, "speech"));
     applyLocalAudio();
