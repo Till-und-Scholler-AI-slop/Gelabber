@@ -883,7 +883,7 @@ async function refreshMic(): Promise<void> {
     }
     const sender = audioSender();
     const previous = sender?.track ?? null;
-    let outcome: "replaced" | "added" | "none" = "none";
+    let outcome: "replaced" | "added" | "none";
     try {
       outcome = await commitMicSend(pc, send, session);
     } catch (error) {
