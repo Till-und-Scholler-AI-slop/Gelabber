@@ -3,6 +3,7 @@
 // flipped on join click.
 
 import { api } from "../api/client.ts";
+import { audioBitrate } from "./settings.ts";
 
 export type IceServer = {
   urls: string | string[];
@@ -124,23 +125,31 @@ export function isOurTicket(ticket: string): boolean {
  * Chromium puts `a=rtcp-fb` between rtpmap and fmtp. Search the `m=`
  * section for the existing fmtp of that payload type, merge, emit one line.
  */
-export function tuneAudioSdp(sdp: string): string {
+export function tuneAudioSdp(sdp: string, bitrate = audioBitrate()): string {
   const nl = sdp.includes("\r\n") ? "\r\n" : "\n";
   const lines = sdp.split(/\r?\n/);
   const firstM = lines.findIndex((line) => line.startsWith("m="));
-  if (firstM < 0) return tuneOpusSection(lines).join(nl);
+  if (firstM < 0) return tuneOpusSection(lines, bitrate).join(nl);
   const out = lines.slice(0, firstM);
   let i = firstM;
   while (i < lines.length) {
     const start = i;
     i += 1;
     while (i < lines.length && !lines[i]?.startsWith("m=")) i += 1;
-    out.push(...tuneOpusSection(lines.slice(start, i)));
+    out.push(...tuneOpusSection(lines.slice(start, i), bitrate));
   }
   return out.join(nl);
 }
 
-function tuneOpusSection(section: string[]): string[] {
+/** Read the Opus maxaveragebitrate the client actually put on the SDP. */
+export function opusMaxAverageBitrate(sdp: string): number | null {
+  const match = /a=fmtp:\d+[^\n]*maxaveragebitrate=(\d+)/i.exec(sdp);
+  if (!match?.[1]) return null;
+  const value = Number(match[1]);
+  return Number.isFinite(value) ? value : null;
+}
+
+function tuneOpusSection(section: string[], bitrate: number): string[] {
   const pts: string[] = [];
   for (const line of section) {
     const rtpmap = /^a=rtpmap:(\d+) opus\/48000/i.exec(line);
@@ -157,7 +166,7 @@ function tuneOpusSection(section: string[]): string[] {
     }
     const parts = new Map<string, string>();
     for (const idx of found) mergeFmtpParams(parts, lines[idx] ?? "");
-    applyVoiceFmtp(parts);
+    applyVoiceFmtp(parts, bitrate);
     const merged = `${prefix} ${[...parts.entries()]
       .map(([key, value]) => `${key}=${value}`)
       .join(";")}`;
@@ -193,9 +202,9 @@ function mergeFmtpParams(parts: Map<string, string>, line: string): void {
   }
 }
 
-function applyVoiceFmtp(parts: Map<string, string>): void {
+function applyVoiceFmtp(parts: Map<string, string>, bitrate: number): void {
   if (!parts.has("minptime")) parts.set("minptime", "10");
   parts.set("useinbandfec", "1");
   parts.set("stereo", "0");
-  parts.set("maxaveragebitrate", "128000");
+  parts.set("maxaveragebitrate", String(bitrate));
 }

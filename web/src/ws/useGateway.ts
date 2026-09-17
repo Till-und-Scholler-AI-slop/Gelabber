@@ -5,7 +5,7 @@
 import { useEffect } from "react";
 
 import { getGateway } from "./client.ts";
-import type { Topic } from "./protocol.ts";
+import { topicKey, type Topic } from "./protocol.ts";
 
 export function useGatewaySession(authenticated: boolean): void {
   useEffect(() => {
@@ -25,25 +25,42 @@ export function useGatewaySession(authenticated: boolean): void {
 export function workspaceTopics(
   serverId: string | undefined,
   channelId: string | undefined,
+  extras: Topic[] = [],
 ): Topic[] {
+  const topics: Topic[] = [];
+  const seen = new Set<string>();
+  const add = (topic: Topic) => {
+    const key = topicKey(topic);
+    if (seen.has(key)) return;
+    seen.add(key);
+    topics.push(topic);
+  };
   if (serverId) {
-    const topics: Topic[] = [{ s: serverId }];
-    if (channelId) topics.push({ s: serverId, c: channelId });
-    return topics;
+    add({ s: serverId });
+    if (channelId) add({ s: serverId, c: channelId });
+  } else if (channelId) {
+    add({ s: channelId, c: channelId });
   }
-  if (channelId) return [{ s: channelId, c: channelId }];
-  return [];
+  for (const extra of extras) add(extra);
+  return topics;
 }
 
 export function useGatewayTopics(
   serverId: string | undefined,
   channelId: string | undefined,
+  extras: Topic[] = [],
 ): void {
+  const extraKey = extras
+    .map((topic) => topicKey(topic))
+    .sort()
+    .join("|");
   useEffect(() => {
-    const topics = workspaceTopics(serverId, channelId);
+    const topics = workspaceTopics(serverId, channelId, extras);
     getGateway().setTopics(topics);
     return () => {
       getGateway().setTopics([]);
     };
-  }, [serverId, channelId]);
+    // extras is hashed as extraKey so a new [] every render does not resubscribe.
+    // eslint-disable-next-line react-hooks/exhaustive-deps -- extras identity is extraKey
+  }, [serverId, channelId, extraKey]);
 }
