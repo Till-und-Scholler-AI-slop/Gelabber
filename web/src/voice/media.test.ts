@@ -1,6 +1,12 @@
 import { describe, expect, it } from "vitest";
 
-import { isOurTicket, opusMaxAverageBitrate, tuneAudioSdp } from "./media.ts";
+import {
+  isOurTicket,
+  openMediaSocket,
+  opusMaxAverageBitrate,
+  tuneAudioSdp,
+} from "./media.ts";
+import { MediaPeer } from "./mediaPeer.ts";
 import { AUDIO_QUALITY } from "./settings.ts";
 
 describe("media ticket shape", () => {
@@ -77,5 +83,49 @@ describe("media ticket shape", () => {
     expect(tuned).not.toContain("useinbandfec=0");
     expect(tuned).not.toContain("stereo=1");
     expect(tuned).not.toContain("maxaveragebitrate=24000");
+  });
+});
+
+describe("media socket lifecycle", () => {
+  it("clears isOpen after the transport closes or errors", () => {
+    const opened: FakeSocket[] = [];
+    class FakeSocket {
+      listeners = new Map<string, Set<() => void>>();
+      constructor(_url: string) {
+        opened.push(this);
+      }
+      addEventListener(type: string, fn: () => void) {
+        const set = this.listeners.get(type) ?? new Set();
+        set.add(fn);
+        this.listeners.set(type, set);
+      }
+      send() {}
+      close() {
+        this.emit("close");
+      }
+      emit(type: string) {
+        for (const fn of this.listeners.get(type) ?? []) fn();
+      }
+    }
+    const previous = globalThis.WebSocket;
+    globalThis.WebSocket = FakeSocket as unknown as typeof WebSocket;
+    try {
+      const first = openMediaSocket("ws://localhost/media/ws");
+      const peer = new MediaPeer();
+      peer.bind(first, () => {});
+      expect(peer.isOpen()).toBe(true);
+      opened[0]?.emit("open");
+      expect(peer.isOpen()).toBe(true);
+      opened[0]?.emit("close");
+      expect(peer.isOpen()).toBe(false);
+
+      const second = openMediaSocket("ws://localhost/media/ws");
+      const again = new MediaPeer();
+      again.bind(second, () => {});
+      opened[1]?.emit("error");
+      expect(again.isOpen()).toBe(false);
+    } finally {
+      globalThis.WebSocket = previous;
+    }
   });
 });

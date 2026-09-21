@@ -39,6 +39,8 @@ export type MediaSocket = {
   send(frame: MediaClientFrame): void;
   close(): void;
   onFrame(handler: (frame: MediaServerFrame) => void): () => void;
+  /** Transport closed or failed. Fires at most once. */
+  onClose(handler: () => void): () => void;
 };
 
 export function mediaWsUrl(path: string): string {
@@ -60,16 +62,30 @@ export type OpenMedia = (url: string) => MediaSocket;
 export function openMediaSocket(url: string): MediaSocket {
   const socket = new WebSocket(url);
   const listeners = new Set<(frame: MediaServerFrame) => void>();
+  const closers = new Set<() => void>();
   const pending: MediaClientFrame[] = [];
   let open = false;
+  let closed = false;
+
+  const fail = () => {
+    if (closed) return;
+    closed = true;
+    open = false;
+    pending.length = 0;
+    for (const handler of closers) handler();
+    closers.clear();
+  };
 
   socket.addEventListener("open", () => {
+    if (closed) return;
     open = true;
     for (const frame of pending) {
       socket.send(JSON.stringify(frame));
     }
     pending.length = 0;
   });
+  socket.addEventListener("close", fail);
+  socket.addEventListener("error", fail);
   socket.addEventListener("message", (event) => {
     if (typeof event.data !== "string") return;
     let value: unknown;
@@ -96,6 +112,7 @@ export function openMediaSocket(url: string): MediaSocket {
 
   return {
     send(frame) {
+      if (closed) return;
       if (open && socket.readyState === WebSocket.OPEN) {
         socket.send(JSON.stringify(frame));
         return;
@@ -103,14 +120,23 @@ export function openMediaSocket(url: string): MediaSocket {
       pending.push(frame);
     },
     close() {
-      open = false;
-      pending.length = 0;
+      fail();
       socket.close();
     },
     onFrame(handler) {
       listeners.add(handler);
       return () => {
         listeners.delete(handler);
+      };
+    },
+    onClose(handler) {
+      if (closed) {
+        handler();
+        return () => {};
+      }
+      closers.add(handler);
+      return () => {
+        closers.delete(handler);
       };
     },
   };

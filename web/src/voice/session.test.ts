@@ -207,6 +207,8 @@ function install(opts?: {
     constraints: MediaStreamConstraints,
   ) => boolean;
   holdReplaceTrack?: Promise<void>;
+  /** Do not answer `op:j` with `op:ok`. Used when the SFU rejects the join. */
+  holdJoin?: boolean;
 }) {
   const sent: ClientFrame[] = [];
   const mediaSent: MediaClientFrame[] = [];
@@ -214,6 +216,8 @@ function install(opts?: {
   let onErr: ((err: ErrFrame) => void) | undefined;
   let onReady: (() => void) | undefined;
   let onMedia: ((frame: MediaServerFrame) => void) | undefined;
+  let lingering: ((frame: MediaServerFrame) => void) | undefined;
+  const mediaSockets: MediaSocket[] = [];
   const peers: FakePeer[] = [];
   const errors: unknown[] = [];
   const streams: MediaStream[] = [];
@@ -307,16 +311,45 @@ function install(opts?: {
       };
     },
     openMedia: () => {
+      const closeHandlers = new Set<() => void>();
+      let alive = true;
       const socket: MediaSocket = {
-        send: (frame) => mediaSent.push(frame),
-        close() {},
+        send: (frame) => {
+          mediaSent.push(frame);
+          if (frame.op === "j" && !opts?.holdJoin) {
+            queueMicrotask(() => {
+              (onMedia ?? lingering)?.({
+                op: "ok",
+                c: "voice",
+                u: opts?.userId ?? "u-self",
+              });
+            });
+          }
+        },
+        close() {
+          if (!alive) return;
+          alive = false;
+          for (const handler of [...closeHandlers]) handler();
+        },
         onFrame(handler) {
           onMedia = handler;
+          lingering = handler;
           return () => {
-            onMedia = undefined;
+            if (onMedia === handler) onMedia = undefined;
+          };
+        },
+        onClose(handler) {
+          if (!alive) {
+            handler();
+            return () => {};
+          }
+          closeHandlers.add(handler);
+          return () => {
+            closeHandlers.delete(handler);
           };
         },
       };
+      mediaSockets.push(socket);
       return socket;
     },
     onError: (error) => errors.push(error),
@@ -331,7 +364,8 @@ function install(opts?: {
     emitSig: (event: SigEvent) => onSig?.(event),
     emitErr: (err: ErrFrame) => onErr?.(err),
     emitReady: () => onReady?.(),
-    emitMedia: (frame: MediaServerFrame) => onMedia?.(frame),
+    emitMedia: (frame: MediaServerFrame) => (onMedia ?? lingering)?.(frame),
+    closeMedia: () => mediaSockets.at(-1)?.close(),
     getUserMediaCalls: () => getUserMediaCalls,
     getDisplayMediaCalls: () => getDisplayMediaCalls,
     lastUserMedia: () => lastUserMedia,
@@ -580,14 +614,80 @@ describe("voice session", () => {
     expect(useVoice.getState().status).toBe("joined");
   });
 
-  it("keeps the seat when the SFU has no free port", async () => {
-    const { emitMedia, errors, mediaSent } = install();
+  it("rebuilds the media peer after the transport closes", async () => {
+    const { emitReady, mediaSent, peers, closeMedia } = install();
     joinVoice({ serverId: "srv", channelId: "voice", channelName: "Lounge" });
     await vi.waitFor(() =>
-      expect(mediaSent.some((frame) => frame.op === "j")).toBe(true),
+      expect(mediaSent.filter((frame) => frame.op === "j")).toHaveLength(1),
     );
-    emitMedia({ op: "err", e: "unavailable" });
+    closeMedia();
+    await vi.waitFor(() =>
+      expect(mediaSent.filter((frame) => frame.op === "j")).toHaveLength(2),
+    );
+    expect(peers).toHaveLength(2);
+    emitReady();
+    expect(mediaSent.filter((frame) => frame.op === "j")).toHaveLength(2);
     expect(useVoice.getState().status).toBe("joined");
+  });
+
+  it("keeps received video across a gateway reconnect", async () => {
+    const { peers, emitReady } = install();
+    joinVoice({ serverId: "srv", channelId: "voice", channelName: "Lounge" });
+    await vi.waitFor(() => expect(peers.length).toBe(1));
+    const stream = fakeVideoStream("u-bob:v");
+    peers[0]?.ontrack?.({
+      track: stream.getVideoTracks()[0]!,
+      streams: [stream],
+    });
+    expect(useVoice.getState().remote["u-bob"]?.v).toBe(stream);
+    emitReady();
+    expect(peers).toHaveLength(1);
+    expect(useVoice.getState().remote["u-bob"]?.v).toBe(stream);
+    expect(useVoice.getState().status).toBe("joined");
+  });
+
+  it("re-announces active tracks after the gateway join is confirmed", async () => {
+    const { sent, peers, emitReady, emitSig, emitErr, getDisplayMediaCalls } =
+      install();
+    joinVoice({ serverId: "srv", channelId: "voice", channelName: "Lounge" });
+    await vi.waitFor(() => expect(peers[0]?.audio).toBeTruthy());
+    toggleGoLive();
+    await vi.waitFor(() => expect(useVoice.getState().localLive).toBeTruthy());
+    const displays = getDisplayMediaCalls();
+    emitReady();
+    const afterReady = sent.length;
+    expect(sent.at(-1)).toEqual({ op: "sig", t: "j", s: "srv", c: "voice" });
+    emitSig({ op: "sig", t: "j", s: "srv", c: "voice", u: "u-self" });
+    expect(sent.slice(afterReady)).toEqual([
+      { op: "sig", t: "p", s: "srv", c: "voice", k: "a" },
+      { op: "sig", t: "p", s: "srv", c: "voice", k: "l" },
+    ]);
+    expect(getDisplayMediaCalls()).toBe(displays);
+    expect(useVoice.getState().live).toBe(true);
+    emitErr({ op: "err", e: "bad_request", s: "srv", c: "voice" });
+    expect(useVoice.getState().live).toBe(false);
+    expect(useVoice.getState().status).toBe("joined");
+    expect(getDisplayMediaCalls()).toBe(displays);
+  });
+
+  it("keeps the seat when the SFU has no free port", async () => {
+    const { emitMedia, errors, mediaSent, peers, sent } = install({
+      holdJoin: true,
+    });
+    joinVoice({ serverId: "srv", channelId: "voice", channelName: "Lounge" });
+    await vi.waitFor(() =>
+      expect(peers[0]?.signalingState).toBe("have-local-offer"),
+    );
+    expect(mediaSent.map((frame) => frame.op)).toEqual(["j"]);
+    emitMedia({ op: "err", e: "unavailable" });
+    emitMedia({ op: "err", e: "unauthorized" });
+    expect(useVoice.getState().status).toBe("joined");
+    expect(sent.some((frame) => frame.op === "sig" && frame.t === "l")).toBe(
+      false,
+    );
+    expect(
+      mediaSent.filter((frame) => frame.op === "o" || frame.op === "i"),
+    ).toEqual([]);
     expect(errors.map((error) => (error as Error).message)).toEqual([
       "Kein freier Sprachplatz.",
     ]);
