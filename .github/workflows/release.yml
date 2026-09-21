@@ -12,7 +12,7 @@ on:
       tag:
         description: "Release tag (created on this commit if missing)"
         required: true
-        default: "v0.2.0"
+        default: "v0.2.1"
 
 permissions:
   contents: write
@@ -43,11 +43,11 @@ jobs:
             exit 0
           fi
           python3 <<'PY' > /tmp/notes.md
-          print("""v0.2.0: erste Tag der v0.2-Linie. `docker compose up` zieht api/web/media/minio als `v0.2.0`. #75 Voice/Video-Settings und Toasts (schließt #58–#62, #68). #69 Bild-Uploads bereits über #70 auf main. Eigenes WebSocket / Signaling / SFU — kein LiveKit. Ein Source-Build setzt das Debian-CA-Bundle für cargo; bei Docker-Desktop-TLS-Inspection (OpenSSL 19) wird die präsentierte Kette mitvertraut, damit crates.io erreichbar bleibt.
+          print("""v0.2.1: Dark Mode und Voice-/Geräte-/Toast-Stabilität. `docker compose up` zieht api/web/media/minio als `v0.2.1`. #89 Dark Mode (schließt #83). #82 Voice-, Geräte- und Toast-Stabilität (schließt #78, #81). Eigenes WebSocket / Signaling / SFU — kein LiveKit. Ein Source-Build setzt das Debian-CA-Bundle für cargo; bei Docker-Desktop-TLS-Inspection (OpenSSL 19) wird die präsentierte Kette mitvertraut, damit crates.io erreichbar bleibt.
 
           Lokal: `cp deploy/compose/.env.example deploy/compose/.env && cd deploy/compose && docker compose up`
 
-          Images: `ghcr.io/till-und-scholler-ai-slop/gelabber/{api,web,media,minio}:v0.2.0` (plus `latest`; MinIO zusätzlich der Pin).
+          Images: `ghcr.io/till-und-scholler-ai-slop/gelabber/{api,web,media,minio}:v0.2.1` (plus `latest`; MinIO zusätzlich der Pin).
 
           ### Enthalten
           - Auth (Cookie-Session, CSRF, Profil)
@@ -60,8 +60,13 @@ jobs:
           - Sprachkanal, Kamera, Screen-Share, Go Live
           - Voice/Video-Settings: Lautstärke, Bitrate-Profil, Screen-Fokus, Geräte/AEC
           - In-App Toasts für neue Nachrichten
+          - Dark Mode: Hell, Dunkel, System
           - Moderation, Limits, Observability
           - Compose-Kern (Caddy, Postgres, Redis, MinIO, coturn)
+
+          ### v0.2.1
+          - #89 Dark Mode Hell/Dunkel/System (schließt #83)
+          - #82 Voice-, Geräte- und Toast-Stabilität (schließt #78, #81)
 
           ### v0.2.0
           - #75 Voice/Video-Settings + Toasts (schließt #58, #59, #60, #61, #62, #68)
