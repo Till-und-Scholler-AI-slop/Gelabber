@@ -95,4 +95,4 @@ Prometheus v3.14.0 und Grafana 13.2.1 auf Loopback (`http://127.0.0.1:3000`, adm
 
 ## Images
 
-`docker compose up` zieht `v0.2.0` von GHCR. Org-Pakete sind oft privat — dann Source-Build, oder `docker login ghcr.io`. MinIO bleibt der Pin in `deploy/compose/minio` (kein `FROM minio/minio`). Source-Build setzt `CARGO_HTTP_CAINFO`; bei TLS-Inspection (Docker Desktop) hängt `docker/rust-build-ca.sh` die präsentierte Kette an.
+`docker compose up` zieht `v0.2.1` von GHCR. Org-Pakete sind oft privat — dann Source-Build, oder `docker login ghcr.io`. MinIO bleibt der Pin in `deploy/compose/minio` (kein `FROM minio/minio`). Source-Build setzt `CARGO_HTTP_CAINFO`; bei TLS-Inspection (Docker Desktop) hängt `docker/rust-build-ca.sh` die präsentierte Kette an.

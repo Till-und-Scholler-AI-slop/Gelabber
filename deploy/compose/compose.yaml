@@ -17,25 +17,25 @@ services:
     restart: unless-stopped
 
   web:
-    image: ghcr.io/till-und-scholler-ai-slop/gelabber/web:v0.2.0
+    image: ghcr.io/till-und-scholler-ai-slop/gelabber/web:v0.2.1
     pull_policy: missing
     build:
       context: ../../web
       dockerfile: Dockerfile
       tags:
-        - gelabber/web:v0.2.0
+        - gelabber/web:v0.2.1
     expose:
       - "80"
     restart: unless-stopped
 
   api:
-    image: ghcr.io/till-und-scholler-ai-slop/gelabber/api:v0.2.0
+    image: ghcr.io/till-und-scholler-ai-slop/gelabber/api:v0.2.1
     pull_policy: missing
     build:
       context: ../..
       dockerfile: api/Dockerfile
       tags:
-        - gelabber/api:v0.2.0
+        - gelabber/api:v0.2.1
     environment:
       API_ADDR: 0.0.0.0:8080
       DATABASE_URL: postgres://${POSTGRES_USER:-gelabber}:${POSTGRES_PASSWORD:-gelabber}@postgres:5432/${POSTGRES_DB:-gelabber}
@@ -62,13 +62,13 @@ services:
     restart: unless-stopped
 
   media:
-    image: ghcr.io/till-und-scholler-ai-slop/gelabber/media:v0.2.0
+    image: ghcr.io/till-und-scholler-ai-slop/gelabber/media:v0.2.1
     pull_policy: missing
     build:
       context: ../..
       dockerfile: media/Dockerfile
       tags:
-        - gelabber/media:v0.2.0
+        - gelabber/media:v0.2.1
     environment:
       MEDIA_ADDR: 0.0.0.0:8081
       REDIS_URL: redis://redis:6379
@@ -144,7 +144,7 @@ services:
     restart: unless-stopped
 
   minio:
-    image: ghcr.io/till-und-scholler-ai-slop/gelabber/minio:v0.2.0
+    image: ghcr.io/till-und-scholler-ai-slop/gelabber/minio:v0.2.1
     pull_policy: missing
     build:
       context: ./minio
@@ -152,7 +152,7 @@ services:
       args:
         MINIO_RELEASE: RELEASE.2025-10-15T17-29-55Z
       tags:
-        - gelabber/minio:v0.2.0
+        - gelabber/minio:v0.2.1
         - gelabber/minio:RELEASE.2025-10-15T17-29-55Z
     command: ["server", "/data", "--console-address", ":9001"]
     environment:
