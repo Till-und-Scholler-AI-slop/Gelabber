@@ -5,6 +5,7 @@ import { createRoot } from "react-dom/client";
 import "./index.css";
 import { ensureSession } from "./auth/session.ts";
 import { router } from "./routes.tsx";
+import { ThemeController } from "./theme/ThemeController.tsx";
 
 const queryClient = new QueryClient({
   defaultOptions: {
@@ -23,6 +24,7 @@ if (!root) {
 
 createRoot(root).render(
   <StrictMode>
+    <ThemeController />
     <QueryClientProvider client={queryClient}>
       <RouterProvider router={router} />
     </QueryClientProvider>

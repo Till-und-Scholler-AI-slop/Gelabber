@@ -42,14 +42,14 @@ export function MediaSettingsForm() {
 
   return (
     <div className="flex flex-col gap-6 text-left">
-      <p className="text-sm text-neutral-600">
+      <p className="text-sm text-neutral-600 dark:text-neutral-400">
         Defaults: Echo-Unterdrückung, Rauschunterdrückung und Auto-Gain an.
         Qualität <span className="font-medium">Normal</span> (64 kbit/s Opus).
         Geräteliste kommt vom Browser — kein fremdes Media-SDK.
       </p>
 
       <fieldset className="flex flex-col gap-3">
-        <legend className="text-sm font-semibold text-neutral-800">
+        <legend className="text-sm font-semibold text-neutral-800 dark:text-neutral-200">
           Geräte
         </legend>
         <Select
@@ -76,14 +76,14 @@ export function MediaSettingsForm() {
         <button
           type="button"
           onClick={() => void refresh()}
-          className="self-start text-sm font-medium text-neutral-700 underline-offset-2 hover:underline"
+          className="self-start text-sm font-medium text-neutral-700 dark:text-neutral-300 underline-offset-2 hover:underline"
         >
           Geräte laden
         </button>
       </fieldset>
 
       <fieldset className="flex flex-col gap-2">
-        <legend className="text-sm font-semibold text-neutral-800">
+        <legend className="text-sm font-semibold text-neutral-800 dark:text-neutral-200">
           Verarbeitung
         </legend>
         <Toggle
@@ -107,7 +107,7 @@ export function MediaSettingsForm() {
       </fieldset>
 
       <fieldset className="flex flex-col gap-3">
-        <legend className="text-sm font-semibold text-neutral-800">
+        <legend className="text-sm font-semibold text-neutral-800 dark:text-neutral-200">
           Lautstärke
         </legend>
         <Slider
@@ -132,7 +132,7 @@ export function MediaSettingsForm() {
       </fieldset>
 
       <fieldset className="flex flex-col gap-2">
-        <legend className="text-sm font-semibold text-neutral-800">
+        <legend className="text-sm font-semibold text-neutral-800 dark:text-neutral-200">
           Audio-Qualität (Opus)
         </legend>
         {(Object.keys(AUDIO_QUALITY) as AudioQuality[]).map((key) => {
@@ -147,7 +147,10 @@ export function MediaSettingsForm() {
               />
               <span>
                 {profile.label}
-                <span className="text-neutral-500"> — {profile.hint}</span>
+                <span className="text-neutral-500 dark:text-neutral-400">
+                  {" "}
+                  — {profile.hint}
+                </span>
               </span>
             </label>
           );
@@ -155,7 +158,7 @@ export function MediaSettingsForm() {
       </fieldset>
 
       <fieldset className="flex flex-col gap-2">
-        <legend className="text-sm font-semibold text-neutral-800">
+        <legend className="text-sm font-semibold text-neutral-800 dark:text-neutral-200">
           Nachrichten
         </legend>
         <Toggle
@@ -203,14 +206,17 @@ function Select({
 }) {
   return (
     <div className="flex flex-col gap-1.5">
-      <label htmlFor={id} className="text-sm font-medium text-neutral-800">
+      <label
+        htmlFor={id}
+        className="text-sm font-medium text-neutral-800 dark:text-neutral-200"
+      >
         {label}
       </label>
       <select
         id={id}
         value={value}
         onChange={(event) => onChange(event.target.value)}
-        className="rounded-lg border border-neutral-300 bg-white px-3 py-2 text-sm text-neutral-900 outline-none focus:border-neutral-500 focus:ring-2 focus:ring-neutral-200"
+        className="rounded-lg border border-neutral-300 dark:border-neutral-600 bg-white dark:bg-neutral-900 px-3 py-2 text-sm text-neutral-900 dark:text-neutral-100 outline-none focus:border-neutral-500 dark:focus:border-neutral-400 focus:ring-2 focus:ring-neutral-200 dark:focus:ring-neutral-700"
       >
         <option value="">Browser-Default</option>
         {options.map((option) => (
@@ -269,10 +275,15 @@ function Slider({
   return (
     <div className="flex flex-col gap-1">
       <div className="flex items-center justify-between gap-2 text-sm">
-        <label htmlFor={id} className="font-medium text-neutral-800">
+        <label
+          htmlFor={id}
+          className="font-medium text-neutral-800 dark:text-neutral-200"
+        >
           {label}
         </label>
-        <span className="tabular-nums text-neutral-500">{suffix}</span>
+        <span className="tabular-nums text-neutral-500 dark:text-neutral-400">
+          {suffix}
+        </span>
       </div>
       <input
         id={id}
@@ -283,7 +294,9 @@ function Slider({
         onChange={(event) => onChange(Number(event.target.value))}
         className="w-full"
       />
-      {hint ? <p className="text-xs text-neutral-500">{hint}</p> : null}
+      {hint ? (
+        <p className="text-xs text-neutral-500 dark:text-neutral-400">{hint}</p>
+      ) : null}
     </div>
   );
 }

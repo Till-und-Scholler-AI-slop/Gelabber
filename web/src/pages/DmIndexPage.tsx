@@ -6,7 +6,11 @@ import { useEffect } from "react";
 
 import { Redirect } from "../components/Redirect.tsx";
 import { useLastDm } from "../dms/lastDm.ts";
-import { isGoneError, lastDmStillListed, shouldOpenLastDm } from "../dms/open.ts";
+import {
+  isGoneError,
+  lastDmStillListed,
+  shouldOpenLastDm,
+} from "../dms/open.ts";
 import { forgetDm, useDm, useDms } from "../dms/queries.ts";
 
 export function DmIndexPage() {
@@ -37,7 +41,7 @@ export function DmIndexPage() {
   if (isPending && !isError) return null;
 
   return (
-    <div className="flex flex-1 items-center justify-center p-8 text-center text-neutral-500">
+    <div className="flex flex-1 items-center justify-center p-8 text-center text-neutral-500 dark:text-neutral-400">
       <p>
         {isError
           ? "Deine Direktnachrichten konnten gerade nicht geladen werden."

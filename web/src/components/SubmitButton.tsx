@@ -27,8 +27,8 @@ export function SubmitButton({
       disabled={pending || disabled}
       aria-busy={pending || undefined}
       className={[
-        "rounded-lg bg-neutral-900 px-4 py-2 text-sm font-medium text-white transition",
-        "hover:bg-neutral-700 disabled:cursor-not-allowed disabled:opacity-60",
+        "rounded-lg bg-neutral-900 dark:bg-neutral-700 px-4 py-2 text-sm font-medium text-white transition",
+        "hover:bg-neutral-700 dark:hover:bg-neutral-600 disabled:cursor-not-allowed disabled:opacity-60",
         className ?? "",
       ].join(" ")}
       {...rest}

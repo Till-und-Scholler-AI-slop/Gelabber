@@ -32,17 +32,17 @@ export function ServerRail({
   return (
     <nav
       aria-label="Server"
-      className="flex h-full w-18 shrink-0 flex-col items-center border-r border-neutral-200 bg-neutral-100"
+      className="flex h-full w-18 shrink-0 flex-col items-center border-r border-neutral-200 dark:border-neutral-700 bg-neutral-100 dark:bg-neutral-800"
     >
       <HomeTile active={dmActive} />
       <ServerList servers={servers ?? []} activeId={activeId} />
-      <div className="flex w-full justify-center border-t border-neutral-200 py-2">
+      <div className="flex w-full justify-center border-t border-neutral-200 dark:border-neutral-700 py-2">
         <button
           type="button"
           onClick={() => setCreating(true)}
           title="Server erstellen"
           aria-label="Server erstellen"
-          className="flex size-12 items-center justify-center rounded-2xl bg-white text-emerald-700 shadow-sm transition hover:rounded-xl hover:bg-emerald-600 hover:text-white"
+          className="flex size-12 items-center justify-center rounded-2xl bg-white dark:bg-neutral-900 text-emerald-700 dark:text-emerald-300 shadow-sm transition hover:rounded-xl hover:bg-emerald-600 hover:text-white"
         >
           <PlusIcon size={20} />
         </button>
@@ -63,7 +63,7 @@ function HomeTile({ active }: { active: boolean }) {
       <span
         aria-hidden
         className={[
-          "absolute -left-3 w-1 rounded-r-full bg-neutral-900 transition-all",
+          "absolute -left-3 w-1 rounded-r-full bg-neutral-900 dark:bg-neutral-700 transition-all",
           active ? "h-8" : "h-0",
         ].join(" ")}
       />
@@ -78,8 +78,8 @@ function HomeTile({ active }: { active: boolean }) {
         className={[
           "flex size-12 items-center justify-center text-sm font-semibold transition-all select-none",
           active
-            ? "rounded-xl bg-neutral-900 text-white"
-            : "rounded-2xl bg-white text-neutral-700 shadow-sm hover:rounded-xl hover:bg-neutral-900 hover:text-white",
+            ? "rounded-xl bg-neutral-900 dark:bg-neutral-700 text-white"
+            : "rounded-2xl bg-white dark:bg-neutral-900 text-neutral-700 dark:text-neutral-300 shadow-sm hover:rounded-xl hover:bg-neutral-900 dark:hover:bg-neutral-600 hover:text-white",
         ].join(" ")}
       >
         <ChatIcon size={20} />
@@ -139,7 +139,7 @@ function ServerTile({ server, active }: { server: Server; active: boolean }) {
       <span
         aria-hidden
         className={[
-          "absolute -left-3 w-1 rounded-r-full bg-neutral-900 transition-all",
+          "absolute -left-3 w-1 rounded-r-full bg-neutral-900 dark:bg-neutral-700 transition-all",
           active ? "h-8" : "h-0",
         ].join(" ")}
       />
@@ -158,8 +158,8 @@ function ServerTile({ server, active }: { server: Server; active: boolean }) {
         className={[
           "flex size-12 items-center justify-center text-sm font-semibold transition-all select-none",
           active
-            ? "rounded-xl bg-neutral-900 text-white"
-            : "rounded-2xl bg-white text-neutral-700 shadow-sm hover:rounded-xl hover:bg-neutral-900 hover:text-white",
+            ? "rounded-xl bg-neutral-900 dark:bg-neutral-700 text-white"
+            : "rounded-2xl bg-white dark:bg-neutral-900 text-neutral-700 dark:text-neutral-300 shadow-sm hover:rounded-xl hover:bg-neutral-900 dark:hover:bg-neutral-600 hover:text-white",
         ].join(" ")}
       >
         {initials(server.name)}

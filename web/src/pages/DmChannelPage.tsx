@@ -42,7 +42,7 @@ export function DmChannelPage() {
   if (gone) return null;
   if (error) {
     return (
-      <div className="flex flex-1 items-center justify-center p-8 text-center text-neutral-500">
+      <div className="flex flex-1 items-center justify-center p-8 text-center text-neutral-500 dark:text-neutral-400">
         <p>Diese Unterhaltung konnte gerade nicht geladen werden.</p>
       </div>
     );
@@ -55,12 +55,14 @@ export function DmChannelPage() {
 function DmChat({ dm }: { dm: DirectMessage }) {
   const typing = useTypingInput(dm.id, dm.id, true);
   const members = [peerMember(dm)];
-  const status = usePresenceStore((s) => presenceOf(s.byServer, dm.id, dm.peer.id));
+  const status = usePresenceStore((s) =>
+    presenceOf(s.byServer, dm.id, dm.peer.id),
+  );
 
   return (
     <div className="flex min-h-0 flex-1 overflow-hidden">
       <div className="flex min-w-0 flex-1 flex-col overflow-hidden">
-        <header className="flex h-12 shrink-0 items-center gap-2 border-b border-neutral-200 bg-white px-4">
+        <header className="flex h-12 shrink-0 items-center gap-2 border-b border-neutral-200 dark:border-neutral-700 bg-white dark:bg-neutral-900 px-4">
           <PresenceAvatar
             name={dm.peer.name}
             url={dm.peer.avatar_url}
