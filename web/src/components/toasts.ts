@@ -24,6 +24,14 @@ let nextId = 1;
 export const useToasts = create<ToastState>((set) => ({
   toasts: [],
   push: (tone, message) => {
+    const current = useToasts.getState().toasts;
+    if (current.some((t) => t.tone === tone && t.message === message)) return;
+    if (
+      tone === "error" &&
+      current.filter((t) => t.tone === "error").length >= 3
+    ) {
+      return;
+    }
     const id = nextId++;
     set((state) => ({ toasts: [...state.toasts, { id, tone, message }] }));
     setTimeout(() => {
@@ -46,6 +54,8 @@ export function notifyError(error: unknown): void {
       ? error.code === "unauthenticated"
         ? null // the session store already bounced the tab to /login
         : errorMessage(error.code)
-      : errorMessage("internal");
+      : error instanceof Error && error.message
+        ? error.message
+        : errorMessage("internal");
   if (message) useToasts.getState().push("error", message);
 }

@@ -24,6 +24,8 @@ export type MediaClientFrame =
   | { op: "a"; sdp: string }
   | { op: "i"; ice: string; mid?: string }
   | { op: "p"; k: "v" | "s" | "l" }
+  | { op: "u"; k: "v" | "s" | "l" }
+  | { op: "x" }
   | { op: "l" };
 
 export type MediaServerFrame =

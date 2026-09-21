@@ -9,17 +9,17 @@ use std::sync::atomic::{AtomicU16, AtomicU64, Ordering};
 use std::time::Duration;
 
 use rtc::media_stream::MediaStreamTrack;
+use rtc::peer_connection::configuration::media_engine::{
+    MIME_TYPE_AV1, MIME_TYPE_H264, MIME_TYPE_HEVC, MIME_TYPE_OPUS, MIME_TYPE_RTX, MIME_TYPE_VP8,
+    MIME_TYPE_VP9,
+};
 use rtc::rtcp;
 use rtc::rtcp::payload_feedbacks::full_intra_request::FullIntraRequest;
 use rtc::rtcp::payload_feedbacks::picture_loss_indication::PictureLossIndication;
 use rtc::rtp;
-use rtc::peer_connection::configuration::media_engine::{
-    MIME_TYPE_AV1, MIME_TYPE_H264, MIME_TYPE_HEVC, MIME_TYPE_OPUS, MIME_TYPE_RTX,
-    MIME_TYPE_VP8, MIME_TYPE_VP9,
-};
 use rtc::rtp_transceiver::rtp_sender::{
-    RTCRtpCodec, RTCRtpCodecParameters, RTCRtpCodingParameters, RTCRtpEncodingParameters,
-    RTCPFeedback, RtpCodecKind,
+    RTCPFeedback, RTCRtpCodec, RTCRtpCodecParameters, RTCRtpCodingParameters,
+    RTCRtpEncodingParameters, RtpCodecKind,
 };
 use tokio::sync::{Mutex, RwLock, broadcast, mpsc, watch};
 use tracing::{debug, info, warn};
@@ -166,6 +166,9 @@ struct PeerSdp {
     /// Local offer in flight; skip further `create_offer` until the answer.
     have_local_offer: bool,
     pending: Vec<PendingPub>,
+    /// Trickle candidates that arrived while our renegotiation offer was still unanswered.
+    /// Applying them immediately fails (unknown mid) and used to toast-storm the viewer.
+    pending_ice: Vec<(String, Option<String>)>,
 }
 
 impl PeerSdp {
@@ -174,6 +177,7 @@ impl PeerSdp {
             negotiated: false,
             have_local_offer: false,
             pending: Vec::new(),
+            pending_ice: Vec::new(),
         }
     }
 }
@@ -340,9 +344,17 @@ impl Sfu {
             return Ok(());
         }
 
-        pc.set_remote_description(desc)
-            .await
-            .map_err(|err| err.to_string())?;
+        if let Err(err) = pc.set_remote_description(desc).await {
+            drop(gate);
+            // A rejected answer leaves this peer in have-local-offer. Clearing
+            // the gate flag alone keeps every later publication, including a
+            // new joiner's audio, queued forever.
+            if !as_offer {
+                self.fail_local_offer(&pc, &out, &gathered, &sdp, false)
+                    .await;
+            }
+            return Err(err.to_string());
+        }
 
         if as_offer {
             let answer = pc
@@ -353,19 +365,23 @@ impl Sfu {
             pc.set_local_description(answer)
                 .await
                 .map_err(|err| err.to_string())?;
-            if let Some(sdp) = local_sdp_after_gather(&pc, &gathered, before).await {
-                let _ = out.send(ServerFrame::Answer { sdp });
+            if let Some(local) = local_sdp_after_gather(&pc, &gathered, before).await {
+                let _ = out.send(ServerFrame::Answer { sdp: local });
             }
             gate.negotiated = true;
             gate.have_local_offer = false;
             let pending = std::mem::take(&mut gate.pending);
+            let queued_ice = std::mem::take(&mut gate.pending_ice);
             drop(gate);
+            flush_ice(&pc, peer_id, queued_ice).await;
             self.attach_existing_pubs(peer_id, channel_id).await;
             self.flush_pending(pc, out, gathered, sdp, pending).await;
         } else {
             gate.have_local_offer = false;
             let pending = std::mem::take(&mut gate.pending);
+            let queued_ice = std::mem::take(&mut gate.pending_ice);
             drop(gate);
+            flush_ice(&pc, peer_id, queued_ice).await;
             self.flush_pending(pc, out, gathered, sdp, pending).await;
         }
         Ok(())
@@ -389,6 +405,71 @@ impl Sfu {
         Ok(())
     }
 
+    /// Drop one camera/screen/live tag that never became a track. A rejected
+    /// publisher offer must not label the next successful video as the failed one.
+    pub async fn retract(
+        &self,
+        peer_id: PeerId,
+        channel_id: Uuid,
+        kind: &str,
+    ) -> Result<(), String> {
+        if kind != "v" && kind != "s" && kind != "l" {
+            return Err("bad_request".into());
+        }
+        let room = self.room(channel_id).await;
+        let mut room = room.lock().await;
+        let peer = room.peers.get_mut(&peer_id).ok_or("not in room")?;
+        if let Some(index) = peer.next_kind.iter().position(|item| item == kind) {
+            peer.next_kind.remove(index);
+            info!(peer = %peer_id.0, kind, "retracted unpublished kind");
+        }
+        Ok(())
+    }
+
+    /// Subscriber could not complete our offer. Roll signaling back to stable
+    /// and forward anything that queued behind that offer.
+    pub async fn abort_offer(&self, peer_id: PeerId, channel_id: Uuid) -> Result<(), String> {
+        let room = self.room(channel_id).await;
+        let (pc, out, gathered, sdp) = {
+            let room = room.lock().await;
+            let peer = room.peers.get(&peer_id).ok_or("not in room")?;
+            (
+                peer.pc.clone(),
+                peer.out.clone(),
+                peer.gathered.clone(),
+                peer.sdp.clone(),
+            )
+        };
+        info!(peer = %peer_id.0, "abort subscriber offer");
+        self.fail_local_offer(&pc, &out, &gathered, &sdp, false)
+            .await;
+        Ok(())
+    }
+
+    /// An answer was refused before `apply_remote` (oversized SDP or frame).
+    /// Abort only while this offer is still outstanding, so a late reject
+    /// cannot roll back the next one.
+    pub async fn abort_outstanding_offer(
+        &self,
+        peer_id: PeerId,
+        channel_id: Uuid,
+    ) -> Result<(), String> {
+        let room = self.room(channel_id).await;
+        let (pc, out, gathered, sdp) = {
+            let room = room.lock().await;
+            let peer = room.peers.get(&peer_id).ok_or("not in room")?;
+            (
+                peer.pc.clone(),
+                peer.out.clone(),
+                peer.gathered.clone(),
+                peer.sdp.clone(),
+            )
+        };
+        self.fail_local_offer(&pc, &out, &gathered, &sdp, true)
+            .await;
+        Ok(())
+    }
+
     pub async fn add_ice(
         &self,
         peer_id: PeerId,
@@ -397,20 +478,26 @@ impl Sfu {
         mid: Option<String>,
     ) -> Result<(), String> {
         let room = self.room(channel_id).await;
-        let pc = {
+        let (pc, gate) = {
             let room = room.lock().await;
-            room.peers.get(&peer_id).ok_or("not in room")?.pc.clone()
+            let peer = room.peers.get(&peer_id).ok_or("not in room")?;
+            (peer.pc.clone(), peer.sdp.clone())
         };
-        let mid = mid.filter(|m| !m.is_empty());
-        pc.add_ice_candidate(RTCIceCandidateInit {
-            candidate: ice,
-            sdp_mid: mid.clone(),
-            sdp_mline_index: if mid.is_some() { None } else { Some(0) },
-            username_fragment: None,
-            url: None,
-        })
-        .await
-        .map_err(|err| err.to_string())
+        {
+            let mut gate = gate.lock().await;
+            // The subscriber's new m-line does not exist until they answer our
+            // offer. Candidates gathered during that answer used to fail one
+            // by one and each failure became a toast.
+            if gate.have_local_offer {
+                if gate.pending_ice.len() < 64 {
+                    gate.pending_ice.push((ice, mid));
+                }
+                return Ok(());
+            }
+        }
+        pc.add_ice_candidate(ice_init(ice, mid))
+            .await
+            .map_err(|err| err.to_string())
     }
 
     pub async fn leave(&self, peer_id: PeerId, channel_id: Uuid) {
@@ -737,14 +824,24 @@ impl Sfu {
                 ..Default::default()
             }],
         )));
+        let before = pc
+            .get_transceivers()
+            .await
+            .iter()
+            .map(|transceiver| transceiver.id())
+            .collect::<Vec<_>>();
         if let Err(err) = pc
             .add_track(Arc::clone(&local) as Arc<dyn TrackLocal>)
             .await
         {
-            warn!(error = %err, "add_track failed");
-            sdp.lock().await.have_local_offer = false;
+            warn!(pub_id, error = %err, "add_track failed");
+            Box::pin(self.fail_local_offer(&pc, &out, &gathered, &sdp, false)).await;
             return;
         }
+        // Offer only the codec we will actually forward. The full video list
+        // (every H264 profile, AV1, HEVC, RTX) made the viewer's answer huge
+        // and could negotiate a payload type this forwarder does not write.
+        limit_forward_codec(&pc, &before, &codec).await;
 
         let mut rx = packets.subscribe();
         let forwarded = Arc::clone(&self.stats);
@@ -803,15 +900,119 @@ impl Sfu {
                 if pc.set_local_description(offer).await.is_ok()
                     && let Some(local) = local_sdp_after_gather(&pc, &gathered, before).await
                 {
+                    info!(
+                        pub_id,
+                        bytes = local.len(),
+                        mime = %codec.mime_type,
+                        stream_id,
+                        "subscriber renegotiation offer"
+                    );
                     let _ = out.send(ServerFrame::Offer { sdp: local });
                 } else {
-                    sdp.lock().await.have_local_offer = false;
+                    warn!(pub_id, "renegotiation offer was not sent");
+                    Box::pin(self.fail_local_offer(&pc, &out, &gathered, &sdp, false)).await;
                 }
             }
             Err(err) => {
                 warn!(error = %err, "renegotiation offer failed");
-                sdp.lock().await.have_local_offer = false;
+                Box::pin(self.fail_local_offer(&pc, &out, &gathered, &sdp, false)).await;
             }
+        }
+    }
+
+    /// Drop an outstanding local offer and send whatever queued behind it.
+    /// Resetting `have_local_offer` alone leaves the peer connection in
+    /// `have-local-offer`, so the next `create_offer` never leaves the SFU.
+    async fn fail_local_offer(
+        &self,
+        pc: &Arc<dyn PeerConnection>,
+        out: &mpsc::UnboundedSender<ServerFrame>,
+        gathered: &watch::Receiver<u64>,
+        sdp: &Arc<Mutex<PeerSdp>>,
+        only_if_outstanding: bool,
+    ) {
+        let pending = {
+            let mut gate = sdp.lock().await;
+            if only_if_outstanding && !gate.have_local_offer {
+                return;
+            }
+            gate.have_local_offer = false;
+            // Those candidates named the m-line this offer is abandoning.
+            gate.pending_ice.clear();
+            std::mem::take(&mut gate.pending)
+        };
+        if pc.pending_local_description().await.is_some() {
+            match RTCSessionDescription::rollback(None) {
+                Ok(rollback) => {
+                    if let Err(err) = pc.set_local_description(rollback).await {
+                        warn!(
+                            error = %err,
+                            queued = pending.len(),
+                            "subscriber offer rollback failed"
+                        );
+                    } else {
+                        info!(queued = pending.len(), "subscriber offer aborted");
+                    }
+                }
+                Err(err) => {
+                    warn!(error = %err, "subscriber offer rollback skipped");
+                }
+            }
+        } else if !pending.is_empty() {
+            info!(queued = pending.len(), "subscriber pending flushed");
+        }
+        self.flush_pending(
+            pc.clone(),
+            out.clone(),
+            gathered.clone(),
+            sdp.clone(),
+            pending,
+        )
+        .await;
+    }
+}
+
+fn ice_init(ice: String, mid: Option<String>) -> RTCIceCandidateInit {
+    let mid = mid.filter(|m| !m.is_empty());
+    RTCIceCandidateInit {
+        candidate: ice,
+        sdp_mid: mid.clone(),
+        sdp_mline_index: if mid.is_some() { None } else { Some(0) },
+        username_fragment: None,
+        url: None,
+    }
+}
+
+async fn flush_ice(
+    pc: &Arc<dyn PeerConnection>,
+    peer_id: PeerId,
+    queued: Vec<(String, Option<String>)>,
+) {
+    for (ice, mid) in queued {
+        if let Err(err) = pc.add_ice_candidate(ice_init(ice, mid)).await {
+            warn!(peer = %peer_id.0, error = %err, "buffered ice dropped");
+        }
+    }
+}
+
+async fn limit_forward_codec(pc: &Arc<dyn PeerConnection>, before: &[usize], codec: &RTCRtpCodec) {
+    let preference = RTCRtpCodecParameters {
+        rtp_codec: codec.clone(),
+        ..Default::default()
+    };
+    for transceiver in pc.get_transceivers().await {
+        if before.contains(&transceiver.id()) {
+            continue;
+        }
+        if let Err(err) = transceiver
+            .set_codec_preferences(vec![preference.clone()])
+            .await
+        {
+            warn!(
+                error = %err,
+                mime = %codec.mime_type,
+                "forward codec preference skipped"
+            );
         }
     }
 }
@@ -1121,8 +1322,8 @@ fn saturating_dec(atom: &AtomicU64) {
 #[cfg(test)]
 mod tests {
     use super::{
-        MIME_TYPE_OPUS, RTCRtpCodec, RTCRtpCodingParameters, RTCRtpEncodingParameters, RtpCodecKind,
-        Sfu, prepare_forwarded_rtp,
+        MIME_TYPE_OPUS, RTCRtpCodec, RTCRtpCodingParameters, RTCRtpEncodingParameters,
+        RtpCodecKind, Sfu, prepare_forwarded_rtp,
     };
     use rtc::rtp::packet::Packet;
     use std::sync::Arc;
@@ -1176,11 +1377,9 @@ mod tests {
         // Client MediaEngine includes PCMA/PCMU/G722 (Chrome-like).
         let mut media = MediaEngine::default();
         media.register_default_codecs().unwrap();
-        let registry = register_default_interceptors(
-            webrtc::peer_connection::Registry::new(),
-            &mut media,
-        )
-        .unwrap();
+        let registry =
+            register_default_interceptors(webrtc::peer_connection::Registry::new(), &mut media)
+                .unwrap();
         let pc = PeerConnectionBuilder::new()
             .with_media_engine(media)
             .with_interceptor_registry(registry)

@@ -74,5 +74,11 @@ mod tests {
         assert!(frame.sdp.is_none());
         let live: ClientFrame = serde_json::from_str(r#"{"op":"p","k":"l"}"#).unwrap();
         assert_eq!(live.k.as_deref(), Some("l"));
+        let abort: ClientFrame = serde_json::from_str(r#"{"op":"x"}"#).unwrap();
+        assert_eq!(abort.op, "x");
+        assert!(abort.k.is_none());
+        let undo: ClientFrame = serde_json::from_str(r#"{"op":"u","k":"s"}"#).unwrap();
+        assert_eq!(undo.op, "u");
+        assert_eq!(undo.k.as_deref(), Some("s"));
     }
 }

@@ -198,9 +198,9 @@ let bound = false;
 let generation = 0;
 let micEpoch = 0;
 let negotiated = false;
-let recoveryUsed = false;
-let recoveryTimer: ReturnType<typeof setTimeout> | null = null;
-const RECOVERY_TIMEOUT_MS = 15_000;
+/** One stream toast per join. Further failures stay in the console. */
+let streamReported = false;
+let watchReported = false;
 let cameraEpoch = 0;
 let screenEpoch = 0;
 let liveEpoch = 0;
@@ -213,6 +213,14 @@ let cameraCommitChain: Promise<void> = Promise.resolve();
 let makingOffer = false;
 let sfuOffered = false;
 let needOffer = false;
+/** SFU offer received and not yet answered. */
+let sfuOfferOpen = false;
+/** Senders that belonged to the last completed negotiation. */
+let settledSenders: RtpSender[] = [];
+/** Video kinds announced for the offer that is still unanswered. */
+let openPublish: Array<"v" | "s" | "l"> = [];
+/** Cleanup of a rejected publish must not enqueue a replacement offer. */
+let discardingPublish = false;
 const pendingMicRaw = new Set<MediaStream>();
 const pendingCameraStreams = new Set<MediaStream>();
 
@@ -225,6 +233,23 @@ let watchSdpChain: Promise<void> = Promise.resolve();
 let watchMakingOffer = false;
 let watchSfuOffered = false;
 let watchNeedOffer = false;
+
+function logVoice(
+  level: "info" | "warn",
+  step: string,
+  extra?: Record<string, string | number | boolean | undefined>,
+): void {
+  const state = useVoice.getState();
+  const fields = {
+    step,
+    user: currentUserId() ?? undefined,
+    channel: state.channelId ?? state.watchChannelId ?? undefined,
+    server: state.serverId ?? state.watchServerId ?? undefined,
+    ...extra,
+  };
+  if (level === "warn") console.warn("[gelabber:voice]", fields);
+  else console.info("[gelabber:voice]", fields);
+}
 
 function currentUserId(): string | null {
   return deps?.userId && deps.userId !== currentUserId
@@ -587,9 +612,8 @@ function stopTracks(stream: MediaStream | null): void {
 }
 
 function stopPeer(): void {
-  if (recoveryTimer) clearTimeout(recoveryTimer);
-  recoveryTimer = null;
   negotiated = false;
+  streamReported = false;
   generation += 1;
   micEpoch += 1;
   cameraEpoch += 1;
@@ -602,6 +626,10 @@ function stopPeer(): void {
   makingOffer = false;
   sfuOffered = false;
   needOffer = false;
+  sfuOfferOpen = false;
+  settledSenders = [];
+  openPublish = [];
+  discardingPublish = false;
   unbindMedia?.();
   unbindMedia = null;
   media?.close();
@@ -1234,35 +1262,137 @@ function signalingState(): string {
   );
 }
 
-/** One bounded retry per explicit join, never a silent infinite reconnect loop. */
+const STREAM_TOAST =
+  "Der Stream konnte nicht verbunden werden. Der Sprachkanal bleibt aktiv.";
+
+/**
+ * A failed stream renegotiation must not tear down a working voice peer.
+ * Before the first answer, there is no call to keep, so the seat rolls back.
+ */
 function recoverNegotiation(error: unknown, mine: number): void {
   if (mine !== generation) return;
-  const state = useVoice.getState();
-  if (!negotiated || recoveryUsed || !state.serverId || !state.channelId) {
+  const detail = error instanceof Error ? error.message : undefined;
+  logVoice("warn", "negotiation", { detail });
+  if (!negotiated) {
     rollbackSeat(error);
     return;
   }
-  recoveryUsed = true;
-  // Display capture requires a fresh user gesture. Do not reopen its picker
-  // in the background during recovery. Clear the matching presence flags.
-  if (state.sharing) stopLocalVideo("s");
-  if (state.live) stopLocalVideo("l");
-  deps?.onError?.(
-    new Error(
-      "Medienverbindung wird wiederhergestellt. Bildschirmfreigaben bitte erneut starten.",
-    ),
-  );
-  void startPeer(state.serverId, state.channelId);
-  const retryGeneration = generation;
-  recoveryTimer = setTimeout(() => {
-    if (generation === retryGeneration) {
-      rollbackSeat(
-        new Error(
-          "Medienverbindung konnte nicht wiederhergestellt werden. Bitte erneut beitreten.",
-        ),
+  reportStreamOnce(detail);
+  void settleFailedNegotiation(mine);
+}
+
+/**
+ * A failed renegotiation must return both sides to stable without closing
+ * the mic. Our rejected offer is rolled back and its new tracks dropped.
+ * An SFU offer we never answered is aborted so later publications flush.
+ */
+async function settleFailedNegotiation(mine: number): Promise<void> {
+  await enqueueSdp(async () => {
+    const pc = peer;
+    if (generation !== mine || !pc) return;
+    const state = signalingState();
+    if (state === "have-local-offer") {
+      discardingPublish = true;
+      try {
+        try {
+          await pc.setLocalDescription({ type: "rollback" });
+          logVoice("warn", "rollback", { detail: "local-offer" });
+        } catch (error) {
+          logVoice("warn", "rollback", {
+            detail: error instanceof Error ? error.message : "rollback",
+          });
+        }
+        if (generation !== mine || peer !== pc) return;
+        const kinds = dropUnsettledPublish();
+        makingOffer = false;
+        // The failed offer's follow-up must wait for the next user publish.
+        needOffer = false;
+        for (const kind of kinds) {
+          logVoice("warn", "unpublish", { track: kind });
+          media?.send({ op: "u", k: kind });
+        }
+      } finally {
+        discardingPublish = false;
+      }
+    } else if (state === "have-remote-offer") {
+      try {
+        await pc.setRemoteDescription({ type: "rollback" });
+        logVoice("warn", "rollback", { detail: "remote-offer" });
+      } catch (error) {
+        logVoice("warn", "rollback", {
+          detail: error instanceof Error ? error.message : "rollback",
+        });
+      }
+    }
+    if (generation !== mine || peer !== pc) return;
+    if (sfuOfferOpen) {
+      sfuOfferOpen = false;
+      logVoice("warn", "abort", { detail: "sfu-offer" });
+      media?.send({ op: "x" });
+    }
+    if (needOffer) void offerIfStable(mine);
+  });
+}
+
+/** Remove senders added after the last successful answer. The mic stays. */
+function dropUnsettledPublish(): Array<"v" | "s" | "l"> {
+  const pc = peer;
+  const kinds = openPublish.slice();
+  openPublish = [];
+  if (pc?.getSenders && pc.removeTrack) {
+    for (const sender of pc.getSenders()) {
+      if (settledSenders.includes(sender)) continue;
+      pc.removeTrack(sender);
+    }
+  }
+  for (const kind of kinds) releaseDiscardedCapture(kind);
+  return kinds;
+}
+
+/**
+ * Stop a publish that never negotiated: capture, local preview, and flags.
+ * Does not touch the mic or a stream that already completed an answer, and
+ * does not ask for a new offer.
+ */
+function releaseDiscardedCapture(kind: "v" | "s" | "l"): void {
+  if (kind === "v") {
+    cameraEpoch += 1;
+    for (const pending of pendingCameraStreams) stopTracks(pending);
+    pendingCameraStreams.clear();
+  } else if (kind === "s") screenEpoch += 1;
+  else liveEpoch += 1;
+  const stream =
+    kind === "v" ? cameraStream : kind === "s" ? screenStream : liveStream;
+  if (kind === "v") {
+    cameraStream = null;
+    useVoice.setState({ camera: false, localCamera: null });
+  } else if (kind === "s") {
+    screenStream = null;
+    useVoice.setState({ sharing: false, localScreen: null });
+  } else {
+    const state = useVoice.getState();
+    liveStream = null;
+    awaitingLive = null;
+    useVoice.setState({ live: false, localLive: null });
+    if (state.serverId && state.channelId) {
+      applyLiveEnd(
+        state.serverId,
+        state.channelId,
+        currentUserId() ?? undefined,
       );
     }
-  }, RECOVERY_TIMEOUT_MS);
+  }
+  stopTracks(stream);
+  const self = currentUserId();
+  if (self) setPub(self, kind, false);
+  sendPub(kind, false);
+}
+
+function reportStreamOnce(detail?: string): void {
+  logVoice("warn", "stream", { detail });
+  if (streamReported) return;
+  streamReported = true;
+  deps?.onError?.(new Error(STREAM_TOAST));
 }
 
 async function applyRemoteDescription(
@@ -1277,6 +1407,7 @@ async function applyRemoteDescription(
   // A duplicate/obsolete answer cannot answer an already settled offer.
   if (type === "answer" && signalingState() !== "have-local-offer") return;
   if (type === "offer") {
+    sfuOfferOpen = true;
     const collision = makingOffer || signalingState() !== "stable";
     if (collision) {
       needOffer = true;
@@ -1297,7 +1428,12 @@ async function applyRemoteDescription(
     try {
       await pc.addIceCandidate(candidate);
     } catch (error) {
-      if (current()) deps?.onError?.(error);
+      if (current()) {
+        logVoice("warn", "ice", {
+          detail: error instanceof Error ? error.message : "addIceCandidate",
+          mid: candidate.sdpMid ?? undefined,
+        });
+      }
     }
     if (!current()) return;
   }
@@ -1306,13 +1442,22 @@ async function applyRemoteDescription(
     if (!current()) return;
     await pc.setLocalDescription(answer);
     if (!current()) return;
-    if (answer.sdp) socket?.send({ op: "a", sdp: answer.sdp });
+    if (answer.sdp) {
+      logVoice("info", "send-answer", { bytes: answer.sdp.length });
+      socket?.send({ op: "a", sdp: answer.sdp });
+    }
+    // The answer is on the wire. A later negotiation_failed must not send
+    // `x`: an oversized answer is aborted on the server, and a late `x`
+    // would roll back the next offer.
+    sfuOfferOpen = false;
   }
   await applyVideoLimits(pc);
   if (!current()) return;
   negotiated = true;
-  if (recoveryTimer) clearTimeout(recoveryTimer);
-  recoveryTimer = null;
+  if (type === "answer") {
+    settledSenders = [...(pc.getSenders?.() ?? [])];
+    openPublish = [];
+  }
   if (needOffer) void offerIfStable(mine);
 }
 
@@ -1323,7 +1468,12 @@ async function applyRemoteIce(candidate: IceCand, mine: number): Promise<void> {
     try {
       await pc.addIceCandidate(candidate);
     } catch (error) {
-      if (mine === generation && peer === pc) deps?.onError?.(error);
+      if (mine === generation && peer === pc) {
+        logVoice("warn", "ice", {
+          detail: error instanceof Error ? error.message : "addIceCandidate",
+          mid: candidate.sdpMid ?? undefined,
+        });
+      }
     }
     return;
   }
@@ -1333,28 +1483,27 @@ async function applyRemoteIce(candidate: IceCand, mine: number): Promise<void> {
 function onMediaFrame(frame: MediaServerFrame): void {
   const mine = generation;
   if (frame.op === "err") {
-    if (frame.e === "ice_failed") {
-      deps?.onError?.(
-        new Error(
-          "Ein Verbindungskandidat wurde abgelehnt; bestehende Verbindung bleibt aktiv.",
-        ),
+    logVoice("warn", "media-error", { op: frame.op, code: frame.e });
+    if (frame.e === "ice_failed") return;
+    if (frame.e === "unauthorized") {
+      rollbackSeat(
+        new ApiError("unauthenticated", 0, errorMessage("unauthenticated")),
       );
       return;
     }
-    if (frame.e === "negotiation_failed") {
-      recoverNegotiation(
-        new Error("Medien-Neuverhandlung fehlgeschlagen"),
-        mine,
-      );
+    if (!negotiated) {
+      rollbackSeat(new ApiError("bad_request", 0, errorMessage("bad_request")));
       return;
     }
-    const code: ApiErrorCode =
-      frame.e === "unauthorized" ? "unauthenticated" : "bad_request";
-    rollbackSeat(new ApiError(code, 0, errorMessage(code)));
+    reportStreamOnce(frame.e);
+    void settleFailedNegotiation(mine);
     return;
   }
   if ((frame.op === "a" || frame.op === "o") && frame.sdp) {
     const type = frame.op === "a" ? "answer" : "offer";
+    logVoice("info", type === "offer" ? "recv-offer" : "recv-answer", {
+      bytes: frame.sdp.length,
+    });
     void enqueueSdp(() => applyRemoteDescription(type, frame.sdp, mine)).catch(
       (error) => recoverNegotiation(error, mine),
     );
@@ -1380,7 +1529,7 @@ export function joinVoice(input: {
   ensureBound();
   const userId = currentUserId();
   if (!userId) return;
-  recoveryUsed = false;
+  streamReported = false;
   const prev = useVoice.getState();
   if (
     prev.status === "joined" &&
@@ -1622,7 +1771,8 @@ export function stopWatching(): void {
 }
 
 export function resetVoiceForTests(): void {
-  recoveryUsed = false;
+  streamReported = false;
+  watchReported = false;
   awaitingJoin = null;
   awaitingLive = null;
   pendingIce = [];
@@ -1783,6 +1933,8 @@ async function publishLocal(
   if (!peer) return;
   const tracks = stream.getVideoTracks();
   if (tracks.length === 0) return;
+  logVoice("info", "publish", { track: kind });
+  openPublish.push(kind);
   media?.send({ op: "p", k: kind });
   for (const track of tracks) {
     peer.addTrack?.(track, stream);
@@ -1817,7 +1969,11 @@ function attachIncoming(track: MediaStreamTrack, stream?: MediaStream): void {
     return;
   }
   const parsed = parseIncomingVideo(track, stream);
-  if (!parsed) return;
+  if (!parsed) {
+    logVoice("warn", "track", { track: track.kind, detail: "untagged" });
+    return;
+  }
+  logVoice("info", "track", { track: parsed.k, peer: parsed.userId });
   const attached = stream ?? new MediaStream([track]);
   const state = useVoice.getState();
   const current = state.remote[parsed.userId] ?? {};
@@ -1833,7 +1989,9 @@ async function offerIfStable(
   mine: number,
   opts?: { initial?: boolean; fromEvent?: boolean },
 ): Promise<void> {
+  if (discardingPublish) return;
   await enqueueSdp(async () => {
+    if (discardingPublish) return;
     if (generation !== mine || !peer) return;
     if (opts?.initial && sfuOffered) return;
     if (makingOffer || signalingState() !== "stable") {
@@ -1862,6 +2020,7 @@ async function offerIfStable(
       }
       await pc.setLocalDescription(offer);
       if (generation !== mine || !offer.sdp) return;
+      logVoice("info", "send-offer", { bytes: offer.sdp.length });
       socket?.send({ op: "o", sdp: offer.sdp });
     } catch (error) {
       if (generation === mine) recoverNegotiation(error, mine);
@@ -2006,6 +2165,7 @@ async function startPeer(serverId: string, channelId: string): Promise<void> {
 }
 
 function stopWatchPeer(): void {
+  watchReported = false;
   watchGeneration += 1;
   watchPendingIce = [];
   watchSdpChain = Promise.resolve();
@@ -2107,7 +2267,12 @@ async function applyWatchRemote(
     try {
       await pc.addIceCandidate(candidate);
     } catch (error) {
-      if (current()) deps?.onError?.(error);
+      if (current()) {
+        logVoice("warn", "watch-ice", {
+          detail: error instanceof Error ? error.message : "addIceCandidate",
+          mid: candidate.sdpMid ?? undefined,
+        });
+      }
     }
     if (!current()) return;
   }
@@ -2117,6 +2282,7 @@ async function applyWatchRemote(
     await pc.setLocalDescription(answer);
     if (!current()) return;
     if (answer.sdp) {
+      logVoice("info", "watch-answer", { bytes: answer.sdp.length });
       socket?.send({ op: "a", sdp: answer.sdp });
     }
   }
@@ -2133,16 +2299,18 @@ function onWatchFrame(frame: MediaServerFrame): void {
     deps?.onError?.(error);
   };
   if (frame.op === "err") {
-    if (frame.e === "ice_failed") {
-      deps?.onError?.(
-        new Error("Ein Stream-Verbindungskandidat wurde abgelehnt."),
-      );
-      return;
-    }
+    logVoice("warn", "watch-error", { op: frame.op, code: frame.e });
+    if (frame.e === "ice_failed") return;
+    if (watchReported) return;
+    watchReported = true;
     stopWatching();
-    const code: ApiErrorCode =
-      frame.e === "unauthorized" ? "unauthenticated" : "bad_request";
-    deps?.onError?.(new ApiError(code, 0, errorMessage(code)));
+    deps?.onError?.(
+      new Error(
+        frame.e === "unauthorized"
+          ? errorMessage("unauthenticated")
+          : "Der Stream konnte nicht verbunden werden.",
+      ),
+    );
     return;
   }
   if (frame.op === "a" && frame.sdp) {
@@ -2161,7 +2329,12 @@ function onWatchFrame(frame: MediaServerFrame): void {
     const candidate = { candidate: frame.ice, sdpMid: frame.mid ?? null };
     if (watchPeer?.remoteDescription) {
       void watchPeer.addIceCandidate(candidate).catch((error) => {
-        if (watchGeneration === mine) deps?.onError?.(error);
+        if (watchGeneration === mine) {
+          logVoice("warn", "watch-ice", {
+            detail: error instanceof Error ? error.message : "addIceCandidate",
+            mid: candidate.sdpMid ?? undefined,
+          });
+        }
       });
     } else {
       watchPendingIce.push(candidate);

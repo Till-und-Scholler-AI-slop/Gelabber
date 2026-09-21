@@ -112,6 +112,29 @@ async fn client_pc(
     }
 }
 
+fn vp8_track(ssrc: u32) -> Arc<TrackLocalStaticRTP> {
+    Arc::new(TrackLocalStaticRTP::new(MediaStreamTrack::new(
+        format!("stream-{ssrc}"),
+        format!("video-{ssrc}"),
+        format!("cam-{ssrc}"),
+        RtpCodecKind::Video,
+        vec![RTCRtpEncodingParameters {
+            rtp_coding_parameters: RTCRtpCodingParameters {
+                ssrc: Some(ssrc),
+                ..Default::default()
+            },
+            codec: RTCRtpCodec {
+                mime_type: "video/VP8".into(),
+                clock_rate: 90000,
+                channels: 0,
+                sdp_fmtp_line: String::new(),
+                rtcp_feedback: vec![],
+            },
+            ..Default::default()
+        }],
+    )))
+}
+
 fn opus_track(ssrc: u32) -> Arc<TrackLocalStaticRTP> {
     Arc::new(TrackLocalStaticRTP::new(MediaStreamTrack::new(
         format!("stream-{ssrc}"),
@@ -383,5 +406,322 @@ async fn concurrent_first_offers_do_not_glare() {
     assert!(
         b.pc.remote_description().await.is_some(),
         "B should have an SFU answer"
+    );
+}
+
+fn test_config() -> Config {
+    Config::from_source(|key| match key {
+        "REDIS_URL" => Some("redis://127.0.0.1:1".to_owned()),
+        "MEDIA_ICE_BIND" => Some("127.0.0.1:0".to_owned()),
+        "TURN_URLS" => Some("stun:127.0.0.1:3478,turn:127.0.0.1:3478".to_owned()),
+        "TURN_USERNAME" => Some("gelabber".to_owned()),
+        "TURN_PASSWORD" => Some("gelabberturn".to_owned()),
+        _ => None,
+    })
+    .unwrap()
+}
+
+/// Go Live / screen share: the subscriber offer names only the forwarded
+/// codec, and ICE that arrives before the answer is not an error.
+#[tokio::test]
+async fn video_renegotiation_keeps_subscriber_and_buffers_early_ice() {
+    let sfu = Arc::new(Sfu::new(&test_config()));
+    let channel = Uuid::from_u128(4);
+
+    let (a_out, mut a_rx) = mpsc::unbounded_channel();
+    let (b_out, mut b_rx) = mpsc::unbounded_channel();
+    let a_id = sfu.join(claim(1, 4), a_out).await.expect("join a");
+    let b_id = sfu.join(claim(2, 4), b_out).await.expect("join b");
+
+    let (a_conn_tx, _a_conn_rx) = mpsc::unbounded_channel();
+    let (b_conn_tx, _b_conn_rx) = mpsc::unbounded_channel();
+    let (a_pkt_tx, _a_pkt_rx) = mpsc::unbounded_channel();
+    let (b_pkt_tx, _b_pkt_rx) = mpsc::unbounded_channel();
+
+    let mut a = client_pc(a_conn_tx, a_pkt_tx).await;
+    let b = client_pc(b_conn_tx, b_pkt_tx).await;
+    let audio = opus_track(0x1111_0001);
+    a.pc.add_track(Arc::clone(&audio) as Arc<dyn TrackLocal>)
+        .await
+        .unwrap();
+    b.pc.add_track(Arc::clone(&opus_track(0x2222_0001)) as Arc<dyn TrackLocal>)
+        .await
+        .unwrap();
+    pump_offer(&a, &sfu, a_id, channel, &mut a_rx).await;
+    pump_offer(&b, &sfu, b_id, channel, &mut b_rx).await;
+
+    let video = vp8_track(0x3333_0001);
+    let sender =
+        a.pc.add_track(Arc::clone(&video) as Arc<dyn TrackLocal>)
+            .await
+            .unwrap();
+    pump_offer(&a, &sfu, a_id, channel, &mut a_rx).await;
+
+    let pt = sender
+        .get_parameters()
+        .await
+        .ok()
+        .and_then(|p| p.rtp_parameters.codecs.first().map(|c| c.payload_type))
+        .unwrap_or(96);
+    let mut pkt = Packet::default();
+    pkt.header.version = 2;
+    pkt.header.ssrc = 0x3333_0001;
+    pkt.header.payload_type = pt;
+    pkt.payload = bytes::Bytes::from_static(&[0x10, 0x00, 0x00]);
+
+    let deadline = tokio::time::Instant::now() + Duration::from_secs(8);
+    let mut offer = None;
+    let mut seq = 1u16;
+    while tokio::time::Instant::now() < deadline && offer.is_none() {
+        pkt.header.sequence_number = seq;
+        pkt.header.timestamp = u32::from(seq) * 3000;
+        seq = seq.wrapping_add(1);
+        let _ = video.write_rtp(pkt.clone()).await;
+        flush_client_ice(&mut a.ice_rx, &sfu, a_id, channel).await;
+        match tokio::time::timeout(Duration::from_millis(40), b_rx.recv()).await {
+            Ok(Some(ServerFrame::Offer { sdp })) => offer = Some(sdp),
+            Ok(Some(_)) | Err(_) => {}
+            Ok(None) => break,
+        }
+    }
+    let offer = offer.expect("subscriber should be offered the forwarded video");
+    assert!(
+        offer.contains("VP8/90000"),
+        "forwarded offer must carry VP8: {offer}"
+    );
+    assert!(
+        !offer.contains("H265/90000") && !offer.contains("AV1/90000"),
+        "forwarded offer must not list every registered video codec: {offer}"
+    );
+    assert!(
+        offer.len() < 48 * 1024,
+        "single-codec offer should stay well under the old 48 KiB cap, got {}",
+        offer.len()
+    );
+
+    sfu.add_ice(
+        b_id,
+        channel,
+        "candidate:1 1 udp 2122260223 192.0.2.1 9 typ host".into(),
+        Some("1".into()),
+    )
+    .await
+    .expect("ICE before the answer is buffered, not a hard failure");
+
+    b.pc.set_remote_description(RTCSessionDescription::offer(offer).unwrap())
+        .await
+        .expect("subscriber accepts the slim offer");
+    let answer = b.pc.create_answer(None).await.unwrap();
+    b.pc.set_local_description(answer.clone()).await.unwrap();
+    sfu.apply_remote(b_id, channel, answer.sdp, false)
+        .await
+        .expect("subscriber answer applies");
+}
+
+async fn next_offer(
+    rx: &mut mpsc::UnboundedReceiver<ServerFrame>,
+    deadline: Duration,
+) -> Option<String> {
+    let start = tokio::time::Instant::now();
+    while start.elapsed() < deadline {
+        match tokio::time::timeout(Duration::from_millis(40), rx.recv()).await {
+            Ok(Some(ServerFrame::Offer { sdp })) => return Some(sdp),
+            Ok(Some(_)) | Err(_) => {}
+            Ok(None) => return None,
+        }
+    }
+    None
+}
+
+/// Outstanding subscriber negotiation fails, then a later publish must still
+/// be offered, and audio from someone who joins after that must be forwarded.
+#[tokio::test]
+async fn failed_offer_then_new_publish_then_joiner_audio() {
+    let sfu = Arc::new(Sfu::new(&test_config()));
+    let channel = Uuid::from_u128(5);
+
+    let (a_out, mut a_rx) = mpsc::unbounded_channel();
+    let (b_out, mut b_rx) = mpsc::unbounded_channel();
+    let a_id = sfu.join(claim(1, 5), a_out).await.expect("join a");
+    let b_id = sfu.join(claim(2, 5), b_out).await.expect("join b");
+
+    let (a_conn_tx, _a_conn_rx) = mpsc::unbounded_channel();
+    let (b_conn_tx, mut b_conn_rx) = mpsc::unbounded_channel();
+    let (a_pkt_tx, _a_pkt_rx) = mpsc::unbounded_channel();
+    let (b_pkt_tx, mut b_pkt_rx) = mpsc::unbounded_channel();
+
+    let mut a = client_pc(a_conn_tx, a_pkt_tx).await;
+    let mut b = client_pc(b_conn_tx, b_pkt_tx).await;
+    a.pc.add_track(Arc::clone(&opus_track(0x1111_0001)) as Arc<dyn TrackLocal>)
+        .await
+        .unwrap();
+    b.pc.add_track(Arc::clone(&opus_track(0x2222_0001)) as Arc<dyn TrackLocal>)
+        .await
+        .unwrap();
+    pump_offer(&a, &sfu, a_id, channel, &mut a_rx).await;
+    pump_offer(&b, &sfu, b_id, channel, &mut b_rx).await;
+
+    let video = vp8_track(0x3333_0001);
+    a.pc.add_track(Arc::clone(&video) as Arc<dyn TrackLocal>)
+        .await
+        .unwrap();
+    pump_offer(&a, &sfu, a_id, channel, &mut a_rx).await;
+
+    let mut pkt = Packet::default();
+    pkt.header.version = 2;
+    pkt.header.ssrc = 0x3333_0001;
+    pkt.header.payload_type = 96;
+    pkt.payload = bytes::Bytes::from_static(&[0x10, 0x00, 0x00]);
+    let mut seq = 1u16;
+    let first = loop {
+        pkt.header.sequence_number = seq;
+        pkt.header.timestamp = u32::from(seq) * 3000;
+        seq = seq.wrapping_add(1);
+        let _ = video.write_rtp(pkt.clone()).await;
+        if let Some(sdp) = next_offer(&mut b_rx, Duration::from_millis(80)).await {
+            break sdp;
+        }
+        if seq > 80 {
+            panic!("subscriber never received the outstanding video offer");
+        }
+    };
+    assert!(
+        first.contains("VP8/90000"),
+        "outstanding offer must be a real video negotiation: {first}"
+    );
+
+    sfu.abort_offer(b_id, channel)
+        .await
+        .expect("abort the unanswered subscriber offer");
+
+    let again = vp8_track(0x4444_0001);
+    a.pc.add_track(Arc::clone(&again) as Arc<dyn TrackLocal>)
+        .await
+        .unwrap();
+    pump_offer(&a, &sfu, a_id, channel, &mut a_rx).await;
+    let mut seq = 1u16;
+    pkt.header.ssrc = 0x4444_0001;
+    let second = loop {
+        pkt.header.sequence_number = seq;
+        pkt.header.timestamp = u32::from(seq) * 3000;
+        seq = seq.wrapping_add(1);
+        let _ = again.write_rtp(pkt.clone()).await;
+        let _ = video.write_rtp(pkt.clone()).await;
+        if let Some(sdp) = next_offer(&mut b_rx, Duration::from_millis(80)).await {
+            break sdp;
+        }
+        if seq > 80 {
+            panic!("new publish produced no offer after the failed negotiation");
+        }
+    };
+    b.pc.set_remote_description(RTCSessionDescription::offer(second).unwrap())
+        .await
+        .expect("subscriber accepts the offer after abort");
+    let answer = b.pc.create_answer(None).await.unwrap();
+    b.pc.set_local_description(answer.clone()).await.unwrap();
+    sfu.apply_remote(b_id, channel, answer.sdp, false)
+        .await
+        .expect("answer after abort applies");
+
+    let (c_out, mut c_rx) = mpsc::unbounded_channel();
+    let c_id = sfu.join(claim(3, 5), c_out).await.expect("join c");
+    let (c_conn_tx, mut c_conn_rx) = mpsc::unbounded_channel();
+    let (c_pkt_tx, _c_pkt_rx) = mpsc::unbounded_channel();
+    let mut c = client_pc(c_conn_tx, c_pkt_tx).await;
+    let mic = opus_track(0x5555_0001);
+    let sender =
+        c.pc.add_track(Arc::clone(&mic) as Arc<dyn TrackLocal>)
+            .await
+            .unwrap();
+    pump_offer(&c, &sfu, c_id, channel, &mut c_rx).await;
+
+    let pt = sender
+        .get_parameters()
+        .await
+        .ok()
+        .and_then(|p| p.rtp_parameters.codecs.first().map(|c| c.payload_type))
+        .unwrap_or(111);
+    let mut audio = Packet::default();
+    audio.header.version = 2;
+    audio.header.ssrc = 0x5555_0001;
+    audio.header.payload_type = pt;
+    audio.payload = bytes::Bytes::from_static(&[0xF8, 0xFF, 0xFE]);
+    let mut seq = 1u16;
+    let offer = loop {
+        audio.header.sequence_number = seq;
+        audio.header.timestamp = u32::from(seq) * 960;
+        seq = seq.wrapping_add(1);
+        let _ = mic.write_rtp(audio.clone()).await;
+        flush_client_ice(&mut c.ice_rx, &sfu, c_id, channel).await;
+        if let Some(sdp) = next_offer(&mut b_rx, Duration::from_millis(80)).await {
+            break sdp;
+        }
+        if seq > 100 {
+            panic!("joiner audio must be offered, not left in the pending queue");
+        }
+    };
+    assert!(
+        offer.contains("opus/48000") || offer.contains("OPUS/48000"),
+        "joiner offer must carry audio: {offer}"
+    );
+    b.pc.set_remote_description(RTCSessionDescription::offer(offer).unwrap())
+        .await
+        .unwrap();
+    let answer = b.pc.create_answer(None).await.unwrap();
+    b.pc.set_local_description(answer.clone()).await.unwrap();
+    sfu.apply_remote(b_id, channel, answer.sdp, false)
+        .await
+        .unwrap();
+
+    let _ = tokio::time::timeout(Duration::from_secs(8), b_conn_rx.recv()).await;
+    let _ = tokio::time::timeout(Duration::from_secs(8), c_conn_rx.recv()).await;
+
+    let deadline = tokio::time::Instant::now() + Duration::from_secs(8);
+    let mut seq = 1u16;
+    let mut got = None;
+    while tokio::time::Instant::now() < deadline && got.is_none() {
+        audio.header.sequence_number = seq;
+        audio.header.timestamp = u32::from(seq) * 960;
+        seq = seq.wrapping_add(1);
+        let _ = mic.write_rtp(audio.clone()).await;
+        flush_client_ice(&mut a.ice_rx, &sfu, a_id, channel).await;
+        flush_client_ice(&mut b.ice_rx, &sfu, b_id, channel).await;
+        flush_client_ice(&mut c.ice_rx, &sfu, c_id, channel).await;
+        apply_sfu_frames(
+            &a.pc,
+            &sfu,
+            a_id,
+            channel,
+            &mut a_rx,
+            Duration::from_millis(20),
+        )
+        .await;
+        apply_sfu_frames(
+            &b.pc,
+            &sfu,
+            b_id,
+            channel,
+            &mut b_rx,
+            Duration::from_millis(20),
+        )
+        .await;
+        apply_sfu_frames(
+            &c.pc,
+            &sfu,
+            c_id,
+            channel,
+            &mut c_rx,
+            Duration::from_millis(20),
+        )
+        .await;
+        if let Ok(Some(packet)) =
+            tokio::time::timeout(Duration::from_millis(20), b_pkt_rx.recv()).await
+        {
+            got = Some(packet);
+        }
+    }
+    assert!(
+        got.is_some(),
+        "viewer should hear a peer who joined after the failed negotiation"
     );
 }

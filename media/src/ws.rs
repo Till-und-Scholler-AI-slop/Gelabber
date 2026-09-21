@@ -16,11 +16,12 @@ use crate::sfu::PeerId;
 use crate::state::AppState;
 use crate::ticket::{self, TicketClaim};
 
-/// Chrome video answers (VP8/VP9/H264 + ICE + BUNDLE) regularly exceed 12 KiB.
-/// A 12 KiB cap rejected those frames with `bad_request` and kicked the peer
-/// the moment someone published camera / screen / Go Live.
-pub(crate) const MAX_FRAME: usize = 64 * 1024;
-pub(crate) const MAX_SDP: usize = 48 * 1024;
+/// Chrome video answers (many codecs, a second m-line, ICE candidates in the
+/// SDP) blow past 12 KiB and can pass 48 KiB. Rejecting that frame as
+/// `bad_request` made the viewer leave the voice channel the moment a stream
+/// started. 192 KiB still bounds a single signaling frame.
+pub const MAX_FRAME: usize = 256 * 1024;
+pub const MAX_SDP: usize = 192 * 1024;
 const MAX_ICE: usize = 800;
 
 pub fn router() -> Router<AppState> {
@@ -45,7 +46,23 @@ async fn run(socket: WebSocket, state: AppState) {
                 match incoming {
                     Some(Ok(Message::Text(text))) => {
                         if text.len() > MAX_FRAME {
-                            let _ = send(&mut sink, ServerFrame::error("bad_request")).await;
+                            warn!(
+                                bytes = text.len(),
+                                max = MAX_FRAME,
+                                "media frame too large"
+                            );
+                            // An answer this large never reaches apply_remote.
+                            // Abort only when the frame is that answer and an
+                            // offer is still outstanding.
+                            if answer_frame(&text)
+                                && let Some((peer_id, channel_id)) = joined
+                            {
+                                let _ = state
+                                    .sfu
+                                    .abort_outstanding_offer(peer_id, channel_id)
+                                    .await;
+                            }
+                            let _ = send(&mut sink, ServerFrame::error("negotiation_failed")).await;
                             continue;
                         }
                         match handle(&state, &text, &tx, &mut joined).await {
@@ -118,14 +135,30 @@ async fn handle(
                 .filter(|s| !s.is_empty())
                 .ok_or("bad_request")?;
             if sdp.len() > MAX_SDP {
-                return Err("bad_request");
+                warn!(
+                    peer = %peer_id.0,
+                    bytes = sdp.len(),
+                    max = MAX_SDP,
+                    op = %frame.op,
+                    "media sdp too large"
+                );
+                if frame.op == "a" {
+                    let _ = state.sfu.abort_outstanding_offer(peer_id, channel_id).await;
+                }
+                return Err("negotiation_failed");
             }
             state
                 .sfu
                 .apply_remote(peer_id, channel_id, sdp.to_owned(), frame.op == "o")
                 .await
                 .map_err(|err| {
-                    warn!(error = %err, "sdp apply failed");
+                    warn!(
+                        peer = %peer_id.0,
+                        bytes = sdp.len(),
+                        op = %frame.op,
+                        error = %err,
+                        "sdp apply failed"
+                    );
                     "negotiation_failed"
                 })?;
             Ok(None)
@@ -146,7 +179,11 @@ async fn handle(
                 .add_ice(peer_id, channel_id, ice.to_owned(), frame.mid)
                 .await
                 .map_err(|err| {
-                    warn!(error = %err, "ice apply failed");
+                    warn!(
+                        peer = %peer_id.0,
+                        error = %err,
+                        "ice apply failed"
+                    );
                     "ice_failed"
                 })?;
             Ok(None)
@@ -162,6 +199,33 @@ async fn handle(
             state
                 .sfu
                 .announce(peer_id, channel_id, k)
+                .await
+                .map_err(|_| "bad_request")?;
+            Ok(None)
+        }
+        // Subscriber could not answer our offer. Roll that offer back and
+        // release publications that queued behind it.
+        "x" => {
+            let (peer_id, channel_id) = joined.ok_or("unauthorized")?;
+            state
+                .sfu
+                .abort_offer(peer_id, channel_id)
+                .await
+                .map_err(|_| "bad_request")?;
+            Ok(None)
+        }
+        // Publisher offer failed before the announced track arrived.
+        "u" => {
+            let (peer_id, channel_id) = joined.ok_or("unauthorized")?;
+            let k = frame
+                .k
+                .as_deref()
+                .map(str::trim)
+                .filter(|s| *s == "v" || *s == "s" || *s == "l")
+                .ok_or("bad_request")?;
+            state
+                .sfu
+                .retract(peer_id, channel_id, k)
                 .await
                 .map_err(|_| "bad_request")?;
             Ok(None)
@@ -198,6 +262,15 @@ async fn join(
     }))
 }
 
+/// `{"op":"a"...}` at the start of a frame. Used when the body is too
+/// large to treat as a normal signaling message. Anything else, including
+/// a publisher offer, must not abort the subscriber's current offer.
+fn answer_frame(text: &str) -> bool {
+    let n = text.len().min(64);
+    let head = &text[..n];
+    head.contains("\"op\":\"a\"") || head.contains("\"op\": \"a\"")
+}
+
 async fn send(
     sink: &mut futures_util::stream::SplitSink<WebSocket, Message>,
     frame: ServerFrame,
@@ -213,10 +286,21 @@ mod tests {
     use super::*;
 
     #[test]
+    fn answer_frame_is_only_an_answer() {
+        assert!(answer_frame(r#"{"op":"a","sdp":"v=0"}"#));
+        assert!(answer_frame("{\"op\": \"a\", \"sdp\": \"v=0\"}"));
+        assert!(!answer_frame(r#"{"op":"o","sdp":"v=0"}"#));
+        assert!(!answer_frame(r#"{"op":"p","k":"s"}"#));
+        assert!(!answer_frame("not-json"));
+    }
+
+    #[test]
     fn chrome_video_sdp_fits() {
-        assert!(MAX_SDP >= 48 * 1024);
-        assert!(MAX_FRAME >= 64 * 1024);
+        assert!(MAX_SDP >= 192 * 1024);
+        assert!(MAX_FRAME >= 256 * 1024);
         assert!(MAX_FRAME > MAX_SDP);
+        // A Chrome video answer around 60 KiB used to miss the 48 KiB cap.
+        assert!(60 * 1024 < MAX_SDP);
         assert!(MAX_SDP > 12_288);
         assert!(MAX_FRAME > 16 * 1024);
     }
