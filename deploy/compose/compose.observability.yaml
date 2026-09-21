@@ -2,7 +2,7 @@
 #   docker compose -f compose.yaml -f compose.observability.yaml up -d
 #
 # Scrapes api:8080/metrics and media:8081/metrics on the compose network.
-# Grafana: http://127.0.0.1:3000 (admin / gelabber, anonymous Viewer).
+# Grafana: http://127.0.0.1:3000/d/gelabber/gelabber (admin / gelabber, anonymous Viewer).
 
 services:
   prometheus:

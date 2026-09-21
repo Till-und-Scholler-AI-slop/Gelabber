@@ -86,12 +86,15 @@ Restore analog; Postgres vorher stoppen.
 
 ## Metriken
 
+Kein Debug-UI in `web`. Grafana startet nicht mit `docker compose up`:
+
 ```bash
 cd deploy/compose
 docker compose -f compose.yaml -f compose.observability.yaml up -d
+# Homelab: drittes -f compose.homelab.yaml
 ```
 
-Prometheus v3.14.0 und Grafana 13.2.1 auf Loopback (`http://127.0.0.1:3000`, admin / `gelabber`). Nicht hinter Caddy.
+Grafana 13.2.1: `http://127.0.0.1:3000/d/gelabber/gelabber` (admin / `gelabber`, anonym Viewer). Datei: `deploy/compose/grafana/dashboards/gelabber.json`. Prometheus v3.14.0: `http://127.0.0.1:9090`, scrapet `api:8080/metrics` und `media:8081/metrics`. Nicht hinter Caddy. Prozess-Tracing ist JSON auf stdout (`RUST_LOG`), kein Jaeger.
 
 ## Images
 
