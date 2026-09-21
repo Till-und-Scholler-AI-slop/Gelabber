@@ -1339,11 +1339,49 @@ describe("stream negotiation stability", () => {
       throw new Error("SDP rejected");
     };
     env.emitMedia({ op: "o", sdp: "v=0\r\n" });
-    for (let i = 0; i < 8; i++) await Promise.resolve();
+    await vi.waitFor(() =>
+      expect(env.mediaSent.some((frame) => frame.op === "x")).toBe(true),
+    );
     expect(useVoice.getState().status).toBe("joined");
     expect(env.peers).toHaveLength(1);
     expect(env.peers[0]?.closed).toBe(false);
+    expect(env.peers[0]?.audio).toBeTruthy();
     expect(env.errors).toHaveLength(1);
+  });
+  it("offers again after a rejected local offer without dropping the mic", async () => {
+    const env = await connected();
+    toggleShare();
+    await vi.waitFor(() =>
+      expect(env.peers[0]?.signalingState).toBe("have-local-offer"),
+    );
+    const offersAtFailure = env.mediaSent.filter((frame) => frame.op === "o").length;
+    expect(offersAtFailure).toBeGreaterThan(0);
+    env.emitMedia({ op: "err", e: "negotiation_failed" });
+    await vi.waitFor(() => expect(env.peers[0]?.signalingState).toBe("stable"));
+    expect(env.mediaSent.some((frame) => frame.op === "u" && frame.k === "s")).toBe(
+      true,
+    );
+    expect(env.peers[0]?.audio).toBeTruthy();
+    expect(env.peers[0]?.closed).toBe(false);
+    toggleShare();
+    toggleCamera();
+    await vi.waitFor(() =>
+      expect(env.mediaSent.filter((frame) => frame.op === "o").length).toBe(
+        offersAtFailure + 1,
+      ),
+    );
+    env.emitMedia({ op: "a", sdp: "v=0\r\n" });
+    await vi.waitFor(() =>
+      expect(env.mediaSent.filter((frame) => frame.op === "o").length).toBeGreaterThan(
+        offersAtFailure + 1,
+      ),
+    );
+    expect(env.peers[0]?.signalingState).toBe("have-local-offer");
+    expect(useVoice.getState().status).toBe("joined");
+    expect(useVoice.getState().camera).toBe(true);
+    expect(env.peers[0]?.audio).toBeTruthy();
+    expect(env.errors).toHaveLength(1);
+    expect((env.errors[0] as Error).message).toMatch(/Sprachkanal bleibt aktiv/);
   });
   it("keeps an active screen share when renegotiation fails", async () => {
     const env = await connected();

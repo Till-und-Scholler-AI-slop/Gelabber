@@ -189,6 +189,33 @@ async fn handle(
                 .map_err(|_| "bad_request")?;
             Ok(None)
         }
+        // Subscriber could not answer our offer. Roll that offer back and
+        // release publications that queued behind it.
+        "x" => {
+            let (peer_id, channel_id) = joined.ok_or("unauthorized")?;
+            state
+                .sfu
+                .abort_offer(peer_id, channel_id)
+                .await
+                .map_err(|_| "bad_request")?;
+            Ok(None)
+        }
+        // Publisher offer failed before the announced track arrived.
+        "u" => {
+            let (peer_id, channel_id) = joined.ok_or("unauthorized")?;
+            let k = frame
+                .k
+                .as_deref()
+                .map(str::trim)
+                .filter(|s| *s == "v" || *s == "s" || *s == "l")
+                .ok_or("bad_request")?;
+            state
+                .sfu
+                .retract(peer_id, channel_id, k)
+                .await
+                .map_err(|_| "bad_request")?;
+            Ok(None)
+        }
         "l" => {
             if let Some((peer_id, channel_id)) = joined.take() {
                 state.sfu.leave(peer_id, channel_id).await;

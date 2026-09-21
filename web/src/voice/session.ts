@@ -213,6 +213,12 @@ let cameraCommitChain: Promise<void> = Promise.resolve();
 let makingOffer = false;
 let sfuOffered = false;
 let needOffer = false;
+/** SFU offer received and not yet answered. */
+let sfuOfferOpen = false;
+/** Senders that belonged to the last completed negotiation. */
+let settledSenders: RtpSender[] = [];
+/** Video kinds announced for the offer that is still unanswered. */
+let openPublish: Array<"v" | "s" | "l"> = [];
 const pendingMicRaw = new Set<MediaStream>();
 const pendingCameraStreams = new Set<MediaStream>();
 
@@ -618,6 +624,9 @@ function stopPeer(): void {
   makingOffer = false;
   sfuOffered = false;
   needOffer = false;
+  sfuOfferOpen = false;
+  settledSenders = [];
+  openPublish = [];
   unbindMedia?.();
   unbindMedia = null;
   media?.close();
@@ -1266,6 +1275,72 @@ function recoverNegotiation(error: unknown, mine: number): void {
     return;
   }
   reportStreamOnce(detail);
+  void settleFailedNegotiation(mine);
+}
+
+/**
+ * A failed renegotiation must return both sides to stable without closing
+ * the mic. Our rejected offer is rolled back and its new tracks dropped.
+ * An SFU offer we never answered is aborted so later publications flush.
+ */
+async function settleFailedNegotiation(mine: number): Promise<void> {
+  await enqueueSdp(async () => {
+    const pc = peer;
+    if (generation !== mine || !pc) return;
+    const state = signalingState();
+    if (state === "have-local-offer") {
+      try {
+        await pc.setLocalDescription({ type: "rollback" });
+        logVoice("warn", "rollback", { detail: "local-offer" });
+      } catch (error) {
+        logVoice("warn", "rollback", {
+          detail: error instanceof Error ? error.message : "rollback",
+        });
+      }
+      if (generation !== mine || peer !== pc) return;
+      const kinds = dropUnsettledPublish();
+      makingOffer = false;
+      for (const kind of kinds) {
+        logVoice("warn", "unpublish", { track: kind });
+        media?.send({ op: "u", k: kind });
+      }
+    } else if (state === "have-remote-offer") {
+      try {
+        await pc.setRemoteDescription({ type: "rollback" });
+        logVoice("warn", "rollback", { detail: "remote-offer" });
+      } catch (error) {
+        logVoice("warn", "rollback", {
+          detail: error instanceof Error ? error.message : "rollback",
+        });
+      }
+    }
+    if (generation !== mine || peer !== pc) return;
+    if (sfuOfferOpen) {
+      sfuOfferOpen = false;
+      logVoice("warn", "abort", { detail: "sfu-offer" });
+      media?.send({ op: "x" });
+    }
+    if (needOffer) void offerIfStable(mine);
+  });
+}
+
+/** Remove senders added after the last successful answer. The mic stays. */
+function dropUnsettledPublish(): Array<"v" | "s" | "l"> {
+  const pc = peer;
+  const kinds = openPublish;
+  openPublish = [];
+  const self = currentUserId();
+  if (pc?.getSenders && pc.removeTrack) {
+    for (const sender of pc.getSenders()) {
+      if (settledSenders.includes(sender)) continue;
+      pc.removeTrack(sender);
+    }
+  }
+  for (const kind of kinds) {
+    if (self) setPub(self, kind, false);
+    sendPub(kind, false);
+  }
+  return kinds;
 }
 
 function reportStreamOnce(detail?: string): void {
@@ -1287,6 +1362,7 @@ async function applyRemoteDescription(
   // A duplicate/obsolete answer cannot answer an already settled offer.
   if (type === "answer" && signalingState() !== "have-local-offer") return;
   if (type === "offer") {
+    sfuOfferOpen = true;
     const collision = makingOffer || signalingState() !== "stable";
     if (collision) {
       needOffer = true;
@@ -1325,10 +1401,15 @@ async function applyRemoteDescription(
       logVoice("info", "send-answer", { bytes: answer.sdp.length });
       socket?.send({ op: "a", sdp: answer.sdp });
     }
+    sfuOfferOpen = false;
   }
   await applyVideoLimits(pc);
   if (!current()) return;
   negotiated = true;
+  if (type === "answer") {
+    settledSenders = [...(pc.getSenders?.() ?? [])];
+    openPublish = [];
+  }
   if (needOffer) void offerIfStable(mine);
 }
 
@@ -1367,6 +1448,7 @@ function onMediaFrame(frame: MediaServerFrame): void {
       return;
     }
     reportStreamOnce(frame.e);
+    void settleFailedNegotiation(mine);
     return;
   }
   if ((frame.op === "a" || frame.op === "o") && frame.sdp) {
@@ -1804,6 +1886,7 @@ async function publishLocal(
   const tracks = stream.getVideoTracks();
   if (tracks.length === 0) return;
   logVoice("info", "publish", { track: kind });
+  openPublish.push(kind);
   media?.send({ op: "p", k: kind });
   for (const track of tracks) {
     peer.addTrack?.(track, stream);

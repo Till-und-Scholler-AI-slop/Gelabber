@@ -344,9 +344,16 @@ impl Sfu {
             return Ok(());
         }
 
-        pc.set_remote_description(desc)
-            .await
-            .map_err(|err| err.to_string())?;
+        if let Err(err) = pc.set_remote_description(desc).await {
+            drop(gate);
+            // A rejected answer leaves this peer in have-local-offer. Clearing
+            // the gate flag alone keeps every later publication, including a
+            // new joiner's audio, queued forever.
+            if !as_offer {
+                self.fail_local_offer(&pc, &out, &gathered, &sdp).await;
+            }
+            return Err(err.to_string());
+        }
 
         if as_offer {
             let answer = pc
@@ -394,6 +401,46 @@ impl Sfu {
         let mut room = room.lock().await;
         let peer = room.peers.get_mut(&peer_id).ok_or("not in room")?;
         peer.next_kind.push_back(kind.to_owned());
+        Ok(())
+    }
+
+    /// Drop one camera/screen/live tag that never became a track. A rejected
+    /// publisher offer must not label the next successful video as the failed one.
+    pub async fn retract(
+        &self,
+        peer_id: PeerId,
+        channel_id: Uuid,
+        kind: &str,
+    ) -> Result<(), String> {
+        if kind != "v" && kind != "s" && kind != "l" {
+            return Err("bad_request".into());
+        }
+        let room = self.room(channel_id).await;
+        let mut room = room.lock().await;
+        let peer = room.peers.get_mut(&peer_id).ok_or("not in room")?;
+        if let Some(index) = peer.next_kind.iter().position(|item| item == kind) {
+            peer.next_kind.remove(index);
+            info!(peer = %peer_id.0, kind, "retracted unpublished kind");
+        }
+        Ok(())
+    }
+
+    /// Subscriber could not complete our offer. Roll signaling back to stable
+    /// and forward anything that queued behind that offer.
+    pub async fn abort_offer(&self, peer_id: PeerId, channel_id: Uuid) -> Result<(), String> {
+        let room = self.room(channel_id).await;
+        let (pc, out, gathered, sdp) = {
+            let room = room.lock().await;
+            let peer = room.peers.get(&peer_id).ok_or("not in room")?;
+            (
+                peer.pc.clone(),
+                peer.out.clone(),
+                peer.gathered.clone(),
+                peer.sdp.clone(),
+            )
+        };
+        info!(peer = %peer_id.0, "abort subscriber offer");
+        self.fail_local_offer(&pc, &out, &gathered, &sdp).await;
         Ok(())
     }
 
@@ -762,7 +809,7 @@ impl Sfu {
             .await
         {
             warn!(pub_id, error = %err, "add_track failed");
-            sdp.lock().await.have_local_offer = false;
+            Box::pin(self.fail_local_offer(&pc, &out, &gathered, &sdp)).await;
             return;
         }
         // Offer only the codec we will actually forward. The full video list
@@ -836,14 +883,62 @@ impl Sfu {
                     );
                     let _ = out.send(ServerFrame::Offer { sdp: local });
                 } else {
-                    sdp.lock().await.have_local_offer = false;
+                    warn!(pub_id, "renegotiation offer was not sent");
+                    Box::pin(self.fail_local_offer(&pc, &out, &gathered, &sdp)).await;
                 }
             }
             Err(err) => {
                 warn!(error = %err, "renegotiation offer failed");
-                sdp.lock().await.have_local_offer = false;
+                Box::pin(self.fail_local_offer(&pc, &out, &gathered, &sdp)).await;
             }
         }
+    }
+
+    /// Drop an outstanding local offer and send whatever queued behind it.
+    /// Resetting `have_local_offer` alone leaves the peer connection in
+    /// `have-local-offer`, so the next `create_offer` never leaves the SFU.
+    async fn fail_local_offer(
+        &self,
+        pc: &Arc<dyn PeerConnection>,
+        out: &mpsc::UnboundedSender<ServerFrame>,
+        gathered: &watch::Receiver<u64>,
+        sdp: &Arc<Mutex<PeerSdp>>,
+    ) {
+        let pending = {
+            let mut gate = sdp.lock().await;
+            gate.have_local_offer = false;
+            // Those candidates named the m-line this offer is abandoning.
+            gate.pending_ice.clear();
+            std::mem::take(&mut gate.pending)
+        };
+        if pc.pending_local_description().await.is_some() {
+            match RTCSessionDescription::rollback(None) {
+                Ok(rollback) => {
+                    if let Err(err) = pc.set_local_description(rollback).await {
+                        warn!(
+                            error = %err,
+                            queued = pending.len(),
+                            "subscriber offer rollback failed"
+                        );
+                    } else {
+                        info!(queued = pending.len(), "subscriber offer aborted");
+                    }
+                }
+                Err(err) => {
+                    warn!(error = %err, "subscriber offer rollback skipped");
+                }
+            }
+        } else if !pending.is_empty() {
+            info!(queued = pending.len(), "subscriber pending flushed");
+        }
+        self.flush_pending(
+            pc.clone(),
+            out.clone(),
+            gathered.clone(),
+            sdp.clone(),
+            pending,
+        )
+        .await;
     }
 }
 
