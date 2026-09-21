@@ -72,6 +72,7 @@ fn claim(user: u128, channel: u128) -> TicketClaim {
         u: Uuid::from_u128(user),
         s: Uuid::from_u128(9),
         c: Uuid::from_u128(channel),
+        g: true,
     }
 }
 

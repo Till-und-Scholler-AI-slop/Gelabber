@@ -11,6 +11,7 @@ use tokio::sync::mpsc;
 use tracing::{debug, warn};
 use uuid::Uuid;
 
+use crate::error::SfuError;
 use crate::protocol::{ClientFrame, ServerFrame};
 use crate::sfu::PeerId;
 use crate::state::AppState;
@@ -104,6 +105,27 @@ async fn run(socket: WebSocket, state: AppState) {
     }
 }
 
+fn sfu_code(peer_id: PeerId, err: &SfuError, what: &'static str) -> &'static str {
+    warn!(peer = %peer_id.0, error = %err, code = err.code(), "{what}");
+    err.code()
+}
+
+fn text_field(value: Option<String>) -> Result<String, &'static str> {
+    value
+        .as_deref()
+        .map(str::trim)
+        .filter(|s| !s.is_empty())
+        .map(str::to_owned)
+        .ok_or("bad_request")
+}
+
+fn track_kind(value: Option<String>) -> Result<String, &'static str> {
+    match value.as_deref().map(str::trim) {
+        Some("v" | "s" | "l") => Ok(value.unwrap().trim().to_owned()),
+        _ => Err("bad_request"),
+    }
+}
+
 async fn handle(
     state: &AppState,
     text: &str,
@@ -111,133 +133,98 @@ async fn handle(
     joined: &mut Option<(PeerId, Uuid)>,
 ) -> Result<Option<ServerFrame>, &'static str> {
     let frame: ClientFrame = serde_json::from_str(text).map_err(|_| "bad_request")?;
-    match frame.op.as_str() {
-        "j" => {
+    match frame {
+        ClientFrame::Join { tk } => {
             if joined.is_some() {
                 return Err("bad_request");
             }
-            let tk = frame.tk.as_deref().map(str::trim).filter(|s| !s.is_empty());
-            let Some(tk) = tk else {
-                return Err("unauthorized");
-            };
-            let claim = ticket::consume(&state.redis, tk)
+            let tk = text_field(tk).map_err(|_| "unauthorized")?;
+            let claim = ticket::consume(&state.redis, &tk)
                 .await
                 .map_err(|_| "internal")?
                 .ok_or("unauthorized")?;
             join(state, claim, out, joined).await
         }
-        "o" | "a" => {
+        ClientFrame::Offer { sdp } => apply_sdp(state, joined, sdp, true).await,
+        ClientFrame::Answer { sdp } => apply_sdp(state, joined, sdp, false).await,
+        ClientFrame::Ice { ice, mid } => {
             let (peer_id, channel_id) = joined.ok_or("unauthorized")?;
-            let sdp = frame
-                .sdp
-                .as_deref()
-                .map(str::trim)
-                .filter(|s| !s.is_empty())
-                .ok_or("bad_request")?;
-            if sdp.len() > MAX_SDP {
-                warn!(
-                    peer = %peer_id.0,
-                    bytes = sdp.len(),
-                    max = MAX_SDP,
-                    op = %frame.op,
-                    "media sdp too large"
-                );
-                if frame.op == "a" {
-                    let _ = state.sfu.abort_outstanding_offer(peer_id, channel_id).await;
-                }
-                return Err("negotiation_failed");
-            }
-            state
-                .sfu
-                .apply_remote(peer_id, channel_id, sdp.to_owned(), frame.op == "o")
-                .await
-                .map_err(|err| {
-                    warn!(
-                        peer = %peer_id.0,
-                        bytes = sdp.len(),
-                        op = %frame.op,
-                        error = %err,
-                        "sdp apply failed"
-                    );
-                    "negotiation_failed"
-                })?;
-            Ok(None)
-        }
-        "i" => {
-            let (peer_id, channel_id) = joined.ok_or("unauthorized")?;
-            let ice = frame
-                .ice
-                .as_deref()
-                .map(str::trim)
-                .filter(|s| !s.is_empty())
-                .ok_or("bad_request")?;
+            let ice = text_field(ice)?;
             if ice.len() > MAX_ICE {
                 return Err("bad_request");
             }
             state
                 .sfu
-                .add_ice(peer_id, channel_id, ice.to_owned(), frame.mid)
+                .add_ice(peer_id, channel_id, ice, mid)
                 .await
-                .map_err(|err| {
-                    warn!(
-                        peer = %peer_id.0,
-                        error = %err,
-                        "ice apply failed"
-                    );
-                    "ice_failed"
-                })?;
+                .map_err(|err| sfu_code(peer_id, &err, "ice apply failed"))?;
             Ok(None)
         }
-        "p" => {
+        ClientFrame::Announce { k } => {
             let (peer_id, channel_id) = joined.ok_or("unauthorized")?;
-            let k = frame
-                .k
-                .as_deref()
-                .map(str::trim)
-                .filter(|s| *s == "v" || *s == "s" || *s == "l")
-                .ok_or("bad_request")?;
+            let k = track_kind(k)?;
             state
                 .sfu
-                .announce(peer_id, channel_id, k)
+                .announce(peer_id, channel_id, &k)
                 .await
-                .map_err(|_| "bad_request")?;
+                .map_err(|err| sfu_code(peer_id, &err, "announce failed"))?;
             Ok(None)
         }
-        // Subscriber could not answer our offer. Roll that offer back and
-        // release publications that queued behind it.
-        "x" => {
+        ClientFrame::Abort => {
             let (peer_id, channel_id) = joined.ok_or("unauthorized")?;
             state
                 .sfu
                 .abort_offer(peer_id, channel_id)
                 .await
-                .map_err(|_| "bad_request")?;
+                .map_err(|err| sfu_code(peer_id, &err, "abort offer failed"))?;
             Ok(None)
         }
-        // Publisher offer failed before the announced track arrived.
-        "u" => {
+        ClientFrame::Retract { k } => {
             let (peer_id, channel_id) = joined.ok_or("unauthorized")?;
-            let k = frame
-                .k
-                .as_deref()
-                .map(str::trim)
-                .filter(|s| *s == "v" || *s == "s" || *s == "l")
-                .ok_or("bad_request")?;
+            let k = track_kind(k)?;
             state
                 .sfu
-                .retract(peer_id, channel_id, k)
+                .retract(peer_id, channel_id, &k)
                 .await
-                .map_err(|_| "bad_request")?;
+                .map_err(|err| sfu_code(peer_id, &err, "retract failed"))?;
             Ok(None)
         }
-        "l" => {
+        ClientFrame::Leave => {
             if let Some((peer_id, channel_id)) = joined.take() {
                 state.sfu.leave(peer_id, channel_id).await;
             }
             Ok(None)
         }
-        _ => Err("bad_request"),
     }
+}
+
+async fn apply_sdp(
+    state: &AppState,
+    joined: &mut Option<(PeerId, Uuid)>,
+    sdp: Option<String>,
+    as_offer: bool,
+) -> Result<Option<ServerFrame>, &'static str> {
+    let (peer_id, channel_id) = joined.ok_or("unauthorized")?;
+    let sdp = text_field(sdp)?;
+    if sdp.len() > MAX_SDP {
+        warn!(
+            peer = %peer_id.0,
+            bytes = sdp.len(),
+            max = MAX_SDP,
+            as_offer,
+            "media sdp too large"
+        );
+        if !as_offer {
+            let _ = state.sfu.abort_outstanding_offer(peer_id, channel_id).await;
+        }
+        return Err("negotiation_failed");
+    }
+    state
+        .sfu
+        .apply_remote(peer_id, channel_id, sdp, as_offer)
+        .await
+        .map_err(|err| sfu_code(peer_id, &err, "sdp apply failed"))?;
+    Ok(None)
 }
 
 async fn join(
@@ -251,8 +238,8 @@ async fn join(
         .join(claim.clone(), out.clone())
         .await
         .map_err(|err| {
-            warn!(error = %err, "sfu join failed");
-            "internal"
+            warn!(error = %err, code = err.code(), "sfu join failed");
+            err.code()
         })?;
     *joined = Some((peer_id, claim.c));
     debug!(user = %claim.u, channel = %claim.c, "media ticket accepted");

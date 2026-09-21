@@ -1,22 +1,54 @@
 //! Compact JSON for the **media** WebSocket. This is not the chat gateway:
 //! no `op:"e"`, no seq, no session cookie. Join is a short ticket.
+//!
+//! Inbound ops are an internally tagged enum. The JSON is the same short
+//! keys as before. An unknown `op` fails to decode and the socket answers
+//! `bad_request`.
 
 use serde::{Deserialize, Serialize};
 
 #[derive(Debug, Clone, Deserialize, PartialEq, Eq)]
-pub struct ClientFrame {
-    pub op: String,
-    #[serde(default)]
-    pub tk: Option<String>,
-    #[serde(default)]
-    pub sdp: Option<String>,
-    #[serde(default)]
-    pub ice: Option<String>,
-    #[serde(default)]
-    pub mid: Option<String>,
+#[serde(tag = "op")]
+pub enum ClientFrame {
+    #[serde(rename = "j")]
+    Join {
+        #[serde(default)]
+        tk: Option<String>,
+    },
+    #[serde(rename = "o")]
+    Offer {
+        #[serde(default)]
+        sdp: Option<String>,
+    },
+    #[serde(rename = "a")]
+    Answer {
+        #[serde(default)]
+        sdp: Option<String>,
+    },
+    #[serde(rename = "i")]
+    Ice {
+        #[serde(default)]
+        ice: Option<String>,
+        #[serde(default)]
+        mid: Option<String>,
+    },
     /// Next inbound track kind from this peer: `v` (camera), `s` (screen), `l` (live).
-    #[serde(default)]
-    pub k: Option<String>,
+    #[serde(rename = "p")]
+    Announce {
+        #[serde(default)]
+        k: Option<String>,
+    },
+    /// Subscriber could not answer the outstanding offer.
+    #[serde(rename = "x")]
+    Abort,
+    /// Publisher offer failed before the announced track arrived.
+    #[serde(rename = "u")]
+    Retract {
+        #[serde(default)]
+        k: Option<String>,
+    },
+    #[serde(rename = "l")]
+    Leave,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
@@ -69,16 +101,32 @@ mod tests {
     #[test]
     fn pub_announce_is_compact() {
         let frame: ClientFrame = serde_json::from_str(r#"{"op":"p","k":"s"}"#).unwrap();
-        assert_eq!(frame.op, "p");
-        assert_eq!(frame.k.as_deref(), Some("s"));
-        assert!(frame.sdp.is_none());
+        assert_eq!(
+            frame,
+            ClientFrame::Announce {
+                k: Some("s".into())
+            }
+        );
         let live: ClientFrame = serde_json::from_str(r#"{"op":"p","k":"l"}"#).unwrap();
-        assert_eq!(live.k.as_deref(), Some("l"));
+        assert_eq!(
+            live,
+            ClientFrame::Announce {
+                k: Some("l".into())
+            }
+        );
         let abort: ClientFrame = serde_json::from_str(r#"{"op":"x"}"#).unwrap();
-        assert_eq!(abort.op, "x");
-        assert!(abort.k.is_none());
+        assert_eq!(abort, ClientFrame::Abort);
         let undo: ClientFrame = serde_json::from_str(r#"{"op":"u","k":"s"}"#).unwrap();
-        assert_eq!(undo.op, "u");
-        assert_eq!(undo.k.as_deref(), Some("s"));
+        assert_eq!(
+            undo,
+            ClientFrame::Retract {
+                k: Some("s".into())
+            }
+        );
+    }
+
+    #[test]
+    fn unknown_op_is_rejected() {
+        assert!(serde_json::from_str::<ClientFrame>(r#"{"op":"mesh"}"#).is_err());
     }
 }

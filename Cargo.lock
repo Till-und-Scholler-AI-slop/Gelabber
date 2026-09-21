@@ -1098,6 +1098,7 @@ dependencies = [
  "axum",
  "chrono",
  "futures-util",
+ "gelabber-shared",
  "rand 0.10.2",
  "redis",
  "reqwest",
@@ -1125,6 +1126,7 @@ dependencies = [
  "axum",
  "bytes",
  "futures-util",
+ "gelabber-shared",
  "rand 0.10.2",
  "redis",
  "rtc",
@@ -1138,6 +1140,16 @@ dependencies = [
  "tracing-subscriber",
  "uuid",
  "webrtc",
+]
+
+[[package]]
+name = "gelabber-shared"
+version = "0.2.1"
+dependencies = [
+ "rand 0.10.2",
+ "serde",
+ "serde_json",
+ "uuid",
 ]
 
 [[package]]

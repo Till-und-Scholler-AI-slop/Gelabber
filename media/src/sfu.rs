@@ -5,7 +5,7 @@
 use std::collections::{HashMap, VecDeque};
 use std::net::SocketAddr;
 use std::sync::Arc;
-use std::sync::atomic::{AtomicU16, AtomicU64, Ordering};
+use std::sync::atomic::{AtomicU64, Ordering};
 use std::time::Duration;
 
 use rtc::media_stream::MediaStreamTrack;
@@ -34,7 +34,10 @@ use webrtc::peer_connection::{
     RTCSessionDescription, SettingEngine, register_default_interceptors,
 };
 
+use gelabber_shared::ticket::deny_key;
+
 use crate::config::Config;
+use crate::error::SfuError;
 use crate::protocol::ServerFrame;
 use crate::ticket::TicketClaim;
 
@@ -108,11 +111,12 @@ async fn local_sdp_after_gather(
 }
 
 /// Published host UDP ports. Port `0` stays ephemeral (in-process tests).
+/// A fixed range is a pool: a port comes back on leave and on a failed bind.
 struct IcePorts {
     ip: std::net::IpAddr,
     min: u16,
     max: u16,
-    next: AtomicU16,
+    free: Mutex<VecDeque<u16>>,
 }
 
 impl IcePorts {
@@ -123,22 +127,49 @@ impl IcePorts {
             .unwrap_or_else(|_| "0.0.0.0:0".parse().unwrap());
         let min = addr.port();
         let max = config.ice_port_max.unwrap_or(min).max(min);
+        let mut free = VecDeque::new();
+        if min != 0 {
+            let mut port = min;
+            loop {
+                free.push_back(port);
+                if port == max {
+                    break;
+                }
+                port = port.saturating_add(1);
+            }
+        }
         Self {
             ip: addr.ip(),
             min,
             max,
-            next: AtomicU16::new(0),
+            free: Mutex::new(free),
         }
     }
 
-    fn take(&self) -> String {
+    /// `None` when every published port is still bound. Does not wrap.
+    async fn take(&self) -> Option<String> {
         if self.min == 0 {
-            return SocketAddr::new(self.ip, 0).to_string();
+            return Some(SocketAddr::new(self.ip, 0).to_string());
         }
-        let span = u32::from(self.max - self.min) + 1;
-        let i = u32::from(self.next.fetch_add(1, Ordering::Relaxed));
-        let port = self.min + (i % span) as u16;
-        SocketAddr::new(self.ip, port).to_string()
+        let port = self.free.lock().await.pop_front()?;
+        Some(SocketAddr::new(self.ip, port).to_string())
+    }
+
+    async fn release(&self, addr: &str) {
+        if self.min == 0 {
+            return;
+        }
+        let Ok(parsed) = addr.parse::<SocketAddr>() else {
+            return;
+        };
+        let port = parsed.port();
+        if port < self.min || port > self.max {
+            return;
+        }
+        let mut free = self.free.lock().await;
+        if !free.contains(&port) {
+            free.push_back(port);
+        }
     }
 }
 
@@ -188,6 +219,10 @@ struct Peer {
     user_id: Uuid,
     #[allow(dead_code)]
     channel_id: Uuid,
+    /// From the join ticket. `l` is refused when this is false.
+    go_live: bool,
+    /// Host UDP address taken from [`IcePorts`], returned on leave.
+    ice_addr: String,
     pc: Arc<dyn PeerConnection>,
     out: mpsc::UnboundedSender<ServerFrame>,
     gathered: watch::Receiver<u64>,
@@ -217,6 +252,8 @@ struct Forward {
 pub struct Sfu {
     ice_ports: IcePorts,
     advertised_ip: Option<String>,
+    /// Shared with the API. `None` in unit tests that never mint tickets.
+    redis: Option<redis::Client>,
     rooms: RwLock<HashMap<Uuid, Arc<Mutex<Room>>>>,
     stats: Arc<SfuStats>,
 }
@@ -231,9 +268,14 @@ struct SfuStats {
 
 impl Sfu {
     pub fn new(config: &Config) -> Self {
+        Self::with_redis(config, None)
+    }
+
+    pub fn with_redis(config: &Config, redis: Option<redis::Client>) -> Self {
         Self {
             ice_ports: IcePorts::from_config(config),
             advertised_ip: config.advertised_ip.clone(),
+            redis,
             rooms: RwLock::new(HashMap::new()),
             stats: Arc::new(SfuStats::default()),
         }
@@ -269,12 +311,20 @@ impl Sfu {
         self: &Arc<Self>,
         claim: TicketClaim,
         out: mpsc::UnboundedSender<ServerFrame>,
-    ) -> Result<PeerId, String> {
+    ) -> Result<PeerId, SfuError> {
+        if self.revoked(claim.s, claim.u).await {
+            return Err(SfuError::Revoked);
+        }
         let peer_id = PeerId(Uuid::new_v4());
-        let (pc, mut events, gathered) = self
-            .build_pc()
-            .await
-            .map_err(|err| format!("peer connection: {err}"))?;
+        let ice_addr = self.ice_ports.take().await.ok_or(SfuError::Unavailable)?;
+        let built = self.build_pc(&ice_addr).await;
+        let (pc, mut events, gathered) = match built {
+            Ok(parts) => parts,
+            Err(err) => {
+                self.ice_ports.release(&ice_addr).await;
+                return Err(SfuError::negotiation(err));
+            }
+        };
 
         let room = self.room(claim.c).await;
         {
@@ -286,6 +336,8 @@ impl Sfu {
                     id: peer_id,
                     user_id: claim.u,
                     channel_id: claim.c,
+                    go_live: claim.g,
+                    ice_addr: ice_addr.clone(),
                     pc: pc.clone(),
                     out: out.clone(),
                     gathered,
@@ -303,6 +355,7 @@ impl Sfu {
             peer = %peer_id.0,
             user = %claim.u,
             channel = %claim.c,
+            go_live = claim.g,
             "sfu join"
         );
 
@@ -310,6 +363,7 @@ impl Sfu {
         tokio::spawn(async move {
             sfu.drive(peer_id, claim.c, pc, &mut events).await;
         });
+        self.watch_revoke(peer_id, claim.c, claim.s, claim.u, out);
 
         Ok(peer_id)
     }
@@ -320,16 +374,16 @@ impl Sfu {
         channel_id: Uuid,
         sdp: String,
         as_offer: bool,
-    ) -> Result<(), String> {
+    ) -> Result<(), SfuError> {
         let desc = if as_offer {
-            RTCSessionDescription::offer(sdp).map_err(|err| err.to_string())?
+            RTCSessionDescription::offer(sdp).map_err(SfuError::negotiation)?
         } else {
-            RTCSessionDescription::answer(sdp).map_err(|err| err.to_string())?
+            RTCSessionDescription::answer(sdp).map_err(SfuError::negotiation)?
         };
         let room = self.room(channel_id).await;
         let (pc, out, gathered, sdp) = {
             let room = room.lock().await;
-            let peer = room.peers.get(&peer_id).ok_or("not in room")?;
+            let peer = room.peers.get(&peer_id).ok_or(SfuError::NotInRoom)?;
             (
                 peer.pc.clone(),
                 peer.out.clone(),
@@ -353,18 +407,18 @@ impl Sfu {
                 self.fail_local_offer(&pc, &out, &gathered, &sdp, false)
                     .await;
             }
-            return Err(err.to_string());
+            return Err(SfuError::negotiation(err));
         }
 
         if as_offer {
             let answer = pc
                 .create_answer(None)
                 .await
-                .map_err(|err| err.to_string())?;
+                .map_err(SfuError::negotiation)?;
             let before = *gathered.borrow();
             pc.set_local_description(answer)
                 .await
-                .map_err(|err| err.to_string())?;
+                .map_err(SfuError::negotiation)?;
             if let Some(local) = local_sdp_after_gather(&pc, &gathered, before).await {
                 let _ = out.send(ServerFrame::Answer { sdp: local });
             }
@@ -394,13 +448,16 @@ impl Sfu {
         peer_id: PeerId,
         channel_id: Uuid,
         kind: &str,
-    ) -> Result<(), String> {
+    ) -> Result<(), SfuError> {
         if kind != "v" && kind != "s" && kind != "l" {
-            return Err("bad_request".into());
+            return Err(SfuError::BadAnnounce);
         }
         let room = self.room(channel_id).await;
         let mut room = room.lock().await;
-        let peer = room.peers.get_mut(&peer_id).ok_or("not in room")?;
+        let peer = room.peers.get_mut(&peer_id).ok_or(SfuError::NotInRoom)?;
+        if kind == "l" && !peer.go_live {
+            return Err(SfuError::Forbidden);
+        }
         peer.next_kind.push_back(kind.to_owned());
         Ok(())
     }
@@ -412,13 +469,13 @@ impl Sfu {
         peer_id: PeerId,
         channel_id: Uuid,
         kind: &str,
-    ) -> Result<(), String> {
+    ) -> Result<(), SfuError> {
         if kind != "v" && kind != "s" && kind != "l" {
-            return Err("bad_request".into());
+            return Err(SfuError::BadAnnounce);
         }
         let room = self.room(channel_id).await;
         let mut room = room.lock().await;
-        let peer = room.peers.get_mut(&peer_id).ok_or("not in room")?;
+        let peer = room.peers.get_mut(&peer_id).ok_or(SfuError::NotInRoom)?;
         if let Some(index) = peer.next_kind.iter().position(|item| item == kind) {
             peer.next_kind.remove(index);
             info!(peer = %peer_id.0, kind, "retracted unpublished kind");
@@ -428,11 +485,11 @@ impl Sfu {
 
     /// Subscriber could not complete our offer. Roll signaling back to stable
     /// and forward anything that queued behind that offer.
-    pub async fn abort_offer(&self, peer_id: PeerId, channel_id: Uuid) -> Result<(), String> {
+    pub async fn abort_offer(&self, peer_id: PeerId, channel_id: Uuid) -> Result<(), SfuError> {
         let room = self.room(channel_id).await;
         let (pc, out, gathered, sdp) = {
             let room = room.lock().await;
-            let peer = room.peers.get(&peer_id).ok_or("not in room")?;
+            let peer = room.peers.get(&peer_id).ok_or(SfuError::NotInRoom)?;
             (
                 peer.pc.clone(),
                 peer.out.clone(),
@@ -453,11 +510,11 @@ impl Sfu {
         &self,
         peer_id: PeerId,
         channel_id: Uuid,
-    ) -> Result<(), String> {
+    ) -> Result<(), SfuError> {
         let room = self.room(channel_id).await;
         let (pc, out, gathered, sdp) = {
             let room = room.lock().await;
-            let peer = room.peers.get(&peer_id).ok_or("not in room")?;
+            let peer = room.peers.get(&peer_id).ok_or(SfuError::NotInRoom)?;
             (
                 peer.pc.clone(),
                 peer.out.clone(),
@@ -476,11 +533,11 @@ impl Sfu {
         channel_id: Uuid,
         ice: String,
         mid: Option<String>,
-    ) -> Result<(), String> {
+    ) -> Result<(), SfuError> {
         let room = self.room(channel_id).await;
         let (pc, gate) = {
             let room = room.lock().await;
-            let peer = room.peers.get(&peer_id).ok_or("not in room")?;
+            let peer = room.peers.get(&peer_id).ok_or(SfuError::NotInRoom)?;
             (peer.pc.clone(), peer.sdp.clone())
         };
         {
@@ -497,7 +554,7 @@ impl Sfu {
         }
         pc.add_ice_candidate(ice_init(ice, mid))
             .await
-            .map_err(|err| err.to_string())
+            .map_err(SfuError::ice)
     }
 
     pub async fn leave(&self, peer_id: PeerId, channel_id: Uuid) {
@@ -510,6 +567,7 @@ impl Sfu {
         };
         if let Some(peer) = peer {
             saturating_dec(&self.stats.peers);
+            self.ice_ports.release(&peer.ice_addr).await;
             let _ = peer.pc.close().await;
             info!(peer = %peer_id.0, channel = %channel_id, "sfu leave");
         }
@@ -520,6 +578,72 @@ impl Sfu {
         if empty && self.rooms.write().await.remove(&channel_id).is_some() {
             saturating_dec(&self.stats.rooms);
         }
+    }
+
+    async fn revoked(&self, server_id: Uuid, user_id: Uuid) -> bool {
+        let Some(redis) = &self.redis else {
+            return false;
+        };
+        let key = deny_key(server_id, user_id);
+        let mut conn = match redis.get_multiplexed_async_connection().await {
+            Ok(conn) => conn,
+            Err(err) => {
+                warn!(error = %err, "revoke check skipped; redis unavailable");
+                return false;
+            }
+        };
+        match redis::cmd("EXISTS")
+            .arg(key)
+            .query_async::<i64>(&mut conn)
+            .await
+        {
+            Ok(n) => n > 0,
+            Err(err) => {
+                warn!(error = %err, "revoke check failed");
+                false
+            }
+        }
+    }
+
+    fn watch_revoke(
+        self: &Arc<Self>,
+        peer_id: PeerId,
+        channel_id: Uuid,
+        server_id: Uuid,
+        user_id: Uuid,
+        out: mpsc::UnboundedSender<ServerFrame>,
+    ) {
+        if self.redis.is_none() {
+            return;
+        }
+        let sfu = Arc::clone(self);
+        tokio::spawn(async move {
+            loop {
+                tokio::time::sleep(Duration::from_secs(1)).await;
+                if !sfu.has_peer(peer_id, channel_id).await {
+                    break;
+                }
+                if sfu.revoked(server_id, user_id).await {
+                    warn!(
+                        %user_id,
+                        %server_id,
+                        peer = %peer_id.0,
+                        "closing sfu peer after revoke"
+                    );
+                    let _ = out.send(ServerFrame::error("unauthorized"));
+                    sfu.leave(peer_id, channel_id).await;
+                    break;
+                }
+            }
+        });
+    }
+
+    async fn has_peer(&self, peer_id: PeerId, channel_id: Uuid) -> bool {
+        let rooms = self.rooms.read().await;
+        let Some(room) = rooms.get(&channel_id) else {
+            return false;
+        };
+        room.lock().await.peers.contains_key(&peer_id)
     }
 
     async fn room(&self, channel_id: Uuid) -> Arc<Mutex<Room>> {
@@ -537,6 +661,7 @@ impl Sfu {
 
     async fn build_pc(
         &self,
+        ice_addr: &str,
     ) -> webrtc::error::Result<(
         Arc<dyn PeerConnection>,
         mpsc::UnboundedReceiver<PcEvent>,
@@ -569,7 +694,7 @@ impl Sfu {
                 tx,
                 gathered: gather_tx,
             }))
-            .with_udp_addrs(vec![self.ice_ports.take()])
+            .with_udp_addrs(vec![ice_addr.to_owned()])
             .build()
             .await?;
         Ok((Arc::new(pc), rx, gather_rx))
@@ -623,16 +748,16 @@ impl Sfu {
         publisher: PeerId,
         channel_id: Uuid,
         track: Arc<dyn TrackRemote>,
-    ) -> Result<(), String> {
+    ) -> Result<(), SfuError> {
         let ssrcs = track.ssrcs().await;
-        let ssrc = *ssrcs.first().ok_or("track has no ssrc")?;
-        let codec = track.codec(ssrc).await.ok_or("track has no codec")?;
+        let ssrc = *ssrcs.first().ok_or(SfuError::BadAnnounce)?;
+        let codec = track.codec(ssrc).await.ok_or(SfuError::BadAnnounce)?;
         let kind = track.kind().await;
         let track_id = track.track_id().await;
         let (user_id, kind_tag) = {
             let room = self.room(channel_id).await;
             let mut room = room.lock().await;
-            let peer = room.peers.get_mut(&publisher).ok_or("not in room")?;
+            let peer = room.peers.get_mut(&publisher).ok_or(SfuError::NotInRoom)?;
             // Camera / screen / live announces tag the next *video* track.
             // A re-fired mic after renegotiation must not consume `l` / `s`.
             let tag = match kind {
@@ -1368,6 +1493,7 @@ mod tests {
                     u: Uuid::from_u128(1),
                     s: Uuid::from_u128(9),
                     c: channel,
+                    g: true,
                 },
                 out,
             )
@@ -1514,5 +1640,25 @@ mod tests {
         assert!(!out.header.extension);
         assert!(out.header.get_extension_ids().is_empty());
         assert!(out.header.csrc.is_empty());
+    }
+
+    #[tokio::test]
+    async fn ice_ports_return_instead_of_wrapping() {
+        use crate::config::Config;
+
+        let config = Config::from_source(|key| match key {
+            "REDIS_URL" => Some("redis://127.0.0.1:1".to_owned()),
+            "MEDIA_ICE_BIND" => Some("127.0.0.1:40000".to_owned()),
+            "MEDIA_ICE_PORT_MAX" => Some("40001".to_owned()),
+            _ => None,
+        })
+        .unwrap();
+        let sfu = Sfu::new(&config);
+        let first = sfu.ice_ports.take().await.expect("port");
+        let second = sfu.ice_ports.take().await.expect("port");
+        assert!(sfu.ice_ports.take().await.is_none(), "pool must not wrap");
+        sfu.ice_ports.release(&first).await;
+        assert_eq!(sfu.ice_ports.take().await.as_deref(), Some(first.as_str()));
+        let _ = second;
     }
 }

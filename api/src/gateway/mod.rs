@@ -12,8 +12,9 @@
 //! over Redis keys + TTL and Pub/Sub. They are not sequenced and never
 //! enter the chat replay log.
 //!
-//! **Issue 10 (signaling)** uses `op: "sig"` (join/leave, offer/answer,
-//! ice, pub/unpub, mute/deafen). Those frames are not mixed into `op: "e"`.
+//! **Issue 10 (signaling)** uses `op: "sig"` for presence (join/leave,
+//! pub/unpub, mute/deafen). SDP and ICE go to the media socket, not `/ws`.
+//! Those frames are not mixed into `op: "e"`.
 
 mod conn;
 mod hub;
@@ -35,7 +36,7 @@ use crate::auth::session::CurrentUser;
 use crate::error::ApiError;
 use crate::state::AppState;
 
-pub use hub::Gateway;
+pub use hub::{ConnTable, EventLog, Gateway, VoiceRoster};
 pub use protocol::{Event, EventDraft, EventKind, PresenceStatus, Topic};
 
 pub fn router() -> Router<AppState> {

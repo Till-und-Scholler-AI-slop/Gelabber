@@ -11,6 +11,7 @@ WORKDIR /src
 COPY rust-toolchain.toml Cargo.toml Cargo.lock ./
 COPY api ./api
 COPY media ./media
+COPY shared ./shared
 RUN cargo build --locked --release -p gelabber-media
 
 FROM debian:trixie-slim

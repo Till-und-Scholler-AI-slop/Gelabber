@@ -1,7 +1,7 @@
 //! Compact JSON frames for the native WS gateway.
 //!
 //! Short field names, no envelope beyond `op`. Chat events are `op: "e"`
-//! with `t` = create/edit/delete. Voice signaling is `op: "sig"` — live
+//! with `t` = create/edit/delete. Voice presence is `op: "sig"` — live
 //! only, no seq, never mixed into the chat stream.
 
 use serde::{Deserialize, Serialize};
@@ -141,7 +141,8 @@ impl EventKind {
     }
 }
 
-/// Voice signaling kind (`op: "sig"`). Short letters, not chat `t`.
+/// Voice presence kind (`op: "sig"`). Short letters, not chat `t`.
+/// SDP and ICE are not on this socket — they go to the media process.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "lowercase")]
 pub enum SigKind {
@@ -149,12 +150,6 @@ pub enum SigKind {
     J,
     /// Leave.
     L,
-    /// SDP offer (client → room / future SFU).
-    O,
-    /// SDP answer.
-    A,
-    /// Trickle ICE candidate.
-    I,
     /// Publish a track.
     P,
     /// Unpublish a track.
@@ -172,21 +167,12 @@ impl SigKind {
         match self {
             Self::J => "j",
             Self::L => "l",
-            Self::O => "o",
-            Self::A => "a",
-            Self::I => "i",
             Self::P => "p",
             Self::U => "u",
             Self::M => "m",
             Self::D => "d",
             Self::R => "r",
         }
-    }
-
-    /// SDP / ICE stay in the room. Join/leave/mute/deafen/pub fan out to
-    /// everyone watching the server so the member list can show voice state.
-    pub fn room_only(self) -> bool {
-        matches!(self, Self::O | Self::A | Self::I)
     }
 }
 
@@ -236,12 +222,6 @@ pub struct SigEvent {
     pub c: Uuid,
     pub u: Uuid,
     #[serde(skip_serializing_if = "Option::is_none")]
-    pub sdp: Option<String>,
-    #[serde(skip_serializing_if = "Option::is_none")]
-    pub ice: Option<String>,
-    #[serde(skip_serializing_if = "Option::is_none")]
-    pub mid: Option<String>,
-    #[serde(skip_serializing_if = "Option::is_none")]
     pub k: Option<TrackKind>,
     /// Mute / deafen: the new value. Omitted on join/leave/media.
     #[serde(skip_serializing_if = "Option::is_none")]
@@ -261,9 +241,6 @@ impl SigEvent {
             s: server_id,
             c: channel_id,
             u: user_id,
-            sdp: None,
-            ice: None,
-            mid: None,
             k: None,
             on: None,
             m: None,
@@ -355,37 +332,55 @@ impl EventDraft {
     }
 }
 
+/// Inbound gateway ops. Same JSON as before (`{"op":"s",…}`). Unknown `op`
+/// fails to decode; the socket answers `bad_request`.
 #[derive(Debug, Clone, Deserialize, PartialEq)]
-pub struct ClientFrame {
-    pub op: String,
-    #[serde(default)]
-    pub s: Option<Uuid>,
-    #[serde(default)]
-    pub c: Option<Uuid>,
-    #[serde(default)]
-    pub n: Option<u64>,
-    /// Signaling kind when `op` is `sig`.
-    #[serde(default)]
-    pub t: Option<SigKind>,
-    #[serde(default)]
-    pub sdp: Option<String>,
-    #[serde(default)]
-    pub ice: Option<String>,
-    #[serde(default)]
-    pub mid: Option<String>,
-    #[serde(default)]
-    pub k: Option<TrackKind>,
-    /// Presence: `o` / `i`. Absent on a `p` frame means "I am active".
-    #[serde(default)]
-    pub st: Option<PresenceStatus>,
-    /// Typing start/stop, and mute/deafen (`t: "m"|"d"`).
-    #[serde(default)]
-    pub on: Option<bool>,
+#[serde(tag = "op")]
+pub enum ClientFrame {
+    #[serde(rename = "h")]
+    Heartbeat,
+    #[serde(rename = "s")]
+    Subscribe {
+        s: Uuid,
+        #[serde(default)]
+        c: Option<Uuid>,
+        #[serde(default)]
+        n: Option<u64>,
+    },
+    #[serde(rename = "u")]
+    Unsubscribe {
+        s: Uuid,
+        #[serde(default)]
+        c: Option<Uuid>,
+    },
+    /// Presence plane for voice: join, leave, pub, mute, deafen.
+    /// SDP and ICE are not fields here.
+    #[serde(rename = "sig")]
+    Sig {
+        #[serde(default)]
+        s: Option<Uuid>,
+        #[serde(default)]
+        c: Option<Uuid>,
+        #[serde(default)]
+        t: Option<SigKind>,
+        #[serde(default)]
+        k: Option<TrackKind>,
+        #[serde(default)]
+        on: Option<bool>,
+    },
+    /// Presence: `o` / `i`. Absent `st` means "I am active".
+    #[serde(rename = "p")]
+    Presence {
+        #[serde(default)]
+        st: Option<PresenceStatus>,
+    },
+    #[serde(rename = "y")]
+    Typing { s: Uuid, c: Uuid, on: bool },
 }
 
 impl ClientFrame {
     pub fn is_heartbeat(&self) -> bool {
-        self.op == "h"
+        matches!(self, Self::Heartbeat)
     }
 }
 
@@ -429,12 +424,6 @@ pub enum ServerFrame {
         c: Option<Uuid>,
         #[serde(skip_serializing_if = "Option::is_none")]
         u: Option<Uuid>,
-        #[serde(skip_serializing_if = "Option::is_none")]
-        sdp: Option<String>,
-        #[serde(skip_serializing_if = "Option::is_none")]
-        ice: Option<String>,
-        #[serde(skip_serializing_if = "Option::is_none")]
-        mid: Option<String>,
         #[serde(skip_serializing_if = "Option::is_none")]
         k: Option<TrackKind>,
         #[serde(skip_serializing_if = "Option::is_none")]
@@ -511,9 +500,6 @@ impl ServerFrame {
             s: event.s,
             c: Some(event.c),
             u: Some(event.u),
-            sdp: event.sdp,
-            ice: event.ice,
-            mid: event.mid,
             k: event.k,
             on: event.on,
             m: event.m,
@@ -528,9 +514,6 @@ impl ServerFrame {
             s: server_id,
             c: None,
             u: None,
-            sdp: None,
-            ice: None,
-            mid: None,
             k: None,
             on: None,
             m: None,
@@ -765,10 +748,14 @@ mod tests {
     fn client_frame_parses_subscribe_with_resume() {
         let frame: ClientFrame =
             serde_json::from_str(r#"{"op":"s","s":"00000000-0000-0000-0000-000000000001","c":"00000000-0000-0000-0000-000000000002","n":12}"#).unwrap();
-        assert_eq!(frame.op, "s");
-        assert_eq!(frame.n, Some(12));
-        assert_eq!(frame.s, Some(Uuid::from_u128(1)));
-        assert_eq!(frame.c, Some(Uuid::from_u128(2)));
+        assert_eq!(
+            frame,
+            ClientFrame::Subscribe {
+                s: Uuid::from_u128(1),
+                c: Some(Uuid::from_u128(2)),
+                n: Some(12),
+            }
+        );
     }
 
     #[test]

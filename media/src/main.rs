@@ -33,7 +33,6 @@ async fn run() -> Result<(), Box<dyn std::error::Error>> {
     info!(
         addr = %local_addr,
         ice_bind = %config.ice_bind,
-        ice_servers = config.ice_servers.len(),
         "gelabber-media listening"
     );
 

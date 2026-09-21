@@ -5,17 +5,12 @@ use std::fmt;
 use std::net::SocketAddr;
 use std::time::Duration;
 
-use crate::ice::{IceServer, parse_ice_servers};
-
 pub const MEDIA_ADDR: &str = "MEDIA_ADDR";
 pub const REDIS_URL: &str = "REDIS_URL";
 pub const MEDIA_READY_TIMEOUT_MS: &str = "MEDIA_READY_TIMEOUT_MS";
 pub const MEDIA_ICE_BIND: &str = "MEDIA_ICE_BIND";
 pub const MEDIA_ICE_PORT_MAX: &str = "MEDIA_ICE_PORT_MAX";
 pub const MEDIA_ADVERTISED_IP: &str = "MEDIA_ADVERTISED_IP";
-pub const TURN_URLS: &str = "TURN_URLS";
-pub const TURN_USERNAME: &str = "TURN_USERNAME";
-pub const TURN_PASSWORD: &str = "TURN_PASSWORD";
 pub const RUST_LOG: &str = "RUST_LOG";
 
 const DEFAULT_MEDIA_ADDR: &str = "0.0.0.0:8081";
@@ -34,7 +29,6 @@ pub struct Config {
     pub ice_port_max: Option<u16>,
     /// 1:1 NAT advertised address for host candidates. Empty = bind only.
     pub advertised_ip: Option<String>,
-    pub ice_servers: Vec<IceServer>,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -115,11 +109,6 @@ impl Config {
         };
 
         let advertised_ip = get(MEDIA_ADVERTISED_IP);
-        let ice_servers = parse_ice_servers(
-            get(TURN_URLS).as_deref(),
-            get(TURN_USERNAME).as_deref(),
-            get(TURN_PASSWORD).as_deref(),
-        );
 
         Ok(Self {
             media_addr,
@@ -128,7 +117,6 @@ impl Config {
             ice_bind,
             ice_port_max,
             advertised_ip,
-            ice_servers,
         })
     }
 }
@@ -179,17 +167,13 @@ mod tests {
         );
         assert_eq!(config.ice_bind, "0.0.0.0:0");
         assert!(config.ice_port_max.is_none());
-        assert!(config.ice_servers.is_empty());
         assert!(config.advertised_ip.is_none());
     }
 
     #[test]
-    fn parses_turn_and_advertised_ip() {
+    fn parses_advertised_ip() {
         let config = Config::from_source(source(&[
             (REDIS_URL, "redis://localhost"),
-            (TURN_URLS, "stun:127.0.0.1:3478,turn:127.0.0.1:3478"),
-            (TURN_USERNAME, "gelabber"),
-            (TURN_PASSWORD, "gelabberturn"),
             (MEDIA_ADVERTISED_IP, "127.0.0.1"),
             (MEDIA_ICE_BIND, "127.0.0.1:0"),
         ]))
@@ -197,8 +181,6 @@ mod tests {
         assert_eq!(config.ice_bind, "127.0.0.1:0");
         assert!(config.ice_port_max.is_none());
         assert_eq!(config.advertised_ip.as_deref(), Some("127.0.0.1"));
-        assert_eq!(config.ice_servers.len(), 2);
-        assert!(config.ice_servers[1].username.is_some());
     }
 
     #[test]

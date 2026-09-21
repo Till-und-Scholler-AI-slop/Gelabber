@@ -29,6 +29,7 @@ subtle = "2.6.1"
 rusty-s3 = "0.10.2"
 reqwest = { version = "0.13.5", default-features = false, features = ["rustls"] }
 url = "2.5.8"
+gelabber-shared.workspace = true
 
 [dev-dependencies]
 tower = { version = "0.5.3", features = ["util"] }

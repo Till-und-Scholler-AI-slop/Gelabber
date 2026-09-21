@@ -1,24 +1,20 @@
-//! Voice signaling on `op: "sig"` (issue #10).
+//! Voice presence on `op: "sig"` (issue #10).
 //!
 //! Session is already on the socket. Join checks membership, `join_voice`,
-//! and a voice channel. Frames stay off the chat stream (`op: "e"`). The
-//! SFU (issue 11) is not here — we only fan out signaling.
+//! and a voice channel. Frames stay off the chat stream (`op: "e"`).
+//! SDP and ICE are not accepted here — the media socket is the only path.
 
 use axum::extract::ws::{Message, WebSocket};
 use uuid::Uuid;
 
 use super::hub::ConnId;
-use super::protocol::{ClientFrame, ServerFrame, SigEvent, SigKind, TrackKind};
+use super::protocol::{ClientFrame, ServerFrame, SigKind, TrackKind};
 use crate::auth::user::User;
 use crate::error::ApiError;
 use crate::servers::channel::{Channel, ChannelKind};
 use crate::servers::membership;
 use crate::servers::permissions::Permission;
 use crate::state::AppState;
-
-const MAX_SDP: usize = 12_288;
-const MAX_ICE: usize = 800;
-const MAX_MID: usize = 32;
 
 type Sink = futures_util::stream::SplitSink<WebSocket, Message>;
 
@@ -28,7 +24,9 @@ struct Call<'a> {
     conn: ConnId,
     server_id: Uuid,
     channel_id: Uuid,
-    frame: &'a ClientFrame,
+    kind: SigKind,
+    track: Option<TrackKind>,
+    on: Option<bool>,
     sink: &'a mut Sink,
 }
 
@@ -39,8 +37,12 @@ pub async fn handle(
     frame: ClientFrame,
     sink: &mut Sink,
 ) -> Result<(), ApiError> {
-    let (Some(server_id), Some(channel_id), Some(kind)) = (frame.s, frame.c, frame.t) else {
-        send_err(sink, "bad_request", frame.s, frame.c).await?;
+    let ClientFrame::Sig { s, c, t, k, on } = frame else {
+        send_err(sink, "bad_request", None, None).await?;
+        return Ok(());
+    };
+    let (Some(server_id), Some(channel_id), Some(kind)) = (s, c, t) else {
+        send_err(sink, "bad_request", s, c).await?;
         return Ok(());
     };
 
@@ -50,16 +52,16 @@ pub async fn handle(
         conn,
         server_id,
         channel_id,
-        frame: &frame,
+        kind,
+        track: k,
+        on,
         sink,
     };
     match kind {
         SigKind::J => join(&mut call).await,
         SigKind::L => leave(&mut call).await,
-        SigKind::O | SigKind::A => negotiate(&mut call, kind).await,
-        SigKind::I => ice(&mut call).await,
-        SigKind::P | SigKind::U => publish(&mut call, kind).await,
-        SigKind::M | SigKind::D => mute_deafen(&mut call, kind).await,
+        SigKind::P | SigKind::U => publish(&mut call).await,
+        SigKind::M | SigKind::D => mute_deafen(&mut call).await,
         SigKind::R => bad(&mut call).await,
     }
 }
@@ -116,95 +118,22 @@ async fn require_room(call: &mut Call<'_>) -> Result<bool, ApiError> {
     Ok(false)
 }
 
-async fn negotiate(call: &mut Call<'_>, kind: SigKind) -> Result<(), ApiError> {
+async fn publish(call: &mut Call<'_>) -> Result<(), ApiError> {
     if !require_room(call).await? {
         return Ok(());
     }
-    let Some(sdp) = call
-        .frame
-        .sdp
-        .as_deref()
-        .map(str::trim)
-        .filter(|s| !s.is_empty())
-    else {
-        return bad(call).await;
-    };
-    if sdp.len() > MAX_SDP {
-        return bad(call).await;
-    }
-    call.state
-        .gateway
-        .publish_sig(SigEvent {
-            t: kind,
-            s: call.server_id,
-            c: call.channel_id,
-            u: call.user.id,
-            sdp: Some(sdp.to_owned()),
-            ice: None,
-            mid: None,
-            k: None,
-            on: None,
-            m: None,
-            d: None,
-        })
-        .await
-}
-
-async fn ice(call: &mut Call<'_>) -> Result<(), ApiError> {
-    if !require_room(call).await? {
-        return Ok(());
-    }
-    let Some(ice) = call
-        .frame
-        .ice
-        .as_deref()
-        .map(str::trim)
-        .filter(|s| !s.is_empty())
-    else {
-        return bad(call).await;
-    };
-    if ice.len() > MAX_ICE {
-        return bad(call).await;
-    }
-    let mid = match call.frame.mid.as_deref() {
-        Some(mid) if mid.len() > MAX_MID => return bad(call).await,
-        Some("") => None,
-        other => other.map(str::to_owned),
-    };
-    call.state
-        .gateway
-        .publish_sig(SigEvent {
-            t: SigKind::I,
-            s: call.server_id,
-            c: call.channel_id,
-            u: call.user.id,
-            sdp: None,
-            ice: Some(ice.to_owned()),
-            mid,
-            k: None,
-            on: None,
-            m: None,
-            d: None,
-        })
-        .await
-}
-
-async fn publish(call: &mut Call<'_>, kind: SigKind) -> Result<(), ApiError> {
-    if !require_room(call).await? {
-        return Ok(());
-    }
-    let Some(track) = call.frame.k else {
+    let Some(track) = call.track else {
         return bad(call).await;
     };
     // Camera (`v`) and screen (`s`) are for anyone already in the voice
     // room. Go Live (`l`) needs `go_live` and is one track per channel.
-    if track == TrackKind::L && kind == SigKind::P {
+    if track == TrackKind::L && call.kind == SigKind::P {
         match authorize_go_live(&call.state.db, call.user.id, call.server_id).await {
             Ok(()) => {}
             Err(err) => return reject(call, err).await,
         }
     }
-    let Some(live_started) = call
+    let started = call
         .state
         .gateway
         .set_voice_pub(
@@ -213,27 +142,27 @@ async fn publish(call: &mut Call<'_>, kind: SigKind) -> Result<(), ApiError> {
             call.server_id,
             call.channel_id,
             track,
-            kind == SigKind::P,
+            call.kind == SigKind::P,
         )
-        .await?
-    else {
+        .await?;
+    let Some(live_started) = started else {
         return bad(call).await;
     };
-    if track == TrackKind::L && kind == SigKind::P && live_started {
+    if track == TrackKind::L && call.kind == SigKind::P && live_started {
         crate::messages::post_live_hint(call.state, call.user, call.server_id, call.channel_id)
             .await;
     }
     Ok(())
 }
 
-async fn mute_deafen(call: &mut Call<'_>, kind: SigKind) -> Result<(), ApiError> {
+async fn mute_deafen(call: &mut Call<'_>) -> Result<(), ApiError> {
     if !require_room(call).await? {
         return Ok(());
     }
-    let Some(on) = call.frame.on else {
+    let Some(on) = call.on else {
         return bad(call).await;
     };
-    let ok = if kind == SigKind::M {
+    let ok = if call.kind == SigKind::M {
         call.state
             .gateway
             .set_voice_mute(call.conn, call.user.id, call.server_id, call.channel_id, on)
@@ -248,6 +177,26 @@ async fn mute_deafen(call: &mut Call<'_>, kind: SigKind) -> Result<(), ApiError>
         return bad(call).await;
     }
     Ok(())
+}
+
+async fn bad(call: &mut Call<'_>) -> Result<(), ApiError> {
+    send_err(
+        call.sink,
+        "bad_request",
+        Some(call.server_id),
+        Some(call.channel_id),
+    )
+    .await
+}
+
+async fn reject(call: &mut Call<'_>, err: ApiError) -> Result<(), ApiError> {
+    let code = match err {
+        ApiError::NotFound => "not_found",
+        ApiError::Forbidden(_) => "forbidden",
+        ApiError::BadRequest(_) => "bad_request",
+        other => return Err(other),
+    };
+    send_err(call.sink, code, Some(call.server_id), Some(call.channel_id)).await
 }
 
 async fn authorize_join(
@@ -292,24 +241,8 @@ async fn load_channel(
     .ok_or(ApiError::NotFound)
 }
 
-async fn reject(call: &mut Call<'_>, err: ApiError) -> Result<(), ApiError> {
-    let code = match err {
-        ApiError::NotFound => "not_found",
-        ApiError::Forbidden(_) => "forbidden",
-        ApiError::BadRequest(_) => "bad_request",
-        other => return Err(other),
-    };
-    send_err(call.sink, code, Some(call.server_id), Some(call.channel_id)).await
-}
-
-async fn bad(call: &mut Call<'_>) -> Result<(), ApiError> {
-    send_err(
-        call.sink,
-        "bad_request",
-        Some(call.server_id),
-        Some(call.channel_id),
-    )
-    .await
+async fn send_sig(sink: &mut Sink, event: super::protocol::SigEvent) -> Result<(), ApiError> {
+    super::conn::send(sink, ServerFrame::sig(event)).await
 }
 
 async fn send_err(
@@ -319,8 +252,4 @@ async fn send_err(
     channel_id: Option<Uuid>,
 ) -> Result<(), ApiError> {
     super::conn::send(sink, ServerFrame::error(code, server_id, channel_id)).await
-}
-
-async fn send_sig(sink: &mut Sink, event: SigEvent) -> Result<(), ApiError> {
-    super::conn::send(sink, ServerFrame::sig(event)).await
 }

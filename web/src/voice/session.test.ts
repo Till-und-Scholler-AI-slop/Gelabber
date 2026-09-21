@@ -355,9 +355,9 @@ describe("voice session", () => {
     expect(state.channelId).toBe("voice");
     expect(state.participants["u-self"]).toEqual({ pubs: [] });
     expect(sent[0]).toEqual({ op: "sig", t: "j", s: "srv", c: "voice" });
-    expect(sent.some((frame) => frame.op === "sig" && frame.t === "o")).toBe(
-      false,
-    );
+    expect(
+      sent.filter((frame) => frame.op === "sig").map((frame) => frame.t),
+    ).toEqual(["j"]);
     expect(mediaSent.some((frame) => frame.op === "o")).toBe(false);
   });
 
@@ -375,9 +375,6 @@ describe("voice session", () => {
     expect(
       sent.filter((frame) => frame.op === "sig").map((frame) => frame.t),
     ).toEqual(["j", "p"]);
-    expect(sent.some((frame) => frame.op === "sig" && frame.t === "o")).toBe(
-      false,
-    );
   });
 
   it("rolls back the seat when the media ticket fails", async () => {
@@ -568,6 +565,48 @@ describe("voice session", () => {
     emitSig({ op: "sig", t: "j", s: "srv", c: "voice", u: "u-cara" });
     expect(useVoice.getState().participants["u-cara"]).toBeDefined();
     expect(useVoice.getState().participants["u-bob"]).toBeUndefined();
+  });
+
+  it("leaves an open media peer alone when the chat socket reconnects", async () => {
+    const { emitSig, emitReady, peers, mediaSent } = install();
+    joinVoice({ serverId: "srv", channelId: "voice", channelName: "Lounge" });
+    await vi.waitFor(() =>
+      expect(mediaSent.some((frame) => frame.op === "j")).toBe(true),
+    );
+    emitSig({ op: "sig", t: "j", s: "srv", c: "voice", u: "u-self" });
+    emitReady();
+    expect(peers).toHaveLength(1);
+    expect(mediaSent.filter((frame) => frame.op === "j")).toHaveLength(1);
+    expect(useVoice.getState().status).toBe("joined");
+  });
+
+  it("keeps the seat when the SFU has no free port", async () => {
+    const { emitMedia, errors, mediaSent } = install();
+    joinVoice({ serverId: "srv", channelId: "voice", channelName: "Lounge" });
+    await vi.waitFor(() =>
+      expect(mediaSent.some((frame) => frame.op === "j")).toBe(true),
+    );
+    emitMedia({ op: "err", e: "unavailable" });
+    expect(useVoice.getState().status).toBe("joined");
+    expect(errors.map((error) => (error as Error).message)).toEqual([
+      "Kein freier Sprachplatz.",
+    ]);
+  });
+
+  it("stops Go Live on a forbidden announce and keeps the seat", async () => {
+    const { emitMedia, errors, mediaSent } = install();
+    joinVoice({ serverId: "srv", channelId: "voice", channelName: "Lounge" });
+    await vi.waitFor(() =>
+      expect(mediaSent.some((frame) => frame.op === "j")).toBe(true),
+    );
+    toggleGoLive();
+    expect(useVoice.getState().live).toBe(true);
+    emitMedia({ op: "err", e: "forbidden" });
+    expect(useVoice.getState().status).toBe("joined");
+    expect(useVoice.getState().live).toBe(false);
+    expect(errors.map((error) => (error as Error).message)).toContain(
+      "Dafür fehlt dir die Berechtigung.",
+    );
   });
 
   it("toggles mute immediately, then sends the sync frame", async () => {

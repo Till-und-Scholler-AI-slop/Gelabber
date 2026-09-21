@@ -6,10 +6,11 @@ use std::time::Duration;
 use sqlx::PgPool;
 use sqlx::postgres::{PgConnectOptions, PgPoolOptions};
 
+use gelabber_shared::ice::IceServer;
+
 use crate::config::Config;
-use crate::gateway::Gateway;
+use crate::gateway::{ConnTable, EventLog, Gateway, VoiceRoster};
 use crate::limits::{Limiter, Limits};
-use crate::media::IceServer;
 use crate::metrics::HttpMetrics;
 use crate::storage::ObjectStore;
 
@@ -28,8 +29,14 @@ pub struct AppState {
     pub ready_timeout: Duration,
     pub cookie_secure: bool,
     pub session_ttl: Duration,
-    /// Native WS gateway (issue #6): Redis Pub/Sub fan-out + local sockets.
+    /// Native WS gateway (issue #6). Facade over the three realtime jobs.
     pub gateway: Gateway,
+    /// Socket table and Redis subscriber.
+    pub connections: ConnTable,
+    /// Sequenced chat log (`publish` / `catch_up`).
+    pub events: EventLog,
+    /// Voice roster: seats, publications, Go Live claim.
+    pub voice: VoiceRoster,
     pub ws_heartbeat: Duration,
     pub ws_dead: Duration,
     pub ws_idle: Duration,
@@ -83,6 +90,12 @@ impl AppState {
         let redis = redis::Client::open(config.redis_url.as_str()).map_err(StateError::Redis)?;
         let store = ObjectStore::from_minio(config.minio.as_ref())
             .map_err(|err| StateError::Store(err.to_string()))?;
+        let gateway = Gateway::new(
+            redis.clone(),
+            config.ws_replay,
+            config.ws_presence_ttl,
+            config.ws_typing_ttl,
+        );
 
         Ok(Self {
             db,
@@ -91,12 +104,10 @@ impl AppState {
             ready_timeout: config.ready_timeout,
             cookie_secure: config.cookie_secure,
             session_ttl: config.session_ttl,
-            gateway: Gateway::new(
-                redis,
-                config.ws_replay,
-                config.ws_presence_ttl,
-                config.ws_typing_ttl,
-            ),
+            connections: gateway.connections.clone(),
+            events: gateway.events.clone(),
+            voice: gateway.voice.clone(),
+            gateway,
             ws_heartbeat: config.ws_heartbeat,
             ws_dead: config.ws_dead,
             ws_idle: config.ws_idle,

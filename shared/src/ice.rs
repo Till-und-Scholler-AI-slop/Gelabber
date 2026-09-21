@@ -1,9 +1,7 @@
-//! Parse Compose `TURN_URLS` for logs / future full-ICE. The SFU itself is
-//! ICE-lite (host + advertised IP). Browser-facing STUN/TURN is minted by
-//! the API on the media ticket.
+//! Parse Compose `TURN_URLS` into the list the API puts on a media ticket.
+//! The SFU does not apply these: it is ICE-lite.
 
 use serde::{Deserialize, Serialize};
-use webrtc::peer_connection::RTCIceServer;
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct IceServer {
@@ -12,16 +10,6 @@ pub struct IceServer {
     pub username: Option<String>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub credential: Option<String>,
-}
-
-impl IceServer {
-    pub fn to_rtc(&self) -> RTCIceServer {
-        RTCIceServer {
-            urls: self.urls.clone(),
-            username: self.username.clone().unwrap_or_default(),
-            credential: self.credential.clone().unwrap_or_default(),
-        }
-    }
 }
 
 /// Comma-separated STUN/TURN URLs. Credentials attach only to `turn:` /

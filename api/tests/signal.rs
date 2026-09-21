@@ -253,9 +253,8 @@ async fn room_fanout_is_sig_not_chat_and_survives_offer_ice_pub(pool: PgPool) {
         }),
     )
     .await;
-    let offer = recv_until(&mut member_ws, |f| f["op"] == "sig" && f["t"] == "o").await;
-    assert_eq!(offer["u"], ada.to_string());
-    assert!(offer["sdp"].as_str().unwrap().starts_with("v=0"));
+    let rejected = recv_until(&mut owner_ws, |f| f["op"] == "err").await;
+    assert_eq!(rejected["e"], "bad_request");
 
     send_json(
         &mut member_ws,
@@ -268,8 +267,8 @@ async fn room_fanout_is_sig_not_chat_and_survives_offer_ice_pub(pool: PgPool) {
         }),
     )
     .await;
-    let answer = recv_until(&mut owner_ws, |f| f["op"] == "sig" && f["t"] == "a").await;
-    assert!(answer["sdp"].as_str().is_some());
+    let rejected = recv_until(&mut member_ws, |f| f["op"] == "err").await;
+    assert_eq!(rejected["e"], "bad_request");
 
     send_json(
         &mut owner_ws,
@@ -283,8 +282,8 @@ async fn room_fanout_is_sig_not_chat_and_survives_offer_ice_pub(pool: PgPool) {
         }),
     )
     .await;
-    let ice = recv_until(&mut member_ws, |f| f["op"] == "sig" && f["t"] == "i").await;
-    assert_eq!(ice["mid"], "0");
+    let rejected = recv_until(&mut owner_ws, |f| f["op"] == "err").await;
+    assert_eq!(rejected["e"], "bad_request");
 
     send_json(
         &mut owner_ws,
@@ -533,6 +532,8 @@ async fn join_mute_deafen_reach_server_watchers_not_in_the_room(pool: PgPool) {
         }),
     )
     .await;
+    let rejected = recv_until(&mut owner_ws, |f| f["op"] == "err").await;
+    assert_eq!(rejected["e"], "bad_request");
     let stray = tokio::time::timeout(Duration::from_millis(150), recv_json(&mut watcher)).await;
     if let Ok(frame) = stray {
         assert_ne!(frame["t"], "o", "watchers must not get SDP: {frame}");

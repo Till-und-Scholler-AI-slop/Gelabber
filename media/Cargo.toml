@@ -23,6 +23,7 @@ tracing-subscriber = { version = "0.3.23", features = ["env-filter", "json"] }
 uuid = { version = "1.26.1", features = ["serde", "v4"] }
 rand = "0.10.2"
 bytes = "1.10.1"
+gelabber-shared.workspace = true
 
 [dev-dependencies]
 tower = { version = "0.5.3", features = ["util"] }
