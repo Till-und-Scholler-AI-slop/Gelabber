@@ -2,7 +2,10 @@ import { Link, Outlet, useNavigate } from "@tanstack/react-router";
 
 import { logout, useSession } from "../auth/session.ts";
 import { leaveVoice } from "../voice/session.ts";
-import { useGatewaySession } from "../ws/useGateway.ts";
+import {
+  useAuthenticatedSubscriptions,
+  useGatewaySession,
+} from "../ws/useGateway.ts";
 import { useIdlePresence } from "../ws/useLive.ts";
 import { useMessageToastsBridge } from "../messages/useMessageToasts.ts";
 import { Avatar } from "./Avatar.tsx";
@@ -10,6 +13,11 @@ import { GearIcon } from "./Icons.tsx";
 import { MessageToasts } from "./MessageToasts.tsx";
 import { Toasts } from "./Toasts.tsx";
 import { VoiceSettingsDialog } from "./VoiceSettingsDialog.tsx";
+
+function AuthenticatedRealtime() {
+  useAuthenticatedSubscriptions();
+  return null;
+}
 
 export function AppShell() {
   const user = useSession((state) => state.user);
@@ -65,6 +73,7 @@ export function AppShell() {
         </div>
       </header>
       <Outlet />
+      {user ? <AuthenticatedRealtime /> : null}
       <Toasts />
       <MessageToasts />
       {user ? <VoiceSettingsDialog /> : null}

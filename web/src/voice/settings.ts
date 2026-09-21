@@ -194,10 +194,26 @@ export function micConstraints(): MediaTrackConstraints {
   };
 }
 
-export function cameraConstraints(): boolean | MediaTrackConstraints {
+/** Total send budget across camera/screen/live, independent of voice quality. */
+export const VIDEO_SEND_BUDGET = 2_500_000;
+export const VIDEO_MAX_FPS = 30;
+
+export function displayConstraints(): MediaTrackConstraints {
+  return {
+    width: { max: 1920 },
+    height: { max: 1080 },
+    frameRate: { ideal: 15, max: VIDEO_MAX_FPS },
+  };
+}
+
+export function cameraConstraints(): MediaTrackConstraints {
   const id = useMediaSettings.getState().videoInputId;
-  if (!id) return true;
-  return { deviceId: { ideal: id } };
+  return {
+    width: { ideal: 1280, max: 1920 },
+    height: { ideal: 720, max: 1080 },
+    frameRate: { ideal: VIDEO_MAX_FPS, max: VIDEO_MAX_FPS },
+    ...(id ? { deviceId: { ideal: id } } : {}),
+  };
 }
 
 export type DeviceOption = { id: string; label: string };

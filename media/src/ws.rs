@@ -126,7 +126,7 @@ async fn handle(
                 .await
                 .map_err(|err| {
                     warn!(error = %err, "sdp apply failed");
-                    "bad_request"
+                    "negotiation_failed"
                 })?;
             Ok(None)
         }
@@ -145,7 +145,10 @@ async fn handle(
                 .sfu
                 .add_ice(peer_id, channel_id, ice.to_owned(), frame.mid)
                 .await
-                .map_err(|_| "bad_request")?;
+                .map_err(|err| {
+                    warn!(error = %err, "ice apply failed");
+                    "ice_failed"
+                })?;
             Ok(None)
         }
         "p" => {
