@@ -91,7 +91,7 @@ describe("media socket lifecycle", () => {
     const opened: FakeSocket[] = [];
     class FakeSocket {
       listeners = new Map<string, Set<() => void>>();
-      constructor(_url: string) {
+      constructor() {
         opened.push(this);
       }
       addEventListener(type: string, fn: () => void) {
