@@ -12,13 +12,17 @@ import { applyMemberRemoved, forgetServer } from "../servers/queries.ts";
 import { getGateway } from "./client.ts";
 import { shouldLeaveView } from "./leaveView.ts";
 
-export function useRealtimeBridge(viewingServerId?: string): void {
+export function useRealtimeBridge(
+  viewingServerId?: string,
+  onSelfRemoved?: (serverId: string) => void,
+): void {
   const client = useQueryClient();
   const navigate = useNavigate();
   const me = useSession((s) => s.user?.id);
 
   useEffect(() => {
     const leave = (reason: "kicked" | "banned", serverId: string) => {
+      onSelfRemoved?.(serverId);
       notify(
         reason === "banned"
           ? "Du wurdest vom Server gesperrt."
@@ -61,5 +65,5 @@ export function useRealtimeBridge(viewingServerId?: string): void {
       offEvent();
       offErr();
     };
-  }, [client, me, navigate, viewingServerId]);
+  }, [client, me, navigate, onSelfRemoved, viewingServerId]);
 }
