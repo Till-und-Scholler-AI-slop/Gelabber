@@ -1317,50 +1317,45 @@ describe("stream negotiation stability", () => {
     await vi.waitFor(() => expect(env.peers[0]?.signalingState).toBe("stable"));
     return env;
   }
-  it("completes recovery without sending a chat leave and keeps deafen", async () => {
+  it("keeps the seat and deafen when a stream renegotiation fails", async () => {
     const env = await connected();
     toggleDeafen();
     env.emitMedia({ op: "err", e: "negotiation_failed" });
-    await vi.waitFor(() =>
-      expect(env.peers[1]?.signalingState).toBe("have-local-offer"),
-    );
-    env.emitMedia({ op: "a", sdp: "v=0\r\n" });
-    await vi.waitFor(() => expect(env.peers[1]?.signalingState).toBe("stable"));
+    env.emitMedia({ op: "err", e: "bad_request" });
     expect(useVoice.getState().status).toBe("joined");
     expect(useVoice.getState().deafened).toBe(true);
-    expect(env.peers[1]?.audio?.enabled).toBe(false);
+    expect(env.peers[0]?.closed).toBe(false);
+    expect(env.peers[0]?.audio?.enabled).toBe(false);
+    expect(env.errors).toHaveLength(1);
+    expect(env.errors[0]).toBeInstanceOf(Error);
+    expect((env.errors[0] as Error).message).toMatch(/Sprachkanal bleibt aktiv/);
     expect(
       env.sent.some((frame) => frame.op === "sig" && frame.t === "l"),
     ).toBe(false);
   });
-  it("ends a recovery that never receives an answer instead of hanging joined forever", async () => {
-    const env = await connected();
-    vi.useFakeTimers();
-    env.emitMedia({ op: "err", e: "negotiation_failed" });
-    await vi.advanceTimersByTimeAsync(15_001);
-    expect(useVoice.getState().status).toBe("idle");
-    expect(env.peers.at(-1)?.closed).toBe(true);
-    expect(env.errors.at(-1)).toBeInstanceOf(Error);
-  });
-  it("handles a rejected remote stream offer without an unhandled rejection", async () => {
+  it("handles a rejected remote stream offer without leaving or an unhandled rejection", async () => {
     const env = await connected();
     env.peers[0]!.setRemoteDescription = async () => {
       throw new Error("SDP rejected");
     };
     env.emitMedia({ op: "o", sdp: "v=0\r\n" });
-    await vi.waitFor(() => expect(env.peers[1]?.audio).toBeTruthy());
+    for (let i = 0; i < 8; i++) await Promise.resolve();
     expect(useVoice.getState().status).toBe("joined");
+    expect(env.peers).toHaveLength(1);
+    expect(env.peers[0]?.closed).toBe(false);
+    expect(env.errors).toHaveLength(1);
   });
-  it("stops screen capture during recovery without reopening its picker", async () => {
+  it("keeps an active screen share when renegotiation fails", async () => {
     const env = await connected();
     toggleShare();
     await vi.waitFor(() =>
       expect(useVoice.getState().localScreen).toBeTruthy(),
     );
     env.emitMedia({ op: "err", e: "negotiation_failed" });
-    await vi.waitFor(() => expect(env.peers[1]?.audio).toBeTruthy());
-    expect(useVoice.getState().sharing).toBe(false);
-    expect(useVoice.getState().localScreen).toBeNull();
+    expect(useVoice.getState().status).toBe("joined");
+    expect(useVoice.getState().sharing).toBe(true);
+    expect(useVoice.getState().localScreen).toBeTruthy();
+    expect(env.peers[0]?.closed).toBe(false);
     expect(env.getDisplayMediaCalls()).toBe(1);
   });
   it("a watch negotiation failure stops only the watch, not the voice call", async () => {
@@ -1417,23 +1412,23 @@ describe("stream negotiation stability", () => {
       ),
     );
   });
-  it("recovers an established call once on negotiation failure, retaining mute", async () => {
+  it("keeps mute and stays joined when renegotiation fails twice", async () => {
     const env = await connected();
     toggleMute();
     env.emitMedia({ op: "err", e: "negotiation_failed" });
-    expect(useVoice.getState().status).toBe("joined");
-    await vi.waitFor(() => expect(env.peers[1]?.audio).toBeTruthy());
-    expect(env.peers[0]?.closed).toBe(true);
-    expect(env.peers[1]?.audio?.enabled).toBe(false);
     env.emitMedia({ op: "err", e: "negotiation_failed" });
-    expect(useVoice.getState().status).toBe("idle");
-    expect(env.peers).toHaveLength(2);
+    expect(useVoice.getState().status).toBe("joined");
+    expect(env.peers).toHaveLength(1);
+    expect(env.peers[0]?.closed).toBe(false);
+    expect(env.peers[0]?.audio?.enabled).toBe(false);
+    expect(env.errors).toHaveLength(1);
   });
-  it("does not leave on an invalid ICE candidate but still leaves on unauthorized", async () => {
+  it("does not toast each ICE failure but still leaves on unauthorized", async () => {
     const env = await connected();
-    env.emitMedia({ op: "err", e: "ice_failed" });
+    for (let i = 0; i < 12; i++) env.emitMedia({ op: "err", e: "ice_failed" });
     expect(useVoice.getState().status).toBe("joined");
     expect(env.peers[0]?.closed).toBe(false);
+    expect(env.errors).toHaveLength(0);
     env.emitMedia({ op: "err", e: "unauthorized" });
     expect(useVoice.getState().status).toBe("idle");
   });

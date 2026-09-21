@@ -16,11 +16,12 @@ use crate::sfu::PeerId;
 use crate::state::AppState;
 use crate::ticket::{self, TicketClaim};
 
-/// Chrome video answers (VP8/VP9/H264 + ICE + BUNDLE) regularly exceed 12 KiB.
-/// A 12 KiB cap rejected those frames with `bad_request` and kicked the peer
-/// the moment someone published camera / screen / Go Live.
-pub(crate) const MAX_FRAME: usize = 64 * 1024;
-pub(crate) const MAX_SDP: usize = 48 * 1024;
+/// Chrome video answers (many codecs, a second m-line, ICE candidates in the
+/// SDP) blow past 12 KiB and can pass 48 KiB. Rejecting that frame as
+/// `bad_request` made the viewer leave the voice channel the moment a stream
+/// started. 192 KiB still bounds a single signaling frame.
+pub(crate) const MAX_FRAME: usize = 256 * 1024;
+pub(crate) const MAX_SDP: usize = 192 * 1024;
 const MAX_ICE: usize = 800;
 
 pub fn router() -> Router<AppState> {
@@ -45,7 +46,12 @@ async fn run(socket: WebSocket, state: AppState) {
                 match incoming {
                     Some(Ok(Message::Text(text))) => {
                         if text.len() > MAX_FRAME {
-                            let _ = send(&mut sink, ServerFrame::error("bad_request")).await;
+                            warn!(
+                                bytes = text.len(),
+                                max = MAX_FRAME,
+                                "media frame too large"
+                            );
+                            let _ = send(&mut sink, ServerFrame::error("negotiation_failed")).await;
                             continue;
                         }
                         match handle(&state, &text, &tx, &mut joined).await {
@@ -118,14 +124,27 @@ async fn handle(
                 .filter(|s| !s.is_empty())
                 .ok_or("bad_request")?;
             if sdp.len() > MAX_SDP {
-                return Err("bad_request");
+                warn!(
+                    peer = %peer_id.0,
+                    bytes = sdp.len(),
+                    max = MAX_SDP,
+                    op = %frame.op,
+                    "media sdp too large"
+                );
+                return Err("negotiation_failed");
             }
             state
                 .sfu
                 .apply_remote(peer_id, channel_id, sdp.to_owned(), frame.op == "o")
                 .await
                 .map_err(|err| {
-                    warn!(error = %err, "sdp apply failed");
+                    warn!(
+                        peer = %peer_id.0,
+                        bytes = sdp.len(),
+                        op = %frame.op,
+                        error = %err,
+                        "sdp apply failed"
+                    );
                     "negotiation_failed"
                 })?;
             Ok(None)
@@ -146,7 +165,11 @@ async fn handle(
                 .add_ice(peer_id, channel_id, ice.to_owned(), frame.mid)
                 .await
                 .map_err(|err| {
-                    warn!(error = %err, "ice apply failed");
+                    warn!(
+                        peer = %peer_id.0,
+                        error = %err,
+                        "ice apply failed"
+                    );
                     "ice_failed"
                 })?;
             Ok(None)
@@ -214,9 +237,11 @@ mod tests {
 
     #[test]
     fn chrome_video_sdp_fits() {
-        assert!(MAX_SDP >= 48 * 1024);
-        assert!(MAX_FRAME >= 64 * 1024);
+        assert!(MAX_SDP >= 192 * 1024);
+        assert!(MAX_FRAME >= 256 * 1024);
         assert!(MAX_FRAME > MAX_SDP);
+        // A Chrome video answer around 60 KiB used to miss the 48 KiB cap.
+        assert!(60 * 1024 < MAX_SDP);
         assert!(MAX_SDP > 12_288);
         assert!(MAX_FRAME > 16 * 1024);
     }

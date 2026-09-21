@@ -198,9 +198,9 @@ let bound = false;
 let generation = 0;
 let micEpoch = 0;
 let negotiated = false;
-let recoveryUsed = false;
-let recoveryTimer: ReturnType<typeof setTimeout> | null = null;
-const RECOVERY_TIMEOUT_MS = 15_000;
+/** One stream toast per join. Further failures stay in the console. */
+let streamReported = false;
+let watchReported = false;
 let cameraEpoch = 0;
 let screenEpoch = 0;
 let liveEpoch = 0;
@@ -225,6 +225,23 @@ let watchSdpChain: Promise<void> = Promise.resolve();
 let watchMakingOffer = false;
 let watchSfuOffered = false;
 let watchNeedOffer = false;
+
+function logVoice(
+  level: "info" | "warn",
+  step: string,
+  extra?: Record<string, string | number | boolean | undefined>,
+): void {
+  const state = useVoice.getState();
+  const fields = {
+    step,
+    user: currentUserId() ?? undefined,
+    channel: state.channelId ?? state.watchChannelId ?? undefined,
+    server: state.serverId ?? state.watchServerId ?? undefined,
+    ...extra,
+  };
+  if (level === "warn") console.warn("[gelabber:voice]", fields);
+  else console.info("[gelabber:voice]", fields);
+}
 
 function currentUserId(): string | null {
   return deps?.userId && deps.userId !== currentUserId
@@ -587,9 +604,8 @@ function stopTracks(stream: MediaStream | null): void {
 }
 
 function stopPeer(): void {
-  if (recoveryTimer) clearTimeout(recoveryTimer);
-  recoveryTimer = null;
   negotiated = false;
+  streamReported = false;
   generation += 1;
   micEpoch += 1;
   cameraEpoch += 1;
@@ -1234,35 +1250,29 @@ function signalingState(): string {
   );
 }
 
-/** One bounded retry per explicit join, never a silent infinite reconnect loop. */
+const STREAM_TOAST =
+  "Der Stream konnte nicht verbunden werden. Der Sprachkanal bleibt aktiv.";
+
+/**
+ * A failed stream renegotiation must not tear down a working voice peer.
+ * Before the first answer, there is no call to keep, so the seat rolls back.
+ */
 function recoverNegotiation(error: unknown, mine: number): void {
   if (mine !== generation) return;
-  const state = useVoice.getState();
-  if (!negotiated || recoveryUsed || !state.serverId || !state.channelId) {
+  const detail = error instanceof Error ? error.message : undefined;
+  logVoice("warn", "negotiation", { detail });
+  if (!negotiated) {
     rollbackSeat(error);
     return;
   }
-  recoveryUsed = true;
-  // Display capture requires a fresh user gesture. Do not reopen its picker
-  // in the background during recovery. Clear the matching presence flags.
-  if (state.sharing) stopLocalVideo("s");
-  if (state.live) stopLocalVideo("l");
-  deps?.onError?.(
-    new Error(
-      "Medienverbindung wird wiederhergestellt. Bildschirmfreigaben bitte erneut starten.",
-    ),
-  );
-  void startPeer(state.serverId, state.channelId);
-  const retryGeneration = generation;
-  recoveryTimer = setTimeout(() => {
-    if (generation === retryGeneration) {
-      rollbackSeat(
-        new Error(
-          "Medienverbindung konnte nicht wiederhergestellt werden. Bitte erneut beitreten.",
-        ),
-      );
-    }
-  }, RECOVERY_TIMEOUT_MS);
+  reportStreamOnce(detail);
+}
+
+function reportStreamOnce(detail?: string): void {
+  logVoice("warn", "stream", { detail });
+  if (streamReported) return;
+  streamReported = true;
+  deps?.onError?.(new Error(STREAM_TOAST));
 }
 
 async function applyRemoteDescription(
@@ -1297,7 +1307,12 @@ async function applyRemoteDescription(
     try {
       await pc.addIceCandidate(candidate);
     } catch (error) {
-      if (current()) deps?.onError?.(error);
+      if (current()) {
+        logVoice("warn", "ice", {
+          detail: error instanceof Error ? error.message : "addIceCandidate",
+          mid: candidate.sdpMid ?? undefined,
+        });
+      }
     }
     if (!current()) return;
   }
@@ -1306,13 +1321,14 @@ async function applyRemoteDescription(
     if (!current()) return;
     await pc.setLocalDescription(answer);
     if (!current()) return;
-    if (answer.sdp) socket?.send({ op: "a", sdp: answer.sdp });
+    if (answer.sdp) {
+      logVoice("info", "send-answer", { bytes: answer.sdp.length });
+      socket?.send({ op: "a", sdp: answer.sdp });
+    }
   }
   await applyVideoLimits(pc);
   if (!current()) return;
   negotiated = true;
-  if (recoveryTimer) clearTimeout(recoveryTimer);
-  recoveryTimer = null;
   if (needOffer) void offerIfStable(mine);
 }
 
@@ -1323,7 +1339,12 @@ async function applyRemoteIce(candidate: IceCand, mine: number): Promise<void> {
     try {
       await pc.addIceCandidate(candidate);
     } catch (error) {
-      if (mine === generation && peer === pc) deps?.onError?.(error);
+      if (mine === generation && peer === pc) {
+        logVoice("warn", "ice", {
+          detail: error instanceof Error ? error.message : "addIceCandidate",
+          mid: candidate.sdpMid ?? undefined,
+        });
+      }
     }
     return;
   }
@@ -1333,28 +1354,26 @@ async function applyRemoteIce(candidate: IceCand, mine: number): Promise<void> {
 function onMediaFrame(frame: MediaServerFrame): void {
   const mine = generation;
   if (frame.op === "err") {
-    if (frame.e === "ice_failed") {
-      deps?.onError?.(
-        new Error(
-          "Ein Verbindungskandidat wurde abgelehnt; bestehende Verbindung bleibt aktiv.",
-        ),
+    logVoice("warn", "media-error", { op: frame.op, code: frame.e });
+    if (frame.e === "ice_failed") return;
+    if (frame.e === "unauthorized") {
+      rollbackSeat(
+        new ApiError("unauthenticated", 0, errorMessage("unauthenticated")),
       );
       return;
     }
-    if (frame.e === "negotiation_failed") {
-      recoverNegotiation(
-        new Error("Medien-Neuverhandlung fehlgeschlagen"),
-        mine,
-      );
+    if (!negotiated) {
+      rollbackSeat(new ApiError("bad_request", 0, errorMessage("bad_request")));
       return;
     }
-    const code: ApiErrorCode =
-      frame.e === "unauthorized" ? "unauthenticated" : "bad_request";
-    rollbackSeat(new ApiError(code, 0, errorMessage(code)));
+    reportStreamOnce(frame.e);
     return;
   }
   if ((frame.op === "a" || frame.op === "o") && frame.sdp) {
     const type = frame.op === "a" ? "answer" : "offer";
+    logVoice("info", type === "offer" ? "recv-offer" : "recv-answer", {
+      bytes: frame.sdp.length,
+    });
     void enqueueSdp(() => applyRemoteDescription(type, frame.sdp, mine)).catch(
       (error) => recoverNegotiation(error, mine),
     );
@@ -1380,7 +1399,7 @@ export function joinVoice(input: {
   ensureBound();
   const userId = currentUserId();
   if (!userId) return;
-  recoveryUsed = false;
+  streamReported = false;
   const prev = useVoice.getState();
   if (
     prev.status === "joined" &&
@@ -1622,7 +1641,8 @@ export function stopWatching(): void {
 }
 
 export function resetVoiceForTests(): void {
-  recoveryUsed = false;
+  streamReported = false;
+  watchReported = false;
   awaitingJoin = null;
   awaitingLive = null;
   pendingIce = [];
@@ -1783,6 +1803,7 @@ async function publishLocal(
   if (!peer) return;
   const tracks = stream.getVideoTracks();
   if (tracks.length === 0) return;
+  logVoice("info", "publish", { track: kind });
   media?.send({ op: "p", k: kind });
   for (const track of tracks) {
     peer.addTrack?.(track, stream);
@@ -1817,7 +1838,11 @@ function attachIncoming(track: MediaStreamTrack, stream?: MediaStream): void {
     return;
   }
   const parsed = parseIncomingVideo(track, stream);
-  if (!parsed) return;
+  if (!parsed) {
+    logVoice("warn", "track", { track: track.kind, detail: "untagged" });
+    return;
+  }
+  logVoice("info", "track", { track: parsed.k, peer: parsed.userId });
   const attached = stream ?? new MediaStream([track]);
   const state = useVoice.getState();
   const current = state.remote[parsed.userId] ?? {};
@@ -1862,6 +1887,7 @@ async function offerIfStable(
       }
       await pc.setLocalDescription(offer);
       if (generation !== mine || !offer.sdp) return;
+      logVoice("info", "send-offer", { bytes: offer.sdp.length });
       socket?.send({ op: "o", sdp: offer.sdp });
     } catch (error) {
       if (generation === mine) recoverNegotiation(error, mine);
@@ -2006,6 +2032,7 @@ async function startPeer(serverId: string, channelId: string): Promise<void> {
 }
 
 function stopWatchPeer(): void {
+  watchReported = false;
   watchGeneration += 1;
   watchPendingIce = [];
   watchSdpChain = Promise.resolve();
@@ -2107,7 +2134,12 @@ async function applyWatchRemote(
     try {
       await pc.addIceCandidate(candidate);
     } catch (error) {
-      if (current()) deps?.onError?.(error);
+      if (current()) {
+        logVoice("warn", "watch-ice", {
+          detail: error instanceof Error ? error.message : "addIceCandidate",
+          mid: candidate.sdpMid ?? undefined,
+        });
+      }
     }
     if (!current()) return;
   }
@@ -2117,6 +2149,7 @@ async function applyWatchRemote(
     await pc.setLocalDescription(answer);
     if (!current()) return;
     if (answer.sdp) {
+      logVoice("info", "watch-answer", { bytes: answer.sdp.length });
       socket?.send({ op: "a", sdp: answer.sdp });
     }
   }
@@ -2133,16 +2166,18 @@ function onWatchFrame(frame: MediaServerFrame): void {
     deps?.onError?.(error);
   };
   if (frame.op === "err") {
-    if (frame.e === "ice_failed") {
-      deps?.onError?.(
-        new Error("Ein Stream-Verbindungskandidat wurde abgelehnt."),
-      );
-      return;
-    }
+    logVoice("warn", "watch-error", { op: frame.op, code: frame.e });
+    if (frame.e === "ice_failed") return;
+    if (watchReported) return;
+    watchReported = true;
     stopWatching();
-    const code: ApiErrorCode =
-      frame.e === "unauthorized" ? "unauthenticated" : "bad_request";
-    deps?.onError?.(new ApiError(code, 0, errorMessage(code)));
+    deps?.onError?.(
+      new Error(
+        frame.e === "unauthorized"
+          ? errorMessage("unauthenticated")
+          : "Der Stream konnte nicht verbunden werden.",
+      ),
+    );
     return;
   }
   if (frame.op === "a" && frame.sdp) {
@@ -2161,7 +2196,12 @@ function onWatchFrame(frame: MediaServerFrame): void {
     const candidate = { candidate: frame.ice, sdpMid: frame.mid ?? null };
     if (watchPeer?.remoteDescription) {
       void watchPeer.addIceCandidate(candidate).catch((error) => {
-        if (watchGeneration === mine) deps?.onError?.(error);
+        if (watchGeneration === mine) {
+          logVoice("warn", "watch-ice", {
+            detail: error instanceof Error ? error.message : "addIceCandidate",
+            mid: candidate.sdpMid ?? undefined,
+          });
+        }
       });
     } else {
       watchPendingIce.push(candidate);
