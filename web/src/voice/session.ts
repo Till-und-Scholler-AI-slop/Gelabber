@@ -34,6 +34,9 @@ import {
   type MediaSettings,
   audioBitrate,
   cameraConstraints,
+  displayConstraints,
+  VIDEO_SEND_BUDGET,
+  VIDEO_MAX_FPS,
   micConstraints,
   onMediaSettingsChange,
   useMediaSettings,
@@ -93,7 +96,10 @@ const idle: VoiceState = {
 
 export const useVoice = create<VoiceState>(() => ({ ...idle }));
 
-export type RtpEncodingParameters = { maxBitrate?: number };
+export type RtpEncodingParameters = {
+  maxBitrate?: number;
+  maxFramerate?: number;
+};
 
 export type RtpSenderParameters = {
   encodings: RtpEncodingParameters[];
@@ -184,6 +190,10 @@ let watchAudio: HTMLAudioElement | null = null;
 let remoteMix: MediaStream | null = null;
 let bound = false;
 let generation = 0;
+let negotiated = false;
+let recoveryUsed = false;
+let recoveryTimer: ReturnType<typeof setTimeout> | null = null;
+const RECOVERY_TIMEOUT_MS = 15_000;
 let cameraEpoch = 0;
 let screenEpoch = 0;
 let liveEpoch = 0;
@@ -553,6 +563,9 @@ function stopTracks(stream: MediaStream | null): void {
 }
 
 function stopPeer(): void {
+  if (recoveryTimer) clearTimeout(recoveryTimer);
+  recoveryTimer = null;
+  negotiated = false;
   generation += 1;
   cameraEpoch += 1;
   screenEpoch += 1;
@@ -684,6 +697,26 @@ async function applySendBitrate(): Promise<void> {
       await sender.setParameters?.(params);
     } catch {
       // Chromium rejects setParameters before the first description.
+    }
+  }
+}
+
+async function applyVideoLimits(pc: PeerConnection): Promise<void> {
+  const senders = (pc.getSenders?.() ?? []).filter(
+    (s) => s.track?.kind === "video",
+  );
+  const perSender = Math.floor(VIDEO_SEND_BUDGET / Math.max(1, senders.length));
+  for (const sender of senders) {
+    const params = sender.getParameters?.();
+    if (!params?.encodings.length) continue;
+    for (const encoding of params.encodings) {
+      encoding.maxBitrate = Math.floor(perSender / params.encodings.length);
+      encoding.maxFramerate = VIDEO_MAX_FPS;
+    }
+    try {
+      await sender.setParameters?.(params);
+    } catch {
+      // Some browsers require negotiation first; retry after SDP completes.
     }
   }
 }
@@ -931,73 +964,137 @@ function signalingState(): string {
   );
 }
 
+/** One bounded retry per explicit join, never a silent infinite reconnect loop. */
+function recoverNegotiation(error: unknown, mine: number): void {
+  if (mine !== generation) return;
+  const state = useVoice.getState();
+  if (!negotiated || recoveryUsed || !state.serverId || !state.channelId) {
+    rollbackSeat(error);
+    return;
+  }
+  recoveryUsed = true;
+  // Display capture requires a fresh user gesture. Do not reopen its picker
+  // in the background during recovery. Clear the matching presence flags.
+  if (state.sharing) stopLocalVideo("s");
+  if (state.live) stopLocalVideo("l");
+  deps?.onError?.(
+    new Error(
+      "Medienverbindung wird wiederhergestellt. Bildschirmfreigaben bitte erneut starten.",
+    ),
+  );
+  void startPeer(state.serverId, state.channelId);
+  const retryGeneration = generation;
+  recoveryTimer = setTimeout(() => {
+    if (generation === retryGeneration) {
+      rollbackSeat(
+        new Error(
+          "Medienverbindung konnte nicht wiederhergestellt werden. Bitte erneut beitreten.",
+        ),
+      );
+    }
+  }, RECOVERY_TIMEOUT_MS);
+}
+
 async function applyRemoteDescription(
   type: "offer" | "answer",
   sdp: string,
+  mine: number,
 ): Promise<void> {
-  if (!peer) return;
+  const pc = peer;
+  const socket = media;
+  const current = () => generation === mine && peer === pc;
+  if (!pc || !current()) return;
+  // A duplicate/obsolete answer cannot answer an already settled offer.
+  if (type === "answer" && signalingState() !== "have-local-offer") return;
   if (type === "offer") {
     const collision = makingOffer || signalingState() !== "stable";
     if (collision) {
-      // Polite peer: drop our in-flight offer so a late-joiner can take
-      // the SFU's video renegotiation instead of throwing InvalidStateError.
-      // Rollback undoes the local description, not addTrack — a follow-up
-      // offer is required so a new m-line (camera) actually gets negotiated.
       needOffer = true;
       try {
-        await peer.setLocalDescription({ type: "rollback" });
+        await pc.setLocalDescription({ type: "rollback" });
       } catch {
-        // Chromium may implicit-rollback inside setRemoteDescription.
+        // Browsers may perform implicit rollback in setRemoteDescription.
       }
+      if (!current()) return;
     }
     sfuOffered = true;
   }
-  await peer.setRemoteDescription({ type, sdp: tuneAudioSdp(sdp) });
+  await pc.setRemoteDescription({ type, sdp: tuneAudioSdp(sdp) });
+  if (!current()) return;
   const queued = pendingIce;
   pendingIce = [];
   for (const candidate of queued) {
-    await peer.addIceCandidate(candidate);
+    try {
+      await pc.addIceCandidate(candidate);
+    } catch (error) {
+      if (current()) deps?.onError?.(error);
+    }
+    if (!current()) return;
   }
   if (type === "offer") {
-    const answer = withTunedSdp(await peer.createAnswer());
-    await peer.setLocalDescription(answer);
-    if (answer.sdp) {
-      media?.send({ op: "a", sdp: answer.sdp });
-    }
+    const answer = withTunedSdp(await pc.createAnswer());
+    if (!current()) return;
+    await pc.setLocalDescription(answer);
+    if (!current()) return;
+    if (answer.sdp) socket?.send({ op: "a", sdp: answer.sdp });
   }
-  if (needOffer) {
-    void offerIfStable(generation);
-  }
+  await applyVideoLimits(pc);
+  if (!current()) return;
+  negotiated = true;
+  if (recoveryTimer) clearTimeout(recoveryTimer);
+  recoveryTimer = null;
+  if (needOffer) void offerIfStable(mine);
 }
 
-async function applyRemoteIce(candidate: IceCand): Promise<void> {
-  if (peer?.remoteDescription) {
-    await peer.addIceCandidate(candidate);
+async function applyRemoteIce(candidate: IceCand, mine: number): Promise<void> {
+  if (mine !== generation) return;
+  const pc = peer;
+  if (pc?.remoteDescription) {
+    try {
+      await pc.addIceCandidate(candidate);
+    } catch (error) {
+      if (mine === generation && peer === pc) deps?.onError?.(error);
+    }
     return;
   }
   pendingIce.push(candidate);
 }
 
 function onMediaFrame(frame: MediaServerFrame): void {
+  const mine = generation;
   if (frame.op === "err") {
+    if (frame.e === "ice_failed") {
+      deps?.onError?.(
+        new Error(
+          "Ein Verbindungskandidat wurde abgelehnt; bestehende Verbindung bleibt aktiv.",
+        ),
+      );
+      return;
+    }
+    if (frame.e === "negotiation_failed") {
+      recoverNegotiation(
+        new Error("Medien-Neuverhandlung fehlgeschlagen"),
+        mine,
+      );
+      return;
+    }
     const code: ApiErrorCode =
       frame.e === "unauthorized" ? "unauthenticated" : "bad_request";
     rollbackSeat(new ApiError(code, 0, errorMessage(code)));
     return;
   }
-  if (frame.op === "a" && frame.sdp) {
-    void enqueueSdp(() => applyRemoteDescription("answer", frame.sdp));
-    return;
-  }
-  if (frame.op === "o" && frame.sdp) {
-    void enqueueSdp(() => applyRemoteDescription("offer", frame.sdp));
+  if ((frame.op === "a" || frame.op === "o") && frame.sdp) {
+    const type = frame.op === "a" ? "answer" : "offer";
+    void enqueueSdp(() => applyRemoteDescription(type, frame.sdp, mine)).catch(
+      (error) => recoverNegotiation(error, mine),
+    );
     return;
   }
   if (frame.op === "i" && frame.ice) {
-    void applyRemoteIce({
-      candidate: frame.ice,
-      sdpMid: frame.mid ?? null,
-    });
+    void applyRemoteIce(
+      { candidate: frame.ice, sdpMid: frame.mid ?? null },
+      mine,
+    );
   }
 }
 
@@ -1013,6 +1110,7 @@ export function joinVoice(input: {
   ensureBound();
   const userId = currentUserId();
   if (!userId) return;
+  recoveryUsed = false;
   const prev = useVoice.getState();
   if (
     prev.status === "joined" &&
@@ -1240,6 +1338,7 @@ export function stopWatching(): void {
 }
 
 export function resetVoiceForTests(): void {
+  recoveryUsed = false;
   awaitingJoin = null;
   awaitingLive = null;
   pendingIce = [];
@@ -1293,7 +1392,7 @@ async function startLocalVideo(kind: "v" | "s" | "l"): Promise<void> {
   const constraints: MediaStreamConstraints =
     kind === "v"
       ? { audio: false, video: cameraConstraints() }
-      : { audio: false, video: true };
+      : { audio: false, video: displayConstraints() };
   let stream: MediaStream;
   try {
     stream = await getMedia(constraints);
@@ -1384,6 +1483,7 @@ function stopLocalVideo(kind: "v" | "s" | "l"): void {
     if (sender) peer?.removeTrack?.(sender);
     track.stop();
   }
+  if (peer) void applyVideoLimits(peer);
   needOffer = true;
   void offerIfStable(generation);
 }
@@ -1399,6 +1499,8 @@ async function publishLocal(
   for (const track of tracks) {
     peer.addTrack?.(track, stream);
   }
+  const pc = peer;
+  void applyVideoLimits(pc);
   const self = currentUserId();
   if (self) setPub(self, kind, true);
   sendPub(kind, true);
@@ -1462,20 +1564,21 @@ async function offerIfStable(
       if (opts?.initial && sfuOffered) return;
       preferOpus(peer);
       preferVp8(peer);
-      const offer = withTunedSdp(await peer.createOffer());
-      if (generation !== mine || signalingState() !== "stable") {
+      const pc = peer;
+      const socket = media;
+      const offer = withTunedSdp(await pc.createOffer());
+      if (generation !== mine) return;
+      if (signalingState() !== "stable") {
         if (!opts?.initial && !opts?.fromEvent) needOffer = true;
         return;
       }
-      await peer.setLocalDescription(offer);
+      await pc.setLocalDescription(offer);
       if (generation !== mine || !offer.sdp) return;
-      media?.send({ op: "o", sdp: offer.sdp });
+      socket?.send({ op: "o", sdp: offer.sdp });
     } catch (error) {
-      if (generation === mine) {
-        deps?.onError?.(error);
-      }
+      if (generation === mine) recoverNegotiation(error, mine);
     } finally {
-      makingOffer = false;
+      if (generation === mine) makingOffer = false;
     }
   });
 }
@@ -1502,7 +1605,9 @@ async function startPeer(serverId: string, channelId: string): Promise<void> {
     iceServers = ticket.ice_servers ?? [];
     const socket = openMedia(mediaWsUrl(ticket.media_path));
     media = socket;
-    unbindMedia = socket.onFrame(onMediaFrame);
+    unbindMedia = socket.onFrame((frame) => {
+      if (generation === mine) onMediaFrame(frame);
+    });
     socket.send({ op: "j", tk: ticket.ticket });
   } catch (error) {
     if (generation !== mine) return;
@@ -1664,31 +1769,45 @@ function attachWatchIncoming(
 async function applyWatchRemote(
   type: "offer" | "answer",
   sdp: string,
+  mine: number,
 ): Promise<void> {
-  if (!watchPeer) return;
+  const pc = watchPeer;
+  const socket = watchMedia;
+  const current = () => watchGeneration === mine && watchPeer === pc;
+  if (!pc || !current()) return;
+  if (type === "answer" && watchSignalingState() !== "have-local-offer") return;
   if (type === "offer") {
     const collision = watchMakingOffer || watchSignalingState() !== "stable";
     if (collision) {
       watchNeedOffer = true;
       try {
-        await watchPeer.setLocalDescription({ type: "rollback" });
+        await pc.setLocalDescription({ type: "rollback" });
       } catch {
         // implicit rollback
       }
     }
+    if (!current()) return;
     watchSfuOffered = true;
   }
-  await watchPeer.setRemoteDescription({ type, sdp: tuneAudioSdp(sdp) });
+  await pc.setRemoteDescription({ type, sdp: tuneAudioSdp(sdp) });
+  if (!current()) return;
   const queued = watchPendingIce;
   watchPendingIce = [];
   for (const candidate of queued) {
-    await watchPeer.addIceCandidate(candidate);
+    try {
+      await pc.addIceCandidate(candidate);
+    } catch (error) {
+      if (current()) deps?.onError?.(error);
+    }
+    if (!current()) return;
   }
   if (type === "offer") {
-    const answer = withTunedSdp(await watchPeer.createAnswer());
-    await watchPeer.setLocalDescription(answer);
+    const answer = withTunedSdp(await pc.createAnswer());
+    if (!current()) return;
+    await pc.setLocalDescription(answer);
+    if (!current()) return;
     if (answer.sdp) {
-      watchMedia?.send({ op: "a", sdp: answer.sdp });
+      socket?.send({ op: "a", sdp: answer.sdp });
     }
   }
   if (watchNeedOffer) {
@@ -1697,7 +1816,19 @@ async function applyWatchRemote(
 }
 
 function onWatchFrame(frame: MediaServerFrame): void {
+  const mine = watchGeneration;
+  const fail = (error: unknown) => {
+    if (watchGeneration !== mine) return;
+    stopWatching();
+    deps?.onError?.(error);
+  };
   if (frame.op === "err") {
+    if (frame.e === "ice_failed") {
+      deps?.onError?.(
+        new Error("Ein Stream-Verbindungskandidat wurde abgelehnt."),
+      );
+      return;
+    }
     stopWatching();
     const code: ApiErrorCode =
       frame.e === "unauthorized" ? "unauthenticated" : "bad_request";
@@ -1705,17 +1836,23 @@ function onWatchFrame(frame: MediaServerFrame): void {
     return;
   }
   if (frame.op === "a" && frame.sdp) {
-    void enqueueWatchSdp(() => applyWatchRemote("answer", frame.sdp));
+    void enqueueWatchSdp(() =>
+      applyWatchRemote("answer", frame.sdp, mine),
+    ).catch(fail);
     return;
   }
   if (frame.op === "o" && frame.sdp) {
-    void enqueueWatchSdp(() => applyWatchRemote("offer", frame.sdp));
+    void enqueueWatchSdp(() =>
+      applyWatchRemote("offer", frame.sdp, mine),
+    ).catch(fail);
     return;
   }
   if (frame.op === "i" && frame.ice) {
     const candidate = { candidate: frame.ice, sdpMid: frame.mid ?? null };
     if (watchPeer?.remoteDescription) {
-      void watchPeer.addIceCandidate(candidate);
+      void watchPeer.addIceCandidate(candidate).catch((error) => {
+        if (watchGeneration === mine) deps?.onError?.(error);
+      });
     } else {
       watchPendingIce.push(candidate);
     }
@@ -1743,20 +1880,23 @@ async function watchOfferIfStable(
       if (opts?.initial && watchSfuOffered) return;
       preferOpus(watchPeer);
       preferVp8(watchPeer);
-      const offer = withTunedSdp(await watchPeer.createOffer());
-      if (watchGeneration !== mine || watchSignalingState() !== "stable") {
+      const pc = watchPeer;
+      const socket = watchMedia;
+      const offer = withTunedSdp(await pc.createOffer());
+      if (watchGeneration !== mine) return;
+      if (watchSignalingState() !== "stable") {
         if (!opts?.initial && !opts?.fromEvent) watchNeedOffer = true;
         return;
       }
-      await watchPeer.setLocalDescription(offer);
+      await pc.setLocalDescription(offer);
       if (watchGeneration !== mine || !offer.sdp) return;
-      watchMedia?.send({ op: "o", sdp: offer.sdp });
+      socket?.send({ op: "o", sdp: offer.sdp });
     } catch (error) {
       if (watchGeneration === mine) {
         deps?.onError?.(error);
       }
     } finally {
-      watchMakingOffer = false;
+      if (watchGeneration === mine) watchMakingOffer = false;
     }
   });
 }
@@ -1776,7 +1916,9 @@ async function startWatchPeer(channelId: string): Promise<void> {
     iceServers = ticket.ice_servers ?? [];
     const socket = openMedia(mediaWsUrl(ticket.media_path));
     watchMedia = socket;
-    unbindWatch = socket.onFrame(onWatchFrame);
+    unbindWatch = socket.onFrame((frame) => {
+      if (watchGeneration === mine) onWatchFrame(frame);
+    });
     socket.send({ op: "j", tk: ticket.ticket });
   } catch (error) {
     if (watchGeneration !== mine) return;

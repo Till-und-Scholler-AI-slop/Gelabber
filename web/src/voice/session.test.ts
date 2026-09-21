@@ -939,3 +939,172 @@ describe("voice session", () => {
     }
   });
 });
+
+describe("stream negotiation stability", () => {
+  afterEach(() => {
+    resetVoiceForTests();
+    resetVoiceRoster();
+    resetMediaSettingsForTests();
+    vi.useRealTimers();
+  });
+  async function connected() {
+    const env = install();
+    joinVoice({ serverId: "srv", channelId: "voice", channelName: "Lounge" });
+    await vi.waitFor(() =>
+      expect(env.peers[0]?.signalingState).toBe("have-local-offer"),
+    );
+    env.emitMedia({ op: "a", sdp: "v=0\r\n" });
+    await vi.waitFor(() => expect(env.peers[0]?.signalingState).toBe("stable"));
+    return env;
+  }
+  it("completes recovery without sending a chat leave and keeps deafen", async () => {
+    const env = await connected();
+    toggleDeafen();
+    env.emitMedia({ op: "err", e: "negotiation_failed" });
+    await vi.waitFor(() =>
+      expect(env.peers[1]?.signalingState).toBe("have-local-offer"),
+    );
+    env.emitMedia({ op: "a", sdp: "v=0\r\n" });
+    await vi.waitFor(() => expect(env.peers[1]?.signalingState).toBe("stable"));
+    expect(useVoice.getState().status).toBe("joined");
+    expect(useVoice.getState().deafened).toBe(true);
+    expect(env.peers[1]?.audio?.enabled).toBe(false);
+    expect(
+      env.sent.some((frame) => frame.op === "sig" && frame.t === "l"),
+    ).toBe(false);
+  });
+  it("ends a recovery that never receives an answer instead of hanging joined forever", async () => {
+    const env = await connected();
+    vi.useFakeTimers();
+    env.emitMedia({ op: "err", e: "negotiation_failed" });
+    await vi.advanceTimersByTimeAsync(15_001);
+    expect(useVoice.getState().status).toBe("idle");
+    expect(env.peers.at(-1)?.closed).toBe(true);
+    expect(env.errors.at(-1)).toBeInstanceOf(Error);
+  });
+  it("handles a rejected remote stream offer without an unhandled rejection", async () => {
+    const env = await connected();
+    env.peers[0]!.setRemoteDescription = async () => {
+      throw new Error("SDP rejected");
+    };
+    env.emitMedia({ op: "o", sdp: "v=0\r\n" });
+    await vi.waitFor(() => expect(env.peers[1]?.audio).toBeTruthy());
+    expect(useVoice.getState().status).toBe("joined");
+  });
+  it("stops screen capture during recovery without reopening its picker", async () => {
+    const env = await connected();
+    toggleShare();
+    await vi.waitFor(() =>
+      expect(useVoice.getState().localScreen).toBeTruthy(),
+    );
+    env.emitMedia({ op: "err", e: "negotiation_failed" });
+    await vi.waitFor(() => expect(env.peers[1]?.audio).toBeTruthy());
+    expect(useVoice.getState().sharing).toBe(false);
+    expect(useVoice.getState().localScreen).toBeNull();
+    expect(env.getDisplayMediaCalls()).toBe(1);
+  });
+  it("a watch negotiation failure stops only the watch, not the voice call", async () => {
+    const env = await connected();
+    watchLive({ serverId: "srv", channelId: "stage", channelName: "Stage" });
+    await vi.waitFor(() =>
+      expect(env.peers[1]?.signalingState).toBe("have-local-offer"),
+    );
+    env.emitMedia({ op: "err", e: "negotiation_failed" });
+    expect(useVoice.getState().watching).toBe(false);
+    expect(useVoice.getState().status).toBe("joined");
+    expect(env.peers[0]?.closed).toBe(false);
+    expect(env.peers[1]?.closed).toBe(true);
+  });
+  it("ignores duplicate answers once negotiation is settled", async () => {
+    const env = await connected();
+    const remote = vi.spyOn(env.peers[0]!, "setRemoteDescription");
+    env.emitMedia({ op: "a", sdp: "v=0\r\n" });
+    for (let i = 0; i < 6; i++) await Promise.resolve();
+    expect(remote).not.toHaveBeenCalled();
+    expect(useVoice.getState().status).toBe("joined");
+  });
+  it("shares the video budget between camera and screen without lowering audio bitrate", async () => {
+    const env = await connected();
+    toggleCamera();
+    await vi.waitFor(() =>
+      expect(
+        env.peers[0]?.senders.filter((s) => s.track?.kind === "video"),
+      ).toHaveLength(1),
+    );
+    toggleShare();
+    await vi.waitFor(() =>
+      expect(
+        env.peers[0]?.senders.filter((s) => s.track?.kind === "video"),
+      ).toHaveLength(2),
+    );
+    const video = env.peers[0]!.senders.filter(
+      (s) => s.track?.kind === "video",
+    );
+    await vi.waitFor(() =>
+      expect(
+        video.map((s) => s.getParameters!().encodings[0]?.maxBitrate),
+      ).toEqual([1_250_000, 1_250_000]),
+    );
+    expect(
+      video.map((s) => s.getParameters!().encodings[0]?.maxFramerate),
+    ).toEqual([30, 30]);
+    const audio = env.peers[0]!.senders.find((s) => s.track?.kind === "audio")!;
+    expect(audio.getParameters!().encodings[0]?.maxBitrate).toBe(64_000);
+    toggleShare();
+    await vi.waitFor(() =>
+      expect(video[0]!.getParameters!().encodings[0]?.maxBitrate).toBe(
+        2_500_000,
+      ),
+    );
+  });
+  it("recovers an established call once on negotiation failure, retaining mute", async () => {
+    const env = await connected();
+    toggleMute();
+    env.emitMedia({ op: "err", e: "negotiation_failed" });
+    expect(useVoice.getState().status).toBe("joined");
+    await vi.waitFor(() => expect(env.peers[1]?.audio).toBeTruthy());
+    expect(env.peers[0]?.closed).toBe(true);
+    expect(env.peers[1]?.audio?.enabled).toBe(false);
+    env.emitMedia({ op: "err", e: "negotiation_failed" });
+    expect(useVoice.getState().status).toBe("idle");
+    expect(env.peers).toHaveLength(2);
+  });
+  it("does not leave on an invalid ICE candidate but still leaves on unauthorized", async () => {
+    const env = await connected();
+    env.emitMedia({ op: "err", e: "ice_failed" });
+    expect(useVoice.getState().status).toBe("joined");
+    expect(env.peers[0]?.closed).toBe(false);
+    env.emitMedia({ op: "err", e: "unauthorized" });
+    expect(useVoice.getState().status).toBe("idle");
+  });
+  it("does not apply an old remote-offer continuation to a rejoined peer", async () => {
+    const env = await connected();
+    let release!: () => void;
+    let entered!: () => void;
+    const started = new Promise<void>((resolve) => {
+      entered = resolve;
+    });
+    const hold = new Promise<void>((resolve) => {
+      release = resolve;
+    });
+    const old = env.peers[0]!;
+    const original = old.setRemoteDescription.bind(old);
+    old.setRemoteDescription = async (desc) => {
+      entered();
+      await hold;
+      await original(desc);
+    };
+    env.emitMedia({ op: "o", sdp: "v=0\r\n" });
+    await started;
+    leaveVoice();
+    joinVoice({ serverId: "srv", channelId: "other", channelName: "Other" });
+    await vi.waitFor(() =>
+      expect(env.peers[1]?.signalingState).toBe("have-local-offer"),
+    );
+    const createAnswer = vi.spyOn(env.peers[1]!, "createAnswer");
+    release();
+    for (let i = 0; i < 12; i++) await Promise.resolve();
+    expect(createAnswer).not.toHaveBeenCalled();
+    expect(env.peers[1]?.signalingState).toBe("have-local-offer");
+  });
+});
