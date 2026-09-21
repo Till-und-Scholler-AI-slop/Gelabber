@@ -34,7 +34,7 @@ export function Modal({ open, onClose, title, children, wide }: ModalProps) {
         if (event.target === event.currentTarget) onClose();
       }}
       className={[
-        "m-auto w-[calc(100%-2rem)] rounded-2xl border border-neutral-200 bg-white p-0 text-neutral-900 shadow-xl backdrop:bg-neutral-900/40",
+        "m-auto w-[calc(100%-2rem)] rounded-2xl border border-neutral-200 dark:border-neutral-700 bg-white dark:bg-neutral-900 p-0 text-neutral-900 dark:text-neutral-100 shadow-xl backdrop:bg-neutral-900/40 dark:backdrop:bg-black/60",
         wide ? "max-w-lg" : "max-w-md",
       ].join(" ")}
     >
@@ -72,8 +72,8 @@ export function GhostButton({
       className={[
         "rounded-lg px-3 py-2 text-sm font-medium transition disabled:cursor-not-allowed disabled:opacity-60",
         tone === "danger"
-          ? "text-red-700 hover:bg-red-50"
-          : "text-neutral-700 hover:bg-neutral-100",
+          ? "text-red-700 dark:text-red-300 hover:bg-red-50 dark:hover:bg-red-950"
+          : "text-neutral-700 dark:text-neutral-300 hover:bg-neutral-100 dark:hover:bg-neutral-800",
       ].join(" ")}
     >
       {children}

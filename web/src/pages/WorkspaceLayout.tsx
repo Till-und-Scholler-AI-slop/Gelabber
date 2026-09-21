@@ -32,7 +32,7 @@ function Workspace() {
   const onDms = pathname === "/d" || pathname.startsWith("/d/");
 
   return (
-    <div className="flex h-[calc(100dvh-3.5rem)] overflow-hidden bg-neutral-50">
+    <div className="flex h-[calc(100dvh-3.5rem)] overflow-hidden bg-neutral-50 dark:bg-neutral-950">
       <ServerRail activeId={serverId} dmActive={onDms} />
       {serverId ? (
         <SelectedServer serverId={serverId} channelId={channelId} />
@@ -110,12 +110,15 @@ function SidebarSkeleton() {
   return (
     <aside
       aria-hidden
-      className="flex h-full w-64 shrink-0 flex-col border-r border-neutral-200 bg-white"
+      className="flex h-full w-64 shrink-0 flex-col border-r border-neutral-200 dark:border-neutral-700 bg-white dark:bg-neutral-900"
     >
-      <div className="h-12 border-b border-neutral-200" />
+      <div className="h-12 border-b border-neutral-200 dark:border-neutral-700" />
       <div className="flex flex-col gap-2 p-3">
         {[0, 1, 2, 3].map((i) => (
-          <div key={i} className="h-5 animate-pulse rounded bg-neutral-100" />
+          <div
+            key={i}
+            className="h-5 animate-pulse rounded bg-neutral-100 dark:bg-neutral-800"
+          />
         ))}
       </div>
     </aside>

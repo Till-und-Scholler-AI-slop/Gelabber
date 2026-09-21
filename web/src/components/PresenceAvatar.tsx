@@ -10,7 +10,7 @@ const LABEL: Record<PresenceStatus, string> = {
 const DOT: Record<PresenceStatus, string> = {
   o: "bg-emerald-500",
   i: "bg-amber-400",
-  x: "bg-neutral-400",
+  x: "bg-neutral-400 dark:bg-neutral-600",
 };
 
 export function PresenceAvatar({

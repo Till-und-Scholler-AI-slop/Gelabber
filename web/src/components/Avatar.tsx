@@ -18,7 +18,7 @@ export function Avatar({ name, url, size = "sm" }: AvatarProps) {
 
   return (
     <span
-      className={`${box} inline-flex shrink-0 items-center justify-center overflow-hidden rounded-full bg-neutral-200 font-semibold text-neutral-700 select-none`}
+      className={`${box} inline-flex shrink-0 items-center justify-center overflow-hidden rounded-full bg-neutral-200 dark:bg-neutral-700 font-semibold text-neutral-700 dark:text-neutral-300 select-none`}
       aria-hidden={showImage ? undefined : true}
     >
       {showImage ? (

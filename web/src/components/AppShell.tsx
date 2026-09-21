@@ -35,8 +35,8 @@ export function AppShell() {
   };
 
   return (
-    <div className="min-h-dvh bg-neutral-50 text-neutral-900">
-      <header className="h-14 border-b border-neutral-200 bg-white">
+    <div className="min-h-dvh bg-neutral-50 dark:bg-neutral-950 text-neutral-900 dark:text-neutral-100">
+      <header className="h-14 border-b border-neutral-200 dark:border-neutral-700 bg-white dark:bg-neutral-900">
         <div className="flex h-full items-center justify-between px-4">
           <Link to="/" className="text-lg font-semibold tracking-tight">
             Gelabber
@@ -45,16 +45,21 @@ export function AppShell() {
             <nav className="flex items-center gap-3 text-sm">
               <Link
                 to="/settings"
-                className="inline-flex items-center gap-1.5 rounded-lg px-3 py-1.5 text-neutral-600 hover:bg-neutral-100 hover:text-neutral-900"
-                activeProps={{ className: "bg-neutral-100 text-neutral-900" }}
+                className="inline-flex items-center gap-1.5 rounded-lg px-3 py-1.5 text-neutral-600 dark:text-neutral-400 hover:bg-neutral-100 dark:hover:bg-neutral-800 hover:text-neutral-900 dark:hover:text-neutral-100"
+                activeProps={{
+                  className:
+                    "bg-neutral-100 dark:bg-neutral-800 text-neutral-900 dark:text-neutral-100",
+                }}
               >
                 <GearIcon size={16} />
                 Einstellungen
               </Link>
               <Link
                 to="/profile"
-                className="flex items-center gap-2 rounded-full py-1 pr-3 pl-1 hover:bg-neutral-100"
-                activeProps={{ className: "bg-neutral-100" }}
+                className="flex items-center gap-2 rounded-full py-1 pr-3 pl-1 hover:bg-neutral-100 dark:hover:bg-neutral-800"
+                activeProps={{
+                  className: "bg-neutral-100 dark:bg-neutral-800",
+                }}
               >
                 <Avatar name={user.name} url={user.avatar_url} />
                 <span className="max-w-40 truncate font-medium">
@@ -64,7 +69,7 @@ export function AppShell() {
               <button
                 type="button"
                 onClick={onLogout}
-                className="rounded-lg px-3 py-1.5 text-neutral-600 hover:bg-neutral-100 hover:text-neutral-900"
+                className="rounded-lg px-3 py-1.5 text-neutral-600 dark:text-neutral-400 hover:bg-neutral-100 dark:hover:bg-neutral-800 hover:text-neutral-900 dark:hover:text-neutral-100"
               >
                 Abmelden
               </button>

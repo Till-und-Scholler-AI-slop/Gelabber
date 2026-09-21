@@ -58,9 +58,9 @@ export function ChannelSidebar({
   return (
     <aside
       aria-label="Kanäle"
-      className="flex h-full w-64 shrink-0 flex-col border-r border-neutral-200 bg-white"
+      className="flex h-full w-64 shrink-0 flex-col border-r border-neutral-200 dark:border-neutral-700 bg-white dark:bg-neutral-900"
     >
-      <header className="flex h-12 items-center justify-between gap-2 border-b border-neutral-200 px-3">
+      <header className="flex h-12 items-center justify-between gap-2 border-b border-neutral-200 dark:border-neutral-700 px-3">
         <h2
           className="truncate font-semibold tracking-tight"
           title={server.name}
@@ -76,8 +76,11 @@ export function ChannelSidebar({
             params={{ serverId: server.id }}
             title={manageServer ? "Servereinstellungen" : "Mitglieder"}
             aria-label={manageServer ? "Servereinstellungen" : "Mitglieder"}
-            className="rounded-md p-1.5 text-neutral-500 transition hover:bg-neutral-100 hover:text-neutral-900"
-            activeProps={{ className: "bg-neutral-100 text-neutral-900" }}
+            className="rounded-md p-1.5 text-neutral-500 dark:text-neutral-400 transition hover:bg-neutral-100 dark:hover:bg-neutral-800 hover:text-neutral-900 dark:hover:text-neutral-100"
+            activeProps={{
+              className:
+                "bg-neutral-100 dark:bg-neutral-800 text-neutral-900 dark:text-neutral-100",
+            }}
           >
             <GearIcon />
           </Link>
@@ -101,10 +104,12 @@ export function ChannelSidebar({
       />
 
       {voice.status === "joined" ? (
-        <div className="flex flex-col gap-1 border-t border-neutral-200 px-3 py-2 text-sm">
+        <div className="flex flex-col gap-1 border-t border-neutral-200 dark:border-neutral-700 px-3 py-2 text-sm">
           <div className="min-w-0 text-left">
-            <p className="text-xs font-medium text-emerald-700">Verbunden</p>
-            <p className="truncate text-neutral-700">
+            <p className="text-xs font-medium text-emerald-700 dark:text-emerald-300">
+              Verbunden
+            </p>
+            <p className="truncate text-neutral-700 dark:text-neutral-300">
               {voice.channelName ?? "Voice"}
             </p>
           </div>
@@ -113,7 +118,7 @@ export function ChannelSidebar({
       ) : null}
 
       {manageChannels ? (
-        <footer className="flex flex-col gap-1 border-t border-neutral-200 p-2 text-sm">
+        <footer className="flex flex-col gap-1 border-t border-neutral-200 dark:border-neutral-700 p-2 text-sm">
           <FooterButton
             onClick={() =>
               setChannelDialog({ mode: "create", categoryId: null })
@@ -183,7 +188,7 @@ function ChannelList({
 
   if (rows.length === 0) {
     return (
-      <p className="flex-1 px-3 py-4 text-sm text-neutral-500">
+      <p className="flex-1 px-3 py-4 text-sm text-neutral-500 dark:text-neutral-400">
         Noch keine Kanäle.
       </p>
     );
@@ -238,7 +243,9 @@ function ChannelList({
                   }}
                 />
               ) : (
-                <p className="px-2 text-xs text-neutral-400">Leer</p>
+                <p className="px-2 text-xs text-neutral-400 dark:text-neutral-500">
+                  Leer
+                </p>
               )}
             </div>
           );
@@ -269,7 +276,7 @@ function CategoryRow({
         pending ? "opacity-50" : "",
       ].join(" ")}
     >
-      <span className="truncate text-xs font-semibold tracking-wide text-neutral-500 uppercase">
+      <span className="truncate text-xs font-semibold tracking-wide text-neutral-500 dark:text-neutral-400 uppercase">
         {category.name}
       </span>
       {manage && !pending ? (
@@ -310,7 +317,10 @@ function ChannelRow({
   const Icon = channel.kind === "voice" ? SpeakerIcon : HashIcon;
   const body = (
     <>
-      <Icon size={16} className="shrink-0 text-neutral-400" />
+      <Icon
+        size={16}
+        className="shrink-0 text-neutral-400 dark:text-neutral-500"
+      />
       <span className="truncate">{channel.name}</span>
       {live ? (
         <span className="ml-auto shrink-0 rounded bg-red-600 px-1 py-px text-[10px] font-semibold tracking-wide text-white uppercase">
@@ -327,8 +337,8 @@ function ChannelRow({
   const rowClass = [
     "group flex h-[34px] items-center gap-1 rounded-md pr-1 text-sm",
     active
-      ? "bg-neutral-900 text-white"
-      : "text-neutral-700 hover:bg-neutral-100 hover:text-neutral-900",
+      ? "bg-neutral-900 dark:bg-neutral-700 text-white"
+      : "text-neutral-700 dark:text-neutral-300 hover:bg-neutral-100 dark:hover:bg-neutral-800 hover:text-neutral-900 dark:hover:text-neutral-100",
     pending ? "opacity-50" : "",
   ].join(" ");
 
@@ -400,8 +410,8 @@ function IconButton({
         "rounded-md transition",
         small ? "p-1" : "p-1.5",
         inverted
-          ? "text-neutral-300 hover:bg-white/15 hover:text-white"
-          : "text-neutral-500 hover:bg-neutral-200 hover:text-neutral-900",
+          ? "text-neutral-300 hover:bg-white/15 dark:hover:bg-white/10 hover:text-white"
+          : "text-neutral-500 dark:text-neutral-400 hover:bg-neutral-200 dark:hover:bg-neutral-700 hover:text-neutral-900 dark:hover:text-neutral-100",
       ].join(" ")}
     >
       {children}
@@ -420,7 +430,7 @@ function FooterButton({
     <button
       type="button"
       onClick={onClick}
-      className="flex items-center gap-1.5 rounded-md px-2 py-1.5 text-left text-neutral-600 transition hover:bg-neutral-100 hover:text-neutral-900"
+      className="flex items-center gap-1.5 rounded-md px-2 py-1.5 text-left text-neutral-600 dark:text-neutral-400 transition hover:bg-neutral-100 dark:hover:bg-neutral-800 hover:text-neutral-900 dark:hover:text-neutral-100"
     >
       {children}
     </button>

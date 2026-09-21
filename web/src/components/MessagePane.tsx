@@ -242,12 +242,12 @@ function MessageList({
       className="flex min-h-0 flex-1 flex-col overflow-y-auto"
     >
       {ready && items.length === 0 ? (
-        <div className="flex h-full items-center justify-center px-6 text-center text-sm text-neutral-500">
+        <div className="flex h-full items-center justify-center px-6 text-center text-sm text-neutral-500 dark:text-neutral-400">
           Noch keine Nachrichten. Schreib die erste.
         </div>
       ) : null}
       {hasOlder || loadingOlder ? (
-        <p className="px-4 py-2 text-center text-xs text-neutral-400">
+        <p className="px-4 py-2 text-center text-xs text-neutral-400 dark:text-neutral-500">
           {loadingOlder ? "Ältere Nachrichten…" : ""}
         </p>
       ) : null}
@@ -352,17 +352,17 @@ function MessageRow({
     return (
       <div
         className={[
-          "group flex items-start gap-3 px-4 py-0.5 hover:bg-neutral-100/80",
+          "group flex items-start gap-3 px-4 py-0.5 hover:bg-neutral-100/80 dark:hover:bg-neutral-800/80",
           pending ? "opacity-60" : "",
         ].join(" ")}
       >
         <span className="w-8 shrink-0" aria-hidden />
         <div className="min-w-0 flex-1">
           {message.content ? (
-            <p className="whitespace-pre-wrap break-words text-sm text-neutral-800">
+            <p className="whitespace-pre-wrap break-words text-sm text-neutral-800 dark:text-neutral-200">
               {message.content}
               {message.edited_at ? (
-                <span className="ml-1 text-xs text-neutral-400">
+                <span className="ml-1 text-xs text-neutral-400 dark:text-neutral-500">
                   (bearbeitet)
                 </span>
               ) : null}
@@ -378,19 +378,19 @@ function MessageRow({
   return (
     <div
       className={[
-        "group flex items-start gap-3 px-4 py-1.5 hover:bg-neutral-100/80",
+        "group flex items-start gap-3 px-4 py-1.5 hover:bg-neutral-100/80 dark:hover:bg-neutral-800/80",
         pending ? "opacity-60" : "",
       ].join(" ")}
     >
       <Avatar name={message.author.name} url={message.author.avatar_url} />
       <div className="min-w-0 flex-1">
         <div className="flex flex-wrap items-baseline gap-2">
-          <span className="text-sm font-semibold text-neutral-900">
+          <span className="text-sm font-semibold text-neutral-900 dark:text-neutral-100">
             {message.author.name}
           </span>
           <time
             dateTime={message.created_at}
-            className="text-xs text-neutral-400"
+            className="text-xs text-neutral-400 dark:text-neutral-500"
           >
             {when}
           </time>
@@ -426,11 +426,11 @@ function MessageRow({
                 }
               }}
               rows={2}
-              className="w-full resize-none rounded-md border border-neutral-300 bg-white px-2 py-1.5 text-sm outline-none focus:border-neutral-500 focus:ring-2 focus:ring-neutral-200"
+              className="w-full resize-none rounded-md border border-neutral-300 dark:border-neutral-600 bg-white dark:bg-neutral-900 px-2 py-1.5 text-sm outline-none focus:border-neutral-500 dark:focus:border-neutral-400 focus:ring-2 focus:ring-neutral-200 dark:focus:ring-neutral-700"
               autoFocus
             />
             {error ? (
-              <p className="text-xs text-red-600">
+              <p className="text-xs text-red-600 dark:text-red-400">
                 {fieldMessage("content", error)}
               </p>
             ) : null}
@@ -438,24 +438,24 @@ function MessageRow({
               <button
                 type="submit"
                 disabled={Boolean(error)}
-                className="rounded-md bg-neutral-900 px-2 py-1 font-medium text-white disabled:opacity-50"
+                className="rounded-md bg-neutral-900 dark:bg-neutral-700 px-2 py-1 font-medium text-white disabled:opacity-50"
               >
                 Speichern
               </button>
               <button
                 type="button"
                 onClick={cancelEdit}
-                className="rounded-md px-2 py-1 text-neutral-600 hover:bg-neutral-100"
+                className="rounded-md px-2 py-1 text-neutral-600 dark:text-neutral-400 hover:bg-neutral-100 dark:hover:bg-neutral-800"
               >
                 Abbrechen
               </button>
             </div>
           </form>
         ) : (
-          <p className="whitespace-pre-wrap break-words text-sm text-neutral-800">
+          <p className="whitespace-pre-wrap break-words text-sm text-neutral-800 dark:text-neutral-200">
             {message.content}
             {message.edited_at ? (
-              <span className="ml-1 text-xs text-neutral-400">
+              <span className="ml-1 text-xs text-neutral-400 dark:text-neutral-500">
                 (bearbeitet)
               </span>
             ) : null}
@@ -566,7 +566,7 @@ function Composer({
 
   if (!canSend) {
     return (
-      <p className="border-t border-neutral-200 px-4 py-3 text-sm text-neutral-500">
+      <p className="border-t border-neutral-200 dark:border-neutral-700 px-4 py-3 text-sm text-neutral-500 dark:text-neutral-400">
         Du kannst in diesem Kanal nicht schreiben.
       </p>
     );
@@ -575,14 +575,14 @@ function Composer({
   return (
     <form
       onSubmit={submit}
-      className="border-t border-neutral-200 bg-white px-4 py-3"
+      className="border-t border-neutral-200 dark:border-neutral-700 bg-white dark:bg-neutral-900 px-4 py-3"
     >
       <label className="sr-only" htmlFor={`compose-${channelId}`}>
         Nachricht in {mention}
         {channelName}
       </label>
       {file ? (
-        <div className="mb-2 flex items-center gap-2 rounded-lg border border-neutral-200 bg-neutral-50 px-2 py-1.5">
+        <div className="mb-2 flex items-center gap-2 rounded-lg border border-neutral-200 dark:border-neutral-700 bg-neutral-50 dark:bg-neutral-950 px-2 py-1.5">
           {preview ? (
             <img
               src={preview}
@@ -591,15 +591,17 @@ function Composer({
             />
           ) : null}
           <div className="min-w-0 flex-1">
-            <p className="truncate text-sm text-neutral-800">{file.name}</p>
-            <p className="text-xs text-neutral-400">
+            <p className="truncate text-sm text-neutral-800 dark:text-neutral-200">
+              {file.name}
+            </p>
+            <p className="text-xs text-neutral-400 dark:text-neutral-500">
               {(file.size / 1024).toFixed(0)} KB
             </p>
           </div>
           <button
             type="button"
             onClick={() => pickFile(null)}
-            className="rounded-md px-2 py-1 text-xs text-neutral-600 hover:bg-neutral-200"
+            className="rounded-md px-2 py-1 text-xs text-neutral-600 dark:text-neutral-400 hover:bg-neutral-200 dark:hover:bg-neutral-700"
           >
             Entfernen
           </button>
@@ -623,7 +625,7 @@ function Composer({
               title="Datei anhängen"
               aria-label="Datei anhängen"
               onClick={() => fileInput.current?.click()}
-              className="rounded-lg p-2 text-neutral-500 transition hover:bg-neutral-100 hover:text-neutral-900"
+              className="rounded-lg p-2 text-neutral-500 dark:text-neutral-400 transition hover:bg-neutral-100 dark:hover:bg-neutral-800 hover:text-neutral-900 dark:hover:text-neutral-100"
             >
               <PaperclipIcon size={18} />
             </button>
@@ -640,27 +642,35 @@ function Composer({
           onKeyDown={onKeyDown}
           rows={1}
           placeholder={`Nachricht an ${mention}${channelName}`}
-          className="max-h-40 min-h-10 flex-1 resize-none rounded-lg border border-neutral-300 bg-neutral-50 px-3 py-2 text-sm outline-none focus:border-neutral-500 focus:bg-white focus:ring-2 focus:ring-neutral-200"
+          className="max-h-40 min-h-10 flex-1 resize-none rounded-lg border border-neutral-300 dark:border-neutral-600 bg-neutral-50 dark:bg-neutral-950 px-3 py-2 text-sm outline-none focus:border-neutral-500 dark:focus:border-neutral-400 focus:bg-white dark:focus:bg-neutral-900 focus:ring-2 focus:ring-neutral-200 dark:focus:ring-neutral-700"
         />
         <button
           type="submit"
           disabled={disabled}
-          className="rounded-lg bg-neutral-900 px-3 py-2 text-sm font-medium text-white transition hover:bg-neutral-700 disabled:cursor-not-allowed disabled:opacity-50"
+          className="rounded-lg bg-neutral-900 dark:bg-neutral-700 px-3 py-2 text-sm font-medium text-white transition hover:bg-neutral-700 dark:hover:bg-neutral-600 disabled:cursor-not-allowed disabled:opacity-50"
         >
           Senden
         </button>
       </div>
-      <div className="mt-1 flex justify-between text-xs text-neutral-400">
+      <div className="mt-1 flex justify-between text-xs text-neutral-400 dark:text-neutral-500">
         <span>Enter sendet · Shift+Enter neue Zeile</span>
         {remaining < 200 ? (
-          <span className={remaining < 0 ? "text-red-600" : undefined}>
+          <span
+            className={
+              remaining < 0 ? "text-red-600 dark:text-red-400" : undefined
+            }
+          >
             {remaining}
           </span>
         ) : null}
         {error ? (
-          <span className="text-red-600">{fieldMessage("content", error)}</span>
+          <span className="text-red-600 dark:text-red-400">
+            {fieldMessage("content", error)}
+          </span>
         ) : null}
-        {fileError ? <span className="text-red-600">{fileError}</span> : null}
+        {fileError ? (
+          <span className="text-red-600 dark:text-red-400">{fileError}</span>
+        ) : null}
       </div>
     </form>
   );
@@ -685,7 +695,7 @@ function AttachmentList({ attachments }: { attachments: Attachment[] }) {
               <img
                 src={src}
                 alt={attachment.filename}
-                className="max-h-56 max-w-full rounded-lg border border-neutral-200 object-contain"
+                className="max-h-56 max-w-full rounded-lg border border-neutral-200 dark:border-neutral-700 object-contain"
               />
             </a>
           );
@@ -694,10 +704,10 @@ function AttachmentList({ attachments }: { attachments: Attachment[] }) {
           <a
             key={attachment.id}
             href={attachmentUrl(attachment.id)}
-            className="inline-flex max-w-full items-center gap-2 rounded-md border border-neutral-200 bg-neutral-50 px-2 py-1 text-sm text-neutral-800 hover:bg-neutral-100"
+            className="inline-flex max-w-full items-center gap-2 rounded-md border border-neutral-200 dark:border-neutral-700 bg-neutral-50 dark:bg-neutral-950 px-2 py-1 text-sm text-neutral-800 dark:text-neutral-200 hover:bg-neutral-100 dark:hover:bg-neutral-800"
           >
             <span className="truncate">{attachment.filename}</span>
-            <span className="shrink-0 text-xs text-neutral-400">
+            <span className="shrink-0 text-xs text-neutral-400 dark:text-neutral-500">
               {(attachment.size / 1024).toFixed(0)} KB
             </span>
           </a>
@@ -741,7 +751,7 @@ function IconButton({
       title={label}
       aria-label={label}
       onClick={onClick}
-      className="rounded-md p-1 text-neutral-500 transition hover:bg-neutral-200 hover:text-neutral-900"
+      className="rounded-md p-1 text-neutral-500 dark:text-neutral-400 transition hover:bg-neutral-200 dark:hover:bg-neutral-700 hover:text-neutral-900 dark:hover:text-neutral-100"
     >
       {children}
     </button>

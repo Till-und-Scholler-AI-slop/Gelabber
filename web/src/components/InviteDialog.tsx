@@ -79,9 +79,12 @@ function InviteForm({
   if (link) {
     return (
       <div className="flex flex-col gap-4">
-        <p className="text-sm text-neutral-600">
+        <p className="text-sm text-neutral-600 dark:text-neutral-400">
           Wer den Link öffnet und angemeldet ist, landet in{" "}
-          <span className="font-medium text-neutral-900">{server.name}</span>.
+          <span className="font-medium text-neutral-900 dark:text-neutral-100">
+            {server.name}
+          </span>
+          .
         </p>
         <div className="flex gap-2">
           <input
@@ -89,7 +92,7 @@ function InviteForm({
             value={link}
             onFocus={(event) => event.currentTarget.select()}
             aria-label="Einladungslink"
-            className="min-w-0 flex-1 rounded-lg border border-neutral-300 bg-neutral-50 px-3 py-2 font-mono text-sm"
+            className="min-w-0 flex-1 rounded-lg border border-neutral-300 dark:border-neutral-600 bg-neutral-50 dark:bg-neutral-950 px-3 py-2 font-mono text-sm"
           />
           <button
             type="button"
@@ -97,7 +100,7 @@ function InviteForm({
               const ok = await copyText(link);
               setCopied(ok);
             }}
-            className="rounded-lg bg-neutral-900 px-3 py-2 text-sm font-medium text-white transition hover:bg-neutral-700"
+            className="rounded-lg bg-neutral-900 dark:bg-neutral-700 px-3 py-2 text-sm font-medium text-white transition hover:bg-neutral-700 dark:hover:bg-neutral-600"
           >
             {copied ? "Kopiert" : "Kopieren"}
           </button>

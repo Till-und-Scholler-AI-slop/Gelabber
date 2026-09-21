@@ -32,7 +32,7 @@ export function TypingBar({
     <div
       data-testid="typing-bar"
       aria-live="polite"
-      className="flex shrink-0 items-center px-4 text-xs text-neutral-500"
+      className="flex shrink-0 items-center px-4 text-xs text-neutral-500 dark:text-neutral-400"
       style={{ height: TYPING_BAR_PX }}
     >
       <span className="truncate">{formatTyping(names)}</span>

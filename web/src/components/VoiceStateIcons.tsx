@@ -33,7 +33,7 @@ export function VoiceStateIcons({
 
   return (
     <span
-      className="flex w-8 shrink-0 items-center justify-end gap-0.5 text-neutral-500"
+      className="flex w-8 shrink-0 items-center justify-end gap-0.5 text-neutral-500 dark:text-neutral-400"
       title={title}
       aria-label={title}
     >
@@ -41,7 +41,10 @@ export function VoiceStateIcons({
         {micOff ? (
           <MicOffIcon size={14} />
         ) : inVoice ? (
-          <SpeakerIcon size={14} className="text-emerald-600" />
+          <SpeakerIcon
+            size={14}
+            className="text-emerald-600 dark:text-emerald-400"
+          />
         ) : null}
       </span>
       <span className={SLOT}>

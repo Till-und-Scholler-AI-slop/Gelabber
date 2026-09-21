@@ -32,11 +32,9 @@ export function InvitePage() {
     return (
       <section className="mx-auto max-w-sm">
         <h1 className="text-2xl font-semibold tracking-tight">
-          {code === "banned"
-            ? "Kein Zutritt"
-            : "Einladung nicht nutzbar"}
+          {code === "banned" ? "Kein Zutritt" : "Einladung nicht nutzbar"}
         </h1>
-        <p className="mt-2 text-neutral-600">
+        <p className="mt-2 text-neutral-600 dark:text-neutral-400">
           {code === "not_found"
             ? "Diesen Einladungslink gibt es nicht. Vielleicht wurde er widerrufen oder falsch kopiert."
             : errorMessage(code)}
@@ -44,7 +42,7 @@ export function InvitePage() {
         <p className="mt-6 text-sm">
           <Link
             to="/"
-            className="font-medium text-neutral-900 underline underline-offset-2"
+            className="font-medium text-neutral-900 dark:text-neutral-100 underline underline-offset-2"
           >
             Zu deinen Servern
           </Link>
@@ -61,20 +59,22 @@ export function InvitePage() {
 
   return (
     <section className="mx-auto max-w-sm">
-      <p className="text-sm text-neutral-600">
+      <p className="text-sm text-neutral-600 dark:text-neutral-400">
         {member ? "Du bist schon Mitglied von" : "Du wurdest eingeladen zu"}
       </p>
       <h1 className="mt-1 text-3xl font-semibold tracking-tight">
         {server.name}
       </h1>
-      <p className="mt-1 text-sm text-neutral-500">{people}</p>
+      <p className="mt-1 text-sm text-neutral-500 dark:text-neutral-400">
+        {people}
+      </p>
 
       <div className="mt-8 flex flex-col gap-4">
         {member ? (
           <Link
             to="/s/$serverId"
             params={{ serverId: server.id }}
-            className="inline-flex justify-center rounded-lg bg-neutral-900 px-4 py-2 text-sm font-medium text-white transition hover:bg-neutral-700"
+            className="inline-flex justify-center rounded-lg bg-neutral-900 dark:bg-neutral-700 px-4 py-2 text-sm font-medium text-white transition hover:bg-neutral-700 dark:hover:bg-neutral-600"
           >
             Zum Server
           </Link>
