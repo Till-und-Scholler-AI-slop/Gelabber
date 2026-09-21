@@ -14,7 +14,7 @@ Dann [http://localhost](http://localhost). Images: `ghcr.io/till-und-scholler-ai
 
 Postgres, Redis und MinIO-Konsole hängen nur an Loopback. UDP für Voice (coturn 3478 + Relay, SFU 10000–10031) geht nicht durch Caddy.
 
-Operator-Doku (bestehendes Caddy, TURN-Port, TLS, Backup): [deploy/README.md](deploy/README.md).
+Operator-Doku (bestehendes Caddy, TURN-Port, TLS, Backup, Grafana): [deploy/README.md](deploy/README.md).
 
 ## Layout
 
