@@ -21,15 +21,15 @@ export function DmSidebar({
   return (
     <aside
       aria-label="Direktnachrichten"
-      className="flex h-full w-64 shrink-0 flex-col border-r border-neutral-200 bg-white"
+      className="flex h-full w-64 shrink-0 flex-col border-r border-neutral-200 dark:border-neutral-700 bg-white dark:bg-neutral-900"
     >
-      <header className="flex h-12 items-center border-b border-neutral-200 px-3">
+      <header className="flex h-12 items-center border-b border-neutral-200 dark:border-neutral-700 px-3">
         <h2 className="truncate font-semibold tracking-tight">
           Direktnachrichten
         </h2>
       </header>
       {dms.length === 0 ? (
-        <p className="flex-1 px-3 py-4 text-sm text-neutral-500">
+        <p className="flex-1 px-3 py-4 text-sm text-neutral-500 dark:text-neutral-400">
           Noch keine Unterhaltungen. Öffne eine über die Mitgliederliste.
         </p>
       ) : (
@@ -91,8 +91,8 @@ function DmRow({ dm, active }: { dm: DirectMessage; active: boolean }) {
       className={[
         "flex h-[42px] items-center gap-2 rounded-md px-2 text-sm",
         active
-          ? "bg-neutral-900 text-white"
-          : "text-neutral-700 hover:bg-neutral-100 hover:text-neutral-900",
+          ? "bg-neutral-900 dark:bg-neutral-700 text-white"
+          : "text-neutral-700 dark:text-neutral-300 hover:bg-neutral-100 dark:hover:bg-neutral-800 hover:text-neutral-900 dark:hover:text-neutral-100",
       ].join(" ")}
     >
       <PresenceAvatar

@@ -134,11 +134,11 @@ export function VoiceRoom({
     <div className="flex flex-1 flex-col items-center justify-center p-8 text-center">
       <div
         className={[
-          "w-full text-neutral-500",
+          "w-full text-neutral-500 dark:text-neutral-400",
           showStage ? "max-w-5xl" : "max-w-sm",
         ].join(" ")}
       >
-        <p className="flex items-center justify-center gap-2 text-lg font-medium text-neutral-800">
+        <p className="flex items-center justify-center gap-2 text-lg font-medium text-neutral-800 dark:text-neutral-200">
           {channelName}
           {liveOn ? (
             <span className="rounded bg-red-600 px-1.5 py-0.5 text-[10px] font-semibold tracking-wide text-white uppercase">
@@ -230,7 +230,7 @@ export function VoiceRoom({
           </div>
         ) : null}
         {occupants.length > 0 ? (
-          <ul className="mt-4 flex flex-col gap-1 text-left text-sm text-neutral-700">
+          <ul className="mt-4 flex flex-col gap-1 text-left text-sm text-neutral-700 dark:text-neutral-300">
             {occupants.map(([id, flags]) => {
               const member = members.get(id);
               const pubs = voice.participants[id]?.pubs ?? [];
@@ -250,13 +250,13 @@ export function VoiceRoom({
               return (
                 <li
                   key={id}
-                  className="flex h-10 items-center justify-between rounded-md bg-neutral-100 px-3"
+                  className="flex h-10 items-center justify-between rounded-md bg-neutral-100 dark:bg-neutral-800 px-3"
                 >
                   <span className="min-w-0 truncate font-medium">
                     {member?.name ?? "Mitglied"}
                   </span>
                   <span className="flex shrink-0 items-center gap-2">
-                    <span className="w-16 text-right text-xs text-neutral-500">
+                    <span className="w-16 text-right text-xs text-neutral-500 dark:text-neutral-400">
                       {mediaLabel}
                     </span>
                     <VoiceStateIcons
@@ -287,14 +287,14 @@ export function VoiceRoom({
               <button
                 type="button"
                 onClick={onJoin}
-                className="rounded-lg bg-neutral-900 px-4 py-2 text-sm font-medium text-white transition hover:bg-neutral-700"
+                className="rounded-lg bg-neutral-900 dark:bg-neutral-700 px-4 py-2 text-sm font-medium text-white transition hover:bg-neutral-700 dark:hover:bg-neutral-600"
               >
                 Beitreten
               </button>
               <button
                 type="button"
                 onClick={() => openSettings()}
-                className="inline-flex items-center gap-1.5 rounded-lg bg-neutral-200 px-3 py-2 text-sm font-medium text-neutral-800 transition hover:bg-neutral-300"
+                className="inline-flex items-center gap-1.5 rounded-lg bg-neutral-200 dark:bg-neutral-700 px-3 py-2 text-sm font-medium text-neutral-800 dark:text-neutral-200 transition hover:bg-neutral-300 dark:hover:bg-neutral-600"
               >
                 <GearIcon size={16} />
                 Einstellungen
@@ -304,7 +304,7 @@ export function VoiceRoom({
                   <button
                     type="button"
                     onClick={() => stopWatching()}
-                    className="rounded-lg bg-red-50 px-4 py-2 text-sm font-medium text-red-700 transition hover:bg-red-100"
+                    className="rounded-lg bg-red-50 dark:bg-red-950 px-4 py-2 text-sm font-medium text-red-700 dark:text-red-300 transition hover:bg-red-100 dark:hover:bg-red-900"
                   >
                     Nicht mehr zuschauen
                   </button>
@@ -330,7 +330,7 @@ export function VoiceRoom({
           <button
             type="button"
             onClick={() => stopWatching()}
-            className="mt-5 rounded-lg bg-red-50 px-4 py-2 text-sm font-medium text-red-700 transition hover:bg-red-100"
+            className="mt-5 rounded-lg bg-red-50 dark:bg-red-950 px-4 py-2 text-sm font-medium text-red-700 dark:text-red-300 transition hover:bg-red-100 dark:hover:bg-red-900"
           >
             Nicht mehr zuschauen
           </button>
@@ -361,8 +361,8 @@ function FocusChip({
       className={[
         "rounded-full px-3 py-1 text-xs font-medium transition",
         active
-          ? "bg-neutral-900 text-white"
-          : "bg-neutral-200 text-neutral-700 hover:bg-neutral-300",
+          ? "bg-neutral-900 dark:bg-neutral-700 text-white"
+          : "bg-neutral-200 dark:bg-neutral-700 text-neutral-700 dark:text-neutral-300 hover:bg-neutral-300 dark:hover:bg-neutral-600",
       ].join(" ")}
     >
       {label}

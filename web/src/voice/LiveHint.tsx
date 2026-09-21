@@ -20,12 +20,11 @@ export function LiveHint({ server }: { server: ServerDetail }) {
   if (entries.length === 0) return null;
 
   return (
-    <div className="shrink-0 border-b border-red-100 bg-red-50 px-4 py-2 text-sm text-red-800">
+    <div className="shrink-0 border-b border-red-100 dark:border-red-900 bg-red-50 dark:bg-red-950 px-4 py-2 text-sm text-red-800 dark:text-red-200">
       {entries.map(([channelId, userId]) => {
         const channel = channels.get(channelId);
         const who = userId === me ? "Du" : (names.get(userId) ?? "Jemand");
-        const here =
-          voice.status === "joined" && voice.channelId === channelId;
+        const here = voice.status === "joined" && voice.channelId === channelId;
         const watching = voice.watching && voice.watchChannelId === channelId;
         return (
           <div
@@ -57,7 +56,7 @@ export function LiveHint({ server }: { server: ServerDetail }) {
                 <button
                   type="button"
                   onClick={() => stopWatching()}
-                  className="text-xs font-medium text-red-700 hover:underline"
+                  className="text-xs font-medium text-red-700 dark:text-red-300 hover:underline"
                 >
                   Nicht mehr zuschauen
                 </button>
@@ -71,7 +70,7 @@ export function LiveHint({ server }: { server: ServerDetail }) {
                       channelName: channel?.name ?? "Voice",
                     })
                   }
-                  className="text-xs font-medium text-red-700 hover:underline"
+                  className="text-xs font-medium text-red-700 dark:text-red-300 hover:underline"
                 >
                   Zuschauen
                 </button>

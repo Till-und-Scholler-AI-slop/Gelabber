@@ -39,15 +39,17 @@ export function MessageToasts() {
                 },
               });
             }}
-            className="pointer-events-auto rounded-xl border border-neutral-200 bg-white px-3 py-2 text-left shadow-lg transition hover:bg-neutral-50"
+            className="pointer-events-auto rounded-xl border border-neutral-200 dark:border-neutral-700 bg-white dark:bg-neutral-900 px-3 py-2 text-left shadow-lg transition hover:bg-neutral-50 dark:hover:bg-neutral-800"
           >
-            <p className="truncate text-xs font-medium text-neutral-500">
+            <p className="truncate text-xs font-medium text-neutral-500 dark:text-neutral-400">
               {title}
             </p>
-            <p className="truncate text-sm font-semibold text-neutral-900">
+            <p className="truncate text-sm font-semibold text-neutral-900 dark:text-neutral-100">
               {toast.author}
             </p>
-            <p className="truncate text-sm text-neutral-600">{toast.preview}</p>
+            <p className="truncate text-sm text-neutral-600 dark:text-neutral-400">
+              {toast.preview}
+            </p>
           </button>
         );
       })}

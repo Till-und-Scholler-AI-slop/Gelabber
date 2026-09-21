@@ -52,12 +52,12 @@ export function RegisterPage() {
   return (
     <section className="mx-auto max-w-sm">
       <h1 className="text-2xl font-semibold tracking-tight">Konto anlegen</h1>
-      <p className="mt-1 text-sm text-neutral-600">
+      <p className="mt-1 text-sm text-neutral-600 dark:text-neutral-400">
         Schon registriert?{" "}
         <Link
           to="/login"
           search={redirect ? { redirect } : {}}
-          className="font-medium text-neutral-900 underline underline-offset-2"
+          className="font-medium text-neutral-900 dark:text-neutral-100 underline underline-offset-2"
         >
           Anmelden
         </Link>

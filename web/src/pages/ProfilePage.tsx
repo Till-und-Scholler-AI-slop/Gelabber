@@ -65,12 +65,14 @@ function ProfileForm({ user }: { user: User }) {
   return (
     <section className="mx-auto max-w-md">
       <h1 className="text-2xl font-semibold tracking-tight">Profil</h1>
-      <p className="mt-1 text-sm text-neutral-600">{user.email}</p>
+      <p className="mt-1 text-sm text-neutral-600 dark:text-neutral-400">
+        {user.email}
+      </p>
 
       <form onSubmit={onSubmit} noValidate className="mt-8 flex flex-col gap-6">
         <div className="flex items-center gap-4">
           <Avatar name={name || user.name} url={previewUrl || null} size="lg" />
-          <p className="text-sm text-neutral-600">
+          <p className="text-sm text-neutral-600 dark:text-neutral-400">
             Ohne Bild zeigen wir deine Initialen. Datei-Upload kommt mit dem
             Dateien-Ticket; bis dahin reicht ein Link.
           </p>
@@ -115,7 +117,10 @@ function ProfileForm({ user }: { user: User }) {
             Speichern
           </SubmitButton>
           {saved && !dirty ? (
-            <span role="status" className="text-sm text-emerald-700">
+            <span
+              role="status"
+              className="text-sm text-emerald-700 dark:text-emerald-300"
+            >
               Gespeichert.
             </span>
           ) : null}

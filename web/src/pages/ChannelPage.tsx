@@ -39,8 +39,8 @@ export function ChannelPage() {
   return (
     <div className="flex min-h-0 flex-1 overflow-hidden">
       <div className="flex min-w-0 flex-1 flex-col overflow-hidden">
-        <header className="flex h-12 shrink-0 items-center gap-2 border-b border-neutral-200 bg-white px-4">
-          <Icon size={18} className="text-neutral-400" />
+        <header className="flex h-12 shrink-0 items-center gap-2 border-b border-neutral-200 dark:border-neutral-700 bg-white dark:bg-neutral-900 px-4">
+          <Icon size={18} className="text-neutral-400 dark:text-neutral-500" />
           <h1 className="truncate font-semibold tracking-tight">
             {channel.name}
           </h1>

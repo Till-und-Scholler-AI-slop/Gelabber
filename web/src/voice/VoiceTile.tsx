@@ -51,7 +51,7 @@ export function VoiceTile({
   return (
     <figure
       className={[
-        "relative overflow-hidden rounded-lg bg-neutral-900 text-white",
+        "relative overflow-hidden rounded-lg bg-neutral-900 dark:bg-neutral-700 text-white",
         screen || expanded ? "aspect-video w-full" : "aspect-video",
         expanded ? "min-h-[40vh] sm:min-h-[56vh]" : "",
       ].join(" ")}
@@ -69,7 +69,7 @@ export function VoiceTile({
         ].join(" ")}
       />
       {!stream ? (
-        <div className="absolute inset-0 flex items-center justify-center text-sm text-neutral-400">
+        <div className="absolute inset-0 flex items-center justify-center text-sm text-neutral-400 dark:text-neutral-500">
           {label}
         </div>
       ) : null}

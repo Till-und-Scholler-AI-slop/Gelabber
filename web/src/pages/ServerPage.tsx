@@ -25,7 +25,7 @@ export function ServerPage() {
     );
   }
   return (
-    <div className="flex flex-1 items-center justify-center p-8 text-center text-neutral-500">
+    <div className="flex flex-1 items-center justify-center p-8 text-center text-neutral-500 dark:text-neutral-400">
       <p>Dieser Server hat noch keine Kanäle.</p>
     </div>
   );

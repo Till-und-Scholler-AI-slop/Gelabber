@@ -37,7 +37,7 @@ export function WorkspaceIndexPage() {
       <h1 className="text-3xl font-semibold tracking-tight">
         {user ? `Hallo ${user.name}` : "Hallo"}
       </h1>
-      <p className="text-neutral-600">
+      <p className="text-neutral-600 dark:text-neutral-400">
         {isError
           ? "Deine Server konnten gerade nicht geladen werden."
           : "Du bist noch in keinem Server. Erstelle einen — oder öffne einen Einladungslink, den dir jemand geschickt hat."}
@@ -46,7 +46,7 @@ export function WorkspaceIndexPage() {
         <button
           type="button"
           onClick={() => setCreating(true)}
-          className="rounded-lg bg-neutral-900 px-4 py-2 text-sm font-medium text-white transition hover:bg-neutral-700"
+          className="rounded-lg bg-neutral-900 dark:bg-neutral-700 px-4 py-2 text-sm font-medium text-white transition hover:bg-neutral-700 dark:hover:bg-neutral-600"
         >
           Server erstellen
         </button>

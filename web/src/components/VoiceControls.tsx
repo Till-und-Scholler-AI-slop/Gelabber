@@ -39,24 +39,24 @@ export function VoiceControls({
   const openSettings = useMediaSettings((s) => s.openDialog);
   const micOff = muted || deafened;
   const btn = compact
-    ? "inline-flex items-center rounded-md p-1.5 text-neutral-600 hover:bg-neutral-100 hover:text-neutral-900"
-    : "inline-flex items-center rounded-lg bg-neutral-200 px-3 py-2 text-sm font-medium text-neutral-800 transition hover:bg-neutral-300";
+    ? "inline-flex items-center rounded-md p-1.5 text-neutral-600 dark:text-neutral-400 hover:bg-neutral-100 dark:hover:bg-neutral-800 hover:text-neutral-900 dark:hover:text-neutral-100"
+    : "inline-flex items-center rounded-lg bg-neutral-200 dark:bg-neutral-700 px-3 py-2 text-sm font-medium text-neutral-800 dark:text-neutral-200 transition hover:bg-neutral-300 dark:hover:bg-neutral-600";
   const liveBtn = compact
     ? [
         "inline-flex items-center rounded-md p-1.5",
         live
           ? "bg-red-600 text-white hover:bg-red-700"
-          : "text-red-600 hover:bg-red-50 hover:text-red-700",
+          : "text-red-600 dark:text-red-400 hover:bg-red-50 dark:hover:bg-red-950 hover:text-red-700 dark:hover:text-red-300",
       ].join(" ")
     : [
         "inline-flex items-center rounded-lg px-3 py-2 text-sm font-medium transition",
         live
           ? "bg-red-600 text-white hover:bg-red-700"
-          : "bg-neutral-200 text-neutral-800 hover:bg-neutral-300",
+          : "bg-neutral-200 dark:bg-neutral-700 text-neutral-800 dark:text-neutral-200 hover:bg-neutral-300 dark:hover:bg-neutral-600",
       ].join(" ");
   const leave = compact
-    ? "inline-flex items-center rounded-md px-2 py-1 text-xs text-neutral-600 hover:bg-neutral-100 hover:text-neutral-900"
-    : "inline-flex items-center rounded-lg bg-neutral-900 px-4 py-2 text-sm font-medium text-white transition hover:bg-neutral-700";
+    ? "inline-flex items-center rounded-md px-2 py-1 text-xs text-neutral-600 dark:text-neutral-400 hover:bg-neutral-100 dark:hover:bg-neutral-800 hover:text-neutral-900 dark:hover:text-neutral-100"
+    : "inline-flex items-center rounded-lg bg-neutral-900 dark:bg-neutral-700 px-4 py-2 text-sm font-medium text-white transition hover:bg-neutral-700 dark:hover:bg-neutral-600";
 
   return (
     <div
@@ -134,7 +134,7 @@ export function VoiceControls({
         </button>
       ) : null}
       {compact ? null : (
-        <label className="inline-flex items-center gap-1.5 text-sm text-neutral-600">
+        <label className="inline-flex items-center gap-1.5 text-sm text-neutral-600 dark:text-neutral-400">
           <span className="sr-only">Wiedergabe</span>
           <input
             type="range"

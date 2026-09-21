@@ -18,7 +18,7 @@ export function Toasts() {
             "pointer-events-auto rounded-lg px-4 py-2 text-sm shadow-lg",
             toast.tone === "error"
               ? "bg-red-600 text-white"
-              : "bg-neutral-900 text-white",
+              : "bg-neutral-900 dark:bg-neutral-700 text-white",
           ].join(" ")}
         >
           {toast.message}

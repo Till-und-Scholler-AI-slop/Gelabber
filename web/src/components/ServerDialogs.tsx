@@ -270,7 +270,7 @@ function ChannelForm({
     <form onSubmit={onSubmit} noValidate className="flex flex-col gap-5">
       {!editing ? (
         <fieldset className="flex flex-col gap-2">
-          <legend className="text-sm font-medium text-neutral-800">
+          <legend className="text-sm font-medium text-neutral-800 dark:text-neutral-200">
             Kanaltyp
           </legend>
           <div className="grid grid-cols-2 gap-2">
@@ -285,8 +285,8 @@ function ChannelForm({
                 className={[
                   "flex cursor-pointer flex-col gap-0.5 rounded-lg border px-3 py-2 text-sm transition",
                   kind === value
-                    ? "border-neutral-900 bg-neutral-900 text-white"
-                    : "border-neutral-300 hover:bg-neutral-50",
+                    ? "border-neutral-900 dark:border-neutral-300 bg-neutral-900 dark:bg-neutral-700 text-white"
+                    : "border-neutral-300 dark:border-neutral-600 hover:bg-neutral-50 dark:hover:bg-neutral-800",
                 ].join(" ")}
               >
                 <input
@@ -307,7 +307,9 @@ function ChannelForm({
                 </span>
                 <span
                   className={
-                    kind === value ? "text-neutral-300" : "text-neutral-500"
+                    kind === value
+                      ? "text-neutral-300"
+                      : "text-neutral-500 dark:text-neutral-400"
                   }
                 >
                   {hint}
@@ -338,7 +340,7 @@ function ChannelForm({
       <div className="flex flex-col gap-1.5">
         <label
           htmlFor="channel-category"
-          className="text-sm font-medium text-neutral-800"
+          className="text-sm font-medium text-neutral-800 dark:text-neutral-200"
         >
           Kategorie
         </label>
@@ -346,7 +348,7 @@ function ChannelForm({
           id="channel-category"
           value={parentId}
           onChange={(event) => setCategoryId(event.target.value)}
-          className="rounded-lg border border-neutral-300 bg-white px-3 py-2 text-base text-neutral-900 outline-none transition focus:border-neutral-500 focus:ring-2 focus:ring-neutral-200"
+          className="rounded-lg border border-neutral-300 dark:border-neutral-600 bg-white dark:bg-neutral-900 px-3 py-2 text-base text-neutral-900 dark:text-neutral-100 outline-none transition focus:border-neutral-500 dark:focus:border-neutral-400 focus:ring-2 focus:ring-neutral-200 dark:focus:ring-neutral-700"
         >
           <option value="">Ohne Kategorie</option>
           {categories.map((category) => (

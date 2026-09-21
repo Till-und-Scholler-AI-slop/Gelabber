@@ -43,12 +43,12 @@ export function LoginPage() {
   return (
     <section className="mx-auto max-w-sm">
       <h1 className="text-2xl font-semibold tracking-tight">Anmelden</h1>
-      <p className="mt-1 text-sm text-neutral-600">
+      <p className="mt-1 text-sm text-neutral-600 dark:text-neutral-400">
         Noch kein Konto?{" "}
         <Link
           to="/register"
           search={redirect ? { redirect } : {}}
-          className="font-medium text-neutral-900 underline underline-offset-2"
+          className="font-medium text-neutral-900 dark:text-neutral-100 underline underline-offset-2"
         >
           Registrieren
         </Link>

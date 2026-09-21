@@ -32,7 +32,7 @@ export function MemberActions({
             kick.mutate(member.user_id);
           }
         }}
-        className="rounded-md px-1.5 py-0.5 text-xs font-medium text-neutral-600 hover:bg-neutral-100 hover:text-neutral-900"
+        className="rounded-md px-1.5 py-0.5 text-xs font-medium text-neutral-600 dark:text-neutral-400 hover:bg-neutral-100 dark:hover:bg-neutral-800 hover:text-neutral-900 dark:hover:text-neutral-100"
       >
         Kick
       </button>
@@ -47,7 +47,7 @@ export function MemberActions({
             ban.mutate(member.user_id);
           }
         }}
-        className="rounded-md px-1.5 py-0.5 text-xs font-medium text-red-700 hover:bg-red-50"
+        className="rounded-md px-1.5 py-0.5 text-xs font-medium text-red-700 dark:text-red-300 hover:bg-red-50 dark:hover:bg-red-950"
       >
         Ban
       </button>
