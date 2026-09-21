@@ -20,8 +20,8 @@ use crate::ticket::{self, TicketClaim};
 /// SDP) blow past 12 KiB and can pass 48 KiB. Rejecting that frame as
 /// `bad_request` made the viewer leave the voice channel the moment a stream
 /// started. 192 KiB still bounds a single signaling frame.
-pub(crate) const MAX_FRAME: usize = 256 * 1024;
-pub(crate) const MAX_SDP: usize = 192 * 1024;
+pub const MAX_FRAME: usize = 256 * 1024;
+pub const MAX_SDP: usize = 192 * 1024;
 const MAX_ICE: usize = 800;
 
 pub fn router() -> Router<AppState> {
@@ -51,6 +51,17 @@ async fn run(socket: WebSocket, state: AppState) {
                                 max = MAX_FRAME,
                                 "media frame too large"
                             );
+                            // An answer this large never reaches apply_remote.
+                            // Abort only when the frame is that answer and an
+                            // offer is still outstanding.
+                            if answer_frame(&text)
+                                && let Some((peer_id, channel_id)) = joined
+                            {
+                                let _ = state
+                                    .sfu
+                                    .abort_outstanding_offer(peer_id, channel_id)
+                                    .await;
+                            }
                             let _ = send(&mut sink, ServerFrame::error("negotiation_failed")).await;
                             continue;
                         }
@@ -131,6 +142,9 @@ async fn handle(
                     op = %frame.op,
                     "media sdp too large"
                 );
+                if frame.op == "a" {
+                    let _ = state.sfu.abort_outstanding_offer(peer_id, channel_id).await;
+                }
                 return Err("negotiation_failed");
             }
             state
@@ -248,6 +262,15 @@ async fn join(
     }))
 }
 
+/// `{"op":"a"...}` at the start of a frame. Used when the body is too
+/// large to treat as a normal signaling message. Anything else, including
+/// a publisher offer, must not abort the subscriber's current offer.
+fn answer_frame(text: &str) -> bool {
+    let n = text.len().min(64);
+    let head = &text[..n];
+    head.contains("\"op\":\"a\"") || head.contains("\"op\": \"a\"")
+}
+
 async fn send(
     sink: &mut futures_util::stream::SplitSink<WebSocket, Message>,
     frame: ServerFrame,
@@ -261,6 +284,15 @@ async fn send(
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn answer_frame_is_only_an_answer() {
+        assert!(answer_frame(r#"{"op":"a","sdp":"v=0"}"#));
+        assert!(answer_frame("{\"op\": \"a\", \"sdp\": \"v=0\"}"));
+        assert!(!answer_frame(r#"{"op":"o","sdp":"v=0"}"#));
+        assert!(!answer_frame(r#"{"op":"p","k":"s"}"#));
+        assert!(!answer_frame("not-json"));
+    }
 
     #[test]
     fn chrome_video_sdp_fits() {

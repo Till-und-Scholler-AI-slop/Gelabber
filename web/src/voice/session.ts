@@ -219,6 +219,8 @@ let sfuOfferOpen = false;
 let settledSenders: RtpSender[] = [];
 /** Video kinds announced for the offer that is still unanswered. */
 let openPublish: Array<"v" | "s" | "l"> = [];
+/** Cleanup of a rejected publish must not enqueue a replacement offer. */
+let discardingPublish = false;
 const pendingMicRaw = new Set<MediaStream>();
 const pendingCameraStreams = new Set<MediaStream>();
 
@@ -627,6 +629,7 @@ function stopPeer(): void {
   sfuOfferOpen = false;
   settledSenders = [];
   openPublish = [];
+  discardingPublish = false;
   unbindMedia?.();
   unbindMedia = null;
   media?.close();
@@ -1289,20 +1292,27 @@ async function settleFailedNegotiation(mine: number): Promise<void> {
     if (generation !== mine || !pc) return;
     const state = signalingState();
     if (state === "have-local-offer") {
+      discardingPublish = true;
       try {
-        await pc.setLocalDescription({ type: "rollback" });
-        logVoice("warn", "rollback", { detail: "local-offer" });
-      } catch (error) {
-        logVoice("warn", "rollback", {
-          detail: error instanceof Error ? error.message : "rollback",
-        });
-      }
-      if (generation !== mine || peer !== pc) return;
-      const kinds = dropUnsettledPublish();
-      makingOffer = false;
-      for (const kind of kinds) {
-        logVoice("warn", "unpublish", { track: kind });
-        media?.send({ op: "u", k: kind });
+        try {
+          await pc.setLocalDescription({ type: "rollback" });
+          logVoice("warn", "rollback", { detail: "local-offer" });
+        } catch (error) {
+          logVoice("warn", "rollback", {
+            detail: error instanceof Error ? error.message : "rollback",
+          });
+        }
+        if (generation !== mine || peer !== pc) return;
+        const kinds = dropUnsettledPublish();
+        makingOffer = false;
+        // The failed offer's follow-up must wait for the next user publish.
+        needOffer = false;
+        for (const kind of kinds) {
+          logVoice("warn", "unpublish", { track: kind });
+          media?.send({ op: "u", k: kind });
+        }
+      } finally {
+        discardingPublish = false;
       }
     } else if (state === "have-remote-offer") {
       try {
@@ -1327,20 +1337,55 @@ async function settleFailedNegotiation(mine: number): Promise<void> {
 /** Remove senders added after the last successful answer. The mic stays. */
 function dropUnsettledPublish(): Array<"v" | "s" | "l"> {
   const pc = peer;
-  const kinds = openPublish;
+  const kinds = openPublish.slice();
   openPublish = [];
-  const self = currentUserId();
   if (pc?.getSenders && pc.removeTrack) {
     for (const sender of pc.getSenders()) {
       if (settledSenders.includes(sender)) continue;
       pc.removeTrack(sender);
     }
   }
-  for (const kind of kinds) {
-    if (self) setPub(self, kind, false);
-    sendPub(kind, false);
-  }
+  for (const kind of kinds) releaseDiscardedCapture(kind);
   return kinds;
+}
+
+/**
+ * Stop a publish that never negotiated: capture, local preview, and flags.
+ * Does not touch the mic or a stream that already completed an answer, and
+ * does not ask for a new offer.
+ */
+function releaseDiscardedCapture(kind: "v" | "s" | "l"): void {
+  if (kind === "v") {
+    cameraEpoch += 1;
+    for (const pending of pendingCameraStreams) stopTracks(pending);
+    pendingCameraStreams.clear();
+  } else if (kind === "s") screenEpoch += 1;
+  else liveEpoch += 1;
+  const stream =
+    kind === "v" ? cameraStream : kind === "s" ? screenStream : liveStream;
+  if (kind === "v") {
+    cameraStream = null;
+    useVoice.setState({ camera: false, localCamera: null });
+  } else if (kind === "s") {
+    screenStream = null;
+    useVoice.setState({ sharing: false, localScreen: null });
+  } else {
+    const state = useVoice.getState();
+    liveStream = null;
+    awaitingLive = null;
+    useVoice.setState({ live: false, localLive: null });
+    if (state.serverId && state.channelId) {
+      applyLiveEnd(
+        state.serverId,
+        state.channelId,
+        currentUserId() ?? undefined,
+      );
+    }
+  }
+  stopTracks(stream);
+  const self = currentUserId();
+  if (self) setPub(self, kind, false);
+  sendPub(kind, false);
 }
 
 function reportStreamOnce(detail?: string): void {
@@ -1401,6 +1446,9 @@ async function applyRemoteDescription(
       logVoice("info", "send-answer", { bytes: answer.sdp.length });
       socket?.send({ op: "a", sdp: answer.sdp });
     }
+    // The answer is on the wire. A later negotiation_failed must not send
+    // `x`: an oversized answer is aborted on the server, and a late `x`
+    // would roll back the next offer.
     sfuOfferOpen = false;
   }
   await applyVideoLimits(pc);
@@ -1941,7 +1989,9 @@ async function offerIfStable(
   mine: number,
   opts?: { initial?: boolean; fromEvent?: boolean },
 ): Promise<void> {
+  if (discardingPublish) return;
   await enqueueSdp(async () => {
+    if (discardingPublish) return;
     if (generation !== mine || !peer) return;
     if (opts?.initial && sfuOffered) return;
     if (makingOffer || signalingState() !== "stable") {

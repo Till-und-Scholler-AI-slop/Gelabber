@@ -1356,44 +1356,60 @@ describe("stream negotiation stability", () => {
     );
     const offersAtFailure = env.mediaSent.filter((frame) => frame.op === "o").length;
     expect(offersAtFailure).toBeGreaterThan(0);
+    const captured = useVoice.getState().localScreen?.getVideoTracks()[0];
+    expect(captured).toBeTruthy();
     env.emitMedia({ op: "err", e: "negotiation_failed" });
     await vi.waitFor(() => expect(env.peers[0]?.signalingState).toBe("stable"));
     expect(env.mediaSent.some((frame) => frame.op === "u" && frame.k === "s")).toBe(
       true,
     );
+    expect(useVoice.getState().sharing).toBe(false);
+    expect(useVoice.getState().localScreen).toBeNull();
+    expect(useVoice.getState().camera).toBe(false);
+    expect(trackStopped(captured)).toBe(true);
+    expect(
+      env.peers[0]?.senders.some((sender) => sender.track?.kind === "video"),
+    ).toBe(false);
     expect(env.peers[0]?.audio).toBeTruthy();
+    expect(trackStopped(env.peers[0]?.audio)).toBe(false);
     expect(env.peers[0]?.closed).toBe(false);
-    toggleShare();
+    const offersAfterFailure = env.mediaSent.filter((frame) => frame.op === "o").length;
+    for (let i = 0; i < 8; i++) await Promise.resolve();
+    expect(env.mediaSent.filter((frame) => frame.op === "o").length).toBe(
+      offersAfterFailure,
+    );
     toggleCamera();
     await vi.waitFor(() =>
       expect(env.mediaSent.filter((frame) => frame.op === "o").length).toBe(
         offersAtFailure + 1,
       ),
     );
-    env.emitMedia({ op: "a", sdp: "v=0\r\n" });
-    await vi.waitFor(() =>
-      expect(env.mediaSent.filter((frame) => frame.op === "o").length).toBeGreaterThan(
-        offersAtFailure + 1,
-      ),
-    );
     expect(env.peers[0]?.signalingState).toBe("have-local-offer");
     expect(useVoice.getState().status).toBe("joined");
+    expect(useVoice.getState().sharing).toBe(false);
     expect(useVoice.getState().camera).toBe(true);
+    expect(useVoice.getState().localCamera).toBeTruthy();
     expect(env.peers[0]?.audio).toBeTruthy();
     expect(env.errors).toHaveLength(1);
     expect((env.errors[0] as Error).message).toMatch(/Sprachkanal bleibt aktiv/);
   });
-  it("keeps an active screen share when renegotiation fails", async () => {
+  it("keeps a negotiated screen share when a later renegotiation fails", async () => {
     const env = await connected();
     toggleShare();
     await vi.waitFor(() =>
-      expect(useVoice.getState().localScreen).toBeTruthy(),
+      expect(env.peers[0]?.signalingState).toBe("have-local-offer"),
     );
+    env.emitMedia({ op: "a", sdp: "v=0\r\n" });
+    await vi.waitFor(() => expect(env.peers[0]?.signalingState).toBe("stable"));
+    const captured = useVoice.getState().localScreen?.getVideoTracks()[0];
     env.emitMedia({ op: "err", e: "negotiation_failed" });
+    for (let i = 0; i < 8; i++) await Promise.resolve();
     expect(useVoice.getState().status).toBe("joined");
     expect(useVoice.getState().sharing).toBe(true);
     expect(useVoice.getState().localScreen).toBeTruthy();
+    expect(trackStopped(captured)).toBe(false);
     expect(env.peers[0]?.closed).toBe(false);
+    expect(env.peers[0]?.audio).toBeTruthy();
     expect(env.getDisplayMediaCalls()).toBe(1);
   });
   it("a watch negotiation failure stops only the watch, not the voice call", async () => {

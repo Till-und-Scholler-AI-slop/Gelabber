@@ -350,7 +350,8 @@ impl Sfu {
             // the gate flag alone keeps every later publication, including a
             // new joiner's audio, queued forever.
             if !as_offer {
-                self.fail_local_offer(&pc, &out, &gathered, &sdp).await;
+                self.fail_local_offer(&pc, &out, &gathered, &sdp, false)
+                    .await;
             }
             return Err(err.to_string());
         }
@@ -440,7 +441,32 @@ impl Sfu {
             )
         };
         info!(peer = %peer_id.0, "abort subscriber offer");
-        self.fail_local_offer(&pc, &out, &gathered, &sdp).await;
+        self.fail_local_offer(&pc, &out, &gathered, &sdp, false)
+            .await;
+        Ok(())
+    }
+
+    /// An answer was refused before `apply_remote` (oversized SDP or frame).
+    /// Abort only while this offer is still outstanding, so a late reject
+    /// cannot roll back the next one.
+    pub async fn abort_outstanding_offer(
+        &self,
+        peer_id: PeerId,
+        channel_id: Uuid,
+    ) -> Result<(), String> {
+        let room = self.room(channel_id).await;
+        let (pc, out, gathered, sdp) = {
+            let room = room.lock().await;
+            let peer = room.peers.get(&peer_id).ok_or("not in room")?;
+            (
+                peer.pc.clone(),
+                peer.out.clone(),
+                peer.gathered.clone(),
+                peer.sdp.clone(),
+            )
+        };
+        self.fail_local_offer(&pc, &out, &gathered, &sdp, true)
+            .await;
         Ok(())
     }
 
@@ -809,7 +835,7 @@ impl Sfu {
             .await
         {
             warn!(pub_id, error = %err, "add_track failed");
-            Box::pin(self.fail_local_offer(&pc, &out, &gathered, &sdp)).await;
+            Box::pin(self.fail_local_offer(&pc, &out, &gathered, &sdp, false)).await;
             return;
         }
         // Offer only the codec we will actually forward. The full video list
@@ -884,12 +910,12 @@ impl Sfu {
                     let _ = out.send(ServerFrame::Offer { sdp: local });
                 } else {
                     warn!(pub_id, "renegotiation offer was not sent");
-                    Box::pin(self.fail_local_offer(&pc, &out, &gathered, &sdp)).await;
+                    Box::pin(self.fail_local_offer(&pc, &out, &gathered, &sdp, false)).await;
                 }
             }
             Err(err) => {
                 warn!(error = %err, "renegotiation offer failed");
-                Box::pin(self.fail_local_offer(&pc, &out, &gathered, &sdp)).await;
+                Box::pin(self.fail_local_offer(&pc, &out, &gathered, &sdp, false)).await;
             }
         }
     }
@@ -903,9 +929,13 @@ impl Sfu {
         out: &mpsc::UnboundedSender<ServerFrame>,
         gathered: &watch::Receiver<u64>,
         sdp: &Arc<Mutex<PeerSdp>>,
+        only_if_outstanding: bool,
     ) {
         let pending = {
             let mut gate = sdp.lock().await;
+            if only_if_outstanding && !gate.have_local_offer {
+                return;
+            }
             gate.have_local_offer = false;
             // Those candidates named the m-line this offer is abandoning.
             gate.pending_ice.clear();
