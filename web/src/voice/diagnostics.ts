@@ -956,24 +956,31 @@ export function resetDiagnostics(): void {
   useVoiceDiagnostics.setState(emptyState());
 }
 
-type LogoutListener = (
-  state: { user: unknown },
-  previous: { user: unknown },
-) => void;
-
 /**
- * Register a logout reset. The caller passes `subscribe` so this module
- * does not import the session store while that store is still initializing.
+ * Subscribe once the session store exists. Voice loads while that store is
+ * still being created, so this module loads it on a later turn.
  */
-export function installDiagnosticsLogoutReset(
-  subscribe: (listener: LogoutListener) => void,
-): void {
+export function installDiagnosticsLogoutReset(): void {
   if (logoutInstalled) return;
   logoutInstalled = true;
-  subscribe((state, previous) => {
-    if (previous.user && !state.user) resetDiagnostics();
-  });
+  void import("../auth/session.ts")
+    .then(({ useSession }) => {
+      if (typeof useSession?.subscribe !== "function") {
+        logoutInstalled = false;
+        return;
+      }
+      useSession.subscribe((state, previous) => {
+        if (previous.user && !state.user) resetDiagnostics();
+      });
+    })
+    .catch(() => {
+      logoutInstalled = false;
+    });
 }
+
+setTimeout(() => {
+  installDiagnosticsLogoutReset();
+}, 0);
 
 export function defaultCaps(): Caps {
   return {

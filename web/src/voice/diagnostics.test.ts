@@ -36,9 +36,7 @@ function entry(partial: StatsEntry): StatsEntry {
 
 describe("voice diagnostics", () => {
   beforeEach(() => {
-    installDiagnosticsLogoutReset((listener) => {
-      useSession.subscribe(listener);
-    });
+    installDiagnosticsLogoutReset();
     resetDiagnostics();
     resetMediaSettingsForTests();
   });

@@ -52,19 +52,6 @@ import {
   useMediaSettings,
 } from "./settings.ts";
 
-function ensureDiagnosticsLogoutReset(): void {
-  if (typeof useSession?.subscribe !== "function") return;
-  installDiagnosticsLogoutReset((listener) => {
-    useSession.subscribe(listener);
-  });
-}
-
-// Account-scope release imports this module while `useSession` is still
-// being created. Subscribe on a later turn, and again from join/watch.
-queueMicrotask(() => {
-  ensureDiagnosticsLogoutReset();
-});
-
 export type VoiceStatus = "idle" | "joined";
 
 export type VoiceParticipant = {
@@ -1814,7 +1801,7 @@ export function joinVoice(input: {
   channelId: string;
   channelName: string;
 }): void {
-  ensureDiagnosticsLogoutReset();
+  installDiagnosticsLogoutReset();
   ensureBound();
   const userId = currentUserId();
   if (!userId) return;
@@ -2028,7 +2015,7 @@ export function watchLive(input: {
   channelId: string;
   channelName: string;
 }): void {
-  ensureDiagnosticsLogoutReset();
+  installDiagnosticsLogoutReset();
   ensureBound();
   const state = useVoice.getState();
   if (
