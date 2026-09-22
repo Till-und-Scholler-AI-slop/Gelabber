@@ -14,6 +14,12 @@ import {
   type QueryClient,
 } from "@tanstack/react-query";
 
+import {
+  scopeGeneration,
+  stampHolds,
+  takeStamp,
+  useUserId,
+} from "../auth/scope.ts";
 import { notifyError } from "../components/toasts.ts";
 import { isPendingId } from "../servers/queries.ts";
 import * as remote from "./api.ts";
@@ -39,7 +45,8 @@ import type {
 import { asAttachmentList } from "./types.ts";
 
 export const messageKeys = {
-  channel: (channelId: string) => ["messages", channelId] as const,
+  channel: (userId: string, generation: number, channelId: string) =>
+    ["user", userId, generation, "messages", channelId] as const,
 };
 
 type Cache = InfiniteData<MessagePage, string | undefined>;
@@ -63,13 +70,18 @@ function emptyCache(): Cache {
 
 function patchPages(
   client: QueryClient,
+  userId: string,
+  generation: number,
   channelId: string,
   update: (pages: MessagePage[]) => MessagePage[],
 ): void {
-  client.setQueryData<Cache>(messageKeys.channel(channelId), (current) => {
-    const base = current ?? emptyCache();
-    return { ...base, pages: update(base.pages) };
-  });
+  client.setQueryData<Cache>(
+    messageKeys.channel(userId, generation, channelId),
+    (current) => {
+      const base = current ?? emptyCache();
+      return { ...base, pages: update(base.pages) };
+    },
+  );
 }
 
 function mapMessages(
@@ -85,8 +97,10 @@ function mapMessages(
 }
 
 export function useMessages(channelId: string | undefined, enabled: boolean) {
+  const userId = useUserId();
+  const generation = scopeGeneration();
   return useInfiniteQuery({
-    queryKey: messageKeys.channel(channelId ?? ""),
+    queryKey: messageKeys.channel(userId, generation, channelId ?? ""),
     queryFn: async ({ pageParam, signal }) =>
       stampOlder(
         await remote.listMessages(
@@ -97,7 +111,7 @@ export function useMessages(channelId: string | undefined, enabled: boolean) {
       ),
     initialPageParam: undefined as string | undefined,
     getNextPageParam: (page) => olderCursor(page),
-    enabled: Boolean(channelId) && enabled,
+    enabled: userId.length > 0 && Boolean(channelId) && enabled,
     staleTime: STALE_MS,
     retry: (count, error) =>
       count < 2 &&
@@ -152,6 +166,8 @@ export function useSendMessage(channelId: string, author: MessageAuthor) {
       return remote.createMessage(channelId, normaliseContent(content), ids);
     },
     onMutate: ({ content, file }) => {
+      const stamp = takeStamp();
+      if (!stamp) return;
       const tmp = tmpId();
       const pending: Message = {
         id: tmp,
@@ -163,22 +179,22 @@ export function useSendMessage(channelId: string, author: MessageAuthor) {
         attachments: file ? [localAttachment(file)] : [],
       };
       addPending(channelId, pending);
-      return tmp;
+      return { ...stamp, tmp };
     },
-    onSuccess: (message, _input, tmp) => {
+    onSuccess: (message, _input, ctx) => {
       // Stay in the overlay until a fetched page already contains this id.
       // Blind append + drop races the in-flight first-page GET: duplicate
       // if GET includes the row, or a successful send vanishes if GET
       // lands without it and replaces an emptyCache write.
-      if (tmp) confirmPending(channelId, tmp, message);
+      // A send started by the previous account must not land in this one.
+      if (!stampHolds(ctx)) return;
+      confirmPending(channelId, ctx.tmp, message);
     },
-    onError: (error, _input, tmp) => {
-      if (tmp) {
-        const pending =
-          usePendingMessages.getState().byChannel[channelId] ?? [];
-        revokePreviews(pending.find((row) => row.id === tmp));
-        removePending(channelId, tmp);
-      }
+    onError: (error, _input, ctx) => {
+      if (!stampHolds(ctx)) return;
+      const pending = usePendingMessages.getState().byChannel[channelId] ?? [];
+      revokePreviews(pending.find((row) => row.id === ctx.tmp));
+      removePending(channelId, ctx.tmp);
       notifyError(error);
     },
   });
@@ -190,28 +206,37 @@ export function useEditMessage(channelId: string) {
     mutationFn: ({ id, content }: { id: string; content: string }) =>
       remote.updateMessage(id, normaliseContent(content)),
     onMutate: ({ id, content }) => {
+      const stamp = takeStamp();
+      if (!stamp) return;
       const previous = client.getQueryData<Cache>(
-        messageKeys.channel(channelId),
+        messageKeys.channel(stamp.userId, stamp.generation, channelId),
       );
       const next = normaliseContent(content);
-      patchPages(client, channelId, (pages) =>
+      patchPages(client, stamp.userId, stamp.generation, channelId, (pages) =>
         mapMessages(pages, (message) =>
           message.id === id
             ? { ...message, content: next, edited_at: now() }
             : message,
         ),
       );
-      return previous;
+      return { ...stamp, previous };
     },
-    onError: (error, _vars, previous) => {
-      if (previous)
-        client.setQueryData(messageKeys.channel(channelId), previous);
+    onError: (error, _vars, ctx) => {
+      if (!stampHolds(ctx)) return;
+      if (ctx.previous) {
+        client.setQueryData(
+          messageKeys.channel(ctx.userId, ctx.generation, channelId),
+          ctx.previous,
+        );
+      }
       notifyError(error);
     },
-    onSuccess: (message) =>
-      patchPages(client, channelId, (pages) =>
+    onSuccess: (message, _vars, ctx) => {
+      if (!stampHolds(ctx)) return;
+      patchPages(client, ctx.userId, ctx.generation, channelId, (pages) =>
         mapMessages(pages, (row) => (row.id === message.id ? message : row)),
-      ),
+      );
+    },
   });
 }
 
@@ -232,11 +257,15 @@ function isMessage(value: unknown): value is Message {
 /** WS create: append if the row is not already in a page. */
 export function applyMessageCreated(
   client: QueryClient,
+  userId: string,
+  generation: number,
   channelId: string,
   message: Message,
 ): void {
-  patchPages(client, channelId, (pages) => {
-    if (pages.some((page) => page.messages.some((row) => row.id === message.id))) {
+  patchPages(client, userId, generation, channelId, (pages) => {
+    if (
+      pages.some((page) => page.messages.some((row) => row.id === message.id))
+    ) {
       return pages;
     }
     if (pages.length === 0) {
@@ -254,10 +283,12 @@ export function applyMessageCreated(
 /** WS edit: replace the row in place. */
 export function applyMessageEdited(
   client: QueryClient,
+  userId: string,
+  generation: number,
   channelId: string,
   message: Message,
 ): void {
-  patchPages(client, channelId, (pages) =>
+  patchPages(client, userId, generation, channelId, (pages) =>
     mapMessages(pages, (row) => (row.id === message.id ? message : row)),
   );
 }
@@ -265,16 +296,22 @@ export function applyMessageEdited(
 /** WS / optimistic delete: drop the row, keep page cursors. */
 export function applyMessageDeleted(
   client: QueryClient,
+  userId: string,
+  generation: number,
   channelId: string,
   messageId: string,
 ): void {
-  patchPages(client, channelId, (pages) =>
-    mapMessages(pages, (message) => (message.id === messageId ? null : message)),
+  patchPages(client, userId, generation, channelId, (pages) =>
+    mapMessages(pages, (message) =>
+      message.id === messageId ? null : message,
+    ),
   );
 }
 
 export function applyChannelEvent(
   client: QueryClient,
+  userId: string,
+  generation: number,
   event: {
     t: "c" | "e" | "d";
     c?: string;
@@ -283,9 +320,9 @@ export function applyChannelEvent(
   },
 ): void {
   const channelId = event.c;
-  if (!channelId) return;
+  if (!channelId || userId.length === 0) return;
   if (event.t === "d" && event.i) {
-    applyMessageDeleted(client, channelId, event.i);
+    applyMessageDeleted(client, userId, generation, channelId, event.i);
     return;
   }
   if ((event.t === "c" || event.t === "e") && isMessage(event.d)) {
@@ -293,8 +330,9 @@ export function applyChannelEvent(
       ...event.d,
       attachments: asAttachmentList(event.d.attachments),
     };
-    if (event.t === "c") applyMessageCreated(client, channelId, message);
-    else applyMessageEdited(client, channelId, message);
+    if (event.t === "c")
+      applyMessageCreated(client, userId, generation, channelId, message);
+    else applyMessageEdited(client, userId, generation, channelId, message);
   }
 }
 
@@ -303,17 +341,24 @@ export function useDeleteMessage(channelId: string) {
   return useMutation({
     mutationFn: (id: string) => remote.deleteMessage(id),
     onMutate: (id) => {
+      const stamp = takeStamp();
+      if (!stamp) return;
       const previous = client.getQueryData<Cache>(
-        messageKeys.channel(channelId),
+        messageKeys.channel(stamp.userId, stamp.generation, channelId),
       );
-      patchPages(client, channelId, (pages) =>
+      patchPages(client, stamp.userId, stamp.generation, channelId, (pages) =>
         mapMessages(pages, (message) => (message.id === id ? null : message)),
       );
-      return previous;
+      return { ...stamp, previous };
     },
-    onError: (error, _id, previous) => {
-      if (previous)
-        client.setQueryData(messageKeys.channel(channelId), previous);
+    onError: (error, _id, ctx) => {
+      if (!stampHolds(ctx)) return;
+      if (ctx.previous) {
+        client.setQueryData(
+          messageKeys.channel(ctx.userId, ctx.generation, channelId),
+          ctx.previous,
+        );
+      }
       notifyError(error);
     },
   });

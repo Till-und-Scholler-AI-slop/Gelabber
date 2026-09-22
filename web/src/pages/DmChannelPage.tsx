@@ -4,6 +4,7 @@ import { useNavigate, useParams } from "@tanstack/react-router";
 import { useQueryClient } from "@tanstack/react-query";
 import { useEffect } from "react";
 
+import { useUserId } from "../auth/scope.ts";
 import { MessagePane } from "../components/MessagePane.tsx";
 import { PresenceAvatar } from "../components/PresenceAvatar.tsx";
 import { TypingBar } from "../components/TypingBar.tsx";
@@ -19,25 +20,27 @@ export function DmChannelPage() {
   const { channelId } = useParams({ from: "/workspace/d/$channelId" });
   const client = useQueryClient();
   const navigate = useNavigate();
+  const userId = useUserId();
   const { data: dm, error, isPending } = useDm(channelId);
   const remember = useLastDm((s) => s.remember);
   const forgetLast = useLastDm((s) => s.forget);
   const gone = isGoneError(error);
 
   useEffect(() => {
-    if (dm) remember(dm.id);
-  }, [dm, remember]);
+    if (dm && userId) remember(userId, dm.id);
+  }, [dm, remember, userId]);
 
   useEffect(() => {
     if (!gone) return;
     // Same as a vanished server: drop the list row + last-DM, leave, then
     // drop the detail so this still-mounted query does not refetch.
-    forgetDm(client, channelId, { keepDetail: true });
-    forgetLast(channelId);
+    if (!userId) return;
+    forgetDm(client, userId, channelId, { keepDetail: true });
+    forgetLast(userId, channelId);
     void navigate({ to: "/d", replace: true }).then(() =>
-      forgetDm(client, channelId),
+      forgetDm(client, userId, channelId),
     );
-  }, [gone, client, channelId, forgetLast, navigate]);
+  }, [gone, client, channelId, forgetLast, navigate, userId]);
 
   if (gone) return null;
   if (error) {

@@ -1,18 +1,19 @@
 import { beforeEach, describe, expect, it } from "vitest";
 
-import { useLastDm } from "./lastDm.ts";
+import { lastDmId, useLastDm } from "./lastDm.ts";
 
 describe("last opened DM", () => {
   beforeEach(() => {
-    useLastDm.setState({ channelId: null });
+    useLastDm.setState({ byUser: {} });
   });
 
-  it("remembers the last channel and ignores a foreign forget", () => {
-    useLastDm.getState().remember("dm-1");
-    expect(useLastDm.getState().channelId).toBe("dm-1");
-    useLastDm.getState().forget("dm-other");
-    expect(useLastDm.getState().channelId).toBe("dm-1");
-    useLastDm.getState().forget("dm-1");
-    expect(useLastDm.getState().channelId).toBeNull();
+  it("remembers the last channel per user and ignores a foreign forget", () => {
+    useLastDm.getState().remember("ada", "dm-1");
+    expect(lastDmId(useLastDm.getState().byUser, "ada")).toBe("dm-1");
+    expect(lastDmId(useLastDm.getState().byUser, "bob")).toBeNull();
+    useLastDm.getState().forget("ada", "dm-other");
+    expect(lastDmId(useLastDm.getState().byUser, "ada")).toBe("dm-1");
+    useLastDm.getState().forget("ada", "dm-1");
+    expect(lastDmId(useLastDm.getState().byUser, "ada")).toBeNull();
   });
 });
