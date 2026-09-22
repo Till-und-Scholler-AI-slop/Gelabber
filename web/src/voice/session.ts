@@ -209,6 +209,14 @@ let awaitingJoin: { serverId: string; channelId: string } | null = null;
 let awaitingLive: { serverId: string; channelId: string } | null = null;
 let audioCommitChain: Promise<void> = Promise.resolve();
 let cameraCommitChain: Promise<void> = Promise.resolve();
+/**
+ * One video-budget queue for the current peer generation. Profile changes,
+ * publish, unpublish, and SDP all share it. A newer request supersedes an
+ * in-flight snapshot so an older pass cannot write a stale sender cap.
+ */
+let videoLimitChain: Promise<void> = Promise.resolve();
+let videoLimitGeneration = 0;
+let videoLimitRevision = 0;
 /** Senders that belonged to the last completed negotiation. */
 let settledSenders: RtpSender[] = [];
 /** Video kinds announced for the offer that is still unanswered. */
@@ -685,6 +693,7 @@ function stopPeer(): void {
   liveEpoch += 1;
   audioCommitChain = Promise.resolve();
   cameraCommitChain = Promise.resolve();
+  resetVideoLimitQueue();
   settledSenders = [];
   openPublish = [];
   discardingPublish = false;
@@ -813,7 +822,50 @@ function profileForVideoTrack(track: MediaStreamTrack): StreamProfileId {
   return useMediaSettings.getState().screenProfile;
 }
 
-async function applyVideoLimits(pc: PeerConnection): Promise<void> {
+function resetVideoLimitQueue(): void {
+  videoLimitRevision += 1;
+  videoLimitChain = Promise.resolve();
+  videoLimitGeneration = seat.generation;
+}
+
+function videoLimitCurrent(
+  pc: PeerConnection,
+  generation: number,
+  revision: number,
+): boolean {
+  return (
+    videoLimitRevision === revision &&
+    videoLimitGeneration === generation &&
+    seat.generation === generation &&
+    seat.pc === pc
+  );
+}
+
+/** Serialize budget writes. Profiles are read when the pass runs, not when queued. */
+function enqueueVideoLimits(pc: PeerConnection): Promise<void> {
+  const generation = seat.generation;
+  if (videoLimitGeneration !== generation) {
+    videoLimitChain = Promise.resolve();
+    videoLimitGeneration = generation;
+  }
+  const revision = ++videoLimitRevision;
+  const run = videoLimitChain.then(
+    () => applyVideoLimits(pc, generation, revision),
+    () => applyVideoLimits(pc, generation, revision),
+  );
+  videoLimitChain = run.then(
+    () => undefined,
+    () => undefined,
+  );
+  return run;
+}
+
+async function applyVideoLimits(
+  pc: PeerConnection,
+  generation: number,
+  revision: number,
+): Promise<void> {
+  if (!videoLimitCurrent(pc, generation, revision)) return;
   const senders = (pc.getSenders?.() ?? []).filter(
     (s) => s.track?.kind === "video",
   );
@@ -822,6 +874,7 @@ async function applyVideoLimits(pc: PeerConnection): Promise<void> {
   );
   const shares = allocateVideoBitrates(profiles);
   for (let index = 0; index < senders.length; index += 1) {
+    if (!videoLimitCurrent(pc, generation, revision)) return;
     const sender = senders[index];
     const params = sender?.getParameters?.();
     if (!sender || !params?.encodings.length) continue;
@@ -837,6 +890,9 @@ async function applyVideoLimits(pc: PeerConnection): Promise<void> {
     } catch {
       // Some browsers require negotiation first; retry after SDP completes.
     }
+    // This snapshot is stale. Stop before the next sender; the newer pass
+    // applies the latest budgets across every sender still sending.
+    if (!videoLimitCurrent(pc, generation, revision)) return;
   }
 }
 
@@ -880,7 +936,7 @@ async function applyStreamProfile(kind: StreamKind): Promise<void> {
   const pc = seat.pc;
   if (pc) {
     try {
-      await applyVideoLimits(pc);
+      await enqueueVideoLimits(pc);
     } catch {
       // sender caps are best-effort
     }
@@ -1673,7 +1729,7 @@ async function applyRemoteDescription(
     // would roll back the next offer.
     seat.sfuOfferOpen = false;
   }
-  await applyVideoLimits(pc);
+  await enqueueVideoLimits(pc);
   if (!current()) return;
   seat.negotiated = true;
   if (type === "answer") {
@@ -2025,6 +2081,7 @@ export function resetVoiceForTests(): void {
   stopPeer();
   seat = new MediaPeer();
   watchCall = new MediaPeer();
+  resetVideoLimitQueue();
   useVoice.setState({ ...idle });
   deps = null;
   bound = false;
@@ -2172,7 +2229,7 @@ function stopLocalVideo(kind: "v" | "s" | "l"): void {
     if (sender) seat.pc?.removeTrack?.(sender);
     track.stop();
   }
-  if (seat.pc) void applyVideoLimits(seat.pc);
+  if (seat.pc) void enqueueVideoLimits(seat.pc);
   if (kind === "v") noteStreamProfileApply("camera", "idle");
   else if (!screenStream && !liveStream) {
     noteStreamProfileApply("screen", "idle");
@@ -2195,7 +2252,7 @@ async function publishLocal(
     seat.pc.addTrack?.(track, stream);
   }
   const pc = seat.pc;
-  void applyVideoLimits(pc);
+  void enqueueVideoLimits(pc);
   const self = currentUserId();
   if (self) setPub(self, kind, true);
   sendPub(kind, true);

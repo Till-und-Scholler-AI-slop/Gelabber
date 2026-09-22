@@ -190,6 +190,36 @@ function deferred(): { promise: Promise<void>; resolve: () => void } {
   return { promise, resolve };
 }
 
+/** Apply this sender's next parameters, then pause before the caller continues. */
+function holdNextSetParameters(sender: RtpSender): {
+  entered: Promise<void>;
+  release: () => void;
+} {
+  const original = sender.setParameters?.bind(sender);
+  const gate = deferred();
+  let enteredResolve!: () => void;
+  const entered = new Promise<void>((resolve) => {
+    enteredResolve = resolve;
+  });
+  let used = false;
+  sender.setParameters = async (params) => {
+    await original?.(params);
+    if (used) return;
+    used = true;
+    enteredResolve();
+    await gate.promise;
+  };
+  return { entered, release: gate.resolve };
+}
+
+function videoBitrates(
+  peer: PeerConnection | undefined,
+): Array<number | undefined> {
+  return (peer?.getSenders?.() ?? [])
+    .filter((sender) => sender.track?.kind === "video")
+    .map((sender) => sender.getParameters?.().encodings[0]?.maxBitrate);
+}
+
 function install(opts?: {
   media?: boolean;
   display?: boolean;
@@ -2049,5 +2079,130 @@ describe("stream negotiation stability", () => {
       "Dieses Streamprofil wird nicht unterstützt. Es läuft eine sicherere Auflösung.",
     );
     expect(useVoice.getState().sharing).toBe(true);
+  });
+
+  it("keeps the newer budgets when an older profile update resumes", async () => {
+    const env = await connected();
+    toggleCamera();
+    toggleShare();
+    await vi.waitFor(() =>
+      expect(videoBitrates(env.peers[0])).toEqual([1_250_000, 1_250_000]),
+    );
+    const camera = env.peers[0]!.senders.find(
+      (sender) => sender.track?.kind === "video",
+    )!;
+    const held = holdNextSetParameters(camera);
+    useMediaSettings.getState().patch({ cameraProfile: "detail" });
+    await held.entered;
+    useMediaSettings.getState().patch({ cameraProfile: "economy" });
+    for (let i = 0; i < 20; i++) await Promise.resolve();
+    held.release();
+    // Detail then Sparsam, screen stays Ausgewogen. The stale screen share
+    // from the Detail pass is 1_538_461.
+    await vi.waitFor(() =>
+      expect(videoBitrates(env.peers[0])).toEqual([606_060, 1_893_939]),
+    );
+    expect(
+      env.peers[0]!.senders.filter(
+        (sender) => sender.track?.kind === "video",
+      ).map((sender) => sender.getParameters?.().encodings[0]?.maxFramerate),
+    ).toEqual([15, 30]);
+  });
+
+  it("applies a stopped sender's freed budget on the same queue", async () => {
+    const env = await connected();
+    toggleCamera();
+    toggleShare();
+    await vi.waitFor(() =>
+      expect(videoBitrates(env.peers[0])).toEqual([1_250_000, 1_250_000]),
+    );
+    const camera = env.peers[0]!.senders.find(
+      (sender) => sender.track?.kind === "video",
+    )!;
+    const held = holdNextSetParameters(camera);
+    useMediaSettings.getState().patch({ cameraProfile: "detail" });
+    await held.entered;
+    toggleShare();
+    held.release();
+    await vi.waitFor(() =>
+      expect(videoBitrates(env.peers[0])).toEqual([4_000_000]),
+    );
+    expect(useVoice.getState().sharing).toBe(false);
+    expect(useVoice.getState().camera).toBe(true);
+  });
+
+  it("does not let an in-flight SFU description restore an older budget", async () => {
+    const env = await connected();
+    toggleCamera();
+    toggleShare();
+    await vi.waitFor(() =>
+      expect(videoBitrates(env.peers[0])).toEqual([1_250_000, 1_250_000]),
+    );
+    for (let i = 0; i < 4 && env.peers[0]?.signalingState !== "stable"; i++) {
+      const offers = env.mediaSent.filter((frame) => frame.op === "o").length;
+      await vi.waitFor(() =>
+        expect(env.peers[0]?.signalingState).toBe("have-local-offer"),
+      );
+      env.emitMedia({ op: "a", sdp: "v=0\r\n" });
+      await vi.waitFor(() => {
+        const answered =
+          env.peers[0]?.signalingState === "stable" ||
+          env.mediaSent.filter((frame) => frame.op === "o").length > offers;
+        expect(answered).toBe(true);
+      });
+    }
+    expect(env.peers[0]?.signalingState).toBe("stable");
+    useMediaSettings.getState().patch({ cameraProfile: "detail" });
+    await vi.waitFor(() =>
+      expect(videoBitrates(env.peers[0])).toEqual([2_461_538, 1_538_461]),
+    );
+    const camera = env.peers[0]!.senders.find(
+      (sender) => sender.track?.kind === "video",
+    )!;
+    const held = holdNextSetParameters(camera);
+    env.emitMedia({ op: "o", sdp: "v=0\r\noffer\r\n" });
+    await held.entered;
+    useMediaSettings.getState().patch({ cameraProfile: "economy" });
+    for (let i = 0; i < 20; i++) await Promise.resolve();
+    held.release();
+    await vi.waitFor(() =>
+      expect(videoBitrates(env.peers[0])).toEqual([606_060, 1_893_939]),
+    );
+    await vi.waitFor(() => expect(env.peers[0]?.signalingState).toBe("stable"));
+  });
+
+  it("does not block a new peer generation on the previous budget queue", async () => {
+    const env = await connected();
+    toggleCamera();
+    await vi.waitFor(() =>
+      expect(videoBitrates(env.peers[0])).toEqual([2_500_000]),
+    );
+    const camera = env.peers[0]!.senders.find(
+      (sender) => sender.track?.kind === "video",
+    )!;
+    const held = holdNextSetParameters(camera);
+    try {
+      useMediaSettings.getState().patch({ cameraProfile: "economy" });
+      await held.entered;
+      leaveVoice();
+      joinVoice({
+        serverId: "srv",
+        channelId: "voice",
+        channelName: "Lounge",
+      });
+      await vi.waitFor(() =>
+        expect(env.peers[1]?.signalingState).toBe("have-local-offer"),
+      );
+      env.emitMedia({ op: "a", sdp: "v=0\r\n" });
+      await vi.waitFor(() =>
+        expect(env.peers[1]?.signalingState).toBe("stable"),
+      );
+      toggleCamera();
+      await vi.waitFor(() =>
+        expect(videoBitrates(env.peers[1])).toEqual([800_000]),
+      );
+    } finally {
+      held.release();
+    }
   });
 });
