@@ -31,13 +31,19 @@ class FakePeer implements PeerConnection {
   onicecandidate: PeerConnection["onicecandidate"] = null;
   ontrack: PeerConnection["ontrack"] = null;
   onnegotiationneeded: PeerConnection["onnegotiationneeded"] = null;
+  oniceconnectionstatechange: PeerConnection["oniceconnectionstatechange"] =
+    null;
+  onconnectionstatechange: PeerConnection["onconnectionstatechange"] = null;
   remoteDescription: { type: string } | null = null;
   signalingState = "stable";
+  iceConnectionState = "new";
+  connectionState = "new";
   closed = false;
   tracks = 0;
   audio: MediaStreamTrack | null = null;
   senders: RtpSender[] = [];
   ice: { candidate: string; sdpMid: string | null }[] = [];
+  offerOptions: Array<{ iceRestart?: boolean } | undefined> = [];
   iceServers: IceServer[];
 
   constructor(iceServers: IceServer[] = []) {
@@ -79,10 +85,13 @@ class FakePeer implements PeerConnection {
     return this.senders;
   }
 
-  async createOffer(): Promise<{ type: string; sdp?: string }> {
+  async createOffer(options?: {
+    iceRestart?: boolean;
+  }): Promise<{ type: string; sdp?: string }> {
     if (this.signalingState !== "stable") {
       throw new Error("InvalidStateError");
     }
+    this.offerOptions.push(options);
     return { type: "offer", sdp: "v=0\r\no=- 1 1 IN IP4 127.0.0.1\r\n" };
   }
 
@@ -124,6 +133,16 @@ class FakePeer implements PeerConnection {
 
   close(): void {
     this.closed = true;
+  }
+
+  setIce(state: string): void {
+    this.iceConnectionState = state;
+    this.oniceconnectionstatechange?.();
+  }
+
+  setConnection(state: string): void {
+    this.connectionState = state;
+    this.onconnectionstatechange?.();
   }
 }
 
@@ -1583,7 +1602,9 @@ describe("stream negotiation stability", () => {
     expect(env.peers[0]?.audio?.enabled).toBe(false);
     expect(env.errors).toHaveLength(1);
     expect(env.errors[0]).toBeInstanceOf(Error);
-    expect((env.errors[0] as Error).message).toMatch(/Sprachkanal bleibt aktiv/);
+    expect((env.errors[0] as Error).message).toMatch(
+      /Sprachkanal bleibt aktiv/,
+    );
     expect(
       env.sent.some((frame) => frame.op === "sig" && frame.t === "l"),
     ).toBe(false);
@@ -1609,15 +1630,17 @@ describe("stream negotiation stability", () => {
     await vi.waitFor(() =>
       expect(env.peers[0]?.signalingState).toBe("have-local-offer"),
     );
-    const offersAtFailure = env.mediaSent.filter((frame) => frame.op === "o").length;
+    const offersAtFailure = env.mediaSent.filter(
+      (frame) => frame.op === "o",
+    ).length;
     expect(offersAtFailure).toBeGreaterThan(0);
     const captured = useVoice.getState().localScreen?.getVideoTracks()[0];
     expect(captured).toBeTruthy();
     env.emitMedia({ op: "err", e: "negotiation_failed" });
     await vi.waitFor(() => expect(env.peers[0]?.signalingState).toBe("stable"));
-    expect(env.mediaSent.some((frame) => frame.op === "u" && frame.k === "s")).toBe(
-      true,
-    );
+    expect(
+      env.mediaSent.some((frame) => frame.op === "u" && frame.k === "s"),
+    ).toBe(true);
     expect(useVoice.getState().sharing).toBe(false);
     expect(useVoice.getState().localScreen).toBeNull();
     expect(useVoice.getState().camera).toBe(false);
@@ -1628,7 +1651,9 @@ describe("stream negotiation stability", () => {
     expect(env.peers[0]?.audio).toBeTruthy();
     expect(trackStopped(env.peers[0]?.audio)).toBe(false);
     expect(env.peers[0]?.closed).toBe(false);
-    const offersAfterFailure = env.mediaSent.filter((frame) => frame.op === "o").length;
+    const offersAfterFailure = env.mediaSent.filter(
+      (frame) => frame.op === "o",
+    ).length;
     for (let i = 0; i < 8; i++) await Promise.resolve();
     expect(env.mediaSent.filter((frame) => frame.op === "o").length).toBe(
       offersAfterFailure,
@@ -1646,7 +1671,9 @@ describe("stream negotiation stability", () => {
     expect(useVoice.getState().localCamera).toBeTruthy();
     expect(env.peers[0]?.audio).toBeTruthy();
     expect(env.errors).toHaveLength(1);
-    expect((env.errors[0] as Error).message).toMatch(/Sprachkanal bleibt aktiv/);
+    expect((env.errors[0] as Error).message).toMatch(
+      /Sprachkanal bleibt aktiv/,
+    );
   });
   it("keeps a negotiated screen share when a later renegotiation fails", async () => {
     const env = await connected();
@@ -1740,6 +1767,121 @@ describe("stream negotiation stability", () => {
     expect(env.errors).toHaveLength(0);
     env.emitMedia({ op: "err", e: "unauthorized" });
     expect(useVoice.getState().status).toBe("idle");
+  });
+  it("restarts ICE once on failed transport and stays joined", async () => {
+    const env = await connected();
+    env.peers[0]?.setIce("failed");
+    await vi.waitFor(() =>
+      expect(env.peers[0]?.offerOptions.some((opt) => opt?.iceRestart)).toBe(
+        true,
+      ),
+    );
+    expect(useVoice.getState().status).toBe("joined");
+    expect(env.peers[0]?.closed).toBe(false);
+  });
+  it("keeps iceRestart on an offer deferred until the in-flight answer", async () => {
+    const env = await connected();
+    toggleCamera();
+    await vi.waitFor(() =>
+      expect(env.peers[0]?.signalingState).toBe("have-local-offer"),
+    );
+    const before = env.peers[0]!.offerOptions.length;
+    env.peers[0]!.setIce("failed");
+    expect(env.peers[0]!.offerOptions.length).toBe(before);
+    env.emitMedia({ op: "a", sdp: "v=0\r\n" });
+    await vi.waitFor(() =>
+      expect(env.peers[0]!.offerOptions.length).toBeGreaterThan(before),
+    );
+    expect(env.peers[0]!.offerOptions.at(-1)?.iceRestart).toBe(true);
+    expect(env.peers[0]?.closed).toBe(false);
+    expect(useVoice.getState().status).toBe("joined");
+  });
+  it("recreates a rolled-back restart offer after a glare collision", async () => {
+    const env = await connected();
+    env.peers[0]!.setIce("failed");
+    await vi.waitFor(() =>
+      expect(env.peers[0]?.signalingState).toBe("have-local-offer"),
+    );
+    expect(env.peers[0]!.offerOptions.at(-1)?.iceRestart).toBe(true);
+    const before = env.peers[0]!.offerOptions.length;
+    env.emitMedia({ op: "o", sdp: "v=0\r\no=- 3 3 IN IP4 127.0.0.1\r\n" });
+    await vi.waitFor(() =>
+      expect(env.peers[0]!.offerOptions.length).toBeGreaterThan(before),
+    );
+    expect(env.peers[0]!.offerOptions.at(-1)?.iceRestart).toBe(true);
+    expect(env.peers[0]?.closed).toBe(false);
+  });
+  it("does not close the peer when ice and connection both report the same failure", async () => {
+    const env = await connected();
+    env.peers[0]!.setIce("failed");
+    env.peers[0]!.setConnection("failed");
+    await vi.waitFor(() =>
+      expect(env.peers[0]?.offerOptions.some((opt) => opt?.iceRestart)).toBe(
+        true,
+      ),
+    );
+    expect(env.peers).toHaveLength(1);
+    expect(env.peers[0]?.closed).toBe(false);
+    expect(useVoice.getState().status).toBe("joined");
+  });
+  it("reconnects after the restart itself fails, not on the first duplicate", async () => {
+    const env = await connected();
+    env.peers[0]!.setIce("failed");
+    await vi.waitFor(() =>
+      expect(env.peers[0]?.signalingState).toBe("have-local-offer"),
+    );
+    env.emitMedia({ op: "a", sdp: "v=0\r\n" });
+    await vi.waitFor(() => expect(env.peers[0]?.signalingState).toBe("stable"));
+    env.peers[0]!.setIce("checking");
+    env.peers[0]!.setIce("failed");
+    await vi.waitFor(() => expect(env.peers[0]?.closed).toBe(true));
+    expect(env.peers.length).toBeGreaterThan(1);
+    expect(useVoice.getState().status).toBe("joined");
+  });
+  it("reconnects when the ice recovery deadline passes", async () => {
+    const env = await connected();
+    vi.useFakeTimers();
+    env.peers[0]!.setIce("failed");
+    for (let i = 0; i < 20; i++) await Promise.resolve();
+    expect(env.peers[0]?.offerOptions.some((opt) => opt?.iceRestart)).toBe(
+      true,
+    );
+    expect(env.peers[0]?.closed).toBe(false);
+    await vi.advanceTimersByTimeAsync(9_999);
+    expect(env.peers[0]?.closed).toBe(false);
+    await vi.advanceTimersByTimeAsync(1);
+    for (let i = 0; i < 20; i++) await Promise.resolve();
+    expect(env.peers[0]?.closed).toBe(true);
+    expect(env.peers.length).toBeGreaterThan(1);
+    expect(useVoice.getState().status).toBe("joined");
+  });
+  it("keeps a deferred watch ice restart through the answer", async () => {
+    const env = await connected();
+    watchLive({ serverId: "srv", channelId: "stage", channelName: "Stage" });
+    await vi.waitFor(() =>
+      expect(env.peers[1]?.signalingState).toBe("have-local-offer"),
+    );
+    const before = env.peers[1]!.offerOptions.length;
+    env.peers[1]!.setIce("failed");
+    expect(env.peers[1]!.offerOptions.length).toBe(before);
+    env.emitMedia({ op: "a", sdp: "v=0\r\n" });
+    await vi.waitFor(() =>
+      expect(env.peers[1]!.offerOptions.length).toBeGreaterThan(before),
+    );
+    expect(env.peers[1]!.offerOptions.at(-1)?.iceRestart).toBe(true);
+    expect(env.peers[1]?.closed).toBe(false);
+    expect(useVoice.getState().watching).toBe(true);
+  });
+  it("does not close the watch peer on a duplicate transport failure", async () => {
+    const env = await connected();
+    watchLive({ serverId: "srv", channelId: "stage", channelName: "Stage" });
+    await vi.waitFor(() => expect(env.peers[1]).toBeTruthy());
+    env.peers[1]!.setIce("failed");
+    env.peers[1]!.setConnection("failed");
+    await Promise.resolve();
+    expect(env.peers[1]?.closed).toBe(false);
+    expect(useVoice.getState().watching).toBe(true);
+    expect(useVoice.getState().status).toBe("joined");
   });
   it("does not apply an old remote-offer continuation to a rejoined peer", async () => {
     const env = await connected();

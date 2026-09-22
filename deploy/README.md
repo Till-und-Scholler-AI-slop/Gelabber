@@ -55,6 +55,22 @@ cd deploy/compose
 docker compose up -d
 ```
 
+## TURN-Zugangsdaten
+
+Zwei Modi. Sie müssen auf API und coturn gleich sein.
+
+**Statisch (Default).** `TURN_AUTH_SECRET` leer lassen. Das Ticket schickt `TURN_USERNAME` / `TURN_PASSWORD`. Der gebündelte coturn prüft genau diese Langzeit-Credentials (`--lt-cred-mech`). Ein externes TURN, das schon User/Passwort kennt, bleibt so erreichbar — auch wenn das Homelab-Overlay den gebündelten coturn abschaltet.
+
+**REST.** Denselben privaten Secret auf der API und auf coturn setzen (`TURN_AUTH_SECRET`, coturn `--use-auth-secret` / `--static-auth-secret`). Jedes Ticket bekommt dann zeitlich begrenzte HMAC-Credentials (`expiry:user`) statt des statischen Passworts. `TURN_CRED_TTL_SECS` (Default 21600) ist die Gültigkeit. Der gebündelte coturn schaltet dabei von allein auf REST um.
+
+`gelabberturnsecret` ist kein Secret. Der alte Compose-Default hat ihn in jeden Stack geschrieben; API und gebündelter coturn starten damit nicht mehr. Wer ihn in der `.env` stehen hat, löscht die Zeile (statisch) oder setzt ein eigenes Secret auf beiden Seiten.
+
+### Migration
+
+1. Bisher nur `TURN_USERNAME` / `TURN_PASSWORD` (externes TURN, Homelab ohne umgebauten coturn): `TURN_AUTH_SECRET` nicht setzen. Relays bleiben bei den bestehenden Credentials.
+2. Gebündelter coturn ohne eigene `TURN_AUTH_SECRET`-Zeile: nichts eintragen. API und coturn wechseln zusammen von dem öffentlichen REST-Default auf statische User/Passwort-Credentials.
+3. REST gewollt: ein neues, nicht öffentliches Secret erzeugen, identisch in die API-Umgebung und in coturn (`static-auth-secret`) schreiben, beide neu starten. Erst dann Tickets mit HMAC-Credentials ausstellen. Ein externes TURN muss denselben Secret bekommen, bevor die Variable gesetzt wird.
+
 ## TURN-Port belegt
 
 `Bind for 0.0.0.0:3478 failed` — meist schon ein coturn.
