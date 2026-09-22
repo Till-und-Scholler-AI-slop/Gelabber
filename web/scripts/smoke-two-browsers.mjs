@@ -102,7 +102,7 @@ async function relaySelected(page) {
 
 try {
   const a = await participant("Smoke A");
-  await a.page.getByRole("button", { name: "Server erstellen" }).click();
+  await a.page.getByRole("button", { name: "Server erstellen" }).first().click();
   const serverDialog = a.page.getByRole("dialog", { name: "Server erstellen" });
   await serverDialog.getByLabel("Name").fill(`Smoke ${suffix}`);
   await serverDialog.getByRole("button", { name: "Erstellen" }).click();
