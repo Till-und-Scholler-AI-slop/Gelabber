@@ -31,7 +31,12 @@ import {
   useVoiceDiagnostics,
 } from "./diagnostics.ts";
 import { resetVoiceRoster, useVoiceRoster, voiceOf } from "./roster.ts";
-import { resetMediaSettingsForTests, useMediaSettings } from "./settings.ts";
+import {
+  allocateVideoBitrates,
+  resetMediaSettingsForTests,
+  useMediaSettings,
+  videoConstraintsFor,
+} from "./settings.ts";
 
 class FakePeer implements PeerConnection {
   onicecandidate: PeerConnection["onicecandidate"] = null;
@@ -51,6 +56,7 @@ class FakePeer implements PeerConnection {
   ice: { candidate: string; sdpMid: string | null }[] = [];
   offerOptions: Array<{ iceRestart?: boolean } | undefined> = [];
   iceServers: IceServer[];
+  getStats?: () => Promise<unknown>;
 
   constructor(iceServers: IceServer[] = []) {
     this.iceServers = iceServers;
@@ -210,6 +216,36 @@ function deferred(): { promise: Promise<void>; resolve: () => void } {
   return { promise, resolve };
 }
 
+/** Apply this sender's next parameters, then pause before the caller continues. */
+function holdNextSetParameters(sender: RtpSender): {
+  entered: Promise<void>;
+  release: () => void;
+} {
+  const original = sender.setParameters?.bind(sender);
+  const gate = deferred();
+  let enteredResolve!: () => void;
+  const entered = new Promise<void>((resolve) => {
+    enteredResolve = resolve;
+  });
+  let used = false;
+  sender.setParameters = async (params) => {
+    await original?.(params);
+    if (used) return;
+    used = true;
+    enteredResolve();
+    await gate.promise;
+  };
+  return { entered, release: gate.resolve };
+}
+
+function videoBitrates(
+  peer: PeerConnection | undefined,
+): Array<number | undefined> {
+  return (peer?.getSenders?.() ?? [])
+    .filter((sender) => sender.track?.kind === "video")
+    .map((sender) => sender.getParameters?.().encodings[0]?.maxBitrate);
+}
+
 function install(opts?: {
   media?: boolean;
   display?: boolean;
@@ -231,6 +267,15 @@ function install(opts?: {
     callIndex: number,
     constraints: MediaStreamConstraints,
   ) => boolean;
+  /** Thrown instead of a generic denial. OverconstrainedError is retried. */
+  mediaError?: (
+    callIndex: number,
+    constraints: MediaStreamConstraints,
+  ) => Error | undefined;
+  displayError?: (
+    callIndex: number,
+    constraints: MediaStreamConstraints,
+  ) => Error | undefined;
   holdReplaceTrack?: Promise<void>;
   /** Do not answer `op:j` with `op:ok`. Used when the SFU rejects the join. */
   holdJoin?: boolean;
@@ -249,6 +294,7 @@ function install(opts?: {
   let getUserMediaCalls = 0;
   let getDisplayMediaCalls = 0;
   let lastUserMedia: MediaStreamConstraints | undefined;
+  let lastDisplayMedia: MediaStreamConstraints | undefined;
 
   configureVoice({
     userId: () => opts?.userId ?? "u-self",
@@ -306,6 +352,12 @@ function install(opts?: {
       const callIndex = getUserMediaCalls;
       getUserMediaCalls += 1;
       lastUserMedia = constraints;
+      const mediaError = opts?.mediaError?.(callIndex, constraints);
+      if (mediaError) {
+        if (opts?.gateMedia) await opts.gateMedia(callIndex, constraints);
+        else if (opts?.holdMedia) await opts.holdMedia;
+        throw mediaError;
+      }
       if (opts?.media === false || opts?.failMedia?.(callIndex, constraints)) {
         if (opts?.gateMedia) await opts.gateMedia(callIndex, constraints);
         else if (opts?.holdMedia) await opts.holdMedia;
@@ -321,9 +373,13 @@ function install(opts?: {
       else if (opts?.holdMedia) await opts.holdMedia;
       return stream;
     },
-    getDisplayMedia: async () => {
+    getDisplayMedia: async (constraints) => {
+      const callIndex = getDisplayMediaCalls;
       getDisplayMediaCalls += 1;
+      lastDisplayMedia = constraints;
       if (opts?.holdDisplay) await opts.holdDisplay;
+      const displayError = opts?.displayError?.(callIndex, constraints);
+      if (displayError) throw displayError;
       if (opts?.display === false) throw new Error("denied");
       return fakeVideoStream("local-scr", true);
     },
@@ -394,6 +450,7 @@ function install(opts?: {
     getUserMediaCalls: () => getUserMediaCalls,
     getDisplayMediaCalls: () => getDisplayMediaCalls,
     lastUserMedia: () => lastUserMedia,
+    lastDisplayMedia: () => lastDisplayMedia,
   };
 }
 
@@ -2049,5 +2106,444 @@ describe("stream negotiation stability", () => {
     for (let i = 0; i < 12; i++) await Promise.resolve();
     expect(createAnswer).not.toHaveBeenCalled();
     expect(env.peers[1]?.signalingState).toBe("have-local-offer");
+  });
+
+  it("captures camera and screen with the selected profile constraints", async () => {
+    useMediaSettings.getState().patch({
+      cameraProfile: "economy",
+      screenProfile: "detail",
+    });
+    const env = await connected();
+    toggleCamera();
+    await vi.waitFor(() =>
+      expect(useVoice.getState().localCamera).toBeTruthy(),
+    );
+    expect(env.lastUserMedia()).toEqual({
+      audio: false,
+      video: videoConstraintsFor("camera", "economy"),
+    });
+    toggleShare();
+    await vi.waitFor(() =>
+      expect(useVoice.getState().localScreen).toBeTruthy(),
+    );
+    expect(env.lastDisplayMedia()).toEqual({
+      audio: false,
+      video: videoConstraintsFor("screen", "detail"),
+    });
+    const video = env.peers[0]!.senders.filter(
+      (s) => s.track?.kind === "video",
+    );
+    await vi.waitFor(() =>
+      expect(
+        video.map((s) => s.getParameters!().encodings[0]?.maxBitrate),
+      ).toEqual(allocateVideoBitrates(["economy", "detail"])),
+    );
+    expect(
+      video.map((s) => s.getParameters!().encodings[0]?.maxFramerate),
+    ).toEqual([15, 30]);
+
+    env.peers[0]!.getStats = async () =>
+      new Map(
+        video.map((sender, index) => [
+          `video-${index}`,
+          {
+            id: `video-${index}`,
+            type: "outbound-rtp",
+            kind: "video",
+            timestamp: Date.now(),
+            trackIdentifier: sender.track!.id,
+            bytesSent: 1000,
+          },
+        ]),
+      );
+    await vi.waitFor(
+      () =>
+        expect(useVoiceDiagnostics.getState().latest?.voice?.flows).toHaveLength(
+          2,
+        ),
+      { timeout: 3_500 },
+    );
+    const exported = buildDiagnosticExport();
+    const flows = exported.samples.at(-1)!.voice!.flows;
+    expect(flows.map((flow) => flow.source)).toEqual(["camera", "screen"]);
+    expect(flows.map((flow) => flow.configuredMaxBitrateBps)).toEqual(
+      video.map((sender) => sender.getParameters!().encodings[0]!.maxBitrate),
+    );
+    expect(flows.map((flow) => flow.configuredMaxFps)).toEqual([15, 30]);
+    expect(exported.samples.at(-1)?.caps.videoSendBudget).toBe(
+      video.reduce(
+        (total, sender) =>
+          total + (sender.getParameters!().encodings[0]!.maxBitrate ?? 0),
+        0,
+      ),
+    );
+    expect(exported.settings.cameraProfile).toBe("economy");
+    expect(exported.settings.screenProfile).toBe("detail");
+  });
+
+  it("restores profile limits and the diagnostics poll after an ICE reconnect", async () => {
+    useMediaSettings.getState().patch({ cameraProfile: "economy" });
+    const env = await connected();
+    toggleCamera();
+    await vi.waitFor(() =>
+      expect(useVoice.getState().localCamera).toBeTruthy(),
+    );
+    env.emitMedia({ op: "a", sdp: "v=0\r\n" });
+    await vi.waitFor(() =>
+      expect(env.peers[0]?.signalingState).toBe("stable"),
+    );
+    env.peers[0]!.setIce("failed");
+    await vi.waitFor(() =>
+      expect(env.peers[0]?.offerOptions.at(-1)?.iceRestart).toBe(true),
+    );
+    env.emitMedia({ op: "a", sdp: "v=0\r\n" });
+    await vi.waitFor(() =>
+      expect(env.peers[0]?.signalingState).toBe("stable"),
+    );
+    env.peers[0]!.setIce("checking");
+    env.peers[0]!.setIce("failed");
+    await vi.waitFor(() => expect(env.peers).toHaveLength(2));
+    await vi.waitFor(() =>
+      expect(
+        env.peers[1]?.senders.find((sender) => sender.track?.kind === "video")
+          ?.getParameters?.().encodings[0],
+      ).toMatchObject({ maxBitrate: 800_000, maxFramerate: 15 }),
+    );
+    expect(diagnosticsPolling().voice).toBe(true);
+  });
+
+  it("uses the screen profile for Go Live", async () => {
+    useMediaSettings.getState().patch({ screenProfile: "economy" });
+    const env = await connected();
+    toggleGoLive();
+    await vi.waitFor(() => expect(useVoice.getState().localLive).toBeTruthy());
+    expect(env.lastDisplayMedia()).toEqual({
+      audio: false,
+      video: videoConstraintsFor("screen", "economy"),
+    });
+    const video = env.peers[0]!.senders.find((s) => s.track?.kind === "video");
+    await vi.waitFor(() =>
+      expect(video?.getParameters?.().encodings[0]?.maxBitrate).toBe(800_000),
+    );
+    expect(video?.getParameters?.().encodings[0]?.maxFramerate).toBe(15);
+  });
+
+  it("applies a live profile on the sender and the track when the browser allows it", async () => {
+    const env = await connected();
+    toggleCamera();
+    await vi.waitFor(() =>
+      expect(useVoice.getState().localCamera).toBeTruthy(),
+    );
+    const track = useVoice.getState().localCamera!.getVideoTracks()[0]!;
+    let applied: MediaTrackConstraints | undefined;
+    (
+      track as MediaStreamTrack & {
+        applyConstraints?: (next: MediaTrackConstraints) => Promise<void>;
+      }
+    ).applyConstraints = async (next) => {
+      applied = next;
+    };
+    useMediaSettings.getState().patch({ cameraProfile: "detail" });
+    await vi.waitFor(() =>
+      expect(useMediaSettings.getState().cameraProfileApply).toBe("live"),
+    );
+    expect(applied).toEqual(videoConstraintsFor("camera", "detail"));
+    const video = env.peers[0]!.senders.find((s) => s.track?.kind === "video");
+    expect(video?.getParameters?.().encodings[0]?.maxBitrate).toBe(4_000_000);
+    expect(video?.getParameters?.().encodings[0]?.maxFramerate).toBe(30);
+    const audio = env.peers[0]!.senders.find((s) => s.track?.kind === "audio");
+    expect(audio?.getParameters?.().encodings[0]?.maxBitrate).toBe(64_000);
+    expect(useVoice.getState().muted).toBe(false);
+    expect(useVoice.getState().deafened).toBe(false);
+  });
+
+  it("marks the next stream when applyConstraints is rejected and still caps the sender", async () => {
+    const env = await connected();
+    toggleMute();
+    toggleCamera();
+    await vi.waitFor(() =>
+      expect(useVoice.getState().localCamera).toBeTruthy(),
+    );
+    const track = useVoice.getState().localCamera!.getVideoTracks()[0]!;
+    (
+      track as MediaStreamTrack & {
+        applyConstraints?: (next: MediaTrackConstraints) => Promise<void>;
+      }
+    ).applyConstraints = async () => {
+      const error = new Error("rejected");
+      error.name = "OverconstrainedError";
+      throw error;
+    };
+    useMediaSettings.getState().patch({
+      cameraProfile: "economy",
+      quality: "high",
+    });
+    await vi.waitFor(() =>
+      expect(useMediaSettings.getState().cameraProfileApply).toBe("next"),
+    );
+    const video = env.peers[0]!.senders.find((s) => s.track?.kind === "video");
+    expect(video?.getParameters?.().encodings[0]?.maxBitrate).toBe(800_000);
+    expect(video?.getParameters?.().encodings[0]?.maxFramerate).toBe(15);
+    const audio = env.peers[0]!.senders.find((s) => s.track?.kind === "audio");
+    expect(audio?.getParameters?.().encodings[0]?.maxBitrate).toBe(128_000);
+    expect(useVoice.getState().muted).toBe(true);
+    expect(useVoice.getState().deafened).toBe(false);
+    expect(useVoice.getState().camera).toBe(true);
+  });
+
+  it("splits one sender share across simulcast encodings", async () => {
+    const env = await connected();
+    toggleCamera();
+    await vi.waitFor(() =>
+      expect(
+        env.peers[0]?.senders.filter((s) => s.track?.kind === "video"),
+      ).toHaveLength(1),
+    );
+    const video = env.peers[0]!.senders.find((s) => s.track?.kind === "video")!;
+    video.getParameters!().encodings.push({});
+    useMediaSettings.getState().patch({ cameraProfile: "economy" });
+    await vi.waitFor(() =>
+      expect(video.getParameters!().encodings.map((e) => e.maxBitrate)).toEqual(
+        [400_000, 400_000],
+      ),
+    );
+    expect(video.getParameters!().encodings.map((e) => e.maxFramerate)).toEqual(
+      [15, 15],
+    );
+  });
+
+  it("falls back to a safer camera constraint when the profile is rejected", async () => {
+    useMediaSettings.getState().patch({ cameraProfile: "detail" });
+    const env = install({
+      mediaError: (_index, constraints) => {
+        const video = constraints.video;
+        if (!video || typeof video !== "object" || !("width" in video)) {
+          return undefined;
+        }
+        const width = video.width;
+        if (
+          width &&
+          typeof width === "object" &&
+          "ideal" in width &&
+          width.ideal === 1920
+        ) {
+          const error = new Error("over");
+          error.name = "OverconstrainedError";
+          return error;
+        }
+        return undefined;
+      },
+    });
+    joinVoice({ serverId: "srv", channelId: "voice", channelName: "Lounge" });
+    await vi.waitFor(() =>
+      expect(env.peers[0]?.signalingState).toBe("have-local-offer"),
+    );
+    env.emitMedia({ op: "a", sdp: "v=0\r\n" });
+    await vi.waitFor(() => expect(env.peers[0]?.signalingState).toBe("stable"));
+    toggleCamera();
+    await vi.waitFor(() =>
+      expect(useVoice.getState().localCamera).toBeTruthy(),
+    );
+    expect(env.getUserMediaCalls()).toBe(3);
+    expect(env.lastUserMedia()).toEqual({
+      audio: false,
+      video: videoConstraintsFor("camera", "balanced"),
+    });
+    expect(env.errors.map((error) => (error as Error).message)).toContain(
+      "Dieses Streamprofil wird nicht unterstützt. Es läuft eine sicherere Auflösung.",
+    );
+    const video = env.peers[0]!.senders.find((s) => s.track?.kind === "video");
+    await vi.waitFor(() =>
+      expect(video?.getParameters?.().encodings[0]?.maxBitrate).toBe(4_000_000),
+    );
+  });
+
+  it("does not reopen the screen picker when the user cancels", async () => {
+    useMediaSettings.getState().patch({ screenProfile: "detail" });
+    const env = install({
+      displayError: () => {
+        const error = new Error("cancel");
+        error.name = "NotAllowedError";
+        return error;
+      },
+    });
+    joinVoice({ serverId: "srv", channelId: "voice", channelName: "Lounge" });
+    await vi.waitFor(() =>
+      expect(env.peers[0]?.signalingState).toBe("have-local-offer"),
+    );
+    env.emitMedia({ op: "a", sdp: "v=0\r\n" });
+    await vi.waitFor(() => expect(env.peers[0]?.signalingState).toBe("stable"));
+    toggleShare();
+    await vi.waitFor(() => expect(useVoice.getState().sharing).toBe(false));
+    expect(env.getDisplayMediaCalls()).toBe(1);
+    expect(env.errors).toHaveLength(0);
+  });
+
+  it("retries screen capture once when the profile constraints are rejected", async () => {
+    useMediaSettings.getState().patch({ screenProfile: "detail" });
+    const env = install({
+      displayError: (index, constraints) => {
+        const video = constraints.video;
+        if (
+          index === 0 &&
+          video &&
+          typeof video === "object" &&
+          "width" in video &&
+          video.width &&
+          typeof video.width === "object" &&
+          "ideal" in video.width &&
+          video.width.ideal === 1920
+        ) {
+          const error = new Error("over");
+          error.name = "OverconstrainedError";
+          return error;
+        }
+        return undefined;
+      },
+    });
+    joinVoice({ serverId: "srv", channelId: "voice", channelName: "Lounge" });
+    await vi.waitFor(() =>
+      expect(env.peers[0]?.signalingState).toBe("have-local-offer"),
+    );
+    env.emitMedia({ op: "a", sdp: "v=0\r\n" });
+    await vi.waitFor(() => expect(env.peers[0]?.signalingState).toBe("stable"));
+    toggleShare();
+    await vi.waitFor(() =>
+      expect(useVoice.getState().localScreen).toBeTruthy(),
+    );
+    expect(env.getDisplayMediaCalls()).toBe(2);
+    expect(env.lastDisplayMedia()).toEqual({
+      audio: false,
+      video: videoConstraintsFor("screen", "balanced"),
+    });
+    expect(env.errors.map((error) => (error as Error).message)).toContain(
+      "Dieses Streamprofil wird nicht unterstützt. Es läuft eine sicherere Auflösung.",
+    );
+    expect(useVoice.getState().sharing).toBe(true);
+  });
+
+  it("keeps the newer budgets when an older profile update resumes", async () => {
+    const env = await connected();
+    toggleCamera();
+    toggleShare();
+    await vi.waitFor(() =>
+      expect(videoBitrates(env.peers[0])).toEqual([1_250_000, 1_250_000]),
+    );
+    const camera = env.peers[0]!.senders.find(
+      (sender) => sender.track?.kind === "video",
+    )!;
+    const held = holdNextSetParameters(camera);
+    useMediaSettings.getState().patch({ cameraProfile: "detail" });
+    await held.entered;
+    useMediaSettings.getState().patch({ cameraProfile: "economy" });
+    for (let i = 0; i < 20; i++) await Promise.resolve();
+    held.release();
+    // Detail then Sparsam, screen stays Ausgewogen. The stale screen share
+    // from the Detail pass is 1_538_461.
+    await vi.waitFor(() =>
+      expect(videoBitrates(env.peers[0])).toEqual([606_060, 1_893_939]),
+    );
+    expect(
+      env.peers[0]!.senders.filter(
+        (sender) => sender.track?.kind === "video",
+      ).map((sender) => sender.getParameters?.().encodings[0]?.maxFramerate),
+    ).toEqual([15, 30]);
+  });
+
+  it("applies a stopped sender's freed budget on the same queue", async () => {
+    const env = await connected();
+    toggleCamera();
+    toggleShare();
+    await vi.waitFor(() =>
+      expect(videoBitrates(env.peers[0])).toEqual([1_250_000, 1_250_000]),
+    );
+    const camera = env.peers[0]!.senders.find(
+      (sender) => sender.track?.kind === "video",
+    )!;
+    const held = holdNextSetParameters(camera);
+    useMediaSettings.getState().patch({ cameraProfile: "detail" });
+    await held.entered;
+    toggleShare();
+    held.release();
+    await vi.waitFor(() =>
+      expect(videoBitrates(env.peers[0])).toEqual([4_000_000]),
+    );
+    expect(useVoice.getState().sharing).toBe(false);
+    expect(useVoice.getState().camera).toBe(true);
+  });
+
+  it("does not let an in-flight SFU description restore an older budget", async () => {
+    const env = await connected();
+    toggleCamera();
+    toggleShare();
+    await vi.waitFor(() =>
+      expect(videoBitrates(env.peers[0])).toEqual([1_250_000, 1_250_000]),
+    );
+    for (let i = 0; i < 4 && env.peers[0]?.signalingState !== "stable"; i++) {
+      const offers = env.mediaSent.filter((frame) => frame.op === "o").length;
+      await vi.waitFor(() =>
+        expect(env.peers[0]?.signalingState).toBe("have-local-offer"),
+      );
+      env.emitMedia({ op: "a", sdp: "v=0\r\n" });
+      await vi.waitFor(() => {
+        const answered =
+          env.peers[0]?.signalingState === "stable" ||
+          env.mediaSent.filter((frame) => frame.op === "o").length > offers;
+        expect(answered).toBe(true);
+      });
+    }
+    expect(env.peers[0]?.signalingState).toBe("stable");
+    useMediaSettings.getState().patch({ cameraProfile: "detail" });
+    await vi.waitFor(() =>
+      expect(videoBitrates(env.peers[0])).toEqual([2_461_538, 1_538_461]),
+    );
+    const camera = env.peers[0]!.senders.find(
+      (sender) => sender.track?.kind === "video",
+    )!;
+    const held = holdNextSetParameters(camera);
+    env.emitMedia({ op: "o", sdp: "v=0\r\noffer\r\n" });
+    await held.entered;
+    useMediaSettings.getState().patch({ cameraProfile: "economy" });
+    for (let i = 0; i < 20; i++) await Promise.resolve();
+    held.release();
+    await vi.waitFor(() =>
+      expect(videoBitrates(env.peers[0])).toEqual([606_060, 1_893_939]),
+    );
+    await vi.waitFor(() => expect(env.peers[0]?.signalingState).toBe("stable"));
+  });
+
+  it("does not block a new peer generation on the previous budget queue", async () => {
+    const env = await connected();
+    toggleCamera();
+    await vi.waitFor(() =>
+      expect(videoBitrates(env.peers[0])).toEqual([2_500_000]),
+    );
+    const camera = env.peers[0]!.senders.find(
+      (sender) => sender.track?.kind === "video",
+    )!;
+    const held = holdNextSetParameters(camera);
+    try {
+      useMediaSettings.getState().patch({ cameraProfile: "economy" });
+      await held.entered;
+      leaveVoice();
+      joinVoice({
+        serverId: "srv",
+        channelId: "voice",
+        channelName: "Lounge",
+      });
+      await vi.waitFor(() =>
+        expect(env.peers[1]?.signalingState).toBe("have-local-offer"),
+      );
+      env.emitMedia({ op: "a", sdp: "v=0\r\n" });
+      await vi.waitFor(() =>
+        expect(env.peers[1]?.signalingState).toBe("stable"),
+      );
+      toggleCamera();
+      await vi.waitFor(() =>
+        expect(videoBitrates(env.peers[1])).toEqual([800_000]),
+      );
+    } finally {
+      held.release();
+    }
   });
 });

@@ -38,18 +38,23 @@ import {
   noteDiagnosticEvent,
   resetDiagnostics,
   statsEntriesFromReport,
+  type Caps,
   type VideoSource,
 } from "./diagnostics.ts";
 import {
   type MediaSettings,
+  type StreamKind,
+  type StreamProfileId,
+  allocateVideoBitrates,
   audioBitrate,
-  cameraConstraints,
-  displayConstraints,
-  VIDEO_SEND_BUDGET,
-  VIDEO_MAX_FPS,
+  isOverconstrainedError,
   micConstraints,
+  noteStreamProfileApply,
   onMediaSettingsChange,
+  streamProfileFps,
   useMediaSettings,
+  videoConstraintLadder,
+  videoConstraintsFor,
 } from "./settings.ts";
 
 export type VoiceStatus = "idle" | "joined";
@@ -216,11 +221,21 @@ let streamReported = false;
 let watchReported = false;
 let cameraEpoch = 0;
 let screenEpoch = 0;
+let cameraProfileEpoch = 0;
+let screenProfileEpoch = 0;
 let liveEpoch = 0;
 let awaitingJoin: { serverId: string; channelId: string } | null = null;
 let awaitingLive: { serverId: string; channelId: string } | null = null;
 let audioCommitChain: Promise<void> = Promise.resolve();
 let cameraCommitChain: Promise<void> = Promise.resolve();
+/**
+ * One video-budget queue for the current peer generation. Profile changes,
+ * publish, unpublish, and SDP all share it. A newer request supersedes an
+ * in-flight snapshot so an older pass cannot write a stale sender cap.
+ */
+let videoLimitChain: Promise<void> = Promise.resolve();
+let videoLimitGeneration = 0;
+let videoLimitRevision = 0;
 /** Senders that belonged to the last completed negotiation. */
 let settledSenders: RtpSender[] = [];
 /** Video kinds announced for the offer that is still unanswered. */
@@ -890,10 +905,57 @@ function voiceStreaming(): boolean {
   return state.camera || state.sharing || state.live;
 }
 
+function voiceCaps(): Caps {
+  const base = defaultCaps();
+  const senders = (seat.pc?.getSenders?.() ?? []).filter(
+    (sender) => sender.track?.kind === "video",
+  );
+  const profiles = senders.map((sender) =>
+    profileForVideoTrack(sender.track!),
+  );
+  const shares = allocateVideoBitrates(profiles);
+  const videoLimits: NonNullable<Caps["videoLimits"]> = {};
+  for (const [index, sender] of senders.entries()) {
+    const source = sender.track
+      ? diagnosticVideoSources()[sender.track.id]
+      : undefined;
+    if (!source) continue;
+    const encodings = sender.getParameters?.().encodings;
+    const hasBitrates =
+      encodings?.length &&
+      encodings.every(
+        (encoding) =>
+          typeof encoding.maxBitrate === "number" &&
+          Number.isFinite(encoding.maxBitrate) &&
+          encoding.maxBitrate > 0,
+      );
+    const maxBitrate = hasBitrates
+      ? encodings.reduce((sum, encoding) => sum + encoding.maxBitrate!, 0)
+      : (shares[index] ?? 0);
+    const maxFps =
+      Math.max(
+        0,
+        ...(encodings ?? []).map((encoding) => encoding.maxFramerate ?? 0),
+      ) || streamProfileFps(profiles[index] ?? "balanced");
+    videoLimits[source] = { maxBitrate, maxFps };
+  }
+  const active = Object.values(videoLimits);
+  return {
+    ...base,
+    videoSendBudget: active.length
+      ? active.reduce((sum, cap) => sum + cap.maxBitrate, 0)
+      : base.videoSendBudget,
+    videoMaxFps: active.length
+      ? Math.max(...active.map((cap) => cap.maxFps))
+      : base.videoMaxFps,
+    videoLimits,
+  };
+}
+
 function attachSeatDiagnostics(generation: number): void {
   attachDiagnostics({
     role: "voice",
-    caps: defaultCaps,
+    caps: voiceCaps,
     streaming: voiceStreaming,
     videoSources: diagnosticVideoSources,
     getReport: async () => {
@@ -957,10 +1019,13 @@ function stopPeer(): void {
   seat.close();
   micEpoch += 1;
   cameraEpoch += 1;
+  cameraProfileEpoch += 1;
+  screenProfileEpoch += 1;
   screenEpoch += 1;
   liveEpoch += 1;
   audioCommitChain = Promise.resolve();
   cameraCommitChain = Promise.resolve();
+  resetVideoLimitQueue();
   settledSenders = [];
   openPublish = [];
   discardingPublish = false;
@@ -1083,24 +1148,192 @@ async function applySendBitrate(): Promise<void> {
   }
 }
 
-async function applyVideoLimits(pc: PeerConnection): Promise<void> {
+function profileForVideoTrack(track: MediaStreamTrack): StreamProfileId {
+  const camera = cameraStream?.getVideoTracks().some((item) => item === track);
+  if (camera) return useMediaSettings.getState().cameraProfile;
+  return useMediaSettings.getState().screenProfile;
+}
+
+function resetVideoLimitQueue(): void {
+  videoLimitRevision += 1;
+  videoLimitChain = Promise.resolve();
+  videoLimitGeneration = seat.generation;
+}
+
+function videoLimitCurrent(
+  pc: PeerConnection,
+  generation: number,
+  revision: number,
+): boolean {
+  return (
+    videoLimitRevision === revision &&
+    videoLimitGeneration === generation &&
+    seat.generation === generation &&
+    seat.pc === pc
+  );
+}
+
+/** Serialize budget writes. Profiles are read when the pass runs, not when queued. */
+function enqueueVideoLimits(pc: PeerConnection): Promise<void> {
+  const generation = seat.generation;
+  if (videoLimitGeneration !== generation) {
+    videoLimitChain = Promise.resolve();
+    videoLimitGeneration = generation;
+  }
+  const revision = ++videoLimitRevision;
+  const run = videoLimitChain.then(
+    () => applyVideoLimits(pc, generation, revision),
+    () => applyVideoLimits(pc, generation, revision),
+  );
+  videoLimitChain = run.then(
+    () => undefined,
+    () => undefined,
+  );
+  return run;
+}
+
+async function applyVideoLimits(
+  pc: PeerConnection,
+  generation: number,
+  revision: number,
+): Promise<void> {
+  if (!videoLimitCurrent(pc, generation, revision)) return;
   const senders = (pc.getSenders?.() ?? []).filter(
     (s) => s.track?.kind === "video",
   );
-  const perSender = Math.floor(VIDEO_SEND_BUDGET / Math.max(1, senders.length));
-  for (const sender of senders) {
-    const params = sender.getParameters?.();
-    if (!params?.encodings.length) continue;
+  const profiles = senders.map((sender) =>
+    sender.track ? profileForVideoTrack(sender.track) : "balanced",
+  );
+  const shares = allocateVideoBitrates(profiles);
+  for (let index = 0; index < senders.length; index += 1) {
+    if (!videoLimitCurrent(pc, generation, revision)) return;
+    const sender = senders[index];
+    const params = sender?.getParameters?.();
+    if (!sender || !params?.encodings.length) continue;
+    const share = shares[index] ?? 0;
+    const perEncoding = Math.floor(share / params.encodings.length);
+    const fps = streamProfileFps(profiles[index] ?? "balanced");
     for (const encoding of params.encodings) {
-      encoding.maxBitrate = Math.floor(perSender / params.encodings.length);
-      encoding.maxFramerate = VIDEO_MAX_FPS;
+      encoding.maxBitrate = perEncoding;
+      encoding.maxFramerate = fps;
     }
     try {
       await sender.setParameters?.(params);
     } catch {
       // Some browsers require negotiation first; retry after SDP completes.
     }
+    // This snapshot is stale. Stop before the next sender; the newer pass
+    // applies the latest budgets across every sender still sending.
+    if (!videoLimitCurrent(pc, generation, revision)) return;
   }
+}
+
+function liveVideoTracks(kind: StreamKind): MediaStreamTrack[] {
+  const streams =
+    kind === "camera" ? [cameraStream] : [screenStream, liveStream];
+  const tracks: MediaStreamTrack[] = [];
+  for (const stream of streams) {
+    const track = stream?.getVideoTracks()[0];
+    if (!track) continue;
+    const state = (track as MediaStreamTrack & { readyState?: string })
+      .readyState;
+    if (state === "ended") continue;
+    tracks.push(track);
+  }
+  return tracks;
+}
+
+function applyTrackConstraints(
+  track: MediaStreamTrack,
+  constraints: MediaTrackConstraints,
+): Promise<void> | null {
+  const apply = (
+    track as MediaStreamTrack & {
+      applyConstraints?: (next: MediaTrackConstraints) => Promise<void>;
+    }
+  ).applyConstraints;
+  if (!apply) return null;
+  return apply.call(track, constraints);
+}
+
+/**
+ * Bitrate and FPS caps update on the sender immediately. Resolution uses
+ * applyConstraints when the browser allows it; otherwise the next capture
+ * picks up the profile and the settings form says so.
+ */
+async function applyStreamProfile(kind: StreamKind): Promise<void> {
+  const epoch = kind === "camera" ? ++cameraProfileEpoch : ++screenProfileEpoch;
+  const current = () =>
+    (kind === "camera" ? cameraProfileEpoch : screenProfileEpoch) === epoch;
+  const pc = seat.pc;
+  if (pc) {
+    try {
+      await enqueueVideoLimits(pc);
+    } catch {
+      // sender caps are best-effort
+    }
+  }
+  if (!current()) return;
+  const tracks = liveVideoTracks(kind);
+  if (tracks.length === 0 || useVoice.getState().status !== "joined") {
+    noteStreamProfileApply(kind, "idle");
+    return;
+  }
+  const selected =
+    kind === "camera"
+      ? useMediaSettings.getState().cameraProfile
+      : useMediaSettings.getState().screenProfile;
+  const constraints = videoConstraintsFor(kind, selected);
+  let allApplied = true;
+  for (const track of tracks) {
+    const pending = applyTrackConstraints(track, constraints);
+    if (!pending) {
+      allApplied = false;
+      continue;
+    }
+    try {
+      await pending;
+    } catch {
+      allApplied = false;
+    }
+    if (!current()) return;
+  }
+  noteStreamProfileApply(kind, allApplied ? "live" : "next");
+}
+
+const STREAM_PROFILE_FALLBACK =
+  "Dieses Streamprofil wird nicht unterstützt. Es läuft eine sicherere Auflösung.";
+
+async function captureVideo(kind: "v" | "s" | "l"): Promise<MediaStream> {
+  const streamKind: StreamKind = kind === "v" ? "camera" : "screen";
+  const settings = useMediaSettings.getState();
+  const profile =
+    streamKind === "camera" ? settings.cameraProfile : settings.screenProfile;
+  const ladder = videoConstraintLadder(
+    streamKind,
+    profile,
+    streamKind === "camera" ? settings.videoInputId : "",
+  );
+  const getMedia =
+    kind === "v"
+      ? (deps?.getUserMedia ?? defaultGetUserMedia)
+      : (deps?.getDisplayMedia ?? defaultGetDisplayMedia);
+  let lastError: unknown;
+  for (let index = 0; index < ladder.length; index += 1) {
+    try {
+      const stream = await getMedia({
+        audio: false,
+        video: ladder[index] ?? true,
+      });
+      if (index > 0) deps?.onError?.(new Error(STREAM_PROFILE_FALLBACK));
+      return stream;
+    } catch (error) {
+      lastError = error;
+      const more = index + 1 < ladder.length;
+      if (!more || !isOverconstrainedError(error)) throw error;
+    }
+  }
+  throw lastError instanceof Error ? lastError : new Error("capture failed");
 }
 
 function audioContextCtor(): { new (): AudioContext } | undefined {
@@ -1345,14 +1578,15 @@ async function refreshCamera(): Promise<void> {
   if (!pc || !useVoice.getState().camera) return;
   const session = seat.generation;
   const epoch = ++cameraEpoch;
-  const getUserMedia = deps?.getUserMedia ?? defaultGetUserMedia;
   let stream: MediaStream;
   try {
-    stream = await getUserMedia({
-      audio: false,
-      video: cameraConstraints(),
-    });
-  } catch {
+    stream = await captureVideo("v");
+  } catch (error) {
+    if (isOverconstrainedError(error) && cameraCurrent(pc, session, epoch)) {
+      deps?.onError?.(
+        new Error("Die Kamera unterstützt das Streamprofil nicht."),
+      );
+    }
     return;
   }
   if (!cameraCurrent(pc, session, epoch)) {
@@ -1550,9 +1784,13 @@ function handleSettingsChange(prev: MediaSettings, next: MediaSettings): void {
       });
     }
   }
+  const cameraProfileChanged = prev.cameraProfile !== next.cameraProfile;
+  const screenProfileChanged = prev.screenProfile !== next.screenProfile;
   if (joined && recaptureMic) void refreshMic();
   else if (joined && prev.inputGain !== next.inputGain) queueInputGain();
   if (joined && camChanged && useVoice.getState().camera) void refreshCamera();
+  if (cameraProfileChanged) void applyStreamProfile("camera");
+  if (screenProfileChanged) void applyStreamProfile("screen");
   if (joined && qualityChanged) {
     void applySendBitrate();
     seat.needOffer = true;
@@ -1871,7 +2109,7 @@ async function applyRemoteDescription(
     // would roll back the next offer.
     seat.sfuOfferOpen = false;
   }
-  await applyVideoLimits(pc);
+  await enqueueVideoLimits(pc);
   if (!current()) return;
   seat.negotiated = true;
   if (type === "answer") {
@@ -2413,6 +2651,7 @@ export function resetVoiceForTests(): void {
   stopPeer();
   seat = new MediaPeer();
   watchCall = new MediaPeer();
+  resetVideoLimitQueue();
   useVoice.setState({ ...idle });
   deps = null;
   bound = false;
@@ -2450,21 +2689,26 @@ function bumpVideoEpoch(kind: "v" | "s" | "l"): number {
 async function startLocalVideo(kind: "v" | "s" | "l"): Promise<void> {
   const epoch = bumpVideoEpoch(kind);
   const mine = seat.generation;
-  const getMedia =
-    kind === "v"
-      ? (deps?.getUserMedia ?? defaultGetUserMedia)
-      : (deps?.getDisplayMedia ?? defaultGetDisplayMedia);
   // Video only for camera / screen / live. Display audio mixed into the
   // voice m-line (and tagged as a second "a" pub) was echo-y on deploy and
   // added a video-sized SDP the 12 KiB cap then rejected.
-  const constraints: MediaStreamConstraints =
-    kind === "v"
-      ? { audio: false, video: cameraConstraints() }
-      : { audio: false, video: displayConstraints() };
   let stream: MediaStream;
   try {
-    stream = await getMedia(constraints);
-  } catch {
+    stream = await captureVideo(kind);
+  } catch (error) {
+    if (
+      isOverconstrainedError(error) &&
+      seat.generation === mine &&
+      videoEpoch(kind) === epoch
+    ) {
+      deps?.onError?.(
+        new Error(
+          kind === "v"
+            ? "Die Kamera unterstützt das Streamprofil nicht."
+            : "Die Bildschirmfreigabe unterstützt das Streamprofil nicht.",
+        ),
+      );
+    }
     if (kind === "v" && cameraEpoch === epoch) {
       useVoice.setState({ camera: false });
     }
@@ -2506,6 +2750,7 @@ async function startLocalVideo(kind: "v" | "s" | "l"): Promise<void> {
     stream.getVideoTracks().forEach((track) => hintTrack(track, "detail"));
     useVoice.setState({ live: true, localLive: stream });
   }
+  noteStreamProfileApply(kind === "v" ? "camera" : "screen", "idle");
   if (self) setPub(self, kind, true);
   noteStream(kind, true);
   // Yield so the local tile paints before addTrack / offer.
@@ -2555,7 +2800,11 @@ function stopLocalVideo(kind: "v" | "s" | "l"): void {
     if (sender) seat.pc?.removeTrack?.(sender);
     track.stop();
   }
-  if (seat.pc) void applyVideoLimits(seat.pc);
+  if (seat.pc) void enqueueVideoLimits(seat.pc);
+  if (kind === "v") noteStreamProfileApply("camera", "idle");
+  else if (!screenStream && !liveStream) {
+    noteStreamProfileApply("screen", "idle");
+  }
   seat.needOffer = true;
   noteStream(kind, false);
   void offerIfStable(seat.generation);
@@ -2575,7 +2824,7 @@ async function publishLocal(
     seat.pc.addTrack?.(track, stream);
   }
   const pc = seat.pc;
-  void applyVideoLimits(pc);
+  void enqueueVideoLimits(pc);
   const self = currentUserId();
   if (self) setPub(self, kind, true);
   sendPub(kind, true);

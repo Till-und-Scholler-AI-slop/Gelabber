@@ -8,8 +8,8 @@ import { create } from "zustand";
 import { APP_VERSION } from "../version.ts";
 import {
   AUDIO_QUALITY,
-  VIDEO_MAX_FPS,
-  VIDEO_SEND_BUDGET,
+  STREAM_PROFILES,
+  streamProfileFps,
   useMediaSettings,
   type MediaSettings,
 } from "./settings.ts";
@@ -135,6 +135,10 @@ export type Caps = {
   audioMaxBitrate: number;
   videoSendBudget: number;
   videoMaxFps: number;
+  /** Active sender limits, keyed by source rather than browser track ids. */
+  videoLimits?: Partial<
+    Record<VideoSource, { maxBitrate: number; maxFps: number }>
+  >;
 };
 
 export type DiagnosticSample = {
@@ -163,6 +167,8 @@ export type PhaseMark = {
 export type RelevantSettings = {
   audioQuality: string;
   audioMaxBitrate: number;
+  cameraProfile: string;
+  screenProfile: string;
   echoCancellation: boolean;
   noiseSuppression: boolean;
   autoGainControl: boolean;
@@ -588,6 +594,11 @@ export function reduceConnection(input: {
       track,
       input.videoSources,
     );
+    const sourceLimit =
+      kind === "video" && direction === "send" &&
+      (source === "camera" || source === "screen" || source === "live")
+        ? input.caps.videoLimits?.[source]
+        : undefined;
     const fpsGauge = gauge(entry.framesPerSecond);
     const frameDelta =
       direction === "send"
@@ -611,11 +622,15 @@ export function reduceConnection(input: {
         direction === "send"
           ? kind === "audio"
             ? input.caps.audioMaxBitrate
-            : perVideo
+            : input.caps.videoLimits
+              ? (sourceLimit?.maxBitrate ?? null)
+              : perVideo
           : null,
       configuredMaxFps:
         direction === "send" && kind === "video"
-          ? input.caps.videoMaxFps
+          ? input.caps.videoLimits
+            ? (sourceLimit?.maxFps ?? null)
+            : input.caps.videoMaxFps
           : null,
       packetLoss: lossRatio(lostDelta, lossBase) ?? fraction,
       packetsLost: lostDelta,
@@ -983,10 +998,17 @@ setTimeout(() => {
 }, 0);
 
 export function defaultCaps(): Caps {
+  const settings = useMediaSettings.getState();
   return {
-    audioMaxBitrate: AUDIO_QUALITY[useMediaSettings.getState().quality].bitrate,
-    videoSendBudget: VIDEO_SEND_BUDGET,
-    videoMaxFps: VIDEO_MAX_FPS,
+    audioMaxBitrate: AUDIO_QUALITY[settings.quality].bitrate,
+    videoSendBudget: Math.max(
+      STREAM_PROFILES[settings.cameraProfile].maxBitrate,
+      STREAM_PROFILES[settings.screenProfile].maxBitrate,
+    ),
+    videoMaxFps: Math.max(
+      streamProfileFps(settings.cameraProfile),
+      streamProfileFps(settings.screenProfile),
+    ),
   };
 }
 
@@ -996,13 +1018,21 @@ export function relevantSettings(
   return {
     audioQuality: settings.quality,
     audioMaxBitrate: AUDIO_QUALITY[settings.quality].bitrate,
+    cameraProfile: settings.cameraProfile,
+    screenProfile: settings.screenProfile,
     echoCancellation: settings.echoCancellation,
     noiseSuppression: settings.noiseSuppression,
     autoGainControl: settings.autoGainControl,
     outputVolume: settings.outputVolume,
     inputGain: settings.inputGain,
-    videoSendBudget: VIDEO_SEND_BUDGET,
-    videoMaxFps: VIDEO_MAX_FPS,
+    videoSendBudget: Math.max(
+      STREAM_PROFILES[settings.cameraProfile].maxBitrate,
+      STREAM_PROFILES[settings.screenProfile].maxBitrate,
+    ),
+    videoMaxFps: Math.max(
+      streamProfileFps(settings.cameraProfile),
+      streamProfileFps(settings.screenProfile),
+    ),
     customAudioInput: settings.audioInputId !== "",
     customAudioOutput: settings.audioOutputId !== "",
     customVideoInput: settings.videoInputId !== "",
