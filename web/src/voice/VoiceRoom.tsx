@@ -11,6 +11,8 @@ import { VoiceStateIcons } from "../components/VoiceStateIcons.tsx";
 import { GearIcon } from "../components/Icons.tsx";
 import { useSession } from "../auth/session.ts";
 import { joinVoice, stopWatching, useVoice, watchLive } from "./session.ts";
+import { useVoiceDiagnostics } from "./diagnostics.ts";
+import { VoiceDiagnostics } from "./VoiceDiagnostics.tsx";
 import { useMediaSettings } from "./settings.ts";
 import { EMPTY_OCCUPANCY, liveOf, useVoiceRoster } from "./roster.ts";
 import { VoiceTile } from "./VoiceTile.tsx";
@@ -35,6 +37,13 @@ export function VoiceRoom({
   const openSettings = useMediaSettings((s) => s.openDialog);
   const here = voice.status === "joined" && voice.channelId === channelId;
   const watching = voice.watching && voice.watchChannelId === channelId;
+  const showDiagnostics = useVoiceDiagnostics(
+    (state) =>
+      state.samples.length > 0 ||
+      state.events.length > 0 ||
+      state.polling.voice ||
+      state.polling.watch,
+  );
   const [focus, setFocus] = useState<string | null>(null);
   const members = new Map(
     server.members.map((member) => [member.user_id, member]),
@@ -339,6 +348,7 @@ export function VoiceRoom({
             Du hast in diesem Server kein Recht, Voice beizutreten.
           </p>
         )}
+        {here || watching || showDiagnostics ? <VoiceDiagnostics /> : null}
       </div>
     </div>
   );
