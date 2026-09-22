@@ -12,6 +12,7 @@ use axum::http::StatusCode;
 use axum::response::{IntoResponse, Json, Response};
 use axum::routing::{get, post};
 use chrono::{DateTime, Duration, Utc};
+use gelabber_shared::ticket::ALPHABET;
 use rand::RngExt;
 use serde::{Deserialize, Serialize};
 use sqlx::{FromRow, PgPool};
@@ -45,8 +46,7 @@ pub fn router() -> Router<AppState> {
 
 /// Lower-case only and without 0/o, 1/l/i: links get read aloud, typed and
 /// retyped from screenshots, so no character may be confusable with another.
-/// 30 symbols × 12 places ≈ 5·10¹⁷ codes.
-const ALPHABET: &[u8] = b"abcdefghjkmnpqrstuvwxyz23456789";
+/// 30 symbols × 12 places ≈ 5·10¹⁷ codes. Same alphabet as media tickets.
 pub const CODE_LEN: usize = 12;
 
 pub fn generate_code() -> String {

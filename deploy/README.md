@@ -60,7 +60,7 @@ docker compose up -d
 `Bind for 0.0.0.0:3478 failed` — meist schon ein coturn.
 
 - Overlay (Weg 2) startet Gelabbers coturn nicht. `TURN_PUBLIC_HOST` / `TURN_PORT` / User / Pass auf den bestehenden Server. Aus einem Container ist `127.0.0.1` falsch (LAN-IP oder `host.docker.internal`).
-- Zweiter coturn: `COMPOSE_PROFILES=bundled-coturn` plus freien `TURN_PORT` (z. B. 3479) und Relays (`TURN_RELAY_MIN` / `TURN_RELAY_MAX`), `MEDIA_TURN_URLS=stun:coturn:3478,turn:coturn:3478`.
+- Zweiter coturn: `COMPOSE_PROFILES=bundled-coturn` plus freien `TURN_PORT` (z. B. 3479) und Relays (`TURN_RELAY_MIN` / `TURN_RELAY_MAX`). `TURN_URLS` hängt am API-Ticket; der SFU liest sie nicht.
 - Ohne Overlay: in `.env` nur `TURN_PORT=3479` (und freie Relays).
 
 ## Hinter TLS

@@ -1,9 +1,12 @@
 [workspace]
 resolver = "3"
-members = ["api", "media"]
+members = ["api", "media", "shared"]
 
 [workspace.package]
 version = "0.2.1"
 edition = "2024"
 rust-version = "1.98.1"
 license = "MIT"
+
+[workspace.dependencies]
+gelabber-shared = { path = "shared" }

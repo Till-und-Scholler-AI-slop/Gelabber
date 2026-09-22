@@ -9,7 +9,8 @@ export type Topic = {
   c?: string;
 };
 
-export type SigType = "j" | "l" | "o" | "a" | "i" | "p" | "u" | "m" | "d" | "r";
+/** Presence plane. SDP and ICE are not gateway ops. */
+export type SigType = "j" | "l" | "p" | "u" | "m" | "d" | "r";
 export type TrackKind = "a" | "v" | "s" | "l";
 
 export type VoiceEntry = {
@@ -25,9 +26,6 @@ export type SigClientFrame = {
   t: Exclude<SigType, "r">;
   s: string;
   c: string;
-  sdp?: string;
-  ice?: string;
-  mid?: string;
   k?: TrackKind;
   on?: boolean;
 };
@@ -58,9 +56,6 @@ export type SigEvent = {
   s: string;
   c?: string;
   u?: string;
-  sdp?: string;
-  ice?: string;
-  mid?: string;
   k?: TrackKind;
   on?: boolean;
   m?: boolean;

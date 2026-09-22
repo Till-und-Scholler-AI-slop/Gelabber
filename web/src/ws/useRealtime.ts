@@ -9,8 +9,20 @@ import { useSession } from "../auth/session.ts";
 import { notify } from "../components/toasts.ts";
 import { applyChannelEvent } from "../messages/queries.ts";
 import { applyMemberRemoved, forgetServer } from "../servers/queries.ts";
+import { leaveVoice, stopWatching, useVoice } from "../voice/session.ts";
 import { getGateway } from "./client.ts";
 import { shouldLeaveView } from "./leaveView.ts";
+
+/** Kick/ban closes both planes before the sidebar that hosts voice unmounts. */
+function dropVoice(serverId: string): void {
+  const voice = useVoice.getState();
+  if (voice.status === "joined" && voice.serverId === serverId) {
+    leaveVoice();
+  }
+  if (voice.watching && voice.watchServerId === serverId) {
+    stopWatching();
+  }
+}
 
 export function useRealtimeBridge(
   viewingServerId?: string,
@@ -22,6 +34,7 @@ export function useRealtimeBridge(
 
   useEffect(() => {
     const leave = (reason: "kicked" | "banned", serverId: string) => {
+      dropVoice(serverId);
       onSelfRemoved?.(serverId);
       notify(
         reason === "banned"

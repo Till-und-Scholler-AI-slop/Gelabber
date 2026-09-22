@@ -75,9 +75,6 @@ services:
       MEDIA_ICE_BIND: 0.0.0.0:10000
       MEDIA_ICE_PORT_MAX: "10031"
       MEDIA_ADVERTISED_IP: ${MEDIA_ADVERTISED_IP:-127.0.0.1}
-      TURN_URLS: ${MEDIA_TURN_URLS:-stun:coturn:3478,turn:coturn:3478}
-      TURN_USERNAME: ${TURN_USERNAME:-gelabber}
-      TURN_PASSWORD: ${TURN_PASSWORD:-gelabberturn}
     extra_hosts:
       - "host.docker.internal:host-gateway"
     expose:

@@ -23,13 +23,13 @@ import {
 import {
   type IceServer,
   type MediaServerFrame,
-  type MediaSocket,
   type OpenMedia,
   mediaWsUrl,
   openMediaSocket,
   requestMediaTicket,
   tuneAudioSdp,
 } from "./media.ts";
+import { type IceCand, MediaPeer } from "./mediaPeer.ts";
 import {
   type MediaSettings,
   audioBitrate,
@@ -173,8 +173,6 @@ export type VoiceDeps = {
   onError?: (error: unknown) => void;
 };
 
-type IceCand = { candidate: string; sdpMid: string | null };
-
 type MicGainInsert = {
   stream: MediaStream;
   setGain: (gain: number) => void;
@@ -182,9 +180,8 @@ type MicGainInsert = {
 };
 
 let deps: VoiceDeps | null = null;
-let peer: PeerConnection | null = null;
-let media: MediaSocket | null = null;
-let unbindMedia: (() => void) | null = null;
+/** Seat media peer. `joinVoice` / `leaveVoice` hold this object. */
+let seat = new MediaPeer();
 let localStream: MediaStream | null = null;
 let rawMicStream: MediaStream | null = null;
 let activeMicGain: MicGainInsert | null = null;
@@ -195,44 +192,32 @@ let remoteAudio: HTMLAudioElement | null = null;
 let watchAudio: HTMLAudioElement | null = null;
 let remoteMix: MediaStream | null = null;
 let bound = false;
-let generation = 0;
 let micEpoch = 0;
-let negotiated = false;
 /** One stream toast per join. Further failures stay in the console. */
 let streamReported = false;
 let watchReported = false;
 let cameraEpoch = 0;
 let screenEpoch = 0;
 let liveEpoch = 0;
-let pendingIce: IceCand[] = [];
 let awaitingJoin: { serverId: string; channelId: string } | null = null;
 let awaitingLive: { serverId: string; channelId: string } | null = null;
-let sdpChain: Promise<void> = Promise.resolve();
 let audioCommitChain: Promise<void> = Promise.resolve();
 let cameraCommitChain: Promise<void> = Promise.resolve();
-let makingOffer = false;
-let sfuOffered = false;
-let needOffer = false;
-/** SFU offer received and not yet answered. */
-let sfuOfferOpen = false;
 /** Senders that belonged to the last completed negotiation. */
 let settledSenders: RtpSender[] = [];
 /** Video kinds announced for the offer that is still unanswered. */
 let openPublish: Array<"v" | "s" | "l"> = [];
 /** Cleanup of a rejected publish must not enqueue a replacement offer. */
 let discardingPublish = false;
+/** Gateway reconnect left the media peer up; re-announce after our join echo. */
+let republishOnJoin = false;
+/** Kinds this media attempt has already announced on the gateway. */
+const announced = new Set<TrackKind>();
 const pendingMicRaw = new Set<MediaStream>();
 const pendingCameraStreams = new Set<MediaStream>();
 
-let watchPeer: PeerConnection | null = null;
-let watchMedia: MediaSocket | null = null;
-let unbindWatch: (() => void) | null = null;
-let watchGeneration = 0;
-let watchPendingIce: IceCand[] = [];
-let watchSdpChain: Promise<void> = Promise.resolve();
-let watchMakingOffer = false;
-let watchSfuOffered = false;
-let watchNeedOffer = false;
+/** Watch media peer. `watchLive` / `stopWatching` hold this object. */
+let watchCall = new MediaPeer();
 
 function logVoice(
   level: "info" | "warn",
@@ -419,6 +404,65 @@ function setPub(userId: string, kind: TrackKind, on: boolean): void {
   });
 }
 
+/** Video still arriving on the open media peer, keyed by publisher. */
+const receivedVideo = new Map<
+  string,
+  Partial<Record<"v" | "s" | "l", MediaStream>>
+>();
+
+function noteReceived(
+  userId: string,
+  kind: "v" | "s" | "l",
+  stream: MediaStream,
+  track: MediaStreamTrack,
+): void {
+  const prev = receivedVideo.get(userId) ?? {};
+  receivedVideo.set(userId, { ...prev, [kind]: stream });
+  track.addEventListener("ended", () => {
+    const held = receivedVideo.get(userId);
+    if (!held || held[kind] !== stream) return;
+    const next = { ...held };
+    delete next[kind];
+    if (!next.v && !next.s && !next.l) receivedVideo.delete(userId);
+    else receivedVideo.set(userId, next);
+    dropRemote(userId, kind);
+  });
+}
+
+/** An explicit unpublish ends that tile. A later `t:"p"` must not restore it. */
+function forgetReceived(userId: string, kind: "v" | "s" | "l"): void {
+  const held = receivedVideo.get(userId);
+  if (held?.[kind]) {
+    const next = { ...held };
+    delete next[kind];
+    if (!next.v && !next.s && !next.l) receivedVideo.delete(userId);
+    else receivedVideo.set(userId, next);
+  }
+  dropRemote(userId, kind);
+}
+
+function reattachReceived(userId: string, kind: "v" | "s" | "l"): void {
+  const stream = receivedVideo.get(userId)?.[kind];
+  if (!stream) return;
+  const dead = stream
+    .getVideoTracks()
+    .some((track) => track.readyState === "ended");
+  if (dead) return;
+  const state = useVoice.getState();
+  const current = state.remote[userId] ?? {};
+  if (current[kind] === stream) return;
+  useVoice.setState({
+    remote: {
+      ...state.remote,
+      [userId]: { ...current, [kind]: stream },
+    },
+  });
+}
+
+function clearReceived(): void {
+  receivedVideo.clear();
+}
+
 function dropRemote(userId: string, kind?: "v" | "s" | "l"): void {
   const state = useVoice.getState();
   if (!state.remote[userId]) return;
@@ -489,6 +533,10 @@ function onSig(event: SigEvent): void {
         event.c === awaitingJoin.channelId
       ) {
         awaitingJoin = null;
+        if (republishOnJoin) {
+          republishOnJoin = false;
+          reannounceActive();
+        }
       }
       useVoice.setState({
         participants: upsert(state.participants, userId),
@@ -502,7 +550,8 @@ function onSig(event: SigEvent): void {
         const next = { ...state.participants };
         delete next[userId];
         useVoice.setState({ participants: next });
-        dropRemote(userId);
+        // Gateway absence is not the end of the media track. The tile
+        // stays until the receiver track or this peer connection ends.
       }
       return;
     case "p":
@@ -524,12 +573,14 @@ function onSig(event: SigEvent): void {
           [userId]: { pubs },
         },
       });
-      if (
-        event.t === "u" &&
-        userId !== currentUserId() &&
-        (event.k === "v" || event.k === "s" || event.k === "l")
-      ) {
-        dropRemote(userId, event.k);
+      if (event.k === "v" || event.k === "s" || event.k === "l") {
+        if (event.t === "u") {
+          // Gateway `t:"l"` keeps a track that is still arriving. `t:"u"`
+          // means that camera, screen, or Go Live actually ended.
+          forgetReceived(userId, event.k);
+        } else if (userId !== currentUserId()) {
+          reattachReceived(userId, event.k);
+        }
       }
       return;
     }
@@ -590,20 +641,26 @@ function onReady(): void {
     return;
   }
   const self = currentUserId();
+  const keepMedia = seat.isOpen();
   useVoice.setState({
     participants: self
       ? { [self]: state.participants[self] ?? { pubs: [] } }
       : {},
-    remote: {},
+    // A live peer connection does not fire ontrack again. Keep the
+    // streams VoiceRoom is already showing.
+    remote: keepMedia ? state.remote : {},
   });
   occupySelf(state);
   awaitingJoin = { serverId: state.serverId, channelId: state.channelId };
+  republishOnJoin = keepMedia;
   deps?.gateway.send({
     op: "sig",
     t: "j",
     s: state.serverId,
     c: state.channelId,
   });
+  // Rebuild only when the media transport has actually closed or failed.
+  if (keepMedia) return;
   void startPeer(state.serverId, state.channelId);
 }
 
@@ -612,30 +669,18 @@ function stopTracks(stream: MediaStream | null): void {
 }
 
 function stopPeer(): void {
-  negotiated = false;
   streamReported = false;
-  generation += 1;
+  seat.close();
   micEpoch += 1;
   cameraEpoch += 1;
   screenEpoch += 1;
   liveEpoch += 1;
-  pendingIce = [];
-  sdpChain = Promise.resolve();
   audioCommitChain = Promise.resolve();
   cameraCommitChain = Promise.resolve();
-  makingOffer = false;
-  sfuOffered = false;
-  needOffer = false;
-  sfuOfferOpen = false;
   settledSenders = [];
   openPublish = [];
   discardingPublish = false;
-  unbindMedia?.();
-  unbindMedia = null;
-  media?.close();
-  media = null;
-  peer?.close();
-  peer = null;
+  announced.clear();
   for (const stream of pendingMicRaw) stopTracks(stream);
   pendingMicRaw.clear();
   for (const stream of pendingCameraStreams) stopTracks(stream);
@@ -652,6 +697,7 @@ function stopPeer(): void {
   screenStream = null;
   liveStream = null;
   remoteMix = null;
+  clearReceived();
   if (remoteAudio) {
     remoteAudio.srcObject = null;
   }
@@ -663,21 +709,13 @@ function stopPeer(): void {
   });
 }
 
-function enqueueSdp(job: () => Promise<void>): Promise<void> {
-  const run = sdpChain.then(job, job);
-  sdpChain = run.then(
-    () => undefined,
-    () => undefined,
-  );
-  return run;
-}
-
 function rollbackSeat(error?: unknown): void {
   const state = useVoice.getState();
   const serverId = state.serverId;
   const channelId = state.channelId;
   awaitingJoin = null;
   awaitingLive = null;
+  republishOnJoin = false;
   if (state.live && serverId && channelId) {
     applyLiveEnd(serverId, channelId, currentUserId() ?? undefined);
   }
@@ -746,7 +784,7 @@ async function applySink(el: HTMLAudioElement): Promise<void> {
 
 async function applySendBitrate(): Promise<void> {
   const bitrate = audioBitrate();
-  for (const sender of peer?.getSenders?.() ?? []) {
+  for (const sender of seat.pc?.getSenders?.() ?? []) {
     if (sender.track?.kind !== "audio") continue;
     const params = sender.getParameters?.();
     if (!params?.encodings.length) continue;
@@ -867,8 +905,8 @@ function micCurrent(
   request: number,
 ): boolean {
   return (
-    peer === pc &&
-    generation === session &&
+    seat.pc === pc &&
+    seat.generation === session &&
     micEpoch === request &&
     useVoice.getState().status === "joined"
   );
@@ -880,8 +918,8 @@ function cameraCurrent(
   epoch: number,
 ): boolean {
   return (
-    peer === pc &&
-    generation === session &&
+    seat.pc === pc &&
+    seat.generation === session &&
     cameraEpoch === epoch &&
     useVoice.getState().status === "joined" &&
     useVoice.getState().camera
@@ -909,9 +947,9 @@ async function commitMicSend(
     await sender.replaceTrack(track);
     return "replaced";
   }
-  if (peer === pc) {
+  if (seat.pc === pc) {
     pc.addTrack?.(track, send);
-    needOffer = true;
+    seat.needOffer = true;
     void offerIfStable(session);
     return "added";
   }
@@ -933,9 +971,9 @@ function buildMicCandidate(raw: MediaStream): {
 }
 
 async function refreshMic(): Promise<void> {
-  const pc = peer;
+  const pc = seat.pc;
   if (!pc || useVoice.getState().status !== "joined") return;
-  const session = generation;
+  const session = seat.generation;
   const request = ++micEpoch;
   const getUserMedia = deps?.getUserMedia ?? defaultGetUserMedia;
   let raw: MediaStream;
@@ -979,7 +1017,7 @@ async function refreshMic(): Promise<void> {
       return;
     }
     if (!micCurrent(pc, session, request)) {
-      if (generation === session && peer === pc) {
+      if (seat.generation === session && seat.pc === pc) {
         try {
           if (outcome === "replaced") {
             await replaceSenderTrack(sender, previous);
@@ -987,7 +1025,7 @@ async function refreshMic(): Promise<void> {
             await replaceSenderTrack(sender, null);
           }
         } catch {
-          // peer may already be tearing down
+          // seat.pc may already be tearing down
         }
       }
       insert?.dispose();
@@ -1019,9 +1057,9 @@ async function refreshMic(): Promise<void> {
 }
 
 async function refreshCamera(): Promise<void> {
-  const pc = peer;
+  const pc = seat.pc;
   if (!pc || !useVoice.getState().camera) return;
-  const session = generation;
+  const session = seat.generation;
   const epoch = ++cameraEpoch;
   const getUserMedia = deps?.getUserMedia ?? defaultGetUserMedia;
   let stream: MediaStream;
@@ -1072,11 +1110,11 @@ async function refreshCamera(): Promise<void> {
       return;
     }
     if (!cameraCurrent(pc, session, epoch)) {
-      if (generation === session && peer === pc && sender?.replaceTrack) {
+      if (seat.generation === session && seat.pc === pc && sender?.replaceTrack) {
         try {
           await sender.replaceTrack(previous);
         } catch {
-          // peer may already be tearing down
+          // seat.pc may already be tearing down
         }
       }
       stopTracks(stream);
@@ -1098,9 +1136,9 @@ async function refreshCamera(): Promise<void> {
 async function applyInputGain(): Promise<void> {
   await enqueueAudioCommit(async () => {
     if (!rawMicStream || useVoice.getState().status !== "joined") return;
-    const pc = peer;
+    const pc = seat.pc;
     if (!pc) return;
-    const session = generation;
+    const session = seat.generation;
     const request = micEpoch;
     const gain = useMediaSettings.getState().inputGain;
     if (activeMicGain) {
@@ -1120,7 +1158,7 @@ async function applyInputGain(): Promise<void> {
         return;
       }
       if (!micCurrent(pc, session, request)) {
-        if (generation === session && peer === pc) {
+        if (seat.generation === session && seat.pc === pc) {
           try {
             if (outcome === "replaced") {
               await replaceSenderTrack(sender, previous);
@@ -1128,7 +1166,7 @@ async function applyInputGain(): Promise<void> {
               await replaceSenderTrack(sender, null);
             }
           } catch {
-            // peer may already be tearing down
+            // seat.pc may already be tearing down
           }
         }
         return;
@@ -1154,7 +1192,7 @@ async function applyInputGain(): Promise<void> {
       return;
     }
     if (!micCurrent(pc, session, request)) {
-      if (generation === session && peer === pc) {
+      if (seat.generation === session && seat.pc === pc) {
         try {
           if (outcome === "replaced") {
             await replaceSenderTrack(sender, previous);
@@ -1162,7 +1200,7 @@ async function applyInputGain(): Promise<void> {
             await replaceSenderTrack(sender, null);
           }
         } catch {
-          // peer may already be tearing down
+          // seat.pc may already be tearing down
         }
       }
       insert.dispose();
@@ -1179,13 +1217,13 @@ function queueInputGain(): void {
 }
 
 function audioSender(): RtpSender | undefined {
-  return peer?.getSenders?.().find((sender) => sender.track?.kind === "audio");
+  return seat.pc?.getSenders?.().find((sender) => sender.track?.kind === "audio");
 }
 
 function cameraSender(): RtpSender | undefined {
   const cam = cameraStream?.getVideoTracks()[0];
   if (!cam) return undefined;
-  return peer?.getSenders?.().find((sender) => sender.track === cam);
+  return seat.pc?.getSenders?.().find((sender) => sender.track === cam);
 }
 
 function handleSettingsChange(prev: MediaSettings, next: MediaSettings): void {
@@ -1203,8 +1241,8 @@ function handleSettingsChange(prev: MediaSettings, next: MediaSettings): void {
   if (joined && camChanged && useVoice.getState().camera) void refreshCamera();
   if (joined && qualityChanged) {
     void applySendBitrate();
-    needOffer = true;
-    void offerIfStable(generation);
+    seat.needOffer = true;
+    void offerIfStable(seat.generation);
   }
 }
 
@@ -1246,6 +1284,8 @@ function sendFlag(
 function sendPub(kind: TrackKind, on: boolean): void {
   const state = useVoice.getState();
   if (!state.serverId || !state.channelId) return;
+  if (on) announced.add(kind);
+  else announced.delete(kind);
   deps?.gateway.send({
     op: "sig",
     t: on ? "p" : "u",
@@ -1255,11 +1295,54 @@ function sendPub(kind: TrackKind, on: boolean): void {
   });
 }
 
-function signalingState(): string {
-  return (
-    peer?.signalingState ??
-    (peer?.remoteDescription ? "have-remote-offer" : "stable")
-  );
+/**
+ * The media attempt failed, but the voice seat stays. Drop only the pubs
+ * this attempt already announced, and release camera, share, and Go Live.
+ */
+function retractAnnouncedMedia(): void {
+  const state = useVoice.getState();
+  const kinds = [...announced];
+  announced.clear();
+  const self = currentUserId();
+  for (const kind of kinds) {
+    if (self) setPub(self, kind, false);
+    if (!state.serverId || !state.channelId) continue;
+    deps?.gateway.send({
+      op: "sig",
+      t: "u",
+      s: state.serverId,
+      c: state.channelId,
+      k: kind,
+    });
+  }
+  awaitingLive = null;
+  if (state.live && state.serverId && state.channelId) {
+    applyLiveEnd(state.serverId, state.channelId, self ?? undefined);
+  }
+  useVoice.setState({ camera: false, sharing: false, live: false });
+}
+
+/**
+ * The gateway dropped pubs and the Go Live claim on detach. The tracks
+ * are still on the peer connection, so announce them again. A rejected
+ * live claim takes the existing awaitingLive path. No new capture.
+ */
+function reannounceActive(): void {
+  const state = useVoice.getState();
+  if (state.status !== "joined" || !state.serverId || !state.channelId) return;
+  const senders = seat.pc?.getSenders?.() ?? [];
+  if (senders.some((sender) => sender.track?.kind === "audio")) {
+    sendPub("a", true);
+  }
+  if (state.camera && cameraStream) sendPub("v", true);
+  if (state.sharing && screenStream) sendPub("s", true);
+  if (!state.live) return;
+  const self = currentUserId();
+  if (self) {
+    applyLiveStart(state.serverId, state.channelId, self);
+    awaitingLive = { serverId: state.serverId, channelId: state.channelId };
+  }
+  sendPub("l", true);
 }
 
 const STREAM_TOAST =
@@ -1270,10 +1353,10 @@ const STREAM_TOAST =
  * Before the first answer, there is no call to keep, so the seat rolls back.
  */
 function recoverNegotiation(error: unknown, mine: number): void {
-  if (mine !== generation) return;
+  if (mine !== seat.generation) return;
   const detail = error instanceof Error ? error.message : undefined;
   logVoice("warn", "negotiation", { detail });
-  if (!negotiated) {
+  if (!seat.negotiated) {
     rollbackSeat(error);
     return;
   }
@@ -1287,10 +1370,10 @@ function recoverNegotiation(error: unknown, mine: number): void {
  * An SFU offer we never answered is aborted so later publications flush.
  */
 async function settleFailedNegotiation(mine: number): Promise<void> {
-  await enqueueSdp(async () => {
-    const pc = peer;
-    if (generation !== mine || !pc) return;
-    const state = signalingState();
+  await seat.enqueue(async () => {
+    const pc = seat.pc;
+    if (seat.generation !== mine || !pc) return;
+    const state = seat.signalingState();
     if (state === "have-local-offer") {
       discardingPublish = true;
       try {
@@ -1302,14 +1385,14 @@ async function settleFailedNegotiation(mine: number): Promise<void> {
             detail: error instanceof Error ? error.message : "rollback",
           });
         }
-        if (generation !== mine || peer !== pc) return;
+        if (seat.generation !== mine || seat.pc !== pc) return;
         const kinds = dropUnsettledPublish();
-        makingOffer = false;
+        seat.makingOffer = false;
         // The failed offer's follow-up must wait for the next user publish.
-        needOffer = false;
+        seat.needOffer = false;
         for (const kind of kinds) {
           logVoice("warn", "unpublish", { track: kind });
-          media?.send({ op: "u", k: kind });
+          seat.send({ op: "u", k: kind });
         }
       } finally {
         discardingPublish = false;
@@ -1324,19 +1407,19 @@ async function settleFailedNegotiation(mine: number): Promise<void> {
         });
       }
     }
-    if (generation !== mine || peer !== pc) return;
-    if (sfuOfferOpen) {
-      sfuOfferOpen = false;
+    if (seat.generation !== mine || seat.pc !== pc) return;
+    if (seat.sfuOfferOpen) {
+      seat.sfuOfferOpen = false;
       logVoice("warn", "abort", { detail: "sfu-offer" });
-      media?.send({ op: "x" });
+      seat.send({ op: "x" });
     }
-    if (needOffer) void offerIfStable(mine);
+    if (seat.needOffer) void offerIfStable(mine);
   });
 }
 
 /** Remove senders added after the last successful answer. The mic stays. */
 function dropUnsettledPublish(): Array<"v" | "s" | "l"> {
-  const pc = peer;
+  const pc = seat.pc;
   const kinds = openPublish.slice();
   openPublish = [];
   if (pc?.getSenders && pc.removeTrack) {
@@ -1400,17 +1483,16 @@ async function applyRemoteDescription(
   sdp: string,
   mine: number,
 ): Promise<void> {
-  const pc = peer;
-  const socket = media;
-  const current = () => generation === mine && peer === pc;
+  const pc = seat.pc;
+  const current = () => seat.generation === mine && seat.pc === pc;
   if (!pc || !current()) return;
   // A duplicate/obsolete answer cannot answer an already settled offer.
-  if (type === "answer" && signalingState() !== "have-local-offer") return;
+  if (type === "answer" && seat.signalingState() !== "have-local-offer") return;
   if (type === "offer") {
-    sfuOfferOpen = true;
-    const collision = makingOffer || signalingState() !== "stable";
+    seat.sfuOfferOpen = true;
+    const collision = seat.makingOffer || seat.signalingState() !== "stable";
     if (collision) {
-      needOffer = true;
+      seat.needOffer = true;
       try {
         await pc.setLocalDescription({ type: "rollback" });
       } catch {
@@ -1418,12 +1500,12 @@ async function applyRemoteDescription(
       }
       if (!current()) return;
     }
-    sfuOffered = true;
+    seat.sfuOffered = true;
   }
   await pc.setRemoteDescription({ type, sdp: tuneAudioSdp(sdp) });
   if (!current()) return;
-  const queued = pendingIce;
-  pendingIce = [];
+  const queued = seat.pendingIce;
+  seat.pendingIce = [];
   for (const candidate of queued) {
     try {
       await pc.addIceCandidate(candidate);
@@ -1444,31 +1526,31 @@ async function applyRemoteDescription(
     if (!current()) return;
     if (answer.sdp) {
       logVoice("info", "send-answer", { bytes: answer.sdp.length });
-      socket?.send({ op: "a", sdp: answer.sdp });
+      seat.send({ op: "a", sdp: answer.sdp });
     }
     // The answer is on the wire. A later negotiation_failed must not send
     // `x`: an oversized answer is aborted on the server, and a late `x`
     // would roll back the next offer.
-    sfuOfferOpen = false;
+    seat.sfuOfferOpen = false;
   }
   await applyVideoLimits(pc);
   if (!current()) return;
-  negotiated = true;
+  seat.negotiated = true;
   if (type === "answer") {
     settledSenders = [...(pc.getSenders?.() ?? [])];
     openPublish = [];
   }
-  if (needOffer) void offerIfStable(mine);
+  if (seat.needOffer) void offerIfStable(mine);
 }
 
 async function applyRemoteIce(candidate: IceCand, mine: number): Promise<void> {
-  if (mine !== generation) return;
-  const pc = peer;
+  if (mine !== seat.generation) return;
+  const pc = seat.pc;
   if (pc?.remoteDescription) {
     try {
       await pc.addIceCandidate(candidate);
     } catch (error) {
-      if (mine === generation && peer === pc) {
+      if (mine === seat.generation && seat.pc === pc) {
         logVoice("warn", "ice", {
           detail: error instanceof Error ? error.message : "addIceCandidate",
           mid: candidate.sdpMid ?? undefined,
@@ -1477,21 +1559,40 @@ async function applyRemoteIce(candidate: IceCand, mine: number): Promise<void> {
     }
     return;
   }
-  pendingIce.push(candidate);
+  seat.pendingIce.push(candidate);
 }
 
 function onMediaFrame(frame: MediaServerFrame): void {
-  const mine = generation;
+  const mine = seat.generation;
+  if (frame.op === "ok") {
+    seat.accept();
+    return;
+  }
   if (frame.op === "err") {
     logVoice("warn", "media-error", { op: frame.op, code: frame.e });
     if (frame.e === "ice_failed") return;
+    if (frame.e === "unavailable") {
+      deps?.onError?.(new Error("Kein freier Sprachplatz."));
+      // Drop this attempt, its queued signaling, and the local capture.
+      // Unpublish what this attempt already announced, then close the
+      // peer. The gateway seat stays. A later unauthorized belongs to
+      // the generation we just closed.
+      retractAnnouncedMedia();
+      stopPeer();
+      return;
+    }
+    if (frame.e === "forbidden") {
+      if (useVoice.getState().live) stopLocalVideo("l");
+      deps?.onError?.(new ApiError("forbidden", 0, errorMessage("forbidden")));
+      return;
+    }
     if (frame.e === "unauthorized") {
       rollbackSeat(
         new ApiError("unauthenticated", 0, errorMessage("unauthenticated")),
       );
       return;
     }
-    if (!negotiated) {
+    if (!seat.negotiated) {
       rollbackSeat(new ApiError("bad_request", 0, errorMessage("bad_request")));
       return;
     }
@@ -1504,7 +1605,7 @@ function onMediaFrame(frame: MediaServerFrame): void {
     logVoice("info", type === "offer" ? "recv-offer" : "recv-answer", {
       bytes: frame.sdp.length,
     });
-    void enqueueSdp(() => applyRemoteDescription(type, frame.sdp, mine)).catch(
+    void seat.enqueue(() => applyRemoteDescription(type, frame.sdp, mine)).catch(
       (error) => recoverNegotiation(error, mine),
     );
     return;
@@ -1589,6 +1690,7 @@ export function leaveVoice(): void {
   const channelId = state.channelId;
   awaitingJoin = null;
   awaitingLive = null;
+  republishOnJoin = false;
   if (state.live && serverId && channelId) {
     applyLiveEnd(serverId, channelId, currentUserId() ?? undefined);
   }
@@ -1775,11 +1877,14 @@ export function resetVoiceForTests(): void {
   watchReported = false;
   awaitingJoin = null;
   awaitingLive = null;
-  pendingIce = [];
+  republishOnJoin = false;
+  seat.pendingIce = [];
   audioCommitChain = Promise.resolve();
   cameraCommitChain = Promise.resolve();
   stopWatchPeer();
   stopPeer();
+  seat = new MediaPeer();
+  watchCall = new MediaPeer();
   useVoice.setState({ ...idle });
   deps = null;
   bound = false;
@@ -1816,7 +1921,7 @@ function bumpVideoEpoch(kind: "v" | "s" | "l"): number {
 
 async function startLocalVideo(kind: "v" | "s" | "l"): Promise<void> {
   const epoch = bumpVideoEpoch(kind);
-  const mine = generation;
+  const mine = seat.generation;
   const getMedia =
     kind === "v"
       ? (deps?.getUserMedia ?? defaultGetUserMedia)
@@ -1852,7 +1957,7 @@ async function startLocalVideo(kind: "v" | "s" | "l"): Promise<void> {
     }
     return;
   }
-  if (generation !== mine || videoEpoch(kind) !== epoch) {
+  if (seat.generation !== mine || videoEpoch(kind) !== epoch) {
     stopTracks(stream);
     return;
   }
@@ -1876,7 +1981,7 @@ async function startLocalVideo(kind: "v" | "s" | "l"): Promise<void> {
   if (self) setPub(self, kind, true);
   // Yield so the local tile paints before addTrack / offer.
   await Promise.resolve();
-  if (generation !== mine || videoEpoch(kind) !== epoch) {
+  if (seat.generation !== mine || videoEpoch(kind) !== epoch) {
     return;
   }
   await publishLocal(kind, stream);
@@ -1895,7 +2000,7 @@ function stopLocalVideo(kind: "v" | "s" | "l"): void {
   else liveEpoch += 1;
   const stream =
     kind === "v" ? cameraStream : kind === "s" ? screenStream : liveStream;
-  const senders = peer?.getSenders?.() ?? [];
+  const senders = seat.pc?.getSenders?.() ?? [];
   if (kind === "v") {
     cameraStream = null;
     useVoice.setState({ camera: false, localCamera: null });
@@ -1918,34 +2023,34 @@ function stopLocalVideo(kind: "v" | "s" | "l"): void {
   sendPub(kind, false);
   for (const track of stream?.getTracks() ?? []) {
     const sender = senders.find((item) => item.track === track);
-    if (sender) peer?.removeTrack?.(sender);
+    if (sender) seat.pc?.removeTrack?.(sender);
     track.stop();
   }
-  if (peer) void applyVideoLimits(peer);
-  needOffer = true;
-  void offerIfStable(generation);
+  if (seat.pc) void applyVideoLimits(seat.pc);
+  seat.needOffer = true;
+  void offerIfStable(seat.generation);
 }
 
 async function publishLocal(
   kind: "v" | "s" | "l",
   stream: MediaStream,
 ): Promise<void> {
-  if (!peer) return;
+  if (!seat.pc) return;
   const tracks = stream.getVideoTracks();
   if (tracks.length === 0) return;
   logVoice("info", "publish", { track: kind });
   openPublish.push(kind);
-  media?.send({ op: "p", k: kind });
+  seat.send({ op: "p", k: kind });
   for (const track of tracks) {
-    peer.addTrack?.(track, stream);
+    seat.pc.addTrack?.(track, stream);
   }
-  const pc = peer;
+  const pc = seat.pc;
   void applyVideoLimits(pc);
   const self = currentUserId();
   if (self) setPub(self, kind, true);
   sendPub(kind, true);
-  needOffer = true;
-  await offerIfStable(generation);
+  seat.needOffer = true;
+  await offerIfStable(seat.generation);
 }
 
 function parseIncomingVideo(
@@ -1975,6 +2080,7 @@ function attachIncoming(track: MediaStreamTrack, stream?: MediaStream): void {
   }
   logVoice("info", "track", { track: parsed.k, peer: parsed.userId });
   const attached = stream ?? new MediaStream([track]);
+  noteReceived(parsed.userId, parsed.k, attached, track);
   const state = useVoice.getState();
   const current = state.remote[parsed.userId] ?? {};
   useVoice.setState({
@@ -1990,53 +2096,52 @@ async function offerIfStable(
   opts?: { initial?: boolean; fromEvent?: boolean },
 ): Promise<void> {
   if (discardingPublish) return;
-  await enqueueSdp(async () => {
+  await seat.enqueue(async () => {
     if (discardingPublish) return;
-    if (generation !== mine || !peer) return;
-    if (opts?.initial && sfuOffered) return;
-    if (makingOffer || signalingState() !== "stable") {
+    if (seat.generation !== mine || !seat.pc) return;
+    if (opts?.initial && seat.sfuOffered) return;
+    if (seat.makingOffer || seat.signalingState() !== "stable") {
       // Sticky only for explicit publish/unpublish. negotiationneeded
       // fires again once we are stable (W3C perfect negotiation).
-      if (!opts?.initial && !opts?.fromEvent) needOffer = true;
+      if (!opts?.initial && !opts?.fromEvent) seat.needOffer = true;
       return;
     }
-    makingOffer = true;
-    needOffer = false;
+    seat.makingOffer = true;
+    seat.needOffer = false;
     try {
-      if (signalingState() !== "stable") {
-        if (!opts?.initial && !opts?.fromEvent) needOffer = true;
+      if (seat.signalingState() !== "stable") {
+        if (!opts?.initial && !opts?.fromEvent) seat.needOffer = true;
         return;
       }
-      if (opts?.initial && sfuOffered) return;
-      preferOpus(peer);
-      preferVp8(peer);
-      const pc = peer;
-      const socket = media;
+      if (opts?.initial && seat.sfuOffered) return;
+      preferOpus(seat.pc);
+      preferVp8(seat.pc);
+      const pc = seat.pc;
       const offer = withTunedSdp(await pc.createOffer());
-      if (generation !== mine) return;
-      if (signalingState() !== "stable") {
-        if (!opts?.initial && !opts?.fromEvent) needOffer = true;
+      if (seat.generation !== mine) return;
+      if (seat.signalingState() !== "stable") {
+        if (!opts?.initial && !opts?.fromEvent) seat.needOffer = true;
         return;
       }
       await pc.setLocalDescription(offer);
-      if (generation !== mine || !offer.sdp) return;
+      if (seat.generation !== mine || !offer.sdp) return;
       logVoice("info", "send-offer", { bytes: offer.sdp.length });
-      socket?.send({ op: "o", sdp: offer.sdp });
+      seat.send({ op: "o", sdp: offer.sdp });
     } catch (error) {
-      if (generation === mine) recoverNegotiation(error, mine);
+      if (seat.generation === mine) recoverNegotiation(error, mine);
     } finally {
-      if (generation === mine) makingOffer = false;
+      if (seat.generation === mine) seat.makingOffer = false;
     }
   });
 }
 
 async function startPeer(serverId: string, channelId: string): Promise<void> {
-  const mine = generation + 1;
+  const mine = seat.generation + 1;
   const resumeCamera = useVoice.getState().camera;
   const resumeShare = useVoice.getState().sharing;
   const resumeLive = useVoice.getState().live;
   stopPeer();
-  generation = mine;
+  seat.generation = mine;
   if (resumeCamera) useVoice.setState({ camera: true });
   if (resumeShare) useVoice.setState({ sharing: true });
   if (resumeLive) useVoice.setState({ live: true });
@@ -2048,38 +2153,48 @@ async function startPeer(serverId: string, channelId: string): Promise<void> {
   let iceServers: IceServer[];
   try {
     const ticket = await fetchTicket(channelId);
-    if (generation !== mine) return;
+    if (seat.generation !== mine) return;
     iceServers = ticket.ice_servers ?? [];
     const socket = openMedia(mediaWsUrl(ticket.media_path));
-    media = socket;
-    unbindMedia = socket.onFrame((frame) => {
-      if (generation === mine) onMediaFrame(frame);
-    });
-    socket.send({ op: "j", tk: ticket.ticket });
+    seat.bind(
+      socket,
+      (frame) => {
+        if (seat.generation === mine) onMediaFrame(frame);
+      },
+      () => {
+        if (seat.generation !== mine) return;
+        const state = useVoice.getState();
+        if (state.status !== "joined" || !state.serverId || !state.channelId) {
+          return;
+        }
+        void startPeer(state.serverId, state.channelId);
+      },
+    );
+    seat.send({ op: "j", tk: ticket.ticket });
   } catch (error) {
-    if (generation !== mine) return;
+    if (seat.generation !== mine) return;
     rollbackSeat(error);
     return;
   }
 
   const pc = createPeer(iceServers);
-  peer = pc;
+  seat.pc = pc;
 
   pc.onnegotiationneeded = () => {
-    if (generation !== mine) return;
+    if (seat.generation !== mine) return;
     void offerIfStable(mine, { fromEvent: true });
   };
   pc.onicecandidate = (event) => {
-    if (generation !== mine) return;
+    if (seat.generation !== mine) return;
     if (!event.candidate) return;
-    media?.send({
+    seat.send({
       op: "i",
       ice: event.candidate.candidate,
       ...(event.candidate.sdpMid ? { mid: event.candidate.sdpMid } : {}),
     });
   };
   pc.ontrack = (event) => {
-    if (generation !== mine) return;
+    if (seat.generation !== mine) return;
     attachIncoming(event.track, event.streams[0]);
   };
 
@@ -2089,7 +2204,7 @@ async function startPeer(serverId: string, channelId: string): Promise<void> {
       audio: micConstraints(),
       video: false,
     });
-    if (generation !== mine) {
+    if (seat.generation !== mine) {
       stopTracks(stream);
       return;
     }
@@ -2101,7 +2216,7 @@ async function startPeer(serverId: string, channelId: string): Promise<void> {
       pendingMicRaw.add(stream);
       const { send, insert } = buildMicCandidate(stream);
       await enqueueAudioCommit(async () => {
-        if (generation !== mine || micEpoch !== micRequest || peer !== pc) {
+        if (seat.generation !== mine || micEpoch !== micRequest || seat.pc !== pc) {
           insert?.dispose();
           stopTracks(stream);
           pendingMicRaw.delete(stream);
@@ -2127,6 +2242,7 @@ async function startPeer(serverId: string, channelId: string): Promise<void> {
         if (self && useVoice.getState().channelId === channelId) {
           setPub(self, "a", true);
         }
+        announced.add("a");
         deps?.gateway.send({
           op: "sig",
           t: "p",
@@ -2140,7 +2256,7 @@ async function startPeer(serverId: string, channelId: string): Promise<void> {
     // No mic — still send an offer so ICE can run.
   }
 
-  if (generation !== mine) return;
+  if (seat.generation !== mine) return;
   const pending = useVoice.getState();
   if (pending.localCamera) {
     await publishLocal("v", pending.localCamera);
@@ -2160,43 +2276,16 @@ async function startPeer(serverId: string, channelId: string): Promise<void> {
   if ((pending.live || resumeLive) && !useVoice.getState().localLive) {
     void startLocalVideo("l");
   }
-  if (generation !== mine) return;
+  if (seat.generation !== mine) return;
   await offerIfStable(mine, { initial: true });
 }
 
 function stopWatchPeer(): void {
   watchReported = false;
-  watchGeneration += 1;
-  watchPendingIce = [];
-  watchSdpChain = Promise.resolve();
-  watchMakingOffer = false;
-  watchSfuOffered = false;
-  watchNeedOffer = false;
-  unbindWatch?.();
-  unbindWatch = null;
-  watchMedia?.close();
-  watchMedia = null;
-  watchPeer?.close();
-  watchPeer = null;
+  watchCall.close();
   if (watchAudio) {
     watchAudio.srcObject = null;
   }
-}
-
-function enqueueWatchSdp(job: () => Promise<void>): Promise<void> {
-  const run = watchSdpChain.then(job, job);
-  watchSdpChain = run.then(
-    () => undefined,
-    () => undefined,
-  );
-  return run;
-}
-
-function watchSignalingState(): string {
-  return (
-    watchPeer?.signalingState ??
-    (watchPeer?.remoteDescription ? "have-remote-offer" : "stable")
-  );
 }
 
 function attachWatchIncoming(
@@ -2241,15 +2330,14 @@ async function applyWatchRemote(
   sdp: string,
   mine: number,
 ): Promise<void> {
-  const pc = watchPeer;
-  const socket = watchMedia;
-  const current = () => watchGeneration === mine && watchPeer === pc;
+  const pc = watchCall.pc;
+  const current = () => watchCall.generation === mine && watchCall.pc === pc;
   if (!pc || !current()) return;
-  if (type === "answer" && watchSignalingState() !== "have-local-offer") return;
+  if (type === "answer" && watchCall.signalingState() !== "have-local-offer") return;
   if (type === "offer") {
-    const collision = watchMakingOffer || watchSignalingState() !== "stable";
+    const collision = watchCall.makingOffer || watchCall.signalingState() !== "stable";
     if (collision) {
-      watchNeedOffer = true;
+      watchCall.needOffer = true;
       try {
         await pc.setLocalDescription({ type: "rollback" });
       } catch {
@@ -2257,12 +2345,12 @@ async function applyWatchRemote(
       }
     }
     if (!current()) return;
-    watchSfuOffered = true;
+    watchCall.sfuOffered = true;
   }
   await pc.setRemoteDescription({ type, sdp: tuneAudioSdp(sdp) });
   if (!current()) return;
-  const queued = watchPendingIce;
-  watchPendingIce = [];
+  const queued = watchCall.pendingIce;
+  watchCall.pendingIce = [];
   for (const candidate of queued) {
     try {
       await pc.addIceCandidate(candidate);
@@ -2283,24 +2371,35 @@ async function applyWatchRemote(
     if (!current()) return;
     if (answer.sdp) {
       logVoice("info", "watch-answer", { bytes: answer.sdp.length });
-      socket?.send({ op: "a", sdp: answer.sdp });
+      watchCall.send({ op: "a", sdp: answer.sdp });
     }
   }
-  if (watchNeedOffer) {
-    void watchOfferIfStable(watchGeneration);
+  if (watchCall.needOffer) {
+    void watchOfferIfStable(watchCall.generation);
   }
 }
 
 function onWatchFrame(frame: MediaServerFrame): void {
-  const mine = watchGeneration;
+  const mine = watchCall.generation;
   const fail = (error: unknown) => {
-    if (watchGeneration !== mine) return;
+    if (watchCall.generation !== mine) return;
     stopWatching();
     deps?.onError?.(error);
   };
+  if (frame.op === "ok") {
+    watchCall.accept();
+    return;
+  }
   if (frame.op === "err") {
     logVoice("warn", "watch-error", { op: frame.op, code: frame.e });
     if (frame.e === "ice_failed") return;
+    if (frame.e === "unavailable") {
+      if (watchReported) return;
+      watchReported = true;
+      stopWatching();
+      deps?.onError?.(new Error("Kein freier Sprachplatz."));
+      return;
+    }
     if (watchReported) return;
     watchReported = true;
     stopWatching();
@@ -2314,22 +2413,22 @@ function onWatchFrame(frame: MediaServerFrame): void {
     return;
   }
   if (frame.op === "a" && frame.sdp) {
-    void enqueueWatchSdp(() =>
+    void watchCall.enqueue(() =>
       applyWatchRemote("answer", frame.sdp, mine),
     ).catch(fail);
     return;
   }
   if (frame.op === "o" && frame.sdp) {
-    void enqueueWatchSdp(() =>
+    void watchCall.enqueue(() =>
       applyWatchRemote("offer", frame.sdp, mine),
     ).catch(fail);
     return;
   }
   if (frame.op === "i" && frame.ice) {
     const candidate = { candidate: frame.ice, sdpMid: frame.mid ?? null };
-    if (watchPeer?.remoteDescription) {
-      void watchPeer.addIceCandidate(candidate).catch((error) => {
-        if (watchGeneration === mine) {
+    if (watchCall.pc?.remoteDescription) {
+      void watchCall.pc.addIceCandidate(candidate).catch((error) => {
+        if (watchCall.generation === mine) {
           logVoice("warn", "watch-ice", {
             detail: error instanceof Error ? error.message : "addIceCandidate",
             mid: candidate.sdpMid ?? undefined,
@@ -2337,7 +2436,7 @@ function onWatchFrame(frame: MediaServerFrame): void {
         }
       });
     } else {
-      watchPendingIce.push(candidate);
+      watchCall.pendingIce.push(candidate);
     }
   }
 }
@@ -2346,48 +2445,47 @@ async function watchOfferIfStable(
   mine: number,
   opts?: { initial?: boolean; fromEvent?: boolean },
 ): Promise<void> {
-  await enqueueWatchSdp(async () => {
-    if (watchGeneration !== mine || !watchPeer) return;
-    if (opts?.initial && watchSfuOffered) return;
-    if (watchMakingOffer || watchSignalingState() !== "stable") {
-      if (!opts?.initial && !opts?.fromEvent) watchNeedOffer = true;
+  await watchCall.enqueue(async () => {
+    if (watchCall.generation !== mine || !watchCall.pc) return;
+    if (opts?.initial && watchCall.sfuOffered) return;
+    if (watchCall.makingOffer || watchCall.signalingState() !== "stable") {
+      if (!opts?.initial && !opts?.fromEvent) watchCall.needOffer = true;
       return;
     }
-    watchMakingOffer = true;
-    watchNeedOffer = false;
+    watchCall.makingOffer = true;
+    watchCall.needOffer = false;
     try {
-      if (watchSignalingState() !== "stable") {
-        if (!opts?.initial && !opts?.fromEvent) watchNeedOffer = true;
+      if (watchCall.signalingState() !== "stable") {
+        if (!opts?.initial && !opts?.fromEvent) watchCall.needOffer = true;
         return;
       }
-      if (opts?.initial && watchSfuOffered) return;
-      preferOpus(watchPeer);
-      preferVp8(watchPeer);
-      const pc = watchPeer;
-      const socket = watchMedia;
+      if (opts?.initial && watchCall.sfuOffered) return;
+      preferOpus(watchCall.pc);
+      preferVp8(watchCall.pc);
+      const pc = watchCall.pc;
       const offer = withTunedSdp(await pc.createOffer());
-      if (watchGeneration !== mine) return;
-      if (watchSignalingState() !== "stable") {
-        if (!opts?.initial && !opts?.fromEvent) watchNeedOffer = true;
+      if (watchCall.generation !== mine) return;
+      if (watchCall.signalingState() !== "stable") {
+        if (!opts?.initial && !opts?.fromEvent) watchCall.needOffer = true;
         return;
       }
       await pc.setLocalDescription(offer);
-      if (watchGeneration !== mine || !offer.sdp) return;
-      socket?.send({ op: "o", sdp: offer.sdp });
+      if (watchCall.generation !== mine || !offer.sdp) return;
+      watchCall.send({ op: "o", sdp: offer.sdp });
     } catch (error) {
-      if (watchGeneration === mine) {
+      if (watchCall.generation === mine) {
         deps?.onError?.(error);
       }
     } finally {
-      if (watchGeneration === mine) watchMakingOffer = false;
+      if (watchCall.generation === mine) watchCall.makingOffer = false;
     }
   });
 }
 
 async function startWatchPeer(channelId: string): Promise<void> {
-  const mine = watchGeneration + 1;
+  const mine = watchCall.generation + 1;
   stopWatchPeer();
-  watchGeneration = mine;
+  watchCall.generation = mine;
   const fetchTicket = deps?.fetchTicket ?? requestMediaTicket;
   const openMedia = deps?.openMedia ?? openMediaSocket;
   const createPeer = deps?.createPeer ?? defaultCreatePeer;
@@ -2395,25 +2493,34 @@ async function startWatchPeer(channelId: string): Promise<void> {
   let iceServers: IceServer[];
   try {
     const ticket = await fetchTicket(channelId);
-    if (watchGeneration !== mine) return;
+    if (watchCall.generation !== mine) return;
     iceServers = ticket.ice_servers ?? [];
     const socket = openMedia(mediaWsUrl(ticket.media_path));
-    watchMedia = socket;
-    unbindWatch = socket.onFrame((frame) => {
-      if (watchGeneration === mine) onWatchFrame(frame);
-    });
-    socket.send({ op: "j", tk: ticket.ticket });
+    watchCall.bind(
+      socket,
+      (frame) => {
+        if (watchCall.generation === mine) onWatchFrame(frame);
+      },
+      () => {
+        if (watchCall.generation !== mine) return;
+        const state = useVoice.getState();
+        if (state.watching && state.watchChannelId === channelId) {
+          void startWatchPeer(channelId);
+        }
+      },
+    );
+    watchCall.send({ op: "j", tk: ticket.ticket });
   } catch (error) {
-    if (watchGeneration !== mine) return;
+    if (watchCall.generation !== mine) return;
     stopWatching();
     deps?.onError?.(error);
     return;
   }
 
   const pc = createPeer(iceServers);
-  watchPeer = pc;
+  watchCall.pc = pc;
   pc.onnegotiationneeded = () => {
-    if (watchGeneration !== mine) return;
+    if (watchCall.generation !== mine) return;
     void watchOfferIfStable(mine, { fromEvent: true });
   };
   // Recvonly m-lines so the offer carries ice-ufrag. webrtc-rs rejects
@@ -2423,19 +2530,19 @@ async function startWatchPeer(channelId: string): Promise<void> {
   preferOpus(pc);
   preferVp8(pc);
   pc.onicecandidate = (event) => {
-    if (watchGeneration !== mine) return;
+    if (watchCall.generation !== mine) return;
     if (!event.candidate) return;
-    watchMedia?.send({
+    watchCall.send({
       op: "i",
       ice: event.candidate.candidate,
       ...(event.candidate.sdpMid ? { mid: event.candidate.sdpMid } : {}),
     });
   };
   pc.ontrack = (event) => {
-    if (watchGeneration !== mine) return;
+    if (watchCall.generation !== mine) return;
     attachWatchIncoming(event.track, event.streams[0]);
   };
 
-  if (watchGeneration !== mine) return;
+  if (watchCall.generation !== mine) return;
   await watchOfferIfStable(mine, { initial: true });
 }

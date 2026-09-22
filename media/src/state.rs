@@ -15,9 +15,9 @@ impl AppState {
     pub fn from_config(config: &Config) -> Result<Self, redis::RedisError> {
         let redis = redis::Client::open(config.redis_url.as_str())?;
         Ok(Self {
-            redis,
+            redis: redis.clone(),
             ready_timeout: config.ready_timeout,
-            sfu: Arc::new(Sfu::new(config)),
+            sfu: Arc::new(Sfu::with_redis(config, Some(redis))),
         })
     }
 }

@@ -134,37 +134,32 @@ async fn handle_text(
         }
     };
 
-    if frame.is_heartbeat() {
-        // Liveness only — `last_client` was already updated in `run`.
-        // Echoing would ping-pong with the browser client, which replies
-        // to every server `h`.
-        return Ok(FrameEffect::Liveness);
-    }
-
-    match frame.op.as_str() {
-        "s" => {
-            subscribe(state, user, conn, frame, sink).await?;
+    match frame {
+        ClientFrame::Heartbeat => {
+            // Liveness only — `last_client` was already updated in `run`.
+            // Echoing would ping-pong with the browser client, which replies
+            // to every server `h`.
+            Ok(FrameEffect::Liveness)
+        }
+        ClientFrame::Subscribe { s, c, n } => {
+            subscribe(state, user, conn, s, c, n, sink).await?;
             Ok(FrameEffect::Activity)
         }
-        "u" => {
-            unsubscribe(state, conn, frame).await?;
+        ClientFrame::Unsubscribe { s, c } => {
+            state.gateway.unsubscribe(conn, Topic::of(s, c)).await;
             Ok(FrameEffect::Activity)
         }
-        "sig" => {
+        ClientFrame::Sig { .. } => {
             super::signal::handle(state, user, conn, frame, sink).await?;
             Ok(FrameEffect::Activity)
         }
-        "p" => Ok(match frame.st {
+        ClientFrame::Presence { st } => Ok(match st {
             Some(PresenceStatus::Idle) => FrameEffect::Idle,
             _ => FrameEffect::Activity,
         }),
-        "y" => {
-            typing(state, user, conn, frame, sink).await?;
+        ClientFrame::Typing { s, c, on } => {
+            typing(state, user, conn, s, c, on, sink).await?;
             Ok(FrameEffect::Activity)
-        }
-        _ => {
-            send(sink, ServerFrame::error("bad_request", frame.s, frame.c)).await?;
-            Ok(FrameEffect::Liveness)
         }
     }
 }
@@ -173,19 +168,17 @@ async fn subscribe(
     state: &AppState,
     user: &User,
     conn: ConnId,
-    frame: ClientFrame,
+    server_id: Uuid,
+    channel_id: Option<Uuid>,
+    resume_n: Option<u64>,
     sink: &mut futures_util::stream::SplitSink<WebSocket, Message>,
 ) -> Result<(), ApiError> {
-    let Some(server_id) = frame.s else {
-        send(sink, ServerFrame::error("bad_request", None, frame.c)).await?;
-        return Ok(());
-    };
-    match authorize(&state.db, user.id, server_id, frame.c).await {
+    match authorize(&state.db, user.id, server_id, channel_id).await {
         Ok(()) => {}
         Err(ApiError::NotFound) => {
             send(
                 sink,
-                ServerFrame::error("not_found", Some(server_id), frame.c),
+                ServerFrame::error("not_found", Some(server_id), channel_id),
             )
             .await?;
             return Ok(());
@@ -194,10 +187,10 @@ async fn subscribe(
     }
 
     state.gateway.watch_server(conn, server_id).await;
-    let topic = Topic::of(server_id, frame.c);
+    let topic = Topic::of(server_id, channel_id);
     state.gateway.begin_catch_up(conn, topic).await;
 
-    let (current, plan) = state.gateway.catch_up(topic, frame.n).await?;
+    let (current, plan) = state.gateway.catch_up(topic, resume_n).await?;
     match plan {
         CatchUp::None => {}
         CatchUp::Replay(events) => {
@@ -206,10 +199,14 @@ async fn subscribe(
             }
         }
         CatchUp::Gap => {
-            send(sink, ServerFrame::gap(server_id, frame.c)).await?;
+            send(sink, ServerFrame::gap(server_id, channel_id)).await?;
         }
     }
-    send(sink, ServerFrame::subscribed(server_id, frame.c, current)).await?;
+    send(
+        sink,
+        ServerFrame::subscribed(server_id, channel_id, current),
+    )
+    .await?;
 
     // Live Pub/Sub frames that arrived while we were reading the log sit
     // in the per-socket queue. Flush them now (drop dups by `n`).
@@ -229,28 +226,15 @@ async fn subscribe(
     Ok(())
 }
 
-async fn unsubscribe(state: &AppState, conn: ConnId, frame: ClientFrame) -> Result<(), ApiError> {
-    let Some(server_id) = frame.s else {
-        return Ok(());
-    };
-    state
-        .gateway
-        .unsubscribe(conn, Topic::of(server_id, frame.c))
-        .await;
-    Ok(())
-}
-
 async fn typing(
     state: &AppState,
     user: &User,
     conn: ConnId,
-    frame: ClientFrame,
+    server_id: Uuid,
+    channel_id: Uuid,
+    on: bool,
     sink: &mut futures_util::stream::SplitSink<WebSocket, Message>,
 ) -> Result<(), ApiError> {
-    let (Some(server_id), Some(channel_id), Some(on)) = (frame.s, frame.c, frame.on) else {
-        send(sink, ServerFrame::error("bad_request", frame.s, frame.c)).await?;
-        return Ok(());
-    };
     match authorize(&state.db, user.id, server_id, Some(channel_id)).await {
         Ok(()) => {}
         Err(ApiError::NotFound) => {

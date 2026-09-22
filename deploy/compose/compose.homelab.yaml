@@ -31,5 +31,3 @@ services:
   media:
     ports:
       - "${GELABBER_MEDIA_BIND:-127.0.0.1}:${GELABBER_MEDIA_PORT:-18081}:8081"
-    environment:
-      TURN_URLS: ${MEDIA_TURN_URLS:-stun:${TURN_PUBLIC_HOST:-127.0.0.1}:${TURN_PORT:-3478},turn:${TURN_PUBLIC_HOST:-127.0.0.1}:${TURN_PORT:-3478}}

@@ -1,6 +1,10 @@
 //! Short SFU join tickets (issue 11). Session + `join_voice` + voice
 //! channel, then a 12-char code in Redis (`gb:mt:{code}`, 30 s). The
 //! media binary consumes it. Not a LiveKit/JWT token.
+//!
+//! The payload is [`gelabber_shared::ticket::TicketClaim`], including
+//! whether this caller may Go Live. The SFU refuses an `l` announce
+//! without that bit.
 
 use std::time::Duration;
 
@@ -8,6 +12,8 @@ use axum::Json;
 use axum::Router;
 use axum::extract::State;
 use axum::routing::post;
+use gelabber_shared::ice::IceServer;
+use gelabber_shared::ticket::{self, TicketClaim};
 use serde::Serialize;
 use uuid::Uuid;
 
@@ -19,63 +25,10 @@ use crate::servers::membership;
 use crate::servers::permissions::Permission;
 use crate::state::AppState;
 
-/// Same alphabet as invite codes (readable, 30^12).
-const ALPHABET: &[u8] = b"abcdefghjkmnpqrstuvwxyz23456789";
-const CODE_LEN: usize = 12;
-const REDIS_PREFIX: &str = "gb:mt:";
+pub use gelabber_shared::ice::parse_ice_servers;
 
 pub fn router() -> Router<AppState> {
     Router::new().route("/api/channels/{id}/media-ticket", post(issue_ticket))
-}
-
-#[derive(Debug, Clone, Serialize)]
-pub struct IceServer {
-    pub urls: Vec<String>,
-    #[serde(skip_serializing_if = "Option::is_none")]
-    pub username: Option<String>,
-    #[serde(skip_serializing_if = "Option::is_none")]
-    pub credential: Option<String>,
-}
-
-/// Comma-separated STUN/TURN URLs. Credentials attach only to `turn:` /
-/// `turns:` entries.
-pub fn parse_ice_servers(
-    urls: Option<&str>,
-    username: Option<&str>,
-    password: Option<&str>,
-) -> Vec<IceServer> {
-    let Some(urls) = urls.filter(|raw| !raw.trim().is_empty()) else {
-        return Vec::new();
-    };
-    let mut stun = Vec::new();
-    let mut turn = Vec::new();
-    for raw in urls.split(',') {
-        let url = raw.trim();
-        if url.is_empty() {
-            continue;
-        }
-        if url.starts_with("turn:") || url.starts_with("turns:") {
-            turn.push(url.to_owned());
-        } else {
-            stun.push(url.to_owned());
-        }
-    }
-    let mut out = Vec::new();
-    if !stun.is_empty() {
-        out.push(IceServer {
-            urls: stun,
-            username: None,
-            credential: None,
-        });
-    }
-    if !turn.is_empty() {
-        out.push(IceServer {
-            urls: turn,
-            username: username.map(str::to_owned).filter(|s| !s.is_empty()),
-            credential: password.map(str::to_owned).filter(|s| !s.is_empty()),
-        });
-    }
-    out
 }
 
 #[derive(Debug, Serialize)]
@@ -101,12 +54,16 @@ async fn issue_ticket(
             "Media tickets are for voice channels.".into(),
         ));
     }
+    let go_live = member.can(Permission::GoLive);
 
     let ticket = mint(
         &state.redis,
-        user.id,
-        server_id,
-        channel.id,
+        TicketClaim {
+            u: user.id,
+            s: server_id,
+            c: channel.id,
+            g: go_live,
+        },
         state.media_ticket_ttl,
     )
     .await?;
@@ -130,27 +87,13 @@ async fn load_channel(db: &sqlx::PgPool, channel_id: Uuid) -> Result<Channel, Ap
     .ok_or(ApiError::NotFound)
 }
 
-fn generate_code() -> String {
-    use rand::RngExt;
-    let mut rng = rand::rng();
-    (0..CODE_LEN)
-        .map(|_| ALPHABET[rng.random_range(0..ALPHABET.len())] as char)
-        .collect()
-}
-
 async fn mint(
     redis: &redis::Client,
-    user_id: Uuid,
-    server_id: Uuid,
-    channel_id: Uuid,
+    claim: TicketClaim,
     ttl: Duration,
 ) -> Result<String, ApiError> {
-    let payload = serde_json::json!({
-        "u": user_id,
-        "s": server_id,
-        "c": channel_id,
-    })
-    .to_string();
+    let payload = ticket::encode(&claim)
+        .map_err(|err| ApiError::Internal(format!("serialize media ticket: {err}")))?;
     let secs = ttl.as_secs().max(1);
     let mut conn = redis
         .get_multiplexed_async_connection()
@@ -158,8 +101,8 @@ async fn mint(
         .map_err(|err| ApiError::Internal(format!("redis: {err}")))?;
 
     for _ in 0..8 {
-        let code = generate_code();
-        let key = format!("{REDIS_PREFIX}{code}");
+        let code = ticket::generate();
+        let key = ticket::redis_key(&code);
         let set: Option<String> = redis::cmd("SET")
             .arg(&key)
             .arg(&payload)
@@ -184,8 +127,8 @@ mod tests {
 
     #[test]
     fn codes_match_media_contract() {
-        let code = generate_code();
-        assert_eq!(code.len(), CODE_LEN);
-        assert!(code.bytes().all(|b| ALPHABET.contains(&b)));
+        let code = ticket::generate();
+        assert_eq!(code.len(), ticket::CODE_LEN);
+        assert!(code.bytes().all(|b| ticket::ALPHABET.contains(&b)));
     }
 }

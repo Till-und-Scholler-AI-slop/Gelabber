@@ -6,7 +6,7 @@ use std::net::SocketAddr;
 use std::time::Duration;
 
 use crate::limits::Limits;
-use crate::media::{IceServer, parse_ice_servers};
+use gelabber_shared::ice::{IceServer, parse_ice_servers};
 
 pub const API_ADDR: &str = "API_ADDR";
 pub const DATABASE_URL: &str = "DATABASE_URL";

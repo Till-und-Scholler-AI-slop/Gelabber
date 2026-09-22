@@ -3,8 +3,8 @@
 //! Locked WebRTC stack: **webrtc 0.20.5** (0.21 is RC). No LiveKit, no mesh.
 
 pub mod config;
+pub mod error;
 pub mod health;
-pub mod ice;
 pub mod metrics;
 pub mod protocol;
 pub mod sfu;
