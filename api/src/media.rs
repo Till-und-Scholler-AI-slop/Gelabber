@@ -72,7 +72,7 @@ async fn issue_ticket(
         ticket,
         expires_in: state.media_ticket_ttl.as_secs().max(1),
         media_path: "/media/ws",
-        ice_servers: state.ice_servers.clone(),
+        ice_servers: state.ticket_ice_servers(user.id),
     }))
 }
 
