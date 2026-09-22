@@ -4,7 +4,7 @@
 import { create } from "zustand";
 
 import { ApiError } from "../api/client.ts";
-import { errorMessage } from "../auth/rules.ts";
+import { errorMessage, fieldMessages } from "../auth/rules.ts";
 
 export type Toast = {
   id: number;
@@ -50,16 +50,26 @@ export function notify(message: string): void {
   useToasts.getState().push("info", message);
 }
 
+function toastText(error: unknown): string | null {
+  if (!(error instanceof ApiError)) {
+    return error instanceof Error && error.message
+      ? error.message
+      : errorMessage("internal");
+  }
+  if (error.code === "unauthenticated") {
+    // The session store already bounced the tab to /login.
+    return null;
+  }
+  if (error.code === "validation_failed") {
+    const detail = Object.values(fieldMessages(error.fields)).filter(Boolean);
+    if (detail.length > 0) return detail.join(" ");
+  }
+  return errorMessage(error.code);
+}
+
 /** For mutations whose form is already closed: say what went wrong. */
 export function notifyError(error: unknown): void {
   if (error instanceof DOMException && error.name === "AbortError") return;
-  const message =
-    error instanceof ApiError
-      ? error.code === "unauthenticated"
-        ? null // the session store already bounced the tab to /login
-        : errorMessage(error.code)
-      : error instanceof Error && error.message
-        ? error.message
-        : errorMessage("internal");
+  const message = toastText(error);
   if (message) useToasts.getState().push("error", message);
 }

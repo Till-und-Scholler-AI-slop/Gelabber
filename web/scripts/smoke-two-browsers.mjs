@@ -1,9 +1,9 @@
 // Runs against the Compose stack from CI. Each isolated browser context has
 // its own account, WebSocket, media peer and cookie jar. Media travels through
 // the running SFU and coturn; only camera/screen capture is synthetic.
-/* global process, window, navigator, document, setInterval, clearInterval, console */
+/* global process, window, navigator, document, setInterval, clearInterval, console, URL */
 import assert from "node:assert/strict";
-import { mkdir } from "node:fs/promises";
+import { mkdir, readFile } from "node:fs/promises";
 import { chromium } from "playwright";
 
 const base = process.env.GELABBER_SMOKE_URL ?? "http://127.0.0.1";
@@ -106,6 +106,8 @@ try {
   const serverDialog = a.page.getByRole("dialog", { name: "Server erstellen" });
   await serverDialog.getByLabel("Name").fill(`Smoke ${suffix}`);
   await serverDialog.getByRole("button", { name: "Erstellen" }).click();
+  await a.page.waitForURL(/\/s\/[^/]+\/c\//);
+  const textUrl = a.page.url();
   await a.page.getByRole("button", { name: "Kanal erstellen" }).click();
   const channelDialog = a.page.getByRole("dialog", { name: "Kanal erstellen" });
   await channelDialog.getByText("Voice", { exact: true }).click();
@@ -181,6 +183,46 @@ try {
   );
   console.log(
     "Two accounts, camera + synthetic screen, SFU video, relay ICE and shared sender budget passed.",
+  );
+
+  await a.page.goto(textUrl);
+  await b.page.goto(textUrl);
+  for (const [extension, type] of [
+    ["jpg", "image/jpeg"],
+    ["png", "image/png"],
+    ["webp", "image/webp"],
+  ]) {
+    const filename = `smoke.${extension}`;
+    const bytes = await readFile(
+      new URL(`./fixtures/${filename}`, import.meta.url),
+    );
+    await a.page.locator('input[type="file"]').setInputFiles({
+      name: filename,
+      mimeType: type,
+      buffer: bytes,
+    });
+    await a.page
+      .locator("form textarea")
+      .fill(`Browser upload ${extension} ${suffix}`);
+    await a.page.getByRole("button", { name: "Senden" }).click();
+    await b.page.waitForFunction(
+      (name) =>
+        [...document.images].some(
+          (image) =>
+            image.alt === name && image.complete && image.naturalWidth === 8,
+        ),
+      filename,
+      { timeout: 30_000 },
+    );
+    const src = await b.page
+      .locator(`img[alt="${filename}"]`)
+      .getAttribute("src");
+    const response = await b.page.request.get(new URL(src, base).href);
+    assert.equal(response.status(), 200);
+    assert.deepEqual(await response.body(), bytes);
+  }
+  console.log(
+    "JPEG, PNG and WebP upload, second-account rendering and byte-exact download passed.",
   );
 } catch (error) {
   await mkdir("/tmp/gelabber-smoke", { recursive: true });

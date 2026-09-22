@@ -346,6 +346,105 @@ async fn attachment_only_message_and_file_only_edit(pool: PgPool) {
 }
 
 #[sqlx::test]
+async fn jpeg_png_and_webp_bind_for_the_other_member(pool: PgPool) {
+    let (mut owner, mut member) = two_users(pool).await;
+    let server = server_with_member(&mut owner, &mut member).await;
+    let channel_id = text_channel_id(&server);
+    let images: &[(&str, &str, &[u8])] = &[
+        ("cat.jpg", "image/jpeg", &[0xff, 0xd8, 0xff, 0xd9]),
+        ("cat.png", "image/png", &[0x89, b'P', b'N', b'G']),
+        ("cat.webp", "image/webp", b"RIFFWEBP"),
+    ];
+    for (filename, content_type, bytes) in images {
+        let signed = presign_ok(
+            &mut owner,
+            &channel_id,
+            filename,
+            content_type,
+            bytes.len() as i64,
+        )
+        .await;
+        let attachment_id = signed["id"].as_str().unwrap();
+        put_object(&owner, attachment_id, content_type, bytes).await;
+        let posted = owner
+            .send(
+                Method::POST,
+                &format!("/api/channels/{channel_id}/messages"),
+                Some(json!({
+                    "content": filename,
+                    "attachment_ids": [attachment_id],
+                })),
+            )
+            .await;
+        assert_eq!(posted.status, StatusCode::CREATED, "{}", posted.body);
+        assert_eq!(posted.body["attachments"][0]["content_type"], *content_type);
+        assert_eq!(posted.body["attachments"][0]["size"], bytes.len());
+
+        let (status, headers, body) = member
+            .send_raw(
+                Method::GET,
+                &format!("/api/attachments/{attachment_id}"),
+                None,
+            )
+            .await;
+        assert_eq!(status, StatusCode::OK);
+        assert_eq!(headers["content-type"], *content_type);
+        assert_eq!(body, *bytes);
+    }
+}
+
+#[sqlx::test]
+async fn mismatched_upload_is_dropped_and_not_referenced(pool: PgPool) {
+    let (mut owner, mut member) = two_users(pool).await;
+    let server = server_with_member(&mut owner, &mut member).await;
+    let channel_id = text_channel_id(&server);
+    let signed = presign_ok(&mut owner, &channel_id, "cat.jpg", "image/jpeg", 8).await;
+    let attachment_id = signed["id"].as_str().unwrap();
+    // Declared 8 bytes, stored 3: truncated upload must not become a message.
+    put_object(&owner, attachment_id, "image/jpeg", &[1, 2, 3]).await;
+
+    let posted = owner
+        .send(
+            Method::POST,
+            &format!("/api/channels/{channel_id}/messages"),
+            Some(json!({
+                "content": "look",
+                "attachment_ids": [attachment_id],
+            })),
+        )
+        .await;
+    assert_eq!(posted.status, StatusCode::UNPROCESSABLE_ENTITY);
+    assert_eq!(posted.body["fields"]["size"], "invalid");
+
+    let page = member
+        .send(
+            Method::GET,
+            &format!("/api/channels/{channel_id}/messages"),
+            None,
+        )
+        .await;
+    assert_eq!(page.status, StatusCode::OK);
+    assert!(page.body["messages"].as_array().unwrap().is_empty());
+
+    let (owner_status, _, _) = owner
+        .send_raw(
+            Method::GET,
+            &format!("/api/attachments/{attachment_id}"),
+            None,
+        )
+        .await;
+    assert_eq!(owner_status, StatusCode::NOT_FOUND);
+    let (member_status, _, _) = member
+        .send_raw(
+            Method::GET,
+            &format!("/api/attachments/{attachment_id}"),
+            None,
+        )
+        .await;
+    assert_eq!(member_status, StatusCode::NOT_FOUND);
+}
+
+#[sqlx::test]
 async fn cannot_steal_someone_elses_upload(pool: PgPool) {
     let (mut owner, mut member) = two_users(pool).await;
     let server = server_with_member(&mut owner, &mut member).await;

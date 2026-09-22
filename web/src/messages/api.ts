@@ -72,12 +72,18 @@ export async function putPresigned(
     });
   } catch (error) {
     if (error instanceof DOMException && error.name === "TimeoutError") {
-      throw new ApiError("timeout", 0, "Request timed out.");
+      throw new Error(
+        "Der Upload hat zu lange gedauert und wurde abgebrochen.",
+        { cause: error },
+      );
+    }
+    if (error instanceof DOMException && error.name === "AbortError") {
+      throw new Error("Der Upload wurde abgebrochen.", { cause: error });
     }
     throw new ApiError("network", 0, "Network error.");
   }
   if (!response.ok) {
-    throw new ApiError("internal", response.status, "Upload failed.");
+    throw new Error("Der Upload ist fehlgeschlagen.");
   }
 }
 
