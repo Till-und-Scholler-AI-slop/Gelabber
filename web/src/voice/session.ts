@@ -2485,9 +2485,10 @@ async function offerIfStable(
         return;
       }
       if (opts?.initial && seat.sfuOffered) return;
-      preferOpus(seat.pc);
-      preferVp8(seat.pc);
       const pc = seat.pc;
+      if (!pc) return;
+      preferOpus(pc);
+      preferVp8(pc);
       const offer = withTunedSdp(
         await pc.createOffer(restart ? { iceRestart: true } : undefined),
       );
@@ -2872,9 +2873,10 @@ async function watchOfferIfStable(
         return;
       }
       if (opts?.initial && watchCall.sfuOffered) return;
-      preferOpus(watchCall.pc);
-      preferVp8(watchCall.pc);
       const pc = watchCall.pc;
+      if (!pc) return;
+      preferOpus(pc);
+      preferVp8(pc);
       const offer = withTunedSdp(
         await pc.createOffer(restart ? { iceRestart: true } : undefined),
       );
