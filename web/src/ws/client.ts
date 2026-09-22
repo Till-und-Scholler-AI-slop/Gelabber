@@ -68,6 +68,8 @@ export class Gateway {
   > &
     GatewayOptions;
   private socket: SocketLike | null = null;
+  /** Drops listeners for the socket `open` most recently bound. */
+  private detachLiveSocket: (() => void) | null = null;
   private desired = new Map<string, Topic>();
   private cursors = new Map<string, number>();
   private retryAttempt = 0;
@@ -178,8 +180,10 @@ export class Gateway {
   stop(): void {
     this.stopped = true;
     this.clearTimers();
-    this.socket?.close();
+    const socket = this.socket;
+    this.unbindSocket();
     this.socket = null;
+    socket?.close();
     this.opts.onStatus?.("idle");
   }
 
@@ -221,14 +225,23 @@ export class Gateway {
 
   private open(): void {
     this.clearTimers();
+    this.unbindSocket();
     this.opts.onStatus?.(
       this.retryAttempt === 0 ? "connecting" : "reconnecting",
     );
     const url = this.opts.url ?? gatewayUrl();
     const socket = this.opts.open ? this.opts.open(url) : new WebSocket(url);
     this.socket = socket;
+    // Captured here, not in `onFrame`: a close/open/message from the socket
+    // we just replaced must not clear the new one or answer on it.
+    const epoch = this.epoch;
+    const live = () => this.socket === socket && this.epoch === epoch;
 
     const onOpen = () => {
+      if (!live()) {
+        detach();
+        return;
+      }
       this.retryAttempt = 0;
       this.lastServerAt = this.opts.now();
       this.opts.onStatus?.("open");
@@ -241,6 +254,10 @@ export class Gateway {
       }
     };
     const onMessage = (event: { data?: string }) => {
+      if (!live()) {
+        detach();
+        return;
+      }
       if (typeof event.data !== "string") {
         return;
       }
@@ -251,16 +268,33 @@ export class Gateway {
       }
     };
     const onClose = () => {
+      const still = live();
+      detach();
+      if (!still) return;
       this.socket = null;
       this.clearHeartbeat();
       if (!this.stopped) {
         this.scheduleReconnect();
       }
     };
+    const detach = () => {
+      socket.removeEventListener("open", onOpen);
+      socket.removeEventListener("message", onMessage);
+      socket.removeEventListener("close", onClose);
+      if (this.detachLiveSocket === detach) {
+        this.detachLiveSocket = null;
+      }
+    };
 
     socket.addEventListener("open", onOpen);
     socket.addEventListener("message", onMessage);
     socket.addEventListener("close", onClose);
+    this.detachLiveSocket = detach;
+  }
+
+  private unbindSocket(): void {
+    this.detachLiveSocket?.();
+    this.detachLiveSocket = null;
   }
 
   private onFrame(frame: ServerFrame): void {

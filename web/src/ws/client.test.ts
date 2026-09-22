@@ -241,4 +241,46 @@ describe("gateway client", () => {
     expect(latest?.sent.some((frame) => frame.includes('"n"'))).toBe(false);
     gateway.stop();
   });
+
+  it("a late close of the previous socket does not drop the next one", async () => {
+    class DeferredCloseSocket extends FakeSocket {
+      override close(): void {
+        // The browser fires close on a later turn. The test emits it.
+      }
+    }
+
+    const sockets: DeferredCloseSocket[] = [];
+    const gateway = new Gateway({
+      url: "ws://test/ws",
+      heartbeatMs: 60_000,
+      open: () => {
+        const socket = new DeferredCloseSocket();
+        sockets.push(socket);
+        return socket;
+      },
+    });
+
+    gateway.start();
+    sockets[0]?.emit("open");
+    gateway.resetSession();
+    gateway.start();
+    const next = sockets[1];
+    next?.emit("open");
+    expect(sockets).toHaveLength(2);
+
+    sockets[0]?.emit("close");
+    sockets[0]?.emit("message", '{"op":"h"}');
+    sockets[0]?.emit("open");
+    await new Promise((resolve) => setTimeout(resolve, 0));
+
+    expect(sockets).toHaveLength(2);
+    expect(next?.sent.some((frame) => frame.includes('"op":"h"'))).toBe(false);
+    gateway.send({ op: "h" });
+    expect(next?.sent).toContain('{"op":"h"}');
+
+    gateway.stop();
+    sockets[1]?.emit("close");
+    gateway.send({ op: "h" });
+    expect(sockets).toHaveLength(2);
+  });
 });

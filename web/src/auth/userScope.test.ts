@@ -24,6 +24,7 @@ import {
   logout,
   resetSessionForTests,
   updateProfile,
+  useSession,
 } from "./session.ts";
 import type { User } from "./types.ts";
 
@@ -306,5 +307,111 @@ describe("account switch drops the previous user's state", () => {
     expect(queryClient.getQueryData(dmKeys.list(ada.id, generation))).toEqual([
       secretDm,
     ]);
+    expect(takeStamp()?.generation).toBe(generation);
+  });
+
+  it("a late profile response does not put the previous account back", async () => {
+    let resolvePatch: ((response: Response) => void) | undefined;
+    vi.stubGlobal(
+      "fetch",
+      vi.fn((input: RequestInfo | URL, init?: RequestInit) => {
+        const key = `${init?.method ?? "GET"} ${String(input)}`;
+        if (key === "POST /api/auth/login") {
+          return Promise.resolve(json(200, { user: who, csrf_token: "csrf" }));
+        }
+        if (key === "POST /api/auth/logout") {
+          return Promise.resolve(json(200, { csrf_token: "after-logout" }));
+        }
+        if (key === "PATCH /api/me") {
+          return new Promise<Response>((resolve) => {
+            resolvePatch = resolve;
+          });
+        }
+        return Promise.reject(new Error(`unexpected request ${key}`));
+      }),
+    );
+
+    who = ada;
+    await login(ada.email, "password123");
+    const pending = updateProfile({ name: "Ada Lovelace" });
+    await logout();
+    who = bob;
+    await login(bob.email, "password123");
+    const bobGeneration = takeStamp()?.generation;
+
+    resolvePatch?.(json(200, { ...ada, name: "Ada Lovelace" }));
+    await pending;
+
+    expect(useSession.getState().user?.id).toBe(bob.id);
+    expect(takeStamp()).toEqual({ userId: bob.id, generation: bobGeneration });
+    expect(cacheDump()).not.toContain("secret-from-a");
+  });
+
+  it("a late profile error does not roll back onto the next account", async () => {
+    let resolvePatch: ((response: Response) => void) | undefined;
+    vi.stubGlobal(
+      "fetch",
+      vi.fn((input: RequestInfo | URL, init?: RequestInit) => {
+        const key = `${init?.method ?? "GET"} ${String(input)}`;
+        if (key === "POST /api/auth/login") {
+          return Promise.resolve(json(200, { user: who, csrf_token: "csrf" }));
+        }
+        if (key === "POST /api/auth/logout") {
+          return Promise.resolve(json(200, { csrf_token: "after-logout" }));
+        }
+        if (key === "PATCH /api/me") {
+          return new Promise<Response>((resolve) => {
+            resolvePatch = resolve;
+          });
+        }
+        return Promise.reject(new Error(`unexpected request ${key}`));
+      }),
+    );
+
+    who = ada;
+    await login(ada.email, "password123");
+    const pending = updateProfile({ name: "Ada Lovelace" });
+    expect(useSession.getState().user?.name).toBe("Ada Lovelace");
+    await logout();
+    who = bob;
+    await login(bob.email, "password123");
+
+    resolvePatch?.(
+      json(422, {
+        error: "validation_failed",
+        message: "x",
+        fields: { name: "invalid" },
+      }),
+    );
+    await expect(pending).rejects.toMatchObject({ code: "validation_failed" });
+    expect(useSession.getState().user).toEqual(bob);
+  });
+
+  it("a profile response for a different user goes through the session boundary", async () => {
+    await login(ada.email, "password123");
+    const generation = takeStamp()?.generation ?? 0;
+    queryClient.setQueryData(dmKeys.list(ada.id, generation), [secretDm]);
+    vi.stubGlobal(
+      "fetch",
+      vi.fn((input: RequestInfo | URL, init?: RequestInit) => {
+        const key = `${init?.method ?? "GET"} ${String(input)}`;
+        if (key === "PATCH /api/me") {
+          return Promise.resolve(json(200, bob));
+        }
+        return Promise.reject(new Error(`unexpected request ${key}`));
+      }),
+    );
+
+    await updateProfile({ name: "Bob" });
+
+    expect(useSession.getState().user).toEqual(bob);
+    expect(takeStamp()?.userId).toBe(bob.id);
+    expect(takeStamp()?.generation).not.toBe(generation);
+    expect(cacheDump()).not.toContain("secret-from-a");
+    expect(
+      queryClient.getQueryData(
+        dmKeys.list(bob.id, takeStamp()?.generation ?? 0),
+      ),
+    ).toBeUndefined();
   });
 });

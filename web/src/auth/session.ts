@@ -6,6 +6,7 @@ import { create } from "zustand";
 
 import { api, setCsrfToken, setSessionSink } from "../api/client.ts";
 import { releaseUserScope } from "./release.ts";
+import { stampHolds, takeStamp } from "./scope.ts";
 import type {
   LogoutResponse,
   ProfilePatch,
@@ -123,10 +124,16 @@ export async function logout(): Promise<void> {
 /**
  * Optimistic: the new name/avatar show up at once; on error the previous
  * user is restored and the error goes back to the form.
+ *
+ * The user id and generation are captured before the request. Success and
+ * rollback both no-op once that stamp is stale, so a slow PATCH from the
+ * previous account cannot overwrite whoever is signed in now. A response
+ * that actually changes the user id still goes through `applySession`.
  */
 export async function updateProfile(patch: ProfilePatch): Promise<User> {
   const previous = useSession.getState().user;
-  if (previous) {
+  const stamp = takeStamp();
+  if (previous && stamp) {
     useSession.setState({
       user: {
         ...previous,
@@ -139,13 +146,18 @@ export async function updateProfile(patch: ProfilePatch): Promise<User> {
   }
   try {
     const user = await api<User>("/me", { method: "PATCH", body: patch });
-    useSession.setState({ status: "authenticated", user });
+    if (stampHolds(stamp)) {
+      if (user.id === stamp.userId) {
+        useSession.setState({ status: "authenticated", user });
+      } else {
+        applySession(user);
+      }
+    }
     return user;
   } catch (error) {
-    // Roll back the optimistic write — unless the failure was the session
-    // itself ending, in which case the store is already anonymous and must
-    // stay that way.
-    if (previous && useSession.getState().status === "authenticated") {
+    // Roll back the optimistic write only while this attempt's account is
+    // still the one in the store. A 401 or a later login must win.
+    if (previous && stampHolds(stamp)) {
       useSession.setState({ user: previous });
     }
     throw error;
