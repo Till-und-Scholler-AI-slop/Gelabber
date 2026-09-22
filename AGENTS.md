@@ -23,7 +23,7 @@ If a new `v*` name would miss that pattern, add the same protection by hand befo
 - Feature work uses feature branches off the current `v*` (e.g. `rft/<short>-01d0`, or Silas’s usual names). **PRs target that `v*` branch, not `main`.**
 - Merge a feature into the current `v*` when that feature is done and fixed (CI green, review as usual).
 - Merge `v*` → `main` **via a PR** only when the **whole** major is done and fixed. Then cut a **release** (tag `v0.2.0` etc.). Do not tag or release from a half-finished major or from a random feature branch.
-- Hotfixes for a shipped minor (`0.1.x`, and the shipped `0.2.1` line) go to `main` (or a hotfix branch). Do not mix them into unfinished current-major product work unless Rafael says so.
+- Hotfixes for a shipped minor (`0.1.x`, and the shipped `0.2.x` line) go to `main` (or a hotfix branch). Do not mix them into unfinished current-major product work unless Rafael says so.
 
 ## Product
 
@@ -31,9 +31,9 @@ No LiveKit, Daily, Agora, Twilio, Stream, or Socket.IO. Own WebSocket, own signa
 
 SilasSch reviews product PRs when that is the standing rule. Do not invent extra process.
 
-## Shipped line: v0.2.1
+## Shipped line: v0.2.2
 
-`v0.2.1` is the shipped line on `main`. Hotfixes for this minor go to `main` the same way `0.1.x` hotfixes do.
+`v0.2.2` is the shipped line on `main`. Hotfixes for this minor go to `main` the same way `0.1.x` hotfixes do.
 
 What is on `main`: owner and member permissions (no roles, no channel overwrites); sequenced chat (no threads, reactions, or search); direct messages (no friends); screen share and Go Live; moderation (kick and ban).
 
