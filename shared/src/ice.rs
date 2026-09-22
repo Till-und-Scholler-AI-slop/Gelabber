@@ -2,7 +2,8 @@
 //! The SFU does not apply these: it is ICE-lite.
 //!
 //! Optional `TURN_AUTH_SECRET` mints coturn REST (time-limited) credentials
-//! per ticket so static long-term passwords are not required on the client.
+//! per ticket. Unset, the ticket keeps the static username and password.
+//! REST is only for a secret the operator set on both the API and coturn.
 
 use base64::Engine;
 use hmac::{Hmac, Mac};

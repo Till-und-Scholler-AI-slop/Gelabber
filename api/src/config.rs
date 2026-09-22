@@ -212,7 +212,7 @@ impl Config {
             get(TURN_USERNAME).as_deref(),
             get(TURN_PASSWORD).as_deref(),
         );
-        let turn_auth_secret = get(TURN_AUTH_SECRET);
+        let turn_auth_secret = parse_turn_auth_secret(get(TURN_AUTH_SECRET))?;
         let turn_cred_ttl_secs = match get(TURN_CRED_TTL_SECS) {
             Some(raw) => parse_positive::<u64>(TURN_CRED_TTL_SECS, &raw)?,
             None => DEFAULT_TURN_CRED_TTL_SECS,
@@ -345,6 +345,30 @@ where
     Ok(value)
 }
 
+/// Public Compose fallback this change removes. REST mode must not turn on
+/// with a secret that shipped in the repo.
+const PUBLIC_TURN_AUTH_SECRET: &str = "gelabberturnsecret";
+
+/// Empty (and the retired public default) keep static `TURN_USERNAME` /
+/// `TURN_PASSWORD`. A private secret turns on coturn REST credentials.
+fn parse_turn_auth_secret(raw: Option<String>) -> Result<Option<String>, ConfigError> {
+    let Some(raw) = raw else {
+        return Ok(None);
+    };
+    let secret = raw.trim();
+    if secret.is_empty() {
+        return Ok(None);
+    }
+    if secret == PUBLIC_TURN_AUTH_SECRET {
+        return Err(invalid(
+            TURN_AUTH_SECRET,
+            secret,
+            "refusing the public default; unset TURN_AUTH_SECRET for static TURN credentials, or set a private secret shared by the API and coturn",
+        ));
+    }
+    Ok(Some(secret.to_owned()))
+}
+
 fn invalid(key: &'static str, value: &str, reason: impl fmt::Display) -> ConfigError {
     ConfigError::Invalid {
         key,
@@ -418,6 +442,30 @@ mod tests {
         .expect("valid config");
         assert_eq!(config.turn_auth_secret.as_deref(), Some("secret"));
         assert_eq!(config.turn_cred_ttl, Duration::from_secs(900));
+    }
+
+    #[test]
+    fn empty_turn_auth_secret_keeps_static_credentials() {
+        let config = Config::from_source(source(&[
+            (DATABASE_URL, "postgres://localhost/db"),
+            (REDIS_URL, "redis://localhost"),
+            (TURN_AUTH_SECRET, "  "),
+        ]))
+        .expect("valid config");
+        assert_eq!(config.turn_auth_secret, None);
+    }
+
+    #[test]
+    fn public_turn_auth_secret_is_rejected() {
+        let error = Config::from_source(source(&[
+            (DATABASE_URL, "postgres://localhost/db"),
+            (REDIS_URL, "redis://localhost"),
+            (TURN_AUTH_SECRET, "gelabberturnsecret"),
+        ]))
+        .expect_err("public default");
+        let message = error.to_string();
+        assert!(message.contains(TURN_AUTH_SECRET), "{message}");
+        assert!(message.contains("public default"), "{message}");
     }
 
     #[test]

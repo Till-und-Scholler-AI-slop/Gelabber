@@ -49,7 +49,9 @@ services:
       TURN_URLS: ${TURN_URLS:-stun:${TURN_PUBLIC_HOST:-127.0.0.1}:${TURN_PORT:-3478},turn:${TURN_PUBLIC_HOST:-127.0.0.1}:${TURN_PORT:-3478}}
       TURN_USERNAME: ${TURN_USERNAME:-gelabber}
       TURN_PASSWORD: ${TURN_PASSWORD:-gelabberturn}
-      TURN_AUTH_SECRET: ${TURN_AUTH_SECRET:-gelabberturnsecret}
+      # Empty keeps static TURN credentials. Set a private secret (same value
+      # on coturn) to mint REST credentials. gelabberturnsecret is rejected.
+      TURN_AUTH_SECRET: ${TURN_AUTH_SECRET:-}
       TURN_CRED_TTL_SECS: ${TURN_CRED_TTL_SECS:-21600}
       MEDIA_TICKET_TTL_SECS: "30"
     expose:
@@ -93,22 +95,19 @@ services:
 
   coturn:
     image: coturn/coturn:4.18.0
-    command:
-      - -n
-      - --log-file=stdout
-      - --listening-port=3478
-      - --min-port=${TURN_RELAY_MIN:-49160}
-      - --max-port=${TURN_RELAY_MAX:-49200}
-      - --fingerprint
-      - --lt-cred-mech
-      - --use-auth-secret
-      - --static-auth-secret=${TURN_AUTH_SECRET:-gelabberturnsecret}
-      - --user=${TURN_USERNAME:-gelabber}:${TURN_PASSWORD:-gelabberturn}
-      - --realm=${TURN_REALM:-gelabber.local}
-      # coturn 4.18.0: CLI/DTLS off by default. `--no-cli` errors; `--no-dtls` unknown.
-      - --no-tls
-      - --listening-ip=0.0.0.0
-      - --external-ip=${TURN_EXTERNAL_IP:-127.0.0.1}
+    # coturn 4.18.0: CLI/DTLS off by default. `--no-cli` errors; `--no-dtls` unknown.
+    # Static `--lt-cred-mech` unless TURN_AUTH_SECRET is a private shared secret.
+    environment:
+      TURN_AUTH_SECRET: ${TURN_AUTH_SECRET:-}
+      TURN_USERNAME: ${TURN_USERNAME:-gelabber}
+      TURN_PASSWORD: ${TURN_PASSWORD:-gelabberturn}
+      TURN_REALM: ${TURN_REALM:-gelabber.local}
+      TURN_EXTERNAL_IP: ${TURN_EXTERNAL_IP:-127.0.0.1}
+      TURN_RELAY_MIN: ${TURN_RELAY_MIN:-49160}
+      TURN_RELAY_MAX: ${TURN_RELAY_MAX:-49200}
+    volumes:
+      - ./coturn-entry.sh:/coturn-entry.sh:ro
+    entrypoint: ["/bin/sh", "/coturn-entry.sh"]
     ports:
       - "${TURN_BIND:-0.0.0.0}:${TURN_PORT:-3478}:3478/udp"
       - "${TURN_BIND:-0.0.0.0}:${TURN_PORT:-3478}:3478/tcp"

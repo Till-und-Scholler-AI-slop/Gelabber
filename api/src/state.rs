@@ -132,7 +132,8 @@ impl AppState {
         sqlx::migrate!("./migrations").run(&self.db).await
     }
 
-    /// Ticket ICE list. REST credentials when `TURN_AUTH_SECRET` is set.
+    /// Ticket ICE list. Static username/password unless `TURN_AUTH_SECRET`
+    /// is an explicit private secret (coturn REST).
     pub fn ticket_ice_servers(&self, user_id: Uuid) -> Vec<IceServer> {
         let Some(secret) = self.turn_auth_secret.as_deref() else {
             return self.ice_servers.clone();
