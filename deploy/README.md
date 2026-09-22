@@ -114,4 +114,4 @@ Grafana 13.2.1: `http://127.0.0.1:3000/d/gelabber/gelabber` (admin / `gelabber`,
 
 ## Images
 
-`docker compose up` zieht `v0.2.1` von GHCR. Org-Pakete sind oft privat — dann Source-Build, oder `docker login ghcr.io`. MinIO bleibt der Pin in `deploy/compose/minio` (kein `FROM minio/minio`). Source-Build setzt `CARGO_HTTP_CAINFO`; bei TLS-Inspection (Docker Desktop) hängt `docker/rust-build-ca.sh` die präsentierte Kette an.
+`docker compose up` zieht `v0.2.2` von GHCR. Org-Pakete sind oft privat — dann Source-Build, oder `docker login ghcr.io`. MinIO bleibt der Pin in `deploy/compose/minio` (kein `FROM minio/minio`). Source-Build setzt `CARGO_HTTP_CAINFO`; bei TLS-Inspection (Docker Desktop) hängt `docker/rust-build-ca.sh` die präsentierte Kette an.

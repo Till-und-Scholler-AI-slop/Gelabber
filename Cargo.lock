@@ -1092,7 +1092,7 @@ dependencies = [
 
 [[package]]
 name = "gelabber-api"
-version = "0.2.1"
+version = "0.2.2"
 dependencies = [
  "argon2",
  "axum",
@@ -1120,7 +1120,7 @@ dependencies = [
 
 [[package]]
 name = "gelabber-media"
-version = "0.2.1"
+version = "0.2.2"
 dependencies = [
  "async-trait",
  "axum",
@@ -1144,7 +1144,7 @@ dependencies = [
 
 [[package]]
 name = "gelabber-shared"
-version = "0.2.1"
+version = "0.2.2"
 dependencies = [
  "base64 0.22.1",
  "hmac 0.12.1",
