@@ -646,6 +646,30 @@ describe("voice session", () => {
     expect(useVoice.getState().status).toBe("joined");
   });
 
+  it("keeps remote video when another publisher's gateway drops", async () => {
+    const { peers, emitSig } = install();
+    joinVoice({ serverId: "srv", channelId: "voice", channelName: "Lounge" });
+    await vi.waitFor(() => expect(peers.length).toBe(1));
+    const stream = fakeVideoStream("u-bob:v");
+    peers[0]?.ontrack?.({
+      track: stream.getVideoTracks()[0]!,
+      streams: [stream],
+    });
+    emitSig({ op: "sig", t: "l", s: "srv", c: "voice", u: "u-bob" });
+    expect(useVoice.getState().remote["u-bob"]?.v).toBe(stream);
+    emitSig({ op: "sig", t: "j", s: "srv", c: "voice", u: "u-bob" });
+    emitSig({
+      op: "sig",
+      t: "p",
+      s: "srv",
+      c: "voice",
+      u: "u-bob",
+      k: "v",
+    });
+    expect(useVoice.getState().participants["u-bob"]?.pubs).toContain("v");
+    expect(useVoice.getState().remote["u-bob"]?.v).toBe(stream);
+  });
+
   it("re-announces active tracks after the gateway join is confirmed", async () => {
     const { sent, peers, emitReady, emitSig, emitErr, getDisplayMediaCalls } =
       install();
@@ -671,17 +695,29 @@ describe("voice session", () => {
   });
 
   it("keeps the seat when the SFU has no free port", async () => {
-    const { emitMedia, errors, mediaSent, peers, sent } = install({
+    const { emitMedia, errors, mediaSent, peers, sent, streams } = install({
       holdJoin: true,
     });
     joinVoice({ serverId: "srv", channelId: "voice", channelName: "Lounge" });
+    await vi.waitFor(() => expect(peers[0]?.audio).toBeTruthy());
     await vi.waitFor(() =>
       expect(peers[0]?.signalingState).toBe("have-local-offer"),
     );
     expect(mediaSent.map((frame) => frame.op)).toEqual(["j"]);
+    const audio = peers[0]?.audio as { stopped?: boolean } | null;
     emitMedia({ op: "err", e: "unavailable" });
     emitMedia({ op: "err", e: "unauthorized" });
     expect(useVoice.getState().status).toBe("joined");
+    expect(peers[0]?.closed).toBe(true);
+    expect(audio?.stopped).toBe(true);
+    expect(
+      streams[0]
+        ?.getTracks()
+        .every((track) => (track as { stopped?: boolean }).stopped),
+    ).toBe(true);
+    expect(useVoice.getState().localCamera).toBeNull();
+    expect(useVoice.getState().localScreen).toBeNull();
+    expect(useVoice.getState().localLive).toBeNull();
     expect(sent.some((frame) => frame.op === "sig" && frame.t === "l")).toBe(
       false,
     );

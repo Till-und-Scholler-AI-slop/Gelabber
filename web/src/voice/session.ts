@@ -402,6 +402,53 @@ function setPub(userId: string, kind: TrackKind, on: boolean): void {
   });
 }
 
+/** Video still arriving on the open media peer, keyed by publisher. */
+const receivedVideo = new Map<
+  string,
+  Partial<Record<"v" | "s" | "l", MediaStream>>
+>();
+
+function noteReceived(
+  userId: string,
+  kind: "v" | "s" | "l",
+  stream: MediaStream,
+  track: MediaStreamTrack,
+): void {
+  const prev = receivedVideo.get(userId) ?? {};
+  receivedVideo.set(userId, { ...prev, [kind]: stream });
+  track.addEventListener("ended", () => {
+    const held = receivedVideo.get(userId);
+    if (!held || held[kind] !== stream) return;
+    const next = { ...held };
+    delete next[kind];
+    if (!next.v && !next.s && !next.l) receivedVideo.delete(userId);
+    else receivedVideo.set(userId, next);
+    dropRemote(userId, kind);
+  });
+}
+
+function reattachReceived(userId: string, kind: "v" | "s" | "l"): void {
+  const stream = receivedVideo.get(userId)?.[kind];
+  if (!stream) return;
+  const dead = stream
+    .getVideoTracks()
+    .some((track) => track.readyState === "ended");
+  if (dead) return;
+  const state = useVoice.getState();
+  const current = state.remote[userId] ?? {};
+  if (current[kind] === stream) return;
+  useVoice.setState({
+    remote: {
+      ...state.remote,
+      [userId]: { ...current, [kind]: stream },
+    },
+  });
+}
+
+function clearReceived(): void {
+  receivedVideo.clear();
+}
+
 function dropRemote(userId: string, kind?: "v" | "s" | "l"): void {
   const state = useVoice.getState();
   if (!state.remote[userId]) return;
@@ -489,7 +536,8 @@ function onSig(event: SigEvent): void {
         const next = { ...state.participants };
         delete next[userId];
         useVoice.setState({ participants: next });
-        dropRemote(userId);
+        // Gateway absence is not the end of the media track. The tile
+        // stays until the receiver track or this peer connection ends.
       }
       return;
     case "p":
@@ -512,11 +560,11 @@ function onSig(event: SigEvent): void {
         },
       });
       if (
-        event.t === "u" &&
+        event.t === "p" &&
         userId !== currentUserId() &&
         (event.k === "v" || event.k === "s" || event.k === "l")
       ) {
-        dropRemote(userId, event.k);
+        reattachReceived(userId, event.k);
       }
       return;
     }
@@ -632,6 +680,7 @@ function stopPeer(): void {
   screenStream = null;
   liveStream = null;
   remoteMix = null;
+  clearReceived();
   if (remoteAudio) {
     remoteAudio.srcObject = null;
   }
@@ -1478,10 +1527,10 @@ function onMediaFrame(frame: MediaServerFrame): void {
     if (frame.e === "ice_failed") return;
     if (frame.e === "unavailable") {
       deps?.onError?.(new Error("Kein freier Sprachplatz."));
-      // Drop this attempt and anything still queued behind the missing ok.
-      // The voice seat stays. A later unauthorized for those frames belongs
-      // to a generation we just closed, so it does not leave the channel.
-      seat.close();
+      // Drop this attempt, its queued signaling, and the local capture.
+      // stopPeer does not leave the gateway seat. A later unauthorized
+      // belongs to the generation we just closed.
+      stopPeer();
       return;
     }
     if (frame.e === "forbidden") {
@@ -1983,6 +2032,7 @@ function attachIncoming(track: MediaStreamTrack, stream?: MediaStream): void {
   }
   logVoice("info", "track", { track: parsed.k, peer: parsed.userId });
   const attached = stream ?? new MediaStream([track]);
+  noteReceived(parsed.userId, parsed.k, attached, track);
   const state = useVoice.getState();
   const current = state.remote[parsed.userId] ?? {};
   useVoice.setState({
