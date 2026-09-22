@@ -670,6 +670,48 @@ describe("voice session", () => {
     expect(useVoice.getState().remote["u-bob"]?.v).toBe(stream);
   });
 
+  it("drops remote video when the publisher unpublishes", async () => {
+    const { peers, emitSig } = install();
+    joinVoice({ serverId: "srv", channelId: "voice", channelName: "Lounge" });
+    await vi.waitFor(() => expect(peers.length).toBe(1));
+    const stream = fakeVideoStream("u-bob:v");
+    peers[0]?.ontrack?.({
+      track: stream.getVideoTracks()[0]!,
+      streams: [stream],
+    });
+    emitSig({
+      op: "sig",
+      t: "p",
+      s: "srv",
+      c: "voice",
+      u: "u-bob",
+      k: "v",
+    });
+    expect(useVoice.getState().remote["u-bob"]?.v).toBe(stream);
+    emitSig({
+      op: "sig",
+      t: "u",
+      s: "srv",
+      c: "voice",
+      u: "u-bob",
+      k: "v",
+    });
+    expect(useVoice.getState().participants["u-bob"]?.pubs ?? []).not.toContain(
+      "v",
+    );
+    expect(useVoice.getState().remote["u-bob"]?.v).toBeUndefined();
+    emitSig({
+      op: "sig",
+      t: "p",
+      s: "srv",
+      c: "voice",
+      u: "u-bob",
+      k: "v",
+    });
+    expect(useVoice.getState().participants["u-bob"]?.pubs).toContain("v");
+    expect(useVoice.getState().remote["u-bob"]?.v).toBeUndefined();
+  });
+
   it("re-announces active tracks after the gateway join is confirmed", async () => {
     const { sent, peers, emitReady, emitSig, emitErr, getDisplayMediaCalls } =
       install();
@@ -727,6 +769,44 @@ describe("voice session", () => {
     expect(errors.map((error) => (error as Error).message)).toEqual([
       "Kein freier Sprachplatz.",
     ]);
+  });
+
+  it("unpublishes announced tracks when the media attempt is unavailable", async () => {
+    const { emitMedia, peers, sent } = install({ holdJoin: true });
+    joinVoice({ serverId: "srv", channelId: "voice", channelName: "Lounge" });
+    await vi.waitFor(() => expect(peers[0]?.audio).toBeTruthy());
+    await vi.waitFor(() =>
+      expect(
+        sent.some(
+          (frame) => frame.op === "sig" && frame.t === "p" && frame.k === "a",
+        ),
+      ).toBe(true),
+    );
+    toggleGoLive();
+    await vi.waitFor(() =>
+      expect(
+        sent.some(
+          (frame) => frame.op === "sig" && frame.t === "p" && frame.k === "l",
+        ),
+      ).toBe(true),
+    );
+    expect(useVoice.getState().live).toBe(true);
+    expect(useVoiceRoster.getState().live.srv?.voice).toBe("u-self");
+    const before = sent.length;
+    emitMedia({ op: "err", e: "unavailable" });
+    expect(useVoice.getState().status).toBe("joined");
+    expect(useVoice.getState().live).toBe(false);
+    expect(useVoice.getState().camera).toBe(false);
+    expect(useVoice.getState().sharing).toBe(false);
+    expect(useVoice.getState().localLive).toBeNull();
+    expect(useVoiceRoster.getState().live.srv?.voice).toBeUndefined();
+    expect(sent.slice(before).filter((frame) => frame.op === "sig")).toEqual([
+      { op: "sig", t: "u", s: "srv", c: "voice", k: "a" },
+      { op: "sig", t: "u", s: "srv", c: "voice", k: "l" },
+    ]);
+    expect(sent.some((frame) => frame.op === "sig" && frame.t === "l")).toBe(
+      false,
+    );
   });
 
   it("stops Go Live on a forbidden announce and keeps the seat", async () => {

@@ -211,6 +211,8 @@ let openPublish: Array<"v" | "s" | "l"> = [];
 let discardingPublish = false;
 /** Gateway reconnect left the media peer up; re-announce after our join echo. */
 let republishOnJoin = false;
+/** Kinds this media attempt has already announced on the gateway. */
+const announced = new Set<TrackKind>();
 const pendingMicRaw = new Set<MediaStream>();
 const pendingCameraStreams = new Set<MediaStream>();
 
@@ -427,6 +429,18 @@ function noteReceived(
   });
 }
 
+/** An explicit unpublish ends that tile. A later `t:"p"` must not restore it. */
+function forgetReceived(userId: string, kind: "v" | "s" | "l"): void {
+  const held = receivedVideo.get(userId);
+  if (held?.[kind]) {
+    const next = { ...held };
+    delete next[kind];
+    if (!next.v && !next.s && !next.l) receivedVideo.delete(userId);
+    else receivedVideo.set(userId, next);
+  }
+  dropRemote(userId, kind);
+}
+
 function reattachReceived(userId: string, kind: "v" | "s" | "l"): void {
   const stream = receivedVideo.get(userId)?.[kind];
   if (!stream) return;
@@ -559,12 +573,14 @@ function onSig(event: SigEvent): void {
           [userId]: { pubs },
         },
       });
-      if (
-        event.t === "p" &&
-        userId !== currentUserId() &&
-        (event.k === "v" || event.k === "s" || event.k === "l")
-      ) {
-        reattachReceived(userId, event.k);
+      if (event.k === "v" || event.k === "s" || event.k === "l") {
+        if (event.t === "u") {
+          // Gateway `t:"l"` keeps a track that is still arriving. `t:"u"`
+          // means that camera, screen, or Go Live actually ended.
+          forgetReceived(userId, event.k);
+        } else if (userId !== currentUserId()) {
+          reattachReceived(userId, event.k);
+        }
       }
       return;
     }
@@ -664,6 +680,7 @@ function stopPeer(): void {
   settledSenders = [];
   openPublish = [];
   discardingPublish = false;
+  announced.clear();
   for (const stream of pendingMicRaw) stopTracks(stream);
   pendingMicRaw.clear();
   for (const stream of pendingCameraStreams) stopTracks(stream);
@@ -1267,6 +1284,8 @@ function sendFlag(
 function sendPub(kind: TrackKind, on: boolean): void {
   const state = useVoice.getState();
   if (!state.serverId || !state.channelId) return;
+  if (on) announced.add(kind);
+  else announced.delete(kind);
   deps?.gateway.send({
     op: "sig",
     t: on ? "p" : "u",
@@ -1274,6 +1293,33 @@ function sendPub(kind: TrackKind, on: boolean): void {
     c: state.channelId,
     k: kind,
   });
+}
+
+/**
+ * The media attempt failed, but the voice seat stays. Drop only the pubs
+ * this attempt already announced, and release camera, share, and Go Live.
+ */
+function retractAnnouncedMedia(): void {
+  const state = useVoice.getState();
+  const kinds = [...announced];
+  announced.clear();
+  const self = currentUserId();
+  for (const kind of kinds) {
+    if (self) setPub(self, kind, false);
+    if (!state.serverId || !state.channelId) continue;
+    deps?.gateway.send({
+      op: "sig",
+      t: "u",
+      s: state.serverId,
+      c: state.channelId,
+      k: kind,
+    });
+  }
+  awaitingLive = null;
+  if (state.live && state.serverId && state.channelId) {
+    applyLiveEnd(state.serverId, state.channelId, self ?? undefined);
+  }
+  useVoice.setState({ camera: false, sharing: false, live: false });
 }
 
 /**
@@ -1528,8 +1574,10 @@ function onMediaFrame(frame: MediaServerFrame): void {
     if (frame.e === "unavailable") {
       deps?.onError?.(new Error("Kein freier Sprachplatz."));
       // Drop this attempt, its queued signaling, and the local capture.
-      // stopPeer does not leave the gateway seat. A later unauthorized
-      // belongs to the generation we just closed.
+      // Unpublish what this attempt already announced, then close the
+      // peer. The gateway seat stays. A later unauthorized belongs to
+      // the generation we just closed.
+      retractAnnouncedMedia();
       stopPeer();
       return;
     }
@@ -2194,6 +2242,7 @@ async function startPeer(serverId: string, channelId: string): Promise<void> {
         if (self && useVoice.getState().channelId === channelId) {
           setPub(self, "a", true);
         }
+        announced.add("a");
         deps?.gateway.send({
           op: "sig",
           t: "p",
