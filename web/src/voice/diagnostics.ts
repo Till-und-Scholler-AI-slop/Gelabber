@@ -5,7 +5,6 @@
 
 import { create } from "zustand";
 
-import { useSession } from "../auth/session.ts";
 import { APP_VERSION } from "../version.ts";
 import {
   AUDIO_QUALITY,
@@ -297,7 +296,8 @@ function shortToken(value: unknown, max = 32): string | undefined {
   if (typeof value !== "string") return undefined;
   const trimmed = value.trim();
   if (!trimmed || trimmed.length > max) return undefined;
-  if (!/^[A-Za-z0-9_.:/+-]{1,32}$/.test(trimmed)) return undefined;
+  // Length is the `max` check above. The pattern is only the allowed charset.
+  if (!/^[A-Za-z0-9_.:/+-]+$/.test(trimmed)) return undefined;
   return trimmed;
 }
 
@@ -748,6 +748,14 @@ function classifyVoice(streaming: boolean): Phase {
   return streamSeen ? "stream-off" : "voice-only";
 }
 
+/** Shared phase uses the voice poll's streaming state when that poll is up. */
+function phaseForReport(reportedStreaming: boolean): Phase {
+  const voice = polls.get("voice");
+  if (voice) return classifyVoice(voice.streaming());
+  if (polls.has("watch")) return "watch";
+  return classifyVoice(reportedStreaming);
+}
+
 function pushBounded<T>(items: readonly T[], item: T, max: number): T[] {
   const next =
     items.length >= max ? items.slice(items.length - max + 1) : items.slice();
@@ -833,11 +841,7 @@ export function applyStatsReport(
   baselines.set(role, reduced.next);
   if (role === "voice") liveVoice = reduced.snapshot;
   else liveWatch = reduced.snapshot;
-  const phase = polls.has("voice")
-    ? classifyVoice(opts.streaming)
-    : polls.has("watch")
-      ? "watch"
-      : classifyVoice(opts.streaming);
+  const phase = phaseForReport(opts.streaming);
   const sample: DiagnosticSample = {
     at: new Date(opts.now ?? Date.now()).toISOString(),
     phase,
@@ -952,11 +956,22 @@ export function resetDiagnostics(): void {
   useVoiceDiagnostics.setState(emptyState());
 }
 
-export function installDiagnosticsLogoutReset(): void {
+type LogoutListener = (
+  state: { user: unknown },
+  previous: { user: unknown },
+) => void;
+
+/**
+ * Register a logout reset. The caller passes `subscribe` so this module
+ * does not import the session store while that store is still initializing.
+ */
+export function installDiagnosticsLogoutReset(
+  subscribe: (listener: LogoutListener) => void,
+): void {
   if (logoutInstalled) return;
   logoutInstalled = true;
-  useSession.subscribe((state, prev) => {
-    if (prev.user && !state.user) resetDiagnostics();
+  subscribe((state, previous) => {
+    if (previous.user && !state.user) resetDiagnostics();
   });
 }
 

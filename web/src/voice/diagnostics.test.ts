@@ -36,7 +36,9 @@ function entry(partial: StatsEntry): StatsEntry {
 
 describe("voice diagnostics", () => {
   beforeEach(() => {
-    installDiagnosticsLogoutReset();
+    installDiagnosticsLogoutReset((listener) => {
+      useSession.subscribe(listener);
+    });
     resetDiagnostics();
     resetMediaSettingsForTests();
   });
@@ -467,6 +469,48 @@ describe("voice diagnostics", () => {
     expect(sanitizeDetail("Bearer session.token")).toBe("unbekannt");
   });
 
+  it("keeps a 36-character track id linked through mediaSourceId", () => {
+    const track = "a1111111-b222-c333-d444-e55555555555";
+    const report = new Map<string, Record<string, unknown>>([
+      [
+        "out-cam",
+        {
+          id: "out-cam",
+          type: "outbound-rtp",
+          kind: "video",
+          mediaSourceId: track,
+          timestamp: 2_000,
+          bytesSent: 80_000,
+        },
+      ],
+      [
+        track,
+        {
+          id: track,
+          type: "media-source",
+          kind: "video",
+          trackIdentifier: track,
+          timestamp: 2_000,
+        },
+      ],
+    ]);
+    const entries = statsEntriesFromReport(report);
+    const outbound = entries.find((item) => item.id === "out-cam");
+    const source = entries.find((item) => item.id === track);
+    expect(outbound?.mediaSourceId).toBe(track);
+    expect(source?.trackIdentifier).toBe(track);
+    const reduced = reduceConnection({
+      role: "voice",
+      caps,
+      videoSources: { [track]: "camera" },
+      previous: new Map(),
+      entries,
+    });
+    expect(
+      reduced.snapshot.flows.find((flow) => flow.kind === "video")?.source,
+    ).toBe("camera");
+  });
+
   it("exports context without secrets and keeps history bounded", () => {
     useMediaSettings.getState().patch({
       audioInputId: "secret-device-id-xyz",
@@ -595,6 +639,42 @@ describe("voice diagnostics", () => {
     expect(
       useVoiceDiagnostics.getState().phases.map((phase) => phase.phase),
     ).toEqual(["voice-only", "stream-on", "stream-off"]);
+  });
+
+  it("keeps an active camera when a watch sample arrives", () => {
+    let streaming = true;
+    attachDiagnostics({
+      role: "voice",
+      streaming: () => streaming,
+      getReport: async () => null,
+    });
+    attachDiagnostics({
+      role: "watch",
+      streaming: () => false,
+      getReport: async () => null,
+    });
+    const on = applyStatsReport("watch", [], {
+      streaming: false,
+      caps,
+      videoSources: {},
+      now: 4_000,
+    });
+    expect(on.phase).toBe("stream-on");
+    expect(
+      useVoiceDiagnostics.getState().phases.map((phase) => phase.phase),
+    ).toEqual(["stream-on"]);
+
+    streaming = false;
+    const off = applyStatsReport("watch", [], {
+      streaming: false,
+      caps,
+      videoSources: {},
+      now: 5_000,
+    });
+    expect(off.phase).toBe("stream-off");
+    expect(
+      useVoiceDiagnostics.getState().phases.map((phase) => phase.phase),
+    ).toEqual(["stream-on", "stream-off"]);
   });
 
   it("stops the old interval on leave, rejoin, and logout", async () => {
