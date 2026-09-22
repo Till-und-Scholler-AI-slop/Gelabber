@@ -2,11 +2,11 @@
 //! written onto `TrackLocalStaticRTP`s of every other peer. No mesh, no
 //! recording, no second node.
 
-use std::collections::{HashMap, VecDeque};
+use std::collections::{HashMap, HashSet, VecDeque};
 use std::net::SocketAddr;
 use std::sync::Arc;
 use std::sync::atomic::{AtomicU64, Ordering};
-use std::time::Duration;
+use std::time::{Duration, Instant};
 
 use rtc::media_stream::MediaStreamTrack;
 use rtc::peer_connection::configuration::media_engine::{
@@ -264,6 +264,10 @@ struct SfuStats {
     peers: AtomicU64,
     forwarded_bytes: AtomicU64,
     ice_fails: AtomicU64,
+    rtp_packets_total: AtomicU64,
+    rtp_lost_total: AtomicU64,
+    /// Latest RFC 3550 interarrival jitter, microseconds. Not a lifetime mean.
+    rtp_jitter_micros: AtomicU64,
 }
 
 impl Sfu {
@@ -291,6 +295,9 @@ impl Sfu {
         let peers = self.stats.peers.load(Ordering::Relaxed);
         let forwarded = self.stats.forwarded_bytes.load(Ordering::Relaxed);
         let ice_fails = self.stats.ice_fails.load(Ordering::Relaxed);
+        let rtp_packets = self.stats.rtp_packets_total.load(Ordering::Relaxed);
+        let rtp_lost = self.stats.rtp_lost_total.load(Ordering::Relaxed);
+        let jitter_ms = self.stats.rtp_jitter_micros.load(Ordering::Relaxed) as f64 / 1_000.0;
         format!(
             "# HELP gelabber_media_rooms Active SFU rooms (voice channels with at least one peer).\n\
              # TYPE gelabber_media_rooms gauge\n\
@@ -303,7 +310,16 @@ impl Sfu {
              gelabber_media_forwarded_bytes_total {forwarded}\n\
              # HELP gelabber_media_ice_fails_total Peer connections that entered the ICE failed state.\n\
              # TYPE gelabber_media_ice_fails_total counter\n\
-             gelabber_media_ice_fails_total {ice_fails}\n"
+             gelabber_media_ice_fails_total {ice_fails}\n\
+             # HELP gelabber_media_rtp_packets_total RTP packets received from publishers.\n\
+             # TYPE gelabber_media_rtp_packets_total counter\n\
+             gelabber_media_rtp_packets_total {rtp_packets}\n\
+             # HELP gelabber_media_rtp_lost_total RTP packets declared lost after the reorder window.\n\
+             # TYPE gelabber_media_rtp_lost_total counter\n\
+             gelabber_media_rtp_lost_total {rtp_lost}\n\
+             # HELP gelabber_media_rtp_jitter_ms Latest publisher RFC 3550 interarrival jitter in milliseconds.\n\
+             # TYPE gelabber_media_rtp_jitter_ms gauge\n\
+             gelabber_media_rtp_jitter_ms {jitter_ms:.3}\n"
         )
     }
 
@@ -771,13 +787,28 @@ impl Sfu {
         };
         let stream_id = format!("{user_id}:{kind_tag}");
         let pub_id = format!("{}:{track_id}", publisher.0);
+        let clock_rate = codec.clock_rate;
         let (packets, _) = broadcast::channel(RTP_Q);
         let keyframe = if kind == RtpCodecKind::Video {
             let (tx, rx) = mpsc::unbounded_channel();
-            spawn_publisher_readout(Arc::clone(&track), ssrc, packets.clone(), Some(rx));
+            spawn_publisher_readout(
+                Arc::clone(&track),
+                ssrc,
+                packets.clone(),
+                Some(rx),
+                Arc::clone(&self.stats),
+                clock_rate,
+            );
             Some(tx)
         } else {
-            spawn_publisher_readout(Arc::clone(&track), ssrc, packets.clone(), None);
+            spawn_publisher_readout(
+                Arc::clone(&track),
+                ssrc,
+                packets.clone(),
+                None,
+                Arc::clone(&self.stats),
+                clock_rate,
+            );
             None
         };
 
@@ -1147,13 +1178,16 @@ fn spawn_publisher_readout(
     ssrc: u32,
     packets: broadcast::Sender<rtp::Packet>,
     mut keyframes: Option<mpsc::UnboundedReceiver<()>>,
+    stats: Arc<SfuStats>,
+    clock_rate: u32,
 ) {
     tokio::spawn(async move {
+        let mut rtp = PublisherRtpStats::new(clock_rate);
         loop {
             if let Some(kf) = keyframes.as_mut() {
                 tokio::select! {
                     evt = track.poll() => {
-                        if !handle_publisher_event(&packets, evt) {
+                        if !handle_publisher_event(&packets, &stats, &mut rtp, evt) {
                             break;
                         }
                     }
@@ -1167,7 +1201,7 @@ fn spawn_publisher_readout(
                 }
             } else {
                 let evt = track.poll().await;
-                if !handle_publisher_event(&packets, evt) {
+                if !handle_publisher_event(&packets, &stats, &mut rtp, evt) {
                     break;
                 }
             }
@@ -1177,15 +1211,132 @@ fn spawn_publisher_readout(
 
 fn handle_publisher_event(
     packets: &broadcast::Sender<rtp::Packet>,
+    stats: &SfuStats,
+    rtp: &mut PublisherRtpStats,
     evt: Option<TrackRemoteEvent>,
 ) -> bool {
     match evt {
         Some(TrackRemoteEvent::OnRtpPacket(packet)) => {
+            rtp.observe(&packet, stats);
             let _ = packets.send(packet);
             true
         }
         Some(TrackRemoteEvent::OnEnded | TrackRemoteEvent::OnError) | None => false,
         Some(_) => true,
+    }
+}
+
+/// How far behind the highest sequence a packet can still fill a gap.
+/// Gaps that age out of this window are counted as loss. Reordering inside
+/// the window is not.
+const RTP_REORDER_WINDOW: u16 = 64;
+
+#[derive(Debug)]
+struct PublisherRtpStats {
+    clock_rate: f64,
+    /// Highest sequence observed. Late packets do not move this backward.
+    max_seq: Option<u16>,
+    /// Sequences behind `max_seq` that have not arrived yet, still inside
+    /// [`RTP_REORDER_WINDOW`].
+    missing: HashSet<u16>,
+    last_arrival: Option<Instant>,
+    last_timestamp: Option<u32>,
+    jitter_seconds: f64,
+}
+
+impl PublisherRtpStats {
+    fn new(clock_rate: u32) -> Self {
+        Self {
+            clock_rate: clock_rate as f64,
+            max_seq: None,
+            missing: HashSet::new(),
+            last_arrival: None,
+            last_timestamp: None,
+            jitter_seconds: 0.0,
+        }
+    }
+
+    fn observe(&mut self, packet: &rtp::Packet, stats: &SfuStats) {
+        stats.rtp_packets_total.fetch_add(1, Ordering::Relaxed);
+        self.observe_sequence(packet.header.sequence_number, stats);
+        self.observe_jitter(packet.header.timestamp, stats);
+    }
+
+    /// Wrap-safe high-water mark. A packet behind the high-water mark fills
+    /// a provisional gap; it is loss only after it leaves the reorder window.
+    fn observe_sequence(&mut self, seq: u16, stats: &SfuStats) {
+        let Some(max_seq) = self.max_seq else {
+            self.max_seq = Some(seq);
+            return;
+        };
+        if seq == max_seq {
+            return;
+        }
+        let ahead = seq.wrapping_sub(max_seq);
+        if ahead > 0 && ahead < 0x8000 {
+            let gap = ahead - 1;
+            if gap > RTP_REORDER_WINDOW {
+                let immediate = u64::from(gap - RTP_REORDER_WINDOW);
+                stats.rtp_lost_total.fetch_add(immediate, Ordering::Relaxed);
+                self.expire_missing(seq, stats);
+                for behind in 1..=RTP_REORDER_WINDOW {
+                    self.missing.insert(seq.wrapping_sub(behind));
+                }
+            } else {
+                let mut cursor = max_seq.wrapping_add(1);
+                while cursor != seq {
+                    self.missing.insert(cursor);
+                    cursor = cursor.wrapping_add(1);
+                }
+                self.expire_missing(seq, stats);
+            }
+            self.max_seq = Some(seq);
+            return;
+        }
+        let behind = max_seq.wrapping_sub(seq);
+        if behind == 0 || behind > RTP_REORDER_WINDOW {
+            return;
+        }
+        self.missing.remove(&seq);
+    }
+
+    fn expire_missing(&mut self, max_seq: u16, stats: &SfuStats) {
+        let mut lost = 0u64;
+        self.missing.retain(|seq| {
+            let behind = max_seq.wrapping_sub(*seq);
+            if behind > RTP_REORDER_WINDOW {
+                lost += 1;
+                false
+            } else {
+                true
+            }
+        });
+        if lost > 0 {
+            stats.rtp_lost_total.fetch_add(lost, Ordering::Relaxed);
+        }
+    }
+
+    /// RFC 3550 interarrival jitter. Timestamp deltas stay signed so a late
+    /// packet is a small negative step, including across the 32-bit wrap.
+    fn observe_jitter(&mut self, ts: u32, stats: &SfuStats) {
+        if self.clock_rate <= 0.0 {
+            return;
+        }
+        let now = Instant::now();
+        if let (Some(last_arrival), Some(last_timestamp)) = (self.last_arrival, self.last_timestamp)
+        {
+            let arrival_delta = now.saturating_duration_since(last_arrival).as_secs_f64();
+            let rtp_ticks = ts.wrapping_sub(last_timestamp) as i32;
+            let rtp_delta = f64::from(rtp_ticks) / self.clock_rate;
+            let d = (arrival_delta - rtp_delta).abs();
+            self.jitter_seconds += (d - self.jitter_seconds) / 16.0;
+            let jitter_micros = (self.jitter_seconds * 1_000_000.0).round().max(0.0) as u64;
+            stats
+                .rtp_jitter_micros
+                .store(jitter_micros, Ordering::Relaxed);
+        }
+        self.last_arrival = Some(now);
+        self.last_timestamp = Some(ts);
     }
 }
 
@@ -1225,7 +1376,7 @@ fn register_sfu_codecs(media: &mut MediaEngine) -> webrtc::error::Result<()> {
                 mime_type: MIME_TYPE_OPUS.to_owned(),
                 clock_rate: 48000,
                 channels: 2,
-                sdp_fmtp_line: "minptime=10;useinbandfec=1".to_owned(),
+                sdp_fmtp_line: "minptime=10;useinbandfec=1;usedtx=1".to_owned(),
                 rtcp_feedback: vec![],
             },
             payload_type: 111,
@@ -1660,5 +1811,75 @@ mod tests {
         sfu.ice_ports.release(&first).await;
         assert_eq!(sfu.ice_ports.take().await.as_deref(), Some(first.as_str()));
         let _ = second;
+    }
+
+    fn rtp_packet(seq: u16, timestamp: u32) -> rtc::rtp::packet::Packet {
+        let mut packet = rtc::rtp::packet::Packet::default();
+        packet.header.sequence_number = seq;
+        packet.header.timestamp = timestamp;
+        packet
+    }
+
+    #[test]
+    fn reordering_does_not_count_as_loss() {
+        use std::sync::atomic::Ordering;
+
+        let stats = super::SfuStats::default();
+        let mut rtp = super::PublisherRtpStats::new(48_000);
+        // 100, 102, 101, 103 is fully delivered. The old high-water reset
+        // counted two losses.
+        for (seq, ts) in [(100u16, 100u32), (102, 102), (101, 101), (103, 103)] {
+            rtp.observe(&rtp_packet(seq, ts), &stats);
+        }
+        assert_eq!(stats.rtp_lost_total.load(Ordering::Relaxed), 0);
+        assert_eq!(stats.rtp_packets_total.load(Ordering::Relaxed), 4);
+    }
+
+    #[test]
+    fn sequence_wrap_and_aged_gap() {
+        use std::sync::atomic::Ordering;
+
+        let stats = super::SfuStats::default();
+        let mut rtp = super::PublisherRtpStats::new(48_000);
+        for seq in [65534u16, 0, 65535, 1] {
+            rtp.observe(&rtp_packet(seq, 0), &stats);
+        }
+        assert_eq!(stats.rtp_lost_total.load(Ordering::Relaxed), 0);
+
+        let mut rtp = super::PublisherRtpStats::new(48_000);
+        rtp.observe(&rtp_packet(100, 0), &stats);
+        rtp.observe(&rtp_packet(102, 0), &stats);
+        let aged = 102u16
+            .wrapping_add(super::RTP_REORDER_WINDOW)
+            .wrapping_add(1);
+        rtp.observe(&rtp_packet(aged, 0), &stats);
+        assert_eq!(stats.rtp_lost_total.load(Ordering::Relaxed), 1);
+    }
+
+    #[test]
+    fn late_audio_timestamp_does_not_explode_jitter() {
+        use std::sync::atomic::Ordering;
+
+        let stats = super::SfuStats::default();
+        let mut rtp = super::PublisherRtpStats::new(48_000);
+        // One 20 ms frame late: 960 ticks at 48 kHz is -0.02 s, not ~89478 s.
+        rtp.observe(&rtp_packet(1, 1920), &stats);
+        rtp.observe(&rtp_packet(2, 960), &stats);
+        let micros = stats.rtp_jitter_micros.load(Ordering::Relaxed);
+        assert!(
+            micros < 1_000_000,
+            "late packet jitter blew up to {micros} µs"
+        );
+
+        // A real timestamp wrap of one frame stays a small positive step.
+        let mut rtp = super::PublisherRtpStats::new(48_000);
+        let last = u32::MAX - 10;
+        rtp.observe(&rtp_packet(1, last), &stats);
+        rtp.observe(&rtp_packet(2, last.wrapping_add(960)), &stats);
+        let wrapped = stats.rtp_jitter_micros.load(Ordering::Relaxed);
+        assert!(
+            wrapped < 1_000_000,
+            "timestamp wrap jitter blew up to {wrapped} µs"
+        );
     }
 }

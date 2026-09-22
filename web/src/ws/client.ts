@@ -68,6 +68,8 @@ export class Gateway {
   > &
     GatewayOptions;
   private socket: SocketLike | null = null;
+  /** Drops listeners for the socket `open` most recently bound. */
+  private detachLiveSocket: (() => void) | null = null;
   private desired = new Map<string, Topic>();
   private cursors = new Map<string, number>();
   private retryAttempt = 0;
@@ -76,6 +78,8 @@ export class Gateway {
   private watchdogTimer: ReturnType<typeof setInterval> | null = null;
   private lastServerAt = 0;
   private stopped = true;
+  /** Bumped by `resetSession` so a frame already in hand cannot fan out. */
+  private epoch = 0;
   private eventListeners = new Set<(event: ChatEvent) => void>();
   private sigListeners = new Set<(event: SigEvent) => void>();
   private errListeners = new Set<(err: ErrFrame) => void>();
@@ -176,9 +180,22 @@ export class Gateway {
   stop(): void {
     this.stopped = true;
     this.clearTimers();
-    this.socket?.close();
+    const socket = this.socket;
+    this.unbindSocket();
     this.socket = null;
+    socket?.close();
     this.opts.onStatus?.("idle");
+  }
+
+  /**
+   * Logout / account switch: unsubscribe, forget resume cursors, and close
+   * the socket. The next `start` is a new session with no prior topics.
+   */
+  resetSession(): void {
+    this.epoch += 1;
+    this.desired.clear();
+    this.cursors.clear();
+    this.stop();
   }
 
   /** Replace the subscribe set. Diffs against the last set and the live socket. */
@@ -190,7 +207,11 @@ export class Gateway {
     if (this.socket) {
       for (const [key, topic] of this.desired) {
         if (!next.has(key)) {
-          this.send({ op: "u", s: topic.s, ...(topic.c ? { c: topic.c } : {}) });
+          this.send({
+            op: "u",
+            s: topic.s,
+            ...(topic.c ? { c: topic.c } : {}),
+          });
         }
       }
       for (const [key, topic] of next) {
@@ -204,14 +225,23 @@ export class Gateway {
 
   private open(): void {
     this.clearTimers();
-    this.opts.onStatus?.(this.retryAttempt === 0 ? "connecting" : "reconnecting");
+    this.unbindSocket();
+    this.opts.onStatus?.(
+      this.retryAttempt === 0 ? "connecting" : "reconnecting",
+    );
     const url = this.opts.url ?? gatewayUrl();
-    const socket = this.opts.open
-      ? this.opts.open(url)
-      : new WebSocket(url);
+    const socket = this.opts.open ? this.opts.open(url) : new WebSocket(url);
     this.socket = socket;
+    // Captured here, not in `onFrame`: a close/open/message from the socket
+    // we just replaced must not clear the new one or answer on it.
+    const epoch = this.epoch;
+    const live = () => this.socket === socket && this.epoch === epoch;
 
     const onOpen = () => {
+      if (!live()) {
+        detach();
+        return;
+      }
       this.retryAttempt = 0;
       this.lastServerAt = this.opts.now();
       this.opts.onStatus?.("open");
@@ -224,6 +254,10 @@ export class Gateway {
       }
     };
     const onMessage = (event: { data?: string }) => {
+      if (!live()) {
+        detach();
+        return;
+      }
       if (typeof event.data !== "string") {
         return;
       }
@@ -234,19 +268,38 @@ export class Gateway {
       }
     };
     const onClose = () => {
+      const still = live();
+      detach();
+      if (!still) return;
       this.socket = null;
       this.clearHeartbeat();
       if (!this.stopped) {
         this.scheduleReconnect();
       }
     };
+    const detach = () => {
+      socket.removeEventListener("open", onOpen);
+      socket.removeEventListener("message", onMessage);
+      socket.removeEventListener("close", onClose);
+      if (this.detachLiveSocket === detach) {
+        this.detachLiveSocket = null;
+      }
+    };
 
     socket.addEventListener("open", onOpen);
     socket.addEventListener("message", onMessage);
     socket.addEventListener("close", onClose);
+    this.detachLiveSocket = detach;
+  }
+
+  private unbindSocket(): void {
+    this.detachLiveSocket?.();
+    this.detachLiveSocket = null;
   }
 
   private onFrame(frame: ServerFrame): void {
+    const epoch = this.epoch;
+    const alive = () => epoch === this.epoch;
     switch (frame.op) {
       case "h":
         this.send({ op: "h" });
@@ -265,6 +318,7 @@ export class Gateway {
         this.cursors.set(key, cursor);
         if (accept) {
           for (const listener of this.eventListeners) {
+            if (!alive()) return;
             listener(frame);
           }
         }
@@ -272,26 +326,31 @@ export class Gateway {
       }
       case "sig":
         for (const listener of this.sigListeners) {
+          if (!alive()) return;
           listener(frame);
         }
         return;
       case "gap":
         for (const listener of this.gapListeners) {
+          if (!alive()) return;
           listener({ s: frame.s, c: frame.c });
         }
         return;
       case "p":
         for (const listener of this.presenceListeners) {
+          if (!alive()) return;
           listener(frame);
         }
         return;
       case "y":
         for (const listener of this.typingListeners) {
+          if (!alive()) return;
           listener(frame);
         }
         return;
       case "err":
         for (const listener of this.errListeners) {
+          if (!alive()) return;
           listener(frame);
         }
         return;
@@ -303,11 +362,14 @@ export class Gateway {
     this.heartbeatTimer = setInterval(() => {
       this.send({ op: "h" });
     }, this.opts.heartbeatMs);
-    this.watchdogTimer = setInterval(() => {
-      if (this.opts.now() - this.lastServerAt >= this.opts.deadMs) {
-        this.socket?.close();
-      }
-    }, Math.min(1_000, this.opts.heartbeatMs));
+    this.watchdogTimer = setInterval(
+      () => {
+        if (this.opts.now() - this.lastServerAt >= this.opts.deadMs) {
+          this.socket?.close();
+        }
+      },
+      Math.min(1_000, this.opts.heartbeatMs),
+    );
   }
 
   private scheduleReconnect(): void {

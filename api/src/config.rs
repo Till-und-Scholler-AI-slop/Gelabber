@@ -24,6 +24,8 @@ pub const API_WS_TYPING_TTL_MS: &str = "API_WS_TYPING_TTL_MS";
 pub const TURN_URLS: &str = "TURN_URLS";
 pub const TURN_USERNAME: &str = "TURN_USERNAME";
 pub const TURN_PASSWORD: &str = "TURN_PASSWORD";
+pub const TURN_AUTH_SECRET: &str = "TURN_AUTH_SECRET";
+pub const TURN_CRED_TTL_SECS: &str = "TURN_CRED_TTL_SECS";
 pub const MEDIA_TICKET_TTL_SECS: &str = "MEDIA_TICKET_TTL_SECS";
 pub const MINIO_ENDPOINT: &str = "MINIO_ENDPOINT";
 pub const MINIO_PUBLIC_ENDPOINT: &str = "MINIO_PUBLIC_ENDPOINT";
@@ -49,6 +51,7 @@ const DEFAULT_WS_REPLAY: usize = 256;
 const DEFAULT_WS_IDLE_MS: u64 = 300_000;
 const DEFAULT_WS_PRESENCE_TTL_MS: u64 = 45_000;
 const DEFAULT_WS_TYPING_TTL_MS: u64 = 6_000;
+const DEFAULT_TURN_CRED_TTL_SECS: u64 = 21_600;
 const DEFAULT_MEDIA_TICKET_TTL_SECS: u64 = 30;
 
 #[derive(Debug, Clone)]
@@ -80,6 +83,11 @@ pub struct Config {
     pub ws_typing_ttl: Duration,
     /// Browser-facing STUN/TURN (coturn). Empty if TURN is not configured.
     pub ice_servers: Vec<IceServer>,
+    /// Optional TURN REST auth secret. When set, ticket responses mint
+    /// time-limited TURN credentials for the current user.
+    pub turn_auth_secret: Option<String>,
+    /// TURN REST credential lifetime in seconds.
+    pub turn_cred_ttl: Duration,
     /// How long an SFU join ticket lives in Redis.
     pub media_ticket_ttl: Duration,
     /// MinIO / S3-compatible store for attachments. Absent in unit tests.
@@ -204,6 +212,11 @@ impl Config {
             get(TURN_USERNAME).as_deref(),
             get(TURN_PASSWORD).as_deref(),
         );
+        let turn_auth_secret = parse_turn_auth_secret(get(TURN_AUTH_SECRET))?;
+        let turn_cred_ttl_secs = match get(TURN_CRED_TTL_SECS) {
+            Some(raw) => parse_positive::<u64>(TURN_CRED_TTL_SECS, &raw)?,
+            None => DEFAULT_TURN_CRED_TTL_SECS,
+        };
         let media_ticket_ttl_secs = match get(MEDIA_TICKET_TTL_SECS) {
             Some(raw) => parse_positive::<u64>(MEDIA_TICKET_TTL_SECS, &raw)?,
             None => DEFAULT_MEDIA_TICKET_TTL_SECS,
@@ -226,6 +239,8 @@ impl Config {
             ws_presence_ttl: Duration::from_millis(ws_presence_ttl_ms),
             ws_typing_ttl: Duration::from_millis(ws_typing_ttl_ms),
             ice_servers,
+            turn_auth_secret,
+            turn_cred_ttl: Duration::from_secs(turn_cred_ttl_secs),
             media_ticket_ttl: Duration::from_secs(media_ticket_ttl_secs),
             minio,
             limits,
@@ -330,6 +345,30 @@ where
     Ok(value)
 }
 
+/// Public Compose fallback this change removes. REST mode must not turn on
+/// with a secret that shipped in the repo.
+const PUBLIC_TURN_AUTH_SECRET: &str = "gelabberturnsecret";
+
+/// Empty (and the retired public default) keep static `TURN_USERNAME` /
+/// `TURN_PASSWORD`. A private secret turns on coturn REST credentials.
+fn parse_turn_auth_secret(raw: Option<String>) -> Result<Option<String>, ConfigError> {
+    let Some(raw) = raw else {
+        return Ok(None);
+    };
+    let secret = raw.trim();
+    if secret.is_empty() {
+        return Ok(None);
+    }
+    if secret == PUBLIC_TURN_AUTH_SECRET {
+        return Err(invalid(
+            TURN_AUTH_SECRET,
+            secret,
+            "refusing the public default; unset TURN_AUTH_SECRET for static TURN credentials, or set a private secret shared by the API and coturn",
+        ));
+    }
+    Ok(Some(secret.to_owned()))
+}
+
 fn invalid(key: &'static str, value: &str, reason: impl fmt::Display) -> ConfigError {
     ConfigError::Invalid {
         key,
@@ -371,6 +410,8 @@ mod tests {
         assert_eq!(config.ws_presence_ttl, Duration::from_millis(45_000));
         assert_eq!(config.ws_typing_ttl, Duration::from_millis(6_000));
         assert!(config.ice_servers.is_empty());
+        assert_eq!(config.turn_auth_secret, None);
+        assert_eq!(config.turn_cred_ttl, Duration::from_secs(21_600));
         assert_eq!(config.media_ticket_ttl, Duration::from_secs(30));
         assert!(config.minio.is_none());
         assert_eq!(config.limits, Limits::default());
@@ -388,6 +429,43 @@ mod tests {
         assert_eq!(config.limits.auth_per_min, 3);
         assert_eq!(config.limits.upload_bytes_per_day, 0);
         assert_eq!(config.limits.api_per_min, Limits::default().api_per_min);
+    }
+
+    #[test]
+    fn parses_turn_auth_secret_and_cred_ttl() {
+        let config = Config::from_source(source(&[
+            (DATABASE_URL, "postgres://localhost/db"),
+            (REDIS_URL, "redis://localhost"),
+            (TURN_AUTH_SECRET, "secret"),
+            (TURN_CRED_TTL_SECS, "900"),
+        ]))
+        .expect("valid config");
+        assert_eq!(config.turn_auth_secret.as_deref(), Some("secret"));
+        assert_eq!(config.turn_cred_ttl, Duration::from_secs(900));
+    }
+
+    #[test]
+    fn empty_turn_auth_secret_keeps_static_credentials() {
+        let config = Config::from_source(source(&[
+            (DATABASE_URL, "postgres://localhost/db"),
+            (REDIS_URL, "redis://localhost"),
+            (TURN_AUTH_SECRET, "  "),
+        ]))
+        .expect("valid config");
+        assert_eq!(config.turn_auth_secret, None);
+    }
+
+    #[test]
+    fn public_turn_auth_secret_is_rejected() {
+        let error = Config::from_source(source(&[
+            (DATABASE_URL, "postgres://localhost/db"),
+            (REDIS_URL, "redis://localhost"),
+            (TURN_AUTH_SECRET, "gelabberturnsecret"),
+        ]))
+        .expect_err("public default");
+        let message = error.to_string();
+        assert!(message.contains(TURN_AUTH_SECRET), "{message}");
+        assert!(message.contains("public default"), "{message}");
     }
 
     #[test]

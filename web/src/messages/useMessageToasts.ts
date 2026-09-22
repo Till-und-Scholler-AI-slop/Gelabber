@@ -2,6 +2,7 @@ import { useQueryClient } from "@tanstack/react-query";
 import { useParams } from "@tanstack/react-router";
 import { useEffect } from "react";
 
+import { scopeGeneration, stampHolds } from "../auth/scope.ts";
 import { useSession } from "../auth/session.ts";
 import { dmKeys } from "../dms/queries.ts";
 import type { DirectMessage } from "../dms/types.ts";
@@ -41,15 +42,21 @@ function asCreated(delta: unknown): Message | null {
 
 function channelLabel(
   client: ReturnType<typeof useQueryClient>,
+  userId: string,
+  generation: number,
   event: ChatEvent,
   dm: boolean,
 ): string {
   if (!event.c) return dm ? "DM" : "Kanal";
   if (dm) {
-    const list = client.getQueryData<DirectMessage[]>(dmKeys.list());
+    const list = client.getQueryData<DirectMessage[]>(
+      dmKeys.list(userId, generation),
+    );
     return list?.find((row) => row.id === event.c)?.peer.name ?? "DM";
   }
-  const server = client.getQueryData<ServerDetail>(serverKeys.detail(event.s));
+  const server = client.getQueryData<ServerDetail>(
+    serverKeys.detail(userId, generation, event.s),
+  );
   const channel = server?.channels.find((row) => row.id === event.c);
   return channel ? `#${channel.name}` : "Kanal";
 }
@@ -80,7 +87,10 @@ export function useMessageToastsBridge(): void {
   const viewingChannelId = useParams({ strict: false }).channelId;
 
   useEffect(() => {
+    const userId = me;
+    const generation = scopeGeneration();
     return getGateway().onEvent((event) => {
+      if (!userId || !stampHolds({ userId, generation })) return;
       if (event.t !== "c" || !event.c) return;
       const message = asCreated(event.d);
       if (!message) return;
@@ -89,7 +99,7 @@ export function useMessageToastsBridge(): void {
         !shouldToastMessage({
           enabled,
           type: event.t,
-          own: Boolean(me && message.author.id === me),
+          own: message.author.id === userId,
           channelId: event.c,
           viewingChannelId,
         })
@@ -97,7 +107,7 @@ export function useMessageToastsBridge(): void {
         return;
       }
       const dm = isDmTopic(event.s, event.c);
-      const label = channelLabel(client, event, dm);
+      const label = channelLabel(client, userId, generation, event, dm);
       const preview = previewText(
         message.content,
         asAttachmentList(message.attachments).length > 0,

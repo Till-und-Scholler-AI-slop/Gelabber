@@ -4,8 +4,9 @@
 import { useQueryClient } from "@tanstack/react-query";
 import { useEffect } from "react";
 
+import { useUserId } from "../auth/scope.ts";
 import { Redirect } from "../components/Redirect.tsx";
-import { useLastDm } from "../dms/lastDm.ts";
+import { lastDmId, useLastDm } from "../dms/lastDm.ts";
 import {
   isGoneError,
   lastDmStillListed,
@@ -15,8 +16,10 @@ import { forgetDm, useDm, useDms } from "../dms/queries.ts";
 
 export function DmIndexPage() {
   const client = useQueryClient();
+  const userId = useUserId();
   const { data: dms, isPending, isError } = useDms();
-  const lastId = useLastDm((s) => s.channelId);
+  const byUser = useLastDm((s) => s.byUser);
+  const lastId = lastDmId(byUser, userId);
   const forgetLast = useLastDm((s) => s.forget);
   // Read-only: do not refetch last-DM from the index. A failed detail
   // stays in cache and must block the auto-open Redirect.
@@ -26,14 +29,14 @@ export function DmIndexPage() {
   useEffect(() => {
     if (!lastId) return;
     if (detailFailed && isGoneError(lastDetail.error)) {
-      forgetDm(client, lastId, { keepDetail: true });
-      forgetLast(lastId);
+      forgetDm(client, userId, lastId, { keepDetail: true });
+      forgetLast(userId, lastId);
       return;
     }
     if (dms && !lastDmStillListed(lastId, dms)) {
-      forgetLast(lastId);
+      forgetLast(userId, lastId);
     }
-  }, [lastId, dms, detailFailed, lastDetail.error, client, forgetLast]);
+  }, [lastId, dms, detailFailed, lastDetail.error, client, forgetLast, userId]);
 
   if (lastId && shouldOpenLastDm(lastId, dms, detailFailed)) {
     return <Redirect to="/d/$channelId" params={{ channelId: lastId }} />;

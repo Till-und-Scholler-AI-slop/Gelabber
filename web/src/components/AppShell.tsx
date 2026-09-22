@@ -22,8 +22,8 @@ function AuthenticatedRealtime() {
 export function AppShell() {
   const user = useSession((state) => state.user);
   const navigate = useNavigate();
-  useGatewaySession(user !== null);
-  useIdlePresence(user !== null);
+  useGatewaySession(user?.id ?? null);
+  useIdlePresence(user?.id ?? null);
   useMessageToastsBridge();
 
   const onLogout = () => {
@@ -78,7 +78,7 @@ export function AppShell() {
         </div>
       </header>
       <Outlet />
-      {user ? <AuthenticatedRealtime /> : null}
+      {user ? <AuthenticatedRealtime key={user.id} /> : null}
       <Toasts />
       <MessageToasts />
       {user ? <VoiceSettingsDialog /> : null}

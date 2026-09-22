@@ -5,6 +5,7 @@ import { useQueryClient } from "@tanstack/react-query";
 import { useNavigate } from "@tanstack/react-router";
 import { useEffect } from "react";
 
+import { scopeGeneration, stampHolds } from "../auth/scope.ts";
 import { useSession } from "../auth/session.ts";
 import { notify } from "../components/toasts.ts";
 import { applyChannelEvent } from "../messages/queries.ts";
@@ -33,7 +34,12 @@ export function useRealtimeBridge(
   const me = useSession((s) => s.user?.id);
 
   useEffect(() => {
+    const userId = me;
+    const generation = scopeGeneration();
+    const alive = () => userId != null && stampHolds({ userId, generation });
+
     const leave = (reason: "kicked" | "banned", serverId: string) => {
+      if (!userId || !alive()) return;
       dropVoice(serverId);
       onSelfRemoved?.(serverId);
       notify(
@@ -42,23 +48,31 @@ export function useRealtimeBridge(
           : "Du wurdest vom Server entfernt.",
       );
       if (shouldLeaveView(viewingServerId, serverId)) {
-        forgetServer(client, serverId, { keepDetail: true });
-        void navigate({ to: "/", replace: true }).then(() =>
-          forgetServer(client, serverId),
-        );
+        forgetServer(client, userId, serverId, { keepDetail: true });
+        void navigate({ to: "/", replace: true }).then(() => {
+          if (!alive()) return;
+          forgetServer(client, userId, serverId);
+        });
         return;
       }
-      forgetServer(client, serverId);
+      forgetServer(client, userId, serverId);
     };
 
     const gateway = getGateway();
     const offEvent = gateway.onEvent((event) => {
+      if (!userId || !alive()) return;
       if (event.c) {
-        applyChannelEvent(client, event);
+        applyChannelEvent(client, userId, generation, event);
         return;
       }
       if (event.t === "d" && event.i) {
-        const result = applyMemberRemoved(client, event.s, event.i, me);
+        const result = applyMemberRemoved(
+          client,
+          userId,
+          generation,
+          event.s,
+          event.i,
+        );
         if (result === "self") {
           const banned =
             event.d !== null &&

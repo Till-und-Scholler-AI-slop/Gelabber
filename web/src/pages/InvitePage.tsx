@@ -6,18 +6,22 @@ import { useQuery } from "@tanstack/react-query";
 import { Link, useNavigate, useParams } from "@tanstack/react-router";
 
 import { ApiError } from "../api/client.ts";
+import { scopeGeneration, useUserId } from "../auth/scope.ts";
 import { errorMessage } from "../auth/rules.ts";
 import { FormError } from "../components/FormError.tsx";
 import { SubmitButton } from "../components/SubmitButton.tsx";
 import { previewInvite } from "../servers/api.ts";
-import { useJoinInvite } from "../servers/queries.ts";
+import { serverKeys, useJoinInvite } from "../servers/queries.ts";
 
 export function InvitePage() {
   const { code } = useParams({ from: "/centered/invite/$code" });
   const navigate = useNavigate();
+  const userId = useUserId();
+  const generation = scopeGeneration();
   const preview = useQuery({
-    queryKey: ["invite", code],
+    queryKey: serverKeys.invite(userId, generation, code),
     queryFn: ({ signal }) => previewInvite(code, signal),
+    enabled: userId.length > 0,
     retry: false,
   });
   const join = useJoinInvite();
