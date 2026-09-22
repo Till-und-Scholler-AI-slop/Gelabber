@@ -326,6 +326,15 @@ pub async fn bind_to_message(
             Err(err) => return Err(store_internal(err)),
         };
         if meta.size != row.size_bytes {
+            // Truncated or swapped body. Drop it so a failed upload is not
+            // left in the bucket and cannot be attached later.
+            if let Err(err) = store.delete(&row.object_key).await {
+                warn!(
+                    error = %err,
+                    key = %row.object_key,
+                    "could not discard mismatched upload"
+                );
+            }
             return Err(ApiError::Validation(FieldErrors::from([(
                 "size", "invalid",
             )])));

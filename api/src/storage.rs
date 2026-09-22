@@ -301,14 +301,7 @@ impl MinioStore {
                 response.status()
             )));
         }
-        let size = response.content_length().unwrap_or(0) as i64;
-        let content_type = response
-            .headers()
-            .get(reqwest::header::CONTENT_TYPE)
-            .and_then(|v| v.to_str().ok())
-            .unwrap_or("application/octet-stream")
-            .to_owned();
-        Ok(ObjectMeta { content_type, size })
+        object_meta_from_head(response.headers())
     }
 
     fn get(&self, key: &str) -> Result<ObjectBody, StoreError> {
@@ -362,6 +355,44 @@ impl MinioStore {
     }
 }
 
+/// Size and type from a MinIO HEAD.
+///
+/// `reqwest::Response::content_length` is the **body** size hint. A HEAD
+/// response has no body, so that hint is 0 (or unknown) even when MinIO
+/// sends `Content-Length` set to the object size. Using the hint made every
+/// non-empty upload fail the bind check (`size` invalid) after a successful
+/// PUT, so the message was never created and the other participant never
+/// saw the image.
+fn object_meta_from_head(headers: &reqwest::header::HeaderMap) -> Result<ObjectMeta, StoreError> {
+    let raw = headers
+        .get(reqwest::header::CONTENT_LENGTH)
+        .and_then(|value| value.to_str().ok())
+        .map(str::trim)
+        .filter(|value| !value.is_empty())
+        .ok_or_else(|| StoreError::Other("head object missing content-length".into()))?;
+    let size = raw.parse::<i64>().map_err(|_| {
+        StoreError::Other(format!(
+            "head object content-length is not an integer: {raw}"
+        ))
+    })?;
+    if size < 0 {
+        return Err(StoreError::Other(
+            "head object content-length is negative".into(),
+        ));
+    }
+    let content_type = headers
+        .get(reqwest::header::CONTENT_TYPE)
+        .and_then(|value| value.to_str().ok())
+        .unwrap_or("application/octet-stream");
+    let content_type = content_type
+        .split(';')
+        .next()
+        .unwrap_or("application/octet-stream")
+        .trim()
+        .to_owned();
+    Ok(ObjectMeta { content_type, size })
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -403,6 +434,50 @@ mod tests {
         assert!(
             url.contains("content-length"),
             "signed headers must include content-length: {url}"
+        );
+    }
+
+    /// MinIO HEAD carries the object size in `Content-Length` and an empty
+    /// body. reqwest's `content_length()` reports that body, not the header.
+    #[tokio::test]
+    async fn head_object_size_uses_content_length_header_not_body() {
+        let listener = std::net::TcpListener::bind("127.0.0.1:0").expect("bind");
+        let addr = listener.local_addr().expect("addr");
+        std::thread::spawn(move || {
+            let (mut sock, _) = listener.accept().expect("accept");
+            let mut buf = [0u8; 2048];
+            let _ = std::io::Read::read(&mut sock, &mut buf);
+            let resp = "HTTP/1.1 200 OK\r\nContent-Length: 128\r\nContent-Type: image/webp\r\nConnection: close\r\n\r\n";
+            let _ = std::io::Write::write_all(&mut sock, resp.as_bytes());
+        });
+
+        let response = reqwest::Client::builder()
+            .timeout(Duration::from_secs(5))
+            .build()
+            .expect("client")
+            .head(format!("http://{addr}/gelabber/att/x"))
+            .send()
+            .await
+            .expect("head");
+        assert!(response.status().is_success());
+        assert_ne!(
+            response.content_length(),
+            Some(128),
+            "body size hint must not be treated as the object size"
+        );
+        let meta = object_meta_from_head(response.headers()).expect("meta");
+        assert_eq!(meta.size, 128);
+        assert_eq!(meta.content_type, "image/webp");
+    }
+
+    #[test]
+    fn head_object_meta_rejects_a_missing_length() {
+        let headers = reqwest::header::HeaderMap::new();
+        let err = object_meta_from_head(&headers).expect_err("missing length");
+        let message = err.to_string();
+        assert!(
+            message.contains("content-length"),
+            "missing length must not become size 0: {message}"
         );
     }
 }

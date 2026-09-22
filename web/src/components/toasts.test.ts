@@ -19,8 +19,19 @@ describe("error toasts", () => {
     );
   });
 
+  it("shows the field message when an upload is rejected", () => {
+    notifyError(
+      new ApiError("validation_failed", 422, "Validation failed.", {
+        size: "invalid",
+      }),
+    );
+    expect(useToasts.getState().toasts[0]?.message).toBe("Datei ist ungültig.");
+  });
+
   it("keeps the ApiError text and caps a stack of different errors", () => {
-    notifyError(new ApiError("forbidden", 403, "Dafür fehlt dir die Berechtigung."));
+    notifyError(
+      new ApiError("forbidden", 403, "Dafür fehlt dir die Berechtigung."),
+    );
     notifyError(new Error("erster"));
     notifyError(new Error("zweiter"));
     notifyError(new Error("dritter"));
