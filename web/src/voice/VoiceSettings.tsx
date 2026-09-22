@@ -6,7 +6,13 @@ import {
   AUDIO_QUALITY,
   type AudioQuality,
   type DeviceList,
+  type StreamApply,
+  type StreamKind,
+  type StreamProfileId,
+  STREAM_PROFILES,
+  formatVideoBitrate,
   listMediaDevices,
+  streamEstimate,
   useMediaSettings,
 } from "./settings.ts";
 
@@ -157,6 +163,33 @@ export function MediaSettingsForm() {
         })}
       </fieldset>
 
+      <fieldset className="flex flex-col gap-4">
+        <legend className="text-sm font-semibold text-neutral-800 dark:text-neutral-200">
+          Stream-Qualität
+        </legend>
+        <p className="text-xs text-neutral-500 dark:text-neutral-400">
+          Audio-Bitrate, Mute und Deafen bleiben unverändert. Das
+          Video-Sendebudget ist gedeckelt und wird von Kamera,
+          Bildschirmfreigabe und Go Live geteilt.
+        </p>
+        <StreamProfilePicker
+          kind="camera"
+          name="camera-stream-profile"
+          legend="Kamera"
+          value={settings.cameraProfile}
+          apply={settings.cameraProfileApply}
+          onChange={(cameraProfile) => settings.patch({ cameraProfile })}
+        />
+        <StreamProfilePicker
+          kind="screen"
+          name="screen-stream-profile"
+          legend="Bildschirmfreigabe und Go Live"
+          value={settings.screenProfile}
+          apply={settings.screenProfileApply}
+          onChange={(screenProfile) => settings.patch({ screenProfile })}
+        />
+      </fieldset>
+
       <fieldset className="flex flex-col gap-2">
         <legend className="text-sm font-semibold text-neutral-800 dark:text-neutral-200">
           Nachrichten
@@ -180,6 +213,79 @@ export function MediaSettingsForm() {
         />
       </fieldset>
     </div>
+  );
+}
+
+function StreamProfilePicker({
+  kind,
+  name,
+  legend,
+  value,
+  apply,
+  onChange,
+}: {
+  kind: StreamKind;
+  name: string;
+  legend: string;
+  value: StreamProfileId;
+  apply: StreamApply;
+  onChange: (value: StreamProfileId) => void;
+}) {
+  return (
+    <div className="flex flex-col gap-2">
+      <p className="text-sm font-medium text-neutral-800 dark:text-neutral-200">
+        {legend}
+      </p>
+      {(Object.keys(STREAM_PROFILES) as StreamProfileId[]).map((key) => {
+        const profile = STREAM_PROFILES[key];
+        const estimate = streamEstimate(kind, key);
+        return (
+          <label key={key} className="flex items-start gap-2 text-sm">
+            <input
+              type="radio"
+              name={name}
+              className="mt-0.5"
+              checked={value === key}
+              onChange={() => onChange(key)}
+            />
+            <span>
+              {profile.label}
+              <span className="text-neutral-500 dark:text-neutral-400">
+                {" "}
+                — {estimate.resolution} · {estimate.fps} · max.{" "}
+                {formatVideoBitrate(estimate.maxBitrate)}
+              </span>
+            </span>
+          </label>
+        );
+      })}
+      <ApplyNote apply={apply} />
+    </div>
+  );
+}
+
+function ApplyNote({ apply }: { apply: StreamApply }) {
+  if (apply === "live") {
+    return (
+      <p className="text-xs text-neutral-600 dark:text-neutral-400">
+        Auf den laufenden Stream angewendet.
+      </p>
+    );
+  }
+  if (apply === "next") {
+    return (
+      <p className="text-xs text-neutral-600 dark:text-neutral-400">
+        Bitrate und FPS-Limit gelten sofort. Die Auflösung gilt ab dem nächsten
+        Stream.
+      </p>
+    );
+  }
+  return (
+    <p className="text-xs text-neutral-500 dark:text-neutral-400">
+      Gilt beim nächsten Start. Während eines Streams werden Bitrate und
+      FPS-Limit sofort gesetzt; die Auflösung nur, wenn der Browser das ohne
+      Neustart erlaubt.
+    </p>
   );
 }
 
