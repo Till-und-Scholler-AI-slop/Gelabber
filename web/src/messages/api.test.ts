@@ -15,7 +15,7 @@ function file(): File {
 
 describe("putPresigned", () => {
   it("does not set the forbidden content-length header", async () => {
-    const fetchMock = vi.fn(() =>
+    const fetchMock = vi.fn<typeof fetch>(() =>
       Promise.resolve(new Response(null, { status: 200 })),
     );
     vi.stubGlobal("fetch", fetchMock);
@@ -25,7 +25,9 @@ describe("putPresigned", () => {
       "Content-Length": "4",
     });
 
-    const init = fetchMock.mock.calls[0]?.[1] as RequestInit;
+    const init = fetchMock.mock.calls[0]?.[1];
+    expect(init).toBeDefined();
+    if (init === undefined) return;
     const headers = new Headers(init.headers);
     expect(headers.get("content-type")).toBe("image/png");
     expect(headers.get("content-length")).toBeNull();
@@ -35,7 +37,9 @@ describe("putPresigned", () => {
   it("says when the upload is aborted", async () => {
     vi.stubGlobal(
       "fetch",
-      vi.fn(() => Promise.reject(new DOMException("aborted", "AbortError"))),
+      vi.fn<typeof fetch>(() =>
+        Promise.reject(new DOMException("aborted", "AbortError")),
+      ),
     );
     await expect(
       putPresigned("https://minio.example/upload", file(), {
@@ -47,7 +51,7 @@ describe("putPresigned", () => {
   it("says when the upload times out", async () => {
     vi.stubGlobal(
       "fetch",
-      vi.fn(() =>
+      vi.fn<typeof fetch>(() =>
         Promise.reject(new DOMException("timed out", "TimeoutError")),
       ),
     );
@@ -63,7 +67,9 @@ describe("putPresigned", () => {
   it("says when the object store rejects the PUT", async () => {
     vi.stubGlobal(
       "fetch",
-      vi.fn(() => Promise.resolve(new Response("no", { status: 403 }))),
+      vi.fn<typeof fetch>(() =>
+        Promise.resolve(new Response("no", { status: 403 })),
+      ),
     );
     await expect(
       putPresigned("https://minio.example/upload", file(), {
@@ -75,7 +81,9 @@ describe("putPresigned", () => {
   it("keeps a network failure as a network error", async () => {
     vi.stubGlobal(
       "fetch",
-      vi.fn(() => Promise.reject(new TypeError("Failed to fetch"))),
+      vi.fn<typeof fetch>(() =>
+        Promise.reject(new TypeError("Failed to fetch")),
+      ),
     );
     await expect(
       putPresigned("https://minio.example/upload", file(), {
