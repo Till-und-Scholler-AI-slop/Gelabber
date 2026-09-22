@@ -110,7 +110,7 @@ try {
   const textUrl = a.page.url();
   await a.page.getByRole("button", { name: "Kanal erstellen" }).click();
   const channelDialog = a.page.getByRole("dialog", { name: "Kanal erstellen" });
-  await channelDialog.getByRole("radio", { name: /Voice/ }).check();
+  await channelDialog.getByText("Voice", { exact: true }).click();
   await channelDialog.getByLabel("Name").fill("Smoke Voice");
   await channelDialog.getByRole("button", { name: "Erstellen" }).click();
   await a.page.getByRole("link", { name: "Smoke Voice" }).click();
