@@ -31,6 +31,16 @@ import {
 } from "./media.ts";
 import { type IceCand, MediaPeer } from "./mediaPeer.ts";
 import {
+  attachDiagnostics,
+  defaultCaps,
+  detachDiagnostics,
+  installDiagnosticsLogoutReset,
+  noteDiagnosticEvent,
+  resetDiagnostics,
+  statsEntriesFromReport,
+  type VideoSource,
+} from "./diagnostics.ts";
+import {
   type MediaSettings,
   audioBitrate,
   cameraConstraints,
@@ -155,6 +165,7 @@ export type PeerConnection = {
   onconnectionstatechange: (() => void) | null;
   remoteDescription?: { type: string } | null;
   signalingState?: string;
+  getStats?(): Promise<unknown>;
 };
 
 export type VoiceGateway = Pick<
@@ -847,11 +858,102 @@ function clearWatchReconnectTimer(): void {
   watchReconnectTimer = null;
 }
 
+function streamDetail(kind: "v" | "s" | "l"): "camera" | "screen" | "live" {
+  if (kind === "v") return "camera";
+  if (kind === "s") return "screen";
+  return "live";
+}
+
+function noteStream(kind: "v" | "s" | "l", started: boolean): void {
+  const state = useVoice.getState();
+  noteDiagnosticEvent({
+    kind: started ? "stream-start" : "stream-stop",
+    connection: "voice",
+    detail: streamDetail(kind),
+    streaming: state.camera || state.sharing || state.live,
+  });
+}
+
+function diagnosticVideoSources(): Record<string, VideoSource> {
+  const sources: Record<string, VideoSource> = {};
+  const camera = cameraStream?.getVideoTracks()[0];
+  const screen = screenStream?.getVideoTracks()[0];
+  const live = liveStream?.getVideoTracks()[0];
+  if (camera) sources[camera.id] = "camera";
+  if (screen) sources[screen.id] = "screen";
+  if (live) sources[live.id] = "live";
+  return sources;
+}
+
+function voiceStreaming(): boolean {
+  const state = useVoice.getState();
+  return state.camera || state.sharing || state.live;
+}
+
+function attachSeatDiagnostics(generation: number): void {
+  attachDiagnostics({
+    role: "voice",
+    caps: defaultCaps,
+    streaming: voiceStreaming,
+    videoSources: diagnosticVideoSources,
+    getReport: async () => {
+      const pc = seat.pc;
+      if (seat.generation !== generation || !pc?.getStats) return null;
+      try {
+        return statsEntriesFromReport(await pc.getStats());
+      } catch {
+        return null;
+      }
+    },
+  });
+}
+
+function attachWatchDiagnostics(generation: number): void {
+  attachDiagnostics({
+    role: "watch",
+    caps: defaultCaps,
+    streaming: () => false,
+    getReport: async () => {
+      const pc = watchCall.pc;
+      if (watchCall.generation !== generation || !pc?.getStats) return null;
+      try {
+        return statsEntriesFromReport(await pc.getStats());
+      } catch {
+        return null;
+      }
+    },
+  });
+}
+
+function noteIceState(
+  pc: PeerConnection,
+  role: "voice" | "watch",
+  generation: number,
+  current: () => number,
+): void {
+  if (current() !== generation) return;
+  const state = pc.iceConnectionState;
+  if (state === "failed" || state === "disconnected") {
+    noteDiagnosticEvent({
+      kind: "ice-error",
+      connection: role,
+      detail: state,
+    });
+  } else if (state === "connected" || state === "completed") {
+    noteDiagnosticEvent({
+      kind: "recovery",
+      connection: role,
+      detail: state,
+    });
+  }
+}
+
 function stopPeer(): void {
   streamReported = false;
   seatEpoch += 1;
   clearSeatReconnectTimer();
   clearRecovery(seatRecoverySlot);
+  detachDiagnostics("voice");
   seat.close();
   micEpoch += 1;
   cameraEpoch += 1;
@@ -1424,6 +1526,30 @@ function handleSettingsChange(prev: MediaSettings, next: MediaSettings): void {
     prev.autoGainControl !== next.autoGainControl;
   const camChanged = prev.videoInputId !== next.videoInputId;
   const qualityChanged = prev.quality !== next.quality;
+  if (joined || useVoice.getState().watching) {
+    const connection = joined ? "voice" : "watch";
+    if (prev.audioInputId !== next.audioInputId) {
+      noteDiagnosticEvent({
+        kind: "device-change",
+        connection,
+        detail: "audio-input",
+      });
+    }
+    if (prev.audioOutputId !== next.audioOutputId) {
+      noteDiagnosticEvent({
+        kind: "device-change",
+        connection,
+        detail: "audio-output",
+      });
+    }
+    if (prev.videoInputId !== next.videoInputId) {
+      noteDiagnosticEvent({
+        kind: "device-change",
+        connection,
+        detail: "video-input",
+      });
+    }
+  }
   if (joined && recaptureMic) void refreshMic();
   else if (joined && prev.inputGain !== next.inputGain) queueInputGain();
   if (joined && camChanged && useVoice.getState().camera) void refreshCamera();
@@ -1544,6 +1670,11 @@ function recoverNegotiation(error: unknown, mine: number): void {
   if (mine !== seat.generation) return;
   const detail = error instanceof Error ? error.message : undefined;
   logVoice("warn", "negotiation", { detail });
+  noteDiagnosticEvent({
+    kind: "sdp-error",
+    connection: "voice",
+    detail: detail ?? "sdp",
+  });
   if (!seat.negotiated) {
     rollbackSeat(error);
     return;
@@ -1609,6 +1740,11 @@ async function settleFailedNegotiation(mine: number): Promise<void> {
     if (seat.needOffer || owesIceRestart(seatRecoverySlot, mine)) {
       void offerIfStable(mine);
     }
+    noteDiagnosticEvent({
+      kind: "recovery",
+      connection: "voice",
+      detail: "renegotiation",
+    });
   });
 }
 
@@ -1664,6 +1800,7 @@ function releaseDiscardedCapture(kind: "v" | "s" | "l"): void {
   const self = currentUserId();
   if (self) setPub(self, kind, false);
   sendPub(kind, false);
+  noteStream(kind, false);
 }
 
 function reportStreamOnce(detail?: string): void {
@@ -1711,6 +1848,11 @@ async function applyRemoteDescription(
           detail: error instanceof Error ? error.message : "addIceCandidate",
           mid: candidate.sdpMid ?? undefined,
         });
+        noteDiagnosticEvent({
+          kind: "ice-error",
+          connection: "voice",
+          detail: "addIceCandidate",
+        });
       }
     }
     if (!current()) return;
@@ -1752,6 +1894,11 @@ async function applyRemoteIce(candidate: IceCand, mine: number): Promise<void> {
         logVoice("warn", "ice", {
           detail: error instanceof Error ? error.message : "addIceCandidate",
           mid: candidate.sdpMid ?? undefined,
+        });
+        noteDiagnosticEvent({
+          kind: "ice-error",
+          connection: "voice",
+          detail: "addIceCandidate",
         });
       }
     }
@@ -1926,6 +2073,11 @@ function onMediaFrame(frame: MediaServerFrame): void {
   if (frame.op === "err") {
     logVoice("warn", "media-error", { op: frame.op, code: frame.e });
     if (frame.e === "ice_failed") {
+      noteDiagnosticEvent({
+        kind: "ice-error",
+        connection: "voice",
+        detail: "ice_failed",
+      });
       restartSeatTransport(mine, { allowReconnect: false });
       return;
     }
@@ -1951,9 +2103,19 @@ function onMediaFrame(frame: MediaServerFrame): void {
       return;
     }
     if (!seat.negotiated) {
+      noteDiagnosticEvent({
+        kind: "sdp-error",
+        connection: "voice",
+        detail: frame.e,
+      });
       rollbackSeat(new ApiError("bad_request", 0, errorMessage("bad_request")));
       return;
     }
+    noteDiagnosticEvent({
+      kind: "sdp-error",
+      connection: "voice",
+      detail: frame.e,
+    });
     reportStreamOnce(frame.e);
     void settleFailedNegotiation(mine);
     return;
@@ -1985,11 +2147,16 @@ export function joinVoice(input: {
   channelId: string;
   channelName: string;
 }): void {
+  installDiagnosticsLogoutReset();
   ensureBound();
   const userId = currentUserId();
   if (!userId) return;
-  streamReported = false;
   const prev = useVoice.getState();
+  const dropWatch =
+    prev.watchServerId === input.serverId &&
+    prev.watchChannelId === input.channelId;
+  resetDiagnostics();
+  streamReported = false;
   if (
     prev.status === "joined" &&
     prev.serverId &&
@@ -2005,11 +2172,10 @@ export function joinVoice(input: {
     });
   }
   stopPeer();
-  if (
-    useVoice.getState().watchServerId === input.serverId &&
-    useVoice.getState().watchChannelId === input.channelId
-  ) {
+  if (dropWatch) {
     stopWatching();
+  } else if (prev.watching && watchCall.pc) {
+    attachWatchDiagnostics(watchCall.generation);
   }
   const self = userId;
   useVoice.setState({
@@ -2195,6 +2361,7 @@ export function watchLive(input: {
   channelId: string;
   channelName: string;
 }): void {
+  installDiagnosticsLogoutReset();
   ensureBound();
   const state = useVoice.getState();
   if (
@@ -2231,6 +2398,7 @@ export function stopWatching(): void {
 }
 
 export function resetVoiceForTests(): void {
+  resetDiagnostics();
   streamReported = false;
   watchReported = false;
   awaitingJoin = null;
@@ -2339,6 +2507,7 @@ async function startLocalVideo(kind: "v" | "s" | "l"): Promise<void> {
     useVoice.setState({ live: true, localLive: stream });
   }
   if (self) setPub(self, kind, true);
+  noteStream(kind, true);
   // Yield so the local tile paints before addTrack / offer.
   await Promise.resolve();
   if (seat.generation !== mine || videoEpoch(kind) !== epoch) {
@@ -2388,6 +2557,7 @@ function stopLocalVideo(kind: "v" | "s" | "l"): void {
   }
   if (seat.pc) void applyVideoLimits(seat.pc);
   seat.needOffer = true;
+  noteStream(kind, false);
   void offerIfStable(seat.generation);
 }
 
@@ -2555,16 +2725,19 @@ async function startPeer(serverId: string, channelId: string): Promise<void> {
     return;
   }
 
+  if (seat.generation !== mine) return;
   const pc = createPeer(iceServers);
   seat.pc = pc;
   clearSeatReconnectTimer();
   clearRecovery(seatRecoverySlot);
+  attachSeatDiagnostics(mine);
 
   pc.onnegotiationneeded = () => {
     if (seat.generation !== mine) return;
     void offerIfStable(mine, { fromEvent: true });
   };
   pc.oniceconnectionstatechange = () => {
+    noteIceState(pc, "voice", mine, () => seat.generation);
     onSeatConnectionChange(mine);
   };
   pc.onconnectionstatechange = () => {
@@ -2675,6 +2848,7 @@ function stopWatchPeer(): void {
   watchEpoch += 1;
   clearWatchReconnectTimer();
   clearRecovery(watchRecoverySlot);
+  detachDiagnostics("watch");
   watchCall.close();
   if (watchAudio) {
     watchAudio.srcObject = null;
@@ -2756,6 +2930,11 @@ async function applyWatchRemote(
           detail: error instanceof Error ? error.message : "addIceCandidate",
           mid: candidate.sdpMid ?? undefined,
         });
+        noteDiagnosticEvent({
+          kind: "ice-error",
+          connection: "watch",
+          detail: "addIceCandidate",
+        });
       }
     }
     if (!current()) return;
@@ -2782,6 +2961,11 @@ function onWatchFrame(frame: MediaServerFrame): void {
   const mine = watchCall.generation;
   const fail = (error: unknown) => {
     if (watchCall.generation !== mine) return;
+    noteDiagnosticEvent({
+      kind: "sdp-error",
+      connection: "watch",
+      detail: error instanceof Error ? error.message : "sdp",
+    });
     stopWatching();
     deps?.onError?.(error);
   };
@@ -2792,6 +2976,11 @@ function onWatchFrame(frame: MediaServerFrame): void {
   if (frame.op === "err") {
     logVoice("warn", "watch-error", { op: frame.op, code: frame.e });
     if (frame.e === "ice_failed") {
+      noteDiagnosticEvent({
+        kind: "ice-error",
+        connection: "watch",
+        detail: "ice_failed",
+      });
       restartWatchTransport(mine, { allowReconnect: false });
       return;
     }
@@ -2804,6 +2993,13 @@ function onWatchFrame(frame: MediaServerFrame): void {
     }
     if (watchReported) return;
     watchReported = true;
+    if (frame.e !== "unauthorized") {
+      noteDiagnosticEvent({
+        kind: "sdp-error",
+        connection: "watch",
+        detail: frame.e,
+      });
+    }
     stopWatching();
     deps?.onError?.(
       new Error(
@@ -2834,6 +3030,11 @@ function onWatchFrame(frame: MediaServerFrame): void {
           logVoice("warn", "watch-ice", {
             detail: error instanceof Error ? error.message : "addIceCandidate",
             mid: candidate.sdpMid ?? undefined,
+          });
+          noteDiagnosticEvent({
+            kind: "ice-error",
+            connection: "watch",
+            detail: "addIceCandidate",
           });
         }
       });
@@ -2893,7 +3094,14 @@ async function watchOfferIfStable(
       watchCall.send({ op: "o", sdp: offer.sdp });
     } catch (error) {
       if (restart && live()) markIceRestartPending(watchRecoverySlot, mine);
-      if (live()) deps?.onError?.(error);
+      if (live()) {
+        noteDiagnosticEvent({
+          kind: "sdp-error",
+          connection: "watch",
+          detail: error instanceof Error ? error.message : "sdp",
+        });
+        deps?.onError?.(error);
+      }
     } finally {
       if (live()) watchCall.makingOffer = false;
     }
@@ -2935,15 +3143,18 @@ async function startWatchPeer(channelId: string): Promise<void> {
     return;
   }
 
+  if (watchCall.generation !== mine) return;
   const pc = createPeer(iceServers);
   watchCall.pc = pc;
   clearWatchReconnectTimer();
   clearRecovery(watchRecoverySlot);
+  attachWatchDiagnostics(mine);
   pc.onnegotiationneeded = () => {
     if (watchCall.generation !== mine) return;
     void watchOfferIfStable(mine, { fromEvent: true });
   };
   pc.oniceconnectionstatechange = () => {
+    noteIceState(pc, "watch", mine, () => watchCall.generation);
     onWatchConnectionChange(mine);
   };
   pc.onconnectionstatechange = () => {

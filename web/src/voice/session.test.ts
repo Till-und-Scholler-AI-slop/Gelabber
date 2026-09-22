@@ -24,6 +24,12 @@ import {
   type PeerConnection,
   type RtpSender,
 } from "./session.ts";
+import { resetSessionForTests, useSession } from "../auth/session.ts";
+import {
+  buildDiagnosticExport,
+  diagnosticsPolling,
+  useVoiceDiagnostics,
+} from "./diagnostics.ts";
 import { resetVoiceRoster, useVoiceRoster, voiceOf } from "./roster.ts";
 import { resetMediaSettingsForTests, useMediaSettings } from "./settings.ts";
 
@@ -1572,6 +1578,117 @@ describe("voice session", () => {
     await vi.waitFor(() => expect(peers[0]?.audio?.id).toBe("mic-1-a"));
     expect(peers[0]?.audio?.enabled).toBe(false);
   });
+
+  it("stops diagnostics on leave, rejoin, watch, and logout", async () => {
+    const env = install();
+    joinVoice({ serverId: "srv", channelId: "voice", channelName: "Lounge" });
+    await vi.waitFor(() => expect(diagnosticsPolling().voice).toBe(true));
+    leaveVoice();
+    expect(diagnosticsPolling().voice).toBe(false);
+    expect(
+      useVoiceDiagnostics.getState().phases.map((phase) => phase.phase),
+    ).toContain("voice-only");
+
+    joinVoice({ serverId: "srv", channelId: "voice", channelName: "Lounge" });
+    await vi.waitFor(() => expect(diagnosticsPolling().voice).toBe(true));
+    expect(diagnosticsPolling().watch).toBe(false);
+    leaveVoice();
+    expect(diagnosticsPolling().voice).toBe(false);
+
+    watchLive({ serverId: "srv", channelId: "stage", channelName: "Stage" });
+    await vi.waitFor(() => expect(diagnosticsPolling().watch).toBe(true));
+    stopWatching();
+    expect(diagnosticsPolling().watch).toBe(false);
+
+    joinVoice({ serverId: "srv", channelId: "voice", channelName: "Lounge" });
+    await vi.waitFor(() => expect(diagnosticsPolling().voice).toBe(true));
+    useSession.setState({
+      status: "authenticated",
+      user: {
+        id: "u-self",
+        email: "ada@example.com",
+        name: "Ada",
+        avatar_url: null,
+        created_at: "2026-01-01T00:00:00.000Z",
+      },
+    });
+    useSession.setState({ status: "anonymous", user: null });
+    expect(diagnosticsPolling().voice).toBe(false);
+    expect(JSON.stringify(buildDiagnosticExport())).not.toContain(
+      "ada@example.com",
+    );
+    expect(JSON.stringify(buildDiagnosticExport())).not.toContain(
+      "abcdefghjkmn",
+    );
+    resetSessionForTests();
+    expect(env.peers.length).toBeGreaterThan(0);
+  });
+
+  it("records stream and device changes without the device id", async () => {
+    const { peers } = install();
+    joinVoice({ serverId: "srv", channelId: "voice", channelName: "Lounge" });
+    await vi.waitFor(() => expect(peers[0]?.audio).toBeTruthy());
+    toggleCamera();
+    await vi.waitFor(() =>
+      expect(useVoice.getState().localCamera).toBeTruthy(),
+    );
+    toggleCamera();
+    expect(useVoice.getState().camera).toBe(false);
+    useMediaSettings.getState().patch({ audioInputId: "mic-secret" });
+    const events = useVoiceDiagnostics.getState().events;
+    expect(
+      events.some(
+        (event) => event.kind === "stream-start" && event.detail === "camera",
+      ),
+    ).toBe(true);
+    expect(
+      events.some(
+        (event) => event.kind === "stream-stop" && event.detail === "camera",
+      ),
+    ).toBe(true);
+    expect(
+      events.some(
+        (event) =>
+          event.kind === "device-change" && event.detail === "audio-input",
+      ),
+    ).toBe(true);
+    const phases = useVoiceDiagnostics
+      .getState()
+      .phases.map((phase) => phase.phase);
+    expect(phases).toEqual(["voice-only", "stream-on", "stream-off"]);
+    expect(JSON.stringify(events)).not.toContain("mic-secret");
+  });
+
+  it("records ICE failures from the media peer", async () => {
+    const { peers, emitMedia } = install();
+    joinVoice({ serverId: "srv", channelId: "voice", channelName: "Lounge" });
+    await vi.waitFor(() => expect(peers.length).toBe(1));
+    emitMedia({ op: "err", e: "ice_failed" });
+    const peer = peers[0];
+    if (!peer) throw new Error("missing peer");
+    peer.iceConnectionState = "disconnected";
+    peer.oniceconnectionstatechange?.();
+    peer.iceConnectionState = "connected";
+    peer.oniceconnectionstatechange?.();
+    const events = useVoiceDiagnostics.getState().events;
+    expect(
+      events.some(
+        (event) => event.kind === "ice-error" && event.detail === "ice_failed",
+      ),
+    ).toBe(true);
+    expect(
+      events.some(
+        (event) =>
+          event.kind === "ice-error" && event.detail === "disconnected",
+      ),
+    ).toBe(true);
+    expect(
+      events.some(
+        (event) => event.kind === "recovery" && event.detail === "connected",
+      ),
+    ).toBe(true);
+    expect(JSON.stringify(buildDiagnosticExport())).not.toContain("v=0");
+  });
 });
 
 describe("stream negotiation stability", () => {
@@ -1776,6 +1893,16 @@ describe("stream negotiation stability", () => {
         true,
       ),
     );
+    expect(
+      useVoiceDiagnostics
+        .getState()
+        .events.some(
+          (event) =>
+            event.kind === "ice-error" &&
+            event.connection === "voice" &&
+            event.detail === "failed",
+        ),
+    ).toBe(true);
     expect(useVoice.getState().status).toBe("joined");
     expect(env.peers[0]?.closed).toBe(false);
   });
@@ -1879,6 +2006,16 @@ describe("stream negotiation stability", () => {
     env.peers[1]!.setIce("failed");
     env.peers[1]!.setConnection("failed");
     await Promise.resolve();
+    expect(
+      useVoiceDiagnostics
+        .getState()
+        .events.some(
+          (event) =>
+            event.kind === "ice-error" &&
+            event.connection === "watch" &&
+            event.detail === "failed",
+        ),
+    ).toBe(true);
     expect(env.peers[1]?.closed).toBe(false);
     expect(useVoice.getState().watching).toBe(true);
     expect(useVoice.getState().status).toBe("joined");
