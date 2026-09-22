@@ -40,7 +40,7 @@ export function MemberPanel({ server }: { server: ServerDetail }) {
 
   const goDm = (peerId: string) => {
     if (peerId === me) return;
-    const cached = findCachedDm(client, peerId);
+    const cached = me ? findCachedDm(client, me, peerId) : undefined;
     if (cached) {
       void navigate({
         to: "/d/$channelId",
@@ -49,11 +49,13 @@ export function MemberPanel({ server }: { server: ServerDetail }) {
       return;
     }
     openDm.mutate(peerId, {
-      onSuccess: (dm) =>
+      onSuccess: (dm) => {
+        if (useSession.getState().user?.id !== me) return;
         void navigate({
           to: "/d/$channelId",
           params: { channelId: dm.id },
-        }),
+        });
+      },
     });
   };
 
@@ -92,8 +94,12 @@ export function MemberPanel({ server }: { server: ServerDetail }) {
                       type="button"
                       disabled={self}
                       title={self ? member.name : `Nachricht an ${member.name}`}
-                      onMouseEnter={() => prefetchDms(client)}
-                      onFocus={() => prefetchDms(client)}
+                      onMouseEnter={() => {
+                        if (me) prefetchDms(client, me);
+                      }}
+                      onFocus={() => {
+                        if (me) prefetchDms(client, me);
+                      }}
                       onClick={() => goDm(member.user_id)}
                       className={[
                         "flex h-9 min-w-0 flex-1 items-center gap-2 rounded-md px-2 text-left",

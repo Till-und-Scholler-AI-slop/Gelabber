@@ -12,7 +12,8 @@
     "preview": "vite preview",
     "lint": "node --require ./eslint-ts6-register.cjs ./node_modules/eslint/bin/eslint.js .",
     "format": "prettier --write .",
-    "test": "vitest run"
+    "test": "vitest run",
+    "test:browser-smoke": "node scripts/smoke-two-browsers.mjs"
   },
   "dependencies": {
     "@tanstack/react-query": "5.102.8",
@@ -32,6 +33,7 @@
     "eslint": "10.10.0",
     "eslint-plugin-react-hooks": "7.1.1",
     "eslint-plugin-react-refresh": "0.5.2",
+    "playwright": "1.63.0",
     "prettier": "3.9.6",
     "tailwindcss": "4.3.3",
     "typescript": "7.0.2",

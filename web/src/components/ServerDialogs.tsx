@@ -5,6 +5,7 @@
 import { useNavigate } from "@tanstack/react-router";
 import { useState, type FormEvent } from "react";
 
+import { currentUserId, useUserId } from "../auth/scope.ts";
 import { fieldMessage } from "../auth/rules.ts";
 import { useFormErrors } from "../auth/useFormErrors.ts";
 import { useLastChannel } from "../servers/lastChannel.ts";
@@ -51,6 +52,7 @@ export function CreateServerDialog({
 
 function CreateServerForm({ onClose }: { onClose: () => void }) {
   const navigate = useNavigate();
+  const userId = useUserId();
   const remember = useLastChannel((s) => s.remember);
   const [name, setName] = useState("");
   const { errors, clearField, setFields, fromError } = useFormErrors();
@@ -65,8 +67,9 @@ function CreateServerForm({ onClose }: { onClose: () => void }) {
     }
     mutation.mutate(name, {
       onSuccess: (detail) => {
+        if (!userId || currentUserId() !== userId) return;
         const first = detail.channels.find((c) => c.kind === "text");
-        if (first) remember(detail.id, first.id);
+        if (first) remember(userId, detail.id, first.id);
         onClose();
         void navigate(
           first

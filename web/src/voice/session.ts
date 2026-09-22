@@ -31,15 +31,30 @@ import {
 } from "./media.ts";
 import { type IceCand, MediaPeer } from "./mediaPeer.ts";
 import {
+  attachDiagnostics,
+  defaultCaps,
+  detachDiagnostics,
+  installDiagnosticsLogoutReset,
+  noteDiagnosticEvent,
+  resetDiagnostics,
+  statsEntriesFromReport,
+  type Caps,
+  type VideoSource,
+} from "./diagnostics.ts";
+import {
   type MediaSettings,
+  type StreamKind,
+  type StreamProfileId,
+  allocateVideoBitrates,
   audioBitrate,
-  cameraConstraints,
-  displayConstraints,
-  VIDEO_SEND_BUDGET,
-  VIDEO_MAX_FPS,
+  isOverconstrainedError,
   micConstraints,
+  noteStreamProfileApply,
   onMediaSettingsChange,
+  streamProfileFps,
   useMediaSettings,
+  videoConstraintLadder,
+  videoConstraintsFor,
 } from "./settings.ts";
 
 export type VoiceStatus = "idle" | "joined";
@@ -132,7 +147,10 @@ export type PeerConnection = {
   ): void;
   removeTrack?(sender: RtpSender): void;
   getSenders?(): RtpSender[];
-  createOffer(): Promise<{ type: string; sdp?: string }>;
+  createOffer(options?: { iceRestart?: boolean }): Promise<{
+    type: string;
+    sdp?: string;
+  }>;
   createAnswer(): Promise<{ type: string; sdp?: string }>;
   setLocalDescription(desc: { type: string; sdp?: string }): Promise<void>;
   setRemoteDescription(desc: { type: string; sdp?: string }): Promise<void>;
@@ -146,8 +164,13 @@ export type PeerConnection = {
     sdpMid: string | null;
   }): Promise<void>;
   close(): void;
+  iceConnectionState?: string;
+  connectionState?: string;
+  oniceconnectionstatechange: (() => void) | null;
+  onconnectionstatechange: (() => void) | null;
   remoteDescription?: { type: string } | null;
   signalingState?: string;
+  getStats?(): Promise<unknown>;
 };
 
 export type VoiceGateway = Pick<
@@ -198,11 +221,21 @@ let streamReported = false;
 let watchReported = false;
 let cameraEpoch = 0;
 let screenEpoch = 0;
+let cameraProfileEpoch = 0;
+let screenProfileEpoch = 0;
 let liveEpoch = 0;
 let awaitingJoin: { serverId: string; channelId: string } | null = null;
 let awaitingLive: { serverId: string; channelId: string } | null = null;
 let audioCommitChain: Promise<void> = Promise.resolve();
 let cameraCommitChain: Promise<void> = Promise.resolve();
+/**
+ * One video-budget queue for the current peer generation. Profile changes,
+ * publish, unpublish, and SDP all share it. A newer request supersedes an
+ * in-flight snapshot so an older pass cannot write a stale sender cap.
+ */
+let videoLimitChain: Promise<void> = Promise.resolve();
+let videoLimitGeneration = 0;
+let videoLimitRevision = 0;
 /** Senders that belonged to the last completed negotiation. */
 let settledSenders: RtpSender[] = [];
 /** Video kinds announced for the offer that is still unanswered. */
@@ -218,6 +251,166 @@ const pendingCameraStreams = new Set<MediaStream>();
 
 /** Watch media peer. `watchLive` / `stopWatching` hold this object. */
 let watchCall = new MediaPeer();
+
+const ICE_DISCONNECTED_RESTART_DELAY_MS = 2_000;
+/** One ICE restart, then a new ticket if it does not recover. */
+const ICE_RECOVERY_DEADLINE_MS = 10_000;
+
+type TransportRecovery = {
+  generation: number;
+  /** `createOffer({iceRestart:true})` has not been applied yet. */
+  pendingIceRestart: boolean;
+  /** A restart offer is the current local description. */
+  offerCreated: boolean;
+  /** ICE left `failed` after that offer, so a later failure is a new one. */
+  leftFailed: boolean;
+  deadlineAt: number;
+};
+
+type RecoverySlot = {
+  recovery: TransportRecovery | null;
+  timer: ReturnType<typeof setTimeout> | null;
+};
+
+const seatRecoverySlot: RecoverySlot = { recovery: null, timer: null };
+const watchRecoverySlot: RecoverySlot = { recovery: null, timer: null };
+/**
+ * Bumped when that peer is stopped. In-flight offers capture it so a
+ * finished attempt cannot negotiate the next one (generation numbers
+ * are reused). Seat and watch stay independent.
+ */
+let seatEpoch = 0;
+let watchEpoch = 0;
+let seatReconnectTimer: ReturnType<typeof setTimeout> | null = null;
+let watchReconnectTimer: ReturnType<typeof setTimeout> | null = null;
+
+function clearRecovery(slot: RecoverySlot): void {
+  slot.recovery = null;
+  if (!slot.timer) return;
+  clearTimeout(slot.timer);
+  slot.timer = null;
+}
+
+function beginRecovery(
+  slot: RecoverySlot,
+  generation: number,
+  stillCurrent: () => boolean,
+  recovered: () => boolean,
+  reconnect: () => void,
+): void {
+  clearRecovery(slot);
+  slot.recovery = {
+    generation,
+    pendingIceRestart: true,
+    offerCreated: false,
+    leftFailed: false,
+    deadlineAt: Date.now() + ICE_RECOVERY_DEADLINE_MS,
+  };
+  slot.timer = setTimeout(() => {
+    slot.timer = null;
+    if (!stillCurrent()) return;
+    if (slot.recovery?.generation !== generation) return;
+    if (recovered()) {
+      clearRecovery(slot);
+      return;
+    }
+    reconnect();
+  }, ICE_RECOVERY_DEADLINE_MS);
+}
+
+function owesIceRestart(slot: RecoverySlot, generation: number): boolean {
+  const recovery = slot.recovery;
+  return Boolean(
+    recovery &&
+    recovery.generation === generation &&
+    recovery.pendingIceRestart,
+  );
+}
+
+function wantsIceRestart(
+  slot: RecoverySlot,
+  generation: number,
+  explicit: boolean | undefined,
+): boolean {
+  if (explicit) return true;
+  return owesIceRestart(slot, generation);
+}
+
+function markIceRestartPending(slot: RecoverySlot, generation: number): void {
+  const recovery = slot.recovery;
+  if (recovery?.generation === generation) recovery.pendingIceRestart = true;
+}
+
+function noteRestartOfferCreated(slot: RecoverySlot, generation: number): void {
+  const recovery = slot.recovery;
+  if (recovery?.generation !== generation) return;
+  recovery.pendingIceRestart = false;
+  recovery.offerCreated = true;
+}
+
+/** A rolled-back restart offer still has to be created. */
+function noteRestartRolledBack(slot: RecoverySlot, generation: number): void {
+  const recovery = slot.recovery;
+  if (!recovery || recovery.generation !== generation) return;
+  if (!recovery.offerCreated && !recovery.pendingIceRestart) return;
+  recovery.pendingIceRestart = true;
+  recovery.offerCreated = false;
+}
+
+function noteTransportProgress(
+  slot: RecoverySlot,
+  generation: number,
+  ice: string,
+  conn: string,
+): void {
+  const recovery = slot.recovery;
+  if (
+    !recovery ||
+    recovery.generation !== generation ||
+    !recovery.offerCreated
+  ) {
+    return;
+  }
+  if (
+    ice === "checking" ||
+    ice === "connected" ||
+    ice === "completed" ||
+    conn === "connecting"
+  ) {
+    recovery.leftFailed = true;
+  }
+}
+
+type RecoveryAction = "start" | "retry-offer" | "reconnect" | "ignore";
+
+function recoveryAction(
+  slot: RecoverySlot,
+  generation: number,
+  allowReconnect: boolean,
+): RecoveryAction {
+  const recovery = slot.recovery;
+  if (!recovery || recovery.generation !== generation) return "start";
+  if (!recovery.offerCreated) return "retry-offer";
+  const expired = Date.now() >= recovery.deadlineAt;
+  if ((expired || recovery.leftFailed) && allowReconnect) return "reconnect";
+  return "ignore";
+}
+
+function transportRecovered(pc: PeerConnection | null): boolean {
+  if (!pc) return false;
+  const ice = pc.iceConnectionState ?? "";
+  if (ice === "connected" || ice === "completed") return true;
+  if (
+    ice === "failed" ||
+    ice === "disconnected" ||
+    ice === "checking" ||
+    ice === "new" ||
+    ice === "closed"
+  ) {
+    return false;
+  }
+  return (pc.connectionState ?? "") === "connected";
+}
 
 function logVoice(
   level: "info" | "warn",
@@ -668,15 +861,171 @@ function stopTracks(stream: MediaStream | null): void {
   stream?.getTracks().forEach((track) => track.stop());
 }
 
+function clearSeatReconnectTimer(): void {
+  if (!seatReconnectTimer) return;
+  clearTimeout(seatReconnectTimer);
+  seatReconnectTimer = null;
+}
+
+function clearWatchReconnectTimer(): void {
+  if (!watchReconnectTimer) return;
+  clearTimeout(watchReconnectTimer);
+  watchReconnectTimer = null;
+}
+
+function streamDetail(kind: "v" | "s" | "l"): "camera" | "screen" | "live" {
+  if (kind === "v") return "camera";
+  if (kind === "s") return "screen";
+  return "live";
+}
+
+function noteStream(kind: "v" | "s" | "l", started: boolean): void {
+  const state = useVoice.getState();
+  noteDiagnosticEvent({
+    kind: started ? "stream-start" : "stream-stop",
+    connection: "voice",
+    detail: streamDetail(kind),
+    streaming: state.camera || state.sharing || state.live,
+  });
+}
+
+function diagnosticVideoSources(): Record<string, VideoSource> {
+  const sources: Record<string, VideoSource> = {};
+  const camera = cameraStream?.getVideoTracks()[0];
+  const screen = screenStream?.getVideoTracks()[0];
+  const live = liveStream?.getVideoTracks()[0];
+  if (camera) sources[camera.id] = "camera";
+  if (screen) sources[screen.id] = "screen";
+  if (live) sources[live.id] = "live";
+  return sources;
+}
+
+function voiceStreaming(): boolean {
+  const state = useVoice.getState();
+  return state.camera || state.sharing || state.live;
+}
+
+function voiceCaps(): Caps {
+  const base = defaultCaps();
+  const senders = (seat.pc?.getSenders?.() ?? []).filter(
+    (sender) => sender.track?.kind === "video",
+  );
+  const profiles = senders.map((sender) =>
+    profileForVideoTrack(sender.track!),
+  );
+  const shares = allocateVideoBitrates(profiles);
+  const videoLimits: NonNullable<Caps["videoLimits"]> = {};
+  for (const [index, sender] of senders.entries()) {
+    const source = sender.track
+      ? diagnosticVideoSources()[sender.track.id]
+      : undefined;
+    if (!source) continue;
+    const encodings = sender.getParameters?.().encodings;
+    const hasBitrates =
+      encodings?.length &&
+      encodings.every(
+        (encoding) =>
+          typeof encoding.maxBitrate === "number" &&
+          Number.isFinite(encoding.maxBitrate) &&
+          encoding.maxBitrate > 0,
+      );
+    const maxBitrate = hasBitrates
+      ? encodings.reduce((sum, encoding) => sum + encoding.maxBitrate!, 0)
+      : (shares[index] ?? 0);
+    const maxFps =
+      Math.max(
+        0,
+        ...(encodings ?? []).map((encoding) => encoding.maxFramerate ?? 0),
+      ) || streamProfileFps(profiles[index] ?? "balanced");
+    videoLimits[source] = { maxBitrate, maxFps };
+  }
+  const active = Object.values(videoLimits);
+  return {
+    ...base,
+    videoSendBudget: active.length
+      ? active.reduce((sum, cap) => sum + cap.maxBitrate, 0)
+      : base.videoSendBudget,
+    videoMaxFps: active.length
+      ? Math.max(...active.map((cap) => cap.maxFps))
+      : base.videoMaxFps,
+    videoLimits,
+  };
+}
+
+function attachSeatDiagnostics(generation: number): void {
+  attachDiagnostics({
+    role: "voice",
+    caps: voiceCaps,
+    streaming: voiceStreaming,
+    videoSources: diagnosticVideoSources,
+    getReport: async () => {
+      const pc = seat.pc;
+      if (seat.generation !== generation || !pc?.getStats) return null;
+      try {
+        return statsEntriesFromReport(await pc.getStats());
+      } catch {
+        return null;
+      }
+    },
+  });
+}
+
+function attachWatchDiagnostics(generation: number): void {
+  attachDiagnostics({
+    role: "watch",
+    caps: defaultCaps,
+    streaming: () => false,
+    getReport: async () => {
+      const pc = watchCall.pc;
+      if (watchCall.generation !== generation || !pc?.getStats) return null;
+      try {
+        return statsEntriesFromReport(await pc.getStats());
+      } catch {
+        return null;
+      }
+    },
+  });
+}
+
+function noteIceState(
+  pc: PeerConnection,
+  role: "voice" | "watch",
+  generation: number,
+  current: () => number,
+): void {
+  if (current() !== generation) return;
+  const state = pc.iceConnectionState;
+  if (state === "failed" || state === "disconnected") {
+    noteDiagnosticEvent({
+      kind: "ice-error",
+      connection: role,
+      detail: state,
+    });
+  } else if (state === "connected" || state === "completed") {
+    noteDiagnosticEvent({
+      kind: "recovery",
+      connection: role,
+      detail: state,
+    });
+  }
+}
+
 function stopPeer(): void {
   streamReported = false;
+  seatEpoch += 1;
+  clearSeatReconnectTimer();
+  clearRecovery(seatRecoverySlot);
+  detachDiagnostics("voice");
   seat.close();
   micEpoch += 1;
   cameraEpoch += 1;
+  cameraProfileEpoch += 1;
+  screenProfileEpoch += 1;
   screenEpoch += 1;
   liveEpoch += 1;
   audioCommitChain = Promise.resolve();
   cameraCommitChain = Promise.resolve();
+  resetVideoLimitQueue();
   settledSenders = [];
   openPublish = [];
   discardingPublish = false;
@@ -799,24 +1148,192 @@ async function applySendBitrate(): Promise<void> {
   }
 }
 
-async function applyVideoLimits(pc: PeerConnection): Promise<void> {
+function profileForVideoTrack(track: MediaStreamTrack): StreamProfileId {
+  const camera = cameraStream?.getVideoTracks().some((item) => item === track);
+  if (camera) return useMediaSettings.getState().cameraProfile;
+  return useMediaSettings.getState().screenProfile;
+}
+
+function resetVideoLimitQueue(): void {
+  videoLimitRevision += 1;
+  videoLimitChain = Promise.resolve();
+  videoLimitGeneration = seat.generation;
+}
+
+function videoLimitCurrent(
+  pc: PeerConnection,
+  generation: number,
+  revision: number,
+): boolean {
+  return (
+    videoLimitRevision === revision &&
+    videoLimitGeneration === generation &&
+    seat.generation === generation &&
+    seat.pc === pc
+  );
+}
+
+/** Serialize budget writes. Profiles are read when the pass runs, not when queued. */
+function enqueueVideoLimits(pc: PeerConnection): Promise<void> {
+  const generation = seat.generation;
+  if (videoLimitGeneration !== generation) {
+    videoLimitChain = Promise.resolve();
+    videoLimitGeneration = generation;
+  }
+  const revision = ++videoLimitRevision;
+  const run = videoLimitChain.then(
+    () => applyVideoLimits(pc, generation, revision),
+    () => applyVideoLimits(pc, generation, revision),
+  );
+  videoLimitChain = run.then(
+    () => undefined,
+    () => undefined,
+  );
+  return run;
+}
+
+async function applyVideoLimits(
+  pc: PeerConnection,
+  generation: number,
+  revision: number,
+): Promise<void> {
+  if (!videoLimitCurrent(pc, generation, revision)) return;
   const senders = (pc.getSenders?.() ?? []).filter(
     (s) => s.track?.kind === "video",
   );
-  const perSender = Math.floor(VIDEO_SEND_BUDGET / Math.max(1, senders.length));
-  for (const sender of senders) {
-    const params = sender.getParameters?.();
-    if (!params?.encodings.length) continue;
+  const profiles = senders.map((sender) =>
+    sender.track ? profileForVideoTrack(sender.track) : "balanced",
+  );
+  const shares = allocateVideoBitrates(profiles);
+  for (let index = 0; index < senders.length; index += 1) {
+    if (!videoLimitCurrent(pc, generation, revision)) return;
+    const sender = senders[index];
+    const params = sender?.getParameters?.();
+    if (!sender || !params?.encodings.length) continue;
+    const share = shares[index] ?? 0;
+    const perEncoding = Math.floor(share / params.encodings.length);
+    const fps = streamProfileFps(profiles[index] ?? "balanced");
     for (const encoding of params.encodings) {
-      encoding.maxBitrate = Math.floor(perSender / params.encodings.length);
-      encoding.maxFramerate = VIDEO_MAX_FPS;
+      encoding.maxBitrate = perEncoding;
+      encoding.maxFramerate = fps;
     }
     try {
       await sender.setParameters?.(params);
     } catch {
       // Some browsers require negotiation first; retry after SDP completes.
     }
+    // This snapshot is stale. Stop before the next sender; the newer pass
+    // applies the latest budgets across every sender still sending.
+    if (!videoLimitCurrent(pc, generation, revision)) return;
   }
+}
+
+function liveVideoTracks(kind: StreamKind): MediaStreamTrack[] {
+  const streams =
+    kind === "camera" ? [cameraStream] : [screenStream, liveStream];
+  const tracks: MediaStreamTrack[] = [];
+  for (const stream of streams) {
+    const track = stream?.getVideoTracks()[0];
+    if (!track) continue;
+    const state = (track as MediaStreamTrack & { readyState?: string })
+      .readyState;
+    if (state === "ended") continue;
+    tracks.push(track);
+  }
+  return tracks;
+}
+
+function applyTrackConstraints(
+  track: MediaStreamTrack,
+  constraints: MediaTrackConstraints,
+): Promise<void> | null {
+  const apply = (
+    track as MediaStreamTrack & {
+      applyConstraints?: (next: MediaTrackConstraints) => Promise<void>;
+    }
+  ).applyConstraints;
+  if (!apply) return null;
+  return apply.call(track, constraints);
+}
+
+/**
+ * Bitrate and FPS caps update on the sender immediately. Resolution uses
+ * applyConstraints when the browser allows it; otherwise the next capture
+ * picks up the profile and the settings form says so.
+ */
+async function applyStreamProfile(kind: StreamKind): Promise<void> {
+  const epoch = kind === "camera" ? ++cameraProfileEpoch : ++screenProfileEpoch;
+  const current = () =>
+    (kind === "camera" ? cameraProfileEpoch : screenProfileEpoch) === epoch;
+  const pc = seat.pc;
+  if (pc) {
+    try {
+      await enqueueVideoLimits(pc);
+    } catch {
+      // sender caps are best-effort
+    }
+  }
+  if (!current()) return;
+  const tracks = liveVideoTracks(kind);
+  if (tracks.length === 0 || useVoice.getState().status !== "joined") {
+    noteStreamProfileApply(kind, "idle");
+    return;
+  }
+  const selected =
+    kind === "camera"
+      ? useMediaSettings.getState().cameraProfile
+      : useMediaSettings.getState().screenProfile;
+  const constraints = videoConstraintsFor(kind, selected);
+  let allApplied = true;
+  for (const track of tracks) {
+    const pending = applyTrackConstraints(track, constraints);
+    if (!pending) {
+      allApplied = false;
+      continue;
+    }
+    try {
+      await pending;
+    } catch {
+      allApplied = false;
+    }
+    if (!current()) return;
+  }
+  noteStreamProfileApply(kind, allApplied ? "live" : "next");
+}
+
+const STREAM_PROFILE_FALLBACK =
+  "Dieses Streamprofil wird nicht unterstützt. Es läuft eine sicherere Auflösung.";
+
+async function captureVideo(kind: "v" | "s" | "l"): Promise<MediaStream> {
+  const streamKind: StreamKind = kind === "v" ? "camera" : "screen";
+  const settings = useMediaSettings.getState();
+  const profile =
+    streamKind === "camera" ? settings.cameraProfile : settings.screenProfile;
+  const ladder = videoConstraintLadder(
+    streamKind,
+    profile,
+    streamKind === "camera" ? settings.videoInputId : "",
+  );
+  const getMedia =
+    kind === "v"
+      ? (deps?.getUserMedia ?? defaultGetUserMedia)
+      : (deps?.getDisplayMedia ?? defaultGetDisplayMedia);
+  let lastError: unknown;
+  for (let index = 0; index < ladder.length; index += 1) {
+    try {
+      const stream = await getMedia({
+        audio: false,
+        video: ladder[index] ?? true,
+      });
+      if (index > 0) deps?.onError?.(new Error(STREAM_PROFILE_FALLBACK));
+      return stream;
+    } catch (error) {
+      lastError = error;
+      const more = index + 1 < ladder.length;
+      if (!more || !isOverconstrainedError(error)) throw error;
+    }
+  }
+  throw lastError instanceof Error ? lastError : new Error("capture failed");
 }
 
 function audioContextCtor(): { new (): AudioContext } | undefined {
@@ -1061,14 +1578,15 @@ async function refreshCamera(): Promise<void> {
   if (!pc || !useVoice.getState().camera) return;
   const session = seat.generation;
   const epoch = ++cameraEpoch;
-  const getUserMedia = deps?.getUserMedia ?? defaultGetUserMedia;
   let stream: MediaStream;
   try {
-    stream = await getUserMedia({
-      audio: false,
-      video: cameraConstraints(),
-    });
-  } catch {
+    stream = await captureVideo("v");
+  } catch (error) {
+    if (isOverconstrainedError(error) && cameraCurrent(pc, session, epoch)) {
+      deps?.onError?.(
+        new Error("Die Kamera unterstützt das Streamprofil nicht."),
+      );
+    }
     return;
   }
   if (!cameraCurrent(pc, session, epoch)) {
@@ -1110,7 +1628,11 @@ async function refreshCamera(): Promise<void> {
       return;
     }
     if (!cameraCurrent(pc, session, epoch)) {
-      if (seat.generation === session && seat.pc === pc && sender?.replaceTrack) {
+      if (
+        seat.generation === session &&
+        seat.pc === pc &&
+        sender?.replaceTrack
+      ) {
         try {
           await sender.replaceTrack(previous);
         } catch {
@@ -1217,7 +1739,9 @@ function queueInputGain(): void {
 }
 
 function audioSender(): RtpSender | undefined {
-  return seat.pc?.getSenders?.().find((sender) => sender.track?.kind === "audio");
+  return seat.pc
+    ?.getSenders?.()
+    .find((sender) => sender.track?.kind === "audio");
 }
 
 function cameraSender(): RtpSender | undefined {
@@ -1236,9 +1760,37 @@ function handleSettingsChange(prev: MediaSettings, next: MediaSettings): void {
     prev.autoGainControl !== next.autoGainControl;
   const camChanged = prev.videoInputId !== next.videoInputId;
   const qualityChanged = prev.quality !== next.quality;
+  if (joined || useVoice.getState().watching) {
+    const connection = joined ? "voice" : "watch";
+    if (prev.audioInputId !== next.audioInputId) {
+      noteDiagnosticEvent({
+        kind: "device-change",
+        connection,
+        detail: "audio-input",
+      });
+    }
+    if (prev.audioOutputId !== next.audioOutputId) {
+      noteDiagnosticEvent({
+        kind: "device-change",
+        connection,
+        detail: "audio-output",
+      });
+    }
+    if (prev.videoInputId !== next.videoInputId) {
+      noteDiagnosticEvent({
+        kind: "device-change",
+        connection,
+        detail: "video-input",
+      });
+    }
+  }
+  const cameraProfileChanged = prev.cameraProfile !== next.cameraProfile;
+  const screenProfileChanged = prev.screenProfile !== next.screenProfile;
   if (joined && recaptureMic) void refreshMic();
   else if (joined && prev.inputGain !== next.inputGain) queueInputGain();
   if (joined && camChanged && useVoice.getState().camera) void refreshCamera();
+  if (cameraProfileChanged) void applyStreamProfile("camera");
+  if (screenProfileChanged) void applyStreamProfile("screen");
   if (joined && qualityChanged) {
     void applySendBitrate();
     seat.needOffer = true;
@@ -1356,6 +1908,11 @@ function recoverNegotiation(error: unknown, mine: number): void {
   if (mine !== seat.generation) return;
   const detail = error instanceof Error ? error.message : undefined;
   logVoice("warn", "negotiation", { detail });
+  noteDiagnosticEvent({
+    kind: "sdp-error",
+    connection: "voice",
+    detail: detail ?? "sdp",
+  });
   if (!seat.negotiated) {
     rollbackSeat(error);
     return;
@@ -1388,8 +1945,13 @@ async function settleFailedNegotiation(mine: number): Promise<void> {
         if (seat.generation !== mine || seat.pc !== pc) return;
         const kinds = dropUnsettledPublish();
         seat.makingOffer = false;
-        // The failed offer's follow-up must wait for the next user publish.
-        seat.needOffer = false;
+        // A discarded publish waits for the next user action. An ICE
+        // restart that was rolled back with it still has to be offered.
+        noteRestartRolledBack(seatRecoverySlot, mine);
+        const restartPending =
+          seatRecoverySlot.recovery?.generation === mine &&
+          seatRecoverySlot.recovery.pendingIceRestart;
+        seat.needOffer = restartPending;
         for (const kind of kinds) {
           logVoice("warn", "unpublish", { track: kind });
           seat.send({ op: "u", k: kind });
@@ -1413,7 +1975,14 @@ async function settleFailedNegotiation(mine: number): Promise<void> {
       logVoice("warn", "abort", { detail: "sfu-offer" });
       seat.send({ op: "x" });
     }
-    if (seat.needOffer) void offerIfStable(mine);
+    if (seat.needOffer || owesIceRestart(seatRecoverySlot, mine)) {
+      void offerIfStable(mine);
+    }
+    noteDiagnosticEvent({
+      kind: "recovery",
+      connection: "voice",
+      detail: "renegotiation",
+    });
   });
 }
 
@@ -1469,6 +2038,7 @@ function releaseDiscardedCapture(kind: "v" | "s" | "l"): void {
   const self = currentUserId();
   if (self) setPub(self, kind, false);
   sendPub(kind, false);
+  noteStream(kind, false);
 }
 
 function reportStreamOnce(detail?: string): void {
@@ -1493,6 +2063,7 @@ async function applyRemoteDescription(
     const collision = seat.makingOffer || seat.signalingState() !== "stable";
     if (collision) {
       seat.needOffer = true;
+      noteRestartRolledBack(seatRecoverySlot, mine);
       try {
         await pc.setLocalDescription({ type: "rollback" });
       } catch {
@@ -1515,6 +2086,11 @@ async function applyRemoteDescription(
           detail: error instanceof Error ? error.message : "addIceCandidate",
           mid: candidate.sdpMid ?? undefined,
         });
+        noteDiagnosticEvent({
+          kind: "ice-error",
+          connection: "voice",
+          detail: "addIceCandidate",
+        });
       }
     }
     if (!current()) return;
@@ -1533,14 +2109,16 @@ async function applyRemoteDescription(
     // would roll back the next offer.
     seat.sfuOfferOpen = false;
   }
-  await applyVideoLimits(pc);
+  await enqueueVideoLimits(pc);
   if (!current()) return;
   seat.negotiated = true;
   if (type === "answer") {
     settledSenders = [...(pc.getSenders?.() ?? [])];
     openPublish = [];
   }
-  if (seat.needOffer) void offerIfStable(mine);
+  if (seat.needOffer || owesIceRestart(seatRecoverySlot, mine)) {
+    void offerIfStable(mine);
+  }
 }
 
 async function applyRemoteIce(candidate: IceCand, mine: number): Promise<void> {
@@ -1555,11 +2133,173 @@ async function applyRemoteIce(candidate: IceCand, mine: number): Promise<void> {
           detail: error instanceof Error ? error.message : "addIceCandidate",
           mid: candidate.sdpMid ?? undefined,
         });
+        noteDiagnosticEvent({
+          kind: "ice-error",
+          connection: "voice",
+          detail: "addIceCandidate",
+        });
       }
     }
     return;
   }
   seat.pendingIce.push(candidate);
+}
+
+function restartSeatTransport(
+  mine: number,
+  options?: { allowReconnect?: boolean },
+): void {
+  if (seat.generation !== mine) return;
+  const state = useVoice.getState();
+  if (state.status !== "joined" || !state.serverId || !state.channelId) return;
+  if (!seat.pc) return;
+  const action = recoveryAction(
+    seatRecoverySlot,
+    mine,
+    options?.allowReconnect !== false,
+  );
+  if (action === "reconnect") {
+    void startPeer(state.serverId, state.channelId);
+    return;
+  }
+  if (action === "ignore") return;
+  if (action === "start") {
+    beginRecovery(
+      seatRecoverySlot,
+      mine,
+      () => seat.generation === mine,
+      () => transportRecovered(seat.pc),
+      () => {
+        const latest = useVoice.getState();
+        if (
+          latest.status !== "joined" ||
+          !latest.serverId ||
+          !latest.channelId
+        ) {
+          return;
+        }
+        if (seat.generation !== mine) return;
+        void startPeer(latest.serverId, latest.channelId);
+      },
+    );
+  } else {
+    markIceRestartPending(seatRecoverySlot, mine);
+  }
+  void offerIfStable(mine, { fromEvent: true, iceRestart: true });
+}
+
+function onSeatConnectionChange(mine: number): void {
+  if (seat.generation !== mine) return;
+  const pc = seat.pc;
+  if (!pc) return;
+  const ice = pc.iceConnectionState ?? "";
+  const conn = pc.connectionState ?? "";
+  noteTransportProgress(seatRecoverySlot, mine, ice, conn);
+  if (ice === "failed" || conn === "failed") {
+    clearSeatReconnectTimer();
+    restartSeatTransport(mine);
+    return;
+  }
+  if (transportRecovered(pc)) {
+    clearSeatReconnectTimer();
+    clearRecovery(seatRecoverySlot);
+    return;
+  }
+  if (ice === "disconnected" || conn === "disconnected") {
+    clearSeatReconnectTimer();
+    seatReconnectTimer = setTimeout(() => {
+      seatReconnectTimer = null;
+      if (seat.generation !== mine) return;
+      const latest = seat.pc;
+      if (!latest || transportRecovered(latest)) return;
+      const latestIce = latest.iceConnectionState ?? "";
+      const latestConn = latest.connectionState ?? "";
+      if (
+        latestIce === "failed" ||
+        latestConn === "failed" ||
+        latestIce === "disconnected" ||
+        latestConn === "disconnected"
+      ) {
+        restartSeatTransport(mine);
+      }
+    }, ICE_DISCONNECTED_RESTART_DELAY_MS);
+  }
+}
+
+function restartWatchTransport(
+  mine: number,
+  options?: { allowReconnect?: boolean },
+): void {
+  if (watchCall.generation !== mine) return;
+  const state = useVoice.getState();
+  if (!state.watching || !state.watchChannelId) return;
+  if (!watchCall.pc) return;
+  const action = recoveryAction(
+    watchRecoverySlot,
+    mine,
+    options?.allowReconnect !== false,
+  );
+  if (action === "reconnect") {
+    void startWatchPeer(state.watchChannelId);
+    return;
+  }
+  if (action === "ignore") return;
+  if (action === "start") {
+    const channelId = state.watchChannelId;
+    beginRecovery(
+      watchRecoverySlot,
+      mine,
+      () => watchCall.generation === mine,
+      () => transportRecovered(watchCall.pc),
+      () => {
+        const latest = useVoice.getState();
+        if (!latest.watching || latest.watchChannelId !== channelId) return;
+        if (watchCall.generation !== mine) return;
+        void startWatchPeer(channelId);
+      },
+    );
+  } else {
+    markIceRestartPending(watchRecoverySlot, mine);
+  }
+  void watchOfferIfStable(mine, { fromEvent: true, iceRestart: true });
+}
+
+function onWatchConnectionChange(mine: number): void {
+  if (watchCall.generation !== mine) return;
+  const pc = watchCall.pc;
+  if (!pc) return;
+  const ice = pc.iceConnectionState ?? "";
+  const conn = pc.connectionState ?? "";
+  noteTransportProgress(watchRecoverySlot, mine, ice, conn);
+  if (ice === "failed" || conn === "failed") {
+    clearWatchReconnectTimer();
+    restartWatchTransport(mine);
+    return;
+  }
+  if (transportRecovered(pc)) {
+    clearWatchReconnectTimer();
+    clearRecovery(watchRecoverySlot);
+    return;
+  }
+  if (ice === "disconnected" || conn === "disconnected") {
+    clearWatchReconnectTimer();
+    watchReconnectTimer = setTimeout(() => {
+      watchReconnectTimer = null;
+      if (watchCall.generation !== mine) return;
+      const latest = watchCall.pc;
+      if (!latest || transportRecovered(latest)) return;
+      const latestIce = latest.iceConnectionState ?? "";
+      const latestConn = latest.connectionState ?? "";
+      if (
+        latestIce === "failed" ||
+        latestConn === "failed" ||
+        latestIce === "disconnected" ||
+        latestConn === "disconnected"
+      ) {
+        restartWatchTransport(mine);
+      }
+    }, ICE_DISCONNECTED_RESTART_DELAY_MS);
+  }
 }
 
 function onMediaFrame(frame: MediaServerFrame): void {
@@ -1570,7 +2310,15 @@ function onMediaFrame(frame: MediaServerFrame): void {
   }
   if (frame.op === "err") {
     logVoice("warn", "media-error", { op: frame.op, code: frame.e });
-    if (frame.e === "ice_failed") return;
+    if (frame.e === "ice_failed") {
+      noteDiagnosticEvent({
+        kind: "ice-error",
+        connection: "voice",
+        detail: "ice_failed",
+      });
+      restartSeatTransport(mine, { allowReconnect: false });
+      return;
+    }
     if (frame.e === "unavailable") {
       deps?.onError?.(new Error("Kein freier Sprachplatz."));
       // Drop this attempt, its queued signaling, and the local capture.
@@ -1593,9 +2341,19 @@ function onMediaFrame(frame: MediaServerFrame): void {
       return;
     }
     if (!seat.negotiated) {
+      noteDiagnosticEvent({
+        kind: "sdp-error",
+        connection: "voice",
+        detail: frame.e,
+      });
       rollbackSeat(new ApiError("bad_request", 0, errorMessage("bad_request")));
       return;
     }
+    noteDiagnosticEvent({
+      kind: "sdp-error",
+      connection: "voice",
+      detail: frame.e,
+    });
     reportStreamOnce(frame.e);
     void settleFailedNegotiation(mine);
     return;
@@ -1605,9 +2363,9 @@ function onMediaFrame(frame: MediaServerFrame): void {
     logVoice("info", type === "offer" ? "recv-offer" : "recv-answer", {
       bytes: frame.sdp.length,
     });
-    void seat.enqueue(() => applyRemoteDescription(type, frame.sdp, mine)).catch(
-      (error) => recoverNegotiation(error, mine),
-    );
+    void seat
+      .enqueue(() => applyRemoteDescription(type, frame.sdp, mine))
+      .catch((error) => recoverNegotiation(error, mine));
     return;
   }
   if (frame.op === "i" && frame.ice) {
@@ -1627,11 +2385,16 @@ export function joinVoice(input: {
   channelId: string;
   channelName: string;
 }): void {
+  installDiagnosticsLogoutReset();
   ensureBound();
   const userId = currentUserId();
   if (!userId) return;
-  streamReported = false;
   const prev = useVoice.getState();
+  const dropWatch =
+    prev.watchServerId === input.serverId &&
+    prev.watchChannelId === input.channelId;
+  resetDiagnostics();
+  streamReported = false;
   if (
     prev.status === "joined" &&
     prev.serverId &&
@@ -1647,11 +2410,10 @@ export function joinVoice(input: {
     });
   }
   stopPeer();
-  if (
-    useVoice.getState().watchServerId === input.serverId &&
-    useVoice.getState().watchChannelId === input.channelId
-  ) {
+  if (dropWatch) {
     stopWatching();
+  } else if (prev.watching && watchCall.pc) {
+    attachWatchDiagnostics(watchCall.generation);
   }
   const self = userId;
   useVoice.setState({
@@ -1837,6 +2599,7 @@ export function watchLive(input: {
   channelId: string;
   channelName: string;
 }): void {
+  installDiagnosticsLogoutReset();
   ensureBound();
   const state = useVoice.getState();
   if (
@@ -1873,6 +2636,7 @@ export function stopWatching(): void {
 }
 
 export function resetVoiceForTests(): void {
+  resetDiagnostics();
   streamReported = false;
   watchReported = false;
   awaitingJoin = null;
@@ -1881,10 +2645,13 @@ export function resetVoiceForTests(): void {
   seat.pendingIce = [];
   audioCommitChain = Promise.resolve();
   cameraCommitChain = Promise.resolve();
+  clearSeatReconnectTimer();
+  clearWatchReconnectTimer();
   stopWatchPeer();
   stopPeer();
   seat = new MediaPeer();
   watchCall = new MediaPeer();
+  resetVideoLimitQueue();
   useVoice.setState({ ...idle });
   deps = null;
   bound = false;
@@ -1922,21 +2689,26 @@ function bumpVideoEpoch(kind: "v" | "s" | "l"): number {
 async function startLocalVideo(kind: "v" | "s" | "l"): Promise<void> {
   const epoch = bumpVideoEpoch(kind);
   const mine = seat.generation;
-  const getMedia =
-    kind === "v"
-      ? (deps?.getUserMedia ?? defaultGetUserMedia)
-      : (deps?.getDisplayMedia ?? defaultGetDisplayMedia);
   // Video only for camera / screen / live. Display audio mixed into the
   // voice m-line (and tagged as a second "a" pub) was echo-y on deploy and
   // added a video-sized SDP the 12 KiB cap then rejected.
-  const constraints: MediaStreamConstraints =
-    kind === "v"
-      ? { audio: false, video: cameraConstraints() }
-      : { audio: false, video: displayConstraints() };
   let stream: MediaStream;
   try {
-    stream = await getMedia(constraints);
-  } catch {
+    stream = await captureVideo(kind);
+  } catch (error) {
+    if (
+      isOverconstrainedError(error) &&
+      seat.generation === mine &&
+      videoEpoch(kind) === epoch
+    ) {
+      deps?.onError?.(
+        new Error(
+          kind === "v"
+            ? "Die Kamera unterstützt das Streamprofil nicht."
+            : "Die Bildschirmfreigabe unterstützt das Streamprofil nicht.",
+        ),
+      );
+    }
     if (kind === "v" && cameraEpoch === epoch) {
       useVoice.setState({ camera: false });
     }
@@ -1978,7 +2750,9 @@ async function startLocalVideo(kind: "v" | "s" | "l"): Promise<void> {
     stream.getVideoTracks().forEach((track) => hintTrack(track, "detail"));
     useVoice.setState({ live: true, localLive: stream });
   }
+  noteStreamProfileApply(kind === "v" ? "camera" : "screen", "idle");
   if (self) setPub(self, kind, true);
+  noteStream(kind, true);
   // Yield so the local tile paints before addTrack / offer.
   await Promise.resolve();
   if (seat.generation !== mine || videoEpoch(kind) !== epoch) {
@@ -2026,8 +2800,13 @@ function stopLocalVideo(kind: "v" | "s" | "l"): void {
     if (sender) seat.pc?.removeTrack?.(sender);
     track.stop();
   }
-  if (seat.pc) void applyVideoLimits(seat.pc);
+  if (seat.pc) void enqueueVideoLimits(seat.pc);
+  if (kind === "v") noteStreamProfileApply("camera", "idle");
+  else if (!screenStream && !liveStream) {
+    noteStreamProfileApply("screen", "idle");
+  }
   seat.needOffer = true;
+  noteStream(kind, false);
   void offerIfStable(seat.generation);
 }
 
@@ -2045,7 +2824,7 @@ async function publishLocal(
     seat.pc.addTrack?.(track, stream);
   }
   const pc = seat.pc;
-  void applyVideoLimits(pc);
+  void enqueueVideoLimits(pc);
   const self = currentUserId();
   if (self) setPub(self, kind, true);
   sendPub(kind, true);
@@ -2093,44 +2872,62 @@ function attachIncoming(track: MediaStreamTrack, stream?: MediaStream): void {
 
 async function offerIfStable(
   mine: number,
-  opts?: { initial?: boolean; fromEvent?: boolean },
+  opts?: { initial?: boolean; fromEvent?: boolean; iceRestart?: boolean },
 ): Promise<void> {
+  const epoch = seatEpoch;
+  const peer = seat;
+  const live = () =>
+    seatEpoch === epoch &&
+    seat === peer &&
+    seat.generation === mine &&
+    !!seat.pc;
   if (discardingPublish) return;
-  await seat.enqueue(async () => {
-    if (discardingPublish) return;
-    if (seat.generation !== mine || !seat.pc) return;
+  await peer.enqueue(async () => {
+    if (discardingPublish || !live()) return;
     if (opts?.initial && seat.sfuOffered) return;
+    const restart = wantsIceRestart(seatRecoverySlot, mine, opts?.iceRestart);
+    const sticky = restart || (!opts?.initial && !opts?.fromEvent);
     if (seat.makingOffer || seat.signalingState() !== "stable") {
       // Sticky only for explicit publish/unpublish. negotiationneeded
       // fires again once we are stable (W3C perfect negotiation).
-      if (!opts?.initial && !opts?.fromEvent) seat.needOffer = true;
+      // A deferred ICE restart keeps its flag until createOffer runs.
+      if (sticky) seat.needOffer = true;
+      if (restart) markIceRestartPending(seatRecoverySlot, mine);
       return;
     }
     seat.makingOffer = true;
     seat.needOffer = false;
     try {
       if (seat.signalingState() !== "stable") {
-        if (!opts?.initial && !opts?.fromEvent) seat.needOffer = true;
+        if (sticky) seat.needOffer = true;
+        if (restart) markIceRestartPending(seatRecoverySlot, mine);
         return;
       }
       if (opts?.initial && seat.sfuOffered) return;
-      preferOpus(seat.pc);
-      preferVp8(seat.pc);
       const pc = seat.pc;
-      const offer = withTunedSdp(await pc.createOffer());
-      if (seat.generation !== mine) return;
+      if (!pc) return;
+      preferOpus(pc);
+      preferVp8(pc);
+      const offer = withTunedSdp(
+        await pc.createOffer(restart ? { iceRestart: true } : undefined),
+      );
+      if (!live()) return;
       if (seat.signalingState() !== "stable") {
-        if (!opts?.initial && !opts?.fromEvent) seat.needOffer = true;
+        if (sticky) seat.needOffer = true;
+        if (restart) markIceRestartPending(seatRecoverySlot, mine);
         return;
       }
       await pc.setLocalDescription(offer);
-      if (seat.generation !== mine || !offer.sdp) return;
+      if (!live()) return;
+      if (restart) noteRestartOfferCreated(seatRecoverySlot, mine);
+      if (!offer.sdp) return;
       logVoice("info", "send-offer", { bytes: offer.sdp.length });
       seat.send({ op: "o", sdp: offer.sdp });
     } catch (error) {
-      if (seat.generation === mine) recoverNegotiation(error, mine);
+      if (restart && live()) markIceRestartPending(seatRecoverySlot, mine);
+      if (live()) recoverNegotiation(error, mine);
     } finally {
-      if (seat.generation === mine) seat.makingOffer = false;
+      if (live()) seat.makingOffer = false;
     }
   });
 }
@@ -2177,12 +2974,23 @@ async function startPeer(serverId: string, channelId: string): Promise<void> {
     return;
   }
 
+  if (seat.generation !== mine) return;
   const pc = createPeer(iceServers);
   seat.pc = pc;
+  clearSeatReconnectTimer();
+  clearRecovery(seatRecoverySlot);
+  attachSeatDiagnostics(mine);
 
   pc.onnegotiationneeded = () => {
     if (seat.generation !== mine) return;
     void offerIfStable(mine, { fromEvent: true });
+  };
+  pc.oniceconnectionstatechange = () => {
+    noteIceState(pc, "voice", mine, () => seat.generation);
+    onSeatConnectionChange(mine);
+  };
+  pc.onconnectionstatechange = () => {
+    onSeatConnectionChange(mine);
   };
   pc.onicecandidate = (event) => {
     if (seat.generation !== mine) return;
@@ -2216,7 +3024,11 @@ async function startPeer(serverId: string, channelId: string): Promise<void> {
       pendingMicRaw.add(stream);
       const { send, insert } = buildMicCandidate(stream);
       await enqueueAudioCommit(async () => {
-        if (seat.generation !== mine || micEpoch !== micRequest || seat.pc !== pc) {
+        if (
+          seat.generation !== mine ||
+          micEpoch !== micRequest ||
+          seat.pc !== pc
+        ) {
           insert?.dispose();
           stopTracks(stream);
           pendingMicRaw.delete(stream);
@@ -2282,6 +3094,10 @@ async function startPeer(serverId: string, channelId: string): Promise<void> {
 
 function stopWatchPeer(): void {
   watchReported = false;
+  watchEpoch += 1;
+  clearWatchReconnectTimer();
+  clearRecovery(watchRecoverySlot);
+  detachDiagnostics("watch");
   watchCall.close();
   if (watchAudio) {
     watchAudio.srcObject = null;
@@ -2333,11 +3149,14 @@ async function applyWatchRemote(
   const pc = watchCall.pc;
   const current = () => watchCall.generation === mine && watchCall.pc === pc;
   if (!pc || !current()) return;
-  if (type === "answer" && watchCall.signalingState() !== "have-local-offer") return;
+  if (type === "answer" && watchCall.signalingState() !== "have-local-offer")
+    return;
   if (type === "offer") {
-    const collision = watchCall.makingOffer || watchCall.signalingState() !== "stable";
+    const collision =
+      watchCall.makingOffer || watchCall.signalingState() !== "stable";
     if (collision) {
       watchCall.needOffer = true;
+      noteRestartRolledBack(watchRecoverySlot, mine);
       try {
         await pc.setLocalDescription({ type: "rollback" });
       } catch {
@@ -2360,6 +3179,11 @@ async function applyWatchRemote(
           detail: error instanceof Error ? error.message : "addIceCandidate",
           mid: candidate.sdpMid ?? undefined,
         });
+        noteDiagnosticEvent({
+          kind: "ice-error",
+          connection: "watch",
+          detail: "addIceCandidate",
+        });
       }
     }
     if (!current()) return;
@@ -2374,7 +3198,10 @@ async function applyWatchRemote(
       watchCall.send({ op: "a", sdp: answer.sdp });
     }
   }
-  if (watchCall.needOffer) {
+  if (
+    watchCall.needOffer ||
+    owesIceRestart(watchRecoverySlot, watchCall.generation)
+  ) {
     void watchOfferIfStable(watchCall.generation);
   }
 }
@@ -2383,6 +3210,11 @@ function onWatchFrame(frame: MediaServerFrame): void {
   const mine = watchCall.generation;
   const fail = (error: unknown) => {
     if (watchCall.generation !== mine) return;
+    noteDiagnosticEvent({
+      kind: "sdp-error",
+      connection: "watch",
+      detail: error instanceof Error ? error.message : "sdp",
+    });
     stopWatching();
     deps?.onError?.(error);
   };
@@ -2392,7 +3224,15 @@ function onWatchFrame(frame: MediaServerFrame): void {
   }
   if (frame.op === "err") {
     logVoice("warn", "watch-error", { op: frame.op, code: frame.e });
-    if (frame.e === "ice_failed") return;
+    if (frame.e === "ice_failed") {
+      noteDiagnosticEvent({
+        kind: "ice-error",
+        connection: "watch",
+        detail: "ice_failed",
+      });
+      restartWatchTransport(mine, { allowReconnect: false });
+      return;
+    }
     if (frame.e === "unavailable") {
       if (watchReported) return;
       watchReported = true;
@@ -2402,6 +3242,13 @@ function onWatchFrame(frame: MediaServerFrame): void {
     }
     if (watchReported) return;
     watchReported = true;
+    if (frame.e !== "unauthorized") {
+      noteDiagnosticEvent({
+        kind: "sdp-error",
+        connection: "watch",
+        detail: frame.e,
+      });
+    }
     stopWatching();
     deps?.onError?.(
       new Error(
@@ -2413,15 +3260,15 @@ function onWatchFrame(frame: MediaServerFrame): void {
     return;
   }
   if (frame.op === "a" && frame.sdp) {
-    void watchCall.enqueue(() =>
-      applyWatchRemote("answer", frame.sdp, mine),
-    ).catch(fail);
+    void watchCall
+      .enqueue(() => applyWatchRemote("answer", frame.sdp, mine))
+      .catch(fail);
     return;
   }
   if (frame.op === "o" && frame.sdp) {
-    void watchCall.enqueue(() =>
-      applyWatchRemote("offer", frame.sdp, mine),
-    ).catch(fail);
+    void watchCall
+      .enqueue(() => applyWatchRemote("offer", frame.sdp, mine))
+      .catch(fail);
     return;
   }
   if (frame.op === "i" && frame.ice) {
@@ -2433,6 +3280,11 @@ function onWatchFrame(frame: MediaServerFrame): void {
             detail: error instanceof Error ? error.message : "addIceCandidate",
             mid: candidate.sdpMid ?? undefined,
           });
+          noteDiagnosticEvent({
+            kind: "ice-error",
+            connection: "watch",
+            detail: "addIceCandidate",
+          });
         }
       });
     } else {
@@ -2443,41 +3295,64 @@ function onWatchFrame(frame: MediaServerFrame): void {
 
 async function watchOfferIfStable(
   mine: number,
-  opts?: { initial?: boolean; fromEvent?: boolean },
+  opts?: { initial?: boolean; fromEvent?: boolean; iceRestart?: boolean },
 ): Promise<void> {
-  await watchCall.enqueue(async () => {
-    if (watchCall.generation !== mine || !watchCall.pc) return;
+  const epoch = watchEpoch;
+  const peer = watchCall;
+  const live = () =>
+    watchEpoch === epoch &&
+    watchCall === peer &&
+    watchCall.generation === mine &&
+    !!watchCall.pc;
+  await peer.enqueue(async () => {
+    if (!live()) return;
     if (opts?.initial && watchCall.sfuOffered) return;
+    const restart = wantsIceRestart(watchRecoverySlot, mine, opts?.iceRestart);
+    const sticky = restart || (!opts?.initial && !opts?.fromEvent);
     if (watchCall.makingOffer || watchCall.signalingState() !== "stable") {
-      if (!opts?.initial && !opts?.fromEvent) watchCall.needOffer = true;
+      if (sticky) watchCall.needOffer = true;
+      if (restart) markIceRestartPending(watchRecoverySlot, mine);
       return;
     }
     watchCall.makingOffer = true;
     watchCall.needOffer = false;
     try {
       if (watchCall.signalingState() !== "stable") {
-        if (!opts?.initial && !opts?.fromEvent) watchCall.needOffer = true;
+        if (sticky) watchCall.needOffer = true;
+        if (restart) markIceRestartPending(watchRecoverySlot, mine);
         return;
       }
       if (opts?.initial && watchCall.sfuOffered) return;
-      preferOpus(watchCall.pc);
-      preferVp8(watchCall.pc);
       const pc = watchCall.pc;
-      const offer = withTunedSdp(await pc.createOffer());
-      if (watchCall.generation !== mine) return;
+      if (!pc) return;
+      preferOpus(pc);
+      preferVp8(pc);
+      const offer = withTunedSdp(
+        await pc.createOffer(restart ? { iceRestart: true } : undefined),
+      );
+      if (!live()) return;
       if (watchCall.signalingState() !== "stable") {
-        if (!opts?.initial && !opts?.fromEvent) watchCall.needOffer = true;
+        if (sticky) watchCall.needOffer = true;
+        if (restart) markIceRestartPending(watchRecoverySlot, mine);
         return;
       }
       await pc.setLocalDescription(offer);
-      if (watchCall.generation !== mine || !offer.sdp) return;
+      if (!live()) return;
+      if (restart) noteRestartOfferCreated(watchRecoverySlot, mine);
+      if (!offer.sdp) return;
       watchCall.send({ op: "o", sdp: offer.sdp });
     } catch (error) {
-      if (watchCall.generation === mine) {
+      if (restart && live()) markIceRestartPending(watchRecoverySlot, mine);
+      if (live()) {
+        noteDiagnosticEvent({
+          kind: "sdp-error",
+          connection: "watch",
+          detail: error instanceof Error ? error.message : "sdp",
+        });
         deps?.onError?.(error);
       }
     } finally {
-      if (watchCall.generation === mine) watchCall.makingOffer = false;
+      if (live()) watchCall.makingOffer = false;
     }
   });
 }
@@ -2517,11 +3392,22 @@ async function startWatchPeer(channelId: string): Promise<void> {
     return;
   }
 
+  if (watchCall.generation !== mine) return;
   const pc = createPeer(iceServers);
   watchCall.pc = pc;
+  clearWatchReconnectTimer();
+  clearRecovery(watchRecoverySlot);
+  attachWatchDiagnostics(mine);
   pc.onnegotiationneeded = () => {
     if (watchCall.generation !== mine) return;
     void watchOfferIfStable(mine, { fromEvent: true });
+  };
+  pc.oniceconnectionstatechange = () => {
+    noteIceState(pc, "watch", mine, () => watchCall.generation);
+    onWatchConnectionChange(mine);
+  };
+  pc.onconnectionstatechange = () => {
+    onWatchConnectionChange(mine);
   };
   // Recvonly m-lines so the offer carries ice-ufrag. webrtc-rs rejects
   // an empty offer with "set_remote_description called with no ice-ufrag".

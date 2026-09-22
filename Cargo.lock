@@ -1146,9 +1146,12 @@ dependencies = [
 name = "gelabber-shared"
 version = "0.2.1"
 dependencies = [
+ "base64 0.22.1",
+ "hmac 0.12.1",
  "rand 0.10.2",
  "serde",
  "serde_json",
+ "sha1 0.10.7",
  "uuid",
 ]
 

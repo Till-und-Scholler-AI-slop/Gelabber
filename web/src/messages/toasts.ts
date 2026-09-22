@@ -93,7 +93,11 @@ export const useMessageToasts = create<MessageToastState>((set, get) => ({
   },
 }));
 
-export function resetMessageToastsForTests(): void {
+export function clearMessageToasts(): void {
   for (const id of timers.keys()) clearTimer(id);
   useMessageToasts.setState({ toasts: [] });
+}
+
+export function resetMessageToastsForTests(): void {
+  clearMessageToasts();
 }

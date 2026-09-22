@@ -233,6 +233,7 @@ function mergeFmtpParams(parts: Map<string, string>, line: string): void {
 function applyVoiceFmtp(parts: Map<string, string>, bitrate: number): void {
   if (!parts.has("minptime")) parts.set("minptime", "10");
   parts.set("useinbandfec", "1");
+  parts.set("usedtx", "1");
   parts.set("stereo", "0");
   parts.set("maxaveragebitrate", String(bitrate));
 }

@@ -24,21 +24,39 @@ import {
   type PeerConnection,
   type RtpSender,
 } from "./session.ts";
+import { resetSessionForTests, useSession } from "../auth/session.ts";
+import {
+  buildDiagnosticExport,
+  diagnosticsPolling,
+  useVoiceDiagnostics,
+} from "./diagnostics.ts";
 import { resetVoiceRoster, useVoiceRoster, voiceOf } from "./roster.ts";
-import { resetMediaSettingsForTests, useMediaSettings } from "./settings.ts";
+import {
+  allocateVideoBitrates,
+  resetMediaSettingsForTests,
+  useMediaSettings,
+  videoConstraintsFor,
+} from "./settings.ts";
 
 class FakePeer implements PeerConnection {
   onicecandidate: PeerConnection["onicecandidate"] = null;
   ontrack: PeerConnection["ontrack"] = null;
   onnegotiationneeded: PeerConnection["onnegotiationneeded"] = null;
+  oniceconnectionstatechange: PeerConnection["oniceconnectionstatechange"] =
+    null;
+  onconnectionstatechange: PeerConnection["onconnectionstatechange"] = null;
   remoteDescription: { type: string } | null = null;
   signalingState = "stable";
+  iceConnectionState = "new";
+  connectionState = "new";
   closed = false;
   tracks = 0;
   audio: MediaStreamTrack | null = null;
   senders: RtpSender[] = [];
   ice: { candidate: string; sdpMid: string | null }[] = [];
+  offerOptions: Array<{ iceRestart?: boolean } | undefined> = [];
   iceServers: IceServer[];
+  getStats?: () => Promise<unknown>;
 
   constructor(iceServers: IceServer[] = []) {
     this.iceServers = iceServers;
@@ -79,10 +97,13 @@ class FakePeer implements PeerConnection {
     return this.senders;
   }
 
-  async createOffer(): Promise<{ type: string; sdp?: string }> {
+  async createOffer(options?: {
+    iceRestart?: boolean;
+  }): Promise<{ type: string; sdp?: string }> {
     if (this.signalingState !== "stable") {
       throw new Error("InvalidStateError");
     }
+    this.offerOptions.push(options);
     return { type: "offer", sdp: "v=0\r\no=- 1 1 IN IP4 127.0.0.1\r\n" };
   }
 
@@ -124,6 +145,16 @@ class FakePeer implements PeerConnection {
 
   close(): void {
     this.closed = true;
+  }
+
+  setIce(state: string): void {
+    this.iceConnectionState = state;
+    this.oniceconnectionstatechange?.();
+  }
+
+  setConnection(state: string): void {
+    this.connectionState = state;
+    this.onconnectionstatechange?.();
   }
 }
 
@@ -185,6 +216,36 @@ function deferred(): { promise: Promise<void>; resolve: () => void } {
   return { promise, resolve };
 }
 
+/** Apply this sender's next parameters, then pause before the caller continues. */
+function holdNextSetParameters(sender: RtpSender): {
+  entered: Promise<void>;
+  release: () => void;
+} {
+  const original = sender.setParameters?.bind(sender);
+  const gate = deferred();
+  let enteredResolve!: () => void;
+  const entered = new Promise<void>((resolve) => {
+    enteredResolve = resolve;
+  });
+  let used = false;
+  sender.setParameters = async (params) => {
+    await original?.(params);
+    if (used) return;
+    used = true;
+    enteredResolve();
+    await gate.promise;
+  };
+  return { entered, release: gate.resolve };
+}
+
+function videoBitrates(
+  peer: PeerConnection | undefined,
+): Array<number | undefined> {
+  return (peer?.getSenders?.() ?? [])
+    .filter((sender) => sender.track?.kind === "video")
+    .map((sender) => sender.getParameters?.().encodings[0]?.maxBitrate);
+}
+
 function install(opts?: {
   media?: boolean;
   display?: boolean;
@@ -206,6 +267,15 @@ function install(opts?: {
     callIndex: number,
     constraints: MediaStreamConstraints,
   ) => boolean;
+  /** Thrown instead of a generic denial. OverconstrainedError is retried. */
+  mediaError?: (
+    callIndex: number,
+    constraints: MediaStreamConstraints,
+  ) => Error | undefined;
+  displayError?: (
+    callIndex: number,
+    constraints: MediaStreamConstraints,
+  ) => Error | undefined;
   holdReplaceTrack?: Promise<void>;
   /** Do not answer `op:j` with `op:ok`. Used when the SFU rejects the join. */
   holdJoin?: boolean;
@@ -224,6 +294,7 @@ function install(opts?: {
   let getUserMediaCalls = 0;
   let getDisplayMediaCalls = 0;
   let lastUserMedia: MediaStreamConstraints | undefined;
+  let lastDisplayMedia: MediaStreamConstraints | undefined;
 
   configureVoice({
     userId: () => opts?.userId ?? "u-self",
@@ -281,6 +352,12 @@ function install(opts?: {
       const callIndex = getUserMediaCalls;
       getUserMediaCalls += 1;
       lastUserMedia = constraints;
+      const mediaError = opts?.mediaError?.(callIndex, constraints);
+      if (mediaError) {
+        if (opts?.gateMedia) await opts.gateMedia(callIndex, constraints);
+        else if (opts?.holdMedia) await opts.holdMedia;
+        throw mediaError;
+      }
       if (opts?.media === false || opts?.failMedia?.(callIndex, constraints)) {
         if (opts?.gateMedia) await opts.gateMedia(callIndex, constraints);
         else if (opts?.holdMedia) await opts.holdMedia;
@@ -296,9 +373,13 @@ function install(opts?: {
       else if (opts?.holdMedia) await opts.holdMedia;
       return stream;
     },
-    getDisplayMedia: async () => {
+    getDisplayMedia: async (constraints) => {
+      const callIndex = getDisplayMediaCalls;
       getDisplayMediaCalls += 1;
+      lastDisplayMedia = constraints;
       if (opts?.holdDisplay) await opts.holdDisplay;
+      const displayError = opts?.displayError?.(callIndex, constraints);
+      if (displayError) throw displayError;
       if (opts?.display === false) throw new Error("denied");
       return fakeVideoStream("local-scr", true);
     },
@@ -369,6 +450,7 @@ function install(opts?: {
     getUserMediaCalls: () => getUserMediaCalls,
     getDisplayMediaCalls: () => getDisplayMediaCalls,
     lastUserMedia: () => lastUserMedia,
+    lastDisplayMedia: () => lastDisplayMedia,
   };
 }
 
@@ -1553,6 +1635,117 @@ describe("voice session", () => {
     await vi.waitFor(() => expect(peers[0]?.audio?.id).toBe("mic-1-a"));
     expect(peers[0]?.audio?.enabled).toBe(false);
   });
+
+  it("stops diagnostics on leave, rejoin, watch, and logout", async () => {
+    const env = install();
+    joinVoice({ serverId: "srv", channelId: "voice", channelName: "Lounge" });
+    await vi.waitFor(() => expect(diagnosticsPolling().voice).toBe(true));
+    leaveVoice();
+    expect(diagnosticsPolling().voice).toBe(false);
+    expect(
+      useVoiceDiagnostics.getState().phases.map((phase) => phase.phase),
+    ).toContain("voice-only");
+
+    joinVoice({ serverId: "srv", channelId: "voice", channelName: "Lounge" });
+    await vi.waitFor(() => expect(diagnosticsPolling().voice).toBe(true));
+    expect(diagnosticsPolling().watch).toBe(false);
+    leaveVoice();
+    expect(diagnosticsPolling().voice).toBe(false);
+
+    watchLive({ serverId: "srv", channelId: "stage", channelName: "Stage" });
+    await vi.waitFor(() => expect(diagnosticsPolling().watch).toBe(true));
+    stopWatching();
+    expect(diagnosticsPolling().watch).toBe(false);
+
+    joinVoice({ serverId: "srv", channelId: "voice", channelName: "Lounge" });
+    await vi.waitFor(() => expect(diagnosticsPolling().voice).toBe(true));
+    useSession.setState({
+      status: "authenticated",
+      user: {
+        id: "u-self",
+        email: "ada@example.com",
+        name: "Ada",
+        avatar_url: null,
+        created_at: "2026-01-01T00:00:00.000Z",
+      },
+    });
+    useSession.setState({ status: "anonymous", user: null });
+    expect(diagnosticsPolling().voice).toBe(false);
+    expect(JSON.stringify(buildDiagnosticExport())).not.toContain(
+      "ada@example.com",
+    );
+    expect(JSON.stringify(buildDiagnosticExport())).not.toContain(
+      "abcdefghjkmn",
+    );
+    resetSessionForTests();
+    expect(env.peers.length).toBeGreaterThan(0);
+  });
+
+  it("records stream and device changes without the device id", async () => {
+    const { peers } = install();
+    joinVoice({ serverId: "srv", channelId: "voice", channelName: "Lounge" });
+    await vi.waitFor(() => expect(peers[0]?.audio).toBeTruthy());
+    toggleCamera();
+    await vi.waitFor(() =>
+      expect(useVoice.getState().localCamera).toBeTruthy(),
+    );
+    toggleCamera();
+    expect(useVoice.getState().camera).toBe(false);
+    useMediaSettings.getState().patch({ audioInputId: "mic-secret" });
+    const events = useVoiceDiagnostics.getState().events;
+    expect(
+      events.some(
+        (event) => event.kind === "stream-start" && event.detail === "camera",
+      ),
+    ).toBe(true);
+    expect(
+      events.some(
+        (event) => event.kind === "stream-stop" && event.detail === "camera",
+      ),
+    ).toBe(true);
+    expect(
+      events.some(
+        (event) =>
+          event.kind === "device-change" && event.detail === "audio-input",
+      ),
+    ).toBe(true);
+    const phases = useVoiceDiagnostics
+      .getState()
+      .phases.map((phase) => phase.phase);
+    expect(phases).toEqual(["voice-only", "stream-on", "stream-off"]);
+    expect(JSON.stringify(events)).not.toContain("mic-secret");
+  });
+
+  it("records ICE failures from the media peer", async () => {
+    const { peers, emitMedia } = install();
+    joinVoice({ serverId: "srv", channelId: "voice", channelName: "Lounge" });
+    await vi.waitFor(() => expect(peers.length).toBe(1));
+    emitMedia({ op: "err", e: "ice_failed" });
+    const peer = peers[0];
+    if (!peer) throw new Error("missing peer");
+    peer.iceConnectionState = "disconnected";
+    peer.oniceconnectionstatechange?.();
+    peer.iceConnectionState = "connected";
+    peer.oniceconnectionstatechange?.();
+    const events = useVoiceDiagnostics.getState().events;
+    expect(
+      events.some(
+        (event) => event.kind === "ice-error" && event.detail === "ice_failed",
+      ),
+    ).toBe(true);
+    expect(
+      events.some(
+        (event) =>
+          event.kind === "ice-error" && event.detail === "disconnected",
+      ),
+    ).toBe(true);
+    expect(
+      events.some(
+        (event) => event.kind === "recovery" && event.detail === "connected",
+      ),
+    ).toBe(true);
+    expect(JSON.stringify(buildDiagnosticExport())).not.toContain("v=0");
+  });
 });
 
 describe("stream negotiation stability", () => {
@@ -1583,7 +1776,9 @@ describe("stream negotiation stability", () => {
     expect(env.peers[0]?.audio?.enabled).toBe(false);
     expect(env.errors).toHaveLength(1);
     expect(env.errors[0]).toBeInstanceOf(Error);
-    expect((env.errors[0] as Error).message).toMatch(/Sprachkanal bleibt aktiv/);
+    expect((env.errors[0] as Error).message).toMatch(
+      /Sprachkanal bleibt aktiv/,
+    );
     expect(
       env.sent.some((frame) => frame.op === "sig" && frame.t === "l"),
     ).toBe(false);
@@ -1609,15 +1804,17 @@ describe("stream negotiation stability", () => {
     await vi.waitFor(() =>
       expect(env.peers[0]?.signalingState).toBe("have-local-offer"),
     );
-    const offersAtFailure = env.mediaSent.filter((frame) => frame.op === "o").length;
+    const offersAtFailure = env.mediaSent.filter(
+      (frame) => frame.op === "o",
+    ).length;
     expect(offersAtFailure).toBeGreaterThan(0);
     const captured = useVoice.getState().localScreen?.getVideoTracks()[0];
     expect(captured).toBeTruthy();
     env.emitMedia({ op: "err", e: "negotiation_failed" });
     await vi.waitFor(() => expect(env.peers[0]?.signalingState).toBe("stable"));
-    expect(env.mediaSent.some((frame) => frame.op === "u" && frame.k === "s")).toBe(
-      true,
-    );
+    expect(
+      env.mediaSent.some((frame) => frame.op === "u" && frame.k === "s"),
+    ).toBe(true);
     expect(useVoice.getState().sharing).toBe(false);
     expect(useVoice.getState().localScreen).toBeNull();
     expect(useVoice.getState().camera).toBe(false);
@@ -1628,7 +1825,9 @@ describe("stream negotiation stability", () => {
     expect(env.peers[0]?.audio).toBeTruthy();
     expect(trackStopped(env.peers[0]?.audio)).toBe(false);
     expect(env.peers[0]?.closed).toBe(false);
-    const offersAfterFailure = env.mediaSent.filter((frame) => frame.op === "o").length;
+    const offersAfterFailure = env.mediaSent.filter(
+      (frame) => frame.op === "o",
+    ).length;
     for (let i = 0; i < 8; i++) await Promise.resolve();
     expect(env.mediaSent.filter((frame) => frame.op === "o").length).toBe(
       offersAfterFailure,
@@ -1646,7 +1845,9 @@ describe("stream negotiation stability", () => {
     expect(useVoice.getState().localCamera).toBeTruthy();
     expect(env.peers[0]?.audio).toBeTruthy();
     expect(env.errors).toHaveLength(1);
-    expect((env.errors[0] as Error).message).toMatch(/Sprachkanal bleibt aktiv/);
+    expect((env.errors[0] as Error).message).toMatch(
+      /Sprachkanal bleibt aktiv/,
+    );
   });
   it("keeps a negotiated screen share when a later renegotiation fails", async () => {
     const env = await connected();
@@ -1741,6 +1942,141 @@ describe("stream negotiation stability", () => {
     env.emitMedia({ op: "err", e: "unauthorized" });
     expect(useVoice.getState().status).toBe("idle");
   });
+  it("restarts ICE once on failed transport and stays joined", async () => {
+    const env = await connected();
+    env.peers[0]?.setIce("failed");
+    await vi.waitFor(() =>
+      expect(env.peers[0]?.offerOptions.some((opt) => opt?.iceRestart)).toBe(
+        true,
+      ),
+    );
+    expect(
+      useVoiceDiagnostics
+        .getState()
+        .events.some(
+          (event) =>
+            event.kind === "ice-error" &&
+            event.connection === "voice" &&
+            event.detail === "failed",
+        ),
+    ).toBe(true);
+    expect(useVoice.getState().status).toBe("joined");
+    expect(env.peers[0]?.closed).toBe(false);
+  });
+  it("keeps iceRestart on an offer deferred until the in-flight answer", async () => {
+    const env = await connected();
+    toggleCamera();
+    await vi.waitFor(() =>
+      expect(env.peers[0]?.signalingState).toBe("have-local-offer"),
+    );
+    const before = env.peers[0]!.offerOptions.length;
+    env.peers[0]!.setIce("failed");
+    expect(env.peers[0]!.offerOptions.length).toBe(before);
+    env.emitMedia({ op: "a", sdp: "v=0\r\n" });
+    await vi.waitFor(() =>
+      expect(env.peers[0]!.offerOptions.length).toBeGreaterThan(before),
+    );
+    expect(env.peers[0]!.offerOptions.at(-1)?.iceRestart).toBe(true);
+    expect(env.peers[0]?.closed).toBe(false);
+    expect(useVoice.getState().status).toBe("joined");
+  });
+  it("recreates a rolled-back restart offer after a glare collision", async () => {
+    const env = await connected();
+    env.peers[0]!.setIce("failed");
+    await vi.waitFor(() =>
+      expect(env.peers[0]?.signalingState).toBe("have-local-offer"),
+    );
+    expect(env.peers[0]!.offerOptions.at(-1)?.iceRestart).toBe(true);
+    const before = env.peers[0]!.offerOptions.length;
+    env.emitMedia({ op: "o", sdp: "v=0\r\no=- 3 3 IN IP4 127.0.0.1\r\n" });
+    await vi.waitFor(() =>
+      expect(env.peers[0]!.offerOptions.length).toBeGreaterThan(before),
+    );
+    expect(env.peers[0]!.offerOptions.at(-1)?.iceRestart).toBe(true);
+    expect(env.peers[0]?.closed).toBe(false);
+  });
+  it("does not close the peer when ice and connection both report the same failure", async () => {
+    const env = await connected();
+    env.peers[0]!.setIce("failed");
+    env.peers[0]!.setConnection("failed");
+    await vi.waitFor(() =>
+      expect(env.peers[0]?.offerOptions.some((opt) => opt?.iceRestart)).toBe(
+        true,
+      ),
+    );
+    expect(env.peers).toHaveLength(1);
+    expect(env.peers[0]?.closed).toBe(false);
+    expect(useVoice.getState().status).toBe("joined");
+  });
+  it("reconnects after the restart itself fails, not on the first duplicate", async () => {
+    const env = await connected();
+    env.peers[0]!.setIce("failed");
+    await vi.waitFor(() =>
+      expect(env.peers[0]?.signalingState).toBe("have-local-offer"),
+    );
+    env.emitMedia({ op: "a", sdp: "v=0\r\n" });
+    await vi.waitFor(() => expect(env.peers[0]?.signalingState).toBe("stable"));
+    env.peers[0]!.setIce("checking");
+    env.peers[0]!.setIce("failed");
+    await vi.waitFor(() => expect(env.peers[0]?.closed).toBe(true));
+    expect(env.peers.length).toBeGreaterThan(1);
+    expect(useVoice.getState().status).toBe("joined");
+  });
+  it("reconnects when the ice recovery deadline passes", async () => {
+    const env = await connected();
+    vi.useFakeTimers();
+    env.peers[0]!.setIce("failed");
+    for (let i = 0; i < 20; i++) await Promise.resolve();
+    expect(env.peers[0]?.offerOptions.some((opt) => opt?.iceRestart)).toBe(
+      true,
+    );
+    expect(env.peers[0]?.closed).toBe(false);
+    await vi.advanceTimersByTimeAsync(9_999);
+    expect(env.peers[0]?.closed).toBe(false);
+    await vi.advanceTimersByTimeAsync(1);
+    for (let i = 0; i < 20; i++) await Promise.resolve();
+    expect(env.peers[0]?.closed).toBe(true);
+    expect(env.peers.length).toBeGreaterThan(1);
+    expect(useVoice.getState().status).toBe("joined");
+  });
+  it("keeps a deferred watch ice restart through the answer", async () => {
+    const env = await connected();
+    watchLive({ serverId: "srv", channelId: "stage", channelName: "Stage" });
+    await vi.waitFor(() =>
+      expect(env.peers[1]?.signalingState).toBe("have-local-offer"),
+    );
+    const before = env.peers[1]!.offerOptions.length;
+    env.peers[1]!.setIce("failed");
+    expect(env.peers[1]!.offerOptions.length).toBe(before);
+    env.emitMedia({ op: "a", sdp: "v=0\r\n" });
+    await vi.waitFor(() =>
+      expect(env.peers[1]!.offerOptions.length).toBeGreaterThan(before),
+    );
+    expect(env.peers[1]!.offerOptions.at(-1)?.iceRestart).toBe(true);
+    expect(env.peers[1]?.closed).toBe(false);
+    expect(useVoice.getState().watching).toBe(true);
+  });
+  it("does not close the watch peer on a duplicate transport failure", async () => {
+    const env = await connected();
+    watchLive({ serverId: "srv", channelId: "stage", channelName: "Stage" });
+    await vi.waitFor(() => expect(env.peers[1]).toBeTruthy());
+    env.peers[1]!.setIce("failed");
+    env.peers[1]!.setConnection("failed");
+    await Promise.resolve();
+    expect(
+      useVoiceDiagnostics
+        .getState()
+        .events.some(
+          (event) =>
+            event.kind === "ice-error" &&
+            event.connection === "watch" &&
+            event.detail === "failed",
+        ),
+    ).toBe(true);
+    expect(env.peers[1]?.closed).toBe(false);
+    expect(useVoice.getState().watching).toBe(true);
+    expect(useVoice.getState().status).toBe("joined");
+  });
   it("does not apply an old remote-offer continuation to a rejoined peer", async () => {
     const env = await connected();
     let release!: () => void;
@@ -1770,5 +2106,444 @@ describe("stream negotiation stability", () => {
     for (let i = 0; i < 12; i++) await Promise.resolve();
     expect(createAnswer).not.toHaveBeenCalled();
     expect(env.peers[1]?.signalingState).toBe("have-local-offer");
+  });
+
+  it("captures camera and screen with the selected profile constraints", async () => {
+    useMediaSettings.getState().patch({
+      cameraProfile: "economy",
+      screenProfile: "detail",
+    });
+    const env = await connected();
+    toggleCamera();
+    await vi.waitFor(() =>
+      expect(useVoice.getState().localCamera).toBeTruthy(),
+    );
+    expect(env.lastUserMedia()).toEqual({
+      audio: false,
+      video: videoConstraintsFor("camera", "economy"),
+    });
+    toggleShare();
+    await vi.waitFor(() =>
+      expect(useVoice.getState().localScreen).toBeTruthy(),
+    );
+    expect(env.lastDisplayMedia()).toEqual({
+      audio: false,
+      video: videoConstraintsFor("screen", "detail"),
+    });
+    const video = env.peers[0]!.senders.filter(
+      (s) => s.track?.kind === "video",
+    );
+    await vi.waitFor(() =>
+      expect(
+        video.map((s) => s.getParameters!().encodings[0]?.maxBitrate),
+      ).toEqual(allocateVideoBitrates(["economy", "detail"])),
+    );
+    expect(
+      video.map((s) => s.getParameters!().encodings[0]?.maxFramerate),
+    ).toEqual([15, 30]);
+
+    env.peers[0]!.getStats = async () =>
+      new Map(
+        video.map((sender, index) => [
+          `video-${index}`,
+          {
+            id: `video-${index}`,
+            type: "outbound-rtp",
+            kind: "video",
+            timestamp: Date.now(),
+            trackIdentifier: sender.track!.id,
+            bytesSent: 1000,
+          },
+        ]),
+      );
+    await vi.waitFor(
+      () =>
+        expect(useVoiceDiagnostics.getState().latest?.voice?.flows).toHaveLength(
+          2,
+        ),
+      { timeout: 3_500 },
+    );
+    const exported = buildDiagnosticExport();
+    const flows = exported.samples.at(-1)!.voice!.flows;
+    expect(flows.map((flow) => flow.source)).toEqual(["camera", "screen"]);
+    expect(flows.map((flow) => flow.configuredMaxBitrateBps)).toEqual(
+      video.map((sender) => sender.getParameters!().encodings[0]!.maxBitrate),
+    );
+    expect(flows.map((flow) => flow.configuredMaxFps)).toEqual([15, 30]);
+    expect(exported.samples.at(-1)?.caps.videoSendBudget).toBe(
+      video.reduce(
+        (total, sender) =>
+          total + (sender.getParameters!().encodings[0]!.maxBitrate ?? 0),
+        0,
+      ),
+    );
+    expect(exported.settings.cameraProfile).toBe("economy");
+    expect(exported.settings.screenProfile).toBe("detail");
+  });
+
+  it("restores profile limits and the diagnostics poll after an ICE reconnect", async () => {
+    useMediaSettings.getState().patch({ cameraProfile: "economy" });
+    const env = await connected();
+    toggleCamera();
+    await vi.waitFor(() =>
+      expect(useVoice.getState().localCamera).toBeTruthy(),
+    );
+    env.emitMedia({ op: "a", sdp: "v=0\r\n" });
+    await vi.waitFor(() =>
+      expect(env.peers[0]?.signalingState).toBe("stable"),
+    );
+    env.peers[0]!.setIce("failed");
+    await vi.waitFor(() =>
+      expect(env.peers[0]?.offerOptions.at(-1)?.iceRestart).toBe(true),
+    );
+    env.emitMedia({ op: "a", sdp: "v=0\r\n" });
+    await vi.waitFor(() =>
+      expect(env.peers[0]?.signalingState).toBe("stable"),
+    );
+    env.peers[0]!.setIce("checking");
+    env.peers[0]!.setIce("failed");
+    await vi.waitFor(() => expect(env.peers).toHaveLength(2));
+    await vi.waitFor(() =>
+      expect(
+        env.peers[1]?.senders.find((sender) => sender.track?.kind === "video")
+          ?.getParameters?.().encodings[0],
+      ).toMatchObject({ maxBitrate: 800_000, maxFramerate: 15 }),
+    );
+    expect(diagnosticsPolling().voice).toBe(true);
+  });
+
+  it("uses the screen profile for Go Live", async () => {
+    useMediaSettings.getState().patch({ screenProfile: "economy" });
+    const env = await connected();
+    toggleGoLive();
+    await vi.waitFor(() => expect(useVoice.getState().localLive).toBeTruthy());
+    expect(env.lastDisplayMedia()).toEqual({
+      audio: false,
+      video: videoConstraintsFor("screen", "economy"),
+    });
+    const video = env.peers[0]!.senders.find((s) => s.track?.kind === "video");
+    await vi.waitFor(() =>
+      expect(video?.getParameters?.().encodings[0]?.maxBitrate).toBe(800_000),
+    );
+    expect(video?.getParameters?.().encodings[0]?.maxFramerate).toBe(15);
+  });
+
+  it("applies a live profile on the sender and the track when the browser allows it", async () => {
+    const env = await connected();
+    toggleCamera();
+    await vi.waitFor(() =>
+      expect(useVoice.getState().localCamera).toBeTruthy(),
+    );
+    const track = useVoice.getState().localCamera!.getVideoTracks()[0]!;
+    let applied: MediaTrackConstraints | undefined;
+    (
+      track as MediaStreamTrack & {
+        applyConstraints?: (next: MediaTrackConstraints) => Promise<void>;
+      }
+    ).applyConstraints = async (next) => {
+      applied = next;
+    };
+    useMediaSettings.getState().patch({ cameraProfile: "detail" });
+    await vi.waitFor(() =>
+      expect(useMediaSettings.getState().cameraProfileApply).toBe("live"),
+    );
+    expect(applied).toEqual(videoConstraintsFor("camera", "detail"));
+    const video = env.peers[0]!.senders.find((s) => s.track?.kind === "video");
+    expect(video?.getParameters?.().encodings[0]?.maxBitrate).toBe(4_000_000);
+    expect(video?.getParameters?.().encodings[0]?.maxFramerate).toBe(30);
+    const audio = env.peers[0]!.senders.find((s) => s.track?.kind === "audio");
+    expect(audio?.getParameters?.().encodings[0]?.maxBitrate).toBe(64_000);
+    expect(useVoice.getState().muted).toBe(false);
+    expect(useVoice.getState().deafened).toBe(false);
+  });
+
+  it("marks the next stream when applyConstraints is rejected and still caps the sender", async () => {
+    const env = await connected();
+    toggleMute();
+    toggleCamera();
+    await vi.waitFor(() =>
+      expect(useVoice.getState().localCamera).toBeTruthy(),
+    );
+    const track = useVoice.getState().localCamera!.getVideoTracks()[0]!;
+    (
+      track as MediaStreamTrack & {
+        applyConstraints?: (next: MediaTrackConstraints) => Promise<void>;
+      }
+    ).applyConstraints = async () => {
+      const error = new Error("rejected");
+      error.name = "OverconstrainedError";
+      throw error;
+    };
+    useMediaSettings.getState().patch({
+      cameraProfile: "economy",
+      quality: "high",
+    });
+    await vi.waitFor(() =>
+      expect(useMediaSettings.getState().cameraProfileApply).toBe("next"),
+    );
+    const video = env.peers[0]!.senders.find((s) => s.track?.kind === "video");
+    expect(video?.getParameters?.().encodings[0]?.maxBitrate).toBe(800_000);
+    expect(video?.getParameters?.().encodings[0]?.maxFramerate).toBe(15);
+    const audio = env.peers[0]!.senders.find((s) => s.track?.kind === "audio");
+    expect(audio?.getParameters?.().encodings[0]?.maxBitrate).toBe(128_000);
+    expect(useVoice.getState().muted).toBe(true);
+    expect(useVoice.getState().deafened).toBe(false);
+    expect(useVoice.getState().camera).toBe(true);
+  });
+
+  it("splits one sender share across simulcast encodings", async () => {
+    const env = await connected();
+    toggleCamera();
+    await vi.waitFor(() =>
+      expect(
+        env.peers[0]?.senders.filter((s) => s.track?.kind === "video"),
+      ).toHaveLength(1),
+    );
+    const video = env.peers[0]!.senders.find((s) => s.track?.kind === "video")!;
+    video.getParameters!().encodings.push({});
+    useMediaSettings.getState().patch({ cameraProfile: "economy" });
+    await vi.waitFor(() =>
+      expect(video.getParameters!().encodings.map((e) => e.maxBitrate)).toEqual(
+        [400_000, 400_000],
+      ),
+    );
+    expect(video.getParameters!().encodings.map((e) => e.maxFramerate)).toEqual(
+      [15, 15],
+    );
+  });
+
+  it("falls back to a safer camera constraint when the profile is rejected", async () => {
+    useMediaSettings.getState().patch({ cameraProfile: "detail" });
+    const env = install({
+      mediaError: (_index, constraints) => {
+        const video = constraints.video;
+        if (!video || typeof video !== "object" || !("width" in video)) {
+          return undefined;
+        }
+        const width = video.width;
+        if (
+          width &&
+          typeof width === "object" &&
+          "ideal" in width &&
+          width.ideal === 1920
+        ) {
+          const error = new Error("over");
+          error.name = "OverconstrainedError";
+          return error;
+        }
+        return undefined;
+      },
+    });
+    joinVoice({ serverId: "srv", channelId: "voice", channelName: "Lounge" });
+    await vi.waitFor(() =>
+      expect(env.peers[0]?.signalingState).toBe("have-local-offer"),
+    );
+    env.emitMedia({ op: "a", sdp: "v=0\r\n" });
+    await vi.waitFor(() => expect(env.peers[0]?.signalingState).toBe("stable"));
+    toggleCamera();
+    await vi.waitFor(() =>
+      expect(useVoice.getState().localCamera).toBeTruthy(),
+    );
+    expect(env.getUserMediaCalls()).toBe(3);
+    expect(env.lastUserMedia()).toEqual({
+      audio: false,
+      video: videoConstraintsFor("camera", "balanced"),
+    });
+    expect(env.errors.map((error) => (error as Error).message)).toContain(
+      "Dieses Streamprofil wird nicht unterstützt. Es läuft eine sicherere Auflösung.",
+    );
+    const video = env.peers[0]!.senders.find((s) => s.track?.kind === "video");
+    await vi.waitFor(() =>
+      expect(video?.getParameters?.().encodings[0]?.maxBitrate).toBe(4_000_000),
+    );
+  });
+
+  it("does not reopen the screen picker when the user cancels", async () => {
+    useMediaSettings.getState().patch({ screenProfile: "detail" });
+    const env = install({
+      displayError: () => {
+        const error = new Error("cancel");
+        error.name = "NotAllowedError";
+        return error;
+      },
+    });
+    joinVoice({ serverId: "srv", channelId: "voice", channelName: "Lounge" });
+    await vi.waitFor(() =>
+      expect(env.peers[0]?.signalingState).toBe("have-local-offer"),
+    );
+    env.emitMedia({ op: "a", sdp: "v=0\r\n" });
+    await vi.waitFor(() => expect(env.peers[0]?.signalingState).toBe("stable"));
+    toggleShare();
+    await vi.waitFor(() => expect(useVoice.getState().sharing).toBe(false));
+    expect(env.getDisplayMediaCalls()).toBe(1);
+    expect(env.errors).toHaveLength(0);
+  });
+
+  it("retries screen capture once when the profile constraints are rejected", async () => {
+    useMediaSettings.getState().patch({ screenProfile: "detail" });
+    const env = install({
+      displayError: (index, constraints) => {
+        const video = constraints.video;
+        if (
+          index === 0 &&
+          video &&
+          typeof video === "object" &&
+          "width" in video &&
+          video.width &&
+          typeof video.width === "object" &&
+          "ideal" in video.width &&
+          video.width.ideal === 1920
+        ) {
+          const error = new Error("over");
+          error.name = "OverconstrainedError";
+          return error;
+        }
+        return undefined;
+      },
+    });
+    joinVoice({ serverId: "srv", channelId: "voice", channelName: "Lounge" });
+    await vi.waitFor(() =>
+      expect(env.peers[0]?.signalingState).toBe("have-local-offer"),
+    );
+    env.emitMedia({ op: "a", sdp: "v=0\r\n" });
+    await vi.waitFor(() => expect(env.peers[0]?.signalingState).toBe("stable"));
+    toggleShare();
+    await vi.waitFor(() =>
+      expect(useVoice.getState().localScreen).toBeTruthy(),
+    );
+    expect(env.getDisplayMediaCalls()).toBe(2);
+    expect(env.lastDisplayMedia()).toEqual({
+      audio: false,
+      video: videoConstraintsFor("screen", "balanced"),
+    });
+    expect(env.errors.map((error) => (error as Error).message)).toContain(
+      "Dieses Streamprofil wird nicht unterstützt. Es läuft eine sicherere Auflösung.",
+    );
+    expect(useVoice.getState().sharing).toBe(true);
+  });
+
+  it("keeps the newer budgets when an older profile update resumes", async () => {
+    const env = await connected();
+    toggleCamera();
+    toggleShare();
+    await vi.waitFor(() =>
+      expect(videoBitrates(env.peers[0])).toEqual([1_250_000, 1_250_000]),
+    );
+    const camera = env.peers[0]!.senders.find(
+      (sender) => sender.track?.kind === "video",
+    )!;
+    const held = holdNextSetParameters(camera);
+    useMediaSettings.getState().patch({ cameraProfile: "detail" });
+    await held.entered;
+    useMediaSettings.getState().patch({ cameraProfile: "economy" });
+    for (let i = 0; i < 20; i++) await Promise.resolve();
+    held.release();
+    // Detail then Sparsam, screen stays Ausgewogen. The stale screen share
+    // from the Detail pass is 1_538_461.
+    await vi.waitFor(() =>
+      expect(videoBitrates(env.peers[0])).toEqual([606_060, 1_893_939]),
+    );
+    expect(
+      env.peers[0]!.senders.filter(
+        (sender) => sender.track?.kind === "video",
+      ).map((sender) => sender.getParameters?.().encodings[0]?.maxFramerate),
+    ).toEqual([15, 30]);
+  });
+
+  it("applies a stopped sender's freed budget on the same queue", async () => {
+    const env = await connected();
+    toggleCamera();
+    toggleShare();
+    await vi.waitFor(() =>
+      expect(videoBitrates(env.peers[0])).toEqual([1_250_000, 1_250_000]),
+    );
+    const camera = env.peers[0]!.senders.find(
+      (sender) => sender.track?.kind === "video",
+    )!;
+    const held = holdNextSetParameters(camera);
+    useMediaSettings.getState().patch({ cameraProfile: "detail" });
+    await held.entered;
+    toggleShare();
+    held.release();
+    await vi.waitFor(() =>
+      expect(videoBitrates(env.peers[0])).toEqual([4_000_000]),
+    );
+    expect(useVoice.getState().sharing).toBe(false);
+    expect(useVoice.getState().camera).toBe(true);
+  });
+
+  it("does not let an in-flight SFU description restore an older budget", async () => {
+    const env = await connected();
+    toggleCamera();
+    toggleShare();
+    await vi.waitFor(() =>
+      expect(videoBitrates(env.peers[0])).toEqual([1_250_000, 1_250_000]),
+    );
+    for (let i = 0; i < 4 && env.peers[0]?.signalingState !== "stable"; i++) {
+      const offers = env.mediaSent.filter((frame) => frame.op === "o").length;
+      await vi.waitFor(() =>
+        expect(env.peers[0]?.signalingState).toBe("have-local-offer"),
+      );
+      env.emitMedia({ op: "a", sdp: "v=0\r\n" });
+      await vi.waitFor(() => {
+        const answered =
+          env.peers[0]?.signalingState === "stable" ||
+          env.mediaSent.filter((frame) => frame.op === "o").length > offers;
+        expect(answered).toBe(true);
+      });
+    }
+    expect(env.peers[0]?.signalingState).toBe("stable");
+    useMediaSettings.getState().patch({ cameraProfile: "detail" });
+    await vi.waitFor(() =>
+      expect(videoBitrates(env.peers[0])).toEqual([2_461_538, 1_538_461]),
+    );
+    const camera = env.peers[0]!.senders.find(
+      (sender) => sender.track?.kind === "video",
+    )!;
+    const held = holdNextSetParameters(camera);
+    env.emitMedia({ op: "o", sdp: "v=0\r\noffer\r\n" });
+    await held.entered;
+    useMediaSettings.getState().patch({ cameraProfile: "economy" });
+    for (let i = 0; i < 20; i++) await Promise.resolve();
+    held.release();
+    await vi.waitFor(() =>
+      expect(videoBitrates(env.peers[0])).toEqual([606_060, 1_893_939]),
+    );
+    await vi.waitFor(() => expect(env.peers[0]?.signalingState).toBe("stable"));
+  });
+
+  it("does not block a new peer generation on the previous budget queue", async () => {
+    const env = await connected();
+    toggleCamera();
+    await vi.waitFor(() =>
+      expect(videoBitrates(env.peers[0])).toEqual([2_500_000]),
+    );
+    const camera = env.peers[0]!.senders.find(
+      (sender) => sender.track?.kind === "video",
+    )!;
+    const held = holdNextSetParameters(camera);
+    try {
+      useMediaSettings.getState().patch({ cameraProfile: "economy" });
+      await held.entered;
+      leaveVoice();
+      joinVoice({
+        serverId: "srv",
+        channelId: "voice",
+        channelName: "Lounge",
+      });
+      await vi.waitFor(() =>
+        expect(env.peers[1]?.signalingState).toBe("have-local-offer"),
+      );
+      env.emitMedia({ op: "a", sdp: "v=0\r\n" });
+      await vi.waitFor(() =>
+        expect(env.peers[1]?.signalingState).toBe("stable"),
+      );
+      toggleCamera();
+      await vi.waitFor(() =>
+        expect(videoBitrates(env.peers[1])).toEqual([800_000]),
+      );
+    } finally {
+      held.release();
+    }
   });
 });

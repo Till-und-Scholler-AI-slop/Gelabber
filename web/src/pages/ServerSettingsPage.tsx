@@ -6,6 +6,7 @@ import { useQueryClient } from "@tanstack/react-query";
 import { useNavigate, useParams } from "@tanstack/react-router";
 import { useState, type FormEvent, type ReactNode } from "react";
 
+import { useUserId } from "../auth/scope.ts";
 import { useSession } from "../auth/session.ts";
 import { fieldMessage } from "../auth/rules.ts";
 import { useFormErrors } from "../auth/useFormErrors.ts";
@@ -137,6 +138,7 @@ function NameSection({ server }: { server: ServerDetail }) {
 /** Toggling a checkbox saves immediately (optimistic, rolled back on error). */
 function PermissionsSection({ server }: { server: ServerDetail }) {
   const client = useQueryClient();
+  const userId = useUserId();
   const update = useUpdateServer(server.id);
   const current = new Set<Permission>(server.member_permissions);
 
@@ -144,7 +146,7 @@ function PermissionsSection({ server }: { server: ServerDetail }) {
     // Start from the cache, not from this render's props: a second click
     // before the first PATCH returns must build on the first click's
     // optimistic mask, or the later request would restore the flag.
-    const latest = readServer(client, server.id) ?? server;
+    const latest = (userId && readServer(client, userId, server.id)) || server;
     const next = new Set<Permission>(latest.member_permissions);
     if (next.has(permission)) next.delete(permission);
     else next.add(permission);
@@ -369,7 +371,7 @@ function DangerSection({ server }: { server: ServerDetail }) {
   if (!user) return null;
 
   const go = () => {
-    forget(server.id);
+    forget(user.id, server.id);
     void navigate({ to: "/", replace: true });
   };
 

@@ -3,16 +3,19 @@
 
 import { useParams } from "@tanstack/react-router";
 
+import { useUserId } from "../auth/scope.ts";
 import { Redirect } from "../components/Redirect.tsx";
 
-import { useLastChannel } from "../servers/lastChannel.ts";
+import { lastChannelsFor, useLastChannel } from "../servers/lastChannel.ts";
 import { useServer } from "../servers/queries.ts";
 import { pickChannel } from "../servers/rows.ts";
 
 export function ServerPage() {
   const { serverId } = useParams({ from: "/workspace/s/$serverId" });
   const { data: server } = useServer(serverId);
-  const remembered = useLastChannel((s) => s.byServer[serverId]);
+  const userId = useUserId();
+  const byUser = useLastChannel((s) => s.byUser);
+  const remembered = lastChannelsFor(byUser, userId)[serverId];
 
   if (!server) return null;
   const channel = pickChannel(server, remembered);
