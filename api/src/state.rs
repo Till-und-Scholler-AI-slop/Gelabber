@@ -5,8 +5,9 @@ use std::time::Duration;
 
 use sqlx::PgPool;
 use sqlx::postgres::{PgConnectOptions, PgPoolOptions};
+use uuid::Uuid;
 
-use gelabber_shared::ice::IceServer;
+use gelabber_shared::ice::{self, IceServer};
 
 use crate::config::Config;
 use crate::gateway::{ConnTable, EventLog, Gateway, VoiceRoster};
@@ -42,6 +43,8 @@ pub struct AppState {
     pub ws_idle: Duration,
     pub ws_replay: usize,
     pub ice_servers: Vec<IceServer>,
+    pub turn_auth_secret: Option<String>,
+    pub turn_cred_ttl: Duration,
     pub media_ticket_ttl: Duration,
     /// MinIO (or in-memory in tests) for attachment bytes.
     pub store: ObjectStore,
@@ -113,6 +116,8 @@ impl AppState {
             ws_idle: config.ws_idle,
             ws_replay: config.ws_replay,
             ice_servers: config.ice_servers.clone(),
+            turn_auth_secret: config.turn_auth_secret.clone(),
+            turn_cred_ttl: config.turn_cred_ttl,
             media_ticket_ttl: config.media_ticket_ttl,
             store,
             limits: config.limits,
@@ -125,5 +130,27 @@ impl AppState {
     /// once at boot, before the listener accepts traffic.
     pub async fn migrate(&self) -> Result<(), sqlx::migrate::MigrateError> {
         sqlx::migrate!("./migrations").run(&self.db).await
+    }
+
+    /// Ticket ICE list. Static username/password unless `TURN_AUTH_SECRET`
+    /// is an explicit private secret (coturn REST).
+    pub fn ticket_ice_servers(&self, user_id: Uuid) -> Vec<IceServer> {
+        let Some(secret) = self.turn_auth_secret.as_deref() else {
+            return self.ice_servers.clone();
+        };
+        if secret.is_empty() || self.ice_servers.is_empty() {
+            return self.ice_servers.clone();
+        }
+        let now = std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .unwrap_or_default()
+            .as_secs();
+        let (username, credential) = ice::turn_rest_credentials(
+            secret,
+            &user_id.to_string(),
+            self.turn_cred_ttl.as_secs(),
+            now,
+        );
+        ice::with_turn_credentials(&self.ice_servers, &username, &credential)
     }
 }

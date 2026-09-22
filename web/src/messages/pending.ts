@@ -78,3 +78,8 @@ export function confirmPending(
 export function removePending(channelId: string, id: string): void {
   usePendingMessages.getState().remove(channelId, id);
 }
+
+/** Drop every in-flight optimistic row. Account switches must not keep them. */
+export function resetPendingMessages(): void {
+  usePendingMessages.setState({ byChannel: {} });
+}

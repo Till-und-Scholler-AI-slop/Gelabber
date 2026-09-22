@@ -51,6 +51,9 @@ async fn metrics_export_rooms_peers_bytes_and_ice_fails() {
         "gelabber_media_peers",
         "gelabber_media_forwarded_bytes_total",
         "gelabber_media_ice_fails_total",
+        "gelabber_media_rtp_packets_total",
+        "gelabber_media_rtp_lost_total",
+        "gelabber_media_rtp_jitter_ms",
     ] {
         assert!(text.contains(needle), "missing {needle} in {text}");
     }

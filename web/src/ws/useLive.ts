@@ -45,9 +45,9 @@ export function useLiveBridge(): void {
   }, []);
 }
 
-export function useIdlePresence(authenticated: boolean): void {
+export function useIdlePresence(userId: string | null): void {
   useEffect(() => {
-    if (!authenticated) {
+    if (!userId) {
       resetLiveStores();
       resetVoiceRoster();
       return undefined;
@@ -87,7 +87,7 @@ export function useIdlePresence(authenticated: boolean): void {
         window.removeEventListener(type, onActivity);
       }
     };
-  }, [authenticated]);
+  }, [userId]);
 }
 
 export function useTypingInput(

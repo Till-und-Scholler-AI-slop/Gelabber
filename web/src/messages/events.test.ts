@@ -30,11 +30,11 @@ describe("asAttachmentList", () => {
 describe("applyChatEvent", () => {
   it("appends a create that carries an attachment", () => {
     const client = new QueryClient();
-    client.setQueryData(messageKeys.channel("c1"), {
+    client.setQueryData(messageKeys.channel("u1", 0, "c1"), {
       pages: [{ messages: [msg("a")], has_more: false } satisfies MessagePage],
       pageParams: [undefined],
     });
-    applyChatEvent(client, {
+    applyChatEvent(client, "u1", 0, {
       op: "e",
       t: "c",
       s: "s1",
@@ -54,7 +54,7 @@ describe("applyChatEvent", () => {
       },
     });
     const cache = client.getQueryData<{ pages: MessagePage[] }>(
-      messageKeys.channel("c1"),
+      messageKeys.channel("u1", 0, "c1"),
     );
     const last = cache?.pages[0]?.messages.at(-1);
     expect(last?.id).toBe("b");
@@ -63,11 +63,11 @@ describe("applyChatEvent", () => {
 
   it("treats redis-cjson empty attachments {} as no files", () => {
     const client = new QueryClient();
-    client.setQueryData(messageKeys.channel("c1"), {
+    client.setQueryData(messageKeys.channel("u1", 0, "c1"), {
       pages: [{ messages: [], has_more: false } satisfies MessagePage],
       pageParams: [undefined],
     });
-    applyChatEvent(client, {
+    applyChatEvent(client, "u1", 0, {
       op: "e",
       t: "c",
       s: "s1",
@@ -80,18 +80,18 @@ describe("applyChatEvent", () => {
       },
     });
     const cache = client.getQueryData<{ pages: MessagePage[] }>(
-      messageKeys.channel("c1"),
+      messageKeys.channel("u1", 0, "c1"),
     );
     expect(cache?.pages[0]?.messages[0]?.attachments).toEqual([]);
   });
 
   it("does not duplicate an id already in the page", () => {
     const client = new QueryClient();
-    client.setQueryData(messageKeys.channel("c1"), {
+    client.setQueryData(messageKeys.channel("u1", 0, "c1"), {
       pages: [{ messages: [msg("a")], has_more: false }],
       pageParams: [undefined],
     });
-    applyChatEvent(client, {
+    applyChatEvent(client, "u1", 0, {
       op: "e",
       t: "c",
       s: "s1",
@@ -101,7 +101,7 @@ describe("applyChatEvent", () => {
       d: msg("a"),
     });
     const cache = client.getQueryData<{ pages: MessagePage[] }>(
-      messageKeys.channel("c1"),
+      messageKeys.channel("u1", 0, "c1"),
     );
     expect(cache?.pages[0]?.messages.map((m) => m.id)).toEqual(["a"]);
   });
