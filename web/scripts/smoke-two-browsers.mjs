@@ -54,7 +54,7 @@ async function participant(name) {
   await page.getByLabel("Name").fill(name);
   await page
     .getByLabel("E-Mail-Adresse")
-    .fill(`smoke-${name}-${suffix}@example.test`);
+    .fill(`smoke-${name.toLowerCase().replace(/[^a-z0-9]+/g, "-")}-${suffix}@example.test`);
   await page.getByLabel("Passwort").fill(password);
   await page.getByRole("button", { name: "Registrieren" }).click();
   await page.waitForURL((url) => !url.pathname.includes("register"));
