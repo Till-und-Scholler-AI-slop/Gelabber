@@ -132,7 +132,10 @@ export type PeerConnection = {
   ): void;
   removeTrack?(sender: RtpSender): void;
   getSenders?(): RtpSender[];
-  createOffer(): Promise<{ type: string; sdp?: string }>;
+  createOffer(options?: { iceRestart?: boolean }): Promise<{
+    type: string;
+    sdp?: string;
+  }>;
   createAnswer(): Promise<{ type: string; sdp?: string }>;
   setLocalDescription(desc: { type: string; sdp?: string }): Promise<void>;
   setRemoteDescription(desc: { type: string; sdp?: string }): Promise<void>;
@@ -146,6 +149,10 @@ export type PeerConnection = {
     sdpMid: string | null;
   }): Promise<void>;
   close(): void;
+  iceConnectionState?: string;
+  connectionState?: string;
+  oniceconnectionstatechange: (() => void) | null;
+  onconnectionstatechange: (() => void) | null;
   remoteDescription?: { type: string } | null;
   signalingState?: string;
 };
@@ -218,6 +225,12 @@ const pendingCameraStreams = new Set<MediaStream>();
 
 /** Watch media peer. `watchLive` / `stopWatching` hold this object. */
 let watchCall = new MediaPeer();
+
+const ICE_DISCONNECTED_RESTART_DELAY_MS = 2_000;
+let seatIceRestartedGeneration = 0;
+let seatReconnectTimer: ReturnType<typeof setTimeout> | null = null;
+let watchIceRestartedGeneration = 0;
+let watchReconnectTimer: ReturnType<typeof setTimeout> | null = null;
 
 function logVoice(
   level: "info" | "warn",
@@ -668,8 +681,22 @@ function stopTracks(stream: MediaStream | null): void {
   stream?.getTracks().forEach((track) => track.stop());
 }
 
+function clearSeatReconnectTimer(): void {
+  if (!seatReconnectTimer) return;
+  clearTimeout(seatReconnectTimer);
+  seatReconnectTimer = null;
+}
+
+function clearWatchReconnectTimer(): void {
+  if (!watchReconnectTimer) return;
+  clearTimeout(watchReconnectTimer);
+  watchReconnectTimer = null;
+}
+
 function stopPeer(): void {
   streamReported = false;
+  clearSeatReconnectTimer();
+  seatIceRestartedGeneration = 0;
   seat.close();
   micEpoch += 1;
   cameraEpoch += 1;
@@ -1562,6 +1589,95 @@ async function applyRemoteIce(candidate: IceCand, mine: number): Promise<void> {
   seat.pendingIce.push(candidate);
 }
 
+function restartSeatTransport(
+  mine: number,
+  options?: { allowReconnect?: boolean },
+): void {
+  if (seat.generation !== mine) return;
+  const state = useVoice.getState();
+  if (state.status !== "joined" || !state.serverId || !state.channelId) return;
+  if (!seat.pc) return;
+  if (seatIceRestartedGeneration !== mine) {
+    seatIceRestartedGeneration = mine;
+    void offerIfStable(mine, { fromEvent: true, iceRestart: true });
+    return;
+  }
+  if (options?.allowReconnect === false) return;
+  void startPeer(state.serverId, state.channelId);
+}
+
+function onSeatConnectionChange(mine: number): void {
+  if (seat.generation !== mine) return;
+  const pc = seat.pc;
+  if (!pc) return;
+  const state = pc.iceConnectionState ?? pc.connectionState ?? "";
+  if (state === "connected" || state === "completed") {
+    clearSeatReconnectTimer();
+    seatIceRestartedGeneration = 0;
+    return;
+  }
+  if (state === "failed") {
+    clearSeatReconnectTimer();
+    restartSeatTransport(mine);
+    return;
+  }
+  if (state === "disconnected") {
+    clearSeatReconnectTimer();
+    seatReconnectTimer = setTimeout(() => {
+      seatReconnectTimer = null;
+      if (seat.generation !== mine) return;
+      const latest = seat.pc?.iceConnectionState ?? seat.pc?.connectionState ?? "";
+      if (latest === "connected" || latest === "completed") return;
+      restartSeatTransport(mine);
+    }, ICE_DISCONNECTED_RESTART_DELAY_MS);
+  }
+}
+
+function restartWatchTransport(
+  mine: number,
+  options?: { allowReconnect?: boolean },
+): void {
+  if (watchCall.generation !== mine) return;
+  const state = useVoice.getState();
+  if (!state.watching || !state.watchChannelId) return;
+  if (!watchCall.pc) return;
+  if (watchIceRestartedGeneration !== mine) {
+    watchIceRestartedGeneration = mine;
+    void watchOfferIfStable(mine, { fromEvent: true, iceRestart: true });
+    return;
+  }
+  if (options?.allowReconnect === false) return;
+  void startWatchPeer(state.watchChannelId);
+}
+
+function onWatchConnectionChange(mine: number): void {
+  if (watchCall.generation !== mine) return;
+  const pc = watchCall.pc;
+  if (!pc) return;
+  const state = pc.iceConnectionState ?? pc.connectionState ?? "";
+  if (state === "connected" || state === "completed") {
+    clearWatchReconnectTimer();
+    watchIceRestartedGeneration = 0;
+    return;
+  }
+  if (state === "failed") {
+    clearWatchReconnectTimer();
+    restartWatchTransport(mine);
+    return;
+  }
+  if (state === "disconnected") {
+    clearWatchReconnectTimer();
+    watchReconnectTimer = setTimeout(() => {
+      watchReconnectTimer = null;
+      if (watchCall.generation !== mine) return;
+      const latest =
+        watchCall.pc?.iceConnectionState ?? watchCall.pc?.connectionState ?? "";
+      if (latest === "connected" || latest === "completed") return;
+      restartWatchTransport(mine);
+    }, ICE_DISCONNECTED_RESTART_DELAY_MS);
+  }
+}
+
 function onMediaFrame(frame: MediaServerFrame): void {
   const mine = seat.generation;
   if (frame.op === "ok") {
@@ -1570,7 +1686,10 @@ function onMediaFrame(frame: MediaServerFrame): void {
   }
   if (frame.op === "err") {
     logVoice("warn", "media-error", { op: frame.op, code: frame.e });
-    if (frame.e === "ice_failed") return;
+    if (frame.e === "ice_failed") {
+      restartSeatTransport(mine, { allowReconnect: false });
+      return;
+    }
     if (frame.e === "unavailable") {
       deps?.onError?.(new Error("Kein freier Sprachplatz."));
       // Drop this attempt, its queued signaling, and the local capture.
@@ -1881,6 +2000,8 @@ export function resetVoiceForTests(): void {
   seat.pendingIce = [];
   audioCommitChain = Promise.resolve();
   cameraCommitChain = Promise.resolve();
+  clearSeatReconnectTimer();
+  clearWatchReconnectTimer();
   stopWatchPeer();
   stopPeer();
   seat = new MediaPeer();
@@ -2093,7 +2214,7 @@ function attachIncoming(track: MediaStreamTrack, stream?: MediaStream): void {
 
 async function offerIfStable(
   mine: number,
-  opts?: { initial?: boolean; fromEvent?: boolean },
+  opts?: { initial?: boolean; fromEvent?: boolean; iceRestart?: boolean },
 ): Promise<void> {
   if (discardingPublish) return;
   await seat.enqueue(async () => {
@@ -2103,24 +2224,32 @@ async function offerIfStable(
     if (seat.makingOffer || seat.signalingState() !== "stable") {
       // Sticky only for explicit publish/unpublish. negotiationneeded
       // fires again once we are stable (W3C perfect negotiation).
-      if (!opts?.initial && !opts?.fromEvent) seat.needOffer = true;
+      if (opts?.iceRestart || (!opts?.initial && !opts?.fromEvent)) {
+        seat.needOffer = true;
+      }
       return;
     }
     seat.makingOffer = true;
     seat.needOffer = false;
     try {
       if (seat.signalingState() !== "stable") {
-        if (!opts?.initial && !opts?.fromEvent) seat.needOffer = true;
+        if (opts?.iceRestart || (!opts?.initial && !opts?.fromEvent)) {
+          seat.needOffer = true;
+        }
         return;
       }
       if (opts?.initial && seat.sfuOffered) return;
       preferOpus(seat.pc);
       preferVp8(seat.pc);
       const pc = seat.pc;
-      const offer = withTunedSdp(await pc.createOffer());
+      const offer = withTunedSdp(
+        await pc.createOffer(opts?.iceRestart ? { iceRestart: true } : undefined),
+      );
       if (seat.generation !== mine) return;
       if (seat.signalingState() !== "stable") {
-        if (!opts?.initial && !opts?.fromEvent) seat.needOffer = true;
+        if (opts?.iceRestart || (!opts?.initial && !opts?.fromEvent)) {
+          seat.needOffer = true;
+        }
         return;
       }
       await pc.setLocalDescription(offer);
@@ -2179,10 +2308,18 @@ async function startPeer(serverId: string, channelId: string): Promise<void> {
 
   const pc = createPeer(iceServers);
   seat.pc = pc;
+  clearSeatReconnectTimer();
+  seatIceRestartedGeneration = 0;
 
   pc.onnegotiationneeded = () => {
     if (seat.generation !== mine) return;
     void offerIfStable(mine, { fromEvent: true });
+  };
+  pc.oniceconnectionstatechange = () => {
+    onSeatConnectionChange(mine);
+  };
+  pc.onconnectionstatechange = () => {
+    onSeatConnectionChange(mine);
   };
   pc.onicecandidate = (event) => {
     if (seat.generation !== mine) return;
@@ -2282,6 +2419,8 @@ async function startPeer(serverId: string, channelId: string): Promise<void> {
 
 function stopWatchPeer(): void {
   watchReported = false;
+  clearWatchReconnectTimer();
+  watchIceRestartedGeneration = 0;
   watchCall.close();
   if (watchAudio) {
     watchAudio.srcObject = null;
@@ -2392,7 +2531,10 @@ function onWatchFrame(frame: MediaServerFrame): void {
   }
   if (frame.op === "err") {
     logVoice("warn", "watch-error", { op: frame.op, code: frame.e });
-    if (frame.e === "ice_failed") return;
+    if (frame.e === "ice_failed") {
+      restartWatchTransport(mine, { allowReconnect: false });
+      return;
+    }
     if (frame.e === "unavailable") {
       if (watchReported) return;
       watchReported = true;
@@ -2443,30 +2585,38 @@ function onWatchFrame(frame: MediaServerFrame): void {
 
 async function watchOfferIfStable(
   mine: number,
-  opts?: { initial?: boolean; fromEvent?: boolean },
+  opts?: { initial?: boolean; fromEvent?: boolean; iceRestart?: boolean },
 ): Promise<void> {
   await watchCall.enqueue(async () => {
     if (watchCall.generation !== mine || !watchCall.pc) return;
     if (opts?.initial && watchCall.sfuOffered) return;
     if (watchCall.makingOffer || watchCall.signalingState() !== "stable") {
-      if (!opts?.initial && !opts?.fromEvent) watchCall.needOffer = true;
+      if (opts?.iceRestart || (!opts?.initial && !opts?.fromEvent)) {
+        watchCall.needOffer = true;
+      }
       return;
     }
     watchCall.makingOffer = true;
     watchCall.needOffer = false;
     try {
       if (watchCall.signalingState() !== "stable") {
-        if (!opts?.initial && !opts?.fromEvent) watchCall.needOffer = true;
+        if (opts?.iceRestart || (!opts?.initial && !opts?.fromEvent)) {
+          watchCall.needOffer = true;
+        }
         return;
       }
       if (opts?.initial && watchCall.sfuOffered) return;
       preferOpus(watchCall.pc);
       preferVp8(watchCall.pc);
       const pc = watchCall.pc;
-      const offer = withTunedSdp(await pc.createOffer());
+      const offer = withTunedSdp(
+        await pc.createOffer(opts?.iceRestart ? { iceRestart: true } : undefined),
+      );
       if (watchCall.generation !== mine) return;
       if (watchCall.signalingState() !== "stable") {
-        if (!opts?.initial && !opts?.fromEvent) watchCall.needOffer = true;
+        if (opts?.iceRestart || (!opts?.initial && !opts?.fromEvent)) {
+          watchCall.needOffer = true;
+        }
         return;
       }
       await pc.setLocalDescription(offer);
@@ -2519,9 +2669,17 @@ async function startWatchPeer(channelId: string): Promise<void> {
 
   const pc = createPeer(iceServers);
   watchCall.pc = pc;
+  clearWatchReconnectTimer();
+  watchIceRestartedGeneration = 0;
   pc.onnegotiationneeded = () => {
     if (watchCall.generation !== mine) return;
     void watchOfferIfStable(mine, { fromEvent: true });
+  };
+  pc.oniceconnectionstatechange = () => {
+    onWatchConnectionChange(mine);
+  };
+  pc.onconnectionstatechange = () => {
+    onWatchConnectionChange(mine);
   };
   // Recvonly m-lines so the offer carries ice-ufrag. webrtc-rs rejects
   // an empty offer with "set_remote_description called with no ice-ufrag".

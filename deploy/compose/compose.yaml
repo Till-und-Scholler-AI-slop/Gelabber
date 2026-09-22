@@ -49,6 +49,8 @@ services:
       TURN_URLS: ${TURN_URLS:-stun:${TURN_PUBLIC_HOST:-127.0.0.1}:${TURN_PORT:-3478},turn:${TURN_PUBLIC_HOST:-127.0.0.1}:${TURN_PORT:-3478}}
       TURN_USERNAME: ${TURN_USERNAME:-gelabber}
       TURN_PASSWORD: ${TURN_PASSWORD:-gelabberturn}
+      TURN_AUTH_SECRET: ${TURN_AUTH_SECRET:-gelabberturnsecret}
+      TURN_CRED_TTL_SECS: ${TURN_CRED_TTL_SECS:-21600}
       MEDIA_TICKET_TTL_SECS: "30"
     expose:
       - "8080"
@@ -99,6 +101,8 @@ services:
       - --max-port=${TURN_RELAY_MAX:-49200}
       - --fingerprint
       - --lt-cred-mech
+      - --use-auth-secret
+      - --static-auth-secret=${TURN_AUTH_SECRET:-gelabberturnsecret}
       - --user=${TURN_USERNAME:-gelabber}:${TURN_PASSWORD:-gelabberturn}
       - --realm=${TURN_REALM:-gelabber.local}
       # coturn 4.18.0: CLI/DTLS off by default. `--no-cli` errors; `--no-dtls` unknown.

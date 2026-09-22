@@ -31,13 +31,18 @@ class FakePeer implements PeerConnection {
   onicecandidate: PeerConnection["onicecandidate"] = null;
   ontrack: PeerConnection["ontrack"] = null;
   onnegotiationneeded: PeerConnection["onnegotiationneeded"] = null;
+  oniceconnectionstatechange: PeerConnection["oniceconnectionstatechange"] = null;
+  onconnectionstatechange: PeerConnection["onconnectionstatechange"] = null;
   remoteDescription: { type: string } | null = null;
   signalingState = "stable";
+  iceConnectionState = "new";
+  connectionState = "new";
   closed = false;
   tracks = 0;
   audio: MediaStreamTrack | null = null;
   senders: RtpSender[] = [];
   ice: { candidate: string; sdpMid: string | null }[] = [];
+  offerOptions: Array<{ iceRestart?: boolean } | undefined> = [];
   iceServers: IceServer[];
 
   constructor(iceServers: IceServer[] = []) {
@@ -79,10 +84,13 @@ class FakePeer implements PeerConnection {
     return this.senders;
   }
 
-  async createOffer(): Promise<{ type: string; sdp?: string }> {
+  async createOffer(options?: {
+    iceRestart?: boolean;
+  }): Promise<{ type: string; sdp?: string }> {
     if (this.signalingState !== "stable") {
       throw new Error("InvalidStateError");
     }
+    this.offerOptions.push(options);
     return { type: "offer", sdp: "v=0\r\no=- 1 1 IN IP4 127.0.0.1\r\n" };
   }
 
@@ -124,6 +132,11 @@ class FakePeer implements PeerConnection {
 
   close(): void {
     this.closed = true;
+  }
+
+  setIce(state: string): void {
+    this.iceConnectionState = state;
+    this.oniceconnectionstatechange?.();
   }
 }
 
@@ -1740,6 +1753,17 @@ describe("stream negotiation stability", () => {
     expect(env.errors).toHaveLength(0);
     env.emitMedia({ op: "err", e: "unauthorized" });
     expect(useVoice.getState().status).toBe("idle");
+  });
+  it("restarts ICE once on failed transport and stays joined", async () => {
+    const env = await connected();
+    env.peers[0]?.setIce("failed");
+    await vi.waitFor(() =>
+      expect(env.peers[0]?.offerOptions.some((opt) => opt?.iceRestart)).toBe(
+        true,
+      ),
+    );
+    expect(useVoice.getState().status).toBe("joined");
+    expect(env.peers[0]?.closed).toBe(false);
   });
   it("does not apply an old remote-offer continuation to a rejoined peer", async () => {
     const env = await connected();

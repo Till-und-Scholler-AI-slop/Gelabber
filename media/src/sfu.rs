@@ -6,7 +6,7 @@ use std::collections::{HashMap, VecDeque};
 use std::net::SocketAddr;
 use std::sync::Arc;
 use std::sync::atomic::{AtomicU64, Ordering};
-use std::time::Duration;
+use std::time::{Duration, Instant};
 
 use rtc::media_stream::MediaStreamTrack;
 use rtc::peer_connection::configuration::media_engine::{
@@ -264,6 +264,10 @@ struct SfuStats {
     peers: AtomicU64,
     forwarded_bytes: AtomicU64,
     ice_fails: AtomicU64,
+    rtp_packets_total: AtomicU64,
+    rtp_lost_total: AtomicU64,
+    rtp_jitter_micros_total: AtomicU64,
+    rtp_jitter_samples_total: AtomicU64,
 }
 
 impl Sfu {
@@ -291,6 +295,15 @@ impl Sfu {
         let peers = self.stats.peers.load(Ordering::Relaxed);
         let forwarded = self.stats.forwarded_bytes.load(Ordering::Relaxed);
         let ice_fails = self.stats.ice_fails.load(Ordering::Relaxed);
+        let rtp_packets = self.stats.rtp_packets_total.load(Ordering::Relaxed);
+        let rtp_lost = self.stats.rtp_lost_total.load(Ordering::Relaxed);
+        let jitter_micros_total = self.stats.rtp_jitter_micros_total.load(Ordering::Relaxed);
+        let jitter_samples_total = self.stats.rtp_jitter_samples_total.load(Ordering::Relaxed);
+        let jitter_ms = if jitter_samples_total == 0 {
+            0.0
+        } else {
+            jitter_micros_total as f64 / jitter_samples_total as f64 / 1_000.0
+        };
         format!(
             "# HELP gelabber_media_rooms Active SFU rooms (voice channels with at least one peer).\n\
              # TYPE gelabber_media_rooms gauge\n\
@@ -303,7 +316,16 @@ impl Sfu {
              gelabber_media_forwarded_bytes_total {forwarded}\n\
              # HELP gelabber_media_ice_fails_total Peer connections that entered the ICE failed state.\n\
              # TYPE gelabber_media_ice_fails_total counter\n\
-             gelabber_media_ice_fails_total {ice_fails}\n"
+             gelabber_media_ice_fails_total {ice_fails}\n\
+             # HELP gelabber_media_rtp_packets_total RTP packets received from publishers.\n\
+             # TYPE gelabber_media_rtp_packets_total counter\n\
+             gelabber_media_rtp_packets_total {rtp_packets}\n\
+             # HELP gelabber_media_rtp_lost_total RTP packets estimated as lost from sequence gaps.\n\
+             # TYPE gelabber_media_rtp_lost_total counter\n\
+             gelabber_media_rtp_lost_total {rtp_lost}\n\
+             # HELP gelabber_media_rtp_jitter_ms Publisher inter-arrival jitter estimate in milliseconds.\n\
+             # TYPE gelabber_media_rtp_jitter_ms gauge\n\
+             gelabber_media_rtp_jitter_ms {jitter_ms:.3}\n"
         )
     }
 
@@ -771,13 +793,28 @@ impl Sfu {
         };
         let stream_id = format!("{user_id}:{kind_tag}");
         let pub_id = format!("{}:{track_id}", publisher.0);
+        let clock_rate = codec.clock_rate;
         let (packets, _) = broadcast::channel(RTP_Q);
         let keyframe = if kind == RtpCodecKind::Video {
             let (tx, rx) = mpsc::unbounded_channel();
-            spawn_publisher_readout(Arc::clone(&track), ssrc, packets.clone(), Some(rx));
+            spawn_publisher_readout(
+                Arc::clone(&track),
+                ssrc,
+                packets.clone(),
+                Some(rx),
+                Arc::clone(&self.stats),
+                clock_rate,
+            );
             Some(tx)
         } else {
-            spawn_publisher_readout(Arc::clone(&track), ssrc, packets.clone(), None);
+            spawn_publisher_readout(
+                Arc::clone(&track),
+                ssrc,
+                packets.clone(),
+                None,
+                Arc::clone(&self.stats),
+                clock_rate,
+            );
             None
         };
 
@@ -1147,13 +1184,16 @@ fn spawn_publisher_readout(
     ssrc: u32,
     packets: broadcast::Sender<rtp::Packet>,
     mut keyframes: Option<mpsc::UnboundedReceiver<()>>,
+    stats: Arc<SfuStats>,
+    clock_rate: u32,
 ) {
     tokio::spawn(async move {
+        let mut rtp = PublisherRtpStats::new(clock_rate);
         loop {
             if let Some(kf) = keyframes.as_mut() {
                 tokio::select! {
                     evt = track.poll() => {
-                        if !handle_publisher_event(&packets, evt) {
+                        if !handle_publisher_event(&packets, &stats, &mut rtp, evt) {
                             break;
                         }
                     }
@@ -1167,7 +1207,7 @@ fn spawn_publisher_readout(
                 }
             } else {
                 let evt = track.poll().await;
-                if !handle_publisher_event(&packets, evt) {
+                if !handle_publisher_event(&packets, &stats, &mut rtp, evt) {
                     break;
                 }
             }
@@ -1177,15 +1217,74 @@ fn spawn_publisher_readout(
 
 fn handle_publisher_event(
     packets: &broadcast::Sender<rtp::Packet>,
+    stats: &SfuStats,
+    rtp: &mut PublisherRtpStats,
     evt: Option<TrackRemoteEvent>,
 ) -> bool {
     match evt {
         Some(TrackRemoteEvent::OnRtpPacket(packet)) => {
+            rtp.observe(&packet, stats);
             let _ = packets.send(packet);
             true
         }
         Some(TrackRemoteEvent::OnEnded | TrackRemoteEvent::OnError) | None => false,
         Some(_) => true,
+    }
+}
+
+#[derive(Debug)]
+struct PublisherRtpStats {
+    clock_rate: f64,
+    last_sequence: Option<u16>,
+    last_arrival: Option<Instant>,
+    last_timestamp: Option<u32>,
+    jitter_seconds: f64,
+}
+
+impl PublisherRtpStats {
+    fn new(clock_rate: u32) -> Self {
+        Self {
+            clock_rate: clock_rate as f64,
+            last_sequence: None,
+            last_arrival: None,
+            last_timestamp: None,
+            jitter_seconds: 0.0,
+        }
+    }
+
+    fn observe(&mut self, packet: &rtp::Packet, stats: &SfuStats) {
+        stats.rtp_packets_total.fetch_add(1, Ordering::Relaxed);
+        let seq = packet.header.sequence_number;
+        if let Some(prev) = self.last_sequence {
+            let step = seq.wrapping_sub(prev);
+            if step > 1 && step < 0x8000 {
+                stats
+                    .rtp_lost_total
+                    .fetch_add((step - 1) as u64, Ordering::Relaxed);
+            }
+        }
+        self.last_sequence = Some(seq);
+
+        if self.clock_rate <= 0.0 {
+            return;
+        }
+        let now = Instant::now();
+        let ts = packet.header.timestamp;
+        if let (Some(last_arrival), Some(last_timestamp)) =
+            (self.last_arrival, self.last_timestamp)
+        {
+            let arrival_delta = now.saturating_duration_since(last_arrival).as_secs_f64();
+            let rtp_delta = ts.wrapping_sub(last_timestamp) as f64 / self.clock_rate;
+            let d = (arrival_delta - rtp_delta).abs();
+            self.jitter_seconds += (d - self.jitter_seconds) / 16.0;
+            let jitter_micros = (self.jitter_seconds * 1_000_000.0).round() as u64;
+            stats
+                .rtp_jitter_micros_total
+                .fetch_add(jitter_micros, Ordering::Relaxed);
+            stats.rtp_jitter_samples_total.fetch_add(1, Ordering::Relaxed);
+        }
+        self.last_arrival = Some(now);
+        self.last_timestamp = Some(ts);
     }
 }
 
@@ -1225,7 +1324,7 @@ fn register_sfu_codecs(media: &mut MediaEngine) -> webrtc::error::Result<()> {
                 mime_type: MIME_TYPE_OPUS.to_owned(),
                 clock_rate: 48000,
                 channels: 2,
-                sdp_fmtp_line: "minptime=10;useinbandfec=1".to_owned(),
+                sdp_fmtp_line: "minptime=10;useinbandfec=1;usedtx=1".to_owned(),
                 rtcp_feedback: vec![],
             },
             payload_type: 111,
