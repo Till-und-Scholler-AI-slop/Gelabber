@@ -7,10 +7,11 @@ import { Link } from "@tanstack/react-router";
 import { useVirtualizer } from "@tanstack/react-virtual";
 import { useRef, useState } from "react";
 
+import { useUserId } from "../auth/scope.ts";
 import { lastDmStillListed } from "../dms/open.ts";
 import { prefetchDms, useDms } from "../dms/queries.ts";
-import { useLastDm } from "../dms/lastDm.ts";
-import { useLastChannel } from "../servers/lastChannel.ts";
+import { lastDmId, useLastDm } from "../dms/lastDm.ts";
+import { lastChannelsFor, useLastChannel } from "../servers/lastChannel.ts";
 import { prefetchServer, useServers } from "../servers/queries.ts";
 import type { Server } from "../servers/types.ts";
 import { ChatIcon, PlusIcon } from "./Icons.tsx";
@@ -54,9 +55,11 @@ export function ServerRail({
 
 function HomeTile({ active }: { active: boolean }) {
   const client = useQueryClient();
-  const lastDmId = useLastDm((s) => s.channelId);
+  const userId = useUserId();
+  const byUser = useLastDm((s) => s.byUser);
+  const remembered = lastDmId(byUser, userId);
   const { data: dms } = useDms();
-  const openId = lastDmStillListed(lastDmId, dms) ? lastDmId : null;
+  const openId = lastDmStillListed(remembered, dms) ? remembered : null;
 
   return (
     <div className="relative flex h-14 items-center">
@@ -73,8 +76,12 @@ function HomeTile({ active }: { active: boolean }) {
         title="Direktnachrichten"
         aria-label="Direktnachrichten"
         aria-current={active ? "page" : undefined}
-        onMouseEnter={() => prefetchDms(client)}
-        onFocus={() => prefetchDms(client)}
+        onMouseEnter={() => {
+          if (userId) prefetchDms(client, userId);
+        }}
+        onFocus={() => {
+          if (userId) prefetchDms(client, userId);
+        }}
         className={[
           "flex size-12 items-center justify-center text-sm font-semibold transition-all select-none",
           active
@@ -132,7 +139,9 @@ function ServerList({
 
 function ServerTile({ server, active }: { server: Server; active: boolean }) {
   const client = useQueryClient();
-  const lastChannelId = useLastChannel((s) => s.byServer[server.id]);
+  const userId = useUserId();
+  const byUser = useLastChannel((s) => s.byUser);
+  const lastChannelId = lastChannelsFor(byUser, userId)[server.id];
 
   return (
     <div className="relative flex h-14 items-center">
@@ -153,8 +162,12 @@ function ServerTile({ server, active }: { server: Server; active: boolean }) {
         title={server.name}
         aria-label={server.name}
         aria-current={active ? "page" : undefined}
-        onMouseEnter={() => prefetchServer(client, server.id)}
-        onFocus={() => prefetchServer(client, server.id)}
+        onMouseEnter={() => {
+          if (userId) prefetchServer(client, userId, server.id);
+        }}
+        onFocus={() => {
+          if (userId) prefetchServer(client, userId, server.id);
+        }}
         className={[
           "flex size-12 items-center justify-center text-sm font-semibold transition-all select-none",
           active

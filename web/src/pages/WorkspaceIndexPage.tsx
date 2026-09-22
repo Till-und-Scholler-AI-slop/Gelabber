@@ -3,15 +3,18 @@
 import { Redirect } from "../components/Redirect.tsx";
 import { useState } from "react";
 
+import { useUserId } from "../auth/scope.ts";
 import { useSession } from "../auth/session.ts";
 import { CreateServerDialog } from "../components/ServerDialogs.tsx";
-import { useLastChannel } from "../servers/lastChannel.ts";
+import { lastChannelsFor, useLastChannel } from "../servers/lastChannel.ts";
 import { useServers } from "../servers/queries.ts";
 
 export function WorkspaceIndexPage() {
   const user = useSession((state) => state.user);
+  const userId = useUserId();
   const { data: servers, isPending, isError } = useServers();
-  const lastByServer = useLastChannel((s) => s.byServer);
+  const byUser = useLastChannel((s) => s.byUser);
+  const lastByServer = lastChannelsFor(byUser, userId);
   const [creating, setCreating] = useState(false);
 
   const first = servers?.[0];

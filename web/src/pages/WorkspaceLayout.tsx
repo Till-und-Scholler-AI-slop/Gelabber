@@ -11,6 +11,7 @@ import {
 import { useEffect } from "react";
 
 import { ApiError } from "../api/client.ts";
+import { useUserId } from "../auth/scope.ts";
 import { ChannelSidebar } from "../components/ChannelSidebar.tsx";
 import { DmSidebar } from "../components/DmSidebar.tsx";
 import { RequireUser } from "../components/RequireUser.tsx";
@@ -56,6 +57,7 @@ function SelectedServer({
 }) {
   const client = useQueryClient();
   const navigate = useNavigate();
+  const userId = useUserId();
   const { data: server, error } = useServer(serverId);
   const gone =
     error instanceof ApiError &&
@@ -66,11 +68,12 @@ function SelectedServer({
     // Deleted, or we were removed: drop it from the rail and go home. The
     // cached detail is removed only after this component is gone, otherwise
     // the still-mounted query would refetch and 404 again.
-    forgetServer(client, serverId, { keepDetail: true });
+    if (!userId) return;
+    forgetServer(client, userId, serverId, { keepDetail: true });
     void navigate({ to: "/", replace: true }).then(() =>
-      forgetServer(client, serverId),
+      forgetServer(client, userId, serverId),
     );
-  }, [gone, client, navigate, serverId]);
+  }, [gone, client, navigate, serverId, userId]);
 
   if (gone) return null;
 

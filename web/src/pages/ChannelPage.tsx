@@ -4,6 +4,7 @@
 import { useParams } from "@tanstack/react-router";
 import { useEffect } from "react";
 
+import { useUserId } from "../auth/scope.ts";
 import { HashIcon, SpeakerIcon } from "../components/Icons.tsx";
 import { MemberPanel } from "../components/MemberPanel.tsx";
 import { MessagePane } from "../components/MessagePane.tsx";
@@ -22,12 +23,13 @@ export function ChannelPage() {
     from: "/workspace/s/$serverId/c/$channelId",
   });
   const { data: server } = useServer(serverId);
+  const userId = useUserId();
   const remember = useLastChannel((s) => s.remember);
   const channel = server?.channels.find((c) => c.id === channelId);
 
   useEffect(() => {
-    if (channel) remember(serverId, channel.id);
-  }, [channel, serverId, remember]);
+    if (channel && userId) remember(userId, serverId, channel.id);
+  }, [channel, serverId, remember, userId]);
 
   if (!server) return null;
   if (!channel) {

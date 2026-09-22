@@ -16,20 +16,18 @@ import { topicKey, type Topic } from "./protocol.ts";
 import { useLiveBridge } from "./useLive.ts";
 import { useRealtimeBridge } from "./useRealtime.ts";
 
-export function useGatewaySession(authenticated: boolean): void {
+export function useGatewaySession(userId: string | null): void {
   useEffect(() => {
     const gateway = getGateway();
-    if (authenticated) {
+    if (userId) {
       gateway.start();
       return () => {
-        gateway.setTopics([]);
-        gateway.stop();
+        gateway.resetSession();
       };
     }
-    gateway.setTopics([]);
-    gateway.stop();
+    gateway.resetSession();
     return undefined;
-  }, [authenticated]);
+  }, [userId]);
 }
 
 /** Deduped topic list; first entry for a key wins. */

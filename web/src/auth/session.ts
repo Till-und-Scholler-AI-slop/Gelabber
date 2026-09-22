@@ -5,6 +5,7 @@
 import { create } from "zustand";
 
 import { api, setCsrfToken, setSessionSink } from "../api/client.ts";
+import { releaseUserScope } from "./release.ts";
 import type {
   LogoutResponse,
   ProfilePatch,
@@ -25,10 +26,17 @@ export const useSession = create<SessionState>(() => ({
 }));
 
 function applySession(user: User | null): void {
+  const previousId = useSession.getState().user?.id ?? null;
+  const nextId = user?.id ?? null;
   useSession.setState({
     status: user ? "authenticated" : "anonymous",
     user,
   });
+  // Same account (profile rename, CSRF refresh) keeps its cache. A different
+  // id, or nobody, drops the previous account before the next paint.
+  if (previousId !== nextId) {
+    releaseUserScope(nextId);
+  }
 }
 
 function isUser(value: unknown): value is User {
@@ -150,4 +158,5 @@ export function resetSessionForTests(): void {
   setCsrfToken(null);
   setSessionSink((value) => applySession(isUser(value) ? value : null));
   useSession.setState({ status: "unknown", user: null });
+  releaseUserScope(null);
 }

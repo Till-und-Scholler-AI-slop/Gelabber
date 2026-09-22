@@ -42,10 +42,15 @@ function emptyCache(): Cache {
   };
 }
 
-export function applyChatEvent(client: QueryClient, event: ChatEvent): void {
+export function applyChatEvent(
+  client: QueryClient,
+  userId: string,
+  generation: number,
+  event: ChatEvent,
+): void {
   const channelId = event.c;
-  if (!channelId) return;
-  const key = messageKeys.channel(channelId);
+  if (!channelId || userId.length === 0) return;
+  const key = messageKeys.channel(userId, generation, channelId);
 
   if (event.t === "c") {
     const message = asMessage(event.d);

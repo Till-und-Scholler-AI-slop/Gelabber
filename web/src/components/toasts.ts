@@ -42,6 +42,10 @@ export const useToasts = create<ToastState>((set) => ({
     set((state) => ({ toasts: state.toasts.filter((t) => t.id !== id) })),
 }));
 
+export function clearToasts(): void {
+  useToasts.setState({ toasts: [] });
+}
+
 export function notify(message: string): void {
   useToasts.getState().push("info", message);
 }

@@ -25,7 +25,7 @@ function cache(
   channelId: string,
   messages: Message[],
 ): void {
-  client.setQueryData(messageKeys.channel(channelId), {
+  client.setQueryData(messageKeys.channel("u1", 0, channelId), {
     pages: [{ messages, has_more: true, older: "stamp" }] satisfies MessagePage[],
     pageParams: [undefined],
   });
@@ -35,9 +35,9 @@ describe("apply channel events", () => {
   it("removes a deleted row and keeps the page cursor", () => {
     const client = new QueryClient();
     cache(client, "c1", [msg("a"), msg("b"), msg("c")]);
-    applyMessageDeleted(client, "c1", "b");
+    applyMessageDeleted(client, "u1", 0, "c1", "b");
     const data = client.getQueryData<{ pages: MessagePage[] }>(
-      messageKeys.channel("c1"),
+      messageKeys.channel("u1", 0, "c1"),
     );
     expect(data?.pages[0]?.messages.map((m) => m.id)).toEqual(["a", "c"]);
     expect(data?.pages[0]?.older).toBe("stamp");
@@ -47,21 +47,21 @@ describe("apply channel events", () => {
   it("applies create/edit/delete from a compact WS event", () => {
     const client = new QueryClient();
     cache(client, "c1", [msg("a")]);
-    applyChannelEvent(client, {
+    applyChannelEvent(client, "u1", 0, {
       t: "c",
       c: "c1",
       i: "b",
       d: msg("b"),
     });
-    applyChannelEvent(client, {
+    applyChannelEvent(client, "u1", 0, {
       t: "e",
       c: "c1",
       i: "a",
       d: { ...msg("a"), content: "edited" },
     });
-    applyChannelEvent(client, { t: "d", c: "c1", i: "b" });
+    applyChannelEvent(client, "u1", 0, { t: "d", c: "c1", i: "b" });
     const data = client.getQueryData<{ pages: MessagePage[] }>(
-      messageKeys.channel("c1"),
+      messageKeys.channel("u1", 0, "c1"),
     );
     expect(data?.pages[0]?.messages).toEqual([
       { ...msg("a"), content: "edited" },
@@ -71,9 +71,9 @@ describe("apply channel events", () => {
   it("does not duplicate a create that is already in the page", () => {
     const client = new QueryClient();
     cache(client, "c1", [msg("a")]);
-    applyChannelEvent(client, { t: "c", c: "c1", i: "a", d: msg("a") });
+    applyChannelEvent(client, "u1", 0, { t: "c", c: "c1", i: "a", d: msg("a") });
     const data = client.getQueryData<{ pages: MessagePage[] }>(
-      messageKeys.channel("c1"),
+      messageKeys.channel("u1", 0, "c1"),
     );
     expect(data?.pages[0]?.messages).toHaveLength(1);
   });
