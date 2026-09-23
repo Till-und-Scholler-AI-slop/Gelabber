@@ -3,13 +3,16 @@
 // the running SFU and coturn; only camera/screen capture is synthetic.
 /* global process, window, navigator, document, setInterval, clearInterval, console, URL */
 import assert from "node:assert/strict";
+import { execFile } from "node:child_process";
 import { mkdir, readFile } from "node:fs/promises";
 import { setTimeout as pause } from "node:timers/promises";
+import { promisify } from "node:util";
 import { chromium } from "playwright";
 
 const base = process.env.GELABBER_SMOKE_URL ?? "http://127.0.0.1";
 const suffix = `${Date.now()}-${process.pid}`;
 const password = `Smoke-${suffix}-password`;
+const execFileAsync = promisify(execFile);
 const browser = await chromium.launch({
   args: [
     "--use-fake-device-for-media-stream",
@@ -153,6 +156,19 @@ async function waitForAudio(page, threshold, timeoutMs = 30_000) {
   );
 }
 
+async function mediaTc(...args) {
+  const pid = process.env.GELABBER_SMOKE_MEDIA_PID;
+  assert.match(pid ?? "", /^[1-9]\d*$/, "Media container PID is required");
+  return execFileAsync("sudo", ["nsenter", "-t", pid, "-n", "tc", ...args]);
+}
+
+async function droppedPackets() {
+  const { stdout } = await mediaTc("-s", "qdisc", "show", "dev", "eth0");
+  const dropped = /\bdropped (\d+)\b/.exec(stdout)?.[1];
+  assert.ok(dropped !== undefined, `Missing netem drop counter: ${stdout}`);
+  return Number(dropped);
+}
+
 try {
   const a = await participant("Smoke A");
   await a.page
@@ -204,37 +220,33 @@ try {
   await waitForAudio(a.page, { sent: 30, received: 30 });
   const beforeLoss = await waitForAudio(b.page, { sent: 30, received: 30 });
 
-  // CDP packetLoss affects WebRTC packets, including the TURN-relayed audio
-  // path. Keep HTTP/WebSocket online so this specifically exercises Opus/RTP.
-  const cdp = await a.context.newCDPSession(a.page);
-  const network = (packetLoss) =>
-    cdp.send("Network.emulateNetworkConditions", {
-      offline: false,
-      latency: 0,
-      downloadThroughput: -1,
-      uploadThroughput: -1,
-      packetLoss,
-    });
-  try {
-    await network(8);
-    await pause(8_000);
-    const duringLoss = await waitForAudio(b.page, {
-      sent: beforeLoss.sent + 100,
-      received: beforeLoss.received + 100,
-      lost: beforeLoss.lost + 1,
-    });
-    await network(0);
+  if (process.env.GELABBER_SMOKE_MEDIA_PID) {
+    // Shape the media container's outgoing traffic at the OS layer. Browser
+    // DevTools packetLoss does not reliably affect established TURN media.
+    await mediaTc("qdisc", "add", "dev", "eth0", "root", "netem", "loss", "8%");
+    let duringLoss;
+    try {
+      await pause(8_000);
+      duringLoss = await waitForAudio(b.page, {
+        sent: beforeLoss.sent + 100,
+        received: beforeLoss.received + 100,
+      });
+      assert.ok((await droppedPackets()) > 0, "netem dropped no packets");
+    } finally {
+      await mediaTc("qdisc", "del", "dev", "eth0", "root");
+    }
     await waitForAudio(b.page, {
       sent: duringLoss.sent + 100,
       received: duringLoss.received + 100,
     });
-  } finally {
-    await network(0);
-    await cdp.detach();
+    console.log(
+      `TURN-relayed Opus audio flowed through 8% netem packet loss and recovered (receiver reported ${duringLoss.lost - beforeLoss.lost} lost packets).`,
+    );
+  } else {
+    console.log(
+      "Packet-loss segment skipped: no media container PID supplied.",
+    );
   }
-  console.log(
-    "TURN-relayed Opus audio flowed in both directions through 8% simulated WebRTC packet loss and recovered.",
-  );
 
   await a.page
     .getByRole("button", { name: "Bildschirm teilen" })
