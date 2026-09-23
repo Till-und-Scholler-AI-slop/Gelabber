@@ -7,33 +7,79 @@ on:
   push:
     tags:
       - "v*"
+  workflow_run:
+    workflows: ["Publish app images"]
+    types: [completed]
+    branches: [main]
   workflow_dispatch:
     inputs:
       tag:
         description: "Release tag (created on this commit if missing)"
         required: true
-        default: "v0.2.2"
+        default: "v0.2.3"
 
 permissions:
+  actions: read
   contents: write
   packages: write
 
 jobs:
   github-release:
+    if: >-
+      github.event_name != 'workflow_run' ||
+      (github.event.workflow_run.event == 'push' &&
+       github.event.workflow_run.head_branch == 'main' &&
+       github.event.workflow_run.conclusion == 'success')
     runs-on: ubuntu-latest
+    timeout-minutes: 25
     steps:
       - name: Checkout
         uses: actions/checkout@v7
         with:
           fetch-depth: 0
+          ref: ${{ github.event_name == 'workflow_run' && github.event.workflow_run.head_sha || github.sha }}
 
       - name: Create GitHub Release
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
           TAG: ${{ github.event_name == 'workflow_dispatch' && inputs.tag || github.ref_name }}
+          SOURCE_SHA: ${{ github.event_name == 'workflow_run' && github.event.workflow_run.head_sha || github.sha }}
         run: |
           set -euo pipefail
           tag="$TAG"
+          if [ "${{ github.event_name }}" = "workflow_run" ]; then
+            tag="v$(sed -n '/^\[workspace.package\]/,/^\[/{s/^version = "\([^"]*\)"/\1/p}' Cargo.toml | head -n 1)"
+            # A newer main push must not release an older image-build commit.
+            main_sha="$(gh api 'repos/${{ github.repository }}/git/ref/heads/main' --jq .object.sha)"
+            if [ "$main_sha" != "$SOURCE_SHA" ]; then
+              echo "Main moved to $main_sha; skipping obsolete build $SOURCE_SHA."
+              exit 0
+            fi
+            # The app images succeeded; wait for the separate CI and MinIO
+            # image workflows on this exact commit before publishing the tag.
+            for attempt in $(seq 1 80); do
+              runs="$(gh api 'repos/${{ github.repository }}/actions/runs?head_sha='"$SOURCE_SHA"'&per_page=100')"
+              ci="$(jq -r '[.workflow_runs[] | select(.name == "CI" and .event == "push") | .conclusion] | first // ""' <<< "$runs")"
+              minio="$(jq -r '[.workflow_runs[] | select(.name == "Publish MinIO CE image" and .event == "push") | .conclusion] | first // ""' <<< "$runs")"
+              if [ "$ci" = "success" ] && [ "$minio" = "success" ]; then
+                break
+              fi
+              if [ "$ci" = "failure" ] || [ "$minio" = "failure" ]; then
+                echo "Release gates failed: CI=$ci MinIO=$minio."
+                exit 1
+              fi
+              sleep 15
+            done
+            if [ "$ci" != "success" ] || [ "$minio" != "success" ]; then
+              echo "Release gates timed out: CI=$ci MinIO=$minio."
+              exit 1
+            fi
+            main_sha="$(gh api 'repos/${{ github.repository }}/git/ref/heads/main' --jq .object.sha)"
+            if [ "$main_sha" != "$SOURCE_SHA" ]; then
+              echo "Main moved to $main_sha; skipping obsolete build $SOURCE_SHA."
+              exit 0
+            fi
+          fi
           if [ -z "$tag" ] || [ "$tag" = "main" ]; then
             echo "No version tag on this run (got '${tag:-empty}'). Skipping."
             exit 0
@@ -50,13 +96,14 @@ jobs:
             exit 0
           fi
           notes=".github/release-notes/${tag}.md"
-          args=(--target "${{ github.sha }}" --title "Gelabber ${tag}" --generate-notes)
+          args=(--target "$SOURCE_SHA" --title "Gelabber ${tag}" --generate-notes)
           if [ -f "$notes" ]; then
             args+=(--notes-file "$notes")
           fi
           gh release create "$tag" "${args[@]}"
 
   public-minio:
+    if: github.event_name != 'workflow_run'
     runs-on: ubuntu-latest
     continue-on-error: true
     steps:

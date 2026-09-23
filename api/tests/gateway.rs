@@ -716,10 +716,14 @@ async fn last_close_and_idle_reach_every_server_the_user_is_on(pool: PgPool) {
 
     send_json(&mut tab_a, json!({ "op": "s", "s": s1 })).await;
     send_json(&mut tab_b, json!({ "op": "s", "s": s2 })).await;
-    send_json(&mut watch_s1, json!({ "op": "s", "s": s1 })).await;
-    send_json(&mut watch_s2, json!({ "op": "s", "s": s2 })).await;
     recv_until(&mut tab_a, |f| f["op"] == "ok").await;
     recv_until(&mut tab_b, |f| f["op"] == "ok").await;
+    // `ok` is sent before the gateway stores presence. Wait for each
+    // owner's snapshot before asking observers for theirs.
+    recv_until(&mut tab_a, |f| f["op"] == "p" && f.get("snap").is_some()).await;
+    recv_until(&mut tab_b, |f| f["op"] == "p" && f.get("snap").is_some()).await;
+    send_json(&mut watch_s1, json!({ "op": "s", "s": s1 })).await;
+    send_json(&mut watch_s2, json!({ "op": "s", "s": s2 })).await;
     recv_until(&mut watch_s1, |f| f["op"] == "ok").await;
     recv_until(&mut watch_s2, |f| f["op"] == "ok").await;
     let snap1 = recv_until(&mut watch_s1, |f| f["op"] == "p" && f.get("snap").is_some()).await;

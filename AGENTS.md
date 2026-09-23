@@ -31,9 +31,9 @@ No LiveKit, Daily, Agora, Twilio, Stream, or Socket.IO. Own WebSocket, own signa
 
 SilasSch reviews product PRs when that is the standing rule. Do not invent extra process.
 
-## Shipped line: v0.2.2
+## Shipped line: v0.2.3
 
-`v0.2.2` is the shipped line on `main`. Hotfixes for this minor go to `main` the same way `0.1.x` hotfixes do.
+`v0.2.3` is the shipped line on `main`. Hotfixes for this minor go to `main` the same way `0.1.x` hotfixes do.
 
 What is on `main`: owner and member permissions (no roles, no channel overwrites); sequenced chat (no threads, reactions, or search); direct messages (no friends); screen share and Go Live; moderation (kick and ban).
 
