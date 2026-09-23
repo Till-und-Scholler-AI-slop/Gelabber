@@ -100,7 +100,15 @@ async fn recv_json(ws: &mut Ws) -> Value {
         .expect("ws closed")
         .expect("ws error");
     match msg {
-        Message::Text(text) => serde_json::from_str(text.as_str()).expect("json frame"),
+        Message::Text(text) => {
+            let frame: Value = serde_json::from_str(text.as_str()).expect("json frame");
+            if frame["op"] == "h" {
+                // A real client acknowledges server heartbeats even while it
+                // waits for a different event. Liveness does not mark activity.
+                send_json(ws, json!({ "op": "h" })).await;
+            }
+            frame
+        }
         other => panic!("expected text frame, got {other:?}"),
     }
 }
@@ -369,7 +377,7 @@ async fn reconnect_signals_gap_when_the_buffer_cannot_fill_it(pool: PgPool) {
 #[sqlx::test]
 async fn heartbeat_keeps_the_socket_and_silence_closes_it(pool: PgPool) {
     let (owner, _) = two_users(pool.clone()).await;
-    let (addr, _) = common::serve_ws(pool).await;
+    let (addr, _) = common::serve_ws_with_dead(pool, 180).await;
     let mut ws = connect(addr, &session_cookie(&owner), None).await;
 
     let beat = recv_until(&mut ws, |f| f["op"] == "h").await;

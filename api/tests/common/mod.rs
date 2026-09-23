@@ -36,15 +36,21 @@ pub fn redis_url() -> String {
     std::env::var("REDIS_URL").unwrap_or_else(|_| "redis://127.0.0.1:6379".to_owned())
 }
 
-/// Real Redis + short heartbeat so gateway tests finish quickly.
+/// Real Redis + short heartbeat so gateway tests finish quickly. Most tests
+/// leave some sockets unread while they assert events on another socket;
+/// their dead timeout must outlive those assertions.
 pub fn ws_state(pool: PgPool) -> AppState {
+    ws_state_with_dead(pool, 5_000)
+}
+
+pub fn ws_state_with_dead(pool: PgPool, dead_ms: u64) -> AppState {
     let redis = redis_url();
     let config = Config::from_source(|key| match key {
         "DATABASE_URL" => Some("postgres://unused:unused@127.0.0.1:1/unused".to_owned()),
         "REDIS_URL" => Some(redis.clone()),
         "API_SESSION_TTL_HOURS" => Some("2".to_owned()),
         "API_WS_HEARTBEAT_MS" => Some("40".to_owned()),
-        "API_WS_DEAD_MS" => Some("180".to_owned()),
+        "API_WS_DEAD_MS" => Some(dead_ms.to_string()),
         "API_WS_REPLAY" => Some("8".to_owned()),
         "API_WS_IDLE_MS" => Some("30000".to_owned()),
         "API_WS_PRESENCE_TTL_MS" => Some("2000".to_owned()),
@@ -56,7 +62,11 @@ pub fn ws_state(pool: PgPool) -> AppState {
 }
 
 pub async fn serve_ws(pool: PgPool) -> (std::net::SocketAddr, AppState) {
-    let state = ws_state(pool);
+    serve_ws_with_dead(pool, 5_000).await
+}
+
+pub async fn serve_ws_with_dead(pool: PgPool, dead_ms: u64) -> (std::net::SocketAddr, AppState) {
+    let state = ws_state_with_dead(pool, dead_ms);
     let listener = tokio::net::TcpListener::bind("127.0.0.1:0")
         .await
         .expect("bind test listener");
