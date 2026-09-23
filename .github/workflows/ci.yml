@@ -209,7 +209,12 @@ jobs:
 
       - name: Two-browser voice and TURN smoke
         working-directory: web
-        run: npm run test:browser-smoke
+        run: |
+          command -v tc
+          media_container="$(cd ../deploy/compose && docker compose ps -q media)"
+          test -n "$media_container"
+          export GELABBER_SMOKE_MEDIA_PID="$(docker inspect --format '{{.State.Pid}}' "$media_container")"
+          npm run test:browser-smoke
 
       - name: Upload browser screenshots
         if: failure()
