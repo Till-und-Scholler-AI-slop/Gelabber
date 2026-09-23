@@ -3,12 +3,16 @@
 // the running SFU and coturn; only camera/screen capture is synthetic.
 /* global process, window, navigator, document, setInterval, clearInterval, console, URL */
 import assert from "node:assert/strict";
+import { execFile } from "node:child_process";
 import { mkdir, readFile } from "node:fs/promises";
+import { setTimeout as pause } from "node:timers/promises";
+import { promisify } from "node:util";
 import { chromium } from "playwright";
 
 const base = process.env.GELABBER_SMOKE_URL ?? "http://127.0.0.1";
 const suffix = `${Date.now()}-${process.pid}`;
 const password = `Smoke-${suffix}-password`;
+const execFileAsync = promisify(execFile);
 const browser = await chromium.launch({
   args: [
     "--use-fake-device-for-media-stream",
@@ -54,7 +58,9 @@ async function participant(name) {
   await page.getByLabel("Name").fill(name);
   await page
     .getByLabel("E-Mail-Adresse")
-    .fill(`smoke-${name.toLowerCase().replace(/[^a-z0-9]+/g, "-")}-${suffix}@example.test`);
+    .fill(
+      `smoke-${name.toLowerCase().replace(/[^a-z0-9]+/g, "-")}-${suffix}@example.test`,
+    );
   await page.getByLabel("Passwort").fill(password);
   await page.getByRole("button", { name: "Registrieren" }).click();
   await page.waitForURL((url) => !url.pathname.includes("register"));
@@ -100,9 +106,75 @@ async function relaySelected(page) {
   );
 }
 
+async function audioStats(page) {
+  return page.evaluate(async () => {
+    const peer = (window.__smokePeers ?? []).find((pc) =>
+      pc.getSenders().some((sender) => sender.track?.kind === "audio"),
+    );
+    if (!peer) return null;
+    const report = await peer.getStats();
+    const audio = [...report.values()].filter(
+      (stat) => stat.kind === "audio" || stat.mediaType === "audio",
+    );
+    const sdp = peer.localDescription?.sdp ?? "";
+    const opusPt = /^a=rtpmap:(\d+) opus\/48000/im.exec(sdp)?.[1];
+    const fmtp = opusPt
+      ? new RegExp(`^a=fmtp:${opusPt}\\s+([^\\r\\n]+)`, "im").exec(sdp)?.[1]
+      : undefined;
+    return {
+      sent: audio
+        .filter((stat) => stat.type === "outbound-rtp")
+        .reduce((total, stat) => total + (stat.packetsSent ?? 0), 0),
+      received: audio
+        .filter((stat) => stat.type === "inbound-rtp")
+        .reduce((total, stat) => total + (stat.packetsReceived ?? 0), 0),
+      lost: audio
+        .filter((stat) => stat.type === "inbound-rtp")
+        .reduce((total, stat) => total + (stat.packetsLost ?? 0), 0),
+      opusFecOffered: /(?:^|;)\s*useinbandfec=1(?:;|$)/i.test(fmtp ?? ""),
+    };
+  });
+}
+
+async function waitForAudio(page, threshold, timeoutMs = 30_000) {
+  const deadline = Date.now() + timeoutMs;
+  let stats;
+  do {
+    stats = await audioStats(page);
+    if (
+      stats?.opusFecOffered &&
+      stats.sent > threshold.sent &&
+      stats.received > threshold.received &&
+      stats.lost >= (threshold.lost ?? 0)
+    ) {
+      return stats;
+    }
+    await pause(500);
+  } while (Date.now() < deadline);
+  throw new Error(
+    `Audio did not reach ${JSON.stringify(threshold)}; last stats: ${JSON.stringify(stats)}`,
+  );
+}
+
+async function mediaTc(...args) {
+  const pid = process.env.GELABBER_SMOKE_MEDIA_PID;
+  assert.match(pid ?? "", /^[1-9]\d*$/, "Media container PID is required");
+  return execFileAsync("sudo", ["nsenter", "-t", pid, "-n", "tc", ...args]);
+}
+
+async function droppedPackets() {
+  const { stdout } = await mediaTc("-s", "qdisc", "show", "dev", "eth0");
+  const dropped = /\bdropped (\d+)\b/.exec(stdout)?.[1];
+  assert.ok(dropped !== undefined, `Missing netem drop counter: ${stdout}`);
+  return Number(dropped);
+}
+
 try {
   const a = await participant("Smoke A");
-  await a.page.getByRole("button", { name: "Server erstellen" }).first().click();
+  await a.page
+    .getByRole("button", { name: "Server erstellen" })
+    .first()
+    .click();
   const serverDialog = a.page.getByRole("dialog", { name: "Server erstellen" });
   await serverDialog.getByLabel("Name").fill(`Smoke ${suffix}`);
   await serverDialog.getByRole("button", { name: "Erstellen" }).click();
@@ -145,6 +217,36 @@ try {
   await remoteVideo(b.page, "Smoke A");
   await relaySelected(a.page);
   await relaySelected(b.page);
+  await waitForAudio(a.page, { sent: 30, received: 30 });
+  const beforeLoss = await waitForAudio(b.page, { sent: 30, received: 30 });
+
+  if (process.env.GELABBER_SMOKE_MEDIA_PID) {
+    // Shape the media container's outgoing traffic at the OS layer. Browser
+    // DevTools packetLoss does not reliably affect established TURN media.
+    await mediaTc("qdisc", "add", "dev", "eth0", "root", "netem", "loss", "8%");
+    let duringLoss;
+    try {
+      await pause(8_000);
+      duringLoss = await waitForAudio(b.page, {
+        sent: beforeLoss.sent + 100,
+        received: beforeLoss.received + 100,
+      });
+      assert.ok((await droppedPackets()) > 0, "netem dropped no packets");
+    } finally {
+      await mediaTc("qdisc", "del", "dev", "eth0", "root");
+    }
+    await waitForAudio(b.page, {
+      sent: duringLoss.sent + 100,
+      received: duringLoss.received + 100,
+    });
+    console.log(
+      `TURN-relayed Opus audio flowed through 8% netem packet loss and recovered (receiver reported ${duringLoss.lost - beforeLoss.lost} lost packets).`,
+    );
+  } else {
+    console.log(
+      "Packet-loss segment skipped: no media container PID supplied.",
+    );
+  }
 
   await a.page
     .getByRole("button", { name: "Bildschirm teilen" })
