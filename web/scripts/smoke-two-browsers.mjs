@@ -4,6 +4,7 @@
 /* global process, window, navigator, document, setInterval, clearInterval, console, URL */
 import assert from "node:assert/strict";
 import { mkdir, readFile } from "node:fs/promises";
+import { setTimeout as pause } from "node:timers/promises";
 import { chromium } from "playwright";
 
 const base = process.env.GELABBER_SMOKE_URL ?? "http://127.0.0.1";
@@ -54,7 +55,9 @@ async function participant(name) {
   await page.getByLabel("Name").fill(name);
   await page
     .getByLabel("E-Mail-Adresse")
-    .fill(`smoke-${name.toLowerCase().replace(/[^a-z0-9]+/g, "-")}-${suffix}@example.test`);
+    .fill(
+      `smoke-${name.toLowerCase().replace(/[^a-z0-9]+/g, "-")}-${suffix}@example.test`,
+    );
   await page.getByLabel("Passwort").fill(password);
   await page.getByRole("button", { name: "Registrieren" }).click();
   await page.waitForURL((url) => !url.pathname.includes("register"));
@@ -100,9 +103,62 @@ async function relaySelected(page) {
   );
 }
 
+async function audioStats(page) {
+  return page.evaluate(async () => {
+    const peer = (window.__smokePeers ?? []).find((pc) =>
+      pc.getSenders().some((sender) => sender.track?.kind === "audio"),
+    );
+    if (!peer) return null;
+    const report = await peer.getStats();
+    const audio = [...report.values()].filter(
+      (stat) => stat.kind === "audio" || stat.mediaType === "audio",
+    );
+    const sdp = peer.localDescription?.sdp ?? "";
+    const opusPt = /^a=rtpmap:(\d+) opus\/48000/im.exec(sdp)?.[1];
+    const fmtp = opusPt
+      ? new RegExp(`^a=fmtp:${opusPt}\\s+([^\\r\\n]+)`, "im").exec(sdp)?.[1]
+      : undefined;
+    return {
+      sent: audio
+        .filter((stat) => stat.type === "outbound-rtp")
+        .reduce((total, stat) => total + (stat.packetsSent ?? 0), 0),
+      received: audio
+        .filter((stat) => stat.type === "inbound-rtp")
+        .reduce((total, stat) => total + (stat.packetsReceived ?? 0), 0),
+      lost: audio
+        .filter((stat) => stat.type === "inbound-rtp")
+        .reduce((total, stat) => total + (stat.packetsLost ?? 0), 0),
+      opusFecOffered: /(?:^|;)\s*useinbandfec=1(?:;|$)/i.test(fmtp ?? ""),
+    };
+  });
+}
+
+async function waitForAudio(page, threshold, timeoutMs = 30_000) {
+  const deadline = Date.now() + timeoutMs;
+  let stats;
+  do {
+    stats = await audioStats(page);
+    if (
+      stats?.opusFecOffered &&
+      stats.sent > threshold.sent &&
+      stats.received > threshold.received &&
+      stats.lost >= (threshold.lost ?? 0)
+    ) {
+      return stats;
+    }
+    await pause(500);
+  } while (Date.now() < deadline);
+  throw new Error(
+    `Audio did not reach ${JSON.stringify(threshold)}; last stats: ${JSON.stringify(stats)}`,
+  );
+}
+
 try {
   const a = await participant("Smoke A");
-  await a.page.getByRole("button", { name: "Server erstellen" }).first().click();
+  await a.page
+    .getByRole("button", { name: "Server erstellen" })
+    .first()
+    .click();
   const serverDialog = a.page.getByRole("dialog", { name: "Server erstellen" });
   await serverDialog.getByLabel("Name").fill(`Smoke ${suffix}`);
   await serverDialog.getByRole("button", { name: "Erstellen" }).click();
@@ -145,6 +201,40 @@ try {
   await remoteVideo(b.page, "Smoke A");
   await relaySelected(a.page);
   await relaySelected(b.page);
+  await waitForAudio(a.page, { sent: 30, received: 30 });
+  const beforeLoss = await waitForAudio(b.page, { sent: 30, received: 30 });
+
+  // CDP packetLoss affects WebRTC packets, including the TURN-relayed audio
+  // path. Keep HTTP/WebSocket online so this specifically exercises Opus/RTP.
+  const cdp = await a.context.newCDPSession(a.page);
+  const network = (packetLoss) =>
+    cdp.send("Network.emulateNetworkConditions", {
+      offline: false,
+      latency: 0,
+      downloadThroughput: -1,
+      uploadThroughput: -1,
+      packetLoss,
+    });
+  try {
+    await network(8);
+    await pause(8_000);
+    const duringLoss = await waitForAudio(b.page, {
+      sent: beforeLoss.sent + 100,
+      received: beforeLoss.received + 100,
+      lost: beforeLoss.lost + 1,
+    });
+    await network(0);
+    await waitForAudio(b.page, {
+      sent: duringLoss.sent + 100,
+      received: duringLoss.received + 100,
+    });
+  } finally {
+    await network(0);
+    await cdp.detach();
+  }
+  console.log(
+    "TURN-relayed Opus audio flowed in both directions through 8% simulated WebRTC packet loss and recovered.",
+  );
 
   await a.page
     .getByRole("button", { name: "Bildschirm teilen" })
