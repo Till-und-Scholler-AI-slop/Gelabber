@@ -16,7 +16,7 @@ on:
       tag:
         description: "Release tag (created on this commit if missing)"
         required: true
-        default: "v0.2.3"
+        default: "v0.2.4"
 
 permissions:
   actions: read
