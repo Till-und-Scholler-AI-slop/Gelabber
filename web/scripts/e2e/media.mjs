@@ -310,18 +310,8 @@ export async function mediaScenarios(h, f) {
     "live-claim-exclusive-and-loser-not-published",
     ["05b", "03b", "08b"],
     async () => {
-      await begin(f);
-      await progress(f.watcher, options);
-      await click(f.member, "Beitreten");
-      await click(f.member, "Go Live");
-      const loser = await observe(3_000, () => snapshot(f.member));
-      check(
-        encoded(loser) === 0 && loser.captures.every((c) => c.state !== "live"),
-        "live-claim-loser-published-or-leaked-capture",
-        loser,
-      );
-      const winner = await progress(f.watcher, options);
-      return { loser, winner };
+      const { concurrentClaim } = await import("./media-extra.mjs");
+      return concurrentClaim(h, f, { reset, options });
     },
   );
   await h.run(
@@ -485,6 +475,8 @@ export async function mediaScenarios(h, f) {
       frames: await progress(f.watcher, options),
     };
   });
+  const { mediaExtraScenarios } = await import("./media-extra.mjs");
+  await mediaExtraScenarios(h, f, { reset, begin, options });
   h.blocked(
     "audible-voice-mute-deafen-quality",
     "requires two devices and human listening; existing relay audio smoke retained",
@@ -494,18 +486,10 @@ export async function mediaScenarios(h, f) {
     "no read-only per-test-room SFU counters",
     ["01"],
   );
-  h.blocked(
-    "forced-arrival-order-and-rejected-sdp",
-    "requires dedicated scoped fault contract; no product instrumentation owned",
-    ["01"],
-  );
-  h.blocked(
-    "api-redis-outage-live-lease-recovery",
-    "shared services cannot be stopped or reset by 11a",
-    ["05b"],
-  );
+  const { leaseFaultScenarios } = await import("./media-lease-faults.mjs");
+  await leaseFaultScenarios(h, options);
   h.blocked(
     "packet-loss-audible-quality",
-    "privileged netem unavailable; original forced-TURN/netem smoke preserved",
+    "selected-UDP kernel harness reviewed; full remote netem and audible quality remain open",
   );
 }

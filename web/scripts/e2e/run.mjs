@@ -27,6 +27,14 @@ if (activeFaultRuntime)
     dedicatedDatabaseAndBucket: true,
     replayWindow: 8,
     fixtureRateLimitsDisabled: true,
+    media: activeFaultRuntime.media
+      ? {
+          sourceSha: activeFaultRuntime.media.manifest.sourceSha,
+          binarySha256: activeFaultRuntime.media.manifest.sha256,
+          authorityViaOwnedRedisProxy: true,
+          iceAdapter: activeFaultRuntime.media.iceAdapter,
+        }
+      : null,
   };
 try {
   let f;

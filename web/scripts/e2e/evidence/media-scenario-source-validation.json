@@ -1,0 +1,124 @@
+{
+  "scope": "B media/access/lease exact parent+index Sourcechecks and artifact-provenance validation; no additional native runtime",
+  "parent": "f0f3c1da95fe68422c4f654d8c29b9757bdda98c",
+  "completeAcceptance": false,
+  "sourceCheckArtifact": {
+    "path": "/tmp/gelabber-e2e/media-scenario-index-checks.json",
+    "sha256": "33c9f52a62da292faaaafddc750f1e11b3bf7c4a1015119e56845a2d66ec2675",
+    "at": "2026-09-28T18:26:57.578981+00:00",
+    "scope": "exact parent+index extracted source; no native runtime",
+    "node": "v26.8.2",
+    "sourceTreeBeforeEvidence": "ed210ba663dc0ee9c2e4be3d4fe7a3401eac9593",
+    "checks": [
+      {
+        "file": "access-native.checks.mjs",
+        "exit": 0,
+        "tests": 5,
+        "skipped": 0,
+        "output": "\u2714 actual heldMedia hung getStats is phase-labelled, quarantined, never fabricated as frames0 and release never reevaluates it (27.340234ms)\n\u2714 actual heldMedia pending outer evaluate cannot bypass quarantine or trigger a second probe (4.919189ms)\n\u2714 actual heldMedia rejects late native answer but records normal increasing and post-revocation stagnant frames unchanged (41.032456ms)\n\u2714 actual access finally attempts every own context after restore rejection and close timeout, with redacted failure stages (6.077571ms)\n\u2714 actual lease finally restores Redis and closes every own context even when API resume and a close fail (0.330154ms)\n\u2139 tests 5\n\u2139 suites 0\n\u2139 pass 5\n\u2139 fail 0\n\u2139 cancelled 0\n\u2139 skipped 0\n\u2139 todo 0\n\u2139 duration_ms 82.380571\n"
+      },
+      {
+        "file": "media-extra.checks.mjs",
+        "exit": 0,
+        "tests": 1,
+        "skipped": 0,
+        "output": "\u2714 exact SDP scenario preserves failed bounded camera warmup and never injects SDP or claims progress afterward (3.045441ms)\n\u2139 tests 1\n\u2139 suites 0\n\u2139 pass 1\n\u2139 fail 0\n\u2139 cancelled 0\n\u2139 skipped 0\n\u2139 todo 0\n\u2139 duration_ms 5.369843\n(node:12) ExperimentalWarning: VM Modules is an experimental feature and might change at any time\n(Use `node --trace-warnings ...` to show where the warning was created)\n"
+      },
+      {
+        "file": "harness.checks.mjs",
+        "exit": 0,
+        "tests": 6,
+        "skipped": 0,
+        "output": "\u2714 bytes and closed receivers cannot pass decoded-frame acceptance (0.503358ms)\n\u2714 evidence errors discard Playwright URLs, secrets and call logs (0.149544ms)\n\u2714 11a account-creating runner refuses production and credential-bearing URLs (2.456995ms)\n\u2714 deadline failure preserves safe measured counters instead of turning red into skip (1.373422ms)\n\u2714 gateway faults leave HMR, media and unrelated socket paths untouched (1.54525ms)\n\u2714 explicit exclusions are NOT_RUN, required failures and incomplete selection stay red (0.461701ms)\n\u2139 tests 6\n\u2139 suites 0\n\u2139 pass 6\n\u2139 fail 0\n\u2139 cancelled 0\n\u2139 skipped 0\n\u2139 todo 0\n\u2139 duration_ms 8.901355\n"
+      }
+    ],
+    "lint": {
+      "exit": 0,
+      "output": ""
+    },
+    "moduleSha256": {
+      "teardown.mjs": "5bb7d0d8e023d23ab242eb8ac8b77a722d0a38c60f5df6637b86938b97419e9a",
+      "teardown.checks.mjs": "22f033c552b92bbe9e20e06c3ad51d993ecc46dcf7799da4d6623448aab7a5b1",
+      "storage-faults.mjs": "e0408378060689e8584c014f90e2d3771dc611b86bfce3bc5328a3b71ada01fb",
+      "selection.mjs": "b8a445a817880843e833510d92dfdaf3150fff643f4b4ae5aa6906cd3913f771",
+      "s3-object.mjs": "1bce9abf11b4aa30e0e62b6063eb283baed30894e8f816787c379dd43ea63168",
+      "run.mjs": "d2900e4f8ec085708a696c1266359c51476d794c6fa497d2c0449243f9747bcd",
+      "rendered-frames.checks.mjs": "4e5bf1be45d1eb0914625d08b35623e48ccca80dc4c35337deff13dd63571780",
+      "redis-command.mjs": "b6d801eb136a072b8a00bc2982d16934bdc4cf90c06ef28b67be4ad5a160706b",
+      "realtime-faults.mjs": "71626d7a152521529f35b1c192760b2ac809bdb56955473507362fd9fe74db62",
+      "profiles.mjs": "ef20d6159fe61e04fda06c41314fbc2798e7ae7a7e5a5f57aa3f88569b0fe2aa",
+      "probe.mjs": "0b7aea113ba651b96d3b6a9e325f9436af9a9ffc06b33ddb27cb6f4033e7f91c",
+      "native-finish.checks.mjs": "0b61ec4d2796d448c92ed36dca1dd66052c4c6ca1844874f59f44462d2910c75",
+      "native-evaluate.mjs": "89294f744f2c6a0d88e90975a944e96e49b2bf1c829ba377ccaa17a19b1564bf",
+      "native-evaluate.checks.mjs": "4b24b3854f84b04ee5037ed2fdff7f02c7f490fefd6ff882bac9285877d8a5fd",
+      "membership-faults.mjs": "e155ee73a21bc27b7e8a75fe8d865e0309b35f8ad38ee77296da0db3a7a5b3a5",
+      "media.mjs": "f9339a0701f1e860865705980b66f7ee1b98ee89346ee235b959acae86461378",
+      "media-runtime.mjs": "d9bc66d17009162fd6f70eec24b227fda607e601fc7a0011a7fadae698795b67",
+      "media-runtime.checks.mjs": "4569eabb3d4339914cd48a0fdea42ad3feae89a827f67aa4923682ff72787a91",
+      "media-probe.checks.mjs": "a43b9440303b7babf4d3b6ac56a25407c9d6294e9ffde68c8f09915d21a12af6",
+      "media-lease-faults.mjs": "e3aefd71b583e5d4ab4a5109c3ed69a78352248392ec90a4f5308212fe8bae70",
+      "media-extra.mjs": "0b885436b9590e62d99b32d88d30f26496746e4d15f5182f4736523e42c74d7f",
+      "media-extra.checks.mjs": "7959d5a1e405d01ebaf835a6ff50e8ce2bb442d8eaefb2a6bb8eec2f7da6f1cb",
+      "harness.mjs": "4425220c56f9da05e83896f1713c9ac800fe1b345507bcfc6b283c1440dec99d",
+      "harness.checks.mjs": "89564069db0e134a936088b2831b0eeac297777a8907523db9274efd276c9003",
+      "gateway-load.mjs": "c98da745c2ccc064829f71d1598a781eb1059177445c7c49dc7b5d07f7ed23d5",
+      "faults.mjs": "62fe2b0f812192bac2be6996049eec802db48097633c6367bd44018b6aa3a0d4",
+      "faults.checks.mjs": "9b013140e232dc052fe9b52755db20fb48267258b06fabec8ca546aae5afe11f",
+      "fault-runtime.mjs": "423684dfaddfdd65ca3021e95f842616563bef30dd8d99c70d477e9098bf7fee",
+      "fault-run.mjs": "39e5af6912f692478599cc2b9c4acc21ede1a877db72b79f4d5b6d8991769438",
+      "core.mjs": "90d46690fe1c6147d6fa54d7cc42372600ea6bc67a7b65a37a237bf4fca8fc03",
+      "ci-fault-prepare.mjs": "b0e7daa460f3db4edfa7cee1a59fb5e3e39b78d268d5dc4bf627b9bc4ea5f3f5",
+      "ci-fault-prepare.checks.mjs": "23c3faade08e8ff7a263442c0207ab323991748389c5023e67e51176995a0a5b",
+      "chat-faults.mjs": "a4d258f8084e4ed842e408ebca19cbe178b636afdf2a32068e8232c16417d767",
+      "browser-options.mjs": "e092d543702eca00f24258a23b1ae97c4d280f857732dc2d262568913e01e052",
+      "browser-options.checks.mjs": "155c1eb154e9def93a95cbf7885a37755f6d91af90c93bc9b60f9f176f7104a5",
+      "account-switch.mjs": "9dd5cc5a93f55ac74ba03f46e3435b0f8e7435569dc242ef597b764e42b0ef46",
+      "access.mjs": "7f0eca2adde822ad21d598a02823607d232ebfe62b4341daf8b5a2ecfec1d1fc",
+      "access-native.checks.mjs": "6134f7c095998bdad801460c83fd1b2df7f9fa7b0a34b26e0dbe8f4976d397d7"
+    }
+  },
+  "importControl": {
+    "exit": 0,
+    "modules": [
+      "access.mjs",
+      "media.mjs",
+      "media-extra.mjs",
+      "media-lease-faults.mjs",
+      "profiles.mjs"
+    ],
+    "noHiddenCWipDependency": true
+  },
+  "artifactValidation": {
+    "index": "web/scripts/e2e/evidence/media-access-validation.json",
+    "sha256": "6af917b5da7a82b0d08e7cb80d51b9479742d41d66c71f7c4bee7e175b179a52",
+    "rawReportHashesVerified": 26,
+    "supportArtifactHashesVerified": 13,
+    "caseRows": 88,
+    "caseReportAssertSourceHashRelationsVerified": true,
+    "parentFailedGatesAndCleanupPreserved": true,
+    "counts": {
+      "chromium-direct": {
+        "PASS": 10,
+        "PASS-observation-in-failed-run": 12
+      },
+      "firefox-direct": {
+        "PASS": 13,
+        "PASS-observation-in-failed-run": 9
+      },
+      "chromium-relay": {
+        "PASS": 22
+      },
+      "firefox-relay-explicit-local-adapters": {
+        "PASS": 19,
+        "PASS-observation-in-failed-run": 3
+      }
+    }
+  },
+  "limits": [
+    "Native app controls retain dirty24211fb/5f841f9 source attribution; no exact clean B native run",
+    "LateWatch remains PASS observation in aborted parent with failed cleanup",
+    "No assembled whole-run gate or complete acceptance",
+    "A budget followup independently PASS; Stop/Route followup review pending; no overall A approval",
+    "Excluded old fixture6channels/4messages/1attachment unchanged, latest dated postcheck18:06 links in matrix"
+  ]
+}

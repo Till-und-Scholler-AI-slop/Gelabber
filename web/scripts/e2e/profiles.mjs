@@ -3,6 +3,7 @@ export const profiles = {
   media: {
     suite: "media",
     cases: [
+      "voice-only-duplex-single-source",
       "live-watch-default-autoplay-no-mic",
       "late-watch-after-30s",
       "media-ws-capture-preserving-recovery",
@@ -14,6 +15,9 @@ export const profiles = {
       "cancelled-live-picker-keeps-voice-no-ghost",
       "camera-screen-live-source-identity",
       "autoplay-rejection-visible-click-retry",
+      "forced-track-arrival-reorder-source-identity",
+      "rejected-native-sdp-keeps-voice-other-source-no-ghost",
+      "session-audio-mute-deafen-volume-playback-retry",
     ],
   },
   core: {
@@ -50,6 +54,10 @@ export const profiles = {
       "ban-invite-join-race",
     ],
   },
+  "media-faults": {
+    suite: "media",
+    cases: ["api-redis-outage-live-lease-recovery"],
+  },
   access: {
     suite: "access",
     cases: [
@@ -58,6 +66,7 @@ export const profiles = {
       "ban-revokes-existing-gateway-active-sfu-and-held-ticket",
       "logout-revokes-existing-gateway-active-sfu-and-held-ticket",
       "logout-other-independent-session-survives",
+      "channel-server-delete-active-sockets",
     ],
   },
 };
