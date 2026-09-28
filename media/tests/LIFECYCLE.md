@@ -49,6 +49,14 @@ report and TWCC processing. The identical reoffer probe decoded all three source
 with four transceivers, and debug logs showed subscriber feedback reaching the
 publisher. A main comparison also decoded but grew from four to eight transceivers.
 
+Independent review found a second pinned routing constraint: the endpoint routes
+only the first destination SSRC of a surfaced RTCP message. The follow-up splits
+compound PLI packets and every FIR entry into individual routed messages. The real
+two-RTC-peer regression failed before that fix; afterward three compound PLI A+B
+batches reached both sources three times, and multi-target FIR reached both with
+their original sequence numbers. A 100-target FIR also verified the queue bound
+of 64 routed messages. Existing media tests and strict Clippy remained green.
+
 To run just that comparison against a separately started local SFU:
 
 ```sh
