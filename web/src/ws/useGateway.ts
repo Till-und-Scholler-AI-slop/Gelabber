@@ -6,6 +6,7 @@ import { useParams } from "@tanstack/react-router";
 import { useShallow } from "zustand/react/shallow";
 
 import { ApiError } from "../api/client.ts";
+import { scopeGeneration } from "../auth/scope.ts";
 import { useDms } from "../dms/queries.ts";
 import type { DirectMessage } from "../dms/types.ts";
 import { useServer } from "../servers/queries.ts";
@@ -17,6 +18,7 @@ import { useLiveBridge } from "./useLive.ts";
 import { useRealtimeBridge } from "./useRealtime.ts";
 
 export function useGatewaySession(userId: string | null): void {
+  const generation = scopeGeneration();
   useEffect(() => {
     const gateway = getGateway();
     if (userId) {
@@ -27,7 +29,7 @@ export function useGatewaySession(userId: string | null): void {
     }
     gateway.resetSession();
     return undefined;
-  }, [userId]);
+  }, [userId, generation]);
 }
 
 /** Deduped topic list; first entry for a key wins. */
@@ -108,6 +110,7 @@ export function mediaContextTopics(input: {
  * the last workspace server id in session memory. Mount only when authenticated.
  */
 export function useAuthenticatedSubscriptions(): void {
+  const generation = scopeGeneration();
   const params = useParams({ strict: false });
   const routeServerId = params.serverId;
   const routeChannelId = params.channelId;
@@ -161,7 +164,7 @@ export function useAuthenticatedSubscriptions(): void {
     // No setTopics([]) on unmount — /settings must keep the union. Logout
     // clears via useGatewaySession.
     // eslint-disable-next-line react-hooks/exhaustive-deps -- topicKeyStr stands in for topics
-  }, [topicKeyStr]);
+  }, [topicKeyStr, generation]);
 
   useLiveBridge();
   const clearRememberedServer = useCallback((serverId: string) => {

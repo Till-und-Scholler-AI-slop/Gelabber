@@ -12,18 +12,22 @@ import {
   useQueryClient,
   type InfiniteData,
   type QueryClient,
+  infiniteQueryOptions,
+  replaceEqualDeep,
 } from "@tanstack/react-query";
 
-import {
-  scopeGeneration,
-  stampHolds,
-  takeStamp,
-  useUserId,
-} from "../auth/scope.ts";
+import { scopeGeneration, stampHolds, takeStamp } from "../auth/scope.ts";
+import { useSession } from "../auth/session.ts";
 import { notifyError } from "../components/toasts.ts";
 import { isPendingId } from "../servers/queries.ts";
 import * as remote from "./api.ts";
-import { olderCursor, stampOlder } from "./pages.ts";
+import {
+  applyMessageChanges,
+  combineMessageChange,
+  olderCursor,
+  stampOlder,
+  type MessageChange,
+} from "./pages.ts";
 import {
   addPending,
   confirmPending,
@@ -61,11 +65,49 @@ function now(): string {
   return new Date().toISOString();
 }
 
-function emptyCache(): Cache {
-  return {
-    pages: [{ messages: [], has_more: false }],
-    pageParams: [undefined],
-  };
+type ReadChanges = { changes: Map<string, MessageChange>; manual: boolean };
+const journals = new WeakMap<QueryClient, Map<string, ReadChanges>>();
+
+/** Changes live only for the lifetime of a REST read, including all its pages. */
+function readJournals(client: QueryClient): Map<string, ReadChanges> {
+  const existing = journals.get(client);
+  if (existing) return existing;
+  const reads = new Map<string, ReadChanges>();
+  journals.set(client, reads);
+  client.getQueryCache().subscribe((event) => {
+    if (event.query.queryKey[3] !== "messages") return;
+    const hash = event.query.queryHash;
+    if (event.type === "removed") reads.delete(hash);
+    if (event.type !== "updated") return;
+    if (event.action.type === "fetch")
+      reads.set(hash, { changes: new Map(), manual: false });
+    if (
+      event.action.type === "error" ||
+      (event.action.type === "success" && !event.action.manual)
+    )
+      reads.delete(hash);
+  });
+  return reads;
+}
+
+function recordChange(
+  client: QueryClient,
+  userId: string,
+  generation: number,
+  channelId: string,
+  change: MessageChange,
+): MessageChange {
+  const query = client.getQueryCache().find({
+    queryKey: messageKeys.channel(userId, generation, channelId),
+    exact: true,
+  });
+  if (!query) return change;
+  const read = readJournals(client).get(query.queryHash);
+  if (!read) return change;
+  const previous = read.changes.get(change.id);
+  const merged = combineMessageChange(previous, change);
+  read.changes.set(change.id, merged);
+  return merged;
 }
 
 function patchPages(
@@ -75,13 +117,31 @@ function patchPages(
   channelId: string,
   update: (pages: MessagePage[]) => MessagePage[],
 ): void {
-  client.setQueryData<Cache>(
-    messageKeys.channel(userId, generation, channelId),
-    (current) => {
-      const base = current ?? emptyCache();
-      return { ...base, pages: update(base.pages) };
-    },
-  );
+  const key = messageKeys.channel(userId, generation, channelId);
+  const query = client.getQueryCache().find({ queryKey: key, exact: true });
+  const previous = query?.state;
+  const read = query && readJournals(client).get(query.queryHash);
+  if (read) read.manual = true;
+  try {
+    client.setQueryData<Cache>(
+      key,
+      (current) => {
+        // An event is a delta, never proof that an unopened history is complete.
+        if (!current) return undefined;
+        return { ...current, pages: update(current.pages) };
+      },
+      { updatedAt: previous?.dataUpdatedAt },
+    );
+  } finally {
+    if (read) read.manual = false;
+  }
+  if (previous?.isInvalidated) {
+    void client.invalidateQueries({
+      queryKey: key,
+      exact: true,
+      refetchType: "none",
+    });
+  }
 }
 
 function mapMessages(
@@ -97,21 +157,49 @@ function mapMessages(
 }
 
 export function useMessages(channelId: string | undefined, enabled: boolean) {
-  const userId = useUserId();
+  const client = useQueryClient();
+  const userId = useSession((state) => state.user)?.id ?? "";
   const generation = scopeGeneration();
   return useInfiniteQuery({
-    queryKey: messageKeys.channel(userId, generation, channelId ?? ""),
+    ...messageQueryOptions(client, userId, generation, channelId ?? ""),
+    enabled: userId.length > 0 && Boolean(channelId) && enabled,
+  });
+}
+
+/** Shared by the hook and recovery tests using the real infinite-query engine. */
+export function messageQueryOptions(
+  client: QueryClient,
+  userId: string,
+  generation: number,
+  channelId: string,
+) {
+  const reads = readJournals(client);
+  const key = messageKeys.channel(userId, generation, channelId);
+  return infiniteQueryOptions({
+    queryKey: key,
     queryFn: async ({ pageParam, signal }) =>
       stampOlder(
         await remote.listMessages(
-          channelId ?? "",
+          channelId,
           { before: pageParam, limit: PAGE_SIZE },
           signal,
         ),
       ),
     initialPageParam: undefined as string | undefined,
     getNextPageParam: (page) => olderCursor(page),
-    enabled: userId.length > 0 && Boolean(channelId) && enabled,
+    structuralSharing: (previous, incoming) => {
+      const query = client.getQueryCache().find({ queryKey: key, exact: true });
+      const read = query && reads.get(query.queryHash);
+      const data = incoming as Cache;
+      const merged =
+        read && !read.manual && read.changes.size > 0
+          ? {
+              ...data,
+              pages: applyMessageChanges(data.pages, read.changes.values()),
+            }
+          : data;
+      return replaceEqualDeep(previous, merged);
+    },
     staleTime: STALE_MS,
     retry: (count, error) =>
       count < 2 &&
@@ -262,22 +350,14 @@ export function applyMessageCreated(
   channelId: string,
   message: Message,
 ): void {
-  patchPages(client, userId, generation, channelId, (pages) => {
-    if (
-      pages.some((page) => page.messages.some((row) => row.id === message.id))
-    ) {
-      return pages;
-    }
-    if (pages.length === 0) {
-      return [{ messages: [message], has_more: false }];
-    }
-    const newest = pages[0];
-    if (!newest) return pages;
-    return [
-      { ...newest, messages: [...newest.messages, message] },
-      ...pages.slice(1),
-    ];
+  const change = recordChange(client, userId, generation, channelId, {
+    id: message.id,
+    message,
+    created: true,
   });
+  patchPages(client, userId, generation, channelId, (pages) =>
+    applyMessageChanges(pages, [change]),
+  );
 }
 
 /** WS edit: replace the row in place. */
@@ -288,8 +368,13 @@ export function applyMessageEdited(
   channelId: string,
   message: Message,
 ): void {
+  const change = recordChange(client, userId, generation, channelId, {
+    id: message.id,
+    message,
+    created: false,
+  });
   patchPages(client, userId, generation, channelId, (pages) =>
-    mapMessages(pages, (row) => (row.id === message.id ? message : row)),
+    applyMessageChanges(pages, [change]),
   );
 }
 
@@ -301,10 +386,13 @@ export function applyMessageDeleted(
   channelId: string,
   messageId: string,
 ): void {
+  const change = recordChange(client, userId, generation, channelId, {
+    id: messageId,
+    message: null,
+    created: false,
+  });
   patchPages(client, userId, generation, channelId, (pages) =>
-    mapMessages(pages, (message) =>
-      message.id === messageId ? null : message,
-    ),
+    applyMessageChanges(pages, [change]),
   );
 }
 
