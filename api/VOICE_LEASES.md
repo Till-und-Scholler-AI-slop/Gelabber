@@ -55,3 +55,16 @@ watcher replacement. Separate API integration checks cover signaling, Gateway,
 and all 03a regressions including pool max_connections=1. This models process
 crash by stopping renewals without detach; a native kill + SFU frame test remains
 part of integrated media acceptance. All keys are UUID scoped; no FLUSHALL.
+
+## Multi-seat event followup
+
+User-scoped join/mute/deafen/unpublish/leave deltas are derived from the current
+Redis aggregate, and that aggregate read plus Pub/Sub emission is one Lua turn.
+Leaving one seat updates remaining flags; unpublish removes a track only when
+no valid remaining seat publishes it. Live union additionally requires the
+current claim's exact seat generation. A resumed stale owner never emits a
+user-scoped Live unpublish while the same user's replacement still holds it.
+Live publish checks the exact serialized current owner in that same Lua turn.
+Three real-PubSub regressions fail on 84cd5a3c and pass after this followup;
+they cover both review findings plus camera/leave aggregation. Wire and Redis
+key formats above are unchanged.
