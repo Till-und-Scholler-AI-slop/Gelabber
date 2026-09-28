@@ -16,6 +16,7 @@ import {
   replaceEqualDeep,
 } from "@tanstack/react-query";
 
+import { ApiError } from "../api/client.ts";
 import { scopeGeneration, stampHolds, takeStamp } from "../auth/scope.ts";
 import { useSession } from "../auth/session.ts";
 import { notifyError } from "../components/toasts.ts";
@@ -31,7 +32,9 @@ import {
 import {
   addPending,
   confirmPending,
-  removePending,
+  forgetAttempt,
+  saveAttempt,
+  type SendAttempt,
   usePendingMessages,
 } from "./pending.ts";
 import {
@@ -201,13 +204,8 @@ export function messageQueryOptions(
       return replaceEqualDeep(previous, merged);
     },
     staleTime: STALE_MS,
-    retry: (count, error) =>
-      count < 2 &&
-      !(
-        error instanceof Error &&
-        "code" in error &&
-        (error.code === "not_found" || error.code === "forbidden")
-      ),
+    retry: false,
+    refetchOnWindowFocus: false,
   });
 }
 
@@ -229,103 +227,236 @@ function localAttachment(file: File): Attachment {
   };
 }
 
-function revokePreviews(message: Message | undefined): void {
-  if (!message) return;
-  for (const attachment of asAttachmentList(message.attachments)) {
-    if (attachment.preview_url?.startsWith("blob:")) {
-      URL.revokeObjectURL(attachment.preview_url);
+function requireAttempt(attempt: SendAttempt): void {
+  if (!stampHolds(attempt.stamp) || attempt.controller.signal.aborted)
+    throw new DOMException("Session changed", "AbortError");
+}
+
+/** The attempt owns its file/status even when the mutation observer unmounts. */
+export async function sendMessageAttempt(
+  channelId: string,
+  author: MessageAuthor,
+  input: SendInput & { attemptId?: string },
+): Promise<Message> {
+  let attempt = input.attemptId
+    ? usePendingMessages.getState().attempts[input.attemptId]
+    : undefined;
+  if (input.attemptId && (!attempt || attempt.status === "sending"))
+    throw new Error(
+      "Dieser Sendeversuch läuft bereits oder ist nicht mehr vorhanden.",
+    );
+  if (attempt?.status === "uncertain")
+    throw new Error(
+      "Speicherstatus unbekannt. Bitte zuerst den Nachrichtenverlauf prüfen.",
+    );
+  if (!attempt) {
+    const stamp = takeStamp();
+    if (!stamp || stamp.userId !== author.id)
+      throw new DOMException("Session changed", "AbortError");
+    const id = tmpId();
+    attempt = {
+      id,
+      channelId,
+      stamp,
+      content: normaliseContent(input.content),
+      file: input.file,
+      status: "sending",
+      stage: input.file ? "presign" : "bind",
+      controller: new AbortController(),
+    };
+    addPending(channelId, {
+      id,
+      channel_id: channelId,
+      author,
+      content: attempt.content,
+      created_at: now(),
+      edited_at: null,
+      attachments: input.file ? [localAttachment(input.file)] : [],
+    });
+  }
+  requireAttempt(attempt);
+  if (attempt.channelId !== channelId)
+    throw new Error("Falscher Kanal für den Sendeversuch.");
+  attempt = { ...attempt, status: "sending", error: undefined };
+  saveAttempt(attempt);
+  try {
+    if (attempt.file && !attempt.uploadedId) {
+      const file = attempt.file;
+      attempt = { ...attempt, stage: "presign" };
+      saveAttempt(attempt);
+      const presign = await remote.presignAttachment(channelId, {
+        filename: file.name,
+        content_type: inferContentType(file),
+        size: file.size,
+      });
+      requireAttempt(attempt);
+      attempt = { ...attempt, stage: "upload" };
+      saveAttempt(attempt);
+      await remote.putPresigned(
+        presign.upload_url,
+        file,
+        presign.headers,
+        attempt.controller.signal,
+      );
+      requireAttempt(attempt);
+      attempt = { ...attempt, uploadedId: presign.id };
     }
+    requireAttempt(attempt);
+    attempt = { ...attempt, stage: "bind" };
+    saveAttempt(attempt);
+    const message = await remote.createMessage(
+      channelId,
+      attempt.content,
+      attempt.uploadedId ? [attempt.uploadedId] : [],
+    );
+    requireAttempt(attempt);
+    confirmPending(channelId, attempt.id, message);
+    forgetAttempt(attempt.id);
+    return message;
+  } catch (error) {
+    if (stampHolds(attempt.stamp)) {
+      // No idempotency key exists yet. A missing bind response cannot safely
+      // authorize another POST; retain the draft and require history inspection.
+      const uncertain =
+        attempt.stage === "bind" &&
+        (!(error instanceof ApiError) ||
+          error.code === "network" ||
+          error.status === 0);
+      const labels = {
+        presign: "Dateifreigabe",
+        upload: "Dateiübertragung",
+        bind: "Nachricht speichern",
+      };
+      saveAttempt({
+        ...attempt,
+        status: uncertain ? "uncertain" : "failed",
+        error: `${labels[attempt.stage]} fehlgeschlagen.`,
+      });
+      notifyError(error);
+    }
+    throw error;
   }
 }
 
 export function useSendMessage(channelId: string, author: MessageAuthor) {
   return useMutation({
-    mutationFn: async ({ content, file }: SendInput) => {
-      const ids: string[] = [];
-      if (file) {
-        const presign = await remote.presignAttachment(channelId, {
-          filename: file.name,
-          content_type: inferContentType(file),
-          size: file.size,
-        });
-        await remote.putPresigned(presign.upload_url, file, presign.headers);
-        ids.push(presign.id);
-      }
-      return remote.createMessage(channelId, normaliseContent(content), ids);
-    },
-    onMutate: ({ content, file }) => {
-      const stamp = takeStamp();
-      if (!stamp) return;
-      const tmp = tmpId();
-      const pending: Message = {
-        id: tmp,
-        channel_id: channelId,
-        author,
-        content: normaliseContent(content),
-        created_at: now(),
-        edited_at: null,
-        attachments: file ? [localAttachment(file)] : [],
-      };
-      addPending(channelId, pending);
-      return { ...stamp, tmp };
-    },
-    onSuccess: (message, _input, ctx) => {
-      // Stay in the overlay until a fetched page already contains this id.
-      // Blind append + drop races the in-flight first-page GET: duplicate
-      // if GET includes the row, or a successful send vanishes if GET
-      // lands without it and replaces an emptyCache write.
-      // A send started by the previous account must not land in this one.
-      if (!stampHolds(ctx)) return;
-      confirmPending(channelId, ctx.tmp, message);
-    },
-    onError: (error, _input, ctx) => {
-      if (!stampHolds(ctx)) return;
-      const pending = usePendingMessages.getState().byChannel[channelId] ?? [];
-      revokePreviews(pending.find((row) => row.id === ctx.tmp));
-      removePending(channelId, ctx.tmp);
-      notifyError(error);
-    },
+    mutationFn: (input: SendInput & { attemptId?: string }) =>
+      sendMessageAttempt(channelId, author, input),
+    retry: false,
   });
 }
 
-export function useEditMessage(channelId: string) {
-  const client = useQueryClient();
-  return useMutation({
+// A per-row token also covers a delete whose optimistic row is absent.
+const rowVersions = new WeakMap<QueryClient, Map<string, number>>();
+function rowVersion(
+  client: QueryClient,
+  userId: string,
+  generation: number,
+  channelId: string,
+  id: string,
+  bump = false,
+): number {
+  let versions = rowVersions.get(client);
+  if (!versions) {
+    versions = new Map();
+    rowVersions.set(client, versions);
+  }
+  const key = JSON.stringify([userId, generation, channelId, id]);
+  const version = (versions.get(key) ?? 0) + (bump ? 1 : 0);
+  if (bump) versions.set(key, version);
+  return version;
+}
+
+export function editMessageOptions(client: QueryClient, channelId: string) {
+  return {
     mutationFn: ({ id, content }: { id: string; content: string }) =>
       remote.updateMessage(id, normaliseContent(content)),
-    onMutate: ({ id, content }) => {
+    onMutate: ({ id, content }: { id: string; content: string }) => {
       const stamp = takeStamp();
-      if (!stamp) return;
-      const previous = client.getQueryData<Cache>(
+      if (!stamp) throw new DOMException("Session changed", "AbortError");
+      const cache = client.getQueryData<Cache>(
         messageKeys.channel(stamp.userId, stamp.generation, channelId),
       );
-      const next = normaliseContent(content);
-      patchPages(client, stamp.userId, stamp.generation, channelId, (pages) =>
-        mapMessages(pages, (message) =>
-          message.id === id
-            ? { ...message, content: next, edited_at: now() }
-            : message,
-        ),
+      const previous = cache?.pages
+        .flatMap((page) => page.messages)
+        .find((row) => row.id === id);
+      const optimistic = previous && {
+        ...previous,
+        content: normaliseContent(content),
+        edited_at: now(),
+      };
+      const version = rowVersion(
+        client,
+        stamp.userId,
+        stamp.generation,
+        channelId,
+        id,
+        true,
       );
-      return { ...stamp, previous };
-    },
-    onError: (error, _vars, ctx) => {
-      if (!stampHolds(ctx)) return;
-      if (ctx.previous) {
-        client.setQueryData(
-          messageKeys.channel(ctx.userId, ctx.generation, channelId),
-          ctx.previous,
+      if (optimistic)
+        patchPages(client, stamp.userId, stamp.generation, channelId, (pages) =>
+          mapMessages(pages, (row) => (row.id === id ? optimistic : row)),
         );
-      }
+      return { ...stamp, id, previous, optimistic, version };
+    },
+    onError: (
+      error: Error,
+      _vars: { id: string; content: string },
+      ctx: EditContext | undefined,
+    ) => {
+      if (!stampHolds(ctx)) return;
+      if (
+        rowVersion(client, ctx.userId, ctx.generation, channelId, ctx.id) ===
+          ctx.version &&
+        ctx.previous
+      )
+        patchPages(client, ctx.userId, ctx.generation, channelId, (pages) =>
+          mapMessages(pages, (row) =>
+            row.id === ctx.id &&
+            row.content === ctx.optimistic?.content &&
+            row.edited_at === ctx.optimistic.edited_at
+              ? ctx.previous!
+              : row,
+          ),
+        );
+      void client.invalidateQueries({
+        queryKey: messageKeys.channel(ctx.userId, ctx.generation, channelId),
+        exact: true,
+      });
       notifyError(error);
     },
-    onSuccess: (message, _vars, ctx) => {
+    onSuccess: (
+      message: Message,
+      _vars: { id: string; content: string },
+      ctx: EditContext | undefined,
+    ) => {
       if (!stampHolds(ctx)) return;
-      patchPages(client, ctx.userId, ctx.generation, channelId, (pages) =>
-        mapMessages(pages, (row) => (row.id === message.id ? message : row)),
-      );
+      if (
+        rowVersion(client, ctx.userId, ctx.generation, channelId, ctx.id) ===
+        ctx.version
+      ) {
+        recordChange(client, ctx.userId, ctx.generation, channelId, {
+          id: message.id,
+          message,
+          created: false,
+        });
+        patchPages(client, ctx.userId, ctx.generation, channelId, (pages) =>
+          mapMessages(pages, (row) => (row.id === message.id ? message : row)),
+        );
+      }
     },
-  });
+  };
+}
+type EditContext = import("../auth/scope.ts").ScopeStamp & {
+  id: string;
+  previous?: Message;
+  optimistic?: Message;
+  version: number;
+};
+
+export function useEditMessage(channelId: string) {
+  const client = useQueryClient();
+  return useMutation(editMessageOptions(client, channelId));
 }
 
 function isMessage(value: unknown): value is Message {
@@ -350,6 +481,7 @@ export function applyMessageCreated(
   channelId: string,
   message: Message,
 ): void {
+  rowVersion(client, userId, generation, channelId, message.id, true);
   const change = recordChange(client, userId, generation, channelId, {
     id: message.id,
     message,
@@ -368,6 +500,7 @@ export function applyMessageEdited(
   channelId: string,
   message: Message,
 ): void {
+  rowVersion(client, userId, generation, channelId, message.id, true);
   const change = recordChange(client, userId, generation, channelId, {
     id: message.id,
     message,
@@ -386,6 +519,7 @@ export function applyMessageDeleted(
   channelId: string,
   messageId: string,
 ): void {
+  rowVersion(client, userId, generation, channelId, messageId, true);
   const change = recordChange(client, userId, generation, channelId, {
     id: messageId,
     message: null,
@@ -424,32 +558,81 @@ export function applyChannelEvent(
   }
 }
 
-export function useDeleteMessage(channelId: string) {
-  const client = useQueryClient();
-  return useMutation({
+type DeleteContext = import("../auth/scope.ts").ScopeStamp & {
+  id: string;
+  previous?: Message;
+  page: number;
+  version: number;
+};
+export function deleteMessageOptions(client: QueryClient, channelId: string) {
+  return {
     mutationFn: (id: string) => remote.deleteMessage(id),
-    onMutate: (id) => {
+    onSuccess: (_result: null, id: string, ctx: DeleteContext | undefined) => {
+      if (stampHolds(ctx))
+        applyMessageDeleted(client, ctx.userId, ctx.generation, channelId, id);
+    },
+    onMutate: (id: string) => {
       const stamp = takeStamp();
-      if (!stamp) return;
-      const previous = client.getQueryData<Cache>(
+      if (!stamp) throw new DOMException("Session changed", "AbortError");
+      const cache = client.getQueryData<Cache>(
         messageKeys.channel(stamp.userId, stamp.generation, channelId),
       );
-      patchPages(client, stamp.userId, stamp.generation, channelId, (pages) =>
-        mapMessages(pages, (message) => (message.id === id ? null : message)),
+      const page =
+        cache?.pages.findIndex((page) =>
+          page.messages.some((row) => row.id === id),
+        ) ?? -1;
+      const previous = cache?.pages[page]?.messages.find(
+        (row) => row.id === id,
       );
-      return { ...stamp, previous };
+      const version = rowVersion(
+        client,
+        stamp.userId,
+        stamp.generation,
+        channelId,
+        id,
+        true,
+      );
+      patchPages(client, stamp.userId, stamp.generation, channelId, (pages) =>
+        mapMessages(pages, (row) => (row.id === id ? null : row)),
+      );
+      return { ...stamp, id, previous, page, version };
     },
-    onError: (error, _id, ctx) => {
+    onError: (error: Error, _id: string, ctx: DeleteContext | undefined) => {
       if (!stampHolds(ctx)) return;
-      if (ctx.previous) {
-        client.setQueryData(
-          messageKeys.channel(ctx.userId, ctx.generation, channelId),
-          ctx.previous,
-        );
-      }
+      if (
+        ctx.previous &&
+        rowVersion(client, ctx.userId, ctx.generation, channelId, ctx.id) ===
+          ctx.version
+      )
+        patchPages(client, ctx.userId, ctx.generation, channelId, (pages) => {
+          if (
+            pages.some((page) => page.messages.some((row) => row.id === ctx.id))
+          )
+            return pages;
+          return pages.map((page, index) =>
+            index === Math.min(ctx.page, pages.length - 1)
+              ? {
+                  ...page,
+                  messages: [...page.messages, ctx.previous!].sort(
+                    (a, b) =>
+                      a.created_at.localeCompare(b.created_at) ||
+                      a.id.localeCompare(b.id),
+                  ),
+                }
+              : page,
+          );
+        });
+      void client.invalidateQueries({
+        queryKey: messageKeys.channel(ctx.userId, ctx.generation, channelId),
+        exact: true,
+      });
       notifyError(error);
     },
-  });
+  };
+}
+export function useDeleteMessage(channelId: string) {
+  const client = useQueryClient();
+  return useMutation(deleteMessageOptions(client, channelId));
 }
 
 export { isPendingId };

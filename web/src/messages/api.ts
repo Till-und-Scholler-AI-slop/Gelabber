@@ -54,6 +54,7 @@ export async function putPresigned(
   url: string,
   file: File,
   headers: Record<string, string>,
+  signal?: AbortSignal,
 ): Promise<void> {
   let response: Response;
   try {
@@ -68,7 +69,9 @@ export async function putPresigned(
       method: "PUT",
       headers: putHeaders,
       body: file,
-      signal: AbortSignal.timeout(UPLOAD_TIMEOUT_MS),
+      signal: signal
+        ? AbortSignal.any([signal, AbortSignal.timeout(UPLOAD_TIMEOUT_MS)])
+        : AbortSignal.timeout(UPLOAD_TIMEOUT_MS),
     });
   } catch (error) {
     if (error instanceof DOMException && error.name === "TimeoutError") {
