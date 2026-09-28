@@ -13,7 +13,9 @@
     "lint": "node --require ./eslint-ts6-register.cjs ./node_modules/eslint/bin/eslint.js .",
     "format": "prettier --write .",
     "test": "vitest run",
-    "test:browser-smoke": "node scripts/smoke-two-browsers.mjs"
+    "test:browser-smoke": "node scripts/smoke-two-browsers.mjs",
+    "test:e2e-app": "node scripts/e2e/run.mjs",
+    "test:e2e-harness": "node scripts/e2e/harness.checks.mjs"
   },
   "dependencies": {
     "@tanstack/react-query": "5.102.8",

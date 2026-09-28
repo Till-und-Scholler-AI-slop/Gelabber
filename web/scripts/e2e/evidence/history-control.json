@@ -1,0 +1,247 @@
+{
+  "testSourceHashes": {
+    "access.mjs": "52d77379e4a97d0dd911934956c70a07f7ef0e02b1a4c4ba211a161f9ef9366f",
+    "account-switch.mjs": "9dd5cc5a93f55ac74ba03f46e3435b0f8e7435569dc242ef597b764e42b0ef46",
+    "core.mjs": "395cd34a0c7567b1fa9d96dd09b0c40f7bc01712ec552152ea66d88ab272a0a0",
+    "harness.checks.mjs": "c5c104cba2c78c42df47382a570fa156335359aa5bb0ae793dff13453e24e7f2",
+    "harness.mjs": "62d63d3364213e97907a664e02a6b0021c955e76605505b88a942bf37dbb7218",
+    "media.mjs": "6e7e427e3bef921a4ec9e87ba697e9006c059e444697c7466924280a0da8fbb9",
+    "probe.mjs": "c373bfed708036da0eb1570f6879ff1607e7032b7fe7863991ca7efd61e8a616",
+    "run.mjs": "308f7c34c77ddd524fbd98e21984bd5cebadb8eee8263de48f91ef7e9617d5df"
+  },
+  "schema": 1,
+  "selectedCases": [
+    "background-event-before-first-open-55-history-paging"
+  ],
+  "phase": "11a",
+  "at": "2026-09-28T13:20:44.191Z",
+  "source": "828ee2341e57a7e77a971b1f9c52d3372f046fb8",
+  "testFilesDirty": true,
+  "runtime": {
+    "attribution": "operator-supplied; not runtime digest verification",
+    "web": "3a30d44",
+    "api": "828ee23",
+    "media": "28d4505"
+  },
+  "browser": {
+    "engine": "chromium",
+    "version": "153.0.8010.12",
+    "platform": "linux",
+    "node": "v26.8.2"
+  },
+  "environment": {
+    "url": "http://127.0.0.1:5174",
+    "requestedNetwork": "direct",
+    "https": false,
+    "capture": "synthetic changing canvas; fake microphone",
+    "autoplay": "browser default; no policy override"
+  },
+  "limitations": [
+    "Not 11b/c/d acceptance",
+    "No native display picker, audible two-device speech, WAN or production test",
+    "No SFU publication/task telemetry; client bounds only",
+    "Accounts remain as isolated example.test fixtures; owned servers are deleted"
+  ],
+  "results": [
+    {
+      "id": "isolated-app-fixture",
+      "status": "PASS",
+      "classification": "observed-pass",
+      "metrics": {
+        "accounts": 3,
+        "servers": 1,
+        "channels": 3,
+        "registration": "UI",
+        "invitation": "UI",
+        "services": "real API/Gateway/SFU"
+      },
+      "at": "2026-09-28T13:20:44.198Z",
+      "durationMs": 7156,
+      "predecessors": []
+    },
+    {
+      "id": "account-session-reload-login",
+      "status": "BLOCKED",
+      "classification": "blocked",
+      "reason": "not-selected-in-this-run",
+      "predecessors": [
+        "04"
+      ],
+      "at": "2026-09-28T13:20:51.355Z"
+    },
+    {
+      "id": "channel-chat-create-edit-delete-converges",
+      "status": "BLOCKED",
+      "classification": "blocked",
+      "reason": "not-selected-in-this-run",
+      "predecessors": [
+        "05a",
+        "06a"
+      ],
+      "at": "2026-09-28T13:20:51.355Z"
+    },
+    {
+      "id": "new-dm-connected-recipient-discovers-without-refetch",
+      "status": "BLOCKED",
+      "classification": "blocked",
+      "reason": "not-selected-in-this-run",
+      "predecessors": [
+        "05a",
+        "06b"
+      ],
+      "at": "2026-09-28T13:20:51.355Z"
+    },
+    {
+      "id": "dm-attachment-fixture",
+      "status": "BLOCKED",
+      "classification": "blocked",
+      "reason": "not-selected-in-this-run",
+      "predecessors": [],
+      "at": "2026-09-28T13:20:51.355Z"
+    },
+    {
+      "id": "channel-jpeg-png-webp-bind-reload-byte-equal",
+      "status": "BLOCKED",
+      "classification": "blocked",
+      "reason": "not-selected-in-this-run",
+      "predecessors": [
+        "07",
+        "10"
+      ],
+      "at": "2026-09-28T13:20:51.355Z"
+    },
+    {
+      "id": "dm-jpeg-png-webp-bind-reload-byte-equal",
+      "status": "BLOCKED",
+      "classification": "blocked",
+      "reason": "dm-fixture-failed",
+      "predecessors": [],
+      "at": "2026-09-28T13:20:51.355Z"
+    },
+    {
+      "id": "background-event-before-first-open-55-history-paging",
+      "status": "PASS",
+      "classification": "observed-pass",
+      "metrics": {
+        "seeded": 55,
+        "oldestVisible": true,
+        "olderPageStatuses": [
+          200
+        ]
+      },
+      "at": "2026-09-28T13:20:51.355Z",
+      "durationMs": 2176,
+      "predecessors": [
+        "06a"
+      ]
+    },
+    {
+      "id": "initial-history-error-visible-bounded-retry",
+      "status": "BLOCKED",
+      "classification": "blocked",
+      "reason": "not-selected-in-this-run",
+      "predecessors": [
+        "07"
+      ],
+      "at": "2026-09-28T13:20:53.531Z"
+    },
+    {
+      "id": "failed-send-navigation-retains-own-retry",
+      "status": "BLOCKED",
+      "classification": "blocked",
+      "reason": "not-selected-in-this-run",
+      "predecessors": [
+        "07"
+      ],
+      "at": "2026-09-28T13:20:53.531Z"
+    },
+    {
+      "id": "two-tabs-account-switch-delayed-401",
+      "status": "BLOCKED",
+      "classification": "blocked",
+      "reason": "not-selected-in-this-run",
+      "predecessors": [
+        "04"
+      ],
+      "at": "2026-09-28T13:20:53.531Z"
+    },
+    {
+      "id": "two-tabs-account-switch-delayed-403",
+      "status": "BLOCKED",
+      "classification": "blocked",
+      "reason": "not-selected-in-this-run",
+      "predecessors": [
+        "04"
+      ],
+      "at": "2026-09-28T13:20:53.532Z"
+    },
+    {
+      "id": "rest-ws-reordering-edit-delete-rollback",
+      "status": "BLOCKED",
+      "classification": "blocked",
+      "reason": "07 pending; scoped delayed REST/event ordering fixture required",
+      "predecessors": [
+        "07"
+      ],
+      "at": "2026-09-28T13:20:53.532Z"
+    },
+    {
+      "id": "two-parallel-sends-upload-account-switch",
+      "status": "BLOCKED",
+      "classification": "blocked",
+      "reason": "07 pending; per-attempt recovery UI contract required",
+      "predecessors": [
+        "07"
+      ],
+      "at": "2026-09-28T13:20:53.532Z"
+    },
+    {
+      "id": "paging-error-data-preservation",
+      "status": "BLOCKED",
+      "classification": "blocked",
+      "reason": "07 pending; separate multi-page failed fetch/retry scenario required",
+      "predecessors": [
+        "07"
+      ],
+      "at": "2026-09-28T13:20:53.532Z"
+    },
+    {
+      "id": "redis-epoch-replay-window-reset",
+      "status": "BLOCKED",
+      "classification": "blocked",
+      "reason": "shared Redis must not be reset; isolated service failure contract needed",
+      "predecessors": [
+        "05a",
+        "06b"
+      ],
+      "at": "2026-09-28T13:20:53.532Z"
+    },
+    {
+      "id": "storage-delete-outage-durable-cleanup",
+      "status": "BLOCKED",
+      "classification": "blocked",
+      "reason": "shared MinIO/DB must not be stopped; read-only own-object cleanup instrumentation needed",
+      "predecessors": [
+        "10"
+      ],
+      "at": "2026-09-28T13:20:53.532Z"
+    },
+    {
+      "id": "attachments-https-wan",
+      "status": "BLOCKED",
+      "classification": "blocked",
+      "reason": "local HTTP evidence only; coordinator owns HTTPS/WAN integration",
+      "predecessors": [
+        "10"
+      ],
+      "at": "2026-09-28T13:20:53.532Z"
+    }
+  ],
+  "cleanup": [
+    {
+      "target": "owned-test-server",
+      "status": 204
+    }
+  ],
+  "finishedAt": "2026-09-28T13:20:54.965Z"
+}

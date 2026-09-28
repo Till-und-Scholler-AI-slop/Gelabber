@@ -1,0 +1,307 @@
+{
+  "testSourceHashes": {
+    "access.mjs": "c36e09098ae2176140890df6f7b24b26439f3c9a6991fed8bd017a008d1244ce",
+    "account-switch.mjs": "9dd5cc5a93f55ac74ba03f46e3435b0f8e7435569dc242ef597b764e42b0ef46",
+    "core.mjs": "395cd34a0c7567b1fa9d96dd09b0c40f7bc01712ec552152ea66d88ab272a0a0",
+    "harness.checks.mjs": "c5c104cba2c78c42df47382a570fa156335359aa5bb0ae793dff13453e24e7f2",
+    "harness.mjs": "62d63d3364213e97907a664e02a6b0021c955e76605505b88a942bf37dbb7218",
+    "media.mjs": "6e7e427e3bef921a4ec9e87ba697e9006c059e444697c7466924280a0da8fbb9",
+    "probe.mjs": "c373bfed708036da0eb1570f6879ff1607e7032b7fe7863991ca7efd61e8a616",
+    "run.mjs": "308f7c34c77ddd524fbd98e21984bd5cebadb8eee8263de48f91ef7e9617d5df"
+  },
+  "schema": 1,
+  "selectedCases": [],
+  "phase": "11a",
+  "at": "2026-09-28T13:22:28.543Z",
+  "source": "828ee2341e57a7e77a971b1f9c52d3372f046fb8",
+  "testFilesDirty": true,
+  "runtime": {
+    "attribution": "operator-supplied; not runtime digest verification",
+    "web": "3a30d44",
+    "api": "828ee23",
+    "media": "28d4505"
+  },
+  "browser": {
+    "engine": "chromium",
+    "version": "153.0.8010.12",
+    "platform": "linux",
+    "node": "v26.8.2"
+  },
+  "environment": {
+    "url": "http://127.0.0.1:5174",
+    "requestedNetwork": "direct",
+    "https": false,
+    "capture": "synthetic changing canvas; fake microphone",
+    "autoplay": "browser default; no policy override"
+  },
+  "limitations": [
+    "Not 11b/c/d acceptance",
+    "No native display picker, audible two-device speech, WAN or production test",
+    "No SFU publication/task telemetry; client bounds only",
+    "Accounts remain as isolated example.test fixtures; owned servers are deleted"
+  ],
+  "results": [
+    {
+      "id": "isolated-app-fixture",
+      "status": "PASS",
+      "classification": "observed-pass",
+      "metrics": {
+        "accounts": 3,
+        "servers": 1,
+        "channels": 3,
+        "registration": "UI",
+        "invitation": "UI",
+        "services": "real API/Gateway/SFU"
+      },
+      "at": "2026-09-28T13:22:28.550Z",
+      "durationMs": 7270,
+      "predecessors": []
+    },
+    {
+      "id": "leave-revokes-existing-gateway-active-sfu-and-held-ticket",
+      "status": "FAIL",
+      "reason": "revoked-client-retained-access",
+      "classification": "confirmed-product-failure",
+      "site": "harness.mjs:20:25",
+      "metrics": {
+        "controlConfirmed": true,
+        "gatewayControl": {
+          "state": 1,
+          "events": 1
+        },
+        "revocationStatus": 204,
+        "baseline": {
+          "frames": 9,
+          "openSockets": 1
+        },
+        "settled": {
+          "frames": 38,
+          "openSockets": 1
+        },
+        "after": {
+          "frames": 48,
+          "openSockets": 1
+        },
+        "beforeGateway": {
+          "state": 1,
+          "events": 1
+        },
+        "gateway": {
+          "state": 1,
+          "events": 2
+        },
+        "restStatus": 404,
+        "freshTicketStatus": 404,
+        "heldTicket": {
+          "accepted": true,
+          "denied": false,
+          "failed": true
+        },
+        "clientTeardownSuppressed": true
+      },
+      "at": "2026-09-28T13:22:35.821Z",
+      "durationMs": 9697,
+      "predecessors": [
+        "03a",
+        "03b"
+      ]
+    },
+    {
+      "id": "kick-revokes-existing-gateway-active-sfu-and-held-ticket",
+      "status": "FAIL",
+      "reason": "revoked-client-retained-access",
+      "classification": "unconfirmed-failure",
+      "site": "harness.mjs:20:25",
+      "metrics": {
+        "controlConfirmed": false,
+        "gatewayControl": {
+          "state": 1,
+          "events": 1
+        },
+        "revocationStatus": 204,
+        "baseline": {
+          "frames": 9,
+          "openSockets": 1
+        },
+        "settled": {
+          "frames": 19,
+          "openSockets": 1
+        },
+        "after": {
+          "frames": 19,
+          "openSockets": 1
+        },
+        "beforeGateway": {
+          "state": 1,
+          "events": 1
+        },
+        "gateway": {
+          "state": 1,
+          "events": 1
+        },
+        "restStatus": 404,
+        "freshTicketStatus": 404,
+        "heldTicket": {
+          "accepted": false,
+          "denied": true,
+          "state": 3
+        },
+        "clientTeardownSuppressed": true
+      },
+      "at": "2026-09-28T13:22:45.518Z",
+      "durationMs": 9637,
+      "predecessors": [
+        "03a",
+        "03b"
+      ]
+    },
+    {
+      "id": "ban-revokes-existing-gateway-active-sfu-and-held-ticket",
+      "status": "FAIL",
+      "reason": "revoked-client-retained-access",
+      "classification": "unconfirmed-failure",
+      "site": "harness.mjs:20:25",
+      "metrics": {
+        "controlConfirmed": false,
+        "gatewayControl": {
+          "state": 1,
+          "events": 1
+        },
+        "revocationStatus": 204,
+        "baseline": {
+          "frames": 9,
+          "openSockets": 1
+        },
+        "settled": {
+          "frames": 19,
+          "openSockets": 1
+        },
+        "after": {
+          "frames": 19,
+          "openSockets": 1
+        },
+        "beforeGateway": {
+          "state": 1,
+          "events": 1
+        },
+        "gateway": {
+          "state": 1,
+          "events": 1
+        },
+        "restStatus": 404,
+        "freshTicketStatus": 404,
+        "heldTicket": {
+          "accepted": false,
+          "denied": true,
+          "state": 3
+        },
+        "clientTeardownSuppressed": true
+      },
+      "at": "2026-09-28T13:22:55.155Z",
+      "durationMs": 9709,
+      "predecessors": [
+        "03a",
+        "03b"
+      ]
+    },
+    {
+      "id": "logout-revokes-existing-gateway-active-sfu-and-held-ticket",
+      "status": "FAIL",
+      "reason": "revoked-client-retained-access",
+      "classification": "confirmed-product-failure",
+      "site": "harness.mjs:20:25",
+      "metrics": {
+        "controlConfirmed": true,
+        "gatewayControl": {
+          "state": 1,
+          "events": 1
+        },
+        "revocationStatus": 200,
+        "baseline": {
+          "frames": 9,
+          "openSockets": 1
+        },
+        "settled": {
+          "frames": 37,
+          "openSockets": 1
+        },
+        "after": {
+          "frames": 47,
+          "openSockets": 1
+        },
+        "beforeGateway": {
+          "state": 1,
+          "events": 1
+        },
+        "gateway": {
+          "state": 1,
+          "events": 2
+        },
+        "restStatus": 401,
+        "freshTicketStatus": 401,
+        "heldTicket": {
+          "accepted": true,
+          "denied": false,
+          "failed": true
+        },
+        "clientTeardownSuppressed": true
+      },
+      "at": "2026-09-28T13:23:04.864Z",
+      "durationMs": 9659,
+      "predecessors": [
+        "03a",
+        "03b"
+      ]
+    },
+    {
+      "id": "logout-other-independent-session-survives",
+      "status": "PASS",
+      "classification": "observed-pass",
+      "metrics": {
+        "independentSessionRetained": true
+      },
+      "at": "2026-09-28T13:23:14.523Z",
+      "durationMs": 1246,
+      "predecessors": [
+        "03a"
+      ]
+    },
+    {
+      "id": "ban-invite-join-race",
+      "status": "BLOCKED",
+      "classification": "blocked",
+      "reason": "03a lock race deterministically covered by backend; browser concurrency alone cannot force transaction overlap",
+      "predecessors": [
+        "03a"
+      ],
+      "at": "2026-09-28T13:23:15.770Z"
+    },
+    {
+      "id": "channel-server-delete-active-sockets",
+      "status": "BLOCKED",
+      "classification": "blocked",
+      "reason": "negative deleted-room scenario remains for integrated 03b",
+      "predecessors": [
+        "03b"
+      ],
+      "at": "2026-09-28T13:23:15.770Z"
+    },
+    {
+      "id": "slow-reader-bounded-memory",
+      "status": "BLOCKED",
+      "classification": "blocked",
+      "reason": "requires isolated server metrics and controllable raw TCP backpressure",
+      "predecessors": [
+        "05a"
+      ],
+      "at": "2026-09-28T13:23:15.770Z"
+    }
+  ],
+  "cleanup": [
+    {
+      "target": "owned-test-server",
+      "status": 204
+    }
+  ],
+  "finishedAt": "2026-09-28T13:23:17.235Z"
+}

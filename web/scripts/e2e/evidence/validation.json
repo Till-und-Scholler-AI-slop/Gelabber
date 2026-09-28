@@ -1,0 +1,68 @@
+{
+  "phase": "11a",
+  "validation": {
+    "webTests": {
+      "status": "PASS",
+      "files": 30,
+      "tests": 229
+    },
+    "harnessChecks": {
+      "status": "PASS",
+      "tests": 4
+    },
+    "lint": "PASS",
+    "build": "PASS",
+    "buildWarnings": [
+      "existing dynamic-import overlap",
+      "existing bundle >500 KiB"
+    ],
+    "originalSmoke": {
+      "status": "PASS",
+      "cameraScreen": "PASS",
+      "forcedTurnAudio": "PASS",
+      "sharedSenderBudget": "PASS",
+      "jpegPngWebp": "PASS",
+      "netem": "BLOCKED: no privileged media container PID"
+    }
+  },
+  "testErrorsCorrected": [
+    {
+      "id": "account-session-reload-login",
+      "cause": "login navigation precedes asynchronous logout POST; test did not await HTTP response and failed to restore owner after early failure",
+      "control": "core-delivery.json: POST200 then Session200 user:null, login owner, PASS; all following core scenarios verified/restored account identity"
+    },
+    {
+      "id": "channel-chat-create-edit-delete-converges",
+      "cause": "early account failure left owner logged out; exact edited-text selector also included annotation",
+      "control": "core-delivery.json PASS cross-client create/edit/delete and REST convergence"
+    },
+    {
+      "id": "new-dm-connected-recipient-discovers-without-refetch",
+      "cause": "earlier account/member accessible-name selector included Presence label; fixed to observed member title and expected DM href",
+      "control": "core-delivery.json new DM fails live discovery but reload finds same DM and first message: now confirmed product failure"
+    },
+    {
+      "id": "background-event-before-first-open-55-history-paging",
+      "cause": "full-core writer exhausted 60/min fixture budget at history index52 (HTTP429); earlier channel creation selector lacked response/href control",
+      "control": "history-control.json PASS all55 rows and paging; final harness uses an independent member writer budget"
+    },
+    {
+      "id": "gateway-only-preserves-peer",
+      "cause": "old probe dereferenced a missing retained native-peer reference; reference access now defensive and the strict identity assertion remains",
+      "control": "media-control.json records capture/peer identity assertion FAIL instead of TypeError"
+    },
+    {
+      "id": "vitest-discovery",
+      "cause": "initial node:test file name matched Vitest; renamed harness.checks.mjs, invoked directly to execute all four checks",
+      "control": "30/30 Vitest suites,229/229 tests,4/4 separate harness checks PASS"
+    },
+    {
+      "id": "source-dirty-metadata",
+      "cause": "old runner was invoked from web/ with repo-relative status paths; core-reviewed not shipped; current runner resolves repository root and records per-module SHA256",
+      "control": "delivery/control reports identify dirty test sources; early media-firefox lacks hashes and remains a baseline probe"
+    }
+  ],
+  "integrationGate": "BLOCKED: mixed service source/runtime, missing02/03b/05a/06b/07/08/10 and manual/operational evidence; no11b/c/d approval",
+  "originalSmokeBlob": "ec5f1663d0092d00f78b1d3bb8ae924d64daa35e",
+  "fileOwnershipVerified": "web/scripts/e2e/** and web/package.json only; no dependency/pin changes"
+}
