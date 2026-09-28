@@ -952,3 +952,206 @@ async fn pending_upload_expiring_during_storage_head_cannot_bind(pool: PgPool) {
     );
     server.abort();
 }
+
+#[sqlx::test]
+async fn inflight_put_after_expiry_is_not_lost_from_daily_usage(pool: PgPool) {
+    use rusty_s3::actions::S3Action;
+    use rusty_s3::{Bucket, Credentials, UrlStyle};
+    use tokio::io::{AsyncReadExt, AsyncWriteExt};
+    let endpoint = std::env::var("MINIO_ENDPOINT").unwrap();
+    let config = minio_config(&endpoint);
+    let mut state = state(pool.clone(), 4);
+    state.store = ObjectStore::from_minio(Some(&config)).unwrap();
+    state.store.ensure_ready().await.unwrap();
+    let (mut client, _, channel) = owner(&state).await;
+    let first = presign(&mut client, &channel).await;
+    let id = Uuid::parse_str(first["id"].as_str().unwrap()).unwrap();
+    let key = format!("att/{id}");
+    // Compress the otherwise ten-minute boundary to three seconds; the actual
+    // valid signed request and DB pending deadline agree, and it starts before both.
+    let bucket = Bucket::new(
+        url::Url::parse(&endpoint).unwrap(),
+        UrlStyle::Path,
+        config.bucket.clone(),
+        "us-east-1".to_owned(),
+    )
+    .unwrap();
+    let credentials = Credentials::new(config.access_key.clone(), config.secret_key.clone());
+    let mut action = bucket.put_object(Some(&credentials), &key);
+    action
+        .headers_mut()
+        .insert("content-type", "image/png".to_owned());
+    action
+        .headers_mut()
+        .insert("content-length", "4".to_owned());
+    let signed = action.sign(Duration::from_secs(3));
+    let date = signed
+        .query_pairs()
+        .find(|(k, _)| k == "X-Amz-Date")
+        .unwrap()
+        .1
+        .to_string();
+    let expiry = chrono::NaiveDateTime::parse_from_str(&date, "%Y%m%dT%H%M%SZ")
+        .unwrap()
+        .and_utc()
+        + chrono::Duration::seconds(3);
+    sqlx::query("UPDATE attachments SET expires_at=$2 WHERE id=$1")
+        .bind(id)
+        .bind(expiry)
+        .execute(&pool)
+        .await
+        .unwrap();
+    let host = signed.host_str().unwrap();
+    let port = signed.port_or_known_default().unwrap();
+    let mut socket = tokio::net::TcpStream::connect((host, port)).await.unwrap();
+    let target = format!("{}?{}", signed.path(), signed.query().unwrap());
+    let request = format!(
+        "PUT {target} HTTP/1.1\r\nHost: {host}:{port}\r\nContent-Type: image/png\r\nContent-Length: 4\r\nConnection: close\r\n\r\n"
+    );
+    socket.write_all(request.as_bytes()).await.unwrap();
+    socket.write_all(&[1, 2]).await.unwrap();
+    let initial = tokio::time::timeout(Duration::from_secs(1), state.store.head(&key))
+        .await
+        .expect("local MinIO HEAD must finish while the PUT is incomplete");
+    assert!(matches!(initial, Err(StoreError::NotFound)));
+    while chrono::Utc::now() <= expiry {
+        tokio::time::sleep(Duration::from_millis(20)).await;
+    }
+    cleanup::expire_pending(&state, 32).await.unwrap();
+    println!(
+        "After expiry HEAD404: ledger={:?}",
+        usage(&state, client.user_id()).await
+    );
+    socket.write_all(&[3, 4]).await.unwrap();
+    let mut response = Vec::new();
+    tokio::time::timeout(Duration::from_secs(3), socket.read_to_end(&mut response))
+        .await
+        .unwrap()
+        .unwrap();
+    assert!(
+        response.starts_with(b"HTTP/1.1 200"),
+        "request started before signed expiry must complete successfully"
+    );
+    assert_eq!(state.store.head(&key).await.unwrap().size, 4);
+    let second = client
+        .send(
+            Method::POST,
+            &format!("/api/channels/{channel}/attachments"),
+            Some(json!({"filename":"second.png","content_type":"image/png","size":4})),
+        )
+        .await;
+    if second.status == StatusCode::CREATED {
+        let mut put = reqwest::Client::new().put(second.body["upload_url"].as_str().unwrap());
+        for (name, value) in second.body["headers"].as_object().unwrap() {
+            put = put.header(name, value.as_str().unwrap());
+        }
+        let uploaded = put
+            .body(vec![5, 6, 7, 8])
+            .send()
+            .await
+            .unwrap_or_else(|_| panic!("own second local PUT transport failed"));
+        assert!(uploaded.status().is_success());
+        let second_key = format!("att/{}", second.body["id"].as_str().unwrap());
+        assert_eq!(state.store.head(&second_key).await.unwrap().size, 4);
+        println!(
+            "Two real 4-byte MinIO uploads succeeded under 4-byte daily cap; ledger={:?}; second reservation HTTP{}",
+            usage(&state, client.user_id()).await,
+            second.status.as_u16()
+        );
+        state.store.delete(&second_key).await.unwrap();
+        cleanup::delete_pending(&state, 32).await.unwrap();
+        state.store.delete(&key).await.unwrap();
+    }
+    println!(
+        "Completed first 4-byte upload after expiry; ledger={:?}; second reservation HTTP{}",
+        usage(&state, client.user_id()).await,
+        second.status.as_u16()
+    );
+    assert_eq!(
+        second.status,
+        StatusCode::TOO_MANY_REQUESTS,
+        "completed first upload must still consume the 4-byte daily cap"
+    );
+    assert_eq!(usage(&state, client.user_id()).await, (4, 0));
+    // Advance only the test's DB deadline; settle the actual late-completed PUT
+    // once and verify final object cleanup without refunding its consumed bytes.
+    sqlx::query("UPDATE attachments SET expires_at=now()-interval '16 minutes',expiry_retry_at=now() WHERE id=$1")
+  .bind(id).execute(&pool).await.unwrap();
+    cleanup::expire_pending(&state, 32).await.unwrap();
+    cleanup::delete_pending(&state, 32).await.unwrap();
+    assert_eq!(usage(&state, client.user_id()).await, (0, 4));
+    assert!(matches!(
+        state.store.head(&key).await,
+        Err(StoreError::NotFound)
+    ));
+}
+
+#[sqlx::test]
+async fn absent_upload_keeps_quota_through_grace_and_concurrent_expiry_refunds_once(pool: PgPool) {
+    let state = state(pool.clone(), 4);
+    let (mut client, _, channel) = owner(&state).await;
+    let signed = presign(&mut client, &channel).await;
+    let id = Uuid::parse_str(signed["id"].as_str().unwrap()).unwrap();
+    sqlx::query(
+        "UPDATE attachments SET expires_at=clock_timestamp()-interval '1 minute' WHERE id=$1",
+    )
+    .bind(id)
+    .execute(&pool)
+    .await
+    .unwrap();
+    cleanup::expire_pending(&state, 32).await.unwrap();
+    assert_eq!(usage(&state, client.user_id()).await, (4, 0));
+    let deferred: bool = sqlx::query_scalar(
+        "SELECT expiry_retry_at>=expires_at+interval '15 minutes' FROM attachments WHERE id=$1",
+    )
+    .bind(id)
+    .fetch_one(&pool)
+    .await
+    .unwrap();
+    assert!(deferred);
+    assert_eq!(
+        client
+            .send(Method::GET, &format!("/api/attachments/{id}"), None)
+            .await
+            .status,
+        StatusCode::NOT_FOUND
+    );
+    assert_eq!(
+        client
+            .send(
+                Method::POST,
+                &format!("/api/channels/{channel}/messages"),
+                Some(json!({"attachment_ids":[id]}))
+            )
+            .await
+            .status,
+        StatusCode::UNPROCESSABLE_ENTITY
+    );
+    let denied = client
+        .send(
+            Method::POST,
+            &format!("/api/channels/{channel}/attachments"),
+            Some(json!({"filename":"y.png","content_type":"image/png","size":4})),
+        )
+        .await;
+    assert_eq!(denied.status, StatusCode::TOO_MANY_REQUESTS);
+    sqlx::query("UPDATE attachments SET expires_at=clock_timestamp()-interval '16 minutes',expiry_retry_at=now() WHERE id=$1")
+        .bind(id).execute(&pool).await.unwrap();
+    let (first, second) = tokio::join!(
+        cleanup::expire_pending(&state, 32),
+        cleanup::expire_pending(&state, 32)
+    );
+    first.unwrap();
+    second.unwrap();
+    cleanup::delete_pending(&state, 32).await.unwrap();
+    assert_eq!(usage(&state, client.user_id()).await, (0, 0));
+    assert_eq!(
+        sqlx::query_scalar::<_, i64>("SELECT count(*) FROM attachments")
+            .fetch_one(&pool)
+            .await
+            .unwrap(),
+        0
+    );
+    presign(&mut client, &channel).await;
+    assert_eq!(usage(&state, client.user_id()).await, (4, 0));
+}

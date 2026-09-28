@@ -45,13 +45,14 @@ struct Upload {
     id: Uuid,
     object_key: String,
     size_bytes: i64,
+    grace_over: bool,
 }
 
 /// HEAD without locks, then lock and recheck. A concurrent bind wins safely;
 /// a failed HEAD leaves metadata/reservation intact for a later retry.
 pub async fn expire_pending(state: &AppState, limit: i64) -> Result<(), ApiError> {
     let uploads = sqlx::query_as::<_, Upload>(
-        "SELECT id, object_key, size_bytes FROM attachments \
+        "SELECT id, object_key, size_bytes, clock_timestamp() >= expires_at + interval '15 minutes' AS grace_over FROM attachments \
          WHERE message_id IS NULL AND expires_at <= now() AND expiry_retry_at <= now() \
          ORDER BY expiry_retry_at, expires_at, id LIMIT $1",
     )
@@ -73,7 +74,7 @@ pub async fn discard_mismatches(
     ids: &[Uuid],
 ) -> Result<(), ApiError> {
     let uploads = sqlx::query_as::<_, Upload>(
-        "SELECT id, object_key, size_bytes FROM attachments \
+        "SELECT id, object_key, size_bytes, clock_timestamp() >= expires_at + interval '15 minutes' AS grace_over FROM attachments \
          WHERE id=ANY($1) AND channel_id=$2 AND uploader_id=$3 AND message_id IS NULL",
     )
     .bind(ids)
@@ -91,6 +92,18 @@ async fn retire(state: &AppState, upload: &Upload, expired: bool) -> Result<(), 
     let quota_state = match state.store.head(&upload.object_key).await {
         Ok(meta) if !expired && meta.size == upload.size_bytes => return Ok(()),
         Ok(_) => "consumed",
+        Err(StoreError::NotFound) if expired && !upload.grace_over => {
+            // HEAD cannot see an incomplete valid PUT. Keep its reservation
+            // and expired metadata until grace has passed; no repeated HEADs
+            // are needed during that wait. Bind/download already reject expiry.
+            sqlx::query(
+                "UPDATE attachments SET expiry_retry_at=GREATEST(expiry_retry_at, expires_at + interval '15 minutes') \
+                 WHERE id=$1 AND object_key=$2 AND message_id IS NULL",
+            ).bind(upload.id).bind(&upload.object_key).execute(&state.db).await?;
+            return Ok(());
+        }
+        // grace_over was sampled BEFORE HEAD, not after it: a HEAD started
+        // before the grace boundary cannot refund based on that older 404.
         Err(StoreError::NotFound) if expired => "unused",
         Err(StoreError::NotFound) => return Ok(()),
         Err(err) => {

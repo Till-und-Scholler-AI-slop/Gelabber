@@ -60,8 +60,16 @@ transaction commits. Concurrent requests cannot all pass a stale SUM. Failure
 rolls back both metadata and reservation; zero configured cap means unlimited.
 
 Binding moves reserved bytes to consumed. Message/channel/server deletion never
-refunds consumed bytes. On pending expiry, a confirmed missing object releases
-its reservation; an uploaded object becomes consumed before cleanup. A cascade
+refunds consumed bytes. An expiry HEAD404 cannot rule out a valid PUT that began
+before expiry but has not finished. The worker therefore keeps the reservation
+and expired metadata through `expires_at + 15 minutes`, and defers the next HEAD
+to that boundary instead of polling the same upload every second. Expired rows
+remain unavailable for bind/download throughout this wait. An uploaded object
+becomes consumed before cleanup; a missing object releases its reservation only
+when the grace boundary was already passed before the confirming HEAD began.
+A PUT completing within grace therefore cannot free capacity for another upload:
+its bytes remain reserved until the worker records consumption. Its physical
+cleanup may wait until the grace boundary. A cascade
 cannot know whether a PUT succeeded, so it queues a conservative charge of an
 unknown pending reservation. That reservation stays counted until the worker
 atomically transfers it to consumed, guarded by the job claim generation.
@@ -102,7 +110,7 @@ unversioned local buckets and only UUID-scoped test objects.
 
 Rust 1.98.1; PostgreSQL 18.6 UTF8; Redis 8.10.1; local MinIO built from
 `RELEASE.2025-10-15T17-29-55Z` (native binary banner `DEVELOPMENT.GOGET`,
-Go 1.24.8). The final `cargo test --locked --workspace --all-targets --
+Go 1.24.8). The original `cargo test --locked --workspace --all-targets --
 --test-threads=2` passed **255 tests, zero failed/ignored**, across 24 targets
 (`/tmp/10-workspace-complete.log`). The 12 storage lifecycle regressions also
 passed as a targeted suite (`/tmp/10-lifecycle-complete.log`). API all-targets
@@ -117,6 +125,26 @@ then green (`/tmp/10-parent-lock-before.log`, `/tmp/10-lifecycle-complete.log`).
 A stalled HEAD crossing the pending deadline returned 201 before the wall-clock
 recheck, then 422 with no message after it (`/tmp/10-bind-expiry-before.log`,
 `/tmp/10-lifecycle-complete.log`). No injected fault remains in the source.
+
+The in-flight PUT follow-up reproduces the independent review against
+`521875c6b6988cd99de1f1a34da56e71112a13e3` with real MinIO. It shortens only
+the matching signed-URL/DB deadlines to three seconds, sends half the four-byte
+body before expiry, observes HEAD404 at expiry, then completes that same PUT
+with HTTP200 inside grace. Before the fix, a second four-byte reservation and
+actual PUT succeeded under a four-byte daily cap (HTTP201; ledger counted only
+the second upload); the expected HTTP429 assertion failed
+(`/tmp/10-inflight-before.log`). After the fix, the first reservation stays
+counted, the second presign returns HTTP429, and the actual first object settles
+to consumed and is deleted after advancing the test's grace deadline. A second
+regression checks that a truly absent object remains reserved during grace,
+cannot bind/download, then refunds exactly once under concurrent expiry workers.
+The targeted suite passed all 14 storage tests (`/tmp/10-inflight-after.log`),
+including 32-job bounds and replacement-claim protection. The follow-up changes
+no job-claim protocol, migration, wire response, stack pin, or CI configuration.
+The final follow-up `cargo test --locked --workspace --all-targets --
+--test-threads=2` passed **257 tests, zero failed/ignored**, across 24 targets
+(`/tmp/10-inflight-workspace.log`). API all-targets Clippy with warnings denied
+also passed (`/tmp/10-inflight-clippy.log`).
 
 An incremental rustc fingerprint ICE occurred during development. The final
 checks used `CARGO_INCREMENTAL=0` in this worktree's target directory, with the
