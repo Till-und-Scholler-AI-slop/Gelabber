@@ -118,7 +118,7 @@ export function VoiceControls({
           <span className="ml-1.5">{sharing ? "Stopp" : "Bildschirm"}</span>
         )}
       </button>
-      {canGoLive ? (
+      {canGoLive || live ? (
         <button
           type="button"
           aria-pressed={live}

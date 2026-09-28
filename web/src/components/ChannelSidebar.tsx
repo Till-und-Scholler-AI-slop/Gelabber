@@ -8,7 +8,6 @@ import { useMemo, useRef, useState, type ReactNode } from "react";
 
 import { useVoice } from "../voice/session.ts";
 import { EMPTY_LIVE, useVoiceRoster } from "../voice/roster.ts";
-import { VoiceControls } from "./VoiceControls.tsx";
 import { can } from "../servers/permissions.ts";
 import { buildRows, rowHeight, type Row } from "../servers/rows.ts";
 import {
@@ -43,7 +42,6 @@ export function ChannelSidebar({
 }) {
   const manageChannels = can(server, "manage_channels");
   const manageServer = can(server, "manage_server");
-  const canGoLive = can(server, "go_live");
   const voice = useVoice();
   const live = useVoiceRoster((s) => s.live[server.id] ?? EMPTY_LIVE);
   const [channelDialog, setChannelDialog] = useState<ChannelDialogState | null>(
@@ -91,7 +89,7 @@ export function ChannelSidebar({
         server={server}
         rows={rows}
         activeChannelId={activeChannelId}
-        voiceChannelId={voice.channelId}
+        voiceChannelId={voice.serverId === server.id ? voice.channelId : null}
         liveChannels={live}
         manageChannels={manageChannels}
         onEditChannel={(channel) => setChannelDialog({ mode: "edit", channel })}
@@ -102,20 +100,6 @@ export function ChannelSidebar({
           setCategoryDialog({ mode: "edit", category })
         }
       />
-
-      {voice.status === "joined" ? (
-        <div className="flex flex-col gap-1 border-t border-neutral-200 dark:border-neutral-700 px-3 py-2 text-sm">
-          <div className="min-w-0 text-left">
-            <p className="text-xs font-medium text-emerald-700 dark:text-emerald-300">
-              Verbunden
-            </p>
-            <p className="truncate text-neutral-700 dark:text-neutral-300">
-              {voice.channelName ?? "Voice"}
-            </p>
-          </div>
-          <VoiceControls compact canGoLive={canGoLive} />
-        </div>
-      ) : null}
 
       {manageChannels ? (
         <footer className="flex flex-col gap-1 border-t border-neutral-200 dark:border-neutral-700 p-2 text-sm">

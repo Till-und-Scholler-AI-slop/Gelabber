@@ -20,6 +20,7 @@ import {
   toggleShare,
   watchLive,
   stopWatching,
+  retryPlayback,
   useVoice,
   type PeerConnection,
   type RtpSender,
@@ -1146,20 +1147,20 @@ describe("voice session", () => {
       streams: [stream],
     });
     expect(useVoice.getState().watchStream).toBe(stream);
-    expect(useVoice.getState().remote["u-bob"]?.l).toBe(stream);
+    expect(useVoice.getState().remote).toEqual({});
     const late = fakeVideoStream("u-cara:l-8801");
     peers[0]?.ontrack?.({
       track: late.getVideoTracks()[0]!,
       streams: [late],
     });
-    expect(useVoice.getState().watchStream).toBe(late);
-    expect(useVoice.getState().remote["u-cara"]?.l).toBe(late);
+    expect(useVoice.getState().watchStream).toBe(stream);
+    expect(useVoice.getState().remote).toEqual({});
     const stray = fakeVideoStream("chrome-msid");
     peers[0]?.ontrack?.({
       track: stray.getVideoTracks()[0]!,
       streams: [stray],
     });
-    expect(useVoice.getState().watchStream).toBe(late);
+    expect(useVoice.getState().watchStream).toBe(stream);
     stopWatching();
     expect(useVoice.getState().watching).toBe(false);
     expect(useVoice.getState().watchServerId).toBeNull();
@@ -1193,7 +1194,7 @@ describe("voice session", () => {
     expect(useVoice.getState().watching).toBe(false);
   });
 
-  it("uses an untagged watch video only until a parsed live track arrives", async () => {
+  it("requires publisher identity before displaying a Watch video", async () => {
     const { peers } = install();
     watchLive({
       serverId: "srv",
@@ -1206,13 +1207,115 @@ describe("voice session", () => {
       track: stray.getVideoTracks()[0]!,
       streams: [stray],
     });
-    expect(useVoice.getState().watchStream).toBe(stray);
+    expect(useVoice.getState().watchStream).toBeNull();
     const live = fakeVideoStream("u-bob:l");
     peers[0]?.ontrack?.({
       track: live.getVideoTracks()[0]!,
       streams: [live],
     });
     expect(useVoice.getState().watchStream).toBe(live);
+    expect(useVoice.getState().watchPublisherId).toBe("u-bob");
+    expect(useVoice.getState().remote).toEqual({});
+  });
+
+  it("keeps Watch separate from Voice and rejects another Live publisher", async () => {
+    const { peers, emitSig } = install();
+    joinVoice({
+      serverId: "srv-a",
+      channelId: "voice",
+      channelName: "Voice A",
+    });
+    await vi.waitFor(() => expect(peers).toHaveLength(1));
+    useVoiceRoster.setState({ live: { "srv-b": { stage: "u-bob" } } });
+    watchLive({
+      serverId: "srv-b",
+      channelId: "stage",
+      channelName: "Stage B",
+    });
+    await vi.waitFor(() => expect(peers).toHaveLength(2));
+    const camera = fakeVideoStream("u-bob:v");
+    const wrong = fakeVideoStream("u-alice:l");
+    for (const stream of [camera, wrong]) {
+      peers[1]!.ontrack?.({
+        track: stream.getVideoTracks()[0]!,
+        streams: [stream],
+      });
+    }
+    expect(useVoice.getState().watchStream).toBeNull();
+    const live = fakeVideoStream("u-bob:l");
+    peers[1]!.ontrack?.({ track: live.getVideoTracks()[0]!, streams: [live] });
+    expect(useVoice.getState().watchStream).toBe(live);
+    expect(useVoice.getState().watchPublisherId).toBe("u-bob");
+    expect(useVoice.getState().watchChannelName).toBe("Stage B");
+    expect(useVoice.getState().remote).toEqual({});
+    emitSig({
+      op: "sig",
+      t: "u",
+      s: "srv-b",
+      c: "stage",
+      u: "u-alice",
+      k: "l",
+    });
+    expect(useVoice.getState().watching).toBe(true);
+    stopWatching();
+    expect(useVoice.getState().watchPublisherId).toBeNull();
+    expect(useVoice.getState().watchChannelName).toBeNull();
+    expect(useVoice.getState().status).toBe("joined");
+    expect(peers[0]!.closed).toBe(false);
+  });
+
+  it("exposes blocked audio, retries on click and ignores a detached play failure", async () => {
+    const clips: FakeAudio[] = [];
+    let rejectPlay = true;
+    let delayedReject: ((error: unknown) => void) | undefined;
+    class FakeAudio {
+      autoplay = false;
+      muted = false;
+      volume = 1;
+      srcObject: MediaStream | null = null;
+      constructor() {
+        clips.push(this);
+      }
+      setAttribute() {}
+      play() {
+        return rejectPlay
+          ? Promise.reject(new DOMException("blocked", "NotAllowedError"))
+          : Promise.resolve();
+      }
+    }
+    const previous = globalThis.Audio;
+    vi.stubGlobal("Audio", FakeAudio);
+    try {
+      const { peers } = install();
+      watchLive({ serverId: "srv", channelId: "stage", channelName: "Stage" });
+      await vi.waitFor(() => expect(peers).toHaveLength(1));
+      const stream = fakeStream("u-bob:a");
+      peers[0]!.ontrack?.({
+        track: stream.getAudioTracks()[0]!,
+        streams: [stream],
+      });
+      await vi.waitFor(() =>
+        expect(useVoice.getState().playbackBlocked).toBe(true),
+      );
+      rejectPlay = false;
+      retryPlayback();
+      await vi.waitFor(() =>
+        expect(useVoice.getState().playbackBlocked).toBe(false),
+      );
+      const el = clips.find((clip) => clip.srcObject === stream)!;
+      el.play = () =>
+        new Promise<void>((_, reject) => {
+          delayedReject = reject;
+        });
+      retryPlayback();
+      stopWatching();
+      delayedReject!(new DOMException("late blocked", "NotAllowedError"));
+      await Promise.resolve();
+      await Promise.resolve();
+      expect(useVoice.getState().playbackBlocked).toBe(false);
+    } finally {
+      globalThis.Audio = previous;
+    }
   });
 
   it("parses SFU stream ids for a live track", () => {

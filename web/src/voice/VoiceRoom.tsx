@@ -35,8 +35,17 @@ export function VoiceRoom({
   );
   const liveUser = useVoiceRoster((s) => liveOf(s.live, server.id, channelId));
   const openSettings = useMediaSettings((s) => s.openDialog);
-  const here = voice.status === "joined" && voice.channelId === channelId;
-  const watching = voice.watching && voice.watchChannelId === channelId;
+  const here =
+    voice.status === "joined" &&
+    voice.serverId === server.id &&
+    voice.channelId === channelId;
+  const watching =
+    voice.watching &&
+    voice.watchServerId === server.id &&
+    voice.watchChannelId === channelId;
+  const liveStreamFor = (id: string) =>
+    (here ? voice.remote[id]?.l : null) ??
+    (watching && voice.watchPublisherId === id ? voice.watchStream : null);
   const showDiagnostics = useVoiceDiagnostics(
     (state) =>
       state.samples.length > 0 ||
@@ -71,8 +80,8 @@ export function VoiceRoom({
     name: string;
   } | null = null;
   for (const [id] of occupants) {
-    const pubs = voice.participants[id]?.pubs ?? [];
-    const self = id === me;
+    const pubs = here ? (voice.participants[id]?.pubs ?? []) : [];
+    const self = here && id === me;
     const name = self
       ? `${members.get(id)?.name ?? "Du"} (du)`
       : (members.get(id)?.name ?? "Mitglied");
@@ -82,9 +91,7 @@ export function VoiceRoom({
     if (isLive && !liveTile) {
       liveTile = {
         id: `${id}-l`,
-        stream: self
-          ? voice.localLive
-          : (voice.remote[id]?.l ?? voice.watchStream),
+        stream: self ? voice.localLive : liveStreamFor(id),
         name: `${name} — Live`,
       };
     }
@@ -113,9 +120,7 @@ export function VoiceRoom({
     liveTile = {
       id: `${liveUser}-l`,
       stream:
-        liveUser === me
-          ? voice.localLive
-          : (voice.remote[liveUser]?.l ?? voice.watchStream),
+        here && liveUser === me ? voice.localLive : liveStreamFor(liveUser),
       name: `${name} — Live`,
     };
   }
@@ -242,7 +247,7 @@ export function VoiceRoom({
           <ul className="mt-4 flex flex-col gap-1 text-left text-sm text-neutral-700 dark:text-neutral-300">
             {occupants.map(([id, flags]) => {
               const member = members.get(id);
-              const pubs = voice.participants[id]?.pubs ?? [];
+              const pubs = here ? (voice.participants[id]?.pubs ?? []) : [];
               const isLive =
                 (here && id === me && voice.live) || liveUser === id;
               const liveAudio =

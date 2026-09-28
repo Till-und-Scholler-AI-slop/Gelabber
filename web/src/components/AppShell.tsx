@@ -1,7 +1,7 @@
 import { Link, Outlet, useNavigate } from "@tanstack/react-router";
 
 import { logout, useSession } from "../auth/session.ts";
-import { leaveVoice } from "../voice/session.ts";
+import { leaveVoice, stopWatching } from "../voice/session.ts";
 import {
   useAuthenticatedSubscriptions,
   useGatewaySession,
@@ -13,6 +13,7 @@ import { GearIcon } from "./Icons.tsx";
 import { MessageToasts } from "./MessageToasts.tsx";
 import { Toasts } from "./Toasts.tsx";
 import { VoiceSettingsDialog } from "./VoiceSettingsDialog.tsx";
+import { VoiceSessionControls } from "./VoiceSessionControls.tsx";
 
 function AuthenticatedRealtime() {
   useAuthenticatedSubscriptions();
@@ -30,6 +31,7 @@ export function AppShell() {
     // Store flips first, so the header and guards react before the request
     // even leaves; the navigation is client-side.
     leaveVoice();
+    stopWatching();
     void logout();
     void navigate({ to: "/login" });
   };
@@ -82,6 +84,7 @@ export function AppShell() {
       <Toasts />
       <MessageToasts />
       {user ? <VoiceSettingsDialog /> : null}
+      {user ? <VoiceSessionControls /> : null}
     </div>
   );
 }

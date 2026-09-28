@@ -86,7 +86,10 @@ export type VoiceState = {
   watching: boolean;
   watchServerId: string | null;
   watchChannelId: string | null;
+  watchChannelName: string | null;
+  watchPublisherId: string | null;
   watchStream: MediaStream | null;
+  playbackBlocked: boolean;
   remote: Record<string, RemoteVideo>;
   participants: Record<string, VoiceParticipant>;
 };
@@ -107,7 +110,10 @@ const idle: VoiceState = {
   watching: false,
   watchServerId: null,
   watchChannelId: null,
+  watchChannelName: null,
+  watchPublisherId: null,
   watchStream: null,
+  playbackBlocked: false,
   remote: {},
   participants: {},
 };
@@ -216,6 +222,7 @@ let screenStream: MediaStream | null = null;
 let liveStream: MediaStream | null = null;
 let remoteAudio: HTMLAudioElement | null = null;
 let watchAudio: HTMLAudioElement | null = null;
+const blockedPlayback = new Set<HTMLAudioElement>();
 let remoteMix: MediaStream | null = null;
 let bound = false;
 let micEpoch = 0;
@@ -466,9 +473,46 @@ function defaultAttachRemote(stream: MediaStream): void {
     remoteAudio.setAttribute("playsinline", "true");
   }
   remoteAudio.srcObject = stream;
-  void remoteAudio.play()?.catch(() => undefined);
   applyLocalAudio();
   applyPlayback();
+  playAudio(remoteAudio);
+}
+
+function updatePlaybackBlocked(): void {
+  useVoice.setState({ playbackBlocked: blockedPlayback.size > 0 });
+}
+
+function playAudio(el: HTMLAudioElement): void {
+  const stream = el.srcObject;
+  if (!stream) return;
+  const failed = (error: unknown) => {
+    if (
+      el.srcObject !== stream ||
+      (error as { name?: string })?.name === "AbortError"
+    )
+      return;
+    blockedPlayback.add(el);
+    updatePlaybackBlocked();
+  };
+  try {
+    void el
+      .play()
+      ?.then(() => {
+        if (el.srcObject !== stream) return;
+        blockedPlayback.delete(el);
+        updatePlaybackBlocked();
+      })
+      .catch(failed);
+  } catch (error) {
+    failed(error);
+  }
+}
+
+/** Call synchronously from a click so the browser grants playback activation. */
+export function retryPlayback(): void {
+  for (const el of [remoteAudio, watchAudio]) {
+    if (el?.srcObject) playAudio(el);
+  }
 }
 
 function rtpSenderCtor():
@@ -708,14 +752,17 @@ function onSig(event: SigEvent): void {
     event.c === state.channelId;
   if (
     watchingHere &&
-    ((event.t === "u" && event.k === "l") || event.t === "l")
+    ((event.t === "u" && event.k === "l") || event.t === "l") &&
+    (!state.watchPublisherId || event.u === state.watchPublisherId)
   ) {
     const liveUser = event.c
       ? liveOf(useVoiceRoster.getState().live, event.s, event.c)
       : null;
     if (
       event.t === "u" ||
-      (event.t === "l" && event.u && liveUser === event.u)
+      (event.t === "l" &&
+        event.u &&
+        (state.watchPublisherId === event.u || liveUser === event.u))
     ) {
       stopWatching();
     }
@@ -1088,6 +1135,8 @@ function stopPeer(preserveCapture = false): void {
   clearReceived();
   if (remoteAudio) {
     remoteAudio.srcObject = null;
+    blockedPlayback.delete(remoteAudio);
+    updatePlaybackBlocked();
   }
   useVoice.setState({
     localCamera: cameraStream,
@@ -1121,8 +1170,12 @@ function rollbackSeat(error?: unknown): void {
     watching: state.watching,
     watchServerId: state.watchServerId,
     watchChannelId: state.watchChannelId,
+    watchChannelName: state.watchChannelName,
+    watchPublisherId: state.watchPublisherId,
     watchStream: state.watchStream,
+    playbackBlocked: blockedPlayback.size > 0,
   });
+  applyPlayback();
   if (serverId && channelId) {
     deps?.gateway.send({
       op: "sig",
@@ -2522,8 +2575,12 @@ export function leaveVoice(): void {
     watching: state.watching,
     watchServerId: state.watchServerId,
     watchChannelId: state.watchChannelId,
+    watchChannelName: state.watchChannelName,
+    watchPublisherId: state.watchPublisherId,
     watchStream: state.watchStream,
+    playbackBlocked: blockedPlayback.size > 0,
   });
+  applyPlayback();
   if (serverId && channelId) {
     deps?.gateway.send({
       op: "sig",
@@ -2679,6 +2736,12 @@ export function watchLive(input: {
     watching: true,
     watchServerId: input.serverId,
     watchChannelId: input.channelId,
+    watchChannelName: input.channelName,
+    watchPublisherId: liveOf(
+      useVoiceRoster.getState().live,
+      input.serverId,
+      input.channelId,
+    ),
     watchStream: null,
   });
   void startWatchPeer(input.channelId);
@@ -2690,6 +2753,8 @@ export function stopWatching(): void {
     watching: false,
     watchServerId: null,
     watchChannelId: null,
+    watchChannelName: null,
+    watchPublisherId: null,
     watchStream: null,
   });
 }
@@ -2708,6 +2773,9 @@ export function resetVoiceForTests(): void {
   clearWatchReconnectTimer();
   stopWatchPeer();
   stopPeer();
+  remoteAudio = null;
+  watchAudio = null;
+  blockedPlayback.clear();
   seat = new MediaPeer();
   watchCall = new MediaPeer();
   resetVideoLimitQueue();
@@ -3267,6 +3335,8 @@ function stopWatchPeer(preserveRetry = false): void {
   watchCall.close();
   if (watchAudio) {
     watchAudio.srcObject = null;
+    blockedPlayback.delete(watchAudio);
+    updatePlaybackBlocked();
   }
 }
 
@@ -3283,27 +3353,25 @@ function attachWatchIncoming(
     }
     const mix = stream ?? new MediaStream([track]);
     watchAudio.srcObject = mix;
-    void watchAudio.play()?.catch(() => undefined);
     applyPlayback();
+    playAudio(watchAudio);
     return;
   }
   const parsed = parseIncomingVideo(track, stream);
   const attached = stream ?? new MediaStream([track]);
   const state = useVoice.getState();
   if (!parsed) {
-    // First untagged video can fill the tile. Do not replace a parsed live.
-    if (!state.watchStream) {
-      useVoice.setState({ watchStream: attached });
-    }
+    // An untagged track cannot identify the selected publisher.
     return;
   }
-  const current = state.remote[parsed.userId] ?? {};
+  if (
+    parsed.k !== "l" ||
+    (state.watchPublisherId && state.watchPublisherId !== parsed.userId)
+  )
+    return;
   useVoice.setState({
-    watchStream: parsed.k === "l" ? attached : (state.watchStream ?? attached),
-    remote: {
-      ...state.remote,
-      [parsed.userId]: { ...current, [parsed.k]: attached },
-    },
+    watchStream: attached,
+    watchPublisherId: parsed.userId,
   });
 }
 

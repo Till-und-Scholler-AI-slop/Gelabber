@@ -1,7 +1,7 @@
 // Local or remote video tile. srcObject is set in an effect so the
 // preview can appear in the same frame as the stream, without SDP.
 
-import { useEffect, useRef } from "react";
+import { useCallback, useEffect, useRef, useState } from "react";
 
 import { CollapseIcon, ExpandIcon } from "../components/Icons.tsx";
 
@@ -23,14 +23,34 @@ export function VoiceTile({
   onToggleExpand?: () => void;
 }) {
   const ref = useRef<HTMLVideoElement>(null);
+  const [blockedStream, setBlockedStream] = useState<MediaStream | null>(null);
+  const play = useCallback(() => {
+    const el = ref.current;
+    if (!el || !stream) return;
+    const failed = (error: unknown) => {
+      if (
+        el.srcObject !== stream ||
+        (error as { name?: string })?.name === "AbortError"
+      )
+        return;
+      setBlockedStream(stream);
+    };
+    try {
+      void el
+        .play()
+        ?.then(() => {
+          if (el.srcObject === stream) setBlockedStream(null);
+        })
+        .catch(failed);
+    } catch (error) {
+      failed(error);
+    }
+  }, [stream]);
   useEffect(() => {
     const el = ref.current;
     if (!el) return;
     el.srcObject = stream;
     if (stream) {
-      const play = () => {
-        void el.play()?.catch(() => undefined);
-      };
       play();
       const onUnmute = () => play();
       stream.getVideoTracks().forEach((track) => {
@@ -46,7 +66,7 @@ export function VoiceTile({
     return () => {
       el.srcObject = null;
     };
-  }, [stream]);
+  }, [stream, play]);
 
   return (
     <figure
@@ -68,6 +88,18 @@ export function VoiceTile({
           stream ? "" : "opacity-0",
         ].join(" ")}
       />
+      {stream && blockedStream === stream ? (
+        <div className="absolute inset-0 flex flex-col items-center justify-center gap-2 bg-black/65 p-3 text-sm">
+          <p role="status">Die Videowiedergabe ist blockiert.</p>
+          <button
+            type="button"
+            onClick={play}
+            className="rounded-md bg-white px-3 py-2 font-medium text-neutral-900"
+          >
+            Wiedergabe starten
+          </button>
+        </div>
+      ) : null}
       {!stream ? (
         <div className="absolute inset-0 flex items-center justify-center text-sm text-neutral-400 dark:text-neutral-500">
           {label}
