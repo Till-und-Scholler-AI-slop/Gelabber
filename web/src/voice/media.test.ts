@@ -3,6 +3,7 @@ import { describe, expect, it } from "vitest";
 import {
   isOurTicket,
   openMediaSocket,
+  publishedTrackIds,
   opusMaxAverageBitrate,
   tuneAudioSdp,
 } from "./media.ts";
@@ -127,5 +128,18 @@ describe("media socket lifecycle", () => {
     } finally {
       globalThis.WebSocket = previous;
     }
+  });
+});
+
+describe("publisher SDP identity", () => {
+  it("maps active video MID to its MSID, not its capture track ID", () => {
+    const sdp =
+      "v=0\r\nm=video 9 UDP/TLS/RTP/SAVPF 96\r\na=mid:2\r\na=msid:new-stream retained-track\r\nm=video 9 UDP/TLS/RTP/SAVPF 96\r\na=mid:3\r\na=recvonly\r\na=msid:old-stream stopped-track\r\n";
+    expect([...publishedTrackIds(sdp)]).toEqual([["2", "retained-track"]]);
+  });
+  it("supports legacy SSRC MSID and ignores rejected video", () => {
+    const sdp =
+      "v=0\nm=video 9 UDP/TLS/RTP/SAVPF 96\na=mid:screen\na=ssrc:123 msid:stream screen-track\nm=video 0 UDP/TLS/RTP/SAVPF 96\na=mid:removed\na=msid:stream removed-track\n";
+    expect([...publishedTrackIds(sdp)]).toEqual([["screen", "screen-track"]]);
   });
 });

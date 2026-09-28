@@ -26,6 +26,7 @@ import {
   type OpenMedia,
   mediaWsUrl,
   openMediaSocket,
+  publishedTrackIds,
   requestMediaTicket,
   tuneAudioSdp,
 } from "./media.ts";
@@ -155,6 +156,7 @@ export type PeerConnection = {
   setLocalDescription(desc: { type: string; sdp?: string }): Promise<void>;
   setRemoteDescription(desc: { type: string; sdp?: string }): Promise<void>;
   getTransceivers?(): {
+    mid?: string | null;
     sender?: { track?: { kind: string } | null };
     receiver?: { track?: { kind: string } | null };
     setCodecPreferences?(codecs: { mimeType: string }[]): void;
@@ -169,6 +171,7 @@ export type PeerConnection = {
   oniceconnectionstatechange: (() => void) | null;
   onconnectionstatechange: (() => void) | null;
   remoteDescription?: { type: string } | null;
+  localDescription?: { type: string; sdp?: string } | null;
   signalingState?: string;
   getStats?(): Promise<unknown>;
 };
@@ -237,9 +240,11 @@ let videoLimitChain: Promise<void> = Promise.resolve();
 let videoLimitGeneration = 0;
 let videoLimitRevision = 0;
 /** Senders that belonged to the last completed negotiation. */
-let settledSenders: RtpSender[] = [];
 /** Video kinds announced for the offer that is still unanswered. */
-let openPublish: Array<"v" | "s" | "l"> = [];
+type PublishIdentity = { kind: "v" | "s" | "l"; trackId: string };
+let openPublish: PublishIdentity[] = [];
+let offeredPublish: PublishIdentity[] = [];
+const publisherTracks = new Map<RtpSender, PublishIdentity>();
 /** Cleanup of a rejected publish must not enqueue a replacement offer. */
 let discardingPublish = false;
 /** Gateway reconnect left the media peer up; re-announce after our join echo. */
@@ -910,9 +915,7 @@ function voiceCaps(): Caps {
   const senders = (seat.pc?.getSenders?.() ?? []).filter(
     (sender) => sender.track?.kind === "video",
   );
-  const profiles = senders.map((sender) =>
-    profileForVideoTrack(sender.track!),
-  );
+  const profiles = senders.map((sender) => profileForVideoTrack(sender.track!));
   const shares = allocateVideoBitrates(profiles);
   const videoLimits: NonNullable<Caps["videoLimits"]> = {};
   for (const [index, sender] of senders.entries()) {
@@ -1026,8 +1029,9 @@ function stopPeer(): void {
   audioCommitChain = Promise.resolve();
   cameraCommitChain = Promise.resolve();
   resetVideoLimitQueue();
-  settledSenders = [];
   openPublish = [];
+  offeredPublish = [];
+  publisherTracks.clear();
   discardingPublish = false;
   announced.clear();
   for (const stream of pendingMicRaw) stopTracks(stream);
@@ -1952,9 +1956,9 @@ async function settleFailedNegotiation(mine: number): Promise<void> {
           seatRecoverySlot.recovery?.generation === mine &&
           seatRecoverySlot.recovery.pendingIceRestart;
         seat.needOffer = restartPending;
-        for (const kind of kinds) {
+        for (const { kind, trackId } of kinds) {
           logVoice("warn", "unpublish", { track: kind });
-          seat.send({ op: "u", k: kind });
+          seat.send({ op: "u", k: kind, t: trackId });
         }
       } finally {
         discardingPublish = false;
@@ -1987,18 +1991,22 @@ async function settleFailedNegotiation(mine: number): Promise<void> {
 }
 
 /** Remove senders added after the last successful answer. The mic stays. */
-function dropUnsettledPublish(): Array<"v" | "s" | "l"> {
+function dropUnsettledPublish(): PublishIdentity[] {
   const pc = seat.pc;
-  const kinds = openPublish.slice();
-  openPublish = [];
-  if (pc?.getSenders && pc.removeTrack) {
-    for (const sender of pc.getSenders()) {
-      if (settledSenders.includes(sender)) continue;
-      pc.removeTrack(sender);
-    }
+  const pending = offeredPublish;
+  offeredPublish = [];
+  openPublish = openPublish.filter((identity) => !pending.includes(identity));
+  const discardedKinds = new Set<"v" | "s" | "l">();
+  for (const [sender, identity] of publisherTracks) {
+    if (!pending.includes(identity)) continue;
+    discardedKinds.add(identity.kind);
+    pc?.removeTrack?.(sender);
+    publisherTracks.delete(sender);
   }
-  for (const kind of kinds) releaseDiscardedCapture(kind);
-  return kinds;
+  for (const kind of discardedKinds) {
+    releaseDiscardedCapture(kind);
+  }
+  return pending;
 }
 
 /**
@@ -2113,8 +2121,8 @@ async function applyRemoteDescription(
   if (!current()) return;
   seat.negotiated = true;
   if (type === "answer") {
-    settledSenders = [...(pc.getSenders?.() ?? [])];
-    openPublish = [];
+    openPublish = openPublish.filter((identity) => !offeredPublish.includes(identity));
+    offeredPublish = [];
   }
   if (seat.needOffer || owesIceRestart(seatRecoverySlot, mine)) {
     void offerIfStable(mine);
@@ -2797,7 +2805,15 @@ function stopLocalVideo(kind: "v" | "s" | "l"): void {
   sendPub(kind, false);
   for (const track of stream?.getTracks() ?? []) {
     const sender = senders.find((item) => item.track === track);
-    if (sender) seat.pc?.removeTrack?.(sender);
+    if (sender) {
+      const identity = publisherTracks.get(sender);
+      seat.send({ op: "u", k: kind, t: identity?.trackId ?? track.id });
+      publisherTracks.delete(sender);
+      seat.pc?.removeTrack?.(sender);
+    } else {
+      seat.send({ op: "u", k: kind, t: track.id });
+    }
+    openPublish = openPublish.filter((item) => item.kind !== kind);
     track.stop();
   }
   if (seat.pc) void enqueueVideoLimits(seat.pc);
@@ -2818,10 +2834,13 @@ async function publishLocal(
   const tracks = stream.getVideoTracks();
   if (tracks.length === 0) return;
   logVoice("info", "publish", { track: kind });
-  openPublish.push(kind);
-  seat.send({ op: "p", k: kind });
   for (const track of tracks) {
-    seat.pc.addTrack?.(track, stream);
+    // addTrack may reuse a stopped sender/transceiver. Reserve by the new
+    // MSID identity, rather than treating the sender object as a new publish.
+    const sender = seat.pc.addTrack?.(track, stream);
+    const identity: PublishIdentity = { kind, trackId: track.id };
+    if (sender) publisherTracks.set(sender, identity);
+    openPublish.push(identity);
   }
   const pc = seat.pc;
   void enqueueVideoLimits(pc);
@@ -2919,10 +2938,31 @@ async function offerIfStable(
       }
       await pc.setLocalDescription(offer);
       if (!live()) return;
+      const localSdp = pc.localDescription?.sdp ?? offer.sdp;
+      const bindings = publishedTrackIds(localSdp ?? "");
+      offeredPublish = [];
+      for (const [sender, identity] of publisherTracks) {
+        if (!openPublish.includes(identity)) continue;
+        const transceiver = pc
+          .getTransceivers?.()
+          .find((item) => item.sender === sender);
+        const trackId = transceiver?.mid
+          ? bindings.get(transceiver.mid)
+          : undefined;
+        if (pc.getTransceivers && !trackId) {
+          // Capture may have arrived after createOffer. It belongs to the next
+          // offer; an answer for this offer must not settle that publication.
+          seat.needOffer = true;
+          continue;
+        }
+        identity.trackId = trackId ?? identity.trackId;
+        offeredPublish.push(identity);
+        seat.send({ op: "p", k: identity.kind, t: identity.trackId });
+      }
       if (restart) noteRestartOfferCreated(seatRecoverySlot, mine);
-      if (!offer.sdp) return;
-      logVoice("info", "send-offer", { bytes: offer.sdp.length });
-      seat.send({ op: "o", sdp: offer.sdp });
+      if (!localSdp) return;
+      logVoice("info", "send-offer", { bytes: localSdp.length });
+      seat.send({ op: "o", sdp: localSdp });
     } catch (error) {
       if (restart && live()) markIceRestartPending(seatRecoverySlot, mine);
       if (live()) recoverNegotiation(error, mine);

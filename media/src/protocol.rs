@@ -32,11 +32,13 @@ pub enum ClientFrame {
         #[serde(default)]
         mid: Option<String>,
     },
-    /// Next inbound track kind from this peer: `v` (camera), `s` (screen), `l` (live).
+    /// Kind bound to the publisher's MSID track ID. Missing `t` is legacy SDP order.
     #[serde(rename = "p")]
     Announce {
         #[serde(default)]
         k: Option<String>,
+        #[serde(default)]
+        t: Option<String>,
     },
     /// Subscriber could not answer the outstanding offer.
     #[serde(rename = "x")]
@@ -46,6 +48,8 @@ pub enum ClientFrame {
     Retract {
         #[serde(default)]
         k: Option<String>,
+        #[serde(default)]
+        t: Option<String>,
     },
     #[serde(rename = "l")]
     Leave,
@@ -104,14 +108,16 @@ mod tests {
         assert_eq!(
             frame,
             ClientFrame::Announce {
-                k: Some("s".into())
+                k: Some("s".into()),
+                t: None,
             }
         );
         let live: ClientFrame = serde_json::from_str(r#"{"op":"p","k":"l"}"#).unwrap();
         assert_eq!(
             live,
             ClientFrame::Announce {
-                k: Some("l".into())
+                k: Some("l".into()),
+                t: None,
             }
         );
         let abort: ClientFrame = serde_json::from_str(r#"{"op":"x"}"#).unwrap();
@@ -120,7 +126,8 @@ mod tests {
         assert_eq!(
             undo,
             ClientFrame::Retract {
-                k: Some("s".into())
+                k: Some("s".into()),
+                t: None,
             }
         );
     }

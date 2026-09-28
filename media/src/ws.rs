@@ -160,12 +160,12 @@ async fn handle(
                 .map_err(|err| sfu_code(peer_id, &err, "ice apply failed"))?;
             Ok(None)
         }
-        ClientFrame::Announce { k } => {
+        ClientFrame::Announce { k, t } => {
             let (peer_id, channel_id) = joined.ok_or("unauthorized")?;
             let k = track_kind(k)?;
             state
                 .sfu
-                .announce(peer_id, channel_id, &k)
+                .announce_track(peer_id, channel_id, &k, t.as_deref())
                 .await
                 .map_err(|err| sfu_code(peer_id, &err, "announce failed"))?;
             Ok(None)
@@ -179,12 +179,12 @@ async fn handle(
                 .map_err(|err| sfu_code(peer_id, &err, "abort offer failed"))?;
             Ok(None)
         }
-        ClientFrame::Retract { k } => {
+        ClientFrame::Retract { k, t } => {
             let (peer_id, channel_id) = joined.ok_or("unauthorized")?;
             let k = track_kind(k)?;
             state
                 .sfu
-                .retract(peer_id, channel_id, &k)
+                .retract_track(peer_id, channel_id, &k, t.as_deref())
                 .await
                 .map_err(|err| sfu_code(peer_id, &err, "retract failed"))?;
             Ok(None)
@@ -253,9 +253,36 @@ async fn join(
 /// large to treat as a normal signaling message. Anything else, including
 /// a publisher offer, must not abort the subscriber's current offer.
 fn answer_frame(text: &str) -> bool {
-    let n = text.len().min(64);
-    let head = &text[..n];
-    head.contains("\"op\":\"a\"") || head.contains("\"op\": \"a\"")
+    use serde::Deserializer;
+    use serde::de::{IgnoredAny, MapAccess, Visitor};
+
+    struct Header<'a>(&'a std::cell::Cell<bool>);
+    impl<'de> Visitor<'de> for Header<'_> {
+        type Value = bool;
+        fn expecting(&self, f: &mut std::fmt::Formatter) -> std::fmt::Result {
+            f.write_str("a signaling object header")
+        }
+        fn visit_map<M: MapAccess<'de>>(self, mut map: M) -> Result<bool, M::Error> {
+            while let Some(key) = map.next_key::<String>()? {
+                if key == "op" {
+                    self.0.set(map.next_value::<String>()? == "a");
+                    // Stop at the header. The oversized body can be incomplete
+                    // JSON and must never be parsed or allocated here.
+                    return Err(serde::de::Error::custom("header complete"));
+                }
+                map.next_value::<IgnoredAny>()?;
+            }
+            Ok(false)
+        }
+    }
+    // Parse only a bounded header, without allocating or inspecting the SDP body.
+    let mut n = text.len().min(1024);
+    while !text.is_char_boundary(n) {
+        n -= 1;
+    }
+    let answer = std::cell::Cell::new(false);
+    let _ = serde_json::Deserializer::from_str(&text[..n]).deserialize_map(Header(&answer));
+    answer.get()
 }
 
 async fn send(
@@ -282,13 +309,28 @@ mod tests {
     }
 
     #[test]
+    fn oversized_unicode_header_does_not_panic() {
+        let text = format!("{}€{}", " ".repeat(63), "x".repeat(MAX_FRAME));
+        assert!(!answer_frame(&text));
+        let text = format!("{}€{}", " ".repeat(1023), "x".repeat(MAX_FRAME));
+        assert!(!answer_frame(&text));
+        assert!(!answer_frame(r#"{"sdp":"\"op\":\"a\"","op":"o"}"#));
+        assert!(answer_frame(&format!(
+            "{{\"op\":\"a\",\"sdp\":\"{}",
+            "€".repeat(MAX_FRAME)
+        )));
+    }
+
+    #[test]
     fn chrome_video_sdp_fits() {
-        assert!(MAX_SDP >= 192 * 1024);
-        assert!(MAX_FRAME >= 256 * 1024);
-        assert!(MAX_FRAME > MAX_SDP);
-        // A Chrome video answer around 60 KiB used to miss the 48 KiB cap.
-        assert!(60 * 1024 < MAX_SDP);
-        assert!(MAX_SDP > 12_288);
-        assert!(MAX_FRAME > 16 * 1024);
+        const {
+            assert!(MAX_SDP >= 192 * 1024);
+            assert!(MAX_FRAME >= 256 * 1024);
+            assert!(MAX_FRAME > MAX_SDP);
+            // A Chrome video answer around 60 KiB used to miss the 48 KiB cap.
+            assert!(60 * 1024 < MAX_SDP);
+            assert!(MAX_SDP > 12_288);
+            assert!(MAX_FRAME > 16 * 1024);
+        }
     }
 }
