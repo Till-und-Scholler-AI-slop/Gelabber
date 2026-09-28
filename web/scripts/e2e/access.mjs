@@ -263,6 +263,28 @@ export async function closeAccessActors(
       nativeDataAvailable: false,
     });
 }
+async function closeIndependentSession(page, context) {
+  const failedSteps = await attemptAll([
+    [
+      "independent-session-logout",
+      async () => {
+        const logout = await api({ page }, "/auth/logout", "POST");
+        check(
+          logout.status === 200,
+          "independent-session-cleanup-logout-failed",
+          { status: logout.status },
+        );
+      },
+    ],
+    ["independent-context-close", () => closeAccessActors([{ context }])],
+  ]);
+  if (failedSteps.length)
+    throw new NativeInterfaceFailure({
+      stage: "independent-session-owned-cleanup",
+      failedSteps,
+      nativeDataAvailable: false,
+    });
+}
 export async function accessScenarios(h, f) {
   h.setIsolation(() => restoreOwnerAccount(f.owner, f.base));
   const chat = f.textPath.split("/").at(-1),
@@ -414,17 +436,35 @@ export async function accessScenarios(h, f) {
           .click();
         await page.waitForURL((u) => !u.pathname.includes("login"));
         const before = await api({ page }, "/auth/session");
-        await api(f.owner, "/auth/logout", "POST");
+        check(
+          before.status === 200 && before.body?.user?.id === f.owner.id,
+          "fixture-independent-session-not-authenticated",
+          { status: before.status },
+        );
+        const ownerLogout = await api(f.owner, "/auth/logout", "POST");
+        check(ownerLogout.status === 200, "owner-logout-request-failed", {
+          status: ownerLogout.status,
+        });
+        const ownerSession = await api(f.owner, "/auth/session");
+        check(
+          ownerSession.status === 200 && ownerSession.body?.user === null,
+          "owner-session-not-anonymous-after-logout",
+          { status: ownerSession.status },
+        );
         const after = await api({ page }, "/auth/session");
         check(
-          before.body.user?.id === f.owner.id &&
-            after.body.user?.id === f.owner.id,
+          after.status === 200 && after.body?.user?.id === f.owner.id,
           "logout-killed-other-session",
+          { status: after.status },
         );
-        await api({ page }, "/auth/logout", "POST");
-        return { independentSessionRetained: true };
+        return {
+          independentSessionRetained: true,
+          ownerLogoutStatus: ownerLogout.status,
+          ownerSessionAnonymousStatus: ownerSession.status,
+          independentSessionStatus: after.status,
+        };
       } finally {
-        await closeAccessActors([{ context }]);
+        await closeIndependentSession(page, context);
       }
     },
   );

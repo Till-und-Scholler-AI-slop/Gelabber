@@ -1,0 +1,103 @@
+{
+  "scope": "B-4 successful owner logout prerequisite and independent session cleanup, source-only",
+  "parent": "108c9054aeb90e4d8cf1c6495f5f0e2941c32f93",
+  "reviewTarget": "93524e91522322d8c516f6aef515d5a756831bc0",
+  "completeAcceptance": false,
+  "red": {
+    "path": "/tmp/gelabber-e2e/b4-parent-red.log",
+    "sha256": "96f48c83247c5e1ce9d2336170df642a8a86d42813803d928a3ccf2ad66d8e31",
+    "exit": 1,
+    "tests": 29,
+    "failures": 7,
+    "source": "exact parent + new actual-source VM/API/UI controls"
+  },
+  "green": {
+    "path": "/tmp/gelabber-e2e/b4-final-index-validation.json",
+    "sha256": "c8dd4d70d985fd5076741ba4630cc0635465b60af3929f43122e241f2ef1b352",
+    "at": "2026-09-28T19:14:01.003591+00:00",
+    "scope": "exact parent+index extracted source; no native runtime",
+    "node": "v26.8.2",
+    "sourceTreeBeforeEvidence": "7f475652c022d8efa4118379eacafa2daee3d76d",
+    "checks": [
+      {
+        "file": "access-native.checks.mjs",
+        "exit": 0,
+        "tests": 29,
+        "skipped": 0,
+        "output": "\u2714 actual heldMedia rejects empty stats instead of inventing a decoded stop (1.496924ms)\n\u2714 actual heldMedia rejects no video RTP instead of inventing a decoded stop (0.422701ms)\n\u2714 actual heldMedia rejects missing counter instead of inventing a decoded stop (0.388997ms)\n\u2714 actual heldMedia rejects invalid counter instead of inventing a decoded stop (0.413191ms)\n\u2714 actual heldMedia rejects partial counter disappearance and replacement after a valid control (0.637472ms)\n\u2714 actual heldMedia preserves available numeric zero and known stagnant counters (0.984341ms)\n\u2714 actual hold establishes known positive video counters before any fault and rejects unavailable/zero fixtures (1.247669ms)\n\u2714 actual heldMedia hung getStats is phase-labelled, quarantined, never fabricated as frames0 and release never reevaluates it (28.080918ms)\n\u2714 actual heldMedia pending outer evaluate cannot bypass quarantine or trigger a second probe (5.992023ms)\n\u2714 actual heldMedia rejects late native answer but records normal increasing and post-revocation stagnant frames unchanged (40.734264ms)\n\u2714 actual access finally attempts every own context after restore rejection and close timeout, with redacted failure stages (6.055054ms)\n\u2714 actual lease finally restores Redis and closes every own context even when API resume and a close fail (0.259412ms)\n\u2714 actual revocation stop check accepts known stagnant counters (0.802286ms)\n\u2714 actual revocation stop check rejects empty (0.318625ms)\n\u2714 actual revocation stop check rejects missing-counter (0.328882ms)\n\u2714 actual deletion stop check accepts known stagnant counters (0.59716ms)\n\u2714 actual deletion stop check rejects empty (0.300018ms)\n\u2714 actual deletion stop check rejects missing-counter (0.29199ms)\n\u2714 actual lease stop check accepts known stagnant counters (0.563576ms)\n\u2714 actual lease stop check rejects empty (0.312ms)\n\u2714 actual lease stop check rejects missing-counter (0.308162ms)\n\u2714 actual independent-session task requires successful owner logout and retains/cleans the other session (1.75979ms)\n\u2714 actual independent-session task rejects an unexercised/failed boundary {\"ownerLogoutStatus\":503} (1.21074ms)\n\u2714 actual independent-session task rejects an unexercised/failed boundary {\"ownerLogoutStatus\":401} (1.083825ms)\n\u2714 actual independent-session task rejects an unexercised/failed boundary {\"ownerStillSignedIn\":true} (1.065ms)\n\u2714 actual independent-session task rejects an unexercised/failed boundary {\"ownerSessionStatus\":503} (0.973451ms)\n\u2714 actual independent-session task rejects an unexercised/failed boundary {\"beforeStatus\":503} (1.004506ms)\n\u2714 actual independent-session task rejects an unexercised/failed boundary {\"afterStatus\":503} (0.957817ms)\n\u2714 actual independent-session task rejects an unexercised/failed boundary {\"cleanupLogoutStatus\":503} (1.119233ms)\n\u2139 tests 29\n\u2139 suites 0\n\u2139 pass 29\n\u2139 fail 0\n\u2139 cancelled 0\n\u2139 skipped 0\n\u2139 todo 0\n\u2139 duration_ms 103.355639\n(node:3) ExperimentalWarning: VM Modules is an experimental feature and might change at any time\n(Use `node --trace-warnings ...` to show where the warning was created)\n"
+      },
+      {
+        "file": "media-extra.checks.mjs",
+        "exit": 0,
+        "tests": 11,
+        "skipped": 0,
+        "output": "\u2714 exact SDP scenario preserves failed bounded camera warmup and never injects SDP or claims progress afterward (3.303604ms)\n\u2714 actual audio task retains the original expected microphone across mute/deafen/undeafen (4.024488ms)\n\u2714 actual audio task rejects microphone loss/replacement {\"lostMicAt\":\"deafen\"} (4.222149ms)\n\u2714 actual audio task rejects microphone loss/replacement {\"lostMicAt\":\"undeafen\"} (2.483699ms)\n\u2714 actual audio task rejects microphone loss/replacement {\"replaceSender\":true} (2.421849ms)\n\u2714 actual audio task rejects microphone loss/replacement {\"replaceTrack\":true} (2.342322ms)\n\u2714 actual audio task restore rejection still closes other context with visible redacted failure (2.439194ms)\n\u2714 actual audio task attempts both failed restore and failed independent close (2.688494ms)\n\u2714 actual audio task independent close rejection remains visible after healthy restore (2.390489ms)\n\u2714 actual audio finally never evaluates quarantined page and bounds pending independent context close (5.780152ms)\n\u2714 actual audio finally bounds a pending restore, quarantines once and still attempts independent context close (4.396657ms)\n\u2139 tests 11\n\u2139 suites 0\n\u2139 pass 11\n\u2139 fail 0\n\u2139 cancelled 0\n\u2139 skipped 0\n\u2139 todo 0\n\u2139 duration_ms 39.619883\n(node:15) ExperimentalWarning: VM Modules is an experimental feature and might change at any time\n(Use `node --trace-warnings ...` to show where the warning was created)\n"
+      },
+      {
+        "file": "native-finish.checks.mjs",
+        "exit": 0,
+        "tests": 4,
+        "skipped": 0,
+        "output": "\u2714 actual harness InterfaceTimeout -> finish never reevaluates quarantined page and reaches cleanup/report (17.520699ms)\n\u2714 actual healthy stop rejection is redacted FAIL/Exit1 while all later cleanup/report actions continue (3.497253ms)\n\u2714 actual harness broken page/context/browser closes stay red and cannot prevent later cleanup/report (5.850491ms)\n\u2714 actual harness pending close paths time out visibly and still write the report (80.836823ms)\n\u2139 tests 4\n\u2139 suites 0\n\u2139 pass 4\n\u2139 fail 0\n\u2139 cancelled 0\n\u2139 skipped 0\n\u2139 todo 0\n\u2139 duration_ms 5039.776473\n(node:27) ExperimentalWarning: VM Modules is an experimental feature and might change at any time\n(Use `node --trace-warnings ...` to show where the warning was created)\n"
+      }
+    ],
+    "lint": {
+      "exit": 0,
+      "output": ""
+    },
+    "moduleSha256": {
+      "teardown.mjs": "5bb7d0d8e023d23ab242eb8ac8b77a722d0a38c60f5df6637b86938b97419e9a",
+      "teardown.checks.mjs": "22f033c552b92bbe9e20e06c3ad51d993ecc46dcf7799da4d6623448aab7a5b1",
+      "storage-faults.mjs": "e0408378060689e8584c014f90e2d3771dc611b86bfce3bc5328a3b71ada01fb",
+      "session-audio-control.mjs": "b4624e88c9885d84ab0697bf55f7fb4878763d6bb810dd9501e7ed02202a6bc2",
+      "selection.mjs": "b8a445a817880843e833510d92dfdaf3150fff643f4b4ae5aa6906cd3913f771",
+      "s3-object.mjs": "1bce9abf11b4aa30e0e62b6063eb283baed30894e8f816787c379dd43ea63168",
+      "run.mjs": "d2900e4f8ec085708a696c1266359c51476d794c6fa497d2c0449243f9747bcd",
+      "rendered-frames.checks.mjs": "4e5bf1be45d1eb0914625d08b35623e48ccca80dc4c35337deff13dd63571780",
+      "redis-command.mjs": "b6d801eb136a072b8a00bc2982d16934bdc4cf90c06ef28b67be4ad5a160706b",
+      "realtime-faults.mjs": "71626d7a152521529f35b1c192760b2ac809bdb56955473507362fd9fe74db62",
+      "profiles.mjs": "ef20d6159fe61e04fda06c41314fbc2798e7ae7a7e5a5f57aa3f88569b0fe2aa",
+      "probe.mjs": "0b7aea113ba651b96d3b6a9e325f9436af9a9ffc06b33ddb27cb6f4033e7f91c",
+      "native-finish.checks.mjs": "0b61ec4d2796d448c92ed36dca1dd66052c4c6ca1844874f59f44462d2910c75",
+      "native-evaluate.mjs": "89294f744f2c6a0d88e90975a944e96e49b2bf1c829ba377ccaa17a19b1564bf",
+      "native-evaluate.checks.mjs": "4b24b3854f84b04ee5037ed2fdff7f02c7f490fefd6ff882bac9285877d8a5fd",
+      "membership-faults.mjs": "e155ee73a21bc27b7e8a75fe8d865e0309b35f8ad38ee77296da0db3a7a5b3a5",
+      "media.mjs": "f9339a0701f1e860865705980b66f7ee1b98ee89346ee235b959acae86461378",
+      "media-runtime.mjs": "d9bc66d17009162fd6f70eec24b227fda607e601fc7a0011a7fadae698795b67",
+      "media-runtime.checks.mjs": "4569eabb3d4339914cd48a0fdea42ad3feae89a827f67aa4923682ff72787a91",
+      "media-probe.checks.mjs": "a43b9440303b7babf4d3b6ac56a25407c9d6294e9ffde68c8f09915d21a12af6",
+      "media-lease-faults.mjs": "e3aefd71b583e5d4ab4a5109c3ed69a78352248392ec90a4f5308212fe8bae70",
+      "media-extra.mjs": "e08f2daa8374db84b665de0dbce58cef369c5088a96fe3ef6685d594db7791a2",
+      "media-extra.checks.mjs": "cfdda0510e5e307c0d00199ca9eed02f9a65b503db7210a26a8f9b03e8bfccd2",
+      "harness.mjs": "4425220c56f9da05e83896f1713c9ac800fe1b345507bcfc6b283c1440dec99d",
+      "harness.checks.mjs": "89564069db0e134a936088b2831b0eeac297777a8907523db9274efd276c9003",
+      "gateway-load.mjs": "c98da745c2ccc064829f71d1598a781eb1059177445c7c49dc7b5d07f7ed23d5",
+      "faults.mjs": "62fe2b0f812192bac2be6996049eec802db48097633c6367bd44018b6aa3a0d4",
+      "faults.checks.mjs": "9b013140e232dc052fe9b52755db20fb48267258b06fabec8ca546aae5afe11f",
+      "fault-runtime.mjs": "423684dfaddfdd65ca3021e95f842616563bef30dd8d99c70d477e9098bf7fee",
+      "fault-run.mjs": "39e5af6912f692478599cc2b9c4acc21ede1a877db72b79f4d5b6d8991769438",
+      "core.mjs": "90d46690fe1c6147d6fa54d7cc42372600ea6bc67a7b65a37a237bf4fca8fc03",
+      "ci-fault-prepare.mjs": "7be606568d420a1104cad28787fe3f8b072cda72eb265d714e6648c790b16e1d",
+      "ci-fault-prepare.checks.mjs": "b3481cdf182fc4e36d34f9b67ae828f5e115a55fcfd81233353744639affd653",
+      "ci-fault-loop.checks.mjs": "4fbf6bf68733e7175ae7baf6213230a9f7a37f75aa8971d6947b1283c5b142ff",
+      "chat-faults.mjs": "a4d258f8084e4ed842e408ebca19cbe178b636afdf2a32068e8232c16417d767",
+      "browser-options.mjs": "e092d543702eca00f24258a23b1ae97c4d280f857732dc2d262568913e01e052",
+      "browser-options.checks.mjs": "155c1eb154e9def93a95cbf7885a37755f6d91af90c93bc9b60f9f176f7104a5",
+      "account-switch.mjs": "9dd5cc5a93f55ac74ba03f46e3435b0f8e7435569dc242ef597b764e42b0ef46",
+      "access.mjs": "987f6440a0aca80c4a2377b35b778993cb30a04f0333bfecb55f01020fb6766b",
+      "access-native.checks.mjs": "a91714de1ecc6aa1ec15154c5c70348248c3eed6c7068e89b6058b90ead46d8b"
+    }
+  },
+  "earlierSourceCheckFailure": {
+    "path": "/tmp/gelabber-e2e/b4-initial-lint-failure.json",
+    "classification": "test-error/lint",
+    "reason": "Cleanup failure throw moved from finally into helper; final exact-index lint0"
+  },
+  "limits": [
+    "Actual source executes with API/UI/browser interfaces faked; no API/browser/DB/second worker",
+    "Contract requires owner POST/logout200 then current_session200 user:null; no invented401 shape",
+    "Both other-session GET statuses200/exact owner plus cleanup logout200/context close are strict",
+    "Historical88 case relations prove only original assert sources; no native stronger-assertion evidence",
+    "Independent followup review required; source checks44PASS are not actual app acceptance"
+  ]
+}

@@ -295,3 +295,137 @@ for (const [boundary, source] of Object.entries(stopChecks)) {
     });
   }
 }
+
+import * as nativeInterface from "./native-evaluate.mjs";
+import * as teardown from "./teardown.mjs";
+async function independentSessionControl({
+  ownerLogoutStatus = 200,
+  ownerSessionStatus = 200,
+  ownerStillSignedIn = false,
+  beforeStatus = 200,
+  afterStatus = 200,
+  cleanupLogoutStatus = 200,
+} = {}) {
+  const actions = [],
+    owner = {
+      id: "owned-user",
+      password: "synthetic-only",
+      email: "synthetic@example.invalid",
+    };
+  let result,
+    error,
+    reads = 0;
+  const locator = { fill: async () => {}, click: async () => {} };
+  const page = {
+    goto: async () => {},
+    waitForURL: async () => {},
+    getByLabel: () => locator,
+    getByRole: () => locator,
+  };
+  const mocks = {
+    "./harness.mjs": {
+      check,
+      click: async () => {},
+      navigate: async () => {},
+      observe: async () => {},
+      until: async () => {},
+      api: async (actor, path, method) => {
+        if (path === "/auth/session") {
+          if (actor === owner) {
+            actions.push("owner.session.after");
+            return {
+              status: ownerSessionStatus,
+              body: { user: ownerStillSignedIn ? { id: owner.id } : null },
+            };
+          }
+          actions.push(
+            reads ? "independent.session.after" : "independent.session.before",
+          );
+          return {
+            status: reads++ ? afterStatus : beforeStatus,
+            body: { user: { id: owner.id } },
+          };
+        }
+        assert.equal(path, "/auth/logout");
+        assert.equal(method, "POST");
+        actions.push(actor === owner ? "owner.logout" : "independent.logout");
+        return {
+          status: actor === owner ? ownerLogoutStatus : cleanupLogoutStatus,
+        };
+      },
+    },
+    "./native-evaluate.mjs": nativeInterface,
+    "./teardown.mjs": teardown,
+    "./media.mjs": { progress: async () => {} },
+  };
+  const context = vm.createContext({});
+  const source = new vm.SourceTextModule(
+    await readFile(new URL("./access.mjs", import.meta.url), "utf8"),
+    { context },
+  );
+  await source.link(async (name) => {
+    const exports = mocks[name] ?? (await import(name));
+    return new vm.SyntheticModule(
+      Object.keys(exports),
+      function () {
+        for (const [key, value] of Object.entries(exports))
+          this.setExport(key, value);
+      },
+      { context },
+    );
+  });
+  await source.evaluate();
+  const h = {
+    setIsolation: () => {},
+    browser: {
+      newContext: async () => ({
+        newPage: async () => page,
+        close: async () => {
+          actions.push("independent.context.close");
+        },
+      }),
+    },
+    run: async (id, _predecessors, task) => {
+      if (id === "logout-other-independent-session-survives") {
+        try {
+          result = await task();
+        } catch (e) {
+          error = e;
+        }
+      }
+    },
+  };
+  await source.namespace.accessScenarios(h, {
+    owner,
+    textPath: "/s/control/c/chat",
+    voicePath: "/s/control/c/voice",
+    base: "http://127.0.0.1:15186",
+  });
+  return { result, error, actions };
+}
+test("actual independent-session task requires successful owner logout and retains/cleans the other session", async () => {
+  const r = await independentSessionControl();
+  assert.equal(r.error, undefined);
+  assert.equal(r.result.independentSessionRetained, true);
+  assert.ok(r.actions.includes("independent.logout"));
+  assert.ok(r.actions.includes("independent.context.close"));
+});
+for (const options of [
+  { ownerLogoutStatus: 503 },
+  { ownerLogoutStatus: 401 },
+  { ownerStillSignedIn: true },
+  { ownerSessionStatus: 503 },
+  { beforeStatus: 503 },
+  { afterStatus: 503 },
+  { cleanupLogoutStatus: 503 },
+]) {
+  test(`actual independent-session task rejects an unexercised/failed boundary ${JSON.stringify(options)}`, async () => {
+    const r = await independentSessionControl(options);
+    assert.ok(r.error);
+    assert.equal(r.result?.independentSessionRetained, undefined);
+    assert.ok(r.actions.includes("independent.logout"));
+    assert.ok(r.actions.includes("independent.context.close"));
+    if (options.ownerLogoutStatus)
+      assert.ok(!r.actions.includes("independent.session.after"));
+  });
+}
