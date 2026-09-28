@@ -156,8 +156,37 @@ export function instrument({ relay }) {
 export async function sample() {
   const state = window.__e2e;
   const peers = [];
+  const closedPeer = () => ({
+    connection: "closed",
+    ice: "closed",
+    transceivers: null,
+    senders: null,
+    receivers: null,
+    localSdpBytes: null,
+    selected: [],
+    inbound: [],
+    outbound: [],
+    nativeSnapshotAvailable: false,
+  });
   for (const pc of state.peers) {
-    const report = await pc.getStats();
+    if (pc.connectionState === "closed") {
+      peers.push(closedPeer());
+      continue;
+    }
+    let report = new Map();
+    if (pc.connectionState !== "closed") {
+      try {
+        report = await pc.getStats();
+      } catch (error) {
+        // Firefox rejects getStats on a closed peer, including a close racing
+        // this sample. Keep the closed peer visible; never hide a live error.
+        if (pc.connectionState !== "closed") throw error;
+      }
+    }
+    if (pc.connectionState === "closed") {
+      peers.push(closedPeer());
+      continue;
+    }
     const entries = [...report.values()];
     const selected = [];
     for (const transport of entries.filter(

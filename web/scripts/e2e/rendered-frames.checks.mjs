@@ -3,7 +3,7 @@ import assert from "node:assert/strict";
 import { createContext, runInContext } from "node:vm";
 import { sample } from "./probe.mjs";
 
-function probe({ quality, callbacks = true }) {
+function probe({ quality, callbacks = true, peers = [] }) {
   let next;
   const video = {
     readyState: 0,
@@ -25,7 +25,7 @@ function probe({ quality, callbacks = true }) {
   const context = createContext({
     window: {
       __e2e: {
-        peers: [],
+        peers,
         sockets: [],
         captures: [],
         renderedVideos: new WeakMap(),
@@ -65,4 +65,36 @@ test("positive playback-quality count keeps its native source while unavailable 
   assert.equal((await absent.read()).renderedFrames, 0);
   assert.equal((await absent.read()).renderedFramesSource, "unavailable");
   assert.equal((await absent.read()).renderedFrames, 0);
+});
+
+test("closed peers never call rejected native getStats; live-peer stats errors remain failures", async () => {
+  let calls = 0;
+  const peer = {
+    connectionState: "closed",
+    iceConnectionState: "closed",
+    getStats: async () => {
+      calls++;
+      throw new Error("native closed peer");
+    },
+    get localDescription() {
+      if (this.connectionState === "closed")
+        throw new Error("native closed getter");
+      return null;
+    },
+    getTransceivers: () => [],
+    getSenders: () => [],
+    getReceivers: () => [],
+  };
+  await probe({ quality: 1, peers: [peer] }).read();
+  assert.equal(calls, 0);
+  peer.connectionState = "connected";
+  await assert.rejects(probe({ quality: 1, peers: [peer] }).read());
+  assert.equal(calls, 1);
+  peer.getStats = async () => {
+    calls++;
+    peer.connectionState = "closed";
+    throw new Error("native close race");
+  };
+  await probe({ quality: 1, peers: [peer] }).read();
+  assert.equal(calls, 2);
 });
