@@ -24,11 +24,12 @@ export function instrument({ relay }) {
   window.WebSocket = class extends Socket {
     constructor(url, protocols) {
       super(url, protocols);
+      const path = new URL(url, window.location.href).pathname;
       const item = {
         ws: this,
-        plane: new URL(url, window.location.href).pathname.startsWith("/media")
-          ? "media"
-          : "gateway",
+        // Vite HMR and any other socket must never be a media fault target.
+        plane:
+          path === "/ws" ? "gateway" : path === "/media/ws" ? "media" : "other",
         offers: 0,
         maxSdp: 0,
         receivedEvents: 0,

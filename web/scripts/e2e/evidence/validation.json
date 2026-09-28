@@ -64,5 +64,18 @@
   ],
   "integrationGate": "BLOCKED: mixed service source/runtime, missing02/03b/05a/06b/07/08/10 and manual/operational evidence; no11b/c/d approval",
   "originalSmokeBlob": "ec5f1663d0092d00f78b1d3bb8ae924d64daa35e",
-  "fileOwnershipVerified": "web/scripts/e2e/** and web/package.json only; no dependency/pin changes"
+  "fileOwnershipVerified": "web/scripts/e2e/** and web/package.json only; no dependency/pin changes",
+  "reviewCorrections": [
+    {
+      "finding": "11a-P2-HMR-as-Gateway",
+      "supersedes": [
+        "media-reviewed.json:gateway-only-preserves-peer",
+        "media-control.json:gateway-only-preserves-peer"
+      ],
+      "classification": "test-error",
+      "cause": "non-media WebSockets included Vite HMR; fault caused document reload",
+      "action": "withdraw confirmed-product classification, preserve historical raw evidence, constrain selector to exact /ws and /media/ws",
+      "regression": "actual instrument + interrupt; six paths, only one Gateway and one Media socket closed; HMR untouched"
+    }
+  ]
 }

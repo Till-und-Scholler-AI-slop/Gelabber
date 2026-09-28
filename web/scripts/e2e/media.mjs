@@ -94,7 +94,8 @@ async function begin(f) {
   );
   await click(f.watcher, "Zuschauen");
 }
-async function interrupt(actor, plane) {
+export async function interrupt(actor, plane) {
+  check(["gateway", "media"].includes(plane), "unsupported-fault-plane");
   const count = await actor.page.evaluate((plane) => {
     const sockets = window.__e2e.sockets.filter(
       (s) => s.plane === plane && s.ws.readyState === 1,

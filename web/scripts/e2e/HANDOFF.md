@@ -1,8 +1,12 @@
-# 11a handoff — implementation stops here
+# 11a historical handoff — review correction
 
 Branch `fix/stability-11`, baseline `828ee2341e57a7e77a971b1f9c52d3372f046fb8`. One standalone test-only commit; coordinator integrates and reviews. No pushes, PRs, release, production access or shared-service restarts. Implementation is paused after delivery so Web07/06b can take the third slot.
 
 Owned changes: `web/scripts/e2e/**` and the two new entries in `web/package.json`. The original camera/screen/forced-TURN/netem/upload smoke is unchanged and executed successfully locally, with netem explicitly unavailable. No product, CI, lockfile, pin or `media/tests/browser-lifecycle.mjs` changes.
+
+## Review correction (RESUME)
+
+The original Gateway-only product finding is withdrawn. The probe incorrectly classified Vite HMR and all non-media sockets as Gateway; the fault closed HMR and reloaded the document. `media-reviewed.json` and `media-control.json` are preserved as historical artifacts, but their Gateway-only rows are invalid test evidence. The earlier TypeError was a symptom of that document reload, not a confirmed product failure. A focused regression now exercises the actual instrument and fault selector: only exact `/ws` is Gateway, only exact `/media/ws` is Media, all other sockets remain outside faults. Native peer/capture assertions are unchanged. A control against the committed correction follows separately; the original 11a pause is superseded by the explicit RESUME.
 
 ## Attribution and validation
 
