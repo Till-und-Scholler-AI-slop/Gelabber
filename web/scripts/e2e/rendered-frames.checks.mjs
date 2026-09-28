@@ -26,6 +26,11 @@ function probe({ quality, callbacks = true, peers = [] }) {
     window: {
       __e2e: {
         peers,
+        mediaElements: new Set(),
+        incomingTracks: [],
+        heldTracks: [],
+        heldLiveClaims: [],
+        voiceRoster: [],
         sockets: [],
         captures: [],
         renderedVideos: new WeakMap(),

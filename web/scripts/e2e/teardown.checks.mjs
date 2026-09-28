@@ -65,7 +65,12 @@ async function runnerProbe({
   fail = [],
   startup = false,
   reportFailure = false,
+  media = false,
+  extraEnv = {},
+  hashChange = false,
 } = {}) {
+  const acquired = [],
+    hashReads = new Map();
   const calls = [],
     records = [],
     messages = [];
@@ -81,6 +86,7 @@ async function runnerProbe({
     storage: proxy("storage"),
     database: proxy("database"),
     close: () => action("runtime.close"),
+    resumeApi: () => action("api.resume"),
   };
   const fakeProcess = {
     exitCode: 0,
@@ -88,6 +94,13 @@ async function runnerProbe({
       GELABBER_E2E_FAULT_ENV: "/tmp/fixture.env",
       GELABBER_E2E_API_MANIFEST: "/tmp/fixture-manifest.json",
       GELABBER_E2E_WEB_SNAPSHOT: "/tmp/fixture-web",
+      ...extraEnv,
+      ...(media
+        ? {
+            GELABBER_E2E_MEDIA_FAULT_ENV: "/tmp/media.env",
+            GELABBER_E2E_MEDIA_MANIFEST: "/tmp/media-manifest.json",
+          }
+        : {}),
     },
   };
   await executeSource(
@@ -103,13 +116,29 @@ async function runnerProbe({
       },
       "./harness.mjs": { safeTarget: (x) => x },
       "./fault-runtime.mjs": {
-        startFaultApi: async () => runtime,
+        startFaultApi: async () => {
+          acquired.push("api");
+          return runtime;
+        },
         useFaultRuntime: (x) => {
           calls.push(x ? "runtime.set" : "runtime.clear");
         },
       },
+      "./media-runtime.mjs": {
+        startFaultMedia: async () => ({
+          manifest: { sourceSha: "b".repeat(40) },
+          close: () => action("media.close"),
+        }),
+      },
       "./run.mjs": {},
       "node:fs/promises": {
+        readFile: async (path) => {
+          const count = (hashReads.get(path) ?? 0) + 1;
+          hashReads.set(path, count);
+          return hashChange && count > 1
+            ? "changed-private-fixture"
+            : "private-fixture";
+        },
         mkdtemp: async () => "/tmp/fixture-cache",
         rm: () => action("cache.remove"),
         mkdir: async () => {},
@@ -121,7 +150,7 @@ async function runnerProbe({
     },
     { process: fakeProcess, console: { error: (msg) => messages.push(msg) } },
   );
-  return { calls, records, messages, exitCode: fakeProcess.exitCode };
+  return { calls, acquired, records, messages, exitCode: fakeProcess.exitCode };
 }
 
 test("exact runner attempts API/cache cleanup after web.close rejects and records only redacted FAIL", async () => {
@@ -309,7 +338,10 @@ test("exact startFaultApi.close releases remaining proxies/log and stops the own
         storageFaultProxy: async () => proxy(),
       },
       "./s3-object.mjs": { objectStatus: async () => 404 },
-      "./redis-command.mjs": { deleteTopicKeys: async () => 4 },
+      "./redis-command.mjs": {
+        deleteTopicKeys: async () => 4,
+        ownedLiveExists: async () => 0,
+      },
     },
     { process: { env: {} }, URL, fetch: async () => ({ ok: true }) },
   );
@@ -356,4 +388,67 @@ test("successful actions leave gate unchanged and preserve sequential teardown o
     [],
   );
   assert.deepEqual(calls, [1, 2]);
+});
+
+test("media close and API resume failures cannot skip remaining owned runtime/cache cleanup", async () => {
+  const result = await runnerProbe({
+    media: true,
+    fail: ["api.resume", "media.close"],
+  });
+  assert.equal(result.exitCode, 1);
+  for (const name of [
+    "api.resume",
+    "web.close",
+    "media.close",
+    "runtime.close",
+    "runtime.clear",
+    "cache.remove",
+  ])
+    assert.ok(result.calls.includes(name));
+  assert.deepEqual(result.records.at(-1).body.failedSteps, [
+    "api-resume",
+    "media-runtime-close",
+  ]);
+  assert.ok(!JSON.stringify(result).includes(secret));
+});
+
+test("exact runner rejects invalid adapter combinations before acquiring API or SFU resources", async () => {
+  for (const extraEnv of [
+    { GELABBER_E2E_SFU_LOOPBACK_ICE: "true" },
+    { GELABBER_E2E_FIREFOX_LOOPBACK_ICE: "bad" },
+    {
+      GELABBER_E2E_BROWSER: "firefox",
+      GELABBER_E2E_NETWORK: "relay",
+      GELABBER_E2E_FIREFOX_LOOPBACK_ICE: "true",
+      GELABBER_E2E_SFU_LOOPBACK_ICE: "true",
+      GELABBER_E2E_MEDIA_FAULT_ENV: "/tmp/media-fault.env",
+    },
+  ]) {
+    const result = await runnerProbe({ extraEnv });
+    assert.deepEqual(result.acquired, []);
+    assert.equal(result.exitCode, 1);
+    assert.equal(result.records[0].body.status, "BLOCKED");
+  }
+});
+test("exact adapter runner records equal baseline hashes and makes changed baseline or report failure nonzero after all cleanup", async () => {
+  const extraEnv = {
+    GELABBER_E2E_BROWSER: "firefox",
+    GELABBER_E2E_NETWORK: "relay",
+    GELABBER_E2E_FIREFOX_LOOPBACK_ICE: "true",
+    GELABBER_E2E_SFU_LOOPBACK_ICE: "true",
+    GELABBER_E2E_MEDIA_FAULT_ENV: "/tmp/media-fault-loopback-control.env",
+    GELABBER_E2E_MEDIA_MANIFEST: "/tmp/media-manifest.json",
+  };
+  for (const hashChange of [false, true]) {
+    const result = await runnerProbe({ extraEnv, hashChange });
+    assert.equal(result.exitCode, hashChange ? 1 : 0);
+    assert.equal(result.records.at(-1).body.baselineUnchanged, !hashChange);
+    assert.ok(result.calls.includes("runtime.close"));
+    assert.ok(result.calls.includes("cache.remove"));
+    assert.ok(!JSON.stringify(result).includes(secret));
+  }
+  assert.equal(
+    (await runnerProbe({ extraEnv, reportFailure: true })).exitCode,
+    1,
+  );
 });

@@ -1,4 +1,4 @@
-/* global window, navigator, document, URL, DOMException, setInterval, clearInterval */
+/* global window, navigator, document, URL, DOMException, setInterval, clearInterval, setTimeout, clearTimeout */
 // Observe native peers/sockets. Never retain tickets, cookies, SDP, ICE addresses,
 // message bodies, captions, track IDs or DOM text in durable evidence.
 export function instrument({ relay }) {
@@ -10,7 +10,14 @@ export function instrument({ relay }) {
     displayCalls: 0,
     cameraCalls: 0,
     playRejected: 0,
+    mediaElements: new Set(),
+    heldTracks: [],
+    incomingTracks: [],
+    heldLiveClaims: [],
+    rejectedSdp: 0,
     renderedVideos: new WeakMap(),
+    voiceRoster: [],
+    voiceRosterSnapshots: 0,
     cancelNextCapture: false,
   });
   const Peer = window.RTCPeerConnection;
@@ -18,6 +25,47 @@ export function instrument({ relay }) {
     constructor(config) {
       super(relay ? { ...config, iceTransportPolicy: "relay" } : config);
       state.peers.push(this);
+    }
+    set ontrack(handler) {
+      super.ontrack =
+        handler &&
+        ((event) => {
+          state.incomingTracks.push({
+            pc: this,
+            track: event.track,
+            publisher: (event.streams[0]?.id ?? event.track.id).split(":")[0],
+            sourceKind: (event.streams[0]?.id ?? event.track.id)
+              .split(":")[1]
+              ?.split("-")[0],
+          });
+          if (state.holdTracks)
+            state.heldTracks.push({
+              event,
+              deliver: () => handler.call(this, event),
+            });
+          else handler.call(this, event);
+        });
+    }
+    get ontrack() {
+      return super.ontrack;
+    }
+    setRemoteDescription(description) {
+      if (
+        state.rejectNextVideoAnswer &&
+        description?.type === "answer" &&
+        this.getSenders().some(
+          (s) => s.track?.kind === "video" && s.track.readyState === "live",
+        )
+      ) {
+        state.rejectNextVideoAnswer = false;
+        state.rejectedSdp++;
+        // Let the real browser reject malformed SDP; never fake negotiated stats.
+        return super.setRemoteDescription({
+          type: "answer",
+          sdp: "invalid native SDP rejection control",
+        });
+      }
+      return super.setRemoteDescription(description);
     }
   };
   const Socket = window.WebSocket;
@@ -45,6 +93,14 @@ export function instrument({ relay }) {
       this.addEventListener("message", (event) => {
         try {
           const frame = JSON.parse(event.data);
+          if (
+            frame.op === "sig" &&
+            frame.t === "r" &&
+            Array.isArray(frame.snap)
+          ) {
+            state.voiceRoster = frame.snap;
+            state.voiceRosterSnapshots++;
+          }
           if (frame.op === "gap") item.gaps++;
           if (frame.op === "resync") item.resyncs++;
           if (frame.op === "dm") item.dmDiscoveries++;
@@ -75,9 +131,19 @@ export function instrument({ relay }) {
             item.offers++;
             item.maxSdp = Math.max(item.maxSdp, frame.sdp.length);
           }
+          if (
+            item.plane === "gateway" &&
+            frame.op === "sig" &&
+            frame.k === "l" &&
+            frame.t === "p" &&
+            state.holdLiveClaims
+          ) {
+            state.heldLiveClaims.push(() => send(data));
+            return;
+          }
           if (frame.op === "sig" && frame.k === "l") {
-            if (frame.on) item.liveOn++;
-            else item.liveOff++;
+            if (frame.t === "p") item.liveOn++;
+            else if (frame.t === "u") item.liveOff++;
           }
         } catch {
           /* Observe only known scalar metadata. */
@@ -88,8 +154,9 @@ export function instrument({ relay }) {
   };
   const play = window.HTMLMediaElement.prototype.play;
   window.HTMLMediaElement.prototype.play = function (...args) {
+    state.mediaElements.add(this);
     const result =
-      state.rejectPlayback && this.tagName === "VIDEO" && this.srcObject
+      state.rejectPlayback && this.srcObject
         ? Promise.reject(
             new DOMException("synthetic blocked play", "NotAllowedError"),
           )
@@ -153,9 +220,11 @@ export function instrument({ relay }) {
     return canvasSource("display", state.displayCalls);
   };
 }
-export async function sample() {
+export async function sample({ deadlineEpochMs } = {}) {
   const state = window.__e2e;
   const peers = [];
+  const audioRtpTracks = new Map();
+  const videoRtpTracks = new Map();
   const closedPeer = () => ({
     connection: "closed",
     ice: "closed",
@@ -176,8 +245,35 @@ export async function sample() {
     let report = new Map();
     if (pc.connectionState !== "closed") {
       try {
-        report = await pc.getStats();
+        state.samplePhase = "native-getStats";
+        let statsTimer;
+        try {
+          report =
+            deadlineEpochMs === undefined
+              ? await pc.getStats()
+              : await Promise.race([
+                  pc.getStats(),
+                  new Promise((_, reject) => {
+                    statsTimer = setTimeout(
+                      () => reject(new Error("E2E_NATIVE_STATS_DEADLINE")),
+                      Math.max(
+                        0,
+                        deadlineEpochMs -
+                          Date.now() -
+                          Math.min(
+                            100,
+                            Math.max(1, (deadlineEpochMs - Date.now()) / 10),
+                          ),
+                      ),
+                    );
+                  }),
+                ]);
+        } finally {
+          if (statsTimer !== undefined) clearTimeout(statsTimer);
+        }
+        state.samplePhase = "native-stats-resolved";
       } catch (error) {
+        if (error.message === "E2E_NATIVE_STATS_DEADLINE") throw error;
         // Firefox rejects getStats on a closed peer, including a close racing
         // this sample. Keep the closed peer visible; never hide a live error.
         if (pc.connectionState !== "closed") throw error;
@@ -188,6 +284,40 @@ export async function sample() {
       continue;
     }
     const entries = [...report.values()];
+    audioRtpTracks.set(
+      pc,
+      new Set(
+        entries
+          .filter(
+            (s) =>
+              s.type === "inbound-rtp" &&
+              (s.kind ?? s.mediaType) === "audio" &&
+              s.packetsReceived > 0,
+          )
+          .map(
+            (s) =>
+              s.trackIdentifier ?? report.get(s.receiverId)?.trackIdentifier,
+          )
+          .filter((id) => typeof id === "string"),
+      ),
+    );
+    videoRtpTracks.set(
+      pc,
+      new Set(
+        entries
+          .filter(
+            (s) =>
+              s.type === "inbound-rtp" &&
+              (s.kind ?? s.mediaType) === "video" &&
+              s.packetsReceived > 0,
+          )
+          .map(
+            (s) =>
+              s.trackIdentifier ?? report.get(s.receiverId)?.trackIdentifier,
+          )
+          .filter((id) => typeof id === "string"),
+      ),
+    );
     const selected = [];
     for (const transport of entries.filter(
       (s) => s.type === "transport" && s.selectedCandidatePairId,
@@ -214,6 +344,7 @@ export async function sample() {
           jitter: s.jitter ?? 0,
           pli: s.pliCount ?? 0,
         }));
+    state.samplePhase = "native-peer-getters";
     peers.push({
       connection: pc.connectionState,
       ice: pc.iceConnectionState,
@@ -223,11 +354,41 @@ export async function sample() {
       receivers: pc.getReceivers().filter((r) => r.track?.readyState === "live")
         .length,
       localSdpBytes: pc.localDescription?.sdp.length ?? 0,
+      iceEndpointCategories: (pc.getConfiguration?.().iceServers ?? []).flatMap(
+        (server) =>
+          (Array.isArray(server.urls) ? server.urls : [server.urls]).map(
+            (raw) => {
+              try {
+                const endpoint = new URL(
+                  raw.replace(/^(turns?|stuns?):/, "http://"),
+                );
+                return {
+                  scheme: raw.split(":")[0],
+                  category: ["localhost", "127.0.0.1", "[::1]"].includes(
+                    endpoint.hostname,
+                  )
+                    ? "loopback"
+                    : "non-loopback",
+                };
+              } catch {
+                return { category: "unparseable" };
+              }
+            },
+          ),
+      ),
+      audioSenders: pc
+        .getSenders()
+        .filter((s) => s.track?.kind === "audio")
+        .map((s) => ({
+          live: s.track.readyState === "live",
+          enabled: s.track.enabled,
+        })),
       selected,
       inbound: rtp("inbound-rtp", false),
       outbound: rtp("outbound-rtp", true),
     });
   }
+  state.samplePhase = "native-video-observation";
   const videos = [...document.querySelectorAll("figure video")].map((video) => {
     const caption =
       video.closest("figure").querySelector("figcaption")?.textContent ?? "";
@@ -291,11 +452,88 @@ export async function sample() {
       pixels,
     };
   });
+  state.samplePhase = "native-snapshot-complete";
   return {
     micCalls: state.micCalls,
     displayCalls: state.displayCalls,
     cameraCalls: state.cameraCalls,
     playRejected: state.playRejected,
+    voiceRosterSnapshots: state.voiceRosterSnapshots,
+    voiceOccupancy: state.voiceRoster.filter(
+      (entry) => entry.c === state.expectedVoiceChannel,
+    ).length,
+    liveOccupancy: state.voiceRoster.filter(
+      (entry) => entry.c === state.expectedVoiceChannel && entry.l,
+    ).length,
+    rejectedSdp: state.rejectedSdp,
+    roomAudio: (() => {
+      const incoming = [
+        ...new Map(state.incomingTracks.map((t) => [t.track, t])).values(),
+      ].filter(
+        (t) =>
+          t.pc === state.expectedAudioPeer &&
+          t.pc.connectionState !== "closed" &&
+          t.track.kind === "audio" &&
+          t.track.readyState === "live" &&
+          audioRtpTracks.get(t.pc)?.has(t.track.id),
+      );
+      return {
+        perSource: (state.expectedAudioPublishers ?? []).map(
+          (publisher) =>
+            incoming.filter((t) => t.publisher === publisher).length,
+        ),
+        foreign: incoming.filter(
+          (t) => !(state.expectedAudioPublishers ?? []).includes(t.publisher),
+        ).length,
+      };
+    })(),
+    watchVideoSources: (() => {
+      const incoming = [
+        ...new Map(state.incomingTracks.map((t) => [t.track, t])).values(),
+      ].filter(
+        (t) =>
+          t.pc === state.expectedAudioPeer &&
+          t.pc.connectionState !== "closed" &&
+          t.track.kind === "video" &&
+          t.track.readyState === "live" &&
+          videoRtpTracks.get(t.pc)?.has(t.track.id),
+      );
+      return {
+        selectedLive: incoming.filter(
+          (t) =>
+            t.publisher === state.expectedLivePublisher && t.sourceKind === "l",
+        ).length,
+        foreign: incoming.filter(
+          (t) =>
+            t.publisher !== state.expectedLivePublisher || t.sourceKind !== "l",
+        ).length,
+      };
+    })(),
+    heldTrackCount: state.heldTracks.length,
+    heldVideoTracks: state.heldTracks.filter(
+      (t) => t.event.track.kind === "video",
+    ).length,
+    heldLiveClaimCount: state.heldLiveClaims.length,
+    playback: [...state.mediaElements].map((el) => ({
+      kind: el.tagName === "AUDIO" ? "audio" : "video",
+      paused: el.paused,
+      muted: el.muted,
+      volume: el.volume,
+      audioTracks:
+        el.srcObject?.getAudioTracks().filter((t) => t.readyState === "live")
+          .length ?? 0,
+      videoTracks:
+        el.srcObject?.getVideoTracks().filter((t) => t.readyState === "live")
+          .length ?? 0,
+    })),
+    duplicateAudioPlaybackTracks: (() => {
+      const tracks = [...state.mediaElements]
+        .filter((el) => !el.paused && el.srcObject)
+        .flatMap((el) =>
+          el.srcObject.getAudioTracks().filter((t) => t.readyState === "live"),
+        );
+      return tracks.length - new Set(tracks).size;
+    })(),
     peers,
     videos,
     captures: state.captures.map((c) => ({

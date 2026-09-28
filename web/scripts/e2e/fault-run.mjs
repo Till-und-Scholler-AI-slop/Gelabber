@@ -1,13 +1,16 @@
 // Own-process runner. Never changes shared services or uses their API database.
 /* global process, console */
 import { createServer } from "vite";
-import { mkdtemp, rm, mkdir, writeFile } from "node:fs/promises";
+import { mkdtemp, rm, mkdir, writeFile, readFile } from "node:fs/promises";
 import { dirname, join } from "node:path";
 import { tmpdir } from "node:os";
 import { fileURLToPath } from "node:url";
 import assert from "node:assert/strict";
+import { createHash } from "node:crypto";
+import { iceAdapterOptions } from "./browser-options.mjs";
 import { safeTarget } from "./harness.mjs";
 import { startFaultApi, useFaultRuntime } from "./fault-runtime.mjs";
+import { startFaultMedia } from "./media-runtime.mjs";
 import { attemptAll } from "./teardown.mjs";
 
 async function recordFailure(kind, record) {
@@ -19,12 +22,41 @@ async function recordFailure(kind, record) {
       mode: 0o600,
     });
   } catch {
+    process.exitCode = 1;
     console.error(`FAIL owned-${kind}-report-write-error`);
   }
 }
 
-let runtime, web, cache;
+let runtime, mediaRuntime, web, cache, adapterProof;
+const digest = async (path) =>
+  createHash("sha256")
+    .update(await readFile(path))
+    .digest("hex");
 try {
+  const { sfuLoopbackIce } = iceAdapterOptions(process.env);
+  if (sfuLoopbackIce) {
+    const root = dirname(process.env.GELABBER_E2E_MEDIA_FAULT_ENV);
+    const files = {
+      baselineEnv: join(root, "media-fault.env"),
+      apiManifest: process.env.GELABBER_E2E_API_MANIFEST,
+      mediaManifest: process.env.GELABBER_E2E_MEDIA_MANIFEST,
+    };
+    adapterProof = {
+      name: "explicit-own-SFU-loopback-ICE-topology-control",
+      scope: "local Firefox forced-relay only; no default/WAN acceptance",
+      nativeMidIndexOverride: false,
+      files,
+      before: Object.fromEntries(
+        await Promise.all(
+          Object.entries(files).map(async ([key, path]) => [
+            key,
+            await digest(path),
+          ]),
+        ),
+      ),
+      controlEnvSha256: await digest(process.env.GELABBER_E2E_MEDIA_FAULT_ENV),
+    };
+  }
   const envPath = process.env.GELABBER_E2E_FAULT_ENV;
   const manifestPath = process.env.GELABBER_E2E_API_MANIFEST;
   const root = process.env.GELABBER_E2E_WEB_SNAPSHOT;
@@ -35,6 +67,19 @@ try {
   assert.ok(root.startsWith("/"));
   runtime = await startFaultApi({ envPath, manifestPath });
   useFaultRuntime(runtime);
+  const mediaEnv = process.env.GELABBER_E2E_MEDIA_FAULT_ENV;
+  const mediaManifest = process.env.GELABBER_E2E_MEDIA_MANIFEST;
+  if (mediaEnv || mediaManifest) {
+    assert.ok(mediaEnv && mediaManifest, "Both owned media paths required");
+    mediaRuntime = await startFaultMedia({
+      envPath: mediaEnv,
+      manifestPath: mediaManifest,
+      redisPort: runtime.redis.port,
+      loopbackIceAdapter: sfuLoopbackIce,
+    });
+    runtime.media = mediaRuntime;
+    process.env.GELABBER_E2E_MEDIA_SHA = mediaRuntime.manifest.sourceSha;
+  }
   const media = safeTarget(
     process.env.GELABBER_E2E_MEDIA_ORIGIN ?? "http://127.0.0.1:18087",
   );
@@ -73,10 +118,12 @@ try {
   );
 } finally {
   const failedSteps = await attemptAll([
+    ["api-resume", () => runtime?.resumeApi?.()],
     ["redis-restore", () => runtime?.redis.restore()],
     ["storage-restore", () => runtime?.storage.restore()],
     ["database-restore", () => runtime?.database.restore()],
     ["web-close", () => web?.close()],
+    ["media-runtime-close", () => mediaRuntime?.close()],
     ["runtime-close", () => runtime?.close()],
     ["runtime-clear", () => useFaultRuntime(null)],
     [
@@ -84,6 +131,44 @@ try {
       () => cache && rm(cache, { recursive: true, force: true }),
     ],
   ]);
+  if (adapterProof) {
+    try {
+      const after = Object.fromEntries(
+        await Promise.all(
+          Object.entries(adapterProof.files).map(async ([key, path]) => [
+            key,
+            await digest(path),
+          ]),
+        ),
+      );
+      const baselineUnchanged = Object.keys(after).every(
+        (key) => after[key] === adapterProof.before[key],
+      );
+      if (!baselineUnchanged) process.exitCode = 1;
+      await recordFailure("runtime-adapter", {
+        status: baselineUnchanged && failedSteps.length === 0 ? "PASS" : "FAIL",
+        name: adapterProof.name,
+        scope: adapterProof.scope,
+        nativeMidIndexOverride: false,
+        baselineHashesBefore: adapterProof.before,
+        baselineHashesAfter: after,
+        baselineUnchanged,
+        controlEnvSha256: adapterProof.controlEnvSha256,
+        launcherSelectionRestored:
+          "baseline; adapter supplied only by explicit per-process selection",
+        ownSfu: mediaRuntime?.iceAdapter,
+        failedSteps,
+        completeAcceptance: false,
+      });
+    } catch {
+      process.exitCode = 1;
+      await recordFailure("runtime-adapter", {
+        status: "FAIL",
+        reason: "adapter-proof-or-restore-error",
+        completeAcceptance: false,
+      });
+    }
+  }
   if (failedSteps.length) {
     process.exitCode = 1;
     await recordFailure("teardown", {

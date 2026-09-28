@@ -1,3 +1,4 @@
+import { nativeEvaluate } from "./native-evaluate.mjs";
 /* global window */
 import {
   check,
@@ -96,13 +97,17 @@ async function begin(f) {
 }
 export async function interrupt(actor, plane) {
   check(["gateway", "media"].includes(plane), "unsupported-fault-plane");
-  const count = await actor.page.evaluate((plane) => {
-    const sockets = window.__e2e.sockets.filter(
-      (s) => s.plane === plane && s.ws.readyState === 1,
-    );
-    for (const s of sockets) s.ws.close(4000, "e2e-local-fault");
-    return sockets.length;
-  }, plane);
+  const count = await nativeEvaluate(
+    actor,
+    (plane) => {
+      const sockets = window.__e2e.sockets.filter(
+        (s) => s.plane === plane && s.ws.readyState === 1,
+      );
+      for (const s of sockets) s.ws.close(4000, "e2e-local-fault");
+      return sockets.length;
+    },
+    plane,
+  );
   check(count > 0, "fault-target-socket-missing");
   return count;
 }
@@ -180,7 +185,7 @@ export async function mediaScenarios(h, f) {
       await begin(f);
       await progress(f.watcher, options);
       const before = await snapshot(f.owner);
-      await f.owner.page.evaluate(() => {
+      await nativeEvaluate(f.owner, () => {
         window.__e2e.savedTrack = window.__e2e.captures.find(
           (c) => c.track.readyState === "live",
         ).track;
@@ -199,7 +204,7 @@ export async function mediaScenarios(h, f) {
         20_000,
       );
       const after = await snapshot(f.owner);
-      const identity = await f.owner.page.evaluate(() => ({
+      const identity = await nativeEvaluate(f.owner, () => ({
         trackLive: window.__e2e.savedTrack?.readyState === "live",
         trackStillSent: window.__e2e.peers.some(
           (p) =>
@@ -404,7 +409,7 @@ export async function mediaScenarios(h, f) {
     async () => {
       await reset(f);
       await click(f.owner, "Beitreten");
-      await f.owner.page.evaluate(() => {
+      await nativeEvaluate(f.owner, () => {
         window.__e2e.cancelNextCapture = true;
       });
       await click(f.owner, "Go Live");
@@ -453,7 +458,7 @@ export async function mediaScenarios(h, f) {
     await reset(f);
     await click(f.owner, "Beitreten");
     await click(f.owner, "Go Live");
-    await f.watcher.page.evaluate(() => {
+    await nativeEvaluate(f.watcher, () => {
       window.__e2e.rejectPlayback = true;
     });
     await click(f.watcher, "Zuschauen");
@@ -470,7 +475,7 @@ export async function mediaScenarios(h, f) {
       "blocked-play-has-no-visible-retry",
       await snapshot(f.watcher),
     );
-    await f.watcher.page.evaluate(() => {
+    await nativeEvaluate(f.watcher, () => {
       window.__e2e.rejectPlayback = false;
     });
     await retry.first().click();

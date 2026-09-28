@@ -8,8 +8,14 @@ import { fileURLToPath } from "node:url";
 const repoRoot = fileURLToPath(new URL("../../../", import.meta.url));
 import { setTimeout as pause } from "node:timers/promises";
 import { chromium, firefox } from "playwright";
+import {
+  NativeInterfaceFailure,
+  nativeEvaluate,
+  deadlineProbe,
+} from "./native-evaluate.mjs";
 import { instrument, sample } from "./probe.mjs";
 import { selection, wanted, requiredCase, gate } from "./selection.mjs";
+import { browserLaunchOptions, iceAdapterOptions } from "./browser-options.mjs";
 
 export class CheckFailure extends Error {
   constructor(code, metrics = {}) {
@@ -20,24 +26,33 @@ export class CheckFailure extends Error {
 export function check(condition, code, metrics = {}) {
   if (!condition) throw new CheckFailure(code, metrics);
 }
+export async function pollPause(deadline) {
+  // Preserve the 200ms polling cadence. A short final wait completes the
+  // observation window; it must not launch another native probe at its edge.
+  const nextProbeAt = Date.now() + 200;
+  const wakeAt = Math.min(nextProbeAt, deadline);
+  while (Date.now() < wakeAt) await pause(Math.max(1, wakeAt - Date.now()));
+  return nextProbeAt < deadline && Date.now() < deadline;
+}
 export async function until(probe, accept, code, timeout = 10_000) {
   const deadline = Date.now() + timeout;
   let last;
-  do {
-    last = await probe();
-    if (accept(last)) return last;
-    await pause(200);
-  } while (Date.now() < deadline);
+  while (Date.now() < deadline) {
+    last = await deadlineProbe(probe, deadline);
+    if (Date.now() <= deadline && accept(last)) return last;
+    if (!(await pollPause(deadline))) break;
+  }
   throw new CheckFailure(code, { last });
 }
-// A bounded observation interval is needed to prove continued progress/absence.
+// Every sample shares this observation deadline; native interface failure is
+// distinct from absence/presence of product progress.
 export async function observe(duration, probe) {
   const deadline = Date.now() + duration;
   let last;
-  do {
-    last = await probe();
-    await pause(200);
-  } while (Date.now() < deadline);
+  while (Date.now() < deadline) {
+    last = await deadlineProbe(probe, deadline);
+    if (!(await pollPause(deadline))) break;
+  }
   return last;
 }
 export function safeTarget(value) {
@@ -56,53 +71,42 @@ export function revision(value) {
 }
 export function safeError(error) {
   // Playwright errors contain URLs, form values and call logs: never persist them.
-  return error instanceof CheckFailure
+  return error instanceof CheckFailure ||
+    error instanceof NativeInterfaceFailure
     ? error.message
     : error?.name === "TimeoutError"
       ? "browser-deadline"
       : "harness-or-interface-error";
 }
-export async function api(actor, path, method = "GET", body) {
-  return actor.page.evaluate(
-    async ({ path, method, body }) => {
-      const session = await fetch("/api/auth/session").then((r) => r.json());
-      const response = await fetch(`/api${path}`, {
-        method,
-        headers: {
-          "Content-Type": "application/json",
-          "X-CSRF-Token": session.csrf_token,
-        },
-        ...(body === undefined ? {} : { body: JSON.stringify(body) }),
-      });
-      return {
-        status: response.status,
-        body: response.status === 204 ? null : await response.json(),
-      };
-    },
-    { path, method, body },
-  );
+export async function api(actor, path, method = "GET", body, nativeBudget) {
+  const request = async ({ path, method, body }) => {
+    const session = await fetch("/api/auth/session").then((r) => r.json());
+    const response = await fetch(`/api${path}`, {
+      method,
+      headers: {
+        "Content-Type": "application/json",
+        "X-CSRF-Token": session.csrf_token,
+      },
+      ...(body === undefined ? {} : { body: JSON.stringify(body) }),
+    });
+    return {
+      status: response.status,
+      body: response.status === 204 ? null : await response.json(),
+    };
+  };
+  const args = { path, method, body };
+  return nativeBudget === undefined
+    ? actor.page.evaluate(request, args)
+    : nativeEvaluate(actor, request, args, nativeBudget);
 }
 export async function startHarness() {
   const base = safeTarget(
     process.env.GELABBER_SMOKE_URL ?? "http://127.0.0.1:5174",
   );
-  const engine = process.env.GELABBER_E2E_BROWSER ?? "chromium";
-  assert.ok(["chromium", "firefox"].includes(engine));
-  const relay = process.env.GELABBER_E2E_NETWORK === "relay";
+  const { engine, relay, firefoxLoopbackIce, sfuLoopbackIce } =
+    iceAdapterOptions(process.env);
   const browser = await (engine === "chromium" ? chromium : firefox).launch(
-    engine === "chromium"
-      ? {
-          args: [
-            "--use-fake-device-for-media-stream",
-            "--use-fake-ui-for-media-stream",
-          ],
-        }
-      : {
-          firefoxUserPrefs: {
-            "media.navigator.streams.fake": true,
-            "media.navigator.permission.disabled": true,
-          },
-        },
+    browserLaunchOptions(engine, { relay, firefoxLoopbackIce, sfuLoopbackIce }),
   );
   const suffix = `${Date.now().toString(36)}-${randomBytes(4).toString("hex")}`;
   const password = randomBytes(24).toString("base64url");
@@ -150,6 +154,19 @@ export async function startHarness() {
       https: base.startsWith("https:"),
       capture: "synthetic changing canvas; fake microphone",
       autoplay: "browser default; no policy override",
+      sfuLoopbackIceAdapter: {
+        enabled: sfuLoopbackIce,
+        name: "explicit-own-SFU-loopback-ICE-topology-control",
+        scope:
+          "local Firefox forced-relay adapter only; no default/WAN acceptance",
+        nativeMidIndexOverride: false,
+      },
+      firefoxLoopbackIceAdapter: {
+        enabled: firefoxLoopbackIce,
+        pref: "media.peerconnection.ice.loopback",
+        value: firefoxLoopbackIce ? true : "browser default",
+        scope: "explicit local Firefox forced-relay test profile only",
+      },
     },
     limitations: [
       "Automated local/CI subset; not complete 11b/c/d acceptance",
@@ -267,17 +284,38 @@ export async function startHarness() {
     };
   }
   let isolation = null,
-    isolationBlocked = false;
+    isolationBlocked = false,
+    nativeInterfaceBlocked = false;
   function setIsolation(restore) {
     isolation = restore;
   }
   async function run(id, predecessors, task, { setup = false } = {}) {
     if (!requiredCase(selected, id, setup)) return notRun(id, predecessors);
-    if (isolationBlocked) {
-      blocked(id, "fixture-recovery-failed", predecessors, { setup });
+    if (isolationBlocked || nativeInterfaceBlocked) {
+      blocked(
+        id,
+        nativeInterfaceBlocked
+          ? "native-browser-interface-unavailable"
+          : "fixture-recovery-failed",
+        predecessors,
+        { setup },
+      );
       return { id, status: "BLOCKED" };
     }
     const at = new Date().toISOString();
+    report.checkpoint = {
+      case: id,
+      stage: "started",
+      at,
+      completeAcceptance: false,
+    };
+    const checkpointPath =
+      (process.env.GELABBER_E2E_REPORT ?? "/tmp/gelabber-e2e/report.json") +
+      ".checkpoint.json";
+    await mkdir(dirname(checkpointPath), { recursive: true });
+    await writeFile(checkpointPath, JSON.stringify(report) + "\n", {
+      mode: 0o600,
+    });
     const start = Date.now();
     let row;
     try {
@@ -289,23 +327,30 @@ export async function startHarness() {
         metrics: await task(),
       };
     } catch (error) {
+      if (error instanceof NativeInterfaceFailure)
+        nativeInterfaceBlocked = true;
       row = {
         id,
         status: "FAIL",
         reason: safeError(error),
         classification:
-          error instanceof CheckFailure && error.metrics?.controlConfirmed
-            ? "confirmed-product-failure"
-            : error instanceof CheckFailure && /fixture/.test(error.message)
-              ? "test-error"
-              : "unconfirmed-failure",
+          error instanceof NativeInterfaceFailure
+            ? "test-error"
+            : error instanceof CheckFailure && error.metrics?.controlConfirmed
+              ? "confirmed-product-failure"
+              : error instanceof CheckFailure && /fixture/.test(error.message)
+                ? "test-error"
+                : "unconfirmed-failure",
         site:
           /scripts\/e2e\/([a-z.]+:\d+:\d+)/.exec(error.stack ?? "")?.[1] ??
           null,
-        ...(error instanceof CheckFailure ? { metrics: error.metrics } : {}),
+        ...(error instanceof CheckFailure ||
+        error instanceof NativeInterfaceFailure
+          ? { metrics: error.metrics }
+          : {}),
       };
     }
-    if (isolation) {
+    if (isolation && !nativeInterfaceBlocked) {
       try {
         await isolation();
       } catch {
@@ -348,12 +393,42 @@ export async function startHarness() {
   async function finish() {
     // Stop browser traffic before deleting only the servers created by this run.
     for (const who of actors) {
-      await who.page
-        .evaluate(() => {
+      if (who.nativeEvaluationUnusable) {
+        const closed = await deadlineProbe(
+          () => who.nativeAbortClose,
+          Date.now() + 5_000,
+        ).catch(() => false);
+        if (closed === false) {
+          report.nativeAbortCloseFailed = true;
+          process.exitCode = 1;
+          report.results.push({
+            id: "native-abort-close",
+            setup: true,
+            status: "FAIL",
+            classification: "test-error",
+            reason: "native-abort-close-failed",
+          });
+        }
+        continue;
+      }
+      try {
+        await nativeEvaluate(who, () => {
           for (const pc of window.__e2e.peers) pc.close();
           for (const { ws } of window.__e2e.sockets) ws.close();
-        })
-        .catch(() => {});
+        });
+      } catch (error) {
+        if (error instanceof NativeInterfaceFailure) {
+          report.nativeCloseInterfaceFailed = true;
+          report.results.push({
+            id: "native-stop-evaluate",
+            setup: true,
+            status: "FAIL",
+            classification: "test-error",
+            reason: "native-stop-interface-failed",
+          });
+          process.exitCode = 1;
+        }
+      }
     }
     for (const { owner, id, deleted } of servers) {
       if (deleted) {
@@ -369,8 +444,14 @@ export async function startHarness() {
       const statuses = {};
       try {
         // A separate login lets logout/revocation scenarios leave the original socket untouched.
-        context = await browser.newContext();
-        const page = await context.newPage();
+        context = await deadlineProbe(
+          () => browser.newContext(),
+          Date.now() + 12_000,
+        );
+        const page = await deadlineProbe(
+          () => context.newPage(),
+          Date.now() + 5_000,
+        );
         stage = "load-login";
         await page.goto(`${base}/login`);
         await page.getByLabel("E-Mail-Adresse").fill(owner.email);
@@ -388,10 +469,18 @@ export async function startHarness() {
         stage = "wait-login-redirect";
         await page.waitForURL((url) => !url.pathname.includes("login"));
         stage = "delete-owned-server";
-        const response = await api({ page }, `/servers/${id}`, "DELETE");
+        const response = await api(
+          { page },
+          `/servers/${id}`,
+          "DELETE",
+          undefined,
+          10_000,
+        );
         statuses.delete = response.status;
         stage = "logout-cleanup-session";
-        statuses.logout = (await api({ page }, "/auth/logout", "POST")).status;
+        statuses.logout = (
+          await api({ page }, "/auth/logout", "POST", undefined, 10_000)
+        ).status;
         check(statuses.logout === 200, "fixture-cleanup-logout-failed");
         report.cleanup.push({
           target: "owned-test-server",
@@ -408,10 +497,33 @@ export async function startHarness() {
           statuses,
         });
       } finally {
-        await context?.close().catch(() => {});
+        if (context)
+          await deadlineProbe(() => context.close(), Date.now() + 5_000).catch(
+            () => {
+              process.exitCode = 1;
+              report.cleanupContextCloseFailed = true;
+              report.results.push({
+                id: "cleanup-context-close",
+                setup: true,
+                status: "FAIL",
+                classification: "test-error",
+                reason: "cleanup-context-close-failed",
+              });
+            },
+          );
       }
     }
-    await browser.close();
+    await deadlineProbe(() => browser.close(), Date.now() + 5_000).catch(() => {
+      process.exitCode = 1;
+      report.browserCloseFailed = true;
+      report.results.push({
+        id: "cleanup-browser-close",
+        setup: true,
+        status: "FAIL",
+        classification: "test-error",
+        reason: "cleanup-browser-close-failed",
+      });
+    });
     report.finishedAt = new Date().toISOString();
     for (const id of gate(report.results, selected, report.cleanup).absent)
       blocked(id, "selected-case-unknown-or-not-reached");
@@ -450,7 +562,7 @@ export async function startHarness() {
   };
 }
 export async function snapshot(actor) {
-  return actor.page.evaluate(sample);
+  return nativeEvaluate(actor, sample);
 }
 export async function click(actor, name) {
   await actor.page.getByRole("button", { name, exact: true }).first().click();

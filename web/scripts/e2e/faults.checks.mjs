@@ -5,7 +5,7 @@ import { createServer, createConnection } from "node:net";
 import { createServer as httpServer } from "node:http";
 import { once } from "node:events";
 import { tcpFaultProxy, storageFaultProxy } from "./faults.mjs";
-import { deleteTopicKeys } from "./redis-command.mjs";
+import { deleteTopicKeys, ownedLiveExists } from "./redis-command.mjs";
 
 test("TCP fault interrupts only proxy connections; independent control and restore survive", async () => {
   const target = createServer((s) => s.pipe(s));
@@ -103,7 +103,7 @@ test("fault proxies reject remote targets and foreign bucket identifiers", async
   );
 });
 
-test("native RESP reset authenticates/selects explicitly and deletes only four matching owned keys", async () => {
+test("native RESP authenticates/selects explicitly; reset deletes four owned keys and lease observation reads one owned key", async () => {
   const commands = [];
   const target = createServer((socket) => {
     let buffer = "";
@@ -118,7 +118,13 @@ test("native RESP reset authenticates/selects explicitly and deletes only four m
       const command = Array.from({ length: size }, (_, i) => parts[i * 2 + 2]);
       commands.push(command);
       buffer = "";
-      socket.write(command[0] === "DEL" ? ":4\r\n" : "+OK\r\n");
+      socket.write(
+        command[0] === "DEL"
+          ? ":4\r\n"
+          : command[0] === "EXISTS"
+            ? ":1\r\n"
+            : "+OK\r\n",
+      );
     });
   });
   target.listen(0, "127.0.0.1");
@@ -143,6 +149,22 @@ test("native RESP reset authenticates/selects explicitly and deletes only four m
       ["SELECT", "2"],
       ["DEL", ...keys],
     ]);
+    assert.equal(
+      await ownedLiveExists(
+        `redis://default:synthetic@127.0.0.1:${target.address().port}/2`,
+        id,
+      ),
+      1,
+    );
+    assert.deepEqual(commands.slice(3), [
+      ["AUTH", "default", "synthetic"],
+      ["SELECT", "2"],
+      ["EXISTS", `gb:live:${id}`],
+    ]);
+    await assert.rejects(ownedLiveExists("redis://example.test:6379", id));
+    await assert.rejects(
+      ownedLiveExists(`redis://127.0.0.1:${target.address().port}`, "foreign"),
+    );
     await assert.rejects(deleteTopicKeys("redis://example.test:6379", keys));
     await assert.rejects(
       deleteTopicKeys(`redis://127.0.0.1:${target.address().port}`, [
@@ -150,7 +172,7 @@ test("native RESP reset authenticates/selects explicitly and deletes only four m
         "foreign",
       ]),
     );
-    assert.equal(commands.length, 3);
+    assert.equal(commands.length, 6);
   } finally {
     await new Promise((r) => target.close(r));
   }
