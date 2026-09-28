@@ -510,28 +510,51 @@ export async function mediaExtraScenarios(h, f, { begin, reset, options }) {
             !s.duplicateAudioPlaybackTracks,
           "audio-click-retry-did-not-play-every-path",
         );
-        const microphoneControl = await nativeEvaluate(f.watcher, () => {
-          const state = window.__e2e;
-          const candidates = state.peers
-            .filter((peer) => peer.connectionState === "connected")
-            .flatMap((peer) =>
-              peer.getSenders().map((sender) => ({ peer, sender })),
-            )
-            .filter(
-              ({ sender }) =>
-                sender.track?.kind === "audio" &&
-                sender.track.readyState === "live",
-            );
-          state.sessionAudioMicrophone =
-            candidates.length === 1
-              ? { ...candidates[0], track: candidates[0].sender.track }
-              : null;
-          return { senderCount: candidates.length };
-        });
-        check(
-          microphoneControl.senderCount === 1,
-          "fixture-session-expected-microphone-missing",
-          microphoneControl,
+        const microphoneControl = await until(
+          async () => {
+            const observed = await snapshot(f.watcher);
+            const control = await nativeEvaluate(f.watcher, () => {
+              const state = window.__e2e;
+              const candidates = state.peers
+                .filter((peer) => peer.connectionState === "connected")
+                .flatMap((peer) =>
+                  peer.getSenders().map((sender) => ({ peer, sender })),
+                )
+                .filter(
+                  ({ sender }) =>
+                    sender.track?.kind === "audio" &&
+                    sender.track.readyState === "live",
+                );
+              const current = candidates.length === 1 ? candidates[0] : null;
+              state.sessionAudioMicrophone = current
+                ? { ...current, track: current.sender.track }
+                : null;
+              return {
+                senderCount: candidates.length,
+                peerIndex: current ? state.peers.indexOf(current.peer) : null,
+                enabled: current ? current.sender.track.enabled : null,
+              };
+            });
+            const peer = observed.peers[control.peerIndex];
+            const audio =
+              peer?.outbound.filter((r) => r.kind === "audio") ?? [];
+            const available =
+              peer?.connection === "connected" &&
+              audio.length > 0 &&
+              audio.every((r) => Number.isInteger(r.packets) && r.packets >= 0);
+            return {
+              ...control,
+              outboundAudioPackets: available
+                ? audio.reduce((sum, r) => sum + r.packets, 0)
+                : null,
+            };
+          },
+          (s) =>
+            s.senderCount === 1 &&
+            s.enabled === true &&
+            s.outboundAudioPackets > 0,
+          "fixture-session-positive-microphone-not-ready",
+          5_000,
         );
         const microphoneSnapshot = async () => {
           const observed = await snapshot(f.watcher);

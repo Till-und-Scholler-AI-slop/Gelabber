@@ -1,0 +1,84 @@
+{
+  "at": "2026-09-28T20:33:14.805522+00:00",
+  "scope": "source-only minimal Mic fixture correction; no further native runtime",
+  "parent": "0004f1f3e4a95ed1e47d3ae6ec403e3065a6b8d3",
+  "red": {
+    "path": "/tmp/gelabber-e2e/final-native-7650a28/mic-parent-red.log",
+    "sha256": "1a86846ce6a3df710da33b28d5ee317dcaf2f5d94a11d3952bbf40f4090be23a",
+    "exit": 1,
+    "tests": 15,
+    "passed": 12,
+    "failed": 3,
+    "output": "\u2714 exact SDP scenario preserves failed bounded camera warmup and never injects SDP or claims progress afterward (3.753453ms)\n(node:3) ExperimentalWarning: VM Modules is an experimental feature and might change at any time\n(Use `node --trace-warnings ...` to show where the warning was created)\n\u2716 actual audio microphone fixture waits for the freshly joined connected sender and its own RTP (4.416142ms)\n\u2714 actual microphone fixture cannot accept missing connection/RTP or another peer's RTP {\"micNeverConnected\":true} (4.019806ms)\n\u2716 actual microphone fixture cannot accept missing connection/RTP or another peer's RTP {\"micNoOutboundRtp\":true} (4.457538ms)\n\u2716 actual microphone fixture cannot accept missing connection/RTP or another peer's RTP {\"otherPeerOnlyRtp\":true} (2.708804ms)\n\u2714 actual audio task retains the original expected microphone across mute/deafen/undeafen (2.361945ms)\n\u2714 actual audio task rejects microphone loss/replacement {\"lostMicAt\":\"deafen\"} (2.586402ms)\n\u2714 actual audio task rejects microphone loss/replacement {\"lostMicAt\":\"undeafen\"} (2.293744ms)\n\u2714 actual audio task rejects microphone loss/replacement {\"replaceSender\":true} (2.601542ms)\n\u2714 actual audio task rejects microphone loss/replacement {\"replaceTrack\":true} (2.497106ms)\n\u2714 actual audio task restore rejection still closes other context with visible redacted failure (2.600221ms)\n\u2714 actual audio task attempts both failed restore and failed independent close (2.685545ms)\n\u2714 actual audio task independent close rejection remains visible after healthy restore (2.496165ms)\n\u2714 actual audio finally never evaluates quarantined page and bounds pending independent context close (5.633644ms)\n\u2714 actual audio finally bounds a pending restore, quarantines once and still attempts independent context close (5.351274ms)\n\u2139 tests 15\n\u2139 suites 0\n\u2139 pass 12\n\u2139 fail 3\n\u2139 cancelled 0\n\u2139 skipped 0\n\u2139 todo 0\n\u2139 duration_ms 53.945143\n\n\u2716 failing tests:\n\ntest at web/scripts/e2e/media-extra.checks.mjs:103:1\n\u2716 actual audio microphone fixture waits for the freshly joined connected sender and its own RTP (4.416142ms)\n  AssertionError [ERR_ASSERTION]: Expected values to be strictly equal:\n  + actual - expected\n  \n  + CheckFailure [Error]: fixture-session-expected-microphone-missing\n  +     at check (file:///tmp/gelabber-stability/e2e/web/scripts/e2e/harness.mjs:27:25)\n  +     at file:///tmp/gelabber-stability/e2e/web/scripts/e2e/media-extra.mjs:531:9\n  +     at async Object.run (file:///tmp/gelabber-stability/e2e/web/scripts/e2e/session-audio-control.mjs:206:20)\n  +     at async Module.mediaExtraScenarios (file:///tmp/gelabber-stability/e2e/web/scripts/e2e/media-extra.mjs:398:3)\n  +     at async sessionAudioControl (file:///tmp/gelabber-stability/e2e/web/scripts/e2e/session-audio-control.mjs:213:3)\n  +     at async TestContext.<anonymous> (file:///tmp/gelabber-stability/e2e/web/scripts/e2e/media-extra.checks.mjs:104:13)\n  +     at async Test.run (node:internal/test_runner/test:1409:7)\n  +     at async Test.processPendingSubtests (node:internal/test_runner/test:974:7) {\n  +   metrics: {\n  +     senderCount: 0\n  +   }\n  + }\n  - undefined\n  \n      at TestContext.<anonymous> (file:///tmp/gelabber-stability/e2e/web/scripts/e2e/media-extra.checks.mjs:105:10)\n      at async Test.run (node:internal/test_runner/test:1409:7)\n      at async Test.processPendingSubtests (node:internal/test_runner/test:974:7) {\n    generatedMessage: true,\n    code: 'ERR_ASSERTION',\n    actual: [CheckFailure],\n    expected: undefined,\n    operator: 'strictEqual',\n    diff: 'simple'\n  }\n\ntest at web/scripts/e2e/media-extra.checks.mjs:115:3\n\u2716 actual microphone fixture cannot accept missing connection/RTP or another peer's RTP {\"micNoOutboundRtp\":true} (4.457538ms)\n  AssertionError [ERR_ASSERTION]: The expression evaluated to a falsy value:\n  \n    assert.ok(r.error instanceof CheckFailure)\n  \n      at TestContext.<anonymous> (file:///tmp/gelabber-stability/e2e/web/scripts/e2e/media-extra.checks.mjs:117:12)\n      at async Test.run (node:internal/test_runner/test:1409:7)\n      at async Test.processPendingSubtests (node:internal/test_runner/test:974:7) {\n    generatedMessage: true,\n    code: 'ERR_ASSERTION',\n    actual: false,\n    expected: true,\n    operator: '==',\n    diff: 'simple'\n  }\n\ntest at web/scripts/e2e/media-extra.checks.mjs:115:3\n\u2716 actual microphone fixture cannot accept missing connection/RTP or another peer's RTP {\"otherPeerOnlyRtp\":true} (2.708804ms)\n  AssertionError [ERR_ASSERTION]: The expression evaluated to a falsy value:\n  \n    assert.ok(r.error instanceof CheckFailure)\n  \n      at TestContext.<anonymous> (file:///tmp/gelabber-stability/e2e/web/scripts/e2e/media-extra.checks.mjs:117:12)\n      at async Test.run (node:internal/test_runner/test:1409:7)\n      at async Test.processPendingSubtests (node:internal/test_runner/test:974:7) {\n    generatedMessage: true,\n    code: 'ERR_ASSERTION',\n    actual: false,\n    expected: true,\n    operator: '==',\n    diff: 'simple'\n  }\n"
+  },
+  "green": {
+    "at": "2026-09-28T20:33:14.737048+00:00",
+    "scope": "exact parent+index extracted source; no native runtime",
+    "node": "v26.8.2",
+    "sourceTreeBeforeEvidence": "88a989785eb72bb7ee8772ac8bb60e296634d752",
+    "checks": [
+      {
+        "file": "media-extra.checks.mjs",
+        "exit": 0,
+        "tests": 15,
+        "skipped": 0,
+        "output": "\u2714 exact SDP scenario preserves failed bounded camera warmup and never injects SDP or claims progress afterward (3.476144ms)\n\u2714 actual audio microphone fixture waits for the freshly joined connected sender and its own RTP (4.271271ms)\n\u2714 actual microphone fixture cannot accept missing connection/RTP or another peer's RTP {\"micNeverConnected\":true} (4.164268ms)\n\u2714 actual microphone fixture cannot accept missing connection/RTP or another peer's RTP {\"micNoOutboundRtp\":true} (2.462202ms)\n\u2714 actual microphone fixture cannot accept missing connection/RTP or another peer's RTP {\"otherPeerOnlyRtp\":true} (2.550587ms)\n\u2714 actual audio task retains the original expected microphone across mute/deafen/undeafen (2.559437ms)\n\u2714 actual audio task rejects microphone loss/replacement {\"lostMicAt\":\"deafen\"} (2.419614ms)\n\u2714 actual audio task rejects microphone loss/replacement {\"lostMicAt\":\"undeafen\"} (2.644061ms)\n\u2714 actual audio task rejects microphone loss/replacement {\"replaceSender\":true} (2.386447ms)\n\u2714 actual audio task rejects microphone loss/replacement {\"replaceTrack\":true} (2.519222ms)\n\u2714 actual audio task restore rejection still closes other context with visible redacted failure (2.675305ms)\n\u2714 actual audio task attempts both failed restore and failed independent close (2.897008ms)\n\u2714 actual audio task independent close rejection remains visible after healthy restore (2.785063ms)\n\u2714 actual audio finally never evaluates quarantined page and bounds pending independent context close (5.70739ms)\n\u2714 actual audio finally bounds a pending restore, quarantines once and still attempts independent context close (5.516903ms)\n\u2139 tests 15\n\u2139 suites 0\n\u2139 pass 15\n\u2139 fail 0\n\u2139 cancelled 0\n\u2139 skipped 0\n\u2139 todo 0\n\u2139 duration_ms 52.606335\n(node:3) ExperimentalWarning: VM Modules is an experimental feature and might change at any time\n(Use `node --trace-warnings ...` to show where the warning was created)\n"
+      }
+    ],
+    "lint": {
+      "exit": 0,
+      "output": ""
+    },
+    "moduleSha256": {
+      "teardown.mjs": "5bb7d0d8e023d23ab242eb8ac8b77a722d0a38c60f5df6637b86938b97419e9a",
+      "teardown.checks.mjs": "22f033c552b92bbe9e20e06c3ad51d993ecc46dcf7799da4d6623448aab7a5b1",
+      "storage-faults.mjs": "e0408378060689e8584c014f90e2d3771dc611b86bfce3bc5328a3b71ada01fb",
+      "session-audio-control.mjs": "9f8f4b18ed4382b154ef6254803442927d787aa29a3613064b9473ee1a01aa2b",
+      "selection.mjs": "b8a445a817880843e833510d92dfdaf3150fff643f4b4ae5aa6906cd3913f771",
+      "s3-object.mjs": "1bce9abf11b4aa30e0e62b6063eb283baed30894e8f816787c379dd43ea63168",
+      "run.mjs": "d2900e4f8ec085708a696c1266359c51476d794c6fa497d2c0449243f9747bcd",
+      "rendered-frames.checks.mjs": "4e5bf1be45d1eb0914625d08b35623e48ccca80dc4c35337deff13dd63571780",
+      "redis-command.mjs": "b6d801eb136a072b8a00bc2982d16934bdc4cf90c06ef28b67be4ad5a160706b",
+      "realtime-faults.mjs": "71626d7a152521529f35b1c192760b2ac809bdb56955473507362fd9fe74db62",
+      "profiles.mjs": "ef20d6159fe61e04fda06c41314fbc2798e7ae7a7e5a5f57aa3f88569b0fe2aa",
+      "probe.mjs": "0b7aea113ba651b96d3b6a9e325f9436af9a9ffc06b33ddb27cb6f4033e7f91c",
+      "native-finish.checks.mjs": "9da214aeb0523a50d0fc646dd0739c62395f1ad5af3c2de4cdb0851612c8d8b8",
+      "native-evaluate.mjs": "89294f744f2c6a0d88e90975a944e96e49b2bf1c829ba377ccaa17a19b1564bf",
+      "native-evaluate.checks.mjs": "4b24b3854f84b04ee5037ed2fdff7f02c7f490fefd6ff882bac9285877d8a5fd",
+      "membership-faults.mjs": "e155ee73a21bc27b7e8a75fe8d865e0309b35f8ad38ee77296da0db3a7a5b3a5",
+      "media.mjs": "f9339a0701f1e860865705980b66f7ee1b98ee89346ee235b959acae86461378",
+      "media-runtime.mjs": "d9bc66d17009162fd6f70eec24b227fda607e601fc7a0011a7fadae698795b67",
+      "media-runtime.checks.mjs": "4569eabb3d4339914cd48a0fdea42ad3feae89a827f67aa4923682ff72787a91",
+      "media-probe.checks.mjs": "a43b9440303b7babf4d3b6ac56a25407c9d6294e9ffde68c8f09915d21a12af6",
+      "media-lease-faults.mjs": "e3aefd71b583e5d4ab4a5109c3ed69a78352248392ec90a4f5308212fe8bae70",
+      "media-extra.mjs": "eb39eb96b9058791c1a47ab9bc9a9de2c8753e445b32c4d5201f19ed285b68ca",
+      "media-extra.checks.mjs": "8febddfe7f103fdc5b4bffbb3ae9ab59299dcb70059c7a61e70ff95c23a3fc97",
+      "harness.mjs": "6534163164c46d9c21d5fb3431f9bae2f5789a04ab328ab0be5ecbc2b7a975ad",
+      "harness.checks.mjs": "89564069db0e134a936088b2831b0eeac297777a8907523db9274efd276c9003",
+      "gateway-load.mjs": "c98da745c2ccc064829f71d1598a781eb1059177445c7c49dc7b5d07f7ed23d5",
+      "faults.mjs": "62fe2b0f812192bac2be6996049eec802db48097633c6367bd44018b6aa3a0d4",
+      "faults.checks.mjs": "9b013140e232dc052fe9b52755db20fb48267258b06fabec8ca546aae5afe11f",
+      "fault-runtime.mjs": "423684dfaddfdd65ca3021e95f842616563bef30dd8d99c70d477e9098bf7fee",
+      "fault-run.mjs": "39e5af6912f692478599cc2b9c4acc21ede1a877db72b79f4d5b6d8991769438",
+      "core.mjs": "90d46690fe1c6147d6fa54d7cc42372600ea6bc67a7b65a37a237bf4fca8fc03",
+      "ci-fault-prepare.mjs": "7be606568d420a1104cad28787fe3f8b072cda72eb265d714e6648c790b16e1d",
+      "ci-fault-prepare.checks.mjs": "b3481cdf182fc4e36d34f9b67ae828f5e115a55fcfd81233353744639affd653",
+      "ci-fault-loop.checks.mjs": "4fbf6bf68733e7175ae7baf6213230a9f7a37f75aa8971d6947b1283c5b142ff",
+      "chat-faults.mjs": "a4d258f8084e4ed842e408ebca19cbe178b636afdf2a32068e8232c16417d767",
+      "browser-options.mjs": "e092d543702eca00f24258a23b1ae97c4d280f857732dc2d262568913e01e052",
+      "browser-options.checks.mjs": "155c1eb154e9def93a95cbf7885a37755f6d91af90c93bc9b60f9f176f7104a5",
+      "account-switch.mjs": "9dd5cc5a93f55ac74ba03f46e3435b0f8e7435569dc242ef597b764e42b0ef46",
+      "access.mjs": "32655d5f780204abd3a73adb5a600db1f1fbb37a9ca42cd1932601b77ba049e4",
+      "access-native.checks.mjs": "f1bab755ba97f26042ba574ddbdf8f1ae56aa1cbdf97f78c0da09480abe74478"
+    }
+  },
+  "contract": "One shared until5s fixture deadline; native connected/live/enabled audio sender exactly1 and positive outbound audio RTP from its same peer index; missing stats null cannot pass. Original retained sender/track/peer checks and all Mute/Deafen/Undeafen/source/playback/retry deadlines unchanged.",
+  "nativeLimits": [
+    "Original clean765 Mic fixture senderCount0 stays FAIL/Exit1",
+    "Observer-wrapped diagnosis healthy Mic/control1 and own RTP1->4 are separate observations, not root-cause proof or fix retest",
+    "Lease unavailable remains strict FAIL unchanged; diagnosis LeaseBLOCKED has no teardown/counter evidence",
+    "No local native/matrix rerun per narrowed user scope; root actual GitHub CI owns next execution",
+    "Independent review pending"
+  ],
+  "completeAcceptance": false
+}

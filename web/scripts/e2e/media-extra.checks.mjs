@@ -100,6 +100,28 @@ test("exact SDP scenario preserves failed bounded camera warmup and never inject
 });
 
 import { sessionAudioControl } from "./session-audio-control.mjs";
+test("actual audio microphone fixture waits for the freshly joined connected sender and its own RTP", async () => {
+  const r = await sessionAudioControl({ micReadyAfterPoll: true });
+  assert.equal(r.error, undefined);
+  assert.equal(
+    r.actions.filter((a) => a === "microphone-fixture-poll").length,
+    2,
+  );
+  assert.equal(r.result.microphoneControl.senderCount, 1);
+  assert.ok(r.result.microphoneControl.outboundAudioPackets > 0);
+});
+for (const option of [
+  { micNeverConnected: true },
+  { micNoOutboundRtp: true },
+  { otherPeerOnlyRtp: true },
+]) {
+  test(`actual microphone fixture cannot accept missing connection/RTP or another peer's RTP ${JSON.stringify(option)}`, async () => {
+    const r = await sessionAudioControl(option);
+    assert.ok(r.error instanceof CheckFailure);
+    assert.equal(r.result, undefined);
+    assert.ok(r.actions.includes("other.context.close"));
+  });
+}
 test("actual audio task retains the original expected microphone across mute/deafen/undeafen", async () => {
   const r = await sessionAudioControl();
   assert.equal(r.error, undefined);

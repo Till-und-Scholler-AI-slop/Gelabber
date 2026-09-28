@@ -1,6 +1,7 @@
 /* global URL */
 // Complete actual scenario source; only native/UI/observation infrastructure is synthetic.
 import vm from "node:vm";
+import assert from "node:assert/strict";
 import { readFile } from "node:fs/promises";
 import { check, CheckFailure } from "./harness.mjs";
 import * as native from "./native-evaluate.mjs";
@@ -39,6 +40,10 @@ export async function sessionAudioControl({
   replaceTrack = false,
   finalRestoreError = false,
   otherCloseError = false,
+  micReadyAfterPoll = false,
+  micNeverConnected = false,
+  micNoOutboundRtp = false,
+  otherPeerOnlyRtp = false,
 } = {}) {
   const actions = [];
   let finishedVolume = false,
@@ -98,13 +103,40 @@ export async function sessionAudioControl({
     otherPath: "/s/control/c/other",
   };
   const other = actor("other");
+  if (micReadyAfterPoll || micNeverConnected)
+    f.watcher.state.peers[0].connectionState = "connecting";
+  if (micNoOutboundRtp || otherPeerOnlyRtp)
+    f.watcher.sample.peers[0].outbound[0].packets = 0;
+  if (otherPeerOnlyRtp) {
+    f.watcher.state.peers.unshift({
+      connectionState: "connected",
+      getSenders: () => [],
+    });
+    f.watcher.sample.peers.unshift({
+      connection: "connected",
+      audioSenders: [],
+      inbound: [],
+      outbound: [{ kind: "audio", packets: 20 }],
+    });
+  }
   const harness = {
     check,
     CheckFailure,
     click: async () => {},
     snapshot: async (actor) => actor.sample,
     observe: async (_ms, probe) => probe(),
-    until: async (probe, accept, code) => {
+    until: async (probe, accept, code, budget) => {
+      if (code === "fixture-session-positive-microphone-not-ready") {
+        assert.equal(budget, 5_000);
+        for (let poll = 0; poll < 2; poll++) {
+          const measured = await probe();
+          actions.push("microphone-fixture-poll");
+          if (accept(measured)) return measured;
+          if (micReadyAfterPoll)
+            f.watcher.state.peers[0].connectionState = "connected";
+        }
+        throw new CheckFailure(code, { last: await probe() });
+      }
       const phase =
         code === "session-mute-did-not-disable-mic"
           ? "mute"
