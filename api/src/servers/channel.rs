@@ -140,7 +140,10 @@ pub async fn insert_channel<'e>(
     .await?)
 }
 
-pub async fn get(db: &PgPool, channel_id: Uuid) -> Result<Option<Channel>, ApiError> {
+pub async fn get<'e, E: sqlx::Executor<'e, Database = sqlx::Postgres>>(
+    db: E,
+    channel_id: Uuid,
+) -> Result<Option<Channel>, ApiError> {
     Ok(sqlx::query_as::<_, Channel>(
         "SELECT id, server_id, category_id, name, kind, created_at FROM channels WHERE id = $1",
     )
@@ -354,13 +357,18 @@ async fn delete_channel(
     CurrentUser(user): CurrentUser,
     Id(channel_id): Id,
 ) -> Result<StatusCode, ApiError> {
-    let (member, _) = channel_for(&state.db, channel_id, user.id).await?;
+    let (_, channel) = channel_for(&state.db, channel_id, user.id).await?;
+    let server_id = channel.server_id.ok_or(ApiError::NotFound)?;
+    let mut tx = membership::lock_server(&state.db, server_id, true).await?;
+    let (member, _) = channel_for_conn(&mut tx, channel_id, user.id).await?;
     member.require(Permission::ManageChannels)?;
+    state.gateway.revoke_channel(server_id, channel_id).await?;
 
     sqlx::query("DELETE FROM channels WHERE id = $1")
         .bind(channel_id)
-        .execute(&state.db)
+        .execute(&mut *tx)
         .await?;
+    tx.commit().await?;
     info!(server_id = %member.server.id, channel_id = %channel_id, "channel deleted");
     Ok(StatusCode::NO_CONTENT)
 }
@@ -390,7 +398,16 @@ pub async fn channel_for(
     channel_id: Uuid,
     user_id: Uuid,
 ) -> Result<(Membership, Channel), ApiError> {
-    let channel = get(db, channel_id).await?.ok_or(ApiError::NotFound)?;
+    let mut conn = db.acquire().await?;
+    channel_for_conn(&mut conn, channel_id, user_id).await
+}
+
+pub async fn channel_for_conn(
+    db: &mut sqlx::PgConnection,
+    channel_id: Uuid,
+    user_id: Uuid,
+) -> Result<(Membership, Channel), ApiError> {
+    let channel = get(&mut *db, channel_id).await?.ok_or(ApiError::NotFound)?;
     let server_id = channel.server_id.ok_or(ApiError::NotFound)?;
     let member = membership::load(db, server_id, user_id).await?;
     Ok((member, channel))

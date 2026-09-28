@@ -223,6 +223,9 @@ pub struct SigEvent {
     pub u: Uuid,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub k: Option<TrackKind>,
+    /// Externally verified exclusive Live claim nonce; never chosen by client.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub lc: Option<Uuid>,
     /// Mute / deafen: the new value. Omitted on join/leave/media.
     #[serde(skip_serializing_if = "Option::is_none")]
     pub on: Option<bool>,
@@ -242,6 +245,7 @@ impl SigEvent {
             c: channel_id,
             u: user_id,
             k: None,
+            lc: None,
             on: None,
             m: None,
             d: None,
@@ -429,6 +433,8 @@ pub enum ServerFrame {
         #[serde(skip_serializing_if = "Option::is_none")]
         on: Option<bool>,
         #[serde(skip_serializing_if = "Option::is_none")]
+        lc: Option<Uuid>,
+        #[serde(skip_serializing_if = "Option::is_none")]
         m: Option<bool>,
         #[serde(skip_serializing_if = "Option::is_none")]
         d: Option<bool>,
@@ -501,6 +507,7 @@ impl ServerFrame {
             c: Some(event.c),
             u: Some(event.u),
             k: event.k,
+            lc: event.lc,
             on: event.on,
             m: event.m,
             d: event.d,
@@ -515,6 +522,7 @@ impl ServerFrame {
             c: None,
             u: None,
             k: None,
+            lc: None,
             on: None,
             m: None,
             d: None,

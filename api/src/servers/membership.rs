@@ -79,7 +79,11 @@ fn denied_message(permission: Permission) -> &'static str {
 
 /// Loads the server *through* the caller's membership. A server the caller
 /// is not part of — or that does not exist — is a `404 not_found`.
-pub async fn load(db: &PgPool, server_id: Uuid, user_id: Uuid) -> Result<Membership, ApiError> {
+pub async fn load<'e, E: sqlx::Executor<'e, Database = sqlx::Postgres>>(
+    db: E,
+    server_id: Uuid,
+    user_id: Uuid,
+) -> Result<Membership, ApiError> {
     let server = sqlx::query_as::<_, ServerRow>(
         "SELECT s.id, s.name, s.owner_id, s.member_permissions, s.created_at \
          FROM servers s \
@@ -92,6 +96,46 @@ pub async fn load(db: &PgPool, server_id: Uuid, user_id: Uuid) -> Result<Members
     .await?
     .ok_or(ApiError::NotFound)?;
     Ok(Membership { server, user_id })
+}
+
+/// Serialize joins, removals, deletes and permission changes on the server row.
+/// Readers hold a shared lock until socket registration / ticket mint completes.
+pub async fn lock_server(
+    db: &PgPool,
+    server_id: Uuid,
+    exclusive: bool,
+) -> Result<sqlx::Transaction<'_, sqlx::Postgres>, ApiError> {
+    let mut tx = db.begin().await?;
+    lock_server_conn(&mut tx, server_id, exclusive).await?;
+    Ok(tx)
+}
+
+pub async fn lock_server_conn(
+    db: &mut sqlx::PgConnection,
+    server_id: Uuid,
+    exclusive: bool,
+) -> Result<(), ApiError> {
+    let query = if exclusive {
+        "SELECT id FROM servers WHERE id = $1 FOR UPDATE"
+    } else {
+        "SELECT id FROM servers WHERE id = $1 FOR SHARE"
+    };
+    sqlx::query_scalar::<_, Uuid>(query)
+        .bind(server_id)
+        .fetch_optional(&mut *db)
+        .await?
+        .ok_or(ApiError::NotFound)?;
+    Ok(())
+}
+
+/// A rejoin is a new authorization, even if it happened between two heartbeats.
+pub async fn revision<'e, E: sqlx::Executor<'e, Database = sqlx::Postgres>>(
+    db: E,
+    server_id: Uuid,
+    user_id: Uuid,
+) -> Result<Option<(chrono::DateTime<chrono::Utc>, i32)>, ApiError> {
+    Ok(sqlx::query_as("SELECT m.joined_at, CASE WHEN s.owner_id = m.user_id THEN 127 ELSE s.member_permissions END FROM server_members m JOIN servers s ON s.id = m.server_id WHERE m.server_id = $1 AND m.user_id = $2")
+        .bind(server_id).bind(user_id).fetch_optional(db).await?)
 }
 
 #[cfg(test)]

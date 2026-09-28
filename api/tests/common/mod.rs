@@ -24,7 +24,7 @@ pub const CSRF: &str = "gelabber_csrf";
 pub fn state(pool: PgPool) -> AppState {
     let config = Config::from_source(|key| match key {
         "DATABASE_URL" => Some("postgres://unused:unused@127.0.0.1:1/unused".to_owned()),
-        "REDIS_URL" => Some("redis://127.0.0.1:1".to_owned()),
+        "REDIS_URL" => Some(redis_url()),
         "API_SESSION_TTL_HOURS" => Some("2".to_owned()),
         _ => None,
     })

@@ -234,7 +234,8 @@ async fn join(
 ) -> Result<Json<ServerView>, ApiError> {
     let code = normalise_code(&code).ok_or(ApiError::NotFound)?;
 
-    let mut tx = state.db.begin().await?;
+    let server_id = by_code(&state.db, &code).await?.server_id;
+    let mut tx = membership::lock_server(&state.db, server_id, true).await?;
     // Lock the row so two concurrent joins cannot both pass a `max_uses`
     // check with one slot left.
     let invite = sqlx::query_as::<_, Invite>("SELECT code, server_id, created_by, created_at, expires_at, max_uses, uses FROM invites WHERE code = $1 FOR UPDATE")
@@ -251,17 +252,17 @@ async fn join(
     .fetch_one(&mut *tx)
     .await?;
 
+    let banned: bool = sqlx::query_scalar(
+        "SELECT EXISTS (SELECT 1 FROM server_bans WHERE server_id = $1 AND user_id = $2)",
+    )
+    .bind(invite.server_id)
+    .bind(user.id)
+    .fetch_one(&mut *tx)
+    .await?;
+    if banned {
+        return Err(ApiError::Banned);
+    }
     if !already {
-        let banned: bool = sqlx::query_scalar(
-            "SELECT EXISTS (SELECT 1 FROM server_bans WHERE server_id = $1 AND user_id = $2)",
-        )
-        .bind(invite.server_id)
-        .bind(user.id)
-        .fetch_one(&mut *tx)
-        .await?;
-        if banned {
-            return Err(ApiError::Banned);
-        }
         if !invite.is_usable(Utc::now()) {
             return Err(ApiError::InviteInvalid);
         }

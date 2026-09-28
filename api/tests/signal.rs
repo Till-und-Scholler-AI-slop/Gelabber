@@ -658,6 +658,11 @@ async fn go_live_needs_permission_and_is_one_per_channel(pool: PgPool) {
     })
     .await;
     assert_eq!(live["u"], ada.to_string());
+    let nonce: Uuid = live["lc"]
+        .as_str()
+        .expect("gateway-issued live claim")
+        .parse()
+        .unwrap();
     assert!(!live.to_string().contains("livekit"));
 
     send_json(
@@ -710,6 +715,10 @@ async fn go_live_needs_permission_and_is_one_per_channel(pool: PgPool) {
     })
     .await;
     assert_eq!(second["k"], "l");
+    assert_ne!(
+        second["lc"].as_str().unwrap().parse::<Uuid>().unwrap(),
+        nonce
+    );
 }
 
 #[sqlx::test]

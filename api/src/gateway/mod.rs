@@ -18,6 +18,7 @@
 
 mod conn;
 mod hub;
+mod leases;
 mod live;
 pub mod protocol;
 mod signal;
@@ -32,7 +33,7 @@ use axum::routing::get;
 use serde_json::Value;
 use uuid::Uuid;
 
-use crate::auth::session::CurrentUser;
+use crate::auth::session::CurrentSession;
 use crate::error::ApiError;
 use crate::state::AppState;
 
@@ -45,7 +46,7 @@ pub fn router() -> Router<AppState> {
 
 async fn upgrade(
     State(state): State<AppState>,
-    CurrentUser(user): CurrentUser,
+    session: CurrentSession,
     headers: HeaderMap,
     ws: WebSocketUpgrade,
 ) -> Result<Response, ApiError> {
@@ -54,7 +55,7 @@ async fn upgrade(
             "Cross-origin WebSocket is not allowed.",
         ));
     }
-    Ok(ws.on_upgrade(move |socket| conn::run(socket, state, user)))
+    Ok(ws.on_upgrade(move |socket| conn::run(socket, state, session)))
 }
 
 /// Same-origin check when the browser sends `Origin`. Non-browser clients

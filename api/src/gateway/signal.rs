@@ -20,6 +20,7 @@ type Sink = futures_util::stream::SplitSink<WebSocket, Message>;
 
 struct Call<'a> {
     state: &'a AppState,
+    db: &'a mut sqlx::PgConnection,
     user: &'a User,
     conn: ConnId,
     server_id: Uuid,
@@ -28,26 +29,29 @@ struct Call<'a> {
     track: Option<TrackKind>,
     on: Option<bool>,
     sink: &'a mut Sink,
+    live_started: bool,
 }
 
 pub async fn handle(
     state: &AppState,
+    db: &mut sqlx::PgConnection,
     user: &User,
     conn: ConnId,
     frame: ClientFrame,
     sink: &mut Sink,
-) -> Result<(), ApiError> {
+) -> Result<Option<(Uuid, Uuid)>, ApiError> {
     let ClientFrame::Sig { s, c, t, k, on } = frame else {
         send_err(sink, "bad_request", None, None).await?;
-        return Ok(());
+        return Ok(None);
     };
     let (Some(server_id), Some(channel_id), Some(kind)) = (s, c, t) else {
         send_err(sink, "bad_request", s, c).await?;
-        return Ok(());
+        return Ok(None);
     };
 
     let mut call = Call {
         state,
+        db,
         user,
         conn,
         server_id,
@@ -56,29 +60,31 @@ pub async fn handle(
         track: k,
         on,
         sink,
+        live_started: false,
     };
+    if let Err(err) = membership::lock_server_conn(call.db, server_id, false).await {
+        return reject(&mut call, err).await.map(|_| None);
+    }
     match kind {
         SigKind::J => join(&mut call).await,
         SigKind::L => leave(&mut call).await,
         SigKind::P | SigKind::U => publish(&mut call).await,
         SigKind::M | SigKind::D => mute_deafen(&mut call).await,
         SigKind::R => bad(&mut call).await,
-    }
+    }?;
+    Ok(call.live_started.then_some((server_id, channel_id)))
 }
 
 async fn join(call: &mut Call<'_>) -> Result<(), ApiError> {
-    match authorize_join(
-        &call.state.db,
-        call.user.id,
-        call.server_id,
-        call.channel_id,
-    )
-    .await
-    {
+    match authorize_join(&mut *call.db, call.user.id, call.server_id, call.channel_id).await {
         Ok(()) => {}
         Err(err) => return reject(call, err).await,
     }
 
+    call.state
+        .gateway
+        .bind_server(call.conn, &mut *call.db, call.server_id, call.user.id)
+        .await?;
     let snapshot = call
         .state
         .gateway
@@ -91,6 +97,9 @@ async fn join(call: &mut Call<'_>) -> Result<(), ApiError> {
 }
 
 async fn leave(call: &mut Call<'_>) -> Result<(), ApiError> {
+    if !require_room(call).await? {
+        return Ok(());
+    }
     let _ = call
         .state
         .gateway
@@ -100,10 +109,16 @@ async fn leave(call: &mut Call<'_>) -> Result<(), ApiError> {
 }
 
 async fn require_room(call: &mut Call<'_>) -> Result<bool, ApiError> {
+    if let Err(err) =
+        authorize_join(&mut *call.db, call.user.id, call.server_id, call.channel_id).await
+    {
+        reject(call, err).await?;
+        return Ok(false);
+    }
     if call
         .state
         .gateway
-        .in_voice(call.conn, call.channel_id)
+        .in_voice(call.conn, call.server_id, call.channel_id)
         .await
     {
         return Ok(true);
@@ -128,7 +143,7 @@ async fn publish(call: &mut Call<'_>) -> Result<(), ApiError> {
     // Camera (`v`) and screen (`s`) are for anyone already in the voice
     // room. Go Live (`l`) needs `go_live` and is one track per channel.
     if track == TrackKind::L && call.kind == SigKind::P {
-        match authorize_go_live(&call.state.db, call.user.id, call.server_id).await {
+        match authorize_go_live(&mut *call.db, call.user.id, call.server_id).await {
             Ok(()) => {}
             Err(err) => return reject(call, err).await,
         }
@@ -148,10 +163,7 @@ async fn publish(call: &mut Call<'_>) -> Result<(), ApiError> {
     let Some(live_started) = started else {
         return bad(call).await;
     };
-    if track == TrackKind::L && call.kind == SigKind::P && live_started {
-        crate::messages::post_live_hint(call.state, call.user, call.server_id, call.channel_id)
-            .await;
-    }
+    call.live_started = track == TrackKind::L && call.kind == SigKind::P && live_started;
     Ok(())
 }
 
@@ -200,12 +212,12 @@ async fn reject(call: &mut Call<'_>, err: ApiError) -> Result<(), ApiError> {
 }
 
 async fn authorize_join(
-    db: &sqlx::PgPool,
+    db: &mut sqlx::PgConnection,
     user_id: Uuid,
     server_id: Uuid,
     channel_id: Uuid,
 ) -> Result<(), ApiError> {
-    let member = membership::load(db, server_id, user_id).await?;
+    let member = membership::load(&mut *db, server_id, user_id).await?;
     member.require(Permission::JoinVoice)?;
     let channel = load_channel(db, server_id, channel_id).await?;
     if channel.kind != ChannelKind::Voice {
@@ -217,16 +229,16 @@ async fn authorize_join(
 }
 
 async fn authorize_go_live(
-    db: &sqlx::PgPool,
+    db: &mut sqlx::PgConnection,
     user_id: Uuid,
     server_id: Uuid,
 ) -> Result<(), ApiError> {
-    let member = membership::load(db, server_id, user_id).await?;
+    let member = membership::load(&mut *db, server_id, user_id).await?;
     member.require(Permission::GoLive)
 }
 
 async fn load_channel(
-    db: &sqlx::PgPool,
+    db: &mut sqlx::PgConnection,
     server_id: Uuid,
     channel_id: Uuid,
 ) -> Result<Channel, ApiError> {
