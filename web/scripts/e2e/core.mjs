@@ -159,8 +159,8 @@ export async function coreScenarios(h, f) {
     },
   );
   // DM creation can succeed even while discovery is correctly red. Verify attachments independently.
-  if (!f.dmPath)
-    await h.run("dm-attachment-fixture", [], async () => {
+  if (!f.dmPath && h.wants("dm-jpeg-png-webp-bind-reload-byte-equal"))
+    await h.setup("dm-attachment-fixture", [], async () => {
       const response = await api(f.owner, "/dms", "POST", {
         user_id: f.member.id,
       });

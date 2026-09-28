@@ -7,7 +7,7 @@ if (!["all", "media", "core", "access"].includes(suite))
 const h = await startHarness();
 try {
   let f;
-  const setup = await h.run("isolated-app-fixture", [], async () => {
+  const setup = await h.setup("isolated-app-fixture", [], async () => {
     f = await h.fixture();
     return {
       accounts: 3,
@@ -28,9 +28,12 @@ try {
       const { accessScenarios } = await import("./access.mjs");
       await accessScenarios(h, f);
     }
-  } else h.blocked("requested-scenarios", "fixture-setup-failed");
+  } else
+    h.blocked("requested-scenarios", "fixture-setup-failed", [], {
+      setup: true,
+    });
 } catch (error) {
-  await h.run("suite-interrupted", [], async () => {
+  await h.setup("suite-interrupted", [], async () => {
     throw error;
   });
 } finally {

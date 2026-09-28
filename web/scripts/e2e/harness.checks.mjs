@@ -146,3 +146,38 @@ test("gateway faults leave HMR, media and unrelated socket paths untouched", asy
   );
   await assert.rejects(interrupt(actor, "other"), /unsupported-fault-plane/);
 });
+
+const { selection, wanted, requiredCase, gate } =
+  await import("./selection.mjs");
+test("explicit exclusions are NOT_RUN, required failures and incomplete selection stay red", () => {
+  const selected = selection("good-case");
+  assert.equal(wanted(selected, "good-case"), true);
+  assert.equal(requiredCase(selected, "fixture", true), true);
+  assert.equal(requiredCase(selected, "other-case"), false);
+  const rows = [
+    { id: "fixture", status: "PASS" },
+    { id: "good-case", status: "PASS" },
+    { id: "other-case", status: "NOT_RUN" },
+  ];
+  assert.equal(gate(rows, selected, [{ status: 204 }]).passed, true);
+  assert.equal(gate(rows, selected, []).completeAcceptance, false);
+  for (const status of ["FAIL", "BLOCKED"])
+    assert.equal(
+      gate([...rows, { id: "required", status }], selected, []).passed,
+      false,
+    );
+  assert.equal(gate(rows, selected, [{ status: "FAILED" }]).passed, false);
+  assert.equal(
+    gate(
+      [...rows, { id: "restore", status: "PASS", fixtureRecovery: "BLOCKED" }],
+      selected,
+      [],
+    ).passed,
+    false,
+  );
+  assert.deepEqual(gate(rows, ["typo-case"], []).absent, ["typo-case"]);
+  assert.equal(gate(rows, ["typo-case"], []).passed, false);
+  assert.equal(gate([], [], []).passed, false);
+  assert.throws(() => selection("good-case,good-case"));
+  assert.throws(() => selection("bad/secret"));
+});

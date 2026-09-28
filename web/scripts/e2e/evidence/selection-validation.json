@@ -1,0 +1,171 @@
+{
+  "scope": "CLI subset semantics and setup controls; not integrated product acceptance",
+  "controls": [
+    {
+      "artifact": "/tmp/gelabber-e2e/selection-late-only.json",
+      "sha256": "9c3deb4a4692bac615736fb74f6611f34f076b5f23a846975624d2b5fc82f49e",
+      "expectedExit": 0,
+      "source": "4028136bcafe2df002b3012a9847cdc1dc16c284",
+      "testFilesDirty": true,
+      "at": "2026-09-28T14:15:59.780Z",
+      "selected": [
+        "late-watch-after-30s"
+      ],
+      "gate": {
+        "passed": true,
+        "scope": "selected-cases",
+        "excluded": [
+          "live-watch-default-autoplay-no-mic",
+          "media-ws-capture-preserving-recovery",
+          "gateway-only-preserves-peer",
+          "offline-8s-no-new-capture-gesture",
+          "watch-navigation-channel-binding-global-controls",
+          "live-claim-exclusive-and-loser-not-published",
+          "20-live-start-stop-bounded-client-resources",
+          "cancelled-live-picker-keeps-voice-no-ghost",
+          "camera-screen-live-source-identity",
+          "autoplay-rejection-visible-click-retry",
+          "audible-voice-mute-deafen-quality",
+          "sfu-publication-task-bounds",
+          "forced-arrival-order-and-rejected-sdp",
+          "api-redis-outage-live-lease-recovery",
+          "packet-loss-audible-quality"
+        ],
+        "absent": [],
+        "completeAcceptance": false
+      },
+      "requiredResults": [
+        {
+          "id": "isolated-app-fixture",
+          "status": "PASS",
+          "durationMs": 7281
+        },
+        {
+          "id": "late-watch-live-fixture",
+          "status": "PASS",
+          "durationMs": 2710
+        },
+        {
+          "id": "late-watch-after-30s",
+          "status": "PASS",
+          "durationMs": 29869
+        }
+      ],
+      "cleanup": [
+        {
+          "target": "owned-test-server",
+          "status": 204
+        }
+      ]
+    },
+    {
+      "artifact": "/tmp/gelabber-e2e/selection-dm-only.json",
+      "sha256": "8a71ef26fbd04738b9221883ec48757f6b8d49874b577193601e262f104990cf",
+      "expectedExit": 0,
+      "source": "4028136bcafe2df002b3012a9847cdc1dc16c284",
+      "testFilesDirty": true,
+      "at": "2026-09-28T14:16:03.324Z",
+      "selected": [
+        "dm-jpeg-png-webp-bind-reload-byte-equal"
+      ],
+      "gate": {
+        "passed": true,
+        "scope": "selected-cases",
+        "excluded": [
+          "account-session-reload-login",
+          "channel-chat-create-edit-delete-converges",
+          "new-dm-connected-recipient-discovers-without-refetch",
+          "channel-jpeg-png-webp-bind-reload-byte-equal",
+          "background-event-before-first-open-55-history-paging",
+          "initial-history-error-visible-bounded-retry",
+          "failed-send-navigation-retains-own-retry",
+          "two-tabs-account-switch-delayed-401",
+          "two-tabs-account-switch-delayed-403",
+          "rest-ws-reordering-edit-delete-rollback",
+          "two-parallel-sends-upload-account-switch",
+          "paging-error-data-preservation",
+          "redis-epoch-replay-window-reset",
+          "storage-delete-outage-durable-cleanup",
+          "attachments-https-wan"
+        ],
+        "absent": [],
+        "completeAcceptance": false
+      },
+      "requiredResults": [
+        {
+          "id": "isolated-app-fixture",
+          "status": "PASS",
+          "durationMs": 7237
+        },
+        {
+          "id": "dm-attachment-fixture",
+          "status": "PASS",
+          "durationMs": 98
+        },
+        {
+          "id": "dm-jpeg-png-webp-bind-reload-byte-equal",
+          "status": "PASS",
+          "durationMs": 3719
+        }
+      ],
+      "cleanup": [
+        {
+          "target": "owned-test-server",
+          "status": 204
+        }
+      ]
+    },
+    {
+      "artifact": "/tmp/gelabber-e2e/selection-required-blocked.json",
+      "sha256": "32ff9326b3fc3fd67e48303f8c190b82b21bf1033c277c2c9c5601eac8fdaf01",
+      "expectedExit": 1,
+      "source": "4028136bcafe2df002b3012a9847cdc1dc16c284",
+      "testFilesDirty": true,
+      "at": "2026-09-28T14:16:21.959Z",
+      "selected": [
+        "attachments-https-wan"
+      ],
+      "gate": {
+        "passed": false,
+        "scope": "selected-cases",
+        "excluded": [
+          "account-session-reload-login",
+          "channel-chat-create-edit-delete-converges",
+          "new-dm-connected-recipient-discovers-without-refetch",
+          "channel-jpeg-png-webp-bind-reload-byte-equal",
+          "dm-jpeg-png-webp-bind-reload-byte-equal",
+          "background-event-before-first-open-55-history-paging",
+          "initial-history-error-visible-bounded-retry",
+          "failed-send-navigation-retains-own-retry",
+          "two-tabs-account-switch-delayed-401",
+          "two-tabs-account-switch-delayed-403",
+          "rest-ws-reordering-edit-delete-rollback",
+          "two-parallel-sends-upload-account-switch",
+          "paging-error-data-preservation",
+          "redis-epoch-replay-window-reset",
+          "storage-delete-outage-durable-cleanup"
+        ],
+        "absent": [],
+        "completeAcceptance": false
+      },
+      "requiredResults": [
+        {
+          "id": "isolated-app-fixture",
+          "status": "PASS",
+          "durationMs": 7158
+        },
+        {
+          "id": "attachments-https-wan",
+          "status": "BLOCKED",
+          "reason": "local HTTP evidence only; coordinator owns HTTPS/WAN integration"
+        }
+      ],
+      "cleanup": [
+        {
+          "target": "owned-test-server",
+          "status": 204
+        }
+      ]
+    }
+  ]
+}

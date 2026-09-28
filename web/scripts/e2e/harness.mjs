@@ -9,6 +9,7 @@ const repoRoot = fileURLToPath(new URL("../../../", import.meta.url));
 import { setTimeout as pause } from "node:timers/promises";
 import { chromium, firefox } from "playwright";
 import { instrument, sample } from "./probe.mjs";
+import { selection, wanted, requiredCase, gate } from "./selection.mjs";
 
 export class CheckFailure extends Error {
   constructor(code, metrics = {}) {
@@ -105,10 +106,7 @@ export async function startHarness() {
   );
   const suffix = `${Date.now().toString(36)}-${randomBytes(4).toString("hex")}`;
   const password = randomBytes(24).toString("base64url");
-  const selected = (process.env.GELABBER_E2E_CASES ?? "")
-    .split(",")
-    .filter(Boolean);
-  assert.ok(selected.every((id) => /^[a-z0-9-]+$/.test(id)));
+  const selected = selection(process.env.GELABBER_E2E_CASES);
   const actors = [];
   const servers = [];
   const testSourceHashes = {};
@@ -120,9 +118,10 @@ export async function startHarness() {
       .digest("hex");
   const report = {
     testSourceHashes,
-    schema: 1,
+    schema: 2,
     selectedCases: selected,
-    phase: "11a",
+    phase: "11b/c-automation",
+    requestedSuite: process.env.GELABBER_E2E_SUITE ?? "all",
     at: new Date().toISOString(),
     source: execFileSync("git", ["rev-parse", "HEAD"], {
       encoding: "utf8",
@@ -153,7 +152,7 @@ export async function startHarness() {
       autoplay: "browser default; no policy override",
     },
     limitations: [
-      "Not 11b/c/d acceptance",
+      "Automated local/CI subset; not complete 11b/c/d acceptance",
       "No native display picker, audible two-device speech, WAN or production test",
       "No SFU publication/task telemetry; client bounds only",
       "Accounts remain as isolated example.test fixtures; owned servers are deleted",
@@ -272,17 +271,10 @@ export async function startHarness() {
   function setIsolation(restore) {
     isolation = restore;
   }
-  async function run(id, predecessors, task) {
+  async function run(id, predecessors, task, { setup = false } = {}) {
+    if (!requiredCase(selected, id, setup)) return notRun(id, predecessors);
     if (isolationBlocked) {
-      blocked(id, "fixture-recovery-failed", predecessors);
-      return { id, status: "BLOCKED" };
-    }
-    if (
-      selected.length &&
-      id !== "isolated-app-fixture" &&
-      !selected.includes(id)
-    ) {
-      blocked(id, "not-selected-in-this-run", predecessors);
+      blocked(id, "fixture-recovery-failed", predecessors, { setup });
       return { id, status: "BLOCKED" };
     }
     const at = new Date().toISOString();
@@ -328,7 +320,21 @@ export async function startHarness() {
     console.log(`${row.status} ${id}${row.reason ? ` (${row.reason})` : ""}`);
     return row;
   }
-  function blocked(id, reason, predecessors = []) {
+  function notRun(id, predecessors = []) {
+    const row = {
+      id,
+      status: "NOT_RUN",
+      classification: "not-executed",
+      reason: "not-selected-in-this-run",
+      predecessors,
+      at: new Date().toISOString(),
+    };
+    report.results.push(row);
+    console.log(`NOT_RUN ${id} (${row.reason})`);
+    return row;
+  }
+  function blocked(id, reason, predecessors = [], { setup = false } = {}) {
+    if (!requiredCase(selected, id, setup)) return notRun(id, predecessors);
     report.results.push({
       id,
       status: "BLOCKED",
@@ -378,21 +384,25 @@ export async function startHarness() {
     }
     await browser.close();
     report.finishedAt = new Date().toISOString();
+    for (const id of gate(report.results, selected, report.cleanup).absent)
+      blocked(id, "selected-case-unknown-or-not-reached");
+    report.gate = gate(report.results, selected, report.cleanup);
     const path =
       process.env.GELABBER_E2E_REPORT ?? "/tmp/gelabber-e2e/report.json";
     await mkdir(dirname(path), { recursive: true });
     await writeFile(path, `${JSON.stringify(report, null, 2)}\n`, {
       mode: 0o600,
     });
-    if (
-      report.results.some((r) => r.status !== "PASS") ||
-      report.cleanup.some((r) => r.status !== 204)
-    )
-      process.exitCode = 1;
-    console.log("11a redacted report written; final acceptance remains open.");
+    if (!report.gate.passed) process.exitCode = 1;
+    console.log(
+      `Automated gate ${report.gate.passed ? "PASS" : "FAIL"}; redacted report written; complete acceptance remains open.`,
+    );
   }
   return {
     actor,
+    wants: (id) => wanted(selected, id),
+    setup: (id, predecessors, task) =>
+      run(id, predecessors, task, { setup: true }),
     fixture,
     setIsolation,
     run,

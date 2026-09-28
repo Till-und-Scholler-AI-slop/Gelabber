@@ -109,27 +109,34 @@ export async function interrupt(actor, plane) {
 export async function mediaScenarios(h, f) {
   const budget = h.relay ? 10_000 : 5_000;
   const options = { relay: h.relay, budget };
-  const first = await h.run(
+  async function initialWatch() {
+    await begin(f);
+    const frames = await progress(f.watcher, options);
+    check(
+      frames.last.micCalls === 0 &&
+        frames.last.cameraCalls === 0 &&
+        frames.last.displayCalls === 0,
+      "watch-requested-capture",
+      frames.last,
+    );
+    check(
+      activePeers(frames.last).every((p) => p.senders === 0),
+      "watch-published-media",
+      frames.last,
+    );
+    return frames;
+  }
+  let first = await h.run(
     "live-watch-default-autoplay-no-mic",
     ["01", "08b"],
-    async () => {
-      await begin(f);
-      const frames = await progress(f.watcher, options);
-      check(
-        frames.last.micCalls === 0 &&
-          frames.last.cameraCalls === 0 &&
-          frames.last.displayCalls === 0,
-        "watch-requested-capture",
-        frames.last,
-      );
-      check(
-        activePeers(frames.last).every((p) => p.senders === 0),
-        "watch-published-media",
-        frames.last,
-      );
-      return frames;
-    },
+    initialWatch,
   );
+  if (first.status === "NOT_RUN" && h.wants("late-watch-after-30s"))
+    first = await h.setup(
+      "late-watch-live-fixture",
+      ["01", "08b"],
+      initialWatch,
+    );
   if (first.status === "PASS") {
     await h.run("late-watch-after-30s", ["01"], async () => {
       const baseline = await snapshot(f.owner);
