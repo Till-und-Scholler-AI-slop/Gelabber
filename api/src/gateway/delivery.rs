@@ -43,76 +43,114 @@ struct Pending {
     delta: Option<Value>,
 }
 
-/// Bounded batch. Other API instances share DB locks and Redis deduplication.
+/// One finite scan pass is bounded by its captured maximum DB revision. New
+/// writes cannot extend that pass indefinitely and starve its older heads.
+#[derive(Default)]
+pub(super) struct ScanCursor {
+    after: i64,
+    through: i64,
+}
+#[derive(FromRow)]
+struct Candidate {
+    id: i64,
+    channel_id: Uuid,
+}
+
+async fn candidates(state: &AppState, limit: usize) -> Result<Vec<Candidate>, ApiError> {
+    // Hold only the scan cursor across DB selection, never across channel locks
+    // or Redis I/O. HTTP retries and the periodic worker share the same cursor.
+    let mut scan = state.connections.inner.delivery_scan.lock().await;
+    if scan.after >= scan.through {
+        scan.after = 0;
+        scan.through = sqlx::query_scalar("SELECT COALESCE(MAX(id),0) FROM gateway_outbox")
+            .fetch_one(&state.db)
+            .await?;
+    }
+    let rows:Vec<Candidate>=sqlx::query_as(
+        "SELECT o.id,o.channel_id FROM gateway_outbox o WHERE o.id>$1 AND o.id<=$2 \
+         AND o.next_attempt<=now() AND NOT EXISTS \
+           (SELECT 1 FROM gateway_outbox earlier WHERE earlier.channel_id=o.channel_id AND earlier.id<o.id) \
+         ORDER BY o.id LIMIT $3",
+    ).bind(scan.after).bind(scan.through).bind(limit as i64).fetch_all(&state.db).await?;
+    scan.after = rows.last().map(|r| r.id).unwrap_or(scan.through);
+    Ok(rows)
+}
+
+/// At most 32 head candidates and publications per invocation. Busy heads
+/// advance the shared round-robin cursor and are revisited next finite pass.
 pub async fn deliver_pending(state: &AppState, limit: usize) -> Result<usize, ApiError> {
+    let limit = limit.min(32);
+    if limit == 0 {
+        return Ok(0);
+    }
     let mut delivered = 0;
-    for _ in 0..limit.min(32) {
-        let mut tx = state.db.begin().await?;
-        let candidates: Vec<Uuid> = sqlx::query_scalar("SELECT o.channel_id FROM gateway_outbox o WHERE o.next_attempt <= now() AND NOT EXISTS (SELECT 1 FROM gateway_outbox earlier WHERE earlier.channel_id=o.channel_id AND earlier.id<o.id) ORDER BY o.id LIMIT 32")
-            .fetch_all(&mut *tx).await?;
-        let mut channel = None;
-        for candidate in candidates {
+    let mut examined = 0;
+    while examined < limit {
+        let batch = candidates(state, limit - examined).await?;
+        if batch.is_empty() {
+            break;
+        }
+        for candidate in batch {
+            examined += 1;
+            let channel = candidate.channel_id;
+            let mut tx = state.db.begin().await?;
             let locked: bool =
                 sqlx::query_scalar("SELECT pg_try_advisory_xact_lock(hashtextextended($1,507))")
-                    .bind(candidate.to_string())
+                    .bind(channel.to_string())
                     .fetch_one(&mut *tx)
                     .await?;
-            if locked {
-                channel = Some(candidate);
-                break;
+            if !locked {
+                continue;
             }
-        }
-        let Some(channel) = channel else {
-            break;
-        };
-        let pending:Option<Pending>=sqlx::query_as("SELECT id,channel_id,server_id,target_user,kind,entity_id,delta FROM gateway_outbox o WHERE channel_id=$1 AND next_attempt <= now() AND NOT EXISTS (SELECT 1 FROM gateway_outbox earlier WHERE earlier.channel_id=o.channel_id AND earlier.id<o.id) ORDER BY id LIMIT 1 FOR UPDATE").bind(channel).fetch_optional(&mut *tx).await?;
-        let Some(pending) = pending else {
-            tx.commit().await?;
-            continue;
-        };
-        let result = if let Some(user) = pending.target_user {
-            state
-                .gateway
-                .publish_discovery(user, pending.channel_id, pending.id)
-                .await
-        } else {
-            let kind = match pending.kind.as_str() {
-                "c" => EventKind::C,
-                "e" => EventKind::E,
-                "d" => EventKind::D,
-                _ => return Err(ApiError::Internal("invalid outbox kind".into())),
+            let pending:Option<Pending>=sqlx::query_as("SELECT id,channel_id,server_id,target_user,kind,entity_id,delta FROM gateway_outbox o WHERE channel_id=$1 AND next_attempt <= now() AND NOT EXISTS (SELECT 1 FROM gateway_outbox earlier WHERE earlier.channel_id=o.channel_id AND earlier.id<o.id) ORDER BY id LIMIT 1 FOR UPDATE").bind(channel).fetch_optional(&mut *tx).await?;
+            let Some(pending) = pending else {
+                tx.commit().await?;
+                continue;
             };
-            state
-                .events
-                .publish_revision(
-                    EventDraft {
-                        kind,
-                        server_id: pending.server_id,
-                        channel_id: Some(pending.channel_id),
-                        entity_id: pending.entity_id,
-                        delta: pending.delta,
-                    },
-                    Some(pending.id),
+            let result = if let Some(user) = pending.target_user {
+                state
+                    .gateway
+                    .publish_discovery(user, pending.channel_id, pending.id)
+                    .await
+            } else {
+                let kind = match pending.kind.as_str() {
+                    "c" => EventKind::C,
+                    "e" => EventKind::E,
+                    "d" => EventKind::D,
+                    _ => return Err(ApiError::Internal("invalid outbox kind".into())),
+                };
+                state
+                    .events
+                    .publish_revision(
+                        EventDraft {
+                            kind,
+                            server_id: pending.server_id,
+                            channel_id: Some(pending.channel_id),
+                            entity_id: pending.entity_id,
+                            delta: pending.delta,
+                        },
+                        Some(pending.id),
+                    )
+                    .await
+                    .map(|_| ())
+            };
+            if let Err(err) = result {
+                sqlx::query(
+                    "UPDATE gateway_outbox SET next_attempt=now()+interval '1 second' WHERE id=$1",
                 )
-                .await
-                .map(|_| ())
-        };
-        if let Err(err) = result {
-            sqlx::query(
-                "UPDATE gateway_outbox SET next_attempt=now()+interval '1 second' WHERE id=$1",
-            )
-            .bind(pending.id)
-            .execute(&mut *tx)
-            .await?;
+                .bind(pending.id)
+                .execute(&mut *tx)
+                .await?;
+                tx.commit().await?;
+                return Err(err);
+            }
+            sqlx::query("DELETE FROM gateway_outbox WHERE id=$1")
+                .bind(pending.id)
+                .execute(&mut *tx)
+                .await?;
             tx.commit().await?;
-            return Err(err);
+            delivered += 1;
         }
-        sqlx::query("DELETE FROM gateway_outbox WHERE id=$1")
-            .bind(pending.id)
-            .execute(&mut *tx)
-            .await?;
-        tx.commit().await?;
-        delivered += 1;
     }
     Ok(delivered)
 }
