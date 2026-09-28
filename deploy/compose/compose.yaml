@@ -17,7 +17,7 @@ services:
     restart: unless-stopped
 
   web:
-    image: ghcr.io/till-und-scholler-ai-slop/gelabber/web:v0.2.4
+    image: ${GELABBER_WEB_IMAGE:-ghcr.io/till-und-scholler-ai-slop/gelabber/web:v0.2.4}
     pull_policy: missing
     build:
       context: ../../web
@@ -29,7 +29,7 @@ services:
     restart: unless-stopped
 
   api:
-    image: ghcr.io/till-und-scholler-ai-slop/gelabber/api:v0.2.4
+    image: ${GELABBER_API_IMAGE:-ghcr.io/till-und-scholler-ai-slop/gelabber/api:v0.2.4}
     pull_policy: missing
     build:
       context: ../..
@@ -66,7 +66,7 @@ services:
     restart: unless-stopped
 
   media:
-    image: ghcr.io/till-und-scholler-ai-slop/gelabber/media:v0.2.4
+    image: ${GELABBER_MEDIA_IMAGE:-ghcr.io/till-und-scholler-ai-slop/gelabber/media:v0.2.4}
     pull_policy: missing
     build:
       context: ../..
@@ -144,7 +144,7 @@ services:
     restart: unless-stopped
 
   minio:
-    image: ghcr.io/till-und-scholler-ai-slop/gelabber/minio:v0.2.4
+    image: ${GELABBER_MINIO_IMAGE:-ghcr.io/till-und-scholler-ai-slop/gelabber/minio:RELEASE.2025-10-15T17-29-55Z}
     pull_policy: missing
     build:
       context: ./minio

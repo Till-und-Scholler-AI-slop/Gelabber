@@ -1,130 +1,53 @@
-# Tagged releases. Org GHCR packages start private; GitHub has no REST/GraphQL
-# endpoint to flip visibility (PATCH returns 404 even with packages:write).
-# public-minio records that and links the one-time UI step.
+# A maintainer explicitly releases a completed, CI-gated main image set.
+# No release on every main push, feature branch, or arbitrary v* tag push.
 name: Release
 
 on:
-  push:
-    tags:
-      - "v*"
-  workflow_run:
-    workflows: ["Publish app images"]
-    types: [completed]
-    branches: [main]
   workflow_dispatch:
     inputs:
       tag:
-        description: "Release tag (created on this commit if missing)"
+        description: Completed release version (must match image set and workspace)
         required: true
-        default: "v0.2.4"
+      image_run_id:
+        description: Successful Publish app images run containing the promoted image-set artifact
+        required: true
+
+concurrency:
+  group: app-images-main
+  cancel-in-progress: false
 
 permissions:
   actions: read
   contents: write
-  packages: write
+  packages: read
 
 jobs:
   github-release:
-    if: >-
-      github.event_name != 'workflow_run' ||
-      (github.event.workflow_run.event == 'push' &&
-       github.event.workflow_run.head_branch == 'main' &&
-       github.event.workflow_run.conclusion == 'success')
+    if: github.ref == 'refs/heads/main'
     runs-on: ubuntu-latest
-    timeout-minutes: 25
     steps:
-      - name: Checkout
-        uses: actions/checkout@v7
+      - uses: actions/checkout@v7
         with:
           fetch-depth: 0
-          ref: ${{ github.event_name == 'workflow_run' && github.event.workflow_run.head_sha || github.sha }}
-
-      - name: Create GitHub Release
+      - name: Download exact image set
+        uses: actions/download-artifact@v4
+        with:
+          name: image-set
+          run-id: ${{ inputs.image_run_id }}
+          github-token: ${{ secrets.GITHUB_TOKEN }}
+      - name: Check artifact provenance
+        env:
+          IMAGE_RUN_ID: ${{ inputs.image_run_id }}
+        run: |
+          python3 -c 'import json,os; assert json.load(open("image-set.json"))["publish_run_id"] == int(os.environ["IMAGE_RUN_ID"])'
+      - uses: docker/setup-buildx-action@v4
+      - uses: docker/login-action@v4
+        with:
+          registry: ghcr.io
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+      - name: Verify exact CI and immutable image set, then create release
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-          TAG: ${{ github.event_name == 'workflow_dispatch' && inputs.tag || github.ref_name }}
-          SOURCE_SHA: ${{ github.event_name == 'workflow_run' && github.event.workflow_run.head_sha || github.sha }}
-        run: |
-          set -euo pipefail
-          tag="$TAG"
-          if [ "${{ github.event_name }}" = "workflow_run" ]; then
-            tag="v$(sed -n '/^\[workspace.package\]/,/^\[/{s/^version = "\([^"]*\)"/\1/p}' Cargo.toml | head -n 1)"
-            # A newer main push must not release an older image-build commit.
-            main_sha="$(gh api 'repos/${{ github.repository }}/git/ref/heads/main' --jq .object.sha)"
-            if [ "$main_sha" != "$SOURCE_SHA" ]; then
-              echo "Main moved to $main_sha; skipping obsolete build $SOURCE_SHA."
-              exit 0
-            fi
-            # The app images succeeded; wait for the separate CI and MinIO
-            # image workflows on this exact commit before publishing the tag.
-            for attempt in $(seq 1 80); do
-              runs="$(gh api 'repos/${{ github.repository }}/actions/runs?head_sha='"$SOURCE_SHA"'&per_page=100')"
-              ci="$(jq -r '[.workflow_runs[] | select(.name == "CI" and .event == "push") | .conclusion] | first // ""' <<< "$runs")"
-              minio="$(jq -r '[.workflow_runs[] | select(.name == "Publish MinIO CE image" and .event == "push") | .conclusion] | first // ""' <<< "$runs")"
-              if [ "$ci" = "success" ] && [ "$minio" = "success" ]; then
-                break
-              fi
-              if [ "$ci" = "failure" ] || [ "$minio" = "failure" ]; then
-                echo "Release gates failed: CI=$ci MinIO=$minio."
-                exit 1
-              fi
-              sleep 15
-            done
-            if [ "$ci" != "success" ] || [ "$minio" != "success" ]; then
-              echo "Release gates timed out: CI=$ci MinIO=$minio."
-              exit 1
-            fi
-            main_sha="$(gh api 'repos/${{ github.repository }}/git/ref/heads/main' --jq .object.sha)"
-            if [ "$main_sha" != "$SOURCE_SHA" ]; then
-              echo "Main moved to $main_sha; skipping obsolete build $SOURCE_SHA."
-              exit 0
-            fi
-          fi
-          if [ -z "$tag" ] || [ "$tag" = "main" ]; then
-            echo "No version tag on this run (got '${tag:-empty}'). Skipping."
-            exit 0
-          fi
-          if [ "${{ github.event_name }}" = "workflow_dispatch" ]; then
-            version="v$(sed -n '/^\[workspace.package\]/,/^\[/{s/^version = "\([^"]*\)"/\1/p}' Cargo.toml | head -n 1)"
-            if [ "$tag" != "$version" ]; then
-              echo "Requested tag $tag does not match workspace version $version."
-              exit 1
-            fi
-          fi
-          if gh release view "$tag" >/dev/null 2>&1; then
-            echo "Release $tag already exists."
-            exit 0
-          fi
-          notes=".github/release-notes/${tag}.md"
-          args=(--target "$SOURCE_SHA" --title "Gelabber ${tag}" --generate-notes)
-          if [ -f "$notes" ]; then
-            args+=(--notes-file "$notes")
-          fi
-          gh release create "$tag" "${args[@]}"
-
-  public-minio:
-    if: github.event_name != 'workflow_run'
-    runs-on: ubuntu-latest
-    continue-on-error: true
-    steps:
-      - name: Check gelabber/minio visibility
-        env:
-          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-        run: |
-          set -euo pipefail
-          encoded='gelabber%2Fminio'
-          path="orgs/${{ github.repository_owner }}/packages/container/${encoded}"
-          vis="$(gh api "$path" --jq .visibility || true)"
-          if [ "$vis" = "public" ]; then
-            echo "GHCR package gelabber/minio is public."
-            exit 0
-          fi
-          echo "Current visibility: ${vis:-unknown}. Trying PATCH (org packages usually 404)…"
-          gh api --method PATCH "$path" -f visibility=public || true
-          vis="$(gh api "$path" --jq .visibility || true)"
-          if [ "$vis" = "public" ]; then
-            echo "GHCR package gelabber/minio is public."
-            exit 0
-          fi
-          echo "::warning::GHCR package gelabber/minio is still ${vis:-unknown/private}. GitHub has no API to make org container packages public. Maintainer UI: https://github.com/orgs/${{ github.repository_owner }}/packages/container/package/gelabber%2Fminio → Package settings → Change visibility → Public."
-          exit 1
+          RELEASE_TAG: ${{ inputs.tag }}
+        run: python3 .github/workflows/scripts/image_set.py release

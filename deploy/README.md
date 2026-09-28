@@ -112,6 +112,49 @@ docker compose -f compose.yaml -f compose.observability.yaml up -d
 
 Grafana 13.2.1: `http://127.0.0.1:3000/d/gelabber/gelabber` (admin / `gelabber`, anonym Viewer). Datei: `deploy/compose/grafana/dashboards/gelabber.json`. Prometheus v3.14.0: `http://127.0.0.1:9090`, scrapet `api:8080/metrics` und `media:8081/metrics`. Nicht hinter Caddy. Prozess-Tracing ist JSON auf stdout (`RUST_LOG`), kein Jaeger.
 
-## Images
+## Images und Release-Gate
 
-`docker compose up` zieht `v0.2.4` von GHCR. Org-Pakete sind oft privat — dann Source-Build, oder `docker login ghcr.io`. MinIO bleibt der Pin in `deploy/compose/minio` (kein `FROM minio/minio`). Source-Build setzt `CARGO_HTTP_CAINFO`; bei TLS-Inspection (Docker Desktop) hängt `docker/rust-build-ca.sh` die präsentierte Kette an.
+Der Default zieht weiterhin die ausgelieferte App-Version `v0.2.4`; bestehende Release-Tags werden nicht überschrieben. MinIO verwendet unabhängig davon den bestehenden CE-Pin `RELEASE.2025-10-15T17-29-55Z`. Org-Pakete können privat sein: `docker login ghcr.io` oder lokal bauen. Alle Stack-Pins bleiben bestehen. Source-Build setzt `CARGO_HTTP_CAINFO`; bei TLS-Inspection hängt `docker/rust-build-ca.sh` die präsentierte Kette an.
+
+CI läuft für **jeden main-Commit**, damit auch Deploy-/Workflow-Änderungen eine eindeutige CI-SHA besitzen. PR-Pfadfilter erfassen `shared/**`, alle Workspace-Mitglieder, Docker-Kontexte, Lockfiles und Workflows. Der Image-Workflow baut PRs ohne Push. Auf main startet er erst nach erfolgreichem `CI`-Push-Lauf derselben SHA; fehlgeschlagene/abgebrochene CI startet keinen Publish-Job.
+
+Zuerst entstehen App-Tags `sha-<volle SHA>-<Run-ID>-<Attempt>`; OCI-Labels enthalten Revision, Version, Commitzeit und Source-URL. Die zusätzlichen Run-Felder verhindern, dass ein erneuter Build derselben SHA einen vorherigen Build überschreibt. Die Promotion prüft CI erneut und prüft **alle drei** Versionsdigests vor dem ersten Schreibvorgang. Ein bestehender Versionsdigest muss exakt identisch sein. Ein vorhandener Git-Release-Tag mit anderer SHA oder inzwischen verschobenes main führt zu einem reinen Kandidatensatz ohne Version-Promotion. `latest` wird nie geschrieben. MinIO publiziert nur seinen eigenen Pin, falls dieser noch fehlt; vorhandene Pins und alte Aliase bleiben erhalten.
+
+Das Artifact `image-set` enthält:
+
+- `image-set.json`: Revision, Version, CI-/Publish-Run, Promotionsstatus, API/Web/Media-Digests und separaten MinIO-Pin/Digest.
+- `image-set.env`: vier `GELABBER_*_IMAGE=ghcr.io/…@sha256:…`-Referenzen für Compose.
+
+Kandidatensätze sind **keine Releases**. Ein abgeschlossener Hotfix bekommt erst nach koordinierter Abnahme eine neue Workspace-/Compose-Version. Der Koordinator startet danach den Workflow `Release` **auf main** mit passendem `tag` und erfolgreicher `image_run_id`. Dieser prüft Manifest, CI, aktuellen main-Stand und Versionsdigests erneut, bewahrt existierende Tags/Releases und hängt den Satz an den neuen GitHub-Release. Es gibt keinen automatischen Release auf jedem Push und keinen Release von Feature-/Major-Zwischenständen. Kein Trigger durch beliebige `v*`-Tag-Pushes.
+
+## Rollout und Rollback mit exakten Digests
+
+Den Satz nach Abnahme aus dem freigegebenen Release herunterladen und dauerhaft beim Deployment archivieren. Für die erste Migration den **tatsächlich laufenden** bisherigen Satz sichern: `docker compose images` / Container-Inspect und Registry-Digests erfassen; nicht annehmen, dass ein alter mutable Tag dem laufenden Container entspricht. Diesen alten Satz als `previous.env` speichern (alle vier Image-Variablen). Zugangsdaten bleiben ausschließlich in `.env`, nicht im Manifest.
+
+```bash
+cd deploy/compose
+# Freigegebenes image-set.env hier als next.env ablegen.
+# .env enthält wie bisher Secrets und ggf. COMPOSE_FILE für Homelab.
+docker compose --env-file .env --env-file next.env config -q
+docker compose --env-file .env --env-file next.env config --images
+# Backup gemäß Abschnitt Backup; alte Manifest-/Env-Dateien behalten.
+docker compose --env-file .env --env-file next.env pull --policy always api web media minio
+docker compose --env-file .env --env-file next.env up -d --no-deps --no-build --pull never --force-recreate api web media minio
+# Anschließend: /ready, /media/ready, Login, Upload und echte Medien/Relay-Abnahme.
+```
+
+`--no-build` verhindert einen unbemerkten lokalen Ersatzbuild, der explizite Pull löst das bisherige `pull_policy: missing`-Problem. Bereits im Shell-Environment exportierte `GELABBER_*_IMAGE`-Variablen vorher entfernen, da sie Env-Dateien übersteuern. Homelab behält sein `COMPOSE_FILE`; alternativ dieselben `-f`-Overlays bei **allen** Befehlen verwenden. Images werden als Satz vorab geladen; Containerwechsel sind nicht atomar und benötigen ein Wartungsfenster.
+
+Bei fehlgeschlagener Abnahme den archivierten vorherigen Digest-Satz verwenden:
+
+```bash
+docker compose --env-file .env --env-file previous.env config -q
+docker compose --env-file .env --env-file previous.env pull --policy always api web media minio
+docker compose --env-file .env --env-file previous.env up -d --no-deps --no-build --pull never --force-recreate api web media minio
+```
+
+Kein `down -v`, keine Volumes löschen oder neu benennen: Postgres-/MinIO-Daten bleiben an denselben Volumes. Ein Image-Rollback ersetzt **keinen** Datenbank-Restore; vor Releases müssen Migrationen auf Rückwärtskompatibilität geprüft und Backups erstellt werden. Nach inkompatiblen Migrationen ist der separat geprüfte Restore erforderlich. Readiness alleine ist keine Medien-/Storage-Abnahme.
+
+Die Pipeline verhindert Überschreiben innerhalb dieser Workflows durch gemeinsamen Promotions-/Release-Lock und Digest-Prüfung. GHCR bietet damit keine transaktionsweite Unveränderlichkeit gegen externe Maintainer-Pushes. Bei abgebrochener Promotion können einzelne neue Versionstags bereits existieren; der Lauf liefert dann keinen freigegebenen Satz, und `Release` bleibt gesperrt. Wiederholungsbuilds mit anderen Digests werden ebenfalls gesperrt, statt Tags zu reparieren/überschreiben. CI-/Artifact-Aufbewahrung ist 90 Tage; freigegebene Sätze zusätzlich dauerhaft archivieren.
+
+Lokale Prüfung für Auftrag09: [Belege und Grenzen](stability-09-evidence.md). Buildidentität ist über OCI/Manifest verfügbar; Health-Responses und Produktquellcode wurden nicht verändert. Spätere Browser-Lifecycle-/Auth-Regressionschecks können nach finaler Schnittstelle in den bestehenden Compose-Smoke eingehängt werden; dessen heutiger Zwei-Browser-/TURN-Lauf bleibt erhalten.
