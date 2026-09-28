@@ -87,6 +87,22 @@ SFU to a real local interface. This is a test adapter choice, not a product ICE
 policy or WAN acceptance. Autoplay rules remain unchanged. The real AV1/PT mapping
 and reoffer regression is documented separately in `PAYLOAD_BINDING.md`.
 
+Independent 02 review reproduced a one-time `unavailable` rejection of the first
+replacement Watch Join. Watch now preserves its remaining recovery budget just
+like the voice seat. Seven new regressions cover successful retry, repeated
+unavailability exhausting seven attempts, initial rejection without automatic
+recovery, and terminal authorization/negotiation errors. The matching retry test
+failed before the follow-up. All 248 Web tests, lint and build passed.
+
+The actual Chromium application also passed the scoped fault: initial Watch
+decoded, only its first replacement Join was rejected, a subsequent connection
+to the healthy SFU decoded changing frames again, and Watch never requested
+capture. That check used API `3a30d44` (03a + 05b), Web `c482901` plus this follow-up,
+and the own 03b working-tree SFU. It used the static Web build, normal autoplay and
+the existing E2E harness through a temporary copy. No simulated Gateway was used.
+Logs: `/tmp/gelabber-media-watch-unavailable-{before,all,lint,build}.log` and
+`/tmp/gelabber-media-watch-unavailable-app.json`.
+
 To run just that comparison against a separately started local SFU:
 
 ```sh

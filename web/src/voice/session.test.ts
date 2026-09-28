@@ -1982,6 +1982,76 @@ describe("stream negotiation stability", () => {
     expect(env.getDisplayMediaCalls()).toBe(0);
     expect(vi.getTimerCount()).toBe(0);
   });
+  it("retries an unavailable Watch recovery Join with the remaining budget", async () => {
+    const env = install();
+    watchLive({ serverId: "srv", channelId: "stage", channelName: "Stage" });
+    await vi.waitFor(() => expect(env.peers).toHaveLength(1));
+    vi.useFakeTimers();
+    env.closeMedia();
+    await vi.advanceTimersByTimeAsync(350);
+    expect(env.peers).toHaveLength(2);
+    env.emitMedia({ op: "err", e: "unavailable" });
+    expect(useVoice.getState().watching).toBe(true);
+    expect(env.peers[1]!.closed).toBe(true);
+    await vi.advanceTimersByTimeAsync(650);
+    expect(env.peers).toHaveLength(3);
+    env.emitMedia({ op: "a", sdp: "v=0\r\n" });
+    await vi.advanceTimersByTimeAsync(0);
+    env.peers[2]!.setConnection("connected");
+    expect(useVoice.getState().watching).toBe(true);
+    expect(env.errors).toHaveLength(0);
+    expect(env.getUserMediaCalls()).toBe(0);
+    stopWatching();
+    expect(vi.getTimerCount()).toBe(0);
+  });
+  it("bounds repeated unavailable Watch recovery Joins and reports once", async () => {
+    const env = install();
+    watchLive({ serverId: "srv", channelId: "stage", channelName: "Stage" });
+    await vi.waitFor(() => expect(env.peers).toHaveLength(1));
+    vi.useFakeTimers();
+    env.closeMedia();
+    for (let attempt = 1; attempt <= 7; attempt++) {
+      await vi.advanceTimersByTimeAsync(5000);
+      expect(env.peers).toHaveLength(attempt + 1);
+      env.emitMedia({ op: "err", e: "unavailable" });
+    }
+    await vi.advanceTimersByTimeAsync(60000);
+    expect(env.ticketCalls()).toBe(8);
+    expect(useVoice.getState().watching).toBe(false);
+    expect(env.errors).toHaveLength(1);
+    expect(env.getUserMediaCalls()).toBe(0);
+    expect(env.getDisplayMediaCalls()).toBe(0);
+    expect(vi.getTimerCount()).toBe(0);
+  });
+  it.each(["unauthorized", "forbidden", "bad_request", "negotiation_failed"])(
+    "ends Watch recovery on terminal %s without retrying",
+    async (code) => {
+      const env = install();
+      watchLive({ serverId: "srv", channelId: "stage", channelName: "Stage" });
+      await vi.waitFor(() => expect(env.peers).toHaveLength(1));
+      vi.useFakeTimers();
+      env.closeMedia();
+      await vi.advanceTimersByTimeAsync(350);
+      env.emitMedia({ op: "err", e: code });
+      await vi.advanceTimersByTimeAsync(60000);
+      expect(env.ticketCalls()).toBe(2);
+      expect(useVoice.getState().watching).toBe(false);
+      expect(env.errors).toHaveLength(1);
+      expect(vi.getTimerCount()).toBe(0);
+    },
+  );
+  it("ends an initial unavailable Watch Join without starting recovery", async () => {
+    const env = install();
+    watchLive({ serverId: "srv", channelId: "stage", channelName: "Stage" });
+    await vi.waitFor(() => expect(env.peers).toHaveLength(1));
+    vi.useFakeTimers();
+    env.emitMedia({ op: "err", e: "unavailable" });
+    await vi.advanceTimersByTimeAsync(60000);
+    expect(env.ticketCalls()).toBe(1);
+    expect(useVoice.getState().watching).toBe(false);
+    expect(env.errors).toHaveLength(1);
+    expect(vi.getTimerCount()).toBe(0);
+  });
   it("keeps the seat and deafen when a stream renegotiation fails", async () => {
     const env = await connected();
     toggleDeafen();
