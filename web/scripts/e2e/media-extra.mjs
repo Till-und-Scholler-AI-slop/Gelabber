@@ -1,4 +1,9 @@
-import { nativeEvaluate } from "./native-evaluate.mjs";
+import {
+  nativeEvaluate,
+  deadlineProbe,
+  NativeInterfaceFailure,
+} from "./native-evaluate.mjs";
+import { attemptAll } from "./teardown.mjs";
 /* global window */
 import {
   CheckFailure,
@@ -18,6 +23,40 @@ const audioSenders = (s) =>
   activePeers(s)
     .flatMap((p) => p.audioSenders)
     .filter((t) => t.live);
+
+export async function closeSessionAudioActors(
+  watcher,
+  other,
+  budgetMs = 5_000,
+) {
+  const failedSteps = await attemptAll([
+    [
+      "playback-restore",
+      async () => {
+        if (watcher.nativeEvaluationUnusable || watcher.page.isClosed?.())
+          return;
+        await nativeEvaluate(
+          watcher,
+          () => {
+            window.__e2e.rejectPlayback = false;
+          },
+          undefined,
+          budgetMs,
+        );
+      },
+    ],
+    [
+      "other-context-close",
+      () => deadlineProbe(() => other.context.close(), Date.now() + budgetMs),
+    ],
+  ]);
+  if (failedSteps.length)
+    throw new NativeInterfaceFailure({
+      stage: "session-audio-owned-restore",
+      failedSteps,
+      nativeDataAvailable: false,
+    });
+}
 
 export async function concurrentClaim(h, f, { reset, options }) {
   await reset(f);
@@ -598,10 +637,7 @@ export async function mediaExtraScenarios(h, f, { begin, reset, options }) {
           other: await snapshot(other).catch(() => null),
         });
       } finally {
-        await nativeEvaluate(f.watcher, () => {
-          window.__e2e.rejectPlayback = false;
-        });
-        await other.context.close();
+        await closeSessionAudioActors(f.watcher, other);
       }
     },
   );

@@ -120,3 +120,94 @@ for (const option of [
     assert.ok(r.actions.includes("other.context.close"));
   });
 }
+
+import * as mediaExtra from "./media-extra.mjs";
+import { NativeInterfaceFailure } from "./native-evaluate.mjs";
+test("actual audio task restore rejection still closes other context with visible redacted failure", async () => {
+  const r = await sessionAudioControl({ finalRestoreError: true });
+  assert.ok(r.error);
+  assert.ok(r.actions.includes("final-restore-rejected"));
+  assert.ok(r.actions.includes("other.context.close"));
+  assert.ok(r.error instanceof NativeInterfaceFailure);
+  assert.equal(r.error.metrics.stage, "session-audio-owned-restore");
+  assert.deepEqual(r.error.metrics.failedSteps, ["playback-restore"]);
+  assert.ok(!JSON.stringify(r.error).includes("PRIVATE"));
+});
+test("actual audio task attempts both failed restore and failed independent close", async () => {
+  const r = await sessionAudioControl({
+    finalRestoreError: true,
+    otherCloseError: true,
+  });
+  assert.ok(r.actions.includes("other.context.close"));
+  assert.deepEqual(r.error.metrics.failedSteps, [
+    "playback-restore",
+    "other-context-close",
+  ]);
+});
+test("actual audio task independent close rejection remains visible after healthy restore", async () => {
+  const r = await sessionAudioControl({ otherCloseError: true });
+  assert.ok(r.error instanceof NativeInterfaceFailure);
+  assert.deepEqual(r.error.metrics.failedSteps, ["other-context-close"]);
+  assert.ok(!JSON.stringify(r.error).includes("PRIVATE"));
+});
+test("actual audio finally never evaluates quarantined page and bounds pending independent context close", async () => {
+  let evaluates = 0,
+    closes = 0;
+  const watcher = {
+    nativeEvaluationUnusable: true,
+    page: {
+      evaluate: () => {
+        evaluates++;
+      },
+    },
+  };
+  const other = {
+    context: {
+      close: () => {
+        closes++;
+        return new Promise(() => {});
+      },
+    },
+  };
+  assert.equal(typeof mediaExtra.closeSessionAudioActors, "function");
+  await assert.rejects(
+    mediaExtra.closeSessionAudioActors(watcher, other, 5),
+    (error) =>
+      error instanceof NativeInterfaceFailure &&
+      error.metrics.failedSteps.join(",") === "other-context-close",
+  );
+  assert.equal(evaluates, 0);
+  assert.equal(closes, 1);
+});
+
+test("actual audio finally bounds a pending restore, quarantines once and still attempts independent context close", async () => {
+  let abortCloses = 0,
+    otherCloses = 0;
+  const watcher = {
+    page: {
+      evaluate: () => new Promise(() => {}),
+      close: async () => {
+        abortCloses++;
+      },
+      isClosed: () => false,
+    },
+  };
+  const other = {
+    context: {
+      close: async () => {
+        otherCloses++;
+      },
+    },
+  };
+  assert.equal(typeof mediaExtra.closeSessionAudioActors, "function");
+  await assert.rejects(
+    mediaExtra.closeSessionAudioActors(watcher, other, 5),
+    (error) =>
+      error instanceof NativeInterfaceFailure &&
+      error.metrics.failedSteps.join(",") === "playback-restore",
+  );
+  await watcher.nativeAbortClose;
+  assert.equal(watcher.nativeEvaluationUnusable, true);
+  assert.equal(abortCloses, 1);
+  assert.equal(otherCloses, 1);
+});
