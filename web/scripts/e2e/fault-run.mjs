@@ -8,6 +8,20 @@ import { fileURLToPath } from "node:url";
 import assert from "node:assert/strict";
 import { safeTarget } from "./harness.mjs";
 import { startFaultApi, useFaultRuntime } from "./fault-runtime.mjs";
+import { attemptAll } from "./teardown.mjs";
+
+async function recordFailure(kind, record) {
+  const report =
+    process.env.GELABBER_E2E_REPORT ?? "/tmp/gelabber-e2e/fault-report.json";
+  try {
+    await mkdir(dirname(report), { recursive: true });
+    await writeFile(`${report}.${kind}.json`, JSON.stringify(record) + "\n", {
+      mode: 0o600,
+    });
+  } catch {
+    console.error(`FAIL owned-${kind}-report-write-error`);
+  }
+}
 
 let runtime, web, cache;
 try {
@@ -48,28 +62,39 @@ try {
 } catch {
   // Startup/teardown errors can contain credentials or signed URLs: persist no raw error.
   process.exitCode = 1;
-  const report =
-    process.env.GELABBER_E2E_REPORT ?? "/tmp/gelabber-e2e/fault-startup.json";
-  await mkdir(dirname(report), { recursive: true });
-  await writeFile(
-    `${report}.startup.json`,
-    JSON.stringify({
-      status: "BLOCKED",
-      reason: "owned-runtime-startup-or-run-error",
-      completeAcceptance: false,
-      runner: fileURLToPath(import.meta.url),
-    }) + "\n",
-    { mode: 0o600 },
-  );
+  await recordFailure("startup", {
+    status: "BLOCKED",
+    reason: "owned-runtime-startup-or-run-error",
+    completeAcceptance: false,
+    runner: fileURLToPath(import.meta.url),
+  });
   console.error(
     "BLOCKED owned-runtime-startup-or-run-error; redacted startup artifact written",
   );
 } finally {
-  runtime?.redis.restore();
-  runtime?.storage.restore();
-  runtime?.database.restore();
-  await web?.close();
-  await runtime?.close();
-  useFaultRuntime(null);
-  if (cache) await rm(cache, { recursive: true, force: true });
+  const failedSteps = await attemptAll([
+    ["redis-restore", () => runtime?.redis.restore()],
+    ["storage-restore", () => runtime?.storage.restore()],
+    ["database-restore", () => runtime?.database.restore()],
+    ["web-close", () => web?.close()],
+    ["runtime-close", () => runtime?.close()],
+    ["runtime-clear", () => useFaultRuntime(null)],
+    [
+      "cache-remove",
+      () => cache && rm(cache, { recursive: true, force: true }),
+    ],
+  ]);
+  if (failedSteps.length) {
+    process.exitCode = 1;
+    await recordFailure("teardown", {
+      status: "FAIL",
+      classification: "test-error",
+      reason: "owned-runtime-teardown-failed",
+      failedSteps,
+      completeAcceptance: false,
+    });
+    console.error(
+      "FAIL owned-runtime-teardown-failed; redacted teardown artifact attempted",
+    );
+  }
 }

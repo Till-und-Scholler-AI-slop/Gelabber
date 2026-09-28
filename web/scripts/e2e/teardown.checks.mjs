@@ -1,0 +1,359 @@
+/* global URL, queueMicrotask */
+import { test } from "node:test";
+import assert from "node:assert/strict";
+import { readFile } from "node:fs/promises";
+import { createHash } from "node:crypto";
+import { EventEmitter } from "node:events";
+import vm from "node:vm";
+import { promisify } from "node:util";
+import { attemptAll, closeOwnedApi, TeardownFailure } from "./teardown.mjs";
+
+const secret = "PRIVATE-cookie-signed-URL-password";
+async function executeSource(filename, mocks, globals = {}) {
+  const context = vm.createContext(globals);
+  const cache = new Map();
+  async function load(
+    specifier,
+    reference = new URL(filename, import.meta.url),
+  ) {
+    const key =
+      specifier === "./teardown.mjs"
+        ? new URL(specifier, reference).href
+        : specifier;
+    if (cache.has(key)) return cache.get(key);
+    let module;
+    if (specifier === "./teardown.mjs") {
+      module = new vm.SourceTextModule(await readFile(new URL(key), "utf8"), {
+        context,
+        identifier: key,
+      });
+    } else {
+      const exports = mocks[specifier] ?? (await import(specifier));
+      module = new vm.SyntheticModule(
+        Object.keys(exports),
+        function () {
+          for (const [k, v] of Object.entries(exports)) this.setExport(k, v);
+        },
+        { context, identifier: key },
+      );
+    }
+    cache.set(key, module);
+    await module.link((name, from) =>
+      load(name, new URL(from.identifier, import.meta.url)),
+    );
+    return module;
+  }
+  const path = new URL(filename, import.meta.url);
+  const module = new vm.SourceTextModule(await readFile(path, "utf8"), {
+    context,
+    identifier: path.href,
+    initializeImportMeta: (meta) => {
+      meta.url = path.href;
+    },
+    importModuleDynamically: async (name) => {
+      const child = await load(name, path);
+      await child.evaluate();
+      return child;
+    },
+  });
+  await module.link((name) => load(name, path));
+  await module.evaluate();
+  return module.namespace;
+}
+
+async function runnerProbe({
+  fail = [],
+  startup = false,
+  reportFailure = false,
+} = {}) {
+  const calls = [],
+    records = [],
+    messages = [];
+  const action = async (name) => {
+    calls.push(name);
+    if (fail.includes(name)) throw new Error(secret);
+  };
+  const proxy = (name) => ({ restore: () => action(`${name}.restore`) });
+  const runtime = {
+    origin: "http://127.0.0.1:18086",
+    manifest: { sourceSha: "a".repeat(40) },
+    redis: proxy("redis"),
+    storage: proxy("storage"),
+    database: proxy("database"),
+    close: () => action("runtime.close"),
+  };
+  const fakeProcess = {
+    exitCode: 0,
+    env: {
+      GELABBER_E2E_FAULT_ENV: "/tmp/fixture.env",
+      GELABBER_E2E_API_MANIFEST: "/tmp/fixture-manifest.json",
+      GELABBER_E2E_WEB_SNAPSHOT: "/tmp/fixture-web",
+    },
+  };
+  await executeSource(
+    "./fault-run.mjs",
+    {
+      vite: {
+        createServer: async () => ({
+          listen: async () => {
+            if (startup) throw new Error(secret);
+          },
+          close: () => action("web.close"),
+        }),
+      },
+      "./harness.mjs": { safeTarget: (x) => x },
+      "./fault-runtime.mjs": {
+        startFaultApi: async () => runtime,
+        useFaultRuntime: (x) => {
+          calls.push(x ? "runtime.set" : "runtime.clear");
+        },
+      },
+      "./run.mjs": {},
+      "node:fs/promises": {
+        mkdtemp: async () => "/tmp/fixture-cache",
+        rm: () => action("cache.remove"),
+        mkdir: async () => {},
+        writeFile: async (path, body) => {
+          records.push({ path, body: JSON.parse(body) });
+          if (reportFailure) throw new Error(secret);
+        },
+      },
+    },
+    { process: fakeProcess, console: { error: (msg) => messages.push(msg) } },
+  );
+  return { calls, records, messages, exitCode: fakeProcess.exitCode };
+}
+
+test("exact runner attempts API/cache cleanup after web.close rejects and records only redacted FAIL", async () => {
+  const result = await runnerProbe({ fail: ["web.close"] });
+  assert.ok(
+    result.calls.includes("runtime.close") &&
+      result.calls.includes("cache.remove") &&
+      result.calls.includes("runtime.clear"),
+  );
+  assert.equal(result.exitCode, 1);
+  assert.deepEqual(result.records.at(-1).body.failedSteps, ["web-close"]);
+  assert.equal(result.records.at(-1).body.status, "FAIL");
+  assert.equal(result.records.at(-1).body.completeAcceptance, false);
+  assert.ok(!JSON.stringify(result).includes(secret));
+});
+test("exact runner attempts every restore/close even with multiple failures and failed artifact writes", async () => {
+  const result = await runnerProbe({
+    fail: ["redis.restore", "web.close", "runtime.close", "cache.remove"],
+    reportFailure: true,
+  });
+  for (const name of [
+    "storage.restore",
+    "database.restore",
+    "web.close",
+    "runtime.close",
+    "runtime.clear",
+    "cache.remove",
+  ])
+    assert.ok(result.calls.includes(name));
+  assert.equal(result.exitCode, 1);
+  assert.ok(result.messages.includes("FAIL owned-teardown-report-write-error"));
+  assert.ok(!JSON.stringify(result).includes(secret));
+});
+test("exact runner startup failure retains nonzero and still attempts every acquired resource", async () => {
+  const result = await runnerProbe({ startup: true, fail: ["web.close"] });
+  assert.equal(result.exitCode, 1);
+  assert.equal(result.records[0].body.status, "BLOCKED");
+  assert.ok(
+    result.calls.includes("runtime.close") &&
+      result.calls.includes("cache.remove"),
+  );
+});
+
+class FakeChild extends EventEmitter {
+  constructor(calls, role) {
+    super();
+    this.pid = 1;
+    this.exitCode = null;
+    this.signalCode = null;
+    this.calls = calls;
+    this.role = role;
+    this.stdout = new EventEmitter();
+    this.stdin = new EventEmitter();
+  }
+  kill(signal) {
+    this.calls.push(`${this.role}.${signal}`);
+    this.signalCode = signal;
+    this.emit("exit", null, signal);
+  }
+}
+test("API teardown continues across failed lock, restore, close and log stages without mutating proxy order", async () => {
+  const calls = [];
+  const proxies = [0, 1, 2].map((i) => ({
+    restore() {
+      calls.push(`restore${i}`);
+      if (i === 0) throw new Error(secret);
+    },
+    async close() {
+      calls.push(`close${i}`);
+      if (i === 2) throw new Error(secret);
+    },
+  }));
+  const first = proxies[0];
+  const child = new FakeChild(calls, "api");
+  await assert.rejects(
+    closeOwnedApi({
+      locks: new Set([
+        async () => {
+          calls.push("lock0");
+          throw new Error(secret);
+        },
+        async () => {
+          calls.push("lock1");
+        },
+      ]),
+      proxies,
+      child,
+      logfile: {
+        async close() {
+          calls.push("log");
+          throw new Error(secret);
+        },
+      },
+    }),
+    (e) => e instanceof TeardownFailure && !JSON.stringify(e).includes(secret),
+  );
+  assert.deepEqual(calls, [
+    "lock0",
+    "lock1",
+    "restore0",
+    "restore1",
+    "restore2",
+    "api.SIGTERM",
+    "close2",
+    "close1",
+    "close0",
+    "log",
+  ]);
+  assert.equal(proxies[0], first);
+});
+test("exact startFaultApi.close releases remaining proxies/log and stops the own locker after lock pipe failure", async () => {
+  const calls = [],
+    binary = "fixture-binary";
+  const manifest = {
+    sourceSha: "a".repeat(40),
+    sha256: createHash("sha256").update(binary).digest("hex"),
+    binaryPath: "/tmp/fixture-api",
+  };
+  const children = [];
+  const sources = {
+    "/tmp/fixture.env":
+      'DATABASE_URL="postgres://fixture@127.0.0.1:5432/gelabber_fault_abcd"\nREDIS_URL="redis://127.0.0.1:6379"\nMINIO_ENDPOINT="http://127.0.0.1:9000"\nMINIO_ROOT_USER="fixture"\nMINIO_ROOT_PASSWORD="private-fixture"\nMINIO_BUCKET="gb-fault-abcd"\n',
+    "/tmp/fixture-manifest.json": JSON.stringify(manifest),
+    "/tmp/fixture-api": binary,
+  };
+  const portProbe = new EventEmitter();
+  portProbe.listen = () => {
+    queueMicrotask(() => portProbe.emit("listening"));
+  };
+  portProbe.close = (done) => done();
+  let index = 0;
+  const execFileMock = () => {};
+  execFileMock[promisify.custom] = async (_cmd, args) => ({
+    stdout: args.at(-1).includes("pg_stat_activity") ? "0\n" : "1\n",
+    stderr: "",
+  });
+  const proxy = () => {
+    const id = index++;
+    return {
+      port: 10000 + id,
+      restore() {
+        calls.push(`restore${id}`);
+        if (id === 0) throw new Error(secret);
+      },
+      async close() {
+        calls.push(`close${id}`);
+        if (id === 1) throw new Error(secret);
+      },
+    };
+  };
+  const source = await executeSource(
+    "./fault-runtime.mjs",
+    {
+      "node:fs/promises": {
+        stat: async () => ({ mode: 0o100600 }),
+        readFile: async (path) => sources[path],
+        open: async () => ({
+          fd: 9,
+          async close() {
+            calls.push("log");
+          },
+        }),
+        readdir: async () => [],
+        readlink: async () => "",
+      },
+      "node:child_process": {
+        execFile: execFileMock,
+        spawn(path) {
+          const child = new FakeChild(
+            calls,
+            path === "psql" ? "locker" : "api",
+          );
+          children.push(child);
+          child.stdin.write = () => child.stdout.emit("data", "E2E_LOCKED\n");
+          child.stdin.end = () => {
+            throw new Error(secret);
+          };
+          return child;
+        },
+      },
+      "node:net": { createServer: () => portProbe },
+      "node:timers/promises": { setTimeout: async () => {} },
+      "./faults.mjs": {
+        tcpFaultProxy: async () => proxy(),
+        storageFaultProxy: async () => proxy(),
+      },
+      "./s3-object.mjs": { objectStatus: async () => 404 },
+      "./redis-command.mjs": { deleteTopicKeys: async () => 4 },
+    },
+    { process: { env: {} }, URL, fetch: async () => ({ ok: true }) },
+  );
+  const runtime = await source.startFaultApi({
+    envPath: "/tmp/fixture.env",
+    manifestPath: "/tmp/fixture-manifest.json",
+  });
+  await runtime.lockOwnedServer(
+    "11111111-1111-4111-8111-111111111111",
+    "22222222-2222-4222-8222-222222222222",
+  );
+  let failure;
+  try {
+    await runtime.close();
+  } catch (error) {
+    failure = error;
+  }
+  assert.equal(failure?.name, "TeardownFailure");
+  for (const name of [
+    "locker.SIGTERM",
+    "api.SIGTERM",
+    "restore0",
+    "restore1",
+    "restore2",
+    "close2",
+    "close1",
+    "close0",
+    "log",
+  ])
+    assert.ok(calls.includes(name), name);
+  assert.ok(children.every((c) => c.signalCode === "SIGTERM"));
+  assert.ok(!JSON.stringify(failure).includes(secret));
+});
+test("successful actions leave gate unchanged and preserve sequential teardown order", async () => {
+  const result = await runnerProbe();
+  assert.equal(result.exitCode, 0);
+  assert.deepEqual(result.records, []);
+  const calls = [];
+  assert.deepEqual(
+    await attemptAll([
+      ["first", async () => calls.push(1)],
+      ["second", () => calls.push(2)],
+    ]),
+    [],
+  );
+  assert.deepEqual(calls, [1, 2]);
+});

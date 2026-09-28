@@ -1,0 +1,46 @@
+{
+  "scope": "separate test-runner teardown P2 follow-up",
+  "before": {
+    "source": "a53ccfebac92bdeab597eac758f5097ad27bf346",
+    "exactSourceRegression": {
+      "exit": 1,
+      "pass": 2,
+      "fail": 4
+    },
+    "rootProbe": {
+      "path": "/tmp/gelabber-review11c-teardown-probe.json",
+      "sha256": "20099f09295e5c5655e1fe1dcb8b05241f11bf81fd0ddcfea32b6ef576f1fa6c",
+      "runtimeCloseAttempted": false,
+      "cacheRemovalAttempted": false
+    }
+  },
+  "after": {
+    "sourceState": "working-tree follow-up on exact a53ccfe",
+    "vmInfrastructureFailureChecks": {
+      "exit": 0,
+      "pass": 6,
+      "fail": 0,
+      "skipped": 0
+    },
+    "sourceHashes": {
+      "fault-run.mjs": "05ccec20ea02135e5cb2a81521209fc5c6baf57280152d64f6a395059dd5f0a9",
+      "fault-runtime.mjs": "69396c12f6a1b6e6c548388dd6b3ebf9f274f9d27a256f090e1008f708a284f3",
+      "teardown.mjs": "5bb7d0d8e023d23ab242eb8ac8b77a722d0a38c60f5df6637b86938b97419e9a",
+      "teardown.checks.mjs": "5b2fe51d8e9c8ef2fb11bb6ec340e764a6edb9f7331c3005ecf6449f56ffed7f"
+    },
+    "nativeSuccessControl": {
+      "script": "/tmp/gelabber-e2e-teardown-native-control.mjs",
+      "scriptSha256": "a0a6505a4e1423e6b79b8750fed0a9de1427707064581db61ddfd6b56f310030",
+      "apiSource": "243c86ccc8f8a4bdfca9bc73da32e34520577bf9",
+      "ownedLockRelease": "PASS",
+      "ownedServerCleanup": 204,
+      "databaseOtherClients": 0,
+      "ownApiProxyPortsFree": true,
+      "wholeBrowserMatrixRepeated": false
+    }
+  },
+  "failureGate": "Exit1 and separate redacted mode600 teardown FAIL; evidence-write failure stays Exit1",
+  "lint": "PASS on changed modules",
+  "ci": "WIP excluded; no remote run",
+  "completeAcceptance": false
+}

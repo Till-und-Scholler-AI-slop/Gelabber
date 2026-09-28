@@ -10,6 +10,11 @@ import { setTimeout as pause } from "node:timers/promises";
 import { objectStatus } from "./s3-object.mjs";
 import { tcpFaultProxy, storageFaultProxy } from "./faults.mjs";
 import { deleteTopicKeys } from "./redis-command.mjs";
+import {
+  closeOwnedApi,
+  terminateOwnedChild,
+  TeardownFailure,
+} from "./teardown.mjs";
 
 const exec = promisify(execFile);
 const uuid = /^[a-f0-9]{8}-[a-f0-9]{4}-[a-f0-9]{4}-[a-f0-9]{4}-[a-f0-9]{12}$/;
@@ -87,25 +92,13 @@ export async function startFaultApi({
   const locks = new Set();
   const topics = new Set();
   async function close() {
-    for (const release of [...locks]) await release();
-    for (const p of proxies) p.restore();
-    if (child?.pid && child.exitCode === null && child.signalCode === null) {
-      const exited = once(child, "exit");
-      child.kill("SIGTERM");
-      await Promise.race([exited, pause(10_000, undefined, { ref: false })]);
-      if (child.exitCode === null && child.signalCode === null) {
-        child.kill("SIGKILL");
-        await exited;
-      }
-    }
-    for (const p of proxies.reverse()) await p.close();
-    await logfile?.close();
+    await closeOwnedApi({ locks, proxies, child, logfile });
   }
   try {
     const portProbe = createServer();
-    portProbe.listen({host: "127.0.0.1", port: apiPort, exclusive: true});
+    portProbe.listen({ host: "127.0.0.1", port: apiPort, exclusive: true });
     await once(portProbe, "listening");
-    await new Promise(r => portProbe.close(r));
+    await new Promise((r) => portProbe.close(r));
     const redis = await tcpFaultProxy(env.REDIS_URL, redisPort);
     proxies.push(redis);
     const storage = await storageFaultProxy(
@@ -197,12 +190,16 @@ export async function startFaultApi({
           locks.delete(release);
           if (locker.exitCode !== null || locker.signalCode !== null) return;
           const exited = once(locker, "exit");
-          locker.stdin.end("COMMIT;\n\\q\n");
-          await Promise.race([exited, pause(2_000, undefined, { ref: false })]);
-          if (locker.exitCode === null && locker.signalCode === null) {
-            locker.kill("SIGKILL");
-            await exited;
+          let commitFailed = false;
+          try {
+            locker.stdin.end("COMMIT;\n\\q\n");
+          } catch {
+            commitFailed = true;
           }
+          await Promise.race([exited, pause(2_000, undefined, { ref: false })]);
+          // Failed pipe/commit still releases the owned locker process.
+          await terminateOwnedChild(locker, 0);
+          if (commitFailed) throw new TeardownFailure(["lock-commit-pipe"]);
         }
         locks.add(release);
         locker.stdin.write(
