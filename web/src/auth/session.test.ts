@@ -185,7 +185,7 @@ describe("session store", () => {
 
   it("a csrf re-bootstrap without a user flips the tab to anonymous", async () => {
     let attempt = 0;
-    fakeApi({
+    const calls = fakeApi({
       "POST /api/auth/login": () => json(200, { user: ada, csrf_token: "c2" }),
       "GET /api/auth/session": () =>
         json(200, { user: null, csrf_token: "c9" }),
@@ -199,10 +199,11 @@ describe("session store", () => {
     await login("ada@example.com", "password123");
 
     await expect(updateProfile({ name: "X" })).rejects.toMatchObject({
-      code: "unauthenticated",
+      name: "AbortError",
     });
     expect(useSession.getState()).toEqual({ status: "anonymous", user: null });
     expect(getCsrfToken()).toBe("c9");
+    expect(calls.filter((call) => call === "PATCH /api/me")).toHaveLength(1);
   });
 
   it("a csrf re-bootstrap that still has the user keeps the tab signed in", async () => {

@@ -2,6 +2,8 @@
 // `X-CSRF-Token` on every mutation, a hard timeout so no button ever spins
 // forever, and the API's error envelope surfaced as `ApiError`.
 
+import type { SessionStamp } from "../auth/scope.ts";
+
 export type FieldCode =
   "required" | "invalid" | "too_short" | "too_long" | "taken";
 
@@ -66,9 +68,29 @@ export function setCsrfToken(token: string | null): void {
 export type SessionSink = (user: unknown) => void;
 
 let sessionSink: SessionSink | null = null;
+let sessionScope: () => SessionStamp = () => ({ userId: null, generation: 0 });
 
 export function setSessionSink(sink: SessionSink | null): void {
   sessionSink = sink;
+}
+
+/** The store supplies identity/generation without a runtime store import. */
+export function setSessionScope(source: () => SessionStamp): void {
+  sessionScope = source;
+}
+
+function scopeHolds(stamp: SessionStamp): boolean {
+  const current = sessionScope();
+  return (
+    current.userId === stamp.userId && current.generation === stamp.generation
+  );
+}
+
+function requireScope(stamp: SessionStamp, signal?: AbortSignal): void {
+  signal?.throwIfAborted();
+  if (!scopeHolds(stamp)) {
+    throw new DOMException("The session changed. Try again.", "AbortError");
+  }
 }
 
 export function getCsrfToken(): string | null {
@@ -81,6 +103,10 @@ export type RequestOptions = {
   method?: Method;
   body?: unknown;
   signal?: AbortSignal;
+  /** Carry the original intent through later steps (e.g. an upload). */
+  scope?: SessionStamp;
+  /** /auth/logout only: the identity captured before the optimistic logout. */
+  logoutUserId?: string | null;
 };
 
 type ErrorBody = {
@@ -121,13 +147,15 @@ export async function api<T>(
   path: string,
   options: RequestOptions = {},
 ): Promise<T> {
-  const response = await requestWithCsrfRetry(path, options);
+  const stamp = options.scope ?? sessionScope();
+  requireScope(stamp, options.signal);
+  const response = await requestWithCsrfRetry(path, options, stamp);
   const payload = await readJson(response);
 
   if (!response.ok) {
     const body = (payload ?? {}) as ErrorBody;
     const code = toErrorCode(body.error);
-    if (code === "unauthenticated") {
+    if (code === "unauthenticated" && scopeHolds(stamp)) {
       // The cookie is gone or expired (other tab logged out, TTL, server
       // restart): tell the store so the UI flips instead of staying stuck
       // on a page that no longer works.
@@ -142,7 +170,7 @@ export async function api<T>(
     );
   }
 
-  rememberCsrf(payload);
+  if (scopeHolds(stamp)) rememberCsrf(payload);
   return payload as T;
 }
 
@@ -152,6 +180,7 @@ export async function api<T>(
 async function requestWithCsrfRetry(
   path: string,
   options: RequestOptions,
+  stamp: SessionStamp,
 ): Promise<Response> {
   const first = await send(path, options);
   if (first.status !== 403 || (options.method ?? "GET") === "GET") {
@@ -161,14 +190,60 @@ async function requestWithCsrfRetry(
   if (body?.error !== "csrf_invalid") {
     return first;
   }
+  requireScope(stamp, options.signal);
   const session = await send("/auth/session", { signal: options.signal });
   const payload = await readJson(session);
-  rememberCsrf(payload);
-  if (session.ok && payload !== null && typeof payload === "object") {
-    // The bootstrap is authoritative about who we are, not just the token.
-    sessionSink?.("user" in payload ? payload.user : null);
+  requireScope(stamp, options.signal);
+  // A failed or malformed bootstrap cannot authorize another write.
+  if (!session.ok || !isSessionPayload(payload)) return first;
+
+  const isLogout = path === "/auth/logout";
+  const expectedId =
+    isLogout && options.logoutUserId !== undefined
+      ? options.logoutUserId
+      : stamp.userId;
+  const actualId = payload.user?.id ?? null;
+  if (!isLogout) {
+    // Synchronize this tab even when another tab changed the cookie. That
+    // new identity must never inherit the old mutation's intent.
+    rememberCsrf(payload);
+    sessionSink?.(payload.user);
   }
+  if (actualId !== expectedId) {
+    throw new DOMException("The session changed. Try again.", "AbortError");
+  }
+  // Logout deliberately keeps the UI anonymous while retrying for the
+  // original account, and never adopts the bootstrap user.
+  requireScope(stamp, options.signal);
+  if (isLogout) rememberCsrf(payload);
   return send(path, options);
+}
+
+function isSessionPayload(payload: unknown): payload is {
+  user: { id: string; email: string; name: string } | null;
+  csrf_token: string;
+} {
+  if (
+    payload === null ||
+    typeof payload !== "object" ||
+    !("user" in payload) ||
+    !("csrf_token" in payload) ||
+    typeof payload.csrf_token !== "string" ||
+    !payload.csrf_token
+  )
+    return false;
+  const user = payload.user;
+  return (
+    user === null ||
+    (typeof user === "object" &&
+      "id" in user &&
+      typeof user.id === "string" &&
+      user.id.length > 0 &&
+      "email" in user &&
+      typeof user.email === "string" &&
+      "name" in user &&
+      typeof user.name === "string")
+  );
 }
 
 async function send(path: string, options: RequestOptions): Promise<Response> {

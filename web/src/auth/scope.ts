@@ -10,6 +10,28 @@ export type ScopeStamp = {
 };
 
 let generation = 0;
+let requestGeneration = 0;
+
+/** Includes anonymous requests; explicit auth intents invalidate them too. */
+export type SessionStamp = {
+  userId: string | null;
+  generation: number;
+};
+
+export function takeSessionStamp(): SessionStamp {
+  return { userId: currentUserId(), generation: requestGeneration };
+}
+
+export function sessionStampHolds(stamp: SessionStamp): boolean {
+  return (
+    stamp.userId === currentUserId() && stamp.generation === requestGeneration
+  );
+}
+
+/** Supersede pending auth/HTTP work without dropping the current account cache. */
+export function invalidateSessionRequests(): void {
+  requestGeneration += 1;
+}
 
 export function scopeGeneration(): number {
   return generation;
@@ -17,11 +39,13 @@ export function scopeGeneration(): number {
 
 export function nextScopeGeneration(): number {
   generation += 1;
+  invalidateSessionRequests();
   return generation;
 }
 
 export function resetScopeGenerationForTests(): void {
   generation = 0;
+  requestGeneration = 0;
 }
 
 /** Who the tab is right now, or nothing when signed out. */
