@@ -138,7 +138,7 @@ async fn handle(
 ) -> Result<Option<ServerFrame>, &'static str> {
     let frame: ClientFrame = serde_json::from_str(text).map_err(|_| "bad_request")?;
     match frame {
-        ClientFrame::Join { tk } => {
+        ClientFrame::Join { tk, w } => {
             if joined.is_some() {
                 return Err("bad_request");
             }
@@ -147,7 +147,7 @@ async fn handle(
                 .await
                 .map_err(|_| "unauthorized")?
                 .ok_or("unauthorized")?;
-            join(state, claim, out, joined).await
+            join(state, claim, w, out, joined).await
         }
         ClientFrame::Offer { sdp } => apply_sdp(state, joined, sdp, true).await,
         ClientFrame::Answer { sdp } => apply_sdp(state, joined, sdp, false).await,
@@ -164,12 +164,12 @@ async fn handle(
                 .map_err(|err| sfu_code(peer_id, &err, "ice apply failed"))?;
             Ok(None)
         }
-        ClientFrame::Announce { k, t } => {
+        ClientFrame::Announce { k, t, lc } => {
             let (peer_id, channel_id) = joined.ok_or("unauthorized")?;
             let k = track_kind(k)?;
             state
                 .sfu
-                .announce_track(peer_id, channel_id, &k, t.as_deref())
+                .announce_with_claim(peer_id, channel_id, &k, t.as_deref(), lc)
                 .await
                 .map_err(|err| sfu_code(peer_id, &err, "announce failed"))?;
             Ok(None)
@@ -234,12 +234,13 @@ async fn apply_sdp(
 async fn join(
     state: &AppState,
     claim: AuthorizedTicketClaim,
+    watch_user: Option<uuid::Uuid>,
     out: &mpsc::UnboundedSender<ServerFrame>,
     joined: &mut Option<(PeerId, Uuid)>,
 ) -> Result<Option<ServerFrame>, &'static str> {
     let peer_id = state
         .sfu
-        .join_authorized(claim.clone(), out.clone())
+        .join_authorized_watch(claim.clone(), watch_user, out.clone())
         .await
         .map_err(|err| {
             warn!(error = %err, code = err.code(), "sfu join failed");

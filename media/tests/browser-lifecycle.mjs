@@ -50,6 +50,22 @@ async function redisCommand(args) {
 }
 async function renewLease(authority) {
   await redisCommand(['SET', `gb:auth:session:${authority.session}`, authority.user, 'PX', '3000']);
+  if (authority.live) await redisCommand(['EVAL', "if redis.call('GET', KEYS[1]) == ARGV[1] then return redis.call('PEXPIRE', KEYS[1], 5000) end return 0", '1', `gb:live:${authority.channel}`, authority.live.record]);
+}
+async function claimLive(user, channel, owner) {
+  const authority = authorities.get(`${owner}:${user}:${channel}`);
+  const nonce = randomUUID();
+  const record = JSON.stringify({ u: user, s: owner, c: channel, session: authority.session, seat: randomUUID(), nonce });
+  assert.equal(await redisCommand(['SET', `gb:live:${channel}`, record, 'PX', '5000', 'NX']), '+OK\r\n', 'test Gateway Live claim occupied');
+  authority.live = { record, nonce };
+  fixtureKeys.add(`gb:live:${channel}`); fixtureKeys.add(`gb:live:peer:${nonce}`);
+  return nonce;
+}
+async function releaseLive(user, channel, owner) {
+  const authority = authorities.get(`${owner}:${user}:${channel}`);
+  const live = authority.live;
+  authority.live = null;
+  if (live) await redisCommand(['EVAL', "if redis.call('GET', KEYS[1]) == ARGV[1] then return redis.call('DEL', KEYS[1]) end return 0", '1', `gb:live:${channel}`, live.record]);
 }
 async function mint(user, channel, owner) {
   const id = `${owner}:${user}:${channel}`;
@@ -83,6 +99,8 @@ async function peer(user, channel, owner, microphone = false) {
   await page.evaluate(() => { document.querySelector('#start').onclick = () => { window.audio = new AudioContext(); void audio.resume(); }; });
   await page.click('#start');
   const ticket = await mint(user, channel, owner);
+  await page.exposeFunction('claimLive', () => claimLive(user, channel, owner));
+  await page.exposeFunction('releaseLive', () => releaseLive(user, channel, owner));
   await page.evaluate(async ({ ticket, wsUrl, microphone }) => {
     const pc = new RTCPeerConnection();
     const ws = new WebSocket(wsUrl);
@@ -90,6 +108,7 @@ async function peer(user, channel, owner, microphone = false) {
     const captures = new Map();
     const errors = [];
     let serverClosed = false;
+    let liveNonce = null;
     ws.onclose = () => { serverClosed = true; };
     let chain = Promise.resolve();
     const send = frame => ws.send(JSON.stringify(frame));
@@ -153,7 +172,7 @@ async function peer(user, channel, owner, microphone = false) {
           const mid = pc.getTransceivers().find(t => t.sender === source.sender).mid;
           source.identity = bindings.get(mid);
           if (!source.identity) throw new Error('missing MSID binding');
-          send({ op: 'p', k, t: source.identity });
+          send({ op: 'p', k, t: source.identity, ...(k === 'l' ? { lc: liveNonce } : {}) });
         }
         send({ op: 'o', sdp: pc.localDescription.sdp });
       });
@@ -161,6 +180,7 @@ async function peer(user, channel, owner, microphone = false) {
     window.call = {
       pc, ws, errors, received,
       async start(k) {
+        if (k === 'l') liveNonce = await window.claimLive();
         const canvas = document.createElement('canvas');
         canvas.width = 160; canvas.height = 100;
         const context = canvas.getContext('2d');
@@ -179,6 +199,7 @@ async function peer(user, channel, owner, microphone = false) {
         send({ op: 'u', k, t: source.identity });
         pc.removeTrack(source.sender);
         source.track.stop(); clearInterval(source.timer); captures.delete(k);
+        if (k === 'l') { liveNonce = null; await window.releaseLive(); }
         await offer();
       },
       async failedPublishAndReuse() {

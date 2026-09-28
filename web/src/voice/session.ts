@@ -163,6 +163,8 @@ export type PeerConnection = {
   setRemoteDescription(desc: { type: string; sdp?: string }): Promise<void>;
   getTransceivers?(): {
     mid?: string | null;
+    direction?: "recvonly" | "sendonly" | "sendrecv" | "inactive";
+    stopped?: boolean;
     sender?: { track?: { kind: string } | null };
     receiver?: { track?: { kind: string } | null };
     setCodecPreferences?(codecs: { mimeType: string }[]): void;
@@ -221,7 +223,7 @@ let cameraStream: MediaStream | null = null;
 let screenStream: MediaStream | null = null;
 let liveStream: MediaStream | null = null;
 let remoteAudio: HTMLAudioElement | null = null;
-let watchAudio: HTMLAudioElement | null = null;
+const watchAudio = new Map<MediaStreamTrack, HTMLAudioElement>();
 const blockedPlayback = new Set<HTMLAudioElement>();
 let remoteMix: MediaStream | null = null;
 let bound = false;
@@ -236,6 +238,37 @@ let screenProfileEpoch = 0;
 let liveEpoch = 0;
 let awaitingJoin: { serverId: string; channelId: string } | null = null;
 let awaitingLive: { serverId: string; channelId: string } | null = null;
+let liveClaimNonce: string | null = null;
+let liveClaimTimer: ReturnType<typeof setTimeout> | null = null;
+let watchPublisherTimer: ReturnType<typeof setTimeout> | null = null;
+
+function clearWatchPublisherTimer(): void {
+  if (watchPublisherTimer !== null) clearTimeout(watchPublisherTimer);
+  watchPublisherTimer = null;
+}
+
+function clearLiveClaim(): void {
+  if (liveClaimTimer !== null) clearTimeout(liveClaimTimer);
+  liveClaimTimer = null;
+  liveClaimNonce = null;
+}
+
+function requestLiveClaim(): void {
+  const state = useVoice.getState();
+  if (!state.serverId || !state.channelId || !state.live) return;
+  clearLiveClaim();
+  awaitingLive = { serverId: state.serverId, channelId: state.channelId };
+  liveClaimTimer = setTimeout(() => {
+    liveClaimTimer = null;
+    if (!awaitingLive) return;
+    awaitingLive = null;
+    stopLocalVideo("l");
+    deps?.onError?.(
+      new Error("Live konnte nicht bestätigt werden. Bitte erneut starten."),
+    );
+  }, 10000);
+  sendPub("l", true);
+}
 let audioCommitChain: Promise<void> = Promise.resolve();
 let cameraCommitChain: Promise<void> = Promise.resolve();
 /**
@@ -252,6 +285,8 @@ type PublishIdentity = { kind: "v" | "s" | "l"; trackId: string };
 let openPublish: PublishIdentity[] = [];
 let offeredPublish: PublishIdentity[] = [];
 const publisherTracks = new Map<RtpSender, PublishIdentity>();
+/** Native addTrack does not reuse an m-line that has already sent media. */
+const videoSenders = new Map<"v" | "s" | "l", RtpSender>();
 /** Cleanup of a rejected publish must not enqueue a replacement offer. */
 let discardingPublish = false;
 /** Gateway reconnect left the media peer up; re-announce after our join echo. */
@@ -510,7 +545,7 @@ function playAudio(el: HTMLAudioElement): void {
 
 /** Call synchronously from a click so the browser grants playback activation. */
 export function retryPlayback(): void {
-  for (const el of [remoteAudio, watchAudio]) {
+  for (const el of [remoteAudio, ...watchAudio.values()]) {
     if (el?.srcObject) playAudio(el);
   }
 }
@@ -740,7 +775,7 @@ export function parseRemoteStreamId(
   return null;
 }
 
-function onSig(event: SigEvent): void {
+function onSig(event: SigEvent & { lc?: string }): void {
   const state = useVoice.getState();
   const watchingHere =
     state.watching &&
@@ -750,22 +785,25 @@ function onSig(event: SigEvent): void {
     state.status === "joined" &&
     event.s === state.serverId &&
     event.c === state.channelId;
+  if (watchingHere && event.u === state.watchPublisherId) {
+    if (event.t === "p" && event.k === "l") clearWatchPublisherTimer();
+    else if (event.t === "l" && watchPublisherTimer === null) {
+      // Gateway detach can be followed by a fresh seat/claim while the native
+      // media peer survives. SFU authority still stops revoked publications;
+      // keep the user's Watch intent for a bounded replacement handshake.
+      watchPublisherTimer = setTimeout(() => {
+        watchPublisherTimer = null;
+        stopWatching();
+      }, 20000);
+    }
+  }
   if (
     watchingHere &&
-    ((event.t === "u" && event.k === "l") || event.t === "l") &&
+    event.t === "u" &&
+    event.k === "l" &&
     (!state.watchPublisherId || event.u === state.watchPublisherId)
   ) {
-    const liveUser = event.c
-      ? liveOf(useVoiceRoster.getState().live, event.s, event.c)
-      : null;
-    if (
-      event.t === "u" ||
-      (event.t === "l" &&
-        event.u &&
-        (state.watchPublisherId === event.u || liveUser === event.u))
-    ) {
-      stopWatching();
-    }
+    stopWatching();
   }
   if (!inRoom) {
     return;
@@ -805,7 +843,19 @@ function onSig(event: SigEvent): void {
     case "u": {
       if (!event.k) return;
       if (event.t === "p" && event.k === "l" && userId === currentUserId()) {
-        awaitingLive = null;
+        if (
+          state.live &&
+          event.lc &&
+          /^[0-9a-f]{8}(?:-[0-9a-f]{4}){3}-[0-9a-f]{12}$/.test(event.lc) &&
+          !/^0{8}-0{4}-0{4}-0{4}-0{12}$/.test(event.lc)
+        ) {
+          const changed = liveClaimNonce !== event.lc;
+          if (liveClaimTimer !== null) clearTimeout(liveClaimTimer);
+          liveClaimTimer = null;
+          liveClaimNonce = event.lc;
+          awaitingLive = null;
+          if (changed && liveStream) void publishLocal("l", liveStream);
+        }
       }
       const current = state.participants[userId] ?? { pubs: [] };
       const pubs =
@@ -854,7 +904,10 @@ function onErr(err: ErrFrame): void {
         watching: state.watching,
         watchServerId: state.watchServerId,
         watchChannelId: state.watchChannelId,
+        watchChannelName: state.watchChannelName,
+        watchPublisherId: state.watchPublisherId,
         watchStream: state.watchStream,
+        playbackBlocked: state.playbackBlocked,
       });
       const code: ApiErrorCode =
         err.e === "forbidden" ||
@@ -869,6 +922,7 @@ function onErr(err: ErrFrame): void {
   if (
     awaitingLive &&
     !awaitingJoin &&
+    err.s === awaitingLive.serverId &&
     err.c === awaitingLive.channelId &&
     (err.e === "forbidden" || err.e === "bad_request")
   ) {
@@ -1074,6 +1128,7 @@ function hasLiveTrack(
 }
 
 function stopPeer(preserveCapture = false): void {
+  if (!preserveCapture) clearLiveClaim();
   seatRetry.cancel(!preserveCapture);
   if (preserveCapture) {
     for (const [kind, stream] of [
@@ -1102,6 +1157,7 @@ function stopPeer(preserveCapture = false): void {
   openPublish = [];
   offeredPublish = [];
   publisherTracks.clear();
+  videoSenders.clear();
   discardingPublish = false;
   announced.clear();
   for (const stream of pendingMicRaw) stopTracks(stream);
@@ -1209,7 +1265,7 @@ function playbackVolume(): number {
 function applyPlayback(): void {
   const volume = playbackVolume();
   const deafened = useVoice.getState().deafened;
-  for (const el of [remoteAudio, watchAudio]) {
+  for (const el of [remoteAudio, ...watchAudio.values()]) {
     if (!el) continue;
     el.muted = deafened;
     el.volume = volume;
@@ -1991,9 +2047,8 @@ function reannounceActive(): void {
   const self = currentUserId();
   if (self) {
     applyLiveStart(state.serverId, state.channelId, self);
-    awaitingLive = { serverId: state.serverId, channelId: state.channelId };
   }
-  sendPub("l", true);
+  requestLiveClaim();
 }
 
 const STREAM_TOAST =
@@ -2110,6 +2165,7 @@ function dropUnsettledPublish(): PublishIdentity[] {
  * does not ask for a new offer.
  */
 function releaseDiscardedCapture(kind: "v" | "s" | "l"): void {
+  if (kind === "l") clearLiveClaim();
   if (kind === "v") {
     cameraEpoch += 1;
     for (const pending of pendingCameraStreams) stopTracks(pending);
@@ -2703,8 +2759,8 @@ export function toggleGoLive(): void {
   }
   useVoice.setState({ live: true });
   applyLiveStart(state.serverId, state.channelId, self);
-  awaitingLive = { serverId: state.serverId, channelId: state.channelId };
   void startLocalVideo("l");
+  requestLiveClaim();
 }
 
 /**
@@ -2732,6 +2788,7 @@ export function watchLive(input: {
   ) {
     return;
   }
+  clearWatchPublisherTimer();
   useVoice.setState({
     watching: true,
     watchServerId: input.serverId,
@@ -2748,6 +2805,7 @@ export function watchLive(input: {
 }
 
 export function stopWatching(): void {
+  clearWatchPublisherTimer();
   stopWatchPeer();
   useVoice.setState({
     watching: false,
@@ -2760,6 +2818,7 @@ export function stopWatching(): void {
 }
 
 export function resetVoiceForTests(): void {
+  clearWatchPublisherTimer();
   resetDiagnostics();
   streamReported = false;
   watchReported = false;
@@ -2774,7 +2833,7 @@ export function resetVoiceForTests(): void {
   stopWatchPeer();
   stopPeer();
   remoteAudio = null;
-  watchAudio = null;
+  watchAudio.clear();
   blockedPlayback.clear();
   seat = new MediaPeer();
   watchCall = new MediaPeer();
@@ -2893,6 +2952,10 @@ function stopLocalVideo(kind: "v" | "s" | "l"): void {
   if (kind === "v" && !state.camera && !state.localCamera) return;
   if (kind === "s" && !state.sharing && !state.localScreen) return;
   if (kind === "l" && !state.live && !state.localLive) return;
+  if (kind === "l") {
+    clearLiveClaim();
+    awaitingLive = null;
+  }
   if (kind === "v") {
     cameraEpoch += 1;
     for (const pending of pendingCameraStreams) stopTracks(pending);
@@ -2950,22 +3013,55 @@ async function publishLocal(
   stream: MediaStream,
 ): Promise<void> {
   if (!seat.pc) return;
+  if (kind === "l" && !liveClaimNonce) return;
   const tracks = stream.getVideoTracks();
   if (tracks.length === 0) return;
+  const pc = seat.pc;
+  const mine = seat.generation;
+  const epoch = videoEpoch(kind);
   logVoice("info", "publish", { track: kind });
   for (const track of tracks) {
     // addTrack may reuse a stopped sender/transceiver. Reserve by the new
     // MSID identity, rather than treating the sender object as a new publish.
-    const sender = seat.pc.addTrack?.(track, stream);
-    const identity: PublishIdentity = { kind, trackId: track.id };
-    if (sender) publisherTracks.set(sender, identity);
-    openPublish.push(identity);
+    let sender = pc.getSenders?.().find((sender) => sender.track === track);
+    const reserved = videoSenders.get(kind);
+    const transceiver = pc
+      .getTransceivers?.()
+      .find((item) => item.sender === reserved);
+    if (
+      !sender &&
+      reserved?.replaceTrack &&
+      !reserved.track &&
+      !transceiver?.stopped
+    ) {
+      await reserved.replaceTrack(track);
+      if (
+        seat.generation !== mine ||
+        seat.pc !== pc ||
+        videoEpoch(kind) !== epoch
+      ) {
+        if (reserved.track === track) pc.removeTrack?.(reserved);
+        return;
+      }
+      if (transceiver?.direction === "recvonly")
+        transceiver.direction = "sendrecv";
+      else if (transceiver?.direction === "inactive")
+        transceiver.direction = "sendonly";
+      sender = reserved;
+    }
+    sender ??= pc.addTrack?.(track, stream) || undefined;
+    const identity: PublishIdentity = (sender &&
+      publisherTracks.get(sender)) ?? { kind, trackId: track.id };
+    if (sender) {
+      publisherTracks.set(sender, identity);
+      videoSenders.set(kind, sender);
+    }
+    if (!openPublish.includes(identity)) openPublish.push(identity);
   }
-  const pc = seat.pc;
   void enqueueVideoLimits(pc);
   const self = currentUserId();
   if (self) setPub(self, kind, true);
-  sendPub(kind, true);
+  if (kind !== "l") sendPub(kind, true);
   seat.needOffer = true;
   await offerIfStable(seat.generation);
 }
@@ -3075,8 +3171,14 @@ async function offerIfStable(
           continue;
         }
         identity.trackId = trackId ?? identity.trackId;
+        if (identity.kind === "l" && !liveClaimNonce) continue;
         offeredPublish.push(identity);
-        seat.send({ op: "p", k: identity.kind, t: identity.trackId });
+        seat.send({
+          op: "p",
+          k: identity.kind,
+          t: identity.trackId,
+          ...(identity.kind === "l" ? { lc: liveClaimNonce! } : {}),
+        });
       }
       if (restart) noteRestartOfferCreated(seatRecoverySlot, mine);
       if (!localSdp) return;
@@ -3333,11 +3435,13 @@ function stopWatchPeer(preserveRetry = false): void {
   clearRecovery(watchRecoverySlot);
   detachDiagnostics("watch");
   watchCall.close();
-  if (watchAudio) {
-    watchAudio.srcObject = null;
-    blockedPlayback.delete(watchAudio);
-    updatePlaybackBlocked();
+  for (const el of watchAudio.values()) {
+    el.pause?.();
+    el.srcObject = null;
+    blockedPlayback.delete(el);
   }
+  watchAudio.clear();
+  updatePlaybackBlocked();
 }
 
 function attachWatchIncoming(
@@ -3346,15 +3450,27 @@ function attachWatchIncoming(
 ): void {
   if (track.kind === "audio") {
     if (typeof Audio === "undefined") return;
-    if (!watchAudio) {
-      watchAudio = new Audio();
-      watchAudio.autoplay = true;
-      watchAudio.setAttribute("playsinline", "true");
-    }
-    const mix = stream ?? new MediaStream([track]);
-    watchAudio.srcObject = mix;
+    if (watchAudio.has(track)) return;
+    const el = new Audio();
+    el.autoplay = true;
+    el.setAttribute("playsinline", "true");
+    // One element per track: a MediaStream's multiple audio tracks must not
+    // compete for an HTML media element's single selected audio track.
+    el.srcObject =
+      typeof MediaStream === "undefined"
+        ? (stream ?? null)
+        : new MediaStream([track]);
+    watchAudio.set(track, el);
+    track.addEventListener("ended", () => {
+      if (watchAudio.get(track) !== el) return;
+      watchAudio.delete(track);
+      el.pause?.();
+      el.srcObject = null;
+      blockedPlayback.delete(el);
+      updatePlaybackBlocked();
+    });
     applyPlayback();
-    playAudio(watchAudio);
+    playAudio(el);
     return;
   }
   const parsed = parseIncomingVideo(track, stream);
@@ -3651,7 +3767,12 @@ async function startWatchPeer(
         }
       },
     );
-    watchCall.send({ op: "j", tk: ticket.ticket });
+    const publisher = useVoice.getState().watchPublisherId;
+    watchCall.send({
+      op: "j",
+      tk: ticket.ticket,
+      ...(publisher ? { w: publisher } : {}),
+    });
   } catch (error) {
     if (watchCall.generation !== mine) return;
     if (recovering && retryableTicketError(error)) {

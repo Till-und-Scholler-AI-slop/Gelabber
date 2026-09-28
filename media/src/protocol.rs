@@ -14,6 +14,9 @@ pub enum ClientFrame {
     Join {
         #[serde(default)]
         tk: Option<String>,
+        /// Selected Live publisher; audio retains the channel's room scope.
+        #[serde(default)]
+        w: Option<uuid::Uuid>,
     },
     #[serde(rename = "o")]
     Offer {
@@ -39,6 +42,8 @@ pub enum ClientFrame {
         k: Option<String>,
         #[serde(default)]
         t: Option<String>,
+        #[serde(default)]
+        lc: Option<uuid::Uuid>,
     },
     /// Subscriber could not answer the outstanding offer.
     #[serde(rename = "x")]
@@ -110,6 +115,7 @@ mod tests {
             ClientFrame::Announce {
                 k: Some("s".into()),
                 t: None,
+                lc: None,
             }
         );
         let live: ClientFrame = serde_json::from_str(r#"{"op":"p","k":"l"}"#).unwrap();
@@ -118,6 +124,7 @@ mod tests {
             ClientFrame::Announce {
                 k: Some("l".into()),
                 t: None,
+                lc: None,
             }
         );
         let abort: ClientFrame = serde_json::from_str(r#"{"op":"x"}"#).unwrap();

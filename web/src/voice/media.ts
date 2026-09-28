@@ -19,11 +19,11 @@ export type MediaTicket = {
 };
 
 export type MediaClientFrame =
-  | { op: "j"; tk: string }
+  | { op: "j"; tk: string; w?: string }
   | { op: "o"; sdp: string }
   | { op: "a"; sdp: string }
   | { op: "i"; ice: string; mid?: string }
-  | { op: "p"; k: "v" | "s" | "l"; t?: string }
+  | { op: "p"; k: "v" | "s" | "l"; t?: string; lc?: string }
   | { op: "u"; k: "v" | "s" | "l"; t?: string }
   | { op: "x" }
   | { op: "l" };

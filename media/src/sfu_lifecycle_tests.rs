@@ -87,20 +87,39 @@ fn remote(
     Arc<dyn TrackRemote>,
     mpsc::UnboundedSender<TrackRemoteEvent>,
 ) {
+    remote_kind(id, RtpCodecKind::Video)
+}
+
+fn remote_kind(
+    id: &str,
+    kind: RtpCodecKind,
+) -> (
+    Arc<dyn TrackRemote>,
+    mpsc::UnboundedSender<TrackRemoteEvent>,
+) {
     let (tx, rx) = mpsc::unbounded_channel();
     let local = TrackLocalStaticRTP::new(MediaStreamTrack::new(
         "capture".into(),
         id.into(),
         id.into(),
-        RtpCodecKind::Video,
+        kind,
         vec![RTCRtpEncodingParameters {
             rtp_coding_parameters: RTCRtpCodingParameters {
                 ssrc: Some(1234),
                 ..Default::default()
             },
             codec: RTCRtpCodec {
-                mime_type: "video/VP8".into(),
-                clock_rate: 90000,
+                mime_type: if kind == RtpCodecKind::Audio {
+                    "audio/opus"
+                } else {
+                    "video/VP8"
+                }
+                .into(),
+                clock_rate: if kind == RtpCodecKind::Audio {
+                    48000
+                } else {
+                    90000
+                },
                 ..Default::default()
             },
             ..Default::default()
@@ -113,6 +132,69 @@ fn remote(
         }),
         tx,
     )
+}
+
+#[tokio::test]
+async fn watch_filters_existing_and_new_video_but_keeps_every_room_audio() {
+    let sfu = Arc::new(Sfu::new(&config()));
+    let channel = Uuid::new_v4();
+    let (a, _rx) = join(&sfu, channel).await;
+    let (b, _rx) = join(&sfu, channel).await;
+    let room = sfu.find_room(channel).await.unwrap();
+    let selected = room.lock().await.peers[&a].user_id;
+    let mut events = Vec::new();
+    for (peer, kind, id) in [(a, "v", "camera-a"), (a, "l", "live-a"), (b, "l", "live-b")] {
+        sfu.announce_track(peer, channel, kind, Some(id))
+            .await
+            .unwrap();
+        let (track, tx) = remote(id);
+        sfu.publish(peer, channel, track).await.unwrap();
+        events.push(tx);
+    }
+    let (out, _rx) = mpsc::unbounded_channel();
+    let watcher = sfu
+        .join_inner(
+            TicketClaim {
+                u: Uuid::new_v4(),
+                s: Uuid::new_v4(),
+                c: channel,
+                g: false,
+            },
+            None,
+            Some(selected),
+            out,
+        )
+        .await
+        .unwrap();
+    sfu.attach_existing_pubs(watcher, channel).await;
+    for (peer, id) in [(a, "audio-a"), (b, "audio-b")] {
+        let (track, tx) = remote_kind(id, RtpCodecKind::Audio);
+        sfu.publish(peer, channel, track).await.unwrap();
+        events.push(tx);
+    }
+    sfu.announce_track(a, channel, "s", Some("screen-a"))
+        .await
+        .unwrap();
+    let (track, tx) = remote("screen-a");
+    sfu.publish(a, channel, track).await.unwrap();
+    events.push(tx);
+    let gate = room.lock().await.peers[&watcher].sdp.clone();
+    let expected: HashSet<_> = [(a, "live-a"), (a, "audio-a"), (b, "audio-b")]
+        .map(|(peer, id)| format!("{}:{id}", peer.0))
+        .into();
+    assert_eq!(
+        gate.lock()
+            .await
+            .subscriptions
+            .keys()
+            .cloned()
+            .collect::<HashSet<_>>(),
+        expected
+    );
+    for peer in [a, b, watcher] {
+        sfu.leave(peer, channel).await;
+    }
+    assert_eq!(sfu.room_count(), 0);
 }
 
 fn config() -> Config {
@@ -547,6 +629,148 @@ fn authority_redis() -> redis::Client {
     .unwrap()
 }
 
+async fn grant_live(redis: &redis::Client, claim: &AuthorizedTicketClaim, nonce: Uuid, ttl: u64) {
+    let mut conn = redis.get_multiplexed_async_connection().await.unwrap();
+    let record = serde_json::json!({"u":claim.claim.u,"s":claim.claim.s,"c":claim.claim.c,"session":claim.auth.session,"seat":Uuid::new_v4(),"nonce":nonce});
+    let _: () = redis::cmd("SET")
+        .arg(format!("gb:live:{}", claim.claim.c))
+        .arg(record.to_string())
+        .arg("PX")
+        .arg(ttl)
+        .query_async(&mut conn)
+        .await
+        .unwrap();
+}
+
+#[tokio::test]
+async fn live_claim_is_rechecked_when_announced_track_arrives() {
+    let redis = authority_redis();
+    let sfu = Arc::new(Sfu::with_redis(&config(), Some(redis.clone())));
+    let (claim, _lease) = authorized_fixture(&sfu, &redis).await;
+    let (out, _rx) = mpsc::unbounded_channel();
+    let peer = sfu.join_authorized(claim.clone(), out).await.unwrap();
+    let channel = claim.claim.c;
+    let nonce = Uuid::new_v4();
+    grant_live(&redis, &claim, nonce, 5000).await;
+    sfu.announce_with_claim(peer, channel, "l", Some("live"), Some(nonce))
+        .await
+        .unwrap();
+    let mut conn = redis.get_multiplexed_async_connection().await.unwrap();
+    let _: () = redis::cmd("DEL")
+        .arg(format!("gb:live:{channel}"))
+        .query_async(&mut conn)
+        .await
+        .unwrap();
+    let (track, _events) = remote("live");
+    assert!(matches!(
+        sfu.publish(peer, channel, track).await,
+        Err(SfuError::Forbidden)
+    ));
+    assert!(
+        sfu.find_room(channel)
+            .await
+            .unwrap()
+            .lock()
+            .await
+            .pubs
+            .is_empty()
+    );
+    sfu.leave(peer, channel).await;
+}
+
+#[tokio::test]
+async fn live_lease_deadline_stops_reader_without_waiting_for_renewal_tick() {
+    let redis = authority_redis();
+    let sfu = Arc::new(Sfu::with_redis(&config(), Some(redis.clone())));
+    let (claim, _lease) = authorized_fixture(&sfu, &redis).await;
+    let (out, _rx) = mpsc::unbounded_channel();
+    let peer = sfu.join_authorized(claim.clone(), out).await.unwrap();
+    let channel = claim.claim.c;
+    let nonce = Uuid::new_v4();
+    grant_live(&redis, &claim, nonce, 400).await;
+    sfu.announce_with_claim(peer, channel, "l", Some("live"), Some(nonce))
+        .await
+        .unwrap();
+    let (track, _events) = remote("live");
+    sfu.publish(peer, channel, track).await.unwrap();
+    let room = sfu.find_room(channel).await.unwrap();
+    let life = room.lock().await.pubs[&format!("{}:live", peer.0)]
+        .life
+        .clone();
+    let mut done = life.done.clone();
+    tokio::time::timeout(Duration::from_millis(700), done.wait_for(|done| *done))
+        .await
+        .expect("must stop before the next 1s renewal tick")
+        .unwrap();
+    assert!(
+        sfu.has_peer(peer, channel).await,
+        "Live expiry retains Voice"
+    );
+    sfu.leave(peer, channel).await;
+}
+
+#[tokio::test]
+async fn live_loss_stops_before_busy_sdp_and_does_not_block_authority_revocation() {
+    let redis = authority_redis();
+    let sfu = Arc::new(Sfu::with_redis(&config(), Some(redis.clone())));
+    let (claim, _lease) = authorized_fixture(&sfu, &redis).await;
+    let (out, _rx) = mpsc::unbounded_channel();
+    let peer = sfu.join_authorized(claim.clone(), out).await.unwrap();
+    let channel = claim.claim.c;
+    let nonce = Uuid::new_v4();
+    grant_live(&redis, &claim, nonce, 5000).await;
+    sfu.announce_with_claim(peer, channel, "l", Some("live"), Some(nonce))
+        .await
+        .unwrap();
+    let (track, _events) = remote("live");
+    sfu.publish(peer, channel, track).await.unwrap();
+    let room = sfu.find_room(channel).await.unwrap();
+    let (gate, life, closing) = {
+        let room = room.lock().await;
+        (
+            room.peers[&peer].sdp.clone(),
+            room.pubs[&format!("{}:live", peer.0)].life.clone(),
+            room.peers[&peer].closing.clone(),
+        )
+    };
+    let guard = gate.lock().await;
+    let mut conn = redis.get_multiplexed_async_connection().await.unwrap();
+    let _: () = redis::cmd("DEL")
+        .arg(format!("gb:live:{channel}"))
+        .query_async(&mut conn)
+        .await
+        .unwrap();
+    let mut stopped = life.stop.subscribe();
+    tokio::time::timeout(Duration::from_millis(1600), stopped.wait_for(|stop| *stop))
+        .await
+        .unwrap()
+        .unwrap();
+    assert!(sfu.has_peer(peer, channel).await);
+    let _: () = redis::cmd("SET")
+        .arg(gelabber_shared::ticket::member_authority_key(
+            claim.claim.s,
+            claim.claim.u,
+        ))
+        .arg(Uuid::new_v4().to_string())
+        .query_async(&mut conn)
+        .await
+        .unwrap();
+    let mut closed = closing.subscribe();
+    tokio::time::timeout(
+        Duration::from_millis(1600),
+        closed.wait_for(|closed| *closed),
+    )
+    .await
+    .expect("authority checks continue while Live cleanup waits for SDP")
+    .unwrap();
+    drop(guard);
+    let mut done = life.done.clone();
+    tokio::time::timeout(Duration::from_secs(1), done.wait_for(|done| *done))
+        .await
+        .unwrap()
+        .unwrap();
+}
+
 #[tokio::test]
 async fn revoke_while_join_waits_for_attach_lock_is_rechecked_after_build() {
     let redis = authority_redis();
@@ -606,7 +830,7 @@ async fn revoke_signals_publisher_stop_before_busy_sdp_cleanup() {
     let (out, _rx) = mpsc::unbounded_channel();
     let id = sfu.join_authorized(claim.clone(), out).await.unwrap();
     let channel = claim.claim.c;
-    sfu.announce_track(id, channel, "l", Some("live"))
+    sfu.announce_track(id, channel, "s", Some("live"))
         .await
         .unwrap();
     let (track, _events) = remote("live");
