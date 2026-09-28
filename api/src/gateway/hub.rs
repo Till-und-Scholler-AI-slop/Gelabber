@@ -23,42 +23,6 @@ use crate::error::ApiError;
 
 const SUBSCRIBER_RETRY: Duration = Duration::from_millis(200);
 
-/// Last seat for a user: drop the roster field and their pubs. Returns 1
-/// when the caller should broadcast leave.
-const LEAVE_SEAT_LUA: &str = r#"
-local n = redis.call('HINCRBY', KEYS[1], ARGV[1], -1)
-if tonumber(n) <= 0 then
-  redis.call('HDEL', KEYS[1], ARGV[1])
-  redis.call('DEL', KEYS[2])
-  return 1
-end
-return 0
-"#;
-
-/// Claim the single Go Live slot for a voice channel. Same user may refresh.
-/// 1 = newly claimed, 2 = already held, 0 = taken by someone else.
-const CLAIM_LIVE_LUA: &str = r#"
-local cur = redis.call('HGET', KEYS[1], ARGV[1])
-if not cur then
-  redis.call('HSET', KEYS[1], ARGV[1], ARGV[2])
-  return 1
-end
-if cur == ARGV[2] then
-  return 2
-end
-return 0
-"#;
-
-/// Drop the Go Live slot only if this user still holds it.
-const RELEASE_LIVE_LUA: &str = r#"
-local cur = redis.call('HGET', KEYS[1], ARGV[1])
-if cur == ARGV[2] then
-  redis.call('HDEL', KEYS[1], ARGV[1])
-  return 1
-end
-return 0
-"#;
-
 /// One Redis turn: assign seq, append the replay list, PUBLISH.
 /// `ARGV[1]` is compact event JSON with `n` as placeholder 0 (serde order
 /// is `t`,`n`,`d`). Seq is string-substituted — Lua cjson would turn `[]`
@@ -73,72 +37,62 @@ return {n, raw}
 "#;
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
-pub struct ConnId(u64);
+pub struct ConnId(u64, Uuid);
 
 impl ConnId {
+    pub fn redis_id(self) -> Uuid {
+        self.1
+    }
+
     pub fn as_u64(self) -> u64 {
         self.0
     }
 }
 
-struct Inner {
+pub(super) struct Inner {
     next_id: AtomicU64,
     started: AtomicBool,
     subscribed: AtomicBool,
     conn: Mutex<Option<redis::aio::MultiplexedConnection>>,
-    sockets: RwLock<HashMap<ConnId, Socket>>,
+    pub(super) sockets: RwLock<HashMap<ConnId, Socket>>,
+    pub(super) voice_ops: Mutex<()>,
     media_sessions: Mutex<HashMap<String, (Uuid, std::time::Instant)>>,
 }
 
-struct VoiceSeat {
-    server_id: Uuid,
-    pubs: HashSet<TrackKind>,
-    muted: bool,
-    deafened: bool,
+#[derive(Clone)]
+pub(super) struct VoiceSeat {
+    pub(super) id: Uuid,
+    pub(super) server_id: Uuid,
+    pub(super) pubs: HashSet<TrackKind>,
+    pub(super) muted: bool,
+    pub(super) deafened: bool,
+    pub(super) live: Option<super::leases::LiveOwner>,
 }
 
-#[derive(Clone, Copy, PartialEq, Eq)]
-enum VoiceFlag {
-    Mute,
-    Deafen,
-}
-
-#[derive(Clone, Copy, PartialEq, Eq)]
-enum LiveClaim {
-    Taken,
-    New,
-    Held,
-}
-
-struct Occupancy {
-    channel_id: Uuid,
-    muted: bool,
-    deafened: bool,
-}
-
-struct Socket {
-    user_id: Uuid,
-    session: Option<(String, tokio::sync::watch::Sender<bool>)>,
+pub(super) struct Socket {
+    pub(super) user_id: Uuid,
+    pub(super) session: Option<(String, tokio::sync::watch::Sender<bool>)>,
     access: HashMap<Uuid, (chrono::DateTime<chrono::Utc>, i32)>,
     /// Servers this socket has subscribed to (channel or server topic).
-    servers: HashSet<Uuid>,
+    pub(super) servers: HashSet<Uuid>,
+    pub(super) voice_rosters: HashMap<Uuid, Vec<VoiceEntry>>,
     /// Channels this socket started typing in (`server`, `channel`).
     typing: HashSet<(Uuid, Uuid)>,
     topics: HashSet<Topic>,
     /// Voice rooms this socket has joined (`op: "sig"`). Independent of
     /// chat topic subscriptions.
-    rooms: HashMap<Uuid, VoiceSeat>,
+    pub(super) rooms: HashMap<Uuid, VoiceSeat>,
     /// Live Pub/Sub frames held until catch-up finishes. Dropping them
     /// here would punch a hole the replay log can miss.
     catching_up: HashMap<Topic, Vec<Event>>,
-    tx: mpsc::UnboundedSender<ServerFrame>,
+    pub(super) tx: mpsc::UnboundedSender<ServerFrame>,
 }
 
 /// Local sockets, the Redis subscriber, and the multiplexed command connection.
 #[derive(Clone)]
 pub struct ConnTable {
     redis: redis::Client,
-    inner: Arc<Inner>,
+    pub(super) inner: Arc<Inner>,
 }
 
 /// Sequenced chat log (`publish` / `catch_up`). Messages live in Postgres;
@@ -153,7 +107,7 @@ pub struct EventLog {
 /// separate from the chat log.
 #[derive(Clone)]
 pub struct VoiceRoster {
-    connections: ConnTable,
+    pub(super) connections: ConnTable,
 }
 
 /// Facade over the connection table, the event log, and the voice roster so
@@ -177,6 +131,7 @@ impl ConnTable {
                 subscribed: AtomicBool::new(false),
                 conn: Mutex::new(None),
                 sockets: RwLock::new(HashMap::new()),
+                voice_ops: Mutex::new(()),
                 media_sessions: Mutex::new(HashMap::new()),
             }),
         }
@@ -210,7 +165,10 @@ impl ConnTable {
 
     pub async fn attach(&self, user_id: Uuid, tx: mpsc::UnboundedSender<ServerFrame>) -> ConnId {
         self.ensure_subscriber();
-        let id = ConnId(self.inner.next_id.fetch_add(1, Ordering::Relaxed));
+        let id = ConnId(
+            self.inner.next_id.fetch_add(1, Ordering::Relaxed),
+            Uuid::new_v4(),
+        );
         self.inner.sockets.write().await.insert(
             id,
             Socket {
@@ -218,6 +176,7 @@ impl ConnTable {
                 session: None,
                 access: HashMap::new(),
                 servers: HashSet::new(),
+                voice_rosters: HashMap::new(),
                 typing: HashSet::new(),
                 topics: HashSet::new(),
                 rooms: HashMap::new(),
@@ -532,286 +491,6 @@ impl EventLog {
 }
 
 impl VoiceRoster {
-    pub async fn in_voice(&self, id: ConnId, server_id: Uuid, channel_id: Uuid) -> bool {
-        self.connections
-            .inner
-            .sockets
-            .read()
-            .await
-            .get(&id)
-            .is_some_and(|socket| {
-                socket
-                    .rooms
-                    .get(&channel_id)
-                    .is_some_and(|seat| seat.server_id == server_id)
-            })
-    }
-
-    /// Seat this socket in `channel_id`, leaving any other voice room first.
-    /// Returns other members (and their pubs) so the handler can snapshot
-    /// them onto this socket without waiting for Pub/Sub.
-    /// Seat this socket in `channel_id`, leaving any other voice room first.
-    /// Returns other members (and their pubs) so the handler can snapshot
-    /// them onto this socket without waiting for Pub/Sub.
-    pub async fn join_voice(
-        &self,
-        id: ConnId,
-        user_id: Uuid,
-        server_id: Uuid,
-        channel_id: Uuid,
-    ) -> Result<Vec<SigEvent>, ApiError> {
-        self.connections.ensure_subscriber();
-        let previous: Vec<(Uuid, Uuid)> = {
-            let sockets = self.connections.inner.sockets.read().await;
-            sockets
-                .get(&id)
-                .map(|socket| {
-                    socket
-                        .rooms
-                        .iter()
-                        .filter(|(cid, _)| **cid != channel_id)
-                        .map(|(cid, seat)| (seat.server_id, *cid))
-                        .collect()
-                })
-                .unwrap_or_default()
-        };
-        for (prev_server, prev_channel) in previous {
-            self.leave_voice(id, user_id, prev_server, prev_channel)
-                .await?;
-        }
-
-        let inserted = {
-            let mut sockets = self.connections.inner.sockets.write().await;
-            if let Some(socket) = sockets.get_mut(&id) {
-                match socket.rooms.entry(channel_id) {
-                    std::collections::hash_map::Entry::Vacant(slot) => {
-                        slot.insert(VoiceSeat {
-                            server_id,
-                            pubs: HashSet::new(),
-                            muted: false,
-                            deafened: false,
-                        });
-                        true
-                    }
-                    std::collections::hash_map::Entry::Occupied(_) => false,
-                }
-            } else {
-                false
-            }
-        };
-        if inserted {
-            self.redis_join_member(channel_id, user_id).await?;
-            self.redis_put_occupancy(server_id, user_id, channel_id, false, false)
-                .await?;
-        }
-        let occupancy = self.redis_occupancy(server_id).await?;
-        let roster = self.redis_roster(channel_id).await?;
-        let mut snapshot = Vec::new();
-        for (uid, pubs) in roster {
-            if uid == user_id {
-                continue;
-            }
-            let (muted, deafened) = occupancy
-                .get(&uid)
-                .map(|row| (row.muted, row.deafened))
-                .unwrap_or((false, false));
-            snapshot.push(SigEvent::join_state(
-                server_id, channel_id, uid, muted, deafened,
-            ));
-            for kind in pubs {
-                snapshot.push(SigEvent::published(server_id, channel_id, uid, kind));
-            }
-        }
-        self.publish_sig(SigEvent::join(server_id, channel_id, user_id))
-            .await?;
-        Ok(snapshot)
-    }
-
-    pub async fn leave_voice(
-        &self,
-        id: ConnId,
-        user_id: Uuid,
-        server_id: Uuid,
-        channel_id: Uuid,
-    ) -> Result<bool, ApiError> {
-        let was_in = {
-            let mut sockets = self.connections.inner.sockets.write().await;
-            sockets.get_mut(&id).is_some_and(|socket| {
-                if socket
-                    .rooms
-                    .get(&channel_id)
-                    .is_some_and(|seat| seat.server_id == server_id)
-                {
-                    socket.rooms.remove(&channel_id).is_some()
-                } else {
-                    false
-                }
-            })
-        };
-        if !was_in {
-            return Ok(false);
-        }
-        if self
-            .redis_leave_member(server_id, channel_id, user_id)
-            .await?
-        {
-            self.publish_sig(SigEvent::leave(server_id, channel_id, user_id))
-                .await?;
-        }
-        Ok(true)
-    }
-
-    pub async fn set_voice_mute(
-        &self,
-        id: ConnId,
-        user_id: Uuid,
-        server_id: Uuid,
-        channel_id: Uuid,
-        on: bool,
-    ) -> Result<bool, ApiError> {
-        self.set_voice_flag(id, user_id, server_id, channel_id, VoiceFlag::Mute, on)
-            .await
-    }
-
-    pub async fn set_voice_deafen(
-        &self,
-        id: ConnId,
-        user_id: Uuid,
-        server_id: Uuid,
-        channel_id: Uuid,
-        on: bool,
-    ) -> Result<bool, ApiError> {
-        self.set_voice_flag(id, user_id, server_id, channel_id, VoiceFlag::Deafen, on)
-            .await
-    }
-
-    async fn set_voice_flag(
-        &self,
-        id: ConnId,
-        user_id: Uuid,
-        server_id: Uuid,
-        channel_id: Uuid,
-        flag: VoiceFlag,
-        on: bool,
-    ) -> Result<bool, ApiError> {
-        let (muted, deafened) = {
-            let mut sockets = self.connections.inner.sockets.write().await;
-            let Some(seat) = sockets
-                .get_mut(&id)
-                .and_then(|socket| socket.rooms.get_mut(&channel_id))
-            else {
-                return Ok(false);
-            };
-            if seat.server_id != server_id {
-                return Ok(false);
-            }
-            match flag {
-                VoiceFlag::Mute => seat.muted = on,
-                VoiceFlag::Deafen => {
-                    seat.deafened = on;
-                    if on {
-                        seat.muted = true;
-                    }
-                }
-            }
-            (seat.muted, seat.deafened)
-        };
-        self.redis_write_occupancy(server_id, user_id, channel_id, muted, deafened)
-            .await?;
-        let event = match flag {
-            VoiceFlag::Mute => SigEvent::muted(server_id, channel_id, user_id, on),
-            VoiceFlag::Deafen => SigEvent::deafened(server_id, channel_id, user_id, on),
-        };
-        self.publish_sig(event).await?;
-        if flag == VoiceFlag::Deafen && on {
-            self.publish_sig(SigEvent::muted(server_id, channel_id, user_id, true))
-                .await?;
-        }
-        Ok(true)
-    }
-
-    pub async fn voice_snapshot(&self, server_id: Uuid) -> Result<Vec<VoiceEntry>, ApiError> {
-        let occupancy = self.redis_occupancy(server_id).await?;
-        let lives = self.redis_lives(server_id).await?;
-        let mut rows: Vec<VoiceEntry> = occupancy
-            .into_iter()
-            .map(|(u, row)| VoiceEntry {
-                u,
-                c: row.channel_id,
-                m: row.muted,
-                d: row.deafened,
-                l: lives.get(&row.channel_id) == Some(&u),
-            })
-            .collect();
-        rows.sort_by_key(|row| row.u);
-        Ok(rows)
-    }
-
-    pub async fn set_voice_pub(
-        &self,
-        id: ConnId,
-        user_id: Uuid,
-        server_id: Uuid,
-        channel_id: Uuid,
-        kind: TrackKind,
-        on: bool,
-    ) -> Result<Option<bool>, ApiError> {
-        {
-            let sockets = self.connections.inner.sockets.read().await;
-            if !sockets.get(&id).is_some_and(|socket| {
-                socket
-                    .rooms
-                    .get(&channel_id)
-                    .is_some_and(|seat| seat.server_id == server_id)
-            }) {
-                return Ok(None);
-            }
-        }
-        let mut live_started = false;
-        if kind == TrackKind::L {
-            if on {
-                match self.claim_live(server_id, channel_id, user_id).await? {
-                    LiveClaim::Taken => return Ok(None),
-                    LiveClaim::New => live_started = true,
-                    LiveClaim::Held => {}
-                }
-            } else {
-                self.release_live(server_id, channel_id, user_id).await?;
-            }
-        }
-        {
-            let mut sockets = self.connections.inner.sockets.write().await;
-            let Some(seat) = sockets
-                .get_mut(&id)
-                .and_then(|socket| socket.rooms.get_mut(&channel_id))
-            else {
-                if kind == TrackKind::L && on && live_started {
-                    let _ = self.release_live(server_id, channel_id, user_id).await;
-                }
-                return Ok(None);
-            };
-            if seat.server_id != server_id {
-                return Ok(None);
-            }
-            if on {
-                seat.pubs.insert(kind);
-            } else {
-                seat.pubs.remove(&kind);
-            }
-        }
-        if on {
-            self.redis_add_pub(channel_id, user_id, kind).await?;
-            self.publish_sig(SigEvent::published(server_id, channel_id, user_id, kind))
-                .await?;
-        } else {
-            self.redis_remove_pub(channel_id, user_id, kind).await?;
-            self.publish_sig(SigEvent::unpublished(server_id, channel_id, user_id, kind))
-                .await?;
-        }
-        Ok(Some(live_started))
-    }
-
-    /// Fan-out a live signaling frame. No seq, no replay list.
     /// Fan-out a live signaling frame. No seq, no replay list.
     pub async fn publish_sig(&self, event: SigEvent) -> Result<(), ApiError> {
         self.connections.ensure_subscriber();
@@ -834,353 +513,6 @@ impl VoiceRoster {
             .await
             .map_err(redis_err)?;
         Ok(())
-    }
-
-    async fn redis_join_member(&self, channel_id: Uuid, user_id: Uuid) -> Result<(), ApiError> {
-        let key = room_key(channel_id);
-        let member = user_id.to_string();
-        self.connections
-            .with_conn(|mut conn| {
-                let key = key.clone();
-                let member = member.clone();
-                async move {
-                    redis::cmd("HINCRBY")
-                        .arg(key)
-                        .arg(member)
-                        .arg(1)
-                        .query_async::<i64>(&mut conn)
-                        .await
-                        .map(|_| ())
-                }
-            })
-            .await
-            .map_err(redis_err)
-    }
-
-    /// Decrement the per-user seat count. `true` = last socket left: drop
-    /// the roster row, pubs, occupancy, caller should broadcast `t:"l"`.
-    /// Decrement the per-user seat count. `true` = last socket left: drop
-    /// the roster row, pubs, occupancy, caller should broadcast `t:"l"`.
-    async fn redis_leave_member(
-        &self,
-        server_id: Uuid,
-        channel_id: Uuid,
-        user_id: Uuid,
-    ) -> Result<bool, ApiError> {
-        let members = room_key(channel_id);
-        let pubs = pubs_key(channel_id, user_id);
-        let member = user_id.to_string();
-        let last: i32 = self
-            .connections
-            .with_conn(|mut conn| {
-                let members = members.clone();
-                let pubs = pubs.clone();
-                let member = member.clone();
-                async move {
-                    redis::Script::new(LEAVE_SEAT_LUA)
-                        .key(members)
-                        .key(pubs)
-                        .arg(member)
-                        .invoke_async(&mut conn)
-                        .await
-                }
-            })
-            .await
-            .map_err(redis_err)?;
-        if last == 1 {
-            self.redis_drop_occupancy(server_id, user_id).await?;
-            self.release_live(server_id, channel_id, user_id).await?;
-        }
-        Ok(last == 1)
-    }
-
-    async fn redis_put_occupancy(
-        &self,
-        server_id: Uuid,
-        user_id: Uuid,
-        channel_id: Uuid,
-        muted: bool,
-        deafened: bool,
-    ) -> Result<(), ApiError> {
-        // Second tab of the same user must not wipe mute/deafen.
-        let key = occupancy_key(server_id);
-        let member = user_id.to_string();
-        let value = encode_occupancy(channel_id, muted, deafened);
-        self.connections
-            .with_conn(|mut conn| {
-                let key = key.clone();
-                let member = member.clone();
-                let value = value.clone();
-                async move {
-                    redis::cmd("HSETNX")
-                        .arg(key)
-                        .arg(member)
-                        .arg(value)
-                        .query_async::<i64>(&mut conn)
-                        .await
-                        .map(|_| ())
-                }
-            })
-            .await
-            .map_err(redis_err)
-    }
-
-    async fn redis_write_occupancy(
-        &self,
-        server_id: Uuid,
-        user_id: Uuid,
-        channel_id: Uuid,
-        muted: bool,
-        deafened: bool,
-    ) -> Result<(), ApiError> {
-        let key = occupancy_key(server_id);
-        let member = user_id.to_string();
-        let value = encode_occupancy(channel_id, muted, deafened);
-        self.connections
-            .with_conn(|mut conn| {
-                let key = key.clone();
-                let member = member.clone();
-                let value = value.clone();
-                async move {
-                    redis::cmd("HSET")
-                        .arg(key)
-                        .arg(member)
-                        .arg(value)
-                        .query_async::<i64>(&mut conn)
-                        .await
-                        .map(|_| ())
-                }
-            })
-            .await
-            .map_err(redis_err)
-    }
-
-    async fn redis_drop_occupancy(&self, server_id: Uuid, user_id: Uuid) -> Result<(), ApiError> {
-        let key = occupancy_key(server_id);
-        let member = user_id.to_string();
-        self.connections
-            .with_conn(|mut conn| {
-                let key = key.clone();
-                let member = member.clone();
-                async move {
-                    redis::cmd("HDEL")
-                        .arg(key)
-                        .arg(member)
-                        .query_async::<i64>(&mut conn)
-                        .await
-                        .map(|_| ())
-                }
-            })
-            .await
-            .map_err(redis_err)
-    }
-
-    async fn redis_occupancy(&self, server_id: Uuid) -> Result<HashMap<Uuid, Occupancy>, ApiError> {
-        let key = occupancy_key(server_id);
-        let seats: HashMap<String, String> = self
-            .connections
-            .with_conn(|mut conn| {
-                let key = key.clone();
-                async move { redis::cmd("HGETALL").arg(key).query_async(&mut conn).await }
-            })
-            .await
-            .map_err(redis_err)?;
-        let mut occupancy = HashMap::with_capacity(seats.len());
-        for (raw, value) in seats {
-            let Ok(uid) = Uuid::parse_str(&raw) else {
-                continue;
-            };
-            let Some(row) = parse_occupancy(&value) else {
-                continue;
-            };
-            occupancy.insert(uid, row);
-        }
-        Ok(occupancy)
-    }
-
-    async fn redis_lives(&self, server_id: Uuid) -> Result<HashMap<Uuid, Uuid>, ApiError> {
-        let key = lives_key(server_id);
-        let rows: HashMap<String, String> = self
-            .connections
-            .with_conn(|mut conn| {
-                let key = key.clone();
-                async move { redis::cmd("HGETALL").arg(key).query_async(&mut conn).await }
-            })
-            .await
-            .map_err(redis_err)?;
-        let mut lives = HashMap::with_capacity(rows.len());
-        for (channel, user) in rows {
-            let Ok(channel_id) = Uuid::parse_str(&channel) else {
-                continue;
-            };
-            let Ok(user_id) = Uuid::parse_str(&user) else {
-                continue;
-            };
-            lives.insert(channel_id, user_id);
-        }
-        Ok(lives)
-    }
-
-    async fn claim_live(
-        &self,
-        server_id: Uuid,
-        channel_id: Uuid,
-        user_id: Uuid,
-    ) -> Result<LiveClaim, ApiError> {
-        let key = lives_key(server_id);
-        let channel = channel_id.to_string();
-        let user = user_id.to_string();
-        let ok: i32 = self
-            .connections
-            .with_conn(|mut conn| {
-                let key = key.clone();
-                let channel = channel.clone();
-                let user = user.clone();
-                async move {
-                    redis::Script::new(CLAIM_LIVE_LUA)
-                        .key(key)
-                        .arg(channel)
-                        .arg(user)
-                        .invoke_async(&mut conn)
-                        .await
-                }
-            })
-            .await
-            .map_err(redis_err)?;
-        Ok(match ok {
-            1 => LiveClaim::New,
-            2 => LiveClaim::Held,
-            _ => LiveClaim::Taken,
-        })
-    }
-
-    async fn release_live(
-        &self,
-        server_id: Uuid,
-        channel_id: Uuid,
-        user_id: Uuid,
-    ) -> Result<(), ApiError> {
-        let key = lives_key(server_id);
-        let channel = channel_id.to_string();
-        let user = user_id.to_string();
-        self.connections
-            .with_conn(|mut conn| {
-                let key = key.clone();
-                let channel = channel.clone();
-                let user = user.clone();
-                async move {
-                    redis::Script::new(RELEASE_LIVE_LUA)
-                        .key(key)
-                        .arg(channel)
-                        .arg(user)
-                        .invoke_async::<i32>(&mut conn)
-                        .await
-                        .map(|_| ())
-                }
-            })
-            .await
-            .map_err(redis_err)
-    }
-
-    async fn redis_add_pub(
-        &self,
-        channel_id: Uuid,
-        user_id: Uuid,
-        kind: TrackKind,
-    ) -> Result<(), ApiError> {
-        let key = pubs_key(channel_id, user_id);
-        let kind = kind.as_str().to_owned();
-        self.connections
-            .with_conn(|mut conn| {
-                let key = key.clone();
-                let kind = kind.clone();
-                async move {
-                    redis::cmd("SADD")
-                        .arg(key)
-                        .arg(kind)
-                        .query_async::<()>(&mut conn)
-                        .await
-                }
-            })
-            .await
-            .map_err(redis_err)
-    }
-
-    async fn redis_remove_pub(
-        &self,
-        channel_id: Uuid,
-        user_id: Uuid,
-        kind: TrackKind,
-    ) -> Result<(), ApiError> {
-        let key = pubs_key(channel_id, user_id);
-        let kind = kind.as_str().to_owned();
-        self.connections
-            .with_conn(|mut conn| {
-                let key = key.clone();
-                let kind = kind.clone();
-                async move {
-                    redis::cmd("SREM")
-                        .arg(key)
-                        .arg(kind)
-                        .query_async::<()>(&mut conn)
-                        .await
-                }
-            })
-            .await
-            .map_err(redis_err)
-    }
-
-    async fn redis_roster(
-        &self,
-        channel_id: Uuid,
-    ) -> Result<Vec<(Uuid, Vec<TrackKind>)>, ApiError> {
-        let key = room_key(channel_id);
-        let seats: HashMap<String, String> = self
-            .connections
-            .with_conn(|mut conn| {
-                let key = key.clone();
-                async move { redis::cmd("HGETALL").arg(key).query_async(&mut conn).await }
-            })
-            .await
-            .map_err(redis_err)?;
-        let mut roster = Vec::with_capacity(seats.len());
-        for (raw, count) in seats {
-            let Ok(count) = count.parse::<i64>() else {
-                continue;
-            };
-            if count <= 0 {
-                continue;
-            }
-            let Ok(uid) = Uuid::parse_str(&raw) else {
-                continue;
-            };
-            let pubs_key = pubs_key(channel_id, uid);
-            let pubs: Vec<String> = self
-                .connections
-                .with_conn(|mut conn| {
-                    let pubs_key = pubs_key.clone();
-                    async move {
-                        redis::cmd("SMEMBERS")
-                            .arg(pubs_key)
-                            .query_async(&mut conn)
-                            .await
-                    }
-                })
-                .await
-                .map_err(redis_err)?;
-            let kinds = pubs
-                .into_iter()
-                .filter_map(|name| match name.as_str() {
-                    "a" => Some(TrackKind::A),
-                    "v" => Some(TrackKind::V),
-                    "s" => Some(TrackKind::S),
-                    "l" => Some(TrackKind::L),
-                    _ => None,
-                })
-                .collect();
-            roster.push((uid, kinds));
-        }
-        Ok(roster)
     }
 
     /// Short Redis deny so the SFU drops this user's peer even if the tab
@@ -1235,21 +567,15 @@ impl Gateway {
     }
 
     pub async fn detach(&self, id: ConnId) -> Option<(Uuid, HashSet<Uuid>, HashSet<(Uuid, Uuid)>)> {
+        let _guard = self.connections.inner.voice_ops.lock().await;
         let socket = self.connections.inner.sockets.write().await.remove(&id)?;
         for (channel_id, seat) in socket.rooms {
-            match self
-                .redis_leave_member(seat.server_id, channel_id, socket.user_id)
+            if let Err(err) = self
+                .voice
+                .drop_seat(id, socket.user_id, channel_id, seat)
                 .await
             {
-                Ok(true) => {
-                    let _ = self
-                        .publish_sig(SigEvent::leave(seat.server_id, channel_id, socket.user_id))
-                        .await;
-                }
-                Ok(false) => {}
-                Err(err) => {
-                    warn!(error = err.code(), "voice leave on detach failed");
-                }
+                warn!(error = err.code(), "voice leave on detach failed");
             }
         }
         Some((socket.user_id, socket.servers, socket.typing))
@@ -1678,9 +1004,6 @@ impl Gateway {
     /// Seat this socket in `channel_id`, leaving any other voice room first.
     /// Returns other members (and their pubs) so the handler can snapshot
     /// them onto this socket without waiting for Pub/Sub.
-    /// Seat this socket in `channel_id`, leaving any other voice room first.
-    /// Returns other members (and their pubs) so the handler can snapshot
-    /// them onto this socket without waiting for Pub/Sub.
     pub async fn join_voice(
         &self,
         id: ConnId,
@@ -1754,21 +1077,6 @@ impl Gateway {
     pub async fn publish_sig(&self, event: SigEvent) -> Result<(), ApiError> {
         self.voice.publish_sig(event).await
     }
-
-    /// Decrement the per-user seat count. `true` = last socket left: drop
-    /// the roster row, pubs, occupancy, caller should broadcast `t:"l"`.
-    /// Decrement the per-user seat count. `true` = last socket left: drop
-    /// the roster row, pubs, occupancy, caller should broadcast `t:"l"`.
-    async fn redis_leave_member(
-        &self,
-        server_id: Uuid,
-        channel_id: Uuid,
-        user_id: Uuid,
-    ) -> Result<bool, ApiError> {
-        self.voice
-            .redis_leave_member(server_id, channel_id, user_id)
-            .await
-    }
 }
 
 pub(super) fn redis_err(err: redis::RedisError) -> ApiError {
@@ -1786,40 +1094,4 @@ fn voice_channel_id(name: &str) -> Option<Uuid> {
         return None;
     }
     Uuid::parse_str(id).ok()
-}
-
-/// Per-channel hash: user_id → seat count (one increment per socket).
-fn room_key(channel_id: Uuid) -> String {
-    format!("{REDIS_PREFIX}vr:{channel_id}")
-}
-
-fn pubs_key(channel_id: Uuid, user_id: Uuid) -> String {
-    format!("{REDIS_PREFIX}vp:{channel_id}:{user_id}")
-}
-
-/// Server-wide voice occupancy for the member list (`user` → channel + flags).
-fn occupancy_key(server_id: Uuid) -> String {
-    format!("{REDIS_PREFIX}vo:{server_id}")
-}
-
-/// Server-wide Go Live holders (`channel` → user). One live track per voice channel.
-fn lives_key(server_id: Uuid) -> String {
-    format!("{REDIS_PREFIX}gs:{server_id}")
-}
-
-fn encode_occupancy(channel_id: Uuid, muted: bool, deafened: bool) -> String {
-    format!("{channel_id}:{}{}", u8::from(muted), u8::from(deafened))
-}
-
-fn parse_occupancy(raw: &str) -> Option<Occupancy> {
-    let (id, flags) = raw.rsplit_once(':')?;
-    if flags.len() != 2 {
-        return None;
-    }
-    let bytes = flags.as_bytes();
-    Some(Occupancy {
-        channel_id: Uuid::parse_str(id).ok()?,
-        muted: bytes[0] == b'1',
-        deafened: bytes[1] == b'1',
-    })
 }

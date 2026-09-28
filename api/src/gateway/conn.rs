@@ -67,6 +67,7 @@ pub async fn run(socket: WebSocket, state: AppState, session: CurrentSession) {
             _ = security.tick() => {
                 let Ok(Ok(Some(mut session_guard))) = tokio::time::timeout(std::time::Duration::from_secs(1), session.lock_live(&state.db)).await else { break; };
                 if state.gateway.reconcile_access(conn, &mut session_guard).await.is_err() { break; }
+                if !matches!(tokio::time::timeout(std::time::Duration::from_secs(1), state.gateway.refresh_voice(conn)).await, Ok(Ok(()))) { break; }
             }
             incoming = stream.next() => {
                 let mut live_hint = None;
