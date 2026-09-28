@@ -657,3 +657,52 @@ async fn permission_extension_keeps_voice_but_reduction_revokes_it(pool: PgPool)
         old["auth"]["member"].as_str()
     );
 }
+
+#[sqlx::test]
+async fn go_live_with_one_pool_connection_keeps_bootstrap_responsive_and_persists_hint(
+    pool: PgPool,
+) {
+    let small = sqlx::postgres::PgPoolOptions::new()
+        .max_connections(1)
+        .acquire_timeout(Duration::from_millis(500))
+        .connect_with(pool.connect_options().as_ref().clone())
+        .await
+        .unwrap();
+    let state = common::ws_state(small);
+    state
+        .gateway
+        .wait_ready(Duration::from_secs(2))
+        .await
+        .unwrap();
+    let mut owner = register(&state, "owner").await;
+    let (sid, text, voice, _) = server(&mut owner, "Live hint").await;
+    let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+    let addr = listener.local_addr().unwrap();
+    let router = gelabber_api::app(state);
+    tokio::spawn(async move {
+        axum::serve(listener, router).await.unwrap();
+    });
+    let mut ws = connect(addr, &owner).await;
+    voice_join(&mut ws, sid, voice).await;
+    send(
+        &mut ws,
+        json!({"op":"sig", "t":"p", "s":sid, "c":voice, "k":"l"}),
+    )
+    .await;
+    until(&mut ws, |f| {
+        f["op"] == "sig" && f["t"] == "p" && f["k"] == "l"
+    })
+    .await;
+    let bootstrap = tokio::time::timeout(Duration::from_millis(250), owner.bootstrap())
+        .await
+        .expect("no nested pool acquire");
+    assert_eq!(bootstrap.status, StatusCode::OK);
+    tokio::time::timeout(Duration::from_secs(1), async {
+        loop {
+            let hint: bool = sqlx::query_scalar("SELECT EXISTS (SELECT 1 FROM messages WHERE channel_id = $1 AND content LIKE '%ist live%')")
+                .bind(text).fetch_one(&pool).await.unwrap();
+            if hint { break; }
+            tokio::time::sleep(Duration::from_millis(10)).await;
+        }
+    }).await.expect("authorized Live hint persists");
+}

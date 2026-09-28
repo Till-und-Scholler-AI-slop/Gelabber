@@ -29,6 +29,7 @@ struct Call<'a> {
     track: Option<TrackKind>,
     on: Option<bool>,
     sink: &'a mut Sink,
+    live_started: bool,
 }
 
 pub async fn handle(
@@ -38,14 +39,14 @@ pub async fn handle(
     conn: ConnId,
     frame: ClientFrame,
     sink: &mut Sink,
-) -> Result<(), ApiError> {
+) -> Result<Option<(Uuid, Uuid)>, ApiError> {
     let ClientFrame::Sig { s, c, t, k, on } = frame else {
         send_err(sink, "bad_request", None, None).await?;
-        return Ok(());
+        return Ok(None);
     };
     let (Some(server_id), Some(channel_id), Some(kind)) = (s, c, t) else {
         send_err(sink, "bad_request", s, c).await?;
-        return Ok(());
+        return Ok(None);
     };
 
     let mut call = Call {
@@ -59,9 +60,10 @@ pub async fn handle(
         track: k,
         on,
         sink,
+        live_started: false,
     };
     if let Err(err) = membership::lock_server_conn(call.db, server_id, false).await {
-        return reject(&mut call, err).await;
+        return reject(&mut call, err).await.map(|_| None);
     }
     match kind {
         SigKind::J => join(&mut call).await,
@@ -69,7 +71,8 @@ pub async fn handle(
         SigKind::P | SigKind::U => publish(&mut call).await,
         SigKind::M | SigKind::D => mute_deafen(&mut call).await,
         SigKind::R => bad(&mut call).await,
-    }
+    }?;
+    Ok(call.live_started.then_some((server_id, channel_id)))
 }
 
 async fn join(call: &mut Call<'_>) -> Result<(), ApiError> {
@@ -160,10 +163,7 @@ async fn publish(call: &mut Call<'_>) -> Result<(), ApiError> {
     let Some(live_started) = started else {
         return bad(call).await;
     };
-    if track == TrackKind::L && call.kind == SigKind::P && live_started {
-        crate::messages::post_live_hint(call.state, call.user, call.server_id, call.channel_id)
-            .await;
-    }
+    call.live_started = track == TrackKind::L && call.kind == SigKind::P && live_started;
     Ok(())
 }
 
