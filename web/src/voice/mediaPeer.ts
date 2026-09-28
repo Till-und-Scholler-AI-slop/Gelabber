@@ -3,12 +3,46 @@
 // replace a peer whose media transport is still alive. Close and error on
 // that transport clear it, so the next reconnect can mint a new ticket.
 
-import type { MediaClientFrame, MediaServerFrame, MediaSocket } from "./media.ts";
+import type {
+  MediaClientFrame,
+  MediaServerFrame,
+  MediaSocket,
+} from "./media.ts";
 import type { PeerConnection } from "./session.ts";
 
 export type IceCand = { candidate: string; sdpMid: string | null };
 
 const OUTBOUND_CAP = 64;
+
+/** A bounded transport retry; reset only after connectivity or an explicit leave. */
+export class MediaRetry {
+  private timer: ReturnType<typeof setTimeout> | null = null;
+  private attempts = 0;
+
+  get active(): boolean {
+    return this.attempts > 0;
+  }
+
+  cancel(reset = true): void {
+    if (this.timer !== null) clearTimeout(this.timer);
+    this.timer = null;
+    if (reset) this.attempts = 0;
+  }
+
+  schedule(retry: () => void, exhausted: () => void): void {
+    if (this.timer !== null) return;
+    if (this.attempts >= 7) {
+      exhausted();
+      return;
+    }
+    const base = Math.min(250 * 2 ** this.attempts++, 4000);
+    const delay = base * (0.8 + Math.random() * 0.4);
+    this.timer = setTimeout(() => {
+      this.timer = null;
+      retry();
+    }, delay);
+  }
+}
 
 export class MediaPeer {
   pc: PeerConnection | null = null;
