@@ -1,5 +1,5 @@
 # Verify API, web, and media: existing tests plus a Compose start smoke.
-# No image push. No continue-on-error. Missing Postgres/Redis fail the job.
+# No image push. No continue-on-error. Missing Postgres/Redis/MinIO fail the job.
 name: CI
 
 on:
@@ -30,6 +30,9 @@ jobs:
   rust:
     name: Rust tests
     runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      packages: read
     services:
       postgres:
         image: postgres:18.6-alpine3.24
@@ -56,9 +59,40 @@ jobs:
     env:
       DATABASE_URL: postgres://gelabber:gelabber@127.0.0.1:5432/gelabber
       REDIS_URL: redis://127.0.0.1:6379
+      MINIO_ENDPOINT: http://127.0.0.1:9000
+      MINIO_ROOT_USER: gelabber-ci
+      MINIO_ROOT_PASSWORD: gelabber-ci-test-password
     steps:
       - name: Checkout
         uses: actions/checkout@v7
+
+      - name: Login to GHCR for pinned test MinIO
+        uses: docker/login-action@v4
+        with:
+          registry: ghcr.io
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Start real pinned MinIO for storage regressions
+        env:
+          MINIO_RELEASE: RELEASE.2025-10-15T17-29-55Z
+        run: |
+          set -euo pipefail
+          repo="$(echo '${{ github.repository }}' | tr '[:upper:]' '[:lower:]')"
+          pin="ghcr.io/${repo}/minio:${MINIO_RELEASE}"
+          grep -F "MINIO_RELEASE: ${MINIO_RELEASE}" deploy/compose/compose.yaml
+          grep -F "ghcr.io/${repo}/minio:${MINIO_RELEASE}" deploy/compose/compose.yaml
+          docker pull "$pin"
+          docker run -d --name gelabber-rust-minio -p 127.0.0.1:9000:9000 \
+            -e MINIO_ROOT_USER -e MINIO_ROOT_PASSWORD -e MINIO_API_CORS_ALLOW_ORIGIN='*' "$pin" server /data
+          deadline=$((SECONDS + 120))
+          until curl -fsS "$MINIO_ENDPOINT/minio/health/ready" >/dev/null; do
+            if [ "$SECONDS" -ge "$deadline" ]; then
+              echo "Required MinIO did not become ready within 120s"
+              exit 1
+            fi
+            sleep 2
+          done
 
       - name: Rust toolchain
         uses: dtolnay/rust-toolchain@1.98.1
@@ -78,7 +112,67 @@ jobs:
         run: python3 -m unittest discover -s deploy/compose/tests -v
 
       - name: Test workspace
-        run: cargo test --locked --workspace --all-targets
+        run: |
+          set -euo pipefail
+          test -n "$MINIO_ENDPOINT"
+          test -n "$MINIO_ROOT_USER"
+          test -n "$MINIO_ROOT_PASSWORD"
+          curl -fsS "$MINIO_ENDPOINT/minio/health/ready" >/dev/null
+          cargo test --locked --workspace --all-targets
+
+      - name: Build owned API for real core fault acceptance
+        run: cargo build --locked -p gelabber-api
+
+      - name: Node for owned core fault acceptance
+        uses: actions/setup-node@v4
+        with:
+          node-version: 26.8.2
+          cache: npm
+          cache-dependency-path: web/package-lock.json
+
+      - name: Install real browsers and SQL fixture client
+        run: |
+          set -euo pipefail
+          sudo apt-get update
+          sudo apt-get install -y postgresql-client
+          npm ci --prefix web
+          cd web
+          npx playwright install --with-deps chromium firefox
+
+      - name: Prepare dedicated fault database, bucket and immutable API copy
+        run: node web/scripts/e2e/ci-fault-prepare.mjs
+
+      - name: Real app chat, upload, epoch, outbox and storage faults
+        run: |
+          set -euo pipefail
+          failed=0
+          for engine in chromium firefox; do
+            if ! GELABBER_E2E_BROWSER="$engine" GELABBER_E2E_PROFILE=core-faults \
+              GELABBER_E2E_REPORT="/tmp/gelabber-e2e/${engine}-core-faults.json" \
+              node web/scripts/e2e/fault-run.mjs; then
+              failed=1
+            fi
+          done
+          exit "$failed"
+
+      - name: Upload redacted owned fault results
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: app-acceptance-core-faults
+          path: /tmp/gelabber-e2e/*.json
+          if-no-files-found: warn
+
+      - name: Dump test MinIO logs
+        if: failure()
+        run: docker logs gelabber-rust-minio
+
+      - name: Stop owned test MinIO
+        if: always()
+        run: |
+          if docker container inspect gelabber-rust-minio >/dev/null 2>&1; then
+            docker rm -f gelabber-rust-minio
+          fi
 
   web:
     name: Frontend
@@ -106,6 +200,14 @@ jobs:
       - name: Test
         run: npm test
 
+      - name: Test native E2E harness boundaries
+        run: |
+          npm run test:e2e-harness
+          node scripts/smoke-netem.checks.mjs
+          node scripts/e2e/faults.checks.mjs
+          node --experimental-vm-modules scripts/e2e/teardown.checks.mjs
+          node --experimental-vm-modules scripts/e2e/ci-fault-prepare.checks.mjs
+
       - name: Build
         run: npm run build
 
@@ -129,7 +231,31 @@ jobs:
 
       - name: Env
         working-directory: deploy/compose
-        run: cp .env.example .env
+        run: |
+          set -euo pipefail
+          cp .env.example .env
+          # Firefox's native ICE path needs a real local IPv4, as in the
+          # approved local runtime. This changes only this ephemeral CI stack.
+          # No addresses or env contents are printed into acceptance evidence.
+          python3 - <<'PY'
+          import ipaddress
+          import socket
+          from pathlib import Path
+          with socket.socket(socket.AF_INET, socket.SOCK_DGRAM) as probe:
+              probe.connect(("192.0.2.1", 9))  # route selection; sends no UDP packet
+              address = probe.getsockname()[0]
+          ip = ipaddress.IPv4Address(address)
+          assert not ip.is_loopback and not ip.is_unspecified
+          path = Path(".env")
+          overrides = {
+              "MEDIA_ADVERTISED_IP": address,
+              "TURN_PUBLIC_HOST": address,
+              "TURN_EXTERNAL_IP": address,
+          }
+          lines = [line for line in path.read_text().splitlines()
+                   if line.partition("=")[0] not in overrides]
+          path.write_text("\n".join(lines + [f"{key}={value}" for key, value in overrides.items()]) + "\n")
+          PY
 
       # Issue 37 asks to build api/web/media. `--build` on `up` also compiles
       # MinIO from source (Go module fetch flakes). Pull the GHCR CE pin
@@ -196,7 +322,7 @@ jobs:
         working-directory: web
         run: |
           npm ci
-          npx playwright install --with-deps chromium
+          npx playwright install --with-deps chromium firefox
 
       - name: Two-browser voice and TURN smoke
         working-directory: web
@@ -206,6 +332,56 @@ jobs:
           test -n "$media_container"
           export GELABBER_SMOKE_MEDIA_PID="$(docker inspect --format '{{.State.Pid}}' "$media_container")"
           npm run test:browser-smoke
+
+      # These cases require the integrated 04/05/06/07/08 product fixes.
+      # A selected PASS is an automated subset gate, never complete live acceptance.
+      - name: Actual app media and access in Chromium and Firefox, direct and TURN
+        working-directory: web
+        run: |
+          set -euo pipefail
+          export GELABBER_E2E_WEB_SHA="$(git rev-parse HEAD)"
+          export GELABBER_E2E_API_SHA="$GELABBER_E2E_WEB_SHA"
+          export GELABBER_E2E_MEDIA_SHA="$GELABBER_E2E_WEB_SHA"
+          export GELABBER_SMOKE_URL=http://127.0.0.1
+          failed=0
+          for engine in chromium firefox; do
+            for network in direct relay; do
+              for profile in media access; do
+                if ! GELABBER_E2E_BROWSER="$engine" GELABBER_E2E_NETWORK="$network" \
+                  GELABBER_E2E_PROFILE="$profile" \
+                  GELABBER_E2E_REPORT="/tmp/gelabber-e2e/${engine}-${network}-${profile}.json" \
+                  npm run test:e2e-app; then
+                  failed=1
+                fi
+              done
+            done
+          done
+          exit "$failed"
+
+      - name: Actual app accounts, chat, DM and attachments
+        working-directory: web
+        run: |
+          set -euo pipefail
+          export GELABBER_E2E_WEB_SHA="$(git rev-parse HEAD)"
+          export GELABBER_E2E_API_SHA="$GELABBER_E2E_WEB_SHA"
+          export GELABBER_E2E_MEDIA_SHA="$GELABBER_E2E_WEB_SHA"
+          export GELABBER_SMOKE_URL=http://127.0.0.1
+          failed=0
+          for engine in chromium firefox; do
+            if ! GELABBER_E2E_BROWSER="$engine" GELABBER_E2E_PROFILE=core \
+              GELABBER_E2E_REPORT="/tmp/gelabber-e2e/${engine}-core.json" npm run test:e2e-app; then
+              failed=1
+            fi
+          done
+          exit "$failed"
+
+      - name: Upload redacted app acceptance results
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: app-acceptance-compose
+          path: /tmp/gelabber-e2e/*.json
+          if-no-files-found: warn
 
       - name: Upload browser screenshots
         if: failure()
