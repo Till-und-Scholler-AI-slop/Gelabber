@@ -42,7 +42,12 @@ the same Postgres transaction as the write. DM creation persists discovery for
 both participants in its transaction. Channel advisory transaction locks order
 writers and delivery; the database sequence allocates revisions while that
 lock is held. Delivery retries automatically, in batches of at most 32 every
-200 ms. An occupied channel is skipped so another channel can proceed. Retry
+200 ms. Each invocation examines at most 32 channel heads. A process-local cursor
+advances past busy heads across invocations, with a captured maximum revision
+per finite pass; continuous new writes cannot keep old heads from being revisited.
+The periodic worker and HTTP attempts share that cursor. Restarting the process
+restarts the scan, while every unacknowledged row stays durable. An occupied
+channel is skipped so another channel can proceed. Retry
 backoff preserves per-channel order. HTTP success means durable commit; Redis
 failure retains the outbox rather than reverting a successful database write.
 
@@ -101,3 +106,16 @@ outage, durable Redis-failure retry / duplicate acknowledgement, concurrent
 edit ordering, epoch reset, private DM discovery, and bounded slow consumers.
 There has been no Web06b or production/browser recovery acceptance in this
 worktree.
+
+The independent 32-busy-heads starvation probe was reproduced red, then fixed
+with bounded finite scan passes. A second regression keeps adding new channels
+and verifies that released older heads are revisited rather than chasing the
+growing tail forever. Logs: `/tmp/05a-fairness-before.log` and
+`/tmp/05a-fairness-after.log`. Channel lock and head recheck still preserve
+per-channel order.
+
+The isolated follow-up (without task10 WIP) passes all 21 Gateway integration
+tests, three fairness/batch regressions, and API all-targets Clippy with warnings
+denied (`/tmp/05a-fairness-final.log`, `/tmp/05a-fairness-clippy.log`). A single
+channel still delivers up to 32 events in one batch, with strictly increasing
+DB revisions.
