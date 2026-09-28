@@ -140,3 +140,29 @@ and autoplay policy were unchanged. The full basis Firefox report is preserved
 separately as `/tmp/gelabber-media-08b-firefox-full-before.json`.
 Gateway timing and independent-review reader ownership races remain open;
 this followup does not grant final runtime acceptance.
+
+## Ended-reader ownership followup
+
+The independent review's deterministic same-MSID replacement race was
+reproduced locally: the replacement nonce was accepted, but delayed old-reader
+cleanup cleared its source kind and prevented the replacement publication.
+`ended_old_reader_must_not_clear_replacement_live_handshake` fails before the
+fix (empty kind, zero publications) and passes after it (`l`, one publication).
+Its lock barrier queues the real replacement handshake before ending the old
+remote reader. Only its own Redis fixture keys are removed.
+
+Cleanup now rechecks stop status and publication life under the Room lock,
+and only mutates a receiver it still owns. Live additionally requires the same
+deadline Arc/track binding, so an accepted new nonce with the same MSID cannot
+be cleared even before the old publication's stop signal arrives. The existing
+publication-removal life guard continues to protect replacement publications.
+Live claim validation, lease deadlines and fail-closed authorization are
+unchanged. This closes the confirmed reader race; it is not evidence that the
+race caused the separate intermittent Firefox Gateway failure.
+
+Before/after logs: `/tmp/gelabber-media-reader-race-{before,after}.log`.
+All 61 media tests (including real RTC and WebSocket integrations), strict
+media Clippy, media rustfmt and build pass. Logs:
+`/tmp/gelabber-media-reader-race-{rust,clippy,build}.log`.
+Workspace-wide rustfmt also reports pre-existing formatting in foreign
+`api/tests/gateway.rs` and `shared/src/ice.rs`; these files were not changed.

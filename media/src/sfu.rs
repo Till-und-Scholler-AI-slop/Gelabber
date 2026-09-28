@@ -1389,11 +1389,27 @@ impl Sfu {
             }
             done_tx.send_replace(true);
             let mut ended_live = None;
-            if !*read_life.stop.borrow()
-                && let Some(room) = sfu.find_room(channel_id).await
-            {
+            if let Some(room) = sfu.find_room(channel_id).await {
                 let mut room = room.lock().await;
-                if let Some(peer) = room.peers.get_mut(&publisher) {
+                // A replacement handshake can win this lock while the ended
+                // reader waits. MSID alone does not identify that generation.
+                let owns_publication = !*read_life.stop.borrow()
+                    && room
+                        .pubs
+                        .get(&read_id)
+                        .is_some_and(|p| Arc::ptr_eq(&p.life, &read_life));
+                if owns_publication
+                    && let Some(peer) = room.peers.get_mut(&publisher)
+                    && peer
+                        .remote_tracks
+                        .get(&track_id)
+                        .is_some_and(|current| Arc::ptr_eq(current, &track))
+                    && live_deadline.as_ref().is_none_or(|deadline| {
+                        peer.live_claim.as_ref().is_some_and(|live| {
+                            live.track_id == track_id && Arc::ptr_eq(deadline, &live.deadline)
+                        })
+                    })
+                {
                     ended_live = peer
                         .live_claim
                         .as_ref()

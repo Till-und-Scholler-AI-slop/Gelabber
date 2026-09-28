@@ -871,3 +871,78 @@ async fn revoke_signals_publisher_stop_before_busy_sdp_cleanup() {
         .unwrap()
         .unwrap();
 }
+
+#[tokio::test]
+async fn ended_old_reader_must_not_clear_replacement_live_handshake() {
+    let redis = authority_redis();
+    let sfu = Arc::new(Sfu::with_redis(&config(), Some(redis.clone())));
+    let (claim, _lease) = authorized_fixture(&sfu, &redis).await;
+    let (out, _rx) = mpsc::unbounded_channel();
+    let peer = sfu.join_authorized(claim.clone(), out).await.unwrap();
+    let channel = claim.claim.c;
+    let old = Uuid::new_v4();
+    grant_live(&redis, &claim, old, 5000).await;
+    sfu.announce_with_claim(peer, channel, "l", Some("reuse-msid"), Some(old))
+        .await
+        .unwrap();
+    let (track, events) = remote("reuse-msid");
+    sfu.publish(peer, channel, track).await.unwrap();
+    let room = sfu.find_room(channel).await.unwrap();
+    let life = room.lock().await.pubs[&format!("{}:reuse-msid", peer.0)]
+        .life
+        .clone();
+    let new = Uuid::new_v4();
+    grant_live(&redis, &claim, new, 5000).await;
+    let guard = room.lock().await;
+    let replace = sfu.clone();
+    let replacement = tokio::spawn(async move {
+        replace
+            .announce_with_claim(peer, channel, "l", Some("reuse-msid"), Some(new))
+            .await
+    });
+    // The accepted replacement announcement queues first behind the room lock.
+    tokio::task::yield_now().await;
+    drop(events); // real publisher polling ends before its cleanup can take that lock.
+    let mut done = life.done.clone();
+    tokio::time::timeout(Duration::from_millis(500), done.wait_for(|done| *done))
+        .await
+        .unwrap()
+        .unwrap();
+    tokio::task::yield_now().await;
+    drop(guard);
+    replacement.await.unwrap().unwrap();
+    let state = {
+        let room = room.lock().await;
+        let p = &room.peers[&peer];
+        (
+            p.live_claim.as_ref().map(|l| l.nonce) == Some(new),
+            p.video_kinds.get("reuse-msid").cloned(),
+        )
+    };
+    let (next, _events) = remote("reuse-msid");
+    sfu.publish(peer, channel, next).await.unwrap();
+    let count = room.lock().await.pubs.len();
+    sfu.leave(peer, channel).await;
+    let mut conn = redis.get_multiplexed_async_connection().await.unwrap();
+    let _: () = redis::cmd("DEL")
+        .arg(format!("gb:live:{channel}"))
+        .arg(crate::live::peer_key(old))
+        .arg(crate::live::peer_key(new))
+        .query_async(&mut conn)
+        .await
+        .unwrap();
+    println!(
+        "replacement_nonce_accepted={} replacement_kind={:?} replacement_publications={} own_keys_cleaned=true",
+        state.0, state.1, count
+    );
+    assert!(state.0, "replacement nonce was accepted");
+    assert_eq!(
+        state.1.as_deref(),
+        Some("l"),
+        "old reader must not clear new publication identity"
+    );
+    assert_eq!(
+        count, 1,
+        "replacement Live must publish after accepted fresh handshake"
+    );
+}
