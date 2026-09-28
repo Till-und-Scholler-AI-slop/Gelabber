@@ -57,6 +57,36 @@ batches reached both sources three times, and multi-target FIR reached both with
 their original sequence numbers. A 100-target FIR also verified the queue bound
 of 64 routed messages. Existing media tests and strict Clippy remained green.
 
+## Production web session recovery (assignment 02)
+
+`MEDIA_CASE=recovery node media/tests/browser-lifecycle.mjs` starts an additional
+local Vite server on 15173 and imports the actual `session.ts` and media socket.
+It denies microphone capture, verifies decoded video and voice reception, starts
+one synthetic screen capture with a click, closes the media transport and rejects
+ticket requests for eight seconds. On the final 01+02 stand, Chromium 153 recovered
+in 9,156 ms and Firefox 155 in 11,946 ms. Each retained the same live capture ID,
+with one display request, one denied microphone request, no empty candidate sent
+and no reported error. Both directions decoded again; receive-only room audio
+continued. Final Leave ended the retained track. Firefox's test stats helper skips
+closed-peer SDP reads during transport replacement and final Leave.
+
+The matching capture-preservation unit regression failed before the fix. Web
+regressions cover a nine-second ticket outage, seven bounded retry attempts,
+single terminal error, leaving during a pending ticket request, timer cancellation,
+ended display capture needing a new explicit toggle, fresh TURN credentials on
+transport replacement, and receive-only audio when microphone capture is denied.
+241 Web tests, lint and build passed. Existing ICE restart recovery remains in place;
+transport replacement has seven retries, 250 ms exponential backoff capped at four
+seconds and +/-20% jitter. A new permission denial stops rather than retrying.
+
+Firefox separately reproduced an empty-string end-of-candidates object. Sending
+it caused a controlled SFU error and an initial Join rollback; Voice/Watch now skip
+it. The localhost loopback adapter did not connect in Firefox, including with the
+loopback preference. `MEDIA_BROWSER=firefox MEDIA_TEST_LAN=1` binds the isolated
+SFU to a real local interface. This is a test adapter choice, not a product ICE
+policy or WAN acceptance. Autoplay rules remain unchanged. The real AV1/PT mapping
+and reoffer regression is documented separately in `PAYLOAD_BINDING.md`.
+
 To run just that comparison against a separately started local SFU:
 
 ```sh
@@ -66,8 +96,10 @@ MEDIA_CASE=renegotiate MEDIA_RESTARTS=1 MEDIA_ICE_RESTART=0 \
 
 ## Limits
 
-This is a direct loopback SFU transport regression, not an integrated application,
-Go Live/Watch authorization, relay/WAN, Firefox/Safari, native display gesture or
+These are direct local SFU transport regressions, not an integrated application,
+Go Live/Watch authorization, relay/WAN, Safari, native display gesture or
 perceptual audio acceptance. Integrated lifecycle/Watch checks and production
-acceptance remain coordinator work. Rust barrier tests separately cover rollback
+acceptance remain coordinator work. Fresh TURN credentials are covered by ticket
+replacement regressions, not a long-running real TURN expiry trial. Rust barrier
+tests separately cover rollback
 serialization, last-leave/join and port release only after close finishes.

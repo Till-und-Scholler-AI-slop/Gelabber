@@ -31,6 +31,12 @@ const origin = `http://127.0.0.1:${server.address().port}`;
 const mediaSource = readFileSync(new URL('../../web/src/voice/media.ts', import.meta.url), 'utf8');
 const identitySource = stripTypeScriptTypes(mediaSource.slice(mediaSource.indexOf('export function publishedTrackIds'), mediaSource.indexOf('export type MediaServerFrame')).replace('export function', 'function'));
 const browser = await (process.env.MEDIA_BROWSER === 'firefox' ? firefox : chromium).launch({ headless: true });
+let vite = null;
+if (process.env.MEDIA_CASE === 'recovery') {
+  const { createServer: createVite } = await import('../../web/node_modules/vite/dist/node/index.js');
+  vite = await createVite({ root: new URL('../../web', import.meta.url).pathname, server: { host: '127.0.0.1', port: 15173, strictPort: true, cors: true, hmr: false } });
+  await vite.listen();
+}
 const alphabet = 'abcdefghjkmnpqrstuvwxyz23456789';
 async function mint(user, channel, owner) {
   const ticket = Array.from(randomBytes(12), n => alphabet[n % alphabet.length]).join('');
@@ -200,6 +206,82 @@ async function decoded(page, count, budget = 10000) {
   return pollStats(page, stats => stats.videos.filter(v => v.frames > (before.videos.find(old => old.mid === v.mid)?.frames ?? 0)).length >= count, budget);
 }
 
+async function productionReceiver(user, channel, owner) {
+  const page = await browser.newPage();
+  await page.goto(origin);
+  await page.exposeFunction('freshTicket', () => mint(user, channel, owner));
+  await page.evaluate(async ({ wsUrl, channel, owner, user }) => {
+    const session = await import('http://127.0.0.1:15173/src/voice/session.ts');
+    const media = await import('http://127.0.0.1:15173/src/voice/media.ts');
+    const peers = [];
+    let socket, capture, displayCalls = 0, micCalls = 0, emptyCandidates = 0;
+    const videos = new Map();
+    session.useVoice.subscribe(state => {
+      for (const source of Object.values(state.remote)) for (const stream of Object.values(source)) {
+        if (!stream || videos.has(stream.id)) continue;
+        const element = document.createElement('video');
+        element.muted = true; element.autoplay = true; element.srcObject = stream;
+        document.body.append(element); videos.set(stream.id, element);
+        void element.play();
+      }
+    });
+    session.configureVoice({
+      userId: () => user,
+      gateway: { send() {}, onSig: () => () => {}, onErr: () => () => {}, onReady: () => () => {} },
+      createPeer: iceServers => {
+        const pc = new RTCPeerConnection({ iceServers });
+        const apply = pc.setRemoteDescription.bind(pc);
+        pc.setRemoteDescription = async description => {
+          try { await apply(description); }
+          catch (error) { window.recoveryErrors.push(`${error.name}: ${error.message}`); throw error; }
+        };
+        peers.push(pc); return pc;
+      },
+      getUserMedia: async () => { micCalls++; throw new DOMException('test microphone permission denied', 'NotAllowedError'); },
+      getDisplayMedia: async () => {
+        displayCalls++;
+        const canvas = document.createElement('canvas'); canvas.width = 160; canvas.height = 100;
+        const context = canvas.getContext('2d'); let frame = 0;
+        setInterval(() => { context.fillStyle = `rgb(${frame++ % 255},140,30)`; context.fillRect(0,0,160,100); }, 50);
+        capture = canvas.captureStream(15);
+        return capture;
+      },
+      fetchTicket: async () => {
+        if (Date.now() < (window.offlineUntil ?? 0)) throw new Error('local API outage');
+        return { ticket: await window.freshTicket(), media_path: '/media/ws', ice_servers: [] };
+      },
+      openMedia: () => {
+        socket = media.openMediaSocket(wsUrl);
+        const send = socket.send.bind(socket);
+        socket.send = frame => { if (frame.op === 'i' && !frame.ice) emptyCandidates++; send(frame); };
+        return socket;
+      },
+      onError: error => { window.recoveryErrors.push(error.message); },
+    });
+    window.recoveryErrors = [];
+    window.call = {
+      join: () => session.joinVoice({ serverId: owner, channelId: channel, channelName: 'Local regression' }),
+      share: () => session.toggleShare(),
+      breakTransport: () => { window.offlineUntil = Date.now() + 8000; socket.close(); },
+      leave: () => session.leaveVoice(),
+      async stats() {
+        const pc = peers.at(-1); let report = new Map();
+        try { if (pc && pc.signalingState !== 'closed') report = await pc.getStats(); }
+        catch (error) { if (error.name !== 'InvalidStateError' && pc?.connectionState !== 'closed') throw error; }
+        const videos = []; let audioBytes = 0;
+        for (const entry of report.values()) {
+          if (entry.type === 'inbound-rtp' && entry.kind === 'video') videos.push({ frames: entry.framesDecoded, keyframes: entry.keyFramesDecoded, bytes: entry.bytesReceived, mid: entry.mid });
+          if (entry.type === 'inbound-rtp' && entry.kind === 'audio') audioBytes += entry.bytesReceived;
+        }
+        return { videos, audioBytes, peers: peers.length, connected: pc?.connectionState === 'connected', displayCalls, micCalls, emptyCandidates, sdp: pc?.signalingState === 'closed' ? [] : pc?.remoteDescription?.sdp.split('\r\n').filter(l => /^(m=video|a=mid:|a=rtpmap:)/.test(l)), captureId: capture?.getVideoTracks()[0].id, captureState: capture?.getVideoTracks()[0].readyState, errors: window.recoveryErrors, localScreenId: session.useVoice.getState().localScreen?.getVideoTracks()[0].id };
+      },
+    };
+    document.querySelector('#start').onclick = () => window.call.join();
+  }, { wsUrl, channel, owner, user });
+  await page.click('#start');
+  return page;
+}
+
 try {
   for (let i = 0; i < 100; i++) {
     try { if ((await fetch(wsUrl.replace('ws:', 'http:').replace('/media/ws', '/media/ready'))).ok) break; } catch {}
@@ -208,6 +290,38 @@ try {
   }
   const channel = randomUUID(), owner = randomUUID(), publisher = randomUUID();
   const a = await peer(publisher, channel, owner, true);
+  if (process.env.MEDIA_CASE === 'recovery') {
+    await a.waitForFunction(() => call.pc.signalingState === 'stable');
+    await a.evaluate(() => call.start('v'));
+    const b = await productionReceiver(randomUUID(), channel, owner);
+    let first;
+    try { first = await decoded(b, 1); } catch (error) {
+      console.log(JSON.stringify({ phase: 'recovery-setup', publisher: await a.evaluate(() => call.stats()), subscriber: await b.evaluate(() => call.stats()) }));
+      throw error;
+    }
+    assert(first.audioBytes > 0, 'mic-denied receiver must receive voice');
+    assert.equal(first.micCalls, 1);
+    await b.evaluate(() => { document.querySelector('#start').onclick = () => call.share(); });
+    await b.click('#start');
+    await decoded(a, 1);
+    const before = await b.evaluate(() => call.stats());
+    const started = Date.now();
+    await b.evaluate(() => call.breakTransport());
+    await pollStats(b, stats => stats.peers >= 2 && stats.connected, 20000);
+    await decoded(a, 1);
+    const after = await decoded(b, 1);
+    const recoveryMs = Date.now() - started;
+    assert(recoveryMs < 20000);
+    assert.equal(after.captureId, before.captureId);
+    assert.equal(after.localScreenId, before.captureId);
+    assert.equal(after.captureState, 'live');
+    assert.equal(after.displayCalls, 1);
+    assert.equal(after.micCalls, 1);
+    assert.deepEqual(after.errors, []);
+    await b.evaluate(() => call.leave());
+    assert.equal((await b.evaluate(() => call.stats())).captureState, 'ended');
+    console.log(JSON.stringify({ browser: browser.version(), case: 'production-session-recovery', recoveryMs, first, before, after }, null, 2));
+  } else {
   const b = await peer(randomUUID(), channel, owner);
   // Deliberately publish in a different order than v/s/l. Each source must remain tagged.
   // Wait for the initial answer before the deliberately rejected offer.
@@ -288,8 +402,10 @@ try {
   }
   console.log(JSON.stringify({ browser: browser.version(), reuse, first, restarted, late, lateMs, after, unicode, stopped }, null, 2));
   }
+  }
 } finally {
   await browser.close();
+  await vite?.close();
   await new Promise(resolve => server.close(resolve));
   if (media) { media.kill('SIGTERM'); await new Promise(resolve => media.once('exit', resolve)); }
 }

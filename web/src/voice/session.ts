@@ -30,7 +30,7 @@ import {
   requestMediaTicket,
   tuneAudioSdp,
 } from "./media.ts";
-import { type IceCand, MediaPeer } from "./mediaPeer.ts";
+import { type IceCand, MediaPeer, MediaRetry } from "./mediaPeer.ts";
 import {
   attachDiagnostics,
   defaultCaps,
@@ -288,6 +288,8 @@ let seatEpoch = 0;
 let watchEpoch = 0;
 let seatReconnectTimer: ReturnType<typeof setTimeout> | null = null;
 let watchReconnectTimer: ReturnType<typeof setTimeout> | null = null;
+const seatRetry = new MediaRetry();
+const watchRetry = new MediaRetry();
 
 function clearRecovery(slot: RecoverySlot): void {
   slot.recovery = null;
@@ -859,7 +861,7 @@ function onReady(): void {
   });
   // Rebuild only when the media transport has actually closed or failed.
   if (keepMedia) return;
-  void startPeer(state.serverId, state.channelId);
+  scheduleSeatRebuild();
 }
 
 function stopTracks(stream: MediaStream | null): void {
@@ -1013,7 +1015,28 @@ function noteIceState(
   }
 }
 
-function stopPeer(): void {
+function hasLiveTrack(
+  stream: MediaStream | null,
+  kind: "audio" | "video",
+): boolean {
+  return Boolean(
+    stream
+      ?.getTracks()
+      .some((track) => track.kind === kind && track.readyState !== "ended"),
+  );
+}
+
+function stopPeer(preserveCapture = false): void {
+  seatRetry.cancel(!preserveCapture);
+  if (preserveCapture) {
+    for (const [kind, stream] of [
+      ["v", cameraStream],
+      ["s", screenStream],
+      ["l", liveStream],
+    ] as const) {
+      if (stream && !hasLiveTrack(stream, "video")) stopLocalVideo(kind);
+    }
+  }
   streamReported = false;
   seatEpoch += 1;
   clearSeatReconnectTimer();
@@ -1038,26 +1061,45 @@ function stopPeer(): void {
   pendingMicRaw.clear();
   for (const stream of pendingCameraStreams) stopTracks(stream);
   pendingCameraStreams.clear();
-  stopTracks(localStream);
-  stopTracks(rawMicStream);
-  stopTracks(cameraStream);
-  stopTracks(screenStream);
-  stopTracks(liveStream);
-  disposeMicGain();
-  localStream = null;
-  rawMicStream = null;
-  cameraStream = null;
-  screenStream = null;
-  liveStream = null;
+  if (
+    !preserveCapture ||
+    !hasLiveTrack(localStream, "audio") ||
+    (rawMicStream && !hasLiveTrack(rawMicStream, "audio"))
+  ) {
+    stopTracks(localStream);
+    stopTracks(rawMicStream);
+    disposeMicGain();
+    localStream = null;
+    rawMicStream = null;
+  }
+  if (!preserveCapture || !hasLiveTrack(cameraStream, "video")) {
+    stopTracks(cameraStream);
+    cameraStream = null;
+  }
+  if (!preserveCapture || !hasLiveTrack(screenStream, "video")) {
+    stopTracks(screenStream);
+    screenStream = null;
+  }
+  if (!preserveCapture || !hasLiveTrack(liveStream, "video")) {
+    stopTracks(liveStream);
+    liveStream = null;
+  }
   remoteMix = null;
   clearReceived();
   if (remoteAudio) {
     remoteAudio.srcObject = null;
   }
   useVoice.setState({
-    localCamera: null,
-    localScreen: null,
-    localLive: null,
+    localCamera: cameraStream,
+    localScreen: screenStream,
+    localLive: liveStream,
+    ...(preserveCapture
+      ? {
+          camera: !!cameraStream,
+          sharing: !!screenStream,
+          live: !!liveStream,
+        }
+      : {}),
     remote: {},
   });
 }
@@ -2121,7 +2163,9 @@ async function applyRemoteDescription(
   if (!current()) return;
   seat.negotiated = true;
   if (type === "answer") {
-    openPublish = openPublish.filter((identity) => !offeredPublish.includes(identity));
+    openPublish = openPublish.filter(
+      (identity) => !offeredPublish.includes(identity),
+    );
     offeredPublish = [];
   }
   if (seat.needOffer || owesIceRestart(seatRecoverySlot, mine)) {
@@ -2167,7 +2211,7 @@ function restartSeatTransport(
     options?.allowReconnect !== false,
   );
   if (action === "reconnect") {
-    void startPeer(state.serverId, state.channelId);
+    scheduleSeatRebuild();
     return;
   }
   if (action === "ignore") return;
@@ -2187,7 +2231,7 @@ function restartSeatTransport(
           return;
         }
         if (seat.generation !== mine) return;
-        void startPeer(latest.serverId, latest.channelId);
+        scheduleSeatRebuild();
       },
     );
   } else {
@@ -2209,6 +2253,7 @@ function onSeatConnectionChange(mine: number): void {
     return;
   }
   if (transportRecovered(pc)) {
+    seatRetry.cancel();
     clearSeatReconnectTimer();
     clearRecovery(seatRecoverySlot);
     return;
@@ -2248,7 +2293,7 @@ function restartWatchTransport(
     options?.allowReconnect !== false,
   );
   if (action === "reconnect") {
-    void startWatchPeer(state.watchChannelId);
+    scheduleWatchRebuild(state.watchChannelId);
     return;
   }
   if (action === "ignore") return;
@@ -2263,7 +2308,7 @@ function restartWatchTransport(
         const latest = useVoice.getState();
         if (!latest.watching || latest.watchChannelId !== channelId) return;
         if (watchCall.generation !== mine) return;
-        void startWatchPeer(channelId);
+        scheduleWatchRebuild(channelId);
       },
     );
   } else {
@@ -2285,6 +2330,7 @@ function onWatchConnectionChange(mine: number): void {
     return;
   }
   if (transportRecovered(pc)) {
+    watchRetry.cancel();
     clearWatchReconnectTimer();
     clearRecovery(watchRecoverySlot);
     return;
@@ -2328,6 +2374,11 @@ function onMediaFrame(frame: MediaServerFrame): void {
       return;
     }
     if (frame.e === "unavailable") {
+      if (seatRetry.active) {
+        stopPeer(true);
+        scheduleSeatRebuild();
+        return;
+      }
       deps?.onError?.(new Error("Kein freier Sprachplatz."));
       // Drop this attempt, its queued signaling, and the local capture.
       // Unpublish what this attempt already announced, then close the
@@ -2972,16 +3023,54 @@ async function offerIfStable(
   });
 }
 
-async function startPeer(serverId: string, channelId: string): Promise<void> {
+function scheduleSeatRebuild(): void {
+  const state = useVoice.getState();
+  if (state.status !== "joined" || !state.serverId || !state.channelId) return;
+  const mine = seat.generation;
+  seatRetry.schedule(
+    () => {
+      const current = useVoice.getState();
+      if (
+        seat.generation !== mine ||
+        current.serverId !== state.serverId ||
+        current.channelId !== state.channelId ||
+        current.status !== "joined"
+      )
+        return;
+      void startPeer(state.serverId!, state.channelId!, true);
+    },
+    () =>
+      rollbackSeat(
+        new Error(
+          "Die Sprachverbindung konnte nicht wiederhergestellt werden. Bitte erneut beitreten.",
+        ),
+      ),
+  );
+}
+
+function retryableTicketError(error: unknown): boolean {
+  return (
+    !(error instanceof ApiError) ||
+    ["network", "timeout", "internal", "rate_limited"].includes(error.code)
+  );
+}
+
+async function startPeer(
+  serverId: string,
+  channelId: string,
+  recovering = false,
+): Promise<void> {
   const mine = seat.generation + 1;
   const resumeCamera = useVoice.getState().camera;
   const resumeShare = useVoice.getState().sharing;
   const resumeLive = useVoice.getState().live;
-  stopPeer();
+  stopPeer(recovering);
   seat.generation = mine;
-  if (resumeCamera) useVoice.setState({ camera: true });
-  if (resumeShare) useVoice.setState({ sharing: true });
-  if (resumeLive) useVoice.setState({ live: true });
+  if (!recovering) {
+    if (resumeCamera) useVoice.setState({ camera: true });
+    if (resumeShare) useVoice.setState({ sharing: true });
+    if (resumeLive) useVoice.setState({ live: true });
+  }
   const fetchTicket = deps?.fetchTicket ?? requestMediaTicket;
   const openMedia = deps?.openMedia ?? openMediaSocket;
   const createPeer = deps?.createPeer ?? defaultCreatePeer;
@@ -3004,12 +3093,17 @@ async function startPeer(serverId: string, channelId: string): Promise<void> {
         if (state.status !== "joined" || !state.serverId || !state.channelId) {
           return;
         }
-        void startPeer(state.serverId, state.channelId);
+        scheduleSeatRebuild();
       },
     );
     seat.send({ op: "j", tk: ticket.ticket });
   } catch (error) {
     if (seat.generation !== mine) return;
+    if (recovering && retryableTicketError(error)) {
+      stopPeer(true);
+      scheduleSeatRebuild();
+      return;
+    }
     rollbackSeat(error);
     return;
   }
@@ -3034,7 +3128,7 @@ async function startPeer(serverId: string, channelId: string): Promise<void> {
   };
   pc.onicecandidate = (event) => {
     if (seat.generation !== mine) return;
-    if (!event.candidate) return;
+    if (!event.candidate?.candidate) return;
     seat.send({
       op: "i",
       ice: event.candidate.candidate,
@@ -3046,67 +3140,86 @@ async function startPeer(serverId: string, channelId: string): Promise<void> {
     attachIncoming(event.track, event.streams[0]);
   };
 
-  const micRequest = ++micEpoch;
-  try {
-    const stream = await getUserMedia({
-      audio: micConstraints(),
-      video: false,
+  if (hasLiveTrack(localStream, "audio")) {
+    for (const track of localStream!.getAudioTracks())
+      pc.addTrack?.(track, localStream!);
+    applyLocalAudio();
+    announced.add("a");
+    deps?.gateway.send({
+      op: "sig",
+      t: "p",
+      s: serverId,
+      c: channelId,
+      k: "a",
     });
-    if (seat.generation !== mine) {
-      stopTracks(stream);
-      return;
-    }
-    if (micEpoch !== micRequest) {
-      stopTracks(stream);
-      // A newer refreshMic owns capture; continue without this stream.
-    } else {
-      disableAudio(stream);
-      pendingMicRaw.add(stream);
-      const { send, insert } = buildMicCandidate(stream);
-      await enqueueAudioCommit(async () => {
-        if (
-          seat.generation !== mine ||
-          micEpoch !== micRequest ||
-          seat.pc !== pc
-        ) {
-          insert?.dispose();
-          stopTracks(stream);
-          pendingMicRaw.delete(stream);
-          return;
-        }
-        rawMicStream = stream;
-        localStream = send;
-        activeMicGain = insert;
-        pendingMicRaw.delete(stream);
-        send.getAudioTracks().forEach((track) => hintTrack(track, "speech"));
-        applyLocalAudio();
-        for (const track of send.getTracks()) {
-          pc.addTrack?.(track, send);
-        }
-        try {
-          await applySendBitrate();
-        } catch {
-          // bitrate is best-effort
-        }
-        preferOpus(pc);
-        preferVp8(pc);
-        const self = currentUserId();
-        if (self && useVoice.getState().channelId === channelId) {
-          setPub(self, "a", true);
-        }
-        announced.add("a");
-        deps?.gateway.send({
-          op: "sig",
-          t: "p",
-          s: serverId,
-          c: channelId,
-          k: "a",
-        });
+    await applySendBitrate().catch(() => undefined);
+  } else if (!recovering) {
+    const micRequest = ++micEpoch;
+    try {
+      const stream = await getUserMedia({
+        audio: micConstraints(),
+        video: false,
       });
+      if (seat.generation !== mine) {
+        stopTracks(stream);
+        return;
+      }
+      if (micEpoch !== micRequest) {
+        stopTracks(stream);
+        // A newer refreshMic owns capture; continue without this stream.
+      } else {
+        disableAudio(stream);
+        pendingMicRaw.add(stream);
+        const { send, insert } = buildMicCandidate(stream);
+        await enqueueAudioCommit(async () => {
+          if (
+            seat.generation !== mine ||
+            micEpoch !== micRequest ||
+            seat.pc !== pc
+          ) {
+            insert?.dispose();
+            stopTracks(stream);
+            pendingMicRaw.delete(stream);
+            return;
+          }
+          rawMicStream = stream;
+          localStream = send;
+          activeMicGain = insert;
+          pendingMicRaw.delete(stream);
+          send.getAudioTracks().forEach((track) => hintTrack(track, "speech"));
+          applyLocalAudio();
+          for (const track of send.getTracks()) {
+            pc.addTrack?.(track, send);
+          }
+          try {
+            await applySendBitrate();
+          } catch {
+            // bitrate is best-effort
+          }
+          preferOpus(pc);
+          preferVp8(pc);
+          const self = currentUserId();
+          if (self && useVoice.getState().channelId === channelId) {
+            setPub(self, "a", true);
+          }
+          announced.add("a");
+          deps?.gateway.send({
+            op: "sig",
+            t: "p",
+            s: serverId,
+            c: channelId,
+            k: "a",
+          });
+        });
+      }
+    } catch {
+      // Listening still needs an audio m-line carrying ICE credentials.
     }
-  } catch {
-    // No mic — still send an offer so ICE can run.
   }
+
+  if (seat.generation !== mine) return;
+  if (!hasLiveTrack(localStream, "audio"))
+    pc.addTransceiver?.("audio", { direction: "recvonly" });
 
   if (seat.generation !== mine) return;
   const pending = useVoice.getState();
@@ -3119,20 +3232,33 @@ async function startPeer(serverId: string, channelId: string): Promise<void> {
   if (pending.localLive) {
     await publishLocal("l", pending.localLive);
   }
-  if ((pending.camera || resumeCamera) && !useVoice.getState().localCamera) {
+  if (
+    !recovering &&
+    (pending.camera || resumeCamera) &&
+    !useVoice.getState().localCamera
+  ) {
     void startLocalVideo("v");
   }
-  if ((pending.sharing || resumeShare) && !useVoice.getState().localScreen) {
+  if (
+    !recovering &&
+    (pending.sharing || resumeShare) &&
+    !useVoice.getState().localScreen
+  ) {
     void startLocalVideo("s");
   }
-  if ((pending.live || resumeLive) && !useVoice.getState().localLive) {
+  if (
+    !recovering &&
+    (pending.live || resumeLive) &&
+    !useVoice.getState().localLive
+  ) {
     void startLocalVideo("l");
   }
   if (seat.generation !== mine) return;
   await offerIfStable(mine, { initial: true });
 }
 
-function stopWatchPeer(): void {
+function stopWatchPeer(preserveRetry = false): void {
+  watchRetry.cancel(!preserveRetry);
   watchReported = false;
   watchEpoch += 1;
   clearWatchReconnectTimer();
@@ -3397,9 +3523,36 @@ async function watchOfferIfStable(
   });
 }
 
-async function startWatchPeer(channelId: string): Promise<void> {
+function scheduleWatchRebuild(channelId: string): void {
+  const mine = watchCall.generation;
+  watchRetry.schedule(
+    () => {
+      const state = useVoice.getState();
+      if (
+        watchCall.generation !== mine ||
+        !state.watching ||
+        state.watchChannelId !== channelId
+      )
+        return;
+      void startWatchPeer(channelId, true);
+    },
+    () => {
+      stopWatching();
+      deps?.onError?.(
+        new Error(
+          "Der Stream konnte nicht wieder verbunden werden. Bitte erneut ansehen.",
+        ),
+      );
+    },
+  );
+}
+
+async function startWatchPeer(
+  channelId: string,
+  recovering = false,
+): Promise<void> {
   const mine = watchCall.generation + 1;
-  stopWatchPeer();
+  stopWatchPeer(recovering);
   watchCall.generation = mine;
   const fetchTicket = deps?.fetchTicket ?? requestMediaTicket;
   const openMedia = deps?.openMedia ?? openMediaSocket;
@@ -3420,13 +3573,18 @@ async function startWatchPeer(channelId: string): Promise<void> {
         if (watchCall.generation !== mine) return;
         const state = useVoice.getState();
         if (state.watching && state.watchChannelId === channelId) {
-          void startWatchPeer(channelId);
+          scheduleWatchRebuild(channelId);
         }
       },
     );
     watchCall.send({ op: "j", tk: ticket.ticket });
   } catch (error) {
     if (watchCall.generation !== mine) return;
+    if (recovering && retryableTicketError(error)) {
+      stopWatchPeer(true);
+      scheduleWatchRebuild(channelId);
+      return;
+    }
     stopWatching();
     deps?.onError?.(error);
     return;
@@ -3457,7 +3615,7 @@ async function startWatchPeer(channelId: string): Promise<void> {
   preferVp8(pc);
   pc.onicecandidate = (event) => {
     if (watchCall.generation !== mine) return;
-    if (!event.candidate) return;
+    if (!event.candidate?.candidate) return;
     watchCall.send({
       op: "i",
       ice: event.candidate.candidate,
