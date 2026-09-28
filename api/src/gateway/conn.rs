@@ -11,6 +11,7 @@ use uuid::Uuid;
 
 use super::hub::ConnId;
 use super::protocol::{CatchUp, ClientFrame, PresenceStatus, ServerFrame, Topic};
+use crate::auth::session::CurrentSession;
 use crate::auth::user::User;
 use crate::error::ApiError;
 use crate::servers::channel::{self, ChannelKind};
@@ -28,9 +29,18 @@ enum FrameEffect {
     Idle,
 }
 
-pub async fn run(socket: WebSocket, state: AppState, user: User) {
+pub async fn run(socket: WebSocket, state: AppState, session: CurrentSession) {
+    let user = &session.user;
     let (tx, mut rx) = mpsc::unbounded_channel();
-    let conn = state.gateway.attach(user.id, tx).await;
+    let (conn, mut revoked) = state
+        .gateway
+        .attach_session(user.id, session.key(), tx)
+        .await;
+    let expiry = (session.expires_at - chrono::Utc::now())
+        .to_std()
+        .unwrap_or_default();
+    let expired = tokio::time::sleep(expiry);
+    tokio::pin!(expired);
     debug!(user_id = %user.id, "ws connected");
 
     let mut last_client = Instant::now();
@@ -41,12 +51,24 @@ pub async fn run(socket: WebSocket, state: AppState, user: User) {
     // The first tick fires immediately; skip it so we do not heartbeat
     // before the client has had a chance to subscribe.
     beat.tick().await;
+    let mut security = tokio::time::interval(std::time::Duration::from_secs(1));
+    security.set_missed_tick_behavior(tokio::time::MissedTickBehavior::Delay);
+    security.tick().await;
 
     let (mut sink, mut stream) = socket.split();
 
     loop {
         tokio::select! {
+            biased;
+            _ = revoked.changed() => break,
+            _ = &mut expired => break,
+            _ = security.tick() => {
+                let Ok(Ok(Some(mut session_guard))) = tokio::time::timeout(std::time::Duration::from_secs(1), session.lock_live(&state.db)).await else { break; };
+                if state.gateway.reconcile_access(conn, &mut session_guard).await.is_err() { break; }
+            }
             incoming = stream.next() => {
+                let Ok(Ok(Some(mut session_guard))) = tokio::time::timeout(std::time::Duration::from_secs(1), session.lock_live(&state.db)).await else { break; };
+                if state.gateway.reconcile_access(conn, &mut session_guard).await.is_err() { break; }
                 match incoming {
                     Some(Ok(Message::Text(text))) => {
                         last_client = Instant::now();
@@ -54,7 +76,7 @@ pub async fn run(socket: WebSocket, state: AppState, user: User) {
                             let _ = send(&mut sink, ServerFrame::error("bad_request", None, None)).await;
                             continue;
                         }
-                        match handle_text(&state, &user, conn, &text, &mut sink).await {
+                        match handle_text(&state, &mut session_guard, user, conn, &text, &mut sink).await {
                             Ok(FrameEffect::Liveness) => {
                                 let _ = state.gateway.touch_presence(conn).await;
                             }
@@ -77,7 +99,7 @@ pub async fn run(socket: WebSocket, state: AppState, user: User) {
                     }
                     Some(Ok(Message::Ping(payload))) => {
                         last_client = Instant::now();
-                        if sink.send(Message::Pong(payload)).await.is_err() {
+                        if !matches!(tokio::time::timeout(std::time::Duration::from_secs(1), sink.send(Message::Pong(payload))).await, Ok(Ok(()))) {
                             break;
                         }
                     }
@@ -89,6 +111,8 @@ pub async fn run(socket: WebSocket, state: AppState, user: User) {
                 }
             }
             _ = beat.tick() => {
+                let Ok(Ok(Some(mut session_guard))) = tokio::time::timeout(std::time::Duration::from_secs(1), session.lock_live(&state.db)).await else { break; };
+                if state.gateway.reconcile_access(conn, &mut session_guard).await.is_err() { break; }
                 if last_client.elapsed() >= state.ws_dead {
                     debug!(user_id = %user.id, "ws silent death");
                     break;
@@ -103,6 +127,10 @@ pub async fn run(socket: WebSocket, state: AppState, user: User) {
             }
             frame = rx.recv() => {
                 let Some(frame) = frame else { break };
+                let Ok(Ok(Some(mut session_guard))) = tokio::time::timeout(std::time::Duration::from_secs(1), session.lock_live(&state.db)).await else { break; };
+                if state.gateway.reconcile_access(conn, &mut session_guard).await.is_err() { break; }
+                if !state.gateway.wants_frame(conn, &frame).await { continue; }
+                if !frame_allowed(&mut session_guard, user.id, &frame).await.unwrap_or(false) { continue; }
                 if send(&mut sink, frame).await.is_err() {
                     break;
                 }
@@ -110,6 +138,11 @@ pub async fn run(socket: WebSocket, state: AppState, user: User) {
         }
     }
 
+    let _ = tokio::time::timeout(
+        std::time::Duration::from_secs(1),
+        sink.send(Message::Close(None)),
+    )
+    .await;
     if let Some((user_id, servers, typing)) = state.gateway.detach(conn).await {
         state
             .gateway
@@ -121,6 +154,7 @@ pub async fn run(socket: WebSocket, state: AppState, user: User) {
 
 async fn handle_text(
     state: &AppState,
+    db: &mut sqlx::PgConnection,
     user: &User,
     conn: ConnId,
     text: &str,
@@ -142,7 +176,7 @@ async fn handle_text(
             Ok(FrameEffect::Liveness)
         }
         ClientFrame::Subscribe { s, c, n } => {
-            subscribe(state, user, conn, s, c, n, sink).await?;
+            subscribe(state, db, user, conn, (s, c), n, sink).await?;
             Ok(FrameEffect::Activity)
         }
         ClientFrame::Unsubscribe { s, c } => {
@@ -150,7 +184,7 @@ async fn handle_text(
             Ok(FrameEffect::Activity)
         }
         ClientFrame::Sig { .. } => {
-            super::signal::handle(state, user, conn, frame, sink).await?;
+            super::signal::handle(state, db, user, conn, frame, sink).await?;
             Ok(FrameEffect::Activity)
         }
         ClientFrame::Presence { st } => Ok(match st {
@@ -158,7 +192,7 @@ async fn handle_text(
             _ => FrameEffect::Activity,
         }),
         ClientFrame::Typing { s, c, on } => {
-            typing(state, user, conn, s, c, on, sink).await?;
+            typing(state, db, user, conn, (s, c), on, sink).await?;
             Ok(FrameEffect::Activity)
         }
     }
@@ -166,14 +200,31 @@ async fn handle_text(
 
 async fn subscribe(
     state: &AppState,
+    db: &mut sqlx::PgConnection,
     user: &User,
     conn: ConnId,
-    server_id: Uuid,
-    channel_id: Option<Uuid>,
+    scope: (Uuid, Option<Uuid>),
     resume_n: Option<u64>,
     sink: &mut futures_util::stream::SplitSink<WebSocket, Message>,
 ) -> Result<(), ApiError> {
-    match authorize(&state.db, user.id, server_id, channel_id).await {
+    let (server_id, channel_id) = scope;
+    let _guard = if channel_id.is_some_and(|cid| cid == server_id) {
+        None // DM authorization below still verifies participants.
+    } else {
+        match membership::lock_server_conn(db, server_id, false).await {
+            Ok(()) => Some(()),
+            Err(ApiError::NotFound) => {
+                send(
+                    sink,
+                    ServerFrame::error("not_found", Some(server_id), channel_id),
+                )
+                .await?;
+                return Ok(());
+            }
+            Err(err) => return Err(err),
+        }
+    };
+    match authorize(&mut *db, user.id, server_id, channel_id).await {
         Ok(()) => {}
         Err(ApiError::NotFound) => {
             send(
@@ -186,6 +237,12 @@ async fn subscribe(
         Err(other) => return Err(other),
     }
 
+    if _guard.is_some() {
+        state
+            .gateway
+            .bind_server(conn, &mut *db, server_id, user.id)
+            .await?;
+    }
     state.gateway.watch_server(conn, server_id).await;
     let topic = Topic::of(server_id, channel_id);
     state.gateway.begin_catch_up(conn, topic).await;
@@ -228,14 +285,31 @@ async fn subscribe(
 
 async fn typing(
     state: &AppState,
+    db: &mut sqlx::PgConnection,
     user: &User,
     conn: ConnId,
-    server_id: Uuid,
-    channel_id: Uuid,
+    scope: (Uuid, Uuid),
     on: bool,
     sink: &mut futures_util::stream::SplitSink<WebSocket, Message>,
 ) -> Result<(), ApiError> {
-    match authorize(&state.db, user.id, server_id, Some(channel_id)).await {
+    let (server_id, channel_id) = scope;
+    let _guard = if channel_id == server_id {
+        None
+    } else {
+        match membership::lock_server_conn(db, server_id, false).await {
+            Ok(()) => Some(()),
+            Err(ApiError::NotFound) => {
+                send(
+                    sink,
+                    ServerFrame::error("not_found", Some(server_id), Some(channel_id)),
+                )
+                .await?;
+                return Ok(());
+            }
+            Err(err) => return Err(err),
+        }
+    };
+    match authorize(&mut *db, user.id, server_id, Some(channel_id)).await {
         Ok(()) => {}
         Err(ApiError::NotFound) => {
             send(
@@ -258,29 +332,70 @@ async fn typing(
 /// id. Same 404 semantics as the REST API: unknown and foreign are
 /// indistinguishable.
 async fn authorize(
-    db: &sqlx::PgPool,
+    db: &mut sqlx::PgConnection,
     user_id: Uuid,
     server_id: Uuid,
     channel_id: Option<Uuid>,
 ) -> Result<(), ApiError> {
     let Some(channel_id) = channel_id else {
-        membership::load(db, server_id, user_id).await?;
+        membership::load(&mut *db, server_id, user_id).await?;
         return Ok(());
     };
-    let channel = channel::get(db, channel_id)
+    let channel = channel::get(&mut *db, channel_id)
         .await?
         .ok_or(ApiError::NotFound)?;
     if channel.kind == ChannelKind::Dm {
         if server_id != channel.id {
             return Err(ApiError::NotFound);
         }
-        return channel::require_participant(db, channel.id, user_id).await;
+        let participant: bool = sqlx::query_scalar(
+            "SELECT EXISTS (SELECT 1 FROM channel_members WHERE channel_id = $1 AND user_id = $2)",
+        )
+        .bind(channel.id)
+        .bind(user_id)
+        .fetch_one(&mut *db)
+        .await?;
+        return if participant {
+            Ok(())
+        } else {
+            Err(ApiError::NotFound)
+        };
     }
     if channel.server_id != Some(server_id) {
         return Err(ApiError::NotFound);
     }
-    membership::load(db, server_id, user_id).await?;
+    membership::load(&mut *db, server_id, user_id).await?;
     Ok(())
+}
+
+/// Check at dequeue time too: already queued events cannot leak after removal.
+async fn frame_allowed(
+    db: &mut sqlx::PgConnection,
+    user_id: Uuid,
+    frame: &ServerFrame,
+) -> Result<bool, ApiError> {
+    let scope = match frame {
+        ServerFrame::Event { s, c, .. } | ServerFrame::Sig { s, c, .. } => Some((*s, *c)),
+        ServerFrame::Presence { s, .. } => Some((*s, None)),
+        ServerFrame::Typing { s, c, .. } => Some((*s, Some(*c))),
+        _ => None,
+    };
+    if let Some((sid, cid)) = scope {
+        if cid != Some(sid) {
+            match membership::lock_server_conn(db, sid, false).await {
+                Ok(()) => {}
+                Err(ApiError::NotFound) => return Ok(false),
+                Err(err) => return Err(err),
+            }
+        }
+        match authorize(db, user_id, sid, cid).await {
+            Ok(()) => Ok(true),
+            Err(ApiError::NotFound) => Ok(false),
+            Err(err) => Err(err),
+        }
+    } else {
+        Ok(true)
+    }
 }
 
 pub(super) async fn send(
@@ -290,7 +405,11 @@ pub(super) async fn send(
     let json = frame
         .to_json()
         .map_err(|err| ApiError::Internal(format!("serialize ws frame: {err}")))?;
-    sink.send(Message::Text(Utf8Bytes::from(json)))
-        .await
-        .map_err(|err| ApiError::Internal(format!("ws send: {err}")))
+    tokio::time::timeout(
+        std::time::Duration::from_secs(1),
+        sink.send(Message::Text(Utf8Bytes::from(json))),
+    )
+    .await
+    .map_err(|_| ApiError::Internal("ws send timed out".into()))?
+    .map_err(|err| ApiError::Internal(format!("ws send: {err}")))
 }

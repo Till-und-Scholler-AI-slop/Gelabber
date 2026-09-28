@@ -33,7 +33,10 @@ pub async fn create(db: &PgPool, user_id: Uuid, ttl: Duration) -> Result<String,
 
 /// Resolves a raw cookie token to its user. Expired rows are treated as
 /// absent (and cleaned up opportunistically by `revoke`).
-pub async fn resolve(db: &PgPool, raw: &str) -> Result<Option<User>, ApiError> {
+pub async fn resolve<'e, E: sqlx::Executor<'e, Database = sqlx::Postgres>>(
+    db: E,
+    raw: &str,
+) -> Result<Option<User>, ApiError> {
     if !token::is_valid(raw) {
         return Ok(None);
     }
@@ -95,4 +98,78 @@ pub async fn reload(db: &PgPool, id: Uuid) -> Result<User, ApiError> {
     user::by_id(db, id)
         .await?
         .ok_or_else(|| ApiError::Internal(format!("user {id} vanished mid-request")))
+}
+
+/// The exact session that authorized a long-lived connection or media ticket.
+/// The cookie itself never leaves the extractor.
+#[derive(Debug, Clone)]
+pub struct CurrentSession {
+    pub user: User,
+    pub hash: Vec<u8>,
+    pub expires_at: chrono::DateTime<Utc>,
+}
+
+impl CurrentSession {
+    pub fn key(&self) -> String {
+        fingerprint(&self.hash)
+    }
+
+    pub async fn lock_live<'a>(
+        &self,
+        db: &'a PgPool,
+    ) -> Result<Option<sqlx::Transaction<'a, sqlx::Postgres>>, ApiError> {
+        let mut tx = db.begin().await?;
+        let exists: Option<Vec<u8>> = sqlx::query_scalar("SELECT token_hash FROM sessions WHERE token_hash = $1 AND user_id = $2 AND expires_at > now() FOR SHARE")
+            .bind(&self.hash).bind(self.user.id).fetch_optional(&mut *tx).await?;
+        Ok(exists.map(|_| tx))
+    }
+}
+
+impl FromRequestParts<AppState> for CurrentSession {
+    type Rejection = ApiError;
+
+    async fn from_request_parts(parts: &mut Parts, state: &AppState) -> Result<Self, ApiError> {
+        let raw = cookies::get(&parts.headers, SESSION_COOKIE)
+            .filter(|raw| token::is_valid(raw))
+            .ok_or(ApiError::Unauthenticated)?;
+        let hash = token::hash(&raw);
+        #[derive(sqlx::FromRow)]
+        struct Row {
+            #[sqlx(flatten)]
+            user: User,
+            expires_at: chrono::DateTime<Utc>,
+        }
+        let row = sqlx::query_as::<_, Row>(
+            "SELECT u.id, u.email, u.name, u.avatar_url, u.created_at, s.expires_at FROM sessions s JOIN users u ON u.id = s.user_id WHERE s.token_hash = $1 AND s.expires_at > now()",
+        ).bind(&hash).fetch_optional(&state.db).await?.ok_or(ApiError::Unauthenticated)?;
+        let Row { user, expires_at } = row;
+        Ok(Self {
+            user,
+            hash,
+            expires_at,
+        })
+    }
+}
+
+/// Stable Redis identifier for the stored hash, never the raw cookie token.
+pub fn fingerprint(hash: &[u8]) -> String {
+    hash.iter().map(|byte| format!("{byte:02x}")).collect()
+}
+
+/// Delete first, then notify only sockets/tickets bound to that session hash.
+/// Database revalidation also covers other API instances and a lost notification.
+pub async fn revoke_current(state: &AppState, raw: Option<&str>) -> Result<(), ApiError> {
+    let Some(hash) = raw.filter(|raw| token::is_valid(raw)).map(token::hash) else {
+        return Ok(());
+    };
+    // The targeted DB revoke is durable even if Redis is unavailable. No other
+    // session's expired-row cleanup delays this logout.
+    sqlx::query("DELETE FROM sessions WHERE token_hash = $1")
+        .bind(&hash)
+        .execute(&state.db)
+        .await?;
+    let key = fingerprint(&hash);
+    state.gateway.revoke_session(&key).await;
+    crate::media::cleanup_session(state.redis.clone(), key).await;
+    Ok(())
 }

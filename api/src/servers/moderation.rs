@@ -63,17 +63,25 @@ async fn kick_member(
     Id(server_id): Id,
     Body(body): Body<TargetBody>,
 ) -> Result<StatusCode, ApiError> {
-    let actor = membership::load(&state.db, server_id, user.id).await?;
+    let mut tx = membership::lock_server(&state.db, server_id, true).await?;
+    let actor = membership::load(&mut *tx, server_id, user.id).await?;
     actor.require(Permission::ManageServer)?;
     let target_id = parse_target(&body.user_id)?;
     guard_target(&actor, user.id, target_id)?;
 
-    let removed = delete_membership(&state.db, server_id, target_id).await?;
+    let removed = sqlx::query("DELETE FROM server_members WHERE server_id = $1 AND user_id = $2")
+        .bind(server_id)
+        .bind(target_id)
+        .execute(&mut *tx)
+        .await?
+        .rows_affected()
+        > 0;
     if !removed {
         return Err(ApiError::NotFound);
     }
     info!(server_id = %server_id, user_id = %target_id, "member kicked");
-    after_removal(&state, server_id, target_id, "kicked").await;
+    after_removal(&state, &mut tx, server_id, target_id, "kicked").await?;
+    tx.commit().await?;
     Ok(StatusCode::NO_CONTENT)
 }
 
@@ -83,13 +91,13 @@ async fn ban_member(
     Id(server_id): Id,
     Body(body): Body<TargetBody>,
 ) -> Result<StatusCode, ApiError> {
-    let actor = membership::load(&state.db, server_id, user.id).await?;
+    let mut tx = membership::lock_server(&state.db, server_id, true).await?;
+    let actor = membership::load(&mut *tx, server_id, user.id).await?;
     actor.require(Permission::ManageServer)?;
     let target_id = parse_target(&body.user_id)?;
     guard_target(&actor, user.id, target_id)?;
-    ensure_user_exists(&state.db, target_id).await?;
+    ensure_user_exists(&mut tx, target_id).await?;
 
-    let mut tx = state.db.begin().await?;
     sqlx::query("DELETE FROM server_members WHERE server_id = $1 AND user_id = $2")
         .bind(server_id)
         .bind(target_id)
@@ -104,9 +112,9 @@ async fn ban_member(
     .bind(user.id)
     .execute(&mut *tx)
     .await?;
-    tx.commit().await?;
     info!(server_id = %server_id, user_id = %target_id, "member banned");
-    after_removal(&state, server_id, target_id, "banned").await;
+    after_removal(&state, &mut tx, server_id, target_id, "banned").await?;
+    tx.commit().await?;
     Ok(StatusCode::NO_CONTENT)
 }
 
@@ -162,7 +170,7 @@ fn guard_target(actor: &Membership, actor_id: Uuid, target_id: Uuid) -> Result<(
     Ok(())
 }
 
-async fn ensure_user_exists(db: &PgPool, user_id: Uuid) -> Result<(), ApiError> {
+async fn ensure_user_exists(db: &mut sqlx::PgConnection, user_id: Uuid) -> Result<(), ApiError> {
     let exists: bool = sqlx::query_scalar("SELECT EXISTS (SELECT 1 FROM users WHERE id = $1)")
         .bind(user_id)
         .fetch_one(db)
@@ -172,16 +180,6 @@ async fn ensure_user_exists(db: &PgPool, user_id: Uuid) -> Result<(), ApiError> 
     } else {
         Err(ApiError::NotFound)
     }
-}
-
-async fn delete_membership(db: &PgPool, server_id: Uuid, user_id: Uuid) -> Result<bool, ApiError> {
-    let deleted = sqlx::query("DELETE FROM server_members WHERE server_id = $1 AND user_id = $2")
-        .bind(server_id)
-        .bind(user_id)
-        .execute(db)
-        .await?
-        .rows_affected();
-    Ok(deleted > 0)
 }
 
 pub async fn is_banned(db: &PgPool, server_id: Uuid, user_id: Uuid) -> Result<bool, ApiError> {
@@ -195,16 +193,21 @@ pub async fn is_banned(db: &PgPool, server_id: Uuid, user_id: Uuid) -> Result<bo
     Ok(banned)
 }
 
-async fn after_removal(state: &AppState, server_id: Uuid, user_id: Uuid, reason: &'static str) {
+pub(super) async fn after_removal(
+    state: &AppState,
+    db: &mut sqlx::PgConnection,
+    server_id: Uuid,
+    user_id: Uuid,
+    reason: &'static str,
+) -> Result<(), ApiError> {
     let channel_ids: Vec<Uuid> = sqlx::query_scalar("SELECT id FROM channels WHERE server_id = $1")
         .bind(server_id)
-        .fetch_all(&state.db)
-        .await
-        .unwrap_or_default();
+        .fetch_all(db)
+        .await?;
     state
         .gateway
         .revoke_server(user_id, server_id, &channel_ids, reason)
-        .await;
+        .await?;
     if let Err(err) = state
         .gateway
         .forget_server_presence(user_id, server_id)
@@ -217,6 +220,9 @@ async fn after_removal(state: &AppState, server_id: Uuid, user_id: Uuid, reason:
             reason,
             "presence cleanup after removal failed"
         );
+    }
+    if !matches!(reason, "kicked" | "banned") {
+        return Ok(());
     }
     if let Err(err) = publish_server(
         state,
@@ -234,4 +240,5 @@ async fn after_removal(state: &AppState, server_id: Uuid, user_id: Uuid, reason:
             "gateway publish after removal failed"
         );
     }
+    Ok(())
 }
