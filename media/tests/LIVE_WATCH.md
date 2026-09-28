@@ -116,3 +116,27 @@ speech and isolated UDP-loss quality remain outside this local basis. Shaping
 all eth0 traffic also shapes Redis TCP and must trigger the unchanged fail-closed
 authority deadline; it cannot serve as isolated media-loss evidence. No service
 push, release, deployment or production action was performed here.
+
+## BUNDLE-only followup
+
+The Firefox camera/screen failure was reproduced in isolation. The actual local
+offer has Live on port 9, camera and screen on port 0 **with a=bundle-only** and
+active sendrecv directions. The SFU accepts those sections on the BUNDLE
+transport, but both identity parsers previously discarded them as rejected.
+Only one video identity remained registered and those incoming tracks failed
+`bad announce`. This is a confirmed signaling/identity cause, not a codec pin.
+
+Web/SFU now include port-zero bundle-only video only when its MID belongs to a
+BUNDLE group with an existing nonzero-port transport anchor. A plain rejected
+port-zero section, missing group/anchor, recvonly and inactive sections remain
+excluded. The new Web regression fails before this change; Rust checks the
+equivalent native-offer shape. 33 media library tests, strict media Clippy,
+120 targeted Web media/session tests, lint and build pass.
+
+Actual App camera + screen + Live now passes in both Firefox155 and Chromium153:
+`/tmp/gelabber-media-bundle-{firefox,chromium}.json`. Each source is checked by
+decoded and changing rendered frames with its expected canvas color. Assertions
+and autoplay policy were unchanged. The full basis Firefox report is preserved
+separately as `/tmp/gelabber-media-08b-firefox-full-before.json`.
+Gateway timing and independent-review reader ownership races remain open;
+this followup does not grant final runtime acceptance.

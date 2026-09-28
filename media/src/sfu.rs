@@ -1300,10 +1300,17 @@ impl Sfu {
                 return Err(SfuError::Forbidden);
             }
             let tag = if kind == RtpCodecKind::Video {
-                peer.video_kinds
-                    .get(&track_id)
-                    .cloned()
-                    .ok_or(SfuError::BadAnnounce)?
+                match peer.video_kinds.get(&track_id).cloned() {
+                    Some(tag) => tag,
+                    None => {
+                        warn!(
+                            track_identity_empty = track_id.is_empty(),
+                            announced_video_count = peer.video_kinds.len(),
+                            "publisher track has no announced MSID binding"
+                        );
+                        return Err(SfuError::BadAnnounce);
+                    }
+                }
             } else {
                 "a".into()
             };
@@ -1889,15 +1896,48 @@ async fn refresh_subscriber_bindings(
 /// Sending video MSIDs in SDP order, excluding rejected/recvonly/inactive sections.
 fn video_sources(sdp: &str) -> Vec<String> {
     let mut sources = Vec::new();
+    let sections: Vec<Vec<_>> = sdp
+        .split("\nm=")
+        .skip(1)
+        .map(|section| section.lines().map(str::trim).collect())
+        .collect();
+    let bundles: Vec<Vec<_>> = sdp
+        .lines()
+        .filter_map(|line| line.trim().strip_prefix("a=group:BUNDLE "))
+        .map(|group| group.split_whitespace().collect())
+        .collect();
     for section in sdp.split("\nm=").skip(1) {
         let mut lines = section.lines().map(str::trim);
         let Some(media) = lines.next() else {
             continue;
         };
-        if !media.starts_with("video ") || media.split_whitespace().nth(1) == Some("0") {
+        if !media.starts_with("video ") {
             continue;
         }
         let lines = lines.collect::<Vec<_>>();
+        if media.split_whitespace().nth(1) == Some("0") {
+            let mid = lines.iter().find_map(|line| line.strip_prefix("a=mid:"));
+            let bundled = lines.contains(&"a=bundle-only")
+                && mid.is_some_and(|mid| {
+                    bundles.iter().any(|group| {
+                        group.contains(&mid)
+                            && group.first().is_some_and(|master| {
+                                sections.iter().any(|section| {
+                                    section
+                                        .iter()
+                                        .any(|line| line.strip_prefix("a=mid:") == Some(*master))
+                                        && section
+                                            .first()
+                                            .and_then(|media| media.split_whitespace().nth(1))
+                                            != Some("0")
+                                })
+                            })
+                    })
+                });
+            if !bundled {
+                continue;
+            }
+        }
         if lines
             .iter()
             .any(|l| matches!(*l, "a=recvonly" | "a=inactive"))
@@ -2368,6 +2408,23 @@ mod tests {
     };
     use rtc::rtp::packet::Packet;
     use std::sync::Arc;
+
+    #[test]
+    fn bundle_only_video_uses_its_live_bundle_transport() {
+        let sdp = "v=0\r\na=group:BUNDLE audio camera screen removed\r\nm=audio 9 UDP/TLS/RTP/SAVPF 111\r\na=mid:audio\r\nm=video 0 UDP/TLS/RTP/SAVPF 96\r\na=mid:camera\r\na=bundle-only\r\na=sendrecv\r\na=msid:camera-stream camera-track\r\nm=video 0 UDP/TLS/RTP/SAVPF 96\r\na=mid:screen\r\na=bundle-only\r\na=sendonly\r\na=msid:screen-stream screen-track\r\nm=video 0 UDP/TLS/RTP/SAVPF 96\r\na=mid:removed\r\na=msid:removed-stream removed-track\r\n";
+        assert_eq!(super::video_sources(sdp), ["camera-track", "screen-track"]);
+        assert!(
+            super::video_sources(
+                &sdp.replace("a=group:BUNDLE audio camera screen removed\r\n", "")
+            )
+            .is_empty()
+        );
+        assert!(super::video_sources(&sdp.replace("m=audio 9", "m=audio 0")).is_empty());
+        assert_eq!(
+            super::video_sources(&sdp.replace("a=sendrecv", "a=recvonly")),
+            ["screen-track"]
+        );
+    }
 
     #[test]
     fn payload_binding_uses_exact_mid_and_codec_profile() {

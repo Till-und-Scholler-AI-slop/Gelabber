@@ -132,6 +132,25 @@ describe("media socket lifecycle", () => {
 });
 
 describe("publisher SDP identity", () => {
+  it("accepts port-zero bundle-only senders only with a live BUNDLE transport", () => {
+    const sdp =
+      "v=0\r\na=group:BUNDLE audio camera screen rejected\r\nm=audio 9 UDP/TLS/RTP/SAVPF 111\r\na=mid:audio\r\nm=video 0 UDP/TLS/RTP/SAVPF 96\r\na=mid:camera\r\na=bundle-only\r\na=sendrecv\r\na=msid:camera-stream camera-track\r\nm=video 0 UDP/TLS/RTP/SAVPF 96\r\na=mid:screen\r\na=bundle-only\r\na=sendonly\r\na=msid:screen-stream screen-track\r\nm=video 0 UDP/TLS/RTP/SAVPF 96\r\na=mid:rejected\r\na=msid:removed-stream removed-track\r\n";
+    expect([...publishedTrackIds(sdp)]).toEqual([
+      ["camera", "camera-track"],
+      ["screen", "screen-track"],
+    ]);
+    expect([
+      ...publishedTrackIds(
+        sdp.replace("a=group:BUNDLE audio camera screen rejected\r\n", ""),
+      ),
+    ]).toEqual([]);
+    expect([
+      ...publishedTrackIds(sdp.replace("m=audio 9", "m=audio 0")),
+    ]).toEqual([]);
+    expect([
+      ...publishedTrackIds(sdp.replace("a=sendrecv", "a=recvonly")),
+    ]).toEqual([["screen", "screen-track"]]);
+  });
   it("maps active video MID to its MSID, not its capture track ID", () => {
     const sdp =
       "v=0\r\nm=video 9 UDP/TLS/RTP/SAVPF 96\r\na=mid:2\r\na=msid:new-stream retained-track\r\nm=video 9 UDP/TLS/RTP/SAVPF 96\r\na=mid:3\r\na=recvonly\r\na=msid:old-stream stopped-track\r\n";

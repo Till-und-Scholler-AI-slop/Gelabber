@@ -32,12 +32,33 @@ export type MediaClientFrame =
  * preserve an older MSID even when the capture MediaStreamTrack.id changes). */
 export function publishedTrackIds(sdp: string): Map<string, string> {
   const bindings = new Map<string, string>();
-  for (const section of sdp.split(/\r?\nm=/).slice(1)) {
-    const lines = section.split(/\r?\n/);
+  const parts = sdp.split(/\r?\nm=/);
+  const sections = parts.slice(1).map((section) => section.split(/\r?\n/));
+  const groups = parts[0]!
+    .split(/\r?\n/)
+    .filter((line) => line.startsWith("a=group:BUNDLE "))
+    .map((line) => line.slice(15).trim().split(/\s+/));
+  for (const lines of sections) {
     if (!lines[0]?.startsWith("video ")) continue;
-    if (lines[0]?.split(/\s+/)[1] === "0") continue;
-    if (lines.includes("a=recvonly") || lines.includes("a=inactive")) continue;
     const mid = lines.find((line) => line.startsWith("a=mid:"))?.slice(6);
+    if (
+      lines[0]?.split(/\s+/)[1] === "0" &&
+      !(
+        mid &&
+        lines.includes("a=bundle-only") &&
+        groups.some(
+          (group) =>
+            group.includes(mid) &&
+            sections.some(
+              (master) =>
+                master.includes(`a=mid:${group[0]}`) &&
+                master[0]?.split(/\s+/)[1] !== "0",
+            ),
+        )
+      )
+    )
+      continue;
+    if (lines.includes("a=recvonly") || lines.includes("a=inactive")) continue;
     const msid =
       lines.find((line) => line.startsWith("a=msid:"))?.slice(7) ??
       lines.find((line) => /^a=ssrc:\d+ msid:/.test(line))?.split(" msid:")[1];
