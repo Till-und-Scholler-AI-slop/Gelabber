@@ -198,6 +198,8 @@ struct Published {
 struct Subscription {
     sender: Arc<dyn RtpSender>,
     task: tokio::task::JoinHandle<()>,
+    codec: RTCRtpCodec,
+    payload_type: watch::Sender<Option<u8>>,
 }
 
 impl Drop for Subscription {
@@ -476,29 +478,64 @@ impl Sfu {
             }
             return Err(SfuError::negotiation(err));
         }
+        let accepted_answer;
         if as_offer {
+            for state in gate.subscriptions.values() {
+                if let SubscriptionState::Active(sub) = state
+                    && let Some(mid) = sender_mid(&pc, &sub.sender).await
+                    && let Some(pt) = negotiated_payload_type(&sdp_text, &mid, &sub.codec)
+                {
+                    limit_forward_codec_with_pt(&pc, &sub.sender, &sub.codec, pt).await;
+                }
+            }
             let result = async {
                 let answer = pc.create_answer(None).await?;
                 let before = *gathered.borrow();
                 pc.set_local_description(answer).await?;
                 let local = local_sdp_after_gather(&pc, &gathered, before)
                     .await
-                    .ok_or_else(|| webrtc::error::Error::ErrUnknownType)?;
-                out.send(ServerFrame::Answer { sdp: local })
-                    .map_err(|_| webrtc::error::Error::ErrUnknownType)?;
-                Ok::<(), webrtc::error::Error>(())
+                    .ok_or(webrtc::error::Error::ErrUnknownType)?;
+                let mut answer = RTCSessionDescription::answer(local)?;
+                // The pinned media engine keeps its earlier PTs on reoffer.
+                // Answers must use the PT offered on this exact subscriber MID.
+                for state in gate.subscriptions.values() {
+                    if let SubscriptionState::Active(sub) = state
+                        && let Some(mid) = sender_mid(&pc, &sub.sender).await
+                        && let Some(offered_pt) =
+                            negotiated_payload_type(&sdp_text, &mid, &sub.codec)
+                        && let Some(answer_pt) =
+                            negotiated_payload_type(&answer.sdp, &mid, &sub.codec)
+                        && offered_pt != answer_pt
+                    {
+                        answer = remap_answer_payload(answer, &mid, answer_pt, offered_pt)?;
+                    }
+                }
+                // Local SDP munging is rejected by this pinned core. The wire
+                // answer uses the offer's PTs; refresh_subscriber_bindings also
+                // reconciles the concrete sender before any RTP is released.
+                out.send(ServerFrame::Answer {
+                    sdp: answer.sdp.clone(),
+                })
+                .map_err(|_| webrtc::error::Error::ErrUnknownType)?;
+                Ok::<RTCSessionDescription, webrtc::error::Error>(answer)
             }
             .await;
-            if let Err(err) = result {
-                if let Ok(rollback) = RTCSessionDescription::rollback(None) {
-                    let _ = pc.set_remote_description(rollback).await;
+            accepted_answer = match result {
+                Ok(answer) => Some(answer),
+                Err(err) => {
+                    if let Ok(rollback) = RTCSessionDescription::rollback(None) {
+                        let _ = pc.set_remote_description(rollback).await;
+                    }
+                    return Err(SfuError::negotiation(err));
                 }
-                return Err(SfuError::negotiation(err));
-            }
+            };
             gate.negotiated = true;
+        } else {
+            accepted_answer = pc.remote_description().await;
         }
         gate.have_local_offer = false;
         gate.offered.clear();
+        refresh_subscriber_bindings(&pc, &gate, accepted_answer.as_ref()).await;
         let queued_ice = std::mem::take(&mut gate.pending_ice);
         flush_ice(&pc, peer_id, queued_ice).await;
         self.negotiate_locked(&pc, &out, &gathered, &mut gate).await;
@@ -1216,10 +1253,17 @@ impl Sfu {
                 }
             };
             limit_forward_codec(pc, &sender, &publication.codec).await;
-            let task = spawn_forwarder(local, ssrc, publication, self.stats.clone());
+            let (payload_type, binding) = watch::channel(None);
+            let codec = publication.codec.clone();
+            let task = spawn_forwarder(local, ssrc, publication, binding, self.stats.clone());
             gate.subscriptions.insert(
                 id.clone(),
-                SubscriptionState::Active(Subscription { sender, task }),
+                SubscriptionState::Active(Subscription {
+                    sender,
+                    task,
+                    codec,
+                    payload_type,
+                }),
             );
             gate.offered.insert(id);
             gate.dirty = true;
@@ -1318,9 +1362,18 @@ async fn limit_forward_codec(
     sender: &Arc<dyn RtpSender>,
     codec: &RTCRtpCodec,
 ) {
+    limit_forward_codec_with_pt(pc, sender, codec, 0).await;
+}
+
+async fn limit_forward_codec_with_pt(
+    pc: &Arc<dyn PeerConnection>,
+    sender: &Arc<dyn RtpSender>,
+    codec: &RTCRtpCodec,
+    payload_type: u8,
+) {
     let preference = RTCRtpCodecParameters {
         rtp_codec: codec.clone(),
-        ..Default::default()
+        payload_type,
     };
     for transceiver in pc.get_transceivers().await {
         if !transceiver
@@ -1342,6 +1395,156 @@ async fn limit_forward_codec(
                 "forward codec preference skipped"
             );
         }
+    }
+}
+
+async fn sender_mid(pc: &Arc<dyn PeerConnection>, sender: &Arc<dyn RtpSender>) -> Option<String> {
+    for transceiver in pc.get_transceivers().await {
+        if transceiver
+            .sender()
+            .await
+            .ok()
+            .flatten()
+            .is_some_and(|s| s.id() == sender.id())
+        {
+            return transceiver.mid().await.ok().flatten();
+        }
+    }
+    None
+}
+
+/// Resolve only the sender's MID and the publication codec in the actual SDP.
+/// Sender get_parameters() can expose preferences rather than the negotiated
+/// binding after a reoffer in the pinned library. TrackLocalContext is private.
+fn negotiated_payload_type(sdp: &str, mid: &str, codec: &RTCRtpCodec) -> Option<u8> {
+    let mut parsed = RTCSessionDescription::answer(sdp.to_owned())
+        .ok()?
+        .unmarshal()
+        .ok()?;
+    parsed.media_descriptions.retain(|media| {
+        media.media_name.port.value != 0
+            && media
+                .attributes
+                .iter()
+                .any(|a| a.key == "mid" && a.value.as_deref() == Some(mid))
+            && !media.attributes.iter().any(|a| a.key == "inactive")
+    });
+    let [media] = parsed.media_descriptions.as_slice() else {
+        return None;
+    };
+    let mut candidates = Vec::new();
+    for format in &media.media_name.formats {
+        let Ok(pt) = format.parse::<u8>() else {
+            continue;
+        };
+        let Ok(bound) = parsed.get_codec_for_payload_type(pt) else {
+            continue;
+        };
+        let mime = format!("{}/{}", media.media_name.media, bound.name);
+        let channels = bound.encoding_parameters.parse::<u16>().unwrap_or(0);
+        if mime.eq_ignore_ascii_case(&codec.mime_type)
+            && bound.clock_rate == codec.clock_rate
+            && channels == codec.channels
+        {
+            candidates.push((pt, bound.fmtp));
+        }
+    }
+    let normalize = |fmtp: &str| {
+        let mut params = fmtp
+            .split(';')
+            .map(str::trim)
+            .filter(|s| !s.is_empty())
+            .collect::<Vec<_>>();
+        params.sort_unstable();
+        params.join(";")
+    };
+    let exact = candidates
+        .iter()
+        .filter(|(_, fmtp)| normalize(fmtp) == normalize(&codec.sdp_fmtp_line))
+        .collect::<Vec<_>>();
+    if let [matched] = exact.as_slice() {
+        return Some(matched.0);
+    }
+    // Opus fmtp is optional receiver tuning, not a different bitstream profile.
+    if codec.mime_type.eq_ignore_ascii_case(MIME_TYPE_OPUS) && candidates.len() == 1 {
+        return Some(candidates[0].0);
+    }
+    None
+}
+
+fn remap_answer_payload(
+    answer: RTCSessionDescription,
+    mid: &str,
+    from: u8,
+    to: u8,
+) -> Result<RTCSessionDescription, webrtc::error::Error> {
+    let mut parsed = answer.unmarshal()?;
+    for media in &mut parsed.media_descriptions {
+        if !media
+            .attributes
+            .iter()
+            .any(|a| a.key == "mid" && a.value.as_deref() == Some(mid))
+        {
+            continue;
+        }
+        for format in &mut media.media_name.formats {
+            if format == &from.to_string() {
+                *format = to.to_string();
+            }
+        }
+        for attribute in &mut media.attributes {
+            if matches!(attribute.key.as_str(), "rtpmap" | "fmtp" | "rtcp-fb")
+                && let Some(value) = &mut attribute.value
+                && let Some((pt, rest)) = value.split_once(' ')
+                && pt == from.to_string()
+            {
+                *value = format!("{to} {rest}");
+            }
+        }
+    }
+    RTCSessionDescription::answer(parsed.marshal())
+}
+
+async fn refresh_subscriber_bindings(
+    pc: &Arc<dyn PeerConnection>,
+    gate: &PeerSdp,
+    answer: Option<&RTCSessionDescription>,
+) {
+    for state in gate.subscriptions.values() {
+        let SubscriptionState::Active(sub) = state else {
+            continue;
+        };
+        let pt = match (answer, sender_mid(pc, &sub.sender).await) {
+            (Some(answer), Some(mid)) => negotiated_payload_type(&answer.sdp, &mid, &sub.codec),
+            _ => None,
+        };
+        // The pinned core can overwrite an existing sender's codec PT with
+        // another leg's mapping while setting a local answer. Reconcile that
+        // sender to its own accepted MID/codec before allowing queued RTP.
+        let pt = if let Some(pt) = pt {
+            limit_forward_codec_with_pt(pc, &sub.sender, &sub.codec, pt).await;
+            sub.sender
+                .get_parameters()
+                .await
+                .ok()
+                .and_then(|parameters| {
+                    parameters
+                        .rtp_parameters
+                        .codecs
+                        .iter()
+                        .any(|codec| {
+                            codec.payload_type == pt
+                                && codec
+                                    .rtp_codec
+                                    .mime_type
+                                    .eq_ignore_ascii_case(&sub.codec.mime_type)
+                        })
+                        .then_some(pt)
+                })
+        } else {
+            None
+        };
+        sub.payload_type.send_replace(pt);
     }
 }
 
@@ -1386,12 +1589,12 @@ fn spawn_forwarder(
     local: Arc<TrackLocalStaticRTP>,
     ssrc: u32,
     publication: Published,
+    mut binding: watch::Receiver<Option<u8>>,
     stats: Arc<SfuStats>,
 ) -> tokio::task::JoinHandle<()> {
     tokio::spawn(async move {
         let mut packets = publication.packets.subscribe();
         let mut stopped = publication.life.stop.subscribe();
-        let mut bound = false;
         let mut rtcp_open = true;
         loop {
             if *stopped.borrow() {
@@ -1400,7 +1603,14 @@ fn spawn_forwarder(
             tokio::select! {
                 biased;
                 _ = stopped.changed() => break,
-                event = local.poll(), if bound && rtcp_open && publication.keyframe.is_some() => {
+                result = binding.changed() => {
+                    if result.is_err() { break; }
+                    if binding.borrow().is_some() {
+                        rtcp_open = true;
+                        if let Some(kf) = &publication.keyframe { let _ = kf.send(()); }
+                    }
+                }
+                event = local.poll(), if binding.borrow().is_some() && rtcp_open && publication.keyframe.is_some() => {
                     match event {
                         Some(TrackLocalEvent::OnRtcpPacket(pkts)) if asks_keyframe(&pkts) => {
                             debug!(source = %publication.stream_id, "subscriber keyframe feedback");
@@ -1413,13 +1623,16 @@ fn spawn_forwarder(
                 packet = packets.recv() => {
                     match packet {
                         Ok(packet) => {
+                            // PT belongs to the negotiated subscriber leg, not
+                            // the incoming publisher packet. Never enqueue RTP
+                            // before the corresponding SDP answer was accepted.
+                            let payload_type = *binding.borrow();
+                            let Some(payload_type) = payload_type else { continue; };
                             let n = packet.payload.len() as u64;
-                            if local.write_rtp(prepare_forwarded_rtp(packet, ssrc)).await.is_ok() {
+                            let mut packet = prepare_forwarded_rtp(packet, ssrc);
+                            packet.header.payload_type = payload_type;
+                            if local.write_rtp(packet).await.is_ok() {
                                 stats.forwarded_bytes.fetch_add(n, Ordering::Relaxed);
-                                if !bound {
-                                    bound = true;
-                                    if let Some(kf) = &publication.keyframe { let _ = kf.send(()); }
-                                }
                             }
                         }
                         Err(broadcast::error::RecvError::Lagged(_)) => {},
@@ -1813,6 +2026,61 @@ mod tests {
     };
     use rtc::rtp::packet::Packet;
     use std::sync::Arc;
+
+    #[test]
+    fn payload_binding_uses_exact_mid_and_codec_profile() {
+        let sdp = "v=0\r\no=- 0 0 IN IP4 127.0.0.1\r\ns=-\r\nt=0 0\r\nm=video 9 UDP/TLS/RTP/SAVPF 96 98 99\r\na=mid:first\r\na=rtpmap:96 VP8/90000\r\na=rtpmap:98 VP9/90000\r\na=fmtp:98 profile-id=0\r\na=rtpmap:99 VP9/90000\r\na=fmtp:99 profile-id=2\r\nm=video 9 UDP/TLS/RTP/SAVPF 41 42\r\na=mid:second\r\na=rtpmap:41 VP9/90000\r\na=fmtp:41 profile-id=2\r\na=rtpmap:42 VP9/90000\r\na=fmtp:42 profile-id=0\r\n";
+        let codec = RTCRtpCodec {
+            mime_type: "video/VP9".into(),
+            clock_rate: 90000,
+            sdp_fmtp_line: "profile-id=2".into(),
+            ..Default::default()
+        };
+        assert_eq!(
+            super::negotiated_payload_type(sdp, "first", &codec),
+            Some(99)
+        );
+        assert_eq!(
+            super::negotiated_payload_type(sdp, "second", &codec),
+            Some(41)
+        );
+        assert_eq!(super::negotiated_payload_type(sdp, "missing", &codec), None);
+        let wrong = RTCRtpCodec {
+            sdp_fmtp_line: "profile-id=3".into(),
+            ..codec.clone()
+        };
+        assert_eq!(super::negotiated_payload_type(sdp, "first", &wrong), None);
+        assert_eq!(
+            super::negotiated_payload_type(
+                &sdp.replace("m=video 9", "m=video 0"),
+                "second",
+                &codec
+            ),
+            None
+        );
+        let remapped = super::remap_answer_payload(
+            webrtc::peer_connection::RTCSessionDescription::answer(sdp.to_owned()).unwrap(),
+            "second",
+            41,
+            43,
+        )
+        .unwrap();
+        assert_eq!(
+            super::negotiated_payload_type(&remapped.sdp, "first", &codec),
+            Some(99)
+        );
+        assert_eq!(
+            super::negotiated_payload_type(&remapped.sdp, "second", &codec),
+            Some(43)
+        );
+        assert!(remapped.sdp.contains("a=fmtp:43 profile-id=2"));
+        assert!(remapped.sdp.contains("a=rtpmap:42 VP9/90000"));
+        let reoffer = sdp.replace("41", "43");
+        assert_eq!(
+            super::negotiated_payload_type(&reoffer, "second", &codec),
+            Some(43)
+        );
+    }
 
     struct NoopHandler;
 

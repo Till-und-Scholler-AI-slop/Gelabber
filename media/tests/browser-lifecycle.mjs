@@ -7,22 +7,30 @@ import { createConnection } from 'node:net';
 import { spawn } from 'node:child_process';
 import { openSync, readFileSync } from 'node:fs';
 import { stripTypeScriptTypes } from 'node:module';
-import { chromium } from '../../web/node_modules/playwright/index.mjs';
+import { networkInterfaces } from 'node:os';
+import { chromium, firefox } from '../../web/node_modules/playwright/index.mjs';
 
 const redis = new URL(process.env.REDIS_URL ?? 'redis://127.0.0.1:56379');
 assert.equal(redis.hostname, '127.0.0.1', 'only the isolated local test Redis is supported');
 const wsUrl = process.env.MEDIA_WS_URL ?? 'ws://127.0.0.1:18081/media/ws';
 assert(wsUrl.startsWith('ws://127.0.0.1:'), 'local-only media test');
+const iceBind = process.env.MEDIA_TEST_LAN === '1'
+  ? `${Object.values(networkInterfaces()).flat().find(address => !address.internal && address.family === 'IPv4')?.address}:0`
+  : '127.0.0.1:0';
+assert(!iceBind.startsWith('undefined'), 'local IPv4 interface required');
 const media = process.env.MEDIA_WS_URL ? null : spawn(`${process.env.CARGO_TARGET_DIR ?? new URL('../../target', import.meta.url).pathname}/debug/gelabber-media`, [], {
-  env: { ...process.env, MEDIA_ADDR: '127.0.0.1:18081', MEDIA_ICE_BIND: '127.0.0.1:0', MEDIA_ADVERTISED_IP: '' },
+  env: { ...process.env, MEDIA_ADDR: '127.0.0.1:18081', MEDIA_ICE_BIND: iceBind, MEDIA_ADVERTISED_IP: '' },
   stdio: ['ignore', openSync('/tmp/gelabber-media-browser-sfu.log', 'w'), openSync('/tmp/gelabber-media-browser-sfu-error.log', 'w')],
 });
-const server = createServer((_req, res) => res.end('<button id="start">Start</button>'));
+const server = createServer((_req, res) => {
+  res.setHeader('Content-Type', 'text/html; charset=utf-8');
+  res.end('<button id="start">Start</button>');
+});
 await new Promise(resolve => server.listen(0, '127.0.0.1', resolve));
 const origin = `http://127.0.0.1:${server.address().port}`;
 const mediaSource = readFileSync(new URL('../../web/src/voice/media.ts', import.meta.url), 'utf8');
 const identitySource = stripTypeScriptTypes(mediaSource.slice(mediaSource.indexOf('export function publishedTrackIds'), mediaSource.indexOf('export type MediaServerFrame')).replace('export function', 'function'));
-const browser = await chromium.launch({ headless: true });
+const browser = await (process.env.MEDIA_BROWSER === 'firefox' ? firefox : chromium).launch({ headless: true });
 const alphabet = 'abcdefghjkmnpqrstuvwxyz23456789';
 async function mint(user, channel, owner) {
   const ticket = Array.from(randomBytes(12), n => alphabet[n % alphabet.length]).join('');
@@ -55,7 +63,7 @@ async function peer(user, channel, owner, microphone = false) {
     const ice = [];
     let joined;
     const ready = new Promise(resolve => joined = resolve);
-    pc.onicecandidate = event => { if (event.candidate) send({ op: 'i', ice: event.candidate.candidate, mid: event.candidate.sdpMid }); };
+    pc.onicecandidate = event => { if (event.candidate?.candidate) send({ op: 'i', ice: event.candidate.candidate, mid: event.candidate.sdpMid }); };
     pc.ontrack = event => {
       const stream = event.streams[0];
       received.set(stream.id, event.track);
@@ -209,20 +217,43 @@ try {
     assert(reuse.sameSender && reuse.differentCaptureId && reuse.retainedMsid, 'Chromium reuse regression was not exercised');
     await decoded(b, 1);
   }
-  for (const k of (reuse ? ['l', 'v'] : ['l', 's', 'v'])) await a.evaluate(k => call.start(k), k);
+  const videoCount = process.env.MEDIA_ASSERT_PT_MAPPING === '1' ? 1 : 3;
+  for (const k of (videoCount === 1 ? ['l'] : reuse ? ['l', 'v'] : ['l', 's', 'v'])) {
+    try { await a.evaluate(k => call.start(k), k); } catch (error) {
+      console.log(JSON.stringify({ phase: `publish-${k}`, publisher: await a.evaluate(() => call.stats()), subscriber: await b.evaluate(() => call.stats()) }));
+      throw error;
+    }
+  }
   let first;
-  try { first = await decoded(b, 3); } catch (error) {
+  try { first = await decoded(b, videoCount); } catch (error) {
     console.log(JSON.stringify({ publisher: await a.evaluate(() => call.stats()), subscriber: await b.evaluate(() => call.stats()) }));
     throw error;
   }
   if (process.env.MEDIA_CASE !== 'renegotiate') for (const k of ['v', 's', 'l']) assert(first.streams.includes(`${publisher}:${k}`), `missing ${k} identity`);
   assert(first.audioBytes > 0, 'voice audio must continue with video');
   console.log(JSON.stringify({ phase: 'before-renegotiation', first, publisher: await a.evaluate(() => call.stats()) }));
-  for (let i = 0; i < Number(process.env.MEDIA_RESTARTS ?? 5); i++) await b.evaluate(restart => call.offer(restart), process.env.MEDIA_ICE_RESTART !== '0');
+  for (let i = 0; i < Number(process.env.MEDIA_RESTARTS ?? 5); i++) {
+    try {
+      await b.evaluate(restart => call.offer(restart), process.env.MEDIA_ICE_RESTART !== '0');
+      if (process.env.MEDIA_ASSERT_PT_MAPPING === '1') await decoded(b, videoCount);
+    } catch (error) {
+      console.log(JSON.stringify({ phase: `reoffer-${i}`, publisher: await a.evaluate(() => call.stats()), subscriber: await b.evaluate(() => call.stats()) }));
+      throw error;
+    }
+  }
   let restarted;
-  try { restarted = await decoded(b, 3); } catch (error) {
+  try { restarted = await decoded(b, videoCount); } catch (error) {
     console.log(JSON.stringify({ phase: 'after-renegotiation', publisher: await a.evaluate(() => call.stats()), subscriber: await b.evaluate(() => call.stats()) }));
     throw error;
+  }
+  if (process.env.MEDIA_ASSERT_PT_MAPPING === '1') {
+    const source = (await a.evaluate(() => call.stats())).outgoing.filter(track => track.kind === 'video');
+    assert.equal(source.length, videoCount);
+    assert(source.every(track => track.codec === 'video/AV1' && track.pt === 99));
+    assert(first.videos.every(track => track.codec === 'video/AV1' && track.pt === 41));
+    assert(restarted.videos.every(track => track.codec === 'video/AV1' && track.pt === 99));
+    assert.equal(restarted.transceivers, videoCount + 1);
+    assert.deepEqual(restarted.errors, []);
   }
   if (process.env.MEDIA_CASE === 'renegotiate') {
     console.log(JSON.stringify({ phase: 'after-renegotiation', restarted }));
