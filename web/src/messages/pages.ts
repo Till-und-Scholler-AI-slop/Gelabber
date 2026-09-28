@@ -31,7 +31,7 @@ function compareTimestamp(a: string, b: string): number {
   return left === right ? 0 : left > right ? 1 : -1;
 }
 
-function newerMessage(current: Message, incoming: Message): Message {
+export function newerMessage(current: Message, incoming: Message): Message {
   if (current.revision !== undefined || incoming.revision !== undefined) {
     const left = current.revision ?? -1,
       right = incoming.revision ?? -1;

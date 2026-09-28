@@ -25,6 +25,7 @@ import * as remote from "./api.ts";
 import {
   applyMessageChanges,
   combineMessageChange,
+  newerMessage,
   olderCursor,
   stampOlder,
   type MessageChange,
@@ -515,37 +516,43 @@ export function editMessageOptions(client: QueryClient, channelId: string) {
       ctx: EditContext | undefined,
     ) => {
       if (!stampHolds(ctx)) return;
-      if (
-        message.revision !== undefined ||
+      const versionMatches =
         rowVersion(client, ctx.userId, ctx.generation, channelId, ctx.id) ===
-          ctx.version
-      ) {
-        if (message.revision === undefined) {
-          const current = client
-            .getQueryData<Cache>(
-              messageKeys.channel(ctx.userId, ctx.generation, channelId),
+        ctx.version;
+      // Legacy replies cannot order themselves against a newer mutation/event.
+      if (message.revision === undefined && !versionMatches) return;
+      const current = client
+        .getQueryData<Cache>(
+          messageKeys.channel(ctx.userId, ctx.generation, channelId),
+        )
+        ?.pages.flatMap((page) => page.messages)
+        .find((row) => row.id === ctx.id);
+      if (message.revision === undefined && !current) return;
+      const ownsOptimistic =
+        versionMatches &&
+        current !== undefined &&
+        current.content === ctx.optimistic?.content &&
+        current.edited_at === ctx.optimistic.edited_at;
+      // REST may replace the optimistic row with either an older or newer
+      // snapshot. Compare canonical values, never the local optimistic clock.
+      const canonical =
+        message.revision === undefined && current && !ownsOptimistic
+          ? newerMessage(current, message)
+          : message;
+      const change = recordChange(
+        client,
+        ctx.userId,
+        ctx.generation,
+        channelId,
+        { id: message.id, message: canonical, created: false },
+      );
+      patchPages(client, ctx.userId, ctx.generation, channelId, (pages) =>
+        ownsOptimistic
+          ? mapMessages(pages, (row) =>
+              row.id === ctx.id ? change.message : row,
             )
-            ?.pages.flatMap((page) => page.messages)
-            .find((row) => row.id === ctx.id);
-          // Retain the isolated07 response guard for the older API too.
-          if (
-            !current ||
-            current.content !== ctx.optimistic?.content ||
-            current.edited_at !== ctx.optimistic.edited_at
-          )
-            return;
-        }
-        const change = recordChange(
-          client,
-          ctx.userId,
-          ctx.generation,
-          channelId,
-          { id: message.id, message, created: false },
-        );
-        patchPages(client, ctx.userId, ctx.generation, channelId, (pages) =>
-          applyMessageChanges(pages, [change]),
-        );
-      }
+          : applyMessageChanges(pages, [change]),
+      );
     },
   };
 }

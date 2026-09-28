@@ -31,7 +31,7 @@ const json = (body: unknown) =>
     headers: { "Content-Type": "application/json" },
   });
 let client: QueryClient;
-let response: () => Response | Promise<Response>;
+let response: (method: string) => Response | Promise<Response>;
 function options() {
   const stamp = takeStamp()!;
   return {
@@ -68,11 +68,11 @@ beforeEach(async () => {
     json({ messages: [message("one", 1), message("two", 2)], has_more: false });
   vi.stubGlobal(
     "fetch",
-    vi.fn((input: RequestInfo | URL) =>
+    vi.fn((input: RequestInfo | URL, init: RequestInit = {}) =>
       Promise.resolve(
         String(input).includes("/auth/login")
           ? json({ user, csrf_token: "csrf" })
-          : response(),
+          : response(init.method ?? "GET"),
       ),
     ),
   );
@@ -198,3 +198,51 @@ it("confirmed HTTP delete without a body tombstones a versioned row before WS de
   await client.fetchInfiniteQuery(options());
   expect(cached()?.map((m) => m.id)).toEqual(["two"]);
 });
+
+it.each([
+  {
+    restRevision: 2,
+    restTime: "2099-01-01T00:00:00Z",
+    patchTime: "2001-01-01T00:00:00Z",
+    winner: 3,
+  },
+  {
+    restRevision: 4,
+    restTime: "2001-01-01T00:00:00Z",
+    patchTime: "2099-01-01T00:00:00Z",
+    winner: 4,
+  },
+])(
+  "PATCH revision 3 against intervening REST revision $restRevision obeys DB order",
+  async ({ restRevision, restTime, patchTime, winner }) => {
+    const { MutationObserver } = await import("@tanstack/react-query");
+    const { editMessageOptions } = await import("./queries.ts");
+    await client.fetchInfiniteQuery(options());
+    const late = held();
+    const rest = { ...message("one", restRevision), edited_at: restTime };
+    const patch = { ...message("one", 3), edited_at: patchTime };
+    response = (method) =>
+      method === "GET"
+        ? json({ messages: [rest, message("two", 2)], has_more: false })
+        : late.promise;
+    const observer = new MutationObserver(
+      client,
+      editMessageOptions(client, "channel"),
+    );
+    const done = observer.mutate({ id: "one", content: "optimistic edit" });
+    await vi.waitFor(() =>
+      expect(cached()?.[0]?.content).toBe("optimistic edit"),
+    );
+    await client.fetchInfiniteQuery(options());
+    expect(cached()?.[0]).toEqual(rest);
+    late.resolve(json(patch));
+    await done;
+    const expected = winner === 3 ? patch : rest;
+    expect(cached()?.[0]).toEqual(expected);
+    // Successful PATCH/REST also retain their floor beyond this mutation/read.
+    event("e", "one", 1, message("one", 1));
+    response = () => json({ messages: [message("one", 1)], has_more: false });
+    await client.fetchInfiniteQuery(options());
+    expect(cached()?.[0]).toEqual(expected);
+  },
+);

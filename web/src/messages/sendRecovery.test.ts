@@ -348,6 +348,60 @@ describe("per-row rollback using real mutation observers", () => {
     await done;
     expect(cached().map((r) => r.id)).toEqual(["two"]);
   });
+  it("reviewer successful PATCH must replace an older REST snapshot", async () => {
+    seed();
+    const response = held();
+    routes((key) =>
+      key.startsWith("GET ")
+        ? json(200, {
+            messages: [row("one", "one"), row("two")],
+            has_more: false,
+          })
+        : response.promise,
+    );
+    const mutation = new MutationObserver(
+      client,
+      editMessageOptions(client, "c"),
+    );
+    const done = mutation.mutate({ id: "one", content: "earlier edit" });
+    await vi.waitFor(() => expect(cached()[0]?.content).toBe("earlier edit"));
+    const stamp = takeStamp()!;
+    await client.invalidateQueries({
+      queryKey: key(),
+      exact: true,
+      refetchType: "none",
+    });
+    await client.fetchInfiniteQuery(
+      messageQueryOptions(client, stamp.userId, stamp.generation, "c"),
+    );
+    expect(cached()[0]?.content).toBe("one");
+    response.resolve(
+      json(200, {
+        ...row("one", "earlier edit"),
+        edited_at: "2026-09-28T00:00:01Z",
+      }),
+    );
+    await done;
+    expect(cached()[0]?.content).toBe("earlier edit");
+  });
+  it("settles its own optimistic clock with the canonical server edit", async () => {
+    seed();
+    const response = held();
+    routes(() => response.promise);
+    const mutation = new MutationObserver(
+      client,
+      editMessageOptions(client, "c"),
+    );
+    const done = mutation.mutate({ id: "one", content: "own edit" });
+    await vi.waitFor(() => expect(cached()[0]?.content).toBe("own edit"));
+    const canonical = {
+      ...row("one", "canonical edit"),
+      edited_at: "2026-09-28T00:00:01Z",
+    };
+    response.resolve(json(200, canonical));
+    await done;
+    expect(cached()[0]).toEqual(canonical);
+  });
   it("reviewer late PATCH response cannot replace a newer REST row", async () => {
     seed();
     const response = held();
