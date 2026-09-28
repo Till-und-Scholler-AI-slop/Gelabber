@@ -94,7 +94,7 @@ async fn run(socket: WebSocket, state: AppState) {
             }
             frame = rx.recv() => {
                 let Some(frame) = frame else { break };
-                let terminal = matches!(&frame, ServerFrame::Err { e } if *e == "unauthorized" || *e == "gone");
+                let terminal = matches!(&frame, ServerFrame::Err { e, .. } if *e == "unauthorized" || *e == "gone");
                 if send(&mut sink, frame).await.is_err() { break; }
                 if terminal {
                     let _ = sink.send(Message::Close(None)).await;

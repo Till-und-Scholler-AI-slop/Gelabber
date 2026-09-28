@@ -943,6 +943,145 @@ describe("voice session", () => {
     );
   });
 
+  it("retains capture across Live claim withdrawal and ignores the old claim after recovery", async () => {
+    const { emitMedia, emitSig, emitReady, peers, getDisplayMediaCalls } =
+      install({ holdLiveClaim: true });
+    joinVoice({ serverId: "srv", channelId: "voice", channelName: "Lounge" });
+    await vi.waitFor(() => expect(peers[0]?.audio).toBeTruthy());
+    toggleGoLive();
+    await vi.waitFor(() => expect(useVoice.getState().localLive).toBeTruthy());
+    const stream = useVoice.getState().localLive!;
+    const old = "00000000-0000-0000-0000-000000000001";
+    const next = "00000000-0000-0000-0000-000000000002";
+    emitSig({
+      op: "sig",
+      t: "p",
+      s: "srv",
+      c: "voice",
+      u: "u-self",
+      k: "l",
+      lc: old,
+    });
+    await vi.waitFor(() =>
+      expect(
+        peers[0]
+          ?.getSenders()
+          .some((s) => s.track === stream.getVideoTracks()[0]),
+      ).toBe(true),
+    );
+    emitMedia({ op: "err", e: "forbidden", lc: old });
+    expect(useVoice.getState().live).toBe(true);
+    expect(streamStopped(stream)).toBe(false);
+    emitReady();
+    emitSig({ op: "sig", t: "j", s: "srv", c: "voice", u: "u-self" });
+    emitSig({
+      op: "sig",
+      t: "p",
+      s: "srv",
+      c: "voice",
+      u: "u-self",
+      k: "l",
+      lc: next,
+    });
+    emitMedia({ op: "err", e: "forbidden", lc: old });
+    expect(useVoice.getState().localLive).toBe(stream);
+    expect(streamStopped(stream)).toBe(false);
+    expect(getDisplayMediaCalls()).toBe(1);
+    expect(peers).toHaveLength(1);
+  });
+
+  it("bounds withdrawn Live claim recovery even across duplicate errors and Gateway rejoin", async () => {
+    const { emitMedia, emitSig, emitReady, peers } = install({
+      holdLiveClaim: true,
+    });
+    joinVoice({ serverId: "srv", channelId: "voice", channelName: "Lounge" });
+    await vi.waitFor(() => expect(peers[0]?.audio).toBeTruthy());
+    toggleGoLive();
+    await vi.waitFor(() => expect(useVoice.getState().localLive).toBeTruthy());
+    const stream = useVoice.getState().localLive!;
+    const nonce = "00000000-0000-0000-0000-000000000001";
+    emitSig({
+      op: "sig",
+      t: "p",
+      s: "srv",
+      c: "voice",
+      u: "u-self",
+      k: "l",
+      lc: nonce,
+    });
+    vi.useFakeTimers();
+    emitMedia({ op: "err", e: "forbidden", lc: nonce });
+    await vi.advanceTimersByTimeAsync(9000);
+    expect(streamStopped(stream)).toBe(false);
+    emitMedia({ op: "err", e: "forbidden", lc: nonce });
+    emitReady();
+    emitSig({ op: "sig", t: "j", s: "srv", c: "voice", u: "u-self" });
+    await vi.advanceTimersByTimeAsync(1001);
+    expect(useVoice.getState().live).toBe(false);
+    expect(streamStopped(stream)).toBe(true);
+    expect(useVoice.getState().status).toBe("joined");
+    expect(trackStopped(peers[0]?.audio)).toBe(false);
+  });
+
+  it("cannot resume a withdrawn nonce", async () => {
+    const { emitMedia, emitSig } = install({ holdLiveClaim: true });
+    joinVoice({ serverId: "srv", channelId: "voice", channelName: "Lounge" });
+    await vi.waitFor(() => expect(useVoice.getState().status).toBe("joined"));
+    toggleGoLive();
+    await vi.waitFor(() => expect(useVoice.getState().localLive).toBeTruthy());
+    const stream = useVoice.getState().localLive!;
+    const nonce = "00000000-0000-0000-0000-000000000001";
+    emitSig({
+      op: "sig",
+      t: "p",
+      s: "srv",
+      c: "voice",
+      u: "u-self",
+      k: "l",
+      lc: nonce,
+    });
+    emitMedia({ op: "err", e: "forbidden", lc: nonce });
+    emitSig({
+      op: "sig",
+      t: "p",
+      s: "srv",
+      c: "voice",
+      u: "u-self",
+      k: "l",
+      lc: nonce,
+    });
+    expect(useVoice.getState().live).toBe(false);
+    expect(streamStopped(stream)).toBe(true);
+    emitMedia({ op: "err", e: "unauthorized" });
+    expect(useVoice.getState().status).toBe("idle");
+  });
+
+  it("ends whole-peer authorization loss during pending Live recovery", async () => {
+    const { emitMedia, emitSig, peers } = install({ holdLiveClaim: true });
+    joinVoice({ serverId: "srv", channelId: "voice", channelName: "Lounge" });
+    await vi.waitFor(() => expect(peers[0]?.audio).toBeTruthy());
+    toggleGoLive();
+    await vi.waitFor(() => expect(useVoice.getState().localLive).toBeTruthy());
+    const stream = useVoice.getState().localLive!;
+    const nonce = "00000000-0000-0000-0000-000000000001";
+    emitSig({
+      op: "sig",
+      t: "p",
+      s: "srv",
+      c: "voice",
+      u: "u-self",
+      k: "l",
+      lc: nonce,
+    });
+    emitMedia({ op: "err", e: "forbidden", lc: nonce });
+    expect(streamStopped(stream)).toBe(false);
+    emitMedia({ op: "err", e: "unauthorized" });
+    expect(useVoice.getState().status).toBe("idle");
+    expect(streamStopped(stream)).toBe(true);
+    expect(peers[0]?.closed).toBe(true);
+    expect(trackStopped(peers[0]?.audio)).toBe(true);
+  });
+
   it("toggles mute immediately, then sends the sync frame", async () => {
     const { sent, peers } = install();
     joinVoice({ serverId: "srv", channelId: "voice", channelName: "Lounge" });

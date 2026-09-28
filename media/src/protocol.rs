@@ -6,6 +6,7 @@
 //! `bad_request`.
 
 use serde::{Deserialize, Serialize};
+use uuid::Uuid;
 
 #[derive(Debug, Clone, Deserialize, PartialEq, Eq)]
 #[serde(tag = "op")]
@@ -76,12 +77,23 @@ pub enum ServerFrame {
         mid: Option<String>,
     },
     #[serde(rename = "err")]
-    Err { e: &'static str },
+    Err {
+        e: &'static str,
+        #[serde(skip_serializing_if = "Option::is_none")]
+        lc: Option<Uuid>,
+    },
 }
 
 impl ServerFrame {
     pub fn error(code: &'static str) -> Self {
-        Self::Err { e: code }
+        Self::Err { e: code, lc: None }
+    }
+
+    pub fn live_withdrawn(nonce: Uuid) -> Self {
+        Self::Err {
+            e: "forbidden",
+            lc: Some(nonce),
+        }
     }
 
     pub fn to_json(&self) -> Result<String, serde_json::Error> {
@@ -105,6 +117,19 @@ mod tests {
         assert!(!json.contains("\"n\""));
         assert!(!json.contains(r#""op":"e""#));
         assert!(!json.contains("livekit"));
+    }
+
+    #[test]
+    fn live_withdrawal_correlates_only_the_retired_claim() {
+        let nonce = Uuid::new_v4();
+        let frame = ServerFrame::live_withdrawn(nonce);
+        let json: serde_json::Value = serde_json::from_str(&frame.to_json().unwrap()).unwrap();
+        assert_eq!(json["e"], "forbidden");
+        assert_eq!(json["lc"], nonce.to_string());
+        assert_eq!(
+            ServerFrame::error("forbidden").to_json().unwrap(),
+            r#"{"op":"err","e":"forbidden"}"#
+        );
     }
 
     #[test]

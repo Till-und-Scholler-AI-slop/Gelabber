@@ -252,6 +252,7 @@ async fn expired_live_claim_stops_live_only_and_fresh_claim_can_rejoin() {
             if let Message::Text(raw) = ws.next().await.unwrap().unwrap() {
                 let frame: Value = serde_json::from_str(&raw).unwrap();
                 if frame["e"] == "forbidden" {
+                    assert_eq!(frame["lc"], nonce.to_string());
                     break;
                 }
             }

@@ -1162,7 +1162,7 @@ impl Sfu {
             peer.withdrawn_live = Some(expected.nonce);
             peer.video_kinds
                 .insert(expected.track_id.clone(), String::new());
-            let _ = peer.out.send(ServerFrame::error("forbidden"));
+            let _ = peer.out.send(ServerFrame::live_withdrawn(expected.nonce));
             let id = format!("{}:{}", peer_id.0, expected.track_id);
             room.pubs
                 .get(&id)
@@ -1372,6 +1372,7 @@ impl Sfu {
         tokio::spawn(async move {
             let mut rtp = PublisherRtpStats::new(codec.clock_rate);
             let mut keyframes = kf_rx;
+            let mut remote_ended = false;
             loop {
                 if live_expired(&live_deadline) {
                     break;
@@ -1382,7 +1383,10 @@ impl Sfu {
                     _ = tokio::time::sleep_until(live_wakeup(&live_deadline)), if live_deadline.is_some() => {},
                     evt = track.poll() => {
                         if live_expired(&live_deadline) { break; }
-                        if !handle_publisher_event(&packets, &sfu.stats, &mut rtp, evt) { break; }
+                        if !handle_publisher_event(&packets, &sfu.stats, &mut rtp, evt) {
+                            remote_ended = true;
+                            break;
+                        }
                     }
                     Some(_) = keyframes.recv(), if kind == RtpCodecKind::Video => request_keyframe(&track, ssrc).await,
                 }
@@ -1420,7 +1424,11 @@ impl Sfu {
                                     .is_some_and(|deadline| Arc::ptr_eq(deadline, &live.deadline))
                         })
                         .cloned();
-                    peer.remote_tracks.remove(&track_id);
+                    // Lease expiry stops forwarding, not the native receiver.
+                    // Keep that binding for a fresh, authorized same-MSID offer.
+                    if remote_ended {
+                        peer.remote_tracks.remove(&track_id);
+                    }
                     if let Some(kind) = peer.video_kinds.get_mut(&track_id) {
                         kind.clear();
                     }

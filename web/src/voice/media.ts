@@ -73,7 +73,7 @@ export type MediaServerFrame =
   | { op: "o"; sdp: string }
   | { op: "a"; sdp: string }
   | { op: "i"; ice: string; mid?: string }
-  | { op: "err"; e: string };
+  | { op: "err"; e: string; lc?: string };
 
 export type MediaSocket = {
   send(frame: MediaClientFrame): void;

@@ -683,7 +683,7 @@ async fn live_lease_deadline_stops_reader_without_waiting_for_renewal_tick() {
     let redis = authority_redis();
     let sfu = Arc::new(Sfu::with_redis(&config(), Some(redis.clone())));
     let (claim, _lease) = authorized_fixture(&sfu, &redis).await;
-    let (out, _rx) = mpsc::unbounded_channel();
+    let (out, mut rx) = mpsc::unbounded_channel();
     let peer = sfu.join_authorized(claim.clone(), out).await.unwrap();
     let channel = claim.claim.c;
     let nonce = Uuid::new_v4();
@@ -706,6 +706,29 @@ async fn live_lease_deadline_stops_reader_without_waiting_for_renewal_tick() {
         sfu.has_peer(peer, channel).await,
         "Live expiry retains Voice"
     );
+    tokio::time::timeout(Duration::from_millis(700), async {
+        while !room.lock().await.pubs.is_empty() {
+            tokio::task::yield_now().await;
+        }
+    })
+    .await
+    .unwrap();
+    let cached = room.lock().await.peers[&peer].remote_tracks["live"].clone();
+    let frame = rx.recv().await.unwrap();
+    assert_eq!(frame, ServerFrame::live_withdrawn(nonce));
+    assert!(*life.stop.borrow(), "old forwarding is stopped");
+    let next = Uuid::new_v4();
+    grant_live(&redis, &claim, next, 5000).await;
+    sfu.announce_with_claim(peer, channel, "l", Some("live"), Some(next))
+        .await
+        .unwrap();
+    sfu.publish(peer, channel, cached).await.unwrap();
+    {
+        let room = room.lock().await;
+        let replacement = &room.pubs[&format!("{}:live", peer.0)];
+        assert!(!Arc::ptr_eq(&replacement.life, &life));
+        assert!(!*replacement.life.done.borrow());
+    }
     sfu.leave(peer, channel).await;
 }
 

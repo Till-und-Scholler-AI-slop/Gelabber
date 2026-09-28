@@ -240,7 +240,17 @@ let awaitingJoin: { serverId: string; channelId: string } | null = null;
 let awaitingLive: { serverId: string; channelId: string } | null = null;
 let liveClaimNonce: string | null = null;
 let liveClaimTimer: ReturnType<typeof setTimeout> | null = null;
+let withdrawnLiveNonce: string | null = null;
+let liveRecoveryDeadline: number | null = null;
 let watchPublisherTimer: ReturnType<typeof setTimeout> | null = null;
+
+function isLiveNonce(value: string | undefined): value is string {
+  return Boolean(
+    value &&
+    /^[0-9a-f]{8}(?:-[0-9a-f]{4}){3}-[0-9a-f]{12}$/.test(value) &&
+    !/^0{8}-0{4}-0{4}-0{4}-0{12}$/.test(value),
+  );
+}
 
 function clearWatchPublisherTimer(): void {
   if (watchPublisherTimer !== null) clearTimeout(watchPublisherTimer);
@@ -251,22 +261,34 @@ function clearLiveClaim(): void {
   if (liveClaimTimer !== null) clearTimeout(liveClaimTimer);
   liveClaimTimer = null;
   liveClaimNonce = null;
+  withdrawnLiveNonce = null;
+  liveRecoveryDeadline = null;
 }
 
 function requestLiveClaim(): void {
   const state = useVoice.getState();
   if (!state.serverId || !state.channelId || !state.live) return;
-  clearLiveClaim();
+  if (liveClaimTimer !== null) clearTimeout(liveClaimTimer);
+  liveClaimNonce = null;
   awaitingLive = { serverId: state.serverId, channelId: state.channelId };
-  liveClaimTimer = setTimeout(() => {
-    liveClaimTimer = null;
-    if (!awaitingLive) return;
-    awaitingLive = null;
-    stopLocalVideo("l");
-    deps?.onError?.(
-      new Error("Live konnte nicht bestätigt werden. Bitte erneut starten."),
-    );
-  }, 10000);
+  liveClaimTimer = setTimeout(
+    () => {
+      liveClaimTimer = null;
+      if (!awaitingLive) return;
+      awaitingLive = null;
+      stopLocalVideo("l");
+      deps?.onError?.(
+        new Error("Live konnte nicht bestätigt werden. Bitte erneut starten."),
+      );
+    },
+    Math.max(
+      0,
+      Math.min(
+        10000,
+        (liveRecoveryDeadline ?? Date.now() + 10000) - Date.now(),
+      ),
+    ),
+  );
   sendPub("l", true);
 }
 let audioCommitChain: Promise<void> = Promise.resolve();
@@ -843,16 +865,20 @@ function onSig(event: SigEvent & { lc?: string }): void {
     case "u": {
       if (!event.k) return;
       if (event.t === "p" && event.k === "l" && userId === currentUserId()) {
-        if (
-          state.live &&
-          event.lc &&
-          /^[0-9a-f]{8}(?:-[0-9a-f]{4}){3}-[0-9a-f]{12}$/.test(event.lc) &&
-          !/^0{8}-0{4}-0{4}-0{4}-0{12}$/.test(event.lc)
-        ) {
+        if (state.live && isLiveNonce(event.lc)) {
+          if (event.lc === withdrawnLiveNonce) {
+            stopLocalVideo("l");
+            deps?.onError?.(
+              new ApiError("forbidden", 0, errorMessage("forbidden")),
+            );
+            return;
+          }
           const changed = liveClaimNonce !== event.lc;
           if (liveClaimTimer !== null) clearTimeout(liveClaimTimer);
           liveClaimTimer = null;
           liveClaimNonce = event.lc;
+          withdrawnLiveNonce = null;
+          liveRecoveryDeadline = null;
           awaitingLive = null;
           if (changed && liveStream) void publishLocal("l", liveStream);
         }
@@ -2498,6 +2524,18 @@ function onMediaFrame(frame: MediaServerFrame): void {
       return;
     }
     if (frame.e === "forbidden") {
+      if (isLiveNonce(frame.lc)) {
+        if (!useVoice.getState().live) return;
+        // A delayed old withdrawal cannot stop a newly acknowledged claim.
+        if (liveClaimNonce && frame.lc !== liveClaimNonce) return;
+        if (frame.lc === withdrawnLiveNonce) return;
+        withdrawnLiveNonce = frame.lc;
+        liveRecoveryDeadline ??= Date.now() + 10000;
+        // SFU forwarding is already stopped. Keep only local capture while a
+        // fresh Gateway acknowledgement is pending, within one fixed budget.
+        requestLiveClaim();
+        return;
+      }
       if (useVoice.getState().live) stopLocalVideo("l");
       deps?.onError?.(new ApiError("forbidden", 0, errorMessage("forbidden")));
       return;

@@ -1,7 +1,8 @@
 # Live claim / Watch integration (08b)
 
-This is a locally tested basis for review, **not final media acceptance**.
-Firefox failures below remain open. Pins and lockfiles are unchanged.
+This series is locally tested for review, **not integrated or production media
+acceptance**. Basis failures below are preserved as before evidence; followups
+record their current status. Pins and lockfiles are unchanged.
 
 ## Runtime contract
 
@@ -166,3 +167,65 @@ media Clippy, media rustfmt and build pass. Logs:
 `/tmp/gelabber-media-reader-race-{rust,clippy,build}.log`.
 Workspace-wide rustfmt also reports pre-existing formatting in foreign
 `api/tests/gateway.rs` and `shared/src/ice.rs`; these files were not changed.
+
+## Claim-correlated Gateway recovery followup
+
+The remaining intermittent Firefox failure was reproduced separately after
+the reader ownership fix. In an actual App probe the third Gateway interruption
+received media `forbidden` before Gateway rejoin acknowledgement. The original
+media peer remained connected, but the generic Web handler ended Live capture;
+the subsequent join consequently requested no fresh Live claim. The before
+trace is `/tmp/gelabber-media-08b-gateway-firefox-stress.json`.
+
+Media now sends `{op:"err",e:"forbidden",lc:<withdrawn nonce>}` only for ongoing
+Live binding withdrawal. Ordinary announce rejection remains an uncorrelated
+`forbidden`. Web retains the existing local capture while requesting a fresh
+Gateway claim, with one 10-s budget from withdrawal. Duplicate errors and
+Gateway rejoins cannot extend that budget. A fresh acknowledged nonce resumes
+publication on the original sender/peer; delayed errors for the old nonce
+cannot stop it. Reacknowledging a withdrawn nonce, ordinary `forbidden`, Gateway
+claim rejection and whole-peer `unauthorized` remain terminal. No capture is
+reacquired automatically.
+
+SFU RTP still stops on lease loss before cleanup waits; every fresh handshake
+is independently authorized. Lease expiry retains only the bounded native
+receiver binding needed for same-MSID reuse. Natural remote end removes that
+binding. The new regression checks expiry before the next renewal tick, stopped
+old forwarding and fresh-nonce reuse of that exact receiver. Real WS checks
+the withdrawn nonce in the error. Neither Gateway leases nor 500-ms fail-closed
+Redis checks changed; media still cannot create or renew a Gateway claim.
+
+The field is additive: older Web stops on its existing `forbidden` handling;
+new Web against older SFU also retains that terminal fallback. Capture-preserving
+Gateway recovery needs the matching Web/SFU followup pair and the existing
+API03a/05b contract. No API or Gateway source change is required.
+
+Two Web regressions fail before the fix and pass after it. Additional tests
+cover the fixed retry budget, withdrawn-nonce rejection, stale error suppression
+and immediate authorization loss. 35 media library tests, 15 real WS/Redis
+claim/authorization tests, strict Clippy/build and 124 Web media/session tests,
+lint/build pass. `/tmp/gelabber-media-gateway-recovery-{unit-before,unit-after,
+rust,integration,clippy,build,web}.log`.
+
+The same actual Firefox stress adapter passes all eight interruptions after the
+fix, retaining the original capture/sender/peer and decoded changing Watch
+frames. Three correlated media withdrawals occurred, exercising the repaired
+path. `/tmp/gelabber-media-08b-gateway-firefox-stress-after.json`.
+The Chromium App passes Gateway recovery, camera/screen/Live identity and all
+20 real Live cycles on the final followup code:
+`/tmp/gelabber-media-gateway-recovery-chromium.json`.
+The equivalent final Firefox App cases also pass:
+`/tmp/gelabber-media-gateway-recovery-firefox.json`.
+Both browsers retain exactly two publisher transceivers over all 20 cycles.
+Gateway checks retain the original capture/sender/peer; all three video sources
+are decoded, rendered and checked against their distinct changing canvas
+contents. Autoplay policy and the existing assertions were unchanged.
+
+The selected case reports leave unrequested cases BLOCKED, rather than claiming
+a full-suite pass. Their runtime metadata labels the tested Web/SFU worktree as
+unknown; the final commit and artifact hashes are recorded separately in
+`/tmp/gelabber-media-08b-runtime-final.json`. API remains the coordinator-approved
+native source `3a30d44924708d9303eed778cd10d276742a5911` on port 8082, with own
+SFU/preview ports. This closes both local Firefox cases from the basis report.
+Independent followup review, CI and integrated/runtime/production acceptance
+remain pending; no push, rollout or shared-runtime replacement was performed.
