@@ -1,4 +1,6 @@
-//! Join the media WS only with a short internal ticket.
+#[path = "support/authority.rs"]
+mod authority;
+// Join the media WS only with an authorized short internal ticket.
 
 use std::time::Duration;
 
@@ -62,21 +64,22 @@ async fn rejects_join_without_ticket() {
 #[tokio::test]
 async fn accepts_short_ticket_and_binds_room() {
     let (addr, redis) = serve().await;
-    let user = uuid::Uuid::from_u128(1);
-    let server = uuid::Uuid::from_u128(2);
-    let channel = uuid::Uuid::from_u128(3);
-    let code = "abcdefghjkmn";
+    let user = uuid::Uuid::new_v4();
+    let server = uuid::Uuid::new_v4();
+    let channel = uuid::Uuid::new_v4();
+    let code = gelabber_shared::ticket::generate();
     let mut conn = redis.get_multiplexed_async_connection().await.unwrap();
-    let _: () = redis::cmd("SET")
-        .arg(format!("gb:mt:{code}"))
-        .arg(format!(
-            r#"{{"u":"{user}","s":"{server}","c":"{channel}"}}"#
-        ))
-        .arg("EX")
-        .arg(30)
-        .query_async(&mut conn)
-        .await
-        .unwrap();
+    let _authority = authority::mint(
+        &redis,
+        &code,
+        gelabber_shared::ticket::TicketClaim {
+            u: user,
+            s: server,
+            c: channel,
+            g: false,
+        },
+    )
+    .await;
 
     let (mut ws, _) = tokio_tungstenite::connect_async(format!("ws://{addr}/media/ws"))
         .await

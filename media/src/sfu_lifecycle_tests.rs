@@ -513,3 +513,137 @@ async fn udp_port_stays_reserved_until_close_completes() {
     leave.await.unwrap();
     assert_eq!(sfu.ice_ports.take().await, Some(addr.to_string()));
 }
+
+#[path = "../tests/support/authority.rs"]
+mod auth_fixture;
+
+async fn authorized_fixture(
+    sfu: &Arc<Sfu>,
+    redis: &redis::Client,
+) -> (
+    crate::ticket::AuthorizedTicketClaim,
+    auth_fixture::TestAuthority,
+) {
+    let code = gelabber_shared::ticket::generate();
+    let lease = auth_fixture::mint(
+        redis,
+        &code,
+        TicketClaim {
+            u: Uuid::new_v4(),
+            s: Uuid::new_v4(),
+            c: Uuid::new_v4(),
+            g: true,
+        },
+    )
+    .await;
+    let claim = crate::ticket::consume(redis, &code).await.unwrap().unwrap();
+    assert_eq!(sfu.room_count(), 0);
+    (claim, lease)
+}
+fn authority_redis() -> redis::Client {
+    redis::Client::open(
+        std::env::var("REDIS_URL").unwrap_or_else(|_| "redis://127.0.0.1:6379".into()),
+    )
+    .unwrap()
+}
+
+#[tokio::test]
+async fn revoke_while_join_waits_for_attach_lock_is_rechecked_after_build() {
+    let redis = authority_redis();
+    let sfu = Arc::new(Sfu::with_redis(&config(), Some(redis.clone())));
+    let (claim, _lease) = authorized_fixture(&sfu, &redis).await;
+    let mut conn = redis.get_multiplexed_async_connection().await.unwrap();
+    let demand = gelabber_shared::ticket::media_demand_key(&claim.auth.session);
+    let _: () = redis::cmd("DEL")
+        .arg(&demand)
+        .query_async(&mut conn)
+        .await
+        .unwrap();
+    let guard = sfu.rooms.write().await;
+    let join = {
+        let sfu = sfu.clone();
+        let claim = claim.clone();
+        tokio::spawn(async move {
+            let (out, _) = mpsc::unbounded_channel();
+            sfu.join_authorized(claim, out).await
+        })
+    };
+    tokio::time::timeout(Duration::from_secs(1), async {
+        loop {
+            let valid: bool = redis::cmd("EXISTS")
+                .arg(&demand)
+                .query_async(&mut conn)
+                .await
+                .unwrap();
+            if valid {
+                break;
+            }
+            tokio::task::yield_now().await;
+        }
+    })
+    .await
+    .unwrap();
+    // First validation passed; attachment is blocked behind our barrier.
+    let _: () = redis::cmd("SET")
+        .arg(gelabber_shared::ticket::member_authority_key(
+            claim.claim.s,
+            claim.claim.u,
+        ))
+        .arg(Uuid::new_v4().to_string())
+        .query_async(&mut conn)
+        .await
+        .unwrap();
+    drop(guard);
+    assert!(matches!(join.await.unwrap(), Err(SfuError::Revoked)));
+    assert_eq!(sfu.room_count(), 0);
+}
+
+#[tokio::test]
+async fn revoke_signals_publisher_stop_before_busy_sdp_cleanup() {
+    let redis = authority_redis();
+    let sfu = Arc::new(Sfu::with_redis(&config(), Some(redis.clone())));
+    let (claim, _lease) = authorized_fixture(&sfu, &redis).await;
+    let (out, _rx) = mpsc::unbounded_channel();
+    let id = sfu.join_authorized(claim.clone(), out).await.unwrap();
+    let channel = claim.claim.c;
+    sfu.announce_track(id, channel, "l", Some("live"))
+        .await
+        .unwrap();
+    let (track, _events) = remote("live");
+    sfu.publish(id, channel, track).await.unwrap();
+    let room = sfu.find_room(channel).await.unwrap();
+    let (gate, closing, life) = {
+        let room = room.lock().await;
+        (
+            room.peers[&id].sdp.clone(),
+            room.peers[&id].closing.clone(),
+            room.pubs[&format!("{}:live", id.0)].life.clone(),
+        )
+    };
+    let guard = gate.lock().await;
+    let mut conn = redis.get_multiplexed_async_connection().await.unwrap();
+    let _: () = redis::cmd("SET")
+        .arg(gelabber_shared::ticket::member_authority_key(
+            claim.claim.s,
+            claim.claim.u,
+        ))
+        .arg(Uuid::new_v4().to_string())
+        .query_async(&mut conn)
+        .await
+        .unwrap();
+    let mut stopped = life.stop.subscribe();
+    let mut closed = closing.subscribe();
+    tokio::time::timeout(Duration::from_millis(1700), async {
+        closed.wait_for(|closed| *closed).await.unwrap();
+        stopped.wait_for(|stopped| *stopped).await.unwrap();
+    })
+    .await
+    .expect("authority removal stops media before waiting for SDP");
+    assert_eq!(sfu.room_count(), 0);
+    drop(guard);
+    let mut done = life.done.clone();
+    tokio::time::timeout(Duration::from_secs(1), done.wait_for(|done| *done))
+        .await
+        .unwrap()
+        .unwrap();
+}

@@ -15,7 +15,7 @@ use crate::error::SfuError;
 use crate::protocol::{ClientFrame, ServerFrame};
 use crate::sfu::PeerId;
 use crate::state::AppState;
-use crate::ticket::{self, TicketClaim};
+use crate::ticket::{self, AuthorizedTicketClaim};
 
 /// Chrome video answers (many codecs, a second m-line, ICE candidates in the
 /// SDP) blow past 12 KiB and can pass 48 KiB. Rejecting that frame as
@@ -76,6 +76,7 @@ async fn run(socket: WebSocket, state: AppState) {
                             Err(code) => {
                                 let _ = send(&mut sink, ServerFrame::error(code)).await;
                                 if code == "unauthorized" || code == "gone" {
+                                    let _ = sink.send(Message::Close(None)).await;
                                     break;
                                 }
                             }
@@ -93,7 +94,10 @@ async fn run(socket: WebSocket, state: AppState) {
             }
             frame = rx.recv() => {
                 let Some(frame) = frame else { break };
-                if send(&mut sink, frame).await.is_err() {
+                let terminal = matches!(&frame, ServerFrame::Err { e } if *e == "unauthorized" || *e == "gone");
+                if send(&mut sink, frame).await.is_err() { break; }
+                if terminal {
+                    let _ = sink.send(Message::Close(None)).await;
                     break;
                 }
             }
@@ -141,7 +145,7 @@ async fn handle(
             let tk = text_field(tk).map_err(|_| "unauthorized")?;
             let claim = ticket::consume(&state.redis, &tk)
                 .await
-                .map_err(|_| "internal")?
+                .map_err(|_| "unauthorized")?
                 .ok_or("unauthorized")?;
             join(state, claim, out, joined).await
         }
@@ -229,18 +233,19 @@ async fn apply_sdp(
 
 async fn join(
     state: &AppState,
-    claim: TicketClaim,
+    claim: AuthorizedTicketClaim,
     out: &mpsc::UnboundedSender<ServerFrame>,
     joined: &mut Option<(PeerId, Uuid)>,
 ) -> Result<Option<ServerFrame>, &'static str> {
     let peer_id = state
         .sfu
-        .join(claim.clone(), out.clone())
+        .join_authorized(claim.clone(), out.clone())
         .await
         .map_err(|err| {
             warn!(error = %err, code = err.code(), "sfu join failed");
             err.code()
         })?;
+    let claim = claim.claim;
     *joined = Some((peer_id, claim.c));
     debug!(user = %claim.u, channel = %claim.c, "media ticket accepted");
     Ok(Some(ServerFrame::Ok {
