@@ -1,0 +1,119 @@
+{
+  "scope": "Firefox rendered-frame observation correction; no data/media assertions changed",
+  "completeAcceptance": false,
+  "sourceChecks": {
+    "pass": 2,
+    "fail": 0,
+    "skip": 0
+  },
+  "existingHarnessChecks": {
+    "pass": 6,
+    "fail": 0,
+    "skip": 0
+  },
+  "nativeControl": {
+    "records": [
+      {
+        "engine": "chromium",
+        "version": "153.0.8010.12",
+        "status": "PASS",
+        "first": {
+          "kind": "camera",
+          "width": 640,
+          "height": 360,
+          "paused": false,
+          "ready": 4,
+          "renderedFrames": 1,
+          "renderedFramesSource": "native-playback-quality",
+          "playbackQualityFrames": 1,
+          "videoFrameCallbacks": 0,
+          "videoPresentedFrames": 0,
+          "pixels": {
+            "source": [194, 28, 28],
+            "motion": [40, 16, 16]
+          }
+        },
+        "last": {
+          "kind": "camera",
+          "width": 640,
+          "height": 360,
+          "paused": false,
+          "ready": 4,
+          "renderedFrames": 2,
+          "renderedFramesSource": "native-playback-quality",
+          "playbackQualityFrames": 2,
+          "videoFrameCallbacks": 1,
+          "videoPresentedFrames": 2,
+          "pixels": {
+            "source": [200, 33, 33],
+            "motion": [80, 57, 57]
+          }
+        },
+        "scope": "native rendered counter only; local muted canvas, no SFU/RTP/autoplay acceptance"
+      },
+      {
+        "engine": "firefox",
+        "version": "155.0",
+        "status": "PASS",
+        "first": {
+          "kind": "camera",
+          "width": 640,
+          "height": 360,
+          "paused": false,
+          "ready": 4,
+          "renderedFrames": 0,
+          "renderedFramesSource": "native-video-frame-callback",
+          "playbackQualityFrames": 0,
+          "videoFrameCallbacks": 0,
+          "videoPresentedFrames": 0,
+          "pixels": {
+            "source": [220, 30, 30],
+            "motion": [15, 15, 15]
+          }
+        },
+        "last": {
+          "kind": "camera",
+          "width": 640,
+          "height": 360,
+          "paused": false,
+          "ready": 4,
+          "renderedFrames": 2,
+          "renderedFramesSource": "native-video-frame-callback",
+          "playbackQualityFrames": 0,
+          "videoFrameCallbacks": 1,
+          "videoPresentedFrames": 2,
+          "pixels": {
+            "source": [220, 30, 30],
+            "motion": [61, 61, 61]
+          }
+        },
+        "scope": "native rendered counter only; local muted canvas, no SFU/RTP/autoplay acceptance"
+      }
+    ],
+    "completeAcceptance": false
+  },
+  "originalFailure": {
+    "preserved": true,
+    "classification": "confirmed-test-error-after-native-counter-control",
+    "reason": "Firefox playback quality0 despite native decoded29, correct pixels and RVFC-render progress"
+  },
+  "actualAppExactCommittedControl": "pending immediately after commit; recorded separately without repeating green core matrix",
+  "earlierErrors": [
+    "local counter fixture missing HTML Content-Type; corrected; own browser/port finally closed",
+    "unused URL global lint declaration removed; final lint PASS"
+  ],
+  "artifacts": [
+    {
+      "path": "/tmp/gelabber-final08b-firefox-start-control.json",
+      "sha256": "d2bd34d52e4e54d9774a286bc83d8c421cb82cd2f3156c5d16f47cac6598f4ff"
+    },
+    {
+      "path": "/tmp/gelabber-e2e-render-native-control.json",
+      "sha256": "e2496bae6e135e00de6570a9bd0319c4d70f79ba9bee204b1ffaf1ed24b53301"
+    },
+    {
+      "path": "/tmp/gelabber-native-render-control.mjs",
+      "sha256": "0d69b3c93ad5922fc4f23eaa2d6dac2d9362d85f67f7813d86195eda7ae99872"
+    }
+  ]
+}

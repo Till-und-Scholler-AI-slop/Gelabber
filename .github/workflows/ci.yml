@@ -203,6 +203,7 @@ jobs:
       - name: Test native E2E harness boundaries
         run: |
           npm run test:e2e-harness
+          node scripts/e2e/rendered-frames.checks.mjs
           node scripts/smoke-netem.checks.mjs
           node scripts/e2e/faults.checks.mjs
           node --experimental-vm-modules scripts/e2e/teardown.checks.mjs

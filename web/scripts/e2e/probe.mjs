@@ -10,6 +10,7 @@ export function instrument({ relay }) {
     displayCalls: 0,
     cameraCalls: 0,
     playRejected: 0,
+    renderedVideos: new WeakMap(),
     cancelNextCapture: false,
   });
   const Peer = window.RTCPeerConnection;
@@ -214,6 +215,29 @@ export async function sample() {
         motion: [...data.slice(8, 11)],
       };
     }
+    let rendered = state.renderedVideos.get(video);
+    if (!rendered) {
+      rendered = { callbacks: 0, presented: 0 };
+      state.renderedVideos.set(video, rendered);
+      if (typeof video.requestVideoFrameCallback === "function") {
+        const onFrame = (_now, metadata) => {
+          rendered.callbacks++;
+          if (
+            Number.isSafeInteger(metadata.presentedFrames) &&
+            metadata.presentedFrames > 0
+          )
+            rendered.presented = Math.max(
+              rendered.presented,
+              metadata.presentedFrames,
+            );
+          video.requestVideoFrameCallback(onFrame);
+        };
+        video.requestVideoFrameCallback(onFrame);
+      }
+    }
+    const qualityFrames = video.getVideoPlaybackQuality?.().totalVideoFrames;
+    const callbackFrames = rendered.presented || rendered.callbacks;
+    const hasQuality = Number.isSafeInteger(qualityFrames) && qualityFrames > 0;
     return {
       kind: caption.includes("— Live")
         ? "live"
@@ -224,8 +248,17 @@ export async function sample() {
       height: video.videoHeight,
       paused: video.paused,
       ready: video.readyState,
-      renderedFrames:
-        video.getVideoPlaybackQuality?.().totalVideoFrames ?? null,
+      renderedFrames: hasQuality ? qualityFrames : callbackFrames,
+      renderedFramesSource: hasQuality
+        ? "native-playback-quality"
+        : typeof video.requestVideoFrameCallback === "function"
+          ? "native-video-frame-callback"
+          : "unavailable",
+      playbackQualityFrames: Number.isSafeInteger(qualityFrames)
+        ? qualityFrames
+        : null,
+      videoFrameCallbacks: rendered.callbacks,
+      videoPresentedFrames: rendered.presented,
       pixels,
     };
   });
