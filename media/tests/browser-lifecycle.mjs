@@ -38,15 +38,41 @@ if (process.env.MEDIA_CASE === 'recovery') {
   await vite.listen();
 }
 const alphabet = 'abcdefghjkmnpqrstuvwxyz23456789';
-async function mint(user, channel, owner) {
-  const ticket = Array.from(randomBytes(12), n => alphabet[n % alphabet.length]).join('');
-  const args = ['SET', `gb:mt:${ticket}`, JSON.stringify({ u: user, s: owner, c: channel, g: true }), 'EX', '60'];
-  const payload = `*${args.length}\r\n` + args.map(arg => `$${Buffer.byteLength(arg)}\r\n${arg}\r\n`).join('');
-  await new Promise((resolve, reject) => {
+const authorities = new Map(), members = new Map(), channels = new Map();
+const fixtureKeys = new Set(), writes = new Set();
+async function redisCommand(args) {
+  const payload = `*${args.length}\r\n` + args.map(arg => `$${Buffer.byteLength(String(arg))}\r\n${arg}\r\n`).join('');
+  return new Promise((resolve, reject) => {
     const socket = createConnection({ host: redis.hostname, port: Number(redis.port) }, () => socket.write(payload));
     socket.on('error', reject);
-    socket.once('data', data => { socket.end(); data.toString().startsWith('+OK') ? resolve() : reject(new Error('ticket mint failed')); });
+    socket.once('data', data => { socket.end(); data.toString().startsWith('-') ? reject(new Error('local fixture Redis command failed')) : resolve(data.toString()); });
   });
+}
+async function renewLease(authority) {
+  await redisCommand(['SET', `gb:auth:session:${authority.session}`, authority.user, 'PX', '3000']);
+}
+async function mint(user, channel, owner) {
+  const id = `${owner}:${user}:${channel}`;
+  let authority = authorities.get(id);
+  if (!authority) {
+    const memberKey = `gb:auth:member:${owner}:${user}`, channelKey = `gb:auth:channel:${channel}`;
+    if (!members.has(memberKey)) members.set(memberKey, randomUUID());
+    if (!channels.has(channelKey)) channels.set(channelKey, randomUUID());
+    authority = { user, owner, channel, session: randomBytes(32).toString('hex'), expires_at: Math.floor(Date.now() / 1000) + 300, member: members.get(memberKey), channelNonce: channels.get(channelKey) };
+    await redisCommand(['SET', memberKey, authority.member]);
+    await redisCommand(['SET', channelKey, authority.channelNonce]);
+    for (const key of [memberKey, channelKey, `gb:auth:session:${authority.session}`, `gb:auth:demand:${authority.session}`]) fixtureKeys.add(key);
+    await renewLease(authority);
+    // This is the test API lease writer. Production media only refreshes demand.
+    authority.timer = setInterval(() => {
+      const write = renewLease(authority); writes.add(write);
+      write.catch(() => {}).finally(() => writes.delete(write));
+    }, 500);
+    authorities.set(id, authority);
+  }
+  const ticket = Array.from(randomBytes(12), n => alphabet[n % alphabet.length]).join('');
+  const key = `gb:mt:${ticket}`; fixtureKeys.add(key);
+  await redisCommand(['SET', key, JSON.stringify({ u: user, s: owner, c: channel, g: true, auth: { session: authority.session, expires_at: authority.expires_at, member: authority.member, channel: authority.channelNonce } }), 'EX', '60']);
   return ticket;
 }
 async function peer(user, channel, owner, microphone = false) {
@@ -63,6 +89,8 @@ async function peer(user, channel, owner, microphone = false) {
     const received = new Map();
     const captures = new Map();
     const errors = [];
+    let serverClosed = false;
+    ws.onclose = () => { serverClosed = true; };
     let chain = Promise.resolve();
     const send = frame => ws.send(JSON.stringify(frame));
     const enqueue = job => chain = chain.then(job).catch(error => errors.push(error.message));
@@ -184,7 +212,7 @@ async function peer(user, channel, owner, microphone = false) {
           if (entry.type === 'inbound-rtp' && entry.kind === 'audio') audioBytes += entry.bytesReceived;
           if (entry.type === 'outbound-rtp') outgoing.push({kind: entry.kind, frames: entry.framesEncoded, keyframes: entry.keyFramesEncoded, plis: entry.pliCount, bytes: entry.bytesSent, codec: stats.get(entry.codecId)?.mimeType, pt: stats.get(entry.codecId)?.payloadType});
         }
-        return { videos, audioBytes, outgoing, sdp: pc.remoteDescription?.sdp.split('\r\n').filter(l => /^(m=video|a=mid:|a=rtpmap:|a=rtcp-fb:)/.test(l)), transceivers: pc.getTransceivers().length, streams: [...received.keys()], errors: [...errors] };
+        return { videos, audioBytes, outgoing, serverClosed, sdp: pc.remoteDescription?.sdp.split('\r\n').filter(l => /^(m=video|a=mid:|a=rtpmap:|a=rtcp-fb:)/.test(l)), transceivers: pc.getTransceivers().length, streams: [...received.keys()], errors: [...errors] };
       },
     };
     await offer();
@@ -290,7 +318,38 @@ try {
   }
   const channel = randomUUID(), owner = randomUUID(), publisher = randomUUID();
   const a = await peer(publisher, channel, owner, true);
-  if (process.env.MEDIA_CASE === 'recovery') {
+  if (process.env.MEDIA_CASE === 'revoke') {
+    await a.waitForFunction(() => call.pc.signalingState === 'stable');
+    await a.evaluate(() => call.start('l'));
+    const b = await peer(randomUUID(), channel, owner);
+    const before = await decoded(b, 1);
+    const otherChannel = randomUUID(), otherPublisher = randomUUID(), otherOwner = randomUUID();
+    const control = await peer(otherPublisher, otherChannel, otherOwner, true);
+    await control.waitForFunction(() => call.pc.signalingState === 'stable');
+    await control.evaluate(() => call.start('v'));
+    const controlReceiver = await peer(randomUUID(), otherChannel, otherOwner);
+    await decoded(controlReceiver, 1);
+    const authority = authorities.get(`${owner}:${publisher}:${channel}`);
+    clearInterval(authority.timer);
+    await Promise.allSettled([...writes]);
+    const started = Date.now();
+    await redisCommand(['DEL', `gb:auth:session:${authority.session}`]);
+    await a.waitForFunction(() => call.errors.includes('unauthorized'), null, { timeout: 2000 });
+    await pollStats(a, stats => stats.serverClosed, 2000);
+    const revokeMs = Date.now() - started;
+    assert(revokeMs < 2000);
+    await new Promise(resolve => setTimeout(resolve, 200));
+    const stopped = await b.evaluate(() => call.stats());
+    await new Promise(resolve => setTimeout(resolve, 500));
+    const after = await b.evaluate(() => call.stats());
+    assert(after.videos.every(video => video.bytes === stopped.videos.find(old => old.mid === video.mid)?.bytes), 'revoked publisher still forwarded RTP');
+    const unaffected = await decoded(controlReceiver, 1);
+    const late = await peer(randomUUID(), channel, owner);
+    await late.waitForFunction(() => call.pc.connectionState === 'connected');
+    await new Promise(resolve => setTimeout(resolve, 500));
+    assert.equal((await late.evaluate(() => call.stats())).videos.length, 0, 'late peer saw revoked publication');
+    console.log(JSON.stringify({ browser: browser.version(), case: 'authorization-revocation', revokeMs, before, stopped, after, unaffected }, null, 2));
+  } else if (process.env.MEDIA_CASE === 'recovery') {
     await a.waitForFunction(() => call.pc.signalingState === 'stable');
     await a.evaluate(() => call.start('v'));
     const b = await productionReceiver(randomUUID(), channel, owner);
@@ -404,8 +463,11 @@ try {
   }
   }
 } finally {
+  for (const authority of authorities.values()) clearInterval(authority.timer);
+  await Promise.allSettled([...writes]);
   await browser.close();
   await vite?.close();
   await new Promise(resolve => server.close(resolve));
   if (media) { media.kill('SIGTERM'); await new Promise(resolve => media.once('exit', resolve)); }
+  if (fixtureKeys.size) await redisCommand(['DEL', ...fixtureKeys]);
 }

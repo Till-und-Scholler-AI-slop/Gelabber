@@ -1,5 +1,7 @@
-//! An answer rejected in the media WebSocket before `apply_remote` must
-//! still abort the outstanding SFU offer. The next publish then gets out.
+#[path = "support/authority.rs"]
+mod authority;
+// An answer rejected in the media WebSocket before `apply_remote` must
+// still abort the outstanding SFU offer. The next publish then gets out.
 
 use std::sync::Arc;
 use std::time::Duration;
@@ -145,21 +147,23 @@ async fn serve() -> (std::net::SocketAddr, redis::Client) {
     (addr, redis)
 }
 
-async fn mint(redis: &redis::Client, code: &str, user: u128, channel: u128) {
-    let mut conn = redis.get_multiplexed_async_connection().await.unwrap();
-    let claim = json!({
-        "u": Uuid::from_u128(user),
-        "s": Uuid::from_u128(9),
-        "c": Uuid::from_u128(channel),
-    });
-    let _: () = redis::cmd("SET")
-        .arg(format!("gb:mt:{code}"))
-        .arg(claim.to_string())
-        .arg("EX")
-        .arg(60)
-        .query_async(&mut conn)
-        .await
-        .unwrap();
+async fn mint(
+    redis: &redis::Client,
+    code: &str,
+    user: u128,
+    channel: u128,
+) -> authority::TestAuthority {
+    authority::mint(
+        redis,
+        code,
+        gelabber_shared::ticket::TicketClaim {
+            u: Uuid::from_u128(user),
+            s: Uuid::new_v4(),
+            c: Uuid::from_u128(channel),
+            g: true,
+        },
+    )
+    .await
 }
 
 async fn connect(
@@ -266,11 +270,13 @@ async fn apply_answer(client: &Client, rx: &mut mpsc::UnboundedReceiver<Value>) 
 #[tokio::test]
 async fn oversized_answer_on_ws_lets_the_next_publish_through() {
     let (addr, redis) = serve().await;
-    let channel = 7u128;
-    mint(&redis, "abcdefghjkmn", 1, channel).await;
-    mint(&redis, "bbcdefghjkmn", 2, channel).await;
-    let (mut a_rx, a_tx) = connect(addr, "abcdefghjkmn").await;
-    let (mut b_rx, b_tx) = connect(addr, "bbcdefghjkmn").await;
+    let channel = Uuid::new_v4().as_u128();
+    let a_code = gelabber_shared::ticket::generate();
+    let b_code = gelabber_shared::ticket::generate();
+    let _a_authority = mint(&redis, &a_code, Uuid::new_v4().as_u128(), channel).await;
+    let _b_authority = mint(&redis, &b_code, Uuid::new_v4().as_u128(), channel).await;
+    let (mut a_rx, a_tx) = connect(addr, &a_code).await;
+    let (mut b_rx, b_tx) = connect(addr, &b_code).await;
     expect_ok(&mut a_rx).await;
     expect_ok(&mut b_rx).await;
 

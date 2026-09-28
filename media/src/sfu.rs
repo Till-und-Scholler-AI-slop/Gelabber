@@ -35,12 +35,10 @@ use webrtc::peer_connection::{
 };
 use webrtc::rtp_transceiver::RtpSender;
 
-use gelabber_shared::ticket::deny_key;
-
 use crate::config::Config;
 use crate::error::SfuError;
 use crate::protocol::ServerFrame;
-use crate::ticket::TicketClaim;
+use crate::ticket::{AuthorizedTicketClaim, TicketClaim};
 
 const RTP_Q: usize = 512;
 
@@ -105,10 +103,19 @@ async fn local_sdp_after_gather(
     pc: &Arc<dyn PeerConnection>,
     gathered: &watch::Receiver<u64>,
     before: u64,
+    closing: &watch::Sender<bool>,
 ) -> Option<String> {
     let mut rx = gathered.clone();
     if *rx.borrow() <= before {
-        let _ = tokio::time::timeout(Duration::from_secs(3), rx.wait_for(|n| *n > before)).await;
+        let mut closed = closing.subscribe();
+        tokio::select! {
+            biased;
+            _ = closed.wait_for(|closed| *closed) => return None,
+            _ = tokio::time::timeout(Duration::from_secs(3), rx.wait_for(|n| *n > before)) => {}
+        }
+    }
+    if *closing.borrow() {
+        return None;
     }
     let sdp = pc.local_description().await.map(|desc| desc.sdp)?;
     sdp.contains("ice-ufrag").then_some(sdp)
@@ -217,6 +224,7 @@ struct PeerSdp {
     negotiated: bool,
     have_local_offer: bool,
     closed: bool,
+    closing: watch::Sender<bool>,
     dirty: bool,
     /// The reservation exists from enqueue until cleanup, including during SDP.
     subscriptions: HashMap<String, SubscriptionState>,
@@ -231,6 +239,7 @@ impl PeerSdp {
             negotiated: false,
             have_local_offer: false,
             closed: false,
+            closing: watch::channel(false).0,
             dirty: false,
             subscriptions: HashMap::new(),
             offered: HashSet::new(),
@@ -253,6 +262,7 @@ struct Peer {
     out: mpsc::UnboundedSender<ServerFrame>,
     gathered: watch::Receiver<u64>,
     sdp: Arc<Mutex<PeerSdp>>,
+    closing: watch::Sender<bool>,
     /// Explicit MSID track identity; legacy tags are bound in SDP order, never RTP order.
     video_kinds: HashMap<String, String>,
     legacy_kinds: VecDeque<String>,
@@ -352,9 +362,31 @@ impl Sfu {
         claim: TicketClaim,
         out: mpsc::UnboundedSender<ServerFrame>,
     ) -> Result<PeerId, SfuError> {
-        if self.revoked(claim.s, claim.u).await {
+        // This helper is exclusively for in-process RTC tests without Redis.
+        // A configured production SFU accepts only authorized ticket envelopes.
+        if self.redis.is_some() {
             return Err(SfuError::Revoked);
         }
+        self.join_inner(claim, None, out).await
+    }
+
+    pub async fn join_authorized(
+        self: &Arc<Self>,
+        claim: AuthorizedTicketClaim,
+        out: mpsc::UnboundedSender<ServerFrame>,
+    ) -> Result<PeerId, SfuError> {
+        if !self.authorized(&claim).await {
+            return Err(SfuError::Revoked);
+        }
+        self.join_inner(claim.claim.clone(), Some(claim), out).await
+    }
+
+    async fn join_inner(
+        self: &Arc<Self>,
+        claim: TicketClaim,
+        authority: Option<AuthorizedTicketClaim>,
+        out: mpsc::UnboundedSender<ServerFrame>,
+    ) -> Result<PeerId, SfuError> {
         let peer_id = PeerId(Uuid::new_v4());
         let ice_addr = self.ice_ports.take().await.ok_or(SfuError::Unavailable)?;
         let built = self.build_pc(&ice_addr).await;
@@ -368,6 +400,18 @@ impl Sfu {
 
         {
             let mut rooms = self.rooms.write().await;
+            // Revalidate after PC construction and any attach-lock wait.
+            if let Some(authority) = &authority
+                && !self.authorized(authority).await
+            {
+                drop(rooms);
+                if pc.close().await.is_ok() {
+                    self.ice_ports.release(&ice_addr).await;
+                }
+                return Err(SfuError::Revoked);
+            }
+            let gate = PeerSdp::new();
+            let closing = gate.closing.clone();
             let room = rooms.entry(claim.c).or_insert_with(|| {
                 Arc::new(Mutex::new(Room {
                     peers: HashMap::new(),
@@ -387,7 +431,8 @@ impl Sfu {
                     pc: pc.clone(),
                     out: out.clone(),
                     gathered,
-                    sdp: Arc::new(Mutex::new(PeerSdp::new())),
+                    sdp: Arc::new(Mutex::new(gate)),
+                    closing,
                     video_kinds: HashMap::new(),
                     legacy_kinds: VecDeque::new(),
                     current_video: HashSet::new(),
@@ -412,7 +457,9 @@ impl Sfu {
         tokio::spawn(async move {
             sfu.drive(peer_id, claim.c, pc, &mut events).await;
         });
-        self.watch_revoke(peer_id, claim.c, claim.s, claim.u, out);
+        if let Some(authority) = authority {
+            self.watch_revoke(peer_id, claim.c, authority, out);
+        }
 
         Ok(peer_id)
     }
@@ -439,7 +486,7 @@ impl Sfu {
             )
         };
         let mut gate = sdp.lock().await;
-        if gate.closed {
+        if gate.closed || *gate.closing.borrow() {
             return Err(SfuError::NotInRoom);
         }
         if as_offer && gate.have_local_offer {
@@ -492,7 +539,7 @@ impl Sfu {
                 let answer = pc.create_answer(None).await?;
                 let before = *gathered.borrow();
                 pc.set_local_description(answer).await?;
-                let local = local_sdp_after_gather(&pc, &gathered, before)
+                let local = local_sdp_after_gather(&pc, &gathered, before, &gate.closing)
                     .await
                     .ok_or(webrtc::error::Error::ErrUnknownType)?;
                 let mut answer = RTCSessionDescription::answer(local)?;
@@ -810,6 +857,11 @@ impl Sfu {
             (peer, publications, subscribers)
         };
         saturating_dec(&self.stats.peers);
+        // Stop both directions before waiting for an outstanding SDP operation.
+        peer.closing.send_replace(true);
+        for publication in &publications {
+            publication.life.stop.send_replace(true);
+        }
         {
             let mut gate = peer.sdp.lock().await;
             gate.closed = true;
@@ -838,26 +890,14 @@ impl Sfu {
         info!(peer = %peer_id.0, channel = %channel_id, "sfu leave");
     }
 
-    async fn revoked(&self, server_id: Uuid, user_id: Uuid) -> bool {
+    async fn authorized(&self, claim: &AuthorizedTicketClaim) -> bool {
         let Some(redis) = &self.redis else {
             return false;
         };
-        let key = deny_key(server_id, user_id);
-        let mut conn = match redis.get_multiplexed_async_connection().await {
-            Ok(conn) => conn,
+        match crate::ticket::validate_authority(redis, claim).await {
+            Ok(valid) => valid,
             Err(err) => {
-                warn!(error = %err, "revoke check skipped; redis unavailable");
-                return false;
-            }
-        };
-        match redis::cmd("EXISTS")
-            .arg(key)
-            .query_async::<i64>(&mut conn)
-            .await
-        {
-            Ok(n) => n > 0,
-            Err(err) => {
-                warn!(error = %err, "revoke check failed");
+                warn!(error = %err, "media authority unavailable; closing peer");
                 false
             }
         }
@@ -867,27 +907,19 @@ impl Sfu {
         self: &Arc<Self>,
         peer_id: PeerId,
         channel_id: Uuid,
-        server_id: Uuid,
-        user_id: Uuid,
+        authority: AuthorizedTicketClaim,
         out: mpsc::UnboundedSender<ServerFrame>,
     ) {
-        if self.redis.is_none() {
-            return;
-        }
         let sfu = Arc::clone(self);
         tokio::spawn(async move {
+            let mut tick = tokio::time::interval(Duration::from_secs(1));
+            tick.set_missed_tick_behavior(tokio::time::MissedTickBehavior::Skip);
             loop {
-                tokio::time::sleep(Duration::from_secs(1)).await;
+                tick.tick().await;
                 if !sfu.has_peer(peer_id, channel_id).await {
                     break;
                 }
-                if sfu.revoked(server_id, user_id).await {
-                    warn!(
-                        %user_id,
-                        %server_id,
-                        peer = %peer_id.0,
-                        "closing sfu peer after revoke"
-                    );
+                if !sfu.authorized(&authority).await {
                     let _ = out.send(ServerFrame::error("unauthorized"));
                     sfu.leave(peer_id, channel_id).await;
                     break;
@@ -1194,7 +1226,7 @@ impl Sfu {
 
     async fn forward_to(&self, job: Forward) {
         let mut gate = job.sdp.lock().await;
-        if gate.closed || *job.publication.life.stop.borrow() {
+        if gate.closed || *gate.closing.borrow() || *job.publication.life.stop.borrow() {
             return;
         }
         gate.subscriptions
@@ -1212,7 +1244,7 @@ impl Sfu {
         gathered: &watch::Receiver<u64>,
         gate: &mut PeerSdp,
     ) {
-        if gate.closed || !gate.negotiated || gate.have_local_offer {
+        if gate.closed || *gate.closing.borrow() || !gate.negotiated || gate.have_local_offer {
             return;
         }
         let queued = gate
@@ -1255,7 +1287,14 @@ impl Sfu {
             limit_forward_codec(pc, &sender, &publication.codec).await;
             let (payload_type, binding) = watch::channel(None);
             let codec = publication.codec.clone();
-            let task = spawn_forwarder(local, ssrc, publication, binding, self.stats.clone());
+            let task = spawn_forwarder(
+                local,
+                ssrc,
+                publication,
+                binding,
+                gate.closing.subscribe(),
+                self.stats.clone(),
+            );
             gate.subscriptions.insert(
                 id.clone(),
                 SubscriptionState::Active(Subscription {
@@ -1276,7 +1315,7 @@ impl Sfu {
             let offer = pc.create_offer(None).await?;
             let before = *gathered.borrow();
             pc.set_local_description(offer).await?;
-            let local = local_sdp_after_gather(pc, gathered, before)
+            let local = local_sdp_after_gather(pc, gathered, before, &gate.closing)
                 .await
                 .ok_or(webrtc::error::Error::ErrUnknownType)?;
             out.send(ServerFrame::Offer { sdp: local })
@@ -1326,7 +1365,8 @@ impl Sfu {
         only_if_outstanding: bool,
     ) {
         let mut gate = sdp.lock().await;
-        if gate.closed || (only_if_outstanding && !gate.have_local_offer) {
+        if gate.closed || *gate.closing.borrow() || (only_if_outstanding && !gate.have_local_offer)
+        {
             return;
         }
         self.rollback_locked(pc, &mut gate).await;
@@ -1590,6 +1630,7 @@ fn spawn_forwarder(
     ssrc: u32,
     publication: Published,
     mut binding: watch::Receiver<Option<u8>>,
+    mut closing: watch::Receiver<bool>,
     stats: Arc<SfuStats>,
 ) -> tokio::task::JoinHandle<()> {
     tokio::spawn(async move {
@@ -1597,12 +1638,13 @@ fn spawn_forwarder(
         let mut stopped = publication.life.stop.subscribe();
         let mut rtcp_open = true;
         loop {
-            if *stopped.borrow() {
+            if *stopped.borrow() || *closing.borrow() {
                 break;
             }
             tokio::select! {
                 biased;
                 _ = stopped.changed() => break,
+                _ = closing.changed() => break,
                 result = binding.changed() => {
                     if result.is_err() { break; }
                     if binding.borrow().is_some() {
