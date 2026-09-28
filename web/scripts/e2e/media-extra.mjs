@@ -471,34 +471,95 @@ export async function mediaExtraScenarios(h, f, { begin, reset, options }) {
             !s.duplicateAudioPlaybackTracks,
           "audio-click-retry-did-not-play-every-path",
         );
+        const microphoneControl = await nativeEvaluate(f.watcher, () => {
+          const state = window.__e2e;
+          const candidates = state.peers
+            .filter((peer) => peer.connectionState === "connected")
+            .flatMap((peer) =>
+              peer.getSenders().map((sender) => ({ peer, sender })),
+            )
+            .filter(
+              ({ sender }) =>
+                sender.track?.kind === "audio" &&
+                sender.track.readyState === "live",
+            );
+          state.sessionAudioMicrophone =
+            candidates.length === 1
+              ? { ...candidates[0], track: candidates[0].sender.track }
+              : null;
+          return { senderCount: candidates.length };
+        });
+        check(
+          microphoneControl.senderCount === 1,
+          "fixture-session-expected-microphone-missing",
+          microphoneControl,
+        );
+        const microphoneSnapshot = async () => {
+          const observed = await snapshot(f.watcher);
+          const sessionMicrophone = await nativeEvaluate(f.watcher, () => {
+            const state = window.__e2e,
+              expected = state.sessionAudioMicrophone;
+            const candidates = state.peers
+              .filter((peer) => peer.connectionState === "connected")
+              .flatMap((peer) =>
+                peer.getSenders().map((sender) => ({ peer, sender })),
+              )
+              .filter(
+                ({ sender }) =>
+                  sender.track?.kind === "audio" &&
+                  sender.track.readyState === "live",
+              );
+            const current = candidates[0];
+            return {
+              senderCount: candidates.length,
+              expectedRetained:
+                candidates.length === 1 &&
+                !!expected &&
+                current.peer === expected.peer &&
+                current.sender === expected.sender &&
+                current.sender.track === expected.track,
+              enabled:
+                candidates.length === 1 ? current.sender.track.enabled : null,
+            };
+          });
+          return { ...observed, sessionMicrophone };
+        };
         stage = "session-mic-mute";
         await click(f.watcher, "Mikrofon aus");
         const muted = await until(
-          () => snapshot(f.watcher),
+          microphoneSnapshot,
           (s) =>
             audioSenders(s).length === 1 &&
-            audioSenders(s).every((t) => !t.enabled),
+            audioSenders(s).every((t) => !t.enabled) &&
+            s.sessionMicrophone.expectedRetained &&
+            s.sessionMicrophone.enabled === false,
           "session-mute-did-not-disable-mic",
         );
         stage = "session-deafen";
         await click(f.watcher, "Mikrofon an");
         await click(f.watcher, "Taub stellen");
         const deafened = await until(
-          () => snapshot(f.watcher),
+          microphoneSnapshot,
           (s) =>
             audioPlays(s).length === 3 &&
             audioPlays(s).every((p) => p.muted) &&
-            audioSenders(s).every((t) => !t.enabled),
+            audioSenders(s).length === 1 &&
+            audioSenders(s).every((t) => !t.enabled) &&
+            s.sessionMicrophone.expectedRetained &&
+            s.sessionMicrophone.enabled === false,
           "session-deafen-did-not-mute-every-path",
         );
         stage = "session-undeafen";
         await click(f.watcher, "Hören");
         const hearing = await until(
-          () => snapshot(f.watcher),
+          microphoneSnapshot,
           (s) =>
             audioPlays(s).length === 3 &&
             audioPlays(s).every((p) => !p.muted && !p.paused) &&
-            audioSenders(s).every((t) => t.enabled),
+            audioSenders(s).length === 1 &&
+            audioSenders(s).every((t) => t.enabled) &&
+            s.sessionMicrophone.expectedRetained &&
+            s.sessionMicrophone.enabled === true,
           "session-undeafen-did-not-restore-every-path",
         );
         stage = "session-volume";
@@ -519,6 +580,7 @@ export async function mediaExtraScenarios(h, f, { begin, reset, options }) {
           selected,
           isolatedRoom,
           playing,
+          microphoneControl,
           muted,
           deafened,
           hearing,

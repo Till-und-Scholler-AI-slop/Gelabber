@@ -98,3 +98,25 @@ test("exact SDP scenario preserves failed bounded camera warmup and never inject
   assert.equal(progressCalls, 0);
   assert.equal(injected, 0);
 });
+
+import { sessionAudioControl } from "./session-audio-control.mjs";
+test("actual audio task retains the original expected microphone across mute/deafen/undeafen", async () => {
+  const r = await sessionAudioControl();
+  assert.equal(r.error, undefined);
+  assert.equal(r.result.muted.peers[0].audioSenders.length, 1);
+  assert.equal(r.result.deafened.peers[0].audioSenders.length, 1);
+  assert.equal(r.result.hearing.peers[0].audioSenders.length, 1);
+  assert.ok(r.actions.includes("other.context.close"));
+});
+for (const option of [
+  { lostMicAt: "deafen" },
+  { lostMicAt: "undeafen" },
+  { replaceSender: true },
+  { replaceTrack: true },
+]) {
+  test(`actual audio task rejects microphone loss/replacement ${JSON.stringify(option)}`, async () => {
+    const r = await sessionAudioControl(option);
+    assert.ok(r.error instanceof CheckFailure);
+    assert.ok(r.actions.includes("other.context.close"));
+  });
+}
