@@ -1,0 +1,1156 @@
+{
+  "at": "2026-09-28T19:49:18.452524+00:00",
+  "finding": "B-4-R1/P2: owned independent context skipped when newPage rejects before try",
+  "scope": "source-only; no native/API/SFU/browser/DBworker; independent followup review pending",
+  "parent": "60c106ae2b6e6e50ae063174ae7dbb3dc3da84f4",
+  "parentControl": {
+    "description": "Exact committed parent archive plus new regression test file only; reviewer copy unmodified",
+    "access": {
+      "path": "/tmp/gelabber-e2e/b4-r1-parent-red.log",
+      "sha256": "5288e33a1a3dd712604aebbcb04cca6e1b372175a2ca03e9d960bcb982a4b957",
+      "exit": 1,
+      "tests": 33,
+      "passed": 29,
+      "failed": 4,
+      "skipped": 0,
+      "output": "\u2714 actual heldMedia rejects empty stats instead of inventing a decoded stop (1.724339ms)\n\u2714 actual heldMedia rejects no video RTP instead of inventing a decoded stop (0.437101ms)\n\u2714 actual heldMedia rejects missing counter instead of inventing a decoded stop (0.368326ms)\n\u2714 actual heldMedia rejects invalid counter instead of inventing a decoded stop (0.428653ms)\n\u2714 actual heldMedia rejects partial counter disappearance and replacement after a valid control (0.643205ms)\n\u2714 actual heldMedia preserves available numeric zero and known stagnant counters (0.792493ms)\n\u2714 actual hold establishes known positive video counters before any fault and rejects unavailable/zero fixtures (1.210605ms)\n\u2714 actual heldMedia hung getStats is phase-labelled, quarantined, never fabricated as frames0 and release never reevaluates it (28.118329ms)\n\u2714 actual heldMedia pending outer evaluate cannot bypass quarantine or trigger a second probe (5.210364ms)\n\u2714 actual heldMedia rejects late native answer but records normal increasing and post-revocation stagnant frames unchanged (41.059674ms)\n\u2714 actual access finally attempts every own context after restore rejection and close timeout, with redacted failure stages (6.090225ms)\n\u2714 actual lease finally restores Redis and closes every own context even when API resume and a close fail (0.285042ms)\n\u2714 actual revocation stop check accepts known stagnant counters (0.879981ms)\n\u2714 actual revocation stop check rejects empty (0.365972ms)\n\u2714 actual revocation stop check rejects missing-counter (0.353698ms)\n\u2714 actual deletion stop check accepts known stagnant counters (0.619927ms)\n\u2714 actual deletion stop check rejects empty (0.32771ms)\n\u2714 actual deletion stop check rejects missing-counter (0.287291ms)\n\u2714 actual lease stop check accepts known stagnant counters (0.564981ms)\n\u2714 actual lease stop check rejects empty (0.308356ms)\n\u2714 actual lease stop check rejects missing-counter (0.30195ms)\n\u2716 actual acquired independent context closes without Page or logout on acquisition failure {\"newPageError\":true} (2.295021ms)\n(node:5) ExperimentalWarning: VM Modules is an experimental feature and might change at any time\n(Use `node --trace-warnings ...` to show where the warning was created)\n\u2716 actual acquired independent context closes without Page or logout on acquisition failure {\"newPageError\":true,\"contextCloseError\":true} (1.074323ms)\n\u2716 actual acquired independent context closes without Page or logout on acquisition failure {\"newPageError\":true,\"contextClosePending\":true} (1.060318ms)\n\u2716 actual acquired independent context closes without Page or logout on acquisition failure {\"newPagePending\":true} (6.149473ms)\n\u2714 actual independent-session task requires successful owner logout and retains/cleans the other session (1.194047ms)\n\u2714 actual independent-session task rejects an unexercised/failed boundary {\"ownerLogoutStatus\":503} (1.025264ms)\n\u2714 actual independent-session task rejects an unexercised/failed boundary {\"ownerLogoutStatus\":401} (1.05459ms)\n\u2714 actual independent-session task rejects an unexercised/failed boundary {\"ownerStillSignedIn\":true} (1.011863ms)\n\u2714 actual independent-session task rejects an unexercised/failed boundary {\"ownerSessionStatus\":503} (1.017068ms)\n\u2714 actual independent-session task rejects an unexercised/failed boundary {\"beforeStatus\":503} (1.318759ms)\n\u2714 actual independent-session task rejects an unexercised/failed boundary {\"afterStatus\":503} (1.040902ms)\n\u2714 actual independent-session task rejects an unexercised/failed boundary {\"cleanupLogoutStatus\":503} (1.064111ms)\n\u2139 tests 33\n\u2139 suites 0\n\u2139 pass 29\n\u2139 fail 4\n\u2139 cancelled 0\n\u2139 skipped 0\n\u2139 todo 0\n\u2139 duration_ms 113.633676\n\n\u2716 failing tests:\n\ntest at ../../gelabber-b4-r1-parent-source/web/scripts/e2e/access-native.checks.mjs:434:3\n\u2716 actual acquired independent context closes without Page or logout on acquisition failure {\"newPageError\":true} (2.295021ms)\n  AssertionError [ERR_ASSERTION]: Expected values to be strictly deep-equal:\n  + actual - expected\n  \n    [\n      'independent.newContext',\n      'independent.newPage',\n  -   'independent.context.close'\n    ]\n  \n      at TestContext.<anonymous> (file:///tmp/gelabber-b4-r1-parent-source/web/scripts/e2e/access-native.checks.mjs:438:12)\n      at async Test.run (node:internal/test_runner/test:1409:7)\n      at async Test.processPendingSubtests (node:internal/test_runner/test:974:7) {\n    generatedMessage: true,\n    code: 'ERR_ASSERTION',\n    actual: [Array],\n    expected: [Array],\n    operator: 'deepStrictEqual',\n    diff: 'simple'\n  }\n\ntest at ../../gelabber-b4-r1-parent-source/web/scripts/e2e/access-native.checks.mjs:434:3\n\u2716 actual acquired independent context closes without Page or logout on acquisition failure {\"newPageError\":true,\"contextCloseError\":true} (1.074323ms)\n  AssertionError [ERR_ASSERTION]: Expected values to be strictly deep-equal:\n  + actual - expected\n  \n    [\n      'independent.newContext',\n      'independent.newPage',\n  -   'independent.context.close'\n    ]\n  \n      at TestContext.<anonymous> (file:///tmp/gelabber-b4-r1-parent-source/web/scripts/e2e/access-native.checks.mjs:438:12)\n      at async Test.run (node:internal/test_runner/test:1409:7)\n      at async Test.processPendingSubtests (node:internal/test_runner/test:974:7) {\n    generatedMessage: true,\n    code: 'ERR_ASSERTION',\n    actual: [Array],\n    expected: [Array],\n    operator: 'deepStrictEqual',\n    diff: 'simple'\n  }\n\ntest at ../../gelabber-b4-r1-parent-source/web/scripts/e2e/access-native.checks.mjs:434:3\n\u2716 actual acquired independent context closes without Page or logout on acquisition failure {\"newPageError\":true,\"contextClosePending\":true} (1.060318ms)\n  AssertionError [ERR_ASSERTION]: Expected values to be strictly deep-equal:\n  + actual - expected\n  \n    [\n      'independent.newContext',\n      'independent.newPage',\n  -   'independent.context.close'\n    ]\n  \n      at TestContext.<anonymous> (file:///tmp/gelabber-b4-r1-parent-source/web/scripts/e2e/access-native.checks.mjs:438:12)\n      at async Test.run (node:internal/test_runner/test:1409:7)\n      at async Test.processPendingSubtests (node:internal/test_runner/test:974:7) {\n    generatedMessage: true,\n    code: 'ERR_ASSERTION',\n    actual: [Array],\n    expected: [Array],\n    operator: 'deepStrictEqual',\n    diff: 'simple'\n  }\n\ntest at ../../gelabber-b4-r1-parent-source/web/scripts/e2e/access-native.checks.mjs:434:3\n\u2716 actual acquired independent context closes without Page or logout on acquisition failure {\"newPagePending\":true} (6.149473ms)\n  AssertionError [ERR_ASSERTION]: Expected values to be strictly deep-equal:\n  + actual - expected\n  \n    [\n      'independent.newContext',\n      'independent.newPage',\n  -   'independent.context.close'\n    ]\n  \n      at TestContext.<anonymous> (file:///tmp/gelabber-b4-r1-parent-source/web/scripts/e2e/access-native.checks.mjs:438:12)\n      at async Test.run (node:internal/test_runner/test:1409:7)\n      at async Test.processPendingSubtests (node:internal/test_runner/test:974:7) {\n    generatedMessage: true,\n    code: 'ERR_ASSERTION',\n    actual: [Array],\n    expected: [Array],\n    operator: 'deepStrictEqual',\n    diff: 'simple'\n  }\n"
+    },
+    "reviewer": {
+      "path": "/tmp/gelabber-e2e/b4-r1-parent-reviewer-red.log",
+      "sha256": "4399b0e515c50201bdfe6276354214d314d1017933e5847040f3492750c9e883",
+      "exit": 1,
+      "tests": 23,
+      "passed": 22,
+      "failed": 1,
+      "skipped": 0,
+      "output": "\u2714 healthy logout200/session200-null and otherSession200-owner passes and cleans (3.568986ms)\n(node:3) ExperimentalWarning: VM Modules is an experimental feature and might change at any time\n(Use `node --trace-warnings ...` to show where the warning was created)\n\u2714 original B-4: failed ownerLogout503 must not prove session isolation (1.418198ms)\n\u2714 rejects failed status/session/early UI {\"ownerLogoutStatus\":401} and attempts logout+contextclose (1.360459ms)\n\u2714 rejects failed status/session/early UI {\"ownerLogoutStatus\":403} and attempts logout+contextclose (1.259532ms)\n\u2714 rejects failed status/session/early UI {\"ownerLogoutError\":true} and attempts logout+contextclose (1.155371ms)\n\u2714 rejects failed status/session/early UI {\"ownerSessionStatus\":503} and attempts logout+contextclose (1.125365ms)\n\u2714 rejects failed status/session/early UI {\"ownerBody\":\"still-signed-in\"} and attempts logout+contextclose (1.102384ms)\n\u2714 rejects failed status/session/early UI {\"ownerBody\":\"absent\"} and attempts logout+contextclose (1.075828ms)\n\u2714 rejects failed status/session/early UI {\"ownerBody\":\"missing-user\"} and attempts logout+contextclose (2.625995ms)\n\u2714 rejects failed status/session/early UI {\"ownerBody\":\"false\"} and attempts logout+contextclose (1.067057ms)\n\u2714 rejects failed status/session/early UI {\"beforeStatus\":503} and attempts logout+contextclose (1.012941ms)\n\u2714 rejects failed status/session/early UI {\"beforeBody\":\"wrong-owner\"} and attempts logout+contextclose (0.969859ms)\n\u2714 rejects failed status/session/early UI {\"beforeBody\":\"absent\"} and attempts logout+contextclose (0.973259ms)\n\u2714 rejects failed status/session/early UI {\"afterStatus\":503} and attempts logout+contextclose (1.023021ms)\n\u2714 rejects failed status/session/early UI {\"afterBody\":\"wrong-owner\"} and attempts logout+contextclose (0.953386ms)\n\u2714 rejects failed status/session/early UI {\"afterBody\":\"absent\"} and attempts logout+contextclose (0.924779ms)\n\u2714 rejects failed status/session/early UI {\"gotoError\":true} and attempts logout+contextclose (0.989426ms)\n\u2714 cleanup failure {\"cleanupLogoutStatus\":503} stays red and close is attempted (1.035859ms)\n\u2714 cleanup failure {\"cleanupLogoutError\":true} stays red and close is attempted (0.964777ms)\n\u2714 cleanup failure {\"closeError\":true} stays red and close is attempted (1.12476ms)\n\u2714 cleanup failure {\"cleanupLogoutError\":true,\"closeError\":true} stays red and close is attempted (1.093731ms)\n\u2714 cleanup failure {\"beforeStatus\":503,\"cleanupLogoutError\":true,\"closeError\":true} stays red and close is attempted (1.012004ms)\n\u2716 acquired independent context must close when newPage rejects before login (1.192021ms)\n\u2139 tests 23\n\u2139 suites 0\n\u2139 pass 22\n\u2139 fail 1\n\u2139 cancelled 0\n\u2139 skipped 0\n\u2139 todo 0\n\u2139 duration_ms 33.057258\n\n\u2716 failing tests:\n\ntest at ../../gelabber-e2e/b4-r1-parent-reviewer-control/review-b4-independent-session.mjs:57:2\n\u2716 acquired independent context must close when newPage rejects before login (1.192021ms)\n  AssertionError [ERR_ASSERTION]: acquired independent context close must be attempted\n      at TestContext.<anonymous> (file:///tmp/gelabber-e2e/b4-r1-parent-reviewer-control/review-b4-independent-session.mjs:58:136)\n      at async Test.run (node:internal/test_runner/test:1409:7)\n      at async Test.processPendingSubtests (node:internal/test_runner/test:974:7) {\n    generatedMessage: false,\n    code: 'ERR_ASSERTION',\n    actual: false,\n    expected: true,\n    operator: '==',\n    diff: 'simple'\n  }\n"
+    },
+    "reviewerObservations": [
+      {
+        "options": {},
+        "accepted": true,
+        "independentSessionRetained": true,
+        "actions": [
+          "independent.newContext",
+          "independent.newPage",
+          "independent.session.before",
+          "owner.logout",
+          "owner.session.after",
+          "independent.session.after",
+          "independent.logout",
+          "independent.context.close"
+        ],
+        "error": null,
+        "scope": "full exact scenario; API/UI/context fakes, actual deadline/check/teardown helpers; no worker"
+      },
+      {
+        "options": {
+          "ownerLogoutStatus": 503
+        },
+        "accepted": false,
+        "actions": [
+          "independent.newContext",
+          "independent.newPage",
+          "independent.session.before",
+          "owner.logout",
+          "independent.logout",
+          "independent.context.close"
+        ],
+        "error": {
+          "reason": "owner-logout-request-failed",
+          "metrics": {
+            "status": 503
+          }
+        },
+        "scope": "full exact scenario; API/UI/context fakes, actual deadline/check/teardown helpers; no worker"
+      },
+      {
+        "options": {
+          "ownerLogoutStatus": 401
+        },
+        "accepted": false,
+        "actions": [
+          "independent.newContext",
+          "independent.newPage",
+          "independent.session.before",
+          "owner.logout",
+          "independent.logout",
+          "independent.context.close"
+        ],
+        "error": {
+          "reason": "owner-logout-request-failed",
+          "metrics": {
+            "status": 401
+          }
+        },
+        "scope": "full exact scenario; API/UI/context fakes, actual deadline/check/teardown helpers; no worker"
+      },
+      {
+        "options": {
+          "ownerLogoutStatus": 403
+        },
+        "accepted": false,
+        "actions": [
+          "independent.newContext",
+          "independent.newPage",
+          "independent.session.before",
+          "owner.logout",
+          "independent.logout",
+          "independent.context.close"
+        ],
+        "error": {
+          "reason": "owner-logout-request-failed",
+          "metrics": {
+            "status": 403
+          }
+        },
+        "scope": "full exact scenario; API/UI/context fakes, actual deadline/check/teardown helpers; no worker"
+      },
+      {
+        "options": {
+          "ownerLogoutError": true
+        },
+        "accepted": false,
+        "actions": [
+          "independent.newContext",
+          "independent.newPage",
+          "independent.session.before",
+          "owner.logout",
+          "independent.logout",
+          "independent.context.close"
+        ],
+        "error": {
+          "reason": "harness-or-interface-error"
+        },
+        "scope": "full exact scenario; API/UI/context fakes, actual deadline/check/teardown helpers; no worker"
+      },
+      {
+        "options": {
+          "ownerSessionStatus": 503
+        },
+        "accepted": false,
+        "actions": [
+          "independent.newContext",
+          "independent.newPage",
+          "independent.session.before",
+          "owner.logout",
+          "owner.session.after",
+          "independent.logout",
+          "independent.context.close"
+        ],
+        "error": {
+          "reason": "owner-session-not-anonymous-after-logout",
+          "metrics": {
+            "status": 503
+          }
+        },
+        "scope": "full exact scenario; API/UI/context fakes, actual deadline/check/teardown helpers; no worker"
+      },
+      {
+        "options": {
+          "ownerBody": "still-signed-in"
+        },
+        "accepted": false,
+        "actions": [
+          "independent.newContext",
+          "independent.newPage",
+          "independent.session.before",
+          "owner.logout",
+          "owner.session.after",
+          "independent.logout",
+          "independent.context.close"
+        ],
+        "error": {
+          "reason": "owner-session-not-anonymous-after-logout",
+          "metrics": {
+            "status": 200
+          }
+        },
+        "scope": "full exact scenario; API/UI/context fakes, actual deadline/check/teardown helpers; no worker"
+      },
+      {
+        "options": {
+          "ownerBody": "absent"
+        },
+        "accepted": false,
+        "actions": [
+          "independent.newContext",
+          "independent.newPage",
+          "independent.session.before",
+          "owner.logout",
+          "owner.session.after",
+          "independent.logout",
+          "independent.context.close"
+        ],
+        "error": {
+          "reason": "owner-session-not-anonymous-after-logout",
+          "metrics": {
+            "status": 200
+          }
+        },
+        "scope": "full exact scenario; API/UI/context fakes, actual deadline/check/teardown helpers; no worker"
+      },
+      {
+        "options": {
+          "ownerBody": "missing-user"
+        },
+        "accepted": false,
+        "actions": [
+          "independent.newContext",
+          "independent.newPage",
+          "independent.session.before",
+          "owner.logout",
+          "owner.session.after",
+          "independent.logout",
+          "independent.context.close"
+        ],
+        "error": {
+          "reason": "owner-session-not-anonymous-after-logout",
+          "metrics": {
+            "status": 200
+          }
+        },
+        "scope": "full exact scenario; API/UI/context fakes, actual deadline/check/teardown helpers; no worker"
+      },
+      {
+        "options": {
+          "ownerBody": "false"
+        },
+        "accepted": false,
+        "actions": [
+          "independent.newContext",
+          "independent.newPage",
+          "independent.session.before",
+          "owner.logout",
+          "owner.session.after",
+          "independent.logout",
+          "independent.context.close"
+        ],
+        "error": {
+          "reason": "owner-session-not-anonymous-after-logout",
+          "metrics": {
+            "status": 200
+          }
+        },
+        "scope": "full exact scenario; API/UI/context fakes, actual deadline/check/teardown helpers; no worker"
+      },
+      {
+        "options": {
+          "beforeStatus": 503
+        },
+        "accepted": false,
+        "actions": [
+          "independent.newContext",
+          "independent.newPage",
+          "independent.session.before",
+          "independent.logout",
+          "independent.context.close"
+        ],
+        "error": {
+          "reason": "fixture-independent-session-not-authenticated",
+          "metrics": {
+            "status": 503
+          }
+        },
+        "scope": "full exact scenario; API/UI/context fakes, actual deadline/check/teardown helpers; no worker"
+      },
+      {
+        "options": {
+          "beforeBody": "wrong-owner"
+        },
+        "accepted": false,
+        "actions": [
+          "independent.newContext",
+          "independent.newPage",
+          "independent.session.before",
+          "independent.logout",
+          "independent.context.close"
+        ],
+        "error": {
+          "reason": "fixture-independent-session-not-authenticated",
+          "metrics": {
+            "status": 200
+          }
+        },
+        "scope": "full exact scenario; API/UI/context fakes, actual deadline/check/teardown helpers; no worker"
+      },
+      {
+        "options": {
+          "beforeBody": "absent"
+        },
+        "accepted": false,
+        "actions": [
+          "independent.newContext",
+          "independent.newPage",
+          "independent.session.before",
+          "independent.logout",
+          "independent.context.close"
+        ],
+        "error": {
+          "reason": "fixture-independent-session-not-authenticated",
+          "metrics": {
+            "status": 200
+          }
+        },
+        "scope": "full exact scenario; API/UI/context fakes, actual deadline/check/teardown helpers; no worker"
+      },
+      {
+        "options": {
+          "afterStatus": 503
+        },
+        "accepted": false,
+        "actions": [
+          "independent.newContext",
+          "independent.newPage",
+          "independent.session.before",
+          "owner.logout",
+          "owner.session.after",
+          "independent.session.after",
+          "independent.logout",
+          "independent.context.close"
+        ],
+        "error": {
+          "reason": "logout-killed-other-session",
+          "metrics": {
+            "status": 503
+          }
+        },
+        "scope": "full exact scenario; API/UI/context fakes, actual deadline/check/teardown helpers; no worker"
+      },
+      {
+        "options": {
+          "afterBody": "wrong-owner"
+        },
+        "accepted": false,
+        "actions": [
+          "independent.newContext",
+          "independent.newPage",
+          "independent.session.before",
+          "owner.logout",
+          "owner.session.after",
+          "independent.session.after",
+          "independent.logout",
+          "independent.context.close"
+        ],
+        "error": {
+          "reason": "logout-killed-other-session",
+          "metrics": {
+            "status": 200
+          }
+        },
+        "scope": "full exact scenario; API/UI/context fakes, actual deadline/check/teardown helpers; no worker"
+      },
+      {
+        "options": {
+          "afterBody": "absent"
+        },
+        "accepted": false,
+        "actions": [
+          "independent.newContext",
+          "independent.newPage",
+          "independent.session.before",
+          "owner.logout",
+          "owner.session.after",
+          "independent.session.after",
+          "independent.logout",
+          "independent.context.close"
+        ],
+        "error": {
+          "reason": "logout-killed-other-session",
+          "metrics": {
+            "status": 200
+          }
+        },
+        "scope": "full exact scenario; API/UI/context fakes, actual deadline/check/teardown helpers; no worker"
+      },
+      {
+        "options": {
+          "gotoError": true
+        },
+        "accepted": false,
+        "actions": [
+          "independent.newContext",
+          "independent.newPage",
+          "independent.logout",
+          "independent.context.close"
+        ],
+        "error": {
+          "reason": "harness-or-interface-error"
+        },
+        "scope": "full exact scenario; API/UI/context fakes, actual deadline/check/teardown helpers; no worker"
+      },
+      {
+        "options": {
+          "cleanupLogoutStatus": 503
+        },
+        "accepted": false,
+        "actions": [
+          "independent.newContext",
+          "independent.newPage",
+          "independent.session.before",
+          "owner.logout",
+          "owner.session.after",
+          "independent.session.after",
+          "independent.logout",
+          "independent.context.close"
+        ],
+        "error": {
+          "reason": "native-browser-interface-deadline",
+          "metrics": {
+            "stage": "independent-session-owned-cleanup",
+            "failedSteps": [
+              "independent-session-logout"
+            ],
+            "nativeDataAvailable": false,
+            "testError": true
+          }
+        },
+        "scope": "full exact scenario; API/UI/context fakes, actual deadline/check/teardown helpers; no worker"
+      },
+      {
+        "options": {
+          "cleanupLogoutError": true
+        },
+        "accepted": false,
+        "actions": [
+          "independent.newContext",
+          "independent.newPage",
+          "independent.session.before",
+          "owner.logout",
+          "owner.session.after",
+          "independent.session.after",
+          "independent.logout",
+          "independent.context.close"
+        ],
+        "error": {
+          "reason": "native-browser-interface-deadline",
+          "metrics": {
+            "stage": "independent-session-owned-cleanup",
+            "failedSteps": [
+              "independent-session-logout"
+            ],
+            "nativeDataAvailable": false,
+            "testError": true
+          }
+        },
+        "scope": "full exact scenario; API/UI/context fakes, actual deadline/check/teardown helpers; no worker"
+      },
+      {
+        "options": {
+          "closeError": true
+        },
+        "accepted": false,
+        "actions": [
+          "independent.newContext",
+          "independent.newPage",
+          "independent.session.before",
+          "owner.logout",
+          "owner.session.after",
+          "independent.session.after",
+          "independent.logout",
+          "independent.context.close"
+        ],
+        "error": {
+          "reason": "native-browser-interface-deadline",
+          "metrics": {
+            "stage": "independent-session-owned-cleanup",
+            "failedSteps": [
+              "independent-context-close"
+            ],
+            "nativeDataAvailable": false,
+            "testError": true
+          }
+        },
+        "scope": "full exact scenario; API/UI/context fakes, actual deadline/check/teardown helpers; no worker"
+      },
+      {
+        "options": {
+          "cleanupLogoutError": true,
+          "closeError": true
+        },
+        "accepted": false,
+        "actions": [
+          "independent.newContext",
+          "independent.newPage",
+          "independent.session.before",
+          "owner.logout",
+          "owner.session.after",
+          "independent.session.after",
+          "independent.logout",
+          "independent.context.close"
+        ],
+        "error": {
+          "reason": "native-browser-interface-deadline",
+          "metrics": {
+            "stage": "independent-session-owned-cleanup",
+            "failedSteps": [
+              "independent-session-logout",
+              "independent-context-close"
+            ],
+            "nativeDataAvailable": false,
+            "testError": true
+          }
+        },
+        "scope": "full exact scenario; API/UI/context fakes, actual deadline/check/teardown helpers; no worker"
+      },
+      {
+        "options": {
+          "beforeStatus": 503,
+          "cleanupLogoutError": true,
+          "closeError": true
+        },
+        "accepted": false,
+        "actions": [
+          "independent.newContext",
+          "independent.newPage",
+          "independent.session.before",
+          "independent.logout",
+          "independent.context.close"
+        ],
+        "error": {
+          "reason": "native-browser-interface-deadline",
+          "metrics": {
+            "stage": "independent-session-owned-cleanup",
+            "failedSteps": [
+              "independent-session-logout",
+              "independent-context-close"
+            ],
+            "nativeDataAvailable": false,
+            "testError": true
+          }
+        },
+        "scope": "full exact scenario; API/UI/context fakes, actual deadline/check/teardown helpers; no worker"
+      },
+      {
+        "options": {
+          "newPageError": true
+        },
+        "accepted": false,
+        "actions": [
+          "independent.newContext",
+          "independent.newPage"
+        ],
+        "error": {
+          "reason": "harness-or-interface-error"
+        },
+        "scope": "full exact scenario; API/UI/context fakes, actual deadline/check/teardown helpers; no worker"
+      }
+    ],
+    "regressionSourceSha256": "4bf0e7d3ce9a6e79623b915ca999b2a78c2eefc10a7db73c23b83f4de0e2b83c",
+    "accessSourceSha256": "987f6440a0aca80c4a2377b35b778993cb30a04f0333bfecb55f01020fb6766b"
+  },
+  "greenIndex": {
+    "at": "2026-09-28T19:48:17.695779+00:00",
+    "scope": "exact parent+index extracted source; no native runtime",
+    "node": "v26.8.2",
+    "sourceTreeBeforeEvidence": "4fa06d705a00dd5cfba3e7b449db09497b42eb9a",
+    "checks": [
+      {
+        "file": "access-native.checks.mjs",
+        "exit": 0,
+        "tests": 33,
+        "skipped": 0,
+        "output": "\u2714 actual heldMedia rejects empty stats instead of inventing a decoded stop (1.6157ms)\n\u2714 actual heldMedia rejects no video RTP instead of inventing a decoded stop (0.427843ms)\n\u2714 actual heldMedia rejects missing counter instead of inventing a decoded stop (0.506968ms)\n\u2714 actual heldMedia rejects invalid counter instead of inventing a decoded stop (0.421418ms)\n\u2714 actual heldMedia rejects partial counter disappearance and replacement after a valid control (0.83091ms)\n\u2714 actual heldMedia preserves available numeric zero and known stagnant counters (1.04294ms)\n\u2714 actual hold establishes known positive video counters before any fault and rejects unavailable/zero fixtures (1.327527ms)\n\u2714 actual heldMedia hung getStats is phase-labelled, quarantined, never fabricated as frames0 and release never reevaluates it (27.054367ms)\n\u2714 actual heldMedia pending outer evaluate cannot bypass quarantine or trigger a second probe (4.865383ms)\n\u2714 actual heldMedia rejects late native answer but records normal increasing and post-revocation stagnant frames unchanged (41.118502ms)\n\u2714 actual access finally attempts every own context after restore rejection and close timeout, with redacted failure stages (6.120313ms)\n\u2714 actual lease finally restores Redis and closes every own context even when API resume and a close fail (0.294688ms)\n\u2714 actual revocation stop check accepts known stagnant counters (0.90051ms)\n\u2714 actual revocation stop check rejects empty (0.368943ms)\n\u2714 actual revocation stop check rejects missing-counter (0.350591ms)\n\u2714 actual deletion stop check accepts known stagnant counters (0.599508ms)\n\u2714 actual deletion stop check rejects empty (0.310696ms)\n\u2714 actual deletion stop check rejects missing-counter (0.290803ms)\n\u2714 actual lease stop check accepts known stagnant counters (0.560065ms)\n\u2714 actual lease stop check rejects empty (0.319517ms)\n\u2714 actual lease stop check rejects missing-counter (0.305533ms)\n\u2714 actual acquired independent context closes without Page or logout on acquisition failure {\"newPageError\":true} (1.790765ms)\n\u2714 actual acquired independent context closes without Page or logout on acquisition failure {\"newPageError\":true,\"contextCloseError\":true} (1.107697ms)\n\u2714 actual acquired independent context closes without Page or logout on acquisition failure {\"newPageError\":true,\"contextClosePending\":true} (6.421892ms)\n\u2714 actual acquired independent context closes without Page or logout on acquisition failure {\"newPagePending\":true} (6.457865ms)\n\u2714 actual independent-session task requires successful owner logout and retains/cleans the other session (1.330052ms)\n\u2714 actual independent-session task rejects an unexercised/failed boundary {\"ownerLogoutStatus\":503} (1.074265ms)\n\u2714 actual independent-session task rejects an unexercised/failed boundary {\"ownerLogoutStatus\":401} (1.068362ms)\n\u2714 actual independent-session task rejects an unexercised/failed boundary {\"ownerStillSignedIn\":true} (1.058007ms)\n\u2714 actual independent-session task rejects an unexercised/failed boundary {\"ownerSessionStatus\":503} (1.16865ms)\n\u2714 actual independent-session task rejects an unexercised/failed boundary {\"beforeStatus\":503} (1.091102ms)\n\u2714 actual independent-session task rejects an unexercised/failed boundary {\"afterStatus\":503} (1.043803ms)\n\u2714 actual independent-session task rejects an unexercised/failed boundary {\"cleanupLogoutStatus\":503} (1.080792ms)\n\u2139 tests 33\n\u2139 suites 0\n\u2139 pass 33\n\u2139 fail 0\n\u2139 cancelled 0\n\u2139 skipped 0\n\u2139 todo 0\n\u2139 duration_ms 118.517521\n(node:3) ExperimentalWarning: VM Modules is an experimental feature and might change at any time\n(Use `node --trace-warnings ...` to show where the warning was created)\n"
+      }
+    ],
+    "lint": {
+      "exit": 0,
+      "output": ""
+    },
+    "moduleSha256": {
+      "teardown.mjs": "5bb7d0d8e023d23ab242eb8ac8b77a722d0a38c60f5df6637b86938b97419e9a",
+      "teardown.checks.mjs": "22f033c552b92bbe9e20e06c3ad51d993ecc46dcf7799da4d6623448aab7a5b1",
+      "storage-faults.mjs": "e0408378060689e8584c014f90e2d3771dc611b86bfce3bc5328a3b71ada01fb",
+      "session-audio-control.mjs": "b4624e88c9885d84ab0697bf55f7fb4878763d6bb810dd9501e7ed02202a6bc2",
+      "selection.mjs": "b8a445a817880843e833510d92dfdaf3150fff643f4b4ae5aa6906cd3913f771",
+      "s3-object.mjs": "1bce9abf11b4aa30e0e62b6063eb283baed30894e8f816787c379dd43ea63168",
+      "run.mjs": "d2900e4f8ec085708a696c1266359c51476d794c6fa497d2c0449243f9747bcd",
+      "rendered-frames.checks.mjs": "4e5bf1be45d1eb0914625d08b35623e48ccca80dc4c35337deff13dd63571780",
+      "redis-command.mjs": "b6d801eb136a072b8a00bc2982d16934bdc4cf90c06ef28b67be4ad5a160706b",
+      "realtime-faults.mjs": "71626d7a152521529f35b1c192760b2ac809bdb56955473507362fd9fe74db62",
+      "profiles.mjs": "ef20d6159fe61e04fda06c41314fbc2798e7ae7a7e5a5f57aa3f88569b0fe2aa",
+      "probe.mjs": "0b7aea113ba651b96d3b6a9e325f9436af9a9ffc06b33ddb27cb6f4033e7f91c",
+      "native-finish.checks.mjs": "0b61ec4d2796d448c92ed36dca1dd66052c4c6ca1844874f59f44462d2910c75",
+      "native-evaluate.mjs": "89294f744f2c6a0d88e90975a944e96e49b2bf1c829ba377ccaa17a19b1564bf",
+      "native-evaluate.checks.mjs": "4b24b3854f84b04ee5037ed2fdff7f02c7f490fefd6ff882bac9285877d8a5fd",
+      "membership-faults.mjs": "e155ee73a21bc27b7e8a75fe8d865e0309b35f8ad38ee77296da0db3a7a5b3a5",
+      "media.mjs": "f9339a0701f1e860865705980b66f7ee1b98ee89346ee235b959acae86461378",
+      "media-runtime.mjs": "d9bc66d17009162fd6f70eec24b227fda607e601fc7a0011a7fadae698795b67",
+      "media-runtime.checks.mjs": "4569eabb3d4339914cd48a0fdea42ad3feae89a827f67aa4923682ff72787a91",
+      "media-probe.checks.mjs": "a43b9440303b7babf4d3b6ac56a25407c9d6294e9ffde68c8f09915d21a12af6",
+      "media-lease-faults.mjs": "e3aefd71b583e5d4ab4a5109c3ed69a78352248392ec90a4f5308212fe8bae70",
+      "media-extra.mjs": "e08f2daa8374db84b665de0dbce58cef369c5088a96fe3ef6685d594db7791a2",
+      "media-extra.checks.mjs": "cfdda0510e5e307c0d00199ca9eed02f9a65b503db7210a26a8f9b03e8bfccd2",
+      "harness.mjs": "4425220c56f9da05e83896f1713c9ac800fe1b345507bcfc6b283c1440dec99d",
+      "harness.checks.mjs": "89564069db0e134a936088b2831b0eeac297777a8907523db9274efd276c9003",
+      "gateway-load.mjs": "c98da745c2ccc064829f71d1598a781eb1059177445c7c49dc7b5d07f7ed23d5",
+      "faults.mjs": "62fe2b0f812192bac2be6996049eec802db48097633c6367bd44018b6aa3a0d4",
+      "faults.checks.mjs": "9b013140e232dc052fe9b52755db20fb48267258b06fabec8ca546aae5afe11f",
+      "fault-runtime.mjs": "423684dfaddfdd65ca3021e95f842616563bef30dd8d99c70d477e9098bf7fee",
+      "fault-run.mjs": "39e5af6912f692478599cc2b9c4acc21ede1a877db72b79f4d5b6d8991769438",
+      "core.mjs": "90d46690fe1c6147d6fa54d7cc42372600ea6bc67a7b65a37a237bf4fca8fc03",
+      "ci-fault-prepare.mjs": "7be606568d420a1104cad28787fe3f8b072cda72eb265d714e6648c790b16e1d",
+      "ci-fault-prepare.checks.mjs": "b3481cdf182fc4e36d34f9b67ae828f5e115a55fcfd81233353744639affd653",
+      "ci-fault-loop.checks.mjs": "4fbf6bf68733e7175ae7baf6213230a9f7a37f75aa8971d6947b1283c5b142ff",
+      "chat-faults.mjs": "a4d258f8084e4ed842e408ebca19cbe178b636afdf2a32068e8232c16417d767",
+      "browser-options.mjs": "e092d543702eca00f24258a23b1ae97c4d280f857732dc2d262568913e01e052",
+      "browser-options.checks.mjs": "155c1eb154e9def93a95cbf7885a37755f6d91af90c93bc9b60f9f176f7104a5",
+      "account-switch.mjs": "9dd5cc5a93f55ac74ba03f46e3435b0f8e7435569dc242ef597b764e42b0ef46",
+      "access.mjs": "32655d5f780204abd3a73adb5a600db1f1fbb37a9ca42cd1932601b77ba049e4",
+      "access-native.checks.mjs": "f1bab755ba97f26042ba574ddbdf8f1ae56aa1cbdf97f78c0da09480abe74478"
+    }
+  },
+  "reviewerCopy": {
+    "source": {
+      "path": "/tmp/gelabber-agent-plan-2026-09-28/evidence/review11-b4-60c106a/review-b4-independent-session.mjs",
+      "sha256": "5296bebb5d2800f8478424eb2a210242c04ac788ebdf8df9fc1077468b9336b9"
+    },
+    "description": "Author executes an identical copy of independent reviewer source against isolated index; this is an author control, not independent review PASS",
+    "result": {
+      "path": "/tmp/gelabber-e2e/b4-r1-index-reviewer-green.log",
+      "sha256": "242fbcd4a96fee386a45bcd57e4987f5711498a4d474d9d887dcd0a7721fe89c",
+      "exit": 0,
+      "tests": 23,
+      "passed": 23,
+      "failed": 0,
+      "skipped": 0,
+      "output": "\u2714 healthy logout200/session200-null and otherSession200-owner passes and cleans (3.786422ms)\n(node:3) ExperimentalWarning: VM Modules is an experimental feature and might change at any time\n(Use `node --trace-warnings ...` to show where the warning was created)\n\u2714 original B-4: failed ownerLogout503 must not prove session isolation (1.45337ms)\n\u2714 rejects failed status/session/early UI {\"ownerLogoutStatus\":401} and attempts logout+contextclose (1.533187ms)\n\u2714 rejects failed status/session/early UI {\"ownerLogoutStatus\":403} and attempts logout+contextclose (1.335982ms)\n\u2714 rejects failed status/session/early UI {\"ownerLogoutError\":true} and attempts logout+contextclose (1.224817ms)\n\u2714 rejects failed status/session/early UI {\"ownerSessionStatus\":503} and attempts logout+contextclose (2.906159ms)\n\u2714 rejects failed status/session/early UI {\"ownerBody\":\"still-signed-in\"} and attempts logout+contextclose (1.106316ms)\n\u2714 rejects failed status/session/early UI {\"ownerBody\":\"absent\"} and attempts logout+contextclose (1.089912ms)\n\u2714 rejects failed status/session/early UI {\"ownerBody\":\"missing-user\"} and attempts logout+contextclose (1.099985ms)\n\u2714 rejects failed status/session/early UI {\"ownerBody\":\"false\"} and attempts logout+contextclose (1.112478ms)\n\u2714 rejects failed status/session/early UI {\"beforeStatus\":503} and attempts logout+contextclose (1.06817ms)\n\u2714 rejects failed status/session/early UI {\"beforeBody\":\"wrong-owner\"} and attempts logout+contextclose (1.045895ms)\n\u2714 rejects failed status/session/early UI {\"beforeBody\":\"absent\"} and attempts logout+contextclose (0.996085ms)\n\u2714 rejects failed status/session/early UI {\"afterStatus\":503} and attempts logout+contextclose (1.047394ms)\n\u2714 rejects failed status/session/early UI {\"afterBody\":\"wrong-owner\"} and attempts logout+contextclose (0.981105ms)\n\u2714 rejects failed status/session/early UI {\"afterBody\":\"absent\"} and attempts logout+contextclose (1.014836ms)\n\u2714 rejects failed status/session/early UI {\"gotoError\":true} and attempts logout+contextclose (1.076577ms)\n\u2714 cleanup failure {\"cleanupLogoutStatus\":503} stays red and close is attempted (1.057874ms)\n\u2714 cleanup failure {\"cleanupLogoutError\":true} stays red and close is attempted (0.993023ms)\n\u2714 cleanup failure {\"closeError\":true} stays red and close is attempted (1.096214ms)\n\u2714 cleanup failure {\"cleanupLogoutError\":true,\"closeError\":true} stays red and close is attempted (1.058377ms)\n\u2714 cleanup failure {\"beforeStatus\":503,\"cleanupLogoutError\":true,\"closeError\":true} stays red and close is attempted (1.076704ms)\n\u2714 acquired independent context must close when newPage rejects before login (1.054227ms)\n\u2139 tests 23\n\u2139 suites 0\n\u2139 pass 23\n\u2139 fail 0\n\u2139 cancelled 0\n\u2139 skipped 0\n\u2139 todo 0\n\u2139 duration_ms 34.453269\n"
+    },
+    "observations": [
+      {
+        "options": {},
+        "accepted": true,
+        "independentSessionRetained": true,
+        "actions": [
+          "independent.newContext",
+          "independent.newPage",
+          "independent.session.before",
+          "owner.logout",
+          "owner.session.after",
+          "independent.session.after",
+          "independent.logout",
+          "independent.context.close"
+        ],
+        "error": null,
+        "scope": "full exact scenario; API/UI/context fakes, actual deadline/check/teardown helpers; no worker"
+      },
+      {
+        "options": {
+          "ownerLogoutStatus": 503
+        },
+        "accepted": false,
+        "actions": [
+          "independent.newContext",
+          "independent.newPage",
+          "independent.session.before",
+          "owner.logout",
+          "independent.logout",
+          "independent.context.close"
+        ],
+        "error": {
+          "reason": "owner-logout-request-failed",
+          "metrics": {
+            "status": 503
+          }
+        },
+        "scope": "full exact scenario; API/UI/context fakes, actual deadline/check/teardown helpers; no worker"
+      },
+      {
+        "options": {
+          "ownerLogoutStatus": 401
+        },
+        "accepted": false,
+        "actions": [
+          "independent.newContext",
+          "independent.newPage",
+          "independent.session.before",
+          "owner.logout",
+          "independent.logout",
+          "independent.context.close"
+        ],
+        "error": {
+          "reason": "owner-logout-request-failed",
+          "metrics": {
+            "status": 401
+          }
+        },
+        "scope": "full exact scenario; API/UI/context fakes, actual deadline/check/teardown helpers; no worker"
+      },
+      {
+        "options": {
+          "ownerLogoutStatus": 403
+        },
+        "accepted": false,
+        "actions": [
+          "independent.newContext",
+          "independent.newPage",
+          "independent.session.before",
+          "owner.logout",
+          "independent.logout",
+          "independent.context.close"
+        ],
+        "error": {
+          "reason": "owner-logout-request-failed",
+          "metrics": {
+            "status": 403
+          }
+        },
+        "scope": "full exact scenario; API/UI/context fakes, actual deadline/check/teardown helpers; no worker"
+      },
+      {
+        "options": {
+          "ownerLogoutError": true
+        },
+        "accepted": false,
+        "actions": [
+          "independent.newContext",
+          "independent.newPage",
+          "independent.session.before",
+          "owner.logout",
+          "independent.logout",
+          "independent.context.close"
+        ],
+        "error": {
+          "reason": "harness-or-interface-error"
+        },
+        "scope": "full exact scenario; API/UI/context fakes, actual deadline/check/teardown helpers; no worker"
+      },
+      {
+        "options": {
+          "ownerSessionStatus": 503
+        },
+        "accepted": false,
+        "actions": [
+          "independent.newContext",
+          "independent.newPage",
+          "independent.session.before",
+          "owner.logout",
+          "owner.session.after",
+          "independent.logout",
+          "independent.context.close"
+        ],
+        "error": {
+          "reason": "owner-session-not-anonymous-after-logout",
+          "metrics": {
+            "status": 503
+          }
+        },
+        "scope": "full exact scenario; API/UI/context fakes, actual deadline/check/teardown helpers; no worker"
+      },
+      {
+        "options": {
+          "ownerBody": "still-signed-in"
+        },
+        "accepted": false,
+        "actions": [
+          "independent.newContext",
+          "independent.newPage",
+          "independent.session.before",
+          "owner.logout",
+          "owner.session.after",
+          "independent.logout",
+          "independent.context.close"
+        ],
+        "error": {
+          "reason": "owner-session-not-anonymous-after-logout",
+          "metrics": {
+            "status": 200
+          }
+        },
+        "scope": "full exact scenario; API/UI/context fakes, actual deadline/check/teardown helpers; no worker"
+      },
+      {
+        "options": {
+          "ownerBody": "absent"
+        },
+        "accepted": false,
+        "actions": [
+          "independent.newContext",
+          "independent.newPage",
+          "independent.session.before",
+          "owner.logout",
+          "owner.session.after",
+          "independent.logout",
+          "independent.context.close"
+        ],
+        "error": {
+          "reason": "owner-session-not-anonymous-after-logout",
+          "metrics": {
+            "status": 200
+          }
+        },
+        "scope": "full exact scenario; API/UI/context fakes, actual deadline/check/teardown helpers; no worker"
+      },
+      {
+        "options": {
+          "ownerBody": "missing-user"
+        },
+        "accepted": false,
+        "actions": [
+          "independent.newContext",
+          "independent.newPage",
+          "independent.session.before",
+          "owner.logout",
+          "owner.session.after",
+          "independent.logout",
+          "independent.context.close"
+        ],
+        "error": {
+          "reason": "owner-session-not-anonymous-after-logout",
+          "metrics": {
+            "status": 200
+          }
+        },
+        "scope": "full exact scenario; API/UI/context fakes, actual deadline/check/teardown helpers; no worker"
+      },
+      {
+        "options": {
+          "ownerBody": "false"
+        },
+        "accepted": false,
+        "actions": [
+          "independent.newContext",
+          "independent.newPage",
+          "independent.session.before",
+          "owner.logout",
+          "owner.session.after",
+          "independent.logout",
+          "independent.context.close"
+        ],
+        "error": {
+          "reason": "owner-session-not-anonymous-after-logout",
+          "metrics": {
+            "status": 200
+          }
+        },
+        "scope": "full exact scenario; API/UI/context fakes, actual deadline/check/teardown helpers; no worker"
+      },
+      {
+        "options": {
+          "beforeStatus": 503
+        },
+        "accepted": false,
+        "actions": [
+          "independent.newContext",
+          "independent.newPage",
+          "independent.session.before",
+          "independent.logout",
+          "independent.context.close"
+        ],
+        "error": {
+          "reason": "fixture-independent-session-not-authenticated",
+          "metrics": {
+            "status": 503
+          }
+        },
+        "scope": "full exact scenario; API/UI/context fakes, actual deadline/check/teardown helpers; no worker"
+      },
+      {
+        "options": {
+          "beforeBody": "wrong-owner"
+        },
+        "accepted": false,
+        "actions": [
+          "independent.newContext",
+          "independent.newPage",
+          "independent.session.before",
+          "independent.logout",
+          "independent.context.close"
+        ],
+        "error": {
+          "reason": "fixture-independent-session-not-authenticated",
+          "metrics": {
+            "status": 200
+          }
+        },
+        "scope": "full exact scenario; API/UI/context fakes, actual deadline/check/teardown helpers; no worker"
+      },
+      {
+        "options": {
+          "beforeBody": "absent"
+        },
+        "accepted": false,
+        "actions": [
+          "independent.newContext",
+          "independent.newPage",
+          "independent.session.before",
+          "independent.logout",
+          "independent.context.close"
+        ],
+        "error": {
+          "reason": "fixture-independent-session-not-authenticated",
+          "metrics": {
+            "status": 200
+          }
+        },
+        "scope": "full exact scenario; API/UI/context fakes, actual deadline/check/teardown helpers; no worker"
+      },
+      {
+        "options": {
+          "afterStatus": 503
+        },
+        "accepted": false,
+        "actions": [
+          "independent.newContext",
+          "independent.newPage",
+          "independent.session.before",
+          "owner.logout",
+          "owner.session.after",
+          "independent.session.after",
+          "independent.logout",
+          "independent.context.close"
+        ],
+        "error": {
+          "reason": "logout-killed-other-session",
+          "metrics": {
+            "status": 503
+          }
+        },
+        "scope": "full exact scenario; API/UI/context fakes, actual deadline/check/teardown helpers; no worker"
+      },
+      {
+        "options": {
+          "afterBody": "wrong-owner"
+        },
+        "accepted": false,
+        "actions": [
+          "independent.newContext",
+          "independent.newPage",
+          "independent.session.before",
+          "owner.logout",
+          "owner.session.after",
+          "independent.session.after",
+          "independent.logout",
+          "independent.context.close"
+        ],
+        "error": {
+          "reason": "logout-killed-other-session",
+          "metrics": {
+            "status": 200
+          }
+        },
+        "scope": "full exact scenario; API/UI/context fakes, actual deadline/check/teardown helpers; no worker"
+      },
+      {
+        "options": {
+          "afterBody": "absent"
+        },
+        "accepted": false,
+        "actions": [
+          "independent.newContext",
+          "independent.newPage",
+          "independent.session.before",
+          "owner.logout",
+          "owner.session.after",
+          "independent.session.after",
+          "independent.logout",
+          "independent.context.close"
+        ],
+        "error": {
+          "reason": "logout-killed-other-session",
+          "metrics": {
+            "status": 200
+          }
+        },
+        "scope": "full exact scenario; API/UI/context fakes, actual deadline/check/teardown helpers; no worker"
+      },
+      {
+        "options": {
+          "gotoError": true
+        },
+        "accepted": false,
+        "actions": [
+          "independent.newContext",
+          "independent.newPage",
+          "independent.logout",
+          "independent.context.close"
+        ],
+        "error": {
+          "reason": "harness-or-interface-error"
+        },
+        "scope": "full exact scenario; API/UI/context fakes, actual deadline/check/teardown helpers; no worker"
+      },
+      {
+        "options": {
+          "cleanupLogoutStatus": 503
+        },
+        "accepted": false,
+        "actions": [
+          "independent.newContext",
+          "independent.newPage",
+          "independent.session.before",
+          "owner.logout",
+          "owner.session.after",
+          "independent.session.after",
+          "independent.logout",
+          "independent.context.close"
+        ],
+        "error": {
+          "reason": "native-browser-interface-deadline",
+          "metrics": {
+            "stage": "independent-session-owned-cleanup",
+            "failedSteps": [
+              "independent-session-logout"
+            ],
+            "nativeDataAvailable": false,
+            "testError": true
+          }
+        },
+        "scope": "full exact scenario; API/UI/context fakes, actual deadline/check/teardown helpers; no worker"
+      },
+      {
+        "options": {
+          "cleanupLogoutError": true
+        },
+        "accepted": false,
+        "actions": [
+          "independent.newContext",
+          "independent.newPage",
+          "independent.session.before",
+          "owner.logout",
+          "owner.session.after",
+          "independent.session.after",
+          "independent.logout",
+          "independent.context.close"
+        ],
+        "error": {
+          "reason": "native-browser-interface-deadline",
+          "metrics": {
+            "stage": "independent-session-owned-cleanup",
+            "failedSteps": [
+              "independent-session-logout"
+            ],
+            "nativeDataAvailable": false,
+            "testError": true
+          }
+        },
+        "scope": "full exact scenario; API/UI/context fakes, actual deadline/check/teardown helpers; no worker"
+      },
+      {
+        "options": {
+          "closeError": true
+        },
+        "accepted": false,
+        "actions": [
+          "independent.newContext",
+          "independent.newPage",
+          "independent.session.before",
+          "owner.logout",
+          "owner.session.after",
+          "independent.session.after",
+          "independent.logout",
+          "independent.context.close"
+        ],
+        "error": {
+          "reason": "native-browser-interface-deadline",
+          "metrics": {
+            "stage": "independent-session-owned-cleanup",
+            "failedSteps": [
+              "independent-context-close"
+            ],
+            "nativeDataAvailable": false,
+            "testError": true
+          }
+        },
+        "scope": "full exact scenario; API/UI/context fakes, actual deadline/check/teardown helpers; no worker"
+      },
+      {
+        "options": {
+          "cleanupLogoutError": true,
+          "closeError": true
+        },
+        "accepted": false,
+        "actions": [
+          "independent.newContext",
+          "independent.newPage",
+          "independent.session.before",
+          "owner.logout",
+          "owner.session.after",
+          "independent.session.after",
+          "independent.logout",
+          "independent.context.close"
+        ],
+        "error": {
+          "reason": "native-browser-interface-deadline",
+          "metrics": {
+            "stage": "independent-session-owned-cleanup",
+            "failedSteps": [
+              "independent-session-logout",
+              "independent-context-close"
+            ],
+            "nativeDataAvailable": false,
+            "testError": true
+          }
+        },
+        "scope": "full exact scenario; API/UI/context fakes, actual deadline/check/teardown helpers; no worker"
+      },
+      {
+        "options": {
+          "beforeStatus": 503,
+          "cleanupLogoutError": true,
+          "closeError": true
+        },
+        "accepted": false,
+        "actions": [
+          "independent.newContext",
+          "independent.newPage",
+          "independent.session.before",
+          "independent.logout",
+          "independent.context.close"
+        ],
+        "error": {
+          "reason": "native-browser-interface-deadline",
+          "metrics": {
+            "stage": "independent-session-owned-cleanup",
+            "failedSteps": [
+              "independent-session-logout",
+              "independent-context-close"
+            ],
+            "nativeDataAvailable": false,
+            "testError": true
+          }
+        },
+        "scope": "full exact scenario; API/UI/context fakes, actual deadline/check/teardown helpers; no worker"
+      },
+      {
+        "options": {
+          "newPageError": true
+        },
+        "accepted": false,
+        "actions": [
+          "independent.newContext",
+          "independent.newPage",
+          "independent.context.close"
+        ],
+        "error": {
+          "reason": "harness-or-interface-error"
+        },
+        "scope": "full exact scenario; API/UI/context fakes, actual deadline/check/teardown helpers; no worker"
+      }
+    ],
+    "rawObservations": {
+      "path": "/tmp/gelabber-e2e/b4-r1-index-reviewer-control/own-repro.json",
+      "sha256": "eb8d7db2a043314d21ef9183fb72732c2d5e3844160baeb8265d3cd2459374c6"
+    },
+    "parentRawObservations": {
+      "path": "/tmp/gelabber-e2e/b4-r1-parent-reviewer-control/own-repro.json",
+      "sha256": "69f3547650aa3d363beb5a95cade0b9a6d3661342616f3ebf758a2b5b5476f9b"
+    }
+  },
+  "controls": [
+    "ordinary newPage rejection -> no logout, owned context close attempted, task rejected",
+    "newPage rejection plus context.close rejection -> fixed cleanup failure redacted",
+    "newPage rejection plus pending context.close -> bounded failure visible",
+    "pending newPage -> acquisition timeout and owned context close attempted",
+    "unchanged healthy owner logout200/session200 user:null and surviving independent session control",
+    "unchanged independent logout/context-close failure controls"
+  ],
+  "limits": [
+    "Only synthetic pending infrastructure controls shorten actual helper deadline to5ms; scenario12s/5s budgets unchanged",
+    "All existing logout/session/native/revocation assertions unchanged",
+    "Historical88 case mappings and native reports unchanged; not evidence for new assertions",
+    "No current runtime/resource observation; no worker started or native run repeated",
+    "B-1/B-2/B-3 independent source/Harness PASS reported by coordinator; B-4-R1 followup awaiting independent review",
+    "Default/WAN/manual/remoteCI and overall acceptance remain separate/open"
+  ]
+}

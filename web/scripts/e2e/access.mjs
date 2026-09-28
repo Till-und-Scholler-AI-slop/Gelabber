@@ -265,17 +265,21 @@ export async function closeAccessActors(
 }
 async function closeIndependentSession(page, context) {
   const failedSteps = await attemptAll([
-    [
-      "independent-session-logout",
-      async () => {
-        const logout = await api({ page }, "/auth/logout", "POST");
-        check(
-          logout.status === 200,
-          "independent-session-cleanup-logout-failed",
-          { status: logout.status },
-        );
-      },
-    ],
+    ...(page
+      ? [
+          [
+            "independent-session-logout",
+            async () => {
+              const logout = await api({ page }, "/auth/logout", "POST");
+              check(
+                logout.status === 200,
+                "independent-session-cleanup-logout-failed",
+                { status: logout.status },
+              );
+            },
+          ],
+        ]
+      : []),
     ["independent-context-close", () => closeAccessActors([{ context }])],
   ]);
   if (failedSteps.length)
@@ -421,11 +425,12 @@ export async function accessScenarios(h, f) {
     ["03a"],
     async () => {
       const context = await deadlineProbe(
-          () => h.browser.newContext(),
-          Date.now() + 12_000,
-        ),
-        page = await deadlineProbe(() => context.newPage(), Date.now() + 5_000);
+        () => h.browser.newContext(),
+        Date.now() + 12_000,
+      );
+      let page;
       try {
+        page = await deadlineProbe(() => context.newPage(), Date.now() + 5_000);
         await page.goto(`${f.base}/login`);
         await page.getByLabel("E-Mail-Adresse").fill(f.owner.email);
         await page

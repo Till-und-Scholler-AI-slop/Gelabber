@@ -305,6 +305,10 @@ async function independentSessionControl({
   beforeStatus = 200,
   afterStatus = 200,
   cleanupLogoutStatus = 200,
+  newPageError = false,
+  newPagePending = false,
+  contextCloseError = false,
+  contextClosePending = false,
 } = {}) {
   const actions = [],
     owner = {
@@ -354,7 +358,20 @@ async function independentSessionControl({
         };
       },
     },
-    "./native-evaluate.mjs": nativeInterface,
+    "./native-evaluate.mjs": {
+      ...nativeInterface,
+      // Bound only the pending infrastructure controls to 5ms. Execute the
+      // actual helper; the scenario's committed 5/12s budgets stay unchanged.
+      deadlineProbe: (work, deadline) =>
+        nativeInterface.deadlineProbe(
+          work,
+          (newPagePending && work.toString().includes(".newPage()")) ||
+            (contextClosePending &&
+              work.toString().includes(".context.close()"))
+            ? Math.min(deadline, Date.now() + 5)
+            : deadline,
+        ),
+    },
     "./teardown.mjs": teardown,
     "./media.mjs": { progress: async () => {} },
   };
@@ -378,12 +395,23 @@ async function independentSessionControl({
   const h = {
     setIsolation: () => {},
     browser: {
-      newContext: async () => ({
-        newPage: async () => page,
-        close: async () => {
-          actions.push("independent.context.close");
-        },
-      }),
+      newContext: async () => {
+        actions.push("independent.newContext");
+        return {
+          newPage: async () => {
+            actions.push("independent.newPage");
+            if (newPageError) throw new Error("PRIVATE-newPage-error");
+            if (newPagePending) return new Promise(() => {});
+            return page;
+          },
+          close: async () => {
+            actions.push("independent.context.close");
+            if (contextCloseError)
+              throw new Error("PRIVATE-context-close-error");
+            if (contextClosePending) return new Promise(() => {});
+          },
+        };
+      },
     },
     run: async (id, _predecessors, task) => {
       if (id === "logout-other-independent-session-survives") {
@@ -402,6 +430,33 @@ async function independentSessionControl({
     base: "http://127.0.0.1:15186",
   });
   return { result, error, actions };
+}
+for (const options of [
+  { newPageError: true },
+  { newPageError: true, contextCloseError: true },
+  { newPageError: true, contextClosePending: true },
+  { newPagePending: true },
+]) {
+  test(`actual acquired independent context closes without Page or logout on acquisition failure ${JSON.stringify(options)}`, async () => {
+    const r = await independentSessionControl(options);
+    assert.ok(r.error);
+    assert.equal(r.result, undefined);
+    assert.deepEqual(r.actions, [
+      "independent.newContext",
+      "independent.newPage",
+      "independent.context.close",
+    ]);
+    if (options.contextCloseError || options.contextClosePending) {
+      assert.ok(r.error instanceof NativeInterfaceFailure);
+      assert.equal(r.error.metrics.stage, "independent-session-owned-cleanup");
+      assert.deepEqual(r.error.metrics.failedSteps, [
+        "independent-context-close",
+      ]);
+    }
+    if (options.newPagePending)
+      assert.ok(r.error instanceof NativeInterfaceFailure);
+    assert.ok(!JSON.stringify(r.error).includes("PRIVATE"));
+  });
 }
 test("actual independent-session task requires successful owner logout and retains/cleans the other session", async () => {
   const r = await independentSessionControl();
