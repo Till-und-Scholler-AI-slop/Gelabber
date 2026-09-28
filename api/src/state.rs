@@ -1,6 +1,7 @@
 use std::fmt;
 use std::str::FromStr;
 use std::sync::Arc;
+use std::sync::atomic::AtomicBool;
 use std::time::Duration;
 
 use sqlx::PgPool;
@@ -48,6 +49,7 @@ pub struct AppState {
     pub media_ticket_ttl: Duration,
     /// MinIO (or in-memory in tests) for attachment bytes.
     pub store: ObjectStore,
+    pub(crate) storage_worker_started: Arc<AtomicBool>,
     pub limits: Limits,
     pub limiter: Arc<Limiter>,
     pub metrics: Arc<HttpMetrics>,
@@ -91,8 +93,12 @@ impl AppState {
         let pg_connect =
             PgConnectOptions::from_str(&config.database_url).map_err(StateError::Database)?;
         let redis = redis::Client::open(config.redis_url.as_str()).map_err(StateError::Redis)?;
-        let store = ObjectStore::from_minio(config.minio.as_ref())
-            .map_err(|err| StateError::Store(err.to_string()))?;
+        let store = if config.minio.is_none() && config.allow_memory_store {
+            Ok(ObjectStore::memory())
+        } else {
+            ObjectStore::from_minio(config.minio.as_ref())
+        }
+        .map_err(|err| StateError::Store(err.to_string()))?;
         let gateway = Gateway::new(
             redis.clone(),
             config.ws_replay,
@@ -120,6 +126,7 @@ impl AppState {
             turn_cred_ttl: config.turn_cred_ttl,
             media_ticket_ttl: config.media_ticket_ttl,
             store,
+            storage_worker_started: Arc::new(AtomicBool::new(false)),
             limits: config.limits,
             limiter: Arc::new(Limiter::new()),
             metrics: Arc::new(HttpMetrics::new()),

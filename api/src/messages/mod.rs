@@ -227,7 +227,26 @@ async fn create_message(
         user.id,
         &attachment_ids,
     )
-    .await?;
+    .await;
+    let bound = match bound {
+        Ok(bound) => bound,
+        Err(err) => {
+            tx.rollback().await?;
+            // Quarantine only this uploader's invalid objects, after rollback;
+            // no physical delete can damage a rolled-back message transaction.
+            if let Err(cleanup_error) = attachments::cleanup::discard_mismatches(
+                &state,
+                channel_id,
+                user.id,
+                &attachment_ids,
+            )
+            .await
+            {
+                warn!(error=?cleanup_error, "invalid upload quarantine deferred to expiry cleanup");
+            }
+            return Err(err);
+        }
+    };
     let mut message = row.into_message(&user);
     message.attachments = bound;
     persist_event(
@@ -305,7 +324,6 @@ async fn delete_message(
         access.require_manage_messages()?;
     }
 
-    attachments::drop_objects(&state.store, message_id, &state.db).await;
     let mut tx = state.db.begin().await?;
     delivery::lock_channel(&mut tx, current.channel_id).await?;
     sqlx::query("DELETE FROM messages WHERE id = $1")

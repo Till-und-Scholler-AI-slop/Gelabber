@@ -22,6 +22,7 @@ fn state_with(pool: PgPool, extra: &[(&str, &str)]) -> AppState {
             return Some(value.clone());
         }
         match key {
+            "API_ALLOW_MEMORY_STORE" => Some("true".to_owned()),
             "DATABASE_URL" => Some("postgres://unused:unused@127.0.0.1:1/unused".to_owned()),
             "REDIS_URL" => Some("redis://127.0.0.1:1".to_owned()),
             "API_SESSION_TTL_HOURS" => Some("2".to_owned()),

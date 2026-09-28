@@ -92,6 +92,8 @@ pub struct Config {
     pub media_ticket_ttl: Duration,
     /// MinIO / S3-compatible store for attachments. Absent in unit tests.
     pub minio: Option<MinioConfig>,
+    /// Explicit opt-in for volatile storage in tests/development.
+    pub allow_memory_store: bool,
     /// Request windows and daily upload bytes (issue #16).
     pub limits: Limits,
 }
@@ -222,6 +224,10 @@ impl Config {
             None => DEFAULT_MEDIA_TICKET_TTL_SECS,
         };
         let minio = parse_minio(&get)?;
+        let allow_memory_store = match get("API_ALLOW_MEMORY_STORE") {
+            Some(raw) => parse_bool("API_ALLOW_MEMORY_STORE", &raw)?,
+            None => false,
+        };
         let limits = parse_limits(&get)?;
 
         Ok(Self {
@@ -243,6 +249,7 @@ impl Config {
             turn_cred_ttl: Duration::from_secs(turn_cred_ttl_secs),
             media_ticket_ttl: Duration::from_secs(media_ticket_ttl_secs),
             minio,
+            allow_memory_store,
             limits,
         })
     }

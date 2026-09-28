@@ -193,6 +193,7 @@ mod tests {
     #[sqlx::test]
     async fn busy_channel_does_not_starve_another_channels_outbox(pool: sqlx::PgPool) {
         let config = crate::Config::from_source(|key| match key {
+            "API_ALLOW_MEMORY_STORE" => Some("true".to_owned()),
             "DATABASE_URL" => Some("postgres://unused:unused@127.0.0.1:1/unused".into()),
             "REDIS_URL" => Some(std::env::var("REDIS_URL").unwrap()),
             _ => None,

@@ -23,6 +23,7 @@ pub const CSRF: &str = "gelabber_csrf";
 
 pub fn state(pool: PgPool) -> AppState {
     let config = Config::from_source(|key| match key {
+        "API_ALLOW_MEMORY_STORE" => Some("true".to_owned()),
         "DATABASE_URL" => Some("postgres://unused:unused@127.0.0.1:1/unused".to_owned()),
         "REDIS_URL" => Some(redis_url()),
         "API_SESSION_TTL_HOURS" => Some("2".to_owned()),
@@ -46,6 +47,7 @@ pub fn ws_state(pool: PgPool) -> AppState {
 pub fn ws_state_with_dead(pool: PgPool, dead_ms: u64) -> AppState {
     let redis = redis_url();
     let config = Config::from_source(|key| match key {
+        "API_ALLOW_MEMORY_STORE" => Some("true".to_owned()),
         "DATABASE_URL" => Some("postgres://unused:unused@127.0.0.1:1/unused".to_owned()),
         "REDIS_URL" => Some(redis.clone()),
         "API_SESSION_TTL_HOURS" => Some("2".to_owned()),
@@ -87,6 +89,7 @@ pub async fn serve_ws_with_dead(pool: PgPool, dead_ms: u64) -> (std::net::Socket
 pub fn ws_state_idle(pool: PgPool, idle_ms: u64) -> AppState {
     let redis = redis_url();
     let config = Config::from_source(|key| match key {
+        "API_ALLOW_MEMORY_STORE" => Some("true".to_owned()),
         "DATABASE_URL" => Some("postgres://unused:unused@127.0.0.1:1/unused".to_owned()),
         "REDIS_URL" => Some(redis.clone()),
         "API_SESSION_TTL_HOURS" => Some("2".to_owned()),

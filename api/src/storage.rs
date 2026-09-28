@@ -1,9 +1,8 @@
 //! Object store for chat attachments (issue #7).
 //!
 //! Production talks to MinIO with path-style S3 (presign PUT for the
-//! browser, Head/Delete from the API). Tests and `cargo test` without
-//! MinIO env use an in-memory map so the HTTP suite does not need a
-//! running bucket.
+//! browser, Head/Delete from the API). Tests or explicitly enabled development
+//! select an in-memory map. Missing production configuration is an error.
 
 use std::collections::HashMap;
 use std::sync::{Arc, Mutex};
@@ -68,10 +67,15 @@ pub enum ObjectStore {
 }
 
 impl ObjectStore {
+    /// Explicit test/development store; never selected by a missing S3 config.
+    pub fn memory() -> Self {
+        Self::Memory(MemoryStore::default())
+    }
+
     pub fn from_minio(config: Option<&MinioConfig>) -> Result<Self, StoreError> {
         match config {
             Some(cfg) => Ok(Self::Minio(MinioStore::new(cfg)?)),
-            None => Ok(Self::Memory(MemoryStore::default())),
+            None => Err(StoreError::Unconfigured),
         }
     }
 
@@ -237,13 +241,10 @@ impl MinioStore {
     async fn ensure_ready(&self) -> Result<(), StoreError> {
         let action = self.inner.internal.create_bucket(&self.inner.creds);
         let url = action.sign(Duration::from_secs(60));
-        let response = self
-            .inner
-            .http
-            .put(url)
-            .send()
-            .await
-            .map_err(|err| StoreError::Other(format!("create bucket: {err}")))?;
+        let response =
+            self.inner.http.put(url).send().await.map_err(|err| {
+                StoreError::Other(format!("create bucket: {}", err.without_url()))
+            })?;
         let status = response.status().as_u16();
         // 200/201 created, 409 already exists.
         if status == 200 || status == 201 || status == 409 {
@@ -291,7 +292,7 @@ impl MinioStore {
             .head(url)
             .send()
             .await
-            .map_err(|err| StoreError::Other(format!("head object: {err}")))?;
+            .map_err(|err| StoreError::Other(format!("head object: {}", err.without_url())))?;
         if response.status().as_u16() == 404 {
             return Err(StoreError::NotFound);
         }
@@ -320,7 +321,7 @@ impl MinioStore {
             .body(bytes)
             .send()
             .await
-            .map_err(|err| StoreError::Other(format!("put object: {err}")))?;
+            .map_err(|err| StoreError::Other(format!("put object: {}", err.without_url())))?;
         if response.status().is_success() {
             Ok(())
         } else {
@@ -337,13 +338,10 @@ impl MinioStore {
             .internal
             .delete_object(Some(&self.inner.creds), key);
         let url = action.sign(Duration::from_secs(30));
-        let response = self
-            .inner
-            .http
-            .delete(url)
-            .send()
-            .await
-            .map_err(|err| StoreError::Other(format!("delete object: {err}")))?;
+        let response =
+            self.inner.http.delete(url).send().await.map_err(|err| {
+                StoreError::Other(format!("delete object: {}", err.without_url()))
+            })?;
         if response.status().is_success() || response.status().as_u16() == 404 {
             Ok(())
         } else {
@@ -408,7 +406,7 @@ mod tests {
 
     #[test]
     fn memory_presign_lists_content_length() {
-        let store = ObjectStore::from_minio(None).expect("memory store");
+        let store = ObjectStore::memory();
         let signed = store
             .presign_put("att/x", "image/png", 12)
             .expect("presign");
