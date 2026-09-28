@@ -18,6 +18,7 @@
 
 mod conn;
 mod hub;
+mod leases;
 mod live;
 pub mod protocol;
 mod signal;
