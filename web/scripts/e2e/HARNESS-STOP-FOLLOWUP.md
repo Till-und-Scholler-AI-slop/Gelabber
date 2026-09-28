@@ -1,0 +1,5 @@
+# Healthy stop rejection follow-up
+
+Separate follow-up to immutable A5f841f9 after8011dd1. Independent review found a normal rejection of a healthy page's stop evaluation was swallowed, leaving gatePASS/Exit0. All stop evaluation errors now append redacted setupFAIL/test-error; ordinary rejection has reason native-stop-evaluate-rejected, interface failures retain their original reason. Cleanup of every owned server, contexts, browser and final report continues. Error text is never persisted. Assertions and deadlines stay unchanged.
+
+The new actual-harness VM regression injects only a healthy stop rejection, confirms earlier scenarioPASS, then requires cleanup204, all later closes/report, FAIL gate/Exit1 and no private error string. Parent source plus new regression:4checks/oneFAIL/Exit1. Isolated exact parent+index follow-up:4finish+6selection checks PASS/0skip, script lint0. Immutable paths/hashes and source-tree hashes: evidence/native-stop-validation.json. No native runtime, no hang-cause or clean actual-app follow-up claim. A remains unchanged; independent follow-up review is required. B scenarios and C CI remain separate.

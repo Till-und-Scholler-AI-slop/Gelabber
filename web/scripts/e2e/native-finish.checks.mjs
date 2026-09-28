@@ -5,7 +5,7 @@ import vm from "node:vm";
 import { readFile } from "node:fs/promises";
 import * as native from "./native-evaluate.mjs";
 import * as options from "./browser-options.mjs";
-async function finishProbe(brokenClose = false) {
+async function finishProbe(brokenClose = false, stopRejected = false) {
   const actions = [],
     reports = [];
   let actorEvaluations = 0,
@@ -45,6 +45,10 @@ async function finishProbe(brokenClose = false) {
           json: async () => ({ id: "voice-control" }),
         }),
         evaluate: async (fn, arg) => {
+          if (stopRejected && actorIndex === 0 && arg === undefined) {
+            actions.push("healthy-stop-evaluate-rejected");
+            throw new Error("PRIVATE-native-close-error");
+          }
           if (actorIndex === 0 && fn.name === "sample") {
             actorEvaluations++;
             return new Promise(() => {});
@@ -135,13 +139,15 @@ async function finishProbe(brokenClose = false) {
   const f = await h.fixture();
   const before = actorEvaluations;
   const failure = await h.run("native-interface-control", [], () =>
-    native.nativeEvaluate(f.owner, function sample() {}, undefined, 2),
+    stopRejected
+      ? Promise.resolve({ control: "healthy-before-stop" })
+      : native.nativeEvaluate(f.owner, function sample() {}, undefined, 2),
   );
-  assert.equal(failure.status, "FAIL");
-  assert.equal(failure.classification, "test-error");
+  assert.equal(failure.status, stopRejected ? "PASS" : "FAIL");
+  if (!stopRejected) assert.equal(failure.classification, "test-error");
   const evaluatedAfterTimeout = actorEvaluations;
   await h.finish();
-  assert.equal(actorEvaluations, evaluatedAfterTimeout);
+  if (!stopRejected) assert.equal(actorEvaluations, evaluatedAfterTimeout);
   return { actions, reports, process, before, evaluatedAfterTimeout };
 }
 test("actual harness InterfaceTimeout -> finish never reevaluates quarantined page and reaches cleanup/report", async () => {
@@ -153,6 +159,26 @@ test("actual harness InterfaceTimeout -> finish never reevaluates quarantined pa
   assert.equal(r.process.exitCode, 1);
   assert.equal(r.reports[0].gate.passed, false);
   assert.equal(r.reports[0].cleanup[0].status, 204);
+});
+test("actual healthy stop rejection is redacted FAIL/Exit1 while all later cleanup/report actions continue", async () => {
+  const r = await finishProbe(false, true);
+  assert.ok(r.actions.includes("healthy-stop-evaluate-rejected"));
+  assert.ok(r.actions.includes("cleanup-context-close"));
+  assert.ok(r.actions.includes("browser-close"));
+  assert.equal(r.actions.at(-1), "report-write");
+  assert.equal(r.reports[0].cleanup[0].status, 204);
+  assert.equal(r.process.exitCode, 1);
+  assert.equal(r.reports[0].gate.passed, false);
+  assert.ok(
+    r.reports[0].results.some(
+      (row) =>
+        row.id === "native-stop-evaluate" &&
+        row.status === "FAIL" &&
+        row.classification === "test-error" &&
+        row.reason === "native-stop-evaluate-rejected",
+    ),
+  );
+  assert.ok(!JSON.stringify(r).includes("PRIVATE-native-close-error"));
 });
 test("actual harness broken page/context/browser closes stay red and cannot prevent later cleanup/report", async () => {
   const r = await finishProbe(true);

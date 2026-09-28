@@ -417,17 +417,18 @@ export async function startHarness() {
           for (const { ws } of window.__e2e.sockets) ws.close();
         });
       } catch (error) {
-        if (error instanceof NativeInterfaceFailure) {
-          report.nativeCloseInterfaceFailed = true;
-          report.results.push({
-            id: "native-stop-evaluate",
-            setup: true,
-            status: "FAIL",
-            classification: "test-error",
-            reason: "native-stop-interface-failed",
-          });
-          process.exitCode = 1;
-        }
+        report.nativeCloseInterfaceFailed = true;
+        report.results.push({
+          id: "native-stop-evaluate",
+          setup: true,
+          status: "FAIL",
+          classification: "test-error",
+          reason:
+            error instanceof NativeInterfaceFailure
+              ? "native-stop-interface-failed"
+              : "native-stop-evaluate-rejected",
+        });
+        process.exitCode = 1;
       }
     }
     for (const { owner, id, deleted } of servers) {
