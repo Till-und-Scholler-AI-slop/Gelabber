@@ -271,6 +271,31 @@ describe("controlled responses across session changes", () => {
     },
   );
 
+  it("a route-guard bootstrap queued during login cannot undo the successful sign-in", async () => {
+    const response = deferred(),
+      started = deferred();
+    const calls = install({
+      "POST /api/auth/login": () => {
+        started.resolve(json(200, {}));
+        return response.promise;
+      },
+      "GET /api/auth/session": () =>
+        json(200, { user: ada, csrf_token: "csrf-a" }),
+    });
+    const signedIn = login(ada.email, "password123");
+    await started.promise;
+    const guarded = ensureSession();
+    response.resolve(json(200, { user: ada, csrf_token: "csrf-a" }));
+    await signedIn;
+    await guarded;
+    expect(useSession.getState()).toEqual({
+      status: "authenticated",
+      user: ada,
+    });
+    expect(calls.map((call) => call.key)).toEqual(["POST /api/auth/login"]);
+    expect(getCsrfToken()).toBe("csrf-a");
+  });
+
   it("a late success cannot replace B's CSRF token", async () => {
     const oldResponse = deferred();
     let who = ada;
