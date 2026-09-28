@@ -77,6 +77,53 @@ if redis.call('GET', KEYS[1]) ~= ARGV[1] then return 0 end
 redis.call('DEL', KEYS[1]); return 1
 "#;
 
+// Read aggregate and publish in one Redis turn. A concurrent tab cannot make
+// a delta stale between the aggregate read and Pub/Sub publication.
+const AGGREGATE_SIGNAL: &str = r#"
+local now=redis.call('TIME')
+local ms=tonumber(now[1])*1000+math.floor(tonumber(now[2])/1000)
+redis.call('ZREMRANGEBYSCORE',KEYS[1],'-inf',ms)
+local raw=redis.call('GET',KEYS[2])
+local live=nil
+if raw then live=cjson.decode(raw) end
+local count=0
+local muted=true
+local deafened=true
+local pubs={}
+for _,key in ipairs(redis.call('ZRANGE',KEYS[1],0,-1)) do
+  local seat=redis.call('GET',key)
+  if seat then
+    local row=cjson.decode(seat)
+    if row.u==ARGV[1] then
+      count=count+1; muted=muted and row.m; deafened=deafened and row.d
+      for _,kind in ipairs(row.p) do
+        if kind~='l' or (live and live.u==row.u and live.seat==row.id) then pubs[kind]=true end
+      end
+    end
+  else redis.call('ZREM',KEYS[1],key) end
+end
+local base='"s":"'..ARGV[2]..'","c":"'..ARGV[3]..'","u":"'..ARGV[1]..'"'
+local function send(t,extra) redis.call('PUBLISH',KEYS[3],'{"t":"'..t..'",'..base..(extra or '')..'}') end
+local function flags() send('m',',"on":'..tostring(muted)); send('d',',"on":'..tostring(deafened)) end
+if ARGV[4]=='j' and count>0 then send('j',',"m":'..tostring(muted)..',"d":'..tostring(deafened))
+elseif ARGV[4]=='m' and count>0 then send('m',',"on":'..tostring(muted))
+elseif (ARGV[4]=='d' or ARGV[4]=='d+') and count>0 then
+  send('d',',"on":'..tostring(deafened)); if ARGV[4]=='d+' then send('m',',"on":'..tostring(muted)) end
+elseif ARGV[4]=='leave' then
+  if count==0 then send('l') else
+    flags()
+    for _,kind in ipairs(cjson.decode(ARGV[6])) do if not pubs[kind] then send('u',',"k":"'..kind..'"') end end
+  end
+elseif ARGV[4]=='u' and not pubs[ARGV[5]] then send('u',',"k":"'..ARGV[5]..'"')
+elseif ARGV[4]=='p' and pubs[ARGV[5]] then
+  if ARGV[5]=='l' then
+    if raw~=ARGV[7] then return 0 end
+    send('p',',"k":"l","lc":"'..live.nonce..'"')
+  else send('p',',"k":"'..ARGV[5]..'"') end
+end
+return 1
+"#;
+
 fn seat_key(id: Uuid) -> String {
     format!("gb:voice:seat:{id}")
 }
@@ -193,6 +240,49 @@ impl VoiceRoster {
         })
         .transpose()
     }
+    async fn aggregate_signal(
+        &self,
+        u: Uuid,
+        s: Uuid,
+        c: Uuid,
+        mode: &str,
+        kinds: &HashSet<TrackKind>,
+        live: Option<&LiveOwner>,
+    ) -> Result<bool, ApiError> {
+        let mode = mode.to_owned();
+        let kinds_raw = encode(kinds)?;
+        let kind = kinds
+            .iter()
+            .next()
+            .map(|kind| kind.as_str())
+            .unwrap_or("")
+            .to_owned();
+        let owner = live.map(encode).transpose()?.unwrap_or_default();
+        let result: i32 = self
+            .connections
+            .with_conn(|mut conn| {
+                let (mode, kinds_raw, kind, owner) =
+                    (mode.clone(), kinds_raw.clone(), kind.clone(), owner.clone());
+                async move {
+                    redis::Script::new(AGGREGATE_SIGNAL)
+                        .key(room_key(c))
+                        .key(live_key(c))
+                        .key(super::hub::voice_redis_channel(c))
+                        .arg(u.to_string())
+                        .arg(s.to_string())
+                        .arg(c.to_string())
+                        .arg(mode)
+                        .arg(kind)
+                        .arg(kinds_raw)
+                        .arg(owner)
+                        .invoke_async(&mut conn)
+                        .await
+                }
+            })
+            .await
+            .map_err(redis_err)?;
+        Ok(result == 1)
+    }
     pub async fn join_voice(
         &self,
         id: ConnId,
@@ -273,7 +363,8 @@ impl VoiceRoster {
                     events.push(event);
                 }
             }
-            self.publish_sig(SigEvent::join(s, c, u)).await?;
+            self.aggregate_signal(u, s, c, "j", &HashSet::new(), None)
+                .await?;
             Ok(events)
         }
         .await;
@@ -327,19 +418,8 @@ impl VoiceRoster {
         if let Some(owner) = &seat.live {
             self.live_op(RELEASE_LIVE, owner).await?;
         }
-        let rows = self.records(room_key(c)).await?;
-        let same_user: Vec<_> = rows.iter().filter(|row| row.u == u).collect();
-        if same_user.is_empty() {
-            self.publish_sig(SigEvent::leave(seat.server_id, c, u))
-                .await?;
-        } else {
-            for kind in seat.pubs {
-                if !same_user.iter().any(|row| row.p.contains(&kind)) {
-                    self.publish_sig(SigEvent::unpublished(seat.server_id, c, u, kind))
-                        .await?;
-                }
-            }
-        }
+        self.aggregate_signal(u, seat.server_id, c, "leave", &seat.pubs, None)
+            .await?;
         Ok(())
     }
     pub async fn set_voice_mute(
@@ -392,15 +472,19 @@ impl VoiceRoster {
             seat.clone()
         };
         self.write_seat(id, u, c, &seat).await?;
-        self.publish_sig(if deafen {
-            SigEvent::deafened(s, c, u, on)
-        } else {
-            SigEvent::muted(s, c, u, on)
-        })
+        self.aggregate_signal(
+            u,
+            s,
+            c,
+            if deafen {
+                if on { "d+" } else { "d" }
+            } else {
+                "m"
+            },
+            &HashSet::new(),
+            None,
+        )
         .await?;
-        if deafen && on {
-            self.publish_sig(SigEvent::muted(s, c, u, true)).await?;
-        }
         Ok(true)
     }
     pub async fn set_voice_pub(
@@ -478,13 +562,19 @@ impl VoiceRoster {
             socket.rooms.insert(c, seat.clone());
         }
         if on {
-            let mut event = SigEvent::published(s, c, u, kind);
-            event.lc = seat
-                .live
-                .as_ref()
-                .filter(|_| kind == TrackKind::L)
-                .map(|owner| owner.nonce);
-            if let Err(err) = self.publish_sig(event).await {
+            let result = self
+                .aggregate_signal(u, s, c, "p", &HashSet::from([kind]), seat.live.as_ref())
+                .await;
+            if result.as_ref().is_ok_and(|accepted| !accepted) {
+                seat.live = None;
+                seat.pubs.remove(&TrackKind::L);
+                if let Some(socket) = self.connections.inner.sockets.write().await.get_mut(&id) {
+                    socket.rooms.insert(c, seat.clone());
+                }
+                let _ = self.write_seat(id, u, c, &seat).await;
+                return Ok(None);
+            }
+            if let Err(err) = result {
                 if kind == TrackKind::L
                     && let Some(owner) = &seat.live
                 {
@@ -501,13 +591,8 @@ impl VoiceRoster {
                 let _ = self.write_seat(id, u, c, &restored).await;
                 return Err(err);
             }
-        } else if !self
-            .records(room_key(c))
-            .await?
-            .iter()
-            .any(|row| row.u == u && row.p.contains(&kind))
-        {
-            self.publish_sig(SigEvent::unpublished(s, c, u, kind))
+        } else {
+            self.aggregate_signal(u, s, c, "u", &HashSet::from([kind]), None)
                 .await?;
         }
         Ok(Some(started))
@@ -565,8 +650,15 @@ impl VoiceRoster {
                 if let Some(socket) = self.connections.inner.sockets.write().await.get_mut(&id) {
                     socket.rooms.insert(c, seat.clone());
                 }
-                self.publish_sig(SigEvent::unpublished(seat.server_id, c, u, TrackKind::L))
-                    .await?;
+                self.aggregate_signal(
+                    u,
+                    seat.server_id,
+                    c,
+                    "u",
+                    &HashSet::from([TrackKind::L]),
+                    None,
+                )
+                .await?;
             }
             self.write_seat(id, u, c, &seat).await?;
             if let Some(socket) = self.connections.inner.sockets.write().await.get_mut(&id) {
