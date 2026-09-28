@@ -260,7 +260,8 @@ async fn update_server(
     Id(server_id): Id,
     Body(body): Body<UpdateServerBody>,
 ) -> Result<Json<ServerView>, ApiError> {
-    let member = membership::load(&state.db, server_id, user.id).await?;
+    let mut tx = membership::lock_server(&state.db, server_id, true).await?;
+    let member = membership::load(&mut *tx, server_id, user.id).await?;
     member.require(Permission::ManageServer)?;
 
     let mut errors = FieldErrors::new();
@@ -284,12 +285,30 @@ async fn update_server(
     .bind(server_id)
     .bind(name.as_deref())
     .bind(member_permissions.map(Permissions::bits))
-    .fetch_optional(&state.db)
+    .fetch_optional(&mut *tx)
     .await?
     .ok_or(ApiError::NotFound)?;
     if let Some(flags) = member_permissions {
         info!(server_id = %server_id, member_permissions = %flags, "member permissions changed");
     }
+    if member_permissions.is_some_and(|flags| {
+        member.server.member_permissions.bits()
+            & !flags.bits()
+            & (Permission::JoinVoice as i32 | Permission::GoLive as i32)
+            != 0
+    }) {
+        let members: Vec<Uuid> = sqlx::query_scalar(
+            "SELECT user_id FROM server_members WHERE server_id = $1 AND user_id <> $2",
+        )
+        .bind(server_id)
+        .bind(server.owner_id)
+        .fetch_all(&mut *tx)
+        .await?;
+        for uid in members {
+            state.gateway.revoke_voice_access(uid, server_id).await?;
+        }
+    }
+    tx.commit().await?;
     Ok(Json(
         Membership {
             server,
@@ -305,13 +324,23 @@ async fn delete_server(
     CurrentUser(user): CurrentUser,
     Id(server_id): Id,
 ) -> Result<StatusCode, ApiError> {
-    let member = membership::load(&state.db, server_id, user.id).await?;
+    let mut tx = membership::lock_server(&state.db, server_id, true).await?;
+    let member = membership::load(&mut *tx, server_id, user.id).await?;
     member.require_owner()?;
 
+    let members: Vec<Uuid> =
+        sqlx::query_scalar("SELECT user_id FROM server_members WHERE server_id = $1")
+            .bind(server_id)
+            .fetch_all(&mut *tx)
+            .await?;
+    for uid in members {
+        moderation::after_removal(&state, &mut tx, server_id, uid, "not_found").await?;
+    }
     sqlx::query("DELETE FROM servers WHERE id = $1")
         .bind(server_id)
-        .execute(&state.db)
+        .execute(&mut *tx)
         .await?;
+    tx.commit().await?;
     info!(server_id = %server_id, "server deleted");
     Ok(StatusCode::NO_CONTENT)
 }
@@ -323,7 +352,8 @@ async fn leave_server(
     CurrentUser(user): CurrentUser,
     Id(server_id): Id,
 ) -> Result<StatusCode, ApiError> {
-    let member = membership::load(&state.db, server_id, user.id).await?;
+    let mut tx = membership::lock_server(&state.db, server_id, true).await?;
+    let member = membership::load(&mut *tx, server_id, user.id).await?;
     if member.role() == Role::Owner {
         return Err(ApiError::Forbidden(
             "The owner cannot leave; delete the server instead.",
@@ -333,8 +363,10 @@ async fn leave_server(
     sqlx::query("DELETE FROM server_members WHERE server_id = $1 AND user_id = $2")
         .bind(server_id)
         .bind(user.id)
-        .execute(&state.db)
+        .execute(&mut *tx)
         .await?;
+    moderation::after_removal(&state, &mut tx, server_id, user.id, "not_found").await?;
+    tx.commit().await?;
     info!(server_id = %server_id, user_id = %user.id, "member left");
     Ok(StatusCode::NO_CONTENT)
 }

@@ -136,7 +136,9 @@ async fn signed_in(
     status: StatusCode,
 ) -> Result<Response, ApiError> {
     let previous = cookies::get(headers, SESSION_COOKIE);
-    session::revoke(&state.db, previous.as_deref()).await?;
+    session::revoke_current(state, previous.as_deref()).await?;
+    // Expired-row housekeeping is separate from the targeted logout.
+    session::revoke(&state.db, None).await?;
     let session_token = session::create(&state.db, user.id, state.session_ttl).await?;
     let csrf_token = token::generate();
 
@@ -155,7 +157,7 @@ async fn signed_in(
 
 async fn logout(State(state): State<AppState>, headers: HeaderMap) -> Result<Response, ApiError> {
     let previous = cookies::get(&headers, SESSION_COOKIE);
-    session::revoke(&state.db, previous.as_deref()).await?;
+    session::revoke_current(&state, previous.as_deref()).await?;
     let csrf_token = token::generate();
     let cookies = AppendHeaders([
         SetCookie::clear(SESSION_COOKIE)

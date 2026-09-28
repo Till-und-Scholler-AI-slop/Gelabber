@@ -87,6 +87,7 @@ struct Inner {
     subscribed: AtomicBool,
     conn: Mutex<Option<redis::aio::MultiplexedConnection>>,
     sockets: RwLock<HashMap<ConnId, Socket>>,
+    media_sessions: Mutex<HashMap<String, (Uuid, std::time::Instant)>>,
 }
 
 struct VoiceSeat {
@@ -117,6 +118,8 @@ struct Occupancy {
 
 struct Socket {
     user_id: Uuid,
+    session: Option<(String, tokio::sync::watch::Sender<bool>)>,
+    access: HashMap<Uuid, (chrono::DateTime<chrono::Utc>, i32)>,
     /// Servers this socket has subscribed to (channel or server topic).
     servers: HashSet<Uuid>,
     /// Channels this socket started typing in (`server`, `channel`).
@@ -174,6 +177,7 @@ impl ConnTable {
                 subscribed: AtomicBool::new(false),
                 conn: Mutex::new(None),
                 sockets: RwLock::new(HashMap::new()),
+                media_sessions: Mutex::new(HashMap::new()),
             }),
         }
     }
@@ -211,6 +215,8 @@ impl ConnTable {
             id,
             Socket {
                 user_id,
+                session: None,
+                access: HashMap::new(),
                 servers: HashSet::new(),
                 typing: HashSet::new(),
                 topics: HashSet::new(),
@@ -526,14 +532,19 @@ impl EventLog {
 }
 
 impl VoiceRoster {
-    pub async fn in_voice(&self, id: ConnId, channel_id: Uuid) -> bool {
+    pub async fn in_voice(&self, id: ConnId, server_id: Uuid, channel_id: Uuid) -> bool {
         self.connections
             .inner
             .sockets
             .read()
             .await
             .get(&id)
-            .is_some_and(|socket| socket.rooms.contains_key(&channel_id))
+            .is_some_and(|socket| {
+                socket
+                    .rooms
+                    .get(&channel_id)
+                    .is_some_and(|seat| seat.server_id == server_id)
+            })
     }
 
     /// Seat this socket in `channel_id`, leaving any other voice room first.
@@ -625,9 +636,17 @@ impl VoiceRoster {
     ) -> Result<bool, ApiError> {
         let was_in = {
             let mut sockets = self.connections.inner.sockets.write().await;
-            sockets
-                .get_mut(&id)
-                .is_some_and(|socket| socket.rooms.remove(&channel_id).is_some())
+            sockets.get_mut(&id).is_some_and(|socket| {
+                if socket
+                    .rooms
+                    .get(&channel_id)
+                    .is_some_and(|seat| seat.server_id == server_id)
+                {
+                    socket.rooms.remove(&channel_id).is_some()
+                } else {
+                    false
+                }
+            })
         };
         if !was_in {
             return Ok(false);
@@ -683,6 +702,9 @@ impl VoiceRoster {
             else {
                 return Ok(false);
             };
+            if seat.server_id != server_id {
+                return Ok(false);
+            }
             match flag {
                 VoiceFlag::Mute => seat.muted = on,
                 VoiceFlag::Deafen => {
@@ -736,10 +758,12 @@ impl VoiceRoster {
     ) -> Result<Option<bool>, ApiError> {
         {
             let sockets = self.connections.inner.sockets.read().await;
-            if !sockets
-                .get(&id)
-                .is_some_and(|socket| socket.rooms.contains_key(&channel_id))
-            {
+            if !sockets.get(&id).is_some_and(|socket| {
+                socket
+                    .rooms
+                    .get(&channel_id)
+                    .is_some_and(|seat| seat.server_id == server_id)
+            }) {
                 return Ok(None);
             }
         }
@@ -766,6 +790,9 @@ impl VoiceRoster {
                 }
                 return Ok(None);
             };
+            if seat.server_id != server_id {
+                return Ok(None);
+            }
             if on {
                 seat.pubs.insert(kind);
             } else {
@@ -1236,56 +1263,50 @@ impl Gateway {
         server_id: Uuid,
         channel_ids: &[Uuid],
         reason: &'static str,
-    ) {
-        if let Err(err) = self.voice.deny(user_id, server_id).await {
-            warn!(error = err.code(), "media deny on revoke failed");
-        }
-        let conns: Vec<ConnId> = {
-            let sockets = self.connections.inner.sockets.read().await;
-            sockets
-                .iter()
-                .filter(|(_, socket)| socket.user_id == user_id)
-                .map(|(id, _)| *id)
-                .collect()
-        };
+    ) -> Result<(), ApiError> {
+        crate::media::revoke_member(&self.connections.redis, server_id, user_id).await?;
+        self.voice.deny(user_id, server_id).await?;
+        let conns: Vec<ConnId> = self
+            .connections
+            .inner
+            .sockets
+            .read()
+            .await
+            .iter()
+            .filter(|(_, socket)| socket.user_id == user_id)
+            .map(|(id, _)| *id)
+            .collect();
         for id in conns {
-            let rooms: Vec<Uuid> = {
-                let sockets = self.connections.inner.sockets.read().await;
-                sockets
-                    .get(&id)
-                    .map(|socket| {
-                        socket
-                            .rooms
-                            .iter()
-                            .filter(|(_, seat)| seat.server_id == server_id)
-                            .map(|(channel_id, _)| *channel_id)
-                            .collect()
-                    })
-                    .unwrap_or_default()
-            };
-            for channel_id in rooms {
-                if let Err(err) = self
-                    .voice
-                    .leave_voice(id, user_id, server_id, channel_id)
-                    .await
-                {
-                    warn!(error = err.code(), "voice leave on revoke failed");
-                }
-            }
+            self.clear_server_access(id, server_id, channel_ids, reason)
+                .await;
+        }
+        Ok(())
+    }
 
-            let typing: Vec<(Uuid, Uuid)> = {
-                let mut sockets = self.connections.inner.sockets.write().await;
-                let Some(socket) = sockets.get_mut(&id) else {
-                    continue;
-                };
+    async fn clear_server_access(
+        &self,
+        id: ConnId,
+        server_id: Uuid,
+        channel_ids: &[Uuid],
+        reason: &'static str,
+    ) {
+        let Some((user_id, rooms, typing)) = ({
+            let mut sockets = self.connections.inner.sockets.write().await;
+            sockets.get_mut(&id).map(|socket| {
+                socket.access.remove(&server_id);
+                socket.servers.remove(&server_id);
                 socket.topics.remove(&Topic::Server(server_id));
                 socket.catching_up.remove(&Topic::Server(server_id));
                 for channel_id in channel_ids {
-                    let topic = Topic::Channel(*channel_id);
-                    socket.topics.remove(&topic);
-                    socket.catching_up.remove(&topic);
+                    socket.topics.remove(&Topic::Channel(*channel_id));
+                    socket.catching_up.remove(&Topic::Channel(*channel_id));
                 }
-                socket.servers.remove(&server_id);
+                let rooms: Vec<Uuid> = socket
+                    .rooms
+                    .iter()
+                    .filter(|(_, seat)| seat.server_id == server_id)
+                    .map(|(cid, _)| *cid)
+                    .collect();
                 let typing: Vec<(Uuid, Uuid)> = socket
                     .typing
                     .iter()
@@ -1298,14 +1319,274 @@ impl Gateway {
                 let _ = socket
                     .tx
                     .send(ServerFrame::error(reason, Some(server_id), None));
-                typing
-            };
-            for (sid, channel_id) in typing {
-                if let Err(err) = self.stop_typing(sid, channel_id, user_id).await {
-                    warn!(error = err.code(), "typing stop on revoke failed");
+                (socket.user_id, rooms, typing)
+            })
+        }) else {
+            return;
+        };
+        for cid in rooms {
+            if let Err(err) = self.leave_voice(id, user_id, server_id, cid).await {
+                warn!(error = err.code(), "voice cleanup failed");
+            }
+        }
+        for (sid, cid) in typing {
+            if let Err(err) = self.stop_typing(sid, cid, user_id).await {
+                warn!(error = err.code(), "typing cleanup failed");
+            }
+        }
+        if let Err(err) = self.forget_server_presence(user_id, server_id).await {
+            warn!(error = err.code(), "server presence cleanup failed");
+        }
+    }
+
+    pub async fn track_media_session(&self, key: &str) -> Option<Uuid> {
+        let mut sessions = self.connections.inner.media_sessions.lock().await;
+        if let Some((_, last_mint)) = sessions.get_mut(key) {
+            *last_mint = std::time::Instant::now();
+            return None;
+        }
+        let generation = Uuid::new_v4();
+        sessions.insert(key.to_owned(), (generation, std::time::Instant::now()));
+        Some(generation)
+    }
+    pub async fn media_session_recent(&self, key: &str, generation: Uuid) -> bool {
+        self.connections
+            .inner
+            .media_sessions
+            .lock()
+            .await
+            .get(key)
+            .is_some_and(|(owner, last)| {
+                *owner == generation && last.elapsed() < Duration::from_secs(35)
+            })
+    }
+    pub async fn untrack_media_session(&self, key: &str, generation: Uuid) {
+        let mut sessions = self.connections.inner.media_sessions.lock().await;
+        if sessions
+            .get(key)
+            .is_some_and(|(owner, _)| *owner == generation)
+        {
+            sessions.remove(key);
+        }
+    }
+
+    pub async fn attach_session(
+        &self,
+        user_id: Uuid,
+        hash: String,
+        tx: mpsc::UnboundedSender<ServerFrame>,
+    ) -> (ConnId, tokio::sync::watch::Receiver<bool>) {
+        let id = self.attach(user_id, tx).await;
+        let (cancel, receiver) = tokio::sync::watch::channel(false);
+        if let Some(socket) = self.connections.inner.sockets.write().await.get_mut(&id) {
+            socket.session = Some((hash, cancel));
+        }
+        (id, receiver)
+    }
+
+    pub async fn revoke_session(&self, hash: &str) {
+        let mut sockets = self.connections.inner.sockets.write().await;
+        for socket in sockets.values_mut() {
+            if let Some((session, cancel)) = &socket.session
+                && session == hash
+            {
+                socket.topics.clear();
+                socket.catching_up.clear();
+                let _ = cancel.send(true);
+            }
+        }
+    }
+
+    pub async fn wants_frame(&self, id: ConnId, frame: &ServerFrame) -> bool {
+        let sockets = self.connections.inner.sockets.read().await;
+        let Some(socket) = sockets.get(&id) else {
+            return false;
+        };
+        match frame {
+            ServerFrame::Event { s, c, .. } => socket.topics.contains(&Topic::of(*s, *c)),
+            ServerFrame::Sig { s, c, .. } => {
+                socket.servers.contains(s)
+                    || c.is_some_and(|cid| {
+                        socket
+                            .rooms
+                            .get(&cid)
+                            .is_some_and(|seat| seat.server_id == *s)
+                    })
+            }
+            ServerFrame::Presence { s, .. } => socket.servers.contains(s),
+            ServerFrame::Typing { c, .. } => socket.topics.contains(&Topic::Channel(*c)),
+            _ => true,
+        }
+    }
+
+    pub async fn bind_server(
+        &self,
+        id: ConnId,
+        db: &mut sqlx::PgConnection,
+        server_id: Uuid,
+        user_id: Uuid,
+    ) -> Result<(), ApiError> {
+        let revision = crate::servers::membership::revision(&mut *db, server_id, user_id)
+            .await?
+            .ok_or(ApiError::NotFound)?;
+        if let Some(socket) = self.connections.inner.sockets.write().await.get_mut(&id) {
+            socket.access.insert(server_id, revision);
+        }
+        Ok(())
+    }
+
+    /// Revalidate existing subscriptions/seats, including on another API process.
+    /// A new joined_at prevents leave + immediate rejoin from reviving old seats.
+    pub async fn reconcile_access(
+        &self,
+        id: ConnId,
+        db: &mut sqlx::PgConnection,
+    ) -> Result<(), ApiError> {
+        let Some((user_id, access, topics, rooms)) = self
+            .connections
+            .inner
+            .sockets
+            .read()
+            .await
+            .get(&id)
+            .map(|socket| {
+                (
+                    socket.user_id,
+                    socket.access.clone(),
+                    socket.topics.clone(),
+                    socket
+                        .rooms
+                        .iter()
+                        .map(|(cid, seat)| (*cid, seat.server_id))
+                        .collect::<Vec<_>>(),
+                )
+            })
+        else {
+            return Ok(());
+        };
+        for (sid, revision) in access {
+            let current = crate::servers::membership::revision(&mut *db, sid, user_id).await?;
+            if current.is_none_or(|now| now.0 != revision.0) {
+                // Include deleted channels: their rows can no longer be queried.
+                let mut cids: Vec<Uuid> =
+                    sqlx::query_scalar("SELECT id FROM channels WHERE server_id = $1")
+                        .bind(sid)
+                        .fetch_all(&mut *db)
+                        .await?;
+                for topic in &topics {
+                    if let Topic::Channel(cid) = topic
+                        && crate::servers::channel::get(&mut *db, *cid)
+                            .await?
+                            .is_none()
+                    {
+                        cids.push(*cid);
+                    }
+                }
+                self.clear_server_access(id, sid, &cids, "not_found").await;
+            } else {
+                let current = current.expect("checked");
+                if revision.1 & !current.1 & 48 != 0 {
+                    self.clear_voice_access(id, sid).await?;
+                }
+                if let Some(socket) = self.connections.inner.sockets.write().await.get_mut(&id) {
+                    socket.access.insert(sid, current);
                 }
             }
         }
+        for topic in topics {
+            if let Topic::Channel(cid) = topic
+                && crate::servers::channel::get(&mut *db, cid).await?.is_none()
+            {
+                self.unsubscribe(id, topic).await;
+            }
+        }
+        for (cid, sid) in rooms {
+            let member = crate::servers::membership::load(&mut *db, sid, user_id).await;
+            let allowed = match member {
+                Ok(member) => member.can(crate::servers::permissions::Permission::JoinVoice),
+                Err(ApiError::NotFound) => false,
+                Err(err) => return Err(err),
+            };
+            if !allowed || crate::servers::channel::get(&mut *db, cid).await?.is_none() {
+                self.leave_voice(id, user_id, sid, cid).await?;
+            }
+        }
+        Ok(())
+    }
+
+    pub async fn revoke_voice_access(
+        &self,
+        user_id: Uuid,
+        server_id: Uuid,
+    ) -> Result<(), ApiError> {
+        crate::media::revoke_member(&self.connections.redis, server_id, user_id).await?;
+        self.voice.deny(user_id, server_id).await?;
+        let ids: Vec<ConnId> = self
+            .connections
+            .inner
+            .sockets
+            .read()
+            .await
+            .iter()
+            .filter(|(_, socket)| socket.user_id == user_id)
+            .map(|(id, _)| *id)
+            .collect();
+        for id in ids {
+            self.clear_voice_access(id, server_id).await?;
+        }
+        Ok(())
+    }
+
+    async fn clear_voice_access(&self, id: ConnId, server_id: Uuid) -> Result<(), ApiError> {
+        let Some((uid, rooms)) =
+            self.connections
+                .inner
+                .sockets
+                .read()
+                .await
+                .get(&id)
+                .map(|socket| {
+                    (
+                        socket.user_id,
+                        socket
+                            .rooms
+                            .iter()
+                            .filter(|(_, seat)| seat.server_id == server_id)
+                            .map(|(cid, _)| *cid)
+                            .collect::<Vec<_>>(),
+                    )
+                })
+        else {
+            return Ok(());
+        };
+        for cid in rooms {
+            self.leave_voice(id, uid, server_id, cid).await?;
+        }
+        Ok(())
+    }
+
+    pub async fn revoke_channel(&self, server_id: Uuid, channel_id: Uuid) -> Result<(), ApiError> {
+        crate::media::revoke_channel(&self.connections.redis, channel_id).await?;
+        let conns: Vec<(ConnId, Uuid)> = self
+            .connections
+            .inner
+            .sockets
+            .read()
+            .await
+            .iter()
+            .map(|(id, socket)| (*id, socket.user_id))
+            .collect();
+        for (id, uid) in conns {
+            self.unsubscribe(id, Topic::Channel(channel_id)).await;
+            if let Err(err) = self.leave_voice(id, uid, server_id, channel_id).await {
+                warn!(error = err.code(), "deleted channel voice cleanup failed");
+            }
+            self.note_typing(id, server_id, channel_id, false).await;
+            if let Err(err) = self.stop_typing(server_id, channel_id, uid).await {
+                warn!(error = err.code(), "deleted channel typing cleanup failed");
+            }
+        }
+        Ok(())
     }
 
     pub fn ensure_subscriber(&self) {
@@ -1390,8 +1671,8 @@ impl Gateway {
         self.events.catch_up(topic, client_n).await
     }
 
-    pub async fn in_voice(&self, id: ConnId, channel_id: Uuid) -> bool {
-        self.voice.in_voice(id, channel_id).await
+    pub async fn in_voice(&self, id: ConnId, server_id: Uuid, channel_id: Uuid) -> bool {
+        self.voice.in_voice(id, server_id, channel_id).await
     }
 
     /// Seat this socket in `channel_id`, leaving any other voice room first.
