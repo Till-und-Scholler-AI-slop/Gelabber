@@ -3400,6 +3400,12 @@ function onWatchFrame(frame: MediaServerFrame): void {
       return;
     }
     if (frame.e === "unavailable") {
+      const state = useVoice.getState();
+      if (watchRetry.active && state.watching && state.watchChannelId) {
+        stopWatchPeer(true);
+        scheduleWatchRebuild(state.watchChannelId);
+        return;
+      }
       if (watchReported) return;
       watchReported = true;
       stopWatching();
