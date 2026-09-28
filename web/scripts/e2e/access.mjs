@@ -129,6 +129,7 @@ async function useHeldTicket(actor) {
 export async function holdActiveMedia(actor) {
   await nativeEvaluate(actor, () => {
     const state = window.__e2e;
+    state.heldFrameCounterKeys = null;
     state.heldPeers = state.peers.filter(
       (p) => p.connectionState === "connected",
     );
@@ -150,43 +151,83 @@ export async function holdActiveMedia(actor) {
       ws.close = () => {};
     }
   });
+  const baseline = await heldMedia(actor);
+  check(
+    baseline.frames > 0,
+    "fixture-held-positive-decoded-counter-missing",
+    baseline,
+  );
+  return baseline;
 }
 export async function heldMedia(actor) {
-  return nativeEvaluate(actor, async function sample({ deadlineEpochMs }) {
-    let frames = 0;
-    for (const pc of window.__e2e.heldPeers) {
-      window.__e2e.samplePhase = "native-getStats";
-      let timer;
-      let stats;
-      try {
-        const remaining = deadlineEpochMs - Date.now();
-        if (remaining <= 0) throw new Error("E2E_NATIVE_STATS_DEADLINE");
-        stats = await Promise.race([
-          pc.getStats(),
-          new Promise((_, reject) => {
-            timer = setTimeout(
-              () => reject(new Error("E2E_NATIVE_STATS_DEADLINE")),
-              Math.max(
-                0,
-                remaining - Math.min(100, Math.max(1, remaining / 10)),
-              ),
-            );
-          }),
-        ]);
-      } finally {
-        clearTimeout(timer);
+  const measurement = await nativeEvaluate(
+    actor,
+    async function sample({ deadlineEpochMs }) {
+      const state = window.__e2e;
+      let frames = 0,
+        videoRtpEntries = 0;
+      const availableKeys = [];
+      for (const [peerIndex, pc] of state.heldPeers.entries()) {
+        window.__e2e.samplePhase = "native-getStats";
+        let timer;
+        let stats;
+        try {
+          const remaining = deadlineEpochMs - Date.now();
+          if (remaining <= 0) throw new Error("E2E_NATIVE_STATS_DEADLINE");
+          stats = await Promise.race([
+            pc.getStats(),
+            new Promise((_, reject) => {
+              timer = setTimeout(
+                () => reject(new Error("E2E_NATIVE_STATS_DEADLINE")),
+                Math.max(
+                  0,
+                  remaining - Math.min(100, Math.max(1, remaining / 10)),
+                ),
+              );
+            }),
+          ]);
+        } finally {
+          clearTimeout(timer);
+        }
+        window.__e2e.samplePhase = "native-stats-resolved";
+        for (const [key, r] of stats.entries())
+          if (r.type === "inbound-rtp" && (r.kind ?? r.mediaType) === "video") {
+            videoRtpEntries++;
+            if (Number.isInteger(r.framesDecoded) && r.framesDecoded >= 0) {
+              availableKeys.push(`${peerIndex}:${key}`);
+              frames += r.framesDecoded;
+            }
+          }
       }
-      window.__e2e.samplePhase = "native-stats-resolved";
-      for (const r of stats.values())
-        if (r.type === "inbound-rtp" && (r.kind ?? r.mediaType) === "video")
-          frames += r.framesDecoded ?? 0;
-    }
-    return {
-      frames,
-      openSockets: window.__e2e.heldSockets.filter((s) => s.ws.readyState === 1)
-        .length,
-    };
-  });
+      // Counter IDs stay in browser memory. A disappearing/replaced report cannot
+      // reduce the observed sum and then masquerade as stagnant decoded media.
+      const complete =
+        videoRtpEntries > 0 && availableKeys.length === videoRtpEntries;
+      if (complete && !state.heldFrameCounterKeys)
+        state.heldFrameCounterKeys = availableKeys;
+      const expectedKeys = state.heldFrameCounterKeys ?? [];
+      const frameCountersAvailable =
+        complete &&
+        expectedKeys.length === availableKeys.length &&
+        expectedKeys.every((key) => availableKeys.includes(key));
+      return {
+        frames: frameCountersAvailable ? frames : null,
+        frameCountersAvailable,
+        videoRtpEntries,
+        availableFrameCounters: availableKeys.length,
+        expectedFrameCounters: expectedKeys.length,
+        openSockets: window.__e2e.heldSockets.filter(
+          (s) => s.ws.readyState === 1,
+        ).length,
+      };
+    },
+  );
+  check(
+    measurement.frameCountersAvailable,
+    "fixture-held-video-counters-unavailable",
+    measurement,
+  );
+  return measurement;
 }
 export async function releaseHeld(actor) {
   if (actor.nativeEvaluationUnusable || actor.page.isClosed?.()) return;

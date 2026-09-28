@@ -1,0 +1,94 @@
+{
+  "scope": "B-1 unavailable held native frame counter P2, source-only",
+  "parent": "a9daedc8b1aff5d52a0e3d425b3f3ce3d0b9e8e2",
+  "reviewTarget": "93524e91522322d8c516f6aef515d5a756831bc0",
+  "completeAcceptance": false,
+  "red": {
+    "path": "/tmp/gelabber-e2e/b1-parent-complete-red.log",
+    "sha256": "c52d6c3fa61bd97326c121dc0173e115b68a74a8dabfbf563dd16520721234c1",
+    "exit": 1,
+    "tests": 21,
+    "failures": 12,
+    "source": "exact committed parent with only new actual-source checks"
+  },
+  "green": {
+    "path": "/tmp/gelabber-e2e/b1-final-index-validation.json",
+    "sha256": "313732e414ee2e3ece3326a3054149d3b45dcae6dd4f991ff1341b0c07d8a5cc",
+    "at": "2026-09-28T19:01:29.566765+00:00",
+    "scope": "exact parent+index extracted source; no native runtime",
+    "node": "v26.8.2",
+    "sourceTreeBeforeEvidence": "3e0fab7c4ec761155bc40e551de982fa07bc604d",
+    "checks": [
+      {
+        "file": "access-native.checks.mjs",
+        "exit": 0,
+        "tests": 21,
+        "skipped": 0,
+        "output": "\u2714 actual heldMedia rejects empty stats instead of inventing a decoded stop (1.545961ms)\n\u2714 actual heldMedia rejects no video RTP instead of inventing a decoded stop (0.410266ms)\n\u2714 actual heldMedia rejects missing counter instead of inventing a decoded stop (0.407314ms)\n\u2714 actual heldMedia rejects invalid counter instead of inventing a decoded stop (0.408519ms)\n\u2714 actual heldMedia rejects partial counter disappearance and replacement after a valid control (0.633787ms)\n\u2714 actual heldMedia preserves available numeric zero and known stagnant counters (0.85647ms)\n\u2714 actual hold establishes known positive video counters before any fault and rejects unavailable/zero fixtures (1.228676ms)\n\u2714 actual heldMedia hung getStats is phase-labelled, quarantined, never fabricated as frames0 and release never reevaluates it (27.9514ms)\n\u2714 actual heldMedia pending outer evaluate cannot bypass quarantine or trigger a second probe (4.94979ms)\n\u2714 actual heldMedia rejects late native answer but records normal increasing and post-revocation stagnant frames unchanged (41.438447ms)\n\u2714 actual access finally attempts every own context after restore rejection and close timeout, with redacted failure stages (6.100342ms)\n\u2714 actual lease finally restores Redis and closes every own context even when API resume and a close fail (0.296134ms)\n\u2714 actual revocation stop check accepts known stagnant counters (0.923126ms)\n\u2714 actual revocation stop check rejects empty (0.33821ms)\n\u2714 actual revocation stop check rejects missing-counter (0.339043ms)\n\u2714 actual deletion stop check accepts known stagnant counters (0.597767ms)\n\u2714 actual deletion stop check rejects empty (0.30862ms)\n\u2714 actual deletion stop check rejects missing-counter (0.295655ms)\n\u2714 actual lease stop check accepts known stagnant counters (0.569456ms)\n\u2714 actual lease stop check rejects empty (0.307838ms)\n\u2714 actual lease stop check rejects missing-counter (0.281335ms)\n\u2139 tests 21\n\u2139 suites 0\n\u2139 pass 21\n\u2139 fail 0\n\u2139 cancelled 0\n\u2139 skipped 0\n\u2139 todo 0\n\u2139 duration_ms 93.424998\n"
+      },
+      {
+        "file": "harness.checks.mjs",
+        "exit": 0,
+        "tests": 6,
+        "skipped": 0,
+        "output": "\u2714 bytes and closed receivers cannot pass decoded-frame acceptance (0.488517ms)\n\u2714 evidence errors discard Playwright URLs, secrets and call logs (0.179329ms)\n\u2714 11a account-creating runner refuses production and credential-bearing URLs (2.596647ms)\n\u2714 deadline failure preserves safe measured counters instead of turning red into skip (0.473545ms)\n\u2714 gateway faults leave HMR, media and unrelated socket paths untouched (1.474759ms)\n\u2714 explicit exclusions are NOT_RUN, required failures and incomplete selection stay red (0.462375ms)\n\u2139 tests 6\n\u2139 suites 0\n\u2139 pass 6\n\u2139 fail 0\n\u2139 cancelled 0\n\u2139 skipped 0\n\u2139 todo 0\n\u2139 duration_ms 10.03152\n"
+      }
+    ],
+    "lint": {
+      "exit": 0,
+      "output": ""
+    },
+    "moduleSha256": {
+      "teardown.mjs": "5bb7d0d8e023d23ab242eb8ac8b77a722d0a38c60f5df6637b86938b97419e9a",
+      "teardown.checks.mjs": "22f033c552b92bbe9e20e06c3ad51d993ecc46dcf7799da4d6623448aab7a5b1",
+      "storage-faults.mjs": "e0408378060689e8584c014f90e2d3771dc611b86bfce3bc5328a3b71ada01fb",
+      "selection.mjs": "b8a445a817880843e833510d92dfdaf3150fff643f4b4ae5aa6906cd3913f771",
+      "s3-object.mjs": "1bce9abf11b4aa30e0e62b6063eb283baed30894e8f816787c379dd43ea63168",
+      "run.mjs": "d2900e4f8ec085708a696c1266359c51476d794c6fa497d2c0449243f9747bcd",
+      "rendered-frames.checks.mjs": "4e5bf1be45d1eb0914625d08b35623e48ccca80dc4c35337deff13dd63571780",
+      "redis-command.mjs": "b6d801eb136a072b8a00bc2982d16934bdc4cf90c06ef28b67be4ad5a160706b",
+      "realtime-faults.mjs": "71626d7a152521529f35b1c192760b2ac809bdb56955473507362fd9fe74db62",
+      "profiles.mjs": "ef20d6159fe61e04fda06c41314fbc2798e7ae7a7e5a5f57aa3f88569b0fe2aa",
+      "probe.mjs": "0b7aea113ba651b96d3b6a9e325f9436af9a9ffc06b33ddb27cb6f4033e7f91c",
+      "native-finish.checks.mjs": "0b61ec4d2796d448c92ed36dca1dd66052c4c6ca1844874f59f44462d2910c75",
+      "native-evaluate.mjs": "89294f744f2c6a0d88e90975a944e96e49b2bf1c829ba377ccaa17a19b1564bf",
+      "native-evaluate.checks.mjs": "4b24b3854f84b04ee5037ed2fdff7f02c7f490fefd6ff882bac9285877d8a5fd",
+      "membership-faults.mjs": "e155ee73a21bc27b7e8a75fe8d865e0309b35f8ad38ee77296da0db3a7a5b3a5",
+      "media.mjs": "f9339a0701f1e860865705980b66f7ee1b98ee89346ee235b959acae86461378",
+      "media-runtime.mjs": "d9bc66d17009162fd6f70eec24b227fda607e601fc7a0011a7fadae698795b67",
+      "media-runtime.checks.mjs": "4569eabb3d4339914cd48a0fdea42ad3feae89a827f67aa4923682ff72787a91",
+      "media-probe.checks.mjs": "a43b9440303b7babf4d3b6ac56a25407c9d6294e9ffde68c8f09915d21a12af6",
+      "media-lease-faults.mjs": "e3aefd71b583e5d4ab4a5109c3ed69a78352248392ec90a4f5308212fe8bae70",
+      "media-extra.mjs": "0b885436b9590e62d99b32d88d30f26496746e4d15f5182f4736523e42c74d7f",
+      "media-extra.checks.mjs": "7959d5a1e405d01ebaf835a6ff50e8ce2bb442d8eaefb2a6bb8eec2f7da6f1cb",
+      "harness.mjs": "4425220c56f9da05e83896f1713c9ac800fe1b345507bcfc6b283c1440dec99d",
+      "harness.checks.mjs": "89564069db0e134a936088b2831b0eeac297777a8907523db9274efd276c9003",
+      "gateway-load.mjs": "c98da745c2ccc064829f71d1598a781eb1059177445c7c49dc7b5d07f7ed23d5",
+      "faults.mjs": "62fe2b0f812192bac2be6996049eec802db48097633c6367bd44018b6aa3a0d4",
+      "faults.checks.mjs": "9b013140e232dc052fe9b52755db20fb48267258b06fabec8ca546aae5afe11f",
+      "fault-runtime.mjs": "423684dfaddfdd65ca3021e95f842616563bef30dd8d99c70d477e9098bf7fee",
+      "fault-run.mjs": "39e5af6912f692478599cc2b9c4acc21ede1a877db72b79f4d5b6d8991769438",
+      "core.mjs": "90d46690fe1c6147d6fa54d7cc42372600ea6bc67a7b65a37a237bf4fca8fc03",
+      "ci-fault-prepare.mjs": "7be606568d420a1104cad28787fe3f8b072cda72eb265d714e6648c790b16e1d",
+      "ci-fault-prepare.checks.mjs": "b3481cdf182fc4e36d34f9b67ae828f5e115a55fcfd81233353744639affd653",
+      "ci-fault-loop.checks.mjs": "4fbf6bf68733e7175ae7baf6213230a9f7a37f75aa8971d6947b1283c5b142ff",
+      "chat-faults.mjs": "a4d258f8084e4ed842e408ebca19cbe178b636afdf2a32068e8232c16417d767",
+      "browser-options.mjs": "e092d543702eca00f24258a23b1ae97c4d280f857732dc2d262568913e01e052",
+      "browser-options.checks.mjs": "155c1eb154e9def93a95cbf7885a37755f6d91af90c93bc9b60f9f176f7104a5",
+      "account-switch.mjs": "9dd5cc5a93f55ac74ba03f46e3435b0f8e7435569dc242ef597b764e42b0ef46",
+      "access.mjs": "f995aea2fa251bd7a1fdb74298b52ae20efccc6693d92c5c9aee6bff55b64ac4",
+      "access-native.checks.mjs": "c0a5949926e0b094edc5b7e054b0db15b62d6f68f9975db21e711c11d2862e58"
+    }
+  },
+  "limits": [
+    "Only VM/native-interface fixtures; no browser/API/SFU/DB worker",
+    "Unavailable stats become explicit test-error, not measured zero or product failure",
+    "The88 historical case relations prove only their original assertions and source hashes",
+    "New assertion/native acceptance remains unexecuted; independent followup source review required"
+  ],
+  "earlierSourceCheckFailure": {
+    "path": "/tmp/gelabber-e2e/b1-index-initial-lint-failure.json",
+    "classification": "test-error",
+    "reason": "New test URL global declaration missing; corrected, final exact-index lint0"
+  }
+}

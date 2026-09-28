@@ -1,9 +1,15 @@
-/* global setTimeout, clearTimeout */
+/* global setTimeout, clearTimeout, URL */
 import { test } from "node:test";
 import assert from "node:assert/strict";
 import vm from "node:vm";
-import { heldMedia, releaseHeld, closeAccessActors } from "./access.mjs";
+import {
+  heldMedia,
+  holdActiveMedia,
+  releaseHeld,
+  closeAccessActors,
+} from "./access.mjs";
 import { deadlineProbe, NativeInterfaceFailure } from "./native-evaluate.mjs";
+import { CheckFailure } from "./harness.mjs";
 function actorFor(stats, outerPending = false) {
   let evaluates = 0,
     closes = 0;
@@ -36,6 +42,75 @@ const report = (frames) =>
   new Map([
     ["v", { type: "inbound-rtp", kind: "video", framesDecoded: frames }],
   ]);
+for (const [label, stats] of [
+  ["empty stats", new Map()],
+  ["no video RTP", new Map([["a", { type: "inbound-rtp", kind: "audio" }]])],
+  ["missing counter", report(undefined)],
+  ["invalid counter", report(NaN)],
+]) {
+  test(`actual heldMedia rejects ${label} instead of inventing a decoded stop`, async () => {
+    const r = actorFor(async () => stats);
+    await assert.rejects(
+      heldMedia(r.actor),
+      (error) =>
+        error instanceof CheckFailure &&
+        error.message === "fixture-held-video-counters-unavailable" &&
+        error.metrics.frames === null &&
+        error.metrics.frameCountersAvailable === false,
+    );
+  });
+}
+test("actual heldMedia rejects partial counter disappearance and replacement after a valid control", async () => {
+  let stats = new Map([
+    ...report(20),
+    [
+      "second-video",
+      {
+        type: "inbound-rtp",
+        kind: "video",
+        framesDecoded: 10,
+      },
+    ],
+  ]);
+  const r = actorFor(async () => stats);
+  const before = await heldMedia(r.actor);
+  assert.equal(before.frames, 30);
+  stats = report(20);
+  await assert.rejects(heldMedia(r.actor), (e) => e.metrics?.frames === null);
+  stats = new Map([
+    ...report(20),
+    [
+      "replacement-video",
+      {
+        type: "inbound-rtp",
+        kind: "video",
+        framesDecoded: 10,
+      },
+    ],
+  ]);
+  await assert.rejects(heldMedia(r.actor), (e) => e.metrics?.frames === null);
+});
+test("actual heldMedia preserves available numeric zero and known stagnant counters", async () => {
+  const zero = await heldMedia(actorFor(async () => report(0)).actor);
+  assert.equal(zero.frames, 0);
+  const known = actorFor(async () => report(20));
+  assert.equal((await heldMedia(known.actor)).frames, 20);
+  assert.equal((await heldMedia(known.actor)).frames, 20);
+});
+test("actual hold establishes known positive video counters before any fault and rejects unavailable/zero fixtures", async () => {
+  const make = (stats) => {
+    const r = actorFor(async () => stats);
+    r.state.peers = r.state.heldPeers;
+    r.state.peers[0].connectionState = "connected";
+    r.state.sockets = [];
+    return r.actor;
+  };
+  const healthy = make(report(20));
+  await holdActiveMedia(healthy);
+  assert.equal((await heldMedia(healthy)).frames, 20);
+  for (const stats of [new Map(), report(0)])
+    await assert.rejects(holdActiveMedia(make(stats)), CheckFailure);
+});
 test("actual heldMedia hung getStats is phase-labelled, quarantined, never fabricated as frames0 and release never reevaluates it", async () => {
   const r = actorFor(() => new Promise(() => {}));
   await assert.rejects(
@@ -156,3 +231,67 @@ test("actual lease finally restores Redis and closes every own context even when
   );
   assert.deepEqual(actions, ["api", "redis", "close0", "close1", "close2"]);
 });
+
+import { readFile } from "node:fs/promises";
+import { check } from "./harness.mjs";
+const accessSource = await readFile(
+  new URL("./access.mjs", import.meta.url),
+  "utf8",
+);
+const leaseSource = await readFile(
+  new URL("./media-lease-faults.mjs", import.meta.url),
+  "utf8",
+);
+const stopChecks = {
+  revocation: accessSource.match(
+    /check\(\s*after\.frames === settled\.frames[\s\S]*?"revoked-client-retained-access",\s*metrics,\s*\);/,
+  )[0],
+  deletion: accessSource
+    .slice(
+      accessSource.indexOf(
+        "const held = await useHeldTicket(victim);",
+        accessSource.indexOf("channel-server-delete-active-sockets"),
+      ),
+    )
+    .match(/check\([\s\S]*?\n\s*\);/)[0],
+  lease: leaseSource.match(
+    /check\(\s*tail\.frames === stopped\.frames,[\s\S]*?\n\s*\);/,
+  )[0],
+};
+for (const [boundary, source] of Object.entries(stopChecks)) {
+  for (const kind of ["known", "empty", "missing-counter"]) {
+    test(`actual ${boundary} stop check ${kind === "known" ? "accepts known stagnant counters" : "rejects " + kind}`, async () => {
+      const r = actorFor(async () =>
+        kind === "empty"
+          ? new Map()
+          : report(kind === "known" ? 20 : undefined),
+      );
+      r.state.heldSockets[0].ws.readyState = 3;
+      let accepted = false;
+      try {
+        const settled = await heldMedia(r.actor),
+          after = await heldMedia(r.actor);
+        vm.runInNewContext(source, {
+          check,
+          settled,
+          after,
+          stopped: settled,
+          tail: after,
+          metrics: {},
+          gateway: { events: 0 },
+          beforeGateway: { events: 0 },
+          rest: { status: 403 },
+          freshTicket: { status: 403 },
+          fresh: { status: 403 },
+          held: { failed: false, accepted: false },
+          scope: "channel",
+          plane: "redis",
+        });
+        accepted = true;
+      } catch (error) {
+        assert.ok(error instanceof CheckFailure);
+      }
+      assert.equal(accepted, kind === "known");
+    });
+  }
+}
