@@ -72,15 +72,24 @@ test("11a account-creating runner refuses production and credential-bearing URLs
     assert.throws(() => safeTarget(url));
   assert.equal(safeTarget("http://127.0.0.1:5174"), "http://127.0.0.1:5174");
 });
-test("deadline failure preserves safe measured counters instead of turning red into skip", async () => {
+test("deadline failure preserves safe measured counters instead of turning red into skip", async (t) => {
+  // Expire the clock after a real sample, not before a scheduler-dependent 1ms probe.
+  t.mock.timers.enable({ apis: ["Date"], now: 0 });
   await assert.rejects(
     until(
       async () => ({ frames: 0, bytes: 200 }),
-      (s) => s.frames > 0,
+      (s) => {
+        t.mock.timers.setTime(1);
+        return s.frames > 0;
+      },
       "no-decoded-progress",
       1,
     ),
-    (e) => e instanceof CheckFailure && e.metrics.last.frames === 0,
+    (e) =>
+      e instanceof CheckFailure &&
+      e.message === "no-decoded-progress" &&
+      e.metrics.last.frames === 0 &&
+      e.metrics.last.bytes === 200,
   );
   assert.throws(() => check(false, "missing-predecessor"), CheckFailure);
 });
