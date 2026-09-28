@@ -34,6 +34,18 @@ const digest = async (path) =>
     .digest("hex");
 try {
   const { sfuLoopbackIce } = iceAdapterOptions(process.env);
+  const mediaEnv = process.env.GELABBER_E2E_MEDIA_FAULT_ENV;
+  const mediaManifest = process.env.GELABBER_E2E_MEDIA_MANIFEST;
+  const ownedMediaOrigin = "http://127.0.0.1:18087";
+  let media = safeTarget(
+    process.env.GELABBER_E2E_MEDIA_ORIGIN ?? ownedMediaOrigin,
+  );
+  if (mediaEnv || mediaManifest) {
+    assert.ok(mediaEnv && mediaManifest, "Both owned media paths required");
+    // Validate before acquiring API, proxies or SFU. Attestation must describe
+    // the same process to which Vite actually forwards the browser's traffic.
+    assert.equal(media, ownedMediaOrigin, "Own SFU media origin mismatch");
+  }
   if (sfuLoopbackIce) {
     const root = dirname(process.env.GELABBER_E2E_MEDIA_FAULT_ENV);
     const files = {
@@ -67,22 +79,22 @@ try {
   assert.ok(root.startsWith("/"));
   runtime = await startFaultApi({ envPath, manifestPath });
   useFaultRuntime(runtime);
-  const mediaEnv = process.env.GELABBER_E2E_MEDIA_FAULT_ENV;
-  const mediaManifest = process.env.GELABBER_E2E_MEDIA_MANIFEST;
   if (mediaEnv || mediaManifest) {
-    assert.ok(mediaEnv && mediaManifest, "Both owned media paths required");
     mediaRuntime = await startFaultMedia({
       envPath: mediaEnv,
       manifestPath: mediaManifest,
       redisPort: runtime.redis.port,
       loopbackIceAdapter: sfuLoopbackIce,
     });
+    assert.equal(
+      mediaRuntime.origin,
+      ownedMediaOrigin,
+      "Own SFU origin mismatch",
+    );
+    media = mediaRuntime.origin;
     runtime.media = mediaRuntime;
     process.env.GELABBER_E2E_MEDIA_SHA = mediaRuntime.manifest.sourceSha;
   }
-  const media = safeTarget(
-    process.env.GELABBER_E2E_MEDIA_ORIGIN ?? "http://127.0.0.1:18087",
-  );
   cache = await mkdtemp(join(tmpdir(), "gelabber-e2e-vite-"));
   web = await createServer({
     root,

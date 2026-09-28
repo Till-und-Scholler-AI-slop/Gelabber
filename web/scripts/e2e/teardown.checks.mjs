@@ -7,6 +7,7 @@ import { EventEmitter } from "node:events";
 import vm from "node:vm";
 import { promisify } from "node:util";
 import { attemptAll, closeOwnedApi, TeardownFailure } from "./teardown.mjs";
+import { safeTarget } from "./harness.mjs";
 
 const secret = "PRIVATE-cookie-signed-URL-password";
 async function executeSource(filename, mocks, globals = {}) {
@@ -68,12 +69,14 @@ async function runnerProbe({
   media = false,
   extraEnv = {},
   hashChange = false,
+  returnedMediaOrigin = "http://127.0.0.1:18087",
 } = {}) {
   const acquired = [],
     hashReads = new Map();
   const calls = [],
     records = [],
     messages = [];
+  let routedMedia;
   const action = async (name) => {
     calls.push(name);
     if (fail.includes(name)) throw new Error(secret);
@@ -107,14 +110,17 @@ async function runnerProbe({
     "./fault-run.mjs",
     {
       vite: {
-        createServer: async () => ({
-          listen: async () => {
-            if (startup) throw new Error(secret);
-          },
-          close: () => action("web.close"),
-        }),
+        createServer: async (options) => {
+          routedMedia = options.server.proxy["/media"].target;
+          return {
+            listen: async () => {
+              if (startup) throw new Error(secret);
+            },
+            close: () => action("web.close"),
+          };
+        },
       },
-      "./harness.mjs": { safeTarget: (x) => x },
+      "./harness.mjs": { safeTarget },
       "./fault-runtime.mjs": {
         startFaultApi: async () => {
           acquired.push("api");
@@ -125,10 +131,14 @@ async function runnerProbe({
         },
       },
       "./media-runtime.mjs": {
-        startFaultMedia: async () => ({
-          manifest: { sourceSha: "b".repeat(40) },
-          close: () => action("media.close"),
-        }),
+        startFaultMedia: async () => {
+          acquired.push("media");
+          return {
+            origin: returnedMediaOrigin,
+            manifest: { sourceSha: "b".repeat(40) },
+            close: () => action("media.close"),
+          };
+        },
       },
       "./run.mjs": {},
       "node:fs/promises": {
@@ -150,7 +160,14 @@ async function runnerProbe({
     },
     { process: fakeProcess, console: { error: (msg) => messages.push(msg) } },
   );
-  return { calls, acquired, records, messages, exitCode: fakeProcess.exitCode };
+  return {
+    calls,
+    acquired,
+    records,
+    messages,
+    routedMedia,
+    exitCode: fakeProcess.exitCode,
+  };
 }
 
 test("exact runner attempts API/cache cleanup after web.close rejects and records only redacted FAIL", async () => {
@@ -165,6 +182,58 @@ test("exact runner attempts API/cache cleanup after web.close rejects and record
   assert.equal(result.records.at(-1).body.status, "FAIL");
   assert.equal(result.records.at(-1).body.completeAcceptance, false);
   assert.ok(!JSON.stringify(result).includes(secret));
+});
+
+const ownAdapterEnv = {
+  GELABBER_E2E_BROWSER: "firefox",
+  GELABBER_E2E_NETWORK: "relay",
+  GELABBER_E2E_FIREFOX_LOOPBACK_ICE: "true",
+  GELABBER_E2E_SFU_LOOPBACK_ICE: "true",
+  GELABBER_E2E_MEDIA_FAULT_ENV: "/tmp/media-fault-loopback-control.env",
+  GELABBER_E2E_MEDIA_MANIFEST: "/tmp/media-manifest.json",
+};
+test("exact own-SFU runner rejects mismatched media override before API/SFU acquisition with both adapters on or off", async () => {
+  for (const adapter of [false, true]) {
+    const result = await runnerProbe({
+      extraEnv: {
+        ...(adapter
+          ? ownAdapterEnv
+          : {
+              GELABBER_E2E_MEDIA_FAULT_ENV: "/tmp/media-fault.env",
+              GELABBER_E2E_MEDIA_MANIFEST: "/tmp/media-manifest.json",
+            }),
+        GELABBER_E2E_MEDIA_ORIGIN: "http://127.0.0.1:18088",
+      },
+    });
+    assert.deepEqual(result.acquired, []);
+    assert.equal(result.routedMedia, undefined);
+    assert.equal(result.exitCode, 1);
+    assert.equal(result.records[0].body.status, "BLOCKED");
+    assert.ok(!JSON.stringify(result).includes(secret));
+  }
+});
+test("exact own-SFU runner routes only to returned attested origin with default or equal explicit override", async () => {
+  for (const override of [undefined, "http://127.0.0.1:18087"]) {
+    const result = await runnerProbe({
+      extraEnv: {
+        ...ownAdapterEnv,
+        ...(override ? { GELABBER_E2E_MEDIA_ORIGIN: override } : {}),
+      },
+    });
+    assert.equal(result.routedMedia, "http://127.0.0.1:18087");
+    assert.equal(result.exitCode, 0);
+    assert.equal(result.records.at(-1).body.status, "PASS");
+  }
+});
+test("unexpected acquired SFU origin cannot reach Vite/run; all acquired resources still close", async () => {
+  const result = await runnerProbe({
+    extraEnv: ownAdapterEnv,
+    returnedMediaOrigin: "http://127.0.0.1:18088",
+  });
+  assert.equal(result.exitCode, 1);
+  assert.equal(result.routedMedia, undefined);
+  assert.ok(result.calls.includes("media.close"));
+  assert.ok(result.calls.includes("runtime.close"));
 });
 test("exact runner attempts every restore/close even with multiple failures and failed artifact writes", async () => {
   const result = await runnerProbe({
