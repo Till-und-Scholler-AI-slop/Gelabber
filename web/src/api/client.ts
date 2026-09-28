@@ -65,10 +65,119 @@ export function setCsrfToken(token: string | null): void {
  * silent CSRF re-bootstrap comes back without a user. The session store
  * registers itself here (keeps this module free of a store import).
  */
-export type SessionSink = (user: unknown) => void;
+export type SessionSink = (
+  user: unknown,
+  options?: { force?: boolean; shared?: boolean },
+) => void;
 
 let sessionSink: SessionSink | null = null;
-let sessionScope: () => SessionStamp = () => ({ userId: null, generation: 0 });
+let sessionScope: () => SessionStamp = () => ({
+  userId: null,
+  generation: 0,
+  sharedGeneration: sessionCookieGeneration(),
+});
+
+// No profile, token, or cookie is persisted here. Storage is the synchronous
+// fence; notifications merely prompt earlier cleanup of caches and media.
+const COOKIE_STATE_KEY = "gelabber:auth-generation";
+type CookieState = {
+  generation: string;
+  phase: "changing" | "settled" | "unknown";
+  userId: string | null;
+};
+let observedCookieState = "";
+let adoptedCookieGeneration = "";
+let reconcileSession: (() => Promise<void>) | null = null;
+let reconciliation: Promise<void> | null = null;
+let listening = false;
+
+function readCookieState(): CookieState | null {
+  if (typeof window === "undefined") return null;
+  const raw = window.localStorage.getItem(COOKIE_STATE_KEY);
+  if (raw === null) return null;
+  const value: unknown = JSON.parse(raw);
+  if (
+    value === null ||
+    typeof value !== "object" ||
+    !("generation" in value) ||
+    typeof value.generation !== "string" ||
+    !("phase" in value) ||
+    !["changing", "settled", "unknown"].includes(String(value.phase)) ||
+    !("userId" in value) ||
+    (value.userId !== null && typeof value.userId !== "string")
+  ) {
+    throw new DOMException(
+      "Session coordination is unavailable.",
+      "AbortError",
+    );
+  }
+  return value as CookieState;
+}
+
+export function sessionCookieGeneration(): string {
+  return adoptedCookieGeneration;
+}
+
+function cookieFingerprint(state: CookieState | null): string {
+  return state ? JSON.stringify(state) : "";
+}
+
+function publishCookieState(state: CookieState): void {
+  if (typeof window === "undefined") return;
+  const serialized = JSON.stringify(state);
+  // Fail closed when storage is unavailable: never change cookies without
+  // first publishing the generation other tabs must check.
+  window.localStorage.setItem(COOKIE_STATE_KEY, serialized);
+  observedCookieState = serialized;
+  adoptedCookieGeneration = state.generation;
+}
+
+function scheduleReconciliation(): void {
+  if (reconciliation || !reconcileSession) return;
+  const request = Promise.resolve()
+    .then(() => reconcileSession?.())
+    .catch(() => {
+      /* Remain anonymous on offline/failed reconciliation. */
+    })
+    .finally(() => {
+      if (reconciliation === request) reconciliation = null;
+    });
+  reconciliation = request;
+}
+
+/** Always read current storage, never trust the (possibly delayed) event value. */
+export function synchronizeSharedSession(): void {
+  const state = readCookieState();
+  if (!state && !observedCookieState) return;
+  const fingerprint = cookieFingerprint(state);
+  const mismatched =
+    state?.phase !== "settled" || state?.userId !== sessionScope().userId;
+  if (fingerprint !== observedCookieState) {
+    observedCookieState = fingerprint;
+    adoptedCookieGeneration = state?.generation ?? "";
+    csrfToken = null;
+    sessionSink?.(null, { force: true, shared: true });
+    scheduleReconciliation();
+  } else if (mismatched) {
+    // An intent may have suppressed reconciliation when this generation was
+    // first observed; the identity check also catches stamps taken too late.
+    sessionSink?.(null, { shared: true });
+    scheduleReconciliation();
+  }
+}
+
+export function setSessionReconciler(reconcile: () => Promise<void>): void {
+  reconcileSession = reconcile;
+  if (typeof window === "undefined" || listening) return;
+  listening = true;
+  window.addEventListener("storage", (event) => {
+    if (event.key === COOKIE_STATE_KEY || event.key === null)
+      synchronizeSharedSession();
+  });
+  window.addEventListener("pageshow", () => synchronizeSharedSession());
+  window.addEventListener("focus", () => synchronizeSharedSession());
+}
+
 let cookieQueue: Promise<void> = Promise.resolve();
 
 /** Set-Cookie is applied by the browser before JS can discard a stale result.
@@ -78,6 +187,12 @@ function withSessionCookieLock<T>(
   action: () => Promise<T>,
   signal?: AbortSignal,
 ): Promise<T> {
+  if (typeof window !== "undefined" && !navigator.locks) {
+    throw new DOMException(
+      "This browser cannot coordinate account changes.",
+      "AbortError",
+    );
+  }
   if (typeof navigator !== "undefined" && navigator.locks) {
     return navigator.locks.request("gelabber:auth-cookies", { signal }, action);
   }
@@ -116,8 +231,22 @@ function scopeHolds(stamp: SessionStamp): boolean {
 
 function requireScope(stamp: SessionStamp, signal?: AbortSignal): void {
   signal?.throwIfAborted();
-  if (!scopeHolds(stamp)) {
-    throw new DOMException("The session changed. Try again.", "AbortError");
+  if (!scopeHolds(stamp)) throw staleSession();
+}
+
+function staleSession(): DOMException {
+  return new DOMException("The session changed. Try again.", "AbortError");
+}
+
+function requireSharedScope(stamp: SessionStamp, signal?: AbortSignal): void {
+  requireScope(stamp, signal);
+  const shared = readCookieState();
+  if (
+    (shared?.generation ?? "") !== stamp.sharedGeneration ||
+    (shared && (shared.phase !== "settled" || shared.userId !== stamp.userId))
+  ) {
+    synchronizeSharedSession();
+    throw staleSession();
   }
 }
 
@@ -135,6 +264,10 @@ export type RequestOptions = {
   scope?: SessionStamp;
   /** /auth/logout only: the identity captured before the optimistic logout. */
   logoutUserId?: string | null;
+  /** Explicit credentials/logout are intents independent of cookie identity. */
+  authIntent?: () => boolean;
+  /** Authoritative cross-tab bootstrap, permitted after invalidation. */
+  reconcile?: boolean;
 };
 
 type ErrorBody = {
@@ -176,10 +309,103 @@ export async function api<T>(
   options: RequestOptions = {},
 ): Promise<T> {
   const stamp = options.scope ?? sessionScope();
-  const run = () => performApi<T>(path, options, stamp);
-  return changesAuthCookies(path)
-    ? withSessionCookieLock(run, options.signal)
-    : run();
+  if (changesAuthCookies(path)) {
+    return withSessionCookieLock(
+      () => performAuthApi<T>(path, options, stamp),
+      options.signal,
+    );
+  }
+  return performApi<T>(path, options, stamp);
+}
+
+function requireAuthRequest(
+  options: RequestOptions,
+  stamp: SessionStamp,
+): void {
+  options.signal?.throwIfAborted();
+  if (options.authIntent) {
+    if (!options.authIntent()) throw staleSession();
+  } else if (!options.reconcile) {
+    requireScope(stamp, options.signal);
+  }
+}
+
+/** The lock covers Set-Cookie, body decoding, the shared fence, and UI adoption. */
+async function performAuthApi<T>(
+  path: string,
+  options: RequestOptions,
+  stamp: SessionStamp,
+): Promise<T> {
+  requireAuthRequest(options, stamp);
+  const explicit = path !== "/auth/session";
+  const previous = readCookieState();
+  let changing: CookieState | null = null;
+  if (explicit && typeof window !== "undefined") {
+    changing = {
+      generation: crypto.randomUUID(),
+      phase: "changing",
+      userId: previous?.userId ?? stamp.userId,
+    };
+    publishCookieState(changing);
+  }
+  try {
+    const response = await requestWithCsrfRetry(path, options, stamp);
+    const payload = await readJson(response);
+    // Even a superseded response has already changed the browser's cookies.
+    // Publish its actual identity before allowing the next auth intent to send.
+    const valid = response.ok && isSessionPayload(payload);
+    const logout = response.ok && path === "/auth/logout";
+    const user = logout ? null : valid ? payload.user : undefined;
+    if (user !== undefined) {
+      settleCookieIdentity(user?.id ?? null, changing?.generation);
+    } else if (changing) {
+      // A failed/timed-out response might still have committed on the server.
+      // A subsequent authoritative bootstrap is required, never guess the uid.
+      publishCookieState({ ...changing, phase: "unknown", userId: null });
+    }
+    requireAuthRequest(options, stamp);
+    if (!response.ok) throwResponseError(response, payload);
+    rememberCsrf(payload);
+    if (user !== undefined && !(logout && sessionScope().userId === null)) {
+      sessionSink?.(user, {
+        shared: options.reconcile,
+        force: explicit && !logout,
+      });
+    }
+    return payload as T;
+  } finally {
+    if (changing && readCookieState()?.phase === "changing") {
+      publishCookieState({ ...changing, phase: "unknown", userId: null });
+    }
+  }
+}
+
+function settleCookieIdentity(
+  userId: string | null,
+  generation?: string,
+): void {
+  if (typeof window === "undefined") return;
+  const previous = readCookieState();
+  publishCookieState({
+    generation:
+      generation ??
+      (previous?.phase === "settled" && previous.userId === userId
+        ? previous.generation
+        : crypto.randomUUID()),
+    phase: "settled",
+    userId,
+  });
+}
+
+function throwResponseError(response: Response, payload: unknown): never {
+  const body = (payload ?? {}) as ErrorBody;
+  throw new ApiError(
+    toErrorCode(body.error),
+    response.status,
+    body.message ?? `Request failed with status ${response.status}`,
+    body.fields ?? {},
+    typeof body.retry_after === "number" ? body.retry_after : null,
+  );
 }
 
 async function performApi<T>(
@@ -187,30 +413,27 @@ async function performApi<T>(
   options: RequestOptions,
   stamp: SessionStamp,
 ): Promise<T> {
-  requireScope(stamp, options.signal);
+  // Synchronous pre-fetch fence catches identity changes before notifications
+  // have arrived. Ordinary reads do not hold the auth lock while on the wire.
+  requireSharedScope(stamp, options.signal);
   const response = await requestWithCsrfRetry(path, options, stamp);
   const payload = await readJson(response);
-
-  if (!response.ok) {
-    const body = (payload ?? {}) as ErrorBody;
-    const code = toErrorCode(body.error);
-    if (code === "unauthenticated" && scopeHolds(stamp)) {
-      // The cookie is gone or expired (other tab logged out, TTL, server
-      // restart): tell the store so the UI flips instead of staying stuck
-      // on a page that no longer works.
-      sessionSink?.(null);
+  // Recheck under the auth lock: no account switch can occur between checking
+  // the shared generation and handing this payload to the caller/cache.
+  return withSessionCookieLock(async () => {
+    requireSharedScope(stamp, options.signal);
+    if (!response.ok) {
+      if (
+        toErrorCode((payload as ErrorBody | null)?.error) === "unauthenticated"
+      ) {
+        settleCookieIdentity(null);
+        sessionSink?.(null);
+      }
+      throwResponseError(response, payload);
     }
-    throw new ApiError(
-      code,
-      response.status,
-      body.message ?? `Request failed with status ${response.status}`,
-      body.fields ?? {},
-      typeof body.retry_after === "number" ? body.retry_after : null,
-    );
-  }
-
-  if (scopeHolds(stamp)) rememberCsrf(payload);
-  return payload as T;
+    rememberCsrf(payload);
+    return payload as T;
+  }, options.signal);
 }
 
 // A stale token (server restarted, cookie expired, other tab logged out)
@@ -243,10 +466,15 @@ async function retryWithSession(
   stamp: SessionStamp,
   first: Response,
 ): Promise<Response> {
-  requireScope(stamp, options.signal);
+  const auth = changesAuthCookies(path);
+  const requireIntent = () =>
+    auth
+      ? requireAuthRequest(options, stamp)
+      : requireSharedScope(stamp, options.signal);
+  requireIntent();
   const session = await send("/auth/session", { signal: options.signal });
   const payload = await readJson(session);
-  requireScope(stamp, options.signal);
+  requireIntent();
   // A failed or malformed bootstrap cannot authorize another write.
   if (!session.ok || !isSessionPayload(payload)) return first;
 
@@ -261,6 +489,7 @@ async function retryWithSession(
     // Synchronize this tab even when another tab changed the cookie. That
     // new identity must never inherit the old mutation's intent.
     rememberCsrf(payload);
+    settleCookieIdentity(actualId);
     sessionSink?.(payload.user);
   }
   // Credentials express an explicit sign-in intent, independent of whichever
@@ -275,7 +504,7 @@ async function retryWithSession(
   }
   // Logout deliberately keeps the UI anonymous while retrying for the
   // original account, and never adopts the bootstrap user.
-  requireScope(stamp, options.signal);
+  requireIntent();
   if (isLogout || isSignIn) rememberCsrf(payload);
   return send(path, options);
 }

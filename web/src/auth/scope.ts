@@ -2,6 +2,8 @@
 // including session end, so a mutation that started as user A cannot commit
 // after A is gone — even if A signs back in before the response arrives.
 
+import { sessionCookieGeneration } from "../api/client.ts";
+
 import { useSession } from "./session.ts";
 
 export type ScopeStamp = {
@@ -16,15 +18,22 @@ let requestGeneration = 0;
 export type SessionStamp = {
   userId: string | null;
   generation: number;
+  sharedGeneration: string;
 };
 
 export function takeSessionStamp(): SessionStamp {
-  return { userId: currentUserId(), generation: requestGeneration };
+  return {
+    userId: currentUserId(),
+    generation: requestGeneration,
+    sharedGeneration: sessionCookieGeneration(),
+  };
 }
 
 export function sessionStampHolds(stamp: SessionStamp): boolean {
   return (
-    stamp.userId === currentUserId() && stamp.generation === requestGeneration
+    stamp.userId === currentUserId() &&
+    stamp.generation === requestGeneration &&
+    stamp.sharedGeneration === sessionCookieGeneration()
   );
 }
 

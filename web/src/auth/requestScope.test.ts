@@ -129,7 +129,7 @@ describe("controlled responses across session changes", () => {
     const resetGateway = vi.spyOn(getGateway(), "resetSession");
 
     oldResponse.resolve(json(401, { error: "unauthenticated" }));
-    expect(await done).toMatchObject({ code: "unauthenticated" });
+    expect(await done).toMatchObject({ name: "AbortError" });
     expect(useSession.getState().user).toEqual(bob);
     expect(takeStamp()).toEqual(stamp);
     expect(queryScopeUser()).toBe(bob.id);
@@ -280,13 +280,36 @@ describe("controlled responses across session changes", () => {
       "GET /api/servers": () => oldResponse.promise,
     });
     await login(ada.email, "password123");
-    const done = api("/servers");
+    const done = api("/servers").catch((error: unknown) => error);
     who = bob;
     await login(bob.email, "password123");
     oldResponse.resolve(json(200, { csrf_token: "late-a", servers: [] }));
-    await done;
+    expect(await done).toMatchObject({ name: "AbortError" });
     expect(getCsrfToken()).toBe(`csrf-${bob.id}`);
     expect(useSession.getState().user).toEqual(bob);
+  });
+
+  it("same-account sign-in drops the previous session cache and held GET payload", async () => {
+    const oldResponse = deferred();
+    install({
+      "POST /api/auth/login": () =>
+        json(200, { user: ada, csrf_token: "csrf-a" }),
+      "GET /api/servers": () => oldResponse.promise,
+    });
+    await login(ada.email, "password123");
+    const oldStamp = takeStamp()!;
+    const key = ["user", ada.id, oldStamp.generation, "servers"];
+    queryClient.setQueryData(key, ["old-session-private-data"]);
+    getGateway().setTopics([{ s: "old-server", c: "old-channel" }]);
+    const reset = vi.spyOn(getGateway(), "resetSession");
+    const done = api("/servers").catch((error: unknown) => error);
+    await login(ada.email, "password123");
+    oldResponse.resolve(json(200, [{ id: "held-old-server" }]));
+    expect(await done).toMatchObject({ name: "AbortError" });
+    expect(queryClient.getQueryData(key)).toBeUndefined();
+    expect(takeStamp()?.generation).not.toBe(oldStamp.generation);
+    expect(reset).toHaveBeenCalledOnce();
+    expect(useSession.getState().user).toEqual(ada);
   });
 
   it("does not let an old anonymous 401 sign out a new anonymous-to-A login", async () => {
