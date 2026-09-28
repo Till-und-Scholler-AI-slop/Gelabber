@@ -186,10 +186,10 @@ async fn connect(
                 incoming = stream.next() => {
                     match incoming {
                         Some(Ok(Message::Text(text))) => {
-                            if let Ok(value) = serde_json::from_str::<Value>(&text) {
-                                if in_tx.send(value).is_err() {
-                                    break;
-                                }
+                            if let Ok(value) = serde_json::from_str::<Value>(&text)
+                                && in_tx.send(value).is_err()
+                            {
+                                break;
                             }
                         }
                         Some(Ok(_)) => {}

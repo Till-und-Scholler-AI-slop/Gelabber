@@ -57,6 +57,7 @@ class FakePeer implements PeerConnection {
   offerOptions: Array<{ iceRestart?: boolean } | undefined> = [];
   iceServers: IceServer[];
   getStats?: () => Promise<unknown>;
+  getTransceivers?: PeerConnection["getTransceivers"];
 
   constructor(iceServers: IceServer[] = []) {
     this.iceServers = iceServers;
@@ -957,7 +958,7 @@ describe("voice session", () => {
   });
 
   it("shows a local camera preview before any publish offer", async () => {
-    const { sent, mediaSent, peers } = install();
+    const { sent, mediaSent, peers, emitMedia } = install();
     joinVoice({ serverId: "srv", channelId: "voice", channelName: "Lounge" });
     await vi.waitFor(() => expect(peers.length).toBe(1));
     toggleCamera();
@@ -976,6 +977,10 @@ describe("voice session", () => {
         { op: "sig", t: "p", s: "srv", c: "voice", k: "v" },
       ]),
     );
+    // The initial microphone offer is still open. The video identity is
+    // announced only once its own SDP has been set locally.
+    expect(mediaSent.some((frame) => frame.op === "p")).toBe(false);
+    emitMedia({ op: "a", sdp: "v=0\r\n" });
     await vi.waitFor(() =>
       expect(
         mediaSent.some((frame) => frame.op === "p" && frame.k === "v"),
@@ -984,7 +989,7 @@ describe("voice session", () => {
   });
 
   it("starts screen-share without putting SDP on the chat socket", async () => {
-    const { sent, mediaSent, peers } = install();
+    const { sent, mediaSent, peers, emitMedia } = install();
     joinVoice({ serverId: "srv", channelId: "voice", channelName: "Lounge" });
     await vi.waitFor(() => expect(peers.length).toBe(1));
     toggleShare();
@@ -997,6 +1002,10 @@ describe("voice session", () => {
       expect(frame).not.toHaveProperty("sdp");
       expect(frame).not.toHaveProperty("token");
     }
+    // The initial microphone offer is still open. The video identity is
+    // announced only once its own SDP has been set locally.
+    expect(mediaSent.some((frame) => frame.op === "p")).toBe(false);
+    emitMedia({ op: "a", sdp: "v=0\r\n" });
     await vi.waitFor(() =>
       expect(
         mediaSent.some((frame) => frame.op === "p" && frame.k === "s"),
@@ -1057,7 +1066,7 @@ describe("voice session", () => {
   });
 
   it("shows the Live badge immediately and publishes after display capture", async () => {
-    const { sent, mediaSent, peers } = install();
+    const { sent, mediaSent, peers, emitMedia } = install();
     joinVoice({ serverId: "srv", channelId: "voice", channelName: "Lounge" });
     await vi.waitFor(() => expect(peers.length).toBe(1));
     toggleGoLive();
@@ -1076,6 +1085,10 @@ describe("voice session", () => {
           frame.k === "l",
       ),
     ).toEqual([{ op: "sig", t: "p", s: "srv", c: "voice", k: "l" }]);
+    // The initial microphone offer is still open. The video identity is
+    // announced only once its own SDP has been set locally.
+    expect(mediaSent.some((frame) => frame.op === "p")).toBe(false);
+    emitMedia({ op: "a", sdp: "v=0\r\n" });
     await vi.waitFor(() =>
       expect(
         mediaSent.some((frame) => frame.op === "p" && frame.k === "l"),
@@ -1849,6 +1862,75 @@ describe("stream negotiation stability", () => {
       /Sprachkanal bleibt aktiv/,
     );
   });
+  it("announces the retained SDP MSID after rollback and sender reuse", async () => {
+    const env = await connected();
+    const peer = env.peers[0]!;
+    const addTrack = peer.addTrack.bind(peer);
+    peer.addTrack = (track) => {
+      const reusable = peer.senders.find((sender) => sender.track === null);
+      if (reusable) {
+        reusable.track = track ?? null;
+        return reusable;
+      }
+      return addTrack(track);
+    };
+    peer.getTransceivers = () =>
+      peer.senders.map((sender, i) => ({ mid: String(i), sender }));
+    const createOffer = peer.createOffer.bind(peer);
+    peer.createOffer = async (options) => {
+      const offer = await createOffer(options);
+      const video = peer.senders.findIndex(
+        (sender) => sender.track?.kind === "video",
+      );
+      return {
+        ...offer,
+        sdp: `${offer.sdp ?? ""}m=video 9 UDP/TLS/RTP/SAVPF 96\r\na=mid:${video}\r\na=msid:capture retained-msid\r\n`,
+      };
+    };
+    toggleCamera();
+    await vi.waitFor(() =>
+      expect(peer.signalingState).toBe("have-local-offer"),
+    );
+    const sender = peer.senders.find((item) => item.track?.kind === "video")!;
+    const firstCapture = sender.track!;
+    expect(env.mediaSent).toContainEqual({
+      op: "p",
+      k: "v",
+      t: "retained-msid",
+    });
+    env.emitMedia({ op: "err", e: "negotiation_failed" });
+    await vi.waitFor(() => expect(peer.signalingState).toBe("stable"));
+    expect(env.mediaSent).toContainEqual({
+      op: "u",
+      k: "v",
+      t: "retained-msid",
+    });
+    expect(sender.track).toBeNull();
+    toggleShare();
+    await vi.waitFor(() =>
+      expect(peer.signalingState).toBe("have-local-offer"),
+    );
+    expect(peer.senders.find((item) => item.track?.kind === "video")).toBe(
+      sender,
+    );
+    expect(sender.track?.id).not.toBe(firstCapture.id);
+    expect(env.mediaSent).toContainEqual({
+      op: "p",
+      k: "s",
+      t: "retained-msid",
+    });
+    env.emitMedia({ op: "a", sdp: "v=0\r\n" });
+    await vi.waitFor(() => expect(peer.signalingState).toBe("stable"));
+    toggleShare();
+    expect(env.mediaSent).toContainEqual({
+      op: "u",
+      k: "s",
+      t: "retained-msid",
+    });
+    expect(peer.audio).toBeTruthy();
+    expect(trackStopped(peer.audio)).toBe(false);
+  });
+
   it("keeps a negotiated screen share when a later renegotiation fails", async () => {
     const env = await connected();
     toggleShare();
@@ -2158,9 +2240,9 @@ describe("stream negotiation stability", () => {
       );
     await vi.waitFor(
       () =>
-        expect(useVoiceDiagnostics.getState().latest?.voice?.flows).toHaveLength(
-          2,
-        ),
+        expect(
+          useVoiceDiagnostics.getState().latest?.voice?.flows,
+        ).toHaveLength(2),
       { timeout: 3_500 },
     );
     const exported = buildDiagnosticExport();
@@ -2189,23 +2271,20 @@ describe("stream negotiation stability", () => {
       expect(useVoice.getState().localCamera).toBeTruthy(),
     );
     env.emitMedia({ op: "a", sdp: "v=0\r\n" });
-    await vi.waitFor(() =>
-      expect(env.peers[0]?.signalingState).toBe("stable"),
-    );
+    await vi.waitFor(() => expect(env.peers[0]?.signalingState).toBe("stable"));
     env.peers[0]!.setIce("failed");
     await vi.waitFor(() =>
       expect(env.peers[0]?.offerOptions.at(-1)?.iceRestart).toBe(true),
     );
     env.emitMedia({ op: "a", sdp: "v=0\r\n" });
-    await vi.waitFor(() =>
-      expect(env.peers[0]?.signalingState).toBe("stable"),
-    );
+    await vi.waitFor(() => expect(env.peers[0]?.signalingState).toBe("stable"));
     env.peers[0]!.setIce("checking");
     env.peers[0]!.setIce("failed");
     await vi.waitFor(() => expect(env.peers).toHaveLength(2));
     await vi.waitFor(() =>
       expect(
-        env.peers[1]?.senders.find((sender) => sender.track?.kind === "video")
+        env.peers[1]?.senders
+          .find((sender) => sender.track?.kind === "video")
           ?.getParameters?.().encodings[0],
       ).toMatchObject({ maxBitrate: 800_000, maxFramerate: 15 }),
     );

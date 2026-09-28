@@ -23,10 +23,29 @@ export type MediaClientFrame =
   | { op: "o"; sdp: string }
   | { op: "a"; sdp: string }
   | { op: "i"; ice: string; mid?: string }
-  | { op: "p"; k: "v" | "s" | "l" }
-  | { op: "u"; k: "v" | "s" | "l" }
+  | { op: "p"; k: "v" | "s" | "l"; t?: string }
+  | { op: "u"; k: "v" | "s" | "l"; t?: string }
   | { op: "x" }
   | { op: "l" };
+
+/** Actual MSID track IDs by MID, after setLocalDescription (sender reuse may
+ * preserve an older MSID even when the capture MediaStreamTrack.id changes). */
+export function publishedTrackIds(sdp: string): Map<string, string> {
+  const bindings = new Map<string, string>();
+  for (const section of sdp.split(/\r?\nm=/).slice(1)) {
+    const lines = section.split(/\r?\n/);
+    if (!lines[0]?.startsWith("video ")) continue;
+    if (lines[0]?.split(/\s+/)[1] === "0") continue;
+    if (lines.includes("a=recvonly") || lines.includes("a=inactive")) continue;
+    const mid = lines.find((line) => line.startsWith("a=mid:"))?.slice(6);
+    const msid =
+      lines.find((line) => line.startsWith("a=msid:"))?.slice(7) ??
+      lines.find((line) => /^a=ssrc:\d+ msid:/.test(line))?.split(" msid:")[1];
+    const trackId = msid?.trim().split(/\s+/)[1];
+    if (mid && trackId) bindings.set(mid, trackId);
+  }
+  return bindings;
+}
 
 export type MediaServerFrame =
   | { op: "ok"; c: string; u: string }
