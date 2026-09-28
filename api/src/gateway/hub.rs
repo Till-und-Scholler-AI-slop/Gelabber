@@ -28,13 +28,37 @@ const SUBSCRIBER_RETRY: Duration = Duration::from_millis(200);
 /// is `t`,`n`,`d`). Seq is string-substituted — Lua cjson would turn `[]`
 /// into `{}`.
 const PUBLISH_LUA: &str = r#"
+for i=1,5 do
+  local expected=({'string','list','none','string','hash'})[i]
+  if i~=3 then
+    local actual=redis.call('TYPE',KEYS[i]).ok
+    if actual~='none' and actual~=expected then return redis.error_reply('wrong realtime key type') end
+  end
+end
+local epoch = redis.call('GET', KEYS[4])
+if not epoch then epoch = ARGV[3]; redis.call('SET', KEYS[4], epoch) end
+if tonumber(ARGV[4]) > 0 then
+  local last = tonumber(redis.call('HGET', KEYS[5], 'r') or '0')
+  if last >= tonumber(ARGV[4]) then return {0, redis.call('HGET', KEYS[5], 'raw')} end
+end
 local n = redis.call('INCR', KEYS[1])
 local raw = string.gsub(ARGV[1], '"n":0', '"n":' .. n, 1)
+raw = string.gsub(raw, '"ep":null', '"ep":"' .. epoch .. '"', 1)
 redis.call('LPUSH', KEYS[2], raw)
 redis.call('LTRIM', KEYS[2], 0, tonumber(ARGV[2]))
 redis.call('PUBLISH', KEYS[3], raw)
+if tonumber(ARGV[4]) > 0 then redis.call('HSET', KEYS[5], 'r', ARGV[4], 'raw', raw) end
 return {n, raw}
 "#;
+const SNAPSHOT_LUA: &str = r#"
+local epoch = redis.call('GET', KEYS[3])
+if not epoch then epoch = ARGV[1]; redis.call('SET', KEYS[3], epoch) end
+redis.call('SET', KEYS[1], '0', 'NX')
+return {redis.call('GET', KEYS[1]), epoch, redis.call('LRANGE', KEYS[2], 0, -1)}
+"#;
+
+pub const OUTBOUND_CAPACITY: usize = 128;
+const CATCH_UP_CAPACITY: usize = 128;
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
 pub struct ConnId(u64, Uuid);
@@ -52,6 +76,7 @@ impl ConnId {
 pub(super) struct Inner {
     next_id: AtomicU64,
     started: AtomicBool,
+    pub(super) delivery_started: AtomicBool,
     subscribed: AtomicBool,
     conn: Mutex<Option<redis::aio::MultiplexedConnection>>,
     pub(super) sockets: RwLock<HashMap<ConnId, Socket>>,
@@ -79,13 +104,26 @@ pub(super) struct Socket {
     /// Channels this socket started typing in (`server`, `channel`).
     typing: HashSet<(Uuid, Uuid)>,
     topics: HashSet<Topic>,
+    epochs: HashMap<Topic, Uuid>,
+    closed: tokio::sync::watch::Sender<bool>,
     /// Voice rooms this socket has joined (`op: "sig"`). Independent of
     /// chat topic subscriptions.
     pub(super) rooms: HashMap<Uuid, VoiceSeat>,
     /// Live Pub/Sub frames held until catch-up finishes. Dropping them
     /// here would punch a hole the replay log can miss.
     catching_up: HashMap<Topic, Vec<Event>>,
-    pub(super) tx: mpsc::UnboundedSender<ServerFrame>,
+    pub(super) tx: mpsc::Sender<ServerFrame>,
+}
+
+impl Socket {
+    pub(super) fn send(&self, frame: ServerFrame) {
+        if *self.closed.borrow() {
+            return;
+        }
+        if self.tx.try_send(frame).is_err() {
+            self.closed.send_replace(true);
+        }
+    }
 }
 
 /// Local sockets, the Redis subscriber, and the multiplexed command connection.
@@ -128,6 +166,7 @@ impl ConnTable {
             inner: Arc::new(Inner {
                 next_id: AtomicU64::new(1),
                 started: AtomicBool::new(false),
+                delivery_started: AtomicBool::new(false),
                 subscribed: AtomicBool::new(false),
                 conn: Mutex::new(None),
                 sockets: RwLock::new(HashMap::new()),
@@ -163,7 +202,7 @@ impl ConnTable {
         Err("redis pub/sub subscriber did not become ready".into())
     }
 
-    pub async fn attach(&self, user_id: Uuid, tx: mpsc::UnboundedSender<ServerFrame>) -> ConnId {
+    pub async fn attach(&self, user_id: Uuid, tx: mpsc::Sender<ServerFrame>) -> ConnId {
         self.ensure_subscriber();
         let id = ConnId(
             self.inner.next_id.fetch_add(1, Ordering::Relaxed),
@@ -179,6 +218,8 @@ impl ConnTable {
                 voice_rosters: HashMap::new(),
                 typing: HashSet::new(),
                 topics: HashSet::new(),
+                epochs: HashMap::new(),
+                closed: tokio::sync::watch::channel(false).0,
                 rooms: HashMap::new(),
                 catching_up: HashMap::new(),
                 tx,
@@ -213,7 +254,6 @@ impl ConnTable {
     }
 
     /// Register the topic and queue live Redis events until [`finish_catch_up`].
-    /// Register the topic and queue live Redis events until [`finish_catch_up`].
     pub async fn begin_catch_up(&self, id: ConnId, topic: Topic) {
         if let Some(socket) = self.inner.sockets.write().await.get_mut(&id) {
             socket.topics.insert(topic);
@@ -223,16 +263,30 @@ impl ConnTable {
 
     /// Release the topic to live delivery and flush queued frames with
     /// `n > after_n` (already-replayed seqs are dropped).
-    /// Release the topic to live delivery and flush queued frames with
-    /// `n > after_n` (already-replayed seqs are dropped).
     pub async fn finish_catch_up(&self, id: ConnId, topic: Topic, after_n: u64) {
+        self.finish_catch_up_epoch(id, topic, after_n, None).await;
+    }
+    pub async fn finish_catch_up_epoch(
+        &self,
+        id: ConnId,
+        topic: Topic,
+        after_n: u64,
+        epoch: Option<Uuid>,
+    ) {
         let mut sockets = self.inner.sockets.write().await;
         let Some(socket) = sockets.get_mut(&id) else {
             return;
         };
+        if let Some(epoch) = epoch {
+            socket.epochs.insert(topic, epoch);
+        }
         let Some(mut buf) = socket.catching_up.remove(&topic) else {
             return;
         };
+        if epoch.is_some_and(|epoch| buf.iter().any(|event| event.ep != Some(epoch))) {
+            socket.send(ServerFrame::Resync);
+            return;
+        }
         buf.sort_by_key(|event| event.n);
         let mut seen = after_n;
         for event in buf {
@@ -240,7 +294,7 @@ impl ConnTable {
                 continue;
             }
             seen = event.n;
-            let _ = socket.tx.send(ServerFrame::event(event));
+            socket.send(ServerFrame::event(event));
         }
     }
 
@@ -275,13 +329,49 @@ impl ConnTable {
         }
     }
 
+    async fn resync_sockets(&self) {
+        let mut sockets = self.inner.sockets.write().await;
+        for socket in sockets.values_mut() {
+            socket.catching_up.clear();
+            socket.epochs.clear();
+            socket.send(ServerFrame::Resync);
+        }
+    }
+
     async fn subscribe_once(&self) -> Result<(), redis::RedisError> {
-        let mut pubsub = self.redis.get_async_pubsub().await?;
-        pubsub.psubscribe(format!("{REDIS_PREFIX}*")).await?;
+        let mut pubsub =
+            tokio::time::timeout(Duration::from_secs(1), self.redis.get_async_pubsub())
+                .await
+                .map_err(|_| {
+                    redis::RedisError::from(std::io::Error::new(
+                        std::io::ErrorKind::TimedOut,
+                        "Redis PubSub connect",
+                    ))
+                })??;
+        tokio::time::timeout(
+            Duration::from_secs(1),
+            pubsub.psubscribe(format!("{REDIS_PREFIX}*")),
+        )
+        .await
+        .map_err(|_| {
+            redis::RedisError::from(std::io::Error::new(
+                std::io::ErrorKind::TimedOut,
+                "Redis PubSub subscribe",
+            ))
+        })??;
+        self.resync_sockets().await;
         self.inner.subscribed.store(true, Ordering::SeqCst);
         debug!("gateway subscribed to redis pub/sub");
-        let mut stream = pubsub.on_message();
-        while let Some(msg) = stream.next().await {
+        let (mut sink, mut stream) = pubsub.split();
+        let mut ping = tokio::time::interval(Duration::from_secs(1));
+        loop {
+            let msg = tokio::select! {
+                message=stream.next()=> match message {Some(message)=>message,None=>break},
+                _=ping.tick()=> {
+                    tokio::time::timeout(Duration::from_secs(1),sink.ping::<redis::Value>()).await.map_err(|_|redis::RedisError::from(std::io::Error::new(std::io::ErrorKind::TimedOut,"Redis PubSub ping")))??;
+                    continue;
+                }
+            };
             let channel = msg.get_channel_name().to_owned();
             match msg.get_payload::<String>() {
                 Ok(raw) => self.deliver_raw(&channel, &raw).await,
@@ -292,6 +382,28 @@ impl ConnTable {
     }
 
     async fn deliver_raw(&self, channel: &str, raw: &str) {
+        #[derive(serde::Deserialize)]
+        struct Discovery {
+            c: Uuid,
+        }
+        if let Some(raw_user) = channel.strip_prefix("gb:dm:") {
+            if let (Ok(user), Ok(Discovery { c })) = (
+                raw_user.parse::<Uuid>(),
+                serde_json::from_str::<Discovery>(raw),
+            ) {
+                for socket in self
+                    .inner
+                    .sockets
+                    .read()
+                    .await
+                    .values()
+                    .filter(|socket| socket.user_id == user)
+                {
+                    socket.send(ServerFrame::Dm { c });
+                }
+            }
+            return;
+        }
         if let Some(channel_id) = voice_channel_id(channel) {
             match serde_json::from_str::<SigEvent>(raw) {
                 Ok(event) => {
@@ -327,7 +439,7 @@ impl ConnTable {
         for socket in sockets.values() {
             let in_room = socket.rooms.contains_key(&channel_id);
             if in_room || socket.servers.contains(&server_id) {
-                let _ = socket.tx.send(frame.clone());
+                socket.send(frame.clone());
             }
         }
     }
@@ -342,7 +454,7 @@ impl ConnTable {
                 }
             };
             if want {
-                let _ = socket.tx.send(frame.clone());
+                socket.send(frame.clone());
             }
         }
     }
@@ -353,11 +465,28 @@ impl ConnTable {
             if !socket.topics.contains(&topic) {
                 continue;
             }
+            if *socket.closed.borrow() {
+                continue;
+            }
+            let buffered: usize = socket.catching_up.values().map(Vec::len).sum();
             if let Some(buf) = socket.catching_up.get_mut(&topic) {
+                if buffered >= CATCH_UP_CAPACITY {
+                    socket.catching_up.clear();
+                    socket.closed.send_replace(true);
+                    continue;
+                }
                 buf.push(event.clone());
                 continue;
             }
-            let _ = socket.tx.send(ServerFrame::event(event.clone()));
+            if let Some(epoch) = event.ep
+                && socket
+                    .epochs
+                    .insert(topic, epoch)
+                    .is_some_and(|previous| previous != epoch)
+            {
+                socket.send(ServerFrame::gap(event.s, event.c).with_epoch(epoch));
+            }
+            socket.send(ServerFrame::event(event.clone()));
         }
     }
 
@@ -366,7 +495,14 @@ impl ConnTable {
         if let Some(conn) = slot.as_ref() {
             return Ok(conn.clone());
         }
-        let conn = self.redis.get_multiplexed_async_connection().await?;
+        let conn = self
+            .redis
+            .get_multiplexed_async_connection_with_config(
+                &redis::AsyncConnectionConfig::new()
+                    .set_response_timeout(Some(Duration::from_secs(1)))
+                    .set_connection_timeout(Some(Duration::from_secs(1))),
+            )
+            .await?;
         *slot = Some(conn.clone());
         Ok(conn)
     }
@@ -397,6 +533,14 @@ impl EventLog {
     /// Assign seq, append the replay buffer, PUBLISH — one Lua turn so a
     /// concurrent writer cannot `PUBLISH` 2 before 1.
     pub async fn publish(&self, draft: EventDraft) -> Result<Event, ApiError> {
+        self.publish_revision(draft, None).await
+    }
+
+    pub(super) async fn publish_revision(
+        &self,
+        draft: EventDraft,
+        revision: Option<i64>,
+    ) -> Result<Event, ApiError> {
         self.connections.ensure_subscriber();
         let topic = draft.topic();
         let placeholder = Event {
@@ -404,6 +548,8 @@ impl EventLog {
             s: draft.server_id,
             c: draft.channel_id,
             n: 0,
+            ep: None,
+            r: revision,
             i: draft.entity_id,
             d: draft.delta,
         };
@@ -426,8 +572,12 @@ impl EventLog {
                         .key(seq_key)
                         .key(log_key)
                         .key(channel)
+                        .key(topic.epoch_key())
+                        .key(topic.delivery_key())
                         .arg(template)
                         .arg(replay_end)
+                        .arg(Uuid::new_v4().to_string())
+                        .arg(revision.unwrap_or(0))
                         .invoke_async(&mut conn)
                         .await
                 }
@@ -484,9 +634,42 @@ impl EventLog {
         topic: Topic,
         client_n: Option<u64>,
     ) -> Result<(u64, CatchUp<Event>), ApiError> {
-        let current = self.current_seq(topic).await?;
-        let log = self.load_log(topic).await?;
-        Ok((current, plan_catch_up(client_n, current, &log, |e| e.n)))
+        let (current, _, plan) = self.catch_up_epoch(topic, client_n, None).await?;
+        Ok((current, plan))
+    }
+    pub async fn catch_up_epoch(
+        &self,
+        topic: Topic,
+        client_n: Option<u64>,
+        client_epoch: Option<Uuid>,
+    ) -> Result<(u64, Uuid, CatchUp<Event>), ApiError> {
+        let (current, epoch, rows): (u64, String, Vec<String>) = self
+            .connections
+            .with_conn(|mut conn| async move {
+                redis::Script::new(SNAPSHOT_LUA)
+                    .key(topic.seq_key())
+                    .key(topic.log_key())
+                    .key(topic.epoch_key())
+                    .arg(Uuid::new_v4().to_string())
+                    .invoke_async(&mut conn)
+                    .await
+            })
+            .await
+            .map_err(redis_err)?;
+        let epoch: Uuid = epoch
+            .parse()
+            .map_err(|_| ApiError::Internal("invalid Redis epoch".into()))?;
+        let events: Vec<Event> = rows
+            .into_iter()
+            .filter_map(|row| serde_json::from_str(&row).ok())
+            .filter(|event: &Event| event.ep == Some(epoch) && event.n <= current)
+            .collect();
+        let plan = if client_epoch.is_some_and(|previous| previous != epoch) {
+            CatchUp::Gap
+        } else {
+            plan_catch_up(client_n, current, &events, |e| e.n)
+        };
+        Ok((current, epoch, plan))
     }
 }
 
@@ -642,9 +825,7 @@ impl Gateway {
                 for pair in &typing {
                     socket.typing.remove(pair);
                 }
-                let _ = socket
-                    .tx
-                    .send(ServerFrame::error(reason, Some(server_id), None));
+                socket.send(ServerFrame::error(reason, Some(server_id), None));
                 (socket.user_id, rooms, typing)
             })
         }) else {
@@ -700,10 +881,13 @@ impl Gateway {
         &self,
         user_id: Uuid,
         hash: String,
-        tx: mpsc::UnboundedSender<ServerFrame>,
+        tx: mpsc::Sender<ServerFrame>,
     ) -> (ConnId, tokio::sync::watch::Receiver<bool>) {
         let id = self.attach(user_id, tx).await;
-        let (cancel, receiver) = tokio::sync::watch::channel(false);
+        let cancel = self.connections.inner.sockets.read().await[&id]
+            .closed
+            .clone();
+        let receiver = cancel.subscribe();
         if let Some(socket) = self.connections.inner.sockets.write().await.get_mut(&id) {
             socket.session = Some((hash, cancel));
         }
@@ -729,7 +913,10 @@ impl Gateway {
             return false;
         };
         match frame {
-            ServerFrame::Event { s, c, .. } => socket.topics.contains(&Topic::of(*s, *c)),
+            ServerFrame::Resync | ServerFrame::Dm { .. } => true,
+            ServerFrame::Event { s, c, .. } | ServerFrame::Gap { s, c, .. } => {
+                socket.topics.contains(&Topic::of(*s, *c))
+            }
             ServerFrame::Sig { s, c, .. } => {
                 socket.servers.contains(s)
                     || c.is_some_and(|cid| {
@@ -927,7 +1114,7 @@ impl Gateway {
         self.connections.wait_ready(timeout).await
     }
 
-    pub async fn attach(&self, user_id: Uuid, tx: mpsc::UnboundedSender<ServerFrame>) -> ConnId {
+    pub async fn attach(&self, user_id: Uuid, tx: mpsc::Sender<ServerFrame>) -> ConnId {
         self.connections.attach(user_id, tx).await
     }
 
@@ -946,13 +1133,10 @@ impl Gateway {
     }
 
     /// Register the topic and queue live Redis events until [`finish_catch_up`].
-    /// Register the topic and queue live Redis events until [`finish_catch_up`].
     pub async fn begin_catch_up(&self, id: ConnId, topic: Topic) {
         self.connections.begin_catch_up(id, topic).await
     }
 
-    /// Release the topic to live delivery and flush queued frames with
-    /// `n > after_n` (already-replayed seqs are dropped).
     /// Release the topic to live delivery and flush queued frames with
     /// `n > after_n` (already-replayed seqs are dropped).
     pub async fn finish_catch_up(&self, id: ConnId, topic: Topic, after_n: u64) {
@@ -1094,4 +1278,103 @@ fn voice_channel_id(name: &str) -> Option<Uuid> {
         return None;
     }
     Uuid::parse_str(id).ok()
+}
+
+#[cfg(test)]
+mod resilience_tests {
+    use super::*;
+    fn gateway() -> Gateway {
+        Gateway::new(
+            redis::Client::open(std::env::var("REDIS_URL").unwrap()).unwrap(),
+            512,
+            Duration::from_secs(10),
+            Duration::from_secs(2),
+        )
+    }
+    fn event(s: Uuid, c: Uuid, n: u64) -> Event {
+        Event {
+            t: super::super::protocol::EventKind::C,
+            s,
+            c: Some(c),
+            n,
+            ep: Some(Uuid::nil()),
+            r: None,
+            i: None,
+            d: None,
+        }
+    }
+    #[tokio::test]
+    async fn slow_consumer_and_catch_up_queues_are_bounded_without_blocking_another_socket() {
+        let g = gateway();
+        g.wait_ready(Duration::from_secs(2)).await.unwrap();
+        let (s, c) = (Uuid::new_v4(), Uuid::new_v4());
+        let topic = Topic::Channel(c);
+        let (tx, rx) = mpsc::channel(2);
+        let (slow, closed) = g.attach_session(Uuid::new_v4(), "slow".into(), tx).await;
+        let (tx, mut fast_rx) = mpsc::channel(128);
+        let (fast, fast_closed) = g.attach_session(Uuid::new_v4(), "fast".into(), tx).await;
+        for id in [slow, fast] {
+            g.begin_catch_up(id, topic).await;
+            g.finish_catch_up(id, topic, 0).await;
+        }
+        for n in 1..=20 {
+            g.connections.deliver(topic, event(s, c, n)).await;
+        }
+        assert!(*closed.borrow());
+        assert!(!*fast_closed.borrow());
+        assert!(rx.len() <= 2);
+        assert_eq!(fast_rx.len(), 20);
+        for n in 1..=20 {
+            assert!(matches!(fast_rx.recv().await,Some(ServerFrame::Event { n:got,.. }) if got==n));
+        }
+        let (tx, _rx) = mpsc::channel(128);
+        let (catching, closed) = g
+            .attach_session(Uuid::new_v4(), "catching".into(), tx)
+            .await;
+        g.begin_catch_up(catching, topic).await;
+        for n in 1..=256 {
+            g.connections.deliver(topic, event(s, c, n)).await;
+        }
+        assert!(*closed.borrow());
+        assert!(g.queued_len(catching, topic).await <= CATCH_UP_CAPACITY);
+        g.detach(slow).await;
+        g.detach(fast).await;
+        g.detach(catching).await;
+    }
+    #[tokio::test]
+    async fn seq_epoch_and_log_snapshot_are_atomic_under_concurrent_publish() {
+        let g = gateway();
+        let (s, c) = (Uuid::new_v4(), Uuid::new_v4());
+        let writer = g.clone();
+        let task = tokio::spawn(async move {
+            for _ in 0..128 {
+                writer
+                    .publish(EventDraft {
+                        kind: super::super::protocol::EventKind::C,
+                        server_id: s,
+                        channel_id: Some(c),
+                        entity_id: None,
+                        delta: None,
+                    })
+                    .await
+                    .unwrap();
+            }
+        });
+        for _ in 0..128 {
+            let (n, ep, plan) = g
+                .events
+                .catch_up_epoch(Topic::Channel(c), Some(0), None)
+                .await
+                .unwrap();
+            match plan {
+                CatchUp::None => assert_eq!(n, 0),
+                CatchUp::Replay(events) => {
+                    assert_eq!(events.len(), n as usize);
+                    assert!(events.iter().all(|event| event.ep == Some(ep)));
+                }
+                CatchUp::Gap => panic!("atomic snapshot must not invent a gap"),
+            }
+        }
+        task.await.unwrap();
+    }
 }

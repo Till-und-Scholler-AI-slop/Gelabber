@@ -17,6 +17,7 @@
 //! Those frames are not mixed into `op: "e"`.
 
 mod conn;
+pub mod delivery;
 mod hub;
 mod leases;
 mod live;

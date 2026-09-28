@@ -33,7 +33,7 @@ enum FrameEffect {
 
 pub async fn run(socket: WebSocket, state: AppState, session: CurrentSession) {
     let user = &session.user;
-    let (tx, mut rx) = mpsc::unbounded_channel();
+    let (tx, mut rx) = mpsc::channel(super::hub::OUTBOUND_CAPACITY);
     let (conn, mut revoked) = state
         .gateway
         .attach_session(user.id, session.key(), tx)
@@ -193,8 +193,12 @@ async fn handle_text(
             // to every server `h`.
             Ok(FrameEffect::Liveness)
         }
-        ClientFrame::Subscribe { s, c, n } => {
-            subscribe(state, db, user, conn, (s, c), n, sink).await?;
+        ClientFrame::Subscribe { s, c, n, ep } => {
+            let result = subscribe(state, db, user, conn, (s, c), (n, ep), sink).await;
+            if result.is_err() {
+                state.gateway.unsubscribe(conn, Topic::of(s, c)).await;
+            }
+            result?;
             Ok(FrameEffect::Activity)
         }
         ClientFrame::Unsubscribe { s, c } => {
@@ -227,7 +231,7 @@ async fn subscribe(
     user: &User,
     conn: ConnId,
     scope: (Uuid, Option<Uuid>),
-    resume_n: Option<u64>,
+    resume: (Option<u64>, Option<Uuid>),
     sink: &mut futures_util::stream::SplitSink<WebSocket, Message>,
 ) -> Result<(), ApiError> {
     let (server_id, channel_id) = scope;
@@ -270,7 +274,11 @@ async fn subscribe(
     let topic = Topic::of(server_id, channel_id);
     state.gateway.begin_catch_up(conn, topic).await;
 
-    let (current, plan) = state.gateway.catch_up(topic, resume_n).await?;
+    let (current, epoch, plan) = state
+        .gateway
+        .events
+        .catch_up_epoch(topic, resume.0, resume.1)
+        .await?;
     match plan {
         CatchUp::None => {}
         CatchUp::Replay(events) => {
@@ -279,18 +287,26 @@ async fn subscribe(
             }
         }
         CatchUp::Gap => {
-            send(sink, ServerFrame::gap(server_id, channel_id)).await?;
+            send(
+                sink,
+                ServerFrame::gap(server_id, channel_id).with_epoch(epoch),
+            )
+            .await?;
         }
     }
     send(
         sink,
-        ServerFrame::subscribed(server_id, channel_id, current),
+        ServerFrame::subscribed(server_id, channel_id, current).with_epoch(epoch),
     )
     .await?;
 
     // Live Pub/Sub frames that arrived while we were reading the log sit
     // in the per-socket queue. Flush them now (drop dups by `n`).
-    state.gateway.finish_catch_up(conn, topic, current).await;
+    state
+        .gateway
+        .connections
+        .finish_catch_up_epoch(conn, topic, current, Some(epoch))
+        .await;
 
     // Presence is ephemeral: announce after the sequenced `ok` so a snapshot
     // never looks like catch-up and never bumps `n`.
@@ -398,7 +414,10 @@ async fn frame_allowed(
     frame: &ServerFrame,
 ) -> Result<bool, ApiError> {
     let scope = match frame {
-        ServerFrame::Event { s, c, .. } | ServerFrame::Sig { s, c, .. } => Some((*s, *c)),
+        ServerFrame::Dm { c } => Some((*c, Some(*c))),
+        ServerFrame::Event { s, c, .. }
+        | ServerFrame::Gap { s, c, .. }
+        | ServerFrame::Sig { s, c, .. } => Some((*s, *c)),
         ServerFrame::Presence { s, .. } => Some((*s, None)),
         ServerFrame::Typing { s, c, .. } => Some((*s, Some(*c))),
         _ => None,

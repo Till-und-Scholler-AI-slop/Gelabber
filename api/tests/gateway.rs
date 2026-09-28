@@ -17,9 +17,8 @@ use uuid::Uuid;
 
 use common::{Client, SESSION};
 
-type Ws = tokio_tungstenite::WebSocketStream<
-    tokio_tungstenite::MaybeTlsStream<tokio::net::TcpStream>,
->;
+type Ws =
+    tokio_tungstenite::WebSocketStream<tokio_tungstenite::MaybeTlsStream<tokio::net::TcpStream>>;
 
 async fn two_users(pool: PgPool) -> (Client, Client) {
     let mut owner = Client::new(pool.clone());
@@ -79,7 +78,9 @@ async fn connect(addr: std::net::SocketAddr, cookie: &str, origin: Option<&str>)
         .expect("ws request");
     request.headers_mut().insert(
         COOKIE,
-        format!("{SESSION}={cookie}").parse().expect("cookie header"),
+        format!("{SESSION}={cookie}")
+            .parse()
+            .expect("cookie header"),
     );
     if let Some(origin) = origin {
         request
@@ -130,7 +131,11 @@ async fn send_json(ws: &mut Ws, value: Value) {
 
 fn ids(server: &Value) -> (Uuid, Uuid) {
     let server_id = server["id"].as_str().unwrap().parse().unwrap();
-    let channel_id = server["channels"][0]["id"].as_str().unwrap().parse().unwrap();
+    let channel_id = server["channels"][0]["id"]
+        .as_str()
+        .unwrap()
+        .parse()
+        .unwrap();
     (server_id, channel_id)
 }
 
@@ -169,13 +174,10 @@ async fn foreign_origin_is_rejected(pool: PgPool) {
     let cookie = session_cookie(&owner);
     let (addr, _) = common::serve_ws(pool).await;
 
-    let mut request = format!("ws://{addr}/ws")
-        .into_client_request()
-        .unwrap();
-    request.headers_mut().insert(
-        COOKIE,
-        format!("{SESSION}={cookie}").parse().unwrap(),
-    );
+    let mut request = format!("ws://{addr}/ws").into_client_request().unwrap();
+    request
+        .headers_mut()
+        .insert(COOKIE, format!("{SESSION}={cookie}").parse().unwrap());
     request
         .headers_mut()
         .insert(ORIGIN, "https://evil.example".parse().unwrap());
@@ -335,10 +337,7 @@ async fn reconnect_replays_the_gap_without_duplicates(pool: PgPool) {
         }
         out
     };
-    let seqs: Vec<u64> = replayed
-        .iter()
-        .map(|f| f["n"].as_u64().unwrap())
-        .collect();
+    let seqs: Vec<u64> = replayed.iter().map(|f| f["n"].as_u64().unwrap()).collect();
     assert_eq!(seqs, vec![third, fourth], "{replayed:?}");
     assert_eq!(replayed[0]["t"], "c");
     assert_eq!(replayed[1]["t"], "d");
@@ -394,9 +393,12 @@ async fn heartbeat_keeps_the_socket_and_silence_closes_it(pool: PgPool) {
     );
 
     // Still alive after another server-initiated heartbeat cycle.
-    let beat = tokio::time::timeout(Duration::from_millis(400), recv_until(&mut ws, |f| f["op"] == "h"))
-        .await
-        .expect("second heartbeat");
+    let beat = tokio::time::timeout(
+        Duration::from_millis(400),
+        recv_until(&mut ws, |f| f["op"] == "h"),
+    )
+    .await
+    .expect("second heartbeat");
     assert_eq!(beat["op"], "h");
 
     // Stop talking. Silent death is 180ms in the test config.
@@ -460,7 +462,7 @@ async fn live_events_during_catch_up_are_queued(pool: PgPool) {
     let topic = gelabber_api::gateway::Topic::Channel(channel_id);
     // Absorb the first Redis PUBLISH on a live socket so a late fan-out
     // cannot land in the catch-up queue (CI flake: queued_len 2 vs 1).
-    let (drain_tx, mut drain_rx) = tokio::sync::mpsc::unbounded_channel();
+    let (drain_tx, mut drain_rx) = tokio::sync::mpsc::channel(128);
     let drain = state.gateway.attach(Uuid::from_u128(2), drain_tx).await;
     state.gateway.begin_catch_up(drain, topic).await;
     state.gateway.finish_catch_up(drain, topic, 0).await;
@@ -479,7 +481,7 @@ async fn live_events_during_catch_up_are_queued(pool: PgPool) {
     .expect("first PUBLISH must reach Redis subscribers before catch-up");
     state.gateway.detach(drain).await;
 
-    let (tx, mut rx) = tokio::sync::mpsc::unbounded_channel();
+    let (tx, mut rx) = tokio::sync::mpsc::channel(128);
     let conn = state.gateway.attach(Uuid::from_u128(1), tx).await;
     state.gateway.begin_catch_up(conn, topic).await;
 
@@ -527,7 +529,14 @@ async fn concurrent_publish_keeps_seq_and_arrival_ordered(pool: PgPool) {
     for i in 0..16 {
         let state = state.clone();
         tasks.push(tokio::spawn(async move {
-            publish(&state, server_id, channel_id, EventKind::C, &format!("m{i}")).await
+            publish(
+                &state,
+                server_id,
+                channel_id,
+                EventKind::C,
+                &format!("m{i}"),
+            )
+            .await
         }));
     }
     let mut assigned = Vec::new();
@@ -914,4 +923,320 @@ async fn dm_uses_the_same_subscribe_and_message_paths(pool: PgPool) {
     .await;
     let err = recv_until(&mut cara_ws, |f| f["op"] == "err").await;
     assert_eq!(err["e"], "not_found");
+}
+
+#[sqlx::test]
+async fn redis_topic_reset_changes_epoch_and_old_cursor_gets_gap(pool: PgPool) {
+    let (mut owner, _) = two_users(pool.clone()).await;
+    let server = create_server(&mut owner, "Epoch").await;
+    let (s, c) = ids(&server);
+    let (addr, state) = common::serve_ws(pool).await;
+    let mut ws = connect(addr, &session_cookie(&owner), None).await;
+    send_json(&mut ws, json!({"op":"s","s":s,"c":c})).await;
+    let old = recv_until(&mut ws, |f| f["op"] == "ok").await;
+    let epoch = old["ep"].clone();
+    for _ in 0..3 {
+        publish(&state, s, c, EventKind::C, "before").await;
+        recv_until(&mut ws, |f| f["op"] == "e").await;
+    }
+    let topic = gelabber_api::gateway::Topic::Channel(c);
+    let mut redis = state
+        .redis
+        .get_multiplexed_async_connection()
+        .await
+        .unwrap();
+    redis::cmd("DEL")
+        .arg(topic.seq_key())
+        .arg(topic.log_key())
+        .arg(topic.epoch_key())
+        .arg(topic.delivery_key())
+        .query_async::<i32>(&mut redis)
+        .await
+        .unwrap();
+    send_json(&mut ws, json!({"op":"s","s":s,"c":c,"n":3,"ep":epoch})).await;
+    let gap = recv_until(&mut ws, |f| f["op"] == "gap").await;
+    assert_ne!(gap["ep"], epoch);
+    let reset = recv_until(&mut ws, |f| f["op"] == "ok").await;
+    assert_eq!(reset["n"], 0);
+    assert_eq!(reset["ep"], gap["ep"]);
+    publish(&state, s, c, EventKind::C, "after").await;
+    let event = recv_until(&mut ws, |f| f["op"] == "e").await;
+    assert_eq!(event["n"], 1);
+    assert_eq!(event["ep"], reset["ep"]);
+    // Epoch mismatch matters even when the numeric cursor happens to match.
+    send_json(&mut ws, json!({"op":"s","s":s,"c":c,"n":1,"ep":epoch})).await;
+    recv_until(&mut ws, |f| f["op"] == "gap").await;
+    recv_until(&mut ws, |f| f["op"] == "ok").await;
+}
+
+#[sqlx::test]
+async fn committed_message_retries_after_redis_failure_and_ack_retry_is_deduplicated(pool: PgPool) {
+    use gelabber_api::gateway::{Topic, delivery};
+    let (mut owner, _) = two_users(pool.clone()).await;
+    let server = create_server(&mut owner, "Outbox").await;
+    let (s, c) = ids(&server);
+    let (addr, state) = common::serve_ws(pool.clone()).await;
+    let mut ws = connect(addr, &session_cookie(&owner), None).await;
+    send_json(&mut ws, json!({"op":"s","s":s,"c":c})).await;
+    recv_until(&mut ws, |f| f["op"] == "ok").await;
+    let mut redis = state
+        .redis
+        .get_multiplexed_async_connection()
+        .await
+        .unwrap();
+    let topic = Topic::Channel(c);
+    redis::cmd("SET")
+        .arg(topic.seq_key())
+        .arg("invalid counter")
+        .query_async::<()>(&mut redis)
+        .await
+        .unwrap();
+    let created = owner
+        .send(
+            Method::POST,
+            &format!("/api/channels/{c}/messages"),
+            Some(json!({"content":"durable"})),
+        )
+        .await;
+    assert_eq!(created.status, StatusCode::CREATED);
+    let revision = created.body["revision"].as_i64().unwrap();
+    assert!(revision > 0);
+    let queued: i64 = sqlx::query_scalar("SELECT COUNT(*) FROM gateway_outbox WHERE id=$1")
+        .bind(revision)
+        .fetch_one(&pool)
+        .await
+        .unwrap();
+    assert_eq!(queued, 1, "publish failure retains committed outbox");
+    redis::cmd("DEL")
+        .arg(topic.seq_key())
+        .query_async::<i32>(&mut redis)
+        .await
+        .unwrap();
+    sqlx::query("UPDATE gateway_outbox SET next_attempt=now() WHERE id=$1")
+        .bind(revision)
+        .execute(&pool)
+        .await
+        .unwrap();
+    let recovery = common::ws_state(pool.clone());
+    let _ = delivery::deliver_pending(&recovery, 32).await;
+    let event = recv_until(&mut ws, |f| f["op"] == "e").await;
+    assert_eq!(event["r"], revision);
+    assert_eq!(event["d"], created.body);
+    let head = state.gateway.current_seq(topic).await.unwrap();
+    // Simulate process death after Redis publication but before DB acknowledgement.
+    sqlx::query("INSERT INTO gateway_outbox(id,channel_id,server_id,kind,entity_id,delta) VALUES($1,$2,$3,'c',$4,$5) ON CONFLICT(id) DO UPDATE SET next_attempt=now()")
+        .bind(revision).bind(c).bind(s).bind(created.body["id"].as_str().unwrap().parse::<Uuid>().unwrap()).bind(created.body.clone()).execute(&pool).await.unwrap();
+    let _ = delivery::deliver_pending(&recovery, 32).await;
+    assert_eq!(state.gateway.current_seq(topic).await.unwrap(), head);
+    assert_eq!(state.gateway.load_log(topic).await.unwrap().len(), 1);
+}
+
+#[sqlx::test]
+async fn dm_discovery_reaches_already_connected_recipient_and_no_other_user(pool: PgPool) {
+    let (mut owner, mut recipient) = two_users(pool.clone()).await;
+    let mut foreign = Client::new(pool.clone());
+    foreign.bootstrap().await;
+    assert_eq!(
+        foreign
+            .register("foreign@example.com", "password123", "Foreign")
+            .await
+            .status,
+        StatusCode::CREATED
+    );
+    let (addr, _) = common::serve_ws(pool).await;
+    let mut bob = connect(addr, &session_cookie(&recipient), None).await;
+    let mut cara = connect(addr, &session_cookie(&foreign), None).await;
+    let created = owner
+        .send(
+            Method::POST,
+            "/api/dms",
+            Some(json!({"user_id":recipient.user_id()})),
+        )
+        .await;
+    assert_eq!(created.status, StatusCode::CREATED);
+    let c = created.body["id"].clone();
+    let first = owner
+        .send(
+            Method::POST,
+            &format!("/api/channels/{}/messages", c.as_str().unwrap()),
+            Some(json!({"content":"first"})),
+        )
+        .await;
+    assert_eq!(first.status, StatusCode::CREATED);
+    let discovery = recv_until(&mut bob, |f| f["op"] == "dm").await;
+    assert_eq!(discovery["c"], c);
+    send_json(&mut bob, json!({"op":"s","s":c,"c":c,"n":0})).await;
+    let event = recv_until(&mut bob, |f| f["op"] == "e").await;
+    assert_eq!(event["d"]["id"], first.body["id"]);
+    assert!(
+        tokio::time::timeout(Duration::from_millis(150), async {
+            loop {
+                let f = recv_json(&mut cara).await;
+                assert_ne!(f["op"], "dm", "foreign discovery leak");
+            }
+        })
+        .await
+        .is_err()
+    );
+    let list = recipient.send(Method::GET, "/api/dms", None).await;
+    assert_eq!(list.body.as_array().unwrap().len(), 1);
+}
+
+#[sqlx::test]
+async fn parallel_message_edits_deliver_in_database_revision_order(pool: PgPool) {
+    let (mut owner, _) = two_users(pool.clone()).await;
+    let server = create_server(&mut owner, "Revision").await;
+    let (s, c) = ids(&server);
+    let (addr, _) = common::serve_ws(pool).await;
+    let mut ws = connect(addr, &session_cookie(&owner), None).await;
+    send_json(&mut ws, json!({"op":"s","s":s,"c":c})).await;
+    recv_until(&mut ws, |f| f["op"] == "ok").await;
+    let created = owner
+        .send(
+            Method::POST,
+            &format!("/api/channels/{c}/messages"),
+            Some(json!({"content":"initial"})),
+        )
+        .await;
+    recv_until(&mut ws, |f| f["op"] == "e").await;
+    let path = format!("/api/messages/{}", created.body["id"].as_str().unwrap());
+    let mut tab = Client {
+        app: owner.app.clone(),
+        store: owner.store.clone(),
+        jar: owner.jar.clone(),
+        csrf: owner.csrf.clone(),
+        user_id: owner.user_id.clone(),
+    };
+    let (a, b) = tokio::join!(
+        owner.send(Method::PATCH, &path, Some(json!({"content":"A"}))),
+        tab.send(Method::PATCH, &path, Some(json!({"content":"B"})))
+    );
+    assert_eq!((a.status, b.status), (StatusCode::OK, StatusCode::OK));
+    let one = recv_until(&mut ws, |f| f["op"] == "e").await;
+    let two = recv_until(&mut ws, |f| f["op"] == "e").await;
+    assert!(one["r"].as_i64().unwrap() < two["r"].as_i64().unwrap());
+    let latest = owner
+        .send(Method::GET, &format!("/api/channels/{c}/messages"), None)
+        .await;
+    assert_eq!(two["d"], latest.body["messages"][0]);
+}
+
+/// Isolated TCP fault proxy; interrupts only this test Gateway's Pub/Sub
+/// connections. Command connections and every other Redis client remain live.
+async fn pubsub_proxy() -> (redis::Client, tokio::sync::watch::Sender<bool>) {
+    use tokio::io::{AsyncReadExt, AsyncWriteExt};
+    let redis = redis::Client::open(common::redis_url()).unwrap();
+    let actual = match &redis.get_connection_info().addr() {
+        redis::ConnectionAddr::Tcp(host, port) => format!("{host}:{port}"),
+        _ => panic!("local test Redis is TCP"),
+    };
+    let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+    let addr = listener.local_addr().unwrap();
+    let (control, _) = tokio::sync::watch::channel(false);
+    let control_copy = control.clone();
+    tokio::spawn(async move {
+        while let Ok((client, _)) = listener.accept().await {
+            let actual = actual.clone();
+            let mut control = control_copy.subscribe();
+            tokio::spawn(async move {
+                let server = tokio::net::TcpStream::connect(actual).await.unwrap();
+                let (mut cr, mut cw) = client.into_split();
+                let (mut sr, mut sw) = server.into_split();
+                let to_server = async {
+                    let mut data = [0u8; 4096];
+                    let mut recent = Vec::new();
+                    let mut subscribed = false;
+                    loop {
+                        let n = tokio::select! {n=cr.read(&mut data)=>n?,_=control.changed()=>{if subscribed && *control.borrow(){return Ok::<(),std::io::Error>(());}continue;}};
+                        if n == 0 {
+                            return Ok(());
+                        }
+                        recent.extend_from_slice(&data[..n]);
+                        if recent
+                            .windows(10)
+                            .any(|chunk| chunk.eq_ignore_ascii_case(b"PSUBSCRIBE"))
+                        {
+                            subscribed = true;
+                        }
+                        if subscribed {
+                            while *control.borrow() {
+                                if control.changed().await.is_err() {
+                                    return Ok(());
+                                }
+                            }
+                        }
+                        sw.write_all(&data[..n]).await?;
+                        if recent.len() > 32 {
+                            recent.drain(..recent.len() - 32);
+                        }
+                    }
+                };
+                tokio::select! {_=to_server=>{},_=tokio::io::copy(&mut sr,&mut cw)=>{}}
+            });
+        }
+    });
+    (
+        redis::Client::open(format!("redis://{addr}")).unwrap(),
+        control,
+    )
+}
+
+#[sqlx::test]
+async fn pubsub_outage_preserves_open_socket_and_requests_rest_resync(pool: PgPool) {
+    let (mut owner, _) = two_users(pool.clone()).await;
+    let server = create_server(&mut owner, "Subscriber outage").await;
+    let (s, c) = ids(&server);
+    let (proxy, paused) = pubsub_proxy().await;
+    let mut state = common::ws_state(pool);
+    let gateway = gelabber_api::gateway::Gateway::new(
+        proxy,
+        8,
+        Duration::from_secs(2),
+        Duration::from_millis(400),
+    );
+    state.gateway = gateway.clone();
+    state.connections = gateway.connections.clone();
+    state.events = gateway.events.clone();
+    state.voice = gateway.voice.clone();
+    let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+    let addr = listener.local_addr().unwrap();
+    let router = gelabber_api::app(state.clone());
+    tokio::spawn(async move {
+        axum::serve(listener, router).await.unwrap();
+    });
+    gateway.wait_ready(Duration::from_secs(2)).await.unwrap();
+    let mut ws = connect(addr, &session_cookie(&owner), None).await;
+    send_json(&mut ws, json!({"op":"s","s":s,"c":c})).await;
+    let previous = recv_until(&mut ws, |f| f["op"] == "ok").await;
+    paused.send_replace(true);
+    tokio::time::timeout(Duration::from_secs(1), async {
+        while gateway.is_ready() {
+            tokio::time::sleep(Duration::from_millis(5)).await;
+        }
+    })
+    .await
+    .unwrap();
+    let missed = owner
+        .send(
+            Method::POST,
+            &format!("/api/channels/{c}/messages"),
+            Some(json!({"content":"during outage"})),
+        )
+        .await;
+    assert_eq!(missed.status, StatusCode::CREATED);
+    paused.send_replace(false);
+    recv_until(&mut ws, |f| f["op"] == "resync").await;
+    let rest = owner
+        .send(Method::GET, &format!("/api/channels/{c}/messages"), None)
+        .await;
+    assert_eq!(rest.body["messages"][0]["id"], missed.body["id"]);
+    // Same socket is still authorized; catching up converges without reconnect.
+    send_json(
+        &mut ws,
+        json!({"op":"s","s":s,"c":c,"n":previous["n"],"ep":previous["ep"]}),
+    )
+    .await;
+    let recovered = recv_until(&mut ws, |f| f["op"] == "e").await;
+    assert_eq!(recovered["d"]["id"], missed.body["id"]);
+    recv_until(&mut ws, |f| f["op"] == "ok").await;
 }
