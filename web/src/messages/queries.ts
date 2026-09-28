@@ -69,7 +69,62 @@ function now(): string {
 }
 
 type ReadChanges = { changes: Map<string, MessageChange>; manual: boolean };
+const manualPatches = new WeakSet<QueryClient>();
 const journals = new WeakMap<QueryClient, Map<string, ReadChanges>>();
+type EntityScope = {
+  scope: string;
+  channels: Map<string, Map<string, MessageChange>>;
+};
+const entities = new WeakMap<QueryClient, EntityScope>();
+const entityCleanup = new WeakSet<QueryClient>();
+function channelEntities(
+  client: QueryClient,
+  userId: string,
+  generation: number,
+  channelId: string,
+): Map<string, MessageChange> {
+  if (!entityCleanup.has(client)) {
+    entityCleanup.add(client);
+    client.getQueryCache().subscribe((event) => {
+      const state = entities.get(client);
+      if (event.type === "removed" && state) {
+        // Scope is stored as a tuple; compare the current identity explicitly.
+        const [owner, epoch] = JSON.parse(state.scope) as [string, number];
+        if (!stampHolds({ userId: owner, generation: epoch })) {
+          entities.delete(client);
+          rowVersions.delete(client);
+        }
+      }
+    });
+  }
+  const scope = JSON.stringify([userId, generation]);
+  let state = entities.get(client);
+  if (!state || state.scope !== scope) {
+    state = { scope, channels: new Map() };
+    entities.set(client, state);
+  }
+  let channel = state.channels.get(channelId);
+  if (!channel) {
+    channel = new Map();
+    state.channels.set(channelId, channel);
+  }
+  return channel;
+}
+
+function retainChange(
+  client: QueryClient,
+  userId: string,
+  generation: number,
+  channelId: string,
+  incoming: MessageChange,
+): MessageChange {
+  const rows = channelEntities(client, userId, generation, channelId);
+  const previous = rows.get(incoming.id);
+  const change = combineMessageChange(previous, incoming);
+  // A retained entity is a floor/overlay, not evidence of complete history.
+  rows.set(change.id, { ...change, created: false });
+  return { ...change, created: incoming.created && change.message !== null };
+}
 
 /** Changes live only for the lifetime of a REST read, including all its pages. */
 function readJournals(client: QueryClient): Map<string, ReadChanges> {
@@ -100,6 +155,7 @@ function recordChange(
   channelId: string,
   change: MessageChange,
 ): MessageChange {
+  change = retainChange(client, userId, generation, channelId, change);
   const query = client.getQueryCache().find({
     queryKey: messageKeys.channel(userId, generation, channelId),
     exact: true,
@@ -125,6 +181,7 @@ function patchPages(
   const previous = query?.state;
   const read = query && readJournals(client).get(query.queryHash);
   if (read) read.manual = true;
+  manualPatches.add(client);
   try {
     client.setQueryData<Cache>(
       key,
@@ -136,6 +193,7 @@ function patchPages(
       { updatedAt: previous?.dataUpdatedAt },
     );
   } finally {
+    manualPatches.delete(client);
     if (read) read.manual = false;
   }
   if (previous?.isInvalidated) {
@@ -193,7 +251,26 @@ export function messageQueryOptions(
     structuralSharing: (previous, incoming) => {
       const query = client.getQueryCache().find({ queryKey: key, exact: true });
       const read = query && reads.get(query.queryHash);
-      const data = incoming as Cache;
+      let data = incoming as Cache;
+      if (!manualPatches.has(client)) {
+        const floors = channelEntities(client, userId, generation, channelId);
+        for (const page of data.pages)
+          for (const message of page.messages) {
+            const known = floors.get(message.id);
+            floors.set(message.id, {
+              ...combineMessageChange(known, {
+                id: message.id,
+                message,
+                created: false,
+              }),
+              created: false,
+            });
+          }
+        data = {
+          ...data,
+          pages: applyMessageChanges(data.pages, floors.values()),
+        };
+      }
       const merged =
         read && !read.manual && read.changes.size > 0
           ? {
@@ -349,7 +426,10 @@ export function useSendMessage(channelId: string, author: MessageAuthor) {
 }
 
 // A per-row token also covers a delete whose optimistic row is absent.
-const rowVersions = new WeakMap<QueryClient, Map<string, number>>();
+const rowVersions = new WeakMap<
+  QueryClient,
+  { scope: string; versions: Map<string, number> }
+>();
 function rowVersion(
   client: QueryClient,
   userId: string,
@@ -358,12 +438,14 @@ function rowVersion(
   id: string,
   bump = false,
 ): number {
-  let versions = rowVersions.get(client);
-  if (!versions) {
-    versions = new Map();
-    rowVersions.set(client, versions);
+  const scope = JSON.stringify([userId, generation]);
+  let state = rowVersions.get(client);
+  if (!state || state.scope !== scope) {
+    state = { scope, versions: new Map() };
+    rowVersions.set(client, state);
   }
-  const key = JSON.stringify([userId, generation, channelId, id]);
+  const versions = state.versions;
+  const key = JSON.stringify([channelId, id]);
   const version = (versions.get(key) ?? 0) + (bump ? 1 : 0);
   if (bump) versions.set(key, version);
   return version;
@@ -434,30 +516,34 @@ export function editMessageOptions(client: QueryClient, channelId: string) {
     ) => {
       if (!stampHolds(ctx)) return;
       if (
+        message.revision !== undefined ||
         rowVersion(client, ctx.userId, ctx.generation, channelId, ctx.id) ===
-        ctx.version
+          ctx.version
       ) {
-        const current = client
-          .getQueryData<Cache>(
-            messageKeys.channel(ctx.userId, ctx.generation, channelId),
+        if (message.revision === undefined) {
+          const current = client
+            .getQueryData<Cache>(
+              messageKeys.channel(ctx.userId, ctx.generation, channelId),
+            )
+            ?.pages.flatMap((page) => page.messages)
+            .find((row) => row.id === ctx.id);
+          // Retain the isolated07 response guard for the older API too.
+          if (
+            !current ||
+            current.content !== ctx.optimistic?.content ||
+            current.edited_at !== ctx.optimistic.edited_at
           )
-          ?.pages.flatMap((page) => page.messages)
-          .find((row) => row.id === ctx.id);
-        // A REST refetch can replace this row without a mutation/WS token.
-        // Only settle the optimistic value this request still owns.
-        if (
-          !current ||
-          current.content !== ctx.optimistic?.content ||
-          current.edited_at !== ctx.optimistic.edited_at
-        )
-          return;
-        recordChange(client, ctx.userId, ctx.generation, channelId, {
-          id: message.id,
-          message,
-          created: false,
-        });
+            return;
+        }
+        const change = recordChange(
+          client,
+          ctx.userId,
+          ctx.generation,
+          channelId,
+          { id: message.id, message, created: false },
+        );
         patchPages(client, ctx.userId, ctx.generation, channelId, (pages) =>
-          mapMessages(pages, (row) => (row.id === message.id ? message : row)),
+          applyMessageChanges(pages, [change]),
         );
       }
     },
@@ -534,12 +620,14 @@ export function applyMessageDeleted(
   generation: number,
   channelId: string,
   messageId: string,
+  revision?: number,
 ): void {
   rowVersion(client, userId, generation, channelId, messageId, true);
   const change = recordChange(client, userId, generation, channelId, {
     id: messageId,
     message: null,
     created: false,
+    revision,
   });
   patchPages(client, userId, generation, channelId, (pages) =>
     applyMessageChanges(pages, [change]),
@@ -555,17 +643,26 @@ export function applyChannelEvent(
     c?: string;
     i?: string;
     d?: unknown;
+    r?: number;
   },
 ): void {
   const channelId = event.c;
   if (!channelId || userId.length === 0) return;
   if (event.t === "d" && event.i) {
-    applyMessageDeleted(client, userId, generation, channelId, event.i);
+    applyMessageDeleted(
+      client,
+      userId,
+      generation,
+      channelId,
+      event.i,
+      event.r,
+    );
     return;
   }
   if ((event.t === "c" || event.t === "e") && isMessage(event.d)) {
     const message = {
       ...event.d,
+      ...(event.r !== undefined ? { revision: event.r } : {}),
       attachments: asAttachmentList(event.d.attachments),
     };
     if (event.t === "c")

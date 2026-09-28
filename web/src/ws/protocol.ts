@@ -34,7 +34,7 @@ export type PresenceStatus = "o" | "i" | "x";
 
 export type ClientFrame =
   | { op: "h" }
-  | { op: "s"; s: string; c?: string; n?: number }
+  | { op: "s"; s: string; c?: string; n?: number; ep?: string }
   | { op: "u"; s: string; c?: string }
   | { op: "p"; st?: "o" | "i" }
   | { op: "y"; s: string; c: string; on: boolean }
@@ -46,6 +46,8 @@ export type ChatEvent = {
   s: string;
   c?: string;
   n: number;
+  ep?: string;
+  r?: number;
   i?: string;
   d?: unknown;
 };
@@ -85,10 +87,12 @@ export type TypingFrame = {
 
 export type ServerFrame =
   | { op: "h" }
-  | { op: "ok"; s: string; c?: string; n: number }
+  | { op: "ok"; s: string; c?: string; n: number; ep?: string }
   | ChatEvent
   | SigEvent
-  | { op: "gap"; s: string; c?: string }
+  | { op: "gap"; s: string; c?: string; ep?: string }
+  | { op: "resync" }
+  | { op: "dm"; c: string }
   | ErrFrame
   | PresenceFrame
   | TypingFrame;
@@ -120,7 +124,9 @@ export function decode(raw: string): ServerFrame | null {
     op === "gap" ||
     op === "err" ||
     op === "p" ||
-    op === "y"
+    op === "y" ||
+    op === "resync" ||
+    op === "dm"
   ) {
     return value as ServerFrame;
   }
@@ -131,6 +137,7 @@ export function decode(raw: string): ServerFrame | null {
 export function resumeFrame(
   topic: Topic,
   lastSeq: number | undefined,
+  epoch?: string,
 ): ClientFrame {
   if (lastSeq === undefined) {
     return { op: "s", s: topic.s, ...(topic.c ? { c: topic.c } : {}) };
@@ -140,6 +147,7 @@ export function resumeFrame(
     s: topic.s,
     ...(topic.c ? { c: topic.c } : {}),
     n: lastSeq,
+    ...(epoch ? { ep: epoch } : {}),
   };
 }
 

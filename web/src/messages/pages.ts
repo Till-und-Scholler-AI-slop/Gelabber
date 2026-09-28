@@ -8,6 +8,7 @@ export type MessageChange = {
   message: Message | null;
   /** A create may add a row absent from the snapshot within the loaded range. */
   created: boolean;
+  revision?: number;
 };
 
 function chronological(
@@ -31,6 +32,11 @@ function compareTimestamp(a: string, b: string): number {
 }
 
 function newerMessage(current: Message, incoming: Message): Message {
+  if (current.revision !== undefined || incoming.revision !== undefined) {
+    const left = current.revision ?? -1,
+      right = incoming.revision ?? -1;
+    if (left !== right) return left > right ? current : incoming;
+  }
   return compareTimestamp(
     current.edited_at ?? current.created_at,
     incoming.edited_at ?? incoming.created_at,
@@ -44,10 +50,34 @@ export function combineMessageChange(
   previous: MessageChange | undefined,
   next: MessageChange,
 ): MessageChange {
-  if (previous?.message === null) return previous;
+  if (previous) {
+    const left = previous.revision ?? previous.message?.revision;
+    // A confirmed HTTP DELETE has no revision body. Its immutable id can
+    // still be tombstoned at the highest revision we already observed.
+    const right =
+      next.revision ??
+      next.message?.revision ??
+      (next.message === null ? left : undefined);
+    if (left !== undefined || right !== undefined) {
+      if ((left ?? -1) > (right ?? -1)) return previous;
+      if ((left ?? -1) === (right ?? -1) && previous.message === null)
+        return previous;
+    }
+    // Message ids are immutable; a confirmed delete is never an upsert.
+    if (previous.message === null)
+      return next.message === null && (right ?? -1) > (left ?? -1)
+        ? { ...previous, revision: right }
+        : previous;
+  }
   return {
     ...next,
     created: next.created || previous?.created === true,
+    revision:
+      next.revision ??
+      next.message?.revision ??
+      (next.message === null
+        ? (previous?.revision ?? previous?.message?.revision)
+        : undefined),
     message:
       previous?.message && next.message
         ? newerMessage(previous.message, next.message)

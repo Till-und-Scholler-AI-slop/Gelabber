@@ -521,3 +521,316 @@ describe("gap recovery on the existing gateway protocol", () => {
     expect(reads).toBe(1);
   });
 });
+
+describe("private DM discovery and topicless resync", () => {
+  it("resync fetches lists with no existing topics or cache, subscribes newly discovered DMs and reads first history", async () => {
+    const queryClient = client();
+    const { gateway: ws, socket } = gateway();
+    const calls = install((url) => {
+      if (url.pathname === "/api/dms") return json([{ id: "first-dm" }]);
+      if (url.pathname === "/api/servers")
+        return json([{ id: "joined-server" }]);
+      if (url.pathname === "/api/channels/first-dm/messages")
+        return json({
+          messages: [{ ...rows(1)[0]!, channel_id: "first-dm", revision: 1 }],
+          has_more: false,
+        });
+      throw new Error(`Unexpected path ${url.pathname}`);
+    });
+    await login(ada.email, "password123");
+    const stamp = takeStamp()!;
+    cleanups.push(attachRealtimeRecovery(queryClient, stamp, ws));
+    socket.frame({ op: "resync" });
+    await vi.waitFor(() =>
+      expect(calls).toContain("/api/channels/first-dm/messages"),
+    );
+    await vi.waitFor(() =>
+      expect(
+        queryClient.getQueryData<InfiniteData<MessagePage>>(
+          messageKeys.channel(stamp.userId, stamp.generation, "first-dm"),
+        )?.pages[0]?.messages,
+      ).toHaveLength(1),
+    );
+    expect(socket.sent.map((s) => JSON.parse(s))).toContainEqual({
+      op: "s",
+      s: "first-dm",
+      c: "first-dm",
+    });
+    expect(
+      queryClient.getQueryData([
+        "user",
+        stamp.userId,
+        stamp.generation,
+        "dms",
+        "list",
+      ]),
+    ).toEqual([{ id: "first-dm" }]);
+  });
+  it("coalesces duplicate discovery and cannot subscribe unconfirmed foreign IDs", async () => {
+    const queryClient = client();
+    const { gateway: ws, socket } = gateway();
+    let lists = 0;
+    install((url) => {
+      if (url.pathname === "/api/dms") {
+        lists++;
+        return json([{ id: "allowed" }]);
+      }
+      if (url.pathname === "/api/servers") return json([]);
+      return json({
+        messages: [{ ...rows(1)[0]!, channel_id: "allowed", revision: 1 }],
+        has_more: false,
+      });
+    });
+    await login(ada.email, "password123");
+    cleanups.push(attachRealtimeRecovery(queryClient, takeStamp()!, ws));
+    socket.frame({ op: "dm", c: "allowed" });
+    socket.frame({ op: "dm", c: "allowed" });
+    socket.frame({ op: "dm", c: "foreign" });
+    await vi.waitFor(() =>
+      expect(socket.sent.map((s) => JSON.parse(s))).toContainEqual({
+        op: "s",
+        s: "allowed",
+        c: "allowed",
+      }),
+    );
+    expect(lists).toBe(1);
+    expect(
+      socket.sent.map((s) => JSON.parse(s)).some((s) => s.c === "foreign"),
+    ).toBe(false);
+  });
+  it("preserves first-message deltas arriving while the discovered REST history is held", async () => {
+    const queryClient = client();
+    const { gateway: ws, socket } = gateway();
+    const held = deferred<Response>();
+    const calls = install((url) => {
+      if (url.pathname === "/api/dms") return json([{ id: "first-dm" }]);
+      if (url.pathname === "/api/servers") return json([]);
+      return held.promise;
+    });
+    await login(ada.email, "password123");
+    const stamp = takeStamp()!;
+    cleanups.push(attachRealtimeRecovery(queryClient, stamp, ws));
+    const offEvent = ws.onEvent((event) =>
+      applyChannelEvent(queryClient, stamp.userId, stamp.generation, event),
+    );
+    cleanups.push(offEvent);
+    socket.frame({ op: "dm", c: "first-dm" });
+    await vi.waitFor(() =>
+      expect(calls).toContain("/api/channels/first-dm/messages"),
+    );
+    const first = { ...rows(1)[0]!, channel_id: "first-dm", revision: 10 };
+    socket.frame({
+      op: "e",
+      s: "first-dm",
+      c: "first-dm",
+      ep: "epoch",
+      n: 1,
+      t: "c",
+      r: 10,
+      d: first,
+    });
+    held.resolve(json({ messages: [], has_more: false }));
+    await vi.waitFor(() =>
+      expect(
+        queryClient.getQueryData<InfiniteData<MessagePage>>(
+          messageKeys.channel(stamp.userId, stamp.generation, "first-dm"),
+        )?.pages[0]?.messages,
+      ).toEqual([first]),
+    );
+  });
+  it("a failed discovery has no tight retry loop and reconnect retries it", async () => {
+    const queryClient = client();
+    const { gateway: ws, socket, sockets } = gateway();
+    let failing = true;
+    let lists = 0;
+    install((url) => {
+      if (url.pathname === "/api/dms") {
+        lists++;
+        return failing
+          ? json({ error: "unavailable" }, 503)
+          : json([{ id: "first-dm" }]);
+      }
+      if (url.pathname === "/api/servers") return json([]);
+      return json({ messages: [], has_more: false });
+    });
+    await login(ada.email, "password123");
+    cleanups.push(attachRealtimeRecovery(queryClient, takeStamp()!, ws));
+    socket.frame({ op: "dm", c: "first-dm" });
+    await vi.waitFor(() => expect(lists).toBe(1));
+    await new Promise((r) => setTimeout(r, 30));
+    expect(lists).toBe(1);
+    failing = false;
+    socket.close();
+    await vi.waitFor(() => expect(sockets).toHaveLength(2));
+    sockets[1]!.emit("open");
+    await vi.waitFor(() =>
+      expect(sockets[1]!.sent.map((s) => JSON.parse(s))).toContainEqual({
+        op: "s",
+        s: "first-dm",
+        c: "first-dm",
+      }),
+    );
+  });
+  it("a held discovery after same-account session replacement cannot subscribe or fetch history", async () => {
+    const queryClient = client();
+    const { gateway: ws, socket } = gateway();
+    const held = deferred<Response>();
+    const calls = install((url) =>
+      url.pathname === "/api/dms" ? held.promise : json([]),
+    );
+    await login(ada.email, "password123");
+    cleanups.push(attachRealtimeRecovery(queryClient, takeStamp()!, ws));
+    socket.frame({ op: "dm", c: "old-dm" });
+    await vi.waitFor(() => expect(calls).toContain("/api/dms"));
+    await login(ada.email, "password123");
+    held.resolve(json([{ id: "old-dm" }]));
+    await new Promise((r) => setTimeout(r, 30));
+    expect(
+      socket.sent.map((s) => JSON.parse(s)).some((s) => s.c === "old-dm"),
+    ).toBe(false);
+    expect(calls.some((path) => path.includes("/channels/old-dm"))).toBe(false);
+  });
+});
+
+it("a second private DM announcement during a held list gets another authoritative discovery read", async () => {
+  const queryClient = client();
+  const { gateway: ws, socket } = gateway();
+  const firstList = deferred<Response>();
+  let reads = 0;
+  install((url) => {
+    if (url.pathname === "/api/dms")
+      return ++reads === 1
+        ? firstList.promise
+        : json([{ id: "first" }, { id: "second" }]);
+    if (url.pathname === "/api/servers") return json([]);
+    return json({ messages: [], has_more: false });
+  });
+  await login(ada.email, "password123");
+  const stamp = takeStamp()!;
+  cleanups.push(attachRealtimeRecovery(queryClient, stamp, ws));
+  socket.frame({ op: "dm", c: "first" });
+  await vi.waitFor(() => expect(reads).toBe(1));
+  socket.frame({ op: "dm", c: "second" });
+  firstList.resolve(json([{ id: "first" }]));
+  await vi.waitFor(() =>
+    expect(socket.sent.map((s) => JSON.parse(s))).toContainEqual({
+      op: "s",
+      s: "second",
+      c: "second",
+    }),
+  );
+  expect(
+    queryClient.getQueryData([
+      "user",
+      stamp.userId,
+      stamp.generation,
+      "dms",
+      "list",
+    ]),
+  ).toEqual([{ id: "first" }, { id: "second" }]);
+});
+
+it("a canonical 404 for an inactive deleted history does not block recovery of surviving topics", async () => {
+  const queryClient = client();
+  const { gateway: ws, socket } = gateway();
+  let removed = false;
+  install((url) => {
+    if (url.pathname === "/api/channels/deleted/messages")
+      return removed
+        ? json({ error: "not_found" }, 404)
+        : json({ messages: rows(1), has_more: false });
+    return json({ messages: rows(1), has_more: false });
+  });
+  await login(ada.email, "password123");
+  const stamp = takeStamp()!;
+  const gone = messageQueryOptions(
+    queryClient,
+    stamp.userId,
+    stamp.generation,
+    "deleted",
+  );
+  await queryClient.fetchInfiniteQuery(gone);
+  await queryClient.fetchInfiniteQuery(options(queryClient));
+  ws.setTopics([
+    { s: "server", c: "deleted" },
+    { s: "server", c: "channel" },
+  ]);
+  cleanups.push(attachRealtimeRecovery(queryClient, stamp, ws));
+  removed = true;
+  socket.frame({ op: "gap", s: "server", c: "channel", ep: "epoch" });
+  socket.frame({ op: "ok", s: "server", c: "channel", ep: "epoch", n: 2 });
+  await vi.waitFor(() => expect(ws.cursorsSnapshot.get("c:channel")).toBe(2));
+  expect(queryClient.getQueryData(gone.queryKey)).toBeUndefined();
+  expect(ws.gapRecoveries()).toEqual([]);
+  expect(socket.sent.map((s) => JSON.parse(s))).toContainEqual({
+    op: "u",
+    s: "server",
+    c: "deleted",
+  });
+});
+
+it("DM and topicless resync received before bridge attachment remain recoverable", async () => {
+  const queryClient = client();
+  const { gateway: ws, socket } = gateway();
+  install((url) =>
+    url.pathname === "/api/dms"
+      ? json([{ id: "first-dm" }])
+      : url.pathname === "/api/servers"
+        ? json([])
+        : json({ messages: rows(1), has_more: false }),
+  );
+  await login(ada.email, "password123");
+  const stamp = takeStamp()!;
+  socket.frame({ op: "resync" });
+  socket.frame({ op: "dm", c: "first-dm" });
+  expect(ws.pendingResync).toBeDefined();
+  expect(ws.dmDiscoveries()).toEqual(["first-dm"]);
+  cleanups.push(attachRealtimeRecovery(queryClient, stamp, ws));
+  await vi.waitFor(() => expect(ws.dmDiscoveries()).toEqual([]));
+  expect(ws.pendingResync).toBeUndefined();
+  expect(
+    queryClient.getQueryData<InfiniteData<MessagePage>>(
+      messageKeys.channel(stamp.userId, stamp.generation, "first-dm"),
+    )?.pages[0]?.messages,
+  ).toHaveLength(1);
+});
+
+it("navigation replacing a bridge while discovery is held retains its pending DM intent", async () => {
+  const queryClient = client();
+  const { gateway: ws, socket } = gateway();
+  const oldResponse = deferred<Response>();
+  let reads = 0;
+  install((url) =>
+    url.pathname === "/api/dms"
+      ? ++reads === 1
+        ? oldResponse.promise
+        : json([{ id: "first-dm" }])
+      : url.pathname === "/api/servers"
+        ? json([])
+        : json({ messages: rows(1), has_more: false }),
+  );
+  await login(ada.email, "password123");
+  const stamp = takeStamp()!;
+  const oldBridge = attachRealtimeRecovery(queryClient, stamp, ws);
+  socket.frame({ op: "dm", c: "first-dm" });
+  await vi.waitFor(() => expect(reads).toBe(1));
+  oldBridge();
+  cleanups.push(attachRealtimeRecovery(queryClient, stamp, ws));
+  await vi.waitFor(() => expect(ws.dmDiscoveries()).toEqual([]));
+  oldResponse.resolve(json([]));
+  await new Promise((r) => setTimeout(r, 20));
+  expect(
+    queryClient.getQueryData([
+      "user",
+      stamp.userId,
+      stamp.generation,
+      "dms",
+      "list",
+    ]),
+  ).toEqual([{ id: "first-dm" }]);
+  expect(socket.sent.map((s) => JSON.parse(s))).toContainEqual({
+    op: "s",
+    s: "first-dm",
+    c: "first-dm",
+  });
+});
