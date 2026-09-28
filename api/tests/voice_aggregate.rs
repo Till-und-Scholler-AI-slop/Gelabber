@@ -50,9 +50,9 @@ async fn quiet(sub: &mut redis::aio::PubSub) {
 async fn mute_deafen_and_leave_deltas_match_all_active_seats() {
     let g = gateway();
     let (u, s, c) = (Uuid::new_v4(), Uuid::new_v4(), Uuid::new_v4());
-    let (tx1, _rx1) = mpsc::unbounded_channel::<ServerFrame>();
+    let (tx1, _rx1) = mpsc::channel::<ServerFrame>(128);
     let (a, _) = g.attach_session(u, "a".repeat(64), tx1).await;
-    let (tx2, _rx2) = mpsc::unbounded_channel::<ServerFrame>();
+    let (tx2, _rx2) = mpsc::channel::<ServerFrame>(128);
     let (b, _) = g.attach_session(u, "b".repeat(64), tx2).await;
     g.join_voice(a, u, s, c).await.unwrap();
     g.join_voice(b, u, s, c).await.unwrap();
@@ -91,7 +91,7 @@ async fn stale_refresh_and_leave_do_not_unpublish_same_user_replacement_claim() 
     let old_api = gateway();
     let new_api = gateway();
     let (u, s, c) = (Uuid::new_v4(), Uuid::new_v4(), Uuid::new_v4());
-    let (tx, _rx) = mpsc::unbounded_channel::<ServerFrame>();
+    let (tx, _rx) = mpsc::channel::<ServerFrame>(128);
     let (old, _) = old_api.attach_session(u, "a".repeat(64), tx).await;
     old_api.join_voice(old, u, s, c).await.unwrap();
     old_api
@@ -99,7 +99,7 @@ async fn stale_refresh_and_leave_do_not_unpublish_same_user_replacement_claim() 
         .await
         .unwrap();
     tokio::time::sleep(Duration::from_millis(5200)).await;
-    let (tx, _rx2) = mpsc::unbounded_channel::<ServerFrame>();
+    let (tx, _rx2) = mpsc::channel::<ServerFrame>(128);
     let (new, _) = new_api.attach_session(u, "b".repeat(64), tx).await;
     new_api.join_voice(new, u, s, c).await.unwrap();
     let mut sub = subscriber(c).await;
@@ -136,9 +136,9 @@ async fn stale_refresh_and_leave_do_not_unpublish_same_user_replacement_claim() 
 async fn unpublish_and_leave_keep_another_seats_camera_publication() {
     let g = gateway();
     let (u, s, c) = (Uuid::new_v4(), Uuid::new_v4(), Uuid::new_v4());
-    let (tx, _rx) = mpsc::unbounded_channel::<ServerFrame>();
+    let (tx, _rx) = mpsc::channel::<ServerFrame>(128);
     let (a, _) = g.attach_session(u, "a".repeat(64), tx).await;
-    let (tx, _rx2) = mpsc::unbounded_channel::<ServerFrame>();
+    let (tx, _rx2) = mpsc::channel::<ServerFrame>(128);
     let (b, _) = g.attach_session(u, "b".repeat(64), tx).await;
     g.join_voice(a, u, s, c).await.unwrap();
     g.join_voice(b, u, s, c).await.unwrap();

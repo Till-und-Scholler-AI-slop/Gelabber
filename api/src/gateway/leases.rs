@@ -686,7 +686,7 @@ impl Gateway {
                 && socket.voice_rosters.get(&server) != Some(&snapshot)
             {
                 socket.voice_rosters.insert(server, snapshot.clone());
-                let _ = socket.tx.send(ServerFrame::voice_snap(server, snapshot));
+                socket.send(ServerFrame::voice_snap(server, snapshot));
             }
         }
         Ok(())
@@ -707,8 +707,11 @@ mod tests {
             Duration::from_secs(2),
         )
     }
-    async fn socket(g: &Gateway, u: Uuid) -> (ConnId, mpsc::UnboundedReceiver<ServerFrame>) {
-        let (tx, rx) = mpsc::unbounded_channel();
+    async fn socket(g: &Gateway, u: Uuid) -> (ConnId, mpsc::Receiver<ServerFrame>) {
+        // Initial subscriber readiness emits resync; this fixture attaches only
+        // after that handshake, like the API integration fixtures do.
+        g.wait_ready(Duration::from_secs(2)).await.unwrap();
+        let (tx, rx) = mpsc::channel(128);
         let (id, _) = g.attach_session(u, Uuid::new_v4().to_string(), tx).await;
         (id, rx)
     }

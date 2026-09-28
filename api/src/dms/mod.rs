@@ -116,6 +116,7 @@ async fn open_dm(
 
     let (dm, created) = open_or_create(&state.db, user.id, &peer).await?;
     if created {
+        let _ = crate::gateway::delivery::deliver_pending(&state, 32).await;
         info!(
             channel_id = %dm.id,
             user_id = %user.id,
@@ -177,6 +178,9 @@ async fn open_or_create(
     let channel = insert_dm(&mut tx, &key).await?;
     insert_member(&mut tx, channel.id, user_id).await?;
     insert_member(&mut tx, channel.id, peer.id).await?;
+    crate::gateway::delivery::lock_channel(&mut tx, channel.id).await?;
+    crate::gateway::delivery::enqueue_dm(&mut tx, user_id, channel.id).await?;
+    crate::gateway::delivery::enqueue_dm(&mut tx, peer.id, channel.id).await?;
     tx.commit().await?;
 
     Ok((
