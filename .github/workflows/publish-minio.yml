@@ -54,7 +54,7 @@ jobs:
       - name: Compose pin matches
         run: |
           set -euo pipefail
-          grep -F "${GHCR_IMAGE}:${GELABBER_VERSION}" deploy/compose/compose.yaml
+          grep -F "${GHCR_IMAGE}:${MINIO_RELEASE}" deploy/compose/compose.yaml
           grep -F "MINIO_RELEASE: ${MINIO_RELEASE}" deploy/compose/compose.yaml
           grep -F "ARG MINIO_RELEASE=${MINIO_RELEASE}" deploy/compose/minio/Dockerfile
           test "${GELABBER_VERSION}" = "v$(sed -n '/^\[workspace.package\]/,/^\[/{s/^version = "\([^"]*\)"/\1/p}' Cargo.toml | head -n 1)"
@@ -92,12 +92,17 @@ jobs:
       - name: Push to GHCR
         if: env.PUSH == 'true'
         run: |
-          docker tag "${LOCAL_IMAGE}:${MINIO_RELEASE}" "${GHCR_IMAGE}:${MINIO_RELEASE}"
-          docker tag "${LOCAL_IMAGE}:${MINIO_RELEASE}" "${GHCR_IMAGE}:${GELABBER_VERSION}"
-          docker tag "${LOCAL_IMAGE}:${MINIO_RELEASE}" "${GHCR_IMAGE}:latest"
-          docker push "${GHCR_IMAGE}:${MINIO_RELEASE}"
-          docker push "${GHCR_IMAGE}:${GELABBER_VERSION}"
-          docker push "${GHCR_IMAGE}:latest"
+          set -euo pipefail
+          # Never replace the pinned source build. Registry/auth errors fail closed.
+          if docker buildx imagetools inspect "${GHCR_IMAGE}:${MINIO_RELEASE}" > /tmp/minio-existing 2>/tmp/minio-error; then
+            echo "Pinned MinIO image already exists; preserving it."
+          elif grep -Fq 'manifest unknown' /tmp/minio-error || grep -Fxq "ERROR: ${GHCR_IMAGE}:${MINIO_RELEASE}: not found" /tmp/minio-error; then
+            docker tag "${LOCAL_IMAGE}:${MINIO_RELEASE}" "${GHCR_IMAGE}:${MINIO_RELEASE}"
+            docker push "${GHCR_IMAGE}:${MINIO_RELEASE}"
+          else
+            cat /tmp/minio-error >&2
+            exit 1
+          fi
 
       - name: Make package public
         if: env.PUSH == 'true'
@@ -121,4 +126,3 @@ jobs:
             exit 0
           fi
           echo "::warning::GHCR package gelabber/minio is still ${vis:-unknown/private}. Fresh clones cannot pull until a maintainer sets it Public: https://github.com/orgs/${{ github.repository_owner }}/packages/container/package/gelabber%2Fminio → Package settings → Change visibility → Public. Until then: docker login ghcr.io, or compose falls back to the source build."
-

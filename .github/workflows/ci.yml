@@ -7,25 +7,17 @@ on:
     paths:
       - api/**
       - media/**
+      - shared/**
       - web/**
       - docker/**
+      - .dockerignore
       - deploy/compose/**
       - Cargo.toml
       - Cargo.lock
       - rust-toolchain.toml
-      - .github/workflows/ci.yml
+      - .github/workflows/**
   push:
     branches: [main]
-    paths:
-      - api/**
-      - media/**
-      - web/**
-      - docker/**
-      - deploy/compose/**
-      - Cargo.toml
-      - Cargo.lock
-      - rust-toolchain.toml
-      - .github/workflows/ci.yml
 
 concurrency:
   group: ci-${{ github.workflow }}-${{ github.ref }}
@@ -76,9 +68,11 @@ jobs:
 
       - name: Install Caddy
         run: |
-          curl -fsSL "https://caddyserver.com/api/download?os=linux&arch=amd64" -o /usr/local/bin/caddy
+          set -euo pipefail
+          curl -fsSL "https://caddyserver.com/api/download?os=linux&arch=amd64&version=v2.11.4" -o /usr/local/bin/caddy
           chmod +x /usr/local/bin/caddy
           caddy version
+          test "$(caddy version | cut -d ' ' -f 1)" = "v2.11.4"
 
       - name: Test deployment config
         run: python3 -m unittest discover -s deploy/compose/tests -v
@@ -139,8 +133,7 @@ jobs:
 
       # Issue 37 asks to build api/web/media. `--build` on `up` also compiles
       # MinIO from source (Go module fetch flakes). Pull the GHCR CE pin
-      # (not compose.yaml's Gelabber version tag — that is published in
-      # parallel and is missing on the version-bump commit: manifest unknown).
+      # MinIO has its own release pin, independent of the app version.
       - name: Pull pinned images
         working-directory: deploy/compose
         env:
@@ -150,11 +143,9 @@ jobs:
           docker compose pull postgres redis proxy coturn
           repo="$(echo '${{ github.repository }}' | tr '[:upper:]' '[:lower:]')"
           pin="ghcr.io/${repo}/minio:${MINIO_RELEASE}"
-          ver="v$(sed -n '/^\[workspace.package\]/,/^\[/{s/^version = "\([^"]*\)"/\1/p}' ../../Cargo.toml | head -n 1)"
           grep -F "MINIO_RELEASE: ${MINIO_RELEASE}" compose.yaml
-          grep -F "ghcr.io/${repo}/minio:${ver}" compose.yaml
+          grep -F "ghcr.io/${repo}/minio:${MINIO_RELEASE}" compose.yaml
           docker pull "$pin"
-          docker tag "$pin" "ghcr.io/${repo}/minio:${ver}"
 
       - name: Build app images
         working-directory: deploy/compose

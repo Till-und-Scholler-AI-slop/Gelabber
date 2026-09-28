@@ -1,39 +1,41 @@
-# Publish api/web/media so `docker compose up` can pull instead of compiling
-# Rust behind Docker Desktop TLS inspection.
+# Main publishing starts only after CI of the exact main SHA succeeds.
 name: Publish app images
 
 on:
-  push:
+  workflow_run:
+    workflows: [CI]
+    types: [completed]
     branches: [main]
-    paths:
-      - api/**
-      - media/**
-      - web/**
-      - docker/**
-      - Cargo.toml
-      - Cargo.lock
-      - rust-toolchain.toml
-      - deploy/compose/compose.yaml
-      - .github/workflows/publish-images.yml
   pull_request:
     paths:
       - api/**
       - media/**
+      - shared/**
       - web/**
       - docker/**
+      - .dockerignore
       - Cargo.toml
       - Cargo.lock
       - rust-toolchain.toml
-      - deploy/compose/compose.yaml
-      - .github/workflows/publish-images.yml
-  workflow_dispatch:
+      - deploy/compose/**
+      - .github/workflows/**
 
+# Serialize promotion across main revisions, including reruns.
 concurrency:
-  group: ${{ github.workflow }}-${{ github.ref }}
+  group: app-images-${{ github.event_name == 'pull_request' && github.ref || 'main' }}
   cancel-in-progress: ${{ github.event_name == 'pull_request' }}
+
+permissions:
+  contents: read
 
 jobs:
   publish:
+    if: >-
+      github.event_name == 'pull_request' ||
+      (github.event.workflow_run.event == 'push' &&
+       github.event.workflow_run.head_branch == 'main' &&
+       github.event.workflow_run.conclusion == 'success' &&
+       github.event.workflow_run.head_repository.full_name == github.repository)
     runs-on: ubuntu-latest
     permissions:
       contents: read
@@ -52,49 +54,97 @@ jobs:
             context: web
             file: web/Dockerfile
     steps:
-      - name: Checkout
+      - name: Checkout exact tested revision
         uses: actions/checkout@v7
-
-      - name: Image names
+        with:
+          ref: ${{ github.event_name == 'workflow_run' && github.event.workflow_run.head_sha || github.sha }}
+      - name: Image names and OCI metadata
+        env:
+          SOURCE_SHA: ${{ github.event_name == 'workflow_run' && github.event.workflow_run.head_sha || github.sha }}
         run: |
           set -euo pipefail
-          repo="$(echo '${{ github.repository }}' | tr '[:upper:]' '[:lower:]')"
-          ver="v$(sed -n '/^\[workspace.package\]/,/^\[/{s/^version = "\([^"]*\)"/\1/p}' Cargo.toml | head -n 1)"
+          repo="${GITHUB_REPOSITORY,,}"
           echo "GHCR_IMAGE=ghcr.io/${repo}/${{ matrix.name }}" >> "$GITHUB_ENV"
-          echo "GELABBER_VERSION=${ver}" >> "$GITHUB_ENV"
-          if [ '${{ github.ref }}' = 'refs/heads/main' ]; then
-            echo "PUSH=true" >> "$GITHUB_ENV"
-          else
-            echo "PUSH=false" >> "$GITHUB_ENV"
-          fi
-
-      - name: Compose pin matches
+          echo "SOURCE_SHA=$SOURCE_SHA" >> "$GITHUB_ENV"
+          echo "IMAGE_TAG=sha-${SOURCE_SHA}-${GITHUB_RUN_ID}-${GITHUB_RUN_ATTEMPT}" >> "$GITHUB_ENV"
+          echo "GELABBER_VERSION=v$(python3 -c 'import tomllib; print(tomllib.load(open("Cargo.toml", "rb"))["workspace"]["package"]["version"])')" >> "$GITHUB_ENV"
+          echo "OCI_CREATED=$(git show -s --format=%cI HEAD)" >> "$GITHUB_ENV"
+      - name: Compose version pins match workspace
         run: |
-          set -euo pipefail
           grep -F "${GHCR_IMAGE}:${GELABBER_VERSION}" deploy/compose/compose.yaml
-
       - name: Set up Buildx
         uses: docker/setup-buildx-action@v4
-
       - name: Login to GHCR
-        if: env.PUSH == 'true'
+        if: github.event_name == 'workflow_run'
         uses: docker/login-action@v4
         with:
           registry: ghcr.io
           username: ${{ github.actor }}
           password: ${{ secrets.GITHUB_TOKEN }}
-
-      - name: Build
+      - name: Build SHA image
+        id: build
         uses: docker/build-push-action@v7
         with:
           context: ${{ matrix.context }}
           file: ${{ matrix.file }}
-          push: ${{ env.PUSH == 'true' }}
+          push: ${{ github.event_name == 'workflow_run' }}
           provenance: false
-          # Only GHCR names. A `gelabber/…` tag is docker.io/gelabber/…
-          # and `push: true` then 401s (insufficient Docker Hub scopes).
-          tags: |
-            ${{ env.GHCR_IMAGE }}:${{ env.GELABBER_VERSION }}
-            ${{ env.GHCR_IMAGE }}:latest
+          tags: ${{ env.GHCR_IMAGE }}:${{ env.IMAGE_TAG }}
+          build-args: |
+            OCI_REVISION=${{ env.SOURCE_SHA }}
+            OCI_VERSION=${{ env.GELABBER_VERSION }}
+            OCI_CREATED=${{ env.OCI_CREATED }}
+            OCI_SOURCE=https://github.com/${{ github.repository }}
           cache-from: type=gha,scope=${{ matrix.name }}
           cache-to: type=gha,mode=max,scope=${{ matrix.name }}
+      - name: Record digest
+        if: github.event_name == 'workflow_run'
+        env:
+          DIGEST: ${{ steps.build.outputs.digest }}
+        run: |
+          mkdir -p digests
+          python3 -c 'import json,os; json.dump({"image":os.environ["GHCR_IMAGE"],"digest":os.environ["DIGEST"],"tag":os.environ["IMAGE_TAG"],"revision":os.environ["SOURCE_SHA"]},open("digests/${{ matrix.name }}.json","w"))'
+      - name: Upload digest
+        if: github.event_name == 'workflow_run'
+        uses: actions/upload-artifact@v4
+        with:
+          name: digest-${{ matrix.name }}
+          path: digests/*.json
+
+  promote:
+    needs: publish
+    if: github.event_name == 'workflow_run'
+    runs-on: ubuntu-latest
+    permissions:
+      actions: read
+      contents: read
+      packages: write
+    steps:
+      - uses: actions/checkout@v7
+        with:
+          ref: ${{ github.event.workflow_run.head_sha }}
+          fetch-depth: 0
+      - uses: docker/setup-buildx-action@v4
+      - uses: docker/login-action@v4
+        with:
+          registry: ghcr.io
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+      - uses: actions/download-artifact@v4
+        with:
+          pattern: digest-*
+          merge-multiple: true
+          path: digests
+      - name: Verify CI, preflight immutable release, record image set
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          SOURCE_SHA: ${{ github.event.workflow_run.head_sha }}
+          CI_RUN_ID: ${{ github.event.workflow_run.id }}
+        run: python3 .github/workflows/scripts/image_set.py promote
+      - name: Upload image set (also on unchanged-version skip)
+        uses: actions/upload-artifact@v4
+        with:
+          name: image-set
+          path: image-set.*
+          if-no-files-found: error
+          retention-days: 90

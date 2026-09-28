@@ -15,6 +15,14 @@ COPY shared ./shared
 RUN cargo build --locked --release -p gelabber-media
 
 FROM debian:trixie-slim
+ARG OCI_REVISION=unknown
+ARG OCI_VERSION=unknown
+ARG OCI_CREATED=unknown
+ARG OCI_SOURCE=unknown
+LABEL org.opencontainers.image.revision=$OCI_REVISION \
+      org.opencontainers.image.version=$OCI_VERSION \
+      org.opencontainers.image.created=$OCI_CREATED \
+      org.opencontainers.image.source=$OCI_SOURCE
 RUN apt-get update \
     && apt-get install -y --no-install-recommends ca-certificates \
     && rm -rf /var/lib/apt/lists/*
