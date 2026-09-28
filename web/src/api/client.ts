@@ -65,10 +65,13 @@ export function setCsrfToken(token: string | null): void {
  * silent CSRF re-bootstrap comes back without a user. The session store
  * registers itself here (keeps this module free of a store import).
  */
-export type SessionSink = (
-  user: unknown,
-  options?: { force?: boolean; shared?: boolean },
-) => void;
+export type SessionSinkOptions = {
+  force?: boolean;
+  shared?: boolean;
+  /** Shared cookie state changed; its authoritative identity is still loading. */
+  invalidate?: boolean;
+};
+export type SessionSink = (user: unknown, options?: SessionSinkOptions) => void;
 
 let sessionSink: SessionSink | null = null;
 let sessionScope: () => SessionStamp = () => ({
@@ -156,12 +159,12 @@ export function synchronizeSharedSession(): void {
     observedCookieState = fingerprint;
     adoptedCookieGeneration = state?.generation ?? "";
     csrfToken = null;
-    sessionSink?.(null, { force: true, shared: true });
+    sessionSink?.(null, { force: true, shared: true, invalidate: true });
     scheduleReconciliation();
   } else if (mismatched) {
     // An intent may have suppressed reconciliation when this generation was
     // first observed; the identity check also catches stamps taken too late.
-    sessionSink?.(null, { shared: true });
+    sessionSink?.(null, { shared: true, invalidate: true });
     scheduleReconciliation();
   }
 }
@@ -266,8 +269,6 @@ export type RequestOptions = {
   logoutUserId?: string | null;
   /** Explicit credentials/logout are intents independent of cookie identity. */
   authIntent?: () => boolean;
-  /** Authoritative cross-tab bootstrap, permitted after invalidation. */
-  reconcile?: boolean;
 };
 
 type ErrorBody = {
@@ -325,7 +326,7 @@ function requireAuthRequest(
   options.signal?.throwIfAborted();
   if (options.authIntent) {
     if (!options.authIntent()) throw staleSession();
-  } else if (!options.reconcile) {
+  } else {
     requireScope(stamp, options.signal);
   }
 }
@@ -368,7 +369,6 @@ async function performAuthApi<T>(
     rememberCsrf(payload);
     if (user !== undefined && !(logout && sessionScope().userId === null)) {
       sessionSink?.(user, {
-        shared: options.reconcile,
         force: explicit && !logout,
       });
     }

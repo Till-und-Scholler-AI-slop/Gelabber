@@ -11,11 +11,11 @@ import {
   setSessionSink,
   setSessionReconciler,
   synchronizeSharedSession,
+  type SessionSinkOptions,
 } from "../api/client.ts";
 import { releaseUserScope } from "./release.ts";
 import {
   invalidateSessionRequests,
-  sessionStampHolds,
   stampHolds,
   takeSessionStamp,
   takeStamp,
@@ -69,10 +69,19 @@ function isUser(value: unknown): value is User {
 // Anything the API client learns about the session on the side (a 401, a
 // re-bootstrap) lands here, so a session that died in another tab flips
 // this tab to anonymous as instantly as an explicit logout would.
-function receiveSession(
-  value: unknown,
-  options?: { force?: boolean; shared?: boolean },
-): void {
+function receiveSession(value: unknown, options?: SessionSinkOptions): void {
+  if (options?.invalidate) {
+    const previous = useSession.getState();
+    // A newly loaded document already awaits its bootstrap. Initial pageshow
+    // must not turn "not yet known" into a confirmed anonymous session or
+    // invalidate the request the route guard is waiting for.
+    if (previous.status === "unknown") return;
+    if (activeAuthIntent === null || previous.user !== null) {
+      useSession.setState({ status: "unknown", user: null });
+    }
+    if (options.force || previous.user !== null) releaseUserScope(null);
+    return;
+  }
   const user = isUser(value) ? value : null;
   // Foreign cookies must not replace an explicitly requested login/register.
   if (options?.shared && user && activeAuthIntent !== null) return;
@@ -86,7 +95,7 @@ let authIntent = 0;
 let activeAuthIntent: number | null = null;
 setSessionReconciler(async () => {
   if (activeAuthIntent !== null) return;
-  await api<SessionResponse>("/auth/session", { reconcile: true });
+  await ensureSession();
 });
 
 /**
@@ -95,23 +104,32 @@ setSessionReconciler(async () => {
  * caller retries.
  */
 export function ensureSession(): Promise<void> {
+  // Guards must await a pending reconciliation even if a callback has just
+  // adopted its result and the shared bootstrap has not finished yet.
+  if (bootstrap) return bootstrap;
   if (useSession.getState().status !== "unknown") {
     return Promise.resolve();
   }
-  if (bootstrap) return bootstrap;
   const stamp = takeSessionStamp();
+  const canFallback = () => {
+    const current = takeSessionStamp();
+    // Initial pageshow may adopt shared metadata while this bootstrap loads.
+    // Local intent/identity changes still supersede its anonymous fallback.
+    return (
+      bootstrap === request &&
+      current.userId === stamp.userId &&
+      current.generation === stamp.generation
+    );
+  };
   const request = api<SessionResponse>("/auth/session")
     .then(() => {
-      if (
-        useSession.getState().status === "unknown" &&
-        sessionStampHolds(stamp)
-      )
+      if (useSession.getState().status === "unknown" && canFallback())
         applySession(null);
     })
     .catch(() => {
       // Offline or API down: treat as anonymous so the login page can render
       // and show the real error inline on submit.
-      if (sessionStampHolds(stamp)) applySession(null);
+      if (canFallback()) applySession(null);
     })
     .finally(() => {
       if (bootstrap === request) bootstrap = null;
