@@ -113,6 +113,7 @@ export async function startHarness() {
   const selected = selection(process.env.GELABBER_E2E_CASES);
   const actors = [];
   const servers = [];
+  const completedActorContextCloses = new WeakSet();
   const testSourceHashes = {};
   for (const filename of (await readdir(new URL("./", import.meta.url)))
     .filter((name) => name.endsWith(".mjs") || name.endsWith(".py"))
@@ -189,6 +190,11 @@ export async function startHarness() {
     page.setDefaultTimeout(12_000);
     const email = `e2e-${suffix}-${actors.length}@example.test`;
     const result = { page, context, label, email, password };
+    const closeContext = context.close.bind(context);
+    context.close = async (...args) => {
+      await closeContext(...args);
+      completedActorContextCloses.add(context);
+    };
     actors.push(result);
     await page.goto(`${base}/register`);
     await page.getByLabel("Name", { exact: true }).fill(`E2E ${label}`);
@@ -393,6 +399,10 @@ export async function startHarness() {
   async function finish() {
     // Stop browser traffic before deleting only the servers created by this run.
     for (const who of actors) {
+      // Scenario finally already closed these owned contexts successfully.
+      // An unexpected page closure or rejected context close remains an error.
+      if (completedActorContextCloses.has(who.context) && who.page.isClosed())
+        continue;
       if (who.nativeEvaluationUnusable) {
         const closed = await deadlineProbe(
           () => who.nativeAbortClose,
