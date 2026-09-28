@@ -22,7 +22,19 @@ async function bounded(work, deadline, stage, invalidate) {
   let timer;
   try {
     const result = await Promise.race([
-      Promise.resolve().then(work),
+      Promise.resolve().then(() => {
+        // The continuation can run after the initial check's budget expired.
+        // Recheck immediately before starting native work, not only afterward.
+        if (Date.now() >= deadline) {
+          invalidate();
+          throw new NativeInterfaceFailure({
+            stage: stage + "-already-expired",
+            deadlineEpochMs: deadline,
+            nativeDataAvailable: false,
+          });
+        }
+        return work();
+      }),
       new Promise((_, reject) => {
         timer = setTimeout(
           () => {

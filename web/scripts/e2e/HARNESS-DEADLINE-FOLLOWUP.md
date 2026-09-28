@@ -1,0 +1,9 @@
+# Native deadline prestart follow-up to5f841f9
+
+This separate source-only commit follows `5f841f932be6d78435e2d9daf42f2e08e2a45ae8`; it does not amend that independently reviewed target. A's original40checks/34module byte-comparison evidence stays unchanged. No independent A-review PASS is claimed here.
+
+Code audit found two prestart gaps: `bounded` checked its budget before scheduling a microtask, but that continuation could start after expiry; sample could start the next peer's getStats with an expired shared deadline. The follow-up rechecks immediately before work and before each native stats call. Expiry remains visible NativeInterfaceFailure/no native data, and page quarantine/finally remain unchanged. No assertion or deadline is relaxed, no extra budget is granted, and no native runtime rerun is necessary.
+
+The new actual-source regression supplies a budget, advances its deterministic clock before the queued continuation runs, and verifies evaluateCalls0; it also calls actual sample with an already-expired deadline and verifies getStatsCalls0. Together with the existing NeverResolve/LateSuccess/poll-cadence guards, there are8 native-deadline checks. Running the new checks against the isolated exact A modules gives Exit1 (old continuation starts and produces late failure); the extracted follow-up source gives Exit0. Source hashes, red/green logs and focused counter/finish/harness checks are in evidence/native-prestart-validation.json. Infrastructure is synthetic; this is no browser-native hang-cause proof and no actual-app clean-commit run.
+
+All previous red matrix/cleanup reports stay unchanged. Source-only follow-up does not replace their FAIL or the separate authorized recovery evidence. Media/Access scenario and CI wiring commits remain separately reviewable. No product code/pins/shared services/production access or push changed.

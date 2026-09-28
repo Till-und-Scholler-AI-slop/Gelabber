@@ -253,3 +253,53 @@ test("actual polling source waits out an early-waking final timer without launch
   );
   assert.equal(accepts, 0);
 });
+test("actual queued native continuation and already-expired native stats never start work", async () => {
+  const realNow = Date.now;
+  let now = 0,
+    calls = 0;
+  const actor = {
+    page: {
+      evaluate: async () => {
+        calls++;
+      },
+      close: async () => {},
+    },
+  };
+  try {
+    Date.now = () => now;
+    const pending = nativeEvaluate(actor, () => {}, undefined, 10);
+    now = 20;
+    await assert.rejects(
+      pending,
+      (e) =>
+        e instanceof NativeInterfaceFailure &&
+        e.metrics.stage === "outer-page-evaluate-already-expired",
+    );
+    assert.equal(calls, 0);
+    await actor.nativeAbortClose;
+  } finally {
+    Date.now = realNow;
+  }
+  const context = vm.createContext({
+    window: {
+      __e2e: {
+        peers: [
+          {
+            connectionState: "connected",
+            getStats: () => {
+              calls++;
+            },
+          },
+        ],
+      },
+    },
+    setTimeout,
+    clearTimeout,
+  });
+  const collect = vm.runInContext(`(${sample.toString()})`, context);
+  await assert.rejects(
+    collect({ deadlineEpochMs: Date.now() - 1 }),
+    (e) => e.message === "E2E_NATIVE_STATS_DEADLINE",
+  );
+  assert.equal(calls, 0);
+});

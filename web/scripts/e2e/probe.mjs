@@ -246,6 +246,8 @@ export async function sample({ deadlineEpochMs } = {}) {
     if (pc.connectionState !== "closed") {
       try {
         state.samplePhase = "native-getStats";
+        if (deadlineEpochMs !== undefined && Date.now() >= deadlineEpochMs)
+          throw new Error("E2E_NATIVE_STATS_DEADLINE");
         let statsTimer;
         try {
           report =
