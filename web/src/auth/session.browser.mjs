@@ -51,12 +51,17 @@ const server = await createServer({
             res.end(`<script type="module">
           import * as session from '/src/auth/session.ts';
           import {api} from '/src/api/client.ts';
-          window.review = {...session,api};
+          import {queryClient,queryScopeUser} from '/src/queryClient.ts';
+          import {takeStamp} from '/src/auth/scope.ts';
+          import {serverKeys} from '/src/servers/queries.ts';
+          import {listServers} from '/src/servers/api.ts';
+          import {getGateway} from '/src/ws/client.ts';
+          window.review = {...session,api,queryClient,queryScopeUser,takeStamp,serverKeys,listServers,getGateway};
         </script>`);
             return;
           }
           if (!req.url?.startsWith("/api/")) return next();
-          const path = req.url;
+          const path = req.url.split("?")[0];
           const cookies = Object.fromEntries(
             (req.headers.cookie ?? "")
               .split(";")
@@ -116,11 +121,23 @@ const server = await createServer({
             return;
           }
           if (path === "/api/servers") {
-            answer(
-              res,
-              user ? 200 : 401,
-              user ? { owner: user.id } : { error: "unauthenticated" },
-            );
+            const finish = () =>
+              answer(
+                res,
+                user ? 200 : 401,
+                user
+                  ? [
+                      {
+                        id: `server-${user.id}`,
+                        owner_id: user.id,
+                        name: "Private",
+                      },
+                    ]
+                  : { error: "unauthenticated" },
+              );
+            if (mode === "hold-read") {
+              held.set("read", [...(held.get("read") ?? []), finish]);
+            } else finish();
             return;
           }
           answer(res, 404, { error: "not_found" });
@@ -190,7 +207,7 @@ try {
     );
     assert.deepEqual(
       await second.evaluate(() => window.review.api("/servers")),
-      { owner: "user-B" },
+      [{ id: "server-user-B", owner_id: "user-B", name: "Private" }],
     );
     console.log(
       "PASS late logout / new login across tabs: B cookie and UI agree",
@@ -227,9 +244,9 @@ try {
       await page.evaluate(() => window.review.useSession.getState().user?.id),
       "user-B",
     );
-    assert.deepEqual(await page.evaluate(() => window.review.api("/servers")), {
-      owner: "user-B",
-    });
+    assert.deepEqual(await page.evaluate(() => window.review.api("/servers")), [
+      { id: "server-user-B", owner_id: "user-B", name: "Private" },
+    ]);
     console.log("PASS superseded login: latest B intent owns the cookie");
     await context.close();
   }
@@ -301,11 +318,173 @@ try {
       return { id: user.id, states };
     }, operation);
     assert.deepEqual(observed, { id: "user-B", states: ["user-B"] });
-    assert.deepEqual(await page.evaluate(() => window.review.api("/servers")), {
-      owner: "user-B",
-    });
+    assert.deepEqual(await page.evaluate(() => window.review.api("/servers")), [
+      { id: "server-user-B", owner_id: "user-B", name: "Private" },
+    ]);
     console.log(
       `PASS explicit ${operation} from anonymous tab with foreign A cookie: B signs in`,
+    );
+    await context.close();
+  }
+
+  for (const variant of [
+    "pre-fetch",
+    "held-response",
+    "same-user",
+    "same-user-pre-fetch",
+    "notified",
+  ]) {
+    mode = "";
+    held.clear();
+    seen.length = 0;
+    const context = await browser.newContext();
+    // Suppress asynchronous auth notifications: synchronous shared-generation
+    // checks must protect both the outgoing fetch and the held response.
+    if (variant !== "notified")
+      await context.addInitScript(() => {
+        window.addEventListener(
+          "storage",
+          (event) => event.stopImmediatePropagation(),
+          true,
+        );
+        window.BroadcastChannel = class {
+          postMessage() {}
+          addEventListener() {}
+          close() {}
+        };
+      });
+    const first = await context.newPage(),
+      second = await context.newPage();
+    await load(first);
+    await first.evaluate(() =>
+      window.review.login("a@example.com", "password123"),
+    );
+    await load(second);
+    const stamp = await first.evaluate(() => {
+      const r = window.review,
+        stamp = r.takeStamp();
+      window.oldKey = r.serverKeys.list(stamp.userId, stamp.generation);
+      r.queryClient.setQueryData(window.oldKey, [
+        { id: "cached-A", owner_id: "user-A" },
+      ]);
+      const gateway = r.getGateway(),
+        original = gateway.resetSession.bind(gateway);
+      window.resets = 0;
+      gateway.resetSession = () => {
+        window.resets++;
+        original();
+      };
+      return stamp;
+    });
+    if (!["pre-fetch", "same-user-pre-fetch", "notified"].includes(variant)) {
+      mode = "hold-read";
+      await first.evaluate(() => {
+        const r = window.review;
+        window.pendingRead = r.api("/servers?direct").then(
+          (data) => ({ data }),
+          (error) => ({ error: error.name }),
+        );
+        window.pendingQuery = r.queryClient
+          .fetchQuery({
+            queryKey: window.oldKey,
+            queryFn: ({ signal }) => r.listServers(signal),
+            retry: false,
+          })
+          .then(
+            (data) => ({ data }),
+            (error) => ({ error: error.name }),
+          );
+      });
+      await waitForHeld("read");
+      const end = Date.now() + 3000;
+      while (held.get("read").length < 2) {
+        assert(Date.now() < end);
+        await new Promise((resolve) => setTimeout(resolve, 5));
+      }
+    }
+    await second.evaluate(
+      (variant) =>
+        window.review.login(
+          variant.startsWith("same-user") ? "a@example.com" : "b@example.com",
+          "password123",
+        ),
+      variant,
+    );
+    if (variant !== "notified")
+      assert.deepEqual(
+        await first.evaluate(() => window.review.takeStamp()),
+        stamp,
+      );
+    if (variant === "notified") {
+      await first.waitForFunction(
+        () => window.review.useSession.getState().user?.id === "user-B",
+      );
+    } else if (["pre-fetch", "same-user-pre-fetch"].includes(variant)) {
+      const before = seen.filter((call) => call.path === "/api/servers").length;
+      const result = await first.evaluate(async () => {
+        const r = window.review;
+        return r.queryClient
+          .fetchQuery({
+            queryKey: window.oldKey,
+            queryFn: ({ signal }) => r.listServers(signal),
+            retry: false,
+          })
+          .then(
+            (data) => ({ data }),
+            (error) => ({ error: error.name }),
+          );
+      });
+      assert(
+        !result.data?.some((server) => server.owner_id === "user-B"),
+        "foreign GET data must never escape the old scope",
+      );
+      assert.equal(
+        seen.filter((call) => call.path === "/api/servers").length,
+        before,
+      );
+    } else {
+      for (const finish of held.get("read")) finish();
+      assert.equal(
+        (await first.evaluate(() => window.pendingRead)).error,
+        "AbortError",
+      );
+      assert(
+        !(await first.evaluate(() => window.pendingQuery)).data?.some(
+          (server) => server.id !== "cached-A",
+        ),
+        "held data must never refill the old key",
+      );
+    }
+    mode = "";
+    const expected = variant.startsWith("same-user") ? "user-A" : "user-B";
+    await first.waitForFunction(
+      (id) => window.review.useSession.getState().user?.id === id,
+      expected,
+    );
+    const after = await first.evaluate(() => ({
+      stamp: window.review.takeStamp(),
+      scope: window.review.queryScopeUser(),
+      cached: window.review.queryClient.getQueryData(window.oldKey),
+    }));
+    assert.equal(after.cached, undefined);
+    assert(
+      (await first.evaluate(() => window.resets)) > 0,
+      "existing scope cleanup must reset the gateway",
+    );
+    assert.equal(after.scope, expected);
+    assert.notEqual(after.stamp.generation, stamp.generation);
+    const fresh = await first.evaluate(async () => {
+      const r = window.review,
+        stamp = r.takeStamp();
+      return r.queryClient.fetchQuery({
+        queryKey: r.serverKeys.list(stamp.userId, stamp.generation),
+        queryFn: ({ signal }) => r.listServers(signal),
+        retry: false,
+      });
+    });
+    assert.equal(fresh[0].owner_id, expected);
+    console.log(
+      `PASS two tabs ${variant}: generation gates HTTP, cache and scope cleanup`,
     );
     await context.close();
   }
