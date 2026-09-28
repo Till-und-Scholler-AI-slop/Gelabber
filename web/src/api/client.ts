@@ -69,6 +69,34 @@ export type SessionSink = (user: unknown) => void;
 
 let sessionSink: SessionSink | null = null;
 let sessionScope: () => SessionStamp = () => ({ userId: null, generation: 0 });
+let cookieQueue: Promise<void> = Promise.resolve();
+
+/** Set-Cookie is applied by the browser before JS can discard a stale result.
+ * Web Locks serialize cookie-changing auth requests across same-origin tabs;
+ * the local queue also covers non-browser callers without a LockManager. */
+function withSessionCookieLock<T>(
+  action: () => Promise<T>,
+  signal?: AbortSignal,
+): Promise<T> {
+  if (typeof navigator !== "undefined" && navigator.locks) {
+    return navigator.locks.request("gelabber:auth-cookies", { signal }, action);
+  }
+  const request = cookieQueue.then(action);
+  cookieQueue = request.then(
+    () => undefined,
+    () => undefined,
+  );
+  return request;
+}
+
+function changesAuthCookies(path: string): boolean {
+  return (
+    path === "/auth/session" ||
+    path === "/auth/login" ||
+    path === "/auth/register" ||
+    path === "/auth/logout"
+  );
+}
 
 export function setSessionSink(sink: SessionSink | null): void {
   sessionSink = sink;
@@ -148,6 +176,17 @@ export async function api<T>(
   options: RequestOptions = {},
 ): Promise<T> {
   const stamp = options.scope ?? sessionScope();
+  const run = () => performApi<T>(path, options, stamp);
+  return changesAuthCookies(path)
+    ? withSessionCookieLock(run, options.signal)
+    : run();
+}
+
+async function performApi<T>(
+  path: string,
+  options: RequestOptions,
+  stamp: SessionStamp,
+): Promise<T> {
   requireScope(stamp, options.signal);
   const response = await requestWithCsrfRetry(path, options, stamp);
   const payload = await readJson(response);
@@ -190,6 +229,20 @@ async function requestWithCsrfRetry(
   if (body?.error !== "csrf_invalid") {
     return first;
   }
+  const refresh = () => retryWithSession(path, options, stamp, first);
+  // Auth already holds this lock. Other mutations keep bootstrap+retry in
+  // one critical section so another tab cannot switch cookies between them.
+  return changesAuthCookies(path)
+    ? refresh()
+    : withSessionCookieLock(refresh, options.signal);
+}
+
+async function retryWithSession(
+  path: string,
+  options: RequestOptions,
+  stamp: SessionStamp,
+  first: Response,
+): Promise<Response> {
   requireScope(stamp, options.signal);
   const session = await send("/auth/session", { signal: options.signal });
   const payload = await readJson(session);
@@ -198,24 +251,32 @@ async function requestWithCsrfRetry(
   if (!session.ok || !isSessionPayload(payload)) return first;
 
   const isLogout = path === "/auth/logout";
+  const isSignIn = path === "/auth/login" || path === "/auth/register";
   const expectedId =
     isLogout && options.logoutUserId !== undefined
       ? options.logoutUserId
       : stamp.userId;
   const actualId = payload.user?.id ?? null;
-  if (!isLogout) {
+  if (!isLogout && !isSignIn) {
     // Synchronize this tab even when another tab changed the cookie. That
     // new identity must never inherit the old mutation's intent.
     rememberCsrf(payload);
     sessionSink?.(payload.user);
   }
-  if (actualId !== expectedId) {
+  // Credentials express an explicit sign-in intent, independent of whichever
+  // account owns the shared cookie. An anonymous logout also revokes a sign-in
+  // response that was still in flight when the user chose to log out.
+  if (
+    !isSignIn &&
+    !(isLogout && expectedId === null) &&
+    actualId !== expectedId
+  ) {
     throw new DOMException("The session changed. Try again.", "AbortError");
   }
   // Logout deliberately keeps the UI anonymous while retrying for the
   // original account, and never adopts the bootstrap user.
   requireScope(stamp, options.signal);
-  if (isLogout) rememberCsrf(payload);
+  if (isLogout || isSignIn) rememberCsrf(payload);
   return send(path, options);
 }
 

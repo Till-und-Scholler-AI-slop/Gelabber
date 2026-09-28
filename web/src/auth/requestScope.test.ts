@@ -219,8 +219,9 @@ describe("controlled responses across session changes", () => {
       (error: unknown) => error,
     );
     await bootstrapStarted.promise;
-    await logout();
+    const signedOut = logout();
     bootstrap.resolve(json(200, { user: ada, csrf_token: "late-csrf" }));
+    await signedOut;
 
     expect(await done).toMatchObject({ name: "AbortError" });
     expect(calls.filter((call) => call.key === "PATCH /api/me")).toHaveLength(
@@ -234,10 +235,15 @@ describe("controlled responses across session changes", () => {
     "a late %s cannot undo logout",
     async (operation) => {
       const oldResponse = deferred();
-      install({
-        "POST /api/auth/login": () => oldResponse.promise,
-        "POST /api/auth/register": () => oldResponse.promise,
-        "GET /api/auth/session": () => oldResponse.promise,
+      const started = deferred();
+      const hold = () => {
+        started.resolve(json(200, {}));
+        return oldResponse.promise;
+      };
+      const calls = install({
+        "POST /api/auth/login": hold,
+        "POST /api/auth/register": hold,
+        "GET /api/auth/session": hold,
         "POST /api/auth/logout": () => json(200, { csrf_token: "csrf-out" }),
       });
       const done = (
@@ -247,9 +253,14 @@ describe("controlled responses across session changes", () => {
             ? register(ada.email, "password123", ada.name)
             : ensureSession()
       ).catch((error: unknown) => error);
-      await logout();
+      await started.promise;
+      const signedOut = logout();
+      expect(calls.some((call) => call.key === "POST /api/auth/logout")).toBe(
+        false,
+      );
       oldResponse.resolve(json(200, { user: ada, csrf_token: "late-csrf" }));
       await done;
+      await signedOut;
 
       expect(useSession.getState()).toEqual({
         status: "anonymous",
@@ -363,34 +374,44 @@ describe("controlled responses across session changes", () => {
 
   it("does not let a failed old bootstrap make the new login anonymous", async () => {
     const oldResponse = deferred();
+    const started = deferred();
     install({
-      "GET /api/auth/session": () => oldResponse.promise,
+      "GET /api/auth/session": () => {
+        started.resolve(json(200, {}));
+        return oldResponse.promise;
+      },
       "POST /api/auth/login": () =>
         json(200, { user: bob, csrf_token: "csrf-b" }),
     });
     const boot = ensureSession();
-    await login(bob.email, "password123");
+    await started.promise;
+    const signedIn = login(bob.email, "password123");
     oldResponse.resolve(json(503, { error: "internal" }));
     await boot;
+    await signedIn;
     expect(useSession.getState().user).toEqual(bob);
     expect(getCsrfToken()).toBe("csrf-b");
   });
 
-  it("a newer login intent wins when two responses arrive out of order", async () => {
+  it("serializes a newer login behind an already-started login", async () => {
     const oldResponse = deferred();
+    const started = deferred();
     let attempts = 0;
     install({
       "POST /api/auth/login": () =>
         ++attempts === 1
-          ? oldResponse.promise
+          ? (started.resolve(json(200, {})), oldResponse.promise)
           : json(200, { user: bob, csrf_token: "csrf-b" }),
     });
     const first = login(ada.email, "password123").catch(
       (error: unknown) => error,
     );
-    await login(bob.email, "password123");
+    await started.promise;
+    const signedIn = login(bob.email, "password123");
+    expect(attempts).toBe(1);
     oldResponse.resolve(json(200, { user: ada, csrf_token: "late-csrf" }));
     expect(await first).toMatchObject({ name: "AbortError" });
+    await signedIn;
     expect(useSession.getState().user).toEqual(bob);
     expect(getCsrfToken()).toBe("csrf-b");
   });
@@ -442,6 +463,40 @@ describe("controlled responses across session changes", () => {
       );
       expect(useSession.getState().user).toEqual(ada);
       expect(getCsrfToken()).toBe("csrf-signed-in");
+    },
+  );
+
+  it.each(["login", "register"])(
+    "honors an explicit %s even if its CSRF bootstrap discovers another cookie account",
+    async (operation) => {
+      let attempts = 0;
+      const path = `POST /api/auth/${operation}`;
+      const calls = install({
+        [path]: () =>
+          ++attempts === 1
+            ? json(403, { error: "csrf_invalid" })
+            : json(200, { user: bob, csrf_token: "csrf-b" }),
+        "GET /api/auth/session": () =>
+          json(200, { user: ada, csrf_token: "cookie-a" }),
+      });
+      const observed: (string | null)[] = [];
+      const unsubscribe = useSession.subscribe((state) =>
+        observed.push(state.user?.id ?? null),
+      );
+      if (operation === "login") await login(bob.email, "password123");
+      else await register(bob.email, "password123", bob.name);
+      unsubscribe();
+      expect(calls.map((call) => call.key)).toEqual([
+        path,
+        "GET /api/auth/session",
+        path,
+      ]);
+      expect(new Headers(calls[2]?.init.headers).get("X-CSRF-Token")).toBe(
+        "cookie-a",
+      );
+      expect(observed).toEqual([bob.id]);
+      expect(useSession.getState().user).toEqual(bob);
+      expect(getCsrfToken()).toBe("csrf-b");
     },
   );
 
@@ -509,18 +564,24 @@ describe("controlled responses across session changes", () => {
 
   it("a late logout response cannot replace B's token", async () => {
     const oldResponse = deferred();
+    const started = deferred();
     let who = ada;
     install({
       "POST /api/auth/login": () =>
         json(200, { user: who, csrf_token: `csrf-${who.id}` }),
-      "POST /api/auth/logout": () => oldResponse.promise,
+      "POST /api/auth/logout": () => {
+        started.resolve(json(200, {}));
+        return oldResponse.promise;
+      },
     });
     await login(ada.email, "password123");
     const done = logout();
+    await started.promise;
     who = bob;
-    await login(bob.email, "password123");
+    const signedIn = login(bob.email, "password123");
     oldResponse.resolve(json(200, { csrf_token: "late-csrf-out" }));
     await done;
+    await signedIn;
     expect(useSession.getState().user).toEqual(bob);
     expect(getCsrfToken()).toBe(`csrf-${bob.id}`);
   });
