@@ -36,6 +36,12 @@ async function prepareProbe(overrides = {}, failSql = false) {
     return { stdout: "CREATE DATABASE\n" };
   };
   const mocks = {
+    "node:os": {
+      tmpdir: () => "/tmp",
+      networkInterfaces: () => ({
+        fixture: [{ family: "IPv4", internal: false, address: "192.0.2.10" }],
+      }),
+    },
     "node:child_process": { execFile },
     "node:fs/promises": {
       async readFile(path) {
@@ -145,4 +151,30 @@ test("failed CI SQL setup remains nonzero and redacted, without exporting an unu
   assert.deepEqual(result.messages, [
     "FAIL owned-CI-runtime-preparation; private details redacted",
   ]);
+});
+
+test("optional owned SFU preparation preserves private address/env and byte-verifies its current-source manifest", async () => {
+  const result = await prepareProbe({ GELABBER_E2E_PREPARE_MEDIA: "true" });
+  assert.equal(result.exitCode, 0);
+  const config = result.files.get("/tmp/fixture-owned-ci/media-fault.env");
+  assert.equal(config.options.mode, 0o600);
+  const env = parseEnv(config.body);
+  assert.equal(env.MEDIA_ADDR, "127.0.0.1:18087");
+  assert.equal(env.MEDIA_ICE_BIND, "192.0.2.10:0");
+  const manifestFile = result.files.get(
+    "/tmp/fixture-owned-ci/media-manifest.json",
+  );
+  assert.equal(manifestFile.options.mode, 0o600);
+  const manifest = JSON.parse(manifestFile.body);
+  assert.equal(manifest.sourceSha, "a".repeat(40));
+  assert.equal(
+    manifest.sha256,
+    createHash("sha256")
+      .update(result.files.get(manifest.binaryPath).body)
+      .digest("hex"),
+  );
+  const exported = result.files.get("/tmp/fixture-github-env").body;
+  assert.ok(exported.includes("GELABBER_E2E_MEDIA_MANIFEST="));
+  assert.ok(!exported.includes("192.0.2.10") && !exported.includes(secret));
+  assert.deepEqual(result.messages, []);
 });

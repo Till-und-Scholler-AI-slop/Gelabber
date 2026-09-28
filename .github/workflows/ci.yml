@@ -120,8 +120,8 @@ jobs:
           curl -fsS "$MINIO_ENDPOINT/minio/health/ready" >/dev/null
           cargo test --locked --workspace --all-targets
 
-      - name: Build owned API for real core fault acceptance
-        run: cargo build --locked -p gelabber-api
+      - name: Build owned API and SFU for isolated fault acceptance
+        run: cargo build --locked -p gelabber-api -p gelabber-media
 
       - name: Node for owned core fault acceptance
         uses: actions/setup-node@v4
@@ -139,19 +139,31 @@ jobs:
           cd web
           npx playwright install --with-deps chromium firefox
 
-      - name: Prepare dedicated fault database, bucket and immutable API copy
+      - name: Prepare dedicated fault database, bucket and immutable API/SFU copies
+        env:
+          GELABBER_E2E_PREPARE_MEDIA: "true"
         run: node web/scripts/e2e/ci-fault-prepare.mjs
 
-      - name: Real app chat, upload, epoch, outbox and storage faults
+      - name: Real app core and API/Redis Live-lease faults in both browsers
         run: |
           set -euo pipefail
           failed=0
           for engine in chromium firefox; do
-            if ! GELABBER_E2E_BROWSER="$engine" GELABBER_E2E_PROFILE=core-faults \
-              GELABBER_E2E_REPORT="/tmp/gelabber-e2e/${engine}-core-faults.json" \
-              node web/scripts/e2e/fault-run.mjs; then
-              failed=1
-            fi
+            for profile in core-faults media-faults; do
+              owned_media_env="$GELABBER_E2E_MEDIA_FAULT_ENV"
+              owned_media_manifest="$GELABBER_E2E_MEDIA_MANIFEST"
+              if [ "$profile" = core-faults ]; then
+                owned_media_env=
+                owned_media_manifest=
+              fi
+              if ! GELABBER_E2E_MEDIA_FAULT_ENV="$owned_media_env" \
+                GELABBER_E2E_MEDIA_MANIFEST="$owned_media_manifest" \
+                GELABBER_E2E_BROWSER="$engine" GELABBER_E2E_PROFILE="$profile" \
+                GELABBER_E2E_REPORT="/tmp/gelabber-e2e/${engine}-${profile}.json" \
+                node web/scripts/e2e/fault-run.mjs; then
+                failed=1
+              fi
+            done
           done
           exit "$failed"
 
@@ -204,10 +216,18 @@ jobs:
         run: |
           npm run test:e2e-harness
           node scripts/e2e/rendered-frames.checks.mjs
+          node scripts/e2e/media-probe.checks.mjs
+          node scripts/e2e/browser-options.checks.mjs
+          node scripts/e2e/native-evaluate.checks.mjs
+          node scripts/e2e/access-native.checks.mjs
+          node --experimental-vm-modules scripts/e2e/native-finish.checks.mjs
+          node --experimental-vm-modules scripts/e2e/media-extra.checks.mjs
           node scripts/smoke-netem.checks.mjs
           node scripts/e2e/faults.checks.mjs
           node --experimental-vm-modules scripts/e2e/teardown.checks.mjs
+          node --experimental-vm-modules scripts/e2e/media-runtime.checks.mjs
           node --experimental-vm-modules scripts/e2e/ci-fault-prepare.checks.mjs
+          node scripts/e2e/ci-fault-loop.checks.mjs
 
       - name: Build
         run: npm run build
