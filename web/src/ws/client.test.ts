@@ -242,6 +242,45 @@ describe("gateway client", () => {
     gateway.stop();
   });
 
+  it("keeps gap heads pending and rejects acknowledgements from an older gap or session", () => {
+    const sockets: FakeSocket[] = [];
+    const gateway = new Gateway({
+      open: () => {
+        const socket = new FakeSocket();
+        sockets.push(socket);
+        return socket;
+      },
+    });
+    gateway.start();
+    sockets[0]!.emit("open");
+    const frame = (data: unknown) =>
+      sockets.at(-1)!.emit("message", JSON.stringify(data));
+    frame({ op: "ok", s: "srv", c: "ch", n: 2 });
+    frame({ op: "gap", s: "srv", c: "ch" });
+    frame({ op: "ok", s: "srv", c: "ch", n: 9 });
+    const old = gateway.gapRecoveries()[0]!;
+    expect(gateway.cursorsSnapshot.get("c:ch")).toBe(2);
+    frame({ op: "gap", s: "srv", c: "ch" });
+    frame({ op: "ok", s: "srv", c: "ch", n: 12 });
+    const current = gateway.gapRecoveries()[0]!;
+    gateway.completeGap(old);
+    expect(gateway.gapRecoveries()).toEqual([current]);
+    expect(gateway.cursorsSnapshot.get("c:ch")).toBe(2);
+    gateway.completeGap(current);
+    expect(gateway.cursorsSnapshot.get("c:ch")).toBe(12);
+    gateway.resetSession();
+    gateway.start();
+    sockets.at(-1)!.emit("open");
+    frame({ op: "gap", s: "srv", c: "ch" });
+    frame({ op: "ok", s: "srv", c: "ch", n: 1 });
+    gateway.completeGap(current);
+    expect(gateway.cursorsSnapshot.get("c:ch")).toBeUndefined();
+    expect(gateway.gapRecoveries()).toHaveLength(1);
+    gateway.completeGap(gateway.gapRecoveries()[0]!);
+    expect(gateway.cursorsSnapshot.get("c:ch")).toBe(1);
+    gateway.stop();
+  });
+
   it("a late close of the previous socket does not drop the next one", async () => {
     class DeferredCloseSocket extends FakeSocket {
       override close(): void {

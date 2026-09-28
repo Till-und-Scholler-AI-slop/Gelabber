@@ -58,6 +58,7 @@ export function gatewayUrl(): string {
 }
 
 export type GapNotice = Topic;
+export type GapRecovery = { topic: Topic; version: number };
 
 export class Gateway {
   private readonly opts: Required<
@@ -72,6 +73,8 @@ export class Gateway {
   private detachLiveSocket: (() => void) | null = null;
   private desired = new Map<string, Topic>();
   private cursors = new Map<string, number>();
+  private gaps = new Map<string, GapRecovery & { cursor?: number }>();
+  private gapVersion = 0;
   private retryAttempt = 0;
   private reconnectTimer: ReturnType<typeof setTimeout> | null = null;
   private heartbeatTimer: ReturnType<typeof setInterval> | null = null;
@@ -101,6 +104,22 @@ export class Gateway {
 
   get cursorsSnapshot(): ReadonlyMap<string, number> {
     return this.cursors;
+  }
+
+  /** Gap heads become resume cursors only once REST recovery has succeeded. */
+  gapRecoveries(): GapRecovery[] {
+    return [...this.gaps.values()].map(({ topic, version }) => ({
+      topic,
+      version,
+    }));
+  }
+
+  completeGap(recovery: GapRecovery): void {
+    const key = topicKey(recovery.topic);
+    const pending = this.gaps.get(key);
+    if (!pending || pending.version !== recovery.version) return;
+    if (pending.cursor !== undefined) this.cursors.set(key, pending.cursor);
+    this.gaps.delete(key);
   }
 
   onEvent(listener: (event: ChatEvent) => void): () => void {
@@ -195,6 +214,7 @@ export class Gateway {
     this.epoch += 1;
     this.desired.clear();
     this.cursors.clear();
+    this.gaps.clear();
     this.stop();
   }
 
@@ -306,6 +326,11 @@ export class Gateway {
         return;
       case "ok": {
         const key = topicKey(frame);
+        const gap = this.gaps.get(key);
+        if (gap) {
+          gap.cursor = Math.max(gap.cursor ?? 0, frame.n);
+          return;
+        }
         const current = this.cursors.get(key);
         if (current === undefined || frame.n > current) {
           this.cursors.set(key, frame.n);
@@ -314,8 +339,13 @@ export class Gateway {
       }
       case "e": {
         const key = topicKey(frame);
-        const { accept, cursor } = nextCursor(this.cursors.get(key), frame.n);
-        this.cursors.set(key, cursor);
+        const gap = this.gaps.get(key);
+        const { accept, cursor } = nextCursor(
+          gap?.cursor ?? this.cursors.get(key),
+          frame.n,
+        );
+        if (gap) gap.cursor = cursor;
+        else this.cursors.set(key, cursor);
         if (accept) {
           for (const listener of this.eventListeners) {
             if (!alive()) return;
@@ -330,12 +360,19 @@ export class Gateway {
           listener(frame);
         }
         return;
-      case "gap":
+      case "gap": {
+        const key = topicKey(frame);
+        this.gaps.set(key, {
+          topic: { s: frame.s, ...(frame.c ? { c: frame.c } : {}) },
+          version: ++this.gapVersion,
+          cursor: this.gaps.get(key)?.cursor ?? this.cursors.get(key),
+        });
         for (const listener of this.gapListeners) {
           if (!alive()) return;
           listener({ s: frame.s, c: frame.c });
         }
         return;
+      }
       case "p":
         for (const listener of this.presenceListeners) {
           if (!alive()) return;
