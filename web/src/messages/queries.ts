@@ -321,7 +321,9 @@ export async function sendMessageAttempt(
         attempt.stage === "bind" &&
         (!(error instanceof ApiError) ||
           error.code === "network" ||
-          error.status === 0);
+          error.status === 0 ||
+          error.status === 408 ||
+          error.status >= 500);
       const labels = {
         presign: "Dateifreigabe",
         upload: "Dateiübertragung",
@@ -435,6 +437,20 @@ export function editMessageOptions(client: QueryClient, channelId: string) {
         rowVersion(client, ctx.userId, ctx.generation, channelId, ctx.id) ===
         ctx.version
       ) {
+        const current = client
+          .getQueryData<Cache>(
+            messageKeys.channel(ctx.userId, ctx.generation, channelId),
+          )
+          ?.pages.flatMap((page) => page.messages)
+          .find((row) => row.id === ctx.id);
+        // A REST refetch can replace this row without a mutation/WS token.
+        // Only settle the optimistic value this request still owns.
+        if (
+          !current ||
+          current.content !== ctx.optimistic?.content ||
+          current.edited_at !== ctx.optimistic.edited_at
+        )
+          return;
         recordChange(client, ctx.userId, ctx.generation, channelId, {
           id: message.id,
           message,

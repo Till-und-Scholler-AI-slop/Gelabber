@@ -127,9 +127,9 @@ try {
         started();
         await gate;
         await route.fulfill({
-          status: 503,
+          status: 429,
           contentType: "application/json",
-          body: JSON.stringify({ error: "unavailable" }),
+          body: JSON.stringify({ error: "rate_limited" }),
         });
         return;
       }
@@ -166,6 +166,68 @@ try {
   );
   console.log(
     "PASS real app parallel late failure → navigation → exact retry, no duplicate",
+  );
+
+  // Real POST commits, but its proxy response is lost/replaced by 504.
+  let ambiguousPosts = 0;
+  await owner.page.route(messageRoute, async (route) => {
+    if (route.request().method() === "POST") {
+      ambiguousPosts++;
+      const response = await route.fetch();
+      assert.equal(response.status(), 201);
+      await route.fulfill({
+        status: 504,
+        contentType: "text/html",
+        body: "Gateway Timeout",
+      });
+      return;
+    }
+    await route.continue();
+  });
+  await send(owner.page, "committed behind gateway timeout");
+  await owner.page
+    .getByText("Die Nachricht kann bereits gespeichert sein.", { exact: false })
+    .waitFor();
+  assert.equal(
+    await owner.page
+      .getByRole("button", { name: "Sendung wiederholen", exact: true })
+      .count(),
+    0,
+  );
+  const rejected = await owner.page.evaluate(async () => {
+    const { usePendingMessages } = await import("/src/messages/pending.ts");
+    const { sendMessageAttempt } = await import("/src/messages/queries.ts");
+    const { useSession } = await import("/src/auth/session.ts");
+    const attempt = Object.values(usePendingMessages.getState().attempts)[0];
+    if (attempt.status !== "uncertain") return false;
+    try {
+      await sendMessageAttempt(attempt.channelId, useSession.getState().user, {
+        content: attempt.content,
+        attemptId: attempt.id,
+      });
+      return false;
+    } catch {
+      return true;
+    }
+  });
+  assert(rejected);
+  assert.equal(ambiguousPosts, 1);
+  const committed = await apiCall(
+    owner.page,
+    `/channels/${channelId}/messages`,
+  );
+  assert.equal(
+    committed.messages.filter(
+      (m) => m.content === "committed behind gateway timeout",
+    ).length,
+    1,
+  );
+  await owner.page
+    .getByRole("button", { name: "Verwerfen", exact: true })
+    .click();
+  await owner.page.unroute(messageRoute);
+  console.log(
+    "PASS real upstream POST201 then proxy504: uncertain outcome, no offered or executable duplicate retry",
   );
 
   let gets = 0,

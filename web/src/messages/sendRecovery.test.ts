@@ -17,6 +17,7 @@ import {
   deleteMessageOptions,
   editMessageOptions,
   messageKeys,
+  messageQueryOptions,
   sendMessageAttempt,
 } from "./queries.ts";
 import type { Message, MessagePage } from "./types.ts";
@@ -93,7 +94,7 @@ describe("durable send attempts with controlled HTTP responses", () => {
       (error: unknown) => error,
     );
     await sendMessageAttempt("c", author, { content: "B" });
-    a.resolve(json(503, { error: "unavailable" }));
+    a.resolve(json(429, { error: "rate_limited" }));
     await first;
     expect(attempts()).toMatchObject([
       { content: "A", status: "failed", stage: "bind" },
@@ -126,7 +127,7 @@ describe("durable send attempts with controlled HTTP responses", () => {
         });
       if (key.startsWith("PUT")) return new Response(null, { status: 200 });
       return ++writes === 1
-        ? json(503, { error: "unavailable" })
+        ? json(429, { error: "rate_limited" })
         : bind.promise;
     });
     await login(user.email, "password");
@@ -222,6 +223,23 @@ describe("durable send attempts with controlled HTTP responses", () => {
     expect(attempts()).toEqual([]);
   });
 });
+
+it.each([408, 500, 502, 503, 504])(
+  "does not repeat bind after ambiguous HTTP %s",
+  async (status) => {
+    routes(() => json(status, { error: "upstream_failure" }));
+    await login(user.email, "password");
+    await sendMessageAttempt("c", author, {
+      content: "possibly committed",
+    }).catch(() => undefined);
+    const attempt = attempts()[0]!;
+    expect(attempt.status).toBe("uncertain");
+    await expect(
+      sendMessageAttempt("c", author, { content: "", attemptId: attempt.id }),
+    ).rejects.toThrow("Speicherstatus unbekannt");
+    expect(requests.filter((key) => key.endsWith("/messages"))).toHaveLength(1);
+  },
+);
 
 describe("per-row rollback using real mutation observers", () => {
   let client: QueryClient;
@@ -329,5 +347,47 @@ describe("per-row rollback using real mutation observers", () => {
     response.resolve(json(503, { error: "unavailable" }));
     await done;
     expect(cached().map((r) => r.id)).toEqual(["two"]);
+  });
+  it("reviewer late PATCH response cannot replace a newer REST row", async () => {
+    seed();
+    const response = held();
+    routes((key) =>
+      key.startsWith("GET ")
+        ? json(200, {
+            messages: [
+              {
+                ...row("one", "newer REST"),
+                edited_at: "2099-01-01T00:00:00Z",
+              },
+              row("two"),
+            ],
+            has_more: false,
+          })
+        : response.promise,
+    );
+    const mutation = new MutationObserver(
+      client,
+      editMessageOptions(client, "c"),
+    );
+    const done = mutation.mutate({ id: "one", content: "earlier edit" });
+    await vi.waitFor(() => expect(cached()[0]?.content).toBe("earlier edit"));
+    const stamp = takeStamp()!;
+    await client.invalidateQueries({
+      queryKey: key(),
+      exact: true,
+      refetchType: "none",
+    });
+    await client.fetchInfiniteQuery(
+      messageQueryOptions(client, stamp.userId, stamp.generation, "c"),
+    );
+    expect(cached()[0]?.content).toBe("newer REST");
+    response.resolve(
+      json(200, {
+        ...row("one", "earlier edit"),
+        edited_at: "2026-09-28T00:00:01Z",
+      }),
+    );
+    await done;
+    expect(cached()[0]?.content).toBe("newer REST");
   });
 });
