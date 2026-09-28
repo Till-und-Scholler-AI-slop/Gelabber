@@ -90,8 +90,11 @@ test("gateway faults leave HMR, media and unrelated socket paths untouched", asy
     constructor(url) {
       this.url = String(url);
       this.readyState = 1;
+      this.listeners = {};
     }
-    addEventListener() {}
+    addEventListener(event, fn) {
+      this.listeners[event] = fn;
+    }
     send() {}
     close() {
       this.readyState = 3;
@@ -126,6 +129,18 @@ test("gateway faults leave HMR, media and unrelated socket paths untouched", asy
     [...window.__e2e.sockets].map((s) => s.plane),
     ["gateway", "media", "other", "other", "other", "other"],
   );
+  const gateway = window.__e2e.sockets[0];
+  for (const frame of [
+    { op: "ok", c: "synthetic-topic", n: 12, ep: "old" },
+    { op: "e", c: "synthetic-topic", n: 1, ep: "new" },
+    { op: "gap", c: "synthetic-topic", n: 1, ep: "new" },
+    { op: "resync" },
+  ])
+    gateway.ws.listeners.message({ data: JSON.stringify(frame) });
+  assert.equal(gateway.topics.get("synthetic-topic").epochChanges, 1);
+  assert.equal(gateway.receivedEvents, 1);
+  assert.equal(gateway.gaps, 1);
+  assert.equal(gateway.resyncs, 1);
   const actor = {
     page: {
       evaluate: (fn, value) => {

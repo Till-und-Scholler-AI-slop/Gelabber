@@ -1,0 +1,63 @@
+// Exact automated scopes. Required manual/environment gates remain in full-suite reports.
+export const profiles = {
+  media: {
+    suite: "media",
+    cases: [
+      "live-watch-default-autoplay-no-mic",
+      "late-watch-after-30s",
+      "media-ws-capture-preserving-recovery",
+      "gateway-only-preserves-peer",
+      "offline-8s-no-new-capture-gesture",
+      "watch-navigation-channel-binding-global-controls",
+      "live-claim-exclusive-and-loser-not-published",
+      "20-live-start-stop-bounded-client-resources",
+      "cancelled-live-picker-keeps-voice-no-ghost",
+      "camera-screen-live-source-identity",
+      "autoplay-rejection-visible-click-retry",
+    ],
+  },
+  core: {
+    suite: "core",
+    cases: [
+      "account-session-reload-login",
+      "channel-chat-create-edit-delete-converges",
+      "new-dm-connected-recipient-discovers-without-refetch",
+      "channel-jpeg-png-webp-bind-reload-byte-equal",
+      "dm-jpeg-png-webp-bind-reload-byte-equal",
+      "background-event-before-first-open-55-history-paging",
+      "initial-history-error-visible-bounded-retry",
+      "failed-send-navigation-retains-own-retry",
+      "two-tabs-account-switch-delayed-401",
+      "two-tabs-account-switch-delayed-403",
+      "private-dm-foreign-discovery-subscription-denied",
+    ],
+  },
+  "core-faults": {
+    suite: "core",
+    cases: [
+      "two-parallel-sends-navigation-retry",
+      "committed-send-gateway-timeout-no-duplicate-retry",
+      "edit-delete-failure-row-scoped-rollback",
+      "rest-ws-reordering-edit-delete-rollback",
+      "paging-error-data-preservation",
+      "upload-abort-retains-text-file-retry",
+      "upload-account-switch-no-foreign-bind",
+      "redis-epoch-replay-window-reset",
+      "redis-pubsub-outage-durable-outbox-convergence",
+      "storage-delete-outage-durable-cleanup",
+      "upload-abandoned-object-cleanup",
+      "slow-reader-bounded-memory",
+      "ban-invite-join-race",
+    ],
+  },
+  access: {
+    suite: "access",
+    cases: [
+      "leave-revokes-existing-gateway-active-sfu-and-held-ticket",
+      "kick-revokes-existing-gateway-active-sfu-and-held-ticket",
+      "ban-revokes-existing-gateway-active-sfu-and-held-ticket",
+      "logout-revokes-existing-gateway-active-sfu-and-held-ticket",
+      "logout-other-independent-session-survives",
+    ],
+  },
+};

@@ -111,7 +111,7 @@ export async function startHarness() {
   const servers = [];
   const testSourceHashes = {};
   for (const filename of (await readdir(new URL("./", import.meta.url)))
-    .filter((name) => name.endsWith(".mjs"))
+    .filter((name) => name.endsWith(".mjs") || name.endsWith(".py"))
     .sort())
     testSourceHashes[filename] = createHash("sha256")
       .update(await readFile(new URL(filename, import.meta.url)))
@@ -355,31 +355,60 @@ export async function startHarness() {
         })
         .catch(() => {});
     }
-    for (const { owner, id } of servers) {
+    for (const { owner, id, deleted } of servers) {
+      if (deleted) {
+        report.cleanup.push({
+          target: "owned-test-server",
+          status: 204,
+          source: "scenario-confirmed-delete",
+        });
+        continue;
+      }
+      let stage = "create-cleanup-context",
+        context;
+      const statuses = {};
       try {
         // A separate login lets logout/revocation scenarios leave the original socket untouched.
-        const context = await browser.newContext();
+        context = await browser.newContext();
         const page = await context.newPage();
+        stage = "load-login";
         await page.goto(`${base}/login`);
         await page.getByLabel("E-Mail-Adresse").fill(owner.email);
         await page.getByLabel("Passwort", { exact: true }).fill(password);
+        const login = page.waitForResponse(
+          (r) =>
+            new URL(r.url()).pathname === "/api/auth/login" &&
+            r.request().method() === "POST",
+        );
+        stage = "submit-login";
         await page
           .getByRole("button", { name: "Anmelden", exact: true })
           .click();
+        statuses.login = (await login).status();
+        stage = "wait-login-redirect";
         await page.waitForURL((url) => !url.pathname.includes("login"));
+        stage = "delete-owned-server";
         const response = await api({ page }, `/servers/${id}`, "DELETE");
+        statuses.delete = response.status;
+        stage = "logout-cleanup-session";
+        statuses.logout = (await api({ page }, "/auth/logout", "POST")).status;
+        check(statuses.logout === 200, "fixture-cleanup-logout-failed");
         report.cleanup.push({
           target: "owned-test-server",
           status: response.status,
+          stage: "complete",
+          statuses,
         });
-        await api({ page }, "/auth/logout", "POST");
-        await context.close();
       } catch {
         report.cleanup.push({
           target: "owned-test-server",
           status: "FAILED",
           reason: "cleanup-interface-or-deadline",
+          stage,
+          statuses,
         });
+      } finally {
+        await context?.close().catch(() => {});
       }
     }
     await browser.close();
@@ -404,6 +433,11 @@ export async function startHarness() {
     setup: (id, predecessors, task) =>
       run(id, predecessors, task, { setup: true }),
     fixture,
+    markServerDeleted(id) {
+      const owned = servers.find((s) => s.id === id);
+      check(owned, "fixture-delete-not-owned");
+      owned.deleted = true;
+    },
     setIsolation,
     run,
     blocked,

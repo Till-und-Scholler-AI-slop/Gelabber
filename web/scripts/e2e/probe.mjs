@@ -33,6 +33,10 @@ export function instrument({ relay }) {
         offers: 0,
         maxSdp: 0,
         receivedEvents: 0,
+        gaps: 0,
+        resyncs: 0,
+        dmDiscoveries: 0,
+        topics: new Map(),
         liveOn: 0,
         liveOff: 0,
       };
@@ -40,7 +44,24 @@ export function instrument({ relay }) {
       this.addEventListener("message", (event) => {
         try {
           const frame = JSON.parse(event.data);
-          if (frame.op === "e") item.receivedEvents++;
+          if (frame.op === "gap") item.gaps++;
+          if (frame.op === "resync") item.resyncs++;
+          if (frame.op === "dm") item.dmDiscoveries++;
+          if (frame.op === "e") {
+            item.receivedEvents++;
+          }
+          if (["ok", "e", "gap"].includes(frame.op)) {
+            if (typeof frame.c === "string" && Number.isSafeInteger(frame.n)) {
+              const previous = item.topics.get(frame.c);
+              item.topics.set(frame.c, {
+                n: frame.n,
+                ep: frame.ep,
+                epochChanges:
+                  (previous?.epochChanges ?? 0) +
+                  (previous && previous.ep !== frame.ep ? 1 : 0),
+              });
+            }
+          }
         } catch {
           /* Non-JSON is not evidence. */
         }
@@ -228,6 +249,13 @@ export async function sample() {
       offers: s.offers,
       maxSdp: s.maxSdp,
       receivedEvents: s.receivedEvents,
+      gaps: s.gaps,
+      resyncs: s.resyncs,
+      dmDiscoveries: s.dmDiscoveries,
+      epochChanges: [...s.topics.values()].reduce(
+        (n, t) => n + t.epochChanges,
+        0,
+      ),
       liveOn: s.liveOn,
       liveOff: s.liveOff,
     })),

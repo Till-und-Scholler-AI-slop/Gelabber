@@ -21,7 +21,7 @@ async function contentInRest(actor, id, text) {
     { status: response.status },
   );
 }
-async function ensureAccount(actor, base) {
+export async function ensureAccount(actor, base) {
   const current = await api(actor, "/auth/session");
   if (current.body.user?.id === actor.id) return;
   if (current.body.user) await api(actor, "/auth/logout", "POST");
@@ -341,6 +341,15 @@ export async function coreScenarios(h, f) {
     "initial-history-error-visible-bounded-retry",
     ["07"],
     async () => {
+      const marker = "E2E initial history retry control";
+      check(
+        (
+          await api(f.owner, `/channels/${chat}/messages`, "POST", {
+            content: marker,
+          })
+        ).status === 201,
+        "fixture-history-retry-seed-failed",
+      );
       let failures = 0;
       const endpoint = `**/api/channels/${chat}/messages*`;
       await f.member.page.route(endpoint, async (route) => {
@@ -357,11 +366,12 @@ export async function coreScenarios(h, f) {
         await navigate(f.member, f.textPath, f.base);
         await observe(6_000, async () => ({ failures }));
         const retry = f.member.page.getByRole("button", {
-          name: /Erneut|Wiederholen|Retry/i,
+          name: "Erneut laden",
+          exact: true,
         });
         const visibleRetry = (await retry.count()) > 0;
         check(
-          visibleRetry && failures <= 4,
+          visibleRetry && failures > 0 && failures <= 4,
           "history-error-hidden-or-retry-unbounded",
           { requests: failures, visibleRetry },
         );
@@ -370,7 +380,12 @@ export async function coreScenarios(h, f) {
         await f.member.page
           .locator("form textarea")
           .waitFor({ state: "visible" });
-        return { failedRequests: failures, explicitRetry: true };
+        await visible(f.member, marker);
+        return {
+          failedRequests: failures,
+          explicitRetry: true,
+          actualHistoryRestored: true,
+        };
       } finally {
         await f.member.page.unroute(endpoint);
       }
@@ -378,15 +393,16 @@ export async function coreScenarios(h, f) {
   );
   await h.run("failed-send-navigation-retains-own-retry", ["07"], async () => {
     await navigate(f.owner, f.textPath, f.base);
+    await navigate(f.member, f.textPath, f.base);
     const endpoint = `**/api/channels/${chat}/messages`;
     let rejected = 0;
     await f.owner.page.route(endpoint, async (route) => {
       if (route.request().method() === "POST") {
         rejected++;
         await route.fulfill({
-          status: 503,
+          status: 429,
           contentType: "application/json",
-          body: '{"error":"unavailable","message":"E2E synthetic send failure"}',
+          body: '{"error":"rate_limited","message":"E2E synthetic send failure"}',
         });
       } else await route.continue();
     });
@@ -398,7 +414,7 @@ export async function coreScenarios(h, f) {
       );
       await send(f.owner, "E2E recoverable send attempt");
       check(
-        (await failedResponse).status() === 503,
+        (await failedResponse).status() === 429,
         "send-fault-response-missing",
       );
       await until(
@@ -411,54 +427,47 @@ export async function coreScenarios(h, f) {
         .click();
       // Navigate by observed href without a reload (draft must survive unmount).
       await f.owner.page.locator(`a[href="${f.textPath}"]`).click();
-      const draft = await f.owner.page
-        .locator("form textarea")
-        .last()
-        .inputValue();
-      const retry = await f.owner.page
-        .getByRole("button", { name: /Erneut senden|Wiederholen/ })
-        .count();
+      const retained = f.owner.page
+        .getByRole("alert")
+        .filter({ hasText: "E2E recoverable send attempt" });
+      const retry = retained.getByRole("button", {
+        name: "Sendung wiederholen",
+        exact: true,
+      });
+      await retry.waitFor();
+      check((await retry.count()) === 1, "failed-send-lost-on-navigation", {
+        rejected,
+        retainedAttempt: true,
+      });
+      await f.owner.page.unroute(endpoint);
+      await retry.click();
+      await visible(f.member, "E2E recoverable send attempt");
+      const history = await api(f.member, `/channels/${chat}/messages`);
       check(
-        draft === "E2E recoverable send attempt" || retry > 0,
-        "failed-send-lost-on-navigation",
-        {
-          rejected,
-          draftRetained: draft === "E2E recoverable send attempt",
-          retryVisible: retry > 0,
-        },
+        history.status === 200 &&
+          history.body.messages.filter(
+            (m) => m.content === "E2E recoverable send attempt",
+          ).length === 1,
+        "failed-send-explicit-retry-duplicated-or-missing",
+        { controlConfirmed: true },
       );
-      return { rejected, attemptRetained: true };
+      return { rejected, attemptRetained: true, exactRetryMessages: 1 };
     } finally {
       await f.owner.page.unroute(endpoint);
     }
   });
   const { accountSwitchScenarios } = await import("./account-switch.mjs");
   await accountSwitchScenarios(h, f);
-  h.blocked(
-    "rest-ws-reordering-edit-delete-rollback",
-    "07 pending; scoped delayed REST/event ordering fixture required",
-    ["07"],
-  );
-  h.blocked(
-    "two-parallel-sends-upload-account-switch",
-    "07 pending; per-attempt recovery UI contract required",
-    ["07"],
-  );
-  h.blocked(
-    "paging-error-data-preservation",
-    "07 pending; separate multi-page failed fetch/retry scenario required",
-    ["07"],
-  );
-  h.blocked(
-    "redis-epoch-replay-window-reset",
-    "shared Redis must not be reset; isolated service failure contract needed",
-    ["05a", "06b"],
-  );
-  h.blocked(
-    "storage-delete-outage-durable-cleanup",
-    "shared MinIO/DB must not be stopped; read-only own-object cleanup instrumentation needed",
-    ["10"],
-  );
+  const { chatFaultScenarios } = await import("./chat-faults.mjs");
+  await chatFaultScenarios(h, f);
+  const { realtimeFaultScenarios } = await import("./realtime-faults.mjs");
+  await realtimeFaultScenarios(h, f, h.faultRuntime);
+  const { storageFaultScenarios } = await import("./storage-faults.mjs");
+  await storageFaultScenarios(h, f, h.faultRuntime);
+  const { gatewayLoadScenarios } = await import("./gateway-load.mjs");
+  await gatewayLoadScenarios(h, f, h.faultRuntime);
+  const { membershipFaultScenarios } = await import("./membership-faults.mjs");
+  await membershipFaultScenarios(h, f, h.faultRuntime);
   h.setIsolation(null);
   h.blocked(
     "attachments-https-wan",

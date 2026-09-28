@@ -1,5 +1,7 @@
 # 11a historical handoff — review correction
 
+This historical record is superseded for current scope/status by [AUTOMATION-HANDOFF.md](AUTOMATION-HANDOFF.md). The later commits a93b1b6,4028136 and6146657 have separate independent reviews. Historical blocked reasons below describe the original runtime and do not apply to the now-authorized isolated API/DB/Storage/Core runtime.
+
 Branch `fix/stability-11`, baseline `828ee2341e57a7e77a971b1f9c52d3372f046fb8`. One standalone test-only commit; coordinator integrates and reviews. No pushes, PRs, release, production access or shared-service restarts. Implementation is paused after delivery so Web07/06b can take the third slot.
 
 Owned changes: `web/scripts/e2e/**` and the two new entries in `web/package.json`. The original camera/screen/forced-TURN/netem/upload smoke is unchanged and executed successfully locally, with netem explicitly unavailable. No product, CI, lockfile, pin or `media/tests/browser-lifecycle.mjs` changes.

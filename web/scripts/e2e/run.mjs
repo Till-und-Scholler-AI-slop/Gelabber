@@ -1,10 +1,33 @@
 /* global process */
 import { startHarness } from "./harness.mjs";
 import { mediaScenarios } from "./media.mjs";
+import { profiles } from "./profiles.mjs";
+import { activeFaultRuntime } from "./fault-runtime.mjs";
+if (process.env.GELABBER_E2E_PROFILE) {
+  const profile = profiles[process.env.GELABBER_E2E_PROFILE];
+  if (
+    !profile ||
+    process.env.GELABBER_E2E_CASES ||
+    process.env.GELABBER_E2E_SUITE
+  )
+    throw new Error("unknown or conflicting E2E profile");
+  process.env.GELABBER_E2E_SUITE = profile.suite;
+  process.env.GELABBER_E2E_CASES = profile.cases.join(",");
+}
 const suite = process.env.GELABBER_E2E_SUITE ?? "all";
 if (!["all", "media", "core", "access"].includes(suite))
   throw new Error("unknown E2E suite");
 const h = await startHarness();
+h.faultRuntime = activeFaultRuntime;
+h.report.profile = process.env.GELABBER_E2E_PROFILE ?? null;
+if (activeFaultRuntime)
+  h.report.ownedFaultRuntime = {
+    api: activeFaultRuntime.manifest.sourceSha,
+    binarySha256: activeFaultRuntime.manifest.sha256,
+    dedicatedDatabaseAndBucket: true,
+    replayWindow: 8,
+    fixtureRateLimitsDisabled: true,
+  };
 try {
   let f;
   const setup = await h.setup("isolated-app-fixture", [], async () => {
@@ -15,7 +38,7 @@ try {
       channels: 3,
       registration: "UI",
       invitation: "UI",
-      services: "real API/Gateway/SFU",
+      services: "real API/Gateway; SFU joined only in media/access scenarios",
     };
   });
   if (setup.status === "PASS") {

@@ -1,5 +1,7 @@
 # Actual-app acceptance scenarios
 
+Current 11b/c execution, the row-by-row acceptance matrix, fault-runtime instructions and CI limits are in [AUTOMATION-HANDOFF.md](AUTOMATION-HANDOFF.md). [HANDOFF.md](HANDOFF.md) preserves historical 11a findings; it is not the current result matrix.
+
 This runner provides scenario construction and automated local/CI subset gates. Complete acceptance also requires the documented manual, HTTPS/WAN and production gates. The runner creates isolated `example.test` accounts and its own server through the UI, uses the actual API, Gateway, SFU and object store, and deletes only its own server. Accounts remain as test fixtures; no shared Redis keys, services or existing data are reset. A fresh browser cookie jar is used for each participant. Core scenarios verify and restore each fixture account before and after every check; failed restoration blocks following scenarios.
 
 The original 11a delivery added `web/scripts/e2e/**` and two npm script entries. The separate smoke fix4028136 subsequently isolated netem to selected SFU UDP ports while preserving camera/screen/forced-TURN/audio/recovery/upload assertions; see [SMOKE-NETEM.md](../SMOKE-NETEM.md). Dependencies, pins, lockfile and product source remain unchanged. CI integration is authorized for the next phase.
@@ -39,6 +41,6 @@ The logout check registers a POST `/api/auth/logout` response wait before clicki
 
 ## Open acceptance
 
-Every operational/manual prerequisite has an explicit BLOCKED row: audible speech/mute/deafen quality on two devices, native display picker, per-room SFU task/publication bounds, forced track arrival ordering/rejected SDP, isolated API/Redis outage and epoch reset, slow raw reader backpressure, object-store/database failure cleanup, deleted-room negative cases, remaining concurrent send/rollback/paging scenarios pending 07, and HTTPS/WAN. The existing privileged netem check is retained; it was not runnable locally. Native screen and audible two-device acceptance remain with the coordinator.
+Core/Storage/Epoch, concurrent attempts and row rollback, real slow raw TCP reader and transaction-forced Ban/Join now have actual Chromium and Firefox controls on the approved immutable core snapshot. Their exact results and earlier test errors are recorded in the current handoff. Final media and deleted-room integration still await the independently approved08b runtime. Native screen-picker, audible two-device quality, WAN/production and full remote netem remain explicit separate gates. The original relay/audio/recovery assertions and strict selected-case/cleanup gates remain in force.
 
 See [HANDOFF.md](HANDOFF.md) and [evidence/](evidence/) for executed checks, controls and remaining blockers. The coordinator authorized 11b/c automation after the separate 11a fix; runtime prerequisites and final 11d gates remain explicit. No product edits or self-deployment.
