@@ -498,6 +498,7 @@ function Composer({
   const [fileError, setFileError] = useState<string | null>(null);
   const [preview, setPreview] = useState<string | null>(null);
   const fileInput = useRef<HTMLInputElement>(null);
+  const composerInput = useRef<HTMLTextAreaElement>(null);
   const fileRef = useRef<File | null>(null);
   const error = draft.length === 0 ? null : validateContent(draft);
   const remaining = CONTENT_MAX - Array.from(normalisedLength(draft)).length;
@@ -616,8 +617,10 @@ function Composer({
               accept={ALLOWED_TYPES.join(",")}
               className="sr-only"
               onChange={(event) => {
-                pickFile(event.target.files?.[0] ?? null);
+                const selected = event.target.files?.[0] ?? null;
+                pickFile(selected);
                 event.target.value = "";
+                if (selected) composerInput.current?.focus();
               }}
             />
             <button
@@ -632,6 +635,7 @@ function Composer({
           </>
         ) : null}
         <textarea
+          ref={composerInput}
           id={`compose-${channelId}`}
           value={draft}
           onChange={(e) => {
