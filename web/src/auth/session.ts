@@ -4,9 +4,20 @@
 
 import { create } from "zustand";
 
-import { api, setCsrfToken, setSessionSink } from "../api/client.ts";
+import {
+  api,
+  setCsrfToken,
+  setSessionScope,
+  setSessionSink,
+} from "../api/client.ts";
 import { releaseUserScope } from "./release.ts";
-import { stampHolds, takeStamp } from "./scope.ts";
+import {
+  invalidateSessionRequests,
+  sessionStampHolds,
+  stampHolds,
+  takeSessionStamp,
+  takeStamp,
+} from "./scope.ts";
 import type {
   LogoutResponse,
   ProfilePatch,
@@ -57,6 +68,7 @@ function isUser(value: unknown): value is User {
 // re-bootstrap) lands here, so a session that died in another tab flips
 // this tab to anonymous as instantly as an explicit logout would.
 setSessionSink((value) => applySession(isUser(value) ? value : null));
+setSessionScope(takeSessionStamp);
 
 let bootstrap: Promise<void> | null = null;
 
@@ -69,24 +81,43 @@ export function ensureSession(): Promise<void> {
   if (useSession.getState().status !== "unknown") {
     return Promise.resolve();
   }
-  bootstrap ??= api<SessionResponse>("/auth/session")
-    .then((session) => applySession(session.user))
+  if (bootstrap) return bootstrap;
+  const stamp = takeSessionStamp();
+  const request = api<SessionResponse>("/auth/session")
+    .then((session) => {
+      if (sessionStampHolds(stamp)) applySession(session.user);
+    })
     .catch(() => {
       // Offline or API down: treat as anonymous so the login page can render
       // and show the real error inline on submit.
-      applySession(null);
+      if (sessionStampHolds(stamp)) applySession(null);
     })
     .finally(() => {
-      bootstrap = null;
+      if (bootstrap === request) bootstrap = null;
     });
+  bootstrap = request;
   return bootstrap;
 }
 
+function startAuthIntent() {
+  invalidateSessionRequests();
+  bootstrap = null;
+  return takeSessionStamp();
+}
+
+function requireAuthIntent(stamp: ReturnType<typeof takeSessionStamp>): void {
+  if (!sessionStampHolds(stamp)) {
+    throw new DOMException("The session changed. Try again.", "AbortError");
+  }
+}
+
 export async function login(email: string, password: string): Promise<User> {
+  const stamp = startAuthIntent();
   const session = await api<SessionResponse>("/auth/login", {
     method: "POST",
     body: { email, password },
   });
+  requireAuthIntent(stamp);
   applySession(session.user);
   return session.user as User;
 }
@@ -96,10 +127,12 @@ export async function register(
   password: string,
   name: string,
 ): Promise<User> {
+  const stamp = startAuthIntent();
   const session = await api<SessionResponse>("/auth/register", {
     method: "POST",
     body: { email, password, name },
   });
+  requireAuthIntent(stamp);
   applySession(session.user);
   return session.user as User;
 }
@@ -110,12 +143,14 @@ export async function register(
  * bootstrap simply picks up again, so there is nothing to roll back.
  */
 export async function logout(): Promise<void> {
+  const logoutUserId = useSession.getState().user?.id ?? null;
+  startAuthIntent();
   applySession(null);
   try {
-    const response = await api<LogoutResponse>("/auth/logout", {
+    await api<LogoutResponse>("/auth/logout", {
       method: "POST",
+      logoutUserId,
     });
-    setCsrfToken(response.csrf_token);
   } catch {
     // Already signed out as far as this tab is concerned.
   }
@@ -169,6 +204,7 @@ export function resetSessionForTests(): void {
   bootstrap = null;
   setCsrfToken(null);
   setSessionSink((value) => applySession(isUser(value) ? value : null));
+  setSessionScope(takeSessionStamp);
   useSession.setState({ status: "unknown", user: null });
   releaseUserScope(null);
 }
