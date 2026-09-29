@@ -3,6 +3,36 @@ import { test } from "node:test";
 import assert from "node:assert/strict";
 import { createContext, runInContext } from "node:vm";
 import { instrument, sample } from "./probe.mjs";
+import { armPlaybackRetry } from "./media.mjs";
+
+test("autoplay rejection remains armed until a trusted retry button click", () => {
+  let listener;
+  const state = { rejectPlayback: true };
+  const window = {
+    __e2e: state,
+    addEventListener: (_event, fn, capture) => {
+      assert.equal(capture, true);
+      listener = fn;
+    },
+    removeEventListener: (_event, fn, capture) => {
+      assert.equal(fn, listener);
+      assert.equal(capture, true);
+      listener = null;
+    },
+  };
+  runInContext(`(${armPlaybackRetry.toString()})()`, createContext({ window }));
+  assert.equal(state.rejectPlayback, true);
+  const event = (isTrusted, textContent) => ({
+    isTrusted,
+    target: { closest: () => ({ textContent }) },
+  });
+  listener(event(false, "Wiedergabe starten"));
+  listener(event(true, "Zuschauen"));
+  assert.equal(state.rejectPlayback, true);
+  listener(event(true, "Wiedergabe starten"));
+  assert.equal(state.rejectPlayback, false);
+  assert.equal(listener, null);
+});
 
 test("concurrent claim fault holds only native Gateway publish, while SDP rejection still delegates to the browser", async () => {
   const sent = [],

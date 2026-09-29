@@ -11,6 +11,20 @@ import {
 
 export const activePeers = (s) =>
   s.peers.filter((p) => p.connection !== "closed");
+export function armPlaybackRetry() {
+  // Keep unmute/autoplay callbacks blocked until the real user click reaches
+  // the retry button; lifting the fault earlier can remove that button.
+  const release = (event) => {
+    if (
+      !event.isTrusted ||
+      event.target.closest?.("button")?.textContent?.trim() !==
+        "Wiedergabe starten"
+    ) return;
+    window.__e2e.rejectPlayback = false;
+    window.removeEventListener("click", release, true);
+  };
+  window.addEventListener("click", release, true);
+}
 export const decoded = (s) =>
   activePeers(s)
     .flatMap((p) => p.inbound)
@@ -465,9 +479,7 @@ export async function mediaScenarios(h, f) {
       "blocked-play-has-no-visible-retry",
       await snapshot(f.watcher),
     );
-    await nativeEvaluate(f.watcher, () => {
-      window.__e2e.rejectPlayback = false;
-    });
+    await nativeEvaluate(f.watcher, armPlaybackRetry);
     await retry.first().click();
     return {
       fault:
