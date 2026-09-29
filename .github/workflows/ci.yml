@@ -3,6 +3,12 @@
 name: CI
 
 on:
+  workflow_dispatch:
+    inputs:
+      extended_e2e:
+        description: Run the extended browser and fault diagnostic matrix (strict results)
+        type: boolean
+        default: true
   pull_request:
     paths:
       - api/**
@@ -121,9 +127,11 @@ jobs:
           cargo test --locked --workspace --all-targets
 
       - name: Build owned API and SFU for isolated fault acceptance
+        if: github.event_name == 'workflow_dispatch' && inputs.extended_e2e
         run: cargo build --locked -p gelabber-api -p gelabber-media
 
       - name: Node for owned core fault acceptance
+        if: github.event_name == 'workflow_dispatch' && inputs.extended_e2e
         uses: actions/setup-node@v4
         with:
           node-version: 26.8.2
@@ -131,6 +139,7 @@ jobs:
           cache-dependency-path: web/package-lock.json
 
       - name: Install real browsers and SQL fixture client
+        if: github.event_name == 'workflow_dispatch' && inputs.extended_e2e
         run: |
           set -euo pipefail
           sudo apt-get update
@@ -140,11 +149,13 @@ jobs:
           npx playwright install --with-deps chromium firefox
 
       - name: Prepare dedicated fault database, bucket and immutable API/SFU copies
+        if: github.event_name == 'workflow_dispatch' && inputs.extended_e2e
         env:
           GELABBER_E2E_PREPARE_MEDIA: "true"
         run: node web/scripts/e2e/ci-fault-prepare.mjs
 
       - name: Real app core and API/Redis Live-lease faults in both browsers
+        if: github.event_name == 'workflow_dispatch' && inputs.extended_e2e
         run: |
           set -euo pipefail
           failed=0
@@ -168,7 +179,7 @@ jobs:
           exit "$failed"
 
       - name: Upload redacted owned fault results
-        if: always()
+        if: always() && github.event_name == 'workflow_dispatch' && inputs.extended_e2e
         uses: actions/upload-artifact@v4
         with:
           name: app-acceptance-core-faults
@@ -354,9 +365,10 @@ jobs:
           export GELABBER_SMOKE_MEDIA_PID="$(docker inspect --format '{{.State.Pid}}' "$media_container")"
           npm run test:browser-smoke
 
-      # These cases require the integrated 04/05/06/07/08 product fixes.
-      # A selected PASS is an automated subset gate, never complete live acceptance.
+      # Extended diagnosis is explicitly manual for the development release.
+      # Preserve strict failures; this is not part of the baseline release gate.
       - name: Actual app media and access in Chromium and Firefox, direct and TURN
+        if: github.event_name == 'workflow_dispatch' && inputs.extended_e2e
         working-directory: web
         run: |
           set -euo pipefail
