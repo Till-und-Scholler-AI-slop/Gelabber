@@ -148,9 +148,10 @@ class Promotion(unittest.TestCase):
     def prepare_release(self):
         Path('image-set.json').write_text(json.dumps(dict(
             promoted=True, revision=SHA, version='v0.2.4', publish_run_id=2,
-            ci_run_id=1, images=self.images)))
+            ci_run_id=1, images=self.images,
+            minio=dict(image=f'ghcr.io/{REPO}/minio', digest=DIGEST, source_pin=m.MINIO_PIN))))
         self.publish = dict(conclusion='success', status='completed', event='workflow_run',
-                            head_branch='main', repository={'full_name': REPO},
+                            head_branch='main', head_sha=SHA, repository={'full_name': REPO},
                             path='.github/workflows/publish-images.yml')
 
     def release_api(self, path):
@@ -158,6 +159,8 @@ class Promotion(unittest.TestCase):
             return self.publish
         if path == 'actions/runs/1':
             return ci()
+        if path == 'releases/latest':
+            return dict(tag_name='v0.2.4', draft=False, prerelease=False, published_at='2026-09-29T00:00:00Z')
         if path.startswith('releases'):
             return []
         return {'object': {'sha': SHA}}
@@ -181,13 +184,109 @@ class Promotion(unittest.TestCase):
 
     def test_verified_release_attaches_exact_manifest(self):
         self.prepare_release()
-        with patch.dict(os.environ, RELEASE_TAG='v0.2.4'), patch.object(m, 'api', side_effect=self.release_api), patch.object(m, 'tag_sha', return_value=None), patch.object(m, 'registry_digest', return_value=DIGEST), patch.object(m, 'run', return_value=SHA) as writes:
+        with patch.dict(os.environ, RELEASE_TAG='v0.2.4'), patch.object(m, 'api', side_effect=self.release_api), patch.object(m, 'tag_sha', side_effect=[None, SHA]), patch.object(m, 'registry_digest', return_value=DIGEST), patch.object(m, 'run', return_value=SHA) as writes:
             m.release()
-            args = writes.call_args_list[-1].args
+            args = next(call.args for call in writes.call_args_list if call.args[:3] == ('gh', 'release', 'create'))
             self.assertEqual(args[:4], ('gh', 'release', 'create', 'v0.2.4'))
             self.assertIn('image-set.json', args)
             self.assertIn('image-set.env', args)
             self.assertIn(SHA, args)
+            alias_calls = [call.args for call in writes.call_args_list if call.args[0] == 'docker']
+            self.assertEqual(len(alias_calls), 4)
+            for call in alias_calls:
+                self.assertTrue(call[-2].endswith(':latest'))
+                self.assertTrue(call[-1].endswith('@' + DIGEST))
+
+    def latest_run(self, api=None, digest=None, run=None, tag=SHA):
+        with patch.dict(os.environ, RELEASE_TAG='v0.2.4'), patch.object(m, 'api', side_effect=api or self.release_api), patch.object(m, 'tag_sha', return_value=tag), patch.object(m, 'registry_digest', side_effect=digest or (lambda ref: DIGEST)), patch.object(m, 'run', side_effect=run or (lambda *args: SHA)) as calls:
+            m.latest()
+            return [c.args for c in calls.call_args_list]
+
+    def test_latest_repairs_published_release_after_main_advanced_without_new_release(self):
+        self.prepare_release()
+        manifest = json.loads(Path('image-set.json').read_text())
+        expected = {}
+        for index, (name, item) in enumerate({**manifest['images'], 'minio': manifest['minio']}.items(), 1):
+            item['digest'] = 'sha256:' + str(index) * 64
+            expected[item['image']] = item['digest']
+        Path('image-set.json').write_text(json.dumps(manifest))
+        calls = self.latest_run(digest=lambda ref: expected[ref.rsplit(':', 1)[0]])
+        self.assertIn(('git', 'merge-base', '--is-ancestor', SHA, 'HEAD'), calls)
+        self.assertIn(('git', 'fetch', '--no-tags', 'origin', 'refs/tags/v0.2.4:refs/tags/v0.2.4'), calls)
+        self.assertEqual(len([c for c in calls if c[0] == 'docker']), 4)
+        self.assertFalse(any(c[0] == 'gh' for c in calls))
+        for call in (c for c in calls if c[0] == 'docker'):
+            image = call[-2].removesuffix(':latest')
+            self.assertEqual(call[-1], image + '@' + expected[image])
+
+    def test_existing_release_is_preserved_while_aliases_are_repaired(self):
+        self.prepare_release()
+        def api(path):
+            return [{'tag_name': 'v0.2.4'}] if path == 'releases?per_page=100' else self.release_api(path)
+        with patch.dict(os.environ, RELEASE_TAG='v0.2.4'), patch.object(m, 'api', side_effect=api), patch.object(m, 'tag_sha', return_value=SHA), patch.object(m, 'registry_digest', return_value=DIGEST), patch.object(m, 'run', return_value=SHA) as calls:
+            m.release()
+            self.assertFalse(any(c.args[0] == 'gh' for c in calls.call_args_list))
+            self.assertEqual(len([c for c in calls.call_args_list if c.args[0] == 'docker']), 4)
+
+    def test_latest_refuses_old_draft_and_prerelease_before_alias_writes(self):
+        self.prepare_release()
+        for changes in ({'tag_name': 'v0.2.5'}, {'draft': True}, {'prerelease': True}, {'published_at': None}):
+            calls = []
+            def api(path):
+                value = self.release_api(path)
+                return {**value, **changes} if path == 'releases/latest' else value
+            with self.subTest(changes=changes), self.assertRaises(ValueError):
+                self.latest_run(api=api, run=lambda *args: calls.append(args))
+            self.assertEqual(calls, [])
+
+    def test_latest_preflights_minio_and_all_app_digests_before_any_alias_write(self):
+        self.prepare_release()
+        for bad in ('media:v0.2.4', 'minio:' + m.MINIO_PIN):
+            calls = []
+            with self.subTest(bad=bad), self.assertRaises(ValueError):
+                self.latest_run(digest=lambda ref: OTHER if ref.endswith(bad) else DIGEST,
+                                run=lambda *args: calls.append(args))
+            self.assertFalse(any(c[0] == 'docker' for c in calls))
+
+    def test_latest_refuses_wrong_publish_source_or_tag(self):
+        self.prepare_release()
+        self.publish['head_sha'] = 'd' * 40
+        calls = []
+        with self.assertRaises(ValueError):
+            self.latest_run(run=lambda *args: calls.append(args))
+        self.assertFalse(any(c[0] == 'docker' for c in calls))
+        self.publish['head_sha'] = SHA
+        with self.assertRaises(ValueError):
+            self.latest_run(tag='d' * 40)
+
+    def test_latest_partial_write_failure_remains_red_and_is_retryable(self):
+        self.prepare_release()
+        calls = []
+        def fail(*args):
+            calls.append(args)
+            if args[0] == 'docker' and args[-2].endswith('/web:latest'):
+                raise subprocess.CalledProcessError(1, args)
+            return SHA
+        with self.assertRaises(subprocess.CalledProcessError):
+            self.latest_run(run=fail)
+        self.assertEqual(len([c for c in calls if c[0] == 'docker']), 2)
+        self.assertEqual(len([c for c in self.latest_run() if c[0] == 'docker']), 4)
+
+    def test_latest_verifies_written_alias_digest(self):
+        self.prepare_release()
+        with self.assertRaises(ValueError):
+            self.latest_run(digest=lambda ref: OTHER if ref.endswith(':latest') else DIGEST)
+
+    def test_failed_release_creation_never_updates_latest(self):
+        self.prepare_release()
+        def run(*args):
+            if args[0] == 'gh':
+                raise subprocess.CalledProcessError(1, args)
+            return SHA
+        with patch.dict(os.environ, RELEASE_TAG='v0.2.4'), patch.object(m, 'api', side_effect=self.release_api), patch.object(m, 'tag_sha', return_value=None), patch.object(m, 'registry_digest', return_value=DIGEST), patch.object(m, 'run', side_effect=run) as calls:
+            with self.assertRaises(subprocess.CalledProcessError):
+                m.release()
+            self.assertFalse(any(c.args[0] == 'docker' for c in calls.call_args_list))
 
 
 if __name__ == '__main__':

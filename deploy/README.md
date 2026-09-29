@@ -118,7 +118,7 @@ Der Default zieht die App-Version `v0.2.5`; bestehende Release-Tags werden nicht
 
 CI läuft für **jeden main-Commit**, damit auch Deploy-/Workflow-Änderungen eine eindeutige CI-SHA besitzen. PR-Pfadfilter erfassen `shared/**`, alle Workspace-Mitglieder, Docker-Kontexte, Lockfiles und Workflows. Der Image-Workflow baut PRs ohne Push. Auf main startet er erst nach erfolgreichem `CI`-Push-Lauf derselben SHA; fehlgeschlagene/abgebrochene CI startet keinen Publish-Job.
 
-Zuerst entstehen App-Tags `sha-<volle SHA>-<Run-ID>-<Attempt>`; OCI-Labels enthalten Revision, Version, Commitzeit und Source-URL. Die zusätzlichen Run-Felder verhindern, dass ein erneuter Build derselben SHA einen vorherigen Build überschreibt. Die Promotion prüft CI erneut und prüft **alle drei** Versionsdigests vor dem ersten Schreibvorgang. Ein bestehender Versionsdigest muss exakt identisch sein. Ein vorhandener Git-Release-Tag mit anderer SHA oder inzwischen verschobenes main führt zu einem reinen Kandidatensatz ohne Version-Promotion. `latest` wird nie geschrieben. MinIO publiziert nur seinen eigenen Pin, falls dieser noch fehlt; vorhandene Pins und alte Aliase bleiben erhalten.
+Zuerst entstehen App-Tags `sha-<volle SHA>-<Run-ID>-<Attempt>`; OCI-Labels enthalten Revision, Version, Commitzeit und Source-URL. Die zusätzlichen Run-Felder verhindern, dass ein erneuter Build derselben SHA einen vorherigen Build überschreibt. Die Promotion prüft CI erneut und prüft **alle drei** Versionsdigests vor dem ersten Schreibvorgang. Ein bestehender Versionsdigest muss exakt identisch sein. Ein vorhandener Git-Release-Tag mit anderer SHA oder inzwischen verschobenes main führt zu einem reinen Kandidatensatz ohne Version-Promotion. Der Build-/Promotionslauf schreibt kein `latest`. Erst der erfolgreiche `Release`-Workflow setzt für API, Web, Media und MinIO den Alias `latest` auf die Digests des veröffentlichten stabilen Releases. Zuvor prüft er den ganzen Satz, den Git-Tag, CI und Publish-Lauf; ältere Releases und Kandidaten dürfen die Aliase nicht zurücksetzen. MinIO behält seinen separaten Pin; dessen `latest` zeigt auf den MinIO-Digest aus dem Release-Satz.
 
 Das Artifact `image-set` enthält:
 
@@ -126,6 +126,8 @@ Das Artifact `image-set` enthält:
 - `image-set.env`: vier `GELABBER_*_IMAGE=ghcr.io/…@sha256:…`-Referenzen für Compose.
 
 Kandidatensätze sind **keine Releases**. Ein abgeschlossener Hotfix bekommt erst nach koordinierter Abnahme eine neue Workspace-/Compose-Version. Der Koordinator startet danach den Workflow `Release` **auf main** mit passendem `tag` und erfolgreicher `image_run_id`. Dieser prüft Manifest, CI, aktuellen main-Stand und Versionsdigests erneut, bewahrt existierende Tags/Releases und hängt den Satz an den neuen GitHub-Release. Es gibt keinen automatischen Release auf jedem Push und keinen Release von Feature-/Major-Zwischenständen. Kein Trigger durch beliebige `v*`-Tag-Pushes.
+
+Falls ein Alias-Update unterbrochen wurde oder bei einem älteren Release fehlte: `Release` auf **main** mit dessen `tag` und `image_run_id` starten und **refresh_latest_only** aktivieren. Das repariert ausschließlich die Aliase des aktuell als latest veröffentlichten stabilen GitHub-Releases, ohne Builds, neue Releases oder Änderungen an festen Tags. Für v0.2.5: `tag=v0.2.5`, `image_run_id=36549037951`. Alle vier Aliase werden einzeln geschrieben; bei einem Fehler bleibt der Workflow rot und kann erneut gestartet werden.
 
 ## Rollout und Rollback mit exakten Digests
 

@@ -99,6 +99,58 @@ def promote():
         for name, item in entries.items()))
 
 
+def latest():
+    """Refresh mutable aliases only from the latest published stable release."""
+    repo = os.environ['GITHUB_REPOSITORY']
+    manifest = json.loads(Path('image-set.json').read_text())
+    sha, version = manifest['revision'], manifest['version']
+    if (manifest.get('promoted') is not True or version != os.environ['RELEASE_TAG']
+            or not re.fullmatch(r'v\d+\.\d+\.\d+', version)
+            or not re.fullmatch(r'[0-9a-f]{40}', sha)):
+        raise ValueError('Latest requires a promoted stable release image set')
+    published = api('releases/latest')
+    if (published['tag_name'] != version or published['draft']
+            or published['prerelease'] or not published.get('published_at')):
+        raise ValueError('Refusing to move latest to an older or unpublished release')
+    # gh release create may have just created this tag on the remote.
+    run('git', 'fetch', '--no-tags', 'origin', f'refs/tags/{version}:refs/tags/{version}')
+    if tag_sha(version) != sha:
+        raise ValueError('Published release tag does not match image-set source')
+    # A manual repair may run after main advanced, but never from unrelated code.
+    run('git', 'merge-base', '--is-ancestor', sha, 'HEAD')
+    publish = api(f'actions/runs/{manifest["publish_run_id"]}')
+    if (publish['conclusion'] != 'success' or publish['status'] != 'completed'
+            or publish['event'] != 'workflow_run' or publish['head_branch'] != 'main'
+            or publish['head_sha'] != sha or publish['repository']['full_name'] != repo
+            or publish['path'] != '.github/workflows/publish-images.yml'):
+        raise ValueError('Latest requires the successful trusted image publish run')
+    check_ci(api(f'actions/runs/{manifest["ci_run_id"]}'), sha, repo)
+    images = manifest['images']
+    if set(images) != set(SERVICES):
+        raise ValueError('Incomplete release image set')
+    refs = {}
+    for name in SERVICES:
+        item = images[name]
+        if item['revision'] != sha:
+            raise ValueError('Invalid release image source')
+        refs[name] = (item, version)
+    minio = manifest['minio']
+    if minio['source_pin'] != MINIO_PIN:
+        raise ValueError('Unexpected MinIO pin')
+    refs['minio'] = (minio, MINIO_PIN)
+    # Validate the complete set before changing any mutable alias.
+    for name, (item, tag) in refs.items():
+        if (item['image'] != f'ghcr.io/{repo.lower()}/{name}'
+                or not re.fullmatch(r'sha256:[0-9a-f]{64}', item['digest'])
+                or registry_digest(f'{item["image"]}:{tag}') != item['digest']):
+            raise ValueError('Release image digest or repository mismatch')
+    for item, _ in refs.values():
+        run('docker', 'buildx', 'imagetools', 'create', '--prefer-index=false',
+            '--tag', f'{item["image"]}:latest', f'{item["image"]}@{item["digest"]}')
+        if registry_digest(f'{item["image"]}:latest') != item['digest']:
+            raise ValueError('Latest alias does not match the released digest')
+
+
 def release():
     repo = os.environ['GITHUB_REPOSITORY']
     manifest = json.loads(Path('image-set.json').read_text())
@@ -127,13 +179,15 @@ def release():
     releases = api('releases?per_page=100')
     if any(r['tag_name'] == version for r in releases):
         print('Release already exists at the verified SHA; preserving it.')
+        latest()
         return
     args = ['gh', 'release', 'create', version, 'image-set.json', 'image-set.env',
             '--target', sha, '--title', f'Gelabber {version}']
     notes = Path(f'.github/release-notes/{version}.md')
     args += ['--notes-file', str(notes)] if notes.exists() else ['--generate-notes']
     run(*args)
+    latest()
 
 
 if __name__ == '__main__':
-    {'promote': promote, 'release': release}[sys.argv[1]]()
+    {'promote': promote, 'release': release, 'latest': latest}[sys.argv[1]]()

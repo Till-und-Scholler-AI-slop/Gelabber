@@ -11,6 +11,10 @@ on:
       image_run_id:
         description: Successful Publish app images run containing the promoted image-set artifact
         required: true
+      refresh_latest_only:
+        description: Only repair latest aliases for the current published stable release
+        type: boolean
+        default: false
 
 concurrency:
   group: app-images-main
@@ -19,7 +23,7 @@ concurrency:
 permissions:
   actions: read
   contents: write
-  packages: read
+  packages: write
 
 jobs:
   github-release:
@@ -46,8 +50,14 @@ jobs:
           registry: ghcr.io
           username: ${{ github.actor }}
           password: ${{ secrets.GITHUB_TOKEN }}
-      - name: Verify exact CI and immutable image set, then create release
+      - name: Verify image set, release and update latest aliases
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
           RELEASE_TAG: ${{ inputs.tag }}
-        run: python3 .github/workflows/scripts/image_set.py release
+          REFRESH_LATEST_ONLY: ${{ inputs.refresh_latest_only }}
+        run: |
+          if [ "$REFRESH_LATEST_ONLY" = true ]; then
+            python3 .github/workflows/scripts/image_set.py latest
+          else
+            python3 .github/workflows/scripts/image_set.py release
+          fi
