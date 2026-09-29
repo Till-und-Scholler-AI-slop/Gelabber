@@ -1,4 +1,4 @@
-/* global URL */
+/* global URL, setTimeout, clearTimeout */
 // Complete actual scenario source; only native/UI/observation infrastructure is synthetic.
 import vm from "node:vm";
 import assert from "node:assert/strict";
@@ -44,6 +44,7 @@ export async function sessionAudioControl({
   micNeverConnected = false,
   micNoOutboundRtp = false,
   otherPeerOnlyRtp = false,
+  samePeerOtherSenderOnlyRtp = false,
 } = {}) {
   const actions = [];
   let finishedVolume = false,
@@ -59,20 +60,44 @@ export async function sessionAudioControl({
   };
   function actor(name) {
     const microphone = { kind: "audio", readyState: "live", enabled: true };
-    const sender = { track: microphone };
+    let senderStatsCalls = 0;
+    const sender = {
+      track: microphone,
+      getStats: async () => {
+        senderStatsCalls++;
+        return new Map([
+          [
+            "owned-sender-audio-rtp",
+            {
+              type: "outbound-rtp",
+              kind: "audio",
+              packetsSent: sender.packetsSent,
+            },
+          ],
+        ]);
+      },
+      packetsSent: 20,
+    };
     const state = {
       nativeSenders: [sender],
       peers: [
         { connectionState: "connected", getSenders: () => state.nativeSenders },
       ],
     };
-    const context = vm.createContext({ window: { __e2e: state } });
+    const context = vm.createContext({
+      window: { __e2e: state },
+      setTimeout,
+      clearTimeout,
+    });
     return {
       id: name,
       sample: data(),
       state,
       sender,
       microphone,
+      get senderStatsCalls() {
+        return senderStatsCalls;
+      },
       page: {
         locator: () => locator,
         getByRole: () => locator,
@@ -107,6 +132,8 @@ export async function sessionAudioControl({
     f.watcher.state.peers[0].connectionState = "connecting";
   if (micNoOutboundRtp || otherPeerOnlyRtp)
     f.watcher.sample.peers[0].outbound[0].packets = 0;
+  if (micNoOutboundRtp || otherPeerOnlyRtp || samePeerOtherSenderOnlyRtp)
+    f.watcher.sender.packetsSent = 0;
   if (otherPeerOnlyRtp) {
     f.watcher.state.peers.unshift({
       connectionState: "connected",
@@ -215,5 +242,10 @@ export async function sessionAudioControl({
     reset: async () => {},
     options: {},
   });
-  return { result, error, actions };
+  return {
+    result,
+    error,
+    actions,
+    watcherSenderStatsCalls: f.watcher.senderStatsCalls,
+  };
 }

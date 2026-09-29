@@ -4,7 +4,7 @@ import {
   NativeInterfaceFailure,
 } from "./native-evaluate.mjs";
 import { attemptAll } from "./teardown.mjs";
-/* global window */
+/* global window, setTimeout, clearTimeout */
 import {
   CheckFailure,
   check,
@@ -513,40 +513,80 @@ export async function mediaExtraScenarios(h, f, { begin, reset, options }) {
         const microphoneControl = await until(
           async () => {
             const observed = await snapshot(f.watcher);
-            const control = await nativeEvaluate(f.watcher, () => {
-              const state = window.__e2e;
-              const candidates = state.peers
-                .filter((peer) => peer.connectionState === "connected")
-                .flatMap((peer) =>
-                  peer.getSenders().map((sender) => ({ peer, sender })),
-                )
-                .filter(
-                  ({ sender }) =>
-                    sender.track?.kind === "audio" &&
-                    sender.track.readyState === "live",
-                );
-              const current = candidates.length === 1 ? candidates[0] : null;
-              state.sessionAudioMicrophone = current
-                ? { ...current, track: current.sender.track }
-                : null;
-              return {
-                senderCount: candidates.length,
-                peerIndex: current ? state.peers.indexOf(current.peer) : null,
-                enabled: current ? current.sender.track.enabled : null,
-              };
-            });
-            const peer = observed.peers[control.peerIndex];
-            const audio =
-              peer?.outbound.filter((r) => r.kind === "audio") ?? [];
-            const available =
-              peer?.connection === "connected" &&
-              audio.length > 0 &&
-              audio.every((r) => Number.isInteger(r.packets) && r.packets >= 0);
+            const control = await nativeEvaluate(
+              f.watcher,
+              async function sample({ deadlineEpochMs }) {
+                const state = window.__e2e;
+                const candidates = state.peers
+                  .filter((peer) => peer.connectionState === "connected")
+                  .flatMap((peer) =>
+                    peer.getSenders().map((sender) => ({ peer, sender })),
+                  )
+                  .filter(
+                    ({ sender }) =>
+                      sender.track?.kind === "audio" &&
+                      sender.track.readyState === "live",
+                  );
+                const current = candidates.length === 1 ? candidates[0] : null;
+                state.sessionAudioMicrophone = current
+                  ? { ...current, track: current.sender.track }
+                  : null;
+                let outboundAudioPackets = null;
+                if (current && typeof current.sender.getStats === "function") {
+                  const remaining = deadlineEpochMs - Date.now();
+                  if (remaining <= 0)
+                    throw new Error("E2E_NATIVE_STATS_DEADLINE");
+                  let timer;
+                  let report;
+                  try {
+                    report = await Promise.race([
+                      current.sender.getStats(),
+                      new Promise((_, reject) => {
+                        timer = setTimeout(
+                          () => reject(new Error("E2E_NATIVE_STATS_DEADLINE")),
+                          Math.max(
+                            0,
+                            remaining -
+                              Math.min(100, Math.max(1, remaining / 10)),
+                          ),
+                        );
+                      }),
+                    ]);
+                  } finally {
+                    clearTimeout(timer);
+                  }
+                  const audioReports = [...report.values()].filter(
+                    (entry) =>
+                      entry.type === "outbound-rtp" &&
+                      (entry.kind ?? entry.mediaType) === "audio",
+                  );
+                  if (
+                    audioReports.length > 0 &&
+                    audioReports.every(
+                      (entry) =>
+                        Number.isInteger(entry.packetsSent) &&
+                        entry.packetsSent >= 0,
+                    )
+                  )
+                    outboundAudioPackets = audioReports.reduce(
+                      (sum, entry) => sum + entry.packetsSent,
+                      0,
+                    );
+                }
+                return {
+                  senderCount: candidates.length,
+                  peerIndex: current ? state.peers.indexOf(current.peer) : null,
+                  enabled: current ? current.sender.track.enabled : null,
+                  outboundAudioPackets,
+                };
+              },
+            );
             return {
               ...control,
-              outboundAudioPackets: available
-                ? audio.reduce((sum, r) => sum + r.packets, 0)
-                : null,
+              outboundAudioPackets:
+                observed.peers[control.peerIndex]?.connection === "connected"
+                  ? control.outboundAudioPackets
+                  : null,
             };
           },
           (s) =>

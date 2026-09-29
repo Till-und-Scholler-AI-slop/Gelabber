@@ -114,12 +114,23 @@ for (const option of [
   { micNeverConnected: true },
   { micNoOutboundRtp: true },
   { otherPeerOnlyRtp: true },
+  { samePeerOtherSenderOnlyRtp: true },
 ]) {
   test(`actual microphone fixture cannot accept missing connection/RTP or another peer's RTP ${JSON.stringify(option)}`, async () => {
     const r = await sessionAudioControl(option);
     assert.ok(r.error instanceof CheckFailure);
+    assert.equal(
+      r.error.message,
+      "fixture-session-positive-microphone-not-ready",
+    );
     assert.equal(r.result, undefined);
     assert.ok(r.actions.includes("other.context.close"));
+    if (option.samePeerOtherSenderOnlyRtp) {
+      assert.ok(r.watcherSenderStatsCalls > 0);
+      assert.equal(r.error.metrics.last.outboundAudioPackets, 0);
+      assert.ok(r.error.metrics.last.senderCount === 1);
+      assert.ok(r.error.metrics.last.peerIndex !== null);
+    }
   });
 }
 test("actual audio task retains the original expected microphone across mute/deafen/undeafen", async () => {
