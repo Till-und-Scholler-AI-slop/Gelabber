@@ -10,6 +10,7 @@ use tower::ServiceExt;
 
 fn config(postgres: SocketAddr, redis: SocketAddr, ready_timeout_ms: u64) -> Config {
     Config::from_source(|key| match key {
+        "API_ALLOW_MEMORY_STORE" => Some("true".to_owned()),
         "DATABASE_URL" => Some(format!("postgres://u:p@{postgres}/db")),
         "REDIS_URL" => Some(format!("redis://{redis}")),
         "API_READY_TIMEOUT_MS" => Some(ready_timeout_ms.to_string()),

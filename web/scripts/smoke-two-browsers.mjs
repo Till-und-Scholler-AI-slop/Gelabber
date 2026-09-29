@@ -8,6 +8,7 @@ import { mkdir, readFile } from "node:fs/promises";
 import { setTimeout as pause } from "node:timers/promises";
 import { promisify } from "node:util";
 import { chromium } from "playwright";
+import { withUdpLoss } from "./smoke-netem.mjs";
 
 const base = process.env.GELABBER_SMOKE_URL ?? "http://127.0.0.1";
 const suffix = `${Date.now()}-${process.pid}`;
@@ -162,11 +163,40 @@ async function mediaTc(...args) {
   return execFileAsync("sudo", ["nsenter", "-t", pid, "-n", "tc", ...args]);
 }
 
-async function droppedPackets() {
-  const { stdout } = await mediaTc("-s", "qdisc", "show", "dev", "eth0");
-  const dropped = /\bdropped (\d+)\b/.exec(stdout)?.[1];
-  assert.ok(dropped !== undefined, `Missing netem drop counter: ${stdout}`);
-  return Number(dropped);
+async function selectedSfuPorts(page) {
+  const candidates = await page.evaluate(async () => {
+    const selected = [];
+    for (const peer of window.__smokePeers ?? []) {
+      if (peer.connectionState !== "connected") continue;
+      const report = await peer.getStats();
+      const transport = [...report.values()].find(
+        (s) => s.type === "transport" && s.selectedCandidatePairId,
+      );
+      const pair = transport && report.get(transport.selectedCandidatePairId);
+      const remote = pair && report.get(pair.remoteCandidateId);
+      if (pair?.state === "succeeded" && remote)
+        selected.push({
+          port: remote.port,
+          protocol: remote.protocol,
+          ipv6: (remote.address ?? remote.ip ?? "").includes(":"),
+        });
+    }
+    return selected;
+  });
+  assert.ok(candidates.length > 0, "Missing selected SFU ICE candidates");
+  for (const candidate of candidates) {
+    assert.equal(candidate.protocol, "udp", "Netem smoke requires SFU UDP");
+    assert.equal(
+      candidate.ipv6,
+      false,
+      "Netem smoke requires the Compose IPv4 path",
+    );
+    assert.ok(
+      Number.isInteger(candidate.port),
+      "Missing selected SFU UDP port",
+    );
+  }
+  return candidates.map((c) => c.port);
 }
 
 try {
@@ -220,27 +250,31 @@ try {
   await waitForAudio(a.page, { sent: 30, received: 30 });
   const beforeLoss = await waitForAudio(b.page, { sent: 30, received: 30 });
 
+  const ports = [
+    ...(await selectedSfuPorts(a.page)),
+    ...(await selectedSfuPorts(b.page)),
+  ];
+
   if (process.env.GELABBER_SMOKE_MEDIA_PID) {
-    // Shape the media container's outgoing traffic at the OS layer. Browser
-    // DevTools packetLoss does not reliably affect established TURN media.
-    await mediaTc("qdisc", "add", "dev", "eth0", "root", "netem", "loss", "8%");
-    let duringLoss;
-    try {
-      await pause(8_000);
-      duringLoss = await waitForAudio(b.page, {
-        sent: beforeLoss.sent + 100,
-        received: beforeLoss.received + 100,
-      });
-      assert.ok((await droppedPackets()) > 0, "netem dropped no packets");
-    } finally {
-      await mediaTc("qdisc", "del", "dev", "eth0", "root");
-    }
+    // Match real selected SFU ICE source ports. Redis authority and media/Gateway
+    // signaling use TCP and must remain healthy during the media-loss test.
+    const { result: duringLoss, dropped } = await withUdpLoss(
+      mediaTc,
+      ports,
+      async () => {
+        await pause(8_000);
+        return waitForAudio(b.page, {
+          sent: beforeLoss.sent + 100,
+          received: beforeLoss.received + 100,
+        });
+      },
+    );
     await waitForAudio(b.page, {
       sent: duringLoss.sent + 100,
       received: duringLoss.received + 100,
     });
     console.log(
-      `TURN-relayed Opus audio flowed through 8% netem packet loss and recovered (receiver reported ${duringLoss.lost - beforeLoss.lost} lost packets).`,
+      `TURN-relayed Opus audio flowed through 8% SFU UDP netem packet loss and recovered (${dropped} UDP packets dropped; receiver reported ${duringLoss.lost - beforeLoss.lost} lost packets).`,
     );
   } else {
     console.log(

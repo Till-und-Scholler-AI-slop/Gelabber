@@ -1,7 +1,7 @@
 // Text-channel body: virtualised history, optimistic composer, own
 // edit/delete. A send writes the pending overlay first, so the row is
 // painted in the same frame; the server answer swaps the `tmp:` id, an
-// error drops the row.
+// error retains an independently recoverable send attempt.
 
 import { useVirtualizer } from "@tanstack/react-virtual";
 import {
@@ -25,6 +25,8 @@ import {
 } from "../messages/pages.ts";
 import {
   nonePending,
+  discardAttempt,
+  type SendAttempt,
   removePending,
   usePendingMessages,
 } from "../messages/pending.ts";
@@ -73,6 +75,14 @@ export function MessagePane({
 }) {
   const user = useSession((s) => s.user);
   const query = useMessages(channelId, true);
+  const attempts = usePendingMessages((s) => s.attempts);
+  const channelAttempts = useMemo(
+    () =>
+      Object.values(attempts).filter(
+        (attempt) => attempt.channelId === channelId,
+      ),
+    [attempts, channelId],
+  );
   const pending = usePendingMessages(
     (s) => s.byChannel[channelId] ?? nonePending,
   );
@@ -91,8 +101,14 @@ export function MessagePane({
   const hasNextPage = query.hasNextPage;
   const isFetchingNextPage = query.isFetchingNextPage;
   const onLoadOlder = useCallback(() => {
-    if (hasNextPage && !isFetchingNextPage) void fetchNextPage();
-  }, [hasNextPage, isFetchingNextPage, fetchNextPage]);
+    if (hasNextPage && !isFetchingNextPage && !query.isFetchNextPageError)
+      void fetchNextPage();
+  }, [
+    hasNextPage,
+    isFetchingNextPage,
+    fetchNextPage,
+    query.isFetchNextPageError,
+  ]);
 
   return (
     <div className="flex min-h-0 flex-1 flex-col">
@@ -105,6 +121,17 @@ export function MessagePane({
         loadingOlder={isFetchingNextPage}
         onLoadOlder={onLoadOlder}
         ready={!query.isPending}
+        loadError={
+          query.error
+            ? query.isFetchNextPageError
+              ? "paging"
+              : "history"
+            : null
+        }
+        onRetry={() => {
+          if (query.isFetchNextPageError) void fetchNextPage();
+          else void query.refetch();
+        }}
       />
       {footer}
       <Composer
@@ -118,6 +145,7 @@ export function MessagePane({
             ? { id: user.id, name: user.name, avatar_url: user.avatar_url }
             : null
         }
+        attempts={channelAttempts}
         onDraftChange={onDraftChange}
         onDraftStop={onDraftStop}
       />
@@ -134,6 +162,8 @@ function MessageList({
   loadingOlder,
   onLoadOlder,
   ready,
+  loadError,
+  onRetry,
 }: {
   channelId: string;
   items: Message[];
@@ -143,6 +173,8 @@ function MessageList({
   loadingOlder: boolean;
   onLoadOlder: () => void;
   ready: boolean;
+  loadError: "history" | "paging" | null;
+  onRetry: () => void;
 }) {
   const scrollRef = useRef<HTMLDivElement>(null);
   const stickToBottom = useRef(true);
@@ -218,14 +250,22 @@ function MessageList({
   const firstVisible = virtualizer.getVirtualItems()[0]?.index ?? 0;
   const firstId = items[0]?.id;
   useEffect(() => {
-    if (!ready || !hasOlder || loadingOlder) return;
+    if (!ready || !hasOlder || loadingOlder || loadError) return;
     // First paint is pinned to the newest row; do not walk older pages
     // until the user actually scrolls up.
     if (stickToBottom.current) return;
     if (firstVisible > 4) return;
     olderAnchor.current = firstId ?? null;
     onLoadOlder();
-  }, [firstVisible, firstId, hasOlder, loadingOlder, onLoadOlder, ready]);
+  }, [
+    firstVisible,
+    firstId,
+    hasOlder,
+    loadingOlder,
+    onLoadOlder,
+    ready,
+    loadError,
+  ]);
 
   return (
     <div
@@ -241,7 +281,24 @@ function MessageList({
       }}
       className="flex min-h-0 flex-1 flex-col overflow-y-auto"
     >
-      {ready && items.length === 0 ? (
+      {loadError ? (
+        <div role="alert" className="px-4 py-3 text-center text-sm">
+          <p>
+            {loadError === "paging"
+              ? "Ältere Nachrichten konnten nicht geladen werden."
+              : "Nachrichten konnten nicht geladen werden."}
+          </p>
+          <button
+            type="button"
+            onClick={onRetry}
+            disabled={!ready || loadingOlder}
+            className="mt-2 rounded border px-3 py-1 disabled:opacity-50"
+          >
+            Erneut laden
+          </button>
+        </div>
+      ) : null}
+      {ready && !loadError && items.length === 0 ? (
         <div className="flex h-full items-center justify-center px-6 text-center text-sm text-neutral-500 dark:text-neutral-400">
           Noch keine Nachrichten. Schreib die erste.
         </div>
@@ -477,6 +534,7 @@ function Composer({
   canSendFiles,
   mention,
   author,
+  attempts,
   onDraftChange,
   onDraftStop,
 }: {
@@ -486,6 +544,7 @@ function Composer({
   canSendFiles: boolean;
   mention: "#" | "@";
   author: { id: string; name: string; avatar_url: string | null } | null;
+  attempts: SendAttempt[];
   onDraftChange?: (value: string) => void;
   onDraftStop?: () => void;
 }) {
@@ -498,7 +557,13 @@ function Composer({
   const [fileError, setFileError] = useState<string | null>(null);
   const [preview, setPreview] = useState<string | null>(null);
   const fileInput = useRef<HTMLInputElement>(null);
-  const fileRef = useRef<File | null>(null);
+  const composerInput = useRef<HTMLTextAreaElement>(null);
+  useEffect(
+    () => () => {
+      if (preview) URL.revokeObjectURL(preview);
+    },
+    [preview],
+  );
   const error = draft.length === 0 ? null : validateContent(draft);
   const remaining = CONTENT_MAX - Array.from(normalisedLength(draft)).length;
   const emptyText = draft.trim().length === 0;
@@ -510,18 +575,15 @@ function Composer({
     setPreview(null);
     setFileError(null);
     if (!next) {
-      fileRef.current = null;
       setFile(null);
       return;
     }
     const invalid = validateAttachment(next);
     if (invalid) {
-      fileRef.current = null;
       setFile(null);
       setFileError(fieldMessage(invalid.field, invalid.code));
       return;
     }
-    fileRef.current = next;
     setFile(next);
     if (isImageType(inferContentType(next))) {
       setPreview(URL.createObjectURL(next));
@@ -533,21 +595,7 @@ function Composer({
     if (disabled) return;
     const text = draft;
     const attached = file;
-    send.mutate(
-      { content: text, file: attached ?? undefined },
-      {
-        onError: () => {
-          setDraft((current) => {
-            const next = current.trim().length === 0 ? text : current;
-            if (next) onDraftChange?.(next);
-            return next;
-          });
-          // `file` from this render is `attached` — do not use it. pickFile(null)
-          // already cleared the ref; restore unless the user picked another file.
-          if (!fileRef.current && attached) pickFile(attached);
-        },
-      },
-    );
+    send.mutate({ content: text, file: attached ?? undefined });
     setDraft("");
     pickFile(null);
     onDraftStop?.();
@@ -577,6 +625,54 @@ function Composer({
       onSubmit={submit}
       className="border-t border-neutral-200 dark:border-neutral-700 bg-white dark:bg-neutral-900 px-4 py-3"
     >
+      {attempts
+        .filter((attempt) => attempt.status !== "sending")
+        .map((attempt) => (
+          <div
+            key={attempt.id}
+            role="alert"
+            className="mb-2 rounded border border-red-300 p-2 text-sm dark:border-red-800"
+          >
+            <p>
+              {attempt.error}{" "}
+              {attempt.status === "uncertain"
+                ? "Die Nachricht kann bereits gespeichert sein. Prüfe den Verlauf vor erneutem Senden."
+                : "Text und Datei bleiben für dich erhalten."}
+            </p>
+            <p className="whitespace-pre-wrap break-words">{attempt.content}</p>
+            {attempt.file ? <p>{attempt.file.name}</p> : null}
+            <div className="mt-2 flex gap-3">
+              {attempt.status === "failed" ? (
+                <button
+                  type="button"
+                  disabled={Boolean(attempt.file && !canSendFiles)}
+                  onClick={() =>
+                    send.mutate({
+                      content: attempt.content,
+                      attemptId: attempt.id,
+                    })
+                  }
+                >
+                  Sendung wiederholen
+                </button>
+              ) : null}
+              <button
+                type="button"
+                onClick={() => {
+                  setDraft(attempt.content);
+                  pickFile(attempt.file ?? null);
+                  discardAttempt(attempt.id);
+                  composerInput.current?.focus();
+                }}
+              >
+                Entwurf übernehmen
+              </button>
+              <button type="button" onClick={() => discardAttempt(attempt.id)}>
+                Verwerfen
+              </button>
+            </div>
+          </div>
+        ))}
       <label className="sr-only" htmlFor={`compose-${channelId}`}>
         Nachricht in {mention}
         {channelName}
@@ -616,8 +712,10 @@ function Composer({
               accept={ALLOWED_TYPES.join(",")}
               className="sr-only"
               onChange={(event) => {
-                pickFile(event.target.files?.[0] ?? null);
+                const selected = event.target.files?.[0] ?? null;
+                pickFile(selected);
                 event.target.value = "";
+                if (selected) composerInput.current?.focus();
               }}
             />
             <button
@@ -632,6 +730,7 @@ function Composer({
           </>
         ) : null}
         <textarea
+          ref={composerInput}
           id={`compose-${channelId}`}
           value={draft}
           onChange={(e) => {

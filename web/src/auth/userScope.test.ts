@@ -340,7 +340,7 @@ describe("account switch drops the previous user's state", () => {
     const bobGeneration = takeStamp()?.generation;
 
     resolvePatch?.(json(200, { ...ada, name: "Ada Lovelace" }));
-    await pending;
+    await expect(pending).rejects.toMatchObject({ name: "AbortError" });
 
     expect(useSession.getState().user?.id).toBe(bob.id);
     expect(takeStamp()).toEqual({ userId: bob.id, generation: bobGeneration });
@@ -383,7 +383,7 @@ describe("account switch drops the previous user's state", () => {
         fields: { name: "invalid" },
       }),
     );
-    await expect(pending).rejects.toMatchObject({ code: "validation_failed" });
+    await expect(pending).rejects.toMatchObject({ name: "AbortError" });
     expect(useSession.getState().user).toEqual(bob);
   });
 

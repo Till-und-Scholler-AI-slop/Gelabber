@@ -17,6 +17,8 @@ export type Attachment = {
 
 export type Message = {
   id: string;
+  /** Durable database revision; optional only for the older API. */
+  revision?: number;
   channel_id: string;
   author: MessageAuthor;
   content: string;

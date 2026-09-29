@@ -90,7 +90,7 @@ return st
 "#;
 
 fn conn_key(user_id: Uuid, conn: ConnId) -> String {
-    format!("{REDIS_PREFIX}p:c:{user_id}:{}", conn.as_u64())
+    format!("{REDIS_PREFIX}p:c:{user_id}:{}", conn.redis_id())
 }
 
 fn user_key(user_id: Uuid) -> String {

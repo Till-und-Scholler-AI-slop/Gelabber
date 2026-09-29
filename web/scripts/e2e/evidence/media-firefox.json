@@ -1,0 +1,862 @@
+{
+  "schema": 1,
+  "selectedCases": [],
+  "phase": "11a",
+  "at": "2026-09-28T13:06:49.879Z",
+  "source": "828ee2341e57a7e77a971b1f9c52d3372f046fb8",
+  "testFilesDirty": true,
+  "runtime": {
+    "attribution": "operator-supplied; not runtime digest verification",
+    "web": "4dc99da",
+    "api": "828ee23",
+    "media": "28d4505"
+  },
+  "browser": {
+    "engine": "firefox",
+    "version": "155.0",
+    "platform": "linux",
+    "node": "v26.8.2"
+  },
+  "environment": {
+    "url": "http://127.0.0.1:5174",
+    "requestedNetwork": "direct",
+    "https": false,
+    "capture": "synthetic changing canvas; fake microphone",
+    "autoplay": "browser default; no policy override"
+  },
+  "limitations": [
+    "Not 11b/c/d acceptance",
+    "No native display picker, audible two-device speech, WAN or production test",
+    "No SFU publication/task telemetry; client bounds only",
+    "Accounts remain as isolated example.test fixtures; owned servers are deleted"
+  ],
+  "results": [
+    {
+      "id": "isolated-app-fixture",
+      "status": "PASS",
+      "metrics": {
+        "accounts": 3,
+        "servers": 1,
+        "channels": 3,
+        "registration": "UI",
+        "invitation": "UI",
+        "services": "real API/Gateway/SFU"
+      },
+      "at": "2026-09-28T13:06:49.886Z",
+      "durationMs": 8404,
+      "predecessors": []
+    },
+    {
+      "id": "live-watch-default-autoplay-no-mic",
+      "status": "FAIL",
+      "reason": "publisher-encode-deadline",
+      "site": "harness.mjs:28:9",
+      "metrics": {
+        "last": {
+          "micCalls": 1,
+          "displayCalls": 1,
+          "cameraCalls": 0,
+          "playRejected": 0,
+          "peers": [
+            {
+              "connection": "failed",
+              "ice": "failed",
+              "transceivers": 2,
+              "senders": 2,
+              "receivers": 2,
+              "localSdpBytes": 4371,
+              "selected": [],
+              "inbound": [],
+              "outbound": [
+                {
+                  "kind": "audio",
+                  "bytes": 0,
+                  "packets": 0,
+                  "frames": null,
+                  "keyframes": null,
+                  "lost": 0,
+                  "jitter": 0,
+                  "pli": 0
+                },
+                {
+                  "kind": "video",
+                  "bytes": 0,
+                  "packets": 0,
+                  "frames": 0,
+                  "keyframes": 0,
+                  "lost": 0,
+                  "jitter": 0,
+                  "pli": 0
+                }
+              ]
+            }
+          ],
+          "videos": [
+            {
+              "kind": "live",
+              "width": 640,
+              "height": 360,
+              "paused": false,
+              "ready": 4,
+              "renderedFrames": 0,
+              "pixels": {
+                "source": [
+                  220,
+                  30,
+                  30
+                ],
+                "motion": [
+                  46,
+                  46,
+                  46
+                ]
+              }
+            }
+          ],
+          "captures": [
+            {
+              "kind": "display",
+              "slot": 1,
+              "state": "live",
+              "muted": false,
+              "colors": [
+                220,
+                30,
+                30
+              ]
+            }
+          ],
+          "sockets": [
+            {
+              "plane": "gateway",
+              "ready": 1,
+              "offers": 0,
+              "maxSdp": 0,
+              "receivedEvents": 0,
+              "liveOn": 0,
+              "liveOff": 0
+            },
+            {
+              "plane": "gateway",
+              "ready": 1,
+              "offers": 0,
+              "maxSdp": 0,
+              "receivedEvents": 1,
+              "liveOn": 0,
+              "liveOff": 1
+            },
+            {
+              "plane": "media",
+              "ready": 1,
+              "offers": 5,
+              "maxSdp": 3989,
+              "receivedEvents": 0,
+              "liveOn": 0,
+              "liveOff": 0
+            }
+          ]
+        }
+      },
+      "at": "2026-09-28T13:06:58.290Z",
+      "durationMs": 10905,
+      "predecessors": [
+        "01",
+        "08b"
+      ]
+    },
+    {
+      "id": "late-watch-after-30s",
+      "status": "BLOCKED",
+      "reason": "initial-live-watch-failed",
+      "predecessors": [
+        "01"
+      ],
+      "at": "2026-09-28T13:07:09.196Z"
+    },
+    {
+      "id": "media-ws-capture-preserving-recovery",
+      "status": "FAIL",
+      "reason": "publisher-encode-deadline",
+      "site": "harness.mjs:28:9",
+      "metrics": {
+        "last": {
+          "micCalls": 1,
+          "displayCalls": 1,
+          "cameraCalls": 0,
+          "playRejected": 0,
+          "peers": [
+            {
+              "connection": "failed",
+              "ice": "failed",
+              "transceivers": 2,
+              "senders": 2,
+              "receivers": 2,
+              "localSdpBytes": 4372,
+              "selected": [],
+              "inbound": [],
+              "outbound": [
+                {
+                  "kind": "audio",
+                  "bytes": 0,
+                  "packets": 0,
+                  "frames": null,
+                  "keyframes": null,
+                  "lost": 0,
+                  "jitter": 0,
+                  "pli": 0
+                },
+                {
+                  "kind": "video",
+                  "bytes": 0,
+                  "packets": 0,
+                  "frames": 0,
+                  "keyframes": 0,
+                  "lost": 0,
+                  "jitter": 0,
+                  "pli": 0
+                }
+              ]
+            }
+          ],
+          "videos": [
+            {
+              "kind": "live",
+              "width": 640,
+              "height": 360,
+              "paused": false,
+              "ready": 4,
+              "renderedFrames": 0,
+              "pixels": {
+                "source": [
+                  220,
+                  30,
+                  30
+                ],
+                "motion": [
+                  46,
+                  46,
+                  46
+                ]
+              }
+            }
+          ],
+          "captures": [
+            {
+              "kind": "display",
+              "slot": 1,
+              "state": "live",
+              "muted": false,
+              "colors": [
+                220,
+                30,
+                30
+              ]
+            }
+          ],
+          "sockets": [
+            {
+              "plane": "gateway",
+              "ready": 1,
+              "offers": 0,
+              "maxSdp": 0,
+              "receivedEvents": 0,
+              "liveOn": 0,
+              "liveOff": 0
+            },
+            {
+              "plane": "gateway",
+              "ready": 1,
+              "offers": 0,
+              "maxSdp": 0,
+              "receivedEvents": 1,
+              "liveOn": 0,
+              "liveOff": 1
+            },
+            {
+              "plane": "media",
+              "ready": 1,
+              "offers": 5,
+              "maxSdp": 3990,
+              "receivedEvents": 0,
+              "liveOn": 0,
+              "liveOff": 0
+            }
+          ]
+        }
+      },
+      "at": "2026-09-28T13:07:09.196Z",
+      "durationMs": 10918,
+      "predecessors": [
+        "02",
+        "05b"
+      ]
+    },
+    {
+      "id": "gateway-only-preserves-peer",
+      "status": "FAIL",
+      "reason": "publisher-encode-deadline",
+      "site": "harness.mjs:28:9",
+      "metrics": {
+        "last": {
+          "micCalls": 1,
+          "displayCalls": 1,
+          "cameraCalls": 0,
+          "playRejected": 0,
+          "peers": [
+            {
+              "connection": "failed",
+              "ice": "failed",
+              "transceivers": 2,
+              "senders": 2,
+              "receivers": 2,
+              "localSdpBytes": 4372,
+              "selected": [],
+              "inbound": [],
+              "outbound": [
+                {
+                  "kind": "audio",
+                  "bytes": 0,
+                  "packets": 0,
+                  "frames": null,
+                  "keyframes": null,
+                  "lost": 0,
+                  "jitter": 0,
+                  "pli": 0
+                },
+                {
+                  "kind": "video",
+                  "bytes": 0,
+                  "packets": 0,
+                  "frames": 0,
+                  "keyframes": 0,
+                  "lost": 0,
+                  "jitter": 0,
+                  "pli": 0
+                }
+              ]
+            }
+          ],
+          "videos": [
+            {
+              "kind": "live",
+              "width": 640,
+              "height": 360,
+              "paused": false,
+              "ready": 4,
+              "renderedFrames": 0,
+              "pixels": {
+                "source": [
+                  220,
+                  30,
+                  30
+                ],
+                "motion": [
+                  23,
+                  23,
+                  23
+                ]
+              }
+            }
+          ],
+          "captures": [
+            {
+              "kind": "display",
+              "slot": 1,
+              "state": "live",
+              "muted": false,
+              "colors": [
+                220,
+                30,
+                30
+              ]
+            }
+          ],
+          "sockets": [
+            {
+              "plane": "gateway",
+              "ready": 1,
+              "offers": 0,
+              "maxSdp": 0,
+              "receivedEvents": 0,
+              "liveOn": 0,
+              "liveOff": 0
+            },
+            {
+              "plane": "gateway",
+              "ready": 1,
+              "offers": 0,
+              "maxSdp": 0,
+              "receivedEvents": 1,
+              "liveOn": 0,
+              "liveOff": 1
+            },
+            {
+              "plane": "media",
+              "ready": 1,
+              "offers": 5,
+              "maxSdp": 3990,
+              "receivedEvents": 0,
+              "liveOn": 0,
+              "liveOff": 0
+            }
+          ]
+        }
+      },
+      "at": "2026-09-28T13:07:20.114Z",
+      "durationMs": 10974,
+      "predecessors": [
+        "02",
+        "05b"
+      ]
+    },
+    {
+      "id": "offline-8s-no-new-capture-gesture",
+      "status": "FAIL",
+      "reason": "browser-deadline",
+      "site": "harness.mjs:358:71",
+      "at": "2026-09-28T13:07:31.088Z",
+      "durationMs": 12808,
+      "predecessors": [
+        "02"
+      ]
+    },
+    {
+      "id": "watch-navigation-channel-binding-global-controls",
+      "status": "FAIL",
+      "reason": "publisher-encode-deadline",
+      "site": "harness.mjs:28:9",
+      "metrics": {
+        "last": {
+          "micCalls": 1,
+          "displayCalls": 1,
+          "cameraCalls": 0,
+          "playRejected": 0,
+          "peers": [
+            {
+              "connection": "failed",
+              "ice": "failed",
+              "transceivers": 2,
+              "senders": 2,
+              "receivers": 2,
+              "localSdpBytes": 4372,
+              "selected": [],
+              "inbound": [],
+              "outbound": [
+                {
+                  "kind": "audio",
+                  "bytes": 0,
+                  "packets": 0,
+                  "frames": null,
+                  "keyframes": null,
+                  "lost": 0,
+                  "jitter": 0,
+                  "pli": 0
+                },
+                {
+                  "kind": "video",
+                  "bytes": 0,
+                  "packets": 0,
+                  "frames": 0,
+                  "keyframes": 0,
+                  "lost": 0,
+                  "jitter": 0,
+                  "pli": 0
+                }
+              ]
+            }
+          ],
+          "videos": [
+            {
+              "kind": "live",
+              "width": 640,
+              "height": 360,
+              "paused": false,
+              "ready": 4,
+              "renderedFrames": 0,
+              "pixels": {
+                "source": [
+                  220,
+                  30,
+                  30
+                ],
+                "motion": [
+                  46,
+                  46,
+                  46
+                ]
+              }
+            }
+          ],
+          "captures": [
+            {
+              "kind": "display",
+              "slot": 1,
+              "state": "live",
+              "muted": false,
+              "colors": [
+                220,
+                30,
+                30
+              ]
+            }
+          ],
+          "sockets": [
+            {
+              "plane": "gateway",
+              "ready": 1,
+              "offers": 0,
+              "maxSdp": 0,
+              "receivedEvents": 0,
+              "liveOn": 0,
+              "liveOff": 0
+            },
+            {
+              "plane": "gateway",
+              "ready": 1,
+              "offers": 0,
+              "maxSdp": 0,
+              "receivedEvents": 1,
+              "liveOn": 0,
+              "liveOff": 1
+            },
+            {
+              "plane": "media",
+              "ready": 1,
+              "offers": 5,
+              "maxSdp": 3990,
+              "receivedEvents": 0,
+              "liveOn": 0,
+              "liveOff": 0
+            }
+          ]
+        }
+      },
+      "at": "2026-09-28T13:07:43.896Z",
+      "durationMs": 10894,
+      "predecessors": [
+        "08a"
+      ]
+    },
+    {
+      "id": "live-claim-exclusive-and-loser-not-published",
+      "status": "FAIL",
+      "reason": "publisher-encode-deadline",
+      "site": "harness.mjs:28:9",
+      "metrics": {
+        "last": {
+          "micCalls": 1,
+          "displayCalls": 1,
+          "cameraCalls": 0,
+          "playRejected": 0,
+          "peers": [
+            {
+              "connection": "failed",
+              "ice": "failed",
+              "transceivers": 2,
+              "senders": 2,
+              "receivers": 2,
+              "localSdpBytes": 4372,
+              "selected": [],
+              "inbound": [],
+              "outbound": [
+                {
+                  "kind": "audio",
+                  "bytes": 0,
+                  "packets": 0,
+                  "frames": null,
+                  "keyframes": null,
+                  "lost": 0,
+                  "jitter": 0,
+                  "pli": 0
+                },
+                {
+                  "kind": "video",
+                  "bytes": 0,
+                  "packets": 0,
+                  "frames": 0,
+                  "keyframes": 0,
+                  "lost": 0,
+                  "jitter": 0,
+                  "pli": 0
+                }
+              ]
+            }
+          ],
+          "videos": [
+            {
+              "kind": "live",
+              "width": 640,
+              "height": 360,
+              "paused": false,
+              "ready": 4,
+              "renderedFrames": 0,
+              "pixels": {
+                "source": [
+                  220,
+                  30,
+                  30
+                ],
+                "motion": [
+                  69,
+                  69,
+                  69
+                ]
+              }
+            }
+          ],
+          "captures": [
+            {
+              "kind": "display",
+              "slot": 1,
+              "state": "live",
+              "muted": false,
+              "colors": [
+                220,
+                30,
+                30
+              ]
+            }
+          ],
+          "sockets": [
+            {
+              "plane": "gateway",
+              "ready": 1,
+              "offers": 0,
+              "maxSdp": 0,
+              "receivedEvents": 0,
+              "liveOn": 0,
+              "liveOff": 0
+            },
+            {
+              "plane": "gateway",
+              "ready": 1,
+              "offers": 0,
+              "maxSdp": 0,
+              "receivedEvents": 1,
+              "liveOn": 0,
+              "liveOff": 1
+            },
+            {
+              "plane": "media",
+              "ready": 1,
+              "offers": 5,
+              "maxSdp": 3990,
+              "receivedEvents": 0,
+              "liveOn": 0,
+              "liveOff": 0
+            }
+          ]
+        }
+      },
+      "at": "2026-09-28T13:07:54.790Z",
+      "durationMs": 10928,
+      "predecessors": [
+        "05b",
+        "03b",
+        "08b"
+      ]
+    },
+    {
+      "id": "20-live-start-stop-bounded-client-resources",
+      "status": "FAIL",
+      "reason": "harness-or-interface-error",
+      "site": "harness.mjs:355:21",
+      "at": "2026-09-28T13:08:05.718Z",
+      "durationMs": 1240,
+      "predecessors": [
+        "01",
+        "02",
+        "05b"
+      ]
+    },
+    {
+      "id": "cancelled-live-picker-keeps-voice-no-ghost",
+      "status": "FAIL",
+      "reason": "browser-deadline",
+      "site": "harness.mjs:358:71",
+      "at": "2026-09-28T13:08:06.958Z",
+      "durationMs": 12794,
+      "predecessors": [
+        "02",
+        "05b"
+      ]
+    },
+    {
+      "id": "camera-screen-live-source-identity",
+      "status": "FAIL",
+      "reason": "publisher-encode-deadline",
+      "site": "harness.mjs:28:9",
+      "metrics": {
+        "last": {
+          "micCalls": 1,
+          "displayCalls": 1,
+          "cameraCalls": 0,
+          "playRejected": 0,
+          "peers": [
+            {
+              "connection": "failed",
+              "ice": "failed",
+              "transceivers": 2,
+              "senders": 2,
+              "receivers": 2,
+              "localSdpBytes": 4367,
+              "selected": [],
+              "inbound": [],
+              "outbound": [
+                {
+                  "kind": "audio",
+                  "bytes": 0,
+                  "packets": 0,
+                  "frames": null,
+                  "keyframes": null,
+                  "lost": 0,
+                  "jitter": 0,
+                  "pli": 0
+                },
+                {
+                  "kind": "video",
+                  "bytes": 0,
+                  "packets": 0,
+                  "frames": 0,
+                  "keyframes": 0,
+                  "lost": 0,
+                  "jitter": 0,
+                  "pli": 0
+                }
+              ]
+            }
+          ],
+          "videos": [
+            {
+              "kind": "live",
+              "width": 640,
+              "height": 360,
+              "paused": false,
+              "ready": 4,
+              "renderedFrames": 0,
+              "pixels": {
+                "source": [
+                  220,
+                  30,
+                  30
+                ],
+                "motion": [
+                  69,
+                  69,
+                  69
+                ]
+              }
+            }
+          ],
+          "captures": [
+            {
+              "kind": "display",
+              "slot": 1,
+              "state": "live",
+              "muted": false,
+              "colors": [
+                220,
+                30,
+                30
+              ]
+            }
+          ],
+          "sockets": [
+            {
+              "plane": "gateway",
+              "ready": 1,
+              "offers": 0,
+              "maxSdp": 0,
+              "receivedEvents": 0,
+              "liveOn": 0,
+              "liveOff": 0
+            },
+            {
+              "plane": "gateway",
+              "ready": 1,
+              "offers": 0,
+              "maxSdp": 0,
+              "receivedEvents": 1,
+              "liveOn": 0,
+              "liveOff": 1
+            },
+            {
+              "plane": "media",
+              "ready": 1,
+              "offers": 5,
+              "maxSdp": 3985,
+              "receivedEvents": 0,
+              "liveOn": 0,
+              "liveOff": 0
+            }
+          ]
+        }
+      },
+      "at": "2026-09-28T13:08:19.752Z",
+      "durationMs": 10929,
+      "predecessors": [
+        "01",
+        "08b"
+      ]
+    },
+    {
+      "id": "autoplay-rejection-visible-click-retry",
+      "status": "FAIL",
+      "reason": "harness-or-interface-error",
+      "site": "harness.mjs:355:21",
+      "at": "2026-09-28T13:08:30.681Z",
+      "durationMs": 1264,
+      "predecessors": [
+        "08a"
+      ]
+    },
+    {
+      "id": "audible-voice-mute-deafen-quality",
+      "status": "BLOCKED",
+      "reason": "requires two devices and human listening; existing relay audio smoke retained",
+      "predecessors": [],
+      "at": "2026-09-28T13:08:31.945Z"
+    },
+    {
+      "id": "sfu-publication-task-bounds",
+      "status": "BLOCKED",
+      "reason": "no read-only per-test-room SFU counters",
+      "predecessors": [
+        "01"
+      ],
+      "at": "2026-09-28T13:08:31.945Z"
+    },
+    {
+      "id": "forced-arrival-order-and-rejected-sdp",
+      "status": "BLOCKED",
+      "reason": "requires dedicated scoped fault contract; no product instrumentation owned",
+      "predecessors": [
+        "01"
+      ],
+      "at": "2026-09-28T13:08:31.945Z"
+    },
+    {
+      "id": "api-redis-outage-live-lease-recovery",
+      "status": "BLOCKED",
+      "reason": "shared services cannot be stopped or reset by 11a",
+      "predecessors": [
+        "05b"
+      ],
+      "at": "2026-09-28T13:08:31.945Z"
+    },
+    {
+      "id": "packet-loss-audible-quality",
+      "status": "BLOCKED",
+      "reason": "privileged netem unavailable; original forced-TURN/netem smoke preserved",
+      "predecessors": [],
+      "at": "2026-09-28T13:08:31.945Z"
+    }
+  ],
+  "cleanup": [
+    {
+      "target": "owned-test-server",
+      "status": 204
+    }
+  ],
+  "finishedAt": "2026-09-28T13:08:33.529Z"
+}

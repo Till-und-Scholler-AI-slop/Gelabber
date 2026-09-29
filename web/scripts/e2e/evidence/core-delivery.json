@@ -1,0 +1,346 @@
+{
+  "testSourceHashes": {
+    "access.mjs": "52d77379e4a97d0dd911934956c70a07f7ef0e02b1a4c4ba211a161f9ef9366f",
+    "account-switch.mjs": "9dd5cc5a93f55ac74ba03f46e3435b0f8e7435569dc242ef597b764e42b0ef46",
+    "core.mjs": "861d1470fd2e069cb87ae5a723358a97c2c4f10d92495d8e35f1cf1d69cb1bf9",
+    "harness.checks.mjs": "c5c104cba2c78c42df47382a570fa156335359aa5bb0ae793dff13453e24e7f2",
+    "harness.mjs": "61cea3abc5ad2db99f847a3c4b6f3c529731527851a6661905a4bd9327c61c6c",
+    "media.mjs": "6e7e427e3bef921a4ec9e87ba697e9006c059e444697c7466924280a0da8fbb9",
+    "probe.mjs": "c373bfed708036da0eb1570f6879ff1607e7032b7fe7863991ca7efd61e8a616",
+    "run.mjs": "308f7c34c77ddd524fbd98e21984bd5cebadb8eee8263de48f91ef7e9617d5df"
+  },
+  "schema": 1,
+  "selectedCases": [],
+  "phase": "11a",
+  "at": "2026-09-28T13:18:31.558Z",
+  "source": "828ee2341e57a7e77a971b1f9c52d3372f046fb8",
+  "testFilesDirty": true,
+  "runtime": {
+    "attribution": "operator-supplied; not runtime digest verification",
+    "web": "3a30d44",
+    "api": "828ee23",
+    "media": "28d4505"
+  },
+  "browser": {
+    "engine": "chromium",
+    "version": "153.0.8010.12",
+    "platform": "linux",
+    "node": "v26.8.2"
+  },
+  "environment": {
+    "url": "http://127.0.0.1:5174",
+    "requestedNetwork": "direct",
+    "https": false,
+    "capture": "synthetic changing canvas; fake microphone",
+    "autoplay": "browser default; no policy override"
+  },
+  "limitations": [
+    "Not 11b/c/d acceptance",
+    "No native display picker, audible two-device speech, WAN or production test",
+    "No SFU publication/task telemetry; client bounds only",
+    "Accounts remain as isolated example.test fixtures; owned servers are deleted"
+  ],
+  "results": [
+    {
+      "id": "isolated-app-fixture",
+      "status": "PASS",
+      "classification": "observed-pass",
+      "metrics": {
+        "accounts": 3,
+        "servers": 1,
+        "channels": 3,
+        "registration": "UI",
+        "invitation": "UI",
+        "services": "real API/Gateway/SFU"
+      },
+      "at": "2026-09-28T13:18:31.565Z",
+      "durationMs": 7425,
+      "predecessors": []
+    },
+    {
+      "id": "account-session-reload-login",
+      "status": "PASS",
+      "classification": "observed-pass",
+      "metrics": {
+        "reloadSameAccount": true,
+        "anonymousAfterLogout": true,
+        "loginSameAccount": true
+      },
+      "at": "2026-09-28T13:18:38.991Z",
+      "durationMs": 1446,
+      "predecessors": [
+        "04"
+      ]
+    },
+    {
+      "id": "channel-chat-create-edit-delete-converges",
+      "status": "PASS",
+      "classification": "observed-pass",
+      "metrics": {
+        "create": true,
+        "edit": true,
+        "delete": true,
+        "otherClientWithoutReload": true
+      },
+      "at": "2026-09-28T13:18:40.437Z",
+      "durationMs": 1352,
+      "predecessors": [
+        "05a",
+        "06a"
+      ]
+    },
+    {
+      "id": "new-dm-connected-recipient-discovers-without-refetch",
+      "status": "FAIL",
+      "reason": "connected-recipient-missed-dm-discovery",
+      "classification": "confirmed-product-failure",
+      "site": "harness.mjs:20:25",
+      "metrics": {
+        "controlConfirmed": true,
+        "discoveredAfterReload": true,
+        "firstMessageVisibleAfterReload": true
+      },
+      "at": "2026-09-28T13:18:41.790Z",
+      "durationMs": 9986,
+      "predecessors": [
+        "05a",
+        "06b"
+      ]
+    },
+    {
+      "id": "channel-jpeg-png-webp-bind-reload-byte-equal",
+      "status": "PASS",
+      "classification": "observed-pass",
+      "metrics": {
+        "files": [
+          {
+            "type": "image/jpeg",
+            "bytes": 633,
+            "presign": 201,
+            "put": 200,
+            "bind": 201,
+            "renderedAfterReload": true,
+            "byteEqual": true
+          },
+          {
+            "type": "image/png",
+            "bytes": 77,
+            "presign": 201,
+            "put": 200,
+            "bind": 201,
+            "renderedAfterReload": true,
+            "byteEqual": true
+          },
+          {
+            "type": "image/webp",
+            "bytes": 66,
+            "presign": 201,
+            "put": 200,
+            "bind": 201,
+            "renderedAfterReload": true,
+            "byteEqual": true
+          }
+        ],
+        "transport": "HTTP-local-only; HTTPS acceptance BLOCKED"
+      },
+      "at": "2026-09-28T13:18:51.776Z",
+      "durationMs": 3732,
+      "predecessors": [
+        "07",
+        "10"
+      ]
+    },
+    {
+      "id": "dm-jpeg-png-webp-bind-reload-byte-equal",
+      "status": "PASS",
+      "classification": "observed-pass",
+      "metrics": {
+        "files": [
+          {
+            "type": "image/jpeg",
+            "bytes": 633,
+            "presign": 201,
+            "put": 200,
+            "bind": 201,
+            "renderedAfterReload": true,
+            "byteEqual": true
+          },
+          {
+            "type": "image/png",
+            "bytes": 77,
+            "presign": 201,
+            "put": 200,
+            "bind": 201,
+            "renderedAfterReload": true,
+            "byteEqual": true
+          },
+          {
+            "type": "image/webp",
+            "bytes": 66,
+            "presign": 201,
+            "put": 200,
+            "bind": 201,
+            "renderedAfterReload": true,
+            "byteEqual": true
+          }
+        ],
+        "transport": "HTTP-local-only; HTTPS acceptance BLOCKED"
+      },
+      "at": "2026-09-28T13:18:55.508Z",
+      "durationMs": 3643,
+      "predecessors": [
+        "07",
+        "10"
+      ]
+    },
+    {
+      "id": "background-event-before-first-open-55-history-paging",
+      "status": "FAIL",
+      "reason": "history-fixture-create-failed",
+      "classification": "unconfirmed-failure",
+      "site": "harness.mjs:20:25",
+      "metrics": {
+        "index": 52,
+        "status": 429
+      },
+      "at": "2026-09-28T13:18:59.151Z",
+      "durationMs": 2371,
+      "predecessors": [
+        "06a"
+      ]
+    },
+    {
+      "id": "initial-history-error-visible-bounded-retry",
+      "status": "FAIL",
+      "reason": "history-error-hidden-or-retry-unbounded",
+      "classification": "unconfirmed-failure",
+      "site": "harness.mjs:20:25",
+      "metrics": {
+        "requests": 4,
+        "visibleRetry": false
+      },
+      "at": "2026-09-28T13:19:01.522Z",
+      "durationMs": 6202,
+      "predecessors": [
+        "07"
+      ]
+    },
+    {
+      "id": "failed-send-navigation-retains-own-retry",
+      "status": "FAIL",
+      "reason": "failed-send-lost-on-navigation",
+      "classification": "unconfirmed-failure",
+      "site": "harness.mjs:20:25",
+      "metrics": {
+        "rejected": 1,
+        "draftRetained": false,
+        "retryVisible": false
+      },
+      "at": "2026-09-28T13:19:07.724Z",
+      "durationMs": 1107,
+      "predecessors": [
+        "07"
+      ]
+    },
+    {
+      "id": "two-tabs-account-switch-delayed-401",
+      "status": "PASS",
+      "classification": "observed-pass",
+      "metrics": {
+        "delayedStatus": 401,
+        "oldPatchRequests": 1,
+        "secondTabSessionB": true,
+        "profileBUnchanged": true
+      },
+      "at": "2026-09-28T13:19:08.831Z",
+      "durationMs": 4322,
+      "predecessors": [
+        "04"
+      ]
+    },
+    {
+      "id": "two-tabs-account-switch-delayed-403",
+      "status": "PASS",
+      "classification": "observed-pass",
+      "metrics": {
+        "delayedStatus": 403,
+        "oldPatchRequests": 1,
+        "secondTabSessionB": true,
+        "profileBUnchanged": true
+      },
+      "at": "2026-09-28T13:19:13.153Z",
+      "durationMs": 4341,
+      "predecessors": [
+        "04"
+      ]
+    },
+    {
+      "id": "rest-ws-reordering-edit-delete-rollback",
+      "status": "BLOCKED",
+      "classification": "blocked",
+      "reason": "07 pending; scoped delayed REST/event ordering fixture required",
+      "predecessors": [
+        "07"
+      ],
+      "at": "2026-09-28T13:19:17.495Z"
+    },
+    {
+      "id": "two-parallel-sends-upload-account-switch",
+      "status": "BLOCKED",
+      "classification": "blocked",
+      "reason": "07 pending; per-attempt recovery UI contract required",
+      "predecessors": [
+        "07"
+      ],
+      "at": "2026-09-28T13:19:17.495Z"
+    },
+    {
+      "id": "paging-error-data-preservation",
+      "status": "BLOCKED",
+      "classification": "blocked",
+      "reason": "07 pending; separate multi-page failed fetch/retry scenario required",
+      "predecessors": [
+        "07"
+      ],
+      "at": "2026-09-28T13:19:17.495Z"
+    },
+    {
+      "id": "redis-epoch-replay-window-reset",
+      "status": "BLOCKED",
+      "classification": "blocked",
+      "reason": "shared Redis must not be reset; isolated service failure contract needed",
+      "predecessors": [
+        "05a",
+        "06b"
+      ],
+      "at": "2026-09-28T13:19:17.495Z"
+    },
+    {
+      "id": "storage-delete-outage-durable-cleanup",
+      "status": "BLOCKED",
+      "classification": "blocked",
+      "reason": "shared MinIO/DB must not be stopped; read-only own-object cleanup instrumentation needed",
+      "predecessors": [
+        "10"
+      ],
+      "at": "2026-09-28T13:19:17.495Z"
+    },
+    {
+      "id": "attachments-https-wan",
+      "status": "BLOCKED",
+      "classification": "blocked",
+      "reason": "local HTTP evidence only; coordinator owns HTTPS/WAN integration",
+      "predecessors": [
+        "10"
+      ],
+      "at": "2026-09-28T13:19:17.495Z"
+    }
+  ],
+  "cleanup": [
+    {
+      "target": "owned-test-server",
+      "status": 204
+    }
+  ],
+  "finishedAt": "2026-09-28T13:19:18.983Z"
+}

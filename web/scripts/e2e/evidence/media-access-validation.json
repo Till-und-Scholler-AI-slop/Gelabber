@@ -1,0 +1,3697 @@
+{
+  "scope": "11b/c local Media15+Access6+one two-plane Lease, assembled per-case observations; no synthetic whole-run gate",
+  "completeAcceptance": false,
+  "independentCommitReview": "pending coordinator; prior exact242/42 independent controls retain separate provenance",
+  "browserPins": {
+    "Node": "26.8.2",
+    "Playwright": "1.63.0",
+    "Chromium": "153.0.8010.12",
+    "Firefox": "155.0"
+  },
+  "runtime": {
+    "webAndSfuSource": "6e221705c34e944bd3804aa3c9482488e770f249",
+    "sfuSha256": "ea095c68223b89c686cadd960df0f7597f3add312618fa4bbfa253ab13736873",
+    "apiSource": "243c86ccc8f8a4bdfca9bc73da32e34520577bf9",
+    "apiSha256": "d383dea15e559d0602c11eb2e48e1a9de4ca96b1540ef995e5a95ef15977fdc8",
+    "capturing": "synthetic changing canvas + fake microphone; default autoplay",
+    "attestation": "owned copied binaries hashed; actual SFU process/config matches categorical; immutable Web source operator + root byte archive"
+  },
+  "matrix": {
+    "chromium-direct": [
+      {
+        "case": "voice-only-duplex-single-source",
+        "status": "PASS",
+        "reportRef": "media-duplex-audio-chromium-final-control2",
+        "sourceModule": "media-extra.mjs",
+        "successfulRunGate": true,
+        "cleanupSucceeded": true
+      },
+      {
+        "case": "live-watch-default-autoplay-no-mic",
+        "status": "PASS-observation-in-failed-run",
+        "reportRef": "media-chromium-final-direct",
+        "sourceModule": "media.mjs",
+        "successfulRunGate": false,
+        "cleanupSucceeded": true
+      },
+      {
+        "case": "late-watch-after-30s",
+        "status": "PASS-observation-in-failed-run",
+        "reportRef": "media-chromium-final-direct",
+        "sourceModule": "media.mjs",
+        "successfulRunGate": false,
+        "cleanupSucceeded": true
+      },
+      {
+        "case": "media-ws-capture-preserving-recovery",
+        "status": "PASS-observation-in-failed-run",
+        "reportRef": "media-chromium-final-direct",
+        "sourceModule": "media.mjs",
+        "successfulRunGate": false,
+        "cleanupSucceeded": true
+      },
+      {
+        "case": "gateway-only-preserves-peer",
+        "status": "PASS-observation-in-failed-run",
+        "reportRef": "media-chromium-final-direct",
+        "sourceModule": "media.mjs",
+        "successfulRunGate": false,
+        "cleanupSucceeded": true
+      },
+      {
+        "case": "offline-8s-no-new-capture-gesture",
+        "status": "PASS-observation-in-failed-run",
+        "reportRef": "media-chromium-final-direct",
+        "sourceModule": "media.mjs",
+        "successfulRunGate": false,
+        "cleanupSucceeded": true
+      },
+      {
+        "case": "watch-navigation-channel-binding-global-controls",
+        "status": "PASS-observation-in-failed-run",
+        "reportRef": "media-chromium-final-direct",
+        "sourceModule": "media.mjs",
+        "successfulRunGate": false,
+        "cleanupSucceeded": true
+      },
+      {
+        "case": "live-claim-exclusive-and-loser-not-published",
+        "status": "PASS-observation-in-failed-run",
+        "reportRef": "media-chromium-final-direct",
+        "sourceModule": "media-extra.mjs",
+        "successfulRunGate": false,
+        "cleanupSucceeded": true
+      },
+      {
+        "case": "20-live-start-stop-bounded-client-resources",
+        "status": "PASS-observation-in-failed-run",
+        "reportRef": "media-chromium-final-direct",
+        "sourceModule": "media.mjs",
+        "successfulRunGate": false,
+        "cleanupSucceeded": true
+      },
+      {
+        "case": "cancelled-live-picker-keeps-voice-no-ghost",
+        "status": "PASS-observation-in-failed-run",
+        "reportRef": "media-chromium-final-direct",
+        "sourceModule": "media.mjs",
+        "successfulRunGate": false,
+        "cleanupSucceeded": true
+      },
+      {
+        "case": "camera-screen-live-source-identity",
+        "status": "PASS-observation-in-failed-run",
+        "reportRef": "media-chromium-final-direct",
+        "sourceModule": "media.mjs",
+        "successfulRunGate": false,
+        "cleanupSucceeded": true
+      },
+      {
+        "case": "autoplay-rejection-visible-click-retry",
+        "status": "PASS-observation-in-failed-run",
+        "reportRef": "media-chromium-final-direct",
+        "sourceModule": "media.mjs",
+        "successfulRunGate": false,
+        "cleanupSucceeded": true
+      },
+      {
+        "case": "forced-track-arrival-reorder-source-identity",
+        "status": "PASS-observation-in-failed-run",
+        "reportRef": "media-chromium-final-direct",
+        "sourceModule": "media-extra.mjs",
+        "successfulRunGate": false,
+        "cleanupSucceeded": true
+      },
+      {
+        "case": "rejected-native-sdp-keeps-voice-other-source-no-ghost",
+        "status": "PASS",
+        "reportRef": "media-sdp-chromium-strict-final-control",
+        "sourceModule": "media-extra.mjs",
+        "successfulRunGate": true,
+        "cleanupSucceeded": true
+      },
+      {
+        "case": "session-audio-mute-deafen-volume-playback-retry",
+        "status": "PASS",
+        "reportRef": "media-duplex-audio-chromium-final-control2",
+        "sourceModule": "media-extra.mjs",
+        "successfulRunGate": true,
+        "cleanupSucceeded": true
+      },
+      {
+        "case": "leave-revokes-existing-gateway-active-sfu-and-held-ticket",
+        "status": "PASS",
+        "reportRef": "access-chromium-final-first",
+        "sourceModule": "access.mjs",
+        "successfulRunGate": true,
+        "cleanupSucceeded": true
+      },
+      {
+        "case": "kick-revokes-existing-gateway-active-sfu-and-held-ticket",
+        "status": "PASS",
+        "reportRef": "access-chromium-final-first",
+        "sourceModule": "access.mjs",
+        "successfulRunGate": true,
+        "cleanupSucceeded": true
+      },
+      {
+        "case": "ban-revokes-existing-gateway-active-sfu-and-held-ticket",
+        "status": "PASS",
+        "reportRef": "access-chromium-final-first",
+        "sourceModule": "access.mjs",
+        "successfulRunGate": true,
+        "cleanupSucceeded": true
+      },
+      {
+        "case": "logout-revokes-existing-gateway-active-sfu-and-held-ticket",
+        "status": "PASS",
+        "reportRef": "access-chromium-final-first",
+        "sourceModule": "access.mjs",
+        "successfulRunGate": true,
+        "cleanupSucceeded": true
+      },
+      {
+        "case": "logout-other-independent-session-survives",
+        "status": "PASS",
+        "reportRef": "access-chromium-final-first",
+        "sourceModule": "access.mjs",
+        "successfulRunGate": true,
+        "cleanupSucceeded": true
+      },
+      {
+        "case": "channel-server-delete-active-sockets",
+        "status": "PASS",
+        "reportRef": "access-chromium-final-first",
+        "sourceModule": "access.mjs",
+        "successfulRunGate": true,
+        "cleanupSucceeded": true
+      },
+      {
+        "case": "api-redis-outage-live-lease-recovery",
+        "status": "PASS",
+        "reportRef": "media-sdp-lease-chromium-final-control",
+        "sourceModule": "media-lease-faults.mjs",
+        "successfulRunGate": true,
+        "cleanupSucceeded": true
+      }
+    ],
+    "firefox-direct": [
+      {
+        "case": "voice-only-duplex-single-source",
+        "status": "PASS",
+        "reportRef": "media-extra-firefox-final-direct-control",
+        "sourceModule": "media-extra.mjs",
+        "successfulRunGate": true,
+        "cleanupSucceeded": true
+      },
+      {
+        "case": "live-watch-default-autoplay-no-mic",
+        "status": "PASS-observation-in-failed-run",
+        "reportRef": "media-firefox-final-direct",
+        "sourceModule": "media.mjs",
+        "successfulRunGate": false,
+        "cleanupSucceeded": true
+      },
+      {
+        "case": "late-watch-after-30s",
+        "status": "PASS-observation-in-failed-run",
+        "reportRef": "media-firefox-final-direct",
+        "sourceModule": "media.mjs",
+        "successfulRunGate": false,
+        "cleanupSucceeded": true
+      },
+      {
+        "case": "media-ws-capture-preserving-recovery",
+        "status": "PASS",
+        "reportRef": "24211fb-firefox-closed-peer-control",
+        "sourceModule": "media.mjs",
+        "successfulRunGate": true,
+        "cleanupSucceeded": true
+      },
+      {
+        "case": "gateway-only-preserves-peer",
+        "status": "PASS-observation-in-failed-run",
+        "reportRef": "media-firefox-final-direct",
+        "sourceModule": "media.mjs",
+        "successfulRunGate": false,
+        "cleanupSucceeded": true
+      },
+      {
+        "case": "offline-8s-no-new-capture-gesture",
+        "status": "PASS-observation-in-failed-run",
+        "reportRef": "media-firefox-final-direct",
+        "sourceModule": "media.mjs",
+        "successfulRunGate": false,
+        "cleanupSucceeded": true
+      },
+      {
+        "case": "watch-navigation-channel-binding-global-controls",
+        "status": "PASS",
+        "reportRef": "24211fb-firefox-closed-peer-control",
+        "sourceModule": "media.mjs",
+        "successfulRunGate": true,
+        "cleanupSucceeded": true
+      },
+      {
+        "case": "live-claim-exclusive-and-loser-not-published",
+        "status": "PASS-observation-in-failed-run",
+        "reportRef": "media-firefox-final-direct",
+        "sourceModule": "media-extra.mjs",
+        "successfulRunGate": false,
+        "cleanupSucceeded": true
+      },
+      {
+        "case": "20-live-start-stop-bounded-client-resources",
+        "status": "PASS",
+        "reportRef": "24211fb-firefox-closed-peer-control",
+        "sourceModule": "media.mjs",
+        "successfulRunGate": true,
+        "cleanupSucceeded": true
+      },
+      {
+        "case": "cancelled-live-picker-keeps-voice-no-ghost",
+        "status": "PASS-observation-in-failed-run",
+        "reportRef": "media-firefox-final-direct",
+        "sourceModule": "media.mjs",
+        "successfulRunGate": false,
+        "cleanupSucceeded": true
+      },
+      {
+        "case": "camera-screen-live-source-identity",
+        "status": "PASS-observation-in-failed-run",
+        "reportRef": "media-firefox-final-direct",
+        "sourceModule": "media.mjs",
+        "successfulRunGate": false,
+        "cleanupSucceeded": true
+      },
+      {
+        "case": "autoplay-rejection-visible-click-retry",
+        "status": "PASS-observation-in-failed-run",
+        "reportRef": "media-firefox-final-direct",
+        "sourceModule": "media.mjs",
+        "successfulRunGate": false,
+        "cleanupSucceeded": true
+      },
+      {
+        "case": "forced-track-arrival-reorder-source-identity",
+        "status": "PASS-observation-in-failed-run",
+        "reportRef": "media-firefox-final-direct",
+        "sourceModule": "media-extra.mjs",
+        "successfulRunGate": false,
+        "cleanupSucceeded": true
+      },
+      {
+        "case": "rejected-native-sdp-keeps-voice-other-source-no-ghost",
+        "status": "PASS",
+        "reportRef": "firefox-direct-sdp-final-strict-control",
+        "sourceModule": "media-extra.mjs",
+        "successfulRunGate": true,
+        "cleanupSucceeded": true
+      },
+      {
+        "case": "session-audio-mute-deafen-volume-playback-retry",
+        "status": "PASS",
+        "reportRef": "media-extra-firefox-final-direct-control",
+        "sourceModule": "media-extra.mjs",
+        "successfulRunGate": true,
+        "cleanupSucceeded": true
+      },
+      {
+        "case": "leave-revokes-existing-gateway-active-sfu-and-held-ticket",
+        "status": "PASS",
+        "reportRef": "access-lease-firefox-final-direct",
+        "sourceModule": "access.mjs",
+        "successfulRunGate": true,
+        "cleanupSucceeded": true
+      },
+      {
+        "case": "kick-revokes-existing-gateway-active-sfu-and-held-ticket",
+        "status": "PASS",
+        "reportRef": "access-lease-firefox-final-direct",
+        "sourceModule": "access.mjs",
+        "successfulRunGate": true,
+        "cleanupSucceeded": true
+      },
+      {
+        "case": "ban-revokes-existing-gateway-active-sfu-and-held-ticket",
+        "status": "PASS",
+        "reportRef": "access-lease-firefox-final-direct",
+        "sourceModule": "access.mjs",
+        "successfulRunGate": true,
+        "cleanupSucceeded": true
+      },
+      {
+        "case": "logout-revokes-existing-gateway-active-sfu-and-held-ticket",
+        "status": "PASS",
+        "reportRef": "access-lease-firefox-final-direct",
+        "sourceModule": "access.mjs",
+        "successfulRunGate": true,
+        "cleanupSucceeded": true
+      },
+      {
+        "case": "logout-other-independent-session-survives",
+        "status": "PASS",
+        "reportRef": "access-lease-firefox-final-direct",
+        "sourceModule": "access.mjs",
+        "successfulRunGate": true,
+        "cleanupSucceeded": true
+      },
+      {
+        "case": "channel-server-delete-active-sockets",
+        "status": "PASS",
+        "reportRef": "access-lease-firefox-final-direct",
+        "sourceModule": "access.mjs",
+        "successfulRunGate": true,
+        "cleanupSucceeded": true
+      },
+      {
+        "case": "api-redis-outage-live-lease-recovery",
+        "status": "PASS",
+        "reportRef": "access-lease-firefox-final-direct",
+        "sourceModule": "media-lease-faults.mjs",
+        "successfulRunGate": true,
+        "cleanupSucceeded": true
+      }
+    ],
+    "chromium-relay": [
+      {
+        "case": "voice-only-duplex-single-source",
+        "status": "PASS",
+        "reportRef": "media-access-lease-chromium-final-relay",
+        "sourceModule": "media-extra.mjs",
+        "successfulRunGate": true,
+        "cleanupSucceeded": true
+      },
+      {
+        "case": "live-watch-default-autoplay-no-mic",
+        "status": "PASS",
+        "reportRef": "media-access-lease-chromium-final-relay",
+        "sourceModule": "media.mjs",
+        "successfulRunGate": true,
+        "cleanupSucceeded": true
+      },
+      {
+        "case": "late-watch-after-30s",
+        "status": "PASS",
+        "reportRef": "media-access-lease-chromium-final-relay",
+        "sourceModule": "media.mjs",
+        "successfulRunGate": true,
+        "cleanupSucceeded": true
+      },
+      {
+        "case": "media-ws-capture-preserving-recovery",
+        "status": "PASS",
+        "reportRef": "media-access-lease-chromium-final-relay",
+        "sourceModule": "media.mjs",
+        "successfulRunGate": true,
+        "cleanupSucceeded": true
+      },
+      {
+        "case": "gateway-only-preserves-peer",
+        "status": "PASS",
+        "reportRef": "media-access-lease-chromium-final-relay",
+        "sourceModule": "media.mjs",
+        "successfulRunGate": true,
+        "cleanupSucceeded": true
+      },
+      {
+        "case": "offline-8s-no-new-capture-gesture",
+        "status": "PASS",
+        "reportRef": "media-access-lease-chromium-final-relay",
+        "sourceModule": "media.mjs",
+        "successfulRunGate": true,
+        "cleanupSucceeded": true
+      },
+      {
+        "case": "watch-navigation-channel-binding-global-controls",
+        "status": "PASS",
+        "reportRef": "media-access-lease-chromium-final-relay",
+        "sourceModule": "media.mjs",
+        "successfulRunGate": true,
+        "cleanupSucceeded": true
+      },
+      {
+        "case": "live-claim-exclusive-and-loser-not-published",
+        "status": "PASS",
+        "reportRef": "media-access-lease-chromium-final-relay",
+        "sourceModule": "media-extra.mjs",
+        "successfulRunGate": true,
+        "cleanupSucceeded": true
+      },
+      {
+        "case": "20-live-start-stop-bounded-client-resources",
+        "status": "PASS",
+        "reportRef": "media-access-lease-chromium-final-relay",
+        "sourceModule": "media.mjs",
+        "successfulRunGate": true,
+        "cleanupSucceeded": true
+      },
+      {
+        "case": "cancelled-live-picker-keeps-voice-no-ghost",
+        "status": "PASS",
+        "reportRef": "media-access-lease-chromium-final-relay",
+        "sourceModule": "media.mjs",
+        "successfulRunGate": true,
+        "cleanupSucceeded": true
+      },
+      {
+        "case": "camera-screen-live-source-identity",
+        "status": "PASS",
+        "reportRef": "media-access-lease-chromium-final-relay",
+        "sourceModule": "media.mjs",
+        "successfulRunGate": true,
+        "cleanupSucceeded": true
+      },
+      {
+        "case": "autoplay-rejection-visible-click-retry",
+        "status": "PASS",
+        "reportRef": "media-access-lease-chromium-final-relay",
+        "sourceModule": "media.mjs",
+        "successfulRunGate": true,
+        "cleanupSucceeded": true
+      },
+      {
+        "case": "forced-track-arrival-reorder-source-identity",
+        "status": "PASS",
+        "reportRef": "media-access-lease-chromium-final-relay",
+        "sourceModule": "media-extra.mjs",
+        "successfulRunGate": true,
+        "cleanupSucceeded": true
+      },
+      {
+        "case": "rejected-native-sdp-keeps-voice-other-source-no-ghost",
+        "status": "PASS",
+        "reportRef": "media-sdp-chromium-relay-strict-final-control",
+        "sourceModule": "media-extra.mjs",
+        "successfulRunGate": true,
+        "cleanupSucceeded": true
+      },
+      {
+        "case": "session-audio-mute-deafen-volume-playback-retry",
+        "status": "PASS",
+        "reportRef": "media-access-lease-chromium-final-relay",
+        "sourceModule": "media-extra.mjs",
+        "successfulRunGate": true,
+        "cleanupSucceeded": true
+      },
+      {
+        "case": "leave-revokes-existing-gateway-active-sfu-and-held-ticket",
+        "status": "PASS",
+        "reportRef": "media-access-lease-chromium-final-relay",
+        "sourceModule": "access.mjs",
+        "successfulRunGate": true,
+        "cleanupSucceeded": true
+      },
+      {
+        "case": "kick-revokes-existing-gateway-active-sfu-and-held-ticket",
+        "status": "PASS",
+        "reportRef": "media-access-lease-chromium-final-relay",
+        "sourceModule": "access.mjs",
+        "successfulRunGate": true,
+        "cleanupSucceeded": true
+      },
+      {
+        "case": "ban-revokes-existing-gateway-active-sfu-and-held-ticket",
+        "status": "PASS",
+        "reportRef": "media-access-lease-chromium-final-relay",
+        "sourceModule": "access.mjs",
+        "successfulRunGate": true,
+        "cleanupSucceeded": true
+      },
+      {
+        "case": "logout-revokes-existing-gateway-active-sfu-and-held-ticket",
+        "status": "PASS",
+        "reportRef": "media-access-lease-chromium-final-relay",
+        "sourceModule": "access.mjs",
+        "successfulRunGate": true,
+        "cleanupSucceeded": true
+      },
+      {
+        "case": "logout-other-independent-session-survives",
+        "status": "PASS",
+        "reportRef": "media-access-lease-chromium-final-relay",
+        "sourceModule": "access.mjs",
+        "successfulRunGate": true,
+        "cleanupSucceeded": true
+      },
+      {
+        "case": "channel-server-delete-active-sockets",
+        "status": "PASS",
+        "reportRef": "media-access-lease-chromium-final-relay",
+        "sourceModule": "access.mjs",
+        "successfulRunGate": true,
+        "cleanupSucceeded": true
+      },
+      {
+        "case": "api-redis-outage-live-lease-recovery",
+        "status": "PASS",
+        "reportRef": "media-access-lease-chromium-final-relay",
+        "sourceModule": "media-lease-faults.mjs",
+        "successfulRunGate": true,
+        "cleanupSucceeded": true
+      }
+    ],
+    "firefox-relay-explicit-local-adapters": [
+      {
+        "case": "voice-only-duplex-single-source",
+        "status": "PASS",
+        "reportRef": "firefox-relay-remaining-media-sources",
+        "sourceModule": "media-extra.mjs",
+        "successfulRunGate": true,
+        "cleanupSucceeded": true
+      },
+      {
+        "case": "live-watch-default-autoplay-no-mic",
+        "status": "PASS",
+        "reportRef": "firefox-turn-app-sfu-loopback-control-app",
+        "sourceModule": "media.mjs",
+        "successfulRunGate": true,
+        "cleanupSucceeded": true
+      },
+      {
+        "case": "late-watch-after-30s",
+        "status": "PASS-observation-in-failed-run",
+        "reportRef": "media-access-lease-firefox-final-relay-loopback-adapter",
+        "sourceModule": "media.mjs",
+        "successfulRunGate": false,
+        "cleanupSucceeded": false,
+        "boundary": "LateWatch native PASS observed; original aborted matrix/cleanup FAILED, no whole-run PASS"
+      },
+      {
+        "case": "media-ws-capture-preserving-recovery",
+        "status": "PASS",
+        "reportRef": "media-ws-firefox-relay-bounded-control",
+        "sourceModule": "media.mjs",
+        "successfulRunGate": true,
+        "cleanupSucceeded": true
+      },
+      {
+        "case": "gateway-only-preserves-peer",
+        "status": "PASS",
+        "reportRef": "firefox-turn-app-sfu-loopback-control-app",
+        "sourceModule": "media.mjs",
+        "successfulRunGate": true,
+        "cleanupSucceeded": true
+      },
+      {
+        "case": "offline-8s-no-new-capture-gesture",
+        "status": "PASS",
+        "reportRef": "firefox-relay-remaining-media-lifecycle",
+        "sourceModule": "media.mjs",
+        "successfulRunGate": true,
+        "cleanupSucceeded": true
+      },
+      {
+        "case": "watch-navigation-channel-binding-global-controls",
+        "status": "PASS",
+        "reportRef": "firefox-relay-remaining-media-lifecycle",
+        "sourceModule": "media.mjs",
+        "successfulRunGate": true,
+        "cleanupSucceeded": true
+      },
+      {
+        "case": "live-claim-exclusive-and-loser-not-published",
+        "status": "PASS",
+        "reportRef": "firefox-relay-remaining-media-sources",
+        "sourceModule": "media-extra.mjs",
+        "successfulRunGate": true,
+        "cleanupSucceeded": true
+      },
+      {
+        "case": "20-live-start-stop-bounded-client-resources",
+        "status": "PASS",
+        "reportRef": "firefox-relay-remaining-media-lifecycle",
+        "sourceModule": "media.mjs",
+        "successfulRunGate": true,
+        "cleanupSucceeded": true
+      },
+      {
+        "case": "cancelled-live-picker-keeps-voice-no-ghost",
+        "status": "PASS",
+        "reportRef": "firefox-relay-remaining-media-lifecycle",
+        "sourceModule": "media.mjs",
+        "successfulRunGate": true,
+        "cleanupSucceeded": true
+      },
+      {
+        "case": "camera-screen-live-source-identity",
+        "status": "PASS",
+        "reportRef": "firefox-relay-remaining-media-lifecycle",
+        "sourceModule": "media.mjs",
+        "successfulRunGate": true,
+        "cleanupSucceeded": true
+      },
+      {
+        "case": "autoplay-rejection-visible-click-retry",
+        "status": "PASS",
+        "reportRef": "firefox-relay-remaining-media-lifecycle",
+        "sourceModule": "media.mjs",
+        "successfulRunGate": true,
+        "cleanupSucceeded": true
+      },
+      {
+        "case": "forced-track-arrival-reorder-source-identity",
+        "status": "PASS",
+        "reportRef": "firefox-relay-remaining-media-sources",
+        "sourceModule": "media-extra.mjs",
+        "successfulRunGate": true,
+        "cleanupSucceeded": true
+      },
+      {
+        "case": "rejected-native-sdp-keeps-voice-other-source-no-ghost",
+        "status": "PASS",
+        "reportRef": "firefox-relay-remaining-media-sources",
+        "sourceModule": "media-extra.mjs",
+        "successfulRunGate": true,
+        "cleanupSucceeded": true
+      },
+      {
+        "case": "session-audio-mute-deafen-volume-playback-retry",
+        "status": "PASS",
+        "reportRef": "firefox-relay-remaining-media-sources",
+        "sourceModule": "media-extra.mjs",
+        "successfulRunGate": true,
+        "cleanupSucceeded": true
+      },
+      {
+        "case": "leave-revokes-existing-gateway-active-sfu-and-held-ticket",
+        "status": "PASS",
+        "reportRef": "firefox-relay-remaining-access-membership",
+        "sourceModule": "access.mjs",
+        "successfulRunGate": true,
+        "cleanupSucceeded": true
+      },
+      {
+        "case": "kick-revokes-existing-gateway-active-sfu-and-held-ticket",
+        "status": "PASS",
+        "reportRef": "firefox-relay-remaining-access-membership",
+        "sourceModule": "access.mjs",
+        "successfulRunGate": true,
+        "cleanupSucceeded": true
+      },
+      {
+        "case": "ban-revokes-existing-gateway-active-sfu-and-held-ticket",
+        "status": "PASS",
+        "reportRef": "firefox-relay-remaining-access-membership",
+        "sourceModule": "access.mjs",
+        "successfulRunGate": true,
+        "cleanupSucceeded": true
+      },
+      {
+        "case": "logout-revokes-existing-gateway-active-sfu-and-held-ticket",
+        "status": "PASS-observation-in-failed-run",
+        "reportRef": "firefox-relay-remaining-access-session-deletion",
+        "sourceModule": "access.mjs",
+        "successfulRunGate": false,
+        "cleanupSucceeded": true
+      },
+      {
+        "case": "logout-other-independent-session-survives",
+        "status": "PASS-observation-in-failed-run",
+        "reportRef": "firefox-relay-remaining-access-session-deletion",
+        "sourceModule": "access.mjs",
+        "successfulRunGate": false,
+        "cleanupSucceeded": true
+      },
+      {
+        "case": "channel-server-delete-active-sockets",
+        "status": "PASS",
+        "reportRef": "firefox-relay-deleted-room-bounded-poll-control",
+        "sourceModule": "access.mjs",
+        "successfulRunGate": true,
+        "cleanupSucceeded": true
+      },
+      {
+        "case": "api-redis-outage-live-lease-recovery",
+        "status": "PASS",
+        "reportRef": "firefox-relay-remaining-lease-both-planes",
+        "sourceModule": "media-lease-faults.mjs",
+        "successfulRunGate": true,
+        "cleanupSucceeded": true
+      }
+    ]
+  },
+  "reports": [
+    {
+      "id": "media-chromium-final-direct",
+      "path": "/tmp/gelabber-e2e/media-chromium-final-direct.json",
+      "sha256": "3df1f48ecae8001b01113cd3e3c459691cd123cc8beb7b87fea6c5532e210b16",
+      "at": "2026-09-28T16:18:30.086Z",
+      "finishedAt": "2026-09-28T16:20:34.834Z",
+      "testHead": "24211fb9250ce62425f8a162a4cdbd1c69d2057c",
+      "testFilesDirty": true,
+      "browser": {
+        "engine": "chromium",
+        "version": "153.0.8010.12",
+        "platform": "linux",
+        "node": "v26.8.2"
+      },
+      "requestedNetwork": "direct",
+      "runtime": {
+        "attribution": "operator-supplied; not runtime digest verification",
+        "web": "6e221705c34e944bd3804aa3c9482488e770f249",
+        "api": "243c86ccc8f8a4bdfca9bc73da32e34520577bf9",
+        "media": "6e221705c34e944bd3804aa3c9482488e770f249"
+      },
+      "gate": {
+        "passed": false,
+        "absent": [],
+        "completeAcceptance": false
+      },
+      "cleanup": [
+        {
+          "target": "owned-test-server",
+          "status": 204,
+          "stage": "complete",
+          "statuses": {
+            "login": 200,
+            "delete": 204,
+            "logout": 200
+          }
+        }
+      ],
+      "failedRows": [
+        {
+          "id": "rejected-native-sdp-keeps-voice-other-source-no-ghost",
+          "status": "FAIL",
+          "classification": "unconfirmed-failure",
+          "reason": "decoded-correct-source-first-frame-deadline",
+          "at": "2026-09-28T16:20:17.973Z",
+          "durationMs": 6440
+        }
+      ],
+      "fixtureStatus": null,
+      "ownedRuntimeProof": {
+        "apiSourceMatchesApproved": true,
+        "apiDigestMatchesApproved": true,
+        "sfuSourceMatchesApproved": true,
+        "sfuDigestMatchesApproved": true,
+        "dedicatedDatabaseAndBucket": true,
+        "authorityViaOwnedRedisProxy": true,
+        "actualSfuProcessBinaryMatchesManifest": null,
+        "actualSfuProcessParametersMatchPrivateConfig": null,
+        "bindCategory": null
+      },
+      "observedSucceededSelectedPaths": [
+        {
+          "local": "host",
+          "remote": "host"
+        }
+      ],
+      "executingSourceHashRefs": {
+        "harness.mjs": "source1",
+        "probe.mjs": "source2",
+        "fault-run.mjs": "source3",
+        "fault-runtime.mjs": "source4",
+        "media-runtime.mjs": "source5",
+        "media.mjs": "source6",
+        "media-extra.mjs": "source7",
+        "access.mjs": "source8",
+        "media-lease-faults.mjs": "source9"
+      },
+      "adapterMetadata": {
+        "sfuLoopbackIceAdapter": null,
+        "firefoxLoopbackIceAdapter": null
+      }
+    },
+    {
+      "id": "media-duplex-audio-chromium-final-control2",
+      "path": "/tmp/gelabber-e2e/media-duplex-audio-chromium-final-control2.json",
+      "sha256": "5d0412ffd3800789531c84f342845d1e8422dd47899d83f79777373338f9cc62",
+      "at": "2026-09-28T16:27:51.703Z",
+      "finishedAt": "2026-09-28T16:28:11.183Z",
+      "testHead": "24211fb9250ce62425f8a162a4cdbd1c69d2057c",
+      "testFilesDirty": true,
+      "browser": {
+        "engine": "chromium",
+        "version": "153.0.8010.12",
+        "platform": "linux",
+        "node": "v26.8.2"
+      },
+      "requestedNetwork": "direct",
+      "runtime": {
+        "attribution": "operator-supplied; not runtime digest verification",
+        "web": "6e221705c34e944bd3804aa3c9482488e770f249",
+        "api": "243c86ccc8f8a4bdfca9bc73da32e34520577bf9",
+        "media": "6e221705c34e944bd3804aa3c9482488e770f249"
+      },
+      "gate": {
+        "passed": true,
+        "absent": [],
+        "completeAcceptance": false
+      },
+      "cleanup": [
+        {
+          "target": "owned-test-server",
+          "status": 204,
+          "stage": "complete",
+          "statuses": {
+            "login": 200,
+            "delete": 204,
+            "logout": 200
+          }
+        }
+      ],
+      "failedRows": [],
+      "fixtureStatus": null,
+      "ownedRuntimeProof": {
+        "apiSourceMatchesApproved": true,
+        "apiDigestMatchesApproved": true,
+        "sfuSourceMatchesApproved": true,
+        "sfuDigestMatchesApproved": true,
+        "dedicatedDatabaseAndBucket": true,
+        "authorityViaOwnedRedisProxy": true,
+        "actualSfuProcessBinaryMatchesManifest": null,
+        "actualSfuProcessParametersMatchPrivateConfig": null,
+        "bindCategory": null
+      },
+      "observedSucceededSelectedPaths": [
+        {
+          "local": "host",
+          "remote": "host"
+        }
+      ],
+      "executingSourceHashRefs": {
+        "harness.mjs": "source1",
+        "probe.mjs": "source2",
+        "fault-run.mjs": "source3",
+        "fault-runtime.mjs": "source4",
+        "media-runtime.mjs": "source5",
+        "media.mjs": "source6",
+        "media-extra.mjs": "source10",
+        "access.mjs": "source8",
+        "media-lease-faults.mjs": "source9"
+      },
+      "adapterMetadata": {
+        "sfuLoopbackIceAdapter": null,
+        "firefoxLoopbackIceAdapter": null
+      }
+    },
+    {
+      "id": "media-sdp-chromium-strict-final-control",
+      "path": "/tmp/gelabber-e2e/media-sdp-chromium-strict-final-control.json",
+      "sha256": "7d61a8252cd2102cd5088c8bd4b943d1c0f4d172ab20916a5837b07be010ee78",
+      "at": "2026-09-28T17:01:28.226Z",
+      "finishedAt": "2026-09-28T17:01:47.918Z",
+      "testHead": "24211fb9250ce62425f8a162a4cdbd1c69d2057c",
+      "testFilesDirty": true,
+      "browser": {
+        "engine": "chromium",
+        "version": "153.0.8010.12",
+        "platform": "linux",
+        "node": "v26.8.2"
+      },
+      "requestedNetwork": "direct",
+      "runtime": {
+        "attribution": "operator-supplied; not runtime digest verification",
+        "web": "6e221705c34e944bd3804aa3c9482488e770f249",
+        "api": "243c86ccc8f8a4bdfca9bc73da32e34520577bf9",
+        "media": "6e221705c34e944bd3804aa3c9482488e770f249"
+      },
+      "gate": {
+        "passed": true,
+        "absent": [],
+        "completeAcceptance": false
+      },
+      "cleanup": [
+        {
+          "target": "owned-test-server",
+          "status": 204,
+          "stage": "complete",
+          "statuses": {
+            "login": 200,
+            "delete": 204,
+            "logout": 200
+          }
+        }
+      ],
+      "failedRows": [],
+      "fixtureStatus": null,
+      "ownedRuntimeProof": {
+        "apiSourceMatchesApproved": true,
+        "apiDigestMatchesApproved": true,
+        "sfuSourceMatchesApproved": true,
+        "sfuDigestMatchesApproved": true,
+        "dedicatedDatabaseAndBucket": true,
+        "authorityViaOwnedRedisProxy": true,
+        "actualSfuProcessBinaryMatchesManifest": null,
+        "actualSfuProcessParametersMatchPrivateConfig": null,
+        "bindCategory": null
+      },
+      "observedSucceededSelectedPaths": [
+        {
+          "local": "host",
+          "remote": "host"
+        }
+      ],
+      "executingSourceHashRefs": {
+        "harness.mjs": "source11",
+        "probe.mjs": "source12",
+        "browser-options.mjs": "source13",
+        "fault-run.mjs": "source3",
+        "fault-runtime.mjs": "source4",
+        "media-runtime.mjs": "source14",
+        "media.mjs": "source6",
+        "media-extra.mjs": "source15",
+        "access.mjs": "source8",
+        "media-lease-faults.mjs": "source9"
+      },
+      "adapterMetadata": {
+        "sfuLoopbackIceAdapter": null,
+        "firefoxLoopbackIceAdapter": {
+          "enabled": false,
+          "pref": "media.peerconnection.ice.loopback",
+          "value": "browser default",
+          "scope": "explicit local Firefox forced-relay test profile only"
+        }
+      }
+    },
+    {
+      "id": "access-chromium-final-first",
+      "path": "/tmp/gelabber-e2e/access-chromium-final-first.json",
+      "sha256": "1954dceea03aaa1c69cc2f2d58161222c308e3036832354e9702ec25bba10a84",
+      "at": "2026-09-28T16:00:46.188Z",
+      "finishedAt": "2026-09-28T16:02:04.798Z",
+      "testHead": "42bc812c8b5a0aaa0395bc126b32c5f893799a5f",
+      "testFilesDirty": true,
+      "browser": {
+        "engine": "chromium",
+        "version": "153.0.8010.12",
+        "platform": "linux",
+        "node": "v26.8.2"
+      },
+      "requestedNetwork": "direct",
+      "runtime": {
+        "attribution": "operator-supplied; not runtime digest verification",
+        "web": "6e221705c34e944bd3804aa3c9482488e770f249",
+        "api": "243c86ccc8f8a4bdfca9bc73da32e34520577bf9",
+        "media": "6e221705c34e944bd3804aa3c9482488e770f249"
+      },
+      "gate": {
+        "passed": true,
+        "absent": [],
+        "completeAcceptance": false
+      },
+      "cleanup": [
+        {
+          "target": "owned-test-server",
+          "status": 204,
+          "stage": "complete",
+          "statuses": {
+            "login": 200,
+            "delete": 204,
+            "logout": 200
+          }
+        },
+        {
+          "target": "owned-test-server",
+          "status": 204,
+          "stage": "complete",
+          "statuses": {
+            "login": 200,
+            "delete": 204,
+            "logout": 200
+          }
+        },
+        {
+          "target": "owned-test-server",
+          "status": 204,
+          "source": "scenario-confirmed-delete"
+        }
+      ],
+      "failedRows": [],
+      "fixtureStatus": null,
+      "ownedRuntimeProof": {
+        "apiSourceMatchesApproved": true,
+        "apiDigestMatchesApproved": true,
+        "sfuSourceMatchesApproved": false,
+        "sfuDigestMatchesApproved": false,
+        "dedicatedDatabaseAndBucket": true,
+        "authorityViaOwnedRedisProxy": null,
+        "actualSfuProcessBinaryMatchesManifest": null,
+        "actualSfuProcessParametersMatchPrivateConfig": null,
+        "bindCategory": null
+      },
+      "observedSucceededSelectedPaths": [],
+      "executingSourceHashRefs": {
+        "harness.mjs": "source1",
+        "probe.mjs": "source16",
+        "fault-run.mjs": "source3",
+        "fault-runtime.mjs": "source4",
+        "media-runtime.mjs": "source5",
+        "media.mjs": "source17",
+        "media-extra.mjs": "source18",
+        "access.mjs": "source8",
+        "media-lease-faults.mjs": "source19"
+      },
+      "adapterMetadata": {
+        "sfuLoopbackIceAdapter": null,
+        "firefoxLoopbackIceAdapter": null
+      }
+    },
+    {
+      "id": "media-sdp-lease-chromium-final-control",
+      "path": "/tmp/gelabber-e2e/media-sdp-lease-chromium-final-control.json",
+      "sha256": "cc592a48d5d076f3a3d39226fb1e81e096baeb332c1ec1ecf05d663033d5567e",
+      "at": "2026-09-28T16:28:58.864Z",
+      "finishedAt": "2026-09-28T16:30:01.403Z",
+      "testHead": "24211fb9250ce62425f8a162a4cdbd1c69d2057c",
+      "testFilesDirty": true,
+      "browser": {
+        "engine": "chromium",
+        "version": "153.0.8010.12",
+        "platform": "linux",
+        "node": "v26.8.2"
+      },
+      "requestedNetwork": "direct",
+      "runtime": {
+        "attribution": "operator-supplied; not runtime digest verification",
+        "web": "6e221705c34e944bd3804aa3c9482488e770f249",
+        "api": "243c86ccc8f8a4bdfca9bc73da32e34520577bf9",
+        "media": "6e221705c34e944bd3804aa3c9482488e770f249"
+      },
+      "gate": {
+        "passed": true,
+        "absent": [],
+        "completeAcceptance": false
+      },
+      "cleanup": [
+        {
+          "target": "owned-test-server",
+          "status": 204,
+          "stage": "complete",
+          "statuses": {
+            "login": 200,
+            "delete": 204,
+            "logout": 200
+          }
+        },
+        {
+          "target": "owned-test-server",
+          "status": 204,
+          "stage": "complete",
+          "statuses": {
+            "login": 200,
+            "delete": 204,
+            "logout": 200
+          }
+        },
+        {
+          "target": "owned-test-server",
+          "status": 204,
+          "stage": "complete",
+          "statuses": {
+            "login": 200,
+            "delete": 204,
+            "logout": 200
+          }
+        }
+      ],
+      "failedRows": [],
+      "fixtureStatus": null,
+      "ownedRuntimeProof": {
+        "apiSourceMatchesApproved": true,
+        "apiDigestMatchesApproved": true,
+        "sfuSourceMatchesApproved": true,
+        "sfuDigestMatchesApproved": true,
+        "dedicatedDatabaseAndBucket": true,
+        "authorityViaOwnedRedisProxy": true,
+        "actualSfuProcessBinaryMatchesManifest": null,
+        "actualSfuProcessParametersMatchPrivateConfig": null,
+        "bindCategory": null
+      },
+      "observedSucceededSelectedPaths": [
+        {
+          "local": "host",
+          "remote": "host"
+        }
+      ],
+      "executingSourceHashRefs": {
+        "harness.mjs": "source1",
+        "probe.mjs": "source2",
+        "fault-run.mjs": "source3",
+        "fault-runtime.mjs": "source4",
+        "media-runtime.mjs": "source5",
+        "media.mjs": "source6",
+        "media-extra.mjs": "source20",
+        "access.mjs": "source8",
+        "media-lease-faults.mjs": "source9"
+      },
+      "adapterMetadata": {
+        "sfuLoopbackIceAdapter": null,
+        "firefoxLoopbackIceAdapter": null
+      }
+    },
+    {
+      "id": "media-firefox-final-direct",
+      "path": "/tmp/gelabber-e2e/media-firefox-final-direct.json",
+      "sha256": "5e891e7ab95067cb1c2e142c156a464ce9dbdf289eb795cf850a48d0edfffe99",
+      "at": "2026-09-28T16:03:36.554Z",
+      "finishedAt": "2026-09-28T16:05:21.749Z",
+      "testHead": "42bc812c8b5a0aaa0395bc126b32c5f893799a5f",
+      "testFilesDirty": true,
+      "browser": {
+        "engine": "firefox",
+        "version": "155.0",
+        "platform": "linux",
+        "node": "v26.8.2"
+      },
+      "requestedNetwork": "direct",
+      "runtime": {
+        "attribution": "operator-supplied; not runtime digest verification",
+        "web": "6e221705c34e944bd3804aa3c9482488e770f249",
+        "api": "243c86ccc8f8a4bdfca9bc73da32e34520577bf9",
+        "media": "6e221705c34e944bd3804aa3c9482488e770f249"
+      },
+      "gate": {
+        "passed": false,
+        "absent": [],
+        "completeAcceptance": false
+      },
+      "cleanup": [
+        {
+          "target": "owned-test-server",
+          "status": 204,
+          "stage": "complete",
+          "statuses": {
+            "login": 200,
+            "delete": 204,
+            "logout": 200
+          }
+        }
+      ],
+      "failedRows": [
+        {
+          "id": "media-ws-capture-preserving-recovery",
+          "status": "FAIL",
+          "classification": "unconfirmed-failure",
+          "reason": "harness-or-interface-error",
+          "at": "2026-09-28T16:04:17.965Z",
+          "durationMs": 3464
+        },
+        {
+          "id": "watch-navigation-channel-binding-global-controls",
+          "status": "FAIL",
+          "classification": "unconfirmed-failure",
+          "reason": "harness-or-interface-error",
+          "at": "2026-09-28T16:04:38.825Z",
+          "durationMs": 3314
+        },
+        {
+          "id": "20-live-start-stop-bounded-client-resources",
+          "status": "FAIL",
+          "classification": "unconfirmed-failure",
+          "reason": "harness-or-interface-error",
+          "at": "2026-09-28T16:04:49.400Z",
+          "durationMs": 2797
+        }
+      ],
+      "fixtureStatus": null,
+      "ownedRuntimeProof": {
+        "apiSourceMatchesApproved": true,
+        "apiDigestMatchesApproved": true,
+        "sfuSourceMatchesApproved": true,
+        "sfuDigestMatchesApproved": true,
+        "dedicatedDatabaseAndBucket": true,
+        "authorityViaOwnedRedisProxy": true,
+        "actualSfuProcessBinaryMatchesManifest": null,
+        "actualSfuProcessParametersMatchPrivateConfig": null,
+        "bindCategory": null
+      },
+      "observedSucceededSelectedPaths": [
+        {
+          "local": "host",
+          "remote": "host"
+        }
+      ],
+      "executingSourceHashRefs": {
+        "harness.mjs": "source1",
+        "probe.mjs": "source16",
+        "fault-run.mjs": "source3",
+        "fault-runtime.mjs": "source4",
+        "media-runtime.mjs": "source5",
+        "media.mjs": "source6",
+        "media-extra.mjs": "source7",
+        "access.mjs": "source8",
+        "media-lease-faults.mjs": "source9"
+      },
+      "adapterMetadata": {
+        "sfuLoopbackIceAdapter": null,
+        "firefoxLoopbackIceAdapter": null
+      }
+    },
+    {
+      "id": "24211fb-firefox-closed-peer-control",
+      "path": "/tmp/gelabber-e2e/24211fb-firefox-closed-peer-control.json",
+      "sha256": "9a280fc97628a6034bc9c47c59d90eebc71f084d6aafe8de286f2b4d75eb0016",
+      "at": "2026-09-28T16:10:05.202Z",
+      "finishedAt": "2026-09-28T16:11:11.539Z",
+      "testHead": "24211fb9250ce62425f8a162a4cdbd1c69d2057c",
+      "testFilesDirty": false,
+      "browser": {
+        "engine": "firefox",
+        "version": "155.0",
+        "platform": "linux",
+        "node": "v26.8.2"
+      },
+      "requestedNetwork": "direct",
+      "runtime": {
+        "attribution": "operator-supplied; not runtime digest verification",
+        "web": "6e221705c34e944bd3804aa3c9482488e770f249",
+        "api": "243c86ccc8f8a4bdfca9bc73da32e34520577bf9",
+        "media": "6e221705c34e944bd3804aa3c9482488e770f249"
+      },
+      "gate": {
+        "passed": true,
+        "absent": [],
+        "completeAcceptance": false
+      },
+      "cleanup": [
+        {
+          "target": "owned-test-server",
+          "status": 204,
+          "stage": "complete",
+          "statuses": {
+            "login": 200,
+            "delete": 204,
+            "logout": 200
+          }
+        }
+      ],
+      "failedRows": [],
+      "fixtureStatus": null,
+      "observedSucceededSelectedPaths": [
+        {
+          "local": "host",
+          "remote": "host"
+        }
+      ],
+      "executingSourceHashRefs": {
+        "harness.mjs": "source1",
+        "probe.mjs": "source21",
+        "fault-run.mjs": "source22",
+        "fault-runtime.mjs": "source23",
+        "media.mjs": "source24",
+        "access.mjs": "source25"
+      },
+      "adapterMetadata": {
+        "sfuLoopbackIceAdapter": null,
+        "firefoxLoopbackIceAdapter": null
+      }
+    },
+    {
+      "id": "media-extra-firefox-final-direct-control",
+      "path": "/tmp/gelabber-e2e/media-extra-firefox-final-direct-control.json",
+      "sha256": "c2d3740350c1b41efde2542c48a43f1884d712401f7edf07bec95d3eac9ed818",
+      "at": "2026-09-28T16:34:58.642Z",
+      "finishedAt": "2026-09-28T16:35:23.919Z",
+      "testHead": "24211fb9250ce62425f8a162a4cdbd1c69d2057c",
+      "testFilesDirty": true,
+      "browser": {
+        "engine": "firefox",
+        "version": "155.0",
+        "platform": "linux",
+        "node": "v26.8.2"
+      },
+      "requestedNetwork": "direct",
+      "runtime": {
+        "attribution": "operator-supplied; not runtime digest verification",
+        "web": "6e221705c34e944bd3804aa3c9482488e770f249",
+        "api": "243c86ccc8f8a4bdfca9bc73da32e34520577bf9",
+        "media": "6e221705c34e944bd3804aa3c9482488e770f249"
+      },
+      "gate": {
+        "passed": true,
+        "absent": [],
+        "completeAcceptance": false
+      },
+      "cleanup": [
+        {
+          "target": "owned-test-server",
+          "status": 204,
+          "stage": "complete",
+          "statuses": {
+            "login": 200,
+            "delete": 204,
+            "logout": 200
+          }
+        }
+      ],
+      "failedRows": [],
+      "fixtureStatus": null,
+      "ownedRuntimeProof": {
+        "apiSourceMatchesApproved": true,
+        "apiDigestMatchesApproved": true,
+        "sfuSourceMatchesApproved": true,
+        "sfuDigestMatchesApproved": true,
+        "dedicatedDatabaseAndBucket": true,
+        "authorityViaOwnedRedisProxy": true,
+        "actualSfuProcessBinaryMatchesManifest": null,
+        "actualSfuProcessParametersMatchPrivateConfig": null,
+        "bindCategory": null
+      },
+      "observedSucceededSelectedPaths": [
+        {
+          "local": "host",
+          "remote": "host"
+        }
+      ],
+      "executingSourceHashRefs": {
+        "harness.mjs": "source1",
+        "probe.mjs": "source2",
+        "fault-run.mjs": "source3",
+        "fault-runtime.mjs": "source4",
+        "media-runtime.mjs": "source5",
+        "media.mjs": "source6",
+        "media-extra.mjs": "source15",
+        "access.mjs": "source8",
+        "media-lease-faults.mjs": "source9"
+      },
+      "adapterMetadata": {
+        "sfuLoopbackIceAdapter": null,
+        "firefoxLoopbackIceAdapter": null
+      }
+    },
+    {
+      "id": "firefox-direct-sdp-final-strict-control",
+      "path": "/tmp/gelabber-e2e/firefox-direct-sdp-final-strict-control.json",
+      "sha256": "3f779d8e37b57e4aea547796244a3dfd51b63215eca34a731178cae53fa670c4",
+      "at": "2026-09-28T18:02:15.575Z",
+      "finishedAt": "2026-09-28T18:02:30.778Z",
+      "testHead": "5f841f932be6d78435e2d9daf42f2e08e2a45ae8",
+      "testFilesDirty": true,
+      "browser": {
+        "engine": "firefox",
+        "version": "155.0",
+        "platform": "linux",
+        "node": "v26.8.2"
+      },
+      "requestedNetwork": "direct",
+      "runtime": {
+        "attribution": "operator-supplied; not runtime digest verification",
+        "web": "6e221705c34e944bd3804aa3c9482488e770f249",
+        "api": "243c86ccc8f8a4bdfca9bc73da32e34520577bf9",
+        "media": "6e221705c34e944bd3804aa3c9482488e770f249"
+      },
+      "gate": {
+        "passed": true,
+        "absent": [],
+        "completeAcceptance": false
+      },
+      "cleanup": [
+        {
+          "target": "owned-test-server",
+          "status": 204,
+          "stage": "complete",
+          "statuses": {
+            "login": 200,
+            "delete": 204,
+            "logout": 200
+          }
+        }
+      ],
+      "failedRows": [],
+      "fixtureStatus": null,
+      "ownedRuntimeProof": {
+        "apiSourceMatchesApproved": true,
+        "apiDigestMatchesApproved": true,
+        "sfuSourceMatchesApproved": true,
+        "sfuDigestMatchesApproved": true,
+        "dedicatedDatabaseAndBucket": true,
+        "authorityViaOwnedRedisProxy": true,
+        "actualSfuProcessBinaryMatchesManifest": true,
+        "actualSfuProcessParametersMatchPrivateConfig": true,
+        "bindCategory": "non-loopback-local-address"
+      },
+      "observedSucceededSelectedPaths": [
+        {
+          "local": "host",
+          "remote": "host"
+        }
+      ],
+      "executingSourceHashRefs": {
+        "harness.mjs": "source26",
+        "probe.mjs": "source27",
+        "native-evaluate.mjs": "source28",
+        "browser-options.mjs": "source29",
+        "fault-run.mjs": "source30",
+        "fault-runtime.mjs": "source4",
+        "media-runtime.mjs": "source31",
+        "media.mjs": "source32",
+        "media-extra.mjs": "source33",
+        "access.mjs": "source34",
+        "media-lease-faults.mjs": "source35"
+      },
+      "adapterMetadata": {
+        "sfuLoopbackIceAdapter": {
+          "enabled": false,
+          "name": "explicit-own-SFU-loopback-ICE-topology-control",
+          "scope": "local Firefox forced-relay adapter only; no default/WAN acceptance",
+          "nativeMidIndexOverride": false
+        },
+        "firefoxLoopbackIceAdapter": {
+          "enabled": false,
+          "pref": "media.peerconnection.ice.loopback",
+          "value": "browser default",
+          "scope": "explicit local Firefox forced-relay test profile only"
+        }
+      }
+    },
+    {
+      "id": "access-lease-firefox-final-direct",
+      "path": "/tmp/gelabber-e2e/access-lease-firefox-final-direct.json",
+      "sha256": "7704ecb581c4ca72e5e6b3389822297630733442988a55c5e59cb501c27c2ff8",
+      "at": "2026-09-28T16:12:33.247Z",
+      "finishedAt": "2026-09-28T16:14:53.236Z",
+      "testHead": "24211fb9250ce62425f8a162a4cdbd1c69d2057c",
+      "testFilesDirty": true,
+      "browser": {
+        "engine": "firefox",
+        "version": "155.0",
+        "platform": "linux",
+        "node": "v26.8.2"
+      },
+      "requestedNetwork": "direct",
+      "runtime": {
+        "attribution": "operator-supplied; not runtime digest verification",
+        "web": "6e221705c34e944bd3804aa3c9482488e770f249",
+        "api": "243c86ccc8f8a4bdfca9bc73da32e34520577bf9",
+        "media": "6e221705c34e944bd3804aa3c9482488e770f249"
+      },
+      "gate": {
+        "passed": true,
+        "absent": [],
+        "completeAcceptance": false
+      },
+      "cleanup": [
+        {
+          "target": "owned-test-server",
+          "status": 204,
+          "stage": "complete",
+          "statuses": {
+            "login": 200,
+            "delete": 204,
+            "logout": 200
+          }
+        },
+        {
+          "target": "owned-test-server",
+          "status": 204,
+          "stage": "complete",
+          "statuses": {
+            "login": 200,
+            "delete": 204,
+            "logout": 200
+          }
+        },
+        {
+          "target": "owned-test-server",
+          "status": 204,
+          "stage": "complete",
+          "statuses": {
+            "login": 200,
+            "delete": 204,
+            "logout": 200
+          }
+        },
+        {
+          "target": "owned-test-server",
+          "status": 204,
+          "stage": "complete",
+          "statuses": {
+            "login": 200,
+            "delete": 204,
+            "logout": 200
+          }
+        },
+        {
+          "target": "owned-test-server",
+          "status": 204,
+          "source": "scenario-confirmed-delete"
+        }
+      ],
+      "failedRows": [],
+      "fixtureStatus": null,
+      "ownedRuntimeProof": {
+        "apiSourceMatchesApproved": true,
+        "apiDigestMatchesApproved": true,
+        "sfuSourceMatchesApproved": true,
+        "sfuDigestMatchesApproved": true,
+        "dedicatedDatabaseAndBucket": true,
+        "authorityViaOwnedRedisProxy": true,
+        "actualSfuProcessBinaryMatchesManifest": null,
+        "actualSfuProcessParametersMatchPrivateConfig": null,
+        "bindCategory": null
+      },
+      "observedSucceededSelectedPaths": [
+        {
+          "local": "host",
+          "remote": "host"
+        }
+      ],
+      "executingSourceHashRefs": {
+        "harness.mjs": "source1",
+        "probe.mjs": "source2",
+        "fault-run.mjs": "source3",
+        "fault-runtime.mjs": "source4",
+        "media-runtime.mjs": "source5",
+        "media.mjs": "source6",
+        "media-extra.mjs": "source7",
+        "access.mjs": "source8",
+        "media-lease-faults.mjs": "source9"
+      },
+      "adapterMetadata": {
+        "sfuLoopbackIceAdapter": null,
+        "firefoxLoopbackIceAdapter": null
+      }
+    },
+    {
+      "id": "media-access-lease-chromium-final-relay",
+      "path": "/tmp/gelabber-e2e/media-access-lease-chromium-final-relay.json",
+      "sha256": "5d2531b214d5523c16dede2e032cc20762cbc3981c2f8807aced736be0da2578",
+      "at": "2026-09-28T16:30:21.981Z",
+      "finishedAt": "2026-09-28T16:34:27.778Z",
+      "testHead": "24211fb9250ce62425f8a162a4cdbd1c69d2057c",
+      "testFilesDirty": true,
+      "browser": {
+        "engine": "chromium",
+        "version": "153.0.8010.12",
+        "platform": "linux",
+        "node": "v26.8.2"
+      },
+      "requestedNetwork": "relay",
+      "runtime": {
+        "attribution": "operator-supplied; not runtime digest verification",
+        "web": "6e221705c34e944bd3804aa3c9482488e770f249",
+        "api": "243c86ccc8f8a4bdfca9bc73da32e34520577bf9",
+        "media": "6e221705c34e944bd3804aa3c9482488e770f249"
+      },
+      "gate": {
+        "passed": true,
+        "absent": [],
+        "completeAcceptance": false
+      },
+      "cleanup": [
+        {
+          "target": "owned-test-server",
+          "status": 204,
+          "stage": "complete",
+          "statuses": {
+            "login": 200,
+            "delete": 204,
+            "logout": 200
+          }
+        },
+        {
+          "target": "owned-test-server",
+          "status": 204,
+          "stage": "complete",
+          "statuses": {
+            "login": 200,
+            "delete": 204,
+            "logout": 200
+          }
+        },
+        {
+          "target": "owned-test-server",
+          "status": 204,
+          "stage": "complete",
+          "statuses": {
+            "login": 200,
+            "delete": 204,
+            "logout": 200
+          }
+        },
+        {
+          "target": "owned-test-server",
+          "status": 204,
+          "stage": "complete",
+          "statuses": {
+            "login": 200,
+            "delete": 204,
+            "logout": 200
+          }
+        },
+        {
+          "target": "owned-test-server",
+          "status": 204,
+          "source": "scenario-confirmed-delete"
+        }
+      ],
+      "failedRows": [],
+      "fixtureStatus": null,
+      "ownedRuntimeProof": {
+        "apiSourceMatchesApproved": true,
+        "apiDigestMatchesApproved": true,
+        "sfuSourceMatchesApproved": true,
+        "sfuDigestMatchesApproved": true,
+        "dedicatedDatabaseAndBucket": true,
+        "authorityViaOwnedRedisProxy": true,
+        "actualSfuProcessBinaryMatchesManifest": null,
+        "actualSfuProcessParametersMatchPrivateConfig": null,
+        "bindCategory": null
+      },
+      "observedSucceededSelectedPaths": [
+        {
+          "local": "relay",
+          "remote": "host"
+        }
+      ],
+      "executingSourceHashRefs": {
+        "harness.mjs": "source1",
+        "probe.mjs": "source2",
+        "fault-run.mjs": "source3",
+        "fault-runtime.mjs": "source4",
+        "media-runtime.mjs": "source5",
+        "media.mjs": "source6",
+        "media-extra.mjs": "source36",
+        "access.mjs": "source8",
+        "media-lease-faults.mjs": "source9"
+      },
+      "adapterMetadata": {
+        "sfuLoopbackIceAdapter": null,
+        "firefoxLoopbackIceAdapter": null
+      }
+    },
+    {
+      "id": "media-sdp-chromium-relay-strict-final-control",
+      "path": "/tmp/gelabber-e2e/media-sdp-chromium-relay-strict-final-control.json",
+      "sha256": "e29bf3d02d1e83c11bd55c29f6bfbf29dd0170ee4ef2323c43a3647d99bad7c5",
+      "at": "2026-09-28T17:06:56.819Z",
+      "finishedAt": "2026-09-28T17:07:16.151Z",
+      "testHead": "24211fb9250ce62425f8a162a4cdbd1c69d2057c",
+      "testFilesDirty": true,
+      "browser": {
+        "engine": "chromium",
+        "version": "153.0.8010.12",
+        "platform": "linux",
+        "node": "v26.8.2"
+      },
+      "requestedNetwork": "relay",
+      "runtime": {
+        "attribution": "operator-supplied; not runtime digest verification",
+        "web": "6e221705c34e944bd3804aa3c9482488e770f249",
+        "api": "243c86ccc8f8a4bdfca9bc73da32e34520577bf9",
+        "media": "6e221705c34e944bd3804aa3c9482488e770f249"
+      },
+      "gate": {
+        "passed": true,
+        "absent": [],
+        "completeAcceptance": false
+      },
+      "cleanup": [
+        {
+          "target": "owned-test-server",
+          "status": 204,
+          "stage": "complete",
+          "statuses": {
+            "login": 200,
+            "delete": 204,
+            "logout": 200
+          }
+        }
+      ],
+      "failedRows": [],
+      "fixtureStatus": null,
+      "ownedRuntimeProof": {
+        "apiSourceMatchesApproved": true,
+        "apiDigestMatchesApproved": true,
+        "sfuSourceMatchesApproved": true,
+        "sfuDigestMatchesApproved": true,
+        "dedicatedDatabaseAndBucket": true,
+        "authorityViaOwnedRedisProxy": true,
+        "actualSfuProcessBinaryMatchesManifest": null,
+        "actualSfuProcessParametersMatchPrivateConfig": null,
+        "bindCategory": null
+      },
+      "observedSucceededSelectedPaths": [
+        {
+          "local": "relay",
+          "remote": "host"
+        }
+      ],
+      "executingSourceHashRefs": {
+        "harness.mjs": "source11",
+        "probe.mjs": "source12",
+        "browser-options.mjs": "source13",
+        "fault-run.mjs": "source3",
+        "fault-runtime.mjs": "source4",
+        "media-runtime.mjs": "source14",
+        "media.mjs": "source6",
+        "media-extra.mjs": "source15",
+        "access.mjs": "source8",
+        "media-lease-faults.mjs": "source9"
+      },
+      "adapterMetadata": {
+        "sfuLoopbackIceAdapter": null,
+        "firefoxLoopbackIceAdapter": {
+          "enabled": false,
+          "pref": "media.peerconnection.ice.loopback",
+          "value": "browser default",
+          "scope": "explicit local Firefox forced-relay test profile only"
+        }
+      }
+    },
+    {
+      "id": "firefox-turn-app-sfu-loopback-control-app",
+      "path": "/tmp/gelabber-e2e/firefox-turn-app-sfu-loopback-control-app.json",
+      "sha256": "6819e5c26be3f0364df4a9fae99de5de3179e233a18c0570864dbf7393379a2a",
+      "at": "2026-09-28T17:05:43.998Z",
+      "finishedAt": "2026-09-28T17:06:04.217Z",
+      "testHead": "24211fb9250ce62425f8a162a4cdbd1c69d2057c",
+      "testFilesDirty": true,
+      "browser": {
+        "engine": "firefox",
+        "version": "155.0",
+        "platform": "linux",
+        "node": "v26.8.2"
+      },
+      "requestedNetwork": "relay",
+      "runtime": {
+        "attribution": "operator-supplied; not runtime digest verification",
+        "web": "unknown",
+        "api": "unknown",
+        "media": "unknown"
+      },
+      "gate": {
+        "passed": true,
+        "absent": [],
+        "completeAcceptance": false
+      },
+      "cleanup": [
+        {
+          "target": "owned-test-server",
+          "status": 204,
+          "stage": "complete",
+          "statuses": {
+            "login": 200,
+            "delete": 204,
+            "logout": 200
+          }
+        }
+      ],
+      "failedRows": [],
+      "fixtureStatus": null,
+      "observedSucceededSelectedPaths": [
+        {
+          "local": "relay",
+          "remote": "host"
+        }
+      ],
+      "executingSourceHashRefs": {
+        "harness.mjs": "source11",
+        "probe.mjs": "source12",
+        "browser-options.mjs": "source13",
+        "fault-run.mjs": "source3",
+        "fault-runtime.mjs": "source4",
+        "media-runtime.mjs": "source14",
+        "media.mjs": "source6",
+        "media-extra.mjs": "source15",
+        "access.mjs": "source8",
+        "media-lease-faults.mjs": "source9"
+      },
+      "adapterMetadata": {
+        "sfuLoopbackIceAdapter": {
+          "name": "explicit-own-SFU-loopback-ICE-topology-control",
+          "enabled": true,
+          "scope": "local Firefox forced relay control only",
+          "nativeMidIndexOverride": false
+        },
+        "firefoxLoopbackIceAdapter": {
+          "enabled": true,
+          "pref": "media.peerconnection.ice.loopback",
+          "value": true,
+          "scope": "explicit local Firefox forced-relay test profile only"
+        }
+      }
+    },
+    {
+      "id": "media-access-lease-firefox-final-relay-loopback-adapter",
+      "path": "/tmp/gelabber-e2e/media-access-lease-firefox-final-relay-loopback-adapter.json",
+      "sha256": "feab62d9b46f38336fa4b99539576894c228c9ad6e7d6ca200cc4fac20d3862e",
+      "at": "2026-09-28T17:11:39.772Z",
+      "finishedAt": "2026-09-28T17:17:10.300Z",
+      "testHead": "24211fb9250ce62425f8a162a4cdbd1c69d2057c",
+      "testFilesDirty": true,
+      "browser": {
+        "engine": "firefox",
+        "version": "155.0",
+        "platform": "linux",
+        "node": "v26.8.2"
+      },
+      "requestedNetwork": "relay",
+      "runtime": {
+        "attribution": "operator-supplied; not runtime digest verification",
+        "web": "6e221705c34e944bd3804aa3c9482488e770f249",
+        "api": "243c86ccc8f8a4bdfca9bc73da32e34520577bf9",
+        "media": "6e221705c34e944bd3804aa3c9482488e770f249"
+      },
+      "gate": {
+        "passed": false,
+        "absent": [],
+        "completeAcceptance": false
+      },
+      "cleanup": [
+        {
+          "target": "owned-test-server",
+          "status": "FAILED",
+          "reason": "cleanup-interface-or-deadline",
+          "stage": "create-cleanup-context",
+          "statuses": {}
+        }
+      ],
+      "failedRows": [
+        {
+          "id": "media-ws-capture-preserving-recovery",
+          "status": "FAIL",
+          "classification": "unconfirmed-failure",
+          "reason": "harness-or-interface-error",
+          "at": "2026-09-28T17:12:20.765Z",
+          "durationMs": 289509
+        },
+        {
+          "id": "gateway-only-preserves-peer",
+          "status": "FAIL",
+          "classification": "unconfirmed-failure",
+          "reason": "harness-or-interface-error",
+          "at": "2026-09-28T17:17:10.274Z",
+          "durationMs": 0
+        },
+        {
+          "id": "offline-8s-no-new-capture-gesture",
+          "status": "FAIL",
+          "classification": "unconfirmed-failure",
+          "reason": "harness-or-interface-error",
+          "at": "2026-09-28T17:17:10.274Z",
+          "durationMs": 0
+        },
+        {
+          "id": "watch-navigation-channel-binding-global-controls",
+          "status": "FAIL",
+          "classification": "unconfirmed-failure",
+          "reason": "harness-or-interface-error",
+          "at": "2026-09-28T17:17:10.275Z",
+          "durationMs": 1
+        },
+        {
+          "id": "live-claim-exclusive-and-loser-not-published",
+          "status": "FAIL",
+          "classification": "unconfirmed-failure",
+          "reason": "harness-or-interface-error",
+          "at": "2026-09-28T17:17:10.276Z",
+          "durationMs": 1
+        },
+        {
+          "id": "20-live-start-stop-bounded-client-resources",
+          "status": "FAIL",
+          "classification": "unconfirmed-failure",
+          "reason": "harness-or-interface-error",
+          "at": "2026-09-28T17:17:10.277Z",
+          "durationMs": 1
+        },
+        {
+          "id": "cancelled-live-picker-keeps-voice-no-ghost",
+          "status": "FAIL",
+          "classification": "unconfirmed-failure",
+          "reason": "harness-or-interface-error",
+          "at": "2026-09-28T17:17:10.278Z",
+          "durationMs": 0
+        },
+        {
+          "id": "camera-screen-live-source-identity",
+          "status": "FAIL",
+          "classification": "unconfirmed-failure",
+          "reason": "harness-or-interface-error",
+          "at": "2026-09-28T17:17:10.278Z",
+          "durationMs": 1
+        },
+        {
+          "id": "autoplay-rejection-visible-click-retry",
+          "status": "FAIL",
+          "classification": "unconfirmed-failure",
+          "reason": "harness-or-interface-error",
+          "at": "2026-09-28T17:17:10.279Z",
+          "durationMs": 1
+        },
+        {
+          "id": "voice-only-duplex-single-source",
+          "status": "FAIL",
+          "classification": "unconfirmed-failure",
+          "reason": "harness-or-interface-error",
+          "at": "2026-09-28T17:17:10.280Z",
+          "durationMs": 2
+        },
+        {
+          "id": "forced-track-arrival-reorder-source-identity",
+          "status": "FAIL",
+          "classification": "unconfirmed-failure",
+          "reason": "harness-or-interface-error",
+          "at": "2026-09-28T17:17:10.282Z",
+          "durationMs": 1
+        },
+        {
+          "id": "rejected-native-sdp-keeps-voice-other-source-no-ghost",
+          "status": "FAIL",
+          "classification": "unconfirmed-failure",
+          "reason": "harness-or-interface-error",
+          "at": "2026-09-28T17:17:10.283Z",
+          "durationMs": 1
+        },
+        {
+          "id": "session-audio-mute-deafen-volume-playback-retry",
+          "status": "FAIL",
+          "classification": "unconfirmed-failure",
+          "reason": "harness-or-interface-error",
+          "at": "2026-09-28T17:17:10.284Z",
+          "durationMs": 1
+        },
+        {
+          "id": "api-redis-outage-live-lease-recovery",
+          "status": "FAIL",
+          "classification": "unconfirmed-failure",
+          "reason": "harness-or-interface-error",
+          "at": "2026-09-28T17:17:10.286Z",
+          "durationMs": 1
+        },
+        {
+          "id": "leave-revokes-existing-gateway-active-sfu-and-held-ticket",
+          "status": "FAIL",
+          "classification": "unconfirmed-failure",
+          "reason": "harness-or-interface-error",
+          "at": "2026-09-28T17:17:10.292Z",
+          "durationMs": 6
+        },
+        {
+          "id": "kick-revokes-existing-gateway-active-sfu-and-held-ticket",
+          "status": "BLOCKED",
+          "classification": "blocked",
+          "reason": "fixture-recovery-failed",
+          "at": "2026-09-28T17:17:10.298Z"
+        },
+        {
+          "id": "ban-revokes-existing-gateway-active-sfu-and-held-ticket",
+          "status": "BLOCKED",
+          "classification": "blocked",
+          "reason": "fixture-recovery-failed",
+          "at": "2026-09-28T17:17:10.298Z"
+        },
+        {
+          "id": "logout-revokes-existing-gateway-active-sfu-and-held-ticket",
+          "status": "BLOCKED",
+          "classification": "blocked",
+          "reason": "fixture-recovery-failed",
+          "at": "2026-09-28T17:17:10.298Z"
+        },
+        {
+          "id": "logout-other-independent-session-survives",
+          "status": "BLOCKED",
+          "classification": "blocked",
+          "reason": "fixture-recovery-failed",
+          "at": "2026-09-28T17:17:10.298Z"
+        },
+        {
+          "id": "channel-server-delete-active-sockets",
+          "status": "BLOCKED",
+          "classification": "blocked",
+          "reason": "fixture-recovery-failed",
+          "at": "2026-09-28T17:17:10.298Z"
+        }
+      ],
+      "fixtureStatus": null,
+      "ownedRuntimeProof": {
+        "apiSourceMatchesApproved": true,
+        "apiDigestMatchesApproved": true,
+        "sfuSourceMatchesApproved": true,
+        "sfuDigestMatchesApproved": true,
+        "dedicatedDatabaseAndBucket": true,
+        "authorityViaOwnedRedisProxy": true,
+        "actualSfuProcessBinaryMatchesManifest": true,
+        "actualSfuProcessParametersMatchPrivateConfig": true,
+        "bindCategory": "loopback-v4"
+      },
+      "observedSucceededSelectedPaths": [
+        {
+          "local": "relay",
+          "remote": "host"
+        }
+      ],
+      "adapterRestore": {
+        "path": "/tmp/gelabber-e2e/media-access-lease-firefox-final-relay-loopback-adapter.json.runtime-adapter.json",
+        "sha256": "6a2a41176124bbe9a02c267cac677013e41d2a017a393242280239c3f2638303",
+        "status": "PASS",
+        "baselineUnchanged": true,
+        "controlEnvSha256": "75d981cd5b5fa9ae6aa3d16463d14289b9cab8746b0e71513f218fd3e731644c",
+        "failedSteps": []
+      },
+      "executingSourceHashRefs": {
+        "harness.mjs": "source37",
+        "probe.mjs": "source12",
+        "browser-options.mjs": "source29",
+        "fault-run.mjs": "source30",
+        "fault-runtime.mjs": "source4",
+        "media-runtime.mjs": "source31",
+        "media.mjs": "source6",
+        "media-extra.mjs": "source15",
+        "access.mjs": "source8",
+        "media-lease-faults.mjs": "source9"
+      },
+      "adapterMetadata": {
+        "sfuLoopbackIceAdapter": {
+          "enabled": true,
+          "name": "explicit-own-SFU-loopback-ICE-topology-control",
+          "scope": "local Firefox forced-relay adapter only; no default/WAN acceptance",
+          "nativeMidIndexOverride": false
+        },
+        "firefoxLoopbackIceAdapter": {
+          "enabled": true,
+          "pref": "media.peerconnection.ice.loopback",
+          "value": true,
+          "scope": "explicit local Firefox forced-relay test profile only"
+        }
+      }
+    },
+    {
+      "id": "media-ws-firefox-relay-bounded-control",
+      "path": "/tmp/gelabber-e2e/media-ws-firefox-relay-bounded-control.json",
+      "sha256": "fbe0874f84b234bdd394ace4e4438aa4ef0a9c289ed2052160fb5a4164182e59",
+      "at": "2026-09-28T17:34:55.995Z",
+      "finishedAt": "2026-09-28T17:35:11.554Z",
+      "testHead": "24211fb9250ce62425f8a162a4cdbd1c69d2057c",
+      "testFilesDirty": true,
+      "browser": {
+        "engine": "firefox",
+        "version": "155.0",
+        "platform": "linux",
+        "node": "v26.8.2"
+      },
+      "requestedNetwork": "relay",
+      "runtime": {
+        "attribution": "operator-supplied; not runtime digest verification",
+        "web": "6e221705c34e944bd3804aa3c9482488e770f249",
+        "api": "243c86ccc8f8a4bdfca9bc73da32e34520577bf9",
+        "media": "6e221705c34e944bd3804aa3c9482488e770f249"
+      },
+      "gate": {
+        "passed": true,
+        "absent": [],
+        "completeAcceptance": false
+      },
+      "cleanup": [
+        {
+          "target": "owned-test-server",
+          "status": 204,
+          "stage": "complete",
+          "statuses": {
+            "login": 200,
+            "delete": 204,
+            "logout": 200
+          }
+        }
+      ],
+      "failedRows": [],
+      "fixtureStatus": null,
+      "ownedRuntimeProof": {
+        "apiSourceMatchesApproved": true,
+        "apiDigestMatchesApproved": true,
+        "sfuSourceMatchesApproved": true,
+        "sfuDigestMatchesApproved": true,
+        "dedicatedDatabaseAndBucket": true,
+        "authorityViaOwnedRedisProxy": true,
+        "actualSfuProcessBinaryMatchesManifest": true,
+        "actualSfuProcessParametersMatchPrivateConfig": true,
+        "bindCategory": "loopback-v4"
+      },
+      "observedSucceededSelectedPaths": [
+        {
+          "local": "relay",
+          "remote": "host"
+        }
+      ],
+      "adapterRestore": {
+        "path": "/tmp/gelabber-e2e/media-ws-firefox-relay-bounded-control.json.runtime-adapter.json",
+        "sha256": "6a2a41176124bbe9a02c267cac677013e41d2a017a393242280239c3f2638303",
+        "status": "PASS",
+        "baselineUnchanged": true,
+        "controlEnvSha256": "75d981cd5b5fa9ae6aa3d16463d14289b9cab8746b0e71513f218fd3e731644c",
+        "failedSteps": []
+      },
+      "executingSourceHashRefs": {
+        "harness.mjs": "source38",
+        "probe.mjs": "source39",
+        "native-evaluate.mjs": "source40",
+        "browser-options.mjs": "source29",
+        "fault-run.mjs": "source30",
+        "fault-runtime.mjs": "source4",
+        "media-runtime.mjs": "source31",
+        "media.mjs": "source32",
+        "media-extra.mjs": "source33",
+        "access.mjs": "source8",
+        "media-lease-faults.mjs": "source9"
+      },
+      "adapterMetadata": {
+        "sfuLoopbackIceAdapter": {
+          "enabled": true,
+          "name": "explicit-own-SFU-loopback-ICE-topology-control",
+          "scope": "local Firefox forced-relay adapter only; no default/WAN acceptance",
+          "nativeMidIndexOverride": false
+        },
+        "firefoxLoopbackIceAdapter": {
+          "enabled": true,
+          "pref": "media.peerconnection.ice.loopback",
+          "value": true,
+          "scope": "explicit local Firefox forced-relay test profile only"
+        }
+      }
+    },
+    {
+      "id": "firefox-relay-remaining-media-lifecycle",
+      "path": "/tmp/gelabber-e2e/firefox-relay-remaining-media-lifecycle.json",
+      "sha256": "505487232b06a55a8f399c5abd07f7e0011c22770856e7218b90f1deb0eeaa44",
+      "at": "2026-09-28T17:43:33.201Z",
+      "finishedAt": "2026-09-28T17:44:56.398Z",
+      "testHead": "24211fb9250ce62425f8a162a4cdbd1c69d2057c",
+      "testFilesDirty": true,
+      "browser": {
+        "engine": "firefox",
+        "version": "155.0",
+        "platform": "linux",
+        "node": "v26.8.2"
+      },
+      "requestedNetwork": "relay",
+      "runtime": {
+        "attribution": "operator-supplied; not runtime digest verification",
+        "web": "6e221705c34e944bd3804aa3c9482488e770f249",
+        "api": "243c86ccc8f8a4bdfca9bc73da32e34520577bf9",
+        "media": "6e221705c34e944bd3804aa3c9482488e770f249"
+      },
+      "gate": {
+        "passed": true,
+        "absent": [],
+        "completeAcceptance": false
+      },
+      "cleanup": [
+        {
+          "target": "owned-test-server",
+          "status": 204,
+          "stage": "complete",
+          "statuses": {
+            "login": 200,
+            "delete": 204,
+            "logout": 200
+          }
+        }
+      ],
+      "failedRows": [],
+      "fixtureStatus": null,
+      "ownedRuntimeProof": {
+        "apiSourceMatchesApproved": true,
+        "apiDigestMatchesApproved": true,
+        "sfuSourceMatchesApproved": true,
+        "sfuDigestMatchesApproved": true,
+        "dedicatedDatabaseAndBucket": true,
+        "authorityViaOwnedRedisProxy": true,
+        "actualSfuProcessBinaryMatchesManifest": true,
+        "actualSfuProcessParametersMatchPrivateConfig": true,
+        "bindCategory": "loopback-v4"
+      },
+      "observedSucceededSelectedPaths": [
+        {
+          "local": "relay",
+          "remote": "host"
+        }
+      ],
+      "adapterRestore": {
+        "path": "/tmp/gelabber-e2e/firefox-relay-remaining-media-lifecycle.json.runtime-adapter.json",
+        "sha256": "6a2a41176124bbe9a02c267cac677013e41d2a017a393242280239c3f2638303",
+        "status": "PASS",
+        "baselineUnchanged": true,
+        "controlEnvSha256": "75d981cd5b5fa9ae6aa3d16463d14289b9cab8746b0e71513f218fd3e731644c",
+        "failedSteps": []
+      },
+      "executingSourceHashRefs": {
+        "harness.mjs": "source38",
+        "probe.mjs": "source27",
+        "native-evaluate.mjs": "source28",
+        "browser-options.mjs": "source29",
+        "fault-run.mjs": "source30",
+        "fault-runtime.mjs": "source4",
+        "media-runtime.mjs": "source31",
+        "media.mjs": "source32",
+        "media-extra.mjs": "source33",
+        "access.mjs": "source8",
+        "media-lease-faults.mjs": "source9"
+      },
+      "adapterMetadata": {
+        "sfuLoopbackIceAdapter": {
+          "enabled": true,
+          "name": "explicit-own-SFU-loopback-ICE-topology-control",
+          "scope": "local Firefox forced-relay adapter only; no default/WAN acceptance",
+          "nativeMidIndexOverride": false
+        },
+        "firefoxLoopbackIceAdapter": {
+          "enabled": true,
+          "pref": "media.peerconnection.ice.loopback",
+          "value": true,
+          "scope": "explicit local Firefox forced-relay test profile only"
+        }
+      }
+    },
+    {
+      "id": "firefox-relay-remaining-media-sources",
+      "path": "/tmp/gelabber-e2e/firefox-relay-remaining-media-sources.json",
+      "sha256": "d0269ad01448d114bfe5f2d185758b41ef4b74e2d9103860bef5aae1dda30780",
+      "at": "2026-09-28T17:45:43.822Z",
+      "finishedAt": "2026-09-28T17:46:20.536Z",
+      "testHead": "24211fb9250ce62425f8a162a4cdbd1c69d2057c",
+      "testFilesDirty": true,
+      "browser": {
+        "engine": "firefox",
+        "version": "155.0",
+        "platform": "linux",
+        "node": "v26.8.2"
+      },
+      "requestedNetwork": "relay",
+      "runtime": {
+        "attribution": "operator-supplied; not runtime digest verification",
+        "web": "6e221705c34e944bd3804aa3c9482488e770f249",
+        "api": "243c86ccc8f8a4bdfca9bc73da32e34520577bf9",
+        "media": "6e221705c34e944bd3804aa3c9482488e770f249"
+      },
+      "gate": {
+        "passed": true,
+        "absent": [],
+        "completeAcceptance": false
+      },
+      "cleanup": [
+        {
+          "target": "owned-test-server",
+          "status": 204,
+          "stage": "complete",
+          "statuses": {
+            "login": 200,
+            "delete": 204,
+            "logout": 200
+          }
+        }
+      ],
+      "failedRows": [],
+      "fixtureStatus": null,
+      "ownedRuntimeProof": {
+        "apiSourceMatchesApproved": true,
+        "apiDigestMatchesApproved": true,
+        "sfuSourceMatchesApproved": true,
+        "sfuDigestMatchesApproved": true,
+        "dedicatedDatabaseAndBucket": true,
+        "authorityViaOwnedRedisProxy": true,
+        "actualSfuProcessBinaryMatchesManifest": true,
+        "actualSfuProcessParametersMatchPrivateConfig": true,
+        "bindCategory": "loopback-v4"
+      },
+      "observedSucceededSelectedPaths": [
+        {
+          "local": "relay",
+          "remote": "host"
+        }
+      ],
+      "adapterRestore": {
+        "path": "/tmp/gelabber-e2e/firefox-relay-remaining-media-sources.json.runtime-adapter.json",
+        "sha256": "6a2a41176124bbe9a02c267cac677013e41d2a017a393242280239c3f2638303",
+        "status": "PASS",
+        "baselineUnchanged": true,
+        "controlEnvSha256": "75d981cd5b5fa9ae6aa3d16463d14289b9cab8746b0e71513f218fd3e731644c",
+        "failedSteps": []
+      },
+      "executingSourceHashRefs": {
+        "harness.mjs": "source38",
+        "probe.mjs": "source27",
+        "native-evaluate.mjs": "source28",
+        "browser-options.mjs": "source29",
+        "fault-run.mjs": "source30",
+        "fault-runtime.mjs": "source4",
+        "media-runtime.mjs": "source31",
+        "media.mjs": "source32",
+        "media-extra.mjs": "source33",
+        "access.mjs": "source41",
+        "media-lease-faults.mjs": "source42"
+      },
+      "adapterMetadata": {
+        "sfuLoopbackIceAdapter": {
+          "enabled": true,
+          "name": "explicit-own-SFU-loopback-ICE-topology-control",
+          "scope": "local Firefox forced-relay adapter only; no default/WAN acceptance",
+          "nativeMidIndexOverride": false
+        },
+        "firefoxLoopbackIceAdapter": {
+          "enabled": true,
+          "pref": "media.peerconnection.ice.loopback",
+          "value": true,
+          "scope": "explicit local Firefox forced-relay test profile only"
+        }
+      }
+    },
+    {
+      "id": "firefox-relay-remaining-access-membership",
+      "path": "/tmp/gelabber-e2e/firefox-relay-remaining-access-membership.json",
+      "sha256": "2f5bb0e5d30cc45d79e1bcec9faad06ea418ea853224066aa73a1d28c2efd58a",
+      "at": "2026-09-28T17:50:48.053Z",
+      "finishedAt": "2026-09-28T17:51:32.046Z",
+      "testHead": "24211fb9250ce62425f8a162a4cdbd1c69d2057c",
+      "testFilesDirty": true,
+      "browser": {
+        "engine": "firefox",
+        "version": "155.0",
+        "platform": "linux",
+        "node": "v26.8.2"
+      },
+      "requestedNetwork": "relay",
+      "runtime": {
+        "attribution": "operator-supplied; not runtime digest verification",
+        "web": "6e221705c34e944bd3804aa3c9482488e770f249",
+        "api": "243c86ccc8f8a4bdfca9bc73da32e34520577bf9",
+        "media": "6e221705c34e944bd3804aa3c9482488e770f249"
+      },
+      "gate": {
+        "passed": true,
+        "absent": [],
+        "completeAcceptance": false
+      },
+      "cleanup": [
+        {
+          "target": "owned-test-server",
+          "status": 204,
+          "stage": "complete",
+          "statuses": {
+            "login": 200,
+            "delete": 204,
+            "logout": 200
+          }
+        }
+      ],
+      "failedRows": [],
+      "fixtureStatus": null,
+      "ownedRuntimeProof": {
+        "apiSourceMatchesApproved": true,
+        "apiDigestMatchesApproved": true,
+        "sfuSourceMatchesApproved": true,
+        "sfuDigestMatchesApproved": true,
+        "dedicatedDatabaseAndBucket": true,
+        "authorityViaOwnedRedisProxy": true,
+        "actualSfuProcessBinaryMatchesManifest": true,
+        "actualSfuProcessParametersMatchPrivateConfig": true,
+        "bindCategory": "loopback-v4"
+      },
+      "observedSucceededSelectedPaths": [],
+      "adapterRestore": {
+        "path": "/tmp/gelabber-e2e/firefox-relay-remaining-access-membership.json.runtime-adapter.json",
+        "sha256": "6a2a41176124bbe9a02c267cac677013e41d2a017a393242280239c3f2638303",
+        "status": "PASS",
+        "baselineUnchanged": true,
+        "controlEnvSha256": "75d981cd5b5fa9ae6aa3d16463d14289b9cab8746b0e71513f218fd3e731644c",
+        "failedSteps": []
+      },
+      "executingSourceHashRefs": {
+        "harness.mjs": "source43",
+        "probe.mjs": "source27",
+        "native-evaluate.mjs": "source28",
+        "browser-options.mjs": "source29",
+        "fault-run.mjs": "source30",
+        "fault-runtime.mjs": "source4",
+        "media-runtime.mjs": "source31",
+        "media.mjs": "source32",
+        "media-extra.mjs": "source33",
+        "access.mjs": "source34",
+        "media-lease-faults.mjs": "source35"
+      },
+      "adapterMetadata": {
+        "sfuLoopbackIceAdapter": {
+          "enabled": true,
+          "name": "explicit-own-SFU-loopback-ICE-topology-control",
+          "scope": "local Firefox forced-relay adapter only; no default/WAN acceptance",
+          "nativeMidIndexOverride": false
+        },
+        "firefoxLoopbackIceAdapter": {
+          "enabled": true,
+          "pref": "media.peerconnection.ice.loopback",
+          "value": true,
+          "scope": "explicit local Firefox forced-relay test profile only"
+        }
+      }
+    },
+    {
+      "id": "firefox-relay-remaining-access-session-deletion",
+      "path": "/tmp/gelabber-e2e/firefox-relay-remaining-access-session-deletion.json",
+      "sha256": "268cec97465561fb630b41f0dfe9a28cff8c40dd3533b5de57509b3970c2f54e",
+      "at": "2026-09-28T17:52:44.818Z",
+      "finishedAt": "2026-09-28T17:53:41.384Z",
+      "testHead": "24211fb9250ce62425f8a162a4cdbd1c69d2057c",
+      "testFilesDirty": true,
+      "browser": {
+        "engine": "firefox",
+        "version": "155.0",
+        "platform": "linux",
+        "node": "v26.8.2"
+      },
+      "requestedNetwork": "relay",
+      "runtime": {
+        "attribution": "operator-supplied; not runtime digest verification",
+        "web": "6e221705c34e944bd3804aa3c9482488e770f249",
+        "api": "243c86ccc8f8a4bdfca9bc73da32e34520577bf9",
+        "media": "6e221705c34e944bd3804aa3c9482488e770f249"
+      },
+      "gate": {
+        "passed": false,
+        "absent": [],
+        "completeAcceptance": false
+      },
+      "cleanup": [
+        {
+          "target": "owned-test-server",
+          "status": 204,
+          "stage": "complete",
+          "statuses": {
+            "login": 200,
+            "delete": 204,
+            "logout": 200
+          }
+        },
+        {
+          "target": "owned-test-server",
+          "status": 204,
+          "stage": "complete",
+          "statuses": {
+            "login": 200,
+            "delete": 204,
+            "logout": 200
+          }
+        },
+        {
+          "target": "owned-test-server",
+          "status": 204,
+          "source": "scenario-confirmed-delete"
+        }
+      ],
+      "failedRows": [
+        {
+          "id": "channel-server-delete-active-sockets",
+          "status": "FAIL",
+          "classification": "test-error",
+          "reason": "native-browser-interface-deadline",
+          "at": "2026-09-28T17:53:06.997Z",
+          "durationMs": 30948
+        }
+      ],
+      "fixtureStatus": null,
+      "ownedRuntimeProof": {
+        "apiSourceMatchesApproved": true,
+        "apiDigestMatchesApproved": true,
+        "sfuSourceMatchesApproved": true,
+        "sfuDigestMatchesApproved": true,
+        "dedicatedDatabaseAndBucket": true,
+        "authorityViaOwnedRedisProxy": true,
+        "actualSfuProcessBinaryMatchesManifest": true,
+        "actualSfuProcessParametersMatchPrivateConfig": true,
+        "bindCategory": "loopback-v4"
+      },
+      "observedSucceededSelectedPaths": [],
+      "adapterRestore": {
+        "path": "/tmp/gelabber-e2e/firefox-relay-remaining-access-session-deletion.json.runtime-adapter.json",
+        "sha256": "6a2a41176124bbe9a02c267cac677013e41d2a017a393242280239c3f2638303",
+        "status": "PASS",
+        "baselineUnchanged": true,
+        "controlEnvSha256": "75d981cd5b5fa9ae6aa3d16463d14289b9cab8746b0e71513f218fd3e731644c",
+        "failedSteps": []
+      },
+      "executingSourceHashRefs": {
+        "harness.mjs": "source43",
+        "probe.mjs": "source27",
+        "native-evaluate.mjs": "source28",
+        "browser-options.mjs": "source29",
+        "fault-run.mjs": "source30",
+        "fault-runtime.mjs": "source4",
+        "media-runtime.mjs": "source31",
+        "media.mjs": "source32",
+        "media-extra.mjs": "source33",
+        "access.mjs": "source34",
+        "media-lease-faults.mjs": "source35"
+      },
+      "adapterMetadata": {
+        "sfuLoopbackIceAdapter": {
+          "enabled": true,
+          "name": "explicit-own-SFU-loopback-ICE-topology-control",
+          "scope": "local Firefox forced-relay adapter only; no default/WAN acceptance",
+          "nativeMidIndexOverride": false
+        },
+        "firefoxLoopbackIceAdapter": {
+          "enabled": true,
+          "pref": "media.peerconnection.ice.loopback",
+          "value": true,
+          "scope": "explicit local Firefox forced-relay test profile only"
+        }
+      }
+    },
+    {
+      "id": "firefox-relay-deleted-room-bounded-poll-control",
+      "path": "/tmp/gelabber-e2e/firefox-relay-deleted-room-bounded-poll-control.json",
+      "sha256": "38ce2f81d26a518d137fd87b93ac6d62994865200bade8c5bf98eb2a12ae4eb4",
+      "at": "2026-09-28T17:57:49.835Z",
+      "finishedAt": "2026-09-28T17:58:32.562Z",
+      "testHead": "24211fb9250ce62425f8a162a4cdbd1c69d2057c",
+      "testFilesDirty": true,
+      "browser": {
+        "engine": "firefox",
+        "version": "155.0",
+        "platform": "linux",
+        "node": "v26.8.2"
+      },
+      "requestedNetwork": "relay",
+      "runtime": {
+        "attribution": "operator-supplied; not runtime digest verification",
+        "web": "6e221705c34e944bd3804aa3c9482488e770f249",
+        "api": "243c86ccc8f8a4bdfca9bc73da32e34520577bf9",
+        "media": "6e221705c34e944bd3804aa3c9482488e770f249"
+      },
+      "gate": {
+        "passed": true,
+        "absent": [],
+        "completeAcceptance": false
+      },
+      "cleanup": [
+        {
+          "target": "owned-test-server",
+          "status": 204,
+          "stage": "complete",
+          "statuses": {
+            "login": 200,
+            "delete": 204,
+            "logout": 200
+          }
+        },
+        {
+          "target": "owned-test-server",
+          "status": 204,
+          "stage": "complete",
+          "statuses": {
+            "login": 200,
+            "delete": 204,
+            "logout": 200
+          }
+        },
+        {
+          "target": "owned-test-server",
+          "status": 204,
+          "source": "scenario-confirmed-delete"
+        }
+      ],
+      "failedRows": [],
+      "fixtureStatus": null,
+      "ownedRuntimeProof": {
+        "apiSourceMatchesApproved": true,
+        "apiDigestMatchesApproved": true,
+        "sfuSourceMatchesApproved": true,
+        "sfuDigestMatchesApproved": true,
+        "dedicatedDatabaseAndBucket": true,
+        "authorityViaOwnedRedisProxy": true,
+        "actualSfuProcessBinaryMatchesManifest": true,
+        "actualSfuProcessParametersMatchPrivateConfig": true,
+        "bindCategory": "loopback-v4"
+      },
+      "observedSucceededSelectedPaths": [],
+      "adapterRestore": {
+        "path": "/tmp/gelabber-e2e/firefox-relay-deleted-room-bounded-poll-control.json.runtime-adapter.json",
+        "sha256": "6a2a41176124bbe9a02c267cac677013e41d2a017a393242280239c3f2638303",
+        "status": "PASS",
+        "baselineUnchanged": true,
+        "controlEnvSha256": "75d981cd5b5fa9ae6aa3d16463d14289b9cab8746b0e71513f218fd3e731644c",
+        "failedSteps": []
+      },
+      "executingSourceHashRefs": {
+        "harness.mjs": "source26",
+        "probe.mjs": "source27",
+        "native-evaluate.mjs": "source28",
+        "browser-options.mjs": "source29",
+        "fault-run.mjs": "source30",
+        "fault-runtime.mjs": "source4",
+        "media-runtime.mjs": "source31",
+        "media.mjs": "source32",
+        "media-extra.mjs": "source33",
+        "access.mjs": "source34",
+        "media-lease-faults.mjs": "source35"
+      },
+      "adapterMetadata": {
+        "sfuLoopbackIceAdapter": {
+          "enabled": true,
+          "name": "explicit-own-SFU-loopback-ICE-topology-control",
+          "scope": "local Firefox forced-relay adapter only; no default/WAN acceptance",
+          "nativeMidIndexOverride": false
+        },
+        "firefoxLoopbackIceAdapter": {
+          "enabled": true,
+          "pref": "media.peerconnection.ice.loopback",
+          "value": true,
+          "scope": "explicit local Firefox forced-relay test profile only"
+        }
+      }
+    },
+    {
+      "id": "firefox-relay-remaining-lease-both-planes",
+      "path": "/tmp/gelabber-e2e/firefox-relay-remaining-lease-both-planes.json",
+      "sha256": "1df7b3b84fa6b79dc62570e522be385df22c8aea3dde15abf7c3b7c3d32b7ed8",
+      "at": "2026-09-28T17:58:57.199Z",
+      "finishedAt": "2026-09-28T17:59:57.751Z",
+      "testHead": "24211fb9250ce62425f8a162a4cdbd1c69d2057c",
+      "testFilesDirty": true,
+      "browser": {
+        "engine": "firefox",
+        "version": "155.0",
+        "platform": "linux",
+        "node": "v26.8.2"
+      },
+      "requestedNetwork": "relay",
+      "runtime": {
+        "attribution": "operator-supplied; not runtime digest verification",
+        "web": "6e221705c34e944bd3804aa3c9482488e770f249",
+        "api": "243c86ccc8f8a4bdfca9bc73da32e34520577bf9",
+        "media": "6e221705c34e944bd3804aa3c9482488e770f249"
+      },
+      "gate": {
+        "passed": true,
+        "absent": [],
+        "completeAcceptance": false
+      },
+      "cleanup": [
+        {
+          "target": "owned-test-server",
+          "status": 204,
+          "stage": "complete",
+          "statuses": {
+            "login": 200,
+            "delete": 204,
+            "logout": 200
+          }
+        },
+        {
+          "target": "owned-test-server",
+          "status": 204,
+          "stage": "complete",
+          "statuses": {
+            "login": 200,
+            "delete": 204,
+            "logout": 200
+          }
+        },
+        {
+          "target": "owned-test-server",
+          "status": 204,
+          "stage": "complete",
+          "statuses": {
+            "login": 200,
+            "delete": 204,
+            "logout": 200
+          }
+        }
+      ],
+      "failedRows": [],
+      "fixtureStatus": null,
+      "ownedRuntimeProof": {
+        "apiSourceMatchesApproved": true,
+        "apiDigestMatchesApproved": true,
+        "sfuSourceMatchesApproved": true,
+        "sfuDigestMatchesApproved": true,
+        "dedicatedDatabaseAndBucket": true,
+        "authorityViaOwnedRedisProxy": true,
+        "actualSfuProcessBinaryMatchesManifest": true,
+        "actualSfuProcessParametersMatchPrivateConfig": true,
+        "bindCategory": "loopback-v4"
+      },
+      "observedSucceededSelectedPaths": [
+        {
+          "local": "relay",
+          "remote": "host"
+        }
+      ],
+      "adapterRestore": {
+        "path": "/tmp/gelabber-e2e/firefox-relay-remaining-lease-both-planes.json.runtime-adapter.json",
+        "sha256": "6a2a41176124bbe9a02c267cac677013e41d2a017a393242280239c3f2638303",
+        "status": "PASS",
+        "baselineUnchanged": true,
+        "controlEnvSha256": "75d981cd5b5fa9ae6aa3d16463d14289b9cab8746b0e71513f218fd3e731644c",
+        "failedSteps": []
+      },
+      "executingSourceHashRefs": {
+        "harness.mjs": "source26",
+        "probe.mjs": "source27",
+        "native-evaluate.mjs": "source28",
+        "browser-options.mjs": "source29",
+        "fault-run.mjs": "source30",
+        "fault-runtime.mjs": "source4",
+        "media-runtime.mjs": "source31",
+        "media.mjs": "source32",
+        "media-extra.mjs": "source33",
+        "access.mjs": "source34",
+        "media-lease-faults.mjs": "source35"
+      },
+      "adapterMetadata": {
+        "sfuLoopbackIceAdapter": {
+          "enabled": true,
+          "name": "explicit-own-SFU-loopback-ICE-topology-control",
+          "scope": "local Firefox forced-relay adapter only; no default/WAN acceptance",
+          "nativeMidIndexOverride": false
+        },
+        "firefoxLoopbackIceAdapter": {
+          "enabled": true,
+          "pref": "media.peerconnection.ice.loopback",
+          "value": true,
+          "scope": "explicit local Firefox forced-relay test profile only"
+        }
+      }
+    },
+    {
+      "id": "media-access-lease-firefox-final-relay",
+      "path": "/tmp/gelabber-e2e/media-access-lease-firefox-final-relay.json",
+      "sha256": "6e2bb3d21eef14c6d54abc4ecac83f847c090c18d707c765d53294a2b2842ff1",
+      "at": "2026-09-28T16:36:23.146Z",
+      "finishedAt": "2026-09-28T16:40:38.630Z",
+      "testHead": "24211fb9250ce62425f8a162a4cdbd1c69d2057c",
+      "testFilesDirty": true,
+      "browser": {
+        "engine": "firefox",
+        "version": "155.0",
+        "platform": "linux",
+        "node": "v26.8.2"
+      },
+      "requestedNetwork": "relay",
+      "runtime": {
+        "attribution": "operator-supplied; not runtime digest verification",
+        "web": "6e221705c34e944bd3804aa3c9482488e770f249",
+        "api": "243c86ccc8f8a4bdfca9bc73da32e34520577bf9",
+        "media": "6e221705c34e944bd3804aa3c9482488e770f249"
+      },
+      "gate": {
+        "passed": false,
+        "absent": [],
+        "completeAcceptance": false
+      },
+      "cleanup": [
+        {
+          "target": "owned-test-server",
+          "status": 204,
+          "stage": "complete",
+          "statuses": {
+            "login": 200,
+            "delete": 204,
+            "logout": 200
+          }
+        },
+        {
+          "target": "owned-test-server",
+          "status": 204,
+          "stage": "complete",
+          "statuses": {
+            "login": 200,
+            "delete": 204,
+            "logout": 200
+          }
+        },
+        {
+          "target": "owned-test-server",
+          "status": 204,
+          "stage": "complete",
+          "statuses": {
+            "login": 200,
+            "delete": 204,
+            "logout": 200
+          }
+        }
+      ],
+      "failedRows": [
+        {
+          "id": "live-watch-default-autoplay-no-mic",
+          "status": "FAIL",
+          "classification": "unconfirmed-failure",
+          "reason": "publisher-encode-deadline",
+          "at": "2026-09-28T16:36:31.749Z",
+          "durationMs": 10912
+        },
+        {
+          "id": "late-watch-after-30s",
+          "status": "BLOCKED",
+          "classification": "blocked",
+          "reason": "initial-live-watch-failed",
+          "at": "2026-09-28T16:36:42.661Z"
+        },
+        {
+          "id": "media-ws-capture-preserving-recovery",
+          "status": "FAIL",
+          "classification": "unconfirmed-failure",
+          "reason": "publisher-encode-deadline",
+          "at": "2026-09-28T16:36:42.661Z",
+          "durationMs": 10951
+        },
+        {
+          "id": "gateway-only-preserves-peer",
+          "status": "FAIL",
+          "classification": "unconfirmed-failure",
+          "reason": "publisher-encode-deadline",
+          "at": "2026-09-28T16:36:53.613Z",
+          "durationMs": 10965
+        },
+        {
+          "id": "offline-8s-no-new-capture-gesture",
+          "status": "FAIL",
+          "classification": "unconfirmed-failure",
+          "reason": "publisher-encode-deadline",
+          "at": "2026-09-28T16:37:04.578Z",
+          "durationMs": 11004
+        },
+        {
+          "id": "watch-navigation-channel-binding-global-controls",
+          "status": "FAIL",
+          "classification": "unconfirmed-failure",
+          "reason": "publisher-encode-deadline",
+          "at": "2026-09-28T16:37:15.582Z",
+          "durationMs": 10959
+        },
+        {
+          "id": "live-claim-exclusive-and-loser-not-published",
+          "status": "FAIL",
+          "classification": "test-error",
+          "reason": "fixture-claim-voice-not-connected",
+          "at": "2026-09-28T16:37:26.541Z",
+          "durationMs": 10821
+        },
+        {
+          "id": "20-live-start-stop-bounded-client-resources",
+          "status": "FAIL",
+          "classification": "unconfirmed-failure",
+          "reason": "decoded-correct-source-first-frame-deadline",
+          "at": "2026-09-28T16:37:37.362Z",
+          "durationMs": 11091
+        },
+        {
+          "id": "camera-screen-live-source-identity",
+          "status": "FAIL",
+          "classification": "unconfirmed-failure",
+          "reason": "publisher-encode-deadline",
+          "at": "2026-09-28T16:37:51.390Z",
+          "durationMs": 10918
+        },
+        {
+          "id": "autoplay-rejection-visible-click-retry",
+          "status": "FAIL",
+          "classification": "unconfirmed-failure",
+          "reason": "blocked-play-has-no-visible-retry",
+          "at": "2026-09-28T16:38:02.308Z",
+          "durationMs": 1229
+        },
+        {
+          "id": "voice-only-duplex-single-source",
+          "status": "FAIL",
+          "classification": "test-error",
+          "reason": "fixture-voice-only-duplex-audio-missing",
+          "at": "2026-09-28T16:38:03.538Z",
+          "durationMs": 11067
+        },
+        {
+          "id": "forced-track-arrival-reorder-source-identity",
+          "status": "FAIL",
+          "classification": "unconfirmed-failure",
+          "reason": "publisher-encode-deadline",
+          "at": "2026-09-28T16:38:14.606Z",
+          "durationMs": 10980
+        },
+        {
+          "id": "rejected-native-sdp-keeps-voice-other-source-no-ghost",
+          "status": "FAIL",
+          "classification": "test-error",
+          "reason": "fixture-sdp-camera-warmup-deadline",
+          "at": "2026-09-28T16:38:25.586Z",
+          "durationMs": 21187
+        },
+        {
+          "id": "session-audio-mute-deafen-volume-playback-retry",
+          "status": "FAIL",
+          "classification": "unconfirmed-failure",
+          "reason": "publisher-encode-deadline",
+          "at": "2026-09-28T16:38:46.773Z",
+          "durationMs": 10979
+        },
+        {
+          "id": "api-redis-outage-live-lease-recovery",
+          "status": "FAIL",
+          "classification": "unconfirmed-failure",
+          "reason": "decoded-correct-source-first-frame-deadline",
+          "at": "2026-09-28T16:38:57.754Z",
+          "durationMs": 19279
+        },
+        {
+          "id": "leave-revokes-existing-gateway-active-sfu-and-held-ticket",
+          "status": "FAIL",
+          "classification": "unconfirmed-failure",
+          "reason": "decoded-correct-source-first-frame-deadline",
+          "at": "2026-09-28T16:39:17.036Z",
+          "durationMs": 13749
+        },
+        {
+          "id": "kick-revokes-existing-gateway-active-sfu-and-held-ticket",
+          "status": "FAIL",
+          "classification": "unconfirmed-failure",
+          "reason": "decoded-correct-source-first-frame-deadline",
+          "at": "2026-09-28T16:39:30.785Z",
+          "durationMs": 13793
+        },
+        {
+          "id": "ban-revokes-existing-gateway-active-sfu-and-held-ticket",
+          "status": "FAIL",
+          "classification": "unconfirmed-failure",
+          "reason": "decoded-correct-source-first-frame-deadline",
+          "at": "2026-09-28T16:39:44.578Z",
+          "durationMs": 13758
+        },
+        {
+          "id": "logout-revokes-existing-gateway-active-sfu-and-held-ticket",
+          "status": "FAIL",
+          "classification": "unconfirmed-failure",
+          "reason": "decoded-correct-source-first-frame-deadline",
+          "at": "2026-09-28T16:39:58.336Z",
+          "durationMs": 13755
+        },
+        {
+          "id": "channel-server-delete-active-sockets",
+          "status": "FAIL",
+          "classification": "unconfirmed-failure",
+          "reason": "decoded-correct-source-first-frame-deadline",
+          "at": "2026-09-28T16:40:14.702Z",
+          "durationMs": 19559
+        }
+      ],
+      "fixtureStatus": null,
+      "ownedRuntimeProof": {
+        "apiSourceMatchesApproved": true,
+        "apiDigestMatchesApproved": true,
+        "sfuSourceMatchesApproved": true,
+        "sfuDigestMatchesApproved": true,
+        "dedicatedDatabaseAndBucket": true,
+        "authorityViaOwnedRedisProxy": true,
+        "actualSfuProcessBinaryMatchesManifest": null,
+        "actualSfuProcessParametersMatchPrivateConfig": null,
+        "bindCategory": null
+      },
+      "observedSucceededSelectedPaths": [],
+      "executingSourceHashRefs": {
+        "harness.mjs": "source1",
+        "probe.mjs": "source2",
+        "fault-run.mjs": "source3",
+        "fault-runtime.mjs": "source4",
+        "media-runtime.mjs": "source5",
+        "media.mjs": "source6",
+        "media-extra.mjs": "source15",
+        "access.mjs": "source8",
+        "media-lease-faults.mjs": "source9"
+      },
+      "adapterMetadata": {
+        "sfuLoopbackIceAdapter": null,
+        "firefoxLoopbackIceAdapter": null
+      }
+    },
+    {
+      "id": "media-extra-chromium-first",
+      "path": "/tmp/gelabber-e2e/media-extra-chromium-first.json",
+      "sha256": "51cae42251348cc4575e50aa5d9ecb0bec37a1fbe4177cad80b5c32be14cf5b6",
+      "at": "2026-09-28T15:50:49.450Z",
+      "finishedAt": "2026-09-28T15:51:24.499Z",
+      "testHead": "42bc812c8b5a0aaa0395bc126b32c5f893799a5f",
+      "testFilesDirty": true,
+      "browser": {
+        "engine": "chromium",
+        "version": "153.0.8010.12",
+        "platform": "linux",
+        "node": "v26.8.2"
+      },
+      "requestedNetwork": "direct",
+      "runtime": {
+        "attribution": "operator-supplied; not runtime digest verification",
+        "web": "6e221705c34e944bd3804aa3c9482488e770f249",
+        "api": "243c86ccc8f8a4bdfca9bc73da32e34520577bf9",
+        "media": "6e221705c34e944bd3804aa3c9482488e770f249"
+      },
+      "gate": {
+        "passed": false,
+        "absent": [],
+        "completeAcceptance": false
+      },
+      "cleanup": [
+        {
+          "target": "owned-test-server",
+          "status": 204,
+          "stage": "complete",
+          "statuses": {
+            "login": 200,
+            "delete": 204,
+            "logout": 200
+          }
+        }
+      ],
+      "failedRows": [
+        {
+          "id": "live-claim-exclusive-and-loser-not-published",
+          "status": "FAIL",
+          "classification": "test-error",
+          "reason": "fixture-concurrent-live-claim-not-held",
+          "at": "2026-09-28T15:50:56.870Z",
+          "durationMs": 12080
+        },
+        {
+          "id": "rejected-native-sdp-keeps-voice-other-source-no-ghost",
+          "status": "FAIL",
+          "classification": "unconfirmed-failure",
+          "reason": "decoded-correct-source-first-frame-deadline",
+          "at": "2026-09-28T15:51:13.736Z",
+          "durationMs": 6320
+        },
+        {
+          "id": "session-audio-mute-deafen-volume-playback-retry",
+          "status": "FAIL",
+          "classification": "confirmed-product-failure",
+          "reason": "watch-foreign-or-duplicate-audio",
+          "at": "2026-09-28T15:51:20.056Z",
+          "durationMs": 2964
+        }
+      ],
+      "fixtureStatus": null,
+      "ownedRuntimeProof": {
+        "apiSourceMatchesApproved": true,
+        "apiDigestMatchesApproved": true,
+        "sfuSourceMatchesApproved": false,
+        "sfuDigestMatchesApproved": false,
+        "dedicatedDatabaseAndBucket": true,
+        "authorityViaOwnedRedisProxy": null,
+        "actualSfuProcessBinaryMatchesManifest": null,
+        "actualSfuProcessParametersMatchPrivateConfig": null,
+        "bindCategory": null
+      },
+      "observedSucceededSelectedPaths": [
+        {
+          "local": "host",
+          "remote": "host"
+        }
+      ],
+      "executingSourceHashRefs": {
+        "harness.mjs": "source1",
+        "probe.mjs": "source44",
+        "fault-run.mjs": "source3",
+        "fault-runtime.mjs": "source4",
+        "media-runtime.mjs": "source5",
+        "media.mjs": "source17",
+        "media-extra.mjs": "source45",
+        "access.mjs": "source8",
+        "media-lease-faults.mjs": "source19"
+      },
+      "adapterMetadata": {
+        "sfuLoopbackIceAdapter": null,
+        "firefoxLoopbackIceAdapter": null
+      }
+    },
+    {
+      "id": "media-extra-chromium-control2",
+      "path": "/tmp/gelabber-e2e/media-extra-chromium-control2.json",
+      "sha256": "323d829519bf9b9f80e9a27a3c401c75731fba59ebf06efa9b25c588fa084f2e",
+      "at": "2026-09-28T15:54:44.610Z",
+      "finishedAt": "2026-09-28T15:55:13.712Z",
+      "testHead": "42bc812c8b5a0aaa0395bc126b32c5f893799a5f",
+      "testFilesDirty": true,
+      "browser": {
+        "engine": "chromium",
+        "version": "153.0.8010.12",
+        "platform": "linux",
+        "node": "v26.8.2"
+      },
+      "requestedNetwork": "direct",
+      "runtime": {
+        "attribution": "operator-supplied; not runtime digest verification",
+        "web": "6e221705c34e944bd3804aa3c9482488e770f249",
+        "api": "243c86ccc8f8a4bdfca9bc73da32e34520577bf9",
+        "media": "6e221705c34e944bd3804aa3c9482488e770f249"
+      },
+      "gate": {
+        "passed": false,
+        "absent": [],
+        "completeAcceptance": false
+      },
+      "cleanup": [
+        {
+          "target": "owned-test-server",
+          "status": 204,
+          "stage": "complete",
+          "statuses": {
+            "login": 200,
+            "delete": 204,
+            "logout": 200
+          }
+        }
+      ],
+      "failedRows": [
+        {
+          "id": "session-audio-mute-deafen-volume-playback-retry",
+          "status": "FAIL",
+          "classification": "unconfirmed-failure",
+          "reason": "watch-foreign-or-duplicate-audio",
+          "at": "2026-09-28T15:55:05.994Z",
+          "durationMs": 6234
+        }
+      ],
+      "fixtureStatus": null,
+      "ownedRuntimeProof": {
+        "apiSourceMatchesApproved": true,
+        "apiDigestMatchesApproved": true,
+        "sfuSourceMatchesApproved": false,
+        "sfuDigestMatchesApproved": false,
+        "dedicatedDatabaseAndBucket": true,
+        "authorityViaOwnedRedisProxy": null,
+        "actualSfuProcessBinaryMatchesManifest": null,
+        "actualSfuProcessParametersMatchPrivateConfig": null,
+        "bindCategory": null
+      },
+      "observedSucceededSelectedPaths": [
+        {
+          "local": "host",
+          "remote": "host"
+        }
+      ],
+      "executingSourceHashRefs": {
+        "harness.mjs": "source1",
+        "probe.mjs": "source46",
+        "fault-run.mjs": "source3",
+        "fault-runtime.mjs": "source4",
+        "media-runtime.mjs": "source5",
+        "media.mjs": "source17",
+        "media-extra.mjs": "source47",
+        "access.mjs": "source8",
+        "media-lease-faults.mjs": "source19"
+      },
+      "adapterMetadata": {
+        "sfuLoopbackIceAdapter": null,
+        "firefoxLoopbackIceAdapter": null
+      }
+    },
+    {
+      "id": "media-duplex-audio-chromium-final-control",
+      "path": "/tmp/gelabber-e2e/media-duplex-audio-chromium-final-control.json",
+      "sha256": "e3870cc70e26013d1cd7a3d0e4d32cdeba5ee271e6c4e5b91c6914202eb97b44",
+      "at": "2026-09-28T16:25:26.099Z",
+      "finishedAt": "2026-09-28T16:25:56.784Z",
+      "testHead": "24211fb9250ce62425f8a162a4cdbd1c69d2057c",
+      "testFilesDirty": true,
+      "browser": {
+        "engine": "chromium",
+        "version": "153.0.8010.12",
+        "platform": "linux",
+        "node": "v26.8.2"
+      },
+      "requestedNetwork": "direct",
+      "runtime": {
+        "attribution": "operator-supplied; not runtime digest verification",
+        "web": "6e221705c34e944bd3804aa3c9482488e770f249",
+        "api": "243c86ccc8f8a4bdfca9bc73da32e34520577bf9",
+        "media": "6e221705c34e944bd3804aa3c9482488e770f249"
+      },
+      "gate": {
+        "passed": false,
+        "absent": [],
+        "completeAcceptance": false
+      },
+      "cleanup": [
+        {
+          "target": "owned-test-server",
+          "status": 204,
+          "stage": "complete",
+          "statuses": {
+            "login": 200,
+            "delete": 204,
+            "logout": 200
+          }
+        }
+      ],
+      "failedRows": [
+        {
+          "id": "session-audio-mute-deafen-volume-playback-retry",
+          "status": "FAIL",
+          "classification": "unconfirmed-failure",
+          "reason": "browser-deadline",
+          "at": "2026-09-28T16:25:35.382Z",
+          "durationMs": 19861
+        }
+      ],
+      "fixtureStatus": null,
+      "ownedRuntimeProof": {
+        "apiSourceMatchesApproved": true,
+        "apiDigestMatchesApproved": true,
+        "sfuSourceMatchesApproved": true,
+        "sfuDigestMatchesApproved": true,
+        "dedicatedDatabaseAndBucket": true,
+        "authorityViaOwnedRedisProxy": true,
+        "actualSfuProcessBinaryMatchesManifest": null,
+        "actualSfuProcessParametersMatchPrivateConfig": null,
+        "bindCategory": null
+      },
+      "observedSucceededSelectedPaths": [
+        {
+          "local": "host",
+          "remote": "host"
+        }
+      ],
+      "executingSourceHashRefs": {
+        "harness.mjs": "source1",
+        "probe.mjs": "source2",
+        "fault-run.mjs": "source3",
+        "fault-runtime.mjs": "source4",
+        "media-runtime.mjs": "source5",
+        "media.mjs": "source6",
+        "media-extra.mjs": "source48",
+        "access.mjs": "source8",
+        "media-lease-faults.mjs": "source9"
+      },
+      "adapterMetadata": {
+        "sfuLoopbackIceAdapter": null,
+        "firefoxLoopbackIceAdapter": null
+      }
+    },
+    {
+      "id": "media-firefox-relay-adapter-start-control",
+      "path": "/tmp/gelabber-e2e/media-firefox-relay-adapter-start-control.json",
+      "sha256": "a39fe9fbfeb30e40bf28fdada728a09ae3a4f8906ca8f60bf32235bdd30828c2",
+      "at": "2026-09-28T16:47:06.539Z",
+      "finishedAt": "2026-09-28T16:47:38.946Z",
+      "testHead": "24211fb9250ce62425f8a162a4cdbd1c69d2057c",
+      "testFilesDirty": true,
+      "browser": {
+        "engine": "firefox",
+        "version": "155.0",
+        "platform": "linux",
+        "node": "v26.8.2"
+      },
+      "requestedNetwork": "relay",
+      "runtime": {
+        "attribution": "operator-supplied; not runtime digest verification",
+        "web": "6e221705c34e944bd3804aa3c9482488e770f249",
+        "api": "243c86ccc8f8a4bdfca9bc73da32e34520577bf9",
+        "media": "6e221705c34e944bd3804aa3c9482488e770f249"
+      },
+      "gate": {
+        "passed": false,
+        "absent": [],
+        "completeAcceptance": false
+      },
+      "cleanup": [
+        {
+          "target": "owned-test-server",
+          "status": 204,
+          "stage": "complete",
+          "statuses": {
+            "login": 200,
+            "delete": 204,
+            "logout": 200
+          }
+        }
+      ],
+      "failedRows": [
+        {
+          "id": "live-watch-default-autoplay-no-mic",
+          "status": "FAIL",
+          "classification": "unconfirmed-failure",
+          "reason": "publisher-encode-deadline",
+          "at": "2026-09-28T16:47:15.037Z",
+          "durationMs": 10960
+        },
+        {
+          "id": "gateway-only-preserves-peer",
+          "status": "FAIL",
+          "classification": "unconfirmed-failure",
+          "reason": "publisher-encode-deadline",
+          "at": "2026-09-28T16:47:25.997Z",
+          "durationMs": 10959
+        }
+      ],
+      "fixtureStatus": null,
+      "ownedRuntimeProof": {
+        "apiSourceMatchesApproved": true,
+        "apiDigestMatchesApproved": true,
+        "sfuSourceMatchesApproved": true,
+        "sfuDigestMatchesApproved": true,
+        "dedicatedDatabaseAndBucket": true,
+        "authorityViaOwnedRedisProxy": true,
+        "actualSfuProcessBinaryMatchesManifest": null,
+        "actualSfuProcessParametersMatchPrivateConfig": null,
+        "bindCategory": null
+      },
+      "observedSucceededSelectedPaths": [],
+      "executingSourceHashRefs": {
+        "harness.mjs": "source11",
+        "probe.mjs": "source12",
+        "browser-options.mjs": "source13",
+        "fault-run.mjs": "source3",
+        "fault-runtime.mjs": "source4",
+        "media-runtime.mjs": "source14",
+        "media.mjs": "source6",
+        "media-extra.mjs": "source15",
+        "access.mjs": "source8",
+        "media-lease-faults.mjs": "source9"
+      },
+      "adapterMetadata": {
+        "sfuLoopbackIceAdapter": null,
+        "firefoxLoopbackIceAdapter": {
+          "enabled": true,
+          "pref": "media.peerconnection.ice.loopback",
+          "value": true,
+          "scope": "explicit local Firefox forced-relay test profile only"
+        }
+      }
+    }
+  ],
+  "preservedInterpretations": {
+    "media-extra-chromium-first": "nonexistent claim-on field: test-contract error; initial report unchanged",
+    "media-extra-chromium-control2": "publisher-only audio assertion retracted as test-contract error, room audio contract requires all room sources once",
+    "media-firefox-final-direct": "closed peer localDescription getter test error corrected independently242; original FAIL unchanged",
+    "media-chromium-final-direct": "SDP camera precondition adapted480x270 before injection; no SDP product finding; strict approved20s-only pre-injection warmup controlled later",
+    "media-duplex-audio-chromium-final-control": "other-room Live changed accessible link name; selector test error, strict source boundaries unchanged",
+    "media-access-lease-firefox-final-relay": "default relay red/unclassified; no default/WAN acceptance",
+    "media-firefox-relay-adapter-start-control": "pref-only relay allocation not connectivity; red preserved",
+    "media-access-lease-firefox-final-relay-loopback-adapter": "whole run aborted after unbounded harness interface; FAIL+cleanup FAILED preserved, no native-call cause proven; later recovery separate",
+    "firefox-relay-remaining-access-session-deletion": "DeletedRoom outer-page-evaluate-already-expired; no native call started, no getStats hang proof; original FAIL preserved, other2 PASS observations"
+  },
+  "supportingArtifacts": [
+    {
+      "path": "/tmp/gelabber-e2e/firefox-turn-native-sfu-loopback-control.json",
+      "sha256": "6c54c2e31ad71e43d42bdf8b6b897d7e65a0e36f8f9f6fd1e3a43fb1e91532a6",
+      "role": "separate diagnostic/restore evidence; does not replace original matrix status"
+    },
+    {
+      "path": "/tmp/gelabber-e2e/firefox-turn-app-sfu-loopback-control.json",
+      "sha256": "80f601fdea796025dfa033f0fb8ccc20cae4fe51365d753d82e84bcbff23595a",
+      "role": "separate diagnostic/restore evidence; does not replace original matrix status"
+    },
+    {
+      "path": "/tmp/gelabber-e2e/firefox-turn-sfu-loopback-adapter-manifest.json",
+      "sha256": "ef0613487b23ff780ff899e8e963b8d359da66eb877489368959ca52934ab6f5",
+      "role": "separate diagnostic/restore evidence; does not replace original matrix status"
+    },
+    {
+      "path": "/tmp/gelabber-e2e/firefox-turn-native-generation-control.json",
+      "sha256": "f8db22f1b3adb2856dfc727eee7c0d25158a804134fd8d556a137d604ebc7fee",
+      "role": "separate diagnostic/restore evidence; does not replace original matrix status"
+    },
+    {
+      "path": "/tmp/gelabber-e2e/firefox-turn-native-explicit-index-control.json",
+      "sha256": "636ca096a3c73b786ab7fc5df60e8cf4ca44d211c2eaae07c96d065e7b39525f",
+      "role": "separate diagnostic/restore evidence; does not replace original matrix status"
+    },
+    {
+      "path": "/tmp/gelabber-e2e/firefox-relay-matrix-abort.json",
+      "sha256": "13cd695d1c34e32b57d12396eca59924c6a229422edfca7e6a75cf19cfca4a56",
+      "role": "separate diagnostic/restore evidence; does not replace original matrix status"
+    },
+    {
+      "path": "/tmp/gelabber-e2e/firefox-relay-matrix-post-abort.json",
+      "sha256": "dd2562c06acd5b016d8ede71005ed9b70ddfca262f5f8639be960e11569dd7bf",
+      "role": "separate diagnostic/restore evidence; does not replace original matrix status"
+    },
+    {
+      "path": "/tmp/gelabber-e2e/firefox-relay-matrix-recovery-cleanup.json",
+      "sha256": "3daabee6dc49d1bccb74b81dfb3d886a24a59c1bd54f9d94e9545425a048e87a",
+      "role": "separate diagnostic/restore evidence; does not replace original matrix status"
+    },
+    {
+      "path": "/tmp/gelabber-e2e/firefox-relay-matrix-post-recovery.json",
+      "sha256": "1f1daf86c462e6969da3da924ae7cbe3b0cbc7d2aaa1ee75060f261e64e068e9",
+      "role": "separate diagnostic/restore evidence; does not replace original matrix status"
+    },
+    {
+      "path": "/tmp/gelabber-e2e/media-ws-firefox-relay-bounded-post-control.json",
+      "sha256": "a8ec3a4fc61b46ef837565df93137f06b379c4bfd39f7b608b60c1f9b293de14",
+      "role": "separate diagnostic/restore evidence; does not replace original matrix status"
+    },
+    {
+      "path": "/tmp/gelabber-e2e/firefox-relay-access-deletion-post-timeout.json",
+      "sha256": "37bf776868130cc1f5857372d1c67a626de444b72d2e765d9d11d511a59f9e52",
+      "role": "separate diagnostic/restore evidence; does not replace original matrix status"
+    },
+    {
+      "path": "/tmp/gelabber-e2e/media-access-lease-final-resources.json",
+      "sha256": "d56cd09e4304c5aa2ef76376c3179d6532eee7e9a7421449b35411fdcdb0909c",
+      "role": "separate diagnostic/restore evidence; does not replace original matrix status"
+    },
+    {
+      "path": "/tmp/gelabber-e2e/media-access-lease-post-direct-final-resources.json",
+      "sha256": "fce44be61753504f69e6fb1478b4cf620e84fe13b6359cbb67c959c29d763905",
+      "role": "separate diagnostic/restore evidence; does not replace original matrix status"
+    }
+  ],
+  "openGates": [
+    {
+      "status": "BLOCKED",
+      "gate": "native OS display picker",
+      "reason": "synthetic capture/cancel does not exercise physical picker"
+    },
+    {
+      "status": "BLOCKED",
+      "gate": "audible two-device quality under loss",
+      "reason": "RTP/render/playback observations do not prove intelligible speech"
+    },
+    {
+      "status": "BLOCKED",
+      "gate": "WAN/CGNAT/HTTPS/production digest",
+      "reason": "local HTTP runtimes only; no production access/deploy"
+    },
+    {
+      "status": "FAIL/unclassified",
+      "gate": "Firefox default forced relay",
+      "reason": "original default matrix red; explicit adapters only locally approved, no silent default retry"
+    },
+    {
+      "status": "BLOCKED",
+      "gate": "full remote netem/CI/Docker/GHCR",
+      "reason": "no remote push/execution; kernel UDPdrop/TCPcontrol separately reviewed4028136"
+    },
+    {
+      "status": "BLOCKED",
+      "gate": "SFU task/publication bounds",
+      "reason": "no read-only per-test-room counters exposed; no RSS threshold fabricated"
+    },
+    {
+      "status": "OPEN",
+      "gate": "MID-null/index-null native TypeError",
+      "reason": "confirmed separate native input rejection; no product fallback/index override in acceptance"
+    },
+    {
+      "status": "BLOCKED",
+      "gate": "Safari on relevant Apple platform",
+      "reason": "Linux pinned browsers are not Safari"
+    }
+  ],
+  "sourceHashCatalog": {
+    "source1": {
+      "file": "harness.mjs",
+      "sha256": "cc3ddacd4f708718fa4c2bf2f366e619d331f441c33bd7fa217239ce01503ef3"
+    },
+    "source2": {
+      "file": "probe.mjs",
+      "sha256": "a15558d1f61395dd01f617428339669e8ba325b3a0186bf507046f991c15c94b"
+    },
+    "source3": {
+      "file": "fault-run.mjs",
+      "sha256": "dc20751e7801ddf52b93f8537f358986c2eabd09d00d1fe95c4e48596747b03f"
+    },
+    "source4": {
+      "file": "fault-runtime.mjs",
+      "sha256": "423684dfaddfdd65ca3021e95f842616563bef30dd8d99c70d477e9098bf7fee"
+    },
+    "source5": {
+      "file": "media-runtime.mjs",
+      "sha256": "2f71b9732e00596634050651da2d63221af8e24bb5f2703d3ecaf26174f4f6be"
+    },
+    "source6": {
+      "file": "media.mjs",
+      "sha256": "ee5618a9425e83a50aba212aa2644238f2c6332f3d4cfbc14561f5e78021c6b0"
+    },
+    "source7": {
+      "file": "media-extra.mjs",
+      "sha256": "2521f37966998e33b4696aaf8055a6f4773016b7d985fbf50b7d569c1871a0d2"
+    },
+    "source8": {
+      "file": "access.mjs",
+      "sha256": "7536eebea54137f95b23914adf705c8789b584f695464d74f0cae9cf15da3fc2"
+    },
+    "source9": {
+      "file": "media-lease-faults.mjs",
+      "sha256": "9436f7ce6adf0d230b1071019b68416d736eb2fab28a3648ef2bcefe243785b2"
+    },
+    "source10": {
+      "file": "media-extra.mjs",
+      "sha256": "9a953af1575bbd648a195744df1f8087fd3c8171f01dee489570590f4b49fd37"
+    },
+    "source11": {
+      "file": "harness.mjs",
+      "sha256": "e2fab547d9187ae65a5c4a74ca55fda8652db91aaedb5f0a5fecbd60ac6f2fae"
+    },
+    "source12": {
+      "file": "probe.mjs",
+      "sha256": "9b38bfe236e6830e5da13e82d458138638c3fbb5aded00c5162803e12d7fd0db"
+    },
+    "source13": {
+      "file": "browser-options.mjs",
+      "sha256": "b53354254cdf0a4dfc312dacdcb7fa26d7e8547d6eaa51b35dfd67aba63e6096"
+    },
+    "source14": {
+      "file": "media-runtime.mjs",
+      "sha256": "85ed1c36a576c3f1d9b1e63b12837cfae2f350600aa9dcc30c80db0bc8c5b3ad"
+    },
+    "source15": {
+      "file": "media-extra.mjs",
+      "sha256": "b09a5e195edf7083dd4cb64d79db07dcdecf54dde0cb380e9c98b556a34a365f"
+    },
+    "source16": {
+      "file": "probe.mjs",
+      "sha256": "765165cab986638c7f60daa176d2827801e3470533acb639ed81af2f9def2999"
+    },
+    "source17": {
+      "file": "media.mjs",
+      "sha256": "36ade4b2b7894b10202acad5f3fac067913c4dc100a7bfa911f0d576a38226e0"
+    },
+    "source18": {
+      "file": "media-extra.mjs",
+      "sha256": "0c34fa5acd5f0293d36bd256c6c988bb682ab1831aaf67c62d02fe2c9cd410bb"
+    },
+    "source19": {
+      "file": "media-lease-faults.mjs",
+      "sha256": "ced42f7b6fbf7db26f8812f3d5c46f758b88953188b8b0364b4e6bf2fbabaf36"
+    },
+    "source20": {
+      "file": "media-extra.mjs",
+      "sha256": "476e19620b5c8b5fe5cb9f17ccb2c8838367435af321bc02f7bfb5faa03d7483"
+    },
+    "source21": {
+      "file": "probe.mjs",
+      "sha256": "355af1cda739d75f9d195ea3276af49d1fdd516b784a917b613a2664941442fb"
+    },
+    "source22": {
+      "file": "fault-run.mjs",
+      "sha256": "05ccec20ea02135e5cb2a81521209fc5c6baf57280152d64f6a395059dd5f0a9"
+    },
+    "source23": {
+      "file": "fault-runtime.mjs",
+      "sha256": "69396c12f6a1b6e6c548388dd6b3ebf9f274f9d27a256f090e1008f708a284f3"
+    },
+    "source24": {
+      "file": "media.mjs",
+      "sha256": "73a18435ae1832b953cd6b1a3f321b74fa2083e51267d6d7f00cb59cd045162b"
+    },
+    "source25": {
+      "file": "access.mjs",
+      "sha256": "c36e09098ae2176140890df6f7b24b26439f3c9a6991fed8bd017a008d1244ce"
+    },
+    "source26": {
+      "file": "harness.mjs",
+      "sha256": "0a47e8e9c84afc4a26a7929f275eaa321d86859b99d24c635355f49b71781b4c"
+    },
+    "source27": {
+      "file": "probe.mjs",
+      "sha256": "4bab5e90f7f88dd1a6aa8b833cd642b0be1b8cf29211cb4ce0c8af326984a1c3"
+    },
+    "source28": {
+      "file": "native-evaluate.mjs",
+      "sha256": "83ce34597243edd49408288b19fd606177810ff6557d86580ca40c72477251d5"
+    },
+    "source29": {
+      "file": "browser-options.mjs",
+      "sha256": "e092d543702eca00f24258a23b1ae97c4d280f857732dc2d262568913e01e052"
+    },
+    "source30": {
+      "file": "fault-run.mjs",
+      "sha256": "673cb2110954201fb604fb745e960746962c36d7970fbbeb0b25ae46d8a33bb1"
+    },
+    "source31": {
+      "file": "media-runtime.mjs",
+      "sha256": "d9bc66d17009162fd6f70eec24b227fda607e601fc7a0011a7fadae698795b67"
+    },
+    "source32": {
+      "file": "media.mjs",
+      "sha256": "f9339a0701f1e860865705980b66f7ee1b98ee89346ee235b959acae86461378"
+    },
+    "source33": {
+      "file": "media-extra.mjs",
+      "sha256": "0b885436b9590e62d99b32d88d30f26496746e4d15f5182f4736523e42c74d7f"
+    },
+    "source34": {
+      "file": "access.mjs",
+      "sha256": "7f0eca2adde822ad21d598a02823607d232ebfe62b4341daf8b5a2ecfec1d1fc"
+    },
+    "source35": {
+      "file": "media-lease-faults.mjs",
+      "sha256": "e3aefd71b583e5d4ab4a5109c3ed69a78352248392ec90a4f5308212fe8bae70"
+    },
+    "source36": {
+      "file": "media-extra.mjs",
+      "sha256": "d37ceb6c8c3ca6cd200e7a2b3b159b861210b72546e4559fa823cd04a599b37a"
+    },
+    "source37": {
+      "file": "harness.mjs",
+      "sha256": "ee0b4e725a53a9b25061dca096de5db5fc23efcab54546cc7a57f9a8d9e02c0a"
+    },
+    "source38": {
+      "file": "harness.mjs",
+      "sha256": "bb7c97272e05c1437b384ed937b0a64e2986e01a53db9d16d3738aafe93e76d0"
+    },
+    "source39": {
+      "file": "probe.mjs",
+      "sha256": "89e6f4bb3537d0272dd4237e7015096ad83ea411a86c9e020fc0057e64a317c1"
+    },
+    "source40": {
+      "file": "native-evaluate.mjs",
+      "sha256": "3a2ca39f067d158fa055ebcf681fda3781ef17becac1093470115434163ccd0e"
+    },
+    "source41": {
+      "file": "access.mjs",
+      "sha256": "afe5afd497d45fcb68b3cf211b71c3491a277e397717d606915e3286c3321c74"
+    },
+    "source42": {
+      "file": "media-lease-faults.mjs",
+      "sha256": "1afe37e852dd4bebd64aa32263cd2686597386aea63e5c538a12c0f67729e650"
+    },
+    "source43": {
+      "file": "harness.mjs",
+      "sha256": "6e518b491fbdef3f2efcddd8b89c2cee9a8385f8ce61b590c433bce14f8bc9bc"
+    },
+    "source44": {
+      "file": "probe.mjs",
+      "sha256": "f1dd0651e98c645a8a50095f0e641cf0015db0b2e568b7bcbb73e95386d98b7b"
+    },
+    "source45": {
+      "file": "media-extra.mjs",
+      "sha256": "4081bcfa71b69251ff31123148edd6629b76cd4a94fa36b0f98322a20d66b955"
+    },
+    "source46": {
+      "file": "probe.mjs",
+      "sha256": "f7f0c22e72c7d91bd89502ecb20f127df027b9f898bf1929c186d4f90e861317"
+    },
+    "source47": {
+      "file": "media-extra.mjs",
+      "sha256": "0474c8c0dd1f1eb6ddcd3565f9d40021fdbf50278fc5f2f2121902d1a6369f81"
+    },
+    "source48": {
+      "file": "media-extra.mjs",
+      "sha256": "29cda100ee90748327e9ca6560727cf185c0234616b8b1b2cf160b333441b0ae"
+    }
+  },
+  "sourceHashLookup": "matrix row -> reports[reportRef].sha256 and executingSourceHashRefs[sourceModule] -> sourceHashCatalog[ref].sha256; complete module map remains in hashed raw report",
+  "sourceOnlyDeliveryValidation": "media-scenario-source-validation.json; native reports remain WIP-source observations, no exact-clean B runtime asserted",
+  "harnessReviewBoundary": {
+    "immutableA": "5f841f932be6d78435e2d9daf42f2e08e2a45ae8",
+    "originalAChecks": 40,
+    "sourceFollowups": [
+      "8011dd12866e6ca104a5b56d3a6f6c586fa5dee8",
+      "e2374bba564ae7401545e427ac32ef49af4398c3",
+      "f0f3c1da95fe68422c4f654d8c29b9757bdda98c"
+    ],
+    "independentFollowupReview": "required; no approval claimed",
+    "noAdditionalNativeRuntime": true
+  }
+}

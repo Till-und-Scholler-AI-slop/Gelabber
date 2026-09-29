@@ -1,0 +1,108 @@
+{
+  "scope": "common Harness/adapter source only; scenario and CI follow-ups separate",
+  "completeAcceptance": false,
+  "validation": "exact staged common Harness/adapter source, extracted read-only; no browser/API runtime started",
+  "at": "2026-09-28T17:59:42.166Z",
+  "node": "v26.8.2",
+  "sourceTreeBeforeEvidence": "e5fbd48a581df0ccf2ddce19e45c7c1f63eb4225",
+  "checks": [
+    {
+      "file": "harness.checks.mjs",
+      "exit": 0,
+      "tests": 6,
+      "skipped": 0
+    },
+    {
+      "file": "native-evaluate.checks.mjs",
+      "exit": 0,
+      "tests": 7,
+      "skipped": 0
+    },
+    {
+      "file": "native-finish.checks.mjs",
+      "exit": 0,
+      "tests": 3,
+      "skipped": 0
+    },
+    {
+      "file": "browser-options.checks.mjs",
+      "exit": 0,
+      "tests": 3,
+      "skipped": 0
+    },
+    {
+      "file": "media-probe.checks.mjs",
+      "exit": 0,
+      "tests": 2,
+      "skipped": 0
+    },
+    {
+      "file": "rendered-frames.checks.mjs",
+      "exit": 0,
+      "tests": 3,
+      "skipped": 0
+    },
+    {
+      "file": "media-runtime.checks.mjs",
+      "exit": 0,
+      "tests": 3,
+      "skipped": 0
+    },
+    {
+      "file": "teardown.checks.mjs",
+      "exit": 0,
+      "tests": 9,
+      "skipped": 0
+    },
+    {
+      "file": "faults.checks.mjs",
+      "exit": 0,
+      "tests": 4,
+      "skipped": 0
+    }
+  ],
+  "lint": {
+    "exit": 0,
+    "source": "same extracted staged tree"
+  },
+  "rawSourceCheck": {
+    "path": "/tmp/gelabber-e2e/native-harness-index-checks.json",
+    "sha256": "a550d1c4cc999b7612b8f9cd670dfc82cc0df2e052c28c02e3148839c1740428"
+  },
+  "testedModuleSha256": {
+    "harness.mjs": "0a47e8e9c84afc4a26a7929f275eaa321d86859b99d24c635355f49b71781b4c",
+    "media.mjs": "9ec1f8ffd4f382931c7fc345e8cf2bec1a22765a344326266118960d88cbad3d",
+    "probe.mjs": "4bab5e90f7f88dd1a6aa8b833cd642b0be1b8cf29211cb4ce0c8af326984a1c3",
+    "native-evaluate.mjs": "83ce34597243edd49408288b19fd606177810ff6557d86580ca40c72477251d5",
+    "native-evaluate.checks.mjs": "e886d61b0aeae148dcf26c737a91429b6401c5d8ffd674f0facdcf9ef29fa005",
+    "native-finish.checks.mjs": "3b9fbc9220572af73a096adcac6949b290fd2ab990d83ad73e99068369b14ca7",
+    "browser-options.mjs": "e092d543702eca00f24258a23b1ae97c4d280f857732dc2d262568913e01e052",
+    "browser-options.checks.mjs": "155c1eb154e9def93a95cbf7885a37755f6d91af90c93bc9b60f9f176f7104a5",
+    "fault-run.mjs": "673cb2110954201fb604fb745e960746962c36d7970fbbeb0b25ae46d8a33bb1",
+    "fault-runtime.mjs": "423684dfaddfdd65ca3021e95f842616563bef30dd8d99c70d477e9098bf7fee",
+    "media-runtime.mjs": "d9bc66d17009162fd6f70eec24b227fda607e601fc7a0011a7fadae698795b67",
+    "media-runtime.checks.mjs": "4569eabb3d4339914cd48a0fdea42ad3feae89a827f67aa4923682ff72787a91",
+    "teardown.checks.mjs": "f922316b3029a40b9e0647b02de55dec63f8d0f5047df17e36ced81f6cbdde9f",
+    "redis-command.mjs": "b6d801eb136a072b8a00bc2982d16934bdc4cf90c06ef28b67be4ad5a160706b",
+    "faults.checks.mjs": "9b013140e232dc052fe9b52755db20fb48267258b06fabec8ca546aae5afe11f",
+    "media-probe.checks.mjs": "a43b9440303b7babf4d3b6ac56a25407c9d6294e9ffde68c8f09915d21a12af6",
+    "rendered-frames.checks.mjs": "4e5bf1be45d1eb0914625d08b35623e48ccca80dc4c35337deff13dd63571780"
+  },
+  "nativeControl": {
+    "path": "/tmp/gelabber-e2e/media-ws-firefox-relay-bounded-control.json",
+    "sha256": "fbe0874f84b234bdd394ace4e4438aa4ef0a9c289ed2052160fb5a4164182e59",
+    "attribution": "author dirty242 WIP, per-module hashes in raw report; not clean execution of this later commit",
+    "exit": 0,
+    "cleanup": {
+      "login": 200,
+      "delete": 204,
+      "logout": 200
+    }
+  },
+  "limits": [
+    "Native hang call/cause unproven",
+    "Original aborted adapter matrix and cleanup remain FAIL",
+    "Firefox default/WAN acceptance open",
+    "No remote CI/netem/GHCR/Docker claim"
+  ]
+}

@@ -28,7 +28,7 @@ use crate::attachments::{self, Attachment};
 use crate::auth::session::CurrentUser;
 use crate::auth::user::User;
 use crate::error::{ApiError, FieldErrors};
-use crate::gateway::{EventKind, publish_channel};
+use crate::gateway::{EventDraft, EventKind, delivery};
 use crate::json::Body;
 use crate::path::Id;
 use crate::servers::channel::{self, ChannelKind};
@@ -65,6 +65,7 @@ pub struct Message {
     pub content: String,
     pub created_at: DateTime<Utc>,
     pub edited_at: Option<DateTime<Utc>>,
+    pub revision: i64,
     #[serde(default)]
     pub attachments: Vec<Attachment>,
 }
@@ -89,6 +90,7 @@ struct MessageRow {
     content: String,
     created_at: DateTime<Utc>,
     edited_at: Option<DateTime<Utc>>,
+    revision: i64,
 }
 
 impl From<MessageRow> for Message {
@@ -104,6 +106,7 @@ impl From<MessageRow> for Message {
             content: row.content,
             created_at: row.created_at,
             edited_at: row.edited_at,
+            revision: row.revision,
             attachments: Vec::new(),
         }
     }
@@ -116,6 +119,7 @@ struct MessageInsert {
     content: String,
     created_at: DateTime<Utc>,
     edited_at: Option<DateTime<Utc>>,
+    revision: i64,
 }
 
 impl MessageInsert {
@@ -131,6 +135,7 @@ impl MessageInsert {
             content: self.content,
             created_at: self.created_at,
             edited_at: self.edited_at,
+            revision: self.revision,
             attachments: Vec::new(),
         }
     }
@@ -204,9 +209,10 @@ async fn create_message(
     }
 
     let mut tx = state.db.begin().await?;
+    delivery::lock_channel(&mut tx, channel_id).await?;
     let row = sqlx::query_as::<_, MessageInsert>(
         "INSERT INTO messages (channel_id, author_id, content) VALUES ($1, $2, $3) \
-         RETURNING id, channel_id, content, created_at, edited_at",
+         RETURNING id, channel_id, content, created_at, edited_at, revision",
     )
     .bind(channel_id)
     .bind(user.id)
@@ -221,20 +227,38 @@ async fn create_message(
         user.id,
         &attachment_ids,
     )
-    .await?;
-    tx.commit().await?;
+    .await;
+    let bound = match bound {
+        Ok(bound) => bound,
+        Err(err) => {
+            tx.rollback().await?;
+            // Quarantine only this uploader's invalid objects, after rollback;
+            // no physical delete can damage a rolled-back message transaction.
+            if let Err(cleanup_error) = attachments::cleanup::discard_mismatches(
+                &state,
+                channel_id,
+                user.id,
+                &attachment_ids,
+            )
+            .await
+            {
+                warn!(error=?cleanup_error, "invalid upload quarantine deferred to expiry cleanup");
+            }
+            return Err(err);
+        }
+    };
     let mut message = row.into_message(&user);
     message.attachments = bound;
-    info!(channel_id = %channel_id, message_id = %message.id, "message created");
-    fanout(
-        &state,
+    persist_event(
+        &mut tx,
         access.event_server_id(),
-        channel_id,
         EventKind::C,
-        Some(message.id),
-        serde_json::to_value(&message).ok(),
+        &mut message,
     )
-    .await;
+    .await?;
+    tx.commit().await?;
+    info!(channel_id = %channel_id, message_id = %message.id, "message created");
+    let _ = delivery::deliver_pending(&state, 32).await;
     Ok((StatusCode::CREATED, Json(message)).into_response())
 }
 
@@ -265,26 +289,28 @@ async fn update_message(
         return Ok(Json(current));
     }
 
+    let mut tx = state.db.begin().await?;
+    delivery::lock_channel(&mut tx, current.channel_id).await?;
     let row = sqlx::query_as::<_, MessageInsert>(
         "UPDATE messages SET content = $2, edited_at = now() WHERE id = $1 \
-         RETURNING id, channel_id, content, created_at, edited_at",
+         RETURNING id, channel_id, content, created_at, edited_at, revision",
     )
     .bind(message_id)
     .bind(&content)
-    .fetch_optional(&state.db)
+    .fetch_optional(&mut *tx)
     .await?
     .ok_or(ApiError::NotFound)?;
     let mut message = row.into_message(&user);
-    message.attachments = attachments::for_message(&state.db, message.id).await?;
-    fanout(
-        &state,
+    message.attachments = current.attachments;
+    persist_event(
+        &mut tx,
         access.event_server_id(),
-        message.channel_id,
         EventKind::E,
-        Some(message.id),
-        serde_json::to_value(&message).ok(),
+        &mut message,
     )
-    .await;
+    .await?;
+    tx.commit().await?;
+    let _ = delivery::deliver_pending(&state, 32).await;
     Ok(Json(message))
 }
 
@@ -298,46 +324,61 @@ async fn delete_message(
         access.require_manage_messages()?;
     }
 
-    attachments::drop_objects(&state.store, message_id, &state.db).await;
+    let mut tx = state.db.begin().await?;
+    delivery::lock_channel(&mut tx, current.channel_id).await?;
     sqlx::query("DELETE FROM messages WHERE id = $1")
         .bind(message_id)
-        .execute(&state.db)
+        .execute(&mut *tx)
         .await?;
     info!(
         channel_id = %current.channel_id,
         message_id = %message_id,
         "message deleted"
     );
-    fanout(
-        &state,
-        access.event_server_id(),
-        current.channel_id,
-        EventKind::D,
-        Some(message_id),
-        None,
+    let revision = delivery::revision(&mut tx).await?;
+    delivery::enqueue(
+        &mut tx,
+        revision,
+        EventDraft {
+            kind: EventKind::D,
+            server_id: access.event_server_id(),
+            channel_id: Some(current.channel_id),
+            entity_id: Some(message_id),
+            delta: None,
+        },
     )
-    .await;
+    .await?;
+    tx.commit().await?;
+    let _ = delivery::deliver_pending(&state, 32).await;
     Ok(StatusCode::NO_CONTENT)
 }
 
-/// Redis fan-out after a successful write. A down or dummy Redis URL
-/// (`tests` use `127.0.0.1:1`) must not fail the HTTP response — the row
-/// is already persisted.
-async fn fanout(
-    state: &AppState,
-    server_id: Uuid,
-    channel_id: Uuid,
+async fn persist_event(
+    db: &mut sqlx::PgConnection,
+    server: Uuid,
     kind: EventKind,
-    entity_id: Option<Uuid>,
-    delta: Option<serde_json::Value>,
-) {
-    if let Err(err) = publish_channel(state, server_id, channel_id, kind, entity_id, delta).await {
-        warn!(
-            error = err.code(),
-            %channel_id,
-            "gateway publish after message write failed"
-        );
-    }
+    message: &mut Message,
+) -> Result<(), ApiError> {
+    message.revision = delivery::revision(db).await?;
+    sqlx::query("UPDATE messages SET revision=$2 WHERE id=$1")
+        .bind(message.id)
+        .bind(message.revision)
+        .execute(&mut *db)
+        .await?;
+    delivery::enqueue(
+        db,
+        message.revision,
+        EventDraft {
+            kind,
+            server_id: server,
+            channel_id: Some(message.channel_id),
+            entity_id: Some(message.id),
+            delta: Some(
+                serde_json::to_value(message).map_err(|err| ApiError::Internal(err.to_string()))?,
+            ),
+        },
+    )
+    .await
 }
 
 /// Best-effort notice in the server's oldest text channel when Go Live starts.
@@ -378,32 +419,20 @@ pub(crate) async fn post_live_hint(state: &AppState, user: &User, server_id: Uui
         return;
     };
     let content = format!("{} ist live in {voice_name}.", user.name);
-    let row = match sqlx::query_as::<_, MessageInsert>(
-        "INSERT INTO messages (channel_id, author_id, content) VALUES ($1, $2, $3) \
-         RETURNING id, channel_id, content, created_at, edited_at",
-    )
-    .bind(text_id)
-    .bind(user.id)
-    .bind(&content)
-    .fetch_one(&state.db)
-    .await
-    {
-        Ok(row) => row,
-        Err(err) => {
-            warn!(error = %err, "live hint: insert");
-            return;
-        }
-    };
-    let message = row.into_message(user);
-    fanout(
-        state,
-        server_id,
-        text_id,
-        EventKind::C,
-        Some(message.id),
-        serde_json::to_value(&message).ok(),
-    )
-    .await;
+    let result: Result<(),ApiError> = async {
+        let mut tx=state.db.begin().await?;
+        delivery::lock_channel(&mut tx,text_id).await?;
+        let row=sqlx::query_as::<_,MessageInsert>("INSERT INTO messages (channel_id, author_id, content) VALUES ($1,$2,$3) RETURNING id,channel_id,content,created_at,edited_at,revision").bind(text_id).bind(user.id).bind(content).fetch_one(&mut *tx).await?;
+        let mut message=row.into_message(user);
+        persist_event(&mut tx,server_id,EventKind::C,&mut message).await?;
+        tx.commit().await?;
+        Ok(())
+    }.await;
+    if let Err(err) = result {
+        warn!(error = err.code(), "live hint persistence failed");
+        return;
+    }
+    let _ = delivery::deliver_pending(state, 32).await;
 }
 
 /// Text channel (via server membership) or 1:1 DM (via channel_members).
@@ -473,7 +502,7 @@ async fn message_for(
 ) -> Result<(MessagingChannel, Message), ApiError> {
     let row = sqlx::query_as::<_, MessageRow>(
         "SELECT m.id, m.channel_id, m.author_id, u.name AS author_name, \
-                u.avatar_url AS author_avatar_url, m.content, m.created_at, m.edited_at \
+                u.avatar_url AS author_avatar_url, m.content, m.created_at, m.edited_at, m.revision \
          FROM messages m JOIN users u ON u.id = m.author_id \
          WHERE m.id = $1",
     )
@@ -499,7 +528,7 @@ async fn load_page(
         let (at, id) = resolve_bound(db, channel_id, cursor, Bound::Before, "before").await?;
         sqlx::query_as::<_, MessageRow>(
             "SELECT m.id, m.channel_id, m.author_id, u.name AS author_name, \
-                    u.avatar_url AS author_avatar_url, m.content, m.created_at, m.edited_at \
+                    u.avatar_url AS author_avatar_url, m.content, m.created_at, m.edited_at, m.revision \
              FROM messages m JOIN users u ON u.id = m.author_id \
              WHERE m.channel_id = $1 AND (m.created_at, m.id) < ($2, $3) \
              ORDER BY m.created_at DESC, m.id DESC \
@@ -515,7 +544,7 @@ async fn load_page(
         let (at, id) = resolve_bound(db, channel_id, cursor, Bound::After, "after").await?;
         let mut newer = sqlx::query_as::<_, MessageRow>(
             "SELECT m.id, m.channel_id, m.author_id, u.name AS author_name, \
-                    u.avatar_url AS author_avatar_url, m.content, m.created_at, m.edited_at \
+                    u.avatar_url AS author_avatar_url, m.content, m.created_at, m.edited_at, m.revision \
              FROM messages m JOIN users u ON u.id = m.author_id \
              WHERE m.channel_id = $1 AND (m.created_at, m.id) > ($2, $3) \
              ORDER BY m.created_at ASC, m.id ASC \
@@ -540,7 +569,7 @@ async fn load_page(
     } else {
         sqlx::query_as::<_, MessageRow>(
             "SELECT m.id, m.channel_id, m.author_id, u.name AS author_name, \
-                    u.avatar_url AS author_avatar_url, m.content, m.created_at, m.edited_at \
+                    u.avatar_url AS author_avatar_url, m.content, m.created_at, m.edited_at, m.revision \
              FROM messages m JOIN users u ON u.id = m.author_id \
              WHERE m.channel_id = $1 \
              ORDER BY m.created_at DESC, m.id DESC \

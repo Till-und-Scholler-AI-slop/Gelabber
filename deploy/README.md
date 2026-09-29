@@ -114,7 +114,7 @@ Grafana 13.2.1: `http://127.0.0.1:3000/d/gelabber/gelabber` (admin / `gelabber`,
 
 ## Images und Release-Gate
 
-Der Default zieht weiterhin die ausgelieferte App-Version `v0.2.4`; bestehende Release-Tags werden nicht überschrieben. MinIO verwendet unabhängig davon den bestehenden CE-Pin `RELEASE.2025-10-15T17-29-55Z`. Org-Pakete können privat sein: `docker login ghcr.io` oder lokal bauen. Alle Stack-Pins bleiben bestehen. Source-Build setzt `CARGO_HTTP_CAINFO`; bei TLS-Inspection hängt `docker/rust-build-ca.sh` die präsentierte Kette an.
+Der Default zieht die App-Version `v0.2.5`; bestehende Release-Tags werden nicht überschrieben. MinIO verwendet unabhängig davon den bestehenden CE-Pin `RELEASE.2025-10-15T17-29-55Z`. Org-Pakete können privat sein: `docker login ghcr.io` oder lokal bauen. Alle Stack-Pins bleiben bestehen. Source-Build setzt `CARGO_HTTP_CAINFO`; bei TLS-Inspection hängt `docker/rust-build-ca.sh` die präsentierte Kette an.
 
 CI läuft für **jeden main-Commit**, damit auch Deploy-/Workflow-Änderungen eine eindeutige CI-SHA besitzen. PR-Pfadfilter erfassen `shared/**`, alle Workspace-Mitglieder, Docker-Kontexte, Lockfiles und Workflows. Der Image-Workflow baut PRs ohne Push. Auf main startet er erst nach erfolgreichem `CI`-Push-Lauf derselben SHA; fehlgeschlagene/abgebrochene CI startet keinen Publish-Job.
 

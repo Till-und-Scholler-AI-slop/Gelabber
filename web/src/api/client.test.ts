@@ -139,6 +139,32 @@ describe("api client", () => {
     expect(calls).toHaveLength(1);
   });
 
+  it.each([
+    [503, { error: "internal", csrf_token: "untrusted" }],
+    [200, {}],
+    [200, { user: null }],
+    [200, { user: { id: "" }, csrf_token: "untrusted" }],
+    [200, { user: { id: "u1" }, csrf_token: "untrusted" }],
+    [200, { user: null, csrf_token: "" }],
+  ])(
+    "does not retry after an unsuccessful or malformed bootstrap (%s, %j)",
+    async (status, payload) => {
+      setCsrfToken("original");
+      const calls = install((call) =>
+        call.url.endsWith("/auth/session")
+          ? jsonResponse(status as number, payload)
+          : jsonResponse(403, { error: "csrf_invalid" }),
+      );
+      await expect(
+        api("/me", { method: "PATCH", body: {} }),
+      ).rejects.toMatchObject({
+        code: "csrf_invalid",
+      });
+      expect(calls).toHaveLength(2);
+      expect(getCsrfToken()).toBe("original");
+    },
+  );
+
   it("turns a fetch failure into a network ApiError", async () => {
     vi.stubGlobal(
       "fetch",

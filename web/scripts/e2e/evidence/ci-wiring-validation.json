@@ -1,0 +1,57 @@
+{
+  "scope": "CI wiring follow-up only; no product files or pins changed",
+  "basis": "e39defd3405611d5d5fa2c8ab466ee84c6498202",
+  "completeAcceptance": false,
+  "checks": {
+    "actionlint": "PASS",
+    "lintNewModules": "PASS",
+    "ciPreparationSourceChecks": {
+      "pass": 3,
+      "fail": 0,
+      "skip": 0,
+      "infrastructure": "stubbed CI filesystem/subprocess; actual preparer source"
+    },
+    "existingHarnessChecks": {
+      "pass": 6,
+      "fail": 0,
+      "skip": 0
+    },
+    "existingNetemBoundaryChecks": {
+      "pass": 4,
+      "fail": 0,
+      "skip": 0
+    },
+    "existingNativeProxyRespChecks": {
+      "pass": 4,
+      "fail": 0,
+      "skip": 0
+    },
+    "existingTeardownSourceChecks": {
+      "pass": 6,
+      "fail": 0,
+      "skip": 0
+    },
+    "originalComposeSmokeInvocationByteEqualToReviewed09": true,
+    "reviewed09IntegrationMinioReleaseContract": "PASS"
+  },
+  "earlierLocalErrors": [
+    {
+      "classification": "test-error",
+      "cause": "new check omitted Buffer import; corrected; lint PASS"
+    },
+    {
+      "classification": "environment-blocked",
+      "cause": "sandbox denied native loopback bind EPERM; unchanged native checks passed in authorized host control"
+    }
+  ],
+  "openGates": [
+    "Real GitHub/Docker Compose execution including pinned MinIO pull and actual successful CI preparation",
+    "Full remote selected-UDP netem relay/audio/recovery",
+    "Final08b actual-app media/access runtime validation"
+  ],
+  "files": {
+    ".github/workflows/ci.yml": "79338aab8497ddd571676579fa7074b5396ad258e98e7f07cfd5e9dcbcc1225a",
+    "web/scripts/e2e/ci-fault-prepare.mjs": "b0e7daa460f3db4edfa7cee1a59fb5e3e39b78d268d5dc4bf627b9bc4ea5f3f5",
+    "web/scripts/e2e/ci-fault-prepare.checks.mjs": "23c3faade08e8ff7a263442c0207ab323991748389c5023e67e51176995a0a5b"
+  }
+}

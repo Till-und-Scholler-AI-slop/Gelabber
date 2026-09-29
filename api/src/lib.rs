@@ -34,6 +34,8 @@ pub use state::AppState;
 /// Builds the HTTP router. Kept separate from `main` so integration tests
 /// can drive it in-process.
 pub fn app(state: AppState) -> Router {
+    state.gateway.ensure_delivery(state.clone());
+    attachments::cleanup::start(state.clone());
     // Everything under /api is a browser-facing JSON route and goes through
     // the CSRF check; /health, /ready and /metrics stay outside (GET only).
     let api = Router::new()

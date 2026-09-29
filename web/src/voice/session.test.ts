@@ -20,6 +20,7 @@ import {
   toggleShare,
   watchLive,
   stopWatching,
+  retryPlayback,
   useVoice,
   type PeerConnection,
   type RtpSender,
@@ -57,6 +58,8 @@ class FakePeer implements PeerConnection {
   offerOptions: Array<{ iceRestart?: boolean } | undefined> = [];
   iceServers: IceServer[];
   getStats?: () => Promise<unknown>;
+  getTransceivers?: PeerConnection["getTransceivers"];
+  transceivers: { kind: string; direction?: string }[] = [];
 
   constructor(iceServers: IceServer[] = []) {
     this.iceServers = iceServers;
@@ -85,7 +88,8 @@ class FakePeer implements PeerConnection {
     return sender;
   }
 
-  addTransceiver(): void {
+  addTransceiver(kind: string, init?: { direction?: string }): void {
+    this.transceivers.push({ kind, direction: init?.direction });
     this.tracks += 1;
   }
 
@@ -251,6 +255,9 @@ function install(opts?: {
   display?: boolean;
   userId?: string;
   ticketFail?: boolean;
+  ticketError?: (index: number) => Error | undefined;
+  gateTicket?: (index: number) => Promise<void> | void;
+  iceServersFor?: (index: number) => IceServer[];
   holdMedia?: Promise<void>;
   holdDisplay?: Promise<void>;
   /** Per getUserMedia call index (0-based). Controlled promise resolution. */
@@ -279,6 +286,7 @@ function install(opts?: {
   holdReplaceTrack?: Promise<void>;
   /** Do not answer `op:j` with `op:ok`. Used when the SFU rejects the join. */
   holdJoin?: boolean;
+  holdLiveClaim?: boolean;
 }) {
   const sent: ClientFrame[] = [];
   const mediaSent: MediaClientFrame[] = [];
@@ -293,13 +301,34 @@ function install(opts?: {
   const streams: MediaStream[] = [];
   let getUserMediaCalls = 0;
   let getDisplayMediaCalls = 0;
+  let ticketCalls = 0;
   let lastUserMedia: MediaStreamConstraints | undefined;
   let lastDisplayMedia: MediaStreamConstraints | undefined;
 
   configureVoice({
     userId: () => opts?.userId ?? "u-self",
     gateway: {
-      send: (frame) => sent.push(frame),
+      send: (frame) => {
+        sent.push(frame);
+        if (
+          frame.op === "sig" &&
+          frame.t === "p" &&
+          frame.k === "l" &&
+          !opts?.holdLiveClaim
+        ) {
+          queueMicrotask(() =>
+            onSig?.({
+              op: "sig",
+              t: "p",
+              s: frame.s,
+              c: frame.c,
+              u: opts?.userId ?? "u-self",
+              k: "l",
+              lc: "00000000-0000-0000-0000-000000000001",
+            } as SigEvent),
+          );
+        }
+      },
       onSig: (listener) => {
         onSig = listener;
         return () => {
@@ -384,11 +413,17 @@ function install(opts?: {
       return fakeVideoStream("local-scr", true);
     },
     fetchTicket: async () => {
+      const index = ticketCalls++;
+      if (opts?.gateTicket) await opts.gateTicket(index);
+      const error = opts?.ticketError?.(index);
+      if (error) throw error;
       if (opts?.ticketFail) throw new Error("ticket");
       return {
         ticket: "abcdefghjkmn",
         media_path: "/media/ws",
-        ice_servers: [{ urls: ["stun:127.0.0.1:3478"] }],
+        ice_servers: opts?.iceServersFor?.(index) ?? [
+          { urls: ["stun:127.0.0.1:3478"] },
+        ],
       };
     },
     openMedia: () => {
@@ -442,13 +477,14 @@ function install(opts?: {
     peers,
     errors,
     streams,
-    emitSig: (event: SigEvent) => onSig?.(event),
+    emitSig: (event: SigEvent & { lc?: string }) => onSig?.(event),
     emitErr: (err: ErrFrame) => onErr?.(err),
     emitReady: () => onReady?.(),
     emitMedia: (frame: MediaServerFrame) => (onMedia ?? lingering)?.(frame),
     closeMedia: () => mediaSockets.at(-1)?.close(),
     getUserMediaCalls: () => getUserMediaCalls,
     getDisplayMediaCalls: () => getDisplayMediaCalls,
+    ticketCalls: () => ticketCalls,
     lastUserMedia: () => lastUserMedia,
     lastDisplayMedia: () => lastDisplayMedia,
   };
@@ -907,6 +943,145 @@ describe("voice session", () => {
     );
   });
 
+  it("retains capture across Live claim withdrawal and ignores the old claim after recovery", async () => {
+    const { emitMedia, emitSig, emitReady, peers, getDisplayMediaCalls } =
+      install({ holdLiveClaim: true });
+    joinVoice({ serverId: "srv", channelId: "voice", channelName: "Lounge" });
+    await vi.waitFor(() => expect(peers[0]?.audio).toBeTruthy());
+    toggleGoLive();
+    await vi.waitFor(() => expect(useVoice.getState().localLive).toBeTruthy());
+    const stream = useVoice.getState().localLive!;
+    const old = "00000000-0000-0000-0000-000000000001";
+    const next = "00000000-0000-0000-0000-000000000002";
+    emitSig({
+      op: "sig",
+      t: "p",
+      s: "srv",
+      c: "voice",
+      u: "u-self",
+      k: "l",
+      lc: old,
+    });
+    await vi.waitFor(() =>
+      expect(
+        peers[0]
+          ?.getSenders()
+          .some((s) => s.track === stream.getVideoTracks()[0]),
+      ).toBe(true),
+    );
+    emitMedia({ op: "err", e: "forbidden", lc: old });
+    expect(useVoice.getState().live).toBe(true);
+    expect(streamStopped(stream)).toBe(false);
+    emitReady();
+    emitSig({ op: "sig", t: "j", s: "srv", c: "voice", u: "u-self" });
+    emitSig({
+      op: "sig",
+      t: "p",
+      s: "srv",
+      c: "voice",
+      u: "u-self",
+      k: "l",
+      lc: next,
+    });
+    emitMedia({ op: "err", e: "forbidden", lc: old });
+    expect(useVoice.getState().localLive).toBe(stream);
+    expect(streamStopped(stream)).toBe(false);
+    expect(getDisplayMediaCalls()).toBe(1);
+    expect(peers).toHaveLength(1);
+  });
+
+  it("bounds withdrawn Live claim recovery even across duplicate errors and Gateway rejoin", async () => {
+    const { emitMedia, emitSig, emitReady, peers } = install({
+      holdLiveClaim: true,
+    });
+    joinVoice({ serverId: "srv", channelId: "voice", channelName: "Lounge" });
+    await vi.waitFor(() => expect(peers[0]?.audio).toBeTruthy());
+    toggleGoLive();
+    await vi.waitFor(() => expect(useVoice.getState().localLive).toBeTruthy());
+    const stream = useVoice.getState().localLive!;
+    const nonce = "00000000-0000-0000-0000-000000000001";
+    emitSig({
+      op: "sig",
+      t: "p",
+      s: "srv",
+      c: "voice",
+      u: "u-self",
+      k: "l",
+      lc: nonce,
+    });
+    vi.useFakeTimers();
+    emitMedia({ op: "err", e: "forbidden", lc: nonce });
+    await vi.advanceTimersByTimeAsync(9000);
+    expect(streamStopped(stream)).toBe(false);
+    emitMedia({ op: "err", e: "forbidden", lc: nonce });
+    emitReady();
+    emitSig({ op: "sig", t: "j", s: "srv", c: "voice", u: "u-self" });
+    await vi.advanceTimersByTimeAsync(1001);
+    expect(useVoice.getState().live).toBe(false);
+    expect(streamStopped(stream)).toBe(true);
+    expect(useVoice.getState().status).toBe("joined");
+    expect(trackStopped(peers[0]?.audio)).toBe(false);
+  });
+
+  it("cannot resume a withdrawn nonce", async () => {
+    const { emitMedia, emitSig } = install({ holdLiveClaim: true });
+    joinVoice({ serverId: "srv", channelId: "voice", channelName: "Lounge" });
+    await vi.waitFor(() => expect(useVoice.getState().status).toBe("joined"));
+    toggleGoLive();
+    await vi.waitFor(() => expect(useVoice.getState().localLive).toBeTruthy());
+    const stream = useVoice.getState().localLive!;
+    const nonce = "00000000-0000-0000-0000-000000000001";
+    emitSig({
+      op: "sig",
+      t: "p",
+      s: "srv",
+      c: "voice",
+      u: "u-self",
+      k: "l",
+      lc: nonce,
+    });
+    emitMedia({ op: "err", e: "forbidden", lc: nonce });
+    emitSig({
+      op: "sig",
+      t: "p",
+      s: "srv",
+      c: "voice",
+      u: "u-self",
+      k: "l",
+      lc: nonce,
+    });
+    expect(useVoice.getState().live).toBe(false);
+    expect(streamStopped(stream)).toBe(true);
+    emitMedia({ op: "err", e: "unauthorized" });
+    expect(useVoice.getState().status).toBe("idle");
+  });
+
+  it("ends whole-peer authorization loss during pending Live recovery", async () => {
+    const { emitMedia, emitSig, peers } = install({ holdLiveClaim: true });
+    joinVoice({ serverId: "srv", channelId: "voice", channelName: "Lounge" });
+    await vi.waitFor(() => expect(peers[0]?.audio).toBeTruthy());
+    toggleGoLive();
+    await vi.waitFor(() => expect(useVoice.getState().localLive).toBeTruthy());
+    const stream = useVoice.getState().localLive!;
+    const nonce = "00000000-0000-0000-0000-000000000001";
+    emitSig({
+      op: "sig",
+      t: "p",
+      s: "srv",
+      c: "voice",
+      u: "u-self",
+      k: "l",
+      lc: nonce,
+    });
+    emitMedia({ op: "err", e: "forbidden", lc: nonce });
+    expect(streamStopped(stream)).toBe(false);
+    emitMedia({ op: "err", e: "unauthorized" });
+    expect(useVoice.getState().status).toBe("idle");
+    expect(streamStopped(stream)).toBe(true);
+    expect(peers[0]?.closed).toBe(true);
+    expect(trackStopped(peers[0]?.audio)).toBe(true);
+  });
+
   it("toggles mute immediately, then sends the sync frame", async () => {
     const { sent, peers } = install();
     joinVoice({ serverId: "srv", channelId: "voice", channelName: "Lounge" });
@@ -957,7 +1132,7 @@ describe("voice session", () => {
   });
 
   it("shows a local camera preview before any publish offer", async () => {
-    const { sent, mediaSent, peers } = install();
+    const { sent, mediaSent, peers, emitMedia } = install();
     joinVoice({ serverId: "srv", channelId: "voice", channelName: "Lounge" });
     await vi.waitFor(() => expect(peers.length).toBe(1));
     toggleCamera();
@@ -976,6 +1151,10 @@ describe("voice session", () => {
         { op: "sig", t: "p", s: "srv", c: "voice", k: "v" },
       ]),
     );
+    // The initial microphone offer is still open. The video identity is
+    // announced only once its own SDP has been set locally.
+    expect(mediaSent.some((frame) => frame.op === "p")).toBe(false);
+    emitMedia({ op: "a", sdp: "v=0\r\n" });
     await vi.waitFor(() =>
       expect(
         mediaSent.some((frame) => frame.op === "p" && frame.k === "v"),
@@ -984,7 +1163,7 @@ describe("voice session", () => {
   });
 
   it("starts screen-share without putting SDP on the chat socket", async () => {
-    const { sent, mediaSent, peers } = install();
+    const { sent, mediaSent, peers, emitMedia } = install();
     joinVoice({ serverId: "srv", channelId: "voice", channelName: "Lounge" });
     await vi.waitFor(() => expect(peers.length).toBe(1));
     toggleShare();
@@ -997,6 +1176,10 @@ describe("voice session", () => {
       expect(frame).not.toHaveProperty("sdp");
       expect(frame).not.toHaveProperty("token");
     }
+    // The initial microphone offer is still open. The video identity is
+    // announced only once its own SDP has been set locally.
+    expect(mediaSent.some((frame) => frame.op === "p")).toBe(false);
+    emitMedia({ op: "a", sdp: "v=0\r\n" });
     await vi.waitFor(() =>
       expect(
         mediaSent.some((frame) => frame.op === "p" && frame.k === "s"),
@@ -1057,7 +1240,7 @@ describe("voice session", () => {
   });
 
   it("shows the Live badge immediately and publishes after display capture", async () => {
-    const { sent, mediaSent, peers } = install();
+    const { sent, mediaSent, peers, emitMedia } = install();
     joinVoice({ serverId: "srv", channelId: "voice", channelName: "Lounge" });
     await vi.waitFor(() => expect(peers.length).toBe(1));
     toggleGoLive();
@@ -1076,6 +1259,10 @@ describe("voice session", () => {
           frame.k === "l",
       ),
     ).toEqual([{ op: "sig", t: "p", s: "srv", c: "voice", k: "l" }]);
+    // The initial microphone offer is still open. The video identity is
+    // announced only once its own SDP has been set locally.
+    expect(mediaSent.some((frame) => frame.op === "p")).toBe(false);
+    emitMedia({ op: "a", sdp: "v=0\r\n" });
     await vi.waitFor(() =>
       expect(
         mediaSent.some((frame) => frame.op === "p" && frame.k === "l"),
@@ -1120,23 +1307,200 @@ describe("voice session", () => {
       streams: [stream],
     });
     expect(useVoice.getState().watchStream).toBe(stream);
-    expect(useVoice.getState().remote["u-bob"]?.l).toBe(stream);
+    expect(useVoice.getState().remote).toEqual({});
     const late = fakeVideoStream("u-cara:l-8801");
     peers[0]?.ontrack?.({
       track: late.getVideoTracks()[0]!,
       streams: [late],
     });
-    expect(useVoice.getState().watchStream).toBe(late);
-    expect(useVoice.getState().remote["u-cara"]?.l).toBe(late);
+    expect(useVoice.getState().watchStream).toBe(stream);
+    expect(useVoice.getState().remote).toEqual({});
     const stray = fakeVideoStream("chrome-msid");
     peers[0]?.ontrack?.({
       track: stray.getVideoTracks()[0]!,
       streams: [stray],
     });
-    expect(useVoice.getState().watchStream).toBe(late);
+    expect(useVoice.getState().watchStream).toBe(stream);
     stopWatching();
     expect(useVoice.getState().watching).toBe(false);
     expect(useVoice.getState().watchServerId).toBeNull();
+  });
+
+  it("waits for the exact Gateway Live acknowledgement and forwards its nonce", async () => {
+    const env = install({ holdLiveClaim: true });
+    joinVoice({ serverId: "srv", channelId: "voice", channelName: "Voice" });
+    await vi.waitFor(() =>
+      expect(env.peers[0]?.signalingState).toBe("have-local-offer"),
+    );
+    env.emitMedia({ op: "a", sdp: "v=0\r\n" });
+    await vi.waitFor(() => expect(env.peers[0]?.signalingState).toBe("stable"));
+    toggleGoLive();
+    await vi.waitFor(() => expect(useVoice.getState().localLive).toBeTruthy());
+    const capture = useVoice.getState().localLive!.getVideoTracks()[0];
+    const nonce = "00000000-0000-0000-0000-000000000042";
+    const ack = {
+      op: "sig" as const,
+      t: "p" as const,
+      s: "srv",
+      c: "voice",
+      u: "u-self",
+      k: "l" as const,
+      lc: nonce,
+    };
+    for (const frame of [
+      { ...ack, s: "other" },
+      { ...ack, c: "other" },
+      { ...ack, u: "other" },
+      { ...ack, lc: "invalid" },
+    ])
+      env.emitSig(frame);
+    expect(
+      env.peers[0]!.senders.some((sender) => sender.track === capture),
+    ).toBe(false);
+    expect(
+      env.mediaSent.some((frame) => frame.op === "p" && frame.k === "l"),
+    ).toBe(false);
+    env.emitSig(ack);
+    await vi.waitFor(() =>
+      expect(
+        env.mediaSent.some(
+          (frame) => frame.op === "p" && frame.k === "l" && frame.lc === nonce,
+        ),
+      ).toBe(true),
+    );
+    const senders = env.peers[0]!.senders.length;
+    env.emitSig(ack);
+    await Promise.resolve();
+    expect(env.peers[0]!.senders).toHaveLength(senders);
+    expect(env.getDisplayMediaCalls()).toBe(1);
+  });
+
+  it("bounds a missing Live acknowledgement and rejects a late one after Stop", async () => {
+    const env = install({ holdLiveClaim: true });
+    joinVoice({ serverId: "srv", channelId: "voice", channelName: "Voice" });
+    await vi.waitFor(() => expect(env.peers).toHaveLength(1));
+    vi.useFakeTimers();
+    toggleGoLive();
+    await vi.advanceTimersByTimeAsync(0);
+    const stream = useVoice.getState().localLive!;
+    expect(stream).toBeTruthy();
+    await vi.advanceTimersByTimeAsync(10000);
+    expect(useVoice.getState().live).toBe(false);
+    expect(streamStopped(stream)).toBe(true);
+    expect(env.errors).toHaveLength(1);
+    env.emitSig({
+      op: "sig",
+      t: "p",
+      s: "srv",
+      c: "voice",
+      u: "u-self",
+      k: "l",
+      lc: "00000000-0000-0000-0000-000000000042",
+    });
+    await vi.advanceTimersByTimeAsync(0);
+    expect(
+      env.mediaSent.some((frame) => frame.op === "p" && frame.k === "l"),
+    ).toBe(false);
+    expect(useVoice.getState().status).toBe("joined");
+    leaveVoice();
+    expect(vi.getTimerCount()).toBe(0);
+  });
+
+  it("reuses one negotiated Live sender through twenty explicit start/stop cycles", async () => {
+    const env = install();
+    joinVoice({ serverId: "srv", channelId: "voice", channelName: "Voice" });
+    await vi.waitFor(() =>
+      expect(env.peers[0]?.signalingState).toBe("have-local-offer"),
+    );
+    env.emitMedia({ op: "a", sdp: "v=0\r\n" });
+    await vi.waitFor(() => expect(env.peers[0]?.signalingState).toBe("stable"));
+    const peer = env.peers[0]!;
+    for (let cycle = 0; cycle < 20; cycle++) {
+      toggleGoLive();
+      await vi.waitFor(() =>
+        expect(peer.signalingState).toBe("have-local-offer"),
+      );
+      env.emitMedia({ op: "a", sdp: "v=0\r\n" });
+      await vi.waitFor(() => expect(peer.signalingState).toBe("stable"));
+      toggleGoLive();
+      await vi.waitFor(() =>
+        expect(peer.signalingState).toBe("have-local-offer"),
+      );
+      env.emitMedia({ op: "a", sdp: "v=0\r\n" });
+      await vi.waitFor(() => expect(peer.signalingState).toBe("stable"));
+      expect(peer.senders).toHaveLength(2);
+    }
+    expect(env.getDisplayMediaCalls()).toBe(20);
+    expect(peer.senders.filter((sender) => sender.track)).toHaveLength(1);
+  });
+
+  it("plays every Watch audio track once and cleans up ended tracks", async () => {
+    const clips: FakeAudio[] = [];
+    const ends = new Map<MediaStreamTrack, () => void>();
+    class FakeAudio {
+      autoplay = false;
+      muted = false;
+      volume = 1;
+      paused = false;
+      srcObject: MediaStream | null = null;
+      constructor() {
+        clips.push(this);
+      }
+      setAttribute() {}
+      play() {
+        return Promise.resolve();
+      }
+      pause() {
+        this.paused = true;
+      }
+    }
+    class SingleStream {
+      constructor(private tracks: MediaStreamTrack[]) {}
+      getTracks() {
+        return this.tracks;
+      }
+      getAudioTracks() {
+        return this.tracks;
+      }
+    }
+    vi.stubGlobal("Audio", FakeAudio);
+    vi.stubGlobal("MediaStream", SingleStream);
+    try {
+      const env = install();
+      joinVoice({ serverId: "srv", channelId: "voice", channelName: "Voice" });
+      await vi.waitFor(() => expect(env.peers).toHaveLength(1));
+      watchLive({ serverId: "srv", channelId: "stage", channelName: "Stage" });
+      await vi.waitFor(() => expect(env.peers).toHaveLength(2));
+      const tracks = [fakeTrack("audio"), fakeTrack("audio")];
+      for (const track of tracks) {
+        track.addEventListener = ((type: string, cb: () => void) => {
+          if (type === "ended") ends.set(track, cb);
+        }) as MediaStreamTrack["addEventListener"];
+        env.peers[1]!.ontrack?.({
+          track,
+          streams: [fakeStream("shared-source")],
+        });
+      }
+      env.peers[1]!.ontrack?.({ track: tracks[0]!, streams: [] });
+      expect(clips).toHaveLength(2);
+      expect(clips.map((el) => el.srcObject!.getAudioTracks())).toEqual(
+        tracks.map((track) => [track]),
+      );
+      useMediaSettings.getState().patch({ outputVolume: 0.35 });
+      expect(clips.every((el) => el.volume === 0.35)).toBe(true);
+      toggleDeafen();
+      expect(clips.every((el) => el.muted && el.volume === 0)).toBe(true);
+      ends.get(tracks[0]!)!();
+      expect(clips[0]!.paused).toBe(true);
+      expect(clips[0]!.srcObject).toBeNull();
+      expect(clips[1]!.srcObject).toBeTruthy();
+      stopWatching();
+      expect(clips.every((el) => el.paused && el.srcObject === null)).toBe(
+        true,
+      );
+    } finally {
+      vi.unstubAllGlobals();
+    }
   });
 
   it("matches watch events by server and channel", async () => {
@@ -1167,7 +1531,7 @@ describe("voice session", () => {
     expect(useVoice.getState().watching).toBe(false);
   });
 
-  it("uses an untagged watch video only until a parsed live track arrives", async () => {
+  it("requires publisher identity before displaying a Watch video", async () => {
     const { peers } = install();
     watchLive({
       serverId: "srv",
@@ -1180,13 +1544,165 @@ describe("voice session", () => {
       track: stray.getVideoTracks()[0]!,
       streams: [stray],
     });
-    expect(useVoice.getState().watchStream).toBe(stray);
+    expect(useVoice.getState().watchStream).toBeNull();
     const live = fakeVideoStream("u-bob:l");
     peers[0]?.ontrack?.({
       track: live.getVideoTracks()[0]!,
       streams: [live],
     });
     expect(useVoice.getState().watchStream).toBe(live);
+    expect(useVoice.getState().watchPublisherId).toBe("u-bob");
+    expect(useVoice.getState().remote).toEqual({});
+  });
+
+  it("keeps Watch through a bounded publisher Gateway rejoin and ends on explicit unpublish", async () => {
+    const env = install();
+    watchLive({ serverId: "srv", channelId: "voice", channelName: "Voice" });
+    await vi.waitFor(() => expect(env.peers).toHaveLength(1));
+    const stream = fakeVideoStream("u-bob:l");
+    env.peers[0]!.ontrack?.({
+      track: stream.getVideoTracks()[0]!,
+      streams: [stream],
+    });
+    vi.useFakeTimers();
+    const event = { op: "sig" as const, s: "srv", c: "voice", u: "u-bob" };
+    env.emitSig({ ...event, t: "l" });
+    expect(useVoice.getState().watching).toBe(true);
+    await vi.advanceTimersByTimeAsync(5000);
+    env.emitSig({ ...event, t: "p", k: "l" });
+    await vi.advanceTimersByTimeAsync(20000);
+    expect(useVoice.getState().watching).toBe(true);
+    expect(useVoice.getState().watchStream).toBe(stream);
+    env.emitSig({ ...event, t: "u", k: "l" });
+    expect(useVoice.getState().watching).toBe(false);
+    expect(env.peers[0]!.closed).toBe(true);
+    expect(vi.getTimerCount()).toBe(0);
+  });
+
+  it("bounds a vanished Watch publisher and ignores another publisher's acknowledgement", async () => {
+    const env = install();
+    watchLive({ serverId: "srv", channelId: "voice", channelName: "Voice" });
+    await vi.waitFor(() => expect(env.peers).toHaveLength(1));
+    const stream = fakeVideoStream("u-bob:l");
+    env.peers[0]!.ontrack?.({
+      track: stream.getVideoTracks()[0]!,
+      streams: [stream],
+    });
+    vi.useFakeTimers();
+    env.emitSig({ op: "sig", s: "srv", c: "voice", u: "u-bob", t: "l" });
+    expect(useVoice.getState().watching).toBe(true);
+    await vi.advanceTimersByTimeAsync(19000);
+    env.emitSig({
+      op: "sig",
+      s: "srv",
+      c: "voice",
+      u: "u-cara",
+      t: "p",
+      k: "l",
+    });
+    await vi.advanceTimersByTimeAsync(1000);
+    expect(useVoice.getState().watching).toBe(false);
+    expect(vi.getTimerCount()).toBe(0);
+  });
+
+  it("keeps Watch separate from Voice and rejects another Live publisher", async () => {
+    const { peers, emitSig } = install();
+    joinVoice({
+      serverId: "srv-a",
+      channelId: "voice",
+      channelName: "Voice A",
+    });
+    await vi.waitFor(() => expect(peers).toHaveLength(1));
+    useVoiceRoster.setState({ live: { "srv-b": { stage: "u-bob" } } });
+    watchLive({
+      serverId: "srv-b",
+      channelId: "stage",
+      channelName: "Stage B",
+    });
+    await vi.waitFor(() => expect(peers).toHaveLength(2));
+    const camera = fakeVideoStream("u-bob:v");
+    const wrong = fakeVideoStream("u-alice:l");
+    for (const stream of [camera, wrong]) {
+      peers[1]!.ontrack?.({
+        track: stream.getVideoTracks()[0]!,
+        streams: [stream],
+      });
+    }
+    expect(useVoice.getState().watchStream).toBeNull();
+    const live = fakeVideoStream("u-bob:l");
+    peers[1]!.ontrack?.({ track: live.getVideoTracks()[0]!, streams: [live] });
+    expect(useVoice.getState().watchStream).toBe(live);
+    expect(useVoice.getState().watchPublisherId).toBe("u-bob");
+    expect(useVoice.getState().watchChannelName).toBe("Stage B");
+    expect(useVoice.getState().remote).toEqual({});
+    emitSig({
+      op: "sig",
+      t: "u",
+      s: "srv-b",
+      c: "stage",
+      u: "u-alice",
+      k: "l",
+    });
+    expect(useVoice.getState().watching).toBe(true);
+    stopWatching();
+    expect(useVoice.getState().watchPublisherId).toBeNull();
+    expect(useVoice.getState().watchChannelName).toBeNull();
+    expect(useVoice.getState().status).toBe("joined");
+    expect(peers[0]!.closed).toBe(false);
+  });
+
+  it("exposes blocked audio, retries on click and ignores a detached play failure", async () => {
+    const clips: FakeAudio[] = [];
+    let rejectPlay = true;
+    let delayedReject: ((error: unknown) => void) | undefined;
+    class FakeAudio {
+      autoplay = false;
+      muted = false;
+      volume = 1;
+      srcObject: MediaStream | null = null;
+      constructor() {
+        clips.push(this);
+      }
+      setAttribute() {}
+      play() {
+        return rejectPlay
+          ? Promise.reject(new DOMException("blocked", "NotAllowedError"))
+          : Promise.resolve();
+      }
+    }
+    const previous = globalThis.Audio;
+    vi.stubGlobal("Audio", FakeAudio);
+    try {
+      const { peers } = install();
+      watchLive({ serverId: "srv", channelId: "stage", channelName: "Stage" });
+      await vi.waitFor(() => expect(peers).toHaveLength(1));
+      const stream = fakeStream("u-bob:a");
+      peers[0]!.ontrack?.({
+        track: stream.getAudioTracks()[0]!,
+        streams: [stream],
+      });
+      await vi.waitFor(() =>
+        expect(useVoice.getState().playbackBlocked).toBe(true),
+      );
+      rejectPlay = false;
+      retryPlayback();
+      await vi.waitFor(() =>
+        expect(useVoice.getState().playbackBlocked).toBe(false),
+      );
+      const el = clips.find((clip) => clip.srcObject === stream)!;
+      el.play = () =>
+        new Promise<void>((_, reject) => {
+          delayedReject = reject;
+        });
+      retryPlayback();
+      stopWatching();
+      delayedReject!(new DOMException("late blocked", "NotAllowedError"));
+      await Promise.resolve();
+      await Promise.resolve();
+      expect(useVoice.getState().playbackBlocked).toBe(false);
+    } finally {
+      globalThis.Audio = previous;
+    }
   });
 
   it("parses SFU stream ids for a live track", () => {
@@ -1765,6 +2281,267 @@ describe("stream negotiation stability", () => {
     await vi.waitFor(() => expect(env.peers[0]?.signalingState).toBe("stable"));
     return env;
   }
+  it("keeps all capture tracks when only the media socket reconnects", async () => {
+    const env = await connected();
+    toggleCamera();
+    await vi.waitFor(() =>
+      expect(useVoice.getState().localCamera).toBeTruthy(),
+    );
+    env.emitMedia({ op: "a", sdp: "v=0\r\n" });
+    toggleShare();
+    await vi.waitFor(() =>
+      expect(useVoice.getState().localScreen).toBeTruthy(),
+    );
+    env.emitMedia({ op: "a", sdp: "v=0\r\n" });
+    toggleGoLive();
+    await vi.waitFor(() => expect(useVoice.getState().localLive).toBeTruthy());
+    env.emitMedia({ op: "a", sdp: "v=0\r\n" });
+    const before = useVoice.getState();
+    const mic = env.peers[0]!.audio;
+    env.closeMedia();
+    await vi.waitFor(() => expect(env.peers).toHaveLength(2));
+    for (const key of ["localCamera", "localScreen", "localLive"] as const) {
+      expect(useVoice.getState()[key]).toBe(before[key]);
+      expect(streamStopped(before[key])).toBe(false);
+      expect(
+        env.peers[1]!.senders.some(
+          (sender) => sender.track === before[key]!.getVideoTracks()[0],
+        ),
+      ).toBe(true);
+    }
+    expect(env.getDisplayMediaCalls()).toBe(2);
+    expect(env.getUserMediaCalls()).toBe(2);
+    expect(env.peers[1]!.audio).toBe(mic);
+    leaveVoice();
+    for (const key of ["localCamera", "localScreen", "localLive"] as const)
+      expect(streamStopped(before[key])).toBe(true);
+    expect(trackStopped(mic)).toBe(true);
+  });
+  it("recovers after nine seconds of ticket outage without new capture", async () => {
+    let offline = true;
+    const env = install({
+      ticketError: (i) => (i > 0 && offline ? new Error("offline") : undefined),
+    });
+    joinVoice({ serverId: "srv", channelId: "voice", channelName: "Lounge" });
+    await vi.waitFor(() =>
+      expect(env.peers[0]?.signalingState).toBe("have-local-offer"),
+    );
+    env.emitMedia({ op: "a", sdp: "v=0\r\n" });
+    toggleShare();
+    await vi.waitFor(() =>
+      expect(useVoice.getState().localScreen).toBeTruthy(),
+    );
+    const screen = useVoice.getState().localScreen;
+    vi.useFakeTimers();
+    env.closeMedia();
+    await vi.advanceTimersByTimeAsync(9000);
+    expect(env.peers).toHaveLength(1);
+    expect(useVoice.getState().localScreen).toBe(screen);
+    expect(streamStopped(screen)).toBe(false);
+    offline = false;
+    await vi.advanceTimersByTimeAsync(10000);
+    expect(env.peers).toHaveLength(2);
+    expect(
+      env.peers[1]!.senders.some(
+        (sender) => sender.track === screen!.getVideoTracks()[0],
+      ),
+    ).toBe(true);
+    expect(env.getDisplayMediaCalls()).toBe(1);
+    expect(env.getUserMediaCalls()).toBe(1);
+    expect(env.ticketCalls()).toBeGreaterThan(2);
+    expect(env.errors).toHaveLength(0);
+    leaveVoice();
+    expect(vi.getTimerCount()).toBe(0);
+  });
+  it("bounds failed ticket retries and reports one failure", async () => {
+    const env = install({
+      ticketError: (i) => (i > 0 ? new Error("offline") : undefined),
+    });
+    joinVoice({ serverId: "srv", channelId: "voice", channelName: "Lounge" });
+    await vi.waitFor(() => expect(env.peers).toHaveLength(1));
+    vi.useFakeTimers();
+    env.closeMedia();
+    await vi.advanceTimersByTimeAsync(60000);
+    expect(env.ticketCalls()).toBe(8);
+    expect(env.peers).toHaveLength(1);
+    expect(env.getUserMediaCalls()).toBe(1);
+    expect(env.errors).toHaveLength(1);
+    expect(useVoice.getState().status).toBe("idle");
+    expect(vi.getTimerCount()).toBe(0);
+    await vi.advanceTimersByTimeAsync(60000);
+    expect(env.ticketCalls()).toBe(8);
+  });
+  it("cancels pending transport recovery on leave", async () => {
+    const gate = deferred();
+    const env = install({
+      gateTicket: (i) => (i > 0 ? gate.promise : undefined),
+    });
+    joinVoice({ serverId: "srv", channelId: "voice", channelName: "Lounge" });
+    await vi.waitFor(() => expect(env.peers).toHaveLength(1));
+    vi.useFakeTimers();
+    env.closeMedia();
+    await vi.advanceTimersByTimeAsync(300);
+    expect(env.ticketCalls()).toBe(2);
+    leaveVoice();
+    gate.resolve();
+    await vi.advanceTimersByTimeAsync(60000);
+    expect(env.peers).toHaveLength(1);
+    expect(env.streams.every(streamStopped)).toBe(true);
+    expect(vi.getTimerCount()).toBe(0);
+  });
+  it("leaves ended display capture off until the next explicit toggle", async () => {
+    const env = await connected();
+    toggleShare();
+    await vi.waitFor(() =>
+      expect(useVoice.getState().localScreen).toBeTruthy(),
+    );
+    const screen = useVoice.getState().localScreen!;
+    Object.defineProperty(screen.getVideoTracks()[0], "readyState", {
+      value: "ended",
+    });
+    env.closeMedia();
+    await vi.waitFor(() => expect(env.peers).toHaveLength(2));
+    expect(useVoice.getState().sharing).toBe(false);
+    expect(useVoice.getState().localScreen).toBeNull();
+    expect(env.getDisplayMediaCalls()).toBe(1);
+    toggleShare();
+    await vi.waitFor(() => expect(env.getDisplayMediaCalls()).toBe(2));
+  });
+  it("creates receive-only audio after microphone denial", async () => {
+    const env = install({ media: false });
+    joinVoice({ serverId: "srv", channelId: "voice", channelName: "Lounge" });
+    await vi.waitFor(() =>
+      expect(env.peers[0]?.signalingState).toBe("have-local-offer"),
+    );
+    expect(env.peers[0]!.transceivers).toEqual([
+      { kind: "audio", direction: "recvonly" },
+    ]);
+    env.closeMedia();
+    await vi.waitFor(() => expect(env.peers).toHaveLength(2));
+    expect(env.peers[1]!.transceivers).toEqual([
+      { kind: "audio", direction: "recvonly" },
+    ]);
+    expect(env.getUserMediaCalls()).toBe(1);
+  });
+  it("skips Firefox empty end-of-candidates in voice and watch", async () => {
+    const env = await connected();
+    env.peers[0]!.onicecandidate?.({
+      candidate: { candidate: "", sdpMid: "0" },
+    });
+    watchLive({ serverId: "srv", channelId: "stage", channelName: "Stage" });
+    await vi.waitFor(() => expect(env.peers).toHaveLength(2));
+    env.peers[1]!.onicecandidate?.({
+      candidate: { candidate: "", sdpMid: "0" },
+    });
+    expect(env.mediaSent.some((frame) => frame.op === "i" && !frame.ice)).toBe(
+      false,
+    );
+    expect(useVoice.getState().status).toBe("joined");
+  });
+  it("uses freshly minted TURN credentials on transport replacement", async () => {
+    const env = install({
+      iceServersFor: (i) => [
+        {
+          urls: ["turn:127.0.0.1:3478"],
+          username: `lease-${i}`,
+          credential: `test-${i}`,
+        },
+      ],
+    });
+    joinVoice({ serverId: "srv", channelId: "voice", channelName: "Lounge" });
+    await vi.waitFor(() => expect(env.peers).toHaveLength(1));
+    expect(env.peers[0]!.iceServers[0]?.username).toBe("lease-0");
+    env.closeMedia();
+    await vi.waitFor(() => expect(env.peers).toHaveLength(2));
+    expect(env.peers[1]!.iceServers[0]?.username).toBe("lease-1");
+    expect(env.getUserMediaCalls()).toBe(1);
+  });
+  it("bounds watch recovery and cancels its timers without capture prompts", async () => {
+    const env = install({
+      ticketError: (i) => (i > 0 ? new Error("offline") : undefined),
+    });
+    watchLive({ serverId: "srv", channelId: "stage", channelName: "Stage" });
+    await vi.waitFor(() => expect(env.peers).toHaveLength(1));
+    vi.useFakeTimers();
+    env.closeMedia();
+    await vi.advanceTimersByTimeAsync(60000);
+    expect(env.ticketCalls()).toBe(8);
+    expect(useVoice.getState().watching).toBe(false);
+    expect(env.errors).toHaveLength(1);
+    expect(env.getUserMediaCalls()).toBe(0);
+    expect(env.getDisplayMediaCalls()).toBe(0);
+    expect(vi.getTimerCount()).toBe(0);
+  });
+  it("retries an unavailable Watch recovery Join with the remaining budget", async () => {
+    const env = install();
+    watchLive({ serverId: "srv", channelId: "stage", channelName: "Stage" });
+    await vi.waitFor(() => expect(env.peers).toHaveLength(1));
+    vi.useFakeTimers();
+    env.closeMedia();
+    await vi.advanceTimersByTimeAsync(350);
+    expect(env.peers).toHaveLength(2);
+    env.emitMedia({ op: "err", e: "unavailable" });
+    expect(useVoice.getState().watching).toBe(true);
+    expect(env.peers[1]!.closed).toBe(true);
+    await vi.advanceTimersByTimeAsync(650);
+    expect(env.peers).toHaveLength(3);
+    env.emitMedia({ op: "a", sdp: "v=0\r\n" });
+    await vi.advanceTimersByTimeAsync(0);
+    env.peers[2]!.setConnection("connected");
+    expect(useVoice.getState().watching).toBe(true);
+    expect(env.errors).toHaveLength(0);
+    expect(env.getUserMediaCalls()).toBe(0);
+    stopWatching();
+    expect(vi.getTimerCount()).toBe(0);
+  });
+  it("bounds repeated unavailable Watch recovery Joins and reports once", async () => {
+    const env = install();
+    watchLive({ serverId: "srv", channelId: "stage", channelName: "Stage" });
+    await vi.waitFor(() => expect(env.peers).toHaveLength(1));
+    vi.useFakeTimers();
+    env.closeMedia();
+    for (let attempt = 1; attempt <= 7; attempt++) {
+      await vi.advanceTimersByTimeAsync(5000);
+      expect(env.peers).toHaveLength(attempt + 1);
+      env.emitMedia({ op: "err", e: "unavailable" });
+    }
+    await vi.advanceTimersByTimeAsync(60000);
+    expect(env.ticketCalls()).toBe(8);
+    expect(useVoice.getState().watching).toBe(false);
+    expect(env.errors).toHaveLength(1);
+    expect(env.getUserMediaCalls()).toBe(0);
+    expect(env.getDisplayMediaCalls()).toBe(0);
+    expect(vi.getTimerCount()).toBe(0);
+  });
+  it.each(["unauthorized", "forbidden", "bad_request", "negotiation_failed"])(
+    "ends Watch recovery on terminal %s without retrying",
+    async (code) => {
+      const env = install();
+      watchLive({ serverId: "srv", channelId: "stage", channelName: "Stage" });
+      await vi.waitFor(() => expect(env.peers).toHaveLength(1));
+      vi.useFakeTimers();
+      env.closeMedia();
+      await vi.advanceTimersByTimeAsync(350);
+      env.emitMedia({ op: "err", e: code });
+      await vi.advanceTimersByTimeAsync(60000);
+      expect(env.ticketCalls()).toBe(2);
+      expect(useVoice.getState().watching).toBe(false);
+      expect(env.errors).toHaveLength(1);
+      expect(vi.getTimerCount()).toBe(0);
+    },
+  );
+  it("ends an initial unavailable Watch Join without starting recovery", async () => {
+    const env = install();
+    watchLive({ serverId: "srv", channelId: "stage", channelName: "Stage" });
+    await vi.waitFor(() => expect(env.peers).toHaveLength(1));
+    vi.useFakeTimers();
+    env.emitMedia({ op: "err", e: "unavailable" });
+    await vi.advanceTimersByTimeAsync(60000);
+    expect(env.ticketCalls()).toBe(1);
+    expect(useVoice.getState().watching).toBe(false);
+    expect(env.errors).toHaveLength(1);
+    expect(vi.getTimerCount()).toBe(0);
+  });
   it("keeps the seat and deafen when a stream renegotiation fails", async () => {
     const env = await connected();
     toggleDeafen();
@@ -1849,6 +2626,75 @@ describe("stream negotiation stability", () => {
       /Sprachkanal bleibt aktiv/,
     );
   });
+  it("announces the retained SDP MSID after rollback and sender reuse", async () => {
+    const env = await connected();
+    const peer = env.peers[0]!;
+    const addTrack = peer.addTrack.bind(peer);
+    peer.addTrack = (track) => {
+      const reusable = peer.senders.find((sender) => sender.track === null);
+      if (reusable) {
+        reusable.track = track ?? null;
+        return reusable;
+      }
+      return addTrack(track);
+    };
+    peer.getTransceivers = () =>
+      peer.senders.map((sender, i) => ({ mid: String(i), sender }));
+    const createOffer = peer.createOffer.bind(peer);
+    peer.createOffer = async (options) => {
+      const offer = await createOffer(options);
+      const video = peer.senders.findIndex(
+        (sender) => sender.track?.kind === "video",
+      );
+      return {
+        ...offer,
+        sdp: `${offer.sdp ?? ""}m=video 9 UDP/TLS/RTP/SAVPF 96\r\na=mid:${video}\r\na=msid:capture retained-msid\r\n`,
+      };
+    };
+    toggleCamera();
+    await vi.waitFor(() =>
+      expect(peer.signalingState).toBe("have-local-offer"),
+    );
+    const sender = peer.senders.find((item) => item.track?.kind === "video")!;
+    const firstCapture = sender.track!;
+    expect(env.mediaSent).toContainEqual({
+      op: "p",
+      k: "v",
+      t: "retained-msid",
+    });
+    env.emitMedia({ op: "err", e: "negotiation_failed" });
+    await vi.waitFor(() => expect(peer.signalingState).toBe("stable"));
+    expect(env.mediaSent).toContainEqual({
+      op: "u",
+      k: "v",
+      t: "retained-msid",
+    });
+    expect(sender.track).toBeNull();
+    toggleShare();
+    await vi.waitFor(() =>
+      expect(peer.signalingState).toBe("have-local-offer"),
+    );
+    expect(peer.senders.find((item) => item.track?.kind === "video")).toBe(
+      sender,
+    );
+    expect(sender.track?.id).not.toBe(firstCapture.id);
+    expect(env.mediaSent).toContainEqual({
+      op: "p",
+      k: "s",
+      t: "retained-msid",
+    });
+    env.emitMedia({ op: "a", sdp: "v=0\r\n" });
+    await vi.waitFor(() => expect(peer.signalingState).toBe("stable"));
+    toggleShare();
+    expect(env.mediaSent).toContainEqual({
+      op: "u",
+      k: "s",
+      t: "retained-msid",
+    });
+    expect(peer.audio).toBeTruthy();
+    expect(trackStopped(peer.audio)).toBe(false);
+  });
+
   it("keeps a negotiated screen share when a later renegotiation fails", async () => {
     const env = await connected();
     toggleShare();
@@ -2034,6 +2880,8 @@ describe("stream negotiation stability", () => {
     await vi.advanceTimersByTimeAsync(9_999);
     expect(env.peers[0]?.closed).toBe(false);
     await vi.advanceTimersByTimeAsync(1);
+    // Transport replacement uses a bounded jittered delay after the ICE budget.
+    await vi.advanceTimersByTimeAsync(300);
     for (let i = 0; i < 20; i++) await Promise.resolve();
     expect(env.peers[0]?.closed).toBe(true);
     expect(env.peers.length).toBeGreaterThan(1);
@@ -2158,9 +3006,9 @@ describe("stream negotiation stability", () => {
       );
     await vi.waitFor(
       () =>
-        expect(useVoiceDiagnostics.getState().latest?.voice?.flows).toHaveLength(
-          2,
-        ),
+        expect(
+          useVoiceDiagnostics.getState().latest?.voice?.flows,
+        ).toHaveLength(2),
       { timeout: 3_500 },
     );
     const exported = buildDiagnosticExport();
@@ -2189,23 +3037,20 @@ describe("stream negotiation stability", () => {
       expect(useVoice.getState().localCamera).toBeTruthy(),
     );
     env.emitMedia({ op: "a", sdp: "v=0\r\n" });
-    await vi.waitFor(() =>
-      expect(env.peers[0]?.signalingState).toBe("stable"),
-    );
+    await vi.waitFor(() => expect(env.peers[0]?.signalingState).toBe("stable"));
     env.peers[0]!.setIce("failed");
     await vi.waitFor(() =>
       expect(env.peers[0]?.offerOptions.at(-1)?.iceRestart).toBe(true),
     );
     env.emitMedia({ op: "a", sdp: "v=0\r\n" });
-    await vi.waitFor(() =>
-      expect(env.peers[0]?.signalingState).toBe("stable"),
-    );
+    await vi.waitFor(() => expect(env.peers[0]?.signalingState).toBe("stable"));
     env.peers[0]!.setIce("checking");
     env.peers[0]!.setIce("failed");
     await vi.waitFor(() => expect(env.peers).toHaveLength(2));
     await vi.waitFor(() =>
       expect(
-        env.peers[1]?.senders.find((sender) => sender.track?.kind === "video")
+        env.peers[1]?.senders
+          .find((sender) => sender.track?.kind === "video")
           ?.getParameters?.().encodings[0],
       ).toMatchObject({ maxBitrate: 800_000, maxFramerate: 15 }),
     );

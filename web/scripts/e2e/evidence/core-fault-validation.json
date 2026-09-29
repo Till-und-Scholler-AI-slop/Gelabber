@@ -1,0 +1,503 @@
+{
+  "scope": "11c automated core and owned faults, not complete acceptance",
+  "reportStorage": "raw redacted JSON retained outside source; hashes below",
+  "validationState": "working tree on6146657, explicit dirty test hashes in every raw report; module content traceability does not claim clean commit execution",
+  "browserPins": {
+    "playwright": "1.63.0",
+    "node": "26.8.2"
+  },
+  "apiManifest": {
+    "source": "243c86ccc8f8a4bdfca9bc73da32e34520577bf9",
+    "sha256": "d383dea15e559d0602c11eb2e48e1a9de4ca96b1540ef995e5a95ef15977fdc8"
+  },
+  "webSnapshot": "d9e2220909a3cfbe8d4b7513d738ab112be38412",
+  "reports": [
+    {
+      "path": "/tmp/gelabber-e2e/core-snapshot-first.json",
+      "sha256": "113f682351d9c6941ab0aaba00eee893340e74d26082c053a2871bfe0d237c91",
+      "at": "2026-09-28T14:44:34.154Z",
+      "finishedAt": "2026-09-28T14:45:15.138Z",
+      "testHead": "6146657347d2453745c4f8a97cf68c2e4003244c",
+      "testFilesDirty": true,
+      "browser": {
+        "engine": "chromium",
+        "version": "153.0.8010.12",
+        "platform": "linux",
+        "node": "v26.8.2"
+      },
+      "runtime": {
+        "attribution": "operator-supplied; not runtime digest verification",
+        "web": "d9e2220909a3cfbe8d4b7513d738ab112be38412",
+        "api": "243c86ccc8f8a4bdfca9bc73da32e34520577bf9",
+        "media": "0481896"
+      },
+      "gate": {
+        "passed": true,
+        "scope": "selected-cases",
+        "absent": [],
+        "completeAcceptance": false
+      },
+      "cleanup": [
+        {
+          "target": "owned-test-server",
+          "status": 204
+        }
+      ],
+      "results": {
+        "PASS": [
+          "isolated-app-fixture",
+          "account-session-reload-login",
+          "channel-chat-create-edit-delete-converges",
+          "new-dm-connected-recipient-discovers-without-refetch",
+          "channel-jpeg-png-webp-bind-reload-byte-equal",
+          "dm-jpeg-png-webp-bind-reload-byte-equal",
+          "background-event-before-first-open-55-history-paging",
+          "initial-history-error-visible-bounded-retry",
+          "failed-send-navigation-retains-own-retry",
+          "two-tabs-account-switch-delayed-401",
+          "two-tabs-account-switch-delayed-403",
+          "private-dm-foreign-discovery-subscription-denied"
+        ]
+      }
+    },
+    {
+      "path": "/tmp/gelabber-e2e/core-retry-control2.json",
+      "sha256": "82a1b71fa3e6401b4742b260e17c1ef8a60e9ef8e0d73adcaa1e2d05aaa33609",
+      "at": "2026-09-28T14:54:31.776Z",
+      "finishedAt": "2026-09-28T14:54:47.988Z",
+      "testHead": "6146657347d2453745c4f8a97cf68c2e4003244c",
+      "testFilesDirty": true,
+      "browser": {
+        "engine": "chromium",
+        "version": "153.0.8010.12",
+        "platform": "linux",
+        "node": "v26.8.2"
+      },
+      "runtime": {
+        "attribution": "operator-supplied; not runtime digest verification",
+        "web": "d9e2220909a3cfbe8d4b7513d738ab112be38412",
+        "api": "243c86ccc8f8a4bdfca9bc73da32e34520577bf9",
+        "media": "unknown"
+      },
+      "gate": {
+        "passed": true,
+        "scope": "selected-cases",
+        "absent": [],
+        "completeAcceptance": false
+      },
+      "cleanup": [
+        {
+          "target": "owned-test-server",
+          "status": 204
+        }
+      ],
+      "results": {
+        "PASS": [
+          "isolated-app-fixture",
+          "initial-history-error-visible-bounded-retry",
+          "failed-send-navigation-retains-own-retry"
+        ]
+      }
+    },
+    {
+      "path": "/tmp/gelabber-e2e/core-faults-control2.json",
+      "sha256": "3ce8ac634c4968e19dd600a6ee8869fd8bcd13b72d2d610935e7316edae7623f",
+      "at": "2026-09-28T14:50:19.780Z",
+      "finishedAt": "2026-09-28T14:51:15.999Z",
+      "testHead": "6146657347d2453745c4f8a97cf68c2e4003244c",
+      "testFilesDirty": true,
+      "browser": {
+        "engine": "chromium",
+        "version": "153.0.8010.12",
+        "platform": "linux",
+        "node": "v26.8.2"
+      },
+      "runtime": {
+        "attribution": "operator-supplied; not runtime digest verification",
+        "web": "d9e2220909a3cfbe8d4b7513d738ab112be38412",
+        "api": "243c86ccc8f8a4bdfca9bc73da32e34520577bf9",
+        "media": "unknown"
+      },
+      "gate": {
+        "passed": false,
+        "scope": "selected-cases",
+        "absent": [],
+        "completeAcceptance": false
+      },
+      "cleanup": [
+        {
+          "target": "owned-test-server",
+          "status": 204
+        }
+      ],
+      "results": {
+        "PASS": [
+          "isolated-app-fixture",
+          "edit-delete-failure-row-scoped-rollback",
+          "paging-error-data-preservation",
+          "upload-abort-retains-text-file-retry",
+          "upload-account-switch-no-foreign-bind",
+          "storage-delete-outage-durable-cleanup",
+          "upload-abandoned-object-cleanup"
+        ],
+        "FAIL": [
+          {
+            "id": "rest-ws-reordering-edit-delete-rollback",
+            "reason": "late-rest-lost-newer-event-or-resurrected-delete"
+          },
+          {
+            "id": "redis-epoch-replay-window-reset",
+            "reason": "harness-or-interface-error"
+          },
+          {
+            "id": "redis-pubsub-outage-durable-outbox-convergence",
+            "reason": "fixture-redis-fault-not-isolated-or-effective"
+          }
+        ]
+      }
+    },
+    {
+      "path": "/tmp/gelabber-e2e/core-faults-control3.json",
+      "sha256": "101ecb35708390a34182ce1d9cf5cecc10a50ca3eb4f92825fa569e0a119bb22",
+      "at": "2026-09-28T14:52:52.654Z",
+      "finishedAt": "2026-09-28T14:53:10.177Z",
+      "testHead": "6146657347d2453745c4f8a97cf68c2e4003244c",
+      "testFilesDirty": true,
+      "browser": {
+        "engine": "chromium",
+        "version": "153.0.8010.12",
+        "platform": "linux",
+        "node": "v26.8.2"
+      },
+      "runtime": {
+        "attribution": "operator-supplied; not runtime digest verification",
+        "web": "d9e2220909a3cfbe8d4b7513d738ab112be38412",
+        "api": "243c86ccc8f8a4bdfca9bc73da32e34520577bf9",
+        "media": "unknown"
+      },
+      "gate": {
+        "passed": false,
+        "scope": "selected-cases",
+        "absent": [],
+        "completeAcceptance": false
+      },
+      "cleanup": [
+        {
+          "target": "owned-test-server",
+          "status": 204
+        }
+      ],
+      "results": {
+        "PASS": [
+          "isolated-app-fixture",
+          "rest-ws-reordering-edit-delete-rollback"
+        ],
+        "FAIL": [
+          {
+            "id": "redis-epoch-replay-window-reset",
+            "reason": "fixture-epoch-browser-interface"
+          },
+          {
+            "id": "redis-pubsub-outage-durable-outbox-convergence",
+            "reason": "pubsub-reconnect-missed-resync"
+          }
+        ]
+      }
+    },
+    {
+      "path": "/tmp/gelabber-e2e/core-redis-control4.json",
+      "sha256": "13f7d47675aaefc74b17b8e8276665fce63021d4a19b725e477fa659a78f4cb1",
+      "at": "2026-09-28T14:54:48.385Z",
+      "finishedAt": "2026-09-28T14:55:03.866Z",
+      "testHead": "6146657347d2453745c4f8a97cf68c2e4003244c",
+      "testFilesDirty": true,
+      "browser": {
+        "engine": "chromium",
+        "version": "153.0.8010.12",
+        "platform": "linux",
+        "node": "v26.8.2"
+      },
+      "runtime": {
+        "attribution": "operator-supplied; not runtime digest verification",
+        "web": "d9e2220909a3cfbe8d4b7513d738ab112be38412",
+        "api": "243c86ccc8f8a4bdfca9bc73da32e34520577bf9",
+        "media": "unknown"
+      },
+      "gate": {
+        "passed": false,
+        "scope": "selected-cases",
+        "absent": [],
+        "completeAcceptance": false
+      },
+      "cleanup": [
+        {
+          "target": "owned-test-server",
+          "status": 204
+        }
+      ],
+      "results": {
+        "PASS": [
+          "isolated-app-fixture",
+          "redis-pubsub-outage-durable-outbox-convergence"
+        ],
+        "FAIL": [
+          {
+            "id": "redis-epoch-replay-window-reset",
+            "reason": "fixture-epoch-browser-interface"
+          }
+        ]
+      }
+    },
+    {
+      "path": "/tmp/gelabber-e2e/epoch-slow-reader-first.json",
+      "sha256": "bccb5555c9201976335be38a87fdb943f6412715414a3ba15e8ee08c7ee80216",
+      "at": "2026-09-28T15:01:44.982Z",
+      "finishedAt": "2026-09-28T15:02:16.626Z",
+      "testHead": "6146657347d2453745c4f8a97cf68c2e4003244c",
+      "testFilesDirty": true,
+      "browser": {
+        "engine": "chromium",
+        "version": "153.0.8010.12",
+        "platform": "linux",
+        "node": "v26.8.2"
+      },
+      "runtime": {
+        "attribution": "operator-supplied; not runtime digest verification",
+        "web": "d9e2220909a3cfbe8d4b7513d738ab112be38412",
+        "api": "243c86ccc8f8a4bdfca9bc73da32e34520577bf9",
+        "media": "unknown"
+      },
+      "gate": {
+        "passed": false,
+        "scope": "selected-cases",
+        "absent": [],
+        "completeAcceptance": false
+      },
+      "cleanup": [
+        {
+          "target": "owned-test-server",
+          "status": 204
+        }
+      ],
+      "results": {
+        "PASS": ["isolated-app-fixture", "redis-epoch-replay-window-reset"],
+        "FAIL": [
+          {
+            "id": "slow-reader-bounded-memory",
+            "reason": "browser-deadline"
+          }
+        ]
+      }
+    },
+    {
+      "path": "/tmp/gelabber-e2e/slow-reader-scroll-control.json",
+      "sha256": "632b5fbb6710393e710f2e83cd720d9706cfd783bc7c9454438fd0ee1f23c7db",
+      "at": "2026-09-28T15:03:05.322Z",
+      "finishedAt": "2026-09-28T15:03:28.025Z",
+      "testHead": "6146657347d2453745c4f8a97cf68c2e4003244c",
+      "testFilesDirty": true,
+      "browser": {
+        "engine": "chromium",
+        "version": "153.0.8010.12",
+        "platform": "linux",
+        "node": "v26.8.2"
+      },
+      "runtime": {
+        "attribution": "operator-supplied; not runtime digest verification",
+        "web": "d9e2220909a3cfbe8d4b7513d738ab112be38412",
+        "api": "243c86ccc8f8a4bdfca9bc73da32e34520577bf9",
+        "media": "unknown"
+      },
+      "gate": {
+        "passed": true,
+        "scope": "selected-cases",
+        "absent": [],
+        "completeAcceptance": false
+      },
+      "cleanup": [
+        {
+          "target": "owned-test-server",
+          "status": 204
+        }
+      ],
+      "results": {
+        "PASS": ["isolated-app-fixture", "slow-reader-bounded-memory"]
+      }
+    },
+    {
+      "path": "/tmp/gelabber-e2e/ban-join-first.json",
+      "sha256": "44ec1846b13a4646c1b011b9c2df7c2ca952c66838966d2b811510fb89106f51",
+      "at": "2026-09-28T15:05:40.847Z",
+      "finishedAt": "2026-09-28T15:05:53.560Z",
+      "testHead": "6146657347d2453745c4f8a97cf68c2e4003244c",
+      "testFilesDirty": true,
+      "browser": {
+        "engine": "chromium",
+        "version": "153.0.8010.12",
+        "platform": "linux",
+        "node": "v26.8.2"
+      },
+      "runtime": {
+        "attribution": "operator-supplied; not runtime digest verification",
+        "web": "d9e2220909a3cfbe8d4b7513d738ab112be38412",
+        "api": "243c86ccc8f8a4bdfca9bc73da32e34520577bf9",
+        "media": "unknown"
+      },
+      "gate": {
+        "passed": true,
+        "scope": "selected-cases",
+        "absent": [],
+        "completeAcceptance": false
+      },
+      "cleanup": [
+        {
+          "target": "owned-test-server",
+          "status": 204,
+          "stage": "complete",
+          "statuses": {
+            "login": 200,
+            "delete": 204,
+            "logout": 200
+          }
+        }
+      ],
+      "results": {
+        "PASS": ["isolated-app-fixture", "ban-invite-join-race"]
+      }
+    },
+    {
+      "path": "/tmp/gelabber-e2e/firefox-core-first.json",
+      "sha256": "eb5d5612eb9985f468f3c26d186ca6d414f75d5c0eeae3be7371bab58d9f82e1",
+      "at": "2026-09-28T15:07:23.821Z",
+      "finishedAt": "2026-09-28T15:08:08.505Z",
+      "testHead": "6146657347d2453745c4f8a97cf68c2e4003244c",
+      "testFilesDirty": true,
+      "browser": {
+        "engine": "firefox",
+        "version": "155.0",
+        "platform": "linux",
+        "node": "v26.8.2"
+      },
+      "runtime": {
+        "attribution": "operator-supplied; not runtime digest verification",
+        "web": "d9e2220909a3cfbe8d4b7513d738ab112be38412",
+        "api": "243c86ccc8f8a4bdfca9bc73da32e34520577bf9",
+        "media": "unknown"
+      },
+      "gate": {
+        "passed": true,
+        "scope": "selected-cases",
+        "absent": [],
+        "completeAcceptance": false
+      },
+      "cleanup": [
+        {
+          "target": "owned-test-server",
+          "status": 204,
+          "stage": "complete",
+          "statuses": {
+            "login": 200,
+            "delete": 204,
+            "logout": 200
+          }
+        }
+      ],
+      "results": {
+        "PASS": [
+          "isolated-app-fixture",
+          "account-session-reload-login",
+          "channel-chat-create-edit-delete-converges",
+          "new-dm-connected-recipient-discovers-without-refetch",
+          "channel-jpeg-png-webp-bind-reload-byte-equal",
+          "dm-jpeg-png-webp-bind-reload-byte-equal",
+          "background-event-before-first-open-55-history-paging",
+          "initial-history-error-visible-bounded-retry",
+          "failed-send-navigation-retains-own-retry",
+          "two-tabs-account-switch-delayed-401",
+          "two-tabs-account-switch-delayed-403",
+          "private-dm-foreign-discovery-subscription-denied"
+        ]
+      }
+    },
+    {
+      "path": "/tmp/gelabber-e2e/firefox-core-faults-first.json",
+      "sha256": "437e333179d23d5510c1ce371208870adfa23fae13f192239c5806274ff1b0a0",
+      "at": "2026-09-28T15:07:20.651Z",
+      "finishedAt": "2026-09-28T15:08:46.126Z",
+      "testHead": "6146657347d2453745c4f8a97cf68c2e4003244c",
+      "testFilesDirty": true,
+      "browser": {
+        "engine": "firefox",
+        "version": "155.0",
+        "platform": "linux",
+        "node": "v26.8.2"
+      },
+      "runtime": {
+        "attribution": "operator-supplied; not runtime digest verification",
+        "web": "d9e2220909a3cfbe8d4b7513d738ab112be38412",
+        "api": "243c86ccc8f8a4bdfca9bc73da32e34520577bf9",
+        "media": "unknown"
+      },
+      "gate": {
+        "passed": true,
+        "scope": "selected-cases",
+        "absent": [],
+        "completeAcceptance": false
+      },
+      "cleanup": [
+        {
+          "target": "owned-test-server",
+          "status": 204,
+          "stage": "complete",
+          "statuses": {
+            "login": 200,
+            "delete": 204,
+            "logout": 200
+          }
+        }
+      ],
+      "results": {
+        "PASS": [
+          "isolated-app-fixture",
+          "two-parallel-sends-navigation-retry",
+          "committed-send-gateway-timeout-no-duplicate-retry",
+          "edit-delete-failure-row-scoped-rollback",
+          "rest-ws-reordering-edit-delete-rollback",
+          "paging-error-data-preservation",
+          "upload-abort-retains-text-file-retry",
+          "upload-account-switch-no-foreign-bind",
+          "redis-epoch-replay-window-reset",
+          "redis-pubsub-outage-durable-outbox-convergence",
+          "storage-delete-outage-durable-cleanup",
+          "upload-abandoned-object-cleanup",
+          "slow-reader-bounded-memory",
+          "ban-invite-join-race"
+        ]
+      }
+    }
+  ],
+  "corrections": [
+    {
+      "artifacts": ["core-faults-control2", "core-faults-control3"],
+      "case": "rest-ws-reordering-edit-delete-rollback",
+      "classification": "test-error; legitimate second REST fetch was incorrectly prohibited. Older confirmed-product-failure label is withdrawn; raw failure retained. Old-row/delete/new-revision assertions preserved."
+    },
+    {
+      "artifacts": ["core-redis-control4"],
+      "case": "redis-epoch-replay-window-reset",
+      "classification": "test-error; absent local redis-cli. Narrow native RESP replacement deletes exact four keys. Epoch observation also needs subscribe ACK baseline."
+    },
+    {
+      "artifacts": ["core-faults-control2", "core-faults-control3"],
+      "case": "redis-pubsub-outage-durable-outbox-convergence",
+      "classification": "test-error; legitimate REST recovery during outage and resync checked before reconnect. Retained durable row/outbox and native event controls; full bounded resync now PASS."
+    },
+    {
+      "artifact": "slow-reader-scroll-control",
+      "classification": "PASS for native stalled receive window/disconnect/healthy client; old timing labels do not directly prove blocked application send onset. Revised measurement fields in firefox-core-faults-first are authoritative."
+    }
+  ],
+  "ci": "actionlint and local harness checks only; GitHub full Compose/netem CI not executed; no remote push allowed",
+  "completeAcceptance": false,
+  "rawReaderSha256": "9aa984d1de3dcd9ec639b709a9d1e97feeb851614736a489000400f597277c6f"
+}

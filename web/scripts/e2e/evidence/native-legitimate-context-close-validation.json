@@ -1,0 +1,93 @@
+{
+  "at": "2026-09-28T20:29:41.395796+00:00",
+  "scope": "source-only context lifecycle correction; no further native runtime",
+  "parent": "7650a2891d06325640c2c08545cea519b324a1be",
+  "red": {
+    "exit": 1,
+    "tests": 7,
+    "passed": 6,
+    "failed": 1,
+    "path": "/tmp/gelabber-e2e/final-native-7650a28/finish-parent-red.log",
+    "sha256": "a471833ed675a84f457f93661a35b64481d559c1e86e216fc657180c76183677",
+    "output": "\u2716 actual finish skips only actor page whose owned context close completed successfully (14.649524ms)\n(node:3) ExperimentalWarning: VM Modules is an experimental feature and might change at any time\n(Use `node --trace-warnings ...` to show where the warning was created)\n\u2714 actual finish keeps unexpected closed page or rejected owned close red external-page (4.182296ms)\n\u2714 actual finish keeps unexpected closed page or rejected owned close red rejected (4.207983ms)\n\u2714 actual harness InterfaceTimeout -> finish never reevaluates quarantined page and reaches cleanup/report (5.451775ms)\n\u2714 actual healthy stop rejection is redacted FAIL/Exit1 while all later cleanup/report actions continue (3.667896ms)\n\u2714 actual harness broken page/context/browser closes stay red and cannot prevent later cleanup/report (5.10531ms)\n\u2714 actual harness pending close paths time out visibly and still write the report (80.6753ms)\n\u2139 tests 7\n\u2139 suites 0\n\u2139 pass 6\n\u2139 fail 1\n\u2139 cancelled 0\n\u2139 skipped 0\n\u2139 todo 0\n\u2139 duration_ms 5049.827282\n\n\u2716 failing tests:\n\ntest at web/scripts/e2e/native-finish.checks.mjs:169:1\n\u2716 actual finish skips only actor page whose owned context close completed successfully (14.649524ms)\n  AssertionError [ERR_ASSERTION]: The expression evaluated to a falsy value:\n  \n    assert.ok(!r.actions.includes(\"closed-actor-evaluate-attempt\"))\n  \n      at TestContext.<anonymous> (file:///tmp/gelabber-stability/e2e/web/scripts/e2e/native-finish.checks.mjs:171:10)\n      at async Test.run (node:internal/test_runner/test:1409:7)\n      at async startSubtestAfterBootstrap (node:internal/test_runner/harness:387:3) {\n    generatedMessage: true,\n    code: 'ERR_ASSERTION',\n    actual: false,\n    expected: true,\n    operator: '==',\n    diff: 'simple'\n  }\n"
+  },
+  "green": {
+    "at": "2026-09-28T20:29:41.329212+00:00",
+    "scope": "exact parent+index extracted source; no native runtime",
+    "node": "v26.8.2",
+    "sourceTreeBeforeEvidence": "7f7c90f1d82017c8dcc9d52fce5a1c5a3c080a5a",
+    "checks": [
+      {
+        "file": "native-finish.checks.mjs",
+        "exit": 0,
+        "tests": 7,
+        "skipped": 0,
+        "output": "\u2714 actual finish skips only actor page whose owned context close completed successfully (14.198389ms)\n\u2714 actual finish keeps unexpected closed page or rejected owned close red external-page (3.612022ms)\n\u2714 actual finish keeps unexpected closed page or rejected owned close red rejected (3.432421ms)\n\u2714 actual harness InterfaceTimeout -> finish never reevaluates quarantined page and reaches cleanup/report (5.439379ms)\n\u2714 actual healthy stop rejection is redacted FAIL/Exit1 while all later cleanup/report actions continue (3.209508ms)\n\u2714 actual harness broken page/context/browser closes stay red and cannot prevent later cleanup/report (5.483515ms)\n\u2714 actual harness pending close paths time out visibly and still write the report (80.705984ms)\n\u2139 tests 7\n\u2139 suites 0\n\u2139 pass 7\n\u2139 fail 0\n\u2139 cancelled 0\n\u2139 skipped 0\n\u2139 todo 0\n\u2139 duration_ms 5048.389718\n(node:3) ExperimentalWarning: VM Modules is an experimental feature and might change at any time\n(Use `node --trace-warnings ...` to show where the warning was created)\n"
+      }
+    ],
+    "lint": {
+      "exit": 0,
+      "output": ""
+    },
+    "moduleSha256": {
+      "teardown.mjs": "5bb7d0d8e023d23ab242eb8ac8b77a722d0a38c60f5df6637b86938b97419e9a",
+      "teardown.checks.mjs": "22f033c552b92bbe9e20e06c3ad51d993ecc46dcf7799da4d6623448aab7a5b1",
+      "storage-faults.mjs": "e0408378060689e8584c014f90e2d3771dc611b86bfce3bc5328a3b71ada01fb",
+      "session-audio-control.mjs": "b4624e88c9885d84ab0697bf55f7fb4878763d6bb810dd9501e7ed02202a6bc2",
+      "selection.mjs": "b8a445a817880843e833510d92dfdaf3150fff643f4b4ae5aa6906cd3913f771",
+      "s3-object.mjs": "1bce9abf11b4aa30e0e62b6063eb283baed30894e8f816787c379dd43ea63168",
+      "run.mjs": "d2900e4f8ec085708a696c1266359c51476d794c6fa497d2c0449243f9747bcd",
+      "rendered-frames.checks.mjs": "4e5bf1be45d1eb0914625d08b35623e48ccca80dc4c35337deff13dd63571780",
+      "redis-command.mjs": "b6d801eb136a072b8a00bc2982d16934bdc4cf90c06ef28b67be4ad5a160706b",
+      "realtime-faults.mjs": "71626d7a152521529f35b1c192760b2ac809bdb56955473507362fd9fe74db62",
+      "profiles.mjs": "ef20d6159fe61e04fda06c41314fbc2798e7ae7a7e5a5f57aa3f88569b0fe2aa",
+      "probe.mjs": "0b7aea113ba651b96d3b6a9e325f9436af9a9ffc06b33ddb27cb6f4033e7f91c",
+      "native-finish.checks.mjs": "9da214aeb0523a50d0fc646dd0739c62395f1ad5af3c2de4cdb0851612c8d8b8",
+      "native-evaluate.mjs": "89294f744f2c6a0d88e90975a944e96e49b2bf1c829ba377ccaa17a19b1564bf",
+      "native-evaluate.checks.mjs": "4b24b3854f84b04ee5037ed2fdff7f02c7f490fefd6ff882bac9285877d8a5fd",
+      "membership-faults.mjs": "e155ee73a21bc27b7e8a75fe8d865e0309b35f8ad38ee77296da0db3a7a5b3a5",
+      "media.mjs": "f9339a0701f1e860865705980b66f7ee1b98ee89346ee235b959acae86461378",
+      "media-runtime.mjs": "d9bc66d17009162fd6f70eec24b227fda607e601fc7a0011a7fadae698795b67",
+      "media-runtime.checks.mjs": "4569eabb3d4339914cd48a0fdea42ad3feae89a827f67aa4923682ff72787a91",
+      "media-probe.checks.mjs": "a43b9440303b7babf4d3b6ac56a25407c9d6294e9ffde68c8f09915d21a12af6",
+      "media-lease-faults.mjs": "e3aefd71b583e5d4ab4a5109c3ed69a78352248392ec90a4f5308212fe8bae70",
+      "media-extra.mjs": "e08f2daa8374db84b665de0dbce58cef369c5088a96fe3ef6685d594db7791a2",
+      "media-extra.checks.mjs": "cfdda0510e5e307c0d00199ca9eed02f9a65b503db7210a26a8f9b03e8bfccd2",
+      "harness.mjs": "6534163164c46d9c21d5fb3431f9bae2f5789a04ab328ab0be5ecbc2b7a975ad",
+      "harness.checks.mjs": "89564069db0e134a936088b2831b0eeac297777a8907523db9274efd276c9003",
+      "gateway-load.mjs": "c98da745c2ccc064829f71d1598a781eb1059177445c7c49dc7b5d07f7ed23d5",
+      "faults.mjs": "62fe2b0f812192bac2be6996049eec802db48097633c6367bd44018b6aa3a0d4",
+      "faults.checks.mjs": "9b013140e232dc052fe9b52755db20fb48267258b06fabec8ca546aae5afe11f",
+      "fault-runtime.mjs": "423684dfaddfdd65ca3021e95f842616563bef30dd8d99c70d477e9098bf7fee",
+      "fault-run.mjs": "39e5af6912f692478599cc2b9c4acc21ede1a877db72b79f4d5b6d8991769438",
+      "core.mjs": "90d46690fe1c6147d6fa54d7cc42372600ea6bc67a7b65a37a237bf4fca8fc03",
+      "ci-fault-prepare.mjs": "7be606568d420a1104cad28787fe3f8b072cda72eb265d714e6648c790b16e1d",
+      "ci-fault-prepare.checks.mjs": "b3481cdf182fc4e36d34f9b67ae828f5e115a55fcfd81233353744639affd653",
+      "ci-fault-loop.checks.mjs": "4fbf6bf68733e7175ae7baf6213230a9f7a37f75aa8971d6947b1283c5b142ff",
+      "chat-faults.mjs": "a4d258f8084e4ed842e408ebca19cbe178b636afdf2a32068e8232c16417d767",
+      "browser-options.mjs": "e092d543702eca00f24258a23b1ae97c4d280f857732dc2d262568913e01e052",
+      "browser-options.checks.mjs": "155c1eb154e9def93a95cbf7885a37755f6d91af90c93bc9b60f9f176f7104a5",
+      "account-switch.mjs": "9dd5cc5a93f55ac74ba03f46e3435b0f8e7435569dc242ef597b764e42b0ef46",
+      "access.mjs": "32655d5f780204abd3a73adb5a600db1f1fbb37a9ca42cd1932601b77ba049e4",
+      "access-native.checks.mjs": "f1bab755ba97f26042ba574ddbdf8f1ae56aa1cbdf97f78c0da09480abe74478"
+    }
+  },
+  "originalNativeFail": {
+    "path": "/tmp/gelabber-e2e/final-native-7650a28/chromium-direct-mic-lease/report.json",
+    "sha256": "e01ac4af79f8cf4dfd00cda9e70114466efb8774fb5cb1a82fc28dca4d228f39",
+    "status": "FAIL/Exit1 preserved; new corrections not natively retested"
+  },
+  "diagnostic": {
+    "path": "/tmp/gelabber-e2e/final-native-7650a28/chromium-direct-mic-lease-diagnosis/report.json.diagnosis.json",
+    "sha256": "62c3066c01236c70d1bd6c158375441ad7268a54bd0dd126b397772857387004",
+    "scope": "observer-wrapped VM source; Mic PASS, Lease BLOCKED because copied SyntheticModule binding was not live; no lease trace or acceptance claim"
+  },
+  "ownershipRule": "Skip only page.isClosed plus successful actor-owned context.close completion; rejected close or independently closed page still evaluates/fails; quarantine handling unchanged",
+  "completeAcceptance": false,
+  "limits": [
+    "No real CI/native confirmation of fix",
+    "Independent followup review pending",
+    "Held counters unavailable remains strict FAIL; no change",
+    "33-case local runlist cancelled by user"
+  ]
+}

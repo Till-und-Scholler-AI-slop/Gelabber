@@ -221,30 +221,42 @@ fn forwarded_ip(headers: &HeaderMap) -> Option<String> {
         .map(str::to_owned)
 }
 
-/// Daily byte quota, counted from attachment metadata (pending + bound).
-pub async fn check_upload_quota(
+/// Lock quota in the SAME transaction as attachment insertion. The insert
+/// trigger records the reservation; this conditional upsert holds the ledger
+/// row lock until that insert/commit and serializes competing seats.
+pub async fn reserve_upload_quota(
     state: &AppState,
+    db: &mut sqlx::PgConnection,
     uploader_id: Uuid,
     size: i64,
-) -> Result<(), ApiError> {
+) -> Result<chrono::NaiveDate, ApiError> {
     let cap = state.limits.upload_bytes_per_day;
-    if cap == 0 {
-        return Ok(());
-    }
-    let used: i64 = sqlx::query_scalar(
-        "SELECT COALESCE(SUM(size_bytes), 0)::bigint FROM attachments \
-         WHERE uploader_id = $1 AND created_at >= date_trunc('day', now())",
+    let cap = if cap == 0 {
+        i64::MAX
+    } else {
+        cap.min(i64::MAX as u64) as i64
+    };
+    let day: Option<chrono::NaiveDate> = sqlx::query_scalar(
+        "INSERT INTO upload_daily_usage (uploader_id, day, reserved) \
+         SELECT $1, (now() AT TIME ZONE 'UTC')::date, 0 WHERE $2 <= $3 \
+         ON CONFLICT (uploader_id, day) DO UPDATE \
+         SET reserved=upload_daily_usage.reserved \
+         WHERE upload_daily_usage.reserved <= $3 - $2 \
+           AND upload_daily_usage.consumed <= $3 - $2 - upload_daily_usage.reserved \
+         RETURNING day",
     )
     .bind(uploader_id)
-    .fetch_one(&state.db)
+    .bind(size)
+    .bind(cap)
+    .fetch_optional(db)
     .await?;
-    let used = u64::try_from(used).unwrap_or(0);
-    let add = u64::try_from(size).unwrap_or(0);
-    if used.saturating_add(add) > cap {
-        state.metrics.rate_limited("quota");
-        return Err(ApiError::QuotaExceeded);
+    match day {
+        Some(day) => Ok(day),
+        None => {
+            state.metrics.rate_limited("quota");
+            Err(ApiError::QuotaExceeded)
+        }
     }
-    Ok(())
 }
 
 #[cfg(test)]

@@ -2,6 +2,8 @@
 // including session end, so a mutation that started as user A cannot commit
 // after A is gone — even if A signs back in before the response arrives.
 
+import { sessionCookieGeneration } from "../api/client.ts";
+
 import { useSession } from "./session.ts";
 
 export type ScopeStamp = {
@@ -10,6 +12,35 @@ export type ScopeStamp = {
 };
 
 let generation = 0;
+let requestGeneration = 0;
+
+/** Includes anonymous requests; explicit auth intents invalidate them too. */
+export type SessionStamp = {
+  userId: string | null;
+  generation: number;
+  sharedGeneration: string;
+};
+
+export function takeSessionStamp(): SessionStamp {
+  return {
+    userId: currentUserId(),
+    generation: requestGeneration,
+    sharedGeneration: sessionCookieGeneration(),
+  };
+}
+
+export function sessionStampHolds(stamp: SessionStamp): boolean {
+  return (
+    stamp.userId === currentUserId() &&
+    stamp.generation === requestGeneration &&
+    stamp.sharedGeneration === sessionCookieGeneration()
+  );
+}
+
+/** Supersede pending auth/HTTP work without dropping the current account cache. */
+export function invalidateSessionRequests(): void {
+  requestGeneration += 1;
+}
 
 export function scopeGeneration(): number {
   return generation;
@@ -17,11 +48,13 @@ export function scopeGeneration(): number {
 
 export function nextScopeGeneration(): number {
   generation += 1;
+  invalidateSessionRequests();
   return generation;
 }
 
 export function resetScopeGenerationForTests(): void {
   generation = 0;
+  requestGeneration = 0;
 }
 
 /** Who the tab is right now, or nothing when signed out. */

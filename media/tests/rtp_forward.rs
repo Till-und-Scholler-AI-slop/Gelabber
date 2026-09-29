@@ -86,8 +86,33 @@ async fn client_pc(
     connected: mpsc::UnboundedSender<()>,
     packets: mpsc::UnboundedSender<Packet>,
 ) -> Client {
+    client_pc_with_opus_pt(connected, packets, None).await
+}
+
+async fn client_pc_with_opus_pt(
+    connected: mpsc::UnboundedSender<()>,
+    packets: mpsc::UnboundedSender<Packet>,
+    opus_pt: Option<u8>,
+) -> Client {
     let mut media = MediaEngine::default();
-    media.register_default_codecs().unwrap();
+    if let Some(payload_type) = opus_pt {
+        media
+            .register_codec(
+                rtc::rtp_transceiver::rtp_sender::RTCRtpCodecParameters {
+                    rtp_codec: RTCRtpCodec {
+                        mime_type: "audio/opus".into(),
+                        clock_rate: 48000,
+                        channels: 2,
+                        ..Default::default()
+                    },
+                    payload_type,
+                },
+                RtpCodecKind::Audio,
+            )
+            .unwrap();
+    } else {
+        media.register_default_codecs().unwrap();
+    }
     let registry =
         register_default_interceptors(webrtc::peer_connection::Registry::new(), &mut media)
             .unwrap();
@@ -356,6 +381,138 @@ async fn forwards_rtp_between_two_peers() {
         }
     }
     assert!(got.is_some(), "subscriber should receive forwarded RTP");
+}
+
+#[tokio::test]
+async fn maps_publisher_payload_type_to_negotiated_subscriber_payload_type() {
+    let config = Config::from_source(|key| match key {
+        "REDIS_URL" => Some("redis://127.0.0.1:1".to_owned()),
+        "MEDIA_ICE_BIND" => Some("127.0.0.1:0".to_owned()),
+        "TURN_URLS" => Some("stun:127.0.0.1:3478,turn:127.0.0.1:3478".to_owned()),
+        "TURN_USERNAME" => Some("gelabber".to_owned()),
+        "TURN_PASSWORD" => Some("gelabberturn".to_owned()),
+        _ => None,
+    })
+    .unwrap();
+    let sfu = Arc::new(Sfu::new(&config));
+    let channel = Uuid::from_u128(3);
+
+    let (a_out, mut a_rx) = mpsc::unbounded_channel();
+    let (b_out, mut b_rx) = mpsc::unbounded_channel();
+    let a_id = sfu.join(claim(1, 3), a_out).await.expect("join a");
+    let b_id = sfu.join(claim(2, 3), b_out).await.expect("join b");
+
+    let (a_conn_tx, mut a_conn_rx) = mpsc::unbounded_channel();
+    let (b_conn_tx, mut b_conn_rx) = mpsc::unbounded_channel();
+    let (a_pkt_tx, _a_pkt_rx) = mpsc::unbounded_channel();
+    let (b_pkt_tx, mut b_pkt_rx) = mpsc::unbounded_channel();
+
+    let mut a = client_pc_with_opus_pt(a_conn_tx, a_pkt_tx, Some(109)).await;
+    let mut b = client_pc(b_conn_tx, b_pkt_tx).await;
+    let track = opus_track(0x1111_0001);
+    let sender =
+        a.pc.add_track(Arc::clone(&track) as Arc<dyn TrackLocal>)
+            .await
+            .unwrap();
+    b.pc.add_track(Arc::clone(&opus_track(0x2222_0001)) as Arc<dyn TrackLocal>)
+        .await
+        .unwrap();
+
+    pump_offer(&a, &sfu, a_id, channel, &mut a_rx).await;
+    pump_offer(&b, &sfu, b_id, channel, &mut b_rx).await;
+    flush_client_ice(&mut a.ice_rx, &sfu, a_id, channel).await;
+    flush_client_ice(&mut b.ice_rx, &sfu, b_id, channel).await;
+    apply_sfu_frames(
+        &a.pc,
+        &sfu,
+        a_id,
+        channel,
+        &mut a_rx,
+        Duration::from_millis(400),
+    )
+    .await;
+    apply_sfu_frames(
+        &b.pc,
+        &sfu,
+        b_id,
+        channel,
+        &mut b_rx,
+        Duration::from_millis(400),
+    )
+    .await;
+
+    let _ = tokio::time::timeout(Duration::from_secs(8), a_conn_rx.recv()).await;
+    let _ = tokio::time::timeout(Duration::from_secs(8), b_conn_rx.recv()).await;
+
+    let pt = sender
+        .get_parameters()
+        .await
+        .ok()
+        .and_then(|p| p.rtp_parameters.codecs.first().map(|c| c.payload_type))
+        .unwrap_or(111);
+
+    assert_eq!(pt, 109, "publisher negotiated its distinct PT");
+    let mut pkt = Packet::default();
+    pkt.header.version = 2;
+    pkt.header.ssrc = 0x1111_0001;
+    pkt.header.payload_type = pt;
+    pkt.payload = bytes::Bytes::from_static(&[0xF8, 0xFF, 0xFE]);
+
+    let mut seq = 1u16;
+    let mut transceivers = None;
+    for phase in 0..2 {
+        if phase == 1 {
+            while b_pkt_rx.try_recv().is_ok() {}
+            pump_offer(&b, &sfu, b_id, channel, &mut b_rx).await;
+            assert_eq!(b.pc.get_transceivers().await.len(), transceivers.unwrap());
+            // A distinct payload proves reception after the accepted reoffer,
+            // rather than a packet still buffered from the initial binding.
+            pkt.payload = bytes::Bytes::from_static(&[0xF8, 0xFF, 0xFD]);
+        }
+        let deadline = tokio::time::Instant::now() + Duration::from_secs(8);
+        let mut got = None;
+        while tokio::time::Instant::now() < deadline && got.is_none() {
+            pkt.header.sequence_number = seq;
+            pkt.header.timestamp = u32::from(seq) * 960;
+            seq = seq.wrapping_add(1);
+            let _ = track.write_rtp(pkt.clone()).await;
+            flush_client_ice(&mut a.ice_rx, &sfu, a_id, channel).await;
+            flush_client_ice(&mut b.ice_rx, &sfu, b_id, channel).await;
+            apply_sfu_frames(
+                &a.pc,
+                &sfu,
+                a_id,
+                channel,
+                &mut a_rx,
+                Duration::from_millis(20),
+            )
+            .await;
+            apply_sfu_frames(
+                &b.pc,
+                &sfu,
+                b_id,
+                channel,
+                &mut b_rx,
+                Duration::from_millis(20),
+            )
+            .await;
+            if let Ok(Some(packet)) =
+                tokio::time::timeout(Duration::from_millis(20), b_pkt_rx.recv()).await
+                && packet.payload == pkt.payload
+            {
+                got = Some(packet);
+            }
+        }
+        let received = got.expect(
+            "subscriber must receive RTP with its own negotiated PT, including after reoffer",
+        );
+        assert_eq!(received.header.payload_type, 111);
+        assert_eq!(received.payload, pkt.payload);
+        assert_ne!(received.header.ssrc, pkt.header.ssrc);
+        transceivers = Some(b.pc.get_transceivers().await.len());
+    }
+    sfu.leave(a_id, channel).await;
+    sfu.leave(b_id, channel).await;
 }
 
 #[tokio::test]

@@ -1,0 +1,149 @@
+{
+  "scope": "C isolated CI extension, committed B dependency; no remote CI/Docker/netem run",
+  "parent": "93524e91522322d8c516f6aef515d5a756831bc0",
+  "completeAcceptance": false,
+  "sourceValidation": {
+    "path": "/tmp/gelabber-e2e/ci-media-index-checks.json",
+    "sha256": "d8270ea68a27186bfb2c76b0c7e06c21d1bbb6e2eb9e1b2b0f42422733f55a1f",
+    "at": "2026-09-28T18:30:42.736393+00:00",
+    "scope": "exact parent+index extracted source; no native runtime",
+    "node": "v26.8.2",
+    "sourceTreeBeforeEvidence": "ad576e53132c661ae8dcb0653ffabcb080523bd0",
+    "checks": [
+      {
+        "file": "ci-fault-prepare.checks.mjs",
+        "exit": 0,
+        "tests": 4,
+        "skipped": 0,
+        "output": "\u2714 CI preparer refuses non-CI, foreign services and missing required variables before creating a DB (15.365707ms)\n\u2714 CI preparer creates a distinct DB/bucket, private env and byte-verified API manifest without credentials in argv/output (2.777283ms)\n\u2714 failed CI SQL setup remains nonzero and redacted, without exporting an unusable runtime (1.477103ms)\n\u2714 optional owned SFU preparation preserves private address/env and byte-verifies its current-source manifest (1.944511ms)\n\u2139 tests 4\n\u2139 suites 0\n\u2139 pass 4\n\u2139 fail 0\n\u2139 cancelled 0\n\u2139 skipped 0\n\u2139 todo 0\n\u2139 duration_ms 25.70834\n(node:4) ExperimentalWarning: VM Modules is an experimental feature and might change at any time\n(Use `node --trace-warnings ...` to show where the warning was created)\n"
+      },
+      {
+        "file": "ci-fault-loop.checks.mjs",
+        "exit": 0,
+        "tests": 1,
+        "skipped": 0,
+        "output": "\u2714 exact CI fault loop attempts both browsers and both profiles after first failure, retains nonzero, and omits SFU only for core (11.450563ms)\n\u2139 tests 1\n\u2139 suites 0\n\u2139 pass 1\n\u2139 fail 0\n\u2139 cancelled 0\n\u2139 skipped 0\n\u2139 todo 0\n\u2139 duration_ms 14.910845\n"
+      }
+    ],
+    "lint": {
+      "exit": 0,
+      "output": ""
+    },
+    "moduleSha256": {
+      "teardown.mjs": "5bb7d0d8e023d23ab242eb8ac8b77a722d0a38c60f5df6637b86938b97419e9a",
+      "teardown.checks.mjs": "22f033c552b92bbe9e20e06c3ad51d993ecc46dcf7799da4d6623448aab7a5b1",
+      "storage-faults.mjs": "e0408378060689e8584c014f90e2d3771dc611b86bfce3bc5328a3b71ada01fb",
+      "selection.mjs": "b8a445a817880843e833510d92dfdaf3150fff643f4b4ae5aa6906cd3913f771",
+      "s3-object.mjs": "1bce9abf11b4aa30e0e62b6063eb283baed30894e8f816787c379dd43ea63168",
+      "run.mjs": "d2900e4f8ec085708a696c1266359c51476d794c6fa497d2c0449243f9747bcd",
+      "rendered-frames.checks.mjs": "4e5bf1be45d1eb0914625d08b35623e48ccca80dc4c35337deff13dd63571780",
+      "redis-command.mjs": "b6d801eb136a072b8a00bc2982d16934bdc4cf90c06ef28b67be4ad5a160706b",
+      "realtime-faults.mjs": "71626d7a152521529f35b1c192760b2ac809bdb56955473507362fd9fe74db62",
+      "profiles.mjs": "ef20d6159fe61e04fda06c41314fbc2798e7ae7a7e5a5f57aa3f88569b0fe2aa",
+      "probe.mjs": "0b7aea113ba651b96d3b6a9e325f9436af9a9ffc06b33ddb27cb6f4033e7f91c",
+      "native-finish.checks.mjs": "0b61ec4d2796d448c92ed36dca1dd66052c4c6ca1844874f59f44462d2910c75",
+      "native-evaluate.mjs": "89294f744f2c6a0d88e90975a944e96e49b2bf1c829ba377ccaa17a19b1564bf",
+      "native-evaluate.checks.mjs": "4b24b3854f84b04ee5037ed2fdff7f02c7f490fefd6ff882bac9285877d8a5fd",
+      "membership-faults.mjs": "e155ee73a21bc27b7e8a75fe8d865e0309b35f8ad38ee77296da0db3a7a5b3a5",
+      "media.mjs": "f9339a0701f1e860865705980b66f7ee1b98ee89346ee235b959acae86461378",
+      "media-runtime.mjs": "d9bc66d17009162fd6f70eec24b227fda607e601fc7a0011a7fadae698795b67",
+      "media-runtime.checks.mjs": "4569eabb3d4339914cd48a0fdea42ad3feae89a827f67aa4923682ff72787a91",
+      "media-probe.checks.mjs": "a43b9440303b7babf4d3b6ac56a25407c9d6294e9ffde68c8f09915d21a12af6",
+      "media-lease-faults.mjs": "e3aefd71b583e5d4ab4a5109c3ed69a78352248392ec90a4f5308212fe8bae70",
+      "media-extra.mjs": "0b885436b9590e62d99b32d88d30f26496746e4d15f5182f4736523e42c74d7f",
+      "media-extra.checks.mjs": "7959d5a1e405d01ebaf835a6ff50e8ce2bb442d8eaefb2a6bb8eec2f7da6f1cb",
+      "harness.mjs": "4425220c56f9da05e83896f1713c9ac800fe1b345507bcfc6b283c1440dec99d",
+      "harness.checks.mjs": "89564069db0e134a936088b2831b0eeac297777a8907523db9274efd276c9003",
+      "gateway-load.mjs": "c98da745c2ccc064829f71d1598a781eb1059177445c7c49dc7b5d07f7ed23d5",
+      "faults.mjs": "62fe2b0f812192bac2be6996049eec802db48097633c6367bd44018b6aa3a0d4",
+      "faults.checks.mjs": "9b013140e232dc052fe9b52755db20fb48267258b06fabec8ca546aae5afe11f",
+      "fault-runtime.mjs": "423684dfaddfdd65ca3021e95f842616563bef30dd8d99c70d477e9098bf7fee",
+      "fault-run.mjs": "39e5af6912f692478599cc2b9c4acc21ede1a877db72b79f4d5b6d8991769438",
+      "core.mjs": "90d46690fe1c6147d6fa54d7cc42372600ea6bc67a7b65a37a237bf4fca8fc03",
+      "ci-fault-prepare.mjs": "7be606568d420a1104cad28787fe3f8b072cda72eb265d714e6648c790b16e1d",
+      "ci-fault-prepare.checks.mjs": "b3481cdf182fc4e36d34f9b67ae828f5e115a55fcfd81233353744639affd653",
+      "ci-fault-loop.checks.mjs": "4fbf6bf68733e7175ae7baf6213230a9f7a37f75aa8971d6947b1283c5b142ff",
+      "chat-faults.mjs": "a4d258f8084e4ed842e408ebca19cbe178b636afdf2a32068e8232c16417d767",
+      "browser-options.mjs": "e092d543702eca00f24258a23b1ae97c4d280f857732dc2d262568913e01e052",
+      "browser-options.checks.mjs": "155c1eb154e9def93a95cbf7885a37755f6d91af90c93bc9b60f9f176f7104a5",
+      "account-switch.mjs": "9dd5cc5a93f55ac74ba03f46e3435b0f8e7435569dc242ef597b764e42b0ef46",
+      "access.mjs": "7f0eca2adde822ad21d598a02823607d232ebfe62b4341daf8b5a2ecfec1d1fc",
+      "access-native.checks.mjs": "6134f7c095998bdad801460c83fd1b2df7f9fa7b0a34b26e0dbe8f4976d397d7"
+    }
+  },
+  "actionlint": {
+    "path": "/tmp/gelabber-e2e/ci-media-index-actionlint.json",
+    "sha256": "eeb5359be9daa1dd4a53f4a6b2460ee565b7de40ce7e880c5de741f92c18d1a4",
+    "exit": 0,
+    "output": "",
+    "scope": "exact staged workflow, no remote execution"
+  },
+  "preservation": {
+    "path": "/tmp/gelabber-e2e/ci-media-preservation.json",
+    "sha256": "97b2cc2db7236710125dd6d79bbf4bb28236ad9c8cbe7607a786c6893ae0a3b9",
+    "scope": "C preservation only; no Docker/remote run",
+    "basis09": "e39defd3405611d5d5fa2c8ab466ee84c6498202",
+    "parent": "93524e91522322d8c516f6aef515d5a756831bc0",
+    "originalComposeSmokeRunByteEqualToReviewed09": true,
+    "entireComposeJobByteEqualToCommittedParent": true,
+    "rustMinioStepsByteEqualToCommittedParent": true,
+    "rustMinioRequiredVariablesAndReadyAndLockedTests": true,
+    "workflowOnlyTouchedRustFaultSetupLoopAndFrontendHarness": true,
+    "unchangedFiles": [
+      "web/scripts/smoke-two-browsers.mjs",
+      "web/scripts/smoke-netem.checks.mjs",
+      "web/package-lock.json",
+      "Cargo.lock",
+      ".github/workflows/publish-images.yml",
+      ".github/workflows/publish-minio.yml",
+      ".github/workflows/release.yml"
+    ],
+    "minioReleasePinUnchanged": "RELEASE.2025-10-15T17-29-55Z",
+    "smokeInvocationSha256": "ae78014758a1ce30964415d491289d539388c251f5f60cda657b92f8472076df",
+    "completeAcceptance": false
+  },
+  "files": {
+    ".github/workflows/ci.yml": "0efb9ddd959f3a71ac63bd7feca8d6cc7d137245bb244156db0fe2ab959b61b7",
+    "web/scripts/e2e/ci-fault-prepare.mjs": "7be606568d420a1104cad28787fe3f8b072cda72eb265d714e6648c790b16e1d",
+    "web/scripts/e2e/ci-fault-prepare.checks.mjs": "b3481cdf182fc4e36d34f9b67ae828f5e115a55fcfd81233353744639affd653",
+    "web/scripts/e2e/ci-fault-loop.checks.mjs": "4fbf6bf68733e7175ae7baf6213230a9f7a37f75aa8971d6947b1283c5b142ff"
+  },
+  "backend10Contract": "api/STORAGE_LIFECYCLE.md read from521875c; MINIO_ENDPOINT/ROOT_USER/ROOT_PASSWORD and real readiness retained in Rust job",
+  "workflowCheckInventory": {
+    "harness": 6,
+    "renderCounters": 3,
+    "mediaProbes": 2,
+    "browserScope": 3,
+    "deadline": 8,
+    "accessNative": 5,
+    "finish": 4,
+    "sdpWarmup": 1,
+    "netemBoundary": 4,
+    "nativeProxyResp": 4,
+    "teardown": 12,
+    "mediaRuntime": 3,
+    "ciPrepare": 4,
+    "ciFaultLoop": 1,
+    "total": 60,
+    "combinedCleanCExecutionClaimed": false
+  },
+  "dependencyReviewBoundary": {
+    "deadline8011dd1": "independentPASS reported by coordinator",
+    "immutableA5f841f9": "three confirmed P2; unchanged",
+    "stopE2374bbAndRouteF0f3c1d": "independent followup review pending",
+    "mediaAccess93524e9": "author controls/committed source checks, independent review pending"
+  },
+  "openGates": [
+    "Actual remote CI/Docker Compose/GHCR pull and real successful CI fixture preparation",
+    "Full remote selected-UDP netem with SFU/coturn/audio/recovery",
+    "Firefox default/WAN relay; explicit local adapter evidence is separate",
+    "Native OS picker/audible two-device/Safari/production-digest gates",
+    "SFU task/publication metrics and separate MID-null robustness finding"
+  ],
+  "limits": [
+    "No tests skipped or softened; actual Bash failure-control tries all four loops and remains nonzero",
+    "CI preparer uses mocked filesystem/subprocess for source regressions, no local DB worker started",
+    "Original Compose smoke/Publish/Release and pins unchanged",
+    "Existing whole native matrix not repeated for C"
+  ]
+}

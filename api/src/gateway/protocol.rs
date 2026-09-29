@@ -32,6 +32,14 @@ impl Topic {
         }
     }
 
+    pub fn epoch_key(self) -> String {
+        format!("{}:ep", self.seq_key())
+    }
+
+    pub fn delivery_key(self) -> String {
+        format!("{}:delivery", self.seq_key())
+    }
+
     pub fn log_key(self) -> String {
         match self {
             Self::Server(id) => format!("{REDIS_PREFIX}l:s:{id}"),
@@ -223,6 +231,9 @@ pub struct SigEvent {
     pub u: Uuid,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub k: Option<TrackKind>,
+    /// Externally verified exclusive Live claim nonce; never chosen by client.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub lc: Option<Uuid>,
     /// Mute / deafen: the new value. Omitted on join/leave/media.
     #[serde(skip_serializing_if = "Option::is_none")]
     pub on: Option<bool>,
@@ -242,6 +253,7 @@ impl SigEvent {
             c: channel_id,
             u: user_id,
             k: None,
+            lc: None,
             on: None,
             m: None,
             d: None,
@@ -303,6 +315,10 @@ pub struct Event {
     #[serde(skip_serializing_if = "Option::is_none")]
     pub c: Option<Uuid>,
     pub n: u64,
+    #[serde(default)]
+    pub ep: Option<Uuid>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub r: Option<i64>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub i: Option<Uuid>,
     #[serde(skip_serializing_if = "Option::is_none")]
@@ -346,6 +362,8 @@ pub enum ClientFrame {
         c: Option<Uuid>,
         #[serde(default)]
         n: Option<u64>,
+        #[serde(default)]
+        ep: Option<Uuid>,
     },
     #[serde(rename = "u")]
     Unsubscribe {
@@ -387,6 +405,10 @@ impl ClientFrame {
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 #[serde(tag = "op")]
 pub enum ServerFrame {
+    #[serde(rename = "resync")]
+    Resync,
+    #[serde(rename = "dm")]
+    Dm { c: Uuid },
     #[serde(rename = "h")]
     Heartbeat,
     #[serde(rename = "ok")]
@@ -395,6 +417,8 @@ pub enum ServerFrame {
         #[serde(skip_serializing_if = "Option::is_none")]
         c: Option<Uuid>,
         n: u64,
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        ep: Option<Uuid>,
     },
     #[serde(rename = "e")]
     Event {
@@ -403,14 +427,20 @@ pub enum ServerFrame {
         #[serde(skip_serializing_if = "Option::is_none")]
         c: Option<Uuid>,
         n: u64,
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        ep: Option<Uuid>,
         #[serde(skip_serializing_if = "Option::is_none")]
         i: Option<Uuid>,
         #[serde(skip_serializing_if = "Option::is_none")]
         d: Option<Value>,
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        r: Option<i64>,
     },
     #[serde(rename = "gap")]
     Gap {
         s: Uuid,
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        ep: Option<Uuid>,
         #[serde(skip_serializing_if = "Option::is_none")]
         c: Option<Uuid>,
     },
@@ -428,6 +458,8 @@ pub enum ServerFrame {
         k: Option<TrackKind>,
         #[serde(skip_serializing_if = "Option::is_none")]
         on: Option<bool>,
+        #[serde(skip_serializing_if = "Option::is_none")]
+        lc: Option<Uuid>,
         #[serde(skip_serializing_if = "Option::is_none")]
         m: Option<bool>,
         #[serde(skip_serializing_if = "Option::is_none")]
@@ -466,6 +498,8 @@ impl ServerFrame {
             s: event.s,
             c: event.c,
             n: event.n,
+            ep: event.ep,
+            r: event.r,
             i: event.i,
             d: event.d,
         }
@@ -476,6 +510,7 @@ impl ServerFrame {
             s: server_id,
             c: channel_id,
             n,
+            ep: None,
         }
     }
 
@@ -483,7 +518,16 @@ impl ServerFrame {
         Self::Gap {
             s: server_id,
             c: channel_id,
+            ep: None,
         }
+    }
+
+    pub fn with_epoch(mut self, epoch: Uuid) -> Self {
+        match &mut self {
+            Self::Ok { ep, .. } | Self::Gap { ep, .. } => *ep = Some(epoch),
+            _ => {}
+        }
+        self
     }
 
     pub fn error(code: &'static str, server_id: Option<Uuid>, channel_id: Option<Uuid>) -> Self {
@@ -501,6 +545,7 @@ impl ServerFrame {
             c: Some(event.c),
             u: Some(event.u),
             k: event.k,
+            lc: event.lc,
             on: event.on,
             m: event.m,
             d: event.d,
@@ -515,6 +560,7 @@ impl ServerFrame {
             c: None,
             u: None,
             k: None,
+            lc: None,
             on: None,
             m: None,
             d: None,
@@ -611,13 +657,16 @@ pub fn plan_catch_up<T: Clone>(
     let Some(client_n) = client_n else {
         return CatchUp::None;
     };
-    if current == 0 || client_n >= current {
+    if client_n > current {
+        return CatchUp::Gap;
+    }
+    if client_n == current {
         return CatchUp::None;
     }
 
     let mut replay: Vec<T> = events
         .iter()
-        .filter(|event| seq_of(event) > client_n)
+        .filter(|event| seq_of(event) > client_n && seq_of(event) <= current)
         .cloned()
         .collect();
     replay.sort_by_key(|event| seq_of(event));
@@ -668,6 +717,8 @@ mod tests {
             s: Uuid::from_u128(1),
             c: Some(Uuid::from_u128(2)),
             n: 7,
+            ep: None,
+            r: None,
             i: Some(Uuid::from_u128(3)),
             d: Some(serde_json::json!({"b":"hi"})),
         };
@@ -730,6 +781,12 @@ mod tests {
     }
 
     #[test]
+    fn legacy_future_cursor_requires_gap_even_at_an_empty_head() {
+        assert_eq!(plan_catch_up(Some(42), 0, &[] as &[u64], ev), CatchUp::Gap);
+        assert_eq!(plan_catch_up(Some(42), 1, &[1], ev), CatchUp::Gap);
+    }
+
+    #[test]
     fn catch_up_replays_contiguous_gap() {
         assert_eq!(
             plan_catch_up(Some(5), 8, &[8, 6, 7, 5], ev),
@@ -754,6 +811,7 @@ mod tests {
                 s: Uuid::from_u128(1),
                 c: Some(Uuid::from_u128(2)),
                 n: Some(12),
+                ep: None,
             }
         );
     }

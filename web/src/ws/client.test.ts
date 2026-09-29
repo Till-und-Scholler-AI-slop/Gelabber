@@ -242,6 +242,45 @@ describe("gateway client", () => {
     gateway.stop();
   });
 
+  it("keeps gap heads pending and rejects acknowledgements from an older gap or session", () => {
+    const sockets: FakeSocket[] = [];
+    const gateway = new Gateway({
+      open: () => {
+        const socket = new FakeSocket();
+        sockets.push(socket);
+        return socket;
+      },
+    });
+    gateway.start();
+    sockets[0]!.emit("open");
+    const frame = (data: unknown) =>
+      sockets.at(-1)!.emit("message", JSON.stringify(data));
+    frame({ op: "ok", s: "srv", c: "ch", n: 2 });
+    frame({ op: "gap", s: "srv", c: "ch" });
+    frame({ op: "ok", s: "srv", c: "ch", n: 9 });
+    const old = gateway.gapRecoveries()[0]!;
+    expect(gateway.cursorsSnapshot.get("c:ch")).toBe(2);
+    frame({ op: "gap", s: "srv", c: "ch" });
+    frame({ op: "ok", s: "srv", c: "ch", n: 12 });
+    const current = gateway.gapRecoveries()[0]!;
+    gateway.completeGap(old);
+    expect(gateway.gapRecoveries()).toEqual([current]);
+    expect(gateway.cursorsSnapshot.get("c:ch")).toBe(2);
+    gateway.completeGap(current);
+    expect(gateway.cursorsSnapshot.get("c:ch")).toBe(12);
+    gateway.resetSession();
+    gateway.start();
+    sockets.at(-1)!.emit("open");
+    frame({ op: "gap", s: "srv", c: "ch" });
+    frame({ op: "ok", s: "srv", c: "ch", n: 1 });
+    gateway.completeGap(current);
+    expect(gateway.cursorsSnapshot.get("c:ch")).toBeUndefined();
+    expect(gateway.gapRecoveries()).toHaveLength(1);
+    gateway.completeGap(gateway.gapRecoveries()[0]!);
+    expect(gateway.cursorsSnapshot.get("c:ch")).toBe(1);
+    gateway.stop();
+  });
+
   it("a late close of the previous socket does not drop the next one", async () => {
     class DeferredCloseSocket extends FakeSocket {
       override close(): void {
@@ -283,4 +322,134 @@ describe("gateway client", () => {
     gateway.send({ op: "h" });
     expect(sockets).toHaveLength(2);
   });
+});
+
+describe("epoch-aware transport", () => {
+  function setup() {
+    const socket = new FakeSocket();
+    const gateway = new Gateway({ open: () => socket });
+    const events: ChatEvent[] = [];
+    gateway.onEvent((event) => events.push(event));
+    gateway.setTopics([{ s: "s", c: "c" }]);
+    gateway.start();
+    socket.emit("open");
+    const frame = (body: unknown) =>
+      socket.emit("message", JSON.stringify(body));
+    return { gateway, socket, events, frame };
+  }
+  it("accepts smaller new-epoch events and resumes with the new pair only after REST", () => {
+    const { gateway, socket, events, frame } = setup();
+    try {
+      frame({ op: "ok", s: "s", c: "c", ep: "old", n: 500 });
+      frame({ op: "gap", s: "s", c: "c", ep: "new" });
+      frame({ op: "ok", s: "s", c: "c", ep: "new", n: 0 });
+      frame({ op: "e", s: "s", c: "c", ep: "new", n: 1, t: "c", i: "m", r: 9 });
+      frame({ op: "e", s: "s", c: "c", ep: "new", n: 1, t: "c", i: "m", r: 9 });
+      expect(events.map((e) => e.n)).toEqual([1]);
+      expect(gateway.topicCursorsSnapshot.get("c:c")).toEqual({
+        ep: "old",
+        n: 500,
+      });
+      gateway.completeGap(gateway.gapRecoveries()[0]!);
+      expect(gateway.topicCursorsSnapshot.get("c:c")).toEqual({
+        ep: "new",
+        n: 1,
+      });
+      socket.sent.length = 0;
+      gateway.setTopics([]);
+      gateway.setTopics([{ s: "s", c: "c" }]);
+      expect(socket.sent.map((s) => JSON.parse(s))).toContainEqual({
+        op: "s",
+        s: "s",
+        c: "c",
+        ep: "new",
+        n: 1,
+      });
+    } finally {
+      gateway.stop();
+    }
+  });
+  it("does not finalize a fast REST read before the authoritative ok head arrives", () => {
+    const { gateway, frame } = setup();
+    try {
+      frame({ op: "ok", s: "s", c: "c", ep: "epoch", n: 100 });
+      frame({ op: "gap", s: "s", c: "c", ep: "epoch" });
+      gateway.completeGap(gateway.gapRecoveries()[0]!);
+      expect(gateway.topicCursorsSnapshot.get("c:c")).toEqual({
+        ep: "epoch",
+        n: 100,
+      });
+      expect(gateway.gapRecoveries()).toEqual([]); // Already reconciled, no REST loop while waiting for ok.
+      frame({ op: "ok", s: "s", c: "c", ep: "epoch", n: 0 });
+      expect(gateway.topicCursorsSnapshot.get("c:c")).toEqual({
+        ep: "epoch",
+        n: 0,
+      });
+    } finally {
+      gateway.stop();
+    }
+  });
+  it("notices an epoch change on a live event even without a preceding gap", () => {
+    const { gateway, events, frame } = setup();
+    try {
+      frame({ op: "ok", s: "s", c: "c", ep: "old", n: 100 });
+      frame({ op: "e", s: "s", c: "c", ep: "new", n: 1, t: "e", i: "m", r: 3 });
+      expect(events).toHaveLength(1);
+      expect(gateway.gapRecoveries()).toHaveLength(1);
+      gateway.completeGap(gateway.gapRecoveries()[0]!);
+      expect(gateway.topicCursorsSnapshot.get("c:c")).toEqual({
+        ep: "new",
+        n: 1,
+      });
+    } finally {
+      gateway.stop();
+    }
+  });
+  it("resync resubscribes every topic and reaches sockets with no topics; private DM stays off chat", () => {
+    const { gateway, socket, events, frame } = setup();
+    let resyncs = 0;
+    const discovered: string[] = [];
+    gateway.onResync(() => resyncs++);
+    gateway.onDm((id) => discovered.push(id));
+    try {
+      gateway.setTopics([{ s: "s" }, { s: "s", c: "c" }]);
+      socket.sent.length = 0;
+      frame({ op: "resync" });
+      expect(
+        socket.sent.map((s) => JSON.parse(s)).filter((s) => s.op === "s"),
+      ).toHaveLength(2);
+      gateway.setTopics([]);
+      frame({ op: "resync" });
+      frame({ op: "dm", c: "private" });
+      expect(resyncs).toBe(2);
+      expect(discovered).toEqual(["private"]);
+      expect(events).toEqual([]);
+    } finally {
+      gateway.stop();
+    }
+  });
+});
+
+it("acknowledges an epoch gap followed only by live delivery after reconciliation", () => {
+  const socket = new FakeSocket();
+  const gateway = new Gateway({ open: () => socket });
+  const events: ChatEvent[] = [];
+  gateway.onEvent((e) => events.push(e));
+  gateway.start();
+  socket.emit("open");
+  const frame = (body: unknown) => socket.emit("message", JSON.stringify(body));
+  try {
+    frame({ op: "ok", s: "s", c: "c", ep: "old", n: 100 });
+    frame({ op: "gap", s: "s", c: "c", ep: "new" });
+    frame({ op: "e", s: "s", c: "c", ep: "new", n: 1, t: "c", i: "m", r: 50 });
+    expect(events).toHaveLength(1);
+    expect(gateway.cursorsSnapshot.get("c:c")).toBe(100);
+    gateway.completeGap(gateway.gapRecoveries()[0]!);
+    expect(gateway.topicCursorsSnapshot.get("c:c")).toEqual({
+      ep: "new",
+      n: 1,
+    });
+  } finally {
+    gateway.stop();
+  }
 });

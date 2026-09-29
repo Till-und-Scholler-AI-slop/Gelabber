@@ -1,0 +1,64 @@
+{
+  "scope": "source-only immediate-before-work deadline guard; no native runtime rerun",
+  "parent": "5f841f932be6d78435e2d9daf42f2e08e2a45ae8",
+  "parentOriginalSourceChecks": 40,
+  "completeAcceptance": false,
+  "red": {
+    "source": "exact parent modules + new actual-source regression",
+    "path": "/tmp/gelabber-e2e/native-budget-guard-old-source-control.log",
+    "sha256": "0e20f34ea85e7aed79ea5a7773caf5231a4579177660d17364a7fbfadc67e1bc",
+    "exit": 1,
+    "tests": 8,
+    "failures": 1
+  },
+  "green": {
+    "path": "/tmp/gelabber-e2e/native-prestart-index-checks.json",
+    "sha256": "62932aad637bece555f0dd0a2f681da0db9467d5d8bde0156f079bd2b12fdad6",
+    "checks": [
+      {
+        "file": "native-evaluate.checks.mjs",
+        "exit": 0,
+        "tests": 8,
+        "skipped": 0
+      },
+      {
+        "file": "native-finish.checks.mjs",
+        "exit": 0,
+        "tests": 3,
+        "skipped": 0
+      },
+      {
+        "file": "rendered-frames.checks.mjs",
+        "exit": 0,
+        "tests": 3,
+        "skipped": 0
+      },
+      {
+        "file": "harness.checks.mjs",
+        "exit": 0,
+        "tests": 6,
+        "skipped": 0
+      }
+    ],
+    "node": "v26.8.2",
+    "at": "2026-09-28T18:14:47.759Z",
+    "sourceTreeBeforeEvidence": "2f440fb1e0c3bf82b20ddfc3348eb5d89fa1c5df",
+    "moduleSha256": {
+      "native-evaluate.mjs": "89294f744f2c6a0d88e90975a944e96e49b2bf1c829ba377ccaa17a19b1564bf",
+      "native-evaluate.checks.mjs": "4b24b3854f84b04ee5037ed2fdff7f02c7f490fefd6ff882bac9285877d8a5fd",
+      "probe.mjs": "0b7aea113ba651b96d3b6a9e325f9436af9a9ffc06b33ddb27cb6f4033e7f91c",
+      "harness.mjs": "0a47e8e9c84afc4a26a7929f275eaa321d86859b99d24c635355f49b71781b4c",
+      "media.mjs": "9ec1f8ffd4f382931c7fc345e8cf2bec1a22765a344326266118960d88cbad3d"
+    }
+  },
+  "lint": {
+    "exit": 0,
+    "scope": "actual working source, only these source changes after preceding lint; no product changes"
+  },
+  "limits": [
+    "No actual-app clean followup execution asserted",
+    "Earlier native hang call/cause remains unproven",
+    "Original reds and failed cleanup retained",
+    "A independent review result pending"
+  ]
+}

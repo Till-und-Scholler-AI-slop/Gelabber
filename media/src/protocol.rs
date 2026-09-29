@@ -6,6 +6,7 @@
 //! `bad_request`.
 
 use serde::{Deserialize, Serialize};
+use uuid::Uuid;
 
 #[derive(Debug, Clone, Deserialize, PartialEq, Eq)]
 #[serde(tag = "op")]
@@ -14,6 +15,9 @@ pub enum ClientFrame {
     Join {
         #[serde(default)]
         tk: Option<String>,
+        /// Selected Live publisher; audio retains the channel's room scope.
+        #[serde(default)]
+        w: Option<uuid::Uuid>,
     },
     #[serde(rename = "o")]
     Offer {
@@ -32,11 +36,15 @@ pub enum ClientFrame {
         #[serde(default)]
         mid: Option<String>,
     },
-    /// Next inbound track kind from this peer: `v` (camera), `s` (screen), `l` (live).
+    /// Kind bound to the publisher's MSID track ID. Missing `t` is legacy SDP order.
     #[serde(rename = "p")]
     Announce {
         #[serde(default)]
         k: Option<String>,
+        #[serde(default)]
+        t: Option<String>,
+        #[serde(default)]
+        lc: Option<uuid::Uuid>,
     },
     /// Subscriber could not answer the outstanding offer.
     #[serde(rename = "x")]
@@ -46,6 +54,8 @@ pub enum ClientFrame {
     Retract {
         #[serde(default)]
         k: Option<String>,
+        #[serde(default)]
+        t: Option<String>,
     },
     #[serde(rename = "l")]
     Leave,
@@ -67,12 +77,23 @@ pub enum ServerFrame {
         mid: Option<String>,
     },
     #[serde(rename = "err")]
-    Err { e: &'static str },
+    Err {
+        e: &'static str,
+        #[serde(skip_serializing_if = "Option::is_none")]
+        lc: Option<Uuid>,
+    },
 }
 
 impl ServerFrame {
     pub fn error(code: &'static str) -> Self {
-        Self::Err { e: code }
+        Self::Err { e: code, lc: None }
+    }
+
+    pub fn live_withdrawn(nonce: Uuid) -> Self {
+        Self::Err {
+            e: "forbidden",
+            lc: Some(nonce),
+        }
     }
 
     pub fn to_json(&self) -> Result<String, serde_json::Error> {
@@ -99,19 +120,36 @@ mod tests {
     }
 
     #[test]
+    fn live_withdrawal_correlates_only_the_retired_claim() {
+        let nonce = Uuid::new_v4();
+        let frame = ServerFrame::live_withdrawn(nonce);
+        let json: serde_json::Value = serde_json::from_str(&frame.to_json().unwrap()).unwrap();
+        assert_eq!(json["e"], "forbidden");
+        assert_eq!(json["lc"], nonce.to_string());
+        assert_eq!(
+            ServerFrame::error("forbidden").to_json().unwrap(),
+            r#"{"op":"err","e":"forbidden"}"#
+        );
+    }
+
+    #[test]
     fn pub_announce_is_compact() {
         let frame: ClientFrame = serde_json::from_str(r#"{"op":"p","k":"s"}"#).unwrap();
         assert_eq!(
             frame,
             ClientFrame::Announce {
-                k: Some("s".into())
+                k: Some("s".into()),
+                t: None,
+                lc: None,
             }
         );
         let live: ClientFrame = serde_json::from_str(r#"{"op":"p","k":"l"}"#).unwrap();
         assert_eq!(
             live,
             ClientFrame::Announce {
-                k: Some("l".into())
+                k: Some("l".into()),
+                t: None,
+                lc: None,
             }
         );
         let abort: ClientFrame = serde_json::from_str(r#"{"op":"x"}"#).unwrap();
@@ -120,7 +158,8 @@ mod tests {
         assert_eq!(
             undo,
             ClientFrame::Retract {
-                k: Some("s".into())
+                k: Some("s".into()),
+                t: None,
             }
         );
     }

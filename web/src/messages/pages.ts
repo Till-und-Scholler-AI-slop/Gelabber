@@ -3,6 +3,140 @@
 
 import type { Message, MessagePage } from "./types.ts";
 
+export type MessageChange = {
+  id: string;
+  message: Message | null;
+  /** A create may add a row absent from the snapshot within the loaded range. */
+  created: boolean;
+  revision?: number;
+};
+
+function chronological(
+  a: Pick<Message, "id" | "created_at">,
+  b: Pick<Message, "id" | "created_at">,
+): number {
+  return (
+    compareTimestamp(a.created_at, b.created_at) || a.id.localeCompare(b.id)
+  );
+}
+
+function compareTimestamp(a: string, b: string): number {
+  const coarse = Date.parse(a) - Date.parse(b);
+  if (coarse !== 0) return coarse;
+  // Postgres/RFC3339 timestamps retain finer precision than Date.parse.
+  const fraction = (value: string) =>
+    (value.match(/\.(\d+)(?:Z|[+-]\d{2}:\d{2})$/)?.[1] ?? "").padEnd(9, "0");
+  const left = fraction(a),
+    right = fraction(b);
+  return left === right ? 0 : left > right ? 1 : -1;
+}
+
+export function newerMessage(current: Message, incoming: Message): Message {
+  if (current.revision !== undefined || incoming.revision !== undefined) {
+    const left = current.revision ?? -1,
+      right = incoming.revision ?? -1;
+    if (left !== right) return left > right ? current : incoming;
+  }
+  return compareTimestamp(
+    current.edited_at ?? current.created_at,
+    incoming.edited_at ?? incoming.created_at,
+  ) > 0
+    ? current
+    : incoming;
+}
+
+/** Coalesce by immutable id, preserving tombstones and the newest edit. */
+export function combineMessageChange(
+  previous: MessageChange | undefined,
+  next: MessageChange,
+): MessageChange {
+  if (previous) {
+    const left = previous.revision ?? previous.message?.revision;
+    // A confirmed HTTP DELETE has no revision body. Its immutable id can
+    // still be tombstoned at the highest revision we already observed.
+    const right =
+      next.revision ??
+      next.message?.revision ??
+      (next.message === null ? left : undefined);
+    if (left !== undefined || right !== undefined) {
+      if ((left ?? -1) > (right ?? -1)) return previous;
+      if ((left ?? -1) === (right ?? -1) && previous.message === null)
+        return previous;
+    }
+    // Message ids are immutable; a confirmed delete is never an upsert.
+    if (previous.message === null)
+      return next.message === null && (right ?? -1) > (left ?? -1)
+        ? { ...previous, revision: right }
+        : previous;
+  }
+  return {
+    ...next,
+    created: next.created || previous?.created === true,
+    revision:
+      next.revision ??
+      next.message?.revision ??
+      (next.message === null
+        ? (previous?.revision ?? previous?.message?.revision)
+        : undefined),
+    message:
+      previous?.message && next.message
+        ? newerMessage(previous.message, next.message)
+        : next.message,
+  };
+}
+
+/** Overlay changes made while REST was reading, retaining pagination metadata. */
+export function applyMessageChanges(
+  pages: MessagePage[],
+  changes: Iterable<MessageChange>,
+): MessagePage[] {
+  let result = pages;
+  for (const change of changes) {
+    let found = false;
+    result = result.map((page) => ({
+      ...page,
+      messages: page.messages.flatMap((row) => {
+        if (row.id !== change.id) return [row];
+        found = true;
+        return change.message ? [newerMessage(row, change.message)] : [];
+      }),
+    }));
+    if (!found && change.created && change.message && result[0]) {
+      const message = change.message;
+      let index = result.findIndex((page) => {
+        const start = snapshotStart(page);
+        return start && chronological(message, start) >= 0;
+      });
+      // A delayed create outside the loaded range is fetched by paging. It
+      // cannot extend a snapshot's boundary or claim the missing range exists.
+      if (index < 0) {
+        if (result.at(-1)?.has_more) continue;
+        index = result.length - 1;
+      }
+      result = result.map((page, i) =>
+        i === index
+          ? {
+              ...page,
+              messages: [...page.messages, message].sort(chronological),
+            }
+          : page,
+      );
+    }
+  }
+  return result;
+}
+
+function snapshotStart(
+  page: MessagePage,
+): Pick<Message, "id" | "created_at"> | undefined {
+  if (!page.older) return page.messages[0];
+  const split = page.older.lastIndexOf("|");
+  return {
+    created_at: page.older.slice(0, split),
+    id: page.older.slice(split + 1),
+  };
+}
+
 /** Server `before`/`after`: time + id, so a hard delete of that row still pages. */
 export function encodeCursor(
   message: Pick<Message, "id" | "created_at">,
@@ -32,9 +166,10 @@ export function flattenPages(pages: MessagePage[]): Message[] {
   return out;
 }
 
-/** Composite cursor of the oldest row, or the stamp if the page was emptied. */
+/** Preserve the snapshot's boundary when live changes add or remove rows. */
 export function olderCursor(page: MessagePage): string | undefined {
   if (!page.has_more) return undefined;
+  if (page.older) return page.older;
   const oldest = page.messages[0];
   if (oldest) return encodeCursor(oldest);
   return page.older;

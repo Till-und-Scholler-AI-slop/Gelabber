@@ -23,119 +23,115 @@ use crate::error::ApiError;
 
 const SUBSCRIBER_RETRY: Duration = Duration::from_millis(200);
 
-/// Last seat for a user: drop the roster field and their pubs. Returns 1
-/// when the caller should broadcast leave.
-const LEAVE_SEAT_LUA: &str = r#"
-local n = redis.call('HINCRBY', KEYS[1], ARGV[1], -1)
-if tonumber(n) <= 0 then
-  redis.call('HDEL', KEYS[1], ARGV[1])
-  redis.call('DEL', KEYS[2])
-  return 1
-end
-return 0
-"#;
-
-/// Claim the single Go Live slot for a voice channel. Same user may refresh.
-/// 1 = newly claimed, 2 = already held, 0 = taken by someone else.
-const CLAIM_LIVE_LUA: &str = r#"
-local cur = redis.call('HGET', KEYS[1], ARGV[1])
-if not cur then
-  redis.call('HSET', KEYS[1], ARGV[1], ARGV[2])
-  return 1
-end
-if cur == ARGV[2] then
-  return 2
-end
-return 0
-"#;
-
-/// Drop the Go Live slot only if this user still holds it.
-const RELEASE_LIVE_LUA: &str = r#"
-local cur = redis.call('HGET', KEYS[1], ARGV[1])
-if cur == ARGV[2] then
-  redis.call('HDEL', KEYS[1], ARGV[1])
-  return 1
-end
-return 0
-"#;
-
 /// One Redis turn: assign seq, append the replay list, PUBLISH.
 /// `ARGV[1]` is compact event JSON with `n` as placeholder 0 (serde order
 /// is `t`,`n`,`d`). Seq is string-substituted — Lua cjson would turn `[]`
 /// into `{}`.
 const PUBLISH_LUA: &str = r#"
+for i=1,5 do
+  local expected=({'string','list','none','string','hash'})[i]
+  if i~=3 then
+    local actual=redis.call('TYPE',KEYS[i]).ok
+    if actual~='none' and actual~=expected then return redis.error_reply('wrong realtime key type') end
+  end
+end
+local epoch = redis.call('GET', KEYS[4])
+if not epoch then epoch = ARGV[3]; redis.call('SET', KEYS[4], epoch) end
+if tonumber(ARGV[4]) > 0 then
+  local last = tonumber(redis.call('HGET', KEYS[5], 'r') or '0')
+  if last >= tonumber(ARGV[4]) then return {0, redis.call('HGET', KEYS[5], 'raw')} end
+end
 local n = redis.call('INCR', KEYS[1])
 local raw = string.gsub(ARGV[1], '"n":0', '"n":' .. n, 1)
+raw = string.gsub(raw, '"ep":null', '"ep":"' .. epoch .. '"', 1)
 redis.call('LPUSH', KEYS[2], raw)
 redis.call('LTRIM', KEYS[2], 0, tonumber(ARGV[2]))
 redis.call('PUBLISH', KEYS[3], raw)
+if tonumber(ARGV[4]) > 0 then redis.call('HSET', KEYS[5], 'r', ARGV[4], 'raw', raw) end
 return {n, raw}
 "#;
+const SNAPSHOT_LUA: &str = r#"
+local epoch = redis.call('GET', KEYS[3])
+if not epoch then epoch = ARGV[1]; redis.call('SET', KEYS[3], epoch) end
+redis.call('SET', KEYS[1], '0', 'NX')
+return {redis.call('GET', KEYS[1]), epoch, redis.call('LRANGE', KEYS[2], 0, -1)}
+"#;
+
+pub const OUTBOUND_CAPACITY: usize = 128;
+const CATCH_UP_CAPACITY: usize = 128;
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
-pub struct ConnId(u64);
+pub struct ConnId(u64, Uuid);
 
 impl ConnId {
+    pub fn redis_id(self) -> Uuid {
+        self.1
+    }
+
     pub fn as_u64(self) -> u64 {
         self.0
     }
 }
 
-struct Inner {
+pub(super) struct Inner {
     next_id: AtomicU64,
     started: AtomicBool,
+    pub(super) delivery_started: AtomicBool,
+    pub(super) delivery_scan: Mutex<super::delivery::ScanCursor>,
     subscribed: AtomicBool,
     conn: Mutex<Option<redis::aio::MultiplexedConnection>>,
-    sockets: RwLock<HashMap<ConnId, Socket>>,
+    pub(super) sockets: RwLock<HashMap<ConnId, Socket>>,
+    pub(super) voice_ops: Mutex<()>,
+    media_sessions: Mutex<HashMap<String, (Uuid, std::time::Instant)>>,
 }
 
-struct VoiceSeat {
-    server_id: Uuid,
-    pubs: HashSet<TrackKind>,
-    muted: bool,
-    deafened: bool,
+#[derive(Clone)]
+pub(super) struct VoiceSeat {
+    pub(super) id: Uuid,
+    pub(super) server_id: Uuid,
+    pub(super) pubs: HashSet<TrackKind>,
+    pub(super) muted: bool,
+    pub(super) deafened: bool,
+    pub(super) live: Option<super::leases::LiveOwner>,
 }
 
-#[derive(Clone, Copy, PartialEq, Eq)]
-enum VoiceFlag {
-    Mute,
-    Deafen,
-}
-
-#[derive(Clone, Copy, PartialEq, Eq)]
-enum LiveClaim {
-    Taken,
-    New,
-    Held,
-}
-
-struct Occupancy {
-    channel_id: Uuid,
-    muted: bool,
-    deafened: bool,
-}
-
-struct Socket {
-    user_id: Uuid,
+pub(super) struct Socket {
+    pub(super) user_id: Uuid,
+    pub(super) session: Option<(String, tokio::sync::watch::Sender<bool>)>,
+    access: HashMap<Uuid, (chrono::DateTime<chrono::Utc>, i32)>,
     /// Servers this socket has subscribed to (channel or server topic).
-    servers: HashSet<Uuid>,
+    pub(super) servers: HashSet<Uuid>,
+    pub(super) voice_rosters: HashMap<Uuid, Vec<VoiceEntry>>,
     /// Channels this socket started typing in (`server`, `channel`).
     typing: HashSet<(Uuid, Uuid)>,
     topics: HashSet<Topic>,
+    epochs: HashMap<Topic, Uuid>,
+    closed: tokio::sync::watch::Sender<bool>,
     /// Voice rooms this socket has joined (`op: "sig"`). Independent of
     /// chat topic subscriptions.
-    rooms: HashMap<Uuid, VoiceSeat>,
+    pub(super) rooms: HashMap<Uuid, VoiceSeat>,
     /// Live Pub/Sub frames held until catch-up finishes. Dropping them
     /// here would punch a hole the replay log can miss.
     catching_up: HashMap<Topic, Vec<Event>>,
-    tx: mpsc::UnboundedSender<ServerFrame>,
+    pub(super) tx: mpsc::Sender<ServerFrame>,
+}
+
+impl Socket {
+    pub(super) fn send(&self, frame: ServerFrame) {
+        if *self.closed.borrow() {
+            return;
+        }
+        if self.tx.try_send(frame).is_err() {
+            self.closed.send_replace(true);
+        }
+    }
 }
 
 /// Local sockets, the Redis subscriber, and the multiplexed command connection.
 #[derive(Clone)]
 pub struct ConnTable {
     redis: redis::Client,
-    inner: Arc<Inner>,
+    pub(super) inner: Arc<Inner>,
 }
 
 /// Sequenced chat log (`publish` / `catch_up`). Messages live in Postgres;
@@ -150,7 +146,7 @@ pub struct EventLog {
 /// separate from the chat log.
 #[derive(Clone)]
 pub struct VoiceRoster {
-    connections: ConnTable,
+    pub(super) connections: ConnTable,
 }
 
 /// Facade over the connection table, the event log, and the voice roster so
@@ -171,9 +167,13 @@ impl ConnTable {
             inner: Arc::new(Inner {
                 next_id: AtomicU64::new(1),
                 started: AtomicBool::new(false),
+                delivery_started: AtomicBool::new(false),
+                delivery_scan: Mutex::new(super::delivery::ScanCursor::default()),
                 subscribed: AtomicBool::new(false),
                 conn: Mutex::new(None),
                 sockets: RwLock::new(HashMap::new()),
+                voice_ops: Mutex::new(()),
+                media_sessions: Mutex::new(HashMap::new()),
             }),
         }
     }
@@ -204,16 +204,24 @@ impl ConnTable {
         Err("redis pub/sub subscriber did not become ready".into())
     }
 
-    pub async fn attach(&self, user_id: Uuid, tx: mpsc::UnboundedSender<ServerFrame>) -> ConnId {
+    pub async fn attach(&self, user_id: Uuid, tx: mpsc::Sender<ServerFrame>) -> ConnId {
         self.ensure_subscriber();
-        let id = ConnId(self.inner.next_id.fetch_add(1, Ordering::Relaxed));
+        let id = ConnId(
+            self.inner.next_id.fetch_add(1, Ordering::Relaxed),
+            Uuid::new_v4(),
+        );
         self.inner.sockets.write().await.insert(
             id,
             Socket {
                 user_id,
+                session: None,
+                access: HashMap::new(),
                 servers: HashSet::new(),
+                voice_rosters: HashMap::new(),
                 typing: HashSet::new(),
                 topics: HashSet::new(),
+                epochs: HashMap::new(),
+                closed: tokio::sync::watch::channel(false).0,
                 rooms: HashMap::new(),
                 catching_up: HashMap::new(),
                 tx,
@@ -248,7 +256,6 @@ impl ConnTable {
     }
 
     /// Register the topic and queue live Redis events until [`finish_catch_up`].
-    /// Register the topic and queue live Redis events until [`finish_catch_up`].
     pub async fn begin_catch_up(&self, id: ConnId, topic: Topic) {
         if let Some(socket) = self.inner.sockets.write().await.get_mut(&id) {
             socket.topics.insert(topic);
@@ -258,16 +265,30 @@ impl ConnTable {
 
     /// Release the topic to live delivery and flush queued frames with
     /// `n > after_n` (already-replayed seqs are dropped).
-    /// Release the topic to live delivery and flush queued frames with
-    /// `n > after_n` (already-replayed seqs are dropped).
     pub async fn finish_catch_up(&self, id: ConnId, topic: Topic, after_n: u64) {
+        self.finish_catch_up_epoch(id, topic, after_n, None).await;
+    }
+    pub async fn finish_catch_up_epoch(
+        &self,
+        id: ConnId,
+        topic: Topic,
+        after_n: u64,
+        epoch: Option<Uuid>,
+    ) {
         let mut sockets = self.inner.sockets.write().await;
         let Some(socket) = sockets.get_mut(&id) else {
             return;
         };
+        if let Some(epoch) = epoch {
+            socket.epochs.insert(topic, epoch);
+        }
         let Some(mut buf) = socket.catching_up.remove(&topic) else {
             return;
         };
+        if epoch.is_some_and(|epoch| buf.iter().any(|event| event.ep != Some(epoch))) {
+            socket.send(ServerFrame::Resync);
+            return;
+        }
         buf.sort_by_key(|event| event.n);
         let mut seen = after_n;
         for event in buf {
@@ -275,7 +296,7 @@ impl ConnTable {
                 continue;
             }
             seen = event.n;
-            let _ = socket.tx.send(ServerFrame::event(event));
+            socket.send(ServerFrame::event(event));
         }
     }
 
@@ -310,13 +331,49 @@ impl ConnTable {
         }
     }
 
+    async fn resync_sockets(&self) {
+        let mut sockets = self.inner.sockets.write().await;
+        for socket in sockets.values_mut() {
+            socket.catching_up.clear();
+            socket.epochs.clear();
+            socket.send(ServerFrame::Resync);
+        }
+    }
+
     async fn subscribe_once(&self) -> Result<(), redis::RedisError> {
-        let mut pubsub = self.redis.get_async_pubsub().await?;
-        pubsub.psubscribe(format!("{REDIS_PREFIX}*")).await?;
+        let mut pubsub =
+            tokio::time::timeout(Duration::from_secs(1), self.redis.get_async_pubsub())
+                .await
+                .map_err(|_| {
+                    redis::RedisError::from(std::io::Error::new(
+                        std::io::ErrorKind::TimedOut,
+                        "Redis PubSub connect",
+                    ))
+                })??;
+        tokio::time::timeout(
+            Duration::from_secs(1),
+            pubsub.psubscribe(format!("{REDIS_PREFIX}*")),
+        )
+        .await
+        .map_err(|_| {
+            redis::RedisError::from(std::io::Error::new(
+                std::io::ErrorKind::TimedOut,
+                "Redis PubSub subscribe",
+            ))
+        })??;
+        self.resync_sockets().await;
         self.inner.subscribed.store(true, Ordering::SeqCst);
         debug!("gateway subscribed to redis pub/sub");
-        let mut stream = pubsub.on_message();
-        while let Some(msg) = stream.next().await {
+        let (mut sink, mut stream) = pubsub.split();
+        let mut ping = tokio::time::interval(Duration::from_secs(1));
+        loop {
+            let msg = tokio::select! {
+                message=stream.next()=> match message {Some(message)=>message,None=>break},
+                _=ping.tick()=> {
+                    tokio::time::timeout(Duration::from_secs(1),sink.ping::<redis::Value>()).await.map_err(|_|redis::RedisError::from(std::io::Error::new(std::io::ErrorKind::TimedOut,"Redis PubSub ping")))??;
+                    continue;
+                }
+            };
             let channel = msg.get_channel_name().to_owned();
             match msg.get_payload::<String>() {
                 Ok(raw) => self.deliver_raw(&channel, &raw).await,
@@ -327,6 +384,28 @@ impl ConnTable {
     }
 
     async fn deliver_raw(&self, channel: &str, raw: &str) {
+        #[derive(serde::Deserialize)]
+        struct Discovery {
+            c: Uuid,
+        }
+        if let Some(raw_user) = channel.strip_prefix("gb:dm:") {
+            if let (Ok(user), Ok(Discovery { c })) = (
+                raw_user.parse::<Uuid>(),
+                serde_json::from_str::<Discovery>(raw),
+            ) {
+                for socket in self
+                    .inner
+                    .sockets
+                    .read()
+                    .await
+                    .values()
+                    .filter(|socket| socket.user_id == user)
+                {
+                    socket.send(ServerFrame::Dm { c });
+                }
+            }
+            return;
+        }
         if let Some(channel_id) = voice_channel_id(channel) {
             match serde_json::from_str::<SigEvent>(raw) {
                 Ok(event) => {
@@ -362,7 +441,7 @@ impl ConnTable {
         for socket in sockets.values() {
             let in_room = socket.rooms.contains_key(&channel_id);
             if in_room || socket.servers.contains(&server_id) {
-                let _ = socket.tx.send(frame.clone());
+                socket.send(frame.clone());
             }
         }
     }
@@ -377,7 +456,7 @@ impl ConnTable {
                 }
             };
             if want {
-                let _ = socket.tx.send(frame.clone());
+                socket.send(frame.clone());
             }
         }
     }
@@ -388,11 +467,28 @@ impl ConnTable {
             if !socket.topics.contains(&topic) {
                 continue;
             }
+            if *socket.closed.borrow() {
+                continue;
+            }
+            let buffered: usize = socket.catching_up.values().map(Vec::len).sum();
             if let Some(buf) = socket.catching_up.get_mut(&topic) {
+                if buffered >= CATCH_UP_CAPACITY {
+                    socket.catching_up.clear();
+                    socket.closed.send_replace(true);
+                    continue;
+                }
                 buf.push(event.clone());
                 continue;
             }
-            let _ = socket.tx.send(ServerFrame::event(event.clone()));
+            if let Some(epoch) = event.ep
+                && socket
+                    .epochs
+                    .insert(topic, epoch)
+                    .is_some_and(|previous| previous != epoch)
+            {
+                socket.send(ServerFrame::gap(event.s, event.c).with_epoch(epoch));
+            }
+            socket.send(ServerFrame::event(event.clone()));
         }
     }
 
@@ -401,7 +497,14 @@ impl ConnTable {
         if let Some(conn) = slot.as_ref() {
             return Ok(conn.clone());
         }
-        let conn = self.redis.get_multiplexed_async_connection().await?;
+        let conn = self
+            .redis
+            .get_multiplexed_async_connection_with_config(
+                &redis::AsyncConnectionConfig::new()
+                    .set_response_timeout(Some(Duration::from_secs(1)))
+                    .set_connection_timeout(Some(Duration::from_secs(1))),
+            )
+            .await?;
         *slot = Some(conn.clone());
         Ok(conn)
     }
@@ -432,6 +535,14 @@ impl EventLog {
     /// Assign seq, append the replay buffer, PUBLISH — one Lua turn so a
     /// concurrent writer cannot `PUBLISH` 2 before 1.
     pub async fn publish(&self, draft: EventDraft) -> Result<Event, ApiError> {
+        self.publish_revision(draft, None).await
+    }
+
+    pub(super) async fn publish_revision(
+        &self,
+        draft: EventDraft,
+        revision: Option<i64>,
+    ) -> Result<Event, ApiError> {
         self.connections.ensure_subscriber();
         let topic = draft.topic();
         let placeholder = Event {
@@ -439,6 +550,8 @@ impl EventLog {
             s: draft.server_id,
             c: draft.channel_id,
             n: 0,
+            ep: None,
+            r: revision,
             i: draft.entity_id,
             d: draft.delta,
         };
@@ -461,8 +574,12 @@ impl EventLog {
                         .key(seq_key)
                         .key(log_key)
                         .key(channel)
+                        .key(topic.epoch_key())
+                        .key(topic.delivery_key())
                         .arg(template)
                         .arg(replay_end)
+                        .arg(Uuid::new_v4().to_string())
+                        .arg(revision.unwrap_or(0))
                         .invoke_async(&mut conn)
                         .await
                 }
@@ -519,272 +636,46 @@ impl EventLog {
         topic: Topic,
         client_n: Option<u64>,
     ) -> Result<(u64, CatchUp<Event>), ApiError> {
-        let current = self.current_seq(topic).await?;
-        let log = self.load_log(topic).await?;
-        Ok((current, plan_catch_up(client_n, current, &log, |e| e.n)))
+        let (current, _, plan) = self.catch_up_epoch(topic, client_n, None).await?;
+        Ok((current, plan))
+    }
+    pub async fn catch_up_epoch(
+        &self,
+        topic: Topic,
+        client_n: Option<u64>,
+        client_epoch: Option<Uuid>,
+    ) -> Result<(u64, Uuid, CatchUp<Event>), ApiError> {
+        let (current, epoch, rows): (u64, String, Vec<String>) = self
+            .connections
+            .with_conn(|mut conn| async move {
+                redis::Script::new(SNAPSHOT_LUA)
+                    .key(topic.seq_key())
+                    .key(topic.log_key())
+                    .key(topic.epoch_key())
+                    .arg(Uuid::new_v4().to_string())
+                    .invoke_async(&mut conn)
+                    .await
+            })
+            .await
+            .map_err(redis_err)?;
+        let epoch: Uuid = epoch
+            .parse()
+            .map_err(|_| ApiError::Internal("invalid Redis epoch".into()))?;
+        let events: Vec<Event> = rows
+            .into_iter()
+            .filter_map(|row| serde_json::from_str(&row).ok())
+            .filter(|event: &Event| event.ep == Some(epoch) && event.n <= current)
+            .collect();
+        let plan = if client_epoch.is_some_and(|previous| previous != epoch) {
+            CatchUp::Gap
+        } else {
+            plan_catch_up(client_n, current, &events, |e| e.n)
+        };
+        Ok((current, epoch, plan))
     }
 }
 
 impl VoiceRoster {
-    pub async fn in_voice(&self, id: ConnId, channel_id: Uuid) -> bool {
-        self.connections
-            .inner
-            .sockets
-            .read()
-            .await
-            .get(&id)
-            .is_some_and(|socket| socket.rooms.contains_key(&channel_id))
-    }
-
-    /// Seat this socket in `channel_id`, leaving any other voice room first.
-    /// Returns other members (and their pubs) so the handler can snapshot
-    /// them onto this socket without waiting for Pub/Sub.
-    /// Seat this socket in `channel_id`, leaving any other voice room first.
-    /// Returns other members (and their pubs) so the handler can snapshot
-    /// them onto this socket without waiting for Pub/Sub.
-    pub async fn join_voice(
-        &self,
-        id: ConnId,
-        user_id: Uuid,
-        server_id: Uuid,
-        channel_id: Uuid,
-    ) -> Result<Vec<SigEvent>, ApiError> {
-        self.connections.ensure_subscriber();
-        let previous: Vec<(Uuid, Uuid)> = {
-            let sockets = self.connections.inner.sockets.read().await;
-            sockets
-                .get(&id)
-                .map(|socket| {
-                    socket
-                        .rooms
-                        .iter()
-                        .filter(|(cid, _)| **cid != channel_id)
-                        .map(|(cid, seat)| (seat.server_id, *cid))
-                        .collect()
-                })
-                .unwrap_or_default()
-        };
-        for (prev_server, prev_channel) in previous {
-            self.leave_voice(id, user_id, prev_server, prev_channel)
-                .await?;
-        }
-
-        let inserted = {
-            let mut sockets = self.connections.inner.sockets.write().await;
-            if let Some(socket) = sockets.get_mut(&id) {
-                match socket.rooms.entry(channel_id) {
-                    std::collections::hash_map::Entry::Vacant(slot) => {
-                        slot.insert(VoiceSeat {
-                            server_id,
-                            pubs: HashSet::new(),
-                            muted: false,
-                            deafened: false,
-                        });
-                        true
-                    }
-                    std::collections::hash_map::Entry::Occupied(_) => false,
-                }
-            } else {
-                false
-            }
-        };
-        if inserted {
-            self.redis_join_member(channel_id, user_id).await?;
-            self.redis_put_occupancy(server_id, user_id, channel_id, false, false)
-                .await?;
-        }
-        let occupancy = self.redis_occupancy(server_id).await?;
-        let roster = self.redis_roster(channel_id).await?;
-        let mut snapshot = Vec::new();
-        for (uid, pubs) in roster {
-            if uid == user_id {
-                continue;
-            }
-            let (muted, deafened) = occupancy
-                .get(&uid)
-                .map(|row| (row.muted, row.deafened))
-                .unwrap_or((false, false));
-            snapshot.push(SigEvent::join_state(
-                server_id, channel_id, uid, muted, deafened,
-            ));
-            for kind in pubs {
-                snapshot.push(SigEvent::published(server_id, channel_id, uid, kind));
-            }
-        }
-        self.publish_sig(SigEvent::join(server_id, channel_id, user_id))
-            .await?;
-        Ok(snapshot)
-    }
-
-    pub async fn leave_voice(
-        &self,
-        id: ConnId,
-        user_id: Uuid,
-        server_id: Uuid,
-        channel_id: Uuid,
-    ) -> Result<bool, ApiError> {
-        let was_in = {
-            let mut sockets = self.connections.inner.sockets.write().await;
-            sockets
-                .get_mut(&id)
-                .is_some_and(|socket| socket.rooms.remove(&channel_id).is_some())
-        };
-        if !was_in {
-            return Ok(false);
-        }
-        if self
-            .redis_leave_member(server_id, channel_id, user_id)
-            .await?
-        {
-            self.publish_sig(SigEvent::leave(server_id, channel_id, user_id))
-                .await?;
-        }
-        Ok(true)
-    }
-
-    pub async fn set_voice_mute(
-        &self,
-        id: ConnId,
-        user_id: Uuid,
-        server_id: Uuid,
-        channel_id: Uuid,
-        on: bool,
-    ) -> Result<bool, ApiError> {
-        self.set_voice_flag(id, user_id, server_id, channel_id, VoiceFlag::Mute, on)
-            .await
-    }
-
-    pub async fn set_voice_deafen(
-        &self,
-        id: ConnId,
-        user_id: Uuid,
-        server_id: Uuid,
-        channel_id: Uuid,
-        on: bool,
-    ) -> Result<bool, ApiError> {
-        self.set_voice_flag(id, user_id, server_id, channel_id, VoiceFlag::Deafen, on)
-            .await
-    }
-
-    async fn set_voice_flag(
-        &self,
-        id: ConnId,
-        user_id: Uuid,
-        server_id: Uuid,
-        channel_id: Uuid,
-        flag: VoiceFlag,
-        on: bool,
-    ) -> Result<bool, ApiError> {
-        let (muted, deafened) = {
-            let mut sockets = self.connections.inner.sockets.write().await;
-            let Some(seat) = sockets
-                .get_mut(&id)
-                .and_then(|socket| socket.rooms.get_mut(&channel_id))
-            else {
-                return Ok(false);
-            };
-            match flag {
-                VoiceFlag::Mute => seat.muted = on,
-                VoiceFlag::Deafen => {
-                    seat.deafened = on;
-                    if on {
-                        seat.muted = true;
-                    }
-                }
-            }
-            (seat.muted, seat.deafened)
-        };
-        self.redis_write_occupancy(server_id, user_id, channel_id, muted, deafened)
-            .await?;
-        let event = match flag {
-            VoiceFlag::Mute => SigEvent::muted(server_id, channel_id, user_id, on),
-            VoiceFlag::Deafen => SigEvent::deafened(server_id, channel_id, user_id, on),
-        };
-        self.publish_sig(event).await?;
-        if flag == VoiceFlag::Deafen && on {
-            self.publish_sig(SigEvent::muted(server_id, channel_id, user_id, true))
-                .await?;
-        }
-        Ok(true)
-    }
-
-    pub async fn voice_snapshot(&self, server_id: Uuid) -> Result<Vec<VoiceEntry>, ApiError> {
-        let occupancy = self.redis_occupancy(server_id).await?;
-        let lives = self.redis_lives(server_id).await?;
-        let mut rows: Vec<VoiceEntry> = occupancy
-            .into_iter()
-            .map(|(u, row)| VoiceEntry {
-                u,
-                c: row.channel_id,
-                m: row.muted,
-                d: row.deafened,
-                l: lives.get(&row.channel_id) == Some(&u),
-            })
-            .collect();
-        rows.sort_by_key(|row| row.u);
-        Ok(rows)
-    }
-
-    pub async fn set_voice_pub(
-        &self,
-        id: ConnId,
-        user_id: Uuid,
-        server_id: Uuid,
-        channel_id: Uuid,
-        kind: TrackKind,
-        on: bool,
-    ) -> Result<Option<bool>, ApiError> {
-        {
-            let sockets = self.connections.inner.sockets.read().await;
-            if !sockets
-                .get(&id)
-                .is_some_and(|socket| socket.rooms.contains_key(&channel_id))
-            {
-                return Ok(None);
-            }
-        }
-        let mut live_started = false;
-        if kind == TrackKind::L {
-            if on {
-                match self.claim_live(server_id, channel_id, user_id).await? {
-                    LiveClaim::Taken => return Ok(None),
-                    LiveClaim::New => live_started = true,
-                    LiveClaim::Held => {}
-                }
-            } else {
-                self.release_live(server_id, channel_id, user_id).await?;
-            }
-        }
-        {
-            let mut sockets = self.connections.inner.sockets.write().await;
-            let Some(seat) = sockets
-                .get_mut(&id)
-                .and_then(|socket| socket.rooms.get_mut(&channel_id))
-            else {
-                if kind == TrackKind::L && on && live_started {
-                    let _ = self.release_live(server_id, channel_id, user_id).await;
-                }
-                return Ok(None);
-            };
-            if on {
-                seat.pubs.insert(kind);
-            } else {
-                seat.pubs.remove(&kind);
-            }
-        }
-        if on {
-            self.redis_add_pub(channel_id, user_id, kind).await?;
-            self.publish_sig(SigEvent::published(server_id, channel_id, user_id, kind))
-                .await?;
-        } else {
-            self.redis_remove_pub(channel_id, user_id, kind).await?;
-            self.publish_sig(SigEvent::unpublished(server_id, channel_id, user_id, kind))
-                .await?;
-        }
-        Ok(Some(live_started))
-    }
-
-    /// Fan-out a live signaling frame. No seq, no replay list.
     /// Fan-out a live signaling frame. No seq, no replay list.
     pub async fn publish_sig(&self, event: SigEvent) -> Result<(), ApiError> {
         self.connections.ensure_subscriber();
@@ -807,353 +698,6 @@ impl VoiceRoster {
             .await
             .map_err(redis_err)?;
         Ok(())
-    }
-
-    async fn redis_join_member(&self, channel_id: Uuid, user_id: Uuid) -> Result<(), ApiError> {
-        let key = room_key(channel_id);
-        let member = user_id.to_string();
-        self.connections
-            .with_conn(|mut conn| {
-                let key = key.clone();
-                let member = member.clone();
-                async move {
-                    redis::cmd("HINCRBY")
-                        .arg(key)
-                        .arg(member)
-                        .arg(1)
-                        .query_async::<i64>(&mut conn)
-                        .await
-                        .map(|_| ())
-                }
-            })
-            .await
-            .map_err(redis_err)
-    }
-
-    /// Decrement the per-user seat count. `true` = last socket left: drop
-    /// the roster row, pubs, occupancy, caller should broadcast `t:"l"`.
-    /// Decrement the per-user seat count. `true` = last socket left: drop
-    /// the roster row, pubs, occupancy, caller should broadcast `t:"l"`.
-    async fn redis_leave_member(
-        &self,
-        server_id: Uuid,
-        channel_id: Uuid,
-        user_id: Uuid,
-    ) -> Result<bool, ApiError> {
-        let members = room_key(channel_id);
-        let pubs = pubs_key(channel_id, user_id);
-        let member = user_id.to_string();
-        let last: i32 = self
-            .connections
-            .with_conn(|mut conn| {
-                let members = members.clone();
-                let pubs = pubs.clone();
-                let member = member.clone();
-                async move {
-                    redis::Script::new(LEAVE_SEAT_LUA)
-                        .key(members)
-                        .key(pubs)
-                        .arg(member)
-                        .invoke_async(&mut conn)
-                        .await
-                }
-            })
-            .await
-            .map_err(redis_err)?;
-        if last == 1 {
-            self.redis_drop_occupancy(server_id, user_id).await?;
-            self.release_live(server_id, channel_id, user_id).await?;
-        }
-        Ok(last == 1)
-    }
-
-    async fn redis_put_occupancy(
-        &self,
-        server_id: Uuid,
-        user_id: Uuid,
-        channel_id: Uuid,
-        muted: bool,
-        deafened: bool,
-    ) -> Result<(), ApiError> {
-        // Second tab of the same user must not wipe mute/deafen.
-        let key = occupancy_key(server_id);
-        let member = user_id.to_string();
-        let value = encode_occupancy(channel_id, muted, deafened);
-        self.connections
-            .with_conn(|mut conn| {
-                let key = key.clone();
-                let member = member.clone();
-                let value = value.clone();
-                async move {
-                    redis::cmd("HSETNX")
-                        .arg(key)
-                        .arg(member)
-                        .arg(value)
-                        .query_async::<i64>(&mut conn)
-                        .await
-                        .map(|_| ())
-                }
-            })
-            .await
-            .map_err(redis_err)
-    }
-
-    async fn redis_write_occupancy(
-        &self,
-        server_id: Uuid,
-        user_id: Uuid,
-        channel_id: Uuid,
-        muted: bool,
-        deafened: bool,
-    ) -> Result<(), ApiError> {
-        let key = occupancy_key(server_id);
-        let member = user_id.to_string();
-        let value = encode_occupancy(channel_id, muted, deafened);
-        self.connections
-            .with_conn(|mut conn| {
-                let key = key.clone();
-                let member = member.clone();
-                let value = value.clone();
-                async move {
-                    redis::cmd("HSET")
-                        .arg(key)
-                        .arg(member)
-                        .arg(value)
-                        .query_async::<i64>(&mut conn)
-                        .await
-                        .map(|_| ())
-                }
-            })
-            .await
-            .map_err(redis_err)
-    }
-
-    async fn redis_drop_occupancy(&self, server_id: Uuid, user_id: Uuid) -> Result<(), ApiError> {
-        let key = occupancy_key(server_id);
-        let member = user_id.to_string();
-        self.connections
-            .with_conn(|mut conn| {
-                let key = key.clone();
-                let member = member.clone();
-                async move {
-                    redis::cmd("HDEL")
-                        .arg(key)
-                        .arg(member)
-                        .query_async::<i64>(&mut conn)
-                        .await
-                        .map(|_| ())
-                }
-            })
-            .await
-            .map_err(redis_err)
-    }
-
-    async fn redis_occupancy(&self, server_id: Uuid) -> Result<HashMap<Uuid, Occupancy>, ApiError> {
-        let key = occupancy_key(server_id);
-        let seats: HashMap<String, String> = self
-            .connections
-            .with_conn(|mut conn| {
-                let key = key.clone();
-                async move { redis::cmd("HGETALL").arg(key).query_async(&mut conn).await }
-            })
-            .await
-            .map_err(redis_err)?;
-        let mut occupancy = HashMap::with_capacity(seats.len());
-        for (raw, value) in seats {
-            let Ok(uid) = Uuid::parse_str(&raw) else {
-                continue;
-            };
-            let Some(row) = parse_occupancy(&value) else {
-                continue;
-            };
-            occupancy.insert(uid, row);
-        }
-        Ok(occupancy)
-    }
-
-    async fn redis_lives(&self, server_id: Uuid) -> Result<HashMap<Uuid, Uuid>, ApiError> {
-        let key = lives_key(server_id);
-        let rows: HashMap<String, String> = self
-            .connections
-            .with_conn(|mut conn| {
-                let key = key.clone();
-                async move { redis::cmd("HGETALL").arg(key).query_async(&mut conn).await }
-            })
-            .await
-            .map_err(redis_err)?;
-        let mut lives = HashMap::with_capacity(rows.len());
-        for (channel, user) in rows {
-            let Ok(channel_id) = Uuid::parse_str(&channel) else {
-                continue;
-            };
-            let Ok(user_id) = Uuid::parse_str(&user) else {
-                continue;
-            };
-            lives.insert(channel_id, user_id);
-        }
-        Ok(lives)
-    }
-
-    async fn claim_live(
-        &self,
-        server_id: Uuid,
-        channel_id: Uuid,
-        user_id: Uuid,
-    ) -> Result<LiveClaim, ApiError> {
-        let key = lives_key(server_id);
-        let channel = channel_id.to_string();
-        let user = user_id.to_string();
-        let ok: i32 = self
-            .connections
-            .with_conn(|mut conn| {
-                let key = key.clone();
-                let channel = channel.clone();
-                let user = user.clone();
-                async move {
-                    redis::Script::new(CLAIM_LIVE_LUA)
-                        .key(key)
-                        .arg(channel)
-                        .arg(user)
-                        .invoke_async(&mut conn)
-                        .await
-                }
-            })
-            .await
-            .map_err(redis_err)?;
-        Ok(match ok {
-            1 => LiveClaim::New,
-            2 => LiveClaim::Held,
-            _ => LiveClaim::Taken,
-        })
-    }
-
-    async fn release_live(
-        &self,
-        server_id: Uuid,
-        channel_id: Uuid,
-        user_id: Uuid,
-    ) -> Result<(), ApiError> {
-        let key = lives_key(server_id);
-        let channel = channel_id.to_string();
-        let user = user_id.to_string();
-        self.connections
-            .with_conn(|mut conn| {
-                let key = key.clone();
-                let channel = channel.clone();
-                let user = user.clone();
-                async move {
-                    redis::Script::new(RELEASE_LIVE_LUA)
-                        .key(key)
-                        .arg(channel)
-                        .arg(user)
-                        .invoke_async::<i32>(&mut conn)
-                        .await
-                        .map(|_| ())
-                }
-            })
-            .await
-            .map_err(redis_err)
-    }
-
-    async fn redis_add_pub(
-        &self,
-        channel_id: Uuid,
-        user_id: Uuid,
-        kind: TrackKind,
-    ) -> Result<(), ApiError> {
-        let key = pubs_key(channel_id, user_id);
-        let kind = kind.as_str().to_owned();
-        self.connections
-            .with_conn(|mut conn| {
-                let key = key.clone();
-                let kind = kind.clone();
-                async move {
-                    redis::cmd("SADD")
-                        .arg(key)
-                        .arg(kind)
-                        .query_async::<()>(&mut conn)
-                        .await
-                }
-            })
-            .await
-            .map_err(redis_err)
-    }
-
-    async fn redis_remove_pub(
-        &self,
-        channel_id: Uuid,
-        user_id: Uuid,
-        kind: TrackKind,
-    ) -> Result<(), ApiError> {
-        let key = pubs_key(channel_id, user_id);
-        let kind = kind.as_str().to_owned();
-        self.connections
-            .with_conn(|mut conn| {
-                let key = key.clone();
-                let kind = kind.clone();
-                async move {
-                    redis::cmd("SREM")
-                        .arg(key)
-                        .arg(kind)
-                        .query_async::<()>(&mut conn)
-                        .await
-                }
-            })
-            .await
-            .map_err(redis_err)
-    }
-
-    async fn redis_roster(
-        &self,
-        channel_id: Uuid,
-    ) -> Result<Vec<(Uuid, Vec<TrackKind>)>, ApiError> {
-        let key = room_key(channel_id);
-        let seats: HashMap<String, String> = self
-            .connections
-            .with_conn(|mut conn| {
-                let key = key.clone();
-                async move { redis::cmd("HGETALL").arg(key).query_async(&mut conn).await }
-            })
-            .await
-            .map_err(redis_err)?;
-        let mut roster = Vec::with_capacity(seats.len());
-        for (raw, count) in seats {
-            let Ok(count) = count.parse::<i64>() else {
-                continue;
-            };
-            if count <= 0 {
-                continue;
-            }
-            let Ok(uid) = Uuid::parse_str(&raw) else {
-                continue;
-            };
-            let pubs_key = pubs_key(channel_id, uid);
-            let pubs: Vec<String> = self
-                .connections
-                .with_conn(|mut conn| {
-                    let pubs_key = pubs_key.clone();
-                    async move {
-                        redis::cmd("SMEMBERS")
-                            .arg(pubs_key)
-                            .query_async(&mut conn)
-                            .await
-                    }
-                })
-                .await
-                .map_err(redis_err)?;
-            let kinds = pubs
-                .into_iter()
-                .filter_map(|name| match name.as_str() {
-                    "a" => Some(TrackKind::A),
-                    "v" => Some(TrackKind::V),
-                    "s" => Some(TrackKind::S),
-                    "l" => Some(TrackKind::L),
-                    _ => None,
-                })
-                .collect();
-            roster.push((uid, kinds));
-        }
-        Ok(roster)
     }
 
     /// Short Redis deny so the SFU drops this user's peer even if the tab
@@ -1208,21 +752,15 @@ impl Gateway {
     }
 
     pub async fn detach(&self, id: ConnId) -> Option<(Uuid, HashSet<Uuid>, HashSet<(Uuid, Uuid)>)> {
+        let _guard = self.connections.inner.voice_ops.lock().await;
         let socket = self.connections.inner.sockets.write().await.remove(&id)?;
         for (channel_id, seat) in socket.rooms {
-            match self
-                .redis_leave_member(seat.server_id, channel_id, socket.user_id)
+            if let Err(err) = self
+                .voice
+                .drop_seat(id, socket.user_id, channel_id, seat)
                 .await
             {
-                Ok(true) => {
-                    let _ = self
-                        .publish_sig(SigEvent::leave(seat.server_id, channel_id, socket.user_id))
-                        .await;
-                }
-                Ok(false) => {}
-                Err(err) => {
-                    warn!(error = err.code(), "voice leave on detach failed");
-                }
+                warn!(error = err.code(), "voice leave on detach failed");
             }
         }
         Some((socket.user_id, socket.servers, socket.typing))
@@ -1236,56 +774,50 @@ impl Gateway {
         server_id: Uuid,
         channel_ids: &[Uuid],
         reason: &'static str,
-    ) {
-        if let Err(err) = self.voice.deny(user_id, server_id).await {
-            warn!(error = err.code(), "media deny on revoke failed");
-        }
-        let conns: Vec<ConnId> = {
-            let sockets = self.connections.inner.sockets.read().await;
-            sockets
-                .iter()
-                .filter(|(_, socket)| socket.user_id == user_id)
-                .map(|(id, _)| *id)
-                .collect()
-        };
+    ) -> Result<(), ApiError> {
+        crate::media::revoke_member(&self.connections.redis, server_id, user_id).await?;
+        self.voice.deny(user_id, server_id).await?;
+        let conns: Vec<ConnId> = self
+            .connections
+            .inner
+            .sockets
+            .read()
+            .await
+            .iter()
+            .filter(|(_, socket)| socket.user_id == user_id)
+            .map(|(id, _)| *id)
+            .collect();
         for id in conns {
-            let rooms: Vec<Uuid> = {
-                let sockets = self.connections.inner.sockets.read().await;
-                sockets
-                    .get(&id)
-                    .map(|socket| {
-                        socket
-                            .rooms
-                            .iter()
-                            .filter(|(_, seat)| seat.server_id == server_id)
-                            .map(|(channel_id, _)| *channel_id)
-                            .collect()
-                    })
-                    .unwrap_or_default()
-            };
-            for channel_id in rooms {
-                if let Err(err) = self
-                    .voice
-                    .leave_voice(id, user_id, server_id, channel_id)
-                    .await
-                {
-                    warn!(error = err.code(), "voice leave on revoke failed");
-                }
-            }
+            self.clear_server_access(id, server_id, channel_ids, reason)
+                .await;
+        }
+        Ok(())
+    }
 
-            let typing: Vec<(Uuid, Uuid)> = {
-                let mut sockets = self.connections.inner.sockets.write().await;
-                let Some(socket) = sockets.get_mut(&id) else {
-                    continue;
-                };
+    async fn clear_server_access(
+        &self,
+        id: ConnId,
+        server_id: Uuid,
+        channel_ids: &[Uuid],
+        reason: &'static str,
+    ) {
+        let Some((user_id, rooms, typing)) = ({
+            let mut sockets = self.connections.inner.sockets.write().await;
+            sockets.get_mut(&id).map(|socket| {
+                socket.access.remove(&server_id);
+                socket.servers.remove(&server_id);
                 socket.topics.remove(&Topic::Server(server_id));
                 socket.catching_up.remove(&Topic::Server(server_id));
                 for channel_id in channel_ids {
-                    let topic = Topic::Channel(*channel_id);
-                    socket.topics.remove(&topic);
-                    socket.catching_up.remove(&topic);
+                    socket.topics.remove(&Topic::Channel(*channel_id));
+                    socket.catching_up.remove(&Topic::Channel(*channel_id));
                 }
-                socket.servers.remove(&server_id);
+                let rooms: Vec<Uuid> = socket
+                    .rooms
+                    .iter()
+                    .filter(|(_, seat)| seat.server_id == server_id)
+                    .map(|(cid, _)| *cid)
+                    .collect();
                 let typing: Vec<(Uuid, Uuid)> = socket
                     .typing
                     .iter()
@@ -1295,17 +827,281 @@ impl Gateway {
                 for pair in &typing {
                     socket.typing.remove(pair);
                 }
-                let _ = socket
-                    .tx
-                    .send(ServerFrame::error(reason, Some(server_id), None));
-                typing
-            };
-            for (sid, channel_id) in typing {
-                if let Err(err) = self.stop_typing(sid, channel_id, user_id).await {
-                    warn!(error = err.code(), "typing stop on revoke failed");
+                socket.send(ServerFrame::error(reason, Some(server_id), None));
+                (socket.user_id, rooms, typing)
+            })
+        }) else {
+            return;
+        };
+        for cid in rooms {
+            if let Err(err) = self.leave_voice(id, user_id, server_id, cid).await {
+                warn!(error = err.code(), "voice cleanup failed");
+            }
+        }
+        for (sid, cid) in typing {
+            if let Err(err) = self.stop_typing(sid, cid, user_id).await {
+                warn!(error = err.code(), "typing cleanup failed");
+            }
+        }
+        if let Err(err) = self.forget_server_presence(user_id, server_id).await {
+            warn!(error = err.code(), "server presence cleanup failed");
+        }
+    }
+
+    pub async fn track_media_session(&self, key: &str) -> Option<Uuid> {
+        let mut sessions = self.connections.inner.media_sessions.lock().await;
+        if let Some((_, last_mint)) = sessions.get_mut(key) {
+            *last_mint = std::time::Instant::now();
+            return None;
+        }
+        let generation = Uuid::new_v4();
+        sessions.insert(key.to_owned(), (generation, std::time::Instant::now()));
+        Some(generation)
+    }
+    pub async fn media_session_recent(&self, key: &str, generation: Uuid) -> bool {
+        self.connections
+            .inner
+            .media_sessions
+            .lock()
+            .await
+            .get(key)
+            .is_some_and(|(owner, last)| {
+                *owner == generation && last.elapsed() < Duration::from_secs(35)
+            })
+    }
+    pub async fn untrack_media_session(&self, key: &str, generation: Uuid) {
+        let mut sessions = self.connections.inner.media_sessions.lock().await;
+        if sessions
+            .get(key)
+            .is_some_and(|(owner, _)| *owner == generation)
+        {
+            sessions.remove(key);
+        }
+    }
+
+    pub async fn attach_session(
+        &self,
+        user_id: Uuid,
+        hash: String,
+        tx: mpsc::Sender<ServerFrame>,
+    ) -> (ConnId, tokio::sync::watch::Receiver<bool>) {
+        let id = self.attach(user_id, tx).await;
+        let cancel = self.connections.inner.sockets.read().await[&id]
+            .closed
+            .clone();
+        let receiver = cancel.subscribe();
+        if let Some(socket) = self.connections.inner.sockets.write().await.get_mut(&id) {
+            socket.session = Some((hash, cancel));
+        }
+        (id, receiver)
+    }
+
+    pub async fn revoke_session(&self, hash: &str) {
+        let mut sockets = self.connections.inner.sockets.write().await;
+        for socket in sockets.values_mut() {
+            if let Some((session, cancel)) = &socket.session
+                && session == hash
+            {
+                socket.topics.clear();
+                socket.catching_up.clear();
+                let _ = cancel.send(true);
+            }
+        }
+    }
+
+    pub async fn wants_frame(&self, id: ConnId, frame: &ServerFrame) -> bool {
+        let sockets = self.connections.inner.sockets.read().await;
+        let Some(socket) = sockets.get(&id) else {
+            return false;
+        };
+        match frame {
+            ServerFrame::Resync | ServerFrame::Dm { .. } => true,
+            ServerFrame::Event { s, c, .. } | ServerFrame::Gap { s, c, .. } => {
+                socket.topics.contains(&Topic::of(*s, *c))
+            }
+            ServerFrame::Sig { s, c, .. } => {
+                socket.servers.contains(s)
+                    || c.is_some_and(|cid| {
+                        socket
+                            .rooms
+                            .get(&cid)
+                            .is_some_and(|seat| seat.server_id == *s)
+                    })
+            }
+            ServerFrame::Presence { s, .. } => socket.servers.contains(s),
+            ServerFrame::Typing { c, .. } => socket.topics.contains(&Topic::Channel(*c)),
+            _ => true,
+        }
+    }
+
+    pub async fn bind_server(
+        &self,
+        id: ConnId,
+        db: &mut sqlx::PgConnection,
+        server_id: Uuid,
+        user_id: Uuid,
+    ) -> Result<(), ApiError> {
+        let revision = crate::servers::membership::revision(&mut *db, server_id, user_id)
+            .await?
+            .ok_or(ApiError::NotFound)?;
+        if let Some(socket) = self.connections.inner.sockets.write().await.get_mut(&id) {
+            socket.access.insert(server_id, revision);
+        }
+        Ok(())
+    }
+
+    /// Revalidate existing subscriptions/seats, including on another API process.
+    /// A new joined_at prevents leave + immediate rejoin from reviving old seats.
+    pub async fn reconcile_access(
+        &self,
+        id: ConnId,
+        db: &mut sqlx::PgConnection,
+    ) -> Result<(), ApiError> {
+        let Some((user_id, access, topics, rooms)) = self
+            .connections
+            .inner
+            .sockets
+            .read()
+            .await
+            .get(&id)
+            .map(|socket| {
+                (
+                    socket.user_id,
+                    socket.access.clone(),
+                    socket.topics.clone(),
+                    socket
+                        .rooms
+                        .iter()
+                        .map(|(cid, seat)| (*cid, seat.server_id))
+                        .collect::<Vec<_>>(),
+                )
+            })
+        else {
+            return Ok(());
+        };
+        for (sid, revision) in access {
+            let current = crate::servers::membership::revision(&mut *db, sid, user_id).await?;
+            if current.is_none_or(|now| now.0 != revision.0) {
+                // Include deleted channels: their rows can no longer be queried.
+                let mut cids: Vec<Uuid> =
+                    sqlx::query_scalar("SELECT id FROM channels WHERE server_id = $1")
+                        .bind(sid)
+                        .fetch_all(&mut *db)
+                        .await?;
+                for topic in &topics {
+                    if let Topic::Channel(cid) = topic
+                        && crate::servers::channel::get(&mut *db, *cid)
+                            .await?
+                            .is_none()
+                    {
+                        cids.push(*cid);
+                    }
+                }
+                self.clear_server_access(id, sid, &cids, "not_found").await;
+            } else {
+                let current = current.expect("checked");
+                if revision.1 & !current.1 & 48 != 0 {
+                    self.clear_voice_access(id, sid).await?;
+                }
+                if let Some(socket) = self.connections.inner.sockets.write().await.get_mut(&id) {
+                    socket.access.insert(sid, current);
                 }
             }
         }
+        for topic in topics {
+            if let Topic::Channel(cid) = topic
+                && crate::servers::channel::get(&mut *db, cid).await?.is_none()
+            {
+                self.unsubscribe(id, topic).await;
+            }
+        }
+        for (cid, sid) in rooms {
+            let member = crate::servers::membership::load(&mut *db, sid, user_id).await;
+            let allowed = match member {
+                Ok(member) => member.can(crate::servers::permissions::Permission::JoinVoice),
+                Err(ApiError::NotFound) => false,
+                Err(err) => return Err(err),
+            };
+            if !allowed || crate::servers::channel::get(&mut *db, cid).await?.is_none() {
+                self.leave_voice(id, user_id, sid, cid).await?;
+            }
+        }
+        Ok(())
+    }
+
+    pub async fn revoke_voice_access(
+        &self,
+        user_id: Uuid,
+        server_id: Uuid,
+    ) -> Result<(), ApiError> {
+        crate::media::revoke_member(&self.connections.redis, server_id, user_id).await?;
+        self.voice.deny(user_id, server_id).await?;
+        let ids: Vec<ConnId> = self
+            .connections
+            .inner
+            .sockets
+            .read()
+            .await
+            .iter()
+            .filter(|(_, socket)| socket.user_id == user_id)
+            .map(|(id, _)| *id)
+            .collect();
+        for id in ids {
+            self.clear_voice_access(id, server_id).await?;
+        }
+        Ok(())
+    }
+
+    async fn clear_voice_access(&self, id: ConnId, server_id: Uuid) -> Result<(), ApiError> {
+        let Some((uid, rooms)) =
+            self.connections
+                .inner
+                .sockets
+                .read()
+                .await
+                .get(&id)
+                .map(|socket| {
+                    (
+                        socket.user_id,
+                        socket
+                            .rooms
+                            .iter()
+                            .filter(|(_, seat)| seat.server_id == server_id)
+                            .map(|(cid, _)| *cid)
+                            .collect::<Vec<_>>(),
+                    )
+                })
+        else {
+            return Ok(());
+        };
+        for cid in rooms {
+            self.leave_voice(id, uid, server_id, cid).await?;
+        }
+        Ok(())
+    }
+
+    pub async fn revoke_channel(&self, server_id: Uuid, channel_id: Uuid) -> Result<(), ApiError> {
+        crate::media::revoke_channel(&self.connections.redis, channel_id).await?;
+        let conns: Vec<(ConnId, Uuid)> = self
+            .connections
+            .inner
+            .sockets
+            .read()
+            .await
+            .iter()
+            .map(|(id, socket)| (*id, socket.user_id))
+            .collect();
+        for (id, uid) in conns {
+            self.unsubscribe(id, Topic::Channel(channel_id)).await;
+            if let Err(err) = self.leave_voice(id, uid, server_id, channel_id).await {
+                warn!(error = err.code(), "deleted channel voice cleanup failed");
+            }
+            self.note_typing(id, server_id, channel_id, false).await;
+            if let Err(err) = self.stop_typing(server_id, channel_id, uid).await {
+                warn!(error = err.code(), "deleted channel typing cleanup failed");
+            }
+        }
+        Ok(())
     }
 
     pub fn ensure_subscriber(&self) {
@@ -1320,7 +1116,7 @@ impl Gateway {
         self.connections.wait_ready(timeout).await
     }
 
-    pub async fn attach(&self, user_id: Uuid, tx: mpsc::UnboundedSender<ServerFrame>) -> ConnId {
+    pub async fn attach(&self, user_id: Uuid, tx: mpsc::Sender<ServerFrame>) -> ConnId {
         self.connections.attach(user_id, tx).await
     }
 
@@ -1339,13 +1135,10 @@ impl Gateway {
     }
 
     /// Register the topic and queue live Redis events until [`finish_catch_up`].
-    /// Register the topic and queue live Redis events until [`finish_catch_up`].
     pub async fn begin_catch_up(&self, id: ConnId, topic: Topic) {
         self.connections.begin_catch_up(id, topic).await
     }
 
-    /// Release the topic to live delivery and flush queued frames with
-    /// `n > after_n` (already-replayed seqs are dropped).
     /// Release the topic to live delivery and flush queued frames with
     /// `n > after_n` (already-replayed seqs are dropped).
     pub async fn finish_catch_up(&self, id: ConnId, topic: Topic, after_n: u64) {
@@ -1390,13 +1183,10 @@ impl Gateway {
         self.events.catch_up(topic, client_n).await
     }
 
-    pub async fn in_voice(&self, id: ConnId, channel_id: Uuid) -> bool {
-        self.voice.in_voice(id, channel_id).await
+    pub async fn in_voice(&self, id: ConnId, server_id: Uuid, channel_id: Uuid) -> bool {
+        self.voice.in_voice(id, server_id, channel_id).await
     }
 
-    /// Seat this socket in `channel_id`, leaving any other voice room first.
-    /// Returns other members (and their pubs) so the handler can snapshot
-    /// them onto this socket without waiting for Pub/Sub.
     /// Seat this socket in `channel_id`, leaving any other voice room first.
     /// Returns other members (and their pubs) so the handler can snapshot
     /// them onto this socket without waiting for Pub/Sub.
@@ -1473,21 +1263,6 @@ impl Gateway {
     pub async fn publish_sig(&self, event: SigEvent) -> Result<(), ApiError> {
         self.voice.publish_sig(event).await
     }
-
-    /// Decrement the per-user seat count. `true` = last socket left: drop
-    /// the roster row, pubs, occupancy, caller should broadcast `t:"l"`.
-    /// Decrement the per-user seat count. `true` = last socket left: drop
-    /// the roster row, pubs, occupancy, caller should broadcast `t:"l"`.
-    async fn redis_leave_member(
-        &self,
-        server_id: Uuid,
-        channel_id: Uuid,
-        user_id: Uuid,
-    ) -> Result<bool, ApiError> {
-        self.voice
-            .redis_leave_member(server_id, channel_id, user_id)
-            .await
-    }
 }
 
 pub(super) fn redis_err(err: redis::RedisError) -> ApiError {
@@ -1507,38 +1282,101 @@ fn voice_channel_id(name: &str) -> Option<Uuid> {
     Uuid::parse_str(id).ok()
 }
 
-/// Per-channel hash: user_id → seat count (one increment per socket).
-fn room_key(channel_id: Uuid) -> String {
-    format!("{REDIS_PREFIX}vr:{channel_id}")
-}
-
-fn pubs_key(channel_id: Uuid, user_id: Uuid) -> String {
-    format!("{REDIS_PREFIX}vp:{channel_id}:{user_id}")
-}
-
-/// Server-wide voice occupancy for the member list (`user` → channel + flags).
-fn occupancy_key(server_id: Uuid) -> String {
-    format!("{REDIS_PREFIX}vo:{server_id}")
-}
-
-/// Server-wide Go Live holders (`channel` → user). One live track per voice channel.
-fn lives_key(server_id: Uuid) -> String {
-    format!("{REDIS_PREFIX}gs:{server_id}")
-}
-
-fn encode_occupancy(channel_id: Uuid, muted: bool, deafened: bool) -> String {
-    format!("{channel_id}:{}{}", u8::from(muted), u8::from(deafened))
-}
-
-fn parse_occupancy(raw: &str) -> Option<Occupancy> {
-    let (id, flags) = raw.rsplit_once(':')?;
-    if flags.len() != 2 {
-        return None;
+#[cfg(test)]
+mod resilience_tests {
+    use super::*;
+    fn gateway() -> Gateway {
+        Gateway::new(
+            redis::Client::open(std::env::var("REDIS_URL").unwrap()).unwrap(),
+            512,
+            Duration::from_secs(10),
+            Duration::from_secs(2),
+        )
     }
-    let bytes = flags.as_bytes();
-    Some(Occupancy {
-        channel_id: Uuid::parse_str(id).ok()?,
-        muted: bytes[0] == b'1',
-        deafened: bytes[1] == b'1',
-    })
+    fn event(s: Uuid, c: Uuid, n: u64) -> Event {
+        Event {
+            t: super::super::protocol::EventKind::C,
+            s,
+            c: Some(c),
+            n,
+            ep: Some(Uuid::nil()),
+            r: None,
+            i: None,
+            d: None,
+        }
+    }
+    #[tokio::test]
+    async fn slow_consumer_and_catch_up_queues_are_bounded_without_blocking_another_socket() {
+        let g = gateway();
+        g.wait_ready(Duration::from_secs(2)).await.unwrap();
+        let (s, c) = (Uuid::new_v4(), Uuid::new_v4());
+        let topic = Topic::Channel(c);
+        let (tx, rx) = mpsc::channel(2);
+        let (slow, closed) = g.attach_session(Uuid::new_v4(), "slow".into(), tx).await;
+        let (tx, mut fast_rx) = mpsc::channel(128);
+        let (fast, fast_closed) = g.attach_session(Uuid::new_v4(), "fast".into(), tx).await;
+        for id in [slow, fast] {
+            g.begin_catch_up(id, topic).await;
+            g.finish_catch_up(id, topic, 0).await;
+        }
+        for n in 1..=20 {
+            g.connections.deliver(topic, event(s, c, n)).await;
+        }
+        assert!(*closed.borrow());
+        assert!(!*fast_closed.borrow());
+        assert!(rx.len() <= 2);
+        assert_eq!(fast_rx.len(), 20);
+        for n in 1..=20 {
+            assert!(matches!(fast_rx.recv().await,Some(ServerFrame::Event { n:got,.. }) if got==n));
+        }
+        let (tx, _rx) = mpsc::channel(128);
+        let (catching, closed) = g
+            .attach_session(Uuid::new_v4(), "catching".into(), tx)
+            .await;
+        g.begin_catch_up(catching, topic).await;
+        for n in 1..=256 {
+            g.connections.deliver(topic, event(s, c, n)).await;
+        }
+        assert!(*closed.borrow());
+        assert!(g.queued_len(catching, topic).await <= CATCH_UP_CAPACITY);
+        g.detach(slow).await;
+        g.detach(fast).await;
+        g.detach(catching).await;
+    }
+    #[tokio::test]
+    async fn seq_epoch_and_log_snapshot_are_atomic_under_concurrent_publish() {
+        let g = gateway();
+        let (s, c) = (Uuid::new_v4(), Uuid::new_v4());
+        let writer = g.clone();
+        let task = tokio::spawn(async move {
+            for _ in 0..128 {
+                writer
+                    .publish(EventDraft {
+                        kind: super::super::protocol::EventKind::C,
+                        server_id: s,
+                        channel_id: Some(c),
+                        entity_id: None,
+                        delta: None,
+                    })
+                    .await
+                    .unwrap();
+            }
+        });
+        for _ in 0..128 {
+            let (n, ep, plan) = g
+                .events
+                .catch_up_epoch(Topic::Channel(c), Some(0), None)
+                .await
+                .unwrap();
+            match plan {
+                CatchUp::None => assert_eq!(n, 0),
+                CatchUp::Replay(events) => {
+                    assert_eq!(events.len(), n as usize);
+                    assert!(events.iter().all(|event| event.ep == Some(ep)));
+                }
+                CatchUp::Gap => panic!("atomic snapshot must not invent a gap"),
+            }
+        }
+        task.await.unwrap();
+    }
 }

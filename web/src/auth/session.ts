@@ -4,9 +4,22 @@
 
 import { create } from "zustand";
 
-import { api, setCsrfToken, setSessionSink } from "../api/client.ts";
+import {
+  api,
+  setCsrfToken,
+  setSessionScope,
+  setSessionSink,
+  setSessionReconciler,
+  synchronizeSharedSession,
+  type SessionSinkOptions,
+} from "../api/client.ts";
 import { releaseUserScope } from "./release.ts";
-import { stampHolds, takeStamp } from "./scope.ts";
+import {
+  invalidateSessionRequests,
+  stampHolds,
+  takeSessionStamp,
+  takeStamp,
+} from "./scope.ts";
 import type {
   LogoutResponse,
   ProfilePatch,
@@ -26,7 +39,7 @@ export const useSession = create<SessionState>(() => ({
   user: null,
 }));
 
-function applySession(user: User | null): void {
+function applySession(user: User | null, force = false): void {
   const previousId = useSession.getState().user?.id ?? null;
   const nextId = user?.id ?? null;
   useSession.setState({
@@ -35,7 +48,7 @@ function applySession(user: User | null): void {
   });
   // Same account (profile rename, CSRF refresh) keeps its cache. A different
   // id, or nobody, drops the previous account before the next paint.
-  if (previousId !== nextId) {
+  if (force || previousId !== nextId) {
     releaseUserScope(nextId);
   }
 }
@@ -56,9 +69,34 @@ function isUser(value: unknown): value is User {
 // Anything the API client learns about the session on the side (a 401, a
 // re-bootstrap) lands here, so a session that died in another tab flips
 // this tab to anonymous as instantly as an explicit logout would.
-setSessionSink((value) => applySession(isUser(value) ? value : null));
+function receiveSession(value: unknown, options?: SessionSinkOptions): void {
+  if (options?.invalidate) {
+    const previous = useSession.getState();
+    // A newly loaded document already awaits its bootstrap. Initial pageshow
+    // must not turn "not yet known" into a confirmed anonymous session or
+    // invalidate the request the route guard is waiting for.
+    if (previous.status === "unknown") return;
+    if (activeAuthIntent === null || previous.user !== null) {
+      useSession.setState({ status: "unknown", user: null });
+    }
+    if (options.force || previous.user !== null) releaseUserScope(null);
+    return;
+  }
+  const user = isUser(value) ? value : null;
+  // Foreign cookies must not replace an explicitly requested login/register.
+  if (options?.shared && user && activeAuthIntent !== null) return;
+  applySession(user, options?.force);
+}
+setSessionSink(receiveSession);
+setSessionScope(takeSessionStamp);
 
 let bootstrap: Promise<void> | null = null;
+let authIntent = 0;
+let activeAuthIntent: number | null = null;
+setSessionReconciler(async () => {
+  if (activeAuthIntent !== null) return;
+  await ensureSession();
+});
 
 /**
  * Resolves once the server has told us who we are (and handed out the CSRF
@@ -66,58 +104,96 @@ let bootstrap: Promise<void> | null = null;
  * caller retries.
  */
 export function ensureSession(): Promise<void> {
+  // Guards must await a pending reconciliation even if a callback has just
+  // adopted its result and the shared bootstrap has not finished yet.
+  if (bootstrap) return bootstrap;
   if (useSession.getState().status !== "unknown") {
     return Promise.resolve();
   }
-  bootstrap ??= api<SessionResponse>("/auth/session")
-    .then((session) => applySession(session.user))
+  const stamp = takeSessionStamp();
+  const canFallback = () => {
+    const current = takeSessionStamp();
+    // Initial pageshow may adopt shared metadata while this bootstrap loads.
+    // Local intent/identity changes still supersede its anonymous fallback.
+    return (
+      bootstrap === request &&
+      current.userId === stamp.userId &&
+      current.generation === stamp.generation
+    );
+  };
+  const request = api<SessionResponse>("/auth/session")
+    .then(() => {
+      if (useSession.getState().status === "unknown" && canFallback())
+        applySession(null);
+    })
     .catch(() => {
       // Offline or API down: treat as anonymous so the login page can render
       // and show the real error inline on submit.
-      applySession(null);
+      if (canFallback()) applySession(null);
     })
     .finally(() => {
-      bootstrap = null;
+      if (bootstrap === request) bootstrap = null;
     });
+  bootstrap = request;
   return bootstrap;
 }
 
-export async function login(email: string, password: string): Promise<User> {
-  const session = await api<SessionResponse>("/auth/login", {
-    method: "POST",
-    body: { email, password },
-  });
-  applySession(session.user);
-  return session.user as User;
+function startAuthIntent(): number {
+  invalidateSessionRequests();
+  bootstrap = null;
+  activeAuthIntent = ++authIntent;
+  return authIntent;
 }
 
-export async function register(
+function finishAuthIntent(intent: number): void {
+  if (activeAuthIntent !== intent) return;
+  activeAuthIntent = null;
+  synchronizeSharedSession();
+}
+
+async function signIn(path: string, body: unknown): Promise<User> {
+  const intent = startAuthIntent();
+  try {
+    const session = await api<SessionResponse>(path, {
+      method: "POST",
+      body,
+      authIntent: () => authIntent === intent,
+    });
+    if (authIntent !== intent)
+      throw new DOMException("The session changed. Try again.", "AbortError");
+    return session.user as User;
+  } finally {
+    finishAuthIntent(intent);
+  }
+}
+
+export function login(email: string, password: string): Promise<User> {
+  return signIn("/auth/login", { email, password });
+}
+
+export function register(
   email: string,
   password: string,
   name: string,
 ): Promise<User> {
-  const session = await api<SessionResponse>("/auth/register", {
-    method: "POST",
-    body: { email, password, name },
-  });
-  applySession(session.user);
-  return session.user as User;
+  return signIn("/auth/register", { email, password, name });
 }
 
-/**
- * Drops the session locally first — the UI is "out" immediately — then
- * tells the server. A failed request leaves a dangling cookie that the next
- * bootstrap simply picks up again, so there is nothing to roll back.
- */
+/** Optimistically release the current account, then revoke its cookie. */
 export async function logout(): Promise<void> {
+  const logoutUserId = useSession.getState().user?.id ?? null;
+  const intent = startAuthIntent();
   applySession(null);
   try {
-    const response = await api<LogoutResponse>("/auth/logout", {
+    await api<LogoutResponse>("/auth/logout", {
       method: "POST",
+      logoutUserId,
+      authIntent: () => authIntent === intent,
     });
-    setCsrfToken(response.csrf_token);
   } catch {
     // Already signed out as far as this tab is concerned.
+  } finally {
+    finishAuthIntent(intent);
   }
 }
 
@@ -167,8 +243,11 @@ export async function updateProfile(patch: ProfilePatch): Promise<User> {
 /** Test/dev helper: forget everything this tab knows. */
 export function resetSessionForTests(): void {
   bootstrap = null;
+  authIntent += 1;
+  activeAuthIntent = null;
   setCsrfToken(null);
-  setSessionSink((value) => applySession(isUser(value) ? value : null));
+  setSessionSink(receiveSession);
+  setSessionScope(takeSessionStamp);
   useSession.setState({ status: "unknown", user: null });
   releaseUserScope(null);
 }

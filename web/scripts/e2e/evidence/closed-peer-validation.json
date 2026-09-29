@@ -1,0 +1,108 @@
+{
+  "scope": "closed native Firefox observation guard; live failures remain nonzero",
+  "completeAcceptance": false,
+  "sourceChecks": {
+    "pass": 3,
+    "fail": 0,
+    "skip": 0
+  },
+  "nativeCounterControl": {
+    "records": [
+      {
+        "engine": "chromium",
+        "version": "153.0.8010.12",
+        "status": "PASS",
+        "closedStatsRejected": false,
+        "first": {
+          "kind": "camera",
+          "width": 640,
+          "height": 360,
+          "paused": false,
+          "ready": 4,
+          "renderedFrames": 1,
+          "renderedFramesSource": "native-playback-quality",
+          "playbackQualityFrames": 1,
+          "videoFrameCallbacks": 0,
+          "videoPresentedFrames": 0,
+          "pixels": {
+            "source": [194, 28, 28],
+            "motion": [40, 16, 16]
+          }
+        },
+        "last": {
+          "kind": "camera",
+          "width": 640,
+          "height": 360,
+          "paused": false,
+          "ready": 4,
+          "renderedFrames": 2,
+          "renderedFramesSource": "native-playback-quality",
+          "playbackQualityFrames": 2,
+          "videoFrameCallbacks": 1,
+          "videoPresentedFrames": 2,
+          "pixels": {
+            "source": [200, 33, 33],
+            "motion": [80, 57, 57]
+          }
+        },
+        "scope": "native rendered counter only; local muted canvas, no SFU/RTP/autoplay acceptance"
+      },
+      {
+        "engine": "firefox",
+        "version": "155.0",
+        "status": "PASS",
+        "closedStatsRejected": false,
+        "first": {
+          "kind": "camera",
+          "width": 640,
+          "height": 360,
+          "paused": false,
+          "ready": 4,
+          "renderedFrames": 0,
+          "renderedFramesSource": "native-video-frame-callback",
+          "playbackQualityFrames": 0,
+          "videoFrameCallbacks": 0,
+          "videoPresentedFrames": 0,
+          "pixels": {
+            "source": [220, 30, 30],
+            "motion": [15, 15, 15]
+          }
+        },
+        "last": {
+          "kind": "camera",
+          "width": 640,
+          "height": 360,
+          "paused": false,
+          "ready": 4,
+          "renderedFrames": 2,
+          "renderedFramesSource": "native-video-frame-callback",
+          "playbackQualityFrames": 0,
+          "videoFrameCallbacks": 1,
+          "videoPresentedFrames": 2,
+          "pixels": {
+            "source": [220, 30, 30],
+            "motion": [38, 38, 38]
+          }
+        },
+        "scope": "native rendered counter only; local muted canvas, no SFU/RTP/autoplay acceptance"
+      }
+    ],
+    "completeAcceptance": false
+  },
+  "preservedBeforeReport": {
+    "path": "/tmp/gelabber-e2e/media-firefox-final-direct.json",
+    "sha256": "5e891e7ab95067cb1c2e142c156a464ce9dbdf289eb795cf850a48d0edfffe99",
+    "status": "FAIL",
+    "classification": "native closed-peer interface errors in three cases; targeted exact committed app control follows"
+  },
+  "artifacts": [
+    {
+      "path": "/tmp/gelabber-e2e-closed-peer-native-control.json",
+      "sha256": "e93f657054a7934d1a9fbfb6c9f9959d158dd810fca1878a3a50d0f5711ef528"
+    },
+    {
+      "path": "/tmp/gelabber-native-closed-peer-control.mjs",
+      "sha256": "3f452248a0ab7411f80ae624bf626d50c76ec5a0a7ecdab86a9c8c67304f5f4a"
+    }
+  ]
+}

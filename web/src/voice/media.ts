@@ -19,21 +19,61 @@ export type MediaTicket = {
 };
 
 export type MediaClientFrame =
-  | { op: "j"; tk: string }
+  | { op: "j"; tk: string; w?: string }
   | { op: "o"; sdp: string }
   | { op: "a"; sdp: string }
   | { op: "i"; ice: string; mid?: string }
-  | { op: "p"; k: "v" | "s" | "l" }
-  | { op: "u"; k: "v" | "s" | "l" }
+  | { op: "p"; k: "v" | "s" | "l"; t?: string; lc?: string }
+  | { op: "u"; k: "v" | "s" | "l"; t?: string }
   | { op: "x" }
   | { op: "l" };
+
+/** Actual MSID track IDs by MID, after setLocalDescription (sender reuse may
+ * preserve an older MSID even when the capture MediaStreamTrack.id changes). */
+export function publishedTrackIds(sdp: string): Map<string, string> {
+  const bindings = new Map<string, string>();
+  const parts = sdp.split(/\r?\nm=/);
+  const sections = parts.slice(1).map((section) => section.split(/\r?\n/));
+  const groups = parts[0]!
+    .split(/\r?\n/)
+    .filter((line) => line.startsWith("a=group:BUNDLE "))
+    .map((line) => line.slice(15).trim().split(/\s+/));
+  for (const lines of sections) {
+    if (!lines[0]?.startsWith("video ")) continue;
+    const mid = lines.find((line) => line.startsWith("a=mid:"))?.slice(6);
+    if (
+      lines[0]?.split(/\s+/)[1] === "0" &&
+      !(
+        mid &&
+        lines.includes("a=bundle-only") &&
+        groups.some(
+          (group) =>
+            group.includes(mid) &&
+            sections.some(
+              (master) =>
+                master.includes(`a=mid:${group[0]}`) &&
+                master[0]?.split(/\s+/)[1] !== "0",
+            ),
+        )
+      )
+    )
+      continue;
+    if (lines.includes("a=recvonly") || lines.includes("a=inactive")) continue;
+    const msid =
+      lines.find((line) => line.startsWith("a=msid:"))?.slice(7) ??
+      lines.find((line) => /^a=ssrc:\d+ msid:/.test(line))?.split(" msid:")[1];
+    const trackId = msid?.trim().split(/\s+/)[1];
+    if (mid && trackId) bindings.set(mid, trackId);
+  }
+  return bindings;
+}
 
 export type MediaServerFrame =
   | { op: "ok"; c: string; u: string }
   | { op: "o"; sdp: string }
   | { op: "a"; sdp: string }
   | { op: "i"; ice: string; mid?: string }
-  | { op: "err"; e: string };
+  | { op: "err"; e: string; lc?: string };
 
 export type MediaSocket = {
   send(frame: MediaClientFrame): void;

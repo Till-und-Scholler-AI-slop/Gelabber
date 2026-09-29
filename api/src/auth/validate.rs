@@ -91,7 +91,9 @@ pub fn avatar_url(raw: &str, errors: &mut FieldErrors) -> Option<Option<String>>
     }
     const SCHEME: &str = "https://";
     let has_host = value.len() > SCHEME.len()
-        && value[..SCHEME.len()].eq_ignore_ascii_case(SCHEME)
+        && value
+            .get(..SCHEME.len())
+            .is_some_and(|prefix| prefix.eq_ignore_ascii_case(SCHEME))
         && !value[SCHEME.len()..].starts_with(['/', '.', '?', '#']);
     if !has_host || value.chars().any(|c| c.is_whitespace() || c.is_control()) {
         errors.insert("avatar_url", "invalid");
@@ -187,6 +189,8 @@ mod tests {
             Some(Some("HTTPS://cdn.example/a.png".to_owned()))
         );
         for raw in [
+            "aaaaaaaéx",
+            "🦀🦀🦀",
             "javascript:alert(1)",
             "ftp://x/y",
             "https://",

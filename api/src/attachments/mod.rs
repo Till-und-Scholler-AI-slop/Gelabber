@@ -5,6 +5,7 @@
 //! file body. Downloads go through this module so there is no public
 //! object URL without a membership check.
 
+pub mod cleanup;
 pub mod validate;
 
 use std::collections::HashMap;
@@ -17,7 +18,7 @@ use axum::response::{IntoResponse, Json, Redirect, Response};
 use axum::routing::{get, post};
 use serde::{Deserialize, Serialize};
 use sqlx::{FromRow, PgPool, Postgres, Transaction};
-use tracing::{info, warn};
+use tracing::info;
 use uuid::Uuid;
 
 use crate::auth::session::CurrentUser;
@@ -76,6 +77,7 @@ struct PendingRow {
     content_type: String,
     size_bytes: i64,
     message_id: Option<Uuid>,
+    expired: bool,
 }
 
 #[derive(Debug, FromRow)]
@@ -128,8 +130,6 @@ async fn presign(
     let content_type = content_type.expect("validated");
     let size = size.expect("validated");
 
-    limits::check_upload_quota(&state, user.id, size).await?;
-
     if let Err(err) = state.store.ensure_ready().await {
         return Err(store_internal(err));
     }
@@ -141,10 +141,24 @@ async fn presign(
         .presign_put(&object_key, &content_type, size)
         .map_err(store_internal)?;
 
+    let mut tx = state.db.begin().await?;
+    // Parent locks precede the ledger lock. A concurrent parent cascade must
+    // not hold the channel while waiting for a quota row owned by this insert.
+    sqlx::query_scalar::<_, Uuid>("SELECT id FROM users WHERE id=$1 FOR KEY SHARE")
+        .bind(user.id)
+        .fetch_optional(&mut *tx)
+        .await?
+        .ok_or(ApiError::Unauthenticated)?;
+    sqlx::query_scalar::<_, Uuid>("SELECT id FROM channels WHERE id=$1 FOR KEY SHARE")
+        .bind(channel_id)
+        .fetch_optional(&mut *tx)
+        .await?
+        .ok_or(ApiError::NotFound)?;
+    let quota_day = limits::reserve_upload_quota(&state, &mut tx, user.id, size).await?;
     sqlx::query(
         "INSERT INTO attachments \
-         (id, channel_id, uploader_id, object_key, filename, content_type, size_bytes) \
-         VALUES ($1, $2, $3, $4, $5, $6, $7)",
+         (id, channel_id, uploader_id, object_key, filename, content_type, size_bytes, quota_day) \
+         VALUES ($1, $2, $3, $4, $5, $6, $7, $8)",
     )
     .bind(id)
     .bind(channel_id)
@@ -153,8 +167,10 @@ async fn presign(
     .bind(&filename)
     .bind(&content_type)
     .bind(size)
-    .execute(&state.db)
+    .bind(quota_day)
+    .execute(&mut *tx)
     .await?;
+    tx.commit().await?;
 
     info!(
         channel_id = %channel_id,
@@ -190,7 +206,7 @@ async fn download(
     let row = sqlx::query_as::<_, StoredRow>(
         "SELECT id, message_id, channel_id, uploader_id, object_key, \
                 filename, content_type, size_bytes \
-         FROM attachments WHERE id = $1",
+         FROM attachments WHERE id = $1 AND (message_id IS NOT NULL OR expires_at > now())",
     )
     .bind(attachment_id)
     .fetch_optional(&state.db)
@@ -299,8 +315,8 @@ pub async fn bind_to_message(
     for id in ids {
         let row = sqlx::query_as::<_, PendingRow>(
             "SELECT id, channel_id, uploader_id, object_key, filename, \
-                    content_type, size_bytes, message_id \
-             FROM attachments WHERE id = $1",
+                    content_type, size_bytes, message_id, expires_at <= now() AS expired \
+             FROM attachments WHERE id = $1 FOR UPDATE",
         )
         .bind(id)
         .fetch_optional(&mut **tx)
@@ -309,6 +325,7 @@ pub async fn bind_to_message(
         if row.channel_id != channel_id
             || row.uploader_id != uploader_id
             || row.message_id.is_some()
+            || row.expired
         {
             return Err(ApiError::Validation(FieldErrors::from([(
                 "attachment_ids",
@@ -326,22 +343,14 @@ pub async fn bind_to_message(
             Err(err) => return Err(store_internal(err)),
         };
         if meta.size != row.size_bytes {
-            // Truncated or swapped body. Drop it so a failed upload is not
-            // left in the bucket and cannot be attached later.
-            if let Err(err) = store.delete(&row.object_key).await {
-                warn!(
-                    error = %err,
-                    key = %row.object_key,
-                    "could not discard mismatched upload"
-                );
-            }
+            // The caller rolls back message creation before durable quarantine.
             return Err(ApiError::Validation(FieldErrors::from([(
                 "size", "invalid",
             )])));
         }
         let updated = sqlx::query_as::<_, AttachmentRow>(
-            "UPDATE attachments SET message_id = $2 \
-             WHERE id = $1 AND message_id IS NULL \
+            "UPDATE attachments SET message_id = $2, quota_state='consumed' \
+             WHERE id = $1 AND message_id IS NULL AND expires_at > clock_timestamp() \
              RETURNING id, message_id, filename, content_type, size_bytes",
         )
         .bind(id)
@@ -352,26 +361,6 @@ pub async fn bind_to_message(
         bound.push(updated.into());
     }
     Ok(bound)
-}
-
-pub async fn drop_objects(store: &ObjectStore, message_id: Uuid, db: &PgPool) {
-    let keys: Vec<String> =
-        match sqlx::query_scalar("SELECT object_key FROM attachments WHERE message_id = $1")
-            .bind(message_id)
-            .fetch_all(db)
-            .await
-        {
-            Ok(keys) => keys,
-            Err(err) => {
-                warn!(error = %err, %message_id, "could not list attachment keys");
-                return;
-            }
-        };
-    for key in keys {
-        if let Err(err) = store.delete(&key).await {
-            warn!(error = %err, %key, "attachment object delete failed");
-        }
-    }
 }
 
 fn store_internal(err: StoreError) -> ApiError {

@@ -1,0 +1,90 @@
+{
+  "scope": "own-SFU media proxy and attestation coupling, source-only P2 fix",
+  "parent": "e2374bba564ae7401545e427ac32ef49af4398c3",
+  "reviewedATarget": "5f841f932be6d78435e2d9daf42f2e08e2a45ae8",
+  "completeAcceptance": false,
+  "red": {
+    "path": "/tmp/gelabber-e2e/media-route-old-source-control.log",
+    "sha256": "6aa4ef5b93fb1e005f7a6a517267a722073626977fe55992469008fd5a8faeea",
+    "source": "exact parent with only new actual-source regressions",
+    "exit": 1,
+    "tests": 12,
+    "failures": 2
+  },
+  "green": {
+    "path": "/tmp/gelabber-e2e/media-route-index-checks.json",
+    "sha256": "070c2323bc871061e04ce41271665655b086849d7430cef3693686c3d5b5845b",
+    "at": "2026-09-28T18:24:40.567268+00:00",
+    "scope": "exact parent+index extracted source; no native runtime",
+    "node": "v26.8.2",
+    "sourceTreeBeforeEvidence": "00cffe848dc2a13f82aeeed21cf3ba502afa2244",
+    "checks": [
+      {
+        "file": "teardown.checks.mjs",
+        "exit": 0,
+        "tests": 12,
+        "skipped": 0,
+        "output": "\u2714 exact runner attempts API/cache cleanup after web.close rejects and records only redacted FAIL (4.245228ms)\n\u2714 exact own-SFU runner rejects mismatched media override before API/SFU acquisition with both adapters on or off (4.547366ms)\n\u2714 exact own-SFU runner routes only to returned attested origin with default or equal explicit override (2.755703ms)\n\u2714 unexpected acquired SFU origin cannot reach Vite/run; all acquired resources still close (1.27982ms)\n\u2714 exact runner attempts every restore/close even with multiple failures and failed artifact writes (1.1452ms)\n\u2714 exact runner startup failure retains nonzero and still attempts every acquired resource (1.068481ms)\n\u2714 API teardown continues across failed lock, restore, close and log stages without mutating proxy order (0.713379ms)\n\u2714 exact startFaultApi.close releases remaining proxies/log and stops the own locker after lock pipe failure (1.911033ms)\n\u2714 successful actions leave gate unchanged and preserve sequential teardown order (1.073693ms)\n\u2714 media close and API resume failures cannot skip remaining owned runtime/cache cleanup (1.34841ms)\n\u2714 exact runner rejects invalid adapter combinations before acquiring API or SFU resources (3.257572ms)\n\u2714 exact adapter runner records equal baseline hashes and makes changed baseline or report failure nonzero after all cleanup (3.852487ms)\n\u2139 tests 12\n\u2139 suites 0\n\u2139 pass 12\n\u2139 fail 0\n\u2139 cancelled 0\n\u2139 skipped 0\n\u2139 todo 0\n\u2139 duration_ms 30.322957\n(node:3) ExperimentalWarning: VM Modules is an experimental feature and might change at any time\n(Use `node --trace-warnings ...` to show where the warning was created)\n"
+      },
+      {
+        "file": "browser-options.checks.mjs",
+        "exit": 0,
+        "tests": 3,
+        "skipped": 0,
+        "output": "\u2714 loopback ICE is absent by default, requires explicit Firefox relay, and never changes autoplay (1.243479ms)\n\u2714 SFU topology adapter requires Firefox relay and the separately explicit browser adapter (0.286433ms)\n\u2714 adapter env guards reject unknown values and require separate own control env before runtime start (0.360915ms)\n\u2139 tests 3\n\u2139 suites 0\n\u2139 pass 3\n\u2139 fail 0\n\u2139 cancelled 0\n\u2139 skipped 0\n\u2139 todo 0\n\u2139 duration_ms 6.537396\n"
+      },
+      {
+        "file": "media-runtime.checks.mjs",
+        "exit": 0,
+        "tests": 3,
+        "skipped": 0,
+        "output": "\u2714 own SFU child-stop failure still closes private log and exposes only controlled teardown steps (7.759145ms)\n\u2714 own SFU refuses a shared port before spawn; successful owned teardown remains bounded and ordered (3.715551ms)\n\u2714 SFU loopback is refused without opt-in, validates private control endpoints, and never inherits a port maximum (6.084327ms)\n\u2139 tests 3\n\u2139 suites 0\n\u2139 pass 3\n\u2139 fail 0\n\u2139 cancelled 0\n\u2139 skipped 0\n\u2139 todo 0\n\u2139 duration_ms 20.766058\n(node:22) ExperimentalWarning: VM Modules is an experimental feature and might change at any time\n(Use `node --trace-warnings ...` to show where the warning was created)\n"
+      }
+    ],
+    "lint": {
+      "exit": 0,
+      "output": ""
+    },
+    "moduleSha256": {
+      "teardown.mjs": "5bb7d0d8e023d23ab242eb8ac8b77a722d0a38c60f5df6637b86938b97419e9a",
+      "teardown.checks.mjs": "22f033c552b92bbe9e20e06c3ad51d993ecc46dcf7799da4d6623448aab7a5b1",
+      "storage-faults.mjs": "e0408378060689e8584c014f90e2d3771dc611b86bfce3bc5328a3b71ada01fb",
+      "selection.mjs": "b8a445a817880843e833510d92dfdaf3150fff643f4b4ae5aa6906cd3913f771",
+      "s3-object.mjs": "1bce9abf11b4aa30e0e62b6063eb283baed30894e8f816787c379dd43ea63168",
+      "run.mjs": "1ec28ba1b1f029f0b12f6eb9ddca5efdf93dce2ad8b36ad2612e9e7a176eb12c",
+      "rendered-frames.checks.mjs": "4e5bf1be45d1eb0914625d08b35623e48ccca80dc4c35337deff13dd63571780",
+      "redis-command.mjs": "b6d801eb136a072b8a00bc2982d16934bdc4cf90c06ef28b67be4ad5a160706b",
+      "realtime-faults.mjs": "71626d7a152521529f35b1c192760b2ac809bdb56955473507362fd9fe74db62",
+      "profiles.mjs": "5de2ecb2306c0f97c5c98700a7d77c2c57af0a65388a545f8f2411b7aadc3c19",
+      "probe.mjs": "0b7aea113ba651b96d3b6a9e325f9436af9a9ffc06b33ddb27cb6f4033e7f91c",
+      "native-finish.checks.mjs": "0b61ec4d2796d448c92ed36dca1dd66052c4c6ca1844874f59f44462d2910c75",
+      "native-evaluate.mjs": "89294f744f2c6a0d88e90975a944e96e49b2bf1c829ba377ccaa17a19b1564bf",
+      "native-evaluate.checks.mjs": "4b24b3854f84b04ee5037ed2fdff7f02c7f490fefd6ff882bac9285877d8a5fd",
+      "membership-faults.mjs": "e155ee73a21bc27b7e8a75fe8d865e0309b35f8ad38ee77296da0db3a7a5b3a5",
+      "media.mjs": "9ec1f8ffd4f382931c7fc345e8cf2bec1a22765a344326266118960d88cbad3d",
+      "media-runtime.mjs": "d9bc66d17009162fd6f70eec24b227fda607e601fc7a0011a7fadae698795b67",
+      "media-runtime.checks.mjs": "4569eabb3d4339914cd48a0fdea42ad3feae89a827f67aa4923682ff72787a91",
+      "media-probe.checks.mjs": "a43b9440303b7babf4d3b6ac56a25407c9d6294e9ffde68c8f09915d21a12af6",
+      "harness.mjs": "4425220c56f9da05e83896f1713c9ac800fe1b345507bcfc6b283c1440dec99d",
+      "harness.checks.mjs": "89564069db0e134a936088b2831b0eeac297777a8907523db9274efd276c9003",
+      "gateway-load.mjs": "c98da745c2ccc064829f71d1598a781eb1059177445c7c49dc7b5d07f7ed23d5",
+      "faults.mjs": "62fe2b0f812192bac2be6996049eec802db48097633c6367bd44018b6aa3a0d4",
+      "faults.checks.mjs": "9b013140e232dc052fe9b52755db20fb48267258b06fabec8ca546aae5afe11f",
+      "fault-runtime.mjs": "423684dfaddfdd65ca3021e95f842616563bef30dd8d99c70d477e9098bf7fee",
+      "fault-run.mjs": "39e5af6912f692478599cc2b9c4acc21ede1a877db72b79f4d5b6d8991769438",
+      "core.mjs": "90d46690fe1c6147d6fa54d7cc42372600ea6bc67a7b65a37a237bf4fca8fc03",
+      "ci-fault-prepare.mjs": "b0e7daa460f3db4edfa7cee1a59fb5e3e39b78d268d5dc4bf627b9bc4ea5f3f5",
+      "ci-fault-prepare.checks.mjs": "23c3faade08e8ff7a263442c0207ab323991748389c5023e67e51176995a0a5b",
+      "chat-faults.mjs": "a4d258f8084e4ed842e408ebca19cbe178b636afdf2a32068e8232c16417d767",
+      "browser-options.mjs": "e092d543702eca00f24258a23b1ae97c4d280f857732dc2d262568913e01e052",
+      "browser-options.checks.mjs": "155c1eb154e9def93a95cbf7885a37755f6d91af90c93bc9b60f9f176f7104a5",
+      "account-switch.mjs": "9dd5cc5a93f55ac74ba03f46e3435b0f8e7435569dc242ef597b764e42b0ef46",
+      "access.mjs": "c36e09098ae2176140890df6f7b24b26439f3c9a6991fed8bd017a008d1244ce"
+    }
+  },
+  "limits": [
+    "No API/SFU/browser acquisition in native infrastructure; all source controls mocked",
+    "Existing actual-app artifacts retain their original executing hashes",
+    "Independent followup review required; immutable A not amended"
+  ]
+}
