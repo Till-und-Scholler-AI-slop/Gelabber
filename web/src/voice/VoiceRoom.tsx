@@ -6,15 +6,12 @@ import { useState } from "react";
 
 import { can } from "../servers/permissions.ts";
 import type { ServerDetail } from "../servers/types.ts";
-import { VoiceControls } from "../components/VoiceControls.tsx";
 import { VoiceStateIcons } from "../components/VoiceStateIcons.tsx";
 import { MemberProfileDialog } from "../components/MemberProfileDialog.tsx";
 import { Avatar } from "../components/Avatar.tsx";
 import { GearIcon, SpeakerIcon } from "../components/Icons.tsx";
 import { useSession } from "../auth/session.ts";
-import { joinVoice, stopWatching, useVoice, watchLive } from "./session.ts";
-import { useVoiceDiagnostics } from "./diagnostics.ts";
-import { VoiceDiagnostics } from "./VoiceDiagnostics.tsx";
+import { joinVoice, useVoice, watchLive } from "./session.ts";
 import { useMediaSettings } from "./settings.ts";
 import { EMPTY_OCCUPANCY, liveOf, useVoiceRoster } from "./roster.ts";
 import { VoiceTile } from "./VoiceTile.tsx";
@@ -31,7 +28,6 @@ export function VoiceRoom({
   channelName: string;
 }) {
   const allowed = can(server, "join_voice");
-  const canStartLive = can(server, "go_live");
   const voice = useVoice();
   const user = useSession((s) => s.user);
   const me = user?.id;
@@ -51,13 +47,6 @@ export function VoiceRoom({
   const liveStreamFor = (id: string) =>
     (here ? voice.remote[id]?.l : null) ??
     (watching && voice.watchPublisherId === id ? voice.watchStream : null);
-  const showDiagnostics = useVoiceDiagnostics(
-    (state) =>
-      state.samples.length > 0 ||
-      state.events.length > 0 ||
-      state.polling.voice ||
-      state.polling.watch,
-  );
   const roomKey = `${server.id}/${channelId}`;
   const [testingMicrophone, setTestingMicrophone] = useState<string | null>(
     null,
@@ -169,7 +158,7 @@ export function VoiceRoom({
   return (
     <section className="voice-room" aria-label={channelName}>
       <header className="voice-room-heading">
-        <SpeakerIcon size={36} />
+        <SpeakerIcon size={28} />
         <div>
           <h2>
             {channelName}
@@ -270,32 +259,30 @@ export function VoiceRoom({
           </li>
         ) : null}
       </ul>
-      <div className="voice-room-actions">
-        {here ? (
-          <VoiceControls canGoLive={canStartLive} />
-        ) : allowed ? (
+      {!here ? (
+        <div className="voice-room-actions">
+          {allowed ? (
+            <button
+              type="button"
+              aria-label="Beitreten"
+              onClick={onJoin}
+              className="voice-room-button voice-room-join"
+            >
+              <SpeakerIcon size={20} />
+              Dazukommen
+            </button>
+          ) : (
+            <p className="voice-room-muted">
+              Du hast in diesem Server kein Recht, Voice beizutreten.
+            </p>
+          )}
           <button
             type="button"
-            aria-label="Beitreten"
-            onClick={onJoin}
-            className="voice-room-button voice-room-join"
+            onClick={() => setTestingMicrophone(roomKey)}
+            className="voice-room-text-button"
           >
-            <SpeakerIcon size={24} />
-            Dazukommen
+            Mikrofon testen
           </button>
-        ) : (
-          <p className="voice-room-muted">
-            Du hast in diesem Server kein Recht, Voice beizutreten.
-          </p>
-        )}
-        <button
-          type="button"
-          onClick={() => setTestingMicrophone(roomKey)}
-          className="voice-room-text-button"
-        >
-          Mikrofon testen
-        </button>
-        {!here ? (
           <button
             type="button"
             aria-label="Voice-Einstellungen"
@@ -305,35 +292,25 @@ export function VoiceRoom({
             <GearIcon size={16} />
             Einstellungen
           </button>
-        ) : null}
-      </div>
+        </div>
+      ) : null}
       {!here && allowed && voice.status === "joined" ? (
         <p className="voice-room-muted voice-room-switch-note">
           Du wechselst aus {voice.channelName ?? "deinem Sprachkanal"}. Stumm
           und Taub bleiben erhalten.
         </p>
       ) : null}
-      {watching || (!here && liveOn && allowed) ? (
+      {!watching && !here && liveOn && allowed ? (
         <div className="voice-room-watch-actions">
-          {watching ? (
-            <button
-              type="button"
-              onClick={() => stopWatching()}
-              className="voice-room-button"
-            >
-              Nicht mehr zuschauen
-            </button>
-          ) : (
-            <button
-              type="button"
-              onClick={() =>
-                watchLive({ serverId: server.id, channelId, channelName })
-              }
-              className="voice-room-button"
-            >
-              Zuschauen
-            </button>
-          )}
+          <button
+            type="button"
+            onClick={() =>
+              watchLive({ serverId: server.id, channelId, channelName })
+            }
+            className="voice-room-button"
+          >
+            Zuschauen
+          </button>
         </div>
       ) : null}
       {showStage ? (
@@ -419,7 +396,6 @@ export function VoiceRoom({
           )}
         </div>
       ) : null}
-      {here || watching || showDiagnostics ? <VoiceDiagnostics /> : null}
       {profile?.serverId === server.id ? (
         <MemberProfileDialog
           server={server}

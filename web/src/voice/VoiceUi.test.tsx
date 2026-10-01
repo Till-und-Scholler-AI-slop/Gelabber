@@ -223,6 +223,11 @@ describe("active media UI", () => {
     expect(html).toContain("Taub");
     expect(html).not.toContain("Du bist noch nicht verbunden");
     expect(html).not.toContain("Dazukommen");
+    expect(html).not.toContain('aria-label="Mikrofon aus"');
+    expect(html).not.toContain("Verlassen");
+    const controls = renderToStaticMarkup(<VoiceSessionControls />);
+    expect(controls).toContain('aria-label="Mikrofon an"');
+    expect(controls).toContain("Verlassen");
   });
 
   it("keeps camera and screen media scoped to the exact active server and channel", () => {
@@ -255,7 +260,7 @@ describe("active media UI", () => {
     expect(render("a", "other")).not.toContain('data-source="source-from-a"');
   });
 
-  it("respects join rights while retaining the stop action for an independent Watch", () => {
+  it("respects join rights and keeps the Watch stop action in the persistent bar", () => {
     const html = renderToStaticMarkup(
       <VoiceRoom
         server={{ ...server, permissions: [] }}
@@ -265,7 +270,10 @@ describe("active media UI", () => {
     );
     expect(html).not.toContain('aria-label="Beitreten"');
     expect(html).toContain("kein Recht");
-    expect(html).toContain("Nicht mehr zuschauen");
+    expect(html).not.toContain("Nicht mehr zuschauen");
+    expect(renderToStaticMarkup(<VoiceSessionControls />)).toContain(
+      "Nicht mehr zuschauen",
+    );
     expect(html).toContain("Mikrofon testen");
   });
 

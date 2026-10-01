@@ -13,7 +13,7 @@ import { ChatIcon, PlusIcon } from "./Icons.tsx";
 import { CreateServerDialog } from "./ServerDialogs.tsx";
 import { initials } from "./initials.ts";
 
-const TILE_PX = 80;
+const TILE_PX = 60;
 
 export function ServerRail({
   activeId,
@@ -36,7 +36,7 @@ export function ServerRail({
           aria-label="Server erstellen"
           className="server-create-button"
         >
-          <PlusIcon size={25} />
+          <PlusIcon size={20} />
         </button>
       </div>
       <CreateServerDialog open={creating} onClose={() => setCreating(false)} />
@@ -67,7 +67,7 @@ function HomeTile({ active }: { active: boolean }) {
         }}
         className={`server-home-link ${active ? "is-active" : ""}`}
       >
-        <ChatIcon size={34} />
+        <ChatIcon size={27} />
       </Link>
     </div>
   );

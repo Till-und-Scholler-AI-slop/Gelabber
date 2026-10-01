@@ -7,7 +7,7 @@ import { presenceOf, usePresenceStore } from "../ws/live.ts";
 import { PresenceAvatar } from "./PresenceAvatar.tsx";
 import { UserPanel } from "./UserPanel.tsx";
 
-const ROW_PX = 60;
+const ROW_PX = 48;
 
 export function DmSidebar({
   dms,

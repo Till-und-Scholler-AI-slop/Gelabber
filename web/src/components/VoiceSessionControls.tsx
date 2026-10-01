@@ -25,7 +25,7 @@ export function VoiceSessionControls() {
     const update = () =>
       document.documentElement.style.setProperty(
         "--lr-media-space",
-        `${Math.ceil(dock.getBoundingClientRect().height) + 24}px`,
+        `${Math.ceil(dock.getBoundingClientRect().height)}px`,
       );
     update();
     const observer = new ResizeObserver(update);
@@ -44,7 +44,7 @@ export function VoiceSessionControls() {
       className="voice-session-dock"
     >
       {voice.status === "joined" && voice.serverId && voice.channelId ? (
-        <div>
+        <div className="voice-session-call">
           <Link
             to="/s/$serverId/c/$channelId"
             params={{ serverId: voice.serverId, channelId: voice.channelId }}

@@ -72,8 +72,8 @@ function sidebarRows(server: ServerDetail): SidebarRow[] {
 }
 
 function sidebarRowHeight(row: SidebarRow | undefined): number {
-  if (row?.kind === "category" || row?.kind === "section") return 44;
-  return row?.kind === "empty" ? 28 : 52;
+  if (row?.kind === "category" || row?.kind === "section") return 34;
+  return row?.kind === "empty" ? 28 : 42;
 }
 
 export function ChannelSidebar({
@@ -146,7 +146,7 @@ export function ChannelSidebar({
         aria-current={pathname === `/s/${server.id}` ? "page" : undefined}
         activeOptions={{ exact: true }}
       >
-        <ChatIcon size={25} />
+        <ChatIcon size={20} />
         Übersicht
       </Link>
       <ChannelList
@@ -166,7 +166,7 @@ export function ChannelSidebar({
       />
 
       <Link to="/d" className="sidebar-messages">
-        <ChatIcon size={24} />
+        <ChatIcon size={20} />
         Nachrichten
       </Link>
       {manageChannels ? (

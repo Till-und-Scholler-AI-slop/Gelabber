@@ -1,14 +1,14 @@
 .voice-room {
   width: 100%;
   min-width: 0;
-  padding: 42px clamp(20px, 4vw, 46px) 48px;
+  padding: 28px 28px 32px;
   color: var(--lr-text);
   text-align: left;
 }
 .voice-room-heading {
   display: flex;
   align-items: flex-start;
-  gap: 24px;
+  gap: 14px;
 }
 .voice-room-heading > svg {
   flex-shrink: 0;
@@ -21,20 +21,21 @@
   align-items: center;
   gap: 12px;
   margin: 0;
-  font-size: clamp(26px, 2.6vw, 35px);
+  font-size: 24px;
   font-weight: 680;
   line-height: 1.25;
-  letter-spacing: -0.6px;
+  letter-spacing: -0.4px;
   overflow-wrap: anywhere;
 }
 .voice-room-heading p {
-  margin: 7px 0 0;
+  margin: 5px 0 0;
   color: var(--lr-muted);
-  font-size: 20px;
+  font-size: 15px;
 }
 .voice-room-empty {
   color: var(--lr-muted);
-  margin: 24px 0 0;
+  margin: 18px 0 0;
+  font-size: 14px;
 }
 .voice-room-live-badge {
   border-radius: 5px;
@@ -47,12 +48,12 @@
 }
 .voice-room-participants {
   display: grid;
-  grid-template-columns: repeat(auto-fill, minmax(130px, 1fr));
-  gap: 26px 20px;
+  grid-template-columns: repeat(auto-fill, minmax(108px, 1fr));
+  gap: 20px 16px;
   list-style: none;
-  margin: 32px 0 0;
+  margin: 24px 0 0;
   padding: 0;
-  max-width: 850px;
+  max-width: 640px;
 }
 .voice-room-participant {
   display: flex;
@@ -64,7 +65,7 @@
 }
 .voice-room-avatar {
   position: relative;
-  width: 124px;
+  width: 84px;
   max-width: 100%;
   aspect-ratio: 1;
 }
@@ -73,29 +74,29 @@
   height: 100%;
   background: var(--lr-surface);
   color: var(--lr-text);
-  font-size: 34px;
+  font-size: 26px;
 }
 .voice-room-connection {
   position: absolute;
-  width: 20px;
-  height: 20px;
+  width: 15px;
+  height: 15px;
   bottom: 4%;
   right: 5%;
-  border: 3px solid var(--lr-bg);
+  border: 2px solid var(--lr-bg);
   border-radius: 50%;
   background: #80cc95;
 }
 .voice-room-participant strong {
   max-width: 100%;
   overflow-wrap: anywhere;
-  margin-top: 10px;
-  font-size: 17px;
+  margin-top: 6px;
+  font-size: 14px;
   font-weight: 600;
 }
 .voice-room-participant-status,
 .voice-room-participant-media {
   color: var(--lr-muted);
-  font-size: 14px;
+  font-size: 12px;
   line-height: 1.45;
 }
 .voice-room-participant > span[title] {
@@ -112,8 +113,8 @@
   display: flex;
   flex-wrap: wrap;
   align-items: center;
-  gap: 14px 24px;
-  margin-top: 24px;
+  gap: 10px 18px;
+  margin-top: 20px;
 }
 .voice-room-button,
 .voice-control {
@@ -121,13 +122,13 @@
   align-items: center;
   justify-content: center;
   gap: 8px;
-  min-height: 44px;
-  padding: 10px 16px;
+  min-height: 36px;
+  padding: 7px 10px;
   border: 1px solid var(--lr-border);
-  border-radius: 9px;
+  border-radius: 7px;
   background: var(--lr-surface);
   color: var(--lr-text);
-  font-size: 14px;
+  font-size: 13px;
   font-weight: 600;
   cursor: pointer;
   transition: background 0.15s;
@@ -143,9 +144,9 @@
   border-color: var(--lr-accent);
 }
 .voice-room-join {
-  min-width: 270px;
-  min-height: 58px;
-  font-size: 18px;
+  min-width: 180px;
+  min-height: 44px;
+  font-size: 15px;
 }
 .voice-room-join:hover,
 .voice-room-primary:hover {
@@ -161,6 +162,7 @@
   text-decoration: underline;
   text-underline-offset: 3px;
   cursor: pointer;
+  font-size: 13px;
 }
 .voice-room-text-button:hover {
   color: var(--lr-text);
@@ -231,38 +233,40 @@
   color: #eb9c91;
 }
 .voice-control-compact {
-  padding: 8px 10px;
+  padding: 7px 9px;
 }
 .voice-playback-volume {
   display: inline-flex;
   align-items: center;
-  min-height: 44px;
-  padding: 0 6px;
+  min-height: 36px;
+  padding: 0 4px;
   color: var(--lr-muted);
 }
 .voice-volume-slider {
-  width: 88px;
+  width: 64px;
   accent-color: var(--lr-accent);
 }
 .voice-session-dock {
   position: fixed;
   z-index: 40;
-  right: 16px;
-  bottom: 16px;
+  right: 0;
+  bottom: 0;
   display: flex;
   flex-direction: column;
-  gap: 12px;
-  width: 440px;
-  max-width: calc(100vw - 32px);
-  max-height: min(320px, 50dvh);
+  gap: 8px;
+  width: auto;
+  max-width: none;
+  max-height: min(220px, 50dvh);
   overflow-y: auto;
-  padding: 14px;
-  border: 1px solid var(--lr-border);
-  border-radius: 14px;
+  padding: 8px 16px calc(8px + env(safe-area-inset-bottom));
+  border: 0;
+  border-radius: 0;
   color: var(--lr-text);
   background: var(--lr-panel);
-  box-shadow: 0 8px 28px #0004;
-  font-size: 13px;
+  box-shadow: none;
+  font-size: 12px;
+  left: 0;
+  border-top: 1px solid var(--lr-border);
 }
 .voice-session-link {
   display: block;
@@ -271,7 +275,7 @@
   text-overflow: ellipsis;
   white-space: nowrap;
   font-weight: 600;
-  margin-bottom: 6px;
+  margin-bottom: 0;
 }
 .voice-session-link:hover {
   text-decoration: underline;
@@ -282,6 +286,7 @@
   align-items: center;
   justify-content: space-between;
   gap: 12px;
+  flex-wrap: wrap;
 }
 .voice-session-watch > button,
 .voice-session-playback > button {
@@ -307,7 +312,7 @@
 /* The shell reserves the measured dock height with has-active-media. */
 @media (max-width: 640px) {
   .voice-room {
-    padding: 24px 24px 32px;
+    padding: 24px 24px 28px;
   }
   .voice-room-heading {
     gap: 14px;
@@ -317,14 +322,14 @@
     height: 28px;
   }
   .voice-room-heading p {
-    font-size: 17px;
+    font-size: 15px;
   }
   .voice-room-participants {
     grid-template-columns: repeat(2, minmax(0, 1fr));
     gap: 24px 16px;
   }
   .voice-room-avatar {
-    width: 108px;
+    width: 80px;
   }
   .voice-room-actions {
     gap: 10px 20px;
@@ -334,13 +339,7 @@
     min-width: 0;
   }
   .voice-session-dock {
-    bottom: calc(10px + env(safe-area-inset-bottom));
-    right: 10px;
-    width: calc(100vw - 20px);
-    max-width: none;
-    max-height: min(260px, 50dvh);
-    padding: 10px;
-    gap: 8px;
+    padding: 8px 12px calc(8px + env(safe-area-inset-bottom));
   }
   .voice-session-dock .voice-controls {
     gap: 4px;
@@ -374,4 +373,52 @@
 .voice-room-profile-name {
   color: inherit;
   text-align: center;
+}
+
+/* A single bottom bar, aligned with the workspace content on desktop. */
+.app-shell-workspace .voice-session-dock {
+  left: var(--lr-navigation-width);
+}
+.voice-session-call {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px 20px;
+  min-width: 0;
+}
+.voice-session-call > .voice-session-link {
+  flex: 1 1 140px;
+}
+.voice-session-call > .voice-controls {
+  margin-left: auto;
+}
+.voice-session-dock .voice-controls {
+  gap: 6px;
+}
+@media (max-width: 800px) {
+  .app-shell-workspace .voice-session-dock {
+    left: 0;
+  }
+}
+@media (max-width: 640px) {
+  .voice-session-call {
+    gap: 6px;
+  }
+  .voice-session-call > .voice-session-link {
+    flex-basis: 100%;
+  }
+  .voice-session-call > .voice-controls {
+    margin-left: 0;
+  }
+  .voice-session-dock .voice-controls {
+    gap: 4px;
+  }
+  .voice-session-call .voice-playback-volume {
+    display: none;
+  }
+  .voice-session-dock .voice-control {
+    min-width: 40px;
+    min-height: 40px;
+  }
 }

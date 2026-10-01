@@ -5,6 +5,41 @@ final result: passed
 Reviewed on 2026-10-01. This is the approved Living Room design integrated into
 Gelabber's existing API, WebSocket gateway and SFU.
 
+## Current iteration: compact layout and bottom call bar
+
+Rafael requested smaller UI throughout and no controls in the middle of a call.
+This direction supersedes the original concept's large sizing. The comparison
+and measurements below under “Visual evidence” document the initial integration;
+the current iteration uses the following sizes and evidence:
+
+- Desktop rail/sidebar/members widths: 64 / 224 / 248 px. Welcome heading:
+  36 px maximum instead of 54 px. Room avatars: 84 px instead of 124 px.
+  Navigation rows and virtualizer estimates were reduced together; chat keeps
+  readable 14 px text and phone inputs retain 16 px text.
+- Joined-room controls and the duplicate watch-stop button were removed from
+  the center. One persistent bar holds the real controls across navigation.
+  It sits against the bottom edge, aligned after the sidebar on desktop, and
+  spans the phone viewport. The measured 53 px desktop / 81 px phone height is
+  reserved above the composer. On phones, playback volume is available through
+  the bar's Voice settings button. Diagnostics are also in Voice settings.
+- Current 1:1 CSS-density captures: `compact-overview-desktop.png` (1487 × 1058)
+  and `compact-overview-mobile.png` (390 × 844) in the existing evidence folder;
+  `compact/desktop-active-call.png` and `compact/call-chat-390x844.png` show the
+  actual connected call. Compare with the earlier empty-room and call-chat
+  captures at the same sizes and interaction states.
+- Typography and spacing are intentionally denser. Palette, landscape asset,
+  real-state copy and account imagery behavior remain as reviewed below.
+  Desktop/mobile captures have no clipping, overlap or horizontal overflow.
+  The room remains clear while joined; call actions stay at the bottom.
+- Regression evidence: `compact/media-regression.json` passed four selected
+  real-backend scenarios for watching, navigation, camera/screen/live identity
+  and responsive controls. The last checks a single control set in the room,
+  bottom alignment, accessible call buttons and an uncovered chat composer at
+  five viewport sizes. Browser console: zero errors or warnings.
+
+Current visual result: no actionable P0/P1/P2 findings. Changes to scale and
+control placement are intentional responses to the user's requested iteration.
+
 ## Visual evidence
 
 - Source: `.tools/living-room-preview/reference/living-room.png`.

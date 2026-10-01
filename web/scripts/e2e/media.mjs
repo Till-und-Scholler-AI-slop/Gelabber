@@ -498,6 +498,12 @@ export async function mediaScenarios(h, f) {
       await page.setViewportSize({ width: 1487, height: 1058 });
       await click(f.owner, "Beitreten");
       await page.getByRole("region", { name: "Aktive Medien" }).waitFor();
+      check(
+        (await page
+          .getByRole("button", { name: "Mikrofon aus", exact: true })
+          .count()) === 1,
+        "duplicate-in-room-call-controls",
+      );
       await page.locator(`a[href="${f.textPath}"]`).first().click();
       await page.locator("textarea").waitFor();
       for (const viewport of [
@@ -519,15 +525,34 @@ export async function mediaScenarios(h, f) {
                 rect.x + rect.width / 2,
                 rect.y + rect.height / 2,
               );
+              const dock = document.querySelector(".voice-session-dock");
+              const dockBounds = dock.getBoundingClientRect();
+              const callControlsUncovered = [
+                ...dock.querySelectorAll("button"),
+              ].every((button) => {
+                const bounds = button.getBoundingClientRect();
+                const target = document.elementFromPoint(
+                  bounds.x + bounds.width / 2,
+                  bounds.y + bounds.height / 2,
+                );
+                return target === button || button.contains(target);
+              });
               return {
                 sendUncovered: hit === send || send.contains(hit),
+                callControlsUncovered,
+                dockAtBottom:
+                  Math.abs(dockBounds.bottom - window.innerHeight) <= 1,
                 overflow: document.documentElement.scrollWidth > innerWidth,
                 channelsHeight: document
                   .querySelector(".sidebar-list-scroll")
                   .getBoundingClientRect().height,
               };
             }),
-          (state) => state.sendUncovered && !state.overflow,
+          (state) =>
+            state.sendUncovered &&
+            state.callControlsUncovered &&
+            state.dockAtBottom &&
+            !state.overflow,
           "call-dock-covers-chat-controls",
         );
         if (viewport.width <= 800) {
