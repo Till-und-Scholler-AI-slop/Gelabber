@@ -109,7 +109,10 @@ jobs:
       - name: Install Caddy
         run: |
           set -euo pipefail
-          curl -fsSL "https://caddyserver.com/api/download?os=linux&arch=amd64&version=v2.11.4" -o /usr/local/bin/caddy
+          caddy_archive="$(mktemp)"
+          trap 'rm -f "$caddy_archive"' EXIT
+          curl -fsSL "https://github.com/caddyserver/caddy/releases/download/v2.11.4/caddy_2.11.4_linux_amd64.tar.gz" -o "$caddy_archive"
+          tar -xzf "$caddy_archive" -C /usr/local/bin caddy
           chmod +x /usr/local/bin/caddy
           caddy version
           test "$(caddy version | cut -d ' ' -f 1)" = "v2.11.4"
