@@ -295,6 +295,99 @@ async fn twenty_stop_start_cycles_cancel_reader_and_pending_subscription() {
 }
 
 #[tokio::test]
+async fn subscriber_offer_waits_for_initial_transport_connection() {
+    let sfu = Arc::new(Sfu::new(&config()));
+    let channel = Uuid::new_v4();
+    let (publisher, _publisher_rx) = join(&sfu, channel).await;
+    let (subscriber, mut subscriber_rx) = join(&sfu, channel).await;
+    let room = sfu.find_room(channel).await.unwrap();
+    let (gate, pc) = {
+        let room = room.lock().await;
+        (
+            room.peers[&subscriber].sdp.clone(),
+            room.peers[&subscriber].pc.clone(),
+        )
+    };
+    // Initial SDP is answered, but ICE/DTLS is still connecting. A room
+    // publication must not trigger another offer in this window.
+    gate.lock().await.negotiated = true;
+    let (track, _events) = remote_kind("audio", RtpCodecKind::Audio);
+    sfu.publish(publisher, channel, track).await.unwrap();
+    for _ in 0..3 {
+        sfu.attach_existing_pubs(subscriber, channel).await;
+    }
+    {
+        let gate = gate.lock().await;
+        assert!(
+            !gate.have_local_offer,
+            "DTLS handshake must precede reoffer"
+        );
+        assert_eq!(gate.subscriptions.len(), 1);
+        assert!(matches!(
+            gate.subscriptions.values().next(),
+            Some(SubscriptionState::Pending(_))
+        ));
+    }
+    assert!(pc.get_senders().await.is_empty());
+    assert!(subscriber_rx.try_recv().is_err());
+
+    // The actual connection event releases that same pending publication;
+    // repeated events cannot create another sender or overlapping offer.
+    sfu.on_connected(subscriber, channel).await;
+    sfu.on_connected(subscriber, channel).await;
+    {
+        let gate = gate.lock().await;
+        assert!(gate.connected);
+        assert!(gate.have_local_offer);
+        assert_eq!(gate.subscriptions.len(), 1);
+        assert!(matches!(
+            gate.subscriptions.values().next(),
+            Some(SubscriptionState::Active(_))
+        ));
+    }
+    assert_eq!(pc.get_senders().await.len(), 1);
+    let mut offers = 0;
+    while let Ok(frame) = subscriber_rx.try_recv() {
+        offers += usize::from(matches!(frame, ServerFrame::Offer { .. }));
+    }
+    assert_eq!(offers, 1, "connection must flush exactly one pending offer");
+    sfu.leave(publisher, channel).await;
+    sfu.leave(subscriber, channel).await;
+}
+
+#[tokio::test]
+async fn publication_removed_before_connection_is_not_offered() {
+    let sfu = Arc::new(Sfu::new(&config()));
+    let channel = Uuid::new_v4();
+    let (publisher, _publisher_rx) = join(&sfu, channel).await;
+    let (subscriber, mut subscriber_rx) = join(&sfu, channel).await;
+    let room = sfu.find_room(channel).await.unwrap();
+    let (gate, pc) = {
+        let room = room.lock().await;
+        (
+            room.peers[&subscriber].sdp.clone(),
+            room.peers[&subscriber].pc.clone(),
+        )
+    };
+    gate.lock().await.negotiated = true;
+    sfu.announce_track(publisher, channel, "s", Some("screen"))
+        .await
+        .unwrap();
+    let (track, _events) = remote("screen");
+    sfu.publish(publisher, channel, track).await.unwrap();
+    sfu.retract_track(publisher, channel, "s", Some("screen"))
+        .await
+        .unwrap();
+    sfu.on_connected(subscriber, channel).await;
+    assert!(gate.lock().await.subscriptions.is_empty());
+    assert!(!gate.lock().await.have_local_offer);
+    assert!(pc.get_senders().await.is_empty());
+    assert!(subscriber_rx.try_recv().is_err());
+    sfu.leave(publisher, channel).await;
+    sfu.leave(subscriber, channel).await;
+}
+
+#[tokio::test]
 async fn offered_sender_is_deduplicated_and_removed_on_failed_offer() {
     let sfu = Arc::new(Sfu::new(&config()));
     let channel = Uuid::new_v4();
@@ -308,7 +401,11 @@ async fn offered_sender_is_deduplicated_and_removed_on_failed_offer() {
             room.peers[&subscriber].pc.clone(),
         )
     };
-    gate.lock().await.negotiated = true;
+    {
+        let mut gate = gate.lock().await;
+        gate.negotiated = true;
+        gate.connected = true;
+    }
     sfu.announce_track(publisher, channel, "v", Some("cam"))
         .await
         .unwrap();
@@ -508,7 +605,11 @@ async fn rollback_holds_gate_until_next_publication_can_create_offer() {
         peer.pc = blocked.clone();
         (peer.sdp.clone(), blocked)
     };
-    gate.lock().await.negotiated = true;
+    {
+        let mut gate = gate.lock().await;
+        gate.negotiated = true;
+        gate.connected = true;
+    }
     sfu.announce_track(publisher, channel, "s", Some("screen"))
         .await
         .unwrap();

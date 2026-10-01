@@ -59,6 +59,8 @@ docker compose up -d
 
 Zwei Modi. Sie müssen auf API und coturn gleich sein.
 
+Compose bietet TURN über UDP und TCP an. TCP ist der Ausweichpfad für Clients, deren Netz UDP zum Server blockiert; coturn leitet von dort weiterhin per UDP zum SFU weiter. Bei einem eigenen `TURN_URLS`-Eintrag beide Varianten aufnehmen, beispielsweise `stun:example.com:3478,turn:example.com:3478?transport=udp,turn:example.com:3478?transport=tcp`. Bestehende `.env`-Overrides werden durch ein Image-Update nicht ergänzt. TCP 3478 muss neben den dokumentierten UDP-Ports erreichbar sein; der gebündelte coturn veröffentlicht beide.
+
 **Statisch (Default).** `TURN_AUTH_SECRET` leer lassen. Das Ticket schickt `TURN_USERNAME` / `TURN_PASSWORD`. Der gebündelte coturn prüft genau diese Langzeit-Credentials (`--lt-cred-mech`). Ein externes TURN, das schon User/Passwort kennt, bleibt so erreichbar — auch wenn das Homelab-Overlay den gebündelten coturn abschaltet.
 
 **REST.** Denselben privaten Secret auf der API und auf coturn setzen (`TURN_AUTH_SECRET`, coturn `--use-auth-secret` / `--static-auth-secret`). Jedes Ticket bekommt dann zeitlich begrenzte HMAC-Credentials (`expiry:user`) statt des statischen Passworts. `TURN_CRED_TTL_SECS` (Default 21600) ist die Gültigkeit. Der gebündelte coturn schaltet dabei von allein auf REST um.
@@ -114,7 +116,7 @@ Grafana 13.2.1: `http://127.0.0.1:3000/d/gelabber/gelabber` (admin / `gelabber`,
 
 ## Images und Release-Gate
 
-Der Default zieht die App-Version `v0.2.5`; bestehende Release-Tags werden nicht überschrieben. MinIO verwendet unabhängig davon den bestehenden CE-Pin `RELEASE.2025-10-15T17-29-55Z`. Org-Pakete können privat sein: `docker login ghcr.io` oder lokal bauen. Alle Stack-Pins bleiben bestehen. Source-Build setzt `CARGO_HTTP_CAINFO`; bei TLS-Inspection hängt `docker/rust-build-ca.sh` die präsentierte Kette an.
+Der Default zieht die App-Version `v0.2.6`; bestehende Release-Tags werden nicht überschrieben. MinIO verwendet unabhängig davon den bestehenden CE-Pin `RELEASE.2025-10-15T17-29-55Z`. Org-Pakete können privat sein: `docker login ghcr.io` oder lokal bauen. Alle Stack-Pins bleiben bestehen. Source-Build setzt `CARGO_HTTP_CAINFO`; bei TLS-Inspection hängt `docker/rust-build-ca.sh` die präsentierte Kette an.
 
 CI läuft für **jeden main-Commit**, damit auch Deploy-/Workflow-Änderungen eine eindeutige CI-SHA besitzen. PR-Pfadfilter erfassen `shared/**`, alle Workspace-Mitglieder, Docker-Kontexte, Lockfiles und Workflows. Der Image-Workflow baut PRs ohne Push. Auf main startet er erst nach erfolgreichem `CI`-Push-Lauf derselben SHA; fehlgeschlagene/abgebrochene CI startet keinen Publish-Job.
 

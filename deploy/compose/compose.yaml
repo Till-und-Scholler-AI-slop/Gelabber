@@ -17,25 +17,25 @@ services:
     restart: unless-stopped
 
   web:
-    image: ${GELABBER_WEB_IMAGE:-ghcr.io/till-und-scholler-ai-slop/gelabber/web:v0.2.5}
+    image: ${GELABBER_WEB_IMAGE:-ghcr.io/till-und-scholler-ai-slop/gelabber/web:v0.2.6}
     pull_policy: missing
     build:
       context: ../../web
       dockerfile: Dockerfile
       tags:
-        - gelabber/web:v0.2.5
+        - gelabber/web:v0.2.6
     expose:
       - "80"
     restart: unless-stopped
 
   api:
-    image: ${GELABBER_API_IMAGE:-ghcr.io/till-und-scholler-ai-slop/gelabber/api:v0.2.5}
+    image: ${GELABBER_API_IMAGE:-ghcr.io/till-und-scholler-ai-slop/gelabber/api:v0.2.6}
     pull_policy: missing
     build:
       context: ../..
       dockerfile: api/Dockerfile
       tags:
-        - gelabber/api:v0.2.5
+        - gelabber/api:v0.2.6
     environment:
       API_ADDR: 0.0.0.0:8080
       DATABASE_URL: postgres://${POSTGRES_USER:-gelabber}:${POSTGRES_PASSWORD:-gelabber}@postgres:5432/${POSTGRES_DB:-gelabber}
@@ -46,7 +46,7 @@ services:
       MINIO_ROOT_PASSWORD: ${MINIO_ROOT_PASSWORD:-gelabbergelabber}
       MINIO_BUCKET: ${MINIO_BUCKET:-gelabber}
       API_COOKIE_SECURE: ${API_COOKIE_SECURE:-false}
-      TURN_URLS: ${TURN_URLS:-stun:${TURN_PUBLIC_HOST:-127.0.0.1}:${TURN_PORT:-3478},turn:${TURN_PUBLIC_HOST:-127.0.0.1}:${TURN_PORT:-3478}}
+      TURN_URLS: ${TURN_URLS:-stun:${TURN_PUBLIC_HOST:-127.0.0.1}:${TURN_PORT:-3478},turn:${TURN_PUBLIC_HOST:-127.0.0.1}:${TURN_PORT:-3478}?transport=udp,turn:${TURN_PUBLIC_HOST:-127.0.0.1}:${TURN_PORT:-3478}?transport=tcp}
       TURN_USERNAME: ${TURN_USERNAME:-gelabber}
       TURN_PASSWORD: ${TURN_PASSWORD:-gelabberturn}
       # Empty keeps static TURN credentials. Set a private secret (same value
@@ -66,13 +66,13 @@ services:
     restart: unless-stopped
 
   media:
-    image: ${GELABBER_MEDIA_IMAGE:-ghcr.io/till-und-scholler-ai-slop/gelabber/media:v0.2.5}
+    image: ${GELABBER_MEDIA_IMAGE:-ghcr.io/till-und-scholler-ai-slop/gelabber/media:v0.2.6}
     pull_policy: missing
     build:
       context: ../..
       dockerfile: media/Dockerfile
       tags:
-        - gelabber/media:v0.2.5
+        - gelabber/media:v0.2.6
     environment:
       MEDIA_ADDR: 0.0.0.0:8081
       REDIS_URL: redis://redis:6379
