@@ -40,3 +40,19 @@ class DigestCompose(unittest.TestCase):
 
     def test_homelab_digest_rollout_and_rollback_configuration(self):
         self.check_roundtrip('.env.homelab.example', homelab=True)
+
+    def test_turn_default_offers_udp_and_tcp_on_the_configured_public_port(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            env = Path(tmp) / 'turn.env'
+            env.write_text('TURN_PUBLIC_HOST=voice.example.test\nTURN_PORT=3479\n')
+            cmd = ['docker', 'compose', '--project-directory', str(ROOT),
+                   '--env-file', str(env), '-f', str(ROOT / 'compose.yaml')]
+            config = json.loads(subprocess.check_output(cmd + ['config', '--format', 'json'], text=True))
+            self.assertEqual(config['services']['api']['environment']['TURN_URLS'].split(','),
+                             ['stun:voice.example.test:3479',
+                              'turn:voice.example.test:3479?transport=udp',
+                              'turn:voice.example.test:3479?transport=tcp'])
+            ports = config['services']['coturn']['ports']
+            self.assertEqual({p['protocol'] for p in ports
+                              if p['target'] == 3478 and str(p['published']) == '3479'},
+                             {'udp', 'tcp'})
