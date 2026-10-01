@@ -41,7 +41,7 @@ export function LoginPage() {
   };
 
   return (
-    <section className="mx-auto max-w-sm">
+    <section className="lr-auth-card mx-auto max-w-sm">
       <h1 className="text-2xl font-semibold tracking-tight">Anmelden</h1>
       <p className="mt-1 text-sm text-neutral-600 dark:text-neutral-400">
         Noch kein Konto?{" "}

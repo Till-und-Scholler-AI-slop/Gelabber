@@ -8,7 +8,9 @@ import { can } from "../servers/permissions.ts";
 import type { ServerDetail } from "../servers/types.ts";
 import { VoiceControls } from "../components/VoiceControls.tsx";
 import { VoiceStateIcons } from "../components/VoiceStateIcons.tsx";
-import { GearIcon } from "../components/Icons.tsx";
+import { MemberProfileDialog } from "../components/MemberProfileDialog.tsx";
+import { Avatar } from "../components/Avatar.tsx";
+import { GearIcon, SpeakerIcon } from "../components/Icons.tsx";
 import { useSession } from "../auth/session.ts";
 import { joinVoice, stopWatching, useVoice, watchLive } from "./session.ts";
 import { useVoiceDiagnostics } from "./diagnostics.ts";
@@ -16,6 +18,8 @@ import { VoiceDiagnostics } from "./VoiceDiagnostics.tsx";
 import { useMediaSettings } from "./settings.ts";
 import { EMPTY_OCCUPANCY, liveOf, useVoiceRoster } from "./roster.ts";
 import { VoiceTile } from "./VoiceTile.tsx";
+import { MicrophoneTest } from "./MicrophoneTest.tsx";
+import "./room.css";
 
 export function VoiceRoom({
   server,
@@ -29,7 +33,8 @@ export function VoiceRoom({
   const allowed = can(server, "join_voice");
   const canStartLive = can(server, "go_live");
   const voice = useVoice();
-  const me = useSession((s) => s.user?.id);
+  const user = useSession((s) => s.user);
+  const me = user?.id;
   const roster = useVoiceRoster(
     (s) => s.byServer[server.id] ?? EMPTY_OCCUPANCY,
   );
@@ -53,16 +58,33 @@ export function VoiceRoom({
       state.polling.voice ||
       state.polling.watch,
   );
+  const roomKey = `${server.id}/${channelId}`;
+  const [testingMicrophone, setTestingMicrophone] = useState<string | null>(
+    null,
+  );
+  const [profile, setProfile] = useState<{
+    serverId: string;
+    memberId: string;
+  } | null>(null);
   const [focus, setFocus] = useState<string | null>(null);
   const members = new Map(
     server.members.map((member) => [member.user_id, member]),
   );
   const occupants = Object.entries(roster).filter(
-    ([, flags]) => flags.channelId === channelId,
+    ([id, flags]) => flags.channelId === channelId && (id !== me || here),
   );
+
+  // Local join is immediate, before the server roster echo arrives.
+  if (here && me && !occupants.some(([id]) => id === me)) {
+    occupants.push([
+      me,
+      { channelId, muted: voice.muted, deafened: voice.deafened },
+    ]);
+  }
 
   const onJoin = () => {
     if (!allowed) return;
+    setTestingMicrophone(null);
     joinVoice({ serverId: server.id, channelId, channelName });
   };
 
@@ -87,7 +109,7 @@ export function VoiceRoom({
       : (members.get(id)?.name ?? "Mitglied");
     const cameraOn = self ? voice.camera : pubs.includes("v");
     const sharing = self ? voice.sharing : pubs.includes("s");
-    const isLive = self ? voice.live : pubs.includes("l") || liveUser === id;
+    const isLive = self ? voice.live : liveUser === id;
     if (isLive && !liveTile) {
       liveTile = {
         id: `${id}-l`,
@@ -145,217 +167,273 @@ export function VoiceRoom({
   };
 
   return (
-    <div className="flex flex-1 flex-col items-center justify-center p-8 text-center">
-      <div
-        className={[
-          "w-full text-neutral-500 dark:text-neutral-400",
-          showStage ? "max-w-5xl" : "max-w-sm",
-        ].join(" ")}
-      >
-        <p className="flex items-center justify-center gap-2 text-lg font-medium text-neutral-800 dark:text-neutral-200">
-          {channelName}
-          {liveOn ? (
-            <span className="rounded bg-red-600 px-1.5 py-0.5 text-[10px] font-semibold tracking-wide text-white uppercase">
-              Live
-            </span>
-          ) : null}
+    <section className="voice-room" aria-label={channelName}>
+      <header className="voice-room-heading">
+        <SpeakerIcon size={36} />
+        <div>
+          <h2>
+            {channelName}
+            {liveOn ? (
+              <span className="voice-room-live-badge">Live</span>
+            ) : null}
+          </h2>
+          <p>{here ? "Schön, dass du da bist." : "Einfach dazukommen."}</p>
+        </div>
+      </header>
+      {occupants.length === 0 ? (
+        <p className="voice-room-empty">
+          Niemand ist in diesem Kanal. Mach es dir gemütlich.
         </p>
-        {showStage ? (
-          <div className="mt-4 flex flex-col gap-3">
-            <div className="flex flex-wrap items-center justify-center gap-1">
-              <FocusChip
-                active={!focused}
-                onClick={() => setFocus(null)}
-                label="Raster"
-              />
-              {liveTile ? (
-                <FocusChip
-                  active={Boolean(focusLive)}
-                  onClick={() => setFocus(liveTile.id)}
-                  label="Live"
-                />
-              ) : null}
-              {screens.length > 0 ? (
-                <FocusChip
-                  active={Boolean(focusScreen)}
-                  onClick={() => setFocus(screens[0]?.id ?? null)}
-                  label="Bildschirm"
-                />
-              ) : null}
-              {cameras.length > 0 ? (
-                <FocusChip
-                  active={Boolean(focusCamera)}
-                  onClick={() => setFocus(cameras[0]?.id ?? null)}
-                  label="Kamera"
-                />
-              ) : null}
-            </div>
-            {focused ? (
-              <VoiceTile
-                key={focused.tile.id}
-                stream={focused.tile.stream}
-                label={focused.tile.name}
-                screen={focused.kind !== "camera"}
-                live={focused.kind === "live"}
-                mirror={
-                  focused.kind === "camera"
-                    ? Boolean("mirror" in focused.tile && focused.tile.mirror)
-                    : false
+      ) : null}
+      <ul
+        className="voice-room-participants"
+        aria-label="Teilnehmer im Sprachkanal"
+      >
+        {occupants.map(([id, flags]) => {
+          const member = members.get(id);
+          const self = id === me;
+          const name =
+            member?.name ?? (self ? (user?.name ?? "Du") : "Mitglied");
+          const pubs = here ? (voice.participants[id]?.pubs ?? []) : [];
+          const muted = self && here ? voice.muted : flags.muted;
+          const deafened = self && here ? voice.deafened : flags.deafened;
+          const isLive = liveUser === id || (self && here && voice.live);
+          const status = deafened ? "Taub" : muted ? "Stumm" : "Im Raum";
+          const media = isLive
+            ? "Live"
+            : pubs.includes("s") || (self && here && voice.sharing)
+              ? "Teilt den Bildschirm"
+              : pubs.includes("v") || (self && here && voice.camera)
+                ? "Kamera an"
+                : null;
+          return (
+            <li key={id} className="voice-room-participant">
+              <button
+                type="button"
+                className="voice-room-avatar"
+                aria-label={`Profil von ${name}`}
+                disabled={!member}
+                onClick={() =>
+                  setProfile({ serverId: server.id, memberId: id })
                 }
-                expanded
-                onToggleExpand={() => toggleFocus(focused.tile.id)}
-              />
-            ) : (
-              <>
-                {liveTile ? (
-                  <VoiceTile
-                    key={liveTile.id}
-                    stream={liveTile.stream}
-                    label={liveTile.name}
-                    screen
-                    live
-                    onToggleExpand={() => toggleFocus(liveTile.id)}
-                  />
-                ) : null}
-                {screens.map((tile) => (
-                  <VoiceTile
-                    key={tile.id}
-                    stream={tile.stream}
-                    label={tile.name}
-                    screen
-                    onToggleExpand={() => toggleFocus(tile.id)}
-                  />
-                ))}
-                {cameras.length > 0 ? (
-                  <div className="grid grid-cols-2 gap-2 sm:grid-cols-3">
-                    {cameras.map((tile) => (
-                      <VoiceTile
-                        key={tile.id}
-                        stream={tile.stream}
-                        label={tile.name}
-                        mirror={tile.mirror}
-                        onToggleExpand={() => toggleFocus(tile.id)}
-                      />
-                    ))}
-                  </div>
-                ) : null}
-              </>
-            )}
-          </div>
-        ) : null}
-        {occupants.length > 0 ? (
-          <ul className="mt-4 flex flex-col gap-1 text-left text-sm text-neutral-700 dark:text-neutral-300">
-            {occupants.map(([id, flags]) => {
-              const member = members.get(id);
-              const pubs = here ? (voice.participants[id]?.pubs ?? []) : [];
-              const isLive =
-                (here && id === me && voice.live) || liveUser === id;
-              const liveAudio =
-                pubs.includes("a") && !flags.muted && !flags.deafened;
-              const mediaLabel = isLive
-                ? "Live"
-                : pubs.includes("s")
-                  ? "Screen"
-                  : pubs.includes("v")
-                    ? "Kamera"
-                    : liveAudio
-                      ? "Audio"
-                      : "\u00a0";
-              return (
-                <li
-                  key={id}
-                  className="flex h-10 items-center justify-between rounded-md bg-neutral-100 dark:bg-neutral-800 px-3"
+              >
+                <Avatar
+                  name={name}
+                  url={
+                    member?.avatar_url ??
+                    (self ? (user?.avatar_url ?? null) : null)
+                  }
+                  size="lg"
+                />
+                <span className="voice-room-connection" aria-hidden="true" />
+              </button>
+              <strong>
+                <button
+                  type="button"
+                  className="voice-room-profile-name"
+                  disabled={!member}
+                  onClick={() =>
+                    setProfile({ serverId: server.id, memberId: id })
+                  }
                 >
-                  <span className="min-w-0 truncate font-medium">
-                    {member?.name ?? "Mitglied"}
-                  </span>
-                  <span className="flex shrink-0 items-center gap-2">
-                    <span className="w-16 text-right text-xs text-neutral-500 dark:text-neutral-400">
-                      {mediaLabel}
-                    </span>
-                    <VoiceStateIcons
-                      inVoice
-                      muted={flags.muted}
-                      deafened={flags.deafened}
-                      channelName={channelName}
-                    />
-                  </span>
-                </li>
-              );
-            })}
-          </ul>
-        ) : (
-          <p className="mt-2 text-sm">Niemand ist in diesem Kanal.</p>
-        )}
-        {here ? (
-          <div className="mt-5">
-            <VoiceControls canGoLive={canStartLive} />
-          </div>
-        ) : allowed ? (
-          <>
-            <p className="mt-2 text-sm">
-              Beitreten setzt dich sofort in den Kanal. Mute und Deafen gelten
-              nur für diese Session.
-            </p>
-            <div className="mt-5 flex flex-wrap items-center justify-center gap-2">
-              <button
-                type="button"
-                onClick={onJoin}
-                className="rounded-lg bg-neutral-900 dark:bg-neutral-700 px-4 py-2 text-sm font-medium text-white transition hover:bg-neutral-700 dark:hover:bg-neutral-600"
-              >
-                Beitreten
-              </button>
-              <button
-                type="button"
-                onClick={() => openSettings()}
-                className="inline-flex items-center gap-1.5 rounded-lg bg-neutral-200 dark:bg-neutral-700 px-3 py-2 text-sm font-medium text-neutral-800 dark:text-neutral-200 transition hover:bg-neutral-300 dark:hover:bg-neutral-600"
-              >
-                <GearIcon size={16} />
-                Einstellungen
-              </button>
-              {liveOn ? (
-                watching ? (
-                  <button
-                    type="button"
-                    onClick={() => stopWatching()}
-                    className="rounded-lg bg-red-50 dark:bg-red-950 px-4 py-2 text-sm font-medium text-red-700 dark:text-red-300 transition hover:bg-red-100 dark:hover:bg-red-900"
-                  >
-                    Nicht mehr zuschauen
-                  </button>
-                ) : (
-                  <button
-                    type="button"
-                    onClick={() =>
-                      watchLive({
-                        serverId: server.id,
-                        channelId,
-                        channelName,
-                      })
-                    }
-                    className="rounded-lg bg-red-600 px-4 py-2 text-sm font-medium text-white transition hover:bg-red-700"
-                  >
-                    Zuschauen
-                  </button>
-                )
+                  {name}
+                  {self ? " (du)" : ""}
+                </button>
+              </strong>
+              <span className="voice-room-participant-status">{status}</span>
+              {media ? (
+                <span className="voice-room-participant-media">{media}</span>
               ) : null}
+              <VoiceStateIcons
+                inVoice
+                muted={muted}
+                deafened={deafened}
+                channelName={channelName}
+              />
+            </li>
+          );
+        })}
+        {!here && user ? (
+          <li className="voice-room-participant voice-room-disconnected">
+            <div className="voice-room-avatar">
+              <Avatar
+                name={user.name ?? "Du"}
+                url={user.avatar_url ?? null}
+                size="lg"
+              />
+              <span className="voice-room-connection" aria-hidden="true" />
             </div>
-          </>
-        ) : liveOn && watching ? (
+            <strong>{user.name ?? "Du"} (du)</strong>
+            <span className="voice-room-participant-status">
+              Du bist noch nicht verbunden
+            </span>
+          </li>
+        ) : null}
+      </ul>
+      <div className="voice-room-actions">
+        {here ? (
+          <VoiceControls canGoLive={canStartLive} />
+        ) : allowed ? (
           <button
             type="button"
-            onClick={() => stopWatching()}
-            className="mt-5 rounded-lg bg-red-50 dark:bg-red-950 px-4 py-2 text-sm font-medium text-red-700 dark:text-red-300 transition hover:bg-red-100 dark:hover:bg-red-900"
+            aria-label="Beitreten"
+            onClick={onJoin}
+            className="voice-room-button voice-room-join"
           >
-            Nicht mehr zuschauen
+            <SpeakerIcon size={24} />
+            Dazukommen
           </button>
         ) : (
-          <p className="mt-2 text-sm">
+          <p className="voice-room-muted">
             Du hast in diesem Server kein Recht, Voice beizutreten.
           </p>
         )}
-        {here || watching || showDiagnostics ? <VoiceDiagnostics /> : null}
+        <button
+          type="button"
+          onClick={() => setTestingMicrophone(roomKey)}
+          className="voice-room-text-button"
+        >
+          Mikrofon testen
+        </button>
+        {!here ? (
+          <button
+            type="button"
+            aria-label="Voice-Einstellungen"
+            onClick={() => openSettings()}
+            className="voice-room-text-button"
+          >
+            <GearIcon size={16} />
+            Einstellungen
+          </button>
+        ) : null}
       </div>
-    </div>
+      {!here && allowed && voice.status === "joined" ? (
+        <p className="voice-room-muted voice-room-switch-note">
+          Du wechselst aus {voice.channelName ?? "deinem Sprachkanal"}. Stumm
+          und Taub bleiben erhalten.
+        </p>
+      ) : null}
+      {watching || (!here && liveOn && allowed) ? (
+        <div className="voice-room-watch-actions">
+          {watching ? (
+            <button
+              type="button"
+              onClick={() => stopWatching()}
+              className="voice-room-button"
+            >
+              Nicht mehr zuschauen
+            </button>
+          ) : (
+            <button
+              type="button"
+              onClick={() =>
+                watchLive({ serverId: server.id, channelId, channelName })
+              }
+              className="voice-room-button"
+            >
+              Zuschauen
+            </button>
+          )}
+        </div>
+      ) : null}
+      {showStage ? (
+        <div className="voice-room-stage" aria-label="Medien im Raum">
+          <div className="voice-room-focus">
+            <FocusChip
+              active={!focused}
+              onClick={() => setFocus(null)}
+              label="Raster"
+            />
+            {liveTile ? (
+              <FocusChip
+                active={Boolean(focusLive)}
+                onClick={() => setFocus(liveTile.id)}
+                label="Live"
+              />
+            ) : null}
+            {screens.length > 0 ? (
+              <FocusChip
+                active={Boolean(focusScreen)}
+                onClick={() => setFocus(screens[0]?.id ?? null)}
+                label="Bildschirm"
+              />
+            ) : null}
+            {cameras.length > 0 ? (
+              <FocusChip
+                active={Boolean(focusCamera)}
+                onClick={() => setFocus(cameras[0]?.id ?? null)}
+                label="Kamera"
+              />
+            ) : null}
+          </div>
+          {focused ? (
+            <VoiceTile
+              key={focused.tile.id}
+              stream={focused.tile.stream}
+              label={focused.tile.name}
+              screen={focused.kind !== "camera"}
+              live={focused.kind === "live"}
+              mirror={
+                focused.kind === "camera"
+                  ? Boolean("mirror" in focused.tile && focused.tile.mirror)
+                  : false
+              }
+              expanded
+              onToggleExpand={() => toggleFocus(focused.tile.id)}
+            />
+          ) : (
+            <>
+              {liveTile ? (
+                <VoiceTile
+                  key={liveTile.id}
+                  stream={liveTile.stream}
+                  label={liveTile.name}
+                  screen
+                  live
+                  onToggleExpand={() => toggleFocus(liveTile.id)}
+                />
+              ) : null}
+              {screens.map((tile) => (
+                <VoiceTile
+                  key={tile.id}
+                  stream={tile.stream}
+                  label={tile.name}
+                  screen
+                  onToggleExpand={() => toggleFocus(tile.id)}
+                />
+              ))}
+              {cameras.length > 0 ? (
+                <div className="voice-room-cameras">
+                  {cameras.map((tile) => (
+                    <VoiceTile
+                      key={tile.id}
+                      stream={tile.stream}
+                      label={tile.name}
+                      mirror={tile.mirror}
+                      onToggleExpand={() => toggleFocus(tile.id)}
+                    />
+                  ))}
+                </div>
+              ) : null}
+            </>
+          )}
+        </div>
+      ) : null}
+      {here || watching || showDiagnostics ? <VoiceDiagnostics /> : null}
+      {profile?.serverId === server.id ? (
+        <MemberProfileDialog
+          server={server}
+          memberId={profile.memberId}
+          onClose={() => setProfile(null)}
+        />
+      ) : null}
+      {testingMicrophone === roomKey ? (
+        <MicrophoneTest
+          key={`${server.id}/${channelId}`}
+          onClose={() => setTestingMicrophone(null)}
+        />
+      ) : null}
+    </section>
   );
 }
 
@@ -373,12 +451,7 @@ function FocusChip({
       type="button"
       aria-pressed={active}
       onClick={onClick}
-      className={[
-        "rounded-full px-3 py-1 text-xs font-medium transition",
-        active
-          ? "bg-neutral-900 dark:bg-neutral-700 text-white"
-          : "bg-neutral-200 dark:bg-neutral-700 text-neutral-700 dark:text-neutral-300 hover:bg-neutral-300 dark:hover:bg-neutral-600",
-      ].join(" ")}
+      className="voice-room-focus-chip"
     >
       {label}
     </button>

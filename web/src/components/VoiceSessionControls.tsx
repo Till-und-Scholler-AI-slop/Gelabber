@@ -1,28 +1,54 @@
 import { Link } from "@tanstack/react-router";
+import { useEffect, useRef } from "react";
 
 import { can } from "../servers/permissions.ts";
 import { useServer } from "../servers/queries.ts";
 import { retryPlayback, stopWatching, useVoice } from "../voice/session.ts";
 import { VoiceControls } from "./VoiceControls.tsx";
+import { GearIcon } from "./Icons.tsx";
+import { useMediaSettings } from "../voice/settings.ts";
+import "../voice/room.css";
 
 /** Active sessions stay controllable independently of the currently open route. */
 export function VoiceSessionControls() {
+  const dockRef = useRef<HTMLElement>(null);
   const voice = useVoice();
+  const volume = useMediaSettings((s) => s.outputVolume);
+  const patch = useMediaSettings((s) => s.patch);
+  const openSettings = useMediaSettings((s) => s.openDialog);
   const { data: server } = useServer(voice.serverId ?? undefined);
-  if (voice.status !== "joined" && !voice.watching && !voice.playbackBlocked)
-    return null;
+  const visible =
+    voice.status === "joined" || voice.watching || voice.playbackBlocked;
+  useEffect(() => {
+    const dock = dockRef.current;
+    if (!visible || !dock) return;
+    const update = () =>
+      document.documentElement.style.setProperty(
+        "--lr-media-space",
+        `${Math.ceil(dock.getBoundingClientRect().height) + 24}px`,
+      );
+    update();
+    const observer = new ResizeObserver(update);
+    observer.observe(dock);
+    return () => {
+      observer.disconnect();
+      document.documentElement.style.removeProperty("--lr-media-space");
+    };
+  }, [visible]);
+  if (!visible) return null;
 
   return (
     <section
+      ref={dockRef}
       aria-label="Aktive Medien"
-      className="fixed right-3 bottom-3 z-40 flex max-w-[calc(100vw-1.5rem)] flex-col gap-2 rounded-lg border border-neutral-200 bg-white p-3 text-sm shadow-lg dark:border-neutral-700 dark:bg-neutral-900"
+      className="voice-session-dock"
     >
       {voice.status === "joined" && voice.serverId && voice.channelId ? (
         <div>
           <Link
             to="/s/$serverId/c/$channelId"
             params={{ serverId: voice.serverId, channelId: voice.channelId }}
-            className="block max-w-80 truncate font-medium text-emerald-700 dark:text-emerald-300"
+            className="voice-session-link"
           >
             Verbunden: {voice.channelName ?? "Voice"}
           </Link>
@@ -30,33 +56,61 @@ export function VoiceSessionControls() {
         </div>
       ) : null}
       {voice.watching && voice.watchServerId && voice.watchChannelId ? (
-        <div className="flex items-center justify-between gap-3">
+        <div className="voice-session-watch">
           <Link
             to="/s/$serverId/c/$channelId"
             params={{
               serverId: voice.watchServerId,
               channelId: voice.watchChannelId,
             }}
-            className="max-w-60 truncate"
+            className="voice-session-link"
           >
             Zuschauen: {voice.watchChannelName ?? "Live"}
           </Link>
           <button
             type="button"
             onClick={() => stopWatching()}
-            className="rounded-md px-2 py-1 text-red-700 hover:bg-red-50 dark:text-red-300 dark:hover:bg-red-950"
+            className="voice-control voice-control-leave"
           >
             Nicht mehr zuschauen
           </button>
         </div>
       ) : null}
+      {voice.status !== "joined" ? (
+        <div className="voice-controls voice-controls-compact">
+          <label className="voice-playback-volume">
+            <span className="sr-only">Wiedergabe</span>
+            <input
+              type="range"
+              min={0}
+              max={100}
+              value={Math.round(volume * 100)}
+              aria-label="Wiedergabe-Lautstärke"
+              disabled={voice.deafened}
+              onChange={(event) =>
+                patch({ outputVolume: Number(event.target.value) / 100 })
+              }
+              className="voice-volume-slider"
+            />
+          </label>
+          <button
+            type="button"
+            aria-label="Voice-Einstellungen"
+            title="Voice-Einstellungen"
+            onClick={() => openSettings()}
+            className="voice-control voice-control-compact"
+          >
+            <GearIcon size={16} />
+          </button>
+        </div>
+      ) : null}
       {voice.playbackBlocked && !voice.deafened ? (
-        <div role="status" className="flex items-center gap-3">
+        <div role="status" className="voice-session-playback">
           <span>Die Tonwiedergabe ist blockiert.</span>
           <button
             type="button"
             onClick={() => retryPlayback()}
-            className="rounded-md bg-neutral-200 px-2 py-1 font-medium dark:bg-neutral-700"
+            className="voice-control"
           >
             Ton starten
           </button>

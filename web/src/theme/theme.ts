@@ -10,17 +10,17 @@ type ThemeStorage = Pick<Storage, "getItem" | "setItem">;
 export function asThemePreference(value: unknown): ThemePreference {
   return value === "light" || value === "dark" || value === "system"
     ? value
-    : "system";
+    : "dark";
 }
 
 export function loadThemePreference(storage?: ThemeStorage): ThemePreference {
   const source =
     storage ?? (typeof localStorage === "undefined" ? undefined : localStorage);
-  if (!source) return "system";
+  if (!source) return "dark";
   try {
     return asThemePreference(source.getItem(THEME_STORAGE_KEY));
   } catch {
-    return "system";
+    return "dark";
   }
 }
 

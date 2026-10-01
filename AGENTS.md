@@ -31,10 +31,17 @@ No LiveKit, Daily, Agora, Twilio, Stream, or Socket.IO. Own WebSocket, own signa
 
 SilasSch reviews product PRs when that is the standing rule. Do not invent extra process.
 
-## Shipped line: v0.2.4
+## Current development line: v0.3
 
-`v0.2.4` is the shipped line on `main`. Hotfixes for this minor go to `main` the same way `0.1.x` hotfixes do.
+The Living Room interface is developed on feature branches from `v0.3`.
+Product PRs target `v0.3`. The active **Version branches** ruleset covers
+`refs/heads/v[0-9]*` and requires PRs with the same review requirements as `main`.
+Do not push feature commits directly to `v0.3` or release the unfinished line.
+
+## Shipped line: v0.2.5
+
+`v0.2.5` is the shipped line on `main`. Hotfixes for this minor go to `main` the same way `0.1.x` hotfixes do.
 
 What is on `main`: owner and member permissions (no roles, no channel overwrites); sequenced chat (no threads, reactions, or search); direct messages (no friends); screen share and Go Live; moderation (kick and ban).
 
-The next unshipped major, when it starts, is a `v*` branch again. Until that branch exists, hotfix work stays on `main`.
+Hotfix work for the shipped line stays on `main`; keep it separate from unfinished `v0.3` product work.

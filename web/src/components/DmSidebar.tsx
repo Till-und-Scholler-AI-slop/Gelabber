@@ -1,6 +1,3 @@
-// Second column on Home: the signed-in user's 1:1 DMs. Highlight follows
-// the URL; rows are virtualised like server channels.
-
 import { Link } from "@tanstack/react-router";
 import { useVirtualizer } from "@tanstack/react-virtual";
 import { useRef } from "react";
@@ -8,8 +5,9 @@ import { useRef } from "react";
 import type { DirectMessage } from "../dms/types.ts";
 import { presenceOf, usePresenceStore } from "../ws/live.ts";
 import { PresenceAvatar } from "./PresenceAvatar.tsx";
+import { UserPanel } from "./UserPanel.tsx";
 
-const ROW_PX = 44;
+const ROW_PX = 60;
 
 export function DmSidebar({
   dms,
@@ -21,20 +19,23 @@ export function DmSidebar({
   return (
     <aside
       aria-label="Direktnachrichten"
-      className="flex h-full w-64 shrink-0 flex-col border-r border-neutral-200 dark:border-neutral-700 bg-white dark:bg-neutral-900"
+      className="channel-sidebar dm-sidebar"
     >
-      <header className="flex h-12 items-center border-b border-neutral-200 dark:border-neutral-700 px-3">
-        <h2 className="truncate font-semibold tracking-tight">
-          Direktnachrichten
-        </h2>
+      <Link to="/" className="sidebar-brand">
+        Gelabber
+      </Link>
+      <header className="dm-sidebar-heading">
+        <h2>Nachrichten</h2>
+        <p>Deine Unterhaltungen.</p>
       </header>
       {dms.length === 0 ? (
-        <p className="flex-1 px-3 py-4 text-sm text-neutral-500 dark:text-neutral-400">
+        <p className="sidebar-empty">
           Noch keine Unterhaltungen. Öffne eine über die Mitgliederliste.
         </p>
       ) : (
         <DmList dms={dms} activeChannelId={activeChannelId} />
       )}
+      <UserPanel contextId={activeChannelId} />
     </aside>
   );
 }
@@ -47,7 +48,6 @@ function DmList({
   activeChannelId: string | undefined;
 }) {
   const scrollRef = useRef<HTMLDivElement>(null);
-  // Not on the React Compiler; the warning is about memoising its return value.
   // eslint-disable-next-line react-hooks/incompatible-library
   const virtualizer = useVirtualizer({
     count: dms.length,
@@ -56,9 +56,8 @@ function DmList({
     getItemKey: (index) => dms[index]?.id ?? index,
     overscan: 10,
   });
-
   return (
-    <div ref={scrollRef} className="flex-1 overflow-y-auto px-2 py-2">
+    <div ref={scrollRef} className="sidebar-list-scroll">
       <div style={{ height: virtualizer.getTotalSize() }} className="relative">
         {virtualizer.getVirtualItems().map((item) => {
           const dm = dms[item.index];
@@ -67,7 +66,7 @@ function DmList({
             <div
               key={item.key}
               data-index={item.index}
-              className="absolute inset-x-0"
+              className="sidebar-virtual-row"
               style={{ top: item.start, height: item.size }}
             >
               <DmRow dm={dm} active={dm.id === activeChannelId} />
@@ -80,27 +79,22 @@ function DmList({
 }
 
 function DmRow({ dm, active }: { dm: DirectMessage; active: boolean }) {
-  const status = usePresenceStore((s) =>
-    presenceOf(s.byServer, dm.id, dm.peer.id),
+  const status = usePresenceStore((state) =>
+    presenceOf(state.byServer, dm.id, dm.peer.id),
   );
   return (
     <Link
       to="/d/$channelId"
       params={{ channelId: dm.id }}
       aria-current={active ? "page" : undefined}
-      className={[
-        "flex h-[42px] items-center gap-2 rounded-md px-2 text-sm",
-        active
-          ? "bg-neutral-900 dark:bg-neutral-700 text-white"
-          : "text-neutral-700 dark:text-neutral-300 hover:bg-neutral-100 dark:hover:bg-neutral-800 hover:text-neutral-900 dark:hover:text-neutral-100",
-      ].join(" ")}
+      className={`dm-row ${active ? "is-active" : ""}`}
     >
       <PresenceAvatar
         name={dm.peer.name}
         url={dm.peer.avatar_url}
         status={status}
       />
-      <span className="truncate">{dm.peer.name}</span>
+      <span>{dm.peer.name}</span>
     </Link>
   );
 }

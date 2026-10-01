@@ -120,6 +120,9 @@ const idle: VoiceState = {
 
 export const useVoice = create<VoiceState>(() => ({ ...idle }));
 
+// Remember a deliberate mute while temporarily deafened, also across room switches.
+let preDeafenMuted = false;
+
 export type RtpEncodingParameters = {
   maxBitrate?: number;
   maxFramerate?: number;
@@ -986,6 +989,8 @@ function onReady(): void {
     s: state.serverId,
     c: state.channelId,
   });
+  if (state.muted) sendFlag("m", state.serverId, state.channelId, true);
+  if (state.deafened) sendFlag("d", state.serverId, state.channelId, true);
   // Rebuild only when the media transport has actually closed or failed.
   if (keepMedia) return;
   scheduleSeatRebuild();
@@ -2596,6 +2601,9 @@ export function joinVoice(input: {
   const userId = currentUserId();
   if (!userId) return;
   const prev = useVoice.getState();
+  const muted = prev.status === "joined" && (prev.muted || prev.deafened);
+  const deafened = prev.status === "joined" && prev.deafened;
+  if (prev.status !== "joined") preDeafenMuted = false;
   const dropWatch =
     prev.watchServerId === input.serverId &&
     prev.watchChannelId === input.channelId;
@@ -2627,8 +2635,8 @@ export function joinVoice(input: {
     serverId: input.serverId,
     channelId: input.channelId,
     channelName: input.channelName,
-    muted: false,
-    deafened: false,
+    muted,
+    deafened,
     camera: false,
     sharing: false,
     live: false,
@@ -2639,8 +2647,8 @@ export function joinVoice(input: {
     participants: { [self]: { pubs: [] } },
   });
   applyVoiceJoin(input.serverId, self, input.channelId, {
-    muted: false,
-    deafened: false,
+    muted,
+    deafened,
   });
   awaitingJoin = { serverId: input.serverId, channelId: input.channelId };
   deps?.gateway.send({
@@ -2649,6 +2657,10 @@ export function joinVoice(input: {
     s: input.serverId,
     c: input.channelId,
   });
+  // The join frame has no mute fields. Sync flags in socket order before media work.
+  if (muted) sendFlag("m", input.serverId, input.channelId, true);
+  if (deafened) sendFlag("d", input.serverId, input.channelId, true);
+  applyPlayback();
   void startPeer(input.serverId, input.channelId);
 }
 
@@ -2699,6 +2711,7 @@ export function toggleMute(): void {
   const prevDeafened = state.deafened;
   const muted = !(state.muted || state.deafened);
   const deafened = muted ? state.deafened : false;
+  if (!deafened) preDeafenMuted = muted;
   useVoice.setState({ muted, deafened });
   applyLocalAudio();
   occupySelf({ ...state, muted, deafened });
@@ -2712,7 +2725,7 @@ export function toggleMute(): void {
 
 /**
  * Deafen toggles immediately. Turning it on also mutes; turning it off
- * unmutes. The member list is updated before the server round-trip.
+ * restores the previous mute choice. The member list is updated before the server round-trip.
  */
 export function toggleDeafen(): void {
   ensureBound();
@@ -2723,7 +2736,8 @@ export function toggleDeafen(): void {
   const prevMuted = state.muted;
   const prevDeafened = state.deafened;
   const deafened = !state.deafened;
-  const muted = deafened;
+  if (deafened) preDeafenMuted = state.muted;
+  const muted = deafened || preDeafenMuted;
   useVoice.setState({ muted, deafened });
   applyLocalAudio();
   occupySelf({ ...state, muted, deafened });
@@ -2856,6 +2870,7 @@ export function stopWatching(): void {
 }
 
 export function resetVoiceForTests(): void {
+  preDeafenMuted = false;
   clearWatchPublisherTimer();
   resetDiagnostics();
   streamReported = false;

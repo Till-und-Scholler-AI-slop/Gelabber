@@ -53,6 +53,7 @@ class FakePeer implements PeerConnection {
   closed = false;
   tracks = 0;
   audio: MediaStreamTrack | null = null;
+  audioEnabledWhenAdded: boolean[] = [];
   senders: RtpSender[] = [];
   ice: { candidate: string; sdpMid: string | null }[] = [];
   offerOptions: Array<{ iceRestart?: boolean } | undefined> = [];
@@ -67,6 +68,7 @@ class FakePeer implements PeerConnection {
 
   addTrack(track?: MediaStreamTrack): RtpSender {
     this.tracks += 1;
+    if (track?.kind === "audio") this.audioEnabledWhenAdded.push(track.enabled);
     const encodings: { maxBitrate?: number }[] = [{}];
     const transactionId = `tx-${this.tracks}`;
     const sender: RtpSender = {
@@ -1113,6 +1115,154 @@ describe("voice session", () => {
     toggleDeafen();
     expect(useVoice.getState().deafened).toBe(false);
     expect(useVoice.getState().muted).toBe(false);
+  });
+
+  it.each([
+    { serverId: "srv", channelId: "other" },
+    { serverId: "other-server", channelId: "voice" },
+  ])(
+    "preserves deliberate mute when switching to $serverId/$channelId",
+    async (target) => {
+      const f = install();
+      joinVoice({ serverId: "srv", channelId: "voice", channelName: "Lounge" });
+      await vi.waitFor(() => expect(f.peers[0]?.audio).toBeTruthy());
+      toggleMute();
+      const before = f.sent.length;
+      joinVoice({ ...target, channelName: "New room" });
+      expect(useVoice.getState().muted).toBe(true);
+      expect(useVoice.getState().deafened).toBe(false);
+      expect(f.sent.slice(before)).toEqual([
+        { op: "sig", t: "l", s: "srv", c: "voice" },
+        { op: "sig", t: "j", s: target.serverId, c: target.channelId },
+        {
+          op: "sig",
+          t: "m",
+          s: target.serverId,
+          c: target.channelId,
+          on: true,
+        },
+      ]);
+      expect(
+        voiceOf(useVoiceRoster.getState().byServer, target.serverId, "u-self")
+          ?.muted,
+      ).toBe(true);
+      await vi.waitFor(() => expect(f.peers[1]?.audio).toBeTruthy());
+      expect(f.peers[0]?.closed).toBe(true);
+      expect(f.peers[1].audioEnabledWhenAdded).toEqual([false]);
+      expect(f.peers[1]?.audio?.enabled).toBe(false);
+    },
+  );
+
+  it.each([false, true])(
+    "restores the pre-deafen mute choice (%s) after an explicit switch",
+    async (initiallyMuted) => {
+      const f = install();
+      joinVoice({ serverId: "srv", channelId: "voice", channelName: "Lounge" });
+      await vi.waitFor(() => expect(f.peers[0]?.audio).toBeTruthy());
+      if (initiallyMuted) toggleMute();
+      toggleDeafen();
+      const before = f.sent.length;
+      joinVoice({ serverId: "srv", channelId: "other", channelName: "Other" });
+      expect(useVoice.getState()).toMatchObject({
+        muted: true,
+        deafened: true,
+      });
+      expect(f.sent.slice(before)).toEqual([
+        { op: "sig", t: "l", s: "srv", c: "voice" },
+        { op: "sig", t: "j", s: "srv", c: "other" },
+        { op: "sig", t: "m", s: "srv", c: "other", on: true },
+        { op: "sig", t: "d", s: "srv", c: "other", on: true },
+      ]);
+      await vi.waitFor(() => expect(f.peers[1]?.audio).toBeTruthy());
+      expect(f.peers[1].audioEnabledWhenAdded).toEqual([false]);
+      const beforeHearing = f.sent.length;
+      toggleDeafen();
+      expect(useVoice.getState()).toMatchObject({
+        muted: initiallyMuted,
+        deafened: false,
+      });
+      expect(f.peers[1]?.audio?.enabled).toBe(!initiallyMuted);
+      expect(f.sent.slice(beforeHearing)).toEqual([
+        ...(initiallyMuted
+          ? []
+          : [{ op: "sig", t: "m", s: "srv", c: "other", on: false }]),
+        { op: "sig", t: "d", s: "srv", c: "other", on: false },
+      ]);
+    },
+  );
+
+  it("resynchronizes preserved flags on gateway reconnect", () => {
+    const f = install();
+    joinVoice({ serverId: "srv", channelId: "voice", channelName: "Lounge" });
+    toggleMute();
+    toggleDeafen();
+    joinVoice({ serverId: "srv", channelId: "other", channelName: "Other" });
+    const before = f.sent.length;
+    f.emitReady();
+    expect(f.sent.slice(before)).toEqual([
+      { op: "sig", t: "j", s: "srv", c: "other" },
+      { op: "sig", t: "m", s: "srv", c: "other", on: true },
+      { op: "sig", t: "d", s: "srv", c: "other", on: true },
+    ]);
+    toggleDeafen();
+    expect(useVoice.getState()).toMatchObject({ muted: true, deafened: false });
+  });
+
+  it("explicit unmute while deafened clears the old mute memory", () => {
+    install();
+    joinVoice({ serverId: "srv", channelId: "voice", channelName: "Lounge" });
+    toggleMute();
+    toggleDeafen();
+    joinVoice({ serverId: "srv", channelId: "other", channelName: "Other" });
+    toggleMute();
+    expect(useVoice.getState()).toMatchObject({
+      muted: false,
+      deafened: false,
+    });
+    toggleDeafen();
+    toggleDeafen();
+    expect(useVoice.getState()).toMatchObject({
+      muted: false,
+      deafened: false,
+    });
+  });
+
+  it("starts a fresh session after leave with default mute and deafen", () => {
+    install();
+    joinVoice({ serverId: "srv", channelId: "voice", channelName: "Lounge" });
+    toggleMute();
+    toggleDeafen();
+    leaveVoice();
+    joinVoice({ serverId: "srv", channelId: "other", channelName: "Other" });
+    expect(useVoice.getState()).toMatchObject({
+      muted: false,
+      deafened: false,
+    });
+    toggleDeafen();
+    toggleDeafen();
+    expect(useVoice.getState()).toMatchObject({
+      muted: false,
+      deafened: false,
+    });
+  });
+
+  it("disposes late old-room capture and keeps new-room capture muted", async () => {
+    const gate = deferred();
+    const f = install({
+      gateMedia: (index) => (index === 0 ? gate.promise : undefined),
+    });
+    joinVoice({ serverId: "srv", channelId: "voice", channelName: "Lounge" });
+    await vi.waitFor(() => expect(f.getUserMediaCalls()).toBe(1));
+    toggleMute();
+    joinVoice({ serverId: "srv", channelId: "other", channelName: "Other" });
+    await vi.waitFor(() => expect(f.peers[1]?.audio).toBeTruthy());
+    expect(f.peers[1].audioEnabledWhenAdded).toEqual([false]);
+    gate.resolve();
+    await vi.waitFor(() => expect(streamStopped(f.streams[0])).toBe(true));
+    expect(useVoice.getState()).toMatchObject({
+      channelId: "other",
+      muted: true,
+    });
   });
 
   it("parses SFU stream ids for camera and screen tiles", () => {

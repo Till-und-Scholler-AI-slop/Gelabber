@@ -1,35 +1,28 @@
-// `/s/$serverId`: no channel picked yet — go to the remembered or first text
-// channel as soon as the detail is in the cache.
-
 import { useParams } from "@tanstack/react-router";
-
-import { useUserId } from "../auth/scope.ts";
-import { Redirect } from "../components/Redirect.tsx";
-
-import { lastChannelsFor, useLastChannel } from "../servers/lastChannel.ts";
 import { useServer } from "../servers/queries.ts";
-import { pickChannel } from "../servers/rows.ts";
+import { CommunityOverview } from "./CommunityOverview.tsx";
 
 export function ServerPage() {
   const { serverId } = useParams({ from: "/workspace/s/$serverId" });
-  const { data: server } = useServer(serverId);
-  const userId = useUserId();
-  const byUser = useLastChannel((s) => s.byUser);
-  const remembered = lastChannelsFor(byUser, userId)[serverId];
-
-  if (!server) return null;
-  const channel = pickChannel(server, remembered);
-  if (channel) {
+  const { data: server, error, refetch } = useServer(serverId);
+  if (!server) {
     return (
-      <Redirect
-        to="/s/$serverId/c/$channelId"
-        params={{ serverId, channelId: channel.id }}
-      />
+      <div
+        className="community-overview__empty"
+        role={error ? "alert" : "status"}
+      >
+        <p>
+          {error
+            ? "Deine Community konnte gerade nicht geladen werden."
+            : "Deine Community wird geladen…"}
+        </p>
+        {error ? (
+          <button type="button" onClick={() => void refetch()}>
+            Erneut versuchen
+          </button>
+        ) : null}
+      </div>
     );
   }
-  return (
-    <div className="flex flex-1 items-center justify-center p-8 text-center text-neutral-500 dark:text-neutral-400">
-      <p>Dieser Server hat noch keine Kanäle.</p>
-    </div>
-  );
+  return <CommunityOverview key={server.id} server={server} />;
 }

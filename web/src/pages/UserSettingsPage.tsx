@@ -1,5 +1,6 @@
 import { MediaSettingsForm } from "../voice/VoiceSettings.tsx";
 import { useTheme, type ThemePreference } from "../theme/theme.ts";
+import { useInterfacePreferences } from "../interface/preferences.ts";
 
 const themes: Array<{ value: ThemePreference; label: string }> = [
   { value: "light", label: "Hell" },
@@ -10,9 +11,10 @@ const themes: Array<{ value: ThemePreference; label: string }> = [
 export function UserSettingsPage() {
   const theme = useTheme((state) => state.preference);
   const setTheme = useTheme((state) => state.setPreference);
+  const preferences = useInterfacePreferences();
 
   return (
-    <section className="mx-auto max-w-lg">
+    <section className="lr-account-page mx-auto max-w-lg">
       <h1 className="text-2xl font-semibold tracking-tight">Einstellungen</h1>
       <p className="mt-1 text-sm text-neutral-600 dark:text-neutral-400">
         Darstellung, Voice, Video und Nachrichten-Popups für diesen Browser.
@@ -47,6 +49,39 @@ export function UserSettingsPage() {
         <p className="text-xs text-neutral-500 dark:text-neutral-400">
           System folgt automatisch der Einstellung deines Betriebssystems.
         </p>
+      </fieldset>
+      <fieldset className="mt-8 flex flex-col gap-4">
+        <legend className="mb-3 text-sm font-semibold">Dein Wohnzimmer</legend>
+        <label className="flex items-center justify-between gap-4 text-sm">
+          <span>
+            Kompakte Raumansicht
+            <span className="block text-xs text-neutral-500 dark:text-neutral-400">
+              Kleinere Avatare und weniger Abstand.
+            </span>
+          </span>
+          <input
+            type="checkbox"
+            checked={preferences.compactRooms}
+            onChange={(event) =>
+              preferences.patch({ compactRooms: event.target.checked })
+            }
+          />
+        </label>
+        <label className="flex items-center justify-between gap-4 text-sm">
+          <span>
+            Bewegung reduzieren
+            <span className="block text-xs text-neutral-500 dark:text-neutral-400">
+              Die Systemeinstellung wird ebenfalls berücksichtigt.
+            </span>
+          </span>
+          <input
+            type="checkbox"
+            checked={preferences.reducedMotion}
+            onChange={(event) =>
+              preferences.patch({ reducedMotion: event.target.checked })
+            }
+          />
+        </label>
       </fieldset>
       <div className="mt-8 border-t border-neutral-200 dark:border-neutral-700 pt-8">
         <MediaSettingsForm />

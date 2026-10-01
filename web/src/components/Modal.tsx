@@ -1,4 +1,4 @@
-import { useEffect, useRef, type ReactNode } from "react";
+import { useEffect, useId, useRef, type ReactNode } from "react";
 
 type ModalProps = {
   open: boolean;
@@ -14,33 +14,63 @@ type ModalProps = {
  */
 export function Modal({ open, onClose, title, children, wide }: ModalProps) {
   const ref = useRef<HTMLDialogElement>(null);
+  const openerRef = useRef<HTMLElement | null>(null);
+  const titleId = useId();
 
   useEffect(() => {
     const dialog = ref.current;
     if (!dialog) return;
-    if (open && !dialog.open) dialog.showModal();
-    if (!open && dialog.open) dialog.close();
+    if (open && !dialog.open) {
+      openerRef.current =
+        document.activeElement instanceof HTMLElement
+          ? document.activeElement
+          : null;
+      dialog.showModal();
+    }
+    if (!open && dialog.open) {
+      dialog.close();
+      const opener = openerRef.current;
+      if (opener?.isConnected && opener.getClientRects().length > 0)
+        opener.focus({ preventScroll: true });
+      openerRef.current = null;
+    }
   }, [open]);
+
+  useEffect(() => {
+    const dialog = ref.current;
+    return () => {
+      if (dialog?.open) dialog.close();
+    };
+  }, []);
 
   return (
     <dialog
       ref={ref}
-      aria-labelledby="modal-title"
+      aria-labelledby={titleId}
       onCancel={(event) => {
         event.preventDefault();
+        event.stopPropagation();
         onClose();
       }}
       onClick={(event) => {
-        if (event.target === event.currentTarget) onClose();
+        if (event.target !== event.currentTarget) return;
+        const bounds = event.currentTarget.getBoundingClientRect();
+        if (
+          event.clientX < bounds.left ||
+          event.clientX > bounds.right ||
+          event.clientY < bounds.top ||
+          event.clientY > bounds.bottom
+        )
+          onClose();
       }}
       className={[
-        "m-auto w-[calc(100%-2rem)] rounded-2xl border border-neutral-200 dark:border-neutral-700 bg-white dark:bg-neutral-900 p-0 text-neutral-900 dark:text-neutral-100 shadow-xl backdrop:bg-neutral-900/40 dark:backdrop:bg-black/60",
+        "gel-modal m-auto w-[calc(100%-2rem)] rounded-2xl border border-neutral-200 dark:border-neutral-700 bg-white dark:bg-neutral-900 p-0 text-neutral-900 dark:text-neutral-100 shadow-xl backdrop:bg-neutral-900/40 dark:backdrop:bg-black/60",
         wide ? "max-w-lg" : "max-w-md",
       ].join(" ")}
     >
       {open ? (
         <div className="flex flex-col gap-5 p-6">
-          <h2 id="modal-title" className="text-lg font-semibold tracking-tight">
+          <h2 id={titleId} className="text-lg font-semibold tracking-tight">
             {title}
           </h2>
           {children}

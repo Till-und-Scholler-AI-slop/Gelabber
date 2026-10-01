@@ -4,6 +4,11 @@
     <meta charset="UTF-8" />
     <meta name="viewport" content="width=device-width, initial-scale=1.0" />
     <meta name="color-scheme" content="light dark" />
+    <link
+      rel="icon"
+      type="image/png"
+      href="/images/living-room/community-banner.png"
+    />
     <script>
       const setInitialTheme = (dark) => {
         document.documentElement.classList.toggle("dark", dark);
@@ -13,14 +18,16 @@
       try {
         const stored = localStorage.getItem("gelabber.theme");
         const preference =
-          stored === "light" || stored === "dark" ? stored : "system";
+          stored === "light" || stored === "dark" || stored === "system"
+            ? stored
+            : "dark";
         const dark =
           preference === "dark" ||
           (preference === "system" &&
             matchMedia("(prefers-color-scheme: dark)").matches);
         setInitialTheme(dark);
       } catch {
-        setInitialTheme(matchMedia("(prefers-color-scheme: dark)").matches);
+        setInitialTheme(true);
       }
     </script>
     <title>Gelabber</title>

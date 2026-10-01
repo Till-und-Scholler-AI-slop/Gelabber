@@ -49,9 +49,9 @@ export function MediaSettingsForm() {
   return (
     <div className="flex flex-col gap-6 text-left">
       <p className="text-sm text-neutral-600 dark:text-neutral-400">
-        Defaults: Echo-Unterdrückung, Rauschunterdrückung und Auto-Gain an.
-        Qualität <span className="font-medium">Normal</span> (64 kbit/s Opus).
-        Geräteliste kommt vom Browser — kein fremdes Media-SDK.
+        Passe Mikrofon, Lautsprecher und Kamera an. Echo-Unterdrückung,
+        Rauschunterdrückung und automatische Mikrofonverstärkung sind anfangs
+        eingeschaltet.
       </p>
 
       <fieldset className="flex flex-col gap-3">

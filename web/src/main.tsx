@@ -7,6 +7,7 @@ import { ensureSession } from "./auth/session.ts";
 import { queryClient } from "./queryClient.ts";
 import { router } from "./routes.tsx";
 import { ThemeController } from "./theme/ThemeController.tsx";
+import { InterfacePreferences } from "./interface/InterfacePreferences.tsx";
 
 // Kick off the session bootstrap in parallel with the first render; the
 // route guards await the same promise instead of starting a second request.
@@ -20,6 +21,7 @@ if (!root) {
 createRoot(root).render(
   <StrictMode>
     <ThemeController />
+    <InterfacePreferences />
     <QueryClientProvider client={queryClient}>
       <RouterProvider router={router} />
     </QueryClientProvider>
