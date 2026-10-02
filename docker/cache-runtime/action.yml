@@ -1,0 +1,5 @@
+name: Expose ephemeral build cache runtime
+description: Expose the runner cache credentials to the isolated acceptance harness
+runs:
+  using: node24
+  main: index.cjs

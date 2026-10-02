@@ -14,6 +14,14 @@ on:
         description: Require 20 consecutive isolated typing latency checks (no retries)
         type: boolean
         default: false
+      rust_build_acceptance:
+        description: Run non-publishing Docker cache, runtime and three-round performance acceptance
+        type: boolean
+        default: false
+      build_baseline:
+        description: Commit containing the pre-optimization Dockerfiles
+        type: string
+        default: e15fa683277bd9fa5736a27dd27c4ed66dc52f58
   pull_request:
     paths:
       - api/**
@@ -38,6 +46,41 @@ env:
   CARGO_TERM_COLOR: always
 
 jobs:
+  rust-build-acceptance:
+    if: github.event_name == 'workflow_dispatch' && inputs.rust_build_acceptance
+    name: Rust image acceptance (${{ matrix.package }})
+    runs-on: ubuntu-latest
+    timeout-minutes: 60
+    permissions:
+      contents: read
+      packages: read
+    strategy:
+      fail-fast: false
+      matrix:
+        package: [api, media]
+    steps:
+      - uses: actions/checkout@v7
+        with:
+          fetch-depth: 0
+      - uses: docker/setup-buildx-action@v4
+      - uses: docker/login-action@v4
+        with:
+          registry: ghcr.io
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+      - uses: ./docker/cache-runtime
+      - name: Verify cache reuse, real containers and measured speed
+        env:
+          PACKAGE: ${{ matrix.package }}
+          BUILD_BASELINE: ${{ inputs.build_baseline }}
+        run: python3 docker/release-build-acceptance.py "$PACKAGE" "$BUILD_BASELINE"
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: rust-build-acceptance-${{ matrix.package }}
+          path: build-acceptance/
+          if-no-files-found: error
+
   rust:
     name: Rust tests
     runs-on: ubuntu-latest
