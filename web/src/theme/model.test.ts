@@ -1,6 +1,7 @@
 import { describe, it, expect } from "vitest";
 import { BUILTIN_IDS, BUILTIN_THEMES } from "./presets.ts";
 import {
+  COLOR_KEYS,
   contrast,
   contrastIssues,
   fixContrast,
@@ -39,6 +40,47 @@ describe("theme catalogue and files", () => {
     ])
       expect(() => importTheme(invalid)).toThrow();
   });
+  it.each(["clear", "soft", "terminal"])(
+    "rejects a %s style array in imports and cached documents",
+    (style) => {
+      const theme = importTheme(JSON.stringify(BUILTIN_THEMES[2]));
+      const invalid = { ...theme, style: [style] };
+      expect(() => importTheme(JSON.stringify(invalid))).toThrow();
+      expect(
+        isThemeDocument(
+          {
+            version: 1,
+            revision: 1,
+            active: theme.id,
+            customThemes: [invalid],
+          },
+          BUILTIN_IDS,
+        ),
+      ).toBe(false);
+    },
+  );
+  it.each(COLOR_KEYS)(
+    "rejects a %s colour array in imports and cached documents",
+    (key) => {
+      const theme = importTheme(JSON.stringify(BUILTIN_THEMES[2]));
+      const invalid = {
+        ...theme,
+        colors: { ...theme.colors, [key]: [theme.colors[key]] },
+      };
+      expect(() => importTheme(JSON.stringify(invalid))).toThrow();
+      expect(
+        isThemeDocument(
+          {
+            version: 1,
+            revision: 1,
+            active: theme.id,
+            customThemes: [invalid],
+          },
+          BUILTIN_IDS,
+        ),
+      ).toBe(false);
+    },
+  );
   it("validates references, unique custom IDs, names and limits", () => {
     const theme = importTheme(JSON.stringify(BUILTIN_THEMES[0]));
     const doc = {

@@ -50,12 +50,14 @@ export function isTheme(v: unknown): v is ThemeDefinition {
         (c.charCodeAt(0) >= 127 && c.charCodeAt(0) <= 159),
     ) &&
     (v.mode === "dark" || v.mode === "light") &&
-    ["clear", "soft", "terminal"].includes(String(v.style)) &&
+    typeof v.style === "string" &&
+    ["clear", "soft", "terminal"].includes(v.style) &&
     object(v.colors) &&
     keysAre(v.colors, COLOR_KEYS) &&
-    COLOR_KEYS.every((k) =>
-      /^#[\da-f]{6}$/i.test(String((v.colors as Record<string, unknown>)[k])),
-    )
+    COLOR_KEYS.every((k) => {
+      const value = (v.colors as Record<string, unknown>)[k];
+      return typeof value === "string" && /^#[\da-f]{6}$/i.test(value);
+    })
   );
 }
 export function isCustomId(id: string): boolean {
