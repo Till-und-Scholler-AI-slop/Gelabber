@@ -26,6 +26,7 @@ vi.mock("./session.ts", () => ({
   toggleGoLive: vi.fn(),
   toggleMute: vi.fn(),
   toggleShare: vi.fn(),
+  toggleSourceWatch: vi.fn(),
 }));
 vi.mock("../auth/session.ts", () => ({
   useSession: (select: (state: unknown) => unknown) =>
@@ -80,6 +81,9 @@ beforeEach(() => {
     camera: false,
     sharing: false,
     live: false,
+    sourceWatchSupported: true,
+    sourceAudio: { s: "off", l: "off" },
+    sourceSubscriptions: {},
     localCamera: null,
     localScreen: null,
     localLive: null,

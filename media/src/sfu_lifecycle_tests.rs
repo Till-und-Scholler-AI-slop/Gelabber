@@ -135,6 +135,174 @@ fn remote_kind(
 }
 
 #[tokio::test]
+async fn source_audio_is_watch_gated_paired_and_removed_without_stopping_microphone() {
+    let sfu = Arc::new(Sfu::new(&config()));
+    let channel = Uuid::new_v4();
+    let (publisher, _rx) = join(&sfu, channel).await;
+    let (viewer, _rx) = join(&sfu, channel).await;
+    let room = sfu.find_room(channel).await.unwrap();
+    let user = room.lock().await.peers[&publisher].user_id;
+    assert!(matches!(
+        sfu.announce_track(publisher, channel, "sa", Some("source"))
+            .await,
+        Err(SfuError::Forbidden)
+    ));
+    sfu.announce_track(publisher, channel, "s", Some("screen"))
+        .await
+        .unwrap();
+    assert!(matches!(
+        sfu.announce(publisher, channel, "sa").await,
+        Err(SfuError::BadAnnounce)
+    ));
+    sfu.announce_track(publisher, channel, "sa", Some("source"))
+        .await
+        .unwrap();
+    let (source, _source_events) = remote_kind("source", RtpCodecKind::Audio);
+    sfu.publish(publisher, channel, source).await.unwrap();
+    let (mic, _mic_events) = remote_kind("mic", RtpCodecKind::Audio);
+    sfu.publish(publisher, channel, mic).await.unwrap();
+    let (screen, screen_events) = remote("screen");
+    sfu.publish(publisher, channel, screen).await.unwrap();
+    let (gate, source_life, mic_life) = {
+        let room = room.lock().await;
+        let source = &room.pubs[&format!("{}:source", publisher.0)];
+        assert_eq!(source.stream_id, format!("{user}:sa"));
+        assert_eq!(forwarded_stream_id(&source.stream_id), format!("{user}:s"));
+        assert_eq!(source.codec.channels, 2);
+        assert!(source.codec.sdp_fmtp_line.contains("usedtx=0"));
+        assert!(
+            source
+                .codec
+                .sdp_fmtp_line
+                .contains("maxaveragebitrate=192000")
+        );
+        (
+            room.peers[&viewer].sdp.clone(),
+            source.life.clone(),
+            room.pubs[&format!("{}:mic", publisher.0)].life.clone(),
+        )
+    };
+    assert_eq!(
+        gate.lock().await.subscriptions.len(),
+        1,
+        "only microphone before Watch"
+    );
+    let (legacy_out, _legacy_rx) = mpsc::unbounded_channel();
+    let legacy = sfu
+        .join_inner(
+            TicketClaim {
+                u: Uuid::new_v4(),
+                s: Uuid::new_v4(),
+                c: channel,
+                g: false,
+            },
+            None,
+            None,
+            0,
+            legacy_out,
+        )
+        .await
+        .unwrap();
+    sfu.attach_existing_pubs(legacy, channel).await;
+    let legacy_gate = room.lock().await.peers[&legacy].sdp.clone();
+    assert_eq!(
+        legacy_gate.lock().await.subscriptions.len(),
+        2,
+        "legacy keeps screen video and mic, never source audio"
+    );
+    assert!(matches!(
+        sfu.announce_track(legacy, channel, "sa", Some("unsupported"))
+            .await,
+        Err(SfuError::Forbidden)
+    ));
+    sfu.set_watch(viewer, channel, user, "s", true)
+        .await
+        .unwrap();
+    assert_eq!(gate.lock().await.subscriptions.len(), 3);
+    assert!(matches!(
+        sfu.set_watch(publisher, channel, user, "s", true).await,
+        Err(SfuError::Forbidden)
+    ));
+    sfu.set_watch(viewer, channel, user, "s", false)
+        .await
+        .unwrap();
+    assert_eq!(
+        gate.lock().await.subscriptions.len(),
+        1,
+        "source video and audio both withdrawn"
+    );
+    sfu.set_watch(viewer, channel, user, "s", true)
+        .await
+        .unwrap();
+    screen_events.send(TrackRemoteEvent::OnEnded).unwrap();
+    let mut stopped = source_life.stop.subscribe();
+    tokio::time::timeout(Duration::from_secs(2), stopped.wait_for(|stopped| *stopped))
+        .await
+        .unwrap()
+        .unwrap();
+    assert!(!*mic_life.stop.borrow());
+    assert!(matches!(
+        sfu.announce_track(publisher, channel, "sa", Some("late"))
+            .await,
+        Err(SfuError::Forbidden)
+    ));
+    sfu.leave(publisher, channel).await;
+    sfu.leave(viewer, channel).await;
+    sfu.leave(legacy, channel).await;
+}
+
+#[tokio::test]
+async fn unwatch_revokes_source_rtp_before_waiting_for_the_sdp_gate() {
+    let sfu = Arc::new(Sfu::new(&config()));
+    let channel = Uuid::new_v4();
+    let (publisher, _rx) = join(&sfu, channel).await;
+    let (viewer, _rx) = join(&sfu, channel).await;
+    let room = sfu.find_room(channel).await.unwrap();
+    let user = room.lock().await.peers[&publisher].user_id;
+    sfu.announce_track(publisher, channel, "s", Some("screen"))
+        .await
+        .unwrap();
+    sfu.announce_track(publisher, channel, "sa", Some("source"))
+        .await
+        .unwrap();
+    let (track, _events) = remote_kind("source", RtpCodecKind::Audio);
+    sfu.publish(publisher, channel, track).await.unwrap();
+    sfu.set_watch(viewer, channel, user, "s", true)
+        .await
+        .unwrap();
+    let (gate, intent) = {
+        let room = room.lock().await;
+        let peer = &room.peers[&viewer];
+        (
+            peer.sdp.clone(),
+            peer.watches[&(user, "s".into())].subscribe(),
+        )
+    };
+    let held = gate.lock().await;
+    let unwatch = {
+        let sfu = sfu.clone();
+        tokio::spawn(async move {
+            sfu.set_watch(viewer, channel, user, "s", false)
+                .await
+                .unwrap();
+        })
+    };
+    let mut intent = intent;
+    tokio::time::timeout(Duration::from_secs(2), intent.wait_for(|allowed| !*allowed))
+        .await
+        .unwrap()
+        .unwrap();
+    assert!(
+        !unwatch.is_finished(),
+        "SDP cleanup waits but RTP permission is already withdrawn"
+    );
+    drop(held);
+    unwatch.await.unwrap();
+    sfu.leave(publisher, channel).await;
+    sfu.leave(viewer, channel).await;
+}
+
+#[tokio::test]
 async fn watch_filters_existing_and_new_video_but_keeps_every_room_audio() {
     let sfu = Arc::new(Sfu::new(&config()));
     let channel = Uuid::new_v4();
@@ -162,12 +330,21 @@ async fn watch_filters_existing_and_new_video_but_keeps_every_room_audio() {
             },
             None,
             Some(selected),
+            2,
             out,
         )
         .await
         .unwrap();
     sfu.attach_existing_pubs(watcher, channel).await;
     for (peer, id) in [(a, "audio-a"), (b, "audio-b")] {
+        let (track, tx) = remote_kind(id, RtpCodecKind::Audio);
+        sfu.publish(peer, channel, track).await.unwrap();
+        events.push(tx);
+    }
+    for (peer, id) in [(a, "live-audio-a"), (b, "live-audio-b")] {
+        sfu.announce_track(peer, channel, "la", Some(id))
+            .await
+            .unwrap();
         let (track, tx) = remote_kind(id, RtpCodecKind::Audio);
         sfu.publish(peer, channel, track).await.unwrap();
         events.push(tx);
@@ -179,9 +356,14 @@ async fn watch_filters_existing_and_new_video_but_keeps_every_room_audio() {
     sfu.publish(a, channel, track).await.unwrap();
     events.push(tx);
     let gate = room.lock().await.peers[&watcher].sdp.clone();
-    let expected: HashSet<_> = [(a, "live-a"), (a, "audio-a"), (b, "audio-b")]
-        .map(|(peer, id)| format!("{}:{id}", peer.0))
-        .into();
+    let expected: HashSet<_> = [
+        (a, "live-a"),
+        (a, "audio-a"),
+        (b, "audio-b"),
+        (a, "live-audio-a"),
+    ]
+    .map(|(peer, id)| format!("{}:{id}", peer.0))
+    .into();
     assert_eq!(
         gate.lock()
             .await
@@ -191,7 +373,36 @@ async fn watch_filters_existing_and_new_video_but_keeps_every_room_audio() {
             .collect::<HashSet<_>>(),
         expected
     );
-    for peer in [a, b, watcher] {
+    let (own_out, _own_rx) = mpsc::unbounded_channel();
+    let own_watch = sfu
+        .join_inner(
+            TicketClaim {
+                u: selected,
+                s: Uuid::new_v4(),
+                c: channel,
+                g: false,
+            },
+            None,
+            Some(selected),
+            2,
+            own_out,
+        )
+        .await
+        .unwrap();
+    sfu.attach_existing_pubs(own_watch, channel).await;
+    let own_gate = room.lock().await.peers[&own_watch].sdp.clone();
+    assert_eq!(
+        own_gate
+            .lock()
+            .await
+            .subscriptions
+            .keys()
+            .cloned()
+            .collect::<HashSet<_>>(),
+        HashSet::from([format!("{}:audio-b", b.0)]),
+        "separate own Watch peer never receives its own voice, video or source audio"
+    );
+    for peer in [a, b, watcher, own_watch] {
         sfu.leave(peer, channel).await;
     }
     assert_eq!(sfu.room_count(), 0);
@@ -232,6 +443,13 @@ async fn reversed_track_arrival_keeps_camera_screen_and_live_identity() {
     let channel = Uuid::new_v4();
     let (publisher, _rx) = join(&sfu, channel).await;
     let (subscriber, _rx) = join(&sfu, channel).await;
+    let room = sfu.find_room(channel).await.unwrap();
+    let user = room.lock().await.peers[&publisher].user_id;
+    for kind in ["s", "l"] {
+        sfu.set_watch(subscriber, channel, user, kind, true)
+            .await
+            .unwrap();
+    }
     for (kind, id) in [("v", "camera"), ("s", "screen"), ("l", "live")] {
         sfu.announce_track(publisher, channel, kind, Some(id))
             .await
@@ -270,6 +488,10 @@ async fn twenty_stop_start_cycles_cancel_reader_and_pending_subscription() {
     let (publisher, _rx) = join(&sfu, channel).await;
     let (subscriber, _rx) = join(&sfu, channel).await;
     let room = sfu.find_room(channel).await.unwrap();
+    let user = room.lock().await.peers[&publisher].user_id;
+    sfu.set_watch(subscriber, channel, user, "s", true)
+        .await
+        .unwrap();
     let gate = room.lock().await.peers[&subscriber].sdp.clone();
     for _ in 0..20 {
         sfu.announce_track(publisher, channel, "s", Some("reused-track"))
@@ -362,6 +584,10 @@ async fn publication_removed_before_connection_is_not_offered() {
     let (publisher, _publisher_rx) = join(&sfu, channel).await;
     let (subscriber, mut subscriber_rx) = join(&sfu, channel).await;
     let room = sfu.find_room(channel).await.unwrap();
+    let user = room.lock().await.peers[&publisher].user_id;
+    sfu.set_watch(subscriber, channel, user, "s", true)
+        .await
+        .unwrap();
     let (gate, pc) = {
         let room = room.lock().await;
         (
@@ -593,6 +819,10 @@ async fn rollback_holds_gate_until_next_publication_can_create_offer() {
     let (publisher, _rx) = join(&sfu, channel).await;
     let (subscriber, _rx) = join(&sfu, channel).await;
     let room = sfu.find_room(channel).await.unwrap();
+    let user = room.lock().await.peers[&publisher].user_id;
+    sfu.set_watch(subscriber, channel, user, "s", true)
+        .await
+        .unwrap();
     let (gate, blocked) = {
         let mut room = room.lock().await;
         let peer = room.peers.get_mut(&subscriber).unwrap();
@@ -798,7 +1028,7 @@ async fn revoked_live_track_is_blocked_before_and_after_watcher_withdrawal() {
         // Attach without the automatic watcher, then install the same valid
         // authority so both room-lock orderings can be exercised deterministically.
         let peer = sfu
-            .join_inner(claim.claim.clone(), None, None, out)
+            .join_inner(claim.claim.clone(), None, None, 2, out)
             .await
             .unwrap();
         let channel = claim.claim.c;

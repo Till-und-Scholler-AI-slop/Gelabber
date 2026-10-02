@@ -14,6 +14,8 @@ export function VoiceSessionControls() {
   const dockRef = useRef<HTMLElement>(null);
   const voice = useVoice();
   const volume = useMediaSettings((s) => s.outputVolume);
+  const sourceVolume = useMediaSettings((s) => s.sourceAudioVolume);
+  const sourceMuted = useMediaSettings((s) => s.sourceAudioMuted);
   const patch = useMediaSettings((s) => s.patch);
   const openSettings = useMediaSettings((s) => s.openDialog);
   const { data: server } = useServer(voice.serverId ?? undefined);
@@ -104,6 +106,49 @@ export function VoiceSessionControls() {
           </button>
         </div>
       ) : null}
+      <div className="voice-source-playback" aria-label="Stream-Ton">
+        <button
+          type="button"
+          className="voice-control voice-control-compact"
+          aria-pressed={sourceMuted}
+          onClick={() => patch({ sourceAudioMuted: !sourceMuted })}
+        >
+          {sourceMuted ? "Stream-Ton an" : "Stream-Ton aus"}
+        </button>
+        <label className="voice-playback-volume">
+          <span>Stream-Ton</span>
+          <input
+            type="range"
+            min={0}
+            max={100}
+            value={Math.round(sourceVolume * 100)}
+            aria-label="Stream-Ton-Lautstärke"
+            disabled={voice.deafened}
+            onChange={(event) =>
+              patch({ sourceAudioVolume: Number(event.target.value) / 100 })
+            }
+            className="voice-volume-slider"
+          />
+        </label>
+      </div>
+      {(voice.sourceAudio.s === "unavailable" ||
+        voice.sourceAudio.l === "unavailable") && (
+        <p role="status" className="voice-source-audio-notice">
+          Der Browser hat keinen Stream-Ton freigegeben. Das Video läuft weiter.
+        </p>
+      )}
+      {(voice.sourceAudio.s === "unsupported" ||
+        voice.sourceAudio.l === "unsupported") && (
+        <p role="status" className="voice-source-audio-notice">
+          Dieser Medienserver unterstützt Stream-Ton noch nicht. Das Video läuft
+          weiter.
+        </p>
+      )}
+      {(voice.sourceAudio.s === "ended" || voice.sourceAudio.l === "ended") && (
+        <p role="status" className="voice-source-audio-notice">
+          Der Stream-Ton wurde beendet. Das Video läuft weiter.
+        </p>
+      )}
       {voice.playbackBlocked && !voice.deafened ? (
         <div role="status" className="voice-session-playback">
           <span>Die Tonwiedergabe ist blockiert.</span>

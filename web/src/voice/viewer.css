@@ -1,0 +1,142 @@
+.voice-video-actions {
+  position: absolute;
+  top: 8px;
+  right: 8px;
+  display: flex;
+  flex-wrap: wrap;
+  justify-content: flex-end;
+  gap: 6px;
+  max-width: calc(100% - 16px);
+}
+.voice-video-actions button,
+.stream-viewer-header button,
+.voice-fullscreen-error button {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  gap: 6px;
+  min-height: 36px;
+  padding: 6px 10px;
+  border: 1px solid #ffffff30;
+  border-radius: 7px;
+  color: white;
+  background: #151819e8;
+  font-size: 12px;
+  cursor: pointer;
+}
+.voice-video-actions button:hover,
+.stream-viewer-header button:hover {
+  background: #343a3e;
+}
+.voice-video-actions button:focus-visible,
+.stream-viewer-header button:focus-visible {
+  outline: 2px solid var(--lr-accent);
+  outline-offset: 2px;
+}
+.stream-viewer {
+  position: fixed;
+  inset: 12px;
+  width: calc(100vw - 24px);
+  height: calc(100dvh - 24px);
+  max-width: none;
+  max-height: none;
+  margin: auto;
+  padding: 0;
+  border: 1px solid var(--lr-border);
+  border-radius: 12px;
+  background: #0b0d0e;
+  color: #fff;
+  overflow: hidden;
+}
+.stream-viewer[open] {
+  display: flex;
+  flex-direction: column;
+}
+.stream-viewer::backdrop {
+  background: #000b;
+}
+.stream-viewer-header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  padding: 10px 14px;
+  flex-shrink: 0;
+}
+.stream-viewer-header strong {
+  font-size: 14px;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.voice-video-viewer {
+  flex: 1;
+  min-height: 0;
+  aspect-ratio: auto;
+  border-radius: 0;
+  background: #000;
+}
+.voice-video-tile:fullscreen {
+  width: 100vw;
+  height: 100dvh;
+  aspect-ratio: auto;
+  border-radius: 0;
+  background: #000;
+}
+.voice-video-tile:fullscreen video,
+.voice-video-viewer video {
+  width: 100%;
+  height: 100%;
+  object-fit: contain;
+}
+.voice-fullscreen-error {
+  position: absolute;
+  bottom: 28px;
+  inset-inline: 12px;
+  padding: 10px;
+  border-radius: 6px;
+  background: #16191bf2;
+  color: #fff;
+  font-size: 13px;
+}
+.voice-fullscreen-error button {
+  margin: 6px;
+}
+@media (max-width: 640px) {
+  .stream-viewer {
+    inset: 0;
+    width: 100vw;
+    height: 100dvh;
+    border: 0;
+    border-radius: 0;
+  }
+  .voice-video-actions button,
+  .stream-viewer-header button {
+    min-height: 40px;
+  }
+}
+
+.voice-source-watch-overlay {
+  position: absolute;
+  inset: 0;
+  z-index: 1;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+}
+.voice-source-watch-overlay button {
+  padding: 9px 14px;
+  border-radius: 7px;
+  background: var(--lr-accent);
+  color: white;
+  cursor: pointer;
+}
+.voice-source-audio-tile {
+  position: absolute;
+  bottom: 28px;
+  inset-inline: 12px;
+  padding: 5px 8px;
+  border-radius: 6px;
+  background: #151819df;
+  color: white;
+}

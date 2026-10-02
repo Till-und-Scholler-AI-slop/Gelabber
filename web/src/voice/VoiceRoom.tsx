@@ -11,7 +11,12 @@ import { MemberProfileDialog } from "../components/MemberProfileDialog.tsx";
 import { Avatar } from "../components/Avatar.tsx";
 import { GearIcon, SpeakerIcon } from "../components/Icons.tsx";
 import { useSession } from "../auth/session.ts";
-import { joinVoice, useVoice, watchLive } from "./session.ts";
+import {
+  joinVoice,
+  useVoice,
+  watchLive,
+  toggleSourceWatch,
+} from "./session.ts";
 import { useMediaSettings } from "./settings.ts";
 import { EMPTY_OCCUPANCY, liveOf, useVoiceRoster } from "./roster.ts";
 import { VoiceTile } from "./VoiceTile.tsx";
@@ -135,6 +140,32 @@ export function VoiceRoom({
       name: `${name} — Live`,
     };
   }
+
+  const sourceProps = (tileId: string) => {
+    const userId = tileId.slice(0, -2);
+    const kind = tileId.endsWith("-s") ? ("s" as const) : ("l" as const);
+    if (userId === me && here) {
+      const status = voice.sourceAudio[kind];
+      return {
+        sourceAudioNotice:
+          status === "unavailable"
+            ? "Kein Stream-Ton freigegeben · Video läuft weiter"
+            : status === "ended"
+              ? "Stream-Ton beendet · Video läuft weiter"
+              : status === "sharing"
+                ? "Ton wird geteilt"
+                : undefined,
+      };
+    }
+    return here && voice.sourceWatchSupported
+      ? {
+          sourceWatch: {
+            watching: voice.sourceSubscriptions[userId]?.[kind] === true,
+            toggle: () => toggleSourceWatch(userId, kind),
+          },
+        }
+      : {};
+  };
 
   const showStage =
     Boolean(liveTile) || screens.length > 0 || cameras.length > 0;
@@ -346,6 +377,9 @@ export function VoiceRoom({
           {focused ? (
             <VoiceTile
               key={focused.tile.id}
+              {...(focused.kind === "camera"
+                ? {}
+                : sourceProps(focused.tile.id))}
               stream={focused.tile.stream}
               label={focused.tile.name}
               screen={focused.kind !== "camera"}
@@ -363,6 +397,7 @@ export function VoiceRoom({
               {liveTile ? (
                 <VoiceTile
                   key={liveTile.id}
+                  {...sourceProps(liveTile.id)}
                   stream={liveTile.stream}
                   label={liveTile.name}
                   screen
@@ -373,6 +408,7 @@ export function VoiceRoom({
               {screens.map((tile) => (
                 <VoiceTile
                   key={tile.id}
+                  {...sourceProps(tile.id)}
                   stream={tile.stream}
                   label={tile.name}
                   screen

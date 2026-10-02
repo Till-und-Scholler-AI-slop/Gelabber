@@ -18,6 +18,7 @@ import {
   toggleGoLive,
   toggleMute,
   toggleShare,
+  toggleSourceWatch,
   watchLive,
   stopWatching,
   retryPlayback,
@@ -170,16 +171,40 @@ type FakeTrack = MediaStreamTrack & { stopped: boolean };
 
 function fakeTrack(kind: "audio" | "video", id?: string): FakeTrack {
   trackSeq += 1;
+  const listeners = new Map<string, Set<EventListenerOrEventListenerObject>>();
   const track = {
     kind,
+    get readyState() {
+      return track.stopped ? "ended" : "live";
+    },
     enabled: true,
     id: id ?? `${kind}-${trackSeq}`,
     stopped: false,
     stop() {
       track.stopped = true;
     },
-    addEventListener() {},
-    removeEventListener() {},
+    addEventListener(
+      type: string,
+      listener: EventListenerOrEventListenerObject,
+    ) {
+      const held = listeners.get(type) ?? new Set();
+      held.add(listener);
+      listeners.set(type, held);
+    },
+    removeEventListener(
+      type: string,
+      listener: EventListenerOrEventListenerObject,
+    ) {
+      listeners.get(type)?.delete(listener);
+    },
+    dispatchEvent(event: Event) {
+      if (event.type === "ended") track.stopped = true;
+      for (const listener of listeners.get(event.type) ?? []) {
+        if (typeof listener === "function") listener(event);
+        else listener.handleEvent(event);
+      }
+      return true;
+    },
   };
   return track as unknown as FakeTrack;
 }
@@ -281,6 +306,10 @@ function install(opts?: {
     callIndex: number,
     constraints: MediaStreamConstraints,
   ) => Error | undefined;
+  displayStreamFor?: (
+    callIndex: number,
+    constraints: MediaStreamConstraints,
+  ) => MediaStream;
   displayError?: (
     callIndex: number,
     constraints: MediaStreamConstraints,
@@ -289,6 +318,7 @@ function install(opts?: {
   /** Do not answer `op:j` with `op:ok`. Used when the SFU rejects the join. */
   holdJoin?: boolean;
   holdLiveClaim?: boolean;
+  mediaVersion?: number;
 }) {
   const sent: ClientFrame[] = [];
   const mediaSent: MediaClientFrame[] = [];
@@ -412,7 +442,10 @@ function install(opts?: {
       const displayError = opts?.displayError?.(callIndex, constraints);
       if (displayError) throw displayError;
       if (opts?.display === false) throw new Error("denied");
-      return fakeVideoStream("local-scr", true);
+      return (
+        opts?.displayStreamFor?.(callIndex, constraints) ??
+        fakeVideoStream("local-scr", true)
+      );
     },
     fetchTicket: async () => {
       const index = ticketCalls++;
@@ -440,6 +473,7 @@ function install(opts?: {
                 op: "ok",
                 c: "voice",
                 u: opts?.userId ?? "u-self",
+                v: opts?.mediaVersion ?? 2,
               });
             });
           }
@@ -525,7 +559,7 @@ describe("voice session", () => {
     expect(peers[0]?.tracks).toBe(1);
     expect(peers[0]?.iceServers[0]?.urls).toEqual(["stun:127.0.0.1:3478"]);
     expect(mediaSent.map((frame) => frame.op)).toEqual(["j", "i", "o"]);
-    expect(mediaSent[0]).toEqual({ op: "j", tk: "abcdefghjkmn" });
+    expect(mediaSent[0]).toEqual({ op: "j", tk: "abcdefghjkmn", v: 2 });
     expect(
       sent.filter((frame) => frame.op === "sig").map((frame) => frame.t),
     ).toEqual(["j", "p"]);
@@ -1385,6 +1419,7 @@ describe("voice session", () => {
       ...fakeTrack("video"),
       id: "u-cara:s-77",
     } as MediaStreamTrack;
+    toggleSourceWatch("u-cara", "s");
     peers[0]?.ontrack?.({ track, streams: [tagged] });
     expect(useVoice.getState().remote["u-cara"]?.s).toBe(tagged);
   });
@@ -2070,7 +2105,7 @@ describe("voice session", () => {
     }
   });
 
-  it("deafens Go Live watch audio with the same volume as the room mix", async () => {
+  it("deafens Watch-channel speech with the same volume as the room mix", async () => {
     const clips: FakeHtmlAudio[] = [];
     class FakeHtmlAudio {
       autoplay = false;
@@ -2102,12 +2137,12 @@ describe("voice session", () => {
         channelName: "Stage",
       });
       await vi.waitFor(() => expect(peers.length).toBe(2));
-      const live = fakeVideoStream("u-bob:l", true);
+      const speech = fakeStream("u-bob:a");
       peers[1]?.ontrack?.({
-        track: live.getAudioTracks()[0]!,
-        streams: [live],
+        track: speech.getAudioTracks()[0]!,
+        streams: [speech],
       });
-      const watch = clips.find((el) => el.srcObject === live);
+      const watch = clips.find((el) => el.srcObject === speech);
       expect(watch).toBeTruthy();
       expect(watch?.muted).toBe(false);
       expect(watch?.volume).toBe(1);
@@ -3207,6 +3242,76 @@ describe("stream negotiation stability", () => {
     expect(diagnosticsPolling().voice).toBe(true);
   });
 
+  it("applies 4K/60 to camera, screen and Go Live and updates the shared upload cap live", async () => {
+    useMediaSettings
+      .getState()
+      .patch({ cameraProfile: "2160p60", screenProfile: "2160p60" });
+    const env = await connected();
+    toggleCamera();
+    await vi.waitFor(() =>
+      expect(useVoice.getState().localCamera).toBeTruthy(),
+    );
+    expect(env.lastUserMedia()?.video).toEqual({
+      width: { ideal: 3840, max: 3840 },
+      height: { ideal: 2160, max: 2160 },
+      frameRate: { ideal: 60, max: 60 },
+    });
+    toggleShare();
+    await vi.waitFor(() =>
+      expect(useVoice.getState().localScreen).toBeTruthy(),
+    );
+    expect(env.lastDisplayMedia()?.video).toEqual(
+      videoConstraintsFor("screen", "2160p60"),
+    );
+    toggleGoLive();
+    await vi.waitFor(() => expect(useVoice.getState().localLive).toBeTruthy());
+    expect(env.lastDisplayMedia()?.video).toEqual(
+      videoConstraintsFor("screen", "2160p60"),
+    );
+    const video = () =>
+      env.peers[0]!.senders.filter((sender) => sender.track?.kind === "video");
+    await vi.waitFor(() =>
+      expect(
+        video().map((sender) => sender.getParameters!().encodings[0]),
+      ).toEqual(Array(3).fill({ maxBitrate: 20_000_000, maxFramerate: 60 })),
+    );
+    useMediaSettings.getState().patch({ videoUploadLimit: 9_000_000 });
+    await vi.waitFor(() =>
+      expect(
+        video().map(
+          (sender) => sender.getParameters!().encodings[0]?.maxBitrate,
+        ),
+      ).toEqual([3_000_000, 3_000_000, 3_000_000]),
+    );
+    const screen = useVoice.getState().localScreen!.getVideoTracks()[0]!;
+    const applied = vi.fn(async () => {});
+    screen.applyConstraints = applied;
+    useMediaSettings.getState().patch({ screenProfile: "1440p24" });
+    await vi.waitFor(() =>
+      expect(applied).toHaveBeenCalledWith(
+        videoConstraintsFor("screen", "1440p24"),
+      ),
+    );
+    await vi.waitFor(() =>
+      expect(
+        video().map(
+          (sender) => sender.getParameters!().encodings[0]?.maxFramerate,
+        ),
+      ).toEqual([60, 24, 24]),
+    );
+    const total = video().reduce(
+      (sum, sender) =>
+        sum + (sender.getParameters!().encodings[0]?.maxBitrate ?? 0),
+      0,
+    );
+    expect(total).toBeLessThanOrEqual(9_000_000);
+    expect(
+      env.peers[0]!.senders.find((sender) => sender.track?.kind === "audio")
+        ?.getParameters!().encodings[0]?.maxBitrate,
+    ).toBe(64_000);
+    expect(useVoice.getState().status).toBe("joined");
+  });
+
   it("uses the screen profile for Go Live", async () => {
     useMediaSettings.getState().patch({ screenProfile: "economy" });
     const env = await connected();
@@ -3374,47 +3479,22 @@ describe("stream negotiation stability", () => {
     expect(env.errors).toHaveLength(0);
   });
 
-  it("retries screen capture once when the profile constraints are rejected", async () => {
-    useMediaSettings.getState().patch({ screenProfile: "detail" });
-    const env = install({
-      displayError: (index, constraints) => {
-        const video = constraints.video;
-        if (
-          index === 0 &&
-          video &&
-          typeof video === "object" &&
-          "width" in video &&
-          video.width &&
-          typeof video.width === "object" &&
-          "ideal" in video.width &&
-          video.width.ideal === 1920
-        ) {
-          const error = new Error("over");
-          error.name = "OverconstrainedError";
-          return error;
-        }
-        return undefined;
-      },
-    });
+  it("does not reopen the display picker after rejected capture constraints", async () => {
+    useMediaSettings
+      .getState()
+      .patch({ screenProfile: "detail", shareSourceAudio: true });
+    const error = new Error("profile rejected");
+    error.name = "OverconstrainedError";
+    const env = install({ displayError: () => error });
     joinVoice({ serverId: "srv", channelId: "voice", channelName: "Lounge" });
-    await vi.waitFor(() =>
-      expect(env.peers[0]?.signalingState).toBe("have-local-offer"),
-    );
+    await vi.waitFor(() => expect(env.peers.length).toBe(1));
     env.emitMedia({ op: "a", sdp: "v=0\r\n" });
-    await vi.waitFor(() => expect(env.peers[0]?.signalingState).toBe("stable"));
     toggleShare();
-    await vi.waitFor(() =>
-      expect(useVoice.getState().localScreen).toBeTruthy(),
-    );
-    expect(env.getDisplayMediaCalls()).toBe(2);
-    expect(env.lastDisplayMedia()).toEqual({
-      audio: false,
-      video: videoConstraintsFor("screen", "balanced"),
-    });
-    expect(env.errors.map((error) => (error as Error).message)).toContain(
-      "Dieses Streamprofil wird nicht unterstützt. Es läuft eine sicherere Auflösung.",
-    );
-    expect(useVoice.getState().sharing).toBe(true);
+    await vi.waitFor(() => expect(useVoice.getState().sharing).toBe(false));
+    expect(env.getDisplayMediaCalls()).toBe(1);
+    expect(useVoice.getState().status).toBe("joined");
+    expect(useVoice.getState().localScreen).toBeNull();
+    expect(env.peers[0]?.closed).toBe(false);
   });
 
   it("keeps the newer budgets when an older profile update resumes", async () => {
@@ -3540,5 +3620,465 @@ describe("stream negotiation stability", () => {
     } finally {
       held.release();
     }
+  });
+});
+
+describe("display-source audio", () => {
+  afterEach(() => {
+    resetVoiceForTests();
+    resetVoiceRoster();
+    resetMediaSettingsForTests();
+    vi.unstubAllGlobals();
+    trackSeq = 0;
+  });
+
+  async function joined(options?: Parameters<typeof install>[0]) {
+    const env = install(options);
+    joinVoice({ serverId: "srv", channelId: "voice", channelName: "Lounge" });
+    await vi.waitFor(() =>
+      expect(env.peers[0]?.signalingState).toBe("have-local-offer"),
+    );
+    env.emitMedia({ op: "a", sdp: "v=0\r\n" });
+    await vi.waitFor(() => expect(env.peers[0]?.signalingState).toBe("stable"));
+    return env;
+  }
+
+  function audioElements() {
+    const elements: FakeAudio[] = [];
+    class FakeAudio {
+      autoplay = false;
+      muted = false;
+      volume = 1;
+      srcObject: MediaStream | null = null;
+      attributes: Record<string, string> = {};
+      pause = vi.fn();
+      play = vi.fn(async () => undefined);
+      constructor() {
+        elements.push(this);
+      }
+      setAttribute(key: string, value: string) {
+        this.attributes[key] = value;
+      }
+    }
+    vi.stubGlobal("Audio", FakeAudio);
+    return elements;
+  }
+
+  it.each(["s", "l"] as const)(
+    "captures %s video and browser audio once and publishes separate music, preserving the mic",
+    async (kind) => {
+      useMediaSettings
+        .getState()
+        .patch({ shareSourceAudio: true, quality: "phone" });
+      const elements = audioElements();
+      const env = await joined();
+      const mic = env.streams[0]?.getAudioTracks()[0];
+      (kind === "s" ? toggleShare : toggleGoLive)();
+      await vi.waitFor(() =>
+        expect(
+          env.mediaSent.some(
+            (frame) =>
+              frame.op === "p" && frame.k === (kind === "s" ? "sa" : "la"),
+          ),
+        ).toBe(true),
+      );
+      expect(env.getDisplayMediaCalls()).toBe(1);
+      expect(env.lastDisplayMedia()?.audio).toEqual({
+        echoCancellation: false,
+        noiseSuppression: false,
+        autoGainControl: false,
+        channelCount: 2,
+      });
+      const capture =
+        kind === "s"
+          ? useVoice.getState().localScreen!
+          : useVoice.getState().localLive!;
+      const audio = capture.getAudioTracks()[0]!;
+      const sourceSender = env.peers[0]?.senders.find(
+        (sender) => sender.track === audio,
+      );
+      expect(sourceSender?.getParameters?.().encodings[0]?.maxBitrate).toBe(
+        192_000,
+      );
+      expect(
+        env.peers[0]?.senders
+          .find((sender) => sender.track === mic)
+          ?.getParameters?.().encodings[0]?.maxBitrate,
+      ).toBe(24_000);
+      expect(
+        (audio as MediaStreamTrack & { contentHint: string }).contentHint,
+      ).toBe("music");
+      const manifests = env.mediaSent.filter((frame) => frame.op === "p");
+      expect(manifests.slice(-2).map((frame) => frame.k)).toEqual([
+        kind,
+        kind === "s" ? "sa" : "la",
+      ]);
+      if (kind === "l")
+        expect(
+          manifests
+            .slice(-2)
+            .every(
+              (frame) => frame.lc === "00000000-0000-0000-0000-000000000001",
+            ),
+        ).toBe(true);
+      expect(
+        elements.every((el) => !el.srcObject?.getTracks().includes(audio)),
+      ).toBe(true);
+      toggleMute();
+      expect(mic?.enabled).toBe(false);
+      expect(audio.enabled).toBe(true);
+      leaveVoice();
+      expect(streamStopped(capture)).toBe(true);
+    },
+  );
+
+  it("continues video with an unavailable-audio status when the browser supplies no audio", async () => {
+    useMediaSettings.getState().patch({ shareSourceAudio: true });
+    const env = await joined({
+      displayStreamFor: () => fakeVideoStream("without-audio"),
+    });
+    toggleShare();
+    await vi.waitFor(() =>
+      expect(useVoice.getState().localScreen).toBeTruthy(),
+    );
+    expect(useVoice.getState().sourceAudio.s).toBe("unavailable");
+    expect(useVoice.getState().sharing).toBe(true);
+    expect(env.getDisplayMediaCalls()).toBe(1);
+    expect(
+      env.mediaSent.some((frame) => frame.op === "p" && frame.k === "sa"),
+    ).toBe(false);
+    expect(env.errors).toEqual([]);
+  });
+
+  it("keeps old media servers on video and never sends extra audio or Watch frames", async () => {
+    useMediaSettings.getState().patch({ shareSourceAudio: true });
+    const env = await joined({ mediaVersion: 1 });
+    toggleShare();
+    await vi.waitFor(() =>
+      expect(useVoice.getState().localScreen).toBeTruthy(),
+    );
+    expect(useVoice.getState().sourceAudio.s).toBe("unsupported");
+    expect(useVoice.getState().sourceWatchSupported).toBe(false);
+    toggleSourceWatch("u-bob", "s");
+    expect(
+      env.mediaSent.some(
+        (frame) => frame.op === "w" || (frame.op === "p" && frame.k === "sa"),
+      ),
+    ).toBe(false);
+    expect(
+      env.peers[0]?.senders.filter((sender) => sender.track?.kind === "audio"),
+    ).toHaveLength(1);
+  });
+
+  it("ends only source audio when its track ends and ends both tracks when the source video ends", async () => {
+    useMediaSettings.getState().patch({ shareSourceAudio: true });
+    const env = await joined();
+    toggleShare();
+    await vi.waitFor(() =>
+      expect(
+        env.mediaSent.some((frame) => frame.op === "p" && frame.k === "sa"),
+      ).toBe(true),
+    );
+    const stream = useVoice.getState().localScreen!;
+    stream.getAudioTracks()[0]!.dispatchEvent(new Event("ended"));
+    expect(useVoice.getState().sourceAudio.s).toBe("ended");
+    expect(useVoice.getState().localScreen).toBe(stream);
+    expect(trackStopped(stream.getVideoTracks()[0])).toBe(false);
+    expect(env.mediaSent).toContainEqual({
+      op: "u",
+      k: "sa",
+      t: stream.getAudioTracks()[0]!.id,
+    });
+    stream.getVideoTracks()[0]!.dispatchEvent(new Event("ended"));
+    expect(useVoice.getState().localScreen).toBeNull();
+    expect(useVoice.getState().sharing).toBe(false);
+    expect(streamStopped(stream)).toBe(true);
+  });
+
+  it("gates screen audio on Watch and keeps stream volume/mute independent while Deafen wins", async () => {
+    const clips = audioElements();
+    const env = await joined();
+    const source = fakeVideoStream("u-bob:s", true);
+    Object.defineProperty(source.getAudioTracks()[0], "id", {
+      value: "u-bob:sa-123",
+    });
+    env.peers[0]!.ontrack?.({
+      track: source.getAudioTracks()[0]!,
+      streams: [source],
+    });
+    env.peers[0]!.ontrack?.({
+      track: source.getVideoTracks()[0]!,
+      streams: [source],
+    });
+    expect(clips.some((el) => el.attributes["data-source-audio"])).toBe(false);
+    expect(useVoice.getState().remote["u-bob"]?.s).toBeUndefined();
+    toggleSourceWatch("u-bob", "s");
+    expect(env.mediaSent).toContainEqual({
+      op: "w",
+      u: "u-bob",
+      k: "s",
+      on: true,
+    });
+    const sourceClip = clips.find(
+      (el) => el.attributes["data-source-audio"] === "s",
+    )!;
+    expect(sourceClip.srcObject).toBe(source);
+    expect(useVoice.getState().remote["u-bob"]?.s).toBe(source);
+    useMediaSettings
+      .getState()
+      .patch({ sourceAudioVolume: 0.3, outputVolume: 0.8 });
+    expect(sourceClip.volume).toBe(0.3);
+    useMediaSettings.getState().patch({ outputVolume: 0.1 });
+    expect(sourceClip.volume).toBe(0.3);
+    useMediaSettings.getState().patch({ sourceAudioMuted: true });
+    expect(sourceClip.muted).toBe(true);
+    toggleDeafen();
+    expect(sourceClip.volume).toBe(0);
+    toggleDeafen();
+    expect(sourceClip.volume).toBe(0.3);
+    expect(sourceClip.muted).toBe(true);
+    useMediaSettings.getState().patch({ sourceAudioMuted: false });
+    expect(sourceClip.muted).toBe(false);
+    toggleSourceWatch("u-bob", "s");
+    expect(sourceClip.srcObject).toBeNull();
+    expect(sourceClip.pause).toHaveBeenCalled();
+    expect(useVoice.getState().remote["u-bob"]?.s).toBeUndefined();
+    expect(env.mediaSent).toContainEqual({
+      op: "w",
+      u: "u-bob",
+      k: "s",
+      on: false,
+    });
+    toggleSourceWatch("u-bob", "s");
+    expect(clips.filter((el) => el.srcObject === source)).toHaveLength(1);
+  });
+
+  it("rejects a self source and wrong-publisher Live audio from standalone Watch", async () => {
+    const clips = audioElements();
+    const env = await joined();
+    toggleSourceWatch("u-self", "s");
+    expect(env.mediaSent.some((frame) => frame.op === "w")).toBe(false);
+    useVoiceRoster.setState({ live: { srv: { stage: "u-bob" } } });
+    watchLive({ serverId: "srv", channelId: "stage", channelName: "Stage" });
+    await vi.waitFor(() => expect(env.peers.length).toBe(2));
+    for (const publisher of ["u-self", "u-cara", "u-bob"]) {
+      const source = fakeVideoStream(`${publisher}:l`, true);
+      Object.defineProperty(source.getAudioTracks()[0], "id", {
+        value: `${publisher}:la-456`,
+      });
+      env.peers[1]!.ontrack?.({
+        track: source.getAudioTracks()[0]!,
+        streams: [source],
+      });
+    }
+    const selected = clips.filter(
+      (el) => el.attributes["data-source-audio"] === "l",
+    );
+    expect(selected).toHaveLength(1);
+    expect(selected[0]?.attributes["data-publisher"]).toBe("u-bob");
+    stopWatching();
+    expect(selected[0]?.srcObject).toBeNull();
+    expect(useVoice.getState().status).toBe("joined");
+  });
+
+  it("preserves capture, subscriptions and source preferences on media reconnect without a new picker", async () => {
+    useMediaSettings.getState().patch({
+      shareSourceAudio: true,
+      sourceAudioVolume: 0.4,
+      sourceAudioMuted: true,
+    });
+    const env = await joined();
+    toggleSourceWatch("u-bob", "s");
+    toggleShare();
+    await vi.waitFor(() =>
+      expect(
+        env.mediaSent.some((frame) => frame.op === "p" && frame.k === "sa"),
+      ).toBe(true),
+    );
+    const capture = useVoice.getState().localScreen!;
+    env.closeMedia();
+    await vi.waitFor(() => expect(env.peers.length).toBe(2));
+    await vi.waitFor(() =>
+      expect(
+        env.peers[1]?.senders.some(
+          (sender) => sender.track === capture.getAudioTracks()[0],
+        ),
+      ).toBe(true),
+    );
+    expect(env.getDisplayMediaCalls()).toBe(1);
+    expect(useVoice.getState().localScreen).toBe(capture);
+    expect(streamStopped(capture)).toBe(false);
+    expect(
+      env.mediaSent.filter((frame) => frame.op === "w" && frame.on),
+    ).toHaveLength(2);
+    expect(useMediaSettings.getState()).toMatchObject({
+      shareSourceAudio: true,
+      sourceAudioVolume: 0.4,
+      sourceAudioMuted: true,
+    });
+  });
+
+  it("cleans both source tracks after rejected negotiation while keeping the microphone", async () => {
+    useMediaSettings.getState().patch({ shareSourceAudio: true });
+    const env = await joined();
+    toggleShare();
+    await vi.waitFor(() =>
+      expect(
+        env.mediaSent.some((frame) => frame.op === "p" && frame.k === "sa"),
+      ).toBe(true),
+    );
+    const capture = useVoice.getState().localScreen!;
+    const mic = env.streams[0]!.getAudioTracks()[0];
+    env.emitMedia({ op: "err", e: "negotiation_failed" });
+    await vi.waitFor(() => expect(useVoice.getState().localScreen).toBeNull());
+    expect(streamStopped(capture)).toBe(true);
+    expect(trackStopped(mic)).toBe(false);
+    expect(useVoice.getState().status).toBe("joined");
+    expect(useVoice.getState().sourceAudio.s).toBe("off");
+  });
+  it("uses the current parent MSID when screen audio/video receivers are reused for Live", async () => {
+    const clips = audioElements();
+    const env = await joined();
+    const screen = fakeVideoStream("u-bob:s", true);
+    Object.defineProperty(screen.getAudioTracks()[0], "id", {
+      value: "u-bob:sa-789",
+    });
+    Object.defineProperty(screen.getVideoTracks()[0], "id", {
+      value: "u-bob:s-456",
+    });
+    toggleSourceWatch("u-bob", "s");
+    env.peers[0]!.ontrack?.({
+      track: screen.getVideoTracks()[0]!,
+      streams: [screen],
+    });
+    env.peers[0]!.ontrack?.({
+      track: screen.getAudioTracks()[0]!,
+      streams: [screen],
+    });
+    const oldAudio = clips.find(
+      (el) => el.attributes["data-source-audio"] === "s",
+    )!;
+    const live = { ...screen, id: "u-bob:l" } as MediaStream;
+    toggleSourceWatch("u-bob", "l");
+    env.peers[0]!.ontrack?.({
+      track: screen.getVideoTracks()[0]!,
+      streams: [live],
+    });
+    env.peers[0]!.ontrack?.({
+      track: screen.getAudioTracks()[0]!,
+      streams: [live],
+    });
+    const liveAudio = clips.find(
+      (el) => el.attributes["data-source-audio"] === "l",
+    )!;
+    expect(oldAudio.srcObject).toBeNull();
+    expect(liveAudio.srcObject).toBe(live);
+    expect(useVoice.getState().remote["u-bob"]?.s).toBeUndefined();
+    expect(useVoice.getState().remote["u-bob"]?.l).toBe(live);
+    // An old source Watch choice cannot restore an alias of the current Live source.
+    toggleSourceWatch("u-bob", "s");
+    toggleSourceWatch("u-bob", "s");
+    expect(useVoice.getState().remote["u-bob"]?.s).toBeUndefined();
+    screen.getAudioTracks()[0]!.dispatchEvent(new Event("ended"));
+    expect(liveAudio.srcObject).toBeNull();
+    expect(liveAudio.pause).toHaveBeenCalled();
+  });
+
+  it("moves reused audio receivers between microphone and source without duplicate playback", async () => {
+    class MutableStream {
+      id = "room-mix";
+      tracks: MediaStreamTrack[];
+      constructor(tracks: MediaStreamTrack[] = []) {
+        this.tracks = tracks;
+      }
+      getTracks() {
+        return [...this.tracks];
+      }
+      getAudioTracks() {
+        return this.tracks.filter((track) => track.kind === "audio");
+      }
+      getVideoTracks() {
+        return this.tracks.filter((track) => track.kind === "video");
+      }
+      addTrack(track: MediaStreamTrack) {
+        this.tracks.push(track);
+      }
+      removeTrack(track: MediaStreamTrack) {
+        this.tracks = this.tracks.filter((held) => held !== track);
+      }
+    }
+    vi.stubGlobal("MediaStream", MutableStream);
+    const clips = audioElements();
+    const env = await joined();
+    const attached: MediaStream[] = [];
+    configureVoice({ attachRemote: (stream) => attached.push(stream) });
+    const track = fakeTrack("audio", "u-bob:a-123");
+    const microphone = Object.assign(new MutableStream([track]), {
+      id: "u-bob:a",
+    }) as unknown as MediaStream;
+    const screen = Object.assign(new MutableStream([track]), {
+      id: "u-bob:s",
+    }) as unknown as MediaStream;
+    env.peers[0]!.ontrack?.({ track, streams: [microphone] });
+    expect(attached.at(-1)?.getAudioTracks()).toEqual([track]);
+    toggleSourceWatch("u-bob", "s");
+    env.peers[0]!.ontrack?.({ track, streams: [screen] });
+    const sourceClip = clips.find(
+      (el) => el.attributes["data-source-audio"] === "s",
+    )!;
+    expect(sourceClip.srcObject).toBe(screen);
+    expect(attached.at(-1)?.getAudioTracks()).toEqual([]);
+    env.peers[0]!.ontrack?.({ track, streams: [microphone] });
+    expect(sourceClip.srcObject).toBeNull();
+    expect(attached.at(-1)?.getAudioTracks()).toEqual([track]);
+    expect(
+      clips.filter((el) => el.attributes["data-source-audio"] && el.srcObject),
+    ).toHaveLength(0);
+  });
+
+  it("falls back on the granted display track without reopening capture", async () => {
+    useMediaSettings
+      .getState()
+      .patch({ screenProfile: "detail", shareSourceAudio: true });
+    const stream = fakeVideoStream("fallback", true);
+    const rejection = new Error("size");
+    rejection.name = "OverconstrainedError";
+    const apply = vi
+      .fn()
+      .mockRejectedValueOnce(rejection)
+      .mockResolvedValue(undefined);
+    stream.getVideoTracks()[0]!.applyConstraints = apply;
+    const env = await joined({ displayStreamFor: () => stream });
+    toggleShare();
+    await vi.waitFor(() =>
+      expect(useVoice.getState().localScreen).toBe(stream),
+    );
+    expect(env.getDisplayMediaCalls()).toBe(1);
+    expect(apply.mock.calls.map((call) => call[0])).toEqual([
+      videoConstraintsFor("screen", "detail"),
+      videoConstraintsFor("screen", "balanced"),
+    ]);
+    expect(streamStopped(stream)).toBe(false);
+    expect(useVoice.getState().sourceAudio.s).toBe("sharing");
+  });
+
+  it("stops a granted video/audio capture immediately when leaving during profile application", async () => {
+    useMediaSettings.getState().patch({ shareSourceAudio: true });
+    const stream = fakeVideoStream("pending-profile", true);
+    const gate = deferred();
+    const apply = vi.fn(() => gate.promise);
+    stream.getVideoTracks()[0]!.applyConstraints = apply;
+    const env = await joined({ displayStreamFor: () => stream });
+    toggleShare();
+    await vi.waitFor(() => expect(apply).toHaveBeenCalled());
+    leaveVoice();
+    expect(streamStopped(stream)).toBe(true);
+    gate.resolve();
+    await Promise.resolve();
+    await Promise.resolve();
+    expect(useVoice.getState().localScreen).toBeNull();
+    expect(
+      env.mediaSent.some((frame) => frame.op === "p" && frame.k === "sa"),
+    ).toBe(false);
   });
 });

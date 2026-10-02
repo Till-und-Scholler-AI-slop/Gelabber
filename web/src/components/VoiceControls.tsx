@@ -35,6 +35,7 @@ export function VoiceControls({
   const camera = useVoice((s) => s.camera);
   const sharing = useVoice((s) => s.sharing);
   const live = useVoice((s) => s.live);
+  const shareSourceAudio = useMediaSettings((s) => s.shareSourceAudio);
   const volume = useMediaSettings((s) => s.outputVolume);
   const patch = useMediaSettings((s) => s.patch);
   const openSettings = useMediaSettings((s) => s.openDialog);
@@ -99,6 +100,19 @@ export function VoiceControls({
           <span className="ml-1.5">{sharing ? "Stopp" : "Bildschirm"}</span>
         )}
       </button>
+      <label
+        className="voice-share-audio"
+        title="Ton bei der nächsten Bildschirmfreigabe oder Go Live im Browser auswählen"
+      >
+        <input
+          type="checkbox"
+          checked={shareSourceAudio}
+          onChange={(event) =>
+            patch({ shareSourceAudio: event.target.checked })
+          }
+        />
+        Ton teilen
+      </label>
       {canGoLive || live ? (
         <button
           type="button"

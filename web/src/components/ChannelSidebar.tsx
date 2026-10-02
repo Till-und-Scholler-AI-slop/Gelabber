@@ -165,10 +165,6 @@ export function ChannelSidebar({
         }
       />
 
-      <Link to="/d" className="sidebar-messages">
-        <ChatIcon size={20} />
-        Nachrichten
-      </Link>
       {manageChannels ? (
         <footer className="sidebar-management">
           <FooterButton

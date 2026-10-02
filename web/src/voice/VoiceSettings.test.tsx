@@ -8,19 +8,25 @@ describe("stream settings form", () => {
     const html = renderToStaticMarkup(<MediaSettingsForm />);
     expect(html).toContain("Stream-Qualität");
     expect(html).toContain("Bildschirmfreigabe und Go Live");
-    expect(html).toContain("Sparsam");
-    expect(html).toContain("480p · 15 FPS · max. 0,8 Mbit/s");
-    expect(html).toContain("720p ideal, max. 1080p · 30 FPS · max. 2,5 Mbit/s");
-    expect(html).toContain(
-      "max. 1080p · 15 FPS ideal, max. 30 · max. 2,5 Mbit/s",
-    );
-    expect(html).toContain("1080p · 30 FPS · max. 4 Mbit/s");
-    expect(html).toContain('name="camera-stream-profile"');
-    expect(html).toContain('name="screen-stream-profile"');
-    expect(html).toContain(
-      "Audio-Bitrate, Mute und Deafen bleiben unverändert",
-    );
-    expect(html).toContain("Gilt beim nächsten Start");
-    expect(html).toContain('name="camera-stream-profile" checked=""');
+    for (const resolution of ["480p", "720p", "1080p", "1440p", "4K · 2160p"])
+      expect(html).toContain(resolution);
+    for (const fps of [15, 24, 30, 45, 60])
+      expect(html).toContain(`${fps} FPS`);
+    expect(html).toContain('id="camera-stream-profile-resolution"');
+    expect(html).toContain('id="screen-stream-profile-fps"');
+    expect(html).toContain("Eigenes Limit");
+    expect(html).toContain("Änderungen gelten beim nächsten Start");
+  });
+});
+
+describe("source-audio form", () => {
+  it("explains browser-selected capture and separate listening controls", () => {
+    const html = renderToStaticMarkup(<MediaSettingsForm />);
+    expect(html).toContain('id="share-source-audio"');
+    expect(html).toContain("Ton teilen");
+    expect(html).toContain("im Browserdialog aus");
+    expect(html).toContain('id="source-audio-volume"');
+    expect(html).toContain("Gespräche");
+    expect(html).toContain("Stream-Ton stummschalten");
   });
 });

@@ -205,6 +205,8 @@ struct Published {
     keyframe: Option<mpsc::UnboundedSender<()>>,
     life: Arc<PublicationLife>,
     live_deadline: Option<Arc<StdMutex<Instant>>>,
+    /// Per-viewer source intent; closing it stops RTP before any SDP wait.
+    watch_gate: Option<watch::Receiver<bool>>,
 }
 
 struct Subscription {
@@ -265,6 +267,8 @@ struct Peer {
     /// From the join ticket. `l` is refused when this is false.
     go_live: bool,
     watch_user: Option<Uuid>,
+    explicit_watch: bool,
+    watches: HashMap<(Uuid, String), watch::Sender<bool>>,
     authority: Option<AuthorizedTicketClaim>,
     live_claim: Option<LiveBinding>,
     withdrawn_live: Option<Uuid>,
@@ -277,6 +281,8 @@ struct Peer {
     closing: watch::Sender<bool>,
     /// Explicit MSID track identity; legacy tags are bound in SDP order, never RTP order.
     video_kinds: HashMap<String, String>,
+    /// Source audio is bound to one exact parent MSID on this peer.
+    source_parents: HashMap<String, String>,
     legacy_kinds: VecDeque<String>,
     current_video: HashSet<String>,
     remote_tracks: HashMap<String, Arc<dyn TrackRemote>>,
@@ -318,9 +324,59 @@ fn live_wakeup(deadline: &Option<Arc<StdMutex<Instant>>>) -> tokio::time::Instan
 
 impl Peer {
     fn receives(&self, publication: &Published) -> bool {
-        self.watch_user.is_none_or(|user| {
-            publication.kind == RtpCodecKind::Audio || publication.stream_id == format!("{user}:l")
-        })
+        let Some((user, tag)) = publication.stream_id.rsplit_once(':') else {
+            return false;
+        };
+        let Ok(user) = user.parse::<Uuid>() else {
+            return false;
+        };
+        if user == self.user_id {
+            return false;
+        }
+        match tag {
+            "a" => true,
+            "v" => self.watch_user.is_none(),
+            "s" => {
+                self.watch_user.is_none()
+                    && (!self.explicit_watch || self.watches.contains_key(&(user, "s".into())))
+            }
+            "sa" => {
+                self.explicit_watch
+                    && self.watch_user.is_none()
+                    && self.watches.contains_key(&(user, "s".into()))
+            }
+            "l" => self.watch_user.map_or_else(
+                || !self.explicit_watch || self.watches.contains_key(&(user, "l".into())),
+                |selected| selected == user,
+            ),
+            "la" => {
+                self.explicit_watch
+                    && self.watch_user.map_or_else(
+                        || self.watches.contains_key(&(user, "l".into())),
+                        |selected| selected == user,
+                    )
+            }
+            _ => false,
+        }
+    }
+
+    fn watched_publication(&self, publication: &Published) -> Published {
+        let mut publication = publication.clone();
+        if self.watch_user.is_none()
+            && let Some((user, tag)) = publication.stream_id.rsplit_once(':')
+            && let Ok(user) = user.parse::<Uuid>()
+        {
+            let parent = match tag {
+                "s" | "sa" => "s",
+                "l" | "la" => "l",
+                _ => "",
+            };
+            publication.watch_gate = self
+                .watches
+                .get(&(user, parent.into()))
+                .map(watch::Sender::subscribe);
+        }
+        publication
     }
 }
 
@@ -416,7 +472,7 @@ impl Sfu {
         if self.redis.is_some() {
             return Err(SfuError::Revoked);
         }
-        self.join_inner(claim, None, None, out).await
+        self.join_inner(claim, None, None, 2, out).await
     }
 
     pub async fn join_authorized(
@@ -433,13 +489,24 @@ impl Sfu {
         watch_user: Option<Uuid>,
         out: mpsc::UnboundedSender<ServerFrame>,
     ) -> Result<PeerId, SfuError> {
+        self.join_authorized_watch_version(claim, watch_user, 2, out)
+            .await
+    }
+
+    pub async fn join_authorized_watch_version(
+        self: &Arc<Self>,
+        claim: AuthorizedTicketClaim,
+        watch_user: Option<Uuid>,
+        version: u8,
+        out: mpsc::UnboundedSender<ServerFrame>,
+    ) -> Result<PeerId, SfuError> {
         if watch_user.is_some_and(|user| user.is_nil()) {
             return Err(SfuError::BadAnnounce);
         }
         if !self.authorized(&claim).await {
             return Err(SfuError::Revoked);
         }
-        self.join_inner(claim.claim.clone(), Some(claim), watch_user, out)
+        self.join_inner(claim.claim.clone(), Some(claim), watch_user, version, out)
             .await
     }
 
@@ -448,6 +515,7 @@ impl Sfu {
         claim: TicketClaim,
         authority: Option<AuthorizedTicketClaim>,
         watch_user: Option<Uuid>,
+        version: u8,
         out: mpsc::UnboundedSender<ServerFrame>,
     ) -> Result<PeerId, SfuError> {
         let peer_id = PeerId(Uuid::new_v4());
@@ -491,6 +559,8 @@ impl Sfu {
                     channel_id: claim.c,
                     go_live: claim.g,
                     watch_user,
+                    explicit_watch: version >= 2,
+                    watches: HashMap::new(),
                     authority: authority.clone(),
                     live_claim: None,
                     withdrawn_live: None,
@@ -501,6 +571,7 @@ impl Sfu {
                     sdp: Arc::new(Mutex::new(gate)),
                     closing,
                     video_kinds: HashMap::new(),
+                    source_parents: HashMap::new(),
                     legacy_kinds: VecDeque::new(),
                     current_video: HashSet::new(),
                     remote_tracks: HashMap::new(),
@@ -656,14 +727,17 @@ impl Sfu {
         drop(gate);
         if as_offer {
             // A recvonly/inactive m-line is a stop even when OnEnded is not emitted.
-            let active = video_sources(&sdp_text);
+            let mut active = video_sources(&sdp_text);
+            active.extend(media_sources(&sdp_text, "audio"));
             let ended = {
                 let room = room.lock().await;
                 room.pubs
                     .values()
                     .filter(|p| {
                         p.publisher == peer_id
-                            && p.kind == RtpCodecKind::Video
+                            && (p.kind == RtpCodecKind::Video
+                                || p.stream_id.ends_with(":sa")
+                                || p.stream_id.ends_with(":la"))
                             && !active.contains(&p.track_id)
                     })
                     .map(|p| (p.id.clone(), p.life.clone()))
@@ -706,6 +780,66 @@ impl Sfu {
         Ok(())
     }
 
+    pub async fn set_watch(
+        &self,
+        peer_id: PeerId,
+        channel_id: Uuid,
+        user: Uuid,
+        kind: &str,
+        on: bool,
+    ) -> Result<(), SfuError> {
+        if user.is_nil() || !matches!(kind, "s" | "l") {
+            return Err(SfuError::BadAnnounce);
+        }
+        let room = self
+            .find_room(channel_id)
+            .await
+            .ok_or(SfuError::NotInRoom)?;
+        let (pc, out, gathered, sdp, ended) = {
+            let mut room = room.lock().await;
+            let peer = room.peers.get_mut(&peer_id).ok_or(SfuError::NotInRoom)?;
+            if !peer.explicit_watch || peer.watch_user.is_some() || peer.user_id == user {
+                return Err(SfuError::Forbidden);
+            }
+            let key = (user, kind.to_owned());
+            if on {
+                if peer.watches.len() >= 64 && !peer.watches.contains_key(&key) {
+                    return Err(SfuError::BadAnnounce);
+                }
+                peer.watches
+                    .entry(key)
+                    .or_insert_with(|| watch::channel(true).0);
+            } else if let Some(intent) = peer.watches.remove(&key) {
+                intent.send_replace(false);
+            }
+            let (pc, out, gathered, sdp) = (
+                peer.pc.clone(),
+                peer.out.clone(),
+                peer.gathered.clone(),
+                peer.sdp.clone(),
+            );
+            let ended = room
+                .pubs
+                .values()
+                .filter(|publication| {
+                    publication.stream_id == format!("{user}:{kind}")
+                        || publication.stream_id == format!("{user}:{kind}a")
+                })
+                .map(|publication| publication.id.clone())
+                .collect::<Vec<_>>();
+            (pc, out, gathered, sdp, ended)
+        };
+        if on {
+            self.attach_existing_pubs(peer_id, channel_id).await;
+        } else {
+            for id in ended {
+                self.detach_subscription(&pc, &out, &gathered, &sdp, &id)
+                    .await;
+            }
+        }
+        Ok(())
+    }
+
     pub async fn announce(
         &self,
         peer_id: PeerId,
@@ -734,7 +868,7 @@ impl Sfu {
         track_id: Option<&str>,
         nonce: Option<Uuid>,
     ) -> Result<(), SfuError> {
-        if !matches!(kind, "v" | "s" | "l") {
+        if !matches!(kind, "v" | "s" | "l" | "sa" | "la") {
             return Err(SfuError::BadAnnounce);
         }
         let room = self
@@ -746,9 +880,49 @@ impl Sfu {
         if peer.watch_user.is_some() {
             return Err(SfuError::Forbidden);
         }
-        if kind == "l" && !peer.go_live {
+        if matches!(kind, "l" | "la") && !peer.go_live {
             return Err(SfuError::Forbidden);
         }
+        let source_parent = if matches!(kind, "sa" | "la") {
+            if !peer.explicit_watch {
+                return Err(SfuError::Forbidden);
+            }
+            let id = track_id
+                .filter(|id| !id.is_empty() && id.len() <= 256)
+                .ok_or(SfuError::BadAnnounce)?;
+            let parent_kind = if kind == "sa" { "s" } else { "l" };
+            let mut parents = peer
+                .video_kinds
+                .iter()
+                .filter(|(_, tag)| tag.as_str() == parent_kind);
+            let parent = parents
+                .next()
+                .map(|(id, _)| id.clone())
+                .ok_or(SfuError::Forbidden)?;
+            if parents.next().is_some() || parent == id {
+                return Err(SfuError::BadAnnounce);
+            }
+            if kind == "la"
+                && let Some(redis) = &self.redis
+            {
+                let live = peer
+                    .live_claim
+                    .as_ref()
+                    .filter(|live| live.track_id == parent && Some(live.nonce) == nonce)
+                    .ok_or(SfuError::Forbidden)?;
+                let authority = peer.authority.as_ref().ok_or(SfuError::Forbidden)?;
+                let checked_at = Instant::now();
+                let ttl =
+                    crate::live::validate_and_acquire(redis, authority, live.nonce, peer_id.0)
+                        .await
+                        .unwrap_or(None)
+                        .ok_or(SfuError::Forbidden)?;
+                *live.deadline.lock().unwrap() = checked_at + ttl;
+            }
+            Some((id.to_owned(), parent))
+        } else {
+            None
+        };
         if let Some(id) = track_id {
             if id.is_empty()
                 || id.len() > 256
@@ -812,6 +986,9 @@ impl Sfu {
                 replaced = Some(old);
             }
         }
+        if let Some((id, parent)) = source_parent {
+            peer.source_parents.insert(id, parent);
+        }
         if let Some(id) = track_id {
             peer.video_kinds.insert(id.into(), kind.into());
         } else if !peer.legacy_kinds.iter().any(|k| k == kind) {
@@ -854,7 +1031,7 @@ impl Sfu {
         kind: &str,
         track_id: Option<&str>,
     ) -> Result<(), SfuError> {
-        if !matches!(kind, "v" | "s" | "l") {
+        if !matches!(kind, "v" | "s" | "l" | "sa" | "la") {
             return Err(SfuError::BadAnnounce);
         }
         if track_id.is_some_and(|id| id.is_empty() || id.len() > 256) {
@@ -867,6 +1044,20 @@ impl Sfu {
         let (ended, released) = {
             let mut room = room.lock().await;
             let peer = room.peers.get_mut(&peer_id).ok_or(SfuError::NotInRoom)?;
+            let parent_ids: HashSet<_> = peer
+                .video_kinds
+                .iter()
+                .filter(|(id, tag)| {
+                    tag.as_str() == kind && track_id.is_none_or(|track| track == id.as_str())
+                })
+                .map(|(id, _)| id.clone())
+                .collect();
+            let paired_ids: HashSet<_> = peer
+                .source_parents
+                .iter()
+                .filter(|(_, parent)| parent_ids.contains(*parent))
+                .map(|(id, _)| id.clone())
+                .collect();
             let released = if kind == "l"
                 && peer
                     .live_claim
@@ -881,6 +1072,13 @@ impl Sfu {
                 peer.withdrawn_live = Some(live.nonce);
             }
             peer.legacy_kinds.retain(|k| k != kind);
+            for id in &paired_ids {
+                peer.video_kinds.insert(id.clone(), String::new());
+                peer.source_parents.remove(id);
+            }
+            if let Some(id) = track_id {
+                peer.source_parents.remove(id);
+            }
             // Keep the identity until the next SDP stops sending it: packets already
             // queued by on_track must not resurrect a retracted source as a camera.
             if let Some(id) = track_id {
@@ -897,8 +1095,9 @@ impl Sfu {
                 .values()
                 .filter(|p| {
                     p.publisher == peer_id
-                        && p.stream_id.ends_with(&format!(":{kind}"))
-                        && track_id.is_none_or(|id| id == p.track_id)
+                        && ((p.stream_id.ends_with(&format!(":{kind}"))
+                            && track_id.is_none_or(|id| id == p.track_id))
+                            || paired_ids.contains(&p.track_id))
                 })
                 .map(|p| (p.id.clone(), p.life.clone()))
                 .collect::<Vec<_>>();
@@ -1169,19 +1368,35 @@ impl Sfu {
             peer.withdrawn_live = Some(expected.nonce);
             peer.video_kinds
                 .insert(expected.track_id.clone(), String::new());
+            let paired: HashSet<_> = peer
+                .source_parents
+                .iter()
+                .filter(|(_, parent)| *parent == &expected.track_id)
+                .map(|(id, _)| id.clone())
+                .collect();
+            for id in &paired {
+                peer.video_kinds.insert(id.clone(), String::new());
+                peer.source_parents.remove(id);
+            }
             let _ = peer.out.send(ServerFrame::live_withdrawn(expected.nonce));
             let id = format!("{}:{}", peer_id.0, expected.track_id);
             room.pubs
-                .get(&id)
-                .map(|publication| (id, publication.life.clone()))
+                .values()
+                .filter(|publication| {
+                    publication.id == id
+                        || (publication.publisher == peer_id
+                            && paired.contains(&publication.track_id))
+                })
+                .map(|publication| (publication.id.clone(), publication.life.clone()))
+                .collect::<Vec<_>>()
         };
-        if let Some((_, life)) = &ended {
+        for (_, life) in &ended {
             life.stop.send_replace(true);
         }
         if let Some(redis) = &self.redis {
             crate::live::release(redis, expected.nonce, peer_id.0).await;
         }
-        if let Some((id, life)) = ended {
+        for (id, life) in ended {
             self.remove_publication(channel_id, &id, &life).await;
         }
     }
@@ -1314,7 +1529,7 @@ impl Sfu {
         track: Arc<dyn TrackRemote>,
     ) -> Result<(), SfuError> {
         let ssrc = *track.ssrcs().await.first().ok_or(SfuError::BadAnnounce)?;
-        let codec = track.codec(ssrc).await.ok_or(SfuError::BadAnnounce)?;
+        let mut codec = track.codec(ssrc).await.ok_or(SfuError::BadAnnounce)?;
         let kind = track.kind().await;
         let track_id = track.track_id().await;
         let room = self
@@ -1346,24 +1561,49 @@ impl Sfu {
                     }
                 }
             } else {
-                "a".into()
+                peer.video_kinds
+                    .get(&track_id)
+                    .cloned()
+                    .unwrap_or_else(|| "a".into())
             };
             if tag.is_empty() {
                 return Ok(());
             }
-            if tag == "l" && !peer.go_live {
+            if (kind == RtpCodecKind::Audio && !matches!(tag.as_str(), "a" | "sa" | "la"))
+                || (kind == RtpCodecKind::Video && !matches!(tag.as_str(), "v" | "s" | "l"))
+            {
+                return Err(SfuError::BadAnnounce);
+            }
+            if matches!(tag.as_str(), "sa" | "la") {
+                let parent = peer
+                    .source_parents
+                    .get(&track_id)
+                    .ok_or(SfuError::Forbidden)?;
+                let parent_kind = if tag == "sa" { "s" } else { "l" };
+                if peer.video_kinds.get(parent).map(String::as_str) != Some(parent_kind)
+                    || !codec.mime_type.eq_ignore_ascii_case(MIME_TYPE_OPUS)
+                {
+                    return Err(SfuError::Forbidden);
+                }
+                codec.channels = 2;
+                codec.sdp_fmtp_line = "minptime=10;useinbandfec=1;stereo=1;sprop-stereo=1;maxaveragebitrate=192000;usedtx=0".into();
+            }
+            if matches!(tag.as_str(), "l" | "la") && !peer.go_live {
                 return Err(SfuError::Forbidden);
             }
             if peer.remote_tracks.len() >= 64 && !peer.remote_tracks.contains_key(&track_id) {
                 return Err(SfuError::BadAnnounce);
             }
-            if tag == "l"
+            if matches!(tag.as_str(), "l" | "la")
                 && let Some(redis) = &self.redis
             {
                 let live = peer
                     .live_claim
                     .as_ref()
-                    .filter(|live| live.track_id == track_id)
+                    .filter(|live| {
+                        live.track_id == track_id
+                            || peer.source_parents.get(&track_id) == Some(&live.track_id)
+                    })
                     .ok_or(SfuError::Forbidden)?;
                 let authority = peer.authority.as_ref().ok_or(SfuError::Forbidden)?;
                 let checked_at = Instant::now();
@@ -1376,7 +1616,7 @@ impl Sfu {
                 };
                 *live.deadline.lock().unwrap() = checked_at + ttl;
             }
-            let live_deadline = (tag == "l")
+            let live_deadline = matches!(tag.as_str(), "l" | "la")
                 .then(|| peer.live_claim.as_ref().map(|live| live.deadline.clone()))
                 .flatten();
             peer.remote_tracks.insert(track_id.clone(), track.clone());
@@ -1395,6 +1635,7 @@ impl Sfu {
                 keyframe: (kind == RtpCodecKind::Video).then_some(kf_tx),
                 life: life.clone(),
                 live_deadline,
+                watch_gate: None,
             };
             room.pubs.insert(pub_id.clone(), publication.clone());
             publication
@@ -1444,7 +1685,9 @@ impl Sfu {
                         .is_some_and(|current| Arc::ptr_eq(current, &track))
                     && live_deadline.as_ref().is_none_or(|deadline| {
                         peer.live_claim.as_ref().is_some_and(|live| {
-                            live.track_id == track_id && Arc::ptr_eq(deadline, &live.deadline)
+                            (live.track_id == track_id
+                                || peer.source_parents.get(&track_id) == Some(&live.track_id))
+                                && Arc::ptr_eq(deadline, &live.deadline)
                         })
                     })
                 {
@@ -1487,7 +1730,7 @@ impl Sfu {
         let Some(room) = self.find_room(channel_id).await else {
             return;
         };
-        let subscribers = {
+        let (subscribers, ended) = {
             let mut room = room.lock().await;
             if !room
                 .pubs
@@ -1496,8 +1739,44 @@ impl Sfu {
             {
                 return;
             }
-            room.pubs.remove(pub_id);
-            room.peers
+            let publication = room.pubs.remove(pub_id).unwrap();
+            let mut ended = vec![(publication.id, publication.life)];
+            if matches!(
+                publication.stream_id.rsplit_once(':').map(|(_, tag)| tag),
+                Some("s" | "l")
+            ) {
+                let paired: HashSet<_> =
+                    if let Some(peer) = room.peers.get_mut(&publication.publisher) {
+                        let paired: HashSet<_> = peer
+                            .source_parents
+                            .iter()
+                            .filter(|(_, parent)| *parent == &publication.track_id)
+                            .map(|(id, _)| id.clone())
+                            .collect();
+                        for id in &paired {
+                            peer.video_kinds.insert(id.clone(), String::new());
+                            peer.source_parents.remove(id);
+                        }
+                        paired
+                    } else {
+                        HashSet::new()
+                    };
+                let ids = room
+                    .pubs
+                    .values()
+                    .filter(|p| {
+                        p.publisher == publication.publisher && paired.contains(&p.track_id)
+                    })
+                    .map(|p| p.id.clone())
+                    .collect::<Vec<_>>();
+                for id in ids {
+                    if let Some(audio) = room.pubs.remove(&id) {
+                        ended.push((id, audio.life));
+                    }
+                }
+            }
+            let subscribers = room
+                .peers
                 .values()
                 .map(|p| {
                     (
@@ -1507,15 +1786,22 @@ impl Sfu {
                         p.sdp.clone(),
                     )
                 })
-                .collect::<Vec<_>>()
+                .collect::<Vec<_>>();
+            (subscribers, ended)
         };
-        life.stop.send_replace(true);
-        for (pc, out, gathered, sdp) in subscribers {
-            self.detach_subscription(&pc, &out, &gathered, &sdp, pub_id)
-                .await;
+        for (_, life) in &ended {
+            life.stop.send_replace(true);
         }
-        let mut done = life.done.clone();
-        let _ = done.wait_for(|done| *done).await;
+        for (pc, out, gathered, sdp) in subscribers {
+            for (id, _) in &ended {
+                self.detach_subscription(&pc, &out, &gathered, &sdp, id)
+                    .await;
+            }
+        }
+        for (_, life) in ended {
+            let mut done = life.done.clone();
+            let _ = done.wait_for(|done| *done).await;
+        }
     }
 
     async fn detach_subscription(
@@ -1552,7 +1838,7 @@ impl Sfu {
                     out: p.out.clone(),
                     gathered: p.gathered.clone(),
                     sdp: p.sdp.clone(),
-                    publication: publication.clone(),
+                    publication: p.watched_publication(publication),
                 })
                 .collect::<Vec<_>>()
         };
@@ -1578,7 +1864,7 @@ impl Sfu {
                     out: peer.out.clone(),
                     gathered: peer.gathered.clone(),
                     sdp: peer.sdp.clone(),
-                    publication: p.clone(),
+                    publication: peer.watched_publication(p),
                 })
                 .collect::<Vec<_>>()
         };
@@ -1589,7 +1875,11 @@ impl Sfu {
 
     async fn forward_to(&self, job: Forward) {
         let mut gate = job.sdp.lock().await;
-        if gate.closed || *gate.closing.borrow() || *job.publication.life.stop.borrow() {
+        if gate.closed
+            || *gate.closing.borrow()
+            || *job.publication.life.stop.borrow()
+            || source_watch_closed(&job.publication)
+        {
             return;
         }
         gate.subscriptions
@@ -1630,12 +1920,12 @@ impl Sfu {
             else {
                 continue;
             };
-            if *publication.life.stop.borrow() {
+            if *publication.life.stop.borrow() || source_watch_closed(&publication) {
                 continue;
             }
             let ssrc = rand::random::<u32>();
             let local = Arc::new(TrackLocalStaticRTP::new(MediaStreamTrack::new(
-                publication.stream_id.clone(),
+                forwarded_stream_id(&publication.stream_id),
                 format!("{}-{ssrc}", publication.stream_id),
                 format!("gelabber-{id}"),
                 publication.kind,
@@ -1961,6 +2251,10 @@ async fn refresh_subscriber_bindings(
 
 /// Sending video MSIDs in SDP order, excluding rejected/recvonly/inactive sections.
 fn video_sources(sdp: &str) -> Vec<String> {
+    media_sources(sdp, "video")
+}
+
+fn media_sources(sdp: &str, media_kind: &str) -> Vec<String> {
     let mut sources = Vec::new();
     let sections: Vec<Vec<_>> = sdp
         .split("\nm=")
@@ -1977,7 +2271,7 @@ fn video_sources(sdp: &str) -> Vec<String> {
         let Some(media) = lines.next() else {
             continue;
         };
-        if !media.starts_with("video ") {
+        if media.split_whitespace().next() != Some(media_kind) {
             continue;
         }
         let lines = lines.collect::<Vec<_>>();
@@ -2029,6 +2323,20 @@ fn video_sources(sdp: &str) -> Vec<String> {
     sources
 }
 
+fn forwarded_stream_id(id: &str) -> String {
+    id.strip_suffix(":sa")
+        .map(|user| format!("{user}:s"))
+        .or_else(|| id.strip_suffix(":la").map(|user| format!("{user}:l")))
+        .unwrap_or_else(|| id.to_owned())
+}
+
+fn source_watch_closed(publication: &Published) -> bool {
+    publication
+        .watch_gate
+        .as_ref()
+        .is_some_and(|intent| !*intent.borrow())
+}
+
 fn spawn_forwarder(
     local: Arc<TrackLocalStaticRTP>,
     ssrc: u32,
@@ -2038,17 +2346,26 @@ fn spawn_forwarder(
     stats: Arc<SfuStats>,
 ) -> tokio::task::JoinHandle<()> {
     tokio::spawn(async move {
+        let mut intent = publication.watch_gate.clone();
         let mut packets = publication.packets.subscribe();
         let mut stopped = publication.life.stop.subscribe();
         let mut rtcp_open = true;
         loop {
-            if *stopped.borrow() || *closing.borrow() || live_expired(&publication.live_deadline) {
+            if *stopped.borrow()
+                || *closing.borrow()
+                || live_expired(&publication.live_deadline)
+                || source_watch_closed(&publication)
+            {
                 break;
             }
             tokio::select! {
                 biased;
                 _ = stopped.changed() => break,
                 _ = closing.changed() => break,
+                _ = async {
+                    if let Some(intent) = &mut intent { let _ = intent.changed().await; }
+                    else { std::future::pending::<()>().await; }
+                } => break,
                 _ = tokio::time::sleep_until(live_wakeup(&publication.live_deadline)), if publication.live_deadline.is_some() => {},
                 result = binding.changed() => {
                     if result.is_err() { break; }
@@ -2070,7 +2387,7 @@ fn spawn_forwarder(
                 packet = packets.recv() => {
                     match packet {
                         Ok(packet) => {
-                            if live_expired(&publication.live_deadline) { break; }
+                            if live_expired(&publication.live_deadline) || source_watch_closed(&publication) { break; }
                             // PT belongs to the negotiated subscriber leg, not
                             // the incoming publisher packet. Never enqueue RTP
                             // before the corresponding SDP answer was accepted.

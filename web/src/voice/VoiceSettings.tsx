@@ -1,6 +1,7 @@
 // Shared Voice/Video + notification form. Used on /settings and in-call.
 
-import { useState } from "react";
+import { useState, type ReactNode } from "react";
+import "./quality.css";
 
 import {
   AUDIO_QUALITY,
@@ -10,9 +11,14 @@ import {
   type StreamKind,
   type StreamProfileId,
   STREAM_PROFILES,
+  VIDEO_RESOLUTIONS,
+  VIDEO_FRAME_RATES,
+  explicitStreamProfile,
+  videoSendBudget,
+  type VideoResolution,
+  type VideoFrameRate,
   formatVideoBitrate,
   listMediaDevices,
-  streamEstimate,
   useMediaSettings,
 } from "./settings.ts";
 
@@ -22,7 +28,16 @@ const emptyDevices: DeviceList = {
   videoinput: [],
 };
 
-export function MediaSettingsForm() {
+type SettingsSection = "all" | "audio" | "video" | "notifications";
+
+export function MediaSettingsForm({
+  section = "all",
+}: {
+  section?: SettingsSection;
+}) {
+  const showAudio = section === "all" || section === "audio";
+  const showVideo = section === "all" || section === "video";
+  const showNotifications = section === "all" || section === "notifications";
   const settings = useMediaSettings();
   const [devices, setDevices] = useState<DeviceList>(emptyDevices);
 
@@ -31,188 +46,337 @@ export function MediaSettingsForm() {
       setDevices(emptyDevices);
       return;
     }
-    try {
-      const audio = await navigator.mediaDevices.getUserMedia({ audio: true });
-      audio.getTracks().forEach((track) => track.stop());
-    } catch {
-      // mic labels stay anonymous until permission
+    if (showAudio) {
+      try {
+        const audio = await navigator.mediaDevices.getUserMedia({
+          audio: true,
+        });
+        audio.getTracks().forEach((track) => track.stop());
+      } catch {
+        // mic labels stay anonymous until permission
+      }
     }
-    try {
-      const video = await navigator.mediaDevices.getUserMedia({ video: true });
-      video.getTracks().forEach((track) => track.stop());
-    } catch {
-      // camera optional
+    if (showVideo) {
+      try {
+        const video = await navigator.mediaDevices.getUserMedia({
+          video: true,
+        });
+        video.getTracks().forEach((track) => track.stop());
+      } catch {
+        // camera optional
+      }
     }
     setDevices(await listMediaDevices());
   };
 
   return (
-    <div className="flex flex-col gap-6 text-left">
-      <p className="text-sm text-neutral-600 dark:text-neutral-400">
-        Passe Mikrofon, Lautsprecher und Kamera an. Echo-Unterdrückung,
-        Rauschunterdrückung und automatische Mikrofonverstärkung sind anfangs
-        eingeschaltet.
-      </p>
-
-      <fieldset className="flex flex-col gap-3">
-        <legend className="text-sm font-semibold text-neutral-800 dark:text-neutral-200">
-          Geräte
-        </legend>
-        <Select
-          id="audio-input"
-          label="Mikrofon"
-          value={settings.audioInputId}
-          onChange={(value) => settings.patch({ audioInputId: value })}
-          options={withCurrent(devices.audioinput, settings.audioInputId)}
-        />
-        <Select
-          id="audio-output"
-          label="Lautsprecher"
-          value={settings.audioOutputId}
-          onChange={(value) => settings.patch({ audioOutputId: value })}
-          options={withCurrent(devices.audiooutput, settings.audioOutputId)}
-        />
-        <Select
-          id="video-input"
-          label="Kamera"
-          value={settings.videoInputId}
-          onChange={(value) => settings.patch({ videoInputId: value })}
-          options={withCurrent(devices.videoinput, settings.videoInputId)}
-        />
-        <button
-          type="button"
-          onClick={() => void refresh()}
-          className="self-start text-sm font-medium text-neutral-700 dark:text-neutral-300 underline-offset-2 hover:underline"
-        >
-          Geräte laden
-        </button>
-      </fieldset>
-
-      <fieldset className="flex flex-col gap-2">
-        <legend className="text-sm font-semibold text-neutral-800 dark:text-neutral-200">
-          Verarbeitung
-        </legend>
-        <Toggle
-          id="aec"
-          label="Echo-Unterdrückung (AEC)"
-          checked={settings.echoCancellation}
-          onChange={(echoCancellation) => settings.patch({ echoCancellation })}
-        />
-        <Toggle
-          id="ns"
-          label="Rauschunterdrückung"
-          checked={settings.noiseSuppression}
-          onChange={(noiseSuppression) => settings.patch({ noiseSuppression })}
-        />
-        <Toggle
-          id="agc"
-          label="Auto-Gain"
-          checked={settings.autoGainControl}
-          onChange={(autoGainControl) => settings.patch({ autoGainControl })}
-        />
-      </fieldset>
-
-      <fieldset className="flex flex-col gap-3">
-        <legend className="text-sm font-semibold text-neutral-800 dark:text-neutral-200">
-          Lautstärke
-        </legend>
-        <Slider
-          id="output-volume"
-          label="Wiedergabe"
-          min={0}
-          max={100}
-          value={Math.round(settings.outputVolume * 100)}
-          suffix={`${Math.round(settings.outputVolume * 100)} %`}
-          onChange={(value) => settings.patch({ outputVolume: value / 100 })}
-        />
-        <Slider
-          id="input-gain"
-          label="Mic-Gain"
-          min={0}
-          max={200}
-          value={Math.round(settings.inputGain * 100)}
-          suffix={`${Math.round(settings.inputGain * 100)} %`}
-          onChange={(value) => settings.patch({ inputGain: value / 100 })}
-          hint="100 % sendet das Mikrofon unverändert (Default). Andere Werte laufen über Web Audio."
-        />
-      </fieldset>
-
-      <fieldset className="flex flex-col gap-2">
-        <legend className="text-sm font-semibold text-neutral-800 dark:text-neutral-200">
-          Audio-Qualität (Opus)
-        </legend>
-        {(Object.keys(AUDIO_QUALITY) as AudioQuality[]).map((key) => {
-          const profile = AUDIO_QUALITY[key];
-          return (
-            <label key={key} className="flex items-center gap-2 text-sm">
-              <input
-                type="radio"
-                name="audio-quality"
-                checked={settings.quality === key}
-                onChange={() => settings.patch({ quality: key })}
-              />
-              <span>
-                {profile.label}
-                <span className="text-neutral-500 dark:text-neutral-400">
-                  {" "}
-                  — {profile.hint}
-                </span>
-              </span>
-            </label>
-          );
-        })}
-      </fieldset>
-
-      <fieldset className="flex flex-col gap-4">
-        <legend className="text-sm font-semibold text-neutral-800 dark:text-neutral-200">
-          Stream-Qualität
-        </legend>
-        <p className="text-xs text-neutral-500 dark:text-neutral-400">
-          Audio-Bitrate, Mute und Deafen bleiben unverändert. Das
-          Video-Sendebudget ist gedeckelt und wird von Kamera,
-          Bildschirmfreigabe und Go Live geteilt.
+    <div className="media-settings-form flex flex-col gap-6 text-left">
+      {section === "all" && (
+        <p className="text-sm text-neutral-600 dark:text-neutral-400">
+          Passe Mikrofon, Lautsprecher und Kamera an. Echo-Unterdrückung,
+          Rauschunterdrückung und automatische Mikrofonverstärkung sind anfangs
+          eingeschaltet.
         </p>
-        <StreamProfilePicker
-          kind="camera"
-          name="camera-stream-profile"
-          legend="Kamera"
-          value={settings.cameraProfile}
-          apply={settings.cameraProfileApply}
-          onChange={(cameraProfile) => settings.patch({ cameraProfile })}
-        />
-        <StreamProfilePicker
-          kind="screen"
-          name="screen-stream-profile"
-          legend="Bildschirmfreigabe und Go Live"
-          value={settings.screenProfile}
-          apply={settings.screenProfileApply}
-          onChange={(screenProfile) => settings.patch({ screenProfile })}
-        />
-      </fieldset>
+      )}
 
-      <fieldset className="flex flex-col gap-2">
-        <legend className="text-sm font-semibold text-neutral-800 dark:text-neutral-200">
-          Nachrichten
-        </legend>
-        <Toggle
-          id="message-toasts"
-          label="Popup bei neuen Nachrichten in anderen Chats"
-          checked={settings.messageToasts}
-          onChange={(messageToasts) => settings.patch({ messageToasts })}
-        />
-        <Toggle
-          id="desktop-notify"
-          label="Browser-Benachrichtigung, wenn der Tab im Hintergrund ist"
-          checked={settings.desktopNotify}
-          onChange={(desktopNotify) => {
-            settings.patch({ desktopNotify });
-            if (desktopNotify && typeof Notification !== "undefined") {
-              void Notification.requestPermission();
-            }
-          }}
-        />
-      </fieldset>
+      {(showAudio || showVideo) && (
+        <fieldset className="flex flex-col gap-3">
+          <legend className="text-sm font-semibold text-neutral-800 dark:text-neutral-200">
+            Geräte
+          </legend>
+          {showAudio && (
+            <Select
+              id="audio-input"
+              label="Mikrofon"
+              value={settings.audioInputId}
+              onChange={(value) => settings.patch({ audioInputId: value })}
+              options={withCurrent(devices.audioinput, settings.audioInputId)}
+            />
+          )}
+          {showAudio && (
+            <Select
+              id="audio-output"
+              label="Lautsprecher"
+              value={settings.audioOutputId}
+              onChange={(value) => settings.patch({ audioOutputId: value })}
+              options={withCurrent(devices.audiooutput, settings.audioOutputId)}
+            />
+          )}
+          {showVideo && (
+            <Select
+              id="video-input"
+              label="Kamera"
+              value={settings.videoInputId}
+              onChange={(value) => settings.patch({ videoInputId: value })}
+              options={withCurrent(devices.videoinput, settings.videoInputId)}
+            />
+          )}
+          <button
+            type="button"
+            onClick={() => void refresh()}
+            className="self-start text-sm font-medium text-neutral-700 dark:text-neutral-300 underline-offset-2 hover:underline"
+          >
+            Geräte laden
+          </button>
+        </fieldset>
+      )}
+      {showAudio && (
+        <>
+          <fieldset className="flex flex-col gap-3">
+            <legend className="text-sm font-semibold text-neutral-800 dark:text-neutral-200">
+              Lautstärke
+            </legend>
+            <Slider
+              id="output-volume"
+              label="Gespräche"
+              min={0}
+              max={100}
+              value={Math.round(settings.outputVolume * 100)}
+              suffix={`${Math.round(settings.outputVolume * 100)} %`}
+              onChange={(value) =>
+                settings.patch({ outputVolume: value / 100 })
+              }
+            />
+            <Slider
+              id="source-audio-volume"
+              label="Stream-Ton"
+              min={0}
+              max={100}
+              value={Math.round(settings.sourceAudioVolume * 100)}
+              suffix={`${Math.round(settings.sourceAudioVolume * 100)} %`}
+              onChange={(value) =>
+                settings.patch({ sourceAudioVolume: value / 100 })
+              }
+              hint="Bildschirm- und Live-Ton haben eine eigene Lautstärke. Taub schaltet auch diesen Ton aus."
+            />
+            <Toggle
+              id="source-audio-muted"
+              label="Stream-Ton stummschalten"
+              checked={settings.sourceAudioMuted}
+              onChange={(sourceAudioMuted) =>
+                settings.patch({ sourceAudioMuted })
+              }
+            />
+            <Slider
+              id="input-gain"
+              label="Mic-Gain"
+              min={0}
+              max={200}
+              value={Math.round(settings.inputGain * 100)}
+              suffix={`${Math.round(settings.inputGain * 100)} %`}
+              onChange={(value) => settings.patch({ inputGain: value / 100 })}
+              hint="100 % sendet das Mikrofon unverändert (Default). Andere Werte laufen über Web Audio."
+            />
+          </fieldset>
+          <AdvancedAudio expanded={section === "all"}>
+            <fieldset className="flex flex-col gap-2">
+              <legend className="text-sm font-semibold text-neutral-800 dark:text-neutral-200">
+                Verarbeitung
+              </legend>
+              <Toggle
+                id="aec"
+                label="Echo-Unterdrückung (AEC)"
+                checked={settings.echoCancellation}
+                onChange={(echoCancellation) =>
+                  settings.patch({ echoCancellation })
+                }
+              />
+              <Toggle
+                id="ns"
+                label="Rauschunterdrückung"
+                checked={settings.noiseSuppression}
+                onChange={(noiseSuppression) =>
+                  settings.patch({ noiseSuppression })
+                }
+              />
+              <Toggle
+                id="agc"
+                label="Auto-Gain"
+                checked={settings.autoGainControl}
+                onChange={(autoGainControl) =>
+                  settings.patch({ autoGainControl })
+                }
+              />
+            </fieldset>
+            <fieldset className="flex flex-col gap-2">
+              <legend className="text-sm font-semibold text-neutral-800 dark:text-neutral-200">
+                Audio-Qualität (Opus)
+              </legend>
+              {(Object.keys(AUDIO_QUALITY) as AudioQuality[]).map((key) => {
+                const profile = AUDIO_QUALITY[key];
+                return (
+                  <label key={key} className="flex items-center gap-2 text-sm">
+                    <input
+                      type="radio"
+                      name="audio-quality"
+                      checked={settings.quality === key}
+                      onChange={() => settings.patch({ quality: key })}
+                    />
+                    <span>
+                      {profile.label}
+                      <span className="text-neutral-500 dark:text-neutral-400">
+                        {" "}
+                        — {profile.hint}
+                      </span>
+                    </span>
+                  </label>
+                );
+              })}
+            </fieldset>
+          </AdvancedAudio>
+        </>
+      )}
+      {showVideo && (
+        <fieldset className="flex flex-col gap-4">
+          <legend className="text-sm font-semibold text-neutral-800 dark:text-neutral-200">
+            Stream-Qualität
+          </legend>
+          <p className="text-xs text-neutral-500 dark:text-neutral-400">
+            Wähle Auflösung und Bildrate für deine Übertragung. Höhere Werte
+            brauchen mehr Rechenleistung und Upload. Die erreichbare Qualität
+            hängt von Quelle, Gerät und Verbindung ab.
+          </p>
+          <StreamProfilePicker
+            kind="camera"
+            name="camera-stream-profile"
+            legend="Kamera"
+            value={settings.cameraProfile}
+            apply={settings.cameraProfileApply}
+            onChange={(cameraProfile) => settings.patch({ cameraProfile })}
+          />
+          <StreamProfilePicker
+            kind="screen"
+            name="screen-stream-profile"
+            legend="Bildschirmfreigabe und Go Live"
+            value={settings.screenProfile}
+            apply={settings.screenProfileApply}
+            onChange={(screenProfile) => settings.patch({ screenProfile })}
+          />
+          <section
+            className="stream-source-audio"
+            aria-label="Ton der Bildschirmfreigabe"
+          >
+            <Toggle
+              id="share-source-audio"
+              label="Ton teilen"
+              checked={settings.shareSourceAudio}
+              onChange={(shareSourceAudio) =>
+                settings.patch({ shareSourceAudio })
+              }
+            />
+            <p className="text-xs text-neutral-500 dark:text-neutral-400">
+              Gilt für die nächste Bildschirmfreigabe und Go Live. Wähle den Ton
+              im Browserdialog aus; je nach Browser und Quelle ist nur Video
+              verfügbar. Der Stream-Ton wird als Stereo-Musik übertragen, ohne
+              Mikrofonfilter.
+            </p>
+          </section>
+          <section className="stream-upload" aria-label="Video-Upload">
+            <div className="stream-quality-heading">
+              <h3>Video-Upload</h3>
+              <span>
+                {settings.videoUploadLimit
+                  ? formatVideoBitrate(settings.videoUploadLimit)
+                  : "Automatisch"}
+              </span>
+            </div>
+            <div className="stream-upload-mode">
+              <label>
+                <input
+                  type="radio"
+                  name="video-upload-mode"
+                  checked={settings.videoUploadLimit === 0}
+                  onChange={() => settings.patch({ videoUploadLimit: 0 })}
+                />{" "}
+                Automatisch
+              </label>
+              <label>
+                <input
+                  type="radio"
+                  name="video-upload-mode"
+                  checked={settings.videoUploadLimit > 0}
+                  onChange={() =>
+                    settings.patch({ videoUploadLimit: 10_000_000 })
+                  }
+                />{" "}
+                Eigenes Limit
+              </label>
+            </div>
+            {settings.videoUploadLimit > 0 ? (
+              <Slider
+                id="video-upload-limit"
+                label="Maximaler Video-Upload"
+                min={0.5}
+                max={100}
+                step={0.5}
+                value={settings.videoUploadLimit / 1_000_000}
+                suffix={formatVideoBitrate(settings.videoUploadLimit)}
+                onChange={(value) =>
+                  settings.patch({ videoUploadLimit: value * 1_000_000 })
+                }
+                hint="Gemeinsames Limit für Kamera, Bildschirm und Go Live. Lass etwas Upload für Sprache und andere Apps frei."
+              />
+            ) : (
+              <p className="stream-quality-budget">
+                Qualitätsbudget bis zu{" "}
+                {formatVideoBitrate(
+                  videoSendBudget({ ...settings, videoUploadLimit: 0 }),
+                )}
+                , passend zu deiner Auflösung und Bildrate.
+              </p>
+            )}
+            <p className="stream-quality-budget">
+              Der Browser passt die tatsächliche Bitrate an die Verbindung an.
+              Das Limit ist eine Obergrenze, keine feste Datenrate.
+            </p>
+          </section>
+          <p className="stream-quality-budget">
+            Änderungen gelten beim nächsten Start und werden, soweit
+            unterstützt, auch auf laufende Streams angewendet.
+          </p>
+        </fieldset>
+      )}
+      {showNotifications && (
+        <fieldset className="flex flex-col gap-2">
+          <legend className="text-sm font-semibold text-neutral-800 dark:text-neutral-200">
+            Nachrichten
+          </legend>
+          <Toggle
+            id="message-toasts"
+            label="Popup bei neuen Nachrichten in anderen Chats"
+            checked={settings.messageToasts}
+            onChange={(messageToasts) => settings.patch({ messageToasts })}
+          />
+          <Toggle
+            id="desktop-notify"
+            label="Browser-Benachrichtigung, wenn der Tab im Hintergrund ist"
+            checked={settings.desktopNotify}
+            onChange={(desktopNotify) => {
+              settings.patch({ desktopNotify });
+              if (desktopNotify && typeof Notification !== "undefined") {
+                void Notification.requestPermission();
+              }
+            }}
+          />
+        </fieldset>
+      )}
     </div>
+  );
+}
+
+function AdvancedAudio({
+  expanded,
+  children,
+}: {
+  expanded: boolean;
+  children: ReactNode;
+}) {
+  if (expanded) return <>{children}</>;
+  return (
+    <details className="settings-advanced">
+      <summary>Erweiterte Audio-Einstellungen</summary>
+      <div className="flex flex-col gap-6">{children}</div>
+    </details>
   );
 }
 
@@ -231,36 +395,68 @@ function StreamProfilePicker({
   apply: StreamApply;
   onChange: (value: StreamProfileId) => void;
 }) {
+  const profile = STREAM_PROFILES[value];
+  const automatic = value === "balanced";
+  const height = (
+    automatic && kind === "screen" ? 1080 : profile.height
+  ) as VideoResolution;
+  const fps = profile.fps as VideoFrameRate;
   return (
-    <div className="flex flex-col gap-2">
-      <p className="text-sm font-medium text-neutral-800 dark:text-neutral-200">
-        {legend}
-      </p>
-      {(Object.keys(STREAM_PROFILES) as StreamProfileId[]).map((key) => {
-        const profile = STREAM_PROFILES[key];
-        const estimate = streamEstimate(kind, key);
-        return (
-          <label key={key} className="flex items-start gap-2 text-sm">
-            <input
-              type="radio"
-              name={name}
-              className="mt-0.5"
-              checked={value === key}
-              onChange={() => onChange(key)}
-            />
-            <span>
-              {profile.label}
-              <span className="text-neutral-500 dark:text-neutral-400">
-                {" "}
-                — {estimate.resolution} · {estimate.fps} · max.{" "}
-                {formatVideoBitrate(estimate.maxBitrate)}
-              </span>
-            </span>
-          </label>
-        );
-      })}
+    <section className="stream-quality-picker" aria-label={legend}>
+      <header className="stream-quality-heading">
+        <h3>{legend}</h3>
+        <span>
+          {automatic
+            ? "Automatisch"
+            : `${height === 2160 ? "4K" : `${height}p`} · ${fps} FPS`}
+        </span>
+      </header>
+      <div className="stream-quality-fields">
+        <Select
+          defaultLabel={null}
+          id={`${name}-resolution`}
+          label="Auflösung"
+          value={automatic ? "auto" : String(height)}
+          onChange={(next) =>
+            onChange(
+              next === "auto"
+                ? "balanced"
+                : explicitStreamProfile(Number(next) as VideoResolution, fps),
+            )
+          }
+          options={[
+            { id: "auto", label: "Automatisch (bis 1080p)" },
+            ...VIDEO_RESOLUTIONS.map((resolution) => ({
+              id: String(resolution),
+              label: resolution === 2160 ? "4K · 2160p" : `${resolution}p`,
+            })),
+          ]}
+        />
+        <Select
+          defaultLabel={null}
+          id={`${name}-fps`}
+          label="Bildrate"
+          value={automatic ? "auto" : String(fps)}
+          onChange={(next) =>
+            onChange(
+              next === "auto"
+                ? "balanced"
+                : explicitStreamProfile(height, Number(next) as VideoFrameRate),
+            )
+          }
+          options={[
+            ...(automatic
+              ? [{ id: "auto", label: "Automatisch (bis 30 FPS)" }]
+              : []),
+            ...VIDEO_FRAME_RATES.map((rate) => ({
+              id: String(rate),
+              label: `${rate} FPS`,
+            })),
+          ]}
+        />
+      </div>
       <ApplyNote apply={apply} />
-    </div>
+    </section>
   );
 }
 
@@ -280,13 +476,7 @@ function ApplyNote({ apply }: { apply: StreamApply }) {
       </p>
     );
   }
-  return (
-    <p className="text-xs text-neutral-500 dark:text-neutral-400">
-      Gilt beim nächsten Start. Während eines Streams werden Bitrate und
-      FPS-Limit sofort gesetzt; die Auflösung nur, wenn der Browser das ohne
-      Neustart erlaubt.
-    </p>
-  );
+  return null;
 }
 
 function withCurrent(
@@ -303,12 +493,14 @@ function Select({
   value,
   onChange,
   options,
+  defaultLabel = "Browser-Default",
 }: {
   id: string;
   label: string;
   value: string;
   onChange: (value: string) => void;
   options: { id: string; label: string }[];
+  defaultLabel?: string | null;
 }) {
   return (
     <div className="flex flex-col gap-1.5">
@@ -324,7 +516,7 @@ function Select({
         onChange={(event) => onChange(event.target.value)}
         className="rounded-lg border border-neutral-300 dark:border-neutral-600 bg-white dark:bg-neutral-900 px-3 py-2 text-sm text-neutral-900 dark:text-neutral-100 outline-none focus:border-neutral-500 dark:focus:border-neutral-400 focus:ring-2 focus:ring-neutral-200 dark:focus:ring-neutral-700"
       >
-        <option value="">Browser-Default</option>
+        {defaultLabel !== null && <option value="">{defaultLabel}</option>}
         {options.map((option) => (
           <option key={option.id} value={option.id}>
             {option.label}
@@ -366,6 +558,7 @@ function Slider({
   max,
   value,
   suffix,
+  step,
   onChange,
   hint,
 }: {
@@ -375,6 +568,7 @@ function Slider({
   max: number;
   value: number;
   suffix: string;
+  step?: number;
   onChange: (value: number) => void;
   hint?: string;
 }) {
@@ -394,6 +588,7 @@ function Slider({
       <input
         id={id}
         type="range"
+        step={step}
         min={min}
         max={max}
         value={value}

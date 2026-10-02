@@ -28,6 +28,13 @@
   font-synthesis: none;
   text-rendering: optimizeLegibility;
   -webkit-font-smoothing: antialiased;
+  --lr-font:
+    system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
+  --lr-radius: 7px;
+  --lr-radius-small: 4px;
+  --lr-shadow: none;
+  --lr-danger: #a12b29;
+  --lr-danger-bg: #b33b38;
   --lr-bg: #f8f5f0;
   --lr-panel: #f4f0e9;
   --lr-surface: #ece7df;
@@ -79,6 +86,7 @@ body,
 }
 body {
   margin: 0;
+  font-family: var(--lr-font);
   min-width: 320px;
   color: var(--lr-text);
 }
@@ -125,7 +133,7 @@ summary {
   background: var(--lr-accent);
   color: var(--lr-accent-ink);
   padding: 12px 18px;
-  border-radius: 7px;
+  border-radius: var(--lr-radius);
 }
 .shell-skip-link:focus {
   top: 12px;
@@ -211,7 +219,7 @@ summary {
   align-items: center;
   gap: 7px;
   padding: 8px;
-  border-radius: 6px;
+  border-radius: var(--lr-radius);
   font-size: 12px;
   color: var(--lr-muted);
 }
@@ -247,7 +255,7 @@ summary {
   place-items: center;
   width: 44px;
   height: 40px;
-  border-radius: 10px;
+  border-radius: var(--lr-radius);
   color: var(--lr-text);
 }
 .server-home-link:hover,
@@ -401,7 +409,7 @@ summary {
   margin: 16px 10px 6px;
   padding: 8px 10px;
   gap: 10px;
-  border-radius: 7px;
+  border-radius: var(--lr-radius);
   font-size: 14px;
   color: var(--lr-muted);
 }
@@ -468,7 +476,7 @@ summary {
   height: 38px;
   gap: 2px;
   padding-right: 3px;
-  border-radius: 7px;
+  border-radius: var(--lr-radius);
   color: var(--lr-muted);
   font-size: 14px;
 }
@@ -488,7 +496,7 @@ summary {
   min-width: 0;
   gap: 10px;
   padding: 0 10px;
-  border-radius: 7px;
+  border-radius: var(--lr-radius);
 }
 .channel-row-icon {
   flex-shrink: 0;
@@ -504,20 +512,6 @@ summary {
 .channel-row.is-active .channel-row-icon {
   color: var(--lr-accent);
 }
-.sidebar-messages {
-  display: flex;
-  align-items: center;
-  flex-shrink: 0;
-  gap: 10px;
-  margin: 8px 16px 10px;
-  padding: 12px 0 6px;
-  border-top: 1px solid var(--lr-border);
-  color: var(--lr-muted);
-  font-size: 14px;
-}
-.sidebar-messages:hover {
-  color: var(--lr-text);
-}
 .sidebar-management {
   display: flex;
   flex-shrink: 0;
@@ -530,7 +524,7 @@ summary {
   align-items: center;
   gap: 7px;
   padding: 5px 6px;
-  border-radius: 6px;
+  border-radius: var(--lr-radius);
   font-size: 11px;
   color: var(--lr-muted);
   text-align: left;
@@ -553,7 +547,7 @@ summary {
 .sidebar-skeleton > div {
   height: 22px;
   background: var(--lr-surface);
-  border-radius: 6px;
+  border-radius: var(--lr-radius);
   margin-bottom: 14px;
 }
 .dm-sidebar-heading {
@@ -575,7 +569,7 @@ summary {
   gap: 10px;
   height: 44px;
   padding: 0 10px;
-  border-radius: 7px;
+  border-radius: var(--lr-radius);
   font-size: 14px;
   color: var(--lr-muted);
 }
@@ -611,7 +605,7 @@ summary {
   gap: 9px;
   min-width: 0;
   flex: 1;
-  border-radius: 7px;
+  border-radius: var(--lr-radius);
 }
 .user-panel-profile > span:last-child {
   min-width: 0;
@@ -636,7 +630,7 @@ summary {
   justify-content: center;
   width: 30px;
   height: 34px;
-  border-radius: 6px;
+  border-radius: var(--lr-radius);
   color: var(--lr-muted);
   flex-shrink: 0;
   cursor: pointer;
@@ -669,7 +663,7 @@ summary {
   padding: 8px;
   background: var(--lr-panel);
   border: 1px solid var(--lr-border);
-  border-radius: 9px;
+  border-radius: var(--lr-radius);
   box-shadow: 0 8px 25px #0003;
 }
 .user-panel-menu > nav > :is(a, button) {
@@ -677,7 +671,7 @@ summary {
   text-align: left;
   font-size: 14px;
   padding: 8px 10px;
-  border-radius: 5px;
+  border-radius: var(--lr-radius-small);
 }
 .user-panel-menu > nav > :is(a, button):hover {
   background: var(--lr-hover);
@@ -800,7 +794,7 @@ summary {
   width: 100%;
   min-width: 0;
   text-align: left;
-  border-radius: 9px;
+  border-radius: var(--lr-radius);
 }
 .member-profile-button:hover {
   background: var(--lr-hover);
@@ -896,7 +890,7 @@ summary {
   padding: 12px 20px;
   font-size: 15px;
   font-weight: 600;
-  border-radius: 9px;
+  border-radius: var(--lr-radius);
 }
 .living-room-primary {
   background: var(--lr-accent);
@@ -964,7 +958,7 @@ summary {
     z-index: 25;
     padding: 7px 10px;
     border: 1px solid var(--lr-border);
-    border-radius: 6px;
+    border-radius: var(--lr-radius);
     background: var(--lr-panel);
     color: var(--lr-muted);
     font-size: 12px;
@@ -1023,7 +1017,7 @@ summary {
     gap: 9px;
     min-height: 36px;
     padding-right: 10px;
-    border-radius: 6px;
+    border-radius: var(--lr-radius);
     font-size: 17px;
     font-weight: 650;
   }
@@ -1089,4 +1083,11 @@ summary {
   .sidebar-row-actions {
     opacity: 1;
   }
+}
+
+/* Theme styles share the same component geometry and hit targets. */
+dialog,
+.media-settings-form fieldset,
+.theme-card {
+  box-shadow: var(--lr-shadow);
 }

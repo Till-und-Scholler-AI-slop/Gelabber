@@ -41,6 +41,7 @@ import {
   statsEntriesFromReport,
   type Caps,
   type VideoSource,
+  type AudioSource,
 } from "./diagnostics.ts";
 import {
   type MediaSettings,
@@ -48,6 +49,8 @@ import {
   type StreamProfileId,
   allocateVideoBitrates,
   audioBitrate,
+  SOURCE_AUDIO_BITRATE,
+  SOURCE_AUDIO_CONSTRAINTS,
   isOverconstrainedError,
   micConstraints,
   noteStreamProfileApply,
@@ -57,6 +60,12 @@ import {
   videoConstraintLadder,
   videoConstraintsFor,
 } from "./settings.ts";
+
+type VideoKind = "v" | "s" | "l";
+type SourceAudioKind = "sa" | "la";
+type PublishKind = VideoKind | SourceAudioKind;
+export type SourceAudioStatus =
+  "off" | "sharing" | "unavailable" | "ended" | "unsupported";
 
 export type VoiceStatus = "idle" | "joined";
 
@@ -80,6 +89,9 @@ export type VoiceState = {
   camera: boolean;
   sharing: boolean;
   live: boolean;
+  sourceWatchSupported: boolean;
+  sourceAudio: Record<"s" | "l", SourceAudioStatus>;
+  sourceSubscriptions: Record<string, Partial<Record<"s" | "l", boolean>>>;
   localCamera: MediaStream | null;
   localScreen: MediaStream | null;
   localLive: MediaStream | null;
@@ -104,6 +116,9 @@ const idle: VoiceState = {
   camera: false,
   sharing: false,
   live: false,
+  sourceWatchSupported: false,
+  sourceAudio: { s: "off", l: "off" },
+  sourceSubscriptions: {},
   localCamera: null,
   localScreen: null,
   localLive: null,
@@ -181,7 +196,7 @@ export type PeerConnection = {
   connectionState?: string;
   oniceconnectionstatechange: (() => void) | null;
   onconnectionstatechange: (() => void) | null;
-  remoteDescription?: { type: string } | null;
+  remoteDescription?: { type: string; sdp?: string } | null;
   localDescription?: { type: string; sdp?: string } | null;
   signalingState?: string;
   getStats?(): Promise<unknown>;
@@ -225,8 +240,26 @@ let activeMicGain: MicGainInsert | null = null;
 let cameraStream: MediaStream | null = null;
 let screenStream: MediaStream | null = null;
 let liveStream: MediaStream | null = null;
+let seatMediaVersion: number | null = null;
 let remoteAudio: HTMLAudioElement | null = null;
 const watchAudio = new Map<MediaStreamTrack, HTMLAudioElement>();
+const receivedAudioSources = new Map<
+  MediaStreamTrack,
+  { role: "voice" | "watch"; source: AudioSource }
+>();
+const receivedSourceAudio = new Map<
+  MediaStreamTrack,
+  { stream?: MediaStream; userId: string; kind: "s" | "l" }
+>();
+const sourceAudio = new Map<
+  MediaStreamTrack,
+  {
+    el: HTMLAudioElement;
+    role: "voice" | "watch";
+    userId: string;
+    kind: "s" | "l";
+  }
+>();
 const blockedPlayback = new Set<HTMLAudioElement>();
 let remoteMix: MediaStream | null = null;
 let bound = false;
@@ -306,12 +339,12 @@ let videoLimitGeneration = 0;
 let videoLimitRevision = 0;
 /** Senders that belonged to the last completed negotiation. */
 /** Video kinds announced for the offer that is still unanswered. */
-type PublishIdentity = { kind: "v" | "s" | "l"; trackId: string };
+type PublishIdentity = { kind: PublishKind; trackId: string };
 let openPublish: PublishIdentity[] = [];
 let offeredPublish: PublishIdentity[] = [];
 const publisherTracks = new Map<RtpSender, PublishIdentity>();
 /** Native addTrack does not reuse an m-line that has already sent media. */
-const videoSenders = new Map<"v" | "s" | "l", RtpSender>();
+const videoSenders = new Map<PublishKind, RtpSender>();
 /** Cleanup of a rejected publish must not enqueue a replacement offer. */
 let discardingPublish = false;
 /** Gateway reconnect left the media peer up; re-announce after our join echo. */
@@ -320,6 +353,7 @@ let republishOnJoin = false;
 const announced = new Set<TrackKind>();
 const pendingMicRaw = new Set<MediaStream>();
 const pendingCameraStreams = new Set<MediaStream>();
+const pendingDisplayStreams = new Map<MediaStream, "s" | "l">();
 
 /** Watch media peer. `watchLive` / `stopWatching` hold this object. */
 let watchCall = new MediaPeer();
@@ -625,7 +659,10 @@ function preferVp8(pc: PeerConnection): void {
   }
 }
 
-function hintTrack(track: MediaStreamTrack, hint: "speech" | "detail"): void {
+function hintTrack(
+  track: MediaStreamTrack,
+  hint: "speech" | "detail" | "music",
+): void {
   try {
     (track as MediaStreamTrack & { contentHint?: string }).contentHint = hint;
   } catch {
@@ -633,12 +670,35 @@ function hintTrack(track: MediaStreamTrack, hint: "speech" | "detail"): void {
   }
 }
 
-function withTunedSdp(desc: { type: string; sdp?: string }): {
+function withTunedSdp(
+  desc: { type: string; sdp?: string },
+  pc = seat.pc,
+): {
   type: string;
   sdp?: string;
 } {
   if (!desc.sdp) return desc;
-  return { type: desc.type, sdp: tuneAudioSdp(desc.sdp) };
+  return { type: desc.type, sdp: tuneSeatAudioSdp(desc.sdp, pc) };
+}
+
+function tuneSeatAudioSdp(sdp: string, pc = seat.pc): string {
+  const tracks = new Set<string>();
+  const mids = new Set<string>();
+  for (const [sender, identity] of pc === seat.pc ? publisherTracks : []) {
+    if (identity.kind !== "sa" && identity.kind !== "la") continue;
+    tracks.add(identity.trackId);
+    if (sender.track) tracks.add(sender.track.id);
+    const mid = pc
+      ?.getTransceivers?.()
+      .find((item) => item.sender === sender)?.mid;
+    if (mid) mids.add(mid);
+  }
+  for (const [mid, track] of publishedTrackIds(
+    pc?.remoteDescription?.sdp ?? "",
+  )) {
+    if (/:(?:sa|la)(?:[-:]|$)/.test(track)) mids.add(mid);
+  }
+  return tuneAudioSdp(sdp, audioBitrate(), tracks, mids);
 }
 
 export function configureVoice(next: Partial<VoiceDeps>): void {
@@ -720,6 +780,18 @@ function noteReceived(
   stream: MediaStream,
   track: MediaStreamTrack,
 ): void {
+  // Receiver tracks can keep their identity when the SFU reuses a transceiver.
+  // Retire the old tile alias before assigning that receiver to its current MSID.
+  for (const [publisher, sources] of receivedVideo) {
+    for (const previousKind of ["v", "s", "l"] as const) {
+      if (
+        (publisher !== userId || previousKind !== kind) &&
+        sources[previousKind]?.getVideoTracks().includes(track)
+      ) {
+        forgetReceived(publisher, previousKind);
+      }
+    }
+  }
   const prev = receivedVideo.get(userId) ?? {};
   receivedVideo.set(userId, { ...prev, [kind]: stream });
   track.addEventListener("ended", () => {
@@ -753,6 +825,12 @@ function reattachReceived(userId: string, kind: "v" | "s" | "l"): void {
     .some((track) => track.readyState === "ended");
   if (dead) return;
   const state = useVoice.getState();
+  if (
+    kind !== "v" &&
+    state.sourceWatchSupported &&
+    !state.sourceSubscriptions[userId]?.[kind]
+  )
+    return;
   const current = state.remote[userId] ?? {};
   if (current[kind] === stream) return;
   useVoice.setState({
@@ -790,11 +868,14 @@ function dropRemote(userId: string, kind?: "v" | "s" | "l"): void {
 /** SFU stream id is `{userId}:{v|s|l}`; track id may be `{userId}:{k}-{ssrc}`. */
 export function parseRemoteStreamId(
   id: string,
-): { userId: string; k: "v" | "s" | "l" } | null {
-  const match = /^(.*):(v|s|l)(?:[-:].*)?$/.exec(id);
+): { userId: string; k: PublishKind } | null {
+  const match = /^(.*):(sa|la|v|s|l)(?:[-:].*)?$/.exec(id);
   const userId = match?.[1];
   const k = match?.[2];
-  if (userId && (k === "v" || k === "s" || k === "l")) {
+  if (
+    userId &&
+    (k === "v" || k === "s" || k === "l" || k === "sa" || k === "la")
+  ) {
     return { userId, k };
   }
   return null;
@@ -811,6 +892,8 @@ function onSig(event: SigEvent & { lc?: string }): void {
     event.s === state.serverId &&
     event.c === state.channelId;
   if (watchingHere && event.u === state.watchPublisherId) {
+    if (event.t === "u" && event.k === "la")
+      clearSourcePlayback("watch", event.u, "l");
     if (event.t === "p" && event.k === "l") clearWatchPublisherTimer();
     else if (event.t === "l" && watchPublisherTimer === null) {
       // Gateway detach can be followed by a fresh seat/claim while the native
@@ -899,11 +982,25 @@ function onSig(event: SigEvent & { lc?: string }): void {
           [userId]: { pubs },
         },
       });
+      if (event.t === "u" && (event.k === "sa" || event.k === "la")) {
+        const kind = event.k === "sa" ? "s" : "l";
+        clearSourcePlayback("voice", userId, kind);
+        for (const [track, source] of receivedSourceAudio)
+          if (source.userId === userId && source.kind === kind)
+            receivedSourceAudio.delete(track);
+      }
       if (event.k === "v" || event.k === "s" || event.k === "l") {
         if (event.t === "u") {
           // Gateway `t:"l"` keeps a track that is still arriving. `t:"u"`
           // means that camera, screen, or Go Live actually ended.
           forgetReceived(userId, event.k);
+          if (event.k !== "v") {
+            clearSourcePlayback("voice", userId, event.k);
+            for (const [track, source] of receivedSourceAudio) {
+              if (source.userId === userId && source.kind === event.k)
+                receivedSourceAudio.delete(track);
+            }
+          }
         } else if (userId !== currentUserId()) {
           reattachReceived(userId, event.k);
         }
@@ -1039,6 +1136,19 @@ function diagnosticVideoSources(): Record<string, VideoSource> {
   return sources;
 }
 
+function diagnosticAudioSources(): Record<string, AudioSource> {
+  const sources: Record<string, AudioSource> = {};
+  for (const track of screenStream?.getAudioTracks() ?? [])
+    sources[track.id] = "screen-audio";
+  for (const track of liveStream?.getAudioTracks() ?? [])
+    sources[track.id] = "live-audio";
+  for (const [track, source] of receivedAudioSources)
+    sources[track.id] = source.source;
+  for (const [track, source] of sourceAudio)
+    sources[track.id] = source.kind === "s" ? "screen-audio" : "live-audio";
+  return sources;
+}
+
 function voiceStreaming(): boolean {
   const state = useVoice.getState();
   return state.camera || state.sharing || state.live;
@@ -1050,7 +1160,10 @@ function voiceCaps(): Caps {
     (sender) => sender.track?.kind === "video",
   );
   const profiles = senders.map((sender) => profileForVideoTrack(sender.track!));
-  const shares = allocateVideoBitrates(profiles);
+  const shares = allocateVideoBitrates(
+    profiles,
+    useMediaSettings.getState().videoUploadLimit,
+  );
   const videoLimits: NonNullable<Caps["videoLimits"]> = {};
   for (const [index, sender] of senders.entries()) {
     const source = sender.track
@@ -1079,6 +1192,7 @@ function voiceCaps(): Caps {
   const active = Object.values(videoLimits);
   return {
     ...base,
+    sourceAudioMaxBitrate: SOURCE_AUDIO_BITRATE,
     videoSendBudget: active.length
       ? active.reduce((sum, cap) => sum + cap.maxBitrate, 0)
       : base.videoSendBudget,
@@ -1095,6 +1209,7 @@ function attachSeatDiagnostics(generation: number): void {
     caps: voiceCaps,
     streaming: voiceStreaming,
     videoSources: diagnosticVideoSources,
+    audioSources: diagnosticAudioSources,
     getReport: async () => {
       const pc = seat.pc;
       if (seat.generation !== generation || !pc?.getStats) return null;
@@ -1111,6 +1226,7 @@ function attachWatchDiagnostics(generation: number): void {
   attachDiagnostics({
     role: "watch",
     caps: defaultCaps,
+    audioSources: diagnosticAudioSources,
     streaming: () => false,
     getReport: async () => {
       const pc = watchCall.pc;
@@ -1176,6 +1292,7 @@ function stopPeer(preserveCapture = false): void {
   clearRecovery(seatRecoverySlot);
   detachDiagnostics("voice");
   seat.close();
+  seatMediaVersion = null;
   micEpoch += 1;
   cameraEpoch += 1;
   cameraProfileEpoch += 1;
@@ -1195,6 +1312,8 @@ function stopPeer(preserveCapture = false): void {
   pendingMicRaw.clear();
   for (const stream of pendingCameraStreams) stopTracks(stream);
   pendingCameraStreams.clear();
+  for (const stream of pendingDisplayStreams.keys()) stopTracks(stream);
+  pendingDisplayStreams.clear();
   if (
     !preserveCapture ||
     !hasLiveTrack(localStream, "audio") ||
@@ -1219,6 +1338,10 @@ function stopPeer(preserveCapture = false): void {
     liveStream = null;
   }
   remoteMix = null;
+  clearSourcePlayback("voice");
+  receivedSourceAudio.clear();
+  for (const [track, source] of receivedAudioSources)
+    if (source.role === "voice") receivedAudioSources.delete(track);
   clearReceived();
   if (remoteAudio) {
     remoteAudio.srcObject = null;
@@ -1229,6 +1352,9 @@ function stopPeer(preserveCapture = false): void {
     localCamera: cameraStream,
     localScreen: screenStream,
     localLive: liveStream,
+    sourceAudio: preserveCapture
+      ? useVoice.getState().sourceAudio
+      : { s: "off", l: "off" },
     ...(preserveCapture
       ? {
           camera: !!cameraStream,
@@ -1302,6 +1428,12 @@ function applyPlayback(): void {
     el.volume = volume;
     void applySink(el);
   }
+  const settings = useMediaSettings.getState();
+  for (const { el } of sourceAudio.values()) {
+    el.muted = deafened || settings.sourceAudioMuted;
+    el.volume = deafened ? 0 : settings.sourceAudioVolume;
+    void applySink(el);
+  }
 }
 
 async function applySink(el: HTMLAudioElement): Promise<void> {
@@ -1324,7 +1456,11 @@ async function applySendBitrate(): Promise<void> {
     const params = sender.getParameters?.();
     if (!params?.encodings.length) continue;
     for (const encoding of params.encodings) {
-      encoding.maxBitrate = bitrate;
+      encoding.maxBitrate =
+        publisherTracks.get(sender)?.kind === "sa" ||
+        publisherTracks.get(sender)?.kind === "la"
+          ? SOURCE_AUDIO_BITRATE
+          : bitrate;
     }
     try {
       await sender.setParameters?.(params);
@@ -1390,7 +1526,10 @@ async function applyVideoLimits(
   const profiles = senders.map((sender) =>
     sender.track ? profileForVideoTrack(sender.track) : "balanced",
   );
-  const shares = allocateVideoBitrates(profiles);
+  const shares = allocateVideoBitrates(
+    profiles,
+    useMediaSettings.getState().videoUploadLimit,
+  );
   for (let index = 0; index < senders.length; index += 1) {
     if (!videoLimitCurrent(pc, generation, revision)) return;
     const sender = senders[index];
@@ -1504,6 +1643,36 @@ async function captureVideo(kind: "v" | "s" | "l"): Promise<MediaStream> {
     kind === "v"
       ? (deps?.getUserMedia ?? defaultGetUserMedia)
       : (deps?.getDisplayMedia ?? defaultGetDisplayMedia);
+  if (kind !== "v") {
+    // One browser picker supplies both tracks; profile fallback never reopens it.
+    const stream = await getMedia({
+      audio: settings.shareSourceAudio
+        ? { ...SOURCE_AUDIO_CONSTRAINTS }
+        : false,
+      video: ladder[0] ?? true,
+    });
+    pendingDisplayStreams.set(stream, kind);
+    if (!settings.shareSourceAudio)
+      stream.getAudioTracks().forEach((track) => track.stop());
+    const track = stream.getVideoTracks()[0];
+    if (track?.applyConstraints) {
+      for (let index = 0; index < ladder.length; index += 1) {
+        try {
+          await track.applyConstraints(ladder[index]);
+          if (index > 0) deps?.onError?.(new Error(STREAM_PROFILE_FALLBACK));
+          break;
+        } catch (error) {
+          if (track.readyState === "ended") break;
+          if (!isOverconstrainedError(error) || index + 1 === ladder.length) {
+            // Capture already succeeded. Keep the browser's usable source.
+            deps?.onError?.(new Error(STREAM_PROFILE_FALLBACK));
+            break;
+          }
+        }
+      }
+    }
+    return stream;
+  }
   let lastError: unknown;
   for (let index = 0; index < ladder.length; index += 1) {
     try {
@@ -1927,7 +2096,10 @@ function queueInputGain(): void {
 function audioSender(): RtpSender | undefined {
   return seat.pc
     ?.getSenders?.()
-    .find((sender) => sender.track?.kind === "audio");
+    .find(
+      (sender) =>
+        sender.track?.kind === "audio" && !publisherTracks.has(sender),
+    );
 }
 
 function cameraSender(): RtpSender | undefined {
@@ -1977,6 +2149,9 @@ function handleSettingsChange(prev: MediaSettings, next: MediaSettings): void {
   if (joined && camChanged && useVoice.getState().camera) void refreshCamera();
   if (cameraProfileChanged) void applyStreamProfile("camera");
   if (screenProfileChanged) void applyStreamProfile("screen");
+  if (joined && prev.videoUploadLimit !== next.videoUploadLimit && seat.pc) {
+    void enqueueVideoLimits(seat.pc);
+  }
   if (joined && qualityChanged) {
     void applySendBitrate();
     seat.needOffer = true;
@@ -2070,10 +2245,13 @@ function reannounceActive(): void {
   if (state.status !== "joined" || !state.serverId || !state.channelId) return;
   const senders = seat.pc?.getSenders?.() ?? [];
   if (senders.some((sender) => sender.track?.kind === "audio")) {
-    sendPub("a", true);
+    if (hasLiveTrack(localStream, "audio")) sendPub("a", true);
   }
   if (state.camera && cameraStream) sendPub("v", true);
-  if (state.sharing && screenStream) sendPub("s", true);
+  if (state.sharing && screenStream) {
+    sendPub("s", true);
+    if (hasLiveTrack(screenStream, "audio")) sendPub("sa", true);
+  }
   if (!state.live) return;
   const self = currentUserId();
   if (self) {
@@ -2177,7 +2355,7 @@ function dropUnsettledPublish(): PublishIdentity[] {
   const pending = offeredPublish;
   offeredPublish = [];
   openPublish = openPublish.filter((identity) => !pending.includes(identity));
-  const discardedKinds = new Set<"v" | "s" | "l">();
+  const discardedKinds = new Set<PublishKind>();
   for (const [sender, identity] of publisherTracks) {
     if (!pending.includes(identity)) continue;
     discardedKinds.add(identity.kind);
@@ -2185,7 +2363,10 @@ function dropUnsettledPublish(): PublishIdentity[] {
     publisherTracks.delete(sender);
   }
   for (const kind of discardedKinds) {
-    releaseDiscardedCapture(kind);
+    if (kind === "sa" || kind === "la") {
+      const parent = kind === "sa" ? "s" : "l";
+      if (!discardedKinds.has(parent)) stopLocalSourceAudio(parent, false);
+    } else releaseDiscardedCapture(kind);
   }
   return pending;
 }
@@ -2224,8 +2405,16 @@ function releaseDiscardedCapture(kind: "v" | "s" | "l"): void {
       );
     }
   }
-  stopTracks(stream);
   const self = currentUserId();
+  if (kind !== "v") {
+    useVoice.setState({
+      sourceAudio: { ...useVoice.getState().sourceAudio, [kind]: "off" },
+    });
+    const audioKind = kind === "s" ? "sa" : "la";
+    if (self) setPub(self, audioKind, false);
+    sendPub(audioKind, false);
+  }
+  stopTracks(stream);
   if (self) setPub(self, kind, false);
   sendPub(kind, false);
   noteStream(kind, false);
@@ -2263,7 +2452,7 @@ async function applyRemoteDescription(
     }
     seat.sfuOffered = true;
   }
-  await pc.setRemoteDescription({ type, sdp: tuneAudioSdp(sdp) });
+  await pc.setRemoteDescription({ type, sdp: tuneSeatAudioSdp(sdp) });
   if (!current()) return;
   const queued = seat.pendingIce;
   seat.pendingIce = [];
@@ -2499,7 +2688,35 @@ function onWatchConnectionChange(mine: number): void {
 function onMediaFrame(frame: MediaServerFrame): void {
   const mine = seat.generation;
   if (frame.op === "ok") {
+    seatMediaVersion = frame.v ?? 1;
+    useVoice.setState({ sourceWatchSupported: seatMediaVersion >= 2 });
     seat.accept();
+    if (seatMediaVersion >= 2) {
+      for (const [userId, subscriptions] of Object.entries(
+        useVoice.getState().sourceSubscriptions,
+      )) {
+        for (const kind of ["s", "l"] as const)
+          if (subscriptions[kind])
+            seat.send({ op: "w", u: userId, k: kind, on: true });
+      }
+    }
+    const captures = [
+      ["s", screenStream],
+      ["l", liveStream],
+    ] as const;
+    for (const [kind, stream] of captures) {
+      if (!hasLiveTrack(stream, "audio")) continue;
+      if (seatMediaVersion >= 2) void publishLocal(kind, stream!);
+      else {
+        stream!.getAudioTracks().forEach((track) => track.stop());
+        useVoice.setState({
+          sourceAudio: {
+            ...useVoice.getState().sourceAudio,
+            [kind]: "unsupported",
+          },
+        });
+      }
+    }
     return;
   }
   if (frame.op === "err") {
@@ -2643,6 +2860,8 @@ export function joinVoice(input: {
     localCamera: null,
     localScreen: null,
     localLive: null,
+    sourceSubscriptions: {},
+    sourceWatchSupported: false,
     remote: {},
     participants: { [self]: { pubs: [] } },
   });
@@ -2886,6 +3105,7 @@ export function resetVoiceForTests(): void {
   stopWatchPeer();
   stopPeer();
   remoteAudio = null;
+  sourceAudio.clear();
   watchAudio.clear();
   blockedPlayback.clear();
   seat = new MediaPeer();
@@ -2908,7 +3128,7 @@ function endedListener(kind: "v" | "s" | "l"): () => void {
 
 function bindEnded(stream: MediaStream, kind: "v" | "s" | "l"): void {
   const onEnded = endedListener(kind);
-  for (const track of stream.getTracks()) {
+  for (const track of stream.getVideoTracks()) {
     track.addEventListener("ended", onEnded);
   }
 }
@@ -2928,9 +3148,7 @@ function bumpVideoEpoch(kind: "v" | "s" | "l"): number {
 async function startLocalVideo(kind: "v" | "s" | "l"): Promise<void> {
   const epoch = bumpVideoEpoch(kind);
   const mine = seat.generation;
-  // Video only for camera / screen / live. Display audio mixed into the
-  // voice m-line (and tagged as a second "a" pub) was echo-y on deploy and
-  // added a video-sized SDP the 12 KiB cap then rejected.
+  // A display capture owns its video and optional browser-selected audio.
   let stream: MediaStream;
   try {
     stream = await captureVideo(kind);
@@ -2968,11 +3186,36 @@ async function startLocalVideo(kind: "v" | "s" | "l"): Promise<void> {
     }
     return;
   }
+  pendingDisplayStreams.delete(stream);
   if (seat.generation !== mine || videoEpoch(kind) !== epoch) {
     stopTracks(stream);
     return;
   }
   const self = currentUserId();
+  if (kind !== "v") {
+    const sharingAudio = hasLiveTrack(stream, "audio");
+    if (sharingAudio && seatMediaVersion !== null && seatMediaVersion < 2)
+      stream.getAudioTracks().forEach((track) => track.stop());
+    useVoice.setState({
+      sourceAudio: {
+        ...useVoice.getState().sourceAudio,
+        [kind]: sharingAudio
+          ? seatMediaVersion !== null && seatMediaVersion < 2
+            ? "unsupported"
+            : "sharing"
+          : useMediaSettings.getState().shareSourceAudio
+            ? "unavailable"
+            : "off",
+      },
+    });
+    for (const track of stream.getAudioTracks()) {
+      hintTrack(track, "music");
+      track.addEventListener("ended", () => {
+        const active = kind === "s" ? screenStream : liveStream;
+        if (active === stream) stopLocalSourceAudio(kind);
+      });
+    }
+  }
   bindEnded(stream, kind);
   if (kind === "v") {
     stopTracks(cameraStream);
@@ -3001,6 +3244,12 @@ async function startLocalVideo(kind: "v" | "s" | "l"): Promise<void> {
 }
 
 function stopLocalVideo(kind: "v" | "s" | "l"): void {
+  for (const [pending, heldKind] of pendingDisplayStreams) {
+    if (heldKind === kind) {
+      stopTracks(pending);
+      pendingDisplayStreams.delete(pending);
+    }
+  }
   const state = useVoice.getState();
   if (kind === "v" && !state.camera && !state.localCamera) return;
   if (kind === "s" && !state.sharing && !state.localScreen) return;
@@ -3042,14 +3291,39 @@ function stopLocalVideo(kind: "v" | "s" | "l"): void {
     const sender = senders.find((item) => item.track === track);
     if (sender) {
       const identity = publisherTracks.get(sender);
-      seat.send({ op: "u", k: kind, t: identity?.trackId ?? track.id });
+      seat.send({
+        op: "u",
+        k: identity?.kind ?? kind,
+        t: identity?.trackId ?? track.id,
+      });
       publisherTracks.delete(sender);
       seat.pc?.removeTrack?.(sender);
     } else {
-      seat.send({ op: "u", k: kind, t: track.id });
+      seat.send({
+        op: "u",
+        k:
+          track.kind === "audio" && kind !== "v"
+            ? kind === "s"
+              ? "sa"
+              : "la"
+            : kind,
+        t: track.id,
+      });
     }
-    openPublish = openPublish.filter((item) => item.kind !== kind);
+    openPublish = openPublish.filter(
+      (item) =>
+        item.kind !== kind &&
+        item.kind !== (kind === "s" ? "sa" : kind === "l" ? "la" : "v"),
+    );
     track.stop();
+  }
+  if (kind !== "v") {
+    useVoice.setState({
+      sourceAudio: { ...useVoice.getState().sourceAudio, [kind]: "off" },
+    });
+    const audioKind = kind === "s" ? "sa" : "la";
+    if (self) setPub(self, audioKind, false);
+    sendPub(audioKind, false);
   }
   if (seat.pc) void enqueueVideoLimits(seat.pc);
   if (kind === "v") noteStreamProfileApply("camera", "idle");
@@ -3067,17 +3341,26 @@ async function publishLocal(
 ): Promise<void> {
   if (!seat.pc) return;
   if (kind === "l" && !liveClaimNonce) return;
-  const tracks = stream.getVideoTracks();
-  if (tracks.length === 0) return;
+  const tracks = [
+    ...stream.getVideoTracks(),
+    ...(kind === "v" || seatMediaVersion === null || seatMediaVersion < 2
+      ? []
+      : stream
+          .getAudioTracks()
+          .filter((track) => track.readyState !== "ended")),
+  ];
+  if (stream.getVideoTracks().length === 0) return;
   const pc = seat.pc;
   const mine = seat.generation;
   const epoch = videoEpoch(kind);
   logVoice("info", "publish", { track: kind });
   for (const track of tracks) {
+    const publishKind: PublishKind =
+      track.kind === "audio" ? (kind === "s" ? "sa" : "la") : kind;
     // addTrack may reuse a stopped sender/transceiver. Reserve by the new
     // MSID identity, rather than treating the sender object as a new publish.
     let sender = pc.getSenders?.().find((sender) => sender.track === track);
-    const reserved = videoSenders.get(kind);
+    const reserved = videoSenders.get(publishKind);
     const transceiver = pc
       .getTransceivers?.()
       .find((item) => item.sender === reserved);
@@ -3104,10 +3387,10 @@ async function publishLocal(
     }
     sender ??= pc.addTrack?.(track, stream) || undefined;
     const identity: PublishIdentity = (sender &&
-      publisherTracks.get(sender)) ?? { kind, trackId: track.id };
+      publisherTracks.get(sender)) ?? { kind: publishKind, trackId: track.id };
     if (sender) {
       publisherTracks.set(sender, identity);
-      videoSenders.set(kind, sender);
+      videoSenders.set(publishKind, sender);
     }
     if (!openPublish.includes(identity)) openPublish.push(identity);
   }
@@ -3115,19 +3398,204 @@ async function publishLocal(
   const self = currentUserId();
   if (self) setPub(self, kind, true);
   if (kind !== "l") sendPub(kind, true);
+  if (
+    kind !== "v" &&
+    seatMediaVersion !== null &&
+    seatMediaVersion >= 2 &&
+    hasLiveTrack(stream, "audio")
+  ) {
+    const audioKind = kind === "s" ? "sa" : "la";
+    if (self) setPub(self, audioKind, true);
+    sendPub(audioKind, true);
+  }
+  void applySendBitrate();
   seat.needOffer = true;
   await offerIfStable(seat.generation);
+}
+
+function stopLocalSourceAudio(kind: "s" | "l", negotiate = true): void {
+  const stream = kind === "s" ? screenStream : liveStream;
+  const audioKind = kind === "s" ? "sa" : "la";
+  for (const track of stream?.getAudioTracks() ?? []) {
+    const sender = seat.pc?.getSenders?.().find((item) => item.track === track);
+    const identity = sender && publisherTracks.get(sender);
+    seat.send({ op: "u", k: audioKind, t: identity?.trackId ?? track.id });
+    if (sender) {
+      publisherTracks.delete(sender);
+      seat.pc?.removeTrack?.(sender);
+    }
+    track.stop();
+  }
+  openPublish = openPublish.filter((item) => item.kind !== audioKind);
+  offeredPublish = offeredPublish.filter((item) => item.kind !== audioKind);
+  const self = currentUserId();
+  if (self) setPub(self, audioKind, false);
+  sendPub(audioKind, false);
+  useVoice.setState({
+    sourceAudio: { ...useVoice.getState().sourceAudio, [kind]: "ended" },
+  });
+  if (negotiate) {
+    seat.needOffer = true;
+    void offerIfStable(seat.generation);
+  }
+}
+
+/** A user's source subscription survives route changes and transport recovery. */
+export function toggleSourceWatch(userId: string, kind: "s" | "l"): void {
+  const state = useVoice.getState();
+  if (state.status !== "joined" || userId === currentUserId()) return;
+  const on = !state.sourceSubscriptions[userId]?.[kind];
+  useVoice.setState({
+    sourceSubscriptions: {
+      ...state.sourceSubscriptions,
+      [userId]: { ...state.sourceSubscriptions[userId], [kind]: on },
+    },
+  });
+  if (state.sourceWatchSupported)
+    seat.send({ op: "w", u: userId, k: kind, on });
+  if (!on) {
+    dropRemote(userId, kind);
+    clearSourcePlayback("voice", userId, kind);
+  } else {
+    reattachReceived(userId, kind);
+    for (const [track, received] of receivedSourceAudio) {
+      if (
+        received.userId === userId &&
+        received.kind === kind &&
+        track.readyState !== "ended"
+      )
+        attachSourceAudio(track, received.stream, "voice");
+    }
+  }
+}
+
+function clearSourcePlayback(
+  role: "voice" | "watch",
+  userId?: string,
+  kind?: "s" | "l",
+): void {
+  for (const [track, entry] of sourceAudio) {
+    if (
+      entry.role !== role ||
+      (userId && entry.userId !== userId) ||
+      (kind && entry.kind !== kind)
+    )
+      continue;
+    entry.el.pause?.();
+    entry.el.srcObject = null;
+    blockedPlayback.delete(entry.el);
+    sourceAudio.delete(track);
+  }
+  updatePlaybackBlocked();
+}
+
+function attachSourceAudio(
+  track: MediaStreamTrack,
+  stream: MediaStream | undefined,
+  role: "voice" | "watch",
+): boolean {
+  // A reused browser receiver keeps its original track.id. The current parent
+  // stream MSID identifies both the publisher and its source after replacement.
+  const parent = parseRemoteStreamId(stream?.id ?? "");
+  if (stream && /:a(?:[-:].*)?$/.test(stream.id)) return false;
+  const parsed =
+    parent && (parent.k === "s" || parent.k === "l")
+      ? { userId: parent.userId, k: parent.k === "s" ? "sa" : "la" }
+      : (parent ?? parseRemoteStreamId(track.id));
+  if (!parsed || (parsed.k !== "sa" && parsed.k !== "la")) return false;
+  if (remoteMix?.getTracks().includes(track)) remoteMix.removeTrack(track);
+  const voiceElement = watchAudio.get(track);
+  if (voiceElement) {
+    voiceElement.pause?.();
+    voiceElement.srcObject = null;
+    blockedPlayback.delete(voiceElement);
+    watchAudio.delete(track);
+  }
+  const state = useVoice.getState();
+  const kind = parsed.k === "sa" ? "s" : "l";
+  receivedAudioSources.set(track, {
+    role,
+    source: kind === "s" ? "screen-audio" : "live-audio",
+  });
+  if (role === "voice")
+    receivedSourceAudio.set(track, { stream, userId: parsed.userId, kind });
+  const held = sourceAudio.get(track);
+  const sameSource =
+    held?.role === role &&
+    held.userId === parsed.userId &&
+    held.kind === kind &&
+    held.el.srcObject === stream;
+  if (held && !sameSource)
+    clearSourcePlayback(held.role, held.userId, held.kind);
+  const allowed =
+    role === "voice"
+      ? state.sourceSubscriptions[parsed.userId]?.[kind]
+      : kind === "l" &&
+        state.watching &&
+        state.watchPublisherId === parsed.userId;
+  if (
+    !allowed ||
+    parsed.userId === currentUserId() ||
+    typeof Audio === "undefined"
+  )
+    return true;
+  if (sameSource) return true;
+  clearSourcePlayback(role, parsed.userId, kind);
+  for (const [previous, source] of receivedSourceAudio) {
+    if (
+      previous !== track &&
+      source.userId === parsed.userId &&
+      source.kind === kind
+    )
+      receivedSourceAudio.delete(previous);
+  }
+  const el = new Audio();
+  el.autoplay = true;
+  el.setAttribute("playsinline", "true");
+  el.srcObject =
+    stream ??
+    (typeof MediaStream === "undefined" ? null : new MediaStream([track]));
+  el.setAttribute("data-source-audio", kind);
+  el.setAttribute("data-publisher", parsed.userId);
+  el.setAttribute("data-connection", role);
+  sourceAudio.set(track, { el, role, userId: parsed.userId, kind });
+  track.addEventListener("ended", () => {
+    if (sourceAudio.get(track)?.el !== el) return;
+    receivedSourceAudio.delete(track);
+    receivedAudioSources.delete(track);
+    sourceAudio.delete(track);
+    el.pause?.();
+    el.srcObject = null;
+    blockedPlayback.delete(el);
+    updatePlaybackBlocked();
+  });
+  applyPlayback();
+  playAudio(el);
+  return true;
+}
+
+function forgetSourceAudioReceiver(track: MediaStreamTrack): void {
+  const held = sourceAudio.get(track);
+  if (held) clearSourcePlayback(held.role, held.userId, held.kind);
+  receivedSourceAudio.delete(track);
 }
 
 function parseIncomingVideo(
   track: MediaStreamTrack,
   stream?: MediaStream,
 ): { userId: string; k: "v" | "s" | "l" } | null {
-  return parseRemoteStreamId(stream?.id ?? "") ?? parseRemoteStreamId(track.id);
+  const parsed =
+    parseRemoteStreamId(stream?.id ?? "") ?? parseRemoteStreamId(track.id);
+  return parsed && (parsed.k === "v" || parsed.k === "s" || parsed.k === "l")
+    ? { userId: parsed.userId, k: parsed.k }
+    : null;
 }
 
 function attachIncoming(track: MediaStreamTrack, stream?: MediaStream): void {
   if (track.kind === "audio") {
+    if (attachSourceAudio(track, stream, "voice")) return;
+    forgetSourceAudioReceiver(track);
+    receivedAudioSources.set(track, { role: "voice", source: "voice" });
     if (typeof MediaStream === "undefined") {
       if (stream) (deps?.attachRemote ?? defaultAttachRemote)(stream);
       return;
@@ -3148,6 +3616,12 @@ function attachIncoming(track: MediaStreamTrack, stream?: MediaStream): void {
   const attached = stream ?? new MediaStream([track]);
   noteReceived(parsed.userId, parsed.k, attached, track);
   const state = useVoice.getState();
+  if (
+    parsed.k !== "v" &&
+    state.sourceWatchSupported &&
+    !state.sourceSubscriptions[parsed.userId]?.[parsed.k]
+  )
+    return;
   const current = state.remote[parsed.userId] ?? {};
   useVoice.setState({
     remote: {
@@ -3224,13 +3698,19 @@ async function offerIfStable(
           continue;
         }
         identity.trackId = trackId ?? identity.trackId;
-        if (identity.kind === "l" && !liveClaimNonce) continue;
+        if (
+          (identity.kind === "l" || identity.kind === "la") &&
+          !liveClaimNonce
+        )
+          continue;
         offeredPublish.push(identity);
         seat.send({
           op: "p",
           k: identity.kind,
           t: identity.trackId,
-          ...(identity.kind === "l" ? { lc: liveClaimNonce! } : {}),
+          ...(identity.kind === "l" || identity.kind === "la"
+            ? { lc: liveClaimNonce! }
+            : {}),
         });
       }
       if (restart) noteRestartOfferCreated(seatRecoverySlot, mine);
@@ -3319,7 +3799,7 @@ async function startPeer(
         scheduleSeatRebuild();
       },
     );
-    seat.send({ op: "j", tk: ticket.ticket });
+    seat.send({ op: "j", tk: ticket.ticket, v: 2 });
   } catch (error) {
     if (seat.generation !== mine) return;
     if (recovering && retryableTicketError(error)) {
@@ -3488,6 +3968,9 @@ function stopWatchPeer(preserveRetry = false): void {
   clearRecovery(watchRecoverySlot);
   detachDiagnostics("watch");
   watchCall.close();
+  clearSourcePlayback("watch");
+  for (const [track, source] of receivedAudioSources)
+    if (source.role === "watch") receivedAudioSources.delete(track);
   for (const el of watchAudio.values()) {
     el.pause?.();
     el.srcObject = null;
@@ -3502,6 +3985,9 @@ function attachWatchIncoming(
   stream?: MediaStream,
 ): void {
   if (track.kind === "audio") {
+    if (attachSourceAudio(track, stream, "watch")) return;
+    forgetSourceAudioReceiver(track);
+    receivedAudioSources.set(track, { role: "watch", source: "voice" });
     if (typeof Audio === "undefined") return;
     if (watchAudio.has(track)) return;
     const el = new Audio();
@@ -3592,7 +4078,7 @@ async function applyWatchRemote(
     if (!current()) return;
   }
   if (type === "offer") {
-    const answer = withTunedSdp(await pc.createAnswer());
+    const answer = withTunedSdp(await pc.createAnswer(), pc);
     if (!current()) return;
     await pc.setLocalDescription(answer);
     if (!current()) return;
@@ -3738,6 +4224,7 @@ async function watchOfferIfStable(
       preferVp8(pc);
       const offer = withTunedSdp(
         await pc.createOffer(restart ? { iceRestart: true } : undefined),
+        pc,
       );
       if (!live()) return;
       if (watchCall.signalingState() !== "stable") {
@@ -3824,6 +4311,7 @@ async function startWatchPeer(
     watchCall.send({
       op: "j",
       tk: ticket.ticket,
+      v: 2,
       ...(publisher ? { w: publisher } : {}),
     });
   } catch (error) {

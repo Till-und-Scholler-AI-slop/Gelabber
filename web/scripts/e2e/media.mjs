@@ -42,10 +42,20 @@ function sourceMatches(video, color) {
     video.pixels.source.every((v, i) => Math.abs(v - color[i]) < 45)
   );
 }
+/** Render assertions select their source through the real Watch action. */
+export async function watchSource(actor, kind) {
+  if (kind !== "live" && kind !== "screen") return;
+  const tiles = actor.page
+    .locator("figure")
+    .filter({ hasText: kind === "live" ? "— Live" : "— Bildschirm" });
+  const start = tiles.getByRole("button", { name: "Zuschauen", exact: true });
+  if (await start.count()) await start.first().click();
+}
 export async function progress(
   actor,
   { kind = "live", color = [220, 30, 30], budget = 5_000, relay = false } = {},
 ) {
+  await watchSource(actor, kind);
   const start = Date.now();
   const first = await until(
     () => snapshot(actor),
@@ -441,6 +451,8 @@ export async function mediaScenarios(h, f) {
     await click(f.member, "Beitreten");
     await click(f.owner, "Kamera an");
     await click(f.owner, "Bildschirm teilen");
+    await watchSource(f.member, "live");
+    await watchSource(f.member, "screen");
     const live = await progress(f.member, options);
     const screen = await progress(f.member, {
       ...options,

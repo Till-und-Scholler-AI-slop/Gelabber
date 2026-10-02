@@ -18,6 +18,7 @@ export type ApiErrorCode =
   | "forbidden"
   | "not_found"
   | "email_taken"
+  | "theme_conflict"
   | "invite_invalid"
   | "banned"
   | "rate_limited"
@@ -257,7 +258,7 @@ export function getCsrfToken(): string | null {
   return csrfToken;
 }
 
-type Method = "GET" | "POST" | "PATCH" | "DELETE";
+type Method = "GET" | "POST" | "PUT" | "PATCH" | "DELETE";
 
 export type RequestOptions = {
   method?: Method;
@@ -287,6 +288,7 @@ const KNOWN_CODES: ReadonlySet<string> = new Set<ApiErrorCode>([
   "forbidden",
   "not_found",
   "email_taken",
+  "theme_conflict",
   "invite_invalid",
   "banned",
   "rate_limited",

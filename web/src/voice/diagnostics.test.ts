@@ -10,6 +10,7 @@ import {
   attachDiagnostics,
   buildDiagnosticExport,
   detachDiagnostics,
+  defaultCaps,
   diagnosticsPolling,
   diffCounter,
   installDiagnosticsLogoutReset,
@@ -754,5 +755,60 @@ describe("voice diagnostics", () => {
     const stopped = calls;
     await vi.advanceTimersByTimeAsync(DIAGNOSTIC_LIMITS.intervalMs * 3);
     expect(calls).toBe(stopped);
+  });
+});
+
+describe("source-audio diagnostics", () => {
+  it("separates microphone and music send caps and reports received screen/Live audio", () => {
+    const result = reduceConnection({
+      role: "voice",
+      previous: new Map(),
+      caps: defaultCaps(),
+      videoSources: {},
+      audioSources: { "native-capture": "screen-audio" },
+      entries: [
+        {
+          id: "mic",
+          type: "outbound-rtp",
+          kind: "audio",
+          trackIdentifier: "microphone",
+          bytesSent: 100,
+        },
+        {
+          id: "music",
+          type: "outbound-rtp",
+          kind: "audio",
+          trackIdentifier: "native-capture",
+          bytesSent: 200,
+        },
+        {
+          id: "screen",
+          type: "inbound-rtp",
+          kind: "audio",
+          trackIdentifier: "u-bob:sa-123",
+          packetsReceived: 30,
+        },
+        {
+          id: "live",
+          type: "inbound-rtp",
+          kind: "audio",
+          trackIdentifier: "u-cara:la-456",
+          packetsReceived: 40,
+        },
+      ],
+    });
+    expect(result.snapshot.flows.map((flow) => flow.source)).toEqual([
+      "voice",
+      "screen-audio",
+      "screen-audio",
+      "live-audio",
+    ]);
+    expect(result.snapshot.flows[0]?.configuredMaxBitrateBps).toBe(64_000);
+    expect(result.snapshot.flows[1]?.configuredMaxBitrateBps).toBe(192_000);
+    expect(
+      result.snapshot.flows
+        .slice(2)
+        .every((flow) => flow.configuredMaxBitrateBps === null),
+    ).toBe(true);
   });
 });

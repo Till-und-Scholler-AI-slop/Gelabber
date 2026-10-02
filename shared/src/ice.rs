@@ -7,8 +7,8 @@
 
 use base64::Engine;
 use hmac::{Hmac, Mac};
-use sha1::Sha1;
 use serde::{Deserialize, Serialize};
+use sha1::Sha1;
 
 type HmacSha1 = Hmac<Sha1>;
 
@@ -63,7 +63,12 @@ pub fn parse_ice_servers(
 }
 
 /// coturn REST username + HMAC-SHA1 credential (`expiry:user`).
-pub fn turn_rest_credentials(secret: &str, user: &str, ttl_secs: u64, now_unix: u64) -> (String, String) {
+pub fn turn_rest_credentials(
+    secret: &str,
+    user: &str,
+    ttl_secs: u64,
+    now_unix: u64,
+) -> (String, String) {
     let expiry = now_unix.saturating_add(ttl_secs.max(1));
     let safe_user = if user.is_empty() { "gelabber" } else { user };
     let username = format!("{expiry}:{safe_user}");
@@ -74,7 +79,11 @@ pub fn turn_rest_credentials(secret: &str, user: &str, ttl_secs: u64, now_unix: 
 }
 
 /// Overlay REST credentials onto TURN entries. STUN entries stay anonymous.
-pub fn with_turn_credentials(servers: &[IceServer], username: &str, credential: &str) -> Vec<IceServer> {
+pub fn with_turn_credentials(
+    servers: &[IceServer],
+    username: &str,
+    credential: &str,
+) -> Vec<IceServer> {
     servers
         .iter()
         .map(|server| {

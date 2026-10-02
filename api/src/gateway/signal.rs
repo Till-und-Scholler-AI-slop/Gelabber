@@ -142,7 +142,7 @@ async fn publish(call: &mut Call<'_>) -> Result<(), ApiError> {
     };
     // Camera (`v`) and screen (`s`) are for anyone already in the voice
     // room. Go Live (`l`) needs `go_live` and is one track per channel.
-    if track == TrackKind::L && call.kind == SigKind::P {
+    if matches!(track, TrackKind::L | TrackKind::La) && call.kind == SigKind::P {
         match authorize_go_live(&mut *call.db, call.user.id, call.server_id).await {
             Ok(()) => {}
             Err(err) => return reject(call, err).await,

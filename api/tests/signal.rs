@@ -630,6 +630,16 @@ async fn go_live_needs_permission_and_is_one_per_channel(pool: PgPool) {
     let denied = recv_until(&mut member_ws, |f| f["op"] == "err").await;
     assert_eq!(denied["e"], "forbidden");
 
+    send_json(
+        &mut member_ws,
+        json!({"op":"sig","t":"p","s":server_id,"c":voice_id,"k":"la"}),
+    )
+    .await;
+    assert_eq!(
+        recv_until(&mut member_ws, |f| f["op"] == "err").await["e"],
+        "forbidden"
+    );
+
     let res = owner
         .send(
             Method::PATCH,
@@ -760,4 +770,79 @@ async fn go_live_shows_in_occupancy_snapshot(pool: PgPool) {
     assert_eq!(snap.len(), 1, "{roster}");
     assert_eq!(snap[0]["u"], ada.to_string());
     assert_eq!(snap[0]["l"], true);
+}
+
+#[sqlx::test]
+async fn source_audio_requires_its_same_socket_parent_and_parent_stop_cleans_it(pool: PgPool) {
+    let (mut owner, mut member) = two_users(pool.clone()).await;
+    let server = create_server(&mut owner, "Source audio").await;
+    let (server_id, _) = ids(&server);
+    join_member(&mut owner, &mut member, &server_id.to_string()).await;
+    let channel = create_voice(&mut owner, server_id).await;
+    let (addr, _) = common::serve_ws(pool).await;
+    let mut publisher = connect(addr, &session_cookie(&owner)).await;
+    let mut other_tab = connect(addr, &session_cookie(&owner)).await;
+    for ws in [&mut publisher, &mut other_tab] {
+        send_json(ws, json!({"op":"sig","t":"j","s":server_id,"c":channel})).await;
+        recv_until(ws, |f| f["op"] == "sig" && f["t"] == "j").await;
+    }
+    send_json(
+        &mut publisher,
+        json!({"op":"sig","t":"p","k":"sa","s":server_id,"c":channel}),
+    )
+    .await;
+    let rejected = recv_until(&mut publisher, |f| f["op"] == "err").await;
+    assert_eq!(rejected["e"], "bad_request");
+    for kind in ["a", "s", "sa"] {
+        send_json(
+            &mut publisher,
+            json!({"op":"sig","t":"p","k":kind,"s":server_id,"c":channel}),
+        )
+        .await;
+        recv_until(&mut publisher, |f| {
+            f["op"] == "sig" && f["t"] == "p" && f["k"] == kind
+        })
+        .await;
+    }
+    send_json(
+        &mut other_tab,
+        json!({"op":"sig","t":"p","k":"sa","s":server_id,"c":channel}),
+    )
+    .await;
+    assert_eq!(
+        recv_until(&mut other_tab, |f| f["op"] == "err").await["e"],
+        "bad_request"
+    );
+    send_json(
+        &mut publisher,
+        json!({"op":"sig","t":"u","k":"s","s":server_id,"c":channel}),
+    )
+    .await;
+    let mut removed = std::collections::HashSet::new();
+    while removed.len() < 2 {
+        let frame = recv_until(&mut publisher, |f| f["op"] == "sig" && f["t"] == "u").await;
+        removed.insert(frame["k"].as_str().unwrap().to_owned());
+    }
+    assert_eq!(
+        removed,
+        std::collections::HashSet::from(["s".into(), "sa".into()])
+    );
+    let mut viewer = connect(addr, &session_cookie(&member)).await;
+    send_json(
+        &mut viewer,
+        json!({"op":"sig","t":"j","s":server_id,"c":channel}),
+    )
+    .await;
+    let mut snapshot = std::collections::HashSet::new();
+    loop {
+        let frame = recv_json(&mut viewer).await;
+        if frame["op"] == "sig" && frame["t"] == "p" {
+            snapshot.insert(frame["k"].as_str().unwrap().to_owned());
+        }
+        if frame["op"] == "sig" && frame["t"] == "j" && frame["u"] != owner_id(&server).to_string()
+        {
+            break;
+        }
+    }
+    assert_eq!(snapshot, std::collections::HashSet::from(["a".into()]));
 }

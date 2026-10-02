@@ -13,7 +13,7 @@ import {
   until,
   observe,
 } from "./harness.mjs";
-import { activePeers, progress } from "./media.mjs";
+import { activePeers, progress, watchSource } from "./media.mjs";
 const audioPackets = (s) =>
   activePeers(s)
     .flatMap((p) => p.inbound)
@@ -213,6 +213,8 @@ export async function mediaExtraScenarios(h, f, { begin, reset, options }) {
         await click(f.owner, "Kamera an");
         await click(f.owner, "Bildschirm teilen");
         await click(f.member, "Beitreten");
+        await watchSource(f.member, "live");
+        await watchSource(f.member, "screen");
         const held = await until(
           () => snapshot(f.member),
           (s) => s.heldVideoTracks === 3,
@@ -260,6 +262,7 @@ export async function mediaExtraScenarios(h, f, { begin, reset, options }) {
       await click(f.owner, "Beitreten");
       await click(f.member, "Beitreten");
       await click(f.owner, "Bildschirm teilen");
+      await watchSource(f.member, "screen");
       await click(f.owner, "Kamera an");
       const warmupStart = Date.now();
       const cameraFixtureWarmup = { deadlineMs: 20_000, status: "FAIL" };
