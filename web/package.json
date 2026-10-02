@@ -1,7 +1,7 @@
 {
   "name": "gelabber-web",
   "private": true,
-  "version": "0.2.6",
+  "version": "0.3.0",
   "type": "module",
   "engines": {
     "node": ">=26.8.2"
@@ -13,6 +13,7 @@
     "lint": "node --require ./eslint-ts6-register.cjs ./node_modules/eslint/bin/eslint.js .",
     "format": "prettier --write .",
     "test": "vitest run",
+    "test:source-audio-smoke": "node scripts/smoke-source-audio.mjs",
     "test:browser-smoke": "node scripts/smoke-two-browsers.mjs",
     "test:e2e-app": "node scripts/e2e/run.mjs",
     "test:e2e-harness": "node scripts/e2e/harness.checks.mjs"

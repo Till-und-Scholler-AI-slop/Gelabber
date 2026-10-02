@@ -21,6 +21,7 @@ import {
   useVoice,
 } from "../voice/session.ts";
 import { useMediaSettings } from "../voice/settings.ts";
+import "../voice/room.css";
 
 export function VoiceControls({
   compact = false,
@@ -34,37 +35,18 @@ export function VoiceControls({
   const camera = useVoice((s) => s.camera);
   const sharing = useVoice((s) => s.sharing);
   const live = useVoice((s) => s.live);
+  const shareSourceAudio = useMediaSettings((s) => s.shareSourceAudio);
   const volume = useMediaSettings((s) => s.outputVolume);
   const patch = useMediaSettings((s) => s.patch);
   const openSettings = useMediaSettings((s) => s.openDialog);
   const micOff = muted || deafened;
-  const btn = compact
-    ? "inline-flex items-center rounded-md p-1.5 text-neutral-600 dark:text-neutral-400 hover:bg-neutral-100 dark:hover:bg-neutral-800 hover:text-neutral-900 dark:hover:text-neutral-100"
-    : "inline-flex items-center rounded-lg bg-neutral-200 dark:bg-neutral-700 px-3 py-2 text-sm font-medium text-neutral-800 dark:text-neutral-200 transition hover:bg-neutral-300 dark:hover:bg-neutral-600";
-  const liveBtn = compact
-    ? [
-        "inline-flex items-center rounded-md p-1.5",
-        live
-          ? "bg-red-600 text-white hover:bg-red-700"
-          : "text-red-600 dark:text-red-400 hover:bg-red-50 dark:hover:bg-red-950 hover:text-red-700 dark:hover:text-red-300",
-      ].join(" ")
-    : [
-        "inline-flex items-center rounded-lg px-3 py-2 text-sm font-medium transition",
-        live
-          ? "bg-red-600 text-white hover:bg-red-700"
-          : "bg-neutral-200 dark:bg-neutral-700 text-neutral-800 dark:text-neutral-200 hover:bg-neutral-300 dark:hover:bg-neutral-600",
-      ].join(" ");
-  const leave = compact
-    ? "inline-flex items-center rounded-md px-2 py-1 text-xs text-neutral-600 dark:text-neutral-400 hover:bg-neutral-100 dark:hover:bg-neutral-800 hover:text-neutral-900 dark:hover:text-neutral-100"
-    : "inline-flex items-center rounded-lg bg-neutral-900 dark:bg-neutral-700 px-4 py-2 text-sm font-medium text-white transition hover:bg-neutral-700 dark:hover:bg-neutral-600";
+  const btn = `voice-control${compact ? " voice-control-compact" : ""}`;
+  const liveBtn = `${btn}${live ? " voice-control-live" : ""}`;
+  const leave = `${btn} voice-control-leave`;
 
   return (
     <div
-      className={
-        compact
-          ? "flex flex-wrap items-center justify-end gap-1"
-          : "flex flex-wrap items-center justify-center gap-2"
-      }
+      className={`voice-controls${compact ? " voice-controls-compact" : ""}`}
     >
       <button
         type="button"
@@ -118,6 +100,19 @@ export function VoiceControls({
           <span className="ml-1.5">{sharing ? "Stopp" : "Bildschirm"}</span>
         )}
       </button>
+      <label
+        className="voice-share-audio"
+        title="Ton bei der nächsten Bildschirmfreigabe oder Go Live im Browser auswählen"
+      >
+        <input
+          type="checkbox"
+          checked={shareSourceAudio}
+          onChange={(event) =>
+            patch({ shareSourceAudio: event.target.checked })
+          }
+        />
+        Ton teilen
+      </label>
       {canGoLive || live ? (
         <button
           type="button"
@@ -133,23 +128,21 @@ export function VoiceControls({
           )}
         </button>
       ) : null}
-      {compact ? null : (
-        <label className="inline-flex items-center gap-1.5 text-sm text-neutral-600 dark:text-neutral-400">
-          <span className="sr-only">Wiedergabe</span>
-          <input
-            type="range"
-            min={0}
-            max={100}
-            value={Math.round(volume * 100)}
-            aria-label="Wiedergabe-Lautstärke"
-            disabled={deafened}
-            onChange={(event) =>
-              patch({ outputVolume: Number(event.target.value) / 100 })
-            }
-            className="w-24"
-          />
-        </label>
-      )}
+      <label className="voice-playback-volume">
+        <span className="sr-only">Wiedergabe</span>
+        <input
+          type="range"
+          min={0}
+          max={100}
+          value={Math.round(volume * 100)}
+          aria-label="Wiedergabe-Lautstärke"
+          disabled={deafened}
+          onChange={(event) =>
+            patch({ outputVolume: Number(event.target.value) / 100 })
+          }
+          className="voice-volume-slider"
+        />
+      </label>
       <button
         type="button"
         aria-label="Voice-Einstellungen"

@@ -1,5 +1,5 @@
 import type { PresenceStatus } from "../ws/protocol.ts";
-import { Avatar } from "./Avatar.tsx";
+import { Avatar, type AvatarSize } from "./Avatar.tsx";
 
 const LABEL: Record<PresenceStatus, string> = {
   o: "Online",
@@ -7,29 +7,24 @@ const LABEL: Record<PresenceStatus, string> = {
   x: "Offline",
 };
 
-const DOT: Record<PresenceStatus, string> = {
-  o: "bg-emerald-500",
-  i: "bg-amber-400",
-  x: "bg-neutral-400 dark:bg-neutral-600",
-};
-
 export function PresenceAvatar({
   name,
   url,
   status,
+  size = "sm",
+  className = "",
 }: {
   name: string;
   url: string | null;
   status: PresenceStatus;
+  size?: AvatarSize;
+  className?: string;
 }) {
   return (
-    <span className="relative inline-flex shrink-0">
-      <Avatar name={name} url={url} />
+    <span className={`gel-presence-avatar ${className}`}>
+      <Avatar name={name} url={url} size={size} />
       <span
-        className={[
-          "absolute right-0 bottom-0 size-2.5 rounded-full ring-2 ring-white",
-          DOT[status],
-        ].join(" ")}
+        className={`gel-presence-dot gel-presence-${status}`}
         title={LABEL[status]}
         aria-label={LABEL[status]}
       />

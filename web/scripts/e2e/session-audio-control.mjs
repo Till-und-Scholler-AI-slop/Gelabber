@@ -203,6 +203,7 @@ export async function sessionAudioControl({
     "./native-evaluate.mjs": native,
     "./teardown.mjs": teardown,
     "./media.mjs": {
+      watchSource: async () => {},
       activePeers,
       progress: async () => ({ syntheticPositiveFixture: true }),
     },

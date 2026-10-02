@@ -19,10 +19,10 @@ function memoryStorage(initial?: string) {
 }
 
 describe("theme preference", () => {
-  it("uses system for missing or invalid persisted values", () => {
-    expect(asThemePreference("sepia")).toBe("system");
-    expect(loadThemePreference(memoryStorage())).toBe("system");
-    expect(loadThemePreference(memoryStorage("invalid"))).toBe("system");
+  it("opens the Living Room in dark mode before a preference is saved", () => {
+    expect(asThemePreference("sepia")).toBe("dark");
+    expect(loadThemePreference(memoryStorage())).toBe("dark");
+    expect(loadThemePreference(memoryStorage("invalid"))).toBe("dark");
   });
 
   it.each<ThemePreference>(["light", "dark", "system"])(

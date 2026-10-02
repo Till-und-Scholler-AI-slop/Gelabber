@@ -4,7 +4,7 @@
 import {
   AUDIO_QUALITY,
   VIDEO_MAX_FPS,
-  VIDEO_SEND_BUDGET,
+  videoSendBudget,
   useMediaSettings,
 } from "./settings.ts";
 import {
@@ -28,7 +28,8 @@ export function VoiceDiagnostics() {
   const phases = useVoiceDiagnostics((state) => state.phases);
   const events = useVoiceDiagnostics((state) => state.events);
   const polling = useVoiceDiagnostics((state) => state.polling);
-  const quality = useMediaSettings((state) => state.quality);
+  const mediaSettings = useMediaSettings();
+  const quality = mediaSettings.quality;
   const audioCap = AUDIO_QUALITY[quality];
   const measuring = polling.voice || polling.watch;
 
@@ -46,8 +47,8 @@ export function VoiceDiagnostics() {
         <p className="text-xs text-neutral-500 dark:text-neutral-400">
           {measuring ? "Messung läuft." : "Keine laufende Messung."}{" "}
           Eingestellte Audio-Obergrenze: {audioCap.label} ({audioCap.hint}).
-          Videobudget {formatBps(VIDEO_SEND_BUDGET)}, höchstens {VIDEO_MAX_FPS}{" "}
-          FPS.
+          Videobudget {formatBps(videoSendBudget(mediaSettings))}, höchstens{" "}
+          {VIDEO_MAX_FPS} FPS.
         </p>
         <ConnectionBlock
           title="Sprache"

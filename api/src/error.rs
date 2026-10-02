@@ -44,6 +44,8 @@ pub enum ApiError {
     NotFound,
     /// 409: e-mail already registered.
     EmailTaken,
+    /// 409: another device saved a newer theme revision.
+    ThemeConflict,
     /// 410: the invite link exists but is expired or used up.
     InviteInvalid,
     /// 403: the caller is banned from this server (invite rejoin included).
@@ -77,6 +79,7 @@ impl ApiError {
             Self::Forbidden(_) => "forbidden",
             Self::NotFound => "not_found",
             Self::EmailTaken => "email_taken",
+            Self::ThemeConflict => "theme_conflict",
             Self::InviteInvalid => "invite_invalid",
             Self::Banned => "banned",
             Self::RateLimited { .. } => "rate_limited",
@@ -92,7 +95,7 @@ impl ApiError {
             Self::Unauthenticated | Self::InvalidCredentials => StatusCode::UNAUTHORIZED,
             Self::Csrf | Self::Forbidden(_) | Self::Banned => StatusCode::FORBIDDEN,
             Self::NotFound => StatusCode::NOT_FOUND,
-            Self::EmailTaken => StatusCode::CONFLICT,
+            Self::EmailTaken | Self::ThemeConflict => StatusCode::CONFLICT,
             Self::InviteInvalid => StatusCode::GONE,
             Self::RateLimited { .. } | Self::QuotaExceeded => StatusCode::TOO_MANY_REQUESTS,
             Self::Internal(_) => StatusCode::INTERNAL_SERVER_ERROR,
@@ -109,6 +112,7 @@ impl ApiError {
             Self::Forbidden(message) => message,
             Self::NotFound => "Not found.",
             Self::EmailTaken => "This e-mail address is already registered.",
+            Self::ThemeConflict => "Themes changed on another device. Reload and try again.",
             Self::InviteInvalid => "This invite link has expired or been used up.",
             Self::Banned => "You are banned from this server.",
             Self::RateLimited { .. } => "Too many requests. Try again in a moment.",

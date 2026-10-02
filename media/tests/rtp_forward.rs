@@ -883,3 +883,149 @@ async fn failed_offer_then_new_publish_then_joiner_audio() {
         "viewer should hear a peer who joined after the failed negotiation"
     );
 }
+
+#[tokio::test]
+async fn source_audio_rtp_only_reaches_a_watcher_and_microphone_keeps_flowing() {
+    let config = Config::from_source(|key| match key {
+        "REDIS_URL" => Some("redis://127.0.0.1:1".into()),
+        "MEDIA_ICE_BIND" => Some("127.0.0.1:0".into()),
+        _ => None,
+    })
+    .unwrap();
+    let sfu = Arc::new(Sfu::new(&config));
+    let channel = Uuid::new_v4();
+    let publisher_user = Uuid::new_v4();
+    let publisher_claim = TicketClaim {
+        u: publisher_user,
+        s: Uuid::new_v4(),
+        c: channel,
+        g: true,
+    };
+    let viewer_claim = TicketClaim {
+        u: Uuid::new_v4(),
+        ..publisher_claim.clone()
+    };
+    let (a_out, mut a_rx) = mpsc::unbounded_channel();
+    let (b_out, mut b_rx) = mpsc::unbounded_channel();
+    let a_id = sfu.join(publisher_claim, a_out).await.unwrap();
+    let b_id = sfu.join(viewer_claim, b_out).await.unwrap();
+    let (a_connected, _) = mpsc::unbounded_channel();
+    let (b_connected, _) = mpsc::unbounded_channel();
+    let (a_packets, _) = mpsc::unbounded_channel();
+    let (b_packets, mut received) = mpsc::unbounded_channel();
+    let mut a = client_pc(a_connected, a_packets).await;
+    let mut b = client_pc(b_connected, b_packets).await;
+    let microphone = opus_track(0x1111_0001);
+    let source = opus_track(0x1111_0002);
+    let video = vp8_track(0x1111_0003);
+    sfu.announce_track(a_id, channel, "s", Some(&format!("video-{}", 0x1111_0003)))
+        .await
+        .unwrap();
+    sfu.announce_track(a_id, channel, "sa", Some(&format!("audio-{}", 0x1111_0002)))
+        .await
+        .unwrap();
+    let microphone_sender =
+        a.pc.add_track(microphone.clone() as Arc<dyn TrackLocal>)
+            .await
+            .unwrap();
+    let source_sender =
+        a.pc.add_track(source.clone() as Arc<dyn TrackLocal>)
+            .await
+            .unwrap();
+    a.pc.add_track(video as Arc<dyn TrackLocal>).await.unwrap();
+    b.pc.add_track(opus_track(0x2222_0001) as Arc<dyn TrackLocal>)
+        .await
+        .unwrap();
+    pump_offer(&a, &sfu, a_id, channel, &mut a_rx).await;
+    pump_offer(&b, &sfu, b_id, channel, &mut b_rx).await;
+    flush_client_ice(&mut a.ice_rx, &sfu, a_id, channel).await;
+    flush_client_ice(&mut b.ice_rx, &sfu, b_id, channel).await;
+    let microphone_pt = microphone_sender
+        .get_parameters()
+        .await
+        .unwrap()
+        .rtp_parameters
+        .codecs[0]
+        .payload_type;
+    let source_pt = source_sender
+        .get_parameters()
+        .await
+        .unwrap()
+        .rtp_parameters
+        .codecs[0]
+        .payload_type;
+    let mut sequence = 0u16;
+    let mut microphone_seen = false;
+    for phase in ["unwatched", "watched", "stopped"] {
+        if phase == "watched" {
+            sfu.set_watch(b_id, channel, publisher_user, "s", true)
+                .await
+                .unwrap();
+        }
+        if phase == "stopped" {
+            sfu.set_watch(b_id, channel, publisher_user, "s", false)
+                .await
+                .unwrap();
+        }
+        // Drain transport packets that were in flight before the phase changed.
+        tokio::time::sleep(Duration::from_millis(100)).await;
+        while received.try_recv().is_ok() {}
+        let mut source_seen = false;
+        let until = tokio::time::Instant::now()
+            + Duration::from_secs(if phase == "unwatched" { 3 } else { 2 });
+        while tokio::time::Instant::now() < until {
+            sequence = sequence.wrapping_add(1);
+            for (track, ssrc, pt, marker) in [
+                (&microphone, 0x1111_0001, microphone_pt, 0x4d),
+                (&source, 0x1111_0002, source_pt, 0x53),
+            ] {
+                let mut packet = Packet::default();
+                packet.header.version = 2;
+                packet.header.ssrc = ssrc;
+                packet.header.payload_type = pt;
+                packet.header.sequence_number = sequence;
+                packet.header.timestamp = u32::from(sequence) * 960;
+                packet.payload = bytes::Bytes::from(vec![marker, 0xff, 0xfe]);
+                track.write_rtp(packet).await.unwrap();
+            }
+            flush_client_ice(&mut a.ice_rx, &sfu, a_id, channel).await;
+            flush_client_ice(&mut b.ice_rx, &sfu, b_id, channel).await;
+            apply_sfu_frames(
+                &a.pc,
+                &sfu,
+                a_id,
+                channel,
+                &mut a_rx,
+                Duration::from_millis(20),
+            )
+            .await;
+            apply_sfu_frames(
+                &b.pc,
+                &sfu,
+                b_id,
+                channel,
+                &mut b_rx,
+                Duration::from_millis(20),
+            )
+            .await;
+            while let Ok(packet) = received.try_recv() {
+                microphone_seen |= packet.payload.first() == Some(&0x4d);
+                source_seen |= packet.payload.first() == Some(&0x53);
+            }
+        }
+        assert!(
+            microphone_seen,
+            "microphone must flow independently in phase {phase}"
+        );
+        assert_eq!(
+            source_seen,
+            phase == "watched",
+            "source RTP Watch gate in phase {phase}"
+        );
+        microphone_seen = false;
+    }
+    a.pc.close().await.unwrap();
+    b.pc.close().await.unwrap();
+    sfu.leave(a_id, channel).await;
+    sfu.leave(b_id, channel).await;
+}

@@ -63,7 +63,7 @@ function ProfileForm({ user }: { user: User }) {
     validateAvatarUrl(settledAvatarUrl) === null ? settledAvatarUrl : "";
 
   return (
-    <section className="mx-auto max-w-md">
+    <section className="lr-account-page mx-auto max-w-md">
       <h1 className="text-2xl font-semibold tracking-tight">Profil</h1>
       <p className="mt-1 text-sm text-neutral-600 dark:text-neutral-400">
         {user.email}
@@ -73,8 +73,8 @@ function ProfileForm({ user }: { user: User }) {
         <div className="flex items-center gap-4">
           <Avatar name={name || user.name} url={previewUrl || null} size="lg" />
           <p className="text-sm text-neutral-600 dark:text-neutral-400">
-            Ohne Bild zeigen wir deine Initialen. Datei-Upload kommt mit dem
-            Dateien-Ticket; bis dahin reicht ein Link.
+            Dein Bild begleitet dich in Chats und Sprachräumen. Ohne Bild zeigen
+            wir deine Initialen.
           </p>
         </div>
 

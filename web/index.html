@@ -4,25 +4,70 @@
     <meta charset="UTF-8" />
     <meta name="viewport" content="width=device-width, initial-scale=1.0" />
     <meta name="color-scheme" content="light dark" />
+    <link
+      rel="icon"
+      type="image/png"
+      href="/images/living-room/community-banner.png"
+    />
     <script>
       const setInitialTheme = (dark) => {
         document.documentElement.classList.toggle("dark", dark);
         document.documentElement.dataset.theme = dark ? "dark" : "light";
         document.documentElement.style.colorScheme = dark ? "dark" : "light";
+        document.documentElement.style.setProperty(
+          "--lr-bg",
+          dark ? "#17191a" : "#f8f5f0",
+        );
+        document.documentElement.style.setProperty(
+          "--lr-text",
+          dark ? "#eef0ee" : "#252829",
+        );
       };
       try {
         const stored = localStorage.getItem("gelabber.theme");
         const preference =
-          stored === "light" || stored === "dark" ? stored : "system";
+          stored === "light" || stored === "dark" || stored === "system"
+            ? stored
+            : "dark";
         const dark =
           preference === "dark" ||
           (preference === "system" &&
             matchMedia("(prefers-color-scheme: dark)").matches);
         setInitialTheme(dark);
+        // Only the minimal, validated paint colours are needed before the app loads.
+        // Full theme validation and system-mode handling live in theme/startup.ts.
+        const cache = JSON.parse(
+          localStorage.getItem("gelabber.theme.paint") ?? "null",
+        );
+        const paint = cache?.theme ?? cache;
+        if (cache?.system === true) {
+          setInitialTheme(matchMedia("(prefers-color-scheme: dark)").matches);
+        } else if (
+          paint?.version === 1 &&
+          ["light", "dark"].includes(paint.mode) &&
+          /^#[0-9a-f]{6}$/i.test(paint.colors?.background) &&
+          /^#[0-9a-f]{6}$/i.test(paint.colors?.text)
+        ) {
+          setInitialTheme(paint.mode === "dark");
+          document.documentElement.style.setProperty(
+            "--lr-bg",
+            paint.colors.background,
+          );
+          document.documentElement.style.setProperty(
+            "--lr-text",
+            paint.colors.text,
+          );
+        }
       } catch {
-        setInitialTheme(matchMedia("(prefers-color-scheme: dark)").matches);
+        setInitialTheme(true);
       }
     </script>
+    <style>
+      html {
+        background: var(--lr-bg, #17191a);
+        color: var(--lr-text, #eef0ee);
+      }
+    </style>
     <title>Gelabber</title>
   </head>
   <body>

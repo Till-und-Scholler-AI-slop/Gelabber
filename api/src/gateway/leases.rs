@@ -97,7 +97,7 @@ for _,key in ipairs(redis.call('ZRANGE',KEYS[1],0,-1)) do
     if row.u==ARGV[1] then
       count=count+1; muted=muted and row.m; deafened=deafened and row.d
       for _,kind in ipairs(row.p) do
-        if kind~='l' or (live and live.u==row.u and live.seat==row.id) then pubs[kind]=true end
+        if (kind~='l' and kind~='la') or (live and live.u==row.u and live.seat==row.id) then pubs[kind]=true end
       end
     end
   else redis.call('ZREM',KEYS[1],key) end
@@ -114,11 +114,12 @@ elseif ARGV[4]=='leave' then
     flags()
     for _,kind in ipairs(cjson.decode(ARGV[6])) do if not pubs[kind] then send('u',',"k":"'..kind..'"') end end
   end
-elseif ARGV[4]=='u' and not pubs[ARGV[5]] then send('u',',"k":"'..ARGV[5]..'"')
+elseif ARGV[4]=='u' then
+  for _,kind in ipairs(cjson.decode(ARGV[6])) do if not pubs[kind] then send('u',',"k":"'..kind..'"') end end
 elseif ARGV[4]=='p' and pubs[ARGV[5]] then
-  if ARGV[5]=='l' then
+  if ARGV[5]=='l' or ARGV[5]=='la' then
     if raw~=ARGV[7] then return 0 end
-    send('p',',"k":"l","lc":"'..live.nonce..'"')
+    send('p',',"k":"'..ARGV[5]..'","lc":"'..live.nonce..'"')
   else send('p',',"k":"'..ARGV[5]..'"') end
 end
 return 1
@@ -343,6 +344,7 @@ impl VoiceRoster {
                     .is_some_and(|owner| owner.seat == row.id && owner.u == row.u && owner.s == s)
                 {
                     row.p.remove(&TrackKind::L);
+                    row.p.remove(&TrackKind::La);
                 }
                 let peer = peers.entry(row.u).or_insert((true, true, HashSet::new()));
                 peer.0 &= row.m;
@@ -354,7 +356,7 @@ impl VoiceRoster {
                 events.push(SigEvent::join_state(s, c, uid, m, d));
                 for kind in pubs {
                     let mut event = SigEvent::published(s, c, uid, kind);
-                    if kind == TrackKind::L {
+                    if matches!(kind, TrackKind::L | TrackKind::La) {
                         event.lc = live
                             .as_ref()
                             .filter(|owner| owner.u == uid)
@@ -515,6 +517,16 @@ impl VoiceRoster {
             )
         };
         let previous = seat.clone();
+        if on && let Some(parent) = kind.source_parent() {
+            if !seat.pubs.contains(&parent) {
+                return Ok(None);
+            }
+            if parent == TrackKind::L
+                && (seat.live.is_none() || self.live_owner(c).await?.as_ref() != seat.live.as_ref())
+            {
+                return Ok(None);
+            }
+        }
         let mut started = false;
         if kind == TrackKind::L {
             if on {
@@ -548,6 +560,9 @@ impl VoiceRoster {
             seat.pubs.insert(kind);
         } else {
             seat.pubs.remove(&kind);
+            if let Some(audio) = kind.source_audio() {
+                seat.pubs.remove(&audio);
+            }
         }
         if let Err(err) = self.write_seat(id, u, c, &seat).await {
             if kind == TrackKind::L
@@ -568,6 +583,7 @@ impl VoiceRoster {
             if result.as_ref().is_ok_and(|accepted| !accepted) {
                 seat.live = None;
                 seat.pubs.remove(&TrackKind::L);
+                seat.pubs.remove(&TrackKind::La);
                 if let Some(socket) = self.connections.inner.sockets.write().await.get_mut(&id) {
                     socket.rooms.insert(c, seat.clone());
                 }
@@ -585,6 +601,7 @@ impl VoiceRoster {
                 if kind == TrackKind::L && started {
                     restored.live = None;
                     restored.pubs.remove(&TrackKind::L);
+                    restored.pubs.remove(&TrackKind::La);
                 }
                 if let Some(socket) = self.connections.inner.sockets.write().await.get_mut(&id) {
                     socket.rooms.insert(c, restored.clone());
@@ -593,8 +610,13 @@ impl VoiceRoster {
                 return Err(err);
             }
         } else {
-            self.aggregate_signal(u, s, c, "u", &HashSet::from([kind]), None)
-                .await?;
+            let mut removed = HashSet::from([kind]);
+            if let Some(audio) = kind.source_audio()
+                && previous.pubs.contains(&audio)
+            {
+                removed.insert(audio);
+            }
+            self.aggregate_signal(u, s, c, "u", &removed, None).await?;
         }
         Ok(Some(started))
     }
@@ -648,18 +670,16 @@ impl VoiceRoster {
             {
                 seat.live = None;
                 seat.pubs.remove(&TrackKind::L);
+                let had_audio = seat.pubs.remove(&TrackKind::La);
                 if let Some(socket) = self.connections.inner.sockets.write().await.get_mut(&id) {
                     socket.rooms.insert(c, seat.clone());
                 }
-                self.aggregate_signal(
-                    u,
-                    seat.server_id,
-                    c,
-                    "u",
-                    &HashSet::from([TrackKind::L]),
-                    None,
-                )
-                .await?;
+                let mut removed = HashSet::from([TrackKind::L]);
+                if had_audio {
+                    removed.insert(TrackKind::La);
+                }
+                self.aggregate_signal(u, seat.server_id, c, "u", &removed, None)
+                    .await?;
             }
             self.write_seat(id, u, c, &seat).await?;
             if let Some(socket) = self.connections.inner.sockets.write().await.get_mut(&id) {
@@ -781,6 +801,9 @@ mod tests {
                 .unwrap(),
             Some(true)
         );
+        g.set_voice_pub(id, u, s, c, TrackKind::La, true)
+            .await
+            .unwrap();
         let previous = g.connections.inner.sockets.read().await[&id].rooms[&c].clone();
         let owner = g.voice.live_owner(c).await.unwrap().unwrap();
         let corrupt = corrupt_aggregate(c).await;
@@ -988,6 +1011,60 @@ mod tests {
         );
         a.detach(id).await;
         b.detach(watcher).await;
+    }
+
+    #[tokio::test]
+    async fn live_audio_is_same_seat_and_expires_with_parent_without_clearing_microphone() {
+        let g = gateway();
+        let (u, s, c) = (Uuid::new_v4(), Uuid::new_v4(), Uuid::new_v4());
+        let (owner, _rx) = socket(&g, u).await;
+        let (other_tab, _rx) = socket(&g, u).await;
+        for id in [owner, other_tab] {
+            g.join_voice(id, u, s, c).await.unwrap();
+        }
+        assert_eq!(
+            g.set_voice_pub(owner, u, s, c, TrackKind::A, true)
+                .await
+                .unwrap(),
+            Some(false)
+        );
+        assert_eq!(
+            g.set_voice_pub(owner, u, s, c, TrackKind::L, true)
+                .await
+                .unwrap(),
+            Some(true)
+        );
+        let nonce = g.voice.live_owner(c).await.unwrap().unwrap().nonce;
+        assert_eq!(
+            g.set_voice_pub(other_tab, u, s, c, TrackKind::La, true)
+                .await
+                .unwrap(),
+            None
+        );
+        assert_eq!(
+            g.set_voice_pub(owner, u, s, c, TrackKind::La, true)
+                .await
+                .unwrap(),
+            Some(false)
+        );
+        assert_eq!(g.voice.live_owner(c).await.unwrap().unwrap().nonce, nonce);
+        redis::cmd("DEL")
+            .arg(live_key(c))
+            .query_async::<()>(&mut redis().await)
+            .await
+            .unwrap();
+        assert_eq!(
+            g.set_voice_pub(owner, u, s, c, TrackKind::La, true)
+                .await
+                .unwrap(),
+            None
+        );
+        g.refresh_voice(owner).await.unwrap();
+        let seat = g.connections.inner.sockets.read().await[&owner].rooms[&c].clone();
+        assert_eq!(seat.pubs, HashSet::from([TrackKind::A]));
+        assert!(seat.live.is_none());
+        g.detach(owner).await;
+        g.detach(other_tab).await;
     }
 
     #[tokio::test]

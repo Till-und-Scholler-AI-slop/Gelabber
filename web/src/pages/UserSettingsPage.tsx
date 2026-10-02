@@ -1,55 +1,162 @@
+import { useState } from "react";
+import { useCanGoBack, useRouter } from "@tanstack/react-router";
+import { useVoice } from "../voice/session.ts";
+import {
+  CameraIcon,
+  ChatIcon,
+  MicIcon,
+  ScreenIcon,
+} from "../components/Icons.tsx";
 import { MediaSettingsForm } from "../voice/VoiceSettings.tsx";
-import { useTheme, type ThemePreference } from "../theme/theme.ts";
+import { ThemesPanel } from "../theme/ThemesPanel.tsx";
+import { useInterfacePreferences } from "../interface/preferences.ts";
+import "./settings.css";
 
-const themes: Array<{ value: ThemePreference; label: string }> = [
-  { value: "light", label: "Hell" },
-  { value: "dark", label: "Dunkel" },
-  { value: "system", label: "System" },
-];
+const areas = [
+  {
+    id: "appearance",
+    label: "Darstellung",
+    description: "Mach Gelabber zu deinem Platz.",
+    icon: ScreenIcon,
+  },
+  {
+    id: "themes",
+    label: "Themes",
+    description: "Farben und Designs, die zu dir passen.",
+    icon: ScreenIcon,
+  },
+  {
+    id: "audio",
+    label: "Audio",
+    description: "Dein Mikrofon, deine Lautsprecher und die Lautstärke.",
+    icon: MicIcon,
+  },
+  {
+    id: "video",
+    label: "Video",
+    description: "Kamera, Bildschirmfreigabe und Liveübertragungen.",
+    icon: CameraIcon,
+  },
+  {
+    id: "notifications",
+    label: "Benachrichtigungen",
+    description: "Entscheide, wie neue Nachrichten dich erreichen.",
+    icon: ChatIcon,
+  },
+] as const;
 
 export function UserSettingsPage() {
-  const theme = useTheme((state) => state.preference);
-  const setTheme = useTheme((state) => state.setPreference);
-
+  const router = useRouter();
+  const canGoBack = useCanGoBack();
+  const goBack = () => {
+    if (canGoBack) {
+      router.history.back();
+      return;
+    }
+    const voice = useVoice.getState();
+    const serverId = voice.serverId ?? voice.watchServerId;
+    const channelId = voice.channelId ?? voice.watchChannelId;
+    if (serverId && channelId) {
+      void router.navigate({
+        to: "/s/$serverId/c/$channelId",
+        params: { serverId, channelId },
+      });
+    } else {
+      void router.navigate({ to: "/" });
+    }
+  };
+  const [area, setArea] = useState<(typeof areas)[number]["id"]>("appearance");
+  const [themeDirty, setThemeDirty] = useState(false);
+  const preferences = useInterfacePreferences();
+  const selected = areas.find((item) => item.id === area)!;
   return (
-    <section className="mx-auto max-w-lg">
-      <h1 className="text-2xl font-semibold tracking-tight">Einstellungen</h1>
-      <p className="mt-1 text-sm text-neutral-600 dark:text-neutral-400">
-        Darstellung, Voice, Video und Nachrichten-Popups für diesen Browser.
-      </p>
-      <fieldset className="mt-8 flex flex-col gap-2">
-        <legend className="text-sm font-semibold text-neutral-800 dark:text-neutral-200">
-          Darstellung
-        </legend>
-        <div className="grid grid-cols-3 gap-2">
-          {themes.map((option) => (
-            <label
-              key={option.value}
-              className={[
-                "cursor-pointer rounded-lg border px-3 py-2 text-center text-sm font-medium transition focus-within:ring-2 focus-within:ring-neutral-400 dark:focus-within:ring-neutral-500",
-                theme === option.value
-                  ? "border-neutral-900 dark:border-neutral-300 bg-neutral-900 dark:bg-neutral-700 text-white"
-                  : "border-neutral-300 dark:border-neutral-600 bg-white dark:bg-neutral-900 text-neutral-700 dark:text-neutral-300 hover:bg-neutral-50 dark:hover:bg-neutral-800",
-              ].join(" ")}
+    <section className="settings-page" aria-labelledby="settings-heading">
+      <button type="button" className="settings-back" onClick={goBack}>
+        <span aria-hidden="true">←</span> Zurück
+      </button>
+      <header className="settings-page-heading">
+        <h1 id="settings-heading">Einstellungen</h1>
+        <p>Dein Gelabber. So, wie es dir gefällt.</p>
+      </header>
+      <div className="settings-layout">
+        <nav className="settings-navigation" aria-label="Einstellungsbereiche">
+          {areas.map(({ id, label, icon: Icon }) => (
+            <button
+              key={id}
+              type="button"
+              aria-current={area === id ? "page" : undefined}
+              aria-controls="settings-content"
+              onClick={() => {
+                if (
+                  id !== area &&
+                  themeDirty &&
+                  !window.confirm("Ungespeicherten Theme-Entwurf verwerfen?")
+                )
+                  return;
+                setArea(id);
+              }}
             >
-              <input
-                type="radio"
-                name="theme"
-                value={option.value}
-                checked={theme === option.value}
-                onChange={() => setTheme(option.value)}
-                className="sr-only"
-              />
-              {option.label}
-            </label>
+              <Icon size={18} />
+              <span>{label}</span>
+            </button>
           ))}
-        </div>
-        <p className="text-xs text-neutral-500 dark:text-neutral-400">
-          System folgt automatisch der Einstellung deines Betriebssystems.
-        </p>
-      </fieldset>
-      <div className="mt-8 border-t border-neutral-200 dark:border-neutral-700 pt-8">
-        <MediaSettingsForm />
+        </nav>
+        <section
+          id="settings-content"
+          className="settings-content"
+          aria-labelledby="settings-area-heading"
+        >
+          <header className="settings-content-heading">
+            <h2 id="settings-area-heading">{selected.label}</h2>
+            <p>{selected.description}</p>
+          </header>
+          {area === "themes" ? (
+            <ThemesPanel onDirtyChange={setThemeDirty} />
+          ) : area === "appearance" ? (
+            <>
+              <fieldset className="settings-group">
+                <legend>Dein Wohnzimmer</legend>
+                <label className="settings-preference">
+                  <span>
+                    <strong>Kompakte Raumansicht</strong>
+                    <small>Kleinere Avatare und weniger Abstand.</small>
+                  </span>
+                  <input
+                    type="checkbox"
+                    role="switch"
+                    checked={preferences.compactRooms}
+                    onChange={(event) =>
+                      preferences.patch({ compactRooms: event.target.checked })
+                    }
+                  />
+                </label>
+                <label className="settings-preference">
+                  <span>
+                    <strong>Bewegung reduzieren</strong>
+                    <small>
+                      Berücksichtigt auch die Einstellung deines Geräts.
+                    </small>
+                  </span>
+                  <input
+                    type="checkbox"
+                    role="switch"
+                    checked={preferences.reducedMotion}
+                    onChange={(event) =>
+                      preferences.patch({ reducedMotion: event.target.checked })
+                    }
+                  />
+                </label>
+              </fieldset>
+            </>
+          ) : (
+            <MediaSettingsForm key={area} section={area} />
+          )}
+          <p className="settings-save-note">
+            {area === "themes"
+              ? "Themes werden in deinem Account gespeichert."
+              : "Änderungen werden automatisch in diesem Browser gespeichert."}
+          </p>
+        </section>
       </div>
     </section>
   );

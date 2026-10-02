@@ -1,4 +1,5 @@
 import { MediaSettingsForm } from "../voice/VoiceSettings.tsx";
+import { VoiceDiagnostics } from "../voice/VoiceDiagnostics.tsx";
 import { useMediaSettings } from "../voice/settings.ts";
 import { GhostButton, Modal } from "./Modal.tsx";
 
@@ -8,6 +9,7 @@ export function VoiceSettingsDialog() {
   return (
     <Modal open={open} onClose={close} title="Voice & Video" wide>
       <MediaSettingsForm />
+      <VoiceDiagnostics />
       <div className="flex justify-end">
         <GhostButton onClick={close}>Fertig</GhostButton>
       </div>

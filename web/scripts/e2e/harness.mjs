@@ -220,10 +220,20 @@ export async function startHarness() {
     await dialog
       .getByRole("button", { name: "Erstellen", exact: true })
       .click();
-    await owner.page.waitForURL(/\/s\/[^/]+\/c\//);
-    const textPath = new URL(owner.page.url()).pathname;
-    const serverId = textPath.split("/")[2];
+    // Creating a community now opens its overview. Select the actual text
+    // channel through the UI before continuing the message scenarios.
+    await owner.page.waitForURL(/\/s\/[^/]+(?:\/c\/[^/]+)?$/);
+    const serverId = new URL(owner.page.url()).pathname.split("/")[2];
     servers.push({ owner, id: serverId });
+    const detail = await api(owner, `/servers/${serverId}`);
+    check(detail.status === 200, "fixture-server-detail-missing");
+    const textChannel = detail.body.channels.find(
+      (item) => item.kind === "text",
+    );
+    check(textChannel?.id, "fixture-text-channel-missing");
+    const textPath = `/s/${serverId}/c/${textChannel.id}`;
+    await owner.page.locator(`a[href="${textPath}"]`).first().click();
+    await owner.page.waitForURL((url) => url.pathname === textPath);
     async function channel(name, kind = "Voice") {
       await owner.page
         .getByRole("button", { name: "Kanal erstellen", exact: true })
@@ -576,6 +586,15 @@ export async function snapshot(actor) {
   return nativeEvaluate(actor, sample);
 }
 export async function click(actor, name) {
+  if (
+    name === "Abmelden" &&
+    !(await actor.page
+      .getByRole("button", { name, exact: true })
+      .first()
+      .isVisible())
+  ) {
+    await actor.page.locator('summary[aria-label="Benutzermenü"]').click();
+  }
   await actor.page.getByRole("button", { name, exact: true }).first().click();
 }
 export async function navigate(actor, path, base) {

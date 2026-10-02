@@ -1,5 +1,5 @@
 import { nativeEvaluate } from "./native-evaluate.mjs";
-/* global window */
+/* global window, document, innerWidth */
 import {
   check,
   click,
@@ -19,7 +19,8 @@ export function armPlaybackRetry() {
       !event.isTrusted ||
       event.target.closest?.("button")?.textContent?.trim() !==
         "Wiedergabe starten"
-    ) return;
+    )
+      return;
     window.__e2e.rejectPlayback = false;
     window.removeEventListener("click", release, true);
   };
@@ -41,10 +42,20 @@ function sourceMatches(video, color) {
     video.pixels.source.every((v, i) => Math.abs(v - color[i]) < 45)
   );
 }
+/** Render assertions select their source through the real Watch action. */
+export async function watchSource(actor, kind) {
+  if (kind !== "live" && kind !== "screen") return;
+  const tiles = actor.page
+    .locator("figure")
+    .filter({ hasText: kind === "live" ? "— Live" : "— Bildschirm" });
+  const start = tiles.getByRole("button", { name: "Zuschauen", exact: true });
+  if (await start.count()) await start.first().click();
+}
 export async function progress(
   actor,
   { kind = "live", color = [220, 30, 30], budget = 5_000, relay = false } = {},
 ) {
+  await watchSource(actor, kind);
   const start = Date.now();
   const first = await until(
     () => snapshot(actor),
@@ -440,6 +451,8 @@ export async function mediaScenarios(h, f) {
     await click(f.member, "Beitreten");
     await click(f.owner, "Kamera an");
     await click(f.owner, "Bildschirm teilen");
+    await watchSource(f.member, "live");
+    await watchSource(f.member, "screen");
     const live = await progress(f.member, options);
     const screen = await progress(f.member, {
       ...options,
@@ -488,6 +501,101 @@ export async function mediaScenarios(h, f) {
     };
   });
   const { mediaExtraScenarios } = await import("./media-extra.mjs");
+  await h.run("active-call-responsive-controls", [], async () => {
+    await reset(f);
+    const page = f.owner.page;
+    const originalViewport = page.viewportSize();
+    const results = [];
+    try {
+      await page.setViewportSize({ width: 1487, height: 1058 });
+      await click(f.owner, "Beitreten");
+      await page.getByRole("region", { name: "Aktive Medien" }).waitFor();
+      check(
+        (await page
+          .getByRole("button", { name: "Mikrofon aus", exact: true })
+          .count()) === 1,
+        "duplicate-in-room-call-controls",
+      );
+      await page.locator(`a[href="${f.textPath}"]`).first().click();
+      await page.locator("textarea").waitFor();
+      for (const viewport of [
+        { width: 1487, height: 1058 },
+        { width: 1366, height: 600 },
+        { width: 390, height: 844 },
+        { width: 780, height: 390 },
+        { width: 844, height: 390 },
+      ]) {
+        await page.setViewportSize(viewport);
+        const metrics = await until(
+          () =>
+            nativeEvaluate(f.owner, () => {
+              const send = [...document.querySelectorAll("button")].find(
+                (button) => button.textContent.trim() === "Senden",
+              );
+              const rect = send.getBoundingClientRect();
+              const hit = document.elementFromPoint(
+                rect.x + rect.width / 2,
+                rect.y + rect.height / 2,
+              );
+              const dock = document.querySelector(".voice-session-dock");
+              const dockBounds = dock.getBoundingClientRect();
+              const callControlsUncovered = [
+                ...dock.querySelectorAll("button"),
+              ].every((button) => {
+                const bounds = button.getBoundingClientRect();
+                const target = document.elementFromPoint(
+                  bounds.x + bounds.width / 2,
+                  bounds.y + bounds.height / 2,
+                );
+                return target === button || button.contains(target);
+              });
+              return {
+                sendUncovered: hit === send || send.contains(hit),
+                callControlsUncovered,
+                dockAtBottom:
+                  Math.abs(dockBounds.bottom - window.innerHeight) <= 1,
+                overflow: document.documentElement.scrollWidth > innerWidth,
+                channelsHeight: document
+                  .querySelector(".sidebar-list-scroll")
+                  .getBoundingClientRect().height,
+              };
+            }),
+          (state) =>
+            state.sendUncovered &&
+            state.callControlsUncovered &&
+            state.dockAtBottom &&
+            !state.overflow,
+          "call-dock-covers-chat-controls",
+        );
+        if (viewport.width <= 800) {
+          await page.getByRole("button", { name: "Navigation öffnen" }).click();
+        } else {
+          check(metrics.channelsHeight >= 156, "channel-navigation-collapsed");
+        }
+        // Scroll to the owner's controls, including on short landscape drawers.
+        await page
+          .getByRole("button", { name: "Kanal erstellen", exact: true })
+          .click();
+        await page
+          .getByRole("dialog", { name: "Kanal erstellen", exact: true })
+          .waitFor();
+        await page.keyboard.press("Escape");
+        if (viewport.width <= 800) {
+          check(
+            await page
+              .getByRole("dialog", { name: "Navigation", exact: true })
+              .isVisible(),
+            "nested-escape-closed-navigation",
+          );
+          await page.keyboard.press("Escape");
+        }
+        results.push({ viewport, ...metrics });
+      }
+      return { viewports: results };
+    } finally {
+      if (originalViewport) await page.setViewportSize(originalViewport);
+    }
+  });
   await mediaExtraScenarios(h, f, { reset, begin, options });
   h.blocked(
     "audible-voice-mute-deafen-quality",

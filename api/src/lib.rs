@@ -19,6 +19,7 @@ pub mod servers;
 pub mod state;
 pub mod storage;
 pub mod telemetry;
+pub mod themes;
 pub mod token;
 
 use axum::Router;
@@ -41,6 +42,7 @@ pub fn app(state: AppState) -> Router {
     let api = Router::new()
         .merge(auth::router())
         .merge(profile::router())
+        .merge(themes::router())
         .merge(servers::router())
         .merge(dms::router())
         .merge(messages::router())

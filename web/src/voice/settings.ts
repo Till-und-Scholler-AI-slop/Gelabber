@@ -27,11 +27,55 @@ export const AUDIO_QUALITY = {
 
 export type AudioQuality = keyof typeof AUDIO_QUALITY;
 
-/**
- * Camera and screen/Go Live presets. "balanced" keeps the previous safe
- * capture targets and the 2.5 Mbit/s send budget. Economy and Detail are
- * explicit steps inside a hard ceiling — video bitrate is never unlimited.
- */
+/** Display-source music stays separate from the speech encoder. */
+export const SOURCE_AUDIO_BITRATE = 192_000;
+export const SOURCE_AUDIO_CONSTRAINTS: MediaTrackConstraints = {
+  echoCancellation: false,
+  noiseSuppression: false,
+  autoGainControl: false,
+  channelCount: 2,
+};
+
+/** Explicit capture targets. Legacy presets remain valid for saved preferences. */
+export const VIDEO_RESOLUTIONS = [480, 720, 1080, 1440, 2160] as const;
+export const VIDEO_FRAME_RATES = [15, 24, 30, 45, 60] as const;
+export type VideoResolution = (typeof VIDEO_RESOLUTIONS)[number];
+export type VideoFrameRate = (typeof VIDEO_FRAME_RATES)[number];
+type ExplicitProfileId = `${VideoResolution}p${VideoFrameRate}`;
+type StreamProfile = {
+  label: string;
+  width: number;
+  height: number;
+  fps: number;
+  maxBitrate: number;
+};
+const resolutionSpecs = {
+  480: { width: 854, bitrate: 1_200_000 },
+  720: { width: 1280, bitrate: 2_500_000 },
+  1080: { width: 1920, bitrate: 8_000_000 },
+  1440: { width: 2560, bitrate: 16_000_000 },
+  2160: { width: 3840, bitrate: 30_000_000 },
+} as const;
+export function explicitStreamProfile(
+  height: VideoResolution,
+  fps: VideoFrameRate,
+): ExplicitProfileId {
+  return `${height}p${fps}`;
+}
+const explicitProfiles = Object.fromEntries(
+  VIDEO_RESOLUTIONS.flatMap((height) =>
+    VIDEO_FRAME_RATES.map((fps) => [
+      explicitStreamProfile(height, fps),
+      {
+        label: `${height === 2160 ? "4K" : `${height}p`} · ${fps} FPS`,
+        width: resolutionSpecs[height].width,
+        height,
+        fps,
+        maxBitrate: Math.round((resolutionSpecs[height].bitrate * fps) / 30),
+      },
+    ]),
+  ),
+) as Record<ExplicitProfileId, StreamProfile>;
 export const STREAM_PROFILES = {
   economy: {
     label: "Sparsam",
@@ -41,7 +85,7 @@ export const STREAM_PROFILES = {
     maxBitrate: 800_000,
   },
   balanced: {
-    label: "Ausgewogen",
+    label: "Automatisch",
     width: 1280,
     height: 720,
     fps: 30,
@@ -54,8 +98,8 @@ export const STREAM_PROFILES = {
     fps: 30,
     maxBitrate: 4_000_000,
   },
+  ...explicitProfiles,
 } as const;
-
 export type StreamProfileId = keyof typeof STREAM_PROFILES;
 export type StreamKind = "camera" | "screen";
 /** Whether a profile change reached the live track or waits for the next one. */
@@ -72,11 +116,17 @@ export type MediaSettings = {
   outputVolume: number;
   /** Pre-send gain, 0–2. 1 = identity (no Web Audio insert). */
   inputGain: number;
+  /** Request browser-selected tab/window/system audio on the next capture. */
+  shareSourceAudio: boolean;
+  sourceAudioVolume: number;
+  sourceAudioMuted: boolean;
   quality: AudioQuality;
   /** Camera capture + that sender's share of the video budget. */
   cameraProfile: StreamProfileId;
   /** Screen share and Go Live. Both are display captures. */
   screenProfile: StreamProfileId;
+  /** 0 = automatic quality budget; otherwise shared video payload cap in bit/s. */
+  videoUploadLimit: number;
   messageToasts: boolean;
   desktopNotify: boolean;
 };
@@ -90,9 +140,13 @@ export const DEFAULT_MEDIA_SETTINGS: MediaSettings = {
   autoGainControl: true,
   outputVolume: 1,
   inputGain: 1,
+  shareSourceAudio: false,
+  sourceAudioVolume: 1,
+  sourceAudioMuted: false,
   quality: "normal",
   cameraProfile: "balanced",
   screenProfile: "balanced",
+  videoUploadLimit: 0,
   messageToasts: true,
   desktopNotify: false,
 };
@@ -156,9 +210,15 @@ export function asQuality(value: unknown): AudioQuality {
 }
 
 export function asStreamProfile(value: unknown): StreamProfileId {
-  return value === "economy" || value === "detail" || value === "balanced"
-    ? value
+  return typeof value === "string" && Object.hasOwn(STREAM_PROFILES, value)
+    ? (value as StreamProfileId)
     : "balanced";
+}
+
+export function clampVideoUploadLimit(value: unknown): number {
+  if (typeof value !== "number" || !Number.isFinite(value) || value <= 0)
+    return 0;
+  return Math.round(Math.min(100_000_000, Math.max(500_000, value)));
 }
 
 function snapshot(state: MediaSettingsState): MediaSettings {
@@ -171,9 +231,13 @@ function snapshot(state: MediaSettingsState): MediaSettings {
     autoGainControl: state.autoGainControl,
     outputVolume: state.outputVolume,
     inputGain: state.inputGain,
+    shareSourceAudio: state.shareSourceAudio,
+    sourceAudioVolume: state.sourceAudioVolume,
+    sourceAudioMuted: state.sourceAudioMuted,
     quality: state.quality,
     cameraProfile: state.cameraProfile,
     screenProfile: state.screenProfile,
+    videoUploadLimit: state.videoUploadLimit,
     messageToasts: state.messageToasts,
     desktopNotify: state.desktopNotify,
   };
@@ -221,6 +285,12 @@ export const useMediaSettings = create<MediaSettingsState>()(
             partial.inputGain !== undefined
               ? clampGain(partial.inputGain)
               : prev.inputGain,
+          shareSourceAudio: partial.shareSourceAudio ?? prev.shareSourceAudio,
+          sourceAudioVolume:
+            partial.sourceAudioVolume !== undefined
+              ? clampVolume(partial.sourceAudioVolume)
+              : prev.sourceAudioVolume,
+          sourceAudioMuted: partial.sourceAudioMuted ?? prev.sourceAudioMuted,
           quality:
             partial.quality !== undefined
               ? asQuality(partial.quality)
@@ -233,6 +303,10 @@ export const useMediaSettings = create<MediaSettingsState>()(
             partial.screenProfile !== undefined
               ? asStreamProfile(partial.screenProfile)
               : prev.screenProfile,
+          videoUploadLimit:
+            partial.videoUploadLimit !== undefined
+              ? clampVideoUploadLimit(partial.videoUploadLimit)
+              : prev.videoUploadLimit,
           messageToasts:
             partial.messageToasts !== undefined
               ? partial.messageToasts
@@ -267,6 +341,10 @@ export const useMediaSettings = create<MediaSettingsState>()(
               ? stored.screenProfile
               : current.screenProfile,
           ),
+          videoUploadLimit: clampVideoUploadLimit(stored.videoUploadLimit),
+          shareSourceAudio: stored.shareSourceAudio === true,
+          sourceAudioVolume: clampVolume(stored.sourceAudioVolume ?? 1),
+          sourceAudioMuted: stored.sourceAudioMuted === true,
           cameraProfileApply: current.cameraProfileApply,
           screenProfileApply: current.screenProfileApply,
           dialogOpen: current.dialogOpen,
@@ -318,20 +396,20 @@ export function micConstraints(): MediaTrackConstraints {
  * when every active source is balanced — concurrent sources share it.
  */
 export const VIDEO_SEND_BUDGET = STREAM_PROFILES.balanced.maxBitrate;
-/** Hard ceiling for every video sender combined. Detail cannot exceed this. */
-export const VIDEO_SEND_CEILING = STREAM_PROFILES.detail.maxBitrate;
-export const VIDEO_MAX_FPS = STREAM_PROFILES.detail.fps;
+/** Shared upper bound, including camera, screen share and Go Live at 4K/60. */
+export const VIDEO_SEND_CEILING = 100_000_000;
+export const VIDEO_MAX_FPS = 60;
 
 const BALANCED_CAMERA: MediaTrackConstraints = {
   width: { ideal: 1280, max: 1920 },
   height: { ideal: 720, max: 1080 },
-  frameRate: { ideal: VIDEO_MAX_FPS, max: VIDEO_MAX_FPS },
+  frameRate: { ideal: 30, max: 30 },
 };
 
 const BALANCED_DISPLAY: MediaTrackConstraints = {
   width: { max: 1920 },
   height: { max: 1080 },
-  frameRate: { ideal: 15, max: VIDEO_MAX_FPS },
+  frameRate: { ideal: 15, max: 30 },
 };
 
 export function streamProfileFps(profile: StreamProfileId): number {
@@ -382,7 +460,7 @@ export function streamEstimate(
     };
   }
   return {
-    resolution: `${spec.height}p`,
+    resolution: spec.height === 2160 ? "4K (2160p)" : `${spec.height}p`,
     fps: `${spec.fps} FPS`,
     maxBitrate: spec.maxBitrate,
   };
@@ -398,20 +476,37 @@ export function formatVideoBitrate(bitsPerSecond: number): string {
 
 /**
  * Share one pool across active video sources. The pool is the largest
- * single-source budget in the set, never above {@link VIDEO_SEND_CEILING}.
+ * single-source budget in the set, or the explicit shared upload limit.
+ * Neither mode exceeds {@link VIDEO_SEND_CEILING}; the browser can send less
+ * in response to congestion feedback. A manual cap scales the source shares
+ * up as well as down so it can provide extra quality headroom.
  * Two balanced sources therefore still split 2.5 Mbit/s in half.
  */
 export function allocateVideoBitrates(
   profiles: readonly StreamProfileId[],
+  uploadLimit = 0,
 ): number[] {
   if (profiles.length === 0) return [];
   const desires = profiles.map(
     (id) => STREAM_PROFILES[asStreamProfile(id)].maxBitrate,
   );
-  const pool = Math.min(VIDEO_SEND_CEILING, Math.max(...desires));
+  const manual = clampVideoUploadLimit(uploadLimit);
+  const pool = Math.min(VIDEO_SEND_CEILING, manual || Math.max(...desires));
   const sum = desires.reduce((total, value) => total + value, 0);
-  const scale = sum > pool ? pool / sum : 1;
+  const scale = manual > 0 || sum > pool ? pool / sum : 1;
   return desires.map((desire) => Math.floor(desire * scale));
+}
+
+export function videoSendBudget(
+  settings: Pick<
+    MediaSettings,
+    "cameraProfile" | "screenProfile" | "videoUploadLimit"
+  >,
+): number {
+  return allocateVideoBitrates(
+    [settings.cameraProfile, settings.screenProfile],
+    settings.videoUploadLimit,
+  ).reduce((sum, value) => sum + value, 0);
 }
 
 export function isOverconstrainedError(error: unknown): boolean {
@@ -435,11 +530,11 @@ export function videoConstraintLadder(
 ): MediaTrackConstraints[] {
   const order: StreamProfileId[] =
     kind === "camera"
-      ? profile === "detail"
-        ? ["detail", "balanced", "economy"]
+      ? profile === "economy"
+        ? ["economy"]
         : profile === "balanced"
           ? ["balanced", "economy"]
-          : ["economy"]
+          : [profile, "balanced", "economy"]
       : profile === "balanced"
         ? ["balanced"]
         : [profile, "balanced"];

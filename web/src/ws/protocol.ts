@@ -11,7 +11,7 @@ export type Topic = {
 
 /** Presence plane. SDP and ICE are not gateway ops. */
 export type SigType = "j" | "l" | "p" | "u" | "m" | "d" | "r";
-export type TrackKind = "a" | "v" | "s" | "l";
+export type TrackKind = "a" | "v" | "s" | "l" | "sa" | "la";
 
 export type VoiceEntry = {
   u: string;

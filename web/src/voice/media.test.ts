@@ -162,3 +162,51 @@ describe("publisher SDP identity", () => {
     expect([...publishedTrackIds(sdp)]).toEqual([["screen", "screen-track"]]);
   });
 });
+
+describe("source music SDP", () => {
+  const section = (mid: string, track: string) => [
+    "m=audio 9 UDP/TLS/RTP/SAVPF 111",
+    `a=mid:${mid}`,
+    "a=rtpmap:111 opus/48000/2",
+    "a=fmtp:111 useinbandfec=0;usedtx=1;stereo=0;maxaveragebitrate=24000",
+    `a=msid:capture ${track}`,
+  ];
+  it("tunes screen/Live music separately from microphone speech, including a reused MID", () => {
+    const sdp = [
+      "v=0",
+      ...section("0", "mic"),
+      ...section("1", "source"),
+      ...section("2", "retained"),
+      "",
+    ].join("\r\n");
+    const tuned = tuneAudioSdp(
+      sdp,
+      24_000,
+      new Set(["source"]),
+      new Set(["2"]),
+    );
+    const sections = tuned.split(/\r\nm=/).slice(1);
+    expect(sections[0]).toContain("usedtx=1;stereo=0;maxaveragebitrate=24000");
+    for (const source of sections.slice(1)) {
+      expect(source).toContain("useinbandfec=1");
+      expect(source).toContain("usedtx=0;stereo=1;maxaveragebitrate=192000");
+      expect(source).toContain("sprop-stereo=1");
+    }
+    expect(publishedTrackIds(tuned)).toEqual(
+      new Map([
+        ["0", "mic"],
+        ["1", "source"],
+        ["2", "retained"],
+      ]),
+    );
+  });
+  it("recognizes forwarded audio tags within their shared parent video MSID", () => {
+    const sdp = ["v=0", ...section("0", "u-bob:la-789"), ""]
+      .join("\r\n")
+      .replace("a=msid:capture", "a=msid:u-bob:l");
+    const tuned = tuneAudioSdp(sdp, 64_000);
+    expect(tuned).toContain("usedtx=0");
+    expect(tuned).toContain("stereo=1");
+    expect(tuned).toContain("maxaveragebitrate=192000");
+  });
+});

@@ -40,19 +40,21 @@ export function ChannelPage() {
 
   return (
     <div className="flex min-h-0 flex-1 overflow-hidden">
-      <div className="flex min-w-0 flex-1 flex-col overflow-hidden">
-        <header className="flex h-12 shrink-0 items-center gap-2 border-b border-neutral-200 dark:border-neutral-700 bg-white dark:bg-neutral-900 px-4">
+      <div className="lr-channel-content flex min-w-0 flex-1 flex-col overflow-hidden">
+        <header className="lr-channel-header flex h-12 shrink-0 items-center gap-2 border-b border-neutral-200 dark:border-neutral-700 bg-white dark:bg-neutral-900 px-4">
           <Icon size={18} className="text-neutral-400 dark:text-neutral-500" />
           <h1 className="truncate font-semibold tracking-tight">
             {channel.name}
           </h1>
         </header>
         {channel.kind === "voice" ? (
-          <VoiceRoom
-            server={server}
-            channelId={channel.id}
-            channelName={channel.name}
-          />
+          <div className="min-h-0 flex-1 overflow-y-auto">
+            <VoiceRoom
+              server={server}
+              channelId={channel.id}
+              channelName={channel.name}
+            />
+          </div>
         ) : (
           <div className="relative min-h-0 flex-1">
             <div

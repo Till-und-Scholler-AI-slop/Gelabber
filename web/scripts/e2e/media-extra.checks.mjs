@@ -34,6 +34,7 @@ test("exact SDP scenario preserves failed bounded camera warmup and never inject
       },
     },
     "./media.mjs": {
+      watchSource: async () => {},
       activePeers: () => [],
       progress: async () => {
         progressCalls++;
