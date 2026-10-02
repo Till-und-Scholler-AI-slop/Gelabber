@@ -673,6 +673,12 @@ async fn typing_broadcasts_fast_and_clears_on_stop(pool: PgPool) {
     recv_until(&mut owner_ws, |f| f["op"] == "ok").await;
     recv_until(&mut member_ws, |f| f["op"] == "ok").await;
 
+    // `ok` precedes presence and voice initialization in subscribe(). The final
+    // voice snapshots mark completed subscriptions; measure typing delivery only
+    // after both sockets have finished that setup, without sleeps or retries.
+    recv_until(&mut owner_ws, |f| f["op"] == "v" && f.get("snap").is_some()).await;
+    recv_until(&mut member_ws, |f| f["op"] == "v" && f.get("snap").is_some()).await;
+
     let start = std::time::Instant::now();
     send_json(
         &mut member_ws,

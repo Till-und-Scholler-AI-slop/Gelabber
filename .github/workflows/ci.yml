@@ -147,7 +147,8 @@ jobs:
           fi
           for ((iteration=1; iteration<=repetitions; iteration++)); do
             echo "Isolated typing latency check ${iteration}/${repetitions}"
-            cargo test --locked -p gelabber-api --test gateway typing_broadcasts_fast_and_clears_on_stop -- --exact --test-threads=1
+            # Match workspace feature unification to reuse the already built tests.
+            cargo test --locked --workspace --all-targets typing_broadcasts_fast_and_clears_on_stop -- --exact --test-threads=1
           done
 
       - name: Build owned API and SFU for isolated fault acceptance
