@@ -677,10 +677,14 @@ async fn typing_broadcasts_fast_and_clears_on_stop(pool: PgPool) {
     // voice snapshots mark completed subscriptions; measure typing delivery only
     // after both sockets have finished that setup, without sleeps or retries.
     for ws in [&mut owner_ws, &mut member_ws] {
-        recv_until(ws, |f| {
-            f["op"] == "sig" && f["t"] == "r" && f.get("snap").is_some()
-        })
-        .await;
+        tokio::time::timeout(
+            Duration::from_secs(2),
+            recv_until(ws, |f| {
+                f["op"] == "sig" && f["t"] == "r" && f.get("snap").is_some()
+            }),
+        )
+        .await
+        .expect("subscription voice snapshot");
     }
 
     let start = std::time::Instant::now();
