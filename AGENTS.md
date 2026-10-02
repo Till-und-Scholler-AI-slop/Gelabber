@@ -23,7 +23,7 @@ If a new `v*` name would miss that pattern, add the same protection by hand befo
 - Feature work uses feature branches off the current `v*` (e.g. `rft/<short>-01d0`, or Silas’s usual names). **PRs target that `v*` branch, not `main`.**
 - Merge a feature into the current `v*` when that feature is done and fixed (CI green, review as usual).
 - Merge `v*` → `main` **via a PR** only when the **whole** major is done and fixed. Then cut a **release** (tag `v0.2.0` etc.). Do not tag or release from a half-finished major or from a random feature branch.
-- Hotfixes for a shipped minor (`0.1.x`, and the shipped `0.2.x` line) go to `main` (or a hotfix branch). Do not mix them into unfinished current-major product work unless Rafael says so.
+- Hotfixes for the shipped minor (`0.3.x`) go to `main` (or a hotfix branch), followed by a sync PR to `v0.3`. Older release lines require an explicitly scoped maintenance branch; do not mix their fixes into the current line unless Rafael says so.
 - After every merged hotfix on `main`, promptly open a sync PR from `main` (or a dedicated sync branch containing it) to the current `v*` branch. Preserve the hotfix commits so ancestry proves the sync; require the usual review and CI before merging. Feature branches then merge the updated version branch.
 - Keep fixes independently reviewable. Review and merge each focused fix before a release PR bundles it; a release bundle does not replace the individual reviews.
 
@@ -38,15 +38,22 @@ SilasSch reviews product PRs when that is the standing rule. Do not invent extra
 The Living Room interface is developed on feature branches from `v0.3`.
 Product PRs target `v0.3`. The active **Version branches** ruleset covers
 `refs/heads/v[0-9]*` and requires PRs with the same review requirements as `main`.
-Do not push feature commits directly to `v0.3` or release the unfinished line.
+Do not push feature commits directly to `v0.3`. Release the completed line only
+from `main` after its version PR, CI and image publishing have finished.
 
-## Shipped line: latest released v0.2.x
+## Shipped line: latest released v0.3.x
 
-The latest tagged `v0.2.x` on `main` is the shipped line (currently `v0.2.6`). Hotfixes for this minor go to `main` the same way `0.1.x` hotfixes do, followed by a sync PR to `v0.3`.
+The completed `v0.3` line ships as `v0.3.0`. The latest published `v0.3.x` tag on
+`main` identifies the shipped version. Hotfixes for this minor go to `main`,
+followed by a sync PR to `v0.3`; a feature-branch version is not a release.
 
-What is on `main`: owner and member permissions (no roles, no channel overwrites); sequenced chat (no threads, reactions, or search); direct messages (no friends); screen share and Go Live; moderation (kick and ban).
+The shipped scope includes the Living Room interface and persistent call dock,
+account themes, configurable stream quality, fullscreen viewing, and separate
+screen/Go Live audio, alongside existing permissions, chat, direct messages,
+screen share, Go Live and moderation.
 
-Hotfix work for the shipped line stays on `main`; keep it separate from unfinished `v0.3` product work.
+Hotfix work for the shipped line stays on `main`; future major product work uses
+its own protected version branch.
 
 The old `v0.2` development branch is frozen for historical reference. The active
 `Frozen v0.2` ruleset blocks updates and deletion with no bypass actors; releases
