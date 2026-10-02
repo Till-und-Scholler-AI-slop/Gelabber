@@ -576,12 +576,13 @@ impl VoiceRoster {
             }
             if let Err(err) = result {
                 if kind == TrackKind::L
+                    && started
                     && let Some(owner) = &seat.live
                 {
                     let _ = self.live_op(RELEASE_LIVE, owner).await;
                 }
                 let mut restored = previous;
-                if kind == TrackKind::L {
+                if kind == TrackKind::L && started {
                     restored.live = None;
                     restored.pubs.remove(&TrackKind::L);
                 }
@@ -721,6 +722,127 @@ mod tests {
             .get_multiplexed_async_connection()
             .await
             .unwrap()
+    }
+    async fn corrupt_aggregate(c: Uuid) -> String {
+        let key = seat_key(Uuid::new_v4());
+        // WRITE_SEAT can still update both indexes, but AGGREGATE_SIGNAL fails
+        // decoding this other seat after the requested seat has been written.
+        redis::pipe()
+            .atomic()
+            .cmd("SET")
+            .arg(&key)
+            .arg("invalid JSON")
+            .arg("PX")
+            .arg(VOICE_LEASE_MS)
+            .ignore()
+            .cmd("ZADD")
+            .arg(room_key(c))
+            .arg("+inf")
+            .arg(&key)
+            .ignore()
+            .query_async::<()>(&mut redis().await)
+            .await
+            .unwrap();
+        key
+    }
+    async fn assert_seat_restored(g: &Gateway, id: ConnId, u: Uuid, c: Uuid, expected: &VoiceSeat) {
+        let seat = g.connections.inner.sockets.read().await[&id].rooms[&c].clone();
+        assert_eq!(seat.id, expected.id);
+        assert_eq!(seat.server_id, expected.server_id);
+        assert_eq!(seat.muted, expected.muted);
+        assert_eq!(seat.deafened, expected.deafened);
+        assert_eq!(seat.pubs, expected.pubs);
+        assert_eq!(seat.live, expected.live);
+        let raw: String = redis::cmd("GET")
+            .arg(seat_key(expected.id))
+            .query_async(&mut redis().await)
+            .await
+            .unwrap();
+        let record: SeatRecord = serde_json::from_str(&raw).unwrap();
+        assert_eq!(record.id, expected.id);
+        assert_eq!((record.u, record.s, record.c), (u, expected.server_id, c));
+        assert_eq!((record.m, record.d), (expected.muted, expected.deafened));
+        assert_eq!(record.p, expected.pubs);
+    }
+
+    #[tokio::test]
+    async fn failed_live_retry_preserves_existing_claim_and_previous_seat() {
+        let g = gateway();
+        let (u, s, c) = (Uuid::new_v4(), Uuid::new_v4(), Uuid::new_v4());
+        let (id, _rx) = socket(&g, u).await;
+        g.join_voice(id, u, s, c).await.unwrap();
+        g.set_voice_deafen(id, u, s, c, true).await.unwrap();
+        g.set_voice_pub(id, u, s, c, TrackKind::V, true)
+            .await
+            .unwrap();
+        assert_eq!(
+            g.set_voice_pub(id, u, s, c, TrackKind::L, true)
+                .await
+                .unwrap(),
+            Some(true)
+        );
+        let previous = g.connections.inner.sockets.read().await[&id].rooms[&c].clone();
+        let owner = g.voice.live_owner(c).await.unwrap().unwrap();
+        let corrupt = corrupt_aggregate(c).await;
+        let error = g
+            .set_voice_pub(id, u, s, c, TrackKind::L, true)
+            .await
+            .unwrap_err();
+        assert!(
+            matches!(error, ApiError::Internal(ref message) if message.contains("Expected value"))
+        );
+        assert_eq!(g.voice.live_owner(c).await.unwrap(), Some(owner.clone()));
+        assert_seat_restored(&g, id, u, c, &previous).await;
+        redis::cmd("DEL")
+            .arg(corrupt)
+            .query_async::<i32>(&mut redis().await)
+            .await
+            .unwrap();
+        assert!(g.voice_snapshot(s).await.unwrap()[0].l);
+        assert_eq!(
+            g.set_voice_pub(id, u, s, c, TrackKind::L, true)
+                .await
+                .unwrap(),
+            Some(false)
+        );
+        assert_eq!(g.voice.live_owner(c).await.unwrap(), Some(owner));
+        g.detach(id).await;
+    }
+
+    #[tokio::test]
+    async fn failed_live_start_releases_new_claim_and_restores_previous_seat() {
+        let g = gateway();
+        let (u, s, c) = (Uuid::new_v4(), Uuid::new_v4(), Uuid::new_v4());
+        let (id, _rx) = socket(&g, u).await;
+        g.join_voice(id, u, s, c).await.unwrap();
+        g.set_voice_deafen(id, u, s, c, true).await.unwrap();
+        g.set_voice_pub(id, u, s, c, TrackKind::V, true)
+            .await
+            .unwrap();
+        let previous = g.connections.inner.sockets.read().await[&id].rooms[&c].clone();
+        let corrupt = corrupt_aggregate(c).await;
+        let error = g
+            .set_voice_pub(id, u, s, c, TrackKind::L, true)
+            .await
+            .unwrap_err();
+        assert!(
+            matches!(error, ApiError::Internal(ref message) if message.contains("Expected value"))
+        );
+        assert!(g.voice.live_owner(c).await.unwrap().is_none());
+        assert_seat_restored(&g, id, u, c, &previous).await;
+        redis::cmd("DEL")
+            .arg(corrupt)
+            .query_async::<i32>(&mut redis().await)
+            .await
+            .unwrap();
+        assert!(!g.voice_snapshot(s).await.unwrap()[0].l);
+        assert_eq!(
+            g.set_voice_pub(id, u, s, c, TrackKind::L, true)
+                .await
+                .unwrap(),
+            Some(true)
+        );
+        g.detach(id).await;
     }
 
     #[tokio::test]
