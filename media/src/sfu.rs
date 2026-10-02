@@ -51,6 +51,7 @@ pub struct PeerId(pub Uuid);
 enum PcEvent {
     Ice(RTCIceCandidateInit),
     Track(Arc<dyn TrackRemote>),
+    Connected,
     IceFailed,
     Closed,
 }
@@ -87,6 +88,9 @@ impl PeerConnectionEventHandler for Handler {
         state: webrtc::peer_connection::RTCPeerConnectionState,
     ) {
         use webrtc::peer_connection::RTCPeerConnectionState;
+        if state == RTCPeerConnectionState::Connected {
+            let _ = self.tx.send(PcEvent::Connected);
+        }
         if state == RTCPeerConnectionState::Failed {
             let _ = self.tx.send(PcEvent::IceFailed);
         }
@@ -223,6 +227,8 @@ enum SubscriptionState {
 
 struct PeerSdp {
     negotiated: bool,
+    /// Initial ICE/DTLS handshake completed before any subscriber reoffer.
+    connected: bool,
     have_local_offer: bool,
     closed: bool,
     closing: watch::Sender<bool>,
@@ -238,6 +244,7 @@ impl PeerSdp {
     fn new() -> Self {
         Self {
             negotiated: false,
+            connected: false,
             have_local_offer: false,
             closed: false,
             closing: watch::channel(false).0,
@@ -1253,6 +1260,9 @@ impl Sfu {
                         warn!(peer = %peer_id.0, error = %err, "publish failed");
                     }
                 }
+                PcEvent::Connected => {
+                    self.on_connected(peer_id, channel_id).await;
+                }
                 PcEvent::IceFailed => {
                     self.stats.ice_fails.fetch_add(1, Ordering::Relaxed);
                 }
@@ -1271,6 +1281,30 @@ impl Sfu {
         let room = self.find_room(channel_id).await?;
         let room = room.lock().await;
         room.peers.get(&peer_id).map(|p| p.out.clone())
+    }
+
+    async fn on_connected(&self, peer_id: PeerId, channel_id: Uuid) {
+        let Some(room) = self.find_room(channel_id).await else {
+            return;
+        };
+        let (pc, out, gathered, sdp) = {
+            let room = room.lock().await;
+            let Some(peer) = room.peers.get(&peer_id) else {
+                return;
+            };
+            (
+                peer.pc.clone(),
+                peer.out.clone(),
+                peer.gathered.clone(),
+                peer.sdp.clone(),
+            )
+        };
+        let mut gate = sdp.lock().await;
+        if gate.closed || *gate.closing.borrow() {
+            return;
+        }
+        gate.connected = true;
+        self.negotiate_locked(&pc, &out, &gathered, &mut gate).await;
     }
 
     async fn publish(
@@ -1573,7 +1607,15 @@ impl Sfu {
         gathered: &watch::Receiver<u64>,
         gate: &mut PeerSdp,
     ) {
-        if gate.closed || *gate.closing.borrow() || !gate.negotiated || gate.have_local_offer {
+        // Subscriber SDP must not race the initial ICE/DTLS handshake. SRTP
+        // keys are installed before Connected; until then keep publications
+        // pending instead of reoffering with the pinned core's setup:actpass.
+        if gate.closed
+            || *gate.closing.borrow()
+            || !gate.negotiated
+            || !gate.connected
+            || gate.have_local_offer
+        {
             return;
         }
         let queued = gate
