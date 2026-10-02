@@ -111,7 +111,7 @@ export function MessagePane({
   ]);
 
   return (
-    <div className="flex min-h-0 flex-1 flex-col">
+    <div className="lr-message-pane flex min-h-0 flex-1 flex-col">
       <MessageList
         channelId={channelId}
         items={items}
@@ -409,7 +409,7 @@ function MessageRow({
     return (
       <div
         className={[
-          "group flex items-start gap-3 px-4 py-0.5 hover:bg-neutral-100/80 dark:hover:bg-neutral-800/80",
+          "lr-message-row lr-message-continued group flex items-start gap-3 px-4 py-0.5 hover:bg-neutral-100/80 dark:hover:bg-neutral-800/80",
           pending ? "opacity-60" : "",
         ].join(" ")}
       >
@@ -435,7 +435,7 @@ function MessageRow({
   return (
     <div
       className={[
-        "group flex items-start gap-3 px-4 py-1.5 hover:bg-neutral-100/80 dark:hover:bg-neutral-800/80",
+        "lr-message-row group flex items-start gap-3 px-4 py-1.5 hover:bg-neutral-100/80 dark:hover:bg-neutral-800/80",
         pending ? "opacity-60" : "",
       ].join(" ")}
     >
@@ -623,7 +623,7 @@ function Composer({
   return (
     <form
       onSubmit={submit}
-      className="border-t border-neutral-200 dark:border-neutral-700 bg-white dark:bg-neutral-900 px-4 py-3"
+      className="lr-composer border-t border-neutral-200 dark:border-neutral-700 bg-white dark:bg-neutral-900 px-4 py-3"
     >
       {attempts
         .filter((attempt) => attempt.status !== "sending")

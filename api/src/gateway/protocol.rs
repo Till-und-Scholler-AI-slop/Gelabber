@@ -184,7 +184,7 @@ impl SigKind {
     }
 }
 
-/// Audio / camera / screen / live track on pub/unpub.
+/// Microphone / camera / screen / live and paired source audio on pub/unpub.
 /// Camera (`v`) and screen (`s`) are in-channel (issue 13).
 /// Go Live (`l`) is one track per voice channel (issue 14).
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize, Deserialize)]
@@ -194,6 +194,8 @@ pub enum TrackKind {
     V,
     S,
     L,
+    Sa,
+    La,
 }
 
 impl TrackKind {
@@ -203,6 +205,24 @@ impl TrackKind {
             Self::V => "v",
             Self::S => "s",
             Self::L => "l",
+            Self::Sa => "sa",
+            Self::La => "la",
+        }
+    }
+
+    pub fn source_parent(self) -> Option<Self> {
+        match self {
+            Self::Sa => Some(Self::S),
+            Self::La => Some(Self::L),
+            _ => None,
+        }
+    }
+
+    pub fn source_audio(self) -> Option<Self> {
+        match self {
+            Self::S => Some(Self::Sa),
+            Self::L => Some(Self::La),
+            _ => None,
         }
     }
 }

@@ -1,139 +1,153 @@
-// Right-hand member list. Presence lives here so a status flip never
-// reflows the message pane (issue 8). Click opens a 1:1 DM like a channel.
-// Voice flags sit in a reserved slot so mute/deafen never shift the
-// avatar or name (issue 12).
-
-import { useQueryClient } from "@tanstack/react-query";
-import { useNavigate } from "@tanstack/react-router";
-import { useMemo } from "react";
+// Real presence and voice occupancy stay independent of message scroll state.
+import { useId, useMemo, useState } from "react";
 
 import { useSession } from "../auth/session.ts";
-import { findCachedDm, prefetchDms, useOpenDm } from "../dms/queries.ts";
 import type { ServerDetail } from "../servers/types.ts";
 import { useVoiceRoster, voiceOf, type VoiceFlags } from "../voice/roster.ts";
 import { useVoice } from "../voice/session.ts";
 import { groupMembers, presenceOf, usePresenceStore } from "../ws/live.ts";
-import { MemberActions } from "./MemberActions.tsx";
+import { ScreenIcon } from "./Icons.tsx";
+import { MemberProfileDialog } from "./MemberProfileDialog.tsx";
 import { PresenceAvatar } from "./PresenceAvatar.tsx";
 import { VoiceStateIcons } from "./VoiceStateIcons.tsx";
+import { WorkspaceDrawer } from "./WorkspaceNavigation.tsx";
 
 export function MemberPanel({ server }: { server: ServerDetail }) {
   const serverId = server.id;
   const members = server.members;
-  const channels = server.channels;
-  const me = useSession((s) => s.user?.id);
-  const byServer = usePresenceStore((s) => s.byServer);
-  const roster = useVoiceRoster((s) => s.byServer);
+  const me = useSession((state) => state.user?.id);
+  const byServer = usePresenceStore((state) => state.byServer);
+  const roster = useVoiceRoster((state) => state.byServer);
+  const live = useVoiceRoster((state) => state.live);
   const session = useVoice();
-  const client = useQueryClient();
-  const navigate = useNavigate();
-  const openDm = useOpenDm();
-  const names = useMemo(() => {
-    const map = new Map<string, string>();
-    for (const channel of channels) map.set(channel.id, channel.name);
-    return map;
-  }, [channels]);
+  const [drawerOpen, setDrawerOpen] = useState(false);
+  const [profile, setProfile] = useState<{
+    serverId: string;
+    memberId: string;
+  } | null>(null);
+  const drawerId = useId();
+  const names = useMemo(
+    () => new Map(server.channels.map((channel) => [channel.id, channel.name])),
+    [server.channels],
+  );
   const groups = useMemo(
     () => groupMembers(members, (id) => presenceOf(byServer, serverId, id)),
     [members, byServer, serverId],
   );
 
-  const goDm = (peerId: string) => {
-    if (peerId === me) return;
-    const cached = me ? findCachedDm(client, me, peerId) : undefined;
-    if (cached) {
-      void navigate({
-        to: "/d/$channelId",
-        params: { channelId: cached.id },
-      });
-      return;
-    }
-    openDm.mutate(peerId, {
-      onSuccess: (dm) => {
-        if (useSession.getState().user?.id !== me) return;
-        void navigate({
-          to: "/d/$channelId",
-          params: { channelId: dm.id },
-        });
-      },
-    });
-  };
-
   return (
-    <aside
-      aria-label="Mitglieder"
-      className="flex h-full w-56 shrink-0 flex-col border-l border-neutral-200 dark:border-neutral-700 bg-white dark:bg-neutral-900"
-    >
-      <header className="flex h-12 shrink-0 items-center px-3">
-        <h2 className="text-xs font-semibold tracking-wide text-neutral-500 dark:text-neutral-400 uppercase">
-          Mitglieder — {members.length}
-        </h2>
-      </header>
-      <ul className="flex-1 overflow-y-auto px-2 pb-3">
-        {groups.map((group) => (
-          <li key={group.group} className="mb-3">
-            <p className="px-2 pb-1 text-[11px] font-semibold tracking-wide text-neutral-400 dark:text-neutral-500 uppercase">
-              {group.label} — {group.members.length}
+    <>
+      <button
+        type="button"
+        className="member-drawer-trigger"
+        aria-expanded={drawerOpen}
+        aria-controls={drawerId}
+        onClick={() => setDrawerOpen(true)}
+      >
+        Mitglieder<span>{members.length}</span>
+      </button>
+      <WorkspaceDrawer
+        id={drawerId}
+        title="Mitglieder"
+        open={drawerOpen}
+        onClose={() => setDrawerOpen(false)}
+        breakpoint={1130}
+        className="member-panel-drawer"
+      >
+        <aside className="member-panel" aria-label="Mitglieder">
+          <header className="member-panel-heading">
+            <h2>Gerade da</h2>
+            <p>
+              {members.length}{" "}
+              {members.length === 1 ? "Mitglied" : "Mitglieder"}
             </p>
-            <ul>
-              {group.members.map((member) => {
-                const self = member.user_id === me;
-                const flags = flagsFor(
-                  roster,
-                  serverId,
-                  member.user_id,
-                  me,
-                  session,
-                );
-                return (
-                  <li
-                    key={member.user_id}
-                    className="flex items-center gap-1 rounded-md px-2 py-1.5"
-                  >
-                    <button
-                      type="button"
-                      disabled={self}
-                      title={self ? member.name : `Nachricht an ${member.name}`}
-                      onMouseEnter={() => {
-                        if (me) prefetchDms(client, me);
-                      }}
-                      onFocus={() => {
-                        if (me) prefetchDms(client, me);
-                      }}
-                      onClick={() => goDm(member.user_id)}
-                      className={[
-                        "flex h-9 min-w-0 flex-1 items-center gap-2 rounded-md px-2 text-left",
-                        self
-                          ? "cursor-default"
-                          : "hover:bg-neutral-100 dark:hover:bg-neutral-800",
-                      ].join(" ")}
-                    >
-                      <PresenceAvatar
-                        name={member.name}
-                        url={member.avatar_url}
-                        status={group.group}
-                      />
-                      <span className="min-w-0 flex-1 truncate text-sm">
-                        {member.name}
-                      </span>
-                      <VoiceStateIcons
-                        inVoice={flags !== null}
-                        muted={flags?.muted ?? false}
-                        deafened={flags?.deafened ?? false}
-                        channelName={
-                          flags ? names.get(flags.channelId) : undefined
-                        }
-                      />
-                    </button>
-                    <MemberActions server={server} member={member} />
-                  </li>
-                );
-              })}
-            </ul>
-          </li>
-        ))}
-      </ul>
-    </aside>
+          </header>
+          <ul className="member-panel-list">
+            {groups.map((group) => (
+              <li key={group.group} className="member-group">
+                <p className="member-group-heading">
+                  {group.label} <span>{group.members.length}</span>
+                </p>
+                <ul>
+                  {group.members.map((member) => {
+                    const self = member.user_id === me;
+                    const flags = flagsFor(
+                      roster,
+                      serverId,
+                      member.user_id,
+                      me,
+                      session,
+                    );
+                    const isLive = Object.values(live[serverId] ?? {}).includes(
+                      member.user_id,
+                    );
+                    return (
+                      <li key={member.user_id} className="member-row">
+                        <button
+                          type="button"
+                          title={`Profil von ${member.name}`}
+                          aria-label={`Profil von ${member.name}`}
+                          aria-haspopup="dialog"
+                          onClick={() => {
+                            setDrawerOpen(false);
+                            setProfile({ serverId, memberId: member.user_id });
+                          }}
+                          className="member-profile-button"
+                        >
+                          <PresenceAvatar
+                            name={member.name}
+                            url={member.avatar_url}
+                            status={group.group}
+                            size="md"
+                            className="member-presence-avatar"
+                          />
+                          <span className="member-description">
+                            <strong>
+                              {member.name}
+                              {self && <small> · Du</small>}
+                            </strong>
+                            <span>{group.label}</span>
+                            {isLive ? (
+                              <small>Teilt live seinen Bildschirm</small>
+                            ) : flags ? (
+                              <small>
+                                {names.get(flags.channelId) ?? "Im Sprachraum"}
+                              </small>
+                            ) : null}
+                          </span>
+                          <span className="member-media-state">
+                            <VoiceStateIcons
+                              inVoice={flags !== null}
+                              muted={flags?.muted ?? false}
+                              deafened={flags?.deafened ?? false}
+                              channelName={
+                                flags ? names.get(flags.channelId) : undefined
+                              }
+                            />
+                            {isLive && (
+                              <ScreenIcon
+                                size={20}
+                                aria-label="Live-Bildschirmübertragung"
+                                aria-hidden={false}
+                              />
+                            )}
+                          </span>
+                        </button>
+                      </li>
+                    );
+                  })}
+                </ul>
+              </li>
+            ))}
+          </ul>
+        </aside>
+      </WorkspaceDrawer>
+      <MemberProfileDialog
+        server={server}
+        memberId={profile?.serverId === serverId ? profile.memberId : null}
+        onClose={() => setProfile(null)}
+      />
+    </>
   );
 }
 

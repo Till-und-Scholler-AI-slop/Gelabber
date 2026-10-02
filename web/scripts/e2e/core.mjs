@@ -132,7 +132,11 @@ export async function coreScenarios(h, f) {
         .waitFor();
       await f.owner.page
         .getByRole("complementary", { name: "Mitglieder", exact: true })
-        .locator('button[title="Nachricht an E2E Member"]')
+        .getByRole("button", { name: "Profil von E2E Member", exact: true })
+        .click();
+      await f.owner.page
+        .getByRole("dialog", { name: "Profil von E2E Member" })
+        .getByRole("button", { name: "Nachricht senden", exact: true })
         .click();
       await f.owner.page.waitForURL(/\/d\//);
       f.dmPath = new URL(f.owner.page.url()).pathname;

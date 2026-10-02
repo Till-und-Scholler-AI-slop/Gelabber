@@ -2,6 +2,10 @@ import { afterEach, describe, expect, it } from "vitest";
 
 import {
   AUDIO_QUALITY,
+  VIDEO_RESOLUTIONS,
+  VIDEO_FRAME_RATES,
+  explicitStreamProfile,
+  clampVideoUploadLimit,
   STREAM_PROFILES,
   VIDEO_SEND_BUDGET,
   VIDEO_SEND_CEILING,
@@ -46,7 +50,54 @@ describe("media settings", () => {
     expect(state.cameraProfileApply).toBe("idle");
     expect(state.screenProfileApply).toBe("idle");
     expect(VIDEO_SEND_BUDGET).toBe(2_500_000);
-    expect(VIDEO_SEND_CEILING).toBe(4_000_000);
+    expect(VIDEO_SEND_CEILING).toBe(100_000_000);
+  });
+
+  it("supports every resolution and FPS combination for capture and persistence", async () => {
+    for (const height of VIDEO_RESOLUTIONS)
+      for (const fps of VIDEO_FRAME_RATES) {
+        const profile = explicitStreamProfile(height, fps);
+        expect(asStreamProfile(profile)).toBe(profile);
+        useMediaSettings
+          .getState()
+          .patch({ cameraProfile: profile, screenProfile: profile });
+        expect(cameraConstraints()).toMatchObject({
+          height: { ideal: height, max: height },
+          frameRate: { ideal: fps, max: fps },
+        });
+        expect(displayConstraints()).toMatchObject({
+          height: { ideal: height, max: height },
+          frameRate: { ideal: fps, max: fps },
+        });
+      }
+    useMediaSettings
+      .getState()
+      .patch({ screenProfile: "2160p60", videoUploadLimit: 75_000_000 });
+    await useMediaSettings.persist.rehydrate();
+    expect(useMediaSettings.getState().screenProfile).toBe("2160p60");
+    expect(useMediaSettings.getState().videoUploadLimit).toBe(75_000_000);
+    expect(asStreamProfile("__proto__")).toBe("balanced");
+    expect(asStreamProfile("2160p120")).toBe("balanced");
+  });
+
+  it("shares manual and automatic upload limits without exceeding the pool", () => {
+    expect(allocateVideoBitrates(["2160p60"])).toEqual([60_000_000]);
+    expect(allocateVideoBitrates(["2160p60", "2160p60"], 10_000_000)).toEqual([
+      5_000_000, 5_000_000,
+    ]);
+    expect(allocateVideoBitrates(["2160p60"], 100_000_000)).toEqual([
+      100_000_000,
+    ]);
+    expect(allocateVideoBitrates(["480p15"], 500_000)).toEqual([500_000]);
+    expect(allocateVideoBitrates(["2160p60"], Infinity)).toEqual([60_000_000]);
+    expect(clampVideoUploadLimit(-2)).toBe(0);
+    expect(clampVideoUploadLimit(1)).toBe(500_000);
+    expect(clampVideoUploadLimit(500_000_000)).toBe(100_000_000);
+    expect(videoConstraintLadder("camera", "2160p60")[0]).toMatchObject({
+      width: { ideal: 3840, max: 3840 },
+      frameRate: { ideal: 60, max: 60 },
+    });
+    expect(videoConstraintLadder("camera", "2160p60")).toHaveLength(4);
   });
 
   it("clamps volume and gain and rejects unknown quality", () => {
@@ -223,5 +274,37 @@ describe("media settings", () => {
     await useMediaSettings.persist.rehydrate();
     expect(useMediaSettings.getState().cameraProfile).toBe("balanced");
     expect(useMediaSettings.getState().screenProfile).toBe("detail");
+  });
+});
+
+describe("source-audio settings", () => {
+  afterEach(() => resetMediaSettingsForTests());
+  it("persists opt-in and independent listening choices across browser reloads", async () => {
+    useMediaSettings.getState().patch({
+      shareSourceAudio: true,
+      sourceAudioVolume: 0.35,
+      sourceAudioMuted: true,
+      outputVolume: 0.8,
+    });
+    const storage = useMediaSettings.persist.getOptions().storage!;
+    const saved = await storage.getItem("gelabber.media");
+    expect(saved?.state).toMatchObject({
+      shareSourceAudio: true,
+      sourceAudioVolume: 0.35,
+      sourceAudioMuted: true,
+      outputVolume: 0.8,
+    });
+    resetMediaSettingsForTests();
+    await storage.setItem("gelabber.media", saved!);
+    await useMediaSettings.persist.rehydrate();
+    expect(useMediaSettings.getState()).toMatchObject({
+      shareSourceAudio: true,
+      sourceAudioVolume: 0.35,
+      sourceAudioMuted: true,
+      outputVolume: 0.8,
+    });
+    useMediaSettings.getState().patch({ sourceAudioVolume: -5 });
+    expect(useMediaSettings.getState().sourceAudioVolume).toBe(0);
+    expect(useMediaSettings.getState().outputVolume).toBe(0.8);
   });
 });

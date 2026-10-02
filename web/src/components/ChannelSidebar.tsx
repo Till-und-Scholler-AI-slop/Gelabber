@@ -2,14 +2,14 @@
 // virtualised list. Highlight follows the URL param; rows with a `tmp:` id
 // are optimistic and not yet clickable.
 
-import { Link, useNavigate } from "@tanstack/react-router";
+import { Link, useNavigate, useRouterState } from "@tanstack/react-router";
 import { useVirtualizer } from "@tanstack/react-virtual";
 import { useMemo, useRef, useState, type ReactNode } from "react";
 
 import { useVoice } from "../voice/session.ts";
 import { EMPTY_LIVE, useVoiceRoster } from "../voice/roster.ts";
 import { can } from "../servers/permissions.ts";
-import { buildRows, rowHeight, type Row } from "../servers/rows.ts";
+import { buildRows, type Row } from "../servers/rows.ts";
 import {
   isPendingId,
   useDeleteCategory,
@@ -17,6 +17,7 @@ import {
 } from "../servers/queries.ts";
 import type { Category, Channel, ServerDetail } from "../servers/types.ts";
 import {
+  ChatIcon,
   GearIcon,
   HashIcon,
   LinkIcon,
@@ -25,6 +26,7 @@ import {
   SpeakerIcon,
   TrashIcon,
 } from "./Icons.tsx";
+import { UserPanel } from "./UserPanel.tsx";
 import { InviteDialog } from "./InviteDialog.tsx";
 import {
   CategoryDialog,
@@ -33,6 +35,47 @@ import {
   type ChannelDialogState,
 } from "./ServerDialogs.tsx";
 
+type SidebarRow = Row | { kind: "section"; key: string; label: string };
+
+// Keep categories intact; give uncategorized voice rooms their own heading.
+function sidebarRows(server: ServerDetail): SidebarRow[] {
+  const base = buildRows(server);
+  const text = base.filter(
+    (row) =>
+      row.kind === "channel" &&
+      row.channel.category_id === null &&
+      row.channel.kind === "text",
+  );
+  const voice = base.filter(
+    (row) =>
+      row.kind === "channel" &&
+      row.channel.category_id === null &&
+      row.channel.kind === "voice",
+  );
+  const categorized = base.filter(
+    (row) => row.kind !== "channel" || row.channel.category_id !== null,
+  );
+  return [
+    ...text,
+    ...(voice.length
+      ? [
+          {
+            kind: "section" as const,
+            key: "voice-heading",
+            label: "Sprachkanäle",
+          },
+          ...voice,
+        ]
+      : []),
+    ...categorized,
+  ];
+}
+
+function sidebarRowHeight(row: SidebarRow | undefined): number {
+  if (row?.kind === "category" || row?.kind === "section") return 34;
+  return row?.kind === "empty" ? 28 : 42;
+}
+
 export function ChannelSidebar({
   server,
   activeChannelId,
@@ -40,6 +83,9 @@ export function ChannelSidebar({
   server: ServerDetail;
   activeChannelId: string | undefined;
 }) {
+  const pathname = useRouterState({
+    select: (state) => state.location.pathname,
+  });
   const manageChannels = can(server, "manage_channels");
   const manageServer = can(server, "manage_server");
   const voice = useVoice();
@@ -51,21 +97,21 @@ export function ChannelSidebar({
     useState<CategoryDialogState | null>(null);
   const [inviting, setInviting] = useState(false);
 
-  const rows = useMemo(() => buildRows(server), [server]);
+  const rows = useMemo(() => sidebarRows(server), [server]);
 
   return (
-    <aside
-      aria-label="Kanäle"
-      className="flex h-full w-64 shrink-0 flex-col border-r border-neutral-200 dark:border-neutral-700 bg-white dark:bg-neutral-900"
-    >
-      <header className="flex h-12 items-center justify-between gap-2 border-b border-neutral-200 dark:border-neutral-700 px-3">
-        <h2
-          className="truncate font-semibold tracking-tight"
-          title={server.name}
-        >
+    <aside aria-label="Kanäle" className="channel-sidebar">
+      <Link to="/" className="sidebar-brand">
+        Gelabber
+      </Link>
+      <div className="sidebar-banner">
+        <img src="/images/living-room/community-banner.png" alt="" />
+      </div>
+      <header className="server-sidebar-heading">
+        <h2 className="server-sidebar-name" title={server.name}>
           {server.name}
         </h2>
-        <div className="flex shrink-0 items-center gap-0.5">
+        <div className="server-sidebar-actions">
           <IconButton label="Leute einladen" onClick={() => setInviting(true)}>
             <LinkIcon />
           </IconButton>
@@ -85,6 +131,24 @@ export function ChannelSidebar({
         </div>
       </header>
 
+      <Link
+        to="/s/$serverId/settings"
+        params={{ serverId: server.id }}
+        className="sidebar-member-count"
+      >
+        {server.members.length}{" "}
+        {server.members.length === 1 ? "Mitglied" : "Mitglieder"}
+      </Link>
+      <Link
+        to="/s/$serverId"
+        params={{ serverId: server.id }}
+        className={`sidebar-overview ${pathname === `/s/${server.id}` ? "is-active" : ""}`}
+        aria-current={pathname === `/s/${server.id}` ? "page" : undefined}
+        activeOptions={{ exact: true }}
+      >
+        <ChatIcon size={20} />
+        Übersicht
+      </Link>
       <ChannelList
         server={server}
         rows={rows}
@@ -102,7 +166,7 @@ export function ChannelSidebar({
       />
 
       {manageChannels ? (
-        <footer className="flex flex-col gap-1 border-t border-neutral-200 dark:border-neutral-700 p-2 text-sm">
+        <footer className="sidebar-management">
           <FooterButton
             onClick={() =>
               setChannelDialog({ mode: "create", categoryId: null })
@@ -116,6 +180,7 @@ export function ChannelSidebar({
         </footer>
       ) : null}
 
+      <UserPanel contextId={server.id} />
       <ChannelDialog
         server={server}
         state={channelDialog}
@@ -147,7 +212,7 @@ function ChannelList({
   onEditCategory,
 }: {
   server: ServerDetail;
-  rows: Row[];
+  rows: SidebarRow[];
   activeChannelId: string | undefined;
   voiceChannelId: string | null;
   liveChannels: Record<string, string>;
@@ -162,7 +227,7 @@ function ChannelList({
   const virtualizer = useVirtualizer({
     count: rows.length,
     getScrollElement: () => scrollRef.current,
-    estimateSize: (index) => rowHeight(rows[index]),
+    estimateSize: (index) => sidebarRowHeight(rows[index]),
     getItemKey: (index) => rows[index]?.key ?? index,
     overscan: 10,
   });
@@ -171,15 +236,11 @@ function ChannelList({
   const navigate = useNavigate();
 
   if (rows.length === 0) {
-    return (
-      <p className="flex-1 px-3 py-4 text-sm text-neutral-500 dark:text-neutral-400">
-        Noch keine Kanäle.
-      </p>
-    );
+    return <p className="sidebar-empty">Noch keine Kanäle.</p>;
   }
 
   return (
-    <div ref={scrollRef} className="flex-1 overflow-y-auto px-2 py-2">
+    <div ref={scrollRef} className="sidebar-list-scroll">
       <div style={{ height: virtualizer.getTotalSize() }} className="relative">
         {virtualizer.getVirtualItems().map((item) => {
           const row = rows[item.index];
@@ -188,10 +249,12 @@ function ChannelList({
             <div
               key={item.key}
               data-index={item.index}
-              className="absolute inset-x-0"
+              className="sidebar-virtual-row"
               style={{ top: item.start, height: item.size }}
             >
-              {row.kind === "category" ? (
+              {row.kind === "section" ? (
+                <p className="sidebar-section-heading">{row.label}</p>
+              ) : row.kind === "category" ? (
                 <CategoryRow
                   category={row.category}
                   manage={manageChannels}
@@ -256,15 +319,13 @@ function CategoryRow({
   return (
     <div
       className={[
-        "group flex h-10 items-end justify-between gap-1 px-1 pb-1",
+        "group sidebar-category-row",
         pending ? "opacity-50" : "",
       ].join(" ")}
     >
-      <span className="truncate text-xs font-semibold tracking-wide text-neutral-500 dark:text-neutral-400 uppercase">
-        {category.name}
-      </span>
+      <span className="sidebar-category-name">{category.name}</span>
       {manage && !pending ? (
-        <span className="flex shrink-0 items-center opacity-0 transition group-focus-within:opacity-100 group-hover:opacity-100">
+        <span className="sidebar-row-actions flex shrink-0 items-center opacity-0 transition group-focus-within:opacity-100 group-hover:opacity-100">
           <IconButton label="Kanal in dieser Kategorie" onClick={onAdd} small>
             <PlusIcon size={14} />
           </IconButton>
@@ -301,11 +362,8 @@ function ChannelRow({
   const Icon = channel.kind === "voice" ? SpeakerIcon : HashIcon;
   const body = (
     <>
-      <Icon
-        size={16}
-        className="shrink-0 text-neutral-400 dark:text-neutral-500"
-      />
-      <span className="truncate">{channel.name}</span>
+      <Icon size={25} className="channel-row-icon" />
+      <span className="channel-row-name">{channel.name}</span>
       {live ? (
         <span className="ml-auto shrink-0 rounded bg-red-600 px-1 py-px text-[10px] font-semibold tracking-wide text-white uppercase">
           Live
@@ -319,25 +377,21 @@ function ChannelRow({
     </>
   );
   const rowClass = [
-    "group flex h-[34px] items-center gap-1 rounded-md pr-1 text-sm",
-    active
-      ? "bg-neutral-900 dark:bg-neutral-700 text-white"
-      : "text-neutral-700 dark:text-neutral-300 hover:bg-neutral-100 dark:hover:bg-neutral-800 hover:text-neutral-900 dark:hover:text-neutral-100",
+    "group channel-row",
+    active ? "is-active" : "",
     pending ? "opacity-50" : "",
   ].join(" ");
 
   return (
     <div className={rowClass}>
       {pending ? (
-        <span className="flex min-w-0 flex-1 items-center gap-1.5 px-2">
-          {body}
-        </span>
+        <span className="channel-row-link">{body}</span>
       ) : (
         <Link
           to="/s/$serverId/c/$channelId"
           params={{ serverId: channel.server_id, channelId: channel.id }}
           aria-current={active ? "page" : undefined}
-          className="flex min-w-0 flex-1 items-center gap-1.5 self-stretch px-2"
+          className="channel-row-link"
         >
           {body}
         </Link>
@@ -345,24 +399,13 @@ function ChannelRow({
       {manage && !pending ? (
         <span
           className={[
-            "flex shrink-0 items-center opacity-0 transition group-focus-within:opacity-100 group-hover:opacity-100",
-            active ? "text-white" : "",
+            "sidebar-row-actions flex shrink-0 items-center opacity-0 transition group-focus-within:opacity-100 group-hover:opacity-100",
           ].join(" ")}
         >
-          <IconButton
-            label="Kanal bearbeiten"
-            onClick={onEdit}
-            small
-            inverted={active}
-          >
+          <IconButton label="Kanal bearbeiten" onClick={onEdit} small>
             <PencilIcon size={14} />
           </IconButton>
-          <IconButton
-            label="Kanal löschen"
-            onClick={onDelete}
-            small
-            inverted={active}
-          >
+          <IconButton label="Kanal löschen" onClick={onDelete} small>
             <TrashIcon size={14} />
           </IconButton>
         </span>
@@ -376,13 +419,11 @@ function IconButton({
   onClick,
   children,
   small,
-  inverted,
 }: {
   label: string;
   onClick: () => void;
   children: ReactNode;
   small?: boolean;
-  inverted?: boolean;
 }) {
   return (
     <button
@@ -391,11 +432,8 @@ function IconButton({
       aria-label={label}
       onClick={onClick}
       className={[
-        "rounded-md transition",
-        small ? "p-1" : "p-1.5",
-        inverted
-          ? "text-neutral-300 hover:bg-white/15 dark:hover:bg-white/10 hover:text-white"
-          : "text-neutral-500 dark:text-neutral-400 hover:bg-neutral-200 dark:hover:bg-neutral-700 hover:text-neutral-900 dark:hover:text-neutral-100",
+        "shell-icon-button",
+        small ? "sidebar-action-small" : "",
       ].join(" ")}
     >
       {children}
@@ -414,7 +452,7 @@ function FooterButton({
     <button
       type="button"
       onClick={onClick}
-      className="flex items-center gap-1.5 rounded-md px-2 py-1.5 text-left text-neutral-600 dark:text-neutral-400 transition hover:bg-neutral-100 dark:hover:bg-neutral-800 hover:text-neutral-900 dark:hover:text-neutral-100"
+      className="sidebar-management-button"
     >
       {children}
     </button>

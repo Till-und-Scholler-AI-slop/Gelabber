@@ -64,8 +64,8 @@ function DmChat({ dm }: { dm: DirectMessage }) {
 
   return (
     <div className="flex min-h-0 flex-1 overflow-hidden">
-      <div className="flex min-w-0 flex-1 flex-col overflow-hidden">
-        <header className="flex h-12 shrink-0 items-center gap-2 border-b border-neutral-200 dark:border-neutral-700 bg-white dark:bg-neutral-900 px-4">
+      <div className="lr-channel-content flex min-w-0 flex-1 flex-col overflow-hidden">
+        <header className="lr-channel-header flex h-12 shrink-0 items-center gap-2 border-b border-neutral-200 dark:border-neutral-700 bg-white dark:bg-neutral-900 px-4">
           <PresenceAvatar
             name={dm.peer.name}
             url={dm.peer.avatar_url}

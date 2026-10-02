@@ -8,7 +8,8 @@ import { create } from "zustand";
 import { APP_VERSION } from "../version.ts";
 import {
   AUDIO_QUALITY,
-  STREAM_PROFILES,
+  SOURCE_AUDIO_BITRATE,
+  videoSendBudget,
   streamProfileFps,
   useMediaSettings,
   type MediaSettings,
@@ -23,7 +24,9 @@ export const DIAGNOSTIC_LIMITS = {
 
 export type ConnectionRole = "voice" | "watch";
 export type VideoSource = "camera" | "screen" | "live";
-export type FlowSource = "voice" | VideoSource | "video" | "watch";
+export type AudioSource = "voice" | "screen-audio" | "live-audio";
+export type FlowSource =
+  "voice" | VideoSource | AudioSource | "video" | "watch";
 export type Phase = "voice-only" | "stream-on" | "stream-off" | "watch";
 export type DiagnosticEventKind =
   | "stream-start"
@@ -133,6 +136,7 @@ export type ConnectionSnapshot = {
 
 export type Caps = {
   audioMaxBitrate: number;
+  sourceAudioMaxBitrate?: number;
   videoSendBudget: number;
   videoMaxFps: number;
   /** Active sender limits, keyed by source rather than browser track ids. */
@@ -174,6 +178,10 @@ export type RelevantSettings = {
   autoGainControl: boolean;
   outputVolume: number;
   inputGain: number;
+  shareSourceAudio: boolean;
+  sourceAudioVolume: number;
+  sourceAudioMuted: boolean;
+  sourceAudioMaxBitrate: number;
   videoSendBudget: number;
   videoMaxFps: number;
   customAudioInput: boolean;
@@ -210,6 +218,7 @@ type Poll = {
   timer: ReturnType<typeof setInterval>;
   getReport: () => Promise<readonly StatsEntry[] | null>;
   videoSources: () => Readonly<Record<string, VideoSource>>;
+  audioSources: () => Readonly<Record<string, AudioSource>>;
   streaming: () => boolean;
   caps: () => Caps;
 };
@@ -491,6 +500,7 @@ export function reduceConnection(input: {
   previous: ReadonlyMap<string, Baseline>;
   caps: Caps;
   videoSources: Readonly<Record<string, VideoSource>>;
+  audioSources?: Readonly<Record<string, AudioSource>>;
 }): { snapshot: ConnectionSnapshot; next: Map<string, Baseline> } {
   const byId = new Map(input.entries.map((entry) => [entry.id, entry]));
   const codecs = new Map(
@@ -593,9 +603,11 @@ export function reduceConnection(input: {
       kind,
       track,
       input.videoSources,
+      input.audioSources,
     );
     const sourceLimit =
-      kind === "video" && direction === "send" &&
+      kind === "video" &&
+      direction === "send" &&
       (source === "camera" || source === "screen" || source === "live")
         ? input.caps.videoLimits?.[source]
         : undefined;
@@ -621,7 +633,9 @@ export function reduceConnection(input: {
       configuredMaxBitrateBps:
         direction === "send"
           ? kind === "audio"
-            ? input.caps.audioMaxBitrate
+            ? source === "screen-audio" || source === "live-audio"
+              ? (input.caps.sourceAudioMaxBitrate ?? SOURCE_AUDIO_BITRATE)
+              : input.caps.audioMaxBitrate
             : input.caps.videoLimits
               ? (sourceLimit?.maxBitrate ?? null)
               : perVideo
@@ -693,7 +707,13 @@ function sourceOf(
   kind: "audio" | "video",
   track: string | null,
   videoSources: Readonly<Record<string, VideoSource>>,
+  audioSources?: Readonly<Record<string, AudioSource>>,
 ): FlowSource {
+  if (kind === "audio" && track) {
+    if (audioSources?.[track]) return audioSources[track];
+    if (/:(?:sa)(?:[-:]|$)/.test(track)) return "screen-audio";
+    if (/:(?:la)(?:[-:]|$)/.test(track)) return "live-audio";
+  }
   if (role === "watch") return "watch";
   if (kind === "video" && direction === "send") {
     if (track && videoSources[track]) return videoSources[track];
@@ -842,6 +862,7 @@ export function applyStatsReport(
     streaming: boolean;
     caps: Caps;
     videoSources: Readonly<Record<string, VideoSource>>;
+    audioSources?: Readonly<Record<string, AudioSource>>;
     now?: number;
   },
 ): DiagnosticSample {
@@ -852,6 +873,7 @@ export function applyStatsReport(
     previous,
     caps: opts.caps,
     videoSources: opts.videoSources,
+    audioSources: opts.audioSources,
   });
   baselines.set(role, reduced.next);
   if (role === "voice") liveVoice = reduced.snapshot;
@@ -898,6 +920,7 @@ async function tick(role: ConnectionRole, token: number): Promise<void> {
     streaming: current.streaming(),
     caps: current.caps(),
     videoSources: current.videoSources(),
+    audioSources: current.audioSources(),
   });
 }
 
@@ -905,6 +928,7 @@ export function attachDiagnostics(input: {
   role: ConnectionRole;
   getReport: () => Promise<readonly StatsEntry[] | null>;
   videoSources?: () => Readonly<Record<string, VideoSource>>;
+  audioSources?: () => Readonly<Record<string, AudioSource>>;
   streaming?: () => boolean;
   caps?: () => Caps;
 }): void {
@@ -915,6 +939,7 @@ export function attachDiagnostics(input: {
     timer: 0 as ReturnType<typeof setInterval>,
     getReport: input.getReport,
     videoSources: input.videoSources ?? (() => ({})),
+    audioSources: input.audioSources ?? (() => ({})),
     streaming: input.streaming ?? (() => false),
     caps: input.caps ?? defaultCaps,
   };
@@ -1001,10 +1026,7 @@ export function defaultCaps(): Caps {
   const settings = useMediaSettings.getState();
   return {
     audioMaxBitrate: AUDIO_QUALITY[settings.quality].bitrate,
-    videoSendBudget: Math.max(
-      STREAM_PROFILES[settings.cameraProfile].maxBitrate,
-      STREAM_PROFILES[settings.screenProfile].maxBitrate,
-    ),
+    videoSendBudget: videoSendBudget(settings),
     videoMaxFps: Math.max(
       streamProfileFps(settings.cameraProfile),
       streamProfileFps(settings.screenProfile),
@@ -1025,10 +1047,11 @@ export function relevantSettings(
     autoGainControl: settings.autoGainControl,
     outputVolume: settings.outputVolume,
     inputGain: settings.inputGain,
-    videoSendBudget: Math.max(
-      STREAM_PROFILES[settings.cameraProfile].maxBitrate,
-      STREAM_PROFILES[settings.screenProfile].maxBitrate,
-    ),
+    shareSourceAudio: settings.shareSourceAudio,
+    sourceAudioVolume: settings.sourceAudioVolume,
+    sourceAudioMuted: settings.sourceAudioMuted,
+    sourceAudioMaxBitrate: SOURCE_AUDIO_BITRATE,
+    videoSendBudget: videoSendBudget(settings),
     videoMaxFps: Math.max(
       streamProfileFps(settings.cameraProfile),
       streamProfileFps(settings.screenProfile),
@@ -1132,6 +1155,8 @@ export const SOURCE_LABEL: Record<FlowSource, string> = {
   voice: "Sprache",
   camera: "Kamera",
   screen: "Bildschirm",
+  "screen-audio": "Bildschirmton",
+  "live-audio": "Live-Ton",
   live: "Live",
   video: "Video",
   watch: "Watch",

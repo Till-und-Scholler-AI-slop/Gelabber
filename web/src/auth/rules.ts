@@ -133,6 +133,8 @@ export function errorMessage(code: ApiErrorCode): string {
   switch (code) {
     case "invalid_credentials":
       return "E-Mail oder Passwort ist falsch.";
+    case "theme_conflict":
+      return "Auf einem anderen Gerät geändert. Bitte erneut versuchen.";
     case "email_taken":
       return "Diese E-Mail-Adresse ist schon registriert.";
     case "unauthenticated":

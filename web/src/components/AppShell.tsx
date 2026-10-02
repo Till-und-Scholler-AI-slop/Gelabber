@@ -1,7 +1,12 @@
-import { Link, Outlet, useNavigate } from "@tanstack/react-router";
+import {
+  Link,
+  Outlet,
+  useNavigate,
+  useRouterState,
+} from "@tanstack/react-router";
 
 import { logout, useSession } from "../auth/session.ts";
-import { leaveVoice, stopWatching } from "../voice/session.ts";
+import { leaveVoice, stopWatching, useVoice } from "../voice/session.ts";
 import {
   useAuthenticatedSubscriptions,
   useGatewaySession,
@@ -23,6 +28,14 @@ function AuthenticatedRealtime() {
 export function AppShell() {
   const user = useSession((state) => state.user);
   const navigate = useNavigate();
+  const workspace = useRouterState({
+    select: (state) =>
+      state.matches.some((match) => match.routeId === "/workspace"),
+  });
+  const activeMedia = useVoice(
+    (state) =>
+      state.status === "joined" || state.watching || state.playbackBlocked,
+  );
   useGatewaySession(user?.id ?? null);
   useIdlePresence(user?.id ?? null);
   useMessageToastsBridge();
@@ -37,49 +50,61 @@ export function AppShell() {
   };
 
   return (
-    <div className="min-h-dvh bg-neutral-50 dark:bg-neutral-950 text-neutral-900 dark:text-neutral-100">
-      <header className="h-14 border-b border-neutral-200 dark:border-neutral-700 bg-white dark:bg-neutral-900">
-        <div className="flex h-full items-center justify-between px-4">
-          <Link to="/" className="text-lg font-semibold tracking-tight">
-            Gelabber
-          </Link>
-          {user ? (
-            <nav className="flex items-center gap-3 text-sm">
-              <Link
-                to="/settings"
-                className="inline-flex items-center gap-1.5 rounded-lg px-3 py-1.5 text-neutral-600 dark:text-neutral-400 hover:bg-neutral-100 dark:hover:bg-neutral-800 hover:text-neutral-900 dark:hover:text-neutral-100"
-                activeProps={{
-                  className:
-                    "bg-neutral-100 dark:bg-neutral-800 text-neutral-900 dark:text-neutral-100",
-                }}
-              >
-                <GearIcon size={16} />
-                Einstellungen
-              </Link>
-              <Link
-                to="/profile"
-                className="flex items-center gap-2 rounded-full py-1 pr-3 pl-1 hover:bg-neutral-100 dark:hover:bg-neutral-800"
-                activeProps={{
-                  className: "bg-neutral-100 dark:bg-neutral-800",
-                }}
-              >
-                <Avatar name={user.name} url={user.avatar_url} />
-                <span className="max-w-40 truncate font-medium">
-                  {user.name}
-                </span>
-              </Link>
-              <button
-                type="button"
-                onClick={onLogout}
-                className="rounded-lg px-3 py-1.5 text-neutral-600 dark:text-neutral-400 hover:bg-neutral-100 dark:hover:bg-neutral-800 hover:text-neutral-900 dark:hover:text-neutral-100"
-              >
-                Abmelden
-              </button>
-            </nav>
-          ) : null}
-        </div>
-      </header>
-      <Outlet />
+    <div
+      className={`app-shell ${workspace ? "app-shell-workspace" : ""} ${activeMedia ? "has-active-media" : ""}`}
+    >
+      <a
+        className="shell-skip-link"
+        href={workspace ? "#workspace-content" : "#app-content"}
+      >
+        Zum Inhalt springen
+      </a>
+      {!workspace ? (
+        <header className="app-header">
+          <div className="flex h-full items-center justify-between px-4">
+            <Link to="/" className="text-lg font-semibold tracking-tight">
+              Gelabber
+            </Link>
+            {user ? (
+              <nav className="flex items-center gap-3 text-sm">
+                <Link
+                  to="/settings"
+                  className="inline-flex items-center gap-1.5 rounded-lg px-3 py-1.5 text-neutral-600 dark:text-neutral-400 hover:bg-neutral-100 dark:hover:bg-neutral-800 hover:text-neutral-900 dark:hover:text-neutral-100"
+                  activeProps={{
+                    className:
+                      "bg-neutral-100 dark:bg-neutral-800 text-neutral-900 dark:text-neutral-100",
+                  }}
+                >
+                  <GearIcon size={16} />
+                  Einstellungen
+                </Link>
+                <Link
+                  to="/profile"
+                  className="flex items-center gap-2 rounded-full py-1 pr-3 pl-1 hover:bg-neutral-100 dark:hover:bg-neutral-800"
+                  activeProps={{
+                    className: "bg-neutral-100 dark:bg-neutral-800",
+                  }}
+                >
+                  <Avatar name={user.name} url={user.avatar_url} />
+                  <span className="max-w-40 truncate font-medium">
+                    {user.name}
+                  </span>
+                </Link>
+                <button
+                  type="button"
+                  onClick={onLogout}
+                  className="rounded-lg px-3 py-1.5 text-neutral-600 dark:text-neutral-400 hover:bg-neutral-100 dark:hover:bg-neutral-800 hover:text-neutral-900 dark:hover:text-neutral-100"
+                >
+                  Abmelden
+                </button>
+              </nav>
+            ) : null}
+          </div>
+        </header>
+      ) : null}
+      <div id="app-content" tabIndex={workspace ? undefined : -1}>
+        <Outlet />
+      </div>
       {user ? <AuthenticatedRealtime key={user.id} /> : null}
       <Toasts />
       <MessageToasts />

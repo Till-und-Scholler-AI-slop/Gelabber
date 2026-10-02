@@ -3,7 +3,7 @@
 // flipped on join click.
 
 import { api } from "../api/client.ts";
-import { audioBitrate } from "./settings.ts";
+import { audioBitrate, SOURCE_AUDIO_BITRATE } from "./settings.ts";
 
 export type IceServer = {
   urls: string | string[];
@@ -19,12 +19,13 @@ export type MediaTicket = {
 };
 
 export type MediaClientFrame =
-  | { op: "j"; tk: string; w?: string }
+  | { op: "j"; tk: string; w?: string; v?: number }
   | { op: "o"; sdp: string }
   | { op: "a"; sdp: string }
   | { op: "i"; ice: string; mid?: string }
-  | { op: "p"; k: "v" | "s" | "l"; t?: string; lc?: string }
-  | { op: "u"; k: "v" | "s" | "l"; t?: string }
+  | { op: "p"; k: "v" | "s" | "l" | "sa" | "la"; t?: string; lc?: string }
+  | { op: "u"; k: "v" | "s" | "l" | "sa" | "la"; t?: string }
+  | { op: "w"; u: string; k: "s" | "l"; on: boolean }
   | { op: "x" }
   | { op: "l" };
 
@@ -39,7 +40,7 @@ export function publishedTrackIds(sdp: string): Map<string, string> {
     .filter((line) => line.startsWith("a=group:BUNDLE "))
     .map((line) => line.slice(15).trim().split(/\s+/));
   for (const lines of sections) {
-    if (!lines[0]?.startsWith("video ")) continue;
+    if (!/^(video|audio) /.test(lines[0] ?? "")) continue;
     const mid = lines.find((line) => line.startsWith("a=mid:"))?.slice(6);
     if (
       lines[0]?.split(/\s+/)[1] === "0" &&
@@ -69,7 +70,7 @@ export function publishedTrackIds(sdp: string): Map<string, string> {
 }
 
 export type MediaServerFrame =
-  | { op: "ok"; c: string; u: string }
+  | { op: "ok"; c: string; u: string; v?: number }
   | { op: "o"; sdp: string }
   | { op: "a"; sdp: string }
   | { op: "i"; ice: string; mid?: string }
@@ -193,7 +194,12 @@ export function isOurTicket(ticket: string): boolean {
  * Chromium puts `a=rtcp-fb` between rtpmap and fmtp. Search the `m=`
  * section for the existing fmtp of that payload type, merge, emit one line.
  */
-export function tuneAudioSdp(sdp: string, bitrate = audioBitrate()): string {
+export function tuneAudioSdp(
+  sdp: string,
+  bitrate = audioBitrate(),
+  sourceTracks: ReadonlySet<string> = new Set(),
+  sourceMids: ReadonlySet<string> = new Set(),
+): string {
   const nl = sdp.includes("\r\n") ? "\r\n" : "\n";
   const lines = sdp.split(/\r?\n/);
   const firstM = lines.findIndex((line) => line.startsWith("m="));
@@ -204,7 +210,26 @@ export function tuneAudioSdp(sdp: string, bitrate = audioBitrate()): string {
     const start = i;
     i += 1;
     while (i < lines.length && !lines[i]?.startsWith("m=")) i += 1;
-    out.push(...tuneOpusSection(lines.slice(start, i), bitrate));
+    const section = lines.slice(start, i);
+    const mid = section.find((line) => line.startsWith("a=mid:"))?.slice(6);
+    const source =
+      (mid && sourceMids.has(mid)) ||
+      section.some((line) => {
+        const msid = /(?:^a=msid:| msid:)(\S+)\s+(\S+)/.exec(line);
+        return (
+          !!msid &&
+          (sourceTracks.has(msid[2]!) ||
+            /:(?:sa|la)(?:[-:]|$)/.test(msid[1]!) ||
+            /:(?:sa|la)(?:[-:]|$)/.test(msid[2]!))
+        );
+      });
+    out.push(
+      ...tuneOpusSection(
+        section,
+        source ? SOURCE_AUDIO_BITRATE : bitrate,
+        !!source,
+      ),
+    );
   }
   return out.join(nl);
 }
@@ -217,7 +242,11 @@ export function opusMaxAverageBitrate(sdp: string): number | null {
   return Number.isFinite(value) ? value : null;
 }
 
-function tuneOpusSection(section: string[], bitrate: number): string[] {
+function tuneOpusSection(
+  section: string[],
+  bitrate: number,
+  source = false,
+): string[] {
   const pts: string[] = [];
   for (const line of section) {
     const rtpmap = /^a=rtpmap:(\d+) opus\/48000/i.exec(line);
@@ -235,6 +264,11 @@ function tuneOpusSection(section: string[], bitrate: number): string[] {
     const parts = new Map<string, string>();
     for (const idx of found) mergeFmtpParams(parts, lines[idx] ?? "");
     applyVoiceFmtp(parts, bitrate);
+    if (source) {
+      parts.set("usedtx", "0");
+      parts.set("stereo", "1");
+      parts.set("sprop-stereo", "1");
+    }
     const merged = `${prefix} ${[...parts.entries()]
       .map(([key, value]) => `${key}=${value}`)
       .join(";")}`;

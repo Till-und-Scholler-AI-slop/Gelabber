@@ -8,6 +8,9 @@
 use serde::{Deserialize, Serialize};
 use uuid::Uuid;
 
+/// Version 2 adds explicit source Watch and independently tagged source audio.
+pub const MEDIA_PROTOCOL_VERSION: u8 = 2;
+
 #[derive(Debug, Clone, Deserialize, PartialEq, Eq)]
 #[serde(tag = "op")]
 pub enum ClientFrame {
@@ -15,9 +18,12 @@ pub enum ClientFrame {
     Join {
         #[serde(default)]
         tk: Option<String>,
-        /// Selected Live publisher; audio retains the channel's room scope.
+        /// Selected Live publisher; microphone audio retains the room scope.
         #[serde(default)]
         w: Option<uuid::Uuid>,
+        /// Client supports explicit Watch and independently tagged source audio.
+        #[serde(default)]
+        v: Option<u8>,
     },
     #[serde(rename = "o")]
     Offer {
@@ -57,6 +63,16 @@ pub enum ClientFrame {
         #[serde(default)]
         t: Option<String>,
     },
+    /// Opt into a source's video and paired audio on a voice seat.
+    #[serde(rename = "w")]
+    Watch {
+        #[serde(default)]
+        u: Option<Uuid>,
+        #[serde(default)]
+        k: Option<String>,
+        #[serde(default)]
+        on: Option<bool>,
+    },
     #[serde(rename = "l")]
     Leave,
 }
@@ -65,7 +81,12 @@ pub enum ClientFrame {
 #[serde(tag = "op")]
 pub enum ServerFrame {
     #[serde(rename = "ok")]
-    Ok { c: String, u: String },
+    Ok {
+        c: String,
+        u: String,
+        #[serde(default)]
+        v: u8,
+    },
     #[serde(rename = "o")]
     Offer { sdp: String },
     #[serde(rename = "a")]
@@ -110,6 +131,7 @@ mod tests {
         let json = ServerFrame::Ok {
             c: "1".into(),
             u: "2".into(),
+            v: MEDIA_PROTOCOL_VERSION,
         }
         .to_json()
         .unwrap();

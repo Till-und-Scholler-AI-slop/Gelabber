@@ -4,16 +4,9 @@
 import { useCallback, useEffect, useRef, useState } from "react";
 
 import { CollapseIcon, ExpandIcon } from "../components/Icons.tsx";
+import "./viewer.css";
 
-export function VoiceTile({
-  stream,
-  label,
-  mirror,
-  screen,
-  live,
-  expanded,
-  onToggleExpand,
-}: {
+type VoiceTileProps = {
   stream: MediaStream | null;
   label: string;
   mirror?: boolean;
@@ -21,7 +14,89 @@ export function VoiceTile({
   live?: boolean;
   expanded?: boolean;
   onToggleExpand?: () => void;
-}) {
+  sourceWatch?: { watching: boolean; toggle: () => void };
+  sourceAudioNotice?: string;
+};
+
+export function VoiceTile(props: VoiceTileProps) {
+  const [viewing, setViewing] = useState(false);
+  return (
+    <>
+      <VideoSurface {...props} onEnlarge={() => setViewing(true)} />
+      {viewing && <StreamViewer {...props} onClose={() => setViewing(false)} />}
+    </>
+  );
+}
+
+function StreamViewer(props: VoiceTileProps & { onClose: () => void }) {
+  const dialogRef = useRef<HTMLDialogElement>(null);
+  useEffect(() => {
+    const dialog = dialogRef.current;
+    const opener =
+      document.activeElement instanceof HTMLElement
+        ? document.activeElement
+        : null;
+    dialog?.showModal();
+    return () => {
+      dialog?.close();
+      if (opener?.isConnected) opener.focus({ preventScroll: true });
+    };
+  }, []);
+  return (
+    <dialog
+      ref={dialogRef}
+      className="stream-viewer"
+      aria-label={`Große Ansicht: ${props.label}`}
+      onCancel={(event) => {
+        event.preventDefault();
+        props.onClose();
+      }}
+    >
+      <header className="stream-viewer-header">
+        <strong>{props.label}</strong>
+        <button type="button" onClick={props.onClose} autoFocus>
+          Schließen <span aria-hidden="true">×</span>
+        </button>
+      </header>
+      <VideoSurface {...props} expanded viewer onToggleExpand={undefined} />
+    </dialog>
+  );
+}
+
+function VideoSurface({
+  stream,
+  label,
+  mirror,
+  screen,
+  live,
+  expanded,
+  onToggleExpand,
+  onEnlarge,
+  viewer,
+  sourceWatch,
+  sourceAudioNotice,
+}: VoiceTileProps & { onEnlarge?: () => void; viewer?: boolean }) {
+  const figureRef = useRef<HTMLElement>(null);
+  const [fullscreen, setFullscreen] = useState(false);
+  const [fullscreenError, setFullscreenError] = useState(false);
+  useEffect(() => {
+    const update = () =>
+      setFullscreen(document.fullscreenElement === figureRef.current);
+    document.addEventListener("fullscreenchange", update);
+    return () => document.removeEventListener("fullscreenchange", update);
+  }, []);
+  const toggleFullscreen = async () => {
+    setFullscreenError(false);
+    try {
+      if (document.fullscreenElement === figureRef.current)
+        await document.exitFullscreen();
+      else if (figureRef.current?.requestFullscreen)
+        await figureRef.current.requestFullscreen();
+      else throw new Error("Fullscreen unavailable");
+    } catch {
+      setFullscreenError(true);
+    }
+  };
   const ref = useRef<HTMLVideoElement>(null);
   const [blockedStream, setBlockedStream] = useState<MediaStream | null>(null);
   const play = useCallback(() => {
@@ -70,10 +145,13 @@ export function VoiceTile({
 
   return (
     <figure
+      ref={figureRef}
       className={[
+        "voice-video-tile",
+        viewer ? "voice-video-viewer" : "",
         "relative overflow-hidden rounded-lg bg-neutral-900 dark:bg-neutral-700 text-white",
         screen || expanded ? "aspect-video w-full" : "aspect-video",
-        expanded ? "min-h-[40vh] sm:min-h-[56vh]" : "",
+        expanded && !viewer ? "min-h-[40vh] sm:min-h-[56vh]" : "",
       ].join(" ")}
     >
       <video
@@ -81,6 +159,7 @@ export function VoiceTile({
         autoPlay
         playsInline
         muted
+        onDoubleClick={() => void toggleFullscreen()}
         className={[
           "size-full",
           screen || expanded ? "object-contain" : "object-cover",
@@ -100,6 +179,21 @@ export function VoiceTile({
           </button>
         </div>
       ) : null}
+      {sourceWatch && !sourceWatch.watching ? (
+        <div className="voice-source-watch-overlay">
+          <button type="button" onClick={sourceWatch.toggle}>
+            Zuschauen
+          </button>
+        </div>
+      ) : null}
+      {sourceAudioNotice ? (
+        <p
+          role="status"
+          className="voice-source-audio-notice voice-source-audio-tile"
+        >
+          {sourceAudioNotice}
+        </p>
+      ) : null}
       {!stream ? (
         <div className="absolute inset-0 flex items-center justify-center text-sm text-neutral-400 dark:text-neutral-500">
           {label}
@@ -113,18 +207,49 @@ export function VoiceTile({
           Live
         </span>
       ) : null}
-      {onToggleExpand ? (
+      <div className="voice-video-actions">
+        {sourceWatch?.watching && (
+          <button type="button" onClick={sourceWatch.toggle}>
+            Nicht mehr zuschauen
+          </button>
+        )}
+        {onToggleExpand && (
+          <button
+            type="button"
+            onClick={onToggleExpand}
+            aria-pressed={expanded ?? false}
+            title={expanded ? "Rasteransicht" : "Im Raum hervorheben"}
+            aria-label={expanded ? "Rasteransicht" : "Im Raum hervorheben"}
+          >
+            {expanded ? <CollapseIcon size={16} /> : <ExpandIcon size={16} />}
+          </button>
+        )}
+        {onEnlarge && !fullscreen && (
+          <button type="button" onClick={onEnlarge}>
+            Vergrößern
+          </button>
+        )}
         <button
           type="button"
-          onClick={onToggleExpand}
-          aria-pressed={expanded ?? false}
-          aria-label={expanded ? "Rasteransicht" : "Maximieren"}
-          title={expanded ? "Rasteransicht" : "Maximieren"}
-          className="absolute top-2 right-2 rounded-md bg-black/55 p-1.5 text-white hover:bg-black/75"
+          onClick={() => void toggleFullscreen()}
+          aria-label={fullscreen ? "Vollbild verlassen" : "Vollbild"}
+          title="Vollbild auch per Doppelklick"
         >
-          {expanded ? <CollapseIcon size={16} /> : <ExpandIcon size={16} />}
+          <ExpandIcon size={16} /> {fullscreen ? "Verkleinern" : "Vollbild"}
         </button>
-      ) : null}
+      </div>
+      {fullscreenError && (
+        <p role="status" className="voice-fullscreen-error">
+          Vollbild ist hier nicht verfügbar.
+          {onEnlarge ? (
+            <button type="button" onClick={onEnlarge}>
+              Große Ansicht öffnen
+            </button>
+          ) : (
+            " Du kannst die große Ansicht weiter nutzen."
+          )}
+        </p>
+      )}
     </figure>
   );
 }

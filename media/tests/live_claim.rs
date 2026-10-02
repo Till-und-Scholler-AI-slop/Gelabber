@@ -80,7 +80,9 @@ async fn join(addr: std::net::SocketAddr, code: &str, watch: Option<Uuid>) -> So
         .await
         .unwrap();
     ws.send(Message::Text(
-        json!({"op":"j","tk":code,"w":watch}).to_string().into(),
+        json!({"op":"j","tk":code,"w":watch,"v":2})
+            .to_string()
+            .into(),
     ))
     .await
     .unwrap();
@@ -338,4 +340,32 @@ async fn media_renews_its_peer_lease_but_never_recreates_the_gateway_claim() {
     assert!(!exists, "media must not recreate a Gateway claim");
     assert_eq!(state.sfu.room_count(), 1);
     ws.close(None).await.unwrap();
+}
+
+#[tokio::test]
+async fn source_audio_shares_the_exact_parent_live_claim_and_cannot_outlive_it() {
+    let (addr, state) = serve().await;
+    let (code, claim, _authority) = fixture(&state).await;
+    let nonce = Uuid::new_v4();
+    set_live(&state, &claim, &live_record(&claim, nonce), Some(5000)).await;
+    let mut ws = join(addr, &code, None).await;
+    assert!(!announce(&mut ws, "la", "source-audio", Some(nonce)).await);
+    assert!(announce(&mut ws, "l", "live", Some(nonce)).await);
+    let owner = key(&state, nonce).await;
+    assert!(!announce(&mut ws, "la", "source-audio", Some(Uuid::new_v4())).await);
+    assert!(announce(&mut ws, "la", "source-audio", Some(nonce)).await);
+    assert_eq!(
+        key(&state, nonce).await,
+        owner,
+        "audio does not acquire a different exclusive owner"
+    );
+    ws.send(Message::Text(
+        json!({"op":"u","k":"l","t":"live"}).to_string().into(),
+    ))
+    .await
+    .unwrap();
+    assert!(!announce(&mut ws, "la", "late-audio", Some(nonce)).await);
+    assert!(key(&state, nonce).await.is_none());
+    ws.close(None).await.unwrap();
+    cleanup(&state, &claim, nonce).await;
 }

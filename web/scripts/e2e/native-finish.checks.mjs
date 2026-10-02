@@ -64,6 +64,15 @@ async function finishProbe(
             return new Promise(() => {});
           }
           if (actorIndex === 0) actorEvaluations++;
+          if (arg?.path === "/servers/server-control" && arg.method === "GET") {
+            return {
+              status: 200,
+              body: {
+                id: "server-control",
+                channels: [{ id: "text-control", kind: "text" }],
+              },
+            };
+          }
           if (arg?.path?.startsWith("/servers/")) return { status: 204 };
           if (arg?.path === "/auth/logout") return { status: 200 };
           return { status: 200, body: { user: { id: "owned-control" } } };

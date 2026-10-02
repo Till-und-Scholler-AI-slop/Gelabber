@@ -36,7 +36,7 @@ async function participant(name) {
         window.__smokePeers.push(this);
       }
     };
-    navigator.mediaDevices.getDisplayMedia = async () => {
+    navigator.mediaDevices.getDisplayMedia = async (constraints) => {
       const canvas = document.createElement("canvas");
       canvas.width = 1280;
       canvas.height = 720;
@@ -47,9 +47,36 @@ async function participant(name) {
         ctx.fillRect(0, 0, canvas.width, canvas.height);
       }, 100);
       const stream = canvas.captureStream(15);
-      stream
-        .getVideoTracks()[0]
-        .addEventListener("ended", () => clearInterval(timer));
+      const video = stream.getVideoTracks()[0];
+      const stopVideo = video.stop.bind(video);
+      let sourceContext;
+      if (constraints.audio) {
+        sourceContext = new window.AudioContext();
+        const destination = sourceContext.createMediaStreamDestination();
+        const stereo = sourceContext.createChannelMerger(2);
+        for (const [channel, frequency] of [440, 880].entries()) {
+          const tone = sourceContext.createOscillator();
+          const level = sourceContext.createGain();
+          tone.frequency.value = frequency;
+          level.gain.value = 0.05;
+          tone.connect(level);
+          level.connect(stereo, 0, channel);
+          tone.start();
+        }
+        stereo.connect(destination);
+        for (const track of destination.stream.getAudioTracks())
+          stream.addTrack(track);
+        await sourceContext.resume();
+      }
+      video.stop = () => {
+        clearInterval(timer);
+        void sourceContext?.close();
+        stopVideo();
+      };
+      video.addEventListener("ended", () => {
+        clearInterval(timer);
+        void sourceContext?.close();
+      });
       return stream;
     };
   });
@@ -239,8 +266,15 @@ try {
     .first()
     .click();
   const settings = a.page.getByRole("dialog", { name: "Voice & Video" });
-  await settings.locator('input[name="camera-stream-profile"]').first().check();
-  await settings.locator('input[name="screen-stream-profile"]').last().check();
+  await settings
+    .locator("#camera-stream-profile-resolution")
+    .selectOption("480");
+  await settings.locator("#camera-stream-profile-fps").selectOption("15");
+  await settings
+    .locator("#screen-stream-profile-resolution")
+    .selectOption("2160");
+  await settings.locator("#screen-stream-profile-fps").selectOption("60");
+  await settings.getByLabel("Ton teilen", { exact: true }).check();
   await settings.getByRole("button", { name: "Fertig" }).click();
 
   await a.page.getByRole("button", { name: "Kamera an" }).first().click();
@@ -286,7 +320,31 @@ try {
     .getByRole("button", { name: "Bildschirm teilen" })
     .first()
     .click();
+  const screenTile = b.page.locator("figure").filter({ hasText: "Bildschirm" });
+  await screenTile
+    .getByRole("button", { name: "Zuschauen", exact: true })
+    .click();
   await remoteVideo(b.page, "Bildschirm");
+  await b.page.waitForFunction(
+    async () => {
+      for (const pc of window.__smokePeers ?? []) {
+        const report = await pc.getStats();
+        if (
+          [...report.values()].some(
+            (stat) =>
+              stat.type === "inbound-rtp" &&
+              stat.kind === "audio" &&
+              /:sa(?:[-:]|$)/.test(stat.trackIdentifier ?? "") &&
+              stat.packetsReceived > 10,
+          )
+        )
+          return true;
+      }
+      return false;
+    },
+    null,
+    { timeout: 30_000 },
+  );
   await a.page.waitForFunction(
     () => {
       const video =
@@ -318,7 +376,7 @@ try {
       .count()) > 0,
   );
   console.log(
-    "Two accounts, camera + synthetic screen, SFU video, relay ICE and shared sender budget passed.",
+    "Two accounts, camera + screen with stereo source audio, explicit Watch, SFU media, relay ICE and shared sender budget passed.",
   );
 
   await a.page.goto(textUrl);

@@ -164,3 +164,52 @@ async fn unpublish_and_leave_keep_another_seats_camera_publication() {
     g.detach(a).await;
     g.detach(b).await;
 }
+
+#[tokio::test]
+async fn stale_audio_refresh_preserves_same_user_replacement_live_audio() {
+    let old_api = gateway();
+    let new_api = gateway();
+    let (u, s, c) = (Uuid::new_v4(), Uuid::new_v4(), Uuid::new_v4());
+    let (old_tx, _old_rx) = mpsc::channel::<ServerFrame>(128);
+    let (old, _) = old_api.attach_session(u, "a".repeat(64), old_tx).await;
+    old_api.join_voice(old, u, s, c).await.unwrap();
+    for kind in [TrackKind::L, TrackKind::La] {
+        old_api
+            .set_voice_pub(old, u, s, c, kind, true)
+            .await
+            .unwrap();
+    }
+    tokio::time::sleep(Duration::from_millis(5200)).await;
+    let (new_tx, _new_rx) = mpsc::channel::<ServerFrame>(128);
+    let (new, _) = new_api.attach_session(u, "b".repeat(64), new_tx).await;
+    new_api.join_voice(new, u, s, c).await.unwrap();
+    let mut sub = subscriber(c).await;
+    for kind in [TrackKind::L, TrackKind::La] {
+        new_api
+            .set_voice_pub(new, u, s, c, kind, true)
+            .await
+            .unwrap();
+        let event = next(&mut sub).await;
+        assert_eq!((event.t, event.k), (SigKind::P, Some(kind)));
+        assert!(event.lc.is_some());
+    }
+    old_api.refresh_voice(old).await.unwrap();
+    quiet(&mut sub).await;
+    old_api.leave_voice(old, u, s, c).await.unwrap();
+    flags(&mut sub, false, false).await;
+    quiet(&mut sub).await;
+    let (observer_tx, _observer_rx) = mpsc::channel::<ServerFrame>(128);
+    let observer_user = Uuid::new_v4();
+    let (observer, _) = new_api
+        .attach_session(observer_user, "c".repeat(64), observer_tx)
+        .await;
+    let snapshot = new_api
+        .join_voice(observer, observer_user, s, c)
+        .await
+        .unwrap();
+    assert!(snapshot.iter().any(|event| event.k == Some(TrackKind::L)));
+    assert!(snapshot.iter().any(|event| event.k == Some(TrackKind::La)));
+    old_api.detach(old).await;
+    new_api.detach(new).await;
+    new_api.detach(observer).await;
+}

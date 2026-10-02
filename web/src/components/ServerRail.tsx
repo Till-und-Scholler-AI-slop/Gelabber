@@ -1,7 +1,3 @@
-// Left-most column: one round tile per server, virtualised so a hundred
-// servers scroll as smoothly as five. The active tile follows the URL, so a
-// click highlights before any request finishes.
-
 import { useQueryClient } from "@tanstack/react-query";
 import { Link } from "@tanstack/react-router";
 import { useVirtualizer } from "@tanstack/react-virtual";
@@ -11,14 +7,13 @@ import { useUserId } from "../auth/scope.ts";
 import { lastDmStillListed } from "../dms/open.ts";
 import { prefetchDms, useDms } from "../dms/queries.ts";
 import { lastDmId, useLastDm } from "../dms/lastDm.ts";
-import { lastChannelsFor, useLastChannel } from "../servers/lastChannel.ts";
 import { prefetchServer, useServers } from "../servers/queries.ts";
 import type { Server } from "../servers/types.ts";
 import { ChatIcon, PlusIcon } from "./Icons.tsx";
 import { CreateServerDialog } from "./ServerDialogs.tsx";
 import { initials } from "./initials.ts";
 
-const TILE_PX = 56;
+const TILE_PX = 60;
 
 export function ServerRail({
   activeId,
@@ -29,21 +24,17 @@ export function ServerRail({
 }) {
   const { data: servers } = useServers();
   const [creating, setCreating] = useState(false);
-
   return (
-    <nav
-      aria-label="Server"
-      className="flex h-full w-18 shrink-0 flex-col items-center border-r border-neutral-200 dark:border-neutral-700 bg-neutral-100 dark:bg-neutral-800"
-    >
+    <nav aria-label="Server" className="server-rail">
       <HomeTile active={dmActive} />
       <ServerList servers={servers ?? []} activeId={activeId} />
-      <div className="flex w-full justify-center border-t border-neutral-200 dark:border-neutral-700 py-2">
+      <div className="server-rail-footer">
         <button
           type="button"
           onClick={() => setCreating(true)}
           title="Server erstellen"
           aria-label="Server erstellen"
-          className="flex size-12 items-center justify-center rounded-2xl bg-white dark:bg-neutral-900 text-emerald-700 dark:text-emerald-300 shadow-sm transition hover:rounded-xl hover:bg-emerald-600 hover:text-white"
+          className="server-create-button"
         >
           <PlusIcon size={20} />
         </button>
@@ -56,20 +47,12 @@ export function ServerRail({
 function HomeTile({ active }: { active: boolean }) {
   const client = useQueryClient();
   const userId = useUserId();
-  const byUser = useLastDm((s) => s.byUser);
+  const byUser = useLastDm((state) => state.byUser);
   const remembered = lastDmId(byUser, userId);
   const { data: dms } = useDms();
   const openId = lastDmStillListed(remembered, dms) ? remembered : null;
-
   return (
-    <div className="relative flex h-14 items-center">
-      <span
-        aria-hidden
-        className={[
-          "absolute -left-3 w-1 rounded-r-full bg-neutral-900 dark:bg-neutral-700 transition-all",
-          active ? "h-8" : "h-0",
-        ].join(" ")}
-      />
+    <div className="server-home-tile">
       <Link
         to={openId ? "/d/$channelId" : "/d"}
         params={openId ? { channelId: openId } : undefined}
@@ -82,14 +65,9 @@ function HomeTile({ active }: { active: boolean }) {
         onFocus={() => {
           if (userId) prefetchDms(client, userId);
         }}
-        className={[
-          "flex size-12 items-center justify-center text-sm font-semibold transition-all select-none",
-          active
-            ? "rounded-xl bg-neutral-900 dark:bg-neutral-700 text-white"
-            : "rounded-2xl bg-white dark:bg-neutral-900 text-neutral-700 dark:text-neutral-300 shadow-sm hover:rounded-xl hover:bg-neutral-900 dark:hover:bg-neutral-600 hover:text-white",
-        ].join(" ")}
+        className={`server-home-link ${active ? "is-active" : ""}`}
       >
-        <ChatIcon size={20} />
+        <ChatIcon size={27} />
       </Link>
     </div>
   );
@@ -103,17 +81,16 @@ function ServerList({
   activeId: string | undefined;
 }) {
   const scrollRef = useRef<HTMLDivElement>(null);
-  // Not on the React Compiler; the warning is about memoising its return value.
   // eslint-disable-next-line react-hooks/incompatible-library
   const virtualizer = useVirtualizer({
     count: servers.length,
     getScrollElement: () => scrollRef.current,
     estimateSize: () => TILE_PX,
+    getItemKey: (index) => servers[index]?.id ?? index,
     overscan: 6,
   });
-
   return (
-    <div ref={scrollRef} className="w-full flex-1 overflow-y-auto py-2">
+    <div ref={scrollRef} className="server-rail-scroll">
       <div
         style={{ height: virtualizer.getTotalSize() }}
         className="relative w-full"
@@ -123,9 +100,9 @@ function ServerList({
           if (!server) return null;
           return (
             <div
-              key={server.id}
+              key={row.key}
               data-index={row.index}
-              className="absolute inset-x-0 flex justify-center"
+              className="server-rail-row"
               style={{ top: row.start, height: row.size }}
             >
               <ServerTile server={server} active={server.id === activeId} />
@@ -140,43 +117,22 @@ function ServerList({
 function ServerTile({ server, active }: { server: Server; active: boolean }) {
   const client = useQueryClient();
   const userId = useUserId();
-  const byUser = useLastChannel((s) => s.byUser);
-  const lastChannelId = lastChannelsFor(byUser, userId)[server.id];
-
   return (
-    <div className="relative flex h-14 items-center">
-      <span
-        aria-hidden
-        className={[
-          "absolute -left-3 w-1 rounded-r-full bg-neutral-900 dark:bg-neutral-700 transition-all",
-          active ? "h-8" : "h-0",
-        ].join(" ")}
-      />
-      <Link
-        to={lastChannelId ? "/s/$serverId/c/$channelId" : "/s/$serverId"}
-        params={
-          lastChannelId
-            ? { serverId: server.id, channelId: lastChannelId }
-            : { serverId: server.id }
-        }
-        title={server.name}
-        aria-label={server.name}
-        aria-current={active ? "page" : undefined}
-        onMouseEnter={() => {
-          if (userId) prefetchServer(client, userId, server.id);
-        }}
-        onFocus={() => {
-          if (userId) prefetchServer(client, userId, server.id);
-        }}
-        className={[
-          "flex size-12 items-center justify-center text-sm font-semibold transition-all select-none",
-          active
-            ? "rounded-xl bg-neutral-900 dark:bg-neutral-700 text-white"
-            : "rounded-2xl bg-white dark:bg-neutral-900 text-neutral-700 dark:text-neutral-300 shadow-sm hover:rounded-xl hover:bg-neutral-900 dark:hover:bg-neutral-600 hover:text-white",
-        ].join(" ")}
-      >
-        {initials(server.name)}
-      </Link>
-    </div>
+    <Link
+      to="/s/$serverId"
+      params={{ serverId: server.id }}
+      title={server.name}
+      aria-label={server.name}
+      aria-current={active ? "page" : undefined}
+      onMouseEnter={() => {
+        if (userId) prefetchServer(client, userId, server.id);
+      }}
+      onFocus={() => {
+        if (userId) prefetchServer(client, userId, server.id);
+      }}
+      className={`server-tile ${active ? "is-active" : ""}`}
+    >
+      {initials(server.name)}
+    </Link>
   );
 }

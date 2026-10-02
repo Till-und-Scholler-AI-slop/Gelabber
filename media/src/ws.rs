@@ -125,7 +125,7 @@ fn text_field(value: Option<String>) -> Result<String, &'static str> {
 
 fn track_kind(value: Option<String>) -> Result<String, &'static str> {
     match value.as_deref().map(str::trim) {
-        Some("v" | "s" | "l") => Ok(value.unwrap().trim().to_owned()),
+        Some("v" | "s" | "l" | "sa" | "la") => Ok(value.unwrap().trim().to_owned()),
         _ => Err("bad_request"),
     }
 }
@@ -138,7 +138,7 @@ async fn handle(
 ) -> Result<Option<ServerFrame>, &'static str> {
     let frame: ClientFrame = serde_json::from_str(text).map_err(|_| "bad_request")?;
     match frame {
-        ClientFrame::Join { tk, w } => {
+        ClientFrame::Join { tk, w, v } => {
             if joined.is_some() {
                 return Err("bad_request");
             }
@@ -147,7 +147,7 @@ async fn handle(
                 .await
                 .map_err(|_| "unauthorized")?
                 .ok_or("unauthorized")?;
-            join(state, claim, w, out, joined).await
+            join(state, claim, w, v.unwrap_or(0), out, joined).await
         }
         ClientFrame::Offer { sdp } => apply_sdp(state, joined, sdp, true).await,
         ClientFrame::Answer { sdp } => apply_sdp(state, joined, sdp, false).await,
@@ -193,6 +193,18 @@ async fn handle(
                 .map_err(|err| sfu_code(peer_id, &err, "retract failed"))?;
             Ok(None)
         }
+        ClientFrame::Watch { u, k, on } => {
+            let (peer_id, channel_id) = joined.ok_or("unauthorized")?;
+            let (Some(user), Some(kind), Some(on)) = (u, k, on) else {
+                return Err("bad_request");
+            };
+            state
+                .sfu
+                .set_watch(peer_id, channel_id, user, &kind, on)
+                .await
+                .map_err(|err| sfu_code(peer_id, &err, "watch failed"))?;
+            Ok(None)
+        }
         ClientFrame::Leave => {
             if let Some((peer_id, channel_id)) = joined.take() {
                 state.sfu.leave(peer_id, channel_id).await;
@@ -235,12 +247,13 @@ async fn join(
     state: &AppState,
     claim: AuthorizedTicketClaim,
     watch_user: Option<uuid::Uuid>,
+    version: u8,
     out: &mpsc::UnboundedSender<ServerFrame>,
     joined: &mut Option<(PeerId, Uuid)>,
 ) -> Result<Option<ServerFrame>, &'static str> {
     let peer_id = state
         .sfu
-        .join_authorized_watch(claim.clone(), watch_user, out.clone())
+        .join_authorized_watch_version(claim.clone(), watch_user, version, out.clone())
         .await
         .map_err(|err| {
             warn!(error = %err, code = err.code(), "sfu join failed");
@@ -252,6 +265,7 @@ async fn join(
     Ok(Some(ServerFrame::Ok {
         c: claim.c.to_string(),
         u: claim.u.to_string(),
+        v: crate::protocol::MEDIA_PROTOCOL_VERSION,
     }))
 }
 
