@@ -31,8 +31,14 @@ class Gates(unittest.TestCase):
         workflow = (ROOT / '.github/workflows/ci.yml').read_text()
         import re
         version = re.search(r'image: caddy:([^:]+)-alpine', compose).group(1)
-        self.assertIn('&version=v' + version, workflow)
-        self.assertIn('test "$(caddy version | cut -d \' \' -f 1)" = "v' + version + '"', workflow)
+        install = workflow.split('      - name: Install Caddy\n', 1)[1].split('\n      - name:', 1)[0]
+        # The download API can return a newer version despite its version query.
+        # Use the exact upstream release asset and verify the installed binary.
+        asset = f'https://github.com/caddyserver/caddy/releases/download/v{version}/caddy_{version}_linux_amd64.tar.gz'
+        self.assertIn(f'curl -fsSL "{asset}" -o "$caddy_archive"', install)
+        self.assertNotIn('caddyserver.com/api/download', install)
+        self.assertIn('tar -xzf "$caddy_archive" -C /usr/local/bin caddy', install)
+        self.assertIn('test "$(caddy version | cut -d \' \' -f 1)" = "v' + version + '"', install)
 
     def test_exact_success(self):
         m.check_ci(ci(), SHA, REPO)

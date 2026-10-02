@@ -295,6 +295,99 @@ async fn twenty_stop_start_cycles_cancel_reader_and_pending_subscription() {
 }
 
 #[tokio::test]
+async fn subscriber_offer_waits_for_initial_transport_connection() {
+    let sfu = Arc::new(Sfu::new(&config()));
+    let channel = Uuid::new_v4();
+    let (publisher, _publisher_rx) = join(&sfu, channel).await;
+    let (subscriber, mut subscriber_rx) = join(&sfu, channel).await;
+    let room = sfu.find_room(channel).await.unwrap();
+    let (gate, pc) = {
+        let room = room.lock().await;
+        (
+            room.peers[&subscriber].sdp.clone(),
+            room.peers[&subscriber].pc.clone(),
+        )
+    };
+    // Initial SDP is answered, but ICE/DTLS is still connecting. A room
+    // publication must not trigger another offer in this window.
+    gate.lock().await.negotiated = true;
+    let (track, _events) = remote_kind("audio", RtpCodecKind::Audio);
+    sfu.publish(publisher, channel, track).await.unwrap();
+    for _ in 0..3 {
+        sfu.attach_existing_pubs(subscriber, channel).await;
+    }
+    {
+        let gate = gate.lock().await;
+        assert!(
+            !gate.have_local_offer,
+            "DTLS handshake must precede reoffer"
+        );
+        assert_eq!(gate.subscriptions.len(), 1);
+        assert!(matches!(
+            gate.subscriptions.values().next(),
+            Some(SubscriptionState::Pending(_))
+        ));
+    }
+    assert!(pc.get_senders().await.is_empty());
+    assert!(subscriber_rx.try_recv().is_err());
+
+    // The actual connection event releases that same pending publication;
+    // repeated events cannot create another sender or overlapping offer.
+    sfu.on_connected(subscriber, channel).await;
+    sfu.on_connected(subscriber, channel).await;
+    {
+        let gate = gate.lock().await;
+        assert!(gate.connected);
+        assert!(gate.have_local_offer);
+        assert_eq!(gate.subscriptions.len(), 1);
+        assert!(matches!(
+            gate.subscriptions.values().next(),
+            Some(SubscriptionState::Active(_))
+        ));
+    }
+    assert_eq!(pc.get_senders().await.len(), 1);
+    let mut offers = 0;
+    while let Ok(frame) = subscriber_rx.try_recv() {
+        offers += usize::from(matches!(frame, ServerFrame::Offer { .. }));
+    }
+    assert_eq!(offers, 1, "connection must flush exactly one pending offer");
+    sfu.leave(publisher, channel).await;
+    sfu.leave(subscriber, channel).await;
+}
+
+#[tokio::test]
+async fn publication_removed_before_connection_is_not_offered() {
+    let sfu = Arc::new(Sfu::new(&config()));
+    let channel = Uuid::new_v4();
+    let (publisher, _publisher_rx) = join(&sfu, channel).await;
+    let (subscriber, mut subscriber_rx) = join(&sfu, channel).await;
+    let room = sfu.find_room(channel).await.unwrap();
+    let (gate, pc) = {
+        let room = room.lock().await;
+        (
+            room.peers[&subscriber].sdp.clone(),
+            room.peers[&subscriber].pc.clone(),
+        )
+    };
+    gate.lock().await.negotiated = true;
+    sfu.announce_track(publisher, channel, "s", Some("screen"))
+        .await
+        .unwrap();
+    let (track, _events) = remote("screen");
+    sfu.publish(publisher, channel, track).await.unwrap();
+    sfu.retract_track(publisher, channel, "s", Some("screen"))
+        .await
+        .unwrap();
+    sfu.on_connected(subscriber, channel).await;
+    assert!(gate.lock().await.subscriptions.is_empty());
+    assert!(!gate.lock().await.have_local_offer);
+    assert!(pc.get_senders().await.is_empty());
+    assert!(subscriber_rx.try_recv().is_err());
+    sfu.leave(publisher, channel).await;
+    sfu.leave(subscriber, channel).await;
+}
+
+#[tokio::test]
 async fn offered_sender_is_deduplicated_and_removed_on_failed_offer() {
     let sfu = Arc::new(Sfu::new(&config()));
     let channel = Uuid::new_v4();
@@ -308,7 +401,11 @@ async fn offered_sender_is_deduplicated_and_removed_on_failed_offer() {
             room.peers[&subscriber].pc.clone(),
         )
     };
-    gate.lock().await.negotiated = true;
+    {
+        let mut gate = gate.lock().await;
+        gate.negotiated = true;
+        gate.connected = true;
+    }
     sfu.announce_track(publisher, channel, "v", Some("cam"))
         .await
         .unwrap();
@@ -508,7 +605,11 @@ async fn rollback_holds_gate_until_next_publication_can_create_offer() {
         peer.pc = blocked.clone();
         (peer.sdp.clone(), blocked)
     };
-    gate.lock().await.negotiated = true;
+    {
+        let mut gate = gate.lock().await;
+        gate.negotiated = true;
+        gate.connected = true;
+    }
     sfu.announce_track(publisher, channel, "s", Some("screen"))
         .await
         .unwrap();
@@ -662,20 +763,86 @@ async fn live_claim_is_rechecked_when_announced_track_arrives() {
         .await
         .unwrap();
     let (track, _events) = remote("live");
-    assert!(matches!(
-        sfu.publish(peer, channel, track).await,
-        Err(SfuError::Forbidden)
-    ));
-    assert!(
-        sfu.find_room(channel)
-            .await
-            .unwrap()
-            .lock()
-            .await
-            .pubs
-            .is_empty()
-    );
+    let result = sfu.publish(peer, channel, track).await;
+    let room = sfu.find_room(channel).await.unwrap();
+    {
+        let room = room.lock().await;
+        let state = &room.peers[&peer];
+        match result {
+            Err(SfuError::Forbidden) => {}
+            Ok(()) => {
+                // The lease watcher may win the room lock and tombstone this
+                // exact source first. publish then ignores its stale on_track.
+                assert_eq!(state.withdrawn_live, Some(nonce));
+                assert!(state.live_claim.is_none());
+                assert_eq!(state.video_kinds.get("live").map(String::as_str), Some(""));
+            }
+            Err(err) => panic!("unexpected publication result: {err:?}"),
+        }
+        assert!(room.pubs.is_empty(), "revoked live source must not publish");
+        assert!(
+            state.remote_tracks.is_empty(),
+            "stale track must not be cached"
+        );
+    }
     sfu.leave(peer, channel).await;
+}
+
+#[tokio::test]
+async fn revoked_live_track_is_blocked_before_and_after_watcher_withdrawal() {
+    for withdraw_first in [false, true] {
+        let redis = authority_redis();
+        let sfu = Arc::new(Sfu::with_redis(&config(), Some(redis.clone())));
+        let (claim, _lease) = authorized_fixture(&sfu, &redis).await;
+        let (out, _rx) = mpsc::unbounded_channel();
+        // Attach without the automatic watcher, then install the same valid
+        // authority so both room-lock orderings can be exercised deterministically.
+        let peer = sfu
+            .join_inner(claim.claim.clone(), None, None, out)
+            .await
+            .unwrap();
+        let channel = claim.claim.c;
+        let room = sfu.find_room(channel).await.unwrap();
+        room.lock().await.peers.get_mut(&peer).unwrap().authority = Some(claim.clone());
+        let nonce = Uuid::new_v4();
+        grant_live(&redis, &claim, nonce, 5000).await;
+        sfu.announce_with_claim(peer, channel, "l", Some("live"), Some(nonce))
+            .await
+            .unwrap();
+        let binding = room.lock().await.peers[&peer].live_claim.clone().unwrap();
+        let mut conn = redis.get_multiplexed_async_connection().await.unwrap();
+        let _: () = redis::cmd("DEL")
+            .arg(format!("gb:live:{channel}"))
+            .query_async(&mut conn)
+            .await
+            .unwrap();
+        if withdraw_first {
+            sfu.stop_live_binding(peer, channel, &binding).await;
+        }
+        let (track, _events) = remote("live");
+        let result = sfu.publish(peer, channel, track).await;
+        {
+            let room = room.lock().await;
+            let state = &room.peers[&peer];
+            if withdraw_first {
+                assert!(result.is_ok(), "tombstoned track is ignored");
+                assert_eq!(state.withdrawn_live, Some(nonce));
+                assert!(state.live_claim.is_none());
+                assert_eq!(state.video_kinds.get("live").map(String::as_str), Some(""));
+            } else {
+                assert!(matches!(result, Err(SfuError::Forbidden)));
+                assert_eq!(state.withdrawn_live, None);
+                assert!(state.live_claim.as_ref() == Some(&binding));
+                assert_eq!(state.video_kinds.get("live").map(String::as_str), Some("l"));
+            }
+            assert!(room.pubs.is_empty(), "revoked live source must not publish");
+            assert!(
+                state.remote_tracks.is_empty(),
+                "stale track must not be cached"
+            );
+        }
+        sfu.leave(peer, channel).await;
+    }
 }
 
 #[tokio::test]
