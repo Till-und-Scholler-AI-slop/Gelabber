@@ -6,6 +6,7 @@ import { clearToasts } from "../components/toasts.ts";
 import { clearMessageToasts } from "../messages/toasts.ts";
 import { resetPendingMessages } from "../messages/pending.ts";
 import { dropForeignUserQueries, setQueryScope } from "../queryClient.ts";
+import { stopCallSounds } from "../voice/callSounds.ts";
 import { useMediaSettings } from "../voice/settings.ts";
 import { leaveVoice, stopWatching } from "../voice/session.ts";
 import { resetVoiceRoster } from "../voice/roster.ts";
@@ -24,6 +25,7 @@ export function releaseUserScope(nextUserId: string | null): void {
   // Stop local media first so a still-open socket can send leave, then drop
   // topics and resume cursors so the next account cannot resume A's seq.
   leaveVoice();
+  stopCallSounds();
   stopWatching();
   getGateway().resetSession();
   dropForeignUserQueries();

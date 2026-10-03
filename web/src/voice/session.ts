@@ -1,3 +1,9 @@
+import {
+  playCallSound,
+  unlockCallSounds,
+  stopCallSounds,
+  setCallSoundsDeafened,
+} from "./callSounds.ts";
 // Local voice state + native RTCPeerConnection.
 // Join updates the store immediately; ticket / ICE / getUserMedia run after.
 // Camera / screen / Go Live: local preview first, publish on the media path.
@@ -881,6 +887,8 @@ export function parseRemoteStreamId(
   return null;
 }
 
+let soundOnJoin = false;
+
 function onSig(event: SigEvent & { lc?: string }): void {
   const state = useVoice.getState();
   const watchingHere =
@@ -921,11 +929,22 @@ function onSig(event: SigEvent & { lc?: string }): void {
   switch (event.t) {
     case "j":
       if (
+        userId !== currentUserId() &&
+        !event.replay &&
+        !state.participants[userId]
+      ) {
+        playCallSound("join");
+      }
+      if (
         userId === currentUserId() &&
         awaitingJoin &&
         event.c === awaitingJoin.channelId
       ) {
         awaitingJoin = null;
+        if (soundOnJoin) {
+          soundOnJoin = false;
+          playCallSound("join");
+        }
         if (republishOnJoin) {
           republishOnJoin = false;
           reannounceActive();
@@ -940,6 +959,7 @@ function onSig(event: SigEvent & { lc?: string }): void {
         return;
       }
       {
+        if (state.participants[userId]) playCallSound("leave");
         const next = { ...state.participants };
         delete next[userId];
         useVoice.setState({ participants: next });
@@ -1063,6 +1083,8 @@ function onErr(err: ErrFrame): void {
 }
 
 function onReady(): void {
+  soundOnJoin = false;
+  stopCallSounds();
   const state = useVoice.getState();
   if (state.status !== "joined" || !state.serverId || !state.channelId) {
     return;
@@ -2818,8 +2840,12 @@ export function joinVoice(input: {
   const userId = currentUserId();
   if (!userId) return;
   const prev = useVoice.getState();
+  soundOnJoin =
+    prev.serverId !== input.serverId || prev.channelId !== input.channelId;
+  unlockCallSounds();
   const muted = prev.status === "joined" && (prev.muted || prev.deafened);
   const deafened = prev.status === "joined" && prev.deafened;
+  setCallSoundsDeafened(deafened);
   if (prev.status !== "joined") preDeafenMuted = false;
   const dropWatch =
     prev.watchServerId === input.serverId &&
@@ -2885,6 +2911,11 @@ export function joinVoice(input: {
 
 export function leaveVoice(): void {
   const state = useVoice.getState();
+  const hadJoined = !awaitingJoin && state.status === "joined";
+  soundOnJoin = false;
+  stopCallSounds();
+  if (hadJoined && !state.deafened) playCallSound("leave");
+  setCallSoundsDeafened(false);
   const serverId = state.serverId;
   const channelId = state.channelId;
   awaitingJoin = null;
@@ -2932,6 +2963,8 @@ export function toggleMute(): void {
   const deafened = muted ? state.deafened : false;
   if (!deafened) preDeafenMuted = muted;
   useVoice.setState({ muted, deafened });
+  setCallSoundsDeafened(deafened);
+  playCallSound(muted ? "mute" : "unmute");
   applyLocalAudio();
   occupySelf({ ...state, muted, deafened });
   if (muted !== prevMuted) {
@@ -2958,6 +2991,8 @@ export function toggleDeafen(): void {
   if (deafened) preDeafenMuted = state.muted;
   const muted = deafened || preDeafenMuted;
   useVoice.setState({ muted, deafened });
+  setCallSoundsDeafened(deafened);
+  playCallSound(deafened ? "deafen" : "undeafen");
   applyLocalAudio();
   occupySelf({ ...state, muted, deafened });
   if (muted !== prevMuted) {
@@ -3089,6 +3124,9 @@ export function stopWatching(): void {
 }
 
 export function resetVoiceForTests(): void {
+  soundOnJoin = false;
+  stopCallSounds();
+  setCallSoundsDeafened(false);
   preDeafenMuted = false;
   clearWatchPublisherTimer();
   resetDiagnostics();

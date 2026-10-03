@@ -353,7 +353,9 @@ impl VoiceRoster {
             }
             let mut events = Vec::new();
             for (uid, (m, d, pubs)) in peers {
-                events.push(SigEvent::join_state(s, c, uid, m, d));
+                let mut joined = SigEvent::join_state(s, c, uid, m, d);
+                joined.replay = true;
+                events.push(joined);
                 for kind in pubs {
                     let mut event = SigEvent::published(s, c, uid, kind);
                     if matches!(kind, TrackKind::L | TrackKind::La) {
@@ -964,6 +966,12 @@ mod tests {
         let (other, _ry) = socket(&g, Uuid::new_v4()).await;
         let snapshot = g.join_voice(other, Uuid::new_v4(), s, c).await.unwrap();
         assert!(!snapshot.iter().any(|event| event.k == Some(TrackKind::L)));
+        let joins: Vec<_> = snapshot
+            .iter()
+            .filter(|event| event.t == crate::gateway::protocol::SigKind::J)
+            .collect();
+        assert_eq!(joins.len(), 1);
+        assert!(joins[0].replay);
         g.detach(id).await;
         g.detach(other).await;
     }

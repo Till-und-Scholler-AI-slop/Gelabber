@@ -263,6 +263,9 @@ pub struct SigEvent {
     /// Join snapshot: occupant is deafened.
     #[serde(skip_serializing_if = "Option::is_none")]
     pub d: Option<bool>,
+    /// Existing occupant replay sent only to the joining connection.
+    #[serde(default, skip_serializing_if = "std::ops::Not::not")]
+    pub replay: bool,
 }
 
 impl SigEvent {
@@ -277,6 +280,7 @@ impl SigEvent {
             on: None,
             m: None,
             d: None,
+            replay: false,
         }
     }
 
@@ -706,6 +710,19 @@ pub fn plan_catch_up<T: Clone>(
 
 #[cfg(test)]
 mod tests {
+    #[test]
+    fn occupant_replay_is_explicit_and_legacy_events_default_to_live() {
+        let id = uuid::Uuid::new_v4();
+        let live = super::SigEvent::join(id, id, id);
+        let json = serde_json::to_value(&live).unwrap();
+        assert!(json.get("replay").is_none());
+        let decoded: super::SigEvent = serde_json::from_value(json).unwrap();
+        assert!(!decoded.replay);
+        let mut replay = live;
+        replay.replay = true;
+        assert_eq!(serde_json::to_value(replay).unwrap()["replay"], true);
+    }
+
     use super::*;
 
     fn ev(n: &u64) -> u64 {
