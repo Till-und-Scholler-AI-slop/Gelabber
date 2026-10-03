@@ -5,7 +5,7 @@
 import assert from "node:assert/strict";
 import { writeFile } from "node:fs/promises";
 import { setTimeout as pause } from "node:timers/promises";
-import { chromium } from "playwright";
+import { chromium, firefox } from "playwright";
 
 const target = new URL(
   process.env.GELABBER_SOURCE_AUDIO_URL ?? "http://127.0.0.1:5173",
@@ -19,6 +19,8 @@ assert.ok(
   "Source-audio smoke requires a loopback test stack",
 );
 const base = target.origin;
+const receiverEngine = process.env.GELABBER_SOURCE_AUDIO_RECEIVER ?? "chromium";
+assert.ok(["chromium", "firefox"].includes(receiverEngine));
 const suffix = `${Date.now()}-${process.pid}`;
 const password = `Source-${suffix}-password`;
 const actors = [];
@@ -26,6 +28,7 @@ const report = {
   status: "running",
   capture: "synthetic canvas video and oscillator audio",
   network: "actual API, gateway, SFU and native WebRTC RTP",
+  browsers: { publisher: "chromium", receiver: receiverEngine },
   limitations: [
     "No physical system/tab audio capture or native display-picker coverage",
     "No TURN, WAN or audible two-device coverage",
@@ -43,6 +46,16 @@ const browser = await chromium.launch({
     "--use-fake-ui-for-media-stream",
   ],
 });
+const receiverBrowser =
+  receiverEngine === "firefox"
+    ? await firefox.launch({
+        firefoxUserPrefs: {
+          "media.navigator.streams.fake": true,
+          "media.navigator.permission.disabled": true,
+          "media.peerconnection.ice.loopback": true,
+        },
+      })
+    : browser;
 
 function instrument() {
   const state = (window.__sourceAudioSmoke = {
@@ -425,9 +438,10 @@ async function api(actor, path, method = "GET", body) {
 }
 
 async function participant(name) {
-  const context = await browser.newContext({
-    permissions: ["camera", "microphone"],
-  });
+  const chosen = actors.length ? receiverBrowser : browser;
+  const context = await chosen.newContext(
+    chosen === browser ? { permissions: ["camera", "microphone"] } : {},
+  );
   await context.addInitScript(instrument);
   const actor = { context, page: await context.newPage(), name };
   actors.push(actor);
@@ -960,6 +974,7 @@ try {
     await actor.context.close();
   }
   await browser.close();
+  if (receiverBrowser !== browser) await receiverBrowser.close();
   if (process.exitCode) report.status = "failed";
   if (process.env.GELABBER_SOURCE_AUDIO_REPORT)
     await writeFile(
