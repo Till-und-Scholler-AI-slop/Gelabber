@@ -32,6 +32,19 @@ describe("media settings", () => {
     resetMediaSettingsForTests();
   });
 
+  it("persists independent call-sound preferences and clamps volume", async () => {
+    expect(useMediaSettings.getState().callSounds).toBe(true);
+    expect(useMediaSettings.getState().callSoundVolume).toBe(0.35);
+    useMediaSettings
+      .getState()
+      .patch({ callSounds: false, callSoundVolume: 2 });
+    await useMediaSettings.persist.rehydrate();
+    expect(useMediaSettings.getState().callSounds).toBe(false);
+    expect(useMediaSettings.getState().callSoundVolume).toBe(1);
+    useMediaSettings.getState().patch({ callSoundVolume: -1 });
+    expect(useMediaSettings.getState().callSoundVolume).toBe(0);
+  });
+
   it("defaults to AEC/NS/AGC, Normal bitrate, full volume, toasts on", () => {
     const state = useMediaSettings.getState();
     expect(state.echoCancellation).toBe(true);

@@ -1,3 +1,4 @@
+import * as callSounds from "./callSounds.ts";
 import { afterEach, describe, expect, it, vi } from "vitest";
 
 import type { ClientFrame, ErrFrame, SigEvent } from "../ws/protocol.ts";
@@ -39,6 +40,14 @@ import {
   useMediaSettings,
   videoConstraintsFor,
 } from "./settings.ts";
+
+// Session tests cover event decisions; native playback is exercised separately.
+vi.mock("./callSounds.ts", () => ({
+  playCallSound: vi.fn(),
+  unlockCallSounds: vi.fn(),
+  stopCallSounds: vi.fn(),
+  setCallSoundsDeafened: vi.fn(),
+}));
 
 class FakePeer implements PeerConnection {
   onicecandidate: PeerConnection["onicecandidate"] = null;
@@ -532,6 +541,64 @@ describe("voice session", () => {
     resetVoiceRoster();
     resetMediaSettingsForTests();
     trackSeq = 0;
+    vi.restoreAllMocks();
+  });
+
+  it("sounds only for new room arrivals and known departures, not snapshots or reconnect replays", () => {
+    const { emitSig, emitReady } = install();
+    const sound = vi
+      .spyOn(callSounds, "playCallSound")
+      .mockImplementation(() => {});
+    joinVoice({ serverId: "srv", channelId: "voice", channelName: "Lounge" });
+    expect(sound).not.toHaveBeenCalled();
+    const event = {
+      op: "sig" as const,
+      t: "j" as const,
+      s: "srv",
+      c: "voice",
+      u: "peer",
+    };
+    emitSig({ ...event, replay: true });
+    emitSig({ ...event, u: "u-self" });
+    emitSig({ ...event, u: "u-self" });
+    expect(sound.mock.calls).toEqual([["join"]]);
+    sound.mockClear();
+    emitSig(event); // already present
+    emitSig({ ...event, c: "other", u: "other" });
+    emitSig({ ...event, t: "r", snap: [{ u: "peer", c: "voice" }] });
+    emitSig({ ...event, t: "l", u: "unknown" });
+    expect(sound).not.toHaveBeenCalled();
+    emitSig({ ...event, u: "new" });
+    emitSig({ ...event, u: "new" });
+    emitSig({ ...event, t: "l", u: "new" });
+    emitSig({ ...event, t: "l", u: "new" });
+    expect(sound.mock.calls).toEqual([["join"], ["leave"]]);
+    sound.mockClear();
+    emitReady();
+    emitSig({ ...event, u: "u-self" });
+    emitSig({ ...event, replay: true });
+    expect(sound).not.toHaveBeenCalled();
+  });
+
+  it("plays own control feedback once and no leave cue for an unacknowledged join", () => {
+    install();
+    const sound = vi
+      .spyOn(callSounds, "playCallSound")
+      .mockImplementation(() => {});
+    joinVoice({ serverId: "srv", channelId: "voice", channelName: "Lounge" });
+    toggleMute();
+    toggleMute();
+    toggleDeafen();
+    toggleDeafen();
+    expect(sound.mock.calls).toEqual([
+      ["mute"],
+      ["unmute"],
+      ["deafen"],
+      ["undeafen"],
+    ]);
+    sound.mockClear();
+    leaveVoice();
+    expect(sound).not.toHaveBeenCalled();
   });
 
   it("join click sets local state before any ICE work", () => {

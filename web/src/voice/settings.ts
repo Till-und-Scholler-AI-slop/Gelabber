@@ -127,6 +127,8 @@ export type MediaSettings = {
   screenProfile: StreamProfileId;
   /** 0 = automatic quality budget; otherwise shared video payload cap in bit/s. */
   videoUploadLimit: number;
+  callSounds: boolean;
+  callSoundVolume: number;
   messageToasts: boolean;
   desktopNotify: boolean;
 };
@@ -147,6 +149,8 @@ export const DEFAULT_MEDIA_SETTINGS: MediaSettings = {
   cameraProfile: "balanced",
   screenProfile: "balanced",
   videoUploadLimit: 0,
+  callSounds: true,
+  callSoundVolume: 0.35,
   messageToasts: true,
   desktopNotify: false,
 };
@@ -238,6 +242,8 @@ function snapshot(state: MediaSettingsState): MediaSettings {
     cameraProfile: state.cameraProfile,
     screenProfile: state.screenProfile,
     videoUploadLimit: state.videoUploadLimit,
+    callSounds: state.callSounds,
+    callSoundVolume: state.callSoundVolume,
     messageToasts: state.messageToasts,
     desktopNotify: state.desktopNotify,
   };
@@ -307,6 +313,11 @@ export const useMediaSettings = create<MediaSettingsState>()(
             partial.videoUploadLimit !== undefined
               ? clampVideoUploadLimit(partial.videoUploadLimit)
               : prev.videoUploadLimit,
+          callSounds: partial.callSounds ?? prev.callSounds,
+          callSoundVolume:
+            partial.callSoundVolume !== undefined
+              ? clampVolume(partial.callSoundVolume)
+              : prev.callSoundVolume,
           messageToasts:
             partial.messageToasts !== undefined
               ? partial.messageToasts
@@ -331,6 +342,9 @@ export const useMediaSettings = create<MediaSettingsState>()(
         return {
           ...current,
           ...stored,
+          callSounds:
+            typeof stored.callSounds === "boolean" ? stored.callSounds : true,
+          callSoundVolume: clampVolume(stored.callSoundVolume ?? 0.35),
           cameraProfile: asStreamProfile(
             "cameraProfile" in stored
               ? stored.cameraProfile
