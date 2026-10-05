@@ -709,11 +709,12 @@ mod tests {
         let (current, _done, _closing) = fence();
         store.accept(&r, &l);
         bind(&store, current.clone());
-        assert_eq!(store.bound_seeds(), 2);
+        assert_eq!(store.bound_seeds(), 0);
         assert_eq!(store.observed().1, 0);
         store.allow_track("track");
         store.accept(&r, &l);
         bind(&store, current.clone());
+        assert_eq!(store.bound_seeds(), 2);
         let mut h = packet(10);
         store.recover(&mut h);
         assert_eq!(h.get_extension(4).unwrap(), b"q"[..]);
