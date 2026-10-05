@@ -687,8 +687,8 @@ impl Sfu {
         }
         gate.rid_recovery.suspend();
         if let Err(err) = pc.set_remote_description(desc).await {
+            self.rollback_locked(&pc, &mut gate).await;
             if !as_offer {
-                self.rollback_locked(&pc, &mut gate).await;
                 self.negotiate_locked(&pc, &out, &gathered, &mut gate).await;
             }
             return Err(SfuError::negotiation(err));
@@ -696,9 +696,10 @@ impl Sfu {
         let accepted_answer;
         if as_offer {
             prefer_simulcast_vp8(&pc, &sdp_text).await;
-            reserve_publication_mids(&pc, &sdp_text, &mut gate)
-                .await
-                .map_err(SfuError::negotiation)?;
+            if let Err(err) = reserve_publication_mids(&pc, &sdp_text, &mut gate).await {
+                self.rollback_locked(&pc, &mut gate).await;
+                return Err(SfuError::negotiation(err));
+            }
             for state in gate.subscriptions.values() {
                 if let SubscriptionState::Active(sub) = state
                     && let Some(mid) = sender_mid(&pc, &sub.sender).await
@@ -742,9 +743,7 @@ impl Sfu {
             accepted_answer = match result {
                 Ok(answer) => Some(answer),
                 Err(err) => {
-                    if let Ok(rollback) = RTCSessionDescription::rollback(None) {
-                        let _ = pc.set_remote_description(rollback).await;
-                    }
+                    self.rollback_locked(&pc, &mut gate).await;
                     return Err(SfuError::negotiation(err));
                 }
             };
@@ -752,8 +751,11 @@ impl Sfu {
         } else {
             accepted_answer = pc.remote_description().await;
         }
-        if let Some(local) = pc.local_description().await {
-            gate.rid_recovery.accept(&sdp_text, &local.sdp);
+        if let (Some(remote), Some(local)) = (
+            pc.current_remote_description().await,
+            pc.current_local_description().await,
+        ) {
+            gate.rid_recovery.accept(&remote.sdp, &local.sdp);
         }
         if as_offer && let Some(answer) = accepted_answer.as_ref() {
             retain_publication_codec(&pc, &gate, &answer.sdp).await;
@@ -796,6 +798,14 @@ impl Sfu {
                 peer.video_kinds.retain(|id, kind| {
                     active.contains(id) || (!previous.contains(id) && !kind.is_empty())
                 });
+                peer.rid_recovery.retain_tracks(
+                    &peer
+                        .video_kinds
+                        .iter()
+                        .filter(|(_, kind)| !kind.is_empty())
+                        .map(|(id, _)| id.clone())
+                        .collect(),
+                );
                 // Stopped sender/transceiver reuse may leave the same remote track
                 // object alive through an inactive offer, without another on_track.
                 // Keep its bounded receiver binding; only an accepted active offer
@@ -2139,12 +2149,23 @@ impl Sfu {
     }
 
     async fn rollback_locked(&self, pc: &Arc<dyn PeerConnection>, gate: &mut PeerSdp) {
+        gate.rid_recovery.suspend();
         if pc.pending_local_description().await.is_some() {
             match RTCSessionDescription::rollback(None) {
                 Ok(rollback) => {
                     if let Err(err) = pc.set_local_description(rollback).await {
                         warn!(error = %err, "subscriber rollback failed");
                         // Do not unlock negotiation as stable when rollback failed.
+                        return;
+                    }
+                }
+                Err(_) => return,
+            }
+        } else if pc.pending_remote_description().await.is_some() {
+            match RTCSessionDescription::rollback(None) {
+                Ok(rollback) => {
+                    if let Err(err) = pc.set_remote_description(rollback).await {
+                        warn!(error = %err, "publisher rollback failed");
                         return;
                     }
                 }
@@ -2161,6 +2182,7 @@ impl Sfu {
         }
         gate.have_local_offer = false;
         gate.pending_ice.clear();
+        restore_rid_recovery(pc, gate).await;
         // Keep removals of already bound sources dirty; the next offer must carry them.
     }
 
@@ -2179,6 +2201,24 @@ impl Sfu {
         }
         self.rollback_locked(pc, &mut gate).await;
         self.negotiate_locked(pc, out, gathered, &mut gate).await;
+    }
+}
+
+async fn restore_rid_recovery(pc: &Arc<dyn PeerConnection>, gate: &PeerSdp) {
+    if gate.closed
+        || *gate.closing.borrow()
+        || pc.pending_local_description().await.is_some()
+        || pc.pending_remote_description().await.is_some()
+    {
+        return;
+    }
+    if let (Some(remote), Some(local)) = (
+        pc.current_remote_description().await,
+        pc.current_local_description().await,
+    ) && !gate.closed
+        && !*gate.closing.borrow()
+    {
+        gate.rid_recovery.restore(&remote.sdp, &local.sdp);
     }
 }
 

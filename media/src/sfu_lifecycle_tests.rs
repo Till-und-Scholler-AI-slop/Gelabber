@@ -700,6 +700,7 @@ struct BlockPc {
     entered: tokio::sync::Notify,
     release: tokio::sync::Notify,
     block_close: bool,
+    fail_rollback: bool,
 }
 
 #[async_trait::async_trait]
@@ -725,6 +726,9 @@ impl PeerConnection for BlockPc {
     }
     async fn set_local_description(&self, desc: RTCSessionDescription) -> Result<()> {
         if desc.sdp_type == RTCSdpType::Rollback {
+            if self.fail_rollback {
+                return Err(webrtc::error::Error::ErrUnknownType);
+            }
             self.entered.notify_one();
             self.release.notified().await;
         }
@@ -826,6 +830,7 @@ async fn rollback_holds_gate_until_next_publication_can_create_offer() {
             entered: tokio::sync::Notify::new(),
             release: tokio::sync::Notify::new(),
             block_close: false,
+            fail_rollback: false,
         });
         peer.pc = blocked.clone();
         (peer.sdp.clone(), blocked)
@@ -883,6 +888,103 @@ async fn rollback_holds_gate_until_next_publication_can_create_offer() {
 }
 
 #[tokio::test]
+async fn recovery_restores_stable_pair_after_rollback_but_not_pending_failed_or_closed() {
+    let sfu = Sfu::new(&config());
+    let (pc, _events, _gathered, recovery) = sfu.build_pc("127.0.0.1:0").await.unwrap();
+    let (remote, _events, _gathered, _recovery) = sfu.build_pc("127.0.0.1:0").await.unwrap();
+    remote
+        .add_transceiver_from_kind(RtpCodecKind::Video, None)
+        .await
+        .unwrap();
+    let offer = remote.create_offer(None).await.unwrap();
+    remote.set_local_description(offer.clone()).await.unwrap();
+    pc.set_remote_description(offer).await.unwrap();
+    let answer = pc.create_answer(None).await.unwrap();
+    pc.set_local_description(answer.clone()).await.unwrap();
+    remote.set_remote_description(answer).await.unwrap();
+    let accepted_remote = pc.current_remote_description().await.unwrap();
+    let accepted_local = pc.current_local_description().await.unwrap();
+    recovery.accept(&accepted_remote.sdp, &accepted_local.sdp);
+    assert!(recovery.is_active());
+    let mut gate = PeerSdp::new();
+    gate.rid_recovery = recovery.clone();
+
+    let pending = pc.create_offer(None).await.unwrap();
+    pc.set_local_description(pending).await.unwrap();
+    gate.have_local_offer = true;
+    recovery.suspend();
+    restore_rid_recovery(&pc, &gate).await;
+    assert!(
+        !recovery.is_active(),
+        "current SDP cannot bypass a pending offer"
+    );
+    sfu.rollback_locked(&pc, &mut gate).await;
+    assert!(pc.pending_local_description().await.is_none());
+    assert_eq!(
+        pc.current_remote_description().await.unwrap().sdp,
+        accepted_remote.sdp
+    );
+    assert_eq!(
+        pc.current_local_description().await.unwrap().sdp,
+        accepted_local.sdp
+    );
+    assert!(
+        recovery.is_active(),
+        "successful local rollback resumes the accepted pair"
+    );
+
+    let pending = remote.create_offer(None).await.unwrap();
+    remote.set_local_description(pending.clone()).await.unwrap();
+    pc.set_remote_description(pending).await.unwrap();
+    recovery.suspend();
+    restore_rid_recovery(&pc, &gate).await;
+    assert!(
+        !recovery.is_active(),
+        "pending remote SDP must also block recovery"
+    );
+    sfu.rollback_locked(&pc, &mut gate).await;
+    assert!(pc.pending_remote_description().await.is_none());
+    assert!(
+        recovery.is_active(),
+        "successful remote rollback resumes the accepted pair"
+    );
+    remote
+        .set_local_description(RTCSessionDescription::rollback(None).unwrap())
+        .await
+        .unwrap();
+
+    pc.set_local_description(pc.create_offer(None).await.unwrap())
+        .await
+        .unwrap();
+    gate.have_local_offer = true;
+    let failing: Arc<dyn PeerConnection> = Arc::new(BlockPc {
+        inner: pc.clone(),
+        entered: tokio::sync::Notify::new(),
+        release: tokio::sync::Notify::new(),
+        block_close: false,
+        fail_rollback: true,
+    });
+    sfu.rollback_locked(&failing, &mut gate).await;
+    assert!(
+        !recovery.is_active(),
+        "failed rollback cannot reactivate the old cache"
+    );
+    assert!(gate.have_local_offer);
+    assert!(pc.pending_local_description().await.is_some());
+    pc.set_local_description(RTCSessionDescription::rollback(None).unwrap())
+        .await
+        .unwrap();
+    gate.closing.send_replace(true);
+    restore_rid_recovery(&pc, &gate).await;
+    assert!(
+        !recovery.is_active(),
+        "closing peer cannot reactivate after a late rollback"
+    );
+    pc.close().await.unwrap();
+    remote.close().await.unwrap();
+}
+
+#[tokio::test]
 async fn udp_port_stays_reserved_until_close_completes() {
     let socket = std::net::UdpSocket::bind("127.0.0.1:0").unwrap();
     let addr = socket.local_addr().unwrap();
@@ -901,6 +1003,7 @@ async fn udp_port_stays_reserved_until_close_completes() {
             entered: tokio::sync::Notify::new(),
             release: tokio::sync::Notify::new(),
             block_close: true,
+            fail_rollback: false,
         });
         peer.pc = blocked.clone();
         blocked

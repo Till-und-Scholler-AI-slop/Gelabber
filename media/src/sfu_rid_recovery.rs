@@ -1,6 +1,8 @@
 //! Restore only learned, currently negotiated MID/RID metadata before the
 //! pinned endpoint forgets RID SSRCs on a subscription reoffer. This uses the
 //! public interceptor API; it does not alter the core or infer unknown SSRCs.
+//! Recovery also requires a current explicit source announcement. Retraction
+//! removes that permission; historical/unknown stops never accumulate state.
 
 use std::collections::{HashMap, HashSet};
 use std::sync::{Arc, Mutex};
@@ -24,7 +26,7 @@ struct Source {
     stream: String,
     track: String,
 }
-#[derive(Clone)]
+#[derive(Clone, PartialEq, Eq)]
 struct Scope {
     source: Source,
     rids: HashSet<String>,
@@ -42,7 +44,7 @@ struct Learned {
 struct State {
     scopes: Vec<Scope>,
     learned: HashMap<u32, Learned>,
-    stopped: HashSet<String>,
+    announced: HashSet<String>,
     active: bool,
     closed: bool,
     #[cfg(test)]
@@ -61,7 +63,7 @@ impl Recovery {
         if state.closed {
             return;
         }
-        scopes.retain(|scope| !state.stopped.contains(&scope.source.track));
+        scopes.retain(|scope| state.announced.contains(&scope.source.track));
         state.learned.retain(|_, learned| {
             scopes
                 .iter()
@@ -70,25 +72,42 @@ impl Recovery {
         state.scopes = scopes;
         state.active = true;
     }
-    pub(super) fn stop_track(&self, track: &str) {
+    pub(super) fn restore(&self, remote: &str, local: &str) {
+        let mut scopes = parse_scopes(remote, local);
         let mut state = self.0.lock().unwrap();
-        if state.stopped.len() >= MAX_SCOPES && !state.stopped.contains(track) {
-            // The surrounding peer admits at most 64 track identities. Fail
-            // closed for recovery if an invalid sequence exceeds this bound.
-            state.closed = true;
-            state.scopes.clear();
-            state.learned.clear();
-            state.active = false;
+        if state.closed {
             return;
         }
-        state.stopped.insert(track.into());
+        scopes.retain(|scope| state.announced.contains(&scope.source.track));
+        // A rollback can only resume the already accepted metadata contract.
+        // It must not authorize identities from an abandoned pending offer.
+        if scopes == state.scopes {
+            state.active = true;
+        }
+    }
+    pub(super) fn stop_track(&self, track: &str) {
+        let mut state = self.0.lock().unwrap();
+        state.announced.remove(track);
         state.scopes.retain(|scope| scope.source.track != track);
         state
             .learned
             .retain(|_, learned| learned.source.track != track);
     }
     pub(super) fn allow_track(&self, track: &str) {
-        self.0.lock().unwrap().stopped.remove(track);
+        let mut state = self.0.lock().unwrap();
+        if !state.closed && state.announced.len() < MAX_SCOPES {
+            state.announced.insert(track.into());
+        }
+    }
+    pub(super) fn retain_tracks(&self, current: &HashSet<String>) {
+        let mut state = self.0.lock().unwrap();
+        state.announced.retain(|track| current.contains(track));
+        state
+            .scopes
+            .retain(|scope| current.contains(&scope.source.track));
+        state
+            .learned
+            .retain(|_, learned| current.contains(&learned.source.track));
     }
     pub(super) fn close(&self) {
         let mut state = self.0.lock().unwrap();
@@ -96,11 +115,17 @@ impl Recovery {
         state.active = false;
         state.scopes.clear();
         state.learned.clear();
+        state.announced.clear();
     }
     #[cfg(test)]
     pub(super) fn observed(&self) -> (usize, usize, usize) {
         let state = self.0.lock().unwrap();
         (state.scopes.len(), state.learned.len(), state.recovered)
+    }
+    #[cfg(test)]
+    pub(super) fn is_active(&self) -> bool {
+        let state = self.0.lock().unwrap();
+        state.active && !state.closed
     }
     fn recover(&self, header: &mut Header) {
         let mut state = self.0.lock().unwrap();
@@ -542,6 +567,7 @@ mod tests {
     #[test]
     fn reoffer_restores_only_known_current_primary_ssrc() {
         let store = Recovery::default();
+        store.allow_track("track");
         let (r, l) = pair("video", "stream", "track", 3, 4);
         store.accept(&r, &l);
         learn(&store, 10, "video", 3, 4);
@@ -566,6 +592,7 @@ mod tests {
     #[test]
     fn partial_conflicting_metadata_invalidates_without_combining_sources() {
         let store = Recovery::default();
+        store.allow_track("track");
         let (r, l) = pair("video", "stream", "track", 3, 4);
         store.accept(&r, &l);
         learn(&store, 10, "video", 3, 4);
@@ -592,6 +619,7 @@ mod tests {
     #[test]
     fn new_stream_track_stop_and_close_cannot_reactivate_old_identity() {
         let store = Recovery::default();
+        store.allow_track("track");
         let (r, l) = pair("video", "stream", "track", 3, 4);
         for altered in [
             r.replace("stream track", "new-stream track"),
@@ -619,6 +647,7 @@ mod tests {
     #[test]
     fn per_mid_negotiated_ids_and_two_byte_conversion_preserve_extensions() {
         let store = Recovery::default();
+        store.allow_track("track");
         let (r, l) = pair("video", "stream", "track", 20, 21);
         store.accept(&r, &l);
         learn(&store, 10, "video", 20, 21);
@@ -642,6 +671,7 @@ mod tests {
     #[test]
     fn repaired_rid_and_unnegotiated_header_identity_never_train() {
         let store = Recovery::default();
+        store.allow_track("track");
         let (r, l) = pair("video", "stream", "track", 3, 4);
         store.accept(&r, &l);
         let mut h = packet(10);
@@ -660,6 +690,7 @@ mod tests {
     #[test]
     fn explicit_source_stop_requires_fresh_authorized_announcement_and_headers() {
         let store = Recovery::default();
+        store.allow_track("track");
         let (r, l) = pair("video", "stream", "track", 3, 4);
         store.accept(&r, &l);
         learn(&store, 10, "video", 3, 4);
@@ -680,8 +711,35 @@ mod tests {
     }
 
     #[test]
+    fn rollback_restores_only_previous_scope_and_respects_retract_and_close() {
+        let store = Recovery::default();
+        store.allow_track("track");
+        let (r, l) = pair("video", "stream", "track", 3, 4);
+        store.accept(&r, &l);
+        learn(&store, 10, "video", 3, 4);
+        store.suspend();
+        store.restore(&r.replace("stream track", "stream abandoned"), &l);
+        assert!(!store.is_active());
+        store.restore(&r, &l);
+        let mut restored = packet(10);
+        store.recover(&mut restored);
+        assert!(restored.extension);
+        store.suspend();
+        store.stop_track("track");
+        store.restore(&r, &l);
+        let mut stopped = packet(10);
+        store.recover(&mut stopped);
+        assert!(!stopped.extension);
+        assert_eq!(store.observed().0, 0);
+        store.close();
+        store.restore(&r, &l);
+        assert!(!store.is_active());
+    }
+
+    #[test]
     fn valid_metadata_cache_is_bounded_even_for_many_claimed_ssrcs() {
         let store = Recovery::default();
+        store.allow_track("track");
         let (r, l) = pair("video", "stream", "track", 3, 4);
         store.accept(&r, &l);
         for ssrc in 0..MAX_SSRC as u32 + 10 {
@@ -691,5 +749,51 @@ mod tests {
         let mut too_many = packet(MAX_SSRC as u32 + 1);
         store.recover(&mut too_many);
         assert!(!too_many.extension);
+    }
+
+    #[test]
+    fn many_retracts_and_sequential_sources_never_exhaust_current_permissions() {
+        let store = Recovery::default();
+        store.allow_track("track");
+        let (r, l) = pair("video", "stream", "track", 3, 4);
+        store.accept(&r, &l);
+        learn(&store, 10, "video", 3, 4);
+        for n in 0..256 {
+            store.stop_track(&format!("unknown-{n}"));
+        }
+        let mut unchanged = packet(10);
+        store.recover(&mut unchanged);
+        assert!(unchanged.extension);
+        store.stop_track("track");
+        for n in 0..256 {
+            let track = format!("screen-{n}");
+            let (r, l) = pair("video", "stream", &track, 3, 4);
+            store.allow_track(&track);
+            store.accept(&r, &l);
+            learn(&store, 10, "video", 3, 4);
+            let mut active = packet(10);
+            store.recover(&mut active);
+            assert!(active.extension, "source {n} still has recovery");
+            store.stop_track(&track);
+            store.accept(&r, &l);
+            let mut replay = packet(10);
+            store.recover(&mut replay);
+            assert!(!replay.extension, "old SDP cannot undo retract {n}");
+            assert!(store.0.lock().unwrap().announced.is_empty());
+        }
+        for n in 0..MAX_SCOPES {
+            store.allow_track(&format!("never-published-{n}"));
+        }
+        store.retain_tracks(&HashSet::new());
+        store.allow_track("track");
+        store.accept(&r, &l);
+        learn(&store, 10, "video", 3, 4);
+        let mut last = packet(10);
+        store.recover(&mut last);
+        assert!(
+            last.extension,
+            "SDP cleanup releases abandoned announcement slots"
+        );
+        assert_eq!(store.0.lock().unwrap().announced.len(), 1);
     }
 }
