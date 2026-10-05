@@ -25,7 +25,11 @@ export type Message = {
   created_at: string;
   edited_at: string | null;
   attachments: Attachment[];
+  /** Optional for older API snapshots; absent means no reactions. */
+  reactions?: Reaction[];
 };
+
+export type Reaction = { emoji: string; user_ids: string[] };
 
 export type MessagePage = {
   /** Oldest → newest within the page. */
