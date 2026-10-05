@@ -219,6 +219,10 @@ impl Recovery {
         state.announced.clear();
     }
     #[cfg(test)]
+    pub(super) fn is_announced(&self, track: &str) -> bool {
+        self.0.lock().unwrap().announced.contains(track)
+    }
+    #[cfg(test)]
     pub(super) fn observed(&self) -> (usize, usize, usize) {
         let state = self.0.lock().unwrap();
         (state.scopes.len(), state.learned.len(), state.recovered)

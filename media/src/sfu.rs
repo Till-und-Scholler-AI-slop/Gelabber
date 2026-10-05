@@ -52,6 +52,9 @@ mod rid_recovery;
 mod viewer_layers;
 
 #[cfg(test)]
+#[path = "sfu_generation_tests.rs"]
+mod generation_tests;
+#[cfg(test)]
 #[path = "sfu_layer_native_tests.rs"]
 mod layer_native_tests;
 
@@ -205,6 +208,8 @@ struct PublicationLife {
 
 #[derive(Clone)]
 struct Published {
+    source_grant: Option<Arc<()>>,
+    parent_grant: Option<Arc<()>>,
     id: String,
     publisher: PeerId,
     track_id: String,
@@ -236,6 +241,7 @@ fn receiver_generation_is_current(current: &Published, candidate: &Published) ->
 }
 
 struct Subscription {
+    life: Arc<PublicationLife>,
     sender: Arc<dyn RtpSender>,
     task: tokio::task::JoinHandle<()>,
     codec: RTCRtpCodec,
@@ -255,6 +261,22 @@ impl Drop for Subscription {
 enum SubscriptionState {
     Pending(Published),
     Active(Subscription),
+}
+
+impl SubscriptionState {
+    fn life(&self) -> &Arc<PublicationLife> {
+        match self {
+            Self::Pending(publication) => &publication.life,
+            Self::Active(subscription) => &subscription.life,
+        }
+    }
+}
+fn same_grant(a: Option<&Arc<()>>, b: Option<&Arc<()>>) -> bool {
+    match (a, b) {
+        (Some(a), Some(b)) => Arc::ptr_eq(a, b),
+        (None, None) => true,
+        _ => false,
+    }
 }
 
 struct PeerSdp {
@@ -321,6 +343,9 @@ struct Peer {
     video_kinds: HashMap<String, String>,
     /// Source audio is bound to one exact parent MSID on this peer.
     source_parents: HashMap<String, String>,
+    /// Active announce generations, bounded by the concurrent video_kinds map.
+    source_grants: HashMap<String, Arc<()>>,
+    source_parent_grants: HashMap<String, Arc<()>>,
     legacy_kinds: VecDeque<String>,
     current_video: HashSet<String>,
     remote_tracks: HashMap<String, Arc<dyn TrackRemote>>,
@@ -613,6 +638,8 @@ impl Sfu {
                     rid_recovery,
                     video_kinds: HashMap::new(),
                     source_parents: HashMap::new(),
+                    source_grants: HashMap::new(),
+                    source_parent_grants: HashMap::new(),
                     legacy_kinds: VecDeque::new(),
                     current_video: HashSet::new(),
                     remote_tracks: HashMap::new(),
@@ -820,6 +847,13 @@ impl Sfu {
                         .map(|(id, _)| id.clone())
                         .collect(),
                 );
+                peer.source_grants.retain(|id, _| {
+                    peer.video_kinds
+                        .get(id)
+                        .is_some_and(|kind| !kind.is_empty())
+                });
+                peer.source_parent_grants
+                    .retain(|id, _| peer.source_parents.contains_key(id));
                 // Stopped sender/transceiver reuse may leave the same remote track
                 // object alive through an inactive offer, without another on_track.
                 // Keep its bounded receiver binding; only an accepted active offer
@@ -939,7 +973,7 @@ impl Sfu {
             self.attach_existing_pubs(peer_id, channel_id).await;
         } else {
             for id in ended {
-                self.detach_subscription(&pc, &out, &gathered, &sdp, &id)
+                self.detach_subscription(&pc, &out, &gathered, &sdp, &id, None)
                     .await;
             }
         }
@@ -1090,35 +1124,75 @@ impl Sfu {
             {
                 peer.video_kinds.insert(old.track_id.clone(), String::new());
                 peer.rid_recovery.stop_track(&old.track_id);
+                peer.source_grants.remove(&old.track_id);
                 replaced = Some(old);
             }
         }
+        let parent_generation_changed = source_parent.as_ref().is_some_and(|(id, parent)| {
+            peer.source_grants.get(parent).is_none_or(|grant| {
+                peer.source_parent_grants
+                    .get(id)
+                    .is_none_or(|old| !Arc::ptr_eq(old, grant))
+            })
+        });
         if let Some((id, parent)) = source_parent {
+            let parent_grant = peer
+                .source_grants
+                .get(&parent)
+                .cloned()
+                .ok_or(SfuError::Forbidden)?;
+            peer.source_parent_grants.insert(id.clone(), parent_grant);
             peer.source_parents.insert(id, parent);
+        } else if let Some(id) = track_id {
+            // A reused source-audio MSID can become an independent video.
+            // Its previous parent must not retain rights to the new grant.
+            peer.source_parents.remove(id);
+            peer.source_parent_grants.remove(id);
         }
         if let Some(id) = track_id {
+            if parent_generation_changed || peer.video_kinds.get(id).is_none_or(|old| old != kind) {
+                peer.source_grants.remove(id);
+                peer.rid_recovery.stop_track(id);
+            }
+            peer.source_grants
+                .entry(id.into())
+                .or_insert_with(|| Arc::new(()));
             peer.video_kinds.insert(id.into(), kind.into());
             peer.rid_recovery.allow_track(id);
         } else if !peer.legacy_kinds.iter().any(|k| k == kind) {
             peer.legacy_kinds.push_back(kind.into());
         }
-        let ended = replaced.as_ref().and_then(|old| {
-            let id = format!("{}:{}", peer_id.0, old.track_id);
-            room.pubs
-                .get(&id)
-                .map(|publication| (id, publication.life.clone()))
-        });
+        // A new grant can reuse the exact MSID. End the captured old life,
+        // then let its cleanup compare grants before touching current rights.
+        let affected: HashSet<_> = track_id
+            .into_iter()
+            .chain(replaced.as_ref().map(|old| old.track_id.as_str()))
+            .collect();
+        let current_grants = peer.source_grants.clone();
+        let ended = room
+            .pubs
+            .values()
+            .filter(|publication| {
+                publication.publisher == peer_id
+                    && affected.contains(publication.track_id.as_str())
+                    && !same_grant(
+                        current_grants.get(&publication.track_id),
+                        publication.source_grant.as_ref(),
+                    )
+            })
+            .map(|publication| (publication.id.clone(), publication.life.clone()))
+            .collect::<Vec<_>>();
         drop(room);
-        if let Some(old) = replaced {
-            if let Some((_, life)) = &ended {
-                life.stop.send_replace(true);
-            }
-            if let Some(redis) = &self.redis {
-                crate::live::release(redis, old.nonce, peer_id.0).await;
-            }
-            if let Some((id, life)) = ended {
-                self.remove_publication(channel_id, &id, &life).await;
-            }
+        for (_, life) in &ended {
+            life.stop.send_replace(true);
+        }
+        if let Some(old) = replaced
+            && let Some(redis) = &self.redis
+        {
+            crate::live::release(redis, old.nonce, peer_id.0).await;
+        }
+        for (id, life) in ended {
+            self.remove_publication(channel_id, &id, &life).await;
         }
         Ok(())
     }
@@ -1162,9 +1236,11 @@ impl Sfu {
                 .collect();
             for id in &parent_ids {
                 peer.rid_recovery.stop_track(id);
+                peer.source_grants.remove(id);
             }
             if let Some(id) = track_id {
                 peer.rid_recovery.stop_track(id);
+                peer.source_grants.remove(id);
             }
             let paired_ids: HashSet<_> = peer
                 .source_parents
@@ -1189,9 +1265,13 @@ impl Sfu {
             for id in &paired_ids {
                 peer.video_kinds.insert(id.clone(), String::new());
                 peer.source_parents.remove(id);
+                peer.source_parent_grants.remove(id);
+                peer.source_grants.remove(id);
             }
             if let Some(id) = track_id {
                 peer.source_parents.remove(id);
+                peer.source_parent_grants.remove(id);
+                peer.source_grants.remove(id);
             }
             // Keep the identity until the next SDP stops sending it: packets already
             // queued by on_track must not resurrect a retracted source as a camera.
@@ -1387,8 +1467,15 @@ impl Sfu {
         for publication in publications {
             publication.life.stop.send_replace(true);
             for (pc, out, gathered, sdp) in &subscribers {
-                self.detach_subscription(pc, out, gathered, sdp, &publication.id)
-                    .await;
+                self.detach_subscription(
+                    pc,
+                    out,
+                    gathered,
+                    sdp,
+                    &publication.id,
+                    Some(&publication.life),
+                )
+                .await;
             }
             let mut done = publication.life.done.clone();
             let _ = done.wait_for(|done| *done).await;
@@ -1485,6 +1572,7 @@ impl Sfu {
             peer.live_claim = None;
             peer.withdrawn_live = Some(expected.nonce);
             peer.rid_recovery.stop_track(&expected.track_id);
+            peer.source_grants.remove(&expected.track_id);
             peer.video_kinds
                 .insert(expected.track_id.clone(), String::new());
             let paired: HashSet<_> = peer
@@ -1496,6 +1584,8 @@ impl Sfu {
             for id in &paired {
                 peer.video_kinds.insert(id.clone(), String::new());
                 peer.source_parents.remove(id);
+                peer.source_parent_grants.remove(id);
+                peer.source_grants.remove(id);
             }
             let _ = peer.out.send(ServerFrame::live_withdrawn(expected.nonce));
             let id = format!("{}:{}", peer_id.0, expected.track_id);
@@ -1711,7 +1801,12 @@ impl Sfu {
                     .get(&track_id)
                     .ok_or(SfuError::Forbidden)?;
                 let parent_kind = if tag == "sa" { "s" } else { "l" };
-                if peer.video_kinds.get(parent).map(String::as_str) != Some(parent_kind)
+                if !peer
+                    .source_parent_grants
+                    .get(&track_id)
+                    .zip(peer.source_grants.get(parent))
+                    .is_some_and(|(bound, current)| Arc::ptr_eq(bound, current))
+                    || peer.video_kinds.get(parent).map(String::as_str) != Some(parent_kind)
                     || !codec.mime_type.eq_ignore_ascii_case(MIME_TYPE_OPUS)
                 {
                     return Err(SfuError::Forbidden);
@@ -1753,10 +1848,14 @@ impl Sfu {
                 .flatten();
             peer.remote_tracks.insert(track_id.clone(), track.clone());
             let user_id = peer.user_id;
+            let source_grant = peer.source_grants.get(&track_id).cloned();
+            let parent_grant = peer.source_parent_grants.get(&track_id).cloned();
             if room.pubs.contains_key(&pub_id) {
                 return Ok(());
             }
             let publication = Published {
+                source_grant,
+                parent_grant,
                 id: pub_id.clone(),
                 publisher,
                 track_id: track_id.clone(),
@@ -1780,6 +1879,8 @@ impl Sfu {
         let read_life = life.clone();
         let read_id = pub_id.clone();
         let live_deadline = publication.live_deadline.clone();
+        let source_grant = publication.source_grant.clone();
+        let parent_grant = publication.parent_grant.clone();
         #[cfg(test)]
         let received_packets = publication.received_packets.clone();
         tokio::spawn(async move {
@@ -1831,6 +1932,11 @@ impl Sfu {
                         .is_some_and(|p| Arc::ptr_eq(&p.life, &read_life));
                 if owns_publication
                     && let Some(peer) = room.peers.get_mut(&publisher)
+                    && same_grant(peer.source_grants.get(&track_id), source_grant.as_ref())
+                    && same_grant(
+                        peer.source_parent_grants.get(&track_id),
+                        parent_grant.as_ref(),
+                    )
                     && peer
                         .remote_tracks
                         .get(&track_id)
@@ -1999,6 +2105,10 @@ impl Sfu {
                 .pubs
                 .get(&publication.id)
                 .is_some_and(|current| receiver_generation_is_current(current, publication))
+                || !same_grant(
+                    peer.source_grants.get(&publication.track_id),
+                    publication.source_grant.as_ref(),
+                )
                 || !peer
                     .remote_tracks
                     .get(&track_id)
@@ -2050,8 +2160,13 @@ impl Sfu {
             }
             let publication = room.pubs.remove(pub_id).unwrap();
             if publication.kind == RtpCodecKind::Video
-                && let Some(peer) = room.peers.get(&publication.publisher)
+                && let Some(peer) = room.peers.get_mut(&publication.publisher)
+                && same_grant(
+                    peer.source_grants.get(&publication.track_id),
+                    publication.source_grant.as_ref(),
+                )
             {
+                peer.source_grants.remove(&publication.track_id);
                 peer.rid_recovery.stop_track(&publication.track_id);
             }
             let mut ended = vec![(publication.id, publication.life)];
@@ -2064,12 +2179,20 @@ impl Sfu {
                         let paired: HashSet<_> = peer
                             .source_parents
                             .iter()
-                            .filter(|(_, parent)| *parent == &publication.track_id)
+                            .filter(|(id, parent)| {
+                                *parent == &publication.track_id
+                                    && same_grant(
+                                        peer.source_parent_grants.get(*id),
+                                        publication.source_grant.as_ref(),
+                                    )
+                            })
                             .map(|(id, _)| id.clone())
                             .collect();
                         for id in &paired {
                             peer.video_kinds.insert(id.clone(), String::new());
                             peer.source_parents.remove(id);
+                            peer.source_parent_grants.remove(id);
+                            peer.source_grants.remove(id);
                         }
                         paired
                     } else {
@@ -2079,7 +2202,16 @@ impl Sfu {
                     .pubs
                     .values()
                     .filter(|p| {
-                        p.publisher == publication.publisher && paired.contains(&p.track_id)
+                        p.publisher == publication.publisher
+                            && p.kind == RtpCodecKind::Audio
+                            && (p
+                                .parent_grant
+                                .as_ref()
+                                .zip(publication.source_grant.as_ref())
+                                .is_some_and(|(parent, expected)| Arc::ptr_eq(parent, expected))
+                                || (p.parent_grant.is_none()
+                                    && publication.source_grant.is_none()
+                                    && paired.contains(&p.track_id)))
                     })
                     .map(|p| p.id.clone())
                     .collect::<Vec<_>>();
@@ -2107,8 +2239,8 @@ impl Sfu {
             life.stop.send_replace(true);
         }
         for (pc, out, gathered, sdp) in subscribers {
-            for (id, _) in &ended {
-                self.detach_subscription(&pc, &out, &gathered, &sdp, id)
+            for (id, life) in &ended {
+                self.detach_subscription(&pc, &out, &gathered, &sdp, id, Some(life))
                     .await;
             }
         }
@@ -2125,8 +2257,16 @@ impl Sfu {
         gathered: &watch::Receiver<u64>,
         sdp: &Arc<Mutex<PeerSdp>>,
         id: &str,
+        expected: Option<&Arc<PublicationLife>>,
     ) {
         let mut gate = sdp.lock().await;
+        if expected.is_some_and(|expected| {
+            gate.subscriptions
+                .get(id)
+                .is_some_and(|state| !Arc::ptr_eq(state.life(), expected))
+        }) {
+            return;
+        }
         if let Some(SubscriptionState::Active(mut sub)) = gate.subscriptions.remove(id) {
             sub.alive.send_replace(false);
             sub.task.abort();
@@ -2193,9 +2333,29 @@ impl Sfu {
         if gate.closed
             || *gate.closing.borrow()
             || *job.publication.life.stop.borrow()
+            || *job.publication.life.done.borrow()
+            || live_expired(&job.publication.live_deadline)
             || source_watch_closed(&job.publication)
         {
             return;
+        }
+        if gate
+            .subscriptions
+            .get(&job.publication.id)
+            .is_some_and(|state| {
+                !Arc::ptr_eq(state.life(), &job.publication.life)
+                    && (*state.life().stop.borrow() || *state.life().done.borrow())
+            })
+            && let Some(SubscriptionState::Active(mut old)) =
+                gate.subscriptions.remove(&job.publication.id)
+        {
+            old.alive.send_replace(false);
+            old.task.abort();
+            let _ = (&mut old.task).await;
+            if let Err(err) = job.pc.remove_track(&old.sender).await {
+                warn!(error=%err,"remove replaced subscriber sender failed");
+            }
+            gate.dirty = true;
         }
         gate.subscriptions
             .entry(job.publication.id.clone())
@@ -2272,6 +2432,7 @@ impl Sfu {
             let source = publication.stream_id.clone();
             let (layer_intent, layer_binding) = watch::channel(viewer_layers::Intent::default());
             let (alive, alive_binding) = watch::channel(true);
+            let life = publication.life.clone();
             let task = spawn_forwarder(
                 local,
                 ssrc,
@@ -2285,6 +2446,7 @@ impl Sfu {
             gate.subscriptions.insert(
                 id.clone(),
                 SubscriptionState::Active(Subscription {
+                    life,
                     sender,
                     task,
                     codec,
@@ -4009,6 +4171,8 @@ mod tests {
         let (stop, _) = watch::channel(false);
         let (done_tx, done) = watch::channel(false);
         let candidate = Published {
+            source_grant: None,
+            parent_grant: None,
             id: "source".into(),
             publisher: PeerId(Uuid::new_v4()),
             track_id: "track".into(),

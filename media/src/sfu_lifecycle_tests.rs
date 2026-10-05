@@ -81,7 +81,7 @@ impl TrackRemote for Remote {
     }
 }
 
-fn remote(
+pub(super) fn remote(
     id: &str,
 ) -> (
     Arc<dyn TrackRemote>,
