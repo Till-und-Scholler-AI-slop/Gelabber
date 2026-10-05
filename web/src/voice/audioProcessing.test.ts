@@ -25,6 +25,53 @@ afterEach(() => {
   vi.useRealTimers();
 });
 describe("microphone processor ownership", () => {
+  it.each(["enhanced", "browser", "original"] as const)(
+    "bypasses a rejected gain context for %s without killing the native fallback",
+    async (mode) => {
+      const contexts: Array<{ closed: boolean }> = [];
+      class Context {
+        state = "suspended";
+        closed = false;
+        constructor() {
+          contexts.push(this);
+        }
+        resume = async () => {
+          throw new Error("AudioContext unavailable");
+        };
+        close = async () => {
+          this.closed = true;
+          this.state = "closed";
+        };
+      }
+      vi.stubGlobal("AudioContext", Context);
+      vi.stubGlobal("AudioWorkletNode", class {});
+      const first = stream(),
+        second = stream();
+      const getMedia = vi
+        .fn()
+        .mockResolvedValueOnce(first.raw)
+        .mockResolvedValueOnce(second.raw);
+      const result = await captureMicrophone(getMedia, {
+        ...DEFAULT_MEDIA_SETTINGS,
+        processingMode: mode,
+        inputGain: 1.5,
+      });
+      expect(getMedia).toHaveBeenCalledTimes(2);
+      expect(contexts).toHaveLength(1);
+      expect(contexts[0]?.closed).toBe(true);
+      expect(first.track.stop).toHaveBeenCalled();
+      expect(second.track.stop).not.toHaveBeenCalled();
+      expect(result.processor.stream).toBe(second.raw);
+      expect(result.processor.nativeFallback).toBe(true);
+      expect(result.processor.info.inputGain).toBe(1);
+      expect(result.processor.info.message).toContain("Mic-Gain 100 %");
+      expect(result.processor.info.actual).toBe(
+        mode === "original" ? "original" : "browser",
+      );
+      expect(result.processor.usable()).toBe(true);
+      result.processor.dispose();
+    },
+  );
   it("uses visible native fallback when AudioWorklet is unavailable", async () => {
     vi.stubGlobal("AudioWorkletNode", undefined);
     const { raw } = stream();

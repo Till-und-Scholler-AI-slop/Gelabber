@@ -1,4 +1,5 @@
 import * as callSounds from "./callSounds.ts";
+import { useAudioProcessing } from "./audioProcessing.ts";
 import { afterEach, describe, expect, it, vi } from "vitest";
 
 import type { ClientFrame, ErrFrame, SigEvent } from "../ws/protocol.ts";
@@ -2244,6 +2245,48 @@ describe("voice session", () => {
       expect(useVoice.getState().status).toBe("joined");
     } finally {
       globalThis.AudioContext = previousContext;
+    }
+  });
+
+  it("adopts native fallback without rebuilding the rejected gain context", async () => {
+    const contexts: Array<{ state: string }> = [];
+    class Context {
+      state = "suspended";
+      constructor() {
+        contexts.push(this);
+      }
+      resume = async () => {
+        throw new Error("resume rejected");
+      };
+      close = async () => {
+        this.state = "closed";
+      };
+    }
+    const previousContext = globalThis.AudioContext,
+      previousWorklet = globalThis.AudioWorkletNode;
+    (globalThis as unknown as { AudioContext: unknown }).AudioContext = Context;
+    (globalThis as unknown as { AudioWorkletNode: unknown }).AudioWorkletNode =
+      class {};
+    try {
+      const env = install();
+      useMediaSettings.getState().patch({ inputGain: 1.5 });
+      joinVoice({ serverId: "srv", channelId: "voice", channelName: "Lounge" });
+      await vi.waitFor(() => expect(env.peers[0]?.audio).toBeTruthy());
+      expect(env.getUserMediaCalls()).toBe(2);
+      expect(contexts).toHaveLength(1);
+      expect(env.peers[0]!.senders[0]!.track).toBe(
+        env.streams[1]!.getAudioTracks()[0],
+      );
+      expect(trackStopped(env.streams[0]!.getAudioTracks()[0])).toBe(true);
+      expect(trackStopped(env.streams[1]!.getAudioTracks()[0])).toBe(false);
+      expect(useAudioProcessing.getState()).toMatchObject({
+        actual: "browser",
+        inputGain: 1,
+        contextState: null,
+      });
+    } finally {
+      globalThis.AudioContext = previousContext;
+      globalThis.AudioWorkletNode = previousWorklet;
     }
   });
 

@@ -39,6 +39,8 @@ export type MicProcessor = {
   stream: MediaStream;
   info: ProcessingInfo;
   enhanced: boolean;
+  /** This capture deliberately bypasses the failed processing/gain graph. */
+  nativeFallback: boolean;
   /** Persistent faults remain visible even before the session installs callbacks. */
   usable: () => boolean;
   setGain: (gain: number) => void;
@@ -131,6 +133,7 @@ export async function createProcessor(
       stream: raw,
       info,
       enhanced: false,
+      nativeFallback: false,
       usable: () =>
         !disposed &&
         raw.getAudioTracks().some((track) => track.readyState !== "ended"),
@@ -309,6 +312,7 @@ export async function createProcessor(
       stream: destination.stream,
       info,
       enhanced: actual === "enhanced",
+      nativeFallback: false,
       usable: () =>
         !disposed &&
         !faulted &&
@@ -371,6 +375,8 @@ export async function captureMicrophone(
         "Mikrofonanfrage abgebrochen oder Audioprozessor ausgefallen",
       );
     }
+    if (forceBrowser || (unavailable && settings.processingMode === "enhanced"))
+      processor.nativeFallback = true;
     if ((forceBrowser || unavailable) && settings.processingMode === "enhanced")
       processor.info.message = forceBrowser
         ? `Audioprozessor ausgefallen; ${processor.info.message} (Mic-Gain 100 %)`
@@ -379,9 +385,10 @@ export async function captureMicrophone(
   } catch (error) {
     raw.getTracks().forEach((track) => track.stop());
     ownership.discarded(raw);
-    if (actual !== "enhanced" || !ownership.current()) throw error;
+    if (!ownership.current()) throw error;
+    const fallbackMode = actual === "original" ? "original" : "browser";
     raw = await getMedia({
-      audio: micConstraints(settings, "browser"),
+      audio: micConstraints(settings, fallbackMode),
       video: false,
     });
     ownership.acquired(raw);
@@ -390,8 +397,8 @@ export async function captureMicrophone(
         throw new Error("Mikrofonanfrage abgebrochen", { cause: error });
       const processor = await createProcessor(
         raw,
-        settings,
-        "browser",
+        { ...settings, inputGain: 1 },
+        fallbackMode,
         onFailure,
         onState,
       );
@@ -399,7 +406,8 @@ export async function captureMicrophone(
         processor.dispose();
         throw new Error("Mikrofonanfrage abgebrochen", { cause: error });
       }
-      processor.info.message = `Lokaler Rauschfilter nicht verfügbar; ${processor.info.message}`;
+      processor.nativeFallback = true;
+      processor.info.message = `${actual === "enhanced" ? "Lokaler Rauschfilter" : "Audioverarbeitung"} nicht verfügbar; ${processor.info.message} (Mic-Gain 100 %)`;
       return { raw, processor };
     } catch (fallbackError) {
       raw.getTracks().forEach((track) => track.stop());
