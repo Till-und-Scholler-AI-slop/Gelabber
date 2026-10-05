@@ -87,6 +87,7 @@ class EvidenceTests(unittest.TestCase):
                 for number in range(3):
                     browser, server = fixture()
                     browser['backend'] = engine
+                    browser['load_generator'] = {'executed_browser': {'product': 'HeadlessChrome/153.0.8010.12', 'revision': '@fixture', 'sha256': 'a' * 64}}
                     if engine == 'mediasoup':
                         for sample in browser['samples']:
                             for stream in sample['stats']:
