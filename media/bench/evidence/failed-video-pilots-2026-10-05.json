@@ -1,0 +1,931 @@
+{
+  "schema": 1,
+  "acceptance": false,
+  "scope": "Failed two-participant video pilots; no backend ranking or migration decision",
+  "open_gates": [
+    "3 qualifying rounds",
+    "16 voices plus 1080p60",
+    "production tickets/ACL/revocation/Watch/source-audio",
+    "TURN/loss/browser-family",
+    "true end-to-end latency",
+    "cohosted production interference"
+  ],
+  "pilots": [
+    {
+      "label": "candidate-specific encoder hints present",
+      "source_revision": "ff2984fbc317fa212730de9ad67b7c957e813fc0",
+      "git_dirty": false,
+      "limits": {
+        "media_cpus": 1,
+        "memory_bytes": 536870912,
+        "pids": 256,
+        "redis_cpus": 0.25,
+        "redis_memory_bytes": 67108864,
+        "cohosted_live_services": true
+      },
+      "artifact_sha256": {
+        "remote-helper.py": "e96ee9003b7ad3b781828f2cdddce47b5b3f719183b3f2c82276575f56606217",
+        "run-remote.py": "a24133ba5a2f00d530d2333c46ecffd476800d05a4df6d168848da08f7ae4bae",
+        "record.py": "ce2f366f6360ca1f17dee550c68dfa3724966348c7ef9969bc75671420a52b33",
+        "package-lock.json": "9d02e4d3313afe6d1fc466ab4fa598993660385d21a13021089fbeca04e1954c",
+        "client.bundle.js": "67225261e6ee21686bc262bf105f5d91cf9b09c970d0297e51bb4ca762dbcf78",
+        "proxy-target.mjs": "eeb6a5b035738da7b5c7320dcaa5b40fb24506f26fd631921f54666b4840e7a2",
+        "loadgen.mjs": "f7d678d18c730bc25982039f6bb9d0aaf107c3dcce48ec905abf971c0c96058d"
+      },
+      "images": {
+        "current": {
+          "id": "sha256:cb2a5576ad71f0f58fad453697914f3742fe5bf263a6072b1fe46bc107033b85",
+          "labels": {
+            "gelabber.bench.binary_sha256": "a2fd497a4836ea1aba57baa8e1216c9fae73476a75ba0e8bad4ab37875285701",
+            "org.opencontainers.image.revision": "de1ae34647b2c4f0631dfc16fd5b8ea7d970184a"
+          }
+        },
+        "mediasoup": {
+          "id": "sha256:75ef46894be12279debd99a55409efca5c67cfa0311a810eed4d726c20c68c4d",
+          "labels": {
+            "gelabber.bench.binary_sha256": "df90621e944a6ed22daec75096e2f8fb4ca092af6de3635ef955f1112dfca01b",
+            "org.opencontainers.image.revision": "de1ae34647b2c4f0631dfc16fd5b8ea7d970184a"
+          }
+        },
+        "janus": {
+          "id": "sha256:76845b0f9e03ad08a0444e4194969510b96ca72d83754e596431aa04dc773e62",
+          "labels": {
+            "org.opencontainers.image.revision": "0a24110ae55a172c4293749b763dbb66a138f9ec",
+            "org.opencontainers.image.version": "janus-v1.4.2"
+          }
+        }
+      },
+      "duration_seconds": 60,
+      "warmup_seconds": 30,
+      "cleanup_errors": null,
+      "runner_error": null,
+      "runs": [
+        {
+          "engine": "current",
+          "peers": 2,
+          "media_fixture_valid": true,
+          "problems": [],
+          "sender_bitrate_distribution": {
+            "audio": {
+              "streams": [
+                {
+                  "peer": "peer-0",
+                  "endpoint": "peer-0/0",
+                  "id": "OT01A1981498791",
+                  "kind": "audio",
+                  "bps": 128418.8843528196
+                },
+                {
+                  "peer": "peer-0",
+                  "endpoint": "peer-0/0",
+                  "id": "OT01A806238512",
+                  "kind": "audio",
+                  "bps": 128415.22538241322
+                },
+                {
+                  "peer": "peer-1",
+                  "endpoint": "peer-1/0",
+                  "id": "OT01A2606270445",
+                  "kind": "audio",
+                  "bps": 128371.724289804
+                }
+              ],
+              "min_bps": 128371.724289804,
+              "max_bps": 128418.8843528196
+            },
+            "video": {
+              "streams": [
+                {
+                  "peer": "peer-0",
+                  "endpoint": "peer-0/0",
+                  "id": "OT01V3220220538",
+                  "kind": "video",
+                  "bps": 4294571.104297596
+                }
+              ],
+              "min_bps": 4294571.104297596,
+              "max_bps": 4294571.104297596
+            }
+          },
+          "decoded_video_fps": [
+            60.000338793556146
+          ],
+          "load_generator_cpu_cores_mean": null,
+          "load_generator_peak_rss_bytes": null,
+          "video_capture_and_encoding": [
+            {
+              "endpoint": "peer-0/0",
+              "ssrc": 3220220538,
+              "type": "outbound-rtp",
+              "framesEncoded_per_second": 60.000338793556146,
+              "mean_packet_send_delay_ms": 0.6303681157394464,
+              "packet_count_delta": 28616,
+              "target_bitrate_bps_last": 3316369
+            },
+            {
+              "endpoint": "peer-0/0",
+              "ssrc": null,
+              "type": "media-source",
+              "frames_per_second": 60.000338793556146,
+              "packet_count_delta": 0,
+              "target_bitrate_bps_last": null
+            }
+          ],
+          "browser": {
+            "browser": "chromium",
+            "browser_channel": null,
+            "browser_version": "153.0.8010.12",
+            "protocol_logs": null
+          }
+        },
+        {
+          "engine": "mediasoup",
+          "peers": 2,
+          "media_fixture_valid": true,
+          "problems": [],
+          "sender_bitrate_distribution": {
+            "audio": {
+              "streams": [
+                {
+                  "peer": "peer-0",
+                  "endpoint": "peer-0/send",
+                  "id": "OT01A197871463",
+                  "kind": "audio",
+                  "bps": 128393.61143573328
+                },
+                {
+                  "peer": "peer-0",
+                  "endpoint": "peer-0/send",
+                  "id": "OT01A532567025",
+                  "kind": "audio",
+                  "bps": 128393.47594126315
+                },
+                {
+                  "peer": "peer-1",
+                  "endpoint": "peer-1/send",
+                  "id": "OT01A2277108570",
+                  "kind": "audio",
+                  "bps": 128393.47594126315
+                }
+              ],
+              "min_bps": 128393.47594126315,
+              "max_bps": 128393.61143573328
+            },
+            "video": {
+              "streams": [
+                {
+                  "peer": "peer-0",
+                  "endpoint": "peer-0/send",
+                  "id": "OT01V2596476259",
+                  "kind": "video",
+                  "bps": 4413699.1684026895
+                }
+              ],
+              "min_bps": 4413699.1684026895,
+              "max_bps": 4413699.1684026895
+            }
+          },
+          "decoded_video_fps": [
+            57.8900123638704
+          ],
+          "load_generator_cpu_cores_mean": null,
+          "load_generator_peak_rss_bytes": null,
+          "video_capture_and_encoding": [
+            {
+              "endpoint": "peer-0/send",
+              "ssrc": 2596476259,
+              "type": "outbound-rtp",
+              "framesEncoded_per_second": 58.31343258303271,
+              "mean_packet_send_delay_ms": 0.2943032430965466,
+              "packet_count_delta": 29478,
+              "target_bitrate_bps_last": 3856237
+            },
+            {
+              "endpoint": "peer-0/send",
+              "ssrc": null,
+              "type": "media-source",
+              "frames_per_second": 59.99017665091544,
+              "packet_count_delta": 0,
+              "target_bitrate_bps_last": null
+            }
+          ],
+          "browser": {
+            "browser": "chromium",
+            "browser_channel": null,
+            "browser_version": "153.0.8010.12",
+            "protocol_logs": null
+          }
+        },
+        {
+          "engine": "janus",
+          "peers": 2,
+          "media_fixture_valid": false,
+          "problems": [
+            "not every video receiver decoded at least 57 fps"
+          ],
+          "sender_bitrate_distribution": {
+            "audio": {
+              "streams": [
+                {
+                  "peer": "peer-0",
+                  "endpoint": "peer-0/0",
+                  "id": "OT01A4173667892",
+                  "kind": "audio",
+                  "bps": 128363.03909782074
+                },
+                {
+                  "peer": "peer-0",
+                  "endpoint": "peer-0/0",
+                  "id": "OT01A4247378709",
+                  "kind": "audio",
+                  "bps": 128367.64481771846
+                },
+                {
+                  "peer": "peer-1",
+                  "endpoint": "peer-1/0",
+                  "id": "OT01A2961610348",
+                  "kind": "audio",
+                  "bps": 128363.03909782074
+                }
+              ],
+              "min_bps": 128363.03909782074,
+              "max_bps": 128367.64481771846
+            },
+            "video": {
+              "streams": [
+                {
+                  "peer": "peer-0",
+                  "endpoint": "peer-0/0",
+                  "id": "OT01V4193165206",
+                  "kind": "video",
+                  "bps": 456810.8776266996
+                }
+              ],
+              "min_bps": 456810.8776266996,
+              "max_bps": 456810.8776266996
+            }
+          },
+          "decoded_video_fps": [
+            12.411737812621704
+          ],
+          "load_generator_cpu_cores_mean": null,
+          "load_generator_peak_rss_bytes": null,
+          "video_capture_and_encoding": [
+            {
+              "endpoint": "peer-0/0",
+              "ssrc": 4193165206,
+              "type": "outbound-rtp",
+              "framesEncoded_per_second": 12.344006637655147,
+              "mean_packet_send_delay_ms": 26.005790984871872,
+              "packet_count_delta": 3239,
+              "target_bitrate_bps_last": 62810
+            },
+            {
+              "endpoint": "peer-0/0",
+              "ssrc": null,
+              "type": "media-source",
+              "frames_per_second": 59.857425876695395,
+              "packet_count_delta": 0,
+              "target_bitrate_bps_last": null
+            }
+          ],
+          "browser": {
+            "browser": "chromium",
+            "browser_channel": null,
+            "browser_version": "153.0.8010.12",
+            "protocol_logs": null
+          }
+        }
+      ]
+    },
+    {
+      "label": "shared 4 Mbit encoder ceiling",
+      "source_revision": "0388fe447733e98af8c0884f664eb9fd3876ca06",
+      "git_dirty": false,
+      "limits": {
+        "media_cpus": 1,
+        "memory_bytes": 536870912,
+        "pids": 256,
+        "redis_cpus": 0.25,
+        "redis_memory_bytes": 67108864,
+        "cohosted_live_services": true
+      },
+      "artifact_sha256": {
+        "remote-helper.py": "e96ee9003b7ad3b781828f2cdddce47b5b3f719183b3f2c82276575f56606217",
+        "run-remote.py": "f9bc59f7b0d228d310201659fb605adfaa6c53432daa30851833fe27bc23db55",
+        "record.py": "ce2f366f6360ca1f17dee550c68dfa3724966348c7ef9969bc75671420a52b33",
+        "package-lock.json": "9d02e4d3313afe6d1fc466ab4fa598993660385d21a13021089fbeca04e1954c",
+        "client.bundle.js": "47bf4f3fdabd27ad7447de98f4ebc03f66798eb324ce6bb90ea736749716c280",
+        "proxy-target.mjs": "eeb6a5b035738da7b5c7320dcaa5b40fb24506f26fd631921f54666b4840e7a2",
+        "loadgen.mjs": "56d380cbdb2036d40ad3623ee5be93664e50a06820b4b151dda02cbc6a84beba"
+      },
+      "images": {
+        "current": {
+          "id": "sha256:cb2a5576ad71f0f58fad453697914f3742fe5bf263a6072b1fe46bc107033b85",
+          "labels": {
+            "gelabber.bench.binary_sha256": "a2fd497a4836ea1aba57baa8e1216c9fae73476a75ba0e8bad4ab37875285701",
+            "org.opencontainers.image.revision": "de1ae34647b2c4f0631dfc16fd5b8ea7d970184a"
+          }
+        },
+        "mediasoup": {
+          "id": "sha256:75ef46894be12279debd99a55409efca5c67cfa0311a810eed4d726c20c68c4d",
+          "labels": {
+            "gelabber.bench.binary_sha256": "df90621e944a6ed22daec75096e2f8fb4ca092af6de3635ef955f1112dfca01b",
+            "org.opencontainers.image.revision": "de1ae34647b2c4f0631dfc16fd5b8ea7d970184a"
+          }
+        },
+        "janus": {
+          "id": "sha256:76845b0f9e03ad08a0444e4194969510b96ca72d83754e596431aa04dc773e62",
+          "labels": {
+            "org.opencontainers.image.revision": "0a24110ae55a172c4293749b763dbb66a138f9ec",
+            "org.opencontainers.image.version": "janus-v1.4.2"
+          }
+        }
+      },
+      "duration_seconds": 60,
+      "warmup_seconds": 30,
+      "cleanup_errors": null,
+      "runner_error": null,
+      "runs": [
+        {
+          "engine": "current",
+          "peers": 2,
+          "media_fixture_valid": false,
+          "problems": [
+            "not every video receiver decoded at least 57 fps"
+          ],
+          "sender_bitrate_distribution": {
+            "audio": {
+              "streams": [
+                {
+                  "peer": "peer-0",
+                  "endpoint": "peer-0/0",
+                  "id": "OT01A1569096574",
+                  "kind": "audio",
+                  "bps": 128419.57615490166
+                },
+                {
+                  "peer": "peer-0",
+                  "endpoint": "peer-0/0",
+                  "id": "OT01A2541175393",
+                  "kind": "audio",
+                  "bps": 128424.04838135895
+                },
+                {
+                  "peer": "peer-1",
+                  "endpoint": "peer-1/0",
+                  "id": "OT01A2957299865",
+                  "kind": "audio",
+                  "bps": 128419.57615490166
+                }
+              ],
+              "min_bps": 128419.57615490166,
+              "max_bps": 128424.04838135895
+            },
+            "video": {
+              "streams": [
+                {
+                  "peer": "peer-0",
+                  "endpoint": "peer-0/0",
+                  "id": "OT01V1344385026",
+                  "kind": "video",
+                  "bps": 1151042.6724941132
+                }
+              ],
+              "min_bps": 1151042.6724941132,
+              "max_bps": 1151042.6724941132
+            }
+          },
+          "decoded_video_fps": [
+            30.746556893835443
+          ],
+          "load_generator_cpu_cores_mean": 0.7691961314444561,
+          "load_generator_peak_rss_bytes": 929939456,
+          "video_capture_and_encoding": [
+            {
+              "endpoint": "peer-0/0",
+              "ssrc": 1344385026,
+              "type": "outbound-rtp",
+              "framesEncoded_per_second": 30.644915383442598,
+              "mean_packet_send_delay_ms": 7.616046471387963,
+              "packet_count_delta": 8091,
+              "target_bitrate_bps_last": 37930
+            },
+            {
+              "endpoint": "peer-0/0",
+              "ssrc": null,
+              "type": "media-source",
+              "frames_per_second": 60.002371635242504,
+              "packet_count_delta": 0,
+              "target_bitrate_bps_last": null
+            }
+          ],
+          "browser": {
+            "browser": "chromium",
+            "browser_channel": null,
+            "browser_version": "153.0.8010.12",
+            "protocol_logs": null
+          },
+          "incoming_rtcp": {
+            "parser_errors": [],
+            "remb_packets": 0,
+            "twcc_packets": 0,
+            "twcc_reported_missing": 0,
+            "twcc_reported_total": 0,
+            "event_logs_sha256": []
+          }
+        },
+        {
+          "engine": "mediasoup",
+          "peers": 2,
+          "media_fixture_valid": false,
+          "problems": [
+            "not every video receiver decoded at least 57 fps"
+          ],
+          "sender_bitrate_distribution": {
+            "audio": {
+              "streams": [
+                {
+                  "peer": "peer-0",
+                  "endpoint": "peer-0/send",
+                  "id": "OT01A3947606387",
+                  "kind": "audio",
+                  "bps": 128359.21409214093
+                },
+                {
+                  "peer": "peer-0",
+                  "endpoint": "peer-0/send",
+                  "id": "OT01A444867153",
+                  "kind": "audio",
+                  "bps": 128356.50406504066
+                },
+                {
+                  "peer": "peer-1",
+                  "endpoint": "peer-1/send",
+                  "id": "OT01A1431417922",
+                  "kind": "audio",
+                  "bps": 128400.0
+                }
+              ],
+              "min_bps": 128356.50406504066,
+              "max_bps": 128400.0
+            },
+            "video": {
+              "streams": [
+                {
+                  "peer": "peer-0",
+                  "endpoint": "peer-0/send",
+                  "id": "OT01V4245149679",
+                  "kind": "video",
+                  "bps": 162909.48509485094
+                }
+              ],
+              "min_bps": 162909.48509485094,
+              "max_bps": 162909.48509485094
+            }
+          },
+          "decoded_video_fps": [
+            4.217479674796748
+          ],
+          "load_generator_cpu_cores_mean": 0.2988996712892942,
+          "load_generator_peak_rss_bytes": 954089472,
+          "video_capture_and_encoding": [
+            {
+              "endpoint": "peer-0/send",
+              "ssrc": 4245149679,
+              "type": "outbound-rtp",
+              "framesEncoded_per_second": 4.234417344173441,
+              "mean_packet_send_delay_ms": 15.787782832618023,
+              "packet_count_delta": 1165,
+              "target_bitrate_bps_last": 141096
+            },
+            {
+              "endpoint": "peer-0/send",
+              "ssrc": null,
+              "type": "media-source",
+              "frames_per_second": 59.993224932249326,
+              "packet_count_delta": 0,
+              "target_bitrate_bps_last": null
+            }
+          ],
+          "browser": {
+            "browser": "chromium",
+            "browser_channel": null,
+            "browser_version": "153.0.8010.12",
+            "protocol_logs": null
+          }
+        },
+        {
+          "engine": "janus",
+          "peers": 2,
+          "media_fixture_valid": false,
+          "problems": [
+            "not every video receiver decoded at least 57 fps"
+          ],
+          "sender_bitrate_distribution": {
+            "audio": {
+              "streams": [
+                {
+                  "peer": "peer-0",
+                  "endpoint": "peer-0/0",
+                  "id": "OT01A2276770216",
+                  "kind": "audio",
+                  "bps": 128403.95006521334
+                },
+                {
+                  "peer": "peer-0",
+                  "endpoint": "peer-0/0",
+                  "id": "OT01A3969315795",
+                  "kind": "audio",
+                  "bps": 128406.52472178465
+                },
+                {
+                  "peer": "peer-1",
+                  "endpoint": "peer-1/0",
+                  "id": "OT01A134090544",
+                  "kind": "audio",
+                  "bps": 128406.52472178465
+                }
+              ],
+              "min_bps": 128403.95006521334,
+              "max_bps": 128406.52472178465
+            },
+            "video": {
+              "streams": [
+                {
+                  "peer": "peer-0",
+                  "endpoint": "peer-0/0",
+                  "id": "OT01V2541159212",
+                  "kind": "video",
+                  "bps": 119296.98324779376
+                }
+              ],
+              "min_bps": 119296.98324779376,
+              "max_bps": 119296.98324779376
+            }
+          },
+          "decoded_video_fps": [
+            3.3538289547233093
+          ],
+          "load_generator_cpu_cores_mean": 0.2873527396084212,
+          "load_generator_peak_rss_bytes": 944721920,
+          "video_capture_and_encoding": [
+            {
+              "endpoint": "peer-0/0",
+              "ssrc": 2541159212,
+              "type": "outbound-rtp",
+              "framesEncoded_per_second": 3.3538289547233093,
+              "mean_packet_send_delay_ms": 25.104666666666663,
+              "packet_count_delta": 843,
+              "target_bitrate_bps_last": 102690
+            },
+            {
+              "endpoint": "peer-0/0",
+              "ssrc": null,
+              "type": "media-source",
+              "frames_per_second": 59.99627352338364,
+              "packet_count_delta": 0,
+              "target_bitrate_bps_last": null
+            }
+          ],
+          "browser": {
+            "browser": "chromium",
+            "browser_channel": null,
+            "browser_version": "153.0.8010.12",
+            "protocol_logs": null
+          }
+        }
+      ]
+    },
+    {
+      "label": "shared 4 Mbit protocol diagnosis; full Chromium",
+      "source_revision": "82bdc5263bfef25e69218ec75ac095e97453da17",
+      "git_dirty": false,
+      "limits": {
+        "media_cpus": 1,
+        "memory_bytes": 536870912,
+        "pids": 256,
+        "redis_cpus": 0.25,
+        "redis_memory_bytes": 67108864,
+        "cohosted_live_services": true
+      },
+      "artifact_sha256": {
+        "remote-helper.py": "e96ee9003b7ad3b781828f2cdddce47b5b3f719183b3f2c82276575f56606217",
+        "run-remote.py": "691c00788b836d475e2c004d7797b23f6032102a6204e03195a082401a7ed34c",
+        "record.py": "ce2f366f6360ca1f17dee550c68dfa3724966348c7ef9969bc75671420a52b33",
+        "package-lock.json": "9d02e4d3313afe6d1fc466ab4fa598993660385d21a13021089fbeca04e1954c",
+        "client.bundle.js": "6ce15cc096e152540edaea5c671360ee1329b7debfe3bbb55c43cd4246abc724",
+        "proxy-target.mjs": "eeb6a5b035738da7b5c7320dcaa5b40fb24506f26fd631921f54666b4840e7a2",
+        "loadgen.mjs": "1f4d7581c1bc77b087f72da42e767972e697391623a3105d88de9705cc907bcc"
+      },
+      "images": {
+        "current": {
+          "id": "sha256:cb2a5576ad71f0f58fad453697914f3742fe5bf263a6072b1fe46bc107033b85",
+          "labels": {
+            "gelabber.bench.binary_sha256": "a2fd497a4836ea1aba57baa8e1216c9fae73476a75ba0e8bad4ab37875285701",
+            "org.opencontainers.image.revision": "de1ae34647b2c4f0631dfc16fd5b8ea7d970184a"
+          }
+        },
+        "mediasoup": {
+          "id": "sha256:75ef46894be12279debd99a55409efca5c67cfa0311a810eed4d726c20c68c4d",
+          "labels": {
+            "gelabber.bench.binary_sha256": "df90621e944a6ed22daec75096e2f8fb4ca092af6de3635ef955f1112dfca01b",
+            "org.opencontainers.image.revision": "de1ae34647b2c4f0631dfc16fd5b8ea7d970184a"
+          }
+        },
+        "janus": {
+          "id": "sha256:76845b0f9e03ad08a0444e4194969510b96ca72d83754e596431aa04dc773e62",
+          "labels": {
+            "org.opencontainers.image.revision": "0a24110ae55a172c4293749b763dbb66a138f9ec",
+            "org.opencontainers.image.version": "janus-v1.4.2"
+          }
+        }
+      },
+      "duration_seconds": 60,
+      "warmup_seconds": 30,
+      "cleanup_errors": null,
+      "runner_error": null,
+      "runs": [
+        {
+          "engine": "current",
+          "peers": 2,
+          "media_fixture_valid": false,
+          "problems": [
+            "not every video receiver decoded at least 57 fps"
+          ],
+          "sender_bitrate_distribution": {
+            "audio": {
+              "streams": [
+                {
+                  "peer": "peer-0",
+                  "endpoint": "peer-0/0",
+                  "id": "OT01A1277164489",
+                  "kind": "audio",
+                  "bps": 128412.10848169668
+                },
+                {
+                  "peer": "peer-0",
+                  "endpoint": "peer-0/0",
+                  "id": "OT01A2888262591",
+                  "kind": "audio",
+                  "bps": 128415.22538241322
+                },
+                {
+                  "peer": "peer-1",
+                  "endpoint": "peer-1/0",
+                  "id": "OT01A1549401908",
+                  "kind": "audio",
+                  "bps": 128371.724289804
+                }
+              ],
+              "min_bps": 128371.724289804,
+              "max_bps": 128415.22538241322
+            },
+            "video": {
+              "streams": [
+                {
+                  "peer": "peer-0",
+                  "endpoint": "peer-0/0",
+                  "id": "OT01V2734612895",
+                  "kind": "video",
+                  "bps": 1184523.0972506902
+                }
+              ],
+              "min_bps": 1184523.0972506902,
+              "max_bps": 1184523.0972506902
+            }
+          },
+          "decoded_video_fps": [
+            31.55861975505226
+          ],
+          "load_generator_cpu_cores_mean": 0.7795735561583248,
+          "load_generator_peak_rss_bytes": 1502392320,
+          "video_capture_and_encoding": [
+            {
+              "endpoint": "peer-0/0",
+              "ssrc": 2734612895,
+              "type": "outbound-rtp",
+              "framesEncoded_per_second": 31.45698168820829,
+              "mean_packet_send_delay_ms": 5.194416198781508,
+              "packet_count_delta": 8371,
+              "target_bitrate_bps_last": 162380
+            },
+            {
+              "endpoint": "peer-0/0",
+              "ssrc": null,
+              "type": "media-source",
+              "frames_per_second": 59.88176104890485,
+              "packet_count_delta": 0,
+              "target_bitrate_bps_last": null
+            }
+          ],
+          "browser": {
+            "browser": "chromium",
+            "browser_channel": "chromium",
+            "browser_version": "153.0.8010.12",
+            "protocol_logs": true
+          },
+          "incoming_rtcp": {
+            "parser_errors": [],
+            "remb_packets": 0,
+            "twcc_packets": 1792,
+            "twcc_reported_missing": 0,
+            "twcc_reported_total": 35172,
+            "event_logs_sha256": [
+              "32089417f965f141684bde18057c4b5fc3ad966b0c4623e8199f9b3a7ea547ac",
+              "bef234bff9727a0bae7d5cd255c1b2d12bb7552df227a5d290c8b6d8266444ba"
+            ]
+          }
+        },
+        {
+          "engine": "mediasoup",
+          "peers": 2,
+          "media_fixture_valid": false,
+          "problems": [
+            "not every video receiver decoded at least 57 fps"
+          ],
+          "sender_bitrate_distribution": {
+            "audio": {
+              "streams": [
+                {
+                  "peer": "peer-0",
+                  "endpoint": "peer-0/send",
+                  "id": "OT01A2622181247",
+                  "kind": "audio",
+                  "bps": 128404.47154471544
+                },
+                {
+                  "peer": "peer-0",
+                  "endpoint": "peer-0/send",
+                  "id": "OT01A2975146229",
+                  "kind": "audio",
+                  "bps": 128400.0
+                },
+                {
+                  "peer": "peer-1",
+                  "endpoint": "peer-1/send",
+                  "id": "OT01A2256713112",
+                  "kind": "audio",
+                  "bps": 128400.0
+                }
+              ],
+              "min_bps": 128400.0,
+              "max_bps": 128404.47154471544
+            },
+            "video": {
+              "streams": [
+                {
+                  "peer": "peer-0",
+                  "endpoint": "peer-0/send",
+                  "id": "OT01V1304174192",
+                  "kind": "video",
+                  "bps": 103311.38211382114
+                }
+              ],
+              "min_bps": 103311.38211382114,
+              "max_bps": 103311.38211382114
+            }
+          },
+          "decoded_video_fps": [
+            3.218157181571816
+          ],
+          "load_generator_cpu_cores_mean": 0.28100522919980975,
+          "load_generator_peak_rss_bytes": 1516548096,
+          "video_capture_and_encoding": [
+            {
+              "endpoint": "peer-0/send",
+              "ssrc": 1304174192,
+              "type": "outbound-rtp",
+              "framesEncoded_per_second": 3.252032520325203,
+              "mean_packet_send_delay_ms": 23.069334221038613,
+              "packet_count_delta": 751,
+              "target_bitrate_bps_last": 75785
+            },
+            {
+              "endpoint": "peer-0/send",
+              "ssrc": null,
+              "type": "media-source",
+              "frames_per_second": 60.010162601626014,
+              "packet_count_delta": 0,
+              "target_bitrate_bps_last": null
+            }
+          ],
+          "browser": {
+            "browser": "chromium",
+            "browser_channel": "chromium",
+            "browser_version": "153.0.8010.12",
+            "protocol_logs": true
+          },
+          "incoming_rtcp": {
+            "parser_errors": [],
+            "remb_packets": 0,
+            "twcc_packets": 1829,
+            "twcc_reported_missing": 4,
+            "twcc_reported_total": 15038,
+            "event_logs_sha256": [
+              "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+              "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+              "56a349a6bc6ec91dbe096c2666771ccbb96e8fdad8c1436e218c52775bc84649",
+              "ae49379759f8ac851f4a87fcdaedc65dea52a97db1398d9936a527ab176f18f4",
+              "8a53dffcc4a08c1e95c7224216ac6b60286e3d526e6fee445262dfdd408a73fe",
+              "de77ac46518ed6b7d0dfc69c1b225a29ace8c64bad2adcdb3faece053bf87f44"
+            ]
+          }
+        },
+        {
+          "engine": "janus",
+          "peers": 2,
+          "media_fixture_valid": false,
+          "problems": [
+            "not every video receiver decoded at least 57 fps"
+          ],
+          "sender_bitrate_distribution": {
+            "audio": {
+              "streams": [
+                {
+                  "peer": "peer-0",
+                  "endpoint": "peer-0/0",
+                  "id": "OT01A3246329189",
+                  "kind": "audio",
+                  "bps": 128391.28814822342
+                },
+                {
+                  "peer": "peer-0",
+                  "endpoint": "peer-0/0",
+                  "id": "OT01A3459662279",
+                  "kind": "audio",
+                  "bps": 128386.95254547302
+                },
+                {
+                  "peer": "peer-1",
+                  "endpoint": "peer-1/0",
+                  "id": "OT01A1954088095",
+                  "kind": "audio",
+                  "bps": 128386.95254547302
+                }
+              ],
+              "min_bps": 128386.95254547302,
+              "max_bps": 128391.28814822342
+            },
+            "video": {
+              "streams": [
+                {
+                  "peer": "peer-0",
+                  "endpoint": "peer-0/0",
+                  "id": "OT01V2992122167",
+                  "kind": "video",
+                  "bps": 1670344.6126748638
+                }
+              ],
+              "min_bps": 1670344.6126748638,
+              "max_bps": 1670344.6126748638
+            }
+          },
+          "decoded_video_fps": [
+            33.70253700504691
+          ],
+          "load_generator_cpu_cores_mean": 0.9589161200584901,
+          "load_generator_peak_rss_bytes": 1551912960,
+          "video_capture_and_encoding": [
+            {
+              "endpoint": "peer-0/0",
+              "ssrc": 2992122167,
+              "type": "outbound-rtp",
+              "framesEncoded_per_second": 33.77028079802188,
+              "mean_packet_send_delay_ms": 11.823835259617043,
+              "packet_count_delta": 11594,
+              "target_bitrate_bps_last": 4000000
+            },
+            {
+              "endpoint": "peer-0/0",
+              "ssrc": null,
+              "type": "media-source",
+              "frames_per_second": 50.72316499000779,
+              "packet_count_delta": 0,
+              "target_bitrate_bps_last": null
+            }
+          ],
+          "browser": {
+            "browser": "chromium",
+            "browser_channel": "chromium",
+            "browser_version": "153.0.8010.12",
+            "protocol_logs": true
+          },
+          "incoming_rtcp": {
+            "parser_errors": [],
+            "remb_packets": 0,
+            "twcc_packets": 257,
+            "twcc_reported_missing": 1,
+            "twcc_reported_total": 13878,
+            "event_logs_sha256": [
+              "f12cea2e6c0bc5581b6dbc38d527604b999d147094abb781a9c45978bdb6ac4b",
+              "fcfaec2df2c6bcd9f88150c5d0c22bc7700ac3a46a0ed3183867d7bc416d47d5",
+              "e07d4d0a75ad805c12f5e07daa786148d23f41655c6718ab281e256a581d20db",
+              "465249ba1e046d166cd06ce2844abdc4f60f06c67464ecc6c21c2689b6147159"
+            ]
+          }
+        }
+      ]
+    }
+  ]
+}

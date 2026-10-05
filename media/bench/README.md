@@ -276,6 +276,14 @@ of compressed updates not decoded; this is a sparse diagnostic timeline.
 Raw logs are retained and parser errors are explicit. This is protocol failure
 evidence, never an acceptance result.
 
+The checked-in [failed video pilot evidence](evidence/failed-video-pilots-2026-10-05.json)
+records long two-peer WAN pilots that failed actual rate/FPS qualification,
+including a shared 4 Mbit ceiling and the diagnostic repeat. A lower CPU reading
+from these runs cannot rank engines. The diagnostic repeat had matching RR
+source targets, no REMB messages and little or no TWCC-reported loss; that does
+not establish the cause of the bandwidth reduction. Loopback controls and a
+separate voice-only matrix are needed before interpreting resource differences.
+
 Primary format references: [Chromium's local event-log switch](https://chromium.googlesource.com/chromium/src/+/refs/heads/main/content/public/common/content_switches.cc),
 [WebRTC v2 schema](https://webrtc.googlesource.com/src/+/refs/heads/main/logging/rtc_event_log/rtc_event_log2.proto),
 [WebRTC blob encoding](https://webrtc.googlesource.com/src/+/refs/heads/main/logging/rtc_event_log/encoder/blob_encoding.cc),
