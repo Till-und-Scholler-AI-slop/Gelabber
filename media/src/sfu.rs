@@ -2910,6 +2910,8 @@ fn source_watch_closed(publication: &Published) -> bool {
         .is_some_and(|intent| !*intent.borrow())
 }
 
+// Each receiver carries a distinct subscription/source/peer cancellation fence.
+#[allow(clippy::too_many_arguments)]
 fn spawn_forwarder(
     local: Arc<TrackLocalStaticRTP>,
     ssrc: u32,
