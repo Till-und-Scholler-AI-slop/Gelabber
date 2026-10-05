@@ -51,7 +51,7 @@ import type {
   MessageAuthor,
   MessagePage,
 } from "./types.ts";
-import { asAttachmentList } from "./types.ts";
+import { asAttachmentList, asReactionList } from "./types.ts";
 
 export const messageKeys = {
   channel: (userId: string, generation: number, channelId: string) =>
@@ -684,6 +684,9 @@ export function applyChannelEvent(
       ...event.d,
       ...(event.r !== undefined ? { revision: event.r } : {}),
       attachments: asAttachmentList(event.d.attachments),
+      ...(event.d.reactions === undefined
+        ? {}
+        : { reactions: asReactionList(event.d.reactions) }),
     };
     if (event.t === "c")
       applyMessageCreated(client, userId, generation, channelId, message);

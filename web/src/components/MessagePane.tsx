@@ -52,6 +52,7 @@ import {
 import type { Attachment, Message } from "../messages/types.ts";
 import { asAttachmentList } from "../messages/types.ts";
 import { Avatar } from "./Avatar.tsx";
+import { ReactionBar } from "./ReactionBar.tsx";
 import { PaperclipIcon, PencilIcon, TrashIcon } from "./Icons.tsx";
 
 export function MessagePane({
@@ -157,6 +158,7 @@ export function MessagePane({
           latestRequest={latestRequest}
           meId={user?.id}
           canModerate={canModerate}
+          canSend={canSend}
           hasOlder={Boolean(hasNextPage)}
           loadingOlder={isFetchingNextPage}
           onLoadOlder={onLoadOlder}
@@ -209,6 +211,7 @@ function MessageList({
   items,
   meId,
   canModerate,
+  canSend,
   hasOlder,
   loadingOlder,
   onLoadOlder,
@@ -222,6 +225,7 @@ function MessageList({
   items: Message[];
   meId: string | undefined;
   canModerate: boolean;
+  canSend: boolean;
   hasOlder: boolean;
   loadingOlder: boolean;
   onLoadOlder: () => void;
@@ -413,6 +417,7 @@ function MessageList({
                 message={message}
                 continued={continued}
                 mine={message.author.id === meId}
+                canSend={canSend}
                 canDelete={message.author.id === meId || canModerate}
                 onEdit={(content) => edit.mutate({ id: message.id, content })}
                 onDelete={() => {
@@ -437,6 +442,7 @@ function MessageRow({
   message,
   continued,
   mine,
+  canSend,
   canDelete,
   onEdit,
   onDelete,
@@ -444,6 +450,7 @@ function MessageRow({
   message: Message;
   continued: boolean;
   mine: boolean;
+  canSend: boolean;
   canDelete: boolean;
   onEdit: (content: string) => void;
   onDelete: () => void;
@@ -470,7 +477,7 @@ function MessageRow({
       : validateContent(draft)
     : null;
   const showDelete = canDelete && !pending && !editing;
-  const showEdit = mine && !pending && !editing;
+  const showEdit = mine && canSend && !pending && !editing;
 
   const actions =
     showEdit || showDelete ? (
@@ -509,6 +516,7 @@ function MessageRow({
             </p>
           ) : null}
           <AttachmentList attachments={message.attachments ?? []} />
+          <ReactionBar message={message} canSend={canSend} />
         </div>
         {actions}
       </div>
@@ -604,6 +612,7 @@ function MessageRow({
         {!editing ? (
           <AttachmentList attachments={message.attachments ?? []} />
         ) : null}
+        {!editing && <ReactionBar message={message} canSend={canSend} />}
       </div>
       {actions}
     </div>

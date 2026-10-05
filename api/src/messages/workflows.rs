@@ -165,7 +165,7 @@ async fn search(
         None
     };
     let rows: Vec<MessageRow> = sqlx::query_as("SELECT m.id,m.channel_id,m.author_id,u.name AS author_name,
-        u.avatar_url AS author_avatar_url,m.content,m.created_at,m.edited_at,m.revision,m.created_order
+        u.avatar_url AS author_avatar_url,m.content,m.created_at,m.edited_at,m.revision,m.created_order, COALESCE((SELECT jsonb_agg(jsonb_build_object('emoji', r.emoji, 'user_ids', r.user_ids) ORDER BY r.emoji) FROM (SELECT emoji,jsonb_agg(user_id ORDER BY user_id) AS user_ids FROM message_reactions WHERE message_id=m.id GROUP BY emoji) r),'[]'::jsonb) AS reactions
         FROM messages m JOIN users u ON u.id=m.author_id
         WHERE m.channel_id=$1 AND to_tsvector('simple',m.content) @@ websearch_to_tsquery('simple',$2)
           AND ($3::timestamptz IS NULL OR (m.created_at,m.id)<($3,$4))

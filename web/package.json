@@ -18,7 +18,8 @@
     "test:e2e-app": "node scripts/e2e/run.mjs",
     "test:e2e-harness": "node scripts/e2e/harness.checks.mjs",
     "test:call-sounds-smoke": "node scripts/smoke-call-sounds.mjs",
-    "test:e2e-chat-workflows": "node scripts/e2e/chat-workflows.mjs"
+    "test:e2e-chat-workflows": "node scripts/e2e/chat-workflows.mjs",
+    "test:reactions-smoke": "node scripts/smoke-reactions.mjs"
   },
   "dependencies": {
     "@tanstack/react-query": "5.102.8",
