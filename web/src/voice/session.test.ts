@@ -543,6 +543,7 @@ describe("voice session", () => {
     resetMediaSettingsForTests();
     trackSeq = 0;
     vi.restoreAllMocks();
+    vi.useRealTimers();
   });
 
   it("sounds only for new room arrivals and known departures, not snapshots or reconnect replays", () => {
@@ -2323,19 +2324,17 @@ describe("voice session", () => {
       await vi.waitFor(() => expect(env.peers[0]?.audio).toBeTruthy());
       const sender = env.peers[0]!.senders[0]!,
         replace = sender.replaceTrack!.bind(sender),
-        gate = deferred(),
-        started = deferred();
+        gate = deferred();
       const replacements: Array<MediaStreamTrack | null> = [];
       sender.replaceTrack = async (next) => {
         replacements.push(next);
         if (replacements.length === 1) {
-          started.resolve();
           await gate.promise;
         }
         await replace(next);
       };
       useMediaSettings.getState().patch({ audioInputId: "healthy-next-mic" });
-      await started.promise;
+      await vi.waitFor(() => expect(replacements).toHaveLength(1));
       contexts[0]!.state = "closed";
       contexts[0]!.onstatechange?.();
       gate.resolve();
