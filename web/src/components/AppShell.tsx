@@ -5,6 +5,7 @@ import {
   useRouterState,
 } from "@tanstack/react-router";
 
+import { useReadBridge } from "../messages/readState.ts";
 import { logout, useSession } from "../auth/session.ts";
 import { leaveVoice, stopWatching, useVoice } from "../voice/session.ts";
 import {
@@ -22,6 +23,7 @@ import { VoiceSessionControls } from "./VoiceSessionControls.tsx";
 
 function AuthenticatedRealtime() {
   useAuthenticatedSubscriptions();
+  useReadBridge();
   return null;
 }
 

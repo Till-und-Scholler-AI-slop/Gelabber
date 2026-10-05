@@ -19,6 +19,8 @@ export type Message = {
   id: string;
   /** Durable database revision; optional only for the older API. */
   revision?: number;
+  /** Immutable server INSERT order; optimistic/legacy messages have none. */
+  created_order?: number;
   channel_id: string;
   author: MessageAuthor;
   content: string;

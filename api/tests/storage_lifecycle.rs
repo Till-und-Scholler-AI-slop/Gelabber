@@ -694,8 +694,19 @@ async fn migration_backfills_existing_bytes_and_rollback_preserves_metadata_and_
             .unwrap(),
         1
     );
-    // Older readers can still read retained metadata; never drop the new ledger
-    // or trigger for binary rollback while cleanup remains pending.
+    // The old reader's selected columns still work on the upgraded storage schema.
+    sqlx::query("SELECT id,channel_id,author_id,content,created_at,edited_at FROM messages WHERE channel_id=$1")
+        .bind(channel).fetch_all(&pool).await.unwrap();
+    // The current binary also needs the current schema (including later chat DTO fields).
+    for later in sqlx::migrate!("./migrations")
+        .iter()
+        .filter(|m| m.version > 8)
+    {
+        sqlx::raw_sql(later.sql.clone())
+            .execute(&pool)
+            .await
+            .unwrap();
+    }
     assert_eq!(
         client
             .send(

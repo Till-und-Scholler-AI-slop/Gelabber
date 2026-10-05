@@ -1,6 +1,7 @@
 // Tear down everything that belongs to one signed-in user. Device and
 // interface preferences stay; account themes switch with the identity.
 
+import { bindDraftAccount } from "../messages/drafts.ts";
 import { bindThemeAccount } from "../theme/account.ts";
 import { clearToasts } from "../components/toasts.ts";
 import { clearMessageToasts } from "../messages/toasts.ts";
@@ -21,6 +22,7 @@ import { nextScopeGeneration } from "./scope.ts";
 export function releaseUserScope(nextUserId: string | null): void {
   const generation = nextScopeGeneration();
   bindThemeAccount(nextUserId);
+  bindDraftAccount(nextUserId);
   setQueryScope(nextUserId, generation);
   // Stop local media first so a still-open socket can send leave, then drop
   // topics and resume cursors so the next account cannot resume A's seq.

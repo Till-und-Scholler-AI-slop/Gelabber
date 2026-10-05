@@ -1,3 +1,4 @@
+import { UnreadBadge } from "../messages/UnreadBadge.tsx";
 import { Link } from "@tanstack/react-router";
 import { useVirtualizer } from "@tanstack/react-virtual";
 import { useRef } from "react";
@@ -95,6 +96,7 @@ function DmRow({ dm, active }: { dm: DirectMessage; active: boolean }) {
         status={status}
       />
       <span>{dm.peer.name}</span>
+      <UnreadBadge channelId={dm.id} />
     </Link>
   );
 }
