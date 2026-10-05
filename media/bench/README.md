@@ -235,3 +235,10 @@ revision, and evidence records Git's dirty status. Private Redis's exact image
 ID and separate idle/load/post-leave RAM/CPU samples are retained in addition
 to media-only measurements. Cohosted live service contention remains a blocker;
 the runner does not interrogate or change those services.
+
+Separate-host runs additionally retain the local Node/browser process-tree
+RSS/CPU and generator hardware. This can reveal generator saturation at 16/32
+participants; CPU totals are reported only while its live-process counters
+remain monotonic. Negotiated DTLS/SRTP ciphers are shown: engines keep their
+native security defaults, so CPU comparisons describe complete default backend
+paths rather than an identical-cipher microbenchmark.

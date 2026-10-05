@@ -16,7 +16,7 @@ import threading
 import time
 import urllib.request
 import uuid
-from record import terminate_group
+from record import hardware, process_sample, process_tree, terminate_group
 
 ROOT = Path(__file__).resolve().parent
 REMOTE = r'''
@@ -132,6 +132,7 @@ def main():
     (snapshot / 'remote-helper.py').write_text(REMOTE)
     (snapshot / 'node_modules').symlink_to(ROOT / 'node_modules', target_is_directory=True)
     report['artifact_sha256'] = {p.name: hashlib.sha256(p.read_bytes()).hexdigest() for p in snapshot.iterdir() if p.is_file()}
+    report['load_generator_hardware'] = hardware()
     collector_source = (snapshot / 'record.py').read_text()
     remote_source = (snapshot / 'remote-helper.py').read_text()
     ssh = ['ssh', '-o', 'BatchMode=yes', '-o', 'ControlMaster=no', '-S', args.ssh_control, args.ssh_host]
@@ -156,7 +157,7 @@ def main():
                 for engine in args.engines if round_number % 2 else list(reversed(args.engines)):
                     folder = args.output / f'{engine}-{count}-{round_number}'; folder.mkdir()
                     conf = {**payload, 'engine': engine, 'image': tags[engine]}
-                    child, thread, stop, samples, errors = None, None, threading.Event(), [], []
+                    child, thread, stop, samples, generator_samples, errors = None, None, threading.Event(), [], [], []
                     try:
                         print(f'Remote {engine}: {count} peers, round {round_number}', flush=True)
                         started = remote({**conf, 'op': 'start'})
@@ -176,7 +177,14 @@ def main():
                         for _ in range(3): idle.append(sample()); time.sleep(.5)
                         def monitor():
                             while not stop.wait(.5):
-                                try: samples.append(sample())
+                                try:
+                                    samples.append(sample())
+                                    if child and child.poll() is None:
+                                        try:
+                                            processes = [process_sample(p) for p in process_tree(child.pid)]
+                                            generator_samples.append({'at': time.time(), 'processes': processes,
+                                                'rss_bytes': sum(p['rss_bytes'] for p in processes), 'cpu_seconds': sum(p['cpu_seconds'] for p in processes)})
+                                        except OSError: pass  # Browser children may finish after leave.
                                 except Exception as error: errors.append(str(error)); break
                         thread = threading.Thread(target=monitor); thread.start()
                         with (folder / 'loadgen.log').open('w') as log:
@@ -191,6 +199,7 @@ def main():
                                 'post_leave_samples': post, 'monitoring_errors': errors, 'loadgen_returncode': child.returncode, 'image_id': started['image_id'], 'clock_offset_estimate_seconds': offset,
                                 'clock_round_trip_seconds': after - before, 'limits': report['limits']}
                         data['redis_image_id'] = started['redis_image_id']
+                        data['load_generator_samples'] = generator_samples
                         (folder / 'server.json').write_text(json.dumps(data, indent=2) + '\n')
                         report['runs'].append({'engine': engine, 'peers': count, 'round': round_number, 'directory': str(folder), 'loadgen_returncode': child.returncode})
                     finally:

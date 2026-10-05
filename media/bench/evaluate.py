@@ -113,6 +113,8 @@ def summarize(browser, server):
                    'decoded_video_fps': fps, 'measurement_seconds': seconds,
                    'receiver_jitter_seconds_median': median([s['jitter'] for s in incoming if 'jitter' in s]),
                    'latency_scope': 'RTP jitter only; end-to-end audio latency is not measured'})
+    result['negotiated_ciphers'] = sorted({(s.get('dtlsCipher', ''), s.get('srtpCipher', ''))
+                                           for s in last['stats'] if s['type'] == 'transport'})
     timed = [s for s in server.get('samples', []) if first['at'] / 1000 <= s['at'] <= last['at'] / 1000]
     idle = server.get('idle_samples', [])
     if len(timed) < 2 or not idle:
@@ -137,6 +139,13 @@ def summarize(browser, server):
             infrastructure[name]['idle_peak_rss_bytes'] = max((s['infrastructure'][name]['rss_bytes'] for s in idle if name in s.get('infrastructure', {})), default=None)
             infrastructure[name]['post_leave_peak_rss_bytes'] = max((s['infrastructure'][name]['rss_bytes'] for s in post if name in s.get('infrastructure', {})), default=None)
         result['infrastructure'] = infrastructure
+    generator = [s for s in server.get('load_generator_samples', []) if first['at'] / 1000 <= s['at'] <= last['at'] / 1000]
+    if generator:
+        result['load_generator_peak_rss_bytes'] = max(s['rss_bytes'] for s in generator)
+        stable = all(b['cpu_seconds'] >= a['cpu_seconds'] for a, b in zip(generator, generator[1:]))
+        result['load_generator_cpu_counters_stable'] = stable
+        if len(generator) >= 2 and stable and generator[-1]['at'] > generator[0]['at']:
+            result['load_generator_cpu_cores_mean'] = (generator[-1]['cpu_seconds'] - generator[0]['cpu_seconds']) / (generator[-1]['at'] - generator[0]['at'])
     result['media_fixture_valid'] = not problems
     return result
 
