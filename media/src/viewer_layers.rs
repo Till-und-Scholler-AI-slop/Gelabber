@@ -8,6 +8,8 @@ const MAX_LAYERS: usize = 3;
 const MAX_FRAME_PACKETS: usize = 2048;
 const MAX_FRAME_BYTES: usize = 2 * 1024 * 1024;
 const MAX_PENDING_FRAMES: usize = 3;
+const INITIAL_LAYER_GRACE: Duration = Duration::from_millis(750);
+const ACTIVE_LAYER_STALL: Duration = Duration::from_secs(2);
 
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
 pub(super) struct Intent {
@@ -333,6 +335,10 @@ pub(super) struct Selector {
     active: Option<u32>,
     synced: bool,
     last_request: Option<Instant>,
+    last_request_target: Option<u32>,
+    first_complete: Option<Instant>,
+    last_forwarded: Option<Instant>,
+    complete_at: HashMap<u32, Instant>,
 }
 impl Selector {
     pub fn register(&mut self, ssrc: u32, rid: &str) {
@@ -347,12 +353,25 @@ impl Selector {
         }
     }
     pub fn accept(&mut self, frame: &Frame, intent: Intent) -> bool {
-        if let Some(layer) = self.layers.get_mut(&frame.ssrc) {
-            layer.0 = frame.height;
-        }
+        self.accept_at(frame, intent, Instant::now())
+    }
+    fn accept_at(&mut self, frame: &Frame, intent: Intent, now: Instant) -> bool {
+        let Some(layer) = self.layers.get_mut(&frame.ssrc) else {
+            return false;
+        };
+        layer.0 = frame.height;
+        self.first_complete.get_or_insert(now);
+        self.complete_at.insert(frame.ssrc, now);
         let desired = self.wanted(intent);
         if desired != self.active && desired == Some(frame.ssrc) && frame.key {
             self.active = desired;
+            self.synced = true;
+        }
+        // Padding/registration proves identity, not an available encoder frame.
+        // Start/recover on a real lower keyframe if the desired layer cannot
+        // produce decodable media, without changing the viewer's desired layer.
+        if self.fallback_due(now) && frame.key && self.active != Some(frame.ssrc) {
+            self.active = Some(frame.ssrc);
             self.synced = true;
         }
         if self.active != Some(frame.ssrc) {
@@ -364,7 +383,18 @@ impl Selector {
         if frame.key {
             self.synced = true;
         }
+        if self.synced {
+            self.last_forwarded = Some(now);
+        }
         self.synced
+    }
+    fn fallback_due(&self, now: Instant) -> bool {
+        match self.last_forwarded {
+            Some(last) => now.saturating_duration_since(last) >= ACTIVE_LAYER_STALL,
+            None => self
+                .first_complete
+                .is_some_and(|first| now.saturating_duration_since(first) >= INITIAL_LAYER_GRACE),
+        }
     }
     pub fn wanted(&self, intent: Intent) -> Option<u32> {
         if intent.congested {
@@ -391,13 +421,35 @@ impl Selector {
             .map(|(ssrc, _)| *ssrc)
     }
     pub fn request(&mut self, intent: Intent) -> Option<u32> {
-        let wanted = self.wanted(intent)?;
+        self.request_at(intent, Instant::now())
+    }
+    fn request_at(&mut self, intent: Intent, now: Instant) -> Option<u32> {
+        let desired = self.wanted(intent)?;
+        let fallback = self
+            .fallback_due(now)
+            .then(|| {
+                self.layers
+                    .iter()
+                    .filter(|(ssrc, _)| {
+                        **ssrc != desired
+                            && self.complete_at.get(ssrc).is_some_and(|last| {
+                                now.saturating_duration_since(*last) < ACTIVE_LAYER_STALL
+                            })
+                    })
+                    .max_by_key(|(_, (_, rank))| *rank)
+                    .map(|(ssrc, _)| *ssrc)
+            })
+            .flatten();
+        let wanted = fallback
+            .filter(|_| self.last_request_target != fallback)
+            .unwrap_or(desired);
         if (self.active != Some(wanted) || !self.synced)
-            && self
-                .last_request
-                .is_none_or(|last| last.elapsed() >= Duration::from_millis(500))
+            && self.last_request.is_none_or(|last| {
+                now.saturating_duration_since(last) >= Duration::from_millis(500)
+            })
         {
-            self.last_request = Some(Instant::now());
+            self.last_request = Some(now);
+            self.last_request_target = Some(wanted);
             Some(wanted)
         } else {
             None
@@ -411,6 +463,137 @@ impl Selector {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn padding_only_full_falls_back_on_current_low_keyframe_then_upgrades() {
+        let mut selector = Selector::default();
+        let now = Instant::now();
+        let intent = Intent::default();
+        selector.register(1, "f");
+        selector.register(2, "q");
+        assert_eq!(selector.request_at(intent, now), Some(1));
+        assert!(!selector.accept_at(&frame(2, 10, 100, true, 90), intent, now));
+        // Repeated padding only registers identity; it cannot satisfy availability.
+        selector.register(1, "f");
+        assert_eq!(
+            selector.request_at(intent, now + INITIAL_LAYER_GRACE),
+            Some(2)
+        );
+        assert!(selector.accept_at(
+            &frame(2, 11, 200, true, 90),
+            intent,
+            now + INITIAL_LAYER_GRACE
+        ));
+        assert_eq!(
+            selector.wanted(intent),
+            Some(1),
+            "the viewer still wants full quality"
+        );
+        assert_eq!(
+            selector.request_at(intent, now + Duration::from_millis(1300)),
+            Some(1)
+        );
+        assert!(selector.accept_at(
+            &frame(2, 12, 300, false, 90),
+            intent,
+            now + Duration::from_millis(1400)
+        ));
+        assert!(
+            !selector.accept_at(
+                &frame(1, 20, 400, false, 360),
+                intent,
+                now + Duration::from_millis(1500)
+            ),
+            "a new full delta is not a decoder entry point"
+        );
+        assert!(selector.accept_at(
+            &frame(1, 21, 500, true, 360),
+            intent,
+            now + Duration::from_millis(1600)
+        ));
+        assert!(!selector.accept_at(
+            &frame(2, 13, 500, true, 90),
+            intent,
+            now + Duration::from_millis(1700)
+        ));
+    }
+
+    #[test]
+    fn healthy_full_deltas_keep_quality_but_reference_loss_can_recover_low() {
+        let mut selector = Selector::default();
+        let now = Instant::now();
+        let intent = Intent::default();
+        selector.register(1, "f");
+        selector.register(2, "q");
+        assert!(selector.accept_at(&frame(1, 1, 100, true, 360), intent, now));
+        assert!(selector.accept_at(
+            &frame(1, 2, 200, false, 360),
+            intent,
+            now + Duration::from_secs(1)
+        ));
+        assert!(
+            !selector.accept_at(
+                &frame(2, 1, 200, true, 90),
+                intent,
+                now + Duration::from_secs(2)
+            ),
+            "healthy full deltas do not require periodic keyframes"
+        );
+        let mut broken = frame(1, 4, 300, false, 360);
+        broken.discontinuity = true;
+        assert!(!selector.accept_at(&broken, intent, now + Duration::from_millis(3100)));
+        assert!(
+            !selector.accept_at(
+                &frame(2, 2, 400, false, 90),
+                intent,
+                now + Duration::from_millis(3200)
+            ),
+            "fallback cannot start from a delta"
+        );
+        assert!(selector.accept_at(
+            &frame(2, 3, 500, true, 90),
+            intent,
+            now + Duration::from_millis(3300)
+        ));
+        assert!(selector.accept_at(
+            &frame(2, 4, 600, false, 90),
+            intent,
+            now + Duration::from_millis(3400)
+        ));
+        assert!(!selector.accept_at(
+            &frame(1, 5, 600, false, 360),
+            intent,
+            now + Duration::from_millis(3500)
+        ));
+        assert!(selector.accept_at(
+            &frame(1, 6, 700, true, 360),
+            intent,
+            now + Duration::from_millis(3600)
+        ));
+    }
+
+    #[test]
+    fn availability_never_inherits_previous_publication_or_unknown_source() {
+        let now = Instant::now();
+        let mut previous = Selector::default();
+        previous.register(1, "f");
+        assert!(previous.accept_at(&frame(1, 1, 100, true, 360), Intent::default(), now));
+        let mut fresh = Selector::default();
+        fresh.register(1, "f");
+        fresh.register(2, "q");
+        assert!(
+            !fresh.accept_at(&frame(9, 1, 100, true, 90), Intent::default(), now),
+            "unregistered sources cannot grow availability or be selected"
+        );
+        assert!(
+            !fresh.accept_at(
+                &frame(2, 1, 100, true, 90),
+                Intent::default(),
+                now + Duration::from_secs(10)
+            ),
+            "the new subscription gets its own startup grace"
+        );
+    }
     fn packet(ssrc: u32, seq: u16, ts: u32, start: bool, marker: bool, key: bool) -> rtp::Packet {
         let mut payload = vec![if start { 0x10 } else { 0 }];
         payload.extend(if key {

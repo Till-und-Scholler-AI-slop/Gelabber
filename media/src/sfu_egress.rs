@@ -276,6 +276,8 @@ mod tests {
             packets: packets.into(),
             alive,
             publication: Published {
+                source_grant: None,
+                parent_grant: None,
                 id: "egress-fixture".into(),
                 publisher: PeerId(Uuid::new_v4()),
                 track_id: "egress-fixture".into(),
