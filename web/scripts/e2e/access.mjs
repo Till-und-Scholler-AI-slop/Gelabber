@@ -1,4 +1,4 @@
-/* global window, URL, fetch, setTimeout, clearTimeout */
+/* global window, document, MediaStream, URL, fetch, setTimeout, clearTimeout */
 import {
   nativeEvaluate,
   NativeInterfaceFailure,
@@ -126,32 +126,119 @@ async function useHeldTicket(actor) {
   );
   return outcome;
 }
-export async function holdActiveMedia(actor) {
-  await nativeEvaluate(actor, () => {
-    const state = window.__e2e;
-    state.heldFrameCounterKeys = null;
-    state.heldPeers = state.peers.filter(
-      (p) => p.connectionState === "connected",
-    );
-    state.heldSockets = state.sockets.filter(
-      (s) => s.plane === "media" && s.ws.readyState === 1,
-    );
-    state.restoreClose = [];
-    // Ignore client-side teardown to test the SFU boundary independently.
-    for (const pc of state.heldPeers) {
-      state.restoreClose.push(() =>
-        window.RTCPeerConnection.prototype.close.call(pc),
+export async function holdActiveMedia(actor, { renderer = false } = {}) {
+  await nativeEvaluate(
+    actor,
+    async (renderer) => {
+      const state = window.__e2e;
+      state.heldCounterMode = renderer ? "receiver-renderer" : "rtp";
+      state.heldRenderers = [];
+      state.heldExpectedRenderers = [];
+      state.heldFrameCounterKeys = null;
+      state.heldPeers = state.peers.filter(
+        (p) => p.connectionState === "connected",
       );
-      pc.close = () => {};
-    }
-    for (const { ws } of state.heldSockets) {
-      state.restoreClose.push(() =>
-        state.NativeSocket.prototype.close.call(ws),
+      state.heldSockets = state.sockets.filter(
+        (s) => s.plane === "media" && s.ws.readyState === 1,
       );
-      ws.close = () => {};
-    }
-  });
+      state.restoreClose = [];
+      // Ignore client-side teardown to test the SFU boundary independently.
+      for (const pc of state.heldPeers) {
+        state.restoreClose.push(() =>
+          window.RTCPeerConnection.prototype.close.call(pc),
+        );
+        pc.close = () => {};
+      }
+      for (const { ws } of state.heldSockets) {
+        state.restoreClose.push(() =>
+          state.NativeSocket.prototype.close.call(ws),
+        );
+        ws.close = () => {};
+      }
+      if (renderer) {
+        for (const pc of state.heldPeers) {
+          for (const receiver of pc.getReceivers()) {
+            const track = receiver.track;
+            if (track.kind !== "video" || track.readyState !== "live") continue;
+            const video = document.createElement("video");
+            video.muted = true;
+            video.playsInline = true;
+            video.style.cssText =
+              "position:fixed;left:-10000px;width:16px;height:16px";
+            video.srcObject = new MediaStream([track]);
+            const callbackCounter =
+              typeof video.requestVideoFrameCallback === "function";
+            const item = {
+              receiver,
+              track,
+              video,
+              frames: 0,
+              lastObservedFrames: 0,
+              callback: null,
+              callbackFunction: null,
+              counterFailed: false,
+              disposed: false,
+              source: callbackCounter
+                ? "native-video-frame-callback"
+                : "native-playback-quality",
+            };
+            state.heldRenderers.push(item);
+            const expected = {
+              renderer: item,
+              source: item.source,
+              video,
+              receiver,
+              track,
+              callbackFunction: null,
+            };
+            state.heldExpectedRenderers.push(expected);
+            document.body.append(video);
+            if (callbackCounter) {
+              const onFrame = (_now, metadata) => {
+                if (item.disposed || item.counterFailed) return;
+                if (
+                  !Number.isSafeInteger(metadata.presentedFrames) ||
+                  metadata.presentedFrames < item.frames
+                ) {
+                  item.counterFailed = true;
+                  return;
+                }
+                item.frames = metadata.presentedFrames;
+                try {
+                  item.callback = video.requestVideoFrameCallback(onFrame);
+                } catch {
+                  item.counterFailed = true;
+                }
+              };
+              item.callbackFunction = onFrame;
+              expected.callbackFunction = onFrame;
+              item.callback = video.requestVideoFrameCallback(onFrame);
+            }
+            await video.play();
+          }
+        }
+      }
+    },
+    renderer,
+  );
   const baseline = await heldMedia(actor);
+  if (renderer) {
+    const positive = await until(
+      () => heldMedia(actor),
+      (s) => s.counters.every((counter) => counter.frames > 0),
+      "fixture-held-renderer-positive-frames-missing",
+      5_000,
+    );
+    return until(
+      () => heldMedia(actor),
+      (s) =>
+        s.counters.every(
+          (counter, i) => counter.frames > positive.counters[i].frames + 1,
+        ),
+      "fixture-held-renderer-positive-progress-missing",
+      5_000,
+    );
+  }
   check(
     baseline.frames > 0,
     "fixture-held-positive-decoded-counter-missing",
@@ -164,6 +251,67 @@ export async function heldMedia(actor) {
     actor,
     async function sample({ deadlineEpochMs }) {
       const state = window.__e2e;
+      if (state.heldCounterMode === "receiver-renderer") {
+        const counters = state.heldRenderers.map((item, i) => {
+          const expected = state.heldExpectedRenderers[i];
+          const binding = {
+            sameRenderer:
+              expected?.renderer === item && expected?.video === item.video,
+            sameReceiverTrack:
+              expected?.receiver === item.receiver &&
+              expected?.track === item.track &&
+              item.receiver.track === item.track,
+            liveTrack: item.track.readyState === "live",
+            enabledTrack: item.track.enabled === true,
+            sameCallback: expected?.callbackFunction === item.callbackFunction,
+          };
+          const sameSource =
+            !item.disposed &&
+            !item.counterFailed &&
+            !item.video.error &&
+            !item.video.paused &&
+            Object.values(binding).every(Boolean) &&
+            item.video.srcObject?.getVideoTracks().length === 1 &&
+            item.video.srcObject.getVideoTracks()[0] === item.track;
+          const frames =
+            item.source === "native-video-frame-callback"
+              ? item.frames
+              : item.video.getVideoPlaybackQuality?.().totalVideoFrames;
+          const available =
+            sameSource &&
+            Number.isSafeInteger(frames) &&
+            frames >= item.lastObservedFrames;
+          if (available) item.lastObservedFrames = frames;
+          return {
+            renderer: i,
+            receiverTrack: i,
+            callback: item.source === "native-video-frame-callback" ? i : null,
+            binding,
+            source: item.source,
+            frames: available ? frames : null,
+          };
+        });
+        const complete =
+          counters.length > 0 &&
+          state.heldExpectedRenderers.length === counters.length &&
+          state.heldExpectedRenderers.every(
+            (item, i) =>
+              item.renderer === state.heldRenderers[i] &&
+              item.source === state.heldRenderers[i].source,
+          ) &&
+          counters.every((counter) => counter.frames !== null);
+        return {
+          frames: complete
+            ? counters.reduce((sum, counter) => sum + counter.frames, 0)
+            : null,
+          frameCountersAvailable: complete,
+          counterMode: "receiver-renderer",
+          counters,
+          expectedFrameCounters: state.heldExpectedRenderers.length,
+          openSockets: state.heldSockets.filter((s) => s.ws.readyState === 1)
+            .length,
+        };
+      }
       let frames = 0,
         videoRtpEntries = 0;
       const availableKeys = [];
@@ -233,9 +381,32 @@ export async function releaseHeld(actor) {
   if (actor.nativeEvaluationUnusable || actor.page.isClosed?.()) return;
   await nativeEvaluate(actor, () => {
     const state = window.__e2e;
+    // Dispose every renderer before restoring peers, even if one cleanup fails.
+    let failed = false;
+    for (const item of state.heldRenderers ?? []) {
+      item.disposed = true;
+      for (const cleanup of [
+        () => {
+          if (item.callback !== null)
+            item.video.cancelVideoFrameCallback?.(item.callback);
+        },
+        () => item.video.pause(),
+        () => {
+          item.video.srcObject = null;
+        },
+        () => item.video.remove(),
+      ]) {
+        try {
+          cleanup();
+        } catch {
+          failed = true;
+        }
+      }
+    }
     for (const restore of state.restoreClose ?? []) restore();
     state.rawGateway?.ws.close();
     state.rawTicket?.ws.close();
+    if (failed) throw new Error("held-renderer-cleanup-failed");
   }).catch((error) => {
     if (error instanceof NativeInterfaceFailure) throw error;
     if (!actor.page.isClosed?.()) throw error;
@@ -509,7 +680,9 @@ export async function accessScenarios(h, f) {
             );
           }
           await heldTicket(victim, voiceId);
-          await holdActiveMedia(victim);
+          const rendererControl = await holdActiveMedia(victim, {
+            renderer: true,
+          });
           const removed =
             scope === "server"
               ? await api(owned.owner, `/servers/${owned.serverId}`, "DELETE")
@@ -561,6 +734,10 @@ export async function accessScenarios(h, f) {
           }
           controls.push({
             scope,
+            counterMode: rendererControl.counterMode,
+            rendererControl,
+            settled,
+            after,
             deleteStatus: removed.status,
             activeDecodedControl: true,
             clientTeardownSuppressed: true,

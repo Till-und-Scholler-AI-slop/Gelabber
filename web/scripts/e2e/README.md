@@ -44,6 +44,21 @@ The local Firefox TURN exception requires explicit `GELABBER_E2E_FIREFOX_LOOPBAC
 
 The logout check registers a POST `/api/auth/logout` response wait before clicking, requires HTTP200, then requires session HTTP200 with `user:null`. Client-side navigation occurs before the POST finishes and is not the success criterion. No arbitrary sleep substitutes for that response.
 
+Channel/server deletion uses an independent muted renderer attached to the held native receiver track **before** deletion. It first proves increasing native frame counters, then retains the same renderer, receiver, track and callback identity through the fault. The counter source is selected once (`requestVideoFrameCallback` or native playback quality). A missing, decreasing or replaced counter, paused/errored renderer, detached source, ended or disabled receiver track fails the measurement; no zero is substituted. A live track becoming muted after server revocation alone cannot prove that frames stopped. Other access scenarios retain their original strict native RTP counter contract. Renderer callbacks and elements are released even after partial setup or peer cleanup failure.
+
+The local instrument control deliberately hides native video RTP reports while authorized media continues. The unchanged renderer must still advance and reject the actual deletion frame-stop predicate. Its denied/closed side conditions are synthetic solely to isolate that predicate; it performs no revocation and is not an access acceptance result. Both commands use fresh fixture accounts and delete only their own servers:
+
+```bash
+GELABBER_SMOKE_URL=http://127.0.0.1:15182 \
+GELABBER_E2E_BROWSER=chromium GELABBER_E2E_SUITE=access \
+GELABBER_E2E_CASES=channel-server-delete-active-sockets \
+npm run test:e2e-app
+GELABBER_SMOKE_URL=http://127.0.0.1:15182 \
+GELABBER_E2E_BROWSER=chromium npm run test:e2e-held-renderer-control
+```
+
+Repeat with `GELABBER_E2E_BROWSER=firefox` for the second native browser. Keep actual runtime attribution and report paths in the surrounding environment as described above. These native controls remain local; CI runs the fast ownership/counter regressions.
+
 ## Open acceptance
 
 Core/Storage/Epoch, concurrent attempts and row rollback, real slow raw TCP reader and transaction-forced Ban/Join now have actual Chromium and Firefox controls on the approved immutable core snapshot. Their exact results and earlier test errors are recorded in the current handoff. Final approved08b runtime now supports the executable media15/access6 and own API-/Redis-lease cases; exact author/clean-source coverage is recorded in [MEDIA-HANDOFF.md](MEDIA-HANDOFF.md). Native screen-picker, audible two-device quality, WAN/production and full remote netem remain explicit separate gates. The original relay/audio/recovery assertions and strict selected-case/cleanup gates remain in force.

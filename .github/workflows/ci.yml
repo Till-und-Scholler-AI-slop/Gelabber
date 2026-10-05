@@ -256,6 +256,7 @@ jobs:
           node scripts/e2e/browser-options.checks.mjs
           node scripts/e2e/native-evaluate.checks.mjs
           node --experimental-vm-modules scripts/e2e/access-native.checks.mjs
+          node scripts/e2e/held-renderer.checks.mjs
           node --experimental-vm-modules scripts/e2e/native-finish.checks.mjs
           node --experimental-vm-modules scripts/e2e/media-extra.checks.mjs
           node scripts/smoke-netem.checks.mjs
