@@ -1893,7 +1893,8 @@ async function acquireMic(
   );
   owned.processor = result.processor;
   const latest = useMediaSettings.getState();
-  const gain = micForceBrowser ? 1 : latest.inputGain;
+  const gain =
+    micForceBrowser || result.processor.nativeFallback ? 1 : latest.inputGain;
   if (result.processor.stream === result.raw && gain !== 1) {
     const previous = result.processor;
     try {
@@ -1914,6 +1915,10 @@ async function acquireMic(
       result.processor.dispose();
       stopTracks(result.raw);
       pendingMicRaw.delete(result.raw);
+      if (current() && !micForceBrowser) {
+        micForceBrowser = true;
+        return acquireMic(getMedia, current);
+      }
       throw error;
     }
   } else result.processor.setGain(gain);
