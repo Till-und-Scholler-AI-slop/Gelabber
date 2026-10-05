@@ -109,9 +109,14 @@ def rtcp(data):
 
 def event_log(path):
     if path.stat().st_size > 32 * 1024 ** 2: raise ValueError('event log exceeds diagnostic size limit')
-    data = path.read_bytes(); events, counts = [], Counter()
+    data = path.read_bytes(); events, anchors, counts = [], [], Counter()
     for number, encoded in fields(data):
         counts[number] += 1
+        if number in (18, 19):
+            message = dict(fields(encoded))
+            anchors.append({'type': 'loss' if number == 18 else 'delay', 'timestamp_ms': message.get(1),
+                'bitrate_bps': message.get(2), 'fraction_loss_or_detector_state': message.get(3),
+                'unparsed_delta_updates': message.get(5 if number == 18 else 4, 0)})
         if number not in (4, 5): continue
         message = dict(fields(encoded)); raw = [message[2]]
         if message.get(3): raw.extend(blobs(message.get(102, b''), message[3]))
@@ -119,7 +124,7 @@ def event_log(path):
             for value in rtcp(packet): events.append({'direction': 'incoming' if number == 4 else 'outgoing',
                 'batch_anchor_timestamp_ms': message.get(1), 'batch_index': index, **value})
     return {'name': path.name, 'sha256': hashlib.sha256(data).hexdigest(), 'protobuf_event_counts': dict(counts),
-            'rtcp': events, 'scope': 'RTCP targets/deltas; batch timestamps are anchors, not decoded event times'}
+            'rtcp': events, 'bwe_batch_first_updates': anchors, 'scope': 'RTCP targets/deltas; batch timestamps are anchors, not decoded event times'}
 
 
 def browser_diagnostics(browser):
@@ -146,14 +151,20 @@ def browser_diagnostics(browser):
 def main():
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument('directory', type=Path, help='one case directory containing browser.json')
-    args = parser.parse_args(); result = browser_diagnostics(json.loads((args.directory / 'browser.json').read_text()))
-    result['rtc_event_logs'] = []
+    args = parser.parse_args(); browser = json.loads((args.directory / 'browser.json').read_text())
+    result = browser_diagnostics(browser)
+    result['rtc_event_logs'], result['errors'] = [], []
     for path in sorted((args.directory / 'rtc-events').glob('*')):
         if not path.is_file(): continue
         try: result['rtc_event_logs'].append(event_log(path))
-        except (ValueError, KeyError, struct.error) as error: result['rtc_event_logs'].append({'name': path.name, 'error': str(error)})
+        except (ValueError, KeyError, struct.error) as error:
+            result['errors'].append(path.name + ': ' + str(error))
+            result['rtc_event_logs'].append({'name': path.name, 'error': str(error)})
+    if browser.get('load_generator', {}).get('protocol_logs'):
+        if not result['rtc_event_logs']: result['errors'].append('RTC event logging requested but no logs exist')
     (args.directory / 'protocol.json').write_text(json.dumps(result, indent=2) + '\n')
-    print(json.dumps(result['video'], indent=2))
+    print(json.dumps({'video': result['video'], 'errors': result['errors']}, indent=2))
+    return 1 if result['errors'] else 0
 
 
-if __name__ == '__main__': main()
+if __name__ == '__main__': raise SystemExit(main())

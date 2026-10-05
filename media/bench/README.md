@@ -271,6 +271,8 @@ v2 event logs retain decrypted RTCP feedback: the helper decodes all compound
 RR/SR report targets, REMB target SSRCs/rates and TWCC sequence/arrival deltas,
 including blob-batched packets. Batched event timestamps remain batch anchors;
 the helper does not reconstruct the compressed per-event timestamp deltas.
+The first delay/loss bandwidth estimate in each batch is shown, with the number
+of compressed updates not decoded; this is a sparse diagnostic timeline.
 Raw logs are retained and parser errors are explicit. This is protocol failure
 evidence, never an acceptance result.
 

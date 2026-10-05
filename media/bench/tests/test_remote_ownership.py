@@ -54,6 +54,19 @@ class RemoteOwnershipTests(unittest.TestCase):
             self.assertEqual(runner.main(), 0)
             mutation.assert_not_called()
 
+    def test_cleanup_evidence_redacts_token_and_never_exports_environment(self):
+        config = {'group': 'gelabber-bench-testfixture', 'op': 'cleanup', 'token': 'private-test-token'}
+        state = {'Status': 'exited', 'ExitCode': 137, 'OOMKilled': True, 'StartedAt': 'start', 'FinishedAt': 'finish'}
+        info = {'Config': {'Labels': {'gelabber.bench.run': config['group']}, 'Env': ['PRIVATE=secret']}, 'State': state}
+        inspect = subprocess.CompletedProcess([], 0, json.dumps([info]), '')
+        output = io.StringIO()
+        with patch('sys.stdin', io.StringIO(json.dumps(config))), patch('subprocess.run', return_value=inspect), \
+             patch('subprocess.check_output', return_value='log private-test-token'), contextlib.redirect_stdout(output):
+            exec(compile(runner.REMOTE, 'remote-helper', 'exec'), {'__name__': 'test_remote'})
+        self.assertNotIn('private-test-token', output.getvalue())
+        self.assertNotIn('PRIVATE', output.getvalue())
+        self.assertEqual(json.loads(output.getvalue())[config['group'] + '-engine']['state'], state)
+
 
 if __name__ == '__main__':
     unittest.main()

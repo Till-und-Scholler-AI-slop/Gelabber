@@ -41,7 +41,7 @@ const proxy = http.createServer(async (request, response) => {
 await new Promise(resolve => proxy.listen(0, '127.0.0.1', resolve));
 let browser, page;
 const pageErrors = [];
-const metadata = () => ({ hostname: os.hostname(), platform: os.platform(), cpu: os.cpus()[0]?.model, logical_cpus: os.cpus().length, browser: options.browser === 'firefox' ? 'firefox' : 'chromium', browser_channel: protocolLogs ? 'chromium' : 'headless-shell', protocol_logs: protocolLogs, browser_version: browser?.version(), browser_args: options.browser === 'firefox' ? [] : browserArgs, remote_claim: options['separate-host'] === 'true', recorded_at: new Date().toISOString() });
+const metadata = () => ({ hostname: os.hostname(), platform: os.platform(), cpu: os.cpus()[0]?.model, logical_cpus: os.cpus().length, browser: options.browser === 'firefox' ? 'firefox' : 'chromium', browser_channel: options.browser === 'firefox' ? 'firefox' : protocolLogs ? 'chromium' : 'headless-shell', protocol_logs: protocolLogs, browser_version: browser?.version(), browser_args: options.browser === 'firefox' ? [] : browserArgs, remote_claim: options['separate-host'] === 'true', recorded_at: new Date().toISOString() });
 const save = result => { fs.mkdirSync(path.dirname(path.resolve(options.output)), { recursive: true }); fs.writeFileSync(options.output, JSON.stringify({ ...result, load_generator: metadata() }, null, 2) + '\n'); };
 try {
   const browserType = options.browser === 'firefox' ? firefox : chromium;

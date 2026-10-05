@@ -77,8 +77,10 @@ elif op=='sample':
 elif op=='cleanup':
     logs={}
     for n in [name,redis_name]:
-        if owned(n):
-            logs[n]=docker('logs',n).replace(c['token'],'[redacted]')
+        info=owned(n)
+        if info:
+            logs[n]={'logs':docker('logs',n).replace(c['token'],'[redacted]'),
+                     'state':{key:info['State'][key]for key in ['Status','ExitCode','OOMKilled','StartedAt','FinishedAt']}}
             docker('rm','-f','-v',n)
     print(json.dumps(logs))
 elif op=='images_cleanup':
