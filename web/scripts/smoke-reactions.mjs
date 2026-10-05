@@ -109,15 +109,58 @@ for (const engine of [chromium, firefox]) {
       .click();
     const dialog = member.getByRole("dialog", { name: "Reaktion auswählen" });
     await dialog.getByRole("searchbox").fill("rotes Herz");
-    await dialog
-      .getByRole("button", { name: "rotes Herz", exact: true })
-      .press("Enter");
+    let releaseReaction;
+    const heldReaction = new Promise((resolve) => {
+      releaseReaction = resolve;
+    });
+    const reactionRoute = "**/api/messages/*/reactions/*";
+    await member.route(reactionRoute, async (route) => {
+      await heldReaction;
+      await route.continue();
+    });
+    const composer = member.locator("form textarea").last();
+    try {
+      await dialog
+        .getByRole("button", { name: "rotes Herz", exact: true })
+        .press("Enter");
+      await dialog.waitFor({ state: "hidden" });
+      await member.waitForFunction(
+        () =>
+          document.activeElement?.getAttribute("aria-label") ===
+          "Reaktion hinzufügen",
+        null,
+        { timeout: 3000 },
+      );
+      assert.equal(
+        await row(member)
+          .getByRole("button", { name: "Reaktion hinzufügen", exact: true })
+          .getAttribute("aria-disabled"),
+        "true",
+      );
+      await composer.focus();
+      await composer.fill("typing while the reaction is pending");
+    } finally {
+      releaseReaction();
+    }
     await member.waitForFunction(
       () =>
         document
           .querySelector('[aria-label="❤️: 1 Reaktionen, du hast reagiert"]')
           ?.getAttribute("aria-pressed") === "true",
     );
+    await member.waitForFunction(
+      () =>
+        !document.querySelector(
+          '[aria-label="Reaktion hinzufügen"][aria-disabled="true"]',
+        ),
+    );
+    assert.equal(
+      await composer.evaluate((element) => document.activeElement === element),
+      true,
+      "settled reaction must not steal a later composer focus",
+    );
+    await composer.fill("");
+    await member.unroute(reactionRoute);
     // Removing the last vote must also survive the Redis cjson [] -> {} shape.
     await row(member)
       .getByRole("button", {
@@ -202,6 +245,156 @@ for (const engine of [chromium, firefox]) {
       fullPage: true,
     });
     await member.keyboard.press("Escape");
+    // Remote chips can wrap and resize an already measured virtual row. The
+    // reader's visible message must stay put while reading older history.
+    const history = await request(
+      0,
+      "POST",
+      `/servers/${server.id}/channels`,
+      { name: "reaction-history", kind: "text" },
+      201,
+    );
+    const historyMessages = [];
+    for (let i = 0; i < 40; i++) {
+      historyMessages.push(
+        await request(
+          0,
+          "POST",
+          `/channels/${history.id}/messages`,
+          { content: `History-anchor-${i}` },
+          201,
+        ),
+      );
+    }
+    await member.goto(new URL(`/s/${server.id}/c/${history.id}`, origin).href);
+    const log = member.getByRole("log", { name: "Nachrichten" });
+    await log
+      .locator(".lr-message-row")
+      .filter({ hasText: "History-anchor-39" })
+      .waitFor();
+    const logBox = await log.boundingBox();
+    assert.ok(logBox);
+    await member.mouse.move(
+      logBox.x + logBox.width / 2,
+      logBox.y + logBox.height / 2,
+    );
+    await member.mouse.wheel(0, -400);
+    await member.waitForFunction(() => {
+      const element = document.querySelector('[role="log"]');
+      return (
+        element &&
+        element.scrollHeight - element.scrollTop - element.clientHeight > 200
+      );
+    });
+    const geometry = await log.evaluate((element) => {
+      const top = element.getBoundingClientRect().top;
+      const rows = [...element.querySelectorAll(".lr-message-row")].map(
+        (row) => ({
+          index: Number(
+            row
+              .querySelector("p")
+              ?.textContent?.match(/History-anchor-(\d+)/)?.[1],
+          ),
+          top: row.getBoundingClientRect().top,
+          height: row.getBoundingClientRect().height,
+        }),
+      );
+      return {
+        anchor: rows.find((row) => row.top >= top),
+        above: rows.filter((row) => row.top + row.height <= top).at(-1),
+      };
+    });
+    assert.ok(
+      geometry.anchor && geometry.above,
+      "fixture needs a visible anchor and an overscan row above it",
+    );
+    const anchorRow = log.locator(".lr-message-row").filter({
+      has: member.getByText(`History-anchor-${geometry.anchor.index}`, {
+        exact: true,
+      }),
+    });
+    const growingRow = log.locator(".lr-message-row").filter({
+      has: member.getByText(`History-anchor-${geometry.above.index}`, {
+        exact: true,
+      }),
+    });
+    const emojis = [
+      "😀",
+      "😂",
+      "😅",
+      "😇",
+      "🙂",
+      "🙃",
+      "😉",
+      "😊",
+      "😍",
+      "🥰",
+      "😘",
+      "😋",
+      "😎",
+      "🤔",
+      "😴",
+      "😮",
+      "😢",
+      "😡",
+      "👍",
+      "❤️",
+    ];
+    for (const emoji of emojis) {
+      await request(
+        0,
+        "PUT",
+        `/messages/${historyMessages[geometry.above.index].id}/reactions/${encodeURIComponent(emoji)}`,
+      );
+    }
+    await growingRow
+      .getByRole("button", { name: "❤️: 1 Reaktionen", exact: true })
+      .waitFor();
+    await member.waitForFunction(
+      ({ index, oldHeight }) => {
+        const row = [...document.querySelectorAll(".lr-message-row")].find(
+          (row) =>
+            row.querySelector("p")?.textContent === `History-anchor-${index}`,
+        );
+        return row && row.getBoundingClientRect().height > oldHeight + 30;
+      },
+      { index: geometry.above.index, oldHeight: geometry.above.height },
+    );
+    // Wait for the browser's native measurement/scroll adjustment, not a
+    // programmatic scrollTo that would hide a jump.
+    await member.waitForFunction(
+      ({ index, top }) => {
+        const row = [...document.querySelectorAll(".lr-message-row")].find(
+          (row) =>
+            row.querySelector("p")?.textContent === `History-anchor-${index}`,
+        );
+        return row && Math.abs(row.getBoundingClientRect().top - top) <= 3;
+      },
+      { index: geometry.anchor.index, top: geometry.anchor.top },
+    );
+    await member.waitForTimeout(300);
+    const finalAnchor = await anchorRow.boundingBox();
+    assert.ok(
+      finalAnchor && Math.abs(finalAnchor.y - geometry.anchor.top) <= 3,
+      "visible history anchor must remain stable after ResizeObserver settles",
+    );
+    assert.ok(
+      await log.evaluate(
+        (element) =>
+          element.scrollHeight - element.scrollTop - element.clientHeight > 200,
+      ),
+    );
+    await member.screenshot({
+      path: `${output}/${engine.name()}-history-anchor.png`,
+      fullPage: true,
+    });
+    await member.goto(target);
+    await row(member)
+      .getByRole("button", {
+        name: "❤️: 2 Reaktionen, du hast reagiert",
+        exact: true,
+      })
+      .waitFor();
     await request(0, "PATCH", `/messages/${message.id}`, {
       content: `Reaction-${nonce} edited`,
     });
@@ -307,6 +500,7 @@ for (const engine of [chromium, firefox]) {
         "reload",
         "keyboard + Escape focus",
         "320px picker",
+        "remote wrapping chips preserve the visible history anchor",
       ],
       physicalDevice: false,
     });
