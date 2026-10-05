@@ -1182,7 +1182,9 @@ impl Sfu {
             // Keep the identity until the next SDP stops sending it: packets already
             // queued by on_track must not resurrect a retracted source as a camera.
             if let Some(id) = track_id {
-                peer.video_kinds.insert(id.into(), String::new());
+                if let Some(tag) = peer.video_kinds.get_mut(id) {
+                    tag.clear();
+                }
             } else {
                 for k in peer.video_kinds.values_mut() {
                     if k == kind {

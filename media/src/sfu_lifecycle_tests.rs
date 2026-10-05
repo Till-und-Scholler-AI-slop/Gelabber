@@ -477,6 +477,51 @@ async fn reversed_track_arrival_keeps_camera_screen_and_live_identity() {
 }
 
 #[tokio::test]
+async fn unknown_retracts_do_not_exhaust_sources_but_known_tombstones_block_late_tracks() {
+    let sfu = Arc::new(Sfu::new(&config()));
+    let channel = Uuid::new_v4();
+    let (publisher, _rx) = join(&sfu, channel).await;
+    for n in 0..128 {
+        sfu.retract_track(publisher, channel, "s", Some(&format!("unknown-{n}")))
+            .await
+            .unwrap();
+    }
+    let room = sfu.find_room(channel).await.unwrap();
+    assert!(room.lock().await.peers[&publisher].video_kinds.is_empty());
+    // An earlier unknown retract must not reject a later legitimate source.
+    sfu.announce_track(publisher, channel, "s", Some("unknown-0"))
+        .await
+        .unwrap();
+    sfu.retract_track(publisher, channel, "s", Some("unknown-0"))
+        .await
+        .unwrap();
+    assert_eq!(
+        room.lock().await.peers[&publisher].video_kinds["unknown-0"],
+        ""
+    );
+    let (late, _events) = remote("unknown-0");
+    sfu.publish(publisher, channel, late).await.unwrap();
+    assert!(
+        room.lock().await.pubs.is_empty(),
+        "late OnTrack cannot resurrect a known source"
+    );
+    // Explicit re-publication of the same identity is still supported.
+    sfu.announce_track(publisher, channel, "s", Some("unknown-0"))
+        .await
+        .unwrap();
+    let (fresh, _events) = remote("unknown-0");
+    sfu.publish(publisher, channel, fresh).await.unwrap();
+    assert!(
+        room.lock()
+            .await
+            .pubs
+            .contains_key(&format!("{}:unknown-0", publisher.0))
+    );
+    sfu.leave(publisher, channel).await;
+    assert_eq!(sfu.room_count(), 0);
+}
+
+#[tokio::test]
 async fn twenty_stop_start_cycles_cancel_reader_and_pending_subscription() {
     let sfu = Arc::new(Sfu::new(&config()));
     let channel = Uuid::new_v4();
