@@ -3898,6 +3898,291 @@ describe("display-source audio", () => {
     return env;
   }
 
+  it("waits for a v3 source detach before reusing its sender for a fresh capture", async () => {
+    const env = await joined({ mediaVersion: 3 });
+    toggleCamera();
+    await vi.waitFor(() =>
+      expect(env.mediaSent.some((f) => f.op === "p" && f.k === "v")).toBe(true),
+    );
+    env.emitMedia({ op: "a", sdp: "v=0\r\n" });
+    await vi.waitFor(() => expect(env.peers[0]?.signalingState).toBe("stable"));
+    const pc = env.peers[0]!,
+      sender = pc.senders.find((s) => s.track?.kind === "video")!,
+      old = sender.track!;
+    const replace = sender.replaceTrack!.bind(sender),
+      remove = vi.spyOn(pc, "removeTrack");
+    let release!: () => void;
+    const hold = new Promise<void>((r) => {
+      release = r;
+    });
+    sender.replaceTrack = async (next) => {
+      if (next === null) await hold;
+      await replace(next);
+    };
+    const count = env.mediaSent.filter(
+      (f) => f.op === "p" && f.k === "v",
+    ).length;
+    try {
+      toggleCamera();
+      expect(old.readyState).toBe("ended");
+      expect(env.mediaSent.some((f) => f.op === "u" && f.k === "v")).toBe(true);
+      toggleCamera();
+      await vi.waitFor(() =>
+        expect(
+          useVoice.getState().localCamera?.getVideoTracks()[0]?.id,
+        ).not.toBe(old.id),
+      );
+      expect(sender.track).toBe(old);
+      expect(
+        env.mediaSent.filter((f) => f.op === "p" && f.k === "v"),
+      ).toHaveLength(count);
+      release();
+      await vi.waitFor(() =>
+        expect(sender.track).toBe(
+          useVoice.getState().localCamera!.getVideoTracks()[0],
+        ),
+      );
+      expect(pc.senders.filter((s) => s.track?.kind === "video")).toEqual([
+        sender,
+      ]);
+      expect(remove).not.toHaveBeenCalled();
+    } finally {
+      release();
+    }
+  });
+
+  it("uses a fresh source sender when a v3 null detach is rejected", async () => {
+    const env = await joined({ mediaVersion: 3 });
+    toggleCamera();
+    await vi.waitFor(() =>
+      expect(env.mediaSent.some((f) => f.op === "p" && f.k === "v")).toBe(true),
+    );
+    env.emitMedia({ op: "a", sdp: "v=0\r\n" });
+    await vi.waitFor(() => expect(env.peers[0]?.signalingState).toBe("stable"));
+    const pc = env.peers[0]!,
+      old = pc.senders.find((s) => s.track?.kind === "video")!;
+    old.replaceTrack = async () => {
+      throw Error("unsupported detach");
+    };
+    toggleCamera();
+    await vi.waitFor(() => expect(old.track).toBeNull());
+    env.emitMedia({ op: "a", sdp: "v=0\r\n" });
+    await vi.waitFor(() => expect(pc.signalingState).toBe("stable"));
+    toggleCamera();
+    await vi.waitFor(() =>
+      expect(pc.senders.find((s) => s.track?.kind === "video")).toBeTruthy(),
+    );
+    expect(pc.senders.find((s) => s.track?.kind === "video")).not.toBe(old);
+    expect(
+      useVoice.getState().localCamera?.getVideoTracks()[0]?.readyState,
+    ).toBe("live");
+  });
+
+  it("defers other-source and event offers until a v3 detach is complete", async () => {
+    const env = await joined({ mediaVersion: 3 });
+    toggleCamera();
+    await vi.waitFor(() =>
+      expect(env.mediaSent.some((f) => f.op === "p" && f.k === "v")).toBe(true),
+    );
+    env.emitMedia({ op: "a", sdp: "v=0\r\n" });
+    await vi.waitFor(() => expect(env.peers[0]?.signalingState).toBe("stable"));
+    const pc = env.peers[0]!,
+      sender = pc.senders.find((s) => s.track?.kind === "video")!,
+      replace = sender.replaceTrack!.bind(sender);
+    let release!: () => void;
+    const hold = new Promise<void>((r) => {
+      release = r;
+    });
+    sender.replaceTrack = async (next) => {
+      if (next === null) await hold;
+      await replace(next);
+    };
+    const create = vi.spyOn(pc, "createOffer");
+    try {
+      toggleCamera();
+      toggleShare();
+      pc.onnegotiationneeded?.();
+      pc.setIce("failed");
+      await vi.waitFor(() =>
+        expect(
+          pc.senders.filter((s) => s.track?.kind === "video"),
+        ).toHaveLength(2),
+      );
+      expect(create).not.toHaveBeenCalled();
+      expect(pc.signalingState).toBe("stable");
+      release();
+      await vi.waitFor(() => expect(create).toHaveBeenCalled());
+      expect(sender.track).toBeNull();
+      expect(pc.offerOptions.at(-1)?.iceRestart).toBe(true);
+    } finally {
+      release();
+    }
+  });
+
+  it("bounds a pending v3 detach and leaves its eventual completion on the retired sender", async () => {
+    const env = await joined({ mediaVersion: 3 });
+    toggleCamera();
+    await vi.waitFor(() =>
+      expect(env.mediaSent.some((f) => f.op === "p" && f.k === "v")).toBe(true),
+    );
+    env.emitMedia({ op: "a", sdp: "v=0\r\n" });
+    await vi.waitFor(() => expect(env.peers[0]?.signalingState).toBe("stable"));
+    const pc = env.peers[0]!,
+      old = pc.senders.find((s) => s.track?.kind === "video")!,
+      replace = old.replaceTrack!.bind(old);
+    let release!: () => void;
+    const hold = new Promise<void>((r) => {
+      release = r;
+    });
+    old.replaceTrack = async (next) => {
+      if (next === null) await hold;
+      await replace(next);
+    };
+    try {
+      toggleCamera();
+      toggleCamera();
+      await vi.waitFor(
+        () =>
+          expect(
+            pc.senders.find((s) => s !== old && s.track?.kind === "video"),
+          ).toBeTruthy(),
+        { timeout: 3000 },
+      );
+      const current = pc.senders.find(
+          (s) => s !== old && s.track?.kind === "video",
+        )!,
+        track = current.track;
+      release();
+      await vi.waitFor(() => expect(old.track).toBeNull());
+      expect(current.track).toBe(track);
+      expect(track?.readyState).toBe("live");
+    } finally {
+      release();
+    }
+  });
+
+  it("does not let an old source detach touch a replacement peer", async () => {
+    const env = await joined({ mediaVersion: 3 });
+    toggleCamera();
+    await vi.waitFor(() =>
+      expect(env.mediaSent.some((f) => f.op === "p" && f.k === "v")).toBe(true),
+    );
+    env.emitMedia({ op: "a", sdp: "v=0\r\n" });
+    await vi.waitFor(() => expect(env.peers[0]?.signalingState).toBe("stable"));
+    const old = env.peers[0]!.senders.find((s) => s.track?.kind === "video")!,
+      replace = old.replaceTrack!.bind(old);
+    let release!: () => void;
+    const hold = new Promise<void>((r) => {
+      release = r;
+    });
+    old.replaceTrack = async (next) => {
+      if (next === null) await hold;
+      await replace(next);
+    };
+    try {
+      toggleCamera();
+      leaveVoice();
+      joinVoice({ serverId: "srv", channelId: "voice", channelName: "Lounge" });
+      await vi.waitFor(() =>
+        expect(env.peers[1]?.signalingState).toBe("have-local-offer"),
+      );
+      env.emitMedia({ op: "a", sdp: "v=0\r\n" });
+      await vi.waitFor(() =>
+        expect(env.peers[1]?.signalingState).toBe("stable"),
+      );
+      toggleCamera();
+      await vi.waitFor(() =>
+        expect(
+          env.peers[1]?.senders.find((s) => s.track?.kind === "video"),
+        ).toBeTruthy(),
+      );
+      const current = env.peers[1]!.senders.find(
+          (s) => s.track?.kind === "video",
+        )!,
+        track = current.track;
+      release();
+      await vi.waitFor(() => expect(old.track).toBeNull());
+      expect(current.track).toBe(track);
+      expect(track?.readyState).toBe("live");
+    } finally {
+      release();
+    }
+  });
+
+  it.each(["s", "l"] as const)(
+    "retires a timed-out %s audio sender before republishing source audio",
+    async (kind) => {
+      useMediaSettings.getState().patch({ shareSourceAudio: true });
+      const env = await joined({ mediaVersion: 3 }),
+        toggle = kind === "s" ? toggleShare : toggleGoLive;
+      toggle();
+      await vi.waitFor(() =>
+        expect(
+          env.mediaSent.some(
+            (f) => f.op === "p" && f.k === (kind === "s" ? "sa" : "la"),
+          ),
+        ).toBe(true),
+      );
+      env.emitMedia({ op: "a", sdp: "v=0\r\n" });
+      await vi.waitFor(() =>
+        expect(env.peers[0]?.signalingState).toBe("stable"),
+      );
+      const pc = env.peers[0]!,
+        stream =
+          kind === "s"
+            ? useVoice.getState().localScreen!
+            : useVoice.getState().localLive!,
+        oldTrack = stream.getAudioTracks()[0]!,
+        old = pc.senders.find((s) => s.track === oldTrack)!,
+        replace = old.replaceTrack!.bind(old);
+      let release!: () => void;
+      const hold = new Promise<void>((r) => {
+        release = r;
+      });
+      old.replaceTrack = async (next) => {
+        if (next === null) await hold;
+        await replace(next);
+      };
+      try {
+        toggle();
+        expect(oldTrack.readyState).toBe("ended");
+        toggle();
+        await vi.waitFor(
+          () =>
+            expect(
+              pc.senders.find((s) => {
+                const freshCapture =
+                  kind === "s"
+                    ? useVoice.getState().localScreen
+                    : useVoice.getState().localLive;
+                const freshTrack = freshCapture?.getAudioTracks()[0];
+                return (
+                  freshTrack &&
+                  freshTrack !== oldTrack &&
+                  s !== old &&
+                  s.track === freshTrack
+                );
+              }),
+            ).toBeTruthy(),
+          { timeout: 3000 },
+        );
+        const capture =
+            kind === "s"
+              ? useVoice.getState().localScreen!
+              : useVoice.getState().localLive!,
+          fresh = capture.getAudioTracks()[0]!,
+          sender = pc.senders.find((s) => s.track === fresh)!;
+        expect(sender).not.toBe(old);
+        release();
+        await vi.waitFor(() => expect(old.track).toBeNull());
+        expect(sender.track).toBe(fresh);
+        expect(fresh.readyState).toBe("live");
+      } finally {
+        release();
+      }
+    },
+  );
+
   function audioElements() {
     const elements: FakeAudio[] = [];
     class FakeAudio {

@@ -370,6 +370,7 @@ let offeredPublish: PublishIdentity[] = [];
 const publisherTracks = new Map<RtpSender, PublishIdentity>();
 /** Native addTrack does not reuse an m-line that has already sent media. */
 const videoSenders = new Map<PublishKind, RtpSender>();
+const pendingVideoDetach = new Map<RtpSender, Promise<void>>();
 /** Cleanup of a rejected publish must not enqueue a replacement offer. */
 let discardingPublish = false;
 /** Gateway reconnect left the media peer up; re-announce after our join echo. */
@@ -1408,6 +1409,7 @@ function stopPeer(preserveCapture = false): void {
   offeredPublish = [];
   publisherTracks.clear();
   videoSenders.clear();
+  pendingVideoDetach.clear();
   discardingPublish = false;
   announced.clear();
   for (const stream of pendingMicRaw) stopTracks(stream);
@@ -3497,6 +3499,10 @@ function stopLocalVideo(kind: "v" | "s" | "l"): void {
   else liveEpoch += 1;
   const stream =
     kind === "v" ? cameraStream : kind === "s" ? screenStream : liveStream;
+  const pc = seat.pc;
+  const mine = seat.generation;
+  const epoch = videoEpoch(kind);
+  const detaches: Promise<void>[] = [];
   const senders = seat.pc?.getSenders?.() ?? [];
   if (kind === "v") {
     cameraStream = null;
@@ -3528,7 +3534,45 @@ function stopLocalVideo(kind: "v" | "s" | "l"): void {
         t: identity?.trackId ?? track.id,
       });
       publisherTracks.delete(sender);
-      seat.pc?.removeTrack?.(sender);
+      if (pc && sender.replaceTrack && (seatMediaVersion ?? 0) >= 3) {
+        // removeTrack's inactive negotiation collapses Firefox's negotiated
+        // q/f encodings. Keep the sender contract while ending capture and
+        // retracting SFU authority immediately. A new capture waits below.
+        let detachTimeout: ReturnType<typeof setTimeout> | undefined;
+        const stopped = Promise.resolve().then(() =>
+          sender.replaceTrack!(null),
+        );
+        const detach = Promise.race([
+          stopped,
+          new Promise<never>((_resolve, reject) => {
+            detachTimeout = setTimeout(
+              () => reject(Error("source detach timeout")),
+              2000,
+            );
+          }),
+        ])
+          .catch(() => {
+            if (sender.track === track || sender.track === null) {
+              try {
+                pc.removeTrack?.(sender);
+              } catch {
+                // A closed peer already ended this sender.
+              }
+            }
+            // Retire every video/source-audio reservation of this sender.
+            // Its original native promise may still complete after timeout.
+            for (const [source, reserved] of videoSenders) {
+              if (reserved === sender) videoSenders.delete(source);
+            }
+          })
+          .finally(() => {
+            clearTimeout(detachTimeout);
+            if (pendingVideoDetach.get(sender) === detach)
+              pendingVideoDetach.delete(sender);
+          });
+        pendingVideoDetach.set(sender, detach);
+        detaches.push(detach);
+      } else pc?.removeTrack?.(sender);
     } else {
       seat.send({
         op: "u",
@@ -3563,7 +3607,14 @@ function stopLocalVideo(kind: "v" | "s" | "l"): void {
   }
   seat.needOffer = true;
   noteStream(kind, false);
-  void offerIfStable(seat.generation);
+  void Promise.all(detaches).then(() => {
+    if (
+      seat.pc === pc &&
+      seat.generation === mine &&
+      videoEpoch(kind) === epoch
+    )
+      void offerIfStable(mine);
+  });
 }
 
 async function publishLocal(
@@ -3588,6 +3639,17 @@ async function publishLocal(
   for (const track of tracks) {
     const publishKind: PublishKind =
       track.kind === "audio" ? (kind === "s" ? "sa" : "la") : kind;
+    const previousSender = videoSenders.get(publishKind);
+    const detaching = previousSender && pendingVideoDetach.get(previousSender);
+    if (detaching) {
+      await detaching;
+      if (
+        seat.generation !== mine ||
+        seat.pc !== pc ||
+        videoEpoch(kind) !== epoch
+      )
+        return;
+    }
     // addTrack may reuse a stopped sender/transceiver. Reserve by the new
     // MSID identity, rather than treating the sender object as a new publish.
     let sender = pc.getSenders?.().find((sender) => sender.track === track);
@@ -3878,6 +3940,10 @@ async function offerIfStable(
   if (discardingPublish) return;
   await peer.enqueue(async () => {
     if (discardingPublish || !live()) return;
+    while (pendingVideoDetach.size > 0) {
+      await Promise.all(pendingVideoDetach.values());
+      if (discardingPublish || !live()) return;
+    }
     if (opts?.initial && seat.sfuOffered) return;
     const restart = wantsIceRestart(seatRecoverySlot, mine, opts?.iceRestart);
     const sticky = restart || (!opts?.initial && !opts?.fromEvent);
@@ -3906,6 +3972,12 @@ async function offerIfStable(
         await pc.createOffer(restart ? { iceRestart: true } : undefined),
       );
       if (!live()) return;
+      // A stop that began while createOffer awaited belongs to a fresh offer.
+      if (pendingVideoDetach.size > 0) {
+        seat.needOffer = true;
+        if (restart) markIceRestartPending(seatRecoverySlot, mine);
+        return;
+      }
       if (seat.signalingState() !== "stable") {
         if (sticky) seat.needOffer = true;
         if (restart) markIceRestartPending(seatRecoverySlot, mine);
