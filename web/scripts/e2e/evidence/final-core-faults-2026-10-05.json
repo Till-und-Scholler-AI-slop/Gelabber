@@ -1,0 +1,833 @@
+{
+  "scope": "actual unchanged full core-faults on final product candidate; original Chromium failure retained",
+  "api_source": "f9365201cad09dc3e0da599f95641229d9d6e21d",
+  "api_binary_sha256": "5a575b832a7f9706340473e012b44aef73ae676a2d5e28a71a3699fd25f05c25",
+  "web_source": "7c7208947769a2074f35871fcf24c106ceaccc7a",
+  "test_source": "76931202f0fa35c45fa1d90efb0f0170d9e6a765",
+  "fullAcceptance": false,
+  "browsers": {
+    "chromium": {
+      "raw_sha256": "4aceebc46354842294469022eb88d36a71175ee17144c3f4bcfa9c7cd7c8a4b2",
+      "finishedAt": "2026-10-05T20:42:10.654Z",
+      "gate": {
+        "passed": false,
+        "scope": "selected-cases",
+        "excluded": [
+          "account-session-reload-login",
+          "channel-chat-create-edit-delete-converges",
+          "new-dm-connected-recipient-discovers-without-refetch",
+          "channel-jpeg-png-webp-bind-reload-byte-equal",
+          "dm-jpeg-png-webp-bind-reload-byte-equal",
+          "background-event-before-first-open-55-history-paging",
+          "initial-history-error-visible-bounded-retry",
+          "failed-send-navigation-retains-own-retry",
+          "two-tabs-account-switch-delayed-401",
+          "two-tabs-account-switch-delayed-403",
+          "private-dm-foreign-discovery-subscription-denied",
+          "attachments-https-wan"
+        ],
+        "absent": [],
+        "completeAcceptance": false
+      },
+      "cleanup": [
+        {
+          "target": "owned-test-server",
+          "status": 204,
+          "stage": "complete",
+          "statuses": {
+            "login": 200,
+            "delete": 204,
+            "logout": 200
+          }
+        }
+      ],
+      "results": [
+        {
+          "id": "two-parallel-sends-navigation-retry",
+          "status": "PASS",
+          "classification": "observed-pass",
+          "metrics": {
+            "overlappingPosts": 2,
+            "firstStatus": 429,
+            "secondDeliveredBeforeRelease": true,
+            "navigation": "SPA",
+            "retainedTextAndFile": true,
+            "exactRetryMessages": 1,
+            "byteEqual": true,
+            "pr112Focus": true
+          },
+          "at": "2026-10-05T20:40:57.183Z",
+          "durationMs": 2700,
+          "predecessors": [
+            "07",
+            "10"
+          ]
+        },
+        {
+          "id": "committed-send-gateway-timeout-no-duplicate-retry",
+          "status": "PASS",
+          "classification": "observed-pass",
+          "metrics": {
+            "upstreamStatus": 201,
+            "browserStatus": 504,
+            "persistedMessages": 1,
+            "postRequests": 1,
+            "uncertainVisible": true,
+            "noRetryOffered": true
+          },
+          "at": "2026-10-05T20:40:59.883Z",
+          "durationMs": 4298,
+          "predecessors": [
+            "07"
+          ]
+        },
+        {
+          "id": "edit-delete-failure-row-scoped-rollback",
+          "status": "PASS",
+          "classification": "observed-pass",
+          "metrics": {
+            "controls": [
+              {
+                "method": "PATCH",
+                "faultStatus": 429,
+                "foreignEventBeforeRollback": true,
+                "originalRestored": true,
+                "foreignRetained": true
+              },
+              {
+                "method": "DELETE",
+                "faultStatus": 429,
+                "foreignEventBeforeRollback": true,
+                "originalRestored": true,
+                "foreignRetained": true
+              }
+            ]
+          },
+          "at": "2026-10-05T20:41:04.182Z",
+          "durationMs": 4766,
+          "predecessors": [
+            "07",
+            "06b"
+          ]
+        },
+        {
+          "id": "rest-ws-reordering-edit-delete-rollback",
+          "status": "PASS",
+          "classification": "observed-pass",
+          "metrics": {
+            "oldRowsInHeldResponse": 2,
+            "nativeEventsBeforeResponse": 3,
+            "newerEditRetained": true,
+            "newerCreateRetained": true,
+            "deleteNotResurrected": true,
+            "historyRequests": 2
+          },
+          "at": "2026-10-05T20:41:08.948Z",
+          "durationMs": 2298,
+          "predecessors": [
+            "06b",
+            "07"
+          ]
+        },
+        {
+          "id": "paging-error-data-preservation",
+          "status": "PASS",
+          "classification": "observed-pass",
+          "metrics": {
+            "messagesSeeded": 55,
+            "initialPagePreserved": true,
+            "requestsBeforeExplicitRetry": 1,
+            "requestsAfterRetry": 2,
+            "oldestVisible": true
+          },
+          "at": "2026-10-05T20:41:11.247Z",
+          "durationMs": 7252,
+          "predecessors": [
+            "07",
+            "06a"
+          ]
+        },
+        {
+          "id": "upload-abort-retains-text-file-retry",
+          "status": "PASS",
+          "classification": "observed-pass",
+          "metrics": {
+            "abortedPuts": 1,
+            "bindBeforeSuccessfulPut": 0,
+            "retainedTextAndFile": true,
+            "exactRetryMessages": 1
+          },
+          "at": "2026-10-05T20:41:18.499Z",
+          "durationMs": 2413,
+          "predecessors": [
+            "07",
+            "10"
+          ]
+        },
+        {
+          "id": "upload-account-switch-no-foreign-bind",
+          "status": "PASS",
+          "classification": "observed-pass",
+          "metrics": {
+            "uploadedBeforeSwitch": true,
+            "oldBindRequests": 0,
+            "noAContentsUnderB": true,
+            "sessionBUnchanged": true,
+            "aDraftPersistence": "not required across scope change"
+          },
+          "at": "2026-10-05T20:41:20.913Z",
+          "durationMs": 6046,
+          "predecessors": [
+            "04",
+            "07",
+            "10"
+          ]
+        },
+        {
+          "id": "redis-epoch-replay-window-reset",
+          "status": "FAIL",
+          "reason": "replay-overflow-not-exercised",
+          "classification": "unconfirmed-failure",
+          "site": "harness.mjs:27:25",
+          "metrics": {
+            "gaps": 0
+          },
+          "at": "2026-10-05T20:41:26.959Z",
+          "durationMs": 2883,
+          "predecessors": [
+            "05a",
+            "06b"
+          ]
+        },
+        {
+          "id": "redis-pubsub-outage-durable-outbox-convergence",
+          "status": "PASS",
+          "classification": "observed-pass",
+          "metrics": {
+            "isolatedApiConnections": true,
+            "outageCommitStatus": 201,
+            "durableMessageAndOutboxObserved": true,
+            "resyncObserved": true,
+            "restoredWithoutNavigation": true,
+            "pendingOutboxAfterRestore": 0,
+            "visibleViaRestDuringOutage": true
+          },
+          "at": "2026-10-05T20:41:29.842Z",
+          "durationMs": 3749,
+          "predecessors": [
+            "05a",
+            "06b"
+          ]
+        },
+        {
+          "id": "storage-delete-outage-durable-cleanup",
+          "status": "PASS",
+          "classification": "observed-pass",
+          "metrics": {
+            "browserUploadBind": [
+              201
+            ],
+            "originalDownloadByteEqual": true,
+            "dbFaultDeleteStatus": 500,
+            "dbFailurePreservedMessageAndBlob": true,
+            "storageDeleteFaultStatus": 503,
+            "deleteFailures": 1,
+            "durableIntentDuringOutage": true,
+            "deleteAfterRestore": true,
+            "originalPutReplayStatus": 200,
+            "replayDeleted": true
+          },
+          "at": "2026-10-05T20:41:33.592Z",
+          "durationMs": 14999,
+          "predecessors": [
+            "10"
+          ]
+        },
+        {
+          "id": "upload-abandoned-object-cleanup",
+          "status": "PASS",
+          "classification": "observed-pass",
+          "metrics": {
+            "controls": [
+              {
+                "uploaded": false,
+                "actualObjectBefore": 404,
+                "headFaultStatus": 503,
+                "reservationRetainedDuringFault": true,
+                "metadataRemoved": true,
+                "objectAfter": 404,
+                "reservedBytesReleased": 77,
+                "consumedBytesAdded": 0
+              },
+              {
+                "uploaded": true,
+                "actualObjectBefore": 200,
+                "headFaultStatus": 503,
+                "reservationRetainedDuringFault": true,
+                "metadataRemoved": true,
+                "objectAfter": 404,
+                "reservedBytesReleased": 77,
+                "consumedBytesAdded": 77
+              }
+            ],
+            "acceleratedClock": "only owned attachment expiry/grace and retry timestamps; production deadlines unchanged"
+          },
+          "at": "2026-10-05T20:41:48.593Z",
+          "durationMs": 5119,
+          "predecessors": [
+            "10"
+          ]
+        },
+        {
+          "id": "slow-reader-bounded-memory",
+          "status": "PASS",
+          "classification": "observed-pass",
+          "metrics": {
+            "rawReceiveBufferBytes": 8192,
+            "noReadsAfterPause": true,
+            "clientHeartbeatsContinued": true,
+            "messagesCommitted": 304,
+            "contentBytesCommitted": 2314242,
+            "pendingTcpBytesWhileReceivePaused": true,
+            "blockedApplicationSendDirectlyMeasured": false,
+            "ownApiSocketDisconnected": true,
+            "terminalAfterLastCommitMs": 27,
+            "pauseObservedAt": "2026-10-05T20:41:55.898Z",
+            "firstPendingQueueObservedAt": "2026-10-05T20:41:56.197Z",
+            "firstConsecutivePendingQueueSampleAt": "2026-10-05T20:41:56.433Z",
+            "lastCommitObservedAt": "2026-10-05T20:42:05.576Z",
+            "socketDisappearanceObservedAt": "2026-10-05T20:42:05.590Z",
+            "loadSampleGapsMs": [
+              290,
+              236,
+              212,
+              205,
+              278,
+              168,
+              281,
+              260,
+              280,
+              258,
+              254,
+              244,
+              329,
+              262,
+              344,
+              287,
+              299,
+              302,
+              289,
+              400,
+              280,
+              248,
+              352,
+              238,
+              240,
+              268,
+              270,
+              234,
+              221,
+              266,
+              251,
+              159,
+              225,
+              177,
+              213,
+              213,
+              168,
+              182
+            ],
+            "terminalPollingIntervalMs": 200,
+            "postLoadObservationBudgetMs": 2500,
+            "timeoutSourceEvidence": {
+              "apiSource": "f9365201cad09dc3e0da599f95641229d9d6e21d",
+              "file": "api/src/gateway/conn.rs",
+              "sendMs": 1000,
+              "finalCloseMs": 1000,
+              "attribution": "source contract; not measured from blocked-send onset"
+            },
+            "outboundQueueContractFrames": 128,
+            "healthyAppClientProgressAfterDisconnect": true,
+            "rssSamples": [
+              {
+                "at": "2026-10-05T20:41:55.907Z",
+                "process": "owned-manifest-api-child",
+                "rssKiB": 73992,
+                "rawSocketOpen": true,
+                "rawSendQueueBytes": 0
+              },
+              {
+                "at": "2026-10-05T20:42:05.590Z",
+                "process": "owned-manifest-api-child",
+                "rssKiB": 75044,
+                "rawSocketOpen": false,
+                "rawSendQueueBytes": 0,
+                "messagesCommitted": 304
+              },
+              {
+                "at": "2026-10-05T20:42:05.603Z",
+                "process": "owned-manifest-api-child",
+                "rssKiB": 75044,
+                "rawSocketOpen": false,
+                "rawSendQueueBytes": 0,
+                "messagesCommitted": 304
+              }
+            ],
+            "rssClaim": "observed samples of the manifest-matched own API child under this load; no general memory bound"
+          },
+          "at": "2026-10-05T20:41:53.713Z",
+          "durationMs": 11955,
+          "predecessors": [
+            "05a"
+          ]
+        },
+        {
+          "id": "ban-invite-join-race",
+          "status": "PASS",
+          "classification": "observed-pass",
+          "metrics": {
+            "fixtureOwnedServerLock": true,
+            "controls": [
+              {
+                "first": "ban",
+                "twoBlockedTransactionsObserved": true,
+                "ban": 204,
+                "join": 403,
+                "finalMemberRows": 0,
+                "finalBanRows": 1,
+                "subsequentJoinStatus": 403
+              },
+              {
+                "first": "join",
+                "twoBlockedTransactionsObserved": true,
+                "join": 200,
+                "ban": 204,
+                "finalMemberRows": 0,
+                "finalBanRows": 1,
+                "subsequentJoinStatus": 403
+              }
+            ]
+          },
+          "at": "2026-10-05T20:42:05.669Z",
+          "durationMs": 3173,
+          "predecessors": [
+            "03a"
+          ]
+        }
+      ]
+    },
+    "firefox": {
+      "raw_sha256": "d241176d52143026b2ae79188b2cc89899676b4472e095f7c0f293f1651cadfb",
+      "finishedAt": "2026-10-05T20:48:01.560Z",
+      "gate": {
+        "passed": true,
+        "scope": "selected-cases",
+        "excluded": [
+          "account-session-reload-login",
+          "channel-chat-create-edit-delete-converges",
+          "new-dm-connected-recipient-discovers-without-refetch",
+          "channel-jpeg-png-webp-bind-reload-byte-equal",
+          "dm-jpeg-png-webp-bind-reload-byte-equal",
+          "background-event-before-first-open-55-history-paging",
+          "initial-history-error-visible-bounded-retry",
+          "failed-send-navigation-retains-own-retry",
+          "two-tabs-account-switch-delayed-401",
+          "two-tabs-account-switch-delayed-403",
+          "private-dm-foreign-discovery-subscription-denied",
+          "attachments-https-wan"
+        ],
+        "absent": [],
+        "completeAcceptance": false
+      },
+      "cleanup": [
+        {
+          "target": "owned-test-server",
+          "status": 204,
+          "stage": "complete",
+          "statuses": {
+            "login": 200,
+            "delete": 204,
+            "logout": 200
+          }
+        }
+      ],
+      "results": [
+        {
+          "id": "two-parallel-sends-navigation-retry",
+          "status": "PASS",
+          "classification": "observed-pass",
+          "metrics": {
+            "overlappingPosts": 2,
+            "firstStatus": 429,
+            "secondDeliveredBeforeRelease": true,
+            "navigation": "SPA",
+            "retainedTextAndFile": true,
+            "exactRetryMessages": 1,
+            "byteEqual": true,
+            "pr112Focus": true
+          },
+          "at": "2026-10-05T20:46:39.982Z",
+          "durationMs": 3221,
+          "predecessors": [
+            "07",
+            "10"
+          ]
+        },
+        {
+          "id": "committed-send-gateway-timeout-no-duplicate-retry",
+          "status": "PASS",
+          "classification": "observed-pass",
+          "metrics": {
+            "upstreamStatus": 201,
+            "browserStatus": 504,
+            "persistedMessages": 1,
+            "postRequests": 1,
+            "uncertainVisible": true,
+            "noRetryOffered": true
+          },
+          "at": "2026-10-05T20:46:43.203Z",
+          "durationMs": 4811,
+          "predecessors": [
+            "07"
+          ]
+        },
+        {
+          "id": "edit-delete-failure-row-scoped-rollback",
+          "status": "PASS",
+          "classification": "observed-pass",
+          "metrics": {
+            "controls": [
+              {
+                "method": "PATCH",
+                "faultStatus": 429,
+                "foreignEventBeforeRollback": true,
+                "originalRestored": true,
+                "foreignRetained": true
+              },
+              {
+                "method": "DELETE",
+                "faultStatus": 429,
+                "foreignEventBeforeRollback": true,
+                "originalRestored": true,
+                "foreignRetained": true
+              }
+            ]
+          },
+          "at": "2026-10-05T20:46:48.014Z",
+          "durationMs": 5110,
+          "predecessors": [
+            "07",
+            "06b"
+          ]
+        },
+        {
+          "id": "rest-ws-reordering-edit-delete-rollback",
+          "status": "PASS",
+          "classification": "observed-pass",
+          "metrics": {
+            "oldRowsInHeldResponse": 2,
+            "nativeEventsBeforeResponse": 3,
+            "newerEditRetained": true,
+            "newerCreateRetained": true,
+            "deleteNotResurrected": true,
+            "historyRequests": 1
+          },
+          "at": "2026-10-05T20:46:53.124Z",
+          "durationMs": 3428,
+          "predecessors": [
+            "06b",
+            "07"
+          ]
+        },
+        {
+          "id": "paging-error-data-preservation",
+          "status": "PASS",
+          "classification": "observed-pass",
+          "metrics": {
+            "messagesSeeded": 55,
+            "initialPagePreserved": true,
+            "requestsBeforeExplicitRetry": 1,
+            "requestsAfterRetry": 2,
+            "oldestVisible": true
+          },
+          "at": "2026-10-05T20:46:56.552Z",
+          "durationMs": 8837,
+          "predecessors": [
+            "07",
+            "06a"
+          ]
+        },
+        {
+          "id": "upload-abort-retains-text-file-retry",
+          "status": "PASS",
+          "classification": "observed-pass",
+          "metrics": {
+            "abortedPuts": 1,
+            "bindBeforeSuccessfulPut": 0,
+            "retainedTextAndFile": true,
+            "exactRetryMessages": 1
+          },
+          "at": "2026-10-05T20:47:05.390Z",
+          "durationMs": 2751,
+          "predecessors": [
+            "07",
+            "10"
+          ]
+        },
+        {
+          "id": "upload-account-switch-no-foreign-bind",
+          "status": "PASS",
+          "classification": "observed-pass",
+          "metrics": {
+            "uploadedBeforeSwitch": true,
+            "oldBindRequests": 0,
+            "noAContentsUnderB": true,
+            "sessionBUnchanged": true,
+            "aDraftPersistence": "not required across scope change"
+          },
+          "at": "2026-10-05T20:47:08.141Z",
+          "durationMs": 6639,
+          "predecessors": [
+            "04",
+            "07",
+            "10"
+          ]
+        },
+        {
+          "id": "redis-epoch-replay-window-reset",
+          "status": "PASS",
+          "classification": "observed-pass",
+          "metrics": {
+            "replayWindow": 8,
+            "missedEvents": 12,
+            "gapObserved": true,
+            "ownTopicOnlyReset": true,
+            "newEpochObserved": true,
+            "newerDatabaseRevision": true,
+            "editedAndCreatedWithoutReload": true
+          },
+          "at": "2026-10-05T20:47:14.781Z",
+          "durationMs": 4427,
+          "predecessors": [
+            "05a",
+            "06b"
+          ]
+        },
+        {
+          "id": "redis-pubsub-outage-durable-outbox-convergence",
+          "status": "PASS",
+          "classification": "observed-pass",
+          "metrics": {
+            "isolatedApiConnections": true,
+            "outageCommitStatus": 201,
+            "durableMessageAndOutboxObserved": true,
+            "resyncObserved": true,
+            "restoredWithoutNavigation": true,
+            "pendingOutboxAfterRestore": 0,
+            "visibleViaRestDuringOutage": true
+          },
+          "at": "2026-10-05T20:47:19.208Z",
+          "durationMs": 4650,
+          "predecessors": [
+            "05a",
+            "06b"
+          ]
+        },
+        {
+          "id": "storage-delete-outage-durable-cleanup",
+          "status": "PASS",
+          "classification": "observed-pass",
+          "metrics": {
+            "browserUploadBind": [
+              201
+            ],
+            "originalDownloadByteEqual": true,
+            "dbFaultDeleteStatus": 500,
+            "dbFailurePreservedMessageAndBlob": true,
+            "storageDeleteFaultStatus": 503,
+            "deleteFailures": 1,
+            "durableIntentDuringOutage": true,
+            "deleteAfterRestore": true,
+            "originalPutReplayStatus": 200,
+            "replayDeleted": true
+          },
+          "at": "2026-10-05T20:47:23.859Z",
+          "durationMs": 15099,
+          "predecessors": [
+            "10"
+          ]
+        },
+        {
+          "id": "upload-abandoned-object-cleanup",
+          "status": "PASS",
+          "classification": "observed-pass",
+          "metrics": {
+            "controls": [
+              {
+                "uploaded": false,
+                "actualObjectBefore": 404,
+                "headFaultStatus": 503,
+                "reservationRetainedDuringFault": true,
+                "metadataRemoved": true,
+                "objectAfter": 404,
+                "reservedBytesReleased": 77,
+                "consumedBytesAdded": 0
+              },
+              {
+                "uploaded": true,
+                "actualObjectBefore": 200,
+                "headFaultStatus": 503,
+                "reservationRetainedDuringFault": true,
+                "metadataRemoved": true,
+                "objectAfter": 404,
+                "reservedBytesReleased": 77,
+                "consumedBytesAdded": 77
+              }
+            ],
+            "acceleratedClock": "only owned attachment expiry/grace and retry timestamps; production deadlines unchanged"
+          },
+          "at": "2026-10-05T20:47:38.958Z",
+          "durationMs": 4949,
+          "predecessors": [
+            "10"
+          ]
+        },
+        {
+          "id": "slow-reader-bounded-memory",
+          "status": "PASS",
+          "classification": "observed-pass",
+          "metrics": {
+            "rawReceiveBufferBytes": 8192,
+            "noReadsAfterPause": true,
+            "clientHeartbeatsContinued": true,
+            "messagesCommitted": 296,
+            "contentBytesCommitted": 2253338,
+            "pendingTcpBytesWhileReceivePaused": true,
+            "blockedApplicationSendDirectlyMeasured": false,
+            "ownApiSocketDisconnected": true,
+            "terminalAfterLastCommitMs": 22,
+            "pauseObservedAt": "2026-10-05T20:47:46.684Z",
+            "firstPendingQueueObservedAt": "2026-10-05T20:47:46.921Z",
+            "firstConsecutivePendingQueueSampleAt": "2026-10-05T20:47:47.228Z",
+            "lastCommitObservedAt": "2026-10-05T20:47:55.399Z",
+            "socketDisappearanceObservedAt": "2026-10-05T20:47:55.410Z",
+            "loadSampleGapsMs": [
+              226,
+              307,
+              232,
+              216,
+              271,
+              241,
+              199,
+              185,
+              256,
+              258,
+              224,
+              246,
+              182,
+              211,
+              292,
+              296,
+              215,
+              229,
+              271,
+              231,
+              262,
+              216,
+              272,
+              219,
+              205,
+              241,
+              237,
+              289,
+              238,
+              246,
+              237,
+              227,
+              187,
+              168,
+              237,
+              238,
+              208
+            ],
+            "terminalPollingIntervalMs": 200,
+            "postLoadObservationBudgetMs": 2500,
+            "timeoutSourceEvidence": {
+              "apiSource": "f9365201cad09dc3e0da599f95641229d9d6e21d",
+              "file": "api/src/gateway/conn.rs",
+              "sendMs": 1000,
+              "finalCloseMs": 1000,
+              "attribution": "source contract; not measured from blocked-send onset"
+            },
+            "outboundQueueContractFrames": 128,
+            "healthyAppClientProgressAfterDisconnect": true,
+            "rssSamples": [
+              {
+                "at": "2026-10-05T20:47:46.695Z",
+                "process": "owned-manifest-api-child",
+                "rssKiB": 75128,
+                "rawSocketOpen": true,
+                "rawSendQueueBytes": 0
+              },
+              {
+                "at": "2026-10-05T20:47:55.410Z",
+                "process": "owned-manifest-api-child",
+                "rssKiB": 75988,
+                "rawSocketOpen": false,
+                "rawSendQueueBytes": 0,
+                "messagesCommitted": 296
+              },
+              {
+                "at": "2026-10-05T20:47:55.421Z",
+                "process": "owned-manifest-api-child",
+                "rssKiB": 75988,
+                "rawSocketOpen": false,
+                "rawSendQueueBytes": 0,
+                "messagesCommitted": 296
+              }
+            ],
+            "rssClaim": "observed samples of the manifest-matched own API child under this load; no general memory bound"
+          },
+          "at": "2026-10-05T20:47:43.907Z",
+          "durationMs": 11589,
+          "predecessors": [
+            "05a"
+          ]
+        },
+        {
+          "id": "ban-invite-join-race",
+          "status": "PASS",
+          "classification": "observed-pass",
+          "metrics": {
+            "fixtureOwnedServerLock": true,
+            "controls": [
+              {
+                "first": "ban",
+                "twoBlockedTransactionsObserved": true,
+                "ban": 204,
+                "join": 403,
+                "finalMemberRows": 0,
+                "finalBanRows": 1,
+                "subsequentJoinStatus": 403
+              },
+              {
+                "first": "join",
+                "twoBlockedTransactionsObserved": true,
+                "join": 200,
+                "ban": 204,
+                "finalMemberRows": 0,
+                "finalBanRows": 1,
+                "subsequentJoinStatus": 403
+              }
+            ]
+          },
+          "at": "2026-10-05T20:47:55.498Z",
+          "durationMs": 3661,
+          "predecessors": [
+            "03a"
+          ]
+        }
+      ]
+    }
+  }
+}

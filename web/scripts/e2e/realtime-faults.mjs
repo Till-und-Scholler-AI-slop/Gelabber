@@ -8,7 +8,7 @@ import {
   until,
   CheckFailure,
 } from "./harness.mjs";
-import { interrupt } from "./media.mjs";
+import { nativeEvaluate } from "./native-evaluate.mjs";
 const log = (a) => a.page.getByRole("log", { name: "Nachrichten" });
 const counter = (s, key) =>
   s.sockets
@@ -48,6 +48,7 @@ export async function realtimeFaultScenarios(h, f, runtime) {
   } else {
     await h.run("redis-epoch-replay-window-reset", ["05a", "06b"], async () => {
       let stage = "fresh-channel";
+      let outage;
       try {
         const c = await fresh(f, "E2E replay and epoch");
         runtime.allowTopic(c.id);
@@ -55,12 +56,58 @@ export async function realtimeFaultScenarios(h, f, runtime) {
         await visible(f.member, control.content);
         const before = await snapshot(f.member);
         stage = "disconnect-and-overflow";
-        // Close while the page is still online; offline may already close it.
-        await interrupt(f.member, "gateway");
-        await f.member.context.setOffline(true);
+        check(
+          before.sockets.some((s) => s.plane === "gateway" && s.ready === 1),
+          "replay-control-live-gateway-missing",
+        );
         try {
+          // Reconnect starts on the next turn. Block new network connections
+          // before closing the old one, including browsers whose offline mode
+          // leaves existing WebSockets alive. Offline may itself close it.
+          await f.member.context.setOffline(true);
+          await nativeEvaluate(f.member, () => {
+            for (const s of window.__e2e.sockets)
+              if (s.plane === "gateway" && s.ws.readyState === 1)
+                s.ws.close(4000, "e2e-replay-offline");
+          });
+          const disconnected = await until(
+            () => snapshot(f.member),
+            (s) =>
+              !s.sockets.some((x) => x.plane === "gateway" && x.ready === 1),
+            "replay-control-gateway-still-open",
+          );
           for (let i = 0; i < 12; i++)
             await seed(f.owner, c.id, `E2E overflow ${i}`);
+          await until(
+            async () =>
+              Number(
+                await runtime.sql(
+                  `SELECT count(*) FROM gateway_outbox WHERE channel_id='${c.id}'::uuid`,
+                ),
+              ),
+            (n) => n === 0,
+            "replay-control-outbox-not-delivered",
+          );
+          const offline = await snapshot(f.member);
+          check(
+            !offline.sockets.some(
+              (s) => s.plane === "gateway" && s.ready === 1,
+            ) &&
+              counter(offline, "receivedEvents") ===
+                counter(disconnected, "receivedEvents"),
+            "replay-control-reconnected-before-overflow",
+          );
+          outage = {
+            openBefore: before.sockets.filter(
+              (s) => s.plane === "gateway" && s.ready === 1,
+            ).length,
+            openAfterWrites: offline.sockets.filter(
+              (s) => s.plane === "gateway" && s.ready === 1,
+            ).length,
+            eventsAfterDisconnect: counter(disconnected, "receivedEvents"),
+            eventsAfterWrites: counter(offline, "receivedEvents"),
+            pendingOutboxBeforeReconnect: 0,
+          };
         } finally {
           await f.member.context.setOffline(false);
         }
@@ -70,7 +117,11 @@ export async function realtimeFaultScenarios(h, f, runtime) {
         check(
           counter(afterReplay, "gaps") > counter(before, "gaps"),
           "replay-overflow-not-exercised",
-          { gaps: counter(afterReplay, "gaps") },
+          {
+            gapsBefore: counter(before, "gaps"),
+            gaps: counter(afterReplay, "gaps"),
+            outage,
+          },
         );
         // Only the topic created by this scenario. No FLUSHALL/FLUSHDB/global keys.
         stage = "own-topic-reset";
@@ -100,14 +151,22 @@ export async function realtimeFaultScenarios(h, f, runtime) {
         return {
           replayWindow: 8,
           missedEvents: 12,
+          outage,
+          gapsBefore: counter(before, "gaps"),
+          gapsAfter: counter(afterReplay, "gaps"),
           gapObserved: true,
           ownTopicOnlyReset: true,
+          disconnectedThroughoutOverflow: true,
+          outboxDrainedBeforeReconnect: true,
           newEpochObserved: true,
           newerDatabaseRevision: true,
           editedAndCreatedWithoutReload: true,
         };
       } catch (error) {
-        if (error instanceof CheckFailure) throw error;
+        if (error instanceof CheckFailure) {
+          error.metrics = { ...error.metrics, stage };
+          throw error;
+        }
         throw new CheckFailure("fixture-epoch-browser-interface", {
           stage,
           errorType: error?.name ?? "Error",
