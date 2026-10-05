@@ -3512,7 +3512,7 @@ describe("stream negotiation stability", () => {
     await vi.waitFor(() =>
       expect(
         video().map((sender) => sender.getParameters!().encodings[0]),
-      ).toEqual(Array(3).fill({ maxFramerate: 60 })),
+      ).toEqual(Array(3).fill({ maxFramerate: 60, priority: "low" })),
     );
     useMediaSettings.getState().patch({ videoUploadLimit: 9_000_000 });
     await vi.waitFor(() =>

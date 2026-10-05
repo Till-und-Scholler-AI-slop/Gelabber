@@ -1,5 +1,5 @@
 // Local native AudioWorklet/recording acceptance. Start Vite on 5179 first.
-/* global process, console, window, document, URL, navigator */
+/* global process, console, window, document, URL, navigator, RTCPeerConnection, setTimeout */
 import assert from "node:assert/strict";
 import { chromium, firefox } from "playwright";
 const url = new URL(process.env.GELABBER_AUDIO_URL ?? "http://127.0.0.1:5179");
@@ -172,6 +172,98 @@ for (const engine of [chromium, firefox]) {
       true,
     );
     assert.deepEqual(errors, []);
+    const senderPriorities = await page.evaluate(async () => {
+      const { prioritizeSender, readSenderPriority } =
+        await import("/src/voice/mediaPriority.ts");
+      const raw = await navigator.mediaDevices.getUserMedia({
+        audio: true,
+        video: true,
+      });
+      const pc = new RTCPeerConnection({ iceServers: [] }),
+        other = new RTCPeerConnection({ iceServers: [] });
+      const pendingLocal = [],
+        pendingRemote = [];
+      pc.onicecandidate = ({ candidate }) => {
+        if (!candidate) return;
+        if (other.remoteDescription)
+          void other.addIceCandidate(candidate).catch(() => {});
+        else pendingLocal.push(candidate);
+      };
+      other.onicecandidate = ({ candidate }) => {
+        if (!candidate) return;
+        if (pc.remoteDescription)
+          void pc.addIceCandidate(candidate).catch(() => {});
+        else pendingRemote.push(candidate);
+      };
+      try {
+        const senders = raw.getTracks().map((track) => pc.addTrack(track, raw));
+        await pc.setLocalDescription(await pc.createOffer());
+        await other.setRemoteDescription(pc.localDescription);
+        for (const candidate of pendingLocal)
+          await other.addIceCandidate(candidate);
+        await other.setLocalDescription(await other.createAnswer());
+        await pc.setRemoteDescription(other.localDescription);
+        for (const candidate of pendingRemote)
+          await pc.addIceCandidate(candidate);
+        const result = [];
+        for (const sender of senders) {
+          const parameters = sender.getParameters();
+          if (sender.track.kind === "audio") {
+            parameters.encodings[0].maxBitrate = 72_000;
+            await sender.setParameters(parameters);
+          }
+          const before = sender.getParameters();
+          await prioritizeSender(sender, sender.track.kind);
+          const after = sender.getParameters();
+          result.push({
+            kind: sender.track.kind,
+            readback: readSenderPriority(sender),
+            networkSupported: Object.hasOwn(
+              before.encodings[0],
+              "networkPriority",
+            ),
+            capsPreserved:
+              after.encodings[0].maxBitrate === before.encodings[0].maxBitrate,
+            codecsPreserved:
+              JSON.stringify(before.codecs) === JSON.stringify(after.codecs),
+            noDefaultVideoCap:
+              sender.track.kind !== "video" ||
+              !Object.hasOwn(after.encodings[0], "maxBitrate"),
+          });
+        }
+        for (let attempt = 0; attempt < 24; attempt++) {
+          const outbound = Array.from((await pc.getStats()).values()).filter(
+            (entry) => entry.type === "outbound-rtp",
+          );
+          if (
+            ["audio", "video"].every((kind) =>
+              outbound.some(
+                (entry) => entry.kind === kind && entry.packetsSent > 0,
+              ),
+            )
+          )
+            return { senders: result, packetsFlowing: true };
+          await new Promise((resolve) => setTimeout(resolve, 250));
+        }
+        return { senders: result, packetsFlowing: false };
+      } finally {
+        pc.close();
+        other.close();
+        raw.getTracks().forEach((track) => track.stop());
+      }
+    });
+    assert.equal(senderPriorities.packetsFlowing, true);
+    for (const sender of senderPriorities.senders) {
+      const desired = sender.kind === "audio" ? "high" : "low";
+      assert.equal(sender.readback.priority, desired);
+      assert.equal(
+        sender.readback.networkPriority,
+        sender.networkSupported ? desired : null,
+      );
+      assert.equal(sender.capsPreserved, true);
+      assert.equal(sender.codecsPreserved, true);
+      assert.equal(sender.noDefaultVideoCap, true);
+    }
     // Fresh document: corrupted/missing assets must visibly recapture browser filters.
     await page.reload();
     await page.waitForFunction(() => window.ready);
@@ -189,6 +281,8 @@ for (const engine of [chromium, firefox]) {
     });
     results.push({
       browser: engine.name(),
+      browserVersion: browser.version(),
+      senderPriorities,
       enhanced,
       original,
       fallback,

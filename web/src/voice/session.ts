@@ -6,6 +6,11 @@ import {
   type MicProcessor,
 } from "./audioProcessing.ts";
 import {
+  prioritizeSender,
+  readSenderPriority,
+  type MediaPriority,
+} from "./mediaPriority.ts";
+import {
   playCallSound,
   unlockCallSounds,
   stopCallSounds,
@@ -153,6 +158,8 @@ let preDeafenMuted = false;
 export type RtpEncodingParameters = {
   maxBitrate?: number;
   maxFramerate?: number;
+  priority?: MediaPriority;
+  networkPriority?: MediaPriority;
 };
 
 export type RtpSenderParameters = {
@@ -1225,9 +1232,24 @@ function voiceCaps(): Caps {
       : null;
   }
   const active = Object.values(videoLimits);
+  const senderPriorities: NonNullable<Caps["senderPriorities"]> = {};
+  for (const sender of seat.pc?.getSenders?.() ?? []) {
+    if (!sender.track) continue;
+    const kind = publisherTracks.get(sender)?.kind;
+    const source =
+      sender.track.kind === "audio"
+        ? kind === "sa"
+          ? "screen-audio"
+          : kind === "la"
+            ? "live-audio"
+            : "voice"
+        : diagnosticVideoSources()[sender.track.id];
+    if (source) senderPriorities[source] = readSenderPriority(sender);
+  }
   return {
     ...base,
     audioLimits,
+    senderPriorities,
     sourceAudioMaxBitrate: sourceAudioBitrate(),
     videoSendBudget: active.length
       ? active.every((cap) => cap.maxBitrate !== null)
@@ -1489,6 +1511,8 @@ async function applySink(el: HTMLAudioElement): Promise<void> {
 }
 
 async function applySendBitrate(): Promise<void> {
+  const pc = seat.pc,
+    generation = seat.generation;
   const bitrate = audioBitrate();
   for (const sender of seat.pc?.getSenders?.() ?? []) {
     if (sender.track?.kind !== "audio") continue;
@@ -1508,6 +1532,11 @@ async function applySendBitrate(): Promise<void> {
     } catch {
       // Chromium rejects setParameters before the first description.
     }
+    await prioritizeSender(
+      sender,
+      "audio",
+      () => seat.pc === pc && seat.generation === generation,
+    );
   }
 }
 
@@ -1591,6 +1620,9 @@ async function applyVideoLimits(
     } catch {
       // Some browsers require negotiation first; retry after SDP completes.
     }
+    await prioritizeSender(sender, "video", () =>
+      videoLimitCurrent(pc, generation, revision),
+    );
     // This snapshot is stale. Stop before the next sender; the newer pass
     // applies the latest budgets across every sender still sending.
     if (!videoLimitCurrent(pc, generation, revision)) return;
@@ -2628,6 +2660,9 @@ async function applyRemoteDescription(
     seat.sfuOfferOpen = false;
   }
   await enqueueVideoLimits(pc);
+  if (!current()) return;
+  // get/setParameters may require a negotiated sender, especially in Chromium.
+  await applySendBitrate();
   if (!current()) return;
   seat.negotiated = true;
   if (type === "answer") {

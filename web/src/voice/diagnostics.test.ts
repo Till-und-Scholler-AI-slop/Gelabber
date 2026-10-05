@@ -759,6 +759,38 @@ describe("voice diagnostics", () => {
 });
 
 describe("source-audio diagnostics", () => {
+  it("reports actual sender priority without substituting the requested high policy", () => {
+    const result = reduceConnection({
+      role: "voice",
+      previous: new Map(),
+      caps: {
+        ...caps,
+        senderPriorities: {
+          voice: { priority: "low", networkPriority: null },
+          camera: { priority: "low", networkPriority: "low" },
+        },
+      },
+      videoSources: { camera: "camera" },
+      entries: [
+        { id: "audio", type: "outbound-rtp", kind: "audio" },
+        {
+          id: "video",
+          type: "outbound-rtp",
+          kind: "video",
+          trackIdentifier: "camera",
+        },
+      ],
+    });
+    expect(
+      result.snapshot.flows.map((flow) => [
+        flow.senderPriority,
+        flow.senderNetworkPriority,
+      ]),
+    ).toEqual([
+      ["low", null],
+      ["low", "low"],
+    ]);
+  });
   it("separates microphone and music send caps and reports received screen/Live audio", () => {
     const result = reduceConnection({
       role: "voice",

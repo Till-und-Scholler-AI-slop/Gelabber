@@ -46,3 +46,26 @@ Capture resolution/FPS remain selectable independently of bandwidth. No
 Gelabber bitrate maximum is applied by default; only explicit Economy or custom
 limits set sender caps. Remote SDP is preserved, so genuine peer receive limits
 and WebRTC congestion control still apply.
+
+Sender priority is a best-effort hint: microphone and display-source audio use
+`priority=high`, video uses `priority=low` (the WebRTC normal priority).
+`networkPriority` is changed only when `getParameters()` already exposes it.
+Priority and DSCP updates run separately from cap/codec updates, so rejection
+does not stop capture, detach a track or prevent a successful cap update.
+Diagnostics show the browser's readback, with absent values remaining unknown.
+The native loopback smoke records exact Chromium/Firefox versions and verifies
+priority roundtrips plus preservation of existing limits. The tested Firefox
+build exposes `priority` but no `networkPriority`; Chromium exposes both.
+Neither a successful API call nor readback proves QoS under congestion. Local
+sender bandwidth scheduling and DSCP are distinct controls; networks may bleach
+DSCP, and this does not prioritize SFU downlink queues. See the
+[W3C Priority Control API](https://www.w3.org/TR/webrtc-priority/).
+
+**Open implementation and acceptance gate:** per-viewer adaptive video layers
+are not implemented. Current publications contain one RTP broadcast; viewers
+can select a source on/off but receive the same encoded packets. Simulcast/SVC
+needs RID/layer-aware publication and subscription state, codec-aware frame
+filtering, safe keyframe switches and sequence/timestamp rewriting before it
+can be advertised. Release acceptance must include different viewer capacities
+and audio under concurrent video congestion; the local priority API smoke does
+not satisfy that gate.
