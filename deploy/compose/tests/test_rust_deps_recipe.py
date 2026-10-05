@@ -1,5 +1,6 @@
 """Dependency recipe invariants; real Docker cache/runtime checks run separately."""
 from pathlib import Path
+import json
 import shutil
 import subprocess
 import tempfile
@@ -67,6 +68,25 @@ class DependencyRecipe(unittest.TestCase):
         lock.write_text(text)
         changed, _ = self.recipe('changed')
         self.assertEqual(self.contents(output), self.contents(changed))
+
+    def test_cargo_accepts_recipe_with_locked_local_packages_and_targets(self):
+        output, _ = self.recipe()
+        lock_before = (output / 'Cargo.lock').read_bytes()
+        result = subprocess.run(
+            ['cargo', 'metadata', '--locked', '--no-deps', '--format-version', '1',
+             '--manifest-path', str(output / 'Cargo.toml')],
+            capture_output=True, text=True, cwd=output)
+        self.assertEqual(result.returncode, 0, result.stderr)
+        self.assertEqual(lock_before, (output / 'Cargo.lock').read_bytes())
+        packages = {package['name']: package for package in json.loads(result.stdout)['packages']}
+        self.assertEqual(set(packages), {f'gelabber-{member}' for member in MEMBERS})
+        for member in MEMBERS:
+            package = packages[f'gelabber-{member}']
+            self.assertEqual(package['version'], '0.0.0')
+            kinds = {tuple(target['kind']) for target in package['targets']}
+            self.assertIn(('lib',), kinds)
+            if member != 'shared':
+                self.assertIn(('bin',), kinds)
 
     def test_dependency_features_and_toolchain_remain_cache_inputs(self):
         output, _ = self.recipe()
