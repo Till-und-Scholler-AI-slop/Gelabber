@@ -10,6 +10,10 @@ on:
         description: Run the extended browser and fault diagnostic matrix (strict results)
         type: boolean
         default: true
+      verify_typing_stability:
+        description: Require 20 consecutive isolated typing latency checks (no retries)
+        type: boolean
+        default: false
   pull_request:
     paths:
       - api/**
@@ -128,7 +132,24 @@ jobs:
           test -n "$MINIO_ROOT_USER"
           test -n "$MINIO_ROOT_PASSWORD"
           curl -fsS "$MINIO_ENDPOINT/minio/health/ready" >/dev/null
-          cargo test --locked --workspace --all-targets
+          # Keep the 100ms latency assertion away from concurrent integration tests.
+          # The skipped test is mandatory in the following isolated step.
+          cargo test --locked --workspace --all-targets -- --skip typing_broadcasts_fast_and_clears_on_stop
+
+      - name: Test typing latency in isolation
+        env:
+          VERIFY_TYPING_STABILITY: ${{ github.event_name == 'workflow_dispatch' && inputs.verify_typing_stability }}
+        run: |
+          set -euo pipefail
+          repetitions=1
+          if [ "$VERIFY_TYPING_STABILITY" = true ]; then
+            repetitions=20
+          fi
+          for ((iteration=1; iteration<=repetitions; iteration++)); do
+            echo "Isolated typing latency check ${iteration}/${repetitions}"
+            # Match workspace feature unification to reuse the already built tests.
+            cargo test --locked --workspace --all-targets typing_broadcasts_fast_and_clears_on_stop -- --exact --test-threads=1
+          done
 
       - name: Build owned API and SFU for isolated fault acceptance
         if: github.event_name == 'workflow_dispatch' && inputs.extended_e2e

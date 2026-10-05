@@ -120,7 +120,7 @@ API- und Media-Dockerbuilds halten kompilierte externe Rust-Abhängigkeiten in e
 
 Die bestehenden getrennten GitHub-Actions-Layer-Caches für API und Media bleiben bestehen. Kalte Builds müssen die Abhängigkeiten einmal kompilieren; warme Builds können sie wiederverwenden. Cache-Rezeptprüfungen laufen mit den Deployment-Konfigurationstests, tatsächliche Laufzeiten und Container-Readiness müssen zusätzlich mit Docker geprüft werden.
 
-Der Default zieht die App-Version `v0.3.0`; bestehende Release-Tags werden nicht überschrieben. MinIO verwendet unabhängig davon den bestehenden CE-Pin `RELEASE.2025-10-15T17-29-55Z`. Org-Pakete können privat sein: `docker login ghcr.io` oder lokal bauen. Alle Stack-Pins bleiben bestehen. Source-Build setzt `CARGO_HTTP_CAINFO`; bei TLS-Inspection hängt `docker/rust-build-ca.sh` die präsentierte Kette an.
+Der Default zieht die App-Version `v0.3.1`; bestehende Release-Tags werden nicht überschrieben. MinIO verwendet unabhängig davon den bestehenden CE-Pin `RELEASE.2025-10-15T17-29-55Z`. Org-Pakete können privat sein: `docker login ghcr.io` oder lokal bauen. Alle Stack-Pins bleiben bestehen. Source-Build setzt `CARGO_HTTP_CAINFO`; bei TLS-Inspection hängt `docker/rust-build-ca.sh` die präsentierte Kette an.
 
 CI läuft für **jeden main-Commit**, damit auch Deploy-/Workflow-Änderungen eine eindeutige CI-SHA besitzen. PR-Pfadfilter erfassen `shared/**`, alle Workspace-Mitglieder, Docker-Kontexte, Lockfiles und Workflows. Der Image-Workflow baut PRs ohne Push. Auf main startet er erst nach erfolgreichem `CI`-Push-Lauf derselben SHA; fehlgeschlagene/abgebrochene CI startet keinen Publish-Job.
 
