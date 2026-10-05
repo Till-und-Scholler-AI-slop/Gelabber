@@ -472,12 +472,30 @@ async fn ban_serializes_with_join_after_ban_check_before_insert(pool: PgPool) {
         .await
         .unwrap();
     drop(blocker);
-    assert_eq!(join_task.await.unwrap().status, StatusCode::OK);
+    let joined = join_task.await.unwrap();
+    // The insert is serialized before Ban, but join() rechecks membership after
+    // COMMIT. Ban may remove it before that final read; 404 is then intentional.
+    match joined.status {
+        StatusCode::OK => assert_eq!(joined.body["id"], sid.to_string()),
+        StatusCode::NOT_FOUND => assert_eq!(joined.body["error"], "not_found"),
+        status => panic!("unexpected join response {status}: {}", joined.body),
+    }
+    let ban_waited_for_join = prematurely_finished.is_none();
     let banned = match prematurely_finished {
         Some(result) => result.unwrap(),
         None => ban_task.await.unwrap(),
     };
     assert_eq!(banned.status, StatusCode::NO_CONTENT);
+    assert!(
+        ban_waited_for_join,
+        "Ban must wait for the held Join transaction"
+    );
+    let uses: i32 = sqlx::query_scalar("SELECT uses FROM invites WHERE server_id=$1")
+        .bind(sid)
+        .fetch_one(&pool)
+        .await
+        .unwrap();
+    assert_eq!(uses, 1, "Join must have committed exactly once before Ban");
     let inconsistent: bool = sqlx::query_scalar("SELECT EXISTS (SELECT 1 FROM server_members m JOIN server_bans b USING(server_id,user_id) WHERE m.server_id = $1 AND m.user_id = $2)").bind(sid).bind(uid).fetch_one(&pool).await.unwrap();
     assert!(!inconsistent, "ban and membership cannot coexist");
 }
