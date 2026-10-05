@@ -1835,7 +1835,8 @@ async function commitMicSend(
 function failedMicProcessor(owner: MicProcessor): void {
   if (activeMicGain !== owner) return;
   const sender = audioSender(),
-    generation = seat.generation;
+    generation = seat.generation,
+    failedTrack = owner.stream.getAudioTracks()[0];
   micForceBrowser = true;
   disableAudio(owner.stream);
   rawMicStream?.getTracks().forEach((track) => track.stop());
@@ -1855,11 +1856,13 @@ function failedMicProcessor(owner: MicProcessor): void {
     ),
   );
   void enqueueAudioCommit(async () => {
-    await replaceSenderTrack(sender, null).catch(() => undefined);
+    if (seat.generation === generation && sender?.track === failedTrack)
+      await replaceSenderTrack(sender, null).catch(() => undefined);
   }).then(() => {
     if (
       seat.generation === generation &&
-      useVoice.getState().status === "joined"
+      useVoice.getState().status === "joined" &&
+      !activeMicGain
     )
       void refreshMic();
   });
