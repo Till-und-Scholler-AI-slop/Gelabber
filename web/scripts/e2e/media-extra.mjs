@@ -400,7 +400,10 @@ export async function mediaExtraScenarios(h, f, { begin, reset, options }) {
           { controlConfirmed: true, after: afterCamera.last },
         );
         await click(f.owner, "Go Live");
-        const retry = await progress(f.member, options);
+        const retry = await progress(f.member, {
+          ...options,
+          publisherName: `E2E ${f.owner.label}`,
+        });
         return {
           injection:
             "one real native setRemoteDescription rejection of malformed answer",
