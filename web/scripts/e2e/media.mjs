@@ -44,20 +44,66 @@ function sourceMatches(video, color) {
   );
 }
 /** Render assertions select their source through the real Watch action. */
-export async function watchSource(actor, kind) {
-  if (kind !== "live" && kind !== "screen") return;
-  const tiles = actor.page
-    .locator("figure")
-    .filter({ hasText: kind === "live" ? "— Live" : "— Bildschirm" });
-  const start = tiles.getByRole("button", { name: "Zuschauen", exact: true });
-  if (await start.count()) await start.first().click();
+export async function watchSource(
+  actor,
+  kind,
+  { publisherName, budget = 5_000 } = {},
+) {
+  if (kind !== "live" && kind !== "screen") return { action: "camera" };
+  const suffix = kind === "live" ? "— Live" : "— Bildschirm";
+  let tiles = actor.page.locator("figure").filter({ hasText: suffix });
+  if (publisherName)
+    tiles = tiles.filter({ hasText: `${publisherName} ${suffix}` });
+  const deadline = Date.now() + budget;
+  await tiles.first().waitFor({ state: "visible", timeout: budget });
+  check((await tiles.count()) === 1, "expected-source-tile-is-ambiguous", {
+    kind,
+    publisherName,
+  });
+  const tile = tiles.first();
+  const start = tile.getByRole("button", { name: "Zuschauen", exact: true });
+  const stop = tile.getByRole("button", {
+    name: "Nicht mehr zuschauen",
+    exact: true,
+  });
+  const globalStop = actor.page
+    .getByRole("region", { name: "Aktive Medien", exact: true })
+    .getByRole("button", { name: "Nicht mehr zuschauen", exact: true });
+  const choice = await until(
+    async () => ({
+      start: await start.count(),
+      stop: await stop.count(),
+      globalStop: await globalStop.count(),
+    }),
+    (state) =>
+      state.start === 1 ||
+      state.stop === 1 ||
+      (kind === "live" && state.globalStop === 1),
+    "expected-source-watch-control-not-mounted",
+    Math.max(1, deadline - Date.now()),
+  );
+  if (choice.start === 1) {
+    await start.click({ timeout: Math.max(1, deadline - Date.now()) });
+    return { action: "clicked", kind, publisherName };
+  }
+  return {
+    action: choice.stop === 1 ? "already-selected" : "watch-peer",
+    kind,
+    publisherName,
+  };
 }
 export async function progress(
   actor,
-  { kind = "live", color = [220, 30, 30], budget = 5_000, relay = false } = {},
+  {
+    kind = "live",
+    color = [220, 30, 30],
+    budget = 5_000,
+    relay = false,
+    publisherName,
+  } = {},
 ) {
-  await watchSource(actor, kind);
   const start = Date.now();
+  const watchAction = await watchSource(actor, kind, { publisherName, budget });
   const first = await until(
     () => snapshot(actor),
     (s) => {
@@ -70,7 +116,7 @@ export async function progress(
       );
     },
     "decoded-correct-source-first-frame-deadline",
-    budget,
+    Math.max(1, budget - (Date.now() - start)),
   );
   const firstFrameMs = Date.now() - start;
   const initial = first.videos.find((v) => v.kind === kind);
@@ -103,7 +149,7 @@ export async function progress(
     "selected-network-path-mismatch",
     { paths },
   );
-  return { firstFrameMs, first, last };
+  return { watchAction, firstFrameMs, first, last };
 }
 async function reset(f) {
   for (const actor of [f.owner, f.member, f.watcher])
