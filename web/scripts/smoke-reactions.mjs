@@ -167,7 +167,7 @@ for (const engine of [chromium, firefox]) {
         name: "❤️: 1 Reaktionen, du hast reagiert",
         exact: true,
       })
-      .click();
+      .press("Enter");
     await row(member)
       .getByRole("button", {
         name: "❤️: 1 Reaktionen, du hast reagiert",
@@ -177,6 +177,13 @@ for (const engine of [chromium, firefox]) {
     await row(pages[0])
       .getByRole("button", { name: "❤️: 1 Reaktionen", exact: true })
       .waitFor({ state: "detached" });
+    assert.equal(
+      await member.evaluate(() =>
+        document.activeElement?.getAttribute("aria-label"),
+      ),
+      "Reaktion hinzufügen",
+      "removed last chip returns focus to Add",
+    );
     const heart = `/messages/${message.id}/reactions/${encodeURIComponent("❤️")}`;
     await request(1, "PUT", heart);
     await row(member)
@@ -407,6 +414,18 @@ for (const engine of [chromium, firefox]) {
         exact: true,
       })
       .waitFor();
+    const readOnlyMessage = await request(
+      0,
+      "POST",
+      `/channels/${channel}/messages`,
+      { content: `Focus-only-${nonce}` },
+      201,
+    );
+    await request(
+      1,
+      "PUT",
+      `/messages/${readOnlyMessage.id}/reactions/${encodeURIComponent("❤️")}`,
+    );
     await request(0, "PATCH", `/servers/${server.id}`, {
       member_permissions: ["send_files", "join_voice"],
     });
@@ -437,6 +456,28 @@ for (const engine of [chromium, firefox]) {
         .getByRole("button", { name: "❤️: 1 Reaktionen", exact: true })
         .isDisabled(),
       true,
+    );
+    const readOnlyRow = member
+      .locator(".lr-message-row")
+      .filter({ hasText: `Focus-only-${nonce}` });
+    await readOnlyRow
+      .getByRole("button", {
+        name: "❤️: 1 Reaktionen, du hast reagiert",
+        exact: true,
+      })
+      .press("Enter");
+    await readOnlyRow
+      .getByRole("button", {
+        name: "❤️: 1 Reaktionen, du hast reagiert",
+        exact: true,
+      })
+      .waitFor({ state: "detached" });
+    assert.equal(
+      await readOnlyRow.evaluate(
+        (element) => document.activeElement === element,
+      ),
+      true,
+      "read-only removal of last chip returns focus to its message row",
     );
     await request(0, "DELETE", `/messages/${message.id}`, undefined, 204);
     await row(member).waitFor({ state: "detached" });

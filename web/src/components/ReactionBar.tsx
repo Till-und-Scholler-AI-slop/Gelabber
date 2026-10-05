@@ -1,4 +1,4 @@
-import { useEffect, useState, type ComponentType } from "react";
+import { useEffect, useRef, useState, type ComponentType } from "react";
 import { useMutation, useQueryClient } from "@tanstack/react-query";
 import { stampHolds, takeStamp } from "../auth/scope.ts";
 import { useSession } from "../auth/session.ts";
@@ -55,6 +55,7 @@ export function ReactionBar({
   const client = useQueryClient();
   const userId = useSession((state) => state.user?.id ?? "");
   const [open, setOpen] = useState(false);
+  const addButton = useRef<HTMLButtonElement>(null);
   const mutation = useMutation(
     reactionMutationOptions(client, message.channel_id, message.id),
   );
@@ -74,8 +75,9 @@ export function ReactionBar({
     return null;
   const react = (emoji: string, add: boolean) => {
     const scope = takeStamp();
-    if (!scope || busy || (add && !canSend)) return;
+    if (!scope || scope.userId !== userId || busy || (add && !canSend)) return;
     mutation.mutate({ emoji, add, scope });
+    return scope;
   };
   return (
     <div
@@ -92,7 +94,18 @@ export function ReactionBar({
             aria-label={`${emoji}: ${user_ids.length} Reaktionen${mine ? ", du hast reagiert" : ""}`}
             disabled={!mine && !canSend}
             aria-disabled={busy || undefined}
-            onClick={() => react(emoji, !mine)}
+            onClick={(event) => {
+              const focused = document.activeElement === event.currentTarget;
+              const accepted = react(emoji, !mine);
+              if (accepted && mine && user_ids.length === 1 && focused) {
+                // Move focus while this last chip still exists, before the
+                // optimistic removal. No late response can overwrite focus.
+                const fallback = canSend
+                  ? addButton.current
+                  : event.currentTarget.closest<HTMLElement>(".lr-message-row");
+                fallback?.focus({ preventScroll: true });
+              }
+            }}
             className={`min-h-9 rounded-full border px-2.5 text-sm disabled:opacity-50 aria-disabled:opacity-50 ${mine ? "border-blue-500 bg-blue-50 text-blue-800 dark:bg-blue-950 dark:text-blue-200" : "border-neutral-300 dark:border-neutral-600"}`}
           >
             <span aria-hidden="true">
@@ -103,6 +116,7 @@ export function ReactionBar({
       })}
       {canSend && (
         <button
+          ref={addButton}
           type="button"
           aria-label="Reaktion hinzufügen"
           // Transient API work must not make the modal's opener unfocusable.
