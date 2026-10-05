@@ -477,6 +477,51 @@ async fn reversed_track_arrival_keeps_camera_screen_and_live_identity() {
 }
 
 #[tokio::test]
+async fn unknown_retracts_do_not_exhaust_sources_but_known_tombstones_block_late_tracks() {
+    let sfu = Arc::new(Sfu::new(&config()));
+    let channel = Uuid::new_v4();
+    let (publisher, _rx) = join(&sfu, channel).await;
+    for n in 0..128 {
+        sfu.retract_track(publisher, channel, "s", Some(&format!("unknown-{n}")))
+            .await
+            .unwrap();
+    }
+    let room = sfu.find_room(channel).await.unwrap();
+    assert!(room.lock().await.peers[&publisher].video_kinds.is_empty());
+    // An earlier unknown retract must not reject a later legitimate source.
+    sfu.announce_track(publisher, channel, "s", Some("unknown-0"))
+        .await
+        .unwrap();
+    sfu.retract_track(publisher, channel, "s", Some("unknown-0"))
+        .await
+        .unwrap();
+    assert_eq!(
+        room.lock().await.peers[&publisher].video_kinds["unknown-0"],
+        ""
+    );
+    let (late, _events) = remote("unknown-0");
+    sfu.publish(publisher, channel, late).await.unwrap();
+    assert!(
+        room.lock().await.pubs.is_empty(),
+        "late OnTrack cannot resurrect a known source"
+    );
+    // Explicit re-publication of the same identity is still supported.
+    sfu.announce_track(publisher, channel, "s", Some("unknown-0"))
+        .await
+        .unwrap();
+    let (fresh, _events) = remote("unknown-0");
+    sfu.publish(publisher, channel, fresh).await.unwrap();
+    assert!(
+        room.lock()
+            .await
+            .pubs
+            .contains_key(&format!("{}:unknown-0", publisher.0))
+    );
+    sfu.leave(publisher, channel).await;
+    assert_eq!(sfu.room_count(), 0);
+}
+
+#[tokio::test]
 async fn twenty_stop_start_cycles_cancel_reader_and_pending_subscription() {
     let sfu = Arc::new(Sfu::new(&config()));
     let channel = Uuid::new_v4();
@@ -700,6 +745,7 @@ struct BlockPc {
     entered: tokio::sync::Notify,
     release: tokio::sync::Notify,
     block_close: bool,
+    fail_rollback: bool,
 }
 
 #[async_trait::async_trait]
@@ -725,6 +771,9 @@ impl PeerConnection for BlockPc {
     }
     async fn set_local_description(&self, desc: RTCSessionDescription) -> Result<()> {
         if desc.sdp_type == RTCSdpType::Rollback {
+            if self.fail_rollback {
+                return Err(webrtc::error::Error::ErrUnknownType);
+            }
             self.entered.notify_one();
             self.release.notified().await;
         }
@@ -826,6 +875,7 @@ async fn rollback_holds_gate_until_next_publication_can_create_offer() {
             entered: tokio::sync::Notify::new(),
             release: tokio::sync::Notify::new(),
             block_close: false,
+            fail_rollback: false,
         });
         peer.pc = blocked.clone();
         (peer.sdp.clone(), blocked)
@@ -883,6 +933,103 @@ async fn rollback_holds_gate_until_next_publication_can_create_offer() {
 }
 
 #[tokio::test]
+async fn recovery_restores_stable_pair_after_rollback_but_not_pending_failed_or_closed() {
+    let sfu = Sfu::new(&config());
+    let (pc, _events, _gathered, recovery) = sfu.build_pc("127.0.0.1:0").await.unwrap();
+    let (remote, _events, _gathered, _recovery) = sfu.build_pc("127.0.0.1:0").await.unwrap();
+    remote
+        .add_transceiver_from_kind(RtpCodecKind::Video, None)
+        .await
+        .unwrap();
+    let offer = remote.create_offer(None).await.unwrap();
+    remote.set_local_description(offer.clone()).await.unwrap();
+    pc.set_remote_description(offer).await.unwrap();
+    let answer = pc.create_answer(None).await.unwrap();
+    pc.set_local_description(answer.clone()).await.unwrap();
+    remote.set_remote_description(answer).await.unwrap();
+    let accepted_remote = pc.current_remote_description().await.unwrap();
+    let accepted_local = pc.current_local_description().await.unwrap();
+    recovery.accept(&accepted_remote.sdp, &accepted_local.sdp);
+    assert!(recovery.is_active());
+    let mut gate = PeerSdp::new();
+    gate.rid_recovery = recovery.clone();
+
+    let pending = pc.create_offer(None).await.unwrap();
+    pc.set_local_description(pending).await.unwrap();
+    gate.have_local_offer = true;
+    recovery.suspend();
+    restore_rid_recovery(&pc, &gate).await;
+    assert!(
+        !recovery.is_active(),
+        "current SDP cannot bypass a pending offer"
+    );
+    sfu.rollback_locked(&pc, &mut gate).await;
+    assert!(pc.pending_local_description().await.is_none());
+    assert_eq!(
+        pc.current_remote_description().await.unwrap().sdp,
+        accepted_remote.sdp
+    );
+    assert_eq!(
+        pc.current_local_description().await.unwrap().sdp,
+        accepted_local.sdp
+    );
+    assert!(
+        recovery.is_active(),
+        "successful local rollback resumes the accepted pair"
+    );
+
+    let pending = remote.create_offer(None).await.unwrap();
+    remote.set_local_description(pending.clone()).await.unwrap();
+    pc.set_remote_description(pending).await.unwrap();
+    recovery.suspend();
+    restore_rid_recovery(&pc, &gate).await;
+    assert!(
+        !recovery.is_active(),
+        "pending remote SDP must also block recovery"
+    );
+    sfu.rollback_locked(&pc, &mut gate).await;
+    assert!(pc.pending_remote_description().await.is_none());
+    assert!(
+        recovery.is_active(),
+        "successful remote rollback resumes the accepted pair"
+    );
+    remote
+        .set_local_description(RTCSessionDescription::rollback(None).unwrap())
+        .await
+        .unwrap();
+
+    pc.set_local_description(pc.create_offer(None).await.unwrap())
+        .await
+        .unwrap();
+    gate.have_local_offer = true;
+    let failing: Arc<dyn PeerConnection> = Arc::new(BlockPc {
+        inner: pc.clone(),
+        entered: tokio::sync::Notify::new(),
+        release: tokio::sync::Notify::new(),
+        block_close: false,
+        fail_rollback: true,
+    });
+    sfu.rollback_locked(&failing, &mut gate).await;
+    assert!(
+        !recovery.is_active(),
+        "failed rollback cannot reactivate the old cache"
+    );
+    assert!(gate.have_local_offer);
+    assert!(pc.pending_local_description().await.is_some());
+    pc.set_local_description(RTCSessionDescription::rollback(None).unwrap())
+        .await
+        .unwrap();
+    gate.closing.send_replace(true);
+    restore_rid_recovery(&pc, &gate).await;
+    assert!(
+        !recovery.is_active(),
+        "closing peer cannot reactivate after a late rollback"
+    );
+    pc.close().await.unwrap();
+    remote.close().await.unwrap();
+}
+
+#[tokio::test]
 async fn udp_port_stays_reserved_until_close_completes() {
     let socket = std::net::UdpSocket::bind("127.0.0.1:0").unwrap();
     let addr = socket.local_addr().unwrap();
@@ -901,6 +1048,7 @@ async fn udp_port_stays_reserved_until_close_completes() {
             entered: tokio::sync::Notify::new(),
             release: tokio::sync::Notify::new(),
             block_close: true,
+            fail_rollback: false,
         });
         peer.pc = blocked.clone();
         blocked
@@ -1360,4 +1508,70 @@ async fn ended_old_reader_must_not_clear_replacement_live_handshake() {
         count, 1,
         "replacement Live must publish after accepted fresh handshake"
     );
+}
+
+#[tokio::test]
+async fn layer_hints_require_v3_and_never_create_watch_or_subscription_authority() {
+    let sfu = Arc::new(Sfu::new(&config()));
+    let channel = Uuid::new_v4();
+    let (publisher, _rx) = join(&sfu, channel).await;
+    let (legacy, _rx) = join(&sfu, channel).await;
+    let (out, _rx) = mpsc::unbounded_channel();
+    let viewer = sfu
+        .join_inner(
+            TicketClaim {
+                u: Uuid::new_v4(),
+                s: Uuid::new_v4(),
+                c: channel,
+                g: false,
+            },
+            None,
+            None,
+            3,
+            out,
+        )
+        .await
+        .unwrap();
+    let room = sfu.find_room(channel).await.unwrap();
+    let user = room.lock().await.peers[&publisher].user_id;
+    sfu.announce_track(publisher, channel, "s", Some("private-screen"))
+        .await
+        .unwrap();
+    let (track, _events) = remote("private-screen");
+    sfu.publish(publisher, channel, track).await.unwrap();
+    assert!(matches!(
+        sfu.set_viewer_layer(legacy, channel, user, "s", 90, false)
+            .await,
+        Err(SfuError::Forbidden)
+    ));
+    for (source, kind, height) in [(user, "s", 90), (Uuid::new_v4(), "l", 0)] {
+        sfu.set_viewer_layer(viewer, channel, source, kind, height, true)
+            .await
+            .unwrap();
+    }
+    for (source, kind, height) in [(Uuid::nil(), "v", 90), (user, "a", 90), (user, "s", 16385)] {
+        assert!(matches!(
+            sfu.set_viewer_layer(viewer, channel, source, kind, height, false)
+                .await,
+            Err(SfuError::BadAnnounce)
+        ));
+    }
+    let gate = {
+        let room = room.lock().await;
+        let peer = &room.peers[&viewer];
+        assert!(peer.watches.is_empty());
+        peer.sdp.clone()
+    };
+    assert!(
+        gate.lock().await.subscriptions.is_empty(),
+        "a hint cannot create the private source's subscription"
+    );
+    sfu.leave(viewer, channel).await;
+    assert!(matches!(
+        sfu.set_viewer_layer(viewer, channel, user, "s", 90, false)
+            .await,
+        Err(SfuError::NotInRoom)
+    ));
+    sfu.leave(legacy, channel).await;
+    sfu.leave(publisher, channel).await;
 }

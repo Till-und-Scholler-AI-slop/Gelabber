@@ -205,6 +205,15 @@ async fn handle(
                 .map_err(|err| sfu_code(peer_id, &err, "watch failed"))?;
             Ok(None)
         }
+        ClientFrame::ViewerLayer { u, k, h, congested } => {
+            let (peer_id, channel_id) = joined.ok_or("unauthorized")?;
+            state
+                .sfu
+                .set_viewer_layer(peer_id, channel_id, u, &k, h, congested)
+                .await
+                .map_err(|err| sfu_code(peer_id, &err, "viewer layer failed"))?;
+            Ok(None)
+        }
         ClientFrame::Leave => {
             if let Some((peer_id, channel_id)) = joined.take() {
                 state.sfu.leave(peer_id, channel_id).await;

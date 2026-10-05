@@ -42,8 +42,18 @@ use crate::ticket::{AuthorizedTicketClaim, TicketClaim};
 
 const RTP_Q: usize = 512;
 
+#[path = "sfu_egress.rs"]
+mod egress;
 #[path = "sfu_feedback.rs"]
 mod feedback;
+#[path = "sfu_rid_recovery.rs"]
+mod rid_recovery;
+#[path = "viewer_layers.rs"]
+mod viewer_layers;
+
+#[cfg(test)]
+#[path = "sfu_layer_native_tests.rs"]
+mod layer_native_tests;
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
 pub struct PeerId(pub Uuid);
@@ -202,11 +212,15 @@ struct Published {
     kind: RtpCodecKind,
     codec: RTCRtpCodec,
     packets: broadcast::Sender<rtp::Packet>,
-    keyframe: Option<mpsc::UnboundedSender<()>>,
+    keyframe: Option<mpsc::UnboundedSender<Option<u32>>>,
     life: Arc<PublicationLife>,
     live_deadline: Option<Arc<StdMutex<Instant>>>,
     /// Per-viewer source intent; closing it stops RTP before any SDP wait.
     watch_gate: Option<watch::Receiver<bool>>,
+    layered: bool,
+    layer_ids: Arc<StdMutex<HashMap<u32, String>>>,
+    #[cfg(test)]
+    received_packets: Arc<AtomicU64>,
 }
 
 struct Subscription {
@@ -214,10 +228,14 @@ struct Subscription {
     task: tokio::task::JoinHandle<()>,
     codec: RTCRtpCodec,
     payload_type: watch::Sender<Option<u8>>,
+    source: String,
+    layer_intent: watch::Sender<viewer_layers::Intent>,
+    alive: watch::Sender<bool>,
 }
 
 impl Drop for Subscription {
     fn drop(&mut self) {
+        self.alive.send_replace(false);
         self.task.abort();
     }
 }
@@ -240,6 +258,9 @@ struct PeerSdp {
     /// Only these new senders are discarded if the current offer fails.
     offered: HashSet<String>,
     pending_ice: Vec<(String, Option<String>)>,
+    egress: Option<egress::Egress>,
+    publication_slots: HashMap<String, Arc<dyn RtpSender>>,
+    rid_recovery: rid_recovery::Recovery,
 }
 
 impl PeerSdp {
@@ -254,6 +275,9 @@ impl PeerSdp {
             subscriptions: HashMap::new(),
             offered: HashSet::new(),
             pending_ice: Vec::new(),
+            egress: None,
+            publication_slots: HashMap::new(),
+            rid_recovery: rid_recovery::Recovery::default(),
         }
     }
 }
@@ -268,6 +292,7 @@ struct Peer {
     go_live: bool,
     watch_user: Option<Uuid>,
     explicit_watch: bool,
+    viewer_layers: bool,
     watches: HashMap<(Uuid, String), watch::Sender<bool>>,
     authority: Option<AuthorizedTicketClaim>,
     live_claim: Option<LiveBinding>,
@@ -279,6 +304,7 @@ struct Peer {
     gathered: watch::Receiver<u64>,
     sdp: Arc<Mutex<PeerSdp>>,
     closing: watch::Sender<bool>,
+    rid_recovery: rid_recovery::Recovery,
     /// Explicit MSID track identity; legacy tags are bound in SDP order, never RTP order.
     video_kinds: HashMap<String, String>,
     /// Source audio is bound to one exact parent MSID on this peer.
@@ -521,7 +547,7 @@ impl Sfu {
         let peer_id = PeerId(Uuid::new_v4());
         let ice_addr = self.ice_ports.take().await.ok_or(SfuError::Unavailable)?;
         let built = self.build_pc(&ice_addr).await;
-        let (pc, mut events, gathered) = match built {
+        let (pc, mut events, gathered, rid_recovery) = match built {
             Ok(parts) => parts,
             Err(err) => {
                 self.ice_ports.release(&ice_addr).await;
@@ -541,7 +567,8 @@ impl Sfu {
                 }
                 return Err(SfuError::Revoked);
             }
-            let gate = PeerSdp::new();
+            let mut gate = PeerSdp::new();
+            gate.rid_recovery = rid_recovery.clone();
             let closing = gate.closing.clone();
             let room = rooms.entry(claim.c).or_insert_with(|| {
                 Arc::new(Mutex::new(Room {
@@ -560,6 +587,7 @@ impl Sfu {
                     go_live: claim.g,
                     watch_user,
                     explicit_watch: version >= 2,
+                    viewer_layers: version >= 3,
                     watches: HashMap::new(),
                     authority: authority.clone(),
                     live_claim: None,
@@ -570,6 +598,7 @@ impl Sfu {
                     gathered,
                     sdp: Arc::new(Mutex::new(gate)),
                     closing,
+                    rid_recovery,
                     video_kinds: HashMap::new(),
                     source_parents: HashMap::new(),
                     legacy_kinds: VecDeque::new(),
@@ -656,15 +685,21 @@ impl Sfu {
                 }
             }
         }
+        gate.rid_recovery.suspend();
         if let Err(err) = pc.set_remote_description(desc).await {
+            self.rollback_locked(&pc, &mut gate).await;
             if !as_offer {
-                self.rollback_locked(&pc, &mut gate).await;
                 self.negotiate_locked(&pc, &out, &gathered, &mut gate).await;
             }
             return Err(SfuError::negotiation(err));
         }
         let accepted_answer;
         if as_offer {
+            prefer_simulcast_vp8(&pc, &sdp_text).await;
+            if let Err(err) = reserve_publication_mids(&pc, &sdp_text, &mut gate).await {
+                self.rollback_locked(&pc, &mut gate).await;
+                return Err(SfuError::negotiation(err));
+            }
             for state in gate.subscriptions.values() {
                 if let SubscriptionState::Active(sub) = state
                     && let Some(mid) = sender_mid(&pc, &sub.sender).await
@@ -708,15 +743,22 @@ impl Sfu {
             accepted_answer = match result {
                 Ok(answer) => Some(answer),
                 Err(err) => {
-                    if let Ok(rollback) = RTCSessionDescription::rollback(None) {
-                        let _ = pc.set_remote_description(rollback).await;
-                    }
+                    self.rollback_locked(&pc, &mut gate).await;
                     return Err(SfuError::negotiation(err));
                 }
             };
             gate.negotiated = true;
         } else {
             accepted_answer = pc.remote_description().await;
+        }
+        if let (Some(remote), Some(local)) = (
+            pc.current_remote_description().await,
+            pc.current_local_description().await,
+        ) {
+            gate.rid_recovery.accept(&remote.sdp, &local.sdp);
+        }
+        if as_offer && let Some(answer) = accepted_answer.as_ref() {
+            retain_publication_codec(&pc, &gate, &answer.sdp).await;
         }
         gate.have_local_offer = false;
         gate.offered.clear();
@@ -756,6 +798,14 @@ impl Sfu {
                 peer.video_kinds.retain(|id, kind| {
                     active.contains(id) || (!previous.contains(id) && !kind.is_empty())
                 });
+                peer.rid_recovery.retain_tracks(
+                    &peer
+                        .video_kinds
+                        .iter()
+                        .filter(|(_, kind)| !kind.is_empty())
+                        .map(|(id, _)| id.clone())
+                        .collect(),
+                );
                 // Stopped sender/transceiver reuse may leave the same remote track
                 // object alive through an inactive offer, without another on_track.
                 // Keep its bounded receiver binding; only an accepted active offer
@@ -776,6 +826,48 @@ impl Sfu {
                 self.publish(peer_id, channel_id, track).await?;
             }
             self.attach_existing_pubs(peer_id, channel_id).await;
+        }
+        Ok(())
+    }
+
+    /// A receiver hint affects only that peer's existing publication binding.
+    /// It never creates a subscription, widens source scope or caps any sender.
+    pub async fn set_viewer_layer(
+        &self,
+        peer_id: PeerId,
+        channel_id: Uuid,
+        user: Uuid,
+        kind: &str,
+        height: u16,
+        congested: bool,
+    ) -> Result<(), SfuError> {
+        if user.is_nil() || !matches!(kind, "v" | "s" | "l") || height > 16384 {
+            return Err(SfuError::BadAnnounce);
+        }
+        let room = self
+            .find_room(channel_id)
+            .await
+            .ok_or(SfuError::NotInRoom)?;
+        let sdp = {
+            let room = room.lock().await;
+            let peer = room.peers.get(&peer_id).ok_or(SfuError::NotInRoom)?;
+            if !peer.viewer_layers {
+                return Err(SfuError::Forbidden);
+            }
+            peer.sdp.clone()
+        };
+        let gate = sdp.lock().await;
+        if gate.closed || *gate.closing.borrow() {
+            return Err(SfuError::NotInRoom);
+        }
+        let source = format!("{user}:{kind}");
+        for sub in gate.subscriptions.values() {
+            if let SubscriptionState::Active(sub) = sub
+                && sub.source == source
+            {
+                sub.layer_intent
+                    .send_replace(viewer_layers::Intent { height, congested });
+            }
         }
         Ok(())
     }
@@ -983,6 +1075,7 @@ impl Sfu {
                 && old != binding
             {
                 peer.video_kinds.insert(old.track_id.clone(), String::new());
+                peer.rid_recovery.stop_track(&old.track_id);
                 replaced = Some(old);
             }
         }
@@ -991,6 +1084,7 @@ impl Sfu {
         }
         if let Some(id) = track_id {
             peer.video_kinds.insert(id.into(), kind.into());
+            peer.rid_recovery.allow_track(id);
         } else if !peer.legacy_kinds.iter().any(|k| k == kind) {
             peer.legacy_kinds.push_back(kind.into());
         }
@@ -1052,6 +1146,12 @@ impl Sfu {
                 })
                 .map(|(id, _)| id.clone())
                 .collect();
+            for id in &parent_ids {
+                peer.rid_recovery.stop_track(id);
+            }
+            if let Some(id) = track_id {
+                peer.rid_recovery.stop_track(id);
+            }
             let paired_ids: HashSet<_> = peer
                 .source_parents
                 .iter()
@@ -1082,7 +1182,9 @@ impl Sfu {
             // Keep the identity until the next SDP stops sending it: packets already
             // queued by on_track must not resurrect a retracted source as a camera.
             if let Some(id) = track_id {
-                peer.video_kinds.insert(id.into(), String::new());
+                if let Some(tag) = peer.video_kinds.get_mut(id) {
+                    tag.clear();
+                }
             } else {
                 for k in peer.video_kinds.values_mut() {
                     if k == kind {
@@ -1242,6 +1344,7 @@ impl Sfu {
         saturating_dec(&self.stats.peers);
         // Stop both directions before waiting for an outstanding SDP operation.
         peer.closing.send_replace(true);
+        peer.rid_recovery.close();
         for publication in &publications {
             publication.life.stop.send_replace(true);
         }
@@ -1255,6 +1358,7 @@ impl Sfu {
             gate.closed = true;
             for (_, state) in gate.subscriptions.drain() {
                 if let SubscriptionState::Active(mut sub) = state {
+                    sub.alive.send_replace(false);
                     sub.task.abort();
                     let _ = (&mut sub.task).await;
                 }
@@ -1366,6 +1470,7 @@ impl Sfu {
             }
             peer.live_claim = None;
             peer.withdrawn_live = Some(expected.nonce);
+            peer.rid_recovery.stop_track(&expected.track_id);
             peer.video_kinds
                 .insert(expected.track_id.clone(), String::new());
             let paired: HashSet<_> = peer
@@ -1412,12 +1517,17 @@ impl Sfu {
         Arc<dyn PeerConnection>,
         mpsc::UnboundedReceiver<PcEvent>,
         watch::Receiver<u64>,
+        rid_recovery::Recovery,
     )> {
         let mut media = MediaEngine::default();
         register_sfu_codecs(&mut media)?;
         let registry =
             register_default_interceptors(webrtc::peer_connection::Registry::new(), &mut media)?;
         let registry = registry.with(feedback::KeyframeFeedback::new);
+        let recovery = rid_recovery::Recovery::default();
+        let hook_recovery = recovery.clone();
+        let registry =
+            registry.with(move |next| rid_recovery::RidRecovery::new(next, hook_recovery));
 
         let mut settings = SettingEngine::default();
         // ICE-lite only emits host candidates. STUN/TURN URLs on this PC
@@ -1444,7 +1554,7 @@ impl Sfu {
             .with_udp_addrs(vec![ice_addr.to_owned()])
             .build()
             .await?;
-        Ok((Arc::new(pc), rx, gather_rx))
+        Ok((Arc::new(pc), rx, gather_rx, recovery))
     }
 
     async fn drive(
@@ -1531,6 +1641,9 @@ impl Sfu {
         let ssrc = *track.ssrcs().await.first().ok_or(SfuError::BadAnnounce)?;
         let mut codec = track.codec(ssrc).await.ok_or(SfuError::BadAnnounce)?;
         let kind = track.kind().await;
+        let layered = kind == RtpCodecKind::Video
+            && codec.mime_type.eq_ignore_ascii_case(MIME_TYPE_VP8)
+            && track.rid(ssrc).await.is_some_and(|rid| !rid.is_empty());
         let track_id = track.track_id().await;
         let room = self
             .find_room(channel_id)
@@ -1542,6 +1655,10 @@ impl Sfu {
         let (done_tx, done) = watch::channel(false);
         let life = Arc::new(PublicationLife { stop, done });
         let (kf_tx, kf_rx) = mpsc::unbounded_channel();
+        let layer_ids = Arc::new(StdMutex::new(HashMap::new()));
+        if let Some(rid) = track.rid(ssrc).await {
+            layer_ids.lock().unwrap().insert(ssrc, rid);
+        }
         let publication = {
             let mut room = room.lock().await;
             let peer = room.peers.get_mut(&publisher).ok_or(SfuError::NotInRoom)?;
@@ -1637,6 +1754,10 @@ impl Sfu {
                 life: life.clone(),
                 live_deadline,
                 watch_gate: None,
+                layered,
+                layer_ids: layer_ids.clone(),
+                #[cfg(test)]
+                received_packets: Arc::new(AtomicU64::new(0)),
             };
             room.pubs.insert(pub_id.clone(), publication.clone());
             publication
@@ -1645,8 +1766,10 @@ impl Sfu {
         let read_life = life.clone();
         let read_id = pub_id.clone();
         let live_deadline = publication.live_deadline.clone();
+        #[cfg(test)]
+        let received_packets = publication.received_packets.clone();
         tokio::spawn(async move {
-            let mut rtp = PublisherRtpStats::new(codec.clock_rate);
+            let mut rtp = HashMap::<u32, PublisherRtpStats>::new();
             let mut keyframes = kf_rx;
             let mut remote_ended = false;
             loop {
@@ -1659,12 +1782,26 @@ impl Sfu {
                     _ = tokio::time::sleep_until(live_wakeup(&live_deadline)), if live_deadline.is_some() => {},
                     evt = track.poll() => {
                         if live_expired(&live_deadline) { break; }
-                        if !handle_publisher_event(&packets, &sfu.stats, &mut rtp, evt) {
+                        if let Some(TrackRemoteEvent::OnRtpPacket(packet)) = &evt {
+                            #[cfg(test)]
+                            received_packets.fetch_add(1,Ordering::Relaxed);
+                            if !layer_ids.lock().unwrap().contains_key(&packet.header.ssrc)
+                                && let Some(rid) = track.rid(packet.header.ssrc).await {
+                                let mut ids = layer_ids.lock().unwrap();
+                                if ids.len() < 3 { ids.insert(packet.header.ssrc, rid); }
+                            }
+                        }
+                        if !handle_publisher_event(&packets, &sfu.stats, &mut rtp, codec.clock_rate, evt) {
                             remote_ended = true;
                             break;
                         }
                     }
-                    Some(_) = keyframes.recv(), if kind == RtpCodecKind::Video => request_keyframe(&track, ssrc).await,
+                    Some(target) = keyframes.recv(), if kind == RtpCodecKind::Video => {
+                        let sources = track.ssrcs().await;
+                        for source in sources {
+                            if target.is_none_or(|wanted| wanted == source) { request_keyframe(&track, source).await; }
+                        }
+                    },
                 }
             }
             done_tx.send_replace(true);
@@ -1741,6 +1878,11 @@ impl Sfu {
                 return;
             }
             let publication = room.pubs.remove(pub_id).unwrap();
+            if publication.kind == RtpCodecKind::Video
+                && let Some(peer) = room.peers.get(&publication.publisher)
+            {
+                peer.rid_recovery.stop_track(&publication.track_id);
+            }
             let mut ended = vec![(publication.id, publication.life)];
             if matches!(
                 publication.stream_id.rsplit_once(':').map(|(_, tag)| tag),
@@ -1815,6 +1957,7 @@ impl Sfu {
     ) {
         let mut gate = sdp.lock().await;
         if let Some(SubscriptionState::Active(mut sub)) = gate.subscriptions.remove(id) {
+            sub.alive.send_replace(false);
             sub.task.abort();
             let _ = (&mut sub.task).await;
             if let Err(err) = pc.remove_track(&sub.sender).await {
@@ -1909,6 +2052,12 @@ impl Sfu {
         {
             return;
         }
+        let egress = gate
+            .egress
+            .get_or_insert_with(|| {
+                egress::Egress::new(self.stats.clone(), gate.closing.subscribe())
+            })
+            .clone();
         let queued = gate
             .subscriptions
             .iter()
@@ -1949,13 +2098,18 @@ impl Sfu {
             limit_forward_codec(pc, &sender, &publication.codec).await;
             let (payload_type, binding) = watch::channel(None);
             let codec = publication.codec.clone();
+            let source = publication.stream_id.clone();
+            let (layer_intent, layer_binding) = watch::channel(viewer_layers::Intent::default());
+            let (alive, alive_binding) = watch::channel(true);
             let task = spawn_forwarder(
                 local,
                 ssrc,
                 publication,
                 binding,
                 gate.closing.subscribe(),
-                self.stats.clone(),
+                layer_binding,
+                alive_binding,
+                egress.clone(),
             );
             gate.subscriptions.insert(
                 id.clone(),
@@ -1964,6 +2118,9 @@ impl Sfu {
                     task,
                     codec,
                     payload_type,
+                    source,
+                    layer_intent,
+                    alive,
                 }),
             );
             gate.offered.insert(id);
@@ -1994,6 +2151,7 @@ impl Sfu {
     }
 
     async fn rollback_locked(&self, pc: &Arc<dyn PeerConnection>, gate: &mut PeerSdp) {
+        gate.rid_recovery.suspend();
         if pc.pending_local_description().await.is_some() {
             match RTCSessionDescription::rollback(None) {
                 Ok(rollback) => {
@@ -2005,9 +2163,20 @@ impl Sfu {
                 }
                 Err(_) => return,
             }
+        } else if pc.pending_remote_description().await.is_some() {
+            match RTCSessionDescription::rollback(None) {
+                Ok(rollback) => {
+                    if let Err(err) = pc.set_remote_description(rollback).await {
+                        warn!(error = %err, "publisher rollback failed");
+                        return;
+                    }
+                }
+                Err(_) => return,
+            }
         }
         for id in std::mem::take(&mut gate.offered) {
             if let Some(SubscriptionState::Active(mut sub)) = gate.subscriptions.remove(&id) {
+                sub.alive.send_replace(false);
                 sub.task.abort();
                 let _ = (&mut sub.task).await;
                 let _ = pc.remove_track(&sub.sender).await;
@@ -2015,6 +2184,7 @@ impl Sfu {
         }
         gate.have_local_offer = false;
         gate.pending_ice.clear();
+        restore_rid_recovery(pc, gate).await;
         // Keep removals of already bound sources dirty; the next offer must carry them.
     }
 
@@ -2033,6 +2203,24 @@ impl Sfu {
         }
         self.rollback_locked(pc, &mut gate).await;
         self.negotiate_locked(pc, out, gathered, &mut gate).await;
+    }
+}
+
+async fn restore_rid_recovery(pc: &Arc<dyn PeerConnection>, gate: &PeerSdp) {
+    if gate.closed
+        || *gate.closing.borrow()
+        || pc.pending_local_description().await.is_some()
+        || pc.pending_remote_description().await.is_some()
+    {
+        return;
+    }
+    if let (Some(remote), Some(local)) = (
+        pc.current_remote_description().await,
+        pc.current_local_description().await,
+    ) && !gate.closed
+        && !*gate.closing.borrow()
+    {
+        gate.rid_recovery.restore(&remote.sdp, &local.sdp);
     }
 }
 
@@ -2055,6 +2243,293 @@ async fn flush_ice(
     for (ice, mid) in queued {
         if let Err(err) = pc.add_ice_candidate(ice_init(ice, mid)).await {
             warn!(peer = %peer_id.0, error = %err, "buffered ice dropped");
+        }
+    }
+}
+
+/// Use the supported independent VP8 representations. RTC reverses offered
+/// codecs, and its async receiver does not exist until the first RTP packet;
+/// configure the transceiver from this exact offered MID before answering.
+/// RID RTX demux is unfinished in the pin, so retain primary-stream NACK/PLI
+/// without advertising the repaired-RID flow as working.
+async fn prefer_simulcast_vp8(pc: &Arc<dyn PeerConnection>, sdp: &str) {
+    let Ok(desc) = RTCSessionDescription::offer(sdp.to_owned()).and_then(|desc| desc.unmarshal())
+    else {
+        return;
+    };
+    for media in &desc.media_descriptions {
+        if media.media_name.media != "video"
+            || !media.attributes.iter().any(|a| a.key == "simulcast")
+        {
+            continue;
+        }
+        let Some(mid) = media
+            .attributes
+            .iter()
+            .find(|a| a.key == "mid")
+            .and_then(|a| a.value.as_ref())
+        else {
+            continue;
+        };
+        let preference = media.media_name.formats.iter().find_map(|format| {
+            let pt = format.parse::<u8>().ok()?;
+            let mut section = desc.clone();
+            section.media_descriptions = vec![media.clone()];
+            let bound = section.get_codec_for_payload_type(pt).ok()?;
+            if !bound.name.eq_ignore_ascii_case("VP8") {
+                return None;
+            }
+            let rtcp_feedback = media
+                .attributes
+                .iter()
+                .filter(|a| a.key == "rtcp-fb")
+                .filter_map(|a| {
+                    let mut parts = a.value.as_deref()?.split_whitespace();
+                    let target = parts.next()?;
+                    if target != format && target != "*" {
+                        return None;
+                    }
+                    let typ = parts.next()?;
+                    let parameter = parts.next().unwrap_or("");
+                    if !matches!(
+                        (typ, parameter),
+                        ("nack", "")
+                            | ("nack", "pli")
+                            | ("ccm", "fir")
+                            | ("goog-remb", "")
+                            | ("transport-cc", "")
+                    ) {
+                        return None;
+                    }
+                    Some(RTCPFeedback {
+                        typ: typ.into(),
+                        parameter: parameter.into(),
+                    })
+                })
+                .collect();
+            Some(RTCRtpCodecParameters {
+                payload_type: pt,
+                rtp_codec: RTCRtpCodec {
+                    mime_type: MIME_TYPE_VP8.into(),
+                    clock_rate: bound.clock_rate,
+                    channels: 0,
+                    sdp_fmtp_line: bound.fmtp,
+                    rtcp_feedback,
+                },
+            })
+        });
+        let Some(preference) = preference else {
+            continue;
+        };
+        for transceiver in pc.get_transceivers().await {
+            if transceiver.mid().await.ok().flatten().as_ref() == Some(mid)
+                && let Err(err) = transceiver
+                    .set_codec_preferences(vec![preference.clone()])
+                    .await
+            {
+                warn!(error=%err,"simulcast codec preference skipped");
+            }
+        }
+    }
+}
+
+/// The pin's add_track takes the first sender-free video MID regardless of
+/// codec. Reserve incoming publication MIDs as recvonly using data-free senders;
+/// ordinary outgoing subscriber slots remain reusable for old and new clients.
+/// No placeholder RTP or out-going MSID is negotiated. Every mutation is under
+/// the same peer SDP lock, and temporary non-publication reservations are undone.
+async fn reserve_publication_mids(
+    pc: &Arc<dyn PeerConnection>,
+    sdp: &str,
+    gate: &mut PeerSdp,
+) -> webrtc::error::Result<()> {
+    let desc = RTCSessionDescription::offer(sdp.to_owned())?.unmarshal()?;
+    let active: HashSet<_> = video_sources(sdp).into_iter().collect();
+    let mut mids = HashSet::new();
+    let mut dummy_codec = None;
+    for media in &desc.media_descriptions {
+        if media.media_name.media != "video" {
+            continue;
+        }
+        let owns_source = media.attributes.iter().any(|a| {
+            a.key == "msid"
+                && a.value
+                    .as_ref()
+                    .and_then(|v| v.split_whitespace().nth(1))
+                    .is_some_and(|id| active.contains(id))
+        });
+        if !owns_source {
+            continue;
+        }
+        if let Some(mid) = media
+            .attributes
+            .iter()
+            .find(|a| a.key == "mid")
+            .and_then(|a| a.value.clone())
+        {
+            mids.insert(mid);
+        }
+        let mut section = desc.clone();
+        section.media_descriptions = vec![media.clone()];
+        for format in &media.media_name.formats {
+            let Ok(pt) = format.parse::<u8>() else {
+                continue;
+            };
+            let Ok(bound) = section.get_codec_for_payload_type(pt) else {
+                continue;
+            };
+            if matches!(
+                bound.name.to_ascii_lowercase().as_str(),
+                "vp8" | "vp9" | "h264" | "av1" | "h265"
+            ) {
+                dummy_codec = Some(RTCRtpCodec {
+                    mime_type: format!("video/{}", bound.name),
+                    clock_rate: bound.clock_rate,
+                    channels: 0,
+                    sdp_fmtp_line: bound.fmtp,
+                    rtcp_feedback: vec![],
+                });
+                break;
+            }
+        }
+    }
+    if mids.is_empty() {
+        return Ok(());
+    }
+    let Some(codec) = dummy_codec else {
+        return Ok(());
+    };
+    let mut temporary = Vec::new();
+    // At most 64 publisher bindings are allowed on a peer; temporary slots are
+    // similarly bounded. Native browser MIDs stay stable across source toggles.
+    let result = async {
+        for _ in 0..128 {
+            let mut needs_reservation = false;
+            for transceiver in pc.get_transceivers().await {
+                if transceiver
+                    .mid()
+                    .await?
+                    .is_some_and(|mid| mids.contains(&mid))
+                    && transceiver.sender().await?.is_none()
+                {
+                    needs_reservation = true;
+                    break;
+                }
+            }
+            if !needs_reservation {
+                return Ok(());
+            }
+            let id = Uuid::new_v4().to_string();
+            let dummy = Arc::new(TrackLocalStaticRTP::new(MediaStreamTrack::new(
+                id.clone(),
+                id.clone(),
+                id,
+                RtpCodecKind::Video,
+                vec![RTCRtpEncodingParameters {
+                    codec: codec.clone(),
+                    rtp_coding_parameters: RTCRtpCodingParameters {
+                        ssrc: Some(rand::random()),
+                        ..Default::default()
+                    },
+                    ..Default::default()
+                }],
+            )));
+            let sender = pc.add_track(dummy as Arc<dyn TrackLocal>).await?;
+            let transceiver = pc
+                .get_transceivers()
+                .await
+                .into_iter()
+                .find(|t| t.id() == usize::from(sender.id()))
+                .ok_or(webrtc::error::Error::ErrUnknownType)?;
+            let mid = transceiver.mid().await?;
+            if let Some(mid) = mid.filter(|mid| mids.contains(mid)) {
+                transceiver
+                    .set_direction(webrtc::rtp_transceiver::RTCRtpTransceiverDirection::Recvonly)
+                    .await?;
+                gate.publication_slots.insert(mid, sender);
+            } else {
+                temporary.push(sender);
+            }
+        }
+        Err(webrtc::error::Error::ErrUnknownType)
+    }
+    .await;
+    for sender in temporary {
+        pc.remove_track(&sender).await?;
+    }
+    result
+}
+
+/// Keep the codec actually selected in the initial publisher answer on that
+/// incoming MID. The pin reverses codec order on every remote answer; keeping
+/// the original broad list would change an old publisher's encoder when an
+/// unrelated subscription causes an SFU offer, leaving Published.codec stale.
+/// Other subscriber MIDs retain their independent native codec capabilities.
+async fn retain_publication_codec(pc: &Arc<dyn PeerConnection>, gate: &PeerSdp, sdp: &str) {
+    let Ok(desc) = RTCSessionDescription::answer(sdp.to_owned()).and_then(|d| d.unmarshal()) else {
+        return;
+    };
+    for media in &desc.media_descriptions {
+        let Some(mid) = media
+            .attributes
+            .iter()
+            .find(|a| a.key == "mid")
+            .and_then(|a| a.value.as_ref())
+        else {
+            continue;
+        };
+        if !gate.publication_slots.contains_key(mid) || !sdp_media_has_transport(&desc, media) {
+            continue;
+        }
+        let mut section = desc.clone();
+        section.media_descriptions = vec![media.clone()];
+        let preference = media.media_name.formats.iter().find_map(|format| {
+            let pt = format.parse::<u8>().ok()?;
+            let bound = section.get_codec_for_payload_type(pt).ok()?;
+            if !matches!(
+                bound.name.to_ascii_lowercase().as_str(),
+                "vp8" | "vp9" | "h264" | "av1" | "h265"
+            ) {
+                return None;
+            }
+            let rtcp_feedback = media
+                .attributes
+                .iter()
+                .filter(|a| a.key == "rtcp-fb")
+                .filter_map(|a| {
+                    let mut parts = a.value.as_deref()?.split_whitespace();
+                    let target = parts.next()?;
+                    if target != format && target != "*" {
+                        return None;
+                    }
+                    Some(RTCPFeedback {
+                        typ: parts.next()?.into(),
+                        parameter: parts.collect::<Vec<_>>().join(" "),
+                    })
+                })
+                .collect();
+            Some(RTCRtpCodecParameters {
+                payload_type: pt,
+                rtp_codec: RTCRtpCodec {
+                    mime_type: format!("video/{}", bound.name),
+                    clock_rate: bound.clock_rate,
+                    channels: 0,
+                    sdp_fmtp_line: bound.fmtp,
+                    rtcp_feedback,
+                },
+            })
+        });
+        let Some(preference) = preference else {
+            continue;
+        };
+        for transceiver in pc.get_transceivers().await {
+            if transceiver.mid().await.ok().flatten().as_ref() == Some(mid)
+                && let Err(err) = transceiver
+                    .set_codec_preferences(vec![preference.clone()])
+                    .await
+            {
+                warn!(error=%err, "publisher codec preservation skipped");
+            }
         }
     }
 }
@@ -2115,6 +2590,50 @@ async fn sender_mid(pc: &Arc<dyn PeerConnection>, sender: &Arc<dyn RtpSender>) -
     None
 }
 
+/// A bundle-only zero-port MID is active on its group's non-rejected master.
+/// Zero port alone is rejection; an inactive target is never an active source.
+fn sdp_media_has_transport(
+    desc: &rtc::sdp::description::session::SessionDescription,
+    media: &rtc::sdp::description::media::MediaDescription,
+) -> bool {
+    if media.attributes.iter().any(|a| a.key == "inactive") {
+        return false;
+    }
+    if media.media_name.port.value != 0 {
+        return true;
+    }
+    if !media.attributes.iter().any(|a| a.key == "bundle-only") {
+        return false;
+    }
+    let Some(mid) = media
+        .attributes
+        .iter()
+        .find(|a| a.key == "mid")
+        .and_then(|a| a.value.as_deref())
+    else {
+        return false;
+    };
+    desc.attributes
+        .iter()
+        .filter(|a| a.key == "group")
+        .filter_map(|a| a.value.as_deref())
+        .any(|group| {
+            let fields = group.split_whitespace().collect::<Vec<_>>();
+            if fields.first() != Some(&"BUNDLE") || !fields[1..].contains(&mid) {
+                return false;
+            }
+            fields.get(1).is_some_and(|master| {
+                desc.media_descriptions.iter().any(|candidate| {
+                    candidate.media_name.port.value != 0
+                        && candidate
+                            .attributes
+                            .iter()
+                            .any(|a| a.key == "mid" && a.value.as_deref() == Some(master))
+                })
+            })
+        })
+}
+
 /// Resolve only the sender's MID and the publication codec in the actual SDP.
 /// Sender get_parameters() can expose preferences rather than the negotiated
 /// binding after a reoffer in the pinned library. TrackLocalContext is private.
@@ -2123,12 +2642,28 @@ fn negotiated_payload_type(sdp: &str, mid: &str, codec: &RTCRtpCodec) -> Option<
         .ok()?
         .unmarshal()
         .ok()?;
-    parsed.media_descriptions.retain(|media| {
-        media.media_name.port.value != 0
-            && media
+    let active_mids = parsed
+        .media_descriptions
+        .iter()
+        .filter(|media| sdp_media_has_transport(&parsed, media))
+        .filter_map(|media| {
+            media
                 .attributes
                 .iter()
-                .any(|a| a.key == "mid" && a.value.as_deref() == Some(mid))
+                .find(|a| a.key == "mid")
+                .and_then(|a| a.value.clone())
+        })
+        .collect::<HashSet<_>>();
+    parsed.media_descriptions.retain(|media| {
+        media.attributes.iter().any(|a| {
+            a.key == "mid"
+                && a.value
+                    .as_ref()
+                    .is_some_and(|mid| active_mids.contains(mid))
+        }) && media
+            .attributes
+            .iter()
+            .any(|a| a.key == "mid" && a.value.as_deref() == Some(mid))
             && !media.attributes.iter().any(|a| a.key == "inactive")
     });
     let [media] = parsed.media_descriptions.as_slice() else {
@@ -2176,6 +2711,23 @@ fn negotiated_payload_type(sdp: &str, mid: &str, codec: &RTCRtpCodec) -> Option<
             })
         {
             params.push("profile-id=0");
+        }
+        // AV1 RTP 7.2: omitted values mean Main profile, level 3.1 and
+        // Main tier. Equivalence keeps actual peer level/tier restrictions;
+        // a lower receiver declaration is not accepted as this publication.
+        if codec.mime_type.eq_ignore_ascii_case("video/AV1") {
+            for (key, default) in [
+                ("profile", "profile=0"),
+                ("level-idx", "level-idx=5"),
+                ("tier", "tier=0"),
+            ] {
+                if !params
+                    .iter()
+                    .any(|s| s.split_once('=').is_some_and(|(k, _)| k.trim() == key))
+                {
+                    params.push(default);
+                }
+            }
         }
         params.sort_unstable();
         params.join(";")
@@ -2364,13 +2916,21 @@ fn spawn_forwarder(
     publication: Published,
     mut binding: watch::Receiver<Option<u8>>,
     mut closing: watch::Receiver<bool>,
-    stats: Arc<SfuStats>,
+    mut layer_intent: watch::Receiver<viewer_layers::Intent>,
+    alive: watch::Receiver<bool>,
+    egress: egress::Egress,
 ) -> tokio::task::JoinHandle<()> {
     tokio::spawn(async move {
         let mut intent = publication.watch_gate.clone();
         let mut packets = publication.packets.subscribe();
         let mut stopped = publication.life.stop.subscribe();
         let mut rtcp_open = true;
+        let mut assembler = viewer_layers::Assembler::default();
+        let mut selector = viewer_layers::Selector::default();
+        let mut rewriter = viewer_layers::Rewriter::default();
+        let (pressure, mut pressure_rx) = watch::channel(None::<egress::Pressure>);
+        let mut pressure_until = None;
+
         loop {
             if *stopped.borrow()
                 || *closing.borrow()
@@ -2379,10 +2939,21 @@ fn spawn_forwarder(
             {
                 break;
             }
+            let current_intent =
+                viewer_layers::effective_intent(*layer_intent.borrow(), pressure_until);
             tokio::select! {
                 biased;
                 _ = stopped.changed() => break,
                 _ = closing.changed() => break,
+                changed = pressure_rx.changed() => {
+                    if changed.is_err() { break; }
+                    if let Some(pressure)=*pressure_rx.borrow() {
+                        pressure_until=Some(pressure.at+Duration::from_secs(8));
+                        if pressure.discontinuity { selector.reset(); }
+                    }
+                    if let Some(target) = selector.request(viewer_layers::effective_intent(*layer_intent.borrow(), pressure_until))
+                        && let Some(kf) = &publication.keyframe { let _ = kf.send(Some(target)); }
+                },
                 _ = async {
                     if let Some(intent) = &mut intent { let _ = intent.changed().await; }
                     else { std::future::pending::<()>().await; }
@@ -2392,14 +2963,21 @@ fn spawn_forwarder(
                     if result.is_err() { break; }
                     if binding.borrow().is_some() {
                         rtcp_open = true;
-                        if let Some(kf) = &publication.keyframe { let _ = kf.send(()); }
+                        if let Some(kf) = &publication.keyframe { let _ = kf.send(None); }
                     }
+                }
+                result = layer_intent.changed() => {
+                    if result.is_err() { break; }
+                    if let Some(target) = selector.request(viewer_layers::effective_intent(*layer_intent.borrow(), pressure_until))
+                        && let Some(kf) = &publication.keyframe { let _ = kf.send(Some(target)); }
                 }
                 event = local.poll(), if binding.borrow().is_some() && rtcp_open && publication.keyframe.is_some() => {
                     match event {
                         Some(TrackLocalEvent::OnRtcpPacket(pkts)) if asks_keyframe(&pkts) => {
                             debug!(source = %publication.stream_id, "subscriber keyframe feedback");
-                            if let Some(kf) = &publication.keyframe { let _ = kf.send(()); }
+                            if let Some(kf) = &publication.keyframe {
+                                let _ = kf.send(selector.wanted(current_intent));
+                            }
                         }
                         None => rtcp_open = false,
                         _ => {}
@@ -2414,14 +2992,50 @@ fn spawn_forwarder(
                             // before the corresponding SDP answer was accepted.
                             let payload_type = *binding.borrow();
                             let Some(payload_type) = payload_type else { continue; };
-                            let n = packet.payload.len() as u64;
-                            let mut packet = prepare_forwarded_rtp(packet, ssrc);
-                            packet.header.payload_type = payload_type;
-                            if local.write_rtp(packet).await.is_ok() {
-                                stats.forwarded_bytes.fetch_add(n, Ordering::Relaxed);
+                            let rid = publication.layer_ids.lock().unwrap().get(&packet.header.ssrc).cloned();
+                            if !publication.layered && rid.as_deref().is_some_and(|rid| !rid.is_empty() && rid != "f") { continue; }
+                            let previous_rewriter = rewriter.clone();
+                            let batch = if publication.layered {
+                                selector.register(packet.header.ssrc, rid.as_deref().unwrap_or(""));
+                                let Some(frame) = assembler.push(packet) else { continue; };
+                                if let Some(target) = selector.request(viewer_layers::effective_intent(*layer_intent.borrow(), pressure_until))
+                                    && let Some(kf) = &publication.keyframe { let _ = kf.send(Some(target)); }
+                                let accepted = selector.accept(&frame, current_intent);
+                                if !accepted { continue; }
+                                rewriter.rewrite(frame)
+                            } else { vec![packet] };
+                            let batch = egress::Batch {
+                                local: local.clone(),
+                                packets: batch.into_iter().map(|packet| {
+                                    let mut packet = prepare_forwarded_rtp(packet, ssrc);
+                                    packet.header.payload_type = payload_type;
+                                    packet
+                                }).collect(),
+                                alive: alive.clone(),
+                                publication: publication.clone(),
+                                queued_at: Instant::now(),
+                                pressure: pressure.clone(),
+                            };
+                            if publication.kind == RtpCodecKind::Audio {
+                                if !egress.audio(batch).await { break; }
+                            } else if !publication.layered {
+                                if !egress.legacy_video(batch).await { break; }
+                            } else if !egress.video(batch) {
+                                rewriter = previous_rewriter;
+                                pressure_until = Some(Instant::now() + Duration::from_secs(8));
+                                // Whole-frame admission failed. Later deltas may
+                                // reference it, so ask for a fresh selected keyframe.
+                                selector.reset();
+                                if let Some(kf) = &publication.keyframe {
+                                    let _ = kf.send(selector.wanted(viewer_layers::effective_intent(*layer_intent.borrow(), pressure_until)));
+                                }
                             }
                         }
-                        Err(broadcast::error::RecvError::Lagged(_)) => {},
+                        Err(broadcast::error::RecvError::Lagged(_)) => {
+                            selector.reset();
+                            pressure_until = Some(Instant::now() + Duration::from_secs(8));
+                            if let Some(kf) = &publication.keyframe { let _ = kf.send(selector.wanted(viewer_layers::effective_intent(*layer_intent.borrow(), pressure_until))); }
+                        },
                         Err(broadcast::error::RecvError::Closed) => break,
                     }
                 }
@@ -2433,12 +3047,18 @@ fn spawn_forwarder(
 fn handle_publisher_event(
     packets: &broadcast::Sender<rtp::Packet>,
     stats: &SfuStats,
-    rtp: &mut PublisherRtpStats,
+    rtp: &mut HashMap<u32, PublisherRtpStats>,
+    clock_rate: u32,
     evt: Option<TrackRemoteEvent>,
 ) -> bool {
     match evt {
         Some(TrackRemoteEvent::OnRtpPacket(packet)) => {
-            rtp.observe(&packet, stats);
+            if rtp.len() >= 3 && !rtp.contains_key(&packet.header.ssrc) {
+                return true;
+            }
+            rtp.entry(packet.header.ssrc)
+                .or_insert_with(|| PublisherRtpStats::new(clock_rate))
+                .observe(&packet, stats);
             let _ = packets.send(packet);
             true
         }
@@ -2816,6 +3436,60 @@ mod tests {
     };
     use rtc::rtp::packet::Packet;
     use std::sync::Arc;
+
+    #[test]
+    fn payload_binding_accepts_only_a_live_bundle_only_transport() {
+        let sdp = "v=0\r\no=- 0 0 IN IP4 127.0.0.1\r\ns=-\r\nt=0 0\r\na=group:BUNDLE audio camera\r\nm=audio 9 UDP/TLS/RTP/SAVPF 111\r\na=mid:audio\r\na=rtpmap:111 opus/48000/2\r\nm=video 0 UDP/TLS/RTP/SAVPF 96\r\na=mid:camera\r\na=bundle-only\r\na=recvonly\r\na=rtpmap:96 VP8/90000\r\n";
+        let codec = RTCRtpCodec {
+            mime_type: "video/VP8".into(),
+            clock_rate: 90000,
+            ..Default::default()
+        };
+        assert_eq!(
+            super::negotiated_payload_type(sdp, "camera", &codec),
+            Some(96)
+        );
+        for denied in [
+            sdp.replace("a=group:BUNDLE audio camera\r\n", ""),
+            sdp.replace("m=audio 9", "m=audio 0"),
+            sdp.replace("a=bundle-only\r\n", ""),
+            sdp.replace("a=recvonly", "a=inactive"),
+            sdp.replace("BUNDLE audio camera", "BUNDLE camera audio"),
+        ] {
+            assert_eq!(
+                super::negotiated_payload_type(&denied, "camera", &codec),
+                None
+            );
+        }
+    }
+
+    #[test]
+    fn av1_defaults_preserve_real_receiver_level_and_profile_limits() {
+        let sdp = "v=0\r\no=- 0 0 IN IP4 127.0.0.1\r\ns=-\r\nt=0 0\r\nm=video 9 UDP/TLS/RTP/SAVPF 45\r\na=mid:video\r\na=rtpmap:45 AV1/90000\r\na=fmtp:45 level-idx=5;profile=0;tier=0\r\na=recvonly\r\n";
+        let codec = RTCRtpCodec {
+            mime_type: "video/AV1".into(),
+            clock_rate: 90000,
+            ..Default::default()
+        };
+        assert_eq!(
+            super::negotiated_payload_type(sdp, "video", &codec),
+            Some(45)
+        );
+        for denied in [
+            "level-idx=4;profile=0;tier=0",
+            "level-idx=5;profile=1;tier=0",
+            "level-idx=5;profile=0;tier=1",
+        ] {
+            assert_eq!(
+                super::negotiated_payload_type(
+                    &sdp.replace("level-idx=5;profile=0;tier=0", denied),
+                    "video",
+                    &codec
+                ),
+                None
+            );
+        }
+    }
 
     #[test]
     fn bundle_only_video_uses_its_live_bundle_transport() {

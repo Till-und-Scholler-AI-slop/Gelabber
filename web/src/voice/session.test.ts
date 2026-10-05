@@ -101,8 +101,14 @@ class FakePeer implements PeerConnection {
     return sender;
   }
 
-  addTransceiver(kind: string, init?: { direction?: string }): void {
-    this.transceivers.push({ kind, direction: init?.direction });
+  addTransceiver(
+    kind: string | MediaStreamTrack,
+    init?: { direction?: string },
+  ): void {
+    this.transceivers.push({
+      kind: typeof kind === "string" ? kind : kind.kind,
+      direction: init?.direction,
+    });
     this.tracks += 1;
   }
 
@@ -628,7 +634,7 @@ describe("voice session", () => {
     expect(peers[0]?.tracks).toBe(1);
     expect(peers[0]?.iceServers[0]?.urls).toEqual(["stun:127.0.0.1:3478"]);
     expect(mediaSent.map((frame) => frame.op)).toEqual(["j", "i", "o"]);
-    expect(mediaSent[0]).toEqual({ op: "j", tk: "abcdefghjkmn", v: 2 });
+    expect(mediaSent[0]).toEqual({ op: "j", tk: "abcdefghjkmn", v: 3 });
     expect(
       sent.filter((frame) => frame.op === "sig").map((frame) => frame.t),
     ).toEqual(["j", "p"]);
