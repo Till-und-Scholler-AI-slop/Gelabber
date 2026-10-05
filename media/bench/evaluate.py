@@ -4,6 +4,7 @@ import argparse
 import json
 from pathlib import Path
 import statistics
+import math
 
 
 def media_stats(sample, direction):
@@ -31,10 +32,49 @@ def median(values):
 
 
 def same_comparison_browser(runs):
-    if not runs or len({bool(run.get('fixed_video_fixture')) for run in runs}) != 1:
+    if not runs or any(len({bool(run.get(policy)) for run in runs}) != 1 for policy in ['fixed_video_fixture', 'pcm_latency_enabled']):
         return False
     identities = {tuple(run.get('executed_browser', {}).get(field) for field in ['product', 'revision', 'sha256']) for run in runs}
     return len(identities) == 1 and all(next(iter(identities)))
+
+
+def summarize_pcm(browser, problems):
+    evidence = browser.get('pcm_latency', {})
+    calibration = browser.get('pcm_calibration', {})
+    parameters = evidence.get('parameters', {})
+    if not calibration.get('valid') or calibration.get('failures') or len(calibration.get('delay_checks', [])) != 4 or not all(check.get('valid') for check in calibration.get('delay_checks', [])):
+        problems.append('PCM measurement lacks passing known-delay calibration')
+    actual = browser.get('load_generator', {}).get('executed_browser', {})
+    if any(not actual.get(field) or actual[field] != calibration.get('executed_browser', {}).get(field) for field in ['product', 'revision', 'sha256']):
+        problems.append('PCM calibration executed browser differs')
+    if parameters != calibration.get('calibration', {}).get('parameters') or parameters.get('errorBoundMs') != 2 or parameters.get('sampleRate') != 48000:
+        problems.append('PCM detector policy differs from calibration')
+    problems.extend(evidence.get('failures', []))
+    if evidence.get('clipped_frames', 0): problems.append('PCM source clipped')
+    clock, wall = evidence.get('sample_clock_seconds', 0), evidence.get('wall_clock_seconds', 0)
+    if min(clock, wall) < 8 or abs(clock - wall) > .1: problems.append('PCM sampleclock and wallclock differ or interval is insufficient')
+    count = browser['peers']
+    expected = {(f'peer-{receiver}', f'peer-{sender}/mic') for receiver in range(count) for sender in range(count) if sender != receiver}
+    if browser['video']: expected.update((f'peer-{receiver}', 'peer-0/screen-audio') for receiver in range(1, count))
+    edges = evidence.get('edges', [])
+    observed = {(edge.get('peer'), edge.get('source')) for edge in edges}
+    if observed != expected or len(edges) != len(expected): problems.append('PCM graph lacks unique source identity on every audio edge')
+    summaries, all_values = [], []
+    for edge in edges:
+        matches = edge.get('matches', [])
+        values = [match.get('latency_ms') for match in matches if not match.get('problem')]
+        valid = edge.get('expected_markers', 0) >= 3 and len(matches) == edge.get('expected_markers') and len(values) == len(matches)
+        valid = valid and all(isinstance(value, (float, int)) and math.isfinite(value) and -2 <= value <= 1000 for value in values)
+        valid = valid and all(match.get('score', 0) >= parameters.get('threshold', 1) and match.get('amplitude', 0) >= .04 for match in matches)
+        if not valid: problems.append(f"PCM markers missing, ambiguous or out of bounds: {edge.get('peer')}/{edge.get('source')}")
+        else:
+            all_values.extend(values)
+            summaries.append({'peer': edge['peer'], 'source': edge['source'], 'markers': len(values), 'min_ms': min(values), 'median_ms': median(values), 'max_ms': max(values)})
+    ordered = sorted(all_values)
+    return {'scope': evidence.get('scope'), 'calibrated_detector_error_bound_ms': parameters.get('errorBoundMs'),
+        'edges': summaries, 'markers': len(all_values), 'median_ms': median(all_values),
+        'p95_ms': ordered[math.ceil(.95 * len(ordered)) - 1] if ordered else None,
+        'max_ms': max(all_values) if all_values else None}
 
 
 def summarize(browser, server):
@@ -45,6 +85,7 @@ def summarize(browser, server):
     samples = browser.get('samples', [])
     result = {'problems': problems, 'media_fixture_valid': False,
               'fixed_video_fixture': browser.get('input', {}).get('fixedVideoFixture', False),
+              'pcm_latency_enabled': browser.get('input', {}).get('pcmLatency', False),
               'executed_browser': browser.get('load_generator', {}).get('executed_browser', {})}
     if len(samples) < 3:
         problems.append('at least three browser samples required')
@@ -159,6 +200,23 @@ def summarize(browser, server):
                    'decoded_video_fps': fps, 'measurement_seconds': seconds,
                    'receiver_jitter_seconds_median': median([s['jitter'] for s in incoming if 'jitter' in s]),
                    'latency_scope': 'RTP jitter only; end-to-end audio latency is not measured'})
+    if result['pcm_latency_enabled']:
+        result['pcm_latency'] = summarize_pcm(browser, problems)
+        result['latency_scope'] = result['pcm_latency']['scope']
+        if not seconds <= browser.get('pcm_latency', {}).get('sample_clock_seconds', 0) <= seconds + 1.3:
+            problems.append('PCM sampleclock does not cover the RTP measurement window')
+        concealment = []
+        for stream in incoming:
+            if stream.get('kind') != 'audio': continue
+            before = received_before.get(key(stream), {})
+            fields = ['concealedSamples', 'totalSamplesReceived']
+            if any(field not in stream or field not in before for field in fields):
+                problems.append('PCM measurement lacks per-edge decoder concealment evidence'); continue
+            total = stream['totalSamplesReceived'] - before['totalSamplesReceived']
+            concealed = stream['concealedSamples'] - before['concealedSamples']
+            if total <= 0 or concealed < 0 or concealed / total > .01: problems.append('PCM audio decoder concealment exceeds one percent')
+            concealment.append({'peer': stream.get('_peer'), 'id': stream['id'], 'fraction': concealed / total if total > 0 else None})
+        result['pcm_latency']['decoder_concealment'] = concealment
     result['negotiated_ciphers'] = sorted({(s.get('dtlsCipher', ''), s.get('srtpCipher', ''))
                                            for s in last['stats'] if s['type'] == 'transport'})
     timed = [s for s in server.get('samples', []) if first['at'] / 1000 <= s['at'] <= last['at'] / 1000]
@@ -192,6 +250,8 @@ def summarize(browser, server):
         result['load_generator_cpu_counters_stable'] = stable
         if len(generator) >= 2 and stable and generator[-1]['at'] > generator[0]['at']:
             result['load_generator_cpu_cores_mean'] = (generator[-1]['cpu_seconds'] - generator[0]['cpu_seconds']) / (generator[-1]['at'] - generator[0]['at'])
+    if result['pcm_latency_enabled'] and (not result.get('load_generator_cpu_counters_stable') or 'load_generator_cpu_cores_mean' not in result or not result.get('load_generator_peak_rss_bytes')):
+        problems.append('PCM measurement lacks stable generator CPU/RAM evidence')
     result['media_fixture_valid'] = not problems
     return result
 
@@ -224,7 +284,9 @@ def main():
                 'load_rss_bytes': median([r['load_peak_rss_bytes'] for r in valid]),
                 'sender_audio_bps': median([r['sender_bitrate_bps_per_stream']['audio'] for r in valid]),
                 'sender_video_bps': median([r['sender_bitrate_bps_per_stream']['video'] for r in valid])
-                if report['configuration']['video'] else None})
+                if report['configuration']['video'] else None,
+                'pcm_latency_median_ms': median([r['pcm_latency']['median_ms'] for r in valid if r.get('pcm_latency_enabled')]),
+                'pcm_latency_p95_ms': median([r['pcm_latency']['p95_ms'] for r in valid if r.get('pcm_latency_enabled')])})
     # Input bitrate and actual decoder quality must be compared before CPU/RAM;
     # a smaller workload cannot qualify as a faster backend.
     for count in report['configuration']['matrix']:

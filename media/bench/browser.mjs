@@ -2,9 +2,17 @@
 // across engines; this does not substitute for product permission/browser tests.
 import { Device } from 'mediasoup-client';
 import { fixtureCodecOptions, fixtureDescription } from './video-fixture.mjs';
+import { PcmMarkers } from './pcm-marker.mjs';
 const sleep = ms => new Promise(resolve => setTimeout(resolve, ms));
 let videoBitrate = 6000000;
 let fixedVideoFixture = false;
+let pcm;
+const sourceIdentity = (index, trackIndex = 0) => ({ name: `peer-${index}/${trackIndex === 2 ? 'screen-audio' : 'mic'}`, number: trackIndex === 2 ? 64 : index });
+function pcmReceiver(track, peer, source) {
+  if (!pcm || track.kind !== 'audio') return;
+  if (!source) { pcm.failures.push('missing PCM source identity for ' + peer); return; }
+  pcm.receiver(track, peer, source.name, source.number);
+}
 async function until(predicate, ms = 30000) {
   const end = Date.now() + ms;
   while (Date.now() < end) { if (predicate()) return; await sleep(50); }
@@ -54,9 +62,9 @@ function retainTrack(track) {
   element.autoplay = true; element.muted = true; element.srcObject = new MediaStream([track]);
   document.body.append(element); element.play().catch(error => failures.push(String(error)));
 }
-function nativePc() {
+function nativePc(onAudio) {
   const pc = new RTCPeerConnection({ iceServers: [] });
-  pcs.push(pc); pc.ontrack = event => retainTrack(event.track); return pc;
+  pcs.push(pc); pc.ontrack = event => { retainTrack(event.track); if (event.track.kind === 'audio') onAudio?.(event); }; return pc;
 }
 async function offer(pc) {
   const video = pc.getTransceivers().filter(t => t.sender.track?.kind === 'video');
@@ -77,14 +85,16 @@ async function offer(pc) {
   return pc.localDescription;
 }
 function inputs(index, video) {
-  const context = new AudioContext({ sampleRate: 48000 });
+  const context = pcm?.context ?? new AudioContext({ sampleRate: 48000 });
   const destination = context.createMediaStreamDestination();
+  const microphone = pcm ? pcm.source(sourceIdentity(index).name, index) : destination;
+  if (pcm) microphone.connect(destination);
   for (const frequency of [317, 719, 1249, 2027]) {
     const tone = context.createOscillator(), gain = context.createGain();
     tone.frequency.value = frequency + index * 13; gain.gain.value = 0.07;
-    tone.connect(gain).connect(destination); tone.start();
+    tone.connect(gain).connect(microphone); tone.start();
   }
-  retained.push(context); context.resume();
+  if (!pcm) retained.push(context); context.resume();
   const tracks = [destination.stream.getAudioTracks()[0]];
   if (video) {
     const canvas = document.createElement('canvas'); canvas.width = 1920; canvas.height = 1080;
@@ -100,14 +110,19 @@ function inputs(index, video) {
     paint(); tracks.push(canvas.captureStream(60).getVideoTracks()[0]);
     // Independent screen-source audio, separate from the microphone.
     const source = context.createMediaStreamDestination(), tone = context.createOscillator();
-    tone.frequency.value = 440; tone.connect(source); tone.start();
+    tone.frequency.value = 440;
+    if (pcm) {
+      const identity = sourceIdentity(index, 2), marker = pcm.source(identity.name, identity.number), gain = context.createGain();
+      gain.gain.value = .2; tone.connect(gain).connect(marker).connect(source);
+    } else tone.connect(source);
+    tone.start();
     tracks.push(source.stream.getAudioTracks()[0]);
   }
   retained.push(...tracks); return tracks;
 }
 async function mediasoup(peers, withVideo) {
   const device = new Device(); await device.load({ routerRtpCapabilities: await rpc({ op: 'capabilities' }) });
-  const members = [];
+  const members = [], producerSources = new Map();
   for (let index = 0; index < peers; index++) {
     const evidence = beginPeer(index, peers, withVideo);
     const peer = `peer-${index}`; await rpc({ op: 'join', peer });
@@ -122,12 +137,13 @@ async function mediasoup(peers, withVideo) {
     const send = await make('send'), recv = await make('recv'), published = [];
     const collect = async () => (await Promise.all([send, recv].map(async transport => [...await transport.getStats()].map(([, value]) => ({ ...value, _endpoint: peer + '/' + transport.direction, _peer: peer }))))).flat();
     observePeer(evidence, collect, 2);
-    for (const track of inputs(index, withVideo && index === 0)) {
+    for (const [trackIndex, track] of inputs(index, withVideo && index === 0).entries()) {
       const producer = await send.produce({ track, codec: track.kind === 'video' ? device.rtpCapabilities.codecs.find(c => c.mimeType.toLowerCase() === 'video/vp8') : undefined,
         encodings: [{ maxBitrate: track.kind === 'video' ? videoBitrate : 128000, ...(track.kind === 'video' ? { maxFramerate: 60, scaleResolutionDownBy: 1 } : {}) }],
         codecOptions: { opusStereo: false, opusFec: true, opusDtx: false, opusMaxAverageBitrate: 128000, ...(track.kind === 'video' ? fixtureCodecOptions(videoBitrate, fixedVideoFixture) : {}) } });
       if (track.kind === 'video') { const settings = producer.rtpSender.getParameters(); settings.degradationPreference = 'maintain-resolution'; await producer.rtpSender.setParameters(settings); }
       published.push(producer.id);
+      if (track.kind === 'audio') producerSources.set(producer.id, sourceIdentity(index, trackIndex));
       rtpConfiguration.push({ peer, direction: 'send', kind: track.kind, parameters: producer.rtpParameters });
     }
     members.push({ peer, send, recv, published, collect });
@@ -137,6 +153,7 @@ async function mediasoup(peers, withVideo) {
     for (const producerId of publisher.published) {
       const params = await rpc({ op: 'consume', peer: member.peer, transportId: member.recv.id, producerId, rtpCapabilities: device.rtpCapabilities });
       const consumer = await member.recv.consume(params); retainTrack(consumer.track);
+      pcmReceiver(consumer.track, member.peer, producerSources.get(producerId));
       rtpConfiguration.push({ peer: member.peer, direction: 'recv', kind: consumer.kind, parameters: consumer.rtpParameters });
       await rpc({ op: 'resume', peer: member.peer, consumerId: consumer.id });
     }
@@ -149,11 +166,15 @@ async function mediasoup(peers, withVideo) {
   window.closePeers = async () => { members.forEach(p => { p.send.close(); p.recv.close(); }); await rpc({ op: 'reset' }); return { engine_stats: await rpc({ op: 'summary' }) }; };
 }
 async function current(peers, withVideo) {
-  const members = [];
+  const members = [], identities = new Map();
   for (let index = 0; index < peers; index++) {
     const evidence = beginPeer(index, peers, withVideo);
     const identity = await rpc({ op: 'join' });
-    const pc = nativePc(), ws = new WebSocket(window.backend.replace(/^http/, 'ws') + '/ws');
+    identities.set(identity.user, index);
+    const pc = nativePc(event => {
+      const stream = event.streams[0]?.id, owner = stream?.split(':')[0], kind = stream?.split(':')[1];
+      pcmReceiver(event.track, evidence.peer, identities.has(owner) && ['a', 's'].includes(kind) ? sourceIdentity(identities.get(owner), kind === 's' ? 2 : 0) : undefined);
+    }), ws = new WebSocket(window.backend.replace(/^http/, 'ws') + '/ws');
     connectionTimer(pc, 'media', evidence);
     observePeer(evidence, () => collectNative([pc], evidence.peer), 1);
     const member = { ...identity, pc, ws, index, evidence, queue: Promise.resolve(), answer: null, pendingIce: [], joined: false };
@@ -244,13 +265,18 @@ async function janus(peers, withVideo) {
     const jsep = await offer(pc);
     const answer = await owner.request(handle, { janus: 'message', body: { request: 'publish', audio: true, video: withVideo && index === 0 }, jsep: { type: jsep.type, sdp: jsep.sdp } });
     await pc.setRemoteDescription(fixtureDescription(answer.jsep, videoBitrate, fixedVideoFixture)); await until(() => pc.connectionState === 'connected');
-    members.push({ owner, id: joined.plugindata.data.id, tracks, evidence, connections });
+    members.push({ owner, id: joined.plugindata.data.id, index, tracks, evidence, connections });
   }
   for (const member of members) {
-    const handle = await member.owner.attach(), pc = nativePc();
+    const sourceMids = new Map();
+    const handle = await member.owner.attach(), pc = nativePc(event => pcmReceiver(event.track, member.evidence.peer, sourceMids.get(event.transceiver.mid)));
     member.connections.push(pc); connectionTimer(pc, 'recv', member.evidence);
     const streams = members.filter(p => p !== member).flatMap(p => p.tracks.map((_, index) => ({ feed: p.id, mid: String(index) })));
     const received = await member.owner.request(handle, { janus: 'message', body: { request: 'join', room, ptype: 'subscriber', streams } });
+    for (const stream of received.plugindata.data.streams ?? []) {
+      const owner = members.find(peer => peer.id === stream.feed_id);
+      if (owner && stream.type === 'audio' && ['0', '2'].includes(String(stream.feed_mid))) sourceMids.set(String(stream.mid), sourceIdentity(owner.index, Number(stream.feed_mid)));
+    }
     await pc.setRemoteDescription(fixtureDescription(received.jsep, videoBitrate, fixedVideoFixture)); await pc.setLocalDescription(await pc.createAnswer());
     await until(() => pc.iceGatheringState === 'complete');
     await member.owner.request(handle, { janus: 'message', body: { request: 'start', room }, jsep: { type: pc.localDescription.type, sdp: pc.localDescription.sdp } });
@@ -269,26 +295,31 @@ window.startBenchmark = async config => {
   window.backend = config.backend;
   videoBitrate = config.videoBitrate;
   fixedVideoFixture = config.fixedVideoFixture;
+  if (config.pcmLatency) pcm = await PcmMarkers.create();
   await ({ current, mediasoup, janus })[config.engine](config.peers, config.video);
   await until(() => peerEvidence.every(p => p.dtls_ready_at && p.first_send_rtp_at && p.full_graph_rtp_ready_at));
   peerEvidence.forEach(p => { p.stop = true; }); await Promise.all(timers);
   await sleep(config.warmupMs);
+  pcm?.begin();
   const samples = [], started = Date.now();
   while (Date.now() - started < config.durationMs) {
     samples.push({ at: Date.now(), stats: await window.collect() }); await sleep(1000);
   }
   const lastStats = samples.at(-1).stats;
+  pcm?.end();
   const codecs = new Map(lastStats.filter(s => s.type === 'codec').map(s => [s._endpoint + '/' + s.id, s.mimeType]));
   const incoming = lastStats.filter(s => s.type === 'inbound-rtp' && s.packetsReceived > 0 && s.mid !== 'probator' && !String(codecs.get(s._endpoint + '/' + s.codecId)).endsWith('/rtx'));
   const expectedAudio = config.peers * (config.peers - 1) + (config.video ? config.peers - 1 : 0);
   const expectedVideo = config.video ? config.peers - 1 : 0;
   if (incoming.filter(s => s.kind === 'audio').length !== expectedAudio || incoming.filter(s => s.kind === 'video').length !== expectedVideo) failures.push('Incomplete forwarding graph: expected ' + expectedAudio + ' audio and ' + expectedVideo + ' video inbound streams, got ' + incoming.length);
-  const result = { backend: config.engine, peers: config.peers, video: config.video, input: { clip: 'moving-colorbars-v1', audioBitrate: 128000, videoBitrate, fixedVideoFixture, videoCodecOptions: fixtureCodecOptions(videoBitrate, fixedVideoFixture), width: 1920, height: 1080, requestedFps: 60 }, failures: [...failures], samples, join_timing: peerEvidence.map(({ stop, ...p }) => p) };
+  const result = { backend: config.engine, peers: config.peers, video: config.video, input: { clip: 'moving-colorbars-v1', audioBitrate: 128000, pcmLatency: config.pcmLatency, videoBitrate, fixedVideoFixture, videoCodecOptions: fixtureCodecOptions(videoBitrate, fixedVideoFixture), width: 1920, height: 1080, requestedFps: 60 }, failures: [...failures], samples, join_timing: peerEvidence.map(({ stop, ...p }) => p) };
+  if (pcm) result.pcm_latency = await pcm.evidence();
   // Keep codec/feedback/SSRC negotiation, excluding ICE credentials/candidates.
   const describe = description => description?.sdp.split(/\r?\n/).filter(line => /^m=|^a=(rtpmap:|fmtp:|rtcp-fb:|extmap:|mid:|ssrc:|ssrc-group:|sendrecv$|sendonly$|recvonly$)/.test(line)) ?? [];
   result.protocol_configuration = { native: nativeEndpoints.map(({ connection, label, peer }) => ({ peer, label,
     local: describe(connection.localDescription), remote: describe(connection.remoteDescription) })), rtp: rtpConfiguration };
   result.post_leave = await window.closePeers(); result.post_leave.at = Date.now();
   retained.forEach(item => { if (item instanceof MediaStreamTrack) item.stop(); if (item instanceof AudioContext) item.close(); });
+  if (pcm) await pcm.close();
   return result;
 };

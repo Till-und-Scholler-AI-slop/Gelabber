@@ -85,11 +85,13 @@ def run(args, engine, count, round_number, report):
         for _ in range(3):
             idle.append(sample_tree(pid))
             time.sleep(.5)
-        samples, monitoring_errors = [], []
+        samples, generator_samples, monitoring_errors = [], [], []
         def monitor():
             while not stop.wait(.5):
                 try:
                     samples.append(sample_tree(pid))
+                    if loadgen is not None and loadgen.poll() is None:
+                        generator_samples.append(sample_tree(loadgen.pid))
                 except (OSError, ProcessLookupError) as error:
                     monitoring_errors.append(str(error))
                     break
@@ -97,7 +99,7 @@ def run(args, engine, count, round_number, report):
         thread.start()
         browser_file = folder / 'browser.json'
         with (folder / 'loadgen.log').open('w') as output:
-            loadgen = subprocess.Popen(['node', str(args.snapshot / 'loadgen.mjs'), '--engine', engine, '--backend', backend, '--peers', str(count), '--video', str(args.video).lower(), '--video-bitrate', str(args.video_bitrate), '--fixed-video-fixture', str(args.fixed_video_fixture).lower(), '--protocol-logs', str(args.protocol_logs).lower(), '--warmup', str(args.warmup * 1000), '--duration', str(args.duration * 1000), '--output', str(browser_file)], env=environment, stdout=output, stderr=subprocess.STDOUT, start_new_session=True)
+            loadgen = subprocess.Popen(['node', str(args.snapshot / 'loadgen.mjs'), '--engine', engine, '--backend', backend, '--peers', str(count), '--video', str(args.video).lower(), '--video-bitrate', str(args.video_bitrate), '--fixed-video-fixture', str(args.fixed_video_fixture).lower(), '--pcm-latency', str(bool(args.pcm_calibration)).lower(), '--pcm-calibration', str(args.snapshot / 'pcm-calibration.json'), '--protocol-logs', str(args.protocol_logs).lower(), '--warmup', str(args.warmup * 1000), '--duration', str(args.duration * 1000), '--output', str(browser_file)], env=environment, stdout=output, stderr=subprocess.STDOUT, start_new_session=True)
             loadgen.wait(timeout=args.duration + args.warmup + 300)
         post_leave = []
         for _ in range(6):
@@ -105,7 +107,7 @@ def run(args, engine, count, round_number, report):
             post_leave.append(sample_tree(pid))
         stop.set()
         thread.join()
-        metrics = {'schema': 1, 'server_hostname': socket.gethostname(), 'engine': engine, 'peers': count, 'round': round_number, 'idle_samples': idle, 'post_leave_samples': post_leave, 'samples': samples, 'monitoring_errors': monitoring_errors, 'loadgen_returncode': loadgen.returncode, 'scope': 'local informational probe; shared Redis excluded from media-only RAM'}
+        metrics = {'schema': 1, 'server_hostname': socket.gethostname(), 'engine': engine, 'peers': count, 'round': round_number, 'idle_samples': idle, 'post_leave_samples': post_leave, 'samples': samples, 'load_generator_samples': generator_samples, 'monitoring_errors': monitoring_errors, 'loadgen_returncode': loadgen.returncode, 'scope': 'local informational probe; shared Redis excluded from media-only RAM'}
         (folder / 'server.json').write_text(json.dumps(metrics, indent=2) + '\n')
         report['runs'].append({'engine': engine, 'peers': count, 'round': round_number, 'directory': str(folder), 'loadgen_returncode': loadgen.returncode, 'idle_peak_rss_bytes': max(s['rss_bytes'] for s in idle), 'observed_peak_rss_bytes': max((s['rss_bytes'] for s in samples), default=0)})
 
@@ -137,6 +139,7 @@ def main():
     parser.add_argument('--video', action='store_true')
     parser.add_argument('--video-bitrate', type=int, default=6000000)
     parser.add_argument('--fixed-video-fixture', action='store_true', help='identical Chrome min/start/max source hints; actual bitrate/FPS still required')
+    parser.add_argument('--pcm-calibration', type=Path, help='enable PCM marker latency with a passing local calibration JSON')
     parser.add_argument('--protocol-logs', action='store_true', help='Chromium RTC event logs; diagnostic runs only')
     parser.add_argument('--output', type=Path, required=True)
     args = parser.parse_args()
@@ -144,17 +147,21 @@ def main():
         parser.error('runs >=1, duration >=3 and warmup >=1 required')
     if args.fixed_video_fixture and (not args.video or args.video_bitrate % 1000):
         parser.error('fixed video fixture requires --video and whole kbit/s')
+    if args.pcm_calibration and (not args.pcm_calibration.is_file() or args.duration < 8):
+        parser.error('PCM calibration file and duration >=8 required')
     args.output = args.output.resolve()
     args.output.mkdir(parents=True)
     args.janus_image = docker('inspect', '--format', '{{.Id}}', 'gelabber-bench/janus:v1.4.2') if 'janus' in args.engines else None
     artifacts = ['client.bundle.js', 'package-lock.json', 'current-probe/Cargo.lock', 'mediasoup-probe/Cargo.lock', 'current-probe/target/release/gelabber-current-probe', 'mediasoup-probe/target/release/gelabber-mediasoup-probe']
     args.snapshot = args.output / 'inputs'
-    for name in [*artifacts, 'loadgen.mjs', 'proxy-target.mjs', 'browser-provenance.mjs', 'video-fixture.mjs']:
+    for name in [*artifacts, 'loadgen.mjs', 'proxy-target.mjs', 'browser-provenance.mjs', 'video-fixture.mjs', 'pcm-policy.mjs', 'pcm-kernel.mjs', 'pcm-marker.mjs', 'pcm.bundle.js']:
         source = ROOT / name
         if source.exists():
             destination = args.snapshot / name
             destination.parent.mkdir(parents=True, exist_ok=True)
             shutil.copy2(source, destination)
+    if args.pcm_calibration:
+        shutil.copy2(args.pcm_calibration, args.snapshot / 'pcm-calibration.json')
     (args.snapshot / 'node_modules').symlink_to(ROOT / 'node_modules', target_is_directory=True)
     report = {'schema': 1, 'acceptance': False, 'blocking_gates': ['separate load-generator host', 'WAN/TURN', 'product tickets/ACL/revocation/watch/source-audio acceptance', 'real end-to-end audio latency'], 'server_hostname': socket.gethostname(), 'source_revision': subprocess.check_output(['git', 'rev-parse', 'HEAD'], cwd=ROOT, text=True).strip(), 'configuration': {key: str(value) if isinstance(value, Path) else value for key, value in vars(args).items()}, 'runs': []}
     report['artifact_sha256'] = {name: hashlib.sha256((args.snapshot / name).read_bytes()).hexdigest() for name in artifacts if (args.snapshot / name).exists()}

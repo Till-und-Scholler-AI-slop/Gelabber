@@ -159,11 +159,60 @@ show CPU in mean cores, peak RSS, every sender bitrate and its min/max distribut
 join timing, post-leave resources and RTP jitter. Equal-stream
 comparison is available only with at least three valid runs per engine and
 measured median sender bitrates within 10%. RTP jitter is **not** end-to-end
-audio latency. Neither runner nor evaluator can issue migration acceptance.
+audio latency. The optional calibrated PCM fixture below measures source-to-decoded
+audio instead. Neither runner nor evaluator can issue migration acceptance.
 Every audio receiver edge must also deliver within 10% of measured sender
 bitrate bounds and report at most 1% packet loss in the measurement window.
 Per-edge received rates/loss are retained; merely advancing a few packets
 cannot qualify a partially delivered stress workload.
+
+## Optional source-to-decoded PCM latency
+
+Build the browser/worklet bundles, then calibrate the exact running browser:
+
+```sh
+cd media/bench
+npm run build
+node pcm-calibrate.mjs /tmp/gelabber-pcm-calibration.json
+# Add to either runner's normal arguments:
+# --pcm-calibration /tmp/gelabber-pcm-calibration.json --duration 60
+```
+
+The optional path adds an identical deterministic 126-ms BPSK marker every two
+seconds to each microphone and separate screen-audio source. Each source has a
+different 63-chip sequence, also varied by planned cycle to reject markers
+delayed by a full period. All generated sources and decoded receiver tracks
+use one 48-kHz AudioContext; AudioWorklet `currentFrame` timestamps the actual
+source samples and a matched-filter peak in decoded PCM. Worklet messages do
+not establish timestamps. The result includes codec processing, forwarding,
+network, jitterbuffer and Web Audio routing. It excludes physical microphone,
+speaker and acoustic latency, and does not establish subjective audio quality.
+The source signal is a separate controlled fixture; the default remains unchanged.
+
+Calibration checks 0/137/300-ms known direct delays, plus a 200-ms differential
+delay on two paths of the same real Opus-decoded track. Silence, deterministic
+noise and a different source code are negative controls. The declared detector
+error bound is ±2 ms; the direct checks currently resolve within 0.25 ms and the
+Opus differential within 0 ms. This bounds the marker locator under the tested
+signal/codec conditions, rather than all acoustic or browser-device latency.
+The runtime requires a passing calibration with identical detector-code hashes
+and executed browser product/revision/binary SHA-256. Use `--full-chromium` for
+calibration if the later diagnostic run enables `--protocol-logs`.
+
+Every expected audio edge must identify its source and recover at least three
+planned markers unambiguously within one second. Missing source emissions,
+clipping, sample-frame gaps, decoder concealment above 1%, and sampleclock vs.
+wallclock drift above 100 ms reject the fixture. Both clocks must cover the RTP
+measurement window. The summary retains per-edge min/median/max, pooled median
+and p95; missing PCM evidence cannot become zero latency. At 16/32 peers there
+are 240/992 microphone detectors plus screen-audio edges on one worklet thread:
+generator resources and marker coverage are mandatory, and large loads may
+fail this instrument's capacity before the backend does. PCM-enabled and
+default fixtures cannot share a performance comparison.
+
+The timestamp model follows the [AudioWorklet sample-frame clock](https://webaudio.github.io/web-audio-api/#dom-audioworkletglobalscope-currentframe).
+[Jitterbuffer statistics](https://www.w3.org/TR/webrtc-stats/#dom-rtcinboundrtpstreamstats-jitterbufferdelay)
+are cumulative decoder metrics and remain separate from this PCM measurement.
 
 ## Separate-host measurement
 
@@ -213,9 +262,9 @@ and **256 MiB with 16 voices + 1080p60**, with CPU and true audio latency no
 worse than the current backend under equivalent encoded streams. Three valid
 runs and a separate generator host are required. Test WAN loss/jitter, TURN,
 Chromium and Firefox, reconnect and overload. This initial fixture has no TURN
-configuration and measures no true end-to-end audio latency; those gates are
-open, not implicitly passing. Use a synchronized audio marker/correlation
-measurement for latency and report distribution rather than only averages.
+configuration. The optional PCM instrument requires its own calibration and
+full comparable matrix; its local calibration alone cannot pass the latency
+gate. Device/acoustic latency and product-policy gates remain open.
 
 Product acceptance must separately cover production ticket lifetime/reuse,
 server/channel/session ACL revocation, self/deaf/mute, Watch gating and unwatch,
@@ -280,7 +329,8 @@ rounds. A shared production host can add contention beyond the quota; this
 limitation remains an explicit acceptance blocker, even if all local workload
 and resource checks pass. These runs establish candidate behavior under the
 same allocation and a real WAN path, not TURN, permission-policy equivalence,
-browser-family acceptance or true end-to-end audio latency.
+browser-family acceptance or source-to-decoded audio latency unless the
+separately calibrated PCM fixture is explicitly enabled and qualified.
 
 The collector, remote helper, full runner and browser scripts are frozen and
 SHA-256 recorded before execution. Image labels retain the binary hash/source

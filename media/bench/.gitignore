@@ -1,5 +1,6 @@
 node_modules/
 client.bundle.js
+pcm.bundle.js
 artifacts/
 **/target/
 **/__pycache__/

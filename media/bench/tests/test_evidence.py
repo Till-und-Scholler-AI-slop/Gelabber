@@ -41,6 +41,45 @@ def fixture():
 
 
 class EvidenceTests(unittest.TestCase):
+    def test_pcm_latency_requires_all_unique_edges_markers_and_matching_calibration(self):
+        browser, server = fixture()
+        browser['input'] = {'pcmLatency': True}
+        identity = {'product': 'HeadlessChrome/153.0.8010.12', 'revision': '@fixture', 'sha256': 'a' * 64}
+        browser['load_generator'] = {'executed_browser': identity}
+        parameters = {'sampleRate': 48000, 'errorBoundMs': 2, 'threshold': .72}
+        browser['pcm_calibration'] = {'valid': True, 'failures': [], 'executed_browser': identity,
+            'delay_checks': [{'valid': True}] * 4, 'calibration': {'parameters': parameters}}
+        edges = [('peer-0', 'peer-1/mic'), ('peer-1', 'peer-0/mic'), ('peer-1', 'peer-0/screen-audio')]
+        browser['pcm_latency'] = {'parameters': parameters, 'scope': 'fixture PCM', 'failures': [], 'clipped_frames': 0,
+            'sample_clock_seconds': 9, 'wall_clock_seconds': 9,
+            'edges': [{'peer': peer, 'source': source, 'expected_markers': 3, 'matches': [
+                {'latency_ms': 60 + i, 'score': .9, 'amplitude': .3} for i in range(3)]} for peer, source in edges]}
+        for i, sample in enumerate(browser['samples']):
+            sample['at'] = 100000 + i * 4000
+            for stream in sample['stats']:
+                for field in ['bytesReceived', 'bytesSent', 'framesDecoded']:
+                    if field in stream: stream[field] *= 4
+                if stream['type'] == 'inbound-rtp' and stream['kind'] == 'audio':
+                    stream.update(totalSamplesReceived=i * 192000, concealedSamples=0)
+        for i, sample in enumerate(server['samples']): sample.update(at=100 + i * 4, cpu_seconds=i * .4)
+        server['load_generator_samples'] = [{'at': 100 + i * 4, 'rss_bytes': 100000000, 'cpu_seconds': i * 2} for i in range(3)]
+        self.assertTrue(summarize(browser, server)['media_fixture_valid'])
+        self.assertEqual(summarize(browser, server)['pcm_latency']['markers'], 9)
+        for mutate in [lambda b: b['pcm_latency']['edges'].pop(),
+                       lambda b: b['pcm_latency']['edges'][0].update(source='peer-0/mic'),
+                       lambda b: b['pcm_latency']['edges'][0]['matches'][0].update(problem='marker not received'),
+                       lambda b: b['pcm_latency']['edges'][0]['matches'][0].update(latency_ms=1001),
+                       lambda b: b['pcm_calibration'].update(valid=False),
+                       lambda b: b['pcm_calibration'].update(executed_browser={**identity, 'sha256': 'b' * 64}),
+                       lambda b: b['pcm_latency'].update(clipped_frames=1),
+                       lambda b: b['pcm_latency'].update(sample_clock_seconds=8.5),
+                       lambda b: b['samples'][-1]['stats'][1].update(concealedSamples=100000)]:
+            broken = copy.deepcopy(browser); mutate(broken)
+            self.assertFalse(summarize(broken, server)['media_fixture_valid'])
+        run = {'executed_browser': identity, 'pcm_latency_enabled': True}
+        self.assertTrue(same_comparison_browser([run, copy.deepcopy(run)]))
+        self.assertFalse(same_comparison_browser([run, {'executed_browser': identity}]))
+
     def test_fixed_video_hints_require_actual_sender_receiver_rates_and_browser_provenance(self):
         browser, server = fixture()
         browser['input'] = {'fixedVideoFixture': True, 'videoBitrate': 80000}

@@ -109,6 +109,7 @@ def main():
     parser.add_argument('--video', action='store_true')
     parser.add_argument('--video-bitrate', type=int, default=6000000)
     parser.add_argument('--fixed-video-fixture', action='store_true', help='identical Chrome min/start/max source hints; actual bitrate/FPS still required')
+    parser.add_argument('--pcm-calibration', type=Path, help='enable PCM marker latency with a passing local calibration JSON')
     parser.add_argument('--protocol-logs', action='store_true', help='Chromium RTC event logs; diagnostic runs only')
     parser.add_argument('--output', type=Path, required=True)
     parser.add_argument('--execute', action='store_true')
@@ -118,6 +119,8 @@ def main():
         parser.error('invalid matrix duration or port range')
     if args.fixed_video_fixture and (not args.video or args.video_bitrate % 1000):
         parser.error('fixed video fixture requires --video and whole kbit/s')
+    if args.pcm_calibration and (not args.pcm_calibration.is_file() or args.duration < 8):
+        parser.error('PCM calibration file and duration >=8 required')
     group = 'gelabber-bench-' + uuid.uuid4().hex[:12]
     original = {engine: ('gelabber-bench/janus:v1.4.2' if engine == 'janus' else f'gelabber-bench/{engine}:debian13') for engine in args.engines}
     images = {engine: json.loads(subprocess.check_output(['docker', 'image', 'inspect', image], text=True))[0] for engine, image in original.items()}
@@ -134,8 +137,10 @@ def main():
         print(json.dumps(report, indent=2)); return 0
     args.output = args.output.resolve(); args.output.mkdir(parents=True)
     snapshot = args.output / 'inputs'; snapshot.mkdir()
-    for filename in ['loadgen.mjs', 'proxy-target.mjs', 'browser-provenance.mjs', 'video-fixture.mjs', 'client.bundle.js', 'package-lock.json', 'record.py', 'run-remote.py', 'evaluate.py', 'protocol-diagnostics.py']:
+    for filename in ['loadgen.mjs', 'proxy-target.mjs', 'browser-provenance.mjs', 'video-fixture.mjs', 'pcm-policy.mjs', 'pcm-kernel.mjs', 'pcm-marker.mjs', 'pcm.bundle.js', 'client.bundle.js', 'package-lock.json', 'record.py', 'run-remote.py', 'evaluate.py', 'protocol-diagnostics.py']:
         shutil.copy2(ROOT / filename, snapshot / filename)
+    if args.pcm_calibration:
+        shutil.copy2(args.pcm_calibration, snapshot / 'pcm-calibration.json')
     (snapshot / 'remote-helper.py').write_text(REMOTE)
     (snapshot / 'node_modules').symlink_to(ROOT / 'node_modules', target_is_directory=True)
     report['artifact_sha256'] = {p.name: hashlib.sha256(p.read_bytes()).hexdigest() for p in snapshot.iterdir() if p.is_file()}
@@ -196,7 +201,7 @@ def main():
                         thread = threading.Thread(target=monitor); thread.start()
                         with (folder / 'loadgen.log').open('w') as log:
                             child = subprocess.Popen(['node', str(snapshot / 'loadgen.mjs'), '--engine', engine, '--backend', backend, '--peers', str(count), '--video', str(args.video).lower(),
-                                '--video-bitrate', str(args.video_bitrate), '--fixed-video-fixture', str(args.fixed_video_fixture).lower(), '--protocol-logs', str(args.protocol_logs).lower(), '--warmup', str(args.warmup * 1000), '--duration', str(args.duration * 1000), '--separate-host', 'true', '--output', str(folder / 'browser.json')],
+                                '--video-bitrate', str(args.video_bitrate), '--fixed-video-fixture', str(args.fixed_video_fixture).lower(), '--pcm-latency', str(bool(args.pcm_calibration)).lower(), '--pcm-calibration', str(snapshot / 'pcm-calibration.json'), '--protocol-logs', str(args.protocol_logs).lower(), '--warmup', str(args.warmup * 1000), '--duration', str(args.duration * 1000), '--separate-host', 'true', '--output', str(folder / 'browser.json')],
                                 env={**os.environ, 'BENCH_TOKEN': token}, stdout=log, stderr=subprocess.STDOUT, start_new_session=True)
                             child.wait(timeout=args.duration + args.warmup + 300)
                         post = []
