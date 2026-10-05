@@ -122,6 +122,15 @@ async fn idempotent_canonical_votes_preserve_content_and_edit_time(pool: PgPool)
     let (mut a, mut b) = users(&pool, true).await;
     let (_, ch) = channel(&mut a, &mut b).await;
     let m = message(&mut a, &ch).await;
+    let read = b
+        .send(
+            Method::PUT,
+            &format!("/api/channels/{ch}/read"),
+            Some(json!({"message_id": m["id"]})),
+        )
+        .await;
+    assert_eq!(read.status, StatusCode::OK);
+    assert_eq!(read.body["unread_count"], 0);
     let first = b.send(Method::PUT, &path(&m, "❤"), None).await;
     assert_eq!(first.status, StatusCode::OK, "{}", first.body);
     assert_eq!(
@@ -151,6 +160,29 @@ async fn idempotent_canonical_votes_preserve_content_and_edit_time(pool: PgPool)
         .send(Method::GET, &format!("/api/channels/{ch}/messages"), None)
         .await;
     assert_eq!(history.body["messages"][0], removed.body);
+    let search = a
+        .send(
+            Method::GET,
+            &format!("/api/channels/{ch}/messages/search?q=edited"),
+            None,
+        )
+        .await;
+    assert_eq!(search.status, StatusCode::OK, "{}", search.body);
+    assert_eq!(search.body["messages"][0], removed.body);
+    assert_eq!(removed.body["created_order"], m["created_order"]);
+    let unread = b.send(Method::GET, "/api/messages/unread", None).await;
+    assert_eq!(unread.status, StatusCode::OK);
+    let cursor = unread
+        .body
+        .as_array()
+        .unwrap()
+        .iter()
+        .find(|row| row["channel_id"] == ch)
+        .unwrap();
+    assert_eq!(
+        cursor["unread_count"], 0,
+        "reactions and edits must not create unread messages"
+    );
     let id: Uuid = m["id"].as_str().unwrap().parse().unwrap();
     let changes: Vec<(String, Value)> =
         sqlx::query_as("SELECT kind,delta FROM gateway_outbox WHERE entity_id=$1 ORDER BY id")
