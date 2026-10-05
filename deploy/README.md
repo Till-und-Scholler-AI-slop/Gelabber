@@ -112,7 +112,8 @@ restore_minio_volume=$(docker inspect --format '{{range .Mounts}}{{if eq .Destin
 restore_minio_image=$(docker inspect --format '{{.Image}}' "$restore_minio_container")
 test -n "$restore_minio_volume"
 printf '%s\n' "$restore_minio_image" > "$restore_backup_dir/minio-image-id.txt"
-docker compose stop api web media minio
+docker compose stop api web media
+docker compose stop minio
 docker compose exec -T postgres pg_dump -U gelabber --format=custom gelabber \
   > "$restore_backup_dir/database.pgdump"
 docker run --rm --pull never --network none --read-only --user 0 \

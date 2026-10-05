@@ -91,3 +91,22 @@ An operator must still rehearse the actual archived deployment image set and
 configuration before a production rollout. The existing PostgreSQL-only
 `tools/check-chat-migration-restore.py` does not satisfy the objectstore/binary
 part of this gate.
+
+## Recorded local acceptance
+
+[Full report](upgrade-storage-restore-evidence.json): 20/20 gates passed on frozen
+runner/candidate `30764470087104a680353da15cf7dda064d5ff60` and old API source
+`5a54a003307465bfaa1430085cbf3f0067fa3b79` (`v0.3.1`). All nine fast safety tests
+passed. Actual services were PostgreSQL 18.6, Redis 8.10.1 and MinIO's locked CE
+release; both APIs used Rust/Cargo 1.98.1. The raw private artifacts remain at
+`/tmp/gelabber-upgrade-storage-drill-20261005-final-3076447` on the test host.
+Every nonce-owned container and volume was removed, confirmed by an independent
+Docker inventory after the runner completed. No production services were used.
+
+The old API against the upgraded schema exited before HTTP bind with SQLx
+`migration 10 was previously applied but is missing in the resolved migrations`.
+The same old executable passed boot/login/download/ACL/write checks after the
+paired old restore. An image-only rollback is therefore **not** accepted by this
+drill. The measured 32.098-second local run used a warm Cargo cache and tiny
+disposable fixtures; it is not a production restore-time guarantee. Web/Media
+deployment images and the production archived image set remain separate gates.
