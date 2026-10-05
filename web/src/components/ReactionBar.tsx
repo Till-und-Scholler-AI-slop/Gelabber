@@ -6,7 +6,7 @@ import {
   displayedReactions,
   reactionMutationOptions,
 } from "../messages/reactions.ts";
-import type { Message } from "../messages/types.ts";
+import { asReactionList, type Message } from "../messages/types.ts";
 import { Modal } from "./Modal.tsx";
 
 function PickerLoader({ onSelect }: { onSelect: (emoji: string) => void }) {
@@ -121,7 +121,7 @@ export function ReactionBar({
           <PickerLoader
             onSelect={(emoji) => {
               const mine =
-                (message.reactions ?? [])
+                asReactionList(message.reactions)
                   .find((reaction) => reaction.emoji === emoji)
                   ?.user_ids.includes(userId) ?? false;
               react(emoji, !mine);

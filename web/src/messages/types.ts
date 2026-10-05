@@ -45,6 +45,19 @@ export function asAttachmentList(value: unknown): Attachment[] {
   return Array.isArray(value) ? value : [];
 }
 
+/** Redis cjson re-encoding represents empty arrays as {}. */
+export function asReactionList(value: unknown): Reaction[] {
+  if (!Array.isArray(value)) return [];
+  return value.filter(
+    (reaction): reaction is Reaction =>
+      reaction !== null &&
+      typeof reaction === "object" &&
+      typeof reaction.emoji === "string" &&
+      Array.isArray(reaction.user_ids) &&
+      reaction.user_ids.every((id: unknown) => typeof id === "string"),
+  );
+}
+
 export type ListMessagesParams = {
   before?: string;
   after?: string;

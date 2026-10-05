@@ -3,7 +3,7 @@ import { stampHolds, type ScopeStamp } from "../auth/scope.ts";
 import { notifyError } from "../components/toasts.ts";
 import type { QueryClient } from "@tanstack/react-query";
 import { applyMessageEdited, messageKeys } from "./queries.ts";
-import type { Message, Reaction } from "./types.ts";
+import { asReactionList, type Message, type Reaction } from "./types.ts";
 
 export type ReactionIntent = {
   emoji: string;
@@ -17,7 +17,7 @@ export function displayedReactions(
   userId: string,
   intent?: ReactionIntent,
 ): Reaction[] {
-  const result = (reactions ?? []).map((reaction) => ({
+  const result = asReactionList(reactions).map((reaction) => ({
     ...reaction,
     user_ids: [...new Set(reaction.user_ids)],
   }));

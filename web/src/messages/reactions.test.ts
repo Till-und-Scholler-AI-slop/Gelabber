@@ -185,6 +185,11 @@ describe("separate reaction intent overlay", () => {
     await pending;
     expect(cached()).toEqual([]);
   });
+  it("normalizes Redis empty object votes and leaves a stable empty reaction bar", () => {
+    event("e", 15, { ...row(15), reactions: {} as Message["reactions"] });
+    expect(cached()?.[0]?.reactions).toEqual([]);
+    expect(displayedReactions({} as Message["reactions"], "me")).toEqual([]);
+  });
   it("the next authoritative read carries reactions after reconnect", async () => {
     respond = () =>
       json({
