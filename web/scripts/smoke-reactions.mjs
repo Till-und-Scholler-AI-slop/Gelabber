@@ -118,7 +118,30 @@ for (const engine of [chromium, firefox]) {
           .querySelector('[aria-label="❤️: 1 Reaktionen, du hast reagiert"]')
           ?.getAttribute("aria-pressed") === "true",
     );
+    // Removing the last vote must also survive the Redis cjson [] -> {} shape.
+    await row(member)
+      .getByRole("button", {
+        name: "❤️: 1 Reaktionen, du hast reagiert",
+        exact: true,
+      })
+      .click();
+    await row(member)
+      .getByRole("button", {
+        name: "❤️: 1 Reaktionen, du hast reagiert",
+        exact: true,
+      })
+      .waitFor({ state: "detached" });
+    await row(pages[0])
+      .getByRole("button", { name: "❤️: 1 Reaktionen", exact: true })
+      .waitFor({ state: "detached" });
     const heart = `/messages/${message.id}/reactions/${encodeURIComponent("❤️")}`;
+    await request(1, "PUT", heart);
+    await row(member)
+      .getByRole("button", {
+        name: "❤️: 1 Reaktionen, du hast reagiert",
+        exact: true,
+      })
+      .waitFor();
     await request(0, "PUT", heart);
     await row(member)
       .getByRole("button", {
