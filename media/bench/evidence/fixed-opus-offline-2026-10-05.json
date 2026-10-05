@@ -1,0 +1,170 @@
+{
+  "schema": 1,
+  "scope": "offline fixed Opus fixture; no SFU, network, real-time pacing, receiving peer topology or latency qualification",
+  "source_files_sha256": {
+    "media/bench/opus-fixture.py": "53320f8dcc1f1cc7f2c508993b988ff80451c8278f68d0781361262c8e1d8ecf",
+    "media/bench/tests/test_opus_fixture.py": "06c3440e2e32317489997dd05e92ccb9491c2454347dbbc7de028a426845921c",
+    "media/bench/FIXED-OPUS.md": "82bfc83aff654bb7823494fd7f66a4de435078dffa4e6e333780be409115bb61"
+  },
+  "fixtures": {
+    "mic": {
+      "archive_sha256": "09c5153968e7119f3a9612dd11030b6e26bcce0824b7e0c439c2eb22601191c4",
+      "metadata": {
+        "channels": 1,
+        "codec": "opus",
+        "comparison_available": false,
+        "decode_control": {
+          "float32le_sha256": "b532da7d2728e78c75bc9249a8a6c20632796afaf8144352b69535aa2f8228dd",
+          "input_correlation_after_codec_lookahead": 0.9969968232090607,
+          "peak": 0.2781066596508026,
+          "samples": 480000
+        },
+        "duration_seconds": 10,
+        "encoded_bytes": 160000,
+        "encoded_packets_sha256": "5e93defb90853698d256a627395c92dc664329d59c12736bacc117c80f7057a4",
+        "encoder": {
+          "application": "audio",
+          "application_constant": 2049,
+          "fec_note": "configured FEC is not proof of a particular packet carrying FEC",
+          "lookahead_ms": 6.5,
+          "lookahead_samples": 312,
+          "settings_readback": {
+            "bitrate": 128000,
+            "complexity": 10,
+            "dtx": 0,
+            "inband_fec": 1,
+            "packet_loss_percent": 1,
+            "vbr": 0
+          }
+        },
+        "loop_policy": "reuse frozen bytes; initial codec lookahead is retained, no sample-exact loop or latency claim",
+        "packet_duration_ms": 20,
+        "packets": 500,
+        "payload_bitrate_bps": 128000,
+        "pcm": {
+          "format": "float32le mono",
+          "frequencies_hz": [
+            317,
+            719,
+            1249,
+            2027
+          ],
+          "gain_per_tone": 0.07,
+          "kind": "mic",
+          "peak": 0.2770959436893463,
+          "phase_at_start_radians": 0,
+          "samples": 480000,
+          "sha256": "beb7015a65a828bf9742e78e33f5a7beb65820599eaf84aa0511b5dde6c6af2d"
+        },
+        "pcm_latency_calibrated": false,
+        "provenance": {
+          "api": "direct opus_encode_float/opus_decode_float; no Ogg trim/flush",
+          "library_path": "/usr/lib/libopus.so.0.11.1",
+          "library_sha256": "ce07b3578b14e1d25ed603670f2336cd2b32b7f24c2c5b9aab8bbeb0f410b8d6",
+          "library_version": "libopus 1.6.1",
+          "machine": "x86_64",
+          "python_binary_sha256": "d78f9cf7178ecff09963551399855543c297f37ac207e626228bfe43cb26a70c",
+          "python_version": "3.14.7",
+          "script_sha256": "53320f8dcc1f1cc7f2c508993b988ff80451c8278f68d0781361262c8e1d8ecf"
+        },
+        "rtp_clock_hz": 48000,
+        "rtp_timestamp_step": 960,
+        "sample_rate_hz": 48000,
+        "schedule": "500 packets, one per 20ms; native replay must advance timestamps across loops",
+        "schema": 1
+      },
+      "inspected_packets": 500,
+      "decoded_samples": 480000,
+      "executed_decoder": {
+        "api": "direct opus_encode_float/opus_decode_float; no Ogg trim/flush",
+        "library_path": "/usr/lib/libopus.so.0.11.1",
+        "library_sha256": "ce07b3578b14e1d25ed603670f2336cd2b32b7f24c2c5b9aab8bbeb0f410b8d6",
+        "library_version": "libopus 1.6.1",
+        "python_version": "3.14.7",
+        "machine": "x86_64",
+        "python_binary_sha256": "d78f9cf7178ecff09963551399855543c297f37ac207e626228bfe43cb26a70c",
+        "script_sha256": "53320f8dcc1f1cc7f2c508993b988ff80451c8278f68d0781361262c8e1d8ecf"
+      }
+    },
+    "source": {
+      "archive_sha256": "affe6772d68884a868f3bc2db91e6e490703d9e2236c7d894f20d3b409416c4a",
+      "metadata": {
+        "channels": 1,
+        "codec": "opus",
+        "comparison_available": false,
+        "decode_control": {
+          "float32le_sha256": "e5e8da38fe41176668c5d3159e731c4d363f3a29504f3743af04605eb0ad64f7",
+          "input_correlation_after_codec_lookahead": 0.9999741607713225,
+          "peak": 1.0137128829956055,
+          "samples": 480000
+        },
+        "duration_seconds": 10,
+        "encoded_bytes": 160000,
+        "encoded_packets_sha256": "797e7fd15927d2fd85478dbf7536ecd9be549bc3a3cf25eac9593e01e6b354c2",
+        "encoder": {
+          "application": "audio",
+          "application_constant": 2049,
+          "fec_note": "configured FEC is not proof of a particular packet carrying FEC",
+          "lookahead_ms": 6.5,
+          "lookahead_samples": 312,
+          "settings_readback": {
+            "bitrate": 128000,
+            "complexity": 10,
+            "dtx": 0,
+            "inband_fec": 1,
+            "packet_loss_percent": 1,
+            "vbr": 0
+          }
+        },
+        "loop_policy": "reuse frozen bytes; initial codec lookahead is retained, no sample-exact loop or latency claim",
+        "packet_duration_ms": 20,
+        "packets": 500,
+        "payload_bitrate_bps": 128000,
+        "pcm": {
+          "format": "float32le mono",
+          "frequencies_hz": [
+            440
+          ],
+          "gain_per_tone": 1.0,
+          "kind": "source",
+          "peak": 1.0,
+          "phase_at_start_radians": 0,
+          "samples": 480000,
+          "sha256": "cada6f314fc2275af62c1018378e96ee320075ff12a394579d18fad7b6a1d47b"
+        },
+        "pcm_latency_calibrated": false,
+        "provenance": {
+          "api": "direct opus_encode_float/opus_decode_float; no Ogg trim/flush",
+          "library_path": "/usr/lib/libopus.so.0.11.1",
+          "library_sha256": "ce07b3578b14e1d25ed603670f2336cd2b32b7f24c2c5b9aab8bbeb0f410b8d6",
+          "library_version": "libopus 1.6.1",
+          "machine": "x86_64",
+          "python_binary_sha256": "d78f9cf7178ecff09963551399855543c297f37ac207e626228bfe43cb26a70c",
+          "python_version": "3.14.7",
+          "script_sha256": "53320f8dcc1f1cc7f2c508993b988ff80451c8278f68d0781361262c8e1d8ecf"
+        },
+        "rtp_clock_hz": 48000,
+        "rtp_timestamp_step": 960,
+        "sample_rate_hz": 48000,
+        "schedule": "500 packets, one per 20ms; native replay must advance timestamps across loops",
+        "schema": 1
+      },
+      "inspected_packets": 500,
+      "decoded_samples": 480000,
+      "executed_decoder": {
+        "api": "direct opus_encode_float/opus_decode_float; no Ogg trim/flush",
+        "library_path": "/usr/lib/libopus.so.0.11.1",
+        "library_sha256": "ce07b3578b14e1d25ed603670f2336cd2b32b7f24c2c5b9aab8bbeb0f410b8d6",
+        "library_version": "libopus 1.6.1",
+        "python_version": "3.14.7",
+        "machine": "x86_64",
+        "python_binary_sha256": "d78f9cf7178ecff09963551399855543c297f37ac207e626228bfe43cb26a70c",
+        "script_sha256": "53320f8dcc1f1cc7f2c508993b988ff80451c8278f68d0781361262c8e1d8ecf"
+      }
+    }
+  },
+  "native_topology_qualified": false,
+  "pcm_latency_calibrated": false,
+  "independent_review": "Two negative imports (stereo TOC and mislabeled source/decoder claims) were reproduced and rejected after the fix; 11 regression checks passed independently.",
+  "mic_repeat_byte_identical": true
+}
