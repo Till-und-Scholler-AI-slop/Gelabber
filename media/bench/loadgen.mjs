@@ -8,7 +8,7 @@ import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { proxyTarget } from './proxy-target.mjs';
 import { executedChromium } from './browser-provenance.mjs';
-import { readPcmCalibration, samePcmBrowser } from './pcm-policy.mjs';
+import { readPcmCalibration, samePcmBrowser, pcmArtifactHashes } from './pcm-policy.mjs';
 const options = {};
 for (let index = 2; index < process.argv.length; index += 2) options[process.argv[index].replace(/^--/, '')] = process.argv[index + 1];
 const engine = options.engine, backend = options.backend, peers = Number(options.peers ?? 2);
@@ -24,6 +24,9 @@ if (fixedVideoFixture && (options.browser === 'firefox' || options.video !== 'tr
 if (pcmLatency && (options.browser === 'firefox' || Number(options.duration ?? 60000) < 8000)) throw new Error('PCM latency requires Chromium and at least eight seconds');
 const folder = path.dirname(fileURLToPath(import.meta.url));
 const pcmCalibration = pcmLatency ? readPcmCalibration(options['pcm-calibration'], folder) : undefined;
+const pcmArtifacts = pcmLatency ? pcmArtifactHashes(folder) : undefined;
+const clientBundle = fs.readFileSync(path.join(folder, 'client.bundle.js'));
+const pcmBundle = pcmLatency ? fs.readFileSync(path.join(folder, 'pcm.bundle.js')) : undefined;
 const browserArgs = ['--enable-automation', '--autoplay-policy=no-user-gesture-required', '--disable-background-timer-throttling', '--disable-renderer-backgrounding', '--disable-features=WebRtcHideLocalIpsWithMdns'];
 if (protocolLogs) {
   const directory = path.join(path.dirname(path.resolve(options.output)), 'rtc-events');
@@ -33,8 +36,8 @@ if (protocolLogs) {
 const proxy = http.createServer(async (request, response) => {
   try {
     if (request.url === '/') { response.setHeader('content-type', 'text/html'); response.end('<!doctype html><title>Gelabber media benchmark</title><script src="/client.js"></script>'); return; }
-    if (request.url === '/client.js') { response.setHeader('content-type', 'text/javascript'); response.end(fs.readFileSync(path.join(folder, 'client.bundle.js'))); return; }
-    if (request.url === '/pcm.js' && pcmLatency) { response.setHeader('content-type', 'text/javascript'); response.end(fs.readFileSync(path.join(folder, 'pcm.bundle.js'))); return; }
+    if (request.url === '/client.js') { response.setHeader('content-type', 'text/javascript'); response.end(clientBundle); return; }
+    if (request.url === '/pcm.js' && pcmLatency) { response.setHeader('content-type', 'text/javascript'); response.end(pcmBundle); return; }
     let body = ''; for await (const part of request) { body += part; if (body.length > 256 * 1024) throw new Error('body limit'); }
     const target = proxyTarget(request.url, backend);
     const headers = { 'content-type': 'application/json', authorization: `Bearer ${process.env.BENCH_TOKEN}` };
@@ -50,7 +53,7 @@ await new Promise(resolve => proxy.listen(0, '127.0.0.1', resolve));
 let browser, page, executedBrowser;
 const pageErrors = [];
 const metadata = () => ({ hostname: os.hostname(), platform: os.platform(), cpu: os.cpus()[0]?.model, logical_cpus: os.cpus().length, browser: options.browser === 'firefox' ? 'firefox' : 'chromium', browser_channel: options.browser === 'firefox' ? 'firefox' : protocolLogs ? 'chromium' : 'headless-shell', protocol_logs: protocolLogs, browser_version: browser?.version(), executed_browser: executedBrowser, browser_args: options.browser === 'firefox' ? [] : browserArgs, remote_claim: options['separate-host'] === 'true', recorded_at: new Date().toISOString() });
-const save = result => { fs.mkdirSync(path.dirname(path.resolve(options.output)), { recursive: true }); fs.writeFileSync(options.output, JSON.stringify({ ...result, ...(pcmCalibration ? { pcm_calibration: pcmCalibration } : {}), load_generator: metadata() }, null, 2) + '\n'); };
+const save = result => { fs.mkdirSync(path.dirname(path.resolve(options.output)), { recursive: true }); fs.writeFileSync(options.output, JSON.stringify({ ...result, ...(pcmCalibration ? { pcm_calibration: pcmCalibration, pcm_artifact_sha256: pcmArtifacts } : {}), load_generator: metadata() }, null, 2) + '\n'); };
 try {
   const browserType = options.browser === 'firefox' ? firefox : chromium;
   browser = await browserType.launch({ headless: true, ...(browserType === chromium ? { args: browserArgs, ...(protocolLogs ? { channel: 'chromium' } : {}) } : {}) });

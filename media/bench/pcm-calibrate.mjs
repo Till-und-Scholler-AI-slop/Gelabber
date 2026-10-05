@@ -3,7 +3,7 @@
 import http from 'node:http';
 import fs from 'node:fs';
 import path from 'node:path';
-import { createHash } from 'node:crypto';
+import { pcmArtifactHashes } from './pcm-policy.mjs';
 import { fileURLToPath } from 'node:url';
 import { chromium } from 'playwright';
 import { executedChromium } from './browser-provenance.mjs';
@@ -19,7 +19,7 @@ const proxy = http.createServer((request, response) => {
 await new Promise(resolve => proxy.listen(0, '127.0.0.1', resolve));
 let browser;
 const result = { schema: 1, recorded_at: new Date().toISOString(), scope: 'local synthetic PCM sample-clock calibration; no acoustic devices, SFU or WAN', failures: [],
-  artifact_sha256: Object.fromEntries(['pcm-kernel.mjs', 'pcm-marker.mjs', 'pcm.bundle.js'].map(name => [name, createHash('sha256').update(fs.readFileSync(path.join(folder, name))).digest('hex')])) };
+  artifact_sha256: pcmArtifactHashes(folder) };
 try {
   browser = await chromium.launch({ headless: true, ...(process.argv.includes('--full-chromium') ? { channel: 'chromium' } : {}), args: ['--enable-automation', '--autoplay-policy=no-user-gesture-required', '--disable-background-timer-throttling', '--disable-renderer-backgrounding'] });
   result.executed_browser = await executedChromium(browser);

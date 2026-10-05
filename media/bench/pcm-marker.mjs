@@ -24,8 +24,10 @@ export class PcmMarkers {
     this.nodes.push(source); return this.receiverNode(source, peer, name, number);
   }
   receiverNode(input, peer, name, number) {
+    const planned = this.sources.get(name);
+    if (!planned || planned.number !== number) { this.failures.push('PCM receiver source name/number mismatch: ' + peer + '/' + name); return; }
     const edge = { peer, source: name, number, received: [] }; this.edges.push(edge);
-    const node = new AudioWorkletNode(this.context, 'gelabber-pcm-marker', { channelCount: 1, channelCountMode: 'explicit', outputChannelCount: [1], processorOptions: { mode: 'receiver', source: number, startFrame: this.sources.get(name)?.startFrame } });
+    const node = new AudioWorkletNode(this.context, 'gelabber-pcm-marker', { channelCount: 1, channelCountMode: 'explicit', outputChannelCount: [1], processorOptions: { mode: 'receiver', source: number, startFrame: planned.startFrame } });
     node.port.onmessage = ({ data }) => { if (data.type === 'received') edge.received.push(data); if (data.type === 'state') node.report?.(data); };
     node.onprocessorerror = () => this.failures.push('PCM receiver worklet failed: ' + peer + '/' + name);
     input.connect(node).connect(this.context.destination); // output is silent

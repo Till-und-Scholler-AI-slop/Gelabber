@@ -1,6 +1,7 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import { PCM, MarkerDetector, markerCode, markerSample } from '../pcm-kernel.mjs';
+import { PcmMarkers } from '../pcm-marker.mjs';
 
 function probe(delay, source = 0, detectorSource = source, noise = false) {
   const detections = [], detector = new MarkerDetector(detectorSource, event => detections.push(event));
@@ -47,4 +48,23 @@ test('markers delayed by a whole period cannot masquerade as the next source cyc
   const valid = [], current = new MarkerDetector(0, event => valid.push(event), startFrame);
   for (let frame = 0; frame < 192000; frame++) current.push(markerSample(markerCode(0, 1), frame - startFrame - PCM.periodFrames - 9600), frame);
   assert.equal(valid.length, 1); assert.equal(valid[0].sequence, 1);
+});
+test('distinct duplicate peaks in the same cycle make actual source matching ambiguous', async () => {
+  for (const secondMs of [300, 600, 750]) {
+    const received = [], startFrame = 24000, code = markerCode(0);
+    const detector = new MarkerDetector(0, event => received.push(event), startFrame);
+    for (let frame = 0; frame < 96000; frame++) detector.push(markerSample(code, frame - startFrame - 4800) + markerSample(code, frame - startFrame - secondMs * 48), frame);
+    assert.equal(received.length, 2, `100+${secondMs}ms`);
+    const marker = new PcmMarkers({ currentTime: 2 });
+    marker.firstFrame = 0; marker.lastFrame = 96000; marker.firstWall = 0; marker.lastWall = 2000;
+    marker.sources.set('source', { name: 'source', number: 0, startFrame, sent: [{ sequence: 0, sentFrame: startFrame }] });
+    marker.edges.push({ peer: 'receiver', source: 'source', number: 0, received });
+    assert.equal((await marker.evidence()).edges[0].matches[0].problem, 'ambiguous marker match');
+  }
+});
+test('receiver source binding rejects unknown names and contradictory source numbers', () => {
+  const markers = new PcmMarkers({}); markers.sources.set('mic', { number: 0 });
+  markers.receiverNode({}, 'receiver', 'mic', 1);
+  markers.receiverNode({}, 'receiver', 'unknown', 0);
+  assert.equal(markers.edges.length, 0); assert.equal(markers.failures.length, 2);
 });

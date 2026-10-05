@@ -34,6 +34,9 @@ def median(values):
 def same_comparison_browser(runs):
     if not runs or any(len({bool(run.get(policy)) for run in runs}) != 1 for policy in ['fixed_video_fixture', 'pcm_latency_enabled']):
         return False
+    if runs[0].get('pcm_latency_enabled'):
+        policies = {json.dumps(run.get('pcm_policy'), sort_keys=True) for run in runs}
+        if len(policies) != 1 or not runs[0].get('pcm_policy'): return False
     identities = {tuple(run.get('executed_browser', {}).get(field) for field in ['product', 'revision', 'sha256']) for run in runs}
     return len(identities) == 1 and all(next(iter(identities)))
 
@@ -42,6 +45,9 @@ def summarize_pcm(browser, problems):
     evidence = browser.get('pcm_latency', {})
     calibration = browser.get('pcm_calibration', {})
     parameters = evidence.get('parameters', {})
+    artifacts = browser.get('pcm_artifact_sha256', {})
+    if artifacts != calibration.get('artifact_sha256') or any(len(artifacts.get(name, '')) != 64 for name in ['pcm-kernel.mjs', 'pcm-marker.mjs', 'pcm.bundle.js', 'client.bundle.js']):
+        problems.append('PCM calibration detector/main artifacts differ or are missing')
     if not calibration.get('valid') or calibration.get('failures') or len(calibration.get('delay_checks', [])) != 4 or not all(check.get('valid') for check in calibration.get('delay_checks', [])):
         problems.append('PCM measurement lacks passing known-delay calibration')
     actual = browser.get('load_generator', {}).get('executed_browser', {})
@@ -86,6 +92,8 @@ def summarize(browser, server):
     result = {'problems': problems, 'media_fixture_valid': False,
               'fixed_video_fixture': browser.get('input', {}).get('fixedVideoFixture', False),
               'pcm_latency_enabled': browser.get('input', {}).get('pcmLatency', False),
+              'pcm_policy': {'parameters': browser.get('pcm_latency', {}).get('parameters'), 'artifact_sha256': browser.get('pcm_artifact_sha256')}
+              if browser.get('input', {}).get('pcmLatency') else None,
               'executed_browser': browser.get('load_generator', {}).get('executed_browser', {})}
     if len(samples) < 3:
         problems.append('at least three browser samples required')

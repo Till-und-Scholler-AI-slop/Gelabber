@@ -196,13 +196,17 @@ error bound is ±2 ms; the direct checks currently resolve within 0.25 ms and th
 Opus differential within 0 ms. This bounds the marker locator under the tested
 signal/codec conditions, rather than all acoustic or browser-device latency.
 The runtime requires a passing calibration with identical detector-code hashes
-and executed browser product/revision/binary SHA-256. Use `--full-chromium` for
+and main/worklet bundle hashes, full PCM policy, and executed browser
+product/revision/binary SHA-256. These must also match across every compared run.
+Use `--full-chromium` for
 calibration if the later diagnostic run enables `--protocol-logs`.
 
 Every expected audio edge must identify its source and recover at least three
 planned markers unambiguously within one second. Missing source emissions,
 clipping, sample-frame gaps, decoder concealment above 1%, and sampleclock vs.
-wallclock drift above 100 ms reject the fixture. Both clocks must cover the RTP
+wallclock drift above 100 ms reject the fixture. The frame-gap counter detects
+discontinuous worklet processing, rather than physical audio-driver underruns.
+Both clocks must cover the RTP
 measurement window. The summary retains per-edge min/median/max, pooled median
 and p95; missing PCM evidence cannot become zero latency. At 16/32 peers there
 are 240/992 microphone detectors plus screen-audio edges on one worklet thread:

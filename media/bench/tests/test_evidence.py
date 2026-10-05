@@ -47,8 +47,10 @@ class EvidenceTests(unittest.TestCase):
         identity = {'product': 'HeadlessChrome/153.0.8010.12', 'revision': '@fixture', 'sha256': 'a' * 64}
         browser['load_generator'] = {'executed_browser': identity}
         parameters = {'sampleRate': 48000, 'errorBoundMs': 2, 'threshold': .72}
+        artifacts = {name: 'a' * 64 for name in ['pcm-kernel.mjs', 'pcm-marker.mjs', 'pcm.bundle.js', 'client.bundle.js']}
+        browser['pcm_artifact_sha256'] = artifacts
         browser['pcm_calibration'] = {'valid': True, 'failures': [], 'executed_browser': identity,
-            'delay_checks': [{'valid': True}] * 4, 'calibration': {'parameters': parameters}}
+            'delay_checks': [{'valid': True}] * 4, 'calibration': {'parameters': parameters}, 'artifact_sha256': artifacts}
         edges = [('peer-0', 'peer-1/mic'), ('peer-1', 'peer-0/mic'), ('peer-1', 'peer-0/screen-audio')]
         browser['pcm_latency'] = {'parameters': parameters, 'scope': 'fixture PCM', 'failures': [], 'clipped_frames': 0,
             'sample_clock_seconds': 9, 'wall_clock_seconds': 9,
@@ -76,9 +78,15 @@ class EvidenceTests(unittest.TestCase):
                        lambda b: b['samples'][-1]['stats'][1].update(concealedSamples=100000)]:
             broken = copy.deepcopy(browser); mutate(broken)
             self.assertFalse(summarize(broken, server)['media_fixture_valid'])
-        run = {'executed_browser': identity, 'pcm_latency_enabled': True}
+        run = {'executed_browser': identity, 'pcm_latency_enabled': True, 'pcm_policy': {'parameters': parameters, 'artifact_sha256': artifacts}}
         self.assertTrue(same_comparison_browser([run, copy.deepcopy(run)]))
         self.assertFalse(same_comparison_browser([run, {'executed_browser': identity}]))
+        for name in artifacts:
+            changed = copy.deepcopy(run); changed['pcm_policy']['artifact_sha256'][name] = 'b' * 64
+            self.assertFalse(same_comparison_browser([run, changed]))
+        for name in ['amplitude', 'periodFrames']:
+            changed = copy.deepcopy(run); changed['pcm_policy']['parameters'][name] = 123
+            self.assertFalse(same_comparison_browser([run, changed]))
 
     def test_fixed_video_hints_require_actual_sender_receiver_rates_and_browser_provenance(self):
         browser, server = fixture()

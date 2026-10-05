@@ -60,7 +60,9 @@ export class MarkerDetector {
       if (downFrame >= this.candidate.until) {
         const best = this.candidate;
         this.emit({ receivedFrame: (best.frame - PCM.chips * 24 + 1) * 4, sequence: best.sequence, score: best.score, amplitude: best.amplitude });
-        this.candidate = null; this.refractory = downFrame + PCM.sampleRate / 4 / 2;
+        // Dedupe only the trailing correlation lobe. A later distinct copy of
+        // the same cycle must remain visible so matching rejects ambiguity.
+        this.candidate = null; this.refractory = downFrame + PCM.sampleRate / 4 * .01;
       }
     }
   }
