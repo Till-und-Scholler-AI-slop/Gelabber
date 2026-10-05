@@ -78,7 +78,11 @@ export function MessagePane({
 }) {
   const user = useSession((s) => s.user);
   const query = useMessages(channelId, true);
-  const [searching, setSearching] = useState(false);
+  const searchScope = `${user?.id ?? "anonymous"}:${channelId}`;
+  const [searchingScope, setSearchingScope] = useState<string | null>(null);
+  const searching = searchingScope === searchScope;
+  const contextEdit = useEditMessage(channelId);
+  const contextRemove = useDeleteMessage(channelId);
   const [atLatest, setAtLatest] = useState(false);
   const [latestRequest, setLatestRequest] = useState(0);
   const attempts = usePendingMessages((s) => s.attempts);
@@ -129,7 +133,7 @@ export function MessagePane({
       <div className="flex shrink-0 justify-end border-b px-4 py-1">
         <button
           type="button"
-          onClick={() => setSearching((value) => !value)}
+          onClick={() => setSearchingScope(searching ? null : searchScope)}
           className="rounded px-3 py-2 text-sm"
           aria-expanded={searching}
         >
@@ -144,36 +148,63 @@ export function MessagePane({
           </button>
         </p>
       ) : null}
-      {searching ? (
-        <MessageSearch
-          channelId={channelId}
-          onClose={() => setSearching(false)}
-        />
-      ) : (
-        <MessageList
-          channelId={channelId}
-          items={items}
-          onAtLatest={setAtLatest}
-          latestRequest={latestRequest}
-          meId={user?.id}
-          canModerate={canModerate}
-          hasOlder={Boolean(hasNextPage)}
-          loadingOlder={isFetchingNextPage}
-          onLoadOlder={onLoadOlder}
-          ready={!query.isPending}
-          loadError={
-            query.error
-              ? query.isFetchNextPageError
-                ? "paging"
-                : "history"
-              : null
-          }
-          onRetry={() => {
-            if (query.isFetchNextPageError) void fetchNextPage();
-            else void query.refetch();
-          }}
-        />
-      )}
+      <div className="relative flex min-h-0 flex-1 flex-col">
+        <div
+          className={`flex min-h-0 flex-1 flex-col ${searching ? "invisible" : ""}`}
+          inert={searching}
+          aria-hidden={searching || undefined}
+        >
+          <MessageList
+            key={searchScope}
+            active={!searching}
+            channelId={channelId}
+            items={items}
+            onAtLatest={setAtLatest}
+            latestRequest={latestRequest}
+            meId={user?.id}
+            canModerate={canModerate}
+            hasOlder={Boolean(hasNextPage)}
+            loadingOlder={isFetchingNextPage}
+            onLoadOlder={onLoadOlder}
+            ready={!query.isPending}
+            loadError={
+              query.error
+                ? query.isFetchNextPageError
+                  ? "paging"
+                  : "history"
+                : null
+            }
+            onRetry={() => {
+              if (query.isFetchNextPageError) void fetchNextPage();
+              else void query.refetch();
+            }}
+          />
+        </div>
+        {searching ? (
+          <div className="absolute inset-0 flex min-h-0 flex-col">
+            <MessageSearch
+              key={searchScope}
+              channelId={channelId}
+              onClose={() => setSearchingScope(null)}
+              renderMessage={(message) => (
+                <MessageRow
+                  message={message}
+                  continued={false}
+                  mine={message.author.id === user?.id}
+                  canDelete={message.author.id === user?.id || canModerate}
+                  onEdit={(content) =>
+                    contextEdit.mutate({ id: message.id, content })
+                  }
+                  onDelete={() => {
+                    if (window.confirm("Diese Nachricht wirklich löschen?"))
+                      contextRemove.mutate(message.id);
+                  }}
+                />
+              )}
+            />
+          </div>
+        ) : null}
+      </div>
       {!searching && !atLatest && items.length > 0 ? (
         <button
           type="button"
@@ -205,6 +236,7 @@ export function MessagePane({
 }
 
 function MessageList({
+  active,
   channelId,
   items,
   meId,
@@ -218,6 +250,7 @@ function MessageList({
   onAtLatest,
   latestRequest,
 }: {
+  active: boolean;
   channelId: string;
   items: Message[];
   meId: string | undefined;
@@ -322,7 +355,7 @@ function MessageList({
   const firstVisible = virtualizer.getVirtualItems()[0]?.index ?? 0;
   const firstId = items[0]?.id;
   useEffect(() => {
-    if (!ready || !hasOlder || loadingOlder || loadError) return;
+    if (!active || !ready || !hasOlder || loadingOlder || loadError) return;
     // First paint is pinned to the newest row; do not walk older pages
     // until the user actually scrolls up.
     if (stickToBottom.current) return;
@@ -330,6 +363,7 @@ function MessageList({
     olderAnchor.current = firstId ?? null;
     onLoadOlder();
   }, [
+    active,
     firstVisible,
     firstId,
     hasOlder,

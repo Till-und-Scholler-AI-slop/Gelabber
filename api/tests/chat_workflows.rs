@@ -483,3 +483,126 @@ async fn equal_timestamp_and_lower_uuid_cannot_hide_a_later_unread_insert(pool: 
     let stale = read(&mut b, &channel, &first).await;
     assert_eq!(stale["read_message_id"], Uuid::nil().to_string());
 }
+
+#[sqlx::test]
+async fn search_context_is_bounded_scoped_and_keeps_the_read_cursor(pool: PgPool) {
+    let (mut a, mut b, _, channel) = setup(pool.clone()).await;
+    let channel_uuid = Uuid::parse_str(&channel).unwrap();
+    let author_id: Uuid = sqlx::query_scalar("SELECT id FROM users WHERE email='a@test.example'")
+        .fetch_one(&pool)
+        .await
+        .unwrap();
+    // Deep history is independent of the current latest page and HTTP paging cost.
+    let ids: Vec<Uuid> = sqlx::query_scalar("INSERT INTO messages(channel_id,author_id,content,created_at)
+        SELECT $1,$2,'context-'||n,clock_timestamp()+n*interval '1 second' FROM generate_series(1,150) n
+        RETURNING id")
+        .bind(channel_uuid).bind(author_id).fetch_all(&pool).await.unwrap();
+    let target = ids[69];
+    let before = summary(&mut b, &channel).await;
+    let path = format!("/api/channels/{channel}/messages/{target}/context");
+    let context = b.send(Method::GET, &path, None).await;
+    assert_eq!(context.status, StatusCode::OK, "{}", context.body);
+    let messages = context.body["messages"].as_array().unwrap();
+    assert_eq!(messages.len(), 61);
+    assert_eq!(context.body["target_id"], target.to_string());
+    assert_eq!(messages[30]["id"], target.to_string());
+    assert_eq!(messages[0]["content"], "context-40");
+    assert_eq!(messages[60]["content"], "context-100");
+    assert!(context.body["before"].as_str().unwrap().contains('|'));
+    assert!(context.body["after"].as_str().unwrap().contains('|'));
+    assert_eq!(summary(&mut b, &channel).await, before);
+    // The target sits outside the standard latest page but its snapshot updates.
+    let edited = a
+        .send(
+            Method::PATCH,
+            &format!("/api/messages/{target}"),
+            Some(json!({"content":"edited context"})),
+        )
+        .await;
+    assert_eq!(edited.status, StatusCode::OK);
+    let updated = b.send(Method::GET, &path, None).await;
+    assert_eq!(updated.body["messages"][30]["content"], "edited context");
+    assert_eq!(
+        a.send(Method::DELETE, &format!("/api/messages/{target}"), None)
+            .await
+            .status,
+        StatusCode::NO_CONTENT
+    );
+    assert_eq!(
+        b.send(Method::GET, &path, None).await.status,
+        StatusCode::NOT_FOUND
+    );
+    // Deleted target IDs in another channel never reveal neighbouring content.
+    assert_eq!(
+        b.send(
+            Method::GET,
+            &format!("/api/channels/{}/messages/{target}/context", Uuid::new_v4()),
+            None
+        )
+        .await
+        .status,
+        StatusCode::NOT_FOUND
+    );
+}
+
+#[sqlx::test]
+async fn message_context_requires_channel_or_dm_membership(pool: PgPool) {
+    let (mut a, mut b, _, channel) = setup(pool.clone()).await;
+    let message = post(&mut a, &channel, "private context").await;
+    let target = message["id"].as_str().unwrap();
+    let mut outsider = Client::new(pool);
+    outsider.bootstrap().await;
+    assert_eq!(
+        outsider
+            .register("outsider@test.example", "password123", "Outsider")
+            .await
+            .status,
+        StatusCode::CREATED
+    );
+    let path = format!("/api/channels/{channel}/messages/{target}/context");
+    assert_eq!(
+        outsider.send(Method::GET, &path, None).await.status,
+        StatusCode::NOT_FOUND
+    );
+    let peer = b.send(Method::GET, "/api/auth/session", None).await.body["user"]["id"].clone();
+    let malformed = a
+        .send(
+            Method::GET,
+            &format!("/api/channels/{channel}/messages/not-a-uuid/context"),
+            None,
+        )
+        .await;
+    assert_eq!(malformed.status, StatusCode::NOT_FOUND);
+    assert_eq!(malformed.body["error"], "not_found");
+    let dm = a
+        .send(Method::POST, "/api/dms", Some(json!({"user_id":peer})))
+        .await;
+    assert_eq!(dm.status, StatusCode::CREATED);
+    let dm_id = dm.body["id"].as_str().unwrap();
+    let dm_message = post(&mut a, dm_id, "private DM context").await;
+    let dm_path = format!(
+        "/api/channels/{dm_id}/messages/{}/context",
+        dm_message["id"].as_str().unwrap()
+    );
+    assert_eq!(
+        b.send(Method::GET, &dm_path, None).await.status,
+        StatusCode::OK
+    );
+    assert_eq!(
+        outsider.send(Method::GET, &dm_path, None).await.status,
+        StatusCode::NOT_FOUND
+    );
+    assert_eq!(
+        b.send(
+            Method::GET,
+            &format!(
+                "/api/channels/{channel}/messages/{}/context",
+                dm_message["id"].as_str().unwrap()
+            ),
+            None
+        )
+        .await
+        .status,
+        StatusCode::NOT_FOUND
+    );
+}

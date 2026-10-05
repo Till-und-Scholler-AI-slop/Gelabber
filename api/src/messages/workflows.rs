@@ -18,7 +18,7 @@ use crate::{
     error::{ApiError, FieldErrors},
     gateway::delivery,
     json::Body,
-    path::Id,
+    path::{Id, Ids},
     servers::{channel::ChannelKind, membership},
     state::AppState,
 };
@@ -28,6 +28,10 @@ pub(super) fn router() -> Router<AppState> {
         .route("/api/messages/unread", get(unread))
         .route("/api/channels/{id}/read", put(mark_read))
         .route("/api/channels/{id}/messages/search", get(search))
+        .route(
+            "/api/channels/{id}/messages/{message_id}/context",
+            get(context),
+        )
 }
 
 #[derive(Debug, Serialize, FromRow)]
@@ -181,4 +185,53 @@ async fn search(
     messages.reverse();
     attachments::for_messages(&state.db, &mut messages).await?;
     Ok(Json(MessagePage { messages, has_more }))
+}
+
+#[derive(Serialize)]
+struct MessageContext {
+    target_id: Uuid,
+    messages: Vec<Message>,
+    before: String,
+    after: String,
+}
+
+/// One bounded snapshot, independent of how far back the target is. Composite
+/// cursors retain the normal history contract even when neighbouring rows vanish.
+async fn context(
+    State(state): State<AppState>,
+    CurrentUser(user): CurrentUser,
+    Ids(channel_id, message_id): Ids,
+) -> Result<Json<MessageContext>, ApiError> {
+    messaging_channel(&state.db, channel_id, user.id).await?;
+    let rows: Vec<MessageRow> = sqlx::query_as(
+        "WITH target AS (SELECT created_at,id FROM messages WHERE channel_id=$1 AND id=$2),
+        selected AS (
+          (SELECT m.id FROM messages m,target t WHERE m.channel_id=$1
+             AND (m.created_at,m.id)<(t.created_at,t.id)
+           ORDER BY m.created_at DESC,m.id DESC LIMIT 30)
+          UNION ALL
+          (SELECT m.id FROM messages m,target t WHERE m.channel_id=$1
+             AND (m.created_at,m.id)>=(t.created_at,t.id)
+           ORDER BY m.created_at,m.id LIMIT 31)
+        ) SELECT m.id,m.channel_id,m.author_id,u.name AS author_name,
+            u.avatar_url AS author_avatar_url,m.content,m.created_at,m.edited_at,m.revision,m.created_order
+          FROM selected JOIN messages m ON m.id=selected.id JOIN users u ON u.id=m.author_id
+          ORDER BY m.created_at,m.id",
+    )
+    .bind(channel_id)
+    .bind(message_id)
+    .fetch_all(&state.db)
+    .await?;
+    let mut messages: Vec<Message> = rows.into_iter().map(Message::from).collect();
+    let first = messages.first().ok_or(ApiError::NotFound)?;
+    let before = format!("{}|{}", first.created_at.to_rfc3339(), first.id);
+    let last = messages.last().expect("nonempty snapshot");
+    let after = format!("{}|{}", last.created_at.to_rfc3339(), last.id);
+    attachments::for_messages(&state.db, &mut messages).await?;
+    Ok(Json(MessageContext {
+        target_id: message_id,
+        messages,
+        before,
+        after,
+    }))
 }
