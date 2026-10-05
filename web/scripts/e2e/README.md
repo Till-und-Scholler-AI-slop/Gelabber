@@ -49,3 +49,34 @@ The logout check registers a POST `/api/auth/logout` response wait before clicki
 Core/Storage/Epoch, concurrent attempts and row rollback, real slow raw TCP reader and transaction-forced Ban/Join now have actual Chromium and Firefox controls on the approved immutable core snapshot. Their exact results and earlier test errors are recorded in the current handoff. Final approved08b runtime now supports the executable media15/access6 and own API-/Redis-lease cases; exact author/clean-source coverage is recorded in [MEDIA-HANDOFF.md](MEDIA-HANDOFF.md). Native screen-picker, audible two-device quality, WAN/production and full remote netem remain explicit separate gates. The original relay/audio/recovery assertions and strict selected-case/cleanup gates remain in force.
 
 See [HANDOFF.md](HANDOFF.md) and [evidence/](evidence/) for executed checks, controls and remaining blockers. The coordinator authorized 11b/c automation after the separate 11a fix; runtime prerequisites and final 11d gates remain explicit. No product edits or self-deployment.
+
+## Continuous call and resource return
+
+The long local check joins two voice publishers and a third watch-only client,
+starts Go Live, and samples native duplex audio and decoded video every 30 seconds.
+It requires advancing media, stable peers/transceivers/captures/playback tracks,
+no duplicate audio playback and no ICE failures. Stop/Leave must release all
+client media tracks and bring the dedicated SFU room/peer gauges back to zero.
+The runner uses the existing real app fixture and deletes only its own server.
+It requires an otherwise idle, dedicated loopback SFU and a static built web
+candidate without HMR. Other calls must use a separate SFU instance.
+
+```bash
+GELABBER_SMOKE_URL=http://127.0.0.1:5177 \
+GELABBER_SOAK_MEDIA_URL=http://127.0.0.1:8081 \
+GELABBER_E2E_CASES=continuous-call-and-resource-return \
+GELABBER_E2E_REPORT=/tmp/gelabber-call-soak.json \
+npm run test:call-soak
+```
+
+The default duration is 3600 seconds; `GELABBER_SOAK_SECONDS=30` runs a fixture
+control and explicitly reports `oneHour:false`. Durations over two hours are
+rejected. `GELABBER_SOAK_CHECKPOINT` sets the intermediate report path. Optional
+Linux `GELABBER_SOAK_API_PID` and `GELABBER_SOAK_MEDIA_PID` record RSS and thread
+counts from the supplied Gelabber processes; executable names and process start
+identity are checked on every sample. No process is killed or restarted.
+RSS is retained as measured: closed tracks do not prove an allocator returned
+memory. The app/runtime SHA declarations retain the standard harness attribution
+limits. Fake capture, a local network and a simulated display do not establish
+physical microphone quality, real iOS suspend/resume or WAN/TURN acceptance.
+This long check stays local and is not added to CI.
