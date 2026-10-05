@@ -1,8 +1,10 @@
 // Real WebRTC endpoints on the load-generator host. Synthetic inputs are shared
 // across engines; this does not substitute for product permission/browser tests.
 import { Device } from 'mediasoup-client';
+import { fixtureCodecOptions, fixtureDescription } from './video-fixture.mjs';
 const sleep = ms => new Promise(resolve => setTimeout(resolve, ms));
 let videoBitrate = 6000000;
+let fixedVideoFixture = false;
 async function until(predicate, ms = 30000) {
   const end = Date.now() + ms;
   while (Date.now() < end) { if (predicate()) return; await sleep(50); }
@@ -123,7 +125,7 @@ async function mediasoup(peers, withVideo) {
     for (const track of inputs(index, withVideo && index === 0)) {
       const producer = await send.produce({ track, codec: track.kind === 'video' ? device.rtpCapabilities.codecs.find(c => c.mimeType.toLowerCase() === 'video/vp8') : undefined,
         encodings: [{ maxBitrate: track.kind === 'video' ? videoBitrate : 128000, ...(track.kind === 'video' ? { maxFramerate: 60, scaleResolutionDownBy: 1 } : {}) }],
-        codecOptions: { opusStereo: false, opusFec: true, opusDtx: false, opusMaxAverageBitrate: 128000 } });
+        codecOptions: { opusStereo: false, opusFec: true, opusDtx: false, opusMaxAverageBitrate: 128000, ...(track.kind === 'video' ? fixtureCodecOptions(videoBitrate, fixedVideoFixture) : {}) } });
       if (track.kind === 'video') { const settings = producer.rtpSender.getParameters(); settings.degradationPreference = 'maintain-resolution'; await producer.rtpSender.setParameters(settings); }
       published.push(producer.id);
       rtpConfiguration.push({ peer, direction: 'send', kind: track.kind, parameters: producer.rtpParameters });
@@ -164,7 +166,7 @@ async function current(peers, withVideo) {
         if (frame.op === 'err') throw new Error(JSON.stringify(frame));
         if (frame.op === 'a' || frame.op === 'o') {
           if (frame.op === 'o' && pc.signalingState !== 'stable') await pc.setLocalDescription({ type: 'rollback' });
-          await pc.setRemoteDescription({ type: frame.op === 'a' ? 'answer' : 'offer', sdp: frame.sdp });
+          await pc.setRemoteDescription(fixtureDescription({ type: frame.op === 'a' ? 'answer' : 'offer', sdp: frame.sdp }, videoBitrate, fixedVideoFixture));
           for (const ice of member.pendingIce.splice(0)) await pc.addIceCandidate(ice);
           if (frame.op === 'o') { await pc.setLocalDescription(await pc.createAnswer()); send({ op: 'a', sdp: pc.localDescription.sdp }); }
           else member.answer?.();
@@ -241,7 +243,7 @@ async function janus(peers, withVideo) {
     const tracks = inputs(index, withVideo && index === 0); tracks.forEach(track => pc.addTrack(track, new MediaStream([track])));
     const jsep = await offer(pc);
     const answer = await owner.request(handle, { janus: 'message', body: { request: 'publish', audio: true, video: withVideo && index === 0 }, jsep: { type: jsep.type, sdp: jsep.sdp } });
-    await pc.setRemoteDescription(answer.jsep); await until(() => pc.connectionState === 'connected');
+    await pc.setRemoteDescription(fixtureDescription(answer.jsep, videoBitrate, fixedVideoFixture)); await until(() => pc.connectionState === 'connected');
     members.push({ owner, id: joined.plugindata.data.id, tracks, evidence, connections });
   }
   for (const member of members) {
@@ -249,7 +251,7 @@ async function janus(peers, withVideo) {
     member.connections.push(pc); connectionTimer(pc, 'recv', member.evidence);
     const streams = members.filter(p => p !== member).flatMap(p => p.tracks.map((_, index) => ({ feed: p.id, mid: String(index) })));
     const received = await member.owner.request(handle, { janus: 'message', body: { request: 'join', room, ptype: 'subscriber', streams } });
-    await pc.setRemoteDescription(received.jsep); await pc.setLocalDescription(await pc.createAnswer());
+    await pc.setRemoteDescription(fixtureDescription(received.jsep, videoBitrate, fixedVideoFixture)); await pc.setLocalDescription(await pc.createAnswer());
     await until(() => pc.iceGatheringState === 'complete');
     await member.owner.request(handle, { janus: 'message', body: { request: 'start', room }, jsep: { type: pc.localDescription.type, sdp: pc.localDescription.sdp } });
     await until(() => pc.connectionState === 'connected');
@@ -266,6 +268,7 @@ async function janus(peers, withVideo) {
 window.startBenchmark = async config => {
   window.backend = config.backend;
   videoBitrate = config.videoBitrate;
+  fixedVideoFixture = config.fixedVideoFixture;
   await ({ current, mediasoup, janus })[config.engine](config.peers, config.video);
   await until(() => peerEvidence.every(p => p.dtls_ready_at && p.first_send_rtp_at && p.full_graph_rtp_ready_at));
   peerEvidence.forEach(p => { p.stop = true; }); await Promise.all(timers);
@@ -280,7 +283,7 @@ window.startBenchmark = async config => {
   const expectedAudio = config.peers * (config.peers - 1) + (config.video ? config.peers - 1 : 0);
   const expectedVideo = config.video ? config.peers - 1 : 0;
   if (incoming.filter(s => s.kind === 'audio').length !== expectedAudio || incoming.filter(s => s.kind === 'video').length !== expectedVideo) failures.push('Incomplete forwarding graph: expected ' + expectedAudio + ' audio and ' + expectedVideo + ' video inbound streams, got ' + incoming.length);
-  const result = { backend: config.engine, peers: config.peers, video: config.video, input: { clip: 'moving-colorbars-v1', audioBitrate: 128000, videoBitrate, width: 1920, height: 1080, requestedFps: 60 }, failures: [...failures], samples, join_timing: peerEvidence.map(({ stop, ...p }) => p) };
+  const result = { backend: config.engine, peers: config.peers, video: config.video, input: { clip: 'moving-colorbars-v1', audioBitrate: 128000, videoBitrate, fixedVideoFixture, videoCodecOptions: fixtureCodecOptions(videoBitrate, fixedVideoFixture), width: 1920, height: 1080, requestedFps: 60 }, failures: [...failures], samples, join_timing: peerEvidence.map(({ stop, ...p }) => p) };
   // Keep codec/feedback/SSRC negotiation, excluding ICE credentials/candidates.
   const describe = description => description?.sdp.split(/\r?\n/).filter(line => /^m=|^a=(rtpmap:|fmtp:|rtcp-fb:|extmap:|mid:|ssrc:|ssrc-group:|sendrecv$|sendonly$|recvonly$)/.test(line)) ?? [];
   result.protocol_configuration = { native: nativeEndpoints.map(({ connection, label, peer }) => ({ peer, label,

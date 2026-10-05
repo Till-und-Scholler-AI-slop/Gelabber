@@ -79,6 +79,49 @@ Candidate-specific encoder minimum/start bitrate hints are absent. Use e.g.
 VBR encoder cannot reach the same measured rate at 6 Mbit/s. The measured
 per-stream bitrate gate must still pass; a requested rate is not evidence.
 
+An optional separate WAN control adds `--video --video-bitrate 4000000
+--fixed-video-fixture --warmup 30 --duration 60` to either runner. It sets the
+same Chrome VP8 `x-google-min/start/max-bitrate=4000` hints for every engine:
+current/Janus Remote-Descriptions (including renegotiation) and mediasoup's
+equivalent `videoGoogleMin/Start/MaxBitrate` codec options. It also keeps the
+same 4 Mbit/s `RTCRtpSender` ceiling. This is a controlled benchmark source,
+not a product cap or a CBR guarantee. Qualification additionally requires the
+actual video sender rate within 10% of 4 Mbit/s, every receiver's actual rate
+within 10% of that sender, and every receiver decoding 1920×1080 at ≥57 fps.
+Missing executed-browser provenance also rejects this control. Run a 2-peer
+pilot on all engines first; a failed pilot cannot justify resource rankings
+or a larger video matrix.
+The summary retains executed-browser provenance and requires identical
+product versions, revisions and binary hashes across all fixed-control cases
+being compared. Individually valid sources from different browsers cannot
+qualify for a shared performance comparison.
+
+New Chromium runs obtain their actual executable, SHA-256, product version and
+revision from CDP; package metadata alone does not establish which browser
+ran. The installed browser inspected for this control is
+`HeadlessChrome/153.0.8010.12`, Chromium revision
+`971a7443b0c9b0a9b2860529b33331b76077ec62`, binary SHA-256
+`ded93a9c9a53a1ae040f08124badcca95c938e9d5015ff340c3b5538c41bf39e`.
+Its [Chromium DEPS](https://chromium.googlesource.com/chromium/src/+/971a7443b0c9b0a9b2860529b33331b76077ec62/DEPS)
+pins WebRTC `9ea5afcad008b940468c2a15aec339592cf5a935`.
+[GetBitrateConfigForCodec](https://webrtc.googlesource.com/src/+/9ea5afcad008b940468c2a15aec339592cf5a935/media/engine/webrtc_media_engine.cc#101)
+converts these hints from kbit/s to BWE constraints;
+[the negotiated send codec](https://webrtc.googlesource.com/src/+/9ea5afcad008b940468c2a15aec339592cf5a935/media/engine/webrtc_video_engine.cc#1352)
+feeds those constraints into the transport. The
+[VP8 encoder](https://webrtc.googlesource.com/src/+/9ea5afcad008b940468c2a15aec339592cf5a935/modules/video_coding/codecs/vp8/libvpx_vp8_encoder.cc#625)
+still permits undershoot and frame dropping. Every run records the actual
+browser again, so a changed binary requires its own source verification.
+
+The first full voice-only WAN attempt was stopped after 15 of 36 cases because
+the generator host's additional USB Ethernet interface repeatedly failed DHCP
+and restarted every 45 seconds. Two Janus `ERR_NETWORK_CHANGED` failures
+matched those NetworkManager transitions within milliseconds. Another case
+had substantial per-edge RTP loss; that loss's exact cause remains open.
+The [archived contaminated attempt](evidence/contaminated-voice-matrix-2026-10-05.json)
+keeps raw-evidence hashes and all original outcomes. Every case, including
+those that passed media delivery, is excluded from resource comparison.
+Owned remote containers and image tags were cleaned after interruption.
+
 One Chromium instance hosts all participants and retains each remote track in
 a muted playing element, so received video is actually decoded. This makes a
 local probe convenient but can saturate the generator at 16/32 peers; such a

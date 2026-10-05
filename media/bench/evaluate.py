@@ -30,13 +30,25 @@ def median(values):
     return statistics.median(values) if values else None
 
 
+def same_fixed_video_browser(runs):
+    fixed = [run for run in runs if run.get('fixed_video_fixture')]
+    if not fixed:
+        return True
+    if len(fixed) != len(runs):
+        return False
+    identities = {tuple(run.get('executed_browser', {}).get(field) for field in ['product', 'revision', 'sha256']) for run in fixed}
+    return len(identities) == 1 and all(next(iter(identities)))
+
+
 def summarize(browser, server):
     problems = list(browser.get('failures', []))
     if server.get('loadgen_returncode') != 0:
         problems.append('load generator failed')
     problems.extend(server.get('monitoring_errors', []))
     samples = browser.get('samples', [])
-    result = {'problems': problems, 'media_fixture_valid': False}
+    result = {'problems': problems, 'media_fixture_valid': False,
+              'fixed_video_fixture': browser.get('input', {}).get('fixedVideoFixture', False),
+              'executed_browser': browser.get('load_generator', {}).get('executed_browser', {})}
     if len(samples) < 3:
         problems.append('at least three browser samples required')
         return result
@@ -91,9 +103,25 @@ def summarize(browser, server):
     result['sender_bitrate_distribution'] = {kind: {'streams': [s for s in rates if s['kind'] == kind],
         'min_bps': min((s['bps'] for s in rates if s['kind'] == kind), default=None),
         'max_bps': max((s['bps'] for s in rates if s['kind'] == kind), default=None)} for kind in expected}
+    fixed_video = result['fixed_video_fixture']
+    received_before = {key(s): s for s in initial}
+    video_edges = [{'peer': s.get('_peer'), 'endpoint': s.get('_endpoint'), 'id': s['id'],
+        'bps': (s['bytesReceived'] - received_before[key(s)]['bytesReceived']) * 8 / seconds}
+        for s in incoming if s.get('kind') == 'video' and key(s) in received_before
+        and 'bytesReceived' in s and 'bytesReceived' in received_before[key(s)]]
+    result['receiver_video_distribution'] = video_edges
+    if fixed_video:
+        target = browser.get('input', {}).get('videoBitrate', 0)
+        video_rates = result['sender_bitrate_distribution']['video']['streams']
+        if not browser['video'] or target <= 0 or len(video_rates) != 1 or not .9 * target <= video_rates[0]['bps'] <= 1.1 * target:
+            problems.append('fixed video source did not deliver its configured actual rate')
+        if len(video_edges) != expected['video'] or any(not video_rates or not .9 * video_rates[0]['bps'] <= s['bps'] <= 1.1 * video_rates[0]['bps'] for s in video_edges):
+            problems.append('fixed video rate did not arrive on every forwarding edge')
+        executed = browser.get('load_generator', {}).get('executed_browser', {})
+        if executed.get('product', '').split('/')[0] not in ['Chrome', 'HeadlessChrome'] or not executed.get('revision') or len(executed.get('sha256', '')) != 64:
+            problems.append('fixed video fixture lacks executed Chromium provenance')
     # A graph can contain advancing counters while silently losing most audio.
     # Qualify every forwarding edge before treating its server work as equal.
-    received_before = {key(s): s for s in initial}
     audio_edges = []
     for stream in incoming:
         if stream.get('kind') != 'audio': continue
@@ -177,7 +205,9 @@ def main():
     args = parser.parse_args()
     report = json.loads((args.directory / 'report.json').read_text())
     output = {'acceptance': False, 'blocking_gates': report['blocking_gates'],
-              'source_revision': report['source_revision'], 'runs': [], 'medians': []}
+              'source_revision': report['source_revision'],
+              'comparison_disqualified': report.get('environment_disqualified') or report.get('error'),
+              'runs': [], 'medians': []}
     for run in report['runs']:
         folder = args.directory / Path(run['directory']).name
         try:
@@ -202,7 +232,9 @@ def main():
     # a smaller workload cannot qualify as a faster backend.
     for count in report['configuration']['matrix']:
         rows = [r for r in output['medians'] if r['peers'] == count]
-        comparable = all(r['valid_runs'] >= r['required_runs'] for r in rows) and len(rows) >= 2
+        compared_runs = [run for run in output['runs'] if run['peers'] == count and run['media_fixture_valid']]
+        same_browser = same_fixed_video_browser(compared_runs)
+        comparable = not output['comparison_disqualified'] and all(r['valid_runs'] >= r['required_runs'] for r in rows) and len(rows) >= 2
         for field in ['sender_audio_bps', 'sender_video_bps']:
             values = [r[field] for r in rows]
             if field == 'sender_video_bps' and not report['configuration']['video']:
@@ -211,11 +243,12 @@ def main():
             if comparable:
                 comparable = max(values) / min(values) <= 1.1
         for row in rows:
-            row['equal_streams_comparison_available'] = comparable
+            row['fixed_video_browser_provenance_equal'] = same_browser
+            row['equal_streams_comparison_available'] = comparable and same_browser
     (args.directory / 'summary.json').write_text(json.dumps(output, indent=2) + '\n')
     print(json.dumps(output['medians'], indent=2))
     expected_runs = len(report['configuration']['matrix']) * len(report['configuration']['engines']) * report['configuration']['runs']
-    return 1 if len(output['runs']) != expected_runs or any(not r['media_fixture_valid'] for r in output['runs']) or 'error' in report else 0
+    return 1 if len(output['runs']) != expected_runs or any(not r['media_fixture_valid'] for r in output['runs']) or output['comparison_disqualified'] else 0
 
 
 if __name__ == '__main__':

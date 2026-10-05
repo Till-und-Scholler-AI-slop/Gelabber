@@ -97,7 +97,7 @@ def run(args, engine, count, round_number, report):
         thread.start()
         browser_file = folder / 'browser.json'
         with (folder / 'loadgen.log').open('w') as output:
-            loadgen = subprocess.Popen(['node', str(args.snapshot / 'loadgen.mjs'), '--engine', engine, '--backend', backend, '--peers', str(count), '--video', str(args.video).lower(), '--video-bitrate', str(args.video_bitrate), '--protocol-logs', str(args.protocol_logs).lower(), '--warmup', str(args.warmup * 1000), '--duration', str(args.duration * 1000), '--output', str(browser_file)], env=environment, stdout=output, stderr=subprocess.STDOUT, start_new_session=True)
+            loadgen = subprocess.Popen(['node', str(args.snapshot / 'loadgen.mjs'), '--engine', engine, '--backend', backend, '--peers', str(count), '--video', str(args.video).lower(), '--video-bitrate', str(args.video_bitrate), '--fixed-video-fixture', str(args.fixed_video_fixture).lower(), '--protocol-logs', str(args.protocol_logs).lower(), '--warmup', str(args.warmup * 1000), '--duration', str(args.duration * 1000), '--output', str(browser_file)], env=environment, stdout=output, stderr=subprocess.STDOUT, start_new_session=True)
             loadgen.wait(timeout=args.duration + args.warmup + 300)
         post_leave = []
         for _ in range(6):
@@ -136,17 +136,20 @@ def main():
     parser.add_argument('--warmup', type=int, default=10)
     parser.add_argument('--video', action='store_true')
     parser.add_argument('--video-bitrate', type=int, default=6000000)
+    parser.add_argument('--fixed-video-fixture', action='store_true', help='identical Chrome min/start/max source hints; actual bitrate/FPS still required')
     parser.add_argument('--protocol-logs', action='store_true', help='Chromium RTC event logs; diagnostic runs only')
     parser.add_argument('--output', type=Path, required=True)
     args = parser.parse_args()
     if args.runs < 1 or args.duration < 3 or args.warmup < 1 or not 0 < args.video_bitrate <= 100000000:
         parser.error('runs >=1, duration >=3 and warmup >=1 required')
+    if args.fixed_video_fixture and (not args.video or args.video_bitrate % 1000):
+        parser.error('fixed video fixture requires --video and whole kbit/s')
     args.output = args.output.resolve()
     args.output.mkdir(parents=True)
     args.janus_image = docker('inspect', '--format', '{{.Id}}', 'gelabber-bench/janus:v1.4.2') if 'janus' in args.engines else None
     artifacts = ['client.bundle.js', 'package-lock.json', 'current-probe/Cargo.lock', 'mediasoup-probe/Cargo.lock', 'current-probe/target/release/gelabber-current-probe', 'mediasoup-probe/target/release/gelabber-mediasoup-probe']
     args.snapshot = args.output / 'inputs'
-    for name in [*artifacts, 'loadgen.mjs', 'proxy-target.mjs']:
+    for name in [*artifacts, 'loadgen.mjs', 'proxy-target.mjs', 'browser-provenance.mjs', 'video-fixture.mjs']:
         source = ROOT / name
         if source.exists():
             destination = args.snapshot / name

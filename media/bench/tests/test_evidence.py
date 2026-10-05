@@ -1,13 +1,18 @@
 import copy
+import contextlib
+import io
+import json
 import os
 from pathlib import Path
 import sys
 import subprocess
 import threading
+import tempfile
 import unittest
+from unittest.mock import patch
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
-from evaluate import summarize, media_stats
+from evaluate import summarize, media_stats, same_fixed_video_browser, main as evaluate_main
 from record import process_sample, process_tree
 
 
@@ -36,6 +41,61 @@ def fixture():
 
 
 class EvidenceTests(unittest.TestCase):
+    def test_fixed_video_hints_require_actual_sender_receiver_rates_and_browser_provenance(self):
+        browser, server = fixture()
+        browser['input'] = {'fixedVideoFixture': True, 'videoBitrate': 80000}
+        browser['load_generator'] = {'executed_browser': {'product': 'HeadlessChrome/153.0.8010.12', 'revision': '@fixture', 'sha256': 'a' * 64}}
+        summary = summarize(browser, server)
+        self.assertTrue(summary['media_fixture_valid'])
+        self.assertEqual(summary['executed_browser'], browser['load_generator']['executed_browser'])
+        broken = copy.deepcopy(browser)
+        broken['input']['videoBitrate'] = 4000000
+        self.assertFalse(summarize(broken, server)['media_fixture_valid'])
+        broken = copy.deepcopy(browser)
+        for stream in broken['samples'][-1]['stats']:
+            if stream['type'] == 'inbound-rtp' and stream['kind'] == 'video': stream['bytesReceived'] = 10000
+        self.assertFalse(summarize(broken, server)['media_fixture_valid'])
+        broken = copy.deepcopy(browser)
+        del broken['load_generator']
+        self.assertFalse(summarize(broken, server)['media_fixture_valid'])
+
+    def test_fixed_video_comparison_rejects_different_executed_browsers_or_source_policies(self):
+        run = {'fixed_video_fixture': True, 'executed_browser': {'product': 'HeadlessChrome/153.0.8010.12', 'revision': '@fixture', 'sha256': 'a' * 64}}
+        self.assertTrue(same_fixed_video_browser([run, copy.deepcopy(run)]))
+        for field in ['product', 'revision', 'sha256']:
+            other = copy.deepcopy(run)
+            other['executed_browser'][field] = 'different'
+            self.assertFalse(same_fixed_video_browser([run, other]))
+        self.assertFalse(same_fixed_video_browser([run, {'fixed_video_fixture': False}]))
+        self.assertFalse(same_fixed_video_browser([{'fixed_video_fixture': True}]))
+
+    def test_interrupted_or_environmentally_disqualified_report_never_allows_comparison(self):
+        with tempfile.TemporaryDirectory() as temporary:
+            directory = Path(temporary)
+            report = {'source_revision': 'fixture', 'blocking_gates': [], 'configuration': {
+                'matrix': [2], 'engines': ['current', 'mediasoup'], 'runs': 3, 'video': True}, 'runs': []}
+            for engine in ['current', 'mediasoup']:
+                for number in range(3):
+                    browser, server = fixture()
+                    browser['backend'] = engine
+                    if engine == 'mediasoup':
+                        for sample in browser['samples']:
+                            for stream in sample['stats']:
+                                if stream['type'] == 'inbound-rtp': stream['_endpoint'] = stream['_endpoint'].replace('/0', '/recv')
+                    folder = directory / f'{engine}-{number}'; folder.mkdir()
+                    (folder / 'browser.json').write_text(json.dumps(browser))
+                    (folder / 'server.json').write_text(json.dumps(server))
+                    report['runs'].append({'engine': engine, 'peers': 2, 'directory': str(folder)})
+            for field, reason in [('error', 'KeyboardInterrupt'), ('environment_disqualified', 'network change during run')]:
+                content = {**report, field: reason}
+                (directory / 'report.json').write_text(json.dumps(content))
+                with patch('sys.argv', ['evaluate.py', temporary]), contextlib.redirect_stdout(io.StringIO()):
+                    self.assertEqual(evaluate_main(), 1)
+                summary = json.loads((directory / 'summary.json').read_text())
+                self.assertTrue(all(run['media_fixture_valid'] for run in summary['runs']))
+                self.assertEqual(summary['comparison_disqualified'], reason)
+                self.assertFalse(any(row['equal_streams_comparison_available'] for row in summary['medians']))
+
     def test_all_media_edges_and_quality_required_before_resource_comparison(self):
         browser, server = fixture()
         valid = summarize(browser, server)
