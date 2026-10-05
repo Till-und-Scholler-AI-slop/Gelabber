@@ -124,6 +124,20 @@
 .lr-channel-content {
   background: var(--lr-bg);
 }
+.lr-message-pane {
+  /* If the keyboard model and call dock leave less than the controls' minimum
+     height, the composer remains reachable inside this conversation pane. */
+  overflow-y: auto;
+}
+@media (max-height: 500px) {
+  /* Keep the draft mounted while search uses the space normally occupied by
+     the composer and typing strip on a reduced-height viewport. */
+  .lr-message-pane:has(.lr-search-overlay) > .lr-composer,
+  .lr-message-pane:has(.lr-search-overlay) > .lr-search-toggle,
+  .lr-message-pane:has(.lr-search-overlay) > [data-testid="typing-bar"] {
+    display: none;
+  }
+}
 .lr-auth-card {
   padding: 32px;
   border: 1px solid var(--lr-border);
@@ -246,6 +260,7 @@ html[data-reduced-motion="true"] *::after {
   width: 34px;
 }
 .lr-composer {
+  flex-shrink: 0;
   margin: 0 16px 12px;
   padding: 10px;
   border: 1px solid var(--lr-border);
