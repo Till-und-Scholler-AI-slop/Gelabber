@@ -29,8 +29,8 @@ export async function janusSessionAbsence(response) {
 }
 
 export class NativeVideo {
-  constructor(binary, archive, bind = '127.0.0.1') {
-    this.child = spawn(binary, ['--archive', archive, bind], { stdio: ['pipe', 'pipe', 'inherit'] });
+  constructor(binary, archive, bind = '127.0.0.1', args = ['--archive', archive, bind]) {
+    this.child = spawn(binary, args, { stdio: ['pipe', 'pipe', 'inherit'] });
     this.serial = Promise.resolve();
     this.ready = new Promise((resolve, reject) => { this.initial = { resolve, reject }; });
     this.readyTimer = setTimeout(() => this.fail(new Error('native source startup deadline')), 30000);

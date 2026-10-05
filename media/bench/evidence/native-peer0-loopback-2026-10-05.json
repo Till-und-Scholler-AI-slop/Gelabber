@@ -1,0 +1,302 @@
+{
+  "schema": 1,
+  "scope": "offline strict cross-language fixtures plus same-namespace two-participant native peer0 control; no SFU/WAN/full-N/latency comparison",
+  "comparison_available": false,
+  "production_feature_acceptance": false,
+  "native_pcm_qualified": false,
+  "source_revision": "f426f9caf8b19391f32a3c62b34586b9e062982c",
+  "source_dirty": true,
+  "runtime_report": {
+    "path": "/tmp/gelabber-native-peer0-runtime-strict-20261005/report.json",
+    "sha256": "8c4d6a5f3dfdd6e108516550a0c69910e960e71a4287601b59838e850431b95a",
+    "image_id": "sha256:140599548b889f1bed86fc4f5b57d0fce3531e4b923feef3a5f6e2a56ff1cdc8",
+    "base_image_id": "sha256:a1087f71b2dbd30bd90b9f7dbd7dc42b2781c21b3c5873b14fc81ec9d158cc1b",
+    "image_labels": {
+      "com.centurylinklabs.watchtower.enable": "false",
+      "gelabber.bench.binary_sha256": "a2fd497a4836ea1aba57baa8e1216c9fae73476a75ba0e8bad4ab37875285701",
+      "gelabber.bench.fixture": "netns-20261005",
+      "gelabber.bench.libopus.sha256": "ce07b3578b14e1d25ed603670f2336cd2b32b7f24c2c5b9aab8bbeb0f410b8d6",
+      "gelabber.bench.native-runtime": "gelabber-native-runtime-e5d5441e7cdc",
+      "gelabber.bench.native.sha256": "59a860bf45aecebd6cbe573d0eb1044aed6f97154e7b080cbcce688454d2a6f2",
+      "gelabber.bench.node.sha256": "8a22a371fd85aecf5411636574309f6380fbc42694aaf0651a089a8ef9c44e52",
+      "org.opencontainers.image.revision": "de1ae34647b2c4f0631dfc16fd5b8ea7d970184a"
+    },
+    "executed_node": "v26.8.2",
+    "executed_glibc": "glibc 2.41",
+    "native_ldd": "linux-vdso.so.1 (0x00007b7a1bdce000)\n\tlibopus.so.0 => /fixture-lib/libopus.so.0 (0x00007b7a1ab5d000)\n\tlibgcc_s.so.1 => /lib/x86_64-linux-gnu/libgcc_s.so.1 (0x00007b7a1ab2d000)\n\tlibm.so.6 => /lib/x86_64-linux-gnu/libm.so.6 (0x00007b7a1aa3d000)\n\tlibc.so.6 => /lib/x86_64-linux-gnu/libc.so.6 (0x00007b7a1a849000)\n\t/lib64/ld-linux-x86-64.so.2 (0x00007b7a1bdd1000)",
+    "library_ldd": "linux-vdso.so.1 (0x000078ff776ef000)\n\tlibm.so.6 => /lib/x86_64-linux-gnu/libm.so.6 (0x000078ff771fb000)\n\tlibc.so.6 => /lib/x86_64-linux-gnu/libc.so.6 (0x000078ff77007000)\n\t/lib64/ld-linux-x86-64.so.2 (0x000078ff776f2000)",
+    "input_hashes": {
+      "libopus.so.0": "ce07b3578b14e1d25ed603670f2336cd2b32b7f24c2c5b9aab8bbeb0f410b8d6",
+      "node": "8a22a371fd85aecf5411636574309f6380fbc42694aaf0651a089a8ef9c44e52",
+      "native-peer": "59a860bf45aecebd6cbe573d0eb1044aed6f97154e7b080cbcce688454d2a6f2",
+      "video.rtpbin": "0b15fe7fda29da794802307c88fe23053ad342bd80c485d441e121d325d663db",
+      "opus-fixture.py": "53320f8dcc1f1cc7f2c508993b988ff80451c8278f68d0781361262c8e1d8ecf",
+      "prepare-native-runtime.py": "0acf8c879619fe053fccff4d98a6e78a4a3af8cbbfd103b3cd7a11e1932ee08d",
+      "rust-Cargo.toml": "96c6a715a384b9db0fb9aeb94b28ab410e51af1357218bacd20989301f03e5b9",
+      "rust-Cargo.lock": "e6ca3aa60d6eb9e1e071626c5c1f209c436436c00cc51d979ef115ef665dbc7b",
+      "rust-src-full_peer.rs": "c736bdf18e0173e2899437ebe441299783ab24e2f28c514d16353bb1ea0ccb64",
+      "rust-src-archive.rs": "dbdb298d58d6aa1d6e0941c7c479312c2034531ce797302c96958c28120aa906",
+      "rust-src-audio.rs": "ea2d207728951c2d841ba573cccedf8a479669563be71ef653cea4719b65328e",
+      "rust-src-clock.rs": "2620ec0ff38636cbc110f9aacb44c22d2ec7b6de9d7217ab1907a408405e9ef7",
+      "rust-src-unique_json.rs": "8129c85b2c14fa6e0905902aaa7a200912e5f8b5f2eae5120a697f5b534f6023"
+    },
+    "offline_controls_valid": true,
+    "cleanup_valid": true
+  },
+  "final_control": {
+    "raw_report": "/tmp/gelabber-native-peer0-loopback-strict4-20261005/report.json",
+    "sha256": "6b0e3b8a87cc93e85fcbbe8996d470b7d32ae4bf5134f66ee99a8b0ea6a550f7",
+    "provenance": {
+      "node_version": "v26.8.2",
+      "node_sha256": "8a22a371fd85aecf5411636574309f6380fbc42694aaf0651a089a8ef9c44e52",
+      "browser_sha256": "ded93a9c9a53a1ae040f08124badcca95c938e9d5015ff340c3b5538c41bf39e",
+      "interfaces": {
+        "lo": [
+          {
+            "address": "127.0.0.1",
+            "netmask": "255.0.0.0",
+            "family": "IPv4",
+            "mac": "00:00:00:00:00:00",
+            "internal": true,
+            "cidr": "127.0.0.1/8"
+          },
+          {
+            "address": "::1",
+            "netmask": "ffff:ffff:ffff:ffff:ffff:ffff:ffff:ffff",
+            "family": "IPv6",
+            "mac": "00:00:00:00:00:00",
+            "internal": true,
+            "cidr": "::1/128",
+            "scopeid": 0
+          }
+        ],
+        "eth0": [
+          {
+            "address": "172.17.0.9",
+            "netmask": "255.255.0.0",
+            "family": "IPv4",
+            "mac": "a6:48:d5:a4:70:93",
+            "internal": false,
+            "cidr": "172.17.0.9/16"
+          }
+        ]
+      },
+      "bind": "172.17.0.9",
+      "inputs": {
+        "binary": "59a860bf45aecebd6cbe573d0eb1044aed6f97154e7b080cbcce688454d2a6f2",
+        "video": "0b15fe7fda29da794802307c88fe23053ad342bd80c485d441e121d325d663db",
+        "mic": "d3be0b97e78997fd041e0d0ac49c502829074b037ead6bc41900f1e50fe67894",
+        "source": "ff1bd24234f06360198f51d15753fcef8a6c18216d69e8ed7e7bcb0d96a18eb0"
+      },
+      "helpers": {
+        "local-native-peer.mjs": "35e2d5a5eb35ef8091ed3586fece6c5219a74d512692c7dbe05ab8f435bc5219",
+        "native-peer.mjs": "9a5969bc04e81460ce4d2199e39e63c0e1b2e33beee49ded7aed0dbbd7e279e0",
+        "native-video.mjs": "eff5ff44b443e7b46343bcdce061aea2892f23aa2b6f1d380908e14359d3e681",
+        "native-peer-checks.mjs": "071efb2a4d7495d8ed4d081a6f3fd0b068bf22807b8ee30ec06af10b5f6ec446"
+      },
+      "runtime": {
+        "image_id": "sha256:140599548b889f1bed86fc4f5b57d0fce3531e4b923feef3a5f6e2a56ff1cdc8",
+        "base_image_id": "sha256:a1087f71b2dbd30bd90b9f7dbd7dc42b2781c21b3c5873b14fc81ec9d158cc1b",
+        "labels": {
+          "com.centurylinklabs.watchtower.enable": "false",
+          "gelabber.bench.binary_sha256": "a2fd497a4836ea1aba57baa8e1216c9fae73476a75ba0e8bad4ab37875285701",
+          "gelabber.bench.fixture": "netns-20261005",
+          "gelabber.bench.libopus.sha256": "ce07b3578b14e1d25ed603670f2336cd2b32b7f24c2c5b9aab8bbeb0f410b8d6",
+          "gelabber.bench.native-runtime": "gelabber-native-runtime-e5d5441e7cdc",
+          "gelabber.bench.native.sha256": "59a860bf45aecebd6cbe573d0eb1044aed6f97154e7b080cbcce688454d2a6f2",
+          "gelabber.bench.node.sha256": "8a22a371fd85aecf5411636574309f6380fbc42694aaf0651a089a8ef9c44e52",
+          "org.opencontainers.image.revision": "de1ae34647b2c4f0631dfc16fd5b8ea7d970184a"
+        },
+        "glibc": "glibc 2.41",
+        "native_ldd": "linux-vdso.so.1 (0x00007b7a1bdce000)\n\tlibopus.so.0 => /fixture-lib/libopus.so.0 (0x00007b7a1ab5d000)\n\tlibgcc_s.so.1 => /lib/x86_64-linux-gnu/libgcc_s.so.1 (0x00007b7a1ab2d000)\n\tlibm.so.6 => /lib/x86_64-linux-gnu/libm.so.6 (0x00007b7a1aa3d000)\n\tlibc.so.6 => /lib/x86_64-linux-gnu/libc.so.6 (0x00007b7a1a849000)\n\t/lib64/ld-linux-x86-64.so.2 (0x00007b7a1bdd1000)",
+        "library_ldd": "linux-vdso.so.1 (0x000078ff776ef000)\n\tlibm.so.6 => /lib/x86_64-linux-gnu/libm.so.6 (0x000078ff771fb000)\n\tlibc.so.6 => /lib/x86_64-linux-gnu/libc.so.6 (0x000078ff77007000)\n\t/lib64/ld-linux-x86-64.so.2 (0x000078ff776f2000)",
+        "control_report_sha256": "8c4d6a5f3dfdd6e108516550a0c69910e960e71a4287601b59838e850431b95a"
+      }
+    },
+    "executed_browser": {
+      "protocolVersion": "1.3",
+      "product": "HeadlessChrome/153.0.8010.12",
+      "revision": "@971a7443b0c9b0a9b2860529b33331b76077ec62",
+      "userAgent": "Mozilla/5.0 (X11; Linux x86_64) AppleWebKit/537.36 (KHTML, like Gecko) HeadlessChrome/153.0.8010.12 Safari/537.36",
+      "jsVersion": "15.3.76.4"
+    },
+    "topology": "one native peer0 and one browser peer1 on the same local network namespace; 2 microphones+1VP8+1separateSourceAudio; no SFU or WAN",
+    "generator_allocation": {
+      "cpu_limit": 4,
+      "memory_limit_bytes": 4294967296,
+      "pid_limit": 512,
+      "backend_allocation": null,
+      "measurement_resource_ranking": false
+    },
+    "video": {
+      "valid": true,
+      "failures": [],
+      "measured_seconds": 22.998683837890624,
+      "bitrate_bps": 4012754.1493463307,
+      "decoded_fps": 60.00343366286172,
+      "lost_packets": 0,
+      "received_packets": 10391
+    },
+    "audio_roles": [
+      {
+        "role": "peer-0/mic",
+        "decoder_id": "IT01A1196247363",
+        "codec_id": "CIT01_111_minptime=10;useinbandfec=1",
+        "ssrc": 1196247363,
+        "bitrate_bps": 127896.01442991883,
+        "decoded_sample_rate": 48002.74693028937,
+        "lost_packets": 0,
+        "concealed_samples": 0,
+        "measured_seconds": 22.998683837890624
+      },
+      {
+        "role": "peer-0/screen-audio",
+        "decoder_id": "IT01A1196638512",
+        "codec_id": "CIT01_111_minptime=10;useinbandfec=1",
+        "ssrc": 1196638512,
+        "bitrate_bps": 127896.01442991883,
+        "decoded_sample_rate": 48002.74693028937,
+        "lost_packets": 0,
+        "concealed_samples": 0,
+        "measured_seconds": 22.998683837890624
+      }
+    ],
+    "reverse_native_audio": {
+      "decoded_sample_rate": 48005.41623822057,
+      "payload_bitrate_bps": 128414.48843724003,
+      "binding": "actual browser outbound SSRC\u2192native receive SSRC"
+    },
+    "timeline": {
+      "clock": "CLOCK_MONOTONIC",
+      "conversionBracketNs": 430,
+      "pcm_latency_calibrated": false,
+      "scope": "planned recorded PCM timeline; no hardware, live encoder or acoustic-device latency",
+      "startClockNs": "35762821146228"
+    },
+    "source_final": {
+      "mic": {
+        "completed": true,
+        "last_enqueue_before_ns": "35792802199429",
+        "last_enqueue_bracket_ns": 7110,
+        "last_enqueued_mono_ns": "35792802206539",
+        "last_planned_mono_ns": "35792801146228",
+        "last_source_sample_ordinal": 1439040,
+        "max_schedule_lateness_ns": 1979632,
+        "packets_enqueued": 1500,
+        "rtp_payload_bytes_enqueued": 480000,
+        "running": false,
+        "source_policy_valid": true,
+        "source_uid": 0,
+        "ssrc": 1196247363,
+        "timeline": {
+          "clock": "CLOCK_MONOTONIC",
+          "conversionBracketNs": 430,
+          "pcm_latency_calibrated": false,
+          "scope": "planned recorded PCM timeline; no hardware, live encoder or acoustic-device latency",
+          "startClockNs": "35762821146228"
+        }
+      },
+      "source": {
+        "completed": true,
+        "last_enqueue_before_ns": "35792802206259",
+        "last_enqueue_bracket_ns": 5220,
+        "last_enqueued_mono_ns": "35792802211479",
+        "last_planned_mono_ns": "35792801146228",
+        "last_source_sample_ordinal": 1439040,
+        "max_schedule_lateness_ns": 1980164,
+        "packets_enqueued": 1500,
+        "rtp_payload_bytes_enqueued": 480000,
+        "running": false,
+        "source_policy_valid": true,
+        "source_uid": 64,
+        "ssrc": 1196638512,
+        "timeline": {
+          "clock": "CLOCK_MONOTONIC",
+          "conversionBracketNs": 430,
+          "pcm_latency_calibrated": false,
+          "scope": "planned recorded PCM timeline; no hardware, live encoder or acoustic-device latency",
+          "startClockNs": "35762821146228"
+        }
+      },
+      "video": {
+        "completed": true,
+        "frames_enqueued": 1800,
+        "max_schedule_lateness_ns": 2128429,
+        "packets_enqueued": 13545,
+        "rtp_payload_bytes_enqueued": 15035703,
+        "running": false,
+        "source_policy_valid": true,
+        "timeline": {
+          "clock": "CLOCK_MONOTONIC",
+          "conversionBracketNs": 430,
+          "pcm_latency_calibrated": false,
+          "scope": "planned recorded PCM timeline; no hardware, live encoder or acoustic-device latency",
+          "startClockNs": "35762821146228"
+        }
+      }
+    },
+    "native_exit": {
+      "exitcode": 0,
+      "signal": null,
+      "clean": true
+    },
+    "cleanup_valid": true,
+    "instrument_loopback_valid": true,
+    "failures": []
+  },
+  "iterations": [
+    {
+      "raw_report": "/tmp/gelabber-native-peer0-loopback-20261005/report.json",
+      "sha256": "e947f8fa79ecb863f9306d0062828b41c482a08b37281797cbe303f762a0212c",
+      "instrument_valid": false,
+      "failures": [
+        "Error: page.evaluate: TypeError: Cannot set properties of undefined (setting 'maxBitrate')\n    at eval (eval at evaluate (:311:30), <anonymous>:17:85)\n    at async <anonymous>:337:30"
+      ],
+      "cleanup_errors": [],
+      "scope": "one native peer0 and one browser peer1 on loopback; 2 microphones+1VP8+1separateSourceAudio; no SFU or WAN"
+    },
+    {
+      "raw_report": "/tmp/gelabber-native-peer0-loopback2-20261005/report.json",
+      "sha256": "ca526114f3df3d888406d62d6d9c738ee22794bff2866c98d4e264bc2f45193b",
+      "instrument_valid": false,
+      "failures": [
+        "Error: page.evaluate: Error: loopback ICE gathering deadline\n    at eval (eval at evaluate (:311:30), <anonymous>:23:91)\n    at async <anonymous>:337:30"
+      ],
+      "cleanup_errors": [],
+      "scope": "one native peer0 and one browser peer1 on loopback; 2 microphones+1VP8+1separateSourceAudio; no SFU or WAN"
+    },
+    {
+      "raw_report": "/tmp/gelabber-native-peer0-loopback3-20261005/report.json",
+      "sha256": "8e3766287c0b4d879c5ddb8e6e7c4c5b938f9ee89bc8e77f7323267f41bf9ce8",
+      "instrument_valid": true,
+      "failures": [],
+      "cleanup_errors": [],
+      "scope": "one native peer0 and one browser peer1 on the same local network namespace; 2 microphones+1VP8+1separateSourceAudio; no SFU or WAN"
+    },
+    {
+      "raw_report": "/tmp/gelabber-native-peer0-loopback-strict4-20261005/report.json",
+      "sha256": "6b0e3b8a87cc93e85fcbbe8996d470b7d32ae4bf5134f66ee99a8b0ea6a550f7",
+      "instrument_valid": true,
+      "failures": [],
+      "cleanup_errors": [],
+      "scope": "one native peer0 and one browser peer1 on the same local network namespace; 2 microphones+1VP8+1separateSourceAudio; no SFU or WAN"
+    }
+  ],
+  "independent_native_clock_control": {
+    "path": "/tmp/gelabber-native-pcm-clock-prototype-20261005/summary-native-clock.json",
+    "scope": "review148 native monotonic reads and causal browser callback bounds; no native replay PCM qualification"
+  },
+  "validation": {
+    "python_local_tests": 49,
+    "node_local_tests": 36,
+    "rust_local_tests": 8,
+    "native_import_forged_comparison_true_rejected": true,
+    "duplicate_mic_row_rejected": true
+  },
+  "limitations": [
+    "Only native peer0 and one browser, with no SFU. Three-engine N-peer adapters and actual signaling source bindings remain unqualified.",
+    "Fixed unmarked10s archives retain codec lookahead and loop state; no marker or true latency acceptance.",
+    "Library/Node/source/Chrome actual hashes are pinned. Generator resources are separate; this control makes no backend CPU/RAM acceptance.",
+    "Janus needs its product ticket/ACL gateway included in backend process accounting before replacement qualification."
+  ]
+}

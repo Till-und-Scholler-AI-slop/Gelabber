@@ -5,6 +5,9 @@ edition = "2024"
 rust-version = "1.98.1"
 license = "MIT"
 publish = false
+[[bin]]
+name = "gelabber-fixed-native-peer"
+path = "src/full_peer.rs"
 [workspace]
 [dependencies]
 async-trait = "=0.1.92"
@@ -12,7 +15,8 @@ bytes = "=1.12.1"
 rtc = "=0.20.5"
 webrtc = "=0.20.5"
 tokio = { version = "=1.53.1", features = ["rt-multi-thread", "macros", "sync", "time"] }
-serde_json = "=1.0.151"
+serde_json = { version = "=1.0.151", features = ["float_roundtrip"] }
+serde = "=1.0.229"
 sha2 = "=0.10.9"
 [profile.release]
 strip = true

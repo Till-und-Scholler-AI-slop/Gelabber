@@ -720,6 +720,7 @@ dependencies = [
  "async-trait",
  "bytes",
  "rtc",
+ "serde",
  "serde_json",
  "sha2",
  "tokio",
