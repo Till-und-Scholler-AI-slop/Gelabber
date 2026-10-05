@@ -1,0 +1,848 @@
+{
+  "schema": 1,
+  "scope": "local N2 full original participant fixture, one diagnostic case per engine; not a performance or migration result",
+  "source_revision": "ebbf2f9d26f129a806d3ac73e17d218086c4d99d",
+  "source_dirty": true,
+  "native_source_sha256": "ce87f918e839c933105f4a7bceeb88124575ce85f0a904b00ed92b8a6ca2dcdb",
+  "configuration": {
+    "peers": 2,
+    "warmup_seconds": 30,
+    "measurement_seconds": 20,
+    "source_seconds": 120,
+    "backend_cpus": 1,
+    "backend_memory_bytes": 536870912,
+    "generator_cpus": 4,
+    "generator_memory_bytes": 4294967296,
+    "same_physical_host": true
+  },
+  "runs": [
+    {
+      "engine": "current",
+      "raw_browser_sha256": "b76c58fe842f02c12fdc4c019a361fe3ecb40fdd0e04f96254bde50121208003",
+      "raw_server_sha256": "9f7498187b0c1ec737de7986e4895c87d143607d2b52b5738a1658f4d4e559ca",
+      "raw_local_path": "/tmp/gelabber-native-full-warm30-n2-20261005/current",
+      "instrument_pilot_valid": true,
+      "full_graph_streams_valid": true,
+      "source_window_valid": true,
+      "cleanup_valid": true,
+      "owned_cleanup_valid": true,
+      "resource_lifetime_valid": true,
+      "failures": [],
+      "browser": {
+        "executable": "/chrome/chromium_headless_shell-1243/chrome-headless-shell-linux64/chrome-headless-shell",
+        "sha256": "ded93a9c9a53a1ae040f08124badcca95c938e9d5015ff340c3b5538c41bf39e",
+        "product": "HeadlessChrome/153.0.8010.12",
+        "revision": "@971a7443b0c9b0a9b2860529b33331b76077ec62",
+        "user_agent": "Mozilla/5.0 (X11; Linux x86_64) AppleWebKit/537.36 (KHTML, like Gecko) HeadlessChrome/153.0.8010.12 Safari/537.36",
+        "js_version": "15.3.76.4"
+      },
+      "helpers": {
+        "native-full-pilot.mjs": "60edcb5369c6e82f20f54dac34e8b8db8260bc3f41b440432b345c0533bae101",
+        "native-full-browser.mjs": "b5ef780ba1dd0d50ea69ec1f8da9a144b7b4989806d0321b523260cfae714850",
+        "native-full.bundle.js": "bcf3c573b6ad3f6a55b7461e534f50c91656a37707d412fa1a3da9f8266c6a38",
+        "native-full-checks.mjs": "4c32b1bea0e0d0864a8ab19efa7d4ec472e7b9882947699111df60e19bf3ed2f",
+        "native-peer-adapters.mjs": "9be48c38cb2ba32af0eb93fe0ab4e2abed9833509802d55316faec00380a3d26",
+        "native-peer-current.mjs": "4e710173232391b1b9fee7da011693e594be39c6119c25dfedc48b581ad4b5c9",
+        "mediasoup-native-peer-sdp.mjs": "0d169e381aa60677113c2b64e4d44942e9a99dc98c57d3a0fa27fa9124dbc0ae",
+        "native-peer-checks.mjs": "f9d1ef7246b40c598683e4f34b1857f459f492221e39cde4f54cd30a3e9bb27d",
+        "native-peer.mjs": "9a5969bc04e81460ce4d2199e39e63c0e1b2e33beee49ded7aed0dbbd7e279e0",
+        "native-video.mjs": "eff5ff44b443e7b46343bcdce061aea2892f23aa2b6f1d380908e14359d3e681",
+        "janus-events.mjs": "611b677b7bcbc0154d04b9be3375ecab6c15c6339feeb177f0426c071f5584b4",
+        "janus-broker.mjs": "c340597861ab6512d59f73cac6bb248f553122d5d45f5b9a865523351e36c413",
+        "browser-provenance.mjs": "c50c9ac32f4acf91982f05ef2cefcf5e945b61a63073c9bc499f216ba3d5c4ec",
+        "proxy-target.mjs": "eeb6a5b035738da7b5c7320dcaa5b40fb24506f26fd631921f54666b4840e7a2",
+        "package-lock.json": "9d02e4d3313afe6d1fc466ab4fa598993660385d21a13021089fbeca04e1954c"
+      },
+      "runtime_image_id": "sha256:1ae5fd33e696fd2fbd169631afec3107a4f59ad2e76e74de3d3e13a88d593636",
+      "backend_image": {
+        "id": "sha256:cb2a5576ad71f0f58fad453697914f3742fe5bf263a6072b1fe46bc107033b85",
+        "labels": {
+          "gelabber.bench.binary_sha256": "a2fd497a4836ea1aba57baa8e1216c9fae73476a75ba0e8bad4ab37875285701",
+          "org.opencontainers.image.revision": "de1ae34647b2c4f0631dfc16fd5b8ea7d970184a"
+        },
+        "size": 34108102,
+        "repo_digests": [
+          "gelabber-bench/current@sha256:cb2a5576ad71f0f58fad453697914f3742fe5bf263a6072b1fe46bc107033b85"
+        ]
+      },
+      "source_sha256": {
+        "mic": "d3be0b97e78997fd041e0d0ac49c502829074b037ead6bc41900f1e50fe67894",
+        "source": "ff1bd24234f06360198f51d15753fcef8a6c18216d69e8ed7e7bcb0d96a18eb0",
+        "video": "0b15fe7fda29da794802307c88fe23053ad342bd80c485d441e121d325d663db"
+      },
+      "topology": {
+        "participants": [
+          {
+            "peer": "peer-0",
+            "implementation": "native"
+          },
+          {
+            "peer": "peer-1",
+            "implementation": "browser"
+          }
+        ],
+        "edges": [
+          {
+            "receiver": "peer-0",
+            "source": "peer-1/mic",
+            "kind": "audio"
+          },
+          {
+            "receiver": "peer-1",
+            "source": "peer-0/mic",
+            "kind": "audio"
+          },
+          {
+            "receiver": "peer-1",
+            "source": "peer-0/screen-audio",
+            "kind": "audio"
+          },
+          {
+            "receiver": "peer-1",
+            "source": "peer-0/video",
+            "kind": "video"
+          }
+        ],
+        "audio_edges": 3,
+        "video_edges": 1,
+        "video_watchers": 1,
+        "video_watch_policy": "every browser participant1..N-1 watches peer0; native peer0 does not decode its own video",
+        "source_publishers": 1,
+        "voice_participants": 2,
+        "comparison_available": false
+      },
+      "measurement_policy": {
+        "engine": "current",
+        "requestedSeconds": 20,
+        "minimum_peer_span_seconds": 19.9,
+        "interval_bitrate_policy": "per-stream observed interval distributions; mean source rate and complete duration are required; this pilot cannot qualify performance"
+      },
+      "streams": [
+        {
+          "receiver": "peer-0",
+          "source": "peer-1/mic",
+          "kind": "audio",
+          "bitrate_bps": 128401.75362129846,
+          "measured_seconds": 19.999726853995526,
+          "decoded_sample_rate": 48000.655559363906
+        },
+        {
+          "receiver": "peer-1",
+          "source": "peer-0/mic",
+          "kind": "audio",
+          "bitrate_bps": 128003.04725271897,
+          "measured_seconds": 19.999523878097534,
+          "decoded_sample_rate": 48001.14271976961
+        },
+        {
+          "receiver": "peer-1",
+          "source": "peer-0/screen-audio",
+          "kind": "audio",
+          "bitrate_bps": 128003.04725271897,
+          "measured_seconds": 19.999523878097534,
+          "decoded_sample_rate": 48001.14271976961
+        },
+        {
+          "receiver": "peer-1",
+          "source": "peer-0/video",
+          "kind": "video",
+          "bitrate_bps": 4009616.253305934,
+          "measured_seconds": 19.999523878097534,
+          "decoded_fps": 60.00142839971202
+        }
+      ],
+      "native_receiver_padding": [
+        {
+          "ssrc": 1083216627,
+          "media_packets": 2510,
+          "padding_packets": 46,
+          "rtp_packets": 2556,
+          "sequence_gaps": 0,
+          "timestamp_gaps": 0,
+          "decode_errors": 0
+        }
+      ],
+      "backend_resources": {
+        "measurement_valid": true,
+        "maximum_process_rss_sum_bytes": 13979648,
+        "actual_span_seconds": 19.595134973526,
+        "cpu_core_equivalents_median": 0.019422367687666725
+      },
+      "generator_resources": {
+        "measurement_valid": true,
+        "maximum_process_rss_sum_bytes": 853778432,
+        "actual_span_seconds": 19.594411849975586,
+        "cpu_core_equivalents_median": 0.31103337139923815
+      },
+      "infrastructure_resources": {
+        "measurement_valid": true,
+        "maximum_process_rss_sum_bytes": 28880896,
+        "actual_span_seconds": 19.594390630722046,
+        "cpu_core_equivalents_median": 0.0
+      },
+      "idle_rss_bytes": 7180288,
+      "post_leave_resources": {
+        "measurement_valid": true,
+        "maximum_process_rss_sum_bytes": 13709312,
+        "actual_span_seconds": 3.5025625228881836,
+        "cpu_core_equivalents_median": 0.0
+      },
+      "post_leave": {
+        "browser": {
+          "destroyed_sessions": [],
+          "connections_closed": true,
+          "pending_requests": 0,
+          "errors": []
+        },
+        "native_adapter": {
+          "socket_closed": true,
+          "pending_candidates": 0,
+          "count_basis": "participant websocket close; whole-engine counters collected after every participant leaves"
+        },
+        "engine_stats": {
+          "metrics": {
+            "gelabber_media_forwarded_bytes_total": 27583301,
+            "gelabber_media_ice_fails_total": 0,
+            "gelabber_media_peers": 0,
+            "gelabber_media_rooms": 0,
+            "gelabber_media_rtp_jitter_ms": 0.202,
+            "gelabber_media_rtp_lost_total": 0,
+            "gelabber_media_rtp_packets_total": 30540
+          },
+          "peers": 0,
+          "rooms": 0
+        }
+      }
+    },
+    {
+      "engine": "mediasoup",
+      "raw_browser_sha256": "3bc5f4572c6d7e816f8905734ea5f140b502dbb3cf444f08aaf449bd041a03ef",
+      "raw_server_sha256": "7ce772a65fab2acb688c264c90679a51c2dd4627e1eddbf25a9d8909178f433c",
+      "raw_local_path": "/tmp/gelabber-native-full-warm30-n2-20261005/mediasoup",
+      "instrument_pilot_valid": true,
+      "full_graph_streams_valid": true,
+      "source_window_valid": true,
+      "cleanup_valid": true,
+      "owned_cleanup_valid": true,
+      "resource_lifetime_valid": true,
+      "failures": [],
+      "browser": {
+        "executable": "/chrome/chromium_headless_shell-1243/chrome-headless-shell-linux64/chrome-headless-shell",
+        "sha256": "ded93a9c9a53a1ae040f08124badcca95c938e9d5015ff340c3b5538c41bf39e",
+        "product": "HeadlessChrome/153.0.8010.12",
+        "revision": "@971a7443b0c9b0a9b2860529b33331b76077ec62",
+        "user_agent": "Mozilla/5.0 (X11; Linux x86_64) AppleWebKit/537.36 (KHTML, like Gecko) HeadlessChrome/153.0.8010.12 Safari/537.36",
+        "js_version": "15.3.76.4"
+      },
+      "helpers": {
+        "native-full-pilot.mjs": "60edcb5369c6e82f20f54dac34e8b8db8260bc3f41b440432b345c0533bae101",
+        "native-full-browser.mjs": "b5ef780ba1dd0d50ea69ec1f8da9a144b7b4989806d0321b523260cfae714850",
+        "native-full.bundle.js": "bcf3c573b6ad3f6a55b7461e534f50c91656a37707d412fa1a3da9f8266c6a38",
+        "native-full-checks.mjs": "4c32b1bea0e0d0864a8ab19efa7d4ec472e7b9882947699111df60e19bf3ed2f",
+        "native-peer-adapters.mjs": "9be48c38cb2ba32af0eb93fe0ab4e2abed9833509802d55316faec00380a3d26",
+        "native-peer-current.mjs": "4e710173232391b1b9fee7da011693e594be39c6119c25dfedc48b581ad4b5c9",
+        "mediasoup-native-peer-sdp.mjs": "0d169e381aa60677113c2b64e4d44942e9a99dc98c57d3a0fa27fa9124dbc0ae",
+        "native-peer-checks.mjs": "f9d1ef7246b40c598683e4f34b1857f459f492221e39cde4f54cd30a3e9bb27d",
+        "native-peer.mjs": "9a5969bc04e81460ce4d2199e39e63c0e1b2e33beee49ded7aed0dbbd7e279e0",
+        "native-video.mjs": "eff5ff44b443e7b46343bcdce061aea2892f23aa2b6f1d380908e14359d3e681",
+        "janus-events.mjs": "611b677b7bcbc0154d04b9be3375ecab6c15c6339feeb177f0426c071f5584b4",
+        "janus-broker.mjs": "c340597861ab6512d59f73cac6bb248f553122d5d45f5b9a865523351e36c413",
+        "browser-provenance.mjs": "c50c9ac32f4acf91982f05ef2cefcf5e945b61a63073c9bc499f216ba3d5c4ec",
+        "proxy-target.mjs": "eeb6a5b035738da7b5c7320dcaa5b40fb24506f26fd631921f54666b4840e7a2",
+        "package-lock.json": "9d02e4d3313afe6d1fc466ab4fa598993660385d21a13021089fbeca04e1954c"
+      },
+      "runtime_image_id": "sha256:1ae5fd33e696fd2fbd169631afec3107a4f59ad2e76e74de3d3e13a88d593636",
+      "backend_image": {
+        "id": "sha256:75ef46894be12279debd99a55409efca5c67cfa0311a810eed4d726c20c68c4d",
+        "labels": {
+          "gelabber.bench.binary_sha256": "df90621e944a6ed22daec75096e2f8fb4ca092af6de3635ef955f1112dfca01b",
+          "org.opencontainers.image.revision": "de1ae34647b2c4f0631dfc16fd5b8ea7d970184a"
+        },
+        "size": 35665019,
+        "repo_digests": [
+          "gelabber-bench/mediasoup@sha256:75ef46894be12279debd99a55409efca5c67cfa0311a810eed4d726c20c68c4d"
+        ]
+      },
+      "source_sha256": {
+        "mic": "d3be0b97e78997fd041e0d0ac49c502829074b037ead6bc41900f1e50fe67894",
+        "source": "ff1bd24234f06360198f51d15753fcef8a6c18216d69e8ed7e7bcb0d96a18eb0",
+        "video": "0b15fe7fda29da794802307c88fe23053ad342bd80c485d441e121d325d663db"
+      },
+      "topology": {
+        "participants": [
+          {
+            "peer": "peer-0",
+            "implementation": "native"
+          },
+          {
+            "peer": "peer-1",
+            "implementation": "browser"
+          }
+        ],
+        "edges": [
+          {
+            "receiver": "peer-0",
+            "source": "peer-1/mic",
+            "kind": "audio"
+          },
+          {
+            "receiver": "peer-1",
+            "source": "peer-0/mic",
+            "kind": "audio"
+          },
+          {
+            "receiver": "peer-1",
+            "source": "peer-0/screen-audio",
+            "kind": "audio"
+          },
+          {
+            "receiver": "peer-1",
+            "source": "peer-0/video",
+            "kind": "video"
+          }
+        ],
+        "audio_edges": 3,
+        "video_edges": 1,
+        "video_watchers": 1,
+        "video_watch_policy": "every browser participant1..N-1 watches peer0; native peer0 does not decode its own video",
+        "source_publishers": 1,
+        "voice_participants": 2,
+        "comparison_available": false
+      },
+      "measurement_policy": {
+        "engine": "mediasoup",
+        "requestedSeconds": 20,
+        "minimum_peer_span_seconds": 19.9,
+        "interval_bitrate_policy": "per-stream observed interval distributions; mean source rate and complete duration are required; this pilot cannot qualify performance"
+      },
+      "streams": [
+        {
+          "receiver": "peer-0",
+          "source": "peer-1/mic",
+          "kind": "audio",
+          "bitrate_bps": 128540.72635511454,
+          "measured_seconds": 19.99808210899937,
+          "decoded_sample_rate": 48052.60798322039
+        },
+        {
+          "receiver": "peer-1",
+          "source": "peer-0/mic",
+          "kind": "audio",
+          "bitrate_bps": 128013.7114906042,
+          "measured_seconds": 19.997857809066772,
+          "decoded_sample_rate": 48005.14180897657
+        },
+        {
+          "receiver": "peer-1",
+          "source": "peer-0/screen-audio",
+          "kind": "audio",
+          "bitrate_bps": 128013.7114906042,
+          "measured_seconds": 19.997857809066772,
+          "decoded_sample_rate": 48005.14180897657
+        },
+        {
+          "receiver": "peer-1",
+          "source": "peer-0/video",
+          "kind": "video",
+          "bitrate_bps": 4009026.204979369,
+          "measured_seconds": 19.997857809066772,
+          "decoded_fps": 60.006427261220715
+        }
+      ],
+      "native_receiver_padding": [
+        {
+          "ssrc": 586732576,
+          "media_packets": 2577,
+          "padding_packets": 0,
+          "rtp_packets": 2577,
+          "sequence_gaps": 0,
+          "timestamp_gaps": 0,
+          "decode_errors": 0
+        }
+      ],
+      "backend_resources": {
+        "measurement_valid": true,
+        "maximum_process_rss_sum_bytes": 22740992,
+        "actual_span_seconds": 19.593188285827637,
+        "cpu_core_equivalents_median": 0.01935813114943429
+      },
+      "generator_resources": {
+        "measurement_valid": true,
+        "maximum_process_rss_sum_bytes": 877342720,
+        "actual_span_seconds": 19.593444347381592,
+        "cpu_core_equivalents_median": 0.30982491584774774
+      },
+      "infrastructure_resources": null,
+      "idle_rss_bytes": 16351232,
+      "post_leave_resources": {
+        "measurement_valid": true,
+        "maximum_process_rss_sum_bytes": 21159936,
+        "actual_span_seconds": 3.5027408599853516,
+        "cpu_core_equivalents_median": 0.0
+      },
+      "post_leave": {
+        "browser": {
+          "destroyed_sessions": [],
+          "connections_closed": true,
+          "pending_requests": 0,
+          "errors": []
+        },
+        "native_adapter": {
+          "peer_left": true,
+          "engine_stats": {
+            "consumers": 0,
+            "peers": 0,
+            "producers": 0,
+            "transports": 0
+          }
+        },
+        "engine_stats": {
+          "consumers": 0,
+          "peers": 0,
+          "producers": 0,
+          "transports": 0
+        }
+      }
+    },
+    {
+      "engine": "janus",
+      "raw_browser_sha256": "47316140efa446beee2d990232da82247efafd08cd635c87fa9eefc9e742d836",
+      "raw_server_sha256": "cedf6a3360ba2325e7e26b4fc886442bffcdbd0acc90a4bec365b490b951b2d3",
+      "raw_local_path": "/tmp/gelabber-native-full-warm30-n2-20261005/janus",
+      "instrument_pilot_valid": true,
+      "full_graph_streams_valid": true,
+      "source_window_valid": true,
+      "cleanup_valid": true,
+      "owned_cleanup_valid": true,
+      "resource_lifetime_valid": true,
+      "failures": [],
+      "browser": {
+        "executable": "/chrome/chromium_headless_shell-1243/chrome-headless-shell-linux64/chrome-headless-shell",
+        "sha256": "ded93a9c9a53a1ae040f08124badcca95c938e9d5015ff340c3b5538c41bf39e",
+        "product": "HeadlessChrome/153.0.8010.12",
+        "revision": "@971a7443b0c9b0a9b2860529b33331b76077ec62",
+        "user_agent": "Mozilla/5.0 (X11; Linux x86_64) AppleWebKit/537.36 (KHTML, like Gecko) HeadlessChrome/153.0.8010.12 Safari/537.36",
+        "js_version": "15.3.76.4"
+      },
+      "helpers": {
+        "native-full-pilot.mjs": "60edcb5369c6e82f20f54dac34e8b8db8260bc3f41b440432b345c0533bae101",
+        "native-full-browser.mjs": "b5ef780ba1dd0d50ea69ec1f8da9a144b7b4989806d0321b523260cfae714850",
+        "native-full.bundle.js": "bcf3c573b6ad3f6a55b7461e534f50c91656a37707d412fa1a3da9f8266c6a38",
+        "native-full-checks.mjs": "4c32b1bea0e0d0864a8ab19efa7d4ec472e7b9882947699111df60e19bf3ed2f",
+        "native-peer-adapters.mjs": "9be48c38cb2ba32af0eb93fe0ab4e2abed9833509802d55316faec00380a3d26",
+        "native-peer-current.mjs": "4e710173232391b1b9fee7da011693e594be39c6119c25dfedc48b581ad4b5c9",
+        "mediasoup-native-peer-sdp.mjs": "0d169e381aa60677113c2b64e4d44942e9a99dc98c57d3a0fa27fa9124dbc0ae",
+        "native-peer-checks.mjs": "f9d1ef7246b40c598683e4f34b1857f459f492221e39cde4f54cd30a3e9bb27d",
+        "native-peer.mjs": "9a5969bc04e81460ce4d2199e39e63c0e1b2e33beee49ded7aed0dbbd7e279e0",
+        "native-video.mjs": "eff5ff44b443e7b46343bcdce061aea2892f23aa2b6f1d380908e14359d3e681",
+        "janus-events.mjs": "611b677b7bcbc0154d04b9be3375ecab6c15c6339feeb177f0426c071f5584b4",
+        "janus-broker.mjs": "c340597861ab6512d59f73cac6bb248f553122d5d45f5b9a865523351e36c413",
+        "browser-provenance.mjs": "c50c9ac32f4acf91982f05ef2cefcf5e945b61a63073c9bc499f216ba3d5c4ec",
+        "proxy-target.mjs": "eeb6a5b035738da7b5c7320dcaa5b40fb24506f26fd631921f54666b4840e7a2",
+        "package-lock.json": "9d02e4d3313afe6d1fc466ab4fa598993660385d21a13021089fbeca04e1954c"
+      },
+      "runtime_image_id": "sha256:1ae5fd33e696fd2fbd169631afec3107a4f59ad2e76e74de3d3e13a88d593636",
+      "backend_image": {
+        "id": "sha256:76845b0f9e03ad08a0444e4194969510b96ca72d83754e596431aa04dc773e62",
+        "labels": {
+          "org.opencontainers.image.revision": "0a24110ae55a172c4293749b763dbb66a138f9ec",
+          "org.opencontainers.image.version": "janus-v1.4.2"
+        },
+        "size": 54416670,
+        "repo_digests": [
+          "gelabber-bench/janus@sha256:76845b0f9e03ad08a0444e4194969510b96ca72d83754e596431aa04dc773e62"
+        ]
+      },
+      "source_sha256": {
+        "mic": "d3be0b97e78997fd041e0d0ac49c502829074b037ead6bc41900f1e50fe67894",
+        "source": "ff1bd24234f06360198f51d15753fcef8a6c18216d69e8ed7e7bcb0d96a18eb0",
+        "video": "0b15fe7fda29da794802307c88fe23053ad342bd80c485d441e121d325d663db"
+      },
+      "topology": {
+        "participants": [
+          {
+            "peer": "peer-0",
+            "implementation": "native"
+          },
+          {
+            "peer": "peer-1",
+            "implementation": "browser"
+          }
+        ],
+        "edges": [
+          {
+            "receiver": "peer-0",
+            "source": "peer-1/mic",
+            "kind": "audio"
+          },
+          {
+            "receiver": "peer-1",
+            "source": "peer-0/mic",
+            "kind": "audio"
+          },
+          {
+            "receiver": "peer-1",
+            "source": "peer-0/screen-audio",
+            "kind": "audio"
+          },
+          {
+            "receiver": "peer-1",
+            "source": "peer-0/video",
+            "kind": "video"
+          }
+        ],
+        "audio_edges": 3,
+        "video_edges": 1,
+        "video_watchers": 1,
+        "video_watch_policy": "every browser participant1..N-1 watches peer0; native peer0 does not decode its own video",
+        "source_publishers": 1,
+        "voice_participants": 2,
+        "comparison_available": false
+      },
+      "measurement_policy": {
+        "engine": "janus",
+        "requestedSeconds": 20,
+        "minimum_peer_span_seconds": 19.9,
+        "interval_bitrate_policy": "per-stream observed interval distributions; mean source rate and complete duration are required; this pilot cannot qualify performance"
+      },
+      "streams": [
+        {
+          "receiver": "peer-0",
+          "source": "peer-1/mic",
+          "kind": "audio",
+          "bitrate_bps": 128405.40598956966,
+          "measured_seconds": 19.99915798100119,
+          "decoded_sample_rate": 48002.02093068024
+        },
+        {
+          "receiver": "peer-1",
+          "source": "peer-0/mic",
+          "kind": "audio",
+          "bitrate_bps": 128006.65012575683,
+          "measured_seconds": 19.998960971832275,
+          "decoded_sample_rate": 48002.493797158815
+        },
+        {
+          "receiver": "peer-1",
+          "source": "peer-0/screen-audio",
+          "kind": "audio",
+          "bitrate_bps": 128006.65012575683,
+          "measured_seconds": 19.998960971832275,
+          "decoded_sample_rate": 48002.493797158815
+        },
+        {
+          "receiver": "peer-1",
+          "source": "peer-0/video",
+          "kind": "video",
+          "bitrate_bps": 4009253.886385976,
+          "measured_seconds": 19.998960971832275,
+          "decoded_fps": 60.00311724644852
+        }
+      ],
+      "native_receiver_padding": [
+        {
+          "ssrc": 2608660781,
+          "media_packets": 2507,
+          "padding_packets": 0,
+          "rtp_packets": 2507,
+          "sequence_gaps": 0,
+          "timestamp_gaps": 0,
+          "decode_errors": 0
+        }
+      ],
+      "backend_resources": {
+        "measurement_valid": true,
+        "maximum_process_rss_sum_bytes": 24104960,
+        "actual_span_seconds": 19.58140277862549,
+        "cpu_core_equivalents_median": 0.019432523002312886
+      },
+      "generator_resources": {
+        "measurement_valid": true,
+        "maximum_process_rss_sum_bytes": 837046272,
+        "actual_span_seconds": 19.58079218864441,
+        "cpu_core_equivalents_median": 0.30999290009147107
+      },
+      "infrastructure_resources": null,
+      "idle_rss_bytes": 19525632,
+      "post_leave_resources": {
+        "measurement_valid": true,
+        "maximum_process_rss_sum_bytes": 23425024,
+        "actual_span_seconds": 3.503283977508545,
+        "cpu_core_equivalents_median": 0.0
+      },
+      "post_leave": {
+        "browser": {
+          "destroyed_sessions": [
+            6327900074386012
+          ],
+          "connections_closed": true,
+          "pending_requests": 0,
+          "errors": []
+        },
+        "native_adapter": {
+          "engine_stats": {
+            "rooms": [],
+            "room_present": false,
+            "count_basis": "owned room destroyed/list absence; sessions destroyed separately"
+          },
+          "destroyed_sessions": [
+            1673325234903200,
+            7851198051293796
+          ],
+          "backend_events": {
+            "transport": "node-backend-longpoll/browser-SSE",
+            "maximum_backend_sessions": 2,
+            "remaining_backend_sessions": 0,
+            "trace": [
+              {
+                "at": 1791231995286,
+                "phase": "poll-start",
+                "session": 1673325234903200,
+                "active_sessions": 1
+              },
+              {
+                "at": 1791231995291,
+                "phase": "poll-start",
+                "session": 7851198051293796,
+                "active_sessions": 2
+              },
+              {
+                "at": 1791231995293,
+                "phase": "poll-complete",
+                "session": 7851198051293796,
+                "active_sessions": 2
+              },
+              {
+                "at": 1791231995293,
+                "phase": "poll-start",
+                "session": 7851198051293796,
+                "active_sessions": 2
+              },
+              {
+                "at": 1791231995295,
+                "phase": "poll-complete",
+                "session": 7851198051293796,
+                "active_sessions": 2
+              },
+              {
+                "at": 1791231995295,
+                "phase": "poll-start",
+                "session": 7851198051293796,
+                "active_sessions": 2
+              },
+              {
+                "at": 1791231995326,
+                "phase": "poll-complete",
+                "session": 7851198051293796,
+                "active_sessions": 2
+              },
+              {
+                "at": 1791231995326,
+                "phase": "poll-start",
+                "session": 7851198051293796,
+                "active_sessions": 2
+              },
+              {
+                "at": 1791231995418,
+                "phase": "poll-complete",
+                "session": 7851198051293796,
+                "active_sessions": 2
+              },
+              {
+                "at": 1791231995418,
+                "phase": "poll-start",
+                "session": 7851198051293796,
+                "active_sessions": 2
+              },
+              {
+                "at": 1791231995419,
+                "phase": "poll-complete",
+                "session": 7851198051293796,
+                "active_sessions": 2
+              },
+              {
+                "at": 1791231995419,
+                "phase": "poll-start",
+                "session": 7851198051293796,
+                "active_sessions": 2
+              },
+              {
+                "at": 1791231995785,
+                "phase": "poll-complete",
+                "session": 7851198051293796,
+                "active_sessions": 2
+              },
+              {
+                "at": 1791231995785,
+                "phase": "poll-start",
+                "session": 7851198051293796,
+                "active_sessions": 2
+              },
+              {
+                "at": 1791231995846,
+                "phase": "poll-complete",
+                "session": 7851198051293796,
+                "active_sessions": 2
+              },
+              {
+                "at": 1791231995846,
+                "phase": "poll-start",
+                "session": 7851198051293796,
+                "active_sessions": 2
+              },
+              {
+                "at": 1791231995847,
+                "phase": "poll-complete",
+                "session": 7851198051293796,
+                "active_sessions": 2
+              },
+              {
+                "at": 1791231995847,
+                "phase": "poll-start",
+                "session": 7851198051293796,
+                "active_sessions": 2
+              },
+              {
+                "at": 1791231995868,
+                "phase": "poll-complete",
+                "session": 7851198051293796,
+                "active_sessions": 2
+              },
+              {
+                "at": 1791231995868,
+                "phase": "poll-start",
+                "session": 7851198051293796,
+                "active_sessions": 2
+              },
+              {
+                "at": 1791232025317,
+                "phase": "poll-complete",
+                "session": 1673325234903200,
+                "active_sessions": 2
+              },
+              {
+                "at": 1791232025317,
+                "phase": "poll-start",
+                "session": 1673325234903200,
+                "active_sessions": 2
+              },
+              {
+                "at": 1791232025869,
+                "phase": "poll-complete",
+                "session": 7851198051293796,
+                "active_sessions": 2
+              },
+              {
+                "at": 1791232025869,
+                "phase": "poll-start",
+                "session": 7851198051293796,
+                "active_sessions": 2
+              },
+              {
+                "at": 1791232046013,
+                "phase": "poll-complete",
+                "session": 7851198051293796,
+                "active_sessions": 2
+              },
+              {
+                "at": 1791232046013,
+                "phase": "poll-start",
+                "session": 7851198051293796,
+                "active_sessions": 2
+              },
+              {
+                "at": 1791232046014,
+                "phase": "poll-complete",
+                "session": 7851198051293796,
+                "active_sessions": 2
+              },
+              {
+                "at": 1791232046014,
+                "phase": "poll-start",
+                "session": 7851198051293796,
+                "active_sessions": 2
+              },
+              {
+                "at": 1791232046018,
+                "phase": "poll-complete",
+                "session": 7851198051293796,
+                "active_sessions": 2
+              },
+              {
+                "at": 1791232046018,
+                "phase": "poll-start",
+                "session": 7851198051293796,
+                "active_sessions": 2
+              },
+              {
+                "at": 1791232046019,
+                "phase": "poll-complete",
+                "session": 7851198051293796,
+                "active_sessions": 2
+              },
+              {
+                "at": 1791232046019,
+                "phase": "poll-start",
+                "session": 7851198051293796,
+                "active_sessions": 2
+              },
+              {
+                "at": 1791232046039,
+                "phase": "poll-complete",
+                "session": 7851198051293796,
+                "active_sessions": 2
+              },
+              {
+                "at": 1791232046039,
+                "phase": "poll-start",
+                "session": 7851198051293796,
+                "active_sessions": 2
+              },
+              {
+                "at": 1791232046040,
+                "phase": "poll-cancelled",
+                "session": 1673325234903200,
+                "active_sessions": 0
+              },
+              {
+                "at": 1791232046040,
+                "phase": "poll-cancelled",
+                "session": 7851198051293796,
+                "active_sessions": 0
+              }
+            ]
+          }
+        },
+        "browser_sessions": [
+          {
+            "id": 6327900074386012,
+            "absent": true,
+            "status": 404
+          }
+        ]
+      }
+    }
+  ],
+  "previous_failed_control": {
+    "engine": "janus",
+    "warmup_seconds": 10,
+    "raw_local_path": "/tmp/gelabber-native-full-negotiated-n2-20261005/janus/browser.json",
+    "sha256": "97852d9e372f9701536d631d69e7536c68337eac482837024e9e4ec9160e76b3",
+    "valid": false,
+    "failures": [
+      "peer-1<-peer-0/mic decoder loss/conceal/order changed or missing"
+    ],
+    "facts": "native microphone->browser +614 concealed samples/one event, packetsLost0, continuous RTP/PCM; no asserted cause"
+  },
+  "limitations": [
+    "current backend is historical de1ae reference, not accepted a5c335e library",
+    "one diagnostic run each; N8/N16/N32 and three-round independent-host matrix remain open",
+    "native V1 audio is looped preencoded content; true PCM latency and V2 calibration remain open",
+    "both alternatives lack the complete product ticket/ACL/Watch/Live gateway; resource results cannot qualify that missing topology",
+    "temporary owned Dockerbridge adds host-veth/private-route then cleans up; no manual host configuration",
+    "configured current benchmark worker_threads2 differs from product default"
+  ],
+  "comparison_available": false,
+  "native_pcm_qualified": false,
+  "production_feature_acceptance": false
+}

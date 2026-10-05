@@ -44,6 +44,67 @@ const MIC: u32 = 0x474d4943;
 const SOURCE: u32 = 0x47534130;
 type Reports = Arc<Mutex<BTreeMap<String, Value>>>;
 
+#[derive(Default)]
+struct RtpOrder {
+    sequence: Option<u16>,
+    media_timestamp: Option<u32>,
+}
+#[derive(Debug, PartialEq)]
+enum PacketKind {
+    Reordered,
+    Padding,
+    Media,
+    EmptyWithoutPadding,
+}
+struct PacketProgress {
+    kind: PacketKind,
+    sequence_gaps: u16,
+    timestamp_gap: bool,
+}
+impl RtpOrder {
+    fn packet(
+        &mut self,
+        sequence: u16,
+        timestamp: u32,
+        padding: bool,
+        empty: bool,
+    ) -> PacketProgress {
+        let step = self
+            .sequence
+            .map(|last| sequence.wrapping_sub(last))
+            .unwrap_or(1);
+        if step == 0 || step >= 32768 {
+            return PacketProgress {
+                kind: PacketKind::Reordered,
+                sequence_gaps: 0,
+                timestamp_gap: false,
+            };
+        }
+        self.sequence = Some(sequence);
+        let kind = if empty && padding {
+            PacketKind::Padding
+        } else if empty {
+            PacketKind::EmptyWithoutPadding
+        } else {
+            PacketKind::Media
+        };
+        // RTP padding has its own sequence number, but no audio frame or media
+        // timestamp advance. Empty unpadded packets remain decoder errors.
+        let timestamp_gap = kind == PacketKind::Media
+            && self
+                .media_timestamp
+                .is_some_and(|last| timestamp.wrapping_sub(last) != 960);
+        if kind == PacketKind::Media {
+            self.media_timestamp = Some(timestamp);
+        }
+        PacketProgress {
+            kind,
+            sequence_gaps: step - 1,
+            timestamp_gap,
+        }
+    }
+}
+
 struct Handler {
     gathered: watch::Sender<bool>,
     state: watch::Sender<RTCPeerConnectionState>,
@@ -74,12 +135,13 @@ impl PeerConnectionEventHandler for Handler {
 }
 
 async fn receive(track: Arc<dyn TrackRemote>, reports: Reports) -> Result<()> {
-    let mut decoders: BTreeMap<u32, (Decoder, Option<(u16, u32)>)> = BTreeMap::new();
+    let mut decoders: BTreeMap<u32, (Decoder, RtpOrder)> = BTreeMap::new();
     while let Some(event) = track.poll().await {
         match event {
             TrackRemoteEvent::OnOpen(init) => {
                 reports.lock().unwrap().entry(init.ssrc.to_string()).or_insert(json!({
                     "ssrc":init.ssrc,"track_id":init.track_id,"stream_ids":init.stream_ids,"source_name":null,
+                    "rtp_packets_received":0,"padding_packets_received":0,"padding_packet_examples":[],
                     "packets_received":0,"payload_bytes_received":0,"decoded_samples":0,"sequence_gaps":0,
                     "reordered_or_duplicate_packets":0,"timestamp_gaps":0,"decode_errors":0,
                     "output":"actual libopus float32 PCM; no jitter-buffer/playout/acoustic latency claim"}));
@@ -94,28 +156,44 @@ async fn receive(track: Arc<dyn TrackRemote>, reports: Reports) -> Result<()> {
                     return Err("native peer only receives Opus audio".into());
                 }
                 if !decoders.contains_key(&ssrc) {
-                    decoders.insert(ssrc, (Decoder::new()?, None));
+                    decoders.insert(ssrc, (Decoder::new()?, RtpOrder::default()));
                 }
-                let (decoder, previous) = decoders.get_mut(&ssrc).unwrap();
+                let (decoder, order) = decoders.get_mut(&ssrc).unwrap();
                 let mut report = reports.lock().unwrap();
                 let edge = report
                     .get_mut(&ssrc.to_string())
                     .ok_or("RTP arrived before source identity event")?;
-                if let Some((sequence, timestamp)) = *previous {
-                    let step = packet.header.sequence_number.wrapping_sub(sequence);
-                    if step == 0 || step > 32768 {
-                        edge["reordered_or_duplicate_packets"] =
-                            json!(edge["reordered_or_duplicate_packets"].as_u64().unwrap() + 1);
-                        continue; // Never feed a duplicate/reordered packet into a stateful decoder as new PCM.
-                    }
-                    edge["sequence_gaps"] =
-                        json!(edge["sequence_gaps"].as_u64().unwrap() + u64::from(step - 1));
-                    if packet.header.timestamp.wrapping_sub(timestamp) != u32::from(step) * 960 {
-                        edge["timestamp_gaps"] =
-                            json!(edge["timestamp_gaps"].as_u64().unwrap() + 1);
-                    }
+                edge["rtp_packets_received"] =
+                    json!(edge["rtp_packets_received"].as_u64().unwrap() + 1);
+                edge["codec"] = json!({"mimeType":codec.mime_type,"clockRate":codec.clock_rate,
+                    "channels":codec.channels,"payloadType":packet.header.payload_type});
+                let progress = order.packet(
+                    packet.header.sequence_number,
+                    packet.header.timestamp,
+                    packet.header.padding,
+                    packet.payload.is_empty(),
+                );
+                if progress.kind == PacketKind::Reordered {
+                    edge["reordered_or_duplicate_packets"] =
+                        json!(edge["reordered_or_duplicate_packets"].as_u64().unwrap() + 1);
+                    continue; // Never feed a duplicate/reordered packet into a stateful decoder as new PCM.
                 }
-                *previous = Some((packet.header.sequence_number, packet.header.timestamp));
+                edge["sequence_gaps"] = json!(
+                    edge["sequence_gaps"].as_u64().unwrap() + u64::from(progress.sequence_gaps)
+                );
+                if progress.timestamp_gap {
+                    edge["timestamp_gaps"] = json!(edge["timestamp_gaps"].as_u64().unwrap() + 1);
+                }
+                if progress.kind == PacketKind::Padding {
+                    edge["padding_packets_received"] =
+                        json!(edge["padding_packets_received"].as_u64().unwrap() + 1);
+                    let examples = edge["padding_packet_examples"].as_array_mut().unwrap();
+                    if examples.len() < 8 {
+                        examples.push(json!({"sequence":packet.header.sequence_number,
+                        "timestamp":packet.header.timestamp,"header_padding":packet.header.padding,"payload_bytes":packet.payload.len()}));
+                    }
+                    continue;
+                }
                 edge["packets_received"] = json!(edge["packets_received"].as_u64().unwrap() + 1);
                 edge["payload_bytes_received"] = json!(
                     edge["payload_bytes_received"].as_u64().unwrap() + packet.payload.len() as u64
@@ -147,6 +225,8 @@ async fn receive(track: Arc<dyn TrackRemote>, reports: Reports) -> Result<()> {
                     Err(error) => {
                         edge["decode_errors"] = json!(edge["decode_errors"].as_u64().unwrap() + 1);
                         edge["error"] = json!(error.to_string());
+                        edge["last_invalid_packet"] = json!({"sequence":packet.header.sequence_number,
+                            "timestamp":packet.header.timestamp,"header_padding":packet.header.padding,"payload_bytes":packet.payload.len()});
                     }
                 }
             }
@@ -165,6 +245,42 @@ struct Peer {
     received: Reports,
     receiver_tasks: Arc<Mutex<Vec<JoinHandle<()>>>>,
     feedback_tasks: Vec<JoinHandle<()>>,
+}
+async fn negotiated_senders(peer: &Peer) -> Result<Vec<Value>> {
+    let mut values = Vec::new();
+    for transceiver in peer.pc.get_transceivers().await {
+        if let Some(sender) = transceiver.sender().await? {
+            let parameters = sender.get_parameters().await?;
+            let track = sender.track().track().await;
+            let codecs: Vec<Value> = parameters
+                .rtp_parameters
+                .codecs
+                .iter()
+                .map(|codec| {
+                    json!({
+                "mimeType":codec.rtp_codec.mime_type,"clockRate":codec.rtp_codec.clock_rate,
+                "channels":codec.rtp_codec.channels,"payloadType":codec.payload_type,
+                "sdpFmtpLine":codec.rtp_codec.sdp_fmtp_line})
+                })
+                .collect();
+            let encodings: Vec<Value> = parameters
+                .encodings
+                .iter()
+                .map(|encoding| {
+                    json!({
+                "ssrc":encoding.rtp_coding_parameters.ssrc,"active":encoding.active,
+                "mimeType":encoding.codec.mime_type,"clockRate":encoding.codec.clock_rate,
+                "sdpFmtpLine":encoding.codec.sdp_fmtp_line})
+                })
+                .collect();
+            if !encodings.is_empty() {
+                values.push(json!({"mid":transceiver.mid().await?,
+                "track_id":track.track_id(),"stream_id":track.stream_id(),"codecs":codecs,"encodings":encodings,
+                "basis":"actual RtpSender::get_parameters negotiated send_codecs and SSRC encodings"}));
+            }
+        }
+    }
+    Ok(values)
 }
 async fn peer(bind: Ipv4Addr, publish: bool) -> Result<Peer> {
     let mut media = MediaEngine::default();
@@ -313,7 +429,8 @@ async fn replay_audio(
                 return Err(format!("{} enqueue missed 20ms packet deadline", key).into());
             }
             packets += 1;
-            reports.lock().unwrap().insert(key.clone(), json!({"running":true,"completed":false,"ssrc":ssrc,
+            reports.lock().unwrap().insert(key.clone(), json!({"running":true,"completed":false,"source_policy_valid":true,
+                "source_policy_scope":"observed enqueue prefix; full packet count checked only on completion","ssrc":ssrc,
                 "source_uid":if key=="mic" {0} else {64},"packets_enqueued":packets,"rtp_payload_bytes_enqueued":packets*320,
                 "last_source_sample_ordinal":(packets-1)*960,"last_planned_mono_ns":(anchor.ns+offset.as_nanos() as u64).to_string(),
                 "last_enqueue_before_ns":enqueue_before.to_string(),"last_enqueued_mono_ns":enqueue_after.to_string(),
@@ -332,6 +449,91 @@ async fn replay_audio(
 #[cfg(test)]
 mod signaling_tests {
     use super::*;
+
+    #[test]
+    fn padding_before_first_media_never_sets_media_timestamp() {
+        let mut order = RtpOrder::default();
+        assert_eq!(
+            order.packet(10, 900_000, true, true).kind,
+            PacketKind::Padding
+        );
+        assert_eq!(order.media_timestamp, None);
+        let first = order.packet(11, 123, false, false);
+        assert_eq!(first.kind, PacketKind::Media);
+        assert!(!first.timestamp_gap);
+        assert_eq!(order.packet(12, 1083, false, false).timestamp_gap, false);
+    }
+
+    #[test]
+    fn padding_sequence_and_media_timestamp_are_independent() {
+        let mut order = RtpOrder::default();
+        order.packet(10, 1000, false, false);
+        for sequence in 11..15 {
+            let padding = order.packet(sequence, 1000, true, true);
+            assert_eq!(padding.kind, PacketKind::Padding);
+            assert_eq!(padding.sequence_gaps, 0);
+            assert!(!padding.timestamp_gap);
+        }
+        let media = order.packet(15, 1960, true, false); // Real media may also carry RTP padding.
+        assert_eq!(media.kind, PacketKind::Media);
+        assert!(!media.timestamp_gap);
+        assert_eq!(media.sequence_gaps, 0);
+    }
+
+    #[test]
+    fn missing_padding_and_missing_media_are_both_visible() {
+        let mut order = RtpOrder::default();
+        order.packet(10, 1000, false, false);
+        let missing_padding = order.packet(12, 1000, true, true);
+        assert_eq!(missing_padding.sequence_gaps, 1);
+        assert!(!missing_padding.timestamp_gap);
+        assert!(!order.packet(13, 1960, false, false).timestamp_gap);
+        order.packet(14, 1960, true, true);
+        let missing_media = order.packet(15, 3880, false, false);
+        assert_eq!(missing_media.sequence_gaps, 0);
+        assert!(missing_media.timestamp_gap); // Padding cannot hide a missing 20 ms media frame.
+    }
+
+    #[test]
+    fn duplicate_reorder_and_wrap_do_not_corrupt_media_clock() {
+        let mut order = RtpOrder::default();
+        order.packet(u16::MAX - 1, u32::MAX - 479, false, false);
+        order.packet(u16::MAX, 0, true, true);
+        assert_eq!(
+            order.packet(u16::MAX, 0, true, true).kind,
+            PacketKind::Reordered
+        );
+        assert_eq!(
+            order.packet(u16::MAX - 1, 0, false, false).kind,
+            PacketKind::Reordered
+        );
+        assert!(!order.packet(0, 480, false, false).timestamp_gap);
+        assert_eq!(
+            order.packet(32768, 0, true, true).kind,
+            PacketKind::Reordered
+        );
+        assert!(!order.packet(1, 1440, false, false).timestamp_gap);
+    }
+
+    #[test]
+    fn empty_unpadded_or_bad_nonempty_payload_is_never_padding() {
+        let mut order = RtpOrder::default();
+        assert_eq!(
+            order.packet(10, 1, false, true).kind,
+            PacketKind::EmptyWithoutPadding
+        );
+        assert_eq!(order.media_timestamp, None);
+        assert_eq!(order.packet(11, 1, true, false).kind, PacketKind::Media);
+        let mut decoder = Decoder::new().unwrap();
+        assert!(decoder.decode(&[]).is_err());
+        assert!(decoder.decode(&[255]).is_err());
+        // Actual 20 ms Opus silence has a nonempty TOC/payload and is media,
+        // regardless of RTP's optional padding bit. It must reach libopus.
+        assert_eq!(
+            decoder.decode(&[0xf8, 0xff, 0xfe]).unwrap().samples.len(),
+            960
+        );
+    }
 
     #[tokio::test]
     async fn native_publication_sdp_has_distinct_signal_bound_track_ids() {
@@ -399,7 +601,8 @@ async fn replay_video(
             }
             packets += 1;
             if index + 1 == archive.records.len() || frames % 60 == 0 {
-                reports.lock().unwrap().insert("video".to_owned(),json!({"running":true,"completed":false,
+                reports.lock().unwrap().insert("video".to_owned(),json!({"running":true,"completed":false,"source_policy_valid":true,
+            "source_policy_scope":"observed enqueue prefix; full frame count checked only on completion",
             "packets_enqueued":packets,"frames_enqueued":frames,"rtp_payload_bytes_enqueued":bytes,"max_schedule_lateness_ns":max_late,"timeline":anchor.evidence()}));
             }
         }
@@ -479,7 +682,11 @@ async fn main() -> Result<()> {
                 let mut status=serde_json::Map::new();
                 for (id,p) in &peers {let stats=p.pc.get_stats(Instant::now(),StatsSelector::None).await;
                     let outbound:Vec<Value>=stats.outbound_rtp_streams().map(serde_json::to_value).collect::<std::result::Result<_,_>>()?;
-                    status.insert(id.clone(),json!({"connection":p.state.borrow().to_string(),"outbound":outbound,"transport":stats.transport(),"received":p.received.lock().unwrap().clone()}));}
+                    let codecs:Vec<Value>=stats.iter().filter_map(|entry| match entry {
+                        rtc::statistics::report::RTCStatsReportEntry::Codec(codec)=>Some(serde_json::to_value(codec)), _=>None
+                    }).collect::<std::result::Result<_,_>>()?;
+                    let negotiated=negotiated_senders(p).await?;
+                    status.insert(id.clone(),json!({"connection":p.state.borrow().to_string(),"outbound":outbound,"codecs":codecs,"negotiated_senders":negotiated,"transport":stats.transport(),"received":p.received.lock().unwrap().clone()}));}
                 return Ok(json!({"peers":status,"sources":reports.lock().unwrap().clone(),"clock":"CLOCK_MONOTONIC","monoNs":clock::monotonic_ns()?.to_string()}));
             }
             let p=peers.get(id).ok_or("unknown peer id; create first")?;

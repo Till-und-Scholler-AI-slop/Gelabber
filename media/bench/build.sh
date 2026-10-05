@@ -20,6 +20,12 @@ node --check native-video-adapters.mjs
 node --check native-video-browser.mjs
 node --check native-video-pilot.mjs
 node --check mediasoup-native-sdp.mjs
+node --check mediasoup-native-peer-sdp.mjs
+node --check native-peer-current.mjs
+node --check native-peer-adapters.mjs
+node --check native-full-checks.mjs
+node --check native-full-browser.mjs
+node --check native-full-pilot.mjs
 node --check janus-events.mjs
 node --check janus-broker.mjs
 node --check local-janus-events.mjs
