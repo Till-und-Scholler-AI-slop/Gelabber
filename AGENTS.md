@@ -23,35 +23,44 @@ If a new `v*` name would miss that pattern, add the same protection by hand befo
 - Feature work uses feature branches off the current `v*` (e.g. `rft/<short>-01d0`, or Silas’s usual names). **PRs target that `v*` branch, not `main`.**
 - Merge a feature into the current `v*` when that feature is done and fixed (CI green, review as usual).
 - Merge `v*` → `main` **via a PR** only when the **whole** major is done and fixed. Then cut a **release** (tag `v0.2.0` etc.). Do not tag or release from a half-finished major or from a random feature branch.
-- Hotfixes for the shipped minor (`0.4.x`) go to `main` (or a hotfix branch), followed by a sync PR to `v0.4`. Older release lines require an explicitly scoped maintenance branch; do not mix their fixes into the current line unless Rafael says so.
+- Hotfixes for the currently shipped minor go to `main` (or a hotfix branch), followed by a sync PR to `v0.4`. The latest published tag on `main` identifies that shipped line. Older release lines require an explicitly scoped maintenance branch; do not mix their fixes into the current line unless Rafael says so.
 - After every merged hotfix on `main`, promptly open a sync PR from `main` (or a dedicated sync branch containing it) to the current `v*` branch. Preserve the hotfix commits so ancestry proves the sync; require the usual review and CI before merging. Feature branches then merge the updated version branch.
 - Keep fixes independently reviewable. Review and merge each focused fix before a release PR bundles it; a release bundle does not replace the individual reviews.
 
 ## Product
 
-No LiveKit, Daily, Agora, Twilio, Stream, or Socket.IO. Own WebSocket, own signaling, own SFU. Keep the locked stack pins.
+No LiveKit, Daily, Agora, Twilio, Stream, or Socket.IO. Own WebSocket and own product signaling. Keep the locked stack pins.
+
+For v0.4, Rafael explicitly authorized comparing the current SFU with self-hosted
+mediasoup (official Rust binding) and Janus VideoRoom. A replacement is allowed
+only after the benchmark and feature gates in `docs/v0.4-roadmap.md` pass. Keep
+the current SFU until that evidence exists; a startup probe is not load or
+authorization acceptance. Browser-local audio DSP may use pinned, self-hosted
+RNNoise assets. Do not introduce a cloud audio service.
 
 SilasSch reviews product PRs when that is the standing rule. Do not invent extra process.
 
 ## Current development line: v0.4
 
-Call sounds are developed on feature branches from `v0.4`.
+The expanded development scope is tracked in `docs/v0.4-roadmap.md` and the
+draft version PR. All features are developed on branches from `v0.4`.
 Product PRs target `v0.4`. The active **Version branches** ruleset covers
 `refs/heads/v[0-9]*` and requires PRs with the same review requirements as `main`.
 Do not push feature commits directly to `v0.4`. Release the completed line only
 from `main` after its version PR, CI and image publishing have finished.
 
-## Shipped line: latest released v0.4.x
+## Shipped line: latest published main tag
 
-The completed `v0.4` line ships as `v0.4.0`. The latest published `v0.4.x` tag on
-`main` identifies the shipped version. Hotfixes for this minor go to `main`,
-followed by a sync PR to `v0.4`; a feature-branch version is not a release.
+The latest published release is currently `v0.3.1`. `v0.4` is unfinished and
+unreleased. The completed line will ship as `v0.4.0`, after its version PR and
+release gates. Hotfixes for the shipped minor go to `main`, followed by a sync
+PR to `v0.4`; a feature-branch version is not a release.
 
-The shipped scope includes configurable call join/leave and mute/deafen sounds,
-the Living Room interface and persistent call dock,
+The existing product includes the Living Room interface and persistent call dock,
 account themes, configurable stream quality, fullscreen viewing, and separate
 screen/Go Live audio, alongside existing permissions, chat, direct messages,
-screen share, Go Live and moderation.
+screen share, Go Live and moderation. Configurable join/leave and mute/deafen
+sounds are integrated into the unreleased `v0.4` branch.
 
 Hotfix work for the shipped line stays on `main`; future major product work uses
 its own protected version branch.
