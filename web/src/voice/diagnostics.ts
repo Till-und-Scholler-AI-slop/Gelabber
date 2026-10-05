@@ -1,4 +1,5 @@
 import { useAudioProcessing, type ProcessingInfo } from "./audioProcessing.ts";
+import type { SenderPriority, MediaPriority } from "./mediaPriority.ts";
 // Voice diagnostics (issue 86). Numeric getStats() only — no A/V recording.
 // Rates come from per-interval counter deltas. A missing browser field stays
 // unknown (null), and a counter that goes backwards is a reset, not a loss.
@@ -109,6 +110,8 @@ export type FlowStats = {
   measuredBitrateBps: number | null;
   configuredMaxBitrateBps: number | null;
   configuredMaxFps: number | null;
+  senderPriority: MediaPriority | null;
+  senderNetworkPriority: MediaPriority | null;
   packetLoss: number | null;
   packetsLost: number | null;
   jitterMs: number | null;
@@ -136,6 +139,8 @@ export type ConnectionSnapshot = {
 };
 
 export type Caps = {
+  /** Browser readback; null means unsupported/unknown, not the requested policy. */
+  senderPriorities?: Partial<Record<FlowSource, SenderPriority>>;
   audioMaxBitrate: number | null;
   /** Effective sender parameters; null means no maxBitrate property. */
   audioLimits?: Partial<Record<AudioSource, number | null>>;
@@ -656,6 +661,14 @@ export function reduceConnection(input: {
             : input.caps.videoMaxFps
           : null,
       packetLoss: lossRatio(lostDelta, lossBase) ?? fraction,
+      senderPriority:
+        direction === "send"
+          ? (input.caps.senderPriorities?.[source]?.priority ?? null)
+          : null,
+      senderNetworkPriority:
+        direction === "send"
+          ? (input.caps.senderPriorities?.[source]?.networkPriority ?? null)
+          : null,
       packetsLost: lostDelta,
       jitterMs: secondsToMs(
         direction === "send" ? (remote?.jitter ?? entry.jitter) : entry.jitter,

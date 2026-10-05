@@ -85,6 +85,13 @@ export function VoiceDiagnostics() {
           {processing.addedBufferMs ?? "unbekannt"} ms (ohne Capture, Codec und
           Netzwerk).
         </p>
+        <p className="text-xs text-neutral-500 dark:text-neutral-400">
+          Prioritätswunsch: Audio hoch, Video normal. Die effektiven
+          Browserwerte stehen bei den Sendespuren. Nicht gemeldete Netzpriorität
+          bleibt unbekannt; Browser und Netzwerk können diese Hinweise
+          ignorieren. Das garantiert keine Priorisierung auf dem SFU oder im
+          Internet und setzt keine Bitratengrenze.
+        </p>
         <ConnectionBlock
           title="Sprache"
           snapshot={latest?.voice ?? null}
@@ -276,6 +283,12 @@ function FlowLine({ flow }: { flow: FlowStats }) {
           : ""}{" "}
         · Jitter: {formatMs(flow.jitterMs)} · RTT: {formatMs(flow.rttMs)}
       </p>
+      {flow.direction === "send" && (
+        <p>
+          Senderpriorität: {flow.senderPriority ?? "nicht gemeldet"} ·
+          Netzpriorität: {flow.senderNetworkPriority ?? "nicht gemeldet"}
+        </p>
+      )}
       {flow.kind === "audio" && flow.direction === "recv" ? (
         <p>
           Ersetzte Samples:{" "}
