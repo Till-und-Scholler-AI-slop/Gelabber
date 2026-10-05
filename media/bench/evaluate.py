@@ -175,7 +175,8 @@ def main():
             row['equal_streams_comparison_available'] = comparable
     (args.directory / 'summary.json').write_text(json.dumps(output, indent=2) + '\n')
     print(json.dumps(output['medians'], indent=2))
-    return 1 if any(not r['media_fixture_valid'] for r in output['runs']) or 'error' in report else 0
+    expected_runs = len(report['configuration']['matrix']) * len(report['configuration']['engines']) * report['configuration']['runs']
+    return 1 if len(output['runs']) != expected_runs or any(not r['media_fixture_valid'] for r in output['runs']) or 'error' in report else 0
 
 
 if __name__ == '__main__':
