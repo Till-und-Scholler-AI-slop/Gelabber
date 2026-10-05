@@ -743,6 +743,7 @@ describe("voice session", () => {
         noiseSuppression: true,
         autoGainControl: true,
         channelCount: 1,
+        sampleRate: { ideal: 48_000 },
       },
       video: false,
     });
@@ -1965,7 +1966,7 @@ describe("voice session", () => {
   });
 
   it("applies the selected Opus bitrate on the sender encodings", async () => {
-    useMediaSettings.getState().patch({ quality: "high" });
+    useMediaSettings.getState().patch({ quality: "high", economyMode: true });
     const { peers } = install();
     joinVoice({ serverId: "srv", channelId: "voice", channelName: "Lounge" });
     await vi.waitFor(() => expect(peers[0]?.senders.length).toBeGreaterThan(0));
@@ -1988,6 +1989,7 @@ describe("voice session", () => {
         noiseSuppression: true,
         autoGainControl: true,
         channelCount: 1,
+        sampleRate: { ideal: 48_000 },
       },
       video: false,
     });
@@ -2034,7 +2036,7 @@ describe("voice session", () => {
     await vi.waitFor(() => expect(peers[0]?.audio).toBeTruthy());
   });
 
-  it("sets GainNode.value in place and tears the insert down at identity", async () => {
+  it("sets GainNode.value in place, retaining the graph at identity until leave", async () => {
     class FakeGain {
       gain = { value: 1 };
       connect(): void {}
@@ -2090,9 +2092,12 @@ describe("voice session", () => {
       expect(getUserMediaCalls()).toBe(1);
       expect(peers[0]?.audio).toBe(boosted);
       useMediaSettings.getState().patch({ inputGain: 1 });
-      await vi.waitFor(() => expect(created[0]?.state).toBe("closed"));
+      await vi.waitFor(() => expect(created[0]?.gain.gain.value).toBe(1));
+      expect(created[0]?.state).toBe("running");
       expect(getUserMediaCalls()).toBe(1);
-      expect(peers[0]?.audio).not.toBe(boosted);
+      expect(peers[0]?.audio).toBe(boosted);
+      leaveVoice();
+      expect(created[0]?.state).toBe("closed");
     } finally {
       (globalThis as unknown as { AudioContext?: unknown }).AudioContext = Prev;
     }
@@ -2169,6 +2174,76 @@ describe("voice session", () => {
       expect(contexts[0]?.state).toBe("closed");
     } finally {
       (globalThis as unknown as { AudioContext?: unknown }).AudioContext = Prev;
+    }
+  });
+
+  it("rolls back a processor that fails during replaceTrack and commits a healthy browser fallback", async () => {
+    const contexts: Context[] = [];
+    class Context {
+      state = "running";
+      onstatechange: (() => void) | null = null;
+      constructor() {
+        contexts.push(this);
+      }
+      resume = async () => {};
+      close = async () => {
+        this.state = "closed";
+      };
+      createMediaStreamSource() {
+        return { connect() {}, disconnect() {} };
+      }
+      createGain() {
+        return { gain: { value: 1 }, connect() {}, disconnect() {} };
+      }
+      createMediaStreamDestination() {
+        return { stream: fakeStream(`processed-${contexts.length}`) };
+      }
+    }
+    const previousContext = globalThis.AudioContext;
+    (globalThis as unknown as { AudioContext: unknown }).AudioContext = Context;
+    try {
+      const env = install();
+      useMediaSettings
+        .getState()
+        .patch({ processingMode: "browser", inputGain: 0.5 });
+      joinVoice({ serverId: "srv", channelId: "voice", channelName: "Lounge" });
+      await vi.waitFor(() => expect(env.peers[0]?.audio).toBeTruthy());
+      const sender = env.peers[0]!.senders[0]!,
+        previous = sender.track;
+      const replace = sender.replaceTrack!.bind(sender),
+        gate = deferred(),
+        started = deferred();
+      const replacements: Array<MediaStreamTrack | null> = [];
+      sender.replaceTrack = async (next) => {
+        replacements.push(next);
+        if (replacements.length === 1) {
+          started.resolve();
+          await gate.promise;
+        }
+        await replace(next);
+      };
+      useMediaSettings.getState().patch({ audioInputId: "new-mic" });
+      await started.promise;
+      const candidate = contexts[1]!;
+      candidate.state = "closed";
+      candidate.onstatechange?.(); // It is not yet active: the persistent usable state must catch this.
+      gate.resolve();
+      await vi.waitFor(() => expect(env.getUserMediaCalls()).toBe(3));
+      await vi.waitFor(() =>
+        expect(sender.track).toBe(env.streams[2]!.getAudioTracks()[0]),
+      );
+      expect(replacements[1]).toBe(previous);
+      expect(trackStopped(env.streams[1]!.getAudioTracks()[0])).toBe(true);
+      expect(trackStopped(replacements[0])).toBe(true);
+      expect(
+        env.errors.some(
+          (error) =>
+            error instanceof Error && error.message.includes("Browser-Ersatz"),
+        ),
+      ).toBe(true);
+      expect(useVoice.getState().status).toBe("joined");
+    } finally {
+      globalThis.AudioContext = previousContext;
     }
   });
 
@@ -3006,18 +3081,18 @@ describe("stream negotiation stability", () => {
     await vi.waitFor(() =>
       expect(
         video.map((s) => s.getParameters!().encodings[0]?.maxBitrate),
-      ).toEqual([1_250_000, 1_250_000]),
+      ).toEqual([undefined, undefined]),
     );
     expect(
       video.map((s) => s.getParameters!().encodings[0]?.maxFramerate),
     ).toEqual([30, 30]);
     const audio = env.peers[0]!.senders.find((s) => s.track?.kind === "audio")!;
-    expect(audio.getParameters!().encodings[0]?.maxBitrate).toBe(64_000);
+    expect(audio.getParameters!().encodings[0]?.maxBitrate).toBeUndefined();
     toggleShare();
     await vi.waitFor(() =>
-      expect(video[0]!.getParameters!().encodings[0]?.maxBitrate).toBe(
-        2_500_000,
-      ),
+      expect(
+        video[0]!.getParameters!().encodings[0]?.maxBitrate,
+      ).toBeUndefined(),
     );
   });
   it("keeps mute and stays joined when renegotiation fails twice", async () => {
@@ -3236,7 +3311,7 @@ describe("stream negotiation stability", () => {
     await vi.waitFor(() =>
       expect(
         video.map((s) => s.getParameters!().encodings[0]?.maxBitrate),
-      ).toEqual(allocateVideoBitrates(["economy", "detail"])),
+      ).toEqual([undefined, undefined]),
     );
     expect(
       video.map((s) => s.getParameters!().encodings[0]?.maxFramerate),
@@ -3267,16 +3342,12 @@ describe("stream negotiation stability", () => {
     const flows = exported.samples.at(-1)!.voice!.flows;
     expect(flows.map((flow) => flow.source)).toEqual(["camera", "screen"]);
     expect(flows.map((flow) => flow.configuredMaxBitrateBps)).toEqual(
-      video.map((sender) => sender.getParameters!().encodings[0]!.maxBitrate),
-    );
-    expect(flows.map((flow) => flow.configuredMaxFps)).toEqual([15, 30]);
-    expect(exported.samples.at(-1)?.caps.videoSendBudget).toBe(
-      video.reduce(
-        (total, sender) =>
-          total + (sender.getParameters!().encodings[0]!.maxBitrate ?? 0),
-        0,
+      video.map(
+        (sender) => sender.getParameters!().encodings[0]!.maxBitrate ?? null,
       ),
     );
+    expect(flows.map((flow) => flow.configuredMaxFps)).toEqual([15, 30]);
+    expect(exported.samples.at(-1)?.caps.videoSendBudget).toBeNull();
     expect(exported.settings.cameraProfile).toBe("economy");
     expect(exported.settings.screenProfile).toBe("detail");
   });
@@ -3304,7 +3375,7 @@ describe("stream negotiation stability", () => {
         env.peers[1]?.senders
           .find((sender) => sender.track?.kind === "video")
           ?.getParameters?.().encodings[0],
-      ).toMatchObject({ maxBitrate: 800_000, maxFramerate: 15 }),
+      ).toMatchObject({ maxFramerate: 15 }),
     );
     expect(diagnosticsPolling().voice).toBe(true);
   });
@@ -3340,7 +3411,7 @@ describe("stream negotiation stability", () => {
     await vi.waitFor(() =>
       expect(
         video().map((sender) => sender.getParameters!().encodings[0]),
-      ).toEqual(Array(3).fill({ maxBitrate: 20_000_000, maxFramerate: 60 })),
+      ).toEqual(Array(3).fill({ maxFramerate: 60 })),
     );
     useMediaSettings.getState().patch({ videoUploadLimit: 9_000_000 });
     await vi.waitFor(() =>
@@ -3375,7 +3446,7 @@ describe("stream negotiation stability", () => {
     expect(
       env.peers[0]!.senders.find((sender) => sender.track?.kind === "audio")
         ?.getParameters!().encodings[0]?.maxBitrate,
-    ).toBe(64_000);
+    ).toBeUndefined();
     expect(useVoice.getState().status).toBe("joined");
   });
 
@@ -3390,7 +3461,7 @@ describe("stream negotiation stability", () => {
     });
     const video = env.peers[0]!.senders.find((s) => s.track?.kind === "video");
     await vi.waitFor(() =>
-      expect(video?.getParameters?.().encodings[0]?.maxBitrate).toBe(800_000),
+      expect(video?.getParameters?.().encodings[0]?.maxBitrate).toBeUndefined(),
     );
     expect(video?.getParameters?.().encodings[0]?.maxFramerate).toBe(15);
   });
@@ -3416,10 +3487,10 @@ describe("stream negotiation stability", () => {
     );
     expect(applied).toEqual(videoConstraintsFor("camera", "detail"));
     const video = env.peers[0]!.senders.find((s) => s.track?.kind === "video");
-    expect(video?.getParameters?.().encodings[0]?.maxBitrate).toBe(4_000_000);
+    expect(video?.getParameters?.().encodings[0]?.maxBitrate).toBeUndefined();
     expect(video?.getParameters?.().encodings[0]?.maxFramerate).toBe(30);
     const audio = env.peers[0]!.senders.find((s) => s.track?.kind === "audio");
-    expect(audio?.getParameters?.().encodings[0]?.maxBitrate).toBe(64_000);
+    expect(audio?.getParameters?.().encodings[0]?.maxBitrate).toBeUndefined();
     expect(useVoice.getState().muted).toBe(false);
     expect(useVoice.getState().deafened).toBe(false);
   });
@@ -3449,10 +3520,10 @@ describe("stream negotiation stability", () => {
       expect(useMediaSettings.getState().cameraProfileApply).toBe("next"),
     );
     const video = env.peers[0]!.senders.find((s) => s.track?.kind === "video");
-    expect(video?.getParameters?.().encodings[0]?.maxBitrate).toBe(800_000);
+    expect(video?.getParameters?.().encodings[0]?.maxBitrate).toBeUndefined();
     expect(video?.getParameters?.().encodings[0]?.maxFramerate).toBe(15);
     const audio = env.peers[0]!.senders.find((s) => s.track?.kind === "audio");
-    expect(audio?.getParameters?.().encodings[0]?.maxBitrate).toBe(128_000);
+    expect(audio?.getParameters?.().encodings[0]?.maxBitrate).toBeUndefined();
     expect(useVoice.getState().muted).toBe(true);
     expect(useVoice.getState().deafened).toBe(false);
     expect(useVoice.getState().camera).toBe(true);
@@ -3471,7 +3542,7 @@ describe("stream negotiation stability", () => {
     useMediaSettings.getState().patch({ cameraProfile: "economy" });
     await vi.waitFor(() =>
       expect(video.getParameters!().encodings.map((e) => e.maxBitrate)).toEqual(
-        [400_000, 400_000],
+        [undefined, undefined],
       ),
     );
     expect(video.getParameters!().encodings.map((e) => e.maxFramerate)).toEqual(
@@ -3521,7 +3592,7 @@ describe("stream negotiation stability", () => {
     );
     const video = env.peers[0]!.senders.find((s) => s.track?.kind === "video");
     await vi.waitFor(() =>
-      expect(video?.getParameters?.().encodings[0]?.maxBitrate).toBe(4_000_000),
+      expect(video?.getParameters?.().encodings[0]?.maxBitrate).toBeUndefined(),
     );
   });
 
@@ -3565,6 +3636,7 @@ describe("stream negotiation stability", () => {
   });
 
   it("keeps the newer budgets when an older profile update resumes", async () => {
+    useMediaSettings.getState().patch({ videoUploadLimit: 2_500_000 });
     const env = await connected();
     toggleCamera();
     toggleShare();
@@ -3583,7 +3655,9 @@ describe("stream negotiation stability", () => {
     // Detail then Sparsam, screen stays Ausgewogen. The stale screen share
     // from the Detail pass is 1_538_461.
     await vi.waitFor(() =>
-      expect(videoBitrates(env.peers[0])).toEqual([606_060, 1_893_939]),
+      expect(videoBitrates(env.peers[0])).toEqual(
+        allocateVideoBitrates(["economy", "balanced"], 2_500_000),
+      ),
     );
     expect(
       env.peers[0]!.senders.filter(
@@ -3593,6 +3667,7 @@ describe("stream negotiation stability", () => {
   });
 
   it("applies a stopped sender's freed budget on the same queue", async () => {
+    useMediaSettings.getState().patch({ videoUploadLimit: 2_500_000 });
     const env = await connected();
     toggleCamera();
     toggleShare();
@@ -3608,13 +3683,14 @@ describe("stream negotiation stability", () => {
     toggleShare();
     held.release();
     await vi.waitFor(() =>
-      expect(videoBitrates(env.peers[0])).toEqual([4_000_000]),
+      expect(videoBitrates(env.peers[0])).toEqual([2_500_000]),
     );
     expect(useVoice.getState().sharing).toBe(false);
     expect(useVoice.getState().camera).toBe(true);
   });
 
   it("does not let an in-flight SFU description restore an older budget", async () => {
+    useMediaSettings.getState().patch({ videoUploadLimit: 2_500_000 });
     const env = await connected();
     toggleCamera();
     toggleShare();
@@ -3637,7 +3713,9 @@ describe("stream negotiation stability", () => {
     expect(env.peers[0]?.signalingState).toBe("stable");
     useMediaSettings.getState().patch({ cameraProfile: "detail" });
     await vi.waitFor(() =>
-      expect(videoBitrates(env.peers[0])).toEqual([2_461_538, 1_538_461]),
+      expect(videoBitrates(env.peers[0])).toEqual(
+        allocateVideoBitrates(["detail", "balanced"], 2_500_000),
+      ),
     );
     const camera = env.peers[0]!.senders.find(
       (sender) => sender.track?.kind === "video",
@@ -3649,12 +3727,15 @@ describe("stream negotiation stability", () => {
     for (let i = 0; i < 20; i++) await Promise.resolve();
     held.release();
     await vi.waitFor(() =>
-      expect(videoBitrates(env.peers[0])).toEqual([606_060, 1_893_939]),
+      expect(videoBitrates(env.peers[0])).toEqual(
+        allocateVideoBitrates(["economy", "balanced"], 2_500_000),
+      ),
     );
     await vi.waitFor(() => expect(env.peers[0]?.signalingState).toBe("stable"));
   });
 
   it("does not block a new peer generation on the previous budget queue", async () => {
+    useMediaSettings.getState().patch({ videoUploadLimit: 2_500_000 });
     const env = await connected();
     toggleCamera();
     await vi.waitFor(() =>
@@ -3682,7 +3763,7 @@ describe("stream negotiation stability", () => {
       );
       toggleCamera();
       await vi.waitFor(() =>
-        expect(videoBitrates(env.peers[1])).toEqual([800_000]),
+        expect(videoBitrates(env.peers[1])).toEqual([2_500_000]),
       );
     } finally {
       held.release();
@@ -3764,14 +3845,14 @@ describe("display-source audio", () => {
       const sourceSender = env.peers[0]?.senders.find(
         (sender) => sender.track === audio,
       );
-      expect(sourceSender?.getParameters?.().encodings[0]?.maxBitrate).toBe(
-        192_000,
-      );
+      expect(
+        sourceSender?.getParameters?.().encodings[0]?.maxBitrate,
+      ).toBeUndefined();
       expect(
         env.peers[0]?.senders
           .find((sender) => sender.track === mic)
           ?.getParameters?.().encodings[0]?.maxBitrate,
-      ).toBe(24_000);
+      ).toBeUndefined();
       expect(
         (audio as MediaStreamTrack & { contentHint: string }).contentHint,
       ).toBe("music");

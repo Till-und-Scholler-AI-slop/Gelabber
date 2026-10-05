@@ -18,7 +18,7 @@ describe("media ticket shape", () => {
     expect(isOurTicket("abcdefghi0mn")).toBe(false);
   });
 
-  it("adds Opus FEC and a voice bitrate when fmtp is missing", () => {
+  it("adds Opus FEC without an application bitrate cap when fmtp is missing", () => {
     const sdp = [
       "v=0",
       "m=audio 9 UDP/TLS/RTP/SAVPF 111",
@@ -29,11 +29,9 @@ describe("media ticket shape", () => {
     const tuned = tuneAudioSdp(sdp);
     expect(tuned).toContain("a=fmtp:111 ");
     expect(tuned).toContain("useinbandfec=1");
-    expect(tuned).toContain(
-      `maxaveragebitrate=${AUDIO_QUALITY.normal.bitrate}`,
-    );
-    expect(tuned).toContain("stereo=0");
-    expect(opusMaxAverageBitrate(tuned)).toBe(AUDIO_QUALITY.normal.bitrate);
+    expect(tuned).not.toContain("maxaveragebitrate");
+    expect(tuned).toContain("stereo=1");
+    expect(opusMaxAverageBitrate(tuned)).toBeNull();
   });
 
   it("writes the chosen quality bitrate onto Opus fmtp", () => {
@@ -76,13 +74,11 @@ describe("media ticket shape", () => {
     expect(tuned.match(/a=fmtp:111 /g)).toHaveLength(1);
     expect(tuned).toContain("a=rtcp-fb:111 transport-cc");
     expect(tuned).toContain("useinbandfec=1");
-    expect(tuned).toContain("stereo=0");
-    expect(tuned).toContain(
-      `maxaveragebitrate=${AUDIO_QUALITY.normal.bitrate}`,
-    );
+    expect(tuned).toContain("stereo=1");
+    expect(tuned).not.toContain("maxaveragebitrate");
     expect(tuned).toContain("minptime=10");
     expect(tuned).not.toContain("useinbandfec=0");
-    expect(tuned).not.toContain("stereo=1");
+    expect(tuned).toContain("sprop-stereo=0");
     expect(tuned).not.toContain("maxaveragebitrate=24000");
   });
 });
@@ -186,10 +182,11 @@ describe("source music SDP", () => {
       new Set(["2"]),
     );
     const sections = tuned.split(/\r\nm=/).slice(1);
-    expect(sections[0]).toContain("usedtx=1;stereo=0;maxaveragebitrate=24000");
+    expect(sections[0]).toContain("usedtx=1;stereo=1;maxaveragebitrate=24000");
     for (const source of sections.slice(1)) {
       expect(source).toContain("useinbandfec=1");
-      expect(source).toContain("usedtx=0;stereo=1;maxaveragebitrate=192000");
+      expect(source).toContain("usedtx=0;stereo=1");
+      expect(source).not.toContain("maxaveragebitrate");
       expect(source).toContain("sprop-stereo=1");
     }
     expect(publishedTrackIds(tuned)).toEqual(
@@ -207,6 +204,6 @@ describe("source music SDP", () => {
     const tuned = tuneAudioSdp(sdp, 64_000);
     expect(tuned).toContain("usedtx=0");
     expect(tuned).toContain("stereo=1");
-    expect(tuned).toContain("maxaveragebitrate=192000");
+    expect(tuned).not.toContain("maxaveragebitrate");
   });
 });
