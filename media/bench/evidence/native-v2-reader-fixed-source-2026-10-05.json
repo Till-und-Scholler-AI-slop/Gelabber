@@ -1,0 +1,14 @@
+{
+  "base_revision": "16d4d9f03487c2feacdb5d1def7e7e2d92033fc7",
+  "paths": {
+    "media/bench/rtp-source/src/audio.rs": "b823cba708c81fdd38c90c745cf55ebcfb687db4806dab5ab699ba5f6ceb8a44",
+    "media/bench/rtp-source/src/full_peer.rs": "e23c503f3159861f66be9b429d39ff1e41e1ed03cbb474bfc73c53befb647a67",
+    "media/bench/rtp-source/src/pn_audio.rs": "f6b2cb4384bb677dfb1d811d79774b89c15b5b7533185ff1365ce8de58bf9f29",
+    "media/bench/prepare-native-runtime.py": "ac69f4279af4b5aaabe3340e94af376f03eabd373388b6e92bb6a8ae42ee8a85",
+    "media/bench/tests/test_native_pn_import.py": "72176a1dedfde86db924f2ccea5f4acfc1461f183dc954ca838ae2d4aea9cb8c",
+    "media/bench/NATIVE-PEER-V2.md": "1d0abf2c58549528ea494f9a4c63ea170552560d2c77dfc5cb28fe45c0d3d486"
+  },
+  "patch_sha256": "ed4215b9a50c6cf269c5f39ebdf20ba4b71789353ab6dccaf47a41e97f57bda4",
+  "native_binary_sha256": "328d63a837a1db474fd3078ade33f7082a97daf029be1e4e641a5ba448966baf",
+  "scope": "fixed source/offline only; no native replay/PCM/matrix qualification"
+}

@@ -3,6 +3,7 @@
 mod archive;
 mod audio;
 mod clock;
+mod pn_audio;
 mod unique_json;
 use archive::{Archive, Result};
 use audio::{AudioArchive, Decoder};
@@ -446,6 +447,85 @@ async fn replay_audio(
     Ok(())
 }
 
+async fn replay_audio_v2(
+    archive: Arc<AudioArchive>,
+    track: Arc<TrackLocalStaticRTP>,
+    anchor: clock::Anchor,
+    reports: Reports,
+    ssrc: u32,
+    hold_ms: u64,
+    test_enabled: bool,
+) -> Result<()> {
+    let total = archive.metadata["duration_seconds"]
+        .as_u64()
+        .ok_or("finite total missing")?;
+    let expected = archive.packets.len() as u64;
+    let key = archive.kind.clone();
+    let hold_ns = hold_ms * 1_000_000;
+    let (mut packets, mut max_late, mut min_hold, mut max_hold) = (0u64, 0u64, u64::MAX, 0u64);
+    for index in 0..archive.packets.len() {
+        let offset = Duration::from_millis(index as u64 * 20);
+        let original_due = anchor.ns + index as u64 * 20_000_000;
+        let shifted_due = original_due + hold_ns;
+        let due = anchor.instant + offset + Duration::from_millis(hold_ms);
+        tokio::time::sleep_until(due).await;
+        let before = clock::monotonic_ns()?;
+        let before_late = before
+            .checked_sub(shifted_due)
+            .ok_or("V2 enqueue bracket precedes shifted source plan")?;
+        if before_late > 20_000_000 {
+            reports
+                .lock()
+                .unwrap()
+                .get_mut(&key)
+                .ok_or("missing V2 prefix")?["schedule_failure"] = json!({
+                "packet_ordinal":index,"source_sample_ordinal":index*960,"planned_mono_ns":original_due.to_string(),
+                "shifted_due_mono_ns":shifted_due.to_string(),"before_enqueue_ns":before.to_string(),
+                "before_lateness_ns":before_late.to_string(),"expected_packet_count":expected,"missing_packet_count":expected-packets});
+            return Err(format!("{key} V2 source missed 20ms packet deadline").into());
+        }
+        track.write_rtp(archive.packet(index, 0, ssrc)).await?;
+        let after = clock::monotonic_ns()?;
+        let late = after
+            .checked_sub(shifted_due)
+            .ok_or("V2 nonmonotonic enqueue after")?;
+        min_hold = min_hold.min(before - original_due);
+        max_hold = max_hold.max(after - original_due);
+        max_late = max_late.max(late);
+        packets += 1;
+        let state = json!({"running":true,"completed":false,"end_reached":false,"source_policy_valid":late<=20_000_000,
+            "source_policy_scope":"finite observed enqueue prefix; full archive/tail count checked on completion",
+            "source_uid":if key=="mic" {0} else {64},"ssrc":ssrc,"archive_sha256":archive.sha256,
+            "packets_enqueued":packets,"expected_packet_count":expected,"rtp_payload_bytes_enqueued":packets*320,
+            "last_source_sample_ordinal":index*960,"last_planned_mono_ns":original_due.to_string(),
+            "last_enqueue_before_ns":before.to_string(),"last_enqueued_mono_ns":after.to_string(),
+            "last_enqueue_bracket_ns":(after-before).to_string(),"max_schedule_lateness_ns":max_late.to_string(),
+            "test_hold_enabled":test_enabled,"audio_hold_ms":hold_ms,"hold_applied_packets":if test_enabled {packets} else {0},
+            "min_actual_hold_ns":min_hold.to_string(),"max_actual_hold_ns":max_hold.to_string(),"timeline":anchor.evidence()});
+        reports.lock().unwrap().insert(key.clone(), state);
+        if late > 20_000_000 {
+            reports.lock().unwrap().get_mut(&key).unwrap()["schedule_failure"] = json!({
+                "packet_ordinal":index,"source_sample_ordinal":index*960,"planned_mono_ns":original_due.to_string(),
+                "shifted_due_mono_ns":shifted_due.to_string(),"before_enqueue_ns":before.to_string(),
+                "after_enqueue_ns":after.to_string(),"after_lateness_ns":late.to_string(),
+                "expected_packet_count":expected,"missing_packet_count":expected-packets});
+            return Err(format!("{key} V2 enqueue missed 20ms packet deadline").into());
+        }
+    }
+    // Hold also applies to every tail packet. Do not end at unheld total_seconds.
+    tokio::time::sleep_until(
+        anchor.instant + Duration::from_secs(total) + Duration::from_millis(hold_ms),
+    )
+    .await;
+    let mut reports = reports.lock().unwrap();
+    let state = reports.get_mut(&key).ok_or("missing completed V2 report")?;
+    state["running"] = json!(false);
+    state["completed"] = json!(true);
+    state["end_reached"] = json!(true);
+    state["source_policy_valid"] = json!(packets == expected);
+    Ok(())
+}
+
 #[cfg(test)]
 mod signaling_tests {
     use super::*;
@@ -570,20 +650,35 @@ async fn replay_video(
     anchor: clock::Anchor,
     seconds: u64,
     reports: Reports,
+    finite: bool,
 ) -> Result<()> {
     let mut packets = 0u64;
     let mut frames = 0u64;
     let mut bytes = 0u64;
     let mut max_late = 0u64;
-    for cycle in 0..seconds / archive.period.as_secs() {
+    for cycle in 0..seconds.div_ceil(archive.period.as_secs()) {
         for (index, record) in archive.records.iter().enumerate() {
-            let due = anchor.instant + archive.period * cycle as u32 + record.due;
+            let offset = archive.period * cycle as u32 + record.due;
+            if offset >= Duration::from_secs(seconds) {
+                break;
+            }
+            let due = anchor.instant + offset;
             tokio::time::sleep_until(due).await;
             let late = tokio::time::Instant::now()
                 .saturating_duration_since(due)
                 .as_nanos() as u64;
             max_late = max_late.max(late);
             if late > 1_000_000_000 / archive::FPS {
+                if finite {
+                    reports
+                        .lock()
+                        .unwrap()
+                        .get_mut("video")
+                        .ok_or("missing V2 video prefix")?["schedule_failure"] = json!({
+                    "frame_ordinal":frames,"packet_ordinal":packets,"planned_mono_ns":(anchor.ns+offset.as_nanos() as u64).to_string(),
+                    "before_enqueue_ns":clock::monotonic_ns()?.to_string(),"before_lateness_ns":late.to_string(),
+                    "expected_frame_count":seconds*60,"missing_frame_count":seconds*60-frames});
+                }
                 return Err("video source missed frame deadline".into());
             }
             let packet = archive.packet(index, cycle);
@@ -597,6 +692,16 @@ async fn replay_video(
                 .as_nanos() as u64;
             max_late = max_late.max(enqueue_late);
             if enqueue_late > 1_000_000_000 / archive::FPS {
+                if finite {
+                    reports
+                        .lock()
+                        .unwrap()
+                        .get_mut("video")
+                        .ok_or("missing V2 video prefix")?["schedule_failure"] = json!({
+                    "frame_ordinal":frames,"packet_ordinal":packets,"planned_mono_ns":(anchor.ns+offset.as_nanos() as u64).to_string(),
+                    "after_enqueue_ns":clock::monotonic_ns()?.to_string(),"after_lateness_ns":enqueue_late.to_string(),
+                    "expected_frame_count":seconds*60,"missing_frame_count":seconds*60-frames});
+                }
                 return Err("video enqueue missed frame deadline".into());
             }
             packets += 1;
@@ -620,10 +725,18 @@ async fn replay_video(
 
 #[tokio::main(worker_threads = 2)]
 async fn main() -> Result<()> {
-    let args: Vec<String> = std::env::args().collect();
+    let mut args: Vec<String> = std::env::args().collect();
+    let test_hold_enabled = args.get(1).map(String::as_str) == Some("--allow-test-audio-hold");
+    if test_hold_enabled {
+        args.remove(1);
+        if args.get(1).map(String::as_str) != Some("--peer0") {
+            return Err("test hold flag is only allowed before --peer0".into());
+        }
+    }
     if args.get(1).map(String::as_str) == Some("--inspect-audio") && args.len() == 4 {
         let mic = AudioArchive::read(Path::new(&args[2]), "mic")?;
         let source = AudioArchive::read(Path::new(&args[3]), "source")?;
+        pn_audio::shared_pair(&mic, &source)?;
         println!(
             "{}",
             json!({"mic":{"sha256":mic.sha256,"metadata":mic.metadata},"source":{"sha256":source.sha256,"metadata":source.metadata},
@@ -642,9 +755,13 @@ async fn main() -> Result<()> {
     let video = Arc::new(Archive::parse(&std::fs::read(&args[2])?)?);
     let mic = Arc::new(AudioArchive::read(Path::new(&args[3]), "mic")?);
     let source = Arc::new(AudioArchive::read(Path::new(&args[4]), "source")?);
-    let provenance = json!({"instrument":"fixed-native-peer0-v1","binary_sha256":archive::hash(&std::fs::read(std::env::current_exe()?)?),
-        "video":{"archive_sha256":video.sha256,"metadata":video.metadata},"mic":{"archive_sha256":mic.sha256,"metadata":mic.metadata},
-        "source":{"archive_sha256":source.sha256,"metadata":source.metadata},"decoder":audio::decoder_provenance()?,
+    pn_audio::shared_pair(&mic, &source)?;
+    if test_hold_enabled && !mic.unlooped() {
+        return Err("test hold flag requires finite V2 audio archives".into());
+    }
+    let provenance = json!({"instrument":if mic.unlooped(){"fixed-native-peer0-v2"}else{"fixed-native-peer0-v1"},"binary_sha256":archive::hash(&std::fs::read(std::env::current_exe()?)?),
+        "video":{"archive_sha256":video.sha256,"metadata":video.metadata},"mic":{"archive_sha256":mic.sha256,"metadata":mic.metadata,"import_verified":true},
+        "source":{"archive_sha256":source.sha256,"metadata":source.metadata,"import_verified":true},"decoder":audio::decoder_provenance()?,
         "topology":"native peer0 replacing one browser; adapters/full N-peer graph not yet qualified","comparison_available":false,"pcm_latency_calibrated":false});
     if args[1] == "--inspect" {
         println!("{provenance}");
@@ -661,6 +778,7 @@ async fn main() -> Result<()> {
     let mut peers: BTreeMap<String, Peer> = BTreeMap::new();
     let reports: Reports = Arc::new(Mutex::new(BTreeMap::new()));
     let mut replay_tasks: Vec<JoinHandle<()>> = Vec::new();
+    let mut start_evidence: Option<Value> = None;
     println!("{}", json!({"ready":true,"provenance":provenance}));
     for line in std::io::stdin().lock().lines() {
         let line = line?;
@@ -687,7 +805,10 @@ async fn main() -> Result<()> {
                     }).collect::<std::result::Result<_,_>>()?;
                     let negotiated=negotiated_senders(p).await?;
                     status.insert(id.clone(),json!({"connection":p.state.borrow().to_string(),"outbound":outbound,"codecs":codecs,"negotiated_senders":negotiated,"transport":stats.transport(),"received":p.received.lock().unwrap().clone()}));}
-                return Ok(json!({"peers":status,"sources":reports.lock().unwrap().clone(),"clock":"CLOCK_MONOTONIC","monoNs":clock::monotonic_ns()?.to_string()}));
+                let mut value=json!({"peers":status,"sources":reports.lock().unwrap().clone(),"clock":"CLOCK_MONOTONIC","monoNs":clock::monotonic_ns()?.to_string()});
+                if let Some(start)=&start_evidence {for key in ["timeline","measurement_seconds","total_seconds","measurement_end_sample_ordinal","tail_samples",
+                    "test_hold_enabled","audio_hold_ms","comparison_available","pcm_latency_calibrated"] {value[key]=start[key].clone();}}
+                return Ok(value);
             }
             let p=peers.get(id).ok_or("unknown peer id; create first")?;
             match op {
@@ -702,22 +823,40 @@ async fn main() -> Result<()> {
                 "ice" => {p.pc.add_ice_candidate(serde_json::from_value(request["candidate"].clone())?).await?;Ok(json!({"ok":true}))}
                 "start" => {
                     if !replay_tasks.is_empty() || p.tracks.len()!=3 {return Err("one start requires full three-track publisher".into());}
-                    let seconds=request["seconds"].as_u64().ok_or("duration required")?;
-                    if seconds==0 || seconds>3600 || seconds%10!=0 {return Err("duration must be whole ten-second periods <=3600".into());}
+                    let (seconds,hold_ms)=pn_audio::start_policy(&request,&mic,test_hold_enabled)?;
                     let mut state=p.state.subscribe();tokio::time::timeout(Duration::from_secs(30),state.wait_for(|s|matches!(s,RTCPeerConnectionState::Connected|RTCPeerConnectionState::Failed|RTCPeerConnectionState::Closed))).await??;
                     if *state.borrow()!=RTCPeerConnectionState::Connected {return Err("native publisher not connected".into());}
                     let anchor=clock::Anchor::new()?;
+                    if mic.unlooped() {
+                        start_evidence=Some(json!({"started":true,"timeline":anchor.evidence(),"total_seconds":seconds,
+                            "measurement_seconds":mic.metadata["measurement_seconds"],"measurement_end_sample_ordinal":mic.metadata["measurement_end_sample_ordinal"],
+                            "tail_samples":mic.metadata["tail_samples"],"test_hold_enabled":test_hold_enabled,"audio_hold_ms":hold_ms,
+                            "comparison_available":false,"pcm_latency_calibrated":false}));
+                        for (name,count) in [("mic",mic.packets.len()),("source",source.packets.len()),("video",0)] {
+                            reports.lock().unwrap().insert(name.to_owned(),json!({"running":true,"completed":false,"source_policy_valid":false,
+                                "packets_enqueued":0,"expected_packet_count":count,"timeline":anchor.evidence()}));
+                        }
+                    }
                     for (name,track) in &p.tracks {
                         let name=name.clone(); let track=track.clone(); let reports=reports.clone(); let anchor=anchor.clone();
                         let video=video.clone();let mic=mic.clone();let source=source.clone();
+                        let finite=mic.unlooped();
                         replay_tasks.push(tokio::spawn(async move {let result=match name.as_str(){
+                            "mic" if mic.unlooped()=>replay_audio_v2(mic,track,anchor,reports.clone(),MIC,hold_ms,test_hold_enabled).await,
+                            "source" if source.unlooped()=>replay_audio_v2(source,track,anchor,reports.clone(),SOURCE,hold_ms,test_hold_enabled).await,
                             "mic"=>replay_audio(mic,track,anchor,seconds,reports.clone(),MIC).await,
                             "source"=>replay_audio(source,track,anchor,seconds,reports.clone(),SOURCE).await,
-                            _=>replay_video(video,track,anchor,seconds,reports.clone()).await};
-                            if let Err(error)=result {reports.lock().unwrap().insert(name,json!({"running":false,"source_policy_valid":false,"error":error.to_string()}));}
+                            _=>replay_video(video,track,anchor,seconds,reports.clone(),finite).await};
+                            if let Err(error)=result {
+                                let mut all=reports.lock().unwrap();
+                                if let Some(state)=all.get_mut(&name).filter(|_|finite) {
+                                    state["running"]=json!(false);state["completed"]=json!(false);state["end_reached"]=json!(false);
+                                    state["source_policy_valid"]=json!(false);state["error"]=json!(error.to_string());
+                                }else{all.insert(name,json!({"running":false,"source_policy_valid":false,"error":error.to_string()}));}
+                            }
                         }));
                     }
-                    Ok(json!({"started":true,"timeline":anchor.evidence()}))
+                    Ok(start_evidence.clone().unwrap_or_else(||json!({"started":true,"timeline":anchor.evidence()})))
                 }
                 "bind" => {
                     let ssrc=request["ssrc"].as_u64().filter(|ssrc|*ssrc<=u32::MAX as u64).ok_or("valid SSRC required")?;

@@ -41,7 +41,7 @@ unsafe extern "C" {
     fn opus_encoder_ctl(state: *mut c_void, request: i32, ...) -> i32;
 }
 
-fn configured_lookahead() -> Result<i32> {
+pub(crate) fn configured_lookahead() -> Result<i32> {
     let mut error = 0;
     let encoder = unsafe { opus_encoder_create(SAMPLE_RATE, 1, 2049, &mut error) };
     if encoder.is_null() || error != 0 {
@@ -74,7 +74,7 @@ fn configured_lookahead() -> Result<i32> {
 
 // Same Neumaier sum as CPython 3.13/3.14's float sum in opus-fixture.py.
 // Ordinary Iterator::sum changes near-zero PCM bits for the four-tone source.
-fn compensated_sum(values: impl Iterator<Item = f64>) -> f64 {
+pub(crate) fn compensated_sum(values: impl Iterator<Item = f64>) -> f64 {
     let (mut sum, mut correction) = (0f64, 0f64);
     for value in values {
         let next = sum + value;
@@ -200,6 +200,9 @@ pub struct AudioArchive {
 }
 impl AudioArchive {
     pub fn parse(data: &[u8], expected_kind: &str) -> Result<Self> {
+        if data.get(..8) == Some(b"GPOPUS2\n") {
+            return crate::pn_audio::parse(data, expected_kind);
+        }
         if !matches!(expected_kind, "mic" | "source")
             || !(12..=262_144).contains(&data.len())
             || &data[..8] != MAGIC
@@ -333,6 +336,9 @@ impl AudioArchive {
     }
     pub fn read(path: &Path, kind: &str) -> Result<Self> {
         Self::parse(&fs::read(path)?, kind)
+    }
+    pub fn unlooped(&self) -> bool {
+        self.metadata["schema"] == 2
     }
     pub fn packet(&self, index: usize, cycle: u64, ssrc: u32) -> Packet {
         let ordinal = cycle * PACKETS as u64 + index as u64;

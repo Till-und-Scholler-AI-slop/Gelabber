@@ -1,0 +1,6 @@
+FROM gelabber-bench/current:debian13
+USER root
+RUN apt-get update && apt-get install -y --no-install-recommends git openssh-client python3 iproute2 libglib2.0-0t64 libnss3 libnspr4 libatk1.0-0t64 libatk-bridge2.0-0t64 libdbus-1-3 libx11-6 libxcomposite1 libxdamage1 libxext6 libxfixes3 libxrandr2 libgbm1 libexpat1 libxcb1 libxkbcommon0 libasound2t64 libatspi2.0-0t64 libxrender1 libxi6 libxau6 libxdmcp6 ca-certificates && dpkg-query -W > /fixture-runtime-packages.txt && rm -rf /var/lib/apt/lists/*
+RUN groupadd -g 1000 fixture && useradd -u 1000 -g 1000 -M -d /tmp fixture
+ENTRYPOINT []
+CMD ["sleep", "infinity"]

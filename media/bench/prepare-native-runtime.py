@@ -40,14 +40,20 @@ def main():
     parser.add_argument('--output', type=Path, required=True)
     parser.add_argument('--execute', action='store_true')
     parser.add_argument('--keep-image', action='store_true')
+    parser.add_argument('--pn-seconds', type=int, help='finite PN measurement20..360s plus1s tail; default retains V1')
     args = parser.parse_args()
     if args.base_image != BASE:
         parser.error('this control requires the independently recorded Debian13 generator base image ID')
+    if args.pn_seconds is not None and not 20 <= args.pn_seconds <= 360:
+        parser.error('PN measurement requires20..360 whole seconds; archive includes an additional1s tail')
     inputs = {'libopus.so.0': args.library.resolve(), 'node': args.node.resolve(),
               'native-peer': args.native_binary.resolve(), 'video.rtpbin': args.video_archive.resolve(),
               'opus-fixture.py': ROOT / 'opus-fixture.py', 'prepare-native-runtime.py': Path(__file__).resolve()}
-    for name in ('Cargo.toml', 'Cargo.lock', 'src/full_peer.rs', 'src/archive.rs', 'src/audio.rs', 'src/clock.rs', 'src/unique_json.rs'):
+    for name in ('Cargo.toml', 'Cargo.lock', 'src/full_peer.rs', 'src/archive.rs', 'src/audio.rs', 'src/clock.rs', 'src/pn_audio.rs', 'src/unique_json.rs'):
         inputs['rust-' + name.replace('/', '-')] = ROOT / 'rtp-source' / name
+    if args.pn_seconds is not None:
+        for name in ('pn-opus-fixture.py', 'pn-opus-markers.mjs', 'pcm-kernel.mjs'):
+            inputs[name] = ROOT / name
     hashes = {name: digest(path) for name, path in inputs.items()}
     if hashes['libopus.so.0'] != OPUS_SHA or hashes['node'] != NODE_SHA:
         parser.error('actual libopus1.6.1 or Node26.8.2 binary differs from frozen pin')
@@ -60,6 +66,7 @@ def main():
         'execute': args.execute, 'run_id': run_id, 'image': image, 'base_image_id': BASE,
         'input_hashes': hashes, 'dockerfile': dockerfile, 'limits': {'cpu': 1, 'memory': '512m', 'pids': 256},
         'network': 'none', 'comparison_available': False, 'pcm_latency_calibrated': False,
+        'pn_measurement_seconds': args.pn_seconds, 'pn_shared_run_id': str(uuid.uuid4()) if args.pn_seconds is not None else None,
         'git_revision': run(['git', '-C', str(ROOT), 'rev-parse', 'HEAD']),
         'git_dirty': bool(run(['git', '-C', str(ROOT), 'status', '--porcelain']))}
     if not args.execute:
@@ -96,11 +103,19 @@ def main():
         report['executed_native_ldd'] = run(common + ['ldd', '/fixture-bin/native-peer'])
         report['executed_library_ldd'] = run(common + ['ldd', '/fixture-lib/libopus.so.0'])
         report['executed_glibc'] = run(common + ['getconf', 'GNU_LIBC_VERSION'])
+        report['executed_python'] = run(common + ['python3', '--version'])
         for kind in ('mic', 'source'):
-            run(common + ['python3', '/inputs/opus-fixture.py', '--library', '/fixture-lib/libopus.so.0',
-                'build', kind, '/controls/' + kind + '.opusbin', '--output', '/controls/' + kind + '.json', '--pcm', '/controls/' + kind + '.f32'])
-            inspected = json.loads(run(common + ['python3', '/inputs/opus-fixture.py', '--library', '/fixture-lib/libopus.so.0',
-                'inspect', '/controls/' + kind + '.opusbin']))
+            if args.pn_seconds is None:
+                build = ['python3', '/inputs/opus-fixture.py', '--library', '/fixture-lib/libopus.so.0',
+                    'build', kind, '/controls/' + kind + '.opusbin', '--output', '/controls/' + kind + '.json', '--pcm', '/controls/' + kind + '.f32']
+                inspect = ['python3', '/inputs/opus-fixture.py', '--library', '/fixture-lib/libopus.so.0', 'inspect', '/controls/' + kind + '.opusbin']
+            else:
+                helper = ['python3', '/inputs/pn-opus-fixture.py', '--library', '/fixture-lib/libopus.so.0', '--node', '/fixture-bin/node']
+                build = helper + ['build', kind, '/controls/' + kind + '.opusbin', '--seconds', str(args.pn_seconds),
+                    '--run-id', report['pn_shared_run_id'], '--output', '/controls/' + kind + '.json', '--pcm', '/controls/' + kind + '.f32']
+                inspect = helper + ['inspect', kind, '/controls/' + kind + '.opusbin']
+            run(common + build)
+            inspected = json.loads(run(common + inspect))
             (controls / (kind + '-inspect.json')).write_text(json.dumps(inspected, indent=2))
         report['native_import'] = json.loads(run(common + ['/fixture-bin/native-peer', '--inspect', '/inputs/video.rtpbin',
             '/controls/mic.opusbin', '/controls/source.opusbin']))

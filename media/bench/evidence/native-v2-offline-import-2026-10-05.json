@@ -1,0 +1,131 @@
+{
+  "schema": 1,
+  "scope": "actual offline finite native Opus PN import only; no peer connection, RTP replay, native/browser clock calibration, engine comparison or production acceptance",
+  "comparison_available": false,
+  "pcm_latency_calibrated": false,
+  "native_replay_qualified": false,
+  "runtime_report_sha256": "5988b5622a8112401148e9c7fb897f67dedb4bc78cd47d796e0ed5680395fac6",
+  "host_241s_import_report_sha256": "5fce452e36f1828378629564acd47a3d3e06f2cb7605ed1449c73ca37ed58113",
+  "source_revision": "16d4d9f03487c2feacdb5d1def7e7e2d92033fc7",
+  "source_dirty": true,
+  "input_sha256": {
+    "libopus.so.0": "ce07b3578b14e1d25ed603670f2336cd2b32b7f24c2c5b9aab8bbeb0f410b8d6",
+    "node": "8a22a371fd85aecf5411636574309f6380fbc42694aaf0651a089a8ef9c44e52",
+    "native-peer": "328d63a837a1db474fd3078ade33f7082a97daf029be1e4e641a5ba448966baf",
+    "video.rtpbin": "0b15fe7fda29da794802307c88fe23053ad342bd80c485d441e121d325d663db",
+    "opus-fixture.py": "53320f8dcc1f1cc7f2c508993b988ff80451c8278f68d0781361262c8e1d8ecf",
+    "prepare-native-runtime.py": "ac69f4279af4b5aaabe3340e94af376f03eabd373388b6e92bb6a8ae42ee8a85",
+    "rust-Cargo.toml": "96c6a715a384b9db0fb9aeb94b28ab410e51af1357218bacd20989301f03e5b9",
+    "rust-Cargo.lock": "e6ca3aa60d6eb9e1e071626c5c1f209c436436c00cc51d979ef115ef665dbc7b",
+    "rust-src-full_peer.rs": "e23c503f3159861f66be9b429d39ff1e41e1ed03cbb474bfc73c53befb647a67",
+    "rust-src-archive.rs": "dbdb298d58d6aa1d6e0941c7c479312c2034531ce797302c96958c28120aa906",
+    "rust-src-audio.rs": "b823cba708c81fdd38c90c745cf55ebcfb687db4806dab5ab699ba5f6ceb8a44",
+    "rust-src-clock.rs": "2620ec0ff38636cbc110f9aacb44c22d2ec7b6de9d7217ab1907a408405e9ef7",
+    "rust-src-pn_audio.rs": "f6b2cb4384bb677dfb1d811d79774b89c15b5b7533185ff1365ce8de58bf9f29",
+    "rust-src-unique_json.rs": "8129c85b2c14fa6e0905902aaa7a200912e5f8b5f2eae5120a697f5b534f6023",
+    "pn-opus-fixture.py": "ae0482d5e4dfc4bf27d5a70057a4a6b3b1b9e257658ec33500b904a62166ec1b",
+    "pn-opus-markers.mjs": "2f76c41845460877880739739344de769d96dc27f43c0e8bb79764bb52b2fb75",
+    "pcm-kernel.mjs": "660f8150da14ce932b6e23effe52c64a3be851af1cff4451fdf699d78443264b"
+  },
+  "runtime": {
+    "image_id": "sha256:085c5910d926e2c372244a905e2dfa7091e99db5090899b79a7eb552f8ea2688",
+    "image_labels": {
+      "com.centurylinklabs.watchtower.enable": "false",
+      "gelabber.bench.binary_sha256": "a2fd497a4836ea1aba57baa8e1216c9fae73476a75ba0e8bad4ab37875285701",
+      "gelabber.bench.fixture": "netns-20261005",
+      "gelabber.bench.libopus.sha256": "ce07b3578b14e1d25ed603670f2336cd2b32b7f24c2c5b9aab8bbeb0f410b8d6",
+      "gelabber.bench.native-runtime": "gelabber-native-runtime-81382c3549c8",
+      "gelabber.bench.native.sha256": "328d63a837a1db474fd3078ade33f7082a97daf029be1e4e641a5ba448966baf",
+      "gelabber.bench.node.sha256": "8a22a371fd85aecf5411636574309f6380fbc42694aaf0651a089a8ef9c44e52",
+      "org.opencontainers.image.revision": "de1ae34647b2c4f0631dfc16fd5b8ea7d970184a"
+    },
+    "executed_python": "Python 3.13.5",
+    "executed_node": "v26.8.2",
+    "executed_glibc": "glibc 2.41",
+    "executed_native_ldd": "linux-vdso.so.1 (0x00007141a5828000)\n\tlibopus.so.0 => /fixture-lib/libopus.so.0 (0x00007141a4d89000)\n\tlibgcc_s.so.1 => /lib/x86_64-linux-gnu/libgcc_s.so.1 (0x00007141a4d59000)\n\tlibm.so.6 => /lib/x86_64-linux-gnu/libm.so.6 (0x00007141a4c69000)\n\tlibc.so.6 => /lib/x86_64-linux-gnu/libc.so.6 (0x00007141a4a75000)\n\t/lib64/ld-linux-x86-64.so.2 (0x00007141a582b000)",
+    "executed_library_ldd": "linux-vdso.so.1 (0x00007f444bef3000)\n\tlibm.so.6 => /lib/x86_64-linux-gnu/libm.so.6 (0x00007f444b9ff000)\n\tlibc.so.6 => /lib/x86_64-linux-gnu/libc.so.6 (0x00007f444b80b000)\n\t/lib64/ld-linux-x86-64.so.2 (0x00007f444bef6000)",
+    "limits": {
+      "cpu": 1,
+      "memory": "512m",
+      "pids": 256
+    },
+    "network": "none",
+    "offline_controls_valid": true,
+    "cleanup_valid": true
+  },
+  "actual_decoder": {
+    "output": "48000Hz mono float32; no acoustic device or playout/latency claim",
+    "path": "/fixture-lib/libopus.so.0",
+    "sha256": "ce07b3578b14e1d25ed603670f2336cd2b32b7f24c2c5b9aab8bbeb0f410b8d6",
+    "version": "libopus 1.6.1"
+  },
+  "new_runtime_archives": {
+    "mic": {
+      "archive_sha256": "74c1e302a7726b9a73eeb9844f367f7feebd8d1afa8abb7b51ad6cb42678694f",
+      "measurement_seconds": 20,
+      "total_seconds": 21,
+      "packets": 1050,
+      "decoded_samples": 1008000,
+      "decoded_float_sha256": "45ee34694a4b334188e9cf50df83a9e2fdba9e7ab7d5d49c53517c6740f70c5c",
+      "run_id": "906e85d0-e39e-404f-9aa7-b994e33f2f8a",
+      "codebook_sha256": "9c4360d17ad5763bb2c5c005f4302b45cbad8a9cc723413ed59b4e89c456a6b5",
+      "markers": 10,
+      "maximum_offline_residual_samples": 4,
+      "lookahead_samples": 312
+    },
+    "source": {
+      "archive_sha256": "d2ecf17879d6fad988feeabeb8d39fd44f4af141a2068ba40c364bfde7fe3a2d",
+      "measurement_seconds": 20,
+      "total_seconds": 21,
+      "packets": 1050,
+      "decoded_samples": 1008000,
+      "decoded_float_sha256": "fa875217f3f07bb80bf03a160b47066cb03599c26aafcd8301337aded96b71b3",
+      "run_id": "906e85d0-e39e-404f-9aa7-b994e33f2f8a",
+      "codebook_sha256": "9c4360d17ad5763bb2c5c005f4302b45cbad8a9cc723413ed59b4e89c456a6b5",
+      "markers": 10,
+      "maximum_offline_residual_samples": 4,
+      "lookahead_samples": 312
+    }
+  },
+  "host_241s_archives": {
+    "mic": {
+      "archive_sha256": "0ce10eb85d20844416e8f5c88e14622208e2b62c17085b83167363591eb152c1",
+      "measurement_seconds": 240,
+      "total_seconds": 241,
+      "packets": 12050,
+      "decoded_samples": 11568000,
+      "decoded_float_sha256": "f85303eccfd31799545ecb5178c746053ca8913c7269f43a6952a0bf051f8b51",
+      "run_id": "6f090a38-31c4-45b5-9c62-c711a3d5e5da",
+      "codebook_sha256": "91ed1302f9887369e936186168cab9a458c5fbc75d9e142b94a8a7010605c91d",
+      "markers": 120,
+      "maximum_offline_residual_samples": 4,
+      "lookahead_samples": 312
+    },
+    "source": {
+      "archive_sha256": "2de60b13ea9ab9c442dee8bcba480617976ef278c475f4a65a2e1c7242601a68",
+      "measurement_seconds": 240,
+      "total_seconds": 241,
+      "packets": 12050,
+      "decoded_samples": 11568000,
+      "decoded_float_sha256": "5205715451aee66a19191b64060c0f8e7630b0c22c6e5b51ab03435ef8e753da",
+      "run_id": "6f090a38-31c4-45b5-9c62-c711a3d5e5da",
+      "codebook_sha256": "91ed1302f9887369e936186168cab9a458c5fbc75d9e142b94a8a7010605c91d",
+      "markers": 120,
+      "maximum_offline_residual_samples": 4,
+      "lookahead_samples": 312
+    }
+  },
+  "validation": {
+    "native_rust_tests": 15,
+    "cross_language_finite_import_tests": 4,
+    "cross_language_v1_import_regressions": 6,
+    "syntax_and_diff_check": true
+  },
+  "review_status": {
+    "initial_import_provenance_finding": "stored Node control header was not pinned and loop/rewind request keys ignored",
+    "fix": "frozen26.8.2/8a22 Node header verified; finite seconds/loop/loops/rewind/endOrdinal rejected",
+    "fixed_source_manifest_sha256": "e73de904b3ab4e602ec9bcd8249ce65d7d9321e43628550a7fcc2ebf07eff6e0",
+    "independent_final_offline_negative_status": "pending at shutdown; no replay approval",
+    "native_replay_qualified": false
+  }
+}

@@ -1,0 +1,12 @@
+{
+  "binary_sha256": "40ee0cd703ae70568c94ac58dac48b51e9fe6736a2d454b85a6007e21b444fa3",
+  "binary_bytes": 10181136,
+  "source_manifest_sha256": "96b7df5971ee204be556fea1b887b3e87ee3bbbafd78fef2120ee4f4e9986717",
+  "library_revision": "a5c335e1975ef9c44d0188a6ea583ecbd90b21e6",
+  "wrapper_revision": "bec6cc80ac0a406bf934ba0d0594baa351872f95",
+  "configured_tokio_workers": 2,
+  "locked_release_build": true,
+  "ldd": "\tlinux-vdso.so.1 (0x00007d9a3c8cf000)\n\tlibgcc_s.so.1 => /usr/lib/libgcc_s.so.1 (0x00007d9a3c86e000)\n\tlibm.so.6 => /usr/lib/libm.so.6 (0x00007d9a3bcc9000)\n\tlibc.so.6 => /usr/lib/libc.so.6 (0x00007d9a3ba00000)\n\t/lib64/ld-linux-x86-64.so.2 => /usr/lib64/ld-linux-x86-64.so.2 (0x00007d9a3c8d2000)\n",
+  "started": false,
+  "comparison_available": false
+}
