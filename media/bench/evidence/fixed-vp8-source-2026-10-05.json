@@ -1,0 +1,151 @@
+{
+  "schema": 1,
+  "source": "ffmpeg-testsrc2-1080p60-v1",
+  "codec": "VP8",
+  "width": 1920,
+  "height": 1080,
+  "fps": 60,
+  "frames": 600,
+  "duration_seconds": 10.0,
+  "target_payload_bitrate_bps": 4000000,
+  "ivf_sha256": "5466c241f836c408038501a0d55ede29037122f204265f222aefe2cb0fbc9dfe",
+  "encoded_bytes": 4993841,
+  "encoded_bitrate_bps": 3995072.8,
+  "frame_bytes_min": 1935,
+  "frame_bytes_max": 51594,
+  "keyframe_indices": [
+    0,
+    120,
+    240,
+    360,
+    480
+  ],
+  "rtp_packets": 4515,
+  "rtp_payload_bytes": 5011901,
+  "rtp_payload_bitrate_bps": 4009520.8,
+  "rtp_datagram_bitrate_bps": 4052864.8,
+  "rtp_mtu": 1200,
+  "rtp_clock_hz": 90000,
+  "picture_id_bits": 15,
+  "schedule": "CFR 60fps; fragments evenly spaced within their frame interval",
+  "congestion_adaptation": false,
+  "padding_bytes": 0,
+  "comparison_available": false,
+  "production_feature_acceptance": false,
+  "ffmpeg": {
+    "path": "/usr/bin/ffmpeg",
+    "sha256": "2e37495139c8cee4711b7e1475dac11ce54633431c4a025b7b70fa2e6d7ca3c3",
+    "version": "ffmpeg version n9.0.1 Copyright (c) 2000-2026 the FFmpeg developers",
+    "libvpx": [
+      {
+        "path": "/usr/lib/libvpx.so.12.1.0",
+        "sha256": "cc30f6b0cc85133cdeff5817777340aac5d8163a22627dd89570bf375ef0d6b0"
+      }
+    ]
+  },
+  "ffprobe": {
+    "path": "/usr/bin/ffprobe",
+    "sha256": "4493102ef9a9dee472ce68b540ba0fd3d2f714db0de930f299f681c72ec61832",
+    "version": "ffprobe version n9.0.1 Copyright (c) 2007-2026 the FFmpeg developers",
+    "libvpx": [
+      {
+        "path": "/usr/lib/libvpx.so.12.1.0",
+        "sha256": "cc30f6b0cc85133cdeff5817777340aac5d8163a22627dd89570bf375ef0d6b0"
+      }
+    ]
+  },
+  "encoding_command": null,
+  "decoded_streams": [
+    {
+      "codec_name": "vp8",
+      "width": 1920,
+      "height": 1080,
+      "r_frame_rate": "60/1",
+      "nb_read_frames": "600"
+    }
+  ],
+  "rtp_archive_sha256": "0b15fe7fda29da794802307c88fe23053ad342bd80c485d441e121d325d663db",
+  "recorded_at": "2026-10-05",
+  "scope": "offline clip decode, deterministic RTP archive and reconstruction checks only",
+  "reencoding_reproducible_bit_exact": false,
+  "reencoding_check": {
+    "ivf_sha256": "751888185101e2cecbe0b4f54e1eac53a7d694df5f72a826a67c6887baf711d7",
+    "encoded_bitrate_bps": 3959688.0,
+    "rtp_payload_bitrate_bps": 3974020.8,
+    "decoded_streams": [
+      {
+        "codec_name": "vp8",
+        "width": 1920,
+        "height": 1080,
+        "r_frame_rate": "60/1",
+        "nb_read_frames": "600"
+      }
+    ],
+    "encoding_command": [
+      "ffmpeg",
+      "-nostdin",
+      "-n",
+      "-v",
+      "warning",
+      "-f",
+      "lavfi",
+      "-i",
+      "testsrc2=size=1920x1080:rate=60",
+      "-t",
+      "10",
+      "-an",
+      "-c:v",
+      "libvpx",
+      "-deadline",
+      "realtime",
+      "-cpu-used",
+      "8",
+      "-threads",
+      "1",
+      "-b:v",
+      "4000000",
+      "-minrate",
+      "4000000",
+      "-maxrate",
+      "4000000",
+      "-bufsize",
+      "8000000",
+      "-g",
+      "120",
+      "-lag-in-frames",
+      "0",
+      "-auto-alt-ref",
+      "0",
+      "-drop-threshold",
+      "0",
+      "-undershoot-pct",
+      "5",
+      "-overshoot-pct",
+      "5",
+      "-f",
+      "ivf",
+      "/tmp/gelabber-fixed-vp8-repro.ivf"
+    ],
+    "same_raw_input_five_frames_sha256": "9e382995de19ced8b54b63dae6553a95024a00775efbe55d44f38fb8308b4b75",
+    "raw_input_check_repetitions": 2
+  },
+  "source_policy": "Reuse one frozen encoded archive across every compared engine; never regenerate it per case",
+  "native_archive_validated": true,
+  "local_decoder_executed": false,
+  "backend_pilot_executed": false,
+  "migration_acceptance": false,
+  "decoder_validation": {
+    "command": [
+      "ffprobe",
+      "-v",
+      "error",
+      "-count_frames",
+      "-show_entries",
+      "stream=codec_name,width,height,r_frame_rate,nb_read_frames",
+      "-of",
+      "json",
+      "/tmp/gelabber-fixed-vp8-1080p60.ivf"
+    ],
+    "stderr": ""
+  }
+}

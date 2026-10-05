@@ -79,6 +79,11 @@ Candidate-specific encoder minimum/start bitrate hints are absent. Use e.g.
 VBR encoder cannot reach the same measured rate at 6 Mbit/s. The measured
 per-stream bitrate gate must still pass; a requested rate is not evidence.
 
+The separate [fixed native RTP diagnostic instrument](FIXED-RTP.md) prepares a
+frozen, fully decoded VP8 source and normal WebRTC sender after the unequal WAN
+video pilots. It is outside this original browser matrix, exposes its proposed
+additional-publisher topology and has not completed a three-engine pilot.
+
 An optional separate WAN control adds `--video --video-bitrate 4000000
 --fixed-video-fixture --warmup 30 --duration 60` to either runner. It sets the
 same Chrome VP8 `x-google-min/start/max-bitrate=4000` hints for every engine:
