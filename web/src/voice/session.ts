@@ -1,4 +1,11 @@
 import {
+  captureMicrophone,
+  createProcessor,
+  noteAudioProcessing,
+  useAudioProcessing,
+  type MicProcessor,
+} from "./audioProcessing.ts";
+import {
   playCallSound,
   unlockCallSounds,
   stopCallSounds,
@@ -55,10 +62,9 @@ import {
   type StreamProfileId,
   allocateVideoBitrates,
   audioBitrate,
-  SOURCE_AUDIO_BITRATE,
+  sourceAudioBitrate,
   SOURCE_AUDIO_CONSTRAINTS,
   isOverconstrainedError,
-  micConstraints,
   noteStreamProfileApply,
   onMediaSettingsChange,
   streamProfileFps,
@@ -231,11 +237,8 @@ export type VoiceDeps = {
   onError?: (error: unknown) => void;
 };
 
-type MicGainInsert = {
-  stream: MediaStream;
-  setGain: (gain: number) => void;
-  dispose: () => void;
-};
+type MicGainInsert = MicProcessor;
+let micForceBrowser = false;
 
 let deps: VoiceDeps | null = null;
 /** Seat media peer. `joinVoice` / `leaveVoice` hold this object. */
@@ -1182,10 +1185,6 @@ function voiceCaps(): Caps {
     (sender) => sender.track?.kind === "video",
   );
   const profiles = senders.map((sender) => profileForVideoTrack(sender.track!));
-  const shares = allocateVideoBitrates(
-    profiles,
-    useMediaSettings.getState().videoUploadLimit,
-  );
   const videoLimits: NonNullable<Caps["videoLimits"]> = {};
   for (const [index, sender] of senders.entries()) {
     const source = sender.track
@@ -1203,7 +1202,7 @@ function voiceCaps(): Caps {
       );
     const maxBitrate = hasBitrates
       ? encodings.reduce((sum, encoding) => sum + encoding.maxBitrate!, 0)
-      : (shares[index] ?? 0);
+      : null;
     const maxFps =
       Math.max(
         0,
@@ -1211,12 +1210,29 @@ function voiceCaps(): Caps {
       ) || streamProfileFps(profiles[index] ?? "balanced");
     videoLimits[source] = { maxBitrate, maxFps };
   }
+  const audioLimits: NonNullable<Caps["audioLimits"]> = {};
+  for (const sender of seat.pc?.getSenders?.() ?? []) {
+    if (sender.track?.kind !== "audio") continue;
+    const encodings = sender.getParameters?.().encodings;
+    if (!encodings?.length) continue;
+    const kind = publisherTracks.get(sender)?.kind;
+    const source: AudioSource =
+      kind === "sa" ? "screen-audio" : kind === "la" ? "live-audio" : "voice";
+    audioLimits[source] = encodings.every(
+      (encoding) => typeof encoding.maxBitrate === "number",
+    )
+      ? encodings.reduce((sum, encoding) => sum + encoding.maxBitrate!, 0)
+      : null;
+  }
   const active = Object.values(videoLimits);
   return {
     ...base,
-    sourceAudioMaxBitrate: SOURCE_AUDIO_BITRATE,
+    audioLimits,
+    sourceAudioMaxBitrate: sourceAudioBitrate(),
     videoSendBudget: active.length
-      ? active.reduce((sum, cap) => sum + cap.maxBitrate, 0)
+      ? active.every((cap) => cap.maxBitrate !== null)
+        ? active.reduce((sum, cap) => sum + (cap.maxBitrate ?? 0), 0)
+        : null
       : base.videoSendBudget,
     videoMaxFps: active.length
       ? Math.max(...active.map((cap) => cap.maxFps))
@@ -1297,6 +1313,7 @@ function hasLiveTrack(
 }
 
 function stopPeer(preserveCapture = false): void {
+  if (!preserveCapture) micForceBrowser = false;
   if (!preserveCapture) clearLiveClaim();
   seatRetry.cancel(!preserveCapture);
   if (preserveCapture) {
@@ -1478,11 +1495,13 @@ async function applySendBitrate(): Promise<void> {
     const params = sender.getParameters?.();
     if (!params?.encodings.length) continue;
     for (const encoding of params.encodings) {
-      encoding.maxBitrate =
+      const cap =
         publisherTracks.get(sender)?.kind === "sa" ||
         publisherTracks.get(sender)?.kind === "la"
-          ? SOURCE_AUDIO_BITRATE
+          ? sourceAudioBitrate()
           : bitrate;
+      if (cap === null) delete encoding.maxBitrate;
+      else encoding.maxBitrate = cap;
     }
     try {
       await sender.setParameters?.(params);
@@ -1551,17 +1570,20 @@ async function applyVideoLimits(
   const shares = allocateVideoBitrates(
     profiles,
     useMediaSettings.getState().videoUploadLimit,
+    useMediaSettings.getState().economyMode,
   );
   for (let index = 0; index < senders.length; index += 1) {
     if (!videoLimitCurrent(pc, generation, revision)) return;
     const sender = senders[index];
     const params = sender?.getParameters?.();
     if (!sender || !params?.encodings.length) continue;
-    const share = shares[index] ?? 0;
-    const perEncoding = Math.floor(share / params.encodings.length);
+    const share = shares[index] ?? null;
+    const perEncoding =
+      share === null ? null : Math.floor(share / params.encodings.length);
     const fps = streamProfileFps(profiles[index] ?? "balanced");
     for (const encoding of params.encodings) {
-      encoding.maxBitrate = perEncoding;
+      if (perEncoding === null) delete encoding.maxBitrate;
+      else encoding.maxBitrate = perEncoding;
       encoding.maxFramerate = fps;
     }
     try {
@@ -1713,60 +1735,11 @@ async function captureVideo(kind: "v" | "s" | "l"): Promise<MediaStream> {
   throw lastError instanceof Error ? lastError : new Error("capture failed");
 }
 
-function audioContextCtor(): { new (): AudioContext } | undefined {
-  return (
-    globalThis as unknown as {
-      AudioContext?: { new (): AudioContext };
-    }
-  ).AudioContext;
-}
-
 function disposeMicGain(): void {
   const insert = activeMicGain;
   activeMicGain = null;
   insert?.dispose();
-}
-
-/** Locally owned gain graph — does not touch the active session insert. */
-function createMicGainInsert(
-  raw: MediaStream,
-  gain: number,
-): MicGainInsert | null {
-  const Ctx = audioContextCtor();
-  if (!Ctx) return null;
-  try {
-    const ctx = new Ctx();
-    const src = ctx.createMediaStreamSource(raw);
-    const node = ctx.createGain();
-    node.gain.value = gain;
-    const dest = ctx.createMediaStreamDestination();
-    src.connect(node);
-    node.connect(dest);
-    void ctx.resume();
-    let disposed = false;
-    return {
-      stream: dest.stream,
-      setGain(next) {
-        if (disposed) return;
-        node.gain.value = next;
-        if (ctx.state === "suspended") void ctx.resume();
-      },
-      dispose() {
-        if (disposed) return;
-        disposed = true;
-        try {
-          node.disconnect();
-        } catch {
-          // already disconnected
-        }
-        if (ctx.state !== "closed") {
-          void ctx.close();
-        }
-      },
-    };
-  } catch {
-    return null;
-  }
+  noteAudioProcessing(null);
 }
 
 function enqueueAudioCommit(job: () => Promise<void>): Promise<void> {
@@ -1833,7 +1806,16 @@ async function commitMicSend(
   send: MediaStream,
   session: number,
 ): Promise<"replaced" | "added" | "none"> {
-  send.getAudioTracks().forEach((track) => hintTrack(track, "speech"));
+  send
+    .getAudioTracks()
+    .forEach((track) =>
+      hintTrack(
+        track,
+        useMediaSettings.getState().processingMode === "original"
+          ? "music"
+          : "speech",
+      ),
+    );
   const track = send.getAudioTracks()[0];
   if (!track) return "none";
   const sender = audioSender();
@@ -1850,18 +1832,134 @@ async function commitMicSend(
   return "none";
 }
 
-function buildMicCandidate(raw: MediaStream): {
-  send: MediaStream;
-  insert: MicGainInsert | null;
-} {
-  const gain = useMediaSettings.getState().inputGain;
-  if (gain === 1) {
-    return { send: raw, insert: null };
+function failedMicProcessor(owner: MicProcessor): void {
+  if (activeMicGain !== owner) return;
+  const sender = audioSender(),
+    generation = seat.generation;
+  micForceBrowser = true;
+  disableAudio(owner.stream);
+  rawMicStream?.getTracks().forEach((track) => track.stop());
+  owner.dispose();
+  activeMicGain = null;
+  localStream = null;
+  rawMicStream = null;
+  noteAudioProcessing({
+    ...owner.info,
+    actual: null,
+    message: "Audioprozessor ausgefallen; Ersatzmikrofon wird aktiviert",
+    contextState: "closed",
+  });
+  deps?.onError?.(
+    new Error(
+      "Audioprozessor ausgefallen; lokale Aufnahme beendet, Browser-Ersatz wird aktiviert",
+    ),
+  );
+  void enqueueAudioCommit(async () => {
+    await replaceSenderTrack(sender, null).catch(() => undefined);
+  }).then(() => {
+    if (
+      seat.generation === generation &&
+      useVoice.getState().status === "joined"
+    )
+      void refreshMic();
+  });
+}
+async function acquireMic(
+  getMedia: (constraints: MediaStreamConstraints) => Promise<MediaStream>,
+  current: () => boolean,
+): Promise<{ raw: MediaStream; processor: MicProcessor }> {
+  const owned: { processor?: MicProcessor } = {};
+  const result = await captureMicrophone(
+    getMedia,
+    useMediaSettings.getState(),
+    micForceBrowser,
+    () => {
+      if (owned.processor) failedMicProcessor(owned.processor);
+    },
+    {
+      current,
+      acquired(raw) {
+        disableAudio(raw);
+        pendingMicRaw.add(raw);
+      },
+      discarded(raw) {
+        pendingMicRaw.delete(raw);
+      },
+    },
+    (info) => {
+      if (owned.processor && activeMicGain === owned.processor)
+        noteAudioProcessing(info);
+    },
+  );
+  owned.processor = result.processor;
+  const latest = useMediaSettings.getState();
+  const gain = micForceBrowser ? 1 : latest.inputGain;
+  if (result.processor.stream === result.raw && gain !== 1) {
+    const previous = result.processor;
+    try {
+      result.processor = await createProcessor(
+        result.raw,
+        { ...latest, inputGain: gain },
+        result.processor.info.actual ?? "browser",
+        () => {
+          if (owned.processor) failedMicProcessor(owned.processor);
+        },
+        (info) => {
+          if (owned.processor && activeMicGain === owned.processor)
+            noteAudioProcessing(info);
+        },
+      );
+      previous.dispose();
+    } catch (error) {
+      result.processor.dispose();
+      stopTracks(result.raw);
+      pendingMicRaw.delete(result.raw);
+      throw error;
+    }
+  } else result.processor.setGain(gain);
+  owned.processor = result.processor;
+  if (!current() || !result.processor.usable()) {
+    result.processor.dispose();
+    stopTracks(result.raw);
+    pendingMicRaw.delete(result.raw);
+    if (current() && !micForceBrowser) {
+      micForceBrowser = true;
+      return acquireMic(getMedia, current);
+    }
+    throw new Error(
+      "Mikrofonanfrage abgebrochen oder Audioprozessor ausgefallen",
+    );
   }
-  const insert = createMicGainInsert(raw, gain);
-  if (!insert) return { send: raw, insert: null };
-  disableAudio(insert.stream);
-  return { send: insert.stream, insert };
+  return result;
+}
+
+function discardFailedMicCandidate(
+  raw: MediaStream,
+  insert: MicProcessor,
+  current: boolean,
+): void {
+  insert.dispose();
+  stopTracks(raw);
+  pendingMicRaw.delete(raw);
+  if (current && !micForceBrowser) {
+    micForceBrowser = true;
+    deps?.onError?.(
+      new Error(
+        "Audioprozessor vor Mikrofonwechsel ausgefallen; Browser-Ersatz wird aktiviert",
+      ),
+    );
+    void refreshMic();
+  }
+}
+
+function announceMicrophone(): void {
+  if (announced.has("a")) return;
+  const { serverId, channelId } = useVoice.getState();
+  if (!serverId || !channelId) return;
+  const self = currentUserId();
+  if (self) setPub(self, "a", true);
+  announced.add("a");
+  deps?.gateway.send({ op: "sig", t: "p", s: serverId, c: channelId, k: "a" });
 }
 
 async function refreshMic(): Promise<void> {
@@ -1870,24 +1968,34 @@ async function refreshMic(): Promise<void> {
   const session = seat.generation;
   const request = ++micEpoch;
   const getUserMedia = deps?.getUserMedia ?? defaultGetUserMedia;
-  let raw: MediaStream;
+  let candidate: Awaited<ReturnType<typeof acquireMic>>;
   try {
-    raw = await getUserMedia({ audio: micConstraints(), video: false });
-  } catch {
+    candidate = await acquireMic(getUserMedia, () =>
+      micCurrent(pc, session, request),
+    );
+  } catch (error) {
+    if (micCurrent(pc, session, request)) deps?.onError?.(error);
     return;
   }
+  const { raw, processor: insert } = candidate;
+  const send = insert.stream;
   if (!micCurrent(pc, session, request)) {
+    insert.dispose();
     stopTracks(raw);
     return;
   }
   disableAudio(raw);
   pendingMicRaw.add(raw);
-  const { send, insert } = buildMicCandidate(raw);
+  disableAudio(send);
   await enqueueAudioCommit(async () => {
     if (!micCurrent(pc, session, request)) {
       insert?.dispose();
       stopTracks(raw);
       pendingMicRaw.delete(raw);
+      return;
+    }
+    if (!insert.usable()) {
+      discardFailedMicCandidate(raw, insert, true);
       return;
     }
     const sender = audioSender();
@@ -1910,7 +2018,7 @@ async function refreshMic(): Promise<void> {
       }
       return;
     }
-    if (!micCurrent(pc, session, request)) {
+    if (!micCurrent(pc, session, request) || !insert.usable()) {
       if (seat.generation === session && seat.pc === pc) {
         try {
           if (outcome === "replaced") {
@@ -1922,9 +2030,7 @@ async function refreshMic(): Promise<void> {
           // seat.pc may already be tearing down
         }
       }
-      insert?.dispose();
-      stopTracks(raw);
-      pendingMicRaw.delete(raw);
+      discardFailedMicCandidate(raw, insert, micCurrent(pc, session, request));
       return;
     }
     const oldRaw = rawMicStream;
@@ -1933,8 +2039,10 @@ async function refreshMic(): Promise<void> {
     rawMicStream = raw;
     localStream = send;
     activeMicGain = insert;
+    noteAudioProcessing(insert.info);
     pendingMicRaw.delete(raw);
     applyLocalAudio();
+    announceMicrophone();
     try {
       await applySendBitrate();
     } catch {
@@ -2034,79 +2142,70 @@ async function refreshCamera(): Promise<void> {
 
 async function applyInputGain(): Promise<void> {
   await enqueueAudioCommit(async () => {
-    if (!rawMicStream || useVoice.getState().status !== "joined") return;
-    const pc = seat.pc;
-    if (!pc) return;
-    const session = seat.generation;
-    const request = micEpoch;
-    const gain = useMediaSettings.getState().inputGain;
-    if (activeMicGain) {
-      activeMicGain.setGain(gain);
-      if (gain !== 1) {
-        return;
-      }
-      const dest = localStream;
-      const raw = rawMicStream;
-      const sender = audioSender();
-      const previous = sender?.track ?? null;
-      let outcome: "replaced" | "added" | "none";
-      try {
-        outcome = await commitMicSend(pc, raw, session);
-      } catch (error) {
-        if (micCurrent(pc, session, request)) deps?.onError?.(error);
-        return;
-      }
-      if (!micCurrent(pc, session, request)) {
-        if (seat.generation === session && seat.pc === pc) {
-          try {
-            if (outcome === "replaced") {
-              await replaceSenderTrack(sender, previous);
-            } else if (outcome === "added" && sender?.replaceTrack) {
-              await replaceSenderTrack(sender, null);
-            }
-          } catch {
-            // seat.pc may already be tearing down
-          }
-        }
-        return;
-      }
-      localStream = raw;
-      if (dest && dest !== raw) stopTracks(dest);
-      disposeMicGain();
-      applyLocalAudio();
+    if (!rawMicStream || useVoice.getState().status !== "joined" || !seat.pc)
+      return;
+    const settings = useMediaSettings.getState();
+    if (activeMicGain && activeMicGain.stream !== rawMicStream) {
+      activeMicGain.setGain(settings.inputGain);
       return;
     }
-    if (gain === 1) return;
-    const insert = createMicGainInsert(rawMicStream, gain);
-    if (!insert) return;
-    disableAudio(insert.stream);
-    const sender = audioSender();
-    const previous = sender?.track ?? null;
-    let outcome: "replaced" | "added" | "none";
+    if (settings.inputGain === 1) return;
+    const pc = seat.pc,
+      raw = rawMicStream,
+      session = seat.generation,
+      request = micEpoch;
+    const actual = activeMicGain?.info?.actual ?? "browser";
+    let insert: MicProcessor | undefined;
     try {
-      outcome = await commitMicSend(pc, insert.stream, session);
+      insert = await createProcessor(
+        raw,
+        settings,
+        actual,
+        () => {
+          if (insert) failedMicProcessor(insert);
+        },
+        (info) => {
+          if (activeMicGain === insert) noteAudioProcessing(info);
+        },
+      );
+    } catch (error) {
+      deps?.onError?.(error);
+      return;
+    }
+    if (!micCurrent(pc, session, request) || !insert.usable()) {
+      insert.dispose();
+      if (micCurrent(pc, session, request))
+        deps?.onError?.(
+          new Error(
+            "Mic-Gain konnte nicht aktiviert werden; bisheriges Mikrofon bleibt aktiv",
+          ),
+        );
+      return;
+    }
+    disableAudio(insert.stream);
+    const sender = audioSender(),
+      previous = sender?.track ?? null;
+    try {
+      await commitMicSend(pc, insert.stream, session);
     } catch (error) {
       insert.dispose();
-      if (micCurrent(pc, session, request)) deps?.onError?.(error);
+      deps?.onError?.(error);
       return;
     }
-    if (!micCurrent(pc, session, request)) {
-      if (seat.generation === session && seat.pc === pc) {
-        try {
-          if (outcome === "replaced") {
-            await replaceSenderTrack(sender, previous);
-          } else if (outcome === "added" && sender?.replaceTrack) {
-            await replaceSenderTrack(sender, null);
-          }
-        } catch {
-          // seat.pc may already be tearing down
-        }
-      }
+    if (!micCurrent(pc, session, request) || !insert.usable()) {
+      if (seat.pc === pc && seat.generation === session)
+        await replaceSenderTrack(sender, previous).catch(() => undefined);
       insert.dispose();
+      if (micCurrent(pc, session, request))
+        deps?.onError?.(
+          new Error("Mic-Gain ausgefallen; bisheriges Mikrofon bleibt aktiv"),
+        );
       return;
     }
-    localStream = insert.stream;
+    activeMicGain?.dispose();
     activeMicGain = insert;
+    localStream = insert.stream;
+    noteAudioProcessing(insert.info);
     applyLocalAudio();
   });
 }
@@ -2137,9 +2236,14 @@ function handleSettingsChange(prev: MediaSettings, next: MediaSettings): void {
     prev.audioInputId !== next.audioInputId ||
     prev.echoCancellation !== next.echoCancellation ||
     prev.noiseSuppression !== next.noiseSuppression ||
-    prev.autoGainControl !== next.autoGainControl;
+    prev.autoGainControl !== next.autoGainControl ||
+    prev.processingMode !== next.processingMode;
+  if (recaptureMic) micForceBrowser = false;
   const camChanged = prev.videoInputId !== next.videoInputId;
-  const qualityChanged = prev.quality !== next.quality;
+  const qualityChanged =
+    prev.quality !== next.quality ||
+    prev.economyMode !== next.economyMode ||
+    prev.processingMode !== next.processingMode;
   if (joined || useVoice.getState().watching) {
     const connection = joined ? "voice" : "watch";
     if (prev.audioInputId !== next.audioInputId) {
@@ -2171,7 +2275,12 @@ function handleSettingsChange(prev: MediaSettings, next: MediaSettings): void {
   if (joined && camChanged && useVoice.getState().camera) void refreshCamera();
   if (cameraProfileChanged) void applyStreamProfile("camera");
   if (screenProfileChanged) void applyStreamProfile("screen");
-  if (joined && prev.videoUploadLimit !== next.videoUploadLimit && seat.pc) {
+  if (
+    joined &&
+    (prev.videoUploadLimit !== next.videoUploadLimit ||
+      prev.economyMode !== next.economyMode) &&
+    seat.pc
+  ) {
     void enqueueVideoLimits(seat.pc);
   }
   if (joined && qualityChanged) {
@@ -2474,7 +2583,7 @@ async function applyRemoteDescription(
     }
     seat.sfuOffered = true;
   }
-  await pc.setRemoteDescription({ type, sdp: tuneSeatAudioSdp(sdp) });
+  await pc.setRemoteDescription({ type, sdp });
   if (!current()) return;
   const queued = seat.pendingIce;
   seat.pendingIce = [];
@@ -3897,21 +4006,25 @@ async function startPeer(
   } else if (!recovering) {
     const micRequest = ++micEpoch;
     try {
-      const stream = await getUserMedia({
-        audio: micConstraints(),
-        video: false,
-      });
+      const { raw: stream, processor: insert } = await acquireMic(
+        getUserMedia,
+        () =>
+          seat.generation === mine && micEpoch === micRequest && seat.pc === pc,
+      );
+      const send = insert.stream;
       if (seat.generation !== mine) {
+        insert.dispose();
         stopTracks(stream);
         return;
       }
       if (micEpoch !== micRequest) {
+        insert.dispose();
         stopTracks(stream);
         // A newer refreshMic owns capture; continue without this stream.
       } else {
         disableAudio(stream);
         pendingMicRaw.add(stream);
-        const { send, insert } = buildMicCandidate(stream);
+        disableAudio(send);
         await enqueueAudioCommit(async () => {
           if (
             seat.generation !== mine ||
@@ -3923,11 +4036,25 @@ async function startPeer(
             pendingMicRaw.delete(stream);
             return;
           }
+          if (!insert.usable()) {
+            discardFailedMicCandidate(stream, insert, true);
+            return;
+          }
           rawMicStream = stream;
           localStream = send;
           activeMicGain = insert;
+          noteAudioProcessing(insert.info);
           pendingMicRaw.delete(stream);
-          send.getAudioTracks().forEach((track) => hintTrack(track, "speech"));
+          send
+            .getAudioTracks()
+            .forEach((track) =>
+              hintTrack(
+                track,
+                useMediaSettings.getState().processingMode === "original"
+                  ? "music"
+                  : "speech",
+              ),
+            );
           applyLocalAudio();
           for (const track of send.getTracks()) {
             pc.addTrack?.(track, send);
@@ -3937,24 +4064,28 @@ async function startPeer(
           } catch {
             // bitrate is best-effort
           }
+          if (
+            seat.generation !== mine ||
+            activeMicGain !== insert ||
+            !insert.usable()
+          )
+            return;
           preferOpus(pc);
           preferVp8(pc);
-          const self = currentUserId();
-          if (self && useVoice.getState().channelId === channelId) {
-            setPub(self, "a", true);
-          }
-          announced.add("a");
-          deps?.gateway.send({
-            op: "sig",
-            t: "p",
-            s: serverId,
-            c: channelId,
-            k: "a",
-          });
+          announceMicrophone();
         });
       }
-    } catch {
-      // Listening still needs an audio m-line carrying ICE credentials.
+    } catch (error) {
+      if (seat.generation === mine) {
+        deps?.onError?.(error);
+        noteAudioProcessing(null);
+        const info = useAudioProcessing.getState();
+        noteAudioProcessing({
+          ...info,
+          requested: useMediaSettings.getState().processingMode,
+          message: "Mikrofon konnte nicht aktiviert werden; du hörst weiter zu",
+        });
+      }
     }
   }
 
@@ -4093,7 +4224,7 @@ async function applyWatchRemote(
     if (!current()) return;
     watchCall.sfuOffered = true;
   }
-  await pc.setRemoteDescription({ type, sdp: tuneAudioSdp(sdp) });
+  await pc.setRemoteDescription({ type, sdp });
   if (!current()) return;
   const queued = watchCall.pendingIce;
   watchCall.pendingIce = [];
