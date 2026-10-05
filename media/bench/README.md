@@ -128,6 +128,41 @@ keeps raw-evidence hashes and all original outcomes. Every case, including
 those that passed media delivery, is excluded from resource comparison.
 Owned remote containers and image tags were cleaned after interruption.
 
+The later [namespace voice matrix](evidence/namespace-voice-incomplete-2026-10-05.json)
+also aborted: 12 of the planned 36 cases were recorded, followed by an
+interrupted thirteenth case. Janus8 first reported an event timeout and then
+the generator exceeded its outer deadline. Every case is disqualified from
+comparison. No `ERR_NETWORK_CHANGED` was recorded in this attempt. A local
+HTTP/1 control reproduces another harness defect: nine browser long-polls
+occupy Chromium's six same-origin connections and delay signaling POSTs.
+Without an original per-request trace this is an inference about the WAN
+timeout, not its demonstrated cause.
+
+Janus now keeps the same manager plus N participant sessions and their N+1
+actual backend long-polls in the generator's Node process. A single local SSE
+connection forwards their events to Chromium. Complete deadlines cover POST,
+response body, ACK and matching event; timeout/cancel removes pending state.
+Setup installs cleanup before creating sessions. Filtered phase/ICE evidence
+excludes session credentials and SDP. The generator process tree includes the
+broker's resources. [Local controls](evidence/janus-events-control-2026-10-05.json)
+cover eight peers, events preceding ACK, missing events, stalled HTTP responses
+and aborted polls. The real pinned Janus control delivered all56 audio edges
+at approximately128 kbit/s and left no test room or broker session. A separate
+earlier local ICE failure remains archived; changing UDP range does not prove
+its cause. Neither control establishes WAN performance or a backend ranking.
+
+```sh
+node media/bench/local-janus-events.mjs /tmp/janus-events-control.json
+python3 media/bench/run-local.py --engines janus --matrix 8 --runs 1 \
+  --duration 12 --warmup 3 --janus-udp-min 12000 --janus-udp-max 12199 \
+  --output /tmp/janus-eight-peer-control
+```
+
+The second command requires Docker access and a free selected local UDP range;
+it never changes host networking. Rebuild the browser bundle before running.
+Because PCM calibration also binds that bundle's hash, older calibration
+files must be regenerated before enabling PCM on this updated instrument.
+
 One Chromium instance hosts all participants and retains each remote track in
 a muted playing element, so received video is actually decoded. This makes a
 local probe convenient but can saturate the generator at 16/32 peers; such a

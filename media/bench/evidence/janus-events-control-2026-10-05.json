@@ -1,0 +1,2251 @@
+{
+  "schema": 1,
+  "scope": "local Janus signaling controls; no resource ranking or WAN acceptance",
+  "acceptance": false,
+  "resource_comparison_available": false,
+  "fake_backend_control": {
+    "scope": "loopback HTTP1 signaling control, fake backend; no ICE/RTP/SFU/WAN",
+    "acceptance": false,
+    "resource_comparison_available": false,
+    "source_revision": "703b3c3cd9e9a39ecff8fbd52442594a44950a30",
+    "git_dirty": true,
+    "artifact_sha256": {
+      "local-janus-events.mjs": "86f80b9b25024d53c7bc4a3cb49ccea4c0785d5b13ab8b9f8c68166a410e756a",
+      "janus-events.mjs": "611b677b7bcbc0154d04b9be3375ecab6c15c6339feeb177f0426c071f5584b4",
+      "janus-broker.mjs": "c340597861ab6512d59f73cac6bb248f553122d5d45f5b9a865523351e36c413",
+      "browser-provenance.mjs": "c50c9ac32f4acf91982f05ef2cefcf5e945b61a63073c9bc499f216ba3d5c4ec",
+      "package-lock.json": "9d02e4d3313afe6d1fc466ab4fa598993660385d21a13021089fbeca04e1954c"
+    },
+    "executed_browser": {
+      "executable": "/home/rafi/.cache/ms-playwright/chromium_headless_shell-1243/chrome-headless-shell-linux64/chrome-headless-shell",
+      "sha256": "ded93a9c9a53a1ae040f08124badcca95c938e9d5015ff340c3b5538c41bf39e",
+      "product": "HeadlessChrome/153.0.8010.12",
+      "revision": "@971a7443b0c9b0a9b2860529b33331b76077ec62",
+      "user_agent": "Mozilla/5.0 (X11; Linux x86_64) AppleWebKit/537.36 (KHTML, like Gecko) HeadlessChrome/153.0.8010.12 Safari/537.36",
+      "js_version": "15.3.76.4"
+    },
+    "original": {
+      "post_delay_ms": 554.8000000007451,
+      "maximum_active_browser_longpolls": 6
+    },
+    "fixed": {
+      "completed_peer_requests": [
+        0,
+        1,
+        2,
+        3,
+        4,
+        5,
+        6,
+        7
+      ],
+      "elapsed_ms": 29.800000000745058,
+      "maximum_active_backend_longpolls": 9
+    },
+    "negative": {
+      "rejected": [
+        {
+          "mode": "missing",
+          "error": "Janus request/event deadline"
+        },
+        {
+          "mode": "stalled",
+          "error": "Janus request/event deadline"
+        }
+      ],
+      "remaining_pending": 0,
+      "remaining_requests": 0
+    },
+    "broker": {
+      "transport": "node-backend-longpoll/browser-SSE",
+      "maximum_backend_sessions": 9,
+      "remaining_backend_sessions": 0,
+      "trace": [
+        {
+          "at": 1791225269530,
+          "phase": "poll-start",
+          "session": 1,
+          "active_sessions": 1
+        },
+        {
+          "at": 1791225269534,
+          "phase": "poll-start",
+          "session": 2,
+          "active_sessions": 2
+        },
+        {
+          "at": 1791225269537,
+          "phase": "poll-start",
+          "session": 3,
+          "active_sessions": 3
+        },
+        {
+          "at": 1791225269539,
+          "phase": "poll-start",
+          "session": 4,
+          "active_sessions": 4
+        },
+        {
+          "at": 1791225269542,
+          "phase": "poll-start",
+          "session": 5,
+          "active_sessions": 5
+        },
+        {
+          "at": 1791225269544,
+          "phase": "poll-start",
+          "session": 6,
+          "active_sessions": 6
+        },
+        {
+          "at": 1791225269546,
+          "phase": "poll-start",
+          "session": 7,
+          "active_sessions": 7
+        },
+        {
+          "at": 1791225269548,
+          "phase": "poll-start",
+          "session": 8,
+          "active_sessions": 8
+        },
+        {
+          "at": 1791225269551,
+          "phase": "poll-start",
+          "session": 9,
+          "active_sessions": 9
+        },
+        {
+          "at": 1791225269557,
+          "phase": "poll-complete",
+          "session": 2,
+          "active_sessions": 9
+        },
+        {
+          "at": 1791225269557,
+          "phase": "poll-start",
+          "session": 2,
+          "active_sessions": 9
+        },
+        {
+          "at": 1791225269558,
+          "phase": "poll-complete",
+          "session": 3,
+          "active_sessions": 9
+        },
+        {
+          "at": 1791225269558,
+          "phase": "poll-start",
+          "session": 3,
+          "active_sessions": 9
+        },
+        {
+          "at": 1791225269559,
+          "phase": "poll-complete",
+          "session": 4,
+          "active_sessions": 9
+        },
+        {
+          "at": 1791225269559,
+          "phase": "poll-start",
+          "session": 4,
+          "active_sessions": 9
+        },
+        {
+          "at": 1791225269559,
+          "phase": "poll-complete",
+          "session": 5,
+          "active_sessions": 9
+        },
+        {
+          "at": 1791225269559,
+          "phase": "poll-start",
+          "session": 5,
+          "active_sessions": 9
+        },
+        {
+          "at": 1791225269560,
+          "phase": "poll-complete",
+          "session": 6,
+          "active_sessions": 9
+        },
+        {
+          "at": 1791225269560,
+          "phase": "poll-start",
+          "session": 6,
+          "active_sessions": 9
+        },
+        {
+          "at": 1791225269569,
+          "phase": "poll-complete",
+          "session": 7,
+          "active_sessions": 9
+        },
+        {
+          "at": 1791225269569,
+          "phase": "poll-start",
+          "session": 7,
+          "active_sessions": 9
+        },
+        {
+          "at": 1791225269571,
+          "phase": "poll-complete",
+          "session": 8,
+          "active_sessions": 9
+        },
+        {
+          "at": 1791225269571,
+          "phase": "poll-start",
+          "session": 8,
+          "active_sessions": 9
+        },
+        {
+          "at": 1791225269571,
+          "phase": "poll-complete",
+          "session": 9,
+          "active_sessions": 9
+        },
+        {
+          "at": 1791225269571,
+          "phase": "poll-start",
+          "session": 9,
+          "active_sessions": 9
+        },
+        {
+          "at": 1791225269837,
+          "phase": "poll-complete",
+          "session": 2,
+          "active_sessions": 9
+        },
+        {
+          "at": 1791225269837,
+          "phase": "poll-start",
+          "session": 2,
+          "active_sessions": 9
+        },
+        {
+          "at": 1791225270089,
+          "phase": "poll-cancelled",
+          "session": 1,
+          "active_sessions": 0
+        },
+        {
+          "at": 1791225270089,
+          "phase": "poll-cancelled",
+          "session": 2,
+          "active_sessions": 0
+        },
+        {
+          "at": 1791225270089,
+          "phase": "poll-cancelled",
+          "session": 3,
+          "active_sessions": 0
+        },
+        {
+          "at": 1791225270089,
+          "phase": "poll-cancelled",
+          "session": 4,
+          "active_sessions": 0
+        },
+        {
+          "at": 1791225270089,
+          "phase": "poll-cancelled",
+          "session": 5,
+          "active_sessions": 0
+        },
+        {
+          "at": 1791225270089,
+          "phase": "poll-cancelled",
+          "session": 6,
+          "active_sessions": 0
+        },
+        {
+          "at": 1791225270089,
+          "phase": "poll-cancelled",
+          "session": 7,
+          "active_sessions": 0
+        },
+        {
+          "at": 1791225270089,
+          "phase": "poll-cancelled",
+          "session": 8,
+          "active_sessions": 0
+        },
+        {
+          "at": 1791225270089,
+          "phase": "poll-cancelled",
+          "session": 9,
+          "active_sessions": 0
+        }
+      ]
+    },
+    "valid": true
+  },
+  "real_janus_control": {
+    "source_revision": "703b3c3cd9e9a39ecff8fbd52442594a44950a30",
+    "source_has_uncommitted_reviewed_changes": true,
+    "image_id": "sha256:76845b0f9e03ad08a0444e4194969510b96ca72d83754e596431aa04dc773e62",
+    "configuration": {
+      "engines": [
+        "janus"
+      ],
+      "matrix": [
+        8
+      ],
+      "runs": 1,
+      "duration": 12,
+      "warmup": 3,
+      "video": false,
+      "video_bitrate": 6000000,
+      "fixed_video_fixture": false,
+      "pcm_calibration": null,
+      "protocol_logs": false,
+      "janus_udp_min": 12000,
+      "janus_udp_max": 12199,
+      "janus_image": "sha256:76845b0f9e03ad08a0444e4194969510b96ca72d83754e596431aa04dc773e62"
+    },
+    "artifact_sha256": {
+      "client.bundle.js": "d3e302a3b5eb6f6c9c3a9c79a6cb03a617ab8c079a9eea07ae97ac058df06c22",
+      "package-lock.json": "9d02e4d3313afe6d1fc466ab4fa598993660385d21a13021089fbeca04e1954c",
+      "current-probe/Cargo.lock": "64875cce6d1cd2832a4f932d2528e6e2c53db00891c6094b58aac2248ebdf18a",
+      "mediasoup-probe/Cargo.lock": "591381d7be1da52691e83bbdfd4f790b6041f5af6df880d6898ab1cf16c857fd",
+      "current-probe/target/release/gelabber-current-probe": "a2fd497a4836ea1aba57baa8e1216c9fae73476a75ba0e8bad4ab37875285701",
+      "mediasoup-probe/target/release/gelabber-mediasoup-probe": "df90621e944a6ed22daec75096e2f8fb4ca092af6de3635ef955f1112dfca01b"
+    },
+    "tooling_sha256": {
+      "package-lock.json": "9d02e4d3313afe6d1fc466ab4fa598993660385d21a13021089fbeca04e1954c",
+      "browser.mjs": "1f666469f711871c3bd7ca11dc7eb6061d5ea302d4f081275e4f6e55a8f4f067",
+      "client.bundle.js": "d3e302a3b5eb6f6c9c3a9c79a6cb03a617ab8c079a9eea07ae97ac058df06c22",
+      "loadgen.mjs": "49193325822e99ae8140a4df7483a4d132f9f6fc60eec97b404d819a3625459d",
+      "run-local.py": "a17965c848308fd1d1c4590bfacc68dd72ee8f0143f56c1ff27c2a5ea59a0a59",
+      "janus-events.mjs": "611b677b7bcbc0154d04b9be3375ecab6c15c6339feeb177f0426c071f5584b4",
+      "janus-broker.mjs": "c340597861ab6512d59f73cac6bb248f553122d5d45f5b9a865523351e36c413"
+    },
+    "raw_sha256": {
+      "server.json": "f522e74bb0565b4d95eea19c9e6e3a28d29fa11e24924699e19267c972f95b26",
+      "browser.json": "8d86fd95dd49201cb3556a3f83b1f4d97ebd1e583b231e2b863243207e3f92a9",
+      "loadgen.log": "7da9fb5a0a9eb32b4eaaa9c54ca4e1d8974bbd4ebc93c6898003a60bd2803b2d",
+      "http.jcfg": "885d477d05e94287f10b60df4bfffa1a3b86cd3e08545fef290230484771f81b",
+      "backend.log": "f8abb961ab93f98b2b5d508ef95122e7f14ef9936eeede4b5393b92a69f9c866"
+    },
+    "result": {
+      "engine": "janus",
+      "peers": 8,
+      "round": 1,
+      "loadgen_returncode": 0,
+      "observed_peak_rss_bytes": 28127232,
+      "problems": [],
+      "media_fixture_valid": true,
+      "fixed_video_fixture": false,
+      "pcm_latency_enabled": false,
+      "pcm_policy": null,
+      "executed_browser": {
+        "executable": "/home/rafi/.cache/ms-playwright/chromium_headless_shell-1243/chrome-headless-shell-linux64/chrome-headless-shell",
+        "sha256": "ded93a9c9a53a1ae040f08124badcca95c938e9d5015ff340c3b5538c41bf39e",
+        "product": "HeadlessChrome/153.0.8010.12",
+        "revision": "@971a7443b0c9b0a9b2860529b33331b76077ec62",
+        "user_agent": "Mozilla/5.0 (X11; Linux x86_64) AppleWebKit/537.36 (KHTML, like Gecko) HeadlessChrome/153.0.8010.12 Safari/537.36",
+        "js_version": "15.3.76.4"
+      },
+      "sender_bitrate_bps_per_stream": {
+        "audio": 128446.62309368192,
+        "video": null
+      },
+      "sender_bitrate_distribution": {
+        "audio": {
+          "streams": [
+            {
+              "peer": "peer-0",
+              "endpoint": "peer-0/0",
+              "id": "OT01A2431927640",
+              "kind": "audio",
+              "bps": 128203.34059549746
+            },
+            {
+              "peer": "peer-1",
+              "endpoint": "peer-1/0",
+              "id": "OT01A4186356588",
+              "kind": "audio",
+              "bps": 128446.62309368192
+            },
+            {
+              "peer": "peer-2",
+              "endpoint": "peer-2/0",
+              "id": "OT01A1860186361",
+              "kind": "audio",
+              "bps": 128208.42411038489
+            },
+            {
+              "peer": "peer-3",
+              "endpoint": "peer-3/0",
+              "id": "OT01A1540382905",
+              "kind": "audio",
+              "bps": 128446.62309368192
+            },
+            {
+              "peer": "peer-4",
+              "endpoint": "peer-4/0",
+              "id": "OT01A3920497642",
+              "kind": "audio",
+              "bps": 128446.62309368192
+            },
+            {
+              "peer": "peer-5",
+              "endpoint": "peer-5/0",
+              "id": "OT01A3009731443",
+              "kind": "audio",
+              "bps": 128446.62309368192
+            },
+            {
+              "peer": "peer-6",
+              "endpoint": "peer-6/0",
+              "id": "OT01A1406811722",
+              "kind": "audio",
+              "bps": 128446.62309368192
+            },
+            {
+              "peer": "peer-7",
+              "endpoint": "peer-7/0",
+              "id": "OT01A3674945500",
+              "kind": "audio",
+              "bps": 128039.2156862745
+            }
+          ],
+          "min_bps": 128039.2156862745,
+          "max_bps": 128446.62309368192
+        },
+        "video": {
+          "streams": [],
+          "min_bps": null,
+          "max_bps": null
+        }
+      },
+      "receiver_video_distribution": [],
+      "receiver_audio_distribution": [
+        {
+          "peer": "peer-0",
+          "endpoint": "peer-0/1",
+          "id": "IT01A1274691844",
+          "bps": 128446.62309368192,
+          "packet_loss_fraction": 0.0
+        },
+        {
+          "peer": "peer-0",
+          "endpoint": "peer-0/1",
+          "id": "IT01A2165484277",
+          "bps": 128039.2156862745,
+          "packet_loss_fraction": 0.0
+        },
+        {
+          "peer": "peer-0",
+          "endpoint": "peer-0/1",
+          "id": "IT01A3442246383",
+          "bps": 128446.62309368192,
+          "packet_loss_fraction": 0.0
+        },
+        {
+          "peer": "peer-0",
+          "endpoint": "peer-0/1",
+          "id": "IT01A3502681280",
+          "bps": 128446.62309368192,
+          "packet_loss_fraction": 0.0
+        },
+        {
+          "peer": "peer-0",
+          "endpoint": "peer-0/1",
+          "id": "IT01A568741582",
+          "bps": 128446.62309368192,
+          "packet_loss_fraction": 0.0
+        },
+        {
+          "peer": "peer-0",
+          "endpoint": "peer-0/1",
+          "id": "IT01A88389043",
+          "bps": 128446.62309368192,
+          "packet_loss_fraction": 0.0
+        },
+        {
+          "peer": "peer-0",
+          "endpoint": "peer-0/1",
+          "id": "IT01A940845806",
+          "bps": 128208.42411038489,
+          "packet_loss_fraction": 0.0
+        },
+        {
+          "peer": "peer-1",
+          "endpoint": "peer-1/1",
+          "id": "IT01A1987932438",
+          "bps": 128208.42411038489,
+          "packet_loss_fraction": 0.0
+        },
+        {
+          "peer": "peer-1",
+          "endpoint": "peer-1/1",
+          "id": "IT01A2161463770",
+          "bps": 128203.34059549746,
+          "packet_loss_fraction": 0.0
+        },
+        {
+          "peer": "peer-1",
+          "endpoint": "peer-1/1",
+          "id": "IT01A2250816084",
+          "bps": 128446.62309368192,
+          "packet_loss_fraction": 0.0
+        },
+        {
+          "peer": "peer-1",
+          "endpoint": "peer-1/1",
+          "id": "IT01A2350437312",
+          "bps": 128446.62309368192,
+          "packet_loss_fraction": 0.0
+        },
+        {
+          "peer": "peer-1",
+          "endpoint": "peer-1/1",
+          "id": "IT01A2999401087",
+          "bps": 128446.62309368192,
+          "packet_loss_fraction": 0.0
+        },
+        {
+          "peer": "peer-1",
+          "endpoint": "peer-1/1",
+          "id": "IT01A3928649523",
+          "bps": 128039.2156862745,
+          "packet_loss_fraction": 0.0
+        },
+        {
+          "peer": "peer-1",
+          "endpoint": "peer-1/1",
+          "id": "IT01A510093149",
+          "bps": 128446.62309368192,
+          "packet_loss_fraction": 0.0
+        },
+        {
+          "peer": "peer-2",
+          "endpoint": "peer-2/1",
+          "id": "IT01A1114857413",
+          "bps": 128446.62309368192,
+          "packet_loss_fraction": 0.0
+        },
+        {
+          "peer": "peer-2",
+          "endpoint": "peer-2/1",
+          "id": "IT01A192946793",
+          "bps": 128446.62309368192,
+          "packet_loss_fraction": 0.0
+        },
+        {
+          "peer": "peer-2",
+          "endpoint": "peer-2/1",
+          "id": "IT01A2185873580",
+          "bps": 128446.62309368192,
+          "packet_loss_fraction": 0.0
+        },
+        {
+          "peer": "peer-2",
+          "endpoint": "peer-2/1",
+          "id": "IT01A3697895652",
+          "bps": 128446.62309368192,
+          "packet_loss_fraction": 0.0
+        },
+        {
+          "peer": "peer-2",
+          "endpoint": "peer-2/1",
+          "id": "IT01A4055953099",
+          "bps": 128203.34059549746,
+          "packet_loss_fraction": 0.0
+        },
+        {
+          "peer": "peer-2",
+          "endpoint": "peer-2/1",
+          "id": "IT01A475077566",
+          "bps": 128039.2156862745,
+          "packet_loss_fraction": 0.0
+        },
+        {
+          "peer": "peer-2",
+          "endpoint": "peer-2/1",
+          "id": "IT01A730799385",
+          "bps": 128446.62309368192,
+          "packet_loss_fraction": 0.0
+        },
+        {
+          "peer": "peer-3",
+          "endpoint": "peer-3/1",
+          "id": "IT01A1075836858",
+          "bps": 128446.62309368192,
+          "packet_loss_fraction": 0.0
+        },
+        {
+          "peer": "peer-3",
+          "endpoint": "peer-3/1",
+          "id": "IT01A2133159912",
+          "bps": 128446.62309368192,
+          "packet_loss_fraction": 0.0
+        },
+        {
+          "peer": "peer-3",
+          "endpoint": "peer-3/1",
+          "id": "IT01A2310635989",
+          "bps": 128039.2156862745,
+          "packet_loss_fraction": 0.0
+        },
+        {
+          "peer": "peer-3",
+          "endpoint": "peer-3/1",
+          "id": "IT01A2648757549",
+          "bps": 128208.42411038489,
+          "packet_loss_fraction": 0.0
+        },
+        {
+          "peer": "peer-3",
+          "endpoint": "peer-3/1",
+          "id": "IT01A3492988494",
+          "bps": 128446.62309368192,
+          "packet_loss_fraction": 0.0
+        },
+        {
+          "peer": "peer-3",
+          "endpoint": "peer-3/1",
+          "id": "IT01A4093865964",
+          "bps": 128203.34059549746,
+          "packet_loss_fraction": 0.0
+        },
+        {
+          "peer": "peer-3",
+          "endpoint": "peer-3/1",
+          "id": "IT01A433774974",
+          "bps": 128446.62309368192,
+          "packet_loss_fraction": 0.0
+        },
+        {
+          "peer": "peer-4",
+          "endpoint": "peer-4/1",
+          "id": "IT01A1031816983",
+          "bps": 128208.42411038489,
+          "packet_loss_fraction": 0.0
+        },
+        {
+          "peer": "peer-4",
+          "endpoint": "peer-4/1",
+          "id": "IT01A1275620612",
+          "bps": 128446.62309368192,
+          "packet_loss_fraction": 0.0
+        },
+        {
+          "peer": "peer-4",
+          "endpoint": "peer-4/1",
+          "id": "IT01A1464408851",
+          "bps": 128446.62309368192,
+          "packet_loss_fraction": 0.0
+        },
+        {
+          "peer": "peer-4",
+          "endpoint": "peer-4/1",
+          "id": "IT01A3190524298",
+          "bps": 128446.62309368192,
+          "packet_loss_fraction": 0.0
+        },
+        {
+          "peer": "peer-4",
+          "endpoint": "peer-4/1",
+          "id": "IT01A3281437674",
+          "bps": 128446.62309368192,
+          "packet_loss_fraction": 0.0
+        },
+        {
+          "peer": "peer-4",
+          "endpoint": "peer-4/1",
+          "id": "IT01A4110545067",
+          "bps": 128203.34059549746,
+          "packet_loss_fraction": 0.0
+        },
+        {
+          "peer": "peer-4",
+          "endpoint": "peer-4/1",
+          "id": "IT01A4170943411",
+          "bps": 128039.2156862745,
+          "packet_loss_fraction": 0.0
+        },
+        {
+          "peer": "peer-5",
+          "endpoint": "peer-5/1",
+          "id": "IT01A1111494330",
+          "bps": 128446.62309368192,
+          "packet_loss_fraction": 0.0
+        },
+        {
+          "peer": "peer-5",
+          "endpoint": "peer-5/1",
+          "id": "IT01A1296991938",
+          "bps": 128446.62309368192,
+          "packet_loss_fraction": 0.0
+        },
+        {
+          "peer": "peer-5",
+          "endpoint": "peer-5/1",
+          "id": "IT01A1470967387",
+          "bps": 128446.62309368192,
+          "packet_loss_fraction": 0.0
+        },
+        {
+          "peer": "peer-5",
+          "endpoint": "peer-5/1",
+          "id": "IT01A229146991",
+          "bps": 128203.34059549746,
+          "packet_loss_fraction": 0.0
+        },
+        {
+          "peer": "peer-5",
+          "endpoint": "peer-5/1",
+          "id": "IT01A2900112768",
+          "bps": 128208.42411038489,
+          "packet_loss_fraction": 0.0
+        },
+        {
+          "peer": "peer-5",
+          "endpoint": "peer-5/1",
+          "id": "IT01A336715851",
+          "bps": 128039.2156862745,
+          "packet_loss_fraction": 0.0
+        },
+        {
+          "peer": "peer-5",
+          "endpoint": "peer-5/1",
+          "id": "IT01A3975971393",
+          "bps": 128446.62309368192,
+          "packet_loss_fraction": 0.0
+        },
+        {
+          "peer": "peer-6",
+          "endpoint": "peer-6/1",
+          "id": "IT01A1037656897",
+          "bps": 128446.62309368192,
+          "packet_loss_fraction": 0.0
+        },
+        {
+          "peer": "peer-6",
+          "endpoint": "peer-6/1",
+          "id": "IT01A1339423032",
+          "bps": 128208.42411038489,
+          "packet_loss_fraction": 0.0
+        },
+        {
+          "peer": "peer-6",
+          "endpoint": "peer-6/1",
+          "id": "IT01A151044017",
+          "bps": 128039.2156862745,
+          "packet_loss_fraction": 0.0
+        },
+        {
+          "peer": "peer-6",
+          "endpoint": "peer-6/1",
+          "id": "IT01A2254853895",
+          "bps": 128446.62309368192,
+          "packet_loss_fraction": 0.0
+        },
+        {
+          "peer": "peer-6",
+          "endpoint": "peer-6/1",
+          "id": "IT01A2786974113",
+          "bps": 128203.34059549746,
+          "packet_loss_fraction": 0.0
+        },
+        {
+          "peer": "peer-6",
+          "endpoint": "peer-6/1",
+          "id": "IT01A3999680506",
+          "bps": 128446.62309368192,
+          "packet_loss_fraction": 0.0
+        },
+        {
+          "peer": "peer-6",
+          "endpoint": "peer-6/1",
+          "id": "IT01A69517243",
+          "bps": 128446.62309368192,
+          "packet_loss_fraction": 0.0
+        },
+        {
+          "peer": "peer-7",
+          "endpoint": "peer-7/1",
+          "id": "IT01A1799488229",
+          "bps": 128203.34059549746,
+          "packet_loss_fraction": 0.0
+        },
+        {
+          "peer": "peer-7",
+          "endpoint": "peer-7/1",
+          "id": "IT01A2506302838",
+          "bps": 128446.62309368192,
+          "packet_loss_fraction": 0.0
+        },
+        {
+          "peer": "peer-7",
+          "endpoint": "peer-7/1",
+          "id": "IT01A2808990922",
+          "bps": 128208.42411038489,
+          "packet_loss_fraction": 0.0
+        },
+        {
+          "peer": "peer-7",
+          "endpoint": "peer-7/1",
+          "id": "IT01A3201436797",
+          "bps": 128446.62309368192,
+          "packet_loss_fraction": 0.0
+        },
+        {
+          "peer": "peer-7",
+          "endpoint": "peer-7/1",
+          "id": "IT01A3275533036",
+          "bps": 128446.62309368192,
+          "packet_loss_fraction": 0.0
+        },
+        {
+          "peer": "peer-7",
+          "endpoint": "peer-7/1",
+          "id": "IT01A3621260836",
+          "bps": 128446.62309368192,
+          "packet_loss_fraction": 0.0
+        },
+        {
+          "peer": "peer-7",
+          "endpoint": "peer-7/1",
+          "id": "IT01A434531174",
+          "bps": 128446.62309368192,
+          "packet_loss_fraction": 0.0
+        }
+      ],
+      "per_peer_graph": {
+        "peer-0": {
+          "expected": {
+            "audio": 7,
+            "video": 0
+          },
+          "observed": {
+            "audio": 7,
+            "video": 0
+          },
+          "expected_endpoint": "peer-0/1"
+        },
+        "peer-1": {
+          "expected": {
+            "audio": 7,
+            "video": 0
+          },
+          "observed": {
+            "audio": 7,
+            "video": 0
+          },
+          "expected_endpoint": "peer-1/1"
+        },
+        "peer-2": {
+          "expected": {
+            "audio": 7,
+            "video": 0
+          },
+          "observed": {
+            "audio": 7,
+            "video": 0
+          },
+          "expected_endpoint": "peer-2/1"
+        },
+        "peer-3": {
+          "expected": {
+            "audio": 7,
+            "video": 0
+          },
+          "observed": {
+            "audio": 7,
+            "video": 0
+          },
+          "expected_endpoint": "peer-3/1"
+        },
+        "peer-4": {
+          "expected": {
+            "audio": 7,
+            "video": 0
+          },
+          "observed": {
+            "audio": 7,
+            "video": 0
+          },
+          "expected_endpoint": "peer-4/1"
+        },
+        "peer-5": {
+          "expected": {
+            "audio": 7,
+            "video": 0
+          },
+          "observed": {
+            "audio": 7,
+            "video": 0
+          },
+          "expected_endpoint": "peer-5/1"
+        },
+        "peer-6": {
+          "expected": {
+            "audio": 7,
+            "video": 0
+          },
+          "observed": {
+            "audio": 7,
+            "video": 0
+          },
+          "expected_endpoint": "peer-6/1"
+        },
+        "peer-7": {
+          "expected": {
+            "audio": 7,
+            "video": 0
+          },
+          "observed": {
+            "audio": 7,
+            "video": 0
+          },
+          "expected_endpoint": "peer-7/1"
+        }
+      },
+      "join_timing_ms": [
+        {
+          "peer": "peer-0",
+          "dtls_ready_at": 3015,
+          "first_send_rtp_at": 408,
+          "full_graph_rtp_ready_at": 3016
+        },
+        {
+          "peer": "peer-1",
+          "dtls_ready_at": 3116,
+          "first_send_rtp_at": 307,
+          "full_graph_rtp_ready_at": 3216
+        },
+        {
+          "peer": "peer-2",
+          "dtls_ready_at": 3315,
+          "first_send_rtp_at": 306,
+          "full_graph_rtp_ready_at": 3315
+        },
+        {
+          "peer": "peer-3",
+          "dtls_ready_at": 3419,
+          "first_send_rtp_at": 410,
+          "full_graph_rtp_ready_at": 3519
+        },
+        {
+          "peer": "peer-4",
+          "dtls_ready_at": 3615,
+          "first_send_rtp_at": 406,
+          "full_graph_rtp_ready_at": 3615
+        },
+        {
+          "peer": "peer-5",
+          "dtls_ready_at": 3715,
+          "first_send_rtp_at": 406,
+          "full_graph_rtp_ready_at": 3815
+        },
+        {
+          "peer": "peer-6",
+          "dtls_ready_at": 3916,
+          "first_send_rtp_at": 406,
+          "full_graph_rtp_ready_at": 3916
+        },
+        {
+          "peer": "peer-7",
+          "dtls_ready_at": 4015,
+          "first_send_rtp_at": 406,
+          "full_graph_rtp_ready_at": 4115
+        }
+      ],
+      "post_leave_peak_rss_bytes": 27242496,
+      "post_leave_engine_stats": {
+        "engine_stats": {
+          "rooms": []
+        },
+        "at": 1791225423979
+      },
+      "expected_inbound": {
+        "audio": 56,
+        "video": 0
+      },
+      "observed_inbound": {
+        "audio": 56,
+        "video": 0
+      },
+      "decoded_video_fps": [],
+      "measurement_seconds": 11.016,
+      "receiver_jitter_seconds_median": 0.004,
+      "latency_scope": "RTP jitter only; end-to-end audio latency is not measured",
+      "negotiated_ciphers": [
+        [
+          "TLS_ECDHE_ECDSA_WITH_AES_128_GCM_SHA256",
+          "SRTP_AEAD_AES_256_GCM"
+        ],
+        [
+          "TLS_ECDHE_ECDSA_WITH_CHACHA20_POLY1305_SHA256",
+          "SRTP_AES128_CM_HMAC_SHA1_80"
+        ]
+      ],
+      "idle_ram_under_64_mib": true,
+      "load_ram_under_256_mib": true,
+      "infrastructure": {},
+      "load_generator_peak_rss_bytes": 899366912,
+      "load_generator_cpu_counters_stable": true,
+      "load_generator_cpu_cores_mean": 0.348137953485275
+    },
+    "janus_event_broker": {
+      "transport": "node-backend-longpoll/browser-SSE",
+      "maximum_backend_sessions": 9,
+      "remaining_backend_sessions": 0,
+      "trace": [
+        {
+          "at": 1791225402460,
+          "phase": "poll-start",
+          "session": 3553390282212971,
+          "active_sessions": 1
+        },
+        {
+          "at": 1791225402468,
+          "phase": "poll-start",
+          "session": 7808167529185513,
+          "active_sessions": 2
+        },
+        {
+          "at": 1791225402474,
+          "phase": "poll-complete",
+          "session": 7808167529185513,
+          "active_sessions": 2
+        },
+        {
+          "at": 1791225402474,
+          "phase": "poll-start",
+          "session": 7808167529185513,
+          "active_sessions": 2
+        },
+        {
+          "at": 1791225402650,
+          "phase": "poll-complete",
+          "session": 7808167529185513,
+          "active_sessions": 2
+        },
+        {
+          "at": 1791225402650,
+          "phase": "poll-start",
+          "session": 7808167529185513,
+          "active_sessions": 2
+        },
+        {
+          "at": 1791225402770,
+          "phase": "poll-complete",
+          "session": 7808167529185513,
+          "active_sessions": 2
+        },
+        {
+          "at": 1791225402770,
+          "phase": "poll-start",
+          "session": 7808167529185513,
+          "active_sessions": 2
+        },
+        {
+          "at": 1791225402793,
+          "phase": "poll-complete",
+          "session": 7808167529185513,
+          "active_sessions": 2
+        },
+        {
+          "at": 1791225402793,
+          "phase": "poll-start",
+          "session": 7808167529185513,
+          "active_sessions": 2
+        },
+        {
+          "at": 1791225402803,
+          "phase": "poll-start",
+          "session": 333051167918387,
+          "active_sessions": 3
+        },
+        {
+          "at": 1791225402808,
+          "phase": "poll-complete",
+          "session": 333051167918387,
+          "active_sessions": 3
+        },
+        {
+          "at": 1791225402808,
+          "phase": "poll-start",
+          "session": 333051167918387,
+          "active_sessions": 3
+        },
+        {
+          "at": 1791225402964,
+          "phase": "poll-complete",
+          "session": 333051167918387,
+          "active_sessions": 3
+        },
+        {
+          "at": 1791225402964,
+          "phase": "poll-start",
+          "session": 333051167918387,
+          "active_sessions": 3
+        },
+        {
+          "at": 1791225403081,
+          "phase": "poll-complete",
+          "session": 7808167529185513,
+          "active_sessions": 3
+        },
+        {
+          "at": 1791225403081,
+          "phase": "poll-start",
+          "session": 7808167529185513,
+          "active_sessions": 3
+        },
+        {
+          "at": 1791225403082,
+          "phase": "poll-complete",
+          "session": 333051167918387,
+          "active_sessions": 3
+        },
+        {
+          "at": 1791225403082,
+          "phase": "poll-start",
+          "session": 333051167918387,
+          "active_sessions": 3
+        },
+        {
+          "at": 1791225403094,
+          "phase": "poll-complete",
+          "session": 333051167918387,
+          "active_sessions": 3
+        },
+        {
+          "at": 1791225403094,
+          "phase": "poll-start",
+          "session": 333051167918387,
+          "active_sessions": 3
+        },
+        {
+          "at": 1791225403117,
+          "phase": "poll-start",
+          "session": 1645681489400871,
+          "active_sessions": 4
+        },
+        {
+          "at": 1791225403122,
+          "phase": "poll-complete",
+          "session": 1645681489400871,
+          "active_sessions": 4
+        },
+        {
+          "at": 1791225403122,
+          "phase": "poll-start",
+          "session": 1645681489400871,
+          "active_sessions": 4
+        },
+        {
+          "at": 1791225403278,
+          "phase": "poll-complete",
+          "session": 1645681489400871,
+          "active_sessions": 4
+        },
+        {
+          "at": 1791225403278,
+          "phase": "poll-start",
+          "session": 1645681489400871,
+          "active_sessions": 4
+        },
+        {
+          "at": 1791225403394,
+          "phase": "poll-complete",
+          "session": 7808167529185513,
+          "active_sessions": 4
+        },
+        {
+          "at": 1791225403394,
+          "phase": "poll-start",
+          "session": 7808167529185513,
+          "active_sessions": 4
+        },
+        {
+          "at": 1791225403394,
+          "phase": "poll-complete",
+          "session": 333051167918387,
+          "active_sessions": 4
+        },
+        {
+          "at": 1791225403394,
+          "phase": "poll-start",
+          "session": 333051167918387,
+          "active_sessions": 4
+        },
+        {
+          "at": 1791225403395,
+          "phase": "poll-complete",
+          "session": 1645681489400871,
+          "active_sessions": 4
+        },
+        {
+          "at": 1791225403395,
+          "phase": "poll-start",
+          "session": 1645681489400871,
+          "active_sessions": 4
+        },
+        {
+          "at": 1791225403414,
+          "phase": "poll-complete",
+          "session": 1645681489400871,
+          "active_sessions": 4
+        },
+        {
+          "at": 1791225403414,
+          "phase": "poll-start",
+          "session": 1645681489400871,
+          "active_sessions": 4
+        },
+        {
+          "at": 1791225403432,
+          "phase": "poll-start",
+          "session": 4682987652167164,
+          "active_sessions": 5
+        },
+        {
+          "at": 1791225403436,
+          "phase": "poll-complete",
+          "session": 4682987652167164,
+          "active_sessions": 5
+        },
+        {
+          "at": 1791225403436,
+          "phase": "poll-start",
+          "session": 4682987652167164,
+          "active_sessions": 5
+        },
+        {
+          "at": 1791225403593,
+          "phase": "poll-complete",
+          "session": 4682987652167164,
+          "active_sessions": 5
+        },
+        {
+          "at": 1791225403593,
+          "phase": "poll-start",
+          "session": 4682987652167164,
+          "active_sessions": 5
+        },
+        {
+          "at": 1791225403722,
+          "phase": "poll-complete",
+          "session": 7808167529185513,
+          "active_sessions": 5
+        },
+        {
+          "at": 1791225403722,
+          "phase": "poll-start",
+          "session": 7808167529185513,
+          "active_sessions": 5
+        },
+        {
+          "at": 1791225403723,
+          "phase": "poll-complete",
+          "session": 333051167918387,
+          "active_sessions": 5
+        },
+        {
+          "at": 1791225403723,
+          "phase": "poll-start",
+          "session": 333051167918387,
+          "active_sessions": 5
+        },
+        {
+          "at": 1791225403723,
+          "phase": "poll-complete",
+          "session": 1645681489400871,
+          "active_sessions": 5
+        },
+        {
+          "at": 1791225403723,
+          "phase": "poll-start",
+          "session": 1645681489400871,
+          "active_sessions": 5
+        },
+        {
+          "at": 1791225403723,
+          "phase": "poll-complete",
+          "session": 4682987652167164,
+          "active_sessions": 5
+        },
+        {
+          "at": 1791225403723,
+          "phase": "poll-start",
+          "session": 4682987652167164,
+          "active_sessions": 5
+        },
+        {
+          "at": 1791225403745,
+          "phase": "poll-complete",
+          "session": 4682987652167164,
+          "active_sessions": 5
+        },
+        {
+          "at": 1791225403745,
+          "phase": "poll-start",
+          "session": 4682987652167164,
+          "active_sessions": 5
+        },
+        {
+          "at": 1791225403746,
+          "phase": "poll-start",
+          "session": 2079213622227099,
+          "active_sessions": 6
+        },
+        {
+          "at": 1791225403751,
+          "phase": "poll-complete",
+          "session": 2079213622227099,
+          "active_sessions": 6
+        },
+        {
+          "at": 1791225403751,
+          "phase": "poll-start",
+          "session": 2079213622227099,
+          "active_sessions": 6
+        },
+        {
+          "at": 1791225403907,
+          "phase": "poll-complete",
+          "session": 2079213622227099,
+          "active_sessions": 6
+        },
+        {
+          "at": 1791225403907,
+          "phase": "poll-start",
+          "session": 2079213622227099,
+          "active_sessions": 6
+        },
+        {
+          "at": 1791225404035,
+          "phase": "poll-complete",
+          "session": 333051167918387,
+          "active_sessions": 6
+        },
+        {
+          "at": 1791225404035,
+          "phase": "poll-start",
+          "session": 333051167918387,
+          "active_sessions": 6
+        },
+        {
+          "at": 1791225404035,
+          "phase": "poll-complete",
+          "session": 7808167529185513,
+          "active_sessions": 6
+        },
+        {
+          "at": 1791225404035,
+          "phase": "poll-start",
+          "session": 7808167529185513,
+          "active_sessions": 6
+        },
+        {
+          "at": 1791225404035,
+          "phase": "poll-complete",
+          "session": 1645681489400871,
+          "active_sessions": 6
+        },
+        {
+          "at": 1791225404035,
+          "phase": "poll-start",
+          "session": 1645681489400871,
+          "active_sessions": 6
+        },
+        {
+          "at": 1791225404036,
+          "phase": "poll-complete",
+          "session": 4682987652167164,
+          "active_sessions": 6
+        },
+        {
+          "at": 1791225404036,
+          "phase": "poll-start",
+          "session": 4682987652167164,
+          "active_sessions": 6
+        },
+        {
+          "at": 1791225404036,
+          "phase": "poll-complete",
+          "session": 2079213622227099,
+          "active_sessions": 6
+        },
+        {
+          "at": 1791225404036,
+          "phase": "poll-start",
+          "session": 2079213622227099,
+          "active_sessions": 6
+        },
+        {
+          "at": 1791225404052,
+          "phase": "poll-complete",
+          "session": 2079213622227099,
+          "active_sessions": 6
+        },
+        {
+          "at": 1791225404052,
+          "phase": "poll-start",
+          "session": 2079213622227099,
+          "active_sessions": 6
+        },
+        {
+          "at": 1791225404060,
+          "phase": "poll-start",
+          "session": 3893055879630442,
+          "active_sessions": 7
+        },
+        {
+          "at": 1791225404065,
+          "phase": "poll-complete",
+          "session": 3893055879630442,
+          "active_sessions": 7
+        },
+        {
+          "at": 1791225404065,
+          "phase": "poll-start",
+          "session": 3893055879630442,
+          "active_sessions": 7
+        },
+        {
+          "at": 1791225404221,
+          "phase": "poll-complete",
+          "session": 3893055879630442,
+          "active_sessions": 7
+        },
+        {
+          "at": 1791225404221,
+          "phase": "poll-start",
+          "session": 3893055879630442,
+          "active_sessions": 7
+        },
+        {
+          "at": 1791225404347,
+          "phase": "poll-complete",
+          "session": 333051167918387,
+          "active_sessions": 7
+        },
+        {
+          "at": 1791225404347,
+          "phase": "poll-start",
+          "session": 333051167918387,
+          "active_sessions": 7
+        },
+        {
+          "at": 1791225404347,
+          "phase": "poll-complete",
+          "session": 1645681489400871,
+          "active_sessions": 7
+        },
+        {
+          "at": 1791225404347,
+          "phase": "poll-start",
+          "session": 1645681489400871,
+          "active_sessions": 7
+        },
+        {
+          "at": 1791225404348,
+          "phase": "poll-complete",
+          "session": 4682987652167164,
+          "active_sessions": 7
+        },
+        {
+          "at": 1791225404348,
+          "phase": "poll-start",
+          "session": 4682987652167164,
+          "active_sessions": 7
+        },
+        {
+          "at": 1791225404348,
+          "phase": "poll-complete",
+          "session": 7808167529185513,
+          "active_sessions": 7
+        },
+        {
+          "at": 1791225404348,
+          "phase": "poll-start",
+          "session": 7808167529185513,
+          "active_sessions": 7
+        },
+        {
+          "at": 1791225404348,
+          "phase": "poll-complete",
+          "session": 2079213622227099,
+          "active_sessions": 7
+        },
+        {
+          "at": 1791225404348,
+          "phase": "poll-start",
+          "session": 2079213622227099,
+          "active_sessions": 7
+        },
+        {
+          "at": 1791225404349,
+          "phase": "poll-complete",
+          "session": 3893055879630442,
+          "active_sessions": 7
+        },
+        {
+          "at": 1791225404349,
+          "phase": "poll-start",
+          "session": 3893055879630442,
+          "active_sessions": 7
+        },
+        {
+          "at": 1791225404366,
+          "phase": "poll-complete",
+          "session": 3893055879630442,
+          "active_sessions": 7
+        },
+        {
+          "at": 1791225404366,
+          "phase": "poll-start",
+          "session": 3893055879630442,
+          "active_sessions": 7
+        },
+        {
+          "at": 1791225404373,
+          "phase": "poll-start",
+          "session": 5746285864532678,
+          "active_sessions": 8
+        },
+        {
+          "at": 1791225404378,
+          "phase": "poll-complete",
+          "session": 5746285864532678,
+          "active_sessions": 8
+        },
+        {
+          "at": 1791225404378,
+          "phase": "poll-start",
+          "session": 5746285864532678,
+          "active_sessions": 8
+        },
+        {
+          "at": 1791225404534,
+          "phase": "poll-complete",
+          "session": 5746285864532678,
+          "active_sessions": 8
+        },
+        {
+          "at": 1791225404534,
+          "phase": "poll-start",
+          "session": 5746285864532678,
+          "active_sessions": 8
+        },
+        {
+          "at": 1791225404660,
+          "phase": "poll-complete",
+          "session": 333051167918387,
+          "active_sessions": 8
+        },
+        {
+          "at": 1791225404660,
+          "phase": "poll-start",
+          "session": 333051167918387,
+          "active_sessions": 8
+        },
+        {
+          "at": 1791225404660,
+          "phase": "poll-complete",
+          "session": 1645681489400871,
+          "active_sessions": 8
+        },
+        {
+          "at": 1791225404660,
+          "phase": "poll-start",
+          "session": 1645681489400871,
+          "active_sessions": 8
+        },
+        {
+          "at": 1791225404660,
+          "phase": "poll-complete",
+          "session": 3893055879630442,
+          "active_sessions": 8
+        },
+        {
+          "at": 1791225404660,
+          "phase": "poll-start",
+          "session": 3893055879630442,
+          "active_sessions": 8
+        },
+        {
+          "at": 1791225404661,
+          "phase": "poll-complete",
+          "session": 4682987652167164,
+          "active_sessions": 8
+        },
+        {
+          "at": 1791225404661,
+          "phase": "poll-start",
+          "session": 4682987652167164,
+          "active_sessions": 8
+        },
+        {
+          "at": 1791225404661,
+          "phase": "poll-complete",
+          "session": 7808167529185513,
+          "active_sessions": 8
+        },
+        {
+          "at": 1791225404661,
+          "phase": "poll-start",
+          "session": 7808167529185513,
+          "active_sessions": 8
+        },
+        {
+          "at": 1791225404661,
+          "phase": "poll-complete",
+          "session": 2079213622227099,
+          "active_sessions": 8
+        },
+        {
+          "at": 1791225404661,
+          "phase": "poll-start",
+          "session": 2079213622227099,
+          "active_sessions": 8
+        },
+        {
+          "at": 1791225404662,
+          "phase": "poll-complete",
+          "session": 5746285864532678,
+          "active_sessions": 8
+        },
+        {
+          "at": 1791225404662,
+          "phase": "poll-start",
+          "session": 5746285864532678,
+          "active_sessions": 8
+        },
+        {
+          "at": 1791225404679,
+          "phase": "poll-complete",
+          "session": 5746285864532678,
+          "active_sessions": 8
+        },
+        {
+          "at": 1791225404679,
+          "phase": "poll-start",
+          "session": 5746285864532678,
+          "active_sessions": 8
+        },
+        {
+          "at": 1791225404687,
+          "phase": "poll-start",
+          "session": 3278535751502635,
+          "active_sessions": 9
+        },
+        {
+          "at": 1791225404692,
+          "phase": "poll-complete",
+          "session": 3278535751502635,
+          "active_sessions": 9
+        },
+        {
+          "at": 1791225404692,
+          "phase": "poll-start",
+          "session": 3278535751502635,
+          "active_sessions": 9
+        },
+        {
+          "at": 1791225404848,
+          "phase": "poll-complete",
+          "session": 3278535751502635,
+          "active_sessions": 9
+        },
+        {
+          "at": 1791225404848,
+          "phase": "poll-start",
+          "session": 3278535751502635,
+          "active_sessions": 9
+        },
+        {
+          "at": 1791225404972,
+          "phase": "poll-complete",
+          "session": 1645681489400871,
+          "active_sessions": 9
+        },
+        {
+          "at": 1791225404972,
+          "phase": "poll-start",
+          "session": 1645681489400871,
+          "active_sessions": 9
+        },
+        {
+          "at": 1791225404973,
+          "phase": "poll-complete",
+          "session": 4682987652167164,
+          "active_sessions": 9
+        },
+        {
+          "at": 1791225404973,
+          "phase": "poll-start",
+          "session": 4682987652167164,
+          "active_sessions": 9
+        },
+        {
+          "at": 1791225404973,
+          "phase": "poll-complete",
+          "session": 333051167918387,
+          "active_sessions": 9
+        },
+        {
+          "at": 1791225404973,
+          "phase": "poll-start",
+          "session": 333051167918387,
+          "active_sessions": 9
+        },
+        {
+          "at": 1791225404973,
+          "phase": "poll-complete",
+          "session": 3893055879630442,
+          "active_sessions": 9
+        },
+        {
+          "at": 1791225404973,
+          "phase": "poll-start",
+          "session": 3893055879630442,
+          "active_sessions": 9
+        },
+        {
+          "at": 1791225404973,
+          "phase": "poll-complete",
+          "session": 7808167529185513,
+          "active_sessions": 9
+        },
+        {
+          "at": 1791225404973,
+          "phase": "poll-start",
+          "session": 7808167529185513,
+          "active_sessions": 9
+        },
+        {
+          "at": 1791225404974,
+          "phase": "poll-complete",
+          "session": 2079213622227099,
+          "active_sessions": 9
+        },
+        {
+          "at": 1791225404974,
+          "phase": "poll-start",
+          "session": 2079213622227099,
+          "active_sessions": 9
+        },
+        {
+          "at": 1791225404974,
+          "phase": "poll-complete",
+          "session": 5746285864532678,
+          "active_sessions": 9
+        },
+        {
+          "at": 1791225404974,
+          "phase": "poll-start",
+          "session": 5746285864532678,
+          "active_sessions": 9
+        },
+        {
+          "at": 1791225404974,
+          "phase": "poll-complete",
+          "session": 3278535751502635,
+          "active_sessions": 9
+        },
+        {
+          "at": 1791225404974,
+          "phase": "poll-start",
+          "session": 3278535751502635,
+          "active_sessions": 9
+        },
+        {
+          "at": 1791225404993,
+          "phase": "poll-complete",
+          "session": 3278535751502635,
+          "active_sessions": 9
+        },
+        {
+          "at": 1791225404993,
+          "phase": "poll-start",
+          "session": 3278535751502635,
+          "active_sessions": 9
+        },
+        {
+          "at": 1791225405013,
+          "phase": "poll-complete",
+          "session": 7808167529185513,
+          "active_sessions": 9
+        },
+        {
+          "at": 1791225405013,
+          "phase": "poll-start",
+          "session": 7808167529185513,
+          "active_sessions": 9
+        },
+        {
+          "at": 1791225405173,
+          "phase": "poll-complete",
+          "session": 7808167529185513,
+          "active_sessions": 9
+        },
+        {
+          "at": 1791225405173,
+          "phase": "poll-start",
+          "session": 7808167529185513,
+          "active_sessions": 9
+        },
+        {
+          "at": 1791225405440,
+          "phase": "poll-complete",
+          "session": 7808167529185513,
+          "active_sessions": 9
+        },
+        {
+          "at": 1791225405440,
+          "phase": "poll-start",
+          "session": 7808167529185513,
+          "active_sessions": 9
+        },
+        {
+          "at": 1791225405482,
+          "phase": "poll-complete",
+          "session": 333051167918387,
+          "active_sessions": 9
+        },
+        {
+          "at": 1791225405482,
+          "phase": "poll-start",
+          "session": 333051167918387,
+          "active_sessions": 9
+        },
+        {
+          "at": 1791225405641,
+          "phase": "poll-complete",
+          "session": 333051167918387,
+          "active_sessions": 9
+        },
+        {
+          "at": 1791225405641,
+          "phase": "poll-start",
+          "session": 333051167918387,
+          "active_sessions": 9
+        },
+        {
+          "at": 1791225405909,
+          "phase": "poll-complete",
+          "session": 333051167918387,
+          "active_sessions": 9
+        },
+        {
+          "at": 1791225405909,
+          "phase": "poll-start",
+          "session": 333051167918387,
+          "active_sessions": 9
+        },
+        {
+          "at": 1791225405947,
+          "phase": "poll-complete",
+          "session": 1645681489400871,
+          "active_sessions": 9
+        },
+        {
+          "at": 1791225405947,
+          "phase": "poll-start",
+          "session": 1645681489400871,
+          "active_sessions": 9
+        },
+        {
+          "at": 1791225406104,
+          "phase": "poll-complete",
+          "session": 1645681489400871,
+          "active_sessions": 9
+        },
+        {
+          "at": 1791225406104,
+          "phase": "poll-start",
+          "session": 1645681489400871,
+          "active_sessions": 9
+        },
+        {
+          "at": 1791225406363,
+          "phase": "poll-complete",
+          "session": 1645681489400871,
+          "active_sessions": 9
+        },
+        {
+          "at": 1791225406363,
+          "phase": "poll-start",
+          "session": 1645681489400871,
+          "active_sessions": 9
+        },
+        {
+          "at": 1791225406411,
+          "phase": "poll-complete",
+          "session": 4682987652167164,
+          "active_sessions": 9
+        },
+        {
+          "at": 1791225406411,
+          "phase": "poll-start",
+          "session": 4682987652167164,
+          "active_sessions": 9
+        },
+        {
+          "at": 1791225406568,
+          "phase": "poll-complete",
+          "session": 4682987652167164,
+          "active_sessions": 9
+        },
+        {
+          "at": 1791225406568,
+          "phase": "poll-start",
+          "session": 4682987652167164,
+          "active_sessions": 9
+        },
+        {
+          "at": 1791225406831,
+          "phase": "poll-complete",
+          "session": 4682987652167164,
+          "active_sessions": 9
+        },
+        {
+          "at": 1791225406831,
+          "phase": "poll-start",
+          "session": 4682987652167164,
+          "active_sessions": 9
+        },
+        {
+          "at": 1791225406875,
+          "phase": "poll-complete",
+          "session": 2079213622227099,
+          "active_sessions": 9
+        },
+        {
+          "at": 1791225406875,
+          "phase": "poll-start",
+          "session": 2079213622227099,
+          "active_sessions": 9
+        },
+        {
+          "at": 1791225407032,
+          "phase": "poll-complete",
+          "session": 2079213622227099,
+          "active_sessions": 9
+        },
+        {
+          "at": 1791225407032,
+          "phase": "poll-start",
+          "session": 2079213622227099,
+          "active_sessions": 9
+        },
+        {
+          "at": 1791225407300,
+          "phase": "poll-complete",
+          "session": 2079213622227099,
+          "active_sessions": 9
+        },
+        {
+          "at": 1791225407300,
+          "phase": "poll-start",
+          "session": 2079213622227099,
+          "active_sessions": 9
+        },
+        {
+          "at": 1791225407339,
+          "phase": "poll-complete",
+          "session": 3893055879630442,
+          "active_sessions": 9
+        },
+        {
+          "at": 1791225407339,
+          "phase": "poll-start",
+          "session": 3893055879630442,
+          "active_sessions": 9
+        },
+        {
+          "at": 1791225407498,
+          "phase": "poll-complete",
+          "session": 3893055879630442,
+          "active_sessions": 9
+        },
+        {
+          "at": 1791225407498,
+          "phase": "poll-start",
+          "session": 3893055879630442,
+          "active_sessions": 9
+        },
+        {
+          "at": 1791225407769,
+          "phase": "poll-complete",
+          "session": 3893055879630442,
+          "active_sessions": 9
+        },
+        {
+          "at": 1791225407769,
+          "phase": "poll-start",
+          "session": 3893055879630442,
+          "active_sessions": 9
+        },
+        {
+          "at": 1791225407805,
+          "phase": "poll-complete",
+          "session": 5746285864532678,
+          "active_sessions": 9
+        },
+        {
+          "at": 1791225407805,
+          "phase": "poll-start",
+          "session": 5746285864532678,
+          "active_sessions": 9
+        },
+        {
+          "at": 1791225407962,
+          "phase": "poll-complete",
+          "session": 5746285864532678,
+          "active_sessions": 9
+        },
+        {
+          "at": 1791225407962,
+          "phase": "poll-start",
+          "session": 5746285864532678,
+          "active_sessions": 9
+        },
+        {
+          "at": 1791225408222,
+          "phase": "poll-complete",
+          "session": 5746285864532678,
+          "active_sessions": 9
+        },
+        {
+          "at": 1791225408222,
+          "phase": "poll-start",
+          "session": 5746285864532678,
+          "active_sessions": 9
+        },
+        {
+          "at": 1791225408270,
+          "phase": "poll-complete",
+          "session": 3278535751502635,
+          "active_sessions": 9
+        },
+        {
+          "at": 1791225408270,
+          "phase": "poll-start",
+          "session": 3278535751502635,
+          "active_sessions": 9
+        },
+        {
+          "at": 1791225408427,
+          "phase": "poll-complete",
+          "session": 3278535751502635,
+          "active_sessions": 9
+        },
+        {
+          "at": 1791225408427,
+          "phase": "poll-start",
+          "session": 3278535751502635,
+          "active_sessions": 9
+        },
+        {
+          "at": 1791225408691,
+          "phase": "poll-complete",
+          "session": 3278535751502635,
+          "active_sessions": 9
+        },
+        {
+          "at": 1791225408691,
+          "phase": "poll-start",
+          "session": 3278535751502635,
+          "active_sessions": 9
+        },
+        {
+          "at": 1791225423949,
+          "phase": "poll-complete",
+          "session": 1645681489400871,
+          "active_sessions": 9
+        },
+        {
+          "at": 1791225423949,
+          "phase": "poll-start",
+          "session": 1645681489400871,
+          "active_sessions": 9
+        },
+        {
+          "at": 1791225423950,
+          "phase": "poll-complete",
+          "session": 7808167529185513,
+          "active_sessions": 9
+        },
+        {
+          "at": 1791225423950,
+          "phase": "poll-start",
+          "session": 7808167529185513,
+          "active_sessions": 9
+        },
+        {
+          "at": 1791225423950,
+          "phase": "poll-complete",
+          "session": 333051167918387,
+          "active_sessions": 9
+        },
+        {
+          "at": 1791225423950,
+          "phase": "poll-start",
+          "session": 333051167918387,
+          "active_sessions": 9
+        },
+        {
+          "at": 1791225423950,
+          "phase": "poll-complete",
+          "session": 4682987652167164,
+          "active_sessions": 9
+        },
+        {
+          "at": 1791225423950,
+          "phase": "poll-start",
+          "session": 4682987652167164,
+          "active_sessions": 9
+        },
+        {
+          "at": 1791225423951,
+          "phase": "poll-complete",
+          "session": 2079213622227099,
+          "active_sessions": 9
+        },
+        {
+          "at": 1791225423951,
+          "phase": "poll-start",
+          "session": 2079213622227099,
+          "active_sessions": 9
+        },
+        {
+          "at": 1791225423951,
+          "phase": "poll-complete",
+          "session": 3278535751502635,
+          "active_sessions": 9
+        },
+        {
+          "at": 1791225423951,
+          "phase": "poll-start",
+          "session": 3278535751502635,
+          "active_sessions": 9
+        },
+        {
+          "at": 1791225423951,
+          "phase": "poll-complete",
+          "session": 3893055879630442,
+          "active_sessions": 9
+        },
+        {
+          "at": 1791225423951,
+          "phase": "poll-start",
+          "session": 3893055879630442,
+          "active_sessions": 9
+        },
+        {
+          "at": 1791225423951,
+          "phase": "poll-complete",
+          "session": 5746285864532678,
+          "active_sessions": 9
+        },
+        {
+          "at": 1791225423952,
+          "phase": "poll-start",
+          "session": 5746285864532678,
+          "active_sessions": 9
+        },
+        {
+          "at": 1791225423956,
+          "phase": "poll-cancelled",
+          "session": 3553390282212971,
+          "active_sessions": 8
+        },
+        {
+          "at": 1791225423957,
+          "phase": "poll-cancelled",
+          "session": 7808167529185513,
+          "active_sessions": 7
+        },
+        {
+          "at": 1791225423958,
+          "phase": "poll-cancelled",
+          "session": 2079213622227099,
+          "active_sessions": 6
+        },
+        {
+          "at": 1791225423959,
+          "phase": "poll-cancelled",
+          "session": 333051167918387,
+          "active_sessions": 5
+        },
+        {
+          "at": 1791225423960,
+          "phase": "poll-cancelled",
+          "session": 3893055879630442,
+          "active_sessions": 4
+        },
+        {
+          "at": 1791225423960,
+          "phase": "poll-cancelled",
+          "session": 1645681489400871,
+          "active_sessions": 3
+        },
+        {
+          "at": 1791225423962,
+          "phase": "poll-cancelled",
+          "session": 4682987652167164,
+          "active_sessions": 2
+        },
+        {
+          "at": 1791225423962,
+          "phase": "poll-cancelled",
+          "session": 5746285864532678,
+          "active_sessions": 1
+        },
+        {
+          "at": 1791225423962,
+          "phase": "poll-cancelled",
+          "session": 3278535751502635,
+          "active_sessions": 0
+        }
+      ]
+    },
+    "post_leave": {
+      "engine_stats": {
+        "rooms": []
+      },
+      "at": 1791225423979
+    },
+    "browser_failures": [],
+    "samples": 12
+  },
+  "earlier_ice_failure": {
+    "configuration_udp_range": [
+      10000,
+      10199
+    ],
+    "raw_sha256": {
+      "server.json": "cf3c75bb0ce24d9e3b1737244523c2a50e326f3dcfa0c6d9f2aa5476cf52c49e",
+      "browser.json": "0af63cc195c9db7ed6bc92cc034d614ad10a1b4d2fb2f6ccc61aa1295fc9a589",
+      "loadgen.log": "7b5690932979521b8f60b34e5ad95714ec0b9c9eca0c9ef7bbb1ba013c3534f5",
+      "http.jcfg": "28c1f052d175a056e4b4d175a86909d355aa7e61bda77f9715fe55921b25d909",
+      "backend.log": "5f74692e75934e9be6e8231fcb711fc284e3d4ad308e5db2ab8843cac283317e"
+    },
+    "browser_failures": [
+      "Error: page.evaluate: Error: WebRTC deadline exceeded\n    at until (http://127.0.0.1:41905/client.js:12626:11)\n    at async Object.janus (http://127.0.0.1:41905/client.js:12962:7)\n    at async window.startBenchmark (http://127.0.0.1:41905/client.js:12990:7)\n    at async <anonymous>:337:30"
+    ],
+    "failed_stage": "fifth publisher: connected-state deadline after immediately received join/publish ACK/events",
+    "backend_evidence": "ice.c:janus_ice_check_failed:2067, handle1014631709465400 ICE failed",
+    "broker_sessions_at_failure": 6,
+    "broker_sessions_after_cleanup": 0,
+    "cause": "open; no port conflict was observed in a read-only check after the run; the later different-range success does not prove cause"
+  },
+  "limitations": [
+    "One short real local case, not3rounds and not the WAN matrix.",
+    "N+1 backend polls remain unchanged; the new local event multiplexing overhead is part of the separately sampled generator.",
+    "Fake control timing is signaling instrumentation evidence, not media latency.",
+    "No video, product tickets/ACL/watch/revocation, TURN or true audio latency acceptance.",
+    "Owned containers were removed by the local runner; production services were untouched.",
+    "The archived original9ab WAN timeout cause remains an inference."
+  ]
+}

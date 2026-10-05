@@ -3,6 +3,7 @@
 import { Device } from 'mediasoup-client';
 import { fixtureCodecOptions, fixtureDescription } from './video-fixture.mjs';
 import { PcmMarkers } from './pcm-marker.mjs';
+import { JanusSignal } from './janus-events.mjs';
 const sleep = ms => new Promise(resolve => setTimeout(resolve, ms));
 let videoBitrate = 6000000;
 let fixedVideoFixture = false;
@@ -27,6 +28,14 @@ const rpc = async body => {
 const pcs = [], retained = [], failures = []; window.benchmarkFailures = failures;
 const peerEvidence = [], timers = [];
 const nativeEndpoints = [], rtpConfiguration = [];
+window.benchmarkConnectionEvidence = async () => Promise.all(nativeEndpoints.map(async ({ connection, label, peer }) => {
+  const reports = [...await connection.getStats()].map(([, value]) => value);
+  const fields = ['id', 'type', 'state', 'nominated', 'bytesSent', 'bytesReceived', 'requestsSent', 'requestsReceived', 'responsesSent', 'responsesReceived', 'localCandidateId', 'remoteCandidateId', 'address', 'port', 'protocol', 'candidateType'];
+  return { peer, label, connection_state: connection.connectionState, ice_connection_state: connection.iceConnectionState,
+    ice_gathering_state: connection.iceGatheringState, signaling_state: connection.signalingState,
+    candidates: reports.filter(value => ['candidate-pair', 'local-candidate', 'remote-candidate'].includes(value.type))
+      .map(value => Object.fromEntries(fields.filter(key => key in value).map(key => [key, value[key]]))) };
+}));
 function beginPeer(index, peers, video) {
   const evidence = { peer: `peer-${index}`, setup_started_at: Date.now(), connections: {},
     expected_audio: peers - 1 + (video && index !== 0 ? 1 : 0), expected_video: video && index !== 0 ? 1 : 0 };
@@ -224,37 +233,35 @@ async function current(peers, withVideo) {
   };
 }
 async function janus(peers, withVideo) {
-  const members = [], sessions = [];
-  const api = async (path, body) => {
-    const value = await (await fetch('/janus' + path, body ? { method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify(body) } : undefined)).json();
-    if (value.janus === 'error') throw new Error(JSON.stringify(value)); return value;
-  };
-  const session = async () => {
-    const response = await api('', { janus: 'create', transaction: crypto.randomUUID() });
-    const entry = { id: response.data.id, pending: new Map(), stopped: false }; sessions.push(entry);
-    const poll = async () => {
-      while (!entry.stopped) {
-        try {
-          const events = await api(`/${entry.id}?rid=${Date.now()}&maxev=10`);
-          for (const event of Array.isArray(events) ? events : [events]) {
-            if (event.transaction && entry.pending.has(event.transaction)) { entry.pending.get(event.transaction)(event); entry.pending.delete(event.transaction); }
-          }
-        } catch (error) { if (!entry.stopped) failures.push(String(error)); await sleep(100); }
+  const members = [], sessions = [], signal = new JanusSignal({ failures });
+  window.benchmarkDiagnostics = { janus: { transport: 'node-backend-longpoll/browser-SSE', trace: signal.trace } };
+  let manager, admin, roomCreated = false, closing;
+  const room = 424242;
+  const session = async () => { const entry = await signal.session(); sessions.push(entry); return entry; };
+  // Install cleanup before setup so a missing join event cannot leak sessions.
+  window.closePeers = () => closing ??= (async () => {
+    let rooms, errors = [];
+    try {
+      if (manager && admin && roomCreated) {
+        if (signal.failed) {
+          await signal.api(`/${manager.id}/${admin}`, { janus: 'message', transaction: crypto.randomUUID(), body: { request: 'destroy', room } }, AbortSignal.timeout(3000));
+        } else {
+          await manager.request(admin, { janus: 'message', body: { request: 'destroy', room } });
+          rooms = await manager.request(admin, { janus: 'message', body: { request: 'list' } });
+        }
       }
-    }; poll();
-    entry.request = async (handle, body) => {
-      const transaction = crypto.randomUUID(); let resolve;
-      const waiting = new Promise(ok => { resolve = ok; }); entry.pending.set(transaction, resolve);
-      const result = await api(`/${entry.id}${handle ? '/' + handle : ''}`, { ...body, transaction });
-      if (result.janus !== 'ack') { entry.pending.delete(transaction); return result; }
-      const event = await Promise.race([waiting, sleep(30000).then(() => { throw new Error('Janus event timeout'); })]);
-      if (event.plugindata?.data?.error) throw new Error(JSON.stringify(event)); return event;
-    };
-    entry.attach = async () => (await entry.request(null, { janus: 'attach', plugin: 'janus.plugin.videoroom' })).data.id;
-    return entry;
-  };
-  const manager = await session(), admin = await manager.attach(), room = 424242;
-  await manager.request(admin, { janus: 'message', body: { request: 'create', room, publishers: 64, bitrate: 0, bitrate_cap: false, audiocodec: 'opus', videocodec: 'vp8', opus_fec: true, opus_dtx: false } });
+    } catch (error) { errors.push(String(error)); }
+    await Promise.all(sessions.map(async owner => {
+      try { await signal.api(`/${owner.id}`, { janus: 'destroy', transaction: crypto.randomUUID() }, AbortSignal.timeout(3000)); }
+      catch (error) { errors.push(String(error)); }
+    }));
+    signal.close(); pcs.forEach(pc => pc.close());
+    if (errors.length) throw new Error('Janus cleanup failed: ' + errors.join('; '));
+    return { engine_stats: { rooms: rooms?.plugindata?.data?.list ?? [] } };
+  })();
+  await signal.ready;
+  manager = await session(); admin = await manager.attach();
+  await manager.request(admin, { janus: 'message', body: { request: 'create', room, publishers: 64, bitrate: 0, bitrate_cap: false, audiocodec: 'opus', videocodec: 'vp8', opus_fec: true, opus_dtx: false } }); roomCreated = true;
   for (let index = 0; index < peers; index++) {
     const evidence = beginPeer(index, peers, withVideo), connections = [];
     const owner = await session(), handle = await owner.attach(), pc = nativePc();
@@ -283,20 +290,20 @@ async function janus(peers, withVideo) {
     await until(() => pc.connectionState === 'connected');
   }
   window.collect = async () => (await Promise.all(members.map(p => collectNative(p.connections, p.evidence.peer)))).flat();
-  window.closePeers = async () => {
-    for (const owner of sessions.filter(s => s !== manager)) { owner.stopped = true; await owner.request(null, { janus: 'destroy' }); }
-    await manager.request(admin, { janus: 'message', body: { request: 'destroy', room } });
-    const rooms = await manager.request(admin, { janus: 'message', body: { request: 'list' } });
-    manager.stopped = true; await manager.request(null, { janus: 'destroy' }); pcs.forEach(pc => pc.close());
-    return { engine_stats: { rooms: rooms.plugindata.data.list } };
-  };
+
 }
 window.startBenchmark = async config => {
   window.backend = config.backend;
   videoBitrate = config.videoBitrate;
   fixedVideoFixture = config.fixedVideoFixture;
   if (config.pcmLatency) pcm = await PcmMarkers.create();
-  await ({ current, mediasoup, janus })[config.engine](config.peers, config.video);
+  try { await ({ current, mediasoup, janus })[config.engine](config.peers, config.video); }
+  catch (error) {
+    peerEvidence.forEach(p => { p.stop = true; });
+    try { window.benchmarkDiagnostics ??= {}; window.benchmarkDiagnostics.failed_connections = await window.benchmarkConnectionEvidence(); } catch {}
+    try { await window.closePeers?.(); } catch (cleanup) { failures.push(String(cleanup)); }
+    throw error;
+  }
   await until(() => peerEvidence.every(p => p.dtls_ready_at && p.first_send_rtp_at && p.full_graph_rtp_ready_at));
   peerEvidence.forEach(p => { p.stop = true; }); await Promise.all(timers);
   await sleep(config.warmupMs);
@@ -318,6 +325,7 @@ window.startBenchmark = async config => {
   const describe = description => description?.sdp.split(/\r?\n/).filter(line => /^m=|^a=(rtpmap:|fmtp:|rtcp-fb:|extmap:|mid:|ssrc:|ssrc-group:|sendrecv$|sendonly$|recvonly$)/.test(line)) ?? [];
   result.protocol_configuration = { native: nativeEndpoints.map(({ connection, label, peer }) => ({ peer, label,
     local: describe(connection.localDescription), remote: describe(connection.remoteDescription) })), rtp: rtpConfiguration };
+  if (window.benchmarkDiagnostics) result.diagnostics = window.benchmarkDiagnostics;
   result.post_leave = await window.closePeers(); result.post_leave.at = Date.now();
   retained.forEach(item => { if (item instanceof MediaStreamTrack) item.stop(); if (item instanceof AudioContext) item.close(); });
   if (pcm) await pcm.close();

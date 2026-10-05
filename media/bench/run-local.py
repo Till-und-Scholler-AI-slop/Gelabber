@@ -74,7 +74,7 @@ def run(args, engine, count, round_number, report):
             config = folder / 'http.jcfg'
             config.write_text(f'general: {{ json = "compact"; base_path = "/janus"; http = true; port = {port}; https = false; }}\nadmin: {{ admin_http = false; admin_https = false; }}\n')
             containers.append(name)
-            docker('run', '-d', '--name', name, '--network', 'host', '-v', f'{config.resolve()}:/opt/janus/etc/janus/janus.transport.http.jcfg:ro', args.janus_image, '--interface=127.0.0.1', '--nat-1-1=127.0.0.1', '--apisecret=' + token)
+            docker('run', '-d', '--name', name, '--network', 'host', '-v', f'{config.resolve()}:/opt/janus/etc/janus/janus.transport.http.jcfg:ro', args.janus_image, '--interface=127.0.0.1', '--nat-1-1=127.0.0.1', f'--rtp-port-range={args.janus_udp_min}-{args.janus_udp_max}', '--apisecret=' + token)
             inspected = json.loads(docker('inspect', name))[0]
             pid = inspected['State']['Pid']
             report['janus_image_id'] = inspected['Image']
@@ -141,10 +141,14 @@ def main():
     parser.add_argument('--fixed-video-fixture', action='store_true', help='identical Chrome min/start/max source hints; actual bitrate/FPS still required')
     parser.add_argument('--pcm-calibration', type=Path, help='enable PCM marker latency with a passing local calibration JSON')
     parser.add_argument('--protocol-logs', action='store_true', help='Chromium RTC event logs; diagnostic runs only')
+    parser.add_argument('--janus-udp-min', type=int, default=10000)
+    parser.add_argument('--janus-udp-max', type=int, default=10199)
     parser.add_argument('--output', type=Path, required=True)
     args = parser.parse_args()
     if args.runs < 1 or args.duration < 3 or args.warmup < 1 or not 0 < args.video_bitrate <= 100000000:
         parser.error('runs >=1, duration >=3 and warmup >=1 required')
+    if not 1024 <= args.janus_udp_min < args.janus_udp_max <= 65535:
+        parser.error('invalid local Janus UDP range')
     if args.fixed_video_fixture and (not args.video or args.video_bitrate % 1000):
         parser.error('fixed video fixture requires --video and whole kbit/s')
     if args.pcm_calibration and (not args.pcm_calibration.is_file() or args.duration < 8):
@@ -154,7 +158,7 @@ def main():
     args.janus_image = docker('inspect', '--format', '{{.Id}}', 'gelabber-bench/janus:v1.4.2') if 'janus' in args.engines else None
     artifacts = ['client.bundle.js', 'package-lock.json', 'current-probe/Cargo.lock', 'mediasoup-probe/Cargo.lock', 'current-probe/target/release/gelabber-current-probe', 'mediasoup-probe/target/release/gelabber-mediasoup-probe']
     args.snapshot = args.output / 'inputs'
-    for name in [*artifacts, 'loadgen.mjs', 'proxy-target.mjs', 'browser-provenance.mjs', 'video-fixture.mjs', 'pcm-policy.mjs', 'pcm-kernel.mjs', 'pcm-marker.mjs', 'pcm.bundle.js']:
+    for name in [*artifacts, 'loadgen.mjs', 'janus-broker.mjs', 'janus-events.mjs', 'proxy-target.mjs', 'browser-provenance.mjs', 'video-fixture.mjs', 'pcm-policy.mjs', 'pcm-kernel.mjs', 'pcm-marker.mjs', 'pcm.bundle.js']:
         source = ROOT / name
         if source.exists():
             destination = args.snapshot / name

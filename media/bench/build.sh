@@ -14,3 +14,6 @@ node --check loadgen.mjs
 node --check local-fixed-video.mjs
 node --check native-video.mjs
 node --check mediasoup-native-sdp.mjs
+node --check janus-events.mjs
+node --check janus-broker.mjs
+node --check local-janus-events.mjs

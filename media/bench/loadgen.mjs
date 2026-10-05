@@ -9,6 +9,7 @@ import { fileURLToPath } from 'node:url';
 import { proxyTarget } from './proxy-target.mjs';
 import { executedChromium } from './browser-provenance.mjs';
 import { readPcmCalibration, samePcmBrowser, pcmArtifactHashes } from './pcm-policy.mjs';
+import { JanusBroker } from './janus-broker.mjs';
 const options = {};
 for (let index = 2; index < process.argv.length; index += 2) options[process.argv[index].replace(/^--/, '')] = process.argv[index + 1];
 const engine = options.engine, backend = options.backend, peers = Number(options.peers ?? 2);
@@ -33,11 +34,19 @@ if (protocolLogs) {
   fs.mkdirSync(directory, { recursive: true, mode: 0o700 });
   browserArgs.push('--webrtc-event-logging=' + directory);
 }
+const janusBroker = engine === 'janus' ? new JanusBroker(async (id, signal) => {
+  const target = proxyTarget(`/janus/${id}?rid=${Date.now()}&maxev=10`, backend);
+  target.searchParams.set('apisecret', process.env.BENCH_TOKEN);
+  const remote = await fetch(target, { signal });
+  if (!remote.ok) throw new Error('Janus backend poll HTTP failure');
+  return remote.json();
+}) : undefined;
 const proxy = http.createServer(async (request, response) => {
   try {
     if (request.url === '/') { response.setHeader('content-type', 'text/html'); response.end('<!doctype html><title>Gelabber media benchmark</title><script src="/client.js"></script>'); return; }
     if (request.url === '/client.js') { response.setHeader('content-type', 'text/javascript'); response.end(clientBundle); return; }
     if (request.url === '/pcm.js' && pcmLatency) { response.setHeader('content-type', 'text/javascript'); response.end(pcmBundle); return; }
+    if (request.url === '/janus-events' && janusBroker && request.method === 'GET') { janusBroker.connect(response); return; }
     let body = ''; for await (const part of request) { body += part; if (body.length > 256 * 1024) throw new Error('body limit'); }
     const target = proxyTarget(request.url, backend);
     const headers = { 'content-type': 'application/json', authorization: `Bearer ${process.env.BENCH_TOKEN}` };
@@ -45,15 +54,22 @@ const proxy = http.createServer(async (request, response) => {
       if (body) body = JSON.stringify({ ...JSON.parse(body), apisecret: process.env.BENCH_TOKEN });
       else target.searchParams.set('apisecret', process.env.BENCH_TOKEN);
     }
-    const remote = await fetch(target, { method: request.method, headers, ...(body ? { body } : {}), signal: AbortSignal.timeout(65000) });
-    response.statusCode = remote.status; response.setHeader('content-type', 'application/json'); response.end(await remote.text());
+    const command = janusBroker && body && request.url.startsWith('/janus') ? JSON.parse(body) : undefined;
+    if (command?.janus === 'destroy') await janusBroker.remove(Number(target.pathname.split('/')[2]));
+    const disconnected = new AbortController(); response.once('close', () => disconnected.abort());
+    const remote = await fetch(target, { method: request.method, headers, ...(body ? { body } : {}), signal: AbortSignal.any([disconnected.signal, AbortSignal.timeout(65000)]) });
+    const content = await remote.text();
+    if (command?.janus === 'create' && remote.ok) {
+      const value = JSON.parse(content); if (value.janus === 'success') janusBroker.add(value.data.id);
+    }
+    response.statusCode = remote.status; response.setHeader('content-type', 'application/json'); response.end(content);
   } catch (error) { response.statusCode = 502; response.end(JSON.stringify({ error: String(error) })); }
 });
 await new Promise(resolve => proxy.listen(0, '127.0.0.1', resolve));
 let browser, page, executedBrowser;
 const pageErrors = [];
 const metadata = () => ({ hostname: os.hostname(), platform: os.platform(), cpu: os.cpus()[0]?.model, logical_cpus: os.cpus().length, browser: options.browser === 'firefox' ? 'firefox' : 'chromium', browser_channel: options.browser === 'firefox' ? 'firefox' : protocolLogs ? 'chromium' : 'headless-shell', protocol_logs: protocolLogs, browser_version: browser?.version(), executed_browser: executedBrowser, browser_args: options.browser === 'firefox' ? [] : browserArgs, remote_claim: options['separate-host'] === 'true', recorded_at: new Date().toISOString() });
-const save = result => { fs.mkdirSync(path.dirname(path.resolve(options.output)), { recursive: true }); fs.writeFileSync(options.output, JSON.stringify({ ...result, ...(pcmCalibration ? { pcm_calibration: pcmCalibration, pcm_artifact_sha256: pcmArtifacts } : {}), load_generator: metadata() }, null, 2) + '\n'); };
+const save = result => { fs.mkdirSync(path.dirname(path.resolve(options.output)), { recursive: true }); fs.writeFileSync(options.output, JSON.stringify({ ...result, ...(janusBroker ? { janus_event_broker: janusBroker.evidence() } : {}), ...(pcmCalibration ? { pcm_calibration: pcmCalibration, pcm_artifact_sha256: pcmArtifacts } : {}), load_generator: metadata() }, null, 2) + '\n'); };
 try {
   const browserType = options.browser === 'firefox' ? firefox : chromium;
   browser = await browserType.launch({ headless: true, ...(browserType === chromium ? { args: browserArgs, ...(protocolLogs ? { channel: 'chromium' } : {}) } : {}) });
@@ -70,7 +86,7 @@ try {
   if (result.failures.length) process.exitCode = 1;
   console.log(`Evidence: ${options.output}`);
 } catch (error) {
-  let observed = []; try { observed = await page?.evaluate(() => window.benchmarkFailures ?? []); } catch {}
-  save({ backend: engine, peers, video: options.video === 'true', failures: [...observed, ...pageErrors, String(error)], samples: [] });
+  let observed = [], diagnostics; try { ({ observed, diagnostics } = await page?.evaluate(() => ({ observed: window.benchmarkFailures ?? [], diagnostics: window.benchmarkDiagnostics }))); } catch {}
+  save({ backend: engine, peers, video: options.video === 'true', failures: [...observed, ...pageErrors, String(error)], diagnostics, samples: [] });
   console.error(error); process.exitCode = 1;
-} finally { if (browser) await browser.close(); proxy.closeAllConnections(); await new Promise(resolve => proxy.close(resolve)); }
+} finally { await janusBroker?.close(); if (browser) await browser.close(); proxy.closeAllConnections(); await new Promise(resolve => proxy.close(resolve)); }

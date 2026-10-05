@@ -1,0 +1,3007 @@
+{
+  "schema": 1,
+  "acceptance": false,
+  "resource_comparison_available": false,
+  "status": "incomplete and globally disqualified voice matrix; 12 recorded cases, 13th case interrupted, planned36",
+  "comparison_disqualified": "Command '['node', '/tmp/gelabber-benchmark-netns/remote-voice-matrix/inputs/loadgen.mjs', '--engine', 'janus', '--backend', 'http://45.93.250.203:18091', '--peers', '8', '--video', 'false', '--video-bitrate', '6000000', '--fixed-video-fixture', 'false', '--protocol-logs', 'false', '--warmup', '10000', '--duration', '60000', '--separate-host', 'true', '--output', '/tmp/gelabber-benchmark-netns/remote-voice-matrix/janus-8-2/browser.json']' timed out after 370 seconds",
+  "source_revision": "9ab9cbe9711a7957e20b2529704c66e2a01a5183",
+  "git_dirty": false,
+  "configuration": {
+    "ssh_host": "root@45.93.250.203",
+    "server_ip": "45.93.250.203",
+    "port": 18091,
+    "udp_min": 11000,
+    "udp_max": 11199,
+    "engines": [
+      "current",
+      "mediasoup",
+      "janus"
+    ],
+    "matrix": [
+      2,
+      8,
+      16,
+      32
+    ],
+    "runs": 3,
+    "duration": 60,
+    "warmup": 10,
+    "video": false,
+    "video_bitrate": 6000000,
+    "fixed_video_fixture": false,
+    "protocol_logs": false
+  },
+  "limits": {
+    "media_cpus": 1,
+    "memory_bytes": 536870912,
+    "pids": 256,
+    "redis_cpus": 0.25,
+    "redis_memory_bytes": 67108864,
+    "cohosted_live_services": true
+  },
+  "images": {
+    "current": {
+      "id": "sha256:cb2a5576ad71f0f58fad453697914f3742fe5bf263a6072b1fe46bc107033b85",
+      "size": 34108102,
+      "labels": {
+        "gelabber.bench.binary_sha256": "a2fd497a4836ea1aba57baa8e1216c9fae73476a75ba0e8bad4ab37875285701",
+        "org.opencontainers.image.revision": "de1ae34647b2c4f0631dfc16fd5b8ea7d970184a"
+      }
+    },
+    "mediasoup": {
+      "id": "sha256:75ef46894be12279debd99a55409efca5c67cfa0311a810eed4d726c20c68c4d",
+      "size": 35665019,
+      "labels": {
+        "gelabber.bench.binary_sha256": "df90621e944a6ed22daec75096e2f8fb4ca092af6de3635ef955f1112dfca01b",
+        "org.opencontainers.image.revision": "de1ae34647b2c4f0631dfc16fd5b8ea7d970184a"
+      }
+    },
+    "janus": {
+      "id": "sha256:76845b0f9e03ad08a0444e4194969510b96ca72d83754e596431aa04dc773e62",
+      "size": 54416670,
+      "labels": {
+        "org.opencontainers.image.revision": "0a24110ae55a172c4293749b763dbb66a138f9ec",
+        "org.opencontainers.image.version": "janus-v1.4.2"
+      }
+    }
+  },
+  "artifact_sha256": {
+    "remote-helper.py": "a810d262b6ac4569e349933ec7f2c4e151c7c7ec61af2a6d901d67d36e7337a5",
+    "protocol-diagnostics.py": "0d4fadc080cb3596d45aea2daa00822a17ac419ea0c84c25b266cfcd792269f0",
+    "evaluate.py": "de48e5cf6676f820038a473e6cecc86355a74d9dc84d7f8aabe9b095c88f4812",
+    "run-remote.py": "6ad9dc2aac93061eb2ee13a57e88c884207a32b8b7033af345d51ab6f55a1bb0",
+    "record.py": "ce2f366f6360ca1f17dee550c68dfa3724966348c7ef9969bc75671420a52b33",
+    "package-lock.json": "9d02e4d3313afe6d1fc466ab4fa598993660385d21a13021089fbeca04e1954c",
+    "client.bundle.js": "7c2e592aa6195c7da53c62047243e7c2816b9e9a06ff59ea5ce3cdc57e9607a4",
+    "video-fixture.mjs": "ed0384af338813e3abeeb17383386f23ea5402d637db7f3139e9a00317dbf4f3",
+    "browser-provenance.mjs": "c50c9ac32f4acf91982f05ef2cefcf5e945b61a63073c9bc499f216ba3d5c4ec",
+    "proxy-target.mjs": "eeb6a5b035738da7b5c7320dcaa5b40fb24506f26fd631921f54666b4840e7a2",
+    "loadgen.mjs": "ac55820498880b0838f83be5ac9c42b08809426599f9d3d07aea7ffee56e70a6"
+  },
+  "raw_report_sha256": "d67babc4e3b07d5cae915bfcce9d2abe3f00da5e65a818d4eb051d871463e303",
+  "final_summary_sha256": "5991cb97031c0d4a4cfe67df7aac7d62d8af89aca1097856c248601b885e37b7",
+  "load_generator_namespace": {
+    "runtime_image_id": "sha256:a1087f71b2dbd30bd90b9f7dbd7dc42b2781c21b3c5873b14fc81ec9d158cc1b",
+    "runtime_memory_bytes": 4294967296,
+    "labels": {
+      "com.centurylinklabs.watchtower.enable": "false",
+      "gelabber.bench.binary_sha256": "a2fd497a4836ea1aba57baa8e1216c9fae73476a75ba0e8bad4ab37875285701",
+      "gelabber.bench.fixture": "netns-20261005",
+      "org.opencontainers.image.revision": "de1ae34647b2c4f0631dfc16fd5b8ea7d970184a"
+    },
+    "declared_dockerfile": "FROM gelabber-bench/current:debian13\nUSER root\nRUN apt-get update && apt-get install -y --no-install-recommends git openssh-client python3 iproute2 libglib2.0-0t64 libnss3 libnspr4 libatk1.0-0t64 libatk-bridge2.0-0t64 libdbus-1-3 libx11-6 libxcomposite1 libxdamage1 libxext6 libxfixes3 libxrandr2 libgbm1 libexpat1 libxcb1 libxkbcommon0 libasound2t64 libatspi2.0-0t64 libxrender1 libxi6 libxau6 libxdmcp6 ca-certificates && dpkg-query -W > /fixture-runtime-packages.txt && rm -rf /var/lib/apt/lists/*\nRUN groupadd -g 1000 fixture && useradd -u 1000 -g 1000 -M -d /tmp fixture\nENTRYPOINT []\nCMD [\"sleep\", \"infinity\"]\n",
+    "runtime_packages": [
+      "adduser\t3.152",
+      "apt\t3.0.3",
+      "at-spi2-common\t2.56.2-1+deb13u2",
+      "base-files\t13.8+deb13u7",
+      "base-passwd\t3.6.7",
+      "bash\t5.2.37-2+b10",
+      "bsdutils\t1:2.41.5-0+deb13u1",
+      "ca-certificates\t20250419",
+      "coreutils\t9.7-3",
+      "dash\t0.5.12-12",
+      "debconf\t1.5.91",
+      "debian-archive-keyring\t2025.1",
+      "debianutils\t5.23.2",
+      "diffutils\t1:3.10-4",
+      "dpkg\t1.22.22",
+      "findutils\t4.10.0-3",
+      "gcc-14-base:amd64\t14.2.0-19",
+      "git\t1:2.47.3-0+deb13u1",
+      "git-man\t1:2.47.3-0+deb13u1",
+      "grep\t3.11-4",
+      "gzip\t1.13-1+deb13u1",
+      "hostname\t3.25",
+      "init-system-helpers\t1.69~deb13u1",
+      "iproute2\t6.15.0-1",
+      "libacl1:amd64\t2.3.2-2+b1",
+      "libapt-pkg7.0:amd64\t3.0.3",
+      "libasound2-data\t1.2.14-1+deb13u1",
+      "libasound2t64:amd64\t1.2.14-1+deb13u1",
+      "libatk-bridge2.0-0t64:amd64\t2.56.2-1+deb13u2",
+      "libatk1.0-0t64:amd64\t2.56.2-1+deb13u2",
+      "libatomic1:amd64\t14.2.0-19",
+      "libatspi2.0-0t64:amd64\t2.56.2-1+deb13u2",
+      "libattr1:amd64\t1:2.5.2-3",
+      "libaudit-common\t1:4.0.2-2+deb13u1",
+      "libaudit1:amd64\t1:4.0.2-2+deb13u1",
+      "libblkid1:amd64\t2.41.5-0+deb13u1",
+      "libbpf1:amd64\t1:1.5.0-3",
+      "libbrotli1:amd64\t1.1.0-2+b7",
+      "libbsd0:amd64\t0.12.2-2",
+      "libbz2-1.0:amd64\t1.0.8-6",
+      "libc-bin\t2.41-12+deb13u4",
+      "libc6:amd64\t2.41-12+deb13u4",
+      "libcap-ng0:amd64\t0.8.5-4+b1",
+      "libcap2:amd64\t1:2.75-10+deb13u1+b3",
+      "libcap2-bin\t1:2.75-10+deb13u1+b3",
+      "libcbor0.10:amd64\t0.10.2-2",
+      "libcom-err2:amd64\t1.47.2-3+b12",
+      "libcrypt1:amd64\t1:4.4.38-1",
+      "libcurl3t64-gnutls:amd64\t8.14.1-2+deb13u5",
+      "libdb5.3t64:amd64\t5.3.28+dfsg2-9",
+      "libdbus-1-3:amd64\t1.16.2-2",
+      "libdebconfclient0:amd64\t0.280",
+      "libdrm-amdgpu1:amd64\t2.4.124-2",
+      "libdrm-common\t2.4.124-2",
+      "libdrm-intel1:amd64\t2.4.124-2",
+      "libdrm2:amd64\t2.4.124-2",
+      "libedit2:amd64\t3.1-20250104-1",
+      "libelf1t64:amd64\t0.192-4",
+      "liberror-perl\t0.17030-1",
+      "libexpat1:amd64\t2.8.3-1~deb13u1",
+      "libffi8:amd64\t3.4.8-2",
+      "libfido2-1:amd64\t1.15.0-1+b1",
+      "libgbm1:amd64\t25.0.7-2+deb13u1",
+      "libgcc-s1:amd64\t14.2.0-19",
+      "libgdbm-compat4t64:amd64\t1.24-2",
+      "libgdbm6t64:amd64\t1.24-2",
+      "libglib2.0-0t64:amd64\t2.84.4-3~deb13u5",
+      "libgmp10:amd64\t2:6.3.0+dfsg-3",
+      "libgnutls30t64:amd64\t3.8.9-3+deb13u4",
+      "libgssapi-krb5-2:amd64\t1.21.3-5+deb13u1",
+      "libhogweed6t64:amd64\t3.10.1-1",
+      "libidn2-0:amd64\t2.3.8-2",
+      "libk5crypto3:amd64\t1.21.3-5+deb13u1",
+      "libkeyutils1:amd64\t1.6.3-6",
+      "libkrb5-3:amd64\t1.21.3-5+deb13u1",
+      "libkrb5support0:amd64\t1.21.3-5+deb13u1",
+      "liblastlog2-2:amd64\t2.41.5-0+deb13u1",
+      "libldap2:amd64\t2.6.10+dfsg-1",
+      "libllvm19:amd64\t1:19.1.7-3+b1",
+      "liblz4-1:amd64\t1.10.0-4",
+      "liblzma5:amd64\t5.8.1-1+deb13u1",
+      "libmd0:amd64\t1.1.0-2+b1",
+      "libmnl0:amd64\t1.0.5-3",
+      "libmount1:amd64\t2.41.5-0+deb13u1",
+      "libncursesw6:amd64\t6.5+20250216-2",
+      "libnettle8t64:amd64\t3.10.1-1",
+      "libnghttp2-14:amd64\t1.64.0-1.1+deb13u1",
+      "libnghttp3-9:amd64\t1.8.0-1",
+      "libngtcp2-16:amd64\t1.11.0-1+deb13u1",
+      "libngtcp2-crypto-gnutls8:amd64\t1.11.0-1+deb13u1",
+      "libnspr4:amd64\t2:4.36-1",
+      "libnss3:amd64\t2:3.110-1+deb13u4",
+      "libp11-kit0:amd64\t0.25.5-3",
+      "libpam-modules:amd64\t1.7.0-5",
+      "libpam-modules-bin\t1.7.0-5",
+      "libpam-runtime\t1.7.0-5",
+      "libpam0g:amd64\t1.7.0-5",
+      "libpciaccess0:amd64\t0.17-3+b3",
+      "libpcre2-8-0:amd64\t10.46-1~deb13u2",
+      "libperl5.40:amd64\t5.40.1-6+deb13u1",
+      "libpsl5t64:amd64\t0.21.2-1.1+b1",
+      "libpython3-stdlib:amd64\t3.13.5-1",
+      "libpython3.13-minimal:amd64\t3.13.5-2+deb13u5",
+      "libpython3.13-stdlib:amd64\t3.13.5-2+deb13u5",
+      "libreadline8t64:amd64\t8.2-6",
+      "librtmp1:amd64\t2.4+20151223.gitfa8646d.1-2+b5",
+      "libsasl2-2:amd64\t2.1.28+dfsg1-9",
+      "libsasl2-modules-db:amd64\t2.1.28+dfsg1-9",
+      "libseccomp2:amd64\t2.6.0-2",
+      "libselinux1:amd64\t3.8.1-1",
+      "libsemanage-common\t3.8.1-1",
+      "libsemanage2:amd64\t3.8.1-1",
+      "libsensors-config\t1:3.6.2-2",
+      "libsensors5:amd64\t1:3.6.2-2",
+      "libsepol2:amd64\t3.8.1-1",
+      "libsmartcols1:amd64\t2.41.5-0+deb13u1",
+      "libsqlite3-0:amd64\t3.46.1-7+deb13u2",
+      "libssh2-1t64:amd64\t1.11.1-1+deb13u2",
+      "libssl3t64:amd64\t3.5.7-1~deb13u3",
+      "libstdc++6:amd64\t14.2.0-19",
+      "libsystemd0:amd64\t257.13-1~deb13u1",
+      "libtasn1-6:amd64\t4.20.0-2+deb13u1",
+      "libtinfo6:amd64\t6.5+20250216-2",
+      "libtirpc-common\t1.3.6+ds-1",
+      "libtirpc3t64:amd64\t1.3.6+ds-1",
+      "libudev1:amd64\t257.13-1~deb13u1",
+      "libunistring5:amd64\t1.3-2",
+      "libuuid1:amd64\t2.41.5-0+deb13u1",
+      "libwayland-server0:amd64\t1.23.1-3",
+      "libx11-6:amd64\t2:1.8.12-1",
+      "libx11-data\t2:1.8.12-1",
+      "libx11-xcb1:amd64\t2:1.8.12-1",
+      "libxau6:amd64\t1:1.0.11-1",
+      "libxcb-dri3-0:amd64\t1.17.0-2+b1",
+      "libxcb-present0:amd64\t1.17.0-2+b1",
+      "libxcb-randr0:amd64\t1.17.0-2+b1",
+      "libxcb-sync1:amd64\t1.17.0-2+b1",
+      "libxcb-xfixes0:amd64\t1.17.0-2+b1",
+      "libxcb1:amd64\t1.17.0-2+b1",
+      "libxcomposite1:amd64\t1:0.4.6-1",
+      "libxdamage1:amd64\t1:1.1.6-1+b2",
+      "libxdmcp6:amd64\t1:1.1.5-1",
+      "libxext6:amd64\t2:1.3.4-1+b3",
+      "libxfixes3:amd64\t1:6.0.0-2+b4",
+      "libxi6:amd64\t2:1.8.2-1",
+      "libxkbcommon0:amd64\t1.7.0-2",
+      "libxml2:amd64\t2.12.7+dfsg+really2.9.14-2.1+deb13u3",
+      "libxrandr2:amd64\t2:1.5.4-1+b3",
+      "libxrender1:amd64\t1:0.9.12-1",
+      "libxshmfence1:amd64\t1.3.3-1",
+      "libxtables12:amd64\t1.8.11-2",
+      "libxxhash0:amd64\t0.8.3-2",
+      "libz3-4:amd64\t4.13.3-1",
+      "libzstd1:amd64\t1.5.7+dfsg-1",
+      "login\t1:4.16.0-2+really2.41.5-0+deb13u1",
+      "login.defs\t1:4.17.4-2",
+      "mawk\t1.3.4.20250131-1",
+      "media-types\t13.0.0",
+      "mesa-libgallium:amd64\t25.0.7-2+deb13u1",
+      "mount\t2.41.5-0+deb13u1",
+      "ncurses-base\t6.5+20250216-2",
+      "ncurses-bin\t6.5+20250216-2",
+      "netbase\t6.5",
+      "openssh-client\t1:10.0p1-7+deb13u4",
+      "openssl\t3.5.7-1~deb13u3",
+      "openssl-provider-legacy\t3.5.7-1~deb13u3",
+      "passwd\t1:4.17.4-2",
+      "perl\t5.40.1-6+deb13u1",
+      "perl-base\t5.40.1-6+deb13u1",
+      "perl-modules-5.40\t5.40.1-6+deb13u1",
+      "python3\t3.13.5-1",
+      "python3-minimal\t3.13.5-1",
+      "python3.13\t3.13.5-2+deb13u5",
+      "python3.13-minimal\t3.13.5-2+deb13u5",
+      "readline-common\t8.2-6",
+      "sed\t4.9-2+deb13u1",
+      "sqv\t1.3.0-3+b2",
+      "sysvinit-utils\t3.14-4",
+      "tar\t1.35+dfsg-3.1",
+      "tzdata\t2026c-0+deb13u1",
+      "util-linux\t2.41.5-0+deb13u1",
+      "xkb-data\t2.42-1",
+      "zlib1g:amd64\t1:1.3.dfsg+really1.3.1-1+b1"
+    ],
+    "hardware": {
+      "cpu": "AMD Ryzen 9 7950X3D 16-Core Processor",
+      "logical_cpus": 32,
+      "total_ram_bytes": 66220544000,
+      "kernel": "7.2.5-3-omarchy",
+      "cpu_affinity": [
+        0,
+        1,
+        2,
+        3,
+        4,
+        5,
+        6,
+        7,
+        8,
+        9,
+        10,
+        11,
+        12,
+        13,
+        14,
+        15,
+        16,
+        17,
+        18,
+        19,
+        20,
+        21,
+        22,
+        23,
+        24,
+        25,
+        26,
+        27,
+        28,
+        29,
+        30,
+        31
+      ]
+    }
+  },
+  "limitations": [
+    "production tickets/ACL/revocation/watch/source-audio",
+    "TURN/loss/browser-family acceptance",
+    "true end-to-end audio latency",
+    "shared production host interference",
+    "Every case in this matrix, including individually valid cases, is excluded from resource comparison because the matrix aborted.",
+    "Native current/mediasoup images derive from de1ae346, not the final layer/recovery implementation.",
+    "The root verified no ERR_NETWORK_CHANGED; the earlier DHCP correlation remains unproven.",
+    "The HTTP1 control reproduces generator socket-pool starvation, but its causal role in the original Janus timeout is an inference without an original HTTP request trace."
+  ],
+  "cleanup": {
+    "independently_confirmed_by_root": true,
+    "owned_container_label_filter": "gelabber.bench.run",
+    "owned_image_tags": "gelabber-bench/gelabber-bench-09b51c5eb9a4-*:owned",
+    "remaining_owned_containers_and_tags": 0,
+    "production_changes": false
+  },
+  "runs": [
+    {
+      "engine": "current",
+      "peers": 2,
+      "round": 1,
+      "media_fixture_valid": true,
+      "problems": [],
+      "executed_browser": {
+        "executable": "/home/rafi/.cache/ms-playwright/chromium_headless_shell-1243/chrome-headless-shell-linux64/chrome-headless-shell",
+        "sha256": "ded93a9c9a53a1ae040f08124badcca95c938e9d5015ff340c3b5538c41bf39e",
+        "product": "HeadlessChrome/153.0.8010.12",
+        "revision": "@971a7443b0c9b0a9b2860529b33331b76077ec62",
+        "user_agent": "Mozilla/5.0 (X11; Linux x86_64) AppleWebKit/537.36 (KHTML, like Gecko) HeadlessChrome/153.0.8010.12 Safari/537.36",
+        "js_version": "15.3.76.4"
+      },
+      "measurement_seconds": 59.035,
+      "sender_bitrate_distribution": {
+        "audio": {
+          "streams": [
+            {
+              "peer": "peer-0",
+              "endpoint": "peer-0/0",
+              "id": "OT01A2208470248",
+              "kind": "audio",
+              "bps": 128369.54349114932
+            },
+            {
+              "peer": "peer-1",
+              "endpoint": "peer-1/0",
+              "id": "OT01A1835861377",
+              "kind": "audio",
+              "bps": 128410.87490471755
+            }
+          ],
+          "min_bps": 128369.54349114932,
+          "max_bps": 128410.87490471755
+        },
+        "video": {
+          "streams": [],
+          "min_bps": null,
+          "max_bps": null
+        }
+      },
+      "receiver_audio_distribution": [
+        {
+          "peer": "peer-0",
+          "endpoint": "peer-0/0",
+          "id": "IT01A270932057",
+          "bps": 128193.37681036674,
+          "packet_loss_fraction": 0.0016605778811026237
+        },
+        {
+          "peer": "peer-1",
+          "endpoint": "peer-1/0",
+          "id": "IT01A358581509",
+          "bps": 128362.63233674939,
+          "packet_loss_fraction": 0.00033433634236041456
+        }
+      ],
+      "per_peer_graph": {
+        "peer-0": {
+          "expected": {
+            "audio": 1,
+            "video": 0
+          },
+          "observed": {
+            "audio": 1,
+            "video": 0
+          },
+          "expected_endpoint": "peer-0/0"
+        },
+        "peer-1": {
+          "expected": {
+            "audio": 1,
+            "video": 0
+          },
+          "observed": {
+            "audio": 1,
+            "video": 0
+          },
+          "expected_endpoint": "peer-1/0"
+        }
+      },
+      "expected_inbound": {
+        "audio": 2,
+        "video": 0
+      },
+      "observed_inbound": {
+        "audio": 2,
+        "video": 0
+      },
+      "join_timing_ms": [
+        {
+          "peer": "peer-0",
+          "dtls_ready_at": 967,
+          "first_send_rtp_at": 967,
+          "full_graph_rtp_ready_at": 1970
+        },
+        {
+          "peer": "peer-1",
+          "dtls_ready_at": 1635,
+          "first_send_rtp_at": 1635,
+          "full_graph_rtp_ready_at": 1736
+        }
+      ],
+      "post_leave_engine_stats": {
+        "engine_stats": {
+          "metrics": {
+            "gelabber_media_forwarded_bytes_total": 2256311,
+            "gelabber_media_ice_fails_total": 0,
+            "gelabber_media_peers": 0,
+            "gelabber_media_rooms": 0,
+            "gelabber_media_rtp_jitter_ms": 7.915,
+            "gelabber_media_rtp_lost_total": 7,
+            "gelabber_media_rtp_packets_total": 7227
+          },
+          "peers": 0,
+          "rooms": 0
+        },
+        "at": 1791222883710
+      },
+      "load_generator_cpu_cores_mean": 0.0778366609033773,
+      "load_generator_peak_rss_bytes": 747458560,
+      "infrastructure": {
+        "redis": {
+          "peak_rss_bytes": 27631616,
+          "image_id": "sha256:becdda6c7f4b3fb42e42fd7f120bbf5c54c4caaaf16f26da24e4563d2c1f0576",
+          "cpu_cores_mean": 0.004447505536395183,
+          "idle_peak_rss_bytes": 27521024,
+          "post_leave_peak_rss_bytes": 27131904
+        }
+      },
+      "resource_comparison_available": false,
+      "raw_sha256": {
+        "backend.log": "f3e5f534c7626363db55f267b5aeb2474a4566f46deed7b461015f4ef3f4592d",
+        "server.json": "ff1da51eb8262b12b888d997eaefdc98bf9fa616a9ea7a7d410d5e873eecb5e5",
+        "browser.json": "f9467d6b773b838ad14cf6984f10795f30accf7955ae48aac7c56eef13326a4d",
+        "loadgen.log": "db06609ebbfd40c1a0299dabdc0abd1acd530c62fbb197422bf6815b9c1c0ff7"
+      },
+      "browser_failures": []
+    },
+    {
+      "engine": "mediasoup",
+      "peers": 2,
+      "round": 1,
+      "media_fixture_valid": true,
+      "problems": [],
+      "executed_browser": {
+        "executable": "/home/rafi/.cache/ms-playwright/chromium_headless_shell-1243/chrome-headless-shell-linux64/chrome-headless-shell",
+        "sha256": "ded93a9c9a53a1ae040f08124badcca95c938e9d5015ff340c3b5538c41bf39e",
+        "product": "HeadlessChrome/153.0.8010.12",
+        "revision": "@971a7443b0c9b0a9b2860529b33331b76077ec62",
+        "user_agent": "Mozilla/5.0 (X11; Linux x86_64) AppleWebKit/537.36 (KHTML, like Gecko) HeadlessChrome/153.0.8010.12 Safari/537.36",
+        "js_version": "15.3.76.4"
+      },
+      "measurement_seconds": 59.042,
+      "sender_bitrate_distribution": {
+        "audio": {
+          "streams": [
+            {
+              "peer": "peer-0",
+              "endpoint": "peer-0/send",
+              "id": "OT01A3937654534",
+              "kind": "audio",
+              "bps": 128399.57996002845
+            },
+            {
+              "peer": "peer-1",
+              "endpoint": "peer-1/send",
+              "id": "OT01A1720621085",
+              "kind": "audio",
+              "bps": 128352.15609227329
+            }
+          ],
+          "min_bps": 128352.15609227329,
+          "max_bps": 128399.57996002845
+        },
+        "video": {
+          "streams": [],
+          "min_bps": null,
+          "max_bps": null
+        }
+      },
+      "receiver_audio_distribution": [
+        {
+          "peer": "peer-0",
+          "endpoint": "peer-0/recv",
+          "id": "IT01A841264268",
+          "bps": 128395.65055384302,
+          "packet_loss_fraction": 0.0
+        },
+        {
+          "peer": "peer-1",
+          "endpoint": "peer-1/recv",
+          "id": "IT01A126230251",
+          "bps": 128436.57057687748,
+          "packet_loss_fraction": 0.0
+        }
+      ],
+      "per_peer_graph": {
+        "peer-0": {
+          "expected": {
+            "audio": 1,
+            "video": 0
+          },
+          "observed": {
+            "audio": 1,
+            "video": 0
+          },
+          "expected_endpoint": "peer-0/recv"
+        },
+        "peer-1": {
+          "expected": {
+            "audio": 1,
+            "video": 0
+          },
+          "observed": {
+            "audio": 1,
+            "video": 0
+          },
+          "expected_endpoint": "peer-1/recv"
+        }
+      },
+      "expected_inbound": {
+        "audio": 2,
+        "video": 0
+      },
+      "observed_inbound": {
+        "audio": 2,
+        "video": 0
+      },
+      "join_timing_ms": [
+        {
+          "peer": "peer-0",
+          "dtls_ready_at": 528,
+          "first_send_rtp_at": 327,
+          "full_graph_rtp_ready_at": 628
+        },
+        {
+          "peer": "peer-1",
+          "dtls_ready_at": 484,
+          "first_send_rtp_at": 384,
+          "full_graph_rtp_ready_at": 484
+        }
+      ],
+      "post_leave_engine_stats": {
+        "engine_stats": {
+          "consumers": 0,
+          "peers": 0,
+          "producers": 0,
+          "transports": 0
+        },
+        "at": 1791222964738
+      },
+      "load_generator_cpu_cores_mean": 0.07321207268110379,
+      "load_generator_peak_rss_bytes": 745934848,
+      "infrastructure": {},
+      "resource_comparison_available": false,
+      "raw_sha256": {
+        "backend.log": "f1e9fc86375f771671f02ea05452d73d7e2062eda769a08a06c101b21936f9f4",
+        "server.json": "0abfde43362422d5731383fc804be64fd752f84615da4ab670b82bba956dc2d6",
+        "browser.json": "4a913d5ae18a8abd4fa32c622b5e79996d37098ed8557db8f912563f503ada78",
+        "loadgen.log": "4ff3cf6b8a5ceefe929f802e1fbeaa42651f3c674d795e84f5d1505f515239c3"
+      },
+      "browser_failures": []
+    },
+    {
+      "engine": "janus",
+      "peers": 2,
+      "round": 1,
+      "media_fixture_valid": true,
+      "problems": [],
+      "executed_browser": {
+        "executable": "/home/rafi/.cache/ms-playwright/chromium_headless_shell-1243/chrome-headless-shell-linux64/chrome-headless-shell",
+        "sha256": "ded93a9c9a53a1ae040f08124badcca95c938e9d5015ff340c3b5538c41bf39e",
+        "product": "HeadlessChrome/153.0.8010.12",
+        "revision": "@971a7443b0c9b0a9b2860529b33331b76077ec62",
+        "user_agent": "Mozilla/5.0 (X11; Linux x86_64) AppleWebKit/537.36 (KHTML, like Gecko) HeadlessChrome/153.0.8010.12 Safari/537.36",
+        "js_version": "15.3.76.4"
+      },
+      "measurement_seconds": 59.036,
+      "sender_bitrate_distribution": {
+        "audio": {
+          "streams": [
+            {
+              "peer": "peer-0",
+              "endpoint": "peer-0/0",
+              "id": "OT01A3181955099",
+              "kind": "audio",
+              "bps": 128411.27447659055
+            },
+            {
+              "peer": "peer-1",
+              "endpoint": "peer-1/0",
+              "id": "OT01A2115124045",
+              "kind": "audio",
+              "bps": 128365.20089436954
+            }
+          ],
+          "min_bps": 128365.20089436954,
+          "max_bps": 128411.27447659055
+        },
+        "video": {
+          "streams": [],
+          "min_bps": null,
+          "max_bps": null
+        }
+      },
+      "receiver_audio_distribution": [
+        {
+          "peer": "peer-0",
+          "endpoint": "peer-0/1",
+          "id": "IT01A2392249647",
+          "bps": 128365.20089436954,
+          "packet_loss_fraction": 0.00033875338753387534
+        },
+        {
+          "peer": "peer-1",
+          "endpoint": "peer-1/1",
+          "id": "IT01A2613504806",
+          "bps": 128237.54996951013,
+          "packet_loss_fraction": 0.0013550135501355014
+        }
+      ],
+      "per_peer_graph": {
+        "peer-0": {
+          "expected": {
+            "audio": 1,
+            "video": 0
+          },
+          "observed": {
+            "audio": 1,
+            "video": 0
+          },
+          "expected_endpoint": "peer-0/1"
+        },
+        "peer-1": {
+          "expected": {
+            "audio": 1,
+            "video": 0
+          },
+          "observed": {
+            "audio": 1,
+            "video": 0
+          },
+          "expected_endpoint": "peer-1/1"
+        }
+      },
+      "expected_inbound": {
+        "audio": 2,
+        "video": 0
+      },
+      "observed_inbound": {
+        "audio": 2,
+        "video": 0
+      },
+      "join_timing_ms": [
+        {
+          "peer": "peer-0",
+          "dtls_ready_at": 1529,
+          "first_send_rtp_at": 626,
+          "full_graph_rtp_ready_at": 1529
+        },
+        {
+          "peer": "peer-1",
+          "dtls_ready_at": 1376,
+          "first_send_rtp_at": 571,
+          "full_graph_rtp_ready_at": 1376
+        }
+      ],
+      "post_leave_engine_stats": {
+        "engine_stats": {
+          "rooms": []
+        },
+        "at": 1791223046770
+      },
+      "load_generator_cpu_cores_mean": 0.07181333314256881,
+      "load_generator_peak_rss_bytes": 771801088,
+      "infrastructure": {},
+      "resource_comparison_available": false,
+      "raw_sha256": {
+        "backend.log": "ae3ec8d169b5da3964cce651531668990bf0f839569b0b4247476ee0f098c4b7",
+        "server.json": "f8664480c47840ecc7a909eb3fa225ad917caa7cfdad3c14c625022337f377e4",
+        "browser.json": "a79bcce38d87531b226ca8e4a82ed66cd2b157f0e68d36386f31fdcc9da98381",
+        "loadgen.log": "531814fc87b32b86fb9bb5f7e0ae3d5191cf3c9d64b41ad0021451cdf15a0c36"
+      },
+      "browser_failures": []
+    },
+    {
+      "engine": "janus",
+      "peers": 2,
+      "round": 2,
+      "media_fixture_valid": true,
+      "problems": [],
+      "executed_browser": {
+        "executable": "/home/rafi/.cache/ms-playwright/chromium_headless_shell-1243/chrome-headless-shell-linux64/chrome-headless-shell",
+        "sha256": "ded93a9c9a53a1ae040f08124badcca95c938e9d5015ff340c3b5538c41bf39e",
+        "product": "HeadlessChrome/153.0.8010.12",
+        "revision": "@971a7443b0c9b0a9b2860529b33331b76077ec62",
+        "user_agent": "Mozilla/5.0 (X11; Linux x86_64) AppleWebKit/537.36 (KHTML, like Gecko) HeadlessChrome/153.0.8010.12 Safari/537.36",
+        "js_version": "15.3.76.4"
+      },
+      "measurement_seconds": 59.027,
+      "sender_bitrate_distribution": {
+        "audio": {
+          "streams": [
+            {
+              "peer": "peer-0",
+              "endpoint": "peer-0/0",
+              "id": "OT01A3892480692",
+              "kind": "audio",
+              "bps": 128424.61924204178
+            },
+            {
+              "peer": "peer-1",
+              "endpoint": "peer-1/0",
+              "id": "OT01A3687238231",
+              "kind": "audio",
+              "bps": 128384.77306995104
+            }
+          ],
+          "min_bps": 128384.77306995104,
+          "max_bps": 128424.61924204178
+        },
+        "video": {
+          "streams": [],
+          "min_bps": null,
+          "max_bps": null
+        }
+      },
+      "receiver_audio_distribution": [
+        {
+          "peer": "peer-0",
+          "endpoint": "peer-0/1",
+          "id": "IT01A3124625711",
+          "bps": 128384.77306995104,
+          "packet_loss_fraction": 0.00033875338753387534
+        },
+        {
+          "peer": "peer-1",
+          "endpoint": "peer-1/1",
+          "id": "IT01A3937822167",
+          "bps": 128202.07701560303,
+          "packet_loss_fraction": 0.0016937669376693768
+        }
+      ],
+      "per_peer_graph": {
+        "peer-0": {
+          "expected": {
+            "audio": 1,
+            "video": 0
+          },
+          "observed": {
+            "audio": 1,
+            "video": 0
+          },
+          "expected_endpoint": "peer-0/1"
+        },
+        "peer-1": {
+          "expected": {
+            "audio": 1,
+            "video": 0
+          },
+          "observed": {
+            "audio": 1,
+            "video": 0
+          },
+          "expected_endpoint": "peer-1/1"
+        }
+      },
+      "expected_inbound": {
+        "audio": 2,
+        "video": 0
+      },
+      "observed_inbound": {
+        "audio": 2,
+        "video": 0
+      },
+      "join_timing_ms": [
+        {
+          "peer": "peer-0",
+          "dtls_ready_at": 1375,
+          "first_send_rtp_at": 572,
+          "full_graph_rtp_ready_at": 1375
+        },
+        {
+          "peer": "peer-1",
+          "dtls_ready_at": 1252,
+          "first_send_rtp_at": 450,
+          "full_graph_rtp_ready_at": 1252
+        }
+      ],
+      "post_leave_engine_stats": {
+        "engine_stats": {
+          "rooms": []
+        },
+        "at": 1791223147513
+      },
+      "load_generator_cpu_cores_mean": 0.04837049489511089,
+      "load_generator_peak_rss_bytes": 760737792,
+      "infrastructure": {},
+      "resource_comparison_available": false,
+      "raw_sha256": {
+        "backend.log": "3c591105a2ed5753d030fe5dd11669b247bcde6c8662df1e907d0f033c170f67",
+        "server.json": "42323937d7f352ca60c273376d3b08efa3db3356ca3a50686ae971c4c0327db1",
+        "browser.json": "a9968b2aab8b64ec15f3c6b756eca2d55f799622e9c5bdece83a2170869414ee",
+        "loadgen.log": "090d185354850e87722b3a09f72180e6656ac41632cb212a2be621b5006219af"
+      },
+      "browser_failures": []
+    },
+    {
+      "engine": "mediasoup",
+      "peers": 2,
+      "round": 2,
+      "media_fixture_valid": true,
+      "problems": [],
+      "executed_browser": {
+        "executable": "/home/rafi/.cache/ms-playwright/chromium_headless_shell-1243/chrome-headless-shell-linux64/chrome-headless-shell",
+        "sha256": "ded93a9c9a53a1ae040f08124badcca95c938e9d5015ff340c3b5538c41bf39e",
+        "product": "HeadlessChrome/153.0.8010.12",
+        "revision": "@971a7443b0c9b0a9b2860529b33331b76077ec62",
+        "user_agent": "Mozilla/5.0 (X11; Linux x86_64) AppleWebKit/537.36 (KHTML, like Gecko) HeadlessChrome/153.0.8010.12 Safari/537.36",
+        "js_version": "15.3.76.4"
+      },
+      "measurement_seconds": 59.046,
+      "sender_bitrate_distribution": {
+        "audio": {
+          "streams": [
+            {
+              "peer": "peer-0",
+              "endpoint": "peer-0/send",
+              "id": "OT01A2980323095",
+              "kind": "audio",
+              "bps": 128377.46841445653
+            },
+            {
+              "peer": "peer-1",
+              "endpoint": "peer-1/send",
+              "id": "OT01A3137271312",
+              "kind": "audio",
+              "bps": 128386.95254547302
+            }
+          ],
+          "min_bps": 128377.46841445653,
+          "max_bps": 128386.95254547302
+        },
+        "video": {
+          "streams": [],
+          "min_bps": null,
+          "max_bps": null
+        }
+      },
+      "receiver_audio_distribution": [
+        {
+          "peer": "peer-0",
+          "endpoint": "peer-0/recv",
+          "id": "IT01A844994618",
+          "bps": 128343.4610303831,
+          "packet_loss_fraction": 0.0
+        },
+        {
+          "peer": "peer-1",
+          "endpoint": "peer-1/recv",
+          "id": "IT01A973213594",
+          "bps": 128343.4610303831,
+          "packet_loss_fraction": 0.0
+        }
+      ],
+      "per_peer_graph": {
+        "peer-0": {
+          "expected": {
+            "audio": 1,
+            "video": 0
+          },
+          "observed": {
+            "audio": 1,
+            "video": 0
+          },
+          "expected_endpoint": "peer-0/recv"
+        },
+        "peer-1": {
+          "expected": {
+            "audio": 1,
+            "video": 0
+          },
+          "observed": {
+            "audio": 1,
+            "video": 0
+          },
+          "expected_endpoint": "peer-1/recv"
+        }
+      },
+      "expected_inbound": {
+        "audio": 2,
+        "video": 0
+      },
+      "observed_inbound": {
+        "audio": 2,
+        "video": 0
+      },
+      "join_timing_ms": [
+        {
+          "peer": "peer-0",
+          "dtls_ready_at": 684,
+          "first_send_rtp_at": 283,
+          "full_graph_rtp_ready_at": 684
+        },
+        {
+          "peer": "peer-1",
+          "dtls_ready_at": 373,
+          "first_send_rtp_at": 373,
+          "full_graph_rtp_ready_at": 373
+        }
+      ],
+      "post_leave_engine_stats": {
+        "engine_stats": {
+          "consumers": 0,
+          "peers": 0,
+          "producers": 0,
+          "transports": 0
+        },
+        "at": 1791223246889
+      },
+      "load_generator_cpu_cores_mean": 0.06814275338681029,
+      "load_generator_peak_rss_bytes": 764899328,
+      "infrastructure": {},
+      "resource_comparison_available": false,
+      "raw_sha256": {
+        "backend.log": "ea47b407fe4c3db2f24f05d423a252b6c66c1a3a8a336ca7dbbd6b82d7f8d03a",
+        "server.json": "eac2d5e1d664ab19bfbb81e1b01f54e0bde2e6788e9d7995121ba6a6a4876654",
+        "browser.json": "a3c304c29b4b2d2f792dc19888e0441e02cbc46dcb980af47a9e935fad687cfe",
+        "loadgen.log": "cd5abdd603633705cf90c7c4f1ec25afa2121e003552122fb7a59f5e9ad17e54"
+      },
+      "browser_failures": []
+    },
+    {
+      "engine": "current",
+      "peers": 2,
+      "round": 2,
+      "media_fixture_valid": true,
+      "problems": [],
+      "executed_browser": {
+        "executable": "/home/rafi/.cache/ms-playwright/chromium_headless_shell-1243/chrome-headless-shell-linux64/chrome-headless-shell",
+        "sha256": "ded93a9c9a53a1ae040f08124badcca95c938e9d5015ff340c3b5538c41bf39e",
+        "product": "HeadlessChrome/153.0.8010.12",
+        "revision": "@971a7443b0c9b0a9b2860529b33331b76077ec62",
+        "user_agent": "Mozilla/5.0 (X11; Linux x86_64) AppleWebKit/537.36 (KHTML, like Gecko) HeadlessChrome/153.0.8010.12 Safari/537.36",
+        "js_version": "15.3.76.4"
+      },
+      "measurement_seconds": 59.036,
+      "sender_bitrate_distribution": {
+        "audio": {
+          "streams": [
+            {
+              "peer": "peer-0",
+              "endpoint": "peer-0/0",
+              "id": "OT01A2287209140",
+              "kind": "audio",
+              "bps": 128410.73243444678
+            },
+            {
+              "peer": "peer-1",
+              "endpoint": "peer-1/0",
+              "id": "OT01A3692475984",
+              "kind": "audio",
+              "bps": 128365.20089436954
+            }
+          ],
+          "min_bps": 128365.20089436954,
+          "max_bps": 128410.73243444678
+        },
+        "video": {
+          "streams": [],
+          "min_bps": null,
+          "max_bps": null
+        }
+      },
+      "receiver_audio_distribution": [
+        {
+          "peer": "peer-0",
+          "endpoint": "peer-0/0",
+          "id": "IT01A3204077033",
+          "bps": 128408.69977640761,
+          "packet_loss_fraction": 0.0
+        },
+        {
+          "peer": "peer-1",
+          "endpoint": "peer-1/0",
+          "id": "IT01A2472887179",
+          "bps": 128323.59915983467,
+          "packet_loss_fraction": 0.00033500837520938025
+        }
+      ],
+      "per_peer_graph": {
+        "peer-0": {
+          "expected": {
+            "audio": 1,
+            "video": 0
+          },
+          "observed": {
+            "audio": 1,
+            "video": 0
+          },
+          "expected_endpoint": "peer-0/0"
+        },
+        "peer-1": {
+          "expected": {
+            "audio": 1,
+            "video": 0
+          },
+          "observed": {
+            "audio": 1,
+            "video": 0
+          },
+          "expected_endpoint": "peer-1/0"
+        }
+      },
+      "expected_inbound": {
+        "audio": 2,
+        "video": 0
+      },
+      "observed_inbound": {
+        "audio": 2,
+        "video": 0
+      },
+      "join_timing_ms": [
+        {
+          "peer": "peer-0",
+          "dtls_ready_at": 962,
+          "first_send_rtp_at": 962,
+          "full_graph_rtp_ready_at": 1769
+        },
+        {
+          "peer": "peer-1",
+          "dtls_ready_at": 1533,
+          "first_send_rtp_at": 1533,
+          "full_graph_rtp_ready_at": 1533
+        }
+      ],
+      "post_leave_engine_stats": {
+        "engine_stats": {
+          "metrics": {
+            "gelabber_media_forwarded_bytes_total": 2259579,
+            "gelabber_media_ice_fails_total": 0,
+            "gelabber_media_peers": 0,
+            "gelabber_media_rooms": 0,
+            "gelabber_media_rtp_jitter_ms": 6.103,
+            "gelabber_media_rtp_lost_total": 2,
+            "gelabber_media_rtp_packets_total": 7194
+          },
+          "peers": 0,
+          "rooms": 0
+        },
+        "at": 1791223328873
+      },
+      "load_generator_cpu_cores_mean": 0.07050678345214059,
+      "load_generator_peak_rss_bytes": 749789184,
+      "infrastructure": {
+        "redis": {
+          "peak_rss_bytes": 27832320,
+          "image_id": "sha256:becdda6c7f4b3fb42e42fd7f120bbf5c54c4caaaf16f26da24e4563d2c1f0576",
+          "cpu_cores_mean": 0.003935980596469636,
+          "idle_peak_rss_bytes": 27602944,
+          "post_leave_peak_rss_bytes": 27348992
+        }
+      },
+      "resource_comparison_available": false,
+      "raw_sha256": {
+        "backend.log": "8ac842a474b8f7f132a8859a0059330e0fa02f228ea88a351026364b40d6e6aa",
+        "server.json": "bd2548a0318c7c1debca11a02967431d8e2e7466b6c5ec600913da815eb784dc",
+        "browser.json": "8c22456a103df6f2afae2a6ef9478d161e3ce270f40a2cc0f0bd7e254b946319",
+        "loadgen.log": "ac296456095b5e3bda8166423a60ff8d7d1e5455fee16d88c8b213f8bd8c059e"
+      },
+      "browser_failures": []
+    },
+    {
+      "engine": "current",
+      "peers": 2,
+      "round": 3,
+      "media_fixture_valid": true,
+      "problems": [],
+      "executed_browser": {
+        "executable": "/home/rafi/.cache/ms-playwright/chromium_headless_shell-1243/chrome-headless-shell-linux64/chrome-headless-shell",
+        "sha256": "ded93a9c9a53a1ae040f08124badcca95c938e9d5015ff340c3b5538c41bf39e",
+        "product": "HeadlessChrome/153.0.8010.12",
+        "revision": "@971a7443b0c9b0a9b2860529b33331b76077ec62",
+        "user_agent": "Mozilla/5.0 (X11; Linux x86_64) AppleWebKit/537.36 (KHTML, like Gecko) HeadlessChrome/153.0.8010.12 Safari/537.36",
+        "js_version": "15.3.76.4"
+      },
+      "measurement_seconds": 59.029,
+      "sender_bitrate_distribution": {
+        "audio": {
+          "streams": [
+            {
+              "peer": "peer-0",
+              "endpoint": "peer-0/0",
+              "id": "OT01A1258560868",
+              "kind": "audio",
+              "bps": 128378.93238916463
+            },
+            {
+              "peer": "peer-1",
+              "endpoint": "peer-1/0",
+              "id": "OT01A2074802941",
+              "kind": "audio",
+              "bps": 128380.42318182587
+            }
+          ],
+          "min_bps": 128378.93238916463,
+          "max_bps": 128380.42318182587
+        },
+        "video": {
+          "streams": [],
+          "min_bps": null,
+          "max_bps": null
+        }
+      },
+      "receiver_audio_distribution": [
+        {
+          "peer": "peer-0",
+          "endpoint": "peer-0/0",
+          "id": "IT01A2654781723",
+          "bps": 128380.42318182587,
+          "packet_loss_fraction": 0.0
+        },
+        {
+          "peer": "peer-1",
+          "endpoint": "peer-1/0",
+          "id": "IT01A2526606231",
+          "bps": 128334.07308272204,
+          "packet_loss_fraction": 0.00033444816053511704
+        }
+      ],
+      "per_peer_graph": {
+        "peer-0": {
+          "expected": {
+            "audio": 1,
+            "video": 0
+          },
+          "observed": {
+            "audio": 1,
+            "video": 0
+          },
+          "expected_endpoint": "peer-0/0"
+        },
+        "peer-1": {
+          "expected": {
+            "audio": 1,
+            "video": 0
+          },
+          "observed": {
+            "audio": 1,
+            "video": 0
+          },
+          "expected_endpoint": "peer-1/0"
+        }
+      },
+      "expected_inbound": {
+        "audio": 2,
+        "video": 0
+      },
+      "observed_inbound": {
+        "audio": 2,
+        "video": 0
+      },
+      "join_timing_ms": [
+        {
+          "peer": "peer-0",
+          "dtls_ready_at": 963,
+          "first_send_rtp_at": 963,
+          "full_graph_rtp_ready_at": 2067
+        },
+        {
+          "peer": "peer-1",
+          "dtls_ready_at": 1839,
+          "first_send_rtp_at": 1839,
+          "full_graph_rtp_ready_at": 1839
+        }
+      ],
+      "post_leave_engine_stats": {
+        "engine_stats": {
+          "metrics": {
+            "gelabber_media_forwarded_bytes_total": 2258877,
+            "gelabber_media_ice_fails_total": 0,
+            "gelabber_media_peers": 0,
+            "gelabber_media_rooms": 0,
+            "gelabber_media_rtp_jitter_ms": 7.598,
+            "gelabber_media_rtp_lost_total": 1,
+            "gelabber_media_rtp_packets_total": 7220
+          },
+          "peers": 0,
+          "rooms": 0
+        },
+        "at": 1791223412120
+      },
+      "load_generator_cpu_cores_mean": 0.04997926382718909,
+      "load_generator_peak_rss_bytes": 744669184,
+      "infrastructure": {
+        "redis": {
+          "peak_rss_bytes": 27488256,
+          "image_id": "sha256:becdda6c7f4b3fb42e42fd7f120bbf5c54c4caaaf16f26da24e4563d2c1f0576",
+          "cpu_cores_mean": 0.003923216016304091,
+          "idle_peak_rss_bytes": 27373568,
+          "post_leave_peak_rss_bytes": 27000832
+        }
+      },
+      "resource_comparison_available": false,
+      "raw_sha256": {
+        "backend.log": "24b0a51f5391e90315bc61d002527f7ea552b23c1c764028c5364c7f33d88a0b",
+        "server.json": "37d0e0ecee45a5d3fa8bda3f38a0c6be86068dec5208747fde31883f2b9cbf32",
+        "browser.json": "a6c18095c6016ee3446f85e7aed4b7ab63ac3749be0d002643d8407cfbd324b4",
+        "loadgen.log": "879ab1aab10341ed234bd71cdc4058092c9dde3c5c153aca4de6039a048591ee"
+      },
+      "browser_failures": []
+    },
+    {
+      "engine": "mediasoup",
+      "peers": 2,
+      "round": 3,
+      "media_fixture_valid": true,
+      "problems": [],
+      "executed_browser": {
+        "executable": "/home/rafi/.cache/ms-playwright/chromium_headless_shell-1243/chrome-headless-shell-linux64/chrome-headless-shell",
+        "sha256": "ded93a9c9a53a1ae040f08124badcca95c938e9d5015ff340c3b5538c41bf39e",
+        "product": "HeadlessChrome/153.0.8010.12",
+        "revision": "@971a7443b0c9b0a9b2860529b33331b76077ec62",
+        "user_agent": "Mozilla/5.0 (X11; Linux x86_64) AppleWebKit/537.36 (KHTML, like Gecko) HeadlessChrome/153.0.8010.12 Safari/537.36",
+        "js_version": "15.3.76.4"
+      },
+      "measurement_seconds": 59.038,
+      "sender_bitrate_distribution": {
+        "audio": {
+          "streams": [
+            {
+              "peer": "peer-0",
+              "endpoint": "peer-0/send",
+              "id": "OT01A2317667796",
+              "kind": "audio",
+              "bps": 128408.27941325927
+            },
+            {
+              "peer": "peer-1",
+              "endpoint": "peer-1/send",
+              "id": "OT01A730909474",
+              "kind": "audio",
+              "bps": 128360.8523323961
+            }
+          ],
+          "min_bps": 128360.8523323961,
+          "max_bps": 128408.27941325927
+        },
+        "video": {
+          "streams": [],
+          "min_bps": null,
+          "max_bps": null
+        }
+      },
+      "receiver_audio_distribution": [
+        {
+          "peer": "peer-0",
+          "endpoint": "peer-0/recv",
+          "id": "IT01A176076179",
+          "bps": 128447.84714929368,
+          "packet_loss_fraction": 0.0
+        },
+        {
+          "peer": "peer-1",
+          "endpoint": "peer-1/recv",
+          "id": "IT01A245767948",
+          "bps": 128401.77512788374,
+          "packet_loss_fraction": 0.0
+        }
+      ],
+      "per_peer_graph": {
+        "peer-0": {
+          "expected": {
+            "audio": 1,
+            "video": 0
+          },
+          "observed": {
+            "audio": 1,
+            "video": 0
+          },
+          "expected_endpoint": "peer-0/recv"
+        },
+        "peer-1": {
+          "expected": {
+            "audio": 1,
+            "video": 0
+          },
+          "observed": {
+            "audio": 1,
+            "video": 0
+          },
+          "expected_endpoint": "peer-1/recv"
+        }
+      },
+      "expected_inbound": {
+        "audio": 2,
+        "video": 0
+      },
+      "observed_inbound": {
+        "audio": 2,
+        "video": 0
+      },
+      "join_timing_ms": [
+        {
+          "peer": "peer-0",
+          "dtls_ready_at": 496,
+          "first_send_rtp_at": 295,
+          "full_graph_rtp_ready_at": 596
+        },
+        {
+          "peer": "peer-1",
+          "dtls_ready_at": 496,
+          "first_send_rtp_at": 396,
+          "full_graph_rtp_ready_at": 496
+        }
+      ],
+      "post_leave_engine_stats": {
+        "engine_stats": {
+          "consumers": 0,
+          "peers": 0,
+          "producers": 0,
+          "transports": 0
+        },
+        "at": 1791223492514
+      },
+      "load_generator_cpu_cores_mean": 0.05284061737009685,
+      "load_generator_peak_rss_bytes": 773693440,
+      "infrastructure": {},
+      "resource_comparison_available": false,
+      "raw_sha256": {
+        "backend.log": "323c52c0026f375fb47b8af10dd323feaa096240b40312335c9440312f2b26ef",
+        "server.json": "c64e049d3a7d40caa857bf098016e0e8cef8cd9567154e178895d7ed9c2ef504",
+        "browser.json": "d98825b72812651e56988f1fa00783e4b3ff80845117cc73b1072afcbb5ad758",
+        "loadgen.log": "151875c46c1ade55cbd69da89afedce7240002f869d62de5738871b99f227509"
+      },
+      "browser_failures": []
+    },
+    {
+      "engine": "janus",
+      "peers": 2,
+      "round": 3,
+      "media_fixture_valid": true,
+      "problems": [],
+      "executed_browser": {
+        "executable": "/home/rafi/.cache/ms-playwright/chromium_headless_shell-1243/chrome-headless-shell-linux64/chrome-headless-shell",
+        "sha256": "ded93a9c9a53a1ae040f08124badcca95c938e9d5015ff340c3b5538c41bf39e",
+        "product": "HeadlessChrome/153.0.8010.12",
+        "revision": "@971a7443b0c9b0a9b2860529b33331b76077ec62",
+        "user_agent": "Mozilla/5.0 (X11; Linux x86_64) AppleWebKit/537.36 (KHTML, like Gecko) HeadlessChrome/153.0.8010.12 Safari/537.36",
+        "js_version": "15.3.76.4"
+      },
+      "measurement_seconds": 59.028,
+      "sender_bitrate_distribution": {
+        "audio": {
+          "streams": [
+            {
+              "peer": "peer-0",
+              "endpoint": "peer-0/0",
+              "id": "OT01A3376319699",
+              "kind": "audio",
+              "bps": 128376.36375957173
+            },
+            {
+              "peer": "peer-1",
+              "endpoint": "peer-1/0",
+              "id": "OT01A2109499245",
+              "kind": "audio",
+              "bps": 128382.5980890425
+            }
+          ],
+          "min_bps": 128376.36375957173,
+          "max_bps": 128382.5980890425
+        },
+        "video": {
+          "streams": [],
+          "min_bps": null,
+          "max_bps": null
+        }
+      },
+      "receiver_audio_distribution": [
+        {
+          "peer": "peer-0",
+          "endpoint": "peer-0/1",
+          "id": "IT01A3316720780",
+          "bps": 128382.5980890425,
+          "packet_loss_fraction": 0.0
+        },
+        {
+          "peer": "peer-1",
+          "endpoint": "peer-1/1",
+          "id": "IT01A2276843822",
+          "bps": 128384.76655146711,
+          "packet_loss_fraction": 0.0
+        }
+      ],
+      "per_peer_graph": {
+        "peer-0": {
+          "expected": {
+            "audio": 1,
+            "video": 0
+          },
+          "observed": {
+            "audio": 1,
+            "video": 0
+          },
+          "expected_endpoint": "peer-0/1"
+        },
+        "peer-1": {
+          "expected": {
+            "audio": 1,
+            "video": 0
+          },
+          "observed": {
+            "audio": 1,
+            "video": 0
+          },
+          "expected_endpoint": "peer-1/1"
+        }
+      },
+      "expected_inbound": {
+        "audio": 2,
+        "video": 0
+      },
+      "observed_inbound": {
+        "audio": 2,
+        "video": 0
+      },
+      "join_timing_ms": [
+        {
+          "peer": "peer-0",
+          "dtls_ready_at": 1408,
+          "first_send_rtp_at": 605,
+          "full_graph_rtp_ready_at": 1408
+        },
+        {
+          "peer": "peer-1",
+          "dtls_ready_at": 1294,
+          "first_send_rtp_at": 491,
+          "full_graph_rtp_ready_at": 1294
+        }
+      ],
+      "post_leave_engine_stats": {
+        "engine_stats": {
+          "rooms": []
+        },
+        "at": 1791223574529
+      },
+      "load_generator_cpu_cores_mean": 0.05876680124814656,
+      "load_generator_peak_rss_bytes": 769396736,
+      "infrastructure": {},
+      "resource_comparison_available": false,
+      "raw_sha256": {
+        "backend.log": "6fac458bf1d700b3bb739236ecfcfd81b1046ed790c8a8e140118d4073eb211a",
+        "server.json": "54d4c8b5eb2832624051fa548f381e79eedd6020e881c244f77b4d7931e856d2",
+        "browser.json": "9fe381e3945399e272c0b4c0244a30a149b73732d46b7ea96ec916c7e710c8d1",
+        "loadgen.log": "4951b03541b938c8e02c08835feb4fbd3c96a38adc41c05338ade6a744eb692d"
+      },
+      "browser_failures": []
+    },
+    {
+      "engine": "current",
+      "peers": 8,
+      "round": 1,
+      "media_fixture_valid": true,
+      "problems": [],
+      "executed_browser": {
+        "executable": "/home/rafi/.cache/ms-playwright/chromium_headless_shell-1243/chrome-headless-shell-linux64/chrome-headless-shell",
+        "sha256": "ded93a9c9a53a1ae040f08124badcca95c938e9d5015ff340c3b5538c41bf39e",
+        "product": "HeadlessChrome/153.0.8010.12",
+        "revision": "@971a7443b0c9b0a9b2860529b33331b76077ec62",
+        "user_agent": "Mozilla/5.0 (X11; Linux x86_64) AppleWebKit/537.36 (KHTML, like Gecko) HeadlessChrome/153.0.8010.12 Safari/537.36",
+        "js_version": "15.3.76.4"
+      },
+      "measurement_seconds": 59.068,
+      "sender_bitrate_distribution": {
+        "audio": {
+          "streams": [
+            {
+              "peer": "peer-0",
+              "endpoint": "peer-0/0",
+              "id": "OT01A1458159324",
+              "kind": "audio",
+              "bps": 128387.48560980565
+            },
+            {
+              "peer": "peer-1",
+              "endpoint": "peer-1/0",
+              "id": "OT01A3083718590",
+              "kind": "audio",
+              "bps": 128382.6098733663
+            },
+            {
+              "peer": "peer-2",
+              "endpoint": "peer-2/0",
+              "id": "OT01A2833944080",
+              "kind": "audio",
+              "bps": 128374.61908309069
+            },
+            {
+              "peer": "peer-3",
+              "endpoint": "peer-3/0",
+              "id": "OT01A204911701",
+              "kind": "audio",
+              "bps": 128382.6098733663
+            },
+            {
+              "peer": "peer-4",
+              "endpoint": "peer-4/0",
+              "id": "OT01A88973570",
+              "kind": "audio",
+              "bps": 128382.6098733663
+            },
+            {
+              "peer": "peer-5",
+              "endpoint": "peer-5/0",
+              "id": "OT01A720259541",
+              "kind": "audio",
+              "bps": 128426.08518995057
+            },
+            {
+              "peer": "peer-6",
+              "endpoint": "peer-6/0",
+              "id": "OT01A4205432965",
+              "kind": "audio",
+              "bps": 128382.6098733663
+            },
+            {
+              "peer": "peer-7",
+              "endpoint": "peer-7/0",
+              "id": "OT01A2840406237",
+              "kind": "audio",
+              "bps": 128411.72885487913
+            }
+          ],
+          "min_bps": 128374.61908309069,
+          "max_bps": 128426.08518995057
+        },
+        "video": {
+          "streams": [],
+          "min_bps": null,
+          "max_bps": null
+        }
+      },
+      "receiver_audio_distribution": [
+        {
+          "peer": "peer-0",
+          "endpoint": "peer-0/0",
+          "id": "IT01A1419187130",
+          "bps": 128339.13455678202,
+          "packet_loss_fraction": 0.0
+        },
+        {
+          "peer": "peer-0",
+          "endpoint": "peer-0/0",
+          "id": "IT01A1832263943",
+          "bps": 128271.95774361753,
+          "packet_loss_fraction": 0.0006765899864682003
+        },
+        {
+          "peer": "peer-0",
+          "endpoint": "peer-0/0",
+          "id": "IT01A1904677507",
+          "bps": 128382.6098733663,
+          "packet_loss_fraction": 0.0
+        },
+        {
+          "peer": "peer-0",
+          "endpoint": "peer-0/0",
+          "id": "IT01A2413946108",
+          "bps": 128426.08518995057,
+          "packet_loss_fraction": 0.0
+        },
+        {
+          "peer": "peer-0",
+          "endpoint": "peer-0/0",
+          "id": "IT01A2921078325",
+          "bps": 128382.6098733663,
+          "packet_loss_fraction": 0.0
+        },
+        {
+          "peer": "peer-0",
+          "endpoint": "peer-0/0",
+          "id": "IT01A3845271874",
+          "bps": 128339.13455678202,
+          "packet_loss_fraction": 0.0003386386725364037
+        },
+        {
+          "peer": "peer-0",
+          "endpoint": "peer-0/0",
+          "id": "IT01A976543239",
+          "bps": 128289.83544389518,
+          "packet_loss_fraction": 0.00033875338753387534
+        },
+        {
+          "peer": "peer-1",
+          "endpoint": "peer-1/0",
+          "id": "IT01A1477632179",
+          "bps": 128289.83544389518,
+          "packet_loss_fraction": 0.00033875338753387534
+        },
+        {
+          "peer": "peer-1",
+          "endpoint": "peer-1/0",
+          "id": "IT01A2568715347",
+          "bps": 128339.13455678202,
+          "packet_loss_fraction": 0.0003386386725364037
+        },
+        {
+          "peer": "peer-1",
+          "endpoint": "peer-1/0",
+          "id": "IT01A2588204233",
+          "bps": 128334.25882034266,
+          "packet_loss_fraction": 0.0
+        },
+        {
+          "peer": "peer-1",
+          "endpoint": "peer-1/0",
+          "id": "IT01A4008755390",
+          "bps": 128426.08518995057,
+          "packet_loss_fraction": 0.0
+        },
+        {
+          "peer": "peer-1",
+          "endpoint": "peer-1/0",
+          "id": "IT01A58707316",
+          "bps": 128339.13455678202,
+          "packet_loss_fraction": 0.0
+        },
+        {
+          "peer": "peer-1",
+          "endpoint": "peer-1/0",
+          "id": "IT01A859979939",
+          "bps": 128271.95774361753,
+          "packet_loss_fraction": 0.0006765899864682003
+        },
+        {
+          "peer": "peer-1",
+          "endpoint": "peer-1/0",
+          "id": "IT01A960062121",
+          "bps": 128382.6098733663,
+          "packet_loss_fraction": 0.0
+        },
+        {
+          "peer": "peer-2",
+          "endpoint": "peer-2/0",
+          "id": "IT01A1665824582",
+          "bps": 128382.6098733663,
+          "packet_loss_fraction": 0.0
+        },
+        {
+          "peer": "peer-2",
+          "endpoint": "peer-2/0",
+          "id": "IT01A2520345757",
+          "bps": 128339.13455678202,
+          "packet_loss_fraction": 0.0003386386725364037
+        },
+        {
+          "peer": "peer-2",
+          "endpoint": "peer-2/0",
+          "id": "IT01A2854663339",
+          "bps": 128382.6098733663,
+          "packet_loss_fraction": 0.0
+        },
+        {
+          "peer": "peer-2",
+          "endpoint": "peer-2/0",
+          "id": "IT01A296318168",
+          "bps": 128334.25882034266,
+          "packet_loss_fraction": 0.0
+        },
+        {
+          "peer": "peer-2",
+          "endpoint": "peer-2/0",
+          "id": "IT01A3543689195",
+          "bps": 128339.13455678202,
+          "packet_loss_fraction": 0.0
+        },
+        {
+          "peer": "peer-2",
+          "endpoint": "peer-2/0",
+          "id": "IT01A4079884894",
+          "bps": 128271.95774361753,
+          "packet_loss_fraction": 0.0006765899864682003
+        },
+        {
+          "peer": "peer-2",
+          "endpoint": "peer-2/0",
+          "id": "IT01A943236877",
+          "bps": 128426.08518995057,
+          "packet_loss_fraction": 0.0
+        },
+        {
+          "peer": "peer-3",
+          "endpoint": "peer-3/0",
+          "id": "IT01A1407553494",
+          "bps": 128382.6098733663,
+          "packet_loss_fraction": 0.0
+        },
+        {
+          "peer": "peer-3",
+          "endpoint": "peer-3/0",
+          "id": "IT01A2290189909",
+          "bps": 128382.6098733663,
+          "packet_loss_fraction": 0.0
+        },
+        {
+          "peer": "peer-3",
+          "endpoint": "peer-3/0",
+          "id": "IT01A2679490157",
+          "bps": 128426.08518995057,
+          "packet_loss_fraction": 0.0
+        },
+        {
+          "peer": "peer-3",
+          "endpoint": "peer-3/0",
+          "id": "IT01A2802806140",
+          "bps": 128334.25882034266,
+          "packet_loss_fraction": 0.0
+        },
+        {
+          "peer": "peer-3",
+          "endpoint": "peer-3/0",
+          "id": "IT01A3100717864",
+          "bps": 128339.13455678202,
+          "packet_loss_fraction": 0.0003386386725364037
+        },
+        {
+          "peer": "peer-3",
+          "endpoint": "peer-3/0",
+          "id": "IT01A3189143645",
+          "bps": 128271.95774361753,
+          "packet_loss_fraction": 0.0006765899864682003
+        },
+        {
+          "peer": "peer-3",
+          "endpoint": "peer-3/0",
+          "id": "IT01A4014754936",
+          "bps": 128289.83544389518,
+          "packet_loss_fraction": 0.00033875338753387534
+        },
+        {
+          "peer": "peer-4",
+          "endpoint": "peer-4/0",
+          "id": "IT01A1356103629",
+          "bps": 128271.95774361753,
+          "packet_loss_fraction": 0.0006765899864682003
+        },
+        {
+          "peer": "peer-4",
+          "endpoint": "peer-4/0",
+          "id": "IT01A1411720970",
+          "bps": 128334.25882034266,
+          "packet_loss_fraction": 0.0
+        },
+        {
+          "peer": "peer-4",
+          "endpoint": "peer-4/0",
+          "id": "IT01A1768513949",
+          "bps": 128339.13455678202,
+          "packet_loss_fraction": 0.0
+        },
+        {
+          "peer": "peer-4",
+          "endpoint": "peer-4/0",
+          "id": "IT01A1807179596",
+          "bps": 128382.6098733663,
+          "packet_loss_fraction": 0.0
+        },
+        {
+          "peer": "peer-4",
+          "endpoint": "peer-4/0",
+          "id": "IT01A2522808231",
+          "bps": 128289.83544389518,
+          "packet_loss_fraction": 0.00033875338753387534
+        },
+        {
+          "peer": "peer-4",
+          "endpoint": "peer-4/0",
+          "id": "IT01A3609513417",
+          "bps": 128339.13455678202,
+          "packet_loss_fraction": 0.0003386386725364037
+        },
+        {
+          "peer": "peer-4",
+          "endpoint": "peer-4/0",
+          "id": "IT01A821463792",
+          "bps": 128382.6098733663,
+          "packet_loss_fraction": 0.0
+        },
+        {
+          "peer": "peer-5",
+          "endpoint": "peer-5/0",
+          "id": "IT01A1214650762",
+          "bps": 128382.6098733663,
+          "packet_loss_fraction": 0.0
+        },
+        {
+          "peer": "peer-5",
+          "endpoint": "peer-5/0",
+          "id": "IT01A1710036727",
+          "bps": 128289.83544389518,
+          "packet_loss_fraction": 0.00033875338753387534
+        },
+        {
+          "peer": "peer-5",
+          "endpoint": "peer-5/0",
+          "id": "IT01A1874586101",
+          "bps": 128339.13455678202,
+          "packet_loss_fraction": 0.0003386386725364037
+        },
+        {
+          "peer": "peer-5",
+          "endpoint": "peer-5/0",
+          "id": "IT01A2106769782",
+          "bps": 128334.25882034266,
+          "packet_loss_fraction": 0.0
+        },
+        {
+          "peer": "peer-5",
+          "endpoint": "peer-5/0",
+          "id": "IT01A3961929423",
+          "bps": 128426.08518995057,
+          "packet_loss_fraction": 0.0
+        },
+        {
+          "peer": "peer-5",
+          "endpoint": "peer-5/0",
+          "id": "IT01A4024146564",
+          "bps": 128339.13455678202,
+          "packet_loss_fraction": 0.0
+        },
+        {
+          "peer": "peer-5",
+          "endpoint": "peer-5/0",
+          "id": "IT01A957052557",
+          "bps": 128271.95774361753,
+          "packet_loss_fraction": 0.0006765899864682003
+        },
+        {
+          "peer": "peer-6",
+          "endpoint": "peer-6/0",
+          "id": "IT01A1463277482",
+          "bps": 128426.08518995057,
+          "packet_loss_fraction": 0.0
+        },
+        {
+          "peer": "peer-6",
+          "endpoint": "peer-6/0",
+          "id": "IT01A1710198809",
+          "bps": 128382.6098733663,
+          "packet_loss_fraction": 0.0
+        },
+        {
+          "peer": "peer-6",
+          "endpoint": "peer-6/0",
+          "id": "IT01A2749265724",
+          "bps": 128271.95774361753,
+          "packet_loss_fraction": 0.0006765899864682003
+        },
+        {
+          "peer": "peer-6",
+          "endpoint": "peer-6/0",
+          "id": "IT01A3053052197",
+          "bps": 128339.13455678202,
+          "packet_loss_fraction": 0.0
+        },
+        {
+          "peer": "peer-6",
+          "endpoint": "peer-6/0",
+          "id": "IT01A3723508398",
+          "bps": 128382.6098733663,
+          "packet_loss_fraction": 0.0
+        },
+        {
+          "peer": "peer-6",
+          "endpoint": "peer-6/0",
+          "id": "IT01A382640510",
+          "bps": 128289.83544389518,
+          "packet_loss_fraction": 0.00033875338753387534
+        },
+        {
+          "peer": "peer-6",
+          "endpoint": "peer-6/0",
+          "id": "IT01A887550081",
+          "bps": 128334.25882034266,
+          "packet_loss_fraction": 0.0
+        },
+        {
+          "peer": "peer-7",
+          "endpoint": "peer-7/0",
+          "id": "IT01A1107301432",
+          "bps": 128382.6098733663,
+          "packet_loss_fraction": 0.0
+        },
+        {
+          "peer": "peer-7",
+          "endpoint": "peer-7/0",
+          "id": "IT01A1267298996",
+          "bps": 128426.08518995057,
+          "packet_loss_fraction": 0.0
+        },
+        {
+          "peer": "peer-7",
+          "endpoint": "peer-7/0",
+          "id": "IT01A1459628595",
+          "bps": 128289.83544389518,
+          "packet_loss_fraction": 0.00033875338753387534
+        },
+        {
+          "peer": "peer-7",
+          "endpoint": "peer-7/0",
+          "id": "IT01A3671435170",
+          "bps": 128334.25882034266,
+          "packet_loss_fraction": 0.0
+        },
+        {
+          "peer": "peer-7",
+          "endpoint": "peer-7/0",
+          "id": "IT01A378987041",
+          "bps": 128339.13455678202,
+          "packet_loss_fraction": 0.0003386386725364037
+        },
+        {
+          "peer": "peer-7",
+          "endpoint": "peer-7/0",
+          "id": "IT01A418044362",
+          "bps": 128382.6098733663,
+          "packet_loss_fraction": 0.0
+        },
+        {
+          "peer": "peer-7",
+          "endpoint": "peer-7/0",
+          "id": "IT01A4300810",
+          "bps": 128339.13455678202,
+          "packet_loss_fraction": 0.0
+        }
+      ],
+      "per_peer_graph": {
+        "peer-0": {
+          "expected": {
+            "audio": 7,
+            "video": 0
+          },
+          "observed": {
+            "audio": 7,
+            "video": 0
+          },
+          "expected_endpoint": "peer-0/0"
+        },
+        "peer-1": {
+          "expected": {
+            "audio": 7,
+            "video": 0
+          },
+          "observed": {
+            "audio": 7,
+            "video": 0
+          },
+          "expected_endpoint": "peer-1/0"
+        },
+        "peer-2": {
+          "expected": {
+            "audio": 7,
+            "video": 0
+          },
+          "observed": {
+            "audio": 7,
+            "video": 0
+          },
+          "expected_endpoint": "peer-2/0"
+        },
+        "peer-3": {
+          "expected": {
+            "audio": 7,
+            "video": 0
+          },
+          "observed": {
+            "audio": 7,
+            "video": 0
+          },
+          "expected_endpoint": "peer-3/0"
+        },
+        "peer-4": {
+          "expected": {
+            "audio": 7,
+            "video": 0
+          },
+          "observed": {
+            "audio": 7,
+            "video": 0
+          },
+          "expected_endpoint": "peer-4/0"
+        },
+        "peer-5": {
+          "expected": {
+            "audio": 7,
+            "video": 0
+          },
+          "observed": {
+            "audio": 7,
+            "video": 0
+          },
+          "expected_endpoint": "peer-5/0"
+        },
+        "peer-6": {
+          "expected": {
+            "audio": 7,
+            "video": 0
+          },
+          "observed": {
+            "audio": 7,
+            "video": 0
+          },
+          "expected_endpoint": "peer-6/0"
+        },
+        "peer-7": {
+          "expected": {
+            "audio": 7,
+            "video": 0
+          },
+          "observed": {
+            "audio": 7,
+            "video": 0
+          },
+          "expected_endpoint": "peer-7/0"
+        }
+      },
+      "expected_inbound": {
+        "audio": 56,
+        "video": 0
+      },
+      "observed_inbound": {
+        "audio": 56,
+        "video": 0
+      },
+      "join_timing_ms": [
+        {
+          "peer": "peer-0",
+          "dtls_ready_at": 1863,
+          "first_send_rtp_at": 1863,
+          "full_graph_rtp_ready_at": 7984
+        },
+        {
+          "peer": "peer-1",
+          "dtls_ready_at": 2432,
+          "first_send_rtp_at": 2432,
+          "full_graph_rtp_ready_at": 7757
+        },
+        {
+          "peer": "peer-2",
+          "dtls_ready_at": 3134,
+          "first_send_rtp_at": 3234,
+          "full_graph_rtp_ready_at": 7646
+        },
+        {
+          "peer": "peer-3",
+          "dtls_ready_at": 3835,
+          "first_send_rtp_at": 3936,
+          "full_graph_rtp_ready_at": 7448
+        },
+        {
+          "peer": "peer-4",
+          "dtls_ready_at": 4533,
+          "first_send_rtp_at": 4633,
+          "full_graph_rtp_ready_at": 7343
+        },
+        {
+          "peer": "peer-5",
+          "dtls_ready_at": 5332,
+          "first_send_rtp_at": 5332,
+          "full_graph_rtp_ready_at": 7144
+        },
+        {
+          "peer": "peer-6",
+          "dtls_ready_at": 6044,
+          "first_send_rtp_at": 6044,
+          "full_graph_rtp_ready_at": 6947
+        },
+        {
+          "peer": "peer-7",
+          "dtls_ready_at": 6743,
+          "first_send_rtp_at": 6743,
+          "full_graph_rtp_ready_at": 6843
+        }
+      ],
+      "post_leave_engine_stats": {
+        "engine_stats": {
+          "metrics": {
+            "gelabber_media_forwarded_bytes_total": 64821241,
+            "gelabber_media_ice_fails_total": 0,
+            "gelabber_media_peers": 0,
+            "gelabber_media_rooms": 0,
+            "gelabber_media_rtp_jitter_ms": 4.032,
+            "gelabber_media_rtp_lost_total": 6,
+            "gelabber_media_rtp_packets_total": 29502
+          },
+          "peers": 0,
+          "rooms": 0
+        },
+        "at": 1791223681213
+      },
+      "load_generator_cpu_cores_mean": 0.27980937373704684,
+      "load_generator_peak_rss_bytes": 823279616,
+      "infrastructure": {
+        "redis": {
+          "peak_rss_bytes": 27348992,
+          "image_id": "sha256:becdda6c7f4b3fb42e42fd7f120bbf5c54c4caaaf16f26da24e4563d2c1f0576",
+          "cpu_cores_mean": 0.007192116651442822,
+          "idle_peak_rss_bytes": 27193344,
+          "post_leave_peak_rss_bytes": 26681344
+        }
+      },
+      "resource_comparison_available": false,
+      "raw_sha256": {
+        "backend.log": "81dddb8c2ab5794ff155f3d4b136b0c34171311645ff7e6ccfded7595b41ddbc",
+        "server.json": "0352a159cc5cfc2c729969f2bac7d258f1d9c71ab5fb695fd9f7a2377f8aaf90",
+        "browser.json": "ca9824668e88f58bf9fa3aa6f59f230c50a138eaa1499bddb382a0bf06e706b2",
+        "loadgen.log": "67ea72adfd508c31ccd4c18862cda1151cbc9a37e85e3356ed07833cf26359d8"
+      },
+      "browser_failures": []
+    },
+    {
+      "engine": "mediasoup",
+      "peers": 8,
+      "round": 1,
+      "media_fixture_valid": true,
+      "problems": [],
+      "executed_browser": {
+        "executable": "/home/rafi/.cache/ms-playwright/chromium_headless_shell-1243/chrome-headless-shell-linux64/chrome-headless-shell",
+        "sha256": "ded93a9c9a53a1ae040f08124badcca95c938e9d5015ff340c3b5538c41bf39e",
+        "product": "HeadlessChrome/153.0.8010.12",
+        "revision": "@971a7443b0c9b0a9b2860529b33331b76077ec62",
+        "user_agent": "Mozilla/5.0 (X11; Linux x86_64) AppleWebKit/537.36 (KHTML, like Gecko) HeadlessChrome/153.0.8010.12 Safari/537.36",
+        "js_version": "15.3.76.4"
+      },
+      "measurement_seconds": 59.122,
+      "sender_bitrate_distribution": {
+        "audio": {
+          "streams": [
+            {
+              "peer": "peer-0",
+              "endpoint": "peer-0/send",
+              "id": "OT01A1535983585",
+              "kind": "audio",
+              "bps": 128396.87426000474
+            },
+            {
+              "peer": "peer-1",
+              "endpoint": "peer-1/send",
+              "id": "OT01A3685566575",
+              "kind": "audio",
+              "bps": 128395.65643922736
+            },
+            {
+              "peer": "peer-2",
+              "endpoint": "peer-2/send",
+              "id": "OT01A560478138",
+              "kind": "audio",
+              "bps": 128405.26369202665
+            },
+            {
+              "peer": "peer-3",
+              "endpoint": "peer-3/send",
+              "id": "OT01A1478007428",
+              "kind": "audio",
+              "bps": 128395.65643922736
+            },
+            {
+              "peer": "peer-4",
+              "endpoint": "peer-4/send",
+              "id": "OT01A4010408967",
+              "kind": "audio",
+              "bps": 128395.65643922736
+            },
+            {
+              "peer": "peer-5",
+              "endpoint": "peer-5/send",
+              "id": "OT01A159724755",
+              "kind": "audio",
+              "bps": 128395.65643922736
+            },
+            {
+              "peer": "peer-6",
+              "endpoint": "peer-6/send",
+              "id": "OT01A3780543049",
+              "kind": "audio",
+              "bps": 128395.65643922736
+            },
+            {
+              "peer": "peer-7",
+              "endpoint": "peer-7/send",
+              "id": "OT01A2418694994",
+              "kind": "audio",
+              "bps": 128374.14160549373
+            }
+          ],
+          "min_bps": 128374.14160549373,
+          "max_bps": 128405.26369202665
+        },
+        "video": {
+          "streams": [],
+          "min_bps": null,
+          "max_bps": null
+        }
+      },
+      "receiver_audio_distribution": [
+        {
+          "peer": "peer-0",
+          "endpoint": "peer-0/recv",
+          "id": "IT01A332776499",
+          "bps": 128395.65643922736,
+          "packet_loss_fraction": 0.0
+        },
+        {
+          "peer": "peer-0",
+          "endpoint": "peer-0/recv",
+          "id": "IT01A383195230",
+          "bps": 128352.22083150096,
+          "packet_loss_fraction": 0.0006763611768684477
+        },
+        {
+          "peer": "peer-0",
+          "endpoint": "peer-0/recv",
+          "id": "IT01A625766933",
+          "bps": 128367.78187476743,
+          "packet_loss_fraction": 0.0
+        },
+        {
+          "peer": "peer-0",
+          "endpoint": "peer-0/recv",
+          "id": "IT01A632060625",
+          "bps": 128308.78522377457,
+          "packet_loss_fraction": 0.0006765899864682003
+        },
+        {
+          "peer": "peer-0",
+          "endpoint": "peer-0/recv",
+          "id": "IT01A700531071",
+          "bps": 128308.78522377457,
+          "packet_loss_fraction": 0.00033840947546531303
+        },
+        {
+          "peer": "peer-0",
+          "endpoint": "peer-0/recv",
+          "id": "IT01A758809693",
+          "bps": 128351.54426440242,
+          "packet_loss_fraction": 0.00033829499323410016
+        },
+        {
+          "peer": "peer-0",
+          "endpoint": "peer-0/recv",
+          "id": "IT01A801208812",
+          "bps": 128395.65643922736,
+          "packet_loss_fraction": 0.0
+        },
+        {
+          "peer": "peer-1",
+          "endpoint": "peer-1/recv",
+          "id": "IT01A162432274",
+          "bps": 128367.78187476743,
+          "packet_loss_fraction": 0.0
+        },
+        {
+          "peer": "peer-1",
+          "endpoint": "peer-1/recv",
+          "id": "IT01A374252754",
+          "bps": 128395.65643922736,
+          "packet_loss_fraction": 0.0
+        },
+        {
+          "peer": "peer-1",
+          "endpoint": "peer-1/recv",
+          "id": "IT01A498096533",
+          "bps": 128351.54426440242,
+          "packet_loss_fraction": 0.00033829499323410016
+        },
+        {
+          "peer": "peer-1",
+          "endpoint": "peer-1/recv",
+          "id": "IT01A525665065",
+          "bps": 128265.34961604817,
+          "packet_loss_fraction": 0.0006768189509306261
+        },
+        {
+          "peer": "peer-1",
+          "endpoint": "peer-1/recv",
+          "id": "IT01A900070440",
+          "bps": 128311.08555190961,
+          "packet_loss_fraction": 0.0006765899864682003
+        },
+        {
+          "peer": "peer-1",
+          "endpoint": "peer-1/recv",
+          "id": "IT01A920216672",
+          "bps": 128395.65643922736,
+          "packet_loss_fraction": 0.0
+        },
+        {
+          "peer": "peer-1",
+          "endpoint": "peer-1/recv",
+          "id": "IT01A937839618",
+          "bps": 128308.78522377457,
+          "packet_loss_fraction": 0.0006765899864682003
+        },
+        {
+          "peer": "peer-2",
+          "endpoint": "peer-2/recv",
+          "id": "IT01A199930330",
+          "bps": 128395.65643922736,
+          "packet_loss_fraction": 0.0
+        },
+        {
+          "peer": "peer-2",
+          "endpoint": "peer-2/recv",
+          "id": "IT01A420925634",
+          "bps": 128395.65643922736,
+          "packet_loss_fraction": 0.0
+        },
+        {
+          "peer": "peer-2",
+          "endpoint": "peer-2/recv",
+          "id": "IT01A452699243",
+          "bps": 128367.78187476743,
+          "packet_loss_fraction": 0.0
+        },
+        {
+          "peer": "peer-2",
+          "endpoint": "peer-2/recv",
+          "id": "IT01A588583589",
+          "bps": 128265.34961604817,
+          "packet_loss_fraction": 0.0006768189509306261
+        },
+        {
+          "peer": "peer-2",
+          "endpoint": "peer-2/recv",
+          "id": "IT01A847070614",
+          "bps": 128308.78522377457,
+          "packet_loss_fraction": 0.0006765899864682003
+        },
+        {
+          "peer": "peer-2",
+          "endpoint": "peer-2/recv",
+          "id": "IT01A904509622",
+          "bps": 128311.08555190961,
+          "packet_loss_fraction": 0.0006765899864682003
+        },
+        {
+          "peer": "peer-2",
+          "endpoint": "peer-2/recv",
+          "id": "IT01A926716973",
+          "bps": 128352.22083150096,
+          "packet_loss_fraction": 0.0006763611768684477
+        },
+        {
+          "peer": "peer-3",
+          "endpoint": "peer-3/recv",
+          "id": "IT01A147992653",
+          "bps": 128367.78187476743,
+          "packet_loss_fraction": 0.0
+        },
+        {
+          "peer": "peer-3",
+          "endpoint": "peer-3/recv",
+          "id": "IT01A229840649",
+          "bps": 128308.78522377457,
+          "packet_loss_fraction": 0.0006765899864682003
+        },
+        {
+          "peer": "peer-3",
+          "endpoint": "peer-3/recv",
+          "id": "IT01A341637439",
+          "bps": 128395.65643922736,
+          "packet_loss_fraction": 0.0
+        },
+        {
+          "peer": "peer-3",
+          "endpoint": "peer-3/recv",
+          "id": "IT01A491556483",
+          "bps": 128311.08555190961,
+          "packet_loss_fraction": 0.0006765899864682003
+        },
+        {
+          "peer": "peer-3",
+          "endpoint": "peer-3/recv",
+          "id": "IT01A578620524",
+          "bps": 128352.22083150096,
+          "packet_loss_fraction": 0.0006763611768684477
+        },
+        {
+          "peer": "peer-3",
+          "endpoint": "peer-3/recv",
+          "id": "IT01A579584336",
+          "bps": 128351.54426440242,
+          "packet_loss_fraction": 0.00033829499323410016
+        },
+        {
+          "peer": "peer-3",
+          "endpoint": "peer-3/recv",
+          "id": "IT01A783345680",
+          "bps": 128265.34961604817,
+          "packet_loss_fraction": 0.0006768189509306261
+        },
+        {
+          "peer": "peer-4",
+          "endpoint": "peer-4/recv",
+          "id": "IT01A204891437",
+          "bps": 128311.08555190961,
+          "packet_loss_fraction": 0.0006765899864682003
+        },
+        {
+          "peer": "peer-4",
+          "endpoint": "peer-4/recv",
+          "id": "IT01A239622537",
+          "bps": 128352.22083150096,
+          "packet_loss_fraction": 0.0006763611768684477
+        },
+        {
+          "peer": "peer-4",
+          "endpoint": "peer-4/recv",
+          "id": "IT01A333734184",
+          "bps": 128351.54426440242,
+          "packet_loss_fraction": 0.00033829499323410016
+        },
+        {
+          "peer": "peer-4",
+          "endpoint": "peer-4/recv",
+          "id": "IT01A366685801",
+          "bps": 128367.78187476743,
+          "packet_loss_fraction": 0.0
+        },
+        {
+          "peer": "peer-4",
+          "endpoint": "peer-4/recv",
+          "id": "IT01A404195749",
+          "bps": 128395.65643922736,
+          "packet_loss_fraction": 0.0
+        },
+        {
+          "peer": "peer-4",
+          "endpoint": "peer-4/recv",
+          "id": "IT01A816728911",
+          "bps": 128265.34961604817,
+          "packet_loss_fraction": 0.0006768189509306261
+        },
+        {
+          "peer": "peer-4",
+          "endpoint": "peer-4/recv",
+          "id": "IT01A936221659",
+          "bps": 128395.65643922736,
+          "packet_loss_fraction": 0.0
+        },
+        {
+          "peer": "peer-5",
+          "endpoint": "peer-5/recv",
+          "id": "IT01A195081449",
+          "bps": 128311.08555190961,
+          "packet_loss_fraction": 0.0006765899864682003
+        },
+        {
+          "peer": "peer-5",
+          "endpoint": "peer-5/recv",
+          "id": "IT01A233781847",
+          "bps": 128395.65643922736,
+          "packet_loss_fraction": 0.0
+        },
+        {
+          "peer": "peer-5",
+          "endpoint": "peer-5/recv",
+          "id": "IT01A284787075",
+          "bps": 128352.22083150096,
+          "packet_loss_fraction": 0.0006763611768684477
+        },
+        {
+          "peer": "peer-5",
+          "endpoint": "peer-5/recv",
+          "id": "IT01A317466265",
+          "bps": 128395.65643922736,
+          "packet_loss_fraction": 0.0
+        },
+        {
+          "peer": "peer-5",
+          "endpoint": "peer-5/recv",
+          "id": "IT01A471459412",
+          "bps": 128351.54426440242,
+          "packet_loss_fraction": 0.00033829499323410016
+        },
+        {
+          "peer": "peer-5",
+          "endpoint": "peer-5/recv",
+          "id": "IT01A757122680",
+          "bps": 128308.78522377457,
+          "packet_loss_fraction": 0.0006765899864682003
+        },
+        {
+          "peer": "peer-5",
+          "endpoint": "peer-5/recv",
+          "id": "IT01A993476528",
+          "bps": 128367.78187476743,
+          "packet_loss_fraction": 0.0
+        },
+        {
+          "peer": "peer-6",
+          "endpoint": "peer-6/recv",
+          "id": "IT01A255220438",
+          "bps": 128308.78522377457,
+          "packet_loss_fraction": 0.0006765899864682003
+        },
+        {
+          "peer": "peer-6",
+          "endpoint": "peer-6/recv",
+          "id": "IT01A335245062",
+          "bps": 128352.22083150096,
+          "packet_loss_fraction": 0.0006763611768684477
+        },
+        {
+          "peer": "peer-6",
+          "endpoint": "peer-6/recv",
+          "id": "IT01A416828564",
+          "bps": 128311.08555190961,
+          "packet_loss_fraction": 0.0006765899864682003
+        },
+        {
+          "peer": "peer-6",
+          "endpoint": "peer-6/recv",
+          "id": "IT01A501153571",
+          "bps": 128265.34961604817,
+          "packet_loss_fraction": 0.0006768189509306261
+        },
+        {
+          "peer": "peer-6",
+          "endpoint": "peer-6/recv",
+          "id": "IT01A589735201",
+          "bps": 128351.54426440242,
+          "packet_loss_fraction": 0.00033829499323410016
+        },
+        {
+          "peer": "peer-6",
+          "endpoint": "peer-6/recv",
+          "id": "IT01A744113022",
+          "bps": 128367.78187476743,
+          "packet_loss_fraction": 0.0
+        },
+        {
+          "peer": "peer-6",
+          "endpoint": "peer-6/recv",
+          "id": "IT01A904515686",
+          "bps": 128395.65643922736,
+          "packet_loss_fraction": 0.0
+        },
+        {
+          "peer": "peer-7",
+          "endpoint": "peer-7/recv",
+          "id": "IT01A167013649",
+          "bps": 128395.65643922736,
+          "packet_loss_fraction": 0.0
+        },
+        {
+          "peer": "peer-7",
+          "endpoint": "peer-7/recv",
+          "id": "IT01A292710382",
+          "bps": 128395.65643922736,
+          "packet_loss_fraction": 0.0
+        },
+        {
+          "peer": "peer-7",
+          "endpoint": "peer-7/recv",
+          "id": "IT01A331738260",
+          "bps": 128308.78522377457,
+          "packet_loss_fraction": 0.0006765899864682003
+        },
+        {
+          "peer": "peer-7",
+          "endpoint": "peer-7/recv",
+          "id": "IT01A335941783",
+          "bps": 128311.08555190961,
+          "packet_loss_fraction": 0.0006765899864682003
+        },
+        {
+          "peer": "peer-7",
+          "endpoint": "peer-7/recv",
+          "id": "IT01A849757764",
+          "bps": 128352.22083150096,
+          "packet_loss_fraction": 0.0006763611768684477
+        },
+        {
+          "peer": "peer-7",
+          "endpoint": "peer-7/recv",
+          "id": "IT01A900256908",
+          "bps": 128265.34961604817,
+          "packet_loss_fraction": 0.0006768189509306261
+        },
+        {
+          "peer": "peer-7",
+          "endpoint": "peer-7/recv",
+          "id": "IT01A974492935",
+          "bps": 128351.54426440242,
+          "packet_loss_fraction": 0.00033829499323410016
+        }
+      ],
+      "per_peer_graph": {
+        "peer-0": {
+          "expected": {
+            "audio": 7,
+            "video": 0
+          },
+          "observed": {
+            "audio": 7,
+            "video": 0
+          },
+          "expected_endpoint": "peer-0/recv"
+        },
+        "peer-1": {
+          "expected": {
+            "audio": 7,
+            "video": 0
+          },
+          "observed": {
+            "audio": 7,
+            "video": 0
+          },
+          "expected_endpoint": "peer-1/recv"
+        },
+        "peer-2": {
+          "expected": {
+            "audio": 7,
+            "video": 0
+          },
+          "observed": {
+            "audio": 7,
+            "video": 0
+          },
+          "expected_endpoint": "peer-2/recv"
+        },
+        "peer-3": {
+          "expected": {
+            "audio": 7,
+            "video": 0
+          },
+          "observed": {
+            "audio": 7,
+            "video": 0
+          },
+          "expected_endpoint": "peer-3/recv"
+        },
+        "peer-4": {
+          "expected": {
+            "audio": 7,
+            "video": 0
+          },
+          "observed": {
+            "audio": 7,
+            "video": 0
+          },
+          "expected_endpoint": "peer-4/recv"
+        },
+        "peer-5": {
+          "expected": {
+            "audio": 7,
+            "video": 0
+          },
+          "observed": {
+            "audio": 7,
+            "video": 0
+          },
+          "expected_endpoint": "peer-5/recv"
+        },
+        "peer-6": {
+          "expected": {
+            "audio": 7,
+            "video": 0
+          },
+          "observed": {
+            "audio": 7,
+            "video": 0
+          },
+          "expected_endpoint": "peer-6/recv"
+        },
+        "peer-7": {
+          "expected": {
+            "audio": 7,
+            "video": 0
+          },
+          "observed": {
+            "audio": 7,
+            "video": 0
+          },
+          "expected_endpoint": "peer-7/recv"
+        }
+      },
+      "expected_inbound": {
+        "audio": 56,
+        "video": 0
+      },
+      "observed_inbound": {
+        "audio": 56,
+        "video": 0
+      },
+      "join_timing_ms": [
+        {
+          "peer": "peer-0",
+          "dtls_ready_at": 1508,
+          "first_send_rtp_at": 300,
+          "full_graph_rtp_ready_at": 1710
+        },
+        {
+          "peer": "peer-1",
+          "dtls_ready_at": 1889,
+          "first_send_rtp_at": 281,
+          "full_graph_rtp_ready_at": 1990
+        },
+        {
+          "peer": "peer-2",
+          "dtls_ready_at": 2200,
+          "first_send_rtp_at": 489,
+          "full_graph_rtp_ready_at": 2301
+        },
+        {
+          "peer": "peer-3",
+          "dtls_ready_at": 2394,
+          "first_send_rtp_at": 180,
+          "full_graph_rtp_ready_at": 2796
+        },
+        {
+          "peer": "peer-4",
+          "dtls_ready_at": 2991,
+          "first_send_rtp_at": 473,
+          "full_graph_rtp_ready_at": 3192
+        },
+        {
+          "peer": "peer-5",
+          "dtls_ready_at": 3299,
+          "first_send_rtp_at": 384,
+          "full_graph_rtp_ready_at": 3602
+        },
+        {
+          "peer": "peer-6",
+          "dtls_ready_at": 3731,
+          "first_send_rtp_at": 411,
+          "full_graph_rtp_ready_at": 3932
+        },
+        {
+          "peer": "peer-7",
+          "dtls_ready_at": 4118,
+          "first_send_rtp_at": 393,
+          "full_graph_rtp_ready_at": 4219
+        }
+      ],
+      "post_leave_engine_stats": {
+        "engine_stats": {
+          "consumers": 0,
+          "peers": 0,
+          "producers": 0,
+          "transports": 0
+        },
+        "at": 1791223769306
+      },
+      "load_generator_cpu_cores_mean": 0.3579747512760318,
+      "load_generator_peak_rss_bytes": 849555456,
+      "infrastructure": {},
+      "resource_comparison_available": false,
+      "raw_sha256": {
+        "backend.log": "ecdcf164b0f63bb0fdd3e297fe0f51bdde143fb425f6016380c0369abcb1beda",
+        "server.json": "a0bef4c1f07fa35f31d8fa98ea506e656093beb0c014cc91af1b5ad3f380c190",
+        "browser.json": "e205fa1f87dd5c91742e9c2054d28d4fb816cec43f83c962741c017805926e02",
+        "loadgen.log": "663fddd854eb4f500f5ff3705f7e2736764a6e3417ecd57133450cef0f72c351"
+      },
+      "browser_failures": []
+    },
+    {
+      "engine": "janus",
+      "peers": 8,
+      "round": 1,
+      "media_fixture_valid": false,
+      "problems": [
+        "Error: page.evaluate: Error: Janus event timeout\n    at http://127.0.0.1:34521/client.js:12676:17\n    at async entry.request (http://127.0.0.1:34521/client.js:12675:23)\n    at async Object.janus (http://127.0.0.1:34521/client.js:12692:22)\n    at async window.startBenchmark (http://127.0.0.1:34521/client.js:12731:5)\n    at async <anonymous>:337:30",
+        "load generator failed",
+        "at least three browser samples required"
+      ],
+      "executed_browser": {
+        "executable": "/home/rafi/.cache/ms-playwright/chromium_headless_shell-1243/chrome-headless-shell-linux64/chrome-headless-shell",
+        "sha256": "ded93a9c9a53a1ae040f08124badcca95c938e9d5015ff340c3b5538c41bf39e",
+        "product": "HeadlessChrome/153.0.8010.12",
+        "revision": "@971a7443b0c9b0a9b2860529b33331b76077ec62",
+        "user_agent": "Mozilla/5.0 (X11; Linux x86_64) AppleWebKit/537.36 (KHTML, like Gecko) HeadlessChrome/153.0.8010.12 Safari/537.36",
+        "js_version": "15.3.76.4"
+      },
+      "resource_comparison_available": false,
+      "raw_sha256": {
+        "backend.log": "16b6b27ac91b5009ee398bd5cc933589a0112e312292b7c0089e93e36bb3b541",
+        "server.json": "2f6a735d235fa95c8d5d8d4f2fec257196e8e9510e5888c31ff7c318862f98b5",
+        "browser.json": "2d2c751d332f15fbe0f4c7ba1d8d2beb88a51e04a99007cec09ac4b6e4bf50a2",
+        "loadgen.log": "d515a1085f1694e569a176ab44d119f0f92ae5a07cfb65be49c26a9625795d37"
+      },
+      "browser_failures": [
+        "Error: page.evaluate: Error: Janus event timeout\n    at http://127.0.0.1:34521/client.js:12676:17\n    at async entry.request (http://127.0.0.1:34521/client.js:12675:23)\n    at async Object.janus (http://127.0.0.1:34521/client.js:12692:22)\n    at async window.startBenchmark (http://127.0.0.1:34521/client.js:12731:5)\n    at async <anonymous>:337:30"
+      ]
+    }
+  ],
+  "interrupted_case": {
+    "engine": "janus",
+    "peers": 8,
+    "round": 2,
+    "report_listed": false,
+    "media_fixture_valid": false,
+    "resource_comparison_available": false,
+    "browser_failures": [
+      "Error: page.evaluate: Target page, context or browser has been closed"
+    ],
+    "recorded_at": "2026-10-05T18:21:34.850Z",
+    "browser_samples": 0,
+    "raw_sha256": {
+      "backend.log": "fbc5bc9dea6440f0411f4b031df875a9e21d3ad613ba9ea32e8b860cb69ffce6",
+      "browser.json": "ff0b3a56bb699e4cbf2de145cc54d2e29fca7d98c347de0fb63d020677adf48c",
+      "loadgen.log": "3a6ea070f0b99562b5ffb5bbc69e250690b1f82bcef30ab5981680b112dedbd7"
+    },
+    "cause": "Outer runner timed out at370s, then terminated its owned generator group; page/browser closure is the resulting failure, not a demonstrated internal cause."
+  },
+  "janus_diagnosis": {
+    "8_round1_failed_stage": "publisher join (client.bundle.js:12692), not video or receiver graph qualification",
+    "8_round1_backend_publisher_candidate_warning_handles": 7,
+    "8_round2_backend_publisher_candidate_warning_handles": 8,
+    "backend_exitcode": 0,
+    "backend_oom_killed": false,
+    "candidate_warning_exclusive_to_failures": false,
+    "candidate_warning_control": "Passing Janus2round3 has the same Failed to add remote candidates warning.",
+    "harness_defects": [
+      "All N+1 browser long-polls and POST requests share one HTTP1 origin.",
+      "Browser POST/body fetch had no complete deadline.",
+      "The old30s event timer started only after POST acknowledgment.",
+      "Timed-out pending transactions were not deleted.",
+      "Setup failure did not install normal client cleanup."
+    ],
+    "local_http1_control": {
+      "scope": "local HTTP1 connection-pool control; no SFU/ICE/media/WAN",
+      "comparison_available": false,
+      "trace": [
+        {
+          "event": "request",
+          "method": "GET",
+          "url": "/",
+          "at": 1791224803779
+        },
+        {
+          "event": "request",
+          "method": "GET",
+          "url": "/poll/0",
+          "at": 1791224803788
+        },
+        {
+          "event": "request",
+          "method": "GET",
+          "url": "/poll/1",
+          "at": 1791224803788
+        },
+        {
+          "event": "request",
+          "method": "GET",
+          "url": "/poll/2",
+          "at": 1791224803788
+        },
+        {
+          "event": "request",
+          "method": "GET",
+          "url": "/poll/3",
+          "at": 1791224803788
+        },
+        {
+          "event": "request",
+          "method": "GET",
+          "url": "/poll/4",
+          "at": 1791224803788
+        },
+        {
+          "event": "request",
+          "method": "GET",
+          "url": "/poll/5",
+          "at": 1791224803788
+        },
+        {
+          "event": "poll-finished",
+          "url": "/poll/0",
+          "at": 1791224805790
+        },
+        {
+          "event": "poll-finished",
+          "url": "/poll/1",
+          "at": 1791224805790
+        },
+        {
+          "event": "poll-finished",
+          "url": "/poll/2",
+          "at": 1791224805790
+        },
+        {
+          "event": "poll-finished",
+          "url": "/poll/3",
+          "at": 1791224805790
+        },
+        {
+          "event": "poll-finished",
+          "url": "/poll/4",
+          "at": 1791224805790
+        },
+        {
+          "event": "poll-finished",
+          "url": "/poll/5",
+          "at": 1791224805790
+        },
+        {
+          "event": "request",
+          "method": "GET",
+          "url": "/poll/6",
+          "at": 1791224805794
+        },
+        {
+          "event": "request",
+          "method": "GET",
+          "url": "/poll/7",
+          "at": 1791224805794
+        },
+        {
+          "event": "request",
+          "method": "GET",
+          "url": "/poll/8",
+          "at": 1791224805794
+        },
+        {
+          "event": "request",
+          "method": "POST",
+          "url": "/post",
+          "at": 1791224805794
+        },
+        {
+          "event": "poll-finished",
+          "url": "/poll/6",
+          "at": 1791224807795
+        },
+        {
+          "event": "poll-finished",
+          "url": "/poll/7",
+          "at": 1791224807795
+        },
+        {
+          "event": "poll-finished",
+          "url": "/poll/8",
+          "at": 1791224807795
+        }
+      ],
+      "executed_browser": {
+        "executable": "/home/rafi/.cache/ms-playwright/chromium_headless_shell-1243/chrome-headless-shell-linux64/chrome-headless-shell",
+        "sha256": "ded93a9c9a53a1ae040f08124badcca95c938e9d5015ff340c3b5538c41bf39e",
+        "product": "HeadlessChrome/153.0.8010.12",
+        "revision": "@971a7443b0c9b0a9b2860529b33331b76077ec62",
+        "user_agent": "Mozilla/5.0 (X11; Linux x86_64) AppleWebKit/537.36 (KHTML, like Gecko) HeadlessChrome/153.0.8010.12 Safari/537.36",
+        "js_version": "15.3.76.4"
+      },
+      "control": {
+        "started": 1791224803787,
+        "postStart": 1791224803887,
+        "postFinished": 1791224805795,
+        "postWaitMs": 1908
+      },
+      "max_active_http1_longpolls": 6,
+      "valid": true
+    },
+    "control_source_sha256": "6ae545aeb9469d612c694758bba2edf50b6ac861e67beb03ea872e441eedf35b",
+    "original_timeout_caused_by_http1_pool": "inference, not established by the archived original logs"
+  }
+}

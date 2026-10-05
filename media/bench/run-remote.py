@@ -137,7 +137,7 @@ def main():
         print(json.dumps(report, indent=2)); return 0
     args.output = args.output.resolve(); args.output.mkdir(parents=True)
     snapshot = args.output / 'inputs'; snapshot.mkdir()
-    for filename in ['loadgen.mjs', 'proxy-target.mjs', 'browser-provenance.mjs', 'video-fixture.mjs', 'pcm-policy.mjs', 'pcm-kernel.mjs', 'pcm-marker.mjs', 'pcm.bundle.js', 'client.bundle.js', 'package-lock.json', 'record.py', 'run-remote.py', 'evaluate.py', 'protocol-diagnostics.py']:
+    for filename in ['loadgen.mjs', 'janus-broker.mjs', 'janus-events.mjs', 'proxy-target.mjs', 'browser-provenance.mjs', 'video-fixture.mjs', 'pcm-policy.mjs', 'pcm-kernel.mjs', 'pcm-marker.mjs', 'pcm.bundle.js', 'client.bundle.js', 'package-lock.json', 'record.py', 'run-remote.py', 'evaluate.py', 'protocol-diagnostics.py']:
         shutil.copy2(ROOT / filename, snapshot / filename)
     if args.pcm_calibration:
         shutil.copy2(args.pcm_calibration, snapshot / 'pcm-calibration.json')
