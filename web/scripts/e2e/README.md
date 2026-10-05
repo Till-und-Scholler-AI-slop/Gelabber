@@ -80,3 +80,7 @@ memory. The app/runtime SHA declarations retain the standard harness attribution
 limits. Fake capture, a local network and a simulated display do not establish
 physical microphone quality, real iOS suspend/resume or WAN/TURN acceptance.
 This long check stays local and is not added to CI.
+
+The separate [iOS and Omarchy acceptance sheet](../../../docs/v0.4-device-acceptance.md)
+records the physical hearing, device, background/resume and TURN checks. It starts
+as not performed and requires the exact candidate and actual browser/device evidence.
