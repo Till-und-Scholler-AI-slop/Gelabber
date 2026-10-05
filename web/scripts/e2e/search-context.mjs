@@ -174,11 +174,11 @@ try {
   await member.page.locator(`a[href="${path}"]`).first().click();
   const log = member.page.getByRole("log", { name: "Nachrichten" });
   await log.waitFor();
-  await log.evaluate((el) => {
-    el.scrollTop = Math.max(0, el.scrollHeight - el.clientHeight - 220);
-    el.dispatchEvent(new Event("scroll"));
-  });
-  await new Promise((r) => setTimeout(r, 500));
+  await until(
+    () => log.getAttribute("aria-busy"),
+    (busy) => !busy,
+    "canonical-history-ready",
+  );
   const composer = member.page.locator("form textarea").last();
   await composer.fill("unsent preserved draft");
   await member.page.locator('input[type="file"]').setInputFiles({
@@ -186,6 +186,41 @@ try {
     mimeType: "text/plain",
     buffer: Buffer.from("unsent"),
   });
+  // Establish real history-reading intent after row and composer measurement.
+  // The phone viewport below is 64px taller and clamps this small gap to end;
+  // that geometry change must not turn an upward wheel into a read of latest.
+  await new Promise((r) => setTimeout(r, 500));
+  const logBox = await log.boundingBox();
+  assert.ok(logBox);
+  await member.page.mouse.move(
+    logBox.x + logBox.width / 2,
+    logBox.y + logBox.height / 2,
+  );
+  await log.evaluate((el) => {
+    el.scrollTop = el.scrollHeight;
+  });
+  await until(
+    () =>
+      log.evaluate((el) => el.scrollHeight - el.scrollTop - el.clientHeight),
+    (distance) => distance <= 16,
+    "canonical-end-before-native-up",
+  );
+  await new Promise((r) => setTimeout(r, 500));
+  await member.page.mouse.wheel(0, -25);
+  await until(
+    () =>
+      log.evaluate((el) => el.scrollHeight - el.scrollTop - el.clientHeight),
+    (distance) => distance > 16 && distance < 64,
+    "history-wheel-before-search",
+  );
+  await new Promise((r) => setTimeout(r, 300));
+  const historyGap = await log.evaluate(
+    (el) => el.scrollHeight - el.scrollTop - el.clientHeight,
+  );
+  assert.ok(
+    historyGap > 16 && historyGap < 64,
+    `fixture must be reading near-end history before search, gap=${historyGap}`,
+  );
   const beforeScroll = await log.evaluate((el) => el.scrollTop);
   const beforeUnread = (await channelState(member, channel)).unread_count;
   const search = async (value) => {
@@ -260,6 +295,14 @@ try {
     "touch opens the same old target at a phone viewport",
     async () => {
       await member.page.setViewportSize({ width: 390, height: 844 });
+      await until(
+        () =>
+          member.page
+            .locator('[role="log"]')
+            .evaluate((el) => el.scrollHeight - el.scrollTop - el.clientHeight),
+        (distance) => distance <= 16,
+        "larger-viewport-clamps-hidden-history",
+      );
       await contextRegion()
         .getByRole("button", { name: "Zurück zu den Treffern" })
         .tap();

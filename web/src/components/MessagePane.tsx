@@ -16,6 +16,11 @@ import {
   type ReactNode,
 } from "react";
 
+import {
+  endDistance,
+  scrollEndIntent,
+  type ScrollPosition,
+} from "../messages/scrollPosition.ts";
 import { MessageSearch } from "../messages/MessageSearch.tsx";
 import { useChatDraft } from "../messages/drafts.ts";
 import { readBoundary, useMarkRead } from "../messages/readState.ts";
@@ -271,7 +276,9 @@ function MessageList({
 }) {
   const scrollRef = useRef<HTMLDivElement>(null);
   const stickToBottom = useRef(true);
-  const lastScrollTop = useRef(0);
+  const contentRef = useRef<HTMLDivElement>(null);
+  const lastPosition = useRef<ScrollPosition | null>(null);
+  const touchY = useRef<number | null>(null);
   const lastRequest = useRef(latestRequest);
   const olderAnchor = useRef<string | null>(null);
   const lastCount = useRef(0);
@@ -295,6 +302,32 @@ function MessageList({
     getItemKey: (index) => items[index]?.id ?? index,
     overscan: 12,
   });
+
+  const updateLatest = useCallback(() => {
+    const element = scrollRef.current;
+    if (!element) return;
+    if (stickToBottom.current) element.scrollTop = element.scrollHeight;
+    const position = {
+      top: element.scrollTop,
+      height: element.scrollHeight,
+      viewport: element.clientHeight,
+    };
+    lastPosition.current = position;
+    onAtLatest(active && stickToBottom.current && endDistance(position) <= 16);
+  }, [active, onAtLatest]);
+
+  useLayoutEffect(() => {
+    const element = scrollRef.current,
+      content = contentRef.current;
+    if (!element || !content) return;
+    // The viewport also changes when the keyboard model, dock, or search
+    // controls resize. Keep history intent even if the browser clamps to end.
+    const observer = new ResizeObserver(updateLatest);
+    observer.observe(element);
+    observer.observe(content);
+    updateLatest();
+    return () => observer.disconnect();
+  }, [updateLatest]);
 
   useLayoutEffect(() => {
     // Preserve history anchors; while pinned, the end owns resize adjustments.
@@ -337,15 +370,7 @@ function MessageList({
       }
     }
 
-    const element = scrollRef.current;
-    if (element && stickToBottom.current)
-      element.scrollTop = element.scrollHeight;
-    onAtLatest(
-      Boolean(
-        element &&
-        element.scrollHeight - element.scrollTop - element.clientHeight <= 16,
-      ),
-    );
+    updateLatest();
     lastCount.current = items.length;
     const first = virtualizer.getVirtualItems()[0];
     const firstMessage = first ? items[first.index] : undefined;
@@ -355,7 +380,7 @@ function MessageList({
         offset: first.start - scrollRef.current.scrollTop,
       };
     }
-  }, [items, virtualizer, onAtLatest, totalSize, latestRequest]);
+  }, [items, virtualizer, updateLatest, totalSize, latestRequest]);
 
   const firstVisible = virtualizer.getVirtualItems()[0]?.index ?? 0;
   const firstId = items[0]?.id;
@@ -384,22 +409,62 @@ function MessageList({
       role="log"
       aria-label="Nachrichten"
       aria-busy={!ready || undefined}
-      onScrollCapture={() => {
-        const el = scrollRef.current;
-        // Capture the end before the virtualizer measures the newly visible rows.
-        if (el && el.scrollHeight - el.scrollTop - el.clientHeight < 96)
+      onWheelCapture={(event) => {
+        if (event.deltaY < 0) stickToBottom.current = false;
+        else if (
+          event.deltaY > 0 &&
+          lastPosition.current &&
+          endDistance(lastPosition.current) < 96
+        )
           stickToBottom.current = true;
+        updateLatest();
       }}
-      onScroll={() => {
-        const el = scrollRef.current;
-        if (!el) return;
-        const distance = el.scrollHeight - el.scrollTop - el.clientHeight;
-        if (distance < 96) stickToBottom.current = true;
-        else if (el.scrollTop < lastScrollTop.current)
+      onKeyDownCapture={(event) => {
+        if (
+          event.target instanceof HTMLElement &&
+          event.target.closest("input,textarea,select,[contenteditable='true']")
+        )
+          return;
+        if (["ArrowUp", "PageUp", "Home"].includes(event.key))
           stickToBottom.current = false;
-        lastScrollTop.current = el.scrollTop;
-        onAtLatest(el.scrollHeight - el.scrollTop - el.clientHeight <= 16);
+        if (event.key === "End") stickToBottom.current = true;
+        updateLatest();
       }}
+      onTouchStartCapture={(event) => {
+        touchY.current = event.touches[0]?.clientY ?? null;
+      }}
+      onTouchMoveCapture={(event) => {
+        const current = event.touches[0]?.clientY;
+        if (current === undefined || touchY.current === null) return;
+        if (current > touchY.current) stickToBottom.current = false;
+        else if (
+          current < touchY.current &&
+          lastPosition.current &&
+          endDistance(lastPosition.current) < 96
+        )
+          stickToBottom.current = true;
+        touchY.current = current;
+        updateLatest();
+      }}
+      onTouchEndCapture={() => {
+        touchY.current = null;
+      }}
+      onScrollCapture={() => {
+        const element = scrollRef.current;
+        if (!element) return;
+        // Observe intent before virtualizer measurement adjusts the geometry.
+        stickToBottom.current = scrollEndIntent(
+          stickToBottom.current,
+          lastPosition.current,
+          {
+            top: element.scrollTop,
+            height: element.scrollHeight,
+            viewport: element.clientHeight,
+          },
+        );
+        updateLatest();
+      }}
+      onScroll={updateLatest}
       style={{ overflowAnchor: "none" }}
       className="flex min-h-0 flex-1 flex-col overflow-y-auto"
     >
@@ -433,6 +498,7 @@ function MessageList({
       <div
         // Pin a short list to the bottom with flex, not a viewport-sized
         // margin: that ResizeObserver loop (scrollbar on/off) is React #185.
+        ref={contentRef}
         style={{ height: virtualizer.getTotalSize() }}
         className="relative mt-auto w-full shrink-0"
       >
