@@ -1,0 +1,4125 @@
+{
+  "schema": 1,
+  "scope": "unchanged historical same-host N8 instrument pilot; source-invalid/strict-quality failed cases cannot rank CPU or migrate",
+  "comparison_available": false,
+  "production_feature_acceptance": false,
+  "raw_report_sha256": "4082aa7b5a1cb614c3e99513b9c40baec22d1f82ad770549b4eec753e2d70d75",
+  "cases": [
+    {
+      "engine": "current",
+      "browser_report_sha256": "0f7046eb787739e7935b20110536880e659a7ef87e0556fa2b8611efcbe1dcb1",
+      "instrument_pilot_valid": false,
+      "source_window_valid": true,
+      "full_graph_streams_valid": false,
+      "cleanup_valid": true,
+      "graph_failures": [
+        "peer-6<-peer-3/mic decoder loss/conceal/order changed or missing"
+      ],
+      "executed_browser": {
+        "executable": "/chrome/chromium_headless_shell-1243/chrome-headless-shell-linux64/chrome-headless-shell",
+        "sha256": "ded93a9c9a53a1ae040f08124badcca95c938e9d5015ff340c3b5538c41bf39e",
+        "product": "HeadlessChrome/153.0.8010.12",
+        "revision": "@971a7443b0c9b0a9b2860529b33331b76077ec62",
+        "user_agent": "Mozilla/5.0 (X11; Linux x86_64) AppleWebKit/537.36 (KHTML, like Gecko) HeadlessChrome/153.0.8010.12 Safari/537.36",
+        "js_version": "15.3.76.4"
+      },
+      "source_provenance": {
+        "schema": 1,
+        "scope": "local full original N-participant native0 fixture; no independent-host WAN/PCM/product/performance acceptance",
+        "execute": true,
+        "source_revision": "ebbf2f9d26f129a806d3ac73e17d218086c4d99d",
+        "source_dirty": true,
+        "peers": 8,
+        "video_watchers": 7,
+        "audio_edges": 63,
+        "video_edges": 7,
+        "private_subnet": "172.30.232.0/24",
+        "published_ports": [],
+        "udp_range": [
+          12000,
+          12199
+        ],
+        "seconds": 20,
+        "warmup": 30,
+        "source_seconds": 120,
+        "limits": {
+          "backend": {
+            "cpus": 1,
+            "memory_bytes": 536870912,
+            "pids": 256
+          },
+          "generator": {
+            "cpus": 4,
+            "memory": "4g",
+            "pids": 512
+          },
+          "infrastructure_separate": true
+        },
+        "runtime_image": {
+          "id": "sha256:1ae5fd33e696fd2fbd169631afec3107a4f59ad2e76e74de3d3e13a88d593636",
+          "labels": {
+            "com.centurylinklabs.watchtower.enable": "false",
+            "gelabber.bench.binary_sha256": "a2fd497a4836ea1aba57baa8e1216c9fae73476a75ba0e8bad4ab37875285701",
+            "gelabber.bench.fixture": "netns-20261005",
+            "gelabber.bench.libopus.sha256": "ce07b3578b14e1d25ed603670f2336cd2b32b7f24c2c5b9aab8bbeb0f410b8d6",
+            "gelabber.bench.native-runtime": "gelabber-native-runtime-acbd72d15483",
+            "gelabber.bench.native.sha256": "0e1dff990131ad0f3e91b16f44fdce0636628c1867f31ffe147a44f63ed48e1c",
+            "gelabber.bench.node.sha256": "8a22a371fd85aecf5411636574309f6380fbc42694aaf0651a089a8ef9c44e52",
+            "org.opencontainers.image.revision": "de1ae34647b2c4f0631dfc16fd5b8ea7d970184a"
+          },
+          "size": 220747079,
+          "repo_digests": [
+            "gelabber-native-runtime-acbd72d15483@sha256:1ae5fd33e696fd2fbd169631afec3107a4f59ad2e76e74de3d3e13a88d593636"
+          ]
+        },
+        "runtime_report_sha256": "47d3e2f31f90c734099b30e22eb24b0673dea6b2e7c78fc98d68e934bb3aae50",
+        "backend_images": {
+          "current": {
+            "id": "sha256:cb2a5576ad71f0f58fad453697914f3742fe5bf263a6072b1fe46bc107033b85",
+            "labels": {
+              "gelabber.bench.binary_sha256": "a2fd497a4836ea1aba57baa8e1216c9fae73476a75ba0e8bad4ab37875285701",
+              "org.opencontainers.image.revision": "de1ae34647b2c4f0631dfc16fd5b8ea7d970184a"
+            },
+            "size": 34108102,
+            "repo_digests": [
+              "gelabber-bench/current@sha256:cb2a5576ad71f0f58fad453697914f3742fe5bf263a6072b1fe46bc107033b85"
+            ]
+          },
+          "mediasoup": {
+            "id": "sha256:75ef46894be12279debd99a55409efca5c67cfa0311a810eed4d726c20c68c4d",
+            "labels": {
+              "gelabber.bench.binary_sha256": "df90621e944a6ed22daec75096e2f8fb4ca092af6de3635ef955f1112dfca01b",
+              "org.opencontainers.image.revision": "de1ae34647b2c4f0631dfc16fd5b8ea7d970184a"
+            },
+            "size": 35665019,
+            "repo_digests": [
+              "gelabber-bench/mediasoup@sha256:75ef46894be12279debd99a55409efca5c67cfa0311a810eed4d726c20c68c4d"
+            ]
+          },
+          "janus": {
+            "id": "sha256:76845b0f9e03ad08a0444e4194969510b96ca72d83754e596431aa04dc773e62",
+            "labels": {
+              "org.opencontainers.image.revision": "0a24110ae55a172c4293749b763dbb66a138f9ec",
+              "org.opencontainers.image.version": "janus-v1.4.2"
+            },
+            "size": 54416670,
+            "repo_digests": [
+              "gelabber-bench/janus@sha256:76845b0f9e03ad08a0444e4194969510b96ca72d83754e596431aa04dc773e62"
+            ]
+          }
+        },
+        "redis_image": {
+          "id": "sha256:ef216d85ec44f4fdf7c0e6df2d1757a4734ed32fbb278cabd3181b5a27353b79",
+          "labels": null,
+          "size": 39034760,
+          "repo_digests": [
+            "redis@sha256:ef216d85ec44f4fdf7c0e6df2d1757a4734ed32fbb278cabd3181b5a27353b79"
+          ]
+        },
+        "comparison_available": false,
+        "production_feature_acceptance": false,
+        "limitations": [
+          "local engine and generator on one physical host",
+          "current cached backend revision is reported separately from collector source; it may precede new layer/recovery changes",
+          "Janus lacks the product ticket/ACL gateway; C-server resources alone cannot qualify its required adapter-inclusive RAM target"
+        ],
+        "input_sha256": {
+          "run-native-full.py": "c05766b1f45298ae2e3896db6e4935181e3d61d044c7faff3a156d5cf6baf6e6",
+          "record.py": "ce2f366f6360ca1f17dee550c68dfa3724966348c7ef9969bc75671420a52b33",
+          "native-full-pilot.mjs": "60edcb5369c6e82f20f54dac34e8b8db8260bc3f41b440432b345c0533bae101",
+          "native-full-browser.mjs": "b5ef780ba1dd0d50ea69ec1f8da9a144b7b4989806d0321b523260cfae714850",
+          "native-full.bundle.js": "bcf3c573b6ad3f6a55b7461e534f50c91656a37707d412fa1a3da9f8266c6a38",
+          "native-full-checks.mjs": "4c32b1bea0e0d0864a8ab19efa7d4ec472e7b9882947699111df60e19bf3ed2f",
+          "native-peer-adapters.mjs": "9be48c38cb2ba32af0eb93fe0ab4e2abed9833509802d55316faec00380a3d26",
+          "native-peer-current.mjs": "4e710173232391b1b9fee7da011693e594be39c6119c25dfedc48b581ad4b5c9",
+          "mediasoup-native-peer-sdp.mjs": "0d169e381aa60677113c2b64e4d44942e9a99dc98c57d3a0fa27fa9124dbc0ae",
+          "native-peer-checks.mjs": "f9d1ef7246b40c598683e4f34b1857f459f492221e39cde4f54cd30a3e9bb27d",
+          "native-peer.mjs": "9a5969bc04e81460ce4d2199e39e63c0e1b2e33beee49ded7aed0dbbd7e279e0",
+          "native-video.mjs": "eff5ff44b443e7b46343bcdce061aea2892f23aa2b6f1d380908e14359d3e681",
+          "janus-events.mjs": "611b677b7bcbc0154d04b9be3375ecab6c15c6339feeb177f0426c071f5584b4",
+          "janus-broker.mjs": "c340597861ab6512d59f73cac6bb248f553122d5d45f5b9a865523351e36c413",
+          "browser-provenance.mjs": "c50c9ac32f4acf91982f05ef2cefcf5e945b61a63073c9bc499f216ba3d5c4ec",
+          "proxy-target.mjs": "eeb6a5b035738da7b5c7320dcaa5b40fb24506f26fd631921f54666b4840e7a2",
+          "package-lock.json": "9d02e4d3313afe6d1fc466ab4fa598993660385d21a13021089fbeca04e1954c"
+        }
+      },
+      "source_first_sample": {
+        "mic": {
+          "completed": false,
+          "last_enqueue_before_ns": "39014699584999",
+          "last_enqueue_bracket_ns": 1620,
+          "last_enqueued_mono_ns": "39014699586619",
+          "last_planned_mono_ns": "39014699130981",
+          "last_source_sample_ordinal": 1656000,
+          "max_schedule_lateness_ns": 1387234,
+          "packets_enqueued": 1726,
+          "rtp_payload_bytes_enqueued": 552320,
+          "running": true,
+          "source_policy_scope": "observed enqueue prefix; full packet count checked only on completion",
+          "source_policy_valid": true,
+          "source_uid": 0,
+          "ssrc": 1196247363,
+          "timeline": {
+            "clock": "CLOCK_MONOTONIC",
+            "conversionBracketNs": 690,
+            "pcm_latency_calibrated": false,
+            "scope": "planned recorded PCM timeline; no hardware, live encoder or acoustic-device latency",
+            "startClockNs": "38980199130981"
+          }
+        },
+        "source": {
+          "completed": false,
+          "last_enqueue_before_ns": "39014699598599",
+          "last_enqueue_bracket_ns": 1140,
+          "last_enqueued_mono_ns": "39014699599739",
+          "last_planned_mono_ns": "39014699130981",
+          "last_source_sample_ordinal": 1656000,
+          "max_schedule_lateness_ns": 1321363,
+          "packets_enqueued": 1726,
+          "rtp_payload_bytes_enqueued": 552320,
+          "running": true,
+          "source_policy_scope": "observed enqueue prefix; full packet count checked only on completion",
+          "source_policy_valid": true,
+          "source_uid": 64,
+          "ssrc": 1196638512,
+          "timeline": {
+            "clock": "CLOCK_MONOTONIC",
+            "conversionBracketNs": 690,
+            "pcm_latency_calibrated": false,
+            "scope": "planned recorded PCM timeline; no hardware, live encoder or acoustic-device latency",
+            "startClockNs": "38980199130981"
+          }
+        },
+        "video": {
+          "completed": false,
+          "frames_enqueued": 2040,
+          "max_schedule_lateness_ns": 2043692,
+          "packets_enqueued": 15348,
+          "rtp_payload_bytes_enqueued": 17039402,
+          "running": true,
+          "source_policy_scope": "observed enqueue prefix; full frame count checked only on completion",
+          "source_policy_valid": true,
+          "timeline": {
+            "clock": "CLOCK_MONOTONIC",
+            "conversionBracketNs": 690,
+            "pcm_latency_calibrated": false,
+            "scope": "planned recorded PCM timeline; no hardware, live encoder or acoustic-device latency",
+            "startClockNs": "38980199130981"
+          }
+        }
+      },
+      "source_last_sample": {
+        "mic": {
+          "completed": false,
+          "last_enqueue_before_ns": "39034700177945",
+          "last_enqueue_bracket_ns": 630,
+          "last_enqueued_mono_ns": "39034700178575",
+          "last_planned_mono_ns": "39034699130981",
+          "last_source_sample_ordinal": 2616000,
+          "max_schedule_lateness_ns": 1387234,
+          "packets_enqueued": 2726,
+          "rtp_payload_bytes_enqueued": 872320,
+          "running": true,
+          "source_policy_scope": "observed enqueue prefix; full packet count checked only on completion",
+          "source_policy_valid": true,
+          "source_uid": 0,
+          "ssrc": 1196247363,
+          "timeline": {
+            "clock": "CLOCK_MONOTONIC",
+            "conversionBracketNs": 690,
+            "pcm_latency_calibrated": false,
+            "scope": "planned recorded PCM timeline; no hardware, live encoder or acoustic-device latency",
+            "startClockNs": "38980199130981"
+          }
+        },
+        "source": {
+          "completed": false,
+          "last_enqueue_before_ns": "39034700168175",
+          "last_enqueue_bracket_ns": 1540,
+          "last_enqueued_mono_ns": "39034700169715",
+          "last_planned_mono_ns": "39034699130981",
+          "last_source_sample_ordinal": 2616000,
+          "max_schedule_lateness_ns": 1324156,
+          "packets_enqueued": 2726,
+          "rtp_payload_bytes_enqueued": 872320,
+          "running": true,
+          "source_policy_scope": "observed enqueue prefix; full packet count checked only on completion",
+          "source_policy_valid": true,
+          "source_uid": 64,
+          "ssrc": 1196638512,
+          "timeline": {
+            "clock": "CLOCK_MONOTONIC",
+            "conversionBracketNs": 690,
+            "pcm_latency_calibrated": false,
+            "scope": "planned recorded PCM timeline; no hardware, live encoder or acoustic-device latency",
+            "startClockNs": "38980199130981"
+          }
+        },
+        "video": {
+          "completed": false,
+          "frames_enqueued": 3240,
+          "max_schedule_lateness_ns": 2043692,
+          "packets_enqueued": 24378,
+          "rtp_payload_bytes_enqueued": 27063204,
+          "running": true,
+          "source_policy_scope": "observed enqueue prefix; full frame count checked only on completion",
+          "source_policy_valid": true,
+          "timeline": {
+            "clock": "CLOCK_MONOTONIC",
+            "conversionBracketNs": 690,
+            "pcm_latency_calibrated": false,
+            "scope": "planned recorded PCM timeline; no hardware, live encoder or acoustic-device latency",
+            "startClockNs": "38980199130981"
+          }
+        }
+      },
+      "streams": [
+        {
+          "receiver": "peer-0",
+          "source": "peer-1/mic",
+          "kind": "audio",
+          "bitrate_bps": 128402.83870428165,
+          "measured_seconds": 19.999557843999355,
+          "ssrc": 3355891570,
+          "decoded_sample_rate": 48001.0611978623
+        },
+        {
+          "receiver": "peer-0",
+          "source": "peer-2/mic",
+          "kind": "audio",
+          "bitrate_bps": 128402.83870428165,
+          "measured_seconds": 19.999557843999355,
+          "ssrc": 849135358,
+          "decoded_sample_rate": 48001.0611978623
+        },
+        {
+          "receiver": "peer-0",
+          "source": "peer-3/mic",
+          "kind": "audio",
+          "bitrate_bps": 128531.24154298592,
+          "measured_seconds": 19.999557843999355,
+          "ssrc": 61188346,
+          "decoded_sample_rate": 48049.06225906016
+        },
+        {
+          "receiver": "peer-0",
+          "source": "peer-4/mic",
+          "kind": "audio",
+          "bitrate_bps": 128402.83870428165,
+          "measured_seconds": 19.999557843999355,
+          "ssrc": 473052573,
+          "decoded_sample_rate": 48001.0611978623
+        },
+        {
+          "receiver": "peer-0",
+          "source": "peer-5/mic",
+          "kind": "audio",
+          "bitrate_bps": 128402.83870428165,
+          "measured_seconds": 19.999557843999355,
+          "ssrc": 2123373639,
+          "decoded_sample_rate": 48001.0611978623
+        },
+        {
+          "receiver": "peer-0",
+          "source": "peer-6/mic",
+          "kind": "audio",
+          "bitrate_bps": 128402.83870428165,
+          "measured_seconds": 19.999557843999355,
+          "ssrc": 1902677285,
+          "decoded_sample_rate": 48001.0611978623
+        },
+        {
+          "receiver": "peer-0",
+          "source": "peer-7/mic",
+          "kind": "audio",
+          "bitrate_bps": 128274.43586557737,
+          "measured_seconds": 19.999557843999355,
+          "ssrc": 400585152,
+          "decoded_sample_rate": 47953.06013666443
+        },
+        {
+          "receiver": "peer-1",
+          "source": "peer-0/mic",
+          "kind": "audio",
+          "bitrate_bps": 128003.07319390074,
+          "measured_seconds": 19.99951982498169,
+          "ssrc": 1827816833,
+          "decoded_sample_rate": 48001.152447712775
+        },
+        {
+          "receiver": "peer-1",
+          "source": "peer-2/mic",
+          "kind": "audio",
+          "bitrate_bps": 128403.08279763168,
+          "measured_seconds": 19.99951982498169,
+          "ssrc": 1914538798,
+          "decoded_sample_rate": 48001.152447712775
+        },
+        {
+          "receiver": "peer-1",
+          "source": "peer-3/mic",
+          "kind": "audio",
+          "bitrate_bps": 128531.4858804293,
+          "measured_seconds": 19.99951982498169,
+          "ssrc": 1879454902,
+          "decoded_sample_rate": 48001.152447712775
+        },
+        {
+          "receiver": "peer-1",
+          "source": "peer-4/mic",
+          "kind": "audio",
+          "bitrate_bps": 128403.08279763168,
+          "measured_seconds": 19.99951982498169,
+          "ssrc": 1584088642,
+          "decoded_sample_rate": 48001.152447712775
+        },
+        {
+          "receiver": "peer-1",
+          "source": "peer-5/mic",
+          "kind": "audio",
+          "bitrate_bps": 128403.08279763168,
+          "measured_seconds": 19.99951982498169,
+          "ssrc": 1533537238,
+          "decoded_sample_rate": 48001.152447712775
+        },
+        {
+          "receiver": "peer-1",
+          "source": "peer-6/mic",
+          "kind": "audio",
+          "bitrate_bps": 128403.08279763168,
+          "measured_seconds": 19.99951982498169,
+          "ssrc": 1888602085,
+          "decoded_sample_rate": 48001.152447712775
+        },
+        {
+          "receiver": "peer-1",
+          "source": "peer-7/mic",
+          "kind": "audio",
+          "bitrate_bps": 128403.08279763168,
+          "measured_seconds": 19.99951982498169,
+          "ssrc": 1623926212,
+          "decoded_sample_rate": 48001.152447712775
+        },
+        {
+          "receiver": "peer-1",
+          "source": "peer-0/screen-audio",
+          "kind": "audio",
+          "bitrate_bps": 128003.07319390074,
+          "measured_seconds": 19.99951982498169,
+          "ssrc": 753527188,
+          "decoded_sample_rate": 48001.152447712775
+        },
+        {
+          "receiver": "peer-1",
+          "source": "peer-0/video",
+          "kind": "video",
+          "bitrate_bps": 4009617.065897402,
+          "measured_seconds": 19.99951982498169,
+          "ssrc": 2434745707,
+          "decoded_fps": 60.00144055964097
+        },
+        {
+          "receiver": "peer-2",
+          "source": "peer-0/mic",
+          "kind": "audio",
+          "bitrate_bps": 128003.09150532949,
+          "measured_seconds": 19.99951696395874,
+          "ssrc": 1092019870,
+          "decoded_sample_rate": 48001.15931449856
+        },
+        {
+          "receiver": "peer-2",
+          "source": "peer-1/mic",
+          "kind": "audio",
+          "bitrate_bps": 128403.10116628364,
+          "measured_seconds": 19.99951696395874,
+          "ssrc": 2946472896,
+          "decoded_sample_rate": 48001.15931449856
+        },
+        {
+          "receiver": "peer-2",
+          "source": "peer-3/mic",
+          "kind": "audio",
+          "bitrate_bps": 128531.50426744993,
+          "measured_seconds": 19.99951696395874,
+          "ssrc": 3406552150,
+          "decoded_sample_rate": 48001.15931449856
+        },
+        {
+          "receiver": "peer-2",
+          "source": "peer-4/mic",
+          "kind": "audio",
+          "bitrate_bps": 128403.10116628364,
+          "measured_seconds": 19.99951696395874,
+          "ssrc": 748509957,
+          "decoded_sample_rate": 48001.15931449856
+        },
+        {
+          "receiver": "peer-2",
+          "source": "peer-5/mic",
+          "kind": "audio",
+          "bitrate_bps": 128403.10116628364,
+          "measured_seconds": 19.99951696395874,
+          "ssrc": 696909869,
+          "decoded_sample_rate": 48001.15931449856
+        },
+        {
+          "receiver": "peer-2",
+          "source": "peer-6/mic",
+          "kind": "audio",
+          "bitrate_bps": 128403.10116628364,
+          "measured_seconds": 19.99951696395874,
+          "ssrc": 3192588395,
+          "decoded_sample_rate": 48001.15931449856
+        },
+        {
+          "receiver": "peer-2",
+          "source": "peer-7/mic",
+          "kind": "audio",
+          "bitrate_bps": 128403.10116628364,
+          "measured_seconds": 19.99951696395874,
+          "ssrc": 3826822119,
+          "decoded_sample_rate": 48001.15931449856
+        },
+        {
+          "receiver": "peer-2",
+          "source": "peer-0/screen-audio",
+          "kind": "audio",
+          "bitrate_bps": 128003.09150532949,
+          "measured_seconds": 19.99951696395874,
+          "ssrc": 1592218101,
+          "decoded_sample_rate": 48001.15931449856
+        },
+        {
+          "receiver": "peer-2",
+          "source": "peer-0/video",
+          "kind": "video",
+          "bitrate_bps": 4009617.639491577,
+          "measured_seconds": 19.99951696395874,
+          "ssrc": 3248487981,
+          "decoded_fps": 60.001449143123196
+        },
+        {
+          "receiver": "peer-3",
+          "source": "peer-0/mic",
+          "kind": "audio",
+          "bitrate_bps": 128003.0655641403,
+          "measured_seconds": 19.999521017074585,
+          "ssrc": 1945029668,
+          "decoded_sample_rate": 48001.149586552616
+        },
+        {
+          "receiver": "peer-3",
+          "source": "peer-1/mic",
+          "kind": "audio",
+          "bitrate_bps": 128403.07514402823,
+          "measured_seconds": 19.999521017074585,
+          "ssrc": 3305554178,
+          "decoded_sample_rate": 48001.149586552616
+        },
+        {
+          "receiver": "peer-3",
+          "source": "peer-2/mic",
+          "kind": "audio",
+          "bitrate_bps": 128403.07514402823,
+          "measured_seconds": 19.999521017074585,
+          "ssrc": 2089044823,
+          "decoded_sample_rate": 48001.149586552616
+        },
+        {
+          "receiver": "peer-3",
+          "source": "peer-4/mic",
+          "kind": "audio",
+          "bitrate_bps": 128403.07514402823,
+          "measured_seconds": 19.999521017074585,
+          "ssrc": 2614465842,
+          "decoded_sample_rate": 48001.149586552616
+        },
+        {
+          "receiver": "peer-3",
+          "source": "peer-5/mic",
+          "kind": "audio",
+          "bitrate_bps": 128403.07514402823,
+          "measured_seconds": 19.999521017074585,
+          "ssrc": 941159251,
+          "decoded_sample_rate": 48001.149586552616
+        },
+        {
+          "receiver": "peer-3",
+          "source": "peer-6/mic",
+          "kind": "audio",
+          "bitrate_bps": 128403.07514402823,
+          "measured_seconds": 19.999521017074585,
+          "ssrc": 3426184245,
+          "decoded_sample_rate": 48001.149586552616
+        },
+        {
+          "receiver": "peer-3",
+          "source": "peer-7/mic",
+          "kind": "audio",
+          "bitrate_bps": 128403.07514402823,
+          "measured_seconds": 19.999521017074585,
+          "ssrc": 349979889,
+          "decoded_sample_rate": 48001.149586552616
+        },
+        {
+          "receiver": "peer-3",
+          "source": "peer-0/screen-audio",
+          "kind": "audio",
+          "bitrate_bps": 128003.0655641403,
+          "measured_seconds": 19.999521017074585,
+          "ssrc": 1601528868,
+          "decoded_sample_rate": 48001.149586552616
+        },
+        {
+          "receiver": "peer-3",
+          "source": "peer-0/video",
+          "kind": "video",
+          "bitrate_bps": 4009616.8268998773,
+          "measured_seconds": 19.999521017074585,
+          "ssrc": 1544301619,
+          "decoded_fps": 60.001436983190764
+        },
+        {
+          "receiver": "peer-4",
+          "source": "peer-0/mic",
+          "kind": "audio",
+          "bitrate_bps": 128003.07166794858,
+          "measured_seconds": 19.99952006340027,
+          "ssrc": 2092363587,
+          "decoded_sample_rate": 48001.15187548072
+        },
+        {
+          "receiver": "peer-4",
+          "source": "peer-1/mic",
+          "kind": "audio",
+          "bitrate_bps": 128403.08126691091,
+          "measured_seconds": 19.99952006340027,
+          "ssrc": 940478557,
+          "decoded_sample_rate": 48001.15187548072
+        },
+        {
+          "receiver": "peer-4",
+          "source": "peer-2/mic",
+          "kind": "audio",
+          "bitrate_bps": 128403.08126691091,
+          "measured_seconds": 19.99952006340027,
+          "ssrc": 126694321,
+          "decoded_sample_rate": 48001.15187548072
+        },
+        {
+          "receiver": "peer-4",
+          "source": "peer-3/mic",
+          "kind": "audio",
+          "bitrate_bps": 128531.48434817782,
+          "measured_seconds": 19.99952006340027,
+          "ssrc": 1613262472,
+          "decoded_sample_rate": 48001.15187548072
+        },
+        {
+          "receiver": "peer-4",
+          "source": "peer-5/mic",
+          "kind": "audio",
+          "bitrate_bps": 128403.08126691091,
+          "measured_seconds": 19.99952006340027,
+          "ssrc": 2850467686,
+          "decoded_sample_rate": 48001.15187548072
+        },
+        {
+          "receiver": "peer-4",
+          "source": "peer-6/mic",
+          "kind": "audio",
+          "bitrate_bps": 128403.08126691091,
+          "measured_seconds": 19.99952006340027,
+          "ssrc": 4013373100,
+          "decoded_sample_rate": 48001.15187548072
+        },
+        {
+          "receiver": "peer-4",
+          "source": "peer-7/mic",
+          "kind": "audio",
+          "bitrate_bps": 128403.08126691091,
+          "measured_seconds": 19.99952006340027,
+          "ssrc": 4265539801,
+          "decoded_sample_rate": 48001.15187548072
+        },
+        {
+          "receiver": "peer-4",
+          "source": "peer-0/screen-audio",
+          "kind": "audio",
+          "bitrate_bps": 128003.07166794858,
+          "measured_seconds": 19.99952006340027,
+          "ssrc": 4087433061,
+          "decoded_sample_rate": 48001.15187548072
+        },
+        {
+          "receiver": "peer-4",
+          "source": "peer-0/video",
+          "kind": "video",
+          "bitrate_bps": 4009617.0180978947,
+          "measured_seconds": 19.99952006340027,
+          "ssrc": 3202188090,
+          "decoded_fps": 60.00143984435089
+        },
+        {
+          "receiver": "peer-5",
+          "source": "peer-0/mic",
+          "kind": "audio",
+          "bitrate_bps": 128003.04725271897,
+          "measured_seconds": 19.999523878097534,
+          "ssrc": 1951888835,
+          "decoded_sample_rate": 48001.14271976961
+        },
+        {
+          "receiver": "peer-5",
+          "source": "peer-1/mic",
+          "kind": "audio",
+          "bitrate_bps": 128403.05677538371,
+          "measured_seconds": 19.999523878097534,
+          "ssrc": 1092053485,
+          "decoded_sample_rate": 48001.14271976961
+        },
+        {
+          "receiver": "peer-5",
+          "source": "peer-2/mic",
+          "kind": "audio",
+          "bitrate_bps": 128403.05677538371,
+          "measured_seconds": 19.999523878097534,
+          "ssrc": 2603357480,
+          "decoded_sample_rate": 48001.14271976961
+        },
+        {
+          "receiver": "peer-5",
+          "source": "peer-3/mic",
+          "kind": "audio",
+          "bitrate_bps": 128531.4598321591,
+          "measured_seconds": 19.999523878097534,
+          "ssrc": 2422347026,
+          "decoded_sample_rate": 48001.14271976961
+        },
+        {
+          "receiver": "peer-5",
+          "source": "peer-4/mic",
+          "kind": "audio",
+          "bitrate_bps": 128403.05677538371,
+          "measured_seconds": 19.999523878097534,
+          "ssrc": 3364043384,
+          "decoded_sample_rate": 48001.14271976961
+        },
+        {
+          "receiver": "peer-5",
+          "source": "peer-6/mic",
+          "kind": "audio",
+          "bitrate_bps": 128403.05677538371,
+          "measured_seconds": 19.999523878097534,
+          "ssrc": 3914190331,
+          "decoded_sample_rate": 48001.14271976961
+        },
+        {
+          "receiver": "peer-5",
+          "source": "peer-7/mic",
+          "kind": "audio",
+          "bitrate_bps": 128403.05677538371,
+          "measured_seconds": 19.999523878097534,
+          "ssrc": 2933178818,
+          "decoded_sample_rate": 48001.14271976961
+        },
+        {
+          "receiver": "peer-5",
+          "source": "peer-0/screen-audio",
+          "kind": "audio",
+          "bitrate_bps": 128003.04725271897,
+          "measured_seconds": 19.999523878097534,
+          "ssrc": 191958230,
+          "decoded_sample_rate": 48001.14271976961
+        },
+        {
+          "receiver": "peer-5",
+          "source": "peer-0/video",
+          "kind": "video",
+          "bitrate_bps": 4009616.253305934,
+          "measured_seconds": 19.999523878097534,
+          "ssrc": 2483358013,
+          "decoded_fps": 60.00142839971202
+        },
+        {
+          "receiver": "peer-6",
+          "source": "peer-0/mic",
+          "kind": "audio",
+          "bitrate_bps": 128003.04725271897,
+          "measured_seconds": 19.999523878097534,
+          "ssrc": 1063214236,
+          "decoded_sample_rate": 48001.14271976961
+        },
+        {
+          "receiver": "peer-6",
+          "source": "peer-1/mic",
+          "kind": "audio",
+          "bitrate_bps": 128403.05677538371,
+          "measured_seconds": 19.999523878097534,
+          "ssrc": 1589199764,
+          "decoded_sample_rate": 48001.14271976961
+        },
+        {
+          "receiver": "peer-6",
+          "source": "peer-2/mic",
+          "kind": "audio",
+          "bitrate_bps": 128403.05677538371,
+          "measured_seconds": 19.999523878097534,
+          "ssrc": 2905658989,
+          "decoded_sample_rate": 48001.14271976961
+        },
+        {
+          "receiver": "peer-6",
+          "source": "peer-3/mic",
+          "kind": "audio",
+          "bitrate_bps": 128531.4598321591,
+          "measured_seconds": 19.999523878097534,
+          "ssrc": 2868052009,
+          "decoded_sample_rate": 48001.14271976961
+        },
+        {
+          "receiver": "peer-6",
+          "source": "peer-4/mic",
+          "kind": "audio",
+          "bitrate_bps": 128403.05677538371,
+          "measured_seconds": 19.999523878097534,
+          "ssrc": 2949928857,
+          "decoded_sample_rate": 48001.14271976961
+        },
+        {
+          "receiver": "peer-6",
+          "source": "peer-5/mic",
+          "kind": "audio",
+          "bitrate_bps": 128403.05677538371,
+          "measured_seconds": 19.999523878097534,
+          "ssrc": 4133102119,
+          "decoded_sample_rate": 48001.14271976961
+        },
+        {
+          "receiver": "peer-6",
+          "source": "peer-7/mic",
+          "kind": "audio",
+          "bitrate_bps": 128403.05677538371,
+          "measured_seconds": 19.999523878097534,
+          "ssrc": 170053644,
+          "decoded_sample_rate": 48001.14271976961
+        },
+        {
+          "receiver": "peer-6",
+          "source": "peer-0/screen-audio",
+          "kind": "audio",
+          "bitrate_bps": 128003.04725271897,
+          "measured_seconds": 19.999523878097534,
+          "ssrc": 2904292651,
+          "decoded_sample_rate": 48001.14271976961
+        },
+        {
+          "receiver": "peer-6",
+          "source": "peer-0/video",
+          "kind": "video",
+          "bitrate_bps": 4009616.253305934,
+          "measured_seconds": 19.999523878097534,
+          "ssrc": 2278884459,
+          "decoded_fps": 60.00142839971202
+        },
+        {
+          "receiver": "peer-7",
+          "source": "peer-0/mic",
+          "kind": "audio",
+          "bitrate_bps": 128003.03351915641,
+          "measured_seconds": 19.999526023864746,
+          "ssrc": 68194722,
+          "decoded_sample_rate": 48001.137569683655
+        },
+        {
+          "receiver": "peer-7",
+          "source": "peer-1/mic",
+          "kind": "audio",
+          "bitrate_bps": 128403.04299890378,
+          "measured_seconds": 19.999526023864746,
+          "ssrc": 3831422388,
+          "decoded_sample_rate": 48001.137569683655
+        },
+        {
+          "receiver": "peer-7",
+          "source": "peer-2/mic",
+          "kind": "audio",
+          "bitrate_bps": 128403.04299890378,
+          "measured_seconds": 19.999526023864746,
+          "ssrc": 2676845506,
+          "decoded_sample_rate": 48001.137569683655
+        },
+        {
+          "receiver": "peer-7",
+          "source": "peer-3/mic",
+          "kind": "audio",
+          "bitrate_bps": 128531.44604190267,
+          "measured_seconds": 19.999526023864746,
+          "ssrc": 4165378082,
+          "decoded_sample_rate": 48001.137569683655
+        },
+        {
+          "receiver": "peer-7",
+          "source": "peer-4/mic",
+          "kind": "audio",
+          "bitrate_bps": 128403.04299890378,
+          "measured_seconds": 19.999526023864746,
+          "ssrc": 2013466410,
+          "decoded_sample_rate": 48001.137569683655
+        },
+        {
+          "receiver": "peer-7",
+          "source": "peer-5/mic",
+          "kind": "audio",
+          "bitrate_bps": 128403.04299890378,
+          "measured_seconds": 19.999526023864746,
+          "ssrc": 113483260,
+          "decoded_sample_rate": 48001.137569683655
+        },
+        {
+          "receiver": "peer-7",
+          "source": "peer-6/mic",
+          "kind": "audio",
+          "bitrate_bps": 128403.04299890378,
+          "measured_seconds": 19.999526023864746,
+          "ssrc": 973666773,
+          "decoded_sample_rate": 48001.137569683655
+        },
+        {
+          "receiver": "peer-7",
+          "source": "peer-0/screen-audio",
+          "kind": "audio",
+          "bitrate_bps": 128003.03351915641,
+          "measured_seconds": 19.999526023864746,
+          "ssrc": 2237426871,
+          "decoded_sample_rate": 48001.137569683655
+        },
+        {
+          "receiver": "peer-7",
+          "source": "peer-0/video",
+          "kind": "video",
+          "bitrate_bps": 4009615.8231105846,
+          "measured_seconds": 19.999526023864746,
+          "ssrc": 2255772236,
+          "decoded_fps": 60.001421962104565
+        }
+      ],
+      "resource_lifetime_valid": true,
+      "backend_resources": {
+        "measurement_valid": true,
+        "phase": "measurement",
+        "measurement_samples": 39,
+        "actual_span_seconds": 19.761539459228516,
+        "maximum_process_rss_sum_bytes": 19976192,
+        "cpu_core_equivalents": [
+          0.0962708646351632,
+          0.11583190034502196,
+          0.0962905348259968,
+          0.09615133682851928,
+          0.09614595888442061,
+          0.09614860369978004,
+          0.09633153653052426,
+          0.11557559953596767,
+          0.07678328098419739,
+          0.0959898643514811,
+          0.09593493182800718,
+          0.11544363722938848,
+          0.09622739772163585,
+          0.09584115194817235,
+          0.09619482328635827,
+          0.0960730193648459,
+          0.09633268702781651,
+          0.09639733600425597,
+          0.07700067926052402,
+          0.11518124719379262,
+          0.09624616672464542,
+          0.09625822691151874,
+          0.07692812354560864,
+          0.09590571281316433,
+          0.11488327164427586,
+          0.09602251992998202,
+          0.09608710533031695,
+          0.11556233135753492,
+          0.07697425384981021,
+          0.09609811286517007,
+          0.09611929845789402,
+          0.1153039452680435,
+          0.11537298201313112,
+          0.07672120202471498,
+          0.09605744157616192,
+          0.09609014315797929,
+          0.09614961758424882,
+          0.1156831309959954
+        ],
+        "scope": "sum of actual process tree RSS and CPU; shared pages may be counted per process"
+      },
+      "generator_resources": {
+        "measurement_valid": true,
+        "phase": "measurement",
+        "measurement_samples": 39,
+        "actual_span_seconds": 19.762974977493286,
+        "maximum_process_rss_sum_bytes": 1141190656,
+        "cpu_core_equivalents": [
+          1.7377472517355146,
+          1.8873932743999788,
+          1.9805904086446735,
+          2.057371661399341,
+          1.9421332328397694,
+          2.2354944156204506,
+          1.9838154667631627,
+          2.1496898439770002,
+          2.054644854374875,
+          2.129221723773821,
+          2.039617469843596,
+          2.116900759632121,
+          1.9552077510168564,
+          2.097114482814305,
+          2.0558194615270238,
+          2.02297063030602,
+          2.0630623055207717,
+          2.0210535590625764,
+          2.0350298345414277,
+          1.694702519242777,
+          1.82828532269931,
+          1.827135091263014,
+          1.9953790353457552,
+          2.0479691593429252,
+          2.0931615507317582,
+          2.0179383120230057,
+          2.137848154508829,
+          2.0206140272395974,
+          2.114061610069284,
+          1.980723895597062,
+          2.0557686093815346,
+          2.0769374371567806,
+          2.0714014117096142,
+          1.9783338454556485,
+          2.094983019873468,
+          2.0768631622286144,
+          2.083236750078638,
+          2.014923914535411
+        ],
+        "scope": "sum of actual process tree RSS and CPU; shared pages may be counted per process"
+      },
+      "post_leave_resources": {
+        "measurement_valid": true,
+        "phase": "post_leave",
+        "measurement_samples": 8,
+        "actual_span_seconds": 3.5025484561920166,
+        "maximum_process_rss_sum_bytes": 19017728,
+        "cpu_core_equivalents": [
+          0.0,
+          0.0,
+          0.0,
+          0.0,
+          0.0,
+          0.0,
+          0.0
+        ],
+        "scope": "sum of actual process tree RSS and CPU; shared pages may be counted per process"
+      }
+    },
+    {
+      "engine": "mediasoup",
+      "browser_report_sha256": "ce843f201c6ade471dd704da2cd0f2919553182d74f61bbbb30ad6784a43695d",
+      "instrument_pilot_valid": false,
+      "source_window_valid": false,
+      "full_graph_streams_valid": false,
+      "cleanup_valid": true,
+      "graph_failures": [
+        "native common-clock source schedule failed",
+        "peer-1<-peer-0/video RTP stalled/counters changed",
+        "peer-1<-peer-0/video video decoder stalled",
+        "peer-1<-peer-0/video actual 1080p60/rate/loss differs",
+        "peer-2<-peer-0/video RTP stalled/counters changed",
+        "peer-2<-peer-0/video video decoder stalled",
+        "peer-2<-peer-0/video actual 1080p60/rate/loss differs",
+        "peer-3<-peer-0/video RTP stalled/counters changed",
+        "peer-3<-peer-0/video video decoder stalled",
+        "peer-3<-peer-0/video actual 1080p60/rate/loss differs",
+        "peer-4<-peer-0/video RTP stalled/counters changed",
+        "peer-4<-peer-0/video video decoder stalled",
+        "peer-4<-peer-0/video actual 1080p60/rate/loss differs",
+        "peer-5<-peer-0/video RTP stalled/counters changed",
+        "peer-5<-peer-0/video video decoder stalled",
+        "peer-5<-peer-0/video actual 1080p60/rate/loss differs",
+        "peer-6<-peer-0/video RTP stalled/counters changed",
+        "peer-6<-peer-0/video video decoder stalled",
+        "peer-6<-peer-0/video actual 1080p60/rate/loss differs",
+        "peer-7<-peer-0/video RTP stalled/counters changed",
+        "peer-7<-peer-0/video video decoder stalled",
+        "peer-7<-peer-0/video actual 1080p60/rate/loss differs",
+        "peer-0 actual sender stalled/changed",
+        "peer-0 actual sender bitrate differs"
+      ],
+      "executed_browser": {
+        "executable": "/chrome/chromium_headless_shell-1243/chrome-headless-shell-linux64/chrome-headless-shell",
+        "sha256": "ded93a9c9a53a1ae040f08124badcca95c938e9d5015ff340c3b5538c41bf39e",
+        "product": "HeadlessChrome/153.0.8010.12",
+        "revision": "@971a7443b0c9b0a9b2860529b33331b76077ec62",
+        "user_agent": "Mozilla/5.0 (X11; Linux x86_64) AppleWebKit/537.36 (KHTML, like Gecko) HeadlessChrome/153.0.8010.12 Safari/537.36",
+        "js_version": "15.3.76.4"
+      },
+      "source_provenance": {
+        "schema": 1,
+        "scope": "local full original N-participant native0 fixture; no independent-host WAN/PCM/product/performance acceptance",
+        "execute": true,
+        "source_revision": "ebbf2f9d26f129a806d3ac73e17d218086c4d99d",
+        "source_dirty": true,
+        "peers": 8,
+        "video_watchers": 7,
+        "audio_edges": 63,
+        "video_edges": 7,
+        "private_subnet": "172.30.232.0/24",
+        "published_ports": [],
+        "udp_range": [
+          12000,
+          12199
+        ],
+        "seconds": 20,
+        "warmup": 30,
+        "source_seconds": 120,
+        "limits": {
+          "backend": {
+            "cpus": 1,
+            "memory_bytes": 536870912,
+            "pids": 256
+          },
+          "generator": {
+            "cpus": 4,
+            "memory": "4g",
+            "pids": 512
+          },
+          "infrastructure_separate": true
+        },
+        "runtime_image": {
+          "id": "sha256:1ae5fd33e696fd2fbd169631afec3107a4f59ad2e76e74de3d3e13a88d593636",
+          "labels": {
+            "com.centurylinklabs.watchtower.enable": "false",
+            "gelabber.bench.binary_sha256": "a2fd497a4836ea1aba57baa8e1216c9fae73476a75ba0e8bad4ab37875285701",
+            "gelabber.bench.fixture": "netns-20261005",
+            "gelabber.bench.libopus.sha256": "ce07b3578b14e1d25ed603670f2336cd2b32b7f24c2c5b9aab8bbeb0f410b8d6",
+            "gelabber.bench.native-runtime": "gelabber-native-runtime-acbd72d15483",
+            "gelabber.bench.native.sha256": "0e1dff990131ad0f3e91b16f44fdce0636628c1867f31ffe147a44f63ed48e1c",
+            "gelabber.bench.node.sha256": "8a22a371fd85aecf5411636574309f6380fbc42694aaf0651a089a8ef9c44e52",
+            "org.opencontainers.image.revision": "de1ae34647b2c4f0631dfc16fd5b8ea7d970184a"
+          },
+          "size": 220747079,
+          "repo_digests": [
+            "gelabber-native-runtime-acbd72d15483@sha256:1ae5fd33e696fd2fbd169631afec3107a4f59ad2e76e74de3d3e13a88d593636"
+          ]
+        },
+        "runtime_report_sha256": "47d3e2f31f90c734099b30e22eb24b0673dea6b2e7c78fc98d68e934bb3aae50",
+        "backend_images": {
+          "current": {
+            "id": "sha256:cb2a5576ad71f0f58fad453697914f3742fe5bf263a6072b1fe46bc107033b85",
+            "labels": {
+              "gelabber.bench.binary_sha256": "a2fd497a4836ea1aba57baa8e1216c9fae73476a75ba0e8bad4ab37875285701",
+              "org.opencontainers.image.revision": "de1ae34647b2c4f0631dfc16fd5b8ea7d970184a"
+            },
+            "size": 34108102,
+            "repo_digests": [
+              "gelabber-bench/current@sha256:cb2a5576ad71f0f58fad453697914f3742fe5bf263a6072b1fe46bc107033b85"
+            ]
+          },
+          "mediasoup": {
+            "id": "sha256:75ef46894be12279debd99a55409efca5c67cfa0311a810eed4d726c20c68c4d",
+            "labels": {
+              "gelabber.bench.binary_sha256": "df90621e944a6ed22daec75096e2f8fb4ca092af6de3635ef955f1112dfca01b",
+              "org.opencontainers.image.revision": "de1ae34647b2c4f0631dfc16fd5b8ea7d970184a"
+            },
+            "size": 35665019,
+            "repo_digests": [
+              "gelabber-bench/mediasoup@sha256:75ef46894be12279debd99a55409efca5c67cfa0311a810eed4d726c20c68c4d"
+            ]
+          },
+          "janus": {
+            "id": "sha256:76845b0f9e03ad08a0444e4194969510b96ca72d83754e596431aa04dc773e62",
+            "labels": {
+              "org.opencontainers.image.revision": "0a24110ae55a172c4293749b763dbb66a138f9ec",
+              "org.opencontainers.image.version": "janus-v1.4.2"
+            },
+            "size": 54416670,
+            "repo_digests": [
+              "gelabber-bench/janus@sha256:76845b0f9e03ad08a0444e4194969510b96ca72d83754e596431aa04dc773e62"
+            ]
+          }
+        },
+        "redis_image": {
+          "id": "sha256:ef216d85ec44f4fdf7c0e6df2d1757a4734ed32fbb278cabd3181b5a27353b79",
+          "labels": null,
+          "size": 39034760,
+          "repo_digests": [
+            "redis@sha256:ef216d85ec44f4fdf7c0e6df2d1757a4734ed32fbb278cabd3181b5a27353b79"
+          ]
+        },
+        "comparison_available": false,
+        "production_feature_acceptance": false,
+        "limitations": [
+          "local engine and generator on one physical host",
+          "current cached backend revision is reported separately from collector source; it may precede new layer/recovery changes",
+          "Janus lacks the product ticket/ACL gateway; C-server resources alone cannot qualify its required adapter-inclusive RAM target"
+        ],
+        "input_sha256": {
+          "run-native-full.py": "c05766b1f45298ae2e3896db6e4935181e3d61d044c7faff3a156d5cf6baf6e6",
+          "record.py": "ce2f366f6360ca1f17dee550c68dfa3724966348c7ef9969bc75671420a52b33",
+          "native-full-pilot.mjs": "60edcb5369c6e82f20f54dac34e8b8db8260bc3f41b440432b345c0533bae101",
+          "native-full-browser.mjs": "b5ef780ba1dd0d50ea69ec1f8da9a144b7b4989806d0321b523260cfae714850",
+          "native-full.bundle.js": "bcf3c573b6ad3f6a55b7461e534f50c91656a37707d412fa1a3da9f8266c6a38",
+          "native-full-checks.mjs": "4c32b1bea0e0d0864a8ab19efa7d4ec472e7b9882947699111df60e19bf3ed2f",
+          "native-peer-adapters.mjs": "9be48c38cb2ba32af0eb93fe0ab4e2abed9833509802d55316faec00380a3d26",
+          "native-peer-current.mjs": "4e710173232391b1b9fee7da011693e594be39c6119c25dfedc48b581ad4b5c9",
+          "mediasoup-native-peer-sdp.mjs": "0d169e381aa60677113c2b64e4d44942e9a99dc98c57d3a0fa27fa9124dbc0ae",
+          "native-peer-checks.mjs": "f9d1ef7246b40c598683e4f34b1857f459f492221e39cde4f54cd30a3e9bb27d",
+          "native-peer.mjs": "9a5969bc04e81460ce4d2199e39e63c0e1b2e33beee49ded7aed0dbbd7e279e0",
+          "native-video.mjs": "eff5ff44b443e7b46343bcdce061aea2892f23aa2b6f1d380908e14359d3e681",
+          "janus-events.mjs": "611b677b7bcbc0154d04b9be3375ecab6c15c6339feeb177f0426c071f5584b4",
+          "janus-broker.mjs": "c340597861ab6512d59f73cac6bb248f553122d5d45f5b9a865523351e36c413",
+          "browser-provenance.mjs": "c50c9ac32f4acf91982f05ef2cefcf5e945b61a63073c9bc499f216ba3d5c4ec",
+          "proxy-target.mjs": "eeb6a5b035738da7b5c7320dcaa5b40fb24506f26fd631921f54666b4840e7a2",
+          "package-lock.json": "9d02e4d3313afe6d1fc466ab4fa598993660385d21a13021089fbeca04e1954c"
+        }
+      },
+      "source_first_sample": {
+        "mic": {
+          "completed": false,
+          "last_enqueue_before_ns": "39074110676807",
+          "last_enqueue_bracket_ns": 890,
+          "last_enqueued_mono_ns": "39074110677697",
+          "last_planned_mono_ns": "39074109299202",
+          "last_source_sample_ordinal": 1541760,
+          "max_schedule_lateness_ns": 18442345,
+          "packets_enqueued": 1607,
+          "rtp_payload_bytes_enqueued": 514240,
+          "running": true,
+          "source_policy_scope": "observed enqueue prefix; full packet count checked only on completion",
+          "source_policy_valid": true,
+          "source_uid": 0,
+          "ssrc": 1196247363,
+          "timeline": {
+            "clock": "CLOCK_MONOTONIC",
+            "conversionBracketNs": 490,
+            "pcm_latency_calibrated": false,
+            "scope": "planned recorded PCM timeline; no hardware, live encoder or acoustic-device latency",
+            "startClockNs": "39041989299202"
+          }
+        },
+        "source": {
+          "completed": false,
+          "last_enqueue_before_ns": "39074110642867",
+          "last_enqueue_bracket_ns": 1930,
+          "last_enqueued_mono_ns": "39074110644797",
+          "last_planned_mono_ns": "39074109299202",
+          "last_source_sample_ordinal": 1541760,
+          "max_schedule_lateness_ns": 18463295,
+          "packets_enqueued": 1607,
+          "rtp_payload_bytes_enqueued": 514240,
+          "running": true,
+          "source_policy_scope": "observed enqueue prefix; full packet count checked only on completion",
+          "source_policy_valid": true,
+          "source_uid": 64,
+          "ssrc": 1196638512,
+          "timeline": {
+            "clock": "CLOCK_MONOTONIC",
+            "conversionBracketNs": 490,
+            "pcm_latency_calibrated": false,
+            "scope": "planned recorded PCM timeline; no hardware, live encoder or acoustic-device latency",
+            "startClockNs": "39041989299202"
+          }
+        },
+        "video": {
+          "error": "video source missed frame deadline",
+          "running": false,
+          "source_policy_valid": false
+        }
+      },
+      "source_last_sample": {
+        "mic": {
+          "completed": false,
+          "last_enqueue_before_ns": "39094110375712",
+          "last_enqueue_bracket_ns": 1800,
+          "last_enqueued_mono_ns": "39094110377512",
+          "last_planned_mono_ns": "39094109299202",
+          "last_source_sample_ordinal": 2501760,
+          "max_schedule_lateness_ns": 18442345,
+          "packets_enqueued": 2607,
+          "rtp_payload_bytes_enqueued": 834240,
+          "running": true,
+          "source_policy_scope": "observed enqueue prefix; full packet count checked only on completion",
+          "source_policy_valid": true,
+          "source_uid": 0,
+          "ssrc": 1196247363,
+          "timeline": {
+            "clock": "CLOCK_MONOTONIC",
+            "conversionBracketNs": 490,
+            "pcm_latency_calibrated": false,
+            "scope": "planned recorded PCM timeline; no hardware, live encoder or acoustic-device latency",
+            "startClockNs": "39041989299202"
+          }
+        },
+        "source": {
+          "completed": false,
+          "last_enqueue_before_ns": "39094110407711",
+          "last_enqueue_bracket_ns": 610,
+          "last_enqueued_mono_ns": "39094110408321",
+          "last_planned_mono_ns": "39094109299202",
+          "last_source_sample_ordinal": 2501760,
+          "max_schedule_lateness_ns": 18463295,
+          "packets_enqueued": 2607,
+          "rtp_payload_bytes_enqueued": 834240,
+          "running": true,
+          "source_policy_scope": "observed enqueue prefix; full packet count checked only on completion",
+          "source_policy_valid": true,
+          "source_uid": 64,
+          "ssrc": 1196638512,
+          "timeline": {
+            "clock": "CLOCK_MONOTONIC",
+            "conversionBracketNs": 490,
+            "pcm_latency_calibrated": false,
+            "scope": "planned recorded PCM timeline; no hardware, live encoder or acoustic-device latency",
+            "startClockNs": "39041989299202"
+          }
+        },
+        "video": {
+          "error": "video source missed frame deadline",
+          "running": false,
+          "source_policy_valid": false
+        }
+      },
+      "streams": [
+        {
+          "receiver": "peer-0",
+          "source": "peer-1/mic",
+          "kind": "audio",
+          "bitrate_bps": 128409.04714928068,
+          "measured_seconds": 19.998590886003512,
+          "ssrc": 316328809,
+          "decoded_sample_rate": 48003.38211188063
+        },
+        {
+          "receiver": "peer-0",
+          "source": "peer-2/mic",
+          "kind": "audio",
+          "bitrate_bps": 128409.44717746494,
+          "measured_seconds": 19.998590886003512,
+          "ssrc": 260595955,
+          "decoded_sample_rate": 48003.38211188063
+        },
+        {
+          "receiver": "peer-0",
+          "source": "peer-3/mic",
+          "kind": "audio",
+          "bitrate_bps": 128409.04714928068,
+          "measured_seconds": 19.998590886003512,
+          "ssrc": 720274040,
+          "decoded_sample_rate": 48003.38211188063
+        },
+        {
+          "receiver": "peer-0",
+          "source": "peer-4/mic",
+          "kind": "audio",
+          "bitrate_bps": 128409.04714928068,
+          "measured_seconds": 19.998590886003512,
+          "ssrc": 576169918,
+          "decoded_sample_rate": 48003.38211188063
+        },
+        {
+          "receiver": "peer-0",
+          "source": "peer-5/mic",
+          "kind": "audio",
+          "bitrate_bps": 128409.04714928068,
+          "measured_seconds": 19.998590886003512,
+          "ssrc": 356202408,
+          "decoded_sample_rate": 48003.38211188063
+        },
+        {
+          "receiver": "peer-0",
+          "source": "peer-6/mic",
+          "kind": "audio",
+          "bitrate_bps": 128409.04714928068,
+          "measured_seconds": 19.998590886003512,
+          "ssrc": 847283109,
+          "decoded_sample_rate": 48003.38211188063
+        },
+        {
+          "receiver": "peer-0",
+          "source": "peer-7/mic",
+          "kind": "audio",
+          "bitrate_bps": 128280.6381021314,
+          "measured_seconds": 19.998590886003512,
+          "ssrc": 109007134,
+          "decoded_sample_rate": 47955.37872976875
+        },
+        {
+          "receiver": "peer-1",
+          "source": "peer-0/mic",
+          "kind": "audio",
+          "bitrate_bps": 128010.52943054523,
+          "measured_seconds": 19.9983549118042,
+          "ssrc": 228829579,
+          "decoded_sample_rate": 48003.94853645446
+        },
+        {
+          "receiver": "peer-1",
+          "source": "peer-2/mic",
+          "kind": "audio",
+          "bitrate_bps": 128410.96236792015,
+          "measured_seconds": 19.9983549118042,
+          "ssrc": 718129843,
+          "decoded_sample_rate": 48003.94853645446
+        },
+        {
+          "receiver": "peer-1",
+          "source": "peer-3/mic",
+          "kind": "audio",
+          "bitrate_bps": 128410.56233501567,
+          "measured_seconds": 19.9983549118042,
+          "ssrc": 692422635,
+          "decoded_sample_rate": 48003.94853645446
+        },
+        {
+          "receiver": "peer-1",
+          "source": "peer-4/mic",
+          "kind": "audio",
+          "bitrate_bps": 128410.56233501567,
+          "measured_seconds": 19.9983549118042,
+          "ssrc": 881896473,
+          "decoded_sample_rate": 48003.94853645446
+        },
+        {
+          "receiver": "peer-1",
+          "source": "peer-5/mic",
+          "kind": "audio",
+          "bitrate_bps": 128410.56233501567,
+          "measured_seconds": 19.9983549118042,
+          "ssrc": 343772133,
+          "decoded_sample_rate": 48003.94853645446
+        },
+        {
+          "receiver": "peer-1",
+          "source": "peer-6/mic",
+          "kind": "audio",
+          "bitrate_bps": 128410.56233501567,
+          "measured_seconds": 19.9983549118042,
+          "ssrc": 490082667,
+          "decoded_sample_rate": 48003.94853645446
+        },
+        {
+          "receiver": "peer-1",
+          "source": "peer-7/mic",
+          "kind": "audio",
+          "bitrate_bps": 128282.15177268066,
+          "measured_seconds": 19.9983549118042,
+          "ssrc": 363703059,
+          "decoded_sample_rate": 48003.94853645446
+        },
+        {
+          "receiver": "peer-1",
+          "source": "peer-0/screen-audio",
+          "kind": "audio",
+          "bitrate_bps": 128010.52943054523,
+          "measured_seconds": 19.9983549118042,
+          "ssrc": 448402105,
+          "decoded_sample_rate": 48003.94853645446
+        },
+        {
+          "receiver": "peer-1",
+          "source": "peer-0/video",
+          "kind": "video",
+          "bitrate_bps": 0,
+          "measured_seconds": 19.9983549118042,
+          "ssrc": 371066458,
+          "decoded_fps": 0
+        },
+        {
+          "receiver": "peer-2",
+          "source": "peer-0/mic",
+          "kind": "audio",
+          "bitrate_bps": 128010.71561867087,
+          "measured_seconds": 19.99832582473755,
+          "ssrc": 282618429,
+          "decoded_sample_rate": 48004.01835700158
+        },
+        {
+          "receiver": "peer-2",
+          "source": "peer-1/mic",
+          "kind": "audio",
+          "bitrate_bps": 128410.74910497922,
+          "measured_seconds": 19.99832582473755,
+          "ssrc": 579377119,
+          "decoded_sample_rate": 48004.01835700158
+        },
+        {
+          "receiver": "peer-2",
+          "source": "peer-3/mic",
+          "kind": "audio",
+          "bitrate_bps": 128410.74910497922,
+          "measured_seconds": 19.99832582473755,
+          "ssrc": 594992154,
+          "decoded_sample_rate": 48004.01835700158
+        },
+        {
+          "receiver": "peer-2",
+          "source": "peer-4/mic",
+          "kind": "audio",
+          "bitrate_bps": 128410.74910497922,
+          "measured_seconds": 19.99832582473755,
+          "ssrc": 623310408,
+          "decoded_sample_rate": 48004.01835700158
+        },
+        {
+          "receiver": "peer-2",
+          "source": "peer-5/mic",
+          "kind": "audio",
+          "bitrate_bps": 128410.74910497922,
+          "measured_seconds": 19.99832582473755,
+          "ssrc": 211619758,
+          "decoded_sample_rate": 48004.01835700158
+        },
+        {
+          "receiver": "peer-2",
+          "source": "peer-6/mic",
+          "kind": "audio",
+          "bitrate_bps": 128410.74910497922,
+          "measured_seconds": 19.99832582473755,
+          "ssrc": 155404827,
+          "decoded_sample_rate": 48004.01835700158
+        },
+        {
+          "receiver": "peer-2",
+          "source": "peer-7/mic",
+          "kind": "audio",
+          "bitrate_bps": 128282.33835587424,
+          "measured_seconds": 19.99832582473755,
+          "ssrc": 123384784,
+          "decoded_sample_rate": 48004.01835700158
+        },
+        {
+          "receiver": "peer-2",
+          "source": "peer-0/screen-audio",
+          "kind": "audio",
+          "bitrate_bps": 128010.71561867087,
+          "measured_seconds": 19.99832582473755,
+          "ssrc": 648096697,
+          "decoded_sample_rate": 48004.01835700158
+        },
+        {
+          "receiver": "peer-2",
+          "source": "peer-0/video",
+          "kind": "video",
+          "bitrate_bps": 0,
+          "measured_seconds": 19.99832582473755,
+          "ssrc": 468792286,
+          "decoded_fps": 0
+        },
+        {
+          "receiver": "peer-3",
+          "source": "peer-0/mic",
+          "kind": "audio",
+          "bitrate_bps": 128010.84839250114,
+          "measured_seconds": 19.998305082321167,
+          "ssrc": 443145382,
+          "decoded_sample_rate": 48004.06814718793
+        },
+        {
+          "receiver": "peer-3",
+          "source": "peer-1/mic",
+          "kind": "audio",
+          "bitrate_bps": 128410.88229372771,
+          "measured_seconds": 19.998305082321167,
+          "ssrc": 404989458,
+          "decoded_sample_rate": 48004.06814718793
+        },
+        {
+          "receiver": "peer-3",
+          "source": "peer-2/mic",
+          "kind": "audio",
+          "bitrate_bps": 128411.28232762894,
+          "measured_seconds": 19.998305082321167,
+          "ssrc": 219276373,
+          "decoded_sample_rate": 48004.06814718793
+        },
+        {
+          "receiver": "peer-3",
+          "source": "peer-4/mic",
+          "kind": "audio",
+          "bitrate_bps": 128410.88229372771,
+          "measured_seconds": 19.998305082321167,
+          "ssrc": 945900042,
+          "decoded_sample_rate": 48004.06814718793
+        },
+        {
+          "receiver": "peer-3",
+          "source": "peer-5/mic",
+          "kind": "audio",
+          "bitrate_bps": 128410.88229372771,
+          "measured_seconds": 19.998305082321167,
+          "ssrc": 173813026,
+          "decoded_sample_rate": 48004.06814718793
+        },
+        {
+          "receiver": "peer-3",
+          "source": "peer-6/mic",
+          "kind": "audio",
+          "bitrate_bps": 128410.88229372771,
+          "measured_seconds": 19.998305082321167,
+          "ssrc": 581034467,
+          "decoded_sample_rate": 48004.06814718793
+        },
+        {
+          "receiver": "peer-3",
+          "source": "peer-7/mic",
+          "kind": "audio",
+          "bitrate_bps": 128282.47141143399,
+          "measured_seconds": 19.998305082321167,
+          "ssrc": 249762291,
+          "decoded_sample_rate": 48004.06814718793
+        },
+        {
+          "receiver": "peer-3",
+          "source": "peer-0/screen-audio",
+          "kind": "audio",
+          "bitrate_bps": 128010.84839250114,
+          "measured_seconds": 19.998305082321167,
+          "ssrc": 582671005,
+          "decoded_sample_rate": 48004.06814718793
+        },
+        {
+          "receiver": "peer-3",
+          "source": "peer-0/video",
+          "kind": "video",
+          "bitrate_bps": 0,
+          "measured_seconds": 19.998305082321167,
+          "ssrc": 481837046,
+          "decoded_fps": 0
+        },
+        {
+          "receiver": "peer-4",
+          "source": "peer-0/mic",
+          "kind": "audio",
+          "bitrate_bps": 128010.9201210068,
+          "measured_seconds": 19.99829387664795,
+          "ssrc": 572883691,
+          "decoded_sample_rate": 48004.09504537755
+        },
+        {
+          "receiver": "peer-4",
+          "source": "peer-1/mic",
+          "kind": "audio",
+          "bitrate_bps": 128410.95424638495,
+          "measured_seconds": 19.99829387664795,
+          "ssrc": 946418144,
+          "decoded_sample_rate": 48004.09504537755
+        },
+        {
+          "receiver": "peer-4",
+          "source": "peer-2/mic",
+          "kind": "audio",
+          "bitrate_bps": 128411.35428051032,
+          "measured_seconds": 19.99829387664795,
+          "ssrc": 615891583,
+          "decoded_sample_rate": 48004.09504537755
+        },
+        {
+          "receiver": "peer-4",
+          "source": "peer-3/mic",
+          "kind": "audio",
+          "bitrate_bps": 128410.95424638495,
+          "measured_seconds": 19.99829387664795,
+          "ssrc": 854327340,
+          "decoded_sample_rate": 48004.09504537755
+        },
+        {
+          "receiver": "peer-4",
+          "source": "peer-5/mic",
+          "kind": "audio",
+          "bitrate_bps": 128410.95424638495,
+          "measured_seconds": 19.99829387664795,
+          "ssrc": 377190240,
+          "decoded_sample_rate": 48004.09504537755
+        },
+        {
+          "receiver": "peer-4",
+          "source": "peer-6/mic",
+          "kind": "audio",
+          "bitrate_bps": 128410.95424638495,
+          "measured_seconds": 19.99829387664795,
+          "ssrc": 924306173,
+          "decoded_sample_rate": 48004.09504537755
+        },
+        {
+          "receiver": "peer-4",
+          "source": "peer-7/mic",
+          "kind": "audio",
+          "bitrate_bps": 128282.54329213857,
+          "measured_seconds": 19.99829387664795,
+          "ssrc": 816672906,
+          "decoded_sample_rate": 48004.09504537755
+        },
+        {
+          "receiver": "peer-4",
+          "source": "peer-0/screen-audio",
+          "kind": "audio",
+          "bitrate_bps": 128010.9201210068,
+          "measured_seconds": 19.99829387664795,
+          "ssrc": 344269763,
+          "decoded_sample_rate": 48004.09504537755
+        },
+        {
+          "receiver": "peer-4",
+          "source": "peer-0/video",
+          "kind": "video",
+          "bitrate_bps": 0,
+          "measured_seconds": 19.99829387664795,
+          "ssrc": 374693044,
+          "decoded_fps": 0
+        },
+        {
+          "receiver": "peer-5",
+          "source": "peer-0/mic",
+          "kind": "audio",
+          "bitrate_bps": 128011.18109135456,
+          "measured_seconds": 19.998253107070923,
+          "ssrc": 654312748,
+          "decoded_sample_rate": 48004.19290925796
+        },
+        {
+          "receiver": "peer-5",
+          "source": "peer-1/mic",
+          "kind": "audio",
+          "bitrate_bps": 128411.21603226505,
+          "measured_seconds": 19.998253107070923,
+          "ssrc": 506368088,
+          "decoded_sample_rate": 48004.19290925796
+        },
+        {
+          "receiver": "peer-5",
+          "source": "peer-2/mic",
+          "kind": "audio",
+          "bitrate_bps": 128411.61606720596,
+          "measured_seconds": 19.998253107070923,
+          "ssrc": 543561959,
+          "decoded_sample_rate": 48004.19290925796
+        },
+        {
+          "receiver": "peer-5",
+          "source": "peer-3/mic",
+          "kind": "audio",
+          "bitrate_bps": 128411.21603226505,
+          "measured_seconds": 19.998253107070923,
+          "ssrc": 722204514,
+          "decoded_sample_rate": 48004.19290925796
+        },
+        {
+          "receiver": "peer-5",
+          "source": "peer-4/mic",
+          "kind": "audio",
+          "bitrate_bps": 128411.21603226505,
+          "measured_seconds": 19.998253107070923,
+          "ssrc": 984236361,
+          "decoded_sample_rate": 48004.19290925796
+        },
+        {
+          "receiver": "peer-5",
+          "source": "peer-6/mic",
+          "kind": "audio",
+          "bitrate_bps": 128411.21603226505,
+          "measured_seconds": 19.998253107070923,
+          "ssrc": 332356290,
+          "decoded_sample_rate": 48004.19290925796
+        },
+        {
+          "receiver": "peer-5",
+          "source": "peer-7/mic",
+          "kind": "audio",
+          "bitrate_bps": 128282.80481623278,
+          "measured_seconds": 19.998253107070923,
+          "ssrc": 826407617,
+          "decoded_sample_rate": 48004.19290925796
+        },
+        {
+          "receiver": "peer-5",
+          "source": "peer-0/screen-audio",
+          "kind": "audio",
+          "bitrate_bps": 128011.18109135456,
+          "measured_seconds": 19.998253107070923,
+          "ssrc": 608919187,
+          "decoded_sample_rate": 48004.19290925796
+        },
+        {
+          "receiver": "peer-5",
+          "source": "peer-0/video",
+          "kind": "video",
+          "bitrate_bps": 0,
+          "measured_seconds": 19.998253107070923,
+          "ssrc": 139998681,
+          "decoded_fps": 0
+        },
+        {
+          "receiver": "peer-6",
+          "source": "peer-0/mic",
+          "kind": "audio",
+          "bitrate_bps": 128011.06052597394,
+          "measured_seconds": 19.998271942138672,
+          "ssrc": 541997736,
+          "decoded_sample_rate": 48004.14769724023
+        },
+        {
+          "receiver": "peer-6",
+          "source": "peer-1/mic",
+          "kind": "audio",
+          "bitrate_bps": 128411.09509011761,
+          "measured_seconds": 19.998271942138672,
+          "ssrc": 889528843,
+          "decoded_sample_rate": 48004.14769724023
+        },
+        {
+          "receiver": "peer-6",
+          "source": "peer-2/mic",
+          "kind": "audio",
+          "bitrate_bps": 128411.49512468175,
+          "measured_seconds": 19.998271942138672,
+          "ssrc": 395397334,
+          "decoded_sample_rate": 48004.14769724023
+        },
+        {
+          "receiver": "peer-6",
+          "source": "peer-3/mic",
+          "kind": "audio",
+          "bitrate_bps": 128411.09509011761,
+          "measured_seconds": 19.998271942138672,
+          "ssrc": 317166711,
+          "decoded_sample_rate": 48004.14769724023
+        },
+        {
+          "receiver": "peer-6",
+          "source": "peer-4/mic",
+          "kind": "audio",
+          "bitrate_bps": 128411.09509011761,
+          "measured_seconds": 19.998271942138672,
+          "ssrc": 797230889,
+          "decoded_sample_rate": 48004.14769724023
+        },
+        {
+          "receiver": "peer-6",
+          "source": "peer-5/mic",
+          "kind": "audio",
+          "bitrate_bps": 128411.09509011761,
+          "measured_seconds": 19.998271942138672,
+          "ssrc": 873371879,
+          "decoded_sample_rate": 48004.14769724023
+        },
+        {
+          "receiver": "peer-6",
+          "source": "peer-7/mic",
+          "kind": "audio",
+          "bitrate_bps": 128282.68399502749,
+          "measured_seconds": 19.998271942138672,
+          "ssrc": 179678975,
+          "decoded_sample_rate": 48004.14769724023
+        },
+        {
+          "receiver": "peer-6",
+          "source": "peer-0/screen-audio",
+          "kind": "audio",
+          "bitrate_bps": 128011.06052597394,
+          "measured_seconds": 19.998271942138672,
+          "ssrc": 764248040,
+          "decoded_sample_rate": 48004.14769724023
+        },
+        {
+          "receiver": "peer-6",
+          "source": "peer-0/video",
+          "kind": "video",
+          "bitrate_bps": 0,
+          "measured_seconds": 19.998271942138672,
+          "ssrc": 964873184,
+          "decoded_fps": 0
+        },
+        {
+          "receiver": "peer-7",
+          "source": "peer-0/mic",
+          "kind": "audio",
+          "bitrate_bps": 128011.03610769667,
+          "measured_seconds": 19.998275756835938,
+          "ssrc": 460047288,
+          "decoded_sample_rate": 48004.13854038625
+        },
+        {
+          "receiver": "peer-7",
+          "source": "peer-1/mic",
+          "kind": "audio",
+          "bitrate_bps": 128411.07059553321,
+          "measured_seconds": 19.998275756835938,
+          "ssrc": 499682977,
+          "decoded_sample_rate": 48004.13854038625
+        },
+        {
+          "receiver": "peer-7",
+          "source": "peer-2/mic",
+          "kind": "audio",
+          "bitrate_bps": 128411.47063002105,
+          "measured_seconds": 19.998275756835938,
+          "ssrc": 235244392,
+          "decoded_sample_rate": 48004.13854038625
+        },
+        {
+          "receiver": "peer-7",
+          "source": "peer-3/mic",
+          "kind": "audio",
+          "bitrate_bps": 128411.07059553321,
+          "measured_seconds": 19.998275756835938,
+          "ssrc": 702638058,
+          "decoded_sample_rate": 48004.13854038625
+        },
+        {
+          "receiver": "peer-7",
+          "source": "peer-4/mic",
+          "kind": "audio",
+          "bitrate_bps": 128411.07059553321,
+          "measured_seconds": 19.998275756835938,
+          "ssrc": 328913971,
+          "decoded_sample_rate": 48004.13854038625
+        },
+        {
+          "receiver": "peer-7",
+          "source": "peer-5/mic",
+          "kind": "audio",
+          "bitrate_bps": 128411.07059553321,
+          "measured_seconds": 19.998275756835938,
+          "ssrc": 429149176,
+          "decoded_sample_rate": 48004.13854038625
+        },
+        {
+          "receiver": "peer-7",
+          "source": "peer-6/mic",
+          "kind": "audio",
+          "bitrate_bps": 128411.07059553321,
+          "measured_seconds": 19.998275756835938,
+          "ssrc": 979894875,
+          "decoded_sample_rate": 48004.13854038625
+        },
+        {
+          "receiver": "peer-7",
+          "source": "peer-0/screen-audio",
+          "kind": "audio",
+          "bitrate_bps": 128011.03610769667,
+          "measured_seconds": 19.998275756835938,
+          "ssrc": 213970920,
+          "decoded_sample_rate": 48004.13854038625
+        },
+        {
+          "receiver": "peer-7",
+          "source": "peer-0/video",
+          "kind": "video",
+          "bitrate_bps": 0,
+          "measured_seconds": 19.998275756835938,
+          "ssrc": 828183141,
+          "decoded_fps": 0
+        }
+      ],
+      "resource_lifetime_valid": true,
+      "backend_resources": {
+        "measurement_valid": true,
+        "phase": "measurement",
+        "measurement_samples": 38,
+        "actual_span_seconds": 19.192370653152466,
+        "maximum_process_rss_sum_bytes": 27795456,
+        "cpu_core_equivalents": [
+          0.038668709057493214,
+          0.019324867375777186,
+          0.019284892251060632,
+          0.01928964611077821,
+          0.0193196867802856,
+          0.03852762393003806,
+          0.0,
+          0.0192765697729997,
+          0.03851069709960366,
+          0.0,
+          0.03849560462354325,
+          0.019292511975301505,
+          0.019278784853507286,
+          0.019328456254910698,
+          0.019333766321766352,
+          0.03858529017135359,
+          0.019198016806430383,
+          0.019315967722474455,
+          0.019296479452855196,
+          0.019303175496592752,
+          0.03855581524149647,
+          0.0,
+          0.03850265455368297,
+          0.0,
+          0.03862131707193554,
+          0.019304756938323626,
+          0.03859160955556162,
+          0.0,
+          0.019290080815625228,
+          0.019245232286515274,
+          0.0386106512198434,
+          0.01927060930499894,
+          0.01923707634144117,
+          0.019291056755013993,
+          0.019001139804548,
+          0.019267130379499144,
+          0.01927955582093286
+        ],
+        "scope": "sum of actual process tree RSS and CPU; shared pages may be counted per process"
+      },
+      "generator_resources": {
+        "measurement_valid": true,
+        "phase": "measurement",
+        "measurement_samples": 38,
+        "actual_span_seconds": 19.192888259887695,
+        "maximum_process_rss_sum_bytes": 1122783232,
+        "cpu_core_equivalents": [
+          0.2898434976981474,
+          0.4049905580780487,
+          0.3857879543360998,
+          0.4057635120318842,
+          0.3660875852722962,
+          0.3283641926698402,
+          0.5782723767882373,
+          0.30810113564576447,
+          0.4244768509254352,
+          0.3464357996258328,
+          0.4437873809784502,
+          0.30847388568760276,
+          0.4251447316891101,
+          0.34802896988734033,
+          0.42447431248959006,
+          0.3455204948568416,
+          0.4442875137186207,
+          0.34733151672099966,
+          0.4247116898634567,
+          0.3084052728038106,
+          0.4249849533401536,
+          0.32726400173308756,
+          0.40454859820939504,
+          0.34757505110215536,
+          0.4247341714353027,
+          0.32804573481279786,
+          0.5004582474584033,
+          0.32792775424079235,
+          0.38490694167990297,
+          0.3281952182286195,
+          0.3661361937478391,
+          0.40402233488847167,
+          0.3472406186701268,
+          0.4750728301596147,
+          0.34674320073521153,
+          0.4048449916507927,
+          0.28976113364799405
+        ],
+        "scope": "sum of actual process tree RSS and CPU; shared pages may be counted per process"
+      },
+      "post_leave_resources": {
+        "measurement_valid": true,
+        "phase": "post_leave",
+        "measurement_samples": 8,
+        "actual_span_seconds": 3.5025835037231445,
+        "maximum_process_rss_sum_bytes": 21487616,
+        "cpu_core_equivalents": [
+          0.0,
+          0.0,
+          0.0,
+          0.0,
+          0.0,
+          0.0,
+          0.0
+        ],
+        "scope": "sum of actual process tree RSS and CPU; shared pages may be counted per process"
+      }
+    },
+    {
+      "engine": "janus",
+      "browser_report_sha256": "13b021b93c71c9567541f321ca9c59b6c1d98b3eefc780ea2d534b6abeba08a9",
+      "instrument_pilot_valid": true,
+      "source_window_valid": true,
+      "full_graph_streams_valid": true,
+      "cleanup_valid": true,
+      "graph_failures": [],
+      "executed_browser": {
+        "executable": "/chrome/chromium_headless_shell-1243/chrome-headless-shell-linux64/chrome-headless-shell",
+        "sha256": "ded93a9c9a53a1ae040f08124badcca95c938e9d5015ff340c3b5538c41bf39e",
+        "product": "HeadlessChrome/153.0.8010.12",
+        "revision": "@971a7443b0c9b0a9b2860529b33331b76077ec62",
+        "user_agent": "Mozilla/5.0 (X11; Linux x86_64) AppleWebKit/537.36 (KHTML, like Gecko) HeadlessChrome/153.0.8010.12 Safari/537.36",
+        "js_version": "15.3.76.4"
+      },
+      "source_provenance": {
+        "schema": 1,
+        "scope": "local full original N-participant native0 fixture; no independent-host WAN/PCM/product/performance acceptance",
+        "execute": true,
+        "source_revision": "ebbf2f9d26f129a806d3ac73e17d218086c4d99d",
+        "source_dirty": true,
+        "peers": 8,
+        "video_watchers": 7,
+        "audio_edges": 63,
+        "video_edges": 7,
+        "private_subnet": "172.30.232.0/24",
+        "published_ports": [],
+        "udp_range": [
+          12000,
+          12199
+        ],
+        "seconds": 20,
+        "warmup": 30,
+        "source_seconds": 120,
+        "limits": {
+          "backend": {
+            "cpus": 1,
+            "memory_bytes": 536870912,
+            "pids": 256
+          },
+          "generator": {
+            "cpus": 4,
+            "memory": "4g",
+            "pids": 512
+          },
+          "infrastructure_separate": true
+        },
+        "runtime_image": {
+          "id": "sha256:1ae5fd33e696fd2fbd169631afec3107a4f59ad2e76e74de3d3e13a88d593636",
+          "labels": {
+            "com.centurylinklabs.watchtower.enable": "false",
+            "gelabber.bench.binary_sha256": "a2fd497a4836ea1aba57baa8e1216c9fae73476a75ba0e8bad4ab37875285701",
+            "gelabber.bench.fixture": "netns-20261005",
+            "gelabber.bench.libopus.sha256": "ce07b3578b14e1d25ed603670f2336cd2b32b7f24c2c5b9aab8bbeb0f410b8d6",
+            "gelabber.bench.native-runtime": "gelabber-native-runtime-acbd72d15483",
+            "gelabber.bench.native.sha256": "0e1dff990131ad0f3e91b16f44fdce0636628c1867f31ffe147a44f63ed48e1c",
+            "gelabber.bench.node.sha256": "8a22a371fd85aecf5411636574309f6380fbc42694aaf0651a089a8ef9c44e52",
+            "org.opencontainers.image.revision": "de1ae34647b2c4f0631dfc16fd5b8ea7d970184a"
+          },
+          "size": 220747079,
+          "repo_digests": [
+            "gelabber-native-runtime-acbd72d15483@sha256:1ae5fd33e696fd2fbd169631afec3107a4f59ad2e76e74de3d3e13a88d593636"
+          ]
+        },
+        "runtime_report_sha256": "47d3e2f31f90c734099b30e22eb24b0673dea6b2e7c78fc98d68e934bb3aae50",
+        "backend_images": {
+          "current": {
+            "id": "sha256:cb2a5576ad71f0f58fad453697914f3742fe5bf263a6072b1fe46bc107033b85",
+            "labels": {
+              "gelabber.bench.binary_sha256": "a2fd497a4836ea1aba57baa8e1216c9fae73476a75ba0e8bad4ab37875285701",
+              "org.opencontainers.image.revision": "de1ae34647b2c4f0631dfc16fd5b8ea7d970184a"
+            },
+            "size": 34108102,
+            "repo_digests": [
+              "gelabber-bench/current@sha256:cb2a5576ad71f0f58fad453697914f3742fe5bf263a6072b1fe46bc107033b85"
+            ]
+          },
+          "mediasoup": {
+            "id": "sha256:75ef46894be12279debd99a55409efca5c67cfa0311a810eed4d726c20c68c4d",
+            "labels": {
+              "gelabber.bench.binary_sha256": "df90621e944a6ed22daec75096e2f8fb4ca092af6de3635ef955f1112dfca01b",
+              "org.opencontainers.image.revision": "de1ae34647b2c4f0631dfc16fd5b8ea7d970184a"
+            },
+            "size": 35665019,
+            "repo_digests": [
+              "gelabber-bench/mediasoup@sha256:75ef46894be12279debd99a55409efca5c67cfa0311a810eed4d726c20c68c4d"
+            ]
+          },
+          "janus": {
+            "id": "sha256:76845b0f9e03ad08a0444e4194969510b96ca72d83754e596431aa04dc773e62",
+            "labels": {
+              "org.opencontainers.image.revision": "0a24110ae55a172c4293749b763dbb66a138f9ec",
+              "org.opencontainers.image.version": "janus-v1.4.2"
+            },
+            "size": 54416670,
+            "repo_digests": [
+              "gelabber-bench/janus@sha256:76845b0f9e03ad08a0444e4194969510b96ca72d83754e596431aa04dc773e62"
+            ]
+          }
+        },
+        "redis_image": {
+          "id": "sha256:ef216d85ec44f4fdf7c0e6df2d1757a4734ed32fbb278cabd3181b5a27353b79",
+          "labels": null,
+          "size": 39034760,
+          "repo_digests": [
+            "redis@sha256:ef216d85ec44f4fdf7c0e6df2d1757a4734ed32fbb278cabd3181b5a27353b79"
+          ]
+        },
+        "comparison_available": false,
+        "production_feature_acceptance": false,
+        "limitations": [
+          "local engine and generator on one physical host",
+          "current cached backend revision is reported separately from collector source; it may precede new layer/recovery changes",
+          "Janus lacks the product ticket/ACL gateway; C-server resources alone cannot qualify its required adapter-inclusive RAM target"
+        ],
+        "input_sha256": {
+          "run-native-full.py": "c05766b1f45298ae2e3896db6e4935181e3d61d044c7faff3a156d5cf6baf6e6",
+          "record.py": "ce2f366f6360ca1f17dee550c68dfa3724966348c7ef9969bc75671420a52b33",
+          "native-full-pilot.mjs": "60edcb5369c6e82f20f54dac34e8b8db8260bc3f41b440432b345c0533bae101",
+          "native-full-browser.mjs": "b5ef780ba1dd0d50ea69ec1f8da9a144b7b4989806d0321b523260cfae714850",
+          "native-full.bundle.js": "bcf3c573b6ad3f6a55b7461e534f50c91656a37707d412fa1a3da9f8266c6a38",
+          "native-full-checks.mjs": "4c32b1bea0e0d0864a8ab19efa7d4ec472e7b9882947699111df60e19bf3ed2f",
+          "native-peer-adapters.mjs": "9be48c38cb2ba32af0eb93fe0ab4e2abed9833509802d55316faec00380a3d26",
+          "native-peer-current.mjs": "4e710173232391b1b9fee7da011693e594be39c6119c25dfedc48b581ad4b5c9",
+          "mediasoup-native-peer-sdp.mjs": "0d169e381aa60677113c2b64e4d44942e9a99dc98c57d3a0fa27fa9124dbc0ae",
+          "native-peer-checks.mjs": "f9d1ef7246b40c598683e4f34b1857f459f492221e39cde4f54cd30a3e9bb27d",
+          "native-peer.mjs": "9a5969bc04e81460ce4d2199e39e63c0e1b2e33beee49ded7aed0dbbd7e279e0",
+          "native-video.mjs": "eff5ff44b443e7b46343bcdce061aea2892f23aa2b6f1d380908e14359d3e681",
+          "janus-events.mjs": "611b677b7bcbc0154d04b9be3375ecab6c15c6339feeb177f0426c071f5584b4",
+          "janus-broker.mjs": "c340597861ab6512d59f73cac6bb248f553122d5d45f5b9a865523351e36c413",
+          "browser-provenance.mjs": "c50c9ac32f4acf91982f05ef2cefcf5e945b61a63073c9bc499f216ba3d5c4ec",
+          "proxy-target.mjs": "eeb6a5b035738da7b5c7320dcaa5b40fb24506f26fd631921f54666b4840e7a2",
+          "package-lock.json": "9d02e4d3313afe6d1fc466ab4fa598993660385d21a13021089fbeca04e1954c"
+        }
+      },
+      "source_first_sample": {
+        "mic": {
+          "completed": false,
+          "last_enqueue_before_ns": "39133124445161",
+          "last_enqueue_bracket_ns": 1889,
+          "last_enqueued_mono_ns": "39133124447050",
+          "last_planned_mono_ns": "39133123364361",
+          "last_source_sample_ordinal": 1546560,
+          "max_schedule_lateness_ns": 1748155,
+          "packets_enqueued": 1612,
+          "rtp_payload_bytes_enqueued": 515840,
+          "running": true,
+          "source_policy_scope": "observed enqueue prefix; full packet count checked only on completion",
+          "source_policy_valid": true,
+          "source_uid": 0,
+          "ssrc": 1196247363,
+          "timeline": {
+            "clock": "CLOCK_MONOTONIC",
+            "conversionBracketNs": 110,
+            "pcm_latency_calibrated": false,
+            "scope": "planned recorded PCM timeline; no hardware, live encoder or acoustic-device latency",
+            "startClockNs": "39100903364361"
+          }
+        },
+        "source": {
+          "completed": false,
+          "last_enqueue_before_ns": "39133124448760",
+          "last_enqueue_bracket_ns": 1270,
+          "last_enqueued_mono_ns": "39133124450030",
+          "last_planned_mono_ns": "39133123364361",
+          "last_source_sample_ordinal": 1546560,
+          "max_schedule_lateness_ns": 1657116,
+          "packets_enqueued": 1612,
+          "rtp_payload_bytes_enqueued": 515840,
+          "running": true,
+          "source_policy_scope": "observed enqueue prefix; full packet count checked only on completion",
+          "source_policy_valid": true,
+          "source_uid": 64,
+          "ssrc": 1196638512,
+          "timeline": {
+            "clock": "CLOCK_MONOTONIC",
+            "conversionBracketNs": 110,
+            "pcm_latency_calibrated": false,
+            "scope": "planned recorded PCM timeline; no hardware, live encoder or acoustic-device latency",
+            "startClockNs": "39100903364361"
+          }
+        },
+        "video": {
+          "completed": false,
+          "frames_enqueued": 1920,
+          "max_schedule_lateness_ns": 2569501,
+          "packets_enqueued": 14424,
+          "rtp_payload_bytes_enqueued": 16012266,
+          "running": true,
+          "source_policy_scope": "observed enqueue prefix; full frame count checked only on completion",
+          "source_policy_valid": true,
+          "timeline": {
+            "clock": "CLOCK_MONOTONIC",
+            "conversionBracketNs": 110,
+            "pcm_latency_calibrated": false,
+            "scope": "planned recorded PCM timeline; no hardware, live encoder or acoustic-device latency",
+            "startClockNs": "39100903364361"
+          }
+        }
+      },
+      "source_last_sample": {
+        "mic": {
+          "completed": false,
+          "last_enqueue_before_ns": "39153124613584",
+          "last_enqueue_bracket_ns": 1670,
+          "last_enqueued_mono_ns": "39153124615254",
+          "last_planned_mono_ns": "39153123364361",
+          "last_source_sample_ordinal": 2506560,
+          "max_schedule_lateness_ns": 1748155,
+          "packets_enqueued": 2612,
+          "rtp_payload_bytes_enqueued": 835840,
+          "running": true,
+          "source_policy_scope": "observed enqueue prefix; full packet count checked only on completion",
+          "source_policy_valid": true,
+          "source_uid": 0,
+          "ssrc": 1196247363,
+          "timeline": {
+            "clock": "CLOCK_MONOTONIC",
+            "conversionBracketNs": 110,
+            "pcm_latency_calibrated": false,
+            "scope": "planned recorded PCM timeline; no hardware, live encoder or acoustic-device latency",
+            "startClockNs": "39100903364361"
+          }
+        },
+        "source": {
+          "completed": false,
+          "last_enqueue_before_ns": "39153124619634",
+          "last_enqueue_bracket_ns": 1960,
+          "last_enqueued_mono_ns": "39153124621594",
+          "last_planned_mono_ns": "39153123364361",
+          "last_source_sample_ordinal": 2506560,
+          "max_schedule_lateness_ns": 1657116,
+          "packets_enqueued": 2612,
+          "rtp_payload_bytes_enqueued": 835840,
+          "running": true,
+          "source_policy_scope": "observed enqueue prefix; full packet count checked only on completion",
+          "source_policy_valid": true,
+          "source_uid": 64,
+          "ssrc": 1196638512,
+          "timeline": {
+            "clock": "CLOCK_MONOTONIC",
+            "conversionBracketNs": 110,
+            "pcm_latency_calibrated": false,
+            "scope": "planned recorded PCM timeline; no hardware, live encoder or acoustic-device latency",
+            "startClockNs": "39100903364361"
+          }
+        },
+        "video": {
+          "completed": false,
+          "frames_enqueued": 3120,
+          "max_schedule_lateness_ns": 2569501,
+          "packets_enqueued": 23454,
+          "rtp_payload_bytes_enqueued": 26036068,
+          "running": true,
+          "source_policy_scope": "observed enqueue prefix; full frame count checked only on completion",
+          "source_policy_valid": true,
+          "timeline": {
+            "clock": "CLOCK_MONOTONIC",
+            "conversionBracketNs": 110,
+            "pcm_latency_calibrated": false,
+            "scope": "planned recorded PCM timeline; no hardware, live encoder or acoustic-device latency",
+            "startClockNs": "39100903364361"
+          }
+        }
+      },
+      "streams": [
+        {
+          "receiver": "peer-0",
+          "source": "peer-1/mic",
+          "kind": "audio",
+          "bitrate_bps": 128411.25559970395,
+          "measured_seconds": 19.998246944996936,
+          "ssrc": 1152143304,
+          "decoded_sample_rate": 48004.20770082391
+        },
+        {
+          "receiver": "peer-0",
+          "source": "peer-2/mic",
+          "kind": "audio",
+          "bitrate_bps": 128406.45517893386,
+          "measured_seconds": 19.998246944996936,
+          "ssrc": 1776145996,
+          "decoded_sample_rate": 48004.20770082391
+        },
+        {
+          "receiver": "peer-0",
+          "source": "peer-3/mic",
+          "kind": "audio",
+          "bitrate_bps": 128411.25559970395,
+          "measured_seconds": 19.998246944996936,
+          "ssrc": 396620080,
+          "decoded_sample_rate": 48004.20770082391
+        },
+        {
+          "receiver": "peer-0",
+          "source": "peer-4/mic",
+          "kind": "audio",
+          "bitrate_bps": 128411.25559970395,
+          "measured_seconds": 19.998246944996936,
+          "ssrc": 2261723568,
+          "decoded_sample_rate": 48004.20770082391
+        },
+        {
+          "receiver": "peer-0",
+          "source": "peer-5/mic",
+          "kind": "audio",
+          "bitrate_bps": 128411.25559970395,
+          "measured_seconds": 19.998246944996936,
+          "ssrc": 795055260,
+          "decoded_sample_rate": 48004.20770082391
+        },
+        {
+          "receiver": "peer-0",
+          "source": "peer-6/mic",
+          "kind": "audio",
+          "bitrate_bps": 128282.84434410423,
+          "measured_seconds": 19.998246944996936,
+          "ssrc": 1274806841,
+          "decoded_sample_rate": 47956.20349312308
+        },
+        {
+          "receiver": "peer-0",
+          "source": "peer-7/mic",
+          "kind": "audio",
+          "bitrate_bps": 128407.65528412638,
+          "measured_seconds": 19.998246944996936,
+          "ssrc": 2023284234,
+          "decoded_sample_rate": 48004.20770082391
+        },
+        {
+          "receiver": "peer-1",
+          "source": "peer-0/mic",
+          "kind": "audio",
+          "bitrate_bps": 128016.77618528133,
+          "measured_seconds": 19.997379064559937,
+          "ssrc": 240792711,
+          "decoded_sample_rate": 47982.28792394576
+        },
+        {
+          "receiver": "peer-1",
+          "source": "peer-2/mic",
+          "kind": "audio",
+          "bitrate_bps": 128412.02798175339,
+          "measured_seconds": 19.997379064559937,
+          "ssrc": 144268409,
+          "decoded_sample_rate": 47982.28792394576
+        },
+        {
+          "receiver": "peer-1",
+          "source": "peer-3/mic",
+          "kind": "audio",
+          "bitrate_bps": 128416.82861086034,
+          "measured_seconds": 19.997379064559937,
+          "ssrc": 1172991313,
+          "decoded_sample_rate": 47982.28792394576
+        },
+        {
+          "receiver": "peer-1",
+          "source": "peer-4/mic",
+          "kind": "audio",
+          "bitrate_bps": 128416.82861086034,
+          "measured_seconds": 19.997379064559937,
+          "ssrc": 2984085404,
+          "decoded_sample_rate": 47982.28792394576
+        },
+        {
+          "receiver": "peer-1",
+          "source": "peer-5/mic",
+          "kind": "audio",
+          "bitrate_bps": 128288.41178224947,
+          "measured_seconds": 19.997379064559937,
+          "ssrc": 3808101572,
+          "decoded_sample_rate": 47982.28792394576
+        },
+        {
+          "receiver": "peer-1",
+          "source": "peer-6/mic",
+          "kind": "audio",
+          "bitrate_bps": 128288.41178224947,
+          "measured_seconds": 19.997379064559937,
+          "ssrc": 3583682313,
+          "decoded_sample_rate": 47982.28792394576
+        },
+        {
+          "receiver": "peer-1",
+          "source": "peer-7/mic",
+          "kind": "audio",
+          "bitrate_bps": 128413.22813903012,
+          "measured_seconds": 19.997379064559937,
+          "ssrc": 1450481648,
+          "decoded_sample_rate": 47982.28792394576
+        },
+        {
+          "receiver": "peer-1",
+          "source": "peer-0/screen-audio",
+          "kind": "audio",
+          "bitrate_bps": 128016.77618528133,
+          "measured_seconds": 19.997379064559937,
+          "ssrc": 4262822821,
+          "decoded_sample_rate": 47982.28792394576
+        },
+        {
+          "receiver": "peer-1",
+          "source": "peer-0/video",
+          "kind": "video",
+          "bitrate_bps": 4009571.041342085,
+          "measured_seconds": 19.997379064559937,
+          "ssrc": 387406286,
+          "decoded_fps": 59.95785728365325
+        },
+        {
+          "receiver": "peer-2",
+          "source": "peer-0/mic",
+          "kind": "audio",
+          "bitrate_bps": 128017.00818009576,
+          "measured_seconds": 19.997342824935913,
+          "ssrc": 2132211624,
+          "decoded_sample_rate": 47982.37487850214
+        },
+        {
+          "receiver": "peer-2",
+          "source": "peer-1/mic",
+          "kind": "audio",
+          "bitrate_bps": 128417.06133065856,
+          "measured_seconds": 19.997342824935913,
+          "ssrc": 2944367385,
+          "decoded_sample_rate": 47982.37487850214
+        },
+        {
+          "receiver": "peer-2",
+          "source": "peer-3/mic",
+          "kind": "audio",
+          "bitrate_bps": 128417.06133065856,
+          "measured_seconds": 19.997342824935913,
+          "ssrc": 1662595002,
+          "decoded_sample_rate": 47982.37487850214
+        },
+        {
+          "receiver": "peer-2",
+          "source": "peer-4/mic",
+          "kind": "audio",
+          "bitrate_bps": 128417.06133065856,
+          "measured_seconds": 19.997342824935913,
+          "ssrc": 3985820025,
+          "decoded_sample_rate": 47982.37487850214
+        },
+        {
+          "receiver": "peer-2",
+          "source": "peer-5/mic",
+          "kind": "audio",
+          "bitrate_bps": 128288.6442693279,
+          "measured_seconds": 19.997342824935913,
+          "ssrc": 205532438,
+          "decoded_sample_rate": 47982.37487850214
+        },
+        {
+          "receiver": "peer-2",
+          "source": "peer-6/mic",
+          "kind": "audio",
+          "bitrate_bps": 128288.6442693279,
+          "measured_seconds": 19.997342824935913,
+          "ssrc": 2695033444,
+          "decoded_sample_rate": 47982.37487850214
+        },
+        {
+          "receiver": "peer-2",
+          "source": "peer-7/mic",
+          "kind": "audio",
+          "bitrate_bps": 128413.4608523035,
+          "measured_seconds": 19.997342824935913,
+          "ssrc": 2364851426,
+          "decoded_sample_rate": 47982.37487850214
+        },
+        {
+          "receiver": "peer-2",
+          "source": "peer-0/screen-audio",
+          "kind": "audio",
+          "bitrate_bps": 128017.00818009576,
+          "measured_seconds": 19.997342824935913,
+          "ssrc": 454413587,
+          "decoded_sample_rate": 47982.37487850214
+        },
+        {
+          "receiver": "peer-2",
+          "source": "peer-0/video",
+          "kind": "video",
+          "bitrate_bps": 4009578.30757482,
+          "measured_seconds": 19.997342824935913,
+          "ssrc": 1468929680,
+          "decoded_fps": 59.957965940599536
+        },
+        {
+          "receiver": "peer-3",
+          "source": "peer-0/mic",
+          "kind": "audio",
+          "bitrate_bps": 128017.1928607794,
+          "measured_seconds": 19.997313976287842,
+          "ssrc": 3985302326,
+          "decoded_sample_rate": 47982.44409913088
+        },
+        {
+          "receiver": "peer-3",
+          "source": "peer-1/mic",
+          "kind": "audio",
+          "bitrate_bps": 128417.24658846934,
+          "measured_seconds": 19.997313976287842,
+          "ssrc": 644047073,
+          "decoded_sample_rate": 47982.44409913088
+        },
+        {
+          "receiver": "peer-3",
+          "source": "peer-2/mic",
+          "kind": "audio",
+          "bitrate_bps": 128412.44594373705,
+          "measured_seconds": 19.997313976287842,
+          "ssrc": 1081990956,
+          "decoded_sample_rate": 47982.44409913088
+        },
+        {
+          "receiver": "peer-3",
+          "source": "peer-4/mic",
+          "kind": "audio",
+          "bitrate_bps": 128417.24658846934,
+          "measured_seconds": 19.997313976287842,
+          "ssrc": 3133781989,
+          "decoded_sample_rate": 47982.44409913088
+        },
+        {
+          "receiver": "peer-3",
+          "source": "peer-5/mic",
+          "kind": "audio",
+          "bitrate_bps": 128288.82934188086,
+          "measured_seconds": 19.997313976287842,
+          "ssrc": 2642974217,
+          "decoded_sample_rate": 47982.44409913088
+        },
+        {
+          "receiver": "peer-3",
+          "source": "peer-6/mic",
+          "kind": "audio",
+          "bitrate_bps": 128288.82934188086,
+          "measured_seconds": 19.997313976287842,
+          "ssrc": 198825450,
+          "decoded_sample_rate": 47982.44409913088
+        },
+        {
+          "receiver": "peer-3",
+          "source": "peer-7/mic",
+          "kind": "audio",
+          "bitrate_bps": 128413.64610492013,
+          "measured_seconds": 19.997313976287842,
+          "ssrc": 3082315571,
+          "decoded_sample_rate": 47982.44409913088
+        },
+        {
+          "receiver": "peer-3",
+          "source": "peer-0/screen-audio",
+          "kind": "audio",
+          "bitrate_bps": 128017.1928607794,
+          "measured_seconds": 19.997313976287842,
+          "ssrc": 146180107,
+          "decoded_sample_rate": 47982.44409913088
+        },
+        {
+          "receiver": "peer-3",
+          "source": "peer-0/video",
+          "kind": "video",
+          "bitrate_bps": 4009584.0918973363,
+          "measured_seconds": 19.997313976287842,
+          "ssrc": 3744865559,
+          "decoded_fps": 60.00805915349034
+        },
+        {
+          "receiver": "peer-4",
+          "source": "peer-0/mic",
+          "kind": "audio",
+          "bitrate_bps": 128017.24475462112,
+          "measured_seconds": 19.997305870056152,
+          "ssrc": 1537317064,
+          "decoded_sample_rate": 47982.463549591426
+        },
+        {
+          "receiver": "peer-4",
+          "source": "peer-1/mic",
+          "kind": "audio",
+          "bitrate_bps": 128417.2986444793,
+          "measured_seconds": 19.997305870056152,
+          "ssrc": 3596347868,
+          "decoded_sample_rate": 47982.463549591426
+        },
+        {
+          "receiver": "peer-4",
+          "source": "peer-2/mic",
+          "kind": "audio",
+          "bitrate_bps": 128412.49799780101,
+          "measured_seconds": 19.997305870056152,
+          "ssrc": 1864053940,
+          "decoded_sample_rate": 47982.463549591426
+        },
+        {
+          "receiver": "peer-4",
+          "source": "peer-3/mic",
+          "kind": "audio",
+          "bitrate_bps": 128417.2986444793,
+          "measured_seconds": 19.997305870056152,
+          "ssrc": 2572441017,
+          "decoded_sample_rate": 47982.463549591426
+        },
+        {
+          "receiver": "peer-4",
+          "source": "peer-5/mic",
+          "kind": "audio",
+          "bitrate_bps": 128288.88134583483,
+          "measured_seconds": 19.997305870056152,
+          "ssrc": 2035123915,
+          "decoded_sample_rate": 47982.463549591426
+        },
+        {
+          "receiver": "peer-4",
+          "source": "peer-6/mic",
+          "kind": "audio",
+          "bitrate_bps": 128288.88134583483,
+          "measured_seconds": 19.997305870056152,
+          "ssrc": 3448035150,
+          "decoded_sample_rate": 47982.463549591426
+        },
+        {
+          "receiver": "peer-4",
+          "source": "peer-7/mic",
+          "kind": "audio",
+          "bitrate_bps": 128413.69815947059,
+          "measured_seconds": 19.997305870056152,
+          "ssrc": 1366757532,
+          "decoded_sample_rate": 47982.463549591426
+        },
+        {
+          "receiver": "peer-4",
+          "source": "peer-0/screen-audio",
+          "kind": "audio",
+          "bitrate_bps": 128017.24475462112,
+          "measured_seconds": 19.997305870056152,
+          "ssrc": 1650997619,
+          "decoded_sample_rate": 47982.463549591426
+        },
+        {
+          "receiver": "peer-4",
+          "source": "peer-0/video",
+          "kind": "video",
+          "bitrate_bps": 4009585.717247163,
+          "measured_seconds": 19.997305870056152,
+          "ssrc": 244590020,
+          "decoded_fps": 59.958076742496374
+        },
+        {
+          "receiver": "peer-5",
+          "source": "peer-0/mic",
+          "kind": "audio",
+          "bitrate_bps": 128017.38364716918,
+          "measured_seconds": 19.997284173965454,
+          "ssrc": 3437534988,
+          "decoded_sample_rate": 47982.515608254595
+        },
+        {
+          "receiver": "peer-5",
+          "source": "peer-1/mic",
+          "kind": "audio",
+          "bitrate_bps": 128417.43797106658,
+          "measured_seconds": 19.997284173965454,
+          "ssrc": 788776784,
+          "decoded_sample_rate": 47982.515608254595
+        },
+        {
+          "receiver": "peer-5",
+          "source": "peer-2/mic",
+          "kind": "audio",
+          "bitrate_bps": 128412.6373191798,
+          "measured_seconds": 19.997284173965454,
+          "ssrc": 2421333471,
+          "decoded_sample_rate": 47982.515608254595
+        },
+        {
+          "receiver": "peer-5",
+          "source": "peer-3/mic",
+          "kind": "audio",
+          "bitrate_bps": 128417.43797106658,
+          "measured_seconds": 19.997284173965454,
+          "ssrc": 1628955733,
+          "decoded_sample_rate": 47982.515608254595
+        },
+        {
+          "receiver": "peer-5",
+          "source": "peer-4/mic",
+          "kind": "audio",
+          "bitrate_bps": 128417.43797106658,
+          "measured_seconds": 19.997284173965454,
+          "ssrc": 4064859037,
+          "decoded_sample_rate": 47982.515608254595
+        },
+        {
+          "receiver": "peer-5",
+          "source": "peer-6/mic",
+          "kind": "audio",
+          "bitrate_bps": 128289.0205330955,
+          "measured_seconds": 19.997284173965454,
+          "ssrc": 3870051874,
+          "decoded_sample_rate": 47982.515608254595
+        },
+        {
+          "receiver": "peer-5",
+          "source": "peer-7/mic",
+          "kind": "audio",
+          "bitrate_bps": 128413.8374821515,
+          "measured_seconds": 19.997284173965454,
+          "ssrc": 1286148770,
+          "decoded_sample_rate": 47982.515608254595
+        },
+        {
+          "receiver": "peer-5",
+          "source": "peer-0/screen-audio",
+          "kind": "audio",
+          "bitrate_bps": 128017.38364716918,
+          "measured_seconds": 19.997284173965454,
+          "ssrc": 1889477901,
+          "decoded_sample_rate": 47982.515608254595
+        },
+        {
+          "receiver": "peer-5",
+          "source": "peer-0/video",
+          "kind": "video",
+          "bitrate_bps": 4009590.0674546524,
+          "measured_seconds": 19.997284173965454,
+          "ssrc": 1115421619,
+          "decoded_fps": 60.00814858461055
+        },
+        {
+          "receiver": "peer-6",
+          "source": "peer-0/mic",
+          "kind": "audio",
+          "bitrate_bps": 128017.71637999362,
+          "measured_seconds": 19.99723219871521,
+          "ssrc": 81750614,
+          "decoded_sample_rate": 47982.64032067636
+        },
+        {
+          "receiver": "peer-6",
+          "source": "peer-1/mic",
+          "kind": "audio",
+          "bitrate_bps": 128417.7717436811,
+          "measured_seconds": 19.99723219871521,
+          "ssrc": 4036012463,
+          "decoded_sample_rate": 47982.64032067636
+        },
+        {
+          "receiver": "peer-6",
+          "source": "peer-2/mic",
+          "kind": "audio",
+          "bitrate_bps": 128412.97107931685,
+          "measured_seconds": 19.99723219871521,
+          "ssrc": 3128803940,
+          "decoded_sample_rate": 47982.64032067636
+        },
+        {
+          "receiver": "peer-6",
+          "source": "peer-3/mic",
+          "kind": "audio",
+          "bitrate_bps": 128417.7717436811,
+          "measured_seconds": 19.99723219871521,
+          "ssrc": 936936898,
+          "decoded_sample_rate": 47982.64032067636
+        },
+        {
+          "receiver": "peer-6",
+          "source": "peer-4/mic",
+          "kind": "audio",
+          "bitrate_bps": 128417.7717436811,
+          "measured_seconds": 19.99723219871521,
+          "ssrc": 3172149742,
+          "decoded_sample_rate": 47982.64032067636
+        },
+        {
+          "receiver": "peer-6",
+          "source": "peer-5/mic",
+          "kind": "audio",
+          "bitrate_bps": 128289.35397193742,
+          "measured_seconds": 19.99723219871521,
+          "ssrc": 1016123566,
+          "decoded_sample_rate": 47982.64032067636
+        },
+        {
+          "receiver": "peer-6",
+          "source": "peer-7/mic",
+          "kind": "audio",
+          "bitrate_bps": 128414.17124540791,
+          "measured_seconds": 19.99723219871521,
+          "ssrc": 3528365533,
+          "decoded_sample_rate": 47982.64032067636
+        },
+        {
+          "receiver": "peer-6",
+          "source": "peer-0/screen-audio",
+          "kind": "audio",
+          "bitrate_bps": 128017.71637999362,
+          "measured_seconds": 19.99723219871521,
+          "ssrc": 4078861628,
+          "decoded_sample_rate": 47982.64032067636
+        },
+        {
+          "receiver": "peer-6",
+          "source": "peer-0/video",
+          "kind": "video",
+          "bitrate_bps": 4009600.4888692293,
+          "measured_seconds": 19.99723219871521,
+          "ssrc": 3145345536,
+          "decoded_fps": 60.00830455312201
+        },
+        {
+          "receiver": "peer-7",
+          "source": "peer-0/mic",
+          "kind": "audio",
+          "bitrate_bps": 128017.80643183526,
+          "measured_seconds": 19.997218132019043,
+          "ssrc": 3481248438,
+          "decoded_sample_rate": 47982.67407323225
+        },
+        {
+          "receiver": "peer-7",
+          "source": "peer-1/mic",
+          "kind": "audio",
+          "bitrate_bps": 128417.86207693473,
+          "measured_seconds": 19.997218132019043,
+          "ssrc": 2967548072,
+          "decoded_sample_rate": 47982.67407323225
+        },
+        {
+          "receiver": "peer-7",
+          "source": "peer-2/mic",
+          "kind": "audio",
+          "bitrate_bps": 128413.06140919354,
+          "measured_seconds": 19.997218132019043,
+          "ssrc": 4176548033,
+          "decoded_sample_rate": 47982.67407323225
+        },
+        {
+          "receiver": "peer-7",
+          "source": "peer-3/mic",
+          "kind": "audio",
+          "bitrate_bps": 128417.86207693473,
+          "measured_seconds": 19.997218132019043,
+          "ssrc": 2010994791,
+          "decoded_sample_rate": 47982.67407323225
+        },
+        {
+          "receiver": "peer-7",
+          "source": "peer-4/mic",
+          "kind": "audio",
+          "bitrate_bps": 128417.86207693473,
+          "measured_seconds": 19.997218132019043,
+          "ssrc": 2955057391,
+          "decoded_sample_rate": 47982.67407323225
+        },
+        {
+          "receiver": "peer-7",
+          "source": "peer-5/mic",
+          "kind": "audio",
+          "bitrate_bps": 128289.44421485781,
+          "measured_seconds": 19.997218132019043,
+          "ssrc": 313512806,
+          "decoded_sample_rate": 47982.67407323225
+        },
+        {
+          "receiver": "peer-7",
+          "source": "peer-6/mic",
+          "kind": "audio",
+          "bitrate_bps": 128289.44421485781,
+          "measured_seconds": 19.997218132019043,
+          "ssrc": 3975291252,
+          "decoded_sample_rate": 47982.67407323225
+        },
+        {
+          "receiver": "peer-7",
+          "source": "peer-0/screen-audio",
+          "kind": "audio",
+          "bitrate_bps": 128017.80643183526,
+          "measured_seconds": 19.997218132019043,
+          "ssrc": 3336652490,
+          "decoded_sample_rate": 47982.67407323225
+        },
+        {
+          "receiver": "peer-7",
+          "source": "peer-0/video",
+          "kind": "video",
+          "bitrate_bps": 4009603.3093531313,
+          "measured_seconds": 19.997218132019043,
+          "ssrc": 2238784785,
+          "decoded_fps": 60.00834676492278
+        }
+      ],
+      "resource_lifetime_valid": true,
+      "backend_resources": {
+        "measurement_valid": true,
+        "phase": "measurement",
+        "measurement_samples": 38,
+        "actual_span_seconds": 19.359578371047974,
+        "maximum_process_rss_sum_bytes": 30105600,
+        "cpu_core_equivalents": [
+          0.1533909178056706,
+          0.17266439458634372,
+          0.15270971374010206,
+          0.1727667310158472,
+          0.21139134116146452,
+          0.15319105263278052,
+          0.17236936590150342,
+          0.17175848356068368,
+          0.17252944867796854,
+          0.1334368706826935,
+          0.17233426937181914,
+          0.17236850012009095,
+          0.15301828954076876,
+          0.17104086495656295,
+          0.13391188855076644,
+          0.1530563296055775,
+          0.1721403946547589,
+          0.17124322205704673,
+          0.17100150441062728,
+          0.17204373840090273,
+          0.17150907597356782,
+          0.15334864636851658,
+          0.17195110685558967,
+          0.17246686126757996,
+          0.1909014775813974,
+          0.1724635518630111,
+          0.15290212275757997,
+          0.17155794830729268,
+          0.17192369702523305,
+          0.1713119211221735,
+          0.17108605894259357,
+          0.1719410816754332,
+          0.15241878696121638,
+          0.15291814969324719,
+          0.17207950111228593,
+          0.1529028195110127,
+          0.1913330669279622
+        ],
+        "scope": "sum of actual process tree RSS and CPU; shared pages may be counted per process"
+      },
+      "generator_resources": {
+        "measurement_valid": true,
+        "phase": "measurement",
+        "measurement_samples": 38,
+        "actual_span_seconds": 19.360361099243164,
+        "maximum_process_rss_sum_bytes": 1202900992,
+        "cpu_core_equivalents": [
+          2.398811136082432,
+          2.4618335127540485,
+          2.420042302931679,
+          2.343235950569494,
+          2.259392668914255,
+          2.184590223703716,
+          2.2126695648100627,
+          2.5307580963734733,
+          2.344440964462049,
+          2.5280609458126153,
+          2.355140397849811,
+          2.4294678059715644,
+          2.451253640193914,
+          2.544641569474649,
+          2.333736445011767,
+          2.3535481045453213,
+          2.434755590626887,
+          2.433071773388033,
+          2.5027823257288286,
+          2.4205355493998346,
+          2.5491288336269284,
+          2.4657017835675665,
+          2.37520303642399,
+          2.159639152122333,
+          2.2203174090325106,
+          2.199841560496856,
+          2.3616844676836632,
+          2.446398291028265,
+          2.6064115168061615,
+          2.395401328143813,
+          2.5217749639029328,
+          2.4004933962645354,
+          2.504593998315271,
+          2.3325566791505765,
+          2.388673337913665,
+          2.391998324696025,
+          2.6033101461603967
+        ],
+        "scope": "sum of actual process tree RSS and CPU; shared pages may be counted per process"
+      },
+      "post_leave_resources": {
+        "measurement_valid": true,
+        "phase": "post_leave",
+        "measurement_samples": 8,
+        "actual_span_seconds": 3.5033464431762695,
+        "maximum_process_rss_sum_bytes": 29339648,
+        "cpu_core_equivalents": [
+          0.0,
+          0.0,
+          0.0,
+          0.0,
+          0.0,
+          0.0,
+          0.0
+        ],
+        "scope": "sum of actual process tree RSS and CPU; shared pages may be counted per process"
+      }
+    }
+  ],
+  "current_quality_episode": {
+    "scope": "offline unchanged N8 strict-failure diagnosis; no perfect PCM or cause inference",
+    "source_report_sha256": "0f7046eb787739e7935b20110536880e659a7ef87e0556fa2b8611efcbe1dcb1",
+    "edge": "peer-6<-peer-3/mic",
+    "rows": [
+      {
+        "timestamp": 1791232158976.136,
+        "ssrc": 2868052009,
+        "packetsReceived": 1558,
+        "bytesReceived": 494340,
+        "packetsLost": 0,
+        "concealedSamples": 0,
+        "concealmentEvents": 0,
+        "silentConcealedSamples": 0,
+        "insertedSamplesForDeceleration": 0,
+        "removedSamplesForAcceleration": 0,
+        "jitter": 0.004,
+        "jitterBufferDelay": 15772.8,
+        "jitterBufferTargetDelay": 31180.8,
+        "jitterBufferMinimumDelay": 31180.8,
+        "jitterBufferEmittedCount": 1478400,
+        "totalSamplesReceived": 1478400,
+        "lastPacketReceivedTimestamp": 1791232158946.7542,
+        "sender": {
+          "timestamp": 1791232158976.092,
+          "ssrc": 2361226342,
+          "packetsSent": 1663,
+          "bytesSent": 522266,
+          "totalPacketSendDelay": 0.000128
+        }
+      },
+      {
+        "timestamp": 1791232159974.802,
+        "ssrc": 2868052009,
+        "packetsReceived": 1609,
+        "bytesReceived": 510711,
+        "packetsLost": 0,
+        "concealedSamples": 514,
+        "concealmentEvents": 1,
+        "silentConcealedSamples": 0,
+        "insertedSamplesForDeceleration": 0,
+        "removedSamplesForAcceleration": 0,
+        "jitter": 0.002,
+        "jitterBufferDelay": 16617.6,
+        "jitterBufferTargetDelay": 32140.8,
+        "jitterBufferMinimumDelay": 32140.8,
+        "jitterBufferEmittedCount": 1526400,
+        "totalSamplesReceived": 1526400,
+        "lastPacketReceivedTimestamp": 1791232159968.866,
+        "sender": {
+          "timestamp": 1791232159974.737,
+          "ssrc": 2361226342,
+          "packetsSent": 1714,
+          "bytesSent": 538637,
+          "totalPacketSendDelay": 0.000128
+        },
+        "deltas": {
+          "packetsReceived": 51,
+          "bytesReceived": 16371,
+          "packetsLost": 0,
+          "concealedSamples": 514,
+          "concealmentEvents": 1,
+          "silentConcealedSamples": 0,
+          "insertedSamplesForDeceleration": 0,
+          "removedSamplesForAcceleration": 0,
+          "jitterBufferDelay": 844.7999999999993,
+          "jitterBufferTargetDelay": 960.0,
+          "jitterBufferMinimumDelay": 960.0,
+          "jitterBufferEmittedCount": 48000,
+          "totalSamplesReceived": 48000
+        },
+        "delta_seconds": 0.998666015625,
+        "jitter_buffer_delta_mean_ms": {
+          "jitterBufferDelay": 17.599999999999984,
+          "jitterBufferTargetDelay": 20.0,
+          "jitterBufferMinimumDelay": 20.0
+        },
+        "sender_deltas": {
+          "packetsSent": 51,
+          "bytesSent": 16371,
+          "totalPacketSendDelay": 0.0
+        }
+      },
+      {
+        "timestamp": 1791232160975.957,
+        "ssrc": 2868052009,
+        "packetsReceived": 1659,
+        "bytesReceived": 526761,
+        "packetsLost": 0,
+        "concealedSamples": 514,
+        "concealmentEvents": 1,
+        "silentConcealedSamples": 0,
+        "insertedSamplesForDeceleration": 0,
+        "removedSamplesForAcceleration": 0,
+        "jitter": 0,
+        "jitterBufferDelay": 17577.6,
+        "jitterBufferTargetDelay": 33100.8,
+        "jitterBufferMinimumDelay": 33100.8,
+        "jitterBufferEmittedCount": 1574400,
+        "totalSamplesReceived": 1574400,
+        "lastPacketReceivedTimestamp": 1791232160970.908,
+        "sender": {
+          "timestamp": 1791232160975.907,
+          "ssrc": 2361226342,
+          "packetsSent": 1764,
+          "bytesSent": 554687,
+          "totalPacketSendDelay": 0.000128
+        },
+        "deltas": {
+          "packetsReceived": 50,
+          "bytesReceived": 16050,
+          "packetsLost": 0,
+          "concealedSamples": 0,
+          "concealmentEvents": 0,
+          "silentConcealedSamples": 0,
+          "insertedSamplesForDeceleration": 0,
+          "removedSamplesForAcceleration": 0,
+          "jitterBufferDelay": 960.0,
+          "jitterBufferTargetDelay": 960.0000000000036,
+          "jitterBufferMinimumDelay": 960.0000000000036,
+          "jitterBufferEmittedCount": 48000,
+          "totalSamplesReceived": 48000
+        },
+        "delta_seconds": 1.001155029296875,
+        "jitter_buffer_delta_mean_ms": {
+          "jitterBufferDelay": 20.0,
+          "jitterBufferTargetDelay": 20.000000000000078,
+          "jitterBufferMinimumDelay": 20.000000000000078
+        },
+        "sender_deltas": {
+          "packetsSent": 50,
+          "bytesSent": 16050,
+          "totalPacketSendDelay": 0.0
+        }
+      },
+      {
+        "timestamp": 1791232161975.829,
+        "ssrc": 2868052009,
+        "packetsReceived": 1712,
+        "bytesReceived": 542811,
+        "packetsLost": 0,
+        "concealedSamples": 514,
+        "concealmentEvents": 1,
+        "silentConcealedSamples": 0,
+        "insertedSamplesForDeceleration": 0,
+        "removedSamplesForAcceleration": 0,
+        "jitter": 0.001,
+        "jitterBufferDelay": 18537.6,
+        "jitterBufferTargetDelay": 34060.8,
+        "jitterBufferMinimumDelay": 34060.8,
+        "jitterBufferEmittedCount": 1622400,
+        "totalSamplesReceived": 1622400,
+        "lastPacketReceivedTimestamp": 1791232161973.287,
+        "sender": {
+          "timestamp": 1791232161975.778,
+          "ssrc": 2361226342,
+          "packetsSent": 1817,
+          "bytesSent": 570737,
+          "totalPacketSendDelay": 0.00014099999999999998
+        },
+        "deltas": {
+          "packetsReceived": 53,
+          "bytesReceived": 16050,
+          "packetsLost": 0,
+          "concealedSamples": 0,
+          "concealmentEvents": 0,
+          "silentConcealedSamples": 0,
+          "insertedSamplesForDeceleration": 0,
+          "removedSamplesForAcceleration": 0,
+          "jitterBufferDelay": 960.0,
+          "jitterBufferTargetDelay": 960.0,
+          "jitterBufferMinimumDelay": 960.0,
+          "jitterBufferEmittedCount": 48000,
+          "totalSamplesReceived": 48000
+        },
+        "delta_seconds": 0.9998720703125,
+        "jitter_buffer_delta_mean_ms": {
+          "jitterBufferDelay": 20.0,
+          "jitterBufferTargetDelay": 20.0,
+          "jitterBufferMinimumDelay": 20.0
+        },
+        "sender_deltas": {
+          "packetsSent": 53,
+          "bytesSent": 16050,
+          "totalPacketSendDelay": 1.299999999999999e-05
+        }
+      },
+      {
+        "timestamp": 1791232162975.894,
+        "ssrc": 2868052009,
+        "packetsReceived": 1762,
+        "bytesReceived": 558861,
+        "packetsLost": 0,
+        "concealedSamples": 514,
+        "concealmentEvents": 1,
+        "silentConcealedSamples": 0,
+        "insertedSamplesForDeceleration": 0,
+        "removedSamplesForAcceleration": 0,
+        "jitter": 0,
+        "jitterBufferDelay": 19497.6,
+        "jitterBufferTargetDelay": 35020.8,
+        "jitterBufferMinimumDelay": 35020.8,
+        "jitterBufferEmittedCount": 1670400,
+        "totalSamplesReceived": 1670400,
+        "lastPacketReceivedTimestamp": 1791232162975.251,
+        "sender": {
+          "timestamp": 1791232162975.852,
+          "ssrc": 2361226342,
+          "packetsSent": 1867,
+          "bytesSent": 586787,
+          "totalPacketSendDelay": 0.00014099999999999998
+        },
+        "deltas": {
+          "packetsReceived": 50,
+          "bytesReceived": 16050,
+          "packetsLost": 0,
+          "concealedSamples": 0,
+          "concealmentEvents": 0,
+          "silentConcealedSamples": 0,
+          "insertedSamplesForDeceleration": 0,
+          "removedSamplesForAcceleration": 0,
+          "jitterBufferDelay": 960.0,
+          "jitterBufferTargetDelay": 960.0,
+          "jitterBufferMinimumDelay": 960.0,
+          "jitterBufferEmittedCount": 48000,
+          "totalSamplesReceived": 48000
+        },
+        "delta_seconds": 1.00006494140625,
+        "jitter_buffer_delta_mean_ms": {
+          "jitterBufferDelay": 20.0,
+          "jitterBufferTargetDelay": 20.0,
+          "jitterBufferMinimumDelay": 20.0
+        },
+        "sender_deltas": {
+          "packetsSent": 50,
+          "bytesSent": 16050,
+          "totalPacketSendDelay": 0.0
+        }
+      },
+      {
+        "timestamp": 1791232163974.921,
+        "ssrc": 2868052009,
+        "packetsReceived": 1811,
+        "bytesReceived": 574590,
+        "packetsLost": 0,
+        "concealedSamples": 514,
+        "concealmentEvents": 1,
+        "silentConcealedSamples": 0,
+        "insertedSamplesForDeceleration": 0,
+        "removedSamplesForAcceleration": 0,
+        "jitter": 0.007,
+        "jitterBufferDelay": 20553.6,
+        "jitterBufferTargetDelay": 35980.8,
+        "jitterBufferMinimumDelay": 35980.8,
+        "jitterBufferEmittedCount": 1718400,
+        "totalSamplesReceived": 1718400,
+        "lastPacketReceivedTimestamp": 1791232163947.135,
+        "sender": {
+          "timestamp": 1791232163974.858,
+          "ssrc": 2361226342,
+          "packetsSent": 1916,
+          "bytesSent": 602516,
+          "totalPacketSendDelay": 0.00014099999999999998
+        },
+        "deltas": {
+          "packetsReceived": 49,
+          "bytesReceived": 15729,
+          "packetsLost": 0,
+          "concealedSamples": 0,
+          "concealmentEvents": 0,
+          "silentConcealedSamples": 0,
+          "insertedSamplesForDeceleration": 0,
+          "removedSamplesForAcceleration": 0,
+          "jitterBufferDelay": 1056.0,
+          "jitterBufferTargetDelay": 960.0,
+          "jitterBufferMinimumDelay": 960.0,
+          "jitterBufferEmittedCount": 48000,
+          "totalSamplesReceived": 48000
+        },
+        "delta_seconds": 0.99902685546875,
+        "jitter_buffer_delta_mean_ms": {
+          "jitterBufferDelay": 22.0,
+          "jitterBufferTargetDelay": 20.0,
+          "jitterBufferMinimumDelay": 20.0
+        },
+        "sender_deltas": {
+          "packetsSent": 49,
+          "bytesSent": 15729,
+          "totalPacketSendDelay": 0.0
+        }
+      },
+      {
+        "timestamp": 1791232164974.55,
+        "ssrc": 2868052009,
+        "packetsReceived": 1862,
+        "bytesReceived": 590961,
+        "packetsLost": 0,
+        "concealedSamples": 514,
+        "concealmentEvents": 1,
+        "silentConcealedSamples": 0,
+        "insertedSamplesForDeceleration": 0,
+        "removedSamplesForAcceleration": 0,
+        "jitter": 0.001,
+        "jitterBufferDelay": 21398.4,
+        "jitterBufferTargetDelay": 37286.4,
+        "jitterBufferMinimumDelay": 37286.4,
+        "jitterBufferEmittedCount": 1766400,
+        "totalSamplesReceived": 1766400,
+        "lastPacketReceivedTimestamp": 1791232164969.299,
+        "sender": {
+          "timestamp": 1791232164974.478,
+          "ssrc": 2361226342,
+          "packetsSent": 1967,
+          "bytesSent": 618887,
+          "totalPacketSendDelay": 0.00014099999999999998
+        },
+        "deltas": {
+          "packetsReceived": 51,
+          "bytesReceived": 16371,
+          "packetsLost": 0,
+          "concealedSamples": 0,
+          "concealmentEvents": 0,
+          "silentConcealedSamples": 0,
+          "insertedSamplesForDeceleration": 0,
+          "removedSamplesForAcceleration": 0,
+          "jitterBufferDelay": 844.8000000000029,
+          "jitterBufferTargetDelay": 1305.5999999999985,
+          "jitterBufferMinimumDelay": 1305.5999999999985,
+          "jitterBufferEmittedCount": 48000,
+          "totalSamplesReceived": 48000
+        },
+        "delta_seconds": 0.999629150390625,
+        "jitter_buffer_delta_mean_ms": {
+          "jitterBufferDelay": 17.60000000000006,
+          "jitterBufferTargetDelay": 27.19999999999997,
+          "jitterBufferMinimumDelay": 27.19999999999997
+        },
+        "sender_deltas": {
+          "packetsSent": 51,
+          "bytesSent": 16371,
+          "totalPacketSendDelay": 0.0
+        }
+      },
+      {
+        "timestamp": 1791232165974.805,
+        "ssrc": 2868052009,
+        "packetsReceived": 1912,
+        "bytesReceived": 607011,
+        "packetsLost": 0,
+        "concealedSamples": 514,
+        "concealmentEvents": 1,
+        "silentConcealedSamples": 0,
+        "insertedSamplesForDeceleration": 0,
+        "removedSamplesForAcceleration": 0,
+        "jitter": 0,
+        "jitterBufferDelay": 21878.4,
+        "jitterBufferTargetDelay": 39206.4,
+        "jitterBufferMinimumDelay": 39206.4,
+        "jitterBufferEmittedCount": 1814400,
+        "totalSamplesReceived": 1814400,
+        "lastPacketReceivedTimestamp": 1791232165971.4731,
+        "sender": {
+          "timestamp": 1791232165974.725,
+          "ssrc": 2361226342,
+          "packetsSent": 2017,
+          "bytesSent": 634937,
+          "totalPacketSendDelay": 0.00014099999999999998
+        },
+        "deltas": {
+          "packetsReceived": 50,
+          "bytesReceived": 16050,
+          "packetsLost": 0,
+          "concealedSamples": 0,
+          "concealmentEvents": 0,
+          "silentConcealedSamples": 0,
+          "insertedSamplesForDeceleration": 0,
+          "removedSamplesForAcceleration": 0,
+          "jitterBufferDelay": 480.0,
+          "jitterBufferTargetDelay": 1920.0,
+          "jitterBufferMinimumDelay": 1920.0,
+          "jitterBufferEmittedCount": 48000,
+          "totalSamplesReceived": 48000
+        },
+        "delta_seconds": 1.0002548828125,
+        "jitter_buffer_delta_mean_ms": {
+          "jitterBufferDelay": 10.0,
+          "jitterBufferTargetDelay": 40.0,
+          "jitterBufferMinimumDelay": 40.0
+        },
+        "sender_deltas": {
+          "packetsSent": 50,
+          "bytesSent": 16050,
+          "totalPacketSendDelay": 0.0
+        }
+      },
+      {
+        "timestamp": 1791232166974.701,
+        "ssrc": 2868052009,
+        "packetsReceived": 1965,
+        "bytesReceived": 623061,
+        "packetsLost": 0,
+        "concealedSamples": 514,
+        "concealmentEvents": 1,
+        "silentConcealedSamples": 0,
+        "insertedSamplesForDeceleration": 0,
+        "removedSamplesForAcceleration": 0,
+        "jitter": 0.001,
+        "jitterBufferDelay": 22742.4,
+        "jitterBufferTargetDelay": 40358.4,
+        "jitterBufferMinimumDelay": 40358.4,
+        "jitterBufferEmittedCount": 1862400,
+        "totalSamplesReceived": 1862400,
+        "lastPacketReceivedTimestamp": 1791232166973.643,
+        "sender": {
+          "timestamp": 1791232166974.617,
+          "ssrc": 2361226342,
+          "packetsSent": 2070,
+          "bytesSent": 650987,
+          "totalPacketSendDelay": 0.000159
+        },
+        "deltas": {
+          "packetsReceived": 53,
+          "bytesReceived": 16050,
+          "packetsLost": 0,
+          "concealedSamples": 0,
+          "concealmentEvents": 0,
+          "silentConcealedSamples": 0,
+          "insertedSamplesForDeceleration": 0,
+          "removedSamplesForAcceleration": 0,
+          "jitterBufferDelay": 864.0,
+          "jitterBufferTargetDelay": 1152.0,
+          "jitterBufferMinimumDelay": 1152.0,
+          "jitterBufferEmittedCount": 48000,
+          "totalSamplesReceived": 48000
+        },
+        "delta_seconds": 0.99989599609375,
+        "jitter_buffer_delta_mean_ms": {
+          "jitterBufferDelay": 18.0,
+          "jitterBufferTargetDelay": 24.0,
+          "jitterBufferMinimumDelay": 24.0
+        },
+        "sender_deltas": {
+          "packetsSent": 53,
+          "bytesSent": 16050,
+          "totalPacketSendDelay": 1.8000000000000004e-05
+        }
+      },
+      {
+        "timestamp": 1791232167975.576,
+        "ssrc": 2868052009,
+        "packetsReceived": 2015,
+        "bytesReceived": 639111,
+        "packetsLost": 0,
+        "concealedSamples": 514,
+        "concealmentEvents": 1,
+        "silentConcealedSamples": 0,
+        "insertedSamplesForDeceleration": 0,
+        "removedSamplesForAcceleration": 0,
+        "jitter": 0,
+        "jitterBufferDelay": 23702.4,
+        "jitterBufferTargetDelay": 41318.4,
+        "jitterBufferMinimumDelay": 41318.4,
+        "jitterBufferEmittedCount": 1910400,
+        "totalSamplesReceived": 1910400,
+        "lastPacketReceivedTimestamp": 1791232167975.544,
+        "sender": {
+          "timestamp": 1791232167975.525,
+          "ssrc": 2361226342,
+          "packetsSent": 2120,
+          "bytesSent": 667037,
+          "totalPacketSendDelay": 0.000159
+        },
+        "deltas": {
+          "packetsReceived": 50,
+          "bytesReceived": 16050,
+          "packetsLost": 0,
+          "concealedSamples": 0,
+          "concealmentEvents": 0,
+          "silentConcealedSamples": 0,
+          "insertedSamplesForDeceleration": 0,
+          "removedSamplesForAcceleration": 0,
+          "jitterBufferDelay": 960.0,
+          "jitterBufferTargetDelay": 960.0,
+          "jitterBufferMinimumDelay": 960.0,
+          "jitterBufferEmittedCount": 48000,
+          "totalSamplesReceived": 48000
+        },
+        "delta_seconds": 1.000875,
+        "jitter_buffer_delta_mean_ms": {
+          "jitterBufferDelay": 20.0,
+          "jitterBufferTargetDelay": 20.0,
+          "jitterBufferMinimumDelay": 20.0
+        },
+        "sender_deltas": {
+          "packetsSent": 50,
+          "bytesSent": 16050,
+          "totalPacketSendDelay": 0.0
+        }
+      },
+      {
+        "timestamp": 1791232168974.508,
+        "ssrc": 2868052009,
+        "packetsReceived": 2064,
+        "bytesReceived": 654840,
+        "packetsLost": 0,
+        "concealedSamples": 514,
+        "concealmentEvents": 1,
+        "silentConcealedSamples": 0,
+        "insertedSamplesForDeceleration": 0,
+        "removedSamplesForAcceleration": 0,
+        "jitter": 0.008,
+        "jitterBufferDelay": 24796.8,
+        "jitterBufferTargetDelay": 42278.4,
+        "jitterBufferMinimumDelay": 42278.4,
+        "jitterBufferEmittedCount": 1958400,
+        "totalSamplesReceived": 1958400,
+        "lastPacketReceivedTimestamp": 1791232168947.563,
+        "sender": {
+          "timestamp": 1791232168974.411,
+          "ssrc": 2361226342,
+          "packetsSent": 2169,
+          "bytesSent": 682766,
+          "totalPacketSendDelay": 0.000159
+        },
+        "deltas": {
+          "packetsReceived": 49,
+          "bytesReceived": 15729,
+          "packetsLost": 0,
+          "concealedSamples": 0,
+          "concealmentEvents": 0,
+          "silentConcealedSamples": 0,
+          "insertedSamplesForDeceleration": 0,
+          "removedSamplesForAcceleration": 0,
+          "jitterBufferDelay": 1094.3999999999978,
+          "jitterBufferTargetDelay": 960.0,
+          "jitterBufferMinimumDelay": 960.0,
+          "jitterBufferEmittedCount": 48000,
+          "totalSamplesReceived": 48000
+        },
+        "delta_seconds": 0.99893212890625,
+        "jitter_buffer_delta_mean_ms": {
+          "jitterBufferDelay": 22.799999999999955,
+          "jitterBufferTargetDelay": 20.0,
+          "jitterBufferMinimumDelay": 20.0
+        },
+        "sender_deltas": {
+          "packetsSent": 49,
+          "bytesSent": 15729,
+          "totalPacketSendDelay": 0.0
+        }
+      },
+      {
+        "timestamp": 1791232169974.711,
+        "ssrc": 2868052009,
+        "packetsReceived": 2115,
+        "bytesReceived": 671211,
+        "packetsLost": 0,
+        "concealedSamples": 514,
+        "concealmentEvents": 1,
+        "silentConcealedSamples": 0,
+        "insertedSamplesForDeceleration": 0,
+        "removedSamplesForAcceleration": 0,
+        "jitter": 0,
+        "jitterBufferDelay": 25785.6,
+        "jitterBufferTargetDelay": 43238.4,
+        "jitterBufferMinimumDelay": 43238.4,
+        "jitterBufferEmittedCount": 2006400,
+        "totalSamplesReceived": 2006400,
+        "lastPacketReceivedTimestamp": 1791232169969.68,
+        "sender": {
+          "timestamp": 1791232169974.627,
+          "ssrc": 2361226342,
+          "packetsSent": 2220,
+          "bytesSent": 699137,
+          "totalPacketSendDelay": 0.000159
+        },
+        "deltas": {
+          "packetsReceived": 51,
+          "bytesReceived": 16371,
+          "packetsLost": 0,
+          "concealedSamples": 0,
+          "concealmentEvents": 0,
+          "silentConcealedSamples": 0,
+          "insertedSamplesForDeceleration": 0,
+          "removedSamplesForAcceleration": 0,
+          "jitterBufferDelay": 988.7999999999993,
+          "jitterBufferTargetDelay": 960.0,
+          "jitterBufferMinimumDelay": 960.0,
+          "jitterBufferEmittedCount": 48000,
+          "totalSamplesReceived": 48000
+        },
+        "delta_seconds": 1.000202880859375,
+        "jitter_buffer_delta_mean_ms": {
+          "jitterBufferDelay": 20.599999999999987,
+          "jitterBufferTargetDelay": 20.0,
+          "jitterBufferMinimumDelay": 20.0
+        },
+        "sender_deltas": {
+          "packetsSent": 51,
+          "bytesSent": 16371,
+          "totalPacketSendDelay": 0.0
+        }
+      },
+      {
+        "timestamp": 1791232170974.543,
+        "ssrc": 2868052009,
+        "packetsReceived": 2165,
+        "bytesReceived": 687261,
+        "packetsLost": 0,
+        "concealedSamples": 514,
+        "concealmentEvents": 1,
+        "silentConcealedSamples": 0,
+        "insertedSamplesForDeceleration": 0,
+        "removedSamplesForAcceleration": 0,
+        "jitter": 0,
+        "jitterBufferDelay": 26745.6,
+        "jitterBufferTargetDelay": 44198.4,
+        "jitterBufferMinimumDelay": 44198.4,
+        "jitterBufferEmittedCount": 2054400,
+        "totalSamplesReceived": 2054400,
+        "lastPacketReceivedTimestamp": 1791232170971.729,
+        "sender": {
+          "timestamp": 1791232170974.479,
+          "ssrc": 2361226342,
+          "packetsSent": 2270,
+          "bytesSent": 715187,
+          "totalPacketSendDelay": 0.000159
+        },
+        "deltas": {
+          "packetsReceived": 50,
+          "bytesReceived": 16050,
+          "packetsLost": 0,
+          "concealedSamples": 0,
+          "concealmentEvents": 0,
+          "silentConcealedSamples": 0,
+          "insertedSamplesForDeceleration": 0,
+          "removedSamplesForAcceleration": 0,
+          "jitterBufferDelay": 960.0,
+          "jitterBufferTargetDelay": 960.0,
+          "jitterBufferMinimumDelay": 960.0,
+          "jitterBufferEmittedCount": 48000,
+          "totalSamplesReceived": 48000
+        },
+        "delta_seconds": 0.99983203125,
+        "jitter_buffer_delta_mean_ms": {
+          "jitterBufferDelay": 20.0,
+          "jitterBufferTargetDelay": 20.0,
+          "jitterBufferMinimumDelay": 20.0
+        },
+        "sender_deltas": {
+          "packetsSent": 50,
+          "bytesSent": 16050,
+          "totalPacketSendDelay": 0.0
+        }
+      },
+      {
+        "timestamp": 1791232171975.628,
+        "ssrc": 2868052009,
+        "packetsReceived": 2218,
+        "bytesReceived": 703311,
+        "packetsLost": 0,
+        "concealedSamples": 514,
+        "concealmentEvents": 1,
+        "silentConcealedSamples": 0,
+        "insertedSamplesForDeceleration": 0,
+        "removedSamplesForAcceleration": 0,
+        "jitter": 0.001,
+        "jitterBufferDelay": 27705.6,
+        "jitterBufferTargetDelay": 45158.4,
+        "jitterBufferMinimumDelay": 45158.4,
+        "jitterBufferEmittedCount": 2102400,
+        "totalSamplesReceived": 2102400,
+        "lastPacketReceivedTimestamp": 1791232171973.96,
+        "sender": {
+          "timestamp": 1791232171975.585,
+          "ssrc": 2361226342,
+          "packetsSent": 2323,
+          "bytesSent": 731237,
+          "totalPacketSendDelay": 0.000175
+        },
+        "deltas": {
+          "packetsReceived": 53,
+          "bytesReceived": 16050,
+          "packetsLost": 0,
+          "concealedSamples": 0,
+          "concealmentEvents": 0,
+          "silentConcealedSamples": 0,
+          "insertedSamplesForDeceleration": 0,
+          "removedSamplesForAcceleration": 0,
+          "jitterBufferDelay": 960.0,
+          "jitterBufferTargetDelay": 960.0,
+          "jitterBufferMinimumDelay": 960.0,
+          "jitterBufferEmittedCount": 48000,
+          "totalSamplesReceived": 48000
+        },
+        "delta_seconds": 1.0010849609375,
+        "jitter_buffer_delta_mean_ms": {
+          "jitterBufferDelay": 20.0,
+          "jitterBufferTargetDelay": 20.0,
+          "jitterBufferMinimumDelay": 20.0
+        },
+        "sender_deltas": {
+          "packetsSent": 53,
+          "bytesSent": 16050,
+          "totalPacketSendDelay": 1.600000000000001e-05
+        }
+      },
+      {
+        "timestamp": 1791232172975.48,
+        "ssrc": 2868052009,
+        "packetsReceived": 2267,
+        "bytesReceived": 719040,
+        "packetsLost": 0,
+        "concealedSamples": 514,
+        "concealmentEvents": 1,
+        "silentConcealedSamples": 0,
+        "insertedSamplesForDeceleration": 0,
+        "removedSamplesForAcceleration": 0,
+        "jitter": 0,
+        "jitterBufferDelay": 28665.6,
+        "jitterBufferTargetDelay": 46118.4,
+        "jitterBufferMinimumDelay": 46118.4,
+        "jitterBufferEmittedCount": 2150400,
+        "totalSamplesReceived": 2150400,
+        "lastPacketReceivedTimestamp": 1791232172955.885,
+        "sender": {
+          "timestamp": 1791232172975.399,
+          "ssrc": 2361226342,
+          "packetsSent": 2372,
+          "bytesSent": 746966,
+          "totalPacketSendDelay": 0.000175
+        },
+        "deltas": {
+          "packetsReceived": 49,
+          "bytesReceived": 15729,
+          "packetsLost": 0,
+          "concealedSamples": 0,
+          "concealmentEvents": 0,
+          "silentConcealedSamples": 0,
+          "insertedSamplesForDeceleration": 0,
+          "removedSamplesForAcceleration": 0,
+          "jitterBufferDelay": 960.0,
+          "jitterBufferTargetDelay": 960.0,
+          "jitterBufferMinimumDelay": 960.0,
+          "jitterBufferEmittedCount": 48000,
+          "totalSamplesReceived": 48000
+        },
+        "delta_seconds": 0.99985205078125,
+        "jitter_buffer_delta_mean_ms": {
+          "jitterBufferDelay": 20.0,
+          "jitterBufferTargetDelay": 20.0,
+          "jitterBufferMinimumDelay": 20.0
+        },
+        "sender_deltas": {
+          "packetsSent": 49,
+          "bytesSent": 15729,
+          "totalPacketSendDelay": 0.0
+        }
+      },
+      {
+        "timestamp": 1791232173975.607,
+        "ssrc": 2868052009,
+        "packetsReceived": 2318,
+        "bytesReceived": 735411,
+        "packetsLost": 0,
+        "concealedSamples": 514,
+        "concealmentEvents": 1,
+        "silentConcealedSamples": 0,
+        "insertedSamplesForDeceleration": 0,
+        "removedSamplesForAcceleration": 0,
+        "jitter": 0.006,
+        "jitterBufferDelay": 29769.6,
+        "jitterBufferTargetDelay": 47078.4,
+        "jitterBufferMinimumDelay": 47078.4,
+        "jitterBufferEmittedCount": 2198400,
+        "totalSamplesReceived": 2198400,
+        "lastPacketReceivedTimestamp": 1791232173968.074,
+        "sender": {
+          "timestamp": 1791232173975.529,
+          "ssrc": 2361226342,
+          "packetsSent": 2423,
+          "bytesSent": 763337,
+          "totalPacketSendDelay": 0.000175
+        },
+        "deltas": {
+          "packetsReceived": 51,
+          "bytesReceived": 16371,
+          "packetsLost": 0,
+          "concealedSamples": 0,
+          "concealmentEvents": 0,
+          "silentConcealedSamples": 0,
+          "insertedSamplesForDeceleration": 0,
+          "removedSamplesForAcceleration": 0,
+          "jitterBufferDelay": 1104.0,
+          "jitterBufferTargetDelay": 960.0,
+          "jitterBufferMinimumDelay": 960.0,
+          "jitterBufferEmittedCount": 48000,
+          "totalSamplesReceived": 48000
+        },
+        "delta_seconds": 1.000126953125,
+        "jitter_buffer_delta_mean_ms": {
+          "jitterBufferDelay": 23.0,
+          "jitterBufferTargetDelay": 20.0,
+          "jitterBufferMinimumDelay": 20.0
+        },
+        "sender_deltas": {
+          "packetsSent": 51,
+          "bytesSent": 16371,
+          "totalPacketSendDelay": 0.0
+        }
+      },
+      {
+        "timestamp": 1791232174975.036,
+        "ssrc": 2868052009,
+        "packetsReceived": 2368,
+        "bytesReceived": 751461,
+        "packetsLost": 0,
+        "concealedSamples": 514,
+        "concealmentEvents": 1,
+        "silentConcealedSamples": 0,
+        "insertedSamplesForDeceleration": 0,
+        "removedSamplesForAcceleration": 0,
+        "jitter": 0,
+        "jitterBufferDelay": 30729.6,
+        "jitterBufferTargetDelay": 48038.4,
+        "jitterBufferMinimumDelay": 48038.4,
+        "jitterBufferEmittedCount": 2246400,
+        "totalSamplesReceived": 2246400,
+        "lastPacketReceivedTimestamp": 1791232174970.091,
+        "sender": {
+          "timestamp": 1791232174974.959,
+          "ssrc": 2361226342,
+          "packetsSent": 2473,
+          "bytesSent": 779387,
+          "totalPacketSendDelay": 0.000175
+        },
+        "deltas": {
+          "packetsReceived": 50,
+          "bytesReceived": 16050,
+          "packetsLost": 0,
+          "concealedSamples": 0,
+          "concealmentEvents": 0,
+          "silentConcealedSamples": 0,
+          "insertedSamplesForDeceleration": 0,
+          "removedSamplesForAcceleration": 0,
+          "jitterBufferDelay": 960.0,
+          "jitterBufferTargetDelay": 960.0,
+          "jitterBufferMinimumDelay": 960.0,
+          "jitterBufferEmittedCount": 48000,
+          "totalSamplesReceived": 48000
+        },
+        "delta_seconds": 0.999428955078125,
+        "jitter_buffer_delta_mean_ms": {
+          "jitterBufferDelay": 20.0,
+          "jitterBufferTargetDelay": 20.0,
+          "jitterBufferMinimumDelay": 20.0
+        },
+        "sender_deltas": {
+          "packetsSent": 50,
+          "bytesSent": 16050,
+          "totalPacketSendDelay": 0.0
+        }
+      },
+      {
+        "timestamp": 1791232175975.659,
+        "ssrc": 2868052009,
+        "packetsReceived": 2418,
+        "bytesReceived": 767511,
+        "packetsLost": 0,
+        "concealedSamples": 514,
+        "concealmentEvents": 1,
+        "silentConcealedSamples": 0,
+        "insertedSamplesForDeceleration": 0,
+        "removedSamplesForAcceleration": 0,
+        "jitter": 0,
+        "jitterBufferDelay": 31689.6,
+        "jitterBufferTargetDelay": 48998.4,
+        "jitterBufferMinimumDelay": 48998.4,
+        "jitterBufferEmittedCount": 2294400,
+        "totalSamplesReceived": 2294400,
+        "lastPacketReceivedTimestamp": 1791232175972.187,
+        "sender": {
+          "timestamp": 1791232175975.606,
+          "ssrc": 2361226342,
+          "packetsSent": 2523,
+          "bytesSent": 795437,
+          "totalPacketSendDelay": 0.000175
+        },
+        "deltas": {
+          "packetsReceived": 50,
+          "bytesReceived": 16050,
+          "packetsLost": 0,
+          "concealedSamples": 0,
+          "concealmentEvents": 0,
+          "silentConcealedSamples": 0,
+          "insertedSamplesForDeceleration": 0,
+          "removedSamplesForAcceleration": 0,
+          "jitterBufferDelay": 960.0,
+          "jitterBufferTargetDelay": 960.0,
+          "jitterBufferMinimumDelay": 960.0,
+          "jitterBufferEmittedCount": 48000,
+          "totalSamplesReceived": 48000
+        },
+        "delta_seconds": 1.000623046875,
+        "jitter_buffer_delta_mean_ms": {
+          "jitterBufferDelay": 20.0,
+          "jitterBufferTargetDelay": 20.0,
+          "jitterBufferMinimumDelay": 20.0
+        },
+        "sender_deltas": {
+          "packetsSent": 50,
+          "bytesSent": 16050,
+          "totalPacketSendDelay": 0.0
+        }
+      },
+      {
+        "timestamp": 1791232176974.574,
+        "ssrc": 2868052009,
+        "packetsReceived": 2471,
+        "bytesReceived": 783561,
+        "packetsLost": 0,
+        "concealedSamples": 514,
+        "concealmentEvents": 1,
+        "silentConcealedSamples": 0,
+        "insertedSamplesForDeceleration": 0,
+        "removedSamplesForAcceleration": 0,
+        "jitter": 0.001,
+        "jitterBufferDelay": 32649.6,
+        "jitterBufferTargetDelay": 49958.4,
+        "jitterBufferMinimumDelay": 49958.4,
+        "jitterBufferEmittedCount": 2342400,
+        "totalSamplesReceived": 2342400,
+        "lastPacketReceivedTimestamp": 1791232176974.427,
+        "sender": {
+          "timestamp": 1791232176974.518,
+          "ssrc": 2361226342,
+          "packetsSent": 2576,
+          "bytesSent": 811487,
+          "totalPacketSendDelay": 0.00018899999999999999
+        },
+        "deltas": {
+          "packetsReceived": 53,
+          "bytesReceived": 16050,
+          "packetsLost": 0,
+          "concealedSamples": 0,
+          "concealmentEvents": 0,
+          "silentConcealedSamples": 0,
+          "insertedSamplesForDeceleration": 0,
+          "removedSamplesForAcceleration": 0,
+          "jitterBufferDelay": 960.0,
+          "jitterBufferTargetDelay": 960.0,
+          "jitterBufferMinimumDelay": 960.0,
+          "jitterBufferEmittedCount": 48000,
+          "totalSamplesReceived": 48000
+        },
+        "delta_seconds": 0.9989150390625,
+        "jitter_buffer_delta_mean_ms": {
+          "jitterBufferDelay": 20.0,
+          "jitterBufferTargetDelay": 20.0,
+          "jitterBufferMinimumDelay": 20.0
+        },
+        "sender_deltas": {
+          "packetsSent": 53,
+          "bytesSent": 16050,
+          "totalPacketSendDelay": 1.3999999999999988e-05
+        }
+      },
+      {
+        "timestamp": 1791232177975.259,
+        "ssrc": 2868052009,
+        "packetsReceived": 2520,
+        "bytesReceived": 799290,
+        "packetsLost": 0,
+        "concealedSamples": 514,
+        "concealmentEvents": 1,
+        "silentConcealedSamples": 0,
+        "insertedSamplesForDeceleration": 0,
+        "removedSamplesForAcceleration": 0,
+        "jitter": 0,
+        "jitterBufferDelay": 33609.6,
+        "jitterBufferTargetDelay": 50918.4,
+        "jitterBufferMinimumDelay": 50918.4,
+        "jitterBufferEmittedCount": 2390400,
+        "totalSamplesReceived": 2390400,
+        "lastPacketReceivedTimestamp": 1791232177956.2961,
+        "sender": {
+          "timestamp": 1791232177975.16,
+          "ssrc": 2361226342,
+          "packetsSent": 2625,
+          "bytesSent": 827216,
+          "totalPacketSendDelay": 0.00018899999999999999
+        },
+        "deltas": {
+          "packetsReceived": 49,
+          "bytesReceived": 15729,
+          "packetsLost": 0,
+          "concealedSamples": 0,
+          "concealmentEvents": 0,
+          "silentConcealedSamples": 0,
+          "insertedSamplesForDeceleration": 0,
+          "removedSamplesForAcceleration": 0,
+          "jitterBufferDelay": 960.0,
+          "jitterBufferTargetDelay": 960.0,
+          "jitterBufferMinimumDelay": 960.0,
+          "jitterBufferEmittedCount": 48000,
+          "totalSamplesReceived": 48000
+        },
+        "delta_seconds": 1.00068505859375,
+        "jitter_buffer_delta_mean_ms": {
+          "jitterBufferDelay": 20.0,
+          "jitterBufferTargetDelay": 20.0,
+          "jitterBufferMinimumDelay": 20.0
+        },
+        "sender_deltas": {
+          "packetsSent": 49,
+          "bytesSent": 15729,
+          "totalPacketSendDelay": 0.0
+        }
+      },
+      {
+        "timestamp": 1791232178975.66,
+        "ssrc": 2868052009,
+        "packetsReceived": 2571,
+        "bytesReceived": 815661,
+        "packetsLost": 0,
+        "concealedSamples": 514,
+        "concealmentEvents": 1,
+        "silentConcealedSamples": 0,
+        "insertedSamplesForDeceleration": 0,
+        "removedSamplesForAcceleration": 0,
+        "jitter": 0.003,
+        "jitterBufferDelay": 34704,
+        "jitterBufferTargetDelay": 51878.4,
+        "jitterBufferMinimumDelay": 51878.4,
+        "jitterBufferEmittedCount": 2438400,
+        "totalSamplesReceived": 2438400,
+        "lastPacketReceivedTimestamp": 1791232178968.574,
+        "sender": {
+          "timestamp": 1791232178975.613,
+          "ssrc": 2361226342,
+          "packetsSent": 2676,
+          "bytesSent": 843587,
+          "totalPacketSendDelay": 0.00018899999999999999
+        },
+        "deltas": {
+          "packetsReceived": 51,
+          "bytesReceived": 16371,
+          "packetsLost": 0,
+          "concealedSamples": 0,
+          "concealmentEvents": 0,
+          "silentConcealedSamples": 0,
+          "insertedSamplesForDeceleration": 0,
+          "removedSamplesForAcceleration": 0,
+          "jitterBufferDelay": 1094.4000000000015,
+          "jitterBufferTargetDelay": 960.0,
+          "jitterBufferMinimumDelay": 960.0,
+          "jitterBufferEmittedCount": 48000,
+          "totalSamplesReceived": 48000
+        },
+        "delta_seconds": 1.00040087890625,
+        "jitter_buffer_delta_mean_ms": {
+          "jitterBufferDelay": 22.800000000000033,
+          "jitterBufferTargetDelay": 20.0,
+          "jitterBufferMinimumDelay": 20.0
+        },
+        "sender_deltas": {
+          "packetsSent": 51,
+          "bytesSent": 16371,
+          "totalPacketSendDelay": 0.0
+        }
+      }
+    ],
+    "native_video_failure": {
+      "error": "video source missed frame deadline",
+      "running": false,
+      "source_policy_valid": false
+    }
+  }
+}
