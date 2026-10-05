@@ -2,6 +2,7 @@
 
 import { useState, type ReactNode } from "react";
 import "./quality.css";
+import { playCallSound } from "./callSounds.ts";
 
 import {
   AUDIO_QUALITY,
@@ -334,6 +335,47 @@ export function MediaSettingsForm({
             Änderungen gelten beim nächsten Start und werden, soweit
             unterstützt, auch auf laufende Streams angewendet.
           </p>
+        </fieldset>
+      )}
+      {(showAudio || showNotifications) && (
+        <fieldset className="flex flex-col gap-2">
+          <legend className="text-sm font-semibold text-neutral-800 dark:text-neutral-200">
+            Call-Sounds
+          </legend>
+          <Toggle
+            id="call-sounds"
+            label="Signaltöne im Call"
+            checked={settings.callSounds}
+            onChange={(callSounds) => settings.patch({ callSounds })}
+          />
+          <p className="text-sm text-neutral-600 dark:text-neutral-400">
+            Kurze Töne beim Beitreten und Verlassen sowie für dein Mikrofon und
+            Taubstellen. Wenn du taubgestellt bist, bleiben Teilnehmer-Töne
+            stumm.
+          </p>
+          <Slider
+            id="call-sound-volume"
+            label="Lautstärke der Signaltöne"
+            min={0}
+            max={1}
+            step={0.05}
+            value={settings.callSoundVolume}
+            suffix={`${Math.round(settings.callSoundVolume * 100)} %`}
+            onChange={(callSoundVolume) => settings.patch({ callSoundVolume })}
+            hint="Nutzt deinen gewählten Lautsprecher und die Wiedergabelautstärke."
+          />
+          <button
+            type="button"
+            className="self-start rounded border border-neutral-300 px-3 py-2 text-sm font-medium text-neutral-800 hover:bg-neutral-100 disabled:opacity-50 dark:border-neutral-600 dark:text-neutral-200 dark:hover:bg-neutral-800"
+            disabled={
+              !settings.callSounds ||
+              settings.callSoundVolume === 0 ||
+              settings.outputVolume === 0
+            }
+            onClick={() => playCallSound("join")}
+          >
+            Testton abspielen
+          </button>
         </fieldset>
       )}
       {showNotifications && (
