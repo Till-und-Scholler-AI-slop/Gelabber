@@ -203,6 +203,7 @@ export function createMicrophoneComparison(
             callbacks.clips({ before: urls.before, after: urls.after });
         };
         recorder.onerror = () => {
+          if (stopped || epoch !== clipEpoch) return;
           endRecording();
           clearClips();
           callbacks.state({
