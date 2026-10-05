@@ -3898,6 +3898,22 @@ describe("display-source audio", () => {
     return env;
   }
 
+  function layeredSenders(pc: FakePeer) {
+    vi.stubGlobal("RTCRtpSender", {
+      getCapabilities: () => ({ codecs: [{ mimeType: "video/VP8" }] }),
+    });
+    pc.addTransceiver = (kind) => {
+      if (typeof kind === "string") return;
+      const sender = pc.addTrack(kind),
+        params = sender.getParameters!;
+      sender.getParameters = () => ({
+        ...params(),
+        encodings: [{ rid: "q" }, { rid: "f" }],
+      });
+      return { sender };
+    };
+  }
+
   it("waits for a v3 source detach before reusing its sender for a fresh capture", async () => {
     const env = await joined({ mediaVersion: 3 });
     toggleCamera();
@@ -3976,6 +3992,115 @@ describe("display-source audio", () => {
     expect(
       useVoice.getState().localCamera?.getVideoTracks()[0]?.readyState,
     ).toBe("live");
+  });
+
+  it("waits for rejected-publish detach and retains a valid q/f sender for retry", async () => {
+    const env = await joined({ mediaVersion: 3 });
+    layeredSenders(env.peers[0]!);
+    toggleShare();
+    await vi.waitFor(() =>
+      expect(env.peers[0]?.signalingState).toBe("have-local-offer"),
+    );
+    const pc = env.peers[0]!,
+      sender = pc.senders.find((s) => s.track?.kind === "video")!,
+      old = sender.track!;
+    const params = sender.getParameters!;
+    sender.getParameters = () => ({
+      ...params(),
+      encodings: [{ rid: "q" }, { rid: "f" }],
+    });
+    const replace = sender.replaceTrack!.bind(sender),
+      remove = vi.spyOn(pc, "removeTrack");
+    let release!: () => void;
+    const held = new Promise<void>((resolve) => {
+      release = resolve;
+    });
+    sender.replaceTrack = async (track) => {
+      if (track === null) await held;
+      await replace(track);
+    };
+    const count = env.mediaSent.filter(
+      (f) => f.op === "p" && f.k === "s",
+    ).length;
+    try {
+      env.emitMedia({ op: "err", e: "negotiation_failed" });
+      await vi.waitFor(() => expect(useVoice.getState().sharing).toBe(false));
+      expect(old.readyState).toBe("ended");
+      expect(env.mediaSent).toContainEqual(
+        expect.objectContaining({ op: "u", k: "s" }),
+      );
+      toggleShare();
+      await vi.waitFor(() =>
+        expect(
+          useVoice.getState().localScreen?.getVideoTracks()[0]?.id,
+        ).not.toBe(old.id),
+      );
+      pc.onnegotiationneeded?.();
+      expect(
+        env.mediaSent.filter((f) => f.op === "p" && f.k === "s"),
+      ).toHaveLength(count);
+      expect(pc.signalingState).toBe("stable");
+      release();
+      await vi.waitFor(() =>
+        expect(sender.track).toBe(
+          useVoice.getState().localScreen!.getVideoTracks()[0],
+        ),
+      );
+      await vi.waitFor(() =>
+        expect(pc.signalingState).toBe("have-local-offer"),
+      );
+      expect(remove).not.toHaveBeenCalled();
+    } finally {
+      release();
+    }
+  });
+
+  it("retires a rollback-narrowed q-only sender before the next v3 publish", async () => {
+    const env = await joined({ mediaVersion: 3 });
+    layeredSenders(env.peers[0]!);
+    toggleShare();
+    await vi.waitFor(() =>
+      expect(env.peers[0]?.signalingState).toBe("have-local-offer"),
+    );
+    const pc = env.peers[0]!,
+      old = pc.senders.find((s) => s.track?.kind === "video")!,
+      params = old.getParameters!;
+    old.getParameters = () => ({ ...params(), encodings: [{ rid: "q" }] });
+    const remove = vi.spyOn(pc, "removeTrack");
+    env.emitMedia({ op: "err", e: "negotiation_failed" });
+    await vi.waitFor(() => expect(useVoice.getState().sharing).toBe(false));
+    await vi.waitFor(() => expect(remove).toHaveBeenCalledWith(old));
+    toggleShare();
+    await vi.waitFor(() => expect(pc.signalingState).toBe("have-local-offer"));
+    const current = pc.senders.find((s) => s.track?.kind === "video");
+    expect(current).toBeTruthy();
+    expect(current).not.toBe(old);
+    expect(current?.track?.readyState).toBe("live");
+    expect(pc.audio?.readyState).toBe("live");
+  });
+
+  it("retires a layered sender stopped before its unconfirmed offer rolls back", async () => {
+    const env = await joined({ mediaVersion: 3 }),
+      pc = env.peers[0]!;
+    layeredSenders(pc);
+    toggleShare();
+    await vi.waitFor(() => expect(pc.signalingState).toBe("have-local-offer"));
+    const old = pc.senders.find((s) => s.track?.kind === "video")!,
+      params = old.getParameters!;
+    toggleShare();
+    await vi.waitFor(() => expect(old.track).toBeNull());
+    env.emitMedia({ op: "err", e: "negotiation_failed" });
+    await vi.waitFor(() => expect(pc.signalingState).toBe("stable"));
+    old.getParameters = () => ({ ...params(), encodings: [{ rid: "q" }] });
+    toggleShare();
+    await vi.waitFor(() => expect(pc.signalingState).toBe("have-local-offer"));
+    const current = pc.senders.find((s) => s.track?.kind === "video");
+    expect(current).toBeTruthy();
+    expect(current).not.toBe(old);
+    expect(
+      current?.getParameters?.().encodings.map((encoding) => encoding.rid),
+    ).toEqual(["q", "f"]);
+    expect(pc.audio?.readyState).toBe("live");
   });
 
   it("defers other-source and event offers until a v3 detach is complete", async () => {

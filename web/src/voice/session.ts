@@ -157,6 +157,7 @@ export const useVoice = create<VoiceState>(() => ({ ...idle }));
 let preDeafenMuted = false;
 
 export type RtpEncodingParameters = {
+  rid?: string;
   maxBitrate?: number;
   maxFramerate?: number;
   priority?: MediaPriority;
@@ -370,6 +371,7 @@ let offeredPublish: PublishIdentity[] = [];
 const publisherTracks = new Map<RtpSender, PublishIdentity>();
 /** Native addTrack does not reuse an m-line that has already sent media. */
 const videoSenders = new Map<PublishKind, RtpSender>();
+const layeredVideoSenders = new WeakSet<RtpSender>();
 const pendingVideoDetach = new Map<RtpSender, Promise<void>>();
 /** Cleanup of a rejected publish must not enqueue a replacement offer. */
 let discardingPublish = false;
@@ -2573,7 +2575,13 @@ function dropUnsettledPublish(): PublishIdentity[] {
   for (const [sender, identity] of publisherTracks) {
     if (!pending.includes(identity)) continue;
     discardedKinds.add(identity.kind);
-    pc?.removeTrack?.(sender);
+    if (pc)
+      detachSourceSender(
+        pc,
+        sender,
+        sender.track,
+        identity.kind !== "sa" && identity.kind !== "la",
+      );
     publisherTracks.delete(sender);
   }
   for (const kind of discardedKinds) {
@@ -3476,6 +3484,64 @@ async function startLocalVideo(kind: "v" | "s" | "l"): Promise<void> {
   await publishLocal(kind, stream);
 }
 
+/** End source ownership while preserving a usable negotiated sender contract. */
+function detachSourceSender(
+  pc: PeerConnection,
+  sender: RtpSender,
+  track: MediaStreamTrack | null,
+  verifyLayers = false,
+): Promise<void> {
+  const previous = pendingVideoDetach.get(sender);
+  if (previous) return previous;
+  const mine = seat.generation;
+  const retire = () => {
+    if (sender.track === track || sender.track === null) {
+      try {
+        pc.removeTrack?.(sender);
+      } catch {
+        /* A closed peer ended this sender. */
+      }
+    }
+    if (seat.pc === pc && seat.generation === mine) {
+      for (const [source, reserved] of videoSenders) {
+        if (reserved === sender) videoSenders.delete(source);
+      }
+    }
+  };
+  if (!sender.replaceTrack || (seatMediaVersion ?? 0) < 3) {
+    pc.removeTrack?.(sender);
+    return Promise.resolve();
+  }
+  // removeTrack's inactive negotiation collapses Firefox's q/f envelope.
+  // A null detach ends RTP without renegotiating that immutable envelope.
+  let timer: ReturnType<typeof setTimeout> | undefined;
+  const detach = Promise.race([
+    Promise.resolve().then(() => sender.replaceTrack!(null)),
+    new Promise<never>((_resolve, reject) => {
+      timer = setTimeout(() => reject(Error("source detach timeout")), 2000);
+    }),
+  ])
+    .then(() => {
+      if (!verifyLayers || !layeredVideoSenders.has(sender)) return;
+      // Rollback of an as-yet unnegotiated simulcast sender may itself narrow
+      // its envelope. setParameters cannot restore it; use a fresh sender.
+      const encodings = sender.getParameters?.().encodings;
+      if (
+        !encodings?.some((encoding) => encoding.rid === "q") ||
+        !encodings.some((encoding) => encoding.rid === "f")
+      )
+        retire();
+    })
+    .catch(retire)
+    .finally(() => {
+      clearTimeout(timer);
+      if (pendingVideoDetach.get(sender) === detach)
+        pendingVideoDetach.delete(sender);
+    });
+  pendingVideoDetach.set(sender, detach);
+  return detach;
+}
+
 function stopLocalVideo(kind: "v" | "s" | "l"): void {
   for (const [pending, heldKind] of pendingDisplayStreams) {
     if (heldKind === kind) {
@@ -3534,45 +3600,7 @@ function stopLocalVideo(kind: "v" | "s" | "l"): void {
         t: identity?.trackId ?? track.id,
       });
       publisherTracks.delete(sender);
-      if (pc && sender.replaceTrack && (seatMediaVersion ?? 0) >= 3) {
-        // removeTrack's inactive negotiation collapses Firefox's negotiated
-        // q/f encodings. Keep the sender contract while ending capture and
-        // retracting SFU authority immediately. A new capture waits below.
-        let detachTimeout: ReturnType<typeof setTimeout> | undefined;
-        const stopped = Promise.resolve().then(() =>
-          sender.replaceTrack!(null),
-        );
-        const detach = Promise.race([
-          stopped,
-          new Promise<never>((_resolve, reject) => {
-            detachTimeout = setTimeout(
-              () => reject(Error("source detach timeout")),
-              2000,
-            );
-          }),
-        ])
-          .catch(() => {
-            if (sender.track === track || sender.track === null) {
-              try {
-                pc.removeTrack?.(sender);
-              } catch {
-                // A closed peer already ended this sender.
-              }
-            }
-            // Retire every video/source-audio reservation of this sender.
-            // Its original native promise may still complete after timeout.
-            for (const [source, reserved] of videoSenders) {
-              if (reserved === sender) videoSenders.delete(source);
-            }
-          })
-          .finally(() => {
-            clearTimeout(detachTimeout);
-            if (pendingVideoDetach.get(sender) === detach)
-              pendingVideoDetach.delete(sender);
-          });
-        pendingVideoDetach.set(sender, detach);
-        detaches.push(detach);
-      } else pc?.removeTrack?.(sender);
+      if (pc) detaches.push(detachSourceSender(pc, sender, track));
     } else {
       seat.send({
         op: "u",
@@ -3653,7 +3681,24 @@ async function publishLocal(
     // addTrack may reuse a stopped sender/transceiver. Reserve by the new
     // MSID identity, rather than treating the sender object as a new publish.
     let sender = pc.getSenders?.().find((sender) => sender.track === track);
-    const reserved = videoSenders.get(publishKind);
+    let reserved = videoSenders.get(publishKind);
+    if (
+      track.kind === "video" &&
+      reserved &&
+      layeredVideoSenders.has(reserved)
+    ) {
+      // Stop may have removed publisherTracks before a failed offer rolled
+      // back. Validate the originally layered contract again at actual reuse.
+      const encodings = reserved.getParameters?.().encodings;
+      if (
+        !encodings?.some((encoding) => encoding.rid === "q") ||
+        !encodings.some((encoding) => encoding.rid === "f")
+      ) {
+        pc.removeTrack?.(reserved);
+        videoSenders.delete(publishKind);
+        reserved = undefined;
+      }
+    }
     const transceiver = pc
       .getTransceivers?.()
       .find((item) => item.sender === reserved);
@@ -3678,8 +3723,10 @@ async function publishLocal(
         transceiver.direction = "sendonly";
       sender = reserved;
     }
-    if (!sender && track.kind === "video" && (seatMediaVersion ?? 0) >= 3)
+    if (!sender && track.kind === "video" && (seatMediaVersion ?? 0) >= 3) {
       sender = addLayeredVideo(pc, track, stream);
+      if (sender) layeredVideoSenders.add(sender);
+    }
     sender ??= pc.addTrack?.(track, stream) || undefined;
     const identity: PublishIdentity = (sender &&
       publisherTracks.get(sender)) ?? { kind: publishKind, trackId: track.id };
@@ -3717,7 +3764,7 @@ function stopLocalSourceAudio(kind: "s" | "l", negotiate = true): void {
     seat.send({ op: "u", k: audioKind, t: identity?.trackId ?? track.id });
     if (sender) {
       publisherTracks.delete(sender);
-      seat.pc?.removeTrack?.(sender);
+      if (seat.pc) detachSourceSender(seat.pc, sender, track);
     }
     track.stop();
   }
