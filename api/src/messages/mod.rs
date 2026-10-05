@@ -12,6 +12,7 @@
 //! is the same `404`.
 
 pub mod validate;
+mod workflows;
 
 use axum::Router;
 use axum::extract::{Query, State};
@@ -48,6 +49,7 @@ pub fn router() -> Router<AppState> {
             "/api/messages/{id}",
             patch(update_message).delete(delete_message),
         )
+        .merge(workflows::router())
 }
 
 #[derive(Debug, Clone, Serialize, PartialEq, Eq)]
@@ -66,6 +68,8 @@ pub struct Message {
     pub created_at: DateTime<Utc>,
     pub edited_at: Option<DateTime<Utc>>,
     pub revision: i64,
+    /// Immutable INSERT order for cross-device read boundaries.
+    pub created_order: i64,
     #[serde(default)]
     pub attachments: Vec<Attachment>,
 }
@@ -91,6 +95,7 @@ struct MessageRow {
     created_at: DateTime<Utc>,
     edited_at: Option<DateTime<Utc>>,
     revision: i64,
+    created_order: i64,
 }
 
 impl From<MessageRow> for Message {
@@ -107,6 +112,7 @@ impl From<MessageRow> for Message {
             created_at: row.created_at,
             edited_at: row.edited_at,
             revision: row.revision,
+            created_order: row.created_order,
             attachments: Vec::new(),
         }
     }
@@ -120,6 +126,7 @@ struct MessageInsert {
     created_at: DateTime<Utc>,
     edited_at: Option<DateTime<Utc>>,
     revision: i64,
+    created_order: i64,
 }
 
 impl MessageInsert {
@@ -136,6 +143,7 @@ impl MessageInsert {
             created_at: self.created_at,
             edited_at: self.edited_at,
             revision: self.revision,
+            created_order: self.created_order,
             attachments: Vec::new(),
         }
     }
@@ -212,7 +220,7 @@ async fn create_message(
     delivery::lock_channel(&mut tx, channel_id).await?;
     let row = sqlx::query_as::<_, MessageInsert>(
         "INSERT INTO messages (channel_id, author_id, content) VALUES ($1, $2, $3) \
-         RETURNING id, channel_id, content, created_at, edited_at, revision",
+         RETURNING id, channel_id, content, created_at, edited_at, revision, created_order",
     )
     .bind(channel_id)
     .bind(user.id)
@@ -293,7 +301,7 @@ async fn update_message(
     delivery::lock_channel(&mut tx, current.channel_id).await?;
     let row = sqlx::query_as::<_, MessageInsert>(
         "UPDATE messages SET content = $2, edited_at = now() WHERE id = $1 \
-         RETURNING id, channel_id, content, created_at, edited_at, revision",
+         RETURNING id, channel_id, content, created_at, edited_at, revision, created_order",
     )
     .bind(message_id)
     .bind(&content)
@@ -422,7 +430,7 @@ pub(crate) async fn post_live_hint(state: &AppState, user: &User, server_id: Uui
     let result: Result<(),ApiError> = async {
         let mut tx=state.db.begin().await?;
         delivery::lock_channel(&mut tx,text_id).await?;
-        let row=sqlx::query_as::<_,MessageInsert>("INSERT INTO messages (channel_id, author_id, content) VALUES ($1,$2,$3) RETURNING id,channel_id,content,created_at,edited_at,revision").bind(text_id).bind(user.id).bind(content).fetch_one(&mut *tx).await?;
+        let row=sqlx::query_as::<_,MessageInsert>("INSERT INTO messages (channel_id, author_id, content) VALUES ($1,$2,$3) RETURNING id,channel_id,content,created_at,edited_at,revision,created_order").bind(text_id).bind(user.id).bind(content).fetch_one(&mut *tx).await?;
         let mut message=row.into_message(user);
         persist_event(&mut tx,server_id,EventKind::C,&mut message).await?;
         tx.commit().await?;
@@ -502,7 +510,7 @@ async fn message_for(
 ) -> Result<(MessagingChannel, Message), ApiError> {
     let row = sqlx::query_as::<_, MessageRow>(
         "SELECT m.id, m.channel_id, m.author_id, u.name AS author_name, \
-                u.avatar_url AS author_avatar_url, m.content, m.created_at, m.edited_at, m.revision \
+                u.avatar_url AS author_avatar_url, m.content, m.created_at, m.edited_at, m.revision, m.created_order \
          FROM messages m JOIN users u ON u.id = m.author_id \
          WHERE m.id = $1",
     )
@@ -528,7 +536,7 @@ async fn load_page(
         let (at, id) = resolve_bound(db, channel_id, cursor, Bound::Before, "before").await?;
         sqlx::query_as::<_, MessageRow>(
             "SELECT m.id, m.channel_id, m.author_id, u.name AS author_name, \
-                    u.avatar_url AS author_avatar_url, m.content, m.created_at, m.edited_at, m.revision \
+                    u.avatar_url AS author_avatar_url, m.content, m.created_at, m.edited_at, m.revision, m.created_order \
              FROM messages m JOIN users u ON u.id = m.author_id \
              WHERE m.channel_id = $1 AND (m.created_at, m.id) < ($2, $3) \
              ORDER BY m.created_at DESC, m.id DESC \
@@ -544,7 +552,7 @@ async fn load_page(
         let (at, id) = resolve_bound(db, channel_id, cursor, Bound::After, "after").await?;
         let mut newer = sqlx::query_as::<_, MessageRow>(
             "SELECT m.id, m.channel_id, m.author_id, u.name AS author_name, \
-                    u.avatar_url AS author_avatar_url, m.content, m.created_at, m.edited_at, m.revision \
+                    u.avatar_url AS author_avatar_url, m.content, m.created_at, m.edited_at, m.revision, m.created_order \
              FROM messages m JOIN users u ON u.id = m.author_id \
              WHERE m.channel_id = $1 AND (m.created_at, m.id) > ($2, $3) \
              ORDER BY m.created_at ASC, m.id ASC \
@@ -569,7 +577,7 @@ async fn load_page(
     } else {
         sqlx::query_as::<_, MessageRow>(
             "SELECT m.id, m.channel_id, m.author_id, u.name AS author_name, \
-                    u.avatar_url AS author_avatar_url, m.content, m.created_at, m.edited_at, m.revision \
+                    u.avatar_url AS author_avatar_url, m.content, m.created_at, m.edited_at, m.revision, m.created_order \
              FROM messages m JOIN users u ON u.id = m.author_id \
              WHERE m.channel_id = $1 \
              ORDER BY m.created_at DESC, m.id DESC \

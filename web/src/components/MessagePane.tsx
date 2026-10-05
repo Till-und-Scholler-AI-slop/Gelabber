@@ -16,7 +16,9 @@ import {
   type ReactNode,
 } from "react";
 
+import { MessageSearch } from "../messages/MessageSearch.tsx";
 import { useChatDraft } from "../messages/drafts.ts";
+import { readBoundary, useMarkRead } from "../messages/readState.ts";
 
 import { useSession } from "../auth/session.ts";
 import { fieldMessage } from "../auth/rules.ts";
@@ -76,6 +78,9 @@ export function MessagePane({
 }) {
   const user = useSession((s) => s.user);
   const query = useMessages(channelId, true);
+  const [searching, setSearching] = useState(false);
+  const [atLatest, setAtLatest] = useState(false);
+  const [latestRequest, setLatestRequest] = useState(0);
   const attempts = usePendingMessages((s) => s.attempts);
   const channelAttempts = useMemo(
     () =>
@@ -90,6 +95,14 @@ export function MessagePane({
   const items = useMemo(
     () => visibleMessages(query.data?.pages ?? [], pending),
     [query.data?.pages, pending],
+  );
+
+  const latest = readBoundary(items);
+  const read = useMarkRead(
+    channelId,
+    latest?.id,
+    atLatest && !searching,
+    !query.isFetching && !query.error,
   );
 
   useEffect(() => {
@@ -113,27 +126,63 @@ export function MessagePane({
 
   return (
     <div className="lr-message-pane flex min-h-0 flex-1 flex-col">
-      <MessageList
-        channelId={channelId}
-        items={items}
-        meId={user?.id}
-        canModerate={canModerate}
-        hasOlder={Boolean(hasNextPage)}
-        loadingOlder={isFetchingNextPage}
-        onLoadOlder={onLoadOlder}
-        ready={!query.isPending}
-        loadError={
-          query.error
-            ? query.isFetchNextPageError
-              ? "paging"
-              : "history"
-            : null
-        }
-        onRetry={() => {
-          if (query.isFetchNextPageError) void fetchNextPage();
-          else void query.refetch();
-        }}
-      />
+      <div className="flex shrink-0 justify-end border-b px-4 py-1">
+        <button
+          type="button"
+          onClick={() => setSearching((value) => !value)}
+          className="rounded px-3 py-2 text-sm"
+          aria-expanded={searching}
+        >
+          Nachrichten suchen
+        </button>
+      </div>
+      {read.error ? (
+        <p className="px-4 py-1 text-xs" role="status">
+          Lesestatus konnte nicht gespeichert werden.{" "}
+          <button type="button" onClick={read.retry}>
+            Erneut versuchen
+          </button>
+        </p>
+      ) : null}
+      {searching ? (
+        <MessageSearch
+          channelId={channelId}
+          onClose={() => setSearching(false)}
+        />
+      ) : (
+        <MessageList
+          channelId={channelId}
+          items={items}
+          onAtLatest={setAtLatest}
+          latestRequest={latestRequest}
+          meId={user?.id}
+          canModerate={canModerate}
+          hasOlder={Boolean(hasNextPage)}
+          loadingOlder={isFetchingNextPage}
+          onLoadOlder={onLoadOlder}
+          ready={!query.isPending}
+          loadError={
+            query.error
+              ? query.isFetchNextPageError
+                ? "paging"
+                : "history"
+              : null
+          }
+          onRetry={() => {
+            if (query.isFetchNextPageError) void fetchNextPage();
+            else void query.refetch();
+          }}
+        />
+      )}
+      {!searching && !atLatest && items.length > 0 ? (
+        <button
+          type="button"
+          onClick={() => setLatestRequest((value) => value + 1)}
+          className="shrink-0 border-t px-4 py-2 text-sm"
+        >
+          Zu den neuesten Nachrichten
+        </button>
+      ) : null}
       {footer}
       <Composer
         key={user?.id ?? "anonymous"}
@@ -166,6 +215,8 @@ function MessageList({
   ready,
   loadError,
   onRetry,
+  onAtLatest,
+  latestRequest,
 }: {
   channelId: string;
   items: Message[];
@@ -177,12 +228,15 @@ function MessageList({
   ready: boolean;
   loadError: "history" | "paging" | null;
   onRetry: () => void;
+  onAtLatest: (value: boolean) => void;
+  latestRequest: number;
 }) {
   const scrollRef = useRef<HTMLDivElement>(null);
   const stickToBottom = useRef(true);
+  const lastScrollTop = useRef(0);
+  const lastRequest = useRef(latestRequest);
   const olderAnchor = useRef<string | null>(null);
   const lastCount = useRef(0);
-  const lastTail = useRef<string | undefined>(undefined);
   const pin = useRef<{ id: string; offset: number } | null>(null);
   const edit = useEditMessage(channelId);
   const remove = useDeleteMessage(channelId);
@@ -205,9 +259,20 @@ function MessageList({
   });
 
   useLayoutEffect(() => {
-    const tail = items[items.length - 1]?.id;
-    const grewAtEnd =
-      tail !== lastTail.current && items.length >= lastCount.current;
+    // Preserve history anchors; while pinned, the end owns resize adjustments.
+    virtualizer.shouldAdjustScrollPositionOnItemSizeChange = (
+      item,
+      _delta,
+      instance,
+    ) => !stickToBottom.current && item.start < (instance.scrollOffset ?? 0);
+  }, [virtualizer]);
+
+  const totalSize = virtualizer.getTotalSize();
+  useLayoutEffect(() => {
+    if (latestRequest !== lastRequest.current) {
+      stickToBottom.current = true;
+      lastRequest.current = latestRequest;
+    }
     const prepended =
       olderAnchor.current !== null && items.length > lastCount.current;
 
@@ -215,10 +280,7 @@ function MessageList({
       const idx = items.findIndex((m) => m.id === olderAnchor.current);
       olderAnchor.current = null;
       if (idx >= 0) virtualizer.scrollToIndex(idx, { align: "start" });
-    } else if (
-      stickToBottom.current &&
-      (grewAtEnd || lastCount.current === 0)
-    ) {
+    } else if (stickToBottom.current) {
       if (items.length > 0)
         virtualizer.scrollToIndex(items.length - 1, { align: "end" });
     } else if (
@@ -237,8 +299,16 @@ function MessageList({
       }
     }
 
+    const element = scrollRef.current;
+    if (element && stickToBottom.current)
+      element.scrollTop = element.scrollHeight;
+    onAtLatest(
+      Boolean(
+        element &&
+        element.scrollHeight - element.scrollTop - element.clientHeight <= 16,
+      ),
+    );
     lastCount.current = items.length;
-    lastTail.current = tail;
     const first = virtualizer.getVirtualItems()[0];
     const firstMessage = first ? items[first.index] : undefined;
     if (first && firstMessage && scrollRef.current) {
@@ -247,7 +317,7 @@ function MessageList({
         offset: first.start - scrollRef.current.scrollTop,
       };
     }
-  }, [items, virtualizer]);
+  }, [items, virtualizer, onAtLatest, totalSize, latestRequest]);
 
   const firstVisible = virtualizer.getVirtualItems()[0]?.index ?? 0;
   const firstId = items[0]?.id;
@@ -275,12 +345,23 @@ function MessageList({
       role="log"
       aria-label="Nachrichten"
       aria-busy={!ready || undefined}
+      onScrollCapture={() => {
+        const el = scrollRef.current;
+        // Capture the end before the virtualizer measures the newly visible rows.
+        if (el && el.scrollHeight - el.scrollTop - el.clientHeight < 96)
+          stickToBottom.current = true;
+      }}
       onScroll={() => {
         const el = scrollRef.current;
         if (!el) return;
-        stickToBottom.current =
-          el.scrollHeight - el.scrollTop - el.clientHeight < 96;
+        const distance = el.scrollHeight - el.scrollTop - el.clientHeight;
+        if (distance < 96) stickToBottom.current = true;
+        else if (el.scrollTop < lastScrollTop.current)
+          stickToBottom.current = false;
+        lastScrollTop.current = el.scrollTop;
+        onAtLatest(el.scrollHeight - el.scrollTop - el.clientHeight <= 16);
       }}
+      style={{ overflowAnchor: "none" }}
       className="flex min-h-0 flex-1 flex-col overflow-y-auto"
     >
       {loadError ? (
