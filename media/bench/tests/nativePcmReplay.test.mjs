@@ -53,13 +53,14 @@ function runtime(pair, hold = 0) {
   return structuredClone({ greeting: { ready: true, provenance: actual }, start: summary, status: { ...summary, sources }, nativeBinarySha256: actual.binary_sha256, audioHoldMs: hold });
 }
 function evidence(pair, hold = 0) {
-  const rows = Array.from({ length: Math.ceil(pair.total_seconds * 48000 / 128) }, (_, i) => ({ sequence: i + 1, firstFrame: i * 128, frames: 128, inputFrames: 128, flags: 0, lowerMs: 100 + i * 128 / 48, upperMs: 101 + (i + 1) * 128 / 48 }));
+  const rows = Array.from({ length: Math.ceil((pair.total_seconds * 48000 + 5000) / 128) }, (_, i) => ({ sequence: i + 1, firstFrame: i * 128, frames: 128, inputFrames: 128, flags: 0, lowerMs: 100 + i * 128 / 48, upperMs: 101 + (i + 1) * 128 / 48 }));
   const clocks = Array.from({ length: pair.total_seconds * 200 + 50 }, (_, i) => ({ p0: i * 5, p1: i * 5 + .5, monoNs: String(1000000000n + BigInt(i) * 5000000n) }));
   return { pair, runtime: runtime(pair, hold), observer: { failures: [], missing: 0, rows: [rows, rows], clocks }, contextStates: ['running'],
     browserClock: { browser: { revision: P.chromiumRevision, product: 'HeadlessChrome/' + P.chromiumVersion }, crossOriginIsolated: true, precision: { samples: 100000, minimumStepMs: .005 }, chromium_sha256: P.chromiumSha256, node_sha256: P.nodeSha256 },
     groups: pair.archives.map(input => ({ role: input.role, uid: input.uid, archive_sha256: input.archive_sha256, run_id: pair.run_id, codebook_sha256: pair.codebook_sha256,
       tap: { uid: input.uid, sampleRate: 48000, gaps: 0, excessPeaks: 0, clipped: 0, nonfinite: 0, peaks: input.metadata.pn.markers.map(marker => ({ sequence: marker.sequence, receivedFrame: marker.source_sample_ordinal + 4800, score: .97, amplitude: .35 })) },
-      receiver: { uid: input.uid, role: input.role, ssrc: input.ssrc, identityStable: true, live: true, enabled: true, codec: 'audio/opus', decodedSamplesProgress: true, packetsProgress: true, packetsLost: 0, concealedSamples: 0, silentConcealedSamples: 0 } })) };
+      receiver: { uid: input.uid, role: input.role, ssrc: input.ssrc, identityStable: true, live: true, enabled: true, codec: 'audio/opus', decodedSamplesProgress: true, packetsProgress: true, packetsLost: 0, concealedSamples: 0, silentConcealedSamples: 0,
+        initialInboundReportId: 'inbound-' + input.role, inboundReportId: 'inbound-' + input.role, initialPacketsReceived: 0, initialTotalSamplesReceived: 0, packetsReceived: input.metadata.packets, totalSamplesReceived: input.metadata.decode_control.samples, packetsDiscarded: 0, insertedSamplesForDeceleration: 0, removedSamplesForAcceleration: 0 } })) };
 }
 
 test('unique JSON rejects duplicate escaped keys and prototype keys do not mutate objects', () => {
@@ -162,5 +163,17 @@ test('partial/duplicate groups or subset peaks cannot qualify even with supplied
 test('missing/duplicate markers, PCM clip/PLC, suspension, ring loss and old browser fail', () => {
   withPair(pair => {
     for (const change of [e => e.groups[0].tap.peaks.push(e.groups[0].tap.peaks[0]), e => e.groups[1].tap.clipped++, e => e.groups[1].receiver.concealedSamples = 128, e => e.groups[0].receiver.live = 'false', e => e.contextStates.push('suspended'), e => e.observer.missing++, e => e.observer.clocks.length = 1, e => e.browserClock.chromium_sha256 = '0'.repeat(64), e => e.browserClock.browser.revision = 'old']) { const e = evidence(pair); change(e); const result = qualifyReplayPair(e); assert.equal(result.qualified, false); assert.equal(result.groups.length, 0); }
+  });
+});
+test('whole source enqueues cannot substitute for missing actual receiver tail', () => {
+  withPair(pair => {
+    const e = evidence(pair); e.groups[0].receiver.packetsReceived -= 50; e.groups[0].receiver.totalSamplesReceived -= 48000;
+    const result = qualifyReplayPair(e); assert.equal(result.qualified, false); assert.equal(result.groups.length, 0);
+  });
+});
+test('whole receiver packet counts cannot substitute for missing tail callbacks', () => {
+  withPair(pair => {
+    const e = evidence(pair); e.observer.rows[1] = e.observer.rows[1].filter(row => row.firstFrame < 20 * 48000);
+    const result = qualifyReplayPair(e); assert.equal(result.qualified, false); assert.equal(result.groups.length, 0);
   });
 });
