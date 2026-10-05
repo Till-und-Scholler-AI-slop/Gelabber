@@ -285,8 +285,13 @@ records long two-peer WAN pilots that failed actual rate/FPS qualification,
 including a shared 4 Mbit ceiling and the diagnostic repeat. A lower CPU reading
 from these runs cannot rank engines. The diagnostic repeat had matching RR
 source targets, no REMB messages and little or no TWCC-reported loss; that does
-not establish the cause of the bandwidth reduction. Loopback controls and a
-separate voice-only matrix are needed before interpreting resource differences.
+not establish the cause of the bandwidth reduction. The subsequent
+[loopback control](evidence/loopback-control-2026-10-05.json) qualified all three
+engines at approximately 4 Mbit/s and 60 decoded fps with the same fixture.
+That shows reproducible path dependence; one local diagnostic round does not
+prove server capacity or a particular WAN/congestion-control cause. A separate
+voice-only matrix can establish partial audio findings while the video,
+production-contract and end-to-end latency gates remain open.
 
 Primary format references: [Chromium's local event-log switch](https://chromium.googlesource.com/chromium/src/+/refs/heads/main/content/public/common/content_switches.cc),
 [WebRTC v2 schema](https://webrtc.googlesource.com/src/+/refs/heads/main/logging/rtc_event_log/rtc_event_log2.proto),

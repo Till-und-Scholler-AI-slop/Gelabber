@@ -1,0 +1,377 @@
+{
+  "schema": 1,
+  "acceptance": false,
+  "scope": "One local loopback diagnostic control; no server capacity, WAN or migration acceptance",
+  "source_revision": "d4f12d57183a2ea36f6c119534d29257a58ac897",
+  "warmup_seconds": 30,
+  "measurement_seconds": 60,
+  "fixture_video_bitrate": 4000000,
+  "tooling_sha256": {
+    "package.json": "c009a51989f02c353ed806f2947ffc239b9be16433d0bd0acdd7fde2d54894e8",
+    ".gitignore": "1741bb31c30d9212cd51726949c66e0af66b3e997a94fea184f89e4ce384a110",
+    "package-lock.json": "9d02e4d3313afe6d1fc466ab4fa598993660385d21a13021089fbeca04e1954c",
+    "browser.mjs": "589cd200e577273caac5388d762236be2b24b9e0d2b49a1411ee1c669f62e312",
+    "client.bundle.js": "6ce15cc096e152540edaea5c671360ee1329b7debfe3bbb55c43cd4246abc724",
+    "loadgen.mjs": "0e535656492806fb8ee3949837ad5985148008dce4a68feaa6e13c806a3feb4c",
+    "record.py": "ce2f366f6360ca1f17dee550c68dfa3724966348c7ef9969bc75671420a52b33",
+    "run-local.py": "05bf182fb98498ffb14c847a94d87ebfc0244be4b55f117afbcfa674a14f70f5",
+    "evaluate.py": "1bb11eaa0ccdbc39d003f213f414cead2cd8c923b40328fe5ddaac0ddfaf43d6",
+    "build.sh": "06522334da454112c9d38dc8f1da1564968678a25f7f83185d57d5600c977d14",
+    "README.md": "15046cddb69e6a52cbd7b0aeb321e9fc06d7b229362aa911f77edb250c064387",
+    "proxy-target.mjs": "eeb6a5b035738da7b5c7320dcaa5b40fb24506f26fd631921f54666b4840e7a2",
+    "build-probe-images.py": "b280100470e0814a9bf1b60ede0f65a544322692e28ef6816f9535f6338936db",
+    "run-remote.py": "a3428cf3945f270bff396660fdf09f2def314b41dbfd72e1e421d9305c417ac1",
+    "protocol-diagnostics.py": "0d4fadc080cb3596d45aea2daa00822a17ac419ea0c84c25b266cfcd792269f0",
+    "mediasoup-probe/Cargo.toml": "aa0ed267d7b159b65ef76f5415c6bdcd79dd9413c6098b29725a751519a3f7ff",
+    "mediasoup-probe/Cargo.lock": "591381d7be1da52691e83bbdfd4f790b6041f5af6df880d6898ab1cf16c857fd",
+    "janus/Dockerfile": "9be960134594aa6cb838d7b90de602a751f5491ea8b99e3883eb8715e96c2faa",
+    "janus/janus.jcfg": "84dc08fcc4a2ee51026b090a094f0fae0f4991c215972ecceefbed9b2fac1d12",
+    "janus/janus.transport.http.jcfg": "f4cc8c4e36b772e702d532ef8284630ac64bb5f5d953fa04d5623a5533556cd1",
+    "janus/janus.plugin.videoroom.jcfg": "99864f741ef75a4d2d87c98ed4c57e2383c5bba08efd549efbe25cc87441cab5",
+    "janus/launch.sh": "168ed2affd8bb1eafb24323dca16d30393cf212bd54475512ba2e908f0ec68ff",
+    "current-probe/Cargo.toml": "d92200ca79f638ecf37b016609ba7776cdacd111e00670f29b9baa3d78ab69e9",
+    "current-probe/Cargo.lock": "64875cce6d1cd2832a4f932d2528e6e2c53db00891c6094b58aac2248ebdf18a",
+    "tests/test_evidence.py": "1dd61e452451548202e0d19bed79d4522a73e9dfb22d2854d9cf99475df5befb",
+    "tests/proxy-target.test.mjs": "0c8e6b78861efb9025489f55531400059b6c7f2d1e7d7872e04b0e0c41c92fa4",
+    "tests/test_remote_ownership.py": "36fae5c9b63a139155f1886aaee197aefbcec1c5d19c6fcef172352afd8c3cd6",
+    "tests/test_protocol.py": "6f409f6dac3c98ab14a910a01a844300ae1a3c3b63312c69d6d47e2e38d013d9",
+    "tests/loadgen-options.test.mjs": "98de6042ef013b74590773f5289e4df61d6455bb4d8d6cba61922159691cdf46",
+    "docker/Dockerfile": "0569eb2a98e6548ef8cd200050c0c5b73a0e03528fbbd33fbcb4e0445a3bc34b",
+    "evidence/local-smoke-2026-10-05.json": "3cd1516369ae03a09132a99f343a1c1f7eeba65ed776a59a005830150fb25d1c",
+    "current-probe/src/main.rs": "f2d19e790bb91f0c61a86617823873cc8207df201b87f590a777584a7d084447",
+    "mediasoup-probe/src/main.rs": "97667d71ecd26fef577b0d7025e796c0d7971fb29d998bda0a9f55fe451ae8cc"
+  },
+  "artifact_sha256": {
+    "client.bundle.js": "6ce15cc096e152540edaea5c671360ee1329b7debfe3bbb55c43cd4246abc724",
+    "package-lock.json": "9d02e4d3313afe6d1fc466ab4fa598993660385d21a13021089fbeca04e1954c",
+    "current-probe/Cargo.lock": "64875cce6d1cd2832a4f932d2528e6e2c53db00891c6094b58aac2248ebdf18a",
+    "mediasoup-probe/Cargo.lock": "591381d7be1da52691e83bbdfd4f790b6041f5af6df880d6898ab1cf16c857fd",
+    "current-probe/target/release/gelabber-current-probe": "a2fd497a4836ea1aba57baa8e1216c9fae73476a75ba0e8bad4ab37875285701",
+    "mediasoup-probe/target/release/gelabber-mediasoup-probe": "df90621e944a6ed22daec75096e2f8fb4ca092af6de3635ef955f1112dfca01b"
+  },
+  "server_hardware": {
+    "cpu": "AMD Ryzen 9 7950X3D 16-Core Processor",
+    "logical_cpus": 32,
+    "total_ram_bytes": 66220544000,
+    "kernel": "7.2.5-3-omarchy",
+    "cpu_affinity": [
+      0,
+      1,
+      2,
+      3,
+      4,
+      5,
+      6,
+      7,
+      8,
+      9,
+      10,
+      11,
+      12,
+      13,
+      14,
+      15,
+      16,
+      17,
+      18,
+      19,
+      20,
+      21,
+      22,
+      23,
+      24,
+      25,
+      26,
+      27,
+      28,
+      29,
+      30,
+      31
+    ]
+  },
+  "janus_image_id": "sha256:76845b0f9e03ad08a0444e4194969510b96ca72d83754e596431aa04dc773e62",
+  "runs": [
+    {
+      "engine": "current",
+      "peers": 2,
+      "media_fixture_valid": true,
+      "problems": [],
+      "sender_bitrate_distribution": {
+        "audio": {
+          "streams": [
+            {
+              "peer": "peer-0",
+              "endpoint": "peer-0/0",
+              "id": "OT01A2291245156",
+              "kind": "audio",
+              "bps": 128396.33475042768
+            },
+            {
+              "peer": "peer-0",
+              "endpoint": "peer-0/0",
+              "id": "OT01A654395139",
+              "kind": "audio",
+              "bps": 128397.8252400874
+            },
+            {
+              "peer": "peer-1",
+              "endpoint": "peer-1/0",
+              "id": "OT01A959880942",
+              "kind": "audio",
+              "bps": 128397.8252400874
+            }
+          ],
+          "min_bps": 128396.33475042768,
+          "max_bps": 128397.8252400874
+        },
+        "video": {
+          "streams": [
+            {
+              "peer": "peer-0",
+              "endpoint": "peer-0/0",
+              "id": "OT01V4206065736",
+              "kind": "video",
+              "bps": 4004777.2903575483
+            }
+          ],
+          "min_bps": 4004777.2903575483,
+          "max_bps": 4004777.2903575483
+        }
+      },
+      "decoded_video_fps": [
+        59.83977236157924
+      ],
+      "receiver_audio_distribution": [
+        {
+          "peer": "peer-0",
+          "endpoint": "peer-0/0",
+          "id": "IT01A2924043045",
+          "bps": 128397.8252400874,
+          "packet_loss_fraction": 0.0
+        },
+        {
+          "peer": "peer-1",
+          "endpoint": "peer-1/0",
+          "id": "IT01A2537446564",
+          "bps": 128396.33475042768,
+          "packet_loss_fraction": 0.0
+        },
+        {
+          "peer": "peer-1",
+          "endpoint": "peer-1/0",
+          "id": "IT01A4111778206",
+          "bps": 128397.8252400874,
+          "packet_loss_fraction": 0.0
+        }
+      ],
+      "video_capture_and_encoding": [
+        {
+          "endpoint": "peer-0/0",
+          "ssrc": 4206065736,
+          "type": "outbound-rtp",
+          "framesEncoded_per_second": 59.856709744076156,
+          "mean_packet_send_delay_ms": 0.011270575978568238,
+          "packet_count_delta": 26876,
+          "target_bitrate_bps_last": 4000000
+        },
+        {
+          "endpoint": "peer-0/0",
+          "ssrc": null,
+          "type": "media-source",
+          "frames_per_second": 59.83977236157924,
+          "packet_count_delta": 0,
+          "target_bitrate_bps_last": null
+        }
+      ],
+      "protocol_errors": []
+    },
+    {
+      "engine": "mediasoup",
+      "peers": 2,
+      "media_fixture_valid": true,
+      "problems": [],
+      "sender_bitrate_distribution": {
+        "audio": {
+          "streams": [
+            {
+              "peer": "peer-0",
+              "endpoint": "peer-0/send",
+              "id": "OT01A1306530570",
+              "kind": "audio",
+              "bps": 128421.74428450466
+            },
+            {
+              "peer": "peer-0",
+              "endpoint": "peer-0/send",
+              "id": "OT01A4172642917",
+              "kind": "audio",
+              "bps": 128424.18289585099
+            },
+            {
+              "peer": "peer-1",
+              "endpoint": "peer-1/send",
+              "id": "OT01A1466928781",
+              "kind": "audio",
+              "bps": 128378.25571549535
+            }
+          ],
+          "min_bps": 128378.25571549535,
+          "max_bps": 128424.18289585099
+        },
+        "video": {
+          "streams": [
+            {
+              "peer": "peer-0",
+              "endpoint": "peer-0/send",
+              "id": "OT01V1419451445",
+              "kind": "video",
+              "bps": 4020853.378492803
+            }
+          ],
+          "min_bps": 4020853.378492803,
+          "max_bps": 4020853.378492803
+        }
+      },
+      "decoded_video_fps": [
+        59.966130397967824
+      ],
+      "receiver_audio_distribution": [
+        {
+          "peer": "peer-0",
+          "endpoint": "peer-0/recv",
+          "id": "IT01A415604220",
+          "bps": 128378.25571549535,
+          "packet_loss_fraction": 0.0
+        },
+        {
+          "peer": "peer-1",
+          "endpoint": "peer-1/recv",
+          "id": "IT01A328200216",
+          "bps": 128421.74428450466,
+          "packet_loss_fraction": 0.0
+        },
+        {
+          "peer": "peer-1",
+          "endpoint": "peer-1/recv",
+          "id": "IT01A816018773",
+          "bps": 128424.18289585099,
+          "packet_loss_fraction": 0.0
+        }
+      ],
+      "video_capture_and_encoding": [
+        {
+          "endpoint": "peer-0/send",
+          "ssrc": 1419451445,
+          "type": "outbound-rtp",
+          "framesEncoded_per_second": 60.01693480101609,
+          "mean_packet_send_delay_ms": 0.011093707275616217,
+          "packet_count_delta": 27063,
+          "target_bitrate_bps_last": 4000000
+        },
+        {
+          "endpoint": "peer-0/send",
+          "ssrc": null,
+          "type": "media-source",
+          "frames_per_second": 60.0,
+          "packet_count_delta": 0,
+          "target_bitrate_bps_last": null
+        }
+      ],
+      "protocol_errors": []
+    },
+    {
+      "engine": "janus",
+      "peers": 2,
+      "media_fixture_valid": true,
+      "problems": [],
+      "sender_bitrate_distribution": {
+        "audio": {
+          "streams": [
+            {
+              "peer": "peer-0",
+              "endpoint": "peer-0/0",
+              "id": "OT01A3061226482",
+              "kind": "audio",
+              "bps": 128395.1152588879
+            },
+            {
+              "peer": "peer-0",
+              "endpoint": "peer-0/0",
+              "id": "OT01A3186251899",
+              "kind": "audio",
+              "bps": 128397.8252400874
+            },
+            {
+              "peer": "peer-1",
+              "endpoint": "peer-1/0",
+              "id": "OT01A1539486795",
+              "kind": "audio",
+              "bps": 128397.8252400874
+            }
+          ],
+          "min_bps": 128395.1152588879,
+          "max_bps": 128397.8252400874
+        },
+        "video": {
+          "streams": [
+            {
+              "peer": "peer-0",
+              "endpoint": "peer-0/0",
+              "id": "OT01V2803639851",
+              "kind": "video",
+              "bps": 4011648.1766907745
+            }
+          ],
+          "min_bps": 4011648.1766907745,
+          "max_bps": 4011648.1766907745
+        }
+      },
+      "decoded_video_fps": [
+        60.009146186548335
+      ],
+      "receiver_audio_distribution": [
+        {
+          "peer": "peer-0",
+          "endpoint": "peer-0/1",
+          "id": "IT01A1822478976",
+          "bps": 128397.8252400874,
+          "packet_loss_fraction": 0.0
+        },
+        {
+          "peer": "peer-1",
+          "endpoint": "peer-1/1",
+          "id": "IT01A1959948495",
+          "bps": 128395.1152588879,
+          "packet_loss_fraction": 0.0
+        },
+        {
+          "peer": "peer-1",
+          "endpoint": "peer-1/1",
+          "id": "IT01A3948087296",
+          "bps": 128397.8252400874,
+          "packet_loss_fraction": 0.0
+        }
+      ],
+      "video_capture_and_encoding": [
+        {
+          "endpoint": "peer-0/0",
+          "ssrc": 2803639851,
+          "type": "outbound-rtp",
+          "framesEncoded_per_second": 60.009146186548335,
+          "mean_packet_send_delay_ms": 0.012338394311953783,
+          "packet_count_delta": 27004,
+          "target_bitrate_bps_last": 4000000
+        },
+        {
+          "endpoint": "peer-0/0",
+          "ssrc": null,
+          "type": "media-source",
+          "frames_per_second": 60.009146186548335,
+          "packet_count_delta": 0,
+          "target_bitrate_bps_last": null
+        }
+      ],
+      "protocol_errors": []
+    }
+  ]
+}
