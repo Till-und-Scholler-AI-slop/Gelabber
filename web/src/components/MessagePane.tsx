@@ -285,8 +285,8 @@ function MessageList({
       olderAnchor.current = null;
       if (idx >= 0) virtualizer.scrollToIndex(idx, { align: "start" });
     } else if (stickToBottom.current) {
-      if (items.length > 0)
-        virtualizer.scrollToIndex(items.length - 1, { align: "end" });
+      // Native bottom pin below owns the end. scrollToIndex's asynchronous
+      // measurement retries can otherwise pull a measured list back upwards.
     } else if (
       items.length < lastCount.current &&
       pin.current &&
