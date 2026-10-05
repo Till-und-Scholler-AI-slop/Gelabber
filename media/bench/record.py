@@ -8,6 +8,7 @@ import json
 import os
 from pathlib import Path
 import socket
+import signal
 import subprocess
 import time
 
@@ -35,6 +36,36 @@ def process_tree(root):
                     pass  # A thread may finish while this snapshot is read.
         if pids == old:
             return sorted(pids)
+
+
+def terminate_group(child):
+    """Terminate only a live owned child and its browser descendants via pidfds."""
+    if child is None or child.poll() is not None:
+        return
+    descriptors = []
+    for pid in process_tree(child.pid):
+        try:
+            descriptors.append(os.pidfd_open(pid))
+        except ProcessLookupError:
+            pass
+    try:
+        try:
+            os.killpg(child.pid, signal.SIGTERM)
+        except ProcessLookupError:
+            pass
+        try:
+            child.wait(timeout=10)
+        except subprocess.TimeoutExpired:
+            os.killpg(child.pid, signal.SIGKILL)
+            child.wait(timeout=10)
+    finally:
+        for descriptor in reversed(descriptors):
+            try:
+                signal.pidfd_send_signal(descriptor, signal.SIGKILL)
+            except ProcessLookupError:
+                pass
+            finally:
+                os.close(descriptor)
 
 
 def process_sample(pid):

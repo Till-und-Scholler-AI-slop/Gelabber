@@ -8,7 +8,6 @@ import json
 import os
 from pathlib import Path
 import secrets
-import signal
 import shutil
 import socket
 import subprocess
@@ -16,7 +15,7 @@ import threading
 import time
 import urllib.request
 import uuid
-from record import hardware, process_sample, process_tree
+from record import hardware, process_sample, process_tree, terminate_group
 
 ROOT = Path(__file__).resolve().parent
 
@@ -114,28 +113,7 @@ def run(args, engine, count, round_number, report):
         stop.set()
         if thread:
             thread.join(timeout=5)
-        if loadgen and loadgen.poll() is None:
-            descendants = []
-            for pid in process_tree(loadgen.pid):
-                try:
-                    descendants.append(os.pidfd_open(pid))
-                except ProcessLookupError:
-                    pass
-            os.killpg(loadgen.pid, signal.SIGTERM)
-            try:
-                loadgen.wait(timeout=10)
-            except subprocess.TimeoutExpired:
-                os.killpg(loadgen.pid, signal.SIGKILL)
-                loadgen.wait()
-            # Browser launchers may create separate process groups. Capture
-            # only this run's descendants before terminating the Node parent.
-            for descriptor in reversed(descendants):
-                try:
-                    signal.pidfd_send_signal(descriptor, signal.SIGKILL)
-                except ProcessLookupError:
-                    pass
-                finally:
-                    os.close(descriptor)
+        terminate_group(loadgen)
         if child:
             child.terminate()
             try:

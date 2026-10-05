@@ -19,9 +19,10 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
     && rm -rf /var/lib/apt/lists/*
 COPY --from=build /opt/janus /opt/janus
 COPY janus.jcfg janus.transport.http.jcfg janus.plugin.videoroom.jcfg /opt/janus/etc/janus/
+COPY --chmod=755 launch.sh /usr/local/bin/janus-bench
 LABEL org.opencontainers.image.version="janus-v1.4.2" \
     org.opencontainers.image.revision="0a24110ae55a172c4293749b763dbb66a138f9ec"
 USER nobody
 EXPOSE 8088 10000-10199/udp
-ENTRYPOINT ["/opt/janus/bin/janus", "-F", "/opt/janus/etc/janus"]
+ENTRYPOINT ["/usr/local/bin/janus-bench"]
 CMD ["--help"]

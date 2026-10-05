@@ -35,6 +35,7 @@ struct App {
     _worker: Worker,
     token: Arc<String>,
     announced: Arc<String>,
+    udp: (u16, u16),
     peers: Arc<Mutex<HashMap<String, Peer>>>,
 }
 async fn health(State(app): State<App>) -> Reply {
@@ -104,7 +105,7 @@ async fn rpc(State(app): State<App>, headers: HeaderMap, Json(request): Json<Val
             announced_address: Some((*app.announced).clone()),
             expose_internal_ip: false,
             port: None,
-            port_range: Some(10000..=10199),
+            port_range: Some(app.udp.0..=app.udp.1),
             flags: None,
             send_buffer_size: None,
             recv_buffer_size: None,
@@ -199,6 +200,15 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     if token.len() < 32 {
         return Err("BENCH_TOKEN must contain at least 32 bytes".into());
     }
+    let udp_min = std::env::var("BENCH_UDP_MIN")
+        .unwrap_or_else(|_| "10000".into())
+        .parse::<u16>()?;
+    let udp_max = std::env::var("BENCH_UDP_MAX")
+        .unwrap_or_else(|_| "10199".into())
+        .parse::<u16>()?;
+    if udp_min < 1024 || udp_max < udp_min {
+        return Err("invalid benchmark UDP range".into());
+    }
     let worker = WorkerManager::new()
         .create_worker({
             let mut s = WorkerSettings::default();
@@ -214,6 +224,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     let state = App {
         router,
         _worker: worker,
+        udp: (udp_min, udp_max),
         token: Arc::new(token),
         announced: Arc::new(
             std::env::var("BENCH_ADVERTISED_IP").unwrap_or_else(|_| "127.0.0.1".into()),

@@ -184,3 +184,54 @@ backend switch.
 
 Documentation does not establish a RAM/performance winner; the reproducible
 evidence above is the prerequisite for that decision.
+
+## Bounded remote server, local browser generator
+
+`build-probe-images.py` packages the existing frozen binaries in the pinned
+Debian 13 runtime and starts each image without network access to verify the
+Rust and native worker startup. Both existing binaries passed the Debian 13
+loader and runtime tests; no stack upgrade or VPS package install is needed.
+Rebuild the probes first if their source changed. Janus's launcher can set its
+HTTP port via `BENCH_HTTP_PORT`, and all engines support the dedicated UDP range.
+
+```sh
+python3 media/bench/build-probe-images.py
+docker build --tag gelabber-bench/janus:v1.4.2 media/bench/janus
+
+# Plan only: local image inspection, zero SSH calls and zero remote mutations.
+python3 media/bench/run-remote.py --ssh-host root@TEST_SERVER \
+  --ssh-control /absolute/existing/control-socket --server-ip TEST_SERVER_IP \
+  --matrix 2 --runs 1 --video --duration 8 --warmup 8 \
+  --output /tmp/gelabber-remote-smoke
+# After inspecting server capacity, ports and the concrete plan, append --execute.
+# Full matrix defaults to 2/8/16/32 ×3, duration60/warmup10; remove smoke overrides.
+python3 media/bench/evaluate.py /tmp/gelabber-remote-smoke
+```
+
+The runner transfers only its exact media images via a `docker save` SSH stream,
+with a conservative image-size upper bound of 1.5 GiB and no server-side archive.
+It creates unique image tags and UUID-labelled containers, then runs one media
+engine at a time with **one CPU quota, 512 MiB memory/swap ceiling and 256 PIDs**.
+The current fixture's dedicated Redis has a separate 0.25 CPU/64 MiB budget and
+a loopback-only random TCP port. Media uses host networking on **TCP18091** and
+**UDP11000..11199**. Check that this range is free and reachable before execution;
+the runner does not modify firewall, Compose, Watchtower or production services.
+Owned container names and labels must both match before sampling or cleanup.
+Owned containers, anonymous volumes and unique image tags are removed on failure
+or completion; imported layers already referenced by other images remain intact.
+
+Raw server evidence includes process-tree and cgroup memory/CPU/throttling data,
+fixed resource limits and a bounded SSH clock-offset estimate for aligning
+samples. The local browser inputs and exact server image IDs are frozen before
+rounds. A shared production host can add contention beyond the quota; this
+limitation remains an explicit acceptance blocker, even if all local workload
+and resource checks pass. These runs establish candidate behavior under the
+same allocation and a real WAN path, not TURN, permission-policy equivalence,
+browser-family acceptance or true end-to-end audio latency.
+
+The collector, remote helper, full runner and browser scripts are frozen and
+SHA-256 recorded before execution. Image labels retain the binary hash/source
+revision, and evidence records Git's dirty status. Private Redis's exact image
+ID and separate idle/load/post-leave RAM/CPU samples are retained in addition
+to media-only measurements. Cohosted live service contention remains a blocker;
+the runner does not interrogate or change those services.

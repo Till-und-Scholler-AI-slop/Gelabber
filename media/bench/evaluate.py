@@ -128,6 +128,15 @@ def summarize(browser, server):
         result['load_peak_rss_bytes'] = max(s['rss_bytes'] for s in timed)
         result['idle_ram_under_64_mib'] = result['idle_peak_rss_bytes'] <= 64 * 1024 ** 2
         result['load_ram_under_256_mib'] = result['load_peak_rss_bytes'] <= 256 * 1024 ** 2
+        infrastructure = {}
+        for name in {name for sample in timed for name in sample.get('infrastructure', {})}:
+            values = [s['infrastructure'][name] for s in timed if name in s.get('infrastructure', {})]
+            infrastructure[name] = {'peak_rss_bytes': max(v['rss_bytes'] for v in values), 'image_id': values[0].get('image_id'),
+                'cpu_cores_mean': (values[-1]['cpu_seconds'] - values[0]['cpu_seconds']) / (values[-1]['at'] - values[0]['at'])
+                if len(values) > 1 and values[-1]['at'] > values[0]['at'] else None}
+            infrastructure[name]['idle_peak_rss_bytes'] = max((s['infrastructure'][name]['rss_bytes'] for s in idle if name in s.get('infrastructure', {})), default=None)
+            infrastructure[name]['post_leave_peak_rss_bytes'] = max((s['infrastructure'][name]['rss_bytes'] for s in post if name in s.get('infrastructure', {})), default=None)
+        result['infrastructure'] = infrastructure
     result['media_fixture_valid'] = not problems
     return result
 
