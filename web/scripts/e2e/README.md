@@ -84,3 +84,10 @@ This long check stays local and is not added to CI.
 The separate [iOS and Omarchy acceptance sheet](../../../docs/v0.4-device-acceptance.md)
 records the physical hearing, device, background/resume and TURN checks. It starts
 as not performed and requires the exact candidate and actual browser/device evidence.
+
+The [2026-10-05 local hour evidence](evidence/v04-one-hour-call-2026-10-05.json)
+records 3600.106 seconds and 120 samples on an earlier frozen candidate. It
+used the temporary predecessor of this portable runner. The current portable
+runner has two separate 30-second controls. The recorded hour proves advancing
+media and released tracks/rooms, while shared API activity confounds its RAM
+comparison; viewer layers, physical devices and WAN/TURN remain separate gates.
