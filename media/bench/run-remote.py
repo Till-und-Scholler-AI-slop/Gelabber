@@ -40,11 +40,11 @@ if op=='start':
          'BENCH_UDP_MIN':str(c['udp_min']),'BENCH_UDP_MAX':str(c['udp_max']),
          'MEDIA_ICE_BIND':f"0.0.0.0:{c['udp_min']}",'MEDIA_ICE_PORT_MAX':str(c['udp_max'])}
     if c['engine']=='current':
-        docker('run','-d','--name',redis_name,'--label','gelabber.bench.run='+group,'--cpus','0.25','--memory','64m','--memory-swap','64m','--pids-limit','64',
+        docker('run','-d','--name',redis_name,'--label','gelabber.bench.run='+group,'--label','com.centurylinklabs.watchtower.enable=false','--cpus','0.25','--memory','64m','--memory-swap','64m','--pids-limit','64',
                '-p','127.0.0.1::6379','redis:8.10.1-alpine','redis-server','--save','','--appendonly','no')
         port=owned(redis_name)['NetworkSettings']['Ports']['6379/tcp'][0]['HostPort']
         env['REDIS_URL']='redis://127.0.0.1:'+port
-    args=['run','-d','--name',name,'--label','gelabber.bench.run='+group,'--network','host',
+    args=['run','-d','--name',name,'--label','gelabber.bench.run='+group,'--label','com.centurylinklabs.watchtower.enable=false','--network','host',
           '--cpus','1','--memory','512m','--memory-swap','512m','--pids-limit','256','--log-opt','max-size=5m','--log-opt','max-file=1']
     if c['engine']=='janus': env['BENCH_HTTP_PORT']=str(c['port'])
     for key,value in env.items(): args+=['-e',key+'='+value]
