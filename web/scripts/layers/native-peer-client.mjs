@@ -16,31 +16,44 @@ export class NativePeer {
     this.videos = [];
     this.tracks = new Set();
     this.offers = [];
+    this.sources = new Map();
+    this.signalQueue = Promise.resolve();
+  }
+  signal(task) {
+    const result = this.signalQueue.then(task);
+    this.signalQueue = result.catch(() => {});
+    return result;
+  }
+  capture(index = 0) {
+    const canvas = document.createElement("canvas");
+    canvas.width = 640;
+    canvas.height = 360;
+    const ctx = canvas.getContext("2d");
+    let frame = index * 30;
+    const draw = () => {
+      ctx.fillStyle = `rgb(${frame++ % 255},80,180)`;
+      ctx.fillRect(0, 0, 640, 360);
+      ctx.fillStyle = "white";
+      ctx.fillRect((frame * 9) % 600, 20, 30, 30);
+    };
+    draw();
+    const timer = setInterval(draw, 33),
+      stream = canvas.captureStream(30),
+      track = stream.getVideoTracks()[0];
+    const dispose = () => {
+      clearInterval(timer);
+      track.stop();
+    };
+    this.resources.push(dispose);
+    return { stream, track, dispose };
   }
   async start({ url, kinds, version = 3, legacy = false }) {
     const sources = [];
     if (legacy === "vp9")
       this.pc.addTransceiver("video", { direction: "recvonly" });
     for (const [index, kind] of kinds.entries()) {
-      const canvas = document.createElement("canvas");
-      canvas.width = 640;
-      canvas.height = 360;
-      const ctx = canvas.getContext("2d");
-      let frame = index * 30;
-      const draw = () => {
-        ctx.fillStyle = `rgb(${frame++ % 255},80,180)`;
-        ctx.fillRect(0, 0, 640, 360);
-        ctx.fillStyle = "white";
-        ctx.fillRect((frame * 9) % 600, 20, 30, 30);
-      };
-      draw();
-      const timer = setInterval(draw, 33),
-        stream = canvas.captureStream(30),
-        track = stream.getVideoTracks()[0];
-      this.resources.push(() => {
-        clearInterval(timer);
-        track.stop();
-      });
+      const capture = this.capture(index),
+        { stream, track } = capture;
       let sender;
       if (legacy === true) {
         sender = this.pc.addTrack(track, stream);
@@ -67,6 +80,7 @@ export class NativePeer {
         if (!sender) throw Error("actual layered helper missing");
       }
       sources.push({ kind, sender });
+      this.sources.set(kind, { ...capture, sender });
     }
     const context = new AudioContext(),
       tone = context.createOscillator(),
@@ -134,17 +148,19 @@ export class NativePeer {
           r.json(),
         )) {
           if (message.op === "o") {
-            await this.pc.setRemoteDescription({
-              type: "offer",
-              sdp: message.sdp,
-            });
-            await this.pc.setLocalDescription(await this.pc.createAnswer());
-            this.offers.push({
-              offer: message.sdp,
-              answer: this.pc.localDescription.sdp,
-            });
-            await post(`/answer/${this.probe}`, {
-              sdp: this.pc.localDescription.sdp,
+            await this.signal(async () => {
+              await this.pc.setRemoteDescription({
+                type: "offer",
+                sdp: message.sdp,
+              });
+              await this.pc.setLocalDescription(await this.pc.createAnswer());
+              this.offers.push({
+                offer: message.sdp,
+                answer: this.pc.localDescription.sdp,
+              });
+              await post(`/answer/${this.probe}`, {
+                sdp: this.pc.localDescription.sdp,
+              });
             });
           } else if (message.op === "err") throw Error(`SFU ${message.e}`);
         }
@@ -154,6 +170,109 @@ export class NativePeer {
       this.error = String(error);
     });
     return { probe: this.probe, user: this.user };
+  }
+  publication(kind) {
+    const capture = this.sources.get(kind);
+    if (!capture) throw Error(`unknown owned source ${kind}`);
+    const mid = this.pc
+      .getTransceivers()
+      .find((t) => t.sender === capture.sender)?.mid;
+    const track = globalThis
+      .__publishedTrackIds(this.pc.localDescription.sdp)
+      .get(mid);
+    if (!track) throw Error(`missing actual source MSID ${kind}`);
+    return {
+      kind,
+      track,
+      mid,
+      capture: capture.track.id,
+      ready: capture.track.readyState,
+    };
+  }
+  async stable() {
+    for (let n = 0; n < 100; n++) {
+      if (this.error) throw Error(this.error);
+      const server = await fetch(`/debug/${this.probe}`).then((r) => r.json());
+      if (this.pc.signalingState === "stable" && !server.haveLocalOffer) return;
+      await wait(30);
+    }
+    throw Error(
+      `source restart signaling did not settle ${JSON.stringify(await this.debug())}`,
+    );
+  }
+  async reofferLocked(kinds = []) {
+    await this.pc.setLocalDescription(await this.pc.createOffer());
+    const answer = await post(`/renegotiate/${this.probe}`, {
+      sdp: this.pc.localDescription.sdp,
+      sources: kinds.map((kind) => this.publication(kind)),
+    });
+    await this.pc.setRemoteDescription({ type: "answer", sdp: answer.sdp });
+  }
+  async stopSource(kind, strategy = "replace") {
+    await this.stable();
+    return this.signal(async () => {
+      const identity = this.publication(kind),
+        capture = this.sources.get(kind);
+      await post(`/retract/${this.probe}`, identity);
+      if (strategy === "replace") await capture.sender.replaceTrack(null);
+      else this.pc.removeTrack(capture.sender);
+      capture.dispose();
+      await this.reofferLocked();
+      return { ...identity, stopped: capture.track.readyState };
+    });
+  }
+  async restartSource(kind) {
+    await this.stable();
+    return this.signal(async () => {
+      const previous = this.sources.get(kind),
+        fresh = this.capture(7);
+      const transceiver = this.pc
+        .getTransceivers()
+        .find((t) => t.sender === previous.sender);
+      // Same sender/direction reuse as the product's publishVideo path.
+      const sender = previous.sender;
+      await sender.replaceTrack(fresh.track);
+      if (transceiver.direction === "recvonly")
+        transceiver.direction = "sendrecv";
+      else if (transceiver.direction === "inactive")
+        transceiver.direction = "sendonly";
+      this.sources.set(kind, { ...fresh, sender });
+      await this.reofferLocked([kind]);
+      return this.publication(kind);
+    });
+  }
+  async freshSource(source, before) {
+    for (let n = 0; n < 100; n++) {
+      const sample = await this.stats(),
+        server = await fetch(`/debug/${this.probe}`).then((r) => r.json());
+      const binding = server.bindings.find((b) => b.source === source);
+      const video = sample.find(
+        (s) =>
+          s.type === "inbound-rtp" &&
+          s.kind === "video" &&
+          s.ssrc === binding?.ssrc,
+      );
+      const baseline = before.find(
+        (s) => s.type === "inbound-rtp" && s.ssrc === video?.ssrc,
+      );
+      const audio = sample
+        .filter((s) => s.type === "inbound-rtp" && s.kind === "audio")
+        .reduce((sum, s) => sum + s.packets, 0);
+      const oldAudio = before
+        .filter((s) => s.type === "inbound-rtp" && s.kind === "audio")
+        .reduce((sum, s) => sum + s.packets, 0);
+      if (
+        video?.height > 0 &&
+        video.frames >= (baseline?.frames ?? 0) + 5 &&
+        video.packets >= (baseline?.packets ?? 0) + 5 &&
+        audio >= oldAudio + 5
+      )
+        return { source, video, audio, binding };
+      await wait(80);
+    }
+    throw Error(
+      `new source has no fresh matching decoder ${JSON.stringify(await this.stats())} ${JSON.stringify(await this.debug())}`,
+    );
   }
   async stats() {
     if (this.error) throw Error(this.error);
@@ -176,6 +295,13 @@ export class NativePeer {
   }
   async debug() {
     return {
+      localIdentifiers: this.pc.localDescription.sdp
+        .split(/\r?\n/)
+        .filter((s) =>
+          /^(m=|a=(?:mid:|msid:|ssrc:|ssrc-group:|rid:|simulcast:|extmap:))/.test(
+            s,
+          ),
+        ),
       offers: this.offers.map(({ offer, answer }) => ({
         offer: offer
           .split(/\r?\n/)
@@ -193,6 +319,10 @@ export class NativePeer {
           ),
       })),
       server: await fetch(`/debug/${this.probe}`).then((r) => r.json()),
+      senders: this.pc.getSenders().map((sender) => ({
+        track: sender.track?.id,
+        parameters: sender.getParameters(),
+      })),
       native: this.pc
         .getTransceivers()
         .map((t) => ({ mid: t.mid, direction: t.currentDirection })),

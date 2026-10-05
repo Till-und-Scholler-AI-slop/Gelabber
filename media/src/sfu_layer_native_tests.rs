@@ -111,15 +111,25 @@ async fn debug_peer(State(f): State<Fixture>, Path(index): Path<usize>) -> Json<
     for state in gate.subscriptions.values() {
         if let SubscriptionState::Active(sub) = state {
             let params = sub.sender.get_parameters().await.unwrap();
-            bindings.push(serde_json::json!({"source":sub.source,"mid":sender_mid(&pc,&sub.sender).await,"binding":*sub.payload_type.borrow(),"codec":sub.codec.mime_type,"fmtp":sub.codec.sdp_fmtp_line,"parameters":params.rtp_parameters.codecs.iter().map(|c|serde_json::json!({"pt":c.payload_type,"codec":c.rtp_codec.mime_type,"fmtp":c.rtp_codec.sdp_fmtp_line})).collect::<Vec<_>>()}));
+            bindings.push(serde_json::json!({"source":sub.source,"mid":sender_mid(&pc,&sub.sender).await,"binding":*sub.payload_type.borrow(),"ssrc":params.encodings.first().and_then(|encoding|encoding.rtp_coding_parameters.ssrc),"codec":sub.codec.mime_type,"fmtp":sub.codec.sdp_fmtp_line,"parameters":params.rtp_parameters.codecs.iter().map(|c|serde_json::json!({"pt":c.payload_type,"codec":c.rtp_codec.mime_type,"fmtp":c.rtp_codec.sdp_fmtp_line})).collect::<Vec<_>>()}));
         }
     }
     let mut mids = Vec::new();
+    let mut receivers = Vec::new();
     for t in pc.get_transceivers().await {
         mids.push(serde_json::json!({"mid":t.mid().await.unwrap(),"direction":format!("{:?}",t.direction().await.unwrap()),"sender":t.sender().await.unwrap().is_some()}));
+        if let Some(receiver) = t.receiver().await.unwrap() {
+            let track = receiver.track();
+            let mut codings = Vec::new();
+            for ssrc in track.ssrcs().await {
+                codings.push(serde_json::json!({"ssrc":ssrc,"rid":track.rid(ssrc).await,"codec":track.codec(ssrc).await.map(|c|c.mime_type)}));
+            }
+            let params = receiver.get_parameters().await.ok();
+            receivers.push(serde_json::json!({"mid":t.mid().await.unwrap(),"stream":track.stream_id().await,"track":track.track_id().await,"known":codings,"parameters":params.map(|params|params.rtp_parameters.codecs.iter().map(|codec|serde_json::json!({"pt":codec.payload_type,"codec":codec.rtp_codec.mime_type})).collect::<Vec<_>>())}));
+        }
     }
     Json(
-        serde_json::json!({"ridRecovery":gate.rid_recovery.observed(),"bindings":bindings,"transceivers":mids,"reserved":gate.publication_slots.len(),"active":gate.subscriptions.values().filter(|s|matches!(s,SubscriptionState::Active(_))).count()}),
+        serde_json::json!({"ridRecovery":gate.rid_recovery.observed(),"ridBoundSeeds":gate.rid_recovery.bound_seeds(),"haveLocalOffer":gate.have_local_offer,"receivers":receivers,"bindings":bindings,"transceivers":mids,"reserved":gate.publication_slots.len(),"active":gate.subscriptions.values().filter(|s|matches!(s,SubscriptionState::Active(_))).count()}),
     )
 }
 async fn offer(
@@ -148,6 +158,56 @@ async fn answer(
             probe.channel,
             body["sdp"].as_str().unwrap().into(),
             false,
+        )
+        .await
+        .unwrap();
+    Json(serde_json::json!({"ok":true}))
+}
+async fn renegotiate(
+    State(f): State<Fixture>,
+    Path(index): Path<usize>,
+    Json(body): Json<serde_json::Value>,
+) -> Json<serde_json::Value> {
+    let probe = f.peers.lock().await[index].clone();
+    // Hold before applying the offer: the concurrent poll route must not
+    // consume this client-offer answer before its request receives it.
+    let mut frames = probe.frames.lock().await;
+    announce_sources(&f, probe.peer, probe.channel, &body).await;
+    f.sfu
+        .apply_remote(
+            probe.peer,
+            probe.channel,
+            body["sdp"].as_str().unwrap().into(),
+            true,
+        )
+        .await
+        .unwrap();
+    let sdp = tokio::time::timeout(Duration::from_secs(10), async {
+        while let Some(frame) = frames.recv().await {
+            match frame {
+                ServerFrame::Answer { sdp } => return sdp,
+                ServerFrame::Ice { .. } => {}
+                other => panic!("unexpected client-offer response {other:?}"),
+            }
+        }
+        panic!("source restart answer channel ended")
+    })
+    .await
+    .unwrap();
+    Json(serde_json::json!({"sdp":sdp}))
+}
+async fn retract(
+    State(f): State<Fixture>,
+    Path(index): Path<usize>,
+    Json(body): Json<serde_json::Value>,
+) -> Json<serde_json::Value> {
+    let probe = f.peers.lock().await[index].clone();
+    f.sfu
+        .retract_track(
+            probe.peer,
+            probe.channel,
+            body["kind"].as_str().unwrap(),
+            body["track"].as_str(),
         )
         .await
         .unwrap();
@@ -234,6 +294,8 @@ async fn native_browser_rid_feasibility() {
         .route("/offer", post(offer))
         .route("/subscriber/{index}", post(subscriber))
         .route("/answer/{index}", post(answer))
+        .route("/renegotiate/{index}", post(renegotiate))
+        .route("/retract/{index}", post(retract))
         .route("/poll/{index}", get(poll))
         .route("/layer/{index}", post(layer))
         .route("/observed/{index}", get(observed))
@@ -243,8 +305,13 @@ async fn native_browser_rid_feasibility() {
     let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
     let url = format!("http://{}", listener.local_addr().unwrap());
     let server = tokio::spawn(async move { axum::serve(listener, app).await.unwrap() });
-    let script = std::path::Path::new(env!("CARGO_MANIFEST_DIR"))
-        .join("../web/scripts/layers/native-rid-probe.mjs");
+    let script = std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join(
+        if std::env::var_os("GELABBER_LAYER_LIFECYCLE_ONLY").is_some() {
+            "../web/scripts/layers/native-lifecycle-probe.mjs"
+        } else {
+            "../web/scripts/layers/native-rid-probe.mjs"
+        },
+    );
     let result = tokio::task::spawn_blocking(move || {
         std::process::Command::new("node")
             .arg(script)
