@@ -217,6 +217,10 @@ default fixtures cannot share a performance comparison.
 The timestamp model follows the [AudioWorklet sample-frame clock](https://webaudio.github.io/web-audio-api/#dom-audioworkletglobalscope-currentframe).
 [Jitterbuffer statistics](https://www.w3.org/TR/webrtc-stats/#dom-rtcinboundrtpstreamstats-jitterbufferdelay)
 are cumulative decoder metrics and remain separate from this PCM measurement.
+The [local calibration record](evidence/pcm-calibration-2026-10-05.json) identifies
+the corrected instrument and exact code/browser hashes. Its known-delay checks
+passed; no final three-engine or WAN latency comparison has been performed with
+this corrected instrument yet.
 
 ## Separate-host measurement
 
@@ -390,6 +394,16 @@ That shows reproducible path dependence; one local diagnostic round does not
 prove server capacity or a particular WAN/congestion-control cause. A separate
 voice-only matrix can establish partial audio findings while the video,
 production-contract and end-to-end latency gates remain open.
+
+The later [namespace WAN pilot](evidence/namespace-video-pilot-2026-10-05.json)
+used the identical optional 4-Mbit/s VP8 source hints on all engines. Its browser
+had only `lo`/`eth0` and no recorded page errors, while both namespace and host
+held-GET controls also reported zero errors. Those controls did not reproduce
+the earlier POST/long-poll error and do not prove DHCP causality. Every engine
+still failed actual video rate/FPS qualification (0.442/0.611/2.606 Mbit/s and
+12.0/16.8/56.6 fps for current/mediasoup/Janus); audio stayed near128.4 kbit/s.
+Runtime image/libraries, browser and server inputs are recorded. This failed
+source pilot cannot justify server CPU/RAM or replacement rankings.
 
 Primary format references: [Chromium's local event-log switch](https://chromium.googlesource.com/chromium/src/+/refs/heads/main/content/public/common/content_switches.cc),
 [WebRTC v2 schema](https://webrtc.googlesource.com/src/+/refs/heads/main/logging/rtc_event_log/rtc_event_log2.proto),

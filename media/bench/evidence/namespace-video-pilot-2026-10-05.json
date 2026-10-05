@@ -1,0 +1,776 @@
+{
+  "schema": 1,
+  "acceptance": false,
+  "resource_comparison_available": false,
+  "status": "all three fixed-source WAN pilot cases failed actual 4-Mbit/s/1080p60 qualification",
+  "limitations": [
+    "production tickets/ACL/revocation/watch/source-audio",
+    "TURN/loss/browser-family acceptance",
+    "true end-to-end audio latency",
+    "shared production host interference",
+    "The GET control did not reproduce the earlier host POST/long-poll network error.",
+    "DHCP timing correlation is not proven causality.",
+    "The browser namespace exposes only its own lo/eth0; the WAN pilot must independently satisfy actual RTP bitrate/FPS/loss and graph requirements.",
+    "Generator limit 4 GiB RAM, 1 GiB SHM, 1024 PIDs; no CPU quota. Actual generator subprocesses are measured inside the namespace.",
+    "UID1000 fixture account was added inside the temporary container, as now recorded in Dockerfile; runtime image metadata predates that passwd entry.",
+    "one pilot run per engine, not a ranking",
+    "main and marker-free browser inputs frozen at9ab9cbe; PCM instrument not enabled"
+  ],
+  "source_revision": "9ab9cbe9711a7957e20b2529704c66e2a01a5183",
+  "git_dirty": false,
+  "configuration": {
+    "engines": [
+      "current",
+      "mediasoup",
+      "janus"
+    ],
+    "matrix": [
+      2
+    ],
+    "runs": 1,
+    "duration": 60,
+    "warmup": 30,
+    "video": true,
+    "video_bitrate": 4000000,
+    "fixed_video_fixture": true,
+    "protocol_logs": false,
+    "port": 18091,
+    "udp_min": 11000,
+    "udp_max": 11199
+  },
+  "limits": {
+    "media_cpus": 1,
+    "memory_bytes": 536870912,
+    "pids": 256,
+    "redis_cpus": 0.25,
+    "redis_memory_bytes": 67108864,
+    "cohosted_live_services": true
+  },
+  "images": {
+    "current": {
+      "id": "sha256:cb2a5576ad71f0f58fad453697914f3742fe5bf263a6072b1fe46bc107033b85",
+      "size": 34108102,
+      "labels": {
+        "gelabber.bench.binary_sha256": "a2fd497a4836ea1aba57baa8e1216c9fae73476a75ba0e8bad4ab37875285701",
+        "org.opencontainers.image.revision": "de1ae34647b2c4f0631dfc16fd5b8ea7d970184a"
+      }
+    },
+    "mediasoup": {
+      "id": "sha256:75ef46894be12279debd99a55409efca5c67cfa0311a810eed4d726c20c68c4d",
+      "size": 35665019,
+      "labels": {
+        "gelabber.bench.binary_sha256": "df90621e944a6ed22daec75096e2f8fb4ca092af6de3635ef955f1112dfca01b",
+        "org.opencontainers.image.revision": "de1ae34647b2c4f0631dfc16fd5b8ea7d970184a"
+      }
+    },
+    "janus": {
+      "id": "sha256:76845b0f9e03ad08a0444e4194969510b96ca72d83754e596431aa04dc773e62",
+      "size": 54416670,
+      "labels": {
+        "org.opencontainers.image.revision": "0a24110ae55a172c4293749b763dbb66a138f9ec",
+        "org.opencontainers.image.version": "janus-v1.4.2"
+      }
+    }
+  },
+  "load_generator": {
+    "runtime_image_id": "sha256:a1087f71b2dbd30bd90b9f7dbd7dc42b2781c21b3c5873b14fc81ec9d158cc1b",
+    "runtime_memory_bytes": 4294967296,
+    "labels": {
+      "com.centurylinklabs.watchtower.enable": "false",
+      "gelabber.bench.binary_sha256": "a2fd497a4836ea1aba57baa8e1216c9fae73476a75ba0e8bad4ab37875285701",
+      "gelabber.bench.fixture": "netns-20261005",
+      "org.opencontainers.image.revision": "de1ae34647b2c4f0631dfc16fd5b8ea7d970184a"
+    },
+    "declared_dockerfile": "FROM gelabber-bench/current:debian13\nUSER root\nRUN apt-get update && apt-get install -y --no-install-recommends git openssh-client python3 iproute2 libglib2.0-0t64 libnss3 libnspr4 libatk1.0-0t64 libatk-bridge2.0-0t64 libdbus-1-3 libx11-6 libxcomposite1 libxdamage1 libxext6 libxfixes3 libxrandr2 libgbm1 libexpat1 libxcb1 libxkbcommon0 libasound2t64 libatspi2.0-0t64 libxrender1 libxi6 libxau6 libxdmcp6 ca-certificates && dpkg-query -W > /fixture-runtime-packages.txt && rm -rf /var/lib/apt/lists/*\nRUN groupadd -g 1000 fixture && useradd -u 1000 -g 1000 -M -d /tmp fixture\nENTRYPOINT []\nCMD [\"sleep\", \"infinity\"]\n",
+    "runtime_packages": [
+      "adduser\t3.152",
+      "apt\t3.0.3",
+      "at-spi2-common\t2.56.2-1+deb13u2",
+      "base-files\t13.8+deb13u7",
+      "base-passwd\t3.6.7",
+      "bash\t5.2.37-2+b10",
+      "bsdutils\t1:2.41.5-0+deb13u1",
+      "ca-certificates\t20250419",
+      "coreutils\t9.7-3",
+      "dash\t0.5.12-12",
+      "debconf\t1.5.91",
+      "debian-archive-keyring\t2025.1",
+      "debianutils\t5.23.2",
+      "diffutils\t1:3.10-4",
+      "dpkg\t1.22.22",
+      "findutils\t4.10.0-3",
+      "gcc-14-base:amd64\t14.2.0-19",
+      "git\t1:2.47.3-0+deb13u1",
+      "git-man\t1:2.47.3-0+deb13u1",
+      "grep\t3.11-4",
+      "gzip\t1.13-1+deb13u1",
+      "hostname\t3.25",
+      "init-system-helpers\t1.69~deb13u1",
+      "iproute2\t6.15.0-1",
+      "libacl1:amd64\t2.3.2-2+b1",
+      "libapt-pkg7.0:amd64\t3.0.3",
+      "libasound2-data\t1.2.14-1+deb13u1",
+      "libasound2t64:amd64\t1.2.14-1+deb13u1",
+      "libatk-bridge2.0-0t64:amd64\t2.56.2-1+deb13u2",
+      "libatk1.0-0t64:amd64\t2.56.2-1+deb13u2",
+      "libatomic1:amd64\t14.2.0-19",
+      "libatspi2.0-0t64:amd64\t2.56.2-1+deb13u2",
+      "libattr1:amd64\t1:2.5.2-3",
+      "libaudit-common\t1:4.0.2-2+deb13u1",
+      "libaudit1:amd64\t1:4.0.2-2+deb13u1",
+      "libblkid1:amd64\t2.41.5-0+deb13u1",
+      "libbpf1:amd64\t1:1.5.0-3",
+      "libbrotli1:amd64\t1.1.0-2+b7",
+      "libbsd0:amd64\t0.12.2-2",
+      "libbz2-1.0:amd64\t1.0.8-6",
+      "libc-bin\t2.41-12+deb13u4",
+      "libc6:amd64\t2.41-12+deb13u4",
+      "libcap-ng0:amd64\t0.8.5-4+b1",
+      "libcap2:amd64\t1:2.75-10+deb13u1+b3",
+      "libcap2-bin\t1:2.75-10+deb13u1+b3",
+      "libcbor0.10:amd64\t0.10.2-2",
+      "libcom-err2:amd64\t1.47.2-3+b12",
+      "libcrypt1:amd64\t1:4.4.38-1",
+      "libcurl3t64-gnutls:amd64\t8.14.1-2+deb13u5",
+      "libdb5.3t64:amd64\t5.3.28+dfsg2-9",
+      "libdbus-1-3:amd64\t1.16.2-2",
+      "libdebconfclient0:amd64\t0.280",
+      "libdrm-amdgpu1:amd64\t2.4.124-2",
+      "libdrm-common\t2.4.124-2",
+      "libdrm-intel1:amd64\t2.4.124-2",
+      "libdrm2:amd64\t2.4.124-2",
+      "libedit2:amd64\t3.1-20250104-1",
+      "libelf1t64:amd64\t0.192-4",
+      "liberror-perl\t0.17030-1",
+      "libexpat1:amd64\t2.8.3-1~deb13u1",
+      "libffi8:amd64\t3.4.8-2",
+      "libfido2-1:amd64\t1.15.0-1+b1",
+      "libgbm1:amd64\t25.0.7-2+deb13u1",
+      "libgcc-s1:amd64\t14.2.0-19",
+      "libgdbm-compat4t64:amd64\t1.24-2",
+      "libgdbm6t64:amd64\t1.24-2",
+      "libglib2.0-0t64:amd64\t2.84.4-3~deb13u5",
+      "libgmp10:amd64\t2:6.3.0+dfsg-3",
+      "libgnutls30t64:amd64\t3.8.9-3+deb13u4",
+      "libgssapi-krb5-2:amd64\t1.21.3-5+deb13u1",
+      "libhogweed6t64:amd64\t3.10.1-1",
+      "libidn2-0:amd64\t2.3.8-2",
+      "libk5crypto3:amd64\t1.21.3-5+deb13u1",
+      "libkeyutils1:amd64\t1.6.3-6",
+      "libkrb5-3:amd64\t1.21.3-5+deb13u1",
+      "libkrb5support0:amd64\t1.21.3-5+deb13u1",
+      "liblastlog2-2:amd64\t2.41.5-0+deb13u1",
+      "libldap2:amd64\t2.6.10+dfsg-1",
+      "libllvm19:amd64\t1:19.1.7-3+b1",
+      "liblz4-1:amd64\t1.10.0-4",
+      "liblzma5:amd64\t5.8.1-1+deb13u1",
+      "libmd0:amd64\t1.1.0-2+b1",
+      "libmnl0:amd64\t1.0.5-3",
+      "libmount1:amd64\t2.41.5-0+deb13u1",
+      "libncursesw6:amd64\t6.5+20250216-2",
+      "libnettle8t64:amd64\t3.10.1-1",
+      "libnghttp2-14:amd64\t1.64.0-1.1+deb13u1",
+      "libnghttp3-9:amd64\t1.8.0-1",
+      "libngtcp2-16:amd64\t1.11.0-1+deb13u1",
+      "libngtcp2-crypto-gnutls8:amd64\t1.11.0-1+deb13u1",
+      "libnspr4:amd64\t2:4.36-1",
+      "libnss3:amd64\t2:3.110-1+deb13u4",
+      "libp11-kit0:amd64\t0.25.5-3",
+      "libpam-modules:amd64\t1.7.0-5",
+      "libpam-modules-bin\t1.7.0-5",
+      "libpam-runtime\t1.7.0-5",
+      "libpam0g:amd64\t1.7.0-5",
+      "libpciaccess0:amd64\t0.17-3+b3",
+      "libpcre2-8-0:amd64\t10.46-1~deb13u2",
+      "libperl5.40:amd64\t5.40.1-6+deb13u1",
+      "libpsl5t64:amd64\t0.21.2-1.1+b1",
+      "libpython3-stdlib:amd64\t3.13.5-1",
+      "libpython3.13-minimal:amd64\t3.13.5-2+deb13u5",
+      "libpython3.13-stdlib:amd64\t3.13.5-2+deb13u5",
+      "libreadline8t64:amd64\t8.2-6",
+      "librtmp1:amd64\t2.4+20151223.gitfa8646d.1-2+b5",
+      "libsasl2-2:amd64\t2.1.28+dfsg1-9",
+      "libsasl2-modules-db:amd64\t2.1.28+dfsg1-9",
+      "libseccomp2:amd64\t2.6.0-2",
+      "libselinux1:amd64\t3.8.1-1",
+      "libsemanage-common\t3.8.1-1",
+      "libsemanage2:amd64\t3.8.1-1",
+      "libsensors-config\t1:3.6.2-2",
+      "libsensors5:amd64\t1:3.6.2-2",
+      "libsepol2:amd64\t3.8.1-1",
+      "libsmartcols1:amd64\t2.41.5-0+deb13u1",
+      "libsqlite3-0:amd64\t3.46.1-7+deb13u2",
+      "libssh2-1t64:amd64\t1.11.1-1+deb13u2",
+      "libssl3t64:amd64\t3.5.7-1~deb13u3",
+      "libstdc++6:amd64\t14.2.0-19",
+      "libsystemd0:amd64\t257.13-1~deb13u1",
+      "libtasn1-6:amd64\t4.20.0-2+deb13u1",
+      "libtinfo6:amd64\t6.5+20250216-2",
+      "libtirpc-common\t1.3.6+ds-1",
+      "libtirpc3t64:amd64\t1.3.6+ds-1",
+      "libudev1:amd64\t257.13-1~deb13u1",
+      "libunistring5:amd64\t1.3-2",
+      "libuuid1:amd64\t2.41.5-0+deb13u1",
+      "libwayland-server0:amd64\t1.23.1-3",
+      "libx11-6:amd64\t2:1.8.12-1",
+      "libx11-data\t2:1.8.12-1",
+      "libx11-xcb1:amd64\t2:1.8.12-1",
+      "libxau6:amd64\t1:1.0.11-1",
+      "libxcb-dri3-0:amd64\t1.17.0-2+b1",
+      "libxcb-present0:amd64\t1.17.0-2+b1",
+      "libxcb-randr0:amd64\t1.17.0-2+b1",
+      "libxcb-sync1:amd64\t1.17.0-2+b1",
+      "libxcb-xfixes0:amd64\t1.17.0-2+b1",
+      "libxcb1:amd64\t1.17.0-2+b1",
+      "libxcomposite1:amd64\t1:0.4.6-1",
+      "libxdamage1:amd64\t1:1.1.6-1+b2",
+      "libxdmcp6:amd64\t1:1.1.5-1",
+      "libxext6:amd64\t2:1.3.4-1+b3",
+      "libxfixes3:amd64\t1:6.0.0-2+b4",
+      "libxi6:amd64\t2:1.8.2-1",
+      "libxkbcommon0:amd64\t1.7.0-2",
+      "libxml2:amd64\t2.12.7+dfsg+really2.9.14-2.1+deb13u3",
+      "libxrandr2:amd64\t2:1.5.4-1+b3",
+      "libxrender1:amd64\t1:0.9.12-1",
+      "libxshmfence1:amd64\t1.3.3-1",
+      "libxtables12:amd64\t1.8.11-2",
+      "libxxhash0:amd64\t0.8.3-2",
+      "libz3-4:amd64\t4.13.3-1",
+      "libzstd1:amd64\t1.5.7+dfsg-1",
+      "login\t1:4.16.0-2+really2.41.5-0+deb13u1",
+      "login.defs\t1:4.17.4-2",
+      "mawk\t1.3.4.20250131-1",
+      "media-types\t13.0.0",
+      "mesa-libgallium:amd64\t25.0.7-2+deb13u1",
+      "mount\t2.41.5-0+deb13u1",
+      "ncurses-base\t6.5+20250216-2",
+      "ncurses-bin\t6.5+20250216-2",
+      "netbase\t6.5",
+      "openssh-client\t1:10.0p1-7+deb13u4",
+      "openssl\t3.5.7-1~deb13u3",
+      "openssl-provider-legacy\t3.5.7-1~deb13u3",
+      "passwd\t1:4.17.4-2",
+      "perl\t5.40.1-6+deb13u1",
+      "perl-base\t5.40.1-6+deb13u1",
+      "perl-modules-5.40\t5.40.1-6+deb13u1",
+      "python3\t3.13.5-1",
+      "python3-minimal\t3.13.5-1",
+      "python3.13\t3.13.5-2+deb13u5",
+      "python3.13-minimal\t3.13.5-2+deb13u5",
+      "readline-common\t8.2-6",
+      "sed\t4.9-2+deb13u1",
+      "sqv\t1.3.0-3+b2",
+      "sysvinit-utils\t3.14-4",
+      "tar\t1.35+dfsg-3.1",
+      "tzdata\t2026c-0+deb13u1",
+      "util-linux\t2.41.5-0+deb13u1",
+      "xkb-data\t2.42-1",
+      "zlib1g:amd64\t1:1.3.dfsg+really1.3.1-1+b1"
+    ],
+    "hardware": {
+      "cpu": "AMD Ryzen 9 7950X3D 16-Core Processor",
+      "logical_cpus": 32,
+      "total_ram_bytes": 66220544000,
+      "kernel": "7.2.5-3-omarchy",
+      "cpu_affinity": [
+        0,
+        1,
+        2,
+        3,
+        4,
+        5,
+        6,
+        7,
+        8,
+        9,
+        10,
+        11,
+        12,
+        13,
+        14,
+        15,
+        16,
+        17,
+        18,
+        19,
+        20,
+        21,
+        22,
+        23,
+        24,
+        25,
+        26,
+        27,
+        28,
+        29,
+        30,
+        31
+      ]
+    }
+  },
+  "network_control": {
+    "schema": 1,
+    "observed_namespace_control": {
+      "started_at": "2026-10-05T17:38:31.711Z",
+      "finished_at": "2026-10-05T17:41:32.063Z",
+      "requests": 560,
+      "failures": [],
+      "namespace": "net:[4026533854]",
+      "browser": {
+        "executable": "/home/rafi/.cache/ms-playwright/chromium_headless_shell-1243/chrome-headless-shell-linux64/chrome-headless-shell",
+        "sha256": "ded93a9c9a53a1ae040f08124badcca95c938e9d5015ff340c3b5538c41bf39e",
+        "product": "HeadlessChrome/153.0.8010.12",
+        "revision": "@971a7443b0c9b0a9b2860529b33331b76077ec62",
+        "user_agent": "Mozilla/5.0 (X11; Linux x86_64) AppleWebKit/537.36 (KHTML, like Gecko) HeadlessChrome/153.0.8010.12 Safari/537.36",
+        "js_version": "15.3.76.4"
+      }
+    },
+    "host_control_requests": 559,
+    "host_control_failures": [],
+    "artifact_sha256": {
+      "Dockerfile": "b0f9f4866abc286aa59160161d71d700c98ddd38cbbfa42daced6fcbb5e794e5",
+      "runtime-packages.txt": "fc38829ce5abcf18c87649089e6640413deb92344b3ba602ee52adb0d1e626c0",
+      "network-control.mjs": "4963413d559bb5bffdcf7a63b4079bcdeff478ac10d61584c1162b59a85467c2",
+      "container-provenance.txt": "950153e6dee5d7a383dc1f118bd3859651d627e93355ab4e9e3b3d0906df3450"
+    },
+    "limits": [
+      "The GET control did not reproduce the earlier host POST/long-poll network error.",
+      "DHCP timing correlation is not proven causality.",
+      "The browser namespace exposes only its own lo/eth0; the WAN pilot must independently satisfy actual RTP bitrate/FPS/loss and graph requirements.",
+      "Generator limit 4 GiB RAM, 1 GiB SHM, 1024 PIDs; no CPU quota. Actual generator subprocesses are measured inside the namespace.",
+      "UID1000 fixture account was added inside the temporary container, as now recorded in Dockerfile; runtime image metadata predates that passwd entry."
+    ]
+  },
+  "artifact_sha256": {
+    "remote-helper.py": "a810d262b6ac4569e349933ec7f2c4e151c7c7ec61af2a6d901d67d36e7337a5",
+    "protocol-diagnostics.py": "0d4fadc080cb3596d45aea2daa00822a17ac419ea0c84c25b266cfcd792269f0",
+    "evaluate.py": "de48e5cf6676f820038a473e6cecc86355a74d9dc84d7f8aabe9b095c88f4812",
+    "run-remote.py": "6ad9dc2aac93061eb2ee13a57e88c884207a32b8b7033af345d51ab6f55a1bb0",
+    "record.py": "ce2f366f6360ca1f17dee550c68dfa3724966348c7ef9969bc75671420a52b33",
+    "package-lock.json": "9d02e4d3313afe6d1fc466ab4fa598993660385d21a13021089fbeca04e1954c",
+    "client.bundle.js": "7c2e592aa6195c7da53c62047243e7c2816b9e9a06ff59ea5ce3cdc57e9607a4",
+    "video-fixture.mjs": "ed0384af338813e3abeeb17383386f23ea5402d637db7f3139e9a00317dbf4f3",
+    "browser-provenance.mjs": "c50c9ac32f4acf91982f05ef2cefcf5e945b61a63073c9bc499f216ba3d5c4ec",
+    "proxy-target.mjs": "eeb6a5b035738da7b5c7320dcaa5b40fb24506f26fd631921f54666b4840e7a2",
+    "loadgen.mjs": "ac55820498880b0838f83be5ac9c42b08809426599f9d3d07aea7ffee56e70a6"
+  },
+  "raw_summary_sha256": "2422a4182360400b8fcd52508a8d987cbfd20a68369438bd61ff480395e94887",
+  "runs": [
+    {
+      "engine": "current",
+      "peers": 2,
+      "round": 1,
+      "media_fixture_valid": false,
+      "problems": [
+        "not every video receiver decoded at least 57 fps",
+        "fixed video source did not deliver its configured actual rate"
+      ],
+      "sender_bitrate_distribution": {
+        "audio": {
+          "streams": [
+            {
+              "peer": "peer-0",
+              "endpoint": "peer-0/0",
+              "id": "OT01A397896916",
+              "kind": "audio",
+              "bps": 128386.4171394699
+            },
+            {
+              "peer": "peer-0",
+              "endpoint": "peer-0/0",
+              "id": "OT01A974467378",
+              "kind": "audio",
+              "bps": 128389.12693708188
+            },
+            {
+              "peer": "peer-1",
+              "endpoint": "peer-1/0",
+              "id": "OT01A1600843793",
+              "kind": "audio",
+              "bps": 128389.12693708188
+            }
+          ],
+          "min_bps": 128386.4171394699,
+          "max_bps": 128389.12693708188
+        },
+        "video": {
+          "streams": [
+            {
+              "peer": "peer-0",
+              "endpoint": "peer-0/0",
+              "id": "OT01V1387703835",
+              "kind": "video",
+              "bps": 442273.2492166991
+            }
+          ],
+          "min_bps": 442273.2492166991,
+          "max_bps": 442273.2492166991
+        }
+      },
+      "receiver_video_distribution": [
+        {
+          "peer": "peer-1",
+          "endpoint": "peer-1/0",
+          "id": "IT01V568309058",
+          "bps": 442567.1267677195
+        }
+      ],
+      "receiver_audio_distribution": [
+        {
+          "peer": "peer-0",
+          "endpoint": "peer-0/0",
+          "id": "IT01A3042031901",
+          "bps": 128432.61918875434,
+          "packet_loss_fraction": 0.0
+        },
+        {
+          "peer": "peer-1",
+          "endpoint": "peer-1/0",
+          "id": "IT01A4243497848",
+          "bps": 128471.09831484461,
+          "packet_loss_fraction": 0.0
+        },
+        {
+          "peer": "peer-1",
+          "endpoint": "peer-1/0",
+          "id": "IT01A4274931535",
+          "bps": 128476.11144042679,
+          "packet_loss_fraction": 0.0
+        }
+      ],
+      "decoded_video_fps": [
+        12.024726903209416
+      ],
+      "per_peer_graph": {
+        "peer-0": {
+          "expected": {
+            "audio": 1,
+            "video": 0
+          },
+          "observed": {
+            "audio": 1,
+            "video": 0
+          },
+          "expected_endpoint": "peer-0/0"
+        },
+        "peer-1": {
+          "expected": {
+            "audio": 2,
+            "video": 1
+          },
+          "observed": {
+            "audio": 2,
+            "video": 1
+          },
+          "expected_endpoint": "peer-1/0"
+        }
+      },
+      "expected_inbound": {
+        "audio": 3,
+        "video": 1
+      },
+      "observed_inbound": {
+        "audio": 3,
+        "video": 1
+      },
+      "measurement_seconds": 59.045,
+      "load_generator_cpu_cores_mean": 0.5403681256640204,
+      "load_generator_peak_rss_bytes": 985026560,
+      "executed_browser": {
+        "executable": "/home/rafi/.cache/ms-playwright/chromium_headless_shell-1243/chrome-headless-shell-linux64/chrome-headless-shell",
+        "sha256": "ded93a9c9a53a1ae040f08124badcca95c938e9d5015ff340c3b5538c41bf39e",
+        "product": "HeadlessChrome/153.0.8010.12",
+        "revision": "@971a7443b0c9b0a9b2860529b33331b76077ec62",
+        "user_agent": "Mozilla/5.0 (X11; Linux x86_64) AppleWebKit/537.36 (KHTML, like Gecko) HeadlessChrome/153.0.8010.12 Safari/537.36",
+        "js_version": "15.3.76.4"
+      },
+      "infrastructure": {
+        "redis": {
+          "peak_rss_bytes": 27009024,
+          "image_id": "sha256:becdda6c7f4b3fb42e42fd7f120bbf5c54c4caaaf16f26da24e4563d2c1f0576",
+          "cpu_cores_mean": 0.0036216690868655396,
+          "idle_peak_rss_bytes": 26972160,
+          "post_leave_peak_rss_bytes": 26406912
+        }
+      },
+      "resource_comparison_available": false,
+      "raw_browser_sha256": "ddadd909ccdee0995c7c81a1d467655505367fa600b376c09782b941a1df115b",
+      "raw_server_sha256": "b909a1c8b2c3e6149c030388282e7984476c550d2185749357644143aa1720a9",
+      "browser_failures": [],
+      "media_image_id": "sha256:cb2a5576ad71f0f58fad453697914f3742fe5bf263a6072b1fe46bc107033b85",
+      "redis_image_id": "sha256:becdda6c7f4b3fb42e42fd7f120bbf5c54c4caaaf16f26da24e4563d2c1f0576"
+    },
+    {
+      "engine": "mediasoup",
+      "peers": 2,
+      "round": 1,
+      "media_fixture_valid": false,
+      "problems": [
+        "not every video receiver decoded at least 57 fps",
+        "fixed video source did not deliver its configured actual rate"
+      ],
+      "sender_bitrate_distribution": {
+        "audio": {
+          "streams": [
+            {
+              "peer": "peer-0",
+              "endpoint": "peer-0/send",
+              "id": "OT01A2575465140",
+              "kind": "audio",
+              "bps": 128393.47815044952
+            },
+            {
+              "peer": "peer-0",
+              "endpoint": "peer-0/send",
+              "id": "OT01A3217736640",
+              "kind": "audio",
+              "bps": 128391.98821597277
+            },
+            {
+              "peer": "peer-1",
+              "endpoint": "peer-1/send",
+              "id": "OT01A2429615944",
+              "kind": "audio",
+              "bps": 128393.47815044952
+            }
+          ],
+          "min_bps": 128391.98821597277,
+          "max_bps": 128393.47815044952
+        },
+        "video": {
+          "streams": [
+            {
+              "peer": "peer-0",
+              "endpoint": "peer-0/send",
+              "id": "OT01V2819966015",
+              "kind": "video",
+              "bps": 610915.5308738127
+            }
+          ],
+          "min_bps": 610915.5308738127,
+          "max_bps": 610915.5308738127
+        }
+      },
+      "receiver_video_distribution": [
+        {
+          "peer": "peer-1",
+          "endpoint": "peer-1/recv",
+          "id": "IT01V250491480",
+          "bps": 610741.2085400335
+        }
+      ],
+      "receiver_audio_distribution": [
+        {
+          "peer": "peer-0",
+          "endpoint": "peer-0/recv",
+          "id": "IT01A264281726",
+          "bps": 128219.56216243672,
+          "packet_loss_fraction": 0.00033898305084745765
+        },
+        {
+          "peer": "peer-1",
+          "endpoint": "peer-1/recv",
+          "id": "IT01A383377286",
+          "bps": 128300.69586712493,
+          "packet_loss_fraction": 0.0
+        },
+        {
+          "peer": "peer-1",
+          "endpoint": "peer-1/recv",
+          "id": "IT01A647478094",
+          "bps": 128306.52015644312,
+          "packet_loss_fraction": 0.0
+        }
+      ],
+      "decoded_video_fps": [
+        16.79562501058192
+      ],
+      "per_peer_graph": {
+        "peer-0": {
+          "expected": {
+            "audio": 1,
+            "video": 0
+          },
+          "observed": {
+            "audio": 1,
+            "video": 0
+          },
+          "expected_endpoint": "peer-0/recv"
+        },
+        "peer-1": {
+          "expected": {
+            "audio": 2,
+            "video": 1
+          },
+          "observed": {
+            "audio": 2,
+            "video": 1
+          },
+          "expected_endpoint": "peer-1/recv"
+        }
+      },
+      "expected_inbound": {
+        "audio": 3,
+        "video": 1
+      },
+      "observed_inbound": {
+        "audio": 3,
+        "video": 1
+      },
+      "measurement_seconds": 59.063,
+      "load_generator_cpu_cores_mean": 0.7489278634384686,
+      "load_generator_peak_rss_bytes": 995975168,
+      "executed_browser": {
+        "executable": "/home/rafi/.cache/ms-playwright/chromium_headless_shell-1243/chrome-headless-shell-linux64/chrome-headless-shell",
+        "sha256": "ded93a9c9a53a1ae040f08124badcca95c938e9d5015ff340c3b5538c41bf39e",
+        "product": "HeadlessChrome/153.0.8010.12",
+        "revision": "@971a7443b0c9b0a9b2860529b33331b76077ec62",
+        "user_agent": "Mozilla/5.0 (X11; Linux x86_64) AppleWebKit/537.36 (KHTML, like Gecko) HeadlessChrome/153.0.8010.12 Safari/537.36",
+        "js_version": "15.3.76.4"
+      },
+      "infrastructure": {},
+      "resource_comparison_available": false,
+      "raw_browser_sha256": "baff80c9f8ffa425d6507f6cbb5ee13b579061f93618c4c0199969d4f1a4fddc",
+      "raw_server_sha256": "27636c49a0a58c96bd118d7fea07437f09fcf8117df5416862b830b3b6fea593",
+      "browser_failures": [],
+      "media_image_id": "sha256:75ef46894be12279debd99a55409efca5c67cfa0311a810eed4d726c20c68c4d",
+      "redis_image_id": null
+    },
+    {
+      "engine": "janus",
+      "peers": 2,
+      "round": 1,
+      "media_fixture_valid": false,
+      "problems": [
+        "not every video receiver decoded at least 57 fps",
+        "fixed video source did not deliver its configured actual rate"
+      ],
+      "sender_bitrate_distribution": {
+        "audio": {
+          "streams": [
+            {
+              "peer": "peer-0",
+              "endpoint": "peer-0/0",
+              "id": "OT01A4061898662",
+              "kind": "audio",
+              "bps": 128406.40081280163
+            },
+            {
+              "peer": "peer-0",
+              "endpoint": "peer-0/0",
+              "id": "OT01A4124962554",
+              "kind": "audio",
+              "bps": 128410.87122174245
+            },
+            {
+              "peer": "peer-1",
+              "endpoint": "peer-1/0",
+              "id": "OT01A3813041949",
+              "kind": "audio",
+              "bps": 128410.87122174245
+            }
+          ],
+          "min_bps": 128406.40081280163,
+          "max_bps": 128410.87122174245
+        },
+        "video": {
+          "streams": [
+            {
+              "peer": "peer-0",
+              "endpoint": "peer-0/0",
+              "id": "OT01V642261656",
+              "kind": "video",
+              "bps": 2605628.6512573026
+            }
+          ],
+          "min_bps": 2605628.6512573026,
+          "max_bps": 2605628.6512573026
+        }
+      },
+      "receiver_video_distribution": [
+        {
+          "peer": "peer-1",
+          "endpoint": "peer-1/1",
+          "id": "IT01V1065839248",
+          "bps": 2607610.668021336
+        }
+      ],
+      "receiver_audio_distribution": [
+        {
+          "peer": "peer-0",
+          "endpoint": "peer-0/1",
+          "id": "IT01A588830774",
+          "bps": 128367.38633477267,
+          "packet_loss_fraction": 0.0
+        },
+        {
+          "peer": "peer-1",
+          "endpoint": "peer-1/1",
+          "id": "IT01A1651438695",
+          "bps": 128367.52180171027,
+          "packet_loss_fraction": 0.0003386386725364037
+        },
+        {
+          "peer": "peer-1",
+          "endpoint": "peer-1/1",
+          "id": "IT01A1912911297",
+          "bps": 128410.87122174245,
+          "packet_loss_fraction": 0.0
+        }
+      ],
+      "decoded_video_fps": [
+        56.591313182626365
+      ],
+      "per_peer_graph": {
+        "peer-0": {
+          "expected": {
+            "audio": 1,
+            "video": 0
+          },
+          "observed": {
+            "audio": 1,
+            "video": 0
+          },
+          "expected_endpoint": "peer-0/1"
+        },
+        "peer-1": {
+          "expected": {
+            "audio": 2,
+            "video": 1
+          },
+          "observed": {
+            "audio": 2,
+            "video": 1
+          },
+          "expected_endpoint": "peer-1/1"
+        }
+      },
+      "expected_inbound": {
+        "audio": 3,
+        "video": 1
+      },
+      "observed_inbound": {
+        "audio": 3,
+        "video": 1
+      },
+      "measurement_seconds": 59.055,
+      "load_generator_cpu_cores_mean": 1.6841930245062173,
+      "load_generator_peak_rss_bytes": 1003286528,
+      "executed_browser": {
+        "executable": "/home/rafi/.cache/ms-playwright/chromium_headless_shell-1243/chrome-headless-shell-linux64/chrome-headless-shell",
+        "sha256": "ded93a9c9a53a1ae040f08124badcca95c938e9d5015ff340c3b5538c41bf39e",
+        "product": "HeadlessChrome/153.0.8010.12",
+        "revision": "@971a7443b0c9b0a9b2860529b33331b76077ec62",
+        "user_agent": "Mozilla/5.0 (X11; Linux x86_64) AppleWebKit/537.36 (KHTML, like Gecko) HeadlessChrome/153.0.8010.12 Safari/537.36",
+        "js_version": "15.3.76.4"
+      },
+      "infrastructure": {},
+      "resource_comparison_available": false,
+      "raw_browser_sha256": "3ac0b543e5973297569c5121de3c3ab7e700037d8fdb8bc9d1ecec3cb706d0d2",
+      "raw_server_sha256": "0eb65bf8b045552b1ced5e9b1be222a5a05236666ecba0d2ebfc7da33e526eec",
+      "browser_failures": [],
+      "media_image_id": "sha256:76845b0f9e03ad08a0444e4194969510b96ca72d83754e596431aa04dc773e62",
+      "redis_image_id": null
+    }
+  ]
+}

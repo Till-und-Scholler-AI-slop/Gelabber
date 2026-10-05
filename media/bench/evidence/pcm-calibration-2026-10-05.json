@@ -1,0 +1,131 @@
+{
+  "schema": 1,
+  "acceptance": false,
+  "resource_comparison_available": false,
+  "source_revision": "9ee4556",
+  "scope": "local synthetic PCM sample-clock calibration; no acoustic devices, SFU or WAN",
+  "limitations": [
+    "single browser/host calibration, not an SFU or WAN benchmark",
+    "bounds marker location for tested signals; not acoustic device or subjective audio quality",
+    "large 16/32-peer instrument capacity not established",
+    "development engine smoke at e5423d2 predates duplicate-peak/full-policy corrections and is not comparison evidence"
+  ],
+  "recorded_at": "2026-10-05T17:53:21.901Z",
+  "raw_sha256": "b3d51ffa790bee0b7b0ab0f4d4e2e14605e9efb6c02c038f403b7548f6bab645",
+  "valid": true,
+  "failures": [],
+  "executed_browser": {
+    "executable": "/home/rafi/.cache/ms-playwright/chromium_headless_shell-1243/chrome-headless-shell-linux64/chrome-headless-shell",
+    "sha256": "ded93a9c9a53a1ae040f08124badcca95c938e9d5015ff340c3b5538c41bf39e",
+    "product": "HeadlessChrome/153.0.8010.12",
+    "revision": "@971a7443b0c9b0a9b2860529b33331b76077ec62",
+    "user_agent": "Mozilla/5.0 (X11; Linux x86_64) AppleWebKit/537.36 (KHTML, like Gecko) HeadlessChrome/153.0.8010.12 Safari/537.36",
+    "js_version": "15.3.76.4"
+  },
+  "artifact_sha256": {
+    "pcm-kernel.mjs": "660f8150da14ce932b6e23effe52c64a3be851af1cff4451fdf699d78443264b",
+    "pcm-marker.mjs": "b13d030dd6ae2344cb6ea0a2a00006873a724f7f628b5af530f9516a54ce47a2",
+    "pcm.bundle.js": "875dd3a1f3791f7a0edebd7dac96ae050fb3b0a5d880728d68620715ba2eaec6",
+    "client.bundle.js": "70fcc2113928c4e162786b97577c2fd3891869d62bcb808181fd55d628680969"
+  },
+  "parameters": {
+    "sampleRate": 48000,
+    "carrierHz": 2000,
+    "chipFrames": 96,
+    "chips": 63,
+    "periodFrames": 96000,
+    "amplitude": 0.35,
+    "threshold": 0.72,
+    "maxDelayMs": 1000,
+    "errorBoundMs": 2
+  },
+  "delay_checks": [
+    {
+      "path": "direct-0",
+      "expected_ms": 0,
+      "matched_markers": 4,
+      "errors_ms": [
+        0.25,
+        0.25,
+        0.25,
+        0.25
+      ],
+      "valid": true
+    },
+    {
+      "path": "direct-137",
+      "expected_ms": 137,
+      "matched_markers": 4,
+      "errors_ms": [
+        -0.25,
+        -0.25,
+        -0.25,
+        0.25
+      ],
+      "valid": true
+    },
+    {
+      "path": "direct-300",
+      "expected_ms": 300,
+      "matched_markers": 4,
+      "errors_ms": [
+        -0.25,
+        -0.25,
+        -0.25,
+        0.25
+      ],
+      "valid": true
+    },
+    {
+      "path": "same decoded Opus track plus 200-ms delay",
+      "expected_ms": 200,
+      "differences_ms": [
+        200,
+        200,
+        200,
+        200
+      ],
+      "valid": true
+    }
+  ],
+  "sample_clock_seconds": 8.992,
+  "wall_clock_seconds": 9.000199999999255,
+  "worklet_states": [
+    {
+      "type": "state",
+      "frame_gaps": 0,
+      "clipped_frames": 0
+    },
+    {
+      "type": "state",
+      "frame_gaps": 0,
+      "clipped_frames": 0
+    },
+    {
+      "type": "state",
+      "frame_gaps": 0,
+      "clipped_frames": 0
+    },
+    {
+      "type": "state",
+      "frame_gaps": 0,
+      "clipped_frames": 0
+    },
+    {
+      "type": "state",
+      "frame_gaps": 0,
+      "clipped_frames": 0
+    },
+    {
+      "type": "state",
+      "frame_gaps": 0,
+      "clipped_frames": 0
+    },
+    {
+      "type": "state",
+      "frame_gaps": 0,
+      "clipped_frames": 0
+    }
+  ],
+  "clipped_frames": 0
+}
