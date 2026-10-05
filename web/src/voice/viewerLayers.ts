@@ -104,10 +104,16 @@ export class ViewerLayerController {
         typeof lost === "number" &&
         typeof time === "number"
       ) {
-        if(previous&&time<=previous.time){
+        if (previous && time <= previous.time) {
           // Overlapping native getStats promises may resolve out of order.
           // Keep newer evidence; stale samples are not counter restarts.
-          send({op:"q",u:source.userId,k:source.kind,h:height(source.trackId),congested:previous.congested});
+          send({
+            op: "q",
+            u: source.userId,
+            k: source.kind,
+            h: height(source.trackId),
+            congested: previous.congested,
+          });
           continue;
         }
         if (

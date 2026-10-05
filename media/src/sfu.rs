@@ -223,6 +223,18 @@ struct Published {
     received_packets: Arc<AtomicU64>,
 }
 
+fn receiver_generation_is_current(current: &Published, candidate: &Published) -> bool {
+    Arc::ptr_eq(&current.life, &candidate.life)
+        && current.publisher == candidate.publisher
+        && current.track_id == candidate.track_id
+        && current.stream_id == candidate.stream_id
+        && current.layered
+        && candidate.layered
+        && !*candidate.life.stop.borrow()
+        && !*candidate.life.done.borrow()
+        && !live_expired(&candidate.live_deadline)
+}
+
 struct Subscription {
     sender: Arc<dyn RtpSender>,
     task: tokio::task::JoinHandle<()>,
@@ -763,6 +775,8 @@ impl Sfu {
         gate.have_local_offer = false;
         gate.offered.clear();
         refresh_subscriber_bindings(&pc, &gate, accepted_answer.as_ref()).await;
+        self.bind_current_receivers(peer_id, &room, &pc, &gate)
+            .await;
         let queued_ice = std::mem::take(&mut gate.pending_ice);
         flush_ice(&pc, peer_id, queued_ice).await;
         self.negotiate_locked(&pc, &out, &gathered, &mut gate).await;
@@ -1855,8 +1869,165 @@ impl Sfu {
             sfu.remove_publication(channel_id, &read_id, &read_life)
                 .await;
         });
+        let binding = {
+            let room = room.lock().await;
+            room.peers
+                .get(&publisher)
+                .map(|peer| (peer.pc.clone(), peer.sdp.clone()))
+        };
+        if let Some((pc, sdp)) = binding {
+            let gate = sdp.lock().await;
+            self.bind_current_receivers(publisher, &room, &pc, &gate)
+                .await;
+        }
         self.attach_publication(channel_id, &publication).await;
         Ok(())
+    }
+
+    /// Validate a public receiver against the stable SDP and the exact current
+    /// publication generation. An old TrackRemote wrapper alone is no grant.
+    async fn bind_current_receivers(
+        &self,
+        peer_id: PeerId,
+        room: &Arc<Mutex<Room>>,
+        pc: &Arc<dyn PeerConnection>,
+        gate: &PeerSdp,
+    ) {
+        if gate.closed
+            || *gate.closing.borrow()
+            || gate.have_local_offer
+            || pc.pending_local_description().await.is_some()
+            || pc.pending_remote_description().await.is_some()
+        {
+            return;
+        }
+        let (Some(remote), Some(local)) = (
+            pc.current_remote_description().await,
+            pc.current_local_description().await,
+        ) else {
+            return;
+        };
+        let candidates = {
+            let room = room.lock().await;
+            let Some(peer) = room
+                .peers
+                .get(&peer_id)
+                .filter(|peer| Arc::ptr_eq(&peer.pc, pc) && !*peer.closing.borrow())
+            else {
+                return;
+            };
+            room.pubs
+                .values()
+                .filter(|publication| publication.publisher == peer_id && publication.layered)
+                .filter_map(|publication| {
+                    peer.remote_tracks
+                        .get(&publication.track_id)
+                        .map(|track| (publication.clone(), track.clone()))
+                })
+                .collect::<Vec<_>>()
+        };
+        for transceiver in pc.get_transceivers().await {
+            let Ok(Some(mid)) = transceiver.mid().await else {
+                continue;
+            };
+            let Ok(Some(receiver)) = transceiver.receiver().await else {
+                continue;
+            };
+            let track = receiver.track();
+            let Some((publication, _)) = candidates
+                .iter()
+                .find(|(_, bound)| Arc::ptr_eq(bound, track))
+            else {
+                continue;
+            };
+            if !matches!(
+                transceiver.current_direction().await,
+                Ok(
+                    webrtc::rtp_transceiver::RTCRtpTransceiverDirection::Recvonly
+                        | webrtc::rtp_transceiver::RTCRtpTransceiverDirection::Sendrecv
+                )
+            ) {
+                continue;
+            }
+            // This goes through core.rtp_receiver(receiver.id). An inactive,
+            // removed wrapper returns ErrRTPReceiverNotExisted on this pin.
+            let Ok(params) = receiver.get_parameters().await else {
+                continue;
+            };
+            let Some(pt) = negotiated_payload_type(&remote.sdp, &mid, &publication.codec) else {
+                continue;
+            };
+            if negotiated_payload_type(&local.sdp, &mid, &publication.codec) != Some(pt)
+                || !params.rtp_parameters.codecs.iter().any(|codec| {
+                    codec.payload_type == pt
+                        && codec
+                            .rtp_codec
+                            .mime_type
+                            .eq_ignore_ascii_case(MIME_TYPE_VP8)
+                        && codec.rtp_codec.clock_rate == publication.codec.clock_rate
+                })
+            {
+                continue;
+            }
+            let stream = track.stream_id().await;
+            let track_id = track.track_id().await;
+            let mut encodings = Vec::new();
+            for ssrc in track.ssrcs().await {
+                let (Some(rid), Some(codec)) = (track.rid(ssrc).await, track.codec(ssrc).await)
+                else {
+                    continue;
+                };
+                if codec.mime_type.eq_ignore_ascii_case(MIME_TYPE_VP8)
+                    && codec.clock_rate == publication.codec.clock_rate
+                    && codec.channels == publication.codec.channels
+                    && codec.sdp_fmtp_line == publication.codec.sdp_fmtp_line
+                {
+                    encodings.push((ssrc, rid, pt));
+                }
+            }
+            // Stop/reannounce can win while the receiver calls above await.
+            // Commit under the room lock only for that exact life and track.
+            let room = room.lock().await;
+            let Some(peer) = room
+                .peers
+                .get(&peer_id)
+                .filter(|peer| Arc::ptr_eq(&peer.pc, pc) && !*peer.closing.borrow())
+            else {
+                continue;
+            };
+            if !room
+                .pubs
+                .get(&publication.id)
+                .is_some_and(|current| receiver_generation_is_current(current, publication))
+                || !peer
+                    .remote_tracks
+                    .get(&track_id)
+                    .is_some_and(|current| Arc::ptr_eq(current, track))
+                || track_id != publication.track_id
+                || !peer.video_kinds.get(&track_id).is_some_and(|kind| {
+                    publication.stream_id == format!("{}:{kind}", peer.user_id)
+                        && matches!(kind.as_str(), "v" | "s" | "l")
+                })
+                || publication.live_deadline.as_ref().is_some_and(|deadline| {
+                    !peer.live_claim.as_ref().is_some_and(|live| {
+                        live.track_id == track_id && Arc::ptr_eq(deadline, &live.deadline)
+                    })
+                })
+            {
+                continue;
+            }
+            gate.rid_recovery.bind_receiver(
+                &mid,
+                &stream,
+                &track_id,
+                &encodings,
+                rid_recovery::ReceiverFence {
+                    life: publication.life.clone(),
+                    closing: peer.closing.subscribe(),
+                    deadline: publication.live_deadline.clone(),
+                },
+            );
+        }
     }
 
     async fn remove_publication(
@@ -3830,6 +4001,48 @@ mod tests {
         assert!(!out.header.extension);
         assert!(out.header.get_extension_ids().is_empty());
         assert!(out.header.csrc.is_empty());
+    }
+
+    #[test]
+    fn current_receiver_rebind_rejects_a_replaced_or_ended_publication_generation() {
+        use super::*;
+        let (stop, _) = watch::channel(false);
+        let (done_tx, done) = watch::channel(false);
+        let candidate = Published {
+            id: "source".into(),
+            publisher: PeerId(Uuid::new_v4()),
+            track_id: "track".into(),
+            stream_id: "user:s".into(),
+            kind: RtpCodecKind::Video,
+            codec: RTCRtpCodec::default(),
+            packets: broadcast::channel(1).0,
+            keyframe: None,
+            life: Arc::new(PublicationLife { stop, done }),
+            live_deadline: None,
+            watch_gate: None,
+            layered: true,
+            layer_ids: Arc::new(StdMutex::new(HashMap::new())),
+            received_packets: Arc::new(AtomicU64::new(0)),
+        };
+        assert!(receiver_generation_is_current(&candidate, &candidate));
+        // An async get_parameters result from A cannot bind a new same-ID B,
+        // even when MID/MSID, wrapper and source kind are intentionally reused.
+        let mut replacement = candidate.clone();
+        let (stop, _) = watch::channel(false);
+        let (_done_tx, done) = watch::channel(false);
+        replacement.life = Arc::new(PublicationLife { stop, done });
+        assert!(!receiver_generation_is_current(&replacement, &candidate));
+        replacement = candidate.clone();
+        replacement.stream_id = "user:l".into();
+        assert!(!receiver_generation_is_current(&replacement, &candidate));
+        replacement = candidate.clone();
+        replacement.track_id = "other".into();
+        assert!(!receiver_generation_is_current(&replacement, &candidate));
+        done_tx.send_replace(true);
+        assert!(!receiver_generation_is_current(&candidate, &candidate));
+        done_tx.send_replace(false);
+        candidate.life.stop.send_replace(true);
+        assert!(!receiver_generation_is_current(&candidate, &candidate));
     }
 
     #[tokio::test]

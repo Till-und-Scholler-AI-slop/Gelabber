@@ -12,6 +12,7 @@ use rtc::interceptor::{Interceptor, Packet, StreamInfo, TaggedPacket, intercepto
 use rtc::rtp::header::{EXTENSION_PROFILE_ONE_BYTE, EXTENSION_PROFILE_TWO_BYTE, Header};
 use rtc::sansio;
 use rtc::shared::error::Error;
+use tokio::sync::watch;
 use webrtc::peer_connection::RTCSessionDescription;
 
 const MID_URI: &str = "urn:ietf:params:rtp-hdrext:sdes:mid";
@@ -39,6 +40,23 @@ struct Scope {
 struct Learned {
     source: Source,
     rid: String,
+    bound: Option<ReceiverFence>,
+}
+/// Only a current, authorized publication may reuse a still-bound public
+/// receiver's primary encodings after an inactive/active negotiation.
+#[derive(Clone)]
+pub(super) struct ReceiverFence {
+    pub life: Arc<super::PublicationLife>,
+    pub closing: watch::Receiver<bool>,
+    pub deadline: Option<Arc<Mutex<std::time::Instant>>>,
+}
+impl ReceiverFence {
+    fn open(&self) -> bool {
+        !*self.life.stop.borrow()
+            && !*self.life.done.borrow()
+            && !*self.closing.borrow()
+            && !super::live_expired(&self.deadline)
+    }
 }
 #[derive(Default)]
 struct State {
@@ -49,6 +67,8 @@ struct State {
     closed: bool,
     #[cfg(test)]
     recovered: usize,
+    #[cfg(test)]
+    seeded: usize,
 }
 #[derive(Clone, Default)]
 pub(super) struct Recovery(Arc<Mutex<State>>);
@@ -109,6 +129,87 @@ impl Recovery {
             .learned
             .retain(|_, learned| current.contains(&learned.source.track));
     }
+    pub(super) fn bind_receiver(
+        &self,
+        mid: &str,
+        stream: &str,
+        track: &str,
+        encodings: &[(u32, String, u8)],
+        fence: ReceiverFence,
+    ) {
+        #[cfg(test)]
+        if std::env::var_os("GELABBER_TEST_DISABLE_BOUND_RID_BINDING").is_some() {
+            return;
+        }
+        let mut state = self.0.lock().unwrap();
+        if state.closed || !state.active || !state.announced.contains(track) || !fence.open() {
+            return;
+        }
+        let Some(scope) = state
+            .scopes
+            .iter()
+            .find(|scope| {
+                scope.source.mid == mid
+                    && scope.source.stream == stream
+                    && scope.source.track == track
+            })
+            .cloned()
+        else {
+            return;
+        };
+        // All encodings must belong to the same negotiated primary source.
+        // Do not partially bind an ambiguous receiver or reuse an SSRC from
+        // another MID/RID. Existing explicit contradictory headers still win.
+        if encodings.is_empty()
+            || encodings.len() > 3
+            || encodings.iter().any(|(ssrc, rid, pt)| {
+                *ssrc == 0 || !scope.rids.contains(rid) || !scope.payloads.contains(pt)
+            })
+            || encodings
+                .iter()
+                .map(|(ssrc, _, _)| ssrc)
+                .collect::<HashSet<_>>()
+                .len()
+                != encodings.len()
+            || encodings
+                .iter()
+                .map(|(_, rid, _)| rid)
+                .collect::<HashSet<_>>()
+                .len()
+                != encodings.len()
+            || encodings.iter().any(|(ssrc, rid, _)| {
+                state
+                    .learned
+                    .get(ssrc)
+                    .is_some_and(|old| old.source != scope.source || old.rid != *rid)
+            })
+        {
+            return;
+        }
+        if state.learned.len()
+            + encodings
+                .iter()
+                .filter(|(ssrc, _, _)| !state.learned.contains_key(ssrc))
+                .count()
+            > MAX_SSRC
+        {
+            return;
+        }
+        for (ssrc, rid, _) in encodings {
+            state.learned.insert(
+                *ssrc,
+                Learned {
+                    source: scope.source.clone(),
+                    rid: rid.clone(),
+                    bound: Some(fence.clone()),
+                },
+            );
+            #[cfg(test)]
+            {
+                state.seeded += 1;
+            }
+        }
+    }
     pub(super) fn close(&self) {
         let mut state = self.0.lock().unwrap();
         state.closed = true;
@@ -126,6 +227,10 @@ impl Recovery {
     pub(super) fn is_active(&self) -> bool {
         let state = self.0.lock().unwrap();
         state.active && !state.closed
+    }
+    #[cfg(test)]
+    pub(super) fn bound_seeds(&self) -> usize {
+        self.0.lock().unwrap().seeded
     }
     fn recover(&self, header: &mut Header) {
         let mut state = self.0.lock().unwrap();
@@ -160,9 +265,10 @@ impl Recovery {
             Some(Learned {
                 source: scope.source.clone(),
                 rid: rid.into(),
+                bound: None,
             })
         });
-        if let Some(learned) = explicit {
+        if let Some(mut learned) = explicit {
             if state
                 .learned
                 .get(&header.ssrc)
@@ -172,6 +278,10 @@ impl Recovery {
                 return;
             }
             if state.learned.contains_key(&header.ssrc) || state.learned.len() < MAX_SSRC {
+                learned.bound = state
+                    .learned
+                    .get(&header.ssrc)
+                    .and_then(|old| old.bound.clone());
                 state.learned.insert(header.ssrc, learned);
             }
             return;
@@ -179,6 +289,10 @@ impl Recovery {
         let Some(learned) = state.learned.get(&header.ssrc).cloned() else {
             return;
         };
+        if learned.bound.as_ref().is_some_and(|fence| !fence.open()) {
+            state.learned.remove(&header.ssrc);
+            return;
+        }
         let Some(scope) = state
             .scopes
             .iter()
@@ -563,6 +677,172 @@ mod tests {
             .unwrap();
         h.set_extension(rid_id, Bytes::from_static(b"q")).unwrap();
         store.recover(&mut h);
+    }
+    fn fence() -> (ReceiverFence, watch::Sender<bool>, watch::Sender<bool>) {
+        let (stop, _) = watch::channel(false);
+        let (done_tx, done) = watch::channel(false);
+        let (closing, _) = watch::channel(false);
+        let life = Arc::new(super::super::PublicationLife { stop, done });
+        (
+            ReceiverFence {
+                life,
+                closing: closing.subscribe(),
+                deadline: None,
+            },
+            done_tx,
+            closing,
+        )
+    }
+    fn bind(store: &Recovery, fence: ReceiverFence) {
+        store.bind_receiver(
+            "video",
+            "stream",
+            "track",
+            &[(10, "q".into(), 96), (20, "f".into(), 96)],
+            fence,
+        );
+    }
+    #[test]
+    fn bound_receiver_requires_fresh_announcement_and_exact_stable_scope() {
+        let store = Recovery::default();
+        let (r, l) = pair("video", "stream", "track", 3, 4);
+        let (current, _done, _closing) = fence();
+        store.accept(&r, &l);
+        bind(&store, current.clone());
+        assert_eq!(store.bound_seeds(), 2);
+        assert_eq!(store.observed().1, 0);
+        store.allow_track("track");
+        store.accept(&r, &l);
+        bind(&store, current.clone());
+        let mut h = packet(10);
+        store.recover(&mut h);
+        assert_eq!(h.get_extension(4).unwrap(), b"q"[..]);
+        store.stop_track("track");
+        store.accept(&r, &l); // replaying the old active SDP is no new grant
+        bind(&store, current.clone());
+        let mut h = packet(10);
+        store.recover(&mut h);
+        assert!(!h.extension);
+        store.allow_track("track");
+        store.accept(&r, &l);
+        store.bind_receiver(
+            "other",
+            "stream",
+            "track",
+            &[(10, "q".into(), 96)],
+            current.clone(),
+        );
+        store.bind_receiver(
+            "video",
+            "changed",
+            "track",
+            &[(10, "q".into(), 96)],
+            current.clone(),
+        );
+        store.bind_receiver(
+            "video",
+            "stream",
+            "track",
+            &[(10, "q".into(), 97)],
+            current.clone(),
+        );
+        assert_eq!(store.observed().1, 0);
+        store.suspend();
+        bind(&store, current.clone());
+        assert_eq!(store.observed().1, 0);
+        store.restore(&r, &l);
+        bind(&store, current.clone());
+        assert_eq!(store.observed().1, 2);
+        store.close();
+        store.accept(&r, &l);
+        bind(&store, current);
+        assert_eq!(store.observed().1, 0);
+    }
+    #[test]
+    fn bound_receiver_keeps_publication_close_done_and_expiry_fences() {
+        for reason in ["stop", "done", "close", "expiry"] {
+            let store = Recovery::default();
+            store.allow_track("track");
+            let (r, l) = pair("video", "stream", "track", 3, 4);
+            store.accept(&r, &l);
+            let (mut current, done, closing) = fence();
+            let deadline = Arc::new(Mutex::new(
+                std::time::Instant::now() + std::time::Duration::from_secs(60),
+            ));
+            current.deadline = Some(deadline.clone());
+            bind(&store, current.clone());
+            // Explicit matching headers must not discard a seeded life fence.
+            learn(&store, 10, "video", 3, 4);
+            match reason {
+                "stop" => {
+                    current.life.stop.send_replace(true);
+                }
+                "done" => {
+                    done.send_replace(true);
+                }
+                "close" => {
+                    closing.send_replace(true);
+                }
+                _ => {
+                    *deadline.lock().unwrap() = std::time::Instant::now();
+                }
+            }
+            let mut h = packet(10);
+            store.recover(&mut h);
+            assert!(!h.extension, "{reason}");
+            bind(&store, current);
+            let mut h = packet(20);
+            store.recover(&mut h);
+            assert!(!h.extension, "late bind after {reason}");
+        }
+    }
+    #[test]
+    fn bound_receiver_rejects_ambiguous_encodings_and_repair_headers() {
+        let store = Recovery::default();
+        store.allow_track("track");
+        let (r, l) = pair("video", "stream", "track", 15, 16);
+        store.accept(&r, &l);
+        let (current, _done, _closing) = fence();
+        store.bind_receiver(
+            "video",
+            "stream",
+            "track",
+            &[(10, "q".into(), 96), (10, "f".into(), 96)],
+            current.clone(),
+        );
+        store.bind_receiver(
+            "video",
+            "stream",
+            "track",
+            &[(10, "q".into(), 96), (20, "q".into(), 96)],
+            current.clone(),
+        );
+        store.bind_receiver(
+            "video",
+            "stream",
+            "track",
+            &[(10, "unknown".into(), 96)],
+            current.clone(),
+        );
+        assert_eq!(store.observed().1, 0);
+        bind(&store, current);
+        let mut repair = packet(10);
+        repair.payload_type = 97;
+        store.recover(&mut repair);
+        assert!(!repair.extension);
+        let mut repair = packet(10);
+        repair.set_extension(13, Bytes::from_static(b"q")).unwrap();
+        store.recover(&mut repair);
+        assert!(repair.get_extension(15).is_none());
+        let mut conflict = packet(10);
+        conflict
+            .set_extension(15, Bytes::from_static(b"wrong"))
+            .unwrap();
+        store.recover(&mut conflict);
+        assert!(conflict.get_extension(16).is_none());
+        let mut subsequent = packet(10);
+        store.recover(&mut subsequent);
+        assert!(!subsequent.extension);
     }
     #[test]
     fn reoffer_restores_only_known_current_primary_ssrc() {
