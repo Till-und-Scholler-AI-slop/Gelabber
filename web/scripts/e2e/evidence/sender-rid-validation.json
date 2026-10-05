@@ -1,0 +1,1334 @@
+{
+  "schema": 1,
+  "scope": "test-only publisher readiness; exact three native source capture objects, own sender progress, one/multiple RID encodings; no product or WAN acceptance",
+  "prerequisite": {
+    "commit": "b0f572448ad077b83ebbe88292f935c115e6448c",
+    "unchangedCherryPick": "26c0c45",
+    "scope": "previous independently reviewed test-only source readiness and explicit Watch synchronization from PR156; no audio/layer product dependency"
+  },
+  "negative": {
+    "report": "/tmp/gelabber-v04-final-media-chromium-c24ead7/report.json",
+    "status": "FAIL",
+    "reason": "fixture-three-native-publisher-encoders-not-ready",
+    "oldExpectation": "exactly three video outbound-rtp records",
+    "observedVideoEncodingCount": 6,
+    "observedLiveCaptures": 3
+  },
+  "positive": [
+    {
+      "report": "/tmp/gelabber-v04-sender-rid-control-chromium/report.json",
+      "browser": {
+        "engine": "chromium",
+        "version": "153.0.8010.12",
+        "platform": "linux",
+        "node": "v26.8.2"
+      },
+      "testSource": "26c0c45efcf27234d7608940f65be3ea07e2f792",
+      "testFilesDirty": true,
+      "testSourceHashes": {
+        "probe.mjs": "a32ce3ff9aff1ca732272aacbfa0451330740b670a5f158da4b1b60433db7c1e",
+        "media-extra.mjs": "82a1f715ee6d49791c7e9b4c3c548f0d5f35649927e65961f6213ff719bb6d0e",
+        "publisher-encoders.mjs": "a1355812113b0e196d2253ff045ed0adef024511a507d85533987924a23b2a2b"
+      },
+      "status": "PASS",
+      "publisherBefore": {
+        "captures": [
+          {
+            "capture": 0,
+            "kind": "display",
+            "slot": 1
+          },
+          {
+            "capture": 1,
+            "kind": "camera",
+            "slot": 1
+          },
+          {
+            "capture": 2,
+            "kind": "display",
+            "slot": 2
+          }
+        ],
+        "senders": [
+          {
+            "peer": 0,
+            "sender": 0,
+            "capture": 0,
+            "current": true,
+            "encodings": [
+              {
+                "rid": "q",
+                "frames": 13,
+                "packets": 59
+              },
+              {
+                "rid": "f",
+                "frames": 8,
+                "packets": 9
+              }
+            ]
+          },
+          {
+            "peer": 0,
+            "sender": 2,
+            "capture": 1,
+            "current": true,
+            "encodings": [
+              {
+                "rid": "f",
+                "frames": 2,
+                "packets": 37
+              },
+              {
+                "rid": "q",
+                "frames": 2,
+                "packets": 3
+              }
+            ]
+          },
+          {
+            "peer": 0,
+            "sender": 3,
+            "capture": 2,
+            "current": true,
+            "encodings": [
+              {
+                "rid": "f",
+                "frames": 2,
+                "packets": 3
+              },
+              {
+                "rid": "q",
+                "frames": 2,
+                "packets": 3
+              }
+            ]
+          }
+        ]
+      },
+      "publisherReady": {
+        "captures": [
+          {
+            "capture": 0,
+            "kind": "display",
+            "slot": 1
+          },
+          {
+            "capture": 1,
+            "kind": "camera",
+            "slot": 1
+          },
+          {
+            "capture": 2,
+            "kind": "display",
+            "slot": 2
+          }
+        ],
+        "senders": [
+          {
+            "peer": 0,
+            "sender": 0,
+            "capture": 0,
+            "current": true,
+            "encodings": [
+              {
+                "rid": "q",
+                "frames": 15,
+                "packets": 61
+              },
+              {
+                "rid": "f",
+                "frames": 10,
+                "packets": 11
+              }
+            ]
+          },
+          {
+            "peer": 0,
+            "sender": 2,
+            "capture": 1,
+            "current": true,
+            "encodings": [
+              {
+                "rid": "f",
+                "frames": 4,
+                "packets": 39
+              },
+              {
+                "rid": "q",
+                "frames": 4,
+                "packets": 5
+              }
+            ]
+          },
+          {
+            "peer": 0,
+            "sender": 3,
+            "capture": 2,
+            "current": true,
+            "encodings": [
+              {
+                "rid": "f",
+                "frames": 4,
+                "packets": 13
+              },
+              {
+                "rid": "q",
+                "frames": 4,
+                "packets": 5
+              }
+            ]
+          }
+        ]
+      },
+      "heldVideoTracks": 3,
+      "deliveredKinds": [
+        "video",
+        "video",
+        "video",
+        "audio"
+      ],
+      "sourceButtons": {
+        "live": 1,
+        "screen": 1
+      },
+      "decodedRenderedSources": {
+        "live": {
+          "firstFrameMs": 208,
+          "first": [
+            {
+              "kind": "live",
+              "width": 640,
+              "height": 360,
+              "paused": false,
+              "ready": 4,
+              "renderedFrames": 2,
+              "renderedFramesSource": "native-playback-quality",
+              "playbackQualityFrames": 2,
+              "videoFrameCallbacks": 2,
+              "videoPresentedFrames": 2,
+              "pixels": {
+                "source": [
+                  205,
+                  19,
+                  34
+                ],
+                "motion": [
+                  164,
+                  135,
+                  140
+                ]
+              }
+            },
+            {
+              "kind": "screen",
+              "width": 640,
+              "height": 360,
+              "paused": false,
+              "ready": 4,
+              "renderedFrames": 3,
+              "renderedFramesSource": "native-playback-quality",
+              "playbackQualityFrames": 3,
+              "videoFrameCallbacks": 2,
+              "videoPresentedFrames": 2,
+              "pixels": {
+                "source": [
+                  42,
+                  227,
+                  28
+                ],
+                "motion": [
+                  39,
+                  63,
+                  37
+                ]
+              }
+            },
+            {
+              "kind": "camera",
+              "width": 640,
+              "height": 360,
+              "paused": false,
+              "ready": 4,
+              "renderedFrames": 2,
+              "renderedFramesSource": "native-playback-quality",
+              "playbackQualityFrames": 2,
+              "videoFrameCallbacks": 2,
+              "videoPresentedFrames": 2,
+              "pixels": {
+                "source": [
+                  27,
+                  47,
+                  202
+                ],
+                "motion": [
+                  60,
+                  60,
+                  85
+                ]
+              }
+            }
+          ],
+          "last": [
+            {
+              "kind": "live",
+              "width": 640,
+              "height": 360,
+              "paused": false,
+              "ready": 4,
+              "renderedFrames": 6,
+              "renderedFramesSource": "native-playback-quality",
+              "playbackQualityFrames": 6,
+              "videoFrameCallbacks": 5,
+              "videoPresentedFrames": 5,
+              "pixels": {
+                "source": [
+                  187,
+                  0,
+                  16
+                ],
+                "motion": [
+                  35,
+                  6,
+                  10
+                ]
+              }
+            },
+            {
+              "kind": "screen",
+              "width": 640,
+              "height": 360,
+              "paused": false,
+              "ready": 4,
+              "renderedFrames": 7,
+              "renderedFramesSource": "native-playback-quality",
+              "playbackQualityFrames": 7,
+              "videoFrameCallbacks": 6,
+              "videoPresentedFrames": 6,
+              "pixels": {
+                "source": [
+                  49,
+                  240,
+                  38
+                ],
+                "motion": [
+                  132,
+                  156,
+                  130
+                ]
+              }
+            },
+            {
+              "kind": "camera",
+              "width": 640,
+              "height": 360,
+              "paused": false,
+              "ready": 4,
+              "renderedFrames": 6,
+              "renderedFramesSource": "native-playback-quality",
+              "playbackQualityFrames": 6,
+              "videoFrameCallbacks": 6,
+              "videoPresentedFrames": 6,
+              "pixels": {
+                "source": [
+                  40,
+                  60,
+                  215
+                ],
+                "motion": [
+                  154,
+                  154,
+                  179
+                ]
+              }
+            }
+          ]
+        },
+        "screen": {
+          "firstFrameMs": 4,
+          "first": [
+            {
+              "kind": "live",
+              "width": 640,
+              "height": 360,
+              "paused": false,
+              "ready": 4,
+              "renderedFrames": 6,
+              "renderedFramesSource": "native-playback-quality",
+              "playbackQualityFrames": 6,
+              "videoFrameCallbacks": 6,
+              "videoPresentedFrames": 6,
+              "pixels": {
+                "source": [
+                  187,
+                  0,
+                  16
+                ],
+                "motion": [
+                  35,
+                  6,
+                  10
+                ]
+              }
+            },
+            {
+              "kind": "screen",
+              "width": 640,
+              "height": 360,
+              "paused": false,
+              "ready": 4,
+              "renderedFrames": 7,
+              "renderedFramesSource": "native-playback-quality",
+              "playbackQualityFrames": 7,
+              "videoFrameCallbacks": 6,
+              "videoPresentedFrames": 6,
+              "pixels": {
+                "source": [
+                  52,
+                  244,
+                  43
+                ],
+                "motion": [
+                  155,
+                  180,
+                  154
+                ]
+              }
+            },
+            {
+              "kind": "camera",
+              "width": 640,
+              "height": 360,
+              "paused": false,
+              "ready": 4,
+              "renderedFrames": 6,
+              "renderedFramesSource": "native-playback-quality",
+              "playbackQualityFrames": 6,
+              "videoFrameCallbacks": 6,
+              "videoPresentedFrames": 6,
+              "pixels": {
+                "source": [
+                  40,
+                  60,
+                  215
+                ],
+                "motion": [
+                  154,
+                  154,
+                  179
+                ]
+              }
+            }
+          ],
+          "last": [
+            {
+              "kind": "live",
+              "width": 640,
+              "height": 360,
+              "paused": false,
+              "ready": 4,
+              "renderedFrames": 10,
+              "renderedFramesSource": "native-playback-quality",
+              "playbackQualityFrames": 10,
+              "videoFrameCallbacks": 10,
+              "videoPresentedFrames": 10,
+              "pixels": {
+                "source": [
+                  200,
+                  14,
+                  29
+                ],
+                "motion": [
+                  127,
+                  98,
+                  103
+                ]
+              }
+            },
+            {
+              "kind": "screen",
+              "width": 640,
+              "height": 360,
+              "paused": false,
+              "ready": 4,
+              "renderedFrames": 11,
+              "renderedFramesSource": "native-playback-quality",
+              "playbackQualityFrames": 11,
+              "videoFrameCallbacks": 10,
+              "videoPresentedFrames": 10,
+              "pixels": {
+                "source": [
+                  32,
+                  225,
+                  29
+                ],
+                "motion": [
+                  25,
+                  50,
+                  24
+                ]
+              }
+            },
+            {
+              "kind": "camera",
+              "width": 640,
+              "height": 360,
+              "paused": false,
+              "ready": 4,
+              "renderedFrames": 10,
+              "renderedFramesSource": "native-playback-quality",
+              "playbackQualityFrames": 10,
+              "videoFrameCallbacks": 10,
+              "videoPresentedFrames": 10,
+              "pixels": {
+                "source": [
+                  21,
+                  41,
+                  197
+                ],
+                "motion": [
+                  21,
+                  24,
+                  47
+                ]
+              }
+            }
+          ]
+        },
+        "camera": {
+          "firstFrameMs": 2,
+          "first": [
+            {
+              "kind": "live",
+              "width": 640,
+              "height": 360,
+              "paused": false,
+              "ready": 4,
+              "renderedFrames": 10,
+              "renderedFramesSource": "native-playback-quality",
+              "playbackQualityFrames": 10,
+              "videoFrameCallbacks": 10,
+              "videoPresentedFrames": 10,
+              "pixels": {
+                "source": [
+                  200,
+                  14,
+                  29
+                ],
+                "motion": [
+                  127,
+                  98,
+                  103
+                ]
+              }
+            },
+            {
+              "kind": "screen",
+              "width": 640,
+              "height": 360,
+              "paused": false,
+              "ready": 4,
+              "renderedFrames": 11,
+              "renderedFramesSource": "native-playback-quality",
+              "playbackQualityFrames": 11,
+              "videoFrameCallbacks": 10,
+              "videoPresentedFrames": 10,
+              "pixels": {
+                "source": [
+                  32,
+                  225,
+                  29
+                ],
+                "motion": [
+                  25,
+                  50,
+                  24
+                ]
+              }
+            },
+            {
+              "kind": "camera",
+              "width": 640,
+              "height": 360,
+              "paused": false,
+              "ready": 4,
+              "renderedFrames": 10,
+              "renderedFramesSource": "native-playback-quality",
+              "playbackQualityFrames": 10,
+              "videoFrameCallbacks": 10,
+              "videoPresentedFrames": 10,
+              "pixels": {
+                "source": [
+                  21,
+                  41,
+                  197
+                ],
+                "motion": [
+                  21,
+                  24,
+                  47
+                ]
+              }
+            }
+          ],
+          "last": [
+            {
+              "kind": "live",
+              "width": 640,
+              "height": 360,
+              "paused": false,
+              "ready": 4,
+              "renderedFrames": 14,
+              "renderedFramesSource": "native-playback-quality",
+              "playbackQualityFrames": 14,
+              "videoFrameCallbacks": 14,
+              "videoPresentedFrames": 14,
+              "pixels": {
+                "source": [
+                  214,
+                  27,
+                  42
+                ],
+                "motion": [
+                  221,
+                  192,
+                  197
+                ]
+              }
+            },
+            {
+              "kind": "screen",
+              "width": 640,
+              "height": 360,
+              "paused": false,
+              "ready": 4,
+              "renderedFrames": 15,
+              "renderedFramesSource": "native-playback-quality",
+              "playbackQualityFrames": 15,
+              "videoFrameCallbacks": 14,
+              "videoPresentedFrames": 14,
+              "pixels": {
+                "source": [
+                  46,
+                  239,
+                  38
+                ],
+                "motion": [
+                  118,
+                  143,
+                  117
+                ]
+              }
+            },
+            {
+              "kind": "camera",
+              "width": 640,
+              "height": 360,
+              "paused": false,
+              "ready": 4,
+              "renderedFrames": 14,
+              "renderedFramesSource": "native-playback-quality",
+              "playbackQualityFrames": 14,
+              "videoFrameCallbacks": 14,
+              "videoPresentedFrames": 14,
+              "pixels": {
+                "source": [
+                  35,
+                  54,
+                  212
+                ],
+                "motion": [
+                  114,
+                  118,
+                  140
+                ]
+              }
+            }
+          ]
+        }
+      },
+      "cleanup": [
+        {
+          "target": "owned-test-server",
+          "status": 204,
+          "stage": "complete",
+          "statuses": {
+            "login": 200,
+            "delete": 204,
+            "logout": 200
+          }
+        }
+      ]
+    },
+    {
+      "report": "/tmp/gelabber-v04-sender-rid-control-firefox/report.json",
+      "browser": {
+        "engine": "firefox",
+        "version": "155.0",
+        "platform": "linux",
+        "node": "v26.8.2"
+      },
+      "testSource": "26c0c45efcf27234d7608940f65be3ea07e2f792",
+      "testFilesDirty": true,
+      "testSourceHashes": {
+        "probe.mjs": "a32ce3ff9aff1ca732272aacbfa0451330740b670a5f158da4b1b60433db7c1e",
+        "media-extra.mjs": "82a1f715ee6d49791c7e9b4c3c548f0d5f35649927e65961f6213ff719bb6d0e",
+        "publisher-encoders.mjs": "a1355812113b0e196d2253ff045ed0adef024511a507d85533987924a23b2a2b"
+      },
+      "status": "PASS",
+      "publisherBefore": {
+        "captures": [
+          {
+            "capture": 0,
+            "kind": "display",
+            "slot": 1
+          },
+          {
+            "capture": 1,
+            "kind": "camera",
+            "slot": 1
+          },
+          {
+            "capture": 2,
+            "kind": "display",
+            "slot": 2
+          }
+        ],
+        "senders": [
+          {
+            "peer": 0,
+            "sender": 0,
+            "capture": 0,
+            "current": true,
+            "encodings": [
+              {
+                "rid": "q",
+                "frames": 12,
+                "packets": 34
+              },
+              {
+                "rid": "f",
+                "frames": 11,
+                "packets": 1457
+              }
+            ]
+          },
+          {
+            "peer": 0,
+            "sender": 2,
+            "capture": 1,
+            "current": true,
+            "encodings": [
+              {
+                "rid": "q",
+                "frames": 2,
+                "packets": 3
+              },
+              {
+                "rid": "f",
+                "frames": 2,
+                "packets": 32
+              }
+            ]
+          },
+          {
+            "peer": 0,
+            "sender": 3,
+            "capture": 2,
+            "current": true,
+            "encodings": [
+              {
+                "rid": "q",
+                "frames": 1,
+                "packets": 2
+              },
+              {
+                "rid": "f",
+                "frames": 1,
+                "packets": 35
+              }
+            ]
+          }
+        ]
+      },
+      "publisherReady": {
+        "captures": [
+          {
+            "capture": 0,
+            "kind": "display",
+            "slot": 1
+          },
+          {
+            "capture": 1,
+            "kind": "camera",
+            "slot": 1
+          },
+          {
+            "capture": 2,
+            "kind": "display",
+            "slot": 2
+          }
+        ],
+        "senders": [
+          {
+            "peer": 0,
+            "sender": 0,
+            "capture": 0,
+            "current": true,
+            "encodings": [
+              {
+                "rid": "q",
+                "frames": 14,
+                "packets": 36
+              },
+              {
+                "rid": "f",
+                "frames": 13,
+                "packets": 1459
+              }
+            ]
+          },
+          {
+            "peer": 0,
+            "sender": 2,
+            "capture": 1,
+            "current": true,
+            "encodings": [
+              {
+                "rid": "q",
+                "frames": 3,
+                "packets": 4
+              },
+              {
+                "rid": "f",
+                "frames": 3,
+                "packets": 33
+              }
+            ]
+          },
+          {
+            "peer": 0,
+            "sender": 3,
+            "capture": 2,
+            "current": true,
+            "encodings": [
+              {
+                "rid": "q",
+                "frames": 3,
+                "packets": 4
+              },
+              {
+                "rid": "f",
+                "frames": 3,
+                "packets": 99
+              }
+            ]
+          }
+        ]
+      },
+      "heldVideoTracks": 3,
+      "deliveredKinds": [
+        "video",
+        "video",
+        "video",
+        "audio"
+      ],
+      "sourceButtons": {
+        "live": 1,
+        "screen": 1
+      },
+      "decodedRenderedSources": {
+        "live": {
+          "firstFrameMs": 8,
+          "first": [
+            {
+              "kind": "live",
+              "width": 640,
+              "height": 360,
+              "paused": false,
+              "ready": 4,
+              "renderedFrames": 0,
+              "renderedFramesSource": "native-video-frame-callback",
+              "playbackQualityFrames": 0,
+              "videoFrameCallbacks": 0,
+              "videoPresentedFrames": 0,
+              "pixels": {
+                "source": [
+                  220,
+                  31,
+                  29
+                ],
+                "motion": [
+                  45,
+                  45,
+                  45
+                ]
+              }
+            },
+            {
+              "kind": "screen",
+              "width": 0,
+              "height": 0,
+              "paused": false,
+              "ready": 0,
+              "renderedFrames": 0,
+              "renderedFramesSource": "native-video-frame-callback",
+              "playbackQualityFrames": 0,
+              "videoFrameCallbacks": 0,
+              "videoPresentedFrames": 0,
+              "pixels": null
+            },
+            {
+              "kind": "camera",
+              "width": 0,
+              "height": 0,
+              "paused": false,
+              "ready": 0,
+              "renderedFrames": 0,
+              "renderedFramesSource": "native-video-frame-callback",
+              "playbackQualityFrames": 0,
+              "videoFrameCallbacks": 0,
+              "videoPresentedFrames": 0,
+              "pixels": null
+            }
+          ],
+          "last": [
+            {
+              "kind": "live",
+              "width": 640,
+              "height": 360,
+              "paused": false,
+              "ready": 4,
+              "renderedFrames": 3,
+              "renderedFramesSource": "native-video-frame-callback",
+              "playbackQualityFrames": 0,
+              "videoFrameCallbacks": 3,
+              "videoPresentedFrames": 3,
+              "pixels": {
+                "source": [
+                  220,
+                  31,
+                  29
+                ],
+                "motion": [
+                  137,
+                  137,
+                  137
+                ]
+              }
+            },
+            {
+              "kind": "screen",
+              "width": 640,
+              "height": 360,
+              "paused": false,
+              "ready": 4,
+              "renderedFrames": 2,
+              "renderedFramesSource": "native-video-frame-callback",
+              "playbackQualityFrames": 0,
+              "videoFrameCallbacks": 2,
+              "videoPresentedFrames": 2,
+              "pixels": {
+                "source": [
+                  30,
+                  220,
+                  32
+                ],
+                "motion": [
+                  73,
+                  70,
+                  73
+                ]
+              }
+            },
+            {
+              "kind": "camera",
+              "width": 640,
+              "height": 360,
+              "paused": false,
+              "ready": 4,
+              "renderedFrames": 3,
+              "renderedFramesSource": "native-video-frame-callback",
+              "playbackQualityFrames": 0,
+              "videoFrameCallbacks": 3,
+              "videoPresentedFrames": 3,
+              "pixels": {
+                "source": [
+                  29,
+                  60,
+                  217
+                ],
+                "motion": [
+                  118,
+                  118,
+                  118
+                ]
+              }
+            }
+          ]
+        },
+        "screen": {
+          "firstFrameMs": 6,
+          "first": [
+            {
+              "kind": "live",
+              "width": 640,
+              "height": 360,
+              "paused": false,
+              "ready": 4,
+              "renderedFrames": 3,
+              "renderedFramesSource": "native-video-frame-callback",
+              "playbackQualityFrames": 0,
+              "videoFrameCallbacks": 3,
+              "videoPresentedFrames": 3,
+              "pixels": {
+                "source": [
+                  220,
+                  31,
+                  29
+                ],
+                "motion": [
+                  137,
+                  137,
+                  137
+                ]
+              }
+            },
+            {
+              "kind": "screen",
+              "width": 640,
+              "height": 360,
+              "paused": false,
+              "ready": 4,
+              "renderedFrames": 2,
+              "renderedFramesSource": "native-video-frame-callback",
+              "playbackQualityFrames": 0,
+              "videoFrameCallbacks": 2,
+              "videoPresentedFrames": 2,
+              "pixels": {
+                "source": [
+                  30,
+                  220,
+                  32
+                ],
+                "motion": [
+                  73,
+                  70,
+                  73
+                ]
+              }
+            },
+            {
+              "kind": "camera",
+              "width": 640,
+              "height": 360,
+              "paused": false,
+              "ready": 4,
+              "renderedFrames": 3,
+              "renderedFramesSource": "native-video-frame-callback",
+              "playbackQualityFrames": 0,
+              "videoFrameCallbacks": 3,
+              "videoPresentedFrames": 3,
+              "pixels": {
+                "source": [
+                  29,
+                  60,
+                  217
+                ],
+                "motion": [
+                  118,
+                  118,
+                  118
+                ]
+              }
+            }
+          ],
+          "last": [
+            {
+              "kind": "live",
+              "width": 640,
+              "height": 360,
+              "paused": false,
+              "ready": 4,
+              "renderedFrames": 6,
+              "renderedFramesSource": "native-video-frame-callback",
+              "playbackQualityFrames": 0,
+              "videoFrameCallbacks": 6,
+              "videoPresentedFrames": 6,
+              "pixels": {
+                "source": [
+                  220,
+                  31,
+                  29
+                ],
+                "motion": [
+                  229,
+                  229,
+                  229
+                ]
+              }
+            },
+            {
+              "kind": "screen",
+              "width": 640,
+              "height": 360,
+              "paused": false,
+              "ready": 4,
+              "renderedFrames": 5,
+              "renderedFramesSource": "native-video-frame-callback",
+              "playbackQualityFrames": 0,
+              "videoFrameCallbacks": 5,
+              "videoPresentedFrames": 5,
+              "pixels": {
+                "source": [
+                  30,
+                  220,
+                  32
+                ],
+                "motion": [
+                  186,
+                  186,
+                  186
+                ]
+              }
+            },
+            {
+              "kind": "camera",
+              "width": 640,
+              "height": 360,
+              "paused": false,
+              "ready": 4,
+              "renderedFrames": 5,
+              "renderedFramesSource": "native-video-frame-callback",
+              "playbackQualityFrames": 0,
+              "videoFrameCallbacks": 5,
+              "videoPresentedFrames": 5,
+              "pixels": {
+                "source": [
+                  29,
+                  60,
+                  217
+                ],
+                "motion": [
+                  210,
+                  210,
+                  210
+                ]
+              }
+            }
+          ]
+        },
+        "camera": {
+          "firstFrameMs": 5,
+          "first": [
+            {
+              "kind": "live",
+              "width": 640,
+              "height": 360,
+              "paused": false,
+              "ready": 4,
+              "renderedFrames": 6,
+              "renderedFramesSource": "native-video-frame-callback",
+              "playbackQualityFrames": 0,
+              "videoFrameCallbacks": 6,
+              "videoPresentedFrames": 6,
+              "pixels": {
+                "source": [
+                  220,
+                  31,
+                  29
+                ],
+                "motion": [
+                  229,
+                  229,
+                  229
+                ]
+              }
+            },
+            {
+              "kind": "screen",
+              "width": 640,
+              "height": 360,
+              "paused": false,
+              "ready": 4,
+              "renderedFrames": 5,
+              "renderedFramesSource": "native-video-frame-callback",
+              "playbackQualityFrames": 0,
+              "videoFrameCallbacks": 5,
+              "videoPresentedFrames": 5,
+              "pixels": {
+                "source": [
+                  30,
+                  220,
+                  32
+                ],
+                "motion": [
+                  186,
+                  186,
+                  186
+                ]
+              }
+            },
+            {
+              "kind": "camera",
+              "width": 640,
+              "height": 360,
+              "paused": false,
+              "ready": 4,
+              "renderedFrames": 5,
+              "renderedFramesSource": "native-video-frame-callback",
+              "playbackQualityFrames": 0,
+              "videoFrameCallbacks": 5,
+              "videoPresentedFrames": 5,
+              "pixels": {
+                "source": [
+                  29,
+                  60,
+                  217
+                ],
+                "motion": [
+                  210,
+                  210,
+                  210
+                ]
+              }
+            }
+          ],
+          "last": [
+            {
+              "kind": "live",
+              "width": 640,
+              "height": 360,
+              "paused": false,
+              "ready": 4,
+              "renderedFrames": 8,
+              "renderedFramesSource": "native-video-frame-callback",
+              "playbackQualityFrames": 0,
+              "videoFrameCallbacks": 8,
+              "videoPresentedFrames": 8,
+              "pixels": {
+                "source": [
+                  220,
+                  31,
+                  29
+                ],
+                "motion": [
+                  101,
+                  101,
+                  101
+                ]
+              }
+            },
+            {
+              "kind": "screen",
+              "width": 640,
+              "height": 360,
+              "paused": false,
+              "ready": 4,
+              "renderedFrames": 7,
+              "renderedFramesSource": "native-video-frame-callback",
+              "playbackQualityFrames": 0,
+              "videoFrameCallbacks": 7,
+              "videoPresentedFrames": 7,
+              "pixels": {
+                "source": [
+                  30,
+                  220,
+                  32
+                ],
+                "motion": [
+                  58,
+                  58,
+                  58
+                ]
+              }
+            },
+            {
+              "kind": "camera",
+              "width": 640,
+              "height": 360,
+              "paused": false,
+              "ready": 4,
+              "renderedFrames": 7,
+              "renderedFramesSource": "native-video-frame-callback",
+              "playbackQualityFrames": 0,
+              "videoFrameCallbacks": 7,
+              "videoPresentedFrames": 7,
+              "pixels": {
+                "source": [
+                  29,
+                  60,
+                  217
+                ],
+                "motion": [
+                  81,
+                  81,
+                  81
+                ]
+              }
+            }
+          ]
+        }
+      },
+      "cleanup": [
+        {
+          "target": "owned-test-server",
+          "status": 204,
+          "stage": "complete",
+          "statuses": {
+            "login": 200,
+            "delete": 204,
+            "logout": 200
+          }
+        }
+      ]
+    }
+  ],
+  "fastChecks": {
+    "passed": 18,
+    "log": "/tmp/gelabber-native-sender-probe-unit.log",
+    "lint": "PASS",
+    "lintLog": "/tmp/gelabber-native-sender-probe-lint.log"
+  },
+  "runtime": {
+    "scope": "local actual app, synthetic capture, native browser media and authorization; no WAN or physical-device acceptance",
+    "web": {
+      "source": "c24ead728f1bd4c2b0a1ca3d6b038b99705b8da2",
+      "origin": "http://127.0.0.1:15182",
+      "serving": "frozen copied dist, no HMR",
+      "attribution": "operator supplied"
+    },
+    "api": {
+      "source": "bd7197417075362def8ac325c2a684c480f5d39d",
+      "origin": "http://127.0.0.1:18092",
+      "mappedBinarySha256": "da412bf6139535d38ea2d639ef4624f6d5ab96299baeb0cf987be177837ecad1",
+      "attribution": "source operator supplied; mapped executable binary hash independently verified",
+      "mappedBinaryIndependentlyVerified": true,
+      "pid": 505125
+    },
+    "media": {
+      "source": "c24ead728f1bd4c2b0a1ca3d6b038b99705b8da2",
+      "origin": "http://127.0.0.1:18096",
+      "mappedBinarySha256": "88865a395486d3811e7449287d190e63a34ec96f34eb762a76103ab87550b282",
+      "includesRecovery": "8cb530ece0a9c97f4ad1dfbefee1b4248873b00c",
+      "attribution": "source operator supplied; mapped executable binary hash independently verified",
+      "mappedBinaryIndependentlyVerified": true,
+      "pid": 778751
+    },
+    "excludedStack": [
+      "http://127.0.0.1:18094",
+      "http://127.0.0.1:18095",
+      "http://127.0.0.1:15186"
+    ],
+    "earlyMediaReport": {
+      "path": "/tmp/gelabber-v04-final-media-chromium-c24ead7/report.json",
+      "apiDeclared": "unknown, started before API SHA supplied; this index preserves later exact operator attribution"
+    }
+  },
+  "sourceSha256": {
+    "probe.mjs": "a32ce3ff9aff1ca732272aacbfa0451330740b670a5f158da4b1b60433db7c1e",
+    "media-extra.mjs": "82a1f715ee6d49791c7e9b4c3c548f0d5f35649927e65961f6213ff719bb6d0e",
+    "publisher-encoders.mjs": "a1355812113b0e196d2253ff045ed0adef024511a507d85533987924a23b2a2b",
+    "publisher-encoders.checks.mjs": "954693f0760fef6b728eaf191a23253dc3340c70e492ffa1eb07ad7e5b4cc323"
+  }
+}

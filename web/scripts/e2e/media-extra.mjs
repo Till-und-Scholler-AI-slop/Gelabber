@@ -14,6 +14,8 @@ import {
   observe,
 } from "./harness.mjs";
 import { activePeers, progress, watchSource } from "./media.mjs";
+import { sampleVideoSenders } from "./probe.mjs";
+import { publisherEncoderProgress } from "./publisher-encoders.mjs";
 const audioPackets = (s) =>
   activePeers(s)
     .flatMap((p) => p.inbound)
@@ -212,14 +214,24 @@ export async function mediaExtraScenarios(h, f, { begin, reset, options }) {
       try {
         await click(f.owner, "Kamera an");
         await click(f.owner, "Bildschirm teilen");
-        const publisherReady = await until(
-          () => snapshot(f.owner),
-          (s) =>
-            activePeers(s)
-              .flatMap((p) => p.outbound)
-              .filter((r) => r.kind === "video" && r.frames > 0).length === 3,
+        const readPublisher = (remaining) =>
+          nativeEvaluate(
+            f.owner,
+            sampleVideoSenders,
+            { deadlineEpochMs: Date.now() + remaining },
+            remaining,
+          );
+        const publisherBefore = await until(
+          readPublisher,
+          (s) => publisherEncoderProgress(s),
           "fixture-three-native-publisher-encoders-not-ready",
           20_000,
+        );
+        const publisherReady = await until(
+          readPublisher,
+          (s) => publisherEncoderProgress(s, publisherBefore),
+          "fixture-three-native-publisher-encoders-not-progressing",
+          5_000,
         );
         await click(f.member, "Beitreten");
         // Join/capture clicks precede async publication and source-Watch capability.
@@ -263,6 +275,7 @@ export async function mediaExtraScenarios(h, f, { begin, reset, options }) {
           return kinds;
         });
         return {
+          publisherBefore,
           publisherReady,
           sourceButtons,
           held,
