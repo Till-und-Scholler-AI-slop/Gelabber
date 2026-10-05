@@ -7,6 +7,6 @@ cargo build --locked --release --manifest-path current-probe/Cargo.toml
 cargo build --locked --release --manifest-path mediasoup-probe/Cargo.toml
 docker build --tag gelabber-bench/janus:v1.4.2 janus
 python3 -m unittest discover -s tests -v
-node --test tests/proxy-target.test.mjs
+node --test tests/*.test.mjs
 node --check browser.mjs
 node --check loadgen.mjs
