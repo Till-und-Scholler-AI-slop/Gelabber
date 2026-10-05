@@ -2405,7 +2405,7 @@ async fn retain_publication_codec(pc: &Arc<dyn PeerConnection>, gate: &PeerSdp, 
         else {
             continue;
         };
-        if !gate.publication_slots.contains_key(mid) || media.media_name.port.value == 0 {
+        if !gate.publication_slots.contains_key(mid) || !sdp_media_has_transport(&desc, media) {
             continue;
         }
         let mut section = desc.clone();
@@ -2517,6 +2517,50 @@ async fn sender_mid(pc: &Arc<dyn PeerConnection>, sender: &Arc<dyn RtpSender>) -
     None
 }
 
+/// A bundle-only zero-port MID is active on its group's non-rejected master.
+/// Zero port alone is rejection; an inactive target is never an active source.
+fn sdp_media_has_transport(
+    desc: &rtc::sdp::description::session::SessionDescription,
+    media: &rtc::sdp::description::media::MediaDescription,
+) -> bool {
+    if media.attributes.iter().any(|a| a.key == "inactive") {
+        return false;
+    }
+    if media.media_name.port.value != 0 {
+        return true;
+    }
+    if !media.attributes.iter().any(|a| a.key == "bundle-only") {
+        return false;
+    }
+    let Some(mid) = media
+        .attributes
+        .iter()
+        .find(|a| a.key == "mid")
+        .and_then(|a| a.value.as_deref())
+    else {
+        return false;
+    };
+    desc.attributes
+        .iter()
+        .filter(|a| a.key == "group")
+        .filter_map(|a| a.value.as_deref())
+        .any(|group| {
+            let fields = group.split_whitespace().collect::<Vec<_>>();
+            if fields.first() != Some(&"BUNDLE") || !fields[1..].contains(&mid) {
+                return false;
+            }
+            fields.get(1).is_some_and(|master| {
+                desc.media_descriptions.iter().any(|candidate| {
+                    candidate.media_name.port.value != 0
+                        && candidate
+                            .attributes
+                            .iter()
+                            .any(|a| a.key == "mid" && a.value.as_deref() == Some(master))
+                })
+            })
+        })
+}
+
 /// Resolve only the sender's MID and the publication codec in the actual SDP.
 /// Sender get_parameters() can expose preferences rather than the negotiated
 /// binding after a reoffer in the pinned library. TrackLocalContext is private.
@@ -2525,12 +2569,28 @@ fn negotiated_payload_type(sdp: &str, mid: &str, codec: &RTCRtpCodec) -> Option<
         .ok()?
         .unmarshal()
         .ok()?;
-    parsed.media_descriptions.retain(|media| {
-        media.media_name.port.value != 0
-            && media
+    let active_mids = parsed
+        .media_descriptions
+        .iter()
+        .filter(|media| sdp_media_has_transport(&parsed, media))
+        .filter_map(|media| {
+            media
                 .attributes
                 .iter()
-                .any(|a| a.key == "mid" && a.value.as_deref() == Some(mid))
+                .find(|a| a.key == "mid")
+                .and_then(|a| a.value.clone())
+        })
+        .collect::<HashSet<_>>();
+    parsed.media_descriptions.retain(|media| {
+        media.attributes.iter().any(|a| {
+            a.key == "mid"
+                && a.value
+                    .as_ref()
+                    .is_some_and(|mid| active_mids.contains(mid))
+        }) && media
+            .attributes
+            .iter()
+            .any(|a| a.key == "mid" && a.value.as_deref() == Some(mid))
             && !media.attributes.iter().any(|a| a.key == "inactive")
     });
     let [media] = parsed.media_descriptions.as_slice() else {
@@ -3303,6 +3363,32 @@ mod tests {
     };
     use rtc::rtp::packet::Packet;
     use std::sync::Arc;
+
+    #[test]
+    fn payload_binding_accepts_only_a_live_bundle_only_transport() {
+        let sdp = "v=0\r\no=- 0 0 IN IP4 127.0.0.1\r\ns=-\r\nt=0 0\r\na=group:BUNDLE audio camera\r\nm=audio 9 UDP/TLS/RTP/SAVPF 111\r\na=mid:audio\r\na=rtpmap:111 opus/48000/2\r\nm=video 0 UDP/TLS/RTP/SAVPF 96\r\na=mid:camera\r\na=bundle-only\r\na=recvonly\r\na=rtpmap:96 VP8/90000\r\n";
+        let codec = RTCRtpCodec {
+            mime_type: "video/VP8".into(),
+            clock_rate: 90000,
+            ..Default::default()
+        };
+        assert_eq!(
+            super::negotiated_payload_type(sdp, "camera", &codec),
+            Some(96)
+        );
+        for denied in [
+            sdp.replace("a=group:BUNDLE audio camera\r\n", ""),
+            sdp.replace("m=audio 9", "m=audio 0"),
+            sdp.replace("a=bundle-only\r\n", ""),
+            sdp.replace("a=recvonly", "a=inactive"),
+            sdp.replace("BUNDLE audio camera", "BUNDLE camera audio"),
+        ] {
+            assert_eq!(
+                super::negotiated_payload_type(&denied, "camera", &codec),
+                None
+            );
+        }
+    }
 
     #[test]
     fn av1_defaults_preserve_real_receiver_level_and_profile_limits() {
