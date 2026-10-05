@@ -97,7 +97,7 @@ def run(args, engine, count, round_number, report):
         thread.start()
         browser_file = folder / 'browser.json'
         with (folder / 'loadgen.log').open('w') as output:
-            loadgen = subprocess.Popen(['node', str(args.snapshot / 'loadgen.mjs'), '--engine', engine, '--backend', backend, '--peers', str(count), '--video', str(args.video).lower(), '--video-bitrate', str(args.video_bitrate), '--warmup', str(args.warmup * 1000), '--duration', str(args.duration * 1000), '--output', str(browser_file)], env=environment, stdout=output, stderr=subprocess.STDOUT, start_new_session=True)
+            loadgen = subprocess.Popen(['node', str(args.snapshot / 'loadgen.mjs'), '--engine', engine, '--backend', backend, '--peers', str(count), '--video', str(args.video).lower(), '--video-bitrate', str(args.video_bitrate), '--protocol-logs', str(args.protocol_logs).lower(), '--warmup', str(args.warmup * 1000), '--duration', str(args.duration * 1000), '--output', str(browser_file)], env=environment, stdout=output, stderr=subprocess.STDOUT, start_new_session=True)
             loadgen.wait(timeout=args.duration + args.warmup + 300)
         post_leave = []
         for _ in range(6):
@@ -136,6 +136,7 @@ def main():
     parser.add_argument('--warmup', type=int, default=10)
     parser.add_argument('--video', action='store_true')
     parser.add_argument('--video-bitrate', type=int, default=6000000)
+    parser.add_argument('--protocol-logs', action='store_true', help='Chromium RTC event logs; diagnostic runs only')
     parser.add_argument('--output', type=Path, required=True)
     args = parser.parse_args()
     if args.runs < 1 or args.duration < 3 or args.warmup < 1 or not 0 < args.video_bitrate <= 100000000:

@@ -16,12 +16,14 @@ const rpc = async body => {
 };
 const pcs = [], retained = [], failures = []; window.benchmarkFailures = failures;
 const peerEvidence = [], timers = [];
+const nativeEndpoints = [], rtpConfiguration = [];
 function beginPeer(index, peers, video) {
   const evidence = { peer: `peer-${index}`, setup_started_at: Date.now(), connections: {},
     expected_audio: peers - 1 + (video && index !== 0 ? 1 : 0), expected_video: video && index !== 0 ? 1 : 0 };
   peerEvidence.push(evidence); return evidence;
 }
 function connectionTimer(connection, label, evidence) {
+  if (connection.getTransceivers) nativeEndpoints.push({ connection, label, peer: evidence.peer });
   const update = () => { if (connection.connectionState === 'connected') evidence.connections[label] ??= Date.now(); };
   if (connection.addEventListener) connection.addEventListener('connectionstatechange', update);
   else connection.on('connectionstatechange', update);
@@ -124,6 +126,7 @@ async function mediasoup(peers, withVideo) {
         codecOptions: { opusStereo: false, opusFec: true, opusDtx: false, opusMaxAverageBitrate: 128000 } });
       if (track.kind === 'video') { const settings = producer.rtpSender.getParameters(); settings.degradationPreference = 'maintain-resolution'; await producer.rtpSender.setParameters(settings); }
       published.push(producer.id);
+      rtpConfiguration.push({ peer, direction: 'send', kind: track.kind, parameters: producer.rtpParameters });
     }
     members.push({ peer, send, recv, published, collect });
   }
@@ -132,6 +135,7 @@ async function mediasoup(peers, withVideo) {
     for (const producerId of publisher.published) {
       const params = await rpc({ op: 'consume', peer: member.peer, transportId: member.recv.id, producerId, rtpCapabilities: device.rtpCapabilities });
       const consumer = await member.recv.consume(params); retainTrack(consumer.track);
+      rtpConfiguration.push({ peer: member.peer, direction: 'recv', kind: consumer.kind, parameters: consumer.rtpParameters });
       await rpc({ op: 'resume', peer: member.peer, consumerId: consumer.id });
     }
   }
@@ -277,6 +281,10 @@ window.startBenchmark = async config => {
   const expectedVideo = config.video ? config.peers - 1 : 0;
   if (incoming.filter(s => s.kind === 'audio').length !== expectedAudio || incoming.filter(s => s.kind === 'video').length !== expectedVideo) failures.push('Incomplete forwarding graph: expected ' + expectedAudio + ' audio and ' + expectedVideo + ' video inbound streams, got ' + incoming.length);
   const result = { backend: config.engine, peers: config.peers, video: config.video, input: { clip: 'moving-colorbars-v1', audioBitrate: 128000, videoBitrate, width: 1920, height: 1080, requestedFps: 60 }, failures: [...failures], samples, join_timing: peerEvidence.map(({ stop, ...p }) => p) };
+  // Keep codec/feedback/SSRC negotiation, excluding ICE credentials/candidates.
+  const describe = description => description?.sdp.split(/\r?\n/).filter(line => /^m=|^a=(rtpmap:|fmtp:|rtcp-fb:|extmap:|mid:|ssrc:|ssrc-group:|sendrecv$|sendonly$|recvonly$)/.test(line)) ?? [];
+  result.protocol_configuration = { native: nativeEndpoints.map(({ connection, label, peer }) => ({ peer, label,
+    local: describe(connection.localDescription), remote: describe(connection.remoteDescription) })), rtp: rtpConfiguration };
   result.post_leave = await window.closePeers(); result.post_leave.at = Date.now();
   retained.forEach(item => { if (item instanceof MediaStreamTrack) item.stop(); if (item instanceof AudioContext) item.close(); });
   return result;

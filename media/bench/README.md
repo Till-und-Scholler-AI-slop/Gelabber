@@ -247,3 +247,36 @@ participants; CPU totals are reported only while its live-process counters
 remain monotonic. Negotiated DTLS/SRTP ciphers are shown: engines keep their
 native security defaults, so CPU comparisons describe complete default backend
 paths rather than an identical-cipher microbenchmark.
+
+## Protocol diagnosis before changing the workload
+
+When a long pilot loses 1080p60 or produces unequal actual rates, stop the matrix.
+Do not interpret lower CPU as greater efficiency or keep reducing the fixture
+rate until it appears to pass. Repeat the same two-peer pilot with
+`--protocol-logs` to enable Chromium's local RTC event logging. This uses the
+installed full Chromium in headless mode because headless-shell lacks its event
+logger; the channel is recorded. This adds diagnostic I/O and is excluded from
+performance evidence. Codec, RTP extension,
+feedback and SSRC negotiation is retained in `browser.json`; ICE credentials
+and candidates are omitted from that negotiation excerpt.
+
+```sh
+python3 media/bench/protocol-diagnostics.py /tmp/RUN/current-2-1
+```
+
+`protocol.json` shows the source capture/encoded frame rates and
+`delta totalPacketSendDelay / delta packetsSent` in milliseconds per packet.
+A cumulative send delay by itself cannot prove a stall. The optional Chromium
+v2 event logs retain decrypted RTCP feedback: the helper decodes all compound
+RR/SR report targets, REMB target SSRCs/rates and TWCC sequence/arrival deltas,
+including blob-batched packets. Batched event timestamps remain batch anchors;
+the helper does not reconstruct the compressed per-event timestamp deltas.
+Raw logs are retained and parser errors are explicit. This is protocol failure
+evidence, never an acceptance result.
+
+Primary format references: [Chromium's local event-log switch](https://chromium.googlesource.com/chromium/src/+/refs/heads/main/content/public/common/content_switches.cc),
+[WebRTC v2 schema](https://webrtc.googlesource.com/src/+/refs/heads/main/logging/rtc_event_log/rtc_event_log2.proto),
+[WebRTC blob encoding](https://webrtc.googlesource.com/src/+/refs/heads/main/logging/rtc_event_log/encoder/blob_encoding.cc),
+[RTP report blocks](https://www.rfc-editor.org/rfc/rfc3550.html),
+[TWCC feedback](https://datatracker.ietf.org/doc/html/draft-holmer-rmcat-transport-wide-cc-extensions-01),
+and [REMB feedback](https://datatracker.ietf.org/doc/html/draft-alvestrand-rmcat-remb-03).

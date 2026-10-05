@@ -11,9 +11,17 @@ const options = {};
 for (let index = 2; index < process.argv.length; index += 2) options[process.argv[index].replace(/^--/, '')] = process.argv[index + 1];
 const engine = options.engine, backend = options.backend, peers = Number(options.peers ?? 2);
 const videoBitrate = Number(options['video-bitrate'] ?? 6000000);
+const protocolLogs = options['protocol-logs'] === 'true';
 if (!['current', 'mediasoup', 'janus'].includes(engine) || !backend || !options.output || !process.env.BENCH_TOKEN) throw new Error('Required: --engine current|mediasoup|janus --backend URL --output FILE; BENCH_TOKEN environment');
 if (![2, 8, 16, 32].includes(peers)) throw new Error('Supported participant matrix: 2/8/16/32');
 if (!Number.isSafeInteger(videoBitrate) || videoBitrate <= 0 || videoBitrate > 100000000) throw new Error('Invalid fixture video bitrate');
+if (protocolLogs && options.browser === 'firefox') throw new Error('Chromium RTC event logging required for --protocol-logs');
+const browserArgs = ['--autoplay-policy=no-user-gesture-required', '--disable-background-timer-throttling', '--disable-renderer-backgrounding', '--disable-features=WebRtcHideLocalIpsWithMdns'];
+if (protocolLogs) {
+  const directory = path.join(path.dirname(path.resolve(options.output)), 'rtc-events');
+  fs.mkdirSync(directory, { recursive: true, mode: 0o700 });
+  browserArgs.push('--webrtc-event-logging=' + directory);
+}
 const folder = path.dirname(fileURLToPath(import.meta.url));
 const proxy = http.createServer(async (request, response) => {
   try {
@@ -33,12 +41,11 @@ const proxy = http.createServer(async (request, response) => {
 await new Promise(resolve => proxy.listen(0, '127.0.0.1', resolve));
 let browser, page;
 const pageErrors = [];
-const browserArgs = ['--autoplay-policy=no-user-gesture-required', '--disable-background-timer-throttling', '--disable-renderer-backgrounding', '--disable-features=WebRtcHideLocalIpsWithMdns'];
-const metadata = () => ({ hostname: os.hostname(), platform: os.platform(), cpu: os.cpus()[0]?.model, logical_cpus: os.cpus().length, browser: options.browser === 'firefox' ? 'firefox' : 'chromium', browser_version: browser?.version(), browser_args: options.browser === 'firefox' ? [] : browserArgs, remote_claim: options['separate-host'] === 'true', recorded_at: new Date().toISOString() });
+const metadata = () => ({ hostname: os.hostname(), platform: os.platform(), cpu: os.cpus()[0]?.model, logical_cpus: os.cpus().length, browser: options.browser === 'firefox' ? 'firefox' : 'chromium', browser_channel: protocolLogs ? 'chromium' : 'headless-shell', protocol_logs: protocolLogs, browser_version: browser?.version(), browser_args: options.browser === 'firefox' ? [] : browserArgs, remote_claim: options['separate-host'] === 'true', recorded_at: new Date().toISOString() });
 const save = result => { fs.mkdirSync(path.dirname(path.resolve(options.output)), { recursive: true }); fs.writeFileSync(options.output, JSON.stringify({ ...result, load_generator: metadata() }, null, 2) + '\n'); };
 try {
   const browserType = options.browser === 'firefox' ? firefox : chromium;
-  browser = await browserType.launch({ headless: true, ...(browserType === chromium ? { args: browserArgs } : {}) });
+  browser = await browserType.launch({ headless: true, ...(browserType === chromium ? { args: browserArgs, ...(protocolLogs ? { channel: 'chromium' } : {}) } : {}) });
   page = await browser.newPage();
   page.on('console', message => console.error('Browser:', message.text()));
   page.on('pageerror', error => { pageErrors.push(error.message); console.error('Browser error:', error.message); });

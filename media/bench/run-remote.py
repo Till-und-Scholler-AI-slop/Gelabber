@@ -106,6 +106,7 @@ def main():
     parser.add_argument('--warmup', type=int, default=10)
     parser.add_argument('--video', action='store_true')
     parser.add_argument('--video-bitrate', type=int, default=6000000)
+    parser.add_argument('--protocol-logs', action='store_true', help='Chromium RTC event logs; diagnostic runs only')
     parser.add_argument('--output', type=Path, required=True)
     parser.add_argument('--execute', action='store_true')
     args = parser.parse_args()
@@ -190,7 +191,7 @@ def main():
                         thread = threading.Thread(target=monitor); thread.start()
                         with (folder / 'loadgen.log').open('w') as log:
                             child = subprocess.Popen(['node', str(snapshot / 'loadgen.mjs'), '--engine', engine, '--backend', backend, '--peers', str(count), '--video', str(args.video).lower(),
-                                '--video-bitrate', str(args.video_bitrate), '--warmup', str(args.warmup * 1000), '--duration', str(args.duration * 1000), '--separate-host', 'true', '--output', str(folder / 'browser.json')],
+                                '--video-bitrate', str(args.video_bitrate), '--protocol-logs', str(args.protocol_logs).lower(), '--warmup', str(args.warmup * 1000), '--duration', str(args.duration * 1000), '--separate-host', 'true', '--output', str(folder / 'browser.json')],
                                 env={**os.environ, 'BENCH_TOKEN': token}, stdout=log, stderr=subprocess.STDOUT, start_new_session=True)
                             child.wait(timeout=args.duration + args.warmup + 300)
                         post = []
