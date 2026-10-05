@@ -1586,7 +1586,8 @@ impl Sfu {
                     return Err(SfuError::Forbidden);
                 }
                 codec.channels = 2;
-                codec.sdp_fmtp_line = "minptime=10;useinbandfec=1;stereo=1;sprop-stereo=1;maxaveragebitrate=192000;usedtx=0".into();
+                codec.sdp_fmtp_line =
+                    "minptime=10;useinbandfec=1;stereo=1;sprop-stereo=1;usedtx=0".into();
             }
             if matches!(tag.as_str(), "l" | "la") && !peer.go_live {
                 return Err(SfuError::Forbidden);
@@ -2597,7 +2598,11 @@ fn register_sfu_codecs(media: &mut MediaEngine) -> webrtc::error::Result<()> {
                 mime_type: MIME_TYPE_OPUS.to_owned(),
                 clock_rate: 48000,
                 channels: 2,
-                sdp_fmtp_line: "minptime=10;useinbandfec=1;usedtx=1".to_owned(),
+                // Accept original/music stereo and continuous audio. The SFU forwards
+                // packets without encoding, so a global speech DTX preference would
+                // also affect music publishers. No application bitrate ceiling.
+                sdp_fmtp_line: "minptime=10;useinbandfec=1;stereo=1;sprop-stereo=1;usedtx=0"
+                    .to_owned(),
                 rtcp_feedback: vec![],
             },
             payload_type: 111,

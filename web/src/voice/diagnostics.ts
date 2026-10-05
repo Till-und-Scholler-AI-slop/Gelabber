@@ -1,3 +1,5 @@
+import { useAudioProcessing, type ProcessingInfo } from "./audioProcessing.ts";
+import type { SenderPriority, MediaPriority } from "./mediaPriority.ts";
 // Voice diagnostics (issue 86). Numeric getStats() only — no A/V recording.
 // Rates come from per-interval counter deltas. A missing browser field stays
 // unknown (null), and a counter that goes backwards is a reset, not a loss.
@@ -7,8 +9,8 @@ import { create } from "zustand";
 
 import { APP_VERSION } from "../version.ts";
 import {
-  AUDIO_QUALITY,
-  SOURCE_AUDIO_BITRATE,
+  audioBitrate,
+  sourceAudioBitrate,
   videoSendBudget,
   streamProfileFps,
   useMediaSettings,
@@ -108,6 +110,8 @@ export type FlowStats = {
   measuredBitrateBps: number | null;
   configuredMaxBitrateBps: number | null;
   configuredMaxFps: number | null;
+  senderPriority: MediaPriority | null;
+  senderNetworkPriority: MediaPriority | null;
   packetLoss: number | null;
   packetsLost: number | null;
   jitterMs: number | null;
@@ -135,13 +139,17 @@ export type ConnectionSnapshot = {
 };
 
 export type Caps = {
-  audioMaxBitrate: number;
-  sourceAudioMaxBitrate?: number;
-  videoSendBudget: number;
+  /** Browser readback; null means unsupported/unknown, not the requested policy. */
+  senderPriorities?: Partial<Record<FlowSource, SenderPriority>>;
+  audioMaxBitrate: number | null;
+  /** Effective sender parameters; null means no maxBitrate property. */
+  audioLimits?: Partial<Record<AudioSource, number | null>>;
+  sourceAudioMaxBitrate?: number | null;
+  videoSendBudget: number | null;
   videoMaxFps: number;
   /** Active sender limits, keyed by source rather than browser track ids. */
   videoLimits?: Partial<
-    Record<VideoSource, { maxBitrate: number; maxFps: number }>
+    Record<VideoSource, { maxBitrate: number | null; maxFps: number }>
   >;
 };
 
@@ -170,7 +178,10 @@ export type PhaseMark = {
 
 export type RelevantSettings = {
   audioQuality: string;
-  audioMaxBitrate: number;
+  economyMode: boolean;
+  processingMode: string;
+  effectiveProcessing: ProcessingInfo;
+  audioMaxBitrate: number | null;
   cameraProfile: string;
   screenProfile: string;
   echoCancellation: boolean;
@@ -181,8 +192,8 @@ export type RelevantSettings = {
   shareSourceAudio: boolean;
   sourceAudioVolume: number;
   sourceAudioMuted: boolean;
-  sourceAudioMaxBitrate: number;
-  videoSendBudget: number;
+  sourceAudioMaxBitrate: number | null;
+  videoSendBudget: number | null;
   videoMaxFps: number;
   customAudioInput: boolean;
   customAudioOutput: boolean;
@@ -520,7 +531,7 @@ export function reduceConnection(input: {
       entry.type === "outbound-rtp" && mediaKind(entry, codecs) === "video",
   ).length;
   const perVideo =
-    videoSenders > 0
+    videoSenders > 0 && input.caps.videoSendBudget !== null
       ? Math.floor(input.caps.videoSendBudget / videoSenders)
       : null;
 
@@ -633,9 +644,12 @@ export function reduceConnection(input: {
       configuredMaxBitrateBps:
         direction === "send"
           ? kind === "audio"
-            ? source === "screen-audio" || source === "live-audio"
-              ? (input.caps.sourceAudioMaxBitrate ?? SOURCE_AUDIO_BITRATE)
-              : input.caps.audioMaxBitrate
+            ? input.caps.audioLimits &&
+              Object.hasOwn(input.caps.audioLimits, source)
+              ? (input.caps.audioLimits[source as AudioSource] ?? null)
+              : source === "screen-audio" || source === "live-audio"
+                ? (input.caps.sourceAudioMaxBitrate ?? null)
+                : input.caps.audioMaxBitrate
             : input.caps.videoLimits
               ? (sourceLimit?.maxBitrate ?? null)
               : perVideo
@@ -647,6 +661,14 @@ export function reduceConnection(input: {
             : input.caps.videoMaxFps
           : null,
       packetLoss: lossRatio(lostDelta, lossBase) ?? fraction,
+      senderPriority:
+        direction === "send"
+          ? (input.caps.senderPriorities?.[source]?.priority ?? null)
+          : null,
+      senderNetworkPriority:
+        direction === "send"
+          ? (input.caps.senderPriorities?.[source]?.networkPriority ?? null)
+          : null,
       packetsLost: lostDelta,
       jitterMs: secondsToMs(
         direction === "send" ? (remote?.jitter ?? entry.jitter) : entry.jitter,
@@ -1025,7 +1047,7 @@ setTimeout(() => {
 export function defaultCaps(): Caps {
   const settings = useMediaSettings.getState();
   return {
-    audioMaxBitrate: AUDIO_QUALITY[settings.quality].bitrate,
+    audioMaxBitrate: audioBitrate(settings),
     videoSendBudget: videoSendBudget(settings),
     videoMaxFps: Math.max(
       streamProfileFps(settings.cameraProfile),
@@ -1039,7 +1061,10 @@ export function relevantSettings(
 ): RelevantSettings {
   return {
     audioQuality: settings.quality,
-    audioMaxBitrate: AUDIO_QUALITY[settings.quality].bitrate,
+    economyMode: settings.economyMode,
+    processingMode: settings.processingMode,
+    effectiveProcessing: useAudioProcessing.getState(),
+    audioMaxBitrate: audioBitrate(settings),
     cameraProfile: settings.cameraProfile,
     screenProfile: settings.screenProfile,
     echoCancellation: settings.echoCancellation,
@@ -1050,7 +1075,7 @@ export function relevantSettings(
     shareSourceAudio: settings.shareSourceAudio,
     sourceAudioVolume: settings.sourceAudioVolume,
     sourceAudioMuted: settings.sourceAudioMuted,
-    sourceAudioMaxBitrate: SOURCE_AUDIO_BITRATE,
+    sourceAudioMaxBitrate: sourceAudioBitrate(settings),
     videoSendBudget: videoSendBudget(settings),
     videoMaxFps: Math.max(
       streamProfileFps(settings.cameraProfile),

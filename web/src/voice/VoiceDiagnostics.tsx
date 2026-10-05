@@ -1,8 +1,9 @@
+import { useAudioProcessing } from "./audioProcessing.ts";
 // Optional voice diagnostics. Collapsed until someone opens it.
 // Figures are clues for a bad call, not a verdict about the cause.
 
 import {
-  AUDIO_QUALITY,
+  audioBitrate,
   VIDEO_MAX_FPS,
   videoSendBudget,
   useMediaSettings,
@@ -29,8 +30,8 @@ export function VoiceDiagnostics() {
   const events = useVoiceDiagnostics((state) => state.events);
   const polling = useVoiceDiagnostics((state) => state.polling);
   const mediaSettings = useMediaSettings();
-  const quality = mediaSettings.quality;
-  const audioCap = AUDIO_QUALITY[quality];
+  const audioCap = audioBitrate(mediaSettings);
+  const processing = useAudioProcessing();
   const measuring = polling.voice || polling.watch;
 
   return (
@@ -45,10 +46,51 @@ export function VoiceDiagnostics() {
           Bitrate.
         </p>
         <p className="text-xs text-neutral-500 dark:text-neutral-400">
-          {measuring ? "Messung läuft." : "Keine laufende Messung."}{" "}
-          Eingestellte Audio-Obergrenze: {audioCap.label} ({audioCap.hint}).
-          Videobudget {formatBps(videoSendBudget(mediaSettings))}, höchstens{" "}
-          {VIDEO_MAX_FPS} FPS.
+          {measuring ? "Messung läuft." : "Keine laufende Messung."} Audio:{" "}
+          {audioCap === null
+            ? "keine Gelabber-Bitratengrenze"
+            : formatBps(audioCap)}
+          . Video:{" "}
+          {videoSendBudget(mediaSettings) === null
+            ? "keine Gelabber-Bitratengrenze"
+            : formatBps(videoSendBudget(mediaSettings))}
+          , höchstens {VIDEO_MAX_FPS} FPS.
+        </p>
+        <p className="text-xs">
+          Mikrofon: {processing.message} · Abtastrate:{" "}
+          {processing.sampleRate ?? "unbekannt"} Hz · Kanäle:{" "}
+          {processing.channels ?? "unbekannt"} · AEC:{" "}
+          {processing.echoCancellation === null
+            ? "unbekannt"
+            : processing.echoCancellation
+              ? "an"
+              : "aus"}{" "}
+          · Browser-NS:{" "}
+          {processing.noiseSuppression === null
+            ? "unbekannt"
+            : processing.noiseSuppression
+              ? "an"
+              : "aus"}{" "}
+          · Browser-AGC:{" "}
+          {processing.autoGainControl === null
+            ? "unbekannt"
+            : processing.autoGainControl
+              ? "an"
+              : "aus"}
+        </p>
+        <p className="text-xs">
+          Effektiver Mic-Gain: {Math.round(processing.inputGain * 100)} % ·
+          Verarbeitungszustand: {processing.contextState ?? "ohne Graph"} ·
+          Zusätzliches Filter-Buffering:{" "}
+          {processing.addedBufferMs ?? "unbekannt"} ms (ohne Capture, Codec und
+          Netzwerk).
+        </p>
+        <p className="text-xs text-neutral-500 dark:text-neutral-400">
+          Prioritätswunsch: Audio hoch, Video normal. Die effektiven
+          Browserwerte stehen bei den Sendespuren. Nicht gemeldete Netzpriorität
+          bleibt unbekannt; Browser und Netzwerk können diese Hinweise
+          ignorieren. Das garantiert keine Priorisierung auf dem SFU oder im
+          Internet und setzt keine Bitratengrenze.
         </p>
         <ConnectionBlock
           title="Sprache"
@@ -230,7 +272,9 @@ function FlowLine({ flow }: { flow: FlowStats }) {
         {formatBps(flow.measuredBitrateBps)}
         {flow.configuredMaxBitrateBps !== null
           ? ` · Obergrenze: ${formatBps(flow.configuredMaxBitrateBps)}`
-          : ""}
+          : flow.direction === "send"
+            ? " · keine Gelabber-Bitratengrenze"
+            : ""}
       </p>
       <p>
         Paketverlust: {formatRatio(flow.packetLoss)}
@@ -239,6 +283,12 @@ function FlowLine({ flow }: { flow: FlowStats }) {
           : ""}{" "}
         · Jitter: {formatMs(flow.jitterMs)} · RTT: {formatMs(flow.rttMs)}
       </p>
+      {flow.direction === "send" && (
+        <p>
+          Senderpriorität: {flow.senderPriority ?? "nicht gemeldet"} ·
+          Netzpriorität: {flow.senderNetworkPriority ?? "nicht gemeldet"}
+        </p>
+      )}
       {flow.kind === "audio" && flow.direction === "recv" ? (
         <p>
           Ersetzte Samples:{" "}

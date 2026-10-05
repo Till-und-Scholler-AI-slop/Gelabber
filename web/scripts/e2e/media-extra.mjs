@@ -212,9 +212,41 @@ export async function mediaExtraScenarios(h, f, { begin, reset, options }) {
       try {
         await click(f.owner, "Kamera an");
         await click(f.owner, "Bildschirm teilen");
+        const publisherReady = await until(
+          () => snapshot(f.owner),
+          (s) =>
+            activePeers(s)
+              .flatMap((p) => p.outbound)
+              .filter((r) => r.kind === "video" && r.frames > 0).length === 3,
+          "fixture-three-native-publisher-encoders-not-ready",
+          20_000,
+        );
         await click(f.member, "Beitreten");
-        await watchSource(f.member, "live");
-        await watchSource(f.member, "screen");
+        // Join/capture clicks precede async publication and source-Watch capability.
+        // Require actual subscription controls; count=0 must not silently skip Watch.
+        const sourceButtons = {};
+        for (const [kind, label] of [
+          ["live", "— Live"],
+          ["screen", "— Bildschirm"],
+        ]) {
+          const tiles = f.member.page
+            .locator("figure")
+            .filter({ hasText: label });
+          const start = tiles.getByRole("button", {
+            name: "Zuschauen",
+            exact: true,
+          });
+          await start.first().waitFor({ state: "visible", timeout: 20_000 });
+          sourceButtons[kind] = await start.count();
+          check(
+            sourceButtons[kind] === 1,
+            "fixture-source-watch-control-not-unique",
+          );
+          await start.first().click();
+          await tiles
+            .getByRole("button", { name: "Nicht mehr zuschauen", exact: true })
+            .waitFor();
+        }
         const held = await until(
           () => snapshot(f.member),
           (s) => s.heldVideoTracks === 3,
@@ -231,6 +263,8 @@ export async function mediaExtraScenarios(h, f, { begin, reset, options }) {
           return kinds;
         });
         return {
+          publisherReady,
+          sourceButtons,
           held,
           callbackOrder: "reversed",
           deliveredKinds: kinds,
