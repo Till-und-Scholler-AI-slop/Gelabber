@@ -131,7 +131,7 @@ def main():
         print(json.dumps(report, indent=2)); return 0
     args.output = args.output.resolve(); args.output.mkdir(parents=True)
     snapshot = args.output / 'inputs'; snapshot.mkdir()
-    for filename in ['loadgen.mjs', 'proxy-target.mjs', 'client.bundle.js', 'package-lock.json', 'record.py', 'run-remote.py']:
+    for filename in ['loadgen.mjs', 'proxy-target.mjs', 'client.bundle.js', 'package-lock.json', 'record.py', 'run-remote.py', 'evaluate.py', 'protocol-diagnostics.py']:
         shutil.copy2(ROOT / filename, snapshot / filename)
     (snapshot / 'remote-helper.py').write_text(REMOTE)
     (snapshot / 'node_modules').symlink_to(ROOT / 'node_modules', target_is_directory=True)

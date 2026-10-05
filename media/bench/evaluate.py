@@ -91,6 +91,27 @@ def summarize(browser, server):
     result['sender_bitrate_distribution'] = {kind: {'streams': [s for s in rates if s['kind'] == kind],
         'min_bps': min((s['bps'] for s in rates if s['kind'] == kind), default=None),
         'max_bps': max((s['bps'] for s in rates if s['kind'] == kind), default=None)} for kind in expected}
+    # A graph can contain advancing counters while silently losing most audio.
+    # Qualify every forwarding edge before treating its server work as equal.
+    received_before = {key(s): s for s in initial}
+    audio_edges = []
+    for stream in incoming:
+        if stream.get('kind') != 'audio': continue
+        before = received_before.get(key(stream), {})
+        if any(field not in stream or field not in before for field in ['bytesReceived', 'packetsReceived', 'packetsLost']):
+            problems.append('missing per-edge audio delivery evidence'); continue
+        received = stream['packetsReceived'] - before['packetsReceived']
+        lost = max(0, stream['packetsLost'] - before['packetsLost'])
+        audio_edges.append({'peer': stream.get('_peer'), 'endpoint': stream.get('_endpoint'), 'id': stream['id'],
+            'bps': (stream['bytesReceived'] - before['bytesReceived']) * 8 / seconds,
+            'packet_loss_fraction': lost / (received + lost) if received + lost > 0 else None})
+    audio_rate = result['sender_bitrate_distribution']['audio']
+    if not audio_rate['min_bps'] or len(audio_edges) != expected['audio']:
+        problems.append('missing audio delivery rate comparison')
+    elif any(edge['bps'] < audio_rate['min_bps'] * .9 or edge['bps'] > audio_rate['max_bps'] * 1.1
+             or edge['packet_loss_fraction'] is None or edge['packet_loss_fraction'] > .01 for edge in audio_edges):
+        problems.append('audio delivery rate/loss differs on a forwarding edge')
+    result['receiver_audio_distribution'] = audio_edges
     result['per_peer_graph'] = per_peer
     timing = browser.get('join_timing', [])
     if len(timing) != count or any(any(field not in p for field in ['setup_started_at', 'dtls_ready_at', 'first_send_rtp_at', 'full_graph_rtp_ready_at']) for p in timing):

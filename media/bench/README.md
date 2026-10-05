@@ -116,6 +116,10 @@ join timing, post-leave resources and RTP jitter. Equal-stream
 comparison is available only with at least three valid runs per engine and
 measured median sender bitrates within 10%. RTP jitter is **not** end-to-end
 audio latency. Neither runner nor evaluator can issue migration acceptance.
+Every audio receiver edge must also deliver within 10% of measured sender
+bitrate bounds and report at most 1% packet loss in the measurement window.
+Per-edge received rates/loss are retained; merely advancing a few packets
+cannot qualify a partially delivered stress workload.
 
 ## Separate-host measurement
 

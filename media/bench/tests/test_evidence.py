@@ -19,6 +19,7 @@ def fixture():
             streams.append({'_endpoint': ('peer-0' if number == 0 else 'peer-1') + '/0', 'id': str(number), 'type': 'inbound-rtp',
                             '_peer': 'peer-0' if number == 0 else 'peer-1',
                             'kind': kind, 'packetsReceived': 10 + index * 100,
+                            'packetsLost': 0, 'bytesReceived': index * 10000,
                             'framesDecoded': index * 60, 'frameWidth': 1920, 'frameHeight': 1080})
             streams.append({'_endpoint': 'sender', 'id': str(number), 'type': 'outbound-rtp',
                             'kind': kind, 'bytesSent': index * 10000})
@@ -85,6 +86,14 @@ class EvidenceTests(unittest.TestCase):
                             {'_endpoint': 'a', 'id': 'rtx', 'type': 'inbound-rtp', 'codecId': 'c'},
                             {'_endpoint': 'b', 'id': 'vp8', 'type': 'inbound-rtp', 'codecId': 'c'}]}
         self.assertEqual([s['id'] for s in media_stats(sample, 'inbound-rtp')], ['vp8'])
+
+    def test_advancing_graph_cannot_hide_an_audio_delivery_failure(self):
+        browser, server = fixture()
+        browser['samples'][-1]['stats'][1]['bytesReceived'] = 10000
+        self.assertFalse(summarize(browser, server)['media_fixture_valid'])
+        browser, server = fixture()
+        browser['samples'][-1]['stats'][1]['packetsLost'] = 30
+        self.assertFalse(summarize(browser, server)['media_fixture_valid'])
 
     def test_failed_or_missing_evidence_cannot_qualify(self):
         browser, server = fixture()
