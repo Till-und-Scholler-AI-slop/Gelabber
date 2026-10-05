@@ -1,19 +1,37 @@
 import { useInfiniteQuery } from "@tanstack/react-query";
-import { useState, type FormEvent } from "react";
+import {
+  useLayoutEffect,
+  useRef,
+  useState,
+  type FormEvent,
+  type ReactNode,
+} from "react";
 import { searchMessages } from "./search.ts";
 import { scopeGeneration, useUserId } from "../auth/scope.ts";
+import type { Message } from "./types.ts";
+import { MessageContextView } from "./MessageContext.tsx";
 
 export function MessageSearch({
   channelId,
   onClose,
+  renderMessage,
 }: {
   channelId: string;
   onClose: () => void;
+  renderMessage: (message: Message) => ReactNode;
 }) {
   const userId = useUserId();
   const generation = scopeGeneration();
   const [input, setInput] = useState("");
   const [q, setQ] = useState("");
+  const [selected, setSelected] = useState<string | null>(null);
+  const resultButtons = useRef(new Map<string, HTMLButtonElement>());
+  const lastSelected = useRef<string | null>(null);
+  useLayoutEffect(() => {
+    if (!selected && lastSelected.current)
+      resultButtons.current.get(lastSelected.current)?.focus();
+    lastSelected.current = selected;
+  }, [selected]);
   const query = useInfiniteQuery({
     queryKey: ["user", userId, generation, "message-search", channelId, q],
     queryFn: ({ pageParam, signal }) =>
@@ -37,6 +55,17 @@ export function MessageSearch({
   };
   const rows =
     query.data?.pages.flatMap((page) => [...page.messages].reverse()) ?? [];
+  if (selected)
+    return (
+      <MessageContextView
+        key={selected}
+        channelId={channelId}
+        messageId={selected}
+        onBack={() => setSelected(null)}
+        onClose={onClose}
+        renderMessage={renderMessage}
+      />
+    );
   return (
     <section
       className="flex min-h-0 flex-1 flex-col"
@@ -102,13 +131,29 @@ export function MessageSearch({
         ) : null}
         {rows.map((message) => (
           <article key={message.id} className="border-b py-3">
-            <p className="text-sm">
-              <strong>{message.author.name}</strong>{" "}
-              <time dateTime={message.created_at}>
-                {new Date(message.created_at).toLocaleString("de-DE")}
-              </time>
-            </p>
-            <p className="whitespace-pre-wrap break-words">{message.content}</p>
+            <button
+              type="button"
+              ref={(node) => {
+                if (node) resultButtons.current.set(message.id, node);
+                else resultButtons.current.delete(message.id);
+              }}
+              onClick={() => setSelected(message.id)}
+              aria-label={`Zur Nachricht von ${message.author.name}: ${message.content || "Datei"}`}
+              className="w-full rounded p-2 text-left hover:bg-neutral-100 focus-visible:outline-2 dark:hover:bg-neutral-800"
+            >
+              <p className="text-sm">
+                <strong>{message.author.name}</strong>{" "}
+                <time dateTime={message.created_at}>
+                  {new Date(message.created_at).toLocaleString("de-DE")}
+                </time>
+              </p>
+              <p className="whitespace-pre-wrap break-words">
+                {message.content}
+              </p>
+              <span className="text-xs underline">
+                Nachricht im Kontext öffnen
+              </span>
+            </button>
           </article>
         ))}
         {query.hasNextPage ? (

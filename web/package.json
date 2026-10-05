@@ -22,7 +22,8 @@
     "test:reactions-smoke": "node scripts/smoke-reactions.mjs",
     "test:e2e-webapp-recovery": "node scripts/e2e/webapp-recovery.mjs",
     "test:audio-smoke": "node scripts/smoke-audio-processing.mjs",
-    "test:audio-dsp": "node scripts/audio/benchmark-rnnoise.mjs"
+    "test:audio-dsp": "node scripts/audio/benchmark-rnnoise.mjs",
+    "test:e2e-search-context": "node scripts/e2e/search-context.mjs"
   },
   "dependencies": {
     "@tanstack/react-query": "5.102.8",
