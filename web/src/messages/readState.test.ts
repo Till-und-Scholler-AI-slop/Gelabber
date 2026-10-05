@@ -10,7 +10,7 @@ import {
   readKey,
   refreshChatWorkflows,
 } from "./readState.ts";
-import { searchMessages } from "./search.ts";
+import { messageContext, searchMessages } from "./search.ts";
 import type { Message } from "./types.ts";
 import type { Gateway } from "../ws/client.ts";
 const user = {
@@ -136,6 +136,83 @@ describe("read eligibility and recovery", () => {
     unsubscribe();
     observer.destroy();
   });
+  it("cancels a pre-delete context before refreshing the selected message", async () => {
+    let resolve!: (r: Response) => void;
+    response = () =>
+      new Promise((r) => {
+        resolve = r;
+      });
+    const stamp = takeStamp()!;
+    const key = [
+      "user",
+      stamp.userId,
+      stamp.generation,
+      "message-context",
+      "channel",
+      "target",
+    ];
+    const observer = new QueryObserver(client, {
+      queryKey: key,
+      queryFn: ({ signal }) => messageContext("channel", "target", signal),
+      retry: false,
+    });
+    const unsubscribe = observer.subscribe(() => {});
+    await vi.waitFor(() => expect(resolve).toBeTypeOf("function"));
+    const current = {
+      target_id: "target",
+      messages: [],
+      before: null,
+      after: null,
+    };
+    response = () => json(current);
+    await refreshChatWorkflows(client, stamp, "channel");
+    resolve(json({ ...current, messages: [{ id: "deleted" }] }));
+    await vi.waitFor(() => expect(client.getQueryData(key)).toEqual(current));
+    unsubscribe();
+    observer.destroy();
+  });
+  it("aborts context requests on observer removal and rejects late private snapshots", async () => {
+    let resolve!: (r: Response) => void;
+    const signals: AbortSignal[] = [];
+    vi.stubGlobal(
+      "fetch",
+      vi.fn((_url: RequestInfo | URL, options: RequestInit) => {
+        signals.push(options.signal as AbortSignal);
+        return new Promise<Response>((r) => {
+          resolve = r;
+        });
+      }),
+    );
+    const stamp = takeStamp()!;
+    const key = [
+      "user",
+      stamp.userId,
+      stamp.generation,
+      "message-context",
+      "channel",
+      "target",
+    ];
+    const observer = new QueryObserver(client, {
+      queryKey: key,
+      queryFn: ({ signal }) => messageContext("channel", "target", signal),
+      retry: false,
+    });
+    const unsubscribe = observer.subscribe(() => {});
+    await vi.waitFor(() => expect(signals).toHaveLength(1));
+    unsubscribe();
+    observer.destroy();
+    expect(signals[0]!.aborted).toBe(true);
+    resolve(
+      json({
+        target_id: "target",
+        messages: [{ id: "private" }],
+        before: null,
+        after: null,
+      }),
+    );
+    await Promise.resolve();
+    expect(client.getQueryData(key)).toBeUndefined();
+  });
   it("coalesces events, reconnects and gaps; detaches on logout and hidden polling", async () => {
     vi.useFakeTimers();
     const window = new EventTarget() as EventTarget & {
@@ -170,7 +247,7 @@ describe("read eligibility and recovery", () => {
     callbacks.ready();
     callbacks.gap();
     await vi.advanceTimersByTimeAsync(0);
-    expect(cancel).toHaveBeenCalledTimes(2); // Search and private read snapshot.
+    expect(cancel).toHaveBeenCalledTimes(3); // Search, context and private read snapshot.
     cancel.mockClear();
     document.visibilityState = "hidden";
     await vi.advanceTimersByTimeAsync(15_000);
@@ -178,7 +255,7 @@ describe("read eligibility and recovery", () => {
     document.visibilityState = "visible";
     document.dispatchEvent(new Event("visibilitychange"));
     await vi.advanceTimersByTimeAsync(0);
-    expect(cancel).toHaveBeenCalledTimes(2);
+    expect(cancel).toHaveBeenCalledTimes(3);
     cancel.mockClear();
     resetSessionForTests();
     callbacks.resync();

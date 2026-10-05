@@ -108,11 +108,24 @@ export async function refreshChatWorkflows(
       ...(channelId ? [channelId] : []),
     ],
   };
-  await client.cancelQueries(filter);
+  const contextFilter = {
+    queryKey: [
+      "user",
+      stamp.userId,
+      stamp.generation,
+      "message-context",
+      ...(channelId ? [channelId] : []),
+    ],
+  };
+  await Promise.all([
+    client.cancelQueries(filter),
+    client.cancelQueries(contextFilter),
+  ]);
   if (!stampHolds(stamp)) return;
   await Promise.all([
     refreshReadState(client, stamp),
     client.invalidateQueries(filter),
+    client.invalidateQueries(contextFilter),
   ]);
 }
 
