@@ -114,7 +114,7 @@ test -n "$restore_minio_volume"
 printf '%s\n' "$restore_minio_image" > "$restore_backup_dir/minio-image-id.txt"
 docker compose stop api web media
 docker compose stop minio
-docker compose exec -T postgres pg_dump -U gelabber --format=custom gelabber \
+docker compose exec -T postgres sh -c 'exec pg_dump -U "$POSTGRES_USER" --format=custom "$POSTGRES_DB"' \
   > "$restore_backup_dir/database.pgdump"
 docker run --rm --pull never --network none --read-only --user 0 \
   --mount "type=volume,src=$restore_minio_volume,dst=/data,readonly" \
