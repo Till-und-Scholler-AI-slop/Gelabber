@@ -119,7 +119,7 @@ async fn debug_peer(State(f): State<Fixture>, Path(index): Path<usize>) -> Json<
         mids.push(serde_json::json!({"mid":t.mid().await.unwrap(),"direction":format!("{:?}",t.direction().await.unwrap()),"sender":t.sender().await.unwrap().is_some()}));
     }
     Json(
-        serde_json::json!({"bindings":bindings,"transceivers":mids,"reserved":gate.publication_slots.len(),"active":gate.subscriptions.values().filter(|s|matches!(s,SubscriptionState::Active(_))).count()}),
+        serde_json::json!({"ridRecovery":gate.rid_recovery.observed(),"bindings":bindings,"transceivers":mids,"reserved":gate.publication_slots.len(),"active":gate.subscriptions.values().filter(|s|matches!(s,SubscriptionState::Active(_))).count()}),
     )
 }
 async fn offer(

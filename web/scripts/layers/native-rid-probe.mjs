@@ -643,6 +643,23 @@ for (const [publisherEngine, viewerEngine] of [
       previous = legacy;
     }
     await watch(current, previous, false);
+    const recovery = (
+      await current.page.evaluate(() => globalThis.__client.debug())
+    ).server.ridRecovery;
+    assert.equal(
+      recovery[0],
+      3,
+      "all three accepted publisher RID scopes remain active",
+    );
+    assert.equal(
+      recovery[1],
+      6,
+      "six actual learned primary RID SSRCs remain scoped",
+    );
+    assert.ok(
+      recovery[2] > 0,
+      "actual missing headers were recovered through the public interceptor",
+    );
     matrix.push({
       publisher: publisherEngine.name(),
       viewer: viewerEngine.name(),
@@ -651,6 +668,7 @@ for (const [publisherEngine, viewerEngine] of [
       cycles,
       controllerHints: hints,
       ownSourceSwitches,
+      recovery,
       full: {
         frames: full.frames,
         audio: full.audio,

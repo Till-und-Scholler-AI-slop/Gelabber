@@ -46,6 +46,8 @@ const RTP_Q: usize = 512;
 mod egress;
 #[path = "sfu_feedback.rs"]
 mod feedback;
+#[path = "sfu_rid_recovery.rs"]
+mod rid_recovery;
 #[path = "viewer_layers.rs"]
 mod viewer_layers;
 
@@ -258,6 +260,7 @@ struct PeerSdp {
     pending_ice: Vec<(String, Option<String>)>,
     egress: Option<egress::Egress>,
     publication_slots: HashMap<String, Arc<dyn RtpSender>>,
+    rid_recovery: rid_recovery::Recovery,
 }
 
 impl PeerSdp {
@@ -274,6 +277,7 @@ impl PeerSdp {
             pending_ice: Vec::new(),
             egress: None,
             publication_slots: HashMap::new(),
+            rid_recovery: rid_recovery::Recovery::default(),
         }
     }
 }
@@ -300,6 +304,7 @@ struct Peer {
     gathered: watch::Receiver<u64>,
     sdp: Arc<Mutex<PeerSdp>>,
     closing: watch::Sender<bool>,
+    rid_recovery: rid_recovery::Recovery,
     /// Explicit MSID track identity; legacy tags are bound in SDP order, never RTP order.
     video_kinds: HashMap<String, String>,
     /// Source audio is bound to one exact parent MSID on this peer.
@@ -542,7 +547,7 @@ impl Sfu {
         let peer_id = PeerId(Uuid::new_v4());
         let ice_addr = self.ice_ports.take().await.ok_or(SfuError::Unavailable)?;
         let built = self.build_pc(&ice_addr).await;
-        let (pc, mut events, gathered) = match built {
+        let (pc, mut events, gathered, rid_recovery) = match built {
             Ok(parts) => parts,
             Err(err) => {
                 self.ice_ports.release(&ice_addr).await;
@@ -562,7 +567,8 @@ impl Sfu {
                 }
                 return Err(SfuError::Revoked);
             }
-            let gate = PeerSdp::new();
+            let mut gate = PeerSdp::new();
+            gate.rid_recovery = rid_recovery.clone();
             let closing = gate.closing.clone();
             let room = rooms.entry(claim.c).or_insert_with(|| {
                 Arc::new(Mutex::new(Room {
@@ -592,6 +598,7 @@ impl Sfu {
                     gathered,
                     sdp: Arc::new(Mutex::new(gate)),
                     closing,
+                    rid_recovery,
                     video_kinds: HashMap::new(),
                     source_parents: HashMap::new(),
                     legacy_kinds: VecDeque::new(),
@@ -678,6 +685,7 @@ impl Sfu {
                 }
             }
         }
+        gate.rid_recovery.suspend();
         if let Err(err) = pc.set_remote_description(desc).await {
             if !as_offer {
                 self.rollback_locked(&pc, &mut gate).await;
@@ -743,6 +751,9 @@ impl Sfu {
             gate.negotiated = true;
         } else {
             accepted_answer = pc.remote_description().await;
+        }
+        if let Some(local) = pc.local_description().await {
+            gate.rid_recovery.accept(&sdp_text, &local.sdp);
         }
         if as_offer && let Some(answer) = accepted_answer.as_ref() {
             retain_publication_codec(&pc, &gate, &answer.sdp).await;
@@ -1054,6 +1065,7 @@ impl Sfu {
                 && old != binding
             {
                 peer.video_kinds.insert(old.track_id.clone(), String::new());
+                peer.rid_recovery.stop_track(&old.track_id);
                 replaced = Some(old);
             }
         }
@@ -1062,6 +1074,7 @@ impl Sfu {
         }
         if let Some(id) = track_id {
             peer.video_kinds.insert(id.into(), kind.into());
+            peer.rid_recovery.allow_track(id);
         } else if !peer.legacy_kinds.iter().any(|k| k == kind) {
             peer.legacy_kinds.push_back(kind.into());
         }
@@ -1123,6 +1136,12 @@ impl Sfu {
                 })
                 .map(|(id, _)| id.clone())
                 .collect();
+            for id in &parent_ids {
+                peer.rid_recovery.stop_track(id);
+            }
+            if let Some(id) = track_id {
+                peer.rid_recovery.stop_track(id);
+            }
             let paired_ids: HashSet<_> = peer
                 .source_parents
                 .iter()
@@ -1313,6 +1332,7 @@ impl Sfu {
         saturating_dec(&self.stats.peers);
         // Stop both directions before waiting for an outstanding SDP operation.
         peer.closing.send_replace(true);
+        peer.rid_recovery.close();
         for publication in &publications {
             publication.life.stop.send_replace(true);
         }
@@ -1438,6 +1458,7 @@ impl Sfu {
             }
             peer.live_claim = None;
             peer.withdrawn_live = Some(expected.nonce);
+            peer.rid_recovery.stop_track(&expected.track_id);
             peer.video_kinds
                 .insert(expected.track_id.clone(), String::new());
             let paired: HashSet<_> = peer
@@ -1484,12 +1505,17 @@ impl Sfu {
         Arc<dyn PeerConnection>,
         mpsc::UnboundedReceiver<PcEvent>,
         watch::Receiver<u64>,
+        rid_recovery::Recovery,
     )> {
         let mut media = MediaEngine::default();
         register_sfu_codecs(&mut media)?;
         let registry =
             register_default_interceptors(webrtc::peer_connection::Registry::new(), &mut media)?;
         let registry = registry.with(feedback::KeyframeFeedback::new);
+        let recovery = rid_recovery::Recovery::default();
+        let hook_recovery = recovery.clone();
+        let registry =
+            registry.with(move |next| rid_recovery::RidRecovery::new(next, hook_recovery));
 
         let mut settings = SettingEngine::default();
         // ICE-lite only emits host candidates. STUN/TURN URLs on this PC
@@ -1516,7 +1542,7 @@ impl Sfu {
             .with_udp_addrs(vec![ice_addr.to_owned()])
             .build()
             .await?;
-        Ok((Arc::new(pc), rx, gather_rx))
+        Ok((Arc::new(pc), rx, gather_rx, recovery))
     }
 
     async fn drive(
@@ -1840,6 +1866,11 @@ impl Sfu {
                 return;
             }
             let publication = room.pubs.remove(pub_id).unwrap();
+            if publication.kind == RtpCodecKind::Video
+                && let Some(peer) = room.peers.get(&publication.publisher)
+            {
+                peer.rid_recovery.stop_track(&publication.track_id);
+            }
             let mut ended = vec![(publication.id, publication.life)];
             if matches!(
                 publication.stream_id.rsplit_once(':').map(|(_, tag)| tag),
