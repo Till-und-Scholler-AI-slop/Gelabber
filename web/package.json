@@ -24,7 +24,8 @@
     "test:audio-smoke": "node scripts/smoke-audio-processing.mjs",
     "test:audio-dsp": "node scripts/audio/benchmark-rnnoise.mjs",
     "test:e2e-search-context": "node scripts/e2e/search-context.mjs",
-    "test:call-soak": "node scripts/e2e/call-soak.mjs"
+    "test:call-soak": "node scripts/e2e/call-soak.mjs",
+    "test:e2e-accessibility": "node scripts/e2e/webapp-accessibility.mjs"
   },
   "dependencies": {
     "@tanstack/react-query": "5.102.8",
