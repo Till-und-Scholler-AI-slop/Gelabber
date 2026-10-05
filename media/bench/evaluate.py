@@ -30,13 +30,10 @@ def median(values):
     return statistics.median(values) if values else None
 
 
-def same_fixed_video_browser(runs):
-    fixed = [run for run in runs if run.get('fixed_video_fixture')]
-    if not fixed:
-        return True
-    if len(fixed) != len(runs):
+def same_comparison_browser(runs):
+    if not runs or len({bool(run.get('fixed_video_fixture')) for run in runs}) != 1:
         return False
-    identities = {tuple(run.get('executed_browser', {}).get(field) for field in ['product', 'revision', 'sha256']) for run in fixed}
+    identities = {tuple(run.get('executed_browser', {}).get(field) for field in ['product', 'revision', 'sha256']) for run in runs}
     return len(identities) == 1 and all(next(iter(identities)))
 
 
@@ -233,7 +230,7 @@ def main():
     for count in report['configuration']['matrix']:
         rows = [r for r in output['medians'] if r['peers'] == count]
         compared_runs = [run for run in output['runs'] if run['peers'] == count and run['media_fixture_valid']]
-        same_browser = same_fixed_video_browser(compared_runs)
+        same_browser = same_comparison_browser(compared_runs)
         comparable = not output['comparison_disqualified'] and all(r['valid_runs'] >= r['required_runs'] for r in rows) and len(rows) >= 2
         for field in ['sender_audio_bps', 'sender_video_bps']:
             values = [r[field] for r in rows]
@@ -243,7 +240,7 @@ def main():
             if comparable:
                 comparable = max(values) / min(values) <= 1.1
         for row in rows:
-            row['fixed_video_browser_provenance_equal'] = same_browser
+            row['executed_browser_provenance_equal'] = same_browser
             row['equal_streams_comparison_available'] = comparable and same_browser
     (args.directory / 'summary.json').write_text(json.dumps(output, indent=2) + '\n')
     print(json.dumps(output['medians'], indent=2))

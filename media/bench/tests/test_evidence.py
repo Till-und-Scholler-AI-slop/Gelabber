@@ -12,7 +12,7 @@ import unittest
 from unittest.mock import patch
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
-from evaluate import summarize, media_stats, same_fixed_video_browser, main as evaluate_main
+from evaluate import summarize, media_stats, same_comparison_browser, main as evaluate_main
 from record import process_sample, process_tree
 
 
@@ -61,13 +61,22 @@ class EvidenceTests(unittest.TestCase):
 
     def test_fixed_video_comparison_rejects_different_executed_browsers_or_source_policies(self):
         run = {'fixed_video_fixture': True, 'executed_browser': {'product': 'HeadlessChrome/153.0.8010.12', 'revision': '@fixture', 'sha256': 'a' * 64}}
-        self.assertTrue(same_fixed_video_browser([run, copy.deepcopy(run)]))
+        self.assertTrue(same_comparison_browser([run, copy.deepcopy(run)]))
         for field in ['product', 'revision', 'sha256']:
             other = copy.deepcopy(run)
             other['executed_browser'][field] = 'different'
-            self.assertFalse(same_fixed_video_browser([run, other]))
-        self.assertFalse(same_fixed_video_browser([run, {'fixed_video_fixture': False}]))
-        self.assertFalse(same_fixed_video_browser([{'fixed_video_fixture': True}]))
+            self.assertFalse(same_comparison_browser([run, other]))
+        self.assertFalse(same_comparison_browser([run, {'fixed_video_fixture': False}]))
+        self.assertFalse(same_comparison_browser([{'fixed_video_fixture': True}]))
+
+    def test_default_voice_comparison_also_requires_identical_actual_browsers(self):
+        run = {'fixed_video_fixture': False, 'executed_browser': {'product': 'HeadlessChrome/153.0.8010.12', 'revision': '@fixture', 'sha256': 'a' * 64}}
+        self.assertTrue(same_comparison_browser([run, copy.deepcopy(run)]))
+        for field in ['product', 'revision', 'sha256']:
+            other = copy.deepcopy(run)
+            other['executed_browser'][field] = 'different'
+            self.assertFalse(same_comparison_browser([run, other]))
+        self.assertFalse(same_comparison_browser([run, {}]))
 
     def test_interrupted_or_environmentally_disqualified_report_never_allows_comparison(self):
         with tempfile.TemporaryDirectory() as temporary:

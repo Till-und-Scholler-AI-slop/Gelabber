@@ -92,9 +92,10 @@ Missing executed-browser provenance also rejects this control. Run a 2-peer
 pilot on all engines first; a failed pilot cannot justify resource rankings
 or a larger video matrix.
 The summary retains executed-browser provenance and requires identical
-product versions, revisions and binary hashes across all fixed-control cases
-being compared. Individually valid sources from different browsers cannot
-qualify for a shared performance comparison.
+product versions, revisions and binary hashes across all cases being compared,
+including voice-only and default video. Individually valid sources from
+different browsers or missing binary evidence cannot qualify for a shared
+performance comparison.
 
 New Chromium runs obtain their actual executable, SHA-256, product version and
 revision from CDP; package metadata alone does not establish which browser
