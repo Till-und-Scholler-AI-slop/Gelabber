@@ -14,6 +14,7 @@ import {
   type FormEvent,
   type KeyboardEvent,
   type ReactNode,
+  type Ref,
 } from "react";
 
 import {
@@ -87,6 +88,18 @@ export function MessagePane({
   const searchScope = `${user?.id ?? "anonymous"}:${channelId}`;
   const [searchingScope, setSearchingScope] = useState<string | null>(null);
   const searching = searchingScope === searchScope;
+  const searchButton = useRef<HTMLButtonElement>(null);
+  const restoreSearchFocus = useRef(false);
+  const closeSearch = useCallback(() => {
+    restoreSearchFocus.current = true;
+    setSearchingScope(null);
+  }, []);
+  useLayoutEffect(() => {
+    if (!searching && restoreSearchFocus.current) {
+      restoreSearchFocus.current = false;
+      searchButton.current?.focus({ preventScroll: true });
+    }
+  }, [searching]);
   const contextEdit = useEditMessage(channelId);
   const contextRemove = useDeleteMessage(channelId);
   const [atLatest, setAtLatest] = useState(false);
@@ -136,8 +149,9 @@ export function MessagePane({
 
   return (
     <div className="lr-message-pane flex min-h-0 flex-1 flex-col">
-      <div className="flex shrink-0 justify-end border-b px-4 py-1">
+      <div className="lr-search-toggle flex shrink-0 justify-end border-b px-4 py-1">
         <button
+          ref={searchButton}
           type="button"
           onClick={() => setSearchingScope(searching ? null : searchScope)}
           className="rounded px-3 py-2 text-sm"
@@ -188,11 +202,11 @@ export function MessagePane({
           />
         </div>
         {searching ? (
-          <div className="absolute inset-0 flex min-h-0 flex-col">
+          <div className="lr-search-overlay absolute inset-0 flex min-h-0 flex-col">
             <MessageSearch
               key={searchScope}
               channelId={channelId}
-              onClose={() => setSearchingScope(null)}
+              onClose={closeSearch}
               renderMessage={(message) => (
                 <MessageRow
                   message={message}
@@ -313,7 +327,12 @@ function MessageList({
       viewport: element.clientHeight,
     };
     lastPosition.current = position;
-    onAtLatest(active && stickToBottom.current && endDistance(position) <= 16);
+    onAtLatest(
+      active &&
+        stickToBottom.current &&
+        position.viewport > 16 &&
+        endDistance(position) <= 16,
+    );
   }, [active, onAtLatest]);
 
   useLayoutEffect(() => {
@@ -410,6 +429,11 @@ function MessageList({
       aria-label="Nachrichten"
       aria-busy={!ready || undefined}
       onWheelCapture={(event) => {
+        if (
+          event.target instanceof Element &&
+          event.target.closest("dialog:modal")
+        )
+          return;
         if (event.deltaY < 0) stickToBottom.current = false;
         else if (
           event.deltaY > 0 &&
@@ -422,7 +446,9 @@ function MessageList({
       onKeyDownCapture={(event) => {
         if (
           event.target instanceof HTMLElement &&
-          event.target.closest("input,textarea,select,[contenteditable='true']")
+          event.target.closest(
+            "dialog:modal,input,textarea,select,[contenteditable='true']",
+          )
         )
           return;
         if (["ArrowUp", "PageUp", "Home"].includes(event.key))
@@ -431,9 +457,19 @@ function MessageList({
         updateLatest();
       }}
       onTouchStartCapture={(event) => {
+        if (
+          event.target instanceof Element &&
+          event.target.closest("dialog:modal")
+        )
+          return;
         touchY.current = event.touches[0]?.clientY ?? null;
       }}
       onTouchMoveCapture={(event) => {
+        if (
+          event.target instanceof Element &&
+          event.target.closest("dialog:modal")
+        )
+          return;
         const current = event.touches[0]?.clientY;
         if (current === undefined || touchY.current === null) return;
         if (current > touchY.current) stickToBottom.current = false;
@@ -449,7 +485,8 @@ function MessageList({
       onTouchEndCapture={() => {
         touchY.current = null;
       }}
-      onScrollCapture={() => {
+      onScrollCapture={(event) => {
+        if (event.target !== event.currentTarget) return;
         const element = scrollRef.current;
         if (!element) return;
         // Observe intent before virtualizer measurement adjusts the geometry.
@@ -559,13 +596,26 @@ function MessageRow({
   const pending = isPendingId(message.id);
   const [editing, setEditing] = useState(false);
   const [draft, setDraft] = useState(message.content);
+  const editButton = useRef<HTMLButtonElement>(null);
+  const restoreEditFocus = useRef(false);
+  useLayoutEffect(() => {
+    if (!editing && restoreEditFocus.current) {
+      restoreEditFocus.current = false;
+      editButton.current?.focus({ preventScroll: true });
+    }
+  }, [editing]);
+  const finishEditing = () => {
+    restoreEditFocus.current = true;
+    setEditing(false);
+  };
 
   const startEdit = () => {
+    restoreEditFocus.current = false;
     setDraft(message.content);
     setEditing(true);
   };
   const cancelEdit = () => {
-    setEditing(false);
+    finishEditing();
     setDraft(message.content);
   };
 
@@ -584,7 +634,11 @@ function MessageRow({
     showEdit || showDelete ? (
       <span className="flex shrink-0 items-center opacity-70 transition group-hover:opacity-100 group-focus-within:opacity-100">
         {showEdit ? (
-          <IconButton label="Nachricht bearbeiten" onClick={startEdit}>
+          <IconButton
+            buttonRef={editButton}
+            label="Nachricht bearbeiten"
+            onClick={startEdit}
+          >
             <PencilIcon size={14} />
           </IconButton>
         ) : null}
@@ -599,6 +653,7 @@ function MessageRow({
   if (continued && !editing) {
     return (
       <div
+        tabIndex={-1}
         className={[
           "lr-message-row lr-message-continued group flex items-start gap-3 px-4 py-0.5 hover:bg-neutral-100/80 dark:hover:bg-neutral-800/80",
           pending ? "opacity-60" : "",
@@ -626,6 +681,7 @@ function MessageRow({
 
   return (
     <div
+      tabIndex={-1}
       className={[
         "lr-message-row group flex items-start gap-3 px-4 py-1.5 hover:bg-neutral-100/80 dark:hover:bg-neutral-800/80",
         pending ? "opacity-60" : "",
@@ -651,7 +707,7 @@ function MessageRow({
               event.preventDefault();
               if (error) return;
               onEdit(draft);
-              setEditing(false);
+              finishEditing();
             }}
           >
             <textarea
@@ -670,7 +726,7 @@ function MessageRow({
                   event.preventDefault();
                   if (!error) {
                     onEdit(draft);
-                    setEditing(false);
+                    finishEditing();
                   }
                 }
               }}
@@ -756,6 +812,38 @@ function Composer({
   const [fileError, setFileError] = useState<string | null>(null);
   const fileInput = useRef<HTMLInputElement>(null);
   const composerInput = useRef<HTMLTextAreaElement>(null);
+  const composerForm = useRef<HTMLFormElement>(null);
+  const revealComposerFocus = useCallback(() => {
+    const form = composerForm.current;
+    const pane = form?.closest<HTMLElement>(".lr-message-pane");
+    const focused = document.activeElement;
+    if (
+      !form ||
+      !pane ||
+      !(focused instanceof HTMLElement) ||
+      !form.contains(focused)
+    )
+      return;
+    const boundary = pane.getBoundingClientRect();
+    const target = focused.getBoundingClientRect();
+    const focusMargin = 4;
+    if (target.bottom + focusMargin > boundary.bottom)
+      pane.scrollTop += target.bottom + focusMargin - boundary.bottom;
+    else if (target.top - focusMargin < boundary.top)
+      pane.scrollTop -= boundary.top - target.top + focusMargin;
+  }, []);
+  // Toolbar/read-state changes can move a focused form without resizing it.
+  useLayoutEffect(revealComposerFocus);
+  useLayoutEffect(() => {
+    const form = composerForm.current;
+    const pane = form?.closest<HTMLElement>(".lr-message-pane");
+    if (!form || !pane) return;
+    const observer = new ResizeObserver(revealComposerFocus);
+    observer.observe(form);
+    observer.observe(pane);
+    revealComposerFocus();
+    return () => observer.disconnect();
+  }, [canSend, revealComposerFocus]);
   const error = draft.length === 0 ? null : validateContent(draft);
   const remaining = CONTENT_MAX - Array.from(normalisedLength(draft)).length;
   const emptyText = draft.trim().length === 0;
@@ -813,6 +901,8 @@ function Composer({
 
   return (
     <form
+      ref={composerForm}
+      onFocusCapture={revealComposerFocus}
       onSubmit={submit}
       className="lr-composer border-t border-neutral-200 dark:border-neutral-700 bg-white dark:bg-neutral-900 px-4 py-3"
     >
@@ -1027,16 +1117,19 @@ function formatWhen(iso: string): string {
 }
 
 function IconButton({
+  buttonRef,
   label,
   onClick,
   children,
 }: {
+  buttonRef?: Ref<HTMLButtonElement>;
   label: string;
   onClick: () => void;
   children: ReactNode;
 }) {
   return (
     <button
+      ref={buttonRef}
       type="button"
       title={label}
       aria-label={label}
