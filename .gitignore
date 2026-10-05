@@ -18,3 +18,4 @@ vendor/
 .vscode/
 *.iml
 .tools/
+deploy/compose/backups/

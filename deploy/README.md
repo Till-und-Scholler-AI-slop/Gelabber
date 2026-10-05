@@ -89,18 +89,66 @@ Compose bietet TURN über UDP und TCP an. TCP ist der Ausweichpfad für Clients,
 
 ## Backup
 
-Volumes: `gelabber_postgres_data`, `gelabber_minio_data`. Redis speichert nichts.
+PostgreSQL-Metadaten und MinIO-Anhänge bilden **ein Snapshotpaar**. Vor dem
+Backup alle App-Schreiber anhalten, einschließlich API-Hintergrundjobs und
+noch gültiger direkter MinIO-Uploads. Die API zuerst drainen, dann MinIO stoppen;
+erst danach beide Datenbestände sichern. Ein laufendes PostgreSQL-Datenvolume
+per `tar` ist kein konsistentes physisches Backup. Hier verwenden wir stattdessen
+`pg_dump` mit dem vollständigen SQLx-Migrationsledger. Redis ist flüchtig und
+gehört nicht zum Daten-Restore.
+
+Beispiel für den Compose-Stack mit Wartungsfenster (die tatsächlich gemountete
+MinIO-Volume und das laufende Image werden vor dem Stop ermittelt):
 
 ```bash
 cd deploy/compose
-docker compose exec -T postgres pg_dump -U gelabber gelabber > gelabber-$(date -u +%Y%m%d).sql
-docker run --rm -v gelabber_postgres_data:/data -v "$PWD":/backup alpine:3.24 \
-  tar czf /backup/postgres-data.tgz -C /data .
-docker run --rm -v gelabber_minio_data:/data -v "$PWD":/backup alpine:3.24 \
-  tar czf /backup/minio-data.tgz -C /data .
+set -eu
+umask 077
+restore_backup_dir="$PWD/backups/$(date -u +%Y%m%dT%H%M%SZ)"
+mkdir -p "$PWD/backups"
+mkdir "$restore_backup_dir"
+restore_minio_container=$(docker compose ps -q minio)
+restore_minio_volume=$(docker inspect --format '{{range .Mounts}}{{if eq .Destination "/data"}}{{.Name}}{{end}}{{end}}' "$restore_minio_container")
+restore_minio_image=$(docker inspect --format '{{.Image}}' "$restore_minio_container")
+test -n "$restore_minio_volume"
+printf '%s\n' "$restore_minio_image" > "$restore_backup_dir/minio-image-id.txt"
+docker compose stop api web media minio
+docker compose exec -T postgres pg_dump -U gelabber --format=custom gelabber \
+  > "$restore_backup_dir/database.pgdump"
+docker run --rm --pull never --network none --read-only --user 0 \
+  --mount "type=volume,src=$restore_minio_volume,dst=/data,readonly" \
+  --entrypoint tar "$restore_minio_image" -czf - -C /data . \
+  > "$restore_backup_dir/minio-data.tgz"
+(cd "$restore_backup_dir" && sha256sum database.pgdump minio-data.tgz minio-image-id.txt > SHA256SUMS)
+docker compose start minio api web media
 ```
 
-Restore analog; Postgres vorher stoppen.
+Bei einem Fehler bleiben die Schreiber gestoppt, bis das unvollständige Backup
+untersucht ist. Den freigegebenen
+`image-set.json`/`image-set.env`, die aktive Compose-Konfiguration und den
+Backup-Zeitpunkt zum Paar archivieren; Secrets dabei privat halten. Ein lokales
+Image-ID allein ist kein portabler Ersatz für den archivierten Registry-Digest.
+
+Restore zuerst auf **frische Zielbestände** prüfen: `sha256sum -c SHA256SUMS`,
+eine neue leere PostgreSQL-Datenbank und ein neues leeres MinIO-Volume mit
+`pg_restore --exit-on-error --no-owner` beziehungsweise dem vollständig
+extrahierten MinIO-Archiv befüllen. Den Objectstore mit demselben MinIO-Pin
+starten und die passende API-/Image-Version auf dieses Paar konfigurieren.
+Quellbestände erhalten, bis Bytehashes, Dateityp, Nachrichten-Metadaten,
+Mitgliedschaft, DM-Scope und verweigerte Downloads/Uploads geprüft sind.
+Neue Presigns verwenden, keine abgelaufenen Download-URLs aus dem Backup.
+
+Ein Binary-/Image-Rückweg auf einen alten Snapshot verliert absichtlich alle
+Änderungen nach dessen Zeitpunkt. Ein altes Binary gegen das neue Schema zu
+starten ist ein separates Gate: selbst additive SQL-Änderungen können am
+SQLx-Migrationsledger scheitern. Deshalb ersetzt ein Imagewechsel den geprüften
+Restore des passenden alten DB-/Objectstore-Paars nicht.
+
+Der lokale vollständige Drill ist in [Upgrade/Storage/Restore](../docs/upgrade-storage-restore.md)
+beschrieben. Er benutzt ausschließlich eigene Wegwerf-Container und führt einen
+echten alten API-Binary-Rückweg aus; das ältere
+`tools/check-chat-migration-restore.py` bleibt als schneller Schema-/Daten-Drill
+ohne Objectstore oder Binary-Abnahme verfügbar.
 
 ## Metriken
 
