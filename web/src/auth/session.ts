@@ -172,8 +172,7 @@ function finishAuthIntent(intent: number): void {
 
 async function signIn(path: string, body: unknown): Promise<User> {
   const intent = startAuthIntent();
-  failedLogoutUserId = null;
-  useSessionProblems.setState({ bootstrap: null, logout: null });
+  useSessionProblems.setState({ bootstrap: null });
   try {
     const session = await api<SessionResponse>(path, {
       method: "POST",
@@ -182,6 +181,8 @@ async function signIn(path: string, body: unknown): Promise<User> {
     });
     if (authIntent !== intent)
       throw new DOMException("The session changed. Try again.", "AbortError");
+    failedLogoutUserId = null;
+    useSessionProblems.setState({ logout: null });
     return session.user as User;
   } finally {
     finishAuthIntent(intent);

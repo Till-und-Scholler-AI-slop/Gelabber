@@ -157,6 +157,35 @@ describe("session store", () => {
     expect(useSessionProblems.getState().logout).toBeNull();
   });
 
+  it.each(["login", "register"])(
+    "keeps failed revocation retry after a rejected %s attempt",
+    async (operation) => {
+      fakeApi({
+        "POST /api/auth/login": () =>
+          json(200, { user: ada, csrf_token: "c1" }),
+        "POST /api/auth/logout": () => json(500, { error: "internal" }),
+      });
+      await login(ada.email, "password");
+      await logout();
+      const warning = useSessionProblems.getState().logout;
+      fakeApi({
+        [`POST /api/auth/${operation}`]: () =>
+          json(422, { error: "validation_failed" }),
+      });
+      await expect(
+        operation === "login"
+          ? login(ada.email, "wrong")
+          : register(ada.email, "wrong", "Ada"),
+      ).rejects.toBeInstanceOf(ApiError);
+      expect(useSessionProblems.getState().logout).toBe(warning);
+      fakeApi({
+        "POST /api/auth/logout": () => json(200, { csrf_token: "out" }),
+      });
+      await logout();
+      expect(useSessionProblems.getState().logout).toBeNull();
+    },
+  );
+
   it("does not let a late logout error overwrite a new login", async () => {
     let finish!: (response: Response) => void;
     fakeApi({
