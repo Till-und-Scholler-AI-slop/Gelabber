@@ -399,7 +399,7 @@ function MessageList({
         // Pin a short list to the bottom with flex, not a viewport-sized
         // margin: that ResizeObserver loop (scrollbar on/off) is React #185.
         style={{ height: virtualizer.getTotalSize() }}
-        className="relative mt-auto w-full"
+        className="relative mt-auto w-full shrink-0"
       >
         {virtualizer.getVirtualItems().map((row) => {
           const message = items[row.index];
