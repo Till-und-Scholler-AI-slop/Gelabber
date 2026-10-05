@@ -91,6 +91,15 @@ selects its observed unique IPv4 address without changing host configuration.
 This controlled local generator can use four CPUs/4 GiB/512 PIDs. It does not
 measure backend resource acceptance or establish WAN/full-N qualification.
 
+The follow-up `native-peer0-msid-2026-10-05.json` control also checks the actual
+offer's stream/track/MID/SSRC tuples: `m fixed-native-mic`,
+`s fixed-native-video`, and `s fixed-native-source-audio`. The rtc constructor
+takes stream ID before track ID. Swapping them previously gave both source
+tracks the same `s` track ID; the earlier direct SSRC/decoder control did not
+validate an SFU signaling contract. Its historical scope remains unchanged.
+The corrected binary's separate 20 s control preserves both audio decoders,
+reverse microphone, 1080p60 decoder and clean exit; full SFU graphs stay open.
+
 For upcoming full-N measurements, native/source/browser/proxy processes are
 generator load. Current server+necessary signaling/ticket adapter and all
 mediasoup probe/worker processes are backend load. Shared Redis is reported

@@ -244,8 +244,8 @@ async fn peer(bind: Ipv4Addr, publish: bool) -> Result<Peer> {
             ),
         ] {
             let track = Arc::new(TrackLocalStaticRTP::new(MediaStreamTrack::new(
-                id.to_owned(),
                 stream.to_owned(),
+                id.to_owned(),
                 name.to_owned(),
                 kind,
                 vec![RTCRtpEncodingParameters {
@@ -327,6 +327,39 @@ async fn replay_audio(
     state["completed"] = json!(true);
     state["source_policy_valid"] = json!(packets == seconds * 50);
     Ok(())
+}
+
+#[cfg(test)]
+mod signaling_tests {
+    use super::*;
+
+    #[tokio::test]
+    async fn native_publication_sdp_has_distinct_signal_bound_track_ids() {
+        let p = peer(Ipv4Addr::LOCALHOST, true).await.unwrap();
+        let offer = p.pc.create_offer(None).await.unwrap();
+        // MediaStreamTrack::new takes stream_id before track_id. The track id
+        // must match the p/s + p/sa signaling contract, never the common "s"
+        // stream id used by the two source tracks.
+        for (stream, track) in [
+            ("m", "fixed-native-mic"),
+            ("s", "fixed-native-video"),
+            ("s", "fixed-native-source-audio"),
+        ] {
+            assert!(offer.sdp.contains(&format!("a=msid:{stream} {track}\r\n")));
+        }
+        assert_eq!(
+            offer
+                .sdp
+                .lines()
+                .filter(|line| line.starts_with("a=msid:"))
+                .count(),
+            3
+        );
+        for task in p.feedback_tasks {
+            task.abort();
+        }
+        p.pc.close().await.unwrap();
+    }
 }
 
 async fn replay_video(

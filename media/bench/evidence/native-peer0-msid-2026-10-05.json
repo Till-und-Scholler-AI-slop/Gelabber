@@ -1,0 +1,184 @@
+{
+  "schema": 1,
+  "scope": "native peer0 actual three-track SDP identity and local two-endpoint duplex control; no SFU/WAN/full-N comparison",
+  "comparison_available": false,
+  "production_feature_acceptance": false,
+  "native_pcm_qualified": false,
+  "source_revision": "4f604ad9ab350bebf882f67ab4a261d867ca9846",
+  "source_dirty": true,
+  "runtime_report": {
+    "path": "/tmp/gelabber-native-peer0-runtime-msid-20261005/report.json",
+    "sha256": "f708652266b60026e1eb39b27a889d28bbe663c1ea5d73bffb4c598733895785",
+    "image_id": "sha256:d81181b2018622ae460d9948bf2ac5a0c649e0d99b5c4998414982ca58d0dd4c",
+    "input_hashes": {
+      "libopus.so.0": "ce07b3578b14e1d25ed603670f2336cd2b32b7f24c2c5b9aab8bbeb0f410b8d6",
+      "node": "8a22a371fd85aecf5411636574309f6380fbc42694aaf0651a089a8ef9c44e52",
+      "native-peer": "258c0e5eb270071672597b0ee9bc3bd75876df089cb4c7ac948020a052839c76",
+      "video.rtpbin": "0b15fe7fda29da794802307c88fe23053ad342bd80c485d441e121d325d663db",
+      "opus-fixture.py": "53320f8dcc1f1cc7f2c508993b988ff80451c8278f68d0781361262c8e1d8ecf",
+      "prepare-native-runtime.py": "0acf8c879619fe053fccff4d98a6e78a4a3af8cbbfd103b3cd7a11e1932ee08d",
+      "rust-Cargo.toml": "96c6a715a384b9db0fb9aeb94b28ab410e51af1357218bacd20989301f03e5b9",
+      "rust-Cargo.lock": "e6ca3aa60d6eb9e1e071626c5c1f209c436436c00cc51d979ef115ef665dbc7b",
+      "rust-src-full_peer.rs": "5014d8dd76a0da20d07680d72edf2c25ede5066c1d619bfd83ad821b6b392c76",
+      "rust-src-archive.rs": "dbdb298d58d6aa1d6e0941c7c479312c2034531ce797302c96958c28120aa906",
+      "rust-src-audio.rs": "ea2d207728951c2d841ba573cccedf8a479669563be71ef653cea4719b65328e",
+      "rust-src-clock.rs": "2620ec0ff38636cbc110f9aacb44c22d2ec7b6de9d7217ab1907a408405e9ef7",
+      "rust-src-unique_json.rs": "8129c85b2c14fa6e0905902aaa7a200912e5f8b5f2eae5120a697f5b534f6023"
+    },
+    "offline_controls_valid": true,
+    "cleanup_valid": true
+  },
+  "loopback_report": {
+    "path": "/tmp/gelabber-native-peer0-loopback-msid-20261005/report.json",
+    "sha256": "5b6d73c71e2a6db0da21dd74756347c41265c7da3de3c364428288a2607a0364",
+    "publication_identity": [
+      {
+        "role": "mic",
+        "kind": "audio",
+        "stream_id": "m",
+        "track_id": "fixed-native-mic",
+        "ssrc": 1196247363,
+        "mid": "0",
+        "binding_basis": "actual offer media MSID and matching SSRC MSID"
+      },
+      {
+        "role": "video",
+        "kind": "video",
+        "stream_id": "s",
+        "track_id": "fixed-native-video",
+        "ssrc": 1196838968,
+        "mid": "1",
+        "binding_basis": "actual offer media MSID and matching SSRC MSID"
+      },
+      {
+        "role": "screen-audio",
+        "kind": "audio",
+        "stream_id": "s",
+        "track_id": "fixed-native-source-audio",
+        "ssrc": 1196638512,
+        "mid": "2",
+        "binding_basis": "actual offer media MSID and matching SSRC MSID"
+      }
+    ],
+    "executed_browser": {
+      "protocolVersion": "1.3",
+      "product": "HeadlessChrome/153.0.8010.12",
+      "revision": "@971a7443b0c9b0a9b2860529b33331b76077ec62",
+      "userAgent": "Mozilla/5.0 (X11; Linux x86_64) AppleWebKit/537.36 (KHTML, like Gecko) HeadlessChrome/153.0.8010.12 Safari/537.36",
+      "jsVersion": "15.3.76.4"
+    },
+    "provenance": {
+      "node_version": "v26.8.2",
+      "node_sha256": "8a22a371fd85aecf5411636574309f6380fbc42694aaf0651a089a8ef9c44e52",
+      "browser_sha256": "ded93a9c9a53a1ae040f08124badcca95c938e9d5015ff340c3b5538c41bf39e",
+      "interfaces": {
+        "lo": [
+          {
+            "address": "127.0.0.1",
+            "netmask": "255.0.0.0",
+            "family": "IPv4",
+            "mac": "00:00:00:00:00:00",
+            "internal": true,
+            "cidr": "127.0.0.1/8"
+          },
+          {
+            "address": "::1",
+            "netmask": "ffff:ffff:ffff:ffff:ffff:ffff:ffff:ffff",
+            "family": "IPv6",
+            "mac": "00:00:00:00:00:00",
+            "internal": true,
+            "cidr": "::1/128",
+            "scopeid": 0
+          }
+        ],
+        "eth0": [
+          {
+            "address": "172.17.0.9",
+            "netmask": "255.255.0.0",
+            "family": "IPv4",
+            "mac": "12:12:53:9d:60:4a",
+            "internal": false,
+            "cidr": "172.17.0.9/16"
+          }
+        ]
+      },
+      "bind": "172.17.0.9",
+      "inputs": {
+        "binary": "258c0e5eb270071672597b0ee9bc3bd75876df089cb4c7ac948020a052839c76",
+        "video": "0b15fe7fda29da794802307c88fe23053ad342bd80c485d441e121d325d663db",
+        "mic": "d3be0b97e78997fd041e0d0ac49c502829074b037ead6bc41900f1e50fe67894",
+        "source": "ff1bd24234f06360198f51d15753fcef8a6c18216d69e8ed7e7bcb0d96a18eb0"
+      },
+      "helpers": {
+        "local-native-peer.mjs": "15bfef7186d92f20cbc307fb472d158d10fda70f68b25d440d81f39cd047bfc1",
+        "native-peer.mjs": "9a5969bc04e81460ce4d2199e39e63c0e1b2e33beee49ded7aed0dbbd7e279e0",
+        "native-video.mjs": "eff5ff44b443e7b46343bcdce061aea2892f23aa2b6f1d380908e14359d3e681",
+        "native-peer-checks.mjs": "f9d1ef7246b40c598683e4f34b1857f459f492221e39cde4f54cd30a3e9bb27d"
+      },
+      "runtime": {
+        "image_id": "sha256:d81181b2018622ae460d9948bf2ac5a0c649e0d99b5c4998414982ca58d0dd4c",
+        "base_image_id": "sha256:a1087f71b2dbd30bd90b9f7dbd7dc42b2781c21b3c5873b14fc81ec9d158cc1b",
+        "labels": {
+          "com.centurylinklabs.watchtower.enable": "false",
+          "gelabber.bench.binary_sha256": "a2fd497a4836ea1aba57baa8e1216c9fae73476a75ba0e8bad4ab37875285701",
+          "gelabber.bench.fixture": "netns-20261005",
+          "gelabber.bench.libopus.sha256": "ce07b3578b14e1d25ed603670f2336cd2b32b7f24c2c5b9aab8bbeb0f410b8d6",
+          "gelabber.bench.native-runtime": "gelabber-native-runtime-09639abd33a3",
+          "gelabber.bench.native.sha256": "258c0e5eb270071672597b0ee9bc3bd75876df089cb4c7ac948020a052839c76",
+          "gelabber.bench.node.sha256": "8a22a371fd85aecf5411636574309f6380fbc42694aaf0651a089a8ef9c44e52",
+          "org.opencontainers.image.revision": "de1ae34647b2c4f0631dfc16fd5b8ea7d970184a"
+        },
+        "glibc": "glibc 2.41",
+        "native_ldd": "linux-vdso.so.1 (0x00007dbf1030f000)\n\tlibopus.so.0 => /fixture-lib/libopus.so.0 (0x00007dbf0f09e000)\n\tlibgcc_s.so.1 => /lib/x86_64-linux-gnu/libgcc_s.so.1 (0x00007dbf0f06e000)\n\tlibm.so.6 => /lib/x86_64-linux-gnu/libm.so.6 (0x00007dbf0ef7e000)\n\tlibc.so.6 => /lib/x86_64-linux-gnu/libc.so.6 (0x00007dbf0ed8a000)\n\t/lib64/ld-linux-x86-64.so.2 (0x00007dbf10312000)",
+        "library_ldd": "linux-vdso.so.1 (0x00007839b9124000)\n\tlibm.so.6 => /lib/x86_64-linux-gnu/libm.so.6 (0x00007839b8c30000)\n\tlibc.so.6 => /lib/x86_64-linux-gnu/libc.so.6 (0x00007839b8a3c000)\n\t/lib64/ld-linux-x86-64.so.2 (0x00007839b9127000)",
+        "control_report_sha256": "f708652266b60026e1eb39b27a889d28bbe663c1ea5d73bffb4c598733895785"
+      }
+    },
+    "video": {
+      "valid": true,
+      "failures": [],
+      "measured_seconds": 12.999864013671875,
+      "bitrate_bps": 4015608.159062211,
+      "decoded_fps": 60.000627635772105,
+      "lost_packets": 0,
+      "received_packets": 5877
+    },
+    "browser_audio": [
+      {
+        "role": "peer-0/mic",
+        "decoder_id": "IT01A1196247363",
+        "codec_id": "CIT01_111_minptime=10;useinbandfec=1",
+        "ssrc": 1196247363,
+        "bitrate_bps": 128001.33895631383,
+        "decoded_sample_rate": 48000.502108617686,
+        "lost_packets": 0,
+        "concealed_samples": 0,
+        "measured_seconds": 12.999864013671875
+      },
+      {
+        "role": "peer-0/screen-audio",
+        "decoder_id": "IT01A1196638512",
+        "codec_id": "CIT01_111_minptime=10;useinbandfec=1",
+        "ssrc": 1196638512,
+        "bitrate_bps": 128198.2640931697,
+        "decoded_sample_rate": 48000.502108617686,
+        "lost_packets": 0,
+        "concealed_samples": 0,
+        "measured_seconds": 12.999864013671875
+      }
+    ],
+    "native_reverse_audio": {
+      "decoded_sample_rate": 48000.916208257164,
+      "payload_bitrate_bps": 128402.45085708791,
+      "binding": "actual browser outbound SSRC\u2192native receive SSRC"
+    },
+    "failures": [],
+    "cleanup_errors": [],
+    "native_exit": {
+      "exitcode": 0,
+      "signal": null,
+      "clean": true
+    },
+    "instrument_loopback_valid": true
+  }
+}

@@ -8,7 +8,7 @@ import { networkInterfaces } from 'node:os';
 import { chromium } from 'playwright';
 import { NativePeer } from './native-peer.mjs';
 import { nativeExitEvidence, decodedVideo } from './native-video.mjs';
-import { nativeBrowserAudio } from './native-peer-checks.mjs';
+import { nativeBrowserAudio, nativePublicationIdentity } from './native-peer-checks.mjs';
 
 const { values } = parseArgs({ options: { execute: { type: 'boolean', default: false },
   binary: { type: 'string' }, video: { type: 'string' }, mic: { type: 'string' }, source: { type: 'string' },
@@ -46,6 +46,7 @@ try {
   result.native_provenance = (await source.ready).provenance;
   await source.call({ op: 'create', peer: 'publish', publish: true });
   const offer = (await source.call({ op: 'offer' })).description;
+  result.publication_identity = nativePublicationIdentity(offer);
   server = createServer((request, response) => { response.writeHead(200, { 'content-type': 'text/html' }); response.end('<!doctype html><title>Private native peer0 loopback control</title>'); });
   await new Promise(resolve => server.listen(0, '127.0.0.1', resolve));
   browser = await chromium.launch({ headless: true, executablePath: values.chromium, args: ['--autoplay-policy=no-user-gesture-required', '--no-sandbox'] });

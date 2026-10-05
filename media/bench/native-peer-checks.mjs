@@ -2,6 +2,27 @@
 // its actual signaling map; these native source SSRCs are only valid directly.
 export const NATIVE_AUDIO_SOURCES = new Map([[0x474d4943, 'peer-0/mic'], [0x47534130, 'peer-0/screen-audio']]);
 
+export function nativePublicationIdentity(offer) {
+  if (offer?.type !== 'offer' || typeof offer.sdp !== 'string') throw new Error('actual native publication offer required');
+  const sections = offer.sdp.split(/(?=^m=)/m).filter(section => section.startsWith('m='));
+  const expected = [
+    { role: 'mic', kind: 'audio', stream_id: 'm', track_id: 'fixed-native-mic', ssrc: 0x474d4943 },
+    { role: 'video', kind: 'video', stream_id: 's', track_id: 'fixed-native-video', ssrc: 0x47565038 },
+    { role: 'screen-audio', kind: 'audio', stream_id: 's', track_id: 'fixed-native-source-audio', ssrc: 0x47534130 }
+  ];
+  if (sections.length !== expected.length) throw new Error('requires exactly native microphone/video/source-audio publication');
+  const mids = new Set();
+  return sections.map((section, index) => {
+    const value = expected[index], lines = section.trim().split(/\r?\n/);
+    const mid = lines.filter(line => line.startsWith('a=mid:'));
+    const msid = lines.filter(line => line.startsWith('a=msid:'));
+    if (!lines[0].startsWith('m=' + value.kind + ' ') || mid.length !== 1 || mids.has(mid[0].slice(6)) ||
+        msid.length !== 1 || msid[0] !== `a=msid:${value.stream_id} ${value.track_id}` ||
+        !lines.includes(`a=ssrc:${value.ssrc} msid:${value.stream_id} ${value.track_id}`)) throw new Error('native actual SDP track/stream/MID/SSRC identity differs');
+    mids.add(mid[0].slice(6)); return { ...value, mid: mid[0].slice(6), binding_basis: 'actual offer media MSID and matching SSRC MSID' };
+  });
+}
+
 export function nativeBrowserAudio(samples) {
   const failures = [], roles = [], edges = [];
   if (!Array.isArray(samples) || samples.length < 2) return { valid: false, failures: ['audio requires multiple samples'], roles };
