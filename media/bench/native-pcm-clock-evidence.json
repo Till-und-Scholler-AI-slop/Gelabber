@@ -1,0 +1,210 @@
+{
+  "schema": 1,
+  "scope": "local clock-only physical AudioWorklet input-callback availability instrument controls; no V2 replay, SDP, ICE, RTP, SFU, hardware/acoustic or native end-to-end PCM acceptance",
+  "pcm_latency_calibrated": false,
+  "comparison_available": false,
+  "native_v2_reader_gate": "pending, not implemented/frozen at these controls",
+  "source_freeze_patch_sha256": "c1f173f048d276bbae273e0d2abbae07a6b068393b6398baf3edd865cf7c2fe8",
+  "source_hashes": {
+    "media/bench/native-pcm-ring.mjs": "233e684c2aebad76bbc4f8b7d9e5bd600325ef94021801892b01f6182af60945",
+    "media/bench/native-pcm-clock-bounds.mjs": "8e7d2c68c8d16b54ad753b2ae75722be6a83b040227c60b3e5f221423a1a31df",
+    "media/bench/native-pcm-observer.mjs": "78b0e78fa5254991d1263f604e5b1b4d7e9abd3b176ae0861c9d416795ec2018",
+    "media/bench/native-pcm-worklet.mjs": "278c5db70afb8b74330470178de325988ca236af672844b265fe679a7686d371",
+    "media/bench/native-pcm-policy.mjs": "cc44c0fb43c3174c44aef025f6f719b4ca97977f708032bcfe0870316485b08a",
+    "media/bench/native-pcm-evidence.mjs": "5c0c9987d28e0fce6f378e80179736dc0e0d137de0ab846148cbbf13dffbe44c",
+    "media/bench/native-pcm-bridge.mjs": "c2bbe8761b7c4715c751776c45c34a8d4081a1d36d02432d3407dc29272bd5d0",
+    "media/bench/native-pcm-control.mjs": "c5f4ab3cf9ad863ad23128a7033d128550447f92355d37d9b1cddba654755485",
+    "media/bench/tests/nativePcm.test.mjs": "98de02e958521c6da3236305d3ded526dd3134bd52d6d5030402fb778ae8086d",
+    "media/bench/tests/nativePcmBridge.test.mjs": "2acde3700cc741814ba20492414fb191b984690c40fc4f5660f889116d624f31",
+    "media/bench/tests/nativePcmWorklet.test.mjs": "dbba3a0dd6a8846a4a5b8fc65abe2549e5fb388dced02f59f66ba5b1c3dc5a72",
+    "media/bench/NATIVE-PCM.md": "44369de0c267f8e4fa3a4dd6b929bf5d3724fa094024beca0dfbe283bbab1bfc"
+  },
+  "unit_tests_pass": 31,
+  "unit_log_sha256": "33c22b4ba19fda91ccc8f907af3d93ffdcb7da467aa797a3361c91f4cb619300",
+  "node": {
+    "version": "v26.8.2",
+    "sha256": "8a22a371fd85aecf5411636574309f6380fbc42694aaf0651a089a8ef9c44e52"
+  },
+  "browser": {
+    "protocolVersion": "1.3",
+    "product": "HeadlessChrome/153.0.8010.12",
+    "revision": "@971a7443b0c9b0a9b2860529b33331b76077ec62",
+    "userAgent": "Mozilla/5.0 (X11; Linux x86_64) AppleWebKit/537.36 (KHTML, like Gecko) HeadlessChrome/153.0.8010.12 Safari/537.36",
+    "jsVersion": "15.3.76.4",
+    "sha256": "ded93a9c9a53a1ae040f08124badcca95c938e9d5015ff340c3b5538c41bf39e",
+    "cross_origin_isolated": true,
+    "worker_precision": {
+      "minimumStepMs": 0.004999995231628418,
+      "maximumStepMs": 0.06499999761581421,
+      "samples": 100000
+    }
+  },
+  "native": {
+    "binary_sha256": "2af768ef0622cc572dd916027dc8f8e9dcb3d8c9c48197dda18c9125c4272812",
+    "instrument": "fixed-native-peer0-v1",
+    "mapped_opus": {
+      "output": "48000Hz mono float32; no acoustic device or playout/latency claim",
+      "path": "/tmp/gelabber-native-peer0-runtime-20261005/inputs/libopus.so.0",
+      "sha256": "ce07b3578b14e1d25ed603670f2336cd2b32b7f24c2c5b9aab8bbeb0f410b8d6",
+      "version": "libopus 1.6.1"
+    },
+    "archives": {
+      "video": "0b15fe7fda29da794802307c88fe23053ad342bd80c485d441e121d325d663db",
+      "mic": "d3be0b97e78997fd041e0d0ac49c502829074b037ead6bc41900f1e50fe67894",
+      "source": "ff1bd24234f06360198f51d15753fcef8a6c18216d69e8ed7e7bcb0d96a18eb0"
+    }
+  },
+  "timing_policy": {
+    "nodeVersion": "v26.8.2",
+    "nodeSha256": "8a22a371fd85aecf5411636574309f6380fbc42694aaf0651a089a8ef9c44e52",
+    "chromiumSha256": "ded93a9c9a53a1ae040f08124badcca95c938e9d5015ff340c3b5538c41bf39e",
+    "chromiumRevision": "@971a7443b0c9b0a9b2860529b33331b76077ec62",
+    "chromiumVersion": "153.0.8010.12",
+    "epsilonMs": 0.1,
+    "maxIntervalWidthMs": 25,
+    "markerErrorFrames": 96,
+    "sampleRate": 48000,
+    "maxGroups": 2,
+    "maxMarkers": 180,
+    "timeClamperSource": "https://github.com/chromium/chromium/blob/971a7443b0c9b0a9b2860529b33331b76077ec62/third_party/blink/renderer/core/timing/time_clamper.h#L21",
+    "performanceSource": "https://github.com/chromium/chromium/blob/971a7443b0c9b0a9b2860529b33331b76077ec62/third_party/blink/renderer/core/timing/performance.cc"
+  },
+  "controls": [
+    {
+      "name": "positive",
+      "expected_qualification": true,
+      "observed_qualification": true,
+      "runner_exit_code": 0,
+      "clock_rpc_count": 6884,
+      "callback_groups": [
+        {
+          "callbacks": 3000,
+          "accepted": 3000,
+          "failed": 0,
+          "minWidthMs": 3.444611,
+          "medianWidthMs": 4.343565,
+          "maxWidthMs": 6.193234,
+          "failures": []
+        },
+        {
+          "callbacks": 3000,
+          "accepted": 3000,
+          "failed": 0,
+          "minWidthMs": 2.908164,
+          "medianWidthMs": 4.343565,
+          "maxWidthMs": 6.193234,
+          "failures": []
+        }
+      ],
+      "ring_missing": 0,
+      "audio_context_states": [
+        "running"
+      ],
+      "failures": [],
+      "native_initial_peer_count": 0,
+      "native_initial_source_count": 0,
+      "native_final_peer_count": 0,
+      "native_final_source_count": 0,
+      "native_cleanup_exit_code": 0,
+      "native_ops": {
+        "status": 2,
+        "clock": 6884
+      },
+      "zero_peer_rpc_contract": true,
+      "report_sha256": "2101bad0fa2a866ab29ff1ecd93d9d323387a90eaaa63ca541e4ee789f1975ab",
+      "summary_sha256": "e76ee447547d5f8af1f6c40b24e25bab3ef1b7cfd3366907c49322bbfca2c45d",
+      "retained_local_report": "/tmp/gelabber-native-pcm-clock-controls-current-20261005/positive/report.json"
+    },
+    {
+      "name": "clock-delay",
+      "expected_qualification": false,
+      "observed_qualification": false,
+      "runner_exit_code": 1,
+      "clock_rpc_count": 50,
+      "callback_groups": null,
+      "ring_missing": 0,
+      "audio_context_states": [
+        "running"
+      ],
+      "failures": [
+        "Error: clock control callback integrity/suspension failed"
+      ],
+      "native_initial_peer_count": 0,
+      "native_initial_source_count": 0,
+      "native_final_peer_count": 0,
+      "native_final_source_count": 0,
+      "native_cleanup_exit_code": 0,
+      "native_ops": {
+        "status": 2,
+        "clock": 50
+      },
+      "zero_peer_rpc_contract": true,
+      "report_sha256": "b8ec9857af73ab75e97c767faf003a782a07517b8b3126dc352e3607f4504995",
+      "summary_sha256": "78062728d614b7a829710d1350e6df5cb37b678dfe6f376dcb190df05ea3ee9a",
+      "retained_local_report": "/tmp/gelabber-native-pcm-clock-controls-current-20261005/clock-delay/report.json"
+    },
+    {
+      "name": "ring-overwrite",
+      "expected_qualification": false,
+      "observed_qualification": false,
+      "runner_exit_code": 1,
+      "clock_rpc_count": 20,
+      "callback_groups": null,
+      "ring_missing": 3704,
+      "audio_context_states": [
+        "running"
+      ],
+      "failures": [
+        "Error: clock control callback integrity/suspension failed"
+      ],
+      "native_initial_peer_count": 0,
+      "native_initial_source_count": 0,
+      "native_final_peer_count": 0,
+      "native_final_source_count": 0,
+      "native_cleanup_exit_code": 0,
+      "native_ops": {
+        "status": 2,
+        "clock": 20
+      },
+      "zero_peer_rpc_contract": true,
+      "report_sha256": "d639dc393bfb4a77bd45ee97f87bccbf3d71df6b84a68cd9f55264be21613a84",
+      "summary_sha256": "6156c59203335324c5b32ee28a326beb50fb392dd12abf70636e25e135797316",
+      "retained_local_report": "/tmp/gelabber-native-pcm-clock-controls-current-20261005/ring-overwrite/report.json"
+    },
+    {
+      "name": "suspend",
+      "expected_qualification": false,
+      "observed_qualification": false,
+      "runner_exit_code": 1,
+      "clock_rpc_count": 3594,
+      "callback_groups": null,
+      "ring_missing": 0,
+      "audio_context_states": [
+        "running",
+        "suspended",
+        "running"
+      ],
+      "failures": [
+        "Error: clock control callback integrity/suspension failed"
+      ],
+      "native_initial_peer_count": 0,
+      "native_initial_source_count": 0,
+      "native_final_peer_count": 0,
+      "native_final_source_count": 0,
+      "native_cleanup_exit_code": 0,
+      "native_ops": {
+        "status": 2,
+        "clock": 3594
+      },
+      "zero_peer_rpc_contract": true,
+      "report_sha256": "1561b138c674bf189d9bd60fdf7c410b0feb1c839f86962f4627ea605ab59ce7",
+      "summary_sha256": "9f1ecfe75ba9012a3854e12ed05b0df745841b8e4d1cda454fe1fb4e43ec268b",
+      "retained_local_report": "/tmp/gelabber-native-pcm-clock-controls-current-20261005/suspend/report.json"
+    }
+  ],
+  "clock_delay_additional_diagnostic": {
+    "sha256": "3adb1b6ddb62a81b450fbaaf2d98c17b27d0e59b534fca5963b1d9a53c8223b2",
+    "retained_local_report": "/tmp/gelabber-native-pcm-clock-controls-current-20261005/clock-delay-width-diagnostic.json",
+    "note": "Primary runner also rejected one frame gap per tap. Independently analyzing all2250 retained test callbacks yields causal bounds204.666..308.029ms, all above unchanged25ms qualification cap; wider diagnostic cap does not qualify them."
+  }
+}
