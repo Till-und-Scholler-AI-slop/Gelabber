@@ -2,6 +2,7 @@
 // across engines; this does not substitute for product permission/browser tests.
 import { Device } from 'mediasoup-client';
 const sleep = ms => new Promise(resolve => setTimeout(resolve, ms));
+let videoBitrate = 6000000;
 async function until(predicate, ms = 30000) {
   const end = Date.now() + ms;
   while (Date.now() < end) { if (predicate()) return; await sleep(50); }
@@ -64,7 +65,7 @@ async function offer(pc) {
     if (!sender.track) continue;
     const params = sender.getParameters();
     if (params.encodings.length) {
-      params.encodings[0].maxBitrate = sender.track.kind === 'video' ? 6000000 : 128000;
+      params.encodings[0].maxBitrate = sender.track.kind === 'video' ? videoBitrate : 128000;
       if (sender.track.kind === 'video') { params.encodings[0].maxFramerate = 60; params.encodings[0].scaleResolutionDownBy = 1; params.degradationPreference = 'maintain-resolution'; }
       await sender.setParameters(params);
     }
@@ -119,8 +120,8 @@ async function mediasoup(peers, withVideo) {
     observePeer(evidence, collect, 2);
     for (const track of inputs(index, withVideo && index === 0)) {
       const producer = await send.produce({ track, codec: track.kind === 'video' ? device.rtpCapabilities.codecs.find(c => c.mimeType.toLowerCase() === 'video/vp8') : undefined,
-        encodings: [{ maxBitrate: track.kind === 'video' ? 6000000 : 128000, ...(track.kind === 'video' ? { maxFramerate: 60, scaleResolutionDownBy: 1 } : {}) }],
-        codecOptions: { videoGoogleStartBitrate: 6000, videoGoogleMinBitrate: 6000, opusStereo: false, opusFec: true, opusDtx: false, opusMaxAverageBitrate: 128000 } });
+        encodings: [{ maxBitrate: track.kind === 'video' ? videoBitrate : 128000, ...(track.kind === 'video' ? { maxFramerate: 60, scaleResolutionDownBy: 1 } : {}) }],
+        codecOptions: { opusStereo: false, opusFec: true, opusDtx: false, opusMaxAverageBitrate: 128000 } });
       if (track.kind === 'video') { const settings = producer.rtpSender.getParameters(); settings.degradationPreference = 'maintain-resolution'; await producer.rtpSender.setParameters(settings); }
       published.push(producer.id);
     }
@@ -260,6 +261,7 @@ async function janus(peers, withVideo) {
 }
 window.startBenchmark = async config => {
   window.backend = config.backend;
+  videoBitrate = config.videoBitrate;
   await ({ current, mediasoup, janus })[config.engine](config.peers, config.video);
   await until(() => peerEvidence.every(p => p.dtls_ready_at && p.first_send_rtp_at && p.full_graph_rtp_ready_at));
   peerEvidence.forEach(p => { p.stop = true; }); await Promise.all(timers);
@@ -274,7 +276,7 @@ window.startBenchmark = async config => {
   const expectedAudio = config.peers * (config.peers - 1) + (config.video ? config.peers - 1 : 0);
   const expectedVideo = config.video ? config.peers - 1 : 0;
   if (incoming.filter(s => s.kind === 'audio').length !== expectedAudio || incoming.filter(s => s.kind === 'video').length !== expectedVideo) failures.push('Incomplete forwarding graph: expected ' + expectedAudio + ' audio and ' + expectedVideo + ' video inbound streams, got ' + incoming.length);
-  const result = { backend: config.engine, peers: config.peers, video: config.video, input: { audioBitrate: 128000, videoBitrate: 6000000, width: 1920, height: 1080, requestedFps: 60 }, failures: [...failures], samples, join_timing: peerEvidence.map(({ stop, ...p }) => p) };
+  const result = { backend: config.engine, peers: config.peers, video: config.video, input: { clip: 'moving-colorbars-v1', audioBitrate: 128000, videoBitrate, width: 1920, height: 1080, requestedFps: 60 }, failures: [...failures], samples, join_timing: peerEvidence.map(({ stop, ...p }) => p) };
   result.post_leave = await window.closePeers(); result.post_leave.at = Date.now();
   retained.forEach(item => { if (item instanceof MediaStreamTrack) item.stop(); if (item instanceof AudioContext) item.close(); });
   return result;

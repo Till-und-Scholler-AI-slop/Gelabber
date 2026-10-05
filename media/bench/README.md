@@ -70,9 +70,14 @@ at 60 fps and a separate screen-source audio track, received by every other
 peer. Current signaling sets screen Watch before publishing. Both native SDP
 and mediasoup clients choose VP8, one encoding, resolution scaling 1 and
 `maintain-resolution`. Opus inputs use 48 kHz. The requested encoder ceilings
-are 128 kbit/s per audio track and 6 Mbit/s video; these are fixture settings,
+are 128 kbit/s per audio track and `--video-bitrate` per video (default 6 Mbit/s);
+the same setting applies to every engine. These are fixture settings,
 not new product limits. Mediasoup's starting bandwidth estimate is set to
 6 Mbit/s so a short local run is not dominated by its 600 kbit/s default.
+Candidate-specific encoder minimum/start bitrate hints are absent. Use e.g.
+`--video-bitrate 4000000 --warmup 30 --duration 60` on every engine if its native
+VBR encoder cannot reach the same measured rate at 6 Mbit/s. The measured
+per-stream bitrate gate must still pass; a requested rate is not evidence.
 
 One Chromium instance hosts all participants and retains each remote track in
 a muted playing element, so received video is actually decoded. This makes a

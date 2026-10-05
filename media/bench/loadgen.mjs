@@ -10,8 +10,10 @@ import { proxyTarget } from './proxy-target.mjs';
 const options = {};
 for (let index = 2; index < process.argv.length; index += 2) options[process.argv[index].replace(/^--/, '')] = process.argv[index + 1];
 const engine = options.engine, backend = options.backend, peers = Number(options.peers ?? 2);
+const videoBitrate = Number(options['video-bitrate'] ?? 6000000);
 if (!['current', 'mediasoup', 'janus'].includes(engine) || !backend || !options.output || !process.env.BENCH_TOKEN) throw new Error('Required: --engine current|mediasoup|janus --backend URL --output FILE; BENCH_TOKEN environment');
 if (![2, 8, 16, 32].includes(peers)) throw new Error('Supported participant matrix: 2/8/16/32');
+if (!Number.isSafeInteger(videoBitrate) || videoBitrate <= 0 || videoBitrate > 100000000) throw new Error('Invalid fixture video bitrate');
 const folder = path.dirname(fileURLToPath(import.meta.url));
 const proxy = http.createServer(async (request, response) => {
   try {
@@ -42,7 +44,7 @@ try {
   page.on('pageerror', error => { pageErrors.push(error.message); console.error('Browser error:', error.message); });
   await page.goto(`http://127.0.0.1:${proxy.address().port}`);
   await page.waitForFunction(() => typeof window.startBenchmark === 'function');
-  const result = await page.evaluate(config => window.startBenchmark(config), { engine, backend, peers, video: options.video === 'true', warmupMs: Number(options.warmup ?? 10000), durationMs: Number(options.duration ?? 60000) });
+  const result = await page.evaluate(config => window.startBenchmark(config), { engine, backend, peers, video: options.video === 'true', videoBitrate, warmupMs: Number(options.warmup ?? 10000), durationMs: Number(options.duration ?? 60000) });
   result.failures.push(...pageErrors);
   save(result);
   if (result.failures.length) process.exitCode = 1;

@@ -105,11 +105,12 @@ def main():
     parser.add_argument('--duration', type=int, default=60)
     parser.add_argument('--warmup', type=int, default=10)
     parser.add_argument('--video', action='store_true')
+    parser.add_argument('--video-bitrate', type=int, default=6000000)
     parser.add_argument('--output', type=Path, required=True)
     parser.add_argument('--execute', action='store_true')
     args = parser.parse_args()
     ipaddress.ip_address(args.server_ip)
-    if args.runs < 1 or args.duration < 3 or args.warmup < 1 or not (1024 <= args.port <= 65535 and 1024 <= args.udp_min <= args.udp_max <= 65535):
+    if args.runs < 1 or args.duration < 3 or args.warmup < 1 or not 0 < args.video_bitrate <= 100000000 or not (1024 <= args.port <= 65535 and 1024 <= args.udp_min <= args.udp_max <= 65535):
         parser.error('invalid matrix duration or port range')
     group = 'gelabber-bench-' + uuid.uuid4().hex[:12]
     original = {engine: ('gelabber-bench/janus:v1.4.2' if engine == 'janus' else f'gelabber-bench/{engine}:debian13') for engine in args.engines}
@@ -189,7 +190,7 @@ def main():
                         thread = threading.Thread(target=monitor); thread.start()
                         with (folder / 'loadgen.log').open('w') as log:
                             child = subprocess.Popen(['node', str(snapshot / 'loadgen.mjs'), '--engine', engine, '--backend', backend, '--peers', str(count), '--video', str(args.video).lower(),
-                                '--warmup', str(args.warmup * 1000), '--duration', str(args.duration * 1000), '--separate-host', 'true', '--output', str(folder / 'browser.json')],
+                                '--video-bitrate', str(args.video_bitrate), '--warmup', str(args.warmup * 1000), '--duration', str(args.duration * 1000), '--separate-host', 'true', '--output', str(folder / 'browser.json')],
                                 env={**os.environ, 'BENCH_TOKEN': token}, stdout=log, stderr=subprocess.STDOUT, start_new_session=True)
                             child.wait(timeout=args.duration + args.warmup + 300)
                         post = []
