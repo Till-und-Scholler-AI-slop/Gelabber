@@ -1,0 +1,2438 @@
+{
+  "scope": "local diagnostic only: one video-only native publisher + one Chromium decoder, zero voice peers; common archive, no WAN/resource ranking/product acceptance",
+  "acceptance": false,
+  "comparison_available": false,
+  "production_feature_acceptance": false,
+  "controls": [
+    {
+      "artifact_directory": "/tmp/gelabber-native-video-sfu-diagnostic-20261005",
+      "raw_report_sha256": "2ee9f5ff0e995176b9f350287765233d4eb3387b3203e64b6283f80d69e631ae",
+      "source_revision": "979e7b0402ab2088b843e873dfcc542489c8af5a",
+      "source_dirty": true,
+      "input_sha256": {
+        "source.rtpbin": "0b15fe7fda29da794802307c88fe23053ad342bd80c485d441e121d325d663db",
+        "fixed-rtp-source": "7bac27b8e56ca72c0beabec8749d38e1ddec1adb59f1673e218f8cdf56dc7d88",
+        "package-lock.json": "9d02e4d3313afe6d1fc466ab4fa598993660385d21a13021089fbeca04e1954c",
+        "proxy-target.mjs": "eeb6a5b035738da7b5c7320dcaa5b40fb24506f26fd631921f54666b4840e7a2",
+        "browser-provenance.mjs": "c50c9ac32f4acf91982f05ef2cefcf5e945b61a63073c9bc499f216ba3d5c4ec",
+        "janus-broker.mjs": "c340597861ab6512d59f73cac6bb248f553122d5d45f5b9a865523351e36c413",
+        "janus-events.mjs": "611b677b7bcbc0154d04b9be3375ecab6c15c6339feeb177f0426c071f5584b4",
+        "mediasoup-native-sdp.mjs": "32b4c405918cc081972010bf5b81942a282fa719111d2e6f1dbef1d82ef1965b",
+        "native-video.mjs": "a15186b2c8b7bb1afb1ba1cc9634ced0f7bf7dfc068e6633b99a26fa56f56c4d",
+        "native-video.bundle.js": "f97d0b43c9d4506d9ad7d4ddcd540800135eb01dd6e88757926f13fe82364d0a",
+        "native-video-browser.mjs": "5d4b9464cd82b0678c5e16eebc605315bced1dca56c29d195b3aedffb290da1e",
+        "native-video-adapters.mjs": "6f9cc895dfadee1c5661a2a3d8cffe1df107a38bff0c64e21c0ca466479d286c",
+        "native-video-pilot.mjs": "f65fc36c3ec48d9d4153b39fa1267a1752b41551d000212bb4f944778603bfcf",
+        "mediasoup-probe/probe": "df90621e944a6ed22daec75096e2f8fb4ca092af6de3635ef955f1112dfca01b",
+        "current-probe/probe": "a2fd497a4836ea1aba57baa8e1216c9fae73476a75ba0e8bad4ab37875285701"
+      },
+      "runs": [
+        {
+          "engine": "current",
+          "raw_browser_sha256": "26b9a0afcc5f9aa91414523d22b716a5cd02bb496867f40c2115117ce5937bab",
+          "returncode": 0,
+          "server_error": null,
+          "monitoring_errors": [],
+          "owned_container_cleanup_valid": null,
+          "resource_measurement_valid_under_recorded_collector": null,
+          "post_leave_sample_count": 6,
+          "run_plan": {
+            "engine": "current",
+            "backend": "http://127.0.0.1:42473",
+            "execute": true,
+            "seconds": 20,
+            "warmup": 10,
+            "native_bind": "127.0.0.1",
+            "topology": {
+              "source_publishers": 1,
+              "receivers": 1,
+              "voice_peers": 0,
+              "media_dtls_transports": 2,
+              "native_audio_tracks": 0,
+              "janus_sessions": 0
+            }
+          },
+          "instrument": {
+            "archive_sha256": "0b15fe7fda29da794802307c88fe23053ad342bd80c485d441e121d325d663db",
+            "binary_sha256": "7bac27b8e56ca72c0beabec8749d38e1ddec1adb59f1673e218f8cdf56dc7d88",
+            "instrument": "fixed-rtp-webrtc-v1",
+            "webrtc": "0.20.5"
+          },
+          "executed_source": {
+            "archive_sha256": "0b15fe7fda29da794802307c88fe23053ad342bd80c485d441e121d325d663db",
+            "binary_sha256": "7bac27b8e56ca72c0beabec8749d38e1ddec1adb59f1673e218f8cdf56dc7d88",
+            "instrument": "fixed-rtp-webrtc-v1",
+            "webrtc": "0.20.5"
+          },
+          "executed_browser": {
+            "executable": "/home/rafi/.cache/ms-playwright/chromium_headless_shell-1243/chrome-headless-shell-linux64/chrome-headless-shell",
+            "sha256": "ded93a9c9a53a1ae040f08124badcca95c938e9d5015ff340c3b5538c41bf39e",
+            "product": "HeadlessChrome/153.0.8010.12",
+            "revision": "@971a7443b0c9b0a9b2860529b33331b76077ec62",
+            "user_agent": "Mozilla/5.0 (X11; Linux x86_64) AppleWebKit/537.36 (KHTML, like Gecko) HeadlessChrome/153.0.8010.12 Safari/537.36",
+            "js_version": "15.3.76.4"
+          },
+          "collector": {
+            "node": "v26.7.0",
+            "executable_sha256": "ad19784f7e90ba789a099eccba77ede8dc90a778c424f1c10a70fed3ff903fdc"
+          },
+          "started_at": "2026-10-05T18:43:27.913Z",
+          "finished_at": "2026-10-05T18:43:57.989Z",
+          "instrument_diagnostic_valid": true,
+          "failures": [],
+          "native": {
+            "connection": "connected",
+            "feedback_packets": 0,
+            "outbound": [
+              {
+                "bytesSent": 15035703,
+                "codecId": "RTCCodec_RTCTransport_send_PT96",
+                "nackCount": 0,
+                "packetsSent": 13545,
+                "retransmittedPacketsSent": 0,
+                "ssrc": 1196838968
+              }
+            ],
+            "source": {
+              "completed": true,
+              "elapsed_seconds": 30.000774187,
+              "expected_frames": 1800,
+              "frames_enqueued": 1800,
+              "intended_duration_seconds": 30,
+              "max_schedule_lateness_us": 2060,
+              "mean_schedule_lateness_us": 1053.4126245847176,
+              "packets_enqueued": 13545,
+              "rtp_payload_bitrate_bps": 4009520,
+              "rtp_payload_bytes_enqueued": 15035703,
+              "running": false,
+              "source_policy_valid": true
+            },
+            "transport": {
+              "bytesReceived": 5784,
+              "bytesSent": 15420238,
+              "dtlsCipher": "TLS_ECDHE_ECDSA_WITH_AES_128_GCM_SHA256",
+              "dtlsRole": "server",
+              "dtlsState": "connected",
+              "iceRole": "controlling",
+              "iceState": "connected",
+              "packetsReceived": 77,
+              "packetsSent": 13612,
+              "selectedCandidatePairId": "RTCIceCandidatePair_candidate:2fM/0b7kD0f1EqnlZkvhtAWBwWiKI2Sx_candidate:yVKZkggLC8bOwICbJxcvMFem2A9mYJac",
+              "srtpCipher": "SRTP_AEAD_AES_128_GCM"
+            }
+          },
+          "decoder": {
+            "valid": true,
+            "failures": [],
+            "measured_seconds": 19.006258056640625,
+            "bitrate_bps": 4013288.2428874136,
+            "decoded_fps": 59.980244222859724,
+            "lost_packets": 0,
+            "received_packets": 8584
+          },
+          "signaling": {
+            "trace": [
+              {
+                "at": 1791225807276,
+                "operation": "ok"
+              },
+              {
+                "at": 1791225807325,
+                "operation": "i"
+              },
+              {
+                "at": 1791225807325,
+                "operation": "a"
+              }
+            ]
+          }
+        },
+        {
+          "engine": "mediasoup",
+          "raw_browser_sha256": "4591be4ebaa3e8aad2ddc991136cf3afe96c0e90ea2d9057e2d1463fda2eb6d3",
+          "returncode": 1,
+          "server_error": null,
+          "monitoring_errors": [],
+          "owned_container_cleanup_valid": null,
+          "resource_measurement_valid_under_recorded_collector": null,
+          "post_leave_sample_count": 6,
+          "run_plan": {
+            "engine": "mediasoup",
+            "backend": "http://127.0.0.1:45653",
+            "execute": true,
+            "seconds": 20,
+            "warmup": 10,
+            "native_bind": "127.0.0.1",
+            "topology": {
+              "source_publishers": 1,
+              "receivers": 1,
+              "voice_peers": 0,
+              "media_dtls_transports": 2,
+              "native_audio_tracks": 0,
+              "janus_sessions": 0
+            }
+          },
+          "instrument": {
+            "archive_sha256": "0b15fe7fda29da794802307c88fe23053ad342bd80c485d441e121d325d663db",
+            "binary_sha256": "7bac27b8e56ca72c0beabec8749d38e1ddec1adb59f1673e218f8cdf56dc7d88",
+            "instrument": "fixed-rtp-webrtc-v1",
+            "webrtc": "0.20.5"
+          },
+          "executed_source": {
+            "archive_sha256": "0b15fe7fda29da794802307c88fe23053ad342bd80c485d441e121d325d663db",
+            "binary_sha256": "7bac27b8e56ca72c0beabec8749d38e1ddec1adb59f1673e218f8cdf56dc7d88",
+            "instrument": "fixed-rtp-webrtc-v1",
+            "webrtc": "0.20.5"
+          },
+          "collector": {
+            "node": "v26.7.0",
+            "executable_sha256": "ad19784f7e90ba789a099eccba77ede8dc90a778c424f1c10a70fed3ff903fdc"
+          },
+          "finished_at": "2026-10-05T18:44:07.062Z",
+          "instrument_diagnostic_valid": false,
+          "failures": [
+            "Error: native diagnostic backend request failed"
+          ]
+        },
+        {
+          "engine": "janus",
+          "raw_browser_sha256": "77818e088667f85c204c01915e693b21686a7c9af1991108bc14925b7d15ee47",
+          "returncode": 1,
+          "server_error": null,
+          "monitoring_errors": [],
+          "owned_container_cleanup_valid": null,
+          "resource_measurement_valid_under_recorded_collector": null,
+          "post_leave_sample_count": 6,
+          "run_plan": {
+            "engine": "janus",
+            "backend": "http://127.0.0.1:57813",
+            "execute": true,
+            "seconds": 20,
+            "warmup": 10,
+            "native_bind": "127.0.0.1",
+            "topology": {
+              "source_publishers": 1,
+              "receivers": 1,
+              "voice_peers": 0,
+              "media_dtls_transports": 2,
+              "native_audio_tracks": 0,
+              "janus_sessions": 3
+            }
+          },
+          "instrument": {
+            "archive_sha256": "0b15fe7fda29da794802307c88fe23053ad342bd80c485d441e121d325d663db",
+            "binary_sha256": "7bac27b8e56ca72c0beabec8749d38e1ddec1adb59f1673e218f8cdf56dc7d88",
+            "instrument": "fixed-rtp-webrtc-v1",
+            "webrtc": "0.20.5"
+          },
+          "executed_source": {
+            "archive_sha256": "0b15fe7fda29da794802307c88fe23053ad342bd80c485d441e121d325d663db",
+            "binary_sha256": "7bac27b8e56ca72c0beabec8749d38e1ddec1adb59f1673e218f8cdf56dc7d88",
+            "instrument": "fixed-rtp-webrtc-v1",
+            "webrtc": "0.20.5"
+          },
+          "executed_browser": {
+            "executable": "/home/rafi/.cache/ms-playwright/chromium_headless_shell-1243/chrome-headless-shell-linux64/chrome-headless-shell",
+            "sha256": "ded93a9c9a53a1ae040f08124badcca95c938e9d5015ff340c3b5538c41bf39e",
+            "product": "HeadlessChrome/153.0.8010.12",
+            "revision": "@971a7443b0c9b0a9b2860529b33331b76077ec62",
+            "user_agent": "Mozilla/5.0 (X11; Linux x86_64) AppleWebKit/537.36 (KHTML, like Gecko) HeadlessChrome/153.0.8010.12 Safari/537.36",
+            "js_version": "15.3.76.4"
+          },
+          "collector": {
+            "node": "v26.7.0",
+            "executable_sha256": "ad19784f7e90ba789a099eccba77ede8dc90a778c424f1c10a70fed3ff903fdc"
+          },
+          "finished_at": "2026-10-05T18:44:16.257Z",
+          "instrument_diagnostic_valid": false,
+          "failures": [
+            "Error: page.evaluate: Error: Janus plugin request failed: 428\n    at JanusSignal.operation (http://127.0.0.1:41231/native-video.js:12423:77)\n    at async window.nativePilotSetup (http://127.0.0.1:41231/native-video.js:12518:24)\n    at async <anonymous>:337:30"
+          ],
+          "browser_janus_broker": {
+            "transport": "node-backend-longpoll/browser-SSE",
+            "maximum_backend_sessions": 1,
+            "remaining_backend_sessions": 0,
+            "trace_event_count": 4
+          }
+        }
+      ]
+    },
+    {
+      "artifact_directory": "/tmp/gelabber-native-video-sfu-diag-adapters2-20261005",
+      "raw_report_sha256": "33ae1ff6b1e312750f8270be630a9459678ed22771e671b6aed93420d76800eb",
+      "source_revision": "979e7b0402ab2088b843e873dfcc542489c8af5a",
+      "source_dirty": true,
+      "input_sha256": {
+        "source.rtpbin": "0b15fe7fda29da794802307c88fe23053ad342bd80c485d441e121d325d663db",
+        "fixed-rtp-source": "7bac27b8e56ca72c0beabec8749d38e1ddec1adb59f1673e218f8cdf56dc7d88",
+        "package-lock.json": "9d02e4d3313afe6d1fc466ab4fa598993660385d21a13021089fbeca04e1954c",
+        "proxy-target.mjs": "eeb6a5b035738da7b5c7320dcaa5b40fb24506f26fd631921f54666b4840e7a2",
+        "browser-provenance.mjs": "c50c9ac32f4acf91982f05ef2cefcf5e945b61a63073c9bc499f216ba3d5c4ec",
+        "janus-broker.mjs": "c340597861ab6512d59f73cac6bb248f553122d5d45f5b9a865523351e36c413",
+        "janus-events.mjs": "611b677b7bcbc0154d04b9be3375ecab6c15c6339feeb177f0426c071f5584b4",
+        "mediasoup-native-sdp.mjs": "32b4c405918cc081972010bf5b81942a282fa719111d2e6f1dbef1d82ef1965b",
+        "native-video.mjs": "a15186b2c8b7bb1afb1ba1cc9634ced0f7bf7dfc068e6633b99a26fa56f56c4d",
+        "native-video.bundle.js": "f97d0b43c9d4506d9ad7d4ddcd540800135eb01dd6e88757926f13fe82364d0a",
+        "native-video-browser.mjs": "5d4b9464cd82b0678c5e16eebc605315bced1dca56c29d195b3aedffb290da1e",
+        "native-video-adapters.mjs": "61517f028dcca30b82c8a6605ce9c2e42c08636461da09c9cd4f259f0d95fc1a",
+        "native-video-pilot.mjs": "e3f6ddcd3e46db380211eebddbdd580c5fea250ffffc684e9be8304c6a3bf663",
+        "mediasoup-probe/probe": "df90621e944a6ed22daec75096e2f8fb4ca092af6de3635ef955f1112dfca01b"
+      },
+      "runs": [
+        {
+          "engine": "mediasoup",
+          "raw_browser_sha256": "5c685aac95b49dcffae57e6bb73c84ea50da46e9d4d335e78d59efbf92a188cf",
+          "returncode": 1,
+          "server_error": null,
+          "monitoring_errors": [],
+          "owned_container_cleanup_valid": null,
+          "resource_measurement_valid_under_recorded_collector": null,
+          "post_leave_sample_count": 6,
+          "run_plan": {
+            "engine": "mediasoup",
+            "backend": "http://127.0.0.1:51399",
+            "execute": true,
+            "seconds": 20,
+            "warmup": 10,
+            "native_bind": "127.0.0.1",
+            "topology": {
+              "source_publishers": 1,
+              "receivers": 1,
+              "voice_peers": 0,
+              "media_dtls_transports": 2,
+              "native_audio_tracks": 0,
+              "janus_sessions": 0
+            }
+          },
+          "instrument": {
+            "archive_sha256": "0b15fe7fda29da794802307c88fe23053ad342bd80c485d441e121d325d663db",
+            "binary_sha256": "7bac27b8e56ca72c0beabec8749d38e1ddec1adb59f1673e218f8cdf56dc7d88",
+            "instrument": "fixed-rtp-webrtc-v1",
+            "webrtc": "0.20.5"
+          },
+          "executed_source": {
+            "archive_sha256": "0b15fe7fda29da794802307c88fe23053ad342bd80c485d441e121d325d663db",
+            "binary_sha256": "7bac27b8e56ca72c0beabec8749d38e1ddec1adb59f1673e218f8cdf56dc7d88",
+            "instrument": "fixed-rtp-webrtc-v1",
+            "webrtc": "0.20.5"
+          },
+          "collector": {
+            "node": "v26.7.0",
+            "executable_sha256": "ad19784f7e90ba789a099eccba77ede8dc90a778c424f1c10a70fed3ff903fdc"
+          },
+          "finished_at": "2026-10-05T18:45:17.977Z",
+          "instrument_diagnostic_valid": false,
+          "failures": [
+            "Error: native diagnostic produce failed: missing field `reducedSize`"
+          ]
+        },
+        {
+          "engine": "janus",
+          "raw_browser_sha256": "b803113d77457b2cb045f873da1beece0882a7574a434c506361bcd279aedfb1",
+          "returncode": 1,
+          "server_error": null,
+          "monitoring_errors": [],
+          "owned_container_cleanup_valid": null,
+          "resource_measurement_valid_under_recorded_collector": null,
+          "post_leave_sample_count": 6,
+          "run_plan": {
+            "engine": "janus",
+            "backend": "http://127.0.0.1:37533",
+            "execute": true,
+            "seconds": 20,
+            "warmup": 10,
+            "native_bind": "127.0.0.1",
+            "topology": {
+              "source_publishers": 1,
+              "receivers": 1,
+              "voice_peers": 0,
+              "media_dtls_transports": 2,
+              "native_audio_tracks": 0,
+              "janus_sessions": 3
+            },
+            "source_replay_seconds": 40
+          },
+          "instrument": {
+            "archive_sha256": "0b15fe7fda29da794802307c88fe23053ad342bd80c485d441e121d325d663db",
+            "binary_sha256": "7bac27b8e56ca72c0beabec8749d38e1ddec1adb59f1673e218f8cdf56dc7d88",
+            "instrument": "fixed-rtp-webrtc-v1",
+            "webrtc": "0.20.5"
+          },
+          "executed_source": {
+            "archive_sha256": "0b15fe7fda29da794802307c88fe23053ad342bd80c485d441e121d325d663db",
+            "binary_sha256": "7bac27b8e56ca72c0beabec8749d38e1ddec1adb59f1673e218f8cdf56dc7d88",
+            "instrument": "fixed-rtp-webrtc-v1",
+            "webrtc": "0.20.5"
+          },
+          "executed_browser": {
+            "executable": "/home/rafi/.cache/ms-playwright/chromium_headless_shell-1243/chrome-headless-shell-linux64/chrome-headless-shell",
+            "sha256": "ded93a9c9a53a1ae040f08124badcca95c938e9d5015ff340c3b5538c41bf39e",
+            "product": "HeadlessChrome/153.0.8010.12",
+            "revision": "@971a7443b0c9b0a9b2860529b33331b76077ec62",
+            "user_agent": "Mozilla/5.0 (X11; Linux x86_64) AppleWebKit/537.36 (KHTML, like Gecko) HeadlessChrome/153.0.8010.12 Safari/537.36",
+            "js_version": "15.3.76.4"
+          },
+          "collector": {
+            "node": "v26.7.0",
+            "executable_sha256": "ad19784f7e90ba789a099eccba77ede8dc90a778c424f1c10a70fed3ff903fdc"
+          },
+          "finished_at": "2026-10-05T18:45:57.713Z",
+          "instrument_diagnostic_valid": false,
+          "failures": [
+            "Error: WebRTC did not connect"
+          ],
+          "browser_janus_broker": {
+            "transport": "node-backend-longpoll/browser-SSE",
+            "maximum_backend_sessions": 0,
+            "remaining_backend_sessions": 0,
+            "trace_event_count": 0
+          }
+        }
+      ]
+    },
+    {
+      "artifact_directory": "/tmp/gelabber-native-video-sfu-diag-cleanup3-20261005",
+      "raw_report_sha256": "d428ed72590f2bc9f79f6468f5cb6351f6d39f0e506b17699266fe415b2bb44c",
+      "source_revision": "979e7b0402ab2088b843e873dfcc542489c8af5a",
+      "source_dirty": true,
+      "input_sha256": {
+        "source.rtpbin": "0b15fe7fda29da794802307c88fe23053ad342bd80c485d441e121d325d663db",
+        "fixed-rtp-source": "7bac27b8e56ca72c0beabec8749d38e1ddec1adb59f1673e218f8cdf56dc7d88",
+        "package-lock.json": "9d02e4d3313afe6d1fc466ab4fa598993660385d21a13021089fbeca04e1954c",
+        "proxy-target.mjs": "eeb6a5b035738da7b5c7320dcaa5b40fb24506f26fd631921f54666b4840e7a2",
+        "browser-provenance.mjs": "c50c9ac32f4acf91982f05ef2cefcf5e945b61a63073c9bc499f216ba3d5c4ec",
+        "janus-broker.mjs": "c340597861ab6512d59f73cac6bb248f553122d5d45f5b9a865523351e36c413",
+        "janus-events.mjs": "611b677b7bcbc0154d04b9be3375ecab6c15c6339feeb177f0426c071f5584b4",
+        "mediasoup-native-sdp.mjs": "5dc986971278862c2e50000510fc4423f849130b77b1de85e77bef3ac930cb29",
+        "native-video.mjs": "a15186b2c8b7bb1afb1ba1cc9634ced0f7bf7dfc068e6633b99a26fa56f56c4d",
+        "native-video.bundle.js": "79735705e2101acadba12d2f649d316f5372c77a9cef282800f4d91723e3c400",
+        "native-video-browser.mjs": "2c0f78626ad1a7b35eb8e73baa3bf4134fcbc425855b5ee62d373d9bd0819f50",
+        "native-video-adapters.mjs": "a6e8f32d52b859fefb852b4f3f69c15c9c470d29f55db0f80d467f07422a15a1",
+        "native-video-pilot.mjs": "e37ba8a6021ac976bc9bab352a8037eb4a8b4e6180e77707eec35f2bc1e8500c",
+        "mediasoup-probe/probe": "df90621e944a6ed22daec75096e2f8fb4ca092af6de3635ef955f1112dfca01b"
+      },
+      "runs": [
+        {
+          "engine": "mediasoup",
+          "raw_browser_sha256": "045e5a6087ff2f3cf04226f0108fa870d18d2ace439327d88c48945df89d2e4e",
+          "returncode": 1,
+          "server_error": null,
+          "monitoring_errors": [],
+          "owned_container_cleanup_valid": true,
+          "resource_measurement_valid_under_recorded_collector": null,
+          "post_leave_sample_count": 6,
+          "run_plan": {
+            "engine": "mediasoup",
+            "backend": "http://127.0.0.1:44127",
+            "execute": true,
+            "seconds": 20,
+            "warmup": 10,
+            "native_bind": "127.0.0.1",
+            "topology": {
+              "source_publishers": 1,
+              "receivers": 1,
+              "voice_peers": 0,
+              "media_dtls_transports": 2,
+              "native_audio_tracks": 0,
+              "janus_sessions": 0
+            },
+            "source_replay_seconds": 40
+          },
+          "instrument": {
+            "archive_sha256": "0b15fe7fda29da794802307c88fe23053ad342bd80c485d441e121d325d663db",
+            "binary_sha256": "7bac27b8e56ca72c0beabec8749d38e1ddec1adb59f1673e218f8cdf56dc7d88",
+            "instrument": "fixed-rtp-webrtc-v1",
+            "webrtc": "0.20.5"
+          },
+          "executed_source": {
+            "archive_sha256": "0b15fe7fda29da794802307c88fe23053ad342bd80c485d441e121d325d663db",
+            "binary_sha256": "7bac27b8e56ca72c0beabec8749d38e1ddec1adb59f1673e218f8cdf56dc7d88",
+            "instrument": "fixed-rtp-webrtc-v1",
+            "webrtc": "0.20.5"
+          },
+          "executed_browser": {
+            "executable": "/home/rafi/.cache/ms-playwright/chromium_headless_shell-1243/chrome-headless-shell-linux64/chrome-headless-shell",
+            "sha256": "ded93a9c9a53a1ae040f08124badcca95c938e9d5015ff340c3b5538c41bf39e",
+            "product": "HeadlessChrome/153.0.8010.12",
+            "revision": "@971a7443b0c9b0a9b2860529b33331b76077ec62",
+            "user_agent": "Mozilla/5.0 (X11; Linux x86_64) AppleWebKit/537.36 (KHTML, like Gecko) HeadlessChrome/153.0.8010.12 Safari/537.36",
+            "js_version": "15.3.76.4"
+          },
+          "collector": {
+            "node": "v26.7.0",
+            "executable_sha256": "ad19784f7e90ba789a099eccba77ede8dc90a778c424f1c10a70fed3ff903fdc"
+          },
+          "finished_at": "2026-10-05T18:49:17.414Z",
+          "source_decoder_valid": false,
+          "cleanup_valid": true,
+          "instrument_diagnostic_valid": false,
+          "failures": [
+            "Error: deadline has elapsed"
+          ],
+          "native": {
+            "connection": "connecting",
+            "feedback_packets": 0,
+            "outbound": [
+              {
+                "bytesSent": 0,
+                "codecId": "RTCCodec_RTCTransport_send_PT96",
+                "nackCount": 0,
+                "packetsSent": 0,
+                "retransmittedPacketsSent": 0,
+                "ssrc": 1196838968
+              }
+            ],
+            "source": {
+              "completed": false,
+              "running": false
+            },
+            "transport": {
+              "bytesReceived": 9500,
+              "bytesSent": 2337,
+              "dtlsCipher": "",
+              "dtlsRole": "Unspecified",
+              "dtlsState": "Unspecified",
+              "iceRole": "controlling",
+              "iceState": "connected",
+              "packetsReceived": 73,
+              "packetsSent": 18,
+              "selectedCandidatePairId": "RTCIceCandidatePair_candidate:nU+gzfhZKeDbibt0TWr//5CsVj47nzPA_candidate:JACUzhMB7CyTnmOd4E7wcwR7H5Qzzl7Q",
+              "srtpCipher": ""
+            }
+          },
+          "post_leave": {
+            "browser": [
+              null
+            ],
+            "sessions": [],
+            "publisher": {
+              "engine_stats": {
+                "consumers": 0,
+                "peers": 0,
+                "producers": 0,
+                "transports": 0
+              }
+            },
+            "native_exitcode": 0
+          },
+          "cleanup_errors": []
+        },
+        {
+          "engine": "janus",
+          "raw_browser_sha256": "e55507d81264ecb184f06d0253983efd624b3594c62b6a5844ab6bf1c258346b",
+          "returncode": 1,
+          "server_error": null,
+          "monitoring_errors": [],
+          "owned_container_cleanup_valid": true,
+          "resource_measurement_valid_under_recorded_collector": null,
+          "post_leave_sample_count": 6,
+          "run_plan": {
+            "engine": "janus",
+            "backend": "http://127.0.0.1:33973",
+            "execute": true,
+            "seconds": 20,
+            "warmup": 10,
+            "native_bind": "127.0.0.1",
+            "topology": {
+              "source_publishers": 1,
+              "receivers": 1,
+              "voice_peers": 0,
+              "media_dtls_transports": 2,
+              "native_audio_tracks": 0,
+              "janus_sessions": 3
+            },
+            "source_replay_seconds": 40
+          },
+          "instrument": {
+            "archive_sha256": "0b15fe7fda29da794802307c88fe23053ad342bd80c485d441e121d325d663db",
+            "binary_sha256": "7bac27b8e56ca72c0beabec8749d38e1ddec1adb59f1673e218f8cdf56dc7d88",
+            "instrument": "fixed-rtp-webrtc-v1",
+            "webrtc": "0.20.5"
+          },
+          "executed_source": {
+            "archive_sha256": "0b15fe7fda29da794802307c88fe23053ad342bd80c485d441e121d325d663db",
+            "binary_sha256": "7bac27b8e56ca72c0beabec8749d38e1ddec1adb59f1673e218f8cdf56dc7d88",
+            "instrument": "fixed-rtp-webrtc-v1",
+            "webrtc": "0.20.5"
+          },
+          "executed_browser": {
+            "executable": "/home/rafi/.cache/ms-playwright/chromium_headless_shell-1243/chrome-headless-shell-linux64/chrome-headless-shell",
+            "sha256": "ded93a9c9a53a1ae040f08124badcca95c938e9d5015ff340c3b5538c41bf39e",
+            "product": "HeadlessChrome/153.0.8010.12",
+            "revision": "@971a7443b0c9b0a9b2860529b33331b76077ec62",
+            "user_agent": "Mozilla/5.0 (X11; Linux x86_64) AppleWebKit/537.36 (KHTML, like Gecko) HeadlessChrome/153.0.8010.12 Safari/537.36",
+            "js_version": "15.3.76.4"
+          },
+          "collector": {
+            "node": "v26.7.0",
+            "executable_sha256": "ad19784f7e90ba789a099eccba77ede8dc90a778c424f1c10a70fed3ff903fdc"
+          },
+          "finished_at": "2026-10-05T18:49:56.788Z",
+          "source_decoder_valid": false,
+          "cleanup_valid": true,
+          "instrument_diagnostic_valid": false,
+          "failures": [
+            "Error: WebRTC did not connect"
+          ],
+          "native": {
+            "connection": "failed",
+            "feedback_packets": 0,
+            "outbound": [
+              {
+                "bytesSent": 0,
+                "codecId": "RTCCodec_RTCTransport_send_PT96",
+                "nackCount": 0,
+                "packetsSent": 0,
+                "retransmittedPacketsSent": 0,
+                "ssrc": 1196838968
+              }
+            ],
+            "source": {
+              "completed": false,
+              "running": false
+            },
+            "transport": {
+              "bytesReceived": 0,
+              "bytesSent": 1600,
+              "dtlsCipher": "",
+              "dtlsRole": "Unspecified",
+              "dtlsState": "Unspecified",
+              "iceRole": "controlling",
+              "iceState": "failed",
+              "packetsReceived": 0,
+              "packetsSent": 16,
+              "selectedCandidatePairId": "",
+              "srtpCipher": ""
+            }
+          },
+          "signaling": {
+            "backend_events": {
+              "transport": "node-backend-longpoll/browser-SSE",
+              "maximum_backend_sessions": 2,
+              "remaining_backend_sessions": 2,
+              "trace_event_count": 14
+            },
+            "negotiation": {
+              "local": [
+                "m=video 9 UDP/TLS/RTP/SAVPF 96",
+                "c=IN IP4 0.0.0.0",
+                "a=setup:actpass",
+                "a=mid:0",
+                "a=rtpmap:96 VP8/90000",
+                "a=rtcp-fb:96 nack",
+                "a=rtcp-fb:96 nack pli",
+                "a=sendrecv",
+                "a=candidate:2693830880 1 udp 2130706431 127.0.0.1 47565 typ host",
+                "a=candidate:2693830880 2 udp 2130706431 127.0.0.1 47565 typ host",
+                "a=end-of-candidates"
+              ],
+              "remote": [
+                "a=ice-lite",
+                "m=video 9 UDP/TLS/RTP/SAVPF 96",
+                "c=IN IP4 127.0.0.1",
+                "a=recvonly",
+                "a=mid:0",
+                "a=setup:active",
+                "a=rtpmap:96 VP8/90000",
+                "a=rtcp-fb:96 ccm fir",
+                "a=rtcp-fb:96 nack",
+                "a=rtcp-fb:96 nack pli",
+                "a=rtcp-fb:96 goog-remb",
+                "a=candidate:1 1 udp 2015363583 127.0.0.1 12067 typ host",
+                "a=candidate:2 1 udp 2015365119 127.0.0.1 12042 typ host",
+                "a=end-of-candidates"
+              ]
+            },
+            "request_count": 20
+          },
+          "post_leave": {
+            "browser": [
+              null
+            ],
+            "sessions": [],
+            "publisher": {
+              "engine_stats": {
+                "rooms": [],
+                "diagnostic_room_present": false,
+                "diagnostic_publishers": 0,
+                "diagnostic_subscribers": 0,
+                "count_basis": "confirmed room destroy and absence from room list; sessions confirmed destroyed separately"
+              },
+              "destroyed_sessions": [
+                901016601129799,
+                8120852307227716
+              ],
+              "backend_events": {
+                "transport": "node-backend-longpoll/browser-SSE",
+                "maximum_backend_sessions": 2,
+                "remaining_backend_sessions": 0,
+                "trace_event_count": 14
+              }
+            },
+            "native_exitcode": 0
+          },
+          "cleanup_errors": [],
+          "browser_janus_broker": {
+            "transport": "node-backend-longpoll/browser-SSE",
+            "maximum_backend_sessions": 0,
+            "remaining_backend_sessions": 0,
+            "trace_event_count": 0
+          }
+        }
+      ]
+    },
+    {
+      "artifact_directory": "/tmp/gelabber-native-video-sfu-diag-lan4-20261005",
+      "raw_report_sha256": "dd69ef82cc9c954ab1b9e4e7cee3065871710b6ea82320da347a143993b81361",
+      "source_revision": "979e7b0402ab2088b843e873dfcc542489c8af5a",
+      "source_dirty": true,
+      "input_sha256": {
+        "source.rtpbin": "0b15fe7fda29da794802307c88fe23053ad342bd80c485d441e121d325d663db",
+        "fixed-rtp-source": "7bac27b8e56ca72c0beabec8749d38e1ddec1adb59f1673e218f8cdf56dc7d88",
+        "package-lock.json": "9d02e4d3313afe6d1fc466ab4fa598993660385d21a13021089fbeca04e1954c",
+        "proxy-target.mjs": "eeb6a5b035738da7b5c7320dcaa5b40fb24506f26fd631921f54666b4840e7a2",
+        "browser-provenance.mjs": "c50c9ac32f4acf91982f05ef2cefcf5e945b61a63073c9bc499f216ba3d5c4ec",
+        "janus-broker.mjs": "c340597861ab6512d59f73cac6bb248f553122d5d45f5b9a865523351e36c413",
+        "janus-events.mjs": "611b677b7bcbc0154d04b9be3375ecab6c15c6339feeb177f0426c071f5584b4",
+        "mediasoup-native-sdp.mjs": "91d6ce0244b1d8956dc3aa6653c9bab66e9cc82daad62fce0722a5c694922e68",
+        "native-video.mjs": "a15186b2c8b7bb1afb1ba1cc9634ced0f7bf7dfc068e6633b99a26fa56f56c4d",
+        "native-video.bundle.js": "79735705e2101acadba12d2f649d316f5372c77a9cef282800f4d91723e3c400",
+        "native-video-browser.mjs": "2c0f78626ad1a7b35eb8e73baa3bf4134fcbc425855b5ee62d373d9bd0819f50",
+        "native-video-adapters.mjs": "1d4d0578823c3a8d299e4382ed7b84b45b9d03b21541ec043f96c135a38eb76f",
+        "native-video-pilot.mjs": "e37ba8a6021ac976bc9bab352a8037eb4a8b4e6180e77707eec35f2bc1e8500c",
+        "mediasoup-probe/probe": "df90621e944a6ed22daec75096e2f8fb4ca092af6de3635ef955f1112dfca01b",
+        "current-probe/probe": "a2fd497a4836ea1aba57baa8e1216c9fae73476a75ba0e8bad4ab37875285701"
+      },
+      "runs": [
+        {
+          "engine": "current",
+          "raw_browser_sha256": "4a7f7b9366c2756699dbdc67b6fdd15290bc1072347189df23445b3724ad3fb8",
+          "returncode": 0,
+          "server_error": null,
+          "monitoring_errors": [],
+          "owned_container_cleanup_valid": true,
+          "resource_measurement_valid_under_recorded_collector": null,
+          "post_leave_sample_count": 6,
+          "run_plan": {
+            "engine": "current",
+            "backend": "http://127.0.0.1:36033",
+            "execute": true,
+            "seconds": 20,
+            "warmup": 10,
+            "native_bind": "192.168.178.31",
+            "topology": {
+              "source_publishers": 1,
+              "receivers": 1,
+              "voice_peers": 0,
+              "media_dtls_transports": 2,
+              "native_audio_tracks": 0,
+              "janus_sessions": 0
+            },
+            "source_replay_seconds": 40
+          },
+          "instrument": {
+            "archive_sha256": "0b15fe7fda29da794802307c88fe23053ad342bd80c485d441e121d325d663db",
+            "binary_sha256": "7bac27b8e56ca72c0beabec8749d38e1ddec1adb59f1673e218f8cdf56dc7d88",
+            "instrument": "fixed-rtp-webrtc-v1",
+            "webrtc": "0.20.5"
+          },
+          "executed_source": {
+            "archive_sha256": "0b15fe7fda29da794802307c88fe23053ad342bd80c485d441e121d325d663db",
+            "binary_sha256": "7bac27b8e56ca72c0beabec8749d38e1ddec1adb59f1673e218f8cdf56dc7d88",
+            "instrument": "fixed-rtp-webrtc-v1",
+            "webrtc": "0.20.5"
+          },
+          "executed_browser": {
+            "executable": "/home/rafi/.cache/ms-playwright/chromium_headless_shell-1243/chrome-headless-shell-linux64/chrome-headless-shell",
+            "sha256": "ded93a9c9a53a1ae040f08124badcca95c938e9d5015ff340c3b5538c41bf39e",
+            "product": "HeadlessChrome/153.0.8010.12",
+            "revision": "@971a7443b0c9b0a9b2860529b33331b76077ec62",
+            "user_agent": "Mozilla/5.0 (X11; Linux x86_64) AppleWebKit/537.36 (KHTML, like Gecko) HeadlessChrome/153.0.8010.12 Safari/537.36",
+            "js_version": "15.3.76.4"
+          },
+          "collector": {
+            "node": "v26.7.0",
+            "executable_sha256": "ad19784f7e90ba789a099eccba77ede8dc90a778c424f1c10a70fed3ff903fdc"
+          },
+          "started_at": "2026-10-05T18:51:35.693Z",
+          "finished_at": "2026-10-05T18:52:15.750Z",
+          "source_decoder_valid": true,
+          "cleanup_valid": true,
+          "instrument_diagnostic_valid": true,
+          "failures": [],
+          "native": {
+            "connection": "connected",
+            "feedback_packets": 0,
+            "outbound": [
+              {
+                "bytesSent": 20047604,
+                "codecId": "RTCCodec_RTCTransport_send_PT96",
+                "nackCount": 0,
+                "packetsSent": 18060,
+                "retransmittedPacketsSent": 0,
+                "ssrc": 1196838968
+              }
+            ],
+            "source": {
+              "completed": true,
+              "elapsed_seconds": 40.000222439,
+              "expected_frames": 2400,
+              "frames_enqueued": 2400,
+              "intended_duration_seconds": 40,
+              "max_schedule_lateness_us": 2080,
+              "mean_schedule_lateness_us": 1059.3902547065338,
+              "packets_enqueued": 18060,
+              "rtp_payload_bitrate_bps": 4009520,
+              "rtp_payload_bytes_enqueued": 20047604,
+              "running": false,
+              "source_policy_valid": true
+            },
+            "transport": {
+              "bytesReceived": 7120,
+              "bytesSent": 20559921,
+              "dtlsCipher": "TLS_ECDHE_ECDSA_WITH_AES_128_GCM_SHA256",
+              "dtlsRole": "server",
+              "dtlsState": "connected",
+              "iceRole": "controlling",
+              "iceState": "connected",
+              "packetsReceived": 95,
+              "packetsSent": 18147,
+              "selectedCandidatePairId": "RTCIceCandidatePair_candidate:Jg7W1J6sPCoKYmu9Kx5QaLL8p2nzwrd9_candidate:Ut8iyEPEP93iZnUTPoKzrPyk5NlohU61",
+              "srtpCipher": "SRTP_AEAD_AES_128_GCM"
+            }
+          },
+          "decoder": {
+            "valid": true,
+            "failures": [],
+            "measured_seconds": 19.00622998046875,
+            "bitrate_bps": 4020896.73115253,
+            "decoded_fps": 59.98033282620967,
+            "lost_packets": 0,
+            "received_packets": 8600
+          },
+          "signaling": {
+            "trace": [
+              {
+                "at": 1791226295361,
+                "operation": "ok"
+              },
+              {
+                "at": 1791226295410,
+                "operation": "i"
+              },
+              {
+                "at": 1791226295411,
+                "operation": "a"
+              }
+            ]
+          },
+          "post_leave": {
+            "browser": [
+              null
+            ],
+            "sessions": [],
+            "publisher": {
+              "engine_stats": {
+                "metrics": {
+                  "gelabber_media_forwarded_bytes_total": 19832225,
+                  "gelabber_media_ice_fails_total": 0,
+                  "gelabber_media_peers": 0,
+                  "gelabber_media_rooms": 0,
+                  "gelabber_media_rtp_jitter_ms": 2.783,
+                  "gelabber_media_rtp_lost_total": 0,
+                  "gelabber_media_rtp_packets_total": 18060
+                },
+                "peers": 0,
+                "rooms": 0
+              }
+            },
+            "native_exitcode": 0
+          },
+          "cleanup_errors": []
+        },
+        {
+          "engine": "mediasoup",
+          "raw_browser_sha256": "880b90840c0ab1cef6e4bfe5cccb795672b6444064f89fdde40b604e6a20e94f",
+          "returncode": 1,
+          "server_error": null,
+          "monitoring_errors": [],
+          "owned_container_cleanup_valid": true,
+          "resource_measurement_valid_under_recorded_collector": null,
+          "post_leave_sample_count": 6,
+          "run_plan": {
+            "engine": "mediasoup",
+            "backend": "http://127.0.0.1:38741",
+            "execute": true,
+            "seconds": 20,
+            "warmup": 10,
+            "native_bind": "192.168.178.31",
+            "topology": {
+              "source_publishers": 1,
+              "receivers": 1,
+              "voice_peers": 0,
+              "media_dtls_transports": 2,
+              "native_audio_tracks": 0,
+              "janus_sessions": 0
+            },
+            "source_replay_seconds": 40
+          },
+          "instrument": {
+            "archive_sha256": "0b15fe7fda29da794802307c88fe23053ad342bd80c485d441e121d325d663db",
+            "binary_sha256": "7bac27b8e56ca72c0beabec8749d38e1ddec1adb59f1673e218f8cdf56dc7d88",
+            "instrument": "fixed-rtp-webrtc-v1",
+            "webrtc": "0.20.5"
+          },
+          "executed_source": {
+            "archive_sha256": "0b15fe7fda29da794802307c88fe23053ad342bd80c485d441e121d325d663db",
+            "binary_sha256": "7bac27b8e56ca72c0beabec8749d38e1ddec1adb59f1673e218f8cdf56dc7d88",
+            "instrument": "fixed-rtp-webrtc-v1",
+            "webrtc": "0.20.5"
+          },
+          "executed_browser": {
+            "executable": "/home/rafi/.cache/ms-playwright/chromium_headless_shell-1243/chrome-headless-shell-linux64/chrome-headless-shell",
+            "sha256": "ded93a9c9a53a1ae040f08124badcca95c938e9d5015ff340c3b5538c41bf39e",
+            "product": "HeadlessChrome/153.0.8010.12",
+            "revision": "@971a7443b0c9b0a9b2860529b33331b76077ec62",
+            "user_agent": "Mozilla/5.0 (X11; Linux x86_64) AppleWebKit/537.36 (KHTML, like Gecko) HeadlessChrome/153.0.8010.12 Safari/537.36",
+            "js_version": "15.3.76.4"
+          },
+          "collector": {
+            "node": "v26.7.0",
+            "executable_sha256": "ad19784f7e90ba789a099eccba77ede8dc90a778c424f1c10a70fed3ff903fdc"
+          },
+          "finished_at": "2026-10-05T18:52:55.068Z",
+          "source_decoder_valid": false,
+          "cleanup_valid": true,
+          "instrument_diagnostic_valid": false,
+          "failures": [
+            "Error: deadline has elapsed"
+          ],
+          "native": {
+            "connection": "connecting",
+            "feedback_packets": 0,
+            "outbound": [
+              {
+                "bytesSent": 0,
+                "codecId": "RTCCodec_RTCTransport_send_PT96",
+                "nackCount": 0,
+                "packetsSent": 0,
+                "retransmittedPacketsSent": 0,
+                "ssrc": 1196838968
+              }
+            ],
+            "source": {
+              "completed": false,
+              "running": false
+            },
+            "transport": {
+              "bytesReceived": 3080,
+              "bytesSent": 2989,
+              "dtlsCipher": "",
+              "dtlsRole": "Unspecified",
+              "dtlsState": "Unspecified",
+              "iceRole": "controlling",
+              "iceState": "connected",
+              "packetsReceived": 27,
+              "packetsSent": 20,
+              "selectedCandidatePairId": "RTCIceCandidatePair_candidate:dEaecBnxW5MM0R0xwrGpOmhwhSZE9o6l_candidate:7jMDR7JPWl8ygorc8qJf2eP6Y3W70uDt",
+              "srtpCipher": ""
+            }
+          },
+          "signaling": {
+            "negotiation": {
+              "local": [
+                "a=fingerprint:sha-256 12:44:76:B0:1C:C6:E7:DD:05:01:24:38:66:26:29:38:0F:C3:A6:6B:C5:BC:02:DA:77:9C:34:29:C4:FD:79:59",
+                "m=video 9 UDP/TLS/RTP/SAVPF 96",
+                "c=IN IP4 0.0.0.0",
+                "a=setup:actpass",
+                "a=mid:0",
+                "a=rtpmap:96 VP8/90000",
+                "a=rtcp-fb:96 nack",
+                "a=rtcp-fb:96 nack pli",
+                "a=sendrecv",
+                "a=candidate:3122224247 1 udp 2130706431 192.168.178.31 41722 typ host",
+                "a=candidate:3122224247 2 udp 2130706431 192.168.178.31 41722 typ host",
+                "a=end-of-candidates"
+              ],
+              "remote": [
+                "a=ice-lite",
+                "a=fingerprint:sha-512 E9:63:5F:EB:B8:0D:25:2E:5A:94:6D:CA:60:AF:7E:4F:EE:E7:66:3A:06:CE:BB:5A:BE:AA:7E:13:CC:3C:FA:B1:E8:1C:E7:D3:95:8A:C5:D0:F2:1B:A5:64:64:12:DE:A7:9B:0D:D3:03:57:3B:DF:9F:A1:D5:B3:98:D9:F1:4B:BC",
+                "m=video 7 UDP/TLS/RTP/SAVPF 96",
+                "c=IN IP4 127.0.0.1",
+                "a=rtpmap:96 VP8/90000",
+                "a=rtcp-fb:96 nack ",
+                "a=rtcp-fb:96 nack pli",
+                "a=setup:active",
+                "a=mid:0",
+                "a=recvonly",
+                "a=candidate:udpcandidate 1 udp 1076302079 192.168.178.31 12013 typ host",
+                "a=end-of-candidates"
+              ]
+            },
+            "source_dtls_role": "server"
+          },
+          "post_leave": {
+            "browser": [
+              null
+            ],
+            "sessions": [],
+            "publisher": {
+              "engine_stats": {
+                "consumers": 0,
+                "peers": 0,
+                "producers": 0,
+                "transports": 0
+              }
+            },
+            "native_exitcode": 0
+          },
+          "cleanup_errors": []
+        },
+        {
+          "engine": "janus",
+          "raw_browser_sha256": "a1d71665cf229e68daec60d23d22891935ad0d315ea9bd2fb4fda896fbc5800f",
+          "returncode": 1,
+          "server_error": null,
+          "monitoring_errors": [],
+          "owned_container_cleanup_valid": true,
+          "resource_measurement_valid_under_recorded_collector": null,
+          "post_leave_sample_count": 6,
+          "run_plan": {
+            "engine": "janus",
+            "backend": "http://127.0.0.1:52823",
+            "execute": true,
+            "seconds": 20,
+            "warmup": 10,
+            "native_bind": "192.168.178.31",
+            "topology": {
+              "source_publishers": 1,
+              "receivers": 1,
+              "voice_peers": 0,
+              "media_dtls_transports": 2,
+              "native_audio_tracks": 0,
+              "janus_sessions": 3
+            },
+            "source_replay_seconds": 40
+          },
+          "instrument": {
+            "archive_sha256": "0b15fe7fda29da794802307c88fe23053ad342bd80c485d441e121d325d663db",
+            "binary_sha256": "7bac27b8e56ca72c0beabec8749d38e1ddec1adb59f1673e218f8cdf56dc7d88",
+            "instrument": "fixed-rtp-webrtc-v1",
+            "webrtc": "0.20.5"
+          },
+          "executed_source": {
+            "archive_sha256": "0b15fe7fda29da794802307c88fe23053ad342bd80c485d441e121d325d663db",
+            "binary_sha256": "7bac27b8e56ca72c0beabec8749d38e1ddec1adb59f1673e218f8cdf56dc7d88",
+            "instrument": "fixed-rtp-webrtc-v1",
+            "webrtc": "0.20.5"
+          },
+          "executed_browser": {
+            "executable": "/home/rafi/.cache/ms-playwright/chromium_headless_shell-1243/chrome-headless-shell-linux64/chrome-headless-shell",
+            "sha256": "ded93a9c9a53a1ae040f08124badcca95c938e9d5015ff340c3b5538c41bf39e",
+            "product": "HeadlessChrome/153.0.8010.12",
+            "revision": "@971a7443b0c9b0a9b2860529b33331b76077ec62",
+            "user_agent": "Mozilla/5.0 (X11; Linux x86_64) AppleWebKit/537.36 (KHTML, like Gecko) HeadlessChrome/153.0.8010.12 Safari/537.36",
+            "js_version": "15.3.76.4"
+          },
+          "collector": {
+            "node": "v26.7.0",
+            "executable_sha256": "ad19784f7e90ba789a099eccba77ede8dc90a778c424f1c10a70fed3ff903fdc"
+          },
+          "started_at": "2026-10-05T18:53:04.184Z",
+          "finished_at": "2026-10-05T18:53:44.304Z",
+          "source_decoder_valid": true,
+          "cleanup_valid": false,
+          "instrument_diagnostic_valid": false,
+          "failures": [
+            "cleanup: SyntaxError: Unexpected end of JSON input"
+          ],
+          "native": {
+            "connection": "connected",
+            "feedback_packets": 0,
+            "outbound": [
+              {
+                "bytesSent": 20047604,
+                "codecId": "RTCCodec_RTCTransport_send_PT96",
+                "nackCount": 0,
+                "packetsSent": 18060,
+                "retransmittedPacketsSent": 0,
+                "ssrc": 1196838968
+              }
+            ],
+            "source": {
+              "completed": true,
+              "elapsed_seconds": 40.001887556,
+              "expected_frames": 2400,
+              "frames_enqueued": 2400,
+              "intended_duration_seconds": 40,
+              "max_schedule_lateness_us": 7906,
+              "mean_schedule_lateness_us": 1081.0553709856035,
+              "packets_enqueued": 18060,
+              "rtp_payload_bitrate_bps": 4009520,
+              "rtp_payload_bytes_enqueued": 20047604,
+              "running": false,
+              "source_policy_valid": true
+            },
+            "transport": {
+              "bytesReceived": 5314,
+              "bytesSent": 20558367,
+              "dtlsCipher": "TLS_ECDHE_ECDSA_WITH_CHACHA20_POLY1305_SHA256",
+              "dtlsRole": "server",
+              "dtlsState": "connected",
+              "iceRole": "controlling",
+              "iceState": "connected",
+              "packetsReceived": 70,
+              "packetsSent": 18127,
+              "selectedCandidatePairId": "RTCIceCandidatePair_candidate:jTHT/BuAw2bHvJOih/7BpIsy8WMmGyTY_candidate:W7RT7lUUXUjjH4xjOHm94duH51CCM6Vt",
+              "srtpCipher": "SRTP_AEAD_AES_256_GCM"
+            }
+          },
+          "decoder": {
+            "valid": true,
+            "failures": [],
+            "measured_seconds": 19.00672900390625,
+            "bitrate_bps": 4004137.6916753445,
+            "decoded_fps": 59.978758036993526,
+            "lost_packets": 0,
+            "received_packets": 8566
+          },
+          "signaling": {
+            "backend_events": {
+              "transport": "node-backend-longpoll/browser-SSE",
+              "maximum_backend_sessions": 2,
+              "remaining_backend_sessions": 2,
+              "trace_event_count": 20
+            },
+            "negotiation": {
+              "local": [
+                "a=fingerprint:sha-256 A5:BD:0B:22:2E:15:9D:B4:AB:2A:46:B7:A6:0E:89:C9:D9:51:93:00:F6:C5:C4:74:70:F4:B6:E9:66:F5:74:83",
+                "m=video 9 UDP/TLS/RTP/SAVPF 96",
+                "c=IN IP4 0.0.0.0",
+                "a=setup:actpass",
+                "a=mid:0",
+                "a=rtpmap:96 VP8/90000",
+                "a=rtcp-fb:96 nack",
+                "a=rtcp-fb:96 nack pli",
+                "a=sendrecv",
+                "a=candidate:3122224247 1 udp 2130706431 192.168.178.31 41756 typ host",
+                "a=candidate:3122224247 2 udp 2130706431 192.168.178.31 41756 typ host",
+                "a=end-of-candidates"
+              ],
+              "remote": [
+                "a=fingerprint:sha-256 83:EF:82:EC:0E:C7:AB:CF:B0:5D:6F:DD:F9:CD:43:63:F7:DC:11:F4:32:B8:CF:FF:04:43:CF:01:03:7A:E5:60",
+                "a=ice-lite",
+                "m=video 9 UDP/TLS/RTP/SAVPF 96",
+                "c=IN IP4 192.168.178.31",
+                "a=recvonly",
+                "a=mid:0",
+                "a=setup:active",
+                "a=rtpmap:96 VP8/90000",
+                "a=rtcp-fb:96 ccm fir",
+                "a=rtcp-fb:96 nack",
+                "a=rtcp-fb:96 nack pli",
+                "a=rtcp-fb:96 goog-remb",
+                "a=candidate:1 1 udp 2015363583 192.168.178.31 12089 typ host",
+                "a=end-of-candidates"
+              ]
+            },
+            "request_count": 20
+          },
+          "post_leave": {
+            "browser": [
+              {
+                "destroyed_sessions": [
+                  3947965130213169
+                ],
+                "remaining_pending": 0,
+                "connection_state": "closed"
+              }
+            ],
+            "sessions": [],
+            "publisher": {
+              "engine_stats": {
+                "rooms": [],
+                "diagnostic_room_present": false,
+                "diagnostic_publishers": 0,
+                "diagnostic_subscribers": 0,
+                "count_basis": "confirmed room destroy and absence from room list; sessions confirmed destroyed separately"
+              },
+              "destroyed_sessions": [
+                6822570625793355,
+                5106272997509191
+              ],
+              "backend_events": {
+                "transport": "node-backend-longpoll/browser-SSE",
+                "maximum_backend_sessions": 2,
+                "remaining_backend_sessions": 0,
+                "trace_event_count": 20
+              }
+            },
+            "native_exitcode": 0
+          },
+          "cleanup_errors": [
+            "SyntaxError: Unexpected end of JSON input"
+          ],
+          "browser_janus_broker": {
+            "transport": "node-backend-longpoll/browser-SSE",
+            "maximum_backend_sessions": 1,
+            "remaining_backend_sessions": 0,
+            "trace_event_count": 10
+          }
+        }
+      ]
+    },
+    {
+      "artifact_directory": "/tmp/gelabber-native-video-sfu-diag-fingerprint5-20261005",
+      "raw_report_sha256": "0abe6ac32bd8ee6cfcaf4045ce9ec2e87c8274989967d633b69e77c346478f2b",
+      "source_revision": "979e7b0402ab2088b843e873dfcc542489c8af5a",
+      "source_dirty": true,
+      "input_sha256": {
+        "source.rtpbin": "0b15fe7fda29da794802307c88fe23053ad342bd80c485d441e121d325d663db",
+        "fixed-rtp-source": "7bac27b8e56ca72c0beabec8749d38e1ddec1adb59f1673e218f8cdf56dc7d88",
+        "package-lock.json": "9d02e4d3313afe6d1fc466ab4fa598993660385d21a13021089fbeca04e1954c",
+        "proxy-target.mjs": "eeb6a5b035738da7b5c7320dcaa5b40fb24506f26fd631921f54666b4840e7a2",
+        "browser-provenance.mjs": "c50c9ac32f4acf91982f05ef2cefcf5e945b61a63073c9bc499f216ba3d5c4ec",
+        "janus-broker.mjs": "c340597861ab6512d59f73cac6bb248f553122d5d45f5b9a865523351e36c413",
+        "janus-events.mjs": "611b677b7bcbc0154d04b9be3375ecab6c15c6339feeb177f0426c071f5584b4",
+        "mediasoup-native-sdp.mjs": "7b04b53bc55f29cfdc354ea18cbc9228f4db0a42eab852b1617bf3df765e1115",
+        "native-video.mjs": "3b25f3dd8b428dd91f4d1f78362a06cf865a618fa0a5bfc7108cd8f829c975ea",
+        "native-video.bundle.js": "79735705e2101acadba12d2f649d316f5372c77a9cef282800f4d91723e3c400",
+        "native-video-browser.mjs": "2c0f78626ad1a7b35eb8e73baa3bf4134fcbc425855b5ee62d373d9bd0819f50",
+        "native-video-adapters.mjs": "63cce771e3465d03e7fd5188b127e22d5dc582ba151f59135bc6a35bcf0f4747",
+        "native-video-pilot.mjs": "ff201299f333d0c5e8b1ac64c5aa0fcc93f351e7f85b48a455bf74ae1d3f8e95",
+        "record.py": "ce2f366f6360ca1f17dee550c68dfa3724966348c7ef9969bc75671420a52b33",
+        "run-fixed-video.py": "113a6f0ef58cfe499c7de6296387dbe6ba82a159913fc07837472616634e85f2",
+        "mediasoup-probe/probe": "df90621e944a6ed22daec75096e2f8fb4ca092af6de3635ef955f1112dfca01b",
+        "current-probe/probe": "a2fd497a4836ea1aba57baa8e1216c9fae73476a75ba0e8bad4ab37875285701"
+      },
+      "runs": [
+        {
+          "engine": "current",
+          "raw_browser_sha256": "46a63dd6282994b6687edadf42d91838ff5e0ad43e4219941c5107317a20b792",
+          "returncode": 0,
+          "server_error": null,
+          "monitoring_errors": [],
+          "owned_container_cleanup_valid": true,
+          "resource_measurement_valid_under_recorded_collector": true,
+          "post_leave_sample_count": 6,
+          "run_plan": {
+            "engine": "current",
+            "backend": "http://127.0.0.1:58941",
+            "execute": true,
+            "seconds": 20,
+            "warmup": 10,
+            "native_bind": "192.168.178.31",
+            "topology": {
+              "source_publishers": 1,
+              "receivers": 1,
+              "voice_peers": 0,
+              "media_dtls_transports": 2,
+              "native_audio_tracks": 0,
+              "janus_sessions": 0
+            },
+            "source_replay_seconds": 40
+          },
+          "instrument": {
+            "archive_sha256": "0b15fe7fda29da794802307c88fe23053ad342bd80c485d441e121d325d663db",
+            "binary_sha256": "7bac27b8e56ca72c0beabec8749d38e1ddec1adb59f1673e218f8cdf56dc7d88",
+            "instrument": "fixed-rtp-webrtc-v1",
+            "webrtc": "0.20.5"
+          },
+          "executed_source": {
+            "archive_sha256": "0b15fe7fda29da794802307c88fe23053ad342bd80c485d441e121d325d663db",
+            "binary_sha256": "7bac27b8e56ca72c0beabec8749d38e1ddec1adb59f1673e218f8cdf56dc7d88",
+            "instrument": "fixed-rtp-webrtc-v1",
+            "webrtc": "0.20.5"
+          },
+          "executed_browser": {
+            "executable": "/home/rafi/.cache/ms-playwright/chromium_headless_shell-1243/chrome-headless-shell-linux64/chrome-headless-shell",
+            "sha256": "ded93a9c9a53a1ae040f08124badcca95c938e9d5015ff340c3b5538c41bf39e",
+            "product": "HeadlessChrome/153.0.8010.12",
+            "revision": "@971a7443b0c9b0a9b2860529b33331b76077ec62",
+            "user_agent": "Mozilla/5.0 (X11; Linux x86_64) AppleWebKit/537.36 (KHTML, like Gecko) HeadlessChrome/153.0.8010.12 Safari/537.36",
+            "js_version": "15.3.76.4"
+          },
+          "collector": {
+            "node": "v26.7.0",
+            "executable_sha256": "ad19784f7e90ba789a099eccba77ede8dc90a778c424f1c10a70fed3ff903fdc"
+          },
+          "started_at": "2026-10-05T18:56:41.100Z",
+          "finished_at": "2026-10-05T18:57:21.164Z",
+          "source_decoder_valid": true,
+          "cleanup_valid": true,
+          "instrument_diagnostic_valid": true,
+          "failures": [],
+          "native": {
+            "connection": "connected",
+            "feedback_packets": 0,
+            "outbound": [
+              {
+                "bytesSent": 20047604,
+                "codecId": "RTCCodec_RTCTransport_send_PT96",
+                "nackCount": 0,
+                "packetsSent": 18060,
+                "retransmittedPacketsSent": 0,
+                "ssrc": 1196838968
+              }
+            ],
+            "source": {
+              "completed": true,
+              "elapsed_seconds": 40.00133679,
+              "expected_frames": 2400,
+              "frames_enqueued": 2400,
+              "intended_duration_seconds": 40,
+              "max_schedule_lateness_us": 2071,
+              "mean_schedule_lateness_us": 1038.3419158361019,
+              "packets_enqueued": 18060,
+              "rtp_payload_bitrate_bps": 4009520,
+              "rtp_payload_bytes_enqueued": 20047604,
+              "running": false,
+              "source_policy_valid": true
+            },
+            "transport": {
+              "bytesReceived": 7119,
+              "bytesSent": 20559922,
+              "dtlsCipher": "TLS_ECDHE_ECDSA_WITH_AES_128_GCM_SHA256",
+              "dtlsRole": "server",
+              "dtlsState": "connected",
+              "iceRole": "controlling",
+              "iceState": "connected",
+              "packetsReceived": 95,
+              "packetsSent": 18147,
+              "selectedCandidatePairId": "RTCIceCandidatePair_candidate:3MKa8kEU1ZUwpyaJ5SN1QNNhjW0xr3LO_candidate:FsO4qVqF3ncBqemfJyyJAZGzhYaJD2P/",
+              "srtpCipher": "SRTP_AEAD_AES_128_GCM"
+            }
+          },
+          "decoder": {
+            "valid": true,
+            "failures": [],
+            "measured_seconds": 19.006406982421876,
+            "bitrate_bps": 4020571.8035330987,
+            "decoded_fps": 59.979774244249946,
+            "lost_packets": 0,
+            "received_packets": 8600
+          },
+          "signaling": {
+            "trace": [
+              {
+                "at": 1791226600764,
+                "operation": "ok"
+              },
+              {
+                "at": 1791226600813,
+                "operation": "i"
+              },
+              {
+                "at": 1791226600813,
+                "operation": "a"
+              }
+            ],
+            "negotiation": {
+              "local": [
+                "a=fingerprint:sha-256 FF:E8:F5:59:60:A0:F5:4C:A0:93:97:12:E5:79:25:CC:E1:4A:DE:D9:8F:47:8B:E3:9B:3C:A8:A1:66:72:DC:65",
+                "m=video 9 UDP/TLS/RTP/SAVPF 96",
+                "c=IN IP4 0.0.0.0",
+                "a=setup:actpass",
+                "a=mid:0",
+                "a=rtpmap:96 VP8/90000",
+                "a=rtcp-fb:96 nack",
+                "a=rtcp-fb:96 nack pli",
+                "a=sendrecv",
+                "a=candidate:3122224247 1 udp 2130706431 192.168.178.31 46584 typ host",
+                "a=candidate:3122224247 2 udp 2130706431 192.168.178.31 46584 typ host",
+                "a=end-of-candidates"
+              ],
+              "remote": [
+                "a=fingerprint:sha-256 C1:E9:E9:97:2B:D5:38:81:E2:69:0E:B0:99:93:B6:77:80:2A:CB:26:F3:D8:1F:75:4E:30:5A:10:8F:B4:AA:32",
+                "a=ice-lite",
+                "m=video 9 UDP/TLS/RTP/SAVPF 96",
+                "c=IN IP4 0.0.0.0",
+                "a=setup:active",
+                "a=mid:0",
+                "a=rtpmap:96 VP8/90000",
+                "a=rtcp-fb:96 nack",
+                "a=rtcp-fb:96 nack pli",
+                "a=rtcp-fb:96 nack",
+                "a=rtcp-fb:96 nack pli",
+                "a=recvonly",
+                "a=candidate:3122224247 1 udp 2130706431 192.168.178.31 60322 typ host",
+                "a=candidate:3122224247 2 udp 2130706431 192.168.178.31 60322 typ host",
+                "a=end-of-candidates"
+              ]
+            }
+          },
+          "post_leave": {
+            "browser": [
+              null
+            ],
+            "sessions": [],
+            "publisher": {
+              "engine_stats": {
+                "metrics": {
+                  "gelabber_media_forwarded_bytes_total": 19831037,
+                  "gelabber_media_ice_fails_total": 0,
+                  "gelabber_media_peers": 0,
+                  "gelabber_media_rooms": 0,
+                  "gelabber_media_rtp_jitter_ms": 2.693,
+                  "gelabber_media_rtp_lost_total": 0,
+                  "gelabber_media_rtp_packets_total": 18060
+                },
+                "peers": 0,
+                "rooms": 0
+              }
+            },
+            "native_exit": {
+              "exitcode": 0,
+              "signal": null,
+              "clean": true
+            }
+          },
+          "cleanup_errors": []
+        },
+        {
+          "engine": "mediasoup",
+          "raw_browser_sha256": "0bbd8a13edaccc69903cc8362f2bc31f88e5e1338f77b34ac13813985a95adf3",
+          "returncode": 0,
+          "server_error": null,
+          "monitoring_errors": [],
+          "owned_container_cleanup_valid": true,
+          "resource_measurement_valid_under_recorded_collector": true,
+          "post_leave_sample_count": 6,
+          "run_plan": {
+            "engine": "mediasoup",
+            "backend": "http://127.0.0.1:58787",
+            "execute": true,
+            "seconds": 20,
+            "warmup": 10,
+            "native_bind": "192.168.178.31",
+            "topology": {
+              "source_publishers": 1,
+              "receivers": 1,
+              "voice_peers": 0,
+              "media_dtls_transports": 2,
+              "native_audio_tracks": 0,
+              "janus_sessions": 0
+            },
+            "source_replay_seconds": 40
+          },
+          "instrument": {
+            "archive_sha256": "0b15fe7fda29da794802307c88fe23053ad342bd80c485d441e121d325d663db",
+            "binary_sha256": "7bac27b8e56ca72c0beabec8749d38e1ddec1adb59f1673e218f8cdf56dc7d88",
+            "instrument": "fixed-rtp-webrtc-v1",
+            "webrtc": "0.20.5"
+          },
+          "executed_source": {
+            "archive_sha256": "0b15fe7fda29da794802307c88fe23053ad342bd80c485d441e121d325d663db",
+            "binary_sha256": "7bac27b8e56ca72c0beabec8749d38e1ddec1adb59f1673e218f8cdf56dc7d88",
+            "instrument": "fixed-rtp-webrtc-v1",
+            "webrtc": "0.20.5"
+          },
+          "executed_browser": {
+            "executable": "/home/rafi/.cache/ms-playwright/chromium_headless_shell-1243/chrome-headless-shell-linux64/chrome-headless-shell",
+            "sha256": "ded93a9c9a53a1ae040f08124badcca95c938e9d5015ff340c3b5538c41bf39e",
+            "product": "HeadlessChrome/153.0.8010.12",
+            "revision": "@971a7443b0c9b0a9b2860529b33331b76077ec62",
+            "user_agent": "Mozilla/5.0 (X11; Linux x86_64) AppleWebKit/537.36 (KHTML, like Gecko) HeadlessChrome/153.0.8010.12 Safari/537.36",
+            "js_version": "15.3.76.4"
+          },
+          "collector": {
+            "node": "v26.7.0",
+            "executable_sha256": "ad19784f7e90ba789a099eccba77ede8dc90a778c424f1c10a70fed3ff903fdc"
+          },
+          "started_at": "2026-10-05T18:57:30.827Z",
+          "finished_at": "2026-10-05T18:58:11.004Z",
+          "source_decoder_valid": true,
+          "cleanup_valid": true,
+          "instrument_diagnostic_valid": true,
+          "failures": [],
+          "native": {
+            "connection": "connected",
+            "feedback_packets": 0,
+            "outbound": [
+              {
+                "bytesSent": 20047604,
+                "codecId": "RTCCodec_RTCTransport_send_PT96",
+                "nackCount": 0,
+                "packetsSent": 18060,
+                "retransmittedPacketsSent": 0,
+                "ssrc": 1196838968
+              }
+            ],
+            "source": {
+              "completed": true,
+              "elapsed_seconds": 40.001563409,
+              "expected_frames": 2400,
+              "frames_enqueued": 2400,
+              "intended_duration_seconds": 40,
+              "max_schedule_lateness_us": 2080,
+              "mean_schedule_lateness_us": 1053.6502214839425,
+              "packets_enqueued": 18060,
+              "rtp_payload_bitrate_bps": 4009520,
+              "rtp_payload_bytes_enqueued": 20047604,
+              "running": false,
+              "source_policy_valid": true
+            },
+            "transport": {
+              "bytesReceived": 5165,
+              "bytesSent": 20558886,
+              "dtlsCipher": "TLS_ECDHE_ECDSA_WITH_CHACHA20_POLY1305_SHA256",
+              "dtlsRole": "server",
+              "dtlsState": "connected",
+              "iceRole": "controlling",
+              "iceState": "connected",
+              "packetsReceived": 61,
+              "packetsSent": 18126,
+              "selectedCandidatePairId": "RTCIceCandidatePair_candidate:eukd2NJsyGuTbPMe7JzMraKiUjV7tK5k_candidate:rCRguBJn8urBfMt8wtfYTBljaLd4Q7pd",
+              "srtpCipher": "SRTP_AEAD_AES_256_GCM"
+            }
+          },
+          "decoder": {
+            "valid": true,
+            "failures": [],
+            "measured_seconds": 19.006796875,
+            "bitrate_bps": 4000374.4186906824,
+            "decoded_fps": 59.978543859721235,
+            "lost_packets": 0,
+            "received_packets": 8559
+          },
+          "signaling": {
+            "negotiation": {
+              "local": [
+                "a=fingerprint:sha-256 25:73:28:E8:A6:C7:8A:82:00:7F:66:3E:92:F6:98:7C:28:F1:8C:F5:77:21:A0:16:07:CD:4C:4B:C1:72:DD:D2",
+                "m=video 9 UDP/TLS/RTP/SAVPF 96",
+                "c=IN IP4 0.0.0.0",
+                "a=setup:actpass",
+                "a=mid:0",
+                "a=rtpmap:96 VP8/90000",
+                "a=rtcp-fb:96 nack",
+                "a=rtcp-fb:96 nack pli",
+                "a=sendrecv",
+                "a=candidate:3122224247 1 udp 2130706431 192.168.178.31 58377 typ host",
+                "a=candidate:3122224247 2 udp 2130706431 192.168.178.31 58377 typ host",
+                "a=end-of-candidates"
+              ],
+              "remote": [
+                "a=ice-lite",
+                "a=fingerprint:sha-256 35:33:C9:A6:60:3E:21:72:80:11:ED:32:5E:01:17:75:B1:53:5B:D9:A9:F6:AF:9D:8C:CE:5E:FB:04:25:21:EA",
+                "m=video 7 UDP/TLS/RTP/SAVPF 96",
+                "c=IN IP4 127.0.0.1",
+                "a=rtpmap:96 VP8/90000",
+                "a=rtcp-fb:96 nack ",
+                "a=rtcp-fb:96 nack pli",
+                "a=setup:active",
+                "a=mid:0",
+                "a=recvonly",
+                "a=candidate:udpcandidate 1 udp 1076302079 192.168.178.31 12156 typ host",
+                "a=end-of-candidates"
+              ]
+            }
+          },
+          "post_leave": {
+            "browser": [
+              {
+                "peer_left": true
+              }
+            ],
+            "sessions": [],
+            "publisher": {
+              "engine_stats": {
+                "consumers": 0,
+                "peers": 0,
+                "producers": 0,
+                "transports": 0
+              }
+            },
+            "native_exit": {
+              "exitcode": 0,
+              "signal": null,
+              "clean": true
+            }
+          },
+          "cleanup_errors": []
+        },
+        {
+          "engine": "janus",
+          "raw_browser_sha256": "b302902f0d7d00126fb4caf2d4b8aa7ca3f422ae9a94e7a6b5b480bee38f6237",
+          "returncode": 0,
+          "server_error": null,
+          "monitoring_errors": [],
+          "owned_container_cleanup_valid": true,
+          "resource_measurement_valid_under_recorded_collector": true,
+          "post_leave_sample_count": 6,
+          "run_plan": {
+            "engine": "janus",
+            "backend": "http://127.0.0.1:53805",
+            "execute": true,
+            "seconds": 20,
+            "warmup": 10,
+            "native_bind": "192.168.178.31",
+            "topology": {
+              "source_publishers": 1,
+              "receivers": 1,
+              "voice_peers": 0,
+              "media_dtls_transports": 2,
+              "native_audio_tracks": 0,
+              "janus_sessions": 3
+            },
+            "source_replay_seconds": 40
+          },
+          "instrument": {
+            "archive_sha256": "0b15fe7fda29da794802307c88fe23053ad342bd80c485d441e121d325d663db",
+            "binary_sha256": "7bac27b8e56ca72c0beabec8749d38e1ddec1adb59f1673e218f8cdf56dc7d88",
+            "instrument": "fixed-rtp-webrtc-v1",
+            "webrtc": "0.20.5"
+          },
+          "executed_source": {
+            "archive_sha256": "0b15fe7fda29da794802307c88fe23053ad342bd80c485d441e121d325d663db",
+            "binary_sha256": "7bac27b8e56ca72c0beabec8749d38e1ddec1adb59f1673e218f8cdf56dc7d88",
+            "instrument": "fixed-rtp-webrtc-v1",
+            "webrtc": "0.20.5"
+          },
+          "executed_browser": {
+            "executable": "/home/rafi/.cache/ms-playwright/chromium_headless_shell-1243/chrome-headless-shell-linux64/chrome-headless-shell",
+            "sha256": "ded93a9c9a53a1ae040f08124badcca95c938e9d5015ff340c3b5538c41bf39e",
+            "product": "HeadlessChrome/153.0.8010.12",
+            "revision": "@971a7443b0c9b0a9b2860529b33331b76077ec62",
+            "user_agent": "Mozilla/5.0 (X11; Linux x86_64) AppleWebKit/537.36 (KHTML, like Gecko) HeadlessChrome/153.0.8010.12 Safari/537.36",
+            "js_version": "15.3.76.4"
+          },
+          "collector": {
+            "node": "v26.7.0",
+            "executable_sha256": "ad19784f7e90ba789a099eccba77ede8dc90a778c424f1c10a70fed3ff903fdc"
+          },
+          "started_at": "2026-10-05T18:58:20.285Z",
+          "finished_at": "2026-10-05T18:59:00.401Z",
+          "source_decoder_valid": true,
+          "cleanup_valid": true,
+          "instrument_diagnostic_valid": true,
+          "failures": [],
+          "native": {
+            "connection": "connected",
+            "feedback_packets": 0,
+            "outbound": [
+              {
+                "bytesSent": 20047604,
+                "codecId": "RTCCodec_RTCTransport_send_PT96",
+                "nackCount": 0,
+                "packetsSent": 18060,
+                "retransmittedPacketsSent": 0,
+                "ssrc": 1196838968
+              }
+            ],
+            "source": {
+              "completed": true,
+              "elapsed_seconds": 40.001291049,
+              "expected_frames": 2400,
+              "frames_enqueued": 2400,
+              "intended_duration_seconds": 40,
+              "max_schedule_lateness_us": 7914,
+              "mean_schedule_lateness_us": 1053.5788482834994,
+              "packets_enqueued": 18060,
+              "rtp_payload_bitrate_bps": 4009520,
+              "rtp_payload_bytes_enqueued": 20047604,
+              "running": false,
+              "source_policy_valid": true
+            },
+            "transport": {
+              "bytesReceived": 5315,
+              "bytesSent": 20558367,
+              "dtlsCipher": "TLS_ECDHE_ECDSA_WITH_CHACHA20_POLY1305_SHA256",
+              "dtlsRole": "server",
+              "dtlsState": "connected",
+              "iceRole": "controlling",
+              "iceState": "connected",
+              "packetsReceived": 70,
+              "packetsSent": 18127,
+              "selectedCandidatePairId": "RTCIceCandidatePair_candidate:ccY2NGVkgDmSY9drM+XBCStUEO1OQP+F_candidate:UeIjiucupfrDcfPxuX4vCgvblOE+Suw+",
+              "srtpCipher": "SRTP_AEAD_AES_256_GCM"
+            }
+          },
+          "decoder": {
+            "valid": true,
+            "failures": [],
+            "measured_seconds": 19.006173095703126,
+            "bitrate_bps": 4004254.8079921347,
+            "decoded_fps": 60.033126829617,
+            "lost_packets": 0,
+            "received_packets": 8566
+          },
+          "signaling": {
+            "backend_events": {
+              "transport": "node-backend-longpoll/browser-SSE",
+              "maximum_backend_sessions": 2,
+              "remaining_backend_sessions": 2,
+              "trace_event_count": 20
+            },
+            "negotiation": {
+              "local": [
+                "a=fingerprint:sha-256 F6:B5:0B:29:5B:61:C1:E1:09:D0:7D:EC:02:0B:0A:A0:91:E6:EE:3F:F4:FA:14:59:14:D0:23:68:24:20:8D:0D",
+                "m=video 9 UDP/TLS/RTP/SAVPF 96",
+                "c=IN IP4 0.0.0.0",
+                "a=setup:actpass",
+                "a=mid:0",
+                "a=rtpmap:96 VP8/90000",
+                "a=rtcp-fb:96 nack",
+                "a=rtcp-fb:96 nack pli",
+                "a=sendrecv",
+                "a=candidate:3122224247 1 udp 2130706431 192.168.178.31 41375 typ host",
+                "a=candidate:3122224247 2 udp 2130706431 192.168.178.31 41375 typ host",
+                "a=end-of-candidates"
+              ],
+              "remote": [
+                "a=fingerprint:sha-256 F3:B2:57:2D:0C:96:26:01:71:08:F5:CB:28:1D:AF:40:9C:46:12:D1:10:BA:7E:E3:7C:E4:E6:0C:14:80:3D:4D",
+                "a=ice-lite",
+                "m=video 9 UDP/TLS/RTP/SAVPF 96",
+                "c=IN IP4 192.168.178.31",
+                "a=recvonly",
+                "a=mid:0",
+                "a=setup:active",
+                "a=rtpmap:96 VP8/90000",
+                "a=rtcp-fb:96 ccm fir",
+                "a=rtcp-fb:96 nack",
+                "a=rtcp-fb:96 nack pli",
+                "a=rtcp-fb:96 goog-remb",
+                "a=candidate:1 1 udp 2015363583 192.168.178.31 12174 typ host",
+                "a=end-of-candidates"
+              ]
+            },
+            "request_count": 20
+          },
+          "post_leave": {
+            "browser": [
+              {
+                "destroyed_sessions": [
+                  8908969760841505
+                ],
+                "remaining_pending": 0,
+                "connection_state": "closed"
+              }
+            ],
+            "sessions": [
+              {
+                "id": 8908969760841505,
+                "absent": true,
+                "status": 404
+              }
+            ],
+            "publisher": {
+              "engine_stats": {
+                "rooms": [],
+                "diagnostic_room_present": false,
+                "diagnostic_publishers": 0,
+                "diagnostic_subscribers": 0,
+                "count_basis": "confirmed room destroy and absence from room list; sessions confirmed destroyed separately"
+              },
+              "destroyed_sessions": [
+                5810680935832783,
+                3326297866454477
+              ],
+              "backend_events": {
+                "transport": "node-backend-longpoll/browser-SSE",
+                "maximum_backend_sessions": 2,
+                "remaining_backend_sessions": 0,
+                "trace_event_count": 20
+              }
+            },
+            "native_exit": {
+              "exitcode": 0,
+              "signal": null,
+              "clean": true
+            }
+          },
+          "cleanup_errors": [],
+          "browser_janus_broker": {
+            "transport": "node-backend-longpoll/browser-SSE",
+            "maximum_backend_sessions": 1,
+            "remaining_backend_sessions": 0,
+            "trace_event_count": 10
+          }
+        }
+      ]
+    },
+    {
+      "artifact_directory": "/tmp/gelabber-native-video-sfu-diag-final6-20261005",
+      "raw_report_sha256": "adb3c0a5128f502fab5d224237bc37639bb5b14630ed080cde5e696cd8a4cdae",
+      "source_revision": "979e7b0402ab2088b843e873dfcc542489c8af5a",
+      "source_dirty": true,
+      "input_sha256": {
+        "source.rtpbin": "0b15fe7fda29da794802307c88fe23053ad342bd80c485d441e121d325d663db",
+        "fixed-rtp-source": "7bac27b8e56ca72c0beabec8749d38e1ddec1adb59f1673e218f8cdf56dc7d88",
+        "package-lock.json": "9d02e4d3313afe6d1fc466ab4fa598993660385d21a13021089fbeca04e1954c",
+        "proxy-target.mjs": "eeb6a5b035738da7b5c7320dcaa5b40fb24506f26fd631921f54666b4840e7a2",
+        "browser-provenance.mjs": "c50c9ac32f4acf91982f05ef2cefcf5e945b61a63073c9bc499f216ba3d5c4ec",
+        "janus-broker.mjs": "c340597861ab6512d59f73cac6bb248f553122d5d45f5b9a865523351e36c413",
+        "janus-events.mjs": "611b677b7bcbc0154d04b9be3375ecab6c15c6339feeb177f0426c071f5584b4",
+        "mediasoup-native-sdp.mjs": "7b04b53bc55f29cfdc354ea18cbc9228f4db0a42eab852b1617bf3df765e1115",
+        "native-video.mjs": "3b25f3dd8b428dd91f4d1f78362a06cf865a618fa0a5bfc7108cd8f829c975ea",
+        "native-video.bundle.js": "cad6895d1615b4ed57375b41a5ff6ab949cecfcad5ffa505944347e21852f202",
+        "native-video-browser.mjs": "10f653aad9d8cc91ce48b0b736bb23a22d375edf4b339093150c10d856273726",
+        "native-video-adapters.mjs": "1b46577ae108659f693d07392d9788c0722c12f0cf3bddcc6518991b86a8bbe4",
+        "native-video-pilot.mjs": "ff201299f333d0c5e8b1ac64c5aa0fcc93f351e7f85b48a455bf74ae1d3f8e95",
+        "record.py": "ce2f366f6360ca1f17dee550c68dfa3724966348c7ef9969bc75671420a52b33",
+        "run-fixed-video.py": "7a6edc21dc3b6f15e9c1e11ce780c6cb6b5a1748e6490285e8b212e003bd32a2",
+        "mediasoup-probe/probe": "df90621e944a6ed22daec75096e2f8fb4ca092af6de3635ef955f1112dfca01b",
+        "current-probe/probe": "a2fd497a4836ea1aba57baa8e1216c9fae73476a75ba0e8bad4ab37875285701"
+      },
+      "runs": [
+        {
+          "engine": "current",
+          "raw_browser_sha256": "cc9a1f7b510f02104ff41ee6ac56c486853666f78b23f30049d1f15718a487a3",
+          "returncode": 0,
+          "server_error": null,
+          "monitoring_errors": [],
+          "resource_measurement_valid_under_recorded_collector": true,
+          "resource_measurement_failures": [],
+          "owned_container_cleanup_valid": true,
+          "post_leave_sample_count": 6,
+          "run_plan": {
+            "engine": "current",
+            "backend": "http://127.0.0.1:57681",
+            "execute": true,
+            "seconds": 10,
+            "warmup": 10,
+            "native_bind": "192.168.178.31",
+            "topology": {
+              "source_publishers": 1,
+              "receivers": 1,
+              "voice_peers": 0,
+              "media_dtls_transports": 2,
+              "native_audio_tracks": 0,
+              "janus_sessions": 0
+            },
+            "source_replay_seconds": 30
+          },
+          "instrument": {
+            "archive_sha256": "0b15fe7fda29da794802307c88fe23053ad342bd80c485d441e121d325d663db",
+            "binary_sha256": "7bac27b8e56ca72c0beabec8749d38e1ddec1adb59f1673e218f8cdf56dc7d88",
+            "instrument": "fixed-rtp-webrtc-v1",
+            "webrtc": "0.20.5"
+          },
+          "executed_source": {
+            "archive_sha256": "0b15fe7fda29da794802307c88fe23053ad342bd80c485d441e121d325d663db",
+            "binary_sha256": "7bac27b8e56ca72c0beabec8749d38e1ddec1adb59f1673e218f8cdf56dc7d88",
+            "instrument": "fixed-rtp-webrtc-v1",
+            "webrtc": "0.20.5"
+          },
+          "executed_browser": {
+            "executable": "/home/rafi/.cache/ms-playwright/chromium_headless_shell-1243/chrome-headless-shell-linux64/chrome-headless-shell",
+            "sha256": "ded93a9c9a53a1ae040f08124badcca95c938e9d5015ff340c3b5538c41bf39e",
+            "product": "HeadlessChrome/153.0.8010.12",
+            "revision": "@971a7443b0c9b0a9b2860529b33331b76077ec62",
+            "user_agent": "Mozilla/5.0 (X11; Linux x86_64) AppleWebKit/537.36 (KHTML, like Gecko) HeadlessChrome/153.0.8010.12 Safari/537.36",
+            "js_version": "15.3.76.4"
+          },
+          "collector": {
+            "node": "v26.7.0",
+            "executable_sha256": "ad19784f7e90ba789a099eccba77ede8dc90a778c424f1c10a70fed3ff903fdc"
+          },
+          "started_at": "2026-10-05T19:00:53.375Z",
+          "finished_at": "2026-10-05T19:01:23.462Z",
+          "source_decoder_valid": true,
+          "cleanup_valid": true,
+          "instrument_diagnostic_valid": true,
+          "failures": [],
+          "native": {
+            "connection": "connected",
+            "feedback_packets": 0,
+            "outbound": [
+              {
+                "bytesSent": 15035703,
+                "codecId": "RTCCodec_RTCTransport_send_PT96",
+                "nackCount": 0,
+                "packetsSent": 13545,
+                "retransmittedPacketsSent": 0,
+                "ssrc": 1196838968
+              }
+            ],
+            "source": {
+              "completed": true,
+              "elapsed_seconds": 30.001608445,
+              "expected_frames": 1800,
+              "frames_enqueued": 1800,
+              "intended_duration_seconds": 30,
+              "max_schedule_lateness_us": 2052,
+              "mean_schedule_lateness_us": 1050.3697305278702,
+              "packets_enqueued": 13545,
+              "rtp_payload_bitrate_bps": 4009520,
+              "rtp_payload_bytes_enqueued": 15035703,
+              "running": false,
+              "source_policy_valid": true
+            },
+            "transport": {
+              "bytesReceived": 5719,
+              "bytesSent": 15420239,
+              "dtlsCipher": "TLS_ECDHE_ECDSA_WITH_AES_128_GCM_SHA256",
+              "dtlsRole": "server",
+              "dtlsState": "connected",
+              "iceRole": "controlling",
+              "iceState": "connected",
+              "packetsReceived": 75,
+              "packetsSent": 13612,
+              "selectedCandidatePairId": "RTCIceCandidatePair_candidate:tLADTaf+tMRT7FLiJDOOFDOUa0qyJ47D_candidate:kdD5gGBo/Upgrvi2EXp/g1y8aU7qsANz",
+              "srtpCipher": "SRTP_AEAD_AES_128_GCM"
+            }
+          },
+          "decoder": {
+            "valid": true,
+            "failures": [],
+            "measured_seconds": 9.002951904296875,
+            "bitrate_bps": 4033333.9982266556,
+            "decoded_fps": 59.98032709052595,
+            "lost_packets": 0,
+            "received_packets": 4084
+          },
+          "signaling": {
+            "trace": [
+              {
+                "at": 1791226853050,
+                "operation": "ok"
+              },
+              {
+                "at": 1791226853099,
+                "operation": "i"
+              },
+              {
+                "at": 1791226853099,
+                "operation": "a"
+              }
+            ],
+            "negotiation": {
+              "local": [
+                "a=fingerprint:sha-256 DB:B3:D1:E7:89:C5:20:66:E4:33:9B:7D:E9:DB:AB:C4:EB:B3:EA:2D:11:F4:E5:7F:A0:25:5E:D1:1A:1B:A2:A6",
+                "m=video 9 UDP/TLS/RTP/SAVPF 96",
+                "c=IN IP4 0.0.0.0",
+                "a=setup:actpass",
+                "a=mid:0",
+                "a=rtpmap:96 VP8/90000",
+                "a=rtcp-fb:96 nack",
+                "a=rtcp-fb:96 nack pli",
+                "a=sendrecv",
+                "a=candidate:3122224247 1 udp 2130706431 192.168.178.31 44443 typ host",
+                "a=candidate:3122224247 2 udp 2130706431 192.168.178.31 44443 typ host",
+                "a=end-of-candidates"
+              ],
+              "remote": [
+                "a=fingerprint:sha-256 11:D7:D3:A0:11:31:3D:66:49:E5:74:4F:46:D5:63:85:A6:5C:F0:A2:FD:BC:85:E4:47:69:8F:CF:A4:A4:B2:18",
+                "a=ice-lite",
+                "m=video 9 UDP/TLS/RTP/SAVPF 96",
+                "c=IN IP4 0.0.0.0",
+                "a=setup:active",
+                "a=mid:0",
+                "a=rtpmap:96 VP8/90000",
+                "a=rtcp-fb:96 nack",
+                "a=rtcp-fb:96 nack pli",
+                "a=rtcp-fb:96 nack",
+                "a=rtcp-fb:96 nack pli",
+                "a=recvonly",
+                "a=candidate:3122224247 1 udp 2130706431 192.168.178.31 55773 typ host",
+                "a=candidate:3122224247 2 udp 2130706431 192.168.178.31 55773 typ host",
+                "a=end-of-candidates"
+              ]
+            }
+          },
+          "post_leave": {
+            "browser": [
+              {
+                "connection_state": "closed",
+                "websocket_state": 3
+              }
+            ],
+            "sessions": [],
+            "publisher": {
+              "engine_stats": {
+                "metrics": {
+                  "gelabber_media_forwarded_bytes_total": 14819136,
+                  "gelabber_media_ice_fails_total": 0,
+                  "gelabber_media_peers": 0,
+                  "gelabber_media_rooms": 0,
+                  "gelabber_media_rtp_jitter_ms": 2.759,
+                  "gelabber_media_rtp_lost_total": 0,
+                  "gelabber_media_rtp_packets_total": 13545
+                },
+                "peers": 0,
+                "rooms": 0
+              }
+            },
+            "native_exit": {
+              "exitcode": 0,
+              "signal": null,
+              "clean": true
+            }
+          },
+          "cleanup_errors": []
+        },
+        {
+          "engine": "mediasoup",
+          "raw_browser_sha256": "1c5639e6eba6316b6ff42ae06033a7b36327bdc6df96bedb1964e56a2c0646db",
+          "returncode": 0,
+          "server_error": null,
+          "monitoring_errors": [],
+          "resource_measurement_valid_under_recorded_collector": true,
+          "resource_measurement_failures": [],
+          "owned_container_cleanup_valid": true,
+          "post_leave_sample_count": 6,
+          "run_plan": {
+            "engine": "mediasoup",
+            "backend": "http://127.0.0.1:40401",
+            "execute": true,
+            "seconds": 10,
+            "warmup": 10,
+            "native_bind": "192.168.178.31",
+            "topology": {
+              "source_publishers": 1,
+              "receivers": 1,
+              "voice_peers": 0,
+              "media_dtls_transports": 2,
+              "native_audio_tracks": 0,
+              "janus_sessions": 0
+            },
+            "source_replay_seconds": 30
+          },
+          "instrument": {
+            "archive_sha256": "0b15fe7fda29da794802307c88fe23053ad342bd80c485d441e121d325d663db",
+            "binary_sha256": "7bac27b8e56ca72c0beabec8749d38e1ddec1adb59f1673e218f8cdf56dc7d88",
+            "instrument": "fixed-rtp-webrtc-v1",
+            "webrtc": "0.20.5"
+          },
+          "executed_source": {
+            "archive_sha256": "0b15fe7fda29da794802307c88fe23053ad342bd80c485d441e121d325d663db",
+            "binary_sha256": "7bac27b8e56ca72c0beabec8749d38e1ddec1adb59f1673e218f8cdf56dc7d88",
+            "instrument": "fixed-rtp-webrtc-v1",
+            "webrtc": "0.20.5"
+          },
+          "executed_browser": {
+            "executable": "/home/rafi/.cache/ms-playwright/chromium_headless_shell-1243/chrome-headless-shell-linux64/chrome-headless-shell",
+            "sha256": "ded93a9c9a53a1ae040f08124badcca95c938e9d5015ff340c3b5538c41bf39e",
+            "product": "HeadlessChrome/153.0.8010.12",
+            "revision": "@971a7443b0c9b0a9b2860529b33331b76077ec62",
+            "user_agent": "Mozilla/5.0 (X11; Linux x86_64) AppleWebKit/537.36 (KHTML, like Gecko) HeadlessChrome/153.0.8010.12 Safari/537.36",
+            "js_version": "15.3.76.4"
+          },
+          "collector": {
+            "node": "v26.7.0",
+            "executable_sha256": "ad19784f7e90ba789a099eccba77ede8dc90a778c424f1c10a70fed3ff903fdc"
+          },
+          "started_at": "2026-10-05T19:01:32.900Z",
+          "finished_at": "2026-10-05T19:02:03.003Z",
+          "source_decoder_valid": true,
+          "cleanup_valid": true,
+          "instrument_diagnostic_valid": true,
+          "failures": [],
+          "native": {
+            "connection": "connected",
+            "feedback_packets": 0,
+            "outbound": [
+              {
+                "bytesSent": 15035703,
+                "codecId": "RTCCodec_RTCTransport_send_PT96",
+                "nackCount": 0,
+                "packetsSent": 13545,
+                "retransmittedPacketsSent": 0,
+                "ssrc": 1196838968
+              }
+            ],
+            "source": {
+              "completed": true,
+              "elapsed_seconds": 30.001711465,
+              "expected_frames": 1800,
+              "frames_enqueued": 1800,
+              "intended_duration_seconds": 30,
+              "max_schedule_lateness_us": 2415,
+              "mean_schedule_lateness_us": 1056.7812476928757,
+              "packets_enqueued": 13545,
+              "rtp_payload_bitrate_bps": 4009520,
+              "rtp_payload_bytes_enqueued": 15035703,
+              "running": false,
+              "source_policy_valid": true
+            },
+            "transport": {
+              "bytesReceived": 4343,
+              "bytesSent": 15419444,
+              "dtlsCipher": "TLS_ECDHE_ECDSA_WITH_CHACHA20_POLY1305_SHA256",
+              "dtlsRole": "server",
+              "dtlsState": "connected",
+              "iceRole": "controlling",
+              "iceState": "connected",
+              "packetsReceived": 49,
+              "packetsSent": 13596,
+              "selectedCandidatePairId": "RTCIceCandidatePair_candidate:oklUWpcVwxaVXYutHKGgpgxwkG2DiiFJ_candidate:f4wIWZwkRbgu5pAHOxYCULyRdK1VgJay",
+              "srtpCipher": "SRTP_AEAD_AES_256_GCM"
+            }
+          },
+          "decoder": {
+            "valid": true,
+            "failures": [],
+            "measured_seconds": 9.00384912109375,
+            "bitrate_bps": 3988359.1469642185,
+            "decoded_fps": 59.97435016263389,
+            "lost_packets": 0,
+            "received_packets": 4041
+          },
+          "signaling": {
+            "negotiation": {
+              "local": [
+                "a=fingerprint:sha-256 C2:47:06:C7:D9:4E:0F:D7:EB:72:45:B1:55:E2:86:E9:23:BD:94:9B:4B:EF:EA:A1:A9:03:4B:E4:B6:C5:25:C0",
+                "m=video 9 UDP/TLS/RTP/SAVPF 96",
+                "c=IN IP4 0.0.0.0",
+                "a=setup:actpass",
+                "a=mid:0",
+                "a=rtpmap:96 VP8/90000",
+                "a=rtcp-fb:96 nack",
+                "a=rtcp-fb:96 nack pli",
+                "a=sendrecv",
+                "a=candidate:3122224247 1 udp 2130706431 192.168.178.31 57800 typ host",
+                "a=candidate:3122224247 2 udp 2130706431 192.168.178.31 57800 typ host",
+                "a=end-of-candidates"
+              ],
+              "remote": [
+                "a=ice-lite",
+                "a=fingerprint:sha-256 BB:FC:37:81:9C:27:70:BC:90:70:A8:35:82:86:9F:C9:9D:72:80:89:52:9A:50:F9:4A:85:BF:62:D7:9C:30:A8",
+                "m=video 7 UDP/TLS/RTP/SAVPF 96",
+                "c=IN IP4 127.0.0.1",
+                "a=rtpmap:96 VP8/90000",
+                "a=rtcp-fb:96 nack ",
+                "a=rtcp-fb:96 nack pli",
+                "a=setup:active",
+                "a=mid:0",
+                "a=recvonly",
+                "a=candidate:udpcandidate 1 udp 1076302079 192.168.178.31 12081 typ host",
+                "a=end-of-candidates"
+              ]
+            },
+            "worker_fingerprints": [
+              {
+                "algorithm": "sha-1",
+                "value": "0B:7E:70:82:1D:40:E1:32:08:F8:9B:67:46:7D:1C:B1:70:15:80:41"
+              },
+              {
+                "algorithm": "sha-224",
+                "value": "5E:E2:B0:04:84:5D:BA:67:F7:3E:54:84:C1:81:41:70:5C:FD:DD:8C:92:62:AF:4F:86:31:B4:EE"
+              },
+              {
+                "algorithm": "sha-256",
+                "value": "BB:FC:37:81:9C:27:70:BC:90:70:A8:35:82:86:9F:C9:9D:72:80:89:52:9A:50:F9:4A:85:BF:62:D7:9C:30:A8"
+              },
+              {
+                "algorithm": "sha-384",
+                "value": "AE:08:B6:F5:C5:1B:41:9E:07:4A:9E:40:D2:B6:B3:79:A1:58:53:A3:8C:61:E2:C8:2F:BC:C4:35:E6:48:14:4A:B1:10:C5:4F:9A:0F:1F:B0:66:FA:06:29:E9:71:37:E6"
+              },
+              {
+                "algorithm": "sha-512",
+                "value": "FD:99:13:4B:83:E8:FC:64:CC:3D:DD:08:B6:41:64:DE:28:B8:27:A4:1A:DF:EE:53:ED:20:E6:6C:E2:2C:B0:08:F0:94:41:8A:FD:64:C1:3C:32:A4:70:C5:F8:10:22:9E:2F:5E:D7:A2:24:9B:95:B6:AF:63:B8:5A:8B:47:99:F5"
+              }
+            ]
+          },
+          "post_leave": {
+            "browser": [
+              {
+                "peer_left": true
+              }
+            ],
+            "sessions": [],
+            "publisher": {
+              "engine_stats": {
+                "consumers": 0,
+                "peers": 0,
+                "producers": 0,
+                "transports": 0
+              }
+            },
+            "native_exit": {
+              "exitcode": 0,
+              "signal": null,
+              "clean": true
+            }
+          },
+          "cleanup_errors": []
+        },
+        {
+          "engine": "janus",
+          "raw_browser_sha256": "bca0f0fbcc6f374a47a5a9c1636dd8840b165d2f9aab3e5345ad4b0811620b2f",
+          "returncode": 0,
+          "server_error": null,
+          "monitoring_errors": [
+            "[Errno 3] No such process: '/proc/843893/smaps_rollup'"
+          ],
+          "resource_measurement_valid_under_recorded_collector": false,
+          "resource_measurement_failures": [
+            "[Errno 3] No such process: '/proc/843893/smaps_rollup'"
+          ],
+          "owned_container_cleanup_valid": true,
+          "post_leave_sample_count": 6,
+          "run_plan": {
+            "engine": "janus",
+            "backend": "http://127.0.0.1:55383",
+            "execute": true,
+            "seconds": 10,
+            "warmup": 10,
+            "native_bind": "192.168.178.31",
+            "topology": {
+              "source_publishers": 1,
+              "receivers": 1,
+              "voice_peers": 0,
+              "media_dtls_transports": 2,
+              "native_audio_tracks": 0,
+              "janus_sessions": 3
+            },
+            "source_replay_seconds": 30
+          },
+          "instrument": {
+            "archive_sha256": "0b15fe7fda29da794802307c88fe23053ad342bd80c485d441e121d325d663db",
+            "binary_sha256": "7bac27b8e56ca72c0beabec8749d38e1ddec1adb59f1673e218f8cdf56dc7d88",
+            "instrument": "fixed-rtp-webrtc-v1",
+            "webrtc": "0.20.5"
+          },
+          "executed_source": {
+            "archive_sha256": "0b15fe7fda29da794802307c88fe23053ad342bd80c485d441e121d325d663db",
+            "binary_sha256": "7bac27b8e56ca72c0beabec8749d38e1ddec1adb59f1673e218f8cdf56dc7d88",
+            "instrument": "fixed-rtp-webrtc-v1",
+            "webrtc": "0.20.5"
+          },
+          "executed_browser": {
+            "executable": "/home/rafi/.cache/ms-playwright/chromium_headless_shell-1243/chrome-headless-shell-linux64/chrome-headless-shell",
+            "sha256": "ded93a9c9a53a1ae040f08124badcca95c938e9d5015ff340c3b5538c41bf39e",
+            "product": "HeadlessChrome/153.0.8010.12",
+            "revision": "@971a7443b0c9b0a9b2860529b33331b76077ec62",
+            "user_agent": "Mozilla/5.0 (X11; Linux x86_64) AppleWebKit/537.36 (KHTML, like Gecko) HeadlessChrome/153.0.8010.12 Safari/537.36",
+            "js_version": "15.3.76.4"
+          },
+          "collector": {
+            "node": "v26.7.0",
+            "executable_sha256": "ad19784f7e90ba789a099eccba77ede8dc90a778c424f1c10a70fed3ff903fdc"
+          },
+          "started_at": "2026-10-05T19:02:12.250Z",
+          "finished_at": "2026-10-05T19:02:42.454Z",
+          "source_decoder_valid": true,
+          "cleanup_valid": true,
+          "instrument_diagnostic_valid": true,
+          "failures": [],
+          "native": {
+            "connection": "connected",
+            "feedback_packets": 0,
+            "outbound": [
+              {
+                "bytesSent": 15035703,
+                "codecId": "RTCCodec_RTCTransport_send_PT96",
+                "nackCount": 0,
+                "packetsSent": 13545,
+                "retransmittedPacketsSent": 0,
+                "ssrc": 1196838968
+              }
+            ],
+            "source": {
+              "completed": true,
+              "elapsed_seconds": 30.001427129,
+              "expected_frames": 1800,
+              "frames_enqueued": 1800,
+              "intended_duration_seconds": 30,
+              "max_schedule_lateness_us": 2341,
+              "mean_schedule_lateness_us": 1047.2227390180879,
+              "packets_enqueued": 13545,
+              "rtp_payload_bitrate_bps": 4009520,
+              "rtp_payload_bytes_enqueued": 15035703,
+              "running": false,
+              "source_policy_valid": true
+            },
+            "transport": {
+              "bytesReceived": 4333,
+              "bytesSent": 15419068,
+              "dtlsCipher": "TLS_ECDHE_ECDSA_WITH_CHACHA20_POLY1305_SHA256",
+              "dtlsRole": "server",
+              "dtlsState": "connected",
+              "iceRole": "controlling",
+              "iceState": "connected",
+              "packetsReceived": 55,
+              "packetsSent": 13597,
+              "selectedCandidatePairId": "RTCIceCandidatePair_candidate:zw50IZXQOMQxrN9Wp7O3z7jTU1A60xP/_candidate:C/hqWyH3KG799RfDBh9ACdOrvVclBClg",
+              "srtpCipher": "SRTP_AEAD_AES_256_GCM"
+            }
+          },
+          "decoder": {
+            "valid": true,
+            "failures": [],
+            "measured_seconds": 9.0029560546875,
+            "bitrate_bps": 3998986.9750896706,
+            "decoded_fps": 59.980299439409386,
+            "lost_packets": 0,
+            "received_packets": 4050
+          },
+          "signaling": {
+            "backend_events": {
+              "transport": "node-backend-longpoll/browser-SSE",
+              "maximum_backend_sessions": 2,
+              "remaining_backend_sessions": 2,
+              "trace_event_count": 20
+            },
+            "negotiation": {
+              "local": [
+                "a=fingerprint:sha-256 FC:0E:88:FE:6D:76:3F:D6:38:80:61:FF:9B:D6:DD:36:D7:3C:97:61:82:06:AF:6A:47:C0:66:7E:8B:6A:6D:6C",
+                "m=video 9 UDP/TLS/RTP/SAVPF 96",
+                "c=IN IP4 0.0.0.0",
+                "a=setup:actpass",
+                "a=mid:0",
+                "a=rtpmap:96 VP8/90000",
+                "a=rtcp-fb:96 nack",
+                "a=rtcp-fb:96 nack pli",
+                "a=sendrecv",
+                "a=candidate:3122224247 1 udp 2130706431 192.168.178.31 50310 typ host",
+                "a=candidate:3122224247 2 udp 2130706431 192.168.178.31 50310 typ host",
+                "a=end-of-candidates"
+              ],
+              "remote": [
+                "a=fingerprint:sha-256 F4:20:FD:BB:A2:97:93:38:9D:7A:1B:CF:D2:08:D7:94:35:4A:D2:61:F5:6A:3E:5E:AE:49:69:9B:48:96:2A:B4",
+                "a=ice-lite",
+                "m=video 9 UDP/TLS/RTP/SAVPF 96",
+                "c=IN IP4 192.168.178.31",
+                "a=recvonly",
+                "a=mid:0",
+                "a=setup:active",
+                "a=rtpmap:96 VP8/90000",
+                "a=rtcp-fb:96 ccm fir",
+                "a=rtcp-fb:96 nack",
+                "a=rtcp-fb:96 nack pli",
+                "a=rtcp-fb:96 goog-remb",
+                "a=candidate:1 1 udp 2015363583 192.168.178.31 12079 typ host",
+                "a=end-of-candidates"
+              ]
+            },
+            "request_count": 20
+          },
+          "post_leave": {
+            "browser": [
+              {
+                "destroyed_sessions": [
+                  3904047046566209
+                ],
+                "remaining_pending": 0,
+                "connection_state": "closed"
+              }
+            ],
+            "sessions": [
+              {
+                "id": 3904047046566209,
+                "absent": true,
+                "status": 404
+              }
+            ],
+            "publisher": {
+              "engine_stats": {
+                "rooms": [],
+                "diagnostic_room_present": false,
+                "diagnostic_publishers": 0,
+                "diagnostic_subscribers": 0,
+                "count_basis": "confirmed room destroy and absence from room list; sessions confirmed destroyed separately"
+              },
+              "destroyed_sessions": [
+                8883011642943287,
+                7742784215717148
+              ],
+              "backend_events": {
+                "transport": "node-backend-longpoll/browser-SSE",
+                "maximum_backend_sessions": 2,
+                "remaining_backend_sessions": 0,
+                "trace_event_count": 20
+              }
+            },
+            "native_exit": {
+              "exitcode": 0,
+              "signal": null,
+              "clean": true
+            }
+          },
+          "cleanup_errors": [],
+          "browser_janus_broker": {
+            "transport": "node-backend-longpoll/browser-SSE",
+            "maximum_backend_sessions": 1,
+            "remaining_backend_sessions": 0,
+            "trace_event_count": 8
+          }
+        }
+      ]
+    }
+  ],
+  "findings": [
+    "First adapter setup rejected mediasoup reducedSize and Janus428 inactive feed before source.start; no media pass.",
+    "Janus ICE packets received0 with rewritten127 candidates. Pinned Janus ice.c skips loopback socket binding. Explicit existing LAN interface/candidates allowed source connection; no host network changes, no claim that an earlier UDP range or USB caused other failures.",
+    "rtc0.20.5 DTLS certificate verifier accepts only sha-256; official mediasoup-client RemoteSdp3.24.1 chooses the final advertised fingerprint, here sha-512. Bridge now selects an actual advertised sha-256 fingerprint, requires actpass, and retains certificate verification.",
+    "LAN4 Janus decoder/source passed but cleanup failed on parsing empty404; recorded as invalid. Later explicit status404 absence check passed; other malformed bodies still fail.",
+    "Fingerprint5 all engines delivered frozen4M/1080p60 locally and all owned media/session/poll/source/container cleanup checks passed. No fullN microphone/source-audio graph, identical resource quota, true latency, WAN or product authorization acceptance is claimed.",
+    "Resource PID/RSS/CPU missing-sample regression strengthened after fingerprint5 froze its inputs. No resource ranking is made from these diagnostic controls.",
+    "Final6 repeats the same archive after strict PID/RSS/CPU and native-exit checks: all three video/cleanup diagnostics valid. Current and mediasoup resource samples valid; Janus resource measurement invalid due to a Chrome PID vanishing during shutdown/smaps_rollup. Whole runner exits1, this loss remains explicit and never supports ranking."
+  ],
+  "source_instrument": {
+    "archive_sha256": "0b15fe7fda29da794802307c88fe23053ad342bd80c485d441e121d325d663db",
+    "binary_sha256": "7bac27b8e56ca72c0beabec8749d38e1ddec1adb59f1673e218f8cdf56dc7d88",
+    "comparison_available": false,
+    "instrument": "fixed-rtp-webrtc-v1",
+    "production_feature_acceptance": false,
+    "source": {
+      "codec": "VP8",
+      "comparison_available": false,
+      "congestion_adaptation": false,
+      "decoded_streams": [
+        {
+          "codec_name": "vp8",
+          "height": 1080,
+          "nb_read_frames": "600",
+          "r_frame_rate": "60/1",
+          "width": 1920
+        }
+      ],
+      "duration_seconds": 10,
+      "encoded_bitrate_bps": 3995072.8,
+      "encoded_bytes": 4993841,
+      "encoding_command": null,
+      "ffmpeg": {
+        "libvpx": [
+          {
+            "path": "/usr/lib/libvpx.so.12.1.0",
+            "sha256": "cc30f6b0cc85133cdeff5817777340aac5d8163a22627dd89570bf375ef0d6b0"
+          }
+        ],
+        "path": "/usr/bin/ffmpeg",
+        "sha256": "2e37495139c8cee4711b7e1475dac11ce54633431c4a025b7b70fa2e6d7ca3c3",
+        "version": "ffmpeg version n9.0.1 Copyright (c) 2000-2026 the FFmpeg developers"
+      },
+      "ffprobe": {
+        "libvpx": [
+          {
+            "path": "/usr/lib/libvpx.so.12.1.0",
+            "sha256": "cc30f6b0cc85133cdeff5817777340aac5d8163a22627dd89570bf375ef0d6b0"
+          }
+        ],
+        "path": "/usr/bin/ffprobe",
+        "sha256": "4493102ef9a9dee472ce68b540ba0fd3d2f714db0de930f299f681c72ec61832",
+        "version": "ffprobe version n9.0.1 Copyright (c) 2007-2026 the FFmpeg developers"
+      },
+      "fps": 60,
+      "frame_bytes_max": 51594,
+      "frame_bytes_min": 1935,
+      "frames": 600,
+      "height": 1080,
+      "ivf_sha256": "5466c241f836c408038501a0d55ede29037122f204265f222aefe2cb0fbc9dfe",
+      "keyframe_indices": [
+        0,
+        120,
+        240,
+        360,
+        480
+      ],
+      "padding_bytes": 0,
+      "picture_id_bits": 15,
+      "production_feature_acceptance": false,
+      "rtp_clock_hz": 90000,
+      "rtp_datagram_bitrate_bps": 4052864.8,
+      "rtp_mtu": 1200,
+      "rtp_packets": 4515,
+      "rtp_payload_bitrate_bps": 4009520.8,
+      "rtp_payload_bytes": 5011901,
+      "schedule": "CFR 60fps; fragments evenly spaced within their frame interval",
+      "schema": 1,
+      "source": "ffmpeg-testsrc2-1080p60-v1",
+      "target_payload_bitrate_bps": 4000000,
+      "width": 1920
+    },
+    "topology": "one additional video-only WebRTC publisher",
+    "webrtc": "0.20.5"
+  }
+}

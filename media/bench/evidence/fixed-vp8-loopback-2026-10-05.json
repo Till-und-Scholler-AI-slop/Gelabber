@@ -1,0 +1,292 @@
+{
+  "instrument": {
+    "archive_sha256": "0b15fe7fda29da794802307c88fe23053ad342bd80c485d441e121d325d663db",
+    "binary_sha256": "7bac27b8e56ca72c0beabec8749d38e1ddec1adb59f1673e218f8cdf56dc7d88",
+    "comparison_available": false,
+    "instrument": "fixed-rtp-webrtc-v1",
+    "production_feature_acceptance": false,
+    "source": {
+      "codec": "VP8",
+      "comparison_available": false,
+      "congestion_adaptation": false,
+      "decoded_streams": [
+        {
+          "codec_name": "vp8",
+          "height": 1080,
+          "nb_read_frames": "600",
+          "r_frame_rate": "60/1",
+          "width": 1920
+        }
+      ],
+      "duration_seconds": 10,
+      "encoded_bitrate_bps": 3995072.8,
+      "encoded_bytes": 4993841,
+      "encoding_command": null,
+      "ffmpeg": {
+        "libvpx": [
+          {
+            "path": "/usr/lib/libvpx.so.12.1.0",
+            "sha256": "cc30f6b0cc85133cdeff5817777340aac5d8163a22627dd89570bf375ef0d6b0"
+          }
+        ],
+        "path": "/usr/bin/ffmpeg",
+        "sha256": "2e37495139c8cee4711b7e1475dac11ce54633431c4a025b7b70fa2e6d7ca3c3",
+        "version": "ffmpeg version n9.0.1 Copyright (c) 2000-2026 the FFmpeg developers"
+      },
+      "ffprobe": {
+        "libvpx": [
+          {
+            "path": "/usr/lib/libvpx.so.12.1.0",
+            "sha256": "cc30f6b0cc85133cdeff5817777340aac5d8163a22627dd89570bf375ef0d6b0"
+          }
+        ],
+        "path": "/usr/bin/ffprobe",
+        "sha256": "4493102ef9a9dee472ce68b540ba0fd3d2f714db0de930f299f681c72ec61832",
+        "version": "ffprobe version n9.0.1 Copyright (c) 2007-2026 the FFmpeg developers"
+      },
+      "fps": 60,
+      "frame_bytes_max": 51594,
+      "frame_bytes_min": 1935,
+      "frames": 600,
+      "height": 1080,
+      "ivf_sha256": "5466c241f836c408038501a0d55ede29037122f204265f222aefe2cb0fbc9dfe",
+      "keyframe_indices": [
+        0,
+        120,
+        240,
+        360,
+        480
+      ],
+      "padding_bytes": 0,
+      "picture_id_bits": 15,
+      "production_feature_acceptance": false,
+      "rtp_clock_hz": 90000,
+      "rtp_datagram_bitrate_bps": 4052864.8,
+      "rtp_mtu": 1200,
+      "rtp_packets": 4515,
+      "rtp_payload_bitrate_bps": 4009520.8,
+      "rtp_payload_bytes": 5011901,
+      "schedule": "CFR 60fps; fragments evenly spaced within their frame interval",
+      "schema": 1,
+      "source": "ffmpeg-testsrc2-1080p60-v1",
+      "target_payload_bitrate_bps": 4000000,
+      "width": 1920
+    },
+    "topology": "one additional video-only WebRTC publisher",
+    "webrtc": "0.20.5"
+  },
+  "scope": "one native video publisher to one Chromium decoder over loopback; no SFU",
+  "source_revision": "703b3c3cd9e9a39ecff8fbd52442594a44950a30",
+  "source_dirty": true,
+  "collector": {
+    "node": "v26.8.2",
+    "executable": "/tmp/gelabber-v04-toolchain/node-v26.8.2-linux-x64/bin/node",
+    "executable_sha256": "8a22a371fd85aecf5411636574309f6380fbc42694aaf0651a089a8ef9c44e52",
+    "helper_sha256": {
+      "local-fixed-video.mjs": "793251fe430cd2abe14b8e594280a51fcbcbcd2d4254757b4bae8105de1a5737",
+      "native-video.mjs": "ce36b094f94c275c9e8addad172afe6ac587c5ae70a78ffb848c9dbeae2db5d5",
+      "browser-provenance.mjs": "c50c9ac32f4acf91982f05ef2cefcf5e945b61a63073c9bc499f216ba3d5c4ec"
+    }
+  },
+  "run_plan": {
+    "execute": true,
+    "seconds": 20,
+    "warmup": 10,
+    "topology": {
+      "source_publishers": 1,
+      "receivers": 1,
+      "voice_peers": 0,
+      "dtls_transports": 1
+    },
+    "video_source_bitrate_bps": 4009520.8
+  },
+  "comparison_available": false,
+  "production_feature_acceptance": false,
+  "failures": [],
+  "executed_source": {
+    "archive_sha256": "0b15fe7fda29da794802307c88fe23053ad342bd80c485d441e121d325d663db",
+    "binary_sha256": "7bac27b8e56ca72c0beabec8749d38e1ddec1adb59f1673e218f8cdf56dc7d88",
+    "comparison_available": false,
+    "instrument": "fixed-rtp-webrtc-v1",
+    "production_feature_acceptance": false,
+    "source": {
+      "codec": "VP8",
+      "comparison_available": false,
+      "congestion_adaptation": false,
+      "decoded_streams": [
+        {
+          "codec_name": "vp8",
+          "height": 1080,
+          "nb_read_frames": "600",
+          "r_frame_rate": "60/1",
+          "width": 1920
+        }
+      ],
+      "duration_seconds": 10,
+      "encoded_bitrate_bps": 3995072.8,
+      "encoded_bytes": 4993841,
+      "encoding_command": null,
+      "ffmpeg": {
+        "libvpx": [
+          {
+            "path": "/usr/lib/libvpx.so.12.1.0",
+            "sha256": "cc30f6b0cc85133cdeff5817777340aac5d8163a22627dd89570bf375ef0d6b0"
+          }
+        ],
+        "path": "/usr/bin/ffmpeg",
+        "sha256": "2e37495139c8cee4711b7e1475dac11ce54633431c4a025b7b70fa2e6d7ca3c3",
+        "version": "ffmpeg version n9.0.1 Copyright (c) 2000-2026 the FFmpeg developers"
+      },
+      "ffprobe": {
+        "libvpx": [
+          {
+            "path": "/usr/lib/libvpx.so.12.1.0",
+            "sha256": "cc30f6b0cc85133cdeff5817777340aac5d8163a22627dd89570bf375ef0d6b0"
+          }
+        ],
+        "path": "/usr/bin/ffprobe",
+        "sha256": "4493102ef9a9dee472ce68b540ba0fd3d2f714db0de930f299f681c72ec61832",
+        "version": "ffprobe version n9.0.1 Copyright (c) 2007-2026 the FFmpeg developers"
+      },
+      "fps": 60,
+      "frame_bytes_max": 51594,
+      "frame_bytes_min": 1935,
+      "frames": 600,
+      "height": 1080,
+      "ivf_sha256": "5466c241f836c408038501a0d55ede29037122f204265f222aefe2cb0fbc9dfe",
+      "keyframe_indices": [
+        0,
+        120,
+        240,
+        360,
+        480
+      ],
+      "padding_bytes": 0,
+      "picture_id_bits": 15,
+      "production_feature_acceptance": false,
+      "rtp_clock_hz": 90000,
+      "rtp_datagram_bitrate_bps": 4052864.8,
+      "rtp_mtu": 1200,
+      "rtp_packets": 4515,
+      "rtp_payload_bitrate_bps": 4009520.8,
+      "rtp_payload_bytes": 5011901,
+      "schedule": "CFR 60fps; fragments evenly spaced within their frame interval",
+      "schema": 1,
+      "source": "ffmpeg-testsrc2-1080p60-v1",
+      "target_payload_bitrate_bps": 4000000,
+      "width": 1920
+    },
+    "topology": "one additional video-only WebRTC publisher",
+    "webrtc": "0.20.5"
+  },
+  "executed_browser": {
+    "executable": "/home/rafi/.cache/ms-playwright/chromium_headless_shell-1243/chrome-headless-shell-linux64/chrome-headless-shell",
+    "sha256": "ded93a9c9a53a1ae040f08124badcca95c938e9d5015ff340c3b5538c41bf39e",
+    "product": "HeadlessChrome/153.0.8010.12",
+    "revision": "@971a7443b0c9b0a9b2860529b33331b76077ec62",
+    "user_agent": "Mozilla/5.0 (X11; Linux x86_64) AppleWebKit/537.36 (KHTML, like Gecko) HeadlessChrome/153.0.8010.12 Safari/537.36",
+    "js_version": "15.3.76.4"
+  },
+  "started_at": "2026-10-05T18:36:58.160Z",
+  "native": {
+    "connection": "connected",
+    "feedback_packets": 0,
+    "outbound": [
+      {
+        "active": true,
+        "bytesSent": 15035703,
+        "codecId": "RTCCodec_RTCTransport_send_PT96",
+        "encoderImplementation": "",
+        "encodingIndex": 0,
+        "firCount": 0,
+        "frameHeight": 0,
+        "frameWidth": 0,
+        "framesEncoded": 0,
+        "framesPerSecond": 0,
+        "framesSent": 0,
+        "headerBytesSent": 162540,
+        "hugeFramesSent": 0,
+        "id": "RTCOutboundRTPStream_video_1196838968",
+        "keyFramesEncoded": 0,
+        "kind": "video",
+        "mediaSourceId": "",
+        "mid": "0",
+        "nackCount": 0,
+        "packetsSent": 13545,
+        "packetsSentWithEct1": 0,
+        "pliCount": 0,
+        "powerEfficientEncoder": false,
+        "psnrMeasurements": 0,
+        "psnrSum": {},
+        "qpSum": 0,
+        "qualityLimitationDurations": {},
+        "qualityLimitationReason": "none",
+        "qualityLimitationResolutionChanges": 0,
+        "remoteId": "RTCRemoteInboundRTPStream_video_1196838968",
+        "retransmittedBytesSent": 0,
+        "retransmittedPacketsSent": 0,
+        "rid": "",
+        "rtxSsrc": 0,
+        "scalabilityMode": "",
+        "ssrc": 1196838968,
+        "targetBitrate": 0,
+        "timestamp": 1791225448.213,
+        "totalEncodeTime": 0,
+        "totalEncodedBytesTarget": 0,
+        "totalPacketSendDelay": 0,
+        "transportId": "RTCTransport",
+        "type": "outbound-rtp"
+      }
+    ],
+    "source": {
+      "completed": true,
+      "elapsed_seconds": 30.000983469,
+      "expected_frames": 1800,
+      "frames_enqueued": 1800,
+      "intended_duration_seconds": 30,
+      "max_schedule_lateness_us": 2062,
+      "mean_schedule_lateness_us": 1058.2484311554078,
+      "packets_enqueued": 13545,
+      "rtp_payload_bitrate_bps": 4009520,
+      "rtp_payload_bytes_enqueued": 15035703,
+      "running": false,
+      "source_policy_valid": true
+    },
+    "transport": {
+      "bytesReceived": 22853,
+      "bytesSent": 15339131,
+      "ccfbMessagesReceived": 0,
+      "ccfbMessagesSent": 0,
+      "dtlsCipher": "TLS_ECDHE_ECDSA_WITH_AES_128_GCM_SHA256",
+      "dtlsRole": "server",
+      "dtlsState": "connected",
+      "iceLocalUsernameFragment": "",
+      "iceRole": "controlling",
+      "iceState": "connected",
+      "id": "RTCTransport",
+      "localCertificateId": "94:7d:7e:17:b6:c9:a1:87:19:be:cf:32:8e:ba:25:ae:88:3e:54:fe:93:37:38:47:66:a8:ca:09:40:a6:ae:0f",
+      "packetsReceived": 181,
+      "packetsSent": 13618,
+      "remoteCertificateId": "remote-certificate-b3:77:9b",
+      "selectedCandidatePairChanges": 1,
+      "selectedCandidatePairId": "RTCIceCandidatePair_candidate:Z70rTa3/xVQ3dIbxpjLA3u8dz8Pl3rjV_candidate:fv/xKUXXyPKsUzZDshifHoKJGVaDwPjs",
+      "srtpCipher": "SRTP_AES128_CM_HMAC_SHA1_80",
+      "timestamp": 1791225448.213,
+      "tlsVersion": "DTLS 1.2",
+      "type": "transport"
+    }
+  },
+  "decoder": {
+    "valid": true,
+    "failures": [],
+    "measured_seconds": 19.006614990234375,
+    "bitrate_bps": 4012212.802710097,
+    "decoded_fps": 59.97911782743711,
+    "lost_packets": 0,
+    "received_packets": 8582
+  },
+  "instrument_local_valid": true,
+  "finished_at": "2026-10-05T18:37:28.214Z",
+  "raw_sha256": "a8509af1177514ea4fe16df46fe404297620561755adf7adb19391442063e543",
+  "root_independent_control": true
+}

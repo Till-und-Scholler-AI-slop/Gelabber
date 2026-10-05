@@ -15,14 +15,25 @@ const transport = { iceParameters: { usernameFragment: 'mediasoup', password: 'r
 test('official helpers map native VP8/SSRC onto a normal DTLS/SRTP transport', () => {
   const before = JSON.stringify([offer, caps, transport]);
   const result = mediasoupNativeAnswer(offer, caps, transport);
-  assert.equal(result.dtlsParameters.role, 'client');
+  assert.equal(result.dtlsParameters.role, 'server');
   assert.equal(result.rtpParameters.codecs[0].payloadType, 96);
   assert.equal(result.rtpParameters.encodings[0].ssrc, 0x47565038);
-  assert.match(result.description.sdp, /a=setup:passive\r\n/);
+  assert.equal(result.rtpParameters.rtcp.reducedSize, false);
+  assert.match(result.description.sdp, /a=setup:active\r\n/);
   assert.match(result.description.sdp, /a=recvonly\r\n/);
   assert.match(result.description.sdp, /a=ice-lite\r\n/);
   assert.match(result.description.sdp, /a=rtpmap:96 VP8\/90000\r\n/);
   assert.equal(JSON.stringify([offer, caps, transport]), before);
+});
+test('Rust-required reducedSize follows the native SDP rather than browser defaults', () => {
+  const result = mediasoupNativeAnswer({ ...offer, sdp: offer.sdp.replace('a=rtcp-mux', 'a=rtcp-mux\r\na=rtcp-rsize') }, caps, transport);
+  assert.equal(result.rtpParameters.rtcp.reducedSize, true);
+});
+test('native actpass and a real advertised SHA-256 certificate are required', () => {
+  for (const role of ['active', 'passive']) assert.throws(() => mediasoupNativeAnswer({ ...offer, sdp: offer.sdp.replace('setup:actpass', 'setup:' + role) }, caps, transport), /actpass/);
+  const mixed = { ...transport, dtlsParameters: { ...transport.dtlsParameters, fingerprints: [...transport.dtlsParameters.fingerprints, { algorithm: 'sha-512', value: Array(64).fill('EF').join(':') }] } };
+  assert.match(mediasoupNativeAnswer(offer, caps, mixed).description.sdp, /a=fingerprint:sha-256 CD:CD:/);
+  assert.throws(() => mediasoupNativeAnswer(offer, caps, { ...mixed, dtlsParameters: { ...mixed.dtlsParameters, fingerprints: mixed.dtlsParameters.fingerprints.slice(1) } }), /SHA-256/);
 });
 test('different source topology, SSRC, codec or a PlainTransport cannot silently qualify', () => {
   for (const changed of [offer.sdp.replace('a=sendonly', 'a=recvonly'), offer.sdp.replaceAll('1196838968', '42'), offer.sdp.replace('VP8/90000', 'VP9/90000'), offer.sdp + 'm=audio 9 UDP/TLS/RTP/SAVPF 111\r\n']) {

@@ -2,6 +2,32 @@
 import { spawn } from 'node:child_process';
 import readline from 'node:readline';
 
+export function nativeExitEvidence(child) {
+  return { exitcode: child.exitCode, signal: child.signalCode,
+    clean: child.exitCode === 0 && child.signalCode === null };
+}
+
+export async function rethrowAfterCleanup(setupError, close) {
+  try { await close(); }
+  catch (cleanupError) {
+    const error = new AggregateError([setupError, cleanupError], 'publisher setup and cleanup both failed', { cause: setupError });
+    error.cleanup_errors = [String(cleanupError)];
+    error.setup_error = String(setupError);
+    error.cleanup_evidence = cleanupError.cleanup_evidence;
+    throw error;
+  }
+  throw setupError;
+}
+
+export async function janusSessionAbsence(response) {
+  // Janus returns an empty 404 body for an already destroyed session. Other
+  // malformed responses remain parse errors rather than absence evidence.
+  if (response.status === 404) return { absent: true, status: 404 };
+  const value = await response.json();
+  return { absent: value.janus === 'error' && value.error?.code === 458,
+    status: response.status, janus_error_code: value.error?.code };
+}
+
 export class NativeVideo {
   constructor(binary, archive, bind = '127.0.0.1') {
     this.child = spawn(binary, ['--archive', archive, bind], { stdio: ['pipe', 'pipe', 'inherit'] });
@@ -55,7 +81,10 @@ export class NativeVideo {
 }
 
 export function decodedVideo(samples, expectedBitrate) {
-  const failures = [], edges = samples.map(sample => sample.stats.filter(s => s.type === 'inbound-rtp' && s.kind === 'video' && s.packetsReceived > 0));
+  const failures = [], edges = samples.map(sample => {
+    const codecs = new Map(sample.stats.filter(s => s.type === 'codec').map(s => [s.id, s.mimeType?.toLowerCase()]));
+    return sample.stats.filter(s => s.type === 'inbound-rtp' && s.kind === 'video' && s.packetsReceived > 0 && s.mid !== 'probator' && codecs.get(s.codecId) !== 'video/rtx');
+  });
   if (edges.length < 2 || edges.some(edge => edge.length !== 1)) return { valid: false, failures: ['requires one advancing decoded video edge in every sample'] };
   const first = edges[0][0], last = edges.at(-1)[0], seconds = (last.timestamp - first.timestamp) / 1000;
   if (!(seconds > 0) || edges.some(edge => edge[0].id !== first.id)) return { valid: false, failures: ['video edge/clock changed during measurement'] };

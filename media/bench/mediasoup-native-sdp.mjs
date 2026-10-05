@@ -24,12 +24,20 @@ export function mediasoupNativeAnswer(offer, routerCapabilities, transport) {
   parameters.encodings = getRtpEncodings({ offerMediaObject: media, codecs: parameters.codecs });
   if (parameters.encodings.length !== 1 || parameters.encodings[0].rtx || parameters.encodings[0].ssrc !== 0x47565038) throw new Error('native SSRC/single-encoding policy differs');
   parameters.rtcp.cname = getCname({ offerMediaObject: media });
+  // The Rust API requires reducedSize explicitly; JS ORTC leaves it absent.
+  // Match the actual native SDP rather than inventing browser defaults.
+  parameters.rtcp.reducedSize = Boolean(media.rtcpRsize);
   if (!parameters.rtcp.cname) throw new Error('native RTP CNAME is missing');
   const dtlsParameters = extractDtlsParameters({ sdpObject: parsed });
-  if (!['auto', 'client'].includes(dtlsParameters.role)) throw new Error('native source must permit the DTLS client role');
-  dtlsParameters.role = 'client';
-  const remote = new RemoteSdp(structuredClone({ iceParameters: transport.iceParameters, iceCandidates: transport.iceCandidates, dtlsParameters: transport.dtlsParameters }));
-  remote.updateDtlsRole('server');
+  if (dtlsParameters.role !== 'auto') throw new Error('native source must offer setup:actpass');
+  // rtc 0.20.5 verifies only SHA-256. Select a real advertised fingerprint
+  // of the worker certificate; never rewrite or bypass certificate checks.
+  const fingerprint = transport.dtlsParameters.fingerprints.find(value => value.algorithm === 'sha-256');
+  if (!fingerprint) throw new Error('worker did not advertise a SHA-256 certificate fingerprint');
+  dtlsParameters.role = 'server';
+  const remote = new RemoteSdp(structuredClone({ iceParameters: transport.iceParameters, iceCandidates: transport.iceCandidates,
+    dtlsParameters: { ...transport.dtlsParameters, fingerprints: [fingerprint] } }));
+  remote.updateDtlsRole('client');
   remote.send({ offerMediaObject: media, offerRtpParameters: parameters, answerRtpParameters: remoteParameters });
   return { description: { type: 'answer', sdp: remote.getSdp() }, dtlsParameters, rtpParameters: parameters,
     policy: { client: 'mediasoup-client 3.24.1', transport: 'WebRtcTransport DTLS/SRTP', source_encodings: 1, kind: 'video', comparison_available: false } };

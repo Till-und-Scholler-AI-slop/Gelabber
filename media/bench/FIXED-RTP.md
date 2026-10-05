@@ -86,7 +86,59 @@ the controller terminates only its owned child if orderly shutdown times out.
 The local decoder check requires actual continuous 1080p at 57..63 decoded fps,
 received payload within 10% of the frozen source, at most 1% loss and a complete
 native schedule. Its `instrument_local_valid` is **not** backend acceptance.
-No local decoder or additional WAN media test has yet run for this instrument.
+An independent local loopback control replayed 1,800 frames in 30.001 seconds;
+Chromium decoded 4.012 Mbit/s at 59.979 fps with zero lost packets. The actual
+source sent 13,545 WebRTC packets / 15,035,703 RTP payload bytes, with maximum
+schedule lateness 2.062 ms. See `evidence/fixed-vp8-loopback-2026-10-05.json`.
+This establishes this one loopback instrument path, not any SFU or WAN gate.
+
+## Local three-engine video-only diagnostic
+
+`run-fixed-video.py` freezes the helpers, actual bundle, native binaries and
+source archive under a fresh output directory, then starts each backend
+sequentially using unique owned containers/children. The native publisher and
+browser decoder use ordinary WebRTC signaling/DTLS/SRTP; there are no voice
+participants or audio tracks. It records source, actual decoder, separate
+generator/backend/Redis resource samples and post-leave backend counters.
+Video validity, cleanup validity and resource-measurement validity are separate.
+Missing PID/RSS/CPU measurements, failed Leave, forced native termination or
+failed owned-container cleanup invalidate their respective checks and exit
+nonzero. Every comparison and product-acceptance flag remains false.
+
+```sh
+npm --prefix media/bench run build
+# Choose an already configured nonloopback IPv4. No host configuration changes.
+python3 media/bench/run-fixed-video.py --binary "$SOURCE" \
+  --archive /tmp/fixed-video.rtpbin --media-ip 192.0.2.10 \
+  --warmup 10 --seconds 20 --output /tmp/fixed-video-sfu-diagnostic
+```
+
+The example address must be replaced by the host's actual existing address.
+Janus skips loopback interfaces when binding candidate sockets; rewriting a
+nonloopback socket to 127.0.0.1 did not produce a usable native ICE path. This
+runner explicitly binds/advertises the supplied address for every engine and
+restricts Janus candidate gathering to that address. HTTP remains on localhost.
+The default diagnostic UDP range is 12000..12199; choose a free owned range.
+
+After correcting adapter setup and fingerprint negotiation, the local control
+delivered the same frozen archive through all three engines: current decoded
+4.021 Mbit/s at 59.980 fps, mediasoup 4.000 Mbit/s at 59.979 fps, and Janus
+4.004 Mbit/s at 60.033 fps, each with zero lost packets. Every source completed
+2,400 frames / 40 seconds and every Leave check completed. The archive, actual
+browser, source/collector hashes, earlier failed controls and their specific
+causes remain in `evidence/fixed-vp8-sfu-diagnostic-2026-10-05.json`. These are
+single local video-only cases; **there is no resource ranking or migration
+decision**. Native/current binaries still represent the recorded older
+`de1ae346` product baseline, not subsequent layer/recovery fixes.
+
+A second, shorter control used the final strict collector and again passed
+the video/Leave checks on all three engines. It exited nonzero because a
+Chromium PID disappeared during Janus generator shutdown while its resource
+snapshot was being read. That Janus CPU/RAM measurement is explicitly invalid;
+its valid source/decoder checks do not override the missing resource evidence.
+These diagnostic cases used the executed Node 26.7.0 and recorded its binary
+hash. The upcoming full matrix must use the configured Node 26.8.2 runtime;
+an installed-version declaration cannot substitute for executed provenance.
 
 ## Adapter and topology gates still open
 
@@ -94,16 +146,20 @@ No local decoder or additional WAN media test has yet run for this instrument.
 3.24.1 SDP/ORTC helpers to map a single native VP8 offer to a normal
 `WebRtcTransport` answer and producer parameters. It rejects extra tracks,
 codecs, encodings, mismatched SSRCs and Plain/Direct transports. Its offline
-tests cover PT/SSRC preservation, DTLS roles and rejection. A real three-engine
-join/forward/leave probe is still required; this helper alone proves no delivery.
+tests cover PT/SSRC preservation, DTLS roles and rejection. The bounded source
+must offer `setup:actpass`; the bridge selects a real SHA-256 fingerprint from
+the worker's offered certificate fingerprints. The pinned rtc verifier supports
+only SHA-256, whereas the pinned official RemoteSdp helper defaults to the last
+fingerprint (SHA-512 here). No hash is invented and certificate checks stay on.
+Actual connected source stats, rather than an SDP role declaration, establish
+successful DTLS. This helper alone proves no delivery.
 
-The first proposed diagnostic pilot is **N browser voice participants plus
-one additional native video-only source**. Model it explicitly: N microphone
-publishers, N×(N−1) microphone receiver edges, one VP8 source and N video receiver
-edges. Source peer/transport overhead is additional and must be shown per
-engine. No screen-source audio or native PCM latency is supplied by this first
-instrument. Do not pass its report to the original N-peer evaluator or claim
-the original microphone+video+source-audio product graph has passed.
+The implemented diagnostic is **one video-only native publisher plus one
+browser decoder, zero voice peers**. It has two media WebRTC transports; Janus
+also uses a room-management session, for three actual backend event polls.
+No screen-source audio or native PCM latency is supplied. Do not pass its
+report to the original N-peer evaluator or claim the original
+microphone+video+source-audio product graph has passed.
 
 The preferred full N-peer topology replaces peer zero's publication with one
 native microphone, one native VP8 track and one native screen-source audio
