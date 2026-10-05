@@ -59,6 +59,8 @@ GELABBER_E2E_BROWSER=chromium npm run test:e2e-held-renderer-control
 
 Repeat with `GELABBER_E2E_BROWSER=firefox` for the second native browser. Keep actual runtime attribution and report paths in the surrounding environment as described above. These native controls remain local; CI runs the fast ownership/counter regressions.
 
+The final local Chromium153/Firefox155 controls on clean test freeze `d2fd0f6` pass for both deletion scopes and reject a false stop with hidden RTP reports. The compact [renderer evidence](evidence/held-renderer-validation.json) records immutable runtime/test hashes, unchanged live/enabled ownership, real counter values, fixture cleanup and explicit remaining gates. It does not validate the later source-restart fix.
+
 ## Open acceptance
 
 Core/Storage/Epoch, concurrent attempts and row rollback, real slow raw TCP reader and transaction-forced Ban/Join now have actual Chromium and Firefox controls on the approved immutable core snapshot. Their exact results and earlier test errors are recorded in the current handoff. Final approved08b runtime now supports the executable media15/access6 and own API-/Redis-lease cases; exact author/clean-source coverage is recorded in [MEDIA-HANDOFF.md](MEDIA-HANDOFF.md). Native screen-picker, audible two-device quality, WAN/production and full remote netem remain explicit separate gates. The original relay/audio/recovery assertions and strict selected-case/cleanup gates remain in force.

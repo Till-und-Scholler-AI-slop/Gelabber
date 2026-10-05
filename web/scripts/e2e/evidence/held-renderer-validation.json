@@ -1,0 +1,300 @@
+{
+  "schema": 1,
+  "testFreeze": "d2fd0f68db33a5b7913d7962a79b4a50d32599af",
+  "scope": "Local native channel/server Delete plus same-source hidden-RTP instrument controls; synthetic capture, direct loopback",
+  "counterContract": "Actual unchanged renderer/receiver/track/callback references checked in browser memory before and after fault; displayed ordinals identify fixture-local resources, not raw track IDs",
+  "runtime": {
+    "webSource": "c24ead728f1bd4c2b0a1ca3d6b038b99705b8da2",
+    "apiSource": "bd7197417075362def8ac325c2a684c480f5d39d",
+    "mediaSource": "c24ead728f1bd4c2b0a1ca3d6b038b99705b8da2",
+    "sourceAttribution": "operator supplied; independent mapped binary hashes verified before controls",
+    "apiMappedBinarySha256": "da412bf6139535d38ea2d639ef4624f6d5ab96299baeb0cf987be177837ecad1",
+    "mediaMappedBinarySha256": "88865a395486d3811e7449287d190e63a34ec96f34eb762a76103ab87550b282",
+    "excludedHourStackPorts": [
+      18094,
+      18095,
+      15186
+    ]
+  },
+  "testSourceSha256": {
+    "access.mjs": "ccf672dea241b97cadbcd0fe83d6041907ccefb60b57e6e10c147c1c6fdcaf13",
+    "held-renderer-native-control.mjs": "d84bae41bc25ad5ef50601b4b80136c866013d1bbdf20dc684ca992366b4d975",
+    "held-renderer.checks.mjs": "76dd565724a45727cd3182aea0c187fb399208aaa3207844253542e41488a38e",
+    "access-native.checks.mjs": "f1bab755ba97f26042ba574ddbdf8f1ae56aa1cbdf97f78c0da09480abe74478"
+  },
+  "checks": {
+    "rendererOwnershipCounterRegressions": 21,
+    "existingStrictRtpRegressions": 33,
+    "lint": "PASS",
+    "diffCheck": "PASS"
+  },
+  "cases": [
+    {
+      "browser": {
+        "engine": "chromium",
+        "version": "153.0.8010.12",
+        "platform": "linux",
+        "node": "v26.8.2"
+      },
+      "case": "channel-server-delete-active-sockets",
+      "status": "PASS",
+      "reportSha256": "8222a347484cae2bfb7148d927773e947fe5fa7e964eb0344e48923078af96c7",
+      "reportPath": "/tmp/gelabber-v04-held-renderer-final-chromium-delete/report.json",
+      "completeAcceptance": false,
+      "fixtures": {
+        "accountsCreated": 9,
+        "ownedServersCreated": 3,
+        "ownedServersDeleted": 3,
+        "accountsRetainedAsFixtures": true
+      },
+      "controls": [
+        {
+          "scope": "channel",
+          "source": "native-video-frame-callback",
+          "stableFixtureOrdinals": [
+            0,
+            0,
+            0
+          ],
+          "before": {
+            "frames": 4,
+            "openSockets": 1,
+            "allOwnershipLiveEnabledChecks": true
+          },
+          "settled": {
+            "frames": 5,
+            "openSockets": 0,
+            "allOwnershipLiveEnabledChecks": true
+          },
+          "after": {
+            "frames": 5,
+            "openSockets": 0,
+            "allOwnershipLiveEnabledChecks": true
+          },
+          "deleteStatus": 204,
+          "heldTicketRejected": true,
+          "freshTicketStatus": 404,
+          "framesStopped": true,
+          "mediaSocketClosed": true
+        },
+        {
+          "scope": "server",
+          "source": "native-video-frame-callback",
+          "stableFixtureOrdinals": [
+            0,
+            0,
+            0
+          ],
+          "before": {
+            "frames": 3,
+            "openSockets": 1,
+            "allOwnershipLiveEnabledChecks": true
+          },
+          "settled": {
+            "frames": 5,
+            "openSockets": 0,
+            "allOwnershipLiveEnabledChecks": true
+          },
+          "after": {
+            "frames": 5,
+            "openSockets": 0,
+            "allOwnershipLiveEnabledChecks": true
+          },
+          "deleteStatus": 204,
+          "heldTicketRejected": true,
+          "freshTicketStatus": 404,
+          "framesStopped": true,
+          "mediaSocketClosed": true
+        }
+      ]
+    },
+    {
+      "browser": {
+        "engine": "chromium",
+        "version": "153.0.8010.12",
+        "platform": "linux",
+        "node": "v26.8.2"
+      },
+      "case": "held-renderer-detects-progress-without-native-rtp-reports",
+      "status": "PASS",
+      "reportSha256": "b80fa0833858cbcd595ba5c100ba6df6a953efd26f82b79e3da76b5b2ce4725b",
+      "reportPath": "/tmp/gelabber-v04-held-renderer-final-chromium-hidden-rtp/report.json",
+      "completeAcceptance": false,
+      "fixtures": {
+        "accountsCreated": 3,
+        "ownedServersCreated": 1,
+        "ownedServersDeleted": 1,
+        "accountsRetainedAsFixtures": true
+      },
+      "control": {
+        "source": "native-video-frame-callback",
+        "stableFixtureOrdinals": [
+          0,
+          0,
+          0
+        ],
+        "before": {
+          "frames": 3,
+          "openSockets": 1,
+          "allOwnershipLiveEnabledChecks": true
+        },
+        "settled": {
+          "frames": 7,
+          "openSockets": 1,
+          "allOwnershipLiveEnabledChecks": true
+        },
+        "after": {
+          "frames": 16,
+          "openSockets": 1,
+          "allOwnershipLiveEnabledChecks": true
+        },
+        "nativeVideoReports": {
+          "nativeVideoReportsBefore": 1,
+          "nativeVideoReportsHidden": 0
+        },
+        "actualStopCheckRejected": true,
+        "instrumentControlOnly": true,
+        "syntheticSideConditions": "denied/closed values isolate frame-stop predicate; no revocation"
+      }
+    },
+    {
+      "browser": {
+        "engine": "firefox",
+        "version": "155.0",
+        "platform": "linux",
+        "node": "v26.8.2"
+      },
+      "case": "channel-server-delete-active-sockets",
+      "status": "PASS",
+      "reportSha256": "911419b7c662823f3200e5171eeda4c35528c1b31f8583501e3140c67e61a9c0",
+      "reportPath": "/tmp/gelabber-v04-held-renderer-final-firefox-delete/report.json",
+      "completeAcceptance": false,
+      "fixtures": {
+        "accountsCreated": 9,
+        "ownedServersCreated": 3,
+        "ownedServersDeleted": 3,
+        "accountsRetainedAsFixtures": true
+      },
+      "controls": [
+        {
+          "scope": "channel",
+          "source": "native-video-frame-callback",
+          "stableFixtureOrdinals": [
+            0,
+            0,
+            0
+          ],
+          "before": {
+            "frames": 4,
+            "openSockets": 1,
+            "allOwnershipLiveEnabledChecks": true
+          },
+          "settled": {
+            "frames": 5,
+            "openSockets": 0,
+            "allOwnershipLiveEnabledChecks": true
+          },
+          "after": {
+            "frames": 5,
+            "openSockets": 0,
+            "allOwnershipLiveEnabledChecks": true
+          },
+          "deleteStatus": 204,
+          "heldTicketRejected": true,
+          "freshTicketStatus": 404,
+          "framesStopped": true,
+          "mediaSocketClosed": true
+        },
+        {
+          "scope": "server",
+          "source": "native-video-frame-callback",
+          "stableFixtureOrdinals": [
+            0,
+            0,
+            0
+          ],
+          "before": {
+            "frames": 3,
+            "openSockets": 1,
+            "allOwnershipLiveEnabledChecks": true
+          },
+          "settled": {
+            "frames": 4,
+            "openSockets": 0,
+            "allOwnershipLiveEnabledChecks": true
+          },
+          "after": {
+            "frames": 4,
+            "openSockets": 0,
+            "allOwnershipLiveEnabledChecks": true
+          },
+          "deleteStatus": 204,
+          "heldTicketRejected": true,
+          "freshTicketStatus": 404,
+          "framesStopped": true,
+          "mediaSocketClosed": true
+        }
+      ]
+    },
+    {
+      "browser": {
+        "engine": "firefox",
+        "version": "155.0",
+        "platform": "linux",
+        "node": "v26.8.2"
+      },
+      "case": "held-renderer-detects-progress-without-native-rtp-reports",
+      "status": "PASS",
+      "reportSha256": "39875a9a33925b3dbd713bc6f92c45fdc2ffb68af9a018592748dab74572fe6b",
+      "reportPath": "/tmp/gelabber-v04-held-renderer-final-firefox-hidden-rtp/report.json",
+      "completeAcceptance": false,
+      "fixtures": {
+        "accountsCreated": 3,
+        "ownedServersCreated": 1,
+        "ownedServersDeleted": 1,
+        "accountsRetainedAsFixtures": true
+      },
+      "control": {
+        "source": "native-video-frame-callback",
+        "stableFixtureOrdinals": [
+          0,
+          0,
+          0
+        ],
+        "before": {
+          "frames": 3,
+          "openSockets": 1,
+          "allOwnershipLiveEnabledChecks": true
+        },
+        "settled": {
+          "frames": 5,
+          "openSockets": 1,
+          "allOwnershipLiveEnabledChecks": true
+        },
+        "after": {
+          "frames": 11,
+          "openSockets": 1,
+          "allOwnershipLiveEnabledChecks": true
+        },
+        "nativeVideoReports": {
+          "nativeVideoReportsBefore": 1,
+          "nativeVideoReportsHidden": 0
+        },
+        "actualStopCheckRejected": true,
+        "instrumentControlOnly": true,
+        "syntheticSideConditions": "denied/closed values isolate frame-stop predicate; no revocation"
+      }
+    }
+  ],
+  "runtimeResourcesAfterControls": {
+    "sfuRooms": 0,
+    "sfuPeers": 0,
+    "scope": "independent runtime gauges; not fixture account/server creation counts"
+  },
+  "limitations": [
+    "Selected Delete checks only; other access checks retain strict RTP contract and are not rerun by these selected controls",
+    "Hidden-RTP cases measure instrument correctness, not revocation",
+    "No actual screen picker, audible device quality, iOS suspend, WAN, production or release acceptance",
+    "Runtime is frozen pre-source-restart-fix c24; these controls do not validate upcoming receiver/source-restart changes"
+  ]
+}
