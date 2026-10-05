@@ -16,6 +16,8 @@ import {
   type ReactNode,
 } from "react";
 
+import { useChatDraft } from "../messages/drafts.ts";
+
 import { useSession } from "../auth/session.ts";
 import { fieldMessage } from "../auth/rules.ts";
 import {
@@ -41,7 +43,6 @@ import { attachmentUrl } from "../messages/api.ts";
 import {
   ALLOWED_TYPES,
   CONTENT_MAX,
-  inferContentType,
   isImageType,
   validateAttachment,
   validateContent,
@@ -135,6 +136,7 @@ export function MessagePane({
       />
       {footer}
       <Composer
+        key={user?.id ?? "anonymous"}
         channelId={channelId}
         channelName={channelName}
         canSend={canSend}
@@ -552,27 +554,28 @@ function Composer({
     channelId,
     author ?? { id: "", name: "", avatar_url: null },
   );
-  const [draft, setDraft] = useState("");
-  const [file, setFile] = useState<File | null>(null);
+  const [savedDraft, updateDraft, preview] = useChatDraft(
+    author?.id ?? "",
+    channelId,
+  );
+  const draft = savedDraft.text;
+  const file = savedDraft.file;
+  const setDraft = (text: string) => updateDraft({ text });
+  const setFile = (file: File | null) => updateDraft({ file });
   const [fileError, setFileError] = useState<string | null>(null);
-  const [preview, setPreview] = useState<string | null>(null);
   const fileInput = useRef<HTMLInputElement>(null);
   const composerInput = useRef<HTMLTextAreaElement>(null);
-  useEffect(
-    () => () => {
-      if (preview) URL.revokeObjectURL(preview);
-    },
-    [preview],
-  );
   const error = draft.length === 0 ? null : validateContent(draft);
   const remaining = CONTENT_MAX - Array.from(normalisedLength(draft)).length;
   const emptyText = draft.trim().length === 0;
   const disabled =
-    !canSend || !author || Boolean(error) || (emptyText && !file);
+    !canSend ||
+    !author ||
+    Boolean(error) ||
+    Boolean(file && !canSendFiles) ||
+    (emptyText && !file);
 
   const pickFile = (next: File | null) => {
-    if (preview) URL.revokeObjectURL(preview);
-    setPreview(null);
     setFileError(null);
     if (!next) {
       setFile(null);
@@ -585,9 +588,6 @@ function Composer({
       return;
     }
     setFile(next);
-    if (isImageType(inferContentType(next))) {
-      setPreview(URL.createObjectURL(next));
-    }
   };
 
   const submit = (event?: FormEvent) => {
