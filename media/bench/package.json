@@ -1,0 +1,1 @@
+{"name":"gelabber-media-bench","version":"0.1.0","private":true,"type":"module","scripts":{"build":"esbuild browser.mjs --bundle --format=iife --outfile=client.bundle.js"},"dependencies":{"mediasoup-client":"3.24.1"},"devDependencies":{"esbuild":"0.28.2","playwright":"1.63.0"}}

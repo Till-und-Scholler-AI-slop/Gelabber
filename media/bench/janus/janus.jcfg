@@ -1,0 +1,3 @@
+general: { configs_folder = "/opt/janus/etc/janus"; plugins_folder = "/opt/janus/lib/janus/plugins"; transports_folder = "/opt/janus/lib/janus/transports"; events_folder = "/opt/janus/lib/janus/events"; log_to_stdout = true; debug_level = 3; session_timeout = 120; }
+media: { rtp_port_range = "10000-10199"; }
+nat: { ice_lite = true; }
