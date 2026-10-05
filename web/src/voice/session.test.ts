@@ -2290,6 +2290,65 @@ describe("voice session", () => {
     }
   });
 
+  it("does not let a retired processor failure detach a healthy mic replacement", async () => {
+    const contexts: Context[] = [];
+    class Context {
+      state = "running";
+      onstatechange: (() => void) | null = null;
+      constructor() {
+        contexts.push(this);
+      }
+      resume = async () => {};
+      close = async () => {
+        this.state = "closed";
+      };
+      createMediaStreamSource() {
+        return { connect() {}, disconnect() {} };
+      }
+      createGain() {
+        return { gain: { value: 1 }, connect() {}, disconnect() {} };
+      }
+      createMediaStreamDestination() {
+        return { stream: fakeStream(`processed-${contexts.length}`) };
+      }
+    }
+    const previousContext = globalThis.AudioContext;
+    (globalThis as unknown as { AudioContext: unknown }).AudioContext = Context;
+    try {
+      const env = install({ failMedia: (index) => index === 2 });
+      useMediaSettings
+        .getState()
+        .patch({ processingMode: "browser", inputGain: 0.5 });
+      joinVoice({ serverId: "srv", channelId: "voice", channelName: "Lounge" });
+      await vi.waitFor(() => expect(env.peers[0]?.audio).toBeTruthy());
+      const sender = env.peers[0]!.senders[0]!,
+        replace = sender.replaceTrack!.bind(sender),
+        gate = deferred(),
+        started = deferred();
+      const replacements: Array<MediaStreamTrack | null> = [];
+      sender.replaceTrack = async (next) => {
+        replacements.push(next);
+        if (replacements.length === 1) {
+          started.resolve();
+          await gate.promise;
+        }
+        await replace(next);
+      };
+      useMediaSettings.getState().patch({ audioInputId: "healthy-next-mic" });
+      await started.promise;
+      contexts[0]!.state = "closed";
+      contexts[0]!.onstatechange?.();
+      gate.resolve();
+      await new Promise((resolve) => setTimeout(resolve, 30));
+      expect(sender.track?.id).toBe("processed-2-a");
+      expect(replacements).toHaveLength(1);
+      expect(env.getUserMediaCalls()).toBe(2);
+      expect(trackStopped(env.streams[1]!.getAudioTracks()[0])).toBe(false);
+    } finally {
+      globalThis.AudioContext = previousContext;
+    }
+  });
+
   it("deafens Watch-channel speech with the same volume as the room mix", async () => {
     const clips: FakeHtmlAudio[] = [];
     class FakeHtmlAudio {
