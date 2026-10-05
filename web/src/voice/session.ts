@@ -1,3 +1,4 @@
+import { addLayeredVideo, ViewerLayerController } from "./viewerLayers.ts";
 import {
   captureMicrophone,
   createProcessor,
@@ -186,9 +187,16 @@ export type PeerConnection = {
   onnegotiationneeded: (() => void) | null;
   addTrack?(track: MediaStreamTrack, stream: MediaStream): RtpSender | void;
   addTransceiver?(
-    kind: "audio" | "video",
-    init?: { direction?: "recvonly" | "sendonly" | "sendrecv" | "inactive" },
-  ): void;
+    kind: "audio" | "video" | MediaStreamTrack,
+    init?: {
+      direction?: "recvonly" | "sendonly" | "sendrecv" | "inactive";
+      streams?: MediaStream[];
+      sendEncodings?: Array<{ rid: string; scaleResolutionDownBy: number }>;
+    },
+  ): {
+    sender?: RtpSender;
+    setCodecPreferences?(codecs: { mimeType: string }[]): void;
+  } | void;
   removeTrack?(sender: RtpSender): void;
   getSenders?(): RtpSender[];
   createOffer(options?: { iceRestart?: boolean }): Promise<{
@@ -257,6 +265,7 @@ let cameraStream: MediaStream | null = null;
 let screenStream: MediaStream | null = null;
 let liveStream: MediaStream | null = null;
 let seatMediaVersion: number | null = null;
+let watchMediaVersion: number | null = null;
 let remoteAudio: HTMLAudioElement | null = null;
 const watchAudio = new Map<MediaStreamTrack, HTMLAudioElement>();
 const receivedAudioSources = new Map<
@@ -1264,6 +1273,7 @@ function voiceCaps(): Caps {
 }
 
 function attachSeatDiagnostics(generation: number): void {
+  const layers = new ViewerLayerController();
   attachDiagnostics({
     role: "voice",
     caps: voiceCaps,
@@ -1274,7 +1284,21 @@ function attachSeatDiagnostics(generation: number): void {
       const pc = seat.pc;
       if (seat.generation !== generation || !pc?.getStats) return null;
       try {
-        return statsEntriesFromReport(await pc.getStats());
+        const report = statsEntriesFromReport(await pc.getStats());
+        if (seat.generation !== generation || seat.pc !== pc) return null;
+        if ((seatMediaVersion ?? 0) >= 3) {
+          const sources = [...receivedVideo].flatMap(([userId, items]) =>
+            (["v", "s", "l"] as const).flatMap(
+              (kind) =>
+                items[kind]
+                  ?.getVideoTracks()
+                  .filter((t) => t.readyState !== "ended")
+                  .map((t) => ({ trackId: t.id, userId, kind })) ?? [],
+            ),
+          );
+          layers.update(report, sources, (frame) => seat.send(frame));
+        }
+        return report;
       } catch {
         return null;
       }
@@ -1283,6 +1307,7 @@ function attachSeatDiagnostics(generation: number): void {
 }
 
 function attachWatchDiagnostics(generation: number): void {
+  const layers = new ViewerLayerController();
   attachDiagnostics({
     role: "watch",
     caps: defaultCaps,
@@ -1292,7 +1317,23 @@ function attachWatchDiagnostics(generation: number): void {
       const pc = watchCall.pc;
       if (watchCall.generation !== generation || !pc?.getStats) return null;
       try {
-        return statsEntriesFromReport(await pc.getStats());
+        const report = statsEntriesFromReport(await pc.getStats());
+        if (watchCall.generation !== generation || watchCall.pc !== pc)
+          return null;
+        const state = useVoice.getState();
+        if ((watchMediaVersion ?? 0) >= 3 && state.watchPublisherId) {
+          const sources =
+            state.watchStream
+              ?.getVideoTracks()
+              .filter((t) => t.readyState !== "ended")
+              .map((t) => ({
+                trackId: t.id,
+                userId: state.watchPublisherId!,
+                kind: "l" as const,
+              })) ?? [];
+          layers.update(report, sources, (frame) => watchCall.send(frame));
+        }
+        return report;
       } catch {
         return null;
       }
@@ -3575,6 +3616,8 @@ async function publishLocal(
         transceiver.direction = "sendonly";
       sender = reserved;
     }
+    if (!sender && track.kind === "video" && (seatMediaVersion ?? 0) >= 3)
+      sender = addLayeredVideo(pc, track, stream);
     sender ??= pc.addTrack?.(track, stream) || undefined;
     const identity: PublishIdentity = (sender &&
       publisherTracks.get(sender)) ?? { kind: publishKind, trackId: track.id };
@@ -3989,7 +4032,7 @@ async function startPeer(
         scheduleSeatRebuild();
       },
     );
-    seat.send({ op: "j", tk: ticket.ticket, v: 2 });
+    seat.send({ op: "j", tk: ticket.ticket, v: 3 });
   } catch (error) {
     if (seat.generation !== mine) return;
     if (recovering && retryableTicketError(error)) {
@@ -4173,6 +4216,7 @@ async function startPeer(
 }
 
 function stopWatchPeer(preserveRetry = false): void {
+  watchMediaVersion = null;
   watchRetry.cancel(!preserveRetry);
   watchReported = false;
   watchEpoch += 1;
@@ -4320,6 +4364,7 @@ function onWatchFrame(frame: MediaServerFrame): void {
     deps?.onError?.(error);
   };
   if (frame.op === "ok") {
+    watchMediaVersion = frame.v ?? 1;
     watchCall.accept();
     return;
   }
@@ -4523,7 +4568,7 @@ async function startWatchPeer(
     watchCall.send({
       op: "j",
       tk: ticket.ticket,
-      v: 2,
+      v: 3,
       ...(publisher ? { w: publisher } : {}),
     });
   } catch (error) {

@@ -1361,3 +1361,69 @@ async fn ended_old_reader_must_not_clear_replacement_live_handshake() {
         "replacement Live must publish after accepted fresh handshake"
     );
 }
+
+#[tokio::test]
+async fn layer_hints_require_v3_and_never_create_watch_or_subscription_authority() {
+    let sfu = Arc::new(Sfu::new(&config()));
+    let channel = Uuid::new_v4();
+    let (publisher, _rx) = join(&sfu, channel).await;
+    let (legacy, _rx) = join(&sfu, channel).await;
+    let (out, _rx) = mpsc::unbounded_channel();
+    let viewer = sfu
+        .join_inner(
+            TicketClaim {
+                u: Uuid::new_v4(),
+                s: Uuid::new_v4(),
+                c: channel,
+                g: false,
+            },
+            None,
+            None,
+            3,
+            out,
+        )
+        .await
+        .unwrap();
+    let room = sfu.find_room(channel).await.unwrap();
+    let user = room.lock().await.peers[&publisher].user_id;
+    sfu.announce_track(publisher, channel, "s", Some("private-screen"))
+        .await
+        .unwrap();
+    let (track, _events) = remote("private-screen");
+    sfu.publish(publisher, channel, track).await.unwrap();
+    assert!(matches!(
+        sfu.set_viewer_layer(legacy, channel, user, "s", 90, false)
+            .await,
+        Err(SfuError::Forbidden)
+    ));
+    for (source, kind, height) in [(user, "s", 90), (Uuid::new_v4(), "l", 0)] {
+        sfu.set_viewer_layer(viewer, channel, source, kind, height, true)
+            .await
+            .unwrap();
+    }
+    for (source, kind, height) in [(Uuid::nil(), "v", 90), (user, "a", 90), (user, "s", 16385)] {
+        assert!(matches!(
+            sfu.set_viewer_layer(viewer, channel, source, kind, height, false)
+                .await,
+            Err(SfuError::BadAnnounce)
+        ));
+    }
+    let gate = {
+        let room = room.lock().await;
+        let peer = &room.peers[&viewer];
+        assert!(peer.watches.is_empty());
+        peer.sdp.clone()
+    };
+    assert!(
+        gate.lock().await.subscriptions.is_empty(),
+        "a hint cannot create the private source's subscription"
+    );
+    sfu.leave(viewer, channel).await;
+    assert!(matches!(
+        sfu.set_viewer_layer(viewer, channel, user, "s", 90, false)
+            .await,
+        Err(SfuError::NotInRoom)
+    ));
+    sfu.leave(legacy, channel).await;
+    sfu.leave(publisher, channel).await;
+}

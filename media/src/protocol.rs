@@ -8,8 +8,8 @@
 use serde::{Deserialize, Serialize};
 use uuid::Uuid;
 
-/// Version 2 adds explicit source Watch and independently tagged source audio.
-pub const MEDIA_PROTOCOL_VERSION: u8 = 2;
+/// Version 3 adds independent viewer video layer hints; v2 Watch stays compatible.
+pub const MEDIA_PROTOCOL_VERSION: u8 = 3;
 
 #[derive(Debug, Clone, Deserialize, PartialEq, Eq)]
 #[serde(tag = "op")]
@@ -72,6 +72,15 @@ pub enum ClientFrame {
         k: Option<String>,
         #[serde(default)]
         on: Option<bool>,
+    },
+    /// Only an already-authorized subscription is affected; this grants no Watch.
+    #[serde(rename = "q")]
+    ViewerLayer {
+        u: Uuid,
+        k: String,
+        h: u16,
+        #[serde(default)]
+        congested: bool,
     },
     #[serde(rename = "l")]
     Leave,
@@ -154,6 +163,28 @@ mod tests {
         );
     }
 
+    #[test]
+    fn layer_hint_is_compact_and_requires_a_bounded_typed_source() {
+        let user = Uuid::new_v4();
+        let hint = format!(r#"{{"op":"q","u":"{user}","k":"v","h":90}}"#);
+        assert_eq!(
+            serde_json::from_str::<ClientFrame>(&hint).unwrap(),
+            ClientFrame::ViewerLayer {
+                u: user,
+                k: "v".into(),
+                h: 90,
+                congested: false
+            }
+        );
+        for invalid in [
+            r#"{"op":"q","k":"v","h":90}"#,
+            r#"{"op":"q","u":"invalid","k":"v","h":90}"#,
+            r#"{"op":"q","u":"00000000-0000-0000-0000-000000000001","k":"v","h":-1}"#,
+            r#"{"op":"q","u":"00000000-0000-0000-0000-000000000001","k":"v","h":65536}"#,
+        ] {
+            assert!(serde_json::from_str::<ClientFrame>(invalid).is_err());
+        }
+    }
     #[test]
     fn pub_announce_is_compact() {
         let frame: ClientFrame = serde_json::from_str(r#"{"op":"p","k":"s"}"#).unwrap();

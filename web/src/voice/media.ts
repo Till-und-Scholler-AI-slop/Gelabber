@@ -30,6 +30,7 @@ export type MediaClientFrame =
   | { op: "p"; k: "v" | "s" | "l" | "sa" | "la"; t?: string; lc?: string }
   | { op: "u"; k: "v" | "s" | "l" | "sa" | "la"; t?: string }
   | { op: "w"; u: string; k: "s" | "l"; on: boolean }
+  | { op: "q"; u: string; k: "v" | "s" | "l"; h: number; congested: boolean }
   | { op: "x" }
   | { op: "l" };
 
