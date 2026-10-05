@@ -109,15 +109,58 @@ for (const engine of [chromium, firefox]) {
       .click();
     const dialog = member.getByRole("dialog", { name: "Reaktion auswählen" });
     await dialog.getByRole("searchbox").fill("rotes Herz");
-    await dialog
-      .getByRole("button", { name: "rotes Herz", exact: true })
-      .press("Enter");
+    let releaseReaction;
+    const heldReaction = new Promise((resolve) => {
+      releaseReaction = resolve;
+    });
+    const reactionRoute = "**/api/messages/*/reactions/*";
+    await member.route(reactionRoute, async (route) => {
+      await heldReaction;
+      await route.continue();
+    });
+    const composer = member.locator("form textarea").last();
+    try {
+      await dialog
+        .getByRole("button", { name: "rotes Herz", exact: true })
+        .press("Enter");
+      await dialog.waitFor({ state: "hidden" });
+      await member.waitForFunction(
+        () =>
+          document.activeElement?.getAttribute("aria-label") ===
+          "Reaktion hinzufügen",
+        null,
+        { timeout: 3000 },
+      );
+      assert.equal(
+        await row(member)
+          .getByRole("button", { name: "Reaktion hinzufügen", exact: true })
+          .getAttribute("aria-disabled"),
+        "true",
+      );
+      await composer.focus();
+      await composer.fill("typing while the reaction is pending");
+    } finally {
+      releaseReaction();
+    }
     await member.waitForFunction(
       () =>
         document
           .querySelector('[aria-label="❤️: 1 Reaktionen, du hast reagiert"]')
           ?.getAttribute("aria-pressed") === "true",
     );
+    await member.waitForFunction(
+      () =>
+        !document.querySelector(
+          '[aria-label="Reaktion hinzufügen"][aria-disabled="true"]',
+        ),
+    );
+    assert.equal(
+      await composer.evaluate((element) => document.activeElement === element),
+      true,
+      "settled reaction must not steal a later composer focus",
+    );
+    await composer.fill("");
+    await member.unroute(reactionRoute);
     // Removing the last vote must also survive the Redis cjson [] -> {} shape.
     await row(member)
       .getByRole("button", {

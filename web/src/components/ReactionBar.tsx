@@ -90,9 +90,10 @@ export function ReactionBar({
             type="button"
             aria-pressed={mine}
             aria-label={`${emoji}: ${user_ids.length} Reaktionen${mine ? ", du hast reagiert" : ""}`}
-            disabled={busy || (!mine && !canSend)}
+            disabled={!mine && !canSend}
+            aria-disabled={busy || undefined}
             onClick={() => react(emoji, !mine)}
-            className={`min-h-9 rounded-full border px-2.5 text-sm disabled:opacity-50 ${mine ? "border-blue-500 bg-blue-50 text-blue-800 dark:bg-blue-950 dark:text-blue-200" : "border-neutral-300 dark:border-neutral-600"}`}
+            className={`min-h-9 rounded-full border px-2.5 text-sm disabled:opacity-50 aria-disabled:opacity-50 ${mine ? "border-blue-500 bg-blue-50 text-blue-800 dark:bg-blue-950 dark:text-blue-200" : "border-neutral-300 dark:border-neutral-600"}`}
           >
             <span aria-hidden="true">
               {emoji} {user_ids.length}
@@ -104,9 +105,12 @@ export function ReactionBar({
         <button
           type="button"
           aria-label="Reaktion hinzufügen"
-          disabled={busy}
-          onClick={() => setOpen(true)}
-          className="min-h-9 rounded-full border border-neutral-300 px-2.5 text-sm disabled:opacity-50 dark:border-neutral-600"
+          // Transient API work must not make the modal's opener unfocusable.
+          aria-disabled={busy || undefined}
+          onClick={() => {
+            if (!busy) setOpen(true);
+          }}
+          className="min-h-9 rounded-full border border-neutral-300 px-2.5 text-sm aria-disabled:opacity-50 dark:border-neutral-600"
         >
           ＋ <span aria-hidden="true">☺</span>
         </button>
