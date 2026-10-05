@@ -101,6 +101,9 @@ impl Egress {
                     current = None;
                     continue;
                 };
+                // Keep the batch on the worker stack instead of allocating on
+                // every audio preemption; this transient enum is never queued.
+                #[allow(clippy::large_enum_variant)]
                 enum Step {
                     Audio(Batch),
                     Video(bool),

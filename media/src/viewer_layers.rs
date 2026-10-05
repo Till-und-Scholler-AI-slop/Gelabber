@@ -699,10 +699,12 @@ mod tests {
     }
     #[test]
     fn rtp_and_vp8_identity_spaces_survive_encoder_switch_and_wrap() {
-        let mut r = Rewriter::default();
-        r.picture = 0x7ffe;
-        r.tl0 = 254;
-        r.key_index = 30;
+        let mut r = Rewriter {
+            picture: 0x7ffe,
+            tl0: 254,
+            key_index: 30,
+            ..Default::default()
+        };
         let first = r.rewrite(frame(1, 65535, 0xfffffff0, true, 90));
         let next = r.rewrite(frame(2, 120, 100, true, 360));
         assert_eq!(first[0].header.sequence_number, 65535);
