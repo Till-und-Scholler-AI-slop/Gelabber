@@ -24,6 +24,19 @@ exactly 480 samples (10 ms); this excludes RNNoise's own algorithmic delay,
 browser capture/output buffers, codec, transport and receiver playback delay.
 Synthetic attenuation is a functional check, not a speech-quality score.
 
+The same command separately estimates the full input-PCM to worklet-output-PCM
+delay, including RNNoise's model delay, using deterministic voiced harmonics
+and an aperiodic chirp. Normalized cross-correlation searches 0–50 ms in three
+fixed half-second windows after warmup. A peak must correlate at least 0.95 and
+exceed periodic aliases outside a 1 ms neighborhood by at least 0.02; an
+unidentifiable/suppressed signal fails acceptance. Direct RNNoise and the actual
+worklet must differ by exactly 480 samples, and each worklet estimate must stay
+within 30 ms. Signal filtering can shift the correlation peak slightly, so
+these are measured estimates for this PCM, not a universal latency guarantee.
+The report keeps frame compute time separate. The PCM measurement includes no
+browser capture/output buffering, scheduling overruns, codec, network or
+physical-device latency; those remain release acceptance gates.
+
 Start `npm run dev -- --host 127.0.0.1 --port 5179`, then run
 `npm run test:audio-smoke`. Chromium and Firefox use browser fake devices, genuine
 AudioWorklet/WASM, real MediaRecorder and HTML audio playback. The local test
