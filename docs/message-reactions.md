@@ -46,3 +46,13 @@ and screenshots go to `/tmp/gelabber-reactions-browser` (override with
 mobile-device test. SQLx tests separately cover concurrent idempotent writes,
 edit/delete races, outbox preservation through Redis failure and permission
 loss while a request waits on the membership writer lock.
+## Local upgrade and restore drill
+
+`python3 tools/check-chat-migration-restore.py --container gelabber-chat-test-postgres --output /tmp/gelabber-chat-restore.json`
+uses only fresh UUID databases in an explicitly named local test PostgreSQL
+container. It upgrades the nine shipped migrations with existing messages,
+then adds votes and a read cursor, makes a real custom-format `pg_dump` and
+restores it with `pg_restore`. Ordered rows, full-text search, creation sequence,
+read boundary and reaction cascades must survive. It checks the old writer's
+SQL footprint after an additive upgrade; it does not claim an old application
+binary, object-store backup or production deployment rollback was accepted.
