@@ -9,6 +9,7 @@ import {
   resetSessionForTests,
   updateProfile,
   useSession,
+  useSessionProblems,
 } from "./session.ts";
 import type { User } from "./types.ts";
 
@@ -65,13 +66,21 @@ describe("session store", () => {
     expect(calls).toHaveLength(1);
   });
 
-  it("treats an unreachable API as anonymous so the login page can render", async () => {
+  it("keeps an unreachable session unresolved and retries authoritatively", async () => {
     vi.stubGlobal(
       "fetch",
       vi.fn(() => Promise.reject(new TypeError("Failed to fetch"))),
     );
     await ensureSession();
-    expect(useSession.getState().status).toBe("anonymous");
+    expect(useSession.getState().status).toBe("unknown");
+    expect(useSessionProblems.getState().bootstrap).not.toBeNull();
+    fakeApi({
+      "GET /api/auth/session": () =>
+        json(200, { user: ada, csrf_token: "recovered" }),
+    });
+    await ensureSession();
+    expect(useSession.getState().status).toBe("authenticated");
+    expect(useSessionProblems.getState().bootstrap).toBeNull();
   });
 
   it("login flips the store before the caller continues", async () => {
@@ -132,7 +141,7 @@ describe("session store", () => {
     expect(getCsrfToken()).toBe("c4");
   });
 
-  it("logout swallows a failing request", async () => {
+  it("keeps local logout but exposes failed server revocation for retry", async () => {
     fakeApi({
       "POST /api/auth/login": () => json(200, { user: ada, csrf_token: "c2" }),
       "POST /api/auth/logout": () => json(500, { error: "internal" }),
@@ -140,6 +149,31 @@ describe("session store", () => {
     await login("ada@example.com", "password123");
     await expect(logout()).resolves.toBeUndefined();
     expect(useSession.getState().status).toBe("anonymous");
+    expect(useSessionProblems.getState().logout).not.toBeNull();
+    fakeApi({
+      "POST /api/auth/logout": () => json(200, { csrf_token: "out" }),
+    });
+    await logout();
+    expect(useSessionProblems.getState().logout).toBeNull();
+  });
+
+  it("does not let a late logout error overwrite a new login", async () => {
+    let finish!: (response: Response) => void;
+    fakeApi({
+      "POST /api/auth/login": () => json(200, { user: ada, csrf_token: "in" }),
+      "POST /api/auth/logout": () =>
+        new Promise<Response>((resolve) => {
+          finish = resolve;
+        }),
+    });
+    await login("ada@example.com", "password123");
+    const out = logout();
+    await vi.waitFor(() => expect(finish).toBeTypeOf("function"));
+    const inAgain = login("ada@example.com", "password123");
+    finish(json(500, { error: "internal" }));
+    await Promise.all([out, inAgain]);
+    expect(useSession.getState().user?.id).toBe(ada.id);
+    expect(useSessionProblems.getState().logout).toBeNull();
   });
 
   it("profile update is optimistic and confirms with the server row", async () => {

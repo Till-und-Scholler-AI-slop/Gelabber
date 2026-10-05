@@ -26,6 +26,35 @@ export function shouldToastMessage(input: {
   return true;
 }
 
+/** Desktop delivery has its own preference and includes a hidden open chat. */
+export function messageNotificationDecision(input: {
+  toastEnabled: boolean;
+  desktopEnabled: boolean;
+  hidden: boolean;
+  type: "c" | "e" | "d";
+  own: boolean;
+  channelId: string;
+  viewingChannelId: string | undefined;
+}): { toast: boolean; desktop: boolean } {
+  return {
+    toast: shouldToastMessage({ ...input, enabled: input.toastEnabled }),
+    desktop:
+      input.desktopEnabled && input.hidden && input.type === "c" && !input.own,
+  };
+}
+
+/** Bound replay suppression to the active account/session listener. */
+export function createNotificationDedupe(limit = 2048) {
+  const seen = new Set<string>();
+  return (channelId: string, messageId: string): boolean => {
+    const key = `${channelId}:${messageId}`;
+    if (seen.has(key)) return false;
+    seen.add(key);
+    if (seen.size > limit) seen.delete(seen.values().next().value!);
+    return true;
+  };
+}
+
 export function previewText(content: string, hasAttachment: boolean): string {
   const trimmed = content.trim().replace(/\s+/g, " ");
   if (trimmed) {

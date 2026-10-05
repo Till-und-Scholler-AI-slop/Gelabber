@@ -19,6 +19,7 @@ import { MessageToasts } from "./MessageToasts.tsx";
 import { Toasts } from "./Toasts.tsx";
 import { VoiceSettingsDialog } from "./VoiceSettingsDialog.tsx";
 import { VoiceSessionControls } from "./VoiceSessionControls.tsx";
+import { SessionRecoveryNotice } from "./SessionRecoveryNotice.tsx";
 
 function AuthenticatedRealtime() {
   useAuthenticatedSubscriptions();
@@ -103,6 +104,7 @@ export function AppShell() {
         </header>
       ) : null}
       <div id="app-content" tabIndex={workspace ? undefined : -1}>
+        <SessionRecoveryNotice />
         <Outlet />
       </div>
       {user ? <AuthenticatedRealtime key={user.id} /> : null}

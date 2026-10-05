@@ -1,6 +1,6 @@
 import { useQueryClient } from "@tanstack/react-query";
-import { useParams } from "@tanstack/react-router";
-import { useEffect } from "react";
+import { useNavigate, useParams } from "@tanstack/react-router";
+import { useEffect, useRef } from "react";
 
 import { scopeGeneration, stampHolds } from "../auth/scope.ts";
 import { useSession } from "../auth/session.ts";
@@ -11,7 +11,12 @@ import type { ServerDetail } from "../servers/types.ts";
 import { useMediaSettings } from "../voice/settings.ts";
 import { getGateway } from "../ws/client.ts";
 import type { ChatEvent } from "../ws/protocol.ts";
-import { isDmTopic, previewText, shouldToastMessage } from "./notify.ts";
+import {
+  createNotificationDedupe,
+  isDmTopic,
+  messageNotificationDecision,
+  previewText,
+} from "./notify.ts";
 import { useMessageToasts } from "./toasts.ts";
 import type { Message } from "./types.ts";
 import { asAttachmentList } from "./types.ts";
@@ -61,20 +66,31 @@ function channelLabel(
   return channel ? `#${channel.name}` : "Kanal";
 }
 
-function maybeDesktopNotify(title: string, body: string): void {
+function maybeDesktopNotify(
+  title: string,
+  body: string,
+  onClick: () => void,
+): void {
   if (typeof document === "undefined" || !document.hidden) return;
   if (!useMediaSettings.getState().desktopNotify) return;
   const Notify = (
     globalThis as unknown as {
       Notification?: {
         permission: string;
-        new (title: string, opts?: { body: string; silent?: boolean }): unknown;
+        new (
+          title: string,
+          opts?: { body: string; silent?: boolean },
+        ): { onclick: (() => void) | null; close: () => void };
       };
     }
   ).Notification;
   if (!Notify || Notify.permission !== "granted") return;
   try {
-    new Notify(title, { body, silent: true });
+    const notification = new Notify(title, { body, silent: true });
+    notification.onclick = () => {
+      notification.close();
+      onClick();
+    };
   } catch {
     // permission revoked mid-flight
   }
@@ -83,44 +99,76 @@ function maybeDesktopNotify(title: string, body: string): void {
 /** Toast + optional desktop notification for creates in another chat. */
 export function useMessageToastsBridge(): void {
   const client = useQueryClient();
+  const navigate = useNavigate();
   const me = useSession((s) => s.user?.id);
   const viewingChannelId = useParams({ strict: false }).channelId;
+  const deliveries = useRef<{
+    userId: string | undefined;
+    generation: number;
+    first: ReturnType<typeof createNotificationDedupe>;
+  } | null>(null);
 
   useEffect(() => {
     const userId = me;
     const generation = scopeGeneration();
+    if (
+      deliveries.current?.userId !== userId ||
+      deliveries.current?.generation !== generation
+    ) {
+      deliveries.current = {
+        userId,
+        generation,
+        first: createNotificationDedupe(),
+      };
+    }
+    const firstDelivery = deliveries.current.first;
     return getGateway().onEvent((event) => {
       if (!userId || !stampHolds({ userId, generation })) return;
       if (event.t !== "c" || !event.c) return;
       const message = asCreated(event.d);
       if (!message) return;
-      const enabled = useMediaSettings.getState().messageToasts;
-      if (
-        !shouldToastMessage({
-          enabled,
-          type: event.t,
-          own: message.author.id === userId,
-          channelId: event.c,
-          viewingChannelId,
-        })
-      ) {
-        return;
-      }
+      if (!firstDelivery(event.c, message.id)) return;
+      const settings = useMediaSettings.getState();
+      const decision = messageNotificationDecision({
+        toastEnabled: settings.messageToasts,
+        desktopEnabled: settings.desktopNotify,
+        hidden: typeof document !== "undefined" && document.hidden,
+        type: event.t,
+        own: message.author.id === userId,
+        channelId: event.c,
+        viewingChannelId,
+      });
+      if (!decision.toast && !decision.desktop) return;
       const dm = isDmTopic(event.s, event.c);
       const label = channelLabel(client, userId, generation, event, dm);
       const preview = previewText(
         message.content,
         asAttachmentList(message.attachments).length > 0,
       );
-      useMessageToasts.getState().push({
-        channelId: event.c,
-        serverId: event.s,
-        dm,
-        channelLabel: label,
-        author: message.author.name,
-        preview,
-      });
-      maybeDesktopNotify(`${message.author.name} · ${label}`, preview);
+      if (decision.toast)
+        useMessageToasts.getState().push({
+          channelId: event.c,
+          serverId: event.s,
+          dm,
+          channelLabel: label,
+          author: message.author.name,
+          preview,
+        });
+      if (decision.desktop) {
+        const channelId = event.c;
+        maybeDesktopNotify(`${message.author.name} · ${label}`, preview, () => {
+          if (!stampHolds({ userId, generation })) return;
+          window.focus();
+          if (dm) {
+            void navigate({ to: "/d/$channelId", params: { channelId } });
+          } else {
+            void navigate({
+              to: "/s/$serverId/c/$channelId",
+              params: { serverId: event.s, channelId },
+            });
+          }
+        });
+      }
     });
-  }, [client, me, viewingChannelId]);
+  }, [client, me, navigate, viewingChannelId]);
 }

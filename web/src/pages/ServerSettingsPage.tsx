@@ -12,6 +12,7 @@ import { fieldMessage } from "../auth/rules.ts";
 import { useFormErrors } from "../auth/useFormErrors.ts";
 import { PresenceAvatar } from "../components/PresenceAvatar.tsx";
 import { Field } from "../components/Field.tsx";
+import { LoadError } from "../components/LoadError.tsx";
 import { FormError } from "../components/FormError.tsx";
 import { GhostButton } from "../components/Modal.tsx";
 import { SubmitButton } from "../components/SubmitButton.tsx";
@@ -43,7 +44,17 @@ import { presenceOf, usePresenceStore } from "../ws/live.ts";
 
 export function ServerSettingsPage() {
   const { serverId } = useParams({ from: "/workspace/s/$serverId/settings" });
-  const { data: server } = useServer(serverId);
+  const { data: server, error, isFetching, refetch } = useServer(serverId);
+  if (error && !server)
+    return (
+      <div className="p-6">
+        <LoadError
+          message="Die Servereinstellungen konnten gerade nicht geladen werden."
+          pending={isFetching}
+          onRetry={() => void refetch()}
+        />
+      </div>
+    );
   if (!server) return null;
   return <Settings key={server.id} server={server} />;
 }
@@ -188,7 +199,13 @@ function PermissionsSection({ server }: { server: ServerDetail }) {
 }
 
 function InvitesSection({ server }: { server: ServerDetail }) {
-  const { data: invites, isPending } = useInvites(server.id, true);
+  const {
+    data: invites,
+    isPending,
+    error,
+    isFetching,
+    refetch,
+  } = useInvites(server.id, true);
   const create = useCreateInvite(server.id);
   const revoke = useRevokeInvite(server.id);
 
@@ -220,6 +237,12 @@ function InvitesSection({ server }: { server: ServerDetail }) {
         <p className="text-sm text-neutral-500 dark:text-neutral-400">
           Lade Einladungen…
         </p>
+      ) : error ? (
+        <LoadError
+          message="Die Einladungen konnten gerade nicht geladen werden."
+          pending={isFetching}
+          onRetry={() => void refetch()}
+        />
       ) : !invites || invites.length === 0 ? (
         <p className="text-sm text-neutral-500 dark:text-neutral-400">
           Keine aktiven Einladungen.
@@ -316,7 +339,13 @@ function MembersSection({ server }: { server: ServerDetail }) {
 }
 
 function BansSection({ server }: { server: ServerDetail }) {
-  const { data: bans, isPending } = useBans(server.id, true);
+  const {
+    data: bans,
+    isPending,
+    error,
+    isFetching,
+    refetch,
+  } = useBans(server.id, true);
   const unban = useUnbanMember(server.id);
 
   return (
@@ -328,6 +357,12 @@ function BansSection({ server }: { server: ServerDetail }) {
         <p className="text-sm text-neutral-500 dark:text-neutral-400">
           Lade Sperren…
         </p>
+      ) : error ? (
+        <LoadError
+          message="Die Sperren konnten gerade nicht geladen werden."
+          pending={isFetching}
+          onRetry={() => void refetch()}
+        />
       ) : !bans || bans.length === 0 ? (
         <p className="text-sm text-neutral-500 dark:text-neutral-400">
           Niemand ist gesperrt.
