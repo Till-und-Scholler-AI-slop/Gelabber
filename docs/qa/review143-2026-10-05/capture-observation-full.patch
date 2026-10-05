@@ -1,0 +1,104 @@
+diff --git i/web/scripts/e2e/media.mjs w/web/scripts/e2e/media.mjs
+index 8714c09..8cc2d32 100644
+--- i/web/scripts/e2e/media.mjs
++++ w/web/scripts/e2e/media.mjs
+@@ -1,4 +1,5 @@
+ import { nativeEvaluate } from "./native-evaluate.mjs";
++import { installCaptureDiagnostic, captureDiagnostics } from "./capture-diagnostic.mjs";
+ /* global window, document, innerWidth */
+ import {
+   check,
+@@ -391,9 +392,14 @@ export async function mediaScenarios(h, f) {
+     ["01", "02", "05b"],
+     async () => {
+       await reset(f);
++      await installCaptureDiagnostic(f.owner);
++      await installCaptureDiagnostic(f.watcher);
+       await click(f.owner, "Beitreten");
+       const cycles = [];
++      let round = 0;
++      try {
+       for (let i = 0; i < 20; i++) {
++        round = i + 1;
+         await click(f.owner, "Go Live");
+         await click(f.watcher, "Zuschauen");
+         const frames = await progress(f.watcher, {
+@@ -462,7 +468,13 @@ export async function mediaScenarios(h, f) {
+         cycles,
+         late: last,
+         serverBounds: "BLOCKED: SFU task/publication counters not exposed",
++        diagnostic: await captureDiagnostics(f),
+       };
++      } catch (error) {
++        error.metrics = { ...error.metrics, round, completedCycles: cycles,
++          diagnostic: await captureDiagnostics(f) };
++        throw error;
++      }
+     },
+   );
+   await h.run(
+@@ -520,6 +532,10 @@ export async function mediaScenarios(h, f) {
+   });
+   await h.run("autoplay-rejection-visible-click-retry", ["08a"], async () => {
+     await reset(f);
++    await installCaptureDiagnostic(f.owner);
++    await installCaptureDiagnostic(f.watcher);
++    let actualRetry;
++    try {
+     await click(f.owner, "Beitreten");
+     await click(f.owner, "Go Live");
+     await nativeEvaluate(f.watcher, () => {
+@@ -541,12 +557,23 @@ export async function mediaScenarios(h, f) {
+       await snapshot(f.watcher),
+     );
+     await nativeEvaluate(f.watcher, armPlaybackRetry);
++    actualRetry = await retry.first().evaluate(button => ({
++      text: button.textContent.trim(),
++      inLiveFigure: !!button.closest("figure")?.textContent.includes("— Live"),
++      region: button.closest("[aria-label]")?.getAttribute("aria-label") ?? null,
++    }));
+     await retry.first().click();
+     return {
+       fault:
+         "synthetic NotAllowedError; normal browser policy tested separately",
+       frames: await progress(f.watcher, options),
++      actualRetry,
++      diagnostic: await captureDiagnostics(f),
+     };
++    } catch (error) {
++      error.metrics = { ...error.metrics, actualRetry, diagnostic: await captureDiagnostics(f) };
++      throw error;
++    }
+   });
+   const { mediaExtraScenarios } = await import("./media-extra.mjs");
+   await h.run("active-call-responsive-controls", [], async () => {
+diff --git i/web/scripts/e2e/probe.mjs w/web/scripts/e2e/probe.mjs
+index 62d26e0..2f71659 100644
+--- i/web/scripts/e2e/probe.mjs
++++ w/web/scripts/e2e/probe.mjs
+@@ -127,6 +127,16 @@ export function instrument({ relay }) {
+       this.send = (data) => {
+         try {
+           const frame = JSON.parse(data);
++          if (frame.op === "q") {
++            item.layerHints ??= [];
++            if (item.layerHints.length >= 100) item.layerHints.shift();
++            item.layerHints.push({
++              at: Date.now(),
++              kind: frame.k,
++              height: frame.h,
++              congested: frame.congested,
++            });
++          }
+           if (typeof frame.sdp === "string") {
+             item.offers++;
+             item.maxSdp = Math.max(item.maxSdp, frame.sdp.length);
+@@ -193,7 +203,7 @@ export function instrument({ relay }) {
+       clearInterval(timer);
+       stop();
+     };
+-    state.captures.push({ kind, slot, track, stream, colors });
++    state.captures.push({ kind, slot, track, stream, colors, drawCount: () => frame });
+     return stream;
+   }
+   const gum = navigator.mediaDevices.getUserMedia.bind(navigator.mediaDevices);

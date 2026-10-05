@@ -1,0 +1,100 @@
+{
+  "scope": "Shutdown handoff: no second control run. Product frozen at a5c335e; PR159 stays Draft. No secrets/env/node_modules/executables/raw RTC SDP or logs included. Compact synthetic fixture evidence only.",
+  "artifacts": [
+    {
+      "name": "original-chromium-media15",
+      "localRaw": "/tmp/gelabber-v04-media-final-7693120-143/chromium/report.json",
+      "rawSha256": "e52d84071fa98edb01c630b30f2c8af675aa84c5defee95bb8dceb9c52fc5c45",
+      "cloudFile": "docs/qa/review143-2026-10-05/original-chromium-media15.json",
+      "cloudSha256": "9c9f07e178ffde2324d28fcf72f36cb618087f97b4832c351e0dbe5ecad4b411"
+    },
+    {
+      "name": "original-firefox-media15",
+      "localRaw": "/tmp/gelabber-v04-media-final-7693120-143/firefox/report.json",
+      "rawSha256": "f7b59d99760fa91cafa81c95d7ad15e9f212818a598d89550974761d54860394",
+      "cloudFile": "docs/qa/review143-2026-10-05/original-firefox-media15.json",
+      "cloudSha256": "f25d56e2a8e3c67294244f93d5826876bc98fecb76b267f4c99edc2e014f8881"
+    },
+    {
+      "name": "core-chromium",
+      "localRaw": "/tmp/gelabber-v04-media-final-7693120-143/core-chromium/report.json",
+      "rawSha256": "96dbba8122b8f0a92daf16fc21ea80c0178e48d788e354091ca0cdbe91dd8161",
+      "cloudFile": "docs/qa/review143-2026-10-05/core-chromium.json",
+      "cloudSha256": "9061c5be34a42443c7d31384bfee19b71e0bf14207b6f87c3b359eacd367efa8"
+    },
+    {
+      "name": "core-firefox",
+      "localRaw": "/tmp/gelabber-v04-media-final-7693120-143/core-firefox/report.json",
+      "rawSha256": "003836ef3ca8519833e4d351558af1e30d8bebd9c55d770e590e5b620aef299c",
+      "cloudFile": "docs/qa/review143-2026-10-05/core-firefox.json",
+      "cloudSha256": "f02a7f44f5eec8c060b9171afa94fdf1236a28027b931fcc20f6d7ea0cc0891b"
+    },
+    {
+      "name": "private-chromium-media15",
+      "localRaw": "/tmp/gelabber-app-autoplay-control-7693120/controls/full-chromium/report.json",
+      "rawSha256": "20f72f8810da16a052fc27d0f65cdb9e63f6f88b8940b5b5f56cfe36bf8b6e28",
+      "cloudFile": "docs/qa/review143-2026-10-05/private-chromium-media15.json",
+      "cloudSha256": "9b9e3acef9b2a2b4370a15a73296a6dca802a15ec2cc6c6c0aa20e9124f4c472"
+    },
+    {
+      "name": "private-firefox-media15",
+      "localRaw": "/tmp/gelabber-app-autoplay-control-7693120/controls/full-firefox/report.json",
+      "rawSha256": "e27edddf75df277dea1c8cd43964ad33af2b699906449e0436804de6b4207d41",
+      "cloudFile": "docs/qa/review143-2026-10-05/private-firefox-media15.json",
+      "cloudSha256": "3e57200eca374eaf6e12d7be68d4fe42fd5b30eb0c1e1238337933313beeb103"
+    },
+    {
+      "name": "last-firefox-media15-no-pulse",
+      "localRaw": "/tmp/gelabber-app-autoplay-control-7693120/controls/reactivation-firefox-one/report.json",
+      "rawSha256": "80e1180ca7bfa62e0a94734f847e1bd1bf75adb9f4dd069e93744b00cdfc5fdc",
+      "cloudFile": "docs/qa/review143-2026-10-05/last-firefox-media15-no-pulse.json",
+      "cloudSha256": "890a9f101cf3769537845bc3ebcdb2049a5addb31463f86097cb564d8f95b625"
+    },
+    {
+      "name": "gateway-positive-summary",
+      "localRaw": "/tmp/gelabber-app-autoplay-control-7693120/controls/gateway-chromium-feedback/summary.json",
+      "rawSha256": "5d408fe6c5756ed9b002c4e8bd6120e56739281a7db3ed1d0fa373bd1840ca47",
+      "cloudFile": "docs/qa/review143-2026-10-05/gateway-positive-summary.json",
+      "cloudSha256": "63b4ffc0a732b1dbd026a17d874af1ff4112d3b667eaff90c60945f18c1f81a9"
+    },
+    {
+      "name": "firefox-f-stall-window",
+      "localRaw": "/tmp/gelabber-app-autoplay-control-7693120/controls/firefox-full-f-stall-window.json",
+      "rawSha256": "928ceb38db627f5b32cab8dc097112091eb34206667e10e6b21e7e0b8147f4ac",
+      "cloudFile": "docs/qa/review143-2026-10-05/firefox-f-stall-window.json",
+      "cloudSha256": "77b84caf49426b7f38b27ec7283420710367ab3817dc40b32fa95f01cd9ca952"
+    },
+    {
+      "artifact": "docs/qa/review143-2026-10-05/capture-observation-full.patch",
+      "sha256": "fd3216710c00d24b773e66ff5152f4839bcfa0a879a38208b5f883e240e04783"
+    },
+    {
+      "artifact": "docs/qa/review143-2026-10-05/capture-observation-gateway.patch",
+      "sha256": "de85f50b3dd9ebea1b394c8d321f31b20829532bfba69c4399861bf838eeaac2"
+    },
+    {
+      "artifact": "docs/qa/review143-2026-10-05/capture-observation-reactivation.patch",
+      "sha256": "0178ef37e2e114d570601cbf90c3e7f77efcf3611b931b4c3fcae8d95ff18c86"
+    },
+    {
+      "artifact": "docs/qa/review143-2026-10-05/capture-observation-reactivation-two.patch",
+      "sha256": "8c548ed7ed7a415417018d31c515aecf8f29a9d1f9d17098e8847510987032ab"
+    },
+    {
+      "artifact": "docs/qa/review143-2026-10-05/capture-diagnostic-full.mjs",
+      "sha256": "682c69ae745b1636c91ec66fa5ef42e9cc9148f8e65720595eff054a7f07263b"
+    },
+    {
+      "artifact": "docs/qa/review143-2026-10-05/capture-diagnostic-latest.mjs",
+      "sha256": "e6a82738602598ae535904665c12d25f9f785af89a8e78ec61f5be7aca7fd06a"
+    },
+    {
+      "artifact": "docs/qa/review143-2026-10-05/native-layer-reactivation-latest.mjs",
+      "sha256": "508515818d00613e6305ef3f984f7ae947014d20d2099b355dc11ba439a5704e"
+    },
+    {
+      "artifact": "docs/qa/review143-2026-10-05/native-layer-reactivation-first-not-invoked.mjs",
+      "sha256": "fb3f87e80eaad358585ae45b2b61d921d067f9fa369c526be287e112bef350a2"
+    }
+  ]
+}

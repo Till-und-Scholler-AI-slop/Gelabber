@@ -1,0 +1,160 @@
+diff --git i/web/scripts/e2e/media.mjs w/web/scripts/e2e/media.mjs
+index 8714c09..678397e 100644
+--- i/web/scripts/e2e/media.mjs
++++ w/web/scripts/e2e/media.mjs
+@@ -1,4 +1,5 @@
+ import { nativeEvaluate } from "./native-evaluate.mjs";
++import { installCaptureDiagnostic, captureDiagnostics } from "./capture-diagnostic.mjs";
+ /* global window, document, innerWidth */
+ import {
+   check,
+@@ -255,6 +256,12 @@ export async function mediaScenarios(h, f) {
+   ]) {
+     await h.run(id, ["02", "05b"], async () => {
+       await begin(f);
++      if (plane === "gateway") {
++        await installCaptureDiagnostic(f.owner);
++        await installCaptureDiagnostic(f.watcher);
++      }
++      let stage = "initial-firstframe-before-fault", faultExercised = false;
++      try {
+       await progress(f.watcher, options);
+       const before = await snapshot(f.owner);
+       await nativeEvaluate(f.owner, () => {
+@@ -265,7 +272,9 @@ export async function mediaScenarios(h, f) {
+           (p) => p.connectionState === "connected",
+         );
+       });
++      stage = "interrupt-signaling";
+       const interruptedSockets = await interrupt(f.owner, plane);
++      faultExercised = interruptedSockets > 0;
+       // Wait for a replacement signaling socket before measuring resumed frames.
+       await until(
+         () => snapshot(f.owner),
+@@ -300,11 +309,18 @@ export async function mediaScenarios(h, f) {
+           "gateway-replaced-healthy-media",
+           { controlConfirmed: true, before, after, identity },
+         );
++      stage = "postfault-frame-gate";
+       const recovery = await progress(f.watcher, {
+         ...options,
+         budget: 20_000,
+       });
+-      return { interruptedSockets, before, after, identity, recovery };
++      return { interruptedSockets, before, after, identity, recovery,
++        stage, faultExercised, diagnostic: plane === "gateway" ? await captureDiagnostics(f) : null };
++      } catch (error) {
++        error.metrics = { ...error.metrics, stage, faultExercised,
++          diagnostic: plane === "gateway" ? await captureDiagnostics(f) : null };
++        throw error;
++      }
+     });
+   }
+   await h.run("offline-8s-no-new-capture-gesture", ["02"], async () => {
+@@ -391,9 +407,14 @@ export async function mediaScenarios(h, f) {
+     ["01", "02", "05b"],
+     async () => {
+       await reset(f);
++      await installCaptureDiagnostic(f.owner);
++      await installCaptureDiagnostic(f.watcher);
+       await click(f.owner, "Beitreten");
+       const cycles = [];
++      let round = 0;
++      try {
+       for (let i = 0; i < 20; i++) {
++        round = i + 1;
+         await click(f.owner, "Go Live");
+         await click(f.watcher, "Zuschauen");
+         const frames = await progress(f.watcher, {
+@@ -462,7 +483,13 @@ export async function mediaScenarios(h, f) {
+         cycles,
+         late: last,
+         serverBounds: "BLOCKED: SFU task/publication counters not exposed",
++        diagnostic: await captureDiagnostics(f),
+       };
++      } catch (error) {
++        error.metrics = { ...error.metrics, round, completedCycles: cycles,
++          diagnostic: await captureDiagnostics(f) };
++        throw error;
++      }
+     },
+   );
+   await h.run(
+@@ -520,6 +547,10 @@ export async function mediaScenarios(h, f) {
+   });
+   await h.run("autoplay-rejection-visible-click-retry", ["08a"], async () => {
+     await reset(f);
++    await installCaptureDiagnostic(f.owner);
++    await installCaptureDiagnostic(f.watcher);
++    let actualRetry;
++    try {
+     await click(f.owner, "Beitreten");
+     await click(f.owner, "Go Live");
+     await nativeEvaluate(f.watcher, () => {
+@@ -541,12 +572,23 @@ export async function mediaScenarios(h, f) {
+       await snapshot(f.watcher),
+     );
+     await nativeEvaluate(f.watcher, armPlaybackRetry);
++    actualRetry = await retry.first().evaluate(button => ({
++      text: button.textContent.trim(),
++      inLiveFigure: !!button.closest("figure")?.textContent.includes("— Live"),
++      region: button.closest("[aria-label]")?.getAttribute("aria-label") ?? null,
++    }));
+     await retry.first().click();
+     return {
+       fault:
+         "synthetic NotAllowedError; normal browser policy tested separately",
+       frames: await progress(f.watcher, options),
++      actualRetry,
++      diagnostic: await captureDiagnostics(f),
+     };
++    } catch (error) {
++      error.metrics = { ...error.metrics, actualRetry, diagnostic: await captureDiagnostics(f) };
++      throw error;
++    }
+   });
+   const { mediaExtraScenarios } = await import("./media-extra.mjs");
+   await h.run("active-call-responsive-controls", [], async () => {
+diff --git i/web/scripts/e2e/probe.mjs w/web/scripts/e2e/probe.mjs
+index 62d26e0..1e360e1 100644
+--- i/web/scripts/e2e/probe.mjs
++++ w/web/scripts/e2e/probe.mjs
+@@ -127,6 +127,29 @@ export function instrument({ relay }) {
+       this.send = (data) => {
+         try {
+           const frame = JSON.parse(data);
++          if (item.plane === "media" && ["p", "u", "w", "o", "a"].includes(frame.op)) {
++            item.sourceSignals ??= [];
++            if (item.sourceSignals.length >= 100) item.sourceSignals.shift();
++            item.sourceSignals.push({ at: Date.now(), op: frame.op, kind: frame.k ?? null,
++              on: frame.on ?? null, announcedCapture: typeof frame.t === "string"
++                ? state.captures.findIndex(capture => capture.track.id === frame.t) : null,
++              sdpScopes: typeof frame.sdp === "string" ? frame.sdp.split(/(?=m=)/).slice(1).map(section => {
++                const lines = section.split(/\r?\n/), msid = lines.find(line => line.startsWith("a=msid:"))?.slice(7).split(" ");
++                return { mid: lines.find(line => line.startsWith("a=mid:"))?.slice(6) ?? null,
++                  direction: lines.find(line => /^a=(sendrecv|sendonly|recvonly|inactive)$/.test(line))?.slice(2) ?? null,
++                  msidCapture: state.captures.findIndex(capture => capture.track.id === msid?.[1]) };
++              }) : null });
++          }
++          if (frame.op === "q") {
++            item.layerHints ??= [];
++            if (item.layerHints.length >= 100) item.layerHints.shift();
++            item.layerHints.push({
++              at: Date.now(),
++              kind: frame.k,
++              height: frame.h,
++              congested: frame.congested,
++            });
++          }
+           if (typeof frame.sdp === "string") {
+             item.offers++;
+             item.maxSdp = Math.max(item.maxSdp, frame.sdp.length);
+@@ -193,7 +216,7 @@ export function instrument({ relay }) {
+       clearInterval(timer);
+       stop();
+     };
+-    state.captures.push({ kind, slot, track, stream, colors });
++    state.captures.push({ kind, slot, track, stream, colors, drawCount: () => frame });
+     return stream;
+   }
+   const gum = navigator.mediaDevices.getUserMedia.bind(navigator.mediaDevices);
