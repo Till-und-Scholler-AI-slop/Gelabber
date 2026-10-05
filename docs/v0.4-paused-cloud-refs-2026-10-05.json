@@ -1,0 +1,143 @@
+{
+  "at": "2026-10-05T20:56:38.208065+00:00",
+  "status": "PAUSED_BY_USER",
+  "scope": "Remote refs checked at pause; root checkpoint 8deac46 contains source/evidence; subsequent root commit only handoff metadata",
+  "branches": {
+    "codex/sync-main-v04-rust-cache": "2a8cb7404073b6566f426d1abd4dd723fefc309d",
+    "codex/v04-audio-quality": "b0f572448ad077b83ebbe88292f935c115e6448c",
+    "codex/v04-backup-restore": "ddec69f2c6ae67febf4e3d3bd7f68cccd4cbdab1",
+    "codex/v04-call-endurance": "8deac469a72ef513a63ceea03917603ad387f8c1",
+    "codex/v04-chat-workflows": "f1404b28398bccbe667e4ca12f86bdaf1747b566",
+    "codex/v04-held-receiver-counters": "d31fc23d0583bc52f4ab680e359c1e9d9a00a1dc",
+    "codex/v04-integration": "76931202f0fa35c45fa1d90efb0f0170d9e6a765",
+    "codex/v04-join-ban-test": "cf638cf3aa61d063086b43e072bed20f645954ad",
+    "codex/v04-media-backend-benchmark": "d6eeac0f566ef7823018411873de31014aed8be2",
+    "codex/v04-message-reactions": "680fcc7e7e2ae065641954a1b2c152dd2e7c0f88",
+    "codex/v04-native-sender-probe": "8f8cb1a84716fdb7ef620367353d4ecfdc790447",
+    "codex/v04-release-roadmap": "53c67299f8f5ddad61994fc6a10d530adbe3b122",
+    "codex/v04-viewer-video-layers": "b00db67dae0632486e6c8d8f1bb9b67c58372dcd",
+    "codex/v04-webapp-reliability": "0d8dde0da5c82b35ff4cac12cde25be9a77dfd11",
+    "main": "17503630886e4997954de50a77b6dc4d66421e0d",
+    "v0.4": "ca385c06493d9553a260ede6b4cb79acb11ea6ee"
+  },
+  "pull_requests": [
+    {
+      "baseRefName": "v0.4",
+      "headRefName": "codex/v04-held-receiver-counters",
+      "headRefOid": "d31fc23d0583bc52f4ab680e359c1e9d9a00a1dc",
+      "isDraft": false,
+      "number": 162,
+      "reviewDecision": "REVIEW_REQUIRED"
+    },
+    {
+      "baseRefName": "v0.4",
+      "headRefName": "codex/v04-native-sender-probe",
+      "headRefOid": "8f8cb1a84716fdb7ef620367353d4ecfdc790447",
+      "isDraft": false,
+      "number": 161,
+      "reviewDecision": "REVIEW_REQUIRED"
+    },
+    {
+      "baseRefName": "v0.4",
+      "headRefName": "codex/v04-backup-restore",
+      "headRefOid": "ddec69f2c6ae67febf4e3d3bd7f68cccd4cbdab1",
+      "isDraft": false,
+      "number": 160,
+      "reviewDecision": "REVIEW_REQUIRED"
+    },
+    {
+      "baseRefName": "v0.4",
+      "headRefName": "codex/v04-viewer-video-layers",
+      "headRefOid": "b00db67dae0632486e6c8d8f1bb9b67c58372dcd",
+      "isDraft": true,
+      "number": 159,
+      "reviewDecision": "REVIEW_REQUIRED"
+    },
+    {
+      "baseRefName": "v0.4",
+      "headRefName": "codex/v04-join-ban-test",
+      "headRefOid": "cf638cf3aa61d063086b43e072bed20f645954ad",
+      "isDraft": false,
+      "number": 158,
+      "reviewDecision": "REVIEW_REQUIRED"
+    },
+    {
+      "baseRefName": "v0.4",
+      "headRefName": "codex/v04-call-endurance",
+      "headRefOid": "8deac469a72ef513a63ceea03917603ad387f8c1",
+      "isDraft": false,
+      "number": 157,
+      "reviewDecision": "REVIEW_REQUIRED"
+    },
+    {
+      "baseRefName": "v0.4",
+      "headRefName": "codex/v04-audio-quality",
+      "headRefOid": "b0f572448ad077b83ebbe88292f935c115e6448c",
+      "isDraft": false,
+      "number": 156,
+      "reviewDecision": "REVIEW_REQUIRED"
+    },
+    {
+      "baseRefName": "v0.4",
+      "headRefName": "codex/v04-media-backend-benchmark",
+      "headRefOid": "d6eeac0f566ef7823018411873de31014aed8be2",
+      "isDraft": true,
+      "number": 155,
+      "reviewDecision": "REVIEW_REQUIRED"
+    },
+    {
+      "baseRefName": "v0.4",
+      "headRefName": "codex/v04-message-reactions",
+      "headRefOid": "680fcc7e7e2ae065641954a1b2c152dd2e7c0f88",
+      "isDraft": false,
+      "number": 154,
+      "reviewDecision": "REVIEW_REQUIRED"
+    },
+    {
+      "baseRefName": "v0.4",
+      "headRefName": "codex/v04-chat-workflows",
+      "headRefOid": "f1404b28398bccbe667e4ca12f86bdaf1747b566",
+      "isDraft": false,
+      "number": 153,
+      "reviewDecision": "REVIEW_REQUIRED"
+    },
+    {
+      "baseRefName": "v0.4",
+      "headRefName": "codex/v04-webapp-reliability",
+      "headRefOid": "0d8dde0da5c82b35ff4cac12cde25be9a77dfd11",
+      "isDraft": false,
+      "number": 152,
+      "reviewDecision": "REVIEW_REQUIRED"
+    },
+    {
+      "baseRefName": "main",
+      "headRefName": "v0.4",
+      "headRefOid": "ca385c06493d9553a260ede6b4cb79acb11ea6ee",
+      "isDraft": true,
+      "number": 151,
+      "reviewDecision": "REVIEW_REQUIRED"
+    },
+    {
+      "baseRefName": "v0.4",
+      "headRefName": "codex/v04-release-roadmap",
+      "headRefOid": "53c67299f8f5ddad61994fc6a10d530adbe3b122",
+      "isDraft": false,
+      "number": 150,
+      "reviewDecision": "REVIEW_REQUIRED"
+    },
+    {
+      "baseRefName": "v0.4",
+      "headRefName": "codex/sync-main-v04-rust-cache",
+      "headRefOid": "2a8cb7404073b6566f426d1abd4dd723fefc309d",
+      "isDraft": false,
+      "number": 149,
+      "reviewDecision": "REVIEW_REQUIRED"
+    }
+  ],
+  "agent_final_checkpoints": {
+    "root": "8deac469a72ef513a63ceea03917603ad387f8c1",
+    "cache_acceptance": "d6eeac0f566ef7823018411873de31014aed8be2",
+    "review_148": "caefca95770d735801c4f86056bdb4aebc8d9326",
+    "review_143": "b00db67dae0632486e6c8d8f1bb9b67c58372dcd"
+  }
+}
