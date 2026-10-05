@@ -1,6 +1,9 @@
 /* global process, console, fetch, performance, URL, AbortSignal */
 import assert from "node:assert/strict";
 import { readFile, writeFile, readlink } from "node:fs/promises";
+import { createHash } from "node:crypto";
+import { execFile } from "node:child_process";
+import { promisify } from "node:util";
 import { setTimeout as pause } from "node:timers/promises";
 import { startHarness, click, snapshot, until, check } from "./harness.mjs";
 import { activePeers, progress } from "./media.mjs";
@@ -28,6 +31,13 @@ const processIds = [
 ].filter(([, pid]) => pid);
 for (const [, pid] of processIds) assert.match(pid, /^[1-9][0-9]*$/);
 const identities = new Map();
+const previousCpu = new Map();
+const binaryHashes = new Map();
+const clockTicks = processIds.length
+  ? Number((await promisify(execFile)("getconf", ["CLK_TCK"])).stdout.trim())
+  : 0;
+if (processIds.length)
+  assert.ok(Number.isSafeInteger(clockTicks) && clockTicks > 0);
 const h = await startHarness();
 const resources = async () => {
   const metrics = await fetch(new URL("/metrics", mediaOrigin), {
@@ -46,17 +56,44 @@ const resources = async () => {
       "PID must identify the supplied Gelabber process",
     );
     const stat = await readFile(`/proc/${pid}/stat`, "utf8");
-    const startTime = stat.slice(stat.lastIndexOf(")") + 2).split(" ")[19];
+    const fields = stat.slice(stat.lastIndexOf(")") + 2).split(" ");
+    const startTime = fields[19];
     const identity = `${exe}:${startTime}`;
     assert.ok(
       !identities.has(role) || identities.get(role) === identity,
       "PID identity changed during observation",
     );
     identities.set(role, identity);
+    if (!binaryHashes.has(role)) {
+      binaryHashes.set(
+        role,
+        createHash("sha256")
+          .update(await readFile(`/proc/${pid}/exe`))
+          .digest("hex"),
+      );
+    }
+    const ticks = Number(fields[11]) + Number(fields[12]);
+    const observedAt = performance.now();
+    const previous = previousCpu.get(role);
+    assert.ok(Number.isSafeInteger(ticks) && ticks >= 0);
+    if (previous) assert.ok(ticks >= previous.ticks);
+    const cpuPercent = previous
+      ? ((ticks - previous.ticks) * 100000) /
+        (clockTicks * (observedAt - previous.observedAt))
+      : null;
+    previousCpu.set(role, { ticks, observedAt });
     const status = await readFile(`/proc/${pid}/status`, "utf8");
     const field = (name) =>
       Number(new RegExp(`^${name}:\\s+(\\d+)`, "m").exec(status)?.[1]);
-    processes[role] = { rssKiB: field("VmRSS"), threads: field("Threads") };
+    processes[role] = {
+      rssKiB: field("VmRSS"),
+      threads: field("Threads"),
+      cpuPercent,
+      cpuTimeMs: (ticks * 1000) / clockTicks,
+      executable: exe,
+      binarySha256: binaryHashes.get(role),
+      startTicks: startTime,
+    };
   }
   return {
     rooms: gauge("gelabber_media_rooms"),

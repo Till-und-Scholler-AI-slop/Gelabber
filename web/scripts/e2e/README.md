@@ -75,6 +75,9 @@ rejected. `GELABBER_SOAK_CHECKPOINT` sets the intermediate report path. Optional
 Linux `GELABBER_SOAK_API_PID` and `GELABBER_SOAK_MEDIA_PID` record RSS and thread
 counts from the supplied Gelabber processes; executable names and process start
 identity are checked on every sample. No process is killed or restarted.
+The report records the mapped executable SHA256 and cumulative process CPU time.
+CPU percentage uses monotonic sample intervals and the system's `CLK_TCK`;
+100% means one fully occupied CPU core, and the first sample has no percentage.
 RSS is retained as measured: closed tracks do not prove an allocator returned
 memory. The app/runtime SHA declarations retain the standard harness attribution
 limits. Fake capture, a local network and a simulated display do not establish
