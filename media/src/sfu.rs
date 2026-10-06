@@ -2339,6 +2339,7 @@ mod tests {
                     native(transport, move |transport| async move {
                         pending.await.unwrap();
                         let result = transport.consume(options).await;
+                        assert!(result.is_ok(), "probe must create a real late consumer");
                         late_created.send(()).unwrap();
                         result
                     })
