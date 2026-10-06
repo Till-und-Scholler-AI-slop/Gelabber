@@ -1,6 +1,7 @@
 //! Own product authority/control; mediasoup is the sole production media engine.
 //! Graph locks only reserve/commit. Native awaits use per-resource gates so a
 //! denied grant cannot be resumed after its confirmed native pause.
+use crate::native_command::native;
 use crate::native_resource::{NativeConsumer, NativeProducer};
 use crate::{
     config::Config,
@@ -30,7 +31,6 @@ use tokio::sync::{Mutex, Notify, OnceCell, mpsc};
 use tracing::{error, warn};
 use uuid::Uuid;
 
-const COMMAND_TIMEOUT: Duration = Duration::from_secs(2);
 const STOP_TIMEOUT: Duration = Duration::from_millis(500);
 const STOP_CONCURRENCY: usize = 64;
 // The deadline includes both an in-flight resource gate and native pause ACK.
@@ -173,7 +173,10 @@ impl Sfu {
         let bind: std::net::SocketAddr = config.ice_bind.parse().map_err(SfuError::negotiation)?;
         let mut settings = WorkerSettings::default();
         settings.log_level = WorkerLogLevel::Error;
-        let worker = native(WorkerManager::new().create_worker(settings)).await?;
+        let worker = native(WorkerManager::new(), move |manager| async move {
+            manager.create_worker(settings).await
+        })
+        .await?;
         let dead = Arc::new(AtomicBool::new(false));
         let exited = dead.clone();
         worker
@@ -197,9 +200,13 @@ impl Sfu {
             send_buffer_size: None,
             recv_buffer_size: None,
         };
-        let server = native(worker.create_webrtc_server(WebRtcServerOptions::new(
-            WebRtcServerListenInfos::new(listen),
-        )))
+        let server = native(worker.clone(), move |worker| async move {
+            worker
+                .create_webrtc_server(WebRtcServerOptions::new(WebRtcServerListenInfos::new(
+                    listen,
+                )))
+                .await
+        })
         .await?;
         let sfu = Arc::new(Self {
             redis: crate::redis_connection::CachedRedis::new(redis),
@@ -337,10 +344,12 @@ impl Sfu {
         let built = room
             .router
             .get_or_try_init(|| async {
-                native(
-                    self.worker
-                        .create_router(RouterOptions::new(router_codecs()?)),
-                )
+                native(self.worker.clone(), |worker| async move {
+                    worker
+                        .create_router(RouterOptions::new(router_codecs()?))
+                        .await
+                        .map_err(SfuError::negotiation)
+                })
                 .await
             })
             .await;
@@ -477,10 +486,8 @@ impl Sfu {
                 // historical totals without retaining an unbounded ID cache.
                 opts.app_data = AppData::new(AtomicU64::new(0));
                 let transport = native(
-                    room.router
-                        .get()
-                        .ok_or(SfuError::Unavailable)?
-                        .create_webrtc_transport(opts),
+                    room.router.get().ok_or(SfuError::Unavailable)?.clone(),
+                    move |router| async move { router.create_webrtc_transport(opts).await },
                 )
                 .await?;
                 let weak = Arc::downgrade(self);
@@ -514,7 +521,11 @@ impl Sfu {
                 let t = self.transport(&room, id, &transport_id).await?;
                 let dtls_parameters = serde_json::from_value::<DtlsParameters>(dtls)
                     .map_err(|_| SfuError::BadAnnounce)?;
-                native(t.connect(WebRtcTransportRemoteParameters { dtls_parameters })).await?;
+                native(t, move |t| async move {
+                    t.connect(WebRtcTransportRemoteParameters { dtls_parameters })
+                        .await
+                })
+                .await?;
                 if !peer.grant.valid() {
                     return Err(SfuError::Revoked);
                 }
@@ -522,7 +533,7 @@ impl Sfu {
             }
             ClientFrame::RestartIce { transport_id, .. } => {
                 let t = self.transport(&room, id, &transport_id).await?;
-                let ice = native(t.restart_ice()).await?;
+                let ice = native(t, |t| async move { t.restart_ice().await }).await?;
                 if !peer.grant.valid() {
                     return Err(SfuError::Revoked);
                 }
@@ -569,7 +580,11 @@ impl Sfu {
                 if !p.valid() {
                     return Err(SfuError::Forbidden);
                 }
-                if let Err(error) = native(p.producer.resume()).await {
+                if let Err(error) = native(p.clone(), |resource| async move {
+                    resource.producer.resume().await
+                })
+                .await
+                {
                     p.producer.confirm_closed().await;
                     return Err(error);
                 }
@@ -606,7 +621,11 @@ impl Sfu {
                 if !s.valid() {
                     return Err(SfuError::Forbidden);
                 }
-                if let Err(error) = native(s.consumer.resume()).await {
+                if let Err(error) = native(s.clone(), |resource| async move {
+                    resource.consumer.resume().await
+                })
+                .await
+                {
                     s.consumer.confirm_closed().await;
                     drop(_gate);
                     self.remove_consumer(&room, &s).await;
@@ -659,15 +678,19 @@ impl Sfu {
                     return Err(SfuError::Forbidden);
                 }
                 if s.publication.layers > 1 {
-                    native(s.consumer.set_preferred_layers(ConsumerLayers {
-                        spatial_layer: preferred_layer(
-                            h,
-                            congested,
-                            s.publication.height,
-                            s.publication.layers,
-                        ),
-                        temporal_layer: None,
-                    }))
+                    native(s.clone(), move |s| async move {
+                        s.consumer
+                            .set_preferred_layers(ConsumerLayers {
+                                spatial_layer: preferred_layer(
+                                    h,
+                                    congested,
+                                    s.publication.height,
+                                    s.publication.layers,
+                                ),
+                                temporal_layer: None,
+                            })
+                            .await
+                    })
                     .await?
                 }
                 Ok(json!({}))
@@ -790,7 +813,10 @@ impl Sfu {
                 parameters,
             );
             options.paused = true;
-            let producer = native(transport.produce(options)).await?;
+            let producer = native(transport.clone(), move |transport| async move {
+                transport.produce(options).await
+            })
+            .await?;
             let pubn = Arc::new(Publication {
                 producer: NativeProducer::new(producer, transport.clone()),
                 peer: peer.clone(),
@@ -867,7 +893,11 @@ impl Sfu {
                 if !pubn.valid() {
                     return Err(SfuError::Forbidden);
                 }
-                if let Err(error) = native(pubn.producer.resume()).await {
+                if let Err(error) = native(pubn.clone(), |resource| async move {
+                    resource.producer.resume().await
+                })
+                .await
+                {
                     pubn.producer.confirm_closed().await;
                     return Err(error);
                 }
@@ -1142,6 +1172,23 @@ impl Sfu {
         id: PeerId,
         pubn: Arc<Publication>,
     ) -> Result<(), SfuError> {
+        self.attach_with(room, id, pubn, |transport, options| {
+            native(transport, move |transport| async move {
+                transport.consume(options).await
+            })
+        })
+        .await
+    }
+    async fn attach_with<F>(
+        self: &Arc<Self>,
+        room: &Arc<Room>,
+        id: PeerId,
+        pubn: Arc<Publication>,
+        create: impl FnOnce(WebRtcTransport, ConsumerOptions) -> F + Send,
+    ) -> Result<(), SfuError>
+    where
+        F: Future<Output = Result<Consumer, SfuError>> + Send,
+    {
         let producer_id = pubn.id();
         let (peer, transport, capabilities, watch) = {
             let mut data = room.data.lock().await;
@@ -1166,6 +1213,7 @@ impl Sfu {
             p.pending_consumers.insert(producer_id.clone());
             (p.peer.clone(), transport, caps, watch)
         };
+        let mut retry_native = false;
         let result = async {
             if !room
                 .router
@@ -1183,7 +1231,14 @@ impl Sfu {
                     temporal_layer: None,
                 });
             }
-            let consumer = native(transport.consume(options)).await?;
+            let consumer = match create(transport.clone(), options).await {
+                Ok(consumer) => consumer,
+                Err(error) => {
+                    retry_native =
+                        matches!(error, SfuError::Unavailable | SfuError::Negotiation(_));
+                    return Err(error);
+                }
+            };
             let sub = Arc::new(Subscription {
                 consumer: NativeConsumer::new(consumer, transport.clone()),
                 publication: pubn,
@@ -1252,6 +1307,10 @@ impl Sfu {
         };
         if recreated {
             self.schedule_attach(peer.authority.claim.c, id).await;
+        } else if retry_native {
+            // Reservation is cleared before retry, and the next attempt rechecks
+            // grants, capabilities, capacity and current receive transport.
+            self.retry_attach(peer.authority.claim.c, peer.clone());
         }
         result
     }
@@ -1993,23 +2052,6 @@ fn router_codecs() -> Result<Vec<RtpCodecCapability>, SfuError> {
     codecs.push(json!({"kind":"video","mimeType":"video/AV1","clockRate":90000,"parameters":{"profile":0},"rtcpFeedback":feedback}));
     serde_json::from_value(Value::Array(codecs)).map_err(SfuError::negotiation)
 }
-async fn native<T, E: std::fmt::Display>(
-    command: impl Future<Output = Result<T, E>>,
-) -> Result<T, SfuError> {
-    tokio::pin!(command);
-    match tokio::time::timeout(COMMAND_TIMEOUT, &mut command).await {
-        Ok(r) => r.map_err(SfuError::negotiation),
-        Err(_) => {
-            // Retain the reply future: cancellation of a create RPC after it
-            // reached C++ could orphan a native object before Rust owns it.
-            // Drop any late handle instead of exposing success after deadline.
-            // Resource revocation cancels resumes; the independent worker
-            // heartbeat handles an actually stalled native engine.
-            drop(command.await);
-            Err(SfuError::Unavailable)
-        }
-    }
-}
 async fn stop_gate(gate: &Mutex<()>) -> Option<tokio::sync::MutexGuard<'_, ()>> {
     tokio::time::timeout(STOP_TIMEOUT, gate.lock()).await.ok()
 }
@@ -2116,17 +2158,20 @@ mod tests {
         )
         .await
         .unwrap();
-        let router = native(
-            sfu.worker
-                .create_router(RouterOptions::new(router_codecs().unwrap())),
-        )
+        let router = native(sfu.worker.clone(), |worker| async move {
+            worker
+                .create_router(RouterOptions::new(router_codecs().unwrap()))
+                .await
+        })
         .await
         .unwrap();
         let mut options = WebRtcTransportOptions::new_with_server(sfu.server.clone());
         options.app_data = AppData::new(AtomicU64::new(0));
-        let transport = native(router.create_webrtc_transport(options))
-            .await
-            .unwrap();
+        let transport = native(router.clone(), move |router| async move {
+            router.create_webrtc_transport(options).await
+        })
+        .await
+        .unwrap();
         let rtp = serde_json::from_value(json!({
             "codecs":[{"mimeType":"audio/opus","payloadType":111,"clockRate":48000,
                 "channels":2,"parameters":{},"rtcpFeedback":[]}],
@@ -2134,9 +2179,13 @@ mod tests {
             "rtcp":{"cname":"stop-order-test","reducedSize":true}
         }))
         .unwrap();
-        let producer = native(transport.produce(ProducerOptions::new(MediaKind::Audio, rtp)))
-            .await
-            .unwrap();
+        let producer = native(transport.clone(), move |transport| async move {
+            transport
+                .produce(ProducerOptions::new(MediaKind::Audio, rtp))
+                .await
+        })
+        .await
+        .unwrap();
         assert!(!producer.paused());
         let (out, rx) = mpsc::channel(16);
         // Deliberately absent authority keys trigger the real denial path.
@@ -2217,6 +2266,128 @@ mod tests {
             counter.store(1, Ordering::Relaxed);
         }
         (sfu, peer, publication, rx)
+    }
+
+    #[tokio::test]
+    async fn native_consume_timeout_retries_without_room_activity_and_retires_late_consumer() {
+        use crate::redis_connection::ConnectionSource;
+        use gelabber_shared::ticket;
+        let (sfu, owner, publication, _owner_events) = stopping_fixture().await;
+        let channel = owner.authority.claim.c;
+        let room = sfu.room(channel).await.unwrap();
+        let mut authority = owner.authority.clone();
+        authority.claim.u = Uuid::new_v4();
+        authority.auth.member = Uuid::new_v4();
+        authority.auth.session = Uuid::new_v4().simple().to_string().repeat(2);
+        let keys = [
+            (
+                ticket::member_authority_key(authority.claim.s, authority.claim.u),
+                authority.auth.member.to_string(),
+            ),
+            (
+                ticket::channel_authority_key(channel),
+                authority.auth.channel.to_string(),
+            ),
+            (
+                ticket::session_authority_key(&authority.auth.session),
+                authority.claim.u.to_string(),
+            ),
+        ];
+        let mut redis = sfu.redis.connection().await.unwrap();
+        for (key, value) in &keys {
+            let _: () = redis::cmd("SET")
+                .arg(key)
+                .arg(value)
+                .arg("EX")
+                .arg(30)
+                .query_async(&mut redis)
+                .await
+                .unwrap();
+        }
+        let (out, mut events) = mpsc::channel(16);
+        let viewer = sfu
+            .join_authorized_watch_version(authority, None, MEDIA_PROTOCOL_VERSION, out)
+            .await
+            .unwrap();
+        let router = room.router.get().unwrap();
+        let mut options = WebRtcTransportOptions::new_with_server(sfu.server.clone());
+        options.app_data = AppData::new(AtomicU64::new(0));
+        let transport = native(router.clone(), move |router| async move {
+            router.create_webrtc_transport(options).await
+        })
+        .await
+        .unwrap();
+        {
+            let mut data = room.data.lock().await;
+            let peer = data.peers.get_mut(&viewer).unwrap();
+            peer.transports.insert(false, transport.clone());
+            peer.capabilities = Some(
+                serde_json::from_value(serde_json::to_value(router.rtp_capabilities()).unwrap())
+                    .unwrap(),
+            );
+        }
+        sfu.counters.transports.fetch_add(1, Ordering::Relaxed);
+        let (complete, pending) = tokio::sync::oneshot::channel();
+        let (late_created, late_ready) = tokio::sync::oneshot::channel();
+        let result = tokio::time::timeout(
+            Duration::from_secs(3),
+            sfu.attach_with(
+                &room,
+                viewer,
+                publication.clone(),
+                move |transport, options| {
+                    native(transport, move |transport| async move {
+                        pending.await.unwrap();
+                        let result = transport.consume(options).await;
+                        late_created.send(()).unwrap();
+                        result
+                    })
+                },
+            ),
+        )
+        .await
+        .expect("attach must release its pending reservation after timeout");
+        assert!(matches!(result, Err(SfuError::Unavailable)));
+        let event = tokio::time::timeout(Duration::from_secs(3), events.recv())
+            .await
+            .unwrap()
+            .unwrap();
+        let ServerFrame::Consumer {
+            producer_id,
+            consumer_id,
+            ..
+        } = event
+        else {
+            panic!("retry did not announce a consumer");
+        };
+        assert_eq!(producer_id, publication.id());
+        {
+            let data = room.data.lock().await;
+            let peer = data.peers.get(&viewer).unwrap();
+            assert_eq!(peer.consumers.len(), 1);
+            assert!(peer.pending_consumers.is_empty());
+        }
+        complete.send(()).unwrap();
+        late_ready.await.unwrap();
+        tokio::time::timeout(Duration::from_secs(2), async {
+            loop {
+                let dump = transport.dump().await.unwrap();
+                if dump.consumer_ids.len() == 1 && dump.consumer_ids[0].to_string() == consumer_id {
+                    break;
+                }
+                tokio::task::yield_now().await;
+            }
+        })
+        .await
+        .expect("late unannounced consumer must be closed");
+        sfu.leave(viewer, channel).await;
+        for (key, _) in keys {
+            let _: () = redis::cmd("DEL")
+                .arg(key)
+                .query_async(&mut redis)
+                .await
+                .unwrap();
+        }
     }
 
     async fn assert_terminal_after_native_stop(revoke: bool) {
@@ -2316,9 +2487,13 @@ mod tests {
             .with(|producer| producer.rtp_parameters().clone())
             .unwrap();
         rtp.encodings[0].ssrc = Some(5678);
-        let other = native(transport.produce(ProducerOptions::new(MediaKind::Audio, rtp)))
-            .await
-            .unwrap();
+        let other = native(transport.clone(), move |transport| async move {
+            transport
+                .produce(ProducerOptions::new(MediaKind::Audio, rtp))
+                .await
+        })
+        .await
+        .unwrap();
         let _gate = publication.gate.lock().await;
         tokio::time::timeout(
             Duration::from_secs(2),
@@ -2332,16 +2507,6 @@ mod tests {
         assert!(dump.producer_ids.contains(&other.id()));
         assert!(!other.paused());
         assert!(sfu.ready());
-    }
-
-    #[tokio::test]
-    async fn slow_native_command_is_a_request_error_not_process_exit() {
-        let result = native(async {
-            tokio::time::sleep(COMMAND_TIMEOUT + Duration::from_millis(20)).await;
-            Ok::<_, std::io::Error>(())
-        })
-        .await;
-        assert!(matches!(result, Err(SfuError::Unavailable)));
     }
 
     #[test]

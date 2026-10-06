@@ -1088,7 +1088,7 @@ export class MediasoupConnection implements MediaConnection {
         )
       ).flat();
       if (this.closed) return;
-      this.layers.update(
+      await this.layers.update(
         rows,
         sources.map((s) => ({
           consumerId: s.consumerId,
@@ -1096,10 +1096,7 @@ export class MediasoupConnection implements MediaConnection {
           trackId: s.track.id,
           ssrc: s.consumer.rtpParameters.encodings?.[0]?.ssrc,
         })),
-        (data) => {
-          // Advisory layer hints may race a remote source closing.
-          void this.options.request("q", data).catch(() => {});
-        },
+        (data) => this.options.request("q", data),
       );
     } catch {
       /* Missing browser stats do not invent congestion. */

@@ -6,6 +6,7 @@ pub mod error;
 pub mod health;
 pub mod live;
 pub mod metrics;
+mod native_command;
 mod native_resource;
 pub mod protocol;
 pub mod redis_connection;

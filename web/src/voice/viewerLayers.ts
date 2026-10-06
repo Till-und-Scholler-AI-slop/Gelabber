@@ -44,12 +44,13 @@ export class ViewerLayerController {
     string,
     { h: number; congested: boolean; at: number }
   >();
-  update(
+  async update(
     report: readonly StatsEntry[],
     sources: readonly ViewerSource[],
-    send: (frame: MediaRequests["q"]) => void,
+    send: (frame: MediaRequests["q"]) => unknown,
     height: (id: string) => number = renderedVideoHeight,
-  ): void {
+  ): Promise<void> {
+    const pending: MediaRequests["q"][] = [];
     const active = new Set<string>();
     const now = Date.now();
     const emit = (frame: MediaRequests["q"]) => {
@@ -62,8 +63,7 @@ export class ViewerLayerController {
         now - last.at < 30_000
       )
         return;
-      this.sent.set(key, { h: frame.h, congested: frame.congested, at: now });
-      send(frame);
+      pending.push(frame);
     };
     for (const source of sources) {
       const key = `${source.generation}:${source.consumerId}`;
@@ -143,5 +143,23 @@ export class ViewerLayerController {
       if (!active.has(key)) this.sent.delete(key);
     for (const key of this.previous.keys())
       if (!active.has(key)) this.previous.delete(key);
+    // Leave room in MediaPeer's 64-request budget for control operations.
+    // Failed hints stay eligible for the next sample instead of being suppressed.
+    for (let offset = 0; offset < pending.length; offset += 8) {
+      await Promise.all(
+        pending.slice(offset, offset + 8).map(async (frame) => {
+          try {
+            await send(frame);
+            this.sent.set(`${frame.generation}:${frame.consumerId}`, {
+              h: frame.h,
+              congested: frame.congested,
+              at: Date.now(),
+            });
+          } catch {
+            // A source can retire or the request budget can fill during sampling.
+          }
+        }),
+      );
+    }
   }
 }
