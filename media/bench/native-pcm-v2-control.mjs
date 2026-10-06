@@ -81,7 +81,7 @@ export async function runV2Control(options) {
     result.initialNativeStatus = await rpc.call({ op: 'status' }); requireThat(Object.keys(result.initialNativeStatus.peers ?? {}).length === 0 && Object.keys(result.initialNativeStatus.sources ?? {}).length === 0, 'fresh V2 native must own zero initial peers/sources');
     bridge = await startV2Bridge(rpc, { staticDirectory: inputs, clockDelayMs: options.clockDelayMs });
     const { chromium } = await withV2Deadline('playwright-import', 10000, () => import('playwright'));
-    browserServer = await withV2Deadline('browser-launch', budgets.launchMs, () => chromium.launchServer({ host: '127.0.0.1', timeout: 30000, headless: true, executablePath: values.chromium, args: ['--autoplay-policy=no-user-gesture-required', '--no-sandbox', '--allow-loopback-in-peer-connection', '--disable-features=WebRtcHideLocalIpsWithMdns'] }));
+    browserServer = await withV2Deadline('browser-launch', budgets.launchMs, () => chromium.launchServer({ host: '127.0.0.1', timeout: 30000, headless: true, executablePath: values.chromium, args: ['--enable-automation', '--autoplay-policy=no-user-gesture-required', '--no-sandbox', '--allow-loopback-in-peer-connection', '--disable-features=WebRtcHideLocalIpsWithMdns'] }));
     ownership = captureOwnedBrowser(browserServer); result.ownedBrowserIdentity = ownership.identity;
     requireThat(ownership.identity.executableSha256 === POLICY.chromiumSha256, 'fresh actual owned browser executable differs');
     browser = await withV2Deadline('browser-connect', budgets.connectMs, () => chromium.connect(browserServer.wsEndpoint(), { timeout: budgets.connectMs }));
