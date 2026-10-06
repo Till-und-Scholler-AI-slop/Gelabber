@@ -170,12 +170,7 @@ async fn source_audio_is_watch_gated_paired_and_removed_without_stopping_microph
         assert_eq!(forwarded_stream_id(&source.stream_id), format!("{user}:s"));
         assert_eq!(source.codec.channels, 2);
         assert!(source.codec.sdp_fmtp_line.contains("usedtx=0"));
-        assert!(
-            source
-                .codec
-                .sdp_fmtp_line
-                .contains("maxaveragebitrate=192000")
-        );
+        assert!(!source.codec.sdp_fmtp_line.contains("maxaveragebitrate"));
         (
             room.peers[&viewer].sdp.clone(),
             source.life.clone(),

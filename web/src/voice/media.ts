@@ -3,7 +3,11 @@
 // flipped on join click.
 
 import { api } from "../api/client.ts";
-import { audioBitrate, SOURCE_AUDIO_BITRATE } from "./settings.ts";
+import {
+  audioBitrate,
+  sourceAudioBitrate,
+  useMediaSettings,
+} from "./settings.ts";
 
 export type IceServer = {
   urls: string | string[];
@@ -226,7 +230,7 @@ export function tuneAudioSdp(
     out.push(
       ...tuneOpusSection(
         section,
-        source ? SOURCE_AUDIO_BITRATE : bitrate,
+        source ? sourceAudioBitrate() : bitrate,
         !!source,
       ),
     );
@@ -244,7 +248,7 @@ export function opusMaxAverageBitrate(sdp: string): number | null {
 
 function tuneOpusSection(
   section: string[],
-  bitrate: number,
+  bitrate: number | null,
   source = false,
 ): string[] {
   const pts: string[] = [];
@@ -304,10 +308,16 @@ function mergeFmtpParams(parts: Map<string, string>, line: string): void {
   }
 }
 
-function applyVoiceFmtp(parts: Map<string, string>, bitrate: number): void {
+function applyVoiceFmtp(
+  parts: Map<string, string>,
+  bitrate: number | null,
+): void {
   if (!parts.has("minptime")) parts.set("minptime", "10");
   parts.set("useinbandfec", "1");
-  parts.set("usedtx", "1");
-  parts.set("stereo", "0");
-  parts.set("maxaveragebitrate", String(bitrate));
+  const original = useMediaSettings.getState().processingMode === "original";
+  parts.set("usedtx", original ? "0" : "1");
+  parts.set("stereo", "1");
+  parts.set("sprop-stereo", original ? "1" : "0");
+  if (bitrate === null) parts.delete("maxaveragebitrate");
+  else parts.set("maxaveragebitrate", String(bitrate));
 }

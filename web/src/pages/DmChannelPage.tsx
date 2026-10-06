@@ -6,6 +6,7 @@ import { useEffect } from "react";
 
 import { useUserId } from "../auth/scope.ts";
 import { MessagePane } from "../components/MessagePane.tsx";
+import { LoadError } from "../components/LoadError.tsx";
 import { PresenceAvatar } from "../components/PresenceAvatar.tsx";
 import { TypingBar } from "../components/TypingBar.tsx";
 import { useLastDm } from "../dms/lastDm.ts";
@@ -21,7 +22,7 @@ export function DmChannelPage() {
   const client = useQueryClient();
   const navigate = useNavigate();
   const userId = useUserId();
-  const { data: dm, error, isPending } = useDm(channelId);
+  const { data: dm, error, isPending, isFetching, refetch } = useDm(channelId);
   const remember = useLastDm((s) => s.remember);
   const forgetLast = useLastDm((s) => s.forget);
   const gone = isGoneError(error);
@@ -46,7 +47,11 @@ export function DmChannelPage() {
   if (error) {
     return (
       <div className="flex flex-1 items-center justify-center p-8 text-center text-neutral-500 dark:text-neutral-400">
-        <p>Diese Unterhaltung konnte gerade nicht geladen werden.</p>
+        <LoadError
+          message="Diese Unterhaltung konnte gerade nicht geladen werden."
+          pending={isFetching}
+          onRetry={() => void refetch()}
+        />
       </div>
     );
   }

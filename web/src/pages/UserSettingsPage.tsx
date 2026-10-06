@@ -10,6 +10,7 @@ import {
 import { MediaSettingsForm } from "../voice/VoiceSettings.tsx";
 import { ThemesPanel } from "../theme/ThemesPanel.tsx";
 import { useInterfacePreferences } from "../interface/preferences.ts";
+import { NotificationPermissionStatus } from "../components/NotificationPermission.tsx";
 import "./settings.css";
 
 const areas = [
@@ -149,7 +150,10 @@ export function UserSettingsPage() {
               </fieldset>
             </>
           ) : (
-            <MediaSettingsForm key={area} section={area} />
+            <>
+              <MediaSettingsForm key={area} section={area} />
+              {area === "notifications" && <NotificationPermissionStatus />}
+            </>
           )}
           <p className="settings-save-note">
             {area === "themes"

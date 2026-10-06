@@ -39,9 +39,22 @@ export const useSession = create<SessionState>(() => ({
   user: null,
 }));
 
+/** Request failures are not proof that the server ended the session. */
+export const useSessionProblems = create<{
+  bootstrap: string | null;
+  logout: string | null;
+}>(() => ({ bootstrap: null, logout: null }));
+
+let failedLogoutUserId: string | null = null;
+
 function applySession(user: User | null, force = false): void {
   const previousId = useSession.getState().user?.id ?? null;
   const nextId = user?.id ?? null;
+  useSessionProblems.setState({ bootstrap: null });
+  if (user && failedLogoutUserId !== null && user.id !== failedLogoutUserId) {
+    failedLogoutUserId = null;
+    useSessionProblems.setState({ logout: null });
+  }
   useSession.setState({
     status: user ? "authenticated" : "anonymous",
     user,
@@ -111,6 +124,7 @@ export function ensureSession(): Promise<void> {
     return Promise.resolve();
   }
   const stamp = takeSessionStamp();
+  useSessionProblems.setState({ bootstrap: null });
   const canFallback = () => {
     const current = takeSessionStamp();
     // Initial pageshow may adopt shared metadata while this bootstrap loads.
@@ -127,9 +141,14 @@ export function ensureSession(): Promise<void> {
         applySession(null);
     })
     .catch(() => {
-      // Offline or API down: treat as anonymous so the login page can render
-      // and show the real error inline on submit.
-      if (canFallback()) applySession(null);
+      if (canFallback()) {
+        // Keep the identity unresolved: no authenticated content and no false
+        // logout redirect while the API or network is unavailable.
+        useSessionProblems.setState({
+          bootstrap:
+            "Deine Sitzung konnte nicht geprüft werden. Prüfe deine Verbindung und versuche es erneut.",
+        });
+      }
     })
     .finally(() => {
       if (bootstrap === request) bootstrap = null;
@@ -153,6 +172,7 @@ function finishAuthIntent(intent: number): void {
 
 async function signIn(path: string, body: unknown): Promise<User> {
   const intent = startAuthIntent();
+  useSessionProblems.setState({ bootstrap: null });
   try {
     const session = await api<SessionResponse>(path, {
       method: "POST",
@@ -161,6 +181,8 @@ async function signIn(path: string, body: unknown): Promise<User> {
     });
     if (authIntent !== intent)
       throw new DOMException("The session changed. Try again.", "AbortError");
+    failedLogoutUserId = null;
+    useSessionProblems.setState({ logout: null });
     return session.user as User;
   } finally {
     finishAuthIntent(intent);
@@ -181,8 +203,9 @@ export function register(
 
 /** Optimistically release the current account, then revoke its cookie. */
 export async function logout(): Promise<void> {
-  const logoutUserId = useSession.getState().user?.id ?? null;
+  const logoutUserId = useSession.getState().user?.id ?? failedLogoutUserId;
   const intent = startAuthIntent();
+  useSessionProblems.setState({ logout: null });
   applySession(null);
   try {
     await api<LogoutResponse>("/auth/logout", {
@@ -190,8 +213,15 @@ export async function logout(): Promise<void> {
       logoutUserId,
       authIntent: () => authIntent === intent,
     });
+    if (authIntent === intent) failedLogoutUserId = null;
   } catch {
-    // Already signed out as far as this tab is concerned.
+    if (authIntent === intent) {
+      failedLogoutUserId = logoutUserId;
+      useSessionProblems.setState({
+        logout:
+          "Die Abmeldung auf dem Server konnte nicht bestätigt werden. Bitte versuche es erneut.",
+      });
+    }
   } finally {
     finishAuthIntent(intent);
   }
@@ -245,6 +275,8 @@ export function resetSessionForTests(): void {
   bootstrap = null;
   authIntent += 1;
   activeAuthIntent = null;
+  failedLogoutUserId = null;
+  useSessionProblems.setState({ bootstrap: null, logout: null });
   setCsrfToken(null);
   setSessionSink(receiveSession);
   setSessionScope(takeSessionStamp);
