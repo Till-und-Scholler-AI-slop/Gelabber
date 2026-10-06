@@ -11,8 +11,9 @@ This is not a native playback, clock calibration or SFU comparison result.
 `comparison_available` and `pcm_latency_calibrated` always remain `false`,
 including successful structural/interval qualification. Unit-test packets and
 runtime records are synthetic contract fixtures, not playable/decoded Opus or
-executed controls. Native V2 reader/pacer and actual0/50/200/500-ms controls are
-separate gates; the reader was not implemented/frozen when this guard was added.
+executed controls. Native V2 reader/pacer review and actual0/50/200/500-ms
+controls remain separate gates. A passing guard test does not qualify a reader
+binary, its actual replay scheduling or received browser PCM.
 
 ## Archive and whole-pair inputs
 
@@ -108,6 +109,39 @@ codebook_sha256,tap,receiver`, using the captured source-to-receiver binding.
 Their actual held receiver UID/SSRC must be Mic0/0x474d4943 and
 Source64/0x47534130, live/enabled with stable identity, real decoded/packet
 progress and available zero lost/concealed/silent-concealed sample counters.
+The initial and final `initialInboundReportId`/`inboundReportId` must be the
+same nonempty actual inbound RTP report ID, with distinct IDs for the two held
+receivers. The collector must keep the same actual `RTCRtpReceiver`, live and
+enabled track, source UID/SSRC and report throughout the run; `identityStable`
+records that observation. A claimed stable ID does not authenticate arbitrary
+JSON or establish a held receiver by itself.
+
+Capture `initialPacketsReceived:0` and `initialTotalSamplesReceived:0` from
+that report **before** the finite replay starts. Final `packetsReceived` must
+equal all archive packets and `totalSamplesReceived` all offline decoded
+samples, including the one-second tail. Prefixes, larger totals, nonzero initial
+counts and unavailable/malformed counters fail. `totalSamplesReceived` includes
+concealment, so these totals cannot replace actual available zero
+`packetsLost`, `concealedSamples`, `silentConcealedSamples` and
+`packetsDiscarded`. Their corresponding `initialPacketsLost`,
+`initialConcealedSamples`, `initialSilentConcealedSamples` and
+`initialPacketsDiscarded` must be available and zero in the same initial report.
+Source `completed`/`end_reached` only proves enqueues and
+cannot replace this whole received-stream evidence.
+
+`insertedSamplesForDeceleration` and `removedSamplesForAcceleration` must also
+be actually available and zero, together with
+`initialInsertedSamplesForDeceleration` and
+`initialRemovedSamplesForAcceleration`. Their totals do not locate individual inserted
+or removed samples relative to PN peaks. Even balanced nonzero totals leave the
+PCM ordinal mapping unknown, so this guard rejects them until an actual
+per-sample mapping exists. The proposed receiver fields are exercised by
+synthetic fixtures here; a future V2 browser collector must measure them from
+the held report. Missing browser statistics never default to zero.
+If the browser cannot expose a genuine zero pre-replay snapshot of that report,
+this whole-stream contract remains unqualified; a manufactured initial record
+or subtracting warmup packets cannot replace it.
+
 The browser must be the frozen Chromium153 binary/revision with the verified
 COI timer precision; Node must be the frozen26.8.2 binary. The caller's
 `browserClock` contains the existing precision/revision evidence plus actual
@@ -119,6 +153,41 @@ loss, decoder PLC/loss, suspension, missing clock brackets or callback intervals
 over25ms reject the whole pair and clear all partial intervals. It retains the
 existing conservative causal clock/callback intervals and96-sample offline
 marker-position tolerance, not an old±2-ms absolute accuracy claim.
+
+Whole-stream callback coverage is derived from **every genuine matched PN
+peak**, the immutable source ordinal and the retained actual codec lookahead:
+
+```text
+startEstimate = peak.receivedFrame - marker.source_sample_ordinal - lookahead_samples
+requiredFirstFrame = max(0, min(startEstimate) - 96)
+requiredEndFrameExclusive = max(startEstimate) + 96 + decode_control.samples
+```
+
+All peak-derived start uncertainties must share an intersection:
+`max(startEstimate) - min(startEstimate) <= 192`. With no insertion/removal,
+peaks that cannot describe the same decoded ordinal mapping invalidate the
+whole pair, even if callback rows cover their broader union. The coverage range
+above conservatively retains that full union once the mapping is consistent.
+
+The decoded sample count already includes the codec delay within the finite
+archive; lookahead is subtracted when mapping the detected PN peak to decoded
+frame zero. Callback rows must cover every frame from `requiredFirstFrame`
+through `requiredEndFrameExclusive - 1`, including the decoded beginning,
+spaces between markers and the entire received tail. No invented end marker,
+caller-provided shortened end, extrapolated frame or source completion flag is
+counted as actual input. Negative estimated bounds may only be clipped at the
+actual AudioContext frame-zero boundary; an estimate whose full uncertainty
+precedes frame zero fails.
+
+Every intersecting callback must retain consecutive safe frame/sequence
+ordinals, zero actual flags, complete `inputFrames === frames` and ordered
+physical observer times. The existing causal native clock probes must bracket
+each such callback within25ms, including callbacks after the last PN marker.
+The guard searches those validated probes without fitting or extrapolating a
+clock. The successful group exposes `receiverTail` with derived frame bounds,
+observed coverage, complete receiver totals, held report ID and callback count.
+These fields describe validated captured evidence, with calibration and
+comparison still false.
 
 This contract is for an owned native-to-browser **direct-loopback instrument**.
 Full-N engines with rewritten receiver SSRCs need explicit producer/consumer

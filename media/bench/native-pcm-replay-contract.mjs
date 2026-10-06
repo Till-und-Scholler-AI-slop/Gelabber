@@ -3,7 +3,7 @@
 import fs from 'node:fs';
 import { createHash } from 'node:crypto';
 import { PCM, markerCode } from './pcm-kernel.mjs';
-import { nativeNs, sourceTimeInterval } from './native-pcm-clock-bounds.mjs';
+import { nativeNs, sourceTimeInterval, boundNativeCallback } from './native-pcm-clock-bounds.mjs';
 import { qualifyNativeMarkers } from './native-pcm-evidence.mjs';
 import { NATIVE_PCM_POLICY as CLOCK, validateBrowserClock } from './native-pcm-policy.mjs';
 
@@ -189,6 +189,60 @@ export function validateReplayRuntime(pair, { greeting, start, status, nativeBin
   return freeze({ qualified: true, timeline: structuredClone(start.timeline), run_id: pair.run_id, codebook_sha256: pair.codebook_sha256, audio_hold_ms: audioHoldMs, comparison_available: false, pcm_latency_calibrated: false });
 }
 
+function wholeReceiver(archive, receiver) {
+  const id = receiver?.inboundReportId;
+  requireThat(typeof id === 'string' && id.trim().length > 0 && id.length <= 1024 && receiver.initialInboundReportId === id, 'same actual held inbound report required for whole receiver');
+  requireThat(receiver.initialPacketsReceived === 0 && receiver.initialTotalSamplesReceived === 0, 'whole receiver counters must start at zero before finite replay');
+  requireThat(receiver.packetsReceived === archive.metadata.packets && receiver.totalSamplesReceived === archive.metadata.decode_control.samples, 'complete actual receiver packet/decoded sample totals required');
+  // totalSamplesReceived includes concealed samples. Packet/sample totals alone
+  // cannot establish a lossless decode, and time stretching changes PN ordinals.
+  // Until actual per-sample stretch mapping exists, reject any insert/remove.
+  for (const field of ['packetsLost', 'concealedSamples', 'silentConcealedSamples', 'packetsDiscarded', 'insertedSamplesForDeceleration', 'removedSamplesForAcceleration']) {
+    const initialField = 'initial' + field[0].toUpperCase() + field.slice(1);
+    requireThat(receiver[initialField] === 0 && receiver[field] === 0, 'actual initial/final whole receiver counter unavailable or nonzero: ' + field);
+  }
+  return id;
+}
+
+function wholeCallbackCoverage(archive, tap, rows, clocks, inboundReportId) {
+  const samples = archive.metadata.decode_control.samples, lookahead = archive.metadata.encoder.lookahead_samples;
+  let minimumStart = Infinity, maximumStart = -Infinity;
+  // qualifyNativeMarkers already matched every peak, sequence and source UID.
+  // Decode ordinals include retained actual codec lookahead. Derive bounds from
+  // genuine peaks, never an invented end marker or a future callback prediction.
+  for (const marker of archive.metadata.pn.markers) {
+    const peak = tap.peaks.find(value => value.sequence === marker.sequence);
+    const start = peak.receivedFrame - marker.source_sample_ordinal - lookahead;
+    requireThat(Number.isSafeInteger(start) && start + CLOCK.markerErrorFrames >= 0, 'decoded stream start cannot precede AudioContext frame zero');
+    minimumStart = Math.min(minimumStart, start); maximumStart = Math.max(maximumStart, start);
+  }
+  requireThat(maximumStart - minimumStart <= 2 * CLOCK.markerErrorFrames, 'genuine PN peaks have no shared unchanged decoded start uncertainty');
+  const low = Math.max(0, minimumStart - CLOCK.markerErrorFrames), latest = maximumStart + CLOCK.markerErrorFrames, end = latest + samples;
+  requireThat(integer(low, 0, Number.MAX_SAFE_INTEGER) && integer(end, low + 1, Number.MAX_SAFE_INTEGER), 'derived whole decoded callback range invalid');
+  requireThat(Array.isArray(rows) && rows.length > 0, 'whole decoded callback rows missing');
+  let next, previous, blocks = 0, firstFrame;
+  for (const row of rows) {
+    requireThat(object(row) && integer(row.firstFrame, 0, Number.MAX_SAFE_INTEGER) && integer(row.frames, 1, Number.MAX_SAFE_INTEGER) && Number.isSafeInteger(row.firstFrame + row.frames) && integer(row.sequence, 1, Number.MAX_SAFE_INTEGER), 'malformed actual callback frame/sequence');
+    if (row.firstFrame >= end || row.firstFrame + row.frames <= low) continue;
+    if (next === undefined) { firstFrame = row.firstFrame; next = firstFrame; requireThat(firstFrame <= low, 'whole decoded start has no actual callback input'); }
+    requireThat(row.firstFrame === next && (!previous || row.sequence === previous.sequence + 1), 'whole decoded callback coverage is missing/duplicate/reordered');
+    requireThat(row.flags === 0 && row.inputFrames === row.frames && Number.isFinite(row.lowerMs) && Number.isFinite(row.upperMs) && row.lowerMs > 0 && row.lowerMs <= row.upperMs && (!previous || row.lowerMs >= previous.lowerMs && row.upperMs >= previous.upperMs), 'whole decoded callback input/clock is unqualified');
+    // Find the same conservative causal brackets as Clock13, with binary search
+    // over its already validated probes. No clock fitting or extrapolation.
+    const interval = { lowerMs: row.lowerMs - CLOCK.epsilonMs, upperMs: row.upperMs + CLOCK.epsilonMs };
+    let left = 0, right = clocks.length;
+    while (left < right) { const middle = Math.floor((left + right) / 2); if (clocks[middle].p1 + CLOCK.epsilonMs <= interval.lowerMs) left = middle + 1; else right = middle; }
+    const before = clocks[left - 1]; left = 0; right = clocks.length;
+    while (left < right) { const middle = Math.floor((left + right) / 2); if (clocks[middle].p0 - CLOCK.epsilonMs >= interval.upperMs) right = middle; else left = middle + 1; }
+    const after = clocks[left];
+    requireThat(before && after, 'whole decoded callback lacks actual native clock brackets');
+    boundNativeCallback(interval, [before, after], { epsilonMs: CLOCK.epsilonMs, maxWidthMs: CLOCK.maxIntervalWidthMs });
+    next += row.frames; previous = row; blocks++;
+  }
+  requireThat(blocks > 0 && next >= end, 'whole received tail lacks continuous actual callback input');
+  return { inboundReportId, packetsReceived: archive.metadata.packets, totalSamplesReceived: samples, codecLookaheadSamples: lookahead, derivedStartFrameLower: low, derivedStartFrameUpper: latest, requiredEndFrameExclusive: end, observedFirstFrame: firstFrame, observedEndFrameExclusive: next, blocks, allCallbacksClockBounded: true };
+}
+
 // No caller-supplied marker list or duration can shrink the required evidence.
 export function qualifyReplayPair({ pair, runtime, groups, observer, contextStates, browserClock }) {
   const result = { qualified: false, comparison_available: false, pcm_latency_calibrated: false, scope: 'complete native V2 direct-loopback decoded-input callback intervals; excludes live capture/encoder/DSP/playout/acoustics; not SFU comparison or calibration', failures: [], groups: [] };
@@ -197,11 +251,16 @@ export function qualifyReplayPair({ pair, runtime, groups, observer, contextStat
     requireThat(browserClock.chromium_sha256 === CLOCK.chromiumSha256 && browserClock.node_sha256 === CLOCK.nodeSha256, 'actual current browser/Node binary differs');
     const replay = validateReplayRuntime(pair, runtime);
     requireThat(Array.isArray(groups) && groups.length === 2 && groups.every(group => object(group)) && groups.map(group => group.role).sort().join(',') === 'mic,source' && Array.isArray(observer?.rows) && observer.rows.length === 2, 'partial/duplicate/foreign receiver group forbidden');
+    const inboundReports = new Set();
     for (const archive of pair.archives) {
       const group = groups.find(v => v.role === archive.role);
       requireThat(group.uid === archive.uid && group.archive_sha256 === archive.archive_sha256 && group.run_id === pair.run_id && group.codebook_sha256 === pair.codebook_sha256, 'received source/run/archive role binding differs');
+      const inboundReportId = wholeReceiver(archive, group.receiver);
+      requireThat(!inboundReports.has(inboundReportId), 'distinct actual inbound reports required for both held receivers'); inboundReports.add(inboundReportId);
       const qualified = qualifyNativeMarkers({ observer, tap: group.tap, uid: archive.uid, markers: archive.metadata.pn.markers, timeline: replay.timeline, receiver: group.receiver, contextStates, sourceArchiveSha256: archive.archive_sha256, codebookSha256: pair.codebook_sha256 });
-      requireThat(qualified.qualified === true, qualified.failures.join('; ')); result.groups.push({ role: archive.role, ...qualified });
+      requireThat(qualified.qualified === true, qualified.failures.join('; '));
+      const receiverTail = wholeCallbackCoverage(archive, group.tap, observer.rows[archive.uid === 0 ? 0 : 1], observer.clocks, inboundReportId);
+      result.groups.push({ role: archive.role, ...qualified, receiverTail });
     }
     result.qualified = true;
   } catch (error) { result.failures.push(String(error)); result.groups = []; }

@@ -30,10 +30,10 @@ function archive(meta = manifest(), rawHeader = JSON.stringify(meta)) {
   return Buffer.concat([prefix, header, ...packets]);
 }
 function inspect(bytes, role = 'mic', p = provenance) { return inspectReplayArchive(bytes, { role, sha256: hash(bytes), provenance: p }); }
-function withPair(fn, change = () => {}) {
+function withPair(fn, change = () => {}, seconds = 20) {
   const folder = fs.mkdtempSync(path.join(os.tmpdir(), 'gelabber-replay-contract-'));
   try {
-    const mic = manifest(), source = manifest('source'); change(mic, source);
+    const mic = manifest('mic', seconds), source = manifest('source', seconds); change(mic, source);
     const inputs = {};
     for (const [role, metadata] of Object.entries({ mic, source })) { const bytes = archive(metadata), file = path.join(folder, role + '.opusbin'); fs.writeFileSync(file, bytes); inputs[role] = { path: file, sha256: hash(bytes) }; }
     return fn(readReplayPair({ ...inputs, provenance }));
@@ -55,12 +55,17 @@ function runtime(pair, hold = 0) {
 function evidence(pair, hold = 0) {
   const rows = Array.from({ length: Math.ceil((pair.total_seconds * 48000 + 5000) / 128) }, (_, i) => ({ sequence: i + 1, firstFrame: i * 128, frames: 128, inputFrames: 128, flags: 0, lowerMs: 100 + i * 128 / 48, upperMs: 101 + (i + 1) * 128 / 48 }));
   const clocks = Array.from({ length: pair.total_seconds * 200 + 50 }, (_, i) => ({ p0: i * 5, p1: i * 5 + .5, monoNs: String(1000000000n + BigInt(i) * 5000000n) }));
-  return { pair, runtime: runtime(pair, hold), observer: { failures: [], missing: 0, rows: [rows, rows], clocks }, contextStates: ['running'],
+  return { pair, runtime: runtime(pair, hold), observer: { failures: [], missing: 0, rows: [rows, structuredClone(rows)], clocks }, contextStates: ['running'],
     browserClock: { browser: { revision: P.chromiumRevision, product: 'HeadlessChrome/' + P.chromiumVersion }, crossOriginIsolated: true, precision: { samples: 100000, minimumStepMs: .005 }, chromium_sha256: P.chromiumSha256, node_sha256: P.nodeSha256 },
     groups: pair.archives.map(input => ({ role: input.role, uid: input.uid, archive_sha256: input.archive_sha256, run_id: pair.run_id, codebook_sha256: pair.codebook_sha256,
-      tap: { uid: input.uid, sampleRate: 48000, gaps: 0, excessPeaks: 0, clipped: 0, nonfinite: 0, peaks: input.metadata.pn.markers.map(marker => ({ sequence: marker.sequence, receivedFrame: marker.source_sample_ordinal + 4800, score: .97, amplitude: .35 })) },
+      tap: { uid: input.uid, sampleRate: 48000, gaps: 0, excessPeaks: 0, clipped: 0, nonfinite: 0, peaks: input.metadata.pn.markers.map(marker => ({ sequence: marker.sequence, receivedFrame: marker.source_sample_ordinal + input.metadata.encoder.lookahead_samples + 4800, score: .97, amplitude: .35 })) },
       receiver: { uid: input.uid, role: input.role, ssrc: input.ssrc, identityStable: true, live: true, enabled: true, codec: 'audio/opus', decodedSamplesProgress: true, packetsProgress: true, packetsLost: 0, concealedSamples: 0, silentConcealedSamples: 0,
-        initialInboundReportId: 'inbound-' + input.role, inboundReportId: 'inbound-' + input.role, initialPacketsReceived: 0, initialTotalSamplesReceived: 0, packetsReceived: input.metadata.packets, totalSamplesReceived: input.metadata.decode_control.samples, packetsDiscarded: 0, insertedSamplesForDeceleration: 0, removedSamplesForAcceleration: 0 } })) };
+        initialInboundReportId: 'inbound-' + input.role, inboundReportId: 'inbound-' + input.role, initialPacketsReceived: 0, initialTotalSamplesReceived: 0, packetsReceived: input.metadata.packets, totalSamplesReceived: input.metadata.decode_control.samples, initialPacketsLost: 0, initialConcealedSamples: 0, initialSilentConcealedSamples: 0, initialPacketsDiscarded: 0, initialInsertedSamplesForDeceleration: 0, initialRemovedSamplesForAcceleration: 0, packetsDiscarded: 0, insertedSamplesForDeceleration: 0, removedSamplesForAcceleration: 0 } })) };
+}
+function rejectEvidence(pair, change, label) {
+  const e = evidence(pair); change(e); const result = qualifyReplayPair(e);
+  assert.equal(result.qualified, false, label); assert.deepEqual(result.groups, [], label);
+  assert.equal(result.pcm_latency_calibrated, false); assert.equal(result.comparison_available, false);
 }
 
 test('unique JSON rejects duplicate escaped keys and prototype keys do not mutate objects', () => {
@@ -176,4 +181,89 @@ test('whole receiver packet counts cannot substitute for missing tail callbacks'
     const e = evidence(pair); e.observer.rows[1] = e.observer.rows[1].filter(row => row.firstFrame < 20 * 48000);
     const result = qualifyReplayPair(e); assert.equal(result.qualified, false); assert.equal(result.groups.length, 0);
   });
+});
+test('whole receiver requires same nonempty distinct report identity and zero-start counters', () => {
+  withPair(pair => {
+    for (const index of [0, 1]) {
+      for (const value of [undefined, null, '', ' ', 7, 'x'.repeat(1025)]) rejectEvidence(pair, e => { e.groups[index].receiver.initialInboundReportId = value; e.groups[index].receiver.inboundReportId = value; }, 'invalid report identity ' + index);
+      rejectEvidence(pair, e => e.groups[index].receiver.initialInboundReportId = 'different', 'changed report identity ' + index);
+      for (const field of ['initialPacketsReceived', 'initialTotalSamplesReceived']) for (const value of [undefined, null, '0', 1, -1, .5, NaN]) rejectEvidence(pair, e => e.groups[index].receiver[field] = value, field + ' ' + index);
+    }
+    rejectEvidence(pair, e => { e.groups[1].receiver.initialInboundReportId = e.groups[0].receiver.inboundReportId; e.groups[1].receiver.inboundReportId = e.groups[0].receiver.inboundReportId; }, 'same inbound report reused for both held sources');
+  });
+});
+test('whole received packet/sample totals reject unavailable, partial, extra and malformed values', () => {
+  withPair(pair => {
+    for (const index of [0, 1]) for (const field of ['packetsReceived', 'totalSamplesReceived']) {
+      const expected = field === 'packetsReceived' ? pair.archives[index].metadata.packets : pair.archives[index].metadata.decode_control.samples;
+      for (const value of [undefined, null, String(expected), 0, -1, expected - 1, expected + 1, expected + .5, Infinity, Number.MAX_SAFE_INTEGER + 1]) rejectEvidence(pair, e => e.groups[index].receiver[field] = value, field + ' ' + index);
+    }
+  });
+});
+test('whole decode requires available zero loss, PLC, discard and time-stretch counters', () => {
+  withPair(pair => {
+    for (const index of [0, 1]) for (const counter of ['packetsLost', 'concealedSamples', 'silentConcealedSamples', 'packetsDiscarded', 'insertedSamplesForDeceleration', 'removedSamplesForAcceleration']) {
+      for (const field of [counter, 'initial' + counter[0].toUpperCase() + counter.slice(1)]) for (const value of [undefined, null, '0', 1, -1, .5, NaN]) rejectEvidence(pair, e => e.groups[index].receiver[field] = value, field + ' ' + index);
+    }
+    rejectEvidence(pair, e => { e.groups[0].receiver.insertedSamplesForDeceleration = 128; e.groups[0].receiver.removedSamplesForAcceleration = 128; }, 'balanced stretch totals still do not supply an actual ordinal mapping');
+    for (const change of [r => r.identityStable = false, r => r.live = false, r => r.enabled = false, r => r.role = 'source', r => r.ssrc = 0]) rejectEvidence(pair, e => change(e.groups[0].receiver), 'held live/enabled source identity');
+  });
+});
+test('genuine peaks and retained lookahead derive whole callback coverage, without a caller tail claim', () => {
+  withPair(pair => {
+    const e = evidence(pair); e.groups[0].tap.peaks.at(-1).receivedFrame += 64;
+    e.groups[0].requiredEndFrameExclusive = 0; e.groups[0].markers = []; e.groups[0].tailSamples = 0;
+    const result = qualifyReplayPair(e); assert.equal(result.qualified, true, result.failures.join());
+    const tail = result.groups[0].receiverTail;
+    assert.equal(tail.derivedStartFrameLower, 4800 - P.markerErrorFrames);
+    assert.equal(tail.derivedStartFrameUpper, 4800 + 64 + P.markerErrorFrames);
+    assert.equal(tail.requiredEndFrameExclusive, pair.archives[0].metadata.decode_control.samples + 4800 + 64 + P.markerErrorFrames);
+    assert.equal(tail.codecLookaheadSamples, 312); assert.equal(tail.allCallbacksClockBounded, true);
+    assert.equal(tail.inboundReportId, e.groups[0].receiver.inboundReportId);
+    assert.ok(tail.observedFirstFrame <= tail.derivedStartFrameLower); assert.ok(tail.observedEndFrameExclusive >= tail.requiredEndFrameExclusive);
+    assert.equal(result.pcm_latency_calibrated, false); assert.equal(result.comparison_available, false);
+  });
+});
+test('derived decoded end is exclusive and requires its last actual sample without extrapolation', () => {
+  withPair(pair => {
+    const e = evidence(pair), requiredEnd = pair.archives[0].metadata.decode_control.samples + 4800 + P.markerErrorFrames;
+    e.observer.rows[0] = e.observer.rows[0].filter(row => row.firstFrame < requiredEnd);
+    const last = e.observer.rows[0].at(-1); last.frames = last.inputFrames = requiredEnd - last.firstFrame;
+    const complete = qualifyReplayPair(e); assert.equal(complete.qualified, true, complete.failures.join()); assert.equal(complete.groups[0].receiverTail.observedEndFrameExclusive, requiredEnd);
+    last.frames--; last.inputFrames--; const short = qualifyReplayPair(e); assert.equal(short.qualified, false); assert.deepEqual(short.groups, []);
+  });
+});
+test('all genuine PN peaks must share a decoded ordinal map within retained uncertainty', () => {
+  withPair(pair => {
+    const e = evidence(pair); e.groups[0].tap.peaks.at(-1).receivedFrame += 2 * P.markerErrorFrames;
+    const boundary = qualifyReplayPair(e); assert.equal(boundary.qualified, true, boundary.failures.join());
+    e.groups[0].tap.peaks.at(-1).receivedFrame++;
+    const conflicting = qualifyReplayPair(e); assert.equal(conflicting.qualified, false); assert.deepEqual(conflicting.groups, []);
+    assert.match(conflicting.failures.join(), /no shared unchanged decoded start uncertainty/);
+  });
+});
+test('continuous actual callback input includes decoded start, gaps after last PN and whole tail', () => {
+  withPair(pair => {
+    for (const index of [0, 1]) {
+      rejectEvidence(pair, e => e.observer.rows[index] = e.observer.rows[index].filter(row => row.firstFrame >= 5000), 'missing decoded start ' + index);
+      rejectEvidence(pair, e => e.observer.rows[index] = e.observer.rows[index].filter(row => row.firstFrame !== 984064), 'missing post-marker input ' + index);
+      for (const change of [row => row.flags = 2, row => delete row.flags, row => row.inputFrames--, row => row.sequence++, row => row.frames++, row => row.firstFrame++, row => row.lowerMs = row.upperMs + 1, row => row.lowerMs = 1]) rejectEvidence(pair, e => change(e.observer.rows[index].find(row => row.firstFrame >= 20.5 * 48000)), 'unqualified actual tail callback ' + index);
+      rejectEvidence(pair, e => { const rows = e.observer.rows[index], slot = rows.findIndex(row => row.firstFrame >= 20.5 * 48000); rows.splice(slot, 0, { ...rows[slot] }); }, 'duplicate actual tail callback ' + index);
+      rejectEvidence(pair, e => { const rows = e.observer.rows[index], slot = rows.findIndex(row => row.firstFrame >= 20.5 * 48000); [rows[slot], rows[slot + 1]] = [rows[slot + 1], rows[slot]]; }, 'reordered actual tail callbacks ' + index);
+      for (const value of [undefined, -1, .5, Infinity, Number.MAX_SAFE_INTEGER + 1]) rejectEvidence(pair, e => e.observer.rows[index].find(row => row.firstFrame >= 20.5 * 48000).sequence = value, 'malformed actual callback sequence ' + index);
+    }
+  });
+});
+test('native clock brackets and width limits also cover post-marker tail callbacks', () => {
+  withPair(pair => {
+    rejectEvidence(pair, e => e.observer.clocks = e.observer.clocks.filter(clock => clock.p0 < 20000), 'no actual tail clock brackets');
+    rejectEvidence(pair, e => e.observer.clocks = e.observer.clocks.filter(clock => clock.p0 < 20500 || clock.p0 > 20750), 'too-wide actual tail callback brackets');
+  });
+});
+test('full maximum finite duration qualifies without spreading all callback rows into arguments', () => {
+  withPair(pair => {
+    const result = qualifyReplayPair(evidence(pair)); assert.equal(result.qualified, true, result.failures.join());
+    for (const group of result.groups) { assert.equal(group.intervals.length, 180); assert.ok(group.receiverTail.blocks > 130000); }
+    assert.equal(result.pcm_latency_calibrated, false); assert.equal(result.comparison_available, false);
+  }, () => {}, 360);
 });
