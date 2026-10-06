@@ -2155,7 +2155,27 @@ fn negotiated_payload_type(sdp: &str, mid: &str, codec: &RTCRtpCodec) -> Option<
             .split(';')
             .map(str::trim)
             .filter(|s| !s.is_empty())
+            // VP8/VP9 max-fr and max-fs describe receiver limits, not a
+            // different bitstream (RFC 7741 6.2, RFC 9628 6.1.2). Firefox
+            // adds these to its answer even when Chromium omitted them.
+            .filter(|s| {
+                !(codec.mime_type.eq_ignore_ascii_case("video/VP8")
+                    || codec.mime_type.eq_ignore_ascii_case("video/VP9"))
+                    || !s
+                        .split_once('=')
+                        .is_some_and(|(key, _)| matches!(key.trim(), "max-fr" | "max-fs"))
+            })
             .collect::<Vec<_>>();
+        // RFC 9628: an omitted VP9 profile-id means profile 0. Keep other
+        // profiles distinct; accepting any VP9 PT could forward undecodable RTP.
+        if codec.mime_type.eq_ignore_ascii_case("video/VP9")
+            && !params.iter().any(|s| {
+                s.split_once('=')
+                    .is_some_and(|(key, _)| key.trim() == "profile-id")
+            })
+        {
+            params.push("profile-id=0");
+        }
         params.sort_unstable();
         params.join(";")
     };
@@ -2861,6 +2881,84 @@ mod tests {
         assert_eq!(
             super::negotiated_payload_type(&reoffer, "second", &codec),
             Some(43)
+        );
+    }
+
+    #[test]
+    fn payload_binding_accepts_firefox_vp9_receiver_limits_and_default_profile() {
+        let sdp = "v=0\r\no=- 0 0 IN IP4 127.0.0.1\r\ns=-\r\nt=0 0\r\nm=video 9 UDP/TLS/RTP/SAVPF 98\r\na=mid:screen\r\na=recvonly\r\na=rtpmap:98 VP9/90000\r\na=fmtp:98 max-fs=12288;max-fr=60\r\n";
+        let codec = RTCRtpCodec {
+            mime_type: "video/VP9".into(),
+            clock_rate: 90000,
+            sdp_fmtp_line: "profile-id=0".into(),
+            ..Default::default()
+        };
+        assert_eq!(
+            super::negotiated_payload_type(sdp, "screen", &codec),
+            Some(98)
+        );
+        for fmtp in ["", "max-fr=30;profile-id=0;max-fs=3600"] {
+            assert_eq!(
+                super::negotiated_payload_type(
+                    sdp,
+                    "screen",
+                    &RTCRtpCodec {
+                        sdp_fmtp_line: fmtp.into(),
+                        ..codec.clone()
+                    }
+                ),
+                Some(98)
+            );
+        }
+        assert_eq!(
+            super::negotiated_payload_type(
+                sdp,
+                "screen",
+                &RTCRtpCodec {
+                    sdp_fmtp_line: "profile-id=2".into(),
+                    ..codec.clone()
+                }
+            ),
+            None
+        );
+        assert_eq!(
+            super::negotiated_payload_type(
+                &sdp.replace("a=recvonly", "a=inactive"),
+                "screen",
+                &codec
+            ),
+            None
+        );
+        let ambiguous = sdp.replace("SAVPF 98", "SAVPF 98 99")
+            + "a=rtpmap:99 VP9/90000\r\na=fmtp:99 profile-id=0\r\n";
+        assert_eq!(
+            super::negotiated_payload_type(&ambiguous, "screen", &codec),
+            None
+        );
+    }
+
+    #[test]
+    fn payload_binding_accepts_vp8_receiver_limits_without_relaxing_other_codecs() {
+        let sdp = "v=0\r\no=- 0 0 IN IP4 127.0.0.1\r\ns=-\r\nt=0 0\r\nm=video 9 UDP/TLS/RTP/SAVPF 120\r\na=mid:live\r\na=rtpmap:120 VP8/90000\r\na=fmtp:120 max-fs=12288;max-fr=60\r\n";
+        let codec = RTCRtpCodec {
+            mime_type: "video/VP8".into(),
+            clock_rate: 90000,
+            ..Default::default()
+        };
+        assert_eq!(
+            super::negotiated_payload_type(sdp, "live", &codec),
+            Some(120)
+        );
+        assert_eq!(
+            super::negotiated_payload_type(
+                &sdp.replace("VP8", "H264"),
+                "live",
+                &RTCRtpCodec {
+                    mime_type: "video/H264".into(),
+                    ..codec
+                }
+            ),
+            None
         );
     }
 

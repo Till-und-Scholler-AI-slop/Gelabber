@@ -76,5 +76,9 @@ unsubscribe before a busy SDP gate, parent cleanup and independent microphone.
 `media/tests/live_claim.rs` verifies the same exact claim on the media wire;
 `api/tests/signal.rs` checks same-socket pairing and removal on the gateway wire.
 `web/scripts/smoke-source-audio.mjs` exercises two Chromium clients with synthetic
-display audio and real signaling/SFU. Browser/OS native tab or system capture
+display audio and real signaling/SFU. Set `GELABBER_SOURCE_AUDIO_RECEIVER=firefox`
+to run the receiver in Firefox, including screen/Live video decoding, source audio,
+and stop/re-Watch. Install both Playwright browsers first. The Firefox profile
+allows loopback ICE for the required local test stack; it is not WAN acceptance.
+Browser/OS native tab or system capture
 availability still depends on the selected source and browser capture support.
