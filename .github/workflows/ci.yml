@@ -267,3 +267,16 @@ jobs:
 
       - name: Build
         run: npm run build
+
+      - name: Test native benchmark contracts
+        working-directory: media/bench
+        run: |
+          npm ci --ignore-scripts
+          node --test tests/*.test.mjs
+
+      - name: Test benchmark evaluation and resource accounting
+        working-directory: media/bench
+        run: |
+          python3 -m unittest discover -s tests -p test_evidence.py -v
+          python3 -m unittest discover -s tests -p test_native_full.py -v
+          python3 -m unittest discover -s tests -p test_native_evaluation.py -v
