@@ -126,16 +126,29 @@ async function useHeldTicket(actor) {
   );
   return outcome;
 }
-export async function holdActiveMedia(actor, { renderer = false } = {}) {
+export async function holdActiveMedia(
+  actor,
+  { renderer = false, suppressClientCleanupRequests = false } = {},
+) {
   await nativeEvaluate(
     actor,
-    async (renderer) => {
+    async ({ renderer, suppressClientCleanupRequests }) => {
       const state = window.__e2e;
       state.heldCounterMode = renderer ? "receiver-renderer" : "rtp";
       state.heldRenderers = [];
       state.heldExpectedRenderers = [];
       state.heldProbators = [];
       state.heldFrameCounterKeys = null;
+      state.heldSuppressedClientCleanupRequests = {
+        l: 0,
+        closeTransport: 0,
+        consumerFailed: 0,
+      };
+      state.heldNativeNegotiationRequests = {
+        setRemoteDescription: 0,
+        setLocalDescription: 0,
+      };
+      state.heldNativeNegotiationWaits = [];
       state.heldPeers = state.peers.filter(
         (p) => p.connectionState === "connected",
       );
@@ -149,6 +162,34 @@ export async function holdActiveMedia(actor, { renderer = false } = {}) {
       });
       // Ignore client-side teardown to test the SFU boundary independently.
       for (const pc of state.heldPeers) {
+        if (renderer) {
+          // SDK Consumer.close may start native SDP teardown before its
+          // Transport.close reaches pc.close. Keep the original negotiation
+          // alive without inventing a native success or allowing local teardown
+          // to masquerade as stopped server media. Release rejects every wait.
+          for (const method of [
+            "setRemoteDescription",
+            "setLocalDescription",
+          ]) {
+            const original = pc[method];
+            pc[method] = () => {
+              const counts = state.heldNativeNegotiationRequests;
+              if (state.heldNativeNegotiationWaits.length >= 64)
+                return Promise.reject(
+                  new Error("E2E_HELD_NATIVE_NEGOTIATION_OVERFLOW"),
+                );
+              counts[method]++;
+              const pending = new Promise((_resolve, reject) => {
+                state.heldNativeNegotiationWaits.push({ reject });
+              });
+              pending.catch(() => {});
+              return pending;
+            };
+            state.restoreClose.push(() => {
+              pc[method] = original;
+            });
+          }
+        }
         state.restoreClose.push(() =>
           window.RTCPeerConnection.prototype.close.call(pc),
         );
@@ -166,11 +207,47 @@ export async function holdActiveMedia(actor, { renderer = false } = {}) {
         }
       }
       for (const { ws } of state.heldSockets) {
+        if (suppressClientCleanupRequests) {
+          const send = ws.send;
+          state.restoreClose.push(() => {
+            ws.send = send;
+          });
+          // External ACL revocation must stop the held peer itself. In v4,
+          // client Leave retires the peer while retaining an unjoined socket;
+          // allowing it would prove client cleanup instead of server authority.
+          // Do not acknowledge suppressed RPCs or affect Watch-Off controls.
+          ws.send = function (data) {
+            let frame;
+            try {
+              frame = typeof data === "string" ? JSON.parse(data) : null;
+            } catch {
+              /* Unknown/binary traffic keeps its original native behavior. */
+            }
+            if (
+              frame &&
+              ["l", "closeTransport", "consumerFailed"].includes(frame.op) &&
+              Number.isInteger(frame.id) &&
+              frame.id > 0 &&
+              frame.id <= 0xffffffff
+            ) {
+              const counts = state.heldSuppressedClientCleanupRequests;
+              if (counts[frame.op] >= 64)
+                throw new Error("E2E_HELD_CLIENT_CLEANUP_OVERFLOW");
+              counts[frame.op]++;
+              return;
+            }
+            return send.call(this, data);
+          };
+        }
         state.restoreClose.push(() =>
           state.NativeSocket.prototype.close.call(ws),
         );
         ws.close = () => {};
       }
+      state.restoreClose.push(() => {
+        for (const wait of state.heldNativeNegotiationWaits.splice(0))
+          wait.reject(new Error("E2E_HELD_NATIVE_NEGOTIATION_RELEASED"));
+      });
       if (renderer) {
         const renderSources = [];
         const sourceKeys = new Set();
@@ -269,6 +346,12 @@ export async function holdActiveMedia(actor, { renderer = false } = {}) {
             const sourceKey = `${source.consumerId}:${source.generation}`;
             if (
               sources.length !== 1 ||
+              transceivers.length !== 1 ||
+              typeof transceivers[0].mid !== "string" ||
+              transceivers[0].mid.length === 0 ||
+              !["recvonly", "sendrecv"].includes(
+                transceivers[0].currentDirection,
+              ) ||
               track.id === "probator" ||
               transceivers.some(
                 (transceiver) => transceiver.mid === "probator",
@@ -299,6 +382,9 @@ export async function holdActiveMedia(actor, { renderer = false } = {}) {
               consumerSource: source,
               consumerIdentity: identity,
               consumerSsrc: encodings[0].ssrc,
+              transceiver: transceivers[0],
+              transceiverMid: transceivers[0].mid,
+              currentDirection: transceivers[0].currentDirection,
             });
           }
         }
@@ -310,6 +396,9 @@ export async function holdActiveMedia(actor, { renderer = false } = {}) {
             consumerSource,
             consumerIdentity,
             consumerSsrc,
+            transceiver,
+            transceiverMid,
+            currentDirection,
           } = bound;
           const video = document.createElement("video");
           video.muted = true;
@@ -346,6 +435,9 @@ export async function holdActiveMedia(actor, { renderer = false } = {}) {
             consumerSource,
             consumerIdentity,
             consumerSsrc,
+            transceiver,
+            transceiverMid,
+            currentDirection,
             callbackFunction: null,
           };
           state.heldExpectedRenderers.push(expected);
@@ -375,7 +467,7 @@ export async function holdActiveMedia(actor, { renderer = false } = {}) {
         }
       }
     },
-    renderer,
+    { renderer, suppressClientCleanupRequests },
   );
   const baseline = await heldMedia(actor);
   if (renderer) {
@@ -420,6 +512,17 @@ export async function heldMedia(actor) {
             sameNativePeer:
               expected?.pc === item.pc &&
               item.pc.getReceivers().includes(item.receiver),
+            sameNativeTransceiver:
+              item.pc.getTransceivers().includes(expected?.transceiver) &&
+              item.pc
+                .getTransceivers()
+                .filter((transceiver) => transceiver.receiver === item.receiver)
+                .length === 1 &&
+              expected.transceiver.receiver === item.receiver &&
+              expected.transceiver.mid === expected.transceiverMid &&
+              ["recvonly", "sendrecv"].includes(expected.currentDirection) &&
+              expected.transceiver.currentDirection ===
+                expected.currentDirection,
             sameConsumerIdentity:
               expected?.consumerSource === item.consumerSource &&
               state.incomingTracks.includes(item.consumerSource) &&
@@ -485,6 +588,9 @@ export async function heldMedia(actor) {
           probatorRtpStatsUnavailable: (state.heldProbators ?? []).filter(
             (probator) => !probator.rtpStatsAvailable,
           ).length,
+          suppressedClientCleanupRequests:
+            state.heldSuppressedClientCleanupRequests,
+          heldNativeNegotiationRequests: state.heldNativeNegotiationRequests,
           openSockets: state.heldSockets.filter((s) => s.ws.readyState === 1)
             .length,
         };
@@ -541,6 +647,8 @@ export async function heldMedia(actor) {
         videoRtpEntries,
         availableFrameCounters: availableKeys.length,
         expectedFrameCounters: expectedKeys.length,
+        suppressedClientCleanupRequests:
+          state.heldSuppressedClientCleanupRequests,
         openSockets: window.__e2e.heldSockets.filter(
           (s) => s.ws.readyState === 1,
         ).length,
@@ -580,7 +688,13 @@ export async function releaseHeld(actor) {
         }
       }
     }
-    for (const restore of state.restoreClose ?? []) restore();
+    for (const restore of state.restoreClose ?? []) {
+      try {
+        restore();
+      } catch {
+        failed = true;
+      }
+    }
     state.rawGateway?.ws.close();
     state.rawTicket?.ws.close();
     if (failed) throw new Error("held-renderer-cleanup-failed");
@@ -676,7 +790,10 @@ export async function accessScenarios(h, f) {
             "pre-revocation-gateway-control-failed",
           );
           await heldTicket(victim, voice);
-          await holdActiveMedia(victim);
+          await holdActiveMedia(victim, {
+            renderer: true,
+            suppressClientCleanupRequests: true,
+          });
           const baseline = await heldMedia(victim);
           let revoked;
           if (mode === "leave")

@@ -224,7 +224,7 @@ class PublicDevice {
     return transport;
   }
 }
-type Rpc = { method: MediaMethod; data: unknown };
+type Rpc = { method: MediaMethod; data: unknown; deadlineEpochMs?: number };
 function fixture(role: "voice" | "watch" = "voice", sdkTimeoutMs?: number) {
   const trace: string[] = [],
     requests: Rpc[] = [],
@@ -236,24 +236,28 @@ function fixture(role: "voice" | "watch" = "voice", sdkTimeoutMs?: number) {
   let intercept:
     | ((method: MediaMethod, data: unknown) => Promise<unknown> | undefined)
     | undefined;
-  const request = vi.fn(async (method: MediaMethod, data: unknown) => {
-    requests.push({ method, data });
-    trace.push("rpc:" + method);
-    const overridden = intercept?.(method, data);
-    if (overridden) return overridden;
-    if (method === "transport")
-      return {
-        id: `${role}-${++transportNumber}`,
-        iceParameters: { usernameFragment: "u", password: "p" },
-        iceCandidates: [],
-        dtlsParameters: { fingerprints: [] },
-      };
-    if (method === "produce")
-      return { producerId: "producer-" + ++producerNumber };
-    if (method === "restartIce")
-      return { iceParameters: { usernameFragment: "next", password: "next" } };
-    return {};
-  });
+  const request = vi.fn(
+    async (method: MediaMethod, data: unknown, deadlineEpochMs?: number) => {
+      requests.push({ method, data, deadlineEpochMs });
+      trace.push("rpc:" + method);
+      const overridden = intercept?.(method, data);
+      if (overridden) return overridden;
+      if (method === "transport")
+        return {
+          id: `${role}-${++transportNumber}`,
+          iceParameters: { usernameFragment: "u", password: "p" },
+          iceCandidates: [],
+          dtlsParameters: { fingerprints: [] },
+        };
+      if (method === "produce")
+        return { producerId: "producer-" + ++producerNumber };
+      if (method === "restartIce")
+        return {
+          iceParameters: { usernameFragment: "next", password: "next" },
+        };
+      return {};
+    },
+  );
   const onConsumer = vi.fn((source: ReceivedSource) => {
     trace.push("attach:" + source.consumerId);
     attached.push(source);
@@ -340,6 +344,394 @@ beforeEach(() => {
       }
     },
   );
+});
+
+describe("bounded live publication recovery through the public SDK", () => {
+  it("bounds repeated live_busy failures without losing current captures, epochs, or audio parents", async () => {
+    vi.useFakeTimers();
+    const f = fixture();
+    await f.start();
+    let originalCurrent = true;
+    const originalDeadline = Date.now() + 10_000;
+    const captures = {
+      a: new Capture("mic", "audio"),
+      v: new Capture("camera", "video"),
+      s: new Capture("screen", "video"),
+      sa: new Capture("screen-audio", "audio"),
+    };
+    for (const kind of ["a", "v", "s", "sa"] as const) {
+      await f.connection.publish(
+        publication(kind, captures[kind], {
+          ...(kind === "sa"
+            ? { parent: f.connection.sender("s")!.producerId }
+            : {}),
+          deadlineEpochMs: originalDeadline,
+          isCurrent: () => originalCurrent,
+        }),
+      );
+    }
+    const recv = f.device.transports[0];
+    originalCurrent = false;
+    vi.setSystemTime(originalDeadline + 1);
+    const deadline = Date.now() + 10_000;
+    const live = new Capture("live", "video");
+    f.intercept((method, data) =>
+      method === "produce" && (data as MediaRequests["produce"]).k === "l"
+        ? Promise.reject(
+            Object.assign(new Error("live_busy"), { code: "live_busy" }),
+          )
+        : undefined,
+    );
+    for (let attempt = 0; attempt < 8; attempt += 1) {
+      await expect(
+        f.connection.publish(
+          publication("l", live, {
+            lc: GENERATION,
+            deadlineEpochMs: deadline,
+            isCurrent: () => true,
+          }),
+        ),
+      ).rejects.toMatchObject({ code: "live_busy" });
+      expect(f.connection.sender("l")).toBeUndefined();
+      expect(f.connection.sender("sa")!.epoch).toBe(EPOCH);
+      expect(
+        f.device.transports
+          .flatMap((t) => t.producers)
+          .filter((p) => p.track === live.native()),
+      ).toEqual([]);
+    }
+    expect(recv.closed).toBe(false);
+    expect(f.calls("closeTransport").length).toBeGreaterThan(0);
+    expect(f.calls("closeTransport").length).toBeLessThanOrEqual(8);
+    for (const transport of f.device.transports.slice(1)) {
+      const parent = transport.producers.find(
+        (p) => p.track === captures.s.native(),
+      );
+      const child = transport.produce.mock.calls.find(
+        ([options]) =>
+          (options.appData?.publication as MediaPublication).kind === "sa",
+      );
+      if (child)
+        expect((child[0].appData?.publication as MediaPublication).parent).toBe(
+          parent?.id,
+        );
+      for (const [options] of transport.produce.mock.calls)
+        expect(options.stopTracks).toBe(false);
+    }
+    for (const [kind, capture] of Object.entries(captures)) {
+      expect(
+        f.connection.senders().find((s) => s.sourceKind === kind)?.track,
+      ).toBe(capture.native());
+      expect(capture.stop).not.toHaveBeenCalled();
+    }
+    expect(
+      f.requests.filter(
+        (r) =>
+          r.method === "produce" &&
+          (r.data as MediaRequests["produce"]).k === "l",
+      ),
+    ).toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({
+          deadlineEpochMs: deadline,
+          data: expect.objectContaining({ epoch: EPOCH, lc: GENERATION }),
+        }),
+      ]),
+    );
+    expect(f.onError).not.toHaveBeenCalled();
+    f.intercept(undefined);
+    await f.connection.publish(
+      publication("l", live, { lc: GENERATION, deadlineEpochMs: deadline }),
+    );
+    expect(f.connection.sender("l")!.track).toBe(live.native());
+    expect(live.stop).not.toHaveBeenCalled();
+  });
+
+  it("passes one absolute deadline through fresh transport, native connect, and producer RPCs", async () => {
+    const f = fixture();
+    await f.start();
+    f.device.configureSend = (transport) => {
+      const original = transport.produce.getMockImplementation()!;
+      transport.produce.mockImplementationOnce(async (options) => {
+        await new Promise<void>((resolve, reject) =>
+          transport.handlers.get("connect")?.(
+            { dtlsParameters: { fingerprints: [] } },
+            resolve,
+            reject,
+          ),
+        );
+        return original(options);
+      });
+    };
+    const deadline = Date.now() + 10_000;
+    await f.connection.publish(
+      publication("l", new Capture("live", "video"), {
+        deadlineEpochMs: deadline,
+      }),
+    );
+    for (const method of ["transport", "connect", "produce"] as const) {
+      const call = f.requests.findLast((r) => r.method === method);
+      expect(call?.deadlineEpochMs).toBe(deadline);
+      expect(call?.data).not.toHaveProperty("deadlineEpochMs");
+    }
+  });
+
+  it("rejects an already expired publication before creating native resources", async () => {
+    const f = fixture();
+    await f.start();
+    const capture = new Capture("live", "video");
+    await expect(
+      f.connection.publish(
+        publication("l", capture, {
+          deadlineEpochMs: Date.now() - 1,
+        }),
+      ),
+    ).rejects.toMatchObject({ code: "live_recovery_timeout" });
+    expect(f.device.transports).toHaveLength(1);
+    expect(f.calls("produce")).toEqual([]);
+    expect(capture.stop).not.toHaveBeenCalled();
+  });
+
+  it("uses the remaining absolute budget for a hung SDK send and retires its late producer", async () => {
+    vi.useFakeTimers();
+    const f = fixture();
+    await f.start();
+    await f.connection.publish(publication("a", new Capture("mic", "audio")));
+    const send = f.device.transports[1],
+      pending = deferred<NativeProducer>();
+    send.produce.mockImplementationOnce(() => pending.promise);
+    const capture = new Capture("live", "video");
+    const publishing = f.connection.publish(
+      publication("l", capture, { deadlineEpochMs: Date.now() + 25 }),
+    );
+    const rejected = expect(publishing).rejects.toMatchObject({
+      code: "sdk_timeout",
+    });
+    await tick();
+    await vi.advanceTimersByTimeAsync(26);
+    await rejected;
+    expect(send.closed).toBe(true);
+    expect(f.calls("closeTransport")).toContainEqual({ transportId: send.id });
+    const late = new NativeProducer("late-sdk-live", capture.native(), false);
+    pending.resolve(late);
+    await tick();
+    expect(late.closed).toBe(true);
+    expect(f.connection.sender("l")).toBeUndefined();
+    expect(capture.stop).not.toHaveBeenCalled();
+  });
+
+  it("closes a stale actual producer ID without retiring a newer publication of the same kind", async () => {
+    const f = fixture();
+    await f.start();
+    const capture = new Capture("live", "video");
+    const old = await f.connection.publish(
+      publication("l", capture, { lc: GENERATION }),
+    );
+    const pending = deferred<{ producerId: string }>();
+    f.intercept((method) =>
+      method === "produce" ? pending.promise : undefined,
+    );
+    let current = true;
+    const publishing = f.connection.publish(
+      publication("l", capture, {
+        epoch: NEXT_EPOCH,
+        lc: NEXT_EPOCH,
+        isCurrent: () => current,
+      }),
+    );
+    const rejected = expect(publishing).rejects.toMatchObject({
+      code: "connection_closed",
+    });
+    await tick();
+    current = false;
+    pending.resolve({ producerId: "stale-server-live" });
+    await rejected;
+    expect(f.calls("closeProducer")).toContainEqual({
+      producerId: "stale-server-live",
+    });
+    expect(f.connection.sender("l")).toBe(old);
+    f.intercept(undefined);
+    const next = await f.connection.publish(
+      publication("l", capture, { epoch: NEXT_EPOCH, lc: NEXT_EPOCH }),
+    );
+    await f.connection.closeSource("l", old.producerId);
+    await f.connection.closeSource("l", "stale-server-live");
+    expect(f.connection.sender("l")).toBe(next);
+    expect(f.calls("closeProducer")).not.toContainEqual({
+      producerId: next.producerId,
+    });
+    await f.connection.closeSource("l", next.producerId);
+    expect(f.connection.sender("l")).toBeUndefined();
+    expect(capture.stop).not.toHaveBeenCalled();
+  });
+
+  it("retires an SDK producer resolving after publication ownership changes", async () => {
+    const f = fixture();
+    await f.start();
+    await f.connection.publish(publication("a", new Capture("mic", "audio")));
+    const pending = deferred<NativeProducer>();
+    f.device.transports[1].produce.mockImplementationOnce(
+      () => pending.promise,
+    );
+    const capture = new Capture("live", "video");
+    let current = true;
+    const publishing = f.connection.publish(
+      publication("l", capture, { isCurrent: () => current }),
+    );
+    const rejected = expect(publishing).rejects.toMatchObject({
+      code: "publication_cancelled",
+    });
+    await tick();
+    current = false;
+    const late = new NativeProducer(
+      "late-owned-sdk-live",
+      capture.native(),
+      false,
+    );
+    pending.resolve(late);
+    await rejected;
+    expect(late.closed).toBe(true);
+    expect(f.calls("closeProducer")).toContainEqual({ producerId: late.id });
+    expect(f.connection.sender("l")).toBeUndefined();
+    expect(capture.stop).not.toHaveBeenCalled();
+  });
+
+  it("closes a freshly created send transport if its reply exhausts the publication budget", async () => {
+    vi.useFakeTimers();
+    const f = fixture();
+    await f.start();
+    const pending = deferred<TransportOptions>();
+    f.intercept((method, data) =>
+      method === "transport" &&
+      (data as MediaRequests["transport"]).direction === "send"
+        ? pending.promise
+        : undefined,
+    );
+    const capture = new Capture("live", "video"),
+      deadline = Date.now() + 100;
+    const publishing = f.connection.publish(
+      publication("l", capture, { deadlineEpochMs: deadline }),
+    );
+    const rejected = expect(publishing).rejects.toMatchObject({
+      code: "live_recovery_timeout",
+    });
+    await tick();
+    vi.setSystemTime(deadline + 1);
+    pending.resolve({
+      id: "late-send",
+      iceParameters: { usernameFragment: "u", password: "p" },
+      iceCandidates: [],
+      dtlsParameters: { fingerprints: [] },
+    });
+    await rejected;
+    expect(f.device.transports.find((t) => t.id === "late-send")?.closed).toBe(
+      true,
+    );
+    expect(f.calls("closeTransport")).toContainEqual({
+      transportId: "late-send",
+    });
+    expect(f.calls("produce")).toEqual([]);
+    expect(capture.stop).not.toHaveBeenCalled();
+  });
+
+  it("does not reset the deadline when a compaction close reply exhausts the budget", async () => {
+    vi.useFakeTimers();
+    const f = fixture();
+    await f.start();
+    const capture = new Capture("screen", "video");
+    for (let i = 0; i < 4; i += 1) {
+      await f.connection.publish(publication("s", capture));
+      await f.connection.closeSource("s");
+    }
+    const old = f.device.transports[1],
+      pending = deferred<Record<string, never>>();
+    f.intercept((method) =>
+      method === "closeTransport" ? pending.promise : undefined,
+    );
+    const deadline = Date.now() + 100;
+    const publishing = f.connection.publish(
+      publication("l", capture, { deadlineEpochMs: deadline }),
+    );
+    const rejected = expect(publishing).rejects.toMatchObject({
+      code: "live_recovery_timeout",
+    });
+    await tick();
+    vi.setSystemTime(deadline + 1);
+    pending.resolve({});
+    await rejected;
+    expect(old.closed).toBe(true);
+    expect(
+      // Failure cleanup has its own bounded RPC; the operation's first close
+      // must retain the shared deadline rather than start another budget.
+      f.requests.find((r) => r.method === "closeTransport")?.deadlineEpochMs,
+    ).toBe(deadline);
+    // The fake RPC accepts an expired budget, unlike MediaPeer.request. Any
+    // native resource it still returns must be retired by failure cleanup.
+    expect(f.device.transports.every((transport) => transport.closed)).toBe(
+      true,
+    );
+    expect(f.calls("produce")).toHaveLength(4);
+    expect(f.connection.sender("l")).toBeUndefined();
+    expect(capture.stop).not.toHaveBeenCalled();
+  });
+
+  it("inherits the same remaining budget when compaction republishes current mic before video children", async () => {
+    vi.useFakeTimers();
+    const f = fixture();
+    await f.start();
+    const mic = new Capture("mic", "audio"),
+      screen = new Capture("screen", "video"),
+      audio = new Capture("screen-audio", "audio");
+    await f.connection.publish(publication("a", mic));
+    const parent = await f.connection.publish(publication("s", screen));
+    await f.connection.publish(
+      publication("sa", audio, { parent: parent.producerId }),
+    );
+    f.intercept((method) =>
+      method === "produce"
+        ? Promise.reject(
+            Object.assign(new Error("live_busy"), { code: "live_busy" }),
+          )
+        : undefined,
+    );
+    const live = new Capture("live", "video");
+    await expect(
+      f.connection.publish(publication("l", live)),
+    ).rejects.toMatchObject({ code: "live_busy" });
+    f.intercept(undefined);
+    const pending = deferred<NativeProducer>();
+    f.device.configureSend = (transport) =>
+      transport.produce.mockImplementationOnce(() => pending.promise);
+    const publishing = f.connection.publish(
+      publication("l", live, { deadlineEpochMs: Date.now() + 25 }),
+    );
+    const rejected = expect(publishing).rejects.toMatchObject({
+      code: "sdk_timeout",
+    });
+    await tick();
+    const newSend = f.device.transports[2];
+    expect(newSend.produce).toHaveBeenCalledOnce();
+    expect(
+      (
+        newSend.produce.mock.calls[0][0].appData
+          ?.publication as MediaPublication
+      ).kind,
+    ).toBe("a");
+    await vi.advanceTimersByTimeAsync(26);
+    await rejected;
+    expect(newSend.closed).toBe(true);
+    expect(f.calls("closeTransport")).toContainEqual({
+      transportId: newSend.id,
+    });
+    expect(newSend.produce).toHaveBeenCalledOnce();
+    const late = new NativeProducer("late-reproduced-mic", mic.native(), false);
+    pending.resolve(late);
+    await tick();
+    expect(late.closed).toBe(true);
+    expect(f.connection.senders()).toEqual([]);
+    for (const capture of [mic, screen, audio, live])
+      expect(capture.stop).not.toHaveBeenCalled();
+  });
 });
 afterEach(() => {
   for (const connection of active) connection.close();

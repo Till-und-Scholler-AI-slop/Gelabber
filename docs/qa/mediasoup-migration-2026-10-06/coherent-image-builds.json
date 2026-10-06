@@ -166,14 +166,222 @@
         "published_http_ip": "127.0.0.1",
         "browser_or_rtp_started": false
       }
+    },
+    {
+      "snapshot": "d3c898288e28",
+      "status": "PASS",
+      "qualification": "INTERMEDIATE_DIRTY_SNAPSHOT_BEFORE_FINAL_RPC_AND_WS_TERMINAL_BARRIER",
+      "base_head": "688c8988996c522142133371667b50e46b23895d",
+      "source_manifest_sha256": "954e28e15d14b3469cc6854795b826f31d80cd29309be030e5b6ad18e31ad26c",
+      "input_files": 439,
+      "source_changed_during_build": [],
+      "revision_label_semantics": "base_git_head_with_exact_uncommitted_input_snapshot",
+      "build_report_sha256": "f7e2bfca354f08e4f7402c94e9f1c3db8a4b91ee2f137f75e8b561c66395fd1b",
+      "builds": [
+        {
+          "component": "media",
+          "image": "gelabber-mediasoup-local/media:20261006-final-d3c898288e28",
+          "image_id": "sha256:ac18c9cd766f1686fc17de5565e2b854021db0c3779feca4d757c9f3178629ad",
+          "platform": "linux/amd64",
+          "status": "PASS",
+          "elapsed_seconds": 17.851,
+          "log_sha256": "3086df75878a2e1fd5d00464377c606c0cf095efcc79b6cd3fc0e7bd1f351249"
+        },
+        {
+          "component": "api",
+          "image": "gelabber-mediasoup-local/api:20261006-final-d3c898288e28",
+          "image_id": "sha256:978e8d553f83915630620854e9f7f1f0f1f9c1e4bf2e125a5811c47f7bd32bb4",
+          "platform": "linux/amd64",
+          "status": "PASS",
+          "elapsed_seconds": 1.617,
+          "log_sha256": "710e810f8480b93670bed9cb08974aacfacc309cdc21e9e19d270b1e8c5a2880"
+        },
+        {
+          "component": "web",
+          "image": "gelabber-mediasoup-local/web:20261006-final-d3c898288e28",
+          "image_id": "sha256:a306dfcf8698e95f70137550ae4463ed93419b9b2dfae8a04c76c109976ea447",
+          "platform": "linux/amd64",
+          "status": "PASS",
+          "elapsed_seconds": 5.225,
+          "log_sha256": "7bc45f6413c78b6d308e966f31dd39e8e080b99993d4b3ad1e572e9205da770d"
+        }
+      ],
+      "selected_input_sha256": {
+        "Cargo.lock": "609105cf26bc5839f3a1f517b714dec5cd0d215d4ddc0eee4a4d444ffd08b274",
+        "api/Dockerfile": "a62af4fafd8454ae9884614e92c4cc49702f64bc6646b55fb25d822339e9c37f",
+        "docker/mediasoup-build-tools.lock.json": "5b83f33ff52885b139ac57b519fc8cae9fc2dee88a348795d27abd0d73feea26",
+        "docker/mediasoup-debian-build-tools.lock.tsv": "2156dadb3455f52bff9f75a2cf90f30a22d03c9554a1d98f0ec4fb9a0259d1a0",
+        "media/Cargo.toml": "036dcf3f5098925553a87011ca797f0687168f7accdce0b0cadad9329d6dff55",
+        "media/Dockerfile": "33cef4d319a82c7e3a175e5ef109ff896b3a106119d838fe5434657f64bb835f",
+        "media/src/error.rs": "da0fd254c2d7f5eebcbafe14d8e7d7271c7bad7ad51322dd94e9d926c77e4495",
+        "media/src/lib.rs": "aa63c001131a222e1699082c8ae984f562e59c55182849c411da65e1ba4ffa38",
+        "media/src/live.rs": "10683e6ea3dcd510280fd460c6e1b7a7464e81b1677c51ed5b079f2522de1c6a",
+        "media/src/sfu.rs": "a59309a853f074870ef9edf6098a3535581c8d76fa1344443fd0433ab8b0302f",
+        "media/src/ws.rs": "740f4571702790070033f69714414dca714cab714ee9e71271de2a14df19ed37",
+        "web/package-lock.json": "682318ea6a51c6c597c690c96a84f787442c802c767d6731298a6dd029e297fa",
+        "web/scripts/e2e/access.mjs": "7a1c5444a27e3e8caf2a2a5ebe549ec50a5a8c962171dad61f53526d0f3e5211",
+        "web/scripts/e2e/held-renderer.checks.mjs": "d70545a89bc361d38174833ec840cc0d2b3616cd90c1d952056b8a881403f156",
+        "web/scripts/e2e/mediasoup-native.mjs": "4f4ec05f214818a1ee7847c50661be94122af29531090bf8e3d0164303ffa22d",
+        "web/src/voice/media.ts": "1c605269920230b725c0267d3b2a0b3451f9bfc77404131a678d6474dc367836",
+        "web/src/voice/mediaPeer.ts": "94c43bb202055ce2ba22ab08aef09807a6e52faf1a33bf43db225cb2cc63ef7d",
+        "web/src/voice/mediasoupConnection.test.ts": "307f40abdaadcb3c92cf0e8fd250d9634f04168a59c618c11df6cc87ea64b16c",
+        "web/src/voice/mediasoupConnection.ts": "03802ded478ea2478014a346a01e69b9f585de29bccf39917ae8167a21a3b9dd",
+        "web/src/voice/session.ts": "424bfe4aa07381165b3330bee68b8b4768fc6b82b9ebb9df02c99ba4ae8dbd14"
+      },
+      "no_rtp_media_image_smoke": {
+        "status": "PASS",
+        "report_sha256": "3e582f041b30e8e7ef8ecd4c1ab18b31eb1d1e9942ca3c49156d2e138e742ab3",
+        "image_id": "sha256:ac18c9cd766f1686fc17de5565e2b854021db0c3779feca4d757c9f3178629ad",
+        "ready": true,
+        "ready_checks": {
+          "redis": "ok",
+          "media": "ok"
+        },
+        "normal_shutdown": true,
+        "exit_code": 0,
+        "forced_cleanup": false,
+        "cleanup_complete": true,
+        "owned_resources_verified_absent": 3,
+        "cleanup_errors": [],
+        "existing_containers_compared": 9,
+        "existing_containers_unchanged": true,
+        "published_host_udp": false,
+        "published_http_ip": "127.0.0.1",
+        "browser_or_rtp_started": false
+      }
+    },
+    {
+      "snapshot": "1d9133364988",
+      "status": "PASS",
+      "qualification": "FINAL_FROZEN_DIRTY_SOURCE_THREE_COMPONENT_BUILD_AND_NO_RTP_SMOKE",
+      "base_head": "688c8988996c522142133371667b50e46b23895d",
+      "source_manifest_sha256": "15bad6eb2eeea47c152c9f9ecf13ee16aa976008478ea2514c4e2eeaf712d462",
+      "input_files": 439,
+      "source_changed_during_build": [],
+      "revision_label_semantics": "base_git_head_with_exact_uncommitted_input_snapshot",
+      "build_report_sha256": "74b77bea11f31e44b3b91938ae49fe3f2bb42e4093e21f5e875912a8d842068f",
+      "builds": [
+        {
+          "component": "media",
+          "image": "gelabber-mediasoup-local/media:20261006-final-1d9133364988",
+          "image_id": "sha256:0c203398285b8bd9a3367e2301042f649bcaaa3a81a6cd58107757a77a91e127",
+          "platform": "linux/amd64",
+          "status": "PASS",
+          "elapsed_seconds": 18.453,
+          "log_sha256": "61b533317850a25683af3d1676471684ba788b874af1a6ec95fa60ddfc49eb53"
+        },
+        {
+          "component": "api",
+          "image": "gelabber-mediasoup-local/api:20261006-final-1d9133364988",
+          "image_id": "sha256:f67622a3ca8db999afef30ab42d061c0abbd8e0d26697b80ad95e35761aa50c9",
+          "platform": "linux/amd64",
+          "status": "PASS",
+          "elapsed_seconds": 1.617,
+          "log_sha256": "0d01fb3317edf22e84a5ec775c6d586f4b9e147685b71faa6bb552021c19c06b"
+        },
+        {
+          "component": "web",
+          "image": "gelabber-mediasoup-local/web:20261006-final-1d9133364988",
+          "image_id": "sha256:23ee641935d0e388f087688807faf06beb3f85c31cafbede3beb36e4927bc00f",
+          "platform": "linux/amd64",
+          "status": "PASS",
+          "elapsed_seconds": 1.166,
+          "log_sha256": "254ca56b7d70f514b5e5477fe825fc2aace3b4fff26e11ba80f3b79caa6d2afb"
+        }
+      ],
+      "selected_input_sha256": {
+        "Cargo.lock": "609105cf26bc5839f3a1f517b714dec5cd0d215d4ddc0eee4a4d444ffd08b274",
+        "api/Dockerfile": "a62af4fafd8454ae9884614e92c4cc49702f64bc6646b55fb25d822339e9c37f",
+        "docker/mediasoup-build-tools.lock.json": "5b83f33ff52885b139ac57b519fc8cae9fc2dee88a348795d27abd0d73feea26",
+        "docker/mediasoup-debian-build-tools.lock.tsv": "2156dadb3455f52bff9f75a2cf90f30a22d03c9554a1d98f0ec4fb9a0259d1a0",
+        "media/Cargo.toml": "036dcf3f5098925553a87011ca797f0687168f7accdce0b0cadad9329d6dff55",
+        "media/Dockerfile": "33cef4d319a82c7e3a175e5ef109ff896b3a106119d838fe5434657f64bb835f",
+        "media/src/error.rs": "da0fd254c2d7f5eebcbafe14d8e7d7271c7bad7ad51322dd94e9d926c77e4495",
+        "media/src/lib.rs": "aa63c001131a222e1699082c8ae984f562e59c55182849c411da65e1ba4ffa38",
+        "media/src/live.rs": "10683e6ea3dcd510280fd460c6e1b7a7464e81b1677c51ed5b079f2522de1c6a",
+        "media/src/sfu.rs": "63d3fe956223a84f0c78c3e0718db37d469cc97acdeba512dc037e3dbde373e8",
+        "media/src/ws.rs": "05022c65f738a93147445d9ab737652874e81adcd9723d9ce480921be0959090",
+        "web/package-lock.json": "682318ea6a51c6c597c690c96a84f787442c802c767d6731298a6dd029e297fa",
+        "web/scripts/e2e/access.mjs": "7a1c5444a27e3e8caf2a2a5ebe549ec50a5a8c962171dad61f53526d0f3e5211",
+        "web/scripts/e2e/held-renderer.checks.mjs": "d70545a89bc361d38174833ec840cc0d2b3616cd90c1d952056b8a881403f156",
+        "web/scripts/e2e/mediasoup-native.mjs": "4f4ec05f214818a1ee7847c50661be94122af29531090bf8e3d0164303ffa22d",
+        "web/src/voice/media.ts": "1c605269920230b725c0267d3b2a0b3451f9bfc77404131a678d6474dc367836",
+        "web/src/voice/mediaPeer.ts": "94c43bb202055ce2ba22ab08aef09807a6e52faf1a33bf43db225cb2cc63ef7d",
+        "web/src/voice/mediasoupConnection.test.ts": "307f40abdaadcb3c92cf0e8fd250d9634f04168a59c618c11df6cc87ea64b16c",
+        "web/src/voice/mediasoupConnection.ts": "03802ded478ea2478014a346a01e69b9f585de29bccf39917ae8167a21a3b9dd",
+        "web/src/voice/session.ts": "424bfe4aa07381165b3330bee68b8b4768fc6b82b9ebb9df02c99ba4ae8dbd14"
+      },
+      "no_rtp_media_image_smoke": {
+        "status": "PASS",
+        "report_sha256": "1ff671bb1fc8e774b21d9c2c54c3040d3ba2e8cdf7bc40d94cd5baeb3ca30538",
+        "image_id": "sha256:0c203398285b8bd9a3367e2301042f649bcaaa3a81a6cd58107757a77a91e127",
+        "ready": true,
+        "ready_checks": {
+          "redis": "ok",
+          "media": "ok"
+        },
+        "normal_shutdown": true,
+        "exit_code": 0,
+        "forced_cleanup": false,
+        "cleanup_complete": true,
+        "owned_resources_verified_absent": 3,
+        "cleanup_errors": [],
+        "existing_containers_compared": 9,
+        "existing_containers_unchanged": true,
+        "published_host_udp": false,
+        "published_http_ip": "127.0.0.1",
+        "browser_or_rtp_started": false
+      }
     }
   ],
-  "current_final_source_images_available": false,
-  "current_limit": "Later authorized Live lease process recovery changes require a new frozen product source snapshot and application stage build; native dependency cache remains valid. These successful intermediate builds are preserved.",
-  "compiler_runtime_distinction": "These Debian GCC native image builds and no-RTP startup checks are separate from browser acceptance against the host-built media executable.",
+  "current_final_source_images_available": true,
+  "current_limit": "Final frozen uncommitted product inputs built as coherent API/Media/Web images and actual Worker/Redis/SIGTERM smoke passed. Later five test-harness-only file corrections leave compiled product sources unchanged; the full 439-input COPY snapshot predates those changes and is not byteidentical to the later full checkout. All other 434 inputs match. Current harness hashes and all 17 CI harness commands plus full registered ESLint passed separately. Root records actual browser acceptance against the immutable Media image and separately hashed host preview; exact later feature commit CI rebuilds all three images separately.",
+  "compiler_runtime_distinction": "Debian GCC image builds and own no-RTP startup checks are separate from the actual browser acceptance against the immutable final Media image, and from the native crash/recovery control against the host-built media executable.",
   "remote_ci_or_exact_final_commit_claimed": false,
   "main_release_or_deployment": false,
   "new_load_or_hour_tests": "EXCLUDED_BY_USER",
   "physical_ios_omarchy": "DEFERRED",
-  "historical_failures": "Retained without rewriting image-build-smoke.json"
+  "historical_failures": "Retained without rewriting image-build-smoke.json",
+  "post_build_harness_only_changes": {
+    "paths": [
+      "web/scripts/e2e/access.mjs",
+      "web/scripts/e2e/held-renderer.checks.mjs",
+      "web/scripts/e2e/native-evaluate.checks.mjs",
+      "web/scripts/e2e/native-evaluate.mjs",
+      "web/scripts/e2e/probe.mjs"
+    ],
+    "compiled_product_source_changed": false,
+    "full_build_context_matches_later_checkout": false,
+    "scope": "External ACL revoke uses a retained native receiver-renderer/transceiver oracle, suppression of client cleanup RPCs only in four opt-in external-revoke cases, and local SDP teardown held without fake native acknowledgement. A separate stats-race correction marks only actually closed peers unavailable while live native failures remain FAIL.",
+    "current_harness_validation": "All 17 current CI harness commands plus full registered ESLint passed with unchanged source hashes; actual product browser acceptance recorded separately by the browser harness owner.",
+    "independent_focused_validation": {
+      "access_sha256": "8655f28a2e2924f0ecfe6f8ff715fec6c9d4eab9627f17f6f25ffcb10ffec56a",
+      "held_renderer_checks_sha256": "7f7f15e1dab3f17ec4dbea320e410cc4893182c8d66d802e38da006feb3b54e2",
+      "command": "node --test scripts/e2e/held-renderer.checks.mjs",
+      "node_version": "26.8.2",
+      "passed": 81,
+      "failed": 0,
+      "log_sha256": "3073f417066ee6ef59cb0e76b2af076c14734e2e035fd29ac913eebd5212cc61",
+      "sources_unchanged_during_validation": true,
+      "scope": "Read-only public-SDK/static review plus focused mock Node checks; actual retained native receiver browser acceptance recorded separately."
+    },
+    "unchanged_other_build_inputs": 434,
+    "all_current_ci_harness_and_registered_lint_report_sha256": "da58ab92eced07a18f5016c3b8fbb5b1fcc81fa688b8bb1a5a5672436ffd80fc",
+    "selected_current_ci_harness_evidence_sha256": "4f1bf43926450953dfae2650e32721f82480ffa3857f0554c20e89ecc0d12346"
+  },
+  "web_image_and_browser_preview_artifacts": {
+    "artifact_reader_report_sha256": "0585a17aab425ce033d4d9a44a6318629145fb73f5457034d102ab627a34d2ea",
+    "image_main_name": "index-BJ38uHxh.js",
+    "image_main_sha256": "65b0b1ec78e302e93318f8197df79e2b014a3647afb1928e22bb291956c0d985",
+    "browser_preview_main_name": "index-DR-9_D2N.js",
+    "browser_preview_main_sha256": "bb045927cec0059d79ebbbca51e10dce8dee1b4024f66841d109a62874e567e8",
+    "main_bundle_bytes_equal": false,
+    "limit": "This artifact reader proves file hashes only. Actual browser acceptance uses the separately hashed host preview bundle and final Media image; it is not acceptance of the Web-image bundle."
+  },
+  "separate_actual_browser_acceptance": {
+    "artifact": "product-acceptance.json",
+    "sha256": "aa5e402c6f651704a999ed6815ffad95616279d3133d3320d543063cc0bf8374",
+    "status": "PASS",
+    "scope": "Selected actual local product cases with synthetic captures; not full v0.4 release, physical devices, WAN/TURN, calibrated quality, load, or standalone worker-thread crash acceptance. Host-native process control and final Media-image browser controls are identified separately; the browser Web preview is separately hashed from the built Web image."
+  }
 }

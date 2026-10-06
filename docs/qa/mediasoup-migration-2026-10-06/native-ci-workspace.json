@@ -134,11 +134,327 @@
       "all_fixture_exits_zero": true,
       "owned_fixture_count": 3,
       "owned_fixtures_verified_absent": 3
+    },
+    {
+      "qualification": "PASS_ON_FROZEN_BACKEND_E9E7_BEFORE_SUBSEQUENT_TERMINAL_STOP_ORDERING_FIX",
+      "wrapper_outer_exit_code": 0,
+      "commands_status": "PASS",
+      "checks": [
+        {
+          "name": "workspace-tests",
+          "command": [
+            "sh",
+            "docker/run-native-ci.sh",
+            "test",
+            "--locked",
+            "--workspace",
+            "--all-targets",
+            "--",
+            "--skip",
+            "typing_broadcasts_fast_and_clears_on_stop",
+            "--test-threads=4"
+          ],
+          "exit_code": 0,
+          "elapsed_seconds": 95.95,
+          "log_sha256": "dca21c38cdbe942120eab49b3b09c509245d206a817441483f494b3967e602b5",
+          "passed": 303,
+          "failed": 0,
+          "ignored": 0
+        },
+        {
+          "name": "typing-isolation",
+          "command": [
+            "sh",
+            "docker/run-native-ci.sh",
+            "test",
+            "--locked",
+            "--workspace",
+            "--all-targets",
+            "typing_broadcasts_fast_and_clears_on_stop",
+            "--",
+            "--exact",
+            "--test-threads=1"
+          ],
+          "exit_code": 0,
+          "elapsed_seconds": 1.217,
+          "log_sha256": "41d876d0948aebd2b77872a0e6bf824eaaa8d8e0ebaef4109eaaa58df3d5fc60",
+          "passed": 1,
+          "failed": 0,
+          "ignored": 0
+        }
+      ],
+      "source_changed_during_tests": [],
+      "report_sha256": "c3e8b1dc4ad8b0270225aadcbfc3911e7cdc03b249c96dd8da158691a74fbf68",
+      "selected_before_input_sha256": {
+        "Cargo.lock": "609105cf26bc5839f3a1f517b714dec5cd0d215d4ddc0eee4a4d444ffd08b274",
+        "media/src/error.rs": "da0fd254c2d7f5eebcbafe14d8e7d7271c7bad7ad51322dd94e9d926c77e4495",
+        "media/src/live.rs": "10683e6ea3dcd510280fd460c6e1b7a7464e81b1677c51ed5b079f2522de1c6a",
+        "media/src/sfu.rs": "e9e7c4a79bf447cf6dd330f75a7a36740174d179c851e23c3b84ccb14828fc62",
+        "media/src/ws.rs": "740f4571702790070033f69714414dca714cab714ee9e71271de2a14df19ed37",
+        "media/tests/live_claim.rs": "6546dd1c70258860938fe4be9a9bb18ebde100fa54701f5517b6e7512238724a"
+      },
+      "fixture_scope": "Three fresh own labeled PostgreSQL Redis MinIO containers; isolated database/bucket tests; no shared/root service writes",
+      "cleanup_complete": true,
+      "all_fixture_exits_zero": true,
+      "owned_fixture_count": 3,
+      "owned_fixtures_verified_absent": 3
+    },
+    {
+      "qualification": "PASS_ON_FINAL_FROZEN_BACKEND_A593_INCLUDING_CONFIRMED_STOP_BEFORE_TERMINAL",
+      "wrapper_outer_exit_code": 0,
+      "commands_status": "PASS",
+      "checks": [
+        {
+          "name": "workspace-tests",
+          "command": [
+            "sh",
+            "docker/run-native-ci.sh",
+            "test",
+            "--locked",
+            "--workspace",
+            "--all-targets",
+            "--",
+            "--skip",
+            "typing_broadcasts_fast_and_clears_on_stop",
+            "--test-threads=4"
+          ],
+          "exit_code": 0,
+          "elapsed_seconds": 95.71,
+          "log_sha256": "bc00734a2c6c7454abdfb1c83006a82a77299d9913098ca8309fe2cc694bce85",
+          "passed": 306,
+          "failed": 0,
+          "ignored": 0
+        },
+        {
+          "name": "typing-isolation",
+          "command": [
+            "sh",
+            "docker/run-native-ci.sh",
+            "test",
+            "--locked",
+            "--workspace",
+            "--all-targets",
+            "typing_broadcasts_fast_and_clears_on_stop",
+            "--",
+            "--exact",
+            "--test-threads=1"
+          ],
+          "exit_code": 0,
+          "elapsed_seconds": 1.167,
+          "log_sha256": "30dcdb20fbcdb730a7405be372d00070a5b02249ec133f9255546e59d8dfefe8",
+          "passed": 1,
+          "failed": 0,
+          "ignored": 0
+        }
+      ],
+      "source_changed_during_tests": [],
+      "report_sha256": "1984150e9ed407f4de813eed8af43c9ded31e1b628193cc8797d493ec1c9c5c2",
+      "selected_before_input_sha256": {
+        "Cargo.lock": "609105cf26bc5839f3a1f517b714dec5cd0d215d4ddc0eee4a4d444ffd08b274",
+        "media/src/error.rs": "da0fd254c2d7f5eebcbafe14d8e7d7271c7bad7ad51322dd94e9d926c77e4495",
+        "media/src/live.rs": "10683e6ea3dcd510280fd460c6e1b7a7464e81b1677c51ed5b079f2522de1c6a",
+        "media/src/sfu.rs": "a59309a853f074870ef9edf6098a3535581c8d76fa1344443fd0433ab8b0302f",
+        "media/src/ws.rs": "740f4571702790070033f69714414dca714cab714ee9e71271de2a14df19ed37",
+        "media/tests/live_claim.rs": "6546dd1c70258860938fe4be9a9bb18ebde100fa54701f5517b6e7512238724a"
+      },
+      "fixture_scope": "Three fresh own labeled PostgreSQL Redis MinIO containers with isolated test databases/buckets; no shared/root service writes",
+      "typing_isolation": "Root held browser launches for this one mandatory100ms assertion; no retries or assertion change",
+      "cleanup_complete": true,
+      "all_fixture_exits_zero": true,
+      "owned_fixture_count": 3,
+      "owned_fixtures_verified_absent": 3
+    },
+    {
+      "qualification": "PASS_FINAL_BACKEND_63D3_WS0502_CUMULATIVE_TERMINAL_NATIVE_STOP_BARRIER",
+      "wrapper_outer_exit_code": 0,
+      "commands_status": "PASS",
+      "checks": [
+        {
+          "name": "workspace-tests",
+          "command": [
+            "sh",
+            "docker/run-native-ci.sh",
+            "test",
+            "--locked",
+            "--workspace",
+            "--all-targets",
+            "--",
+            "--skip",
+            "typing_broadcasts_fast_and_clears_on_stop",
+            "--test-threads=4"
+          ],
+          "exit_code": 0,
+          "elapsed_seconds": 99.101,
+          "log_sha256": "8f04fe20bdac74298f96985f01ef6f23e64dfb5e69cbe0068e15032e50948b37",
+          "passed": 307,
+          "failed": 0,
+          "ignored": 0
+        },
+        {
+          "name": "typing-isolation",
+          "command": [
+            "sh",
+            "docker/run-native-ci.sh",
+            "test",
+            "--locked",
+            "--workspace",
+            "--all-targets",
+            "typing_broadcasts_fast_and_clears_on_stop",
+            "--",
+            "--exact",
+            "--test-threads=1"
+          ],
+          "exit_code": 0,
+          "elapsed_seconds": 1.216,
+          "log_sha256": "5e92e02c766fb80468d376713bf66d6f0ef5f75ba2f72145914f2fdc60d16927",
+          "passed": 1,
+          "failed": 0,
+          "ignored": 0
+        }
+      ],
+      "source_changed_during_tests": [],
+      "report_sha256": "c47b5d86330fe8ef714b126766ae1a774342da7597b1a50fdd5875b518826e5f",
+      "selected_before_input_sha256": {
+        "Cargo.lock": "609105cf26bc5839f3a1f517b714dec5cd0d215d4ddc0eee4a4d444ffd08b274",
+        "media/src/error.rs": "da0fd254c2d7f5eebcbafe14d8e7d7271c7bad7ad51322dd94e9d926c77e4495",
+        "media/src/live.rs": "10683e6ea3dcd510280fd460c6e1b7a7464e81b1677c51ed5b079f2522de1c6a",
+        "media/src/sfu.rs": "63d3fe956223a84f0c78c3e0718db37d469cc97acdeba512dc037e3dbde373e8",
+        "media/src/ws.rs": "05022c65f738a93147445d9ab737652874e81adcd9723d9ce480921be0959090",
+        "media/tests/live_claim.rs": "6546dd1c70258860938fe4be9a9bb18ebde100fa54701f5517b6e7512238724a"
+      },
+      "fixture_scope": "Three fresh own labeled PostgreSQL Redis MinIO containers with isolated test databases/buckets; no shared/root service writes",
+      "typing_isolation": "One mandatory100ms assertion during Root-held browser pause; no retries or assertion change",
+      "cleanup_complete": true,
+      "all_fixture_exits_zero": true,
+      "owned_fixture_count": 3,
+      "owned_fixtures_verified_absent": 3
     }
   ],
-  "current_final_source_workspace_qualified": false,
+  "current_final_source_workspace_qualified": true,
   "browser_started": false,
   "main_release_or_deployment": false,
   "new_load_or_hour_tests": "EXCLUDED_BY_USER",
-  "physical_ios_omarchy": "DEFERRED"
+  "physical_ios_omarchy": "DEFERRED",
+  "backend_e9e7_compile_checks": {
+    "status": "PASS",
+    "qualification": "FROZEN_BACKEND_E9E7_BEFORE_SUBSEQUENT_TERMINAL_STOP_ORDERING_FIX",
+    "checks": [
+      {
+        "name": "fmt",
+        "image_id": "sha256:f1323cca0f0746a3729971612af0b5258c3718aa7b9c14504e1aa646b1fd2e75",
+        "command": [
+          "sh",
+          "docker/run-native-ci.sh",
+          "fmt",
+          "--all",
+          "--",
+          "--check"
+        ],
+        "exit_code": 0,
+        "elapsed_seconds": 0.515,
+        "log_sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+      },
+      {
+        "name": "check",
+        "image_id": "sha256:f1323cca0f0746a3729971612af0b5258c3718aa7b9c14504e1aa646b1fd2e75",
+        "command": [
+          "sh",
+          "docker/run-native-ci.sh",
+          "check",
+          "--locked",
+          "--workspace",
+          "--all-targets"
+        ],
+        "exit_code": 0,
+        "elapsed_seconds": 1.768,
+        "log_sha256": "e35c46ccbe16e6a7e0fecc02f9f201e707cc7abfb8f13bd530de5f03c9bd9da5"
+      },
+      {
+        "name": "clippy",
+        "image_id": "sha256:b4ff3a195b266cba2e86c27e7aca92b1974eac75ee17e78e6c1cba7b115650df",
+        "command": [
+          "sh",
+          "docker/run-native-ci.sh",
+          "clippy",
+          "--locked",
+          "--workspace",
+          "--all-targets",
+          "--",
+          "-D",
+          "warnings"
+        ],
+        "exit_code": 0,
+        "elapsed_seconds": 1.768,
+        "log_sha256": "d56c7ed67e11212fb00131c43318c3f32d0f540aecd50b423e7f400e9fd960aa"
+      }
+    ],
+    "base_image_id": "sha256:f1323cca0f0746a3729971612af0b5258c3718aa7b9c14504e1aa646b1fd2e75",
+    "clippy_derivative_image_id": "sha256:b4ff3a195b266cba2e86c27e7aca92b1974eac75ee17e78e6c1cba7b115650df",
+    "clippy_component_toolchain": "1.98.1",
+    "original_base_tag_restored": true,
+    "source_changed_during_checks": [],
+    "report_sha256": "5ae44f22f2f2dd114d9f3db90851b727c036793f7272ac407b760f25d9e2c6f0"
+  },
+  "current_limit": "Final307+1 and frozenfmt/check/Clippy passed with unchanged source hashes and complete own-fixture cleanup. Actual product images/browser acceptance and later exact feature commit CI are separately evidenced. Earlier runs and the source-race failure remain preserved.",
+  "final_backend_compile_checks": {
+    "status": "PASS",
+    "qualification": "FINAL_FROZEN_BACKEND_63D3_WS0502",
+    "checks": [
+      {
+        "name": "fmt",
+        "image_id": "sha256:f1323cca0f0746a3729971612af0b5258c3718aa7b9c14504e1aa646b1fd2e75",
+        "command": [
+          "sh",
+          "docker/run-native-ci.sh",
+          "fmt",
+          "--all",
+          "--",
+          "--check"
+        ],
+        "exit_code": 0,
+        "elapsed_seconds": 0.515,
+        "log_sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+      },
+      {
+        "name": "check",
+        "image_id": "sha256:f1323cca0f0746a3729971612af0b5258c3718aa7b9c14504e1aa646b1fd2e75",
+        "command": [
+          "sh",
+          "docker/run-native-ci.sh",
+          "check",
+          "--locked",
+          "--workspace",
+          "--all-targets"
+        ],
+        "exit_code": 0,
+        "elapsed_seconds": 1.467,
+        "log_sha256": "f8e7cc7a373d62bafce6a87dc841800e8abd1452f90630c41a6744617748282a"
+      },
+      {
+        "name": "clippy",
+        "image_id": "sha256:b4ff3a195b266cba2e86c27e7aca92b1974eac75ee17e78e6c1cba7b115650df",
+        "command": [
+          "sh",
+          "docker/run-native-ci.sh",
+          "clippy",
+          "--locked",
+          "--workspace",
+          "--all-targets",
+          "--",
+          "-D",
+          "warnings"
+        ],
+        "exit_code": 0,
+        "elapsed_seconds": 1.417,
+        "log_sha256": "671d3ec2323bedfa5d55d396795d6523e5854520effe0a83db0f3e9db32b0f3c"
+      }
+    ],
+    "base_image_id": "sha256:f1323cca0f0746a3729971612af0b5258c3718aa7b9c14504e1aa646b1fd2e75",
+    "clippy_derivative_image_id": "sha256:b4ff3a195b266cba2e86c27e7aca92b1974eac75ee17e78e6c1cba7b115650df",
+    "clippy_component_toolchain": "1.98.1",
+    "original_base_tag_restored": true,
+    "source_changed_during_checks": [],
+    "report_sha256": "b2abbe183d1acfd7c9b269aebb1458a48db6dd50c95be50da7531a8e48ed0cb6"
+  },
+  "current_final_source_scope": "Only frozen Rust/Cargo source used by the local verified Debian CI wrapper, including finalSfu63d3 and WebSocket0502; no remoteCI or later exact featureCommit claim."
 }

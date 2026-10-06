@@ -401,6 +401,7 @@ impl Sfu {
             .clone();
         let _rpc = peer.rpc_gate.lock().await;
         if !peer.grant.valid() || !self.ready() {
+            self.leave(id, channel).await;
             return Err(SfuError::Revoked);
         }
         if !crate::ticket::validate_authority(&self.redis, &peer.authority)
@@ -1511,8 +1512,8 @@ impl Sfu {
                 .collect();
             for peer in peers {
                 peer.grant.stop();
-                self.emit(&peer, ServerFrame::error("gone"));
                 self.leave(peer.id, channel).await;
+                self.emit(&peer, ServerFrame::error("gone"));
             }
         }
     }
@@ -1638,8 +1639,8 @@ impl Sfu {
                         .await
                         .unwrap_or(false)
                 {
-                    sfu.emit(&peer, ServerFrame::error("unauthorized"));
                     sfu.leave(peer.id, channel).await;
+                    sfu.emit(&peer, ServerFrame::error("unauthorized"));
                     break;
                 }
                 let Ok(room) = sfu.room(channel).await else {
@@ -1937,7 +1938,8 @@ fn fail_closed(reason: &'static str) -> ! {
 
 #[cfg(test)]
 mod tests {
-    use super::{STOP_CONCURRENCY, stop_batch};
+    use super::*;
+    use gelabber_shared::ticket::{TicketAuthorization, TicketClaim};
     use std::sync::{
         Arc,
         atomic::{AtomicUsize, Ordering},
@@ -1977,5 +1979,224 @@ mod tests {
         });
         assert!(stop_batch(jobs).await.is_ok());
         assert_eq!(paused.load(Ordering::SeqCst), 2);
+    }
+
+    async fn stopping_fixture() -> (
+        Arc<Sfu>,
+        Arc<Peer>,
+        Arc<Publication>,
+        mpsc::Receiver<ServerFrame>,
+    ) {
+        let config = Config::from_source(|key| match key {
+            "REDIS_URL" => Some(std::env::var(key).expect("isolated REDIS_URL required")),
+            "MEDIA_ICE_BIND" => Some("127.0.0.1:0".into()),
+            _ => None,
+        })
+        .unwrap();
+        let sfu = Sfu::with_redis(
+            &config,
+            redis::Client::open(config.redis_url.as_str()).unwrap(),
+        )
+        .await
+        .unwrap();
+        let router = native(
+            sfu.worker
+                .create_router(RouterOptions::new(router_codecs().unwrap())),
+        )
+        .await
+        .unwrap();
+        let mut options = WebRtcTransportOptions::new_with_server(sfu.server.clone());
+        options.app_data = AppData::new(AtomicU64::new(0));
+        let transport = native(router.create_webrtc_transport(options))
+            .await
+            .unwrap();
+        let rtp = serde_json::from_value(json!({
+            "codecs":[{"mimeType":"audio/opus","payloadType":111,"clockRate":48000,
+                "channels":2,"parameters":{},"rtcpFeedback":[]}],
+            "headerExtensions":[],"encodings":[{"ssrc":1234}],
+            "rtcp":{"cname":"stop-order-test","reducedSize":true}
+        }))
+        .unwrap();
+        let producer = native(transport.produce(ProducerOptions::new(MediaKind::Audio, rtp)))
+            .await
+            .unwrap();
+        assert!(!producer.paused());
+        let (out, rx) = mpsc::channel(16);
+        // Deliberately absent authority keys trigger the real denial path.
+        // The native resources are installed directly to hold their gate before
+        // starting revocation; this fixture exercises stop ordering, not join.
+        let channel = Uuid::new_v4();
+        let peer = Arc::new(Peer {
+            id: PeerId(Uuid::new_v4()),
+            authority: AuthorizedTicketClaim {
+                claim: TicketClaim {
+                    u: Uuid::new_v4(),
+                    s: Uuid::new_v4(),
+                    c: channel,
+                    g: false,
+                },
+                auth: TicketAuthorization {
+                    session: Uuid::new_v4().simple().to_string().repeat(2),
+                    expires_at: 9_007_199_254_740_991,
+                    member: Uuid::new_v4(),
+                    channel: Uuid::new_v4(),
+                },
+            },
+            watch_user: None,
+            grant: Grant::new(),
+            out,
+            rpc_gate: Mutex::new(()),
+            lease_gate: Mutex::new(()),
+            attach_scheduled: AtomicBool::new(false),
+            attach_dirty: AtomicBool::new(false),
+        });
+        let publication = Arc::new(Publication {
+            producer,
+            peer: peer.clone(),
+            kind: SourceKind::Mic,
+            epoch: Uuid::new_v4(),
+            parent: None,
+            live: None,
+            grant: Grant::new(),
+            gate: Mutex::new(()),
+            height: 0,
+            layers: 1,
+            packet_samples: StdMutex::new(HashMap::new()),
+        });
+        let data = RoomData {
+            peers: HashMap::from([(
+                peer.id,
+                PeerData {
+                    peer: peer.clone(),
+                    capabilities: None,
+                    transports: HashMap::from([(true, transport)]),
+                    publications: HashMap::from([(SourceKind::Mic, publication.clone())]),
+                    consumers: HashMap::new(),
+                    pending_consumers: HashSet::new(),
+                    watches: HashMap::new(),
+                    withdrawn_live: VecDeque::new(),
+                    retired_producers: VecDeque::new(),
+                    retired_transports: VecDeque::new(),
+                },
+            )]),
+            publications: HashMap::from([(publication.id(), publication.clone())]),
+        };
+        sfu.rooms.lock().await.insert(
+            channel,
+            Arc::new(Room {
+                router: OnceCell::new_with(Some(router)),
+                data: Mutex::new(data),
+                joining: AtomicUsize::new(0),
+            }),
+        );
+        for counter in [
+            &sfu.counters.rooms,
+            &sfu.counters.peers,
+            &sfu.counters.producers,
+            &sfu.counters.transports,
+        ] {
+            counter.store(1, Ordering::Relaxed);
+        }
+        (sfu, peer, publication, rx)
+    }
+
+    async fn assert_terminal_after_native_stop(revoke: bool) {
+        let (sfu, peer, publication, mut rx) = stopping_fixture().await;
+        let gate = publication.gate.lock().await;
+        let shutdown = if revoke {
+            Sfu::watch_authority(
+                Arc::downgrade(&sfu),
+                peer.authority.claim.c,
+                Arc::downgrade(&peer),
+            );
+            None
+        } else {
+            let engine = sfu.clone();
+            Some(tokio::spawn(async move { engine.shutdown().await }))
+        };
+        tokio::time::timeout(Duration::from_secs(2), async {
+            while peer.grant.valid() {
+                tokio::task::yield_now().await;
+            }
+        })
+        .await
+        .unwrap();
+        assert!(
+            matches!(rx.try_recv(), Err(mpsc::error::TryRecvError::Empty)),
+            "terminal event preceded the confirmed native stop"
+        );
+        assert!(!publication.producer.paused());
+        assert!(sfu.peer_present(peer.id, peer.authority.claim.c).await);
+        drop(gate);
+        let expected = if revoke { "unauthorized" } else { "gone" };
+        tokio::time::timeout(Duration::from_secs(2), async {
+            loop {
+                if let Some(ServerFrame::Err { e, .. }) = rx.recv().await {
+                    assert_eq!(e, expected);
+                    break;
+                }
+            }
+        })
+        .await
+        .unwrap();
+        assert!(publication.producer.paused());
+        assert!(!sfu.peer_present(peer.id, peer.authority.claim.c).await);
+        if let Some(task) = shutdown {
+            task.await.unwrap();
+        }
+    }
+
+    #[tokio::test]
+    async fn shutdown_terminal_event_follows_confirmed_native_stop() {
+        assert_terminal_after_native_stop(false).await;
+    }
+
+    #[tokio::test]
+    async fn revocation_terminal_event_follows_confirmed_native_stop() {
+        assert_terminal_after_native_stop(true).await;
+    }
+
+    #[tokio::test]
+    async fn revoked_rpc_waits_for_confirmed_native_stop() {
+        let (sfu, peer, publication, _rx) = stopping_fixture().await;
+        let gate = publication.gate.lock().await;
+        peer.grant.stop();
+        let rpc = sfu.rpc(
+            peer.id,
+            peer.authority.claim.c,
+            ClientFrame::Capabilities {
+                id: 1,
+                rtp: json!({}),
+            },
+        );
+        tokio::pin!(rpc);
+        // The operation gate represents an in-flight native operation. A revoked
+        // RPC must not finish while that operation still prevents confirmed stop.
+        assert!(
+            tokio::time::timeout(Duration::from_millis(10), &mut rpc)
+                .await
+                .is_err()
+        );
+        assert!(!publication.producer.paused());
+        assert!(sfu.peer_present(peer.id, peer.authority.claim.c).await);
+        drop(gate);
+        assert!(matches!(rpc.await, Err(SfuError::Revoked)));
+        assert!(publication.producer.paused());
+        assert!(!sfu.peer_present(peer.id, peer.authority.claim.c).await);
+    }
+
+    #[test]
+    fn fail_closed_terminates_child_process_with_exit_one() {
+        const CHILD: &str = "GELABBER_TEST_FAIL_CLOSED_CHILD";
+        if std::env::var_os(CHILD).is_some() {
+            fail_closed("test child executes the real termination function");
+        }
+        let status = std::process::Command::new(std::env::current_exe().unwrap())
+            .arg("--exact")
+            .arg("sfu::tests::fail_closed_terminates_child_process_with_exit_one")
+            .env(CHILD, "1")
+            .status()
+            .unwrap();
+        assert_eq!(status.code(), Some(1));
     }
 }

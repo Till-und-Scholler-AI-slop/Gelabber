@@ -70,6 +70,7 @@ async fn run(socket: WebSocket, state: AppState) {
             _ = retirement.tick(), if joined.is_some() => {
                 let (peer, channel) = joined.unwrap();
                 if !state.sfu.peer_present(peer, channel).await {
+                    leave_joined(&state, &mut joined).await;
                     let _ = send(&mut sink, ServerFrame::error("gone")).await;
                     let _ = tokio::time::timeout(WRITE_DEADLINE, sink.send(Message::Close(None))).await;
                     break;
@@ -83,6 +84,7 @@ async fn run(socket: WebSocket, state: AppState) {
                             Err(error)=>error.into_frame(),
                         };
                         let close=terminal(&response);
+                        if close {leave_joined(&state,&mut joined).await;}
                         if send(&mut sink,response).await.is_err() {break;}
                         if close {let _=tokio::time::timeout(WRITE_DEADLINE,sink.send(Message::Close(None))).await;break;}
                     }
@@ -99,12 +101,18 @@ async fn run(socket: WebSocket, state: AppState) {
             event=rx.recv()=> {
                 let Some(event)=event else {break;};
                 let close=terminal(&event);
+                if close {leave_joined(&state,&mut joined).await;}
                 if send(&mut sink,event).await.is_err(){break;}
                 if close {let _=tokio::time::timeout(WRITE_DEADLINE,sink.send(Message::Close(None))).await;break;}
             }
         }
     }
-    if let Some((peer, channel)) = joined {
+    leave_joined(&state, &mut joined).await;
+}
+/// Every terminal response/event crosses this native-stop barrier before send.
+/// Taking the socket identity keeps cleanup idempotent on the loop's exit path.
+async fn leave_joined(state: &AppState, joined: &mut Option<(PeerId, Uuid)>) {
+    if let Some((peer, channel)) = joined.take() {
         state.sfu.leave(peer, channel).await;
     }
 }
@@ -139,9 +147,7 @@ async fn handle(
             }
         }
         ClientFrame::Leave { .. } => {
-            if let Some((peer, channel)) = joined.take() {
-                state.sfu.leave(peer, channel).await;
-            }
+            leave_joined(state, joined).await;
             Ok(json!({}))
         }
         frame => {

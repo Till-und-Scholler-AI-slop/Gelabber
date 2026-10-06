@@ -129,6 +129,12 @@ function installReceiverProbe({ proxyPort, mediaPort }) {
             state.nativeFrames ??= [];
             state.nativeFrames.push({ op: frame.op, k: frame.k ?? null });
             if (state.nativeFrames.length > 32) state.nativeFrames.shift();
+            if (frame.op === "err" && frame.e === "live_busy") {
+              if (!Number.isSafeInteger(frame.id) || frame.id <= 0)
+                throw new Error("UNCORRELATED_LIVE_BUSY_RESPONSE");
+              state.nativeLiveBusyResponses =
+                (state.nativeLiveBusyResponses ?? 0) + 1;
+            }
             if (
               frame.op === "consumer" &&
               frame.k === "l" &&
@@ -683,6 +689,7 @@ try {
             return {
               displayCalls: state.displayCalls,
               micCalls: state.micCalls,
+              liveBusyResponses: state.nativeLiveBusyResponses ?? 0,
             };
           });
           await runtime.crashAndRestart(async () => {
@@ -705,6 +712,7 @@ try {
             return {
               displayCalls: state.displayCalls,
               micCalls: state.micCalls,
+              liveBusyResponses: state.nativeLiveBusyResponses ?? 0,
               captureLive: state.savedNativeCapture.readyState === "live",
               captureStillSent: state.peers.some(
                 (pc) =>

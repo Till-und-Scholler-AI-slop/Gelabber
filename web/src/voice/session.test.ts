@@ -2289,6 +2289,112 @@ describe("bounded Live lease recovery", () => {
     await vi.advanceTimersByTimeAsync(10000);
     expect(attempts).toBe(50);
   });
+
+  it("a hanging SDK attempt after busy shares the original deadline and cannot issue a late producer RPC", async () => {
+    let busy = true;
+    const env = await joined({
+      produceError: (kind) =>
+        kind === "l" && busy ? new Error("live_busy") : undefined,
+    });
+    const gate = deferred();
+    const peer = env.peers[0]!,
+      original = peer.publish.bind(peer);
+    let starts = 0;
+    peer.publish = async (input) => {
+      if (input.kind === "l" && ++starts > 1) await gate.promise;
+      return original(input);
+    };
+    toggleGoLive();
+    await flush();
+    const stream = useVoice.getState().localLive!;
+    busy = false;
+    await vi.advanceTimersByTimeAsync(200);
+    expect(starts).toBe(2);
+    await vi.advanceTimersByTimeAsync(9799);
+    expect(useVoice.getState().live).toBe(true);
+    await vi.advanceTimersByTimeAsync(1);
+    expect(useVoice.getState().live).toBe(false);
+    expect(streamStopped(stream)).toBe(true);
+    gate.resolve();
+    await flush();
+    expect(
+      env.mediaSent.filter(
+        (frame) => frame.op === "produce" && frame.k === "l",
+      ),
+    ).toHaveLength(1);
+    expect(peer.sender("l")).toBeUndefined();
+    expect(trackStopped(peer.audio)).toBe(false);
+    expect(env.getDisplayMediaCalls()).toBe(1);
+    expect(env.errors).toHaveLength(1);
+  });
+
+  it("an acknowledged but delayed SDK result after Stop never revives the source", async () => {
+    const env = await joined({});
+    const gate = deferred();
+    const peer = env.peers[0]!,
+      original = peer.publish.bind(peer);
+    peer.publish = async (input) => {
+      const sender = await original(input);
+      if (input.kind === "l") await gate.promise;
+      return sender;
+    };
+    toggleGoLive();
+    await flush();
+    const stream = useVoice.getState().localLive!;
+    const actualProducer = peer.sender("l")?.producerId;
+    expect(actualProducer).toBeTruthy();
+    toggleGoLive();
+    gate.resolve();
+    await flush();
+    expect(peer.sender("l")).toBeUndefined();
+    expect(streamStopped(stream)).toBe(true);
+    expect(useVoice.getState().live).toBe(false);
+    expect(
+      env.mediaSent.some((frame) => frame.op === "produce" && frame.k === "la"),
+    ).toBe(false);
+    expect(
+      env.mediaSent.some(
+        (frame) =>
+          frame.op === "closeProducer" && frame.producerId === actualProducer,
+      ),
+    ).toBe(true);
+    expect(env.getDisplayMediaCalls()).toBe(1);
+  });
+
+  it("producer-ID scoped late cleanup cannot close a new Live capture started after Stop", async () => {
+    const env = await joined({});
+    const gate = deferred();
+    const peer = env.peers[0]!,
+      original = peer.publish.bind(peer);
+    let held = false;
+    peer.publish = async (input) => {
+      const sender = await original(input);
+      if (input.kind === "l" && !held) {
+        held = true;
+        await gate.promise;
+      }
+      return sender;
+    };
+    toggleGoLive();
+    await flush();
+    const oldStream = useVoice.getState().localLive!;
+    toggleGoLive();
+    toggleGoLive();
+    await flush();
+    const newStream = useVoice.getState().localLive!,
+      newSender = peer.sender("l");
+    expect(newStream).not.toBe(oldStream);
+    expect(newSender?.track).toBe(newStream.getVideoTracks()[0]);
+    gate.resolve();
+    await flush();
+    expect(peer.sender("l")).toBe(newSender);
+    expect(streamStopped(oldStream)).toBe(true);
+    expect(streamStopped(newStream)).toBe(false);
+    expect(useVoice.getState().localLive).toBe(newStream);
+    expect(useVoice.getState().live).toBe(true);
+    expect(env.getDisplayMediaCalls()).toBe(2);
+    expect(env.errors).toHaveLength(0);
+  });
 });
 
 describe("source and transport continuity", () => {

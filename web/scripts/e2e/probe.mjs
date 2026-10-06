@@ -682,10 +682,16 @@ export async function sample({ deadlineEpochMs } = {}) {
         }
         state.samplePhase = "native-stats-resolved";
       } catch (error) {
-        if (error.message === "E2E_NATIVE_STATS_DEADLINE") throw error;
-        // Firefox rejects getStats on a closed peer, including a close racing
-        // this sample. Keep the closed peer visible; never hide a live error.
-        if (pc.connectionState !== "closed") throw error;
+        // Firefox can reject or leave getStats pending when close races this
+        // sample. Only a confirmed closed peer has unavailable native stats.
+        if (pc.connectionState !== "closed") {
+          if (error.message === "E2E_NATIVE_STATS_DEADLINE")
+            throw new Error(
+              `${error.message} pc=${state.peers.indexOf(pc)} connection=${pc.connectionState} ice=${pc.iceConnectionState}`,
+              { cause: error },
+            );
+          throw error;
+        }
       }
     }
     if (pc.connectionState === "closed") {

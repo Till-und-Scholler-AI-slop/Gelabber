@@ -158,9 +158,7 @@ export class MediasoupConnection implements MediaConnection {
       0,
       Math.min(
         this.options.sdkTimeoutMs ?? 10_000,
-        (deadlineEpochMs ??
-          (direction === "send" ? this.sendDeadlineEpochMs : undefined) ??
-          Infinity) - Date.now(),
+        (deadlineEpochMs ?? Infinity) - Date.now(),
       ),
     );
     const deadline = performance.now() + budget;
@@ -373,6 +371,26 @@ export class MediasoupConnection implements MediaConnection {
       this.sendDeadlineEpochMs = input.deadlineEpochMs;
       try {
         return await this.publishNow(input);
+      } catch (error) {
+        if (
+          input.deadlineEpochMs !== undefined &&
+          !this.closed &&
+          error instanceof MediaError &&
+          ["sdk_timeout", "request_timeout", "live_recovery_timeout"].includes(
+            error.code,
+          )
+        ) {
+          // The common budget includes transport creation and compaction too.
+          const transport = this.send;
+          if (transport) {
+            if (!transport.closed) transport.close();
+            void this.options
+              .request("closeTransport", { transportId: transport.id })
+              .catch(() => {});
+          }
+          this.fail(error, "send");
+        }
+        throw error;
       } finally {
         this.sendDeadlineEpochMs = previousDeadline;
       }
@@ -416,6 +434,9 @@ export class MediasoupConnection implements MediaConnection {
         await this.sdk(
           () => previous!.producer.replaceTrack({ track: input.track }),
           "send",
+          true,
+          undefined,
+          input.deadlineEpochMs ?? this.sendDeadlineEpochMs,
         );
       this.checkPublication(input);
       previous.input = {
@@ -482,17 +503,19 @@ export class MediasoupConnection implements MediaConnection {
       },
     };
     const produce = async (options: ProducerOptions): Promise<Producer> => {
+      const operationDeadline =
+        input.deadlineEpochMs ?? this.sendDeadlineEpochMs;
       try {
         return await this.sdk(
           () => transport.produce(options),
           "send",
           true,
           (late) => late.close(),
-          input.deadlineEpochMs,
+          operationDeadline,
         );
       } catch (error) {
         if (
-          input.deadlineEpochMs !== undefined &&
+          operationDeadline !== undefined &&
           error instanceof MediaError &&
           ["sdk_timeout", "request_timeout", "live_recovery_timeout"].includes(
             error.code,

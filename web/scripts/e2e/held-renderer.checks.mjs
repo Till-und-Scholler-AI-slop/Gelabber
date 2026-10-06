@@ -38,7 +38,15 @@ function fixture({ source = "native-video-frame-callback", frames = 20 } = {}) {
     },
   };
   const receiver = { track };
-  const pc = { getReceivers: () => [receiver] };
+  const transceiver = {
+    receiver,
+    mid: "consumer-0",
+    currentDirection: "recvonly",
+  };
+  const pc = {
+    getReceivers: () => [receiver],
+    getTransceivers: () => [transceiver],
+  };
   const publication = consumerSource(pc, receiver, track);
   const stream = { getVideoTracks: () => [track] };
   const cleanup = [];
@@ -81,6 +89,9 @@ function fixture({ source = "native-video-frame-callback", frames = 20 } = {}) {
         consumerSource: publication,
         consumerIdentity: consumerIdentity(publication),
         consumerSsrc: publication.rtpParameters.encodings[0].ssrc,
+        transceiver,
+        transceiverMid: transceiver.mid,
+        currentDirection: transceiver.currentDirection,
         callbackFunction: item.callbackFunction,
       },
     ],
@@ -99,7 +110,14 @@ function fixture({ source = "native-video-frame-callback", frames = 20 } = {}) {
       isClosed: () => false,
     },
   };
-  return { actor, state, item, cleanup, statsCalls: () => statsCalls };
+  return {
+    actor,
+    state,
+    item,
+    cleanup,
+    transceiver,
+    statsCalls: () => statsCalls,
+  };
 }
 
 const access = await readFile(new URL("./access.mjs", import.meta.url), "utf8");
@@ -114,6 +132,24 @@ function deletionStop(settled, after) {
     fresh: { status: 404 },
     held: { accepted: false },
     scope: "channel",
+  });
+}
+const revocationStopCheck = access
+  .slice(
+    access.indexOf('for (const mode of ["leave", "kick", "ban", "logout"])'),
+  )
+  .match(/check\(\s*after\.frames === settled\.frames[\s\S]*?\n\s*\);/)[0];
+function revocationStop(settled, after) {
+  vm.runInNewContext(revocationStopCheck, {
+    check,
+    settled,
+    after,
+    gateway: { events: 1 },
+    beforeGateway: { events: 1 },
+    rest: { status: 404 },
+    freshTicket: { status: 404 },
+    held: { accepted: false, denied: true, failed: false },
+    metrics: {},
   });
 }
 
@@ -199,6 +235,18 @@ for (const mutate of [
   (r) => {
     r.item.pc.getReceivers = () => [];
   },
+  (r) => {
+    r.transceiver.currentDirection = "inactive";
+  },
+  (r) => {
+    r.transceiver.mid = "replacement-mid";
+  },
+  (r) => {
+    r.item.pc.getTransceivers = () => [{ ...r.transceiver }];
+  },
+  (r) => {
+    r.item.pc.getTransceivers = () => [r.transceiver, { ...r.transceiver }];
+  },
 ])
   test(`missing/replaced/reset counter cannot become a stopped-media pass: ${mutate}`, async () => {
     const r = fixture();
@@ -237,6 +285,7 @@ function setupFixture({
   appendError = false,
   rescheduleError = false,
   extraReceiver = null,
+  sockets = [],
 } = {}) {
   const callbacks = new Map(),
     timers = new Map();
@@ -284,21 +333,39 @@ function setupFixture({
   const peer = {
     connectionState: "connected",
     close() {},
+    setRemoteDescription: async () => {},
+    setLocalDescription: async () => {},
     getReceivers: () => [receiver, ...(extraReceiver ? [extraReceiver] : [])],
     getTransceivers: () => transceivers,
   };
   const transceivers = [
-    { receiver, mid: "consumer-0" },
+    { receiver, mid: "consumer-0", currentDirection: "recvonly" },
     ...(extraReceiver ? [{ receiver: extraReceiver, mid: "probator" }] : []),
   ];
   const publication = consumerSource(peer, receiver, track);
   const state = {
     peers: [peer],
-    sockets: [],
+    sockets,
+    NativeSocket: {
+      prototype: {
+        close() {
+          this.readyState = 3;
+        },
+      },
+    },
     incomingTracks: [publication],
   };
   const context = vm.createContext({
-    window: { __e2e: state, RTCPeerConnection: { prototype: { close() {} } } },
+    window: {
+      __e2e: state,
+      RTCPeerConnection: {
+        prototype: {
+          close() {
+            this.connectionState = "closed";
+          },
+        },
+      },
+    },
     document: {
       createElement: () => {
         if (state.heldRenderers.length === 0) return video;
@@ -384,6 +451,254 @@ function unmappedReceiver({ id = "probator", rows } = {}) {
       ),
   };
 }
+
+test("external revocation holds only actual held-media cleanup requests without fabricating replies", async () => {
+  const delivered = [],
+    unrelatedDelivered = [];
+  const send = function (data) {
+    delivered.push({ receiver: this, data });
+  };
+  const ws = { readyState: 1, send, close() {} };
+  const gateway = {
+    readyState: 1,
+    send: (data) => unrelatedDelivered.push(data),
+    close() {},
+  };
+  const r = setupFixture({
+    sockets: [
+      { plane: "media", ws },
+      { plane: "gateway", ws: gateway },
+    ],
+  });
+  try {
+    const before = await holdActiveMedia(r.actor, {
+      renderer: true,
+      suppressClientCleanupRequests: true,
+    });
+    const cleanupFrames = [
+      { op: "l", id: 20 },
+      { op: "closeTransport", id: 21, transportId: "owned-transport" },
+      {
+        op: "consumerFailed",
+        id: 22,
+        consumerId: r.publication.consumerId,
+        generation: r.publication.generation,
+      },
+    ];
+    for (const frame of cleanupFrames) ws.send(JSON.stringify(frame));
+    assert.equal(delivered.length, 0);
+    assert.equal(ws.readyState, 1);
+    const retainedFrames = [
+      { op: "consumerReady", id: 23 },
+      { op: "q", id: 24, h: 300, congested: false },
+      { op: "produce", id: 25 },
+      { op: "connect", id: 26 },
+      { op: "closeProducer", id: 27 },
+      { op: "l", id: 0 },
+    ];
+    for (const frame of retainedFrames) ws.send(JSON.stringify(frame));
+    const binary = new Uint8Array([3]);
+    ws.send(binary);
+    ws.send("non-JSON native data");
+    assert.equal(delivered.length, retainedFrames.length + 2);
+    assert.ok(delivered.every((item) => item.receiver === ws));
+    assert.equal(delivered.at(-2).data, binary);
+    gateway.send(JSON.stringify(cleanupFrames[0]));
+    assert.equal(unrelatedDelivered.length, 1);
+    await new Promise((resolve) => setTimeout(resolve, 30));
+    const after = await heldMedia(r.actor);
+    assert.ok(after.frames > before.frames);
+    assert.throws(() => revocationStop(before, after), CheckFailure);
+    assert.deepEqual(
+      JSON.parse(JSON.stringify(after.suppressedClientCleanupRequests)),
+      { l: 1, closeTransport: 1, consumerFailed: 1 },
+    );
+    assert.equal(after.openSockets, 1);
+    assert.equal(r.receiver.track, r.track);
+    assert.equal(r.track.readyState, "live");
+    assert.equal(r.track.enabled, true);
+    await releaseHeld(r.actor);
+    assert.equal(ws.send, send);
+    ws.send(JSON.stringify({ op: "l", id: 28 }));
+    assert.equal(delivered.length, retainedFrames.length + 3);
+  } finally {
+    await releaseHeld(r.actor);
+  }
+});
+
+test("default held renderer delivers genuine Watch-Off Leave; only explicit external-revoke setup suppresses it", async () => {
+  const delivered = [],
+    send = (data) => delivered.push(JSON.parse(data));
+  const ws = { readyState: 1, send, close() {} };
+  const r = setupFixture({ sockets: [{ plane: "media", ws }] });
+  try {
+    await holdActiveMedia(r.actor, { renderer: true });
+    assert.equal(ws.send, send);
+    ws.send(JSON.stringify({ op: "l", id: 17 }));
+    assert.deepEqual(delivered, [{ op: "l", id: 17 }]);
+    const sample = await heldMedia(r.actor);
+    assert.deepEqual(
+      JSON.parse(JSON.stringify(sample.suppressedClientCleanupRequests)),
+      { l: 0, closeTransport: 0, consumerFailed: 0 },
+    );
+  } finally {
+    await releaseHeld(r.actor);
+  }
+});
+
+test("cleanup diagnostic counts are bounded and original send is restored even after another owned cleanup throws", async () => {
+  const send = () => {};
+  const ws = { readyState: 1, send, close() {} };
+  const r = setupFixture({ sockets: [{ plane: "media", ws }] });
+  try {
+    await holdActiveMedia(r.actor, {
+      renderer: true,
+      suppressClientCleanupRequests: true,
+    });
+    for (let id = 1; id <= 64; id++) ws.send(JSON.stringify({ op: "l", id }));
+    assert.throws(
+      () => ws.send(JSON.stringify({ op: "l", id: 65 })),
+      /E2E_HELD_CLIENT_CLEANUP_OVERFLOW/,
+    );
+    assert.equal(r.state.heldSuppressedClientCleanupRequests.l, 64);
+    r.state.restoreClose.unshift(() => {
+      throw new Error("PRIVATE earlier native cleanup failed");
+    });
+    await assert.rejects(releaseHeld(r.actor), /held-renderer-cleanup-failed/);
+    assert.equal(ws.send, send);
+    assert.equal(ws.readyState, 3);
+    r.state.restoreClose.shift();
+  } finally {
+    await releaseHeld(r.actor);
+  }
+});
+
+test("external revocation keeps genuine source-bound renderer progress as its oracle when RTP reports disappear", async () => {
+  const r = fixture();
+  const before = await heldMedia(r.actor);
+  r.item.frames += 4;
+  const continuing = await heldMedia(r.actor);
+  assert.throws(() => revocationStop(before, continuing), CheckFailure);
+  const stopped = await heldMedia(r.actor);
+  revocationStop(continuing, stopped);
+  assert.equal(r.statsCalls(), 0);
+  r.state.heldSockets[0].ws.readyState = 1;
+  assert.throws(
+    () => revocationStop(stopped, { ...stopped, openSockets: 1 }),
+    CheckFailure,
+  );
+  r.item.frames = null;
+  await assert.rejects(heldMedia(r.actor), CheckFailure);
+});
+
+test("local SDK receive teardown remains pending without native success and cannot turn ongoing server frames into a privacy pass", async () => {
+  const r = setupFixture();
+  let remoteCalls = 0,
+    localCalls = 0,
+    completions = 0;
+  const originalRemote = (r.peer.setRemoteDescription = async () => {
+    remoteCalls++;
+    r.transceivers[0].currentDirection = "inactive";
+  });
+  const originalLocal = (r.peer.setLocalDescription = async () => {
+    localCalls++;
+  });
+  try {
+    const before = await holdActiveMedia(r.actor, { renderer: true });
+    const remote = r.peer.setRemoteDescription({ type: "offer" });
+    const local = r.peer.setLocalDescription({ type: "answer" });
+    const outcomes = Promise.allSettled([remote, local]);
+    remote.then(
+      () => completions++,
+      () => completions++,
+    );
+    local.then(
+      () => completions++,
+      () => completions++,
+    );
+    r.peer.close();
+    r.track.stop();
+    await new Promise((resolve) => setTimeout(resolve, 30));
+    assert.equal(completions, 0);
+    assert.equal(remoteCalls, 0);
+    assert.equal(localCalls, 0);
+    assert.equal(r.transceivers[0].currentDirection, "recvonly");
+    assert.equal(r.peer.connectionState, "connected");
+    assert.equal(r.track.readyState, "live");
+    const after = await heldMedia(r.actor);
+    assert.ok(after.frames > before.frames);
+    assert.equal(after.counters[0].binding.sameNativeTransceiver, true);
+    assert.throws(() => revocationStop(before, after), CheckFailure);
+    assert.deepEqual(
+      JSON.parse(JSON.stringify(after.heldNativeNegotiationRequests)),
+      { setRemoteDescription: 1, setLocalDescription: 1 },
+    );
+    await releaseHeld(r.actor);
+    const released = await outcomes;
+    assert.ok(
+      released.every(
+        (result) =>
+          result.status === "rejected" &&
+          result.reason.message === "E2E_HELD_NATIVE_NEGOTIATION_RELEASED",
+      ),
+    );
+    assert.equal(r.peer.setRemoteDescription, originalRemote);
+    assert.equal(r.peer.setLocalDescription, originalLocal);
+    assert.equal(r.peer.connectionState, "closed");
+    assert.equal(r.track.readyState, "ended");
+  } finally {
+    await releaseHeld(r.actor);
+  }
+});
+
+test("native negotiation waits have one shared finite bound and are all rejected even if another cleanup fails", async () => {
+  const r = setupFixture();
+  const originalRemote = r.peer.setRemoteDescription,
+    originalLocal = r.peer.setLocalDescription;
+  try {
+    await holdActiveMedia(r.actor, { renderer: true });
+    const pending = Array.from({ length: 64 }, (_, i) =>
+      i % 2 === 0
+        ? r.peer.setRemoteDescription({ type: "offer" })
+        : r.peer.setLocalDescription({ type: "answer" }),
+    );
+    const outcomes = Promise.allSettled(pending);
+    await assert.rejects(
+      r.peer.setRemoteDescription({ type: "offer" }),
+      /E2E_HELD_NATIVE_NEGOTIATION_OVERFLOW/,
+    );
+    assert.deepEqual(
+      JSON.parse(JSON.stringify(r.state.heldNativeNegotiationRequests)),
+      { setRemoteDescription: 32, setLocalDescription: 32 },
+    );
+    r.state.restoreClose.unshift(() => {
+      throw new Error("PRIVATE earlier native cleanup failed");
+    });
+    await assert.rejects(releaseHeld(r.actor), /held-renderer-cleanup-failed/);
+    assert.ok((await outcomes).every((result) => result.status === "rejected"));
+    assert.equal(r.state.heldNativeNegotiationWaits.length, 0);
+    assert.equal(r.peer.setRemoteDescription, originalRemote);
+    assert.equal(r.peer.setLocalDescription, originalLocal);
+    assert.equal(r.peer.connectionState, "closed");
+    r.state.restoreClose.shift();
+  } finally {
+    await releaseHeld(r.actor);
+  }
+});
+
+test("inactive native Consumer transceiver cannot establish a held-renderer positive control", async () => {
+  const r = setupFixture();
+  r.transceivers[0].currentDirection = "inactive";
+  try {
+    await assert.rejects(
+      holdActiveMedia(r.actor, { renderer: true }),
+      /E2E_HELD_CONSUMER_IDENTITY_UNAVAILABLE/,
+    );
+    assert.equal(r.plays(), 0);
+  } finally {
+    await releaseHeld(r.actor);
+  }
+});
 
 test("held renderer plays only the actual bound Consumer; the native SDK probator remains held without play", async () => {
   const probator = unmappedReceiver();
