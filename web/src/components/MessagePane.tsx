@@ -125,7 +125,7 @@ export function MessagePane({
     channelId,
     latest?.id,
     atLatest && !searching,
-    !query.isFetching && !query.error,
+    !query.isFetching && (!query.error || query.isFetchNextPageError),
   );
 
   useEffect(() => {
@@ -434,7 +434,12 @@ function MessageList({
           event.target.closest("dialog:modal")
         )
           return;
-        if (event.deltaY < 0) stickToBottom.current = false;
+        if (
+          event.deltaY < 0 &&
+          event.currentTarget.scrollHeight >
+            event.currentTarget.clientHeight + 16
+        )
+          stickToBottom.current = false;
         else if (
           event.deltaY > 0 &&
           lastPosition.current &&
@@ -451,7 +456,11 @@ function MessageList({
           )
         )
           return;
-        if (["ArrowUp", "PageUp", "Home"].includes(event.key))
+        if (
+          ["ArrowUp", "PageUp", "Home"].includes(event.key) &&
+          event.currentTarget.scrollHeight >
+            event.currentTarget.clientHeight + 16
+        )
           stickToBottom.current = false;
         if (event.key === "End") stickToBottom.current = true;
         updateLatest();
@@ -472,7 +481,12 @@ function MessageList({
           return;
         const current = event.touches[0]?.clientY;
         if (current === undefined || touchY.current === null) return;
-        if (current > touchY.current) stickToBottom.current = false;
+        if (
+          current > touchY.current &&
+          event.currentTarget.scrollHeight >
+            event.currentTarget.clientHeight + 16
+        )
+          stickToBottom.current = false;
         else if (
           current < touchY.current &&
           lastPosition.current &&
@@ -833,7 +847,7 @@ function Composer({
       pane.scrollTop -= boundary.top - target.top + focusMargin;
   }, []);
   // Toolbar/read-state changes can move a focused form without resizing it.
-  useLayoutEffect(revealComposerFocus);
+  useLayoutEffect(revealComposerFocus, [revealComposerFocus]);
   useLayoutEffect(() => {
     const form = composerForm.current;
     const pane = form?.closest<HTMLElement>(".lr-message-pane");

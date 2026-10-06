@@ -11,6 +11,7 @@ import {
   useUserId,
   type ScopeStamp,
 } from "../auth/scope.ts";
+import { create } from "zustand";
 import type { Message } from "./types.ts";
 import { getGateway, type Gateway } from "../ws/client.ts";
 
@@ -31,6 +32,15 @@ export const markRead = (channelId: string, messageId: string) =>
     body: { message_id: messageId },
   });
 
+const readingView = create<{
+  channel: string | null;
+  stamp: ScopeStamp | null;
+}>(() => ({ channel: null, stamp: null }));
+export function useReadingChannel(): string | null {
+  const view = readingView();
+  return view.stamp && stampHolds(view.stamp) ? view.channel : null;
+}
+
 export function useReadState() {
   const userId = useUserId();
   const generation = scopeGeneration();
@@ -50,33 +60,84 @@ export function attachReadRecovery(
   gateway: Gateway,
 ): () => void {
   let active = true;
-  let queued = false;
-  const refresh = () => {
-    if (!active || !stampHolds(stamp) || queued) return;
-    queued = true;
-    queueMicrotask(() => {
-      queued = false;
+  let timer: ReturnType<typeof setTimeout> | undefined;
+  let maxTimer: ReturnType<typeof setTimeout> | undefined;
+  const waiting = new Map<string, () => void>();
+  const invalidate = (queryKey: readonly unknown[]) => {
+    for (const query of client.getQueryCache().findAll({ queryKey })) {
+      if (query.state.fetchStatus === "idle" || waiting.has(query.queryHash))
+        continue;
+      const stop = client.getQueryCache().subscribe((event) => {
+        if (
+          event.query !== query ||
+          (event.type !== "removed" && query.state.fetchStatus !== "idle")
+        )
+          return;
+        stop();
+        waiting.delete(query.queryHash);
+        if (event.type !== "removed" && active && stampHolds(stamp))
+          void client.invalidateQueries(
+            { queryKey: query.queryKey, exact: true },
+            { cancelRefetch: false },
+          );
+      });
+      waiting.set(query.queryHash, stop);
+    }
+    void client.invalidateQueries({ queryKey }, { cancelRefetch: false });
+  };
+  const channels = new Set<string>();
+  let all = false;
+  const refresh = (channelId?: string) => {
+    if (!active || !stampHolds(stamp)) return;
+    if (channelId) channels.add(channelId);
+    else all = true;
+    clearTimeout(timer);
+    const flush = () => {
+      clearTimeout(timer);
+      clearTimeout(maxTimer);
+      maxTimer = undefined;
       if (!active || !stampHolds(stamp)) return;
-      void refreshChatWorkflows(client, stamp);
-    });
+      const pending = all ? [undefined] : [...channels];
+      all = false;
+      channels.clear();
+      // WS frames arrive in separate tasks. A trailing debounce coalesces
+      // replay bursts without repeatedly aborting SQL or paginated searches.
+      invalidate(readKey(stamp));
+      for (const channel of pending) {
+        for (const kind of ["message-search", "message-context"]) {
+          invalidate([
+            "user",
+            stamp.userId,
+            stamp.generation,
+            kind,
+            ...(channel ? [channel] : []),
+          ]);
+        }
+      }
+    };
+    timer = setTimeout(flush, 750);
+    maxTimer ??= setTimeout(flush, 5_000);
   };
   const focus = () => {
     if (document.visibilityState === "visible") refresh();
   };
   const cleanup = [
-    gateway.onEvent(refresh),
-    gateway.onReady(refresh),
-    gateway.onGap(refresh),
-    gateway.onResync(refresh),
-    gateway.onDm(refresh),
+    gateway.onEvent((event) => refresh(event.c)),
+    gateway.onReady(() => refresh()),
+    gateway.onGap(() => refresh()),
+    gateway.onResync(() => refresh()),
+    gateway.onDm(() => refresh()),
   ];
   window.addEventListener("focus", focus);
   document.addEventListener("visibilitychange", focus);
-  const timer = window.setInterval(focus, 15_000);
+  const poll = window.setInterval(focus, 15_000);
   return () => {
     active = false;
     cleanup.forEach((fn) => fn());
-    window.clearInterval(timer);
+    clearTimeout(timer);
+    clearTimeout(maxTimer);
+    waiting.forEach((stop) => stop());
+    window.clearInterval(poll);
     window.removeEventListener("focus", focus);
     document.removeEventListener("visibilitychange", focus);
   };
@@ -161,6 +222,35 @@ export function useMarkRead(
   const [error, setError] = useState(false);
   const [retry, setRetry] = useState(0);
   useEffect(() => {
+    const stamp = { userId, generation };
+    const update = () =>
+      readingView.setState({
+        channel:
+          userId &&
+          !error &&
+          mayMarkRead(
+            atLatest,
+            ready,
+            document.visibilityState === "visible",
+            document.hasFocus(),
+          )
+            ? channelId
+            : null,
+        stamp,
+      });
+    update();
+    window.addEventListener("focus", update);
+    window.addEventListener("blur", update);
+    document.addEventListener("visibilitychange", update);
+    return () => {
+      window.removeEventListener("focus", update);
+      window.removeEventListener("blur", update);
+      document.removeEventListener("visibilitychange", update);
+      if (readingView.getState().stamp === stamp)
+        readingView.setState({ channel: null, stamp: null });
+    };
+  }, [userId, generation, channelId, atLatest, ready, error]);
+  useEffect(() => {
     if (!userId || !messageId) return;
     let active = true,
       running = false,
@@ -182,11 +272,17 @@ export function useMarkRead(
         return;
       running = true;
       void markRead(channelId, messageId)
-        .then(async () => {
+        .then(async (row) => {
           if (!active || !stampHolds(stamp)) return;
           done = true;
           setError(false);
-          await refreshReadState(client, stamp);
+          await client.cancelQueries({ queryKey: readKey(stamp), exact: true });
+          if (!stampHolds(stamp)) return;
+          client.setQueryData<ReadState[]>(readKey(stamp), (rows) =>
+            rows?.map((current) =>
+              current.channel_id === channelId ? row : current,
+            ),
+          );
         })
         .catch(() => {
           if (active && stampHolds(stamp)) setError(true);

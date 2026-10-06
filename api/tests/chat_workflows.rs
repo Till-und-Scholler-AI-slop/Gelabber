@@ -615,3 +615,17 @@ async fn message_context_requires_channel_or_dm_membership(pool: PgPool) {
         StatusCode::NOT_FOUND
     );
 }
+
+#[sqlx::test]
+async fn unread_is_capped_and_returns_to_exact_counts_after_read(pool: PgPool) {
+    let (a, mut b, _, channel) = setup(pool.clone()).await;
+    let cid: Uuid = channel.parse().unwrap();
+    let author: Uuid = a.user_id().parse().unwrap();
+    let ids: Vec<Uuid> = sqlx::query_scalar(
+        "INSERT INTO messages(channel_id,author_id,content) SELECT $1,$2,'unread' FROM generate_series(1,150) RETURNING id",
+    ).bind(cid).bind(author).fetch_all(&pool).await.unwrap();
+    assert_eq!(summary(&mut b, &channel).await["unread_count"], 100);
+    let boundary = json!({"id": ids[139]});
+    assert_eq!(read(&mut b, &channel, &boundary).await["unread_count"], 10);
+    assert_eq!(summary(&mut b, &channel).await["unread_count"], 10);
+}
