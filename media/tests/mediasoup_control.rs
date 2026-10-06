@@ -273,3 +273,84 @@ async fn malformed_rtp_cannot_reserve_a_source_or_hide_later_success() {
     let metrics = state.sfu.metrics_text();
     assert!(metrics.contains("gelabber_media_peers 0"), "{metrics}");
 }
+
+#[tokio::test]
+async fn failed_consumer_reannounces_without_an_unrelated_publication() {
+    let (addr, state) = serve().await;
+    let server = Uuid::new_v4();
+    let channel = Uuid::new_v4();
+    let (a, _la) = member(&state, Uuid::new_v4(), server, channel).await;
+    let (b, _lb) = member(&state, Uuid::new_v4(), server, channel).await;
+    let mut publisher = Peer::join(addr, &a, None).await;
+    let mut viewer = Peer::join(addr, &b, None).await;
+    publisher.transport("send").await;
+    viewer.receive().await;
+    publisher.ok(produce("a", Uuid::new_v4(), None, None)).await;
+    let old = viewer.event("consumer").await;
+    viewer.ok(json!({"op":"consumerFailed","consumerId":old["consumerId"],"generation":old["generation"]})).await;
+    let next = viewer.event("consumer").await;
+    assert_eq!(old["producerId"], next["producerId"]);
+    assert_ne!(old["consumerId"], next["consumerId"]);
+    assert_ne!(old["generation"], next["generation"]);
+    viewer.ok(json!({"op":"consumerReady","consumerId":next["consumerId"],"generation":next["generation"]})).await;
+    viewer.close().await;
+    publisher.close().await;
+}
+
+#[tokio::test]
+async fn large_room_announcements_and_camera_churn_preserve_microphones() {
+    // Native control/resources only: this is not decoded RTP or an A/V load benchmark.
+    let (addr, state) = serve().await;
+    let server = Uuid::new_v4();
+    let channel = Uuid::new_v4();
+    let mut leases = Vec::new();
+    let mut publishers = Vec::new();
+    for _ in 0..34 {
+        let (code, lease) = member(&state, Uuid::new_v4(), server, channel).await;
+        leases.push(lease);
+        let mut peer = Peer::join(addr, &code, None).await;
+        peer.transport("send").await;
+        let mic = peer.ok(produce("a", Uuid::new_v4(), None, None)).await;
+        let camera = peer.ok(produce("v", Uuid::new_v4(), None, None)).await;
+        publishers.push((
+            peer,
+            mic["producerId"].clone(),
+            camera["producerId"].clone(),
+        ));
+    }
+    let (code, lease) = member(&state, Uuid::new_v4(), server, channel).await;
+    leases.push(lease);
+    let mut viewer = Peer::join(addr, &code, None).await;
+    viewer.receive().await;
+    let mut received = std::collections::HashSet::new();
+    for _ in 0..68 {
+        let event = viewer.event("consumer").await;
+        assert!(received.insert(event["producerId"].as_str().unwrap().to_owned()));
+        viewer.ok(json!({"op":"consumerReady","consumerId":event["consumerId"],"generation":event["generation"]})).await;
+    }
+    for (peer, mic, camera) in publishers.iter_mut().take(8) {
+        peer.ok(json!({"op":"closeProducer","producerId":camera}))
+            .await;
+        peer.ok(produce("v", Uuid::new_v4(), None, None)).await;
+        let closed = viewer.event("consumerClosed").await;
+        assert!(closed["consumerId"].is_string());
+        let opened = viewer.event("consumer").await;
+        assert_eq!(opened["k"], "v");
+        // The same original mic still exists and accepts native operations.
+        peer.ok(json!({"op":"pauseProducer","producerId":mic}))
+            .await;
+        peer.ok(json!({"op":"resumeProducer","producerId":mic}))
+            .await;
+    }
+    assert!(state.sfu.ready());
+    assert!(
+        state
+            .sfu
+            .metrics_text()
+            .contains("gelabber_media_outbound_overflows_total 0")
+    );
+    viewer.close().await;
+    for (mut peer, _, _) in publishers {
+        peer.close().await;
+    }
+}

@@ -1002,7 +1002,8 @@ function codecOptionsFor(kind: TrackKind): ProducerCodecOptions {
     opusFec: true,
     opusDtx: !source && !original,
     opusStereo: source || original,
-    ...(bitrate === null ? {} : { opusMaxAverageBitrate: bitrate }),
+    // A missing Opus hint selects libwebrtc's low default even without an RTP cap.
+    opusMaxAverageBitrate: bitrate ?? (source || original ? 510_000 : 128_000),
   };
 }
 function receiveSource(source: ReceivedSource, role: "voice" | "watch"): void {
@@ -1212,6 +1213,10 @@ function rollbackSeat(error?: unknown): void {
   }
 }
 
+const requestedMicPause = new WeakMap<
+  MediaConnection,
+  { producer: string; paused: boolean }
+>();
 function applyLocalAudio(): void {
   const state = useVoice.getState();
   const micOff = state.muted || state.deafened;
@@ -1222,10 +1227,22 @@ function applyLocalAudio(): void {
     track.enabled = !micOff;
   });
   const connection = seat.connection;
-  if (connection?.sender("a"))
-    void connection.setSourcePaused("a", micOff).catch((error) => {
-      if (seat.connection === connection) deps?.onError?.(error);
-    });
+  const sender = connection?.sender("a");
+  if (connection && sender) {
+    const previous = requestedMicPause.get(connection);
+    if (
+      previous?.producer !== sender.producerId ||
+      previous.paused !== micOff
+    ) {
+      const request = { producer: sender.producerId, paused: micOff };
+      requestedMicPause.set(connection, request);
+      void connection.setSourcePaused("a", micOff).catch((error) => {
+        if (requestedMicPause.get(connection) === request)
+          requestedMicPause.delete(connection);
+        if (seat.connection === connection) deps?.onError?.(error);
+      });
+    }
+  }
   applyPlayback();
 }
 
@@ -3320,7 +3337,16 @@ async function startPeer(
   }
 
   if (hasLiveTrack(localStream, "audio")) {
-    await commitMicSend(pc, localStream!, mine);
+    try {
+      await commitMicSend(pc, localStream!, mine);
+    } catch (error) {
+      if (seat.generation === mine && seat.connection === pc) {
+        deps?.onError?.(error);
+        stopPeer(true);
+        scheduleSeatRebuild();
+      }
+      return;
+    }
     applyLocalAudio();
     announced.add("a");
     deps?.gateway.send({

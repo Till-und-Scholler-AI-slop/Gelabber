@@ -1,9 +1,14 @@
 import { api } from "../api/client.ts";
 import { stampHolds, type ScopeStamp } from "../auth/scope.ts";
 import { notifyError } from "../components/toasts.ts";
-import type { QueryClient } from "@tanstack/react-query";
+import type { QueryClient, InfiniteData } from "@tanstack/react-query";
 import { applyMessageEdited, messageKeys } from "./queries.ts";
-import { asReactionList, type Message, type Reaction } from "./types.ts";
+import {
+  asReactionList,
+  type Message,
+  type MessagePage,
+  type Reaction,
+} from "./types.ts";
 
 export type ReactionIntent = {
   emoji: string;
@@ -51,7 +56,7 @@ export function reactionMutationOptions(
       );
     },
     onSuccess: (message: Message, intent: ReactionIntent) => {
-      if (stampHolds(intent.scope))
+      if (stampHolds(intent.scope)) {
         applyMessageEdited(
           client,
           intent.scope.userId,
@@ -59,6 +64,28 @@ export function reactionMutationOptions(
           channelId,
           message,
         );
+        const prefix = ["user", intent.scope.userId, intent.scope.generation];
+        const update = (row: Message) =>
+          row.id === message.id &&
+          (row.revision ?? 0) <= (message.revision ?? 0)
+            ? message
+            : row;
+        client.setQueriesData<InfiniteData<MessagePage>>(
+          { queryKey: [...prefix, "message-search", channelId] },
+          (data) =>
+            data && {
+              ...data,
+              pages: data.pages.map((page) => ({
+                ...page,
+                messages: page.messages.map(update),
+              })),
+            },
+        );
+        client.setQueriesData<{ messages: Message[] }>(
+          { queryKey: [...prefix, "message-context", channelId] },
+          (data) => data && { ...data, messages: data.messages.map(update) },
+        );
+      }
     },
     onError: (error: Error, intent: ReactionIntent) => {
       if (!stampHolds(intent.scope)) return;

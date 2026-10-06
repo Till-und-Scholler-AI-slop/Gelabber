@@ -66,10 +66,13 @@ function channelLabel(
   return channel ? `#${channel.name}` : "Kanal";
 }
 
+const desktopNotifications = new Map<string, { close: () => void }>();
+
 function maybeDesktopNotify(
   title: string,
   body: string,
   onClick: () => void,
+  tag: string,
 ): void {
   if (typeof document === "undefined" || !document.hidden) return;
   if (!useMediaSettings.getState().desktopNotify) return;
@@ -79,14 +82,26 @@ function maybeDesktopNotify(
         permission: string;
         new (
           title: string,
-          opts?: { body: string; silent?: boolean },
+          opts?: {
+            body: string;
+            silent?: boolean;
+            tag?: string;
+            renotify?: boolean;
+          },
         ): { onclick: (() => void) | null; close: () => void };
       };
     }
   ).Notification;
   if (!Notify || Notify.permission !== "granted") return;
   try {
-    const notification = new Notify(title, { body, silent: true });
+    desktopNotifications.get(tag)?.close();
+    const notification = new Notify(title, {
+      body,
+      silent: true,
+      tag,
+      renotify: false,
+    });
+    desktopNotifications.set(tag, notification);
     notification.onclick = () => {
       notification.close();
       onClick();
@@ -102,10 +117,19 @@ export function useMessageToastsBridge(): void {
   const navigate = useNavigate();
   const me = useSession((s) => s.user?.id);
   const viewingChannelId = useParams({ strict: false }).channelId;
+  useEffect(
+    () => () => {
+      for (const notification of desktopNotifications.values())
+        notification.close();
+      desktopNotifications.clear();
+    },
+    [me],
+  );
   const deliveries = useRef<{
     userId: string | undefined;
     generation: number;
     first: ReturnType<typeof createNotificationDedupe>;
+    desktopAt: Map<string, number>;
   } | null>(null);
 
   useEffect(() => {
@@ -119,6 +143,7 @@ export function useMessageToastsBridge(): void {
         userId,
         generation,
         first: createNotificationDedupe(),
+        desktopAt: new Map(),
       };
     }
     const firstDelivery = deliveries.current.first;
@@ -154,20 +179,33 @@ export function useMessageToastsBridge(): void {
           author: message.author.name,
           preview,
         });
-      if (decision.desktop) {
+      const now = Date.now();
+      const desktopAt = deliveries.current!.desktopAt;
+      // Replays older than the live delivery window do not generate a burst.
+      if (
+        decision.desktop &&
+        now - Date.parse(message.created_at) < 30_000 &&
+        now - (desktopAt.get(event.c) ?? 0) >= 5_000
+      ) {
+        desktopAt.set(event.c, now);
         const channelId = event.c;
-        maybeDesktopNotify(`${message.author.name} · ${label}`, preview, () => {
-          if (!stampHolds({ userId, generation })) return;
-          window.focus();
-          if (dm) {
-            void navigate({ to: "/d/$channelId", params: { channelId } });
-          } else {
-            void navigate({
-              to: "/s/$serverId/c/$channelId",
-              params: { serverId: event.s, channelId },
-            });
-          }
-        });
+        maybeDesktopNotify(
+          `${message.author.name} · ${label}`,
+          preview,
+          () => {
+            if (!stampHolds({ userId, generation })) return;
+            window.focus();
+            if (dm) {
+              void navigate({ to: "/d/$channelId", params: { channelId } });
+            } else {
+              void navigate({
+                to: "/s/$serverId/c/$channelId",
+                params: { serverId: event.s, channelId },
+              });
+            }
+          },
+          `gelabber:${userId}:${channelId}`,
+        );
       }
     });
   }, [client, me, navigate, viewingChannelId]);

@@ -40,13 +40,31 @@ type Previous = {
  * unknown/reset counters never masquerade as congestion or bandwidth. */
 export class ViewerLayerController {
   private previous = new Map<string, Previous>();
-  update(
+  private sent = new Map<
+    string,
+    { h: number; congested: boolean; at: number }
+  >();
+  async update(
     report: readonly StatsEntry[],
     sources: readonly ViewerSource[],
-    send: (frame: MediaRequests["q"]) => void,
+    send: (frame: MediaRequests["q"]) => unknown,
     height: (id: string) => number = renderedVideoHeight,
-  ): void {
+  ): Promise<void> {
+    const pending: MediaRequests["q"][] = [];
     const active = new Set<string>();
+    const now = Date.now();
+    const emit = (frame: MediaRequests["q"]) => {
+      const key = `${frame.generation}:${frame.consumerId}`;
+      const last = this.sent.get(key);
+      if (
+        last &&
+        last.h === frame.h &&
+        last.congested === frame.congested &&
+        now - last.at < 30_000
+      )
+        return;
+      pending.push(frame);
+    };
     for (const source of sources) {
       const key = `${source.generation}:${source.consumerId}`;
       active.add(key);
@@ -60,7 +78,7 @@ export class ViewerLayerController {
             : e.trackIdentifier === source.trackId),
       );
       if (!stats) {
-        send({
+        emit({
           consumerId: source.consumerId,
           generation: source.generation,
           h: height(source.trackId),
@@ -86,7 +104,7 @@ export class ViewerLayerController {
         if (previous && time <= previous.time) {
           // Overlapping native getStats promises may resolve out of order.
           // Keep newer evidence; stale samples are not counter restarts.
-          send({
+          emit({
             consumerId: source.consumerId,
             generation: source.generation,
             h: height(source.trackId),
@@ -114,14 +132,34 @@ export class ViewerLayerController {
         }
         this.previous.set(key, { received, lost, time, congested, good });
       }
-      send({
+      emit({
         consumerId: source.consumerId,
         generation: source.generation,
         h: height(source.trackId),
         congested,
       });
     }
+    for (const key of this.sent.keys())
+      if (!active.has(key)) this.sent.delete(key);
     for (const key of this.previous.keys())
       if (!active.has(key)) this.previous.delete(key);
+    // Leave room in MediaPeer's 64-request budget for control operations.
+    // Failed hints stay eligible for the next sample instead of being suppressed.
+    for (let offset = 0; offset < pending.length; offset += 8) {
+      await Promise.all(
+        pending.slice(offset, offset + 8).map(async (frame) => {
+          try {
+            await send(frame);
+            this.sent.set(`${frame.generation}:${frame.consumerId}`, {
+              h: frame.h,
+              congested: frame.congested,
+              at: Date.now(),
+            });
+          } catch {
+            // A source can retire or the request budget can fill during sampling.
+          }
+        }),
+      );
+    }
   }
 }

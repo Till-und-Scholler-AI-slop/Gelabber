@@ -53,9 +53,9 @@ const UNREAD: &str = "WITH visible AS (
     FROM channels c JOIN channel_members cm ON cm.channel_id=c.id AND cm.user_id=$1
     WHERE c.kind='dm'
 ) SELECT v.channel_id, v.server_id, r.message_id AS read_message_id, r.message_at AS read_at,
-    (SELECT count(*) FROM messages m WHERE m.channel_id=v.channel_id AND m.author_id<>$1
+    (SELECT count(*) FROM (SELECT 1 FROM messages m WHERE m.channel_id=v.channel_id AND m.author_id<>$1
       AND m.created_at>=v.joined_at
-      AND (r.created_order IS NULL OR m.created_order>r.created_order)) AS unread_count
+      AND (r.created_order IS NULL OR m.created_order>r.created_order) LIMIT 100) bounded) AS unread_count
   FROM visible v LEFT JOIN channel_read_state r ON r.user_id=$1 AND r.channel_id=v.channel_id
     AND r.membership_at=v.joined_at
   WHERE ($2::uuid IS NULL OR v.channel_id=$2)";

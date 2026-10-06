@@ -203,6 +203,7 @@ class PublicTransport {
   getStats = vi.fn(async () => new Map());
 }
 class PublicDevice {
+  handlerName = "Chrome111";
   recvRtpCapabilities = capabilities;
   sendRtpCapabilities = capabilities;
   transports: PublicTransport[] = [];
@@ -401,7 +402,7 @@ describe("bounded live publication recovery through the public SDK", () => {
       ).toEqual([]);
     }
     expect(recv.closed).toBe(false);
-    expect(f.calls("closeTransport").length).toBeGreaterThan(0);
+    expect(f.calls("closeTransport")).toHaveLength(0);
     expect(f.calls("closeTransport").length).toBeLessThanOrEqual(8);
     for (const transport of f.device.transports.slice(1)) {
       const parent = transport.producers.find(
@@ -637,9 +638,10 @@ describe("bounded live publication recovery through the public SDK", () => {
   it("does not reset the deadline when a compaction close reply exhausts the budget", async () => {
     vi.useFakeTimers();
     const f = fixture();
+    f.device.handlerName = "Firefox120";
     await f.start();
     const capture = new Capture("screen", "video");
-    for (let i = 0; i < 4; i += 1) {
+    for (let i = 0; i < 16; i += 1) {
       await f.connection.publish(publication("s", capture));
       await f.connection.closeSource("s");
     }
@@ -670,7 +672,7 @@ describe("bounded live publication recovery through the public SDK", () => {
     expect(f.device.transports.every((transport) => transport.closed)).toBe(
       true,
     );
-    expect(f.calls("produce")).toHaveLength(4);
+    expect(f.calls("produce")).toHaveLength(16);
     expect(f.connection.sender("l")).toBeUndefined();
     expect(capture.stop).not.toHaveBeenCalled();
   });
@@ -678,6 +680,7 @@ describe("bounded live publication recovery through the public SDK", () => {
   it("inherits the same remaining budget when compaction republishes current mic before video children", async () => {
     vi.useFakeTimers();
     const f = fixture();
+    f.device.handlerName = "Firefox120";
     await f.start();
     const mic = new Capture("mic", "audio"),
       screen = new Capture("screen", "video"),
@@ -699,6 +702,12 @@ describe("bounded live publication recovery through the public SDK", () => {
       f.connection.publish(publication("l", live)),
     ).rejects.toMatchObject({ code: "live_busy" });
     f.intercept(undefined);
+    for (let count = 0; count < 15; count++) {
+      await f.connection.publish(
+        publication("v", new Capture("camera-" + count, "video")),
+      );
+      await f.connection.closeSource("v");
+    }
     const pending = deferred<NativeProducer>();
     f.device.configureSend = (transport) =>
       transport.produce.mockImplementationOnce(() => pending.promise);
@@ -937,9 +946,10 @@ describe("public mediasoup connection lifecycle", () => {
 
   it("compacts receive transports and accepts only fresh server consumer announcements", async () => {
     const f = fixture();
+    f.device.handlerName = "Firefox120";
     await f.start();
     const old = f.device.transports[0];
-    for (let count = 0; count < 4; count += 1) {
+    for (let count = 0; count < 16; count += 1) {
       const consumerId = "consumer-" + count;
       f.connection.handleEvent(announcement({ consumerId }));
       await tick();
@@ -1425,6 +1435,7 @@ describe("public mediasoup connection lifecycle", () => {
 
   it("compacts through public transports with current capture and fresh child parent IDs", async () => {
     const f = fixture();
+    f.device.handlerName = "Firefox120";
     await f.start();
     const screen = new Capture("screen-old", "video"),
       current = new Capture("screen-current", "video");
@@ -1434,7 +1445,7 @@ describe("public mediasoup connection lifecycle", () => {
       publication("sa", audio, { parent: video.producerId }),
     );
     await video.replaceTrack(current.native());
-    for (let count = 0; count < 2; count += 1) {
+    for (let count = 0; count < 16; count += 1) {
       await f.connection.publish(
         publication("v", new Capture("camera-" + count, "video")),
       );
@@ -1488,11 +1499,12 @@ describe("public mediasoup connection lifecycle", () => {
 
   it("never revives a detached microphone capture during send transport compaction", async () => {
     const f = fixture();
+    f.device.handlerName = "Firefox120";
     await f.start();
     const capture = new Capture("detached-mic", "audio");
     const mic = await f.connection.publish(publication("a", capture));
     await mic.replaceTrack(null);
-    for (let count = 0; count < 3; count += 1) {
+    for (let count = 0; count < 16; count += 1) {
       await f.connection.publish(
         publication("v", new Capture("camera-" + count, "video")),
       );
@@ -1716,6 +1728,50 @@ describe("public mediasoup connection lifecycle", () => {
     expect(capture.stop).not.toHaveBeenCalled();
   });
 
+  it("accepts more than 64 announced consumers without interrupting existing media", async () => {
+    const f = fixture();
+    await f.start();
+    for (let count = 0; count < 100; count++) {
+      f.connection.handleEvent(announcement({ consumerId: "many-" + count }));
+    }
+    await vi.waitFor(() => expect(f.connection.consumers()).toHaveLength(100));
+    expect(f.calls("consumerReady")).toHaveLength(100);
+    expect(f.onError).not.toHaveBeenCalled();
+    expect(f.device.transports).toHaveLength(1);
+    expect(f.device.transports[0].closed).toBe(false);
+  });
+
+  it.each(["Chrome111", "Firefox120"])(
+    "keeps mic and receive transport stable for ordinary camera toggles in %s",
+    async (handler) => {
+      const f = fixture();
+      f.device.handlerName = handler;
+      await f.start();
+      const mic = await f.connection.publish(
+        publication("a", new Capture("mic", "audio")),
+      );
+      const recv = f.device.transports[0];
+      for (let count = 0; count < 10; count++) {
+        await f.connection.publish(
+          publication("v", new Capture("camera", "video")),
+        );
+        await f.connection.closeSource("v");
+        f.connection.handleEvent(
+          announcement({ consumerId: "camera-" + count }),
+        );
+        await tick();
+        f.connection.handleEvent({
+          op: "consumerClosed",
+          consumerId: "camera-" + count,
+          generation: GENERATION,
+        });
+      }
+      expect(f.connection.sender("a")?.producerId).toBe(mic.producerId);
+      expect(f.calls("closeTransport")).toEqual([]);
+      expect(recv.closed).toBe(false);
+    },
+  );
+
   it("fails closed on receive backlog overflow with no fabricated Ready or attachments", async () => {
     const f = fixture();
     await f.start();
@@ -1723,7 +1779,7 @@ describe("public mediasoup connection lifecycle", () => {
     f.device.transports[0].consumeGate = pending;
     f.connection.handleEvent(announcement({ consumerId: "consumer-0" }));
     await tick();
-    for (let count = 1; count <= 64; count += 1)
+    for (let count = 1; count <= 1024; count += 1)
       f.connection.handleEvent(
         announcement({ consumerId: "consumer-" + count }),
       );
@@ -1742,7 +1798,7 @@ describe("public mediasoup connection lifecycle", () => {
 
   it("fails closed on pre-start event overflow before loading any public SDK transport", async () => {
     const f = fixture();
-    for (let count = 0; count <= 64; count += 1)
+    for (let count = 0; count <= 3 * 1024; count += 1)
       f.connection.handleEvent(
         announcement({ consumerId: "consumer-" + count }),
       );

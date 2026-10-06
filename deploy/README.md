@@ -12,7 +12,7 @@ App: `http://localhost` (Caddy :80). Daten und MinIO nur auf `127.0.0.1`. Secret
 
 ## Bestehendes Caddy
 
-UDP (TURN + SFU-ICE 10000–10031) geht nicht durch Caddy — Host/Router-Ports bleiben offen.
+UDP (TURN + SFU-ICE 10000) geht nicht durch Caddy — Host/Router-Ports bleiben offen.
 
 **Kleiner Diff:** bundled Caddy auf Loopback, dein Caddy davor.
 
@@ -102,26 +102,7 @@ MinIO-Volume und das laufende Image werden vor dem Stop ermittelt):
 
 ```bash
 cd deploy/compose
-set -eu
-umask 077
-restore_backup_dir="$PWD/backups/$(date -u +%Y%m%dT%H%M%SZ)"
-mkdir -p "$PWD/backups"
-mkdir "$restore_backup_dir"
-restore_minio_container=$(docker compose ps -q minio)
-restore_minio_volume=$(docker inspect --format '{{range .Mounts}}{{if eq .Destination "/data"}}{{.Name}}{{end}}{{end}}' "$restore_minio_container")
-restore_minio_image=$(docker inspect --format '{{.Image}}' "$restore_minio_container")
-test -n "$restore_minio_volume"
-printf '%s\n' "$restore_minio_image" > "$restore_backup_dir/minio-image-id.txt"
-docker compose stop api web media
-docker compose stop minio
-docker compose exec -T postgres sh -c 'exec pg_dump -U "$POSTGRES_USER" --format=custom "$POSTGRES_DB"' \
-  > "$restore_backup_dir/database.pgdump"
-docker run --rm --pull never --network none --read-only --user 0 \
-  --mount "type=volume,src=$restore_minio_volume,dst=/data,readonly" \
-  --entrypoint tar "$restore_minio_image" -czf - -C /data . \
-  > "$restore_backup_dir/minio-data.tgz"
-(cd "$restore_backup_dir" && sha256sum database.pgdump minio-data.tgz minio-image-id.txt > SHA256SUMS)
-docker compose start minio api web media
+sh ../backup.sh
 ```
 
 Bei einem Fehler bleiben die Schreiber gestoppt, bis das unvollständige Backup
@@ -204,7 +185,13 @@ docker compose --env-file .env --env-file next.env up -d --no-deps --no-build --
 
 `--no-build` verhindert einen unbemerkten lokalen Ersatzbuild, der explizite Pull löst das bisherige `pull_policy: missing`-Problem. Bereits im Shell-Environment exportierte `GELABBER_*_IMAGE`-Variablen vorher entfernen, da sie Env-Dateien übersteuern. Homelab behält sein `COMPOSE_FILE`; alternativ dieselben `-f`-Overlays bei **allen** Befehlen verwenden. Images werden als Satz vorab geladen; Containerwechsel sind nicht atomar und benötigen ein Wartungsfenster.
 
-Bei fehlgeschlagener Abnahme den archivierten vorherigen Digest-Satz verwenden:
+**v0.4 → v0.3.1 funktioniert nicht durch einen Imagewechsel:** Migrationen
+0010/0011 verändern das SQLx-Migrationsledger. Vor dem Start von v0.3.1 muss
+das vor dem Upgrade gesicherte PostgreSQL-/MinIO-Snapshotpaar auf geprüfte
+Zielbestände zurückgespielt werden. Änderungen seit diesem Backup gehen verloren.
+
+Nur bei nachgewiesener Schema-/Ledger-Kompatibilität den archivierten vorherigen
+vollständigen API-/Web-/Media-Satz verwenden (kein einzelnes altes Media-Image):
 
 ```bash
 docker compose --env-file .env --env-file previous.env config -q

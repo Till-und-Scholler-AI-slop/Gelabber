@@ -43,7 +43,7 @@ return ttl
 "#;
 
 pub async fn try_acquire(
-    redis: &redis::Client,
+    redis: &impl crate::redis_connection::ConnectionSource,
     authority: &AuthorizedTicketClaim,
     nonce: Uuid,
     peer: Uuid,
@@ -52,7 +52,7 @@ pub async fn try_acquire(
         return Ok(LiveAcquireOutcome::Denied);
     }
     tokio::time::timeout(Duration::from_millis(500), async {
-        let mut conn = redis.get_multiplexed_async_connection().await?;
+        let mut conn = redis.connection().await?;
         let result: i64 = redis::cmd("EVAL")
             .arg(ACQUIRE)
             .arg(5)
@@ -88,7 +88,7 @@ pub async fn try_acquire(
 }
 
 pub async fn validate_and_acquire(
-    redis: &redis::Client,
+    redis: &impl crate::redis_connection::ConnectionSource,
     authority: &AuthorizedTicketClaim,
     nonce: Uuid,
     peer: Uuid,
@@ -99,9 +99,13 @@ pub async fn validate_and_acquire(
     })
 }
 
-pub async fn release(redis: &redis::Client, nonce: Uuid, peer: Uuid) {
+pub async fn release(
+    redis: &impl crate::redis_connection::ConnectionSource,
+    nonce: Uuid,
+    peer: Uuid,
+) {
     let _ = tokio::time::timeout(Duration::from_millis(500), async {
-        let mut conn = redis.get_multiplexed_async_connection().await?;
+        let mut conn = redis.connection().await?;
         redis::cmd("EVAL")
             .arg("if redis.call('GET', KEYS[1]) == ARGV[1] then return redis.call('DEL', KEYS[1]) end return 0")
             .arg(1)

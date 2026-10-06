@@ -64,6 +64,7 @@ export function createMicrophoneComparison(
     if (ctx && ctx.state !== "closed") void ctx.close().catch(() => {});
   }
   async function start() {
+    if (stopped) return;
     callbacks.state({
       phase: "pending",
       message: "Bitte erlaube den lokalen Mikrofonzugriff.",
@@ -72,6 +73,7 @@ export function createMicrophoneComparison(
       // Resume before the permission prompt consumes the explicit button gesture.
       ctx = new AudioContext();
       await ctx.resume();
+      if (stopped) return;
       const result = await captureMicrophone(
         (constraints) => navigator.mediaDevices.getUserMedia(constraints),
         settings,

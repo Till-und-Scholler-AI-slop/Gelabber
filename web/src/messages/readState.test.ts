@@ -213,6 +213,89 @@ describe("read eligibility and recovery", () => {
     await Promise.resolve();
     expect(client.getQueryData(key)).toBeUndefined();
   });
+  it("debounces separate replay frames, scopes refreshes and lets an in-flight search finish", async () => {
+    vi.useFakeTimers();
+    const win = new EventTarget() as EventTarget & {
+      setInterval: typeof setInterval;
+      clearInterval: typeof clearInterval;
+    };
+    win.setInterval = setInterval;
+    win.clearInterval = clearInterval;
+    const doc = Object.assign(new EventTarget(), {
+      visibilityState: "visible",
+    });
+    vi.stubGlobal("window", win);
+    vi.stubGlobal("document", doc);
+    let event!: (event: { c: string }) => void;
+    const gateway = {
+      onEvent: (callback: typeof event) => {
+        event = callback;
+        return () => {};
+      },
+      onReady: () => () => {},
+      onGap: () => () => {},
+      onResync: () => () => {},
+      onDm: () => () => {},
+    } as unknown as Gateway;
+    const stamp = takeStamp()!;
+    const key = [
+      "user",
+      stamp.userId,
+      stamp.generation,
+      "message-search",
+      "a",
+      "query",
+    ];
+    const other = [...key.slice(0, 4), "b", "query"];
+    client.setQueryData(key, "cached");
+    client.setQueryData(other, "other");
+    let complete!: (result: string) => void;
+    let signal!: AbortSignal;
+    const query = vi.fn(({ signal: input }: { signal: AbortSignal }) => {
+      signal = input;
+      return query.mock.calls.length === 1
+        ? new Promise<string>((resolve) => {
+            complete = resolve;
+          })
+        : Promise.resolve("current");
+    });
+    const unrelated = vi.fn(async () => "unrelated");
+    const a = new QueryObserver(client, {
+      queryKey: key,
+      queryFn: query,
+      staleTime: Infinity,
+    });
+    const b = new QueryObserver(client, {
+      queryKey: other,
+      queryFn: unrelated,
+      staleTime: Infinity,
+    });
+    const stopA = a.subscribe(() => {}),
+      stopB = b.subscribe(() => {});
+    const inFlight = a.refetch();
+    const cleanup = attachReadRecovery(client, stamp, gateway);
+    for (let frame = 0; frame < 128; frame++) {
+      event({ c: "a" });
+      await vi.advanceTimersByTimeAsync(1);
+    }
+    expect(query).toHaveBeenCalledTimes(1);
+    await vi.advanceTimersByTimeAsync(750);
+    expect(signal.aborted).toBe(false);
+    expect(query).toHaveBeenCalledTimes(1);
+    expect(unrelated).not.toHaveBeenCalled();
+    complete("old snapshot");
+    await inFlight;
+    await vi.advanceTimersByTimeAsync(0);
+    expect(query).toHaveBeenCalledTimes(2);
+    expect(client.getQueryData(key)).toBe("current");
+    expect(unrelated).not.toHaveBeenCalled();
+    cleanup();
+    stopA();
+    stopB();
+    a.destroy();
+    b.destroy();
+  });
+
   it("coalesces events, reconnects and gaps; detaches on logout and hidden polling", async () => {
     vi.useFakeTimers();
     const window = new EventTarget() as EventTarget & {
@@ -227,7 +310,7 @@ describe("read eligibility and recovery", () => {
     document.visibilityState = "visible";
     vi.stubGlobal("window", window);
     vi.stubGlobal("document", document);
-    const callbacks: Record<string, () => void> = {};
+    const callbacks: Record<string, (...args: never[]) => void> = {};
     const register = (type: string) => (cb: () => void) => {
       callbacks[type] = cb;
       return () => {
@@ -241,12 +324,12 @@ describe("read eligibility and recovery", () => {
       onResync: register("resync"),
       onDm: register("dm"),
     } as unknown as Gateway;
-    const cancel = vi.spyOn(client, "cancelQueries");
+    const cancel = vi.spyOn(client, "invalidateQueries");
     const cleanup = attachReadRecovery(client, takeStamp()!, gateway);
-    callbacks.event();
+    callbacks.event({ c: "channel" } as never);
     callbacks.ready();
     callbacks.gap();
-    await vi.advanceTimersByTimeAsync(0);
+    await vi.advanceTimersByTimeAsync(750);
     expect(cancel).toHaveBeenCalledTimes(3); // Search, context and private read snapshot.
     cancel.mockClear();
     document.visibilityState = "hidden";
@@ -254,7 +337,7 @@ describe("read eligibility and recovery", () => {
     expect(cancel).not.toHaveBeenCalled();
     document.visibilityState = "visible";
     document.dispatchEvent(new Event("visibilitychange"));
-    await vi.advanceTimersByTimeAsync(0);
+    await vi.advanceTimersByTimeAsync(750);
     expect(cancel).toHaveBeenCalledTimes(3);
     cancel.mockClear();
     resetSessionForTests();

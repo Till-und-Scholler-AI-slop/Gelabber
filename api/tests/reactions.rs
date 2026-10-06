@@ -401,3 +401,47 @@ async fn in_flight_reaction_rechecks_membership_after_the_writer_lock(pool: PgPo
         .unwrap();
     assert_eq!(count, 0);
 }
+
+#[sqlx::test]
+async fn concurrent_new_emojis_cannot_exceed_twenty_and_existing_votes_still_work(pool: PgPool) {
+    let (mut a, mut b) = users(&pool, true).await;
+    let (_, ch) = channel(&mut a, &mut b).await;
+    let m = message(&mut a, &ch).await;
+    let emojis = [
+        "😀", "😃", "😄", "😁", "😆", "😅", "😂", "🤣", "😊", "😇", "🙂", "🙃", "😉", "😌", "🥰",
+        "😗", "😙", "😚", "😋",
+    ];
+    for emoji in emojis {
+        let result = a.send(Method::PUT, &path(&m, emoji), None).await;
+        assert_eq!(result.status, StatusCode::OK);
+    }
+    let first_path = path(&m, "😍");
+    let second_path = path(&m, "😘");
+    let (one, two) = tokio::join!(
+        a.send(Method::PUT, &first_path, None),
+        b.send(Method::PUT, &second_path, None),
+    );
+    assert_eq!(
+        usize::from(one.status == StatusCode::OK) + usize::from(two.status == StatusCode::OK),
+        1
+    );
+    assert!(
+        one.status == StatusCode::UNPROCESSABLE_ENTITY
+            || two.status == StatusCode::UNPROCESSABLE_ENTITY
+    );
+    let existing = b.send(Method::PUT, &path(&m, "😀"), None).await;
+    assert_eq!(existing.status, StatusCode::OK);
+    assert_eq!(existing.body["reactions"].as_array().unwrap().len(), 20);
+    assert_eq!(
+        b.send(Method::PUT, &path(&m, "😀"), None).await.status,
+        StatusCode::OK
+    );
+    assert_eq!(
+        a.send(Method::DELETE, &path(&m, "😃"), None).await.status,
+        StatusCode::OK
+    );
+    assert_eq!(
+        b.send(Method::PUT, &path(&m, "😎"), None).await.status,
+        StatusCode::OK
+    );
+}

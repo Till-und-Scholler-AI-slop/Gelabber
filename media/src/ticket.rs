@@ -59,14 +59,14 @@ fn deadline_error() -> redis::RedisError {
 /// Consumption and authority validation run in one Redis operation. Invalid
 /// envelopes are consumed as well; Redis failure never grants a peer.
 pub async fn consume(
-    redis: &redis::Client,
+    redis: &impl crate::redis_connection::ConnectionSource,
     code: &str,
 ) -> Result<Option<AuthorizedTicketClaim>, redis::RedisError> {
     if !is_valid(code) {
         return Ok(None);
     }
     tokio::time::timeout(Duration::from_millis(500), async {
-        let mut conn = redis.get_multiplexed_async_connection().await?;
+        let mut conn = redis.connection().await?;
         let raw: Option<String> = redis::cmd("EVAL")
             .arg(CONSUME)
             .arg(1)
@@ -84,14 +84,14 @@ pub async fn consume(
 /// Only the API renews the short session lease. Media refreshes demand after
 /// atomic validation and never deletes another tab's demand on leave.
 pub async fn validate_authority(
-    redis: &redis::Client,
+    redis: &impl crate::redis_connection::ConnectionSource,
     claim: &AuthorizedTicketClaim,
 ) -> Result<bool, redis::RedisError> {
     if !claim.well_formed() {
         return Ok(false);
     }
     tokio::time::timeout(Duration::from_millis(500), async {
-        let mut conn = redis.get_multiplexed_async_connection().await?;
+        let mut conn = redis.connection().await?;
         let result: i64 = redis::cmd("EVAL")
             .arg(VALIDATE)
             .arg(4)
