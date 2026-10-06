@@ -5,6 +5,7 @@ import {
   useRouterState,
 } from "@tanstack/react-router";
 
+import { useReadBridge } from "../messages/readState.ts";
 import { logout, useSession } from "../auth/session.ts";
 import { leaveVoice, stopWatching, useVoice } from "../voice/session.ts";
 import {
@@ -19,9 +20,11 @@ import { MessageToasts } from "./MessageToasts.tsx";
 import { Toasts } from "./Toasts.tsx";
 import { VoiceSettingsDialog } from "./VoiceSettingsDialog.tsx";
 import { VoiceSessionControls } from "./VoiceSessionControls.tsx";
+import { SessionRecoveryNotice } from "./SessionRecoveryNotice.tsx";
 
 function AuthenticatedRealtime() {
   useAuthenticatedSubscriptions();
+  useReadBridge();
   return null;
 }
 
@@ -103,6 +106,7 @@ export function AppShell() {
         </header>
       ) : null}
       <div id="app-content" tabIndex={workspace ? undefined : -1}>
+        <SessionRecoveryNotice />
         <Outlet />
       </div>
       {user ? <AuthenticatedRealtime key={user.id} /> : null}
