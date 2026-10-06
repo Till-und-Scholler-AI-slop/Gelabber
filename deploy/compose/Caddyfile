@@ -53,6 +53,11 @@
 		}
 	}
 
+	# Prometheus scrapes the internal listener; never publish metrics.
+	handle /media/metrics {
+		respond 404
+	}
+
 	@media path /media /media/*
 	handle @media {
 		reverse_proxy media:8081 {

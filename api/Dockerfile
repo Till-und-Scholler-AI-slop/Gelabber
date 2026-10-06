@@ -1,5 +1,6 @@
 # syntax=docker/dockerfile:1
-FROM rust:1.98.1-slim-trixie AS base
+FROM rust:1.98.1-slim-trixie@sha256:4cd829461bd5c4d511c32e269da9cb8929223b666519d8004e35fc8d1d771ab7 AS base
+COPY docker/debian-snapshot.sources /etc/apt/sources.list.d/debian.sources
 COPY docker/rust-build-ca.sh /tmp/rust-build-ca.sh
 RUN sh /tmp/rust-build-ca.sh
 ENV SSL_CERT_FILE=/etc/ssl/certs/ca-certificates.crt \
@@ -32,7 +33,8 @@ COPY api ./api
 COPY shared ./shared
 RUN cargo build --locked --release -p gelabber-api
 
-FROM debian:trixie-slim
+FROM debian:trixie-slim@sha256:a29215f6a35e51e22adffa17f89e9d2ef06214e64a2bad10d765c46aea49f11f
+COPY docker/debian-snapshot.sources /etc/apt/sources.list.d/debian.sources
 ARG OCI_REVISION=unknown
 ARG OCI_VERSION=unknown
 ARG OCI_CREATED=unknown

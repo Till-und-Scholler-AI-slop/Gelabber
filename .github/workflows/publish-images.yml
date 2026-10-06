@@ -139,6 +139,13 @@ jobs:
           pattern: digest-*
           merge-multiple: true
           path: digests
+      - name: Smoke exact main media digest before promotion
+        env:
+          SOURCE_SHA: ${{ github.event.workflow_run.head_sha }}
+        run: |
+          media_ref=$(python3 -c 'import json; d=json.load(open("digests/media.json")); print(d["image"]+"@"+d["digest"])')
+          docker pull "$media_ref"
+          python3 docker/check-media-image.py --image "$media_ref" --revision "$SOURCE_SHA"
       - name: Verify CI, preflight immutable release, record image set
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
