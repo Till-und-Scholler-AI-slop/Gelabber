@@ -201,6 +201,39 @@ export function useReadBridge() {
   }, [client, userId, generation]);
 }
 
+/** Apply an acknowledged read row without losing a refresh other channels need. */
+export async function applyMarkedRead(
+  client: QueryClient,
+  stamp: ScopeStamp,
+  channelId: string,
+  row: ReadState,
+): Promise<void> {
+  const queryKey = readKey(stamp);
+  if (!client.getQueryData(queryKey)) {
+    // Let the initial unread snapshot finish instead of repeatedly
+    // cancelling it as new visible messages are marked read.
+    void client.invalidateQueries(
+      { queryKey, exact: true },
+      { cancelRefetch: false },
+    );
+    return;
+  }
+  // A snapshot started before the write may still report this channel as
+  // unread. Cancel it, but refetch afterwards: it may carry other channels'
+  // unread deltas that a debounced refresh asked for.
+  const inFlight = client.getQueryState(queryKey)?.fetchStatus === "fetching";
+  await client.cancelQueries({ queryKey, exact: true });
+  if (!stampHolds(stamp)) return;
+  client.setQueryData<ReadState[]>(queryKey, (rows) =>
+    rows?.map((current) => (current.channel_id === channelId ? row : current)),
+  );
+  if (inFlight)
+    void client.invalidateQueries(
+      { queryKey, exact: true },
+      { cancelRefetch: false },
+    );
+}
+
 export function mayMarkRead(
   atLatest: boolean,
   ready: boolean,
@@ -276,22 +309,7 @@ export function useMarkRead(
           if (!active || !stampHolds(stamp)) return;
           done = true;
           setError(false);
-          if (!client.getQueryData(readKey(stamp))) {
-            // Let the initial unread snapshot finish instead of repeatedly
-            // cancelling it as new visible messages are marked read.
-            void client.invalidateQueries(
-              { queryKey: readKey(stamp), exact: true },
-              { cancelRefetch: false },
-            );
-            return;
-          }
-          await client.cancelQueries({ queryKey: readKey(stamp), exact: true });
-          if (!stampHolds(stamp)) return;
-          client.setQueryData<ReadState[]>(readKey(stamp), (rows) =>
-            rows?.map((current) =>
-              current.channel_id === channelId ? row : current,
-            ),
-          );
+          await applyMarkedRead(client, stamp, channelId, row);
         })
         .catch(() => {
           if (active && stampHolds(stamp)) setError(true);

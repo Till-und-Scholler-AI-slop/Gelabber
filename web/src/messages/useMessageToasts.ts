@@ -2,6 +2,7 @@ import { useQueryClient } from "@tanstack/react-query";
 import { useNavigate, useParams } from "@tanstack/react-router";
 import { useEffect, useRef } from "react";
 
+import { serverNow } from "../api/client.ts";
 import { scopeGeneration, stampHolds } from "../auth/scope.ts";
 import { useSession } from "../auth/session.ts";
 import { dmKeys } from "../dms/queries.ts";
@@ -182,9 +183,11 @@ export function useMessageToastsBridge(): void {
       const now = Date.now();
       const desktopAt = deliveries.current!.desktopAt;
       // Replays older than the live delivery window do not generate a burst.
+      // Age is measured on the server clock: a fast local clock must not
+      // suppress every live notification.
       if (
         decision.desktop &&
-        now - Date.parse(message.created_at) < 30_000 &&
+        serverNow() - Date.parse(message.created_at) < 30_000 &&
         now - (desktopAt.get(event.c) ?? 0) >= 5_000
       ) {
         desktopAt.set(event.c, now);

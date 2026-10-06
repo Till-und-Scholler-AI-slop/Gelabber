@@ -1,6 +1,12 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
-import { ApiError, api, getCsrfToken, setCsrfToken } from "./client.ts";
+import {
+  ApiError,
+  api,
+  getCsrfToken,
+  serverNow,
+  setCsrfToken,
+} from "./client.ts";
 
 type Call = { url: string; init: RequestInit };
 
@@ -29,6 +35,25 @@ function header(call: Call, name: string): string | null {
 describe("api client", () => {
   beforeEach(() => setCsrfToken(null));
   afterEach(() => vi.unstubAllGlobals());
+
+  it("tracks the server clock from response Date headers", async () => {
+    const server = Date.parse("2026-10-06T12:00:00Z");
+    install(
+      () =>
+        new Response("{}", {
+          headers: { Date: new Date(server).toUTCString() },
+        }),
+    );
+    vi.useFakeTimers({ now: server + 120_000, toFake: ["Date"] });
+    try {
+      await api("/auth/session");
+      expect(serverNow()).toBe(server);
+      vi.setSystemTime(server + 125_000);
+      expect(serverNow()).toBe(server + 5_000);
+    } finally {
+      vi.useRealTimers();
+    }
+  });
 
   it("sends JSON with same-origin credentials under the /api base", async () => {
     const calls = install(() => jsonResponse(200, { ok: true }));

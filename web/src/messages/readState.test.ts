@@ -3,6 +3,7 @@ import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { login, resetSessionForTests } from "../auth/session.ts";
 import { takeStamp } from "../auth/scope.ts";
 import {
+  applyMarkedRead,
   attachReadRecovery,
   listReadState,
   mayMarkRead,
@@ -80,6 +81,46 @@ describe("read eligibility and recovery", () => {
     await vi.waitFor(() =>
       expect(client.getQueryData(readKey(stamp))).toEqual([
         { channel_id: "c", unread_count: 1 },
+      ]),
+    );
+    unsubscribe();
+    observer.destroy();
+  });
+  it("refetches after a mark-read cancels an in-flight unread snapshot", async () => {
+    const stamp = takeStamp()!;
+    const row = (channel_id: string, unread_count: number) => ({
+      channel_id,
+      server_id: null,
+      read_message_id: null,
+      read_at: null,
+      unread_count,
+    });
+    let resolve!: (r: Response) => void;
+    response = () => json([row("a", 0), row("b", 0)]);
+    const observer = new QueryObserver(client, {
+      queryKey: readKey(stamp),
+      queryFn: ({ signal }) => listReadState(signal),
+      retry: false,
+    });
+    const unsubscribe = observer.subscribe(() => {});
+    await vi.waitFor(() =>
+      expect(client.getQueryData(readKey(stamp))).toHaveLength(2),
+    );
+    // A debounced refresh for a new message in "b" is in flight while "a"
+    // is marked read; its result must not be lost.
+    response = () =>
+      new Promise((r) => {
+        resolve = r;
+      });
+    void client.invalidateQueries({ queryKey: readKey(stamp) });
+    await vi.waitFor(() => expect(resolve).toBeTypeOf("function"));
+    response = () => json([row("a", 0), row("b", 1)]);
+    await applyMarkedRead(client, stamp, "a", row("a", 0));
+    resolve(json([row("a", 3), row("b", 1)]));
+    await vi.waitFor(() =>
+      expect(client.getQueryData(readKey(stamp))).toEqual([
+        row("a", 0),
+        row("b", 1),
       ]),
     );
     unsubscribe();
