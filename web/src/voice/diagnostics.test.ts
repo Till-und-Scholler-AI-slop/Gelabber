@@ -602,7 +602,7 @@ describe("voice diagnostics", () => {
     expect(exported.exportedAt).toBe("2026-09-22T08:00:00.000Z");
     expect(exported.browser.userAgent.length).toBeGreaterThan(0);
     expect(exported.settings.audioQuality).toBe("high");
-    expect(exported.settings.audioMaxBitrate).toBe(128_000);
+    expect(exported.settings.audioMaxBitrate).toBeNull();
     expect(exported.settings.customAudioInput).toBe(true);
     expect(exported.settings.videoMaxFps).toBe(30);
     expect(json).not.toContain("secret-device-id-xyz");
@@ -759,6 +759,38 @@ describe("voice diagnostics", () => {
 });
 
 describe("source-audio diagnostics", () => {
+  it("reports actual sender priority without substituting the requested high policy", () => {
+    const result = reduceConnection({
+      role: "voice",
+      previous: new Map(),
+      caps: {
+        ...caps,
+        senderPriorities: {
+          voice: { priority: "low", networkPriority: null },
+          camera: { priority: "low", networkPriority: "low" },
+        },
+      },
+      videoSources: { camera: "camera" },
+      entries: [
+        { id: "audio", type: "outbound-rtp", kind: "audio" },
+        {
+          id: "video",
+          type: "outbound-rtp",
+          kind: "video",
+          trackIdentifier: "camera",
+        },
+      ],
+    });
+    expect(
+      result.snapshot.flows.map((flow) => [
+        flow.senderPriority,
+        flow.senderNetworkPriority,
+      ]),
+    ).toEqual([
+      ["low", null],
+      ["low", "low"],
+    ]);
+  });
   it("separates microphone and music send caps and reports received screen/Live audio", () => {
     const result = reduceConnection({
       role: "voice",
@@ -803,8 +835,8 @@ describe("source-audio diagnostics", () => {
       "screen-audio",
       "live-audio",
     ]);
-    expect(result.snapshot.flows[0]?.configuredMaxBitrateBps).toBe(64_000);
-    expect(result.snapshot.flows[1]?.configuredMaxBitrateBps).toBe(192_000);
+    expect(result.snapshot.flows[0]?.configuredMaxBitrateBps).toBeNull();
+    expect(result.snapshot.flows[1]?.configuredMaxBitrateBps).toBeNull();
     expect(
       result.snapshot.flows
         .slice(2)

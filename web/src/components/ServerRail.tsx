@@ -1,3 +1,4 @@
+import { UnreadBadge } from "../messages/UnreadBadge.tsx";
 import { useQueryClient } from "@tanstack/react-query";
 import { Link } from "@tanstack/react-router";
 import { useVirtualizer } from "@tanstack/react-virtual";
@@ -65,9 +66,10 @@ function HomeTile({ active }: { active: boolean }) {
         onFocus={() => {
           if (userId) prefetchDms(client, userId);
         }}
-        className={`server-home-link ${active ? "is-active" : ""}`}
+        className={`relative server-home-link ${active ? "is-active" : ""}`}
       >
         <ChatIcon size={27} />
+        <UnreadBadge dms rail />
       </Link>
     </div>
   );
@@ -133,6 +135,7 @@ function ServerTile({ server, active }: { server: Server; active: boolean }) {
       className={`server-tile ${active ? "is-active" : ""}`}
     >
       {initials(server.name)}
+      <UnreadBadge serverId={server.id} rail />
     </Link>
   );
 }

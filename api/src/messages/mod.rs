@@ -11,7 +11,9 @@
 //! answer `404` — they have no message resource. A foreign/unknown channel
 //! is the same `404`.
 
+pub mod reactions;
 pub mod validate;
+mod workflows;
 
 use axum::Router;
 use axum::extract::{Query, State};
@@ -40,6 +42,7 @@ use self::validate::Cursor;
 
 pub fn router() -> Router<AppState> {
     Router::new()
+        .merge(reactions::router())
         .route(
             "/api/channels/{id}/messages",
             get(list_messages).post(create_message),
@@ -48,6 +51,7 @@ pub fn router() -> Router<AppState> {
             "/api/messages/{id}",
             patch(update_message).delete(delete_message),
         )
+        .merge(workflows::router())
 }
 
 #[derive(Debug, Clone, Serialize, PartialEq, Eq)]
@@ -66,8 +70,12 @@ pub struct Message {
     pub created_at: DateTime<Utc>,
     pub edited_at: Option<DateTime<Utc>>,
     pub revision: i64,
+    /// Immutable INSERT order for cross-device read boundaries.
+    pub created_order: i64,
     #[serde(default)]
     pub attachments: Vec<Attachment>,
+    #[serde(default)]
+    pub reactions: Vec<reactions::Reaction>,
 }
 
 #[derive(Debug, Clone, Serialize, PartialEq, Eq)]
@@ -91,6 +99,8 @@ struct MessageRow {
     created_at: DateTime<Utc>,
     edited_at: Option<DateTime<Utc>>,
     revision: i64,
+    created_order: i64,
+    reactions: sqlx::types::Json<Vec<reactions::Reaction>>,
 }
 
 impl From<MessageRow> for Message {
@@ -107,7 +117,9 @@ impl From<MessageRow> for Message {
             created_at: row.created_at,
             edited_at: row.edited_at,
             revision: row.revision,
+            created_order: row.created_order,
             attachments: Vec::new(),
+            reactions: row.reactions.0,
         }
     }
 }
@@ -120,6 +132,7 @@ struct MessageInsert {
     created_at: DateTime<Utc>,
     edited_at: Option<DateTime<Utc>>,
     revision: i64,
+    created_order: i64,
 }
 
 impl MessageInsert {
@@ -136,7 +149,9 @@ impl MessageInsert {
             created_at: self.created_at,
             edited_at: self.edited_at,
             revision: self.revision,
+            created_order: self.created_order,
             attachments: Vec::new(),
+            reactions: Vec::new(),
         }
     }
 }
@@ -212,7 +227,7 @@ async fn create_message(
     delivery::lock_channel(&mut tx, channel_id).await?;
     let row = sqlx::query_as::<_, MessageInsert>(
         "INSERT INTO messages (channel_id, author_id, content) VALUES ($1, $2, $3) \
-         RETURNING id, channel_id, content, created_at, edited_at, revision",
+         RETURNING id, channel_id, content, created_at, edited_at, revision, created_order",
     )
     .bind(channel_id)
     .bind(user.id)
@@ -293,7 +308,7 @@ async fn update_message(
     delivery::lock_channel(&mut tx, current.channel_id).await?;
     let row = sqlx::query_as::<_, MessageInsert>(
         "UPDATE messages SET content = $2, edited_at = now() WHERE id = $1 \
-         RETURNING id, channel_id, content, created_at, edited_at, revision",
+         RETURNING id, channel_id, content, created_at, edited_at, revision, created_order",
     )
     .bind(message_id)
     .bind(&content)
@@ -359,6 +374,7 @@ async fn persist_event(
     kind: EventKind,
     message: &mut Message,
 ) -> Result<(), ApiError> {
+    reactions::populate(db, message).await?;
     message.revision = delivery::revision(db).await?;
     sqlx::query("UPDATE messages SET revision=$2 WHERE id=$1")
         .bind(message.id)
@@ -422,7 +438,7 @@ pub(crate) async fn post_live_hint(state: &AppState, user: &User, server_id: Uui
     let result: Result<(),ApiError> = async {
         let mut tx=state.db.begin().await?;
         delivery::lock_channel(&mut tx,text_id).await?;
-        let row=sqlx::query_as::<_,MessageInsert>("INSERT INTO messages (channel_id, author_id, content) VALUES ($1,$2,$3) RETURNING id,channel_id,content,created_at,edited_at,revision").bind(text_id).bind(user.id).bind(content).fetch_one(&mut *tx).await?;
+        let row=sqlx::query_as::<_,MessageInsert>("INSERT INTO messages (channel_id, author_id, content) VALUES ($1,$2,$3) RETURNING id,channel_id,content,created_at,edited_at,revision,created_order").bind(text_id).bind(user.id).bind(content).fetch_one(&mut *tx).await?;
         let mut message=row.into_message(user);
         persist_event(&mut tx,server_id,EventKind::C,&mut message).await?;
         tx.commit().await?;
@@ -495,21 +511,21 @@ pub(crate) async fn messaging_channel(
     Ok(MessagingChannel::Server { member })
 }
 
+const MESSAGE_BY_ID_SQL: &str = "SELECT m.id, m.channel_id, m.author_id, u.name AS author_name, \
+                u.avatar_url AS author_avatar_url, m.content, m.created_at, m.edited_at, m.revision, m.created_order, COALESCE((SELECT jsonb_agg(jsonb_build_object('emoji', r.emoji, 'user_ids', r.user_ids) ORDER BY r.emoji) FROM (SELECT emoji,jsonb_agg(user_id ORDER BY user_id) AS user_ids FROM message_reactions WHERE message_id=m.id GROUP BY emoji) r),'[]'::jsonb) AS reactions \
+         FROM messages m JOIN users u ON u.id = m.author_id \
+         WHERE m.id = $1";
+
 async fn message_for(
     db: &PgPool,
     message_id: Uuid,
     user_id: Uuid,
 ) -> Result<(MessagingChannel, Message), ApiError> {
-    let row = sqlx::query_as::<_, MessageRow>(
-        "SELECT m.id, m.channel_id, m.author_id, u.name AS author_name, \
-                u.avatar_url AS author_avatar_url, m.content, m.created_at, m.edited_at, m.revision \
-         FROM messages m JOIN users u ON u.id = m.author_id \
-         WHERE m.id = $1",
-    )
-    .bind(message_id)
-    .fetch_optional(db)
-    .await?
-    .ok_or(ApiError::NotFound)?;
+    let row = sqlx::query_as::<_, MessageRow>(MESSAGE_BY_ID_SQL)
+        .bind(message_id)
+        .fetch_optional(db)
+        .await?
+        .ok_or(ApiError::NotFound)?;
     let access = messaging_channel(db, row.channel_id, user_id).await?;
     let mut message = Message::from(row);
     message.attachments = attachments::for_message(db, message.id).await?;
@@ -528,7 +544,7 @@ async fn load_page(
         let (at, id) = resolve_bound(db, channel_id, cursor, Bound::Before, "before").await?;
         sqlx::query_as::<_, MessageRow>(
             "SELECT m.id, m.channel_id, m.author_id, u.name AS author_name, \
-                    u.avatar_url AS author_avatar_url, m.content, m.created_at, m.edited_at, m.revision \
+                    u.avatar_url AS author_avatar_url, m.content, m.created_at, m.edited_at, m.revision, m.created_order, COALESCE((SELECT jsonb_agg(jsonb_build_object('emoji', r.emoji, 'user_ids', r.user_ids) ORDER BY r.emoji) FROM (SELECT emoji,jsonb_agg(user_id ORDER BY user_id) AS user_ids FROM message_reactions WHERE message_id=m.id GROUP BY emoji) r),'[]'::jsonb) AS reactions \
              FROM messages m JOIN users u ON u.id = m.author_id \
              WHERE m.channel_id = $1 AND (m.created_at, m.id) < ($2, $3) \
              ORDER BY m.created_at DESC, m.id DESC \
@@ -544,7 +560,7 @@ async fn load_page(
         let (at, id) = resolve_bound(db, channel_id, cursor, Bound::After, "after").await?;
         let mut newer = sqlx::query_as::<_, MessageRow>(
             "SELECT m.id, m.channel_id, m.author_id, u.name AS author_name, \
-                    u.avatar_url AS author_avatar_url, m.content, m.created_at, m.edited_at, m.revision \
+                    u.avatar_url AS author_avatar_url, m.content, m.created_at, m.edited_at, m.revision, m.created_order, COALESCE((SELECT jsonb_agg(jsonb_build_object('emoji', r.emoji, 'user_ids', r.user_ids) ORDER BY r.emoji) FROM (SELECT emoji,jsonb_agg(user_id ORDER BY user_id) AS user_ids FROM message_reactions WHERE message_id=m.id GROUP BY emoji) r),'[]'::jsonb) AS reactions \
              FROM messages m JOIN users u ON u.id = m.author_id \
              WHERE m.channel_id = $1 AND (m.created_at, m.id) > ($2, $3) \
              ORDER BY m.created_at ASC, m.id ASC \
@@ -569,7 +585,7 @@ async fn load_page(
     } else {
         sqlx::query_as::<_, MessageRow>(
             "SELECT m.id, m.channel_id, m.author_id, u.name AS author_name, \
-                    u.avatar_url AS author_avatar_url, m.content, m.created_at, m.edited_at, m.revision \
+                    u.avatar_url AS author_avatar_url, m.content, m.created_at, m.edited_at, m.revision, m.created_order, COALESCE((SELECT jsonb_agg(jsonb_build_object('emoji', r.emoji, 'user_ids', r.user_ids) ORDER BY r.emoji) FROM (SELECT emoji,jsonb_agg(user_id ORDER BY user_id) AS user_ids FROM message_reactions WHERE message_id=m.id GROUP BY emoji) r),'[]'::jsonb) AS reactions \
              FROM messages m JOIN users u ON u.id = m.author_id \
              WHERE m.channel_id = $1 \
              ORDER BY m.created_at DESC, m.id DESC \
