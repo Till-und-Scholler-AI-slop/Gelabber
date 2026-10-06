@@ -1,6 +1,17 @@
 # Actual-app acceptance scenarios
 
-Current 11b/c execution, the row-by-row acceptance matrix, fault-runtime instructions and CI limits are in [AUTOMATION-HANDOFF.md](AUTOMATION-HANDOFF.md). [HANDOFF.md](HANDOFF.md) preserves historical 11a findings; it is not the current result matrix.
+The current v0.4 candidate uses mediasoup 0.29.0 through the official Rust binding
+and public mediasoup-client 3.24.1, with Gelabber's own v4 WebSocket/authority
+contract. A publishing voice connection uses separate SDK send and receive PCs
+(at most two active PCs); a watch-only connection uses one receive PC. Native
+transport compaction preserves captures and creates fresh Producer/Consumer IDs.
+Use the current executed test/runtime freeze when reporting limits or results.
+The previous engine's `media/tests/browser-lifecycle.mjs`, dated media test docs
+and historical reports are not v4 acceptance gates. See
+[SOURCE_AUDIO.md](../../../media/SOURCE_AUDIO.md) and the
+[migration document](../../../docs/v0.4-mediasoup-migration.md).
+
+Recorded 11b/c execution, the row-by-row acceptance matrix, fault-runtime instructions and CI limits are in [AUTOMATION-HANDOFF.md](AUTOMATION-HANDOFF.md). [HANDOFF.md](HANDOFF.md) preserves historical 11a findings. Those results retain their recorded runtime hashes and do not establish acceptance of the new v4 engine.
 
 This runner provides scenario construction and automated local/CI subset gates. Complete acceptance also requires the documented manual, HTTPS/WAN and production gates. The runner creates isolated `example.test` accounts and its own server through the UI, uses the actual API, Gateway, SFU and object store, and deletes only its own server. Accounts remain as test fixtures; no shared Redis keys, services or existing data are reset. A fresh browser cookie jar is used for each participant. Core scenarios verify and restore each fixture account before and after every check; failed restoration blocks following scenarios.
 
@@ -36,9 +47,9 @@ The local Firefox TURN exception requires explicit `GELABBER_E2E_FIREFOX_LOOPBAC
 
 - Media: actual UI Go Live and watch-only without microphone/camera/display calls or senders; default autoplay; late watch aged at least 30 seconds from publication; native selected ICE path; decoded and rendered frame growth with changing synthetic pixels and distinct live/screen/camera color bands. Bytes alone cannot pass. First-frame budgets: 5 seconds direct, 10 seconds relay. Native publisher encoding must begin first.
 - Recovery: targeted browser Media-WS/Gateway disconnects, automatic signaling return within 20 seconds, same live capture track sent without another display request. Gateway-only recovery must keep the healthy peer. No publisher click after the fault. Browser offline for 8 seconds is separately labeled: established UDP may remain flowing; it does not claim an OS network outage or server restart.
-- Lifecycle: all 20 live start/stop cycles run before client resource bounds are assessed, followed by an independent late viewer. At most one active publisher/watch peer; stop leaves audio only, at most four transceivers (audio/video plus two spare slots) and 32 KiB local SDP. These deliberately finite client bounds catch linear accumulation. They do not prove unexposed SFU publication/task bounds. No reload of the publisher during the cycles.
+- Lifecycle: all 20 live start/stop cycles run before the current client resource assertions are assessed, followed by an independent late viewer. A voice connection has at most two active SDK PCs and watch-only has one; stop leaves voice audio. Public transport compaction retires old native resources before retaining captures on replacement transports. Report the actual native PC/transceiver counts from the executed candidate; the previous engine's sender-reuse and fixed SDP-size results do not qualify v4. These checks do not prove unexposed SFU publication/task bounds. No reload of the publisher during the cycles.
 - UI: SPA channel navigation must not label old-channel video as the new channel; stop/leave/mute/live controls remain reachable. Native picker cancellation and losing an existing live claim must release capture. Simulated `NotAllowedError` requires a visible playback retry; actual default autoplay is a separate native-browser check, without policy overrides.
-- Watch audio: every active publication in the same authorized voice channel exactly once; publisher selection filters Live video only. Positive other-room audio/Live must not leak. Native source/RTP and duplicate-playback observations complement session-wide Volume/Deafen/click-retry checks. Human audible quality stays manual.
+- Watch audio: room microphone audio exactly once plus the selected publisher's Live audio paired to its current Live Producer/epoch. Other camera/screen video and their source audio are excluded from the dedicated watch peer. Positive other-room audio/Live must not leak. Native source/RTP and duplicate-playback observations complement session-wide Volume/Deafen/click-retry checks. Human audible quality stays manual.
 - Forced track arrival: before holding/reversing callbacks, require exactly three live fixture capture objects (one camera, two display sources), each bound to a distinct current native sender. Read each sender's own stats and require fresh encoded-frame growth for every source across two observations. One legacy encoding and multiple simulcast RIDs are both valid; several RTP records for one source cannot substitute for a missing source. Native track identifiers stay in browser memory; evidence uses fixture ordinals and RID labels. Run the focused ownership/deadline checks with `node --test scripts/e2e/publisher-encoders.checks.mjs`.
 - Core: real registration/invite/channel setup, reload/login/logout, cross-client chat create/edit/delete, new DM discovery while receiver is already connected, JPEG/PNG/WebP presign/PUT/bind/reload/byte-exact download in both channel and DM, 55-message history/paging, explicit error/retry and failed-send navigation, delayed A-account 401/CSRF403 after login as B with another tab observing B's session.
 - Access: Leave/Kick/Ban/Logout while an independent native Gateway subscriber remains open, plus an actual decoded watch peer whose local close is deliberately suppressed, plus an unconsumed pre-revocation SFU ticket. Positive pre-revocation Gateway and frame controls are recorded. Post-revocation REST, new tickets, existing events, continuing decoded frames and the held ticket are all assessed. Closing the normal UI socket alone cannot pass. Another independent session must survive logout. Raw sockets and tracks are released afterward.
@@ -69,6 +80,10 @@ Core/Storage/Epoch, concurrent attempts and row rollback, real slow raw TCP read
 See [HANDOFF.md](HANDOFF.md) and [evidence/](evidence/) for executed checks, controls and remaining blockers. The coordinator authorized 11b/c automation after the separate 11a fix; runtime prerequisites and final 11d gates remain explicit. No product edits or self-deployment.
 
 ## Continuous call and resource return
+
+The user excluded the one-hour call test and new load tests for this v0.4 work.
+Do not execute the runner below as a current acceptance requirement or record it
+as passed. Its invocation and dated reports are retained for historical reference.
 
 The long local check joins two voice publishers and a third watch-only client,
 starts Go Live, and samples native duplex audio and decoded video every 30 seconds.

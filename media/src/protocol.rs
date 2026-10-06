@@ -1,122 +1,285 @@
-//! Compact JSON for the **media** WebSocket. This is not the chat gateway:
-//! no `op:"e"`, no seq, no session cookie. Join is a short ticket.
-//!
-//! Inbound ops are an internally tagged enum. The JSON is the same short
-//! keys as before. An unknown `op` fails to decode and the socket answers
-//! `bad_request`.
-
+//! Own mediasoup control protocol. No product SDP or ICE-candidate messages.
 use serde::{Deserialize, Serialize};
+use serde_json::Value;
 use uuid::Uuid;
 
-/// Version 2 adds explicit source Watch and independently tagged source audio.
-pub const MEDIA_PROTOCOL_VERSION: u8 = 2;
+/// v3 belongs to the retired layer prototype; v4 is the mediasoup contract.
+pub const MEDIA_PROTOCOL_VERSION: u8 = 4;
+pub const OUTBOUND_CAPACITY: usize = 64;
 
-#[derive(Debug, Clone, Deserialize, PartialEq, Eq)]
-#[serde(tag = "op")]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize, Deserialize)]
+pub enum SourceKind {
+    #[serde(rename = "a")]
+    Mic,
+    #[serde(rename = "v")]
+    Camera,
+    #[serde(rename = "s")]
+    Screen,
+    #[serde(rename = "l")]
+    Live,
+    #[serde(rename = "sa")]
+    ScreenAudio,
+    #[serde(rename = "la")]
+    LiveAudio,
+}
+impl SourceKind {
+    pub fn as_str(self) -> &'static str {
+        match self {
+            Self::Mic => "a",
+            Self::Camera => "v",
+            Self::Screen => "s",
+            Self::Live => "l",
+            Self::ScreenAudio => "sa",
+            Self::LiveAudio => "la",
+        }
+    }
+    pub fn is_video(self) -> bool {
+        matches!(self, Self::Camera | Self::Screen | Self::Live)
+    }
+    pub fn parent(self) -> Option<Self> {
+        match self {
+            Self::ScreenAudio => Some(Self::Screen),
+            Self::LiveAudio => Some(Self::Live),
+            _ => None,
+        }
+    }
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize, Deserialize)]
+pub enum WatchKind {
+    #[serde(rename = "s")]
+    Screen,
+    #[serde(rename = "l")]
+    Live,
+}
+impl WatchKind {
+    pub fn as_str(self) -> &'static str {
+        match self {
+            Self::Screen => "s",
+            Self::Live => "l",
+        }
+    }
+}
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "lowercase")]
+pub enum TransportDirection {
+    Send,
+    Recv,
+}
+
+#[derive(Debug, Clone, Deserialize, PartialEq)]
+#[serde(tag = "op", deny_unknown_fields)]
 pub enum ClientFrame {
     #[serde(rename = "j")]
     Join {
         #[serde(default)]
-        tk: Option<String>,
-        /// Selected Live publisher; microphone audio retains the room scope.
+        id: u32,
         #[serde(default)]
-        w: Option<uuid::Uuid>,
-        /// Client supports explicit Watch and independently tagged source audio.
+        tk: String,
         #[serde(default)]
-        v: Option<u8>,
-    },
-    #[serde(rename = "o")]
-    Offer {
-        #[serde(default)]
-        sdp: Option<String>,
-    },
-    #[serde(rename = "a")]
-    Answer {
-        #[serde(default)]
-        sdp: Option<String>,
-    },
-    #[serde(rename = "i")]
-    Ice {
-        #[serde(default)]
-        ice: Option<String>,
-        #[serde(default)]
-        mid: Option<String>,
-    },
-    /// Kind bound to the publisher's MSID track ID. Missing `t` is legacy SDP order.
-    #[serde(rename = "p")]
-    Announce {
-        #[serde(default)]
-        k: Option<String>,
-        #[serde(default)]
-        t: Option<String>,
-        #[serde(default)]
-        lc: Option<uuid::Uuid>,
-    },
-    /// Subscriber could not answer the outstanding offer.
-    #[serde(rename = "x")]
-    Abort,
-    /// Publisher offer failed before the announced track arrived.
-    #[serde(rename = "u")]
-    Retract {
-        #[serde(default)]
-        k: Option<String>,
-        #[serde(default)]
-        t: Option<String>,
-    },
-    /// Opt into a source's video and paired audio on a voice seat.
-    #[serde(rename = "w")]
-    Watch {
-        #[serde(default)]
-        u: Option<Uuid>,
-        #[serde(default)]
-        k: Option<String>,
-        #[serde(default)]
-        on: Option<bool>,
-    },
-    #[serde(rename = "l")]
-    Leave,
-}
-
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
-#[serde(tag = "op")]
-pub enum ServerFrame {
-    #[serde(rename = "ok")]
-    Ok {
-        c: String,
-        u: String,
+        w: Option<Uuid>,
         #[serde(default)]
         v: u8,
     },
-    #[serde(rename = "o")]
-    Offer { sdp: String },
-    #[serde(rename = "a")]
-    Answer { sdp: String },
-    #[serde(rename = "i")]
-    Ice {
-        ice: String,
-        #[serde(skip_serializing_if = "Option::is_none")]
-        mid: Option<String>,
+    #[serde(rename = "capabilities")]
+    Capabilities { id: u32, rtp: Value },
+    #[serde(rename = "transport")]
+    CreateTransport {
+        id: u32,
+        direction: TransportDirection,
     },
-    #[serde(rename = "err")]
-    Err {
-        e: &'static str,
-        #[serde(skip_serializing_if = "Option::is_none")]
+    #[serde(rename = "connect")]
+    ConnectTransport {
+        id: u32,
+        #[serde(rename = "transportId")]
+        transport_id: String,
+        dtls: Value,
+    },
+    #[serde(rename = "restartIce")]
+    RestartIce {
+        id: u32,
+        #[serde(rename = "transportId")]
+        transport_id: String,
+    },
+    #[serde(rename = "closeTransport")]
+    CloseTransport {
+        id: u32,
+        #[serde(rename = "transportId")]
+        transport_id: String,
+    },
+    #[serde(rename = "produce")]
+    Produce {
+        id: u32,
+        k: SourceKind,
+        rtp: Value,
+        epoch: Uuid,
+        #[serde(default)]
+        parent: Option<String>,
+        #[serde(default)]
         lc: Option<Uuid>,
+        #[serde(default, rename = "expectedOldProducerId")]
+        expected_old_producer_id: Option<String>,
+        #[serde(default)]
+        height: u16,
+        #[serde(default)]
+        paused: bool,
     },
+    #[serde(rename = "pauseProducer")]
+    PauseProducer {
+        id: u32,
+        #[serde(rename = "producerId")]
+        producer_id: String,
+    },
+    #[serde(rename = "resumeProducer")]
+    ResumeProducer {
+        id: u32,
+        #[serde(rename = "producerId")]
+        producer_id: String,
+    },
+    #[serde(rename = "closeProducer")]
+    CloseProducer {
+        id: u32,
+        #[serde(rename = "producerId")]
+        producer_id: String,
+    },
+    #[serde(rename = "consumerReady")]
+    ConsumerReady {
+        id: u32,
+        #[serde(rename = "consumerId")]
+        consumer_id: String,
+        generation: Uuid,
+    },
+    #[serde(rename = "consumerFailed")]
+    ConsumerFailed {
+        id: u32,
+        #[serde(rename = "consumerId")]
+        consumer_id: String,
+        generation: Uuid,
+    },
+    #[serde(rename = "w")]
+    Watch {
+        id: u32,
+        u: Uuid,
+        k: WatchKind,
+        on: bool,
+    },
+    #[serde(rename = "q")]
+    ViewerLayer {
+        id: u32,
+        #[serde(rename = "consumerId")]
+        consumer_id: String,
+        generation: Uuid,
+        h: u16,
+        congested: bool,
+    },
+    #[serde(rename = "l")]
+    Leave { id: u32 },
+}
+impl ClientFrame {
+    pub fn id(&self) -> u32 {
+        match self {
+            Self::Join { id, .. }
+            | Self::Capabilities { id, .. }
+            | Self::CreateTransport { id, .. }
+            | Self::ConnectTransport { id, .. }
+            | Self::RestartIce { id, .. }
+            | Self::CloseTransport { id, .. }
+            | Self::Produce { id, .. }
+            | Self::PauseProducer { id, .. }
+            | Self::ResumeProducer { id, .. }
+            | Self::CloseProducer { id, .. }
+            | Self::ConsumerReady { id, .. }
+            | Self::ConsumerFailed { id, .. }
+            | Self::Watch { id, .. }
+            | Self::ViewerLayer { id, .. }
+            | Self::Leave { id } => *id,
+        }
+    }
 }
 
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+#[serde(tag = "op")]
+pub enum ServerFrame {
+    #[serde(rename = "result")]
+    Result { id: u32, data: Value },
+    #[serde(rename = "err")]
+    Err {
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        id: Option<u32>,
+        e: String,
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        lc: Option<Uuid>,
+    },
+    #[serde(rename = "consumer")]
+    Consumer {
+        #[serde(rename = "consumerId")]
+        consumer_id: String,
+        #[serde(rename = "producerId")]
+        producer_id: String,
+        owner: Uuid,
+        k: SourceKind,
+        epoch: Uuid,
+        generation: Uuid,
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        parent: Option<String>,
+        kind: String,
+        #[serde(rename = "rtpParameters")]
+        rtp_parameters: Value,
+        #[serde(default)]
+        paused: bool,
+    },
+    #[serde(rename = "consumerClosed")]
+    ConsumerClosed {
+        #[serde(rename = "consumerId")]
+        consumer_id: String,
+        generation: Uuid,
+    },
+    #[serde(rename = "consumerState")]
+    ConsumerState {
+        #[serde(rename = "consumerId")]
+        consumer_id: String,
+        generation: Uuid,
+        paused: bool,
+    },
+    #[serde(rename = "producerClosed")]
+    ProducerClosed {
+        #[serde(rename = "producerId")]
+        producer_id: String,
+        epoch: Uuid,
+    },
+    #[serde(rename = "layers")]
+    Layers {
+        #[serde(rename = "consumerId")]
+        consumer_id: String,
+        generation: Uuid,
+        #[serde(rename = "spatialLayer")]
+        spatial_layer: Option<u8>,
+        #[serde(rename = "temporalLayer")]
+        temporal_layer: Option<u8>,
+    },
+}
 impl ServerFrame {
     pub fn error(code: &'static str) -> Self {
-        Self::Err { e: code, lc: None }
+        Self::Err {
+            id: None,
+            e: code.into(),
+            lc: None,
+        }
     }
-
+    pub fn request_error(id: u32, code: &'static str) -> Self {
+        Self::Err {
+            id: Some(id),
+            e: code.into(),
+            lc: None,
+        }
+    }
     pub fn live_withdrawn(nonce: Uuid) -> Self {
         Self::Err {
-            e: "forbidden",
+            id: None,
+            e: "forbidden".into(),
             lc: Some(nonce),
         }
     }
-
     pub fn to_json(&self) -> Result<String, serde_json::Error> {
         serde_json::to_string(self)
     }
@@ -125,69 +288,47 @@ impl ServerFrame {
 #[cfg(test)]
 mod tests {
     use super::*;
-
     #[test]
-    fn frames_are_compact_and_not_chat() {
-        let json = ServerFrame::Ok {
-            c: "1".into(),
-            u: "2".into(),
-            v: MEDIA_PROTOCOL_VERSION,
+    fn rejects_old_sdp_and_unknown_fields() {
+        for raw in [
+            r#"{"op":"o","sdp":"v=0"}"#,
+            r#"{"op":"a","sdp":"v=0"}"#,
+            r#"{"op":"i","ice":"candidate"}"#,
+            r#"{"op":"l","id":1,"user":"other"}"#,
+        ] {
+            assert!(serde_json::from_str::<ClientFrame>(raw).is_err());
         }
-        .to_json()
-        .unwrap();
-        assert!(json.starts_with(r#"{"op":"ok""#));
-        assert!(!json.contains("\"n\""));
-        assert!(!json.contains(r#""op":"e""#));
-        assert!(!json.contains("livekit"));
     }
-
     #[test]
-    fn live_withdrawal_correlates_only_the_retired_claim() {
+    fn source_and_generation_are_explicit() {
+        let epoch = Uuid::new_v4();
+        let raw = serde_json::json!({"op":"produce","id":3,"k":"sa","rtp":{},"epoch":epoch,"parent":"parent-producer"});
+        let frame: ClientFrame = serde_json::from_value(raw).unwrap();
+        assert!(matches!(
+            &frame,
+            ClientFrame::Produce {
+                k: SourceKind::ScreenAudio,
+                parent: Some(_),
+                ..
+            }
+        ));
+        assert_eq!(frame.id(), 3);
+    }
+    #[test]
+    fn old_join_can_be_rejected_before_consuming_ticket() {
+        let old: ClientFrame =
+            serde_json::from_str(r#"{"op":"j","tk":"abcdefghijkl","v":2}"#).unwrap();
+        assert!(matches!(old, ClientFrame::Join { v: 2, id: 0, .. }));
+        assert_eq!(MEDIA_PROTOCOL_VERSION, 4);
+    }
+    #[test]
+    fn errors_correlate_request_or_retired_live_claim() {
         let nonce = Uuid::new_v4();
-        let frame = ServerFrame::live_withdrawn(nonce);
-        let json: serde_json::Value = serde_json::from_str(&frame.to_json().unwrap()).unwrap();
-        assert_eq!(json["e"], "forbidden");
-        assert_eq!(json["lc"], nonce.to_string());
-        assert_eq!(
-            ServerFrame::error("forbidden").to_json().unwrap(),
-            r#"{"op":"err","e":"forbidden"}"#
-        );
-    }
-
-    #[test]
-    fn pub_announce_is_compact() {
-        let frame: ClientFrame = serde_json::from_str(r#"{"op":"p","k":"s"}"#).unwrap();
-        assert_eq!(
-            frame,
-            ClientFrame::Announce {
-                k: Some("s".into()),
-                t: None,
-                lc: None,
-            }
-        );
-        let live: ClientFrame = serde_json::from_str(r#"{"op":"p","k":"l"}"#).unwrap();
-        assert_eq!(
-            live,
-            ClientFrame::Announce {
-                k: Some("l".into()),
-                t: None,
-                lc: None,
-            }
-        );
-        let abort: ClientFrame = serde_json::from_str(r#"{"op":"x"}"#).unwrap();
-        assert_eq!(abort, ClientFrame::Abort);
-        let undo: ClientFrame = serde_json::from_str(r#"{"op":"u","k":"s"}"#).unwrap();
-        assert_eq!(
-            undo,
-            ClientFrame::Retract {
-                k: Some("s".into()),
-                t: None,
-            }
-        );
-    }
-
-    #[test]
-    fn unknown_op_is_rejected() {
-        assert!(serde_json::from_str::<ClientFrame>(r#"{"op":"mesh"}"#).is_err());
+        let error = serde_json::to_value(ServerFrame::live_withdrawn(nonce)).unwrap();
+        assert_eq!(error["lc"], nonce.to_string());
+        assert!(error.get("id").is_none());
+        let error = serde_json::to_value(ServerFrame::request_error(7, "forbidden")).unwrap();
+        assert_eq!(error["id"], 7);
+        assert!(error.get("lc").is_none());
     }
 }

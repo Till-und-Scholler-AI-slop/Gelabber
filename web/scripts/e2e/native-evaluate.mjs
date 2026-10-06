@@ -132,11 +132,21 @@ export async function nativeEvaluate(actor, fn, arg, deadlineMs = 5_000) {
   } catch (error) {
     if (error instanceof NativeInterfaceFailure) throw error;
     if (error?.message?.includes("E2E_NATIVE_STATS_DEADLINE")) {
+      const peer = error.message.match(
+        /E2E_NATIVE_STATS_DEADLINE pc=(\d{1,5}) connection=(new|connecting|connected|disconnected|failed|closed) ice=(new|checking|connected|completed|disconnected|failed|closed)(?:\s|$)/,
+      );
       invalidate();
       throw new NativeInterfaceFailure({
         stage: "native-getStats",
         nativeDataAvailable: false,
         deadlineEpochMs: deadline,
+        ...(peer
+          ? {
+              nativePCordinal: Number(peer[1]),
+              connection: peer[2],
+              ice: peer[3],
+            }
+          : {}),
       });
     }
     throw error;

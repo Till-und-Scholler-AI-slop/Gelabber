@@ -1,0 +1,550 @@
+{
+  "schema": 1,
+  "status": "PASS",
+  "recorded_utc": "2026-10-06T12:39:49.242269+00:00",
+  "scope": "short actual local product acceptance; own synthetic capture and own fixture services; not full v0.4 release acceptance",
+  "product_input_sha256": {
+    "Cargo.lock": "609105cf26bc5839f3a1f517b714dec5cd0d215d4ddc0eee4a4d444ffd08b274",
+    "media/Cargo.toml": "036dcf3f5098925553a87011ca797f0687168f7accdce0b0cadad9329d6dff55",
+    "web/package-lock.json": "682318ea6a51c6c597c690c96a84f787442c802c767d6731298a6dd029e297fa",
+    "media/src/config.rs": "9966fc4b1d12cb37c0a9538fa4958485138c3fdf44420529dd05bd5a857713b5",
+    "media/src/error.rs": "da0fd254c2d7f5eebcbafe14d8e7d7271c7bad7ad51322dd94e9d926c77e4495",
+    "media/src/health.rs": "9b0f1a5bead063b6aac1358bf5cc07407c1ea07444a3dfc9a5373967d94e55cc",
+    "media/src/lib.rs": "aa63c001131a222e1699082c8ae984f562e59c55182849c411da65e1ba4ffa38",
+    "media/src/live.rs": "10683e6ea3dcd510280fd460c6e1b7a7464e81b1677c51ed5b079f2522de1c6a",
+    "media/src/main.rs": "5758ccbe31e022604b8e997a40a4b407e1917a5025dc7cd3cdb32ffbf8ce2a59",
+    "media/src/metrics.rs": "58f6ced13c7ca979831a494f3af44377784c91d39ba0b56fbe327056056ead86",
+    "media/src/protocol.rs": "f683777e23bdef1632980d160138b53e4efe16ee89946228042c2dab96972441",
+    "media/src/sfu.rs": "63d3fe956223a84f0c78c3e0718db37d469cc97acdeba512dc037e3dbde373e8",
+    "media/src/state.rs": "c54afc4b6deca40577f0ae370323869c1662649fe7977fce1afe7562b5694bfa",
+    "media/src/telemetry.rs": "d326c0bbd5724f90b4bd0e6c4e6300b95cccfb71a8f6b379648ed9d1cc82f736",
+    "media/src/ticket.rs": "aa6ccf93a70ad85558ee852a62aff842cc1c9cdc4b4939956a47c88eeb67af6f",
+    "media/src/ws.rs": "05022c65f738a93147445d9ab737652874e81adcd9723d9ce480921be0959090",
+    "web/src/voice/audioProcessing.test.ts": "c437997790f69da998d1dcfdd2877a3308d5f9a6a5a526e06248500efa9f49e6",
+    "web/src/voice/audioProcessing.ts": "440c334239a1a987f22cd30a25abc3793410fd77268adbeebf1342b3c90742fa",
+    "web/src/voice/callSounds.test.ts": "a24a2811833dec7904a7e0209f4eed6fe9e1303de837d60cbef1536b69da912f",
+    "web/src/voice/callSounds.ts": "a5011c576e44112e46afbd2b3813c70346d856352f65e8320f02bf5c5fcf50ca",
+    "web/src/voice/diagnostics.test.ts": "ed8ba2e29123dd6b83aee7b8dcc3201d5d63185cad9f3752fffc2258ab783064",
+    "web/src/voice/diagnostics.ts": "511a32630d73c8fdbd6280838052e61807b5285a19c56a454eb99a8acd19246f",
+    "web/src/voice/media.test.ts": "414cdde7c3be8011e49ac88c2b767ec3be90175325c174d8f1f0f2e174bdcc8e",
+    "web/src/voice/media.ts": "1c605269920230b725c0267d3b2a0b3451f9bfc77404131a678d6474dc367836",
+    "web/src/voice/mediaPeer.ts": "94c43bb202055ce2ba22ab08aef09807a6e52faf1a33bf43db225cb2cc63ef7d",
+    "web/src/voice/mediaPriority.test.ts": "ca9901a862ebffa01035ed0df21704082ddaf256721a94e2a02896121f2a2689",
+    "web/src/voice/mediaPriority.ts": "8d4cd7daa4830c15b4fe03e66cdb6c7a373ec35f2e90603e27d7db3057d59cae",
+    "web/src/voice/mediasoupConnection.test.ts": "307f40abdaadcb3c92cf0e8fd250d9634f04168a59c618c11df6cc87ea64b16c",
+    "web/src/voice/mediasoupConnection.ts": "03802ded478ea2478014a346a01e69b9f585de29bccf39917ae8167a21a3b9dd",
+    "web/src/voice/microphone.test.ts": "284542eb23b01f1446f7981563071dfb966a8d92429cd5f754d8e57ce4f5c699",
+    "web/src/voice/microphone.ts": "6bdafbedbd3b22aa202072d620f382bf0c475bb0fadddae9debe197b9fc22d95",
+    "web/src/voice/microphoneComparison.test.ts": "b310ae13a27c4585ab5fd6c3a3becfb200e35de22f600e580e130be51e46717b",
+    "web/src/voice/microphoneComparison.ts": "4f7bb9a386f60468888fb308d64f3d643e744c5c86e13c4024d17695c6369792",
+    "web/src/voice/roster.test.ts": "a4b5db5950446be11d4125d29f60cb471a679e9109705d94671dc273729f7bca",
+    "web/src/voice/roster.ts": "b94d8f64509c08508bb04a182024f04fed3c57925af1f6ba6a5329f3ea47d08d",
+    "web/src/voice/session.test.ts": "925adf07e84adc51cbd8f216894b49f25b87b01c1d7a4de1fc3f748b07faf73e",
+    "web/src/voice/session.ts": "424bfe4aa07381165b3330bee68b8b4768fc6b82b9ebb9df02c99ba4ae8dbd14",
+    "web/src/voice/settings.test.ts": "550e6179aca98b5bde04f8a5ad1e64aeb4f04ed458926fe0b9894384f8590de0",
+    "web/src/voice/settings.ts": "eaec068dee30dbbdf0e60aa53974d09ea45eecbfdb788b358b28e2fea482d1fc",
+    "web/src/voice/viewerLayers.test.ts": "25fe59693d782edcaa4415ad4947d4aa89bbbe1b4c543d190801798e9384c636",
+    "web/src/voice/viewerLayers.ts": "2b59e244b5ae16e8bc32dc93a53c6b1782808d3b915ef79a2e13a8409622821b"
+  },
+  "native_binary_sha256": "fe5e29c501797359f2ffae753747abba60735c85f84b06b2528911c32d4bde53",
+  "runtime_provenance": {
+    "schema": 1,
+    "recorded_utc": "2026-10-06T12:21:18.029779+00:00",
+    "media_image_id": "sha256:0c203398285b8bd9a3367e2301042f649bcaaa3a81a6cd58107757a77a91e127",
+    "media_container_binary_sha256": "7dfd3f158378d81c0925ddf5745b6dc622986b7a859f54ebd804141d6759b4b4",
+    "media_image_input_manifest_sha256": "15bad6eb2eeea47c152c9f9ecf13ee16aa976008478ea2514c4e2eeaf712d462",
+    "host_native_process_test_binary_sha256": "fe5e29c501797359f2ffae753747abba60735c85f84b06b2528911c32d4bde53",
+    "served_web_bundle_sha256": "bb045927cec0059d79ebbbca51e10dce8dee1b4024f66841d109a62874e567e8",
+    "scope": "Native13 process control uses own host GCC16 binary; source/audio/access/lifecycle/reconnect use actual Debian GCC14 media image via owned host network fixture. Identical frozen product source; local network/synthetic capture only."
+  },
+  "web_dist_assets": {
+    "index-DR-9_D2N.js": "bb045927cec0059d79ebbbca51e10dce8dee1b4024f66841d109a62874e567e8",
+    "EmojiPicker-DWF7knUi.js": "ebe91ee761fb53e4de6064a9fe4843de2f2bec3127f06c46a141d3ca4a6bfb1f"
+  },
+  "api_runtime": "own unchanged API source at v0.4 base 99394ae4c0f1881417f805936bb6908a077c8dac; dedicated fixtures with rate limits disabled",
+  "evidence": [
+    {
+      "artifact": "mediasoup-native-product-final-13.json",
+      "sha256": "eae6a39291129f8f77699f1dae4c23ca998d2dd95afe92a96bf69953af42d683",
+      "held_receiver_oracle_qualification": "Before native SDP-cleanup guard; final independent Watch-Off proof is native-held-final-14. Layers/process recovery/9 live_busy responses remain valid.",
+      "browser": {
+        "engine": "chromium",
+        "version": "153.0.8010.12",
+        "platform": "linux",
+        "node": "v26.8.2"
+      },
+      "gate": {
+        "passed": true,
+        "scope": "requested-suite",
+        "excluded": [],
+        "absent": [],
+        "completeAcceptance": false
+      },
+      "cases": [
+        {
+          "id": "isolated-mediasoup-native-fixture",
+          "status": "PASS"
+        },
+        {
+          "id": "consumer-paused-until-browser-ready",
+          "status": "PASS"
+        },
+        {
+          "id": "independent-viewer-layers-with-receive-loss",
+          "status": "PASS"
+        },
+        {
+          "id": "native-media-process-failure-preserves-capture",
+          "status": "PASS"
+        },
+        {
+          "id": "watch-off-held-receiver-stops-native-media",
+          "status": "PASS"
+        },
+        {
+          "id": "owned-media-runtime-normal-shutdown",
+          "status": "PASS"
+        }
+      ],
+      "cleanup": [
+        {
+          "target": "owned-test-server",
+          "status": 204,
+          "stage": "complete",
+          "statuses": {
+            "login": 200,
+            "delete": 204,
+            "logout": 200
+          }
+        }
+      ]
+    },
+    {
+      "artifact": "source-audio-chromium-final-6.json",
+      "sha256": "ff737e87b39a76146cd3eb21c29725b9b52c9b910e468153d5107cca478fd201",
+      "status": "passed",
+      "checks": [
+        "s: independent volume, source/microphone mute, deafen restoration",
+        "s: actual A/V RTP, Watch/Stop Watch gating, no loopback, parent cleanup",
+        "l: independent volume, source/microphone mute, deafen restoration",
+        "l: actual A/V RTP, Watch/Stop Watch gating, no loopback, parent cleanup",
+        "six concurrent sources: a/v/s/l/sa/la actual RTP and three rendered videos",
+        "enumerated input-device and enhanced/Original DSP swaps: confirmed native audio with other five sources flowing",
+        "no-audio fallback: video, visible notice, no fabricated source audio",
+        "listen-only Live Watch: selected A/V, no microphone acquisition, complete stop"
+      ],
+      "browser_versions": {
+        "publisher": "153.0.8010.12",
+        "receiver": "153.0.8010.12"
+      },
+      "node": "v26.8.2",
+      "cleanup": {
+        "community": 204,
+        "accounts": "example.test fixtures retained; no account-deletion API",
+        "logout": [
+          200,
+          200
+        ]
+      }
+    },
+    {
+      "artifact": "source-audio-firefox-final-3.json",
+      "sha256": "bda7ec8699ee7a61cd03cb12beee6a1287f4762c6da3b8ad1a0987099cf4213b",
+      "status": "passed",
+      "checks": [
+        "s: independent volume, source/microphone mute, deafen restoration",
+        "s: actual A/V RTP, Watch/Stop Watch gating, no loopback, parent cleanup",
+        "l: independent volume, source/microphone mute, deafen restoration",
+        "l: actual A/V RTP, Watch/Stop Watch gating, no loopback, parent cleanup",
+        "six concurrent sources: a/v/s/l/sa/la actual RTP and three rendered videos",
+        "enumerated input-device and enhanced/Original DSP swaps: confirmed native audio with other five sources flowing",
+        "no-audio fallback: video, visible notice, no fabricated source audio",
+        "listen-only Live Watch: selected A/V, no microphone acquisition, complete stop"
+      ],
+      "browser_versions": {
+        "publisher": "153.0.8010.12",
+        "receiver": "155.0"
+      },
+      "node": "v26.8.2",
+      "cleanup": {
+        "community": 204,
+        "accounts": "example.test fixtures retained; no account-deletion API",
+        "logout": [
+          200,
+          200
+        ]
+      }
+    },
+    {
+      "artifact": "access-product-final-2.json",
+      "sha256": "9f197299c7e85e5b04ba0c312cfe15f19e81c6e4c1e53848107e005d8aa94710",
+      "browser": {
+        "engine": "chromium",
+        "version": "153.0.8010.12",
+        "platform": "linux",
+        "node": "v26.8.2"
+      },
+      "gate": {
+        "passed": true,
+        "scope": "selected-cases",
+        "excluded": [],
+        "absent": [],
+        "completeAcceptance": false
+      },
+      "cases": [
+        {
+          "id": "isolated-app-fixture",
+          "status": "PASS"
+        },
+        {
+          "id": "leave-revokes-existing-gateway-active-sfu-and-held-ticket",
+          "status": "PASS"
+        },
+        {
+          "id": "kick-revokes-existing-gateway-active-sfu-and-held-ticket",
+          "status": "PASS"
+        },
+        {
+          "id": "ban-revokes-existing-gateway-active-sfu-and-held-ticket",
+          "status": "PASS"
+        },
+        {
+          "id": "logout-revokes-existing-gateway-active-sfu-and-held-ticket",
+          "status": "PASS"
+        },
+        {
+          "id": "logout-other-independent-session-survives",
+          "status": "PASS"
+        },
+        {
+          "id": "channel-server-delete-active-sockets",
+          "status": "PASS"
+        }
+      ],
+      "cleanup": [
+        {
+          "target": "owned-test-server",
+          "status": 204,
+          "stage": "complete",
+          "statuses": {
+            "login": 200,
+            "delete": 204,
+            "logout": 200
+          }
+        },
+        {
+          "target": "owned-test-server",
+          "status": 204,
+          "stage": "complete",
+          "statuses": {
+            "login": 200,
+            "delete": 204,
+            "logout": 200
+          }
+        },
+        {
+          "target": "owned-test-server",
+          "status": 204,
+          "source": "scenario-confirmed-delete"
+        }
+      ]
+    },
+    {
+      "artifact": "media-chromium-product-final-1.json",
+      "sha256": "70cee29474f5bd2f441d5be7a65637e48cccc4fa4f03ea8c89dd4a788f6d74a2",
+      "browser": {
+        "engine": "chromium",
+        "version": "153.0.8010.12",
+        "platform": "linux",
+        "node": "v26.8.2"
+      },
+      "gate": {
+        "passed": true,
+        "scope": "selected-cases",
+        "excluded": [
+          "live-watch-default-autoplay-no-mic",
+          "late-watch-after-30s",
+          "media-ws-capture-preserving-recovery",
+          "gateway-only-preserves-peer",
+          "offline-8s-no-new-capture-gesture",
+          "watch-navigation-channel-binding-global-controls",
+          "live-claim-exclusive-and-loser-not-published",
+          "cancelled-live-picker-keeps-voice-no-ghost",
+          "camera-screen-live-source-identity",
+          "autoplay-rejection-visible-click-retry",
+          "active-call-responsive-controls",
+          "voice-only-duplex-single-source",
+          "forced-track-arrival-reorder-source-identity",
+          "session-audio-mute-deafen-volume-playback-retry",
+          "audible-voice-mute-deafen-quality",
+          "sfu-publication-task-bounds",
+          "api-redis-outage-live-lease-recovery",
+          "packet-loss-audible-quality"
+        ],
+        "absent": [],
+        "completeAcceptance": false
+      },
+      "cases": [
+        {
+          "id": "isolated-app-fixture",
+          "status": "PASS"
+        },
+        {
+          "id": "20-live-start-stop-bounded-client-resources",
+          "status": "PASS"
+        },
+        {
+          "id": "rejected-native-sdp-keeps-voice-other-source-no-ghost",
+          "status": "PASS"
+        }
+      ],
+      "cleanup": [
+        {
+          "target": "owned-test-server",
+          "status": 204,
+          "stage": "complete",
+          "statuses": {
+            "login": 200,
+            "delete": 204,
+            "logout": 200
+          }
+        }
+      ]
+    },
+    {
+      "artifact": "media-firefox-product-final-2.json",
+      "sha256": "87be00574dd090c33b448e122c995a225c6672545d9b86c520edbfbccb61ef33",
+      "browser": {
+        "engine": "firefox",
+        "version": "155.0",
+        "platform": "linux",
+        "node": "v26.8.2"
+      },
+      "gate": {
+        "passed": true,
+        "scope": "selected-cases",
+        "excluded": [
+          "live-watch-default-autoplay-no-mic",
+          "late-watch-after-30s",
+          "gateway-only-preserves-peer",
+          "offline-8s-no-new-capture-gesture",
+          "watch-navigation-channel-binding-global-controls",
+          "live-claim-exclusive-and-loser-not-published",
+          "20-live-start-stop-bounded-client-resources",
+          "cancelled-live-picker-keeps-voice-no-ghost",
+          "camera-screen-live-source-identity",
+          "autoplay-rejection-visible-click-retry",
+          "active-call-responsive-controls",
+          "voice-only-duplex-single-source",
+          "forced-track-arrival-reorder-source-identity",
+          "rejected-native-sdp-keeps-voice-other-source-no-ghost",
+          "session-audio-mute-deafen-volume-playback-retry",
+          "audible-voice-mute-deafen-quality",
+          "sfu-publication-task-bounds",
+          "api-redis-outage-live-lease-recovery",
+          "packet-loss-audible-quality"
+        ],
+        "absent": [],
+        "completeAcceptance": false
+      },
+      "cases": [
+        {
+          "id": "isolated-app-fixture",
+          "status": "PASS"
+        },
+        {
+          "id": "media-ws-capture-preserving-recovery",
+          "status": "PASS"
+        }
+      ],
+      "cleanup": [
+        {
+          "target": "owned-test-server",
+          "status": 204,
+          "stage": "complete",
+          "statuses": {
+            "login": 200,
+            "delete": 204,
+            "logout": 200
+          }
+        }
+      ]
+    },
+    {
+      "artifact": "mediasoup-native-held-final-14.json",
+      "sha256": "33737b3f4c41e30a7ae8bc513329f30d9063618f0a31534bdba08b2827dc2ac0",
+      "browser": {
+        "engine": "chromium",
+        "version": "153.0.8010.12",
+        "platform": "linux",
+        "node": "v26.8.2"
+      },
+      "gate": {
+        "passed": true,
+        "scope": "selected-cases",
+        "excluded": [
+          "independent-viewer-layers-with-receive-loss"
+        ],
+        "absent": [],
+        "completeAcceptance": false
+      },
+      "cases": [
+        {
+          "id": "isolated-mediasoup-native-fixture",
+          "status": "PASS"
+        },
+        {
+          "id": "consumer-paused-until-browser-ready",
+          "status": "PASS"
+        },
+        {
+          "id": "watch-off-held-receiver-stops-native-media",
+          "status": "PASS"
+        }
+      ],
+      "cleanup": [
+        {
+          "target": "owned-test-server",
+          "status": 204,
+          "stage": "complete",
+          "statuses": {
+            "login": 200,
+            "delete": 204,
+            "logout": 200
+          }
+        }
+      ]
+    }
+  ],
+  "limits": [
+    "No load matrix or hour test, as requested.",
+    "Physical device/audio quality, WAN/TURN and standalone native C++ worker-thread crash deferred; real owned process SIGKILL/restart and fail_closed exit1 are separate evidence.",
+    "No database migration, main merge, release or production deployment.",
+    "Browser stats may be unavailable; source identity/SSRC/track binding remains authoritative and unavailable counters are not fabricated as zero.",
+    "Candidate software, local toolchain and test fixtures qualify these passes; historical FAIL/BLOCKED reports are preserved."
+  ],
+  "retained_prior_failures": [
+    {
+      "artifact": "access-product-final-1.json",
+      "sha256": "f57ff54c17c1bb7e79ec4ba1b1f189c3891fa476ce5767f771efc6d5cfd5ef70",
+      "status": "FAIL",
+      "reason": "RTP report IDs disappeared after cleanup; local Leave and synchronous SDK SDP cleanup defeated held receiver oracle. Final explicit renderer/native-negotiation guards independently isolate server revoke; actual l and SRD attempts observed."
+    },
+    {
+      "artifact": "media-firefox-product-final-1.json",
+      "sha256": "a252a9af4d7362a61860d89514990457c5ed94c4893f989c44234b7175a2b3f0",
+      "status": "FAIL",
+      "reason": "Native stats deadline with unknown actor/PC state. Closed-peer stats race corrected in harness, but causal attribution of this historical failure remains NOT_ESTABLISHED."
+    },
+    {
+      "artifact": "mediasoup-native-product-final-10.json",
+      "sha256": "735c060390ef5673bb2c032f2e8e826bc3092137c9fbedc9f6829a96dff78a08",
+      "status": "FAIL",
+      "reason": "Old peer Live lease rejected recovery; fixed by authority-validated live_busy and bounded capture-preserving retry."
+    },
+    {
+      "artifact": "source-audio-chromium-six-final-4.json",
+      "sha256": "70ec726c508e879400a7488bacf275a26e31064ea288a1d7a8af61a36c9f77de",
+      "status": "failed",
+      "reason": "Source Live audio counters did not advance during simultaneous diagnostic fixtures. No inferred root cause or load acceptance; final checks execute fixtures sequentially."
+    },
+    {
+      "artifact": "source-audio-firefox-six-final-2.json",
+      "sha256": "92326a0b91aa25ce5a4b5c3d335da37131016b956b993c51e0d219d629fca53d",
+      "status": "failed",
+      "reason": "Source Live audio counters did not advance during simultaneous diagnostic fixtures. No inferred root cause or load acceptance; final checks execute fixtures sequentially."
+    }
+  ],
+  "native_observed_metrics": {
+    "independent-viewer-layers-with-receive-loss": {
+      "small": {
+        "width": 160,
+        "height": 90,
+        "frames": 52,
+        "videoPackets": 52,
+        "lost": 0,
+        "audioPackets": 229,
+        "spatial": 0,
+        "temporal": 2,
+        "captureCalls": 0,
+        "connectedPeers": 1
+      },
+      "full": {
+        "width": 640,
+        "height": 360,
+        "frames": 28,
+        "videoPackets": 28,
+        "lost": 0,
+        "audioPackets": 227,
+        "spatial": 1,
+        "temporal": 2,
+        "captureCalls": 0,
+        "connectedPeers": 1
+      },
+      "degraded": {
+        "width": 160,
+        "height": 90,
+        "frames": 53,
+        "videoPackets": 70,
+        "lost": 19,
+        "audioPackets": 377,
+        "spatial": 0,
+        "temporal": 2,
+        "captureCalls": 0,
+        "connectedPeers": 1
+      },
+      "unaffected": {
+        "width": 160,
+        "height": 90,
+        "frames": 95,
+        "videoPackets": 95,
+        "lost": 0,
+        "audioPackets": 379,
+        "spatial": 0,
+        "temporal": 2,
+        "captureCalls": 0,
+        "connectedPeers": 1
+      },
+      "recovered": {
+        "width": 640,
+        "height": 360,
+        "frames": 145,
+        "videoPackets": 166,
+        "lost": 20,
+        "audioPackets": 720,
+        "spatial": 1,
+        "temporal": 0,
+        "captureCalls": 0,
+        "connectedPeers": 1
+      },
+      "independent": {
+        "width": 640,
+        "height": 360,
+        "frames": 210,
+        "videoPackets": 210,
+        "lost": 0,
+        "audioPackets": 795,
+        "spatial": 1,
+        "temporal": 0,
+        "captureCalls": 0,
+        "connectedPeers": 1
+      }
+    },
+    "native-media-process-failure-preserves-capture": {
+      "ownedEngineProcessKilled": true,
+      "restartedReady": true,
+      "before": {
+        "displayCalls": 1,
+        "micCalls": 1,
+        "liveBusyResponses": 0
+      },
+      "after": {
+        "displayCalls": 1,
+        "micCalls": 1,
+        "liveBusyResponses": 9,
+        "captureLive": true,
+        "captureStillSent": true
+      }
+    }
+  }
+}

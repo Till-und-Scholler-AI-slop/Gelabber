@@ -6,7 +6,8 @@ ENV SSL_CERT_FILE=/etc/ssl/certs/ca-certificates.crt \
     SSL_CERT_DIR=/etc/ssl/certs \
     CURL_CA_BUNDLE=/etc/ssl/certs/ca-certificates.crt \
     CARGO_HTTP_CAINFO=/etc/ssl/certs/ca-certificates.crt \
-    CARGO_NET_RETRY=3
+    CARGO_NET_RETRY=3 \
+    CARGO_BUILD_JOBS=2
 FROM base AS recipe
 WORKDIR /input
 COPY rust-toolchain.toml Cargo.toml Cargo.lock ./

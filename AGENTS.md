@@ -31,12 +31,17 @@ If a new `v*` name would miss that pattern, add the same protection by hand befo
 
 No LiveKit, Daily, Agora, Twilio, Stream, or Socket.IO. Own WebSocket and own product signaling. Keep the locked stack pins.
 
-For v0.4, Rafael explicitly authorized comparing the current SFU with self-hosted
-mediasoup (official Rust binding) and Janus VideoRoom. A replacement is allowed
-only after the benchmark and feature gates in `docs/v0.4-roadmap.md` pass. Keep
-the current SFU until that evidence exists; a startup probe is not load or
-authorization acceptance. Browser-local audio DSP may use pinned, self-hosted
-RNNoise assets. Do not introduce a cloud audio service.
+For v0.4, Rafael explicitly selected self-hosted mediasoup with its official Rust
+binding on 2026-10-06 and authorized full replacement of the existing SFU. There
+is no runtime backend selector or old-SFU fallback. Benchmark selection and new
+load tests are not prerequisites of this instruction. Preserve historical
+benchmark FAIL/BLOCKED results; do not claim calibrated latency or performance
+acceptance from the selection. Keep product tickets, ACL/revocation, Watch,
+Go Live and separate source lifetimes under Gelabber's own gateway. See
+`docs/v0.4-mediasoup-migration.md` for build, functional checks and the coherent
+previous-application rollback boundary. Only necessary mediasoup dependencies
+change; preserve unrelated stack pins. Browser-local DSP uses pinned,
+self-hosted RNNoise assets. Do not introduce a cloud audio service.
 
 SilasSch reviews product PRs when that is the standing rule. Do not invent extra process.
 
@@ -44,6 +49,11 @@ Rafael explicitly waived human review for the finished v0.4 feature integration
 on 2026-10-06. This exception does not waive PRs or successful technical checks.
 Restore the normal review protection after that integration. He also excluded
 the one-hour call test; do not run it or record it as passed.
+
+The subsequent mediasoup implementation remains feature-PR work targeting
+`v0.4`. Rafael allows skipping human review; successful technical checks and
+PR protection still apply. Physical iOS/Omarchy acceptance remains deferred.
+This instruction does not authorize main merges, release or deployment.
 
 ## Current development line: v0.4
 

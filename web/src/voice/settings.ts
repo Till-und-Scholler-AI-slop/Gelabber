@@ -1,7 +1,7 @@
 // Voice/video + in-app notification prefs. Persisted per browser.
 // Capture quality and microphone processing are independent of bandwidth.
 // No application bitrate limit unless the user explicitly selects economy/custom.
-// No product SDK; devices are the browser's own list.
+// Capture devices are the browser's own list.
 
 import { create } from "zustand";
 import { createJSONStorage, persist } from "zustand/middleware";

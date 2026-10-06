@@ -65,6 +65,7 @@ export type StatsEntry = {
   id: string;
   type: string;
   timestamp?: number;
+  ssrc?: number;
   kind?: string;
   mimeType?: string;
   codecId?: string;
@@ -255,6 +256,7 @@ let logoutInstalled = false;
 
 const NUMERIC_FIELDS = [
   "timestamp",
+  "ssrc",
   "bytesSent",
   "bytesReceived",
   "packetsSent",
@@ -362,7 +364,7 @@ function sanitizeEntry(
 ): StatsEntry | null {
   if (!value || typeof value !== "object") return null;
   const source = value as Record<string, unknown>;
-  const id = shortToken(source.id, 64) ?? (mapKey && shortToken(mapKey, 64));
+  const id = shortToken(source.id, 256) ?? (mapKey && shortToken(mapKey, 256));
   const type = shortToken(source.type, 40);
   if (!id || !type) return null;
   const entry: StatsEntry = { id, type };
@@ -372,7 +374,10 @@ function sanitizeEntry(
   }
   for (const field of STRING_FIELDS) {
     if (field === "id" || field === "type") continue;
-    const token = shortToken(source[field], field === "mimeType" ? 40 : 64);
+    const token = shortToken(
+      source[field],
+      field === "mimeType" ? 40 : field.endsWith("Id") ? 256 : 64,
+    );
     if (token !== undefined) entry[field] = token;
   }
   if (typeof source.selected === "boolean") entry.selected = source.selected;

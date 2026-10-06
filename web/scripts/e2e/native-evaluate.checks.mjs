@@ -111,6 +111,7 @@ test("actual sample native getStats deadline stays distinct from outer evaluate 
         peers: [
           {
             connectionState: "connected",
+            iceConnectionState: "connected",
             getStats: () => new Promise(() => {}),
           },
         ],
@@ -120,14 +121,15 @@ test("actual sample native getStats deadline stays distinct from outer evaluate 
     clearTimeout,
   });
   const collect = vm.runInContext(`(${sample.toString()})`, context);
-  await assert.rejects(
-    collect({ deadlineEpochMs: Date.now() + 5 }),
-    (e) => e.message === "E2E_NATIVE_STATS_DEADLINE",
-  );
+  let nativeError;
+  await assert.rejects(collect({ deadlineEpochMs: Date.now() + 5 }), (e) => {
+    nativeError = e;
+    return e.message.startsWith("E2E_NATIVE_STATS_DEADLINE");
+  });
   const actor = {
     page: {
       evaluate: async () => {
-        throw new Error("E2E_NATIVE_STATS_DEADLINE");
+        throw nativeError;
       },
       close: async () => {},
     },
@@ -136,7 +138,115 @@ test("actual sample native getStats deadline stays distinct from outer evaluate 
     nativeEvaluate(actor, function sample() {}),
     (e) =>
       e.metrics.stage === "native-getStats" &&
-      e.metrics.nativeDataAvailable === false,
+      e.metrics.nativeDataAvailable === false &&
+      e.metrics.nativePCordinal === 0 &&
+      e.metrics.connection === "connected" &&
+      e.metrics.ice === "connected",
+  );
+});
+
+function peerSnapshotFixture(peers) {
+  const context = vm.createContext({
+    window: {
+      __e2e: {
+        peers,
+        voiceRoster: [],
+        incomingTracks: [],
+        heldTracks: [],
+        heldLiveClaims: [],
+        mediaElements: new Set(),
+        captures: [],
+        sockets: [],
+      },
+    },
+    document: { querySelectorAll: () => [] },
+    setTimeout,
+    clearTimeout,
+  });
+  return vm.runInContext(`(${sample.toString()})`, context);
+}
+
+function assertUnavailableClosedPeer(peer) {
+  assert.equal(peer.connection, "closed");
+  assert.equal(peer.ice, "closed");
+  assert.equal(peer.nativeSnapshotAvailable, false);
+  for (const field of ["transceivers", "senders", "receivers", "localSdpBytes"])
+    assert.equal(peer[field], null);
+  for (const field of ["selected", "inbound", "outbound"])
+    assert.equal(peer[field].length, 0);
+}
+
+test("actual sample skips native getters for an already closed peer", async () => {
+  let calls = 0;
+  const peer = { connectionState: "closed" };
+  for (const method of [
+    "getStats",
+    "getTransceivers",
+    "getSenders",
+    "getReceivers",
+  ])
+    peer[method] = () => {
+      calls++;
+      throw new Error("closed native getter must not run");
+    };
+  const snapshot = await peerSnapshotFixture([peer])();
+  assertUnavailableClosedPeer(snapshot.peers[0]);
+  assert.equal(calls, 0);
+});
+
+test("actual sample reports a close-racing pending getStats as unavailable and still samples the next live peer", async () => {
+  const retired = {
+    connectionState: "connected",
+    getStats: () => {
+      retired.connectionState = "closed";
+      return new Promise(() => {});
+    },
+  };
+  let liveCalls = 0;
+  const live = {
+    connectionState: "connected",
+    iceConnectionState: "connected",
+    getStats: async () => {
+      liveCalls++;
+      return new Map();
+    },
+    getTransceivers: () => [],
+    getSenders: () => [],
+    getReceivers: () => [],
+  };
+  const snapshot = await peerSnapshotFixture([retired, live])({
+    deadlineEpochMs: Date.now() + 50,
+  });
+  assertUnavailableClosedPeer(snapshot.peers[0]);
+  assert.equal(snapshot.peers[1].connection, "connected");
+  assert.equal(liveCalls, 1);
+});
+
+test("actual sample reports a close-racing getStats rejection without invented native measurements", async () => {
+  const peer = {
+    connectionState: "connected",
+    getStats: async () => {
+      peer.connectionState = "closed";
+      throw new Error("closed native stats rejection");
+    },
+  };
+  const snapshot = await peerSnapshotFixture([peer])({
+    deadlineEpochMs: Date.now() + 50,
+  });
+  assertUnavailableClosedPeer(snapshot.peers[0]);
+});
+
+test("actual sample never hides a non-timeout getStats failure on a live peer", async () => {
+  const error = new TypeError("live native stats rejection");
+  const peer = {
+    connectionState: "connected",
+    getStats: async () => {
+      throw error;
+    },
+  };
+  await assert.rejects(
+    peerSnapshotFixture([peer])({ deadlineEpochMs: Date.now() + 50 }),
+    (e) => e === error,
   );
 });
 test("already expired absolute budget never starts probe or evaluation work", async () => {
@@ -297,9 +407,8 @@ test("actual queued native continuation and already-expired native stats never s
     clearTimeout,
   });
   const collect = vm.runInContext(`(${sample.toString()})`, context);
-  await assert.rejects(
-    collect({ deadlineEpochMs: Date.now() - 1 }),
-    (e) => e.message === "E2E_NATIVE_STATS_DEADLINE",
+  await assert.rejects(collect({ deadlineEpochMs: Date.now() - 1 }), (e) =>
+    e.message.startsWith("E2E_NATIVE_STATS_DEADLINE"),
   );
   assert.equal(calls, 0);
 });

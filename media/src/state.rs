@@ -12,12 +12,14 @@ pub struct AppState {
 }
 
 impl AppState {
-    pub fn from_config(config: &Config) -> Result<Self, redis::RedisError> {
+    pub async fn from_config(
+        config: &Config,
+    ) -> Result<Self, Box<dyn std::error::Error + Send + Sync>> {
         let redis = redis::Client::open(config.redis_url.as_str())?;
         Ok(Self {
             redis: redis.clone(),
             ready_timeout: config.ready_timeout,
-            sfu: Arc::new(Sfu::with_redis(config, Some(redis))),
+            sfu: Sfu::with_redis(config, redis).await?,
         })
     }
 }

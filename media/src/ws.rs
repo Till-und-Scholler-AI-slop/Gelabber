@@ -1,356 +1,240 @@
-//! Media WebSocket. Ticket in the first `j` frame; SDP/ICE stay off the
-//! chat gateway.
-
+//! Gelabber's authenticated v4 mediasoup control WebSocket.
 use axum::Router;
 use axum::extract::State;
 use axum::extract::ws::{Message, Utf8Bytes, WebSocket, WebSocketUpgrade};
 use axum::response::Response;
 use axum::routing::get;
 use futures_util::{SinkExt, StreamExt};
+use serde_json::{Value, json};
+use std::time::Duration;
 use tokio::sync::mpsc;
 use tracing::{debug, warn};
 use uuid::Uuid;
 
-use crate::error::SfuError;
-use crate::protocol::{ClientFrame, ServerFrame};
+use crate::protocol::{ClientFrame, MEDIA_PROTOCOL_VERSION, OUTBOUND_CAPACITY, ServerFrame};
 use crate::sfu::PeerId;
 use crate::state::AppState;
-use crate::ticket::{self, AuthorizedTicketClaim};
+use crate::ticket;
 
-/// Chrome video answers (many codecs, a second m-line, ICE candidates in the
-/// SDP) blow past 12 KiB and can pass 48 KiB. Rejecting that frame as
-/// `bad_request` made the viewer leave the voice channel the moment a stream
-/// started. 192 KiB still bounds a single signaling frame.
+/// Includes complete RTP capabilities/parameters, bounded before JSON decoding.
 pub const MAX_FRAME: usize = 256 * 1024;
-pub const MAX_SDP: usize = 192 * 1024;
-const MAX_ICE: usize = 800;
+const WRITE_DEADLINE: Duration = Duration::from_secs(2);
 
 pub fn router() -> Router<AppState> {
     Router::new()
         .route("/ws", get(upgrade))
         .route("/media/ws", get(upgrade))
 }
-
 async fn upgrade(State(state): State<AppState>, ws: WebSocketUpgrade) -> Response {
-    ws.on_upgrade(move |socket| run(socket, state))
+    ws.max_message_size(MAX_FRAME)
+        .max_frame_size(MAX_FRAME)
+        .on_upgrade(move |socket| run(socket, state))
 }
-
+fn terminal(frame: &ServerFrame) -> bool {
+    matches!(frame,ServerFrame::Err { e,.. } if matches!(e.as_str(),"unauthorized"|"gone"|"update_required"))
+}
+#[derive(Debug)]
+struct ParseError {
+    id: Option<u32>,
+}
+impl ParseError {
+    fn into_frame(self) -> ServerFrame {
+        match self.id {
+            Some(id) => ServerFrame::request_error(id, "bad_request"),
+            None => ServerFrame::error("bad_request"),
+        }
+    }
+}
+fn parse_frame(text: &str) -> Result<ClientFrame, ParseError> {
+    if text.len() > MAX_FRAME {
+        return Err(ParseError { id: None });
+    }
+    let value: Value = serde_json::from_str(text).map_err(|_| ParseError { id: None })?;
+    let id = value
+        .get("id")
+        .and_then(Value::as_u64)
+        .and_then(|id| u32::try_from(id).ok());
+    serde_json::from_value(value).map_err(|_| ParseError { id })
+}
 async fn run(socket: WebSocket, state: AppState) {
     let (mut sink, mut stream) = socket.split();
-    let (tx, mut rx) = mpsc::unbounded_channel::<ServerFrame>();
-
+    let (tx, mut rx) = mpsc::channel::<ServerFrame>(OUTBOUND_CAPACITY);
     let mut joined: Option<(PeerId, Uuid)> = None;
-
+    let mut last_id = 0;
+    // Native cleanup can revoke an overflowing peer without room in its event
+    // queue. Close the socket after the graph retires the stopped resources.
+    let mut retirement = tokio::time::interval(Duration::from_millis(250));
+    retirement.set_missed_tick_behavior(tokio::time::MissedTickBehavior::Skip);
     loop {
         tokio::select! {
-            incoming = stream.next() => {
-                match incoming {
-                    Some(Ok(Message::Text(text))) => {
-                        if text.len() > MAX_FRAME {
-                            warn!(
-                                bytes = text.len(),
-                                max = MAX_FRAME,
-                                "media frame too large"
-                            );
-                            // An answer this large never reaches apply_remote.
-                            // Abort only when the frame is that answer and an
-                            // offer is still outstanding.
-                            if answer_frame(&text)
-                                && let Some((peer_id, channel_id)) = joined
-                            {
-                                let _ = state
-                                    .sfu
-                                    .abort_outstanding_offer(peer_id, channel_id)
-                                    .await;
-                            }
-                            let _ = send(&mut sink, ServerFrame::error("negotiation_failed")).await;
-                            continue;
-                        }
-                        match handle(&state, &text, &tx, &mut joined).await {
-                            Ok(Some(frame)) => {
-                                if send(&mut sink, frame).await.is_err() {
-                                    break;
-                                }
-                            }
-                            Ok(None) => {}
-                            Err(code) => {
-                                let _ = send(&mut sink, ServerFrame::error(code)).await;
-                                if code == "unauthorized" || code == "gone" {
-                                    let _ = sink.send(Message::Close(None)).await;
-                                    break;
-                                }
-                            }
-                        }
-                    }
-                    Some(Ok(Message::Ping(payload))) => {
-                        if sink.send(Message::Pong(payload)).await.is_err() {
-                            break;
-                        }
-                    }
-                    Some(Ok(Message::Pong(_) | Message::Binary(_))) => {}
-                    Some(Ok(Message::Close(_))) | None => break,
-                    Some(Err(_)) => break,
-                }
-            }
-            frame = rx.recv() => {
-                let Some(frame) = frame else { break };
-                let terminal = matches!(&frame, ServerFrame::Err { e, .. } if *e == "unauthorized" || *e == "gone");
-                if send(&mut sink, frame).await.is_err() { break; }
-                if terminal {
-                    let _ = sink.send(Message::Close(None)).await;
+            _ = retirement.tick(), if joined.is_some() => {
+                let (peer, channel) = joined.unwrap();
+                if !state.sfu.peer_present(peer, channel).await {
+                    leave_joined(&state, &mut joined).await;
+                    let _ = send(&mut sink, ServerFrame::error("gone")).await;
+                    let _ = tokio::time::timeout(WRITE_DEADLINE, sink.send(Message::Close(None))).await;
                     break;
                 }
             }
+            incoming=stream.next()=> {
+                match incoming {
+                    Some(Ok(Message::Text(text)))=> {
+                        let response=match parse_frame(&text) {
+                            Ok(frame)=>handle(&state,frame,&tx,&mut joined,&mut last_id).await,
+                            Err(error)=>error.into_frame(),
+                        };
+                        let close=terminal(&response);
+                        if close {leave_joined(&state,&mut joined).await;}
+                        if send(&mut sink,response).await.is_err() {break;}
+                        if close {let _=tokio::time::timeout(WRITE_DEADLINE,sink.send(Message::Close(None))).await;break;}
+                    }
+                    Some(Ok(Message::Ping(payload)))=> {
+                        if !matches!(tokio::time::timeout(WRITE_DEADLINE,sink.send(Message::Pong(payload))).await,Ok(Ok(()))){break;}
+                    }
+                    Some(Ok(Message::Pong(_)))=> {}
+                    Some(Ok(Message::Binary(_)))=> {
+                        if send(&mut sink,ServerFrame::error("bad_request")).await.is_err(){break;}
+                    }
+                    _=>break,
+                }
+            }
+            event=rx.recv()=> {
+                let Some(event)=event else {break;};
+                let close=terminal(&event);
+                if close {leave_joined(&state,&mut joined).await;}
+                if send(&mut sink,event).await.is_err(){break;}
+                if close {let _=tokio::time::timeout(WRITE_DEADLINE,sink.send(Message::Close(None))).await;break;}
+            }
         }
     }
-
-    if let Some((peer_id, channel_id)) = joined {
-        state.sfu.leave(peer_id, channel_id).await;
+    leave_joined(&state, &mut joined).await;
+}
+/// Every terminal response/event crosses this native-stop barrier before send.
+/// Taking the socket identity keeps cleanup idempotent on the loop's exit path.
+async fn leave_joined(state: &AppState, joined: &mut Option<(PeerId, Uuid)>) {
+    if let Some((peer, channel)) = joined.take() {
+        state.sfu.leave(peer, channel).await;
     }
 }
-
-fn sfu_code(peer_id: PeerId, err: &SfuError, what: &'static str) -> &'static str {
-    warn!(peer = %peer_id.0, error = %err, code = err.code(), "{what}");
-    err.code()
-}
-
-fn text_field(value: Option<String>) -> Result<String, &'static str> {
-    value
-        .as_deref()
-        .map(str::trim)
-        .filter(|s| !s.is_empty())
-        .map(str::to_owned)
-        .ok_or("bad_request")
-}
-
-fn track_kind(value: Option<String>) -> Result<String, &'static str> {
-    match value.as_deref().map(str::trim) {
-        Some("v" | "s" | "l" | "sa" | "la") => Ok(value.unwrap().trim().to_owned()),
-        _ => Err("bad_request"),
-    }
-}
-
 async fn handle(
     state: &AppState,
-    text: &str,
-    out: &mpsc::UnboundedSender<ServerFrame>,
+    frame: ClientFrame,
+    out: &mpsc::Sender<ServerFrame>,
     joined: &mut Option<(PeerId, Uuid)>,
-) -> Result<Option<ServerFrame>, &'static str> {
-    let frame: ClientFrame = serde_json::from_str(text).map_err(|_| "bad_request")?;
-    match frame {
-        ClientFrame::Join { tk, w, v } => {
+    last_id: &mut u32,
+) -> ServerFrame {
+    let id = frame.id();
+    // The protocol gate precedes identity, Redis access and ticket consumption.
+    if let ClientFrame::Join { v, .. } = &frame
+        && *v != MEDIA_PROTOCOL_VERSION
+    {
+        return if id > 0 {
+            ServerFrame::request_error(id, "update_required")
+        } else {
+            ServerFrame::error("update_required")
+        };
+    }
+    if id == 0 || id <= *last_id {
+        return ServerFrame::request_error(id, "bad_request");
+    }
+    *last_id = id;
+    let result = match frame {
+        ClientFrame::Join { tk, w, v, .. } => {
             if joined.is_some() {
-                return Err("bad_request");
+                Err("bad_request")
+            } else {
+                join(state, &tk, w, v, out, joined).await
             }
-            let tk = text_field(tk).map_err(|_| "unauthorized")?;
-            let claim = ticket::consume(&state.redis, &tk)
-                .await
-                .map_err(|_| "unauthorized")?
-                .ok_or("unauthorized")?;
-            join(state, claim, w, v.unwrap_or(0), out, joined).await
         }
-        ClientFrame::Offer { sdp } => apply_sdp(state, joined, sdp, true).await,
-        ClientFrame::Answer { sdp } => apply_sdp(state, joined, sdp, false).await,
-        ClientFrame::Ice { ice, mid } => {
-            let (peer_id, channel_id) = joined.ok_or("unauthorized")?;
-            let ice = text_field(ice)?;
-            if ice.len() > MAX_ICE {
-                return Err("bad_request");
+        ClientFrame::Leave { .. } => {
+            leave_joined(state, joined).await;
+            Ok(json!({}))
+        }
+        frame => {
+            if let Some((peer, channel)) = *joined {
+                state.sfu.rpc(peer, channel, frame).await.map_err(|err| {
+                    warn!(peer=%peer.0,error=%err,code=err.code(),"mediasoup control failed");
+                    err.code()
+                })
+            } else {
+                Err("unauthorized")
             }
-            state
-                .sfu
-                .add_ice(peer_id, channel_id, ice, mid)
-                .await
-                .map_err(|err| sfu_code(peer_id, &err, "ice apply failed"))?;
-            Ok(None)
         }
-        ClientFrame::Announce { k, t, lc } => {
-            let (peer_id, channel_id) = joined.ok_or("unauthorized")?;
-            let k = track_kind(k)?;
-            state
-                .sfu
-                .announce_with_claim(peer_id, channel_id, &k, t.as_deref(), lc)
-                .await
-                .map_err(|err| sfu_code(peer_id, &err, "announce failed"))?;
-            Ok(None)
-        }
-        ClientFrame::Abort => {
-            let (peer_id, channel_id) = joined.ok_or("unauthorized")?;
-            state
-                .sfu
-                .abort_offer(peer_id, channel_id)
-                .await
-                .map_err(|err| sfu_code(peer_id, &err, "abort offer failed"))?;
-            Ok(None)
-        }
-        ClientFrame::Retract { k, t } => {
-            let (peer_id, channel_id) = joined.ok_or("unauthorized")?;
-            let k = track_kind(k)?;
-            state
-                .sfu
-                .retract_track(peer_id, channel_id, &k, t.as_deref())
-                .await
-                .map_err(|err| sfu_code(peer_id, &err, "retract failed"))?;
-            Ok(None)
-        }
-        ClientFrame::Watch { u, k, on } => {
-            let (peer_id, channel_id) = joined.ok_or("unauthorized")?;
-            let (Some(user), Some(kind), Some(on)) = (u, k, on) else {
-                return Err("bad_request");
-            };
-            state
-                .sfu
-                .set_watch(peer_id, channel_id, user, &kind, on)
-                .await
-                .map_err(|err| sfu_code(peer_id, &err, "watch failed"))?;
-            Ok(None)
-        }
-        ClientFrame::Leave => {
-            if let Some((peer_id, channel_id)) = joined.take() {
-                state.sfu.leave(peer_id, channel_id).await;
-            }
-            Ok(None)
-        }
+    };
+    match result {
+        Ok(data) => ServerFrame::Result { id, data },
+        Err(code) => ServerFrame::request_error(id, code),
     }
 }
-
-async fn apply_sdp(
-    state: &AppState,
-    joined: &mut Option<(PeerId, Uuid)>,
-    sdp: Option<String>,
-    as_offer: bool,
-) -> Result<Option<ServerFrame>, &'static str> {
-    let (peer_id, channel_id) = joined.ok_or("unauthorized")?;
-    let sdp = text_field(sdp)?;
-    if sdp.len() > MAX_SDP {
-        warn!(
-            peer = %peer_id.0,
-            bytes = sdp.len(),
-            max = MAX_SDP,
-            as_offer,
-            "media sdp too large"
-        );
-        if !as_offer {
-            let _ = state.sfu.abort_outstanding_offer(peer_id, channel_id).await;
-        }
-        return Err("negotiation_failed");
-    }
-    state
-        .sfu
-        .apply_remote(peer_id, channel_id, sdp, as_offer)
-        .await
-        .map_err(|err| sfu_code(peer_id, &err, "sdp apply failed"))?;
-    Ok(None)
-}
-
 async fn join(
     state: &AppState,
-    claim: AuthorizedTicketClaim,
-    watch_user: Option<uuid::Uuid>,
+    code: &str,
+    watch: Option<Uuid>,
     version: u8,
-    out: &mpsc::UnboundedSender<ServerFrame>,
+    out: &mpsc::Sender<ServerFrame>,
     joined: &mut Option<(PeerId, Uuid)>,
-) -> Result<Option<ServerFrame>, &'static str> {
-    let peer_id = state
-        .sfu
-        .join_authorized_watch_version(claim.clone(), watch_user, version, out.clone())
+) -> Result<Value, &'static str> {
+    if watch.is_some_and(|user| user.is_nil()) {
+        return Err("bad_request");
+    }
+    let claim = ticket::consume(&state.redis, code)
         .await
-        .map_err(|err| {
-            warn!(error = %err, code = err.code(), "sfu join failed");
-            err.code()
-        })?;
-    let claim = claim.claim;
-    *joined = Some((peer_id, claim.c));
-    debug!(user = %claim.u, channel = %claim.c, "media ticket accepted");
-    Ok(Some(ServerFrame::Ok {
-        c: claim.c.to_string(),
-        u: claim.u.to_string(),
-        v: crate::protocol::MEDIA_PROTOCOL_VERSION,
-    }))
+        .map_err(|_| "unauthorized")?
+        .ok_or("unauthorized")?;
+    let channel = claim.claim.c;
+    let user = claim.claim.u;
+    let peer = state
+        .sfu
+        .join_authorized_watch_version(claim, watch, version, out.clone())
+        .await
+        .map_err(|err| err.code())?;
+    *joined = Some((peer, channel));
+    let data = state
+        .sfu
+        .join_data(peer, channel)
+        .await
+        .map_err(|err| err.code())?;
+    debug!(%user,%channel,"mediasoup ticket accepted");
+    Ok(data)
 }
-
-/// `{"op":"a"...}` at the start of a frame. Used when the body is too
-/// large to treat as a normal signaling message. Anything else, including
-/// a publisher offer, must not abort the subscriber's current offer.
-fn answer_frame(text: &str) -> bool {
-    use serde::Deserializer;
-    use serde::de::{IgnoredAny, MapAccess, Visitor};
-
-    struct Header<'a>(&'a std::cell::Cell<bool>);
-    impl<'de> Visitor<'de> for Header<'_> {
-        type Value = bool;
-        fn expecting(&self, f: &mut std::fmt::Formatter) -> std::fmt::Result {
-            f.write_str("a signaling object header")
-        }
-        fn visit_map<M: MapAccess<'de>>(self, mut map: M) -> Result<bool, M::Error> {
-            while let Some(key) = map.next_key::<String>()? {
-                if key == "op" {
-                    self.0.set(map.next_value::<String>()? == "a");
-                    // Stop at the header. The oversized body can be incomplete
-                    // JSON and must never be parsed or allocated here.
-                    return Err(serde::de::Error::custom("header complete"));
-                }
-                map.next_value::<IgnoredAny>()?;
-            }
-            Ok(false)
-        }
-    }
-    // Parse only a bounded header, without allocating or inspecting the SDP body.
-    let mut n = text.len().min(1024);
-    while !text.is_char_boundary(n) {
-        n -= 1;
-    }
-    let answer = std::cell::Cell::new(false);
-    let _ = serde_json::Deserializer::from_str(&text[..n]).deserialize_map(Header(&answer));
-    answer.get()
-}
-
 async fn send(
     sink: &mut futures_util::stream::SplitSink<WebSocket, Message>,
     frame: ServerFrame,
 ) -> Result<(), ()> {
-    let json = frame.to_json().map_err(|_| ())?;
-    sink.send(Message::Text(Utf8Bytes::from(json)))
-        .await
-        .map_err(|_| ())
+    let text = frame.to_json().map_err(|_| ())?;
+    tokio::time::timeout(
+        WRITE_DEADLINE,
+        sink.send(Message::Text(Utf8Bytes::from(text))),
+    )
+    .await
+    .map_err(|_| ())?
+    .map_err(|_| ())
 }
-
 #[cfg(test)]
 mod tests {
     use super::*;
-
     #[test]
-    fn answer_frame_is_only_an_answer() {
-        assert!(answer_frame(r#"{"op":"a","sdp":"v=0"}"#));
-        assert!(answer_frame("{\"op\": \"a\", \"sdp\": \"v=0\"}"));
-        assert!(!answer_frame(r#"{"op":"o","sdp":"v=0"}"#));
-        assert!(!answer_frame(r#"{"op":"p","k":"s"}"#));
-        assert!(!answer_frame("not-json"));
+    fn schema_errors_retain_request_identity() {
+        assert!(matches!(
+            parse_frame(r#"{"op":"produce","id":7,"k":"sa","rtp":{}}"#),
+            Err(ParseError { id: Some(7) })
+        ));
+        assert!(matches!(
+            parse_frame("not-json"),
+            Err(ParseError { id: None })
+        ));
     }
-
     #[test]
-    fn oversized_unicode_header_does_not_panic() {
-        let text = format!("{}€{}", " ".repeat(63), "x".repeat(MAX_FRAME));
-        assert!(!answer_frame(&text));
-        let text = format!("{}€{}", " ".repeat(1023), "x".repeat(MAX_FRAME));
-        assert!(!answer_frame(&text));
-        assert!(!answer_frame(r#"{"sdp":"\"op\":\"a\"","op":"o"}"#));
-        assert!(answer_frame(&format!(
-            "{{\"op\":\"a\",\"sdp\":\"{}",
-            "€".repeat(MAX_FRAME)
-        )));
+    fn oversized_frames_are_bounded_before_decode() {
+        assert!(parse_frame(&"€".repeat(MAX_FRAME)).is_err());
     }
-
     #[test]
-    fn chrome_video_sdp_fits() {
-        const {
-            assert!(MAX_SDP >= 192 * 1024);
-            assert!(MAX_FRAME >= 256 * 1024);
-            assert!(MAX_FRAME > MAX_SDP);
-            // A Chrome video answer around 60 KiB used to miss the 48 KiB cap.
-            assert!(60 * 1024 < MAX_SDP);
-            assert!(MAX_SDP > 12_288);
-            assert!(MAX_FRAME > 16 * 1024);
-        }
+    fn legacy_join_is_decodable_but_terminal() {
+        assert!(matches!(
+            parse_frame(r#"{"op":"j","tk":"abcdefghjkmn"}"#),
+            Ok(ClientFrame::Join { v: 0, .. })
+        ));
+        assert!(terminal(&ServerFrame::error("update_required")));
+        assert!(!terminal(&ServerFrame::request_error(1, "forbidden")));
     }
 }

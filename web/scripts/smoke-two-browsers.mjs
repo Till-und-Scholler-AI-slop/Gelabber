@@ -136,11 +136,19 @@ async function relaySelected(page) {
 
 async function audioStats(page) {
   return page.evaluate(async () => {
-    const peer = (window.__smokePeers ?? []).find((pc) =>
+    const peers = (window.__smokePeers ?? []).filter(
+      (pc) => pc.connectionState === "connected",
+    );
+    if (!peers.length) return null;
+    const report = new Map();
+    for (const [index, pc] of peers.entries()) {
+      for (const [id, stat] of await pc.getStats())
+        report.set(`${index}:${id}`, stat);
+    }
+    const peer = peers.find((pc) =>
       pc.getSenders().some((sender) => sender.track?.kind === "audio"),
     );
     if (!peer) return null;
-    const report = await peer.getStats();
     const audio = [...report.values()].filter(
       (stat) => stat.kind === "audio" || stat.mediaType === "audio",
     );

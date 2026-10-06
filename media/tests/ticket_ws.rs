@@ -32,7 +32,9 @@ async fn serve() -> (std::net::SocketAddr, redis::Client) {
         _ => None,
     })
     .expect("config");
-    let state = gelabber_media::AppState::from_config(&config).expect("state");
+    let state = gelabber_media::AppState::from_config(&config)
+        .await
+        .expect("state");
     let listener = tokio::net::TcpListener::bind("127.0.0.1:0")
         .await
         .expect("bind media test listener");
@@ -49,7 +51,7 @@ async fn rejects_join_without_ticket() {
     let (mut ws, _) = tokio_tungstenite::connect_async(format!("ws://{addr}/media/ws"))
         .await
         .expect("ws");
-    ws.send(Message::Text(r#"{"op":"j"}"#.into()))
+    ws.send(Message::Text(r#"{"op":"j","id":1,"v":4}"#.into()))
         .await
         .unwrap();
     let msg = tokio::time::timeout(Duration::from_secs(2), ws.next())
@@ -85,7 +87,7 @@ async fn accepts_short_ticket_and_binds_room() {
         .await
         .expect("ws");
     ws.send(Message::Text(
-        format!(r#"{{"op":"j","tk":"{code}"}}"#).into(),
+        format!(r#"{{"op":"j","id":1,"v":4,"tk":"{code}"}}"#).into(),
     ))
     .await
     .unwrap();
@@ -95,7 +97,7 @@ async fn accepts_short_ticket_and_binds_room() {
         .expect("ok")
         .expect("text");
     let text = msg.to_text().unwrap();
-    assert!(text.contains(r#""op":"ok""#), "{text}");
+    assert!(text.contains(r#""op":"result""#), "{text}");
     assert!(text.contains(&channel.to_string()), "{text}");
     assert!(!text.contains("livekit"));
 
@@ -105,4 +107,63 @@ async fn accepts_short_ticket_and_binds_room() {
         .await
         .unwrap();
     assert!(leftover.is_none(), "ticket is single-use");
+}
+
+#[tokio::test]
+async fn old_media_protocol_is_rejected_without_consuming_ticket() {
+    let (addr, redis) = serve().await;
+    let code = gelabber_shared::ticket::generate();
+    let _lease = authority::mint(
+        &redis,
+        &code,
+        gelabber_shared::ticket::TicketClaim {
+            u: uuid::Uuid::new_v4(),
+            s: uuid::Uuid::new_v4(),
+            c: uuid::Uuid::new_v4(),
+            g: false,
+        },
+    )
+    .await;
+    let (mut old, _) = tokio_tungstenite::connect_async(format!("ws://{addr}/media/ws"))
+        .await
+        .unwrap();
+    old.send(Message::Text(
+        format!(r#"{{"op":"j","tk":"{code}","v":2}}"#).into(),
+    ))
+    .await
+    .unwrap();
+    let first = tokio::time::timeout(Duration::from_secs(2), old.next())
+        .await
+        .unwrap()
+        .unwrap()
+        .unwrap();
+    let error: serde_json::Value = serde_json::from_str(first.to_text().unwrap()).unwrap();
+    assert_eq!(error["e"], "update_required");
+    let left: Option<String> = redis::cmd("GET")
+        .arg(gelabber_shared::ticket::redis_key(&code))
+        .query_async(&mut redis.get_multiplexed_async_connection().await.unwrap())
+        .await
+        .unwrap();
+    assert!(
+        left.is_some(),
+        "version rejection must not burn a valid one-use ticket"
+    );
+    let (mut current, _) = tokio_tungstenite::connect_async(format!("ws://{addr}/media/ws"))
+        .await
+        .unwrap();
+    current
+        .send(Message::Text(
+            format!(r#"{{"op":"j","id":1,"tk":"{code}","v":4}}"#).into(),
+        ))
+        .await
+        .unwrap();
+    let accepted = tokio::time::timeout(Duration::from_secs(3), current.next())
+        .await
+        .unwrap()
+        .unwrap()
+        .unwrap();
+    let value: serde_json::Value = serde_json::from_str(accepted.to_text().unwrap()).unwrap();
+    assert_eq!(value["op"], "result");
+    assert_eq!(value["data"]["v"], 4);
+    current.close(None).await.unwrap();
 }
