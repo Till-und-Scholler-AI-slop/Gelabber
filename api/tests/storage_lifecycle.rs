@@ -694,8 +694,19 @@ async fn migration_backfills_existing_bytes_and_rollback_preserves_metadata_and_
             .unwrap(),
         1
     );
-    // Older readers can still read retained metadata; never drop the new ledger
-    // or trigger for binary rollback while cleanup remains pending.
+    // The old reader's selected columns still work on the upgraded storage schema.
+    sqlx::query("SELECT id,channel_id,author_id,content,created_at,edited_at FROM messages WHERE channel_id=$1")
+        .bind(channel).fetch_all(&pool).await.unwrap();
+    // The current binary also needs the current schema (including later chat DTO fields).
+    for later in sqlx::migrate!("./migrations")
+        .iter()
+        .filter(|m| m.version > 8)
+    {
+        sqlx::raw_sql(later.sql.clone())
+            .execute(&pool)
+            .await
+            .unwrap();
+    }
     assert_eq!(
         client
             .send(
@@ -1022,6 +1033,7 @@ async fn inflight_put_after_expiry_is_not_lost_from_daily_usage(pool: PgPool) {
         "After expiry HEAD404: ledger={:?}",
         usage(&state, client.user_id()).await
     );
+    assert_eq!(usage(&state, client.user_id()).await, (4, 0));
     socket.write_all(&[3, 4]).await.unwrap();
     let mut response = Vec::new();
     tokio::time::timeout(Duration::from_secs(3), socket.read_to_end(&mut response))
@@ -1072,7 +1084,14 @@ async fn inflight_put_after_expiry_is_not_lost_from_daily_usage(pool: PgPool) {
         StatusCode::TOO_MANY_REQUESTS,
         "completed first upload must still consume the 4-byte daily cap"
     );
-    assert_eq!(usage(&state, client.user_id()).await, (4, 0));
+    // The real background worker can observe the completed PUT after its
+    // earlier in-flight HEAD. Both ledger states keep the entire daily cap;
+    // demanding only the reserved intermediate state races valid settlement.
+    let ledger = usage(&state, client.user_id()).await;
+    assert!(
+        matches!(ledger, (4, 0) | (0, 4)),
+        "quota was lost: {ledger:?}"
+    );
     // Advance only the test's DB deadline; settle the actual late-completed PUT
     // once and verify final object cleanup without refunding its consumed bytes.
     sqlx::query("UPDATE attachments SET expires_at=now()-interval '16 minutes',expiry_retry_at=now() WHERE id=$1")

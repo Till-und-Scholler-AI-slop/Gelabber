@@ -21,9 +21,9 @@ async fn main() -> ExitCode {
     }
 }
 
-async fn run() -> Result<(), Box<dyn std::error::Error>> {
+async fn run() -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
     let config = Config::from_env()?;
-    let state = AppState::from_config(&config)?;
+    let state = AppState::from_config(&config).await?;
 
     let listener = TcpListener::bind(config.media_addr)
         .await
@@ -36,10 +36,17 @@ async fn run() -> Result<(), Box<dyn std::error::Error>> {
         "gelabber-media listening"
     );
 
-    axum::serve(listener, app(state))
-        .with_graceful_shutdown(shutdown_signal())
+    let engine = state.sfu.clone();
+    axum::serve(listener, app(state.clone()))
+        .with_graceful_shutdown(async move {
+            shutdown_signal().await;
+            // Stop native forwarding and close signaling before Axum waits for
+            // WebSocket connections, otherwise active calls prevent shutdown.
+            engine.shutdown().await;
+        })
         .await?;
 
+    state.sfu.shutdown().await;
     info!("gelabber-media stopped");
     Ok(())
 }

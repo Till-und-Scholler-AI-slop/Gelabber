@@ -21,6 +21,7 @@ import { scopeGeneration, stampHolds, takeStamp } from "../auth/scope.ts";
 import { useSession } from "../auth/session.ts";
 import { notifyError } from "../components/toasts.ts";
 import { isPendingId } from "../servers/queries.ts";
+import { refreshChatWorkflows } from "./readState.ts";
 import * as remote from "./api.ts";
 import {
   applyMessageChanges,
@@ -50,7 +51,7 @@ import type {
   MessageAuthor,
   MessagePage,
 } from "./types.ts";
-import { asAttachmentList } from "./types.ts";
+import { asAttachmentList, asReactionList } from "./types.ts";
 
 export const messageKeys = {
   channel: (userId: string, generation: number, channelId: string) =>
@@ -419,7 +420,13 @@ export async function sendMessageAttempt(
 }
 
 export function useSendMessage(channelId: string, author: MessageAuthor) {
+  const client = useQueryClient();
   return useMutation({
+    onMutate: () => takeStamp(),
+    onSettled: (_result, _error, _input, stamp) => {
+      if (stampHolds(stamp))
+        void refreshChatWorkflows(client, stamp, channelId);
+    },
     mutationFn: (input: SendInput & { attemptId?: string }) =>
       sendMessageAttempt(channelId, author, input),
     retry: false,
@@ -565,7 +572,13 @@ type EditContext = import("../auth/scope.ts").ScopeStamp & {
 
 export function useEditMessage(channelId: string) {
   const client = useQueryClient();
-  return useMutation(editMessageOptions(client, channelId));
+  return useMutation({
+    ...editMessageOptions(client, channelId),
+    onSettled: (_result, _error, _input, stamp) => {
+      if (stampHolds(stamp))
+        void refreshChatWorkflows(client, stamp, channelId);
+    },
+  });
 }
 
 function isMessage(value: unknown): value is Message {
@@ -671,6 +684,9 @@ export function applyChannelEvent(
       ...event.d,
       ...(event.r !== undefined ? { revision: event.r } : {}),
       attachments: asAttachmentList(event.d.attachments),
+      ...(event.d.reactions === undefined
+        ? {}
+        : { reactions: asReactionList(event.d.reactions) }),
     };
     if (event.t === "c")
       applyMessageCreated(client, userId, generation, channelId, message);
@@ -752,7 +768,13 @@ export function deleteMessageOptions(client: QueryClient, channelId: string) {
 }
 export function useDeleteMessage(channelId: string) {
   const client = useQueryClient();
-  return useMutation(deleteMessageOptions(client, channelId));
+  return useMutation({
+    ...deleteMessageOptions(client, channelId),
+    onSettled: (_result, _error, _input, stamp) => {
+      if (stampHolds(stamp))
+        void refreshChatWorkflows(client, stamp, channelId);
+    },
+  });
 }
 
 export { isPendingId };

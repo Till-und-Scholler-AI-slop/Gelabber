@@ -88,6 +88,7 @@ jobs:
           context: ${{ matrix.context }}
           file: ${{ matrix.file }}
           push: ${{ github.event_name == 'workflow_run' }}
+          load: ${{ github.event_name == 'pull_request' && matrix.name == 'media' }}
           provenance: false
           tags: ${{ env.GHCR_IMAGE }}:${{ env.IMAGE_TAG }}
           build-args: |
@@ -97,6 +98,9 @@ jobs:
             OCI_SOURCE=https://github.com/${{ github.repository }}
           cache-from: type=gha,scope=${{ matrix.name }}
           cache-to: type=gha,mode=max,scope=${{ matrix.name }}
+      - name: Verify actual media image readiness and normal shutdown
+        if: github.event_name == 'pull_request' && matrix.name == 'media'
+        run: python3 docker/check-media-image.py --image "${GHCR_IMAGE}:${IMAGE_TAG}" --revision "$SOURCE_SHA"
       - name: Record digest
         if: github.event_name == 'workflow_run'
         env:
@@ -135,6 +139,13 @@ jobs:
           pattern: digest-*
           merge-multiple: true
           path: digests
+      - name: Smoke exact main media digest before promotion
+        env:
+          SOURCE_SHA: ${{ github.event.workflow_run.head_sha }}
+        run: |
+          media_ref=$(python3 -c 'import json; d=json.load(open("digests/media.json")); print(d["image"]+"@"+d["digest"])')
+          docker pull "$media_ref"
+          python3 docker/check-media-image.py --image "$media_ref" --revision "$SOURCE_SHA"
       - name: Verify CI, preflight immutable release, record image set
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}

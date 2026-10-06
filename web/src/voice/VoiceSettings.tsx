@@ -1,11 +1,15 @@
+import { useAudioProcessing } from "./audioProcessing.ts";
+import { MicrophoneTest } from "./MicrophoneTest.tsx";
 // Shared Voice/Video + notification form. Used on /settings and in-call.
 
 import { useState, type ReactNode } from "react";
 import "./quality.css";
+import { playCallSound } from "./callSounds.ts";
 
 import {
-  AUDIO_QUALITY,
-  type AudioQuality,
+  AUDIO_PROCESSING,
+  audioBitrate,
+  type AudioProcessingMode,
   type DeviceList,
   type StreamApply,
   type StreamKind,
@@ -14,12 +18,12 @@ import {
   VIDEO_RESOLUTIONS,
   VIDEO_FRAME_RATES,
   explicitStreamProfile,
-  videoSendBudget,
   type VideoResolution,
   type VideoFrameRate,
   formatVideoBitrate,
   listMediaDevices,
   useMediaSettings,
+  videoSendBudget,
 } from "./settings.ts";
 
 const emptyDevices: DeviceList = {
@@ -39,6 +43,10 @@ export function MediaSettingsForm({
   const showVideo = section === "all" || section === "video";
   const showNotifications = section === "all" || section === "notifications";
   const settings = useMediaSettings();
+  const processing = useAudioProcessing();
+  const audioLimit = audioBitrate(settings);
+  const videoLimit = videoSendBudget(settings);
+  const [microphoneTest, setMicrophoneTest] = useState(false);
   const [devices, setDevices] = useState<DeviceList>(emptyDevices);
 
   const refresh = async () => {
@@ -73,9 +81,8 @@ export function MediaSettingsForm({
     <div className="media-settings-form flex flex-col gap-6 text-left">
       {section === "all" && (
         <p className="text-sm text-neutral-600 dark:text-neutral-400">
-          Passe Mikrofon, Lautsprecher und Kamera an. Echo-Unterdrückung,
-          Rauschunterdrückung und automatische Mikrofonverstärkung sind anfangs
-          eingeschaltet.
+          Passe Mikrofon, Lautsprecher und Kamera an. Die Übertragung hat
+          standardmäßig keine Bitratengrenze durch Gelabber.
         </p>
       )}
 
@@ -101,6 +108,26 @@ export function MediaSettingsForm({
               onChange={(value) => settings.patch({ audioOutputId: value })}
               options={withCurrent(devices.audiooutput, settings.audioOutputId)}
             />
+          )}
+          {(showAudio || showVideo) && (
+            <fieldset className="flex flex-col gap-2">
+              <legend className="text-sm font-semibold">Bandbreite</legend>
+              <Toggle
+                id="economy-mode"
+                label="Sparmodus für wenig Upload"
+                checked={settings.economyMode}
+                onChange={(economyMode) =>
+                  settings.patch({ economyMode, quality: "normal" })
+                }
+              />
+              <p className="text-xs text-neutral-500">
+                {settings.economyMode
+                  ? `Ausdrückliche Obergrenzen: Sprache ${audioLimit! / 1000} kbit/s, Stream-Ton 128 kbit/s, Video gemeinsam ${formatVideoBitrate(videoLimit!)}.`
+                  : videoLimit
+                    ? `Audio ohne Bitratengrenze durch Gelabber; Video mit deinem gemeinsamen Limit von ${formatVideoBitrate(videoLimit)}.`
+                    : "Keine Bitratengrenze durch Gelabber. Browser, Codec und Verbindung bestimmen die tatsächliche Datenrate."}
+              </p>
+            </fieldset>
           )}
           {showVideo && (
             <Select
@@ -165,13 +192,46 @@ export function MediaSettingsForm({
               value={Math.round(settings.inputGain * 100)}
               suffix={`${Math.round(settings.inputGain * 100)} %`}
               onChange={(value) => settings.patch({ inputGain: value / 100 })}
-              hint="100 % sendet das Mikrofon unverändert (Default). Andere Werte laufen über Web Audio."
+              hint="100 % fügt keine Verstärkung hinzu. Andere Werte laufen über Web Audio."
             />
+          </fieldset>
+          <fieldset className="flex flex-col gap-3">
+            <legend className="text-sm font-semibold">
+              Mikrofonverarbeitung
+            </legend>
+            {(Object.keys(AUDIO_PROCESSING) as AudioProcessingMode[]).map(
+              (mode) => (
+                <label key={mode} className="flex items-start gap-2 text-sm">
+                  <input
+                    type="radio"
+                    name="audio-processing"
+                    checked={settings.processingMode === mode}
+                    onChange={() => settings.patch({ processingMode: mode })}
+                  />
+                  <span>
+                    {AUDIO_PROCESSING[mode].label}
+                    <small className="block text-neutral-500">
+                      {AUDIO_PROCESSING[mode].hint}
+                    </small>
+                  </span>
+                </label>
+              ),
+            )}
+            <p role="status" className="text-xs text-neutral-500">
+              {processing.message}
+            </p>
+            <button
+              type="button"
+              className="self-start rounded border px-3 py-2 text-sm"
+              onClick={() => setMicrophoneTest(true)}
+            >
+              Mikrofon testen und vergleichen
+            </button>
           </fieldset>
           <AdvancedAudio expanded={section === "all"}>
             <fieldset className="flex flex-col gap-2">
-              <legend className="text-sm font-semibold text-neutral-800 dark:text-neutral-200">
-                Verarbeitung
+              <legend className="text-sm font-semibold">
+                Echo und Browserfilter
               </legend>
               <Toggle
                 id="aec"
@@ -181,47 +241,30 @@ export function MediaSettingsForm({
                   settings.patch({ echoCancellation })
                 }
               />
-              <Toggle
-                id="ns"
-                label="Rauschunterdrückung"
-                checked={settings.noiseSuppression}
-                onChange={(noiseSuppression) =>
-                  settings.patch({ noiseSuppression })
-                }
-              />
-              <Toggle
-                id="agc"
-                label="Auto-Gain"
-                checked={settings.autoGainControl}
-                onChange={(autoGainControl) =>
-                  settings.patch({ autoGainControl })
-                }
-              />
-            </fieldset>
-            <fieldset className="flex flex-col gap-2">
-              <legend className="text-sm font-semibold text-neutral-800 dark:text-neutral-200">
-                Audio-Qualität (Opus)
-              </legend>
-              {(Object.keys(AUDIO_QUALITY) as AudioQuality[]).map((key) => {
-                const profile = AUDIO_QUALITY[key];
-                return (
-                  <label key={key} className="flex items-center gap-2 text-sm">
-                    <input
-                      type="radio"
-                      name="audio-quality"
-                      checked={settings.quality === key}
-                      onChange={() => settings.patch({ quality: key })}
-                    />
-                    <span>
-                      {profile.label}
-                      <span className="text-neutral-500 dark:text-neutral-400">
-                        {" "}
-                        — {profile.hint}
-                      </span>
-                    </span>
-                  </label>
-                );
-              })}
+              <p className="text-xs text-neutral-500">
+                Bei Lautsprechern empfohlen. Für Musik mit Kopfhörern kannst du
+                sie ausschalten.
+              </p>
+              {settings.processingMode === "browser" && (
+                <>
+                  <Toggle
+                    id="ns"
+                    label="Rauschunterdrückung des Browsers"
+                    checked={settings.noiseSuppression}
+                    onChange={(noiseSuppression) =>
+                      settings.patch({ noiseSuppression })
+                    }
+                  />
+                  <Toggle
+                    id="agc"
+                    label="Auto-Gain des Browsers"
+                    checked={settings.autoGainControl}
+                    onChange={(autoGainControl) =>
+                      settings.patch({ autoGainControl })
+                    }
+                  />
+                </>
+              )}
             </fieldset>
           </AdvancedAudio>
         </>
@@ -275,9 +318,7 @@ export function MediaSettingsForm({
             <div className="stream-quality-heading">
               <h3>Video-Upload</h3>
               <span>
-                {settings.videoUploadLimit
-                  ? formatVideoBitrate(settings.videoUploadLimit)
-                  : "Automatisch"}
+                {videoLimit ? formatVideoBitrate(videoLimit) : "Ohne Limit"}
               </span>
             </div>
             <div className="stream-upload-mode">
@@ -288,7 +329,7 @@ export function MediaSettingsForm({
                   checked={settings.videoUploadLimit === 0}
                   onChange={() => settings.patch({ videoUploadLimit: 0 })}
                 />{" "}
-                Automatisch
+                {settings.economyMode ? "Sparmodus (2,5 Mbit/s)" : "Ohne Limit"}
               </label>
               <label>
                 <input
@@ -302,28 +343,26 @@ export function MediaSettingsForm({
                 Eigenes Limit
               </label>
             </div>
-            {settings.videoUploadLimit > 0 ? (
-              <Slider
-                id="video-upload-limit"
-                label="Maximaler Video-Upload"
-                min={0.5}
-                max={100}
-                step={0.5}
-                value={settings.videoUploadLimit / 1_000_000}
-                suffix={formatVideoBitrate(settings.videoUploadLimit)}
-                onChange={(value) =>
-                  settings.patch({ videoUploadLimit: value * 1_000_000 })
-                }
-                hint="Gemeinsames Limit für Kamera, Bildschirm und Go Live. Lass etwas Upload für Sprache und andere Apps frei."
-              />
-            ) : (
-              <p className="stream-quality-budget">
-                Qualitätsbudget bis zu{" "}
-                {formatVideoBitrate(
-                  videoSendBudget({ ...settings, videoUploadLimit: 0 }),
-                )}
-                , passend zu deiner Auflösung und Bildrate.
-              </p>
+            {settings.videoUploadLimit > 0 && (
+              <div className="flex flex-col gap-2">
+                <label htmlFor="video-upload-limit">
+                  Eigenes gemeinsames Video-Limit (Mbit/s)
+                </label>
+                <input
+                  id="video-upload-limit"
+                  type="number"
+                  min="0.001"
+                  max="4294.967"
+                  step="any"
+                  value={settings.videoUploadLimit / 1_000_000}
+                  onChange={(event) =>
+                    settings.patch({
+                      videoUploadLimit: Number(event.target.value) * 1_000_000,
+                    })
+                  }
+                  className="rounded border px-3 py-2"
+                />
+              </div>
             )}
             <p className="stream-quality-budget">
               Der Browser passt die tatsächliche Bitrate an die Verbindung an.
@@ -335,6 +374,50 @@ export function MediaSettingsForm({
             unterstützt, auch auf laufende Streams angewendet.
           </p>
         </fieldset>
+      )}
+      {(showAudio || showNotifications) && (
+        <fieldset className="flex flex-col gap-2">
+          <legend className="text-sm font-semibold text-neutral-800 dark:text-neutral-200">
+            Call-Sounds
+          </legend>
+          <Toggle
+            id="call-sounds"
+            label="Signaltöne im Call"
+            checked={settings.callSounds}
+            onChange={(callSounds) => settings.patch({ callSounds })}
+          />
+          <p className="text-sm text-neutral-600 dark:text-neutral-400">
+            Kurze Töne beim Beitreten und Verlassen sowie für dein Mikrofon und
+            Taubstellen. Wenn du taubgestellt bist, bleiben Teilnehmer-Töne
+            stumm.
+          </p>
+          <Slider
+            id="call-sound-volume"
+            label="Lautstärke der Signaltöne"
+            min={0}
+            max={1}
+            step={0.05}
+            value={settings.callSoundVolume}
+            suffix={`${Math.round(settings.callSoundVolume * 100)} %`}
+            onChange={(callSoundVolume) => settings.patch({ callSoundVolume })}
+            hint="Nutzt deinen gewählten Lautsprecher und die Wiedergabelautstärke."
+          />
+          <button
+            type="button"
+            className="self-start rounded border border-neutral-300 px-3 py-2 text-sm font-medium text-neutral-800 hover:bg-neutral-100 disabled:opacity-50 dark:border-neutral-600 dark:text-neutral-200 dark:hover:bg-neutral-800"
+            disabled={
+              !settings.callSounds ||
+              settings.callSoundVolume === 0 ||
+              settings.outputVolume === 0
+            }
+            onClick={() => playCallSound("join")}
+          >
+            Testton abspielen
+          </button>
+        </fieldset>
+      )}
+      {microphoneTest && (
+        <MicrophoneTest onClose={() => setMicrophoneTest(false)} />
       )}
       {showNotifications && (
         <fieldset className="flex flex-col gap-2">

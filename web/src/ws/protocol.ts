@@ -63,6 +63,8 @@ export type SigEvent = {
   m?: boolean;
   d?: boolean;
   snap?: VoiceEntry[];
+  /** Existing occupant replay, not a new arrival. */
+  replay?: boolean;
 };
 
 export type ErrFrame = { op: "err"; e: string; s?: string; c?: string };

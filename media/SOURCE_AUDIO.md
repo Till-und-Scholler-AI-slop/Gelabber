@@ -1,84 +1,120 @@
-# Media protocol version 2: source audio and explicit Watch
+# Media protocol v4: source audio and explicit Watch
 
-New clients send `v: 2` in the media join; the acknowledgement carries `v: 2`. The gateway still uses its
-existing compact `sig` messages; `k: "sa"` and `k: "la"` are additional track
-kinds. Microphone `a`, camera `v`, screen `s`, and Live `l` keep their identities.
-A deployment must update media, gateway, and web together. Missing media `v`
-means the legacy protocol: a new web client must omit source-audio senders and
-announcements and show the unsupported-audio notice, while keeping video-only
-capture usable. It must also skip `op: "w"` against a legacy media server.
-Older web clients with no join version retain microphone, camera, and automatic
-screen/Live video forwarding. The SFU never sends source audio to those legacy
-peers and refuses their source-audio announcements. Version 2 voice peers receive
-source video and audio only through explicit Watch. This preserves legacy video
-behavior while ensuring legacy viewers cannot mix source audio into voice audio.
+Gelabber owns tickets, room authority and its WebSocket signaling. The sole media
+engine is the official Rust mediasoup 0.29.0 binding; web uses the public
+mediasoup-client 3.24.1 SDK. See the [migration document](../docs/v0.4-mediasoup-migration.md)
+for the native build and coherent previous-application rollback boundary.
+
+Clients join with `op: "j"`, a positive increasing request `id`, the one-use `tk`
+and `v: 4`. A dedicated Live viewer additionally sends `w: <publisher UUID>`.
+The correlated result includes `v: 4`, room/user identity, a peer generation and
+`routerRtpCapabilities`. Other protocol versions receive `update_required` before
+ticket consumption. API, media and web must be updated together.
 
 ## Publish and pair
 
-A display capture can provide video without audio. Announce each present track
-by its exact native MSID track ID before sending its offer:
+Source kinds remain microphone `a`, camera `v`, screen video `s`, Live video `l`,
+screen audio `sa` and Live audio `la`. A display capture may supply only video.
+The public SDK creates send/receive transports and supplies its actual RTP/DTLS
+parameters to Gelabber's correlated RPCs; media WebSocket messages carry no SDP.
 
-```json
-{"op":"p","k":"s","t":"display-video-id"}
-{"op":"p","k":"sa","t":"display-audio-id"}
+Each successful `produce` returns an actual native `producerId` and `epoch`.
+`epoch` identifies the capture lifetime: paired video/audio share one capture
+UUID, and a new capture receives a new UUID. Source audio requires the same
+peer's current parent Producer ID and capture epoch. For example, the adapter's
+produce callback sends the equivalent of:
+
+```ts
+const video = await request("produce", {
+  k: "s", rtp: videoRtpParameters, epoch: captureEpoch,
+});
+await request("produce", {
+  k: "sa", rtp: audioRtpParameters, epoch: captureEpoch,
+  parent: video.producerId,
+});
 ```
 
-For Live, `l` and `la` both include the same gateway-issued `lc`. Audio never
-acquires a new exclusive claim. An audio announcement requires one matching
-parent video announcement on that same peer; source audio requires explicit
-`t` and cannot use legacy SDP-order fallback. The gateway also requires the
-parent publication on that exact voice socket, so another tab cannot attach
-audio to its sibling's screen or Live claim. Live audio has the same current
-claim, peer ownership, access authority, permission, and local lease deadline
-as its parent. Browser tracks without explicit source-audio announcements remain
-legacy microphone tracks; clients must never send source audio to legacy media.
+The request helper supplies the increasing `id`; RTP parameters come from the
+real SDK callback. For Live, `l` and `la` also carry the same current Gateway-issued
+`lc`. The Gateway requires source audio's parent on that exact voice socket.
+Media validates the claim against the ticket's exact authority/session and binds
+it to one media peer; audio shares its parent's Live binding rather than acquiring
+another exclusive lease. A child cannot attach to another tab's Producer or an
+old parent ID, epoch or Live claim.
 
-Source audio uses Opus at 48 kHz, two channels, stereo and sprop-stereo enabled,
-192000 bits/s, FEC enabled and DTX disabled. Frontend display constraints and
-sender tuning keep speech processing off independently of microphone settings.
-The SFU forwards the encoded stream without transcoding. Internal publication
-identities use `<user>:sa` / `<user>:la`; outgoing native stream IDs and CNAME
-match `<user>:s` / `<user>:l`, while outgoing audio track IDs remain
-`<user>:sa-<ssrc>` / `<user>:la-<ssrc>`. Prefer the current parent stream ID
-for audio source classification, then the tagged audio track ID as fallback.
-Browsers keep a receiver track ID immutable when a stopped sender is reused;
-its current MSID can move from screen to Live while that old track ID remains.
-This lets the browser associate captured video and audio for synchronization.
+A codec-only Producer replacement keeps the capture epoch and supplies
+`expectedOldProducerId`. The server stops the old publication and its children
+before committing the replacement; children must then bind to the new actual
+parent ID. Late cleanup of an old ID cannot stop a replacement sharing its epoch.
+Transport compaction closes the old native resources before republishing retained
+captures, video before paired audio. It preserves capture epochs and rewrites
+child parent IDs; it does not withdraw the API's Live claim.
 
-## Watch
+Source audio uses Opus at 48 kHz with two channels, stereo and FEC enabled and DTX
+disabled. Display constraints disable speech processing independently of the
+microphone mode. Default source-audio bitrate has no application cap; an explicit
+user economy setting can supply one. The SFU forwards encoded media without
+transcoding. Incoming identity is the authenticated Consumer announcement's
+`owner`, `k`, actual Producer/Consumer IDs, `epoch`, `generation` and optional
+`parent`. Browser track IDs, MSID, SDP order and CNAME are not source classifiers.
 
-Version 2 voice peers receive microphone and camera by default. Explicit Watch
-selects one publisher and parent kind, including both its video and source audio:
+## Watch, Ready and privacy
+
+Normal voice peers receive room microphone audio and cameras automatically.
+Explicit Watch selects one publisher's screen or Live video and its paired audio:
 
 ```json
-{"op":"w","u":"publisher-uuid","k":"s","on":true}
-{"op":"w","u":"publisher-uuid","k":"s","on":false}
+{"op":"w","id":10,"u":"publisher-uuid","k":"s","on":true}
+{"op":"w","id":11,"u":"publisher-uuid","k":"s","on":false}
 ```
 
-The allowed parent kinds are `s` and `l`. Intent can precede publication and must
-be replayed after rebuilding the media peer. A dedicated Live watch peer joined
-with `w: <publisher-uuid>` continues to receive that publisher's `l`/`la` and
-channel microphone audio; it cannot publish or change its selection via `op:w`.
-The SFU excludes every publication by the viewer's own user, including when
-publisher and watcher are different media peers. Closing Watch revokes a
-per-viewer forwarding gate before waiting for subscription SDP cleanup.
+Allowed parent kinds are `s` and `l`. Watch intent may precede publication and is
+replayed on a new media peer. A dedicated Live watch peer receives room microphone
+audio and only its selected publisher's `l`/`la`; it excludes other camera/screen
+video and their source audio. It cannot create a send transport, publish even a
+microphone or change its selection with `w`. Every peer excludes publications by
+its own user, including another tab's publications.
 
-Retracting or ending a parent source removes its paired audio immediately;
-source-audio stop alone leaves the parent video and microphone running. A
-stopped or revoked source cannot resume through an old pending track event.
-Gateway snapshots omit audio associated with a stale Live claim. Parent `u`
-also emits the paired audio `u` when no other live seat still publishes it.
+Every native Consumer starts paused. Its `consumer` announcement carries the
+actual `consumerId`, `producerId`, source identity, a fresh subscription
+`generation`, RTP parameters and the source pause state. The browser first
+completes public SDK `consume` and attaches that exact receiver, then sends
+`consumerReady` with the same ID/generation. The server checks ownership and
+current grants before and after native resume; `consumerState` carries the
+confirmed effective pause state. Failed attachment reports `consumerFailed`.
+Retired or mismatched generations cannot authorize a new receiver.
 
-## Verification
+Watch-off, parent close, rights revocation and peer leave invalidate all affected
+grants before native awaits. Producer/Consumer pauses share a 500-ms aggregate
+phase covering queued stops, resource gates and actual native acknowledgements,
+with at most 64 jobs in flight. An unconfirmed stop terminates the media process
+so native forwarding cannot continue. Graph/UI cleanup and Live peer-lease release
+follow confirmed stops. Closing audio alone retains video and microphone; closing
+or replacing the parent retires its paired audio. Old Ready and resume requests
+cannot revive a revoked source. Live claim loss retains unrelated authorized
+voice/camera/screen sources; full authority loss retires the entire peer.
 
-`media/src/sfu_lifecycle_tests.rs` covers source identity, Watch selection,
-unsubscribe before a busy SDP gate, parent cleanup and independent microphone.
-`media/tests/live_claim.rs` verifies the same exact claim on the media wire;
-`api/tests/signal.rs` checks same-socket pairing and removal on the gateway wire.
-`web/scripts/smoke-source-audio.mjs` exercises two Chromium clients with synthetic
-display audio and real signaling/SFU. Set `GELABBER_SOURCE_AUDIO_RECEIVER=firefox`
-to run the receiver in Firefox, including screen/Live video decoding, source audio,
-and stop/re-Watch. Install both Playwright browsers first. The Firefox profile
-allows loopback ICE for the required local test stack; it is not WAN acceptance.
-Browser/OS native tab or system capture
-availability still depends on the selected source and browser capture support.
+## Verification and limits
+
+Current control tests use real mediasoup resources and the v4 WebSocket/Redis
+contract:
+
+- `media/tests/mediasoup_control.rs` covers peer-scoped transports, Producer
+  replacement/late cleanup, exact parent/epoch pairing, automatic microphone and
+  camera sources, Watch selection and ConsumerReady generation/ownership.
+- `media/tests/live_claim.rs` covers exclusive peer binding, stale release,
+  expiry/renewal and exact Live-audio parent/claim ownership.
+- `media/tests/access_revocation.rs` covers session/channel authority loss and
+  redis failure. The stop-batch unit tests in `media/src/sfu.rs` cover concurrent
+  acknowledgements and an aggregate timeout while resources remain queued.
+- `api/tests/signal.rs` covers same-Gateway-socket pairing and parent cleanup.
+
+These control checks do not establish actual RTP playback. The existing
+`web/scripts/smoke-source-audio.mjs` uses the product with synthetic display audio
+and real native transport/playback. `GELABBER_SOURCE_AUDIO_RECEIVER=firefox` selects
+a Firefox receiver; both Playwright browsers must be installed. Browser results
+must identify the exact executed runtime/test freeze, and older SFU reports remain
+historical. `media/tests/browser-lifecycle.mjs` and the dated media test documents
+record the previous engine and are not v4 acceptance gates. Native tab/system
+capture availability, audible quality, physical devices and WAN/relay acceptance
+remain separate from these local synthetic controls.

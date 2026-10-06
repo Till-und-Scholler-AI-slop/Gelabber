@@ -1,20 +1,18 @@
-// One media peer: socket, generation, SDP queue, ICE buffer.
-// The seat and the watch each hold one. A chat-gateway reconnect must not
-// replace a peer whose media transport is still alive. Close and error on
-// that transport clear it, so the next reconnect can mint a new ticket.
-
-import type {
-  MediaClientFrame,
-  MediaServerFrame,
-  MediaSocket,
+import {
+  MediaError,
+  MEDIA_VERSION,
+  type MediaClientFrame,
+  type MediaMethod,
+  type MediaRequests,
+  type MediaResults,
+  type MediaServerFrame,
+  type MediaSocket,
 } from "./media.ts";
-import type { PeerConnection } from "./session.ts";
-
-export type IceCand = { candidate: string; sdpMid: string | null };
+import type { MediaConnection } from "./mediasoupConnection.ts";
 
 const OUTBOUND_CAP = 64;
+export const MEDIA_REQUEST_DEADLINE_MS = 10_000;
 
-/** A bounded transport retry; reset only after connectivity or an explicit leave. */
 export class MediaRetry {
   private timer: ReturnType<typeof setTimeout> | null = null;
   private attempts = 0;
@@ -44,70 +42,101 @@ export class MediaRetry {
   }
 }
 
+type PendingRequest = {
+  resolve(value: unknown): void;
+  reject(error: Error): void;
+  timer: ReturnType<typeof setTimeout>;
+  deadline: number;
+};
+
+/** Each seat/watch owns its correlated socket, SDK connection and generation. */
 export class MediaPeer {
-  pc: PeerConnection | null = null;
+  connection: MediaConnection | null = null;
   socket: MediaSocket | null = null;
   generation = 0;
-  pendingIce: IceCand[] = [];
-  makingOffer = false;
-  sfuOffered = false;
-  needOffer = false;
-  /** SFU offer we have not answered yet. */
-  sfuOfferOpen = false;
-  /** First remote answer (or our answer to the SFU) has landed. */
-  negotiated = false;
-  /** SFU accepted `op:j` with `op:ok`. SDP and ICE stay queued until then. */
   accepted = false;
-  private outbound: MediaClientFrame[] = [];
-  private sdpChain: Promise<void> = Promise.resolve();
+  serverGeneration: string | null = null;
+  private nextId = 1;
+  private pending = new Map<number, PendingRequest>();
   private unbind: (() => void) | null = null;
   private unbindClose: (() => void) | null = null;
   private transportLive = false;
 
-  /**
-   * The media transport has not closed or failed.
-   * A gateway blip must not replace this peer while that is true.
-   */
   isOpen(): boolean {
     return this.socket !== null && this.transportLive;
   }
 
-  enqueue(job: () => Promise<void>): Promise<void> {
-    const run = this.sdpChain.then(job, job);
-    this.sdpChain = run.then(
-      () => undefined,
-      () => undefined,
+  async request<K extends MediaMethod>(
+    method: K,
+    data: MediaRequests[K],
+    deadlineEpochMs?: number,
+  ): Promise<MediaResults[K]> {
+    if (!this.isOpen()) throw new MediaError("connection_closed");
+    if (method !== "j" && !this.accepted) throw new MediaError("join_required");
+    if (this.pending.size >= OUTBOUND_CAP)
+      throw new MediaError("request_overflow");
+    const deadline = Math.min(
+      Date.now() + MEDIA_REQUEST_DEADLINE_MS,
+      deadlineEpochMs ?? Infinity,
     );
-    return run;
-  }
-
-  signalingState(): string {
-    return (
-      this.pc?.signalingState ??
-      (this.pc?.remoteDescription ? "have-remote-offer" : "stable")
-    );
-  }
-
-  /**
-   * Join goes out immediately. Every other frame waits until `accept`,
-   * so a rejected join cannot be followed by ICE the SFU treats as unauthorized.
-   */
-  send(frame: MediaClientFrame): void {
-    if (frame.op !== "j" && !this.accepted) {
-      this.outbound.push(frame);
-      if (this.outbound.length > OUTBOUND_CAP) this.outbound.shift();
-      return;
+    if (!Number.isFinite(deadline) || Date.now() >= deadline)
+      throw new MediaError("request_timeout");
+    if (this.nextId > 0xffffffff) {
+      this.socket?.close();
+      throw new MediaError("request_id_exhausted");
     }
-    this.socket?.send(frame);
-  }
-
-  /** `op:ok` — the SFU joined this peer. Flush signaling held back until then. */
-  accept(): void {
-    if (this.accepted) return;
-    this.accepted = true;
-    const queued = this.outbound;
-    this.outbound = [];
-    for (const frame of queued) this.socket?.send(frame);
+    const generation = this.generation,
+      socket = this.socket;
+    const requestId = this.nextId++;
+    const response = await new Promise<unknown>((resolve, reject) => {
+      const timer = setTimeout(
+        () => {
+          this.pending.delete(requestId);
+          reject(new MediaError("request_timeout"));
+        },
+        Math.max(0, deadline - Date.now()),
+      );
+      this.pending.set(requestId, { resolve, reject, timer, deadline });
+      try {
+        this.socket!.send({
+          op: method,
+          id: requestId,
+          ...data,
+        } as MediaClientFrame);
+      } catch (error) {
+        clearTimeout(timer);
+        this.pending.delete(requestId);
+        reject(
+          error instanceof Error ? error : new MediaError("connection_closed"),
+        );
+      }
+    });
+    if (Date.now() >= deadline) throw new MediaError("request_timeout");
+    if (
+      this.generation !== generation ||
+      this.socket !== socket ||
+      !this.isOpen()
+    )
+      throw new MediaError("connection_closed");
+    if (!response || typeof response !== "object" || Array.isArray(response))
+      throw new MediaError("invalid_response");
+    if (method === "j") {
+      const joined = response as Partial<MediaResults["j"]>;
+      if (joined.v !== MEDIA_VERSION) throw new MediaError("update_required");
+      if (
+        typeof joined.generation !== "string" ||
+        !/^[0-9a-f]{8}(?:-[0-9a-f]{4}){3}-[0-9a-f]{12}$/i.test(
+          joined.generation,
+        ) ||
+        !joined.routerRtpCapabilities ||
+        typeof joined.c !== "string" ||
+        typeof joined.u !== "string"
+      )
+        throw new MediaError("invalid_response");
+      this.accepted = true;
+      this.serverGeneration = joined.generation;
+    }
+    return response as MediaResults[K];
   }
 
   bind(
@@ -120,12 +149,33 @@ export class MediaPeer {
     this.socket = socket;
     this.transportLive = true;
     this.accepted = false;
-    this.outbound = [];
-    this.unbind = socket.onFrame(onFrame);
+    this.unbind = socket.onFrame((frame) => {
+      if (this.socket !== socket) return;
+      if (
+        frame.op === "result" ||
+        (frame.op === "err" && frame.id !== undefined)
+      ) {
+        const request = this.pending.get(frame.id!);
+        if (request) {
+          clearTimeout(request.timer);
+          this.pending.delete(frame.id!);
+          if (Date.now() >= request.deadline)
+            request.reject(new MediaError("request_timeout"));
+          else if (frame.op === "err")
+            request.reject(new MediaError(frame.e, frame.lc));
+          else request.resolve(frame.data);
+        }
+        // The requesting operation owns its rejection and source cleanup.
+        // A late/duplicate RPC error must not become an unsolicited room error.
+        return;
+      }
+      onFrame(frame);
+    });
     this.unbindClose = socket.onClose(() => {
       if (this.socket !== socket) return;
       this.transportLive = false;
       this.socket = null;
+      this.cancelPending();
       this.unbind?.();
       this.unbind = null;
       this.unbindClose = null;
@@ -133,28 +183,44 @@ export class MediaPeer {
     });
   }
 
-  /** Drop the socket and the peer connection. In-flight work sees a new generation. */
+  private cancelPending(): void {
+    for (const request of this.pending.values()) {
+      clearTimeout(request.timer);
+      request.reject(new MediaError("connection_closed"));
+    }
+    this.pending.clear();
+  }
+
   close(): void {
+    // Explicitly withdraw the owned server peer before closing local resources.
+    // WebSocket.close alone cannot enforce Leave against a retained receiver.
+    // This final bounded frame owns no reply promise and never reuses an id.
+    if (
+      this.isOpen() &&
+      this.accepted &&
+      this.serverGeneration &&
+      this.nextId <= 0xffffffff
+    ) {
+      try {
+        this.socket!.send({ op: "l", id: this.nextId++ });
+      } catch {
+        /* Continue local teardown if the socket already failed. */
+      }
+    }
     this.generation += 1;
-    this.negotiated = false;
-    this.pendingIce = [];
-    this.outbound = [];
+    this.nextId = 1;
     this.accepted = false;
-    this.sdpChain = Promise.resolve();
-    this.makingOffer = false;
-    this.sfuOffered = false;
-    this.needOffer = false;
-    this.sfuOfferOpen = false;
+    this.serverGeneration = null;
     this.transportLive = false;
-    const unbindClose = this.unbindClose;
+    this.cancelPending();
+    this.unbindClose?.();
     this.unbindClose = null;
-    unbindClose?.();
     this.unbind?.();
     this.unbind = null;
     const socket = this.socket;
     this.socket = null;
+    this.connection?.close();
+    this.connection = null;
     socket?.close();
-    this.pc?.close();
-    this.pc = null;
   }
 }

@@ -14,7 +14,17 @@ import {
   type FormEvent,
   type KeyboardEvent,
   type ReactNode,
+  type Ref,
 } from "react";
+
+import {
+  endDistance,
+  scrollEndIntent,
+  type ScrollPosition,
+} from "../messages/scrollPosition.ts";
+import { MessageSearch } from "../messages/MessageSearch.tsx";
+import { useChatDraft } from "../messages/drafts.ts";
+import { readBoundary, useMarkRead } from "../messages/readState.ts";
 
 import { useSession } from "../auth/session.ts";
 import { fieldMessage } from "../auth/rules.ts";
@@ -41,7 +51,6 @@ import { attachmentUrl } from "../messages/api.ts";
 import {
   ALLOWED_TYPES,
   CONTENT_MAX,
-  inferContentType,
   isImageType,
   validateAttachment,
   validateContent,
@@ -49,6 +58,7 @@ import {
 import type { Attachment, Message } from "../messages/types.ts";
 import { asAttachmentList } from "../messages/types.ts";
 import { Avatar } from "./Avatar.tsx";
+import { ReactionBar } from "./ReactionBar.tsx";
 import { PaperclipIcon, PencilIcon, TrashIcon } from "./Icons.tsx";
 
 export function MessagePane({
@@ -75,6 +85,25 @@ export function MessagePane({
 }) {
   const user = useSession((s) => s.user);
   const query = useMessages(channelId, true);
+  const searchScope = `${user?.id ?? "anonymous"}:${channelId}`;
+  const [searchingScope, setSearchingScope] = useState<string | null>(null);
+  const searching = searchingScope === searchScope;
+  const searchButton = useRef<HTMLButtonElement>(null);
+  const restoreSearchFocus = useRef(false);
+  const closeSearch = useCallback(() => {
+    restoreSearchFocus.current = true;
+    setSearchingScope(null);
+  }, []);
+  useLayoutEffect(() => {
+    if (!searching && restoreSearchFocus.current) {
+      restoreSearchFocus.current = false;
+      searchButton.current?.focus({ preventScroll: true });
+    }
+  }, [searching]);
+  const contextEdit = useEditMessage(channelId);
+  const contextRemove = useDeleteMessage(channelId);
+  const [atLatest, setAtLatest] = useState(false);
+  const [latestRequest, setLatestRequest] = useState(0);
   const attempts = usePendingMessages((s) => s.attempts);
   const channelAttempts = useMemo(
     () =>
@@ -89,6 +118,14 @@ export function MessagePane({
   const items = useMemo(
     () => visibleMessages(query.data?.pages ?? [], pending),
     [query.data?.pages, pending],
+  );
+
+  const latest = readBoundary(items);
+  const read = useMarkRead(
+    channelId,
+    latest?.id,
+    atLatest && !searching,
+    !query.isFetching && (!query.error || query.isFetchNextPageError),
   );
 
   useEffect(() => {
@@ -112,29 +149,96 @@ export function MessagePane({
 
   return (
     <div className="lr-message-pane flex min-h-0 flex-1 flex-col">
-      <MessageList
-        channelId={channelId}
-        items={items}
-        meId={user?.id}
-        canModerate={canModerate}
-        hasOlder={Boolean(hasNextPage)}
-        loadingOlder={isFetchingNextPage}
-        onLoadOlder={onLoadOlder}
-        ready={!query.isPending}
-        loadError={
-          query.error
-            ? query.isFetchNextPageError
-              ? "paging"
-              : "history"
-            : null
-        }
-        onRetry={() => {
-          if (query.isFetchNextPageError) void fetchNextPage();
-          else void query.refetch();
-        }}
-      />
+      <div className="lr-search-toggle flex shrink-0 justify-end border-b px-4 py-1">
+        <button
+          ref={searchButton}
+          type="button"
+          onClick={() => setSearchingScope(searching ? null : searchScope)}
+          className="rounded px-3 py-2 text-sm"
+          aria-expanded={searching}
+        >
+          Nachrichten suchen
+        </button>
+      </div>
+      {read.error ? (
+        <p className="px-4 py-1 text-xs" role="status">
+          Lesestatus konnte nicht gespeichert werden.{" "}
+          <button type="button" onClick={read.retry}>
+            Erneut versuchen
+          </button>
+        </p>
+      ) : null}
+      <div className="relative flex min-h-0 flex-1 flex-col">
+        <div
+          className={`flex min-h-0 flex-1 flex-col ${searching ? "invisible" : ""}`}
+          inert={searching}
+          aria-hidden={searching || undefined}
+        >
+          <MessageList
+            key={searchScope}
+            active={!searching}
+            channelId={channelId}
+            items={items}
+            onAtLatest={setAtLatest}
+            latestRequest={latestRequest}
+            meId={user?.id}
+            canModerate={canModerate}
+            canSend={canSend}
+            hasOlder={Boolean(hasNextPage)}
+            loadingOlder={isFetchingNextPage}
+            onLoadOlder={onLoadOlder}
+            ready={!query.isPending}
+            loadError={
+              query.error
+                ? query.isFetchNextPageError
+                  ? "paging"
+                  : "history"
+                : null
+            }
+            onRetry={() => {
+              if (query.isFetchNextPageError) void fetchNextPage();
+              else void query.refetch();
+            }}
+          />
+        </div>
+        {searching ? (
+          <div className="lr-search-overlay absolute inset-0 flex min-h-0 flex-col">
+            <MessageSearch
+              key={searchScope}
+              channelId={channelId}
+              onClose={closeSearch}
+              renderMessage={(message) => (
+                <MessageRow
+                  message={message}
+                  continued={false}
+                  canSend={canSend}
+                  mine={message.author.id === user?.id}
+                  canDelete={message.author.id === user?.id || canModerate}
+                  onEdit={(content) =>
+                    contextEdit.mutate({ id: message.id, content })
+                  }
+                  onDelete={() => {
+                    if (window.confirm("Diese Nachricht wirklich löschen?"))
+                      contextRemove.mutate(message.id);
+                  }}
+                />
+              )}
+            />
+          </div>
+        ) : null}
+      </div>
+      {!searching && !atLatest && items.length > 0 ? (
+        <button
+          type="button"
+          onClick={() => setLatestRequest((value) => value + 1)}
+          className="shrink-0 border-t px-4 py-2 text-sm"
+        >
+          Zu den neuesten Nachrichten
+        </button>
+      ) : null}
       {footer}
       <Composer
+        key={user?.id ?? "anonymous"}
         channelId={channelId}
         channelName={channelName}
         canSend={canSend}
@@ -154,33 +258,44 @@ export function MessagePane({
 }
 
 function MessageList({
+  active,
   channelId,
   items,
   meId,
   canModerate,
+  canSend,
   hasOlder,
   loadingOlder,
   onLoadOlder,
   ready,
   loadError,
   onRetry,
+  onAtLatest,
+  latestRequest,
 }: {
+  active: boolean;
   channelId: string;
   items: Message[];
   meId: string | undefined;
   canModerate: boolean;
+  canSend: boolean;
   hasOlder: boolean;
   loadingOlder: boolean;
   onLoadOlder: () => void;
   ready: boolean;
   loadError: "history" | "paging" | null;
   onRetry: () => void;
+  onAtLatest: (value: boolean) => void;
+  latestRequest: number;
 }) {
   const scrollRef = useRef<HTMLDivElement>(null);
   const stickToBottom = useRef(true);
+  const contentRef = useRef<HTMLDivElement>(null);
+  const lastPosition = useRef<ScrollPosition | null>(null);
+  const touchY = useRef<number | null>(null);
+  const lastRequest = useRef(latestRequest);
   const olderAnchor = useRef<string | null>(null);
   const lastCount = useRef(0);
-  const lastTail = useRef<string | undefined>(undefined);
   const pin = useRef<{ id: string; offset: number } | null>(null);
   const edit = useEditMessage(channelId);
   const remove = useDeleteMessage(channelId);
@@ -202,10 +317,52 @@ function MessageList({
     overscan: 12,
   });
 
+  const updateLatest = useCallback(() => {
+    const element = scrollRef.current;
+    if (!element) return;
+    if (stickToBottom.current) element.scrollTop = element.scrollHeight;
+    const position = {
+      top: element.scrollTop,
+      height: element.scrollHeight,
+      viewport: element.clientHeight,
+    };
+    lastPosition.current = position;
+    onAtLatest(
+      active &&
+        stickToBottom.current &&
+        position.viewport > 16 &&
+        endDistance(position) <= 16,
+    );
+  }, [active, onAtLatest]);
+
   useLayoutEffect(() => {
-    const tail = items[items.length - 1]?.id;
-    const grewAtEnd =
-      tail !== lastTail.current && items.length >= lastCount.current;
+    const element = scrollRef.current,
+      content = contentRef.current;
+    if (!element || !content) return;
+    // The viewport also changes when the keyboard model, dock, or search
+    // controls resize. Keep history intent even if the browser clamps to end.
+    const observer = new ResizeObserver(updateLatest);
+    observer.observe(element);
+    observer.observe(content);
+    updateLatest();
+    return () => observer.disconnect();
+  }, [updateLatest]);
+
+  useLayoutEffect(() => {
+    // Preserve history anchors; while pinned, the end owns resize adjustments.
+    virtualizer.shouldAdjustScrollPositionOnItemSizeChange = (
+      item,
+      _delta,
+      instance,
+    ) => !stickToBottom.current && item.start < (instance.scrollOffset ?? 0);
+  }, [virtualizer]);
+
+  const totalSize = virtualizer.getTotalSize();
+  useLayoutEffect(() => {
+    if (latestRequest !== lastRequest.current) {
+      stickToBottom.current = true;
+      lastRequest.current = latestRequest;
+    }
     const prepended =
       olderAnchor.current !== null && items.length > lastCount.current;
 
@@ -213,12 +370,9 @@ function MessageList({
       const idx = items.findIndex((m) => m.id === olderAnchor.current);
       olderAnchor.current = null;
       if (idx >= 0) virtualizer.scrollToIndex(idx, { align: "start" });
-    } else if (
-      stickToBottom.current &&
-      (grewAtEnd || lastCount.current === 0)
-    ) {
-      if (items.length > 0)
-        virtualizer.scrollToIndex(items.length - 1, { align: "end" });
+    } else if (stickToBottom.current) {
+      // Native bottom pin below owns the end. scrollToIndex's asynchronous
+      // measurement retries can otherwise pull a measured list back upwards.
     } else if (
       items.length < lastCount.current &&
       pin.current &&
@@ -235,8 +389,8 @@ function MessageList({
       }
     }
 
+    updateLatest();
     lastCount.current = items.length;
-    lastTail.current = tail;
     const first = virtualizer.getVirtualItems()[0];
     const firstMessage = first ? items[first.index] : undefined;
     if (first && firstMessage && scrollRef.current) {
@@ -245,12 +399,12 @@ function MessageList({
         offset: first.start - scrollRef.current.scrollTop,
       };
     }
-  }, [items, virtualizer]);
+  }, [items, virtualizer, updateLatest, totalSize, latestRequest]);
 
   const firstVisible = virtualizer.getVirtualItems()[0]?.index ?? 0;
   const firstId = items[0]?.id;
   useEffect(() => {
-    if (!ready || !hasOlder || loadingOlder || loadError) return;
+    if (!active || !ready || !hasOlder || loadingOlder || loadError) return;
     // First paint is pinned to the newest row; do not walk older pages
     // until the user actually scrolls up.
     if (stickToBottom.current) return;
@@ -258,6 +412,7 @@ function MessageList({
     olderAnchor.current = firstId ?? null;
     onLoadOlder();
   }, [
+    active,
     firstVisible,
     firstId,
     hasOlder,
@@ -273,12 +428,95 @@ function MessageList({
       role="log"
       aria-label="Nachrichten"
       aria-busy={!ready || undefined}
-      onScroll={() => {
-        const el = scrollRef.current;
-        if (!el) return;
-        stickToBottom.current =
-          el.scrollHeight - el.scrollTop - el.clientHeight < 96;
+      onWheelCapture={(event) => {
+        if (
+          event.target instanceof Element &&
+          event.target.closest("dialog:modal")
+        )
+          return;
+        if (
+          event.deltaY < 0 &&
+          event.currentTarget.scrollHeight >
+            event.currentTarget.clientHeight + 16
+        )
+          stickToBottom.current = false;
+        else if (
+          event.deltaY > 0 &&
+          lastPosition.current &&
+          endDistance(lastPosition.current) < 96
+        )
+          stickToBottom.current = true;
+        updateLatest();
       }}
+      onKeyDownCapture={(event) => {
+        if (
+          event.target instanceof HTMLElement &&
+          event.target.closest(
+            "dialog:modal,input,textarea,select,[contenteditable='true']",
+          )
+        )
+          return;
+        if (
+          ["ArrowUp", "PageUp", "Home"].includes(event.key) &&
+          event.currentTarget.scrollHeight >
+            event.currentTarget.clientHeight + 16
+        )
+          stickToBottom.current = false;
+        if (event.key === "End") stickToBottom.current = true;
+        updateLatest();
+      }}
+      onTouchStartCapture={(event) => {
+        if (
+          event.target instanceof Element &&
+          event.target.closest("dialog:modal")
+        )
+          return;
+        touchY.current = event.touches[0]?.clientY ?? null;
+      }}
+      onTouchMoveCapture={(event) => {
+        if (
+          event.target instanceof Element &&
+          event.target.closest("dialog:modal")
+        )
+          return;
+        const current = event.touches[0]?.clientY;
+        if (current === undefined || touchY.current === null) return;
+        if (
+          current > touchY.current &&
+          event.currentTarget.scrollHeight >
+            event.currentTarget.clientHeight + 16
+        )
+          stickToBottom.current = false;
+        else if (
+          current < touchY.current &&
+          lastPosition.current &&
+          endDistance(lastPosition.current) < 96
+        )
+          stickToBottom.current = true;
+        touchY.current = current;
+        updateLatest();
+      }}
+      onTouchEndCapture={() => {
+        touchY.current = null;
+      }}
+      onScrollCapture={(event) => {
+        if (event.target !== event.currentTarget) return;
+        const element = scrollRef.current;
+        if (!element) return;
+        // Observe intent before virtualizer measurement adjusts the geometry.
+        stickToBottom.current = scrollEndIntent(
+          stickToBottom.current,
+          lastPosition.current,
+          {
+            top: element.scrollTop,
+            height: element.scrollHeight,
+            viewport: element.clientHeight,
+          },
+        );
+        updateLatest();
+      }}
+      onScroll={updateLatest}
+      style={{ overflowAnchor: "none" }}
       className="flex min-h-0 flex-1 flex-col overflow-y-auto"
     >
       {loadError ? (
@@ -311,8 +549,9 @@ function MessageList({
       <div
         // Pin a short list to the bottom with flex, not a viewport-sized
         // margin: that ResizeObserver loop (scrollbar on/off) is React #185.
+        ref={contentRef}
         style={{ height: virtualizer.getTotalSize() }}
-        className="relative mt-auto w-full"
+        className="relative mt-auto w-full shrink-0"
       >
         {virtualizer.getVirtualItems().map((row) => {
           const message = items[row.index];
@@ -330,6 +569,7 @@ function MessageList({
                 message={message}
                 continued={continued}
                 mine={message.author.id === meId}
+                canSend={canSend}
                 canDelete={message.author.id === meId || canModerate}
                 onEdit={(content) => edit.mutate({ id: message.id, content })}
                 onDelete={() => {
@@ -354,6 +594,7 @@ function MessageRow({
   message,
   continued,
   mine,
+  canSend,
   canDelete,
   onEdit,
   onDelete,
@@ -361,6 +602,7 @@ function MessageRow({
   message: Message;
   continued: boolean;
   mine: boolean;
+  canSend: boolean;
   canDelete: boolean;
   onEdit: (content: string) => void;
   onDelete: () => void;
@@ -368,13 +610,26 @@ function MessageRow({
   const pending = isPendingId(message.id);
   const [editing, setEditing] = useState(false);
   const [draft, setDraft] = useState(message.content);
+  const editButton = useRef<HTMLButtonElement>(null);
+  const restoreEditFocus = useRef(false);
+  useLayoutEffect(() => {
+    if (!editing && restoreEditFocus.current) {
+      restoreEditFocus.current = false;
+      editButton.current?.focus({ preventScroll: true });
+    }
+  }, [editing]);
+  const finishEditing = () => {
+    restoreEditFocus.current = true;
+    setEditing(false);
+  };
 
   const startEdit = () => {
+    restoreEditFocus.current = false;
     setDraft(message.content);
     setEditing(true);
   };
   const cancelEdit = () => {
-    setEditing(false);
+    finishEditing();
     setDraft(message.content);
   };
 
@@ -387,13 +642,17 @@ function MessageRow({
       : validateContent(draft)
     : null;
   const showDelete = canDelete && !pending && !editing;
-  const showEdit = mine && !pending && !editing;
+  const showEdit = mine && canSend && !pending && !editing;
 
   const actions =
     showEdit || showDelete ? (
       <span className="flex shrink-0 items-center opacity-70 transition group-hover:opacity-100 group-focus-within:opacity-100">
         {showEdit ? (
-          <IconButton label="Nachricht bearbeiten" onClick={startEdit}>
+          <IconButton
+            buttonRef={editButton}
+            label="Nachricht bearbeiten"
+            onClick={startEdit}
+          >
             <PencilIcon size={14} />
           </IconButton>
         ) : null}
@@ -408,6 +667,7 @@ function MessageRow({
   if (continued && !editing) {
     return (
       <div
+        tabIndex={-1}
         className={[
           "lr-message-row lr-message-continued group flex items-start gap-3 px-4 py-0.5 hover:bg-neutral-100/80 dark:hover:bg-neutral-800/80",
           pending ? "opacity-60" : "",
@@ -426,6 +686,7 @@ function MessageRow({
             </p>
           ) : null}
           <AttachmentList attachments={message.attachments ?? []} />
+          <ReactionBar message={message} canSend={canSend} />
         </div>
         {actions}
       </div>
@@ -434,6 +695,7 @@ function MessageRow({
 
   return (
     <div
+      tabIndex={-1}
       className={[
         "lr-message-row group flex items-start gap-3 px-4 py-1.5 hover:bg-neutral-100/80 dark:hover:bg-neutral-800/80",
         pending ? "opacity-60" : "",
@@ -459,7 +721,7 @@ function MessageRow({
               event.preventDefault();
               if (error) return;
               onEdit(draft);
-              setEditing(false);
+              finishEditing();
             }}
           >
             <textarea
@@ -478,7 +740,7 @@ function MessageRow({
                   event.preventDefault();
                   if (!error) {
                     onEdit(draft);
-                    setEditing(false);
+                    finishEditing();
                   }
                 }
               }}
@@ -521,6 +783,7 @@ function MessageRow({
         {!editing ? (
           <AttachmentList attachments={message.attachments ?? []} />
         ) : null}
+        {!editing && <ReactionBar message={message} canSend={canSend} />}
       </div>
       {actions}
     </div>
@@ -552,27 +815,60 @@ function Composer({
     channelId,
     author ?? { id: "", name: "", avatar_url: null },
   );
-  const [draft, setDraft] = useState("");
-  const [file, setFile] = useState<File | null>(null);
+  const [savedDraft, updateDraft, preview] = useChatDraft(
+    author?.id ?? "",
+    channelId,
+  );
+  const draft = savedDraft.text;
+  const file = savedDraft.file;
+  const setDraft = (text: string) => updateDraft({ text });
+  const setFile = (file: File | null) => updateDraft({ file });
   const [fileError, setFileError] = useState<string | null>(null);
-  const [preview, setPreview] = useState<string | null>(null);
   const fileInput = useRef<HTMLInputElement>(null);
   const composerInput = useRef<HTMLTextAreaElement>(null);
-  useEffect(
-    () => () => {
-      if (preview) URL.revokeObjectURL(preview);
-    },
-    [preview],
-  );
+  const composerForm = useRef<HTMLFormElement>(null);
+  const revealComposerFocus = useCallback(() => {
+    const form = composerForm.current;
+    const pane = form?.closest<HTMLElement>(".lr-message-pane");
+    const focused = document.activeElement;
+    if (
+      !form ||
+      !pane ||
+      !(focused instanceof HTMLElement) ||
+      !form.contains(focused)
+    )
+      return;
+    const boundary = pane.getBoundingClientRect();
+    const target = focused.getBoundingClientRect();
+    const focusMargin = 4;
+    if (target.bottom + focusMargin > boundary.bottom)
+      pane.scrollTop += target.bottom + focusMargin - boundary.bottom;
+    else if (target.top - focusMargin < boundary.top)
+      pane.scrollTop -= boundary.top - target.top + focusMargin;
+  }, []);
+  // Toolbar/read-state changes can move a focused form without resizing it.
+  useLayoutEffect(revealComposerFocus, [revealComposerFocus]);
+  useLayoutEffect(() => {
+    const form = composerForm.current;
+    const pane = form?.closest<HTMLElement>(".lr-message-pane");
+    if (!form || !pane) return;
+    const observer = new ResizeObserver(revealComposerFocus);
+    observer.observe(form);
+    observer.observe(pane);
+    revealComposerFocus();
+    return () => observer.disconnect();
+  }, [canSend, revealComposerFocus]);
   const error = draft.length === 0 ? null : validateContent(draft);
   const remaining = CONTENT_MAX - Array.from(normalisedLength(draft)).length;
   const emptyText = draft.trim().length === 0;
   const disabled =
-    !canSend || !author || Boolean(error) || (emptyText && !file);
+    !canSend ||
+    !author ||
+    Boolean(error) ||
+    Boolean(file && !canSendFiles) ||
+    (emptyText && !file);
 
   const pickFile = (next: File | null) => {
-    if (preview) URL.revokeObjectURL(preview);
-    setPreview(null);
     setFileError(null);
     if (!next) {
       setFile(null);
@@ -585,9 +881,6 @@ function Composer({
       return;
     }
     setFile(next);
-    if (isImageType(inferContentType(next))) {
-      setPreview(URL.createObjectURL(next));
-    }
   };
 
   const submit = (event?: FormEvent) => {
@@ -622,6 +915,8 @@ function Composer({
 
   return (
     <form
+      ref={composerForm}
+      onFocusCapture={revealComposerFocus}
       onSubmit={submit}
       className="lr-composer border-t border-neutral-200 dark:border-neutral-700 bg-white dark:bg-neutral-900 px-4 py-3"
     >
@@ -836,16 +1131,19 @@ function formatWhen(iso: string): string {
 }
 
 function IconButton({
+  buttonRef,
   label,
   onClick,
   children,
 }: {
+  buttonRef?: Ref<HTMLButtonElement>;
   label: string;
   onClick: () => void;
   children: ReactNode;
 }) {
   return (
     <button
+      ref={buttonRef}
       type="button"
       title={label}
       aria-label={label}

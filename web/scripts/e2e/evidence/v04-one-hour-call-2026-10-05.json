@@ -1,0 +1,110 @@
+{
+  "schema": 1,
+  "started_at": "2026-10-05T16:34:24.306Z",
+  "finished_at": "2026-10-05T17:34:34.881Z",
+  "candidate_source": "103e8728ab3f386788cce6c02d1f102e47256b6e",
+  "browser": {
+    "engine": "chromium",
+    "version": "153.0.8010.12",
+    "platform": "linux",
+    "node": "v26.8.2"
+  },
+  "actual_continuous_seconds": 3600.10600074,
+  "samples": 120,
+  "media_and_lifecycle_gate_passed": true,
+  "full_release_acceptance": false,
+  "binary_sha256": {
+    "api": "fb2e7accc01b93ff39458e2ea9a8a02d3b79e6eb3d184ed7293dbc6db009914c",
+    "media": "e091e1e8e02ad272e5422629f1c4f491e01432b8295c7402c2d61c906f88fb6d"
+  },
+  "temporary_runner_sha256": "7392a30a8444225a43110cfbc019643a3425ebf023054879c39233acda769d76",
+  "raw_report_sha256": "910ac835d5eaf7a95aec56806dff1da328412103d9c54d876b0430b0b2bc01d1",
+  "checkpoint_sha256": "e15ba282cbc496c4d18c19174663e7cf964eb9be8f8aa819f7d46b567366aee0",
+  "rss": {
+    "api": {
+      "baseline_rss_kib": 472608,
+      "peak_rss_kib": 608396,
+      "final_rss_kib": 608396
+    },
+    "media": {
+      "baseline_rss_kib": 52376,
+      "peak_rss_kib": 53508,
+      "final_rss_kib": 53372
+    }
+  },
+  "final": {
+    "clients": [
+      {
+        "connected": 0,
+        "peers": 0,
+        "audioPackets": 0,
+        "videoFrames": 0,
+        "senders": 0,
+        "transceivers": 0,
+        "captures": 0,
+        "playbackTracks": 0,
+        "duplicateAudioTracks": 0,
+        "mediaSockets": 0
+      },
+      {
+        "connected": 0,
+        "peers": 0,
+        "audioPackets": 0,
+        "videoFrames": 0,
+        "senders": 0,
+        "transceivers": 0,
+        "captures": 0,
+        "playbackTracks": 0,
+        "duplicateAudioTracks": 0,
+        "mediaSockets": 0
+      },
+      {
+        "connected": 0,
+        "peers": 0,
+        "audioPackets": 0,
+        "videoFrames": 0,
+        "senders": 0,
+        "transceivers": 0,
+        "captures": 0,
+        "playbackTracks": 0,
+        "duplicateAudioTracks": 0,
+        "mediaSockets": 0
+      }
+    ],
+    "resource": {
+      "rooms": 0,
+      "peers": 0,
+      "iceFailures": 0,
+      "processes": {
+        "api": {
+          "rssKiB": 608396,
+          "threads": 33
+        },
+        "media": {
+          "rssKiB": 53372,
+          "threads": 33
+        }
+      }
+    }
+  },
+  "limits": [
+    "Frozen candidate predates message-context, later focus fixes and viewer layers.",
+    "The temporary one-hour runner is a predecessor of this PR portable runner; the portable runner has two separate 30-second controls, not this hour.",
+    "Native Chromium fake microphone/camera and local ICE; no physical iOS/Omarchy, audible speech or WAN/TURN acceptance.",
+    "The API also served unrelated fixture registrations during the observation. Its RSS increase is confounded; complete server RAM-return gate remains open.",
+    "A host USB adapter retried DHCP during the observation. This local call stayed connected; it does not prove stable WAN or fair backend resource comparison.",
+    "Measured SFU RSS is retained above baseline; closed tracks do not imply allocator memory release."
+  ],
+  "cleanup": [
+    {
+      "target": "owned-test-server",
+      "status": 204,
+      "stage": "complete",
+      "statuses": {
+        "login": 200,
+        "delete": 204,
+        "logout": 200
+      }
+    }
+  ]
+}

@@ -1,13 +1,15 @@
-//! Gelabber media/SFU (issue 11). Room = voice channel. Join only with a
-//! short internal ticket. RTP is forwarded; UDP is not through Caddy.
-//! Locked WebRTC stack: **webrtc 0.20.5** (0.21 is RC). No LiveKit, no mesh.
+//! Gelabber's own ticket/signaling/authority gateway with the pinned official
+//! Rust mediasoup engine. Room = voice channel; UDP stays outside Caddy.
 
 pub mod config;
 pub mod error;
 pub mod health;
 pub mod live;
 pub mod metrics;
+mod native_command;
+mod native_resource;
 pub mod protocol;
+pub mod redis_connection;
 pub mod sfu;
 pub mod state;
 pub mod telemetry;

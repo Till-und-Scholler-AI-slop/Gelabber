@@ -1,7 +1,7 @@
 {
   "name": "gelabber-web",
   "private": true,
-  "version": "0.3.1",
+  "version": "0.4.0",
   "type": "module",
   "engines": {
     "node": ">=26.8.2"
@@ -16,12 +16,23 @@
     "test:source-audio-smoke": "node scripts/smoke-source-audio.mjs",
     "test:browser-smoke": "node scripts/smoke-two-browsers.mjs",
     "test:e2e-app": "node scripts/e2e/run.mjs",
-    "test:e2e-harness": "node scripts/e2e/harness.checks.mjs"
+    "test:e2e-harness": "node scripts/e2e/harness.checks.mjs",
+    "test:call-sounds-smoke": "node scripts/smoke-call-sounds.mjs",
+    "test:call-soak": "node scripts/e2e/call-soak.mjs",
+    "test:e2e-held-renderer-control": "node scripts/e2e/held-renderer-native-control.mjs",
+    "test:e2e-webapp-recovery": "node scripts/e2e/webapp-recovery.mjs",
+    "test:e2e-accessibility": "node scripts/e2e/webapp-accessibility.mjs",
+    "test:audio-smoke": "node scripts/smoke-audio-processing.mjs",
+    "test:audio-dsp": "node scripts/audio/benchmark-rnnoise.mjs",
+    "test:e2e-chat-workflows": "node scripts/e2e/chat-workflows.mjs",
+    "test:reactions-smoke": "node scripts/smoke-reactions.mjs",
+    "test:e2e-search-context": "node scripts/e2e/search-context.mjs"
   },
   "dependencies": {
     "@tanstack/react-query": "5.102.8",
     "@tanstack/react-router": "1.170.35",
     "@tanstack/react-virtual": "3.14.12",
+    "mediasoup-client": "3.24.1",
     "react": "19.3.0",
     "react-dom": "19.3.0",
     "zustand": "5.0.15"

@@ -1,3 +1,4 @@
+import { UnreadBadge } from "../messages/UnreadBadge.tsx";
 // Second column: the selected server's categories and channels as one flat,
 // virtualised list. Highlight follows the URL param; rows with a `tmp:` id
 // are optimistic and not yet clickable.
@@ -364,6 +365,7 @@ function ChannelRow({
     <>
       <Icon size={25} className="channel-row-icon" />
       <span className="channel-row-name">{channel.name}</span>
+      {channel.kind === "text" ? <UnreadBadge channelId={channel.id} /> : null}
       {live ? (
         <span className="ml-auto shrink-0 rounded bg-red-600 px-1 py-px text-[10px] font-semibold tracking-wide text-white uppercase">
           Live

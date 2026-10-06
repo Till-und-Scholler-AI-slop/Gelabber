@@ -1,7 +1,8 @@
 import { useQueryClient } from "@tanstack/react-query";
-import { useParams } from "@tanstack/react-router";
-import { useEffect } from "react";
+import { useNavigate, useParams } from "@tanstack/react-router";
+import { useEffect, useRef } from "react";
 
+import { serverNow } from "../api/client.ts";
 import { scopeGeneration, stampHolds } from "../auth/scope.ts";
 import { useSession } from "../auth/session.ts";
 import { dmKeys } from "../dms/queries.ts";
@@ -11,7 +12,12 @@ import type { ServerDetail } from "../servers/types.ts";
 import { useMediaSettings } from "../voice/settings.ts";
 import { getGateway } from "../ws/client.ts";
 import type { ChatEvent } from "../ws/protocol.ts";
-import { isDmTopic, previewText, shouldToastMessage } from "./notify.ts";
+import {
+  createNotificationDedupe,
+  isDmTopic,
+  messageNotificationDecision,
+  previewText,
+} from "./notify.ts";
 import { useMessageToasts } from "./toasts.ts";
 import type { Message } from "./types.ts";
 import { asAttachmentList } from "./types.ts";
@@ -61,20 +67,46 @@ function channelLabel(
   return channel ? `#${channel.name}` : "Kanal";
 }
 
-function maybeDesktopNotify(title: string, body: string): void {
+const desktopNotifications = new Map<string, { close: () => void }>();
+
+function maybeDesktopNotify(
+  title: string,
+  body: string,
+  onClick: () => void,
+  tag: string,
+): void {
   if (typeof document === "undefined" || !document.hidden) return;
   if (!useMediaSettings.getState().desktopNotify) return;
   const Notify = (
     globalThis as unknown as {
       Notification?: {
         permission: string;
-        new (title: string, opts?: { body: string; silent?: boolean }): unknown;
+        new (
+          title: string,
+          opts?: {
+            body: string;
+            silent?: boolean;
+            tag?: string;
+            renotify?: boolean;
+          },
+        ): { onclick: (() => void) | null; close: () => void };
       };
     }
   ).Notification;
   if (!Notify || Notify.permission !== "granted") return;
   try {
-    new Notify(title, { body, silent: true });
+    desktopNotifications.get(tag)?.close();
+    const notification = new Notify(title, {
+      body,
+      silent: true,
+      tag,
+      renotify: false,
+    });
+    desktopNotifications.set(tag, notification);
+    notification.onclick = () => {
+      notification.close();
+      onClick();
+    };
   } catch {
     // permission revoked mid-flight
   }
@@ -83,44 +115,101 @@ function maybeDesktopNotify(title: string, body: string): void {
 /** Toast + optional desktop notification for creates in another chat. */
 export function useMessageToastsBridge(): void {
   const client = useQueryClient();
+  const navigate = useNavigate();
   const me = useSession((s) => s.user?.id);
   const viewingChannelId = useParams({ strict: false }).channelId;
+  useEffect(
+    () => () => {
+      for (const notification of desktopNotifications.values())
+        notification.close();
+      desktopNotifications.clear();
+    },
+    [me],
+  );
+  const deliveries = useRef<{
+    userId: string | undefined;
+    generation: number;
+    first: ReturnType<typeof createNotificationDedupe>;
+    desktopAt: Map<string, number>;
+  } | null>(null);
 
   useEffect(() => {
     const userId = me;
     const generation = scopeGeneration();
+    if (
+      deliveries.current?.userId !== userId ||
+      deliveries.current?.generation !== generation
+    ) {
+      deliveries.current = {
+        userId,
+        generation,
+        first: createNotificationDedupe(),
+        desktopAt: new Map(),
+      };
+    }
+    const firstDelivery = deliveries.current.first;
     return getGateway().onEvent((event) => {
       if (!userId || !stampHolds({ userId, generation })) return;
       if (event.t !== "c" || !event.c) return;
       const message = asCreated(event.d);
       if (!message) return;
-      const enabled = useMediaSettings.getState().messageToasts;
-      if (
-        !shouldToastMessage({
-          enabled,
-          type: event.t,
-          own: message.author.id === userId,
-          channelId: event.c,
-          viewingChannelId,
-        })
-      ) {
-        return;
-      }
+      if (!firstDelivery(event.c, message.id)) return;
+      const settings = useMediaSettings.getState();
+      const decision = messageNotificationDecision({
+        toastEnabled: settings.messageToasts,
+        desktopEnabled: settings.desktopNotify,
+        hidden: typeof document !== "undefined" && document.hidden,
+        type: event.t,
+        own: message.author.id === userId,
+        channelId: event.c,
+        viewingChannelId,
+      });
+      if (!decision.toast && !decision.desktop) return;
       const dm = isDmTopic(event.s, event.c);
       const label = channelLabel(client, userId, generation, event, dm);
       const preview = previewText(
         message.content,
         asAttachmentList(message.attachments).length > 0,
       );
-      useMessageToasts.getState().push({
-        channelId: event.c,
-        serverId: event.s,
-        dm,
-        channelLabel: label,
-        author: message.author.name,
-        preview,
-      });
-      maybeDesktopNotify(`${message.author.name} · ${label}`, preview);
+      if (decision.toast)
+        useMessageToasts.getState().push({
+          channelId: event.c,
+          serverId: event.s,
+          dm,
+          channelLabel: label,
+          author: message.author.name,
+          preview,
+        });
+      const now = Date.now();
+      const desktopAt = deliveries.current!.desktopAt;
+      // Replays older than the live delivery window do not generate a burst.
+      // Age is measured on the server clock: a fast local clock must not
+      // suppress every live notification.
+      if (
+        decision.desktop &&
+        serverNow() - Date.parse(message.created_at) < 30_000 &&
+        now - (desktopAt.get(event.c) ?? 0) >= 5_000
+      ) {
+        desktopAt.set(event.c, now);
+        const channelId = event.c;
+        maybeDesktopNotify(
+          `${message.author.name} · ${label}`,
+          preview,
+          () => {
+            if (!stampHolds({ userId, generation })) return;
+            window.focus();
+            if (dm) {
+              void navigate({ to: "/d/$channelId", params: { channelId } });
+            } else {
+              void navigate({
+                to: "/s/$serverId/c/$channelId",
+                params: { serverId: event.s, channelId },
+              });
+            }
+          },
+          `gelabber:${userId}:${channelId}`,
+        );
+      }
     });
-  }, [client, me, viewingChannelId]);
+  }, [client, me, navigate, viewingChannelId]);
 }

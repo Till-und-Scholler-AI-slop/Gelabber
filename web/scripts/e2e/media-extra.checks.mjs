@@ -5,6 +5,105 @@ import vm from "node:vm";
 import { readFile } from "node:fs/promises";
 import { CheckFailure } from "./harness.mjs";
 
+test("source identity reorder delivers authoritative Consumer messages without native track events", async () => {
+  const delivered = [];
+  const state = {
+    holdTracks: false,
+    heldTracks: ["camera", "screen", "live"].map((source) => ({
+      event: Object.freeze({
+        data: JSON.stringify({ op: "consumer", source }),
+      }),
+      kind: "video",
+      deliver: () => delivered.push(source),
+    })),
+  };
+  const element = {
+    filter() {
+      return this;
+    },
+    getByRole() {
+      return this;
+    },
+    first() {
+      return this;
+    },
+    async waitFor() {},
+    async count() {
+      return 1;
+    },
+    async click() {},
+  };
+  const actor = { page: { locator: () => element } };
+  const mocks = {
+    "./harness.mjs": {
+      CheckFailure,
+      check: (ok, code) => assert.ok(ok, code),
+      click: async () => {},
+      snapshot: async () => ({ heldVideoTracks: state.heldTracks.length }),
+      observe: async () => {},
+      until: async (read, accepts) => {
+        const value = await read(5_000);
+        assert.ok(accepts(value));
+        return value;
+      },
+    },
+    "./media.mjs": {
+      watchSource: async () => {},
+      activePeers: () => [],
+      progress: async (_actor, options) => ({ kind: options.kind ?? "live" }),
+    },
+    "./native-evaluate.mjs": {
+      nativeEvaluate: async (_actor, fn, arg) => fn(arg),
+      deadlineProbe: async (fn) => fn(),
+      NativeInterfaceFailure: class extends Error {},
+    },
+    "./probe.mjs": {
+      sampleVideoSenders: async () => ({ actualFixture: true }),
+      samplePublicationFlow: async () => ({}),
+    },
+    "./publisher-encoders.mjs": {
+      publisherEncoderProgress: (value) => value.actualFixture === true,
+    },
+  };
+  const context = vm.createContext({ window: { __e2e: state }, Date });
+  const source = new vm.SourceTextModule(
+    await readFile(new URL("./media-extra.mjs", import.meta.url), "utf8"),
+    { context },
+  );
+  await source.link(async (name) => {
+    const exports = mocks[name] ?? (await import(name));
+    return new vm.SyntheticModule(
+      Object.keys(exports),
+      function () {
+        for (const [key, value] of Object.entries(exports))
+          this.setExport(key, value);
+      },
+      { context },
+    );
+  });
+  await source.evaluate();
+  let result;
+  await source.namespace.mediaExtraScenarios(
+    {
+      run: async (id, _predecessors, task) => {
+        if (id === "forced-track-arrival-reorder-source-identity")
+          result = await task();
+      },
+    },
+    { owner: actor, member: actor, watcher: actor },
+    { begin: async () => {}, reset: async () => {}, options: {} },
+  );
+  assert.deepEqual(delivered, ["live", "screen", "camera"]);
+  assert.deepEqual(Array.from(result.deliveredKinds), [
+    "video",
+    "video",
+    "video",
+  ]);
+  assert.equal(result.consumerAnnouncementOrder, "reversed");
+  assert.equal(state.holdTracks, false);
+  assert.equal(state.heldTracks.length, 0);
+});
+
 test("exact SDP scenario preserves failed bounded camera warmup and never injects SDP or claims progress afterward", async () => {
   let clock = 1_000,
     injected = 0,

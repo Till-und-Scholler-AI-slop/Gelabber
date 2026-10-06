@@ -13,8 +13,10 @@ export function instrument({ relay }) {
     mediaElements: new Set(),
     heldTracks: [],
     incomingTracks: [],
+    outgoingSources: new Map(),
     heldLiveClaims: [],
     rejectedSdp: 0,
+    rejectedSdpErrors: [],
     renderedVideos: new WeakMap(),
     voiceRoster: [],
     voiceRosterSnapshots: 0,
@@ -25,29 +27,6 @@ export function instrument({ relay }) {
     constructor(config) {
       super(relay ? { ...config, iceTransportPolicy: "relay" } : config);
       state.peers.push(this);
-    }
-    set ontrack(handler) {
-      super.ontrack =
-        handler &&
-        ((event) => {
-          state.incomingTracks.push({
-            pc: this,
-            track: event.track,
-            publisher: (event.streams[0]?.id ?? event.track.id).split(":")[0],
-            sourceKind: (event.streams[0]?.id ?? event.track.id)
-              .split(":")[1]
-              ?.split("-")[0],
-          });
-          if (state.holdTracks)
-            state.heldTracks.push({
-              event,
-              deliver: () => handler.call(this, event),
-            });
-          else handler.call(this, event);
-        });
-    }
-    get ontrack() {
-      return super.ontrack;
     }
     setRemoteDescription(description) {
       if (
@@ -60,14 +39,73 @@ export function instrument({ relay }) {
         state.rejectNextVideoAnswer = false;
         state.rejectedSdp++;
         // Let the real browser reject malformed SDP; never fake negotiated stats.
-        return super.setRemoteDescription({
-          type: "answer",
-          sdp: "invalid native SDP rejection control",
-        });
+        return super
+          .setRemoteDescription({
+            type: "answer",
+            sdp: "invalid native SDP rejection control",
+          })
+          .catch((error) => {
+            state.rejectedSdpErrors.push({
+              name:
+                typeof error.name === "string" ? error.name.slice(0, 64) : null,
+              errorDetail:
+                typeof error.errorDetail === "string"
+                  ? error.errorDetail.slice(0, 64)
+                  : null,
+              isError: error instanceof Error,
+              isDOMException:
+                typeof DOMException !== "undefined" &&
+                error instanceof DOMException,
+            });
+            if (state.rejectedSdpErrors.length > 4)
+              state.rejectedSdpErrors.shift();
+            throw error;
+          });
       }
       return super.setRemoteDescription(description);
     }
   };
+  // Source identity comes from the authenticated Consumer, not browser MSID.
+  window.addEventListener?.("gelabber:media-consumer", ({ detail }) => {
+    const {
+      receiver,
+      track,
+      owner,
+      k,
+      consumerId,
+      generation,
+      producerId,
+      epoch,
+      rtpParameters,
+    } = detail;
+    const pc = state.peers.find((peer) =>
+      peer.getReceivers().includes(receiver),
+    );
+    if (!pc || receiver.track !== track)
+      throw new Error("E2E_CONSUMER_BINDING_UNAVAILABLE");
+    state.incomingTracks.push({
+      pc,
+      track,
+      receiver,
+      publisher: owner,
+      sourceKind: k,
+      consumerId,
+      generation,
+      producerId,
+      epoch,
+      rtpParameters,
+    });
+  });
+  window.addEventListener?.("gelabber:media-layers", ({ detail }) => {
+    state.layers ??= new Map();
+    state.layers.set(detail.consumerId, { ...detail });
+  });
+  window.addEventListener?.("gelabber:media-producer", ({ detail }) => {
+    const pc = state.peers.find((peer) =>
+      peer.getSenders().includes(detail.sender),
+    );
+    state.outgoingSources.set(detail.k, { ...detail, pc });
+  });
   const Socket = window.WebSocket;
   state.NativeSocket = Socket;
   window.WebSocket = class extends Socket {
@@ -88,11 +126,26 @@ export function instrument({ relay }) {
         topics: new Map(),
         liveOn: 0,
         liveOff: 0,
+        pendingMedia: new Map(),
+        mediaRpc: [],
       };
       state.sockets.push(item);
-      this.addEventListener("message", (event) => {
+      super.addEventListener("message", (event) => {
         try {
           const frame = JSON.parse(event.data);
+          if (item.plane === "media" && ["result", "err"].includes(frame.op)) {
+            const request = item.pendingMedia.get(frame.id);
+            if (request) {
+              request.status = frame.op === "result" ? "PASS" : "FAIL";
+              request.error =
+                frame.op === "err" && typeof frame.e === "string"
+                  ? /^[a-z_]{1,64}$/.test(frame.e)
+                    ? frame.e
+                    : "unclassified"
+                  : null;
+              item.pendingMedia.delete(frame.id);
+            }
+          }
           if (
             frame.op === "sig" &&
             frame.t === "r" &&
@@ -123,10 +176,71 @@ export function instrument({ relay }) {
           /* Non-JSON is not evidence. */
         }
       });
+      // Delay authoritative Consumer announcements to exercise out-of-order
+      // arrival. Suppress local cleanup only for independently held receivers.
+      this.addEventListener = (type, listener, options) => {
+        if (type !== "message" || typeof listener !== "function")
+          return super.addEventListener(type, listener, options);
+        return super.addEventListener(
+          type,
+          (event) => {
+            let frame;
+            try {
+              frame = JSON.parse(event.data);
+            } catch {
+              /* delegate below */
+            }
+            if (
+              item.plane === "media" &&
+              state.holdMediaCleanup &&
+              [
+                "consumerClosed",
+                "consumerState",
+                "producerClosed",
+                "err",
+              ].includes(frame?.op)
+            )
+              return;
+            if (
+              item.plane === "media" &&
+              state.holdTracks &&
+              frame?.op === "consumer"
+            ) {
+              state.heldTracks.push({
+                event,
+                kind: frame.kind,
+                deliver: () => listener.call(this, event),
+              });
+              return;
+            }
+            listener.call(this, event);
+          },
+          options,
+        );
+      };
       const send = this.send.bind(this);
       this.send = (data) => {
         try {
           const frame = JSON.parse(data);
+          if (item.plane === "media" && Number.isSafeInteger(frame.id)) {
+            const consumer = state.incomingTracks.find(
+              (source) =>
+                source.consumerId === frame.consumerId &&
+                source.generation === frame.generation,
+            );
+            const request = {
+              method: frame.op,
+              kind: frame.k ?? consumer?.sourceKind ?? null,
+              on: typeof frame.on === "boolean" ? frame.on : null,
+              status: "pending",
+              error: null,
+            };
+            item.pendingMedia.set(frame.id, request);
+            if (item.pendingMedia.size > 64)
+              item.pendingMedia.delete(item.pendingMedia.keys().next().value);
+            item.mediaRpc.push(request);
+            if (item.mediaRpc.length > 128) item.mediaRpc.shift();
+          }
           if (typeof frame.sdp === "string") {
             item.offers++;
             item.maxSdp = Math.max(item.maxSdp, frame.sdp.length);
@@ -220,6 +334,299 @@ export function instrument({ relay }) {
     return canvasSource("display", state.displayCalls);
   };
 }
+export async function samplePublicationFlow({ kind }) {
+  const state = window.__e2e;
+  const producer = state.outgoingSources?.get(kind);
+  const counters = async (native, type, track, ssrcs) => {
+    if (!native)
+      return { available: false, rows: null, packets: null, frames: null };
+    let report;
+    try {
+      report = await native.getStats();
+    } catch {
+      return { available: false, rows: null, packets: null, frames: null };
+    }
+    const rows = [...report.values()].filter((row) => {
+      if (row.type !== type || (row.kind ?? row.mediaType) !== "video")
+        return false;
+      if (ssrcs) return ssrcs.has(row.ssrc);
+      const identifier =
+        row.trackIdentifier ?? report.get(row.mediaSourceId)?.trackIdentifier;
+      return identifier === track.id;
+    });
+    return {
+      available: rows.length > 0,
+      rows: rows.length,
+      packets:
+        rows.length &&
+        rows.every((r) =>
+          Number.isFinite(
+            type === "outbound-rtp" ? r.packetsSent : r.packetsReceived,
+          ),
+        )
+          ? rows.reduce(
+              (n, r) =>
+                n +
+                (type === "outbound-rtp" ? r.packetsSent : r.packetsReceived),
+              0,
+            )
+          : null,
+      frames:
+        rows.length &&
+        rows.every((r) =>
+          Number.isFinite(
+            type === "outbound-rtp" ? r.framesEncoded : r.framesDecoded,
+          ),
+        )
+          ? rows.reduce(
+              (n, r) =>
+                n +
+                (type === "outbound-rtp" ? r.framesEncoded : r.framesDecoded),
+              0,
+            )
+          : null,
+    };
+  };
+  return {
+    producer: {
+      present: !!producer,
+      bound: !!(
+        producer &&
+        producer.pc?.getSenders().includes(producer.sender) &&
+        producer.sender.track === producer.track
+      ),
+      connection: producer?.pc?.connectionState ?? null,
+      trackLive: producer?.track?.readyState === "live",
+      trackEnabled: producer?.track?.enabled ?? null,
+      native: await counters(producer?.sender, "outbound-rtp", producer?.track),
+    },
+    consumers: await Promise.all(
+      state.incomingTracks
+        .filter(
+          (source) =>
+            source.sourceKind === kind &&
+            source.pc.connectionState !== "closed",
+        )
+        .map(async (source) => ({
+          bound:
+            source.pc.getReceivers().includes(source.receiver) &&
+            source.receiver.track === source.track,
+          connection: source.pc.connectionState,
+          trackLive: source.track.readyState === "live",
+          identitiesBound: [
+            source.producerId,
+            source.consumerId,
+            source.epoch,
+            source.generation,
+          ].every((value) => typeof value === "string" && value.length > 0),
+          native: await counters(
+            source.receiver,
+            "inbound-rtp",
+            source.track,
+            new Set(
+              source.rtpParameters?.encodings?.map((encoding) => encoding.ssrc),
+            ),
+          ),
+        })),
+    ),
+    rpc: state.sockets
+      .filter((socket) => socket.plane === "media")
+      .flatMap((socket) => socket.mediaRpc ?? []),
+  };
+}
+// Count actual authenticated Consumers, keeping SSRCs and native track identities
+// in browser memory. SDK 3.24.1 also creates its own video probation receiver
+// (trackId "probator", SSRC 1234); it is never a Gelabber publication.
+export async function sampleVideoConsumers({ publisher, deadlineEpochMs }) {
+  const state = window.__e2e;
+  const result = {
+    sources: 0,
+    selectedLiveSources: 0,
+    foreignSources: 0,
+    sourceRtpRows: 0,
+    probatorRtpRows: 0,
+    unexpectedRtpRows: 0,
+    invalidBindings: 0,
+    identitiesBound: 0,
+  };
+  const readStats = async (native) => {
+    if (Date.now() >= deadlineEpochMs)
+      throw new Error("E2E_NATIVE_STATS_DEADLINE");
+    let timer;
+    try {
+      const report = await Promise.race([
+        native.getStats(),
+        new Promise((_, reject) => {
+          timer = setTimeout(
+            () => reject(new Error("E2E_NATIVE_STATS_DEADLINE")),
+            Math.max(1, deadlineEpochMs - Date.now()),
+          );
+        }),
+      ]);
+      if (Date.now() >= deadlineEpochMs)
+        throw new Error("E2E_NATIVE_STATS_DEADLINE");
+      return [...report.values()].filter(
+        (row) =>
+          row.type === "inbound-rtp" && (row.kind ?? row.mediaType) === "video",
+      );
+    } finally {
+      clearTimeout(timer);
+    }
+  };
+  for (const pc of state.peers) {
+    if (pc.connectionState !== "connected") continue;
+    const receivers = pc.getReceivers();
+    const sources = [
+      ...new Map(
+        state.incomingTracks
+          .filter(
+            (s) =>
+              s.pc === pc &&
+              s.track.kind === "video" &&
+              s.track.readyState === "live",
+          )
+          .map((s) => [s.receiver, s]),
+      ).values(),
+    ];
+    const sourceSsrcs = new Set();
+    for (const source of sources) {
+      result.sources++;
+      if (source.publisher === publisher && source.sourceKind === "l")
+        result.selectedLiveSources++;
+      else result.foreignSources++;
+      const encodings = source.rtpParameters?.encodings;
+      if (
+        ![
+          source.consumerId,
+          source.producerId,
+          source.epoch,
+          source.generation,
+        ].every(
+          (value) =>
+            typeof value === "string" &&
+            value.length > 0 &&
+            value.length <= 128,
+        ) ||
+        !receivers.includes(source.receiver) ||
+        source.receiver.track !== source.track ||
+        !Array.isArray(encodings) ||
+        encodings.length !== 1 ||
+        !Number.isInteger(encodings[0].ssrc) ||
+        encodings[0].ssrc <= 0 ||
+        encodings[0].ssrc === 1234 ||
+        sourceSsrcs.has(encodings[0].ssrc)
+      ) {
+        result.invalidBindings++;
+        continue;
+      }
+      result.identitiesBound++;
+      const ssrc = encodings[0].ssrc;
+      const rows = (await readStats(source.receiver)).filter(
+        (row) => row.ssrc === ssrc,
+      );
+      if (
+        rows.length !== 1 ||
+        !Number.isFinite(rows[0].packetsReceived) ||
+        rows[0].packetsReceived <= 0 ||
+        !Number.isFinite(rows[0].framesDecoded) ||
+        rows[0].framesDecoded <= 0
+      )
+        result.invalidBindings++;
+      else sourceSsrcs.add(ssrc);
+    }
+    const probators = receivers.filter(
+      (receiver) =>
+        receiver.track?.kind === "video" &&
+        receiver.track.readyState === "live" &&
+        receiver.track.id === "probator" &&
+        !sources.some((source) => source.receiver === receiver),
+    );
+    let nativeProbator = false;
+    if (probators.length === 1)
+      nativeProbator = (await readStats(probators[0])).some(
+        (row) => row.ssrc === 1234,
+      );
+    for (const row of await readStats(pc)) {
+      if (sourceSsrcs.has(row.ssrc)) result.sourceRtpRows++;
+      else if (nativeProbator && row.ssrc === 1234) result.probatorRtpRows++;
+      else result.unexpectedRtpRows++;
+    }
+  }
+  return result;
+}
+// Bind native sender stats to actual fixture capture objects in browser memory.
+// Persist fixture ordinals and RID labels, never native track identifiers or SDP.
+export async function sampleVideoSenders({ deadlineEpochMs } = {}) {
+  const state = window.__e2e;
+  const captures = state.captures
+    .map((capture, index) => ({ capture, index }))
+    .filter(({ capture }) => capture.track.readyState === "live");
+  const senders = [];
+  for (const [peerIndex, peer] of state.peers.entries()) {
+    if (peer.connectionState !== "connected") continue;
+    for (const [senderIndex, sender] of peer.getSenders().entries()) {
+      const track = sender.track;
+      if (track?.kind !== "video" || track.readyState !== "live") continue;
+      const capture = captures.find((item) => item.capture.track === track);
+      if (deadlineEpochMs !== undefined && Date.now() >= deadlineEpochMs)
+        throw new Error("E2E_NATIVE_STATS_DEADLINE");
+      let timer;
+      let report;
+      try {
+        report =
+          deadlineEpochMs === undefined
+            ? await sender.getStats()
+            : await Promise.race([
+                sender.getStats(),
+                new Promise((_, reject) => {
+                  timer = setTimeout(
+                    () => reject(new Error("E2E_NATIVE_STATS_DEADLINE")),
+                    Math.max(0, deadlineEpochMs - Date.now() - 10),
+                  );
+                }),
+              ]);
+      } finally {
+        if (timer !== undefined) clearTimeout(timer);
+      }
+      const current =
+        peer.connectionState === "connected" &&
+        sender.track === track &&
+        track.readyState === "live";
+      const encodings = [...report.values()]
+        .filter((entry) => {
+          if (
+            entry.type !== "outbound-rtp" ||
+            (entry.kind ?? entry.mediaType) !== "video"
+          )
+            return false;
+          const identifier =
+            entry.trackIdentifier ??
+            report.get(entry.mediaSourceId)?.trackIdentifier;
+          return identifier === undefined || identifier === track.id;
+        })
+        .map((entry) => ({
+          rid: typeof entry.rid === "string" ? entry.rid : null,
+          frames: entry.framesEncoded ?? null,
+          packets: entry.packetsSent ?? 0,
+        }));
+      senders.push({
+        peer: peerIndex,
+        sender: senderIndex,
+        capture: capture?.index ?? null,
+        current,
+        encodings,
+      });
+    }
+  }
+  return {
+    captures: captures.map(({ capture, index }) => ({
+      capture: index,
+      kind: capture.kind,
+      slot: capture.slot,
+    })),
+    senders,
+  };
+}
 export async function sample({ deadlineEpochMs } = {}) {
   const state = window.__e2e;
   const peers = [];
@@ -275,10 +682,16 @@ export async function sample({ deadlineEpochMs } = {}) {
         }
         state.samplePhase = "native-stats-resolved";
       } catch (error) {
-        if (error.message === "E2E_NATIVE_STATS_DEADLINE") throw error;
-        // Firefox rejects getStats on a closed peer, including a close racing
-        // this sample. Keep the closed peer visible; never hide a live error.
-        if (pc.connectionState !== "closed") throw error;
+        // Firefox can reject or leave getStats pending when close races this
+        // sample. Only a confirmed closed peer has unavailable native stats.
+        if (pc.connectionState !== "closed") {
+          if (error.message === "E2E_NATIVE_STATS_DEADLINE")
+            throw new Error(
+              `${error.message} pc=${state.peers.indexOf(pc)} connection=${pc.connectionState} ice=${pc.iceConnectionState}`,
+              { cause: error },
+            );
+          throw error;
+        }
       }
     }
     if (pc.connectionState === "closed") {
@@ -468,6 +881,7 @@ export async function sample({ deadlineEpochMs } = {}) {
       (entry) => entry.c === state.expectedVoiceChannel && entry.l,
     ).length,
     rejectedSdp: state.rejectedSdp,
+    rejectedSdpErrors: state.rejectedSdpErrors?.slice() ?? [],
     roomAudio: (() => {
       const incoming = [
         ...new Map(state.incomingTracks.map((t) => [t.track, t])).values(),
@@ -512,9 +926,7 @@ export async function sample({ deadlineEpochMs } = {}) {
       };
     })(),
     heldTrackCount: state.heldTracks.length,
-    heldVideoTracks: state.heldTracks.filter(
-      (t) => t.event.track.kind === "video",
-    ).length,
+    heldVideoTracks: state.heldTracks.filter((t) => t.kind === "video").length,
     heldLiveClaimCount: state.heldLiveClaims.length,
     playback: [...state.mediaElements].map((el) => ({
       kind: el.tagName === "AUDIO" ? "audio" : "video",

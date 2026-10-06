@@ -1,0 +1,44 @@
+{
+  "schema": 1,
+  "status": "PASS",
+  "scope": "real_authenticated_debian_archive_download_hash_and_dpkg_metadata_verification_no_cpp_no_cargo_no_rtp",
+  "archive_targets": {
+    "amd64": 16,
+    "arm64": 16
+  },
+  "native_amd64_existing_package_versions_unchanged": true,
+  "arm64_binaries_executed": false,
+  "selected_native_packages": [
+    "build-essential\t12.12\tamd64",
+    "g++\t4:14.2.0-1\tamd64",
+    "g++-14\t14.2.0-19\tamd64",
+    "g++-14-x86-64-linux-gnu\t14.2.0-19\tamd64",
+    "gcc\t4:14.2.0-1\tamd64",
+    "gcc-14\t14.2.0-19\tamd64",
+    "gcc-14-x86-64-linux-gnu\t14.2.0-19\tamd64",
+    "libpython3-stdlib:amd64\t3.13.5-1\tamd64",
+    "libpython3.13-minimal:amd64\t3.13.5-2+deb13u5\tamd64",
+    "libpython3.13-stdlib:amd64\t3.13.5-2+deb13u5\tamd64",
+    "python3\t3.13.5-1\tamd64",
+    "python3-minimal\t3.13.5-1\tamd64",
+    "python3-venv\t3.13.5-1\tamd64",
+    "python3.13\t3.13.5-2+deb13u5\tamd64",
+    "python3.13-minimal\t3.13.5-2+deb13u5\tamd64",
+    "python3.13-venv\t3.13.5-2+deb13u5\tamd64"
+  ],
+  "canonical_lock_sha256": "2156dadb3455f52bff9f75a2cf90f30a22d03c9554a1d98f0ec4fb9a0259d1a0",
+  "report_sha256": "a20ac3419891acf34514033a8759f4dbf04ba65e4c75013eb0f2b39fe7a5ea92",
+  "installer_sha256": "2fbc8758b03431ecbf5bd2ef7105924b4ec4850e3bff9ab230b8ae8c6b05d519",
+  "native_wheel_pins_unchanged": true,
+  "focused_offline_checks": 13,
+  "deployment_suite": {
+    "reported_cases": 45,
+    "result": "OK",
+    "skipped": 1,
+    "skip_reason": "existing Caddy binary prerequisite absent",
+    "log_sha256": "49afcc02997e8c19d6ac7850955a71390bdde1e8e8dbd7e8887bc3e5203a27c2"
+  },
+  "owned_metadata_and_archive_containers_removed": true,
+  "product_image_with_new_archive_installer_built": false,
+  "native_rtp_or_browser_acceptance": false
+}

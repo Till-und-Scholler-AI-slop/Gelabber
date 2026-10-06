@@ -538,6 +538,19 @@ function isSessionPayload(payload: unknown): payload is {
   );
 }
 
+// Local clock minus server clock, from the latest API response's `Date`.
+let clockOffsetMs = 0;
+
+/** Server wall clock (second precision), independent of a skewed local clock. */
+export function serverNow(): number {
+  return Date.now() - clockOffsetMs;
+}
+
+function rememberServerClock(response: Response): void {
+  const date = Date.parse(response.headers.get("Date") ?? "");
+  if (Number.isFinite(date)) clockOffsetMs = Date.now() - date;
+}
+
 async function send(path: string, options: RequestOptions): Promise<Response> {
   const method = options.method ?? "GET";
   const headers = new Headers({ Accept: "application/json" });
@@ -553,7 +566,7 @@ async function send(path: string, options: RequestOptions): Promise<Response> {
     : AbortSignal.timeout(REQUEST_TIMEOUT_MS);
 
   try {
-    return await fetch(`${API_BASE}${path}`, {
+    const response = await fetch(`${API_BASE}${path}`, {
       method,
       headers,
       credentials: "same-origin",
@@ -561,6 +574,8 @@ async function send(path: string, options: RequestOptions): Promise<Response> {
         options.body === undefined ? undefined : JSON.stringify(options.body),
       signal,
     });
+    rememberServerClock(response);
+    return response;
   } catch (error) {
     if (error instanceof DOMException && error.name === "TimeoutError") {
       throw new ApiError("timeout", 0, "Request timed out.");

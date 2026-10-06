@@ -1,0 +1,214 @@
+{
+  "schema": 1,
+  "date": "2026-10-06",
+  "scope": "ALL_17_CURRENT_CI_HARNESS_COMMANDS_AND_FULL_REGISTERED_ESLINT_NO_BROWSER",
+  "status": "PASS",
+  "node": "26.8.2",
+  "report_sha256": "da58ab92eced07a18f5016c3b8fbb5b1fcc81fa688b8bb1a5a5672436ffd80fc",
+  "harness_commands": 17,
+  "full_registered_eslint": "PASS",
+  "checks": [
+    {
+      "command": [
+        "npm",
+        "run",
+        "test:e2e-harness"
+      ],
+      "exit_code": 0,
+      "status": "PASS",
+      "elapsed_seconds": 0.315,
+      "log_sha256": "55ef2ca09119ef5e34a1a012667257bfe82abdd7ea9414b2e53e4227426f9973"
+    },
+    {
+      "command": [
+        "node",
+        "scripts/e2e/rendered-frames.checks.mjs"
+      ],
+      "exit_code": 0,
+      "status": "PASS",
+      "elapsed_seconds": 0.064,
+      "log_sha256": "6f40f33f543d41ed9887d7a163518f77c0de354e29952c76052f9351a6b9d038"
+    },
+    {
+      "command": [
+        "node",
+        "scripts/e2e/media-probe.checks.mjs"
+      ],
+      "exit_code": 0,
+      "status": "PASS",
+      "elapsed_seconds": 0.465,
+      "log_sha256": "1c300766ac1d6179b16ce7ada15a7557821a3eca71b305b8e3d3fe1c041a0511"
+    },
+    {
+      "command": [
+        "node",
+        "scripts/e2e/publisher-encoders.checks.mjs"
+      ],
+      "exit_code": 0,
+      "status": "PASS",
+      "elapsed_seconds": 0.064,
+      "log_sha256": "d463cc37c912b87600a1c41ee5c57d1633c967e11e692e990f238c8b3f3f9e2d"
+    },
+    {
+      "command": [
+        "node",
+        "scripts/e2e/receive-loss-proxy.checks.mjs"
+      ],
+      "exit_code": 0,
+      "status": "PASS",
+      "elapsed_seconds": 0.114,
+      "log_sha256": "119ac1c76c9868cbb5839f572ea15fbe44a1f5a5ac1536ad76253d21476bd69b"
+    },
+    {
+      "command": [
+        "node",
+        "scripts/e2e/browser-options.checks.mjs"
+      ],
+      "exit_code": 0,
+      "status": "PASS",
+      "elapsed_seconds": 0.064,
+      "log_sha256": "0119764e4d4a9526c51c1e398315c5be40b17932a561e9474b42166fead67622"
+    },
+    {
+      "command": [
+        "node",
+        "scripts/e2e/native-evaluate.checks.mjs"
+      ],
+      "exit_code": 0,
+      "status": "PASS",
+      "elapsed_seconds": 0.315,
+      "log_sha256": "c7b542f36d4f5789bd444b00a4e87fb0eaa85798912801d182667ad347641c91"
+    },
+    {
+      "command": [
+        "node",
+        "--experimental-vm-modules",
+        "scripts/e2e/access-native.checks.mjs"
+      ],
+      "exit_code": 0,
+      "status": "PASS",
+      "elapsed_seconds": 0.315,
+      "log_sha256": "c84cf48feab90afc16a022fcada9d1c80a740a23c7eee1bb3e4f75a447e91239"
+    },
+    {
+      "command": [
+        "node",
+        "scripts/e2e/held-renderer.checks.mjs"
+      ],
+      "exit_code": 0,
+      "status": "PASS",
+      "elapsed_seconds": 4.175,
+      "log_sha256": "e10ea872bbddaa291441cd2e6d5412f52d756cc5bda23be57b947ece933b5f07"
+    },
+    {
+      "command": [
+        "node",
+        "--experimental-vm-modules",
+        "scripts/e2e/native-finish.checks.mjs"
+      ],
+      "exit_code": 0,
+      "status": "PASS",
+      "elapsed_seconds": 5.128,
+      "log_sha256": "4f289811d1f44d6453643fec74f86f62edff8727fa622cc3daa3890105d342f2"
+    },
+    {
+      "command": [
+        "node",
+        "--experimental-vm-modules",
+        "scripts/e2e/media-extra.checks.mjs"
+      ],
+      "exit_code": 0,
+      "status": "PASS",
+      "elapsed_seconds": 0.265,
+      "log_sha256": "8ecbedab7a4adb755a26ea948c09d01b4284d2a05bf37fcb77771297cb62a242"
+    },
+    {
+      "command": [
+        "node",
+        "scripts/smoke-netem.checks.mjs"
+      ],
+      "exit_code": 0,
+      "status": "PASS",
+      "elapsed_seconds": 0.064,
+      "log_sha256": "c0b5583b39875e43f62ba61bc29b0e4e29762f4f47f58787cc99882ffe35b921"
+    },
+    {
+      "command": [
+        "node",
+        "scripts/e2e/faults.checks.mjs"
+      ],
+      "exit_code": 0,
+      "status": "PASS",
+      "elapsed_seconds": 0.114,
+      "log_sha256": "a598778a8f99dd7cccbb7c057c17aa15ff6a28f2a31a19d8dfd734b19bfad171"
+    },
+    {
+      "command": [
+        "node",
+        "--experimental-vm-modules",
+        "scripts/e2e/teardown.checks.mjs"
+      ],
+      "exit_code": 0,
+      "status": "PASS",
+      "elapsed_seconds": 0.265,
+      "log_sha256": "ef18840076feae4737decddc8b374b32c417b341d724bd51fc4914a9000ebccd"
+    },
+    {
+      "command": [
+        "node",
+        "--experimental-vm-modules",
+        "scripts/e2e/media-runtime.checks.mjs"
+      ],
+      "exit_code": 0,
+      "status": "PASS",
+      "elapsed_seconds": 0.114,
+      "log_sha256": "e7e31c97d2cfde11bc14570615e90b0cc5f70af5ceb3dfa6f1852a76fb9ded41"
+    },
+    {
+      "command": [
+        "node",
+        "--experimental-vm-modules",
+        "scripts/e2e/ci-fault-prepare.checks.mjs"
+      ],
+      "exit_code": 0,
+      "status": "PASS",
+      "elapsed_seconds": 0.114,
+      "log_sha256": "435f51f94ecbcfa82e40deb67cc6d1710253b1069c860efc6f66c76e31be2ee5"
+    },
+    {
+      "command": [
+        "node",
+        "scripts/e2e/ci-fault-loop.checks.mjs"
+      ],
+      "exit_code": 0,
+      "status": "PASS",
+      "elapsed_seconds": 0.064,
+      "log_sha256": "a2b4faea8590389eb8e6d6d077deed59749b2c9012871e3e1d4b56e22273e491"
+    },
+    {
+      "command": [
+        "npm",
+        "run",
+        "lint"
+      ],
+      "exit_code": 0,
+      "status": "PASS",
+      "elapsed_seconds": 4.172,
+      "log_sha256": "b2290364f8ee1fed67e0cd2f6d08e5dc9618d1e1b6f25397ef6bca0e5fea562f"
+    }
+  ],
+  "selected_source_sha256": {
+    ".github/workflows/ci.yml": "d23ee2def935df82dc10a58476f2440edf663337b055822b762d3df94fd600f4",
+    "web/package.json": "f018f812a5cfbd76dd886e0a11be20a7781e23fd34e954b92325214a4bbaf17c",
+    "web/scripts/e2e/access.mjs": "8655f28a2e2924f0ecfe6f8ff715fec6c9d4eab9627f17f6f25ffcb10ffec56a",
+    "web/scripts/e2e/held-renderer.checks.mjs": "7f7f15e1dab3f17ec4dbea320e410cc4893182c8d66d802e38da006feb3b54e2",
+    "web/scripts/e2e/probe.mjs": "cfa8217325d600391189759f0bfd8bef4b92b2a76b2b4c82510e9f405e8f8096",
+    "web/scripts/e2e/native-evaluate.mjs": "8822cd32d787ae531d021893ec5f2eaa6406c8e707c163c5e9cd075bd3ce6102",
+    "web/scripts/e2e/native-evaluate.checks.mjs": "d15a8c9079de1096d18bc335a9d0ba01828dcef84dce27564c1b61bf4d0887ae"
+  },
+  "source_changed_during_checks": [],
+  "browser_or_product_server_started": false,
+  "full_frontend_unit_suite_repeated": false,
+  "product_acceptance_claimed": false,
+  "scope_limit": "Static/mock harness checks and full registered ESLint; no actual product browser acceptance or rerun of the separately proven 504 frontend tests."
+}

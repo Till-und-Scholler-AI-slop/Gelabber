@@ -1,139 +1,162 @@
 import { afterEach, describe, expect, it } from "vitest";
-
 import {
+  DEFAULT_MEDIA_SETTINGS,
   AUDIO_QUALITY,
   VIDEO_RESOLUTIONS,
   VIDEO_FRAME_RATES,
   explicitStreamProfile,
   clampVideoUploadLimit,
-  STREAM_PROFILES,
-  VIDEO_SEND_BUDGET,
-  VIDEO_SEND_CEILING,
   allocateVideoBitrates,
-  asQuality,
-  asStreamProfile,
   audioBitrate,
+  sourceAudioBitrate,
   cameraConstraints,
+  micConstraints,
+  resetMediaSettingsForTests,
+  useMediaSettings,
+  videoSendBudget,
+  videoConstraintLadder,
   clampGain,
   clampVolume,
   displayConstraints,
-  formatVideoBitrate,
-  isOverconstrainedError,
-  micConstraints,
-  resetMediaSettingsForTests,
-  streamEstimate,
-  useMediaSettings,
-  videoConstraintLadder,
+  asStreamProfile,
   videoConstraintsFor,
+  isOverconstrainedError,
 } from "./settings.ts";
-
-describe("media settings", () => {
-  afterEach(() => {
-    resetMediaSettingsForTests();
+afterEach(resetMediaSettingsForTests);
+describe("capture and explicit bandwidth preferences", () => {
+  it("defaults to enhanced speech with no application bitrate cap", () => {
+    expect(useMediaSettings.getState().processingMode).toBe("enhanced");
+    expect(audioBitrate()).toBeNull();
+    expect(sourceAudioBitrate()).toBeNull();
+    expect(videoSendBudget(useMediaSettings.getState())).toBeNull();
+    expect(allocateVideoBitrates(["2160p60", "balanced", "economy"])).toEqual([
+      null,
+      null,
+      null,
+    ]);
   });
-
-  it("defaults to AEC/NS/AGC, Normal bitrate, full volume, toasts on", () => {
-    const state = useMediaSettings.getState();
-    expect(state.echoCancellation).toBe(true);
-    expect(state.noiseSuppression).toBe(true);
-    expect(state.autoGainControl).toBe(true);
-    expect(state.quality).toBe("normal");
-    expect(AUDIO_QUALITY.normal.bitrate).toBe(64_000);
-    expect(AUDIO_QUALITY.phone.bitrate).toBe(24_000);
-    expect(AUDIO_QUALITY.high.bitrate).toBe(128_000);
-    expect(state.outputVolume).toBe(1);
-    expect(state.inputGain).toBe(1);
-    expect(state.messageToasts).toBe(true);
-    expect(state.desktopNotify).toBe(false);
-    expect(state.cameraProfile).toBe("balanced");
-    expect(state.screenProfile).toBe("balanced");
-    expect(state.cameraProfileApply).toBe("idle");
-    expect(state.screenProfileApply).toBe("idle");
-    expect(VIDEO_SEND_BUDGET).toBe(2_500_000);
-    expect(VIDEO_SEND_CEILING).toBe(100_000_000);
+  it("allows user-selected economy and a custom pool above the old 100 Mbit ceiling", () => {
+    useMediaSettings.getState().patch({ economyMode: true });
+    expect(audioBitrate()).toBe(AUDIO_QUALITY.normal.bitrate);
+    expect(sourceAudioBitrate()).toBe(128000);
+    expect(allocateVideoBitrates(["balanced", "balanced"], 0, true)).toEqual([
+      1250000, 1250000,
+    ]);
+    expect(allocateVideoBitrates(["2160p60", "2160p60"], 500000000)).toEqual([
+      250000000, 250000000,
+    ]);
+    expect(clampVideoUploadLimit(Infinity)).toBe(0);
+    expect(clampVideoUploadLimit(-1)).toBe(0);
+    useMediaSettings.getState().patch({ economyMode: false });
+    expect(audioBitrate()).toBeNull();
   });
-
-  it("supports every resolution and FPS combination for capture and persistence", async () => {
+  it("keeps every capture resolution/FPS independent of bandwidth", () => {
     for (const height of VIDEO_RESOLUTIONS)
       for (const fps of VIDEO_FRAME_RATES) {
-        const profile = explicitStreamProfile(height, fps);
-        expect(asStreamProfile(profile)).toBe(profile);
         useMediaSettings
           .getState()
-          .patch({ cameraProfile: profile, screenProfile: profile });
+          .patch({ cameraProfile: explicitStreamProfile(height, fps) });
         expect(cameraConstraints()).toMatchObject({
           height: { ideal: height, max: height },
           frameRate: { ideal: fps, max: fps },
         });
-        expect(displayConstraints()).toMatchObject({
-          height: { ideal: height, max: height },
-          frameRate: { ideal: fps, max: fps },
-        });
+        expect(audioBitrate()).toBeNull();
+        expect(videoSendBudget(useMediaSettings.getState())).toBeNull();
       }
-    useMediaSettings
-      .getState()
-      .patch({ screenProfile: "2160p60", videoUploadLimit: 75_000_000 });
-    await useMediaSettings.persist.rehydrate();
-    expect(useMediaSettings.getState().screenProfile).toBe("2160p60");
-    expect(useMediaSettings.getState().videoUploadLimit).toBe(75_000_000);
-    expect(asStreamProfile("__proto__")).toBe("balanced");
-    expect(asStreamProfile("2160p120")).toBe("balanced");
-  });
-
-  it("shares manual and automatic upload limits without exceeding the pool", () => {
-    expect(allocateVideoBitrates(["2160p60"])).toEqual([60_000_000]);
-    expect(allocateVideoBitrates(["2160p60", "2160p60"], 10_000_000)).toEqual([
-      5_000_000, 5_000_000,
-    ]);
-    expect(allocateVideoBitrates(["2160p60"], 100_000_000)).toEqual([
-      100_000_000,
-    ]);
-    expect(allocateVideoBitrates(["480p15"], 500_000)).toEqual([500_000]);
-    expect(allocateVideoBitrates(["2160p60"], Infinity)).toEqual([60_000_000]);
-    expect(clampVideoUploadLimit(-2)).toBe(0);
-    expect(clampVideoUploadLimit(1)).toBe(500_000);
-    expect(clampVideoUploadLimit(500_000_000)).toBe(100_000_000);
-    expect(videoConstraintLadder("camera", "2160p60")[0]).toMatchObject({
-      width: { ideal: 3840, max: 3840 },
-      frameRate: { ideal: 60, max: 60 },
-    });
     expect(videoConstraintLadder("camera", "2160p60")).toHaveLength(4);
   });
-
-  it("clamps volume and gain and rejects unknown quality", () => {
-    expect(clampVolume(-1)).toBe(0);
-    expect(clampVolume(2)).toBe(1);
-    expect(clampGain(8)).toBe(2);
-    expect(asQuality("nope")).toBe("normal");
+  it("avoids double noise filtering and offers original stereo with optional AEC", () => {
+    expect(micConstraints()).toMatchObject({
+      noiseSuppression: false,
+      autoGainControl: false,
+      channelCount: 1,
+    });
     useMediaSettings
       .getState()
-      .patch({ outputVolume: 4, inputGain: -2, quality: "high" });
-    expect(useMediaSettings.getState().outputVolume).toBe(1);
-    expect(useMediaSettings.getState().inputGain).toBe(0);
-    expect(useMediaSettings.getState().quality).toBe("high");
-  });
-
-  it("builds mic constraints from the store, including a device hint", () => {
-    expect(micConstraints()).toEqual({
-      echoCancellation: true,
+      .patch({ processingMode: "browser", audioInputId: "mic-2" });
+    expect(micConstraints()).toMatchObject({
       noiseSuppression: true,
       autoGainControl: true,
-      channelCount: 1,
-    });
-    useMediaSettings.getState().patch({
-      echoCancellation: false,
-      audioInputId: "mic-2",
-    });
-    expect(micConstraints()).toEqual({
-      echoCancellation: false,
-      noiseSuppression: true,
-      autoGainControl: true,
-      channelCount: 1,
       deviceId: { ideal: "mic-2" },
     });
+    useMediaSettings
+      .getState()
+      .patch({ processingMode: "original", echoCancellation: false });
+    expect(micConstraints()).toMatchObject({
+      noiseSuppression: false,
+      autoGainControl: false,
+      echoCancellation: false,
+      channelCount: { ideal: 2 },
+      sampleRate: { ideal: 48000 },
+    });
   });
-
-  it("keeps the previous safe capture targets on the balanced default", () => {
+  it("migrates old automatic caps without changing their browser filters or capture preferences", async () => {
+    const storage = useMediaSettings.persist.getOptions().storage!;
+    await storage.setItem("gelabber.media", {
+      state: {
+        quality: "high",
+        noiseSuppression: true,
+        autoGainControl: true,
+        cameraProfile: "2160p60",
+        screenProfile: "detail",
+        videoUploadLimit: 0,
+      } as never,
+    });
+    await useMediaSettings.persist.rehydrate();
+    expect(useMediaSettings.getState()).toMatchObject({
+      processingMode: "browser",
+      economyMode: false,
+      cameraProfile: "2160p60",
+      screenProfile: "detail",
+    });
+    expect(audioBitrate()).toBeNull();
+    expect(videoSendBudget(useMediaSettings.getState())).toBeNull();
+  });
+  it("retains explicit legacy phone/custom limits and unprocessed preferences", async () => {
+    const storage = useMediaSettings.persist.getOptions().storage!;
+    await storage.setItem("gelabber.media", {
+      state: {
+        quality: "phone",
+        noiseSuppression: false,
+        autoGainControl: false,
+        videoUploadLimit: 75000000,
+      } as never,
+    });
+    await useMediaSettings.persist.rehydrate();
+    expect(useMediaSettings.getState()).toMatchObject({
+      processingMode: "original",
+      economyMode: true,
+      videoUploadLimit: 75000000,
+    });
+    expect(audioBitrate()).toBe(24000);
+  });
+  it("persists the new modes and independent playback/call-sound choices", async () => {
+    useMediaSettings.getState().patch({
+      processingMode: "original",
+      economyMode: false,
+      shareSourceAudio: true,
+      sourceAudioVolume: 0.35,
+      callSounds: false,
+      callSoundVolume: 2,
+    });
+    const storage = useMediaSettings.persist.getOptions().storage!;
+    const saved = await storage.getItem("gelabber.media");
+    resetMediaSettingsForTests();
+    await storage.setItem("gelabber.media", saved!);
+    await useMediaSettings.persist.rehydrate();
+    expect(useMediaSettings.getState()).toMatchObject({
+      processingMode: "original",
+      economyMode: false,
+      shareSourceAudio: true,
+      sourceAudioVolume: 0.35,
+      callSounds: false,
+      callSoundVolume: 1,
+    });
+    expect(DEFAULT_MEDIA_SETTINGS.outputVolume).toBe(1);
+    expect(clampGain(5)).toBe(2);
+    expect(clampVolume(-1)).toBe(0);
+  });
+  it("preserves camera/display fallbacks, device hints and invalid saved profile recovery", async () => {
     expect(cameraConstraints()).toEqual({
       width: { ideal: 1280, max: 1920 },
       height: { ideal: 720, max: 1080 },
@@ -144,75 +167,6 @@ describe("media settings", () => {
       height: { max: 1080 },
       frameRate: { ideal: 15, max: 30 },
     });
-    expect(streamEstimate("camera", "balanced")).toEqual({
-      resolution: "720p ideal, max. 1080p",
-      fps: "30 FPS",
-      maxBitrate: 2_500_000,
-    });
-    expect(streamEstimate("screen", "balanced")).toEqual({
-      resolution: "max. 1080p",
-      fps: "15 FPS ideal, max. 30",
-      maxBitrate: 2_500_000,
-    });
-  });
-
-  it("builds economy and detail constraints and shows their send budget", () => {
-    useMediaSettings.getState().patch({
-      cameraProfile: "economy",
-      screenProfile: "detail",
-      videoInputId: "cam-1",
-      quality: "high",
-    });
-    expect(cameraConstraints()).toEqual({
-      width: { ideal: 854, max: 854 },
-      height: { ideal: 480, max: 480 },
-      frameRate: { ideal: 15, max: 15 },
-      deviceId: { ideal: "cam-1" },
-    });
-    expect(displayConstraints()).toEqual(
-      videoConstraintsFor("screen", "detail"),
-    );
-    expect(displayConstraints()).toEqual({
-      width: { ideal: 1920, max: 1920 },
-      height: { ideal: 1080, max: 1080 },
-      frameRate: { ideal: 30, max: 30 },
-    });
-    expect(formatVideoBitrate(STREAM_PROFILES.economy.maxBitrate)).toBe(
-      "0,8 Mbit/s",
-    );
-    expect(formatVideoBitrate(STREAM_PROFILES.detail.maxBitrate)).toBe(
-      "4 Mbit/s",
-    );
-    expect(audioBitrate()).toBe(AUDIO_QUALITY.high.bitrate);
-    expect(asStreamProfile("nope")).toBe("balanced");
-    useMediaSettings.getState().patch({
-      cameraProfile: "nope" as "balanced",
-    });
-    expect(useMediaSettings.getState().cameraProfile).toBe("balanced");
-    expect(useMediaSettings.getState().quality).toBe("high");
-  });
-
-  it("shares one capped video budget and steps down when constraints are rejected", () => {
-    expect(allocateVideoBitrates([])).toEqual([]);
-    expect(allocateVideoBitrates(["balanced"])).toEqual([2_500_000]);
-    expect(allocateVideoBitrates(["balanced", "balanced"])).toEqual([
-      1_250_000, 1_250_000,
-    ]);
-    expect(allocateVideoBitrates(["economy"])).toEqual([800_000]);
-    expect(allocateVideoBitrates(["detail"])).toEqual([4_000_000]);
-    expect(allocateVideoBitrates(["detail", "detail"])).toEqual([
-      2_000_000, 2_000_000,
-    ]);
-    expect(allocateVideoBitrates(["economy", "balanced"])).toEqual([
-      606_060, 1_893_939,
-    ]);
-    expect(
-      allocateVideoBitrates(["detail", "balanced", "economy"]).reduce(
-        (sum, value) => sum + value,
-        0,
-      ),
-    ).toBeLessThanOrEqual(VIDEO_SEND_CEILING);
-
     expect(
       videoConstraintLadder("camera", "detail", "cam-1").map(
         (step) => step.width,
@@ -226,74 +180,35 @@ describe("media settings", () => {
     expect(videoConstraintLadder("camera", "detail", "cam-1")[3]).toEqual({
       deviceId: { ideal: "cam-1" },
     });
-    expect(videoConstraintLadder("screen", "economy")).toHaveLength(2);
-    expect(videoConstraintLadder("screen", "balanced")).toHaveLength(1);
     expect(videoConstraintLadder("screen", "detail")[1]).toEqual(
       videoConstraintsFor("screen", "balanced"),
     );
-    const rejected = new Error("no");
+    expect(videoConstraintLadder("screen", "balanced")).toHaveLength(1);
+    expect(asStreamProfile("__proto__")).toBe("balanced");
+    expect(asStreamProfile("2160p120")).toBe("balanced");
+    const rejected = new Error("unsupported");
     rejected.name = "OverconstrainedError";
     expect(isOverconstrainedError(rejected)).toBe(true);
     expect(isOverconstrainedError(new Error("denied"))).toBe(false);
-  });
-
-  it("persists stream profiles across rehydrate and drops unknown values", async () => {
-    useMediaSettings.getState().patch({
-      cameraProfile: "economy",
-      screenProfile: "detail",
-      quality: "phone",
+    const storage = useMediaSettings.persist.getOptions().storage!;
+    await storage.setItem("gelabber.media", {
+      state: { cameraProfile: "broken", screenProfile: "detail" } as never,
     });
-    const storage = useMediaSettings.persist.getOptions().storage;
-    expect(storage).toBeTruthy();
-    const saved = await storage!.getItem("gelabber.media");
-    expect(saved?.state).toMatchObject({
-      cameraProfile: "economy",
-      screenProfile: "detail",
-      quality: "phone",
-    });
-    useMediaSettings.setState({
-      cameraProfile: "balanced",
-      screenProfile: "balanced",
-      quality: "normal",
-      cameraProfileApply: "live",
-    });
-    await storage!.setItem("gelabber.media", saved!);
-    await useMediaSettings.persist.rehydrate();
-    expect(useMediaSettings.getState().cameraProfile).toBe("economy");
-    expect(useMediaSettings.getState().screenProfile).toBe("detail");
-    expect(useMediaSettings.getState().quality).toBe("phone");
-    expect(useMediaSettings.getState().cameraProfileApply).toBe("live");
-
-    const broken = structuredClone(saved!) as {
-      state: { cameraProfile: string; screenProfile: string };
-      version?: number;
-    };
-    broken.state.cameraProfile = "nope";
-    broken.state.screenProfile = "detail";
-    await storage!.setItem("gelabber.media", broken);
     await useMediaSettings.persist.rehydrate();
     expect(useMediaSettings.getState().cameraProfile).toBe("balanced");
     expect(useMediaSettings.getState().screenProfile).toBe("detail");
   });
-});
-
-describe("source-audio settings", () => {
-  afterEach(() => resetMediaSettingsForTests());
-  it("persists opt-in and independent listening choices across browser reloads", async () => {
-    useMediaSettings.getState().patch({
-      shareSourceAudio: true,
-      sourceAudioVolume: 0.35,
-      sourceAudioMuted: true,
-      outputVolume: 0.8,
-    });
-    const storage = useMediaSettings.persist.getOptions().storage!;
-    const saved = await storage.getItem("gelabber.media");
-    expect(saved?.state).toMatchObject({
-      shareSourceAudio: true,
-      sourceAudioVolume: 0.35,
-      sourceAudioMuted: true,
-      outputVolume: 0.8,
-    });
+  it("keeps source audio and conversation playback independent across reloads", async () => {
+    useMediaSettings
+      .getState()
+      .patch({
+        shareSourceAudio: true,
+        sourceAudioVolume: 0.35,
+        sourceAudioMuted: true,
+        outputVolume: 0.8,
+      });
+    const storage = useMediaSettings.persist.getOptions().storage!,
+      saved = await storage.getItem("gelabber.media");
     resetMediaSettingsForTests();
     await storage.setItem("gelabber.media", saved!);
     await useMediaSettings.persist.rehydrate();

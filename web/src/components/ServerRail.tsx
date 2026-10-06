@@ -1,7 +1,8 @@
+import { UnreadBadge } from "../messages/UnreadBadge.tsx";
 import { useQueryClient } from "@tanstack/react-query";
 import { Link } from "@tanstack/react-router";
 import { useVirtualizer } from "@tanstack/react-virtual";
-import { useRef, useState } from "react";
+import { useId, useRef, useState } from "react";
 
 import { useUserId } from "../auth/scope.ts";
 import { lastDmStillListed } from "../dms/open.ts";
@@ -45,6 +46,7 @@ export function ServerRail({
 }
 
 function HomeTile({ active }: { active: boolean }) {
+  const unreadId = useId();
   const client = useQueryClient();
   const userId = useUserId();
   const byUser = useLastDm((state) => state.byUser);
@@ -58,6 +60,7 @@ function HomeTile({ active }: { active: boolean }) {
         params={openId ? { channelId: openId } : undefined}
         title="Direktnachrichten"
         aria-label="Direktnachrichten"
+        aria-describedby={unreadId}
         aria-current={active ? "page" : undefined}
         onMouseEnter={() => {
           if (userId) prefetchDms(client, userId);
@@ -65,9 +68,10 @@ function HomeTile({ active }: { active: boolean }) {
         onFocus={() => {
           if (userId) prefetchDms(client, userId);
         }}
-        className={`server-home-link ${active ? "is-active" : ""}`}
+        className={`relative server-home-link ${active ? "is-active" : ""}`}
       >
         <ChatIcon size={27} />
+        <UnreadBadge id={unreadId} dms rail />
       </Link>
     </div>
   );
@@ -115,6 +119,7 @@ function ServerList({
 }
 
 function ServerTile({ server, active }: { server: Server; active: boolean }) {
+  const unreadId = useId();
   const client = useQueryClient();
   const userId = useUserId();
   return (
@@ -123,6 +128,7 @@ function ServerTile({ server, active }: { server: Server; active: boolean }) {
       params={{ serverId: server.id }}
       title={server.name}
       aria-label={server.name}
+      aria-describedby={unreadId}
       aria-current={active ? "page" : undefined}
       onMouseEnter={() => {
         if (userId) prefetchServer(client, userId, server.id);
@@ -133,6 +139,7 @@ function ServerTile({ server, active }: { server: Server; active: boolean }) {
       className={`server-tile ${active ? "is-active" : ""}`}
     >
       {initials(server.name)}
+      <UnreadBadge id={unreadId} serverId={server.id} rail />
     </Link>
   );
 }

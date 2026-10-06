@@ -12,7 +12,7 @@ App: `http://localhost` (Caddy :80). Daten und MinIO nur auf `127.0.0.1`. Secret
 
 ## Bestehendes Caddy
 
-UDP (TURN + SFU-ICE 10000–10031) geht nicht durch Caddy — Host/Router-Ports bleiben offen.
+UDP (TURN + SFU-ICE 10000) geht nicht durch Caddy — Host/Router-Ports bleiben offen.
 
 **Kleiner Diff:** bundled Caddy auf Loopback, dein Caddy davor.
 
@@ -89,18 +89,48 @@ Compose bietet TURN über UDP und TCP an. TCP ist der Ausweichpfad für Clients,
 
 ## Backup
 
-Volumes: `gelabber_postgres_data`, `gelabber_minio_data`. Redis speichert nichts.
+PostgreSQL-Metadaten und MinIO-Anhänge bilden **ein Snapshotpaar**. Vor dem
+Backup alle App-Schreiber anhalten, einschließlich API-Hintergrundjobs und
+noch gültiger direkter MinIO-Uploads. Die API zuerst drainen, dann MinIO stoppen;
+erst danach beide Datenbestände sichern. Ein laufendes PostgreSQL-Datenvolume
+per `tar` ist kein konsistentes physisches Backup. Hier verwenden wir stattdessen
+`pg_dump` mit dem vollständigen SQLx-Migrationsledger. Redis ist flüchtig und
+gehört nicht zum Daten-Restore.
+
+Beispiel für den Compose-Stack mit Wartungsfenster (die tatsächlich gemountete
+MinIO-Volume und das laufende Image werden vor dem Stop ermittelt):
 
 ```bash
 cd deploy/compose
-docker compose exec -T postgres pg_dump -U gelabber gelabber > gelabber-$(date -u +%Y%m%d).sql
-docker run --rm -v gelabber_postgres_data:/data -v "$PWD":/backup alpine:3.24 \
-  tar czf /backup/postgres-data.tgz -C /data .
-docker run --rm -v gelabber_minio_data:/data -v "$PWD":/backup alpine:3.24 \
-  tar czf /backup/minio-data.tgz -C /data .
+sh ../backup.sh
 ```
 
-Restore analog; Postgres vorher stoppen.
+Bei einem Fehler bleiben die Schreiber gestoppt, bis das unvollständige Backup
+untersucht ist. Den freigegebenen
+`image-set.json`/`image-set.env`, die aktive Compose-Konfiguration und den
+Backup-Zeitpunkt zum Paar archivieren; Secrets dabei privat halten. Ein lokales
+Image-ID allein ist kein portabler Ersatz für den archivierten Registry-Digest.
+
+Restore zuerst auf **frische Zielbestände** prüfen: `sha256sum -c SHA256SUMS`,
+eine neue leere PostgreSQL-Datenbank und ein neues leeres MinIO-Volume mit
+`pg_restore --exit-on-error --no-owner` beziehungsweise dem vollständig
+extrahierten MinIO-Archiv befüllen. Den Objectstore mit demselben MinIO-Pin
+starten und die passende API-/Image-Version auf dieses Paar konfigurieren.
+Quellbestände erhalten, bis Bytehashes, Dateityp, Nachrichten-Metadaten,
+Mitgliedschaft, DM-Scope und verweigerte Downloads/Uploads geprüft sind.
+Neue Presigns verwenden, keine abgelaufenen Download-URLs aus dem Backup.
+
+Ein Binary-/Image-Rückweg auf einen alten Snapshot verliert absichtlich alle
+Änderungen nach dessen Zeitpunkt. Ein altes Binary gegen das neue Schema zu
+starten ist ein separates Gate: selbst additive SQL-Änderungen können am
+SQLx-Migrationsledger scheitern. Deshalb ersetzt ein Imagewechsel den geprüften
+Restore des passenden alten DB-/Objectstore-Paars nicht.
+
+Der lokale vollständige Drill ist in [Upgrade/Storage/Restore](../docs/upgrade-storage-restore.md)
+beschrieben. Er benutzt ausschließlich eigene Wegwerf-Container und führt einen
+echten alten API-Binary-Rückweg aus; das ältere
+`tools/check-chat-migration-restore.py` bleibt als schneller Schema-/Daten-Drill
+ohne Objectstore oder Binary-Abnahme verfügbar.
 
 ## Metriken
 
@@ -122,7 +152,7 @@ Die bestehenden getrennten GitHub-Actions-Layer-Caches für API und Media bleibe
 
 Die langsame lokale Cache-Abnahme startet mit `python3 docker/check-rust-cache.py --baseline-ref <commit-vor-cache-aenderung> --output /tmp/gelabber-rust-cache`. Sie prüft Quell-, Shared-, Versions- und Feature-Änderungen in eigenen Buildx-Caches und vergleicht drei unterschiedliche Quell-Rebuilds mit den bisherigen Dockerfiles. JSON und vollständige Logs enthalten die Cache-Treffer und gemessenen Laufzeiten der Build-Stufe, ohne Image-Export; mindestens 20 Prozent Verbesserung wird geprüft. `--keep-images` exportiert anschließend Images aus dem unveränderten Quellstand für eine separate Readiness-Prüfung. Dieser Runner gehört zur lokalen Abnahme und läuft nicht in CI.
 
-Der Default zieht die App-Version `v0.3.1`; bestehende Release-Tags werden nicht überschrieben. MinIO verwendet unabhängig davon den bestehenden CE-Pin `RELEASE.2025-10-15T17-29-55Z`. Org-Pakete können privat sein: `docker login ghcr.io` oder lokal bauen. Alle Stack-Pins bleiben bestehen. Source-Build setzt `CARGO_HTTP_CAINFO`; bei TLS-Inspection hängt `docker/rust-build-ca.sh` die präsentierte Kette an.
+Der Compose-Default bezeichnet das Entwicklungsziel `v0.4.0`, das noch nicht veröffentlicht ist; für diesen Stand lokal aus den Quellen bauen. Die zuletzt veröffentlichte Version ist `v0.3.1`. Bestehende Release-Tags werden nicht überschrieben. MinIO verwendet unabhängig davon den bestehenden CE-Pin `RELEASE.2025-10-15T17-29-55Z`. Org-Pakete können privat sein: `docker login ghcr.io` oder lokal bauen. Alle Stack-Pins bleiben bestehen. Source-Build setzt `CARGO_HTTP_CAINFO`; bei TLS-Inspection hängt `docker/rust-build-ca.sh` die präsentierte Kette an.
 
 CI läuft für **jeden main-Commit**, damit auch Deploy-/Workflow-Änderungen eine eindeutige CI-SHA besitzen. PR-Pfadfilter erfassen `shared/**`, alle Workspace-Mitglieder, Docker-Kontexte, Lockfiles und Workflows. Der Image-Workflow baut PRs ohne Push. Auf main startet er erst nach erfolgreichem `CI`-Push-Lauf derselben SHA; fehlgeschlagene/abgebrochene CI startet keinen Publish-Job.
 
@@ -155,7 +185,13 @@ docker compose --env-file .env --env-file next.env up -d --no-deps --no-build --
 
 `--no-build` verhindert einen unbemerkten lokalen Ersatzbuild, der explizite Pull löst das bisherige `pull_policy: missing`-Problem. Bereits im Shell-Environment exportierte `GELABBER_*_IMAGE`-Variablen vorher entfernen, da sie Env-Dateien übersteuern. Homelab behält sein `COMPOSE_FILE`; alternativ dieselben `-f`-Overlays bei **allen** Befehlen verwenden. Images werden als Satz vorab geladen; Containerwechsel sind nicht atomar und benötigen ein Wartungsfenster.
 
-Bei fehlgeschlagener Abnahme den archivierten vorherigen Digest-Satz verwenden:
+**v0.4 → v0.3.1 funktioniert nicht durch einen Imagewechsel:** Migrationen
+0010/0011 verändern das SQLx-Migrationsledger. Vor dem Start von v0.3.1 muss
+das vor dem Upgrade gesicherte PostgreSQL-/MinIO-Snapshotpaar auf geprüfte
+Zielbestände zurückgespielt werden. Änderungen seit diesem Backup gehen verloren.
+
+Nur bei nachgewiesener Schema-/Ledger-Kompatibilität den archivierten vorherigen
+vollständigen API-/Web-/Media-Satz verwenden (kein einzelnes altes Media-Image):
 
 ```bash
 docker compose --env-file .env --env-file previous.env config -q

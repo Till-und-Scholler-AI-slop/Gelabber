@@ -1,4 +1,5 @@
 import { nativeEvaluate } from "./native-evaluate.mjs";
+import { sampleVideoConsumers } from "./probe.mjs";
 /* global window, document, innerWidth */
 import {
   check,
@@ -17,8 +18,9 @@ export function armPlaybackRetry() {
   const release = (event) => {
     if (
       !event.isTrusted ||
-      event.target.closest?.("button")?.textContent?.trim() !==
-        "Wiedergabe starten"
+      !["Wiedergabe starten", "Ton starten"].includes(
+        event.target.closest?.("button")?.textContent?.trim(),
+      )
     )
       return;
     window.__e2e.rejectPlayback = false;
@@ -43,33 +45,70 @@ function sourceMatches(video, color) {
   );
 }
 /** Render assertions select their source through the real Watch action. */
-export async function watchSource(actor, kind) {
+export async function watchSource(
+  actor,
+  kind,
+  { deadlineEpochMs = Date.now() + 5_000 } = {},
+) {
   if (kind !== "live" && kind !== "screen") return;
   const tiles = actor.page
     .locator("figure")
     .filter({ hasText: kind === "live" ? "— Live" : "— Bildschirm" });
   const start = tiles.getByRole("button", { name: "Zuschauen", exact: true });
-  if (await start.count()) await start.first().click();
+  const stop = tiles.getByRole("button", {
+    name: "Nicht mehr zuschauen",
+    exact: true,
+  });
+  const controls = await until(
+    async () => ({
+      start: await start.count(),
+      stop: await stop.count(),
+      subscribed: await nativeEvaluate(
+        actor,
+        (sourceKind) =>
+          window.__e2e.incomingTracks.some(
+            (source) =>
+              source.sourceKind === sourceKind &&
+              source.track.readyState === "live" &&
+              source.pc.connectionState === "connected" &&
+              source.receiver.track === source.track &&
+              source.pc.getReceivers().includes(source.receiver),
+          ),
+        kind === "live" ? "l" : "s",
+      ),
+    }),
+    (state) =>
+      (state.start === 1 && state.stop === 0) ||
+      (state.start === 0 && (state.stop === 1 || state.subscribed)),
+    "source-watch-control-not-ready",
+    Math.max(0, deadlineEpochMs - Date.now()),
+  );
+  if (controls.start === 1)
+    await start
+      .first()
+      .click({ timeout: Math.max(1, deadlineEpochMs - Date.now()) });
 }
 export async function progress(
   actor,
   { kind = "live", color = [220, 30, 30], budget = 5_000, relay = false } = {},
 ) {
-  await watchSource(actor, kind);
   const start = Date.now();
+  const deadline = start + budget;
+  await watchSource(actor, kind, { deadlineEpochMs: deadline });
   const first = await until(
     () => snapshot(actor),
     (s) => {
       const video = s.videos.find((v) => v.kind === kind);
       return (
         decoded(s) > 0 &&
-        video?.width === 640 &&
+        [160, 640].includes(video?.width) &&
+        video.height === (video.width * 9) / 16 &&
         !video.paused &&
         sourceMatches(video, color)
       );
     },
     "decoded-correct-source-first-frame-deadline",
-    budget,
+    Math.max(0, deadline - Date.now()),
   );
   const firstFrameMs = Date.now() - start;
   const initial = first.videos.find((v) => v.kind === kind);
@@ -353,6 +392,48 @@ export async function mediaScenarios(h, f) {
           ...options,
           color: i % 2 ? [30, 220, 30] : [220, 30, 30],
         });
+        const beforeStopOwner = await snapshot(f.owner);
+        const beforeStopInventory = await nativeEvaluate(
+          f.watcher,
+          sampleVideoConsumers,
+          {
+            publisher: f.owner.id,
+            deadlineEpochMs: Date.now() + options.budget,
+          },
+        );
+        check(
+          beforeStopInventory.sources === 1 &&
+            beforeStopInventory.selectedLiveSources === 1 &&
+            beforeStopInventory.foreignSources === 0 &&
+            beforeStopInventory.identitiesBound === 1 &&
+            beforeStopInventory.sourceRtpRows === 1 &&
+            beforeStopInventory.probatorRtpRows <= 1 &&
+            beforeStopInventory.unexpectedRtpRows === 0 &&
+            beforeStopInventory.invalidBindings === 0 &&
+            activePeers(frames.last).length === 1 &&
+            activePeers(frames.last).every(
+              (p) =>
+                p.connection === "connected" &&
+                p.transceivers <= 4 &&
+                p.receivers <= 3 &&
+                p.senders === 0 &&
+                p.localSdpBytes <= 32_000,
+            ) &&
+            activePeers(beforeStopOwner).length <= 2 &&
+            activePeers(beforeStopOwner).every(
+              (p) =>
+                p.transceivers <= 4 &&
+                p.senders <= 2 &&
+                p.localSdpBytes <= 32_000,
+            ),
+          "active-cycle-client-resources-or-source-identity-invalid",
+          {
+            cycle: i + 1,
+            owner: beforeStopOwner,
+            watcher: frames.last,
+            actualConsumerInventory: beforeStopInventory,
+          },
+        );
         await click(f.owner, "Live beenden");
         await until(
           () => snapshot(f.owner),
@@ -366,6 +447,11 @@ export async function mediaScenarios(h, f) {
           owner,
           watcher,
           decodedFrames: decoded(frames.last),
+          beforeStop: {
+            owner: beforeStopOwner,
+            watcher: frames.last,
+            actualConsumerInventory: beforeStopInventory,
+          },
         });
         // Explicit watcher stop is UI cleanup; the next start never reloads publisher.
         const stop = f.watcher.page.getByRole("button", {
@@ -379,17 +465,26 @@ export async function mediaScenarios(h, f) {
       await f.join(late);
       await click(late, "Zuschauen");
       const last = await progress(late, options);
+      const lateConsumers = await nativeEvaluate(late, sampleVideoConsumers, {
+        publisher: f.owner.id,
+        deadlineEpochMs: Date.now() + options.budget,
+      });
       check(
-        activePeers(last.last)
-          .flatMap((p) => p.inbound)
-          .filter((r) => r.kind === "video").length === 1,
+        lateConsumers.sources === 1 &&
+          lateConsumers.selectedLiveSources === 1 &&
+          lateConsumers.foreignSources === 0 &&
+          lateConsumers.identitiesBound === 1 &&
+          lateConsumers.sourceRtpRows === 1 &&
+          lateConsumers.probatorRtpRows <= 1 &&
+          lateConsumers.unexpectedRtpRows === 0 &&
+          lateConsumers.invalidBindings === 0,
         "late-watch-received-stale-publications",
-        last.last,
+        { last: last.last, actualConsumerInventory: lateConsumers },
       );
       check(
         cycles.every(
           (c) =>
-            activePeers(c.owner).length <= 1 &&
+            activePeers(c.owner).length <= 2 &&
             activePeers(c.owner).every(
               (p) =>
                 p.transceivers <= 4 &&
@@ -414,6 +509,7 @@ export async function mediaScenarios(h, f) {
       return {
         cycles,
         late: last,
+        actualConsumerInventory: lateConsumers,
         serverBounds: "BLOCKED: SFU task/publication counters not exposed",
       };
     },
@@ -485,8 +581,9 @@ export async function mediaScenarios(h, f) {
       "blocked-play-fault-not-exercised",
     );
     const retry = f.watcher.page.getByRole("button", {
-      name: /Wiedergabe starten|Abspielen|Wiedergabe wiederholen|Play/i,
+      name: /Wiedergabe starten|Ton starten|Abspielen|Wiedergabe wiederholen|Play/i,
     });
+    await retry.first().waitFor({ state: "visible", timeout: 5_000 });
     check(
       (await retry.count()) > 0,
       "blocked-play-has-no-visible-retry",

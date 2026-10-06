@@ -1,0 +1,44 @@
+{
+  "schema": 1,
+  "date": "2026-10-06",
+  "scope": "local_final_harness_and_offline_ci_wrapper_checks",
+  "node": "26.8.2",
+  "harness": {
+    "passed_commands": 17,
+    "failed_commands": 0,
+    "executed_source_hashes_unchanged": true,
+    "private_report_sha256": "fc46428966a320d0200d94bcf652a5953463453e0f0b445f12a8947d0eb078a3"
+  },
+  "deployment": {
+    "focused_native_tool_tests_passed": 16,
+    "total_test_cases": 48,
+    "failed": 0,
+    "skipped": 1,
+    "skip_reason": "existing local Caddy executable unavailable",
+    "private_report_sha256": "4dbd40c154cd8ad633e2918a74cc37fb9624eb55127303436fdd6e1ef9137110"
+  },
+  "ci_wrapper": {
+    "model": "real shell entrypoint with recording Docker command fixture; no daemon",
+    "immutable_image_id": true,
+    "host_uid_gid_and_source_path_preserved": true,
+    "cargo_registry_cache_retained": true,
+    "debian_target_separate_from_ubuntu_diagnostic": true,
+    "cargo_exit_status_propagated": true,
+    "invalid_image_identity_rejected_before_run": true,
+    "actual_container_cargo_executed": false
+  },
+  "source_sha256": {
+    ".github/workflows/ci.yml": "28095ff16c1c3698ba4da93905a016e37e993b957dba8acbaf2feb31c282709c",
+    "media/Dockerfile": "33cef4d319a82c7e3a175e5ef109ff896b3a106119d838fe5434657f64bb835f",
+    "docker/run-native-ci.sh": "4f2cfb3332e376f5afde83f875e551dc506349b42b112b1425419b94a26de203",
+    "docker/mediasoup-build-tools.py": "6d553750deaa8ae548c8fb811fa991ba2d5a850a3986077ef840e742a16d6830",
+    "docker/mediasoup-build-tools.lock.json": "5b83f33ff52885b139ac57b519fc8cae9fc2dee88a348795d27abd0d73feea26",
+    "docker/mediasoup-debian-build-tools.lock.tsv": "2156dadb3455f52bff9f75a2cf90f30a22d03c9554a1d98f0ec4fb9a0259d1a0",
+    "docker/install-mediasoup-debian-build-tools.sh": "2fbc8758b03431ecbf5bd2ef7105924b4ec4850e3bff9ab230b8ae8c6b05d519",
+    "deploy/compose/tests/test_media_native_build.py": "c96166f909824cdbe024878a81cf6396ffaee67e41775deb109de20d0765d1d4"
+  },
+  "browser_started": false,
+  "cold_native_build_started": false,
+  "full_product_acceptance_claimed": false,
+  "main_release_or_deployment": false
+}

@@ -14,6 +14,8 @@ import {
   observe,
 } from "./harness.mjs";
 import { activePeers, progress, watchSource } from "./media.mjs";
+import { sampleVideoSenders, samplePublicationFlow } from "./probe.mjs";
+import { publisherEncoderProgress } from "./publisher-encoders.mjs";
 const audioPackets = (s) =>
   activePeers(s)
     .flatMap((p) => p.inbound)
@@ -212,27 +214,73 @@ export async function mediaExtraScenarios(h, f, { begin, reset, options }) {
       try {
         await click(f.owner, "Kamera an");
         await click(f.owner, "Bildschirm teilen");
+        const readPublisher = (remaining) =>
+          nativeEvaluate(
+            f.owner,
+            sampleVideoSenders,
+            { deadlineEpochMs: Date.now() + remaining },
+            remaining,
+          );
+        const publisherBefore = await until(
+          readPublisher,
+          (s) => publisherEncoderProgress(s),
+          "fixture-three-native-publisher-encoders-not-ready",
+          20_000,
+        );
+        const publisherReady = await until(
+          readPublisher,
+          (s) => publisherEncoderProgress(s, publisherBefore),
+          "fixture-three-native-publisher-encoders-not-progressing",
+          5_000,
+        );
         await click(f.member, "Beitreten");
-        await watchSource(f.member, "live");
-        await watchSource(f.member, "screen");
+        // Join/capture clicks precede async publication and source-Watch capability.
+        // Require actual subscription controls; count=0 must not silently skip Watch.
+        const sourceButtons = {};
+        for (const [kind, label] of [
+          ["live", "— Live"],
+          ["screen", "— Bildschirm"],
+        ]) {
+          const tiles = f.member.page
+            .locator("figure")
+            .filter({ hasText: label });
+          const start = tiles.getByRole("button", {
+            name: "Zuschauen",
+            exact: true,
+          });
+          await start.first().waitFor({ state: "visible", timeout: 20_000 });
+          sourceButtons[kind] = await start.count();
+          check(
+            sourceButtons[kind] === 1,
+            "fixture-source-watch-control-not-unique",
+          );
+          await start.first().click();
+          await tiles
+            .getByRole("button", { name: "Nicht mehr zuschauen", exact: true })
+            .waitFor();
+        }
         const held = await until(
           () => snapshot(f.member),
           (s) => s.heldVideoTracks === 3,
           "fixture-three-native-video-arrivals-not-held",
           20_000,
         );
-        // Reverse native callback delivery only; the actual peers/RTP/SDP stay native.
+        // Reverse authoritative Consumer announcements before the SDK consumes
+        // them; the actual native peers and RTP remain unchanged.
         const kinds = await nativeEvaluate(f.member, () => {
           const state = window.__e2e;
           state.holdTracks = false;
           const pending = state.heldTracks.splice(0).reverse();
-          const kinds = pending.map((item) => item.event.track.kind);
+          const kinds = pending.map((item) => item.kind);
           for (const item of pending) item.deliver();
           return kinds;
         });
         return {
+          publisherBefore,
+          publisherReady,
+          sourceButtons,
           held,
-          callbackOrder: "reversed",
+          consumerAnnouncementOrder: "reversed",
           deliveredKinds: kinds,
           live: await progress(f.member, options),
           screen: await progress(f.member, {
@@ -272,7 +320,10 @@ export async function mediaExtraScenarios(h, f, { begin, reset, options }) {
           () => snapshot(f.member),
           (s) =>
             s.videos.some(
-              (v) => v.kind === "camera" && v.width === 640 && v.height === 360,
+              (v) =>
+                v.kind === "camera" &&
+                [160, 640].includes(v.width) &&
+                v.height === (v.width * 9) / 16,
             ),
           "fixture-sdp-camera-warmup-deadline",
           cameraFixtureWarmup.deadlineMs,
@@ -372,6 +423,7 @@ export async function mediaExtraScenarios(h, f, { begin, reset, options }) {
             "one real native setRemoteDescription rejection of malformed answer",
           cameraFixtureWarmup,
           faultExercised: true,
+          sdpRejectionErrors: failed.rejectedSdpErrors,
           before,
           failed,
           camera,
@@ -385,6 +437,15 @@ export async function mediaExtraScenarios(h, f, { begin, reset, options }) {
         const diagnostics = {
           cameraFixtureWarmup,
           faultExercised: observed?.rejectedSdp > 0,
+          sdpRejectionErrors: observed?.rejectedSdpErrors ?? [],
+          publisherLive: await nativeEvaluate(f.owner, samplePublicationFlow, {
+            kind: "l",
+          }),
+          subscriberLive: await nativeEvaluate(
+            f.member,
+            samplePublicationFlow,
+            { kind: "l" },
+          ),
         };
         if (error instanceof CheckFailure) {
           error.metrics = { ...error.metrics, ...diagnostics };

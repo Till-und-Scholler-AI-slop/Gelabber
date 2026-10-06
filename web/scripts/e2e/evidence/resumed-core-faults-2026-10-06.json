@@ -1,0 +1,1367 @@
+{
+  "schema": 1,
+  "scope": "local actual focused replay and full core faults on frozen v0.4 product candidate; no WAN/device/media acceptance",
+  "product_commit": "7c7208947769a2074f35871fcf24c106ceaccc7a",
+  "test_snapshot": "76931202f0fa35c45fa1d90efb0f0170d9e6a765",
+  "realtime_fault_sha256": "16655fef7e1bfaf7c2dd6f19da235914e29c6654506851e30d7af3e19729f62f",
+  "historical_evidence_preserved": "final-core-faults-2026-10-05.json",
+  "one_hour_test": {
+    "status": "EXCLUDED_BY_USER",
+    "date": "2026-10-06",
+    "instruction": "dieser 1 stunden test muss nicht gemacht werden",
+    "paused_previous_run_is_complete": false
+  },
+  "complete_acceptance": false,
+  "runs": [
+    {
+      "name": "replay-chromium",
+      "raw_report_sha256": "53f2b27889e753de23f01b06265f2f1e4a8be1ee62137d2f7c452876bbd73369",
+      "at": "2026-10-06T07:14:10.059Z",
+      "finished_at": "2026-10-06T07:14:21.797Z",
+      "browser": {
+        "engine": "chromium",
+        "version": "153.0.8010.12",
+        "platform": "linux",
+        "node": "v26.8.2"
+      },
+      "profile": null,
+      "test_files_dirty": true,
+      "runtime_attribution": "operator-supplied; not runtime digest verification",
+      "source_hashes": {
+        "access-native.checks.mjs": "f1bab755ba97f26042ba574ddbdf8f1ae56aa1cbdf97f78c0da09480abe74478",
+        "access.mjs": "ccf672dea241b97cadbcd0fe83d6041907ccefb60b57e6e10c147c1c6fdcaf13",
+        "account-switch.mjs": "9dd5cc5a93f55ac74ba03f46e3435b0f8e7435569dc242ef597b764e42b0ef46",
+        "browser-options.checks.mjs": "155c1eb154e9def93a95cbf7885a37755f6d91af90c93bc9b60f9f176f7104a5",
+        "browser-options.mjs": "e092d543702eca00f24258a23b1ae97c4d280f857732dc2d262568913e01e052",
+        "call-soak.mjs": "3b22229dceafe10255d5f890ae1ecf95a69415bdbac1d94f73b041bf0fe8912d",
+        "chat-faults.mjs": "a4d258f8084e4ed842e408ebca19cbe178b636afdf2a32068e8232c16417d767",
+        "chat-workflows.mjs": "43135ff1960bf242e1bb12d44bde12b342d46fe89ee5534266d5d0f0995967a8",
+        "ci-fault-loop.checks.mjs": "8e7b89ba7616742111d5904792587cfefeadabee2f1d53c828f41625e7291136",
+        "ci-fault-prepare.checks.mjs": "b3481cdf182fc4e36d34f9b67ae828f5e115a55fcfd81233353744639affd653",
+        "ci-fault-prepare.mjs": "7be606568d420a1104cad28787fe3f8b072cda72eb265d714e6648c790b16e1d",
+        "core.mjs": "eb6a20d2eff0900fe96ca58aefb95e9f73745e5c05318e23829bcb8246080f9e",
+        "fault-run.mjs": "39e5af6912f692478599cc2b9c4acc21ede1a877db72b79f4d5b6d8991769438",
+        "fault-runtime.mjs": "423684dfaddfdd65ca3021e95f842616563bef30dd8d99c70d477e9098bf7fee",
+        "faults.checks.mjs": "9b013140e232dc052fe9b52755db20fb48267258b06fabec8ca546aae5afe11f",
+        "faults.mjs": "62fe2b0f812192bac2be6996049eec802db48097633c6367bd44018b6aa3a0d4",
+        "gateway-load.mjs": "c98da745c2ccc064829f71d1598a781eb1059177445c7c49dc7b5d07f7ed23d5",
+        "harness.checks.mjs": "62a37e83471f373cebc173769cee3f66067c98b6ef697fcb52ccb2cca6ff6f57",
+        "harness.mjs": "9e1b4a0085ab108212df125fda32e39630ced313be7033a04c874285e75929e8",
+        "held-renderer-native-control.mjs": "d84bae41bc25ad5ef50601b4b80136c866013d1bbdf20dc684ca992366b4d975",
+        "held-renderer.checks.mjs": "76dd565724a45727cd3182aea0c187fb399208aaa3207844253542e41488a38e",
+        "media-extra.checks.mjs": "b8659416016c2173e95c571b8e7b5a020e15dd7c91c4e8012915bc6d8f8c7f9e",
+        "media-extra.mjs": "696b7454647a14e9cce32b424c9f8b62884b65c405093ae87e02f77dc870ed52",
+        "media-lease-faults.mjs": "e3aefd71b583e5d4ab4a5109c3ed69a78352248392ec90a4f5308212fe8bae70",
+        "media-probe.checks.mjs": "be13c3567b6f4f5798636b494befc94b1c887fcf3e12c5f494cd15eb613ac769",
+        "media-runtime.checks.mjs": "4569eabb3d4339914cd48a0fdea42ad3feae89a827f67aa4923682ff72787a91",
+        "media-runtime.mjs": "d9bc66d17009162fd6f70eec24b227fda607e601fc7a0011a7fadae698795b67",
+        "media.mjs": "c802edfccd217c432b507822c072aac919ded00bb2fe682a3d2eb64066444b0d",
+        "membership-faults.mjs": "e155ee73a21bc27b7e8a75fe8d865e0309b35f8ad38ee77296da0db3a7a5b3a5",
+        "native-evaluate.checks.mjs": "4b24b3854f84b04ee5037ed2fdff7f02c7f490fefd6ff882bac9285877d8a5fd",
+        "native-evaluate.mjs": "89294f744f2c6a0d88e90975a944e96e49b2bf1c829ba377ccaa17a19b1564bf",
+        "native-finish.checks.mjs": "db9ed08e5bb99f1fb8b1a2d54a5cee9c32172a44e11a657d2dea2f4f987b56e6",
+        "probe.mjs": "a32ce3ff9aff1ca732272aacbfa0451330740b670a5f158da4b1b60433db7c1e",
+        "profiles.mjs": "ef20d6159fe61e04fda06c41314fbc2798e7ae7a7e5a5f57aa3f88569b0fe2aa",
+        "publisher-encoders.checks.mjs": "954693f0760fef6b728eaf191a23253dc3340c70e492ffa1eb07ad7e5b4cc323",
+        "publisher-encoders.mjs": "a1355812113b0e196d2253ff045ed0adef024511a507d85533987924a23b2a2b",
+        "raw-reader.py": "9aa984d1de3dcd9ec639b709a9d1e97feeb851614736a489000400f597277c6f",
+        "realtime-faults.mjs": "16655fef7e1bfaf7c2dd6f19da235914e29c6654506851e30d7af3e19729f62f",
+        "redis-command.mjs": "b6d801eb136a072b8a00bc2982d16934bdc4cf90c06ef28b67be4ad5a160706b",
+        "rendered-frames.checks.mjs": "4e5bf1be45d1eb0914625d08b35623e48ccca80dc4c35337deff13dd63571780",
+        "run.mjs": "d2900e4f8ec085708a696c1266359c51476d794c6fa497d2c0449243f9747bcd",
+        "s3-object.mjs": "1bce9abf11b4aa30e0e62b6063eb283baed30894e8f816787c379dd43ea63168",
+        "search-context.mjs": "01237d331f1c706a420fd3711ed59f1ee981824370f0b2170b4f0e5801e2791c",
+        "selection.mjs": "b8a445a817880843e833510d92dfdaf3150fff643f4b4ae5aa6906cd3913f771",
+        "session-audio-control.mjs": "1374a94ca61814a26ebfc30159ee5e1b8b5f8a4e40f4ef29ffc507b8f547025a",
+        "storage-faults.mjs": "e0408378060689e8584c014f90e2d3771dc611b86bfce3bc5328a3b71ada01fb",
+        "teardown.checks.mjs": "22f033c552b92bbe9e20e06c3ad51d993ecc46dcf7799da4d6623448aab7a5b1",
+        "teardown.mjs": "5bb7d0d8e023d23ab242eb8ac8b77a722d0a38c60f5df6637b86938b97419e9a",
+        "webapp-accessibility.mjs": "794d57e23cd12c0182f993e95ddf03cdd1377654dbafa0d1d2f9e0f179cd096c",
+        "webapp-recovery.mjs": "2a46205e3de78c0b5fdbb6addb07b0b9209bfba616a9e5f500924e895f92c237"
+      },
+      "owned_fault_runtime": {
+        "api": "76931202f0fa35c45fa1d90efb0f0170d9e6a765",
+        "binarySha256": "c61f776e3b14a076d479d09898de22fbbe988409d3c0fe67e1b6838dc9a0e567",
+        "dedicatedDatabaseAndBucket": true,
+        "replayWindow": 8,
+        "fixtureRateLimitsDisabled": true,
+        "media": null
+      },
+      "results": [
+        {
+          "id": "isolated-app-fixture",
+          "status": "PASS",
+          "classification": "observed-pass",
+          "metrics": {
+            "accounts": 3,
+            "servers": 1,
+            "channels": 3,
+            "registration": "UI",
+            "invitation": "UI",
+            "services": "real API/Gateway; SFU joined only in media/access scenarios"
+          },
+          "at": "2026-10-06T07:14:10.067Z",
+          "durationMs": 7298,
+          "predecessors": []
+        },
+        {
+          "id": "redis-epoch-replay-window-reset",
+          "status": "PASS",
+          "classification": "observed-pass",
+          "metrics": {
+            "replayWindow": 8,
+            "missedEvents": 12,
+            "outage": {
+              "openBefore": 1,
+              "openAfterWrites": 0,
+              "eventsAfterDisconnect": 0,
+              "eventsAfterWrites": 0,
+              "pendingOutboxBeforeReconnect": 0
+            },
+            "gapsBefore": 0,
+            "gapsAfter": 1,
+            "gapObserved": true,
+            "ownTopicOnlyReset": true,
+            "disconnectedThroughoutOverflow": true,
+            "outboxDrainedBeforeReconnect": true,
+            "newEpochObserved": true,
+            "newerDatabaseRevision": true,
+            "editedAndCreatedWithoutReload": true
+          },
+          "at": "2026-10-06T07:14:17.373Z",
+          "durationMs": 3025,
+          "predecessors": [
+            "05a",
+            "06b"
+          ]
+        }
+      ],
+      "cleanup": [
+        {
+          "target": "owned-test-server",
+          "status": 204,
+          "stage": "complete",
+          "statuses": {
+            "login": 200,
+            "delete": 204,
+            "logout": 200
+          }
+        }
+      ],
+      "gate": {
+        "passed": true,
+        "scope": "selected-cases",
+        "excluded": [
+          "account-session-reload-login",
+          "channel-chat-create-edit-delete-converges",
+          "new-dm-connected-recipient-discovers-without-refetch",
+          "channel-jpeg-png-webp-bind-reload-byte-equal",
+          "dm-jpeg-png-webp-bind-reload-byte-equal",
+          "background-event-before-first-open-55-history-paging",
+          "initial-history-error-visible-bounded-retry",
+          "failed-send-navigation-retains-own-retry",
+          "two-tabs-account-switch-delayed-401",
+          "two-tabs-account-switch-delayed-403",
+          "two-parallel-sends-navigation-retry",
+          "committed-send-gateway-timeout-no-duplicate-retry",
+          "edit-delete-failure-row-scoped-rollback",
+          "rest-ws-reordering-edit-delete-rollback",
+          "paging-error-data-preservation",
+          "upload-abort-retains-text-file-retry",
+          "upload-account-switch-no-foreign-bind",
+          "redis-pubsub-outage-durable-outbox-convergence",
+          "private-dm-foreign-discovery-subscription-denied",
+          "storage-delete-outage-durable-cleanup",
+          "upload-abandoned-object-cleanup",
+          "slow-reader-bounded-memory",
+          "ban-invite-join-race",
+          "attachments-https-wan"
+        ],
+        "absent": [],
+        "completeAcceptance": false
+      }
+    },
+    {
+      "name": "replay-firefox",
+      "raw_report_sha256": "68fbadb1085738a8fa37d31c2426e6d954501408356d967c644370e28f319082",
+      "at": "2026-10-06T07:15:00.508Z",
+      "finished_at": "2026-10-06T07:15:16.004Z",
+      "browser": {
+        "engine": "firefox",
+        "version": "155.0",
+        "platform": "linux",
+        "node": "v26.8.2"
+      },
+      "profile": null,
+      "test_files_dirty": true,
+      "runtime_attribution": "operator-supplied; not runtime digest verification",
+      "source_hashes": {
+        "access-native.checks.mjs": "f1bab755ba97f26042ba574ddbdf8f1ae56aa1cbdf97f78c0da09480abe74478",
+        "access.mjs": "ccf672dea241b97cadbcd0fe83d6041907ccefb60b57e6e10c147c1c6fdcaf13",
+        "account-switch.mjs": "9dd5cc5a93f55ac74ba03f46e3435b0f8e7435569dc242ef597b764e42b0ef46",
+        "browser-options.checks.mjs": "155c1eb154e9def93a95cbf7885a37755f6d91af90c93bc9b60f9f176f7104a5",
+        "browser-options.mjs": "e092d543702eca00f24258a23b1ae97c4d280f857732dc2d262568913e01e052",
+        "call-soak.mjs": "3b22229dceafe10255d5f890ae1ecf95a69415bdbac1d94f73b041bf0fe8912d",
+        "chat-faults.mjs": "a4d258f8084e4ed842e408ebca19cbe178b636afdf2a32068e8232c16417d767",
+        "chat-workflows.mjs": "43135ff1960bf242e1bb12d44bde12b342d46fe89ee5534266d5d0f0995967a8",
+        "ci-fault-loop.checks.mjs": "8e7b89ba7616742111d5904792587cfefeadabee2f1d53c828f41625e7291136",
+        "ci-fault-prepare.checks.mjs": "b3481cdf182fc4e36d34f9b67ae828f5e115a55fcfd81233353744639affd653",
+        "ci-fault-prepare.mjs": "7be606568d420a1104cad28787fe3f8b072cda72eb265d714e6648c790b16e1d",
+        "core.mjs": "eb6a20d2eff0900fe96ca58aefb95e9f73745e5c05318e23829bcb8246080f9e",
+        "fault-run.mjs": "39e5af6912f692478599cc2b9c4acc21ede1a877db72b79f4d5b6d8991769438",
+        "fault-runtime.mjs": "423684dfaddfdd65ca3021e95f842616563bef30dd8d99c70d477e9098bf7fee",
+        "faults.checks.mjs": "9b013140e232dc052fe9b52755db20fb48267258b06fabec8ca546aae5afe11f",
+        "faults.mjs": "62fe2b0f812192bac2be6996049eec802db48097633c6367bd44018b6aa3a0d4",
+        "gateway-load.mjs": "c98da745c2ccc064829f71d1598a781eb1059177445c7c49dc7b5d07f7ed23d5",
+        "harness.checks.mjs": "62a37e83471f373cebc173769cee3f66067c98b6ef697fcb52ccb2cca6ff6f57",
+        "harness.mjs": "9e1b4a0085ab108212df125fda32e39630ced313be7033a04c874285e75929e8",
+        "held-renderer-native-control.mjs": "d84bae41bc25ad5ef50601b4b80136c866013d1bbdf20dc684ca992366b4d975",
+        "held-renderer.checks.mjs": "76dd565724a45727cd3182aea0c187fb399208aaa3207844253542e41488a38e",
+        "media-extra.checks.mjs": "b8659416016c2173e95c571b8e7b5a020e15dd7c91c4e8012915bc6d8f8c7f9e",
+        "media-extra.mjs": "696b7454647a14e9cce32b424c9f8b62884b65c405093ae87e02f77dc870ed52",
+        "media-lease-faults.mjs": "e3aefd71b583e5d4ab4a5109c3ed69a78352248392ec90a4f5308212fe8bae70",
+        "media-probe.checks.mjs": "be13c3567b6f4f5798636b494befc94b1c887fcf3e12c5f494cd15eb613ac769",
+        "media-runtime.checks.mjs": "4569eabb3d4339914cd48a0fdea42ad3feae89a827f67aa4923682ff72787a91",
+        "media-runtime.mjs": "d9bc66d17009162fd6f70eec24b227fda607e601fc7a0011a7fadae698795b67",
+        "media.mjs": "c802edfccd217c432b507822c072aac919ded00bb2fe682a3d2eb64066444b0d",
+        "membership-faults.mjs": "e155ee73a21bc27b7e8a75fe8d865e0309b35f8ad38ee77296da0db3a7a5b3a5",
+        "native-evaluate.checks.mjs": "4b24b3854f84b04ee5037ed2fdff7f02c7f490fefd6ff882bac9285877d8a5fd",
+        "native-evaluate.mjs": "89294f744f2c6a0d88e90975a944e96e49b2bf1c829ba377ccaa17a19b1564bf",
+        "native-finish.checks.mjs": "db9ed08e5bb99f1fb8b1a2d54a5cee9c32172a44e11a657d2dea2f4f987b56e6",
+        "probe.mjs": "a32ce3ff9aff1ca732272aacbfa0451330740b670a5f158da4b1b60433db7c1e",
+        "profiles.mjs": "ef20d6159fe61e04fda06c41314fbc2798e7ae7a7e5a5f57aa3f88569b0fe2aa",
+        "publisher-encoders.checks.mjs": "954693f0760fef6b728eaf191a23253dc3340c70e492ffa1eb07ad7e5b4cc323",
+        "publisher-encoders.mjs": "a1355812113b0e196d2253ff045ed0adef024511a507d85533987924a23b2a2b",
+        "raw-reader.py": "9aa984d1de3dcd9ec639b709a9d1e97feeb851614736a489000400f597277c6f",
+        "realtime-faults.mjs": "16655fef7e1bfaf7c2dd6f19da235914e29c6654506851e30d7af3e19729f62f",
+        "redis-command.mjs": "b6d801eb136a072b8a00bc2982d16934bdc4cf90c06ef28b67be4ad5a160706b",
+        "rendered-frames.checks.mjs": "4e5bf1be45d1eb0914625d08b35623e48ccca80dc4c35337deff13dd63571780",
+        "run.mjs": "d2900e4f8ec085708a696c1266359c51476d794c6fa497d2c0449243f9747bcd",
+        "s3-object.mjs": "1bce9abf11b4aa30e0e62b6063eb283baed30894e8f816787c379dd43ea63168",
+        "search-context.mjs": "01237d331f1c706a420fd3711ed59f1ee981824370f0b2170b4f0e5801e2791c",
+        "selection.mjs": "b8a445a817880843e833510d92dfdaf3150fff643f4b4ae5aa6906cd3913f771",
+        "session-audio-control.mjs": "1374a94ca61814a26ebfc30159ee5e1b8b5f8a4e40f4ef29ffc507b8f547025a",
+        "storage-faults.mjs": "e0408378060689e8584c014f90e2d3771dc611b86bfce3bc5328a3b71ada01fb",
+        "teardown.checks.mjs": "22f033c552b92bbe9e20e06c3ad51d993ecc46dcf7799da4d6623448aab7a5b1",
+        "teardown.mjs": "5bb7d0d8e023d23ab242eb8ac8b77a722d0a38c60f5df6637b86938b97419e9a",
+        "webapp-accessibility.mjs": "794d57e23cd12c0182f993e95ddf03cdd1377654dbafa0d1d2f9e0f179cd096c",
+        "webapp-recovery.mjs": "2a46205e3de78c0b5fdbb6addb07b0b9209bfba616a9e5f500924e895f92c237"
+      },
+      "owned_fault_runtime": {
+        "api": "76931202f0fa35c45fa1d90efb0f0170d9e6a765",
+        "binarySha256": "c61f776e3b14a076d479d09898de22fbbe988409d3c0fe67e1b6838dc9a0e567",
+        "dedicatedDatabaseAndBucket": true,
+        "replayWindow": 8,
+        "fixtureRateLimitsDisabled": true,
+        "media": null
+      },
+      "results": [
+        {
+          "id": "isolated-app-fixture",
+          "status": "PASS",
+          "classification": "observed-pass",
+          "metrics": {
+            "accounts": 3,
+            "servers": 1,
+            "channels": 3,
+            "registration": "UI",
+            "invitation": "UI",
+            "services": "real API/Gateway; SFU joined only in media/access scenarios"
+          },
+          "at": "2026-10-06T07:15:00.517Z",
+          "durationMs": 9791,
+          "predecessors": []
+        },
+        {
+          "id": "redis-epoch-replay-window-reset",
+          "status": "PASS",
+          "classification": "observed-pass",
+          "metrics": {
+            "replayWindow": 8,
+            "missedEvents": 12,
+            "outage": {
+              "openBefore": 1,
+              "openAfterWrites": 0,
+              "eventsAfterDisconnect": 0,
+              "eventsAfterWrites": 0,
+              "pendingOutboxBeforeReconnect": 0
+            },
+            "gapsBefore": 0,
+            "gapsAfter": 1,
+            "gapObserved": true,
+            "ownTopicOnlyReset": true,
+            "disconnectedThroughoutOverflow": true,
+            "outboxDrainedBeforeReconnect": true,
+            "newEpochObserved": true,
+            "newerDatabaseRevision": true,
+            "editedAndCreatedWithoutReload": true
+          },
+          "at": "2026-10-06T07:15:10.313Z",
+          "durationMs": 3839,
+          "predecessors": [
+            "05a",
+            "06b"
+          ]
+        }
+      ],
+      "cleanup": [
+        {
+          "target": "owned-test-server",
+          "status": 204,
+          "stage": "complete",
+          "statuses": {
+            "login": 200,
+            "delete": 204,
+            "logout": 200
+          }
+        }
+      ],
+      "gate": {
+        "passed": true,
+        "scope": "selected-cases",
+        "excluded": [
+          "account-session-reload-login",
+          "channel-chat-create-edit-delete-converges",
+          "new-dm-connected-recipient-discovers-without-refetch",
+          "channel-jpeg-png-webp-bind-reload-byte-equal",
+          "dm-jpeg-png-webp-bind-reload-byte-equal",
+          "background-event-before-first-open-55-history-paging",
+          "initial-history-error-visible-bounded-retry",
+          "failed-send-navigation-retains-own-retry",
+          "two-tabs-account-switch-delayed-401",
+          "two-tabs-account-switch-delayed-403",
+          "two-parallel-sends-navigation-retry",
+          "committed-send-gateway-timeout-no-duplicate-retry",
+          "edit-delete-failure-row-scoped-rollback",
+          "rest-ws-reordering-edit-delete-rollback",
+          "paging-error-data-preservation",
+          "upload-abort-retains-text-file-retry",
+          "upload-account-switch-no-foreign-bind",
+          "redis-pubsub-outage-durable-outbox-convergence",
+          "private-dm-foreign-discovery-subscription-denied",
+          "storage-delete-outage-durable-cleanup",
+          "upload-abandoned-object-cleanup",
+          "slow-reader-bounded-memory",
+          "ban-invite-join-race",
+          "attachments-https-wan"
+        ],
+        "absent": [],
+        "completeAcceptance": false
+      }
+    },
+    {
+      "name": "core-faults-chromium",
+      "raw_report_sha256": "4776249fdc7686773700b081603ab4e6e67c6a4234d18a2daaf83fd577a91db0",
+      "at": "2026-10-06T07:15:49.912Z",
+      "finished_at": "2026-10-06T07:17:12.840Z",
+      "browser": {
+        "engine": "chromium",
+        "version": "153.0.8010.12",
+        "platform": "linux",
+        "node": "v26.8.2"
+      },
+      "profile": "core-faults",
+      "test_files_dirty": true,
+      "runtime_attribution": "operator-supplied; not runtime digest verification",
+      "source_hashes": {
+        "access-native.checks.mjs": "f1bab755ba97f26042ba574ddbdf8f1ae56aa1cbdf97f78c0da09480abe74478",
+        "access.mjs": "ccf672dea241b97cadbcd0fe83d6041907ccefb60b57e6e10c147c1c6fdcaf13",
+        "account-switch.mjs": "9dd5cc5a93f55ac74ba03f46e3435b0f8e7435569dc242ef597b764e42b0ef46",
+        "browser-options.checks.mjs": "155c1eb154e9def93a95cbf7885a37755f6d91af90c93bc9b60f9f176f7104a5",
+        "browser-options.mjs": "e092d543702eca00f24258a23b1ae97c4d280f857732dc2d262568913e01e052",
+        "call-soak.mjs": "3b22229dceafe10255d5f890ae1ecf95a69415bdbac1d94f73b041bf0fe8912d",
+        "chat-faults.mjs": "a4d258f8084e4ed842e408ebca19cbe178b636afdf2a32068e8232c16417d767",
+        "chat-workflows.mjs": "43135ff1960bf242e1bb12d44bde12b342d46fe89ee5534266d5d0f0995967a8",
+        "ci-fault-loop.checks.mjs": "8e7b89ba7616742111d5904792587cfefeadabee2f1d53c828f41625e7291136",
+        "ci-fault-prepare.checks.mjs": "b3481cdf182fc4e36d34f9b67ae828f5e115a55fcfd81233353744639affd653",
+        "ci-fault-prepare.mjs": "7be606568d420a1104cad28787fe3f8b072cda72eb265d714e6648c790b16e1d",
+        "core.mjs": "eb6a20d2eff0900fe96ca58aefb95e9f73745e5c05318e23829bcb8246080f9e",
+        "fault-run.mjs": "39e5af6912f692478599cc2b9c4acc21ede1a877db72b79f4d5b6d8991769438",
+        "fault-runtime.mjs": "423684dfaddfdd65ca3021e95f842616563bef30dd8d99c70d477e9098bf7fee",
+        "faults.checks.mjs": "9b013140e232dc052fe9b52755db20fb48267258b06fabec8ca546aae5afe11f",
+        "faults.mjs": "62fe2b0f812192bac2be6996049eec802db48097633c6367bd44018b6aa3a0d4",
+        "gateway-load.mjs": "c98da745c2ccc064829f71d1598a781eb1059177445c7c49dc7b5d07f7ed23d5",
+        "harness.checks.mjs": "62a37e83471f373cebc173769cee3f66067c98b6ef697fcb52ccb2cca6ff6f57",
+        "harness.mjs": "9e1b4a0085ab108212df125fda32e39630ced313be7033a04c874285e75929e8",
+        "held-renderer-native-control.mjs": "d84bae41bc25ad5ef50601b4b80136c866013d1bbdf20dc684ca992366b4d975",
+        "held-renderer.checks.mjs": "76dd565724a45727cd3182aea0c187fb399208aaa3207844253542e41488a38e",
+        "media-extra.checks.mjs": "b8659416016c2173e95c571b8e7b5a020e15dd7c91c4e8012915bc6d8f8c7f9e",
+        "media-extra.mjs": "696b7454647a14e9cce32b424c9f8b62884b65c405093ae87e02f77dc870ed52",
+        "media-lease-faults.mjs": "e3aefd71b583e5d4ab4a5109c3ed69a78352248392ec90a4f5308212fe8bae70",
+        "media-probe.checks.mjs": "be13c3567b6f4f5798636b494befc94b1c887fcf3e12c5f494cd15eb613ac769",
+        "media-runtime.checks.mjs": "4569eabb3d4339914cd48a0fdea42ad3feae89a827f67aa4923682ff72787a91",
+        "media-runtime.mjs": "d9bc66d17009162fd6f70eec24b227fda607e601fc7a0011a7fadae698795b67",
+        "media.mjs": "c802edfccd217c432b507822c072aac919ded00bb2fe682a3d2eb64066444b0d",
+        "membership-faults.mjs": "e155ee73a21bc27b7e8a75fe8d865e0309b35f8ad38ee77296da0db3a7a5b3a5",
+        "native-evaluate.checks.mjs": "4b24b3854f84b04ee5037ed2fdff7f02c7f490fefd6ff882bac9285877d8a5fd",
+        "native-evaluate.mjs": "89294f744f2c6a0d88e90975a944e96e49b2bf1c829ba377ccaa17a19b1564bf",
+        "native-finish.checks.mjs": "db9ed08e5bb99f1fb8b1a2d54a5cee9c32172a44e11a657d2dea2f4f987b56e6",
+        "probe.mjs": "a32ce3ff9aff1ca732272aacbfa0451330740b670a5f158da4b1b60433db7c1e",
+        "profiles.mjs": "ef20d6159fe61e04fda06c41314fbc2798e7ae7a7e5a5f57aa3f88569b0fe2aa",
+        "publisher-encoders.checks.mjs": "954693f0760fef6b728eaf191a23253dc3340c70e492ffa1eb07ad7e5b4cc323",
+        "publisher-encoders.mjs": "a1355812113b0e196d2253ff045ed0adef024511a507d85533987924a23b2a2b",
+        "raw-reader.py": "9aa984d1de3dcd9ec639b709a9d1e97feeb851614736a489000400f597277c6f",
+        "realtime-faults.mjs": "16655fef7e1bfaf7c2dd6f19da235914e29c6654506851e30d7af3e19729f62f",
+        "redis-command.mjs": "b6d801eb136a072b8a00bc2982d16934bdc4cf90c06ef28b67be4ad5a160706b",
+        "rendered-frames.checks.mjs": "4e5bf1be45d1eb0914625d08b35623e48ccca80dc4c35337deff13dd63571780",
+        "run.mjs": "d2900e4f8ec085708a696c1266359c51476d794c6fa497d2c0449243f9747bcd",
+        "s3-object.mjs": "1bce9abf11b4aa30e0e62b6063eb283baed30894e8f816787c379dd43ea63168",
+        "search-context.mjs": "01237d331f1c706a420fd3711ed59f1ee981824370f0b2170b4f0e5801e2791c",
+        "selection.mjs": "b8a445a817880843e833510d92dfdaf3150fff643f4b4ae5aa6906cd3913f771",
+        "session-audio-control.mjs": "1374a94ca61814a26ebfc30159ee5e1b8b5f8a4e40f4ef29ffc507b8f547025a",
+        "storage-faults.mjs": "e0408378060689e8584c014f90e2d3771dc611b86bfce3bc5328a3b71ada01fb",
+        "teardown.checks.mjs": "22f033c552b92bbe9e20e06c3ad51d993ecc46dcf7799da4d6623448aab7a5b1",
+        "teardown.mjs": "5bb7d0d8e023d23ab242eb8ac8b77a722d0a38c60f5df6637b86938b97419e9a",
+        "webapp-accessibility.mjs": "794d57e23cd12c0182f993e95ddf03cdd1377654dbafa0d1d2f9e0f179cd096c",
+        "webapp-recovery.mjs": "2a46205e3de78c0b5fdbb6addb07b0b9209bfba616a9e5f500924e895f92c237"
+      },
+      "owned_fault_runtime": {
+        "api": "76931202f0fa35c45fa1d90efb0f0170d9e6a765",
+        "binarySha256": "c61f776e3b14a076d479d09898de22fbbe988409d3c0fe67e1b6838dc9a0e567",
+        "dedicatedDatabaseAndBucket": true,
+        "replayWindow": 8,
+        "fixtureRateLimitsDisabled": true,
+        "media": null
+      },
+      "results": [
+        {
+          "id": "isolated-app-fixture",
+          "status": "PASS",
+          "classification": "observed-pass",
+          "metrics": {
+            "accounts": 3,
+            "servers": 1,
+            "channels": 3,
+            "registration": "UI",
+            "invitation": "UI",
+            "services": "real API/Gateway; SFU joined only in media/access scenarios"
+          },
+          "at": "2026-10-06T07:15:49.921Z",
+          "durationMs": 7234,
+          "predecessors": []
+        },
+        {
+          "id": "two-parallel-sends-navigation-retry",
+          "status": "PASS",
+          "classification": "observed-pass",
+          "metrics": {
+            "overlappingPosts": 2,
+            "firstStatus": 429,
+            "secondDeliveredBeforeRelease": true,
+            "navigation": "SPA",
+            "retainedTextAndFile": true,
+            "exactRetryMessages": 1,
+            "byteEqual": true,
+            "pr112Focus": true
+          },
+          "at": "2026-10-06T07:15:57.161Z",
+          "durationMs": 2739,
+          "predecessors": [
+            "07",
+            "10"
+          ]
+        },
+        {
+          "id": "committed-send-gateway-timeout-no-duplicate-retry",
+          "status": "PASS",
+          "classification": "observed-pass",
+          "metrics": {
+            "upstreamStatus": 201,
+            "browserStatus": 504,
+            "persistedMessages": 1,
+            "postRequests": 1,
+            "uncertainVisible": true,
+            "noRetryOffered": true
+          },
+          "at": "2026-10-06T07:15:59.900Z",
+          "durationMs": 4279,
+          "predecessors": [
+            "07"
+          ]
+        },
+        {
+          "id": "edit-delete-failure-row-scoped-rollback",
+          "status": "PASS",
+          "classification": "observed-pass",
+          "metrics": {
+            "controls": [
+              {
+                "method": "PATCH",
+                "faultStatus": 429,
+                "foreignEventBeforeRollback": true,
+                "originalRestored": true,
+                "foreignRetained": true
+              },
+              {
+                "method": "DELETE",
+                "faultStatus": 429,
+                "foreignEventBeforeRollback": true,
+                "originalRestored": true,
+                "foreignRetained": true
+              }
+            ]
+          },
+          "at": "2026-10-06T07:16:04.179Z",
+          "durationMs": 4583,
+          "predecessors": [
+            "07",
+            "06b"
+          ]
+        },
+        {
+          "id": "rest-ws-reordering-edit-delete-rollback",
+          "status": "PASS",
+          "classification": "observed-pass",
+          "metrics": {
+            "oldRowsInHeldResponse": 2,
+            "nativeEventsBeforeResponse": 3,
+            "newerEditRetained": true,
+            "newerCreateRetained": true,
+            "deleteNotResurrected": true,
+            "historyRequests": 2
+          },
+          "at": "2026-10-06T07:16:08.763Z",
+          "durationMs": 2244,
+          "predecessors": [
+            "06b",
+            "07"
+          ]
+        },
+        {
+          "id": "paging-error-data-preservation",
+          "status": "PASS",
+          "classification": "observed-pass",
+          "metrics": {
+            "messagesSeeded": 55,
+            "initialPagePreserved": true,
+            "requestsBeforeExplicitRetry": 1,
+            "requestsAfterRetry": 2,
+            "oldestVisible": true
+          },
+          "at": "2026-10-06T07:16:11.008Z",
+          "durationMs": 6575,
+          "predecessors": [
+            "07",
+            "06a"
+          ]
+        },
+        {
+          "id": "upload-abort-retains-text-file-retry",
+          "status": "PASS",
+          "classification": "observed-pass",
+          "metrics": {
+            "abortedPuts": 1,
+            "bindBeforeSuccessfulPut": 0,
+            "retainedTextAndFile": true,
+            "exactRetryMessages": 1
+          },
+          "at": "2026-10-06T07:16:17.584Z",
+          "durationMs": 2331,
+          "predecessors": [
+            "07",
+            "10"
+          ]
+        },
+        {
+          "id": "upload-account-switch-no-foreign-bind",
+          "status": "PASS",
+          "classification": "observed-pass",
+          "metrics": {
+            "uploadedBeforeSwitch": true,
+            "oldBindRequests": 0,
+            "noAContentsUnderB": true,
+            "sessionBUnchanged": true,
+            "aDraftPersistence": "not required across scope change"
+          },
+          "at": "2026-10-06T07:16:19.917Z",
+          "durationMs": 5447,
+          "predecessors": [
+            "04",
+            "07",
+            "10"
+          ]
+        },
+        {
+          "id": "redis-epoch-replay-window-reset",
+          "status": "PASS",
+          "classification": "observed-pass",
+          "metrics": {
+            "replayWindow": 8,
+            "missedEvents": 12,
+            "outage": {
+              "openBefore": 1,
+              "openAfterWrites": 0,
+              "eventsAfterDisconnect": 0,
+              "eventsAfterWrites": 0,
+              "pendingOutboxBeforeReconnect": 0
+            },
+            "gapsBefore": 0,
+            "gapsAfter": 1,
+            "gapObserved": true,
+            "ownTopicOnlyReset": true,
+            "disconnectedThroughoutOverflow": true,
+            "outboxDrainedBeforeReconnect": true,
+            "newEpochObserved": true,
+            "newerDatabaseRevision": true,
+            "editedAndCreatedWithoutReload": true
+          },
+          "at": "2026-10-06T07:16:25.365Z",
+          "durationMs": 3377,
+          "predecessors": [
+            "05a",
+            "06b"
+          ]
+        },
+        {
+          "id": "redis-pubsub-outage-durable-outbox-convergence",
+          "status": "PASS",
+          "classification": "observed-pass",
+          "metrics": {
+            "isolatedApiConnections": true,
+            "outageCommitStatus": 201,
+            "durableMessageAndOutboxObserved": true,
+            "resyncObserved": true,
+            "restoredWithoutNavigation": true,
+            "pendingOutboxAfterRestore": 0,
+            "visibleViaRestDuringOutage": true
+          },
+          "at": "2026-10-06T07:16:28.742Z",
+          "durationMs": 4359,
+          "predecessors": [
+            "05a",
+            "06b"
+          ]
+        },
+        {
+          "id": "storage-delete-outage-durable-cleanup",
+          "status": "PASS",
+          "classification": "observed-pass",
+          "metrics": {
+            "browserUploadBind": [
+              201
+            ],
+            "originalDownloadByteEqual": true,
+            "dbFaultDeleteStatus": 500,
+            "dbFailurePreservedMessageAndBlob": true,
+            "storageDeleteFaultStatus": 503,
+            "deleteFailures": 1,
+            "durableIntentDuringOutage": true,
+            "deleteAfterRestore": true,
+            "originalPutReplayStatus": 200,
+            "replayDeleted": true
+          },
+          "at": "2026-10-06T07:16:33.102Z",
+          "durationMs": 14640,
+          "predecessors": [
+            "10"
+          ]
+        },
+        {
+          "id": "upload-abandoned-object-cleanup",
+          "status": "PASS",
+          "classification": "observed-pass",
+          "metrics": {
+            "controls": [
+              {
+                "uploaded": false,
+                "actualObjectBefore": 404,
+                "headFaultStatus": 503,
+                "reservationRetainedDuringFault": true,
+                "metadataRemoved": true,
+                "objectAfter": 404,
+                "reservedBytesReleased": 77,
+                "consumedBytesAdded": 0
+              },
+              {
+                "uploaded": true,
+                "actualObjectBefore": 200,
+                "headFaultStatus": 503,
+                "reservationRetainedDuringFault": true,
+                "metadataRemoved": true,
+                "objectAfter": 404,
+                "reservedBytesReleased": 77,
+                "consumedBytesAdded": 77
+              }
+            ],
+            "acceleratedClock": "only owned attachment expiry/grace and retry timestamps; production deadlines unchanged"
+          },
+          "at": "2026-10-06T07:16:47.744Z",
+          "durationMs": 5119,
+          "predecessors": [
+            "10"
+          ]
+        },
+        {
+          "id": "slow-reader-bounded-memory",
+          "status": "PASS",
+          "classification": "observed-pass",
+          "metrics": {
+            "rawReceiveBufferBytes": 8192,
+            "noReadsAfterPause": true,
+            "clientHeartbeatsContinued": true,
+            "messagesCommitted": 264,
+            "contentBytesCommitted": 2009722,
+            "pendingTcpBytesWhileReceivePaused": true,
+            "blockedApplicationSendDirectlyMeasured": false,
+            "ownApiSocketDisconnected": true,
+            "terminalAfterLastCommitMs": 13,
+            "pauseObservedAt": "2026-10-06T07:16:54.980Z",
+            "firstPendingQueueObservedAt": "2026-10-06T07:16:55.778Z",
+            "firstConsecutivePendingQueueSampleAt": "2026-10-06T07:16:56.289Z",
+            "lastCommitObservedAt": "2026-10-06T07:17:08.735Z",
+            "socketDisappearanceObservedAt": "2026-10-06T07:17:08.741Z",
+            "loadSampleGapsMs": [
+              299,
+              493,
+              511,
+              443,
+              414,
+              411,
+              427,
+              432,
+              365,
+              343,
+              352,
+              369,
+              222,
+              491,
+              386,
+              442,
+              357,
+              395,
+              353,
+              508,
+              450,
+              434,
+              415,
+              498,
+              468,
+              444,
+              439,
+              478,
+              497,
+              471,
+              326,
+              417,
+              405
+            ],
+            "terminalPollingIntervalMs": 200,
+            "postLoadObservationBudgetMs": 2500,
+            "timeoutSourceEvidence": {
+              "apiSource": "76931202f0fa35c45fa1d90efb0f0170d9e6a765",
+              "file": "api/src/gateway/conn.rs",
+              "sendMs": 1000,
+              "finalCloseMs": 1000,
+              "attribution": "source contract; not measured from blocked-send onset"
+            },
+            "outboundQueueContractFrames": 128,
+            "healthyAppClientProgressAfterDisconnect": true,
+            "rssSamples": [
+              {
+                "at": "2026-10-06T07:16:54.986Z",
+                "process": "owned-manifest-api-child",
+                "rssKiB": 63340,
+                "rawSocketOpen": true,
+                "rawSendQueueBytes": 0
+              },
+              {
+                "at": "2026-10-06T07:17:08.741Z",
+                "process": "owned-manifest-api-child",
+                "rssKiB": 64292,
+                "rawSocketOpen": false,
+                "rawSendQueueBytes": 0,
+                "messagesCommitted": 264
+              },
+              {
+                "at": "2026-10-06T07:17:08.748Z",
+                "process": "owned-manifest-api-child",
+                "rssKiB": 64292,
+                "rawSocketOpen": false,
+                "rawSendQueueBytes": 0,
+                "messagesCommitted": 264
+              }
+            ],
+            "rssClaim": "observed samples of the manifest-matched own API child under this load; no general memory bound"
+          },
+          "at": "2026-10-06T07:16:52.864Z",
+          "durationMs": 15946,
+          "predecessors": [
+            "05a"
+          ]
+        },
+        {
+          "id": "ban-invite-join-race",
+          "status": "PASS",
+          "classification": "observed-pass",
+          "metrics": {
+            "fixtureOwnedServerLock": true,
+            "controls": [
+              {
+                "first": "ban",
+                "twoBlockedTransactionsObserved": true,
+                "ban": 204,
+                "join": 403,
+                "finalMemberRows": 0,
+                "finalBanRows": 1,
+                "subsequentJoinStatus": 403
+              },
+              {
+                "first": "join",
+                "twoBlockedTransactionsObserved": true,
+                "join": 200,
+                "ban": 204,
+                "finalMemberRows": 0,
+                "finalBanRows": 1,
+                "subsequentJoinStatus": 403
+              }
+            ]
+          },
+          "at": "2026-10-06T07:17:08.811Z",
+          "durationMs": 2612,
+          "predecessors": [
+            "03a"
+          ]
+        }
+      ],
+      "cleanup": [
+        {
+          "target": "owned-test-server",
+          "status": 204,
+          "stage": "complete",
+          "statuses": {
+            "login": 200,
+            "delete": 204,
+            "logout": 200
+          }
+        }
+      ],
+      "gate": {
+        "passed": true,
+        "scope": "selected-cases",
+        "excluded": [
+          "account-session-reload-login",
+          "channel-chat-create-edit-delete-converges",
+          "new-dm-connected-recipient-discovers-without-refetch",
+          "channel-jpeg-png-webp-bind-reload-byte-equal",
+          "dm-jpeg-png-webp-bind-reload-byte-equal",
+          "background-event-before-first-open-55-history-paging",
+          "initial-history-error-visible-bounded-retry",
+          "failed-send-navigation-retains-own-retry",
+          "two-tabs-account-switch-delayed-401",
+          "two-tabs-account-switch-delayed-403",
+          "private-dm-foreign-discovery-subscription-denied",
+          "attachments-https-wan"
+        ],
+        "absent": [],
+        "completeAcceptance": false
+      }
+    },
+    {
+      "name": "core-faults-firefox",
+      "raw_report_sha256": "212a524a64117c7a03adcccfca5f52a2fba86ebaac846637b806504bb0bd2024",
+      "at": "2026-10-06T07:18:10.750Z",
+      "finished_at": "2026-10-06T07:19:45.051Z",
+      "browser": {
+        "engine": "firefox",
+        "version": "155.0",
+        "platform": "linux",
+        "node": "v26.8.2"
+      },
+      "profile": "core-faults",
+      "test_files_dirty": true,
+      "runtime_attribution": "operator-supplied; not runtime digest verification",
+      "source_hashes": {
+        "access-native.checks.mjs": "f1bab755ba97f26042ba574ddbdf8f1ae56aa1cbdf97f78c0da09480abe74478",
+        "access.mjs": "ccf672dea241b97cadbcd0fe83d6041907ccefb60b57e6e10c147c1c6fdcaf13",
+        "account-switch.mjs": "9dd5cc5a93f55ac74ba03f46e3435b0f8e7435569dc242ef597b764e42b0ef46",
+        "browser-options.checks.mjs": "155c1eb154e9def93a95cbf7885a37755f6d91af90c93bc9b60f9f176f7104a5",
+        "browser-options.mjs": "e092d543702eca00f24258a23b1ae97c4d280f857732dc2d262568913e01e052",
+        "call-soak.mjs": "3b22229dceafe10255d5f890ae1ecf95a69415bdbac1d94f73b041bf0fe8912d",
+        "chat-faults.mjs": "a4d258f8084e4ed842e408ebca19cbe178b636afdf2a32068e8232c16417d767",
+        "chat-workflows.mjs": "43135ff1960bf242e1bb12d44bde12b342d46fe89ee5534266d5d0f0995967a8",
+        "ci-fault-loop.checks.mjs": "8e7b89ba7616742111d5904792587cfefeadabee2f1d53c828f41625e7291136",
+        "ci-fault-prepare.checks.mjs": "b3481cdf182fc4e36d34f9b67ae828f5e115a55fcfd81233353744639affd653",
+        "ci-fault-prepare.mjs": "7be606568d420a1104cad28787fe3f8b072cda72eb265d714e6648c790b16e1d",
+        "core.mjs": "eb6a20d2eff0900fe96ca58aefb95e9f73745e5c05318e23829bcb8246080f9e",
+        "fault-run.mjs": "39e5af6912f692478599cc2b9c4acc21ede1a877db72b79f4d5b6d8991769438",
+        "fault-runtime.mjs": "423684dfaddfdd65ca3021e95f842616563bef30dd8d99c70d477e9098bf7fee",
+        "faults.checks.mjs": "9b013140e232dc052fe9b52755db20fb48267258b06fabec8ca546aae5afe11f",
+        "faults.mjs": "62fe2b0f812192bac2be6996049eec802db48097633c6367bd44018b6aa3a0d4",
+        "gateway-load.mjs": "c98da745c2ccc064829f71d1598a781eb1059177445c7c49dc7b5d07f7ed23d5",
+        "harness.checks.mjs": "62a37e83471f373cebc173769cee3f66067c98b6ef697fcb52ccb2cca6ff6f57",
+        "harness.mjs": "9e1b4a0085ab108212df125fda32e39630ced313be7033a04c874285e75929e8",
+        "held-renderer-native-control.mjs": "d84bae41bc25ad5ef50601b4b80136c866013d1bbdf20dc684ca992366b4d975",
+        "held-renderer.checks.mjs": "76dd565724a45727cd3182aea0c187fb399208aaa3207844253542e41488a38e",
+        "media-extra.checks.mjs": "b8659416016c2173e95c571b8e7b5a020e15dd7c91c4e8012915bc6d8f8c7f9e",
+        "media-extra.mjs": "696b7454647a14e9cce32b424c9f8b62884b65c405093ae87e02f77dc870ed52",
+        "media-lease-faults.mjs": "e3aefd71b583e5d4ab4a5109c3ed69a78352248392ec90a4f5308212fe8bae70",
+        "media-probe.checks.mjs": "be13c3567b6f4f5798636b494befc94b1c887fcf3e12c5f494cd15eb613ac769",
+        "media-runtime.checks.mjs": "4569eabb3d4339914cd48a0fdea42ad3feae89a827f67aa4923682ff72787a91",
+        "media-runtime.mjs": "d9bc66d17009162fd6f70eec24b227fda607e601fc7a0011a7fadae698795b67",
+        "media.mjs": "c802edfccd217c432b507822c072aac919ded00bb2fe682a3d2eb64066444b0d",
+        "membership-faults.mjs": "e155ee73a21bc27b7e8a75fe8d865e0309b35f8ad38ee77296da0db3a7a5b3a5",
+        "native-evaluate.checks.mjs": "4b24b3854f84b04ee5037ed2fdff7f02c7f490fefd6ff882bac9285877d8a5fd",
+        "native-evaluate.mjs": "89294f744f2c6a0d88e90975a944e96e49b2bf1c829ba377ccaa17a19b1564bf",
+        "native-finish.checks.mjs": "db9ed08e5bb99f1fb8b1a2d54a5cee9c32172a44e11a657d2dea2f4f987b56e6",
+        "probe.mjs": "a32ce3ff9aff1ca732272aacbfa0451330740b670a5f158da4b1b60433db7c1e",
+        "profiles.mjs": "ef20d6159fe61e04fda06c41314fbc2798e7ae7a7e5a5f57aa3f88569b0fe2aa",
+        "publisher-encoders.checks.mjs": "954693f0760fef6b728eaf191a23253dc3340c70e492ffa1eb07ad7e5b4cc323",
+        "publisher-encoders.mjs": "a1355812113b0e196d2253ff045ed0adef024511a507d85533987924a23b2a2b",
+        "raw-reader.py": "9aa984d1de3dcd9ec639b709a9d1e97feeb851614736a489000400f597277c6f",
+        "realtime-faults.mjs": "16655fef7e1bfaf7c2dd6f19da235914e29c6654506851e30d7af3e19729f62f",
+        "redis-command.mjs": "b6d801eb136a072b8a00bc2982d16934bdc4cf90c06ef28b67be4ad5a160706b",
+        "rendered-frames.checks.mjs": "4e5bf1be45d1eb0914625d08b35623e48ccca80dc4c35337deff13dd63571780",
+        "run.mjs": "d2900e4f8ec085708a696c1266359c51476d794c6fa497d2c0449243f9747bcd",
+        "s3-object.mjs": "1bce9abf11b4aa30e0e62b6063eb283baed30894e8f816787c379dd43ea63168",
+        "search-context.mjs": "01237d331f1c706a420fd3711ed59f1ee981824370f0b2170b4f0e5801e2791c",
+        "selection.mjs": "b8a445a817880843e833510d92dfdaf3150fff643f4b4ae5aa6906cd3913f771",
+        "session-audio-control.mjs": "1374a94ca61814a26ebfc30159ee5e1b8b5f8a4e40f4ef29ffc507b8f547025a",
+        "storage-faults.mjs": "e0408378060689e8584c014f90e2d3771dc611b86bfce3bc5328a3b71ada01fb",
+        "teardown.checks.mjs": "22f033c552b92bbe9e20e06c3ad51d993ecc46dcf7799da4d6623448aab7a5b1",
+        "teardown.mjs": "5bb7d0d8e023d23ab242eb8ac8b77a722d0a38c60f5df6637b86938b97419e9a",
+        "webapp-accessibility.mjs": "794d57e23cd12c0182f993e95ddf03cdd1377654dbafa0d1d2f9e0f179cd096c",
+        "webapp-recovery.mjs": "2a46205e3de78c0b5fdbb6addb07b0b9209bfba616a9e5f500924e895f92c237"
+      },
+      "owned_fault_runtime": {
+        "api": "76931202f0fa35c45fa1d90efb0f0170d9e6a765",
+        "binarySha256": "c61f776e3b14a076d479d09898de22fbbe988409d3c0fe67e1b6838dc9a0e567",
+        "dedicatedDatabaseAndBucket": true,
+        "replayWindow": 8,
+        "fixtureRateLimitsDisabled": true,
+        "media": null
+      },
+      "results": [
+        {
+          "id": "isolated-app-fixture",
+          "status": "PASS",
+          "classification": "observed-pass",
+          "metrics": {
+            "accounts": 3,
+            "servers": 1,
+            "channels": 3,
+            "registration": "UI",
+            "invitation": "UI",
+            "services": "real API/Gateway; SFU joined only in media/access scenarios"
+          },
+          "at": "2026-10-06T07:18:10.758Z",
+          "durationMs": 9749,
+          "predecessors": []
+        },
+        {
+          "id": "two-parallel-sends-navigation-retry",
+          "status": "PASS",
+          "classification": "observed-pass",
+          "metrics": {
+            "overlappingPosts": 2,
+            "firstStatus": 429,
+            "secondDeliveredBeforeRelease": true,
+            "navigation": "SPA",
+            "retainedTextAndFile": true,
+            "exactRetryMessages": 1,
+            "byteEqual": true,
+            "pr112Focus": true
+          },
+          "at": "2026-10-06T07:18:20.510Z",
+          "durationMs": 3162,
+          "predecessors": [
+            "07",
+            "10"
+          ]
+        },
+        {
+          "id": "committed-send-gateway-timeout-no-duplicate-retry",
+          "status": "PASS",
+          "classification": "observed-pass",
+          "metrics": {
+            "upstreamStatus": 201,
+            "browserStatus": 504,
+            "persistedMessages": 1,
+            "postRequests": 1,
+            "uncertainVisible": true,
+            "noRetryOffered": true
+          },
+          "at": "2026-10-06T07:18:23.673Z",
+          "durationMs": 4726,
+          "predecessors": [
+            "07"
+          ]
+        },
+        {
+          "id": "edit-delete-failure-row-scoped-rollback",
+          "status": "PASS",
+          "classification": "observed-pass",
+          "metrics": {
+            "controls": [
+              {
+                "method": "PATCH",
+                "faultStatus": 429,
+                "foreignEventBeforeRollback": true,
+                "originalRestored": true,
+                "foreignRetained": true
+              },
+              {
+                "method": "DELETE",
+                "faultStatus": 429,
+                "foreignEventBeforeRollback": true,
+                "originalRestored": true,
+                "foreignRetained": true
+              }
+            ]
+          },
+          "at": "2026-10-06T07:18:28.399Z",
+          "durationMs": 4999,
+          "predecessors": [
+            "07",
+            "06b"
+          ]
+        },
+        {
+          "id": "rest-ws-reordering-edit-delete-rollback",
+          "status": "PASS",
+          "classification": "observed-pass",
+          "metrics": {
+            "oldRowsInHeldResponse": 2,
+            "nativeEventsBeforeResponse": 3,
+            "newerEditRetained": true,
+            "newerCreateRetained": true,
+            "deleteNotResurrected": true,
+            "historyRequests": 2
+          },
+          "at": "2026-10-06T07:18:33.398Z",
+          "durationMs": 3209,
+          "predecessors": [
+            "06b",
+            "07"
+          ]
+        },
+        {
+          "id": "paging-error-data-preservation",
+          "status": "PASS",
+          "classification": "observed-pass",
+          "metrics": {
+            "messagesSeeded": 55,
+            "initialPagePreserved": true,
+            "requestsBeforeExplicitRetry": 1,
+            "requestsAfterRetry": 2,
+            "oldestVisible": true
+          },
+          "at": "2026-10-06T07:18:36.607Z",
+          "durationMs": 8402,
+          "predecessors": [
+            "07",
+            "06a"
+          ]
+        },
+        {
+          "id": "upload-abort-retains-text-file-retry",
+          "status": "PASS",
+          "classification": "observed-pass",
+          "metrics": {
+            "abortedPuts": 1,
+            "bindBeforeSuccessfulPut": 0,
+            "retainedTextAndFile": true,
+            "exactRetryMessages": 1
+          },
+          "at": "2026-10-06T07:18:45.010Z",
+          "durationMs": 2730,
+          "predecessors": [
+            "07",
+            "10"
+          ]
+        },
+        {
+          "id": "upload-account-switch-no-foreign-bind",
+          "status": "PASS",
+          "classification": "observed-pass",
+          "metrics": {
+            "uploadedBeforeSwitch": true,
+            "oldBindRequests": 0,
+            "noAContentsUnderB": true,
+            "sessionBUnchanged": true,
+            "aDraftPersistence": "not required across scope change"
+          },
+          "at": "2026-10-06T07:18:47.741Z",
+          "durationMs": 6066,
+          "predecessors": [
+            "04",
+            "07",
+            "10"
+          ]
+        },
+        {
+          "id": "redis-epoch-replay-window-reset",
+          "status": "PASS",
+          "classification": "observed-pass",
+          "metrics": {
+            "replayWindow": 8,
+            "missedEvents": 12,
+            "outage": {
+              "openBefore": 1,
+              "openAfterWrites": 0,
+              "eventsAfterDisconnect": 0,
+              "eventsAfterWrites": 0,
+              "pendingOutboxBeforeReconnect": 0
+            },
+            "gapsBefore": 0,
+            "gapsAfter": 1,
+            "gapObserved": true,
+            "ownTopicOnlyReset": true,
+            "disconnectedThroughoutOverflow": true,
+            "outboxDrainedBeforeReconnect": true,
+            "newEpochObserved": true,
+            "newerDatabaseRevision": true,
+            "editedAndCreatedWithoutReload": true
+          },
+          "at": "2026-10-06T07:18:53.808Z",
+          "durationMs": 3908,
+          "predecessors": [
+            "05a",
+            "06b"
+          ]
+        },
+        {
+          "id": "redis-pubsub-outage-durable-outbox-convergence",
+          "status": "PASS",
+          "classification": "observed-pass",
+          "metrics": {
+            "isolatedApiConnections": true,
+            "outageCommitStatus": 201,
+            "durableMessageAndOutboxObserved": true,
+            "resyncObserved": true,
+            "restoredWithoutNavigation": true,
+            "pendingOutboxAfterRestore": 0,
+            "visibleViaRestDuringOutage": true
+          },
+          "at": "2026-10-06T07:18:57.717Z",
+          "durationMs": 4461,
+          "predecessors": [
+            "05a",
+            "06b"
+          ]
+        },
+        {
+          "id": "storage-delete-outage-durable-cleanup",
+          "status": "PASS",
+          "classification": "observed-pass",
+          "metrics": {
+            "browserUploadBind": [
+              201
+            ],
+            "originalDownloadByteEqual": true,
+            "dbFaultDeleteStatus": 500,
+            "dbFailurePreservedMessageAndBlob": true,
+            "storageDeleteFaultStatus": 503,
+            "deleteFailures": 1,
+            "durableIntentDuringOutage": true,
+            "deleteAfterRestore": true,
+            "originalPutReplayStatus": 200,
+            "replayDeleted": true
+          },
+          "at": "2026-10-06T07:19:02.180Z",
+          "durationMs": 15120,
+          "predecessors": [
+            "10"
+          ]
+        },
+        {
+          "id": "upload-abandoned-object-cleanup",
+          "status": "PASS",
+          "classification": "observed-pass",
+          "metrics": {
+            "controls": [
+              {
+                "uploaded": false,
+                "actualObjectBefore": 404,
+                "headFaultStatus": 503,
+                "reservationRetainedDuringFault": true,
+                "metadataRemoved": true,
+                "objectAfter": 404,
+                "reservedBytesReleased": 77,
+                "consumedBytesAdded": 0
+              },
+              {
+                "uploaded": true,
+                "actualObjectBefore": 200,
+                "headFaultStatus": 503,
+                "reservationRetainedDuringFault": true,
+                "metadataRemoved": true,
+                "objectAfter": 404,
+                "reservedBytesReleased": 77,
+                "consumedBytesAdded": 77
+              }
+            ],
+            "acceleratedClock": "only owned attachment expiry/grace and retry timestamps; production deadlines unchanged"
+          },
+          "at": "2026-10-06T07:19:17.301Z",
+          "durationMs": 5130,
+          "predecessors": [
+            "10"
+          ]
+        },
+        {
+          "id": "slow-reader-bounded-memory",
+          "status": "PASS",
+          "classification": "observed-pass",
+          "metrics": {
+            "rawReceiveBufferBytes": 8192,
+            "noReadsAfterPause": true,
+            "clientHeartbeatsContinued": true,
+            "messagesCommitted": 264,
+            "contentBytesCommitted": 2009722,
+            "pendingTcpBytesWhileReceivePaused": true,
+            "blockedApplicationSendDirectlyMeasured": false,
+            "ownApiSocketDisconnected": true,
+            "terminalAfterLastCommitMs": 13,
+            "pauseObservedAt": "2026-10-06T07:19:25.167Z",
+            "firstPendingQueueObservedAt": "2026-10-06T07:19:25.638Z",
+            "firstConsecutivePendingQueueSampleAt": "2026-10-06T07:19:26.065Z",
+            "lastCommitObservedAt": "2026-10-06T07:19:39.840Z",
+            "socketDisappearanceObservedAt": "2026-10-06T07:19:39.846Z",
+            "loadSampleGapsMs": [
+              466,
+              427,
+              413,
+              482,
+              478,
+              470,
+              394,
+              445,
+              473,
+              432,
+              469,
+              366,
+              401,
+              471,
+              426,
+              486,
+              487,
+              396,
+              509,
+              448,
+              474,
+              508,
+              407,
+              458,
+              382,
+              489,
+              528,
+              392,
+              360,
+              402,
+              402,
+              453,
+              480
+            ],
+            "terminalPollingIntervalMs": 200,
+            "postLoadObservationBudgetMs": 2500,
+            "timeoutSourceEvidence": {
+              "apiSource": "76931202f0fa35c45fa1d90efb0f0170d9e6a765",
+              "file": "api/src/gateway/conn.rs",
+              "sendMs": 1000,
+              "finalCloseMs": 1000,
+              "attribution": "source contract; not measured from blocked-send onset"
+            },
+            "outboundQueueContractFrames": 128,
+            "healthyAppClientProgressAfterDisconnect": true,
+            "rssSamples": [
+              {
+                "at": "2026-10-06T07:19:25.172Z",
+                "process": "owned-manifest-api-child",
+                "rssKiB": 62560,
+                "rawSocketOpen": true,
+                "rawSendQueueBytes": 0
+              },
+              {
+                "at": "2026-10-06T07:19:39.846Z",
+                "process": "owned-manifest-api-child",
+                "rssKiB": 63200,
+                "rawSocketOpen": false,
+                "rawSendQueueBytes": 0,
+                "messagesCommitted": 264
+              },
+              {
+                "at": "2026-10-06T07:19:39.853Z",
+                "process": "owned-manifest-api-child",
+                "rssKiB": 63200,
+                "rawSocketOpen": false,
+                "rawSendQueueBytes": 0,
+                "messagesCommitted": 264
+              }
+            ],
+            "rssClaim": "observed samples of the manifest-matched own API child under this load; no general memory bound"
+          },
+          "at": "2026-10-06T07:19:22.432Z",
+          "durationMs": 17512,
+          "predecessors": [
+            "05a"
+          ]
+        },
+        {
+          "id": "ban-invite-join-race",
+          "status": "PASS",
+          "classification": "observed-pass",
+          "metrics": {
+            "fixtureOwnedServerLock": true,
+            "controls": [
+              {
+                "first": "ban",
+                "twoBlockedTransactionsObserved": true,
+                "ban": 204,
+                "join": 403,
+                "finalMemberRows": 0,
+                "finalBanRows": 1,
+                "subsequentJoinStatus": 403
+              },
+              {
+                "first": "join",
+                "twoBlockedTransactionsObserved": true,
+                "join": 200,
+                "ban": 204,
+                "finalMemberRows": 0,
+                "finalBanRows": 1,
+                "subsequentJoinStatus": 403
+              }
+            ]
+          },
+          "at": "2026-10-06T07:19:39.945Z",
+          "durationMs": 3219,
+          "predecessors": [
+            "03a"
+          ]
+        }
+      ],
+      "cleanup": [
+        {
+          "target": "owned-test-server",
+          "status": 204,
+          "stage": "complete",
+          "statuses": {
+            "login": 200,
+            "delete": 204,
+            "logout": 200
+          }
+        }
+      ],
+      "gate": {
+        "passed": true,
+        "scope": "selected-cases",
+        "excluded": [
+          "account-session-reload-login",
+          "channel-chat-create-edit-delete-converges",
+          "new-dm-connected-recipient-discovers-without-refetch",
+          "channel-jpeg-png-webp-bind-reload-byte-equal",
+          "dm-jpeg-png-webp-bind-reload-byte-equal",
+          "background-event-before-first-open-55-history-paging",
+          "initial-history-error-visible-bounded-retry",
+          "failed-send-navigation-retains-own-retry",
+          "two-tabs-account-switch-delayed-401",
+          "two-tabs-account-switch-delayed-403",
+          "private-dm-foreign-discovery-subscription-denied",
+          "attachments-https-wan"
+        ],
+        "absent": [],
+        "completeAcceptance": false
+      }
+    }
+  ]
+}
