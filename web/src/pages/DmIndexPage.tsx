@@ -6,6 +6,7 @@ import { useEffect } from "react";
 
 import { useUserId } from "../auth/scope.ts";
 import { Redirect } from "../components/Redirect.tsx";
+import { LoadError } from "../components/LoadError.tsx";
 import { lastDmId, useLastDm } from "../dms/lastDm.ts";
 import {
   isGoneError,
@@ -17,7 +18,7 @@ import { forgetDm, useDm, useDms } from "../dms/queries.ts";
 export function DmIndexPage() {
   const client = useQueryClient();
   const userId = useUserId();
-  const { data: dms, isPending, isError } = useDms();
+  const { data: dms, isPending, isError, isFetching, refetch } = useDms();
   const byUser = useLastDm((s) => s.byUser);
   const lastId = lastDmId(byUser, userId);
   const forgetLast = useLastDm((s) => s.forget);
@@ -42,6 +43,16 @@ export function DmIndexPage() {
     return <Redirect to="/d/$channelId" params={{ channelId: lastId }} />;
   }
   if (isPending && !isError) return null;
+  if (isError)
+    return (
+      <div className="p-6">
+        <LoadError
+          message="Deine Direktnachrichten konnten gerade nicht geladen werden."
+          pending={isFetching}
+          onRetry={() => void refetch()}
+        />
+      </div>
+    );
 
   return (
     <div className="flex flex-1 items-center justify-center p-8 text-center text-neutral-500 dark:text-neutral-400">
