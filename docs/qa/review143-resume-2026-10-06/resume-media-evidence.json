@@ -1,0 +1,1810 @@
+{
+  "schema": 1,
+  "scope": "New isolated host runtime Media15 acceptance; original budgets and source/640px/motion gates. Historical intermittent failures remain preserved and unexplained. No physical listening/device/WAN/whole-hour claim.",
+  "productSource": "76931202f0fa35c45fa1d90efb0f0170d9e6a765",
+  "historicalProductBuild": "7c7208947769a2074f35871fcf24c106ceaccc7a",
+  "runtimeBuildScope": "new host Rust locked release executables from frozen integration source; historical executable byte identity is not claimed",
+  "actualBinaryHashes": {
+    "api": "c61f776e3b14a076d479d09898de22fbbe988409d3c0fe67e1b6838dc9a0e567",
+    "media": "ac842923908b9d7ff835aa398e84003681bce50dd8c1c6de092c439ab7d0342b"
+  },
+  "httpAssets": {
+    "assets/EmojiPicker-CdZZLy0o.js": {
+      "bytes": 711279,
+      "sha256": "0d7f1889d7082fb1540bbefe251a86da139539d9b8138fd79572cb8af1ea6e4f"
+    },
+    "assets/index-B0mwLyDK.js": {
+      "bytes": 691518,
+      "sha256": "a072d5da854b320fa0b67128e0594351820ea16d1e7acf40f146cb04e0f237c5"
+    },
+    "assets/index-TslbdE2J.css": {
+      "bytes": 76103,
+      "sha256": "e25718638abfbdcc6d91c147285d2a60269836b58b382a2461a2ef1037642516"
+    },
+    "audio/RNNOISE-LICENSE.txt": {
+      "bytes": 1612,
+      "sha256": "45d37ca1cdb278c088e1aa85e0e65ca3a534ed86a28dcc96ca16810248a61d35"
+    },
+    "audio/RNNOISE-PROVENANCE.json": {
+      "bytes": 1005,
+      "sha256": "ec967b8c20779960c0ce10c0fd240fda6eaaf8e5131bc04b62a4dbda0f65b6e1"
+    },
+    "audio/rnnoise-worklet.js": {
+      "bytes": 2578,
+      "sha256": "343aa3d351b9b89ebfb0d6c79b40554bda6000e17f441ceeb67d42f8bad60860"
+    },
+    "audio/rnnoise.wasm": {
+      "bytes": 5592404,
+      "sha256": "e66d0eaef35d3774e86377efa8b9897e5b226284fb53059f0c1444881888b71c"
+    },
+    "emoji-license.txt": {
+      "bytes": 1995,
+      "sha256": "e7a93b009565cfce55919a381437ac4db883e9da2126fa28b91d12732bc53d96"
+    },
+    "images/living-room/README.md": {
+      "bytes": 559,
+      "sha256": "f62d4183492e8f35a8a1cfe0d9a27e0200139da8787695178b3715330d87da47"
+    },
+    "images/living-room/community-banner.png": {
+      "bytes": 2040857,
+      "sha256": "4371fccf1eb0ff803d3b0bd8356222d99ad84e50ca8f97b15d37d0bc33ad0328"
+    },
+    "index.html": {
+      "bytes": 2638,
+      "sha256": "5ece886e1614bcf137883c501aff6cbcdfa24a52aeee11d995e4fe37fabbe821"
+    }
+  },
+  "staticProductionAssets": true,
+  "testRouter": false,
+  "rootServicesUntouched": true,
+  "ownPorts": {
+    "api": 18112,
+    "media": 18113,
+    "preview": 15212,
+    "redis": 32873
+  },
+  "runs": {
+    "original-chromium": {
+      "rawReportPath": "/tmp/gelabber-v04-media-resume-20261006-o84mmkqn/original-chromium/report.json",
+      "rawReportSha256": "bd05da5e40381db29151278fefc26a0e2c13093ba38e74bb48a0b4da06a513b9",
+      "profile": null,
+      "selectedCases": [],
+      "testFilesDirty": false,
+      "browser": {
+        "engine": "chromium",
+        "version": "153.0.8010.12",
+        "platform": "linux",
+        "node": "v26.8.2"
+      },
+      "actualBrowserExecutables": {
+        "/home/rafi/.cache/ms-playwright/chromium_headless_shell-1243/chrome-headless-shell-linux64/chrome-headless-shell": {
+          "sha256": "ded93a9c9a53a1ae040f08124badcca95c938e9d5015ff340c3b5538c41bf39e",
+          "firstObservedPid": 1108023
+        }
+      },
+      "gate": {
+        "passed": false,
+        "scope": "requested-suite",
+        "excluded": [],
+        "absent": [],
+        "completeAcceptance": false
+      },
+      "outcomes": [
+        {
+          "id": "isolated-app-fixture",
+          "status": "PASS",
+          "reason": null,
+          "classification": "observed-pass",
+          "at": "2026-10-06T07:22:11.013Z",
+          "durationMs": 6165
+        },
+        {
+          "id": "live-watch-default-autoplay-no-mic",
+          "status": "PASS",
+          "reason": null,
+          "classification": "observed-pass",
+          "at": "2026-10-06T07:22:17.181Z",
+          "durationMs": 2247
+        },
+        {
+          "id": "late-watch-after-30s",
+          "status": "PASS",
+          "reason": null,
+          "classification": "observed-pass",
+          "at": "2026-10-06T07:22:19.428Z",
+          "durationMs": 29589
+        },
+        {
+          "id": "media-ws-capture-preserving-recovery",
+          "status": "PASS",
+          "reason": null,
+          "classification": "observed-pass",
+          "at": "2026-10-06T07:22:49.018Z",
+          "durationMs": 3309
+        },
+        {
+          "id": "gateway-only-preserves-peer",
+          "status": "PASS",
+          "reason": null,
+          "classification": "observed-pass",
+          "at": "2026-10-06T07:22:52.327Z",
+          "durationMs": 3101
+        },
+        {
+          "id": "offline-8s-no-new-capture-gesture",
+          "status": "PASS",
+          "reason": null,
+          "classification": "observed-pass",
+          "at": "2026-10-06T07:22:55.428Z",
+          "durationMs": 10692
+        },
+        {
+          "id": "watch-navigation-channel-binding-global-controls",
+          "status": "PASS",
+          "reason": null,
+          "classification": "observed-pass",
+          "at": "2026-10-06T07:23:06.120Z",
+          "durationMs": 2522
+        },
+        {
+          "id": "live-claim-exclusive-and-loser-not-published",
+          "status": "PASS",
+          "reason": null,
+          "classification": "observed-pass",
+          "at": "2026-10-06T07:23:08.642Z",
+          "durationMs": 5928
+        },
+        {
+          "id": "20-live-start-stop-bounded-client-resources",
+          "status": "PASS",
+          "reason": null,
+          "classification": "observed-pass",
+          "at": "2026-10-06T07:23:14.571Z",
+          "durationMs": 23372
+        },
+        {
+          "id": "cancelled-live-picker-keeps-voice-no-ghost",
+          "status": "PASS",
+          "reason": null,
+          "classification": "observed-pass",
+          "at": "2026-10-06T07:23:37.944Z",
+          "durationMs": 2982
+        },
+        {
+          "id": "camera-screen-live-source-identity",
+          "status": "PASS",
+          "reason": null,
+          "classification": "observed-pass",
+          "at": "2026-10-06T07:23:40.927Z",
+          "durationMs": 2699
+        },
+        {
+          "id": "autoplay-rejection-visible-click-retry",
+          "status": "PASS",
+          "reason": null,
+          "classification": "observed-pass",
+          "at": "2026-10-06T07:23:43.627Z",
+          "durationMs": 1884
+        },
+        {
+          "id": "active-call-responsive-controls",
+          "status": "FAIL",
+          "reason": "channel-navigation-collapsed",
+          "classification": "unconfirmed-failure",
+          "at": "2026-10-06T07:23:45.512Z",
+          "durationMs": 1288
+        },
+        {
+          "id": "voice-only-duplex-single-source",
+          "status": "PASS",
+          "reason": null,
+          "classification": "observed-pass",
+          "at": "2026-10-06T07:23:46.801Z",
+          "durationMs": 1541
+        },
+        {
+          "id": "forced-track-arrival-reorder-source-identity",
+          "status": "PASS",
+          "reason": null,
+          "classification": "observed-pass",
+          "at": "2026-10-06T07:23:48.344Z",
+          "durationMs": 5006
+        },
+        {
+          "id": "rejected-native-sdp-keeps-voice-other-source-no-ghost",
+          "status": "PASS",
+          "reason": null,
+          "classification": "observed-pass",
+          "at": "2026-10-06T07:23:53.351Z",
+          "durationMs": 4022
+        },
+        {
+          "id": "session-audio-mute-deafen-volume-playback-retry",
+          "status": "PASS",
+          "reason": null,
+          "classification": "observed-pass",
+          "at": "2026-10-06T07:23:57.375Z",
+          "durationMs": 7958
+        },
+        {
+          "id": "audible-voice-mute-deafen-quality",
+          "status": "BLOCKED",
+          "reason": "requires two devices and human listening; existing relay audio smoke retained",
+          "classification": "blocked",
+          "at": "2026-10-06T07:24:05.334Z",
+          "durationMs": null
+        },
+        {
+          "id": "sfu-publication-task-bounds",
+          "status": "BLOCKED",
+          "reason": "no read-only per-test-room SFU counters",
+          "classification": "blocked",
+          "at": "2026-10-06T07:24:05.334Z",
+          "durationMs": null
+        },
+        {
+          "id": "api-redis-outage-live-lease-recovery",
+          "status": "BLOCKED",
+          "reason": "requires owned API and approved SFU attached to own Redis proxy",
+          "classification": "blocked",
+          "at": "2026-10-06T07:24:05.336Z",
+          "durationMs": null
+        },
+        {
+          "id": "packet-loss-audible-quality",
+          "status": "BLOCKED",
+          "reason": "selected-UDP kernel harness reviewed; full remote netem and audible quality remain open",
+          "classification": "blocked",
+          "at": "2026-10-06T07:24:05.336Z",
+          "durationMs": null
+        }
+      ],
+      "runtimeBeforeAfterIdentical": true,
+      "cleanup": [
+        {
+          "target": "owned-test-server",
+          "status": 204,
+          "stage": "complete",
+          "statuses": {
+            "login": 200,
+            "delete": 204,
+            "logout": 200
+          }
+        }
+      ],
+      "testSourceHashes": {
+        "access-native.checks.mjs": "f1bab755ba97f26042ba574ddbdf8f1ae56aa1cbdf97f78c0da09480abe74478",
+        "access.mjs": "ccf672dea241b97cadbcd0fe83d6041907ccefb60b57e6e10c147c1c6fdcaf13",
+        "account-switch.mjs": "9dd5cc5a93f55ac74ba03f46e3435b0f8e7435569dc242ef597b764e42b0ef46",
+        "browser-options.checks.mjs": "155c1eb154e9def93a95cbf7885a37755f6d91af90c93bc9b60f9f176f7104a5",
+        "browser-options.mjs": "e092d543702eca00f24258a23b1ae97c4d280f857732dc2d262568913e01e052",
+        "call-soak.mjs": "3b22229dceafe10255d5f890ae1ecf95a69415bdbac1d94f73b041bf0fe8912d",
+        "chat-faults.mjs": "a4d258f8084e4ed842e408ebca19cbe178b636afdf2a32068e8232c16417d767",
+        "chat-workflows.mjs": "43135ff1960bf242e1bb12d44bde12b342d46fe89ee5534266d5d0f0995967a8",
+        "ci-fault-loop.checks.mjs": "8e7b89ba7616742111d5904792587cfefeadabee2f1d53c828f41625e7291136",
+        "ci-fault-prepare.checks.mjs": "b3481cdf182fc4e36d34f9b67ae828f5e115a55fcfd81233353744639affd653",
+        "ci-fault-prepare.mjs": "7be606568d420a1104cad28787fe3f8b072cda72eb265d714e6648c790b16e1d",
+        "core.mjs": "eb6a20d2eff0900fe96ca58aefb95e9f73745e5c05318e23829bcb8246080f9e",
+        "fault-run.mjs": "39e5af6912f692478599cc2b9c4acc21ede1a877db72b79f4d5b6d8991769438",
+        "fault-runtime.mjs": "423684dfaddfdd65ca3021e95f842616563bef30dd8d99c70d477e9098bf7fee",
+        "faults.checks.mjs": "9b013140e232dc052fe9b52755db20fb48267258b06fabec8ca546aae5afe11f",
+        "faults.mjs": "62fe2b0f812192bac2be6996049eec802db48097633c6367bd44018b6aa3a0d4",
+        "gateway-load.mjs": "c98da745c2ccc064829f71d1598a781eb1059177445c7c49dc7b5d07f7ed23d5",
+        "harness.checks.mjs": "62a37e83471f373cebc173769cee3f66067c98b6ef697fcb52ccb2cca6ff6f57",
+        "harness.mjs": "9e1b4a0085ab108212df125fda32e39630ced313be7033a04c874285e75929e8",
+        "held-renderer-native-control.mjs": "d84bae41bc25ad5ef50601b4b80136c866013d1bbdf20dc684ca992366b4d975",
+        "held-renderer.checks.mjs": "76dd565724a45727cd3182aea0c187fb399208aaa3207844253542e41488a38e",
+        "media-extra.checks.mjs": "b8659416016c2173e95c571b8e7b5a020e15dd7c91c4e8012915bc6d8f8c7f9e",
+        "media-extra.mjs": "696b7454647a14e9cce32b424c9f8b62884b65c405093ae87e02f77dc870ed52",
+        "media-lease-faults.mjs": "e3aefd71b583e5d4ab4a5109c3ed69a78352248392ec90a4f5308212fe8bae70",
+        "media-probe.checks.mjs": "be13c3567b6f4f5798636b494befc94b1c887fcf3e12c5f494cd15eb613ac769",
+        "media-runtime.checks.mjs": "4569eabb3d4339914cd48a0fdea42ad3feae89a827f67aa4923682ff72787a91",
+        "media-runtime.mjs": "d9bc66d17009162fd6f70eec24b227fda607e601fc7a0011a7fadae698795b67",
+        "media.mjs": "c802edfccd217c432b507822c072aac919ded00bb2fe682a3d2eb64066444b0d",
+        "membership-faults.mjs": "e155ee73a21bc27b7e8a75fe8d865e0309b35f8ad38ee77296da0db3a7a5b3a5",
+        "native-evaluate.checks.mjs": "4b24b3854f84b04ee5037ed2fdff7f02c7f490fefd6ff882bac9285877d8a5fd",
+        "native-evaluate.mjs": "89294f744f2c6a0d88e90975a944e96e49b2bf1c829ba377ccaa17a19b1564bf",
+        "native-finish.checks.mjs": "db9ed08e5bb99f1fb8b1a2d54a5cee9c32172a44e11a657d2dea2f4f987b56e6",
+        "probe.mjs": "a32ce3ff9aff1ca732272aacbfa0451330740b670a5f158da4b1b60433db7c1e",
+        "profiles.mjs": "ef20d6159fe61e04fda06c41314fbc2798e7ae7a7e5a5f57aa3f88569b0fe2aa",
+        "publisher-encoders.checks.mjs": "954693f0760fef6b728eaf191a23253dc3340c70e492ffa1eb07ad7e5b4cc323",
+        "publisher-encoders.mjs": "a1355812113b0e196d2253ff045ed0adef024511a507d85533987924a23b2a2b",
+        "raw-reader.py": "9aa984d1de3dcd9ec639b709a9d1e97feeb851614736a489000400f597277c6f",
+        "realtime-faults.mjs": "71626d7a152521529f35b1c192760b2ac809bdb56955473507362fd9fe74db62",
+        "redis-command.mjs": "b6d801eb136a072b8a00bc2982d16934bdc4cf90c06ef28b67be4ad5a160706b",
+        "rendered-frames.checks.mjs": "4e5bf1be45d1eb0914625d08b35623e48ccca80dc4c35337deff13dd63571780",
+        "run.mjs": "d2900e4f8ec085708a696c1266359c51476d794c6fa497d2c0449243f9747bcd",
+        "s3-object.mjs": "1bce9abf11b4aa30e0e62b6063eb283baed30894e8f816787c379dd43ea63168",
+        "search-context.mjs": "01237d331f1c706a420fd3711ed59f1ee981824370f0b2170b4f0e5801e2791c",
+        "selection.mjs": "b8a445a817880843e833510d92dfdaf3150fff643f4b4ae5aa6906cd3913f771",
+        "session-audio-control.mjs": "1374a94ca61814a26ebfc30159ee5e1b8b5f8a4e40f4ef29ffc507b8f547025a",
+        "storage-faults.mjs": "e0408378060689e8584c014f90e2d3771dc611b86bfce3bc5328a3b71ada01fb",
+        "teardown.checks.mjs": "22f033c552b92bbe9e20e06c3ad51d993ecc46dcf7799da4d6623448aab7a5b1",
+        "teardown.mjs": "5bb7d0d8e023d23ab242eb8ac8b77a722d0a38c60f5df6637b86938b97419e9a",
+        "webapp-accessibility.mjs": "794d57e23cd12c0182f993e95ddf03cdd1377654dbafa0d1d2f9e0f179cd096c",
+        "webapp-recovery.mjs": "2a46205e3de78c0b5fdbb6addb07b0b9209bfba616a9e5f500924e895f92c237"
+      },
+      "scope": "Unfiltered media suite executed by first private launcher; extra responsive FAIL preserved, no exact Media15 profile PASS claim.",
+      "extraResponsiveFailure": {
+        "stage": "Dock hit tests/bottom/overflow until passed; desktop width>800 branch immediately checks channelsHeight>=156 before channel-create dialog action.",
+        "possibleDesktopViewports": [
+          {
+            "width": 1487,
+            "height": 1058
+          },
+          {
+            "width": 1366,
+            "height": 600
+          },
+          {
+            "width": 844,
+            "height": 390
+          }
+        ],
+        "actualFailureViewport": "NOT_RECORDED",
+        "actualChannelsHeight": "NOT_RECORDED",
+        "originalErrorMetrics": {},
+        "screenshot": "NONE_CREATED",
+        "source": "web/scripts/e2e/media.mjs:621",
+        "classification": "unconfirmed-failure"
+      }
+    },
+    "original-chromium-media15": {
+      "rawReportPath": "/tmp/gelabber-v04-media-resume-20261006-o84mmkqn/original-chromium-media15/report.json",
+      "rawReportSha256": "f63d0e78d9e0decf3a1148a504ec08f1ca85b7a47807ff40cbaf129dd1267c1b",
+      "profile": "media",
+      "selectedCases": [
+        "voice-only-duplex-single-source",
+        "live-watch-default-autoplay-no-mic",
+        "late-watch-after-30s",
+        "media-ws-capture-preserving-recovery",
+        "gateway-only-preserves-peer",
+        "offline-8s-no-new-capture-gesture",
+        "watch-navigation-channel-binding-global-controls",
+        "live-claim-exclusive-and-loser-not-published",
+        "20-live-start-stop-bounded-client-resources",
+        "cancelled-live-picker-keeps-voice-no-ghost",
+        "camera-screen-live-source-identity",
+        "autoplay-rejection-visible-click-retry",
+        "forced-track-arrival-reorder-source-identity",
+        "rejected-native-sdp-keeps-voice-other-source-no-ghost",
+        "session-audio-mute-deafen-volume-playback-retry"
+      ],
+      "testFilesDirty": false,
+      "browser": {
+        "engine": "chromium",
+        "version": "153.0.8010.12",
+        "platform": "linux",
+        "node": "v26.8.2"
+      },
+      "actualBrowserExecutables": {
+        "/home/rafi/.cache/ms-playwright/chromium_headless_shell-1243/chrome-headless-shell-linux64/chrome-headless-shell": {
+          "sha256": "ded93a9c9a53a1ae040f08124badcca95c938e9d5015ff340c3b5538c41bf39e",
+          "firstObservedPid": 1111437
+        }
+      },
+      "gate": {
+        "passed": true,
+        "scope": "selected-cases",
+        "excluded": [
+          "active-call-responsive-controls",
+          "audible-voice-mute-deafen-quality",
+          "sfu-publication-task-bounds",
+          "api-redis-outage-live-lease-recovery",
+          "packet-loss-audible-quality"
+        ],
+        "absent": [],
+        "completeAcceptance": false
+      },
+      "outcomes": [
+        {
+          "id": "isolated-app-fixture",
+          "status": "PASS",
+          "reason": null,
+          "classification": "observed-pass",
+          "at": "2026-10-06T07:24:38.196Z",
+          "durationMs": 6110
+        },
+        {
+          "id": "live-watch-default-autoplay-no-mic",
+          "status": "PASS",
+          "reason": null,
+          "classification": "observed-pass",
+          "at": "2026-10-06T07:24:44.308Z",
+          "durationMs": 2251
+        },
+        {
+          "id": "late-watch-after-30s",
+          "status": "PASS",
+          "reason": null,
+          "classification": "observed-pass",
+          "at": "2026-10-06T07:24:46.559Z",
+          "durationMs": 29582
+        },
+        {
+          "id": "media-ws-capture-preserving-recovery",
+          "status": "PASS",
+          "reason": null,
+          "classification": "observed-pass",
+          "at": "2026-10-06T07:25:16.142Z",
+          "durationMs": 3334
+        },
+        {
+          "id": "gateway-only-preserves-peer",
+          "status": "PASS",
+          "reason": null,
+          "classification": "observed-pass",
+          "at": "2026-10-06T07:25:19.477Z",
+          "durationMs": 3100
+        },
+        {
+          "id": "offline-8s-no-new-capture-gesture",
+          "status": "PASS",
+          "reason": null,
+          "classification": "observed-pass",
+          "at": "2026-10-06T07:25:22.578Z",
+          "durationMs": 10713
+        },
+        {
+          "id": "watch-navigation-channel-binding-global-controls",
+          "status": "PASS",
+          "reason": null,
+          "classification": "observed-pass",
+          "at": "2026-10-06T07:25:33.291Z",
+          "durationMs": 2491
+        },
+        {
+          "id": "live-claim-exclusive-and-loser-not-published",
+          "status": "PASS",
+          "reason": null,
+          "classification": "observed-pass",
+          "at": "2026-10-06T07:25:35.783Z",
+          "durationMs": 5945
+        },
+        {
+          "id": "20-live-start-stop-bounded-client-resources",
+          "status": "PASS",
+          "reason": null,
+          "classification": "observed-pass",
+          "at": "2026-10-06T07:25:41.729Z",
+          "durationMs": 23392
+        },
+        {
+          "id": "cancelled-live-picker-keeps-voice-no-ghost",
+          "status": "PASS",
+          "reason": null,
+          "classification": "observed-pass",
+          "at": "2026-10-06T07:26:05.121Z",
+          "durationMs": 2998
+        },
+        {
+          "id": "camera-screen-live-source-identity",
+          "status": "PASS",
+          "reason": null,
+          "classification": "observed-pass",
+          "at": "2026-10-06T07:26:08.120Z",
+          "durationMs": 2700
+        },
+        {
+          "id": "autoplay-rejection-visible-click-retry",
+          "status": "PASS",
+          "reason": null,
+          "classification": "observed-pass",
+          "at": "2026-10-06T07:26:10.821Z",
+          "durationMs": 1901
+        },
+        {
+          "id": "active-call-responsive-controls",
+          "status": "NOT_RUN",
+          "reason": "not-selected-in-this-run",
+          "classification": "not-executed",
+          "at": "2026-10-06T07:26:12.723Z",
+          "durationMs": null
+        },
+        {
+          "id": "voice-only-duplex-single-source",
+          "status": "PASS",
+          "reason": null,
+          "classification": "observed-pass",
+          "at": "2026-10-06T07:26:12.724Z",
+          "durationMs": 1576
+        },
+        {
+          "id": "forced-track-arrival-reorder-source-identity",
+          "status": "PASS",
+          "reason": null,
+          "classification": "observed-pass",
+          "at": "2026-10-06T07:26:14.301Z",
+          "durationMs": 4779
+        },
+        {
+          "id": "rejected-native-sdp-keeps-voice-other-source-no-ghost",
+          "status": "PASS",
+          "reason": null,
+          "classification": "observed-pass",
+          "at": "2026-10-06T07:26:19.081Z",
+          "durationMs": 3967
+        },
+        {
+          "id": "session-audio-mute-deafen-volume-playback-retry",
+          "status": "PASS",
+          "reason": null,
+          "classification": "observed-pass",
+          "at": "2026-10-06T07:26:23.049Z",
+          "durationMs": 7925
+        },
+        {
+          "id": "audible-voice-mute-deafen-quality",
+          "status": "NOT_RUN",
+          "reason": "not-selected-in-this-run",
+          "classification": "not-executed",
+          "at": "2026-10-06T07:26:30.976Z",
+          "durationMs": null
+        },
+        {
+          "id": "sfu-publication-task-bounds",
+          "status": "NOT_RUN",
+          "reason": "not-selected-in-this-run",
+          "classification": "not-executed",
+          "at": "2026-10-06T07:26:30.976Z",
+          "durationMs": null
+        },
+        {
+          "id": "api-redis-outage-live-lease-recovery",
+          "status": "NOT_RUN",
+          "reason": "not-selected-in-this-run",
+          "classification": "not-executed",
+          "at": "2026-10-06T07:26:30.978Z",
+          "durationMs": null
+        },
+        {
+          "id": "packet-loss-audible-quality",
+          "status": "NOT_RUN",
+          "reason": "not-selected-in-this-run",
+          "classification": "not-executed",
+          "at": "2026-10-06T07:26:30.978Z",
+          "durationMs": null
+        }
+      ],
+      "runtimeBeforeAfterIdentical": true,
+      "cleanup": [
+        {
+          "target": "owned-test-server",
+          "status": 204,
+          "stage": "complete",
+          "statuses": {
+            "login": 200,
+            "delete": 204,
+            "logout": 200
+          }
+        }
+      ],
+      "testSourceHashes": {
+        "access-native.checks.mjs": "f1bab755ba97f26042ba574ddbdf8f1ae56aa1cbdf97f78c0da09480abe74478",
+        "access.mjs": "ccf672dea241b97cadbcd0fe83d6041907ccefb60b57e6e10c147c1c6fdcaf13",
+        "account-switch.mjs": "9dd5cc5a93f55ac74ba03f46e3435b0f8e7435569dc242ef597b764e42b0ef46",
+        "browser-options.checks.mjs": "155c1eb154e9def93a95cbf7885a37755f6d91af90c93bc9b60f9f176f7104a5",
+        "browser-options.mjs": "e092d543702eca00f24258a23b1ae97c4d280f857732dc2d262568913e01e052",
+        "call-soak.mjs": "3b22229dceafe10255d5f890ae1ecf95a69415bdbac1d94f73b041bf0fe8912d",
+        "chat-faults.mjs": "a4d258f8084e4ed842e408ebca19cbe178b636afdf2a32068e8232c16417d767",
+        "chat-workflows.mjs": "43135ff1960bf242e1bb12d44bde12b342d46fe89ee5534266d5d0f0995967a8",
+        "ci-fault-loop.checks.mjs": "8e7b89ba7616742111d5904792587cfefeadabee2f1d53c828f41625e7291136",
+        "ci-fault-prepare.checks.mjs": "b3481cdf182fc4e36d34f9b67ae828f5e115a55fcfd81233353744639affd653",
+        "ci-fault-prepare.mjs": "7be606568d420a1104cad28787fe3f8b072cda72eb265d714e6648c790b16e1d",
+        "core.mjs": "eb6a20d2eff0900fe96ca58aefb95e9f73745e5c05318e23829bcb8246080f9e",
+        "fault-run.mjs": "39e5af6912f692478599cc2b9c4acc21ede1a877db72b79f4d5b6d8991769438",
+        "fault-runtime.mjs": "423684dfaddfdd65ca3021e95f842616563bef30dd8d99c70d477e9098bf7fee",
+        "faults.checks.mjs": "9b013140e232dc052fe9b52755db20fb48267258b06fabec8ca546aae5afe11f",
+        "faults.mjs": "62fe2b0f812192bac2be6996049eec802db48097633c6367bd44018b6aa3a0d4",
+        "gateway-load.mjs": "c98da745c2ccc064829f71d1598a781eb1059177445c7c49dc7b5d07f7ed23d5",
+        "harness.checks.mjs": "62a37e83471f373cebc173769cee3f66067c98b6ef697fcb52ccb2cca6ff6f57",
+        "harness.mjs": "9e1b4a0085ab108212df125fda32e39630ced313be7033a04c874285e75929e8",
+        "held-renderer-native-control.mjs": "d84bae41bc25ad5ef50601b4b80136c866013d1bbdf20dc684ca992366b4d975",
+        "held-renderer.checks.mjs": "76dd565724a45727cd3182aea0c187fb399208aaa3207844253542e41488a38e",
+        "media-extra.checks.mjs": "b8659416016c2173e95c571b8e7b5a020e15dd7c91c4e8012915bc6d8f8c7f9e",
+        "media-extra.mjs": "696b7454647a14e9cce32b424c9f8b62884b65c405093ae87e02f77dc870ed52",
+        "media-lease-faults.mjs": "e3aefd71b583e5d4ab4a5109c3ed69a78352248392ec90a4f5308212fe8bae70",
+        "media-probe.checks.mjs": "be13c3567b6f4f5798636b494befc94b1c887fcf3e12c5f494cd15eb613ac769",
+        "media-runtime.checks.mjs": "4569eabb3d4339914cd48a0fdea42ad3feae89a827f67aa4923682ff72787a91",
+        "media-runtime.mjs": "d9bc66d17009162fd6f70eec24b227fda607e601fc7a0011a7fadae698795b67",
+        "media.mjs": "c802edfccd217c432b507822c072aac919ded00bb2fe682a3d2eb64066444b0d",
+        "membership-faults.mjs": "e155ee73a21bc27b7e8a75fe8d865e0309b35f8ad38ee77296da0db3a7a5b3a5",
+        "native-evaluate.checks.mjs": "4b24b3854f84b04ee5037ed2fdff7f02c7f490fefd6ff882bac9285877d8a5fd",
+        "native-evaluate.mjs": "89294f744f2c6a0d88e90975a944e96e49b2bf1c829ba377ccaa17a19b1564bf",
+        "native-finish.checks.mjs": "db9ed08e5bb99f1fb8b1a2d54a5cee9c32172a44e11a657d2dea2f4f987b56e6",
+        "probe.mjs": "a32ce3ff9aff1ca732272aacbfa0451330740b670a5f158da4b1b60433db7c1e",
+        "profiles.mjs": "ef20d6159fe61e04fda06c41314fbc2798e7ae7a7e5a5f57aa3f88569b0fe2aa",
+        "publisher-encoders.checks.mjs": "954693f0760fef6b728eaf191a23253dc3340c70e492ffa1eb07ad7e5b4cc323",
+        "publisher-encoders.mjs": "a1355812113b0e196d2253ff045ed0adef024511a507d85533987924a23b2a2b",
+        "raw-reader.py": "9aa984d1de3dcd9ec639b709a9d1e97feeb851614736a489000400f597277c6f",
+        "realtime-faults.mjs": "71626d7a152521529f35b1c192760b2ac809bdb56955473507362fd9fe74db62",
+        "redis-command.mjs": "b6d801eb136a072b8a00bc2982d16934bdc4cf90c06ef28b67be4ad5a160706b",
+        "rendered-frames.checks.mjs": "4e5bf1be45d1eb0914625d08b35623e48ccca80dc4c35337deff13dd63571780",
+        "run.mjs": "d2900e4f8ec085708a696c1266359c51476d794c6fa497d2c0449243f9747bcd",
+        "s3-object.mjs": "1bce9abf11b4aa30e0e62b6063eb283baed30894e8f816787c379dd43ea63168",
+        "search-context.mjs": "01237d331f1c706a420fd3711ed59f1ee981824370f0b2170b4f0e5801e2791c",
+        "selection.mjs": "b8a445a817880843e833510d92dfdaf3150fff643f4b4ae5aa6906cd3913f771",
+        "session-audio-control.mjs": "1374a94ca61814a26ebfc30159ee5e1b8b5f8a4e40f4ef29ffc507b8f547025a",
+        "storage-faults.mjs": "e0408378060689e8584c014f90e2d3771dc611b86bfce3bc5328a3b71ada01fb",
+        "teardown.checks.mjs": "22f033c552b92bbe9e20e06c3ad51d993ecc46dcf7799da4d6623448aab7a5b1",
+        "teardown.mjs": "5bb7d0d8e023d23ab242eb8ac8b77a722d0a38c60f5df6637b86938b97419e9a",
+        "webapp-accessibility.mjs": "794d57e23cd12c0182f993e95ddf03cdd1377654dbafa0d1d2f9e0f179cd096c",
+        "webapp-recovery.mjs": "2a46205e3de78c0b5fdbb6addb07b0b9209bfba616a9e5f500924e895f92c237"
+      },
+      "scope": "Existing exact profiles.media fifteen-case selection, with all original assertions/deadlines.",
+      "selectedPassCount": 15
+    },
+    "original-firefox-media15": {
+      "rawReportPath": "/tmp/gelabber-v04-media-resume-20261006-o84mmkqn/original-firefox-media15/report.json",
+      "rawReportSha256": "44967db416cbd10625d09b3d9f7e881bbbeaceb37a89dffa3610eaa6579bf28b",
+      "profile": "media",
+      "selectedCases": [
+        "voice-only-duplex-single-source",
+        "live-watch-default-autoplay-no-mic",
+        "late-watch-after-30s",
+        "media-ws-capture-preserving-recovery",
+        "gateway-only-preserves-peer",
+        "offline-8s-no-new-capture-gesture",
+        "watch-navigation-channel-binding-global-controls",
+        "live-claim-exclusive-and-loser-not-published",
+        "20-live-start-stop-bounded-client-resources",
+        "cancelled-live-picker-keeps-voice-no-ghost",
+        "camera-screen-live-source-identity",
+        "autoplay-rejection-visible-click-retry",
+        "forced-track-arrival-reorder-source-identity",
+        "rejected-native-sdp-keeps-voice-other-source-no-ghost",
+        "session-audio-mute-deafen-volume-playback-retry"
+      ],
+      "testFilesDirty": false,
+      "browser": {
+        "engine": "firefox",
+        "version": "155.0",
+        "platform": "linux",
+        "node": "v26.8.2"
+      },
+      "actualBrowserExecutables": {
+        "/home/rafi/.cache/ms-playwright/firefox-1543/firefox/firefox": {
+          "sha256": "062272ac4d851eade5b75db2dc7c14569d96cb3ca38f949337cdc1b74367e35b",
+          "firstObservedPid": 1114517
+        }
+      },
+      "gate": {
+        "passed": true,
+        "scope": "selected-cases",
+        "excluded": [
+          "active-call-responsive-controls",
+          "audible-voice-mute-deafen-quality",
+          "sfu-publication-task-bounds",
+          "api-redis-outage-live-lease-recovery",
+          "packet-loss-audible-quality"
+        ],
+        "absent": [],
+        "completeAcceptance": false
+      },
+      "outcomes": [
+        {
+          "id": "isolated-app-fixture",
+          "status": "PASS",
+          "reason": null,
+          "classification": "observed-pass",
+          "at": "2026-10-06T07:26:37.009Z",
+          "durationMs": 9047
+        },
+        {
+          "id": "live-watch-default-autoplay-no-mic",
+          "status": "PASS",
+          "reason": null,
+          "classification": "observed-pass",
+          "at": "2026-10-06T07:26:46.057Z",
+          "durationMs": 3125
+        },
+        {
+          "id": "late-watch-after-30s",
+          "status": "PASS",
+          "reason": null,
+          "classification": "observed-pass",
+          "at": "2026-10-06T07:26:49.183Z",
+          "durationMs": 29605
+        },
+        {
+          "id": "media-ws-capture-preserving-recovery",
+          "status": "PASS",
+          "reason": null,
+          "classification": "observed-pass",
+          "at": "2026-10-06T07:27:18.788Z",
+          "durationMs": 5180
+        },
+        {
+          "id": "gateway-only-preserves-peer",
+          "status": "PASS",
+          "reason": null,
+          "classification": "observed-pass",
+          "at": "2026-10-06T07:27:23.969Z",
+          "durationMs": 4310
+        },
+        {
+          "id": "offline-8s-no-new-capture-gesture",
+          "status": "PASS",
+          "reason": null,
+          "classification": "observed-pass",
+          "at": "2026-10-06T07:27:28.280Z",
+          "durationMs": 11766
+        },
+        {
+          "id": "watch-navigation-channel-binding-global-controls",
+          "status": "PASS",
+          "reason": null,
+          "classification": "observed-pass",
+          "at": "2026-10-06T07:27:40.046Z",
+          "durationMs": 3570
+        },
+        {
+          "id": "live-claim-exclusive-and-loser-not-published",
+          "status": "PASS",
+          "reason": null,
+          "classification": "observed-pass",
+          "at": "2026-10-06T07:27:43.617Z",
+          "durationMs": 6013
+        },
+        {
+          "id": "20-live-start-stop-bounded-client-resources",
+          "status": "PASS",
+          "reason": null,
+          "classification": "observed-pass",
+          "at": "2026-10-06T07:27:49.631Z",
+          "durationMs": 49441
+        },
+        {
+          "id": "cancelled-live-picker-keeps-voice-no-ghost",
+          "status": "PASS",
+          "reason": null,
+          "classification": "observed-pass",
+          "at": "2026-10-06T07:28:39.072Z",
+          "durationMs": 3024
+        },
+        {
+          "id": "camera-screen-live-source-identity",
+          "status": "PASS",
+          "reason": null,
+          "classification": "observed-pass",
+          "at": "2026-10-06T07:28:42.098Z",
+          "durationMs": 4132
+        },
+        {
+          "id": "autoplay-rejection-visible-click-retry",
+          "status": "PASS",
+          "reason": null,
+          "classification": "observed-pass",
+          "at": "2026-10-06T07:28:46.231Z",
+          "durationMs": 3225
+        },
+        {
+          "id": "active-call-responsive-controls",
+          "status": "NOT_RUN",
+          "reason": "not-selected-in-this-run",
+          "classification": "not-executed",
+          "at": "2026-10-06T07:28:49.458Z",
+          "durationMs": null
+        },
+        {
+          "id": "voice-only-duplex-single-source",
+          "status": "PASS",
+          "reason": null,
+          "classification": "observed-pass",
+          "at": "2026-10-06T07:28:49.458Z",
+          "durationMs": 2442
+        },
+        {
+          "id": "forced-track-arrival-reorder-source-identity",
+          "status": "PASS",
+          "reason": null,
+          "classification": "observed-pass",
+          "at": "2026-10-06T07:28:51.901Z",
+          "durationMs": 5683
+        },
+        {
+          "id": "rejected-native-sdp-keeps-voice-other-source-no-ghost",
+          "status": "PASS",
+          "reason": null,
+          "classification": "observed-pass",
+          "at": "2026-10-06T07:28:57.585Z",
+          "durationMs": 4399
+        },
+        {
+          "id": "session-audio-mute-deafen-volume-playback-retry",
+          "status": "PASS",
+          "reason": null,
+          "classification": "observed-pass",
+          "at": "2026-10-06T07:29:01.985Z",
+          "durationMs": 10819
+        },
+        {
+          "id": "audible-voice-mute-deafen-quality",
+          "status": "NOT_RUN",
+          "reason": "not-selected-in-this-run",
+          "classification": "not-executed",
+          "at": "2026-10-06T07:29:12.805Z",
+          "durationMs": null
+        },
+        {
+          "id": "sfu-publication-task-bounds",
+          "status": "NOT_RUN",
+          "reason": "not-selected-in-this-run",
+          "classification": "not-executed",
+          "at": "2026-10-06T07:29:12.805Z",
+          "durationMs": null
+        },
+        {
+          "id": "api-redis-outage-live-lease-recovery",
+          "status": "NOT_RUN",
+          "reason": "not-selected-in-this-run",
+          "classification": "not-executed",
+          "at": "2026-10-06T07:29:12.807Z",
+          "durationMs": null
+        },
+        {
+          "id": "packet-loss-audible-quality",
+          "status": "NOT_RUN",
+          "reason": "not-selected-in-this-run",
+          "classification": "not-executed",
+          "at": "2026-10-06T07:29:12.807Z",
+          "durationMs": null
+        }
+      ],
+      "runtimeBeforeAfterIdentical": true,
+      "cleanup": [
+        {
+          "target": "owned-test-server",
+          "status": 204,
+          "stage": "complete",
+          "statuses": {
+            "login": 200,
+            "delete": 204,
+            "logout": 200
+          }
+        }
+      ],
+      "testSourceHashes": {
+        "access-native.checks.mjs": "f1bab755ba97f26042ba574ddbdf8f1ae56aa1cbdf97f78c0da09480abe74478",
+        "access.mjs": "ccf672dea241b97cadbcd0fe83d6041907ccefb60b57e6e10c147c1c6fdcaf13",
+        "account-switch.mjs": "9dd5cc5a93f55ac74ba03f46e3435b0f8e7435569dc242ef597b764e42b0ef46",
+        "browser-options.checks.mjs": "155c1eb154e9def93a95cbf7885a37755f6d91af90c93bc9b60f9f176f7104a5",
+        "browser-options.mjs": "e092d543702eca00f24258a23b1ae97c4d280f857732dc2d262568913e01e052",
+        "call-soak.mjs": "3b22229dceafe10255d5f890ae1ecf95a69415bdbac1d94f73b041bf0fe8912d",
+        "chat-faults.mjs": "a4d258f8084e4ed842e408ebca19cbe178b636afdf2a32068e8232c16417d767",
+        "chat-workflows.mjs": "43135ff1960bf242e1bb12d44bde12b342d46fe89ee5534266d5d0f0995967a8",
+        "ci-fault-loop.checks.mjs": "8e7b89ba7616742111d5904792587cfefeadabee2f1d53c828f41625e7291136",
+        "ci-fault-prepare.checks.mjs": "b3481cdf182fc4e36d34f9b67ae828f5e115a55fcfd81233353744639affd653",
+        "ci-fault-prepare.mjs": "7be606568d420a1104cad28787fe3f8b072cda72eb265d714e6648c790b16e1d",
+        "core.mjs": "eb6a20d2eff0900fe96ca58aefb95e9f73745e5c05318e23829bcb8246080f9e",
+        "fault-run.mjs": "39e5af6912f692478599cc2b9c4acc21ede1a877db72b79f4d5b6d8991769438",
+        "fault-runtime.mjs": "423684dfaddfdd65ca3021e95f842616563bef30dd8d99c70d477e9098bf7fee",
+        "faults.checks.mjs": "9b013140e232dc052fe9b52755db20fb48267258b06fabec8ca546aae5afe11f",
+        "faults.mjs": "62fe2b0f812192bac2be6996049eec802db48097633c6367bd44018b6aa3a0d4",
+        "gateway-load.mjs": "c98da745c2ccc064829f71d1598a781eb1059177445c7c49dc7b5d07f7ed23d5",
+        "harness.checks.mjs": "62a37e83471f373cebc173769cee3f66067c98b6ef697fcb52ccb2cca6ff6f57",
+        "harness.mjs": "9e1b4a0085ab108212df125fda32e39630ced313be7033a04c874285e75929e8",
+        "held-renderer-native-control.mjs": "d84bae41bc25ad5ef50601b4b80136c866013d1bbdf20dc684ca992366b4d975",
+        "held-renderer.checks.mjs": "76dd565724a45727cd3182aea0c187fb399208aaa3207844253542e41488a38e",
+        "media-extra.checks.mjs": "b8659416016c2173e95c571b8e7b5a020e15dd7c91c4e8012915bc6d8f8c7f9e",
+        "media-extra.mjs": "696b7454647a14e9cce32b424c9f8b62884b65c405093ae87e02f77dc870ed52",
+        "media-lease-faults.mjs": "e3aefd71b583e5d4ab4a5109c3ed69a78352248392ec90a4f5308212fe8bae70",
+        "media-probe.checks.mjs": "be13c3567b6f4f5798636b494befc94b1c887fcf3e12c5f494cd15eb613ac769",
+        "media-runtime.checks.mjs": "4569eabb3d4339914cd48a0fdea42ad3feae89a827f67aa4923682ff72787a91",
+        "media-runtime.mjs": "d9bc66d17009162fd6f70eec24b227fda607e601fc7a0011a7fadae698795b67",
+        "media.mjs": "c802edfccd217c432b507822c072aac919ded00bb2fe682a3d2eb64066444b0d",
+        "membership-faults.mjs": "e155ee73a21bc27b7e8a75fe8d865e0309b35f8ad38ee77296da0db3a7a5b3a5",
+        "native-evaluate.checks.mjs": "4b24b3854f84b04ee5037ed2fdff7f02c7f490fefd6ff882bac9285877d8a5fd",
+        "native-evaluate.mjs": "89294f744f2c6a0d88e90975a944e96e49b2bf1c829ba377ccaa17a19b1564bf",
+        "native-finish.checks.mjs": "db9ed08e5bb99f1fb8b1a2d54a5cee9c32172a44e11a657d2dea2f4f987b56e6",
+        "probe.mjs": "a32ce3ff9aff1ca732272aacbfa0451330740b670a5f158da4b1b60433db7c1e",
+        "profiles.mjs": "ef20d6159fe61e04fda06c41314fbc2798e7ae7a7e5a5f57aa3f88569b0fe2aa",
+        "publisher-encoders.checks.mjs": "954693f0760fef6b728eaf191a23253dc3340c70e492ffa1eb07ad7e5b4cc323",
+        "publisher-encoders.mjs": "a1355812113b0e196d2253ff045ed0adef024511a507d85533987924a23b2a2b",
+        "raw-reader.py": "9aa984d1de3dcd9ec639b709a9d1e97feeb851614736a489000400f597277c6f",
+        "realtime-faults.mjs": "71626d7a152521529f35b1c192760b2ac809bdb56955473507362fd9fe74db62",
+        "redis-command.mjs": "b6d801eb136a072b8a00bc2982d16934bdc4cf90c06ef28b67be4ad5a160706b",
+        "rendered-frames.checks.mjs": "4e5bf1be45d1eb0914625d08b35623e48ccca80dc4c35337deff13dd63571780",
+        "run.mjs": "d2900e4f8ec085708a696c1266359c51476d794c6fa497d2c0449243f9747bcd",
+        "s3-object.mjs": "1bce9abf11b4aa30e0e62b6063eb283baed30894e8f816787c379dd43ea63168",
+        "search-context.mjs": "01237d331f1c706a420fd3711ed59f1ee981824370f0b2170b4f0e5801e2791c",
+        "selection.mjs": "b8a445a817880843e833510d92dfdaf3150fff643f4b4ae5aa6906cd3913f771",
+        "session-audio-control.mjs": "1374a94ca61814a26ebfc30159ee5e1b8b5f8a4e40f4ef29ffc507b8f547025a",
+        "storage-faults.mjs": "e0408378060689e8584c014f90e2d3771dc611b86bfce3bc5328a3b71ada01fb",
+        "teardown.checks.mjs": "22f033c552b92bbe9e20e06c3ad51d993ecc46dcf7799da4d6623448aab7a5b1",
+        "teardown.mjs": "5bb7d0d8e023d23ab242eb8ac8b77a722d0a38c60f5df6637b86938b97419e9a",
+        "webapp-accessibility.mjs": "794d57e23cd12c0182f993e95ddf03cdd1377654dbafa0d1d2f9e0f179cd096c",
+        "webapp-recovery.mjs": "2a46205e3de78c0b5fdbb6addb07b0b9209bfba616a9e5f500924e895f92c237"
+      },
+      "scope": "Existing exact profiles.media fifteen-case selection, with all original assertions/deadlines.",
+      "selectedPassCount": 15
+    },
+    "focused-responsive-chromium": {
+      "rawReportPath": "/tmp/gelabber-v04-media-resume-20261006-o84mmkqn/focused-responsive-chromium/report.json",
+      "rawReportSha256": "b1dc5c80bf7d5893c0d0ef1d8e12e2eac000440701433808e120d0e633cb989c",
+      "profile": null,
+      "requestedSuite": "media",
+      "selectedCases": [
+        "active-call-responsive-controls"
+      ],
+      "testFilesDirty": true,
+      "testSourceHashes": {
+        "access-native.checks.mjs": "f1bab755ba97f26042ba574ddbdf8f1ae56aa1cbdf97f78c0da09480abe74478",
+        "access.mjs": "ccf672dea241b97cadbcd0fe83d6041907ccefb60b57e6e10c147c1c6fdcaf13",
+        "account-switch.mjs": "9dd5cc5a93f55ac74ba03f46e3435b0f8e7435569dc242ef597b764e42b0ef46",
+        "browser-options.checks.mjs": "155c1eb154e9def93a95cbf7885a37755f6d91af90c93bc9b60f9f176f7104a5",
+        "browser-options.mjs": "e092d543702eca00f24258a23b1ae97c4d280f857732dc2d262568913e01e052",
+        "call-soak.mjs": "3b22229dceafe10255d5f890ae1ecf95a69415bdbac1d94f73b041bf0fe8912d",
+        "chat-faults.mjs": "a4d258f8084e4ed842e408ebca19cbe178b636afdf2a32068e8232c16417d767",
+        "chat-workflows.mjs": "43135ff1960bf242e1bb12d44bde12b342d46fe89ee5534266d5d0f0995967a8",
+        "ci-fault-loop.checks.mjs": "8e7b89ba7616742111d5904792587cfefeadabee2f1d53c828f41625e7291136",
+        "ci-fault-prepare.checks.mjs": "b3481cdf182fc4e36d34f9b67ae828f5e115a55fcfd81233353744639affd653",
+        "ci-fault-prepare.mjs": "7be606568d420a1104cad28787fe3f8b072cda72eb265d714e6648c790b16e1d",
+        "core.mjs": "eb6a20d2eff0900fe96ca58aefb95e9f73745e5c05318e23829bcb8246080f9e",
+        "fault-run.mjs": "39e5af6912f692478599cc2b9c4acc21ede1a877db72b79f4d5b6d8991769438",
+        "fault-runtime.mjs": "423684dfaddfdd65ca3021e95f842616563bef30dd8d99c70d477e9098bf7fee",
+        "faults.checks.mjs": "9b013140e232dc052fe9b52755db20fb48267258b06fabec8ca546aae5afe11f",
+        "faults.mjs": "62fe2b0f812192bac2be6996049eec802db48097633c6367bd44018b6aa3a0d4",
+        "gateway-load.mjs": "c98da745c2ccc064829f71d1598a781eb1059177445c7c49dc7b5d07f7ed23d5",
+        "harness.checks.mjs": "62a37e83471f373cebc173769cee3f66067c98b6ef697fcb52ccb2cca6ff6f57",
+        "harness.mjs": "9e1b4a0085ab108212df125fda32e39630ced313be7033a04c874285e75929e8",
+        "held-renderer-native-control.mjs": "d84bae41bc25ad5ef50601b4b80136c866013d1bbdf20dc684ca992366b4d975",
+        "held-renderer.checks.mjs": "76dd565724a45727cd3182aea0c187fb399208aaa3207844253542e41488a38e",
+        "media-extra.checks.mjs": "b8659416016c2173e95c571b8e7b5a020e15dd7c91c4e8012915bc6d8f8c7f9e",
+        "media-extra.mjs": "696b7454647a14e9cce32b424c9f8b62884b65c405093ae87e02f77dc870ed52",
+        "media-lease-faults.mjs": "e3aefd71b583e5d4ab4a5109c3ed69a78352248392ec90a4f5308212fe8bae70",
+        "media-probe.checks.mjs": "be13c3567b6f4f5798636b494befc94b1c887fcf3e12c5f494cd15eb613ac769",
+        "media-runtime.checks.mjs": "4569eabb3d4339914cd48a0fdea42ad3feae89a827f67aa4923682ff72787a91",
+        "media-runtime.mjs": "d9bc66d17009162fd6f70eec24b227fda607e601fc7a0011a7fadae698795b67",
+        "media.mjs": "da3197c79f6b269c9fd8686c1f6dda1f30e52a57625f6f57602b2a3cc87b3b74",
+        "membership-faults.mjs": "e155ee73a21bc27b7e8a75fe8d865e0309b35f8ad38ee77296da0db3a7a5b3a5",
+        "native-evaluate.checks.mjs": "4b24b3854f84b04ee5037ed2fdff7f02c7f490fefd6ff882bac9285877d8a5fd",
+        "native-evaluate.mjs": "89294f744f2c6a0d88e90975a944e96e49b2bf1c829ba377ccaa17a19b1564bf",
+        "native-finish.checks.mjs": "db9ed08e5bb99f1fb8b1a2d54a5cee9c32172a44e11a657d2dea2f4f987b56e6",
+        "probe.mjs": "a32ce3ff9aff1ca732272aacbfa0451330740b670a5f158da4b1b60433db7c1e",
+        "profiles.mjs": "ef20d6159fe61e04fda06c41314fbc2798e7ae7a7e5a5f57aa3f88569b0fe2aa",
+        "publisher-encoders.checks.mjs": "954693f0760fef6b728eaf191a23253dc3340c70e492ffa1eb07ad7e5b4cc323",
+        "publisher-encoders.mjs": "a1355812113b0e196d2253ff045ed0adef024511a507d85533987924a23b2a2b",
+        "raw-reader.py": "9aa984d1de3dcd9ec639b709a9d1e97feeb851614736a489000400f597277c6f",
+        "realtime-faults.mjs": "71626d7a152521529f35b1c192760b2ac809bdb56955473507362fd9fe74db62",
+        "redis-command.mjs": "b6d801eb136a072b8a00bc2982d16934bdc4cf90c06ef28b67be4ad5a160706b",
+        "rendered-frames.checks.mjs": "4e5bf1be45d1eb0914625d08b35623e48ccca80dc4c35337deff13dd63571780",
+        "run.mjs": "d2900e4f8ec085708a696c1266359c51476d794c6fa497d2c0449243f9747bcd",
+        "s3-object.mjs": "1bce9abf11b4aa30e0e62b6063eb283baed30894e8f816787c379dd43ea63168",
+        "search-context.mjs": "01237d331f1c706a420fd3711ed59f1ee981824370f0b2170b4f0e5801e2791c",
+        "selection.mjs": "b8a445a817880843e833510d92dfdaf3150fff643f4b4ae5aa6906cd3913f771",
+        "session-audio-control.mjs": "1374a94ca61814a26ebfc30159ee5e1b8b5f8a4e40f4ef29ffc507b8f547025a",
+        "storage-faults.mjs": "e0408378060689e8584c014f90e2d3771dc611b86bfce3bc5328a3b71ada01fb",
+        "teardown.checks.mjs": "22f033c552b92bbe9e20e06c3ad51d993ecc46dcf7799da4d6623448aab7a5b1",
+        "teardown.mjs": "5bb7d0d8e023d23ab242eb8ac8b77a722d0a38c60f5df6637b86938b97419e9a",
+        "webapp-accessibility.mjs": "794d57e23cd12c0182f993e95ddf03cdd1377654dbafa0d1d2f9e0f179cd096c",
+        "webapp-recovery.mjs": "2a46205e3de78c0b5fdbb6addb07b0b9209bfba616a9e5f500924e895f92c237"
+      },
+      "browser": {
+        "engine": "chromium",
+        "version": "153.0.8010.12",
+        "platform": "linux",
+        "node": "v26.8.2"
+      },
+      "actualBrowserExecutables": {
+        "/home/rafi/.cache/ms-playwright/chromium_headless_shell-1243/chrome-headless-shell-linux64/chrome-headless-shell": {
+          "sha256": "ded93a9c9a53a1ae040f08124badcca95c938e9d5015ff340c3b5538c41bf39e",
+          "firstObservedPid": 1123925
+        }
+      },
+      "gate": {
+        "passed": false,
+        "scope": "selected-cases",
+        "excluded": [
+          "live-watch-default-autoplay-no-mic",
+          "late-watch-after-30s",
+          "media-ws-capture-preserving-recovery",
+          "gateway-only-preserves-peer",
+          "offline-8s-no-new-capture-gesture",
+          "watch-navigation-channel-binding-global-controls",
+          "live-claim-exclusive-and-loser-not-published",
+          "20-live-start-stop-bounded-client-resources",
+          "cancelled-live-picker-keeps-voice-no-ghost",
+          "camera-screen-live-source-identity",
+          "autoplay-rejection-visible-click-retry",
+          "voice-only-duplex-single-source",
+          "forced-track-arrival-reorder-source-identity",
+          "rejected-native-sdp-keeps-voice-other-source-no-ghost",
+          "session-audio-mute-deafen-volume-playback-retry",
+          "audible-voice-mute-deafen-quality",
+          "sfu-publication-task-bounds",
+          "api-redis-outage-live-lease-recovery",
+          "packet-loss-audible-quality"
+        ],
+        "absent": [],
+        "completeAcceptance": false
+      },
+      "outcomes": [
+        {
+          "id": "isolated-app-fixture",
+          "status": "PASS",
+          "classification": "observed-pass",
+          "metrics": {
+            "accounts": 3,
+            "servers": 1,
+            "channels": 3,
+            "registration": "UI",
+            "invitation": "UI",
+            "services": "real API/Gateway; SFU joined only in media/access scenarios"
+          },
+          "at": "2026-10-06T07:33:16.336Z",
+          "durationMs": 6135,
+          "predecessors": []
+        },
+        {
+          "id": "active-call-responsive-controls",
+          "status": "FAIL",
+          "reason": "channel-navigation-collapsed",
+          "classification": "unconfirmed-failure",
+          "site": "harness.mjs:27:25",
+          "metrics": {
+            "viewport": {
+              "width": 844,
+              "height": 390
+            },
+            "sendUncovered": true,
+            "callControlsUncovered": true,
+            "dockAtBottom": true,
+            "overflow": false,
+            "channelsHeight": 0
+          },
+          "at": "2026-10-06T07:33:22.475Z",
+          "durationMs": 1402,
+          "predecessors": []
+        }
+      ],
+      "cleanup": [
+        {
+          "target": "owned-test-server",
+          "status": 204,
+          "stage": "complete",
+          "statuses": {
+            "login": 200,
+            "delete": 204,
+            "logout": 200
+          }
+        }
+      ],
+      "runtimeBeforeAfterIdentical": true,
+      "runtimeBeforeSha256": "dad8d4a62e981929cd52572ecaa57101b3b8589024a27cb6eb77f7f7698ef1dc",
+      "runtimeAfterSha256": "dad8d4a62e981929cd52572ecaa57101b3b8589024a27cb6eb77f7f7698ef1dc",
+      "diagnosticPatch": {
+        "file": "web/scripts/e2e/media.mjs",
+        "base": "76931202f0fa35c45fa1d90efb0f0170d9e6a765",
+        "patchPath": "/tmp/gelabber-v04-media-resume-20261006-o84mmkqn/responsive-metrics.patch",
+        "patchSha256": "8b5acbea702c0797ed989d2054347f78610b1415faeabd76895ecd261cd4cdec",
+        "sourceSha256": "da3197c79f6b269c9fd8686c1f6dda1f30e52a57625f6f57602b2a3cc87b3b74",
+        "scope": "Only CheckFailure.metrics third argument; same channelsHeight>=156 assertion and untouched10s until budget; no other diagnostic patches."
+      },
+      "rootIndependentlyReviewedPatchBeforeRun": true,
+      "privatePostFailureRunnerSha256": "4129a540d1f06619dd98290ad1e39f2b80b24bee309b9e78df22f5fd875cd823",
+      "postFailureReadonlySnapshot": {
+        "path": "docs/qa/review143-resume-2026-10-06/responsive-postfail-dom.json",
+        "sha256": "550881444b03ed16f6fdd1ae42e27000c53670afc03870ce6350a3b7b761f6ab",
+        "scope": "Read only after actual FAIL; original finally already restored1280x720, not exact844x390 assertion frame"
+      },
+      "postFailureScreenshot": {
+        "path": "docs/qa/review143-resume-2026-10-06/responsive-postfail.png",
+        "sha256": "8ea2e41af040248811e7bbb91fa1e85d8279f26404d11388ee424e3217b429f9",
+        "observed": "Screenshot subsequently shows desktop navigation visible, whereas preceding DOM snapshot showed it closed; duration/cause at844x390 not proven"
+      },
+      "productCauseProven": false
+    },
+    "focused-responsive-until-chromium": {
+      "rawReportPath": "/tmp/gelabber-v04-media-resume-20261006-o84mmkqn/focused-responsive-until-chromium/report.json",
+      "rawReportSha256": "3fa4e9b55435950e157e2df9b29ae21d9a768b92fb9e19d152b9bad068249713",
+      "profile": null,
+      "requestedSuite": "media",
+      "selectedCases": [
+        "active-call-responsive-controls"
+      ],
+      "testFilesDirty": true,
+      "testSourceHashes": {
+        "access-native.checks.mjs": "f1bab755ba97f26042ba574ddbdf8f1ae56aa1cbdf97f78c0da09480abe74478",
+        "access.mjs": "ccf672dea241b97cadbcd0fe83d6041907ccefb60b57e6e10c147c1c6fdcaf13",
+        "account-switch.mjs": "9dd5cc5a93f55ac74ba03f46e3435b0f8e7435569dc242ef597b764e42b0ef46",
+        "browser-options.checks.mjs": "155c1eb154e9def93a95cbf7885a37755f6d91af90c93bc9b60f9f176f7104a5",
+        "browser-options.mjs": "e092d543702eca00f24258a23b1ae97c4d280f857732dc2d262568913e01e052",
+        "call-soak.mjs": "3b22229dceafe10255d5f890ae1ecf95a69415bdbac1d94f73b041bf0fe8912d",
+        "chat-faults.mjs": "a4d258f8084e4ed842e408ebca19cbe178b636afdf2a32068e8232c16417d767",
+        "chat-workflows.mjs": "43135ff1960bf242e1bb12d44bde12b342d46fe89ee5534266d5d0f0995967a8",
+        "ci-fault-loop.checks.mjs": "8e7b89ba7616742111d5904792587cfefeadabee2f1d53c828f41625e7291136",
+        "ci-fault-prepare.checks.mjs": "b3481cdf182fc4e36d34f9b67ae828f5e115a55fcfd81233353744639affd653",
+        "ci-fault-prepare.mjs": "7be606568d420a1104cad28787fe3f8b072cda72eb265d714e6648c790b16e1d",
+        "core.mjs": "eb6a20d2eff0900fe96ca58aefb95e9f73745e5c05318e23829bcb8246080f9e",
+        "fault-run.mjs": "39e5af6912f692478599cc2b9c4acc21ede1a877db72b79f4d5b6d8991769438",
+        "fault-runtime.mjs": "423684dfaddfdd65ca3021e95f842616563bef30dd8d99c70d477e9098bf7fee",
+        "faults.checks.mjs": "9b013140e232dc052fe9b52755db20fb48267258b06fabec8ca546aae5afe11f",
+        "faults.mjs": "62fe2b0f812192bac2be6996049eec802db48097633c6367bd44018b6aa3a0d4",
+        "gateway-load.mjs": "c98da745c2ccc064829f71d1598a781eb1059177445c7c49dc7b5d07f7ed23d5",
+        "harness.checks.mjs": "62a37e83471f373cebc173769cee3f66067c98b6ef697fcb52ccb2cca6ff6f57",
+        "harness.mjs": "9e1b4a0085ab108212df125fda32e39630ced313be7033a04c874285e75929e8",
+        "held-renderer-native-control.mjs": "d84bae41bc25ad5ef50601b4b80136c866013d1bbdf20dc684ca992366b4d975",
+        "held-renderer.checks.mjs": "76dd565724a45727cd3182aea0c187fb399208aaa3207844253542e41488a38e",
+        "media-extra.checks.mjs": "b8659416016c2173e95c571b8e7b5a020e15dd7c91c4e8012915bc6d8f8c7f9e",
+        "media-extra.mjs": "696b7454647a14e9cce32b424c9f8b62884b65c405093ae87e02f77dc870ed52",
+        "media-lease-faults.mjs": "e3aefd71b583e5d4ab4a5109c3ed69a78352248392ec90a4f5308212fe8bae70",
+        "media-probe.checks.mjs": "be13c3567b6f4f5798636b494befc94b1c887fcf3e12c5f494cd15eb613ac769",
+        "media-runtime.checks.mjs": "4569eabb3d4339914cd48a0fdea42ad3feae89a827f67aa4923682ff72787a91",
+        "media-runtime.mjs": "d9bc66d17009162fd6f70eec24b227fda607e601fc7a0011a7fadae698795b67",
+        "media.mjs": "083c6288b7e9ccbf5fce635dd35a96a127c31c4afce02a244dd24d927227b963",
+        "membership-faults.mjs": "e155ee73a21bc27b7e8a75fe8d865e0309b35f8ad38ee77296da0db3a7a5b3a5",
+        "native-evaluate.checks.mjs": "4b24b3854f84b04ee5037ed2fdff7f02c7f490fefd6ff882bac9285877d8a5fd",
+        "native-evaluate.mjs": "89294f744f2c6a0d88e90975a944e96e49b2bf1c829ba377ccaa17a19b1564bf",
+        "native-finish.checks.mjs": "db9ed08e5bb99f1fb8b1a2d54a5cee9c32172a44e11a657d2dea2f4f987b56e6",
+        "probe.mjs": "a32ce3ff9aff1ca732272aacbfa0451330740b670a5f158da4b1b60433db7c1e",
+        "profiles.mjs": "ef20d6159fe61e04fda06c41314fbc2798e7ae7a7e5a5f57aa3f88569b0fe2aa",
+        "publisher-encoders.checks.mjs": "954693f0760fef6b728eaf191a23253dc3340c70e492ffa1eb07ad7e5b4cc323",
+        "publisher-encoders.mjs": "a1355812113b0e196d2253ff045ed0adef024511a507d85533987924a23b2a2b",
+        "raw-reader.py": "9aa984d1de3dcd9ec639b709a9d1e97feeb851614736a489000400f597277c6f",
+        "realtime-faults.mjs": "71626d7a152521529f35b1c192760b2ac809bdb56955473507362fd9fe74db62",
+        "redis-command.mjs": "b6d801eb136a072b8a00bc2982d16934bdc4cf90c06ef28b67be4ad5a160706b",
+        "rendered-frames.checks.mjs": "4e5bf1be45d1eb0914625d08b35623e48ccca80dc4c35337deff13dd63571780",
+        "run.mjs": "d2900e4f8ec085708a696c1266359c51476d794c6fa497d2c0449243f9747bcd",
+        "s3-object.mjs": "1bce9abf11b4aa30e0e62b6063eb283baed30894e8f816787c379dd43ea63168",
+        "search-context.mjs": "01237d331f1c706a420fd3711ed59f1ee981824370f0b2170b4f0e5801e2791c",
+        "selection.mjs": "b8a445a817880843e833510d92dfdaf3150fff643f4b4ae5aa6906cd3913f771",
+        "session-audio-control.mjs": "1374a94ca61814a26ebfc30159ee5e1b8b5f8a4e40f4ef29ffc507b8f547025a",
+        "storage-faults.mjs": "e0408378060689e8584c014f90e2d3771dc611b86bfce3bc5328a3b71ada01fb",
+        "teardown.checks.mjs": "22f033c552b92bbe9e20e06c3ad51d993ecc46dcf7799da4d6623448aab7a5b1",
+        "teardown.mjs": "5bb7d0d8e023d23ab242eb8ac8b77a722d0a38c60f5df6637b86938b97419e9a",
+        "webapp-accessibility.mjs": "794d57e23cd12c0182f993e95ddf03cdd1377654dbafa0d1d2f9e0f179cd096c",
+        "webapp-recovery.mjs": "2a46205e3de78c0b5fdbb6addb07b0b9209bfba616a9e5f500924e895f92c237"
+      },
+      "browser": {
+        "engine": "chromium",
+        "version": "153.0.8010.12",
+        "platform": "linux",
+        "node": "v26.8.2"
+      },
+      "actualBrowserExecutables": {
+        "/home/rafi/.cache/ms-playwright/chromium_headless_shell-1243/chrome-headless-shell-linux64/chrome-headless-shell": {
+          "sha256": "ded93a9c9a53a1ae040f08124badcca95c938e9d5015ff340c3b5538c41bf39e",
+          "firstObservedPid": 1130274
+        }
+      },
+      "gate": {
+        "passed": true,
+        "scope": "selected-cases",
+        "excluded": [
+          "live-watch-default-autoplay-no-mic",
+          "late-watch-after-30s",
+          "media-ws-capture-preserving-recovery",
+          "gateway-only-preserves-peer",
+          "offline-8s-no-new-capture-gesture",
+          "watch-navigation-channel-binding-global-controls",
+          "live-claim-exclusive-and-loser-not-published",
+          "20-live-start-stop-bounded-client-resources",
+          "cancelled-live-picker-keeps-voice-no-ghost",
+          "camera-screen-live-source-identity",
+          "autoplay-rejection-visible-click-retry",
+          "voice-only-duplex-single-source",
+          "forced-track-arrival-reorder-source-identity",
+          "rejected-native-sdp-keeps-voice-other-source-no-ghost",
+          "session-audio-mute-deafen-volume-playback-retry",
+          "audible-voice-mute-deafen-quality",
+          "sfu-publication-task-bounds",
+          "api-redis-outage-live-lease-recovery",
+          "packet-loss-audible-quality"
+        ],
+        "absent": [],
+        "completeAcceptance": false
+      },
+      "outcomes": [
+        {
+          "id": "isolated-app-fixture",
+          "status": "PASS",
+          "classification": "observed-pass",
+          "metrics": {
+            "accounts": 3,
+            "servers": 1,
+            "channels": 3,
+            "registration": "UI",
+            "invitation": "UI",
+            "services": "real API/Gateway; SFU joined only in media/access scenarios"
+          },
+          "at": "2026-10-06T07:37:25.819Z",
+          "durationMs": 6090,
+          "predecessors": []
+        },
+        {
+          "id": "active-call-responsive-controls",
+          "status": "PASS",
+          "classification": "observed-pass",
+          "metrics": {
+            "viewports": [
+              {
+                "viewport": {
+                  "width": 1487,
+                  "height": 1058
+                },
+                "sendUncovered": true,
+                "callControlsUncovered": true,
+                "dockAtBottom": true,
+                "overflow": false,
+                "channelsHeight": 673,
+                "navigationOpen": true,
+                "mobileMediaMatches": false,
+                "channelsMinHeight": "156px",
+                "perfTimestamp": 941.4000000059605
+              },
+              {
+                "viewport": {
+                  "width": 1366,
+                  "height": 600
+                },
+                "sendUncovered": true,
+                "callControlsUncovered": true,
+                "dockAtBottom": true,
+                "overflow": false,
+                "channelsHeight": 215,
+                "navigationOpen": true,
+                "mobileMediaMatches": false,
+                "channelsMinHeight": "156px",
+                "perfTimestamp": 990.3000000044703
+              },
+              {
+                "viewport": {
+                  "width": 390,
+                  "height": 844
+                },
+                "sendUncovered": true,
+                "callControlsUncovered": true,
+                "dockAtBottom": true,
+                "overflow": false,
+                "channelsHeight": 0,
+                "navigationOpen": false,
+                "mobileMediaMatches": true,
+                "channelsMinHeight": "156px",
+                "perfTimestamp": 1227
+              },
+              {
+                "viewport": {
+                  "width": 780,
+                  "height": 390
+                },
+                "sendUncovered": true,
+                "callControlsUncovered": true,
+                "dockAtBottom": true,
+                "overflow": false,
+                "channelsHeight": 0,
+                "navigationOpen": false,
+                "mobileMediaMatches": true,
+                "channelsMinHeight": "156px",
+                "perfTimestamp": 1495.2000000029802
+              },
+              {
+                "viewport": {
+                  "width": 844,
+                  "height": 390
+                },
+                "sendUncovered": true,
+                "callControlsUncovered": true,
+                "dockAtBottom": true,
+                "overflow": false,
+                "channelsHeight": 156,
+                "navigationOpen": true,
+                "mobileMediaMatches": false,
+                "channelsMinHeight": "156px",
+                "perfTimestamp": 1567.1000000014901
+              }
+            ],
+            "viewportObservations": [
+              {
+                "viewport": {
+                  "width": 1487,
+                  "height": 1058
+                },
+                "observations": [
+                  {
+                    "sendUncovered": true,
+                    "callControlsUncovered": true,
+                    "dockAtBottom": true,
+                    "overflow": false,
+                    "channelsHeight": 673,
+                    "navigationOpen": true,
+                    "mobileMediaMatches": false,
+                    "channelsMinHeight": "156px",
+                    "perfTimestamp": 941.4000000059605
+                  }
+                ],
+                "observationsDropped": 0
+              },
+              {
+                "viewport": {
+                  "width": 1366,
+                  "height": 600
+                },
+                "observations": [
+                  {
+                    "sendUncovered": true,
+                    "callControlsUncovered": true,
+                    "dockAtBottom": true,
+                    "overflow": false,
+                    "channelsHeight": 215,
+                    "navigationOpen": true,
+                    "mobileMediaMatches": false,
+                    "channelsMinHeight": "156px",
+                    "perfTimestamp": 990.3000000044703
+                  }
+                ],
+                "observationsDropped": 0
+              },
+              {
+                "viewport": {
+                  "width": 390,
+                  "height": 844
+                },
+                "observations": [
+                  {
+                    "sendUncovered": false,
+                    "callControlsUncovered": true,
+                    "dockAtBottom": true,
+                    "overflow": false,
+                    "channelsHeight": 446,
+                    "navigationOpen": true,
+                    "mobileMediaMatches": true,
+                    "channelsMinHeight": "156px",
+                    "perfTimestamp": 1025
+                  },
+                  {
+                    "sendUncovered": true,
+                    "callControlsUncovered": true,
+                    "dockAtBottom": true,
+                    "overflow": false,
+                    "channelsHeight": 0,
+                    "navigationOpen": false,
+                    "mobileMediaMatches": true,
+                    "channelsMinHeight": "156px",
+                    "perfTimestamp": 1227
+                  }
+                ],
+                "observationsDropped": 0
+              },
+              {
+                "viewport": {
+                  "width": 780,
+                  "height": 390
+                },
+                "observations": [
+                  {
+                    "sendUncovered": false,
+                    "callControlsUncovered": true,
+                    "dockAtBottom": true,
+                    "overflow": false,
+                    "channelsHeight": 0,
+                    "navigationOpen": false,
+                    "mobileMediaMatches": true,
+                    "channelsMinHeight": "156px",
+                    "perfTimestamp": 1292.5
+                  },
+                  {
+                    "sendUncovered": true,
+                    "callControlsUncovered": true,
+                    "dockAtBottom": true,
+                    "overflow": false,
+                    "channelsHeight": 0,
+                    "navigationOpen": false,
+                    "mobileMediaMatches": true,
+                    "channelsMinHeight": "156px",
+                    "perfTimestamp": 1495.2000000029802
+                  }
+                ],
+                "observationsDropped": 0
+              },
+              {
+                "viewport": {
+                  "width": 844,
+                  "height": 390
+                },
+                "observations": [
+                  {
+                    "sendUncovered": true,
+                    "callControlsUncovered": true,
+                    "dockAtBottom": true,
+                    "overflow": false,
+                    "channelsHeight": 156,
+                    "navigationOpen": true,
+                    "mobileMediaMatches": false,
+                    "channelsMinHeight": "156px",
+                    "perfTimestamp": 1567.1000000014901
+                  }
+                ],
+                "observationsDropped": 0
+              }
+            ]
+          },
+          "at": "2026-10-06T07:37:31.914Z",
+          "durationMs": 1618,
+          "predecessors": []
+        }
+      ],
+      "cleanup": [
+        {
+          "target": "owned-test-server",
+          "status": 204,
+          "stage": "complete",
+          "statuses": {
+            "login": 200,
+            "delete": 204,
+            "logout": 200
+          }
+        }
+      ],
+      "runtimeBeforeAfterIdentical": true,
+      "runtimeBeforeSha256": "dad8d4a62e981929cd52572ecaa57101b3b8589024a27cb6eb77f7f7698ef1dc",
+      "runtimeAfterSha256": "dad8d4a62e981929cd52572ecaa57101b3b8589024a27cb6eb77f7f7698ef1dc",
+      "desktop844FirstProbeAlreadyVisible": true,
+      "desktopZeroToVisibleTransitionObserved": false,
+      "productCauseProven": false
+    },
+    "focused-responsive-until-firefox": {
+      "rawReportPath": "/tmp/gelabber-v04-media-resume-20261006-o84mmkqn/focused-responsive-until-firefox/report.json",
+      "rawReportSha256": "ff7f027acdb943678aafeacccb423520e29d24c7587409d800333e063a70b64a",
+      "profile": null,
+      "requestedSuite": "media",
+      "selectedCases": [
+        "active-call-responsive-controls"
+      ],
+      "testFilesDirty": true,
+      "testSourceHashes": {
+        "access-native.checks.mjs": "f1bab755ba97f26042ba574ddbdf8f1ae56aa1cbdf97f78c0da09480abe74478",
+        "access.mjs": "ccf672dea241b97cadbcd0fe83d6041907ccefb60b57e6e10c147c1c6fdcaf13",
+        "account-switch.mjs": "9dd5cc5a93f55ac74ba03f46e3435b0f8e7435569dc242ef597b764e42b0ef46",
+        "browser-options.checks.mjs": "155c1eb154e9def93a95cbf7885a37755f6d91af90c93bc9b60f9f176f7104a5",
+        "browser-options.mjs": "e092d543702eca00f24258a23b1ae97c4d280f857732dc2d262568913e01e052",
+        "call-soak.mjs": "3b22229dceafe10255d5f890ae1ecf95a69415bdbac1d94f73b041bf0fe8912d",
+        "chat-faults.mjs": "a4d258f8084e4ed842e408ebca19cbe178b636afdf2a32068e8232c16417d767",
+        "chat-workflows.mjs": "43135ff1960bf242e1bb12d44bde12b342d46fe89ee5534266d5d0f0995967a8",
+        "ci-fault-loop.checks.mjs": "8e7b89ba7616742111d5904792587cfefeadabee2f1d53c828f41625e7291136",
+        "ci-fault-prepare.checks.mjs": "b3481cdf182fc4e36d34f9b67ae828f5e115a55fcfd81233353744639affd653",
+        "ci-fault-prepare.mjs": "7be606568d420a1104cad28787fe3f8b072cda72eb265d714e6648c790b16e1d",
+        "core.mjs": "eb6a20d2eff0900fe96ca58aefb95e9f73745e5c05318e23829bcb8246080f9e",
+        "fault-run.mjs": "39e5af6912f692478599cc2b9c4acc21ede1a877db72b79f4d5b6d8991769438",
+        "fault-runtime.mjs": "423684dfaddfdd65ca3021e95f842616563bef30dd8d99c70d477e9098bf7fee",
+        "faults.checks.mjs": "9b013140e232dc052fe9b52755db20fb48267258b06fabec8ca546aae5afe11f",
+        "faults.mjs": "62fe2b0f812192bac2be6996049eec802db48097633c6367bd44018b6aa3a0d4",
+        "gateway-load.mjs": "c98da745c2ccc064829f71d1598a781eb1059177445c7c49dc7b5d07f7ed23d5",
+        "harness.checks.mjs": "62a37e83471f373cebc173769cee3f66067c98b6ef697fcb52ccb2cca6ff6f57",
+        "harness.mjs": "9e1b4a0085ab108212df125fda32e39630ced313be7033a04c874285e75929e8",
+        "held-renderer-native-control.mjs": "d84bae41bc25ad5ef50601b4b80136c866013d1bbdf20dc684ca992366b4d975",
+        "held-renderer.checks.mjs": "76dd565724a45727cd3182aea0c187fb399208aaa3207844253542e41488a38e",
+        "media-extra.checks.mjs": "b8659416016c2173e95c571b8e7b5a020e15dd7c91c4e8012915bc6d8f8c7f9e",
+        "media-extra.mjs": "696b7454647a14e9cce32b424c9f8b62884b65c405093ae87e02f77dc870ed52",
+        "media-lease-faults.mjs": "e3aefd71b583e5d4ab4a5109c3ed69a78352248392ec90a4f5308212fe8bae70",
+        "media-probe.checks.mjs": "be13c3567b6f4f5798636b494befc94b1c887fcf3e12c5f494cd15eb613ac769",
+        "media-runtime.checks.mjs": "4569eabb3d4339914cd48a0fdea42ad3feae89a827f67aa4923682ff72787a91",
+        "media-runtime.mjs": "d9bc66d17009162fd6f70eec24b227fda607e601fc7a0011a7fadae698795b67",
+        "media.mjs": "083c6288b7e9ccbf5fce635dd35a96a127c31c4afce02a244dd24d927227b963",
+        "membership-faults.mjs": "e155ee73a21bc27b7e8a75fe8d865e0309b35f8ad38ee77296da0db3a7a5b3a5",
+        "native-evaluate.checks.mjs": "4b24b3854f84b04ee5037ed2fdff7f02c7f490fefd6ff882bac9285877d8a5fd",
+        "native-evaluate.mjs": "89294f744f2c6a0d88e90975a944e96e49b2bf1c829ba377ccaa17a19b1564bf",
+        "native-finish.checks.mjs": "db9ed08e5bb99f1fb8b1a2d54a5cee9c32172a44e11a657d2dea2f4f987b56e6",
+        "probe.mjs": "a32ce3ff9aff1ca732272aacbfa0451330740b670a5f158da4b1b60433db7c1e",
+        "profiles.mjs": "ef20d6159fe61e04fda06c41314fbc2798e7ae7a7e5a5f57aa3f88569b0fe2aa",
+        "publisher-encoders.checks.mjs": "954693f0760fef6b728eaf191a23253dc3340c70e492ffa1eb07ad7e5b4cc323",
+        "publisher-encoders.mjs": "a1355812113b0e196d2253ff045ed0adef024511a507d85533987924a23b2a2b",
+        "raw-reader.py": "9aa984d1de3dcd9ec639b709a9d1e97feeb851614736a489000400f597277c6f",
+        "realtime-faults.mjs": "71626d7a152521529f35b1c192760b2ac809bdb56955473507362fd9fe74db62",
+        "redis-command.mjs": "b6d801eb136a072b8a00bc2982d16934bdc4cf90c06ef28b67be4ad5a160706b",
+        "rendered-frames.checks.mjs": "4e5bf1be45d1eb0914625d08b35623e48ccca80dc4c35337deff13dd63571780",
+        "run.mjs": "d2900e4f8ec085708a696c1266359c51476d794c6fa497d2c0449243f9747bcd",
+        "s3-object.mjs": "1bce9abf11b4aa30e0e62b6063eb283baed30894e8f816787c379dd43ea63168",
+        "search-context.mjs": "01237d331f1c706a420fd3711ed59f1ee981824370f0b2170b4f0e5801e2791c",
+        "selection.mjs": "b8a445a817880843e833510d92dfdaf3150fff643f4b4ae5aa6906cd3913f771",
+        "session-audio-control.mjs": "1374a94ca61814a26ebfc30159ee5e1b8b5f8a4e40f4ef29ffc507b8f547025a",
+        "storage-faults.mjs": "e0408378060689e8584c014f90e2d3771dc611b86bfce3bc5328a3b71ada01fb",
+        "teardown.checks.mjs": "22f033c552b92bbe9e20e06c3ad51d993ecc46dcf7799da4d6623448aab7a5b1",
+        "teardown.mjs": "5bb7d0d8e023d23ab242eb8ac8b77a722d0a38c60f5df6637b86938b97419e9a",
+        "webapp-accessibility.mjs": "794d57e23cd12c0182f993e95ddf03cdd1377654dbafa0d1d2f9e0f179cd096c",
+        "webapp-recovery.mjs": "2a46205e3de78c0b5fdbb6addb07b0b9209bfba616a9e5f500924e895f92c237"
+      },
+      "browser": {
+        "engine": "firefox",
+        "version": "155.0",
+        "platform": "linux",
+        "node": "v26.8.2"
+      },
+      "actualBrowserExecutables": {
+        "/home/rafi/.cache/ms-playwright/firefox-1543/firefox/firefox": {
+          "sha256": "062272ac4d851eade5b75db2dc7c14569d96cb3ca38f949337cdc1b74367e35b",
+          "firstObservedPid": 1130865
+        }
+      },
+      "gate": {
+        "passed": true,
+        "scope": "selected-cases",
+        "excluded": [
+          "live-watch-default-autoplay-no-mic",
+          "late-watch-after-30s",
+          "media-ws-capture-preserving-recovery",
+          "gateway-only-preserves-peer",
+          "offline-8s-no-new-capture-gesture",
+          "watch-navigation-channel-binding-global-controls",
+          "live-claim-exclusive-and-loser-not-published",
+          "20-live-start-stop-bounded-client-resources",
+          "cancelled-live-picker-keeps-voice-no-ghost",
+          "camera-screen-live-source-identity",
+          "autoplay-rejection-visible-click-retry",
+          "voice-only-duplex-single-source",
+          "forced-track-arrival-reorder-source-identity",
+          "rejected-native-sdp-keeps-voice-other-source-no-ghost",
+          "session-audio-mute-deafen-volume-playback-retry",
+          "audible-voice-mute-deafen-quality",
+          "sfu-publication-task-bounds",
+          "api-redis-outage-live-lease-recovery",
+          "packet-loss-audible-quality"
+        ],
+        "absent": [],
+        "completeAcceptance": false
+      },
+      "outcomes": [
+        {
+          "id": "isolated-app-fixture",
+          "status": "PASS",
+          "classification": "observed-pass",
+          "metrics": {
+            "accounts": 3,
+            "servers": 1,
+            "channels": 3,
+            "registration": "UI",
+            "invitation": "UI",
+            "services": "real API/Gateway; SFU joined only in media/access scenarios"
+          },
+          "at": "2026-10-06T07:37:40.919Z",
+          "durationMs": 9024,
+          "predecessors": []
+        },
+        {
+          "id": "active-call-responsive-controls",
+          "status": "PASS",
+          "classification": "observed-pass",
+          "metrics": {
+            "viewports": [
+              {
+                "viewport": {
+                  "width": 1487,
+                  "height": 1058
+                },
+                "sendUncovered": true,
+                "callControlsUncovered": true,
+                "dockAtBottom": true,
+                "overflow": false,
+                "channelsHeight": 673,
+                "navigationOpen": true,
+                "mobileMediaMatches": false,
+                "channelsMinHeight": "156px",
+                "perfTimestamp": 1000
+              },
+              {
+                "viewport": {
+                  "width": 1366,
+                  "height": 600
+                },
+                "sendUncovered": true,
+                "callControlsUncovered": true,
+                "dockAtBottom": true,
+                "overflow": false,
+                "channelsHeight": 215,
+                "navigationOpen": true,
+                "mobileMediaMatches": false,
+                "channelsMinHeight": "156px",
+                "perfTimestamp": 1084
+              },
+              {
+                "viewport": {
+                  "width": 390,
+                  "height": 844
+                },
+                "sendUncovered": true,
+                "callControlsUncovered": true,
+                "dockAtBottom": true,
+                "overflow": false,
+                "channelsHeight": 0,
+                "navigationOpen": false,
+                "mobileMediaMatches": true,
+                "channelsMinHeight": "156px",
+                "perfTimestamp": 1213
+              },
+              {
+                "viewport": {
+                  "width": 780,
+                  "height": 390
+                },
+                "sendUncovered": true,
+                "callControlsUncovered": true,
+                "dockAtBottom": true,
+                "overflow": false,
+                "channelsHeight": 0,
+                "navigationOpen": false,
+                "mobileMediaMatches": true,
+                "channelsMinHeight": "156px",
+                "perfTimestamp": 1381
+              },
+              {
+                "viewport": {
+                  "width": 844,
+                  "height": 390
+                },
+                "sendUncovered": true,
+                "callControlsUncovered": true,
+                "dockAtBottom": true,
+                "overflow": false,
+                "channelsHeight": 156,
+                "navigationOpen": true,
+                "mobileMediaMatches": false,
+                "channelsMinHeight": "156px",
+                "perfTimestamp": 1539
+              }
+            ],
+            "viewportObservations": [
+              {
+                "viewport": {
+                  "width": 1487,
+                  "height": 1058
+                },
+                "observations": [
+                  {
+                    "sendUncovered": true,
+                    "callControlsUncovered": true,
+                    "dockAtBottom": true,
+                    "overflow": false,
+                    "channelsHeight": 673,
+                    "navigationOpen": true,
+                    "mobileMediaMatches": false,
+                    "channelsMinHeight": "156px",
+                    "perfTimestamp": 1000
+                  }
+                ],
+                "observationsDropped": 0
+              },
+              {
+                "viewport": {
+                  "width": 1366,
+                  "height": 600
+                },
+                "observations": [
+                  {
+                    "sendUncovered": true,
+                    "callControlsUncovered": true,
+                    "dockAtBottom": true,
+                    "overflow": false,
+                    "channelsHeight": 215,
+                    "navigationOpen": true,
+                    "mobileMediaMatches": false,
+                    "channelsMinHeight": "156px",
+                    "perfTimestamp": 1084
+                  }
+                ],
+                "observationsDropped": 0
+              },
+              {
+                "viewport": {
+                  "width": 390,
+                  "height": 844
+                },
+                "observations": [
+                  {
+                    "sendUncovered": true,
+                    "callControlsUncovered": true,
+                    "dockAtBottom": true,
+                    "overflow": false,
+                    "channelsHeight": 0,
+                    "navigationOpen": false,
+                    "mobileMediaMatches": true,
+                    "channelsMinHeight": "156px",
+                    "perfTimestamp": 1213
+                  }
+                ],
+                "observationsDropped": 0
+              },
+              {
+                "viewport": {
+                  "width": 780,
+                  "height": 390
+                },
+                "observations": [
+                  {
+                    "sendUncovered": true,
+                    "callControlsUncovered": true,
+                    "dockAtBottom": true,
+                    "overflow": false,
+                    "channelsHeight": 0,
+                    "navigationOpen": false,
+                    "mobileMediaMatches": true,
+                    "channelsMinHeight": "156px",
+                    "perfTimestamp": 1381
+                  }
+                ],
+                "observationsDropped": 0
+              },
+              {
+                "viewport": {
+                  "width": 844,
+                  "height": 390
+                },
+                "observations": [
+                  {
+                    "sendUncovered": true,
+                    "callControlsUncovered": true,
+                    "dockAtBottom": true,
+                    "overflow": false,
+                    "channelsHeight": 156,
+                    "navigationOpen": true,
+                    "mobileMediaMatches": false,
+                    "channelsMinHeight": "156px",
+                    "perfTimestamp": 1539
+                  }
+                ],
+                "observationsDropped": 0
+              }
+            ]
+          },
+          "at": "2026-10-06T07:37:49.946Z",
+          "durationMs": 1646,
+          "predecessors": []
+        }
+      ],
+      "cleanup": [
+        {
+          "target": "owned-test-server",
+          "status": 204,
+          "stage": "complete",
+          "statuses": {
+            "login": 200,
+            "delete": 204,
+            "logout": 200
+          }
+        }
+      ],
+      "runtimeBeforeAfterIdentical": true,
+      "runtimeBeforeSha256": "dad8d4a62e981929cd52572ecaa57101b3b8589024a27cb6eb77f7f7698ef1dc",
+      "runtimeAfterSha256": "dad8d4a62e981929cd52572ecaa57101b3b8589024a27cb6eb77f7f7698ef1dc",
+      "desktop844FirstProbeAlreadyVisible": true,
+      "desktopZeroToVisibleTransitionObserved": false,
+      "productCauseProven": false
+    }
+  },
+  "optionalFullReactivationDiagnostic": {
+    "run": false,
+    "patchApplied": false,
+    "pulseApplied": false,
+    "reason": "Both new uninstrumented original Media15 browser profiles passed, including full Live20; no current failed gate for the evidence-dependent diagnostic.",
+    "efficacy": "UNVERIFIED",
+    "historicalCause": "UNKNOWN"
+  },
+  "oneHour": {
+    "run": false,
+    "scope": "Explicitly excluded by user on2026-10-06; no3600s run started."
+  },
+  "preparedResponsiveHarnessFix": {
+    "manifest": {
+      "base": "76931202f0fa35c45fa1d90efb0f0170d9e6a765",
+      "file": "web/scripts/e2e/media.mjs",
+      "patchPath": "/tmp/gelabber-v04-media-resume-20261006-o84mmkqn/responsive-until-fix.patch",
+      "patchSha256": "ddd3b26578065e52fcb084e9ee2171de20a214c2548312f631e3c0df64293497",
+      "sourceSha256": "083c6288b7e9ccbf5fce635dd35a96a127c31c4afce02a244dd24d927227b963",
+      "remoteReference": "origin/codex/v04-viewer-video-layers",
+      "remoteSourceSha": "b00db67dae0632486e6c8d8f1bb9b67c58372dcd",
+      "remoteOriginalResponsiveFunctionIdentical": true,
+      "samePatchRemoteApplyCheck": true,
+      "scope": "Test-only desktop channelsHeight>=156 joins existing same10s until; original final assertion retained, same200ms poll. One existing native evaluate per probe adds read-only open/media-query/min-height/perf timestamp; bounded64 observations perviewport in PASS and CheckFailure/NativeInterfaceFailure metrics. No product/pin/budget changes."
+    },
+    "staticChecks": {
+      "nodeSyntax": "PASS",
+      "targetedESLint": "PASS",
+      "targetedPrettier": "PASS",
+      "gitDiffCheck": "PASS"
+    },
+    "executed": true,
+    "awaitingIndependentRootAck": false,
+    "rootIndependentAckBeforeExecution": true,
+    "sourceFreezeImmediatelyBeforeExecutionAndAfterBothRuns": true,
+    "preciseDesktopTransitionProven": false
+  }
+}

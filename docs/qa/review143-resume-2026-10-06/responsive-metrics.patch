@@ -1,0 +1,16 @@
+diff --git i/web/scripts/e2e/media.mjs w/web/scripts/e2e/media.mjs
+index 8714c09..e43c2ba 100644
+--- i/web/scripts/e2e/media.mjs
++++ w/web/scripts/e2e/media.mjs
+@@ -618,7 +618,10 @@ export async function mediaScenarios(h, f) {
+         if (viewport.width <= 800) {
+           await page.getByRole("button", { name: "Navigation öffnen" }).click();
+         } else {
+-          check(metrics.channelsHeight >= 156, "channel-navigation-collapsed");
++          check(metrics.channelsHeight >= 156, "channel-navigation-collapsed", {
++            viewport,
++            ...metrics,
++          });
+         }
+         // Scroll to the owner's controls, including on short landscape drawers.
+         await page

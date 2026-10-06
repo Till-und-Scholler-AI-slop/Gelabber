@@ -1,0 +1,177 @@
+{
+  "scope": "Readonly post-FAIL snapshot; original test finally already restored its initial viewport, so this is not an image of the exact failed assertion frame.",
+  "originalFailure": {
+    "id": "active-call-responsive-controls",
+    "status": "FAIL",
+    "reason": "channel-navigation-collapsed",
+    "classification": "unconfirmed-failure",
+    "site": "harness.mjs:27:25",
+    "metrics": {
+      "viewport": {
+        "width": 844,
+        "height": 390
+      },
+      "sendUncovered": true,
+      "callControlsUncovered": true,
+      "dockAtBottom": true,
+      "overflow": false,
+      "channelsHeight": 0
+    },
+    "at": "2026-10-06T07:33:22.475Z",
+    "durationMs": 1402,
+    "predecessors": []
+  },
+  "postFailureCurrentViewport": {
+    "width": 1280,
+    "height": 720
+  },
+  "state": {
+    "at": 1791272003878,
+    "viewport": {
+      "width": 1280,
+      "height": 720
+    },
+    "mobileMediaMatches": false,
+    "lists": [
+      {
+        "element": {
+          "tag": "DIV",
+          "className": "sidebar-list-scroll",
+          "display": "block",
+          "visibility": "visible",
+          "minHeight": "156px",
+          "maxHeight": "none",
+          "height": "auto",
+          "width": "auto",
+          "rect": {
+            "x": 0,
+            "y": 0,
+            "width": 0,
+            "height": 0
+          },
+          "open": null,
+          "role": null,
+          "ariaModal": null
+        },
+        "parents": [
+          {
+            "tag": "ASIDE",
+            "className": "channel-sidebar",
+            "display": "flex",
+            "visibility": "visible",
+            "minHeight": "0px",
+            "maxHeight": "none",
+            "height": "100%",
+            "width": "224px",
+            "rect": {
+              "x": 0,
+              "y": 0,
+              "width": 0,
+              "height": 0
+            },
+            "open": null,
+            "role": null,
+            "ariaModal": null
+          },
+          {
+            "tag": "DIV",
+            "className": "workspace-drawer-body",
+            "display": "flex",
+            "visibility": "visible",
+            "minHeight": "0px",
+            "maxHeight": "none",
+            "height": "auto",
+            "width": "auto",
+            "rect": {
+              "x": 0,
+              "y": 0,
+              "width": 0,
+              "height": 0
+            },
+            "open": null,
+            "role": null,
+            "ariaModal": null
+          },
+          {
+            "tag": "DIALOG",
+            "className": "workspace-drawer workspace-navigation",
+            "display": "none",
+            "visibility": "visible",
+            "minHeight": "0px",
+            "maxHeight": "none",
+            "height": "100%",
+            "width": "288px",
+            "rect": {
+              "x": 0,
+              "y": 0,
+              "width": 0,
+              "height": 0
+            },
+            "open": false,
+            "role": null,
+            "ariaModal": null
+          },
+          {
+            "tag": "DIV",
+            "className": "workspace",
+            "display": "flex",
+            "visibility": "visible",
+            "minHeight": "0px",
+            "maxHeight": "none",
+            "height": "720px",
+            "width": "1280px",
+            "rect": {
+              "x": 0,
+              "y": 0,
+              "width": 1280,
+              "height": 720
+            },
+            "open": null,
+            "role": null,
+            "ariaModal": null
+          },
+          {
+            "tag": "DIV",
+            "className": "",
+            "display": "block",
+            "visibility": "visible",
+            "minHeight": "0px",
+            "maxHeight": "none",
+            "height": "720px",
+            "width": "1280px",
+            "rect": {
+              "x": 0,
+              "y": 0,
+              "width": 1280,
+              "height": 720
+            },
+            "open": null,
+            "role": null,
+            "ariaModal": null
+          }
+        ]
+      }
+    ],
+    "navigation": [
+      {
+        "tag": "DIALOG",
+        "className": "workspace-drawer workspace-navigation",
+        "display": "none",
+        "visibility": "visible",
+        "minHeight": "0px",
+        "maxHeight": "none",
+        "height": "100%",
+        "width": "288px",
+        "rect": {
+          "x": 0,
+          "y": 0,
+          "width": 0,
+          "height": 0
+        },
+        "open": false,
+        "role": null,
+        "ariaModal": null
+      }
+    ]
+  }
+}

@@ -1,0 +1,8 @@
+{
+  "file": "web/scripts/e2e/media.mjs",
+  "base": "76931202f0fa35c45fa1d90efb0f0170d9e6a765",
+  "patchPath": "/tmp/gelabber-v04-media-resume-20261006-o84mmkqn/responsive-metrics.patch",
+  "patchSha256": "8b5acbea702c0797ed989d2054347f78610b1415faeabd76895ecd261cd4cdec",
+  "sourceSha256": "da3197c79f6b269c9fd8686c1f6dda1f30e52a57625f6f57602b2a3cc87b3b74",
+  "scope": "Only CheckFailure.metrics third argument; same channelsHeight>=156 assertion and untouched10s until budget; no other diagnostic patches."
+}

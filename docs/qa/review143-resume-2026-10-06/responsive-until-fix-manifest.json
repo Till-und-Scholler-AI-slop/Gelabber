@@ -1,0 +1,12 @@
+{
+  "base": "76931202f0fa35c45fa1d90efb0f0170d9e6a765",
+  "file": "web/scripts/e2e/media.mjs",
+  "patchPath": "/tmp/gelabber-v04-media-resume-20261006-o84mmkqn/responsive-until-fix.patch",
+  "patchSha256": "ddd3b26578065e52fcb084e9ee2171de20a214c2548312f631e3c0df64293497",
+  "sourceSha256": "083c6288b7e9ccbf5fce635dd35a96a127c31c4afce02a244dd24d927227b963",
+  "remoteReference": "origin/codex/v04-viewer-video-layers",
+  "remoteSourceSha": "b00db67dae0632486e6c8d8f1bb9b67c58372dcd",
+  "remoteOriginalResponsiveFunctionIdentical": true,
+  "samePatchRemoteApplyCheck": true,
+  "scope": "Test-only desktop channelsHeight>=156 joins existing same10s until; original final assertion retained, same200ms poll. One existing native evaluate per probe adds read-only open/media-query/min-height/perf timestamp; bounded64 observations perviewport in PASS and CheckFailure/NativeInterfaceFailure metrics. No product/pin/budget changes."
+}
