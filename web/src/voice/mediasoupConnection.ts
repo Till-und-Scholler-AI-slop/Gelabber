@@ -131,6 +131,7 @@ export class MediasoupConnection implements MediaConnection {
   private sendChain: Promise<unknown> = Promise.resolve();
   private sendPending = 0;
   private consumePending = new Set<string>();
+  private layerCursor = 0;
   private sendUses = 0;
   private recvUses = 0;
   private compactingSend = false;
@@ -458,7 +459,7 @@ export class MediasoupConnection implements MediaConnection {
     if (
       !this.compactingSend &&
       this.send &&
-      this.sendUses >= Math.max(4, this.publications.size + 1)
+      this.needsCompaction(this.sendUses, this.publications.size)
     ) {
       await this.compactSend();
       previous = this.publications.get(input.kind);
@@ -637,6 +638,14 @@ export class MediasoupConnection implements MediaConnection {
 
   /** The pinned Firefox handler does not reuse stopped m-lines. Compact through
    * public transports, closing the old native PC before creating its replacement. */
+  private needsCompaction(uses: number, active: number): boolean {
+    const dead = uses - active;
+    return (
+      Boolean(this.device?.handlerName?.startsWith("Firefox")) &&
+      dead >= 16 &&
+      dead > 2 * active
+    );
+  }
   private async compactSend(): Promise<void> {
     const old = this.send;
     if (!old) return;
@@ -750,7 +759,7 @@ export class MediasoupConnection implements MediaConnection {
   async restartIce(direction: "send" | "recv"): Promise<void> {
     this.live();
     const transport = direction === "send" ? this.send : this.recv;
-    if (!transport) return;
+    if (!transport) throw new MediaError("transport_missing");
     const params = await this.options.request("restartIce", {
       transportId: transport.id,
     });
@@ -762,8 +771,8 @@ export class MediasoupConnection implements MediaConnection {
   private fail(error: Error, direction: "send" | "recv"): void {
     if (this.closed) return;
     this.options.onError(error);
-    this.options.onTransportState(direction, "failed");
     this.close();
+    this.options.onTransportState(direction, "failed");
   }
   private rememberClosed(source: {
     consumerId: string;
@@ -806,8 +815,9 @@ export class MediasoupConnection implements MediaConnection {
     }
     if ("consumerId" in event && this.removed.has(consumerKey(event))) return;
     if (!this.recv) {
-      if (this.queued.length < 64) this.queued.push(event);
-      else this.fail(new MediaError("event_overflow"), "recv");
+      if (this.queueEvent(event)) {
+        /* queued or coalesced */
+      } else this.fail(new MediaError("event_overflow"), "recv");
       return;
     }
     if (event.op === "consumer") {
@@ -818,7 +828,7 @@ export class MediasoupConnection implements MediaConnection {
         this.removed.has(key)
       )
         return;
-      if (this.consumePending.size >= 64) {
+      if (this.consumePending.size >= 1024) {
         this.fail(new MediaError("event_overflow"), "recv");
         return;
       }
@@ -831,8 +841,9 @@ export class MediasoupConnection implements MediaConnection {
     }
     const held = this.received.get(event.consumerId);
     if (!held) {
-      if (this.queued.length < 64) this.queued.push(event);
-      else this.fail(new MediaError("event_overflow"), "recv");
+      if (this.queueEvent(event)) {
+        /* queued or coalesced */
+      } else this.fail(new MediaError("event_overflow"), "recv");
       return;
     }
     if (held.generation !== event.generation) return;
@@ -855,6 +866,23 @@ export class MediasoupConnection implements MediaConnection {
       });
     }
   }
+  private queueEvent(event: MediaEvent): boolean {
+    if ("consumerId" in event) {
+      const index = this.queued.findIndex(
+        (queued) =>
+          queued.op === event.op &&
+          "consumerId" in queued &&
+          consumerKey(queued) === consumerKey(event),
+      );
+      if (index >= 0) {
+        this.queued[index] = event;
+        return true;
+      }
+    }
+    if (this.queued.length >= 3 * 1024) return false;
+    this.queued.push(event);
+    return true;
+  }
   private async consume(event: ConsumerAnnouncement): Promise<void> {
     if (
       this.closed ||
@@ -866,7 +894,7 @@ export class MediasoupConnection implements MediaConnection {
     const transport = this.recv;
     if (!transport) return;
     try {
-      if (this.recvUses >= Math.max(4, this.received.size + 1)) {
+      if (this.needsCompaction(this.recvUses, this.received.size)) {
         this.rememberClosed(event);
         await this.compactRecv();
         return;
@@ -1007,12 +1035,22 @@ export class MediasoupConnection implements MediaConnection {
           report: () => consumer.getStats(),
         });
     }
-    const reports = await Promise.all(
-      scopes.map(async ({ transport, direction, report }) => ({
-        id: transport.id,
-        rows: statsEntriesFromReport(await this.sdk(report, direction, false)),
-      })),
-    );
+    const reports: Array<{ id: string; rows: StatsEntry[] }> = [];
+    // Diagnostic collection must not consume the SDK budget needed for control.
+    for (let offset = 0; offset < scopes.length; offset += 16) {
+      reports.push(
+        ...(await Promise.all(
+          scopes
+            .slice(offset, offset + 16)
+            .map(async ({ transport, direction, report }) => ({
+              id: transport.id,
+              rows: statsEntriesFromReport(
+                await this.sdk(report, direction, false),
+              ),
+            })),
+        )),
+      );
+    }
     this.live();
     const qualified = new Map<string, StatsEntry>();
     for (const { id, rows } of reports)
@@ -1033,9 +1071,16 @@ export class MediasoupConnection implements MediaConnection {
     this.samplingLayers = true;
     try {
       const sources = this.consumers().filter((s) => s.kind === "video");
+      const ordered = sources
+        .slice(this.layerCursor)
+        .concat(sources.slice(0, this.layerCursor));
+      const sampled = ordered.slice(0, 32);
+      this.layerCursor = sources.length
+        ? (this.layerCursor + 32) % sources.length
+        : 0;
       const rows = (
         await Promise.all(
-          sources.map(async (s) =>
+          sampled.map(async (s) =>
             statsEntriesFromReport(
               await this.sdk(() => s.consumer.getStats(), "recv", false),
             ),
@@ -1052,7 +1097,8 @@ export class MediasoupConnection implements MediaConnection {
           ssrc: s.consumer.rtpParameters.encodings?.[0]?.ssrc,
         })),
         (data) => {
-          void this.options.request("q", data).catch(this.options.onError);
+          // Advisory layer hints may race a remote source closing.
+          void this.options.request("q", data).catch(() => {});
         },
       );
     } catch {

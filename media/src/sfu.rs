@@ -1,6 +1,7 @@
 //! Own product authority/control; mediasoup is the sole production media engine.
 //! Graph locks only reserve/commit. Native awaits use per-resource gates so a
 //! denied grant cannot be resumed after its confirmed native pause.
+use crate::native_resource::{NativeConsumer, NativeProducer};
 use crate::{
     config::Config,
     error::SfuError,
@@ -64,6 +65,8 @@ struct Peer {
     lease_gate: Mutex<()>,
     attach_scheduled: AtomicBool,
     attach_dirty: AtomicBool,
+    retry_scheduled: AtomicBool,
+    attach_failures: AtomicUsize,
 }
 struct PeerData {
     peer: Arc<Peer>,
@@ -83,7 +86,7 @@ struct LiveBinding {
     changed: Notify,
 }
 struct Publication {
-    producer: Producer,
+    producer: NativeProducer,
     peer: Arc<Peer>,
     kind: SourceKind,
     epoch: Uuid,
@@ -110,7 +113,7 @@ impl Publication {
     }
 }
 struct Subscription {
-    consumer: Consumer,
+    consumer: NativeConsumer,
     publication: Arc<Publication>,
     peer: Arc<Peer>,
     watch: Option<Arc<Grant>>,
@@ -126,6 +129,7 @@ impl Subscription {
             && self.watch.as_ref().is_none_or(|g| g.valid())
     }
 }
+#[derive(Clone)]
 enum StopResource {
     Publication(Arc<Publication>),
     Subscription(Arc<Subscription>),
@@ -153,9 +157,10 @@ struct Counters {
     input_available: AtomicBool,
     jitter_microseconds: AtomicU64,
     ice_disconnects: AtomicU64,
+    outbound_overflows: AtomicU64,
 }
 pub struct Sfu {
-    redis: redis::Client,
+    redis: crate::redis_connection::CachedRedis,
     worker: Worker,
     server: WebRtcServer,
     rooms: Mutex<HashMap<Uuid, Arc<Room>>>,
@@ -197,7 +202,7 @@ impl Sfu {
         )))
         .await?;
         let sfu = Arc::new(Self {
-            redis,
+            redis: crate::redis_connection::CachedRedis::new(redis),
             worker,
             server,
             rooms: Mutex::new(HashMap::new()),
@@ -206,6 +211,23 @@ impl Sfu {
             draining: AtomicBool::new(false),
         });
         Self::watch_stats(Arc::downgrade(&sfu));
+        let weak = Arc::downgrade(&sfu);
+        tokio::spawn(async move {
+            let mut interval = tokio::time::interval(Duration::from_secs(1));
+            interval.set_missed_tick_behavior(tokio::time::MissedTickBehavior::Skip);
+            loop {
+                interval.tick().await;
+                let Some(sfu) = weak.upgrade() else {
+                    break;
+                };
+                if !matches!(
+                    tokio::time::timeout(Duration::from_secs(5), sfu.worker.dump()).await,
+                    Ok(Ok(_))
+                ) {
+                    fail_closed("native worker heartbeat unresponsive");
+                }
+            }
+        });
         Ok(sfu)
     }
     pub fn ready(&self) -> bool {
@@ -249,6 +271,7 @@ impl Sfu {
             text.push_str(&format!("# HELP gelabber_media_forwarded_bytes_total Measured native RTP byte deltas including RTP headers; failed final samples may omit bytes.\n# TYPE gelabber_media_forwarded_bytes_total counter\ngelabber_media_forwarded_bytes_total {value}\n# TYPE gelabber_sfu_forwarded_bytes_total counter\ngelabber_sfu_forwarded_bytes_total {value}\n",value=c.rtp_sent.load(Ordering::Relaxed)));
         }
         text.push_str(&format!("# TYPE gelabber_mediasoup_ice_disconnects_total counter\ngelabber_mediasoup_ice_disconnects_total {}\n",c.ice_disconnects.load(Ordering::Relaxed)));
+        text.push_str(&format!("# TYPE gelabber_media_outbound_overflows_total counter\ngelabber_media_outbound_overflows_total {}\n", c.outbound_overflows.load(Ordering::Relaxed)));
         text.push_str("# HELP gelabber_media_rtp_packets_total Measured native source packet deltas; failed final samples may omit packets; absent when current input stats are unavailable.\n# TYPE gelabber_media_rtp_packets_total counter\n# HELP gelabber_media_rtp_jitter_ms Maximum current native source jitter converted from RTP clock ticks; absent when unavailable.\n# TYPE gelabber_media_rtp_jitter_ms gauge\n# HELP gelabber_media_rtp_lost_total Unavailable: native signed loss gauges do not preserve the previous reorder-aware monotonic counter.\n");
         if c.input_available.load(Ordering::Relaxed) || c.producers.load(Ordering::Relaxed) == 0 {
             text.push_str(&format!(
@@ -346,6 +369,8 @@ impl Sfu {
             lease_gate: Mutex::new(()),
             attach_scheduled: AtomicBool::new(false),
             attach_dirty: AtomicBool::new(false),
+            retry_scheduled: AtomicBool::new(false),
+            attach_failures: AtomicUsize::new(0),
         });
         room.data.lock().await.peers.insert(
             id,
@@ -544,7 +569,10 @@ impl Sfu {
                 if !p.valid() {
                     return Err(SfuError::Forbidden);
                 }
-                native(p.producer.resume()).await?;
+                if let Err(error) = native(p.producer.resume()).await {
+                    p.producer.confirm_closed().await;
+                    return Err(error);
+                }
                 if !p.valid() {
                     stop_producer(&p.producer, &self.dead).await;
                     return Err(SfuError::Forbidden);
@@ -578,11 +606,15 @@ impl Sfu {
                 if !s.valid() {
                     return Err(SfuError::Forbidden);
                 }
-                native(s.consumer.resume()).await?;
+                if let Err(error) = native(s.consumer.resume()).await {
+                    s.consumer.confirm_closed().await;
+                    return Err(error);
+                }
                 if !s.valid() {
                     stop_consumer(&s.consumer, &self.dead).await;
                     return Err(SfuError::Forbidden);
                 }
+                peer.attach_failures.store(0, Ordering::Relaxed);
                 self.emit(
                     &peer,
                     ServerFrame::ConsumerState {
@@ -602,6 +634,7 @@ impl Sfu {
                     .own_consumer(&room, id, &consumer_id, generation)
                     .await?;
                 self.remove_consumer(&room, &s).await;
+                self.retry_attach(channel, peer.clone());
                 Ok(json!({}))
             }
             ClientFrame::Watch { u, k, on, .. } => {
@@ -756,7 +789,7 @@ impl Sfu {
             options.paused = true;
             let producer = native(transport.produce(options)).await?;
             let pubn = Arc::new(Publication {
-                producer,
+                producer: NativeProducer::new(producer, transport.clone()),
                 peer: peer.clone(),
                 kind,
                 epoch,
@@ -831,7 +864,10 @@ impl Sfu {
                 if !pubn.valid() {
                     return Err(SfuError::Forbidden);
                 }
-                native(pubn.producer.resume()).await?;
+                if let Err(error) = native(pubn.producer.resume()).await {
+                    pubn.producer.confirm_closed().await;
+                    return Err(error);
+                }
                 if !pubn.valid() {
                     stop_producer(&pubn.producer, &self.dead).await;
                     return Err(SfuError::Forbidden);
@@ -1014,6 +1050,23 @@ impl Sfu {
             self.schedule_peer_attach(channel, peer);
         }
     }
+    fn retry_attach(self: &Arc<Self>, channel: Uuid, peer: Arc<Peer>) {
+        if !peer.grant.valid() || peer.retry_scheduled.swap(true, Ordering::SeqCst) {
+            return;
+        }
+        let failures = peer.attach_failures.fetch_add(1, Ordering::Relaxed).min(5);
+        let delay = Duration::from_millis(250 * (1 << failures));
+        let weak = Arc::downgrade(self);
+        tokio::spawn(async move {
+            tokio::time::sleep(delay).await;
+            peer.retry_scheduled.store(false, Ordering::SeqCst);
+            if let Some(sfu) = weak.upgrade()
+                && peer.grant.valid()
+            {
+                sfu.schedule_peer_attach(channel, peer);
+            }
+        });
+    }
     fn schedule_peer_attach(self: &Arc<Self>, channel: Uuid, peer: Arc<Peer>) {
         if !peer.grant.valid() {
             return;
@@ -1129,7 +1182,7 @@ impl Sfu {
             }
             let consumer = native(transport.consume(options)).await?;
             let sub = Arc::new(Subscription {
-                consumer,
+                consumer: NativeConsumer::new(consumer, transport.clone()),
                 publication: pubn,
                 peer: peer.clone(),
                 watch,
@@ -1265,20 +1318,43 @@ impl Sfu {
                     .map(StopResource::Subscription),
             )
             .collect();
-        let jobs = resources.into_iter().map(|resource| async move {
+        let jobs = resources.clone().into_iter().map(|resource| async move {
             match resource {
                 StopResource::Publication(p) => {
                     let _gate = stop_gate(&p.gate).await;
-                    stop_producer(&p.producer, &self.dead).await;
+                    if _gate.is_some() {
+                        stop_producer(&p.producer, &self.dead).await;
+                    } else {
+                        p.producer.confirm_closed().await;
+                    }
                 }
                 StopResource::Subscription(s) => {
                     let _gate = stop_gate(&s.gate).await;
-                    stop_consumer(&s.consumer, &self.dead).await;
+                    if _gate.is_some() {
+                        stop_consumer(&s.consumer, &self.dead).await;
+                    } else {
+                        s.consumer.confirm_closed().await;
+                    }
                 }
             }
         });
         if stop_batch(jobs).await.is_err() {
-            fail_closed("native stop batch exceeded its aggregate deadline");
+            // Close only this batch, including resources still waiting for a
+            // concurrency slot. No unrelated room loses its worker/transport.
+            for resource in &resources {
+                match resource {
+                    StopResource::Publication(p) => p.producer.resource.close(),
+                    StopResource::Subscription(s) => s.consumer.resource.close(),
+                }
+            }
+            stream::iter(resources)
+                .for_each_concurrent(Some(STOP_CONCURRENCY), |resource| async move {
+                    match resource {
+                        StopResource::Publication(p) => p.producer.confirm_closed().await,
+                        StopResource::Subscription(s) => s.consumer.confirm_closed().await,
+                    }
+                })
+                .await;
         }
     }
     async fn remove_consumer(self: &Arc<Self>, room: &Room, sub: &Arc<Subscription>) {
@@ -1518,7 +1594,15 @@ impl Sfu {
         }
     }
     fn emit(self: &Arc<Self>, peer: &Arc<Peer>, frame: ServerFrame) {
-        if peer.out.try_send(frame).is_err() && peer.grant.stop_once() {
+        let Err(error) = peer.out.try_send(frame) else {
+            return;
+        };
+        if matches!(error, mpsc::error::TrySendError::Full(_)) {
+            self.counters
+                .outbound_overflows
+                .fetch_add(1, Ordering::Relaxed);
+        }
+        if peer.grant.stop_once() {
             let weak = Arc::downgrade(self);
             let id = peer.id;
             let channel = peer.authority.claim.c;
@@ -1534,20 +1618,22 @@ impl Sfu {
         let room = Arc::downgrade(room);
         let publication = Arc::downgrade(pubn);
         let runtime = tokio::runtime::Handle::current();
-        pubn.producer
-            .on_transport_close(move || {
-                if let Some(p) = publication.upgrade() {
-                    p.grant.stop()
-                }
-                runtime.spawn(async move {
-                    if let (Some(sfu), Some(room), Some(p)) =
-                        (weak.upgrade(), room.upgrade(), publication.upgrade())
-                    {
-                        sfu.remove_publication(&room, &p, true).await;
+        pubn.producer.resource.with(|producer| {
+            producer
+                .on_close(move || {
+                    if let Some(p) = publication.upgrade() {
+                        p.grant.stop()
                     }
-                });
-            })
-            .detach();
+                    runtime.spawn(async move {
+                        if let (Some(sfu), Some(room), Some(p)) =
+                            (weak.upgrade(), room.upgrade(), publication.upgrade())
+                        {
+                            sfu.remove_publication(&room, &p, true).await;
+                        }
+                    });
+                })
+                .detach();
+        });
     }
     fn observe_consumer(self: &Arc<Self>, room: &Arc<Room>, sub: &Arc<Subscription>) {
         for paused in [true, false] {
@@ -1573,54 +1659,62 @@ impl Sfu {
                 });
             };
             if paused {
-                sub.consumer.on_producer_pause(callback).detach()
+                sub.consumer
+                    .resource
+                    .with(|c| c.on_producer_pause(callback).detach());
             } else {
-                sub.consumer.on_producer_resume(callback).detach()
+                sub.consumer
+                    .resource
+                    .with(|c| c.on_producer_resume(callback).detach());
             }
         }
         let weak = Arc::downgrade(self);
         let subweak = Arc::downgrade(sub);
         let runtime = tokio::runtime::Handle::current();
-        sub.consumer
-            .on_layers_change(move |layers| {
-                let weak = weak.clone();
-                let subweak = subweak.clone();
-                let layers = *layers;
-                runtime.spawn(async move {
-                    if let (Some(sfu), Some(s)) = (weak.upgrade(), subweak.upgrade())
-                        && s.valid()
-                    {
-                        sfu.emit(
-                            &s.peer,
-                            ServerFrame::Layers {
-                                consumer_id: s.consumer.id().to_string(),
-                                generation: s.generation,
-                                spatial_layer: layers.map(|l| l.spatial_layer),
-                                temporal_layer: layers.and_then(|l| l.temporal_layer),
-                            },
-                        );
-                    }
-                });
-            })
-            .detach();
+        sub.consumer.resource.with(|consumer| {
+            consumer
+                .on_layers_change(move |layers| {
+                    let weak = weak.clone();
+                    let subweak = subweak.clone();
+                    let layers = *layers;
+                    runtime.spawn(async move {
+                        if let (Some(sfu), Some(s)) = (weak.upgrade(), subweak.upgrade())
+                            && s.valid()
+                        {
+                            sfu.emit(
+                                &s.peer,
+                                ServerFrame::Layers {
+                                    consumer_id: s.consumer.id().to_string(),
+                                    generation: s.generation,
+                                    spatial_layer: layers.map(|l| l.spatial_layer),
+                                    temporal_layer: layers.and_then(|l| l.temporal_layer),
+                                },
+                            );
+                        }
+                    });
+                })
+                .detach();
+        });
         let weak = Arc::downgrade(self);
         let subweak = Arc::downgrade(sub);
         let room = Arc::downgrade(room);
         let runtime = tokio::runtime::Handle::current();
-        sub.consumer
-            .on_close(move || {
-                if let Some(s) = subweak.upgrade() {
-                    s.grant.stop()
-                }
-                runtime.spawn(async move {
-                    if let (Some(sfu), Some(room), Some(s)) =
-                        (weak.upgrade(), room.upgrade(), subweak.upgrade())
-                    {
-                        sfu.remove_consumer(&room, &s).await;
+        sub.consumer.resource.with(|consumer| {
+            consumer
+                .on_close(move || {
+                    if let Some(s) = subweak.upgrade() {
+                        s.grant.stop()
                     }
-                });
-            })
-            .detach();
+                    runtime.spawn(async move {
+                        if let (Some(sfu), Some(room), Some(s)) =
+                            (weak.upgrade(), room.upgrade(), subweak.upgrade())
+                        {
+                            sfu.remove_consumer(&room, &s).await;
+                        }
+                    });
+                })
+                .detach();
+        });
     }
     fn watch_authority(weak: Weak<Self>, channel: Uuid, peer: Weak<Peer>) {
         tokio::spawn(async move {
@@ -1709,8 +1803,9 @@ impl Sfu {
     }
     fn watch_stats(weak: Weak<Self>) {
         tokio::spawn(async move {
-            let mut interval = tokio::time::interval(Duration::from_secs(1));
+            let mut interval = tokio::time::interval(Duration::from_secs(5));
             interval.set_missed_tick_behavior(tokio::time::MissedTickBehavior::Skip);
+            let mut cursor = 0usize;
             loop {
                 interval.tick().await;
                 let Some(sfu) = weak.upgrade() else { break };
@@ -1727,14 +1822,27 @@ impl Sfu {
                     );
                     publications.extend(data.publications.values().cloned());
                 }
+                // At most 32 transport + 32 producer samples per five seconds.
+                // Rotate stable native IDs so large rooms do not starve later IDs.
+                transports.sort_by_key(|t| t.id().to_string());
+                publications.sort_by_key(|p| p.id());
+                if !transports.is_empty() {
+                    let n = transports.len();
+                    transports.rotate_left(cursor % n);
+                }
+                if !publications.is_empty() {
+                    let n = publications.len();
+                    publications.rotate_left(cursor % n);
+                }
+                cursor = cursor.wrapping_add(32);
                 let mut ok = false;
-                for transport in transports {
+                for transport in transports.into_iter().take(32) {
                     ok |= sfu.sample_transport(&transport).await;
                 }
                 sfu.counters.stats_available.store(ok, Ordering::Relaxed);
                 let mut input_available = false;
                 let mut jitter_microseconds = 0;
-                for p in publications {
+                for p in publications.into_iter().take(32) {
                     if let Some(jitter) = sfu.sample_publication(&p, STOP_TIMEOUT).await {
                         input_available = true;
                         jitter_microseconds = jitter_microseconds.max(jitter);
@@ -1885,16 +1993,22 @@ fn router_codecs() -> Result<Vec<RtpCodecCapability>, SfuError> {
 async fn native<T, E: std::fmt::Display>(
     command: impl Future<Output = Result<T, E>>,
 ) -> Result<T, SfuError> {
-    match tokio::time::timeout(COMMAND_TIMEOUT, command).await {
+    tokio::pin!(command);
+    match tokio::time::timeout(COMMAND_TIMEOUT, &mut command).await {
         Ok(r) => r.map_err(SfuError::negotiation),
-        Err(_) => fail_closed("native command timed out with an unconfirmed result"),
+        Err(_) => {
+            // Retain the reply future: cancellation of a create RPC after it
+            // reached C++ could orphan a native object before Rust owns it.
+            // Drop any late handle instead of exposing success after deadline.
+            // Resource revocation cancels resumes; the independent worker
+            // heartbeat handles an actually stalled native engine.
+            drop(command.await);
+            Err(SfuError::Unavailable)
+        }
     }
 }
-async fn stop_gate(gate: &Mutex<()>) -> tokio::sync::MutexGuard<'_, ()> {
-    match tokio::time::timeout(STOP_TIMEOUT, gate.lock()).await {
-        Ok(g) => g,
-        Err(_) => fail_closed("native operation blocked revocation"),
-    }
+async fn stop_gate(gate: &Mutex<()>) -> Option<tokio::sync::MutexGuard<'_, ()>> {
+    tokio::time::timeout(STOP_TIMEOUT, gate.lock()).await.ok()
 }
 async fn stop_batch<F: Future<Output = ()>>(
     jobs: impl IntoIterator<Item = F>,
@@ -1910,22 +2024,22 @@ async fn stop_batch<F: Future<Output = ()>>(
     )
     .await
 }
-async fn stop_producer(p: &Producer, dead: &AtomicBool) {
+async fn stop_producer(p: &NativeProducer, dead: &AtomicBool) {
     if dead.load(Ordering::SeqCst) || p.closed() || p.paused() {
         return;
     }
     match tokio::time::timeout(STOP_TIMEOUT, p.pause()).await {
         Ok(Ok(())) if p.paused() => {}
-        _ => fail_closed("native producer pause unconfirmed"),
+        _ => p.confirm_closed().await,
     }
 }
-async fn stop_consumer(c: &Consumer, dead: &AtomicBool) {
+async fn stop_consumer(c: &NativeConsumer, dead: &AtomicBool) {
     if dead.load(Ordering::SeqCst) || c.closed() || c.paused() {
         return;
     }
     match tokio::time::timeout(STOP_TIMEOUT, c.pause()).await {
         Ok(Ok(())) if c.paused() => {}
-        _ => fail_closed("native consumer pause unconfirmed"),
+        _ => c.confirm_closed().await,
     }
 }
 fn fail_closed(reason: &'static str) -> ! {
@@ -2049,9 +2163,11 @@ mod tests {
             lease_gate: Mutex::new(()),
             attach_scheduled: AtomicBool::new(false),
             attach_dirty: AtomicBool::new(false),
+            retry_scheduled: AtomicBool::new(false),
+            attach_failures: AtomicUsize::new(0),
         });
         let publication = Arc::new(Publication {
-            producer,
+            producer: NativeProducer::new(producer, transport.clone()),
             peer: peer.clone(),
             kind: SourceKind::Mic,
             epoch: Uuid::new_v4(),
@@ -2183,6 +2299,43 @@ mod tests {
         assert!(matches!(rpc.await, Err(SfuError::Revoked)));
         assert!(publication.producer.paused());
         assert!(!sfu.peer_present(peer.id, peer.authority.claim.c).await);
+    }
+
+    #[tokio::test]
+    async fn slow_resource_gate_closes_only_its_native_producer() {
+        let (sfu, _peer, publication, _rx) = stopping_fixture().await;
+        let transport = publication.producer.transport();
+        let rtp = serde_json::from_value(json!({
+            "codecs":[{"mimeType":"audio/opus","payloadType":111,"clockRate":48000,"channels":2}],
+            "encodings":[{"ssrc":5678}],"rtcp":{"cname":"other-source"}
+        }))
+        .unwrap();
+        let other = native(transport.produce(ProducerOptions::new(MediaKind::Audio, rtp)))
+            .await
+            .unwrap();
+        let _gate = publication.gate.lock().await;
+        tokio::time::timeout(
+            Duration::from_secs(2),
+            sfu.confirmed_stop_resources(std::slice::from_ref(&publication), &[]),
+        )
+        .await
+        .unwrap();
+        assert!(publication.producer.closed());
+        let dump = transport.dump().await.unwrap();
+        assert!(!dump.producer_ids.contains(&publication.producer.id()));
+        assert!(dump.producer_ids.contains(&other.id()));
+        assert!(!other.paused());
+        assert!(sfu.ready());
+    }
+
+    #[tokio::test]
+    async fn slow_native_command_is_a_request_error_not_process_exit() {
+        let result = native(async {
+            tokio::time::sleep(COMMAND_TIMEOUT + Duration::from_millis(20)).await;
+            Ok::<_, std::io::Error>(())
+        })
+        .await;
+        assert!(matches!(result, Err(SfuError::Unavailable)));
     }
 
     #[test]

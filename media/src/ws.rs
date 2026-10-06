@@ -59,55 +59,83 @@ fn parse_frame(text: &str) -> Result<ClientFrame, ParseError> {
 async fn run(socket: WebSocket, state: AppState) {
     let (mut sink, mut stream) = socket.split();
     let (tx, mut rx) = mpsc::channel::<ServerFrame>(OUTBOUND_CAPACITY);
+    let (writes, mut pending) = mpsc::channel::<Message>(32);
+    let (identity, current) = tokio::sync::watch::channel::<Option<(PeerId, Uuid)>>(None);
+    let writer_state = state.clone();
+    // The socket writer must keep draining announcements while the reader is
+    // awaiting Redis/native RPCs. Both paths retain bounded queues/deadlines.
+    let mut writer = tokio::spawn(async move {
+        loop {
+            tokio::select! {
+                message = pending.recv() => {
+                    let Some(message) = message else { break; };
+                    let close = matches!(message, Message::Close(_));
+                    if !matches!(tokio::time::timeout(WRITE_DEADLINE, sink.send(message)).await, Ok(Ok(()))) || close { break; }
+                }
+                event = rx.recv() => {
+                    let Some(event) = event else { break; };
+                    let close = terminal(&event);
+                    if close {
+                        let joined = *current.borrow();
+                        if let Some((peer, channel)) = joined { writer_state.sfu.leave(peer, channel).await; }
+                    }
+                    if send(&mut sink, event).await.is_err() { break; }
+                    if close {
+                        let _ = tokio::time::timeout(WRITE_DEADLINE, sink.send(Message::Close(None))).await;
+                        break;
+                    }
+                }
+            }
+        }
+    });
     let mut joined: Option<(PeerId, Uuid)> = None;
     let mut last_id = 0;
-    // Native cleanup can revoke an overflowing peer without room in its event
-    // queue. Close the socket after the graph retires the stopped resources.
     let mut retirement = tokio::time::interval(Duration::from_millis(250));
     retirement.set_missed_tick_behavior(tokio::time::MissedTickBehavior::Skip);
+    let mut writer_finished = false;
     loop {
         tokio::select! {
+            _ = &mut writer => { writer_finished = true; break; }
             _ = retirement.tick(), if joined.is_some() => {
                 let (peer, channel) = joined.unwrap();
-                if !state.sfu.peer_present(peer, channel).await {
-                    leave_joined(&state, &mut joined).await;
-                    let _ = send(&mut sink, ServerFrame::error("gone")).await;
-                    let _ = tokio::time::timeout(WRITE_DEADLINE, sink.send(Message::Close(None))).await;
-                    break;
-                }
+                if !state.sfu.peer_present(peer, channel).await { break; }
             }
-            incoming=stream.next()=> {
-                match incoming {
-                    Some(Ok(Message::Text(text)))=> {
-                        let response=match parse_frame(&text) {
-                            Ok(frame)=>handle(&state,frame,&tx,&mut joined,&mut last_id).await,
-                            Err(error)=>error.into_frame(),
+            incoming = stream.next() => {
+                let message = match incoming {
+                    Some(Ok(Message::Text(text))) => {
+                        let response = match parse_frame(&text) {
+                            Ok(frame) => handle(&state, frame, &tx, &mut joined, &mut last_id).await,
+                            Err(error) => error.into_frame(),
                         };
-                        let close=terminal(&response);
-                        if close {leave_joined(&state,&mut joined).await;}
-                        if send(&mut sink,response).await.is_err() {break;}
-                        if close {let _=tokio::time::timeout(WRITE_DEADLINE,sink.send(Message::Close(None))).await;break;}
+                        identity.send_replace(joined);
+                        let close = terminal(&response);
+                        if close { leave_joined(&state, &mut joined).await; }
+                        let Ok(text) = response.to_json() else { break; };
+                        if !matches!(tokio::time::timeout(WRITE_DEADLINE, writes.send(Message::Text(text.into()))).await, Ok(Ok(()))) { break; }
+                        if close { break; }
+                        continue;
                     }
-                    Some(Ok(Message::Ping(payload)))=> {
-                        if !matches!(tokio::time::timeout(WRITE_DEADLINE,sink.send(Message::Pong(payload))).await,Ok(Ok(()))){break;}
-                    }
-                    Some(Ok(Message::Pong(_)))=> {}
-                    Some(Ok(Message::Binary(_)))=> {
-                        if send(&mut sink,ServerFrame::error("bad_request")).await.is_err(){break;}
-                    }
-                    _=>break,
-                }
-            }
-            event=rx.recv()=> {
-                let Some(event)=event else {break;};
-                let close=terminal(&event);
-                if close {leave_joined(&state,&mut joined).await;}
-                if send(&mut sink,event).await.is_err(){break;}
-                if close {let _=tokio::time::timeout(WRITE_DEADLINE,sink.send(Message::Close(None))).await;break;}
+                    Some(Ok(Message::Ping(payload))) => Message::Pong(payload),
+                    Some(Ok(Message::Pong(_))) => continue,
+                    Some(Ok(Message::Binary(_))) => Message::Text(ServerFrame::error("bad_request").to_json().unwrap().into()),
+                    _ => break,
+                };
+                if !matches!(tokio::time::timeout(WRITE_DEADLINE, writes.send(message)).await, Ok(Ok(()))) { break; }
             }
         }
     }
     leave_joined(&state, &mut joined).await;
+    if !writer_finished {
+        let _ = tokio::time::timeout(WRITE_DEADLINE, writes.send(Message::Close(None))).await;
+        drop(writes);
+        if tokio::time::timeout(WRITE_DEADLINE, &mut writer)
+            .await
+            .is_err()
+        {
+            writer.abort();
+            let _ = writer.await;
+        }
+    }
 }
 /// Every terminal response/event crosses this native-stop barrier before send.
 /// Taking the socket identity keeps cleanup idempotent on the loop's exit path.

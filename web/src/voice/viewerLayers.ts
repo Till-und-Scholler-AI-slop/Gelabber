@@ -40,6 +40,10 @@ type Previous = {
  * unknown/reset counters never masquerade as congestion or bandwidth. */
 export class ViewerLayerController {
   private previous = new Map<string, Previous>();
+  private sent = new Map<
+    string,
+    { h: number; congested: boolean; at: number }
+  >();
   update(
     report: readonly StatsEntry[],
     sources: readonly ViewerSource[],
@@ -47,6 +51,20 @@ export class ViewerLayerController {
     height: (id: string) => number = renderedVideoHeight,
   ): void {
     const active = new Set<string>();
+    const now = Date.now();
+    const emit = (frame: MediaRequests["q"]) => {
+      const key = `${frame.generation}:${frame.consumerId}`;
+      const last = this.sent.get(key);
+      if (
+        last &&
+        last.h === frame.h &&
+        last.congested === frame.congested &&
+        now - last.at < 30_000
+      )
+        return;
+      this.sent.set(key, { h: frame.h, congested: frame.congested, at: now });
+      send(frame);
+    };
     for (const source of sources) {
       const key = `${source.generation}:${source.consumerId}`;
       active.add(key);
@@ -60,7 +78,7 @@ export class ViewerLayerController {
             : e.trackIdentifier === source.trackId),
       );
       if (!stats) {
-        send({
+        emit({
           consumerId: source.consumerId,
           generation: source.generation,
           h: height(source.trackId),
@@ -86,7 +104,7 @@ export class ViewerLayerController {
         if (previous && time <= previous.time) {
           // Overlapping native getStats promises may resolve out of order.
           // Keep newer evidence; stale samples are not counter restarts.
-          send({
+          emit({
             consumerId: source.consumerId,
             generation: source.generation,
             h: height(source.trackId),
@@ -114,13 +132,15 @@ export class ViewerLayerController {
         }
         this.previous.set(key, { received, lost, time, congested, good });
       }
-      send({
+      emit({
         consumerId: source.consumerId,
         generation: source.generation,
         h: height(source.trackId),
         congested,
       });
     }
+    for (const key of this.sent.keys())
+      if (!active.has(key)) this.sent.delete(key);
     for (const key of this.previous.keys())
       if (!active.has(key)) this.previous.delete(key);
   }

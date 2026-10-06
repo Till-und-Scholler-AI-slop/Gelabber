@@ -1,4 +1,4 @@
-import { describe, expect, it } from "vitest";
+import { describe, expect, it, vi } from "vitest";
 import { ViewerLayerController, type ViewerSource } from "./viewerLayers.ts";
 import type { MediaRequests } from "./media.ts";
 import type { StatsEntry } from "./diagnostics.ts";
@@ -42,10 +42,36 @@ describe("per-consumer viewer preference", () => {
       send,
       (id) => (id === a.trackId ? 180 : 1080),
     );
-    expect(requests.slice(-2)).toEqual([
-      { consumerId: "a", generation: "gen-a", h: 180, congested: true },
-      { consumerId: "b", generation: "gen-b", h: 1080, congested: false },
-    ]);
+    expect(requests).toHaveLength(3);
+    expect(requests.at(-1)).toEqual({
+      consumerId: "a",
+      generation: "gen-a",
+      h: 180,
+      congested: true,
+    });
+  });
+  it("deduplicates unchanged hints, refreshes slowly, and forgets retired generations", () => {
+    const clock = vi.spyOn(Date, "now").mockReturnValue(0);
+    try {
+      const controller = new ViewerLayerController();
+      const send = vi.fn();
+      controller.update([], [a], send, () => 720);
+      for (let second = 2; second < 30; second += 2) {
+        clock.mockReturnValue(second * 1000);
+        controller.update([], [a], send, () => 720);
+      }
+      expect(send).toHaveBeenCalledTimes(1);
+      clock.mockReturnValue(30_000);
+      controller.update([], [a], send, () => 720);
+      expect(send).toHaveBeenCalledTimes(2);
+      controller.update([], [a], send, () => 90);
+      expect(send).toHaveBeenCalledTimes(3);
+      controller.update([], [], send);
+      controller.update([], [a], send, () => 90);
+      expect(send).toHaveBeenCalledTimes(4);
+    } finally {
+      clock.mockRestore();
+    }
   });
   it("requires four healthy intervals to restore a congested consumer", () => {
     const c = new ViewerLayerController(),

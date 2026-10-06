@@ -5,7 +5,8 @@ use uuid::Uuid;
 
 /// v3 belongs to the retired layer prototype; v4 is the mediasoup contract.
 pub const MEDIA_PROTOCOL_VERSION: u8 = 4;
-pub const OUTBOUND_CAPACITY: usize = 64;
+// One announcement plus latest state/layers per allowed consumer, with RPC headroom.
+pub const OUTBOUND_CAPACITY: usize = 3 * 1024 + 32;
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize, Deserialize)]
 pub enum SourceKind {
