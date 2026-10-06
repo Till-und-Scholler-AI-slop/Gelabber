@@ -1,0 +1,22 @@
+    Finished `test` profile [unoptimized + debuginfo] target(s) in 0.07s
+     Running unittests src/full_peer.rs (/tmp/gelabber-v04-native-resume-target/debug/deps/gelabber_fixed_native_peer-1cc7b040f04e71d5)
+
+running 15 tests
+test archive::tests::loops_have_continuous_rtp_clocks_and_picture_ids ... ok
+test archive::tests::truncation_is_a_failure_instead_of_a_partial_workload ... ok
+test clock::tests::clock_is_monotonic_and_anchor_future ... ok
+test pn_audio::tests::pair_requires_complete_identical_books_not_only_matching_duration ... ok
+test signaling_tests::duplicate_reorder_and_wrap_do_not_corrupt_media_clock ... ok
+test signaling_tests::missing_padding_and_missing_media_are_both_visible ... ok
+test pn_audio::tests::replay_start_never_cuts_loops_or_trusts_requested_hold ... ok
+test signaling_tests::padding_before_first_media_never_sets_media_timestamp ... ok
+test signaling_tests::padding_sequence_and_media_timestamp_are_independent ... ok
+test unique_json::tests::repeated_nested_source_fields_cannot_hide_policy ... ok
+test signaling_tests::empty_unpadded_or_bad_nonempty_payload_is_never_padding ... ok
+test signaling_tests::native_publication_sdp_has_distinct_signal_bound_track_ids ... ok
+test pn_audio::tests::shared_books_and_finite_bounds_are_identical_for_both_roles ... ok
+test archive::tests::source_hash_and_schedule_prevent_silent_workload_changes ... ok
+test pn_audio::tests::decoded_filter_rejects_missing_duplicate_and_wrong_source ... ok
+
+test result: ok. 15 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.35s
+

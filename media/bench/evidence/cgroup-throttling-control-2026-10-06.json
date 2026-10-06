@@ -1,0 +1,209 @@
+{
+  "scope": "actual cgroup-only sampler positive control; no media/SFU/browser/CPU ranking or migration",
+  "comparison_available": false,
+  "limits": {
+    "cpu": 0.25,
+    "memory": "32m",
+    "pids": 16
+  },
+  "run_id": "8f03edd31988426082360efd117387bc",
+  "samples": [
+    {
+      "at": 1791271167.5761497,
+      "phase": "measurement",
+      "root_pid": 1104525,
+      "processes": [
+        {
+          "pid": 1104525,
+          "rss_bytes": 1003520,
+          "pss_bytes": null,
+          "cpu_seconds": 0.02,
+          "threads": 1
+        }
+      ],
+      "rss_bytes": 1003520,
+      "cpu_seconds": 0.02,
+      "valid": true,
+      "cgroup_path": "/system.slice/docker-8d3f35b609fc1d6bb1372072c7afde3c2e6ffb98cb3e43a5016a498c564f6ff5.scope",
+      "cgroup_cpu_stat": "usage_usec 39534\nuser_usec 29181\nsystem_usec 10353\nnice_usec 0\ncore_sched.force_idle_usec 0\nnr_periods 1\nnr_throttled 1\nthrottled_usec 831\nnr_bursts 0\nburst_usec 0\n"
+    },
+    {
+      "at": 1791271168.57704,
+      "phase": "measurement",
+      "root_pid": 1104525,
+      "processes": [
+        {
+          "pid": 1104525,
+          "rss_bytes": 1003520,
+          "pss_bytes": null,
+          "cpu_seconds": 0.28,
+          "threads": 1
+        }
+      ],
+      "rss_bytes": 1003520,
+      "cpu_seconds": 0.28,
+      "valid": true,
+      "cgroup_path": "/system.slice/docker-8d3f35b609fc1d6bb1372072c7afde3c2e6ffb98cb3e43a5016a498c564f6ff5.scope",
+      "cgroup_cpu_stat": "usage_usec 299206\nuser_usec 288417\nsystem_usec 10789\nnice_usec 0\ncore_sched.force_idle_usec 0\nnr_periods 11\nnr_throttled 11\nthrottled_usec 740993\nnr_bursts 0\nburst_usec 0\n"
+    },
+    {
+      "at": 1791271169.5777323,
+      "phase": "measurement",
+      "root_pid": 1104525,
+      "processes": [
+        {
+          "pid": 1104525,
+          "rss_bytes": 1003520,
+          "pss_bytes": null,
+          "cpu_seconds": 0.53,
+          "threads": 1
+        }
+      ],
+      "rss_bytes": 1003520,
+      "cpu_seconds": 0.53,
+      "valid": true,
+      "cgroup_path": "/system.slice/docker-8d3f35b609fc1d6bb1372072c7afde3c2e6ffb98cb3e43a5016a498c564f6ff5.scope",
+      "cgroup_cpu_stat": "usage_usec 547863\nuser_usec 537026\nsystem_usec 10837\nnice_usec 0\ncore_sched.force_idle_usec 0\nnr_periods 21\nnr_throttled 21\nthrottled_usec 1489192\nnr_bursts 0\nburst_usec 0\n"
+    },
+    {
+      "at": 1791271170.578653,
+      "phase": "measurement",
+      "root_pid": 1104525,
+      "processes": [
+        {
+          "pid": 1104525,
+          "rss_bytes": 1003520,
+          "pss_bytes": null,
+          "cpu_seconds": 0.78,
+          "threads": 1
+        }
+      ],
+      "rss_bytes": 1003520,
+      "cpu_seconds": 0.78,
+      "valid": true,
+      "cgroup_path": "/system.slice/docker-8d3f35b609fc1d6bb1372072c7afde3c2e6ffb98cb3e43a5016a498c564f6ff5.scope",
+      "cgroup_cpu_stat": "usage_usec 798040\nuser_usec 787196\nsystem_usec 10843\nnice_usec 0\ncore_sched.force_idle_usec 0\nnr_periods 31\nnr_throttled 31\nthrottled_usec 2239221\nnr_bursts 0\nburst_usec 0\n"
+    }
+  ],
+  "image_id": "sha256:ef216d85ec44f4fdf7c0e6df2d1757a4734ed32fbb278cabd3181b5a27353b79",
+  "resource_observation": {
+    "measurement_valid": true,
+    "phase": "measurement",
+    "measurement_samples": 4,
+    "actual_span_seconds": 3.0025033950805664,
+    "maximum_process_rss_sum_bytes": 1003520,
+    "cpu_core_equivalents": [
+      0.25976873958739777,
+      0.24982702787186148,
+      0.24977001862241752
+    ],
+    "cgroup_throttling": {
+      "available": true,
+      "baseline": {
+        "usage_usec": 39534,
+        "user_usec": 29181,
+        "system_usec": 10353,
+        "nice_usec": 0,
+        "core_sched.force_idle_usec": 0,
+        "nr_periods": 1,
+        "nr_throttled": 1,
+        "throttled_usec": 831,
+        "nr_bursts": 0,
+        "burst_usec": 0
+      },
+      "end": {
+        "usage_usec": 798040,
+        "user_usec": 787196,
+        "system_usec": 10843,
+        "nice_usec": 0,
+        "core_sched.force_idle_usec": 0,
+        "nr_periods": 31,
+        "nr_throttled": 31,
+        "throttled_usec": 2239221,
+        "nr_bursts": 0,
+        "burst_usec": 0
+      },
+      "delta": {
+        "nr_periods": 30,
+        "nr_throttled": 30,
+        "throttled_usec": 2238390
+      },
+      "throttled_seconds": 2.23839,
+      "throttled_period_fraction": 1.0,
+      "observed_throttling": true,
+      "interval_deltas": [
+        {
+          "nr_periods": 10,
+          "nr_throttled": 10,
+          "throttled_usec": 740162
+        },
+        {
+          "nr_periods": 10,
+          "nr_throttled": 10,
+          "throttled_usec": 748199
+        },
+        {
+          "nr_periods": 10,
+          "nr_throttled": 10,
+          "throttled_usec": 750029
+        }
+      ],
+      "scope": "actual owned cgroup, independently of process-tree CPU mean; no causal attribution"
+    },
+    "scope": "sum of actual process tree RSS and CPU; shared pages may be counted per process; cgroup throttling reported separately"
+  },
+  "throttling": {
+    "available": true,
+    "baseline": {
+      "usage_usec": 39534,
+      "user_usec": 29181,
+      "system_usec": 10353,
+      "nice_usec": 0,
+      "core_sched.force_idle_usec": 0,
+      "nr_periods": 1,
+      "nr_throttled": 1,
+      "throttled_usec": 831,
+      "nr_bursts": 0,
+      "burst_usec": 0
+    },
+    "end": {
+      "usage_usec": 798040,
+      "user_usec": 787196,
+      "system_usec": 10843,
+      "nice_usec": 0,
+      "core_sched.force_idle_usec": 0,
+      "nr_periods": 31,
+      "nr_throttled": 31,
+      "throttled_usec": 2239221,
+      "nr_bursts": 0,
+      "burst_usec": 0
+    },
+    "delta": {
+      "nr_periods": 30,
+      "nr_throttled": 30,
+      "throttled_usec": 2238390
+    },
+    "throttled_seconds": 2.23839,
+    "throttled_period_fraction": 1.0,
+    "observed_throttling": true,
+    "interval_deltas": [
+      {
+        "nr_periods": 10,
+        "nr_throttled": 10,
+        "throttled_usec": 740162
+      },
+      {
+        "nr_periods": 10,
+        "nr_throttled": 10,
+        "throttled_usec": 748199
+      },
+      {
+        "nr_periods": 10,
+        "nr_throttled": 10,
+        "throttled_usec": 750029
+      }
+    ],
+    "scope": "actual owned cgroup, independently of process-tree CPU mean; no causal attribution"
+  },
+  "owned_container_removed": true
+}
