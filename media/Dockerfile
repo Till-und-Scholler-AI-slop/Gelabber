@@ -1,5 +1,7 @@
 # syntax=docker/dockerfile:1
-FROM rust:1.98.1-slim-trixie@sha256:4cd829461bd5c4d511c32e269da9cb8929223b666519d8004e35fc8d1d771ab7 AS base
+FROM rust:1.98.1-slim-trixie@sha256:4cd829461bd5c4d511c32e269da9cb8929223b666519d8004e35fc8d1d771ab7 AS toolchain
+
+FROM toolchain AS base
 COPY docker/debian-snapshot.sources /etc/apt/sources.list.d/debian.sources
 COPY docker/rust-build-ca.sh /tmp/rust-build-ca.sh
 RUN sh /tmp/rust-build-ca.sh
@@ -51,6 +53,9 @@ COPY shared ./shared
 RUN cargo build --locked --release -p gelabber-media
 
 FROM debian:trixie-slim@sha256:a29215f6a35e51e22adffa17f89e9d2ef06214e64a2bad10d765c46aea49f11f
+# Bootstrap HTTPS APT with the untouched, digest-pinned public CA bundle.
+# Build-time proxy certificates must never be copied into the runtime image.
+COPY --from=toolchain /etc/ssl/certs/ca-certificates.crt /etc/ssl/certs/ca-certificates.crt
 COPY docker/debian-snapshot.sources /etc/apt/sources.list.d/debian.sources
 ARG OCI_REVISION=unknown
 ARG OCI_VERSION=unknown
