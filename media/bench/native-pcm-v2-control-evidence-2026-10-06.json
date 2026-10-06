@@ -1,0 +1,207 @@
+{
+  "schema": 1,
+  "scope": "actual short direct native-to-browser V2 control attempts only; no SFU/product/resource/device acceptance",
+  "comparison_available": false,
+  "pcm_latency_calibrated": false,
+  "source": {
+    "run_id": "1dfa25f8-53b0-42d0-b8d3-483722051663",
+    "measurement_seconds": 20,
+    "total_seconds": 21,
+    "provenance": {
+      "nodeVersion": "v26.8.2",
+      "nodeSha256": "8a22a371fd85aecf5411636574309f6380fbc42694aaf0651a089a8ef9c44e52",
+      "chromiumSha256": "ded93a9c9a53a1ae040f08124badcca95c938e9d5015ff340c3b5538c41bf39e",
+      "nativeSha256": "328d63a837a1db474fd3078ade33f7082a97daf029be1e4e641a5ba448966baf",
+      "librarySha256": "ce07b3578b14e1d25ed603670f2336cd2b32b7f24c2c5b9aab8bbeb0f410b8d6",
+      "pairSha256": "5c512896db015dc246e94978f9c8538c842ae85a69506ee0413595e43c892da9",
+      "generationSha256": "5849591a4e6671fc5292984a313bd1e0935455ef5d04fd100c923bfb2e99698c",
+      "videoSha256": "00e33765442fdbd3d9d104530269745c5de64c77e1a120ea7f017f9671062c2f",
+      "micSha256": "3a4eb287ea233a936a482be9906f44e35fea21ab57182157c02dceaeab6a5421",
+      "sourceSha256": "622f837b68d07a622ccb4177623158f0f395f080cd35e47dc8f6d542ce9571f7"
+    }
+  },
+  "attempts": [
+    {
+      "attempt": "0ms-initial",
+      "audio_hold_ms": 0,
+      "status": "BLOCKED",
+      "blocked_stage": "browser-provenance-before-prepare",
+      "process_exit_code": 1,
+      "qualified": false,
+      "replay_evidence_qualified": false,
+      "failure": "Error: cdpSession.send: Protocol error (Browser.getBrowserCommandLine): Command line not returned because --enable-automation not set.",
+      "additional_contract_failure": "owned V2 complete normal browser/native/HTTP/audio/worker cleanup unqualified",
+      "stage_timeouts": [],
+      "native_start_calls": 0,
+      "native_status_calls": 1,
+      "initial_native_sources": 0,
+      "initial_native_peers": 0,
+      "initial_receiver_reports": "NOT_COLLECTED: browser preparation never invoked",
+      "initial_receiver_counters": "NOT_COLLECTED: browser preparation never invoked",
+      "created_resource_inventory": {
+        "native": "CREATED",
+        "browser": "CREATED",
+        "http_bridge": "CREATED",
+        "page": "NOT_CREATED",
+        "peer_connection": "NOT_CREATED",
+        "audio_context": "NOT_CREATED",
+        "observer_worker": "NOT_CREATED",
+        "audio_nodes": "NOT_CREATED"
+      },
+      "actual_owned_cleanup": {
+        "browser_disconnected": true,
+        "browser_process_exited": true,
+        "browser_graceful": true,
+        "browser_forced": false,
+        "browser_exit_code": 0,
+        "browser_exit_signal": null,
+        "http_closed": true,
+        "native_exit_code": 0,
+        "native_exit_signal": null
+      },
+      "helpers_after_equal_before": true,
+      "report_sha256": "ccd69f9cb1c13ce87fda3bd22e0d68317b09d72449f4e7ebec7a21a2aaa26ba1",
+      "summary_sha256": "f9efe518e40257db8f4ede1d965d06af096c85c77095ab797ef66514ae48724d",
+      "private_output_permissions": "directory0700/report0600",
+      "interpretation": "The actual CDP error establishes the missing automation flag; no initial-stat or received-PCM behavior was tested."
+    },
+    {
+      "attempt": "0ms-retry-with-explicit-automation",
+      "audio_hold_ms": 0,
+      "status": "BLOCKED",
+      "finite_replay": "NOT_RUN",
+      "blocked_stage": "browser-prepare/genuine-zero-initial-same-receiver-report",
+      "process_exit_code": 1,
+      "qualified": false,
+      "replay_evidence_qualified": false,
+      "failure": "Error: genuine pre-replay inbound report unavailable or ambiguous",
+      "node_preflight_failure": "Error: actual complete V2 browser preparation required",
+      "stage_timeouts": [],
+      "actual_browser_provenance": {
+        "product": "HeadlessChrome/153.0.8010.12",
+        "revision": "@971a7443b0c9b0a9b2860529b33331b76077ec62",
+        "sha256": "ded93a9c9a53a1ae040f08124badcca95c938e9d5015ff340c3b5538c41bf39e"
+      },
+      "actual_automation_flag": {
+        "present_at_commandline_token_boundary": true,
+        "same_new_owned_pid_start_executable": true,
+        "cdp_commandline_request_succeeded": true,
+        "proc_cmdline_shape": "one space-joined entry; exact NUL-element flag check was false; preserved raw has not been rewritten",
+        "private_commandline_sha256": "deac919c30358e0afbca92a4d58980c6b50db636d5084edb9d179a588a85e057",
+        "private_commandline_analysis_sha256": "0494db29f941bdb9cefe71fc2e0cdb6152f41a367e394e09aff9d08b0c7664f9"
+      },
+      "native_calls": {
+        "status": 2,
+        "create": 1,
+        "offer": 1,
+        "remote": 1,
+        "clock": 3135
+      },
+      "native_start_calls": 0,
+      "initial_native_sources": 0,
+      "pre_start_native_sources": 0,
+      "pre_start_native_publish_connection": "connected",
+      "finite_timeline_anchor": "NOT_CREATED: no native start response",
+      "actual_initial_receiver_tables": {
+        "mic": {
+          "collection": "ACTUAL getStats collected/retried",
+          "rows": [],
+          "inbound_audio_reports": 0,
+          "report_id": "UNAVAILABLE: report absent",
+          "codec_id": "UNAVAILABLE: report absent",
+          "counters": {
+            "packetsReceived": "UNAVAILABLE: report absent",
+            "totalSamplesReceived": "UNAVAILABLE: report absent",
+            "packetsLost": "UNAVAILABLE: report absent",
+            "concealedSamples": "UNAVAILABLE: report absent",
+            "silentConcealedSamples": "UNAVAILABLE: report absent",
+            "packetsDiscarded": "UNAVAILABLE: report absent",
+            "insertedSamplesForDeceleration": "UNAVAILABLE: report absent",
+            "removedSamplesForAcceleration": "UNAVAILABLE: report absent"
+          }
+        },
+        "source": {
+          "collection": "NOT_COLLECTED: sequential collection stopped at Mic failure"
+        },
+        "whole_peer_connection": {
+          "collection": "NOT_COLLECTED: sequential collection stopped at Mic failure"
+        }
+      },
+      "created_resource_inventory": {
+        "native": "CREATED",
+        "browser": "CREATED",
+        "http_bridge": "CREATED",
+        "page": "CREATED",
+        "peer_connection": "CREATED",
+        "audio_context": "CREATED",
+        "observer_worker": "CREATED",
+        "audio_nodes": "CREATED",
+        "video_element": "CREATED"
+      },
+      "actual_owned_cleanup": {
+        "browser_disconnected": true,
+        "browser_process_exited": true,
+        "browser_graceful": true,
+        "browser_forced": false,
+        "browser_exit_code": 0,
+        "browser_exit_signal": null,
+        "http_closed": true,
+        "native_exit_code": 0,
+        "native_exit_signal": null,
+        "audio_context": "closed",
+        "peer_connection": "closed",
+        "observer_worker_terminated": true,
+        "audio_nodes_disconnected": true,
+        "video_detached": true,
+        "browser_disposal_errors": [],
+        "normal_complete_created_resource_cleanup": true
+      },
+      "helpers_after_equal_before": true,
+      "approved_source_freeze_before_after_match": true,
+      "clock13_tail3_unchanged": true,
+      "report_sha256": "ebd26c32f1b1981fe72f9fc0f507af1866764ba94f8ad1c5ddc4f80411a57310",
+      "summary_sha256": "f1bce788b30345e89c0475caf728a9c93d2c87de601eab8f7c5e8448a6da830f",
+      "private_output_permissions": "directory0700/report0600/commandline0600",
+      "interpretation": "Actual CDP provenance and normal owned cleanup passed; unavailable genuine Mic initial inbound report blocks finite replay. There are no actual replay PN/received-tail or latency results."
+    }
+  ],
+  "remaining_controls": [
+    {
+      "control": "audio-hold-50ms",
+      "status": "NOT_RUN/BLOCKED",
+      "reason": "Genuine Mic zero initial same-receiver report is unavailable before finite start; later holds/failure seams would repeat a pre-start blockade and cannot test replay behavior."
+    },
+    {
+      "control": "audio-hold-200ms",
+      "status": "NOT_RUN/BLOCKED",
+      "reason": "Genuine Mic zero initial same-receiver report is unavailable before finite start; later holds/failure seams would repeat a pre-start blockade and cannot test replay behavior."
+    },
+    {
+      "control": "audio-hold-500ms",
+      "status": "NOT_RUN/BLOCKED",
+      "reason": "Genuine Mic zero initial same-receiver report is unavailable before finite start; later holds/failure seams would repeat a pre-start blockade and cannot test replay behavior."
+    },
+    {
+      "control": "observer-pause/ring-overflow",
+      "status": "NOT_RUN/BLOCKED",
+      "reason": "Genuine Mic zero initial same-receiver report is unavailable before finite start; later holds/failure seams would repeat a pre-start blockade and cannot test replay behavior."
+    },
+    {
+      "control": "wide-native-clock-bracket",
+      "status": "NOT_RUN/BLOCKED",
+      "reason": "Genuine Mic zero initial same-receiver report is unavailable before finite start; later holds/failure seams would repeat a pre-start blockade and cannot test replay behavior."
+    },
+    {
+      "control": "AudioContext-suspension",
+      "status": "NOT_RUN/BLOCKED",
+      "reason": "Genuine Mic zero initial same-receiver report is unavailable before finite start; later holds/failure seams would repeat a pre-start blockade and cannot test replay behavior."
+    },
+    {
+      "control": "PLC/sample-stretch",
+      "status": "NOT_RUN/BLOCKED",
+      "reason": "Genuine Mic zero initial same-receiver report is unavailable before finite start; later holds/failure seams would repeat a pre-start blockade and cannot test replay behavior."
+    }
+  ],
+  "hour_long_test": "EXCLUDED_BY_USER",
+  "baseline_acceptance": "BLOCKED: genuine pre-replay Mic inbound report unavailable; no finite start or latency anchor"
+}
