@@ -20,9 +20,10 @@ import time
 import urllib.request
 import uuid
 from record import process_sample, process_tree
+from evaluate import cgroup_throttling
 
 ROOT = Path(__file__).resolve().parent
-HELPERS = ['run-native-full.py', 'record.py', 'native-full-pilot.mjs', 'native-full-browser.mjs', 'native-full.bundle.js',
+HELPERS = ['run-native-full.py', 'record.py', 'evaluate.py', 'native-full-pilot.mjs', 'native-full-browser.mjs', 'native-full.bundle.js',
            'native-full-checks.mjs', 'native-peer-adapters.mjs', 'native-peer-current.mjs', 'mediasoup-native-peer-sdp.mjs',
            'native-peer-checks.mjs', 'native-peer.mjs', 'native-video.mjs', 'janus-events.mjs', 'janus-broker.mjs',
            'browser-provenance.mjs', 'proxy-target.mjs', 'package-lock.json']
@@ -50,13 +51,32 @@ def phase(path):
         return 'starting'
 
 
+def cgroup_cpu_sample(pid, proc_root=Path('/proc'), cgroup_root=Path('/sys/fs/cgroup')):
+    groups = (proc_root / str(pid) / 'cgroup').read_text().splitlines()
+    group = next((line.split('::', 1)[1] for line in groups if line.startswith('0::')), None)
+    if not group:
+        raise ValueError('actual cgroup v2 identity unavailable')
+    root = cgroup_root.resolve()
+    path = (root / group.lstrip('/')).resolve()
+    if not path.is_relative_to(root):
+        raise ValueError('actual cgroup path is outside the visible cgroup root')
+    return {'cgroup_path': group, 'cgroup_cpu_stat': (path / 'cpu.stat').read_text()}
+
+
 def tree(pid, current_phase):
     processes = [process_sample(child) for child in process_tree(pid)]
     valid = bool(processes and any(value['pid'] == pid for value in processes) and all(
         value['rss_bytes'] >= 0 and math.isfinite(value['cpu_seconds']) and value['cpu_seconds'] >= 0 for value in processes))
-    return {'at': time.time(), 'phase': current_phase, 'root_pid': pid, 'processes': processes,
+    sample = {'at': time.time(), 'phase': current_phase, 'root_pid': pid, 'processes': processes,
             'rss_bytes': sum(value['rss_bytes'] for value in processes),
             'cpu_seconds': sum(value['cpu_seconds'] for value in processes), 'valid': valid}
+    try:
+        sample.update(cgroup_cpu_sample(pid))
+    except (OSError, ValueError) as error:
+        # Keep the historical process-tree result; separately block a claim
+        # about throttling instead of replacing unavailable counters with zero.
+        sample['cgroup_cpu_stat_error'] = str(error)
+    return sample
 
 
 def resources(samples, selected_phase='measurement', minimum_span=0):
@@ -69,7 +89,8 @@ def resources(samples, selected_phase='measurement', minimum_span=0):
         valid = False
     return {'measurement_valid': valid, 'phase': selected_phase, 'measurement_samples': len(active), 'actual_span_seconds': span,
             'maximum_process_rss_sum_bytes': max((sample.get('rss_bytes', 0) for sample in active), default=None),
-            'cpu_core_equivalents': rates, 'scope': 'sum of actual process tree RSS and CPU; shared pages may be counted per process'}
+            'cpu_core_equivalents': rates, 'cgroup_throttling': cgroup_throttling(active),
+            'scope': 'sum of actual process tree RSS and CPU; shared pages may be counted per process; cgroup throttling reported separately'}
 
 
 def case(args, engine, plan):

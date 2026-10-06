@@ -31,6 +31,186 @@ def median(values):
     return statistics.median(values) if values else None
 
 
+def cgroup_throttling(samples):
+    """Report actual cpu.stat deltas; a low CPU mean says nothing about bursts."""
+    required = ['nr_periods', 'nr_throttled', 'throttled_usec']
+    unavailable, parsed = [], []
+    for sample in samples:
+        raw = sample.get('cgroup_cpu_stat')
+        try:
+            pairs = [line.split() for line in raw.splitlines()]
+            if any(len(pair) != 2 for pair in pairs) or len({pair[0] for pair in pairs}) != len(pairs):
+                raise ValueError('malformed or duplicate cpu.stat field')
+            counters = {name: int(value) for name, value in pairs}
+            if any(name not in counters or counters[name] < 0 for name in required):
+                raise ValueError('missing/negative throttling counter')
+            if any(value < 0 for value in counters.values()):
+                raise ValueError('negative cpu.stat counter')
+            parsed.append(counters)
+        except (AttributeError, ValueError):
+            unavailable.append('missing or invalid actual cgroup cpu.stat')
+    if len(samples) < 2:
+        unavailable.append('at least two cgroup samples required')
+    groups = [sample.get('cgroup_path') for sample in samples]
+    if not all(isinstance(group, str) and group.startswith('/') for group in groups) or len(set(groups)) != 1:
+        unavailable.append('cgroup identity changed or disappeared')
+    if not unavailable:
+        for index in range(1, len(samples)):
+            before, after = samples[index - 1].get('at'), samples[index].get('at')
+            if not all(isinstance(value, (int, float)) and not isinstance(value, bool) and math.isfinite(value) for value in [before, after]) or after <= before:
+                unavailable.append('cgroup sample clock changed')
+            if any(parsed[index][name] < parsed[index - 1][name] for name in required):
+                unavailable.append('cgroup throttling counter reset')
+    if unavailable:
+        return {'available': False, 'unavailable': sorted(set(unavailable)), 'delta': None,
+                'scope': 'actual cgroup cpu.stat; missing evidence is not zero throttling'}
+    delta = {name: parsed[-1][name] - parsed[0][name] for name in required}
+    return {'available': True, 'baseline': parsed[0], 'end': parsed[-1], 'delta': delta,
+            'throttled_seconds': delta['throttled_usec'] / 1e6,
+            'throttled_period_fraction': delta['nr_throttled'] / delta['nr_periods'] if delta['nr_periods'] else None,
+            'observed_throttling': delta['nr_throttled'] > 0 or delta['throttled_usec'] > 0,
+            'interval_deltas': [{name: after[name] - before[name] for name in required} for before, after in zip(parsed, parsed[1:])],
+            'scope': 'actual owned cgroup, independently of process-tree CPU mean; no causal attribution'}
+
+
+def native_expected_edges(topology):
+    count = topology.get('voice_participants')
+    if not isinstance(count, int) or isinstance(count, bool) or not 2 <= count <= 32:
+        return set()
+    expected = {(f'peer-{receiver}', f'peer-{sender}/mic', 'audio') for receiver in range(count) for sender in range(count) if receiver != sender}
+    expected.update((f'peer-{receiver}', f'peer-0/{source}', kind) for receiver in range(1, count) for source, kind in [('screen-audio', 'audio'), ('video', 'video')])
+    declared = [(edge.get('receiver'), edge.get('source'), edge.get('kind')) for edge in topology.get('edges', [])]
+    participants = topology.get('participants', [])
+    if len(declared) != len(expected) or set(declared) != expected or participants != [
+            {'peer': f'peer-{peer}', 'implementation': 'native' if peer == 0 else 'browser'} for peer in range(count)]:
+        return set()
+    return expected
+
+
+def finite_number(value):
+    return isinstance(value, (int, float)) and not isinstance(value, bool) and math.isfinite(value)
+
+
+def native_quality_complete(browser):
+    quality = browser.get('graph', {}).get('quality', {})
+    expected = native_expected_edges(browser.get('topology', {}))
+    edges = quality.get('edges', [])
+    actual = [(edge.get('receiver'), edge.get('source'), edge.get('kind')) for edge in edges]
+    if not expected or len(actual) != len(expected) or set(actual) != expected or quality.get('complete') is not True:
+        return False
+    for edge in edges:
+        native = edge.get('receiver') == 'peer-0'
+        if edge.get('receiver_implementation') != ('native' if native else 'browser') or edge.get('complete') is not True or edge.get('unavailable'):
+            return False
+        fields = ['packets_received', 'payload_bytes_received', 'decoded_samples', 'sequence_gaps', 'timestamp_gaps', 'reordered_or_duplicate_packets', 'decode_errors'] if native else [
+            'packetsReceived', 'bytesReceived', 'packetsLost', 'packetsDiscarded', 'jitterBufferDelay', 'jitterBufferTargetDelay', 'jitterBufferMinimumDelay', 'jitterBufferEmittedCount'] + ([
+            'totalSamplesReceived', 'concealedSamples', 'silentConcealedSamples', 'concealmentEvents', 'insertedSamplesForDeceleration', 'removedSamplesForAcceleration'] if edge['kind'] == 'audio' else [
+            'framesDecoded', 'framesDropped', 'freezeCount', 'pauseCount', 'totalFreezesDuration', 'totalPausesDuration'])
+        counters = edge.get('counters', {})
+        if any(not finite_number(counters.get(field, {}).get('delta')) or counters[field].get('unavailable') or
+               (field != 'packetsLost' and counters[field]['delta'] < 0) for field in fields):
+            return False
+        metric = edge.get('sample_rate' if edge['kind'] == 'audio' else 'decoded_fps')
+        if not finite_number(metric) or metric < 0 or not finite_number(edge.get('measured_seconds')) or edge['measured_seconds'] <= 0:
+            return False
+        count = counters['decoded_samples' if native else 'totalSamplesReceived' if edge['kind'] == 'audio' else 'framesDecoded']['delta']
+        if not math.isclose(metric, count / edge['measured_seconds'], rel_tol=1e-9, abs_tol=1e-9):
+            return False
+        if not native:
+            emitted = counters['jitterBufferEmittedCount']['delta']
+            means = edge.get('jitter_buffer_mean_seconds')
+            if emitted <= 0 or not isinstance(means, dict) or any(not finite_number(means.get(field)) or means[field] < 0 or
+                   not math.isclose(means[field], counters[counter]['delta'] / emitted, rel_tol=1e-9, abs_tol=1e-9)
+                   for field, counter in [('actual', 'jitterBufferDelay'), ('target', 'jitterBufferTargetDelay'), ('minimum', 'jitterBufferMinimumDelay')]):
+                return False
+            if edge['kind'] == 'audio':
+                concealed, silent = counters['concealedSamples']['delta'], counters['silentConcealedSamples']['delta']
+                nonconcealed = edge.get('nonconcealed_sample_rate')
+                if not 0 <= silent <= concealed <= count or not finite_number(nonconcealed) or not math.isclose(nonconcealed,
+                       (count - concealed) / edge['measured_seconds'], rel_tol=1e-9, abs_tol=1e-9):
+                    return False
+        if any(not isinstance(edge.get(field), list) for field in ['packet_stalls', 'decoder_stalls']):
+            return False
+    return True
+
+
+def summarize_native(browser, server):
+    """Additive full-N observations; never rewrite strict historical pilot status."""
+    graph = browser.get('graph', {})
+    quality = graph.get('quality', {'complete': False, 'edges': []})
+    complete = native_quality_complete(browser)
+    phases = lambda name: [sample for sample in server.get(name, []) if sample.get('phase') == 'measurement']
+    return {'strict_pilot_valid': graph.get('valid') is True and browser.get('full_graph_streams_valid') is True,
+            'strict_pilot_failures': browser.get('failures', []),
+            'source_graph_valid': graph.get('source_graph', {}).get('valid') is True,
+            'source_graph_failures': graph.get('source_graph', {}).get('failures', ['new source/graph observations absent']),
+            'quality_data_complete': complete, 'measured_quality': quality,
+            'measurement_comparable': graph.get('source_graph', {}).get('valid') is True and complete,
+            'backend_throttling': cgroup_throttling(phases('samples')),
+            'generator_throttling': cgroup_throttling(phases('load_generator_samples')),
+            'infrastructure_throttling': cgroup_throttling(phases('infrastructure_samples')) if browser.get('engine') == 'current' else None,
+            'comparison_available': False, 'acceptance': False,
+            'blocking_gates': ['complete matched current/candidate runs on separate physical hosts',
+                               'calibrated native media latency for every edge',
+                               'full requested matrix and product gateway-inclusive qualification'],
+            'policy': 'source/graph validity and measured quality are separate; no universal zero-PLC product rule; PCM calibration remains strict'}
+
+
+def native_source_comparison(browsers):
+    """Instrument comparability only, never a performance or migration pass."""
+    failures = []
+    engines = [browser.get('engine') for browser in browsers]
+    if any(engine not in ['current', 'mediasoup', 'janus'] for engine in engines) or len(set(engines)) != len(engines):
+        failures.append('known unique engine cases required; repeated rounds need a separate matrix')
+    if len(browsers) < 2 or 'current' not in {browser.get('engine') for browser in browsers}:
+        failures.append('actual current and candidate data required')
+    if len({browser.get('engine') for browser in browsers}) < 2:
+        failures.append('at least one candidate required')
+    identities, rates = [], {}
+    for browser in browsers:
+        graph, instrument = browser.get('graph', {}), browser.get('instrument', {})
+        if graph.get('measurement_policy', {}).get('engine') != browser.get('engine'):
+            failures.append('engine label differs from executed graph policy')
+        plan, collector = browser.get('plan', {}), browser.get('collector', {})
+        if graph.get('measurement_policy', {}).get('requestedSeconds') != plan.get('seconds'):
+            failures.append('executed measurement window differs from source schedule policy')
+        executed = browser.get('executed_browser', {})
+        archives = [instrument.get(name, {}).get('archive_sha256') for name in ['mic', 'source', 'video']]
+        if any(not isinstance(value, str) or len(value) != 64 or any(char not in '0123456789abcdef' for char in value) for value in archives):
+            failures.append('same frozen source archives required')
+        if graph.get('source_graph', {}).get('valid') is not True:
+            failures.append('source schedule/inventory/graph/rates invalid or unavailable')
+        if not native_expected_edges(browser.get('topology', {})):
+            failures.append('complete full-N participant and receiver inventory required')
+        if not all(plan.get(field) is not None for field in ['seconds', 'warmup', 'source_seconds', 'source_policy']):
+            failures.append('complete source schedule policy required')
+        if not all(executed.get(field) for field in ['product', 'revision', 'sha256']) or not collector.get('node_sha256') or not instrument.get('decoder'):
+            failures.append('actual browser/Node/native decoder provenance required')
+        identities.append(json.dumps({'archives': archives, 'topology': browser.get('topology'),
+            'schedule': {field: plan.get(field) for field in ['seconds', 'warmup', 'source_seconds', 'source_policy']},
+            'browser': executed, 'node_sha256': collector.get('node_sha256'), 'decoder': instrument.get('decoder')}, sort_keys=True))
+        senders = graph.get('senders', [])
+        inventory = [sender.get('source') for sender in senders]
+        count = browser.get('topology', {}).get('voice_participants', 0)
+        if not isinstance(count, int) or isinstance(count, bool) or not 2 <= count <= 32:
+            count = 0
+        wanted = {f'peer-{peer}/mic' for peer in range(count)} | {'peer-0/screen-audio', 'peer-0/video'}
+        if len(inventory) != len(wanted) or set(inventory) != wanted:
+            failures.append('exact actual sender inventory required')
+        for sender in senders:
+            value = sender.get('bitrate_bps')
+            if not isinstance(value, (float, int)) or isinstance(value, bool) or not math.isfinite(value) or value <= 0:
+                failures.append('actual sender bitrate unavailable')
+            else:
+                rates.setdefault(sender.get('source'), []).append(value)
+    if len(set(identities)) != 1:
+        failures.append('source archive/runtime/topology/schedule differs')
+    if any(len(values) != len(browsers) or max(values) / min(values) > 1.1 for values in rates.values()):
+        failures.append('actual per-source bitrate differs between runs')
+    return {'source_graph_comparison_available': not failures, 'failures': sorted(set(failures)),
+            'comparison_available': False, 'scope': 'matched instrument inputs only; quality/CPU/latency/stability and migration remain unqualified'}
+
+
 def same_comparison_browser(runs):
     if not runs or any(len({bool(run.get(policy)) for run in runs}) != 1 for policy in ['fixed_video_fixture', 'pcm_latency_enabled']):
         return False
@@ -228,6 +408,7 @@ def summarize(browser, server):
     result['negotiated_ciphers'] = sorted({(s.get('dtlsCipher', ''), s.get('srtpCipher', ''))
                                            for s in last['stats'] if s['type'] == 'transport'})
     timed = [s for s in server.get('samples', []) if first['at'] / 1000 <= s['at'] <= last['at'] / 1000]
+    result['backend_throttling'] = cgroup_throttling(timed)
     idle = server.get('idle_samples', [])
     if len(timed) < 2 or not idle:
         problems.append('missing server samples aligned with browser interval')
@@ -252,6 +433,7 @@ def summarize(browser, server):
             infrastructure[name]['post_leave_peak_rss_bytes'] = max((s['infrastructure'][name]['rss_bytes'] for s in post if name in s.get('infrastructure', {})), default=None)
         result['infrastructure'] = infrastructure
     generator = [s for s in server.get('load_generator_samples', []) if first['at'] / 1000 <= s['at'] <= last['at'] / 1000]
+    result['load_generator_throttling'] = cgroup_throttling(generator)
     if generator:
         result['load_generator_peak_rss_bytes'] = max(s['rss_bytes'] for s in generator)
         stable = all(b['cpu_seconds'] >= a['cpu_seconds'] for a, b in zip(generator, generator[1:]))
@@ -269,6 +451,28 @@ def main():
     parser.add_argument('directory', type=Path)
     args = parser.parse_args()
     report = json.loads((args.directory / 'report.json').read_text())
+    if 'configuration' not in report and 'peers' in report:
+        browsers, runs = [], []
+        for run in report.get('runs', []):
+            folder = args.directory / run['engine']
+            try:
+                browser = json.loads((folder / 'browser.json').read_text())
+                server = json.loads((folder / 'server.json').read_text())
+                browsers.append(browser)
+                summary = summarize_native(browser, server)
+            except (OSError, ValueError, KeyError) as error:
+                summary = {'strict_pilot_valid': False, 'source_graph_valid': False, 'quality_data_complete': False, 'problems': [str(error)]}
+            runs.append({'engine': run['engine'], **summary})
+        comparison = native_source_comparison(browsers)
+        if len(browsers) != len(runs) or len(runs) != len(report.get('backend_images', {})) or report.get('error') or report.get('environment_disqualified'):
+            comparison['source_graph_comparison_available'] = False
+            comparison['failures'].append('matrix incomplete or globally disqualified')
+        output = {'acceptance': False, 'comparison_available': False, 'runs': runs, 'source_comparison': comparison,
+                  'scope': 'additive native full-N source/quality/throttling observations; original strict pilot failures retained'}
+        (args.directory / 'summary.json').write_text(json.dumps(output, indent=2, allow_nan=False) + '\n')
+        print(json.dumps(comparison, indent=2))
+        return int(not runs or any(not run.get('strict_pilot_valid') or not run.get('source_graph_valid') or not run.get('quality_data_complete') for run in runs)
+                   or not comparison['source_graph_comparison_available'])
     output = {'acceptance': False, 'blocking_gates': report['blocking_gates'],
               'source_revision': report['source_revision'],
               'comparison_disqualified': report.get('environment_disqualified') or report.get('error'),

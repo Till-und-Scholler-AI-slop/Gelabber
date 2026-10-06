@@ -91,3 +91,74 @@ test('all engines require actual negotiated sender MID/SSRC/codec; optional Code
     const bad = structuredClone(value); mutate(bad); assert.equal(check(bad).valid, false);
   }
 });
+
+function withQuality(value = control()) {
+  for (const sample of value.samples) for (const row of sample.browser.stats.filter(row => row.type === 'inbound-rtp')) {
+    const emitted = row.kind === 'audio' ? row.totalSamplesReceived : row.framesDecoded;
+    Object.assign(row, { packetsDiscarded: 0, jitterBufferEmittedCount: emitted,
+      jitterBufferDelay: emitted * .02, jitterBufferTargetDelay: emitted * .025, jitterBufferMinimumDelay: emitted * .015 });
+    if (row.kind === 'audio') Object.assign(row, { silentConcealedSamples: 0, concealmentEvents: 0,
+      insertedSamplesForDeceleration: 0, removedSamplesForAcceleration: 0 });
+    else Object.assign(row, { framesDropped: 0, freezeCount: 0, pauseCount: 0, totalFreezesDuration: 0, totalPausesDuration: 0 });
+  }
+  return value;
+}
+test('nonzero PLC is an observation against the baseline while the historical strict pilot remains FAIL', () => {
+  const value = withQuality();
+  for (const sample of value.samples.slice(1)) {
+    const row = sample.browser.stats.find(row => row.type === 'inbound-rtp' && row.kind === 'audio');
+    Object.assign(row, { concealedSamples: 514, silentConcealedSamples: 10, concealmentEvents: 1,
+      insertedSamplesForDeceleration: 8, removedSamplesForAcceleration: 4 });
+  }
+  const result = check(value), quality = result.quality.edges.find(edge => edge.receiver === 'peer-1' && edge.source === 'peer-0/mic');
+  assert.equal(result.valid, false); assert.equal(result.source_graph.valid, true);
+  assert.equal(result.quality.complete, true); assert.equal(result.source_graph.measurement_comparable, true);
+  assert.equal(quality.counters.concealedSamples.delta, 514); assert.equal(quality.counters.silentConcealedSamples.delta, 10);
+  assert.equal(quality.counters.concealmentEvents.delta, 1); assert.equal(quality.counters.insertedSamplesForDeceleration.delta, 8);
+  assert.equal(quality.counters.removedSamplesForAcceleration.delta, 4); assert.equal(quality.sample_rate, 48000);
+  assert.equal(quality.nonconcealed_sample_rate, (1440000 - 514) / 30);
+  assert.equal(result.comparison_available, false); assert.equal(result.quality.comparison_available, false);
+});
+test('interval jitter-buffer means exclude warmup counters and native decode does not invent browser PLC', () => {
+  const value = withQuality();
+  for (const sample of value.samples) for (const row of sample.browser.stats.filter(row => row.type === 'inbound-rtp')) row.jitterBufferDelay += 1000;
+  const result = check(value), audio = result.quality.edges.find(edge => edge.receiver === 'peer-1' && edge.kind === 'audio');
+  assert.equal(audio.jitter_buffer_mean_seconds.actual, .02); assert.equal(audio.jitter_buffer_mean_seconds.target, .025);
+  assert.equal(audio.jitter_buffer_mean_seconds.minimum, .015);
+  const native = result.quality.edges.find(edge => edge.receiver === 'peer-0');
+  assert.equal(native.counters.concealedSamples, undefined); assert.equal(native.jitter_buffer_mean_seconds, null);
+  assert.equal(native.sample_rate, 48000); assert.match(native.scope, /no browser/);
+});
+test('missing, malformed, reset or impossible quality counters never become zero or a complete comparison', () => {
+  for (const mutate of [row => { delete row.silentConcealedSamples; }, row => { row.concealmentEvents = NaN; },
+    row => { row.jitterBufferDelay = -1; }, row => { row.silentConcealedSamples = 1; }, row => { row.jitterBufferTargetDelay = 0; }]) {
+    const value = withQuality(); mutate(value.samples[1].browser.stats.find(row => row.type === 'inbound-rtp' && row.kind === 'audio'));
+    const result = check(value);
+    assert.equal(result.quality.complete, false); assert.equal(result.source_graph.measurement_comparable, false);
+    assert.equal(result.comparison_available, false);
+  }
+});
+test('record real stalls and signed loss correction independently of source schedule/inventory qualification', () => {
+  const value = withQuality();
+  const video = sample => sample.browser.stats.find(row => row.type === 'inbound-rtp' && row.kind === 'video');
+  video(value.samples[1]).framesDecoded = video(value.samples[0]).framesDecoded;
+  for (const sample of value.samples) video(sample).packetsLost = 10;
+  video(value.samples[3]).packetsLost = 8; // late received packets may reduce WebRTC cumulative loss
+  const result = check(value), quality = result.quality.edges.find(edge => edge.kind === 'video');
+  assert.equal(result.valid, false); assert.equal(result.source_graph.valid, true); assert.equal(result.quality.complete, true);
+  assert.deepEqual(quality.decoder_stalls, [{ interval: 0, seconds: 10 }]); assert.equal(quality.counters.packetsLost.delta, -2);
+  assert.equal(quality.decoded_fps, 60);
+});
+test('missing edges, unequal native schedules, extra source inventory and changed sender bitrate invalidate source comparability', () => {
+  for (const mutate of [v => { v.samples[1].browser.stats = v.samples[1].browser.stats.filter(row => !(row.type === 'inbound-rtp' && row.kind === 'video')); },
+    v => { for (const source of Object.values(v.samples[1].native.sources)) source.timeline.startClockNs = '2'; },
+    v => { v.samples[1].native.sources.extra = structuredClone(v.samples[1].native.sources.mic); },
+    v => { v.samples[3].browser.stats.find(row => row.type === 'outbound-rtp').bytesSent *= .5; },
+    v => { v.samples[1].browser.stats.find(row => row.type === 'inbound-rtp').ssrc++; },
+    v => { delete v.samples[1].browser.stats.find(row => row.type === 'inbound-rtp').bytesReceived; },
+    v => { v.topology.edges.push(structuredClone(v.topology.edges[0])); },
+    v => { v.samples[1].native.peers.publish.negotiated_senders[0].encodings[0].active = false; }]) {
+    const value = withQuality(); mutate(value); const result = check(value);
+    assert.equal(result.source_graph.valid, false); assert.equal(result.source_graph.measurement_comparable, false);
+  }
+});

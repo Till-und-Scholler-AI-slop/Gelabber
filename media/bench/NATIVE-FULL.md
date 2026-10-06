@@ -94,3 +94,59 @@ tool does not run a WAN matrix or rank engines: independent-host measurements,
 all requested three-round cases, calibrated true media latency, product access/
 Watch/Live acceptance and an executed rollback remain open. Comparison and
 production acceptance flags remain false even for a passing local pilot.
+
+## Additive source, quality and throttling observations
+
+`nativeFullGraph` retains its original strict `valid`/`failures` result. The
+historical Current N8 concealment and mediasoup source-deadline failures remain
+failures. New `source_graph` observations distinguish complete, owned receiver
+and sender inventories, an unchanged common source clock and actual configured
+sender rates from receiver quality. A measured concealment event or decoder
+stall can coexist with valid source/graph inputs; it is still retained in the
+strict pilot result and in every affected edge's quality record. A source
+schedule, missing edge, changed receiver, missing/reset core counter or unequal
+sender rate invalidates source/graph comparability.
+
+`quality.edges` records measurement-window deltas for packets/loss/discards,
+concealed and silently concealed samples, concealment events, inserted/removed
+samples, decoded sample rates/FPS and actual packet/decoder stall intervals.
+Jitter-buffer actual/target/minimum means use the delta of each cumulative delay
+divided by the delta of emitted samples/frames; warmup totals are excluded.
+Browser sample totals include concealment, so the nonconcealed rate is reported
+separately. Signed packet-loss corrections are retained without clamping them
+to zero. These semantics follow the [W3C receiver statistics definitions](https://www.w3.org/TR/webrtc-stats/#dom-rtcinboundrtpstreamstats).
+Native receiver counters describe actual packet order and libopus decode; they
+do not invent browser playout PLC, jitter-buffer or acoustic latency values.
+
+Missing, nonfinite, reset or inconsistent quality counters make
+`quality.complete` and `source_graph.measurement_comparable` false. Unsupported
+browser fields remain unavailable rather than becoming zero. Quality is to be
+compared with complete current-SFU baseline observations under equal inputs;
+there is no universal zero-PLC product rule. Native PCM calibration continues to
+require its independent strict, loss/concealment-free controls.
+
+The owned collector now reads each actual root PID's cgroup-v2 path and raw
+`cpu.stat` during idle/measurement/post-leave, for the backend, generator and
+separate infrastructure. Its resource summary retains the first/last counters,
+interval deltas, throttled periods and throttled microseconds separately from
+process-tree CPU means. Missing counters, changed cgroups/clocks or counter
+resets make this evidence unavailable. A process-tree mean below its CPU quota
+does not establish absence of burst throttling. No process/CPU-cause attribution
+follows from the recorded throttling alone.
+
+An existing pilot directory can be inspected without starting fixtures:
+
+```sh
+python3 media/bench/evaluate.py /absolute/owned-native-full-directory
+```
+
+This writes an additive `summary.json`; it does not modify the raw reports.
+`source_comparison` requires an actual Current run plus a candidate, identical
+frozen audio/video archives, browser/Node/decoder provenance, complete topology,
+source schedule policy and matched actual per-source sender bitrates. It is
+only instrument comparability. The evaluator returns a failure for incomplete
+inputs, missing quality or strict pilot failures, preserving historical red
+results. Full quality/CPU/latency/stability comparison and acceptance remain
+unavailable until complete matched separate-host runs, every edge's calibrated
+native media latency, the requested matrix and gateway-inclusive product gates
+exist. A passing synthetic evaluator test supplies none of that runtime evidence.
