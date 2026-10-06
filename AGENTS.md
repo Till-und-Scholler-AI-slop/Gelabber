@@ -40,6 +40,11 @@ RNNoise assets. Do not introduce a cloud audio service.
 
 SilasSch reviews product PRs when that is the standing rule. Do not invent extra process.
 
+Rafael explicitly waived human review for the finished v0.4 feature integration
+on 2026-10-06. This exception does not waive PRs or successful technical checks.
+Restore the normal review protection after that integration. He also excluded
+the one-hour call test; do not run it or record it as passed.
+
 ## Current development line: v0.4
 
 The expanded development scope is tracked in `docs/v0.4-roadmap.md` and the
