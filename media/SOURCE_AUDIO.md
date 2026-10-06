@@ -34,7 +34,7 @@ as its parent. Browser tracks without explicit source-audio announcements remain
 legacy microphone tracks; clients must never send source audio to legacy media.
 
 Source audio uses Opus at 48 kHz, two channels, stereo and sprop-stereo enabled,
-192000 bits/s, FEC enabled and DTX disabled. Frontend display constraints and
+no application bitrate cap, FEC enabled and DTX disabled. Frontend display constraints and
 sender tuning keep speech processing off independently of microphone settings.
 The SFU forwards the encoded stream without transcoding. Internal publication
 identities use `<user>:sa` / `<user>:la`; outgoing native stream IDs and CNAME

@@ -220,6 +220,79 @@ export function instrument({ relay }) {
     return canvasSource("display", state.displayCalls);
   };
 }
+// Bind native sender stats to actual fixture capture objects in browser memory.
+// Persist fixture ordinals and RID labels, never native track identifiers or SDP.
+export async function sampleVideoSenders({ deadlineEpochMs } = {}) {
+  const state = window.__e2e;
+  const captures = state.captures
+    .map((capture, index) => ({ capture, index }))
+    .filter(({ capture }) => capture.track.readyState === "live");
+  const senders = [];
+  for (const [peerIndex, peer] of state.peers.entries()) {
+    if (peer.connectionState !== "connected") continue;
+    for (const [senderIndex, sender] of peer.getSenders().entries()) {
+      const track = sender.track;
+      if (track?.kind !== "video" || track.readyState !== "live") continue;
+      const capture = captures.find((item) => item.capture.track === track);
+      if (deadlineEpochMs !== undefined && Date.now() >= deadlineEpochMs)
+        throw new Error("E2E_NATIVE_STATS_DEADLINE");
+      let timer;
+      let report;
+      try {
+        report =
+          deadlineEpochMs === undefined
+            ? await sender.getStats()
+            : await Promise.race([
+                sender.getStats(),
+                new Promise((_, reject) => {
+                  timer = setTimeout(
+                    () => reject(new Error("E2E_NATIVE_STATS_DEADLINE")),
+                    Math.max(0, deadlineEpochMs - Date.now() - 10),
+                  );
+                }),
+              ]);
+      } finally {
+        if (timer !== undefined) clearTimeout(timer);
+      }
+      const current =
+        peer.connectionState === "connected" &&
+        sender.track === track &&
+        track.readyState === "live";
+      const encodings = [...report.values()]
+        .filter((entry) => {
+          if (
+            entry.type !== "outbound-rtp" ||
+            (entry.kind ?? entry.mediaType) !== "video"
+          )
+            return false;
+          const identifier =
+            entry.trackIdentifier ??
+            report.get(entry.mediaSourceId)?.trackIdentifier;
+          return identifier === undefined || identifier === track.id;
+        })
+        .map((entry) => ({
+          rid: typeof entry.rid === "string" ? entry.rid : null,
+          frames: entry.framesEncoded ?? null,
+          packets: entry.packetsSent ?? 0,
+        }));
+      senders.push({
+        peer: peerIndex,
+        sender: senderIndex,
+        capture: capture?.index ?? null,
+        current,
+        encodings,
+      });
+    }
+  }
+  return {
+    captures: captures.map(({ capture, index }) => ({
+      capture: index,
+      kind: capture.kind,
+      slot: capture.slot,
+    })),
+    senders,
+  };
+}
 export async function sample({ deadlineEpochMs } = {}) {
   const state = window.__e2e;
   const peers = [];

@@ -45,6 +45,7 @@ const validateAuthSearch = (search: Record<string, unknown>): AuthSearch => {
 /** Guard for signed-in pages: waits for the (single) session bootstrap. */
 async function requireUser({ location }: { location: { href: string } }) {
   await ensureSession();
+  if (useSession.getState().status === "unknown") return;
   if (useSession.getState().status !== "authenticated") {
     throw redirect({
       to: "/login",

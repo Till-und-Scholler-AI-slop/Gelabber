@@ -14,6 +14,8 @@ import {
   observe,
 } from "./harness.mjs";
 import { activePeers, progress, watchSource } from "./media.mjs";
+import { sampleVideoSenders } from "./probe.mjs";
+import { publisherEncoderProgress } from "./publisher-encoders.mjs";
 const audioPackets = (s) =>
   activePeers(s)
     .flatMap((p) => p.inbound)
@@ -212,9 +214,51 @@ export async function mediaExtraScenarios(h, f, { begin, reset, options }) {
       try {
         await click(f.owner, "Kamera an");
         await click(f.owner, "Bildschirm teilen");
+        const readPublisher = (remaining) =>
+          nativeEvaluate(
+            f.owner,
+            sampleVideoSenders,
+            { deadlineEpochMs: Date.now() + remaining },
+            remaining,
+          );
+        const publisherBefore = await until(
+          readPublisher,
+          (s) => publisherEncoderProgress(s),
+          "fixture-three-native-publisher-encoders-not-ready",
+          20_000,
+        );
+        const publisherReady = await until(
+          readPublisher,
+          (s) => publisherEncoderProgress(s, publisherBefore),
+          "fixture-three-native-publisher-encoders-not-progressing",
+          5_000,
+        );
         await click(f.member, "Beitreten");
-        await watchSource(f.member, "live");
-        await watchSource(f.member, "screen");
+        // Join/capture clicks precede async publication and source-Watch capability.
+        // Require actual subscription controls; count=0 must not silently skip Watch.
+        const sourceButtons = {};
+        for (const [kind, label] of [
+          ["live", "— Live"],
+          ["screen", "— Bildschirm"],
+        ]) {
+          const tiles = f.member.page
+            .locator("figure")
+            .filter({ hasText: label });
+          const start = tiles.getByRole("button", {
+            name: "Zuschauen",
+            exact: true,
+          });
+          await start.first().waitFor({ state: "visible", timeout: 20_000 });
+          sourceButtons[kind] = await start.count();
+          check(
+            sourceButtons[kind] === 1,
+            "fixture-source-watch-control-not-unique",
+          );
+          await start.first().click();
+          await tiles
+            .getByRole("button", { name: "Nicht mehr zuschauen", exact: true })
+            .waitFor();
+        }
         const held = await until(
           () => snapshot(f.member),
           (s) => s.heldVideoTracks === 3,
@@ -231,6 +275,9 @@ export async function mediaExtraScenarios(h, f, { begin, reset, options }) {
           return kinds;
         });
         return {
+          publisherBefore,
+          publisherReady,
+          sourceButtons,
           held,
           callbackOrder: "reversed",
           deliveredKinds: kinds,

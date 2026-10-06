@@ -1,0 +1,22 @@
+{
+  "upstream": "https://github.com/xiph/rnnoise",
+  "release": "v0.2",
+  "sourceCommit": "904a876dce1f9ab8860c0a5000ed151f9f6eef58",
+  "sourceArchiveSha256": "975488a6b6ed404b176f9e7a72b418470e50b1e7596f875eb7799f5b785e3ebf",
+  "model": "rnnoise_data-0b50c45.tar.gz",
+  "modelUrl": "https://media.xiph.org/rnnoise/models/rnnoise_data-0b50c45.tar.gz",
+  "modelSha256": "4ac81c5c0884ec4bd5907026aaae16209b7b76cd9d7f71af582094a2f98f4b43",
+  "emsdkImage": "emscripten/emsdk@sha256:af45409f3199d88db4b1b03af0098532c8fb33a375ac257463eeb0a622870d06",
+  "emsdkVersion": "3.1.74",
+  "wasmSha256": "e66d0eaef35d3774e86377efa8b9897e5b226284fb53059f0c1444881888b71c",
+  "license": "RNNOISE-LICENSE.txt",
+  "format": {
+    "sampleRate": 48000,
+    "channels": 1,
+    "frameSamples": 480,
+    "memoryBytes": 16777216,
+    "stackBytes": 1048576
+  },
+  "rebuild": "web/scripts/audio/build-rnnoise.sh",
+  "compatibility": "v0.2 scalar vec.h references absent os_support.h; build supplies only OPUS_CLEAR using memset."
+}

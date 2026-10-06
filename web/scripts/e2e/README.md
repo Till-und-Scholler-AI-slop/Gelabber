@@ -39,10 +39,28 @@ The local Firefox TURN exception requires explicit `GELABBER_E2E_FIREFOX_LOOPBAC
 - Lifecycle: all 20 live start/stop cycles run before client resource bounds are assessed, followed by an independent late viewer. At most one active publisher/watch peer; stop leaves audio only, at most four transceivers (audio/video plus two spare slots) and 32 KiB local SDP. These deliberately finite client bounds catch linear accumulation. They do not prove unexposed SFU publication/task bounds. No reload of the publisher during the cycles.
 - UI: SPA channel navigation must not label old-channel video as the new channel; stop/leave/mute/live controls remain reachable. Native picker cancellation and losing an existing live claim must release capture. Simulated `NotAllowedError` requires a visible playback retry; actual default autoplay is a separate native-browser check, without policy overrides.
 - Watch audio: every active publication in the same authorized voice channel exactly once; publisher selection filters Live video only. Positive other-room audio/Live must not leak. Native source/RTP and duplicate-playback observations complement session-wide Volume/Deafen/click-retry checks. Human audible quality stays manual.
+- Forced track arrival: before holding/reversing callbacks, require exactly three live fixture capture objects (one camera, two display sources), each bound to a distinct current native sender. Read each sender's own stats and require fresh encoded-frame growth for every source across two observations. One legacy encoding and multiple simulcast RIDs are both valid; several RTP records for one source cannot substitute for a missing source. Native track identifiers stay in browser memory; evidence uses fixture ordinals and RID labels. Run the focused ownership/deadline checks with `node --test scripts/e2e/publisher-encoders.checks.mjs`.
 - Core: real registration/invite/channel setup, reload/login/logout, cross-client chat create/edit/delete, new DM discovery while receiver is already connected, JPEG/PNG/WebP presign/PUT/bind/reload/byte-exact download in both channel and DM, 55-message history/paging, explicit error/retry and failed-send navigation, delayed A-account 401/CSRF403 after login as B with another tab observing B's session.
 - Access: Leave/Kick/Ban/Logout while an independent native Gateway subscriber remains open, plus an actual decoded watch peer whose local close is deliberately suppressed, plus an unconsumed pre-revocation SFU ticket. Positive pre-revocation Gateway and frame controls are recorded. Post-revocation REST, new tickets, existing events, continuing decoded frames and the held ticket are all assessed. Closing the normal UI socket alone cannot pass. Another independent session must survive logout. Raw sockets and tracks are released afterward.
 
 The logout check registers a POST `/api/auth/logout` response wait before clicking, requires HTTP200, then requires session HTTP200 with `user:null`. Client-side navigation occurs before the POST finishes and is not the success criterion. No arbitrary sleep substitutes for that response.
+
+Channel/server deletion uses an independent muted renderer attached to the held native receiver track **before** deletion. It first proves increasing native frame counters, then retains the same renderer, receiver, track and callback identity through the fault. The counter source is selected once (`requestVideoFrameCallback` or native playback quality). A missing, decreasing or replaced counter, paused/errored renderer, detached source, ended or disabled receiver track fails the measurement; no zero is substituted. A live track becoming muted after server revocation alone cannot prove that frames stopped. Other access scenarios retain their original strict native RTP counter contract. Renderer callbacks and elements are released even after partial setup or peer cleanup failure.
+
+The local instrument control deliberately hides native video RTP reports while authorized media continues. The unchanged renderer must still advance and reject the actual deletion frame-stop predicate. Its denied/closed side conditions are synthetic solely to isolate that predicate; it performs no revocation and is not an access acceptance result. Both commands use fresh fixture accounts and delete only their own servers:
+
+```bash
+GELABBER_SMOKE_URL=http://127.0.0.1:15182 \
+GELABBER_E2E_BROWSER=chromium GELABBER_E2E_SUITE=access \
+GELABBER_E2E_CASES=channel-server-delete-active-sockets \
+npm run test:e2e-app
+GELABBER_SMOKE_URL=http://127.0.0.1:15182 \
+GELABBER_E2E_BROWSER=chromium npm run test:e2e-held-renderer-control
+```
+
+Repeat with `GELABBER_E2E_BROWSER=firefox` for the second native browser. Keep actual runtime attribution and report paths in the surrounding environment as described above. These native controls remain local; CI runs the fast ownership/counter regressions.
+
+The final local Chromium153/Firefox155 controls on clean test freeze `d2fd0f6` pass for both deletion scopes and reject a false stop with hidden RTP reports. The compact [renderer evidence](evidence/held-renderer-validation.json) records immutable runtime/test hashes, unchanged live/enabled ownership, real counter values, fixture cleanup and explicit remaining gates. It does not validate the later source-restart fix.
 
 ## Open acceptance
 

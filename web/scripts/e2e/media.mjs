@@ -17,8 +17,9 @@ export function armPlaybackRetry() {
   const release = (event) => {
     if (
       !event.isTrusted ||
-      event.target.closest?.("button")?.textContent?.trim() !==
-        "Wiedergabe starten"
+      !["Wiedergabe starten", "Ton starten"].includes(
+        event.target.closest?.("button")?.textContent?.trim(),
+      )
     )
       return;
     window.__e2e.rejectPlayback = false;
@@ -485,8 +486,9 @@ export async function mediaScenarios(h, f) {
       "blocked-play-fault-not-exercised",
     );
     const retry = f.watcher.page.getByRole("button", {
-      name: /Wiedergabe starten|Abspielen|Wiedergabe wiederholen|Play/i,
+      name: /Wiedergabe starten|Ton starten|Abspielen|Wiedergabe wiederholen|Play/i,
     });
+    await retry.first().waitFor({ state: "visible", timeout: 5_000 });
     check(
       (await retry.count()) > 0,
       "blocked-play-has-no-visible-retry",

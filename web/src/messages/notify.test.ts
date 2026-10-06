@@ -2,12 +2,58 @@ import { describe, expect, it } from "vitest";
 
 import {
   isDmTopic,
+  createNotificationDedupe,
+  messageNotificationDecision,
   previewText,
   shouldToastMessage,
   stackOnto,
 } from "./notify.ts";
 
 describe("message toast rules", () => {
+  it("delivers desktop messages independently, including the hidden open chat", () => {
+    const base = {
+      toastEnabled: false,
+      desktopEnabled: true,
+      hidden: true,
+      type: "c" as const,
+      own: false,
+      channelId: "c1",
+      viewingChannelId: "c1",
+    };
+    expect(messageNotificationDecision(base)).toEqual({
+      toast: false,
+      desktop: true,
+    });
+    expect(
+      messageNotificationDecision({ ...base, hidden: false }).desktop,
+    ).toBe(false);
+    expect(messageNotificationDecision({ ...base, own: true }).desktop).toBe(
+      false,
+    );
+    expect(messageNotificationDecision({ ...base, type: "e" }).desktop).toBe(
+      false,
+    );
+    expect(
+      messageNotificationDecision({ ...base, desktopEnabled: false }).desktop,
+    ).toBe(false);
+    expect(
+      messageNotificationDecision({
+        ...base,
+        toastEnabled: true,
+        viewingChannelId: "c2",
+        desktopEnabled: false,
+      }),
+    ).toEqual({ toast: true, desktop: false });
+  });
+
+  it("does not replay delivery and bounds session deduplication", () => {
+    const first = createNotificationDedupe(2);
+    expect(first("c", "m1")).toBe(true);
+    expect(first("c", "m1")).toBe(false);
+    expect(first("other", "m1")).toBe(true);
+    expect(first("c", "m2")).toBe(true);
+    expect(first("c", "m1")).toBe(true);
+  });
   it("skips own messages, edits, the open channel, and a disabled setting", () => {
     const base = {
       enabled: true,
