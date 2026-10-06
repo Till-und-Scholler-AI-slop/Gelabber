@@ -276,6 +276,15 @@ export function useMarkRead(
           if (!active || !stampHolds(stamp)) return;
           done = true;
           setError(false);
+          if (!client.getQueryData(readKey(stamp))) {
+            // Let the initial unread snapshot finish instead of repeatedly
+            // cancelling it as new visible messages are marked read.
+            void client.invalidateQueries(
+              { queryKey: readKey(stamp), exact: true },
+              { cancelRefetch: false },
+            );
+            return;
+          }
           await client.cancelQueries({ queryKey: readKey(stamp), exact: true });
           if (!stampHolds(stamp)) return;
           client.setQueryData<ReadState[]>(readKey(stamp), (rows) =>
