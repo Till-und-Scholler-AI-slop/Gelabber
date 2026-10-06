@@ -2308,11 +2308,14 @@ mod tests {
     async fn slow_resource_gate_closes_only_its_native_producer() {
         let (sfu, _peer, publication, _rx) = stopping_fixture().await;
         let transport = publication.producer.transport();
-        let rtp = serde_json::from_value(json!({
-            "codecs":[{"mimeType":"audio/opus","payloadType":111,"clockRate":48000,"channels":2}],
-            "encodings":[{"ssrc":5678}],"rtcp":{"cname":"other-source","reducedSize":true}
-        }))
-        .unwrap();
+        // Reuse the complete parameters accepted by the native fixture. Only
+        // the second source's SSRC differs; no partial SDK JSON schema here.
+        let mut rtp = publication
+            .producer
+            .resource
+            .with(|producer| producer.rtp_parameters().clone())
+            .unwrap();
+        rtp.encodings[0].ssrc = Some(5678);
         let other = native(transport.produce(ProducerOptions::new(MediaKind::Audio, rtp)))
             .await
             .unwrap();

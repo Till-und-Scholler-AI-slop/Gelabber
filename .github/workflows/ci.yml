@@ -146,6 +146,9 @@ jobs:
       - name: Cache cargo
         uses: Swatinem/rust-cache@v2
         with:
+          # Keep compiled dependencies when a runtime assertion fails; checks
+          # remain failing and every test is rerun on the next candidate.
+          cache-on-failure: true
           shared-key: native-debian-${{ hashFiles('media/Dockerfile', 'docker/mediasoup-*', 'docker/install-mediasoup-debian-build-tools.sh') }}
           workspaces: . -> target/native-debian
 
@@ -172,7 +175,7 @@ jobs:
           curl -fsS "$MINIO_ENDPOINT/minio/health/ready" >/dev/null
           # Keep the 100ms latency assertion away from concurrent integration tests.
           # The skipped test is mandatory in the following isolated step.
-          sh docker/run-native-ci.sh test --locked --workspace --all-targets -- --skip typing_broadcasts_fast_and_clears_on_stop --test-threads=4
+          sh docker/run-native-ci.sh test --locked --workspace --all-targets --no-fail-fast -- --skip typing_broadcasts_fast_and_clears_on_stop --test-threads=4
 
       - name: Test typing latency in isolation
         env:
