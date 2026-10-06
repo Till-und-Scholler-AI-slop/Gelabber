@@ -498,6 +498,14 @@ async fn search_context_is_bounded_scoped_and_keeps_the_read_cursor(pool: PgPool
         RETURNING id")
         .bind(channel_uuid).bind(author_id).fetch_all(&pool).await.unwrap();
     let target = ids[69];
+    let reaction = a
+        .send(
+            Method::PUT,
+            &format!("/api/messages/{target}/reactions/%F0%9F%98%80"),
+            None,
+        )
+        .await;
+    assert_eq!(reaction.status, StatusCode::OK, "{}", reaction.body);
     let before = summary(&mut b, &channel).await;
     let path = format!("/api/channels/{channel}/messages/{target}/context");
     let context = b.send(Method::GET, &path, None).await;
@@ -506,6 +514,7 @@ async fn search_context_is_bounded_scoped_and_keeps_the_read_cursor(pool: PgPool
     assert_eq!(messages.len(), 61);
     assert_eq!(context.body["target_id"], target.to_string());
     assert_eq!(messages[30]["id"], target.to_string());
+    assert_eq!(messages[30]["reactions"], reaction.body["reactions"]);
     assert_eq!(messages[0]["content"], "context-40");
     assert_eq!(messages[60]["content"], "context-100");
     assert!(context.body["before"].as_str().unwrap().contains('|'));

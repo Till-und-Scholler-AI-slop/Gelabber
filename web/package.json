@@ -21,6 +21,7 @@
     "test:audio-smoke": "node scripts/smoke-audio-processing.mjs",
     "test:audio-dsp": "node scripts/audio/benchmark-rnnoise.mjs",
     "test:e2e-chat-workflows": "node scripts/e2e/chat-workflows.mjs",
+    "test:reactions-smoke": "node scripts/smoke-reactions.mjs",
     "test:e2e-search-context": "node scripts/e2e/search-context.mjs"
   },
   "dependencies": {
