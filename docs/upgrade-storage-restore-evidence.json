@@ -1,0 +1,200 @@
+{
+  "schema": 1,
+  "passed": true,
+  "nonce": "5eeb617abfff47b68ae60a0df221e58d",
+  "started_at_utc": "2026-10-05T18:11:34.562284+00:00",
+  "runner_sha256": "fffc6c1b7cfaba65ccd894fc54cbdf11a138c242049d84983e68844d7810cb1e",
+  "python_version": "3.14.7 (main, Aug 10 2026, 07:46:56) [GCC 16.1.1 20260728]",
+  "scope": "local frozen API binaries, PostgreSQL and paired MinIO volume snapshots; no production rollout, Web/Media image rollback or device acceptance",
+  "checks": [
+    "local daemon and exact cached pinned service image IDs",
+    "legacy frozen source built --locked and executable copied/hash recorded",
+    "candidate frozen source built --locked and executable copied/hash recorded",
+    "legacy seed channel/DM/pending attachment hashes, metadata, private bucket and auth/ACL",
+    "legacy paired quiesced DB/object snapshot recorded",
+    "real migration preserves legacy users/membership/messages/attachments/quota rows",
+    "candidate upgrade channel/DM/pending attachment hashes, metadata, private bucket and auth/ACL",
+    "negative control rejects same-size/Content-Type object corruption by SHA256",
+    "real migrated API search/read/reactions/channel+DM permissions and new attachment write",
+    "candidate paired quiesced DB/object snapshot recorded",
+    "negative control rejects a modified archive before restore",
+    "restored pg_restore exact rows including metadata/ACL/quota/migration ledger",
+    "candidate restore channel/DM/pending attachment hashes, metadata, private bucket and auth/ACL",
+    "restored API reaction/read state and next message sequence/default",
+    "restored pending upload binds through real API and exact quota transition",
+    "old binary/upgraded migration-ledger boot behavior recorded separately",
+    "negative control rejects DB metadata with missing restored object bytes",
+    "rollback pg_restore exact rows including metadata/ACL/quota/migration ledger",
+    "old binary rollback channel/DM/pending attachment hashes, metadata, private bucket and auth/ACL",
+    "actual frozen old API boots/authenticates/reads/writes with paired legacy restore"
+  ],
+  "binaries": {
+    "legacy": {
+      "revision": "5a54a003307465bfaa1430085cbf3f0067fa3b79",
+      "binary_sha256": "52a538bab46ed240708cdd06c4ef7540fd947f558c26cfa469ec3275b7dba0d8",
+      "git_archive_sha256": "e060dcb7a7b5bca621a5de891583a61dd37c1a4e870b3e41a9c4f8b1cddf1804",
+      "rust_toolchain": "1.98.1",
+      "rustc_version": "rustc 1.98.1 (48a229cea 2026-09-01)",
+      "cargo_version": "cargo 1.98.1 (797e8a9bc 2026-08-05)",
+      "cargo_lock_sha256": "51cd4627eba3d23a9d43d558b8301cb790656dd723d630b86af5f21a78743d1a",
+      "migrations": {
+        "0001_users_sessions.sql": "6c5cefff2ded495f1e65e8e5f6c85159fec8d4df364f97ee52ac6d52b5bca7fe",
+        "0002_servers_channels_invites.sql": "f8ec4b0cb8b0f968e8f3c123404fb1fb457232bd3bb68ec6f79b715f635a3587",
+        "0003_messages.sql": "1067919e55ab723bc0edc0f09afda51f15a82dc8d2504595205c089c02905e06",
+        "0004_direct_messages.sql": "36b9684183cfbca31914e2a781c18f8afe6ec7aebfeecb5453921ed4e2bf4224",
+        "0005_moderation.sql": "4d2118f25c4341fe4796769f62bd0f488b332541317c63d5b1f1694cf5fd5cf6",
+        "0006_attachments.sql": "3e258f8cf5333faf8c30d656ddf677fb5b5db69186868e199a5fe1d2342e61f3",
+        "0007_realtime_delivery.sql": "915e0b2f8c9c48cd38f8deb1217594f748b443447d21eabdc36ffa50a3b0f2da",
+        "0008_storage_lifecycle.sql": "57f0f8755740a6c98125c7d0dabcc6fdab5d73d19f182bfd06752ea25e74deea",
+        "0009_account_themes.sql": "efc819698d22fb2142a259a21e36bc4c3af5f394b9e50f9287960726d4a6d97e"
+      }
+    },
+    "candidate": {
+      "revision": "30764470087104a680353da15cf7dda064d5ff60",
+      "binary_sha256": "4eb604a1f4e8f39f7149a299bdc2e414967c169dcc180523ac3e5bd725b35009",
+      "git_archive_sha256": "2ef6ddfd1922a3820e48eb47ae5b9b9b3f19aa62615059bee611a53ad910d4a5",
+      "rust_toolchain": "1.98.1",
+      "rustc_version": "rustc 1.98.1 (48a229cea 2026-09-01)",
+      "cargo_version": "cargo 1.98.1 (797e8a9bc 2026-08-05)",
+      "cargo_lock_sha256": "2ea89bb21b628640d344d4c31611e46f2b73ee04d7443adf3d4133eceae15b80",
+      "migrations": {
+        "0001_users_sessions.sql": "6c5cefff2ded495f1e65e8e5f6c85159fec8d4df364f97ee52ac6d52b5bca7fe",
+        "0002_servers_channels_invites.sql": "f8ec4b0cb8b0f968e8f3c123404fb1fb457232bd3bb68ec6f79b715f635a3587",
+        "0003_messages.sql": "1067919e55ab723bc0edc0f09afda51f15a82dc8d2504595205c089c02905e06",
+        "0004_direct_messages.sql": "36b9684183cfbca31914e2a781c18f8afe6ec7aebfeecb5453921ed4e2bf4224",
+        "0005_moderation.sql": "4d2118f25c4341fe4796769f62bd0f488b332541317c63d5b1f1694cf5fd5cf6",
+        "0006_attachments.sql": "3e258f8cf5333faf8c30d656ddf677fb5b5db69186868e199a5fe1d2342e61f3",
+        "0007_realtime_delivery.sql": "915e0b2f8c9c48cd38f8deb1217594f748b443447d21eabdc36ffa50a3b0f2da",
+        "0008_storage_lifecycle.sql": "57f0f8755740a6c98125c7d0dabcc6fdab5d73d19f182bfd06752ea25e74deea",
+        "0009_account_themes.sql": "efc819698d22fb2142a259a21e36bc4c3af5f394b9e50f9287960726d4a6d97e",
+        "0010_chat_read_state.sql": "67ad191448cd6f472f5abb9ea49baa7847b94482df9e45db8f6abb3886a0bf8a",
+        "0011_message_reactions.sql": "30764d9a09a169d46bd68ebacafa2f8d5f34dfbb704151b26c51e49032b79669"
+      }
+    }
+  },
+  "images": {
+    "postgres": {
+      "reference": "postgres:18.6-alpine3.24",
+      "id": "sha256:77f585114c32fbca283dc835b0596f4e52b51b4c6662d7810b2f4084f60a1873",
+      "repo_digests": [
+        "postgres@sha256:77f585114c32fbca283dc835b0596f4e52b51b4c6662d7810b2f4084f60a1873"
+      ]
+    },
+    "redis": {
+      "reference": "redis:8.10.1-alpine",
+      "id": "sha256:ef216d85ec44f4fdf7c0e6df2d1757a4734ed32fbb278cabd3181b5a27353b79",
+      "repo_digests": [
+        "redis@sha256:ef216d85ec44f4fdf7c0e6df2d1757a4734ed32fbb278cabd3181b5a27353b79"
+      ]
+    },
+    "minio": {
+      "reference": "ghcr.io/till-und-scholler-ai-slop/gelabber/minio:RELEASE.2025-10-15T17-29-55Z",
+      "id": "sha256:528e6b8ceff5c806ff4077987a09b1cee7e6b965dbc5caad94114af60b95c79e",
+      "repo_digests": [
+        "ghcr.io/till-und-scholler-ai-slop/gelabber/minio@sha256:528e6b8ceff5c806ff4077987a09b1cee7e6b965dbc5caad94114af60b95c79e"
+      ]
+    }
+  },
+  "snapshots": {
+    "legacy": {
+      "database_sha256": "4aa1145e034017b884effda65d0b338df4d4ecadd30bf06368fabaf4cc16e718",
+      "objects_sha256": "67b17886185ee7006483a27401c00b5c6e2b98af07eb391055e900206d6191fe",
+      "database_bytes": 41240,
+      "objects_bytes": 4541,
+      "rows_sha256": "8cad93ec0cd9b907057bcceabdc2b2c3a762d4ca0b6e580120628a598e9654f1",
+      "minio_image_id": "sha256:528e6b8ceff5c806ff4077987a09b1cee7e6b965dbc5caad94114af60b95c79e",
+      "postgres_image_id": "sha256:77f585114c32fbca283dc835b0596f4e52b51b4c6662d7810b2f4084f60a1873",
+      "consistency": "own API drained; MinIO stopped; no other fixture writers"
+    },
+    "candidate": {
+      "database_sha256": "40f6620b2b88619390646c8b90a4265c866a4b6a94f60727533881ea88f50c3f",
+      "objects_sha256": "5cf477f0d56c21bace1eae6bccff4ed3c59c6368e0d31eb937fe49376d5dd389",
+      "database_bytes": 48347,
+      "objects_bytes": 5061,
+      "rows_sha256": "96eb2f76c511de681a5c67d36efec80a31db63eec7711673437710f0c6d714ed",
+      "minio_image_id": "sha256:528e6b8ceff5c806ff4077987a09b1cee7e6b965dbc5caad94114af60b95c79e",
+      "postgres_image_id": "sha256:77f585114c32fbca283dc835b0596f4e52b51b4c6662d7810b2f4084f60a1873",
+      "consistency": "own API drained; MinIO stopped; no other fixture writers"
+    }
+  },
+  "service_versions": {
+    "postgres": "18.6",
+    "redis": "8.10.1",
+    "minio": "minio version RELEASE.2025-10-15T17-29-55Z (commit-id=9e49d5e7a648f00e26f2246f4dc28e6b07f8c84a)"
+  },
+  "corrupt_object_control": "downloaded bytes SHA256: 'e490a3d7a3e809950fbf9bb5071c16541f4f87b62dcdf3c56ea391326e13f384' != '75d2c42df471d05295b07f9272ea766437b8dc797bc4d58ea3dcc6bcac7e5435'",
+  "corrupt_archive_control": "candidate database archive checksum: '93ac31b004fb7e44d1fcfa10311c5066384ceccd665715f1067f9b21aaefa2d2' != '40f6620b2b88619390646c8b90a4265c866a4b6a94f60727533881ea88f50c3f'",
+  "old_binary_on_upgraded_schema": "refused by SQLx applied migration ledger; paired legacy restore required",
+  "mismatched_pair_control": "real restored MinIO object readable: 404 != 200",
+  "rollback": {
+    "api_binary_verified": true,
+    "data_snapshot": "legacy",
+    "post_snapshot_data": "intentionally absent; snapshot rollback has an explicit recovery-point data-loss boundary",
+    "full_deployment_images_verified": false
+  },
+  "fixtures": [
+    {
+      "id": "6aef3ee8-f799-43a3-976f-276c0083513c",
+      "channel": "447167f4-c73a-4d61-bef0-6e12c06209b4",
+      "metadata": {
+        "id": "6aef3ee8-f799-43a3-976f-276c0083513c",
+        "filename": "bild.png",
+        "content_type": "image/png",
+        "size": 68
+      },
+      "body_sha256": "431ced6916a2a21a156e38701afe55bbd7f88969fbbfc56d7fe099d47f265460",
+      "body_size": 68
+    },
+    {
+      "id": "5e0a2b1f-4c8d-4e73-bc28-35497ec79c99",
+      "channel": "447167f4-c73a-4d61-bef0-6e12c06209b4",
+      "metadata": {
+        "id": "5e0a2b1f-4c8d-4e73-bc28-35497ec79c99",
+        "filename": "bericht.pdf",
+        "content_type": "application/pdf",
+        "size": 23
+      },
+      "body_sha256": "22fd222cac55f89525f55509ac82dcbdadce42db704de74e09155d275243bb26",
+      "body_size": 23
+    },
+    {
+      "id": "fbdca7e7-fd49-4df1-9aa4-b03c02cd0e30",
+      "channel": "93062249-d111-4c91-b0e7-ec1c5d66c7f7",
+      "metadata": {
+        "id": "fbdca7e7-fd49-4df1-9aa4-b03c02cd0e30",
+        "filename": "dm.txt",
+        "content_type": "text/plain",
+        "size": 17
+      },
+      "body_sha256": "6e04f76d5aeadbe6930541020719bcdc1b8aee10d04706047d852a0a5fb30fbb",
+      "body_size": 17
+    },
+    {
+      "id": "fcef05d6-f1f9-4843-a2f0-9f9e73bb6699",
+      "channel": "447167f4-c73a-4d61-bef0-6e12c06209b4",
+      "metadata": {
+        "id": "fcef05d6-f1f9-4843-a2f0-9f9e73bb6699",
+        "filename": "pending.txt",
+        "content_type": "text/plain",
+        "size": 22
+      },
+      "body_sha256": "9b94720cbbfb116a4e5a12b67e9f8c66187d54f3da1cf18cdc1885117593c1bc",
+      "body_size": 22
+    },
+    {
+      "id": "8aebd99c-b726-47a0-b658-d3a6b585a711",
+      "channel": "447167f4-c73a-4d61-bef0-6e12c06209b4",
+      "metadata": {
+        "id": "8aebd99c-b726-47a0-b658-d3a6b585a711",
+        "filename": "nach-upgrade.zip",
+        "content_type": "application/zip",
+        "size": 27
+      },
+      "body_sha256": "75d2c42df471d05295b07f9272ea766437b8dc797bc4d58ea3dcc6bcac7e5435",
+      "body_size": 27
+    }
+  ],
+  "cleanup": "removed only nonce-labelled fixture containers and volumes",
+  "finished_at_utc": "2026-10-05T18:12:06.660120+00:00",
+  "duration_seconds": 32.098
+}
