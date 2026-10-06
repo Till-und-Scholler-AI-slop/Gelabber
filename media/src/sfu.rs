@@ -2310,7 +2310,7 @@ mod tests {
         let transport = publication.producer.transport();
         let rtp = serde_json::from_value(json!({
             "codecs":[{"mimeType":"audio/opus","payloadType":111,"clockRate":48000,"channels":2}],
-            "encodings":[{"ssrc":5678}],"rtcp":{"cname":"other-source"}
+            "encodings":[{"ssrc":5678}],"rtcp":{"cname":"other-source","reducedSize":true}
         }))
         .unwrap();
         let other = native(transport.produce(ProducerOptions::new(MediaKind::Audio, rtp)))
