@@ -1,5 +1,5 @@
 # syntax=docker/dockerfile:1
-FROM rust:1.98.1-slim-trixie AS build
+FROM rust:1.98.1-slim-trixie AS base
 COPY docker/rust-build-ca.sh /tmp/rust-build-ca.sh
 RUN sh /tmp/rust-build-ca.sh
 ENV SSL_CERT_FILE=/etc/ssl/certs/ca-certificates.crt \
@@ -7,10 +7,27 @@ ENV SSL_CERT_FILE=/etc/ssl/certs/ca-certificates.crt \
     CURL_CA_BUNDLE=/etc/ssl/certs/ca-certificates.crt \
     CARGO_HTTP_CAINFO=/etc/ssl/certs/ca-certificates.crt \
     CARGO_NET_RETRY=3
-WORKDIR /src
+FROM base AS recipe
+WORKDIR /input
 COPY rust-toolchain.toml Cargo.toml Cargo.lock ./
+COPY api/Cargo.toml ./api/Cargo.toml
+COPY media/Cargo.toml ./media/Cargo.toml
+COPY shared/Cargo.toml ./shared/Cargo.toml
+COPY docker/rust-deps-recipe.sh /tmp/rust-deps-recipe.sh
+RUN sh /tmp/rust-deps-recipe.sh /input /recipe
+
+FROM base AS dependencies
+WORKDIR /src
+# The recipe contents stay identical across source-only and version-only changes.
+COPY --from=recipe /recipe/ ./
+RUN cargo build --locked --release -p gelabber-api \
+    && cargo clean --locked --release -p gelabber-api -p gelabber-media -p gelabber-shared
+
+FROM dependencies AS build
+# Restore all original manifests/versions; no placeholder artifact may survive.
+COPY rust-toolchain.toml Cargo.toml Cargo.lock ./
+COPY media/Cargo.toml ./media/Cargo.toml
 COPY api ./api
-COPY media ./media
 COPY shared ./shared
 RUN cargo build --locked --release -p gelabber-api
 
