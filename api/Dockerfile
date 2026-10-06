@@ -48,8 +48,8 @@ LABEL org.opencontainers.image.revision=$OCI_REVISION \
       org.opencontainers.image.version=$OCI_VERSION \
       org.opencontainers.image.created=$OCI_CREATED \
       org.opencontainers.image.source=$OCI_SOURCE
-RUN apt-get update \
-    && apt-get install -y --no-install-recommends ca-certificates \
+RUN apt-get -o Acquire::https::CaInfo=/etc/ssl/certs/ca-certificates.crt update \
+    && apt-get -o Acquire::https::CaInfo=/etc/ssl/certs/ca-certificates.crt install -y --no-install-recommends ca-certificates \
     && rm -rf /var/lib/apt/lists/*
 COPY --from=build /src/target/release/gelabber-api /usr/local/bin/gelabber-api
 EXPOSE 8080
