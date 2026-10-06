@@ -608,6 +608,9 @@ impl Sfu {
                 }
                 if let Err(error) = native(s.consumer.resume()).await {
                     s.consumer.confirm_closed().await;
+                    drop(_gate);
+                    self.remove_consumer(&room, &s).await;
+                    self.retry_attach(channel, peer.clone());
                     return Err(error);
                 }
                 if !s.valid() {

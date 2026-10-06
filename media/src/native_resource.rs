@@ -30,6 +30,11 @@ impl<T: Clone> Resource<T> {
         action: impl FnOnce(T) -> F,
     ) -> Result<R, SfuError> {
         let mut closed = self.closed.subscribe();
+        // A subscriber created between close's notification and take must not
+        // treat the already-seen true value as permission to start a new RPC.
+        if *closed.borrow() {
+            return Err(SfuError::Unavailable);
+        }
         let value = self.with(Clone::clone).ok_or(SfuError::Unavailable)?;
         tokio::select! {
             biased;
@@ -178,5 +183,23 @@ impl NativeConsumer {
             }
             tokio::time::sleep(std::time::Duration::from_millis(10)).await;
         }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    #[tokio::test]
+    async fn already_signalled_close_never_starts_a_new_native_operation() {
+        let resource = Resource::new(1u8);
+        resource.closed.send_replace(true);
+        let result = resource
+            .run(|_| async {
+                panic!("RPC started after close notification");
+                #[allow(unreachable_code)]
+                Ok::<(), std::io::Error>(())
+            })
+            .await;
+        assert!(matches!(result, Err(SfuError::Unavailable)));
     }
 }
