@@ -37,6 +37,8 @@ const STOP_CONCURRENCY: usize = 64;
 const LIVE_STOP_MARGIN: Duration = Duration::from_millis(1250);
 const WATCH_LIMIT: usize = 64;
 const CONSUMER_LIMIT: usize = 1024;
+/// Browser-reported failures per producer before a viewer stops re-consuming it.
+const CONSUMER_FAILURE_LIMIT: u8 = 5;
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
 pub struct PeerId(pub Uuid);
@@ -75,6 +77,8 @@ struct PeerData {
     publications: HashMap<SourceKind, Arc<Publication>>,
     consumers: HashMap<String, Arc<Subscription>>,
     pending_consumers: HashSet<String>,
+    /// Producer ID -> `consumerFailed` reports from this viewer for that producer.
+    failed_consumers: HashMap<String, u8>,
     watches: HashMap<(Uuid, WatchKind), Arc<Grant>>,
     withdrawn_live: VecDeque<Uuid>,
     retired_producers: VecDeque<String>,
@@ -390,6 +394,7 @@ impl Sfu {
                 publications: HashMap::new(),
                 consumers: HashMap::new(),
                 pending_consumers: HashSet::new(),
+                failed_consumers: HashMap::new(),
                 watches: HashMap::new(),
                 withdrawn_live: VecDeque::new(),
                 retired_producers: VecDeque::new(),
@@ -656,7 +661,25 @@ impl Sfu {
                     .own_consumer(&room, id, &consumer_id, generation)
                     .await?;
                 self.remove_consumer(&room, &s).await;
-                self.retry_attach(channel, peer.clone());
+                let retry = {
+                    let mut data = room.data.lock().await;
+                    let RoomData {
+                        peers,
+                        publications,
+                    } = &mut *data;
+                    peers.get_mut(&id).is_some_and(|p| {
+                        note_consumer_failure(
+                            &mut p.failed_consumers,
+                            |producer| publications.contains_key(producer),
+                            s.publication.id(),
+                        )
+                    })
+                };
+                // A producer this browser cannot decode would otherwise be
+                // re-consumed forever; a new producer ID starts a fresh budget.
+                if retry {
+                    self.retry_attach(channel, peer.clone());
+                }
                 Ok(json!({}))
             }
             ClientFrame::Watch { u, k, on, .. } => {
@@ -1198,6 +1221,9 @@ impl Sfu {
                 || p.consumers
                     .values()
                     .any(|s| s.publication.id() == producer_id)
+                || p.failed_consumers
+                    .get(&producer_id)
+                    .is_some_and(|failures| *failures >= CONSUMER_FAILURE_LIMIT)
             {
                 return Ok(());
             }
@@ -1963,6 +1989,19 @@ impl Sfu {
     }
 }
 
+/// Counts a browser consumer failure; returns whether another attempt is allowed.
+/// Entries for producers that left the room are dropped first.
+fn note_consumer_failure(
+    failed: &mut HashMap<String, u8>,
+    live: impl Fn(&str) -> bool,
+    producer: String,
+) -> bool {
+    failed.retain(|id, _| live(id));
+    let failures = failed.entry(producer).or_default();
+    *failures = failures.saturating_add(1);
+    *failures < CONSUMER_FAILURE_LIMIT
+}
+
 fn remember_retired(ids: &mut VecDeque<String>, id: String) {
     if ids.contains(&id) {
         return;
@@ -2104,6 +2143,22 @@ mod tests {
         atomic::{AtomicUsize, Ordering},
     };
 
+    #[test]
+    fn consumer_failures_stop_retrying_per_producer() {
+        let mut failed = HashMap::new();
+        let live = |id: &str| id != "gone";
+        failed.insert("gone".to_owned(), 3);
+        for _ in 1..CONSUMER_FAILURE_LIMIT {
+            assert!(note_consumer_failure(&mut failed, live, "a".to_owned()));
+        }
+        assert!(!note_consumer_failure(&mut failed, live, "a".to_owned()));
+        assert!(!failed.contains_key("gone"));
+        // Another producer, e.g. the same source republished, has its own budget.
+        assert!(note_consumer_failure(&mut failed, live, "b".to_owned()));
+        assert!(!note_consumer_failure(&mut failed, live, "a".to_owned()));
+        assert_eq!(failed["a"], CONSUMER_FAILURE_LIMIT + 1);
+    }
+
     #[tokio::test]
     async fn stop_batch_deadline_includes_queued_unpaused_resources() {
         let started = Arc::new(AtomicUsize::new(0));
@@ -2241,6 +2296,7 @@ mod tests {
                     publications: HashMap::from([(SourceKind::Mic, publication.clone())]),
                     consumers: HashMap::new(),
                     pending_consumers: HashSet::new(),
+                    failed_consumers: HashMap::new(),
                     watches: HashMap::new(),
                     withdrawn_live: VecDeque::new(),
                     retired_producers: VecDeque::new(),

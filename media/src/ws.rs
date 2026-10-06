@@ -64,9 +64,13 @@ async fn run(socket: WebSocket, state: AppState) {
     let writer_state = state.clone();
     // The socket writer must keep draining announcements while the reader is
     // awaiting Redis/native RPCs. Both paths retain bounded queues/deadlines.
+    // Ordering contract: an RPC response is not ordered against announcements
+    // raised while that RPC ran; clients must tolerate either order. `biased`
+    // only keeps a ready response from waiting behind an announcement burst.
     let mut writer = tokio::spawn(async move {
         loop {
             tokio::select! {
+                biased;
                 message = pending.recv() => {
                     let Some(message) = message else { break; };
                     let close = matches!(message, Message::Close(_));

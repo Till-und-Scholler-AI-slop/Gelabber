@@ -36,7 +36,9 @@ export function UnreadBadge({
     <span
       className={`${rail ? "absolute -right-1 -bottom-1" : "ml-auto"} shrink-0 rounded-full bg-[var(--lr-accent)] px-1.5 py-0.5 text-xs font-semibold text-[var(--lr-accent-ink)]`}
       id={id}
-      role="status"
+      // A named, non-live element: rail links reference it as their
+      // description, while a live region would announce every count change.
+      role="img"
       aria-label={`${count > 99 ? "Mehr als 99" : count} ungelesene Nachrichten`}
     >
       {count > 99 ? "99+" : count}
