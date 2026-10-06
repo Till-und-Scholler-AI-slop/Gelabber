@@ -102,6 +102,23 @@ def smoke(image, label):
         CONTAINERS.remove(name)
 
 
+def cache_evidence(text, stage):
+    match = re.search(r'^#(\d+) \[' + stage + r' [^\]]+\] RUN cargo build', text, re.M)
+    assert match, f'{stage} build step missing'
+    vertex = match[1]
+    if re.search(r'^#' + vertex + r' CACHED$', text, re.M):
+        return dict(cached=True, source='cached-vertex', vertex=vertex)
+    # A slow content-hash cache match can restore the compiled layer without a
+    # CACHED line. Require a completed layer download and no command execution.
+    # Cargo always writes progress/Finished, including a no-op compilation.
+    restored = bool(re.search(r'^#' + vertex + r' extracting sha256:', text, re.M))
+    completed = bool(re.search(r'^#' + vertex + r' DONE', text, re.M))
+    executed = bool(re.search(r'^#' + vertex + r' \d+(?:\.\d+)? ', text, re.M))
+    return dict(cached=restored and completed and not executed,
+                source='restored-layer' if restored and completed and not executed else 'executed',
+                vertex=vertex)
+
+
 def build(context, variant, scenario, version, dependencies_cached=None, build_cached=None):
     builder = f'{PREFIX}-{variant}-{scenario}'
     image = f'gelabber-acceptance/{PACKAGE}:{variant}-{scenario}'
@@ -122,21 +139,24 @@ def build(context, variant, scenario, version, dependencies_cached=None, build_c
     finally:
         command('docker', 'buildx', 'rm', builder)
     text = log_path.read_text()
-    def cached(stage):
-        match = re.search(r'^#(\d+) \[' + stage + r' [^\]]+\] RUN cargo build', text, re.M)
-        assert match, f'{stage} build step missing from {log_path}'
-        return bool(re.search(r'^#' + match[1] + r' CACHED$', text, re.M))
+    evidence = {'build': cache_evidence(text, 'build')}
     if dependencies_cached is not None:
-        assert cached('dependencies') == dependencies_cached, f'Dependency cache: {scenario}'
+        evidence['dependencies'] = cache_evidence(text, 'dependencies')
+        assert evidence['dependencies']['cached'] == dependencies_cached, f'Dependency cache: {scenario}'
     if build_cached is not None:
-        assert cached('build') == build_cached, f'Final build cache: {scenario}'
+        assert evidence['build']['cached'] == build_cached, f'Final build cache: {scenario}'
+    compiled = sorted(set(re.findall(r'Compiling ([\w-]+) v', text)))
+    external = sorted(set(compiled) - {'gelabber-api', 'gelabber-media', 'gelabber-shared'})
+    if dependencies_cached:
+        assert not external, f'Cached dependency stage recompiled external packages: {external}'
     if build_cached is False:
         assert f'Compiling gelabber-{PACKAGE} v{version}' in text, 'Real release package was not compiled'
     labels = json.loads(run('docker', 'image', 'inspect', image))[0]['Config']['Labels']
     for key, value in {'revision': REVISION, 'version': f'v{version}', 'created': CREATED, 'source': SOURCE}.items():
         assert labels[f'org.opencontainers.image.{key}'] == value
     RESULTS.append(dict(variant=variant, scenario=scenario, seconds=round(elapsed, 3), version=version,
-                        labels=labels, dependencies_cached=dependencies_cached, build_cached=build_cached))
+                        labels=labels, dependencies_cached=dependencies_cached, build_cached=build_cached,
+                        cache_evidence=evidence, compiled_packages=compiled))
     (REPORT / 'results.json').write_text(json.dumps(RESULTS, indent=2))
     print(f'{PACKAGE} {variant} {scenario}: {elapsed:.1f}s', flush=True)
     return image

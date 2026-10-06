@@ -82,6 +82,7 @@ jobs:
           if-no-files-found: error
 
   rust:
+    if: github.event_name != 'workflow_dispatch' || !inputs.rust_build_acceptance
     name: Rust tests
     runs-on: ubuntu-latest
     permissions:
@@ -266,6 +267,7 @@ jobs:
           fi
 
   web:
+    if: github.event_name != 'workflow_dispatch' || !inputs.rust_build_acceptance
     name: Frontend
     runs-on: ubuntu-latest
     defaults:
