@@ -554,6 +554,7 @@ export async function mediaScenarios(h, f) {
     const page = f.owner.page;
     const originalViewport = page.viewportSize();
     const results = [];
+    const viewportObservations = [];
     try {
       await page.setViewportSize({ width: 1487, height: 1058 });
       await click(f.owner, "Beitreten");
@@ -574,9 +575,12 @@ export async function mediaScenarios(h, f) {
         { width: 844, height: 390 },
       ]) {
         await page.setViewportSize(viewport);
+        const observations = [];
+        const trace = { viewport, observations, observationsDropped: 0 };
+        viewportObservations.push(trace);
         const metrics = await until(
-          () =>
-            nativeEvaluate(f.owner, () => {
+          async () => {
+            const state = await nativeEvaluate(f.owner, () => {
               const send = [...document.querySelectorAll("button")].find(
                 (button) => button.textContent.trim() === "Senden",
               );
@@ -587,6 +591,10 @@ export async function mediaScenarios(h, f) {
               );
               const dock = document.querySelector(".voice-session-dock");
               const dockBounds = dock.getBoundingClientRect();
+              const channels = document.querySelector(".sidebar-list-scroll");
+              const navigation = document.querySelector(
+                ".workspace-navigation",
+              );
               const callControlsUncovered = [
                 ...dock.querySelectorAll("button"),
               ].every((button) => {
@@ -603,22 +611,34 @@ export async function mediaScenarios(h, f) {
                 dockAtBottom:
                   Math.abs(dockBounds.bottom - window.innerHeight) <= 1,
                 overflow: document.documentElement.scrollWidth > innerWidth,
-                channelsHeight: document
-                  .querySelector(".sidebar-list-scroll")
-                  .getBoundingClientRect().height,
+                channelsHeight: channels.getBoundingClientRect().height,
+                navigationOpen: navigation.open,
+                mobileMediaMatches:
+                  window.matchMedia("(max-width: 800px)").matches,
+                channelsMinHeight: window.getComputedStyle(channels).minHeight,
+                perfTimestamp: window.performance.now(),
               };
-            }),
+            });
+            // The unchanged 10s/200ms poll permits at most 51 observations.
+            if (observations.length < 64) observations.push(state);
+            else trace.observationsDropped += 1;
+            return state;
+          },
           (state) =>
             state.sendUncovered &&
             state.callControlsUncovered &&
             state.dockAtBottom &&
-            !state.overflow,
+            !state.overflow &&
+            (viewport.width <= 800 || state.channelsHeight >= 156),
           "call-dock-covers-chat-controls",
         );
         if (viewport.width <= 800) {
           await page.getByRole("button", { name: "Navigation öffnen" }).click();
         } else {
-          check(metrics.channelsHeight >= 156, "channel-navigation-collapsed");
+          check(metrics.channelsHeight >= 156, "channel-navigation-collapsed", {
+            viewport,
+            ...metrics,
+          });
         }
         // Scroll to the owner's controls, including on short landscape drawers.
         await page
@@ -639,7 +659,11 @@ export async function mediaScenarios(h, f) {
         }
         results.push({ viewport, ...metrics });
       }
-      return { viewports: results };
+      return { viewports: results, viewportObservations };
+    } catch (error) {
+      if (error?.metrics && typeof error.metrics === "object")
+        error.metrics = { ...error.metrics, viewportObservations };
+      throw error;
     } finally {
       if (originalViewport) await page.setViewportSize(originalViewport);
     }
