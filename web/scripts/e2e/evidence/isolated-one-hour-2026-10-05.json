@@ -1,0 +1,217 @@
+{
+  "schema": 1,
+  "scope": "Historical c24 candidate before source-grant and sender-rollback fixes; isolated local Chromium continuous call",
+  "source": "c24ead728f1bd4c2b0a1ca3d6b038b99705b8da2",
+  "physical_devices": false,
+  "fake_capture": true,
+  "accepts_current_recovery_fix": false,
+  "comparison_available": false,
+  "full_release_acceptance": false,
+  "actual_continuous_seconds": 3600.004892774,
+  "sample_count": 120,
+  "sample_interval_seconds": 30,
+  "actors": 3,
+  "checks": {
+    "continuous_duplex_audio_and_decoded_video": true,
+    "no_ice_failures": true,
+    "three_peerconnections_stable": true,
+    "no_duplicate_audio_tracks": true,
+    "active_client_resources_closed": true,
+    "sfu_rooms_and_peers_returned_to_zero": true,
+    "allocator_rss_return_to_startup_demonstrated": false
+  },
+  "processes": {
+    "api": {
+      "binary_sha256": "5a575b832a7f9706340473e012b44aef73ae676a2d5e28a71a3699fd25f05c25",
+      "start_ticks": "3176311",
+      "initial_rss_kib": 51420,
+      "measurement_rss_min_kib": 51584,
+      "measurement_rss_max_kib": 51732,
+      "end_rss_kib": 51772,
+      "median_cpu_percent_of_one_core": 0.9664620595774461,
+      "cpu_time_ms_during_call": 35710,
+      "threads_initial": 34,
+      "threads_end": 33
+    },
+    "media": {
+      "binary_sha256": "88865a395486d3811e7449287d190e63a34ec96f34eb762a76103ab87550b282",
+      "start_ticks": "3183467",
+      "initial_rss_kib": 16360,
+      "measurement_rss_min_kib": 28284,
+      "measurement_rss_max_kib": 31220,
+      "end_rss_kib": 31116,
+      "median_cpu_percent_of_one_core": 6.231933374527571,
+      "cpu_time_ms_during_call": 231340,
+      "threads_initial": 33,
+      "threads_end": 33
+    }
+  },
+  "last_media_counters": [
+    {
+      "audio_packets": 158443,
+      "video_frames": 0
+    },
+    {
+      "audio_packets": 129708,
+      "video_frames": 0
+    },
+    {
+      "audio_packets": 287944,
+      "video_frames": 36005
+    }
+  ],
+  "cleanup": [
+    {
+      "target": "owned-test-server",
+      "status": 204,
+      "stage": "complete",
+      "statuses": {
+        "login": 200,
+        "delete": 204,
+        "logout": 200
+      }
+    }
+  ],
+  "delayed_post_leave": {
+    "at": "2026-10-05T19:39:57.242017+00:00",
+    "processes": {
+      "hour-api": {
+        "pid": 775622,
+        "start_ticks": "3176311",
+        "cpu_ticks": 4009,
+        "binary_sha256": "5a575b832a7f9706340473e012b44aef73ae676a2d5e28a71a3699fd25f05c25",
+        "status": {
+          "VmSize": "2138788 kB",
+          "VmRSS": "73644 kB",
+          "RssAnon": "50972 kB",
+          "RssFile": "2800 kB",
+          "RssShmem": "19872 kB",
+          "VmData": "119752 kB",
+          "Threads": "33"
+        }
+      },
+      "hour-media": {
+        "pid": 778591,
+        "start_ticks": "3183467",
+        "cpu_ticks": 23134,
+        "binary_sha256": "88865a395486d3811e7449287d190e63a34ec96f34eb762a76103ab87550b282",
+        "status": {
+          "VmSize": "2124844 kB",
+          "VmRSS": "31116 kB",
+          "RssAnon": "10512 kB",
+          "RssFile": "2720 kB",
+          "RssShmem": "17884 kB",
+          "VmData": "76200 kB",
+          "Threads": "33"
+        }
+      },
+      "fresh-api": {
+        "pid": 857565,
+        "start_ticks": "3449708",
+        "cpu_ticks": 541,
+        "binary_sha256": "5a575b832a7f9706340473e012b44aef73ae676a2d5e28a71a3699fd25f05c25",
+        "status": {
+          "VmSize": "2133392 kB",
+          "VmRSS": "26784 kB",
+          "RssAnon": "4764 kB",
+          "RssFile": "2824 kB",
+          "RssShmem": "19196 kB",
+          "VmData": "73776 kB",
+          "Threads": "33"
+        }
+      }
+    }
+  },
+  "separate_auth_memory_control": {
+    "scope": "one controlled missing-account login with normal CSRF on unused owned test fixture, no call or media source",
+    "binary_sha256": "5a575b832a7f9706340473e012b44aef73ae676a2d5e28a71a3699fd25f05c25",
+    "before": {
+      "at": "2026-10-05T19:40:28.974371+00:00",
+      "pid": 857565,
+      "start_ticks": "3449708",
+      "cpu_ticks": 551,
+      "status": {
+        "VmRSS": "26868 kB",
+        "RssAnon": "4784 kB",
+        "VmData": "73776 kB",
+        "Threads": "33"
+      }
+    },
+    "login_status": 401,
+    "request_seconds": 0.4181930429986096,
+    "after": {
+      "at": "2026-10-05T19:40:29.392749+00:00",
+      "pid": 857565,
+      "start_ticks": "3449708",
+      "cpu_ticks": 581,
+      "status": {
+        "VmRSS": "46692 kB",
+        "RssAnon": "24416 kB",
+        "VmData": "95248 kB",
+        "Threads": "34"
+      }
+    }
+  },
+  "interpretation": [
+    "Closed rooms/peers/tracks/sockets and idle media CPU are directly observed; retained RSS is not silently considered freed.",
+    "The harness separately logs the owner in after the end sample for server deletion. A normal failed login on another unused fixture grows anonymous RSS by 19632 KiB without any call; consistent with Argon2 allocator high-water memory, not a causal proof for each retained page in this run.",
+    "Media RSS remains about30.4MiB after Leave, versus16.0MiB before first call. Object closure does not establish allocator return or absence of a long-run growth problem.",
+    "Current source-recovery acceptance and final-candidate one-hour run remain separate."
+  ],
+  "raw_artifacts_sha256": {
+    "report.json": "779bf1a0971b8d3fbfc8d48d15f845600c0ba8816a65a959fa4933f2544cf128",
+    "checkpoint.json": "996d0f51e7894f635518f97bbecf5970b7e8efd299fb544579be8d28ed900c4c",
+    "api-manifest.json": "65f6de69443f9b520c749e289171d2352849c6c49122c1546bc566bf9d23f33d",
+    "media-manifest.json": "c1aee1a377dd16c01d51ea7656322b0d42e506469b6c68972002a1ccaf978b54",
+    "web-assets.json": "8f8ebde36158ff3cca0168442018c1461192e84b15b419b1498991f8f475c775",
+    "post-leave-2.json": "1094621848bd418350c84715a2b98a04c26e801dd3be29d9ff1fe3350e64d87f"
+  },
+  "test_source_hashes": {
+    "access-native.checks.mjs": "f1bab755ba97f26042ba574ddbdf8f1ae56aa1cbdf97f78c0da09480abe74478",
+    "access.mjs": "32655d5f780204abd3a73adb5a600db1f1fbb37a9ca42cd1932601b77ba049e4",
+    "account-switch.mjs": "9dd5cc5a93f55ac74ba03f46e3435b0f8e7435569dc242ef597b764e42b0ef46",
+    "browser-options.checks.mjs": "155c1eb154e9def93a95cbf7885a37755f6d91af90c93bc9b60f9f176f7104a5",
+    "browser-options.mjs": "e092d543702eca00f24258a23b1ae97c4d280f857732dc2d262568913e01e052",
+    "call-soak.mjs": "3b22229dceafe10255d5f890ae1ecf95a69415bdbac1d94f73b041bf0fe8912d",
+    "chat-faults.mjs": "a4d258f8084e4ed842e408ebca19cbe178b636afdf2a32068e8232c16417d767",
+    "chat-workflows.mjs": "43135ff1960bf242e1bb12d44bde12b342d46fe89ee5534266d5d0f0995967a8",
+    "ci-fault-loop.checks.mjs": "8e7b89ba7616742111d5904792587cfefeadabee2f1d53c828f41625e7291136",
+    "ci-fault-prepare.checks.mjs": "b3481cdf182fc4e36d34f9b67ae828f5e115a55fcfd81233353744639affd653",
+    "ci-fault-prepare.mjs": "7be606568d420a1104cad28787fe3f8b072cda72eb265d714e6648c790b16e1d",
+    "core.mjs": "eb6a20d2eff0900fe96ca58aefb95e9f73745e5c05318e23829bcb8246080f9e",
+    "fault-run.mjs": "39e5af6912f692478599cc2b9c4acc21ede1a877db72b79f4d5b6d8991769438",
+    "fault-runtime.mjs": "423684dfaddfdd65ca3021e95f842616563bef30dd8d99c70d477e9098bf7fee",
+    "faults.checks.mjs": "9b013140e232dc052fe9b52755db20fb48267258b06fabec8ca546aae5afe11f",
+    "faults.mjs": "62fe2b0f812192bac2be6996049eec802db48097633c6367bd44018b6aa3a0d4",
+    "gateway-load.mjs": "c98da745c2ccc064829f71d1598a781eb1059177445c7c49dc7b5d07f7ed23d5",
+    "harness.checks.mjs": "62a37e83471f373cebc173769cee3f66067c98b6ef697fcb52ccb2cca6ff6f57",
+    "harness.mjs": "9e1b4a0085ab108212df125fda32e39630ced313be7033a04c874285e75929e8",
+    "media-extra.checks.mjs": "b8659416016c2173e95c571b8e7b5a020e15dd7c91c4e8012915bc6d8f8c7f9e",
+    "media-extra.mjs": "1a0e960e583eaa38c244a0a4d1a27ef1c45a7a2ace7e39bd3d5f876a4473579d",
+    "media-lease-faults.mjs": "e3aefd71b583e5d4ab4a5109c3ed69a78352248392ec90a4f5308212fe8bae70",
+    "media-probe.checks.mjs": "be13c3567b6f4f5798636b494befc94b1c887fcf3e12c5f494cd15eb613ac769",
+    "media-runtime.checks.mjs": "4569eabb3d4339914cd48a0fdea42ad3feae89a827f67aa4923682ff72787a91",
+    "media-runtime.mjs": "d9bc66d17009162fd6f70eec24b227fda607e601fc7a0011a7fadae698795b67",
+    "media.mjs": "a53ec50e1a50401fb9359a8894cc4fd47272ce1423dcdfea78c7a1b57a070937",
+    "membership-faults.mjs": "e155ee73a21bc27b7e8a75fe8d865e0309b35f8ad38ee77296da0db3a7a5b3a5",
+    "native-evaluate.checks.mjs": "4b24b3854f84b04ee5037ed2fdff7f02c7f490fefd6ff882bac9285877d8a5fd",
+    "native-evaluate.mjs": "89294f744f2c6a0d88e90975a944e96e49b2bf1c829ba377ccaa17a19b1564bf",
+    "native-finish.checks.mjs": "db9ed08e5bb99f1fb8b1a2d54a5cee9c32172a44e11a657d2dea2f4f987b56e6",
+    "probe.mjs": "0b7aea113ba651b96d3b6a9e325f9436af9a9ffc06b33ddb27cb6f4033e7f91c",
+    "profiles.mjs": "ef20d6159fe61e04fda06c41314fbc2798e7ae7a7e5a5f57aa3f88569b0fe2aa",
+    "raw-reader.py": "9aa984d1de3dcd9ec639b709a9d1e97feeb851614736a489000400f597277c6f",
+    "realtime-faults.mjs": "71626d7a152521529f35b1c192760b2ac809bdb56955473507362fd9fe74db62",
+    "redis-command.mjs": "b6d801eb136a072b8a00bc2982d16934bdc4cf90c06ef28b67be4ad5a160706b",
+    "rendered-frames.checks.mjs": "4e5bf1be45d1eb0914625d08b35623e48ccca80dc4c35337deff13dd63571780",
+    "run.mjs": "d2900e4f8ec085708a696c1266359c51476d794c6fa497d2c0449243f9747bcd",
+    "s3-object.mjs": "1bce9abf11b4aa30e0e62b6063eb283baed30894e8f816787c379dd43ea63168",
+    "search-context.mjs": "01237d331f1c706a420fd3711ed59f1ee981824370f0b2170b4f0e5801e2791c",
+    "selection.mjs": "b8a445a817880843e833510d92dfdaf3150fff643f4b4ae5aa6906cd3913f771",
+    "session-audio-control.mjs": "1374a94ca61814a26ebfc30159ee5e1b8b5f8a4e40f4ef29ffc507b8f547025a",
+    "storage-faults.mjs": "e0408378060689e8584c014f90e2d3771dc611b86bfce3bc5328a3b71ada01fb",
+    "teardown.checks.mjs": "22f033c552b92bbe9e20e06c3ad51d993ecc46dcf7799da4d6623448aab7a5b1",
+    "teardown.mjs": "5bb7d0d8e023d23ab242eb8ac8b77a722d0a38c60f5df6637b86938b97419e9a",
+    "webapp-accessibility.mjs": "794d57e23cd12c0182f993e95ddf03cdd1377654dbafa0d1d2f9e0f179cd096c",
+    "webapp-recovery.mjs": "2a46205e3de78c0b5fdbb6addb07b0b9209bfba616a9e5f500924e895f92c237"
+  }
+}

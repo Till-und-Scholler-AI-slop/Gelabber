@@ -1,0 +1,47 @@
+{
+  "scope": "cleanup of only the three fresh root-owned local fixture containers; no hour or media acceptance",
+  "run_id": "945d4b51b8f94e72891652bd1d8da0ff",
+  "containers": [
+    {
+      "role": "postgres",
+      "name": "gb-v04-945d4b51b8f9-postgres",
+      "id": "4cc7431bae499b2558ddcbcb7bac2761df60f1e89499c68f5354a009feac319e",
+      "image": "sha256:77f585114c32fbca283dc835b0596f4e52b51b4c6662d7810b2f4084f60a1873",
+      "label": "gelabber.v04.fixture=945d4b51b8f94e72891652bd1d8da0ff"
+    },
+    {
+      "role": "redis",
+      "name": "gb-v04-945d4b51b8f9-redis",
+      "id": "70e0a19415d7c425cc82c45615f85b99d1adec9a91518c13acfb5502ac995e43",
+      "image": "sha256:ef216d85ec44f4fdf7c0e6df2d1757a4734ed32fbb278cabd3181b5a27353b79",
+      "label": "gelabber.v04.fixture=945d4b51b8f94e72891652bd1d8da0ff"
+    },
+    {
+      "role": "minio",
+      "name": "gb-v04-945d4b51b8f9-minio",
+      "id": "8f82eb997ef436f8cf5eedd8f241a30d32ecb1a6d0c7affb2a6295cf52921f6a",
+      "image": "sha256:528e6b8ceff5c806ff4077987a09b1cee7e6b965dbc5caad94114af60b95c79e",
+      "label": "gelabber.v04.fixture=945d4b51b8f94e72891652bd1d8da0ff"
+    }
+  ],
+  "owned_containers_remaining": [],
+  "legacy_dev_containers_before": {
+    "gelabber-dev-api-1": "ef523303898c",
+    "gelabber-dev-media-1": "941e183cd820",
+    "gelabber-dev-postgres-1": "65958f1b2f60",
+    "gelabber-dev-redis-1": "be8e6275e8cd",
+    "gelabber-dev-coturn-1": "5ce0149fab3f",
+    "gelabber-dev-minio-1": "dd98ea855f06"
+  },
+  "legacy_dev_containers_after": {
+    "gelabber-dev-api-1": "ef523303898c",
+    "gelabber-dev-media-1": "941e183cd820",
+    "gelabber-dev-postgres-1": "65958f1b2f60",
+    "gelabber-dev-redis-1": "be8e6275e8cd",
+    "gelabber-dev-coturn-1": "5ce0149fab3f",
+    "gelabber-dev-minio-1": "dd98ea855f06"
+  },
+  "legacy_dev_containers_unchanged": true,
+  "comparison_available": false,
+  "pcm_latency_calibrated": false
+}

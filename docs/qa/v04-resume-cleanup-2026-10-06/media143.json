@@ -1,0 +1,178 @@
+{
+  "schema": 1,
+  "scope": "Only fresh media143 isolated fixture; shared root infrastructure and historical dev containers excluded",
+  "fixtureId": "67f9e2ecfd5f",
+  "startedAt": "2026-10-06T07:46:09.895590+00:00",
+  "processes": {
+    "preview": {
+      "pid": 1099059,
+      "uid": [
+        1000,
+        1000,
+        1000,
+        1000
+      ],
+      "exe": "/home/rafi/.local/share/mise/installs/node/26.8.2/bin/node",
+      "exeSha256": "8a22a371fd85aecf5411636574309f6380fbc42694aaf0651a089a8ef9c44e52",
+      "cmdline": [
+        "/tmp/gelabber-v04-toolchain/node-v26.8.2-linux-x64/bin/node",
+        "/tmp/gelabber-v04-media-resume-20261006-o84mmkqn/preview.mjs"
+      ],
+      "cwd": "/home/rafi/Projects/Gelabber",
+      "startTicks": "42431107",
+      "ownershipMatch": true,
+      "result": "exited",
+      "signal": "SIGTERM",
+      "forcedSigkill": false,
+      "verifiedFreshImmediatelyBeforeSignal": true
+    },
+    "api": {
+      "pid": 1099019,
+      "uid": [
+        1000,
+        1000,
+        1000,
+        1000
+      ],
+      "exe": "/tmp/gelabber-v04-media-resume-20261006-o84mmkqn/gelabber-api",
+      "exeSha256": "c61f776e3b14a076d479d09898de22fbbe988409d3c0fe67e1b6838dc9a0e567",
+      "cmdline": [
+        "/tmp/gelabber-v04-media-resume-20261006-o84mmkqn/gelabber-api"
+      ],
+      "cwd": "/home/rafi/Projects/Gelabber",
+      "startTicks": "42431083",
+      "ownershipMatch": true,
+      "result": "exited",
+      "signal": "SIGTERM",
+      "forcedSigkill": false,
+      "verifiedFreshImmediatelyBeforeSignal": true
+    },
+    "media": {
+      "pid": 1099037,
+      "uid": [
+        1000,
+        1000,
+        1000,
+        1000
+      ],
+      "exe": "/tmp/gelabber-v04-media-resume-20261006-o84mmkqn/gelabber-media",
+      "exeSha256": "ac842923908b9d7ff835aa398e84003681bce50dd8c1c6de092c439ab7d0342b",
+      "cmdline": [
+        "/tmp/gelabber-v04-media-resume-20261006-o84mmkqn/gelabber-media"
+      ],
+      "cwd": "/home/rafi/Projects/Gelabber",
+      "startTicks": "42431085",
+      "ownershipMatch": true,
+      "result": "exited",
+      "signal": "SIGTERM",
+      "forcedSigkill": false,
+      "verifiedFreshImmediatelyBeforeSignal": true
+    }
+  },
+  "portsAfterProcessStop": {
+    "api": {
+      "port": 18112,
+      "acceptsConnection": false
+    },
+    "media": {
+      "port": 18113,
+      "acceptsConnection": false
+    },
+    "preview": {
+      "port": 15212,
+      "acceptsConnection": false
+    }
+  },
+  "redis": {
+    "name": "gb-v04-media143-67f9e2ecfd5f-redis",
+    "id": "12bc9ce0c48956c4385b53b295e3b471bdff661e706880791ea64c2bc5a357ff",
+    "label": "gelabber.v04.media143=67f9e2ecfd5f",
+    "freshLabelAndIdVerified": true,
+    "result": "removed",
+    "acceptsConnectionAfter": false
+  },
+  "sharedRootContainersAfter": {
+    "postgres": {
+      "name": "gb-v04-945d4b51b8f9-postgres",
+      "id": "4cc7431bae499b2558ddcbcb7bac2761df60f1e89499c68f5354a009feac319e",
+      "running": true,
+      "readOnlyCheckOnly": true
+    },
+    "redis": {
+      "name": "gb-v04-945d4b51b8f9-redis",
+      "id": "70e0a19415d7c425cc82c45615f85b99d1adec9a91518c13acfb5502ac995e43",
+      "running": true,
+      "readOnlyCheckOnly": true
+    },
+    "minio": {
+      "name": "gb-v04-945d4b51b8f9-minio",
+      "id": "8f82eb997ef436f8cf5eedd8f241a30d32ecb1a6d0c7affb2a6295cf52921f6a",
+      "running": true,
+      "readOnlyCheckOnly": true
+    }
+  },
+  "database": {
+    "name": "gelabber_media_143_67f9e2ecfd5f",
+    "connectionEndpoint": "127.0.0.1:32870",
+    "privateConnectionTargetMatchedOwnDatabase": true,
+    "existedBefore": true,
+    "result": "dropped",
+    "existsAfter": false,
+    "sharedPostgresStopped": false
+  },
+  "bucket": {
+    "name": "gb-media-143-67f9e2ecfd5f",
+    "endpoint": "127.0.0.1:32872",
+    "privateConfigurationTargetMatchedOwnBucket": true,
+    "existedBefore": true,
+    "deletedObjectCount": 0,
+    "result": "removed",
+    "headStatusAfter": 404,
+    "sharedMinioStopped": false
+  },
+  "frozenNineArtifacts": {
+    "count": 9,
+    "unchanged": true,
+    "sha256": {
+      "responsive-focused-evidence.json": "b5ff61b06d0957a322242c5ff2ff4a01b484560187e253c8b8e90f01097fac36",
+      "responsive-metrics-manifest.json": "10ea322e6f0ddff14841a22f2a34133dd020d7f2abcd714dcb56a10d61a36c87",
+      "responsive-metrics.patch": "8b5acbea702c0797ed989d2054347f78610b1415faeabd76895ecd261cd4cdec",
+      "responsive-postfail-dom.json": "550881444b03ed16f6fdd1ae42e27000c53670afc03870ce6350a3b7b761f6ab",
+      "responsive-postfail.png": "8ea2e41af040248811e7bbb91fa1e85d8279f26404d11388ee424e3217b429f9",
+      "responsive-until-fix-manifest.json": "a93295297f7faa6346a40b6f101ec5921dda188af92680cf120625ffcaeafaaa",
+      "responsive-until-fix.patch": "ddd3b26578065e52fcb084e9ee2171de20a214c2548312f631e3c0df64293497",
+      "resume-media-evidence.json": "d5fcc0c451ac89bc56995f71f99784307368256e7583e2bbdfc6e57433915130",
+      "v0.4-handoff-review143-resume-2026-10-06.md": "f45fb5f2886a532c4e203176a83b8943d76ae7087a5307400dcf23a030a18b35"
+    }
+  },
+  "portsAfterCleanup": {
+    "api": {
+      "port": 18112,
+      "acceptsConnection": false
+    },
+    "media": {
+      "port": 18113,
+      "acceptsConnection": false
+    },
+    "preview": {
+      "port": 15212,
+      "acceptsConnection": false
+    },
+    "redis": {
+      "port": 32873,
+      "acceptsConnection": false
+    }
+  },
+  "historicalGelabberDevContainersMutated": false,
+  "sharedRootInfrastructureMutated": false,
+  "browsersAlreadyClosedBeforeCleanup": true,
+  "completedAt": "2026-10-06T07:46:59.040146+00:00",
+  "result": "PASS",
+  "privateFixturePermissions": {
+    "allFixtureDirectories": "0700",
+    "envFilesPrivateJsonRawAndLogs": "0600",
+    "verifiedFiles": 57,
+    "cleanupRedisInspectPrivateJson": "0600",
+    "noPrivateFileAddedToGit": true
+  }
+}

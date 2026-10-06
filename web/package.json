@@ -18,6 +18,7 @@
     "test:e2e-app": "node scripts/e2e/run.mjs",
     "test:e2e-harness": "node scripts/e2e/harness.checks.mjs",
     "test:call-sounds-smoke": "node scripts/smoke-call-sounds.mjs",
+    "test:call-soak": "node scripts/e2e/call-soak.mjs",
     "test:e2e-held-renderer-control": "node scripts/e2e/held-renderer-native-control.mjs",
     "test:e2e-webapp-recovery": "node scripts/e2e/webapp-recovery.mjs",
     "test:e2e-accessibility": "node scripts/e2e/webapp-accessibility.mjs",
