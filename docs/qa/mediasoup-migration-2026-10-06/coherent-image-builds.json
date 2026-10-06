@@ -1,0 +1,179 @@
+{
+  "schema": 1,
+  "date": "2026-10-06",
+  "scope": "ACTUAL_COHERENT_API_MEDIA_WEB_DIRTY_SNAPSHOT_BUILDS_AND_NO_RTP_SMOKES",
+  "epochs": [
+    {
+      "snapshot": "c4dbdc886282",
+      "status": "PASS",
+      "qualification": "INTERMEDIATE_DIRTY_SNAPSHOT_WITH_PRESERVED_INPUT_MANIFEST",
+      "base_head": "99394ae4c0f1881417f805936bb6908a077c8dac",
+      "source_manifest_sha256": "f429a2033b888655216f4156791e57992f9fd5aa8fcc6c44c8f6c645b515664d",
+      "input_files": 440,
+      "source_changed_during_build": [],
+      "revision_label_semantics": "base_git_head_with_exact_uncommitted_input_snapshot",
+      "build_report_sha256": "248c0b61df0a75deea1cb72c5519c65b96165e3954d8f3553a8bc98d010f59f2",
+      "builds": [
+        {
+          "component": "media",
+          "image": "gelabber-mediasoup-local/media:20261006-final-c4dbdc886282",
+          "image_id": "sha256:982b7dd80a0d06e7a1f4666d6b1629d77c76a984aba486614056098fdcf56d74",
+          "platform": "linux/amd64",
+          "status": "PASS",
+          "elapsed_seconds": 17.451,
+          "log_sha256": "fad492f5a6f08c8ac0fb23302659c57f8a50e60e7620d986aa4167c2d35f6fa2"
+        },
+        {
+          "component": "api",
+          "image": "gelabber-mediasoup-local/api:20261006-final-c4dbdc886282",
+          "image_id": "sha256:00c6a37cffc90046ec11763607bb281fcc52143fd91b14716be829789c375e9b",
+          "platform": "linux/amd64",
+          "status": "PASS",
+          "elapsed_seconds": 33.637,
+          "log_sha256": "2da2eb1ae8bbcb3ed9db0ebf946fe47ce0d0be1459dfecec600333852ddd8096"
+        },
+        {
+          "component": "web",
+          "image": "gelabber-mediasoup-local/web:20261006-final-c4dbdc886282",
+          "image_id": "sha256:7e0c73da04d69416480a82786fd5d4df5475960b21e0765098c54f3558b8cbed",
+          "platform": "linux/amd64",
+          "status": "PASS",
+          "elapsed_seconds": 5.375,
+          "log_sha256": "ce60fd390796df1067f8f5b8eef91847138a9aa3bbee63d936355d4e3c2eb763"
+        }
+      ],
+      "selected_input_sha256": {
+        "Cargo.lock": "609105cf26bc5839f3a1f517b714dec5cd0d215d4ddc0eee4a4d444ffd08b274",
+        "api/Dockerfile": "a62af4fafd8454ae9884614e92c4cc49702f64bc6646b55fb25d822339e9c37f",
+        "docker/mediasoup-build-tools.lock.json": "5b83f33ff52885b139ac57b519fc8cae9fc2dee88a348795d27abd0d73feea26",
+        "docker/mediasoup-debian-build-tools.lock.tsv": "2156dadb3455f52bff9f75a2cf90f30a22d03c9554a1d98f0ec4fb9a0259d1a0",
+        "media/Cargo.toml": "036dcf3f5098925553a87011ca797f0687168f7accdce0b0cadad9329d6dff55",
+        "media/Dockerfile": "33cef4d319a82c7e3a175e5ef109ff896b3a106119d838fe5434657f64bb835f",
+        "media/src/error.rs": "1876714c18b0f3fe6379afc6dfa2347749145a7ec4ab68f371b8f8482cb4340b",
+        "media/src/lib.rs": "aa63c001131a222e1699082c8ae984f562e59c55182849c411da65e1ba4ffa38",
+        "media/src/live.rs": "6296a00eb041f205886ebd06ef188dc0d0e838dd86aba25451b3928848287ef8",
+        "media/src/sfu.rs": "baac844091f11273f1954cc34b4330ad41444274b8244eefc56c29ebde793d96",
+        "media/src/ws.rs": "740f4571702790070033f69714414dca714cab714ee9e71271de2a14df19ed37",
+        "web/package-lock.json": "682318ea6a51c6c597c690c96a84f787442c802c767d6731298a6dd029e297fa",
+        "web/scripts/e2e/access.mjs": "f515fba8c98e6496021d935b19bd80e766be38e56ba4dc3bb3140e048ec581f9",
+        "web/scripts/e2e/held-renderer.checks.mjs": "42537d23543ac50f02175c3c988035db9eea4cee41a24d40d9151261c900f6cf",
+        "web/scripts/e2e/mediasoup-native.mjs": "fad7c53e509bfb4e32a307923a15a048ae6b3887a51d0752aa0055e3012a0e04",
+        "web/src/voice/media.ts": "073ee97ae12d6563ee99b5e14d6fb2c9e287780187c2b43adc1d9d4badbf5361",
+        "web/src/voice/mediaPeer.ts": "35f1a1189f22f33cb7c54f11ff6ee72df2b267f3cae6733f2a93d08c19982f81",
+        "web/src/voice/mediasoupConnection.test.ts": "338f6e54c3973a4397de62883ec0f3a21f72eb88f68d3b2309c7676a2c740949",
+        "web/src/voice/mediasoupConnection.ts": "3878f5e5ea6efb40037d4b8bcfea6da87a9d172bb4964d51a014382859ae8de0"
+      },
+      "no_rtp_media_image_smoke": {
+        "status": "PASS",
+        "report_sha256": "aad7b775310e8365ae0d0b94aed7f622f62b774c50ca731783e1bf73cac7d706",
+        "image_id": "sha256:982b7dd80a0d06e7a1f4666d6b1629d77c76a984aba486614056098fdcf56d74",
+        "ready": true,
+        "ready_checks": {
+          "redis": "ok",
+          "media": "ok"
+        },
+        "normal_shutdown": true,
+        "exit_code": 0,
+        "forced_cleanup": false,
+        "cleanup_complete": true,
+        "owned_resources_verified_absent": 3,
+        "cleanup_errors": [],
+        "existing_containers_compared": 9,
+        "existing_containers_unchanged": true,
+        "published_host_udp": false,
+        "published_http_ip": "127.0.0.1",
+        "browser_or_rtp_started": false
+      }
+    },
+    {
+      "snapshot": "72c229761e1c",
+      "status": "PASS",
+      "qualification": "INTERMEDIATE_DIRTY_SNAPSHOT_WITH_PRESERVED_INPUT_MANIFEST",
+      "base_head": "99394ae4c0f1881417f805936bb6908a077c8dac",
+      "source_manifest_sha256": "699cdfe8b85c02cb304d357f190ff796ae5178dd052626d5ec8b044cd596da26",
+      "input_files": 439,
+      "source_changed_during_build": [],
+      "revision_label_semantics": "base_git_head_with_exact_uncommitted_input_snapshot",
+      "build_report_sha256": "e26a1167141fa598cb1de75b2a198ddc5eee0b6520d572598c2557484b26f30f",
+      "builds": [
+        {
+          "component": "media",
+          "image": "gelabber-mediasoup-local/media:20261006-final-72c229761e1c",
+          "image_id": "sha256:693c3cd103848248d0afd8d7fdbd010ea31162e7819c73ef2d9c23346ecc4d6e",
+          "platform": "linux/amd64",
+          "status": "PASS",
+          "elapsed_seconds": 19.807,
+          "log_sha256": "1da6215d09abd789ed9fd7315f9a18ffab055b8017573fb66b671fd354fa91a7"
+        },
+        {
+          "component": "api",
+          "image": "gelabber-mediasoup-local/api:20261006-final-72c229761e1c",
+          "image_id": "sha256:73a38254015f86a7ec4bc508992b07a8fb301310e5c6223a05cfefacf5c6d320",
+          "platform": "linux/amd64",
+          "status": "PASS",
+          "elapsed_seconds": 1.617,
+          "log_sha256": "d4a586b28d284cc04420d01baaee7cd4575b665fee9a2b3e0adc03c99fdd1bc5"
+        },
+        {
+          "component": "web",
+          "image": "gelabber-mediasoup-local/web:20261006-final-72c229761e1c",
+          "image_id": "sha256:fc3e1f55b7c58a8c4a98dcee0fc39d0992692b0ee37f72078c6ac94c2dd60073",
+          "platform": "linux/amd64",
+          "status": "PASS",
+          "elapsed_seconds": 4.674,
+          "log_sha256": "d864bb99b58173e9a7d4d383c2e24ebaed53f2d6d6e6d152cd1e900876e7e6cb"
+        }
+      ],
+      "selected_input_sha256": {
+        "Cargo.lock": "609105cf26bc5839f3a1f517b714dec5cd0d215d4ddc0eee4a4d444ffd08b274",
+        "api/Dockerfile": "a62af4fafd8454ae9884614e92c4cc49702f64bc6646b55fb25d822339e9c37f",
+        "docker/mediasoup-build-tools.lock.json": "5b83f33ff52885b139ac57b519fc8cae9fc2dee88a348795d27abd0d73feea26",
+        "docker/mediasoup-debian-build-tools.lock.tsv": "2156dadb3455f52bff9f75a2cf90f30a22d03c9554a1d98f0ec4fb9a0259d1a0",
+        "media/Cargo.toml": "036dcf3f5098925553a87011ca797f0687168f7accdce0b0cadad9329d6dff55",
+        "media/Dockerfile": "33cef4d319a82c7e3a175e5ef109ff896b3a106119d838fe5434657f64bb835f",
+        "media/src/error.rs": "1876714c18b0f3fe6379afc6dfa2347749145a7ec4ab68f371b8f8482cb4340b",
+        "media/src/lib.rs": "aa63c001131a222e1699082c8ae984f562e59c55182849c411da65e1ba4ffa38",
+        "media/src/live.rs": "6296a00eb041f205886ebd06ef188dc0d0e838dd86aba25451b3928848287ef8",
+        "media/src/sfu.rs": "baac844091f11273f1954cc34b4330ad41444274b8244eefc56c29ebde793d96",
+        "media/src/ws.rs": "740f4571702790070033f69714414dca714cab714ee9e71271de2a14df19ed37",
+        "web/package-lock.json": "682318ea6a51c6c597c690c96a84f787442c802c767d6731298a6dd029e297fa",
+        "web/scripts/e2e/access.mjs": "7a1c5444a27e3e8caf2a2a5ebe549ec50a5a8c962171dad61f53526d0f3e5211",
+        "web/scripts/e2e/held-renderer.checks.mjs": "d70545a89bc361d38174833ec840cc0d2b3616cd90c1d952056b8a881403f156",
+        "web/scripts/e2e/mediasoup-native.mjs": "2e45b24f6de3deca63f5d906e7a3881d42757e735c54e8cbc38caa8ec81be93e",
+        "web/src/voice/media.ts": "073ee97ae12d6563ee99b5e14d6fb2c9e287780187c2b43adc1d9d4badbf5361",
+        "web/src/voice/mediaPeer.ts": "35f1a1189f22f33cb7c54f11ff6ee72df2b267f3cae6733f2a93d08c19982f81",
+        "web/src/voice/mediasoupConnection.test.ts": "338f6e54c3973a4397de62883ec0f3a21f72eb88f68d3b2309c7676a2c740949",
+        "web/src/voice/mediasoupConnection.ts": "3878f5e5ea6efb40037d4b8bcfea6da87a9d172bb4964d51a014382859ae8de0"
+      },
+      "no_rtp_media_image_smoke": {
+        "status": "PASS",
+        "report_sha256": "c40fb05bb7e6dd4fb25305b4ce9f66f48f1bb676106f57abcfc75d2cc7c4edca",
+        "image_id": "sha256:693c3cd103848248d0afd8d7fdbd010ea31162e7819c73ef2d9c23346ecc4d6e",
+        "ready": true,
+        "ready_checks": {
+          "redis": "ok",
+          "media": "ok"
+        },
+        "normal_shutdown": true,
+        "exit_code": 0,
+        "forced_cleanup": false,
+        "cleanup_complete": true,
+        "owned_resources_verified_absent": 3,
+        "cleanup_errors": [],
+        "existing_containers_compared": 9,
+        "existing_containers_unchanged": true,
+        "published_host_udp": false,
+        "published_http_ip": "127.0.0.1",
+        "browser_or_rtp_started": false
+      }
+    }
+  ],
+  "current_final_source_images_available": false,
+  "current_limit": "Later authorized Live lease process recovery changes require a new frozen product source snapshot and application stage build; native dependency cache remains valid. These successful intermediate builds are preserved.",
+  "compiler_runtime_distinction": "These Debian GCC native image builds and no-RTP startup checks are separate from browser acceptance against the host-built media executable.",
+  "remote_ci_or_exact_final_commit_claimed": false,
+  "main_release_or_deployment": false,
+  "new_load_or_hour_tests": "EXCLUDED_BY_USER",
+  "physical_ios_omarchy": "DEFERRED",
+  "historical_failures": "Retained without rewriting image-build-smoke.json"
+}

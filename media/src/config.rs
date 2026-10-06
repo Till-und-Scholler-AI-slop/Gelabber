@@ -15,17 +15,17 @@ pub const RUST_LOG: &str = "RUST_LOG";
 
 const DEFAULT_MEDIA_ADDR: &str = "0.0.0.0:8081";
 const DEFAULT_READY_TIMEOUT_MS: u64 = 2000;
-const DEFAULT_ICE_BIND: &str = "0.0.0.0:0";
+const DEFAULT_ICE_BIND: &str = "0.0.0.0:10000";
 
 #[derive(Debug, Clone)]
 pub struct Config {
     pub media_addr: SocketAddr,
     pub redis_url: String,
     pub ready_timeout: Duration,
-    /// Host ICE bind (`ip:port`). Port `0` is ephemeral (tests). A non-zero
-    /// port is the first host UDP port; [`ice_port_max`] is the last.
+    /// Shared native UDP listener (`ip:port`). Test port `0` selects one port
+    /// from the explicit 20000..=30000 range. Production defaults to UDP 10000.
     pub ice_bind: String,
-    /// Inclusive end of the published host UDP range. `None` = only `ice_bind`.
+    /// Reserved deployment range; the shared listener uses only `ice_bind`.
     pub ice_port_max: Option<u16>,
     /// 1:1 NAT advertised address for host candidates. Empty = bind only.
     pub advertised_ip: Option<String>,
@@ -79,7 +79,7 @@ impl Config {
             invalid(
                 MEDIA_ICE_BIND,
                 &ice_bind,
-                "expected ip:port (port 0 is ephemeral)",
+                "expected ip:port (test port 0 selects from 20000..=30000)",
             )
         })?;
 
@@ -165,7 +165,7 @@ mod tests {
             config.media_addr,
             "0.0.0.0:8081".parse::<SocketAddr>().unwrap()
         );
-        assert_eq!(config.ice_bind, "0.0.0.0:0");
+        assert_eq!(config.ice_bind, "0.0.0.0:10000");
         assert!(config.ice_port_max.is_none());
         assert!(config.advertised_ip.is_none());
     }

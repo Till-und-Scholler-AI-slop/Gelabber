@@ -56,14 +56,22 @@ const receiverBrowser =
         },
       })
     : browser;
+report.browserVersions = {
+  publisher: browser.version(),
+  receiver: receiverBrowser.version(),
+};
+report.node = process.version;
+report.localFirefoxLoopbackPreference = receiverEngine === "firefox";
 
 function instrument() {
   const state = (window.__sourceAudioSmoke = {
     peers: [],
     incoming: new Map(),
+    outgoing: new Map(),
     elements: new Set(),
     captures: [],
     microphones: new Set(),
+    cameras: new Set(),
     rtp: new Map(),
     controls: [],
     micCalls: 0,
@@ -74,11 +82,28 @@ function instrument() {
     constructor(config) {
       super(config);
       state.peers.push(this);
-      this.addEventListener("track", (event) => {
-        state.incoming.set(event.track, event.streams[0]?.id ?? "");
-      });
     }
   };
+  window.addEventListener("gelabber:media-consumer", ({ detail }) => {
+    if (detail.receiver.track !== detail.track)
+      throw new Error("SOURCE_AUDIO_RECEIVER_BINDING");
+    state.incoming.set(detail.track, {
+      publisher: detail.owner,
+      kind: detail.k,
+      receiver: detail.receiver,
+      consumerId: detail.consumerId,
+      encodings: detail.rtpParameters.encodings,
+    });
+  });
+  window.addEventListener("gelabber:media-producer", ({ detail }) => {
+    if (!detail.sender || detail.sender.track !== detail.track)
+      throw new Error("SOURCE_AUDIO_SENDER_BINDING");
+    state.outgoing.set(detail.sender, {
+      kind: detail.k,
+      producerId: detail.producerId,
+      encodings: detail.encodings,
+    });
+  });
   const play = window.HTMLMediaElement.prototype.play;
   window.HTMLMediaElement.prototype.play = function (...args) {
     state.elements.add(this);
@@ -97,14 +122,16 @@ function instrument() {
             direction: "in",
             op: frame.op,
             error: frame.e,
-            version: frame.v,
+            version: frame.data?.v ?? frame.v,
+            paused: frame.paused ?? null,
+            kind: frame.k ?? null,
           });
         });
     }
     send(data) {
       if (this.isMedia) {
         const frame = JSON.parse(data);
-        if (["j", "p", "u", "w"].includes(frame.op))
+        if (["j", "produce", "closeProducer", "w"].includes(frame.op))
           state.controls.push({
             direction: "out",
             op: frame.op,
@@ -126,6 +153,8 @@ function instrument() {
       state.micCalls++;
       stream.getAudioTracks().forEach((track) => state.microphones.add(track));
     }
+    if (constraints.video)
+      stream.getVideoTracks().forEach((track) => state.cameras.add(track));
     return stream;
   };
   navigator.mediaDevices.getDisplayMedia = async (constraints) => {
@@ -195,30 +224,22 @@ async function sample() {
     if (pc.connectionState === "closed") continue;
     for (const receiver of pc.getReceivers()) {
       const track = receiver.track;
-      const mid = pc
-        .getTransceivers()
-        .find((item) => item.receiver === receiver)?.mid;
-      const section = pc.remoteDescription?.sdp
-        .split(/\r?\nm=/)
-        .find((item) => item.split(/\r?\n/).includes(`a=mid:${mid}`));
-      const msid = section
-        ?.split(/\r?\n/)
-        .find((line) => line.startsWith("a=msid:"))
-        ?.slice(7)
-        .split(" ");
-      // Native receiver track IDs remain immutable when an SFU sender/MID is
-      // reused. The currently negotiated MSID and SSRC bind the actual source.
-      const identity =
-        parse(msid?.[1]) ??
-        parse(msid?.[0]) ??
-        parse(state.incoming.get(track)) ??
-        parse(track.id);
+      const identity = state.incoming.get(track);
+      if (
+        !identity ||
+        identity.receiver !== receiver ||
+        track.readyState !== "live"
+      )
+        continue;
       const currentSsrcs = new Set(
-        section
-          ?.split(/\r?\n/)
-          .flatMap((line) => /^a=ssrc:(\d+)/.exec(line)?.[1] ?? []) ?? [],
+        identity.encodings.map((encoding) => String(encoding.ssrc)),
       );
+      if (!currentSsrcs.size || currentSsrcs.has("undefined"))
+        throw new Error("SOURCE_AUDIO_SSRC_BINDING");
       const stats = await receiver.getStats();
+      const allInbound = [...stats.values()].filter(
+        (stat) => stat.type === "inbound-rtp",
+      );
       const inbound = [...stats.values()].filter(
         (stat) =>
           stat.type === "inbound-rtp" && currentSsrcs.has(String(stat.ssrc)),
@@ -231,9 +252,16 @@ async function sample() {
         track: track.id,
         publisher: identity?.publisher ?? null,
         kind: identity?.kind ?? track.kind,
-        streamKind: parse(state.incoming.get(track))?.kind ?? null,
-        advertisedKind:
-          parse(msid?.[1])?.kind ?? parse(msid?.[0])?.kind ?? null,
+        streamKind: identity.kind,
+        advertisedKind: identity.kind,
+        nativeRows: inbound.length,
+        nativeKindRows: allInbound.filter(
+          (stat) => (stat.kind ?? stat.mediaType) === track.kind,
+        ).length,
+        actualPackets:
+          inbound.length === 1 && Number.isFinite(inbound[0].packetsReceived)
+            ? inbound[0].packetsReceived
+            : null,
         packets,
         decodedSamples: inbound.reduce(
           (sum, stat) =>
@@ -264,20 +292,47 @@ async function sample() {
       const capture = state.captures.find(
         (item) => item.video === track || item.audio === track,
       );
-      const kind = state.microphones.has(track)
-        ? "mic"
-        : capture?.audio === track
-          ? "source-audio"
-          : capture?.video === track
-            ? "source-video"
-            : track.kind;
+      const identity = state.outgoing.get(sender);
+      if (!identity) continue;
+      const kind =
+        identity.kind === "a"
+          ? "mic"
+          : identity.kind === "v"
+            ? "camera-video"
+            : ["sa", "la"].includes(identity.kind)
+              ? "source-audio"
+              : "source-video";
+      if (kind === "camera-video" && !state.cameras.has(track))
+        throw new Error("SOURCE_CAMERA_CAPTURE_BINDING");
+      if (!["mic", "camera-video"].includes(kind) && !capture)
+        throw new Error("SOURCE_AUDIO_CAPTURE_BINDING");
       const stats = await sender.getStats();
+      const ssrcs = new Set(
+        identity.encodings
+          .map((e) => String(e.ssrc))
+          .filter((ssrc) => ssrc !== "undefined"),
+      );
+      const rids = new Set(
+        identity.encodings.map((e) => e.rid).filter(Boolean),
+      );
+      if (!ssrcs.size && !rids.size)
+        throw new Error("SOURCE_AUDIO_SENDER_RTP_BINDING");
       const outbound = [...stats.values()].filter(
-        (stat) => stat.type === "outbound-rtp",
+        (stat) =>
+          stat.type === "outbound-rtp" &&
+          (stat.kind ?? stat.mediaType) === track.kind &&
+          (ssrcs.has(String(stat.ssrc)) || rids.has(stat.rid)),
       );
       sent.push({
         track: track.id,
         kind,
+        sourceKind: identity.kind,
+        nativeRows: outbound.length,
+        actualPackets:
+          outbound.length > 0 &&
+          outbound.every((row) => Number.isFinite(row.packetsSent))
+            ? outbound.reduce((sum, row) => sum + row.packetsSent, 0)
+            : null,
         enabled: track.enabled,
         live: track.readyState === "live",
         packets: outbound.reduce(
@@ -370,6 +425,9 @@ async function until(probe, accept, message, timeout = 30_000) {
           kind,
           streamKind,
           advertisedKind,
+          nativeRows,
+          nativeKindRows,
+          actualPackets,
           packets,
           decodedSamples,
           audioEnergy,
@@ -379,6 +437,9 @@ async function until(probe, accept, message, timeout = 30_000) {
           kind,
           streamKind,
           advertisedKind,
+          nativeRows,
+          nativeKindRows,
+          actualPackets,
           packets,
           decodedSamples,
           audioEnergy,
@@ -810,6 +871,149 @@ try {
   await sourceScenario(receiver, "s");
   await sourceScenario(receiver, "l");
 
+  stage = "six concurrent sources";
+  for (const name of ["Kamera an", "Bildschirm teilen", "Go Live"]) {
+    stage = `six concurrent sources: start ${name}`;
+    await dock(owner).getByRole("button", { name, exact: true }).click();
+  }
+  for (const kind of ["s", "l"]) {
+    stage = `six concurrent sources: watch ${kind}`;
+    await watch(receiver, kind);
+  }
+  stage = "six concurrent sources: native RTP";
+  const allKinds = ["a", "v", "s", "l", "sa", "la"];
+  const six = await until(
+    () => snapshot(receiver),
+    (state) =>
+      allKinds.every((kind) =>
+        state.received.some(
+          (row) =>
+            row.publisher === owner.id &&
+            row.kind === kind &&
+            row.live &&
+            row.connected &&
+            row.packets > 10,
+        ),
+      ),
+    "All six authoritative sources must carry actual native RTP concurrently",
+  );
+  for (const kind of allKinds) {
+    const before = packets(six, [kind], owner.id);
+    await until(
+      () => snapshot(receiver),
+      (state) => packets(state, [kind], owner.id) > before + 10,
+      `Concurrent ${kind} native RTP must advance`,
+    );
+  }
+  const rendered = await until(
+    () => snapshot(receiver),
+    (state) =>
+      state.videos.filter((video) => video.attached && video.width > 0)
+        .length >= 3,
+    "Camera, screen and Live must all render concurrently",
+  );
+  noLoopback(rendered, receiver.id);
+  report.checks.push(
+    "six concurrent sources: a/v/s/l/sa/la actual RTP and three rendered videos",
+  );
+  stage = "device and DSP changes with six sources";
+  await dock(owner)
+    .getByRole("button", { name: "Voice-Einstellungen", exact: true })
+    .click();
+  const input = owner.page.locator("#audio-input");
+  await input.waitFor();
+  await owner.page
+    .getByRole("button", { name: "Geräte laden", exact: true })
+    .click();
+  const device = await until(
+    () =>
+      input
+        .locator("option")
+        .evaluateAll(
+          (options) => options.find((option) => option.value !== "")?.value,
+        ),
+    (value) => typeof value === "string" && value.length > 0,
+    "Real input-device enumeration must finish before selecting a device",
+    5000,
+  );
+  assert.ok(device, "A real browser fake input device must be enumerated");
+  const changeMic = async (action, producerReplacement = false) => {
+    const before = await snapshot(owner);
+    await owner.page.evaluate(() => {
+      const state = window.__sourceAudioSmoke;
+      state.beforeMicChange = {
+        raw: [...state.microphones].find(
+          (track) => track.readyState === "live",
+        ),
+        producer: [...state.outgoing.values()]
+          .filter((p) => p.kind === "a")
+          .at(-1)?.producerId,
+      };
+    });
+    await action();
+    await until(
+      () => snapshot(owner),
+      (state) =>
+        state.micCalls > before.micCalls &&
+        state.sent.some(
+          (row) =>
+            row.kind === "mic" && row.live && row.enabled && row.packets > 10,
+        ),
+      "Device/DSP change must establish actual replacement audio sender",
+    );
+    const replaced = await until(
+      () =>
+        owner.page.evaluate(() => {
+          const state = window.__sourceAudioSmoke;
+          return {
+            retiredOldCapture:
+              state.beforeMicChange.raw?.readyState === "ended",
+            changedProducer:
+              [...state.outgoing.values()].filter((p) => p.kind === "a").at(-1)
+                ?.producerId !== state.beforeMicChange.producer,
+          };
+        }),
+      (state) =>
+        state.retiredOldCapture &&
+        (!producerReplacement || state.changedProducer),
+      "Native producer swap must commit before prior capture is retired",
+    );
+    assert.ok(
+      replaced.retiredOldCapture,
+      "Confirmed swap must retire the prior raw capture",
+    );
+    if (producerReplacement)
+      assert.ok(
+        replaced.changedProducer,
+        "Codec-relevant Original mode must confirm a different native Producer",
+      );
+    await progress(receiver, ["a"], owner.id);
+    for (const kind of ["v", "s", "l", "sa", "la"])
+      await progress(receiver, [kind], owner.id);
+  };
+  await changeMic(() => input.selectOption(device));
+  await changeMic(
+    () => owner.page.getByRole("radio", { name: /Original \/ Musik/ }).check(),
+    true,
+  );
+  await changeMic(
+    () =>
+      owner.page.getByRole("radio", { name: /Verbesserte Sprache/ }).check(),
+    true,
+  );
+  await owner.page.getByRole("button", { name: "Fertig", exact: true }).click();
+  report.checks.push(
+    "enumerated input-device and enhanced/Original DSP swaps: confirmed native audio with other five sources flowing",
+  );
+  for (const name of ["Kamera aus", "Teilen beenden", "Live beenden"])
+    await dock(owner).getByRole("button", { name, exact: true }).click();
+  await until(
+    () => snapshot(owner),
+    (state) => state.sent.every((row) => row.kind === "mic" || !row.live),
+    "Stopping concurrent sources must retire their actual senders",
+  );
+  await progress(receiver, ["a"], owner.id);
+
   stage = "no-audio fallback";
   const sourceBefore = packets(await snapshot(receiver), ["sa"], owner.id);
   await owner.page.evaluate(() => {
@@ -945,6 +1149,22 @@ try {
     stage,
     reason: error instanceof assert.AssertionError ? error.message : error.name,
   };
+  if (owner) {
+    try {
+      const state = await snapshot(owner);
+      report.publisherAtFailure = state.sent.map(
+        ({ sourceKind, nativeRows, actualPackets, enabled, live }) => ({
+          sourceKind,
+          nativeRows,
+          actualPackets,
+          enabled,
+          live,
+        }),
+      );
+    } catch {
+      report.publisherAtFailure = "native-observation-unavailable";
+    }
+  }
   process.exitCode = 1;
 } finally {
   if (server && owner) {

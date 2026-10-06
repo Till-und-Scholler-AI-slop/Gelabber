@@ -7,6 +7,14 @@ pub fn peer_key(nonce: Uuid) -> String {
     format!("gb:live:peer:{nonce}")
 }
 
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum LiveAcquireOutcome {
+    Acquired(Duration),
+    /// Exact authority and API claim are valid, but another bounded peer lease remains.
+    Busy,
+    Denied,
+}
+
 const ACQUIRE: &str = r#"
 local now = redis.call('TIME')
 if redis.call('GET', KEYS[1]) ~= ARGV[1]
@@ -25,19 +33,23 @@ if not ok or type(claim) ~= 'table'
 local ttl = redis.call('PTTL', KEYS[4])
 if ttl <= 0 or ttl > 5000 then return 0 end
 local peer = redis.call('GET', KEYS[5])
-if peer and peer ~= ARGV[9] then return 0 end
+if peer and peer ~= ARGV[9] then
+ local peer_ttl = redis.call('PTTL', KEYS[5])
+ if peer_ttl > 0 and peer_ttl <= 5000 then return -1 end
+ return 0
+end
 redis.call('SET', KEYS[5], ARGV[9], 'PX', ttl)
 return ttl
 "#;
 
-pub async fn validate_and_acquire(
+pub async fn try_acquire(
     redis: &redis::Client,
     authority: &AuthorizedTicketClaim,
     nonce: Uuid,
     peer: Uuid,
-) -> Result<Option<Duration>, redis::RedisError> {
+) -> Result<LiveAcquireOutcome, redis::RedisError> {
     if !authority.well_formed() || nonce.is_nil() || peer.is_nil() || !authority.claim.g {
-        return Ok(None);
+        return Ok(LiveAcquireOutcome::Denied);
     }
     tokio::time::timeout(Duration::from_millis(500), async {
         let mut conn = redis.get_multiplexed_async_connection().await?;
@@ -63,12 +75,28 @@ pub async fn validate_and_acquire(
             .arg(peer.to_string())
             .query_async(&mut conn)
             .await?;
-        Ok((result > 0).then(|| Duration::from_millis(result as u64)))
+        Ok(match result {
+            ttl if ttl > 0 => LiveAcquireOutcome::Acquired(Duration::from_millis(ttl as u64)),
+            -1 => LiveAcquireOutcome::Busy,
+            _ => LiveAcquireOutcome::Denied,
+        })
     })
     .await
     .map_err(|_| {
         redis::RedisError::from((redis::ErrorKind::Io, "live authority deadline exceeded"))
     })?
+}
+
+pub async fn validate_and_acquire(
+    redis: &redis::Client,
+    authority: &AuthorizedTicketClaim,
+    nonce: Uuid,
+    peer: Uuid,
+) -> Result<Option<Duration>, redis::RedisError> {
+    Ok(match try_acquire(redis, authority, nonce, peer).await? {
+        LiveAcquireOutcome::Acquired(ttl) => Some(ttl),
+        LiveAcquireOutcome::Busy | LiveAcquireOutcome::Denied => None,
+    })
 }
 
 pub async fn release(redis: &redis::Client, nonce: Uuid, peer: Uuid) {

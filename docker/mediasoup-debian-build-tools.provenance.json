@@ -1,0 +1,31 @@
+{
+  "schema": 1,
+  "date": "2026-10-06",
+  "source": "Debian trixie/trixie-updates/trixie-security official repositories",
+  "verification": "apt-get update -o APT::Update::Error-Mode=any in the existing Debian build base, default Debian archive keyring and authenticated source configuration",
+  "architectures": [
+    "amd64",
+    "arm64"
+  ],
+  "packages_per_architecture": 16,
+  "versions_changed_from_existing_build": false,
+  "compiler_payload_exact_dependencies": {
+    "gcc-14": "gcc-14-<native-triplet> (= 14.2.0-19)",
+    "g++-14": "g++-14-<native-triplet> (= 14.2.0-19)"
+  },
+  "python_payload_existing_version": "3.13.5-2+deb13u5",
+  "python_payload_reason": "Python wrapper dependencies permit newer payloads with >=; lock the interpreter/minimal/stdlib/venv packages actually used by the existing build",
+  "apt_verified_index_file_sha256": {
+    "deb.debian.org_debian_dists_trixie_InRelease": "0584fba32e13e0ab8285fb16c27adea1ec03a73669c18702821094fd6ca86675",
+    "deb.debian.org_debian_dists_trixie_main_binary-arm64_Packages.lz4": "dbe3c5b7a1587b7669b7dfd760350f40d12947572ecf9ec75908e08aac3a2e22",
+    "deb.debian.org_debian_dists_trixie_main_binary-amd64_Packages.lz4": "31c37ab52e49bc16fd5116607198838519beb0fa5defaa99ad33e1d45666d551",
+    "deb.debian.org_debian_dists_trixie-updates_InRelease": "056c3b5e561551a5498fbf8c94a91cd6dbd19da16b984e38fdb2cb1938cb0b98",
+    "deb.debian.org_debian_dists_trixie-updates_main_binary-amd64_Packages.lz4": "ef7207c79353aa413579833b0ec9710a8ccb34d36b1e62af88971e1caf742fee",
+    "deb.debian.org_debian_dists_trixie-updates_main_binary-arm64_Packages.lz4": "54129b18dfc8545f7ee28b783793c0ecd6952f6ac6314c24384162e02822c048",
+    "deb.debian.org_debian-security_dists_trixie-security_InRelease": "1402f5b326f84ad48b7d32e092165d1f6ee192af737c941d70879f3cf9518818",
+    "deb.debian.org_debian-security_dists_trixie-security_main_binary-arm64_Packages.lz4": "452aa45248c5506a10d7ac9522b1b3ebdfb188975b118b2fbdc18c851c8d8e98",
+    "deb.debian.org_debian-security_dists_trixie-security_main_binary-amd64_Packages.lz4": "b79104601aeef2b8104a3e430abe86d73aa47d6cda1e304e9db1e9f1086e4b6c"
+  },
+  "canonical_lock_sha256": "2156dadb3455f52bff9f75a2cf90f30a22d03c9554a1d98f0ec4fb9a0259d1a0",
+  "scope": "direct native tool and interpreter payload archive integrity, not an immutable lock of every baseimage/transitive operating system library"
+}

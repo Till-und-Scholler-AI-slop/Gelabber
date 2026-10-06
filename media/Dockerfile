@@ -7,6 +7,24 @@ ENV SSL_CERT_FILE=/etc/ssl/certs/ca-certificates.crt \
     CURL_CA_BUNDLE=/etc/ssl/certs/ca-certificates.crt \
     CARGO_HTTP_CAINFO=/etc/ssl/certs/ca-certificates.crt \
     CARGO_NET_RETRY=3
+# The SDK's pinned planus code generator invokes rustfmt during compilation.
+RUN rustup component add --toolchain 1.98.1 rustfmt && rustfmt --version
+COPY docker/mediasoup-build-tools.py docker/mediasoup-build-tools.lock.json \
+    docker/mediasoup-debian-build-tools.lock.tsv docker/install-mediasoup-debian-build-tools.sh \
+    /opt/gelabber-native-bootstrap/
+# Python and compiler packages are selected from Debian 13; native Python
+# wheels are hash-verified, then all upstream pip calls use only that wheelhouse.
+RUN sh /opt/gelabber-native-bootstrap/install-mediasoup-debian-build-tools.sh \
+       /opt/gelabber-native-bootstrap/mediasoup-debian-build-tools.lock.tsv \
+    && python3 /opt/gelabber-native-bootstrap/mediasoup-build-tools.py --destination /opt/gelabber-native-build \
+    && rm -rf /var/lib/apt/lists/*
+ENV PYTHON=/opt/gelabber-native-build/native-python \
+    CARGO_BUILD_JOBS=2 \
+    PIP_NO_INDEX=1 \
+    PIP_FIND_LINKS=/opt/gelabber-native-build/wheelhouse \
+    PIP_CONSTRAINT=/opt/gelabber-native-build/constraints.txt \
+    MESON_VERSION=1.12.0 \
+    NINJA_VERSION=1.13.2
 FROM base AS recipe
 WORKDIR /input
 COPY rust-toolchain.toml Cargo.toml Cargo.lock ./

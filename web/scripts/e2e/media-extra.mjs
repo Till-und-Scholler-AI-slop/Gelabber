@@ -14,7 +14,7 @@ import {
   observe,
 } from "./harness.mjs";
 import { activePeers, progress, watchSource } from "./media.mjs";
-import { sampleVideoSenders } from "./probe.mjs";
+import { sampleVideoSenders, samplePublicationFlow } from "./probe.mjs";
 import { publisherEncoderProgress } from "./publisher-encoders.mjs";
 const audioPackets = (s) =>
   activePeers(s)
@@ -265,12 +265,13 @@ export async function mediaExtraScenarios(h, f, { begin, reset, options }) {
           "fixture-three-native-video-arrivals-not-held",
           20_000,
         );
-        // Reverse native callback delivery only; the actual peers/RTP/SDP stay native.
+        // Reverse authoritative Consumer announcements before the SDK consumes
+        // them; the actual native peers and RTP remain unchanged.
         const kinds = await nativeEvaluate(f.member, () => {
           const state = window.__e2e;
           state.holdTracks = false;
           const pending = state.heldTracks.splice(0).reverse();
-          const kinds = pending.map((item) => item.event.track.kind);
+          const kinds = pending.map((item) => item.kind);
           for (const item of pending) item.deliver();
           return kinds;
         });
@@ -279,7 +280,7 @@ export async function mediaExtraScenarios(h, f, { begin, reset, options }) {
           publisherReady,
           sourceButtons,
           held,
-          callbackOrder: "reversed",
+          consumerAnnouncementOrder: "reversed",
           deliveredKinds: kinds,
           live: await progress(f.member, options),
           screen: await progress(f.member, {
@@ -319,7 +320,10 @@ export async function mediaExtraScenarios(h, f, { begin, reset, options }) {
           () => snapshot(f.member),
           (s) =>
             s.videos.some(
-              (v) => v.kind === "camera" && v.width === 640 && v.height === 360,
+              (v) =>
+                v.kind === "camera" &&
+                [160, 640].includes(v.width) &&
+                v.height === (v.width * 9) / 16,
             ),
           "fixture-sdp-camera-warmup-deadline",
           cameraFixtureWarmup.deadlineMs,
@@ -419,6 +423,7 @@ export async function mediaExtraScenarios(h, f, { begin, reset, options }) {
             "one real native setRemoteDescription rejection of malformed answer",
           cameraFixtureWarmup,
           faultExercised: true,
+          sdpRejectionErrors: failed.rejectedSdpErrors,
           before,
           failed,
           camera,
@@ -432,6 +437,15 @@ export async function mediaExtraScenarios(h, f, { begin, reset, options }) {
         const diagnostics = {
           cameraFixtureWarmup,
           faultExercised: observed?.rejectedSdp > 0,
+          sdpRejectionErrors: observed?.rejectedSdpErrors ?? [],
+          publisherLive: await nativeEvaluate(f.owner, samplePublicationFlow, {
+            kind: "l",
+          }),
+          subscriberLive: await nativeEvaluate(
+            f.member,
+            samplePublicationFlow,
+            { kind: "l" },
+          ),
         };
         if (error instanceof CheckFailure) {
           error.metrics = { ...error.metrics, ...diagnostics };

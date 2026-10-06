@@ -26,7 +26,7 @@ async fn serve_at(
         _ => None,
     })
     .unwrap();
-    let state = AppState::from_config(&config).unwrap();
+    let state = AppState::from_config(&config).await.unwrap();
     let redis = state.redis.clone();
     let sfu = state.sfu.clone();
     let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
@@ -58,7 +58,9 @@ async fn legacy_envelope_is_consumed_and_rejected_on_real_websocket() {
         .await
         .unwrap();
     ws.send(tokio_tungstenite::tungstenite::Message::Text(
-        json!({"op":"j", "tk":code}).to_string().into(),
+        json!({"op":"j", "id":1, "v":4,"tk":code})
+            .to_string()
+            .into(),
     ))
     .await
     .unwrap();
@@ -171,11 +173,20 @@ impl Authority {
 type Socket =
     tokio_tungstenite::WebSocketStream<tokio_tungstenite::MaybeTlsStream<tokio::net::TcpStream>>;
 async fn join(addr: std::net::SocketAddr, code: &str) -> (Socket, serde_json::Value) {
+    join_with_watch(addr, code, None).await
+}
+async fn join_with_watch(
+    addr: std::net::SocketAddr,
+    code: &str,
+    watch: Option<Uuid>,
+) -> (Socket, serde_json::Value) {
     let (mut ws, _) = tokio_tungstenite::connect_async(format!("ws://{addr}/media/ws"))
         .await
         .unwrap();
     ws.send(tokio_tungstenite::tungstenite::Message::Text(
-        json!({"op":"j","tk":code}).to_string().into(),
+        json!({"op":"j","id":1,"v":4,"tk":code,"w":watch})
+            .to_string()
+            .into(),
     ))
     .await
     .unwrap();
@@ -221,7 +232,7 @@ async fn rejects_consumed_ticket_after_authority_rotation_and_allows_immediate_r
     let mut authority = Authority::new(&redis).await;
     let old = authority.mint().await;
     let (mut ws, value) = join(addr, &old).await;
-    assert_eq!(value["op"], "ok");
+    assert_eq!(value["op"], "result");
     let (_, replay) = join(addr, &old).await;
     assert_eq!(replay["e"], "unauthorized");
     let outstanding = authority.mint().await;
@@ -239,7 +250,7 @@ async fn rejects_consumed_ticket_after_authority_rotation_and_allows_immediate_r
         .await;
     let fresh = authority.mint().await;
     let (mut next, accepted) = join(addr, &fresh).await;
-    assert_eq!(accepted["op"], "ok");
+    assert_eq!(accepted["op"], "result");
     next.close(None).await.unwrap();
     authority.cleanup().await;
     let mut conn = redis.get_multiplexed_async_connection().await.unwrap();
@@ -260,7 +271,7 @@ async fn channel_rotation_revokes_open_peer_and_old_unconsumed_ticket() {
     let (addr, redis, _) = serve().await;
     let authority = Authority::new(&redis).await;
     let (mut ws, value) = join(addr, &authority.mint().await).await;
-    assert_eq!(value["op"], "ok");
+    assert_eq!(value["op"], "result");
     let outstanding = authority.mint().await;
     authority
         .set(&authority.keys()[1], &Uuid::new_v4().to_string())
@@ -282,9 +293,9 @@ async fn exact_session_logout_does_not_revoke_second_session_of_same_user() {
     b.claim.auth.channel = a.claim.auth.channel;
     b.install().await;
     let (mut first, value) = join(addr, &a.mint().await).await;
-    assert_eq!(value["op"], "ok");
+    assert_eq!(value["op"], "result");
     let (mut second, value) = join(addr, &b.mint().await).await;
-    assert_eq!(value["op"], "ok");
+    assert_eq!(value["op"], "result");
     let mut conn = redis.get_multiplexed_async_connection().await.unwrap();
     let _: () = redis::cmd("DEL")
         .arg(&a.keys()[2])
@@ -294,7 +305,9 @@ async fn exact_session_logout_does_not_revoke_second_session_of_same_user() {
     revoked(&mut first, Duration::from_millis(1700)).await;
     second
         .send(tokio_tungstenite::tungstenite::Message::Text(
-            json!({"op":"o","sdp":"invalid"}).to_string().into(),
+            json!({"op":"transport","id":2,"direction":"recv"})
+                .to_string()
+                .into(),
         ))
         .await
         .unwrap();
@@ -304,8 +317,8 @@ async fn exact_session_logout_does_not_revoke_second_session_of_same_user() {
         .unwrap()
         .unwrap();
     assert_eq!(
-        serde_json::from_str::<serde_json::Value>(msg.to_text().unwrap()).unwrap()["e"],
-        "negotiation_failed",
+        serde_json::from_str::<serde_json::Value>(msg.to_text().unwrap()).unwrap()["op"],
+        "result",
         "second exact session remains authorized"
     );
     second.close(None).await.unwrap();
@@ -319,7 +332,7 @@ async fn authority_lease_expiry_closes_open_peer_within_three_seconds_plus_check
     let authority = Authority::new(&redis).await;
     let started = tokio::time::Instant::now();
     let (mut ws, value) = join(addr, &authority.mint().await).await;
-    assert_eq!(value["op"], "ok");
+    assert_eq!(value["op"], "result");
     revoked(&mut ws, Duration::from_millis(4500)).await;
     assert!(started.elapsed() < Duration::from_millis(4500));
     tokio::time::sleep(Duration::from_millis(100)).await;
@@ -331,10 +344,11 @@ async fn authority_lease_expiry_closes_open_peer_within_three_seconds_plus_check
 async fn watch_only_peer_refreshes_demand_without_renewing_session_and_keeps_other_tab_demand() {
     let (addr, redis, _) = serve().await;
     let authority = Authority::new(&redis).await;
-    let (mut a, value) = join(addr, &authority.mint().await).await;
-    assert_eq!(value["op"], "ok");
-    let (mut b, value) = join(addr, &authority.mint().await).await;
-    assert_eq!(value["op"], "ok");
+    let watch = Some(Uuid::new_v4());
+    let (mut a, value) = join_with_watch(addr, &authority.mint().await, watch).await;
+    assert_eq!(value["op"], "result");
+    let (mut b, value) = join_with_watch(addr, &authority.mint().await, watch).await;
+    assert_eq!(value["op"], "result");
     let keys = authority.keys();
     let mut conn = redis.get_multiplexed_async_connection().await.unwrap();
     let _: () = redis::cmd("EXPIRE")
@@ -428,9 +442,10 @@ async fn consumed_grant_is_rechecked_before_sfu_attach() {
     authority
         .set(&authority.keys()[0], &Uuid::new_v4().to_string())
         .await;
-    let (out, _) = tokio::sync::mpsc::unbounded_channel();
+    let (out, _) = tokio::sync::mpsc::channel(64);
     assert!(matches!(
-        sfu.join_authorized(consumed, out).await,
+        sfu.join_authorized_watch_version(consumed, None, 4, out)
+            .await,
         Err(gelabber_media::error::SfuError::Revoked)
     ));
     assert_eq!(sfu.room_count(), 0);
@@ -445,7 +460,7 @@ async fn absolute_session_expiry_revokes_even_while_lease_still_exists() {
     let now: (u64, u64) = redis::cmd("TIME").query_async(&mut conn).await.unwrap();
     authority.claim.auth.expires_at = now.0 + 2;
     let (mut ws, value) = join(addr, &authority.mint().await).await;
-    assert_eq!(value["op"], "ok");
+    assert_eq!(value["op"], "result");
     revoked(&mut ws, Duration::from_millis(2700)).await;
     let lease: i64 = redis::cmd("PTTL")
         .arg(&authority.keys()[2])
@@ -493,19 +508,21 @@ async fn redis_failure_revokes_open_peer_and_rejects_new_ticket_without_affectin
     let (addr, proxy_redis, sfu) = serve_at(format!("redis://{proxy}")).await;
     let mut authority = Authority::new(&proxy_redis).await;
     let (mut ws, value) = join(addr, &authority.mint().await).await;
-    assert_eq!(value["op"], "ok");
+    assert_eq!(value["op"], "result");
     let outstanding = authority.mint().await;
     let (control_addr, direct, _) = serve().await;
     let control = Authority::new(&direct).await;
     let (mut control_ws, value) = join(control_addr, &control.mint().await).await;
-    assert_eq!(value["op"], "ok");
+    assert_eq!(value["op"], "result");
     cut.send_replace(true);
     revoked(&mut ws, Duration::from_millis(1700)).await;
     let (_, value) = join(addr, &outstanding).await;
     assert_eq!(value["e"], "unauthorized");
     control_ws
         .send(tokio_tungstenite::tungstenite::Message::Text(
-            json!({"op":"o","sdp":"invalid"}).to_string().into(),
+            json!({"op":"transport","id":2,"direction":"recv"})
+                .to_string()
+                .into(),
         ))
         .await
         .unwrap();
@@ -515,8 +532,8 @@ async fn redis_failure_revokes_open_peer_and_rejects_new_ticket_without_affectin
         .unwrap()
         .unwrap();
     assert_eq!(
-        serde_json::from_str::<serde_json::Value>(message.to_text().unwrap()).unwrap()["e"],
-        "negotiation_failed"
+        serde_json::from_str::<serde_json::Value>(message.to_text().unwrap()).unwrap()["op"],
+        "result"
     );
     control_ws.close(None).await.unwrap();
     tokio::time::sleep(Duration::from_millis(100)).await;

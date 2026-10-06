@@ -1,3252 +1,1981 @@
-//! Single-node SFU: a room is a voice channel. RTP from a publisher is
-//! written onto `TrackLocalStaticRTP`s of every other peer. No mesh, no
-//! recording, no second node.
-
-use std::collections::{HashMap, HashSet, VecDeque};
-use std::net::SocketAddr;
-use std::sync::atomic::{AtomicU64, Ordering};
-use std::sync::{Arc, Mutex as StdMutex};
-use std::time::{Duration, Instant};
-
-use rtc::media_stream::MediaStreamTrack;
-use rtc::peer_connection::configuration::media_engine::{
-    MIME_TYPE_AV1, MIME_TYPE_H264, MIME_TYPE_HEVC, MIME_TYPE_OPUS, MIME_TYPE_RTX, MIME_TYPE_VP8,
-    MIME_TYPE_VP9,
+//! Own product authority/control; mediasoup is the sole production media engine.
+//! Graph locks only reserve/commit. Native awaits use per-resource gates so a
+//! denied grant cannot be resumed after its confirmed native pause.
+use crate::{
+    config::Config,
+    error::SfuError,
+    protocol::{
+        ClientFrame, MEDIA_PROTOCOL_VERSION, ServerFrame, SourceKind, TransportDirection, WatchKind,
+    },
+    ticket::AuthorizedTicketClaim,
 };
-use rtc::rtcp;
-use rtc::rtcp::payload_feedbacks::full_intra_request::FullIntraRequest;
-use rtc::rtcp::payload_feedbacks::picture_loss_indication::PictureLossIndication;
-use rtc::rtp;
-use rtc::rtp_transceiver::rtp_sender::{
-    RTCPFeedback, RTCRtpCodec, RTCRtpCodecParameters, RTCRtpCodingParameters,
-    RTCRtpEncodingParameters, RtpCodecKind,
+use futures_util::{StreamExt, future::join_all, stream};
+use mediasoup::{
+    prelude::*,
+    types::data_structures::{AppData, IceState},
+    worker::WorkerLogLevel,
 };
-use tokio::sync::{Mutex, RwLock, broadcast, mpsc, watch};
-use tracing::{debug, info, warn};
+use serde_json::{Value, json};
+use std::{
+    collections::{HashMap, HashSet, VecDeque},
+    future::Future,
+    sync::{
+        Arc, Mutex as StdMutex, Weak,
+        atomic::{AtomicBool, AtomicU64, AtomicUsize, Ordering},
+    },
+    time::{Duration, Instant},
+};
+use tokio::sync::{Mutex, Notify, OnceCell, mpsc};
+use tracing::{error, warn};
 use uuid::Uuid;
-use webrtc::media_stream::track_local::TrackLocal;
-use webrtc::media_stream::track_local::TrackLocalEvent;
-use webrtc::media_stream::track_local::static_rtp::TrackLocalStaticRTP;
-use webrtc::media_stream::track_remote::{TrackRemote, TrackRemoteEvent};
-use webrtc::peer_connection::{
-    MediaEngine, PeerConnection, PeerConnectionBuilder, PeerConnectionEventHandler,
-    RTCConfigurationBuilder, RTCIceCandidateInit, RTCIceCandidateType, RTCIceGatheringState,
-    RTCSessionDescription, SettingEngine, register_default_interceptors,
-};
-use webrtc::rtp_transceiver::RtpSender;
 
-use crate::config::Config;
-use crate::error::SfuError;
-use crate::protocol::ServerFrame;
-use crate::ticket::{AuthorizedTicketClaim, TicketClaim};
-
-const RTP_Q: usize = 512;
-
-#[path = "sfu_feedback.rs"]
-mod feedback;
+const COMMAND_TIMEOUT: Duration = Duration::from_secs(2);
+const STOP_TIMEOUT: Duration = Duration::from_millis(500);
+const STOP_CONCURRENCY: usize = 64;
+// The deadline includes both an in-flight resource gate and native pause ACK.
+const LIVE_STOP_MARGIN: Duration = Duration::from_millis(1250);
+const WATCH_LIMIT: usize = 64;
+const CONSUMER_LIMIT: usize = 1024;
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
 pub struct PeerId(pub Uuid);
-
-enum PcEvent {
-    Ice(RTCIceCandidateInit),
-    Track(Arc<dyn TrackRemote>),
-    Connected,
-    IceFailed,
-    Closed,
-}
-
-struct Handler {
-    tx: mpsc::UnboundedSender<PcEvent>,
-    gathered: watch::Sender<u64>,
-}
-
-#[async_trait::async_trait]
-impl PeerConnectionEventHandler for Handler {
-    async fn on_ice_candidate(&self, event: webrtc::peer_connection::RTCPeerConnectionIceEvent) {
-        if event.candidate.address.is_empty() {
-            return;
-        }
-        if let Ok(init) = event.candidate.to_json() {
-            let _ = self.tx.send(PcEvent::Ice(init));
-        }
+struct Grant(AtomicBool);
+impl Grant {
+    fn new() -> Arc<Self> {
+        Arc::new(Self(AtomicBool::new(true)))
     }
-
-    async fn on_ice_gathering_state_change(&self, state: RTCIceGatheringState) {
-        if state == RTCIceGatheringState::Complete {
-            let next = *self.gathered.borrow() + 1;
-            let _ = self.gathered.send(next);
-        }
+    fn valid(&self) -> bool {
+        self.0.load(Ordering::SeqCst)
     }
-
-    async fn on_track(&self, track: Arc<dyn TrackRemote>) {
-        let _ = self.tx.send(PcEvent::Track(track));
+    fn stop(&self) {
+        self.0.store(false, Ordering::SeqCst);
     }
-
-    async fn on_connection_state_change(
-        &self,
-        state: webrtc::peer_connection::RTCPeerConnectionState,
-    ) {
-        use webrtc::peer_connection::RTCPeerConnectionState;
-        if state == RTCPeerConnectionState::Connected {
-            let _ = self.tx.send(PcEvent::Connected);
-        }
-        if state == RTCPeerConnectionState::Failed {
-            let _ = self.tx.send(PcEvent::IceFailed);
-        }
-        if matches!(
-            state,
-            RTCPeerConnectionState::Failed | RTCPeerConnectionState::Closed
-        ) {
-            let _ = self.tx.send(PcEvent::Closed);
-        }
+    fn stop_once(&self) -> bool {
+        self.0.swap(false, Ordering::SeqCst)
     }
 }
-
-async fn local_sdp_after_gather(
-    pc: &Arc<dyn PeerConnection>,
-    gathered: &watch::Receiver<u64>,
-    before: u64,
-    closing: &watch::Sender<bool>,
-) -> Option<String> {
-    let mut rx = gathered.clone();
-    if *rx.borrow() <= before {
-        let mut closed = closing.subscribe();
-        tokio::select! {
-            biased;
-            _ = closed.wait_for(|closed| *closed) => return None,
-            _ = tokio::time::timeout(Duration::from_secs(3), rx.wait_for(|n| *n > before)) => {}
-        }
-    }
-    if *closing.borrow() {
-        return None;
-    }
-    let sdp = pc.local_description().await.map(|desc| desc.sdp)?;
-    sdp.contains("ice-ufrag").then_some(sdp)
-}
-
-/// Published host UDP ports. Port `0` stays ephemeral (in-process tests).
-/// A fixed range is a pool: a port comes back on leave and on a failed bind.
-struct IcePorts {
-    ip: std::net::IpAddr,
-    min: u16,
-    max: u16,
-    free: Mutex<VecDeque<u16>>,
-}
-
-impl IcePorts {
-    fn from_config(config: &Config) -> Self {
-        let addr: SocketAddr = config
-            .ice_bind
-            .parse()
-            .unwrap_or_else(|_| "0.0.0.0:0".parse().unwrap());
-        let min = addr.port();
-        let max = config.ice_port_max.unwrap_or(min).max(min);
-        let mut free = VecDeque::new();
-        if min != 0 {
-            let mut port = min;
-            loop {
-                free.push_back(port);
-                if port == max {
-                    break;
-                }
-                port = port.saturating_add(1);
-            }
-        }
-        Self {
-            ip: addr.ip(),
-            min,
-            max,
-            free: Mutex::new(free),
-        }
-    }
-
-    /// `None` when every published port is still bound. Does not wrap.
-    async fn take(&self) -> Option<String> {
-        if self.min == 0 {
-            return Some(SocketAddr::new(self.ip, 0).to_string());
-        }
-        let port = self.free.lock().await.pop_front()?;
-        Some(SocketAddr::new(self.ip, port).to_string())
-    }
-
-    async fn release(&self, addr: &str) {
-        if self.min == 0 {
-            return;
-        }
-        let Ok(parsed) = addr.parse::<SocketAddr>() else {
-            return;
-        };
-        let port = parsed.port();
-        if port < self.min || port > self.max {
-            return;
-        }
-        let mut free = self.free.lock().await;
-        if !free.contains(&port) {
-            free.push_back(port);
-        }
-    }
-}
-
-struct PublicationLife {
-    stop: watch::Sender<bool>,
-    done: watch::Receiver<bool>,
-}
-
-#[derive(Clone)]
-struct Published {
-    id: String,
-    publisher: PeerId,
-    track_id: String,
-    stream_id: String,
-    kind: RtpCodecKind,
-    codec: RTCRtpCodec,
-    packets: broadcast::Sender<rtp::Packet>,
-    keyframe: Option<mpsc::UnboundedSender<()>>,
-    life: Arc<PublicationLife>,
-    live_deadline: Option<Arc<StdMutex<Instant>>>,
-    /// Per-viewer source intent; closing it stops RTP before any SDP wait.
-    watch_gate: Option<watch::Receiver<bool>>,
-}
-
-struct Subscription {
-    sender: Arc<dyn RtpSender>,
-    task: tokio::task::JoinHandle<()>,
-    codec: RTCRtpCodec,
-    payload_type: watch::Sender<Option<u8>>,
-}
-
-impl Drop for Subscription {
-    fn drop(&mut self) {
-        self.task.abort();
-    }
-}
-
-enum SubscriptionState {
-    Pending(Published),
-    Active(Subscription),
-}
-
-struct PeerSdp {
-    negotiated: bool,
-    /// Initial ICE/DTLS handshake completed before any subscriber reoffer.
-    connected: bool,
-    have_local_offer: bool,
-    closed: bool,
-    closing: watch::Sender<bool>,
-    dirty: bool,
-    /// The reservation exists from enqueue until cleanup, including during SDP.
-    subscriptions: HashMap<String, SubscriptionState>,
-    /// Only these new senders are discarded if the current offer fails.
-    offered: HashSet<String>,
-    pending_ice: Vec<(String, Option<String>)>,
-}
-
-impl PeerSdp {
-    fn new() -> Self {
-        Self {
-            negotiated: false,
-            connected: false,
-            have_local_offer: false,
-            closed: false,
-            closing: watch::channel(false).0,
-            dirty: false,
-            subscriptions: HashMap::new(),
-            offered: HashSet::new(),
-            pending_ice: Vec::new(),
-        }
-    }
-}
-
 struct Peer {
-    #[allow(dead_code)]
     id: PeerId,
-    user_id: Uuid,
-    #[allow(dead_code)]
-    channel_id: Uuid,
-    /// From the join ticket. `l` is refused when this is false.
-    go_live: bool,
+    authority: AuthorizedTicketClaim,
     watch_user: Option<Uuid>,
-    explicit_watch: bool,
-    watches: HashMap<(Uuid, String), watch::Sender<bool>>,
-    authority: Option<AuthorizedTicketClaim>,
-    live_claim: Option<LiveBinding>,
-    withdrawn_live: Option<Uuid>,
-    /// Host UDP address taken from [`IcePorts`], returned on leave.
-    ice_addr: String,
-    pc: Arc<dyn PeerConnection>,
-    out: mpsc::UnboundedSender<ServerFrame>,
-    gathered: watch::Receiver<u64>,
-    sdp: Arc<Mutex<PeerSdp>>,
-    closing: watch::Sender<bool>,
-    /// Explicit MSID track identity; legacy tags are bound in SDP order, never RTP order.
-    video_kinds: HashMap<String, String>,
-    /// Source audio is bound to one exact parent MSID on this peer.
-    source_parents: HashMap<String, String>,
-    legacy_kinds: VecDeque<String>,
-    current_video: HashSet<String>,
-    remote_tracks: HashMap<String, Arc<dyn TrackRemote>>,
+    grant: Arc<Grant>,
+    out: mpsc::Sender<ServerFrame>,
+    rpc_gate: Mutex<()>,
+    lease_gate: Mutex<()>,
+    attach_scheduled: AtomicBool,
+    attach_dirty: AtomicBool,
 }
-
-struct Room {
-    peers: HashMap<PeerId, Peer>,
-    pubs: HashMap<String, Published>,
+struct PeerData {
+    peer: Arc<Peer>,
+    capabilities: Option<RtpCapabilities>,
+    transports: HashMap<bool, WebRtcTransport>, // true = send
+    publications: HashMap<SourceKind, Arc<Publication>>,
+    consumers: HashMap<String, Arc<Subscription>>,
+    pending_consumers: HashSet<String>,
+    watches: HashMap<(Uuid, WatchKind), Arc<Grant>>,
+    withdrawn_live: VecDeque<Uuid>,
+    retired_producers: VecDeque<String>,
+    retired_transports: VecDeque<String>,
 }
-
-#[derive(Clone)]
 struct LiveBinding {
     nonce: Uuid,
-    track_id: String,
-    deadline: Arc<StdMutex<Instant>>,
+    deadline: StdMutex<Instant>,
+    changed: Notify,
 }
-
-impl PartialEq for LiveBinding {
-    fn eq(&self, other: &Self) -> bool {
-        self.nonce == other.nonce
-            && self.track_id == other.track_id
-            && Arc::ptr_eq(&self.deadline, &other.deadline)
+struct Publication {
+    producer: Producer,
+    peer: Arc<Peer>,
+    kind: SourceKind,
+    epoch: Uuid,
+    parent: Option<Arc<Publication>>,
+    live: Option<Arc<LiveBinding>>,
+    grant: Arc<Grant>,
+    gate: Mutex<()>,
+    height: u16,
+    layers: u8,
+    packet_samples: StdMutex<HashMap<u32, u64>>,
+}
+impl Publication {
+    fn id(&self) -> String {
+        self.producer.id().to_string()
+    }
+    fn valid(&self) -> bool {
+        self.grant.valid()
+            && self.peer.grant.valid()
+            && self.parent.as_ref().is_none_or(|p| p.valid())
+            && self
+                .live
+                .as_ref()
+                .is_none_or(|l| Instant::now() + LIVE_STOP_MARGIN < *l.deadline.lock().unwrap())
     }
 }
-
-fn live_expired(deadline: &Option<Arc<StdMutex<Instant>>>) -> bool {
-    deadline
-        .as_ref()
-        .is_some_and(|deadline| Instant::now() >= *deadline.lock().unwrap())
+struct Subscription {
+    consumer: Consumer,
+    publication: Arc<Publication>,
+    peer: Arc<Peer>,
+    watch: Option<Arc<Grant>>,
+    grant: Arc<Grant>,
+    generation: Uuid,
+    gate: Mutex<()>,
 }
-
-fn live_wakeup(deadline: &Option<Arc<StdMutex<Instant>>>) -> tokio::time::Instant {
-    let at = deadline.as_ref().map_or_else(
-        || Instant::now() + Duration::from_secs(3600),
-        |deadline| *deadline.lock().unwrap(),
-    );
-    at.into()
-}
-
-impl Peer {
-    fn receives(&self, publication: &Published) -> bool {
-        let Some((user, tag)) = publication.stream_id.rsplit_once(':') else {
-            return false;
-        };
-        let Ok(user) = user.parse::<Uuid>() else {
-            return false;
-        };
-        if user == self.user_id {
-            return false;
-        }
-        match tag {
-            "a" => true,
-            "v" => self.watch_user.is_none(),
-            "s" => {
-                self.watch_user.is_none()
-                    && (!self.explicit_watch || self.watches.contains_key(&(user, "s".into())))
-            }
-            "sa" => {
-                self.explicit_watch
-                    && self.watch_user.is_none()
-                    && self.watches.contains_key(&(user, "s".into()))
-            }
-            "l" => self.watch_user.map_or_else(
-                || !self.explicit_watch || self.watches.contains_key(&(user, "l".into())),
-                |selected| selected == user,
-            ),
-            "la" => {
-                self.explicit_watch
-                    && self.watch_user.map_or_else(
-                        || self.watches.contains_key(&(user, "l".into())),
-                        |selected| selected == user,
-                    )
-            }
-            _ => false,
-        }
-    }
-
-    fn watched_publication(&self, publication: &Published) -> Published {
-        let mut publication = publication.clone();
-        if self.watch_user.is_none()
-            && let Some((user, tag)) = publication.stream_id.rsplit_once(':')
-            && let Ok(user) = user.parse::<Uuid>()
-        {
-            let parent = match tag {
-                "s" | "sa" => "s",
-                "l" | "la" => "l",
-                _ => "",
-            };
-            publication.watch_gate = self
-                .watches
-                .get(&(user, parent.into()))
-                .map(watch::Sender::subscribe);
-        }
-        publication
+impl Subscription {
+    fn valid(&self) -> bool {
+        self.grant.valid()
+            && self.peer.grant.valid()
+            && self.publication.valid()
+            && self.watch.as_ref().is_none_or(|g| g.valid())
     }
 }
-
-struct Forward {
-    pc: Arc<dyn PeerConnection>,
-    out: mpsc::UnboundedSender<ServerFrame>,
-    gathered: watch::Receiver<u64>,
-    sdp: Arc<Mutex<PeerSdp>>,
-    publication: Published,
+enum StopResource {
+    Publication(Arc<Publication>),
+    Subscription(Arc<Subscription>),
 }
-
-pub struct Sfu {
-    ice_ports: IcePorts,
-    advertised_ip: Option<String>,
-    /// Shared with the API. `None` in unit tests that never mint tickets.
-    redis: Option<redis::Client>,
-    rooms: RwLock<HashMap<Uuid, Arc<Mutex<Room>>>>,
-    stats: Arc<SfuStats>,
-}
-
 #[derive(Default)]
-struct SfuStats {
-    rooms: AtomicU64,
-    peers: AtomicU64,
-    forwarded_bytes: AtomicU64,
-    ice_fails: AtomicU64,
-    rtp_packets_total: AtomicU64,
-    rtp_lost_total: AtomicU64,
-    /// Latest RFC 3550 interarrival jitter, microseconds. Not a lifetime mean.
-    rtp_jitter_micros: AtomicU64,
+struct RoomData {
+    peers: HashMap<PeerId, PeerData>,
+    publications: HashMap<String, Arc<Publication>>,
 }
-
+struct Room {
+    router: OnceCell<Router>,
+    data: Mutex<RoomData>,
+    joining: AtomicUsize,
+}
+#[derive(Default)]
+struct Counters {
+    rooms: AtomicUsize,
+    peers: AtomicUsize,
+    producers: AtomicUsize,
+    consumers: AtomicUsize,
+    transports: AtomicUsize,
+    rtp_sent: AtomicU64,
+    stats_available: AtomicBool,
+    rtp_received: AtomicU64,
+    input_available: AtomicBool,
+    jitter_microseconds: AtomicU64,
+    ice_disconnects: AtomicU64,
+}
+pub struct Sfu {
+    redis: redis::Client,
+    worker: Worker,
+    server: WebRtcServer,
+    rooms: Mutex<HashMap<Uuid, Arc<Room>>>,
+    counters: Counters,
+    dead: Arc<AtomicBool>,
+    draining: AtomicBool,
+}
 impl Sfu {
-    pub fn new(config: &Config) -> Self {
-        Self::with_redis(config, None)
-    }
-
-    pub fn with_redis(config: &Config, redis: Option<redis::Client>) -> Self {
-        Self {
-            ice_ports: IcePorts::from_config(config),
-            advertised_ip: config.advertised_ip.clone(),
+    pub async fn with_redis(config: &Config, redis: redis::Client) -> Result<Arc<Self>, SfuError> {
+        let bind: std::net::SocketAddr = config.ice_bind.parse().map_err(SfuError::negotiation)?;
+        let mut settings = WorkerSettings::default();
+        settings.log_level = WorkerLogLevel::Error;
+        let worker = native(WorkerManager::new().create_worker(settings)).await?;
+        let dead = Arc::new(AtomicBool::new(false));
+        let exited = dead.clone();
+        worker
+            .on_dead(move |result| {
+                exited.store(true, Ordering::SeqCst);
+                error!(?result, "mediasoup worker exited");
+                // Unexpected worker death is terminal so the process supervisor
+                // can restart a fresh engine; readiness alone does not restart it.
+                fail_closed("mediasoup worker unexpectedly exited");
+            })
+            .detach();
+        let listen = ListenInfo {
+            protocol: Protocol::Udp,
+            ip: bind.ip(),
+            announced_address: config.advertised_ip.clone(),
+            expose_internal_ip: false,
+            port: (bind.port() != 0).then_some(bind.port()),
+            // Explicit bounded local test allocation; production binds fixed UDP.
+            port_range: (bind.port() == 0).then_some(20000..=30000),
+            flags: None,
+            send_buffer_size: None,
+            recv_buffer_size: None,
+        };
+        let server = native(worker.create_webrtc_server(WebRtcServerOptions::new(
+            WebRtcServerListenInfos::new(listen),
+        )))
+        .await?;
+        let sfu = Arc::new(Self {
             redis,
-            rooms: RwLock::new(HashMap::new()),
-            stats: Arc::new(SfuStats::default()),
-        }
+            worker,
+            server,
+            rooms: Mutex::new(HashMap::new()),
+            counters: Counters::default(),
+            dead,
+            draining: AtomicBool::new(false),
+        });
+        Self::watch_stats(Arc::downgrade(&sfu));
+        Ok(sfu)
     }
-
+    pub fn ready(&self) -> bool {
+        !self.draining.load(Ordering::SeqCst)
+            && !self.dead.load(Ordering::SeqCst)
+            && !self.worker.closed()
+            && !self.server.closed()
+    }
     pub fn room_count(&self) -> usize {
-        // test helper; cheap snapshot
-        self.rooms.try_read().map(|g| g.len()).unwrap_or(0)
+        self.counters.rooms.load(Ordering::Relaxed)
     }
-
     pub fn metrics_text(&self) -> String {
-        let rooms = self.stats.rooms.load(Ordering::Relaxed);
-        let peers = self.stats.peers.load(Ordering::Relaxed);
-        let forwarded = self.stats.forwarded_bytes.load(Ordering::Relaxed);
-        let ice_fails = self.stats.ice_fails.load(Ordering::Relaxed);
-        let rtp_packets = self.stats.rtp_packets_total.load(Ordering::Relaxed);
-        let rtp_lost = self.stats.rtp_lost_total.load(Ordering::Relaxed);
-        let jitter_ms = self.stats.rtp_jitter_micros.load(Ordering::Relaxed) as f64 / 1_000.0;
-        format!(
-            "# HELP gelabber_media_rooms Active SFU rooms (voice channels with at least one peer).\n\
-             # TYPE gelabber_media_rooms gauge\n\
-             gelabber_media_rooms {rooms}\n\
-             # HELP gelabber_media_peers Connected peers across all rooms.\n\
-             # TYPE gelabber_media_peers gauge\n\
-             gelabber_media_peers {peers}\n\
-             # HELP gelabber_media_forwarded_bytes_total RTP payload bytes forwarded to subscribers.\n\
-             # TYPE gelabber_media_forwarded_bytes_total counter\n\
-             gelabber_media_forwarded_bytes_total {forwarded}\n\
-             # HELP gelabber_media_ice_fails_total Peer connections that entered the ICE failed state.\n\
-             # TYPE gelabber_media_ice_fails_total counter\n\
-             gelabber_media_ice_fails_total {ice_fails}\n\
-             # HELP gelabber_media_rtp_packets_total RTP packets received from publishers.\n\
-             # TYPE gelabber_media_rtp_packets_total counter\n\
-             gelabber_media_rtp_packets_total {rtp_packets}\n\
-             # HELP gelabber_media_rtp_lost_total RTP packets declared lost after the reorder window.\n\
-             # TYPE gelabber_media_rtp_lost_total counter\n\
-             gelabber_media_rtp_lost_total {rtp_lost}\n\
-             # HELP gelabber_media_rtp_jitter_ms Latest publisher RFC 3550 interarrival jitter in milliseconds.\n\
-             # TYPE gelabber_media_rtp_jitter_ms gauge\n\
-             gelabber_media_rtp_jitter_ms {jitter_ms:.3}\n"
-        )
-    }
-
-    pub async fn join(
-        self: &Arc<Self>,
-        claim: TicketClaim,
-        out: mpsc::UnboundedSender<ServerFrame>,
-    ) -> Result<PeerId, SfuError> {
-        // This helper is exclusively for in-process RTC tests without Redis.
-        // A configured production SFU accepts only authorized ticket envelopes.
-        if self.redis.is_some() {
-            return Err(SfuError::Revoked);
+        let c = &self.counters;
+        let mut text = String::new();
+        for (name, value) in [
+            ("gelabber_sfu_rooms", self.room_count()),
+            ("gelabber_sfu_peers", c.peers.load(Ordering::Relaxed)),
+            ("gelabber_media_rooms", self.room_count()),
+            ("gelabber_media_peers", c.peers.load(Ordering::Relaxed)),
+            (
+                "gelabber_mediasoup_producers",
+                c.producers.load(Ordering::Relaxed),
+            ),
+            (
+                "gelabber_mediasoup_consumers",
+                c.consumers.load(Ordering::Relaxed),
+            ),
+            (
+                "gelabber_mediasoup_transports",
+                c.transports.load(Ordering::Relaxed),
+            ),
+            (
+                "gelabber_mediasoup_stats_available",
+                usize::from(c.stats_available.load(Ordering::Relaxed)),
+            ),
+        ] {
+            text.push_str(&format!("# TYPE {name} gauge\n{name} {value}\n"));
         }
-        self.join_inner(claim, None, None, 2, out).await
+        if c.stats_available.load(Ordering::Relaxed) || c.transports.load(Ordering::Relaxed) == 0 {
+            // Actual delta sum from native RTP counters, including retired transports.
+            text.push_str(&format!("# HELP gelabber_media_forwarded_bytes_total Measured native RTP byte deltas including RTP headers; failed final samples may omit bytes.\n# TYPE gelabber_media_forwarded_bytes_total counter\ngelabber_media_forwarded_bytes_total {value}\n# TYPE gelabber_sfu_forwarded_bytes_total counter\ngelabber_sfu_forwarded_bytes_total {value}\n",value=c.rtp_sent.load(Ordering::Relaxed)));
+        }
+        text.push_str(&format!("# TYPE gelabber_mediasoup_ice_disconnects_total counter\ngelabber_mediasoup_ice_disconnects_total {}\n",c.ice_disconnects.load(Ordering::Relaxed)));
+        text.push_str("# HELP gelabber_media_rtp_packets_total Measured native source packet deltas; failed final samples may omit packets; absent when current input stats are unavailable.\n# TYPE gelabber_media_rtp_packets_total counter\n# HELP gelabber_media_rtp_jitter_ms Maximum current native source jitter converted from RTP clock ticks; absent when unavailable.\n# TYPE gelabber_media_rtp_jitter_ms gauge\n# HELP gelabber_media_rtp_lost_total Unavailable: native signed loss gauges do not preserve the previous reorder-aware monotonic counter.\n");
+        if c.input_available.load(Ordering::Relaxed) || c.producers.load(Ordering::Relaxed) == 0 {
+            text.push_str(&format!(
+                "gelabber_media_rtp_packets_total {}\n",
+                c.rtp_received.load(Ordering::Relaxed)
+            ));
+        }
+        if c.input_available.load(Ordering::Relaxed) {
+            text.push_str(&format!(
+                "gelabber_media_rtp_jitter_ms {}\n",
+                c.jitter_microseconds.load(Ordering::Relaxed) as f64 / 1000.0
+            ));
+        }
+        text
     }
-
-    pub async fn join_authorized(
-        self: &Arc<Self>,
-        claim: AuthorizedTicketClaim,
-        out: mpsc::UnboundedSender<ServerFrame>,
-    ) -> Result<PeerId, SfuError> {
-        self.join_authorized_watch(claim, None, out).await
-    }
-
-    pub async fn join_authorized_watch(
-        self: &Arc<Self>,
-        claim: AuthorizedTicketClaim,
-        watch_user: Option<Uuid>,
-        out: mpsc::UnboundedSender<ServerFrame>,
-    ) -> Result<PeerId, SfuError> {
-        self.join_authorized_watch_version(claim, watch_user, 2, out)
+    async fn room(&self, channel: Uuid) -> Result<Arc<Room>, SfuError> {
+        self.rooms
+            .lock()
             .await
+            .get(&channel)
+            .cloned()
+            .ok_or(SfuError::NotInRoom)
     }
-
     pub async fn join_authorized_watch_version(
         self: &Arc<Self>,
-        claim: AuthorizedTicketClaim,
+        authority: AuthorizedTicketClaim,
         watch_user: Option<Uuid>,
         version: u8,
-        out: mpsc::UnboundedSender<ServerFrame>,
+        out: mpsc::Sender<ServerFrame>,
     ) -> Result<PeerId, SfuError> {
-        if watch_user.is_some_and(|user| user.is_nil()) {
+        if version != MEDIA_PROTOCOL_VERSION {
+            return Err(SfuError::ProtocolVersion);
+        }
+        if watch_user.is_some_and(|u| u.is_nil()) {
             return Err(SfuError::BadAnnounce);
         }
-        if !self.authorized(&claim).await {
+        if !self.ready() {
+            return Err(SfuError::Unavailable);
+        }
+        if !crate::ticket::validate_authority(&self.redis, &authority)
+            .await
+            .unwrap_or(false)
+        {
             return Err(SfuError::Revoked);
         }
-        self.join_inner(claim.claim.clone(), Some(claim), watch_user, version, out)
-            .await
-    }
-
-    async fn join_inner(
-        self: &Arc<Self>,
-        claim: TicketClaim,
-        authority: Option<AuthorizedTicketClaim>,
-        watch_user: Option<Uuid>,
-        version: u8,
-        out: mpsc::UnboundedSender<ServerFrame>,
-    ) -> Result<PeerId, SfuError> {
-        let peer_id = PeerId(Uuid::new_v4());
-        let ice_addr = self.ice_ports.take().await.ok_or(SfuError::Unavailable)?;
-        let built = self.build_pc(&ice_addr).await;
-        let (pc, mut events, gathered) = match built {
-            Ok(parts) => parts,
-            Err(err) => {
-                self.ice_ports.release(&ice_addr).await;
-                return Err(SfuError::negotiation(err));
-            }
-        };
-
-        {
-            let mut rooms = self.rooms.write().await;
-            // Revalidate after PC construction and any attach-lock wait.
-            if let Some(authority) = &authority
-                && !self.authorized(authority).await
-            {
-                drop(rooms);
-                if pc.close().await.is_ok() {
-                    self.ice_ports.release(&ice_addr).await;
-                }
-                return Err(SfuError::Revoked);
-            }
-            let gate = PeerSdp::new();
-            let closing = gate.closing.clone();
-            let room = rooms.entry(claim.c).or_insert_with(|| {
-                Arc::new(Mutex::new(Room {
-                    peers: HashMap::new(),
-                    pubs: HashMap::new(),
-                }))
-            });
-            let mut room = room.lock().await;
-            let first = room.peers.is_empty();
-            room.peers.insert(
-                peer_id,
-                Peer {
-                    id: peer_id,
-                    user_id: claim.u,
-                    channel_id: claim.c,
-                    go_live: claim.g,
-                    watch_user,
-                    explicit_watch: version >= 2,
-                    watches: HashMap::new(),
-                    authority: authority.clone(),
-                    live_claim: None,
-                    withdrawn_live: None,
-                    ice_addr: ice_addr.clone(),
-                    pc: pc.clone(),
-                    out: out.clone(),
-                    gathered,
-                    sdp: Arc::new(Mutex::new(gate)),
-                    closing,
-                    video_kinds: HashMap::new(),
-                    source_parents: HashMap::new(),
-                    legacy_kinds: VecDeque::new(),
-                    current_video: HashSet::new(),
-                    remote_tracks: HashMap::new(),
-                },
-            );
-            if first {
-                self.stats.rooms.fetch_add(1, Ordering::Relaxed);
-            }
-            self.stats.peers.fetch_add(1, Ordering::Relaxed);
-        }
-
-        info!(
-            peer = %peer_id.0,
-            user = %claim.u,
-            channel = %claim.c,
-            go_live = claim.g,
-            "sfu join"
-        );
-
-        let sfu = Arc::clone(self);
-        tokio::spawn(async move {
-            sfu.drive(peer_id, claim.c, pc, &mut events).await;
-        });
-        if let Some(authority) = authority {
-            self.watch_revoke(peer_id, claim.c, authority, out);
-        }
-
-        Ok(peer_id)
-    }
-
-    pub async fn apply_remote(
-        self: &Arc<Self>,
-        peer_id: PeerId,
-        channel_id: Uuid,
-        sdp_text: String,
-        as_offer: bool,
-    ) -> Result<(), SfuError> {
-        let room = self
-            .find_room(channel_id)
-            .await
-            .ok_or(SfuError::NotInRoom)?;
-        let (pc, out, gathered, sdp) = {
-            let room = room.lock().await;
-            let peer = room.peers.get(&peer_id).ok_or(SfuError::NotInRoom)?;
-            (
-                peer.pc.clone(),
-                peer.out.clone(),
-                peer.gathered.clone(),
-                peer.sdp.clone(),
-            )
-        };
-        let mut gate = sdp.lock().await;
-        if gate.closed || *gate.closing.borrow() {
-            return Err(SfuError::NotInRoom);
-        }
-        if as_offer && gate.have_local_offer {
-            return Ok(());
-        }
-        let parsed = if as_offer {
-            RTCSessionDescription::offer(sdp_text.clone())
-        } else {
-            RTCSessionDescription::answer(sdp_text.clone())
-        };
-        let desc = match parsed {
-            Ok(desc) => desc,
-            Err(err) => {
-                if !as_offer {
-                    self.rollback_locked(&pc, &mut gate).await;
-                    self.negotiate_locked(&pc, &out, &gathered, &mut gate).await;
-                }
-                return Err(SfuError::negotiation(err));
-            }
-        };
-        // Bind old announcements before set_remote_description can deliver on_track.
-        if as_offer {
-            let mut room = room.lock().await;
-            let peer = room.peers.get_mut(&peer_id).ok_or(SfuError::NotInRoom)?;
-            for source in video_sources(&sdp_text) {
-                if !peer.video_kinds.contains_key(&source) {
-                    let kind = peer.legacy_kinds.pop_front().unwrap_or_else(|| "v".into());
-                    peer.video_kinds.insert(source, kind);
-                }
-            }
-        }
-        if let Err(err) = pc.set_remote_description(desc).await {
-            if !as_offer {
-                self.rollback_locked(&pc, &mut gate).await;
-                self.negotiate_locked(&pc, &out, &gathered, &mut gate).await;
-            }
-            return Err(SfuError::negotiation(err));
-        }
-        let accepted_answer;
-        if as_offer {
-            for state in gate.subscriptions.values() {
-                if let SubscriptionState::Active(sub) = state
-                    && let Some(mid) = sender_mid(&pc, &sub.sender).await
-                    && let Some(pt) = negotiated_payload_type(&sdp_text, &mid, &sub.codec)
-                {
-                    limit_forward_codec_with_pt(&pc, &sub.sender, &sub.codec, pt).await;
-                }
-            }
-            let result = async {
-                let answer = pc.create_answer(None).await?;
-                let before = *gathered.borrow();
-                pc.set_local_description(answer).await?;
-                let local = local_sdp_after_gather(&pc, &gathered, before, &gate.closing)
-                    .await
-                    .ok_or(webrtc::error::Error::ErrUnknownType)?;
-                let mut answer = RTCSessionDescription::answer(local)?;
-                // The pinned media engine keeps its earlier PTs on reoffer.
-                // Answers must use the PT offered on this exact subscriber MID.
-                for state in gate.subscriptions.values() {
-                    if let SubscriptionState::Active(sub) = state
-                        && let Some(mid) = sender_mid(&pc, &sub.sender).await
-                        && let Some(offered_pt) =
-                            negotiated_payload_type(&sdp_text, &mid, &sub.codec)
-                        && let Some(answer_pt) =
-                            negotiated_payload_type(&answer.sdp, &mid, &sub.codec)
-                        && offered_pt != answer_pt
-                    {
-                        answer = remap_answer_payload(answer, &mid, answer_pt, offered_pt)?;
-                    }
-                }
-                // Local SDP munging is rejected by this pinned core. The wire
-                // answer uses the offer's PTs; refresh_subscriber_bindings also
-                // reconciles the concrete sender before any RTP is released.
-                out.send(ServerFrame::Answer {
-                    sdp: answer.sdp.clone(),
+        let channel = authority.claim.c;
+        let room = {
+            let mut rooms = self.rooms.lock().await;
+            let room = rooms
+                .entry(channel)
+                .or_insert_with(|| {
+                    self.counters.rooms.fetch_add(1, Ordering::Relaxed);
+                    Arc::new(Room {
+                        router: OnceCell::new(),
+                        data: Mutex::new(RoomData::default()),
+                        joining: AtomicUsize::new(0),
+                    })
                 })
-                .map_err(|_| webrtc::error::Error::ErrUnknownType)?;
-                Ok::<RTCSessionDescription, webrtc::error::Error>(answer)
-            }
+                .clone();
+            room.joining.fetch_add(1, Ordering::SeqCst);
+            room
+        };
+        let built = room
+            .router
+            .get_or_try_init(|| async {
+                native(
+                    self.worker
+                        .create_router(RouterOptions::new(router_codecs()?)),
+                )
+                .await
+            })
             .await;
-            accepted_answer = match result {
-                Ok(answer) => Some(answer),
-                Err(err) => {
-                    if let Ok(rollback) = RTCSessionDescription::rollback(None) {
-                        let _ = pc.set_remote_description(rollback).await;
-                    }
-                    return Err(SfuError::negotiation(err));
-                }
-            };
-            gate.negotiated = true;
-        } else {
-            accepted_answer = pc.remote_description().await;
+        if let Err(err) = built {
+            room.joining.fetch_sub(1, Ordering::SeqCst);
+            self.remove_empty_room(channel, &room).await;
+            return Err(err);
         }
-        gate.have_local_offer = false;
-        gate.offered.clear();
-        refresh_subscriber_bindings(&pc, &gate, accepted_answer.as_ref()).await;
-        let queued_ice = std::mem::take(&mut gate.pending_ice);
-        flush_ice(&pc, peer_id, queued_ice).await;
-        self.negotiate_locked(&pc, &out, &gathered, &mut gate).await;
-        drop(gate);
-        if as_offer {
-            // A recvonly/inactive m-line is a stop even when OnEnded is not emitted.
-            let mut active = video_sources(&sdp_text);
-            active.extend(media_sources(&sdp_text, "audio"));
-            let ended = {
-                let room = room.lock().await;
-                room.pubs
-                    .values()
-                    .filter(|p| {
-                        p.publisher == peer_id
-                            && (p.kind == RtpCodecKind::Video
-                                || p.stream_id.ends_with(":sa")
-                                || p.stream_id.ends_with(":la"))
-                            && !active.contains(&p.track_id)
-                    })
-                    .map(|p| (p.id.clone(), p.life.clone()))
-                    .collect::<Vec<_>>()
-            };
-            for (id, life) in ended {
-                self.remove_publication(channel_id, &id, &life).await;
-            }
-            let reusable = {
-                let mut room = room.lock().await;
-                let Some(peer) = room.peers.get_mut(&peer_id) else {
-                    return Err(SfuError::NotInRoom);
-                };
-                let previous =
-                    std::mem::replace(&mut peer.current_video, active.iter().cloned().collect());
-                peer.video_kinds.retain(|id, kind| {
-                    active.contains(id) || (!previous.contains(id) && !kind.is_empty())
-                });
-                // Stopped sender/transceiver reuse may leave the same remote track
-                // object alive through an inactive offer, without another on_track.
-                // Keep its bounded receiver binding; only an accepted active offer
-                // can create a new publication/reader from it.
-                peer.remote_tracks
-                    .iter()
-                    .filter(|(id, _)| {
-                        active.contains(id)
-                            && peer
-                                .video_kinds
-                                .get(*id)
-                                .is_some_and(|kind| !kind.is_empty())
-                    })
-                    .map(|(_, track)| track.clone())
-                    .collect::<Vec<_>>()
-            };
-            for track in reusable {
-                self.publish(peer_id, channel_id, track).await?;
-            }
-            self.attach_existing_pubs(peer_id, channel_id).await;
-        }
-        Ok(())
-    }
-
-    pub async fn set_watch(
-        &self,
-        peer_id: PeerId,
-        channel_id: Uuid,
-        user: Uuid,
-        kind: &str,
-        on: bool,
-    ) -> Result<(), SfuError> {
-        if user.is_nil() || !matches!(kind, "s" | "l") {
-            return Err(SfuError::BadAnnounce);
-        }
-        let room = self
-            .find_room(channel_id)
+        if !crate::ticket::validate_authority(&self.redis, &authority)
             .await
-            .ok_or(SfuError::NotInRoom)?;
-        let (pc, out, gathered, sdp, ended) = {
-            let mut room = room.lock().await;
-            let peer = room.peers.get_mut(&peer_id).ok_or(SfuError::NotInRoom)?;
-            if !peer.explicit_watch || peer.watch_user.is_some() || peer.user_id == user {
-                return Err(SfuError::Forbidden);
-            }
-            let key = (user, kind.to_owned());
-            if on {
-                if peer.watches.len() >= 64 && !peer.watches.contains_key(&key) {
+            .unwrap_or(false)
+            || !self.ready()
+        {
+            room.joining.fetch_sub(1, Ordering::SeqCst);
+            self.remove_empty_room(channel, &room).await;
+            return Err(SfuError::Revoked);
+        }
+        let id = PeerId(Uuid::new_v4());
+        let peer = Arc::new(Peer {
+            id,
+            authority,
+            watch_user,
+            grant: Grant::new(),
+            out,
+            rpc_gate: Mutex::new(()),
+            lease_gate: Mutex::new(()),
+            attach_scheduled: AtomicBool::new(false),
+            attach_dirty: AtomicBool::new(false),
+        });
+        room.data.lock().await.peers.insert(
+            id,
+            PeerData {
+                peer: peer.clone(),
+                capabilities: None,
+                transports: HashMap::new(),
+                publications: HashMap::new(),
+                consumers: HashMap::new(),
+                pending_consumers: HashSet::new(),
+                watches: HashMap::new(),
+                withdrawn_live: VecDeque::new(),
+                retired_producers: VecDeque::new(),
+                retired_transports: VecDeque::new(),
+            },
+        );
+        self.counters.peers.fetch_add(1, Ordering::Relaxed);
+        room.joining.fetch_sub(1, Ordering::SeqCst);
+        Self::watch_authority(Arc::downgrade(self), channel, Arc::downgrade(&peer));
+        Ok(id)
+    }
+    pub async fn join_data(&self, id: PeerId, channel: Uuid) -> Result<Value, SfuError> {
+        let room = self.room(channel).await?;
+        let data = room.data.lock().await;
+        let peer = &data.peers.get(&id).ok_or(SfuError::NotInRoom)?.peer;
+        Ok(
+            json!({"c":channel,"u":peer.authority.claim.u,"v":MEDIA_PROTOCOL_VERSION,"generation":id.0,"routerRtpCapabilities":room.router.get().ok_or(SfuError::Unavailable)?.rtp_capabilities()}),
+        )
+    }
+    /// Signaling may close only after leave has confirmed native resource stop
+    /// and removed this peer from the graph. An invalid grant alone is earlier.
+    pub async fn peer_present(&self, id: PeerId, channel: Uuid) -> bool {
+        let Ok(room) = self.room(channel).await else {
+            return false;
+        };
+        room.data.lock().await.peers.contains_key(&id)
+    }
+    pub async fn rpc(
+        self: &Arc<Self>,
+        id: PeerId,
+        channel: Uuid,
+        frame: ClientFrame,
+    ) -> Result<Value, SfuError> {
+        let room = self.room(channel).await?;
+        let peer = room
+            .data
+            .lock()
+            .await
+            .peers
+            .get(&id)
+            .ok_or(SfuError::NotInRoom)?
+            .peer
+            .clone();
+        let _rpc = peer.rpc_gate.lock().await;
+        if !peer.grant.valid() || !self.ready() {
+            return Err(SfuError::Revoked);
+        }
+        if !crate::ticket::validate_authority(&self.redis, &peer.authority)
+            .await
+            .unwrap_or(false)
+        {
+            self.leave(id, channel).await;
+            return Err(SfuError::Revoked);
+        }
+        match frame {
+            ClientFrame::Capabilities { rtp, .. } => {
+                let caps: RtpCapabilities =
+                    serde_json::from_value(rtp).map_err(|_| SfuError::BadAnnounce)?;
+                if caps.codecs.len() > 64 || caps.header_extensions.len() > 32 {
                     return Err(SfuError::BadAnnounce);
                 }
-                peer.watches
-                    .entry(key)
-                    .or_insert_with(|| watch::channel(true).0);
-            } else if let Some(intent) = peer.watches.remove(&key) {
-                intent.send_replace(false);
+                let mut data = room.data.lock().await;
+                let p = data.peers.get_mut(&id).ok_or(SfuError::Revoked)?;
+                if p.capabilities.is_some() {
+                    return Err(SfuError::BadAnnounce);
+                }
+                p.capabilities = Some(caps);
+                drop(data);
+                self.schedule_attach(channel, id).await;
+                Ok(json!({}))
             }
-            let (pc, out, gathered, sdp) = (
-                peer.pc.clone(),
-                peer.out.clone(),
-                peer.gathered.clone(),
-                peer.sdp.clone(),
-            );
-            let ended = room
-                .pubs
-                .values()
-                .filter(|publication| {
-                    publication.stream_id == format!("{user}:{kind}")
-                        || publication.stream_id == format!("{user}:{kind}a")
-                })
-                .map(|publication| publication.id.clone())
-                .collect::<Vec<_>>();
-            (pc, out, gathered, sdp, ended)
-        };
-        if on {
-            self.attach_existing_pubs(peer_id, channel_id).await;
-        } else {
-            for id in ended {
-                self.detach_subscription(&pc, &out, &gathered, &sdp, &id)
-                    .await;
+            ClientFrame::CreateTransport { direction, .. } => {
+                let send = direction == TransportDirection::Send;
+                if send && peer.watch_user.is_some() {
+                    return Err(SfuError::Forbidden);
+                }
+                if room
+                    .data
+                    .lock()
+                    .await
+                    .peers
+                    .get(&id)
+                    .ok_or(SfuError::Revoked)?
+                    .transports
+                    .contains_key(&send)
+                {
+                    return Err(SfuError::BadAnnounce);
+                }
+                let mut opts = WebRtcTransportOptions::new_with_server(self.server.clone());
+                opts.enable_tcp = false;
+                opts.prefer_udp = true;
+                // Last sample belongs to the native transport lifetime, keeping
+                // historical totals without retaining an unbounded ID cache.
+                opts.app_data = AppData::new(AtomicU64::new(0));
+                let transport = native(
+                    room.router
+                        .get()
+                        .ok_or(SfuError::Unavailable)?
+                        .create_webrtc_transport(opts),
+                )
+                .await?;
+                let weak = Arc::downgrade(self);
+                transport
+                    .on_ice_state_change(move |state| {
+                        if state == IceState::Disconnected
+                            && let Some(sfu) = weak.upgrade()
+                        {
+                            sfu.counters.ice_disconnects.fetch_add(1, Ordering::Relaxed);
+                        }
+                    })
+                    .detach();
+                let result = json!({"id":transport.id(),"iceParameters":transport.ice_parameters(),"iceCandidates":transport.ice_candidates(),"dtlsParameters":transport.dtls_parameters()});
+                let mut data = room.data.lock().await;
+                let p = data
+                    .peers
+                    .get_mut(&id)
+                    .filter(|p| p.peer.grant.valid())
+                    .ok_or(SfuError::Revoked)?;
+                p.transports.insert(send, transport);
+                self.counters.transports.fetch_add(1, Ordering::Relaxed);
+                drop(data);
+                if !send {
+                    self.schedule_attach(channel, id).await
+                }
+                Ok(result)
             }
+            ClientFrame::ConnectTransport {
+                transport_id, dtls, ..
+            } => {
+                let t = self.transport(&room, id, &transport_id).await?;
+                let dtls_parameters = serde_json::from_value::<DtlsParameters>(dtls)
+                    .map_err(|_| SfuError::BadAnnounce)?;
+                native(t.connect(WebRtcTransportRemoteParameters { dtls_parameters })).await?;
+                if !peer.grant.valid() {
+                    return Err(SfuError::Revoked);
+                }
+                Ok(json!({}))
+            }
+            ClientFrame::RestartIce { transport_id, .. } => {
+                let t = self.transport(&room, id, &transport_id).await?;
+                let ice = native(t.restart_ice()).await?;
+                if !peer.grant.valid() {
+                    return Err(SfuError::Revoked);
+                }
+                Ok(json!({"iceParameters":ice}))
+            }
+            ClientFrame::CloseTransport { transport_id, .. } => {
+                self.close_transport(&room, &peer, &transport_id).await?;
+                Ok(json!({}))
+            }
+            ClientFrame::Produce {
+                k,
+                rtp,
+                epoch,
+                parent,
+                lc,
+                expected_old_producer_id,
+                height,
+                paused,
+                ..
+            } => {
+                self.produce(
+                    &room,
+                    &peer,
+                    k,
+                    rtp,
+                    epoch,
+                    parent,
+                    lc,
+                    expected_old_producer_id,
+                    height,
+                    paused,
+                )
+                .await
+            }
+            ClientFrame::PauseProducer { producer_id, .. } => {
+                let p = self.own_publication(&room, id, &producer_id).await?;
+                let _gate = p.gate.lock().await;
+                stop_producer(&p.producer, &self.dead).await;
+                Ok(json!({}))
+            }
+            ClientFrame::ResumeProducer { producer_id, .. } => {
+                let p = self.own_publication(&room, id, &producer_id).await?;
+                let _gate = p.gate.lock().await;
+                if !p.valid() {
+                    return Err(SfuError::Forbidden);
+                }
+                native(p.producer.resume()).await?;
+                if !p.valid() {
+                    stop_producer(&p.producer, &self.dead).await;
+                    return Err(SfuError::Forbidden);
+                }
+                Ok(json!({}))
+            }
+            ClientFrame::CloseProducer { producer_id, .. } => {
+                if room
+                    .data
+                    .lock()
+                    .await
+                    .peers
+                    .get(&id)
+                    .is_some_and(|p| p.retired_producers.contains(&producer_id))
+                {
+                    return Ok(json!({}));
+                }
+                let p = self.own_publication(&room, id, &producer_id).await?;
+                self.remove_publication(&room, &p, true).await;
+                Ok(json!({}))
+            }
+            ClientFrame::ConsumerReady {
+                consumer_id,
+                generation,
+                ..
+            } => {
+                let s = self
+                    .own_consumer(&room, id, &consumer_id, generation)
+                    .await?;
+                let _gate = s.gate.lock().await;
+                if !s.valid() {
+                    return Err(SfuError::Forbidden);
+                }
+                native(s.consumer.resume()).await?;
+                if !s.valid() {
+                    stop_consumer(&s.consumer, &self.dead).await;
+                    return Err(SfuError::Forbidden);
+                }
+                self.emit(
+                    &peer,
+                    ServerFrame::ConsumerState {
+                        consumer_id,
+                        generation,
+                        paused: s.consumer.paused() || s.consumer.producer_paused(),
+                    },
+                );
+                Ok(json!({}))
+            }
+            ClientFrame::ConsumerFailed {
+                consumer_id,
+                generation,
+                ..
+            } => {
+                let s = self
+                    .own_consumer(&room, id, &consumer_id, generation)
+                    .await?;
+                self.remove_consumer(&room, &s).await;
+                Ok(json!({}))
+            }
+            ClientFrame::Watch { u, k, on, .. } => {
+                self.set_watch(channel, &room, &peer, u, k, on).await?;
+                Ok(json!({}))
+            }
+            ClientFrame::ViewerLayer {
+                consumer_id,
+                generation,
+                h,
+                congested,
+                ..
+            } => {
+                let s = self
+                    .own_consumer(&room, id, &consumer_id, generation)
+                    .await?;
+                let _gate = s.gate.lock().await;
+                if !s.valid() || !s.publication.kind.is_video() {
+                    return Err(SfuError::Forbidden);
+                }
+                if s.publication.layers > 1 {
+                    native(s.consumer.set_preferred_layers(ConsumerLayers {
+                        spatial_layer: preferred_layer(
+                            h,
+                            congested,
+                            s.publication.height,
+                            s.publication.layers,
+                        ),
+                        temporal_layer: None,
+                    }))
+                    .await?
+                }
+                Ok(json!({}))
+            }
+            ClientFrame::Leave { .. } => {
+                self.leave(id, channel).await;
+                Ok(json!({}))
+            }
+            ClientFrame::Join { .. } => Err(SfuError::BadAnnounce),
         }
-        Ok(())
     }
-
-    pub async fn announce(
-        &self,
-        peer_id: PeerId,
-        channel_id: Uuid,
-        kind: &str,
-    ) -> Result<(), SfuError> {
-        self.announce_track(peer_id, channel_id, kind, None).await
-    }
-
-    pub async fn announce_track(
-        &self,
-        peer_id: PeerId,
-        channel_id: Uuid,
-        kind: &str,
-        track_id: Option<&str>,
-    ) -> Result<(), SfuError> {
-        self.announce_with_claim(peer_id, channel_id, kind, track_id, None)
-            .await
-    }
-
-    pub async fn announce_with_claim(
-        &self,
-        peer_id: PeerId,
-        channel_id: Uuid,
-        kind: &str,
-        track_id: Option<&str>,
+    #[allow(clippy::too_many_arguments)]
+    async fn produce(
+        self: &Arc<Self>,
+        room: &Arc<Room>,
+        peer: &Arc<Peer>,
+        kind: SourceKind,
+        rtp: Value,
+        epoch: Uuid,
+        parent_id: Option<String>,
         nonce: Option<Uuid>,
-    ) -> Result<(), SfuError> {
-        if !matches!(kind, "v" | "s" | "l" | "sa" | "la") {
-            return Err(SfuError::BadAnnounce);
-        }
-        let room = self
-            .find_room(channel_id)
-            .await
-            .ok_or(SfuError::NotInRoom)?;
-        let mut room = room.lock().await;
-        let peer = room.peers.get_mut(&peer_id).ok_or(SfuError::NotInRoom)?;
-        if peer.watch_user.is_some() {
+        expected_old: Option<String>,
+        height: u16,
+        paused: bool,
+    ) -> Result<Value, SfuError> {
+        if peer.watch_user.is_some() || epoch.is_nil() {
             return Err(SfuError::Forbidden);
         }
-        if matches!(kind, "l" | "la") && !peer.go_live {
+        if matches!(kind, SourceKind::Live | SourceKind::LiveAudio) && !peer.authority.claim.g {
             return Err(SfuError::Forbidden);
         }
-        let source_parent = if matches!(kind, "sa" | "la") {
-            if !peer.explicit_watch {
-                return Err(SfuError::Forbidden);
-            }
-            let id = track_id
-                .filter(|id| !id.is_empty() && id.len() <= 256)
-                .ok_or(SfuError::BadAnnounce)?;
-            let parent_kind = if kind == "sa" { "s" } else { "l" };
-            let mut parents = peer
-                .video_kinds
-                .iter()
-                .filter(|(_, tag)| tag.as_str() == parent_kind);
-            let parent = parents
-                .next()
-                .map(|(id, _)| id.clone())
-                .ok_or(SfuError::Forbidden)?;
-            if parents.next().is_some() || parent == id {
-                return Err(SfuError::BadAnnounce);
-            }
-            if kind == "la"
-                && let Some(redis) = &self.redis
-            {
-                let live = peer
-                    .live_claim
-                    .as_ref()
-                    .filter(|live| live.track_id == parent && Some(live.nonce) == nonce)
-                    .ok_or(SfuError::Forbidden)?;
-                let authority = peer.authority.as_ref().ok_or(SfuError::Forbidden)?;
-                let checked_at = Instant::now();
-                let ttl =
-                    crate::live::validate_and_acquire(redis, authority, live.nonce, peer_id.0)
-                        .await
-                        .unwrap_or(None)
-                        .ok_or(SfuError::Forbidden)?;
-                *live.deadline.lock().unwrap() = checked_at + ttl;
-            }
-            Some((id.to_owned(), parent))
+        let mut parameters: RtpParameters =
+            serde_json::from_value(rtp).map_err(|_| SfuError::BadAnnounce)?;
+        // The pinned public Chrome handler returns an empty CNAME for RID-only
+        // offers. Treat that absent identity as None so the official Rust SDK
+        // chooses its documented transport CNAME. Some("") would poison that
+        // SDK's transport-wide cache before the native worker rejects it.
+        if parameters.rtcp.cname.as_deref() == Some("") {
+            parameters.rtcp.cname = None;
+        }
+        validate_parameters(kind, &parameters)?;
+        let _lease = if kind == SourceKind::Live {
+            Some(peer.lease_gate.lock().await)
         } else {
             None
         };
-        if let Some(id) = track_id {
-            if id.is_empty()
-                || id.len() > 256
-                || (peer.video_kinds.len() >= 64 && !peer.video_kinds.contains_key(id))
-            {
-                return Err(SfuError::BadAnnounce);
-            }
-            if kind != "l"
-                && peer
-                    .live_claim
-                    .as_ref()
-                    .is_some_and(|live| live.track_id == id)
-            {
-                return Err(SfuError::BadAnnounce);
-            }
-        }
-        let mut replaced = None;
-        if kind == "l"
-            && let Some(redis) = &self.redis
-        {
-            let nonce = nonce.ok_or(SfuError::Forbidden)?;
-            if peer.withdrawn_live == Some(nonce) {
+        let (transport, old, parent) = {
+            let data = room.data.lock().await;
+            let p = data.peers.get(&peer.id).ok_or(SfuError::Revoked)?;
+            let old = p.publications.get(&kind).cloned();
+            if old.as_ref().map(|p| p.id()) != expected_old {
                 return Err(SfuError::Forbidden);
             }
-            let id = track_id
-                .filter(|id| !id.is_empty() && id.len() <= 256)
-                .ok_or(SfuError::BadAnnounce)?;
-            let authority = peer.authority.as_ref().ok_or(SfuError::Forbidden)?;
-            if peer
-                .live_claim
-                .as_ref()
-                .is_some_and(|live| live.nonce == nonce && live.track_id != id)
-            {
-                return Err(SfuError::Forbidden);
-            }
-            // Start before Redis I/O: the local forwarding deadline must never
-            // outlive the atomic peer lease when another peer takes ownership.
-            let checked_at = Instant::now();
-            let Some(ttl) = crate::live::validate_and_acquire(redis, authority, nonce, peer_id.0)
-                .await
-                .unwrap_or(None)
-            else {
-                return Err(SfuError::Forbidden);
-            };
-            let deadline = peer
-                .live_claim
-                .as_ref()
-                .filter(|live| live.nonce == nonce && live.track_id == id)
-                .map(|live| live.deadline.clone())
-                .unwrap_or_else(|| Arc::new(StdMutex::new(checked_at + ttl)));
-            *deadline.lock().unwrap() = checked_at + ttl;
-            let binding = LiveBinding {
-                nonce,
-                track_id: id.into(),
-                deadline,
-            };
-            if let Some(old) = peer.live_claim.replace(binding.clone())
-                && old != binding
-            {
-                peer.video_kinds.insert(old.track_id.clone(), String::new());
-                replaced = Some(old);
-            }
-        }
-        if let Some((id, parent)) = source_parent {
-            peer.source_parents.insert(id, parent);
-        }
-        if let Some(id) = track_id {
-            peer.video_kinds.insert(id.into(), kind.into());
-        } else if !peer.legacy_kinds.iter().any(|k| k == kind) {
-            peer.legacy_kinds.push_back(kind.into());
-        }
-        let ended = replaced.as_ref().and_then(|old| {
-            let id = format!("{}:{}", peer_id.0, old.track_id);
-            room.pubs
-                .get(&id)
-                .map(|publication| (id, publication.life.clone()))
-        });
-        drop(room);
-        if let Some(old) = replaced {
-            if let Some((_, life)) = &ended {
-                life.stop.send_replace(true);
-            }
-            if let Some(redis) = &self.redis {
-                crate::live::release(redis, old.nonce, peer_id.0).await;
-            }
-            if let Some((id, life)) = ended {
-                self.remove_publication(channel_id, &id, &life).await;
-            }
-        }
-        Ok(())
-    }
-
-    pub async fn retract(
-        &self,
-        peer_id: PeerId,
-        channel_id: Uuid,
-        kind: &str,
-    ) -> Result<(), SfuError> {
-        self.retract_track(peer_id, channel_id, kind, None).await
-    }
-
-    pub async fn retract_track(
-        &self,
-        peer_id: PeerId,
-        channel_id: Uuid,
-        kind: &str,
-        track_id: Option<&str>,
-    ) -> Result<(), SfuError> {
-        if !matches!(kind, "v" | "s" | "l" | "sa" | "la") {
-            return Err(SfuError::BadAnnounce);
-        }
-        if track_id.is_some_and(|id| id.is_empty() || id.len() > 256) {
-            return Err(SfuError::BadAnnounce);
-        }
-        let room = self
-            .find_room(channel_id)
-            .await
-            .ok_or(SfuError::NotInRoom)?;
-        let (ended, released) = {
-            let mut room = room.lock().await;
-            let peer = room.peers.get_mut(&peer_id).ok_or(SfuError::NotInRoom)?;
-            let parent_ids: HashSet<_> = peer
-                .video_kinds
-                .iter()
-                .filter(|(id, tag)| {
-                    tag.as_str() == kind && track_id.is_none_or(|track| track == id.as_str())
-                })
-                .map(|(id, _)| id.clone())
-                .collect();
-            let paired_ids: HashSet<_> = peer
-                .source_parents
-                .iter()
-                .filter(|(_, parent)| parent_ids.contains(*parent))
-                .map(|(id, _)| id.clone())
-                .collect();
-            let released = if kind == "l"
-                && peer
-                    .live_claim
-                    .as_ref()
-                    .is_some_and(|live| track_id.is_none_or(|id| id == live.track_id))
-            {
-                peer.live_claim.take()
+            let parent = if let Some(pk) = kind.parent() {
+                let parent = p
+                    .publications
+                    .get(&pk)
+                    .filter(|p| {
+                        p.valid() && p.epoch == epoch && Some(p.id()).as_ref() == parent_id.as_ref()
+                    })
+                    .ok_or(SfuError::Forbidden)?
+                    .clone();
+                if kind == SourceKind::LiveAudio && parent.live.as_ref().map(|l| l.nonce) != nonce {
+                    return Err(SfuError::Forbidden);
+                }
+                Some(parent)
             } else {
+                if parent_id.is_some() {
+                    return Err(SfuError::BadAnnounce);
+                }
                 None
             };
-            if let Some(live) = &released {
-                peer.withdrawn_live = Some(live.nonce);
+            if !matches!(kind, SourceKind::Live | SourceKind::LiveAudio) && nonce.is_some() {
+                return Err(SfuError::BadAnnounce);
             }
-            peer.legacy_kinds.retain(|k| k != kind);
-            for id in &paired_ids {
-                peer.video_kinds.insert(id.clone(), String::new());
-                peer.source_parents.remove(id);
-            }
-            if let Some(id) = track_id {
-                peer.source_parents.remove(id);
-            }
-            // Keep the identity until the next SDP stops sending it: packets already
-            // queued by on_track must not resurrect a retracted source as a camera.
-            if let Some(id) = track_id {
-                peer.video_kinds.insert(id.into(), String::new());
-            } else {
-                for k in peer.video_kinds.values_mut() {
-                    if k == kind {
-                        k.clear();
-                    }
-                }
-            }
-            let ended = room
-                .pubs
-                .values()
-                .filter(|p| {
-                    p.publisher == peer_id
-                        && ((p.stream_id.ends_with(&format!(":{kind}"))
-                            && track_id.is_none_or(|id| id == p.track_id))
-                            || paired_ids.contains(&p.track_id))
-                })
-                .map(|p| (p.id.clone(), p.life.clone()))
-                .collect::<Vec<_>>();
-            (ended, released)
-        };
-        // Stop RTP before releasing the exact peer lease to a recovery peer.
-        for (_, life) in &ended {
-            life.stop.send_replace(true);
-        }
-        if let Some(live) = released
-            && let Some(redis) = &self.redis
-        {
-            crate::live::release(redis, live.nonce, peer_id.0).await;
-        }
-        for (id, life) in ended {
-            self.remove_publication(channel_id, &id, &life).await;
-        }
-        Ok(())
-    }
-
-    /// Subscriber could not complete our offer. Roll signaling back to stable
-    /// and forward anything that queued behind that offer.
-    pub async fn abort_offer(&self, peer_id: PeerId, channel_id: Uuid) -> Result<(), SfuError> {
-        let room = self
-            .find_room(channel_id)
-            .await
-            .ok_or(SfuError::NotInRoom)?;
-        let (pc, out, gathered, sdp) = {
-            let room = room.lock().await;
-            let peer = room.peers.get(&peer_id).ok_or(SfuError::NotInRoom)?;
-            (
-                peer.pc.clone(),
-                peer.out.clone(),
-                peer.gathered.clone(),
-                peer.sdp.clone(),
-            )
-        };
-        info!(peer = %peer_id.0, "abort subscriber offer");
-        self.fail_local_offer(&pc, &out, &gathered, &sdp, false)
-            .await;
-        Ok(())
-    }
-
-    /// An answer was refused before `apply_remote` (oversized SDP or frame).
-    /// Abort only while this offer is still outstanding, so a late reject
-    /// cannot roll back the next one.
-    pub async fn abort_outstanding_offer(
-        &self,
-        peer_id: PeerId,
-        channel_id: Uuid,
-    ) -> Result<(), SfuError> {
-        let room = self
-            .find_room(channel_id)
-            .await
-            .ok_or(SfuError::NotInRoom)?;
-        let (pc, out, gathered, sdp) = {
-            let room = room.lock().await;
-            let peer = room.peers.get(&peer_id).ok_or(SfuError::NotInRoom)?;
-            (
-                peer.pc.clone(),
-                peer.out.clone(),
-                peer.gathered.clone(),
-                peer.sdp.clone(),
-            )
-        };
-        self.fail_local_offer(&pc, &out, &gathered, &sdp, true)
-            .await;
-        Ok(())
-    }
-
-    pub async fn add_ice(
-        &self,
-        peer_id: PeerId,
-        channel_id: Uuid,
-        ice: String,
-        mid: Option<String>,
-    ) -> Result<(), SfuError> {
-        let room = self
-            .find_room(channel_id)
-            .await
-            .ok_or(SfuError::NotInRoom)?;
-        let (pc, gate) = {
-            let room = room.lock().await;
-            let peer = room.peers.get(&peer_id).ok_or(SfuError::NotInRoom)?;
-            (peer.pc.clone(), peer.sdp.clone())
-        };
-        {
-            let mut gate = gate.lock().await;
-            // The subscriber's new m-line does not exist until they answer our
-            // offer. Candidates gathered during that answer used to fail one
-            // by one and each failure became a toast.
-            if gate.have_local_offer {
-                if gate.pending_ice.len() < 64 {
-                    gate.pending_ice.push((ice, mid));
-                }
-                return Ok(());
-            }
-        }
-        pc.add_ice_candidate(ice_init(ice, mid))
-            .await
-            .map_err(SfuError::ice)
-    }
-
-    pub async fn leave(&self, peer_id: PeerId, channel_id: Uuid) {
-        let (peer, publications, subscribers) = {
-            let mut rooms = self.rooms.write().await;
-            let Some(room) = rooms.get(&channel_id).cloned() else {
-                return;
-            };
-            let mut room = room.lock().await;
-            let Some(peer) = room.peers.remove(&peer_id) else {
-                return;
-            };
-            let ids = room
-                .pubs
-                .values()
-                .filter(|p| p.publisher == peer_id)
-                .map(|p| p.id.clone())
-                .collect::<Vec<_>>();
-            let publications = ids
-                .into_iter()
-                .filter_map(|id| room.pubs.remove(&id))
-                .collect::<Vec<_>>();
-            let subscribers = room
-                .peers
-                .values()
-                .map(|p| {
-                    (
-                        p.pc.clone(),
-                        p.out.clone(),
-                        p.gathered.clone(),
-                        p.sdp.clone(),
-                    )
-                })
-                .collect::<Vec<_>>();
-            if room.peers.is_empty() {
-                rooms.remove(&channel_id);
-                saturating_dec(&self.stats.rooms);
-            }
-            (peer, publications, subscribers)
-        };
-        saturating_dec(&self.stats.peers);
-        // Stop both directions before waiting for an outstanding SDP operation.
-        peer.closing.send_replace(true);
-        for publication in &publications {
-            publication.life.stop.send_replace(true);
-        }
-        if let Some(live) = &peer.live_claim
-            && let Some(redis) = &self.redis
-        {
-            crate::live::release(redis, live.nonce, peer_id.0).await;
-        }
-        {
-            let mut gate = peer.sdp.lock().await;
-            gate.closed = true;
-            for (_, state) in gate.subscriptions.drain() {
-                if let SubscriptionState::Active(mut sub) = state {
-                    sub.task.abort();
-                    let _ = (&mut sub.task).await;
-                }
-            }
-            gate.offered.clear();
-            gate.pending_ice.clear();
-            // A port is reusable only once the PC has actually closed.
-            if peer.pc.close().await.is_ok() {
-                self.ice_ports.release(&peer.ice_addr).await;
-            }
-        }
-        for publication in publications {
-            publication.life.stop.send_replace(true);
-            for (pc, out, gathered, sdp) in &subscribers {
-                self.detach_subscription(pc, out, gathered, sdp, &publication.id)
-                    .await;
-            }
-            let mut done = publication.life.done.clone();
-            let _ = done.wait_for(|done| *done).await;
-        }
-        info!(peer = %peer_id.0, channel = %channel_id, "sfu leave");
-    }
-
-    async fn authorized(&self, claim: &AuthorizedTicketClaim) -> bool {
-        let Some(redis) = &self.redis else {
-            return false;
-        };
-        match crate::ticket::validate_authority(redis, claim).await {
-            Ok(valid) => valid,
-            Err(err) => {
-                warn!(error = %err, "media authority unavailable; closing peer");
-                false
-            }
-        }
-    }
-
-    fn watch_revoke(
-        self: &Arc<Self>,
-        peer_id: PeerId,
-        channel_id: Uuid,
-        authority: AuthorizedTicketClaim,
-        out: mpsc::UnboundedSender<ServerFrame>,
-    ) {
-        let sfu = Arc::clone(self);
-        tokio::spawn(async move {
-            let mut tick = tokio::time::interval(Duration::from_secs(1));
-            tick.set_missed_tick_behavior(tokio::time::MissedTickBehavior::Skip);
-            loop {
-                tick.tick().await;
-                if !sfu.has_peer(peer_id, channel_id).await {
-                    break;
-                }
-                if !sfu.authorized(&authority).await {
-                    let _ = out.send(ServerFrame::error("unauthorized"));
-                    sfu.leave(peer_id, channel_id).await;
-                    break;
-                }
-                let live = if let Some(room) = sfu.find_room(channel_id).await {
-                    room.lock()
-                        .await
-                        .peers
-                        .get(&peer_id)
-                        .and_then(|peer| peer.live_claim.clone())
-                } else {
-                    None
-                };
-                if let Some(live) = live
-                    && let Some(redis) = &sfu.redis
-                {
-                    let checked_at = Instant::now();
-                    if let Some(ttl) =
-                        crate::live::validate_and_acquire(redis, &authority, live.nonce, peer_id.0)
-                            .await
-                            .unwrap_or(None)
-                    {
-                        *live.deadline.lock().unwrap() = checked_at + ttl;
-                        continue;
-                    }
-                    // Live teardown can wait on subscriber SDP; authorization
-                    // checks must keep running independently of that cleanup.
-                    let cleanup = sfu.clone();
-                    tokio::spawn(async move {
-                        cleanup.stop_live_binding(peer_id, channel_id, &live).await;
-                    });
-                }
-            }
-        });
-    }
-
-    async fn has_peer(&self, peer_id: PeerId, channel_id: Uuid) -> bool {
-        let rooms = self.rooms.read().await;
-        let Some(room) = rooms.get(&channel_id) else {
-            return false;
-        };
-        room.lock().await.peers.contains_key(&peer_id)
-    }
-
-    async fn stop_live_binding(&self, peer_id: PeerId, channel_id: Uuid, expected: &LiveBinding) {
-        let Some(room) = self.find_room(channel_id).await else {
-            return;
-        };
-        let ended = {
-            let mut room = room.lock().await;
-            let Some(peer) = room.peers.get_mut(&peer_id) else {
-                return;
-            };
-            if peer.live_claim.as_ref() != Some(expected) {
-                return;
-            }
-            peer.live_claim = None;
-            peer.withdrawn_live = Some(expected.nonce);
-            peer.video_kinds
-                .insert(expected.track_id.clone(), String::new());
-            let paired: HashSet<_> = peer
-                .source_parents
-                .iter()
-                .filter(|(_, parent)| *parent == &expected.track_id)
-                .map(|(id, _)| id.clone())
-                .collect();
-            for id in &paired {
-                peer.video_kinds.insert(id.clone(), String::new());
-                peer.source_parents.remove(id);
-            }
-            let _ = peer.out.send(ServerFrame::live_withdrawn(expected.nonce));
-            let id = format!("{}:{}", peer_id.0, expected.track_id);
-            room.pubs
-                .values()
-                .filter(|publication| {
-                    publication.id == id
-                        || (publication.publisher == peer_id
-                            && paired.contains(&publication.track_id))
-                })
-                .map(|publication| (publication.id.clone(), publication.life.clone()))
-                .collect::<Vec<_>>()
-        };
-        for (_, life) in &ended {
-            life.stop.send_replace(true);
-        }
-        if let Some(redis) = &self.redis {
-            crate::live::release(redis, expected.nonce, peer_id.0).await;
-        }
-        for (id, life) in ended {
-            self.remove_publication(channel_id, &id, &life).await;
-        }
-    }
-
-    async fn find_room(&self, channel_id: Uuid) -> Option<Arc<Mutex<Room>>> {
-        self.rooms.read().await.get(&channel_id).cloned()
-    }
-
-    async fn build_pc(
-        &self,
-        ice_addr: &str,
-    ) -> webrtc::error::Result<(
-        Arc<dyn PeerConnection>,
-        mpsc::UnboundedReceiver<PcEvent>,
-        watch::Receiver<u64>,
-    )> {
-        let mut media = MediaEngine::default();
-        register_sfu_codecs(&mut media)?;
-        let registry =
-            register_default_interceptors(webrtc::peer_connection::Registry::new(), &mut media)?;
-        let registry = registry.with(feedback::KeyframeFeedback::new);
-
-        let mut settings = SettingEngine::default();
-        // ICE-lite only emits host candidates. STUN/TURN URLs on this PC
-        // make webrtc-rs fail with "agent does not need URL with selected
-        // candidate types". Browsers get those URLs from the API ticket.
-        settings.set_lite(true);
-        if let Some(ip) = &self.advertised_ip {
-            settings.set_nat_1to1_ips(vec![ip.clone()], RTCIceCandidateType::Host);
-        }
-
-        let config = RTCConfigurationBuilder::new().build();
-
-        let (tx, rx) = mpsc::unbounded_channel();
-        let (gather_tx, gather_rx) = watch::channel(0);
-        let pc = PeerConnectionBuilder::new()
-            .with_configuration(config)
-            .with_media_engine(media)
-            .with_interceptor_registry(registry)
-            .with_setting_engine(settings)
-            .with_handler(Arc::new(Handler {
-                tx,
-                gathered: gather_tx,
-            }))
-            .with_udp_addrs(vec![ice_addr.to_owned()])
-            .build()
-            .await?;
-        Ok((Arc::new(pc), rx, gather_rx))
-    }
-
-    async fn drive(
-        self: Arc<Self>,
-        peer_id: PeerId,
-        channel_id: Uuid,
-        pc: Arc<dyn PeerConnection>,
-        events: &mut mpsc::UnboundedReceiver<PcEvent>,
-    ) {
-        while let Some(event) = events.recv().await {
-            match event {
-                PcEvent::Ice(init) => {
-                    let mid = init.sdp_mid.filter(|m| !m.is_empty());
-                    if let Some(out) = self.out_of(peer_id, channel_id).await {
-                        let _ = out.send(ServerFrame::Ice {
-                            ice: init.candidate,
-                            mid,
-                        });
-                    }
-                }
-                PcEvent::Track(track) => {
-                    if let Err(err) = self.publish(peer_id, channel_id, track).await {
-                        if matches!(err, SfuError::Forbidden)
-                            && let Some(out) = self.out_of(peer_id, channel_id).await
-                        {
-                            let _ = out.send(ServerFrame::error("forbidden"));
-                        }
-                        warn!(peer = %peer_id.0, error = %err, "publish failed");
-                    }
-                }
-                PcEvent::Connected => {
-                    self.on_connected(peer_id, channel_id).await;
-                }
-                PcEvent::IceFailed => {
-                    self.stats.ice_fails.fetch_add(1, Ordering::Relaxed);
-                }
-                PcEvent::Closed => break,
-            }
-        }
-        let _ = pc.close().await;
-        self.leave(peer_id, channel_id).await;
-    }
-
-    async fn out_of(
-        &self,
-        peer_id: PeerId,
-        channel_id: Uuid,
-    ) -> Option<mpsc::UnboundedSender<ServerFrame>> {
-        let room = self.find_room(channel_id).await?;
-        let room = room.lock().await;
-        room.peers.get(&peer_id).map(|p| p.out.clone())
-    }
-
-    async fn on_connected(&self, peer_id: PeerId, channel_id: Uuid) {
-        let Some(room) = self.find_room(channel_id).await else {
-            return;
-        };
-        let (pc, out, gathered, sdp) = {
-            let room = room.lock().await;
-            let Some(peer) = room.peers.get(&peer_id) else {
-                return;
-            };
-            (
-                peer.pc.clone(),
-                peer.out.clone(),
-                peer.gathered.clone(),
-                peer.sdp.clone(),
-            )
-        };
-        let mut gate = sdp.lock().await;
-        if gate.closed || *gate.closing.borrow() {
-            return;
-        }
-        gate.connected = true;
-        self.negotiate_locked(&pc, &out, &gathered, &mut gate).await;
-    }
-
-    async fn publish(
-        self: &Arc<Self>,
-        publisher: PeerId,
-        channel_id: Uuid,
-        track: Arc<dyn TrackRemote>,
-    ) -> Result<(), SfuError> {
-        let ssrc = *track.ssrcs().await.first().ok_or(SfuError::BadAnnounce)?;
-        let mut codec = track.codec(ssrc).await.ok_or(SfuError::BadAnnounce)?;
-        let kind = track.kind().await;
-        let track_id = track.track_id().await;
-        let room = self
-            .find_room(channel_id)
-            .await
-            .ok_or(SfuError::NotInRoom)?;
-        let pub_id = format!("{}:{track_id}", publisher.0);
-        let (packets, _) = broadcast::channel(RTP_Q);
-        let (stop, mut stopped) = watch::channel(false);
-        let (done_tx, done) = watch::channel(false);
-        let life = Arc::new(PublicationLife { stop, done });
-        let (kf_tx, kf_rx) = mpsc::unbounded_channel();
-        let publication = {
-            let mut room = room.lock().await;
-            let peer = room.peers.get_mut(&publisher).ok_or(SfuError::NotInRoom)?;
-            if peer.watch_user.is_some() {
+            if nonce.is_some_and(|n| p.withdrawn_live.contains(&n)) {
                 return Err(SfuError::Forbidden);
             }
-            let tag = if kind == RtpCodecKind::Video {
-                match peer.video_kinds.get(&track_id).cloned() {
-                    Some(tag) => tag,
-                    None => {
-                        warn!(
-                            track_identity_empty = track_id.is_empty(),
-                            announced_video_count = peer.video_kinds.len(),
-                            "publisher track has no announced MSID binding"
-                        );
-                        return Err(SfuError::BadAnnounce);
-                    }
-                }
-            } else {
-                peer.video_kinds
-                    .get(&track_id)
+            (
+                p.transports
+                    .get(&true)
                     .cloned()
-                    .unwrap_or_else(|| "a".into())
-            };
-            if tag.is_empty() {
-                return Ok(());
-            }
-            if (kind == RtpCodecKind::Audio && !matches!(tag.as_str(), "a" | "sa" | "la"))
-                || (kind == RtpCodecKind::Video && !matches!(tag.as_str(), "v" | "s" | "l"))
-            {
-                return Err(SfuError::BadAnnounce);
-            }
-            if matches!(tag.as_str(), "sa" | "la") {
-                let parent = peer
-                    .source_parents
-                    .get(&track_id)
-                    .ok_or(SfuError::Forbidden)?;
-                let parent_kind = if tag == "sa" { "s" } else { "l" };
-                if peer.video_kinds.get(parent).map(String::as_str) != Some(parent_kind)
-                    || !codec.mime_type.eq_ignore_ascii_case(MIME_TYPE_OPUS)
-                {
-                    return Err(SfuError::Forbidden);
-                }
-                codec.channels = 2;
-                codec.sdp_fmtp_line =
-                    "minptime=10;useinbandfec=1;stereo=1;sprop-stereo=1;usedtx=0".into();
-            }
-            if matches!(tag.as_str(), "l" | "la") && !peer.go_live {
-                return Err(SfuError::Forbidden);
-            }
-            if peer.remote_tracks.len() >= 64 && !peer.remote_tracks.contains_key(&track_id) {
-                return Err(SfuError::BadAnnounce);
-            }
-            if matches!(tag.as_str(), "l" | "la")
-                && let Some(redis) = &self.redis
-            {
-                let live = peer
-                    .live_claim
-                    .as_ref()
-                    .filter(|live| {
-                        live.track_id == track_id
-                            || peer.source_parents.get(&track_id) == Some(&live.track_id)
-                    })
-                    .ok_or(SfuError::Forbidden)?;
-                let authority = peer.authority.as_ref().ok_or(SfuError::Forbidden)?;
-                let checked_at = Instant::now();
-                let Some(ttl) =
-                    crate::live::validate_and_acquire(redis, authority, live.nonce, publisher.0)
-                        .await
-                        .unwrap_or(None)
-                else {
-                    return Err(SfuError::Forbidden);
-                };
-                *live.deadline.lock().unwrap() = checked_at + ttl;
-            }
-            let live_deadline = matches!(tag.as_str(), "l" | "la")
-                .then(|| peer.live_claim.as_ref().map(|live| live.deadline.clone()))
-                .flatten();
-            peer.remote_tracks.insert(track_id.clone(), track.clone());
-            let user_id = peer.user_id;
-            if room.pubs.contains_key(&pub_id) {
-                return Ok(());
-            }
-            let publication = Published {
-                id: pub_id.clone(),
-                publisher,
-                track_id: track_id.clone(),
-                stream_id: format!("{user_id}:{tag}"),
-                kind,
-                codec: codec.clone(),
-                packets: packets.clone(),
-                keyframe: (kind == RtpCodecKind::Video).then_some(kf_tx),
-                life: life.clone(),
-                live_deadline,
-                watch_gate: None,
-            };
-            room.pubs.insert(pub_id.clone(), publication.clone());
-            publication
+                    .ok_or(SfuError::BadAnnounce)?,
+                old,
+                parent,
+            )
         };
-        let sfu = self.clone();
-        let read_life = life.clone();
-        let read_id = pub_id.clone();
-        let live_deadline = publication.live_deadline.clone();
-        tokio::spawn(async move {
-            let mut rtp = PublisherRtpStats::new(codec.clock_rate);
-            let mut keyframes = kf_rx;
-            let mut remote_ended = false;
-            loop {
-                if live_expired(&live_deadline) {
-                    break;
-                }
-                tokio::select! {
-                    biased;
-                    _ = stopped.changed() => break,
-                    _ = tokio::time::sleep_until(live_wakeup(&live_deadline)), if live_deadline.is_some() => {},
-                    evt = track.poll() => {
-                        if live_expired(&live_deadline) { break; }
-                        if !handle_publisher_event(&packets, &sfu.stats, &mut rtp, evt) {
-                            remote_ended = true;
-                            break;
-                        }
-                    }
-                    Some(_) = keyframes.recv(), if kind == RtpCodecKind::Video => request_keyframe(&track, ssrc).await,
-                }
-            }
-            done_tx.send_replace(true);
-            let mut ended_live = None;
-            if let Some(room) = sfu.find_room(channel_id).await {
-                let mut room = room.lock().await;
-                // A replacement handshake can win this lock while the ended
-                // reader waits. MSID alone does not identify that generation.
-                let owns_publication = !*read_life.stop.borrow()
-                    && room
-                        .pubs
-                        .get(&read_id)
-                        .is_some_and(|p| Arc::ptr_eq(&p.life, &read_life));
-                if owns_publication
-                    && let Some(peer) = room.peers.get_mut(&publisher)
-                    && peer
-                        .remote_tracks
-                        .get(&track_id)
-                        .is_some_and(|current| Arc::ptr_eq(current, &track))
-                    && live_deadline.as_ref().is_none_or(|deadline| {
-                        peer.live_claim.as_ref().is_some_and(|live| {
-                            (live.track_id == track_id
-                                || peer.source_parents.get(&track_id) == Some(&live.track_id))
-                                && Arc::ptr_eq(deadline, &live.deadline)
-                        })
-                    })
-                {
-                    ended_live = peer
-                        .live_claim
-                        .as_ref()
-                        .filter(|live| {
-                            live.track_id == track_id
-                                && live_deadline
-                                    .as_ref()
-                                    .is_some_and(|deadline| Arc::ptr_eq(deadline, &live.deadline))
-                        })
-                        .cloned();
-                    // Lease expiry stops forwarding, not the native receiver.
-                    // Keep that binding for a fresh, authorized same-MSID offer.
-                    if remote_ended {
-                        peer.remote_tracks.remove(&track_id);
-                    }
-                    if let Some(kind) = peer.video_kinds.get_mut(&track_id) {
-                        kind.clear();
-                    }
-                }
-            }
-            if let Some(live) = ended_live {
-                sfu.stop_live_binding(publisher, channel_id, &live).await;
-            }
-            sfu.remove_publication(channel_id, &read_id, &read_life)
-                .await;
-        });
-        self.attach_publication(channel_id, &publication).await;
-        Ok(())
-    }
-
-    async fn remove_publication(
-        &self,
-        channel_id: Uuid,
-        pub_id: &str,
-        life: &Arc<PublicationLife>,
-    ) {
-        let Some(room) = self.find_room(channel_id).await else {
-            return;
-        };
-        let (subscribers, ended) = {
-            let mut room = room.lock().await;
-            if !room
-                .pubs
-                .get(pub_id)
-                .is_some_and(|p| Arc::ptr_eq(&p.life, life))
-            {
-                return;
-            }
-            let publication = room.pubs.remove(pub_id).unwrap();
-            let mut ended = vec![(publication.id, publication.life)];
-            if matches!(
-                publication.stream_id.rsplit_once(':').map(|(_, tag)| tag),
-                Some("s" | "l")
-            ) {
-                let paired: HashSet<_> =
-                    if let Some(peer) = room.peers.get_mut(&publication.publisher) {
-                        let paired: HashSet<_> = peer
-                            .source_parents
-                            .iter()
-                            .filter(|(_, parent)| *parent == &publication.track_id)
-                            .map(|(id, _)| id.clone())
-                            .collect();
-                        for id in &paired {
-                            peer.video_kinds.insert(id.clone(), String::new());
-                            peer.source_parents.remove(id);
-                        }
-                        paired
-                    } else {
-                        HashSet::new()
-                    };
-                let ids = room
-                    .pubs
-                    .values()
-                    .filter(|p| {
-                        p.publisher == publication.publisher && paired.contains(&p.track_id)
-                    })
-                    .map(|p| p.id.clone())
-                    .collect::<Vec<_>>();
-                for id in ids {
-                    if let Some(audio) = room.pubs.remove(&id) {
-                        ended.push((id, audio.life));
-                    }
-                }
-            }
-            let subscribers = room
-                .peers
-                .values()
-                .map(|p| {
-                    (
-                        p.pc.clone(),
-                        p.out.clone(),
-                        p.gathered.clone(),
-                        p.sdp.clone(),
-                    )
-                })
-                .collect::<Vec<_>>();
-            (subscribers, ended)
-        };
-        for (_, life) in &ended {
-            life.stop.send_replace(true);
-        }
-        for (pc, out, gathered, sdp) in subscribers {
-            for (id, _) in &ended {
-                self.detach_subscription(&pc, &out, &gathered, &sdp, id)
-                    .await;
-            }
-        }
-        for (_, life) in ended {
-            let mut done = life.done.clone();
-            let _ = done.wait_for(|done| *done).await;
-        }
-    }
-
-    async fn detach_subscription(
-        &self,
-        pc: &Arc<dyn PeerConnection>,
-        out: &mpsc::UnboundedSender<ServerFrame>,
-        gathered: &watch::Receiver<u64>,
-        sdp: &Arc<Mutex<PeerSdp>>,
-        id: &str,
-    ) {
-        let mut gate = sdp.lock().await;
-        if let Some(SubscriptionState::Active(mut sub)) = gate.subscriptions.remove(id) {
-            sub.task.abort();
-            let _ = (&mut sub.task).await;
-            if let Err(err) = pc.remove_track(&sub.sender).await {
-                warn!(error = %err, "remove subscriber sender failed");
-            }
-            gate.dirty = true;
-        }
-        self.negotiate_locked(pc, out, gathered, &mut gate).await;
-    }
-
-    async fn attach_publication(&self, channel_id: Uuid, publication: &Published) {
-        let Some(room) = self.find_room(channel_id).await else {
-            return;
-        };
-        let jobs = {
-            let room = room.lock().await;
-            room.peers
-                .iter()
-                .filter(|(id, p)| **id != publication.publisher && p.receives(publication))
-                .map(|(_, p)| Forward {
-                    pc: p.pc.clone(),
-                    out: p.out.clone(),
-                    gathered: p.gathered.clone(),
-                    sdp: p.sdp.clone(),
-                    publication: p.watched_publication(publication),
-                })
-                .collect::<Vec<_>>()
-        };
-        for job in jobs {
-            self.forward_to(job).await;
-        }
-    }
-
-    async fn attach_existing_pubs(&self, subscriber: PeerId, channel_id: Uuid) {
-        let Some(room) = self.find_room(channel_id).await else {
-            return;
-        };
-        let jobs = {
-            let room = room.lock().await;
-            let Some(peer) = room.peers.get(&subscriber) else {
-                return;
-            };
-            room.pubs
-                .values()
-                .filter(|p| p.publisher != subscriber && peer.receives(p))
-                .map(|p| Forward {
-                    pc: peer.pc.clone(),
-                    out: peer.out.clone(),
-                    gathered: peer.gathered.clone(),
-                    sdp: peer.sdp.clone(),
-                    publication: peer.watched_publication(p),
-                })
-                .collect::<Vec<_>>()
-        };
-        for job in jobs {
-            self.forward_to(job).await;
-        }
-    }
-
-    async fn forward_to(&self, job: Forward) {
-        let mut gate = job.sdp.lock().await;
-        if gate.closed
-            || *gate.closing.borrow()
-            || *job.publication.life.stop.borrow()
-            || source_watch_closed(&job.publication)
-        {
-            return;
-        }
-        gate.subscriptions
-            .entry(job.publication.id.clone())
-            .or_insert(SubscriptionState::Pending(job.publication));
-        self.negotiate_locked(&job.pc, &job.out, &job.gathered, &mut gate)
-            .await;
-    }
-
-    /// Every PC mutation, including rollback, runs while the same SDP lock is held.
-    async fn negotiate_locked(
-        &self,
-        pc: &Arc<dyn PeerConnection>,
-        out: &mpsc::UnboundedSender<ServerFrame>,
-        gathered: &watch::Receiver<u64>,
-        gate: &mut PeerSdp,
-    ) {
-        // Subscriber SDP must not race the initial ICE/DTLS handshake. SRTP
-        // keys are installed before Connected; until then keep publications
-        // pending instead of reoffering with the pinned core's setup:actpass.
-        if gate.closed
-            || *gate.closing.borrow()
-            || !gate.negotiated
-            || !gate.connected
-            || gate.have_local_offer
-        {
-            return;
-        }
-        let queued = gate
-            .subscriptions
-            .iter()
-            .filter_map(|(id, state)| {
-                matches!(state, SubscriptionState::Pending(_)).then_some(id.clone())
-            })
-            .collect::<Vec<_>>();
-        for id in queued {
-            let Some(SubscriptionState::Pending(publication)) = gate.subscriptions.remove(&id)
-            else {
-                continue;
-            };
-            if *publication.life.stop.borrow() || source_watch_closed(&publication) {
-                continue;
-            }
-            let ssrc = rand::random::<u32>();
-            let local = Arc::new(TrackLocalStaticRTP::new(MediaStreamTrack::new(
-                forwarded_stream_id(&publication.stream_id),
-                format!("{}-{ssrc}", publication.stream_id),
-                format!("gelabber-{id}"),
-                publication.kind,
-                vec![RTCRtpEncodingParameters {
-                    rtp_coding_parameters: RTCRtpCodingParameters {
-                        ssrc: Some(ssrc),
-                        ..Default::default()
-                    },
-                    codec: publication.codec.clone(),
-                    ..Default::default()
-                }],
-            )));
-            let sender = match pc.add_track(local.clone() as Arc<dyn TrackLocal>).await {
-                Ok(sender) => sender,
-                Err(err) => {
-                    warn!(error = %err, "add subscriber track failed");
-                    continue;
-                }
-            };
-            limit_forward_codec(pc, &sender, &publication.codec).await;
-            let (payload_type, binding) = watch::channel(None);
-            let codec = publication.codec.clone();
-            let task = spawn_forwarder(
-                local,
-                ssrc,
-                publication,
-                binding,
-                gate.closing.subscribe(),
-                self.stats.clone(),
-            );
-            gate.subscriptions.insert(
-                id.clone(),
-                SubscriptionState::Active(Subscription {
-                    sender,
-                    task,
-                    codec,
-                    payload_type,
-                }),
-            );
-            gate.offered.insert(id);
-            gate.dirty = true;
-        }
-        if !gate.dirty {
-            return;
-        }
-        gate.have_local_offer = true;
-        let result = async {
-            let offer = pc.create_offer(None).await?;
-            let before = *gathered.borrow();
-            pc.set_local_description(offer).await?;
-            let local = local_sdp_after_gather(pc, gathered, before, &gate.closing)
+        let live = if kind == SourceKind::Live {
+            let nonce = nonce.ok_or(SfuError::Forbidden)?;
+            let checked = Instant::now();
+            let ttl = match crate::live::try_acquire(&self.redis, &peer.authority, nonce, peer.id.0)
                 .await
-                .ok_or(webrtc::error::Error::ErrUnknownType)?;
-            out.send(ServerFrame::Offer { sdp: local })
-                .map_err(|_| webrtc::error::Error::ErrUnknownType)?;
-            Ok::<(), webrtc::error::Error>(())
+                .unwrap_or(crate::live::LiveAcquireOutcome::Denied)
+            {
+                crate::live::LiveAcquireOutcome::Acquired(ttl) => ttl,
+                crate::live::LiveAcquireOutcome::Busy => return Err(SfuError::LiveBusy),
+                crate::live::LiveAcquireOutcome::Denied => return Err(SfuError::Forbidden),
+            };
+            let deadline = checked + ttl;
+            if Instant::now() + LIVE_STOP_MARGIN >= deadline {
+                self.release_unpublished_live(room, peer, nonce).await;
+                return Err(SfuError::LiveBusy);
+            }
+            Some(Arc::new(LiveBinding {
+                nonce,
+                deadline: StdMutex::new(deadline),
+                changed: Notify::new(),
+            }))
+        } else {
+            parent.as_ref().and_then(|p| p.live.clone())
+        };
+        let result = async {
+            let layers = parameters.encodings.len().max(1) as u8;
+            let mut options = ProducerOptions::new(
+                if kind.is_video() {
+                    MediaKind::Video
+                } else {
+                    MediaKind::Audio
+                },
+                parameters,
+            );
+            options.paused = true;
+            let producer = native(transport.produce(options)).await?;
+            let pubn = Arc::new(Publication {
+                producer,
+                peer: peer.clone(),
+                kind,
+                epoch,
+                parent,
+                live,
+                grant: Grant::new(),
+                gate: Mutex::new(()),
+                height,
+                layers,
+                packet_samples: StdMutex::new(HashMap::new()),
+            });
+            if !crate::ticket::validate_authority(&self.redis, &peer.authority)
+                .await
+                .unwrap_or(false)
+                || !pubn.valid()
+            {
+                stop_producer(&pubn.producer, &self.dead).await;
+                return Err(SfuError::Revoked);
+            }
+            // Atomically replace the slot with a still-paused new Producer. This actual
+            // ID fences timeout/close callbacks from the retired Producer, even if the
+            // browser kept the same capture epoch for a codec-only replacement.
+            {
+                let mut data = room.data.lock().await;
+                let p = data
+                    .peers
+                    .get_mut(&peer.id)
+                    .filter(|p| p.peer.grant.valid())
+                    .ok_or(SfuError::Revoked)?;
+                if p.publications.get(&kind).map(|p| p.id()) != expected_old
+                    || old.as_ref().is_some_and(|o| !o.valid())
+                    || !pubn.valid()
+                {
+                    return Err(SfuError::Forbidden);
+                }
+                if let Some(old) = &old {
+                    old.grant.stop()
+                }
+                p.publications.insert(kind, pubn.clone());
+            }
+            if let Some(old) = &old {
+                self.retire_publication(room, old).await;
+            }
+            let committed = {
+                let mut data = room.data.lock().await;
+                if !pubn.valid()
+                    || !data
+                        .peers
+                        .get(&peer.id)
+                        .and_then(|p| p.publications.get(&kind))
+                        .is_some_and(|p| Arc::ptr_eq(p, &pubn))
+                {
+                    false
+                } else {
+                    data.publications.insert(pubn.id(), pubn.clone());
+                    self.counters.producers.fetch_add(1, Ordering::Relaxed);
+                    true
+                }
+            };
+            if !committed {
+                stop_producer(&pubn.producer, &self.dead).await;
+                return Err(SfuError::Revoked);
+            }
+            if let Some(old) = old.as_ref().filter(|o| o.kind == SourceKind::Live)
+                && let Some(live) = &old.live
+                && pubn.live.as_ref().is_none_or(|l| l.nonce != live.nonce)
+            {
+                crate::live::release(&self.redis, live.nonce, peer.id.0).await;
+            }
+            if !paused {
+                let _gate = pubn.gate.lock().await;
+                if !pubn.valid() {
+                    return Err(SfuError::Forbidden);
+                }
+                native(pubn.producer.resume()).await?;
+                if !pubn.valid() {
+                    stop_producer(&pubn.producer, &self.dead).await;
+                    return Err(SfuError::Forbidden);
+                }
+            }
+            self.observe_producer(room, &pubn);
+            if kind == SourceKind::Live {
+                Self::watch_live(
+                    Arc::downgrade(self),
+                    Arc::downgrade(room),
+                    Arc::downgrade(&pubn),
+                );
+            }
+            self.schedule_room_attach(peer.authority.claim.c).await;
+            Ok(json!({"producerId":pubn.producer.id(),"epoch":epoch}))
         }
         .await;
-        if let Err(err) = result {
-            warn!(error = %err, "subscriber offer failed");
-            self.rollback_locked(pc, gate).await;
-        } else {
-            gate.dirty = false;
-        }
-    }
-
-    async fn rollback_locked(&self, pc: &Arc<dyn PeerConnection>, gate: &mut PeerSdp) {
-        if pc.pending_local_description().await.is_some() {
-            match RTCSessionDescription::rollback(None) {
-                Ok(rollback) => {
-                    if let Err(err) = pc.set_local_description(rollback).await {
-                        warn!(error = %err, "subscriber rollback failed");
-                        // Do not unlock negotiation as stable when rollback failed.
-                        return;
-                    }
-                }
-                Err(_) => return,
+        if result.is_err() {
+            let failed = room
+                .data
+                .lock()
+                .await
+                .peers
+                .get(&peer.id)
+                .and_then(|p| p.publications.get(&kind))
+                .filter(|p| Some(p.id()) != expected_old)
+                .cloned();
+            if let Some(failed) = failed {
+                self.retire_publication(room, &failed).await;
+            }
+            if kind == SourceKind::Live
+                && let Some(nonce) = nonce
+            {
+                // The lease gate is already held by this Produce operation.
+                self.release_unpublished_live(room, peer, nonce).await;
             }
         }
-        for id in std::mem::take(&mut gate.offered) {
-            if let Some(SubscriptionState::Active(mut sub)) = gate.subscriptions.remove(&id) {
-                sub.task.abort();
-                let _ = (&mut sub.task).await;
-                let _ = pc.remove_track(&sub.sender).await;
-            }
-        }
-        gate.have_local_offer = false;
-        gate.pending_ice.clear();
-        // Keep removals of already bound sources dirty; the next offer must carry them.
+        result
     }
-
-    async fn fail_local_offer(
-        &self,
-        pc: &Arc<dyn PeerConnection>,
-        out: &mpsc::UnboundedSender<ServerFrame>,
-        gathered: &watch::Receiver<u64>,
-        sdp: &Arc<Mutex<PeerSdp>>,
-        only_if_outstanding: bool,
+    async fn release_unpublished_live(
+        self: &Arc<Self>,
+        room: &Arc<Room>,
+        peer: &Arc<Peer>,
+        nonce: Uuid,
     ) {
-        let mut gate = sdp.lock().await;
-        if gate.closed || *gate.closing.borrow() || (only_if_outstanding && !gate.have_local_offer)
+        let current = room
+            .data
+            .lock()
+            .await
+            .peers
+            .get(&peer.id)
+            .and_then(|p| p.publications.get(&SourceKind::Live))
+            .filter(|p| p.live.as_ref().is_some_and(|l| l.nonce == nonce))
+            .cloned();
+        if let Some(current) = current {
+            if current.valid() {
+                return;
+            }
+            // A grant may have expired while native creation was in flight.
+            // Confirm the old source is stopped before releasing its lease.
+            self.retire_publication(room, &current).await;
+        }
+        crate::live::release(&self.redis, nonce, peer.id.0).await;
+    }
+    async fn transport(
+        &self,
+        room: &Room,
+        peer: PeerId,
+        id: &str,
+    ) -> Result<WebRtcTransport, SfuError> {
+        room.data
+            .lock()
+            .await
+            .peers
+            .get(&peer)
+            .ok_or(SfuError::Revoked)?
+            .transports
+            .values()
+            .find(|t| t.id().to_string() == id)
+            .cloned()
+            .ok_or(SfuError::Forbidden)
+    }
+    async fn close_transport(
+        self: &Arc<Self>,
+        room: &Arc<Room>,
+        peer: &Arc<Peer>,
+        id: &str,
+    ) -> Result<(), SfuError> {
+        let (direction, transport, publications, consumers) = {
+            let data = room.data.lock().await;
+            let p = data.peers.get(&peer.id).ok_or(SfuError::Revoked)?;
+            if p.retired_transports.iter().any(|owned| owned == id) {
+                return Ok(());
+            }
+            let (direction, transport) = p
+                .transports
+                .iter()
+                .find(|(_, t)| t.id().to_string() == id)
+                .ok_or(SfuError::Forbidden)?;
+            let publications = p
+                .publications
+                .values()
+                .filter(|p| p.producer.transport().id().to_string() == id)
+                .cloned()
+                .collect::<Vec<_>>();
+            let consumers = p
+                .consumers
+                .values()
+                .filter(|s| s.consumer.transport().id().to_string() == id)
+                .cloned()
+                .collect::<Vec<_>>();
+            (*direction, transport.clone(), publications, consumers)
+        };
+        self.confirmed_stop_resources(&publications, &consumers)
+            .await;
+        for publication in publications {
+            // Compaction retires the native resource, not the API's Live claim.
+            self.remove_publication(room, &publication, false).await;
+        }
+        for consumer in consumers {
+            self.forget_consumer(room, &consumer).await;
+        }
+        self.sample_transport(&transport).await;
+        let mut data = room.data.lock().await;
+        if let Some(p) = data.peers.get_mut(&peer.id)
+            && p.transports
+                .get(&direction)
+                .is_some_and(|t| t.id() == transport.id())
         {
+            p.transports.remove(&direction);
+            remember_retired(&mut p.retired_transports, id.to_owned());
+            self.counters.transports.fetch_sub(1, Ordering::Relaxed);
+        }
+        Ok(())
+    }
+    async fn own_publication(
+        &self,
+        room: &Room,
+        peer: PeerId,
+        id: &str,
+    ) -> Result<Arc<Publication>, SfuError> {
+        room.data
+            .lock()
+            .await
+            .publications
+            .get(id)
+            .filter(|p| p.peer.id == peer && p.grant.valid())
+            .cloned()
+            .ok_or(SfuError::Forbidden)
+    }
+    async fn own_consumer(
+        &self,
+        room: &Room,
+        peer: PeerId,
+        id: &str,
+        generation: Uuid,
+    ) -> Result<Arc<Subscription>, SfuError> {
+        room.data
+            .lock()
+            .await
+            .peers
+            .get(&peer)
+            .and_then(|p| p.consumers.get(id))
+            .filter(|s| s.generation == generation)
+            .cloned()
+            .ok_or(SfuError::Forbidden)
+    }
+    async fn schedule_attach(self: &Arc<Self>, channel: Uuid, id: PeerId) {
+        let Ok(room) = self.room(channel).await else {
+            return;
+        };
+        let peer = room
+            .data
+            .lock()
+            .await
+            .peers
+            .get(&id)
+            .map(|p| p.peer.clone());
+        if let Some(peer) = peer {
+            self.schedule_peer_attach(channel, peer);
+        }
+    }
+    fn schedule_peer_attach(self: &Arc<Self>, channel: Uuid, peer: Arc<Peer>) {
+        if !peer.grant.valid() {
             return;
         }
-        self.rollback_locked(pc, &mut gate).await;
-        self.negotiate_locked(pc, out, gathered, &mut gate).await;
+        peer.attach_dirty.store(true, Ordering::SeqCst);
+        if peer.attach_scheduled.swap(true, Ordering::SeqCst) {
+            return;
+        }
+        let weak = Arc::downgrade(self);
+        tokio::spawn(async move {
+            loop {
+                peer.attach_dirty.store(false, Ordering::SeqCst);
+                if let Some(sfu) = weak.upgrade()
+                    && peer.grant.valid()
+                {
+                    sfu.attach_existing(channel, peer.id).await;
+                }
+                peer.attach_scheduled.store(false, Ordering::SeqCst);
+                if !peer.grant.valid()
+                    || !peer.attach_dirty.load(Ordering::SeqCst)
+                    || peer
+                        .attach_scheduled
+                        .compare_exchange(false, true, Ordering::SeqCst, Ordering::SeqCst)
+                        .is_err()
+                {
+                    break;
+                }
+            }
+        });
     }
-}
-
-fn ice_init(ice: String, mid: Option<String>) -> RTCIceCandidateInit {
-    let mid = mid.filter(|m| !m.is_empty());
-    RTCIceCandidateInit {
-        candidate: ice,
-        sdp_mid: mid.clone(),
-        sdp_mline_index: if mid.is_some() { None } else { Some(0) },
-        username_fragment: None,
-        url: None,
-    }
-}
-
-async fn flush_ice(
-    pc: &Arc<dyn PeerConnection>,
-    peer_id: PeerId,
-    queued: Vec<(String, Option<String>)>,
-) {
-    for (ice, mid) in queued {
-        if let Err(err) = pc.add_ice_candidate(ice_init(ice, mid)).await {
-            warn!(peer = %peer_id.0, error = %err, "buffered ice dropped");
+    async fn schedule_room_attach(self: &Arc<Self>, channel: Uuid) {
+        let Ok(room) = self.room(channel).await else {
+            return;
+        };
+        let peers: Vec<_> = room
+            .data
+            .lock()
+            .await
+            .peers
+            .values()
+            .map(|p| p.peer.clone())
+            .collect();
+        for peer in peers {
+            self.schedule_peer_attach(channel, peer);
         }
     }
-}
-
-async fn limit_forward_codec(
-    pc: &Arc<dyn PeerConnection>,
-    sender: &Arc<dyn RtpSender>,
-    codec: &RTCRtpCodec,
-) {
-    limit_forward_codec_with_pt(pc, sender, codec, 0).await;
-}
-
-async fn limit_forward_codec_with_pt(
-    pc: &Arc<dyn PeerConnection>,
-    sender: &Arc<dyn RtpSender>,
-    codec: &RTCRtpCodec,
-    payload_type: u8,
-) {
-    let preference = RTCRtpCodecParameters {
-        rtp_codec: codec.clone(),
-        payload_type,
-    };
-    for transceiver in pc.get_transceivers().await {
-        if !transceiver
-            .sender()
+    async fn attach_existing(self: &Arc<Self>, channel: Uuid, id: PeerId) {
+        let Ok(room) = self.room(channel).await else {
+            return;
+        };
+        let pubs: Vec<_> = room
+            .data
+            .lock()
             .await
-            .ok()
-            .flatten()
-            .is_some_and(|s| s.id() == sender.id())
-        {
-            continue;
+            .publications
+            .values()
+            .cloned()
+            .collect();
+        for pubn in pubs {
+            if let Err(err) = self.attach(&room, id, pubn).await
+                && !matches!(err, SfuError::Forbidden | SfuError::Unavailable)
+            {
+                warn!(?id, code = err.code(), "consumer attach failed");
+            }
         }
-        if let Err(err) = transceiver
-            .set_codec_preferences(vec![preference.clone()])
-            .await
+    }
+    async fn attach(
+        self: &Arc<Self>,
+        room: &Arc<Room>,
+        id: PeerId,
+        pubn: Arc<Publication>,
+    ) -> Result<(), SfuError> {
+        let producer_id = pubn.id();
+        let (peer, transport, capabilities, watch) = {
+            let mut data = room.data.lock().await;
+            let p = data.peers.get_mut(&id).ok_or(SfuError::Revoked)?;
+            let watch = receives(p, &pubn)?;
+            if p.pending_consumers.contains(&producer_id)
+                || p.consumers
+                    .values()
+                    .any(|s| s.publication.id() == producer_id)
+            {
+                return Ok(());
+            }
+            if p.consumers.len() + p.pending_consumers.len() >= CONSUMER_LIMIT {
+                return Err(SfuError::Unavailable);
+            }
+            let transport = p
+                .transports
+                .get(&false)
+                .cloned()
+                .ok_or(SfuError::Unavailable)?;
+            let caps = p.capabilities.clone().ok_or(SfuError::Unavailable)?;
+            p.pending_consumers.insert(producer_id.clone());
+            (p.peer.clone(), transport, caps, watch)
+        };
+        let result = async {
+            if !room
+                .router
+                .get()
+                .ok_or(SfuError::Unavailable)?
+                .can_consume(&pubn.producer.id(), &capabilities)
+            {
+                return Err(SfuError::UnsupportedCodec);
+            }
+            let mut options = ConsumerOptions::new(pubn.producer.id(), capabilities);
+            options.paused = true;
+            if pubn.kind.is_video() && pubn.layers > 1 {
+                options.preferred_layers = Some(ConsumerLayers {
+                    spatial_layer: 0,
+                    temporal_layer: None,
+                });
+            }
+            let consumer = native(transport.consume(options)).await?;
+            let sub = Arc::new(Subscription {
+                consumer,
+                publication: pubn,
+                peer: peer.clone(),
+                watch,
+                grant: Grant::new(),
+                generation: Uuid::new_v4(),
+                gate: Mutex::new(()),
+            });
+            if !sub.valid()
+                || !crate::ticket::validate_authority(&self.redis, &peer.authority)
+                    .await
+                    .unwrap_or(false)
+            {
+                stop_consumer(&sub.consumer, &self.dead).await;
+                return Err(SfuError::Revoked);
+            }
+            {
+                let mut data = room.data.lock().await;
+                let p = data.peers.get_mut(&id).ok_or(SfuError::Revoked)?;
+                if !sub.valid()
+                    || !p
+                        .transports
+                        .get(&false)
+                        .is_some_and(|t| t.id() == transport.id())
+                {
+                    return Err(SfuError::Forbidden);
+                }
+                p.consumers
+                    .insert(sub.consumer.id().to_string(), sub.clone());
+                self.counters.consumers.fetch_add(1, Ordering::Relaxed);
+            }
+            self.observe_consumer(room, &sub);
+            self.emit(
+                &peer,
+                ServerFrame::Consumer {
+                    consumer_id: sub.consumer.id().to_string(),
+                    producer_id: sub.publication.id(),
+                    owner: sub.publication.peer.authority.claim.u,
+                    k: sub.publication.kind,
+                    epoch: sub.publication.epoch,
+                    generation: sub.generation,
+                    parent: sub.publication.parent.as_ref().map(|p| p.id()),
+                    kind: if sub.publication.kind.is_video() {
+                        "video"
+                    } else {
+                        "audio"
+                    }
+                    .into(),
+                    rtp_parameters: serde_json::to_value(sub.consumer.rtp_parameters())
+                        .map_err(SfuError::negotiation)?,
+                    paused: sub.publication.producer.paused(),
+                },
+            );
+            Ok(())
+        }
+        .await;
+        let recreated = {
+            let mut data = room.data.lock().await;
+            data.peers.get_mut(&id).is_some_and(|p| {
+                p.pending_consumers.remove(&producer_id);
+                p.transports
+                    .get(&false)
+                    .is_some_and(|t| t.id() != transport.id())
+            })
+        };
+        if recreated {
+            self.schedule_attach(peer.authority.claim.c, id).await;
+        }
+        result
+    }
+    async fn set_watch(
+        self: &Arc<Self>,
+        channel: Uuid,
+        room: &Arc<Room>,
+        peer: &Arc<Peer>,
+        user: Uuid,
+        kind: WatchKind,
+        on: bool,
+    ) -> Result<(), SfuError> {
+        if user.is_nil() || user == peer.authority.claim.u || peer.watch_user.is_some() {
+            return Err(SfuError::Forbidden);
+        }
+        let stopped = {
+            let mut data = room.data.lock().await;
+            let p = data.peers.get_mut(&peer.id).ok_or(SfuError::Revoked)?;
+            let key = (user, kind);
+            if on {
+                if p.watches.len() >= WATCH_LIMIT && !p.watches.contains_key(&key) {
+                    return Err(SfuError::BadAnnounce);
+                }
+                p.watches.entry(key).or_insert_with(Grant::new);
+                Vec::new()
+            } else {
+                if let Some(g) = p.watches.remove(&key) {
+                    g.stop()
+                }
+                p.consumers
+                    .values()
+                    .filter(|s| !s.valid())
+                    .cloned()
+                    .collect::<Vec<_>>()
+            }
+        };
+        self.confirmed_stop_resources(&[], &stopped).await;
+        for sub in stopped {
+            self.forget_consumer(room, &sub).await;
+        }
+        if on {
+            self.schedule_attach(channel, peer.id).await
+        }
+        Ok(())
+    }
+    async fn confirmed_stop_resources(
+        &self,
+        publications: &[Arc<Publication>],
+        subscriptions: &[Arc<Subscription>],
+    ) {
+        // Fence every resource before starting any native operation. The single
+        // deadline includes queued work, gate acquisition and every pause ACK.
+        for publication in publications {
+            publication.grant.stop();
+        }
+        for subscription in subscriptions {
+            subscription.grant.stop();
+        }
+        let resources: Vec<_> = publications
+            .iter()
+            .cloned()
+            .map(StopResource::Publication)
+            .chain(
+                subscriptions
+                    .iter()
+                    .cloned()
+                    .map(StopResource::Subscription),
+            )
+            .collect();
+        let jobs = resources.into_iter().map(|resource| async move {
+            match resource {
+                StopResource::Publication(p) => {
+                    let _gate = stop_gate(&p.gate).await;
+                    stop_producer(&p.producer, &self.dead).await;
+                }
+                StopResource::Subscription(s) => {
+                    let _gate = stop_gate(&s.gate).await;
+                    stop_consumer(&s.consumer, &self.dead).await;
+                }
+            }
+        });
+        if stop_batch(jobs).await.is_err() {
+            fail_closed("native stop batch exceeded its aggregate deadline");
+        }
+    }
+    async fn remove_consumer(self: &Arc<Self>, room: &Room, sub: &Arc<Subscription>) {
+        self.confirmed_stop_resources(&[], std::slice::from_ref(sub))
+            .await;
+        self.forget_consumer(room, sub).await;
+    }
+    async fn forget_consumer(self: &Arc<Self>, room: &Room, sub: &Arc<Subscription>) {
+        let mut data = room.data.lock().await;
+        if let Some(p) = data.peers.get_mut(&sub.peer.id)
+            && p.consumers
+                .get(&sub.consumer.id().to_string())
+                .is_some_and(|s| Arc::ptr_eq(s, sub))
         {
-            warn!(
-                error = %err,
-                mime = %codec.mime_type,
-                "forward codec preference skipped"
+            p.consumers.remove(&sub.consumer.id().to_string());
+            self.counters.consumers.fetch_sub(1, Ordering::Relaxed);
+            self.emit(
+                &sub.peer,
+                ServerFrame::ConsumerClosed {
+                    consumer_id: sub.consumer.id().to_string(),
+                    generation: sub.generation,
+                },
             );
         }
     }
-}
-
-async fn sender_mid(pc: &Arc<dyn PeerConnection>, sender: &Arc<dyn RtpSender>) -> Option<String> {
-    for transceiver in pc.get_transceivers().await {
-        if transceiver
-            .sender()
-            .await
-            .ok()
-            .flatten()
-            .is_some_and(|s| s.id() == sender.id())
-        {
-            return transceiver.mid().await.ok().flatten();
-        }
-    }
-    None
-}
-
-/// Resolve only the sender's MID and the publication codec in the actual SDP.
-/// Sender get_parameters() can expose preferences rather than the negotiated
-/// binding after a reoffer in the pinned library. TrackLocalContext is private.
-fn negotiated_payload_type(sdp: &str, mid: &str, codec: &RTCRtpCodec) -> Option<u8> {
-    let mut parsed = RTCSessionDescription::answer(sdp.to_owned())
-        .ok()?
-        .unmarshal()
-        .ok()?;
-    parsed.media_descriptions.retain(|media| {
-        media.media_name.port.value != 0
-            && media
-                .attributes
-                .iter()
-                .any(|a| a.key == "mid" && a.value.as_deref() == Some(mid))
-            && !media.attributes.iter().any(|a| a.key == "inactive")
-    });
-    let [media] = parsed.media_descriptions.as_slice() else {
-        return None;
-    };
-    let mut candidates = Vec::new();
-    for format in &media.media_name.formats {
-        let Ok(pt) = format.parse::<u8>() else {
-            continue;
-        };
-        let Ok(bound) = parsed.get_codec_for_payload_type(pt) else {
-            continue;
-        };
-        let mime = format!("{}/{}", media.media_name.media, bound.name);
-        let channels = bound.encoding_parameters.parse::<u16>().unwrap_or(0);
-        if mime.eq_ignore_ascii_case(&codec.mime_type)
-            && bound.clock_rate == codec.clock_rate
-            && channels == codec.channels
-        {
-            candidates.push((pt, bound.fmtp));
-        }
-    }
-    let normalize = |fmtp: &str| {
-        let mut params = fmtp
-            .split(';')
-            .map(str::trim)
-            .filter(|s| !s.is_empty())
-            // VP8/VP9 max-fr and max-fs describe receiver limits, not a
-            // different bitstream (RFC 7741 6.2, RFC 9628 6.1.2). Firefox
-            // adds these to its answer even when Chromium omitted them.
-            .filter(|s| {
-                !(codec.mime_type.eq_ignore_ascii_case("video/VP8")
-                    || codec.mime_type.eq_ignore_ascii_case("video/VP9"))
-                    || !s
-                        .split_once('=')
-                        .is_some_and(|(key, _)| matches!(key.trim(), "max-fr" | "max-fs"))
-            })
-            .collect::<Vec<_>>();
-        // RFC 9628: an omitted VP9 profile-id means profile 0. Keep other
-        // profiles distinct; accepting any VP9 PT could forward undecodable RTP.
-        if codec.mime_type.eq_ignore_ascii_case("video/VP9")
-            && !params.iter().any(|s| {
-                s.split_once('=')
-                    .is_some_and(|(key, _)| key.trim() == "profile-id")
-            })
-        {
-            params.push("profile-id=0");
-        }
-        params.sort_unstable();
-        params.join(";")
-    };
-    let exact = candidates
-        .iter()
-        .filter(|(_, fmtp)| normalize(fmtp) == normalize(&codec.sdp_fmtp_line))
-        .collect::<Vec<_>>();
-    if let [matched] = exact.as_slice() {
-        return Some(matched.0);
-    }
-    // Opus fmtp is optional receiver tuning, not a different bitstream profile.
-    if codec.mime_type.eq_ignore_ascii_case(MIME_TYPE_OPUS) && candidates.len() == 1 {
-        return Some(candidates[0].0);
-    }
-    None
-}
-
-fn remap_answer_payload(
-    answer: RTCSessionDescription,
-    mid: &str,
-    from: u8,
-    to: u8,
-) -> Result<RTCSessionDescription, webrtc::error::Error> {
-    let mut parsed = answer.unmarshal()?;
-    for media in &mut parsed.media_descriptions {
-        if !media
-            .attributes
-            .iter()
-            .any(|a| a.key == "mid" && a.value.as_deref() == Some(mid))
-        {
-            continue;
-        }
-        for format in &mut media.media_name.formats {
-            if format == &from.to_string() {
-                *format = to.to_string();
-            }
-        }
-        for attribute in &mut media.attributes {
-            if matches!(attribute.key.as_str(), "rtpmap" | "fmtp" | "rtcp-fb")
-                && let Some(value) = &mut attribute.value
-                && let Some((pt, rest)) = value.split_once(' ')
-                && pt == from.to_string()
-            {
-                *value = format!("{to} {rest}");
-            }
-        }
-    }
-    RTCSessionDescription::answer(parsed.marshal())
-}
-
-async fn refresh_subscriber_bindings(
-    pc: &Arc<dyn PeerConnection>,
-    gate: &PeerSdp,
-    answer: Option<&RTCSessionDescription>,
-) {
-    for state in gate.subscriptions.values() {
-        let SubscriptionState::Active(sub) = state else {
-            continue;
-        };
-        let pt = match (answer, sender_mid(pc, &sub.sender).await) {
-            (Some(answer), Some(mid)) => negotiated_payload_type(&answer.sdp, &mid, &sub.codec),
-            _ => None,
-        };
-        // The pinned core can overwrite an existing sender's codec PT with
-        // another leg's mapping while setting a local answer. Reconcile that
-        // sender to its own accepted MID/codec before allowing queued RTP.
-        let pt = if let Some(pt) = pt {
-            limit_forward_codec_with_pt(pc, &sub.sender, &sub.codec, pt).await;
-            sub.sender
-                .get_parameters()
-                .await
-                .ok()
-                .and_then(|parameters| {
-                    parameters
-                        .rtp_parameters
-                        .codecs
-                        .iter()
-                        .any(|codec| {
-                            codec.payload_type == pt
-                                && codec
-                                    .rtp_codec
-                                    .mime_type
-                                    .eq_ignore_ascii_case(&sub.codec.mime_type)
-                        })
-                        .then_some(pt)
-                })
-        } else {
-            None
-        };
-        sub.payload_type.send_replace(pt);
-    }
-}
-
-/// Sending video MSIDs in SDP order, excluding rejected/recvonly/inactive sections.
-fn video_sources(sdp: &str) -> Vec<String> {
-    media_sources(sdp, "video")
-}
-
-fn media_sources(sdp: &str, media_kind: &str) -> Vec<String> {
-    let mut sources = Vec::new();
-    let sections: Vec<Vec<_>> = sdp
-        .split("\nm=")
-        .skip(1)
-        .map(|section| section.lines().map(str::trim).collect())
-        .collect();
-    let bundles: Vec<Vec<_>> = sdp
-        .lines()
-        .filter_map(|line| line.trim().strip_prefix("a=group:BUNDLE "))
-        .map(|group| group.split_whitespace().collect())
-        .collect();
-    for section in sdp.split("\nm=").skip(1) {
-        let mut lines = section.lines().map(str::trim);
-        let Some(media) = lines.next() else {
-            continue;
-        };
-        if media.split_whitespace().next() != Some(media_kind) {
-            continue;
-        }
-        let lines = lines.collect::<Vec<_>>();
-        if media.split_whitespace().nth(1) == Some("0") {
-            let mid = lines.iter().find_map(|line| line.strip_prefix("a=mid:"));
-            let bundled = lines.contains(&"a=bundle-only")
-                && mid.is_some_and(|mid| {
-                    bundles.iter().any(|group| {
-                        group.contains(&mid)
-                            && group.first().is_some_and(|master| {
-                                sections.iter().any(|section| {
-                                    section
-                                        .iter()
-                                        .any(|line| line.strip_prefix("a=mid:") == Some(*master))
-                                        && section
-                                            .first()
-                                            .and_then(|media| media.split_whitespace().nth(1))
-                                            != Some("0")
-                                })
-                            })
+    async fn retire_publication(self: &Arc<Self>, room: &Arc<Room>, pubn: &Arc<Publication>) {
+        let (pubs, subs) = {
+            let data = room.data.lock().await;
+            let mut pubs = vec![pubn.clone()];
+            pubs.extend(
+                data.publications
+                    .values()
+                    .filter(|p| {
+                        !Arc::ptr_eq(p, pubn)
+                            && p.parent
+                                .as_ref()
+                                .is_some_and(|parent| Arc::ptr_eq(parent, pubn))
                     })
-                });
-            if !bundled {
-                continue;
+                    .cloned(),
+            );
+            for p in &pubs {
+                p.grant.stop()
             }
-        }
-        if lines
-            .iter()
-            .any(|l| matches!(*l, "a=recvonly" | "a=inactive"))
+            let subs: Vec<_> = data
+                .peers
+                .values()
+                .flat_map(|p| p.consumers.values())
+                .filter(|s| !s.valid())
+                .cloned()
+                .collect();
+            for s in &subs {
+                s.grant.stop()
+            }
+            (pubs, subs)
+        };
+        self.confirmed_stop_resources(&pubs, &subs).await;
+        // Registry removal, UI events and retired-ID ACKs follow the confirmed
+        // stop of both owned sources and every affected room subscription.
+        let registered = {
+            let mut data = room.data.lock().await;
+            let mut registered = 0;
+            for p in &pubs {
+                if data.publications.remove(&p.id()).is_some() {
+                    registered += 1;
+                }
+                if let Some(peer) = data.peers.get_mut(&p.peer.id)
+                    && peer
+                        .publications
+                        .get(&p.kind)
+                        .is_some_and(|current| Arc::ptr_eq(current, p))
+                {
+                    peer.publications.remove(&p.kind);
+                }
+            }
+            registered
+        };
+        // An idempotent close ACK for an old ID is only legal after its native
+        // pause has been confirmed, never merely after graph invalidation.
+        // Optional telemetry follows stop; its pre-lease-release budget is 10ms.
+        join_all(
+            pubs.iter()
+                .map(|p| self.sample_publication(p, Duration::from_millis(10))),
+        )
+        .await;
         {
-            continue;
-        }
-        for line in lines {
-            let track = if let Some(msid) = line.strip_prefix("a=msid:") {
-                msid.split_whitespace().nth(1)
-            } else if line.starts_with("a=ssrc:") {
-                line.split_once(" msid:")
-                    .and_then(|(_, msid)| msid.split_whitespace().nth(1))
-            } else {
-                None
-            };
-            if let Some(id) = track
-                && !sources.iter().any(|s| s == id)
-            {
-                sources.push(id.into());
+            let mut data = room.data.lock().await;
+            for p in &pubs {
+                if let Some(peer) = data.peers.get_mut(&p.peer.id) {
+                    remember_retired(&mut peer.retired_producers, p.id());
+                }
             }
+        }
+        for sub in subs {
+            self.forget_consumer(room, &sub).await;
+        }
+        self.counters
+            .producers
+            .fetch_sub(registered, Ordering::Relaxed);
+        for p in pubs {
+            self.emit(
+                &p.peer,
+                ServerFrame::ProducerClosed {
+                    producer_id: p.id(),
+                    epoch: p.epoch,
+                },
+            );
         }
     }
-    sources
-}
-
-fn forwarded_stream_id(id: &str) -> String {
-    id.strip_suffix(":sa")
-        .map(|user| format!("{user}:s"))
-        .or_else(|| id.strip_suffix(":la").map(|user| format!("{user}:l")))
-        .unwrap_or_else(|| id.to_owned())
-}
-
-fn source_watch_closed(publication: &Published) -> bool {
-    publication
-        .watch_gate
-        .as_ref()
-        .is_some_and(|intent| !*intent.borrow())
-}
-
-fn spawn_forwarder(
-    local: Arc<TrackLocalStaticRTP>,
-    ssrc: u32,
-    publication: Published,
-    mut binding: watch::Receiver<Option<u8>>,
-    mut closing: watch::Receiver<bool>,
-    stats: Arc<SfuStats>,
-) -> tokio::task::JoinHandle<()> {
-    tokio::spawn(async move {
-        let mut intent = publication.watch_gate.clone();
-        let mut packets = publication.packets.subscribe();
-        let mut stopped = publication.life.stop.subscribe();
-        let mut rtcp_open = true;
-        loop {
-            if *stopped.borrow()
-                || *closing.borrow()
-                || live_expired(&publication.live_deadline)
-                || source_watch_closed(&publication)
-            {
-                break;
-            }
-            tokio::select! {
-                biased;
-                _ = stopped.changed() => break,
-                _ = closing.changed() => break,
-                _ = async {
-                    if let Some(intent) = &mut intent { let _ = intent.changed().await; }
-                    else { std::future::pending::<()>().await; }
-                } => break,
-                _ = tokio::time::sleep_until(live_wakeup(&publication.live_deadline)), if publication.live_deadline.is_some() => {},
-                result = binding.changed() => {
-                    if result.is_err() { break; }
-                    if binding.borrow().is_some() {
-                        rtcp_open = true;
-                        if let Some(kf) = &publication.keyframe { let _ = kf.send(()); }
-                    }
-                }
-                event = local.poll(), if binding.borrow().is_some() && rtcp_open && publication.keyframe.is_some() => {
-                    match event {
-                        Some(TrackLocalEvent::OnRtcpPacket(pkts)) if asks_keyframe(&pkts) => {
-                            debug!(source = %publication.stream_id, "subscriber keyframe feedback");
-                            if let Some(kf) = &publication.keyframe { let _ = kf.send(()); }
-                        }
-                        None => rtcp_open = false,
-                        _ => {}
-                    }
-                }
-                packet = packets.recv() => {
-                    match packet {
-                        Ok(packet) => {
-                            if live_expired(&publication.live_deadline) || source_watch_closed(&publication) { break; }
-                            // PT belongs to the negotiated subscriber leg, not
-                            // the incoming publisher packet. Never enqueue RTP
-                            // before the corresponding SDP answer was accepted.
-                            let payload_type = *binding.borrow();
-                            let Some(payload_type) = payload_type else { continue; };
-                            let n = packet.payload.len() as u64;
-                            let mut packet = prepare_forwarded_rtp(packet, ssrc);
-                            packet.header.payload_type = payload_type;
-                            if local.write_rtp(packet).await.is_ok() {
-                                stats.forwarded_bytes.fetch_add(n, Ordering::Relaxed);
+    async fn remove_publication(
+        self: &Arc<Self>,
+        room: &Arc<Room>,
+        pubn: &Arc<Publication>,
+        withdraw: bool,
+    ) {
+        // Pause before acquiring the lease gate: a native creation holding that
+        // gate must never delay the existing producer beyond its lease deadline.
+        self.retire_publication(room, pubn).await;
+        if pubn.kind == SourceKind::Live
+            && let Some(live) = &pubn.live
+        {
+            let _lease = pubn.peer.lease_gate.lock().await;
+            let release = {
+                let mut data = room.data.lock().await;
+                match data.peers.get_mut(&pubn.peer.id) {
+                    Some(p) => {
+                        let same = p
+                            .publications
+                            .get(&SourceKind::Live)
+                            .and_then(|p| p.live.as_ref())
+                            .is_some_and(|l| l.nonce == live.nonce);
+                        if withdraw && !same && !p.withdrawn_live.contains(&live.nonce) {
+                            if p.withdrawn_live.len() == 64 {
+                                p.withdrawn_live.pop_front();
                             }
+                            p.withdrawn_live.push_back(live.nonce);
                         }
-                        Err(broadcast::error::RecvError::Lagged(_)) => {},
-                        Err(broadcast::error::RecvError::Closed) => break,
+                        !same
                     }
+                    None => true,
+                }
+            };
+            if release {
+                crate::live::release(&self.redis, live.nonce, pubn.peer.id.0).await;
+                if withdraw {
+                    self.emit(&pubn.peer, ServerFrame::live_withdrawn(live.nonce));
                 }
             }
         }
-    })
-}
-
-fn handle_publisher_event(
-    packets: &broadcast::Sender<rtp::Packet>,
-    stats: &SfuStats,
-    rtp: &mut PublisherRtpStats,
-    evt: Option<TrackRemoteEvent>,
-) -> bool {
-    match evt {
-        Some(TrackRemoteEvent::OnRtpPacket(packet)) => {
-            rtp.observe(&packet, stats);
-            let _ = packets.send(packet);
-            true
-        }
-        Some(TrackRemoteEvent::OnEnded | TrackRemoteEvent::OnError) | None => false,
-        Some(_) => true,
     }
-}
-
-/// How far behind the highest sequence a packet can still fill a gap.
-/// Gaps that age out of this window are counted as loss. Reordering inside
-/// the window is not.
-const RTP_REORDER_WINDOW: u16 = 64;
-
-#[derive(Debug)]
-struct PublisherRtpStats {
-    clock_rate: f64,
-    /// Highest sequence observed. Late packets do not move this backward.
-    max_seq: Option<u16>,
-    /// Sequences behind `max_seq` that have not arrived yet, still inside
-    /// [`RTP_REORDER_WINDOW`].
-    missing: HashSet<u16>,
-    last_arrival: Option<Instant>,
-    last_timestamp: Option<u32>,
-    jitter_seconds: f64,
-}
-
-impl PublisherRtpStats {
-    fn new(clock_rate: u32) -> Self {
-        Self {
-            clock_rate: clock_rate as f64,
-            max_seq: None,
-            missing: HashSet::new(),
-            last_arrival: None,
-            last_timestamp: None,
-            jitter_seconds: 0.0,
-        }
-    }
-
-    fn observe(&mut self, packet: &rtp::Packet, stats: &SfuStats) {
-        stats.rtp_packets_total.fetch_add(1, Ordering::Relaxed);
-        self.observe_sequence(packet.header.sequence_number, stats);
-        self.observe_jitter(packet.header.timestamp, stats);
-    }
-
-    /// Wrap-safe high-water mark. A packet behind the high-water mark fills
-    /// a provisional gap; it is loss only after it leaves the reorder window.
-    fn observe_sequence(&mut self, seq: u16, stats: &SfuStats) {
-        let Some(max_seq) = self.max_seq else {
-            self.max_seq = Some(seq);
+    pub async fn leave(self: &Arc<Self>, id: PeerId, channel: Uuid) {
+        let Ok(room) = self.room(channel).await else {
             return;
         };
-        if seq == max_seq {
-            return;
-        }
-        let ahead = seq.wrapping_sub(max_seq);
-        if ahead > 0 && ahead < 0x8000 {
-            let gap = ahead - 1;
-            if gap > RTP_REORDER_WINDOW {
-                let immediate = u64::from(gap - RTP_REORDER_WINDOW);
-                stats.rtp_lost_total.fetch_add(immediate, Ordering::Relaxed);
-                self.expire_missing(seq, stats);
-                for behind in 1..=RTP_REORDER_WINDOW {
-                    self.missing.insert(seq.wrapping_sub(behind));
-                }
-            } else {
-                let mut cursor = max_seq.wrapping_add(1);
-                while cursor != seq {
-                    self.missing.insert(cursor);
-                    cursor = cursor.wrapping_add(1);
-                }
-                self.expire_missing(seq, stats);
+        let (peer, pubs, subs) = {
+            let data = room.data.lock().await;
+            let Some(p) = data.peers.get(&id) else { return };
+            p.peer.grant.stop();
+            for p in p.publications.values() {
+                p.grant.stop()
             }
-            self.max_seq = Some(seq);
-            return;
+            for s in p.consumers.values() {
+                s.grant.stop()
+            }
+            (
+                p.peer.clone(),
+                p.publications.values().cloned().collect::<Vec<_>>(),
+                p.consumers.values().cloned().collect::<Vec<_>>(),
+            )
+        };
+        self.confirmed_stop_resources(&pubs, &subs).await;
+        for p in &pubs {
+            self.retire_publication(&room, p).await;
         }
-        let behind = max_seq.wrapping_sub(seq);
-        if behind == 0 || behind > RTP_REORDER_WINDOW {
-            return;
+        for sub in subs {
+            self.forget_consumer(&room, &sub).await;
         }
-        self.missing.remove(&seq);
+        let _lease = peer.lease_gate.lock().await;
+        for p in &pubs {
+            if p.kind == SourceKind::Live
+                && let Some(live) = &p.live
+            {
+                crate::live::release(&self.redis, live.nonce, id.0).await;
+            }
+        }
+        let transports: Vec<_> = room
+            .data
+            .lock()
+            .await
+            .peers
+            .get(&id)
+            .map(|p| p.transports.values().cloned().collect())
+            .unwrap_or_default();
+        // Sources are stopped and Live leases released above. Final transport
+        // samples are optional and concurrent, bounded to 500ms total.
+        join_all(transports.iter().map(|t| self.sample_transport(t))).await;
+        if let Some(p) = room.data.lock().await.peers.remove(&id) {
+            self.counters
+                .transports
+                .fetch_sub(p.transports.len(), Ordering::Relaxed);
+            self.counters.peers.fetch_sub(1, Ordering::Relaxed);
+        }
+        self.remove_empty_room(channel, &room).await;
     }
-
-    fn expire_missing(&mut self, max_seq: u16, stats: &SfuStats) {
-        let mut lost = 0u64;
-        self.missing.retain(|seq| {
-            let behind = max_seq.wrapping_sub(*seq);
-            if behind > RTP_REORDER_WINDOW {
-                lost += 1;
-                false
+    async fn remove_empty_room(&self, channel: Uuid, room: &Arc<Room>) {
+        let mut rooms = self.rooms.lock().await;
+        if room.joining.load(Ordering::SeqCst) == 0
+            && room.data.lock().await.peers.is_empty()
+            && rooms.get(&channel).is_some_and(|r| Arc::ptr_eq(r, room))
+        {
+            rooms.remove(&channel);
+            self.counters.rooms.fetch_sub(1, Ordering::Relaxed);
+        }
+    }
+    pub async fn shutdown(self: &Arc<Self>) {
+        self.draining.store(true, Ordering::SeqCst);
+        let rooms: Vec<_> = self
+            .rooms
+            .lock()
+            .await
+            .iter()
+            .map(|(c, r)| (*c, r.clone()))
+            .collect();
+        for (channel, room) in rooms {
+            let peers: Vec<_> = room
+                .data
+                .lock()
+                .await
+                .peers
+                .values()
+                .map(|p| p.peer.clone())
+                .collect();
+            for peer in peers {
+                peer.grant.stop();
+                self.emit(&peer, ServerFrame::error("gone"));
+                self.leave(peer.id, channel).await;
+            }
+        }
+    }
+    fn emit(self: &Arc<Self>, peer: &Arc<Peer>, frame: ServerFrame) {
+        if peer.out.try_send(frame).is_err() && peer.grant.stop_once() {
+            let weak = Arc::downgrade(self);
+            let id = peer.id;
+            let channel = peer.authority.claim.c;
+            tokio::spawn(async move {
+                if let Some(sfu) = weak.upgrade() {
+                    sfu.leave(id, channel).await;
+                }
+            });
+        }
+    }
+    fn observe_producer(self: &Arc<Self>, room: &Arc<Room>, pubn: &Arc<Publication>) {
+        let weak = Arc::downgrade(self);
+        let room = Arc::downgrade(room);
+        let publication = Arc::downgrade(pubn);
+        let runtime = tokio::runtime::Handle::current();
+        pubn.producer
+            .on_transport_close(move || {
+                if let Some(p) = publication.upgrade() {
+                    p.grant.stop()
+                }
+                runtime.spawn(async move {
+                    if let (Some(sfu), Some(room), Some(p)) =
+                        (weak.upgrade(), room.upgrade(), publication.upgrade())
+                    {
+                        sfu.remove_publication(&room, &p, true).await;
+                    }
+                });
+            })
+            .detach();
+    }
+    fn observe_consumer(self: &Arc<Self>, room: &Arc<Room>, sub: &Arc<Subscription>) {
+        for paused in [true, false] {
+            let weak = Arc::downgrade(self);
+            let subweak = Arc::downgrade(sub);
+            let runtime = tokio::runtime::Handle::current();
+            let callback = move || {
+                let weak = weak.clone();
+                let subweak = subweak.clone();
+                runtime.spawn(async move {
+                    if let (Some(sfu), Some(s)) = (weak.upgrade(), subweak.upgrade())
+                        && s.grant.valid()
+                    {
+                        sfu.emit(
+                            &s.peer,
+                            ServerFrame::ConsumerState {
+                                consumer_id: s.consumer.id().to_string(),
+                                generation: s.generation,
+                                paused: s.consumer.paused() || s.consumer.producer_paused(),
+                            },
+                        );
+                    }
+                });
+            };
+            if paused {
+                sub.consumer.on_producer_pause(callback).detach()
             } else {
-                true
+                sub.consumer.on_producer_resume(callback).detach()
+            }
+        }
+        let weak = Arc::downgrade(self);
+        let subweak = Arc::downgrade(sub);
+        let runtime = tokio::runtime::Handle::current();
+        sub.consumer
+            .on_layers_change(move |layers| {
+                let weak = weak.clone();
+                let subweak = subweak.clone();
+                let layers = *layers;
+                runtime.spawn(async move {
+                    if let (Some(sfu), Some(s)) = (weak.upgrade(), subweak.upgrade())
+                        && s.valid()
+                    {
+                        sfu.emit(
+                            &s.peer,
+                            ServerFrame::Layers {
+                                consumer_id: s.consumer.id().to_string(),
+                                generation: s.generation,
+                                spatial_layer: layers.map(|l| l.spatial_layer),
+                                temporal_layer: layers.and_then(|l| l.temporal_layer),
+                            },
+                        );
+                    }
+                });
+            })
+            .detach();
+        let weak = Arc::downgrade(self);
+        let subweak = Arc::downgrade(sub);
+        let room = Arc::downgrade(room);
+        let runtime = tokio::runtime::Handle::current();
+        sub.consumer
+            .on_close(move || {
+                if let Some(s) = subweak.upgrade() {
+                    s.grant.stop()
+                }
+                runtime.spawn(async move {
+                    if let (Some(sfu), Some(room), Some(s)) =
+                        (weak.upgrade(), room.upgrade(), subweak.upgrade())
+                    {
+                        sfu.remove_consumer(&room, &s).await;
+                    }
+                });
+            })
+            .detach();
+    }
+    fn watch_authority(weak: Weak<Self>, channel: Uuid, peer: Weak<Peer>) {
+        tokio::spawn(async move {
+            let mut interval = tokio::time::interval(Duration::from_secs(1));
+            interval.set_missed_tick_behavior(tokio::time::MissedTickBehavior::Skip);
+            loop {
+                interval.tick().await;
+                let (Some(sfu), Some(peer)) = (weak.upgrade(), peer.upgrade()) else {
+                    break;
+                };
+                if !peer.grant.valid() {
+                    break;
+                }
+                if !sfu.ready()
+                    || !crate::ticket::validate_authority(&sfu.redis, &peer.authority)
+                        .await
+                        .unwrap_or(false)
+                {
+                    sfu.emit(&peer, ServerFrame::error("unauthorized"));
+                    sfu.leave(peer.id, channel).await;
+                    break;
+                }
+                let Ok(room) = sfu.room(channel).await else {
+                    break;
+                };
+                let pubn = room
+                    .data
+                    .lock()
+                    .await
+                    .peers
+                    .get(&peer.id)
+                    .and_then(|p| p.publications.get(&SourceKind::Live))
+                    .cloned();
+                if let Some(pubn) = pubn {
+                    let _lease = peer.lease_gate.lock().await;
+                    if !pubn.grant.valid() {
+                        continue;
+                    }
+                    let Some(live) = &pubn.live else { continue };
+                    let checked = Instant::now();
+                    if let Some(ttl) = crate::live::validate_and_acquire(
+                        &sfu.redis,
+                        &peer.authority,
+                        live.nonce,
+                        peer.id.0,
+                    )
+                    .await
+                    .unwrap_or(None)
+                        && pubn.grant.valid()
+                        && checked + ttl > Instant::now() + LIVE_STOP_MARGIN
+                    {
+                        *live.deadline.lock().unwrap() = checked + ttl;
+                        live.changed.notify_one();
+                        continue;
+                    }
+                    drop(_lease);
+                    sfu.remove_publication(&room, &pubn, true).await;
+                }
             }
         });
-        if lost > 0 {
-            stats.rtp_lost_total.fetch_add(lost, Ordering::Relaxed);
-        }
     }
-
-    /// RFC 3550 interarrival jitter. Timestamp deltas stay signed so a late
-    /// packet is a small negative step, including across the 32-bit wrap.
-    fn observe_jitter(&mut self, ts: u32, stats: &SfuStats) {
-        if self.clock_rate <= 0.0 {
-            return;
+    fn watch_live(weak: Weak<Self>, room: Weak<Room>, pubn: Weak<Publication>) {
+        tokio::spawn(async move {
+            loop {
+                let Some(p) = pubn.upgrade() else { break };
+                if !p.grant.valid() {
+                    break;
+                }
+                let Some(live) = p.live.clone() else { break };
+                let deadline = *live.deadline.lock().unwrap();
+                let stop_at = deadline.checked_sub(LIVE_STOP_MARGIN).unwrap_or(deadline);
+                drop(p);
+                tokio::select! {_=tokio::time::sleep_until(stop_at.into())=>{},_=live.changed.notified()=>continue}
+                let (Some(sfu), Some(room), Some(p)) =
+                    (weak.upgrade(), room.upgrade(), pubn.upgrade())
+                else {
+                    break;
+                };
+                if Instant::now() + LIVE_STOP_MARGIN < *live.deadline.lock().unwrap() {
+                    continue;
+                }
+                sfu.remove_publication(&room, &p, true).await;
+                break;
+            }
+        });
+    }
+    fn watch_stats(weak: Weak<Self>) {
+        tokio::spawn(async move {
+            let mut interval = tokio::time::interval(Duration::from_secs(1));
+            interval.set_missed_tick_behavior(tokio::time::MissedTickBehavior::Skip);
+            loop {
+                interval.tick().await;
+                let Some(sfu) = weak.upgrade() else { break };
+                let rooms: Vec<_> = sfu.rooms.lock().await.values().cloned().collect();
+                let mut transports = Vec::new();
+                let mut publications = Vec::new();
+                for room in rooms {
+                    let data = room.data.lock().await;
+                    transports.extend(
+                        data.peers
+                            .values()
+                            .flat_map(|p| p.transports.values())
+                            .cloned(),
+                    );
+                    publications.extend(data.publications.values().cloned());
+                }
+                let mut ok = false;
+                for transport in transports {
+                    ok |= sfu.sample_transport(&transport).await;
+                }
+                sfu.counters.stats_available.store(ok, Ordering::Relaxed);
+                let mut input_available = false;
+                let mut jitter_microseconds = 0;
+                for p in publications {
+                    if let Some(jitter) = sfu.sample_publication(&p, STOP_TIMEOUT).await {
+                        input_available = true;
+                        jitter_microseconds = jitter_microseconds.max(jitter);
+                    }
+                }
+                sfu.counters
+                    .jitter_microseconds
+                    .store(jitter_microseconds, Ordering::Relaxed);
+                sfu.counters
+                    .input_available
+                    .store(input_available, Ordering::Relaxed);
+            }
+        });
+    }
+    async fn sample_publication(&self, p: &Publication, budget: Duration) -> Option<u64> {
+        let Ok(Ok(stats)) = tokio::time::timeout(budget, p.producer.get_stats()).await else {
+            return None;
+        };
+        if stats.is_empty() {
+            return None;
         }
-        let now = Instant::now();
-        if let (Some(last_arrival), Some(last_timestamp)) = (self.last_arrival, self.last_timestamp)
-        {
-            let arrival_delta = now.saturating_duration_since(last_arrival).as_secs_f64();
-            let rtp_ticks = ts.wrapping_sub(last_timestamp) as i32;
-            let rtp_delta = f64::from(rtp_ticks) / self.clock_rate;
-            let d = (arrival_delta - rtp_delta).abs();
-            self.jitter_seconds += (d - self.jitter_seconds) / 16.0;
-            let jitter_micros = (self.jitter_seconds * 1_000_000.0).round().max(0.0) as u64;
-            stats
-                .rtp_jitter_micros
-                .store(jitter_micros, Ordering::Relaxed);
+        let mut jitter_microseconds = 0;
+        for stat in stats {
+            let mut samples = p.packet_samples.lock().unwrap();
+            let old = samples.entry(stat.ssrc).or_default();
+            self.counters
+                .rtp_received
+                .fetch_add(stat.packet_count.saturating_sub(*old), Ordering::Relaxed);
+            *old = (*old).max(stat.packet_count);
+            let rate = if stat.kind == MediaKind::Audio {
+                48000
+            } else {
+                90000
+            };
+            jitter_microseconds =
+                jitter_microseconds.max(u64::from(stat.jitter) * 1_000_000 / rate);
         }
-        self.last_arrival = Some(now);
-        self.last_timestamp = Some(ts);
+        Some(jitter_microseconds)
+    }
+    async fn sample_transport(&self, transport: &WebRtcTransport) -> bool {
+        let Ok(Ok(stats)) = tokio::time::timeout(STOP_TIMEOUT, transport.get_stats()).await else {
+            return false;
+        };
+        let available = !stats.is_empty();
+        for stat in stats {
+            let sample = transport
+                .app_data()
+                .downcast_ref::<AtomicU64>()
+                .expect("gateway transport measurement");
+            let old = sample.fetch_max(stat.rtp_bytes_sent, Ordering::SeqCst);
+            self.counters
+                .rtp_sent
+                .fetch_add(stat.rtp_bytes_sent.saturating_sub(old), Ordering::Relaxed);
+        }
+        available
     }
 }
 
-async fn request_keyframe(track: &Arc<dyn TrackRemote>, media_ssrc: u32) {
-    debug!(media_ssrc, "request publisher keyframe");
-    let pli = PictureLossIndication {
-        sender_ssrc: 0,
-        media_ssrc,
-    };
-    if track.write_rtcp(vec![Box::new(pli)]).await.is_err() {
-        debug!(media_ssrc, "pli to publisher failed");
+fn remember_retired(ids: &mut VecDeque<String>, id: String) {
+    if ids.contains(&id) {
+        return;
+    }
+    if ids.len() == 256 {
+        ids.pop_front();
+    }
+    ids.push_back(id);
+}
+
+fn receives(peer: &PeerData, pubn: &Publication) -> Result<Option<Arc<Grant>>, SfuError> {
+    let owner = pubn.peer.authority.claim.u;
+    if !peer.peer.grant.valid() || !pubn.valid() || owner == peer.peer.authority.claim.u {
+        return Err(SfuError::Forbidden);
+    }
+    match pubn.kind {
+        SourceKind::Mic => Ok(None),
+        SourceKind::Camera if peer.peer.watch_user.is_none() => Ok(None),
+        SourceKind::Live | SourceKind::LiveAudio if peer.peer.watch_user == Some(owner) => Ok(None),
+        SourceKind::Screen | SourceKind::ScreenAudio if peer.peer.watch_user.is_none() => peer
+            .watches
+            .get(&(owner, WatchKind::Screen))
+            .filter(|g| g.valid())
+            .cloned()
+            .map(Some)
+            .ok_or(SfuError::Forbidden),
+        SourceKind::Live | SourceKind::LiveAudio if peer.peer.watch_user.is_none() => peer
+            .watches
+            .get(&(owner, WatchKind::Live))
+            .filter(|g| g.valid())
+            .cloned()
+            .map(Some)
+            .ok_or(SfuError::Forbidden),
+        _ => Err(SfuError::Forbidden),
     }
 }
-
-fn asks_keyframe(packets: &[Box<dyn rtcp::Packet>]) -> bool {
-    packets.iter().any(|packet| {
-        packet
-            .as_any()
-            .downcast_ref::<PictureLossIndication>()
-            .is_some()
-            || packet.as_any().downcast_ref::<FullIntraRequest>().is_some()
-    })
-}
-
-/// Register SFU codecs: Opus-only audio, full default video set from rtc 0.20.5.
-///
-/// webrtc-rs 0.20 `set_codec_preferences_from_remote_description` walks the
-/// remote offer codecs with `.rev()` and pushes matches, which *reverses*
-/// preference order. Chrome offers `111 … 8` (Opus first); the SFU answer
-/// became `m=audio … 8 0 9 111` (PCMA first) and stats showed audio/PCMA
-/// ~64 kbps — root cause of #53. Omitting PCMA/PCMU/G722 makes the reversed
-/// list still Opus-only. Video registrations mirror `MediaEngine::register_default_codecs`
-/// (VP8/VP9/H264 variants/AV1/H265 + RTX) so camera/screenshare parity is kept.
-fn register_sfu_codecs(media: &mut MediaEngine) -> webrtc::error::Result<()> {
-    media.register_codec(
-        RTCRtpCodecParameters {
-            rtp_codec: RTCRtpCodec {
-                mime_type: MIME_TYPE_OPUS.to_owned(),
-                clock_rate: 48000,
-                channels: 2,
-                // Accept original/music stereo and continuous audio. The SFU forwards
-                // packets without encoding, so a global speech DTX preference would
-                // also affect music publishers. No application bitrate ceiling.
-                sdp_fmtp_line: "minptime=10;useinbandfec=1;stereo=1;sprop-stereo=1;usedtx=0"
-                    .to_owned(),
-                rtcp_feedback: vec![],
-            },
-            payload_type: 111,
-        },
-        RtpCodecKind::Audio,
-    )?;
-
-    let video_rtcp_feedback = vec![
-        RTCPFeedback {
-            typ: "goog-remb".to_owned(),
-            parameter: String::new(),
-        },
-        RTCPFeedback {
-            typ: "ccm".to_owned(),
-            parameter: "fir".to_owned(),
-        },
-        RTCPFeedback {
-            typ: "nack".to_owned(),
-            parameter: String::new(),
-        },
-        RTCPFeedback {
-            typ: "nack".to_owned(),
-            parameter: "pli".to_owned(),
-        },
-    ];
-
-    // Mirror rtc 0.20.5 MediaEngine::register_default_codecs video + RTX PTs.
-    let rtx = |payload_type: u8, apt: u8| RTCRtpCodecParameters {
-        rtp_codec: RTCRtpCodec {
-            mime_type: MIME_TYPE_RTX.to_owned(),
-            clock_rate: 90000,
-            channels: 0,
-            sdp_fmtp_line: format!("apt={apt}"),
-            rtcp_feedback: vec![],
-        },
-        payload_type,
-    };
-
-    for codec in [
-        RTCRtpCodecParameters {
-            rtp_codec: RTCRtpCodec {
-                mime_type: MIME_TYPE_VP8.to_owned(),
-                clock_rate: 90000,
-                channels: 0,
-                sdp_fmtp_line: String::new(),
-                rtcp_feedback: video_rtcp_feedback.clone(),
-            },
-            payload_type: 96,
-        },
-        rtx(97, 96),
-        RTCRtpCodecParameters {
-            rtp_codec: RTCRtpCodec {
-                mime_type: MIME_TYPE_VP9.to_owned(),
-                clock_rate: 90000,
-                channels: 0,
-                sdp_fmtp_line: "profile-id=0".to_owned(),
-                rtcp_feedback: video_rtcp_feedback.clone(),
-            },
-            payload_type: 98,
-        },
-        rtx(99, 98),
-        RTCRtpCodecParameters {
-            rtp_codec: RTCRtpCodec {
-                mime_type: MIME_TYPE_VP9.to_owned(),
-                clock_rate: 90000,
-                channels: 0,
-                sdp_fmtp_line: "profile-id=1".to_owned(),
-                rtcp_feedback: video_rtcp_feedback.clone(),
-            },
-            payload_type: 100,
-        },
-        rtx(101, 100),
-        RTCRtpCodecParameters {
-            rtp_codec: RTCRtpCodec {
-                mime_type: MIME_TYPE_H264.to_owned(),
-                clock_rate: 90000,
-                channels: 0,
-                sdp_fmtp_line:
-                    "level-asymmetry-allowed=1;packetization-mode=1;profile-level-id=42001f"
-                        .to_owned(),
-                rtcp_feedback: video_rtcp_feedback.clone(),
-            },
-            payload_type: 102,
-        },
-        rtx(103, 102),
-        RTCRtpCodecParameters {
-            rtp_codec: RTCRtpCodec {
-                mime_type: MIME_TYPE_H264.to_owned(),
-                clock_rate: 90000,
-                channels: 0,
-                sdp_fmtp_line:
-                    "level-asymmetry-allowed=1;packetization-mode=0;profile-level-id=42001f"
-                        .to_owned(),
-                rtcp_feedback: video_rtcp_feedback.clone(),
-            },
-            payload_type: 127,
-        },
-        rtx(104, 127),
-        RTCRtpCodecParameters {
-            rtp_codec: RTCRtpCodec {
-                mime_type: MIME_TYPE_H264.to_owned(),
-                clock_rate: 90000,
-                channels: 0,
-                sdp_fmtp_line:
-                    "level-asymmetry-allowed=1;packetization-mode=1;profile-level-id=42e01f"
-                        .to_owned(),
-                rtcp_feedback: video_rtcp_feedback.clone(),
-            },
-            payload_type: 125,
-        },
-        rtx(105, 125),
-        RTCRtpCodecParameters {
-            rtp_codec: RTCRtpCodec {
-                mime_type: MIME_TYPE_H264.to_owned(),
-                clock_rate: 90000,
-                channels: 0,
-                sdp_fmtp_line:
-                    "level-asymmetry-allowed=1;packetization-mode=0;profile-level-id=42e01f"
-                        .to_owned(),
-                rtcp_feedback: video_rtcp_feedback.clone(),
-            },
-            payload_type: 108,
-        },
-        rtx(109, 108),
-        RTCRtpCodecParameters {
-            rtp_codec: RTCRtpCodec {
-                mime_type: MIME_TYPE_H264.to_owned(),
-                clock_rate: 90000,
-                channels: 0,
-                sdp_fmtp_line:
-                    "level-asymmetry-allowed=1;packetization-mode=0;profile-level-id=42001f"
-                        .to_owned(),
-                rtcp_feedback: video_rtcp_feedback.clone(),
-            },
-            payload_type: 127,
-        },
-        RTCRtpCodecParameters {
-            rtp_codec: RTCRtpCodec {
-                mime_type: MIME_TYPE_H264.to_owned(),
-                clock_rate: 90000,
-                channels: 0,
-                sdp_fmtp_line:
-                    "level-asymmetry-allowed=1;packetization-mode=1;profile-level-id=640032"
-                        .to_owned(),
-                rtcp_feedback: video_rtcp_feedback.clone(),
-            },
-            payload_type: 123,
-        },
-        rtx(124, 123),
-        RTCRtpCodecParameters {
-            rtp_codec: RTCRtpCodec {
-                mime_type: MIME_TYPE_AV1.to_owned(),
-                clock_rate: 90000,
-                channels: 0,
-                sdp_fmtp_line: "profile-id=0".to_owned(),
-                rtcp_feedback: video_rtcp_feedback.clone(),
-            },
-            payload_type: 41,
-        },
-        rtx(106, 41),
-        RTCRtpCodecParameters {
-            rtp_codec: RTCRtpCodec {
-                mime_type: MIME_TYPE_HEVC.to_owned(),
-                clock_rate: 90000,
-                channels: 0,
-                sdp_fmtp_line: String::new(),
-                rtcp_feedback: video_rtcp_feedback,
-            },
-            payload_type: 126,
-        },
-        rtx(107, 126),
-    ] {
-        media.register_codec(codec, RtpCodecKind::Video)?;
+fn validate_parameters(kind: SourceKind, rtp: &RtpParameters) -> Result<(), SfuError> {
+    if rtp.codecs.is_empty()
+        || rtp.codecs.len() > 16
+        || rtp.encodings.len() > 2
+        || rtp.header_extensions.len() > 32
+    {
+        return Err(SfuError::BadAnnounce);
+    }
+    let first = serde_json::to_value(&rtp.codecs[0]).map_err(SfuError::negotiation)?;
+    let mime = first["mimeType"]
+        .as_str()
+        .unwrap_or_default()
+        .to_ascii_lowercase();
+    if kind.is_video() {
+        if !matches!(
+            mime.as_str(),
+            "video/vp8" | "video/vp9" | "video/h264" | "video/av1"
+        ) {
+            return Err(SfuError::UnsupportedCodec);
+        }
+    } else if mime != "audio/opus" || rtp.encodings.len() > 1 {
+        return Err(SfuError::UnsupportedCodec);
     }
     Ok(())
 }
-
-/// Chrome always attaches `mid` / transport-cc / audio-level using the
-/// *publisher* extmap ids. webrtc 0.20 `write_rtp` rejects a packet if any
-/// extension id is not negotiated on this sender — which they are not, on
-/// the subscriber leg. Strip them; SSRC is rewritten for the new track.
-fn prepare_forwarded_rtp(mut packet: rtp::Packet, ssrc: u32) -> rtp::Packet {
-    packet.header.ssrc = ssrc;
-    packet.header.csrc.clear();
-    for id in packet.header.get_extension_ids() {
-        let _ = packet.header.del_extension(id);
+fn preferred_layer(h: u16, congested: bool, height: u16, layers: u8) -> u8 {
+    if layers <= 1 || congested || h == 0 || h <= height.saturating_div(4).max(1) {
+        0
+    } else {
+        layers - 1
     }
-    if packet.header.extensions.is_empty() {
-        packet.header.extension = false;
-        packet.header.extensions_padding = 0;
-    }
-    packet
 }
-
-fn saturating_dec(atom: &AtomicU64) {
-    let mut current = atom.load(Ordering::Relaxed);
-    while current > 0 {
-        match atom.compare_exchange_weak(current, current - 1, Ordering::Relaxed, Ordering::Relaxed)
-        {
-            Ok(_) => return,
-            Err(seen) => current = seen,
-        }
+fn router_codecs() -> Result<Vec<RtpCodecCapability>, SfuError> {
+    let feedback = json!([{"type":"nack"},{"type":"nack","parameter":"pli"},{"type":"ccm","parameter":"fir"},{"type":"goog-remb"},{"type":"transport-cc"}]);
+    let mut codecs = vec![
+        json!({"kind":"audio","mimeType":"audio/opus","clockRate":48000,"channels":2,"rtcpFeedback":[{"type":"nack"},{"type":"transport-cc"}]}),
+        json!({"kind":"video","mimeType":"video/VP8","clockRate":90000,"rtcpFeedback":feedback}),
+    ];
+    for profile in [0, 1] {
+        codecs.push(json!({"kind":"video","mimeType":"video/VP9","clockRate":90000,"parameters":{"profile-id":profile},"rtcpFeedback":feedback}));
     }
+    for (profile, mode) in [
+        ("42e01f", 1),
+        ("42001f", 1),
+        ("42e01f", 0),
+        ("42001f", 0),
+        ("640032", 1),
+    ] {
+        codecs.push(json!({"kind":"video","mimeType":"video/H264","clockRate":90000,"parameters":{"profile-level-id":profile,"packetization-mode":mode,"level-asymmetry-allowed":1},"rtcpFeedback":feedback}));
+    }
+    codecs.push(json!({"kind":"video","mimeType":"video/AV1","clockRate":90000,"parameters":{"profile":0},"rtcpFeedback":feedback}));
+    serde_json::from_value(Value::Array(codecs)).map_err(SfuError::negotiation)
+}
+async fn native<T, E: std::fmt::Display>(
+    command: impl Future<Output = Result<T, E>>,
+) -> Result<T, SfuError> {
+    match tokio::time::timeout(COMMAND_TIMEOUT, command).await {
+        Ok(r) => r.map_err(SfuError::negotiation),
+        Err(_) => fail_closed("native command timed out with an unconfirmed result"),
+    }
+}
+async fn stop_gate(gate: &Mutex<()>) -> tokio::sync::MutexGuard<'_, ()> {
+    match tokio::time::timeout(STOP_TIMEOUT, gate.lock()).await {
+        Ok(g) => g,
+        Err(_) => fail_closed("native operation blocked revocation"),
+    }
+}
+async fn stop_batch<F: Future<Output = ()>>(
+    jobs: impl IntoIterator<Item = F>,
+) -> Result<(), tokio::time::error::Elapsed> {
+    tokio::time::timeout(
+        STOP_TIMEOUT,
+        stream::iter(jobs).for_each_concurrent(Some(STOP_CONCURRENCY), |job| async move {
+            // Keep the deadline observable even when many already-stopped
+            // resources can finish without a native await.
+            tokio::task::yield_now().await;
+            job.await;
+        }),
+    )
+    .await
+}
+async fn stop_producer(p: &Producer, dead: &AtomicBool) {
+    if dead.load(Ordering::SeqCst) || p.closed() || p.paused() {
+        return;
+    }
+    match tokio::time::timeout(STOP_TIMEOUT, p.pause()).await {
+        Ok(Ok(())) if p.paused() => {}
+        _ => fail_closed("native producer pause unconfirmed"),
+    }
+}
+async fn stop_consumer(c: &Consumer, dead: &AtomicBool) {
+    if dead.load(Ordering::SeqCst) || c.closed() || c.paused() {
+        return;
+    }
+    match tokio::time::timeout(STOP_TIMEOUT, c.pause()).await {
+        Ok(Ok(())) if c.paused() => {}
+        _ => fail_closed("native consumer pause unconfirmed"),
+    }
+}
+fn fail_closed(reason: &'static str) -> ! {
+    error!(
+        reason,
+        "terminating media service to stop native forwarding"
+    );
+    std::process::exit(1)
 }
 
 #[cfg(test)]
 mod tests {
-    use super::{
-        MIME_TYPE_OPUS, RTCRtpCodec, RTCRtpCodingParameters, RTCRtpEncodingParameters,
-        RtpCodecKind, Sfu, prepare_forwarded_rtp,
+    use super::{STOP_CONCURRENCY, stop_batch};
+    use std::sync::{
+        Arc,
+        atomic::{AtomicUsize, Ordering},
     };
-    use rtc::rtp::packet::Packet;
-    use std::sync::Arc;
 
-    #[test]
-    fn bundle_only_video_uses_its_live_bundle_transport() {
-        let sdp = "v=0\r\na=group:BUNDLE audio camera screen removed\r\nm=audio 9 UDP/TLS/RTP/SAVPF 111\r\na=mid:audio\r\nm=video 0 UDP/TLS/RTP/SAVPF 96\r\na=mid:camera\r\na=bundle-only\r\na=sendrecv\r\na=msid:camera-stream camera-track\r\nm=video 0 UDP/TLS/RTP/SAVPF 96\r\na=mid:screen\r\na=bundle-only\r\na=sendonly\r\na=msid:screen-stream screen-track\r\nm=video 0 UDP/TLS/RTP/SAVPF 96\r\na=mid:removed\r\na=msid:removed-stream removed-track\r\n";
-        assert_eq!(super::video_sources(sdp), ["camera-track", "screen-track"]);
-        assert!(
-            super::video_sources(
-                &sdp.replace("a=group:BUNDLE audio camera screen removed\r\n", "")
-            )
-            .is_empty()
-        );
-        assert!(super::video_sources(&sdp.replace("m=audio 9", "m=audio 0")).is_empty());
-        assert_eq!(
-            super::video_sources(&sdp.replace("a=sendrecv", "a=recvonly")),
-            ["screen-track"]
-        );
-    }
-
-    #[test]
-    fn payload_binding_uses_exact_mid_and_codec_profile() {
-        let sdp = "v=0\r\no=- 0 0 IN IP4 127.0.0.1\r\ns=-\r\nt=0 0\r\nm=video 9 UDP/TLS/RTP/SAVPF 96 98 99\r\na=mid:first\r\na=rtpmap:96 VP8/90000\r\na=rtpmap:98 VP9/90000\r\na=fmtp:98 profile-id=0\r\na=rtpmap:99 VP9/90000\r\na=fmtp:99 profile-id=2\r\nm=video 9 UDP/TLS/RTP/SAVPF 41 42\r\na=mid:second\r\na=rtpmap:41 VP9/90000\r\na=fmtp:41 profile-id=2\r\na=rtpmap:42 VP9/90000\r\na=fmtp:42 profile-id=0\r\n";
-        let codec = RTCRtpCodec {
-            mime_type: "video/VP9".into(),
-            clock_rate: 90000,
-            sdp_fmtp_line: "profile-id=2".into(),
-            ..Default::default()
-        };
-        assert_eq!(
-            super::negotiated_payload_type(sdp, "first", &codec),
-            Some(99)
-        );
-        assert_eq!(
-            super::negotiated_payload_type(sdp, "second", &codec),
-            Some(41)
-        );
-        assert_eq!(super::negotiated_payload_type(sdp, "missing", &codec), None);
-        let wrong = RTCRtpCodec {
-            sdp_fmtp_line: "profile-id=3".into(),
-            ..codec.clone()
-        };
-        assert_eq!(super::negotiated_payload_type(sdp, "first", &wrong), None);
-        assert_eq!(
-            super::negotiated_payload_type(
-                &sdp.replace("m=video 9", "m=video 0"),
-                "second",
-                &codec
-            ),
-            None
-        );
-        let remapped = super::remap_answer_payload(
-            webrtc::peer_connection::RTCSessionDescription::answer(sdp.to_owned()).unwrap(),
-            "second",
-            41,
-            43,
-        )
-        .unwrap();
-        assert_eq!(
-            super::negotiated_payload_type(&remapped.sdp, "first", &codec),
-            Some(99)
-        );
-        assert_eq!(
-            super::negotiated_payload_type(&remapped.sdp, "second", &codec),
-            Some(43)
-        );
-        assert!(remapped.sdp.contains("a=fmtp:43 profile-id=2"));
-        assert!(remapped.sdp.contains("a=rtpmap:42 VP9/90000"));
-        let reoffer = sdp.replace("41", "43");
-        assert_eq!(
-            super::negotiated_payload_type(&reoffer, "second", &codec),
-            Some(43)
-        );
-    }
-
-    #[test]
-    fn payload_binding_accepts_firefox_vp9_receiver_limits_and_default_profile() {
-        let sdp = "v=0\r\no=- 0 0 IN IP4 127.0.0.1\r\ns=-\r\nt=0 0\r\nm=video 9 UDP/TLS/RTP/SAVPF 98\r\na=mid:screen\r\na=recvonly\r\na=rtpmap:98 VP9/90000\r\na=fmtp:98 max-fs=12288;max-fr=60\r\n";
-        let codec = RTCRtpCodec {
-            mime_type: "video/VP9".into(),
-            clock_rate: 90000,
-            sdp_fmtp_line: "profile-id=0".into(),
-            ..Default::default()
-        };
-        assert_eq!(
-            super::negotiated_payload_type(sdp, "screen", &codec),
-            Some(98)
-        );
-        for fmtp in ["", "max-fr=30;profile-id=0;max-fs=3600"] {
-            assert_eq!(
-                super::negotiated_payload_type(
-                    sdp,
-                    "screen",
-                    &RTCRtpCodec {
-                        sdp_fmtp_line: fmtp.into(),
-                        ..codec.clone()
-                    }
-                ),
-                Some(98)
-            );
-        }
-        assert_eq!(
-            super::negotiated_payload_type(
-                sdp,
-                "screen",
-                &RTCRtpCodec {
-                    sdp_fmtp_line: "profile-id=2".into(),
-                    ..codec.clone()
-                }
-            ),
-            None
-        );
-        assert_eq!(
-            super::negotiated_payload_type(
-                &sdp.replace("a=recvonly", "a=inactive"),
-                "screen",
-                &codec
-            ),
-            None
-        );
-        let ambiguous = sdp.replace("SAVPF 98", "SAVPF 98 99")
-            + "a=rtpmap:99 VP9/90000\r\na=fmtp:99 profile-id=0\r\n";
-        assert_eq!(
-            super::negotiated_payload_type(&ambiguous, "screen", &codec),
-            None
-        );
-    }
-
-    #[test]
-    fn payload_binding_accepts_vp8_receiver_limits_without_relaxing_other_codecs() {
-        let sdp = "v=0\r\no=- 0 0 IN IP4 127.0.0.1\r\ns=-\r\nt=0 0\r\nm=video 9 UDP/TLS/RTP/SAVPF 120\r\na=mid:live\r\na=rtpmap:120 VP8/90000\r\na=fmtp:120 max-fs=12288;max-fr=60\r\n";
-        let codec = RTCRtpCodec {
-            mime_type: "video/VP8".into(),
-            clock_rate: 90000,
-            ..Default::default()
-        };
-        assert_eq!(
-            super::negotiated_payload_type(sdp, "live", &codec),
-            Some(120)
-        );
-        assert_eq!(
-            super::negotiated_payload_type(
-                &sdp.replace("VP8", "H264"),
-                "live",
-                &RTCRtpCodec {
-                    mime_type: "video/H264".into(),
-                    ..codec
-                }
-            ),
-            None
-        );
-    }
-
-    struct NoopHandler;
-
-    #[async_trait::async_trait]
-    impl webrtc::peer_connection::PeerConnectionEventHandler for NoopHandler {}
-
-    /// Regression for #53: Chrome-like offer lists Opus then G.711; SFU answer
-    /// must still prefer Opus (first PT), not PCMA/PCMU/G722.
     #[tokio::test]
-    async fn sfu_answer_prefers_opus_when_offer_lists_pcma() {
-        use crate::config::Config;
-        use crate::protocol::ServerFrame;
-        use crate::ticket::TicketClaim;
-        use rtc::media_stream::MediaStreamTrack;
-        use tokio::sync::mpsc;
-        use uuid::Uuid;
-        use webrtc::media_stream::track_local::TrackLocal;
-        use webrtc::media_stream::track_local::static_rtp::TrackLocalStaticRTP;
-        use webrtc::peer_connection::{
-            MediaEngine, PeerConnection, PeerConnectionBuilder, RTCSessionDescription,
-            register_default_interceptors,
-        };
-
-        let config = Config::from_source(|key| match key {
-            "REDIS_URL" => Some("redis://127.0.0.1:1".to_owned()),
-            "MEDIA_ICE_BIND" => Some("127.0.0.1:0".to_owned()),
-            "TURN_URLS" => Some("stun:127.0.0.1:3478".to_owned()),
-            "TURN_USERNAME" => Some("gelabber".to_owned()),
-            "TURN_PASSWORD" => Some("gelabberturn".to_owned()),
-            _ => None,
-        })
-        .unwrap();
-        let sfu = Arc::new(Sfu::new(&config));
-        let (out, mut rx) = mpsc::unbounded_channel();
-        let channel = Uuid::from_u128(53);
-        let peer = sfu
-            .join(
-                TicketClaim {
-                    u: Uuid::from_u128(1),
-                    s: Uuid::from_u128(9),
-                    c: channel,
-                    g: true,
-                },
-                out,
-            )
-            .await
-            .expect("join");
-
-        // Client MediaEngine includes PCMA/PCMU/G722 (Chrome-like).
-        let mut media = MediaEngine::default();
-        media.register_default_codecs().unwrap();
-        let registry =
-            register_default_interceptors(webrtc::peer_connection::Registry::new(), &mut media)
-                .unwrap();
-        let pc = PeerConnectionBuilder::new()
-            .with_media_engine(media)
-            .with_interceptor_registry(registry)
-            .with_handler(Arc::new(NoopHandler))
-            .with_udp_addrs(vec!["127.0.0.1:0".to_owned()])
-            .build()
-            .await
-            .unwrap();
-        let track = Arc::new(TrackLocalStaticRTP::new(MediaStreamTrack::new(
-            "stream".into(),
-            "audio".into(),
-            "mic".into(),
-            RtpCodecKind::Audio,
-            vec![RTCRtpEncodingParameters {
-                rtp_coding_parameters: RTCRtpCodingParameters {
-                    ssrc: Some(0x1111_0001),
-                    ..Default::default()
-                },
-                codec: RTCRtpCodec {
-                    mime_type: MIME_TYPE_OPUS.to_owned(),
-                    clock_rate: 48000,
-                    channels: 2,
-                    sdp_fmtp_line: String::new(),
-                    rtcp_feedback: vec![],
-                },
-                ..Default::default()
-            }],
-        )));
-        pc.add_track(Arc::clone(&track) as Arc<dyn TrackLocal>)
-            .await
-            .unwrap();
-        let offer = pc.create_offer(None).await.unwrap();
-        // Track encodings are Opus-only, so inject Chrome-like G.711 PTs into the
-        // offer SDP (order: Opus first, then PCMA/PCMU/G722) — the #53 shape.
-        let offer_sdp = inject_g711_after_opus(&offer.sdp);
-        let offer_audio = offer_sdp
-            .lines()
-            .find(|l| l.starts_with("m=audio"))
-            .expect("client m=audio");
-        assert!(
-            offer_audio.contains(" 8") && offer_audio.contains(" 0"),
-            "precondition: Chrome-like offer must list G.711: {offer_audio}"
-        );
-
-        pc.set_local_description(offer).await.unwrap();
-        sfu.apply_remote(peer, channel, offer_sdp, true)
-            .await
-            .expect("apply offer");
-
-        let answer_sdp = loop {
-            match tokio::time::timeout(std::time::Duration::from_secs(5), rx.recv()).await {
-                Ok(Some(ServerFrame::Answer { sdp })) => break sdp,
-                Ok(Some(_)) => continue,
-                Ok(None) => panic!("sfu closed before answer"),
-                Err(_) => panic!("timeout waiting for SFU answer"),
-            }
-        };
-        let audio_line = answer_sdp
-            .lines()
-            .find(|l| l.starts_with("m=audio"))
-            .expect("answer m=audio");
-        let pts: Vec<&str> = audio_line.split_whitespace().skip(3).collect();
-        assert_eq!(
-            pts.first().copied(),
-            Some("111"),
-            "Opus must be first in SFU answer: {audio_line}"
-        );
-        assert!(
-            !pts.iter().any(|p| *p == "8" || *p == "0" || *p == "9"),
-            "G.711/G.722 must not appear in SFU answer: {audio_line}"
-        );
-
-        pc.set_remote_description(RTCSessionDescription::answer(answer_sdp).unwrap())
-            .await
-            .expect("client accepts SFU answer");
-    }
-
-    /// Chrome offers Opus then static G.711/G.722; webrtc-rs track encodings with
-    /// Opus-only omit them from create_offer, so splice them in for the regression.
-    fn inject_g711_after_opus(sdp: &str) -> String {
-        let mut out = Vec::new();
-        let mut injected = false;
-        for line in sdp.lines() {
-            if let Some(rest) = line.strip_prefix("m=audio ") {
-                let mut parts: Vec<&str> = rest.split_whitespace().collect();
-                // m=audio <port> <proto> <pts...>
-                if parts.len() >= 3 {
-                    let mut pts: Vec<&str> = parts[3..].to_vec();
-                    for pt in ["8", "0", "9"] {
-                        if !pts.contains(&pt) {
-                            pts.push(pt);
-                        }
-                    }
-                    parts.truncate(3);
-                    parts.extend(pts);
-                    out.push(format!("m=audio {}", parts.join(" ")));
-                    injected = true;
-                    continue;
+    async fn stop_batch_deadline_includes_queued_unpaused_resources() {
+        let started = Arc::new(AtomicUsize::new(0));
+        let paused = Arc::new(AtomicUsize::new(0));
+        let jobs = (0..=STOP_CONCURRENCY).map(|index| {
+            let started = started.clone();
+            let paused = paused.clone();
+            async move {
+                started.fetch_add(1, Ordering::SeqCst);
+                if index < STOP_CONCURRENCY {
+                    std::future::pending::<()>().await;
                 }
+                paused.fetch_add(1, Ordering::SeqCst);
             }
-            out.push(line.to_owned());
-            if injected && line.starts_with("a=rtpmap:111") {
-                out.push("a=rtpmap:8 PCMA/8000".to_owned());
-                out.push("a=rtpmap:0 PCMU/8000".to_owned());
-                out.push("a=rtpmap:9 G722/8000".to_owned());
-                injected = false;
-            }
-        }
-        out.join("\n") + "\n"
-    }
-
-    #[test]
-    fn strips_publisher_header_extensions() {
-        let mut packet = Packet::default();
-        packet.header.version = 2;
-        packet.header.ssrc = 0x1111_0001;
-        packet.header.payload_type = 111;
-        packet
-            .header
-            .set_extension(1, bytes::Bytes::from_static(b"0"))
-            .expect("mid");
-        packet
-            .header
-            .set_extension(3, bytes::Bytes::from_static(&[0x01, 0x02]))
-            .expect("transport-cc");
-        assert!(packet.header.extension);
-        assert!(!packet.header.get_extension_ids().is_empty());
-
-        let out = prepare_forwarded_rtp(packet, 0x2222_0002);
-        assert_eq!(out.header.ssrc, 0x2222_0002);
-        assert_eq!(out.header.payload_type, 111);
-        assert!(!out.header.extension);
-        assert!(out.header.get_extension_ids().is_empty());
-        assert!(out.header.csrc.is_empty());
+        });
+        assert!(stop_batch(jobs).await.is_err());
+        assert_eq!(started.load(Ordering::SeqCst), STOP_CONCURRENCY);
+        assert_eq!(paused.load(Ordering::SeqCst), 0);
     }
 
     #[tokio::test]
-    async fn ice_ports_return_instead_of_wrapping() {
-        use crate::config::Config;
-
-        let config = Config::from_source(|key| match key {
-            "REDIS_URL" => Some("redis://127.0.0.1:1".to_owned()),
-            "MEDIA_ICE_BIND" => Some("127.0.0.1:40000".to_owned()),
-            "MEDIA_ICE_PORT_MAX" => Some("40001".to_owned()),
-            _ => None,
-        })
-        .unwrap();
-        let sfu = Sfu::new(&config);
-        let first = sfu.ice_ports.take().await.expect("port");
-        let second = sfu.ice_ports.take().await.expect("port");
-        assert!(sfu.ice_ports.take().await.is_none(), "pool must not wrap");
-        sfu.ice_ports.release(&first).await;
-        assert_eq!(sfu.ice_ports.take().await.as_deref(), Some(first.as_str()));
-        let _ = second;
-    }
-
-    fn rtp_packet(seq: u16, timestamp: u32) -> rtc::rtp::packet::Packet {
-        let mut packet = rtc::rtp::packet::Packet::default();
-        packet.header.sequence_number = seq;
-        packet.header.timestamp = timestamp;
-        packet
-    }
-
-    #[test]
-    fn reordering_does_not_count_as_loss() {
-        use std::sync::atomic::Ordering;
-
-        let stats = super::SfuStats::default();
-        let mut rtp = super::PublisherRtpStats::new(48_000);
-        // 100, 102, 101, 103 is fully delivered. The old high-water reset
-        // counted two losses.
-        for (seq, ts) in [(100u16, 100u32), (102, 102), (101, 101), (103, 103)] {
-            rtp.observe(&rtp_packet(seq, ts), &stats);
-        }
-        assert_eq!(stats.rtp_lost_total.load(Ordering::Relaxed), 0);
-        assert_eq!(stats.rtp_packets_total.load(Ordering::Relaxed), 4);
-    }
-
-    #[test]
-    fn sequence_wrap_and_aged_gap() {
-        use std::sync::atomic::Ordering;
-
-        let stats = super::SfuStats::default();
-        let mut rtp = super::PublisherRtpStats::new(48_000);
-        for seq in [65534u16, 0, 65535, 1] {
-            rtp.observe(&rtp_packet(seq, 0), &stats);
-        }
-        assert_eq!(stats.rtp_lost_total.load(Ordering::Relaxed), 0);
-
-        let mut rtp = super::PublisherRtpStats::new(48_000);
-        rtp.observe(&rtp_packet(100, 0), &stats);
-        rtp.observe(&rtp_packet(102, 0), &stats);
-        let aged = 102u16
-            .wrapping_add(super::RTP_REORDER_WINDOW)
-            .wrapping_add(1);
-        rtp.observe(&rtp_packet(aged, 0), &stats);
-        assert_eq!(stats.rtp_lost_total.load(Ordering::Relaxed), 1);
-    }
-
-    #[test]
-    fn late_audio_timestamp_does_not_explode_jitter() {
-        use std::sync::atomic::Ordering;
-
-        let stats = super::SfuStats::default();
-        let mut rtp = super::PublisherRtpStats::new(48_000);
-        // One 20 ms frame late: 960 ticks at 48 kHz is -0.02 s, not ~89478 s.
-        rtp.observe(&rtp_packet(1, 1920), &stats);
-        rtp.observe(&rtp_packet(2, 960), &stats);
-        let micros = stats.rtp_jitter_micros.load(Ordering::Relaxed);
-        assert!(
-            micros < 1_000_000,
-            "late packet jitter blew up to {micros} µs"
-        );
-
-        // A real timestamp wrap of one frame stays a small positive step.
-        let mut rtp = super::PublisherRtpStats::new(48_000);
-        let last = u32::MAX - 10;
-        rtp.observe(&rtp_packet(1, last), &stats);
-        rtp.observe(&rtp_packet(2, last.wrapping_add(960)), &stats);
-        let wrapped = stats.rtp_jitter_micros.load(Ordering::Relaxed);
-        assert!(
-            wrapped < 1_000_000,
-            "timestamp wrap jitter blew up to {wrapped} µs"
-        );
+    async fn stop_batch_waits_for_concurrent_pause_acknowledgements() {
+        let barrier = Arc::new(tokio::sync::Barrier::new(2));
+        let paused = Arc::new(AtomicUsize::new(0));
+        let jobs = (0..2).map(|_| {
+            let barrier = barrier.clone();
+            let paused = paused.clone();
+            async move {
+                barrier.wait().await;
+                paused.fetch_add(1, Ordering::SeqCst);
+            }
+        });
+        assert!(stop_batch(jobs).await.is_ok());
+        assert_eq!(paused.load(Ordering::SeqCst), 2);
     }
 }
-
-#[cfg(test)]
-#[path = "sfu_lifecycle_tests.rs"]
-mod lifecycle_tests;

@@ -1,0 +1,144 @@
+{
+  "schema": 1,
+  "date": "2026-10-06",
+  "scope": "ACTUAL_LOCAL_PINNED_DEBIAN_CI_WRAPPER_CHECKS",
+  "base_image_id": "sha256:f1323cca0f0746a3729971612af0b5258c3718aa7b9c14504e1aa646b1fd2e75",
+  "source_scope": "uncommitted product snapshots; not exact final feature commit or remote CI",
+  "compile_checks": {
+    "status": "PASS",
+    "fmt": {
+      "exit_code": 0,
+      "command": [
+        "sh",
+        "docker/run-native-ci.sh",
+        "fmt",
+        "--all",
+        "--",
+        "--check"
+      ],
+      "log_sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+    },
+    "checks": [
+      {
+        "name": "workspace-check",
+        "command": [
+          "sh",
+          "docker/run-native-ci.sh",
+          "check",
+          "--locked",
+          "--workspace",
+          "--all-targets"
+        ],
+        "exit_code": 0,
+        "elapsed_seconds": 258.051,
+        "log_sha256": "e8a8eecb530ee1b23763d8ad216f5f618047d10c388689a7e19d51050b4c81f4"
+      },
+      {
+        "name": "workspace-clippy",
+        "command": [
+          "sh",
+          "docker/run-native-ci.sh",
+          "clippy",
+          "--locked",
+          "--workspace",
+          "--all-targets",
+          "--",
+          "-D",
+          "warnings"
+        ],
+        "exit_code": 0,
+        "elapsed_seconds": 8.782,
+        "log_sha256": "334daf7ee511708a9640d667fba418017d2af1b485000ce6c11fd6b5b99456f5"
+      }
+    ],
+    "source_changed_during_checks": [],
+    "selected_input_sha256": {
+      "Cargo.lock": "609105cf26bc5839f3a1f517b714dec5cd0d215d4ddc0eee4a4d444ffd08b274",
+      "media/src/error.rs": "1876714c18b0f3fe6379afc6dfa2347749145a7ec4ab68f371b8f8482cb4340b",
+      "media/src/live.rs": "6296a00eb041f205886ebd06ef188dc0d0e838dd86aba25451b3928848287ef8",
+      "media/src/sfu.rs": "baac844091f11273f1954cc34b4330ad41444274b8244eefc56c29ebde793d96",
+      "media/src/ws.rs": "740f4571702790070033f69714414dca714cab714ee9e71271de2a14df19ed37",
+      "media/tests/live_claim.rs": "a3f2244969174cfd1e5a1e6147fdd9daea119fb87fd932cfdbb3f95683228d7d"
+    },
+    "report_sha256": "a8d783bc91053b7ad59516280f6a58ae39cd041f56c23cc3dfe8d4d32e2a24ce",
+    "clippy_qualification": "Local derivative of the exact verified base plus official Clippy component of Rust1.98.1; original PR base has rustfmt but no Clippy",
+    "clippy_derivative_image_id": "sha256:b4ff3a195b266cba2e86c27e7aca92b1974eac75ee17e78e6c1cba7b115650df",
+    "original_base_tag_restored": true
+  },
+  "workspace_test_runs": [
+    {
+      "qualification": "SOURCE_CHANGED_DURING_RUN_REQUIRES_FROZEN_REPEAT",
+      "wrapper_outer_exit_code": 1,
+      "commands_status": "PASS",
+      "checks": [
+        {
+          "name": "workspace-tests",
+          "command": [
+            "sh",
+            "docker/run-native-ci.sh",
+            "test",
+            "--locked",
+            "--workspace",
+            "--all-targets",
+            "--",
+            "--skip",
+            "typing_broadcasts_fast_and_clears_on_stop",
+            "--test-threads=4"
+          ],
+          "exit_code": 0,
+          "elapsed_seconds": 364.293,
+          "log_sha256": "d01adcb8abab5450504099e8a99e5ab5f5db3b4c258a0603edca3afd3f986587",
+          "passed": 300,
+          "failed": 0,
+          "ignored": 0
+        },
+        {
+          "name": "typing-isolation",
+          "command": [
+            "sh",
+            "docker/run-native-ci.sh",
+            "test",
+            "--locked",
+            "--workspace",
+            "--all-targets",
+            "typing_broadcasts_fast_and_clears_on_stop",
+            "--",
+            "--exact",
+            "--test-threads=1"
+          ],
+          "exit_code": 0,
+          "elapsed_seconds": 9.936,
+          "log_sha256": "0c2bc6f70169966905dfd2725a88ba3da4480756382a49e8e62823dc053da6de",
+          "passed": 1,
+          "failed": 0,
+          "ignored": 0
+        }
+      ],
+      "source_changed_during_tests": [
+        "media/src/error.rs",
+        "media/src/live.rs",
+        "media/src/sfu.rs",
+        "media/tests/live_claim.rs"
+      ],
+      "report_sha256": "d2dd5ce24ce233c0837260516a4962f5d93547a3e6043c1304d061e35e2b1c07",
+      "selected_before_input_sha256": {
+        "Cargo.lock": "609105cf26bc5839f3a1f517b714dec5cd0d215d4ddc0eee4a4d444ffd08b274",
+        "media/src/error.rs": "1876714c18b0f3fe6379afc6dfa2347749145a7ec4ab68f371b8f8482cb4340b",
+        "media/src/live.rs": "6296a00eb041f205886ebd06ef188dc0d0e838dd86aba25451b3928848287ef8",
+        "media/src/sfu.rs": "baac844091f11273f1954cc34b4330ad41444274b8244eefc56c29ebde793d96",
+        "media/src/ws.rs": "740f4571702790070033f69714414dca714cab714ee9e71271de2a14df19ed37",
+        "media/tests/live_claim.rs": "a3f2244969174cfd1e5a1e6147fdd9daea119fb87fd932cfdbb3f95683228d7d"
+      },
+      "fixture_scope": "Three own labeled PostgreSQL18.6 Redis8.10.1 and existing exact MinIO-pin containers, random127.0.0.1 ports and no host bind mounts; no shared/root service writes",
+      "cleanup_complete": true,
+      "all_fixture_exits_zero": true,
+      "owned_fixture_count": 3,
+      "owned_fixtures_verified_absent": 3
+    }
+  ],
+  "current_final_source_workspace_qualified": false,
+  "browser_started": false,
+  "main_release_or_deployment": false,
+  "new_load_or_hour_tests": "EXCLUDED_BY_USER",
+  "physical_ios_omarchy": "DEFERRED"
+}

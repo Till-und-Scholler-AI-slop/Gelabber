@@ -1,0 +1,327 @@
+{
+  "schema": 1,
+  "date": "2026-10-06",
+  "qualification": "DIRTY_SNAPSHOT_BUILD_AND_NO_RTP_SMOKE_ONLY",
+  "full_native_browser_acceptance": false,
+  "main_release_or_deployment": false,
+  "new_load_or_hour_tests": "EXCLUDED_BY_USER",
+  "physical_ios_omarchy": "DEFERRED",
+  "builds": [
+    {
+      "component": "media",
+      "status": "PASS",
+      "image": "gelabber-mediasoup-local/media:20261006-070ecda872da",
+      "image_id": "sha256:7b243b477d1f2afe3145d35d1a9c6544a2d122f35a2e4c6947b87a0a14b9845d",
+      "base_head": "99394ae4c0f1881417f805936bb6908a077c8dac",
+      "platform": "linux/amd64",
+      "architecture": "amd64",
+      "os": "linux",
+      "elapsed_seconds": 17.278,
+      "started_utc": "2026-10-06T10:01:15.712225+00:00",
+      "finished_utc": "2026-10-06T10:01:32.990006+00:00",
+      "source_manifest_sha256": "bfedc5177ac5ac673b160fa582affa599b77792ea66c119ad80ba6885e385717",
+      "revision_label_semantics": "base_git_head_with_exact_uncommitted_input_snapshot",
+      "source_files_changed_during_build": [],
+      "report_sha256": "6ad956be59671570706160c8d9811a62ca75e4e6b31b13c6a32d953ef915fd35",
+      "selected_input_sha256": {
+        "Cargo.lock": "609105cf26bc5839f3a1f517b714dec5cd0d215d4ddc0eee4a4d444ffd08b274",
+        "api/Dockerfile": "a62af4fafd8454ae9884614e92c4cc49702f64bc6646b55fb25d822339e9c37f",
+        "media/Cargo.toml": "036dcf3f5098925553a87011ca797f0687168f7accdce0b0cadad9329d6dff55",
+        "media/src/sfu.rs": "240169a169f1293b33ac1555d70049e09657d8f92050b3cf0f6c1a9f635af564",
+        "media/src/ws.rs": "740f4571702790070033f69714414dca714cab714ee9e71271de2a14df19ed37"
+      }
+    },
+    {
+      "component": "api",
+      "status": "PASS",
+      "image": "gelabber-mediasoup-local/api:20261006-8e7d40c04c3e",
+      "image_id": "sha256:17a9ac295c455c60c9e9de6878c74b81aec5b09a6b7f60944b88e76011f0adce",
+      "base_head": "99394ae4c0f1881417f805936bb6908a077c8dac",
+      "platform": "linux/amd64",
+      "architecture": "amd64",
+      "os": "linux",
+      "elapsed_seconds": 162.408,
+      "started_utc": "2026-10-06T09:54:16.202022+00:00",
+      "finished_utc": "2026-10-06T09:56:58.610259+00:00",
+      "source_manifest_sha256": "773689708d80dd4b830b8d367426013caa14627eae6113c1784875074aac9e24",
+      "revision_label_semantics": "base_git_head_with_exact_uncommitted_input_snapshot",
+      "source_files_changed_during_build": [],
+      "report_sha256": "295437729f09cc6ab00ffd8b8d2640fe7779c6049a9a9323a43cd52a937d72a0",
+      "selected_input_sha256": {
+        "Cargo.lock": "609105cf26bc5839f3a1f517b714dec5cd0d215d4ddc0eee4a4d444ffd08b274",
+        "api/Dockerfile": "a62af4fafd8454ae9884614e92c4cc49702f64bc6646b55fb25d822339e9c37f",
+        "media/Cargo.toml": "036dcf3f5098925553a87011ca797f0687168f7accdce0b0cadad9329d6dff55",
+        "media/src/sfu.rs": "78a9cd732cb61a0006ddd06f978b432cc0c0ac0e6c0b5094bbcadaadef9c5a2d",
+        "media/src/ws.rs": "740f4571702790070033f69714414dca714cab714ee9e71271de2a14df19ed37"
+      }
+    },
+    {
+      "component": "web",
+      "status": "PASS",
+      "image": "gelabber-mediasoup-local/web:20261006-64d2ec0bb972",
+      "image_id": "sha256:142b1010b955d9a01088e0ae4909ac65c44b95971a66380528cbcdab3bb24d2b",
+      "base_head": "99394ae4c0f1881417f805936bb6908a077c8dac",
+      "platform": "linux/amd64",
+      "architecture": "amd64",
+      "os": "linux",
+      "elapsed_seconds": 5.311,
+      "started_utc": "2026-10-06T09:55:06.717575+00:00",
+      "finished_utc": "2026-10-06T09:55:12.028554+00:00",
+      "source_manifest_sha256": "6a3b0b88b24e8893b0fe357dd6f0b49060213d535981bda8117a41ffa26e6811",
+      "revision_label_semantics": "base_git_head_with_exact_uncommitted_input_snapshot",
+      "source_files_changed_during_build": [],
+      "report_sha256": "ffc429e64206af07b95248f32217d656733aa3fc2c7f3d64da1d0979adf0d099",
+      "selected_input_sha256": {
+        "web/package-lock.json": "682318ea6a51c6c597c690c96a84f787442c802c767d6731298a6dd029e297fa",
+        "web/src/voice/media.ts": "073ee97ae12d6563ee99b5e14d6fb2c9e287780187c2b43adc1d9d4badbf5361",
+        "web/src/voice/mediaPeer.ts": "35f1a1189f22f33cb7c54f11ff6ee72df2b267f3cae6733f2a93d08c19982f81",
+        "web/src/voice/mediasoupConnection.ts": "ba8c8df9a7a26a049f6579ceb8488850d3de153d75ac2300e031e111c42c3477"
+      }
+    }
+  ],
+  "actual_media_image_smoke": {
+    "status": "PASS",
+    "scope": "actual_image_worker_redis_readiness_and_shutdown_no_rtp",
+    "revision": "99394ae4c0f1881417f805936bb6908a077c8dac",
+    "image_id": "sha256:7b243b477d1f2afe3145d35d1a9c6544a2d122f35a2e4c6947b87a0a14b9845d",
+    "ready": true,
+    "ready_checks": {
+      "redis": "ok",
+      "media": "ok"
+    },
+    "normal_shutdown": true,
+    "exit_code": 0,
+    "forced_cleanup": false,
+    "cleanup": {
+      "complete": true,
+      "errors": [],
+      "verified_absent": [
+        "ceca021016d44e8a764259ac75365eadc26de874a7597e9fbba45566bc346d9a",
+        "7f7df53a33959f5cda68a8e8a186574d7e4358352cb7543de07a97f94b4c0348",
+        "ed3a930e0a96f626d5c1480e146827b750ae82b9f95d79246020f6641ac53764"
+      ]
+    },
+    "report_sha256": "85d0fee9c56a9e5f726b0c1d8d3e25bb5cf870b2c9763558ecc1fd7c6ce52d77",
+    "runner_sha256": "e340cef54a6c0bcbd2fa3933453e8088abd4e4ac779e1df509229278fa3fd4d2",
+    "published_host_udp": false,
+    "published_http_ip": "127.0.0.1"
+  },
+  "historical_failures_preserved": [
+    {
+      "component": "media",
+      "status": "FAIL",
+      "image": "gelabber-mediasoup-local/media:20261006-928598030030",
+      "base_head": "99394ae4c0f1881417f805936bb6908a077c8dac",
+      "platform": "linux/amd64",
+      "elapsed_seconds": 80.324,
+      "started_utc": "2026-10-06T09:36:14.094422+00:00",
+      "finished_utc": "2026-10-06T09:37:34.418848+00:00",
+      "source_manifest_sha256": "6ebad0206d400fe3dfa5ecd6a6edfd438eab9270003e142c1b1766d73eadd267",
+      "revision_label_semantics": "base_git_head_with_exact_uncommitted_input_snapshot",
+      "report_sha256": "6fae8125ebdf9d4c0aa04ebed88158f3ee90c19914a2e6cbd1569763c75671f8",
+      "selected_input_sha256": {
+        "Cargo.lock": "609105cf26bc5839f3a1f517b714dec5cd0d215d4ddc0eee4a4d444ffd08b274",
+        "api/Dockerfile": "1aa7a22b7675eb1230404b6acf4b997b771c6c2c9c16f2f9abf2f5bf82ec8eee",
+        "media/Cargo.toml": "036dcf3f5098925553a87011ca797f0687168f7accdce0b0cadad9329d6dff55",
+        "media/src/sfu.rs": "486c99aa7f6d6265a39dec59b07dd0791da5d8f3b4ef7bb3cd75876619a195ea",
+        "media/src/ws.rs": "85badebfae5f7e7cb384a37d1fb117123e6f21f069eda8106baabe857b98150e"
+      },
+      "reason": "SDK FlatBuffers generator required rustfmt, which was absent from the minimal Rust build image"
+    },
+    {
+      "component": "media",
+      "status": "FAIL",
+      "image": "gelabber-mediasoup-local/media:20261006-b97899e40a2e",
+      "base_head": "99394ae4c0f1881417f805936bb6908a077c8dac",
+      "platform": "linux/amd64",
+      "elapsed_seconds": 334.343,
+      "started_utc": "2026-10-06T09:40:07.041866+00:00",
+      "finished_utc": "2026-10-06T09:45:41.385308+00:00",
+      "source_manifest_sha256": "1e963253e15624ae19eee3e9cbdc7821219ad5ca4c7b03e4e6c47bb94fcdf549",
+      "revision_label_semantics": "base_git_head_with_exact_uncommitted_input_snapshot",
+      "report_sha256": "55e619d771a9368487270c6e74bdad0204f73dceb586039ef02f836e96b5ff83",
+      "selected_input_sha256": {
+        "Cargo.lock": "609105cf26bc5839f3a1f517b714dec5cd0d215d4ddc0eee4a4d444ffd08b274",
+        "api/Dockerfile": "1aa7a22b7675eb1230404b6acf4b997b771c6c2c9c16f2f9abf2f5bf82ec8eee",
+        "media/Cargo.toml": "036dcf3f5098925553a87011ca797f0687168f7accdce0b0cadad9329d6dff55",
+        "media/src/sfu.rs": "81d22fd84e7f9c9668d7df6729ede476c382812854cd75825cab891d5cf27530",
+        "media/src/ws.rs": "295ff129e9d09a60b003196a66f0993d639eab59927cdab89418e197baf2771b"
+      },
+      "reason": "snapshot mixed the new ws peer_present call with an earlier backend without that method; the bounded native dependency build itself completed"
+    },
+    {
+      "component": "media-image-smoke",
+      "status": "FAIL",
+      "ready": true,
+      "normal_shutdown": true,
+      "forced_cleanup": false,
+      "cleanup": {
+        "complete": false,
+        "errors": [
+          "network: CalledProcessError: Command '['docker', 'network', 'inspect', '5f1075f63e810e823f925fd8923d718be47a831f7e219724e8558bed28060c9f']' returned non-zero exit status 1."
+        ],
+        "verified_absent": [
+          "fe931373425fc14af685798b0cc6bce06d157e1dc0d2bb6cf7356e74ae55c79b",
+          "95867f1dc773f1936c1964b25afee220b169410686e7a9879fcfb8247cfc4fec"
+        ]
+      },
+      "report_sha256": "d16519c7319504bf8a5ae83f9746709045042fce2cc2bc3ca573f3e60a389733",
+      "runner_sha256": "07d1fc930c64aadacf4db7f69601d68f0aa8020e3cab0ba2511fc21d73c5db1c",
+      "reason": "the reader rejected Docker network <owned-id> not found after successful network removal; fresh retry uses exact resource-specific absence handling"
+    }
+  ],
+  "existing_ci_harness_checks": {
+    "node": "v26.8.2",
+    "status": "PASS",
+    "commands": 17,
+    "scope": "existing_ci_e2e_harness_checks_no_browser_start",
+    "report_sha256": "7b4ead9c8fa6b154e391dbe214a6a91cde64eb1e149b446670683be5f139af8e",
+    "files_changed_during_checks": [
+      "web/scripts/e2e/mediasoup-native.mjs"
+    ],
+    "changed_file_scope_note": "only the new, explicitly unfrozen native browser script changed; the executed check files and voice sources retained their hashes"
+  },
+  "python_checks": {
+    "focused_native_bootstrap_and_smoke": {
+      "pass": 9
+    },
+    "deployment_suite": {
+      "reported_cases": 41,
+      "skipped": 1,
+      "result": "OK",
+      "skip_reason": "Caddy binary absent for existing adapt tests",
+      "log_sha256": "c43adf57d9271e969f270ad9de5614e93563d200ce06c0a6b5eecad41d5b1d5d"
+    }
+  },
+  "existing_containers_after_smoke": {
+    "schema": 1,
+    "captured_utc": "2026-10-06T10:02:16.687425+00:00",
+    "legacy_six_unchanged": true,
+    "own_infra_three_unchanged": true,
+    "smoke_containers_remaining": [],
+    "selected_existing_containers": [
+      {
+        "ID": "ef523303898c",
+        "Names": "gelabber-dev-api-1",
+        "Image": "ghcr.io/till-und-scholler-ai-slop/gelabber/api:v0.2.5",
+        "State": "running",
+        "Ports": "127.0.0.1:8080->8080/tcp"
+      },
+      {
+        "ID": "941e183cd820",
+        "Names": "gelabber-dev-media-1",
+        "Image": "ghcr.io/till-und-scholler-ai-slop/gelabber/media:v0.2.5",
+        "State": "running",
+        "Ports": "127.0.0.1:8081->8081/tcp, 127.0.0.1:10000-10031->10000-10031/udp"
+      },
+      {
+        "ID": "65958f1b2f60",
+        "Names": "gelabber-dev-postgres-1",
+        "Image": "postgres:18.6-alpine3.24",
+        "State": "running",
+        "Ports": "127.0.0.1:5432->5432/tcp"
+      },
+      {
+        "ID": "be8e6275e8cd",
+        "Names": "gelabber-dev-redis-1",
+        "Image": "redis:8.10.1-alpine",
+        "State": "running",
+        "Ports": "127.0.0.1:6379->6379/tcp"
+      },
+      {
+        "ID": "5ce0149fab3f",
+        "Names": "gelabber-dev-coturn-1",
+        "Image": "coturn/coturn:4.18.0",
+        "State": "running",
+        "Ports": "127.0.0.1:3478->3478/udp, 127.0.0.1:3478->3478/tcp, 127.0.0.1:49160-49200->49160-49200/udp, 5349/tcp, 5349/udp"
+      },
+      {
+        "ID": "dd98ea855f06",
+        "Names": "gelabber-dev-minio-1",
+        "Image": "ghcr.io/till-und-scholler-ai-slop/gelabber/minio:RELEASE.2025-10-15T17-29-55Z",
+        "State": "running",
+        "Ports": "127.0.0.1:9000-9001->9000-9001/tcp"
+      },
+      {
+        "ID": "5342425d218e",
+        "Names": "gelabber-mediasoup-v04-postgres-1",
+        "Image": "postgres:18.6-alpine3.24",
+        "State": "running",
+        "Ports": "127.0.0.1:15499->5432/tcp"
+      },
+      {
+        "ID": "96c07331146e",
+        "Names": "gelabber-mediasoup-v04-redis-1",
+        "Image": "redis:8.10.1-alpine",
+        "State": "running",
+        "Ports": "127.0.0.1:16399->6379/tcp"
+      },
+      {
+        "ID": "3315321a7dc4",
+        "Names": "gelabber-mediasoup-v04-minio-1",
+        "Image": "ghcr.io/till-und-scholler-ai-slop/gelabber/minio:RELEASE.2025-10-15T17-29-55Z",
+        "State": "running",
+        "Ports": "127.0.0.1:19099->9000/tcp, 127.0.0.1:19100->9001/tcp"
+      }
+    ]
+  },
+  "previous_successful_media_builds": [
+    {
+      "component": "media",
+      "status": "PASS",
+      "image": "gelabber-mediasoup-local/media:20261006-8972fb52979a",
+      "image_id": "sha256:9182fa645b2d6393c6114e5f47db4a06ac095c146755bb193049a59f29362a96",
+      "base_head": "99394ae4c0f1881417f805936bb6908a077c8dac",
+      "platform": "linux/amd64",
+      "architecture": "amd64",
+      "os": "linux",
+      "elapsed_seconds": 16.98,
+      "started_utc": "2026-10-06T09:47:11.003852+00:00",
+      "finished_utc": "2026-10-06T09:47:27.984223+00:00",
+      "source_manifest_sha256": "c1afaf194c943fecc94a7fb1d54dcca3215c7a1b956c66201baffbae4c5f4306",
+      "revision_label_semantics": "base_git_head_with_exact_uncommitted_input_snapshot",
+      "source_files_changed_during_build": [],
+      "report_sha256": "c8da0316938ecebfa229bea8cae41b8bb06b71f27e74af8f5c39545f4563e036",
+      "selected_input_sha256": {
+        "Cargo.lock": "609105cf26bc5839f3a1f517b714dec5cd0d215d4ddc0eee4a4d444ffd08b274",
+        "api/Dockerfile": "1aa7a22b7675eb1230404b6acf4b997b771c6c2c9c16f2f9abf2f5bf82ec8eee",
+        "media/Cargo.toml": "036dcf3f5098925553a87011ca797f0687168f7accdce0b0cadad9329d6dff55",
+        "media/src/sfu.rs": "78a9cd732cb61a0006ddd06f978b432cc0c0ac0e6c0b5094bbcadaadef9c5a2d",
+        "media/src/ws.rs": "740f4571702790070033f69714414dca714cab714ee9e71271de2a14df19ed37"
+      }
+    }
+  ],
+  "previous_actual_media_image_smokes": [
+    {
+      "status": "PASS",
+      "scope": "actual_image_worker_redis_readiness_and_shutdown_no_rtp",
+      "revision": "99394ae4c0f1881417f805936bb6908a077c8dac",
+      "image_id": "sha256:9182fa645b2d6393c6114e5f47db4a06ac095c146755bb193049a59f29362a96",
+      "ready": true,
+      "ready_checks": {
+        "redis": "ok",
+        "media": "ok"
+      },
+      "normal_shutdown": true,
+      "exit_code": 0,
+      "forced_cleanup": false,
+      "cleanup": {
+        "complete": true,
+        "errors": [],
+        "verified_absent": [
+          "5683d87573fdbfb9ddd14c71793001997318151261c1070634aaa9da56269cc5",
+          "3484bb677c45b5c5231a1cd57276bd11d68d014e39e6be4e9c3365d9b6a49f83",
+          "49826cb455f28ac5190ec6a52ad9ab7e41b788b95c938520ebd21251b9b64169"
+        ]
+      },
+      "report_sha256": "859d333a89c11b9be8a8191f7b6273442e0b8db75e157dfba0c249af6207a6bd",
+      "runner_sha256": "e340cef54a6c0bcbd2fa3933453e8088abd4e4ac779e1df509229278fa3fd4d2",
+      "published_host_udp": false,
+      "published_http_ip": "127.0.0.1"
+    }
+  ],
+  "media_source_fix_scope": "Some(empty RTCP cname) is omitted so the SDK uses its documented transport CNAME generator; no RTP assertion comes from this smoke",
+  "existing_containers_after_smoke_report_sha256": "2b19ec5499c7975b119fde512bc135495e3b472e2c0fef638ab9b8c2d27db794",
+  "current_final_source_images_available": false,
+  "scope_note_after_additional_fixes": "These successful build/smoke snapshots predate aggregate NativeStop deadline, SDK OperationError recovery and Debian archive closure; their results remain historical until those final sources are rebuilt."
+}

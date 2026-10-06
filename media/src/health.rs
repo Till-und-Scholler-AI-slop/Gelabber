@@ -1,4 +1,4 @@
-//! `GET /health` (process is up) and `GET /ready` (Redis answers).
+//! `GET /health` (process is up) and `/ready` (Redis plus native media engine).
 //! Caddy proxies `/media` and `/media/*`, so both prefixes are registered.
 
 use std::time::Instant;
@@ -37,6 +37,7 @@ pub struct ReadyResponse {
 #[derive(Debug, Serialize)]
 pub struct Checks {
     pub redis: CheckResult,
+    pub media: CheckResult,
 }
 
 #[derive(Debug, Serialize)]
@@ -84,7 +85,15 @@ async fn ready(State(state): State<AppState>) -> (StatusCode, Json<ReadyResponse
         }
     };
 
-    let ok = matches!(redis, CheckResult::Ok { .. });
+    let media = if state.sfu.ready() {
+        CheckResult::Ok { latency_ms: 0 }
+    } else {
+        CheckResult::Error {
+            error: "unavailable",
+            latency_ms: 0,
+        }
+    };
+    let ok = matches!(redis, CheckResult::Ok { .. }) && matches!(media, CheckResult::Ok { .. });
     let status = if ok {
         StatusCode::OK
     } else {
@@ -94,7 +103,7 @@ async fn ready(State(state): State<AppState>) -> (StatusCode, Json<ReadyResponse
         status,
         Json(ReadyResponse {
             status: if ok { "ready" } else { "not_ready" },
-            checks: Checks { redis },
+            checks: Checks { redis, media },
         }),
     )
 }
