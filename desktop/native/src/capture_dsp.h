@@ -67,7 +67,7 @@ namespace gelabber
 		std::atomic<int> processedLevel{ 0 };
 		std::atomic<bool> clipping{ false };
 		std::atomic<bool> denoised{ false };
-		std::atomic<uint64_t> blocks{ 0 };
-		std::atomic<int> channels{ 0 };
+		std::atomic<uint64_t> blockCount{ 0 };
+		std::atomic<int> lastChannels{ 0 };
 	};
 } // namespace gelabber

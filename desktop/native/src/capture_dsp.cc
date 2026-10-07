@@ -91,8 +91,8 @@ namespace gelabber
 			}
 		}
 		denoised.store(canDenoise);
-		channels.store(numChannels);
-		blocks.fetch_add(1);
+		lastChannels.store(numChannels);
+		blockCount.fetch_add(1);
 
 		const float g = gain.load();
 		for (int c = 0; c < numChannels; ++c)
@@ -136,8 +136,8 @@ namespace gelabber
 		levels.processed = processedLevel.load();
 		levels.clipping  = clipping.load();
 		levels.denoised  = denoised.load();
-		levels.blocks    = blocks.load();
-		levels.channels  = channels.load();
+		levels.blocks    = blockCount.load();
+		levels.channels  = lastChannels.load();
 		return levels;
 	}
 } // namespace gelabber
