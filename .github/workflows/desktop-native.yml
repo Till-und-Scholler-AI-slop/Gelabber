@@ -241,8 +241,7 @@ jobs:
         timeout-minutes: 10
         env:
           GELABBER_TEST_AUDIO: "1"
-          CARGO_TARGET_X86_64_UNKNOWN_LINUX_GNU_RUNNER: >-
-            gdb -q -batch -ex run -ex "thread apply all bt 30" --args
+          CARGO_TARGET_X86_64_UNKNOWN_LINUX_GNU_RUNNER: ${{ github.workspace }}/desktop/native/scripts/gdb-backtrace.sh
         run: |
           desktop/native/scripts/fake-desktop-session.sh \
             cargo test --manifest-path desktop/Cargo.toml --test voice -- --nocapture || true
