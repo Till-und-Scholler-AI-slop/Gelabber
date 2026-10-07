@@ -20,6 +20,12 @@ set(CMAKE_VISIBILITY_INLINES_HIDDEN ON)
 # match, so every translation unit sees NDEBUG.
 add_compile_definitions(NDEBUG)
 
+# Set by cmake/chromium-linux.cmake; must reach libmediasoupclient and
+# libsdptransform too, so it is added before FetchContent.
+foreach(flag IN LISTS GELABBER_LIBCXX_FLAGS)
+  add_compile_options("$<$<COMPILE_LANGUAGE:CXX>:${flag}>")
+endforeach()
+
 set(GELABBER_LIBWEBRTC_DIR "" CACHE PATH "libwebrtc package (lib/, include/)")
 if(NOT GELABBER_LIBWEBRTC_DIR)
   message(FATAL_ERROR "GELABBER_LIBWEBRTC_DIR is required")

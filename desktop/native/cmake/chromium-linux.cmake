@@ -21,15 +21,19 @@ set(CMAKE_CXX_COMPILER "${_pkg}/toolchain/bin/clang++")
 set(CMAKE_AR "${_pkg}/toolchain/bin/llvm-ar" CACHE FILEPATH "" FORCE)
 set(CMAKE_SYSROOT "${_pkg}/sysroot")
 
-set(_libcxx
+set(CMAKE_C_COMPILER_TARGET x86_64-linux-gnu)
+set(CMAKE_CXX_COMPILER_TARGET x86_64-linux-gnu)
+
+# Chromium's libc++ instead of the sysroot's libstdc++. Applied by
+# CMakeLists.txt with add_compile_options: a CMAKE_CXX_FLAGS_INIT here would be
+# dropped whenever CMAKE_CXX_FLAGS is passed explicitly (the Rust cmake crate
+# always does).
+set(GELABBER_LIBCXX_FLAGS
   "-nostdinc++"
   "-isystem${_pkg}/include/buildtools/third_party/libc++"
   "-isystem${_pkg}/include/third_party/libc++/src/include"
   "-isystem${_pkg}/include/third_party/libc++abi/src/include")
-string(JOIN " " _libcxx_flags ${_libcxx})
 
-set(CMAKE_C_FLAGS_INIT "--target=x86_64-linux-gnu")
-set(CMAKE_CXX_FLAGS_INIT "--target=x86_64-linux-gnu ${_libcxx_flags}")
 # libc++/libc++abi objects come from libwebrtc.a.
 set(CMAKE_SHARED_LINKER_FLAGS_INIT "-fuse-ld=lld -nostdlib++")
 set(CMAKE_EXE_LINKER_FLAGS_INIT "-fuse-ld=lld -nostdlib++")

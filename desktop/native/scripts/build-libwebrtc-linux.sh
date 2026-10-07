@@ -106,12 +106,14 @@ llvm_ar="$src/third_party/llvm-build/Release+Asserts/bin/llvm-ar"
 (cd "$out/obj" && find . -name '*.o' -print0 | sort -z | xargs -0 "$llvm_ar" qc "$package/lib/libwebrtc.a")
 "$llvm_ar" s "$package/lib/libwebrtc.a"
 
-rsync -a --prune-empty-dirs --exclude='out/' --include='*/' \
-  --include='*.h' --include='*.hpp' --include='*.inc' --include='*.def' \
-  --exclude='*' ./ "$package/include/"
+# Headers only, keeping the tree layout (tar instead of rsync: no extra tool).
+find . \( -path ./out -o -path ./build/linux -o -path ./third_party/llvm-build -o -name .git \) -prune -o -type f \
+  \( -name '*.h' -o -name '*.hpp' -o -name '*.inc' -o -name '*.def' \) -print0 |
+  tar --null -T - -cf - | tar -xf - -C "$package/include"
 # libc++ configuration headers that are not *.h.
-rsync -a ./third_party/libc++/src/include/ "$package/include/third_party/libc++/src/include/"
-rsync -a ./buildtools/third_party/libc++/ "$package/include/buildtools/third_party/libc++/"
+mkdir -p "$package/include/third_party/libc++/src/include" "$package/include/buildtools/third_party/libc++"
+cp -a ./third_party/libc++/src/include/. "$package/include/third_party/libc++/src/include/"
+cp -a ./buildtools/third_party/libc++/. "$package/include/buildtools/third_party/libc++/"
 cp "$out/args.gn" "$package/args.gn"
 
 llvm="$src/third_party/llvm-build/Release+Asserts"
@@ -122,7 +124,8 @@ cp -a "$llvm/lib/clang" "$package/toolchain/lib/"
 
 sysroot="$(find build/linux -maxdepth 1 -type d -name 'debian_*amd64-sysroot' | head -n1)"
 test -n "$sysroot"
-rsync -a "$sysroot/" "$package/sysroot/"
+mkdir -p "$package/sysroot"
+cp -a "$sysroot/." "$package/sysroot/"
 
 {
   echo "WEBRTC_BRANCH=$WEBRTC_BRANCH"

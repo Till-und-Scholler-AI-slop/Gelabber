@@ -182,7 +182,7 @@ jobs:
       - name: Check and measure the core library
         run: |
           set -euo pipefail
-          lib="$(find desktop/target -name libgelabber_media.so -path '*/out/lib/*' | head -n1)"
+          lib="$(find desktop/target -name libgelabber_media.so -path '*/out/build/*' | head -n1)"
           test -n "$lib"
           echo "Dynamic dependencies:"
           readelf -d "$lib" | grep NEEDED | tee /tmp/needed.txt

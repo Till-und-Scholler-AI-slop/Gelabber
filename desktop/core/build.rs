@@ -32,14 +32,17 @@ fn main() {
         config
             .define("GELABBER_LIBWEBRTC_DIR", &webrtc)
             .profile("Release")
-            .generator("Ninja");
+            .generator("Ninja")
+            // Only the core: libsdptransform's tests and helpers are part of
+            // `all` and cannot link without libwebrtc's libc++.
+            .build_target("gelabber_media");
         if env::var("CARGO_CFG_TARGET_OS").as_deref() == Ok("linux") {
             config.define(
                 "CMAKE_TOOLCHAIN_FILE",
                 native.join("cmake/chromium-linux.cmake"),
             );
         }
-        config.build().join("lib")
+        config.build().join("build")
     };
 
     println!("cargo:rustc-link-search=native={}", lib_dir.display());
