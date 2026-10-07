@@ -118,7 +118,8 @@ async fn voice_modes_reach_a_consumer() {
                 "autoGainControl": false, "echoCancellation": false}),
     )
     .unwrap();
-    let producer = produce(&send, &plain, json!({"codecOptions": {"opusDtx": false}})).await;
+    let browser_producer =
+        produce(&send, &plain, json!({"codecOptions": {"opusDtx": false}})).await;
     let server_producer = server_producers.lock().unwrap().last().cloned().unwrap();
     assert_eq!(server_producer.kind(), MediaKind::Audio);
     wait_for("Opus at the server", Duration::from_secs(20), || {
@@ -172,7 +173,11 @@ async fn voice_modes_reach_a_consumer() {
     })
     .await;
     engine.configure_audio(&json!({"inputGain": 1.0})).unwrap();
-    drop(producer);
+
+    // Each new mode is produced before the old producer closes, so capture
+    // keeps running (as when the client swaps tracks). The test microphone
+    // (a remapped null-sink monitor) records only zeros after a quick
+    // capture restart.
 
     // "enhanced": RNNoise takes the noise out.
     let enhanced = Source::microphone(
@@ -180,7 +185,8 @@ async fn voice_modes_reach_a_consumer() {
         &json!({"processingMode": "enhanced", "echoCancellation": false}),
     )
     .unwrap();
-    let producer = produce(&send, &enhanced, json!({"codecOptions": {"opusDtx": true}})).await;
+    let enhanced_producer =
+        produce(&send, &enhanced, json!({"codecOptions": {"opusDtx": true}})).await;
     let denoised = levels_when(&engine, "enhanced mode", |l| {
         l["denoised"] == true && level(l, "input") >= 10.0
     })
@@ -189,7 +195,7 @@ async fn voice_modes_reach_a_consumer() {
         level(&denoised, "processed") * 3.0 <= level(&denoised, "input"),
         "RNNoise suppresses white noise: {denoised}"
     );
-    drop(producer);
+    drop(browser_producer);
 
     // "original": stereo Opus, no processing.
     let original = Source::microphone(
@@ -197,15 +203,16 @@ async fn voice_modes_reach_a_consumer() {
         &json!({"processingMode": "original", "echoCancellation": false}),
     )
     .unwrap();
-    let producer = produce(
+    let original_producer = produce(
         &send,
         &original,
         json!({"codecOptions": {"opusStereo": true, "opusDtx": false}}),
     )
     .await;
+    drop(enhanced_producer);
     eprintln!(
         "original rtpParameters: {}",
-        producer.rtp_parameters().unwrap()["codecs"]
+        original_producer.rtp_parameters().unwrap()["codecs"]
     );
     levels_when(&engine, "original mode", |l| {
         l["denoised"] == false
