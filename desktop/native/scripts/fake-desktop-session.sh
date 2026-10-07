@@ -1,18 +1,24 @@
 #!/usr/bin/env bash
-# Runs a command inside a throwaway desktop session with a working ScreenCast
-# portal, to test screen capture without a monitor, GPU or dialog:
-# D-Bus session, PipeWire + WirePlumber, the real xdg-desktop-portal frontend,
-# and a test backend (fake_screencast_portal.py) whose "monitor" is
-# fake_screen.c: a PipeWire Video/Source node with a moving pattern in
-# shared-memory buffers, like a compositor's screencast stream.
+# Runs a command inside a throwaway desktop session, to test screen capture
+# and audio without a monitor, GPU, sound card or dialog:
+# - D-Bus session, PipeWire + WirePlumber + pipewire-pulse;
+# - the real xdg-desktop-portal frontend with a test ScreenCast backend
+#   (fake_screencast_portal.py) whose "monitor" is fake_screen.c, a PipeWire
+#   Video/Source with a moving pattern in shared-memory buffers like a
+#   compositor's screencast stream;
+# - a null sink "Gelabber-Speakers" as the output, and a microphone
+#   "Gelabber-Mic" that hears white noise: a source remapped from the monitor
+#   of a second null sink the noise plays into (libwebrtc lists no monitor
+#   sources). GELABBER_TEST_MIC / GELABBER_TEST_SPEAKERS name both.
 #
 # The compositor side (xdg-desktop-portal-hyprland, DMA-BUF frames) is not
 # covered; that needs a real desktop.
 #
-# Ubuntu 24.04 packages: pipewire wireplumber xdg-desktop-portal
-# libpipewire-0.3-dev gcc python3-gi (dbus-run-session comes with dbus).
+# Ubuntu 24.04 packages: pipewire wireplumber pipewire-pulse pulseaudio-utils
+# xdg-desktop-portal libpipewire-0.3-dev gcc python3-gi (dbus-run-session
+# comes with dbus).
 #
-# Usage: fake-screencast-session.sh <command> [args...]
+# Usage: fake-desktop-session.sh <command> [args...]
 set -euo pipefail
 
 if [[ -z "${GELABBER_FAKE_SESSION:-}" ]]; then
@@ -66,6 +72,31 @@ for _ in $(seq 50); do
 done
 wireplumber &
 pids+=($!)
+pipewire-pulse &
+pids+=($!)
+for _ in $(seq 50); do
+  pactl info >/dev/null 2>&1 && break
+  sleep 0.1
+done
+
+pactl load-module module-null-sink sink_name=gelabber-speakers \
+  sink_properties=device.description=Gelabber-Speakers >/dev/null
+pactl load-module module-null-sink sink_name=gelabber-mic-feed rate=48000 channels=1 \
+  sink_properties=device.description=Gelabber-Mic-Feed >/dev/null
+# 60 s of white noise at -20 dBFS RMS, 48 kHz mono.
+"${GELABBER_PYTHON:-/usr/bin/python3}" -I -c '
+import random, struct, sys, wave
+w = wave.open(sys.argv[1], "wb")
+w.setnchannels(1); w.setsampwidth(2); w.setframerate(48000)
+r = random.Random(1)
+w.writeframes(b"".join(struct.pack("<h", max(-32767, min(32767, int(r.gauss(0, 3277))))) for _ in range(48000 * 60)))
+' "$runtime/noise.wav"
+pactl load-module module-remap-source master=gelabber-mic-feed.monitor source_name=gelabber-mic \
+  source_properties=device.description=Gelabber-Mic >/dev/null
+pw-play --target gelabber-mic-feed "$runtime/noise.wav" &
+pids+=($!)
+export GELABBER_TEST_MIC=Gelabber-Mic
+export GELABBER_TEST_SPEAKERS=Gelabber-Speakers
 
 "${GELABBER_HOST_CC:-gcc}" -O2 -o "$runtime/fake_screen" "$here/fake_screen.c" \
   $(pkg-config --cflags --libs libpipewire-0.3)

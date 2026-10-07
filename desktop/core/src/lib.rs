@@ -139,6 +139,28 @@ impl Engine {
             .ok_or_else(last_error)
     }
 
+    /// `{"inputs":[{"id","name"}],"outputs":[...],"input","output"}`; id `""`
+    /// is the system default.
+    pub fn audio_devices(&self) -> Result<Value> {
+        // SAFETY: live engine.
+        owned_json(unsafe { ffi::gm_audio_devices(self.raw()) })
+    }
+
+    /// Live audio settings, each optional:
+    /// `{"input"?: id, "output"?: id, "inputGain"?: 0..2}`.
+    pub fn configure_audio(&self, options: &Value) -> Result<()> {
+        let options = json_arg(options)?;
+        // SAFETY: live engine, NUL-terminated JSON.
+        check(unsafe { ffi::gm_audio_configure(self.raw(), options.as_ptr()) })
+    }
+
+    /// Microphone meters while capture runs, 0..100:
+    /// `{"input","processed","clipping","denoised"}`.
+    pub fn audio_levels(&self) -> Result<Value> {
+        // SAFETY: live engine.
+        owned_json(unsafe { ffi::gm_audio_levels(self.raw()) })
+    }
+
     fn raw(&self) -> *mut ffi::gm_engine {
         self.0.0.as_ptr()
     }
@@ -466,10 +488,16 @@ impl Drop for SourceInner {
 pub struct Source(Arc<SourceInner>);
 
 impl Source {
-    pub fn microphone(engine: &Engine) -> Result<Self> {
-        // SAFETY: live engine.
+    /// Microphone with the web client's processing modes. `options`, all
+    /// optional: `{"processingMode": "enhanced|browser|original",
+    /// "echoCancellation", "noiseSuppression", "autoGainControl": bool,
+    /// "inputGain": 0..2}`. Processing is per engine; the newest microphone
+    /// sets it.
+    pub fn microphone(engine: &Engine, options: &Value) -> Result<Self> {
+        let options = json_arg(options)?;
+        // SAFETY: live engine, NUL-terminated JSON.
         Self::wrap(engine, unsafe {
-            ffi::gm_source_new_microphone(engine.raw())
+            ffi::gm_source_new_microphone(engine.raw(), options.as_ptr())
         })
     }
 
@@ -582,7 +610,14 @@ impl Consumer {
         check(unsafe { ffi::gm_consumer_pause(self.ptr.as_ptr(), paused as i32) })
     }
 
-    /// `{"framesReceived","width","height"}` for video plus libwebrtc stats in `rtc`.
+    /// Playback volume of an audio consumer, 0..2.
+    pub fn set_volume(&self, volume: f64) -> Result<()> {
+        // SAFETY: live consumer.
+        check(unsafe { ffi::gm_consumer_set_volume(self.ptr.as_ptr(), volume) })
+    }
+
+    /// `{"framesReceived","width","height"}` for video, `{"audioLevel",
+    /// "samplesPlayed"}` for audio, plus libwebrtc stats in `rtc`.
     pub fn stats(&self) -> Result<Value> {
         // SAFETY: live consumer.
         owned_json(unsafe { ffi::gm_consumer_stats(self.ptr.as_ptr()) })

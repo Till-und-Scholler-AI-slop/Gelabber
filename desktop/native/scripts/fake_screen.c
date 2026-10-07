@@ -1,4 +1,4 @@
-// Test-only "monitor" for fake-screencast-session.sh: a PipeWire Video/Source
+// Test-only "monitor" for fake-desktop-session.sh: a PipeWire Video/Source
 // that behaves like a compositor's screencast stream (xdg-desktop-portal-wlr,
 // -hyprland): it drives the graph itself and fills shared-memory (MemFd)
 // buffers it allocates itself, with a moving BGRx pattern. libwebrtc's

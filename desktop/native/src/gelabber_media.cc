@@ -3,18 +3,28 @@
 
 #define GM_BUILDING 1
 #include "gelabber_media.h"
+#include "capture_dsp.h"
 #include "gst_h264_encoder.h"
 #include "local_video_source.h"
 
 #include "mediasoupclient.hpp"
 
+#include <api/audio/audio_device.h>
+#include <api/audio/audio_processing.h>
+#include <api/audio/builtin_audio_processing_builder.h>
+#if __has_include(<api/audio/create_audio_device_module.h>)
+#  include <api/audio/create_audio_device_module.h>
+#  define GM_CREATE_ADM_WITH_ENVIRONMENT 1
+#endif
 #include <api/audio_codecs/builtin_audio_decoder_factory.h>
 #include <api/audio_codecs/builtin_audio_encoder_factory.h>
 #include <api/create_peerconnection_factory.h>
+#include <api/environment/environment_factory.h>
 #include <api/make_ref_counted.h>
 #include <api/media_stream_interface.h>
 #include <api/peer_connection_interface.h>
 #include <api/rtp_parameters.h>
+#include <api/task_queue/default_task_queue_factory.h>
 #include <api/video/i420_buffer.h>
 #include <api/video/video_frame.h>
 #include <api/video/video_sink_interface.h>
@@ -30,6 +40,7 @@
 #include <api/video_codecs/video_encoder_factory_template_open_h264_adapter.h>
 #include <media/base/adapted_video_track_source.h>
 #include <media/engine/simulcast_encoder_adapter.h>
+#include <modules/audio_processing/audio_buffer.h>
 #include <modules/audio_device/include/fake_audio_device.h>
 #include <rtc_base/logging.h>
 #include <rtc_base/thread.h>
@@ -38,6 +49,7 @@
 #include <algorithm>
 #include <atomic>
 #include <cctype>
+#include <cmath>
 #include <chrono>
 #include <cstring>
 #include <future>
@@ -215,6 +227,132 @@ namespace
 		std::atomic<int> width{ 0 };
 		std::atomic<int> height{ 0 };
 	};
+
+	// The APM's capture post-processor: RNNoise, gain and meters after
+	// libwebrtc's own echo cancellation, noise suppression and AGC.
+	class CapturePostProcessor : public webrtc::CustomProcessing
+	{
+	public:
+		explicit CapturePostProcessor(std::shared_ptr<gelabber::CaptureDsp> dsp) : dsp(std::move(dsp))
+		{
+		}
+
+		void Initialize(int sampleRateHz, int numChannels) override
+		{
+			dsp->Initialize(sampleRateHz, numChannels);
+		}
+
+		void Process(webrtc::AudioBuffer* audio) override
+		{
+			dsp->Process(
+			  audio->channels(), static_cast<int>(audio->num_channels()), static_cast<int>(audio->num_frames()));
+		}
+
+		std::string ToString() const override
+		{
+			return "GelabberCapture";
+		}
+
+	private:
+		const std::shared_ptr<gelabber::CaptureDsp> dsp;
+	};
+
+	// Decoded remote audio as it is played out: level (0..100, 80 ms
+	// windows like the microphone meter) and a sample count.
+	class AudioLevelSink : public webrtc::AudioTrackSinkInterface
+	{
+	public:
+		void OnData(
+		  const void* audioData,
+		  int bitsPerSample,
+		  int sampleRate,
+		  size_t numberOfChannels,
+		  size_t numberOfFrames) override
+		{
+			if (bitsPerSample != 16 || !audioData)
+				return;
+			const auto* pcm     = static_cast<const int16_t*>(audioData);
+			const size_t values = numberOfChannels * numberOfFrames;
+			for (size_t i = 0; i < values; ++i)
+				sum += static_cast<double>(pcm[i]) * pcm[i];
+			count += values;
+			window += numberOfFrames;
+			samples.fetch_add(numberOfFrames, std::memory_order_relaxed);
+			if (sampleRate > 0 && window >= static_cast<size_t>(sampleRate) * 80 / 1000)
+			{
+				const double rms = std::sqrt(sum / static_cast<double>(std::max<uint64_t>(count, 1))) / 32768.0;
+				level.store(static_cast<int>(std::min(100.0, std::round(rms * 350.0))));
+				sum    = 0;
+				count  = 0;
+				window = 0;
+			}
+		}
+
+		std::atomic<uint64_t> samples{ 0 };
+		std::atomic<int> level{ 0 };
+
+	private:
+		double sum{ 0 };
+		uint64_t count{ 0 };
+		size_t window{ 0 };
+	};
+
+	struct AudioDeviceEntry
+	{
+		uint16_t index;
+		std::string id;
+		std::string name;
+	};
+
+	// Devices in module order. Index 0 is the system default with id "".
+	// Other ids are the module's GUID where it has one (Windows endpoint
+	// ids); libwebrtc's PulseAudio module reports none, so there the
+	// display name is the id, numbered when names repeat.
+	template<typename Count, typename NameOf>
+	std::vector<AudioDeviceEntry> ListAudioDevices(Count count, NameOf nameOf)
+	{
+		std::vector<AudioDeviceEntry> out;
+		std::map<std::string, int> seen;
+		char name[webrtc::kAdmMaxDeviceNameSize];
+		char guid[webrtc::kAdmMaxGuidSize];
+		for (int i = 0, n = count(); i < n; ++i)
+		{
+			name[0] = guid[0] = '\0';
+			if (nameOf(static_cast<uint16_t>(i), name, guid) != 0)
+				continue;
+			std::string id;
+			if (i > 0)
+			{
+				id = guid[0] != '\0' ? guid : name;
+				if (const int repeat = ++seen[id]; repeat > 1)
+					id += " (" + std::to_string(repeat) + ")";
+			}
+			out.push_back({ static_cast<uint16_t>(i), id, name });
+		}
+		return out;
+	}
+
+	std::vector<AudioDeviceEntry> RecordingDevices(webrtc::AudioDeviceModule& adm)
+	{
+		return ListAudioDevices(
+		  [&] { return adm.RecordingDevices(); },
+		  [&](uint16_t i, char* name, char* guid) { return adm.RecordingDeviceName(i, name, guid); });
+	}
+
+	std::vector<AudioDeviceEntry> PlayoutDevices(webrtc::AudioDeviceModule& adm)
+	{
+		return ListAudioDevices(
+		  [&] { return adm.PlayoutDevices(); },
+		  [&](uint16_t i, char* name, char* guid) { return adm.PlayoutDeviceName(i, name, guid); });
+	}
+
+	int FindAudioDevice(const std::vector<AudioDeviceEntry>& devices, const std::string& id)
+	{
+		for (const auto& device : devices)
+			if (device.id == id)
+				return device.index;
+		return -1;
+	}
 
 	// Shared by send and receive listeners: turns libmediasoupclient's
 	// blocking std::future callbacks into numbered events answered through
@@ -456,9 +594,17 @@ struct gm_engine
 	std::unique_ptr<webrtc::Thread> worker;
 	std::unique_ptr<webrtc::Thread> signaling;
 	std::unique_ptr<webrtc::FakeAudioDeviceModule> dummyAudio;
+	std::unique_ptr<webrtc::TaskQueueFactory> taskQueues;
+	// Platform audio device module; null with "dummy" audio. Used on the
+	// worker thread only.
+	webrtc::scoped_refptr<webrtc::AudioDeviceModule> adm;
+	webrtc::scoped_refptr<webrtc::AudioProcessing> apm;
+	std::shared_ptr<gelabber::CaptureDsp> dsp;
 	webrtc::scoped_refptr<webrtc::PeerConnectionFactoryInterface> factory;
-	webrtc::scoped_refptr<webrtc::AudioSourceInterface> microphone;
 	std::atomic<uint64_t> nextTrack{ 0 };
+	std::mutex audioMutex;
+	std::string inputId;
+	std::string outputId;
 
 	mediasoupclient::PeerConnection::Options Options() const
 	{
@@ -514,6 +660,7 @@ struct gm_consumer
 {
 	mediasoupclient::Consumer* consumer{ nullptr };
 	std::unique_ptr<FrameCounter> counter;
+	std::unique_ptr<AudioLevelSink> audio;
 	std::string id;
 };
 
@@ -567,6 +714,31 @@ gm_engine* gm_engine_new(const char* optionsJson)
 			engine->dummyAudio = std::make_unique<webrtc::FakeAudioDeviceModule>();
 			adm                = webrtc::scoped_refptr<webrtc::AudioDeviceModule>(engine->dummyAudio.get());
 		}
+		else
+		{
+			// Created here rather than inside the factory so device
+			// selection can reach it.
+			engine->taskQueues = webrtc::CreateDefaultTaskQueueFactory();
+			engine->adm        = engine->worker->BlockingCall([&] {
+#if defined(GM_CREATE_ADM_WITH_ENVIRONMENT)
+				return webrtc::CreateAudioDeviceModule(
+				  webrtc::CreateEnvironment(), webrtc::AudioDeviceModule::kPlatformDefaultAudio);
+#else
+				return webrtc::AudioDeviceModule::Create(
+				  webrtc::AudioDeviceModule::kPlatformDefaultAudio, engine->taskQueues.get());
+#endif
+			});
+			if (!engine->adm)
+				throw std::runtime_error("failed to create the audio device module");
+			adm = engine->adm;
+		}
+
+		engine->dsp = std::make_shared<gelabber::CaptureDsp>();
+		engine->apm = webrtc::BuiltinAudioProcessingBuilder()
+		                .SetCapturePostProcessing(std::make_unique<CapturePostProcessor>(engine->dsp))
+		                .Build(webrtc::CreateEnvironment());
+		if (!engine->apm)
+			throw std::runtime_error("failed to create audio processing");
 
 		// TODO(desktop): hardware H264 decoding.
 		engine->factory = webrtc::CreatePeerConnectionFactory(
@@ -583,7 +755,7 @@ gm_engine* gm_engine_new(const char* optionsJson)
 		    webrtc::LibvpxVp9DecoderTemplateAdapter,
 		    webrtc::Dav1dDecoderTemplateAdapter>>(),
 		  nullptr,
-		  nullptr);
+		  engine->apm);
 		if (!engine->factory)
 			throw std::runtime_error("failed to create PeerConnectionFactory");
 		return engine.release();
@@ -595,13 +767,112 @@ void gm_engine_free(gm_engine* engine)
 	guarded<int>(0, [&] {
 		if (!engine)
 			return 0;
-		engine->microphone = nullptr;
-		engine->factory    = nullptr;
+		engine->factory = nullptr;
+		engine->apm     = nullptr;
+		if (engine->adm)
+			engine->worker->BlockingCall([&] { engine->adm = nullptr; });
 		engine->signaling->Stop();
 		engine->worker->Stop();
 		engine->network->Stop();
 		delete engine;
 		return 0;
+	});
+}
+
+char* gm_audio_devices(gm_engine* engine)
+{
+	return guarded<char*>(nullptr, [&] {
+		json out = { { "inputs", json::array() }, { "outputs", json::array() }, { "input", "" }, { "output", "" } };
+		if (!engine->adm)
+			return dupString(out.dump());
+		engine->worker->BlockingCall([&] {
+			for (const auto& device : RecordingDevices(*engine->adm))
+				out["inputs"].push_back({ { "id", device.id }, { "name", device.name } });
+			for (const auto& device : PlayoutDevices(*engine->adm))
+				out["outputs"].push_back({ { "id", device.id }, { "name", device.name } });
+		});
+		std::lock_guard lock(engine->audioMutex);
+		out["input"]  = engine->inputId;
+		out["output"] = engine->outputId;
+		// Device names come from the system and need not be valid UTF-8.
+		return dupString(out.dump(-1, ' ', false, json::error_handler_t::replace));
+	});
+}
+
+int gm_audio_configure(gm_engine* engine, const char* optionsJson)
+{
+	return guarded<int>(-1, [&] {
+		const auto options = parseJson(optionsJson, "audio options");
+		if (options.contains("inputGain"))
+			engine->dsp->SetGain(options["inputGain"].get<float>());
+		const bool input  = options.contains("input");
+		const bool output = options.contains("output");
+		if (!input && !output)
+			return 0;
+		if (!engine->adm)
+			throw std::runtime_error("no audio devices with dummy audio");
+
+		std::string error;
+		engine->worker->BlockingCall([&] {
+			auto& adm = *engine->adm;
+			if (input)
+			{
+				const auto id   = options["input"].get<std::string>();
+				const int index = FindAudioDevice(RecordingDevices(adm), id);
+				if (index < 0)
+				{
+					error = "unknown input device " + id;
+					return;
+				}
+				const bool running = adm.Recording();
+				if (running)
+					adm.StopRecording();
+				if (adm.SetRecordingDevice(static_cast<uint16_t>(index)) != 0)
+					error = "cannot select input device " + id;
+				if (running && (adm.InitRecording() != 0 || adm.StartRecording() != 0))
+					error = "cannot restart capture on " + id;
+				if (!error.empty())
+					return;
+				std::lock_guard lock(engine->audioMutex);
+				engine->inputId = id;
+			}
+			if (output)
+			{
+				const auto id   = options["output"].get<std::string>();
+				const int index = FindAudioDevice(PlayoutDevices(adm), id);
+				if (index < 0)
+				{
+					error = "unknown output device " + id;
+					return;
+				}
+				const bool running = adm.Playing();
+				if (running)
+					adm.StopPlayout();
+				if (adm.SetPlayoutDevice(static_cast<uint16_t>(index)) != 0)
+					error = "cannot select output device " + id;
+				if (running && (adm.InitPlayout() != 0 || adm.StartPlayout() != 0))
+					error = "cannot restart playout on " + id;
+				if (!error.empty())
+					return;
+				std::lock_guard lock(engine->audioMutex);
+				engine->outputId = id;
+			}
+		});
+		if (!error.empty())
+			throw std::runtime_error(error);
+		return 0;
+	});
+}
+
+char* gm_audio_levels(gm_engine* engine)
+{
+	return guarded<char*>(nullptr, [&] {
+		const auto levels = engine->dsp->Levels();
+		return dupString(json{ { "input", levels.raw },
+		                       { "processed", levels.processed },
+		                       { "clipping", levels.clipping },
+		                       { "denoised", levels.denoised } }
+		                   .dump());
 	});
 }
 
@@ -750,12 +1021,35 @@ char* gm_transport_stats(gm_transport* transport)
 	return guarded<char*>(nullptr, [&] { return dupString(transport->Base()->GetStats().dump()); });
 }
 
-gm_source* gm_source_new_microphone(gm_engine* engine)
+gm_source* gm_source_new_microphone(gm_engine* engine, const char* optionsJson)
 {
 	return guarded<gm_source*>(nullptr, [&]() -> gm_source* {
-		if (!engine->microphone)
-			engine->microphone = engine->factory->CreateAudioSource(webrtc::AudioOptions());
-		auto track = engine->factory->CreateAudioTrack(engine->TrackId("mic"), engine->microphone.get());
+		const auto options = optionsJson ? json::parse(optionsJson) : json::object();
+		const auto mode    = options.value("processingMode", std::string("enhanced"));
+		if (mode != "enhanced" && mode != "browser" && mode != "original")
+			throw std::invalid_argument("processingMode must be enhanced, browser or original");
+		const bool echoCancellation = options.value("echoCancellation", true);
+
+		// Same switches as the web client's getUserMedia constraints
+		// (web/src/voice/settings.ts micConstraints).
+		webrtc::AudioOptions audio;
+		audio.echo_cancellation = echoCancellation;
+		audio.noise_suppression = mode == "browser" && options.value("noiseSuppression", true);
+		audio.auto_gain_control = mode == "browser" && options.value("autoGainControl", true);
+		audio.highpass_filter   = mode != "original";
+
+		// Stereo capture only in original mode; the module records stereo
+		// when the device can, and the APM downmixes unless told otherwise.
+		auto config                            = engine->apm->GetConfig();
+		config.pipeline.multi_channel_capture = mode == "original";
+		engine->apm->ApplyConfig(config);
+		engine->dsp->SetDenoise(mode == "enhanced");
+		engine->dsp->SetGain(static_cast<float>(options.value("inputGain", 1.0)));
+
+		auto source = engine->factory->CreateAudioSource(audio);
+		if (!source)
+			throw std::runtime_error("failed to create audio source");
+		auto track = engine->factory->CreateAudioTrack(engine->TrackId("mic"), source.get());
 		if (!track)
 			throw std::runtime_error("failed to create audio track");
 		return new gm_source{ engine, track, nullptr };
@@ -968,6 +1262,12 @@ gm_consumer* gm_transport_consume(gm_transport* transport, const char* consumerJ
 			auto* track  = static_cast<webrtc::VideoTrackInterface*>(consumer->GetTrack());
 			track->AddOrUpdateSink(out->counter.get(), webrtc::VideoSinkWants());
 		}
+		else
+		{
+			out->audio  = std::make_unique<AudioLevelSink>();
+			auto* track = static_cast<webrtc::AudioTrackInterface*>(consumer->GetTrack());
+			track->AddSink(out->audio.get());
+		}
 		return out.release();
 	});
 }
@@ -981,6 +1281,11 @@ void gm_consumer_free(gm_consumer* consumer)
 		{
 			auto* track = static_cast<webrtc::VideoTrackInterface*>(consumer->consumer->GetTrack());
 			track->RemoveSink(consumer->counter.get());
+		}
+		if (consumer->audio)
+		{
+			auto* track = static_cast<webrtc::AudioTrackInterface*>(consumer->consumer->GetTrack());
+			track->RemoveSink(consumer->audio.get());
 		}
 		if (!consumer->consumer->IsClosed())
 			consumer->consumer->Close();
@@ -1006,6 +1311,20 @@ int gm_consumer_pause(gm_consumer* consumer, int paused)
 	});
 }
 
+int gm_consumer_set_volume(gm_consumer* consumer, double volume)
+{
+	return guarded<int>(-1, [&] {
+		if (!consumer->audio)
+			throw std::invalid_argument("volume needs an audio consumer");
+		if (!std::isfinite(volume))
+			throw std::invalid_argument("volume must be a number");
+		auto* track = static_cast<webrtc::AudioTrackInterface*>(consumer->consumer->GetTrack());
+		// RemoteAudioSource scales the decoded audio by this factor (0..10).
+		track->GetSource()->SetVolume(std::clamp(volume, 0.0, 2.0));
+		return 0;
+	});
+}
+
 char* gm_consumer_stats(gm_consumer* consumer)
 {
 	return guarded<char*>(nullptr, [&] {
@@ -1015,6 +1334,11 @@ char* gm_consumer_stats(gm_consumer* consumer)
 			out["framesReceived"] = consumer->counter->frames.load();
 			out["width"]          = consumer->counter->width.load();
 			out["height"]         = consumer->counter->height.load();
+		}
+		if (consumer->audio)
+		{
+			out["audioLevel"]    = consumer->audio->level.load();
+			out["samplesPlayed"] = consumer->audio->samples.load();
 		}
 		out["rtc"] = consumer->consumer->GetStats();
 		return dupString(out.dump());

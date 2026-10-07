@@ -38,7 +38,7 @@
 extern "C" {
 #endif
 
-#define GM_ABI_VERSION 1
+#define GM_ABI_VERSION 2
 
 typedef struct gm_engine gm_engine;
 typedef struct gm_device gm_device;
@@ -79,6 +79,21 @@ GM_API void gm_set_log_level(int level);
 GM_API gm_engine* gm_engine_new(const char* options_json);
 GM_API void gm_engine_free(gm_engine* engine);
 
+/* Audio devices of the engine's audio device module (Linux: PulseAudio API,
+ * which PipeWire serves). {"inputs":[{"id","name"}],"outputs":[{"id","name"}],
+ * "input":"<id>","output":"<id>"}. The id "" is the system default; other ids
+ * are the platform's device GUID where it reports one, else the display name
+ * (PulseAudio). Monitor sources are not listed. */
+GM_API char* gm_audio_devices(gm_engine* engine);
+/* Live audio settings; every key is optional:
+ * {"input"?: "<id>", "output"?: "<id>", "inputGain"?: 0..2}.
+ * Switching a device restarts capture/playout if it runs. */
+GM_API int gm_audio_configure(gm_engine* engine, const char* options_json);
+/* Microphone meters while capture runs, 0..100 like the web client's:
+ * {"input": before RNNoise and gain, "processed": as sent, "clipping": bool,
+ *  "denoised": bool (RNNoise ran)}. */
+GM_API char* gm_audio_levels(gm_engine* engine);
+
 /* Device: loads router RTP capabilities (server `capabilities` frame). */
 GM_API gm_device* gm_device_new(gm_engine* engine);
 GM_API void gm_device_free(gm_device* device);
@@ -103,8 +118,15 @@ GM_API int gm_transport_restart_ice(gm_transport* transport, const char* ice_par
 GM_API char* gm_transport_stats(gm_transport* transport);
 
 /* Local sources. */
-/* Microphone through the engine's audio device module. */
-GM_API gm_source* gm_source_new_microphone(gm_engine* engine);
+/* Microphone through the engine's audio device module and its processing,
+ * matching the web client's modes. options_json (all optional):
+ * {"processingMode": "enhanced|browser|original" (default enhanced),
+ *  "echoCancellation": true, "noiseSuppression": true, "autoGainControl": true,
+ *  "inputGain": 1.0}
+ * enhanced: RNNoise, no WebRTC noise suppression/AGC; browser: WebRTC noise
+ * suppression and AGC as configured; original: stereo, neither. Processing is
+ * per engine (one capture path): the newest microphone source sets it. */
+GM_API gm_source* gm_source_new_microphone(gm_engine* engine, const char* options_json);
 /* Synthetic moving test pattern (I420) for build/pipeline checks. */
 GM_API gm_source* gm_source_new_test_pattern(gm_engine* engine, int width, int height, int fps);
 /* Screen or window picked in the desktop's own dialog (Linux: xdg-desktop-portal
@@ -137,7 +159,11 @@ GM_API gm_consumer* gm_transport_consume(gm_transport* transport, const char* co
 GM_API void gm_consumer_free(gm_consumer* consumer);
 GM_API const char* gm_consumer_id(gm_consumer* consumer);
 GM_API int gm_consumer_pause(gm_consumer* consumer, int paused);
-/* {"framesReceived","width","height"} for video, {} for audio, plus libwebrtc stats under "rtc". */
+/* Playback volume of an audio consumer, 0..2 (1 = as received; 0 = silent). */
+GM_API int gm_consumer_set_volume(gm_consumer* consumer, double volume);
+/* {"framesReceived","width","height"} for video, {"audioLevel" 0..100,
+ * "samplesPlayed"} for audio, plus libwebrtc stats under "rtc". Audio is only
+ * decoded while playout runs. */
 GM_API char* gm_consumer_stats(gm_consumer* consumer);
 
 #ifdef __cplusplus

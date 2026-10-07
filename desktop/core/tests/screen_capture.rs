@@ -2,8 +2,8 @@
 //! sent through mediasoup 0.29 and decoded by a native consumer.
 //!
 //! Needs a Wayland session with PipeWire and a portal that answers without a
-//! dialog; CI runs it under headless sway with xdg-desktop-portal-wlr
-//! (desktop/native/scripts/headless-screencast.sh). Skipped unless
+//! dialog; CI runs it in desktop/native/scripts/fake-desktop-session.sh (real
+//! portal frontend, test ScreenCast backend). Skipped unless
 //! GELABBER_TEST_SCREEN=1 so a developer desktop never opens a picker.
 
 mod common;

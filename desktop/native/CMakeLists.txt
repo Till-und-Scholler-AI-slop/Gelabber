@@ -49,11 +49,51 @@ FetchContent_Declare(
 )
 FetchContent_MakeAvailable(mediasoupclient)
 
-add_library(gelabber_media SHARED src/gelabber_media.cc)
+# RNNoise for the "enhanced" microphone mode: the same source commit and
+# model as the web client (web/scripts/audio/build-rnnoise.sh), built as
+# plain C. Neither archive has a CMake build.
+FetchContent_Declare(
+  rnnoise
+  URL https://codeload.github.com/xiph/rnnoise/tar.gz/904a876dce1f9ab8860c0a5000ed151f9f6eef58
+  URL_HASH SHA256=975488a6b6ed404b176f9e7a72b418470e50b1e7596f875eb7799f5b785e3ebf
+  DOWNLOAD_NAME rnnoise-904a876d.tar.gz
+)
+FetchContent_Declare(
+  rnnoise_model
+  URL https://media.xiph.org/rnnoise/models/rnnoise_data-0b50c45.tar.gz
+  URL_HASH SHA256=4ac81c5c0884ec4bd5907026aaae16209b7b76cd9d7f71af582094a2f98f4b43
+)
+FetchContent_MakeAvailable(rnnoise rnnoise_model)
+# The model archive holds src/rnnoise_data.{c,h}; extraction may strip src/.
+if(EXISTS "${rnnoise_model_SOURCE_DIR}/src/rnnoise_data.c")
+  set(rnnoise_model_dir "${rnnoise_model_SOURCE_DIR}/src")
+else()
+  set(rnnoise_model_dir "${rnnoise_model_SOURCE_DIR}")
+endif()
+# v0.2's scalar vec.h includes Opus' os_support.h for OPUS_CLEAR only.
+file(WRITE "${CMAKE_CURRENT_BINARY_DIR}/rnnoise-shim/os_support.h"
+  "#include <string.h>\n#define OPUS_CLEAR(dst, n) memset((dst), 0, (n)*sizeof(*(dst)))\n")
+add_library(rnnoise STATIC
+  ${rnnoise_SOURCE_DIR}/src/denoise.c
+  ${rnnoise_SOURCE_DIR}/src/rnn.c
+  ${rnnoise_SOURCE_DIR}/src/pitch.c
+  ${rnnoise_SOURCE_DIR}/src/kiss_fft.c
+  ${rnnoise_SOURCE_DIR}/src/celt_lpc.c
+  ${rnnoise_SOURCE_DIR}/src/nnet.c
+  ${rnnoise_SOURCE_DIR}/src/nnet_default.c
+  ${rnnoise_SOURCE_DIR}/src/parse_lpcnet_weights.c
+  ${rnnoise_model_dir}/rnnoise_data.c
+  ${rnnoise_SOURCE_DIR}/src/rnnoise_tables.c)
+target_include_directories(rnnoise
+  PUBLIC ${rnnoise_SOURCE_DIR}/include
+  PRIVATE ${rnnoise_model_dir} ${rnnoise_SOURCE_DIR}/src "${CMAKE_CURRENT_BINARY_DIR}/rnnoise-shim")
+target_compile_options(rnnoise PRIVATE -w)
+
+add_library(gelabber_media SHARED src/gelabber_media.cc src/capture_dsp.cc)
 target_include_directories(gelabber_media
   PUBLIC include
   PRIVATE ${mediasoupclient_SOURCE_DIR}/include)
-target_link_libraries(gelabber_media PRIVATE mediasoupclient)
+target_link_libraries(gelabber_media PRIVATE mediasoupclient rnnoise)
 
 if(UNIX AND NOT APPLE)
   # WEBRTC_USE_H264 matches rtc_use_h264=true; without it the OpenH264

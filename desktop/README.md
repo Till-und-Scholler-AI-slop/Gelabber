@@ -4,7 +4,8 @@ Native desktop client (issue #165): Tauri 2 shell around the existing web UI,
 with a native media core instead of the browser's WebRTC. Linux
 (Omarchy/Hyprland/Wayland) first, then Windows.
 
-Status: **spikes** (steps 1 and 2 of the ticket: build, Linux screen capture).
+Status: **spikes** (steps 1 to 3 of the ticket: build, Linux screen capture,
+voice in the core).
 Not a product yet.
 
 ## Layout
@@ -18,6 +19,7 @@ Not a product yet.
 | `core/` | Rust crate `gelabber-media-core`: safe API over the C ABI |
 | `core/tests/mediasoup_loopback.rs` | Loopback call against mediasoup 0.29 with the server's router codecs |
 | `core/tests/screen_capture.rs` | Screen capture through the portal, H264, mediasoup, native decode (`GELABBER_TEST_SCREEN=1`) |
+| `core/tests/voice.rs` | Microphone modes, RNNoise, device selection, Opus through mediasoup, playout (`GELABBER_TEST_AUDIO=1`) |
 
 ## Why a shared library with a C ABI
 
@@ -64,7 +66,17 @@ any glibc ≥ 2.31 system. PipeWire is loaded at runtime (`dlopen`), X11 is off.
 - Screen capture (Linux): xdg-desktop-portal ScreenCast picks the source,
   PipeWire delivers frames (libwebrtc's `BaseCapturerPipeWire`). The portal's
   GLib callbacks run on the capture thread, so no host main loop is needed.
-  `native/scripts/fake-screencast-session.sh` runs a command in a throwaway
+  `native/scripts/fake-desktop-session.sh` runs a command in a throwaway
   session with the real portal frontend and a test backend whose "monitor"
-  is a shared-memory PipeWire stream (`fake_screen.c`); CI uses it. The compositor side
-  (xdg-desktop-portal-hyprland, DMA-BUF frames) needs a real desktop.
+  is a shared-memory PipeWire stream (`fake_screen.c`); CI uses it. The
+  compositor side (xdg-desktop-portal-hyprland, DMA-BUF frames) needs a real
+  desktop.
+- Voice: libwebrtc's audio device module (Linux: PulseAudio API, served by
+  pipewire-pulse) with its APM for echo cancellation, noise suppression and
+  AGC. The web client's modes carry over: `enhanced` runs RNNoise (same
+  source commit and model as `web/public/audio`) after the APM, `browser`
+  uses the APM's noise suppression/AGC, `original` captures stereo without
+  either. Input gain and meters (0..100, the web formula) run in the same
+  post-processor; per-consumer playback volume replaces the web's audio
+  elements. The test session also provides null-sink "speakers" and a
+  noise-playing "microphone" for `core/tests/voice.rs`.

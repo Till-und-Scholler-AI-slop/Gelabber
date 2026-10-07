@@ -70,7 +70,7 @@ async fn native_client_round_trips_media_through_mediasoup() {
         server_producers.clone(),
     );
 
-    let mic = Source::microphone(&engine).unwrap();
+    let mic = Source::microphone(&engine, &json!({})).unwrap();
     let h264_source = Source::test_pattern(&engine, 1280, 720, 30).unwrap();
     let vp8_source = Source::test_pattern(&engine, 1280, 720, 30).unwrap();
 

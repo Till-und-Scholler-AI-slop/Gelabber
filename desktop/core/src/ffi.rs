@@ -3,7 +3,7 @@
 
 use std::os::raw::{c_char, c_int, c_void};
 
-pub const GM_ABI_VERSION: u32 = 1;
+pub const GM_ABI_VERSION: u32 = 2;
 
 #[repr(C)]
 pub struct gm_engine {
@@ -51,6 +51,9 @@ unsafe extern "C" {
 
     pub fn gm_engine_new(options_json: *const c_char) -> *mut gm_engine;
     pub fn gm_engine_free(engine: *mut gm_engine);
+    pub fn gm_audio_devices(engine: *mut gm_engine) -> *mut c_char;
+    pub fn gm_audio_configure(engine: *mut gm_engine, options: *const c_char) -> c_int;
+    pub fn gm_audio_levels(engine: *mut gm_engine) -> *mut c_char;
 
     pub fn gm_device_new(engine: *mut gm_engine) -> *mut gm_device;
     pub fn gm_device_free(device: *mut gm_device);
@@ -76,7 +79,10 @@ unsafe extern "C" {
     pub fn gm_transport_restart_ice(transport: *mut gm_transport, ice: *const c_char) -> c_int;
     pub fn gm_transport_stats(transport: *mut gm_transport) -> *mut c_char;
 
-    pub fn gm_source_new_microphone(engine: *mut gm_engine) -> *mut gm_source;
+    pub fn gm_source_new_microphone(
+        engine: *mut gm_engine,
+        options: *const c_char,
+    ) -> *mut gm_source;
     pub fn gm_source_new_test_pattern(
         engine: *mut gm_engine,
         width: c_int,
@@ -105,5 +111,6 @@ unsafe extern "C" {
     pub fn gm_consumer_free(consumer: *mut gm_consumer);
     pub fn gm_consumer_id(consumer: *mut gm_consumer) -> *const c_char;
     pub fn gm_consumer_pause(consumer: *mut gm_consumer, paused: c_int) -> c_int;
+    pub fn gm_consumer_set_volume(consumer: *mut gm_consumer, volume: f64) -> c_int;
     pub fn gm_consumer_stats(consumer: *mut gm_consumer) -> *mut c_char;
 }
