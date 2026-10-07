@@ -19,6 +19,9 @@ import {
 import { statsEntriesFromReport, type StatsEntry } from "./diagnostics.ts";
 import type { MediaPriority } from "./mediaPriority.ts";
 import { ViewerLayerController } from "./viewerLayers.ts";
+import { isDesktopApp } from "./native/bridge.ts";
+import { createNativeDevice } from "./native/device.ts";
+import { createStream } from "./native/tracks.ts";
 
 export type RtpSenderParameters = {
   encodings: Array<{
@@ -86,9 +89,15 @@ export interface MediaConnection {
   handleEvent(event: MediaEvent): void;
   close(): void;
 }
+/** In the desktop app the native core stands in for the browser's WebRTC. */
 export const createMediaConnection = (
   options: MediaConnectionOptions,
-): MediaConnection => new MediasoupConnection(options);
+): MediaConnection =>
+  new MediasoupConnection(
+    isDesktopApp() && !options.deviceFactory
+      ? { ...options, deviceFactory: createNativeDevice }
+      : options,
+  );
 
 const consumerKey = (source: { consumerId: string; generation: string }) =>
   `${source.consumerId}:${source.generation}`;
@@ -931,7 +940,7 @@ export class MediasoupConnection implements MediaConnection {
         ...event,
         consumer,
         track: consumer.track,
-        stream: new MediaStream([consumer.track]),
+        stream: createStream([consumer.track]) as MediaStream,
         rtpReceiver: consumer.rtpReceiver,
         layers: { spatial: null, temporal: null },
       };

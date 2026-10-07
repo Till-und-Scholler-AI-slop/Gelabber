@@ -1,4 +1,5 @@
 import { useAudioProcessing } from "./audioProcessing.ts";
+import { isDesktopApp } from "./native/bridge.ts";
 import { MicrophoneTest } from "./MicrophoneTest.tsx";
 // Shared Voice/Video + notification form. Used on /settings and in-call.
 
@@ -50,6 +51,11 @@ export function MediaSettingsForm({
   const [devices, setDevices] = useState<DeviceList>(emptyDevices);
 
   const refresh = async () => {
+    // The desktop app lists the native engine's devices; no permission probe.
+    if (isDesktopApp()) {
+      setDevices(await listMediaDevices().catch(() => emptyDevices));
+      return;
+    }
     if (typeof navigator === "undefined" || !navigator.mediaDevices) {
       setDevices(emptyDevices);
       return;
@@ -220,13 +226,17 @@ export function MediaSettingsForm({
             <p role="status" className="text-xs text-neutral-500">
               {processing.message}
             </p>
-            <button
-              type="button"
-              className="self-start rounded border px-3 py-2 text-sm"
-              onClick={() => setMicrophoneTest(true)}
-            >
-              Mikrofon testen und vergleichen
-            </button>
+            {/* The comparison records through Web Audio; the desktop app's
+                microphone runs in the native core. */}
+            {!isDesktopApp() && (
+              <button
+                type="button"
+                className="self-start rounded border px-3 py-2 text-sm"
+                onClick={() => setMicrophoneTest(true)}
+              >
+                Mikrofon testen und vergleichen
+              </button>
+            )}
           </fieldset>
           <AdvancedAudio expanded={section === "all"}>
             <fieldset className="flex flex-col gap-2">

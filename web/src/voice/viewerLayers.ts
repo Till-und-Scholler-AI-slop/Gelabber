@@ -6,6 +6,7 @@ export function renderedVideoHeight(trackId: string): number {
   for (const video of document.querySelectorAll("video")) {
     const stream = video.srcObject;
     if (
+      typeof MediaStream === "undefined" ||
       !(stream instanceof MediaStream) ||
       !stream.getVideoTracks().some((t) => t.id === trackId)
     )

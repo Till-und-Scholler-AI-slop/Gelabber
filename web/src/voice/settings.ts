@@ -1,10 +1,13 @@
 // Voice/video + in-app notification prefs. Persisted per browser.
 // Capture quality and microphone processing are independent of bandwidth.
 // No application bitrate limit unless the user explicitly selects economy/custom.
-// Capture devices are the browser's own list.
+// Capture devices are the browser's own list (the native engine's in the
+// desktop app).
 
 import { create } from "zustand";
 import { createJSONStorage, persist } from "zustand/middleware";
+import { isDesktopApp } from "./native/bridge.ts";
+import { listNativeDevices } from "./native/capture.ts";
 
 /** Explicit economy presets retained for migration; never applied by default. */
 export const AUDIO_QUALITY = {
@@ -641,6 +644,7 @@ export type DeviceList = {
 
 export async function listMediaDevices(): Promise<DeviceList> {
   const empty: DeviceList = { audioinput: [], audiooutput: [], videoinput: [] };
+  if (isDesktopApp()) return listNativeDevices();
   if (
     typeof navigator === "undefined" ||
     !navigator.mediaDevices?.enumerateDevices

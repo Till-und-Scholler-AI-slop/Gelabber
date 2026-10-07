@@ -366,7 +366,8 @@ pub async fn media_producer_close(media: State<'_, Media>, producer: u64) -> Res
 }
 
 /// `params`: the server's consumer announcement as
-/// `{"id","producerId","kind","rtpParameters","appData"?}`.
+/// `{"id","producerId","kind","rtpParameters","appData"?}`. Audio starts at
+/// volume 0; `media_consumer_set_volume` makes it audible.
 #[tauri::command]
 pub async fn media_consume(
     media: State<'_, Media>,
@@ -374,7 +375,17 @@ pub async fn media_consume(
     params: Value,
 ) -> Result<Value> {
     let transport = get(&media.transports, transport, "transport")?;
-    let consumer = blocking(move || transport.consume(&params).map_err(err)).await?;
+    let audio = params["kind"] == "audio";
+    let consumer = blocking(move || {
+        let consumer = transport.consume(&params).map_err(err)?;
+        // Silent until the page attaches it to an output, like a browser
+        // track without an audio element.
+        if audio {
+            consumer.set_volume(0.0).map_err(err)?;
+        }
+        Ok(consumer)
+    })
+    .await?;
     let id = consumer.id().to_owned();
     let handle = media.insert(&media.consumers, Arc::new(Mutex::new(consumer)));
     Ok(json!({ "consumer": handle, "id": id }))

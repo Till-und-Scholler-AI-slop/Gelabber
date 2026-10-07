@@ -4,6 +4,7 @@
 import { useCallback, useEffect, useRef, useState } from "react";
 
 import { CollapseIcon, ExpandIcon } from "../components/Icons.tsx";
+import { isNativeStream } from "./native/tracks.ts";
 import "./viewer.css";
 
 type VoiceTileProps = {
@@ -64,7 +65,7 @@ function StreamViewer(props: VoiceTileProps & { onClose: () => void }) {
 }
 
 function VideoSurface({
-  stream,
+  stream: given,
   label,
   mirror,
   screen,
@@ -76,6 +77,10 @@ function VideoSurface({
   sourceWatch,
   sourceAudioNotice,
 }: VoiceTileProps & { onEnlarge?: () => void; viewer?: boolean }) {
+  // Native streams (desktop app) are decoded by the native core; the webview
+  // cannot show them, so the tile keeps its placeholder.
+  const nativeVideo = isNativeStream(given);
+  const stream = nativeVideo ? null : given;
   const figureRef = useRef<HTMLElement>(null);
   const [fullscreen, setFullscreen] = useState(false);
   const [fullscreenError, setFullscreenError] = useState(false);
@@ -195,8 +200,13 @@ function VideoSurface({
         </p>
       ) : null}
       {!stream ? (
-        <div className="absolute inset-0 flex items-center justify-center text-sm text-neutral-400 dark:text-neutral-500">
-          {label}
+        <div className="absolute inset-0 flex flex-col items-center justify-center gap-1 p-3 text-center text-sm text-neutral-400 dark:text-neutral-500">
+          <span>{label}</span>
+          {nativeVideo ? (
+            <span role="status" className="text-xs">
+              Video empfangen; die Anzeige in der Desktop-App folgt.
+            </span>
+          ) : null}
         </div>
       ) : null}
       <figcaption className="absolute inset-x-0 bottom-0 truncate bg-black/50 px-2 py-1 text-left text-xs">
