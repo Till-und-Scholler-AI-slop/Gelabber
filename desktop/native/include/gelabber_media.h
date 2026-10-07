@@ -91,7 +91,8 @@ GM_API char* gm_audio_devices(gm_engine* engine);
 GM_API int gm_audio_configure(gm_engine* engine, const char* options_json);
 /* Microphone meters while capture runs, 0..100 like the web client's:
  * {"input": before RNNoise and gain, "processed": as sent, "clipping": bool,
- *  "denoised": bool (RNNoise ran)}. */
+ *  "denoised": bool (RNNoise ran), "blocks": 10 ms blocks processed so far
+ *  (stops growing while capture is idle), "channels": of the last block}. */
 GM_API char* gm_audio_levels(gm_engine* engine);
 
 /* Device: loads router RTP capabilities (server `capabilities` frame). */

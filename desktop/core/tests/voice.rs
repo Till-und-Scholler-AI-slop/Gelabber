@@ -29,15 +29,25 @@ async fn produce(send: &Transport, source: &Source, options: Value) -> Producer 
         .unwrap()
 }
 
-/// Polls the microphone meters until `ready` accepts them.
+/// Polls the microphone meters until `ready` accepts a window that was
+/// measured after this call (the meters keep their last values while capture
+/// processing is idle).
 async fn levels_when(engine: &Engine, what: &str, ready: impl Fn(&Value) -> bool) -> Value {
+    let blocks = |l: &Value| l["blocks"].as_u64().unwrap_or(0);
     let start = Instant::now();
     let mut levels = engine.audio_levels().unwrap();
-    while !ready(&levels) && start.elapsed() < Duration::from_secs(15) {
+    // One meter window is 8 blocks of 10 ms; skip the one in progress.
+    let fresh_after = blocks(&levels) + 16;
+    let accept = |l: &Value| blocks(l) >= fresh_after && ready(l);
+    while !accept(&levels) && start.elapsed() < Duration::from_secs(15) {
         tokio::time::sleep(Duration::from_millis(200)).await;
         levels = engine.audio_levels().unwrap();
     }
     eprintln!("{what}: {levels}");
+    assert!(
+        blocks(&levels) >= fresh_after,
+        "{what}: capture processing stalled: {levels}"
+    );
     assert!(ready(&levels), "{what}: {levels}");
     levels
 }

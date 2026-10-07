@@ -155,7 +155,7 @@ impl Engine {
     }
 
     /// Microphone meters while capture runs, 0..100:
-    /// `{"input","processed","clipping","denoised"}`.
+    /// `{"input","processed","clipping","denoised","blocks","channels"}`.
     pub fn audio_levels(&self) -> Result<Value> {
         // SAFETY: live engine.
         owned_json(unsafe { ffi::gm_audio_levels(self.raw()) })

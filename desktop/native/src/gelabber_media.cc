@@ -239,6 +239,8 @@ namespace
 
 		void Initialize(int sampleRateHz, int numChannels) override
 		{
+			RTC_LOG(LS_INFO) << "Capture post-processing: " << sampleRateHz << " Hz, " << numChannels
+			                 << " channel(s)";
 			dsp->Initialize(sampleRateHz, numChannels);
 		}
 
@@ -871,7 +873,9 @@ char* gm_audio_levels(gm_engine* engine)
 		return dupString(json{ { "input", levels.raw },
 		                       { "processed", levels.processed },
 		                       { "clipping", levels.clipping },
-		                       { "denoised", levels.denoised } }
+		                       { "denoised", levels.denoised },
+		                       { "blocks", levels.blocks },
+		                       { "channels", levels.channels } }
 		                   .dump());
 	});
 }

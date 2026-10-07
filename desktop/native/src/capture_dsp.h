@@ -20,6 +20,10 @@ namespace gelabber
 		bool clipping{ false };
 		// RNNoise ran on the last block (needs 48 kHz, 10 ms blocks).
 		bool denoised{ false };
+		// Blocks processed since the engine started, and the channel count
+		// of the last one: lets callers tell live meters from stale ones.
+		uint64_t blocks{ 0 };
+		int channels{ 0 };
 	};
 
 	class CaptureDsp
@@ -63,5 +67,7 @@ namespace gelabber
 		std::atomic<int> processedLevel{ 0 };
 		std::atomic<bool> clipping{ false };
 		std::atomic<bool> denoised{ false };
+		std::atomic<uint64_t> blocks{ 0 };
+		std::atomic<int> channels{ 0 };
 	};
 } // namespace gelabber
