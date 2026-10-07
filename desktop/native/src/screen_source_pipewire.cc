@@ -182,6 +182,14 @@ namespace gelabber
 				const int srcHeight = frame->size().height();
 				if (srcWidth < 2 || srcHeight < 2)
 					return;
+				{
+					// Counts captured frames, also while nothing consumes the
+					// track yet (AdaptFrame then drops them).
+					std::lock_guard lock(mutex);
+					width  = srcWidth;
+					height = srcHeight;
+					++frames;
+				}
 				const int64_t nowUs = webrtc::TimeMicros();
 				int outWidth, outHeight, cropWidth, cropHeight, cropX, cropY;
 				if (!AdaptFrame(
@@ -215,12 +223,6 @@ namespace gelabber
 					auto scaled = webrtc::I420Buffer::Create(outWidth, outHeight);
 					scaled->CropAndScaleFrom(*i420, cropX, cropY, cropWidth, cropHeight);
 					buffer = scaled;
-				}
-				{
-					std::lock_guard lock(mutex);
-					width  = srcWidth;
-					height = srcHeight;
-					++frames;
 				}
 				OnFrame(webrtc::VideoFrame::Builder()
 				          .set_video_frame_buffer(buffer)
