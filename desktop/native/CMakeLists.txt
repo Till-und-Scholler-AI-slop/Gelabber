@@ -56,7 +56,9 @@ target_include_directories(gelabber_media
 target_link_libraries(gelabber_media PRIVATE mediasoupclient)
 
 if(UNIX AND NOT APPLE)
-  target_compile_definitions(gelabber_media PRIVATE WEBRTC_LINUX)
+  # WEBRTC_USE_H264 matches rtc_use_h264=true; without it the OpenH264
+  # template adapters advertise no H264 formats.
+  target_compile_definitions(gelabber_media PRIVATE WEBRTC_LINUX WEBRTC_USE_H264)
   target_compile_definitions(mediasoupclient PUBLIC WEBRTC_LINUX)
   target_link_options(gelabber_media PRIVATE
     # Only the gm_* C ABI leaves the library; libwebrtc, libmediasoupclient and

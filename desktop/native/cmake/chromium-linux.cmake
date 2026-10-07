@@ -32,7 +32,13 @@ set(GELABBER_LIBCXX_FLAGS
   "-nostdinc++"
   "-isystem${_pkg}/include/buildtools/third_party/libc++"
   "-isystem${_pkg}/include/third_party/libc++/src/include"
-  "-isystem${_pkg}/include/third_party/libc++abi/src/include")
+  "-isystem${_pkg}/include/third_party/libc++abi/src/include"
+  # Defines Chromium passes next to its __config_site (build/config/c++ and
+  # build/config/compiler at M140) for a static, non-ASan release build.
+  "-D_LIBCPP_HARDENING_MODE=_LIBCPP_HARDENING_MODE_EXTENSIVE"
+  "-D_LIBCPP_DISABLE_VISIBILITY_ANNOTATIONS"
+  "-D_LIBCXXABI_DISABLE_VISIBILITY_ANNOTATIONS"
+  "-D_LIBCPP_INSTRUMENTED_WITH_ASAN=0")
 
 # libc++/libc++abi objects come from libwebrtc.a.
 set(CMAKE_SHARED_LINKER_FLAGS_INIT "-fuse-ld=lld -nostdlib++")
