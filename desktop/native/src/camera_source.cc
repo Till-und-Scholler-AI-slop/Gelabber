@@ -80,6 +80,11 @@ namespace gelabber
 				}
 			}
 
+			bool is_screencast() const override
+			{
+				return false;
+			}
+
 			std::string StateJson() const override
 			{
 				std::lock_guard lock(mutex);
