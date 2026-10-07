@@ -86,6 +86,9 @@ transports, producers and sources. WebKitGTK needs `libwebkit2gtk-4.1`.
   is a shared-memory PipeWire stream (`fake_screen.c`); CI uses it. The
   compositor side (xdg-desktop-portal-hyprland, DMA-BUF frames) needs a real
   desktop.
+- Camera: libwebrtc's video capture module (V4L2 on Linux, DirectShow on
+  Windows) at the closest format to the requested profile. CI runners have
+  no camera, so only the "no camera" path is tested there.
 - Video display: the webview cannot show the core's video, so remote video
   opens in a native viewer window (`app/src/viewer.rs`): winit on its own
   thread next to the webview's GTK loop, wgpu drawing the decoded I420

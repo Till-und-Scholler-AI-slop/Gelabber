@@ -262,6 +262,22 @@ pub async fn media_source_screen(media: State<'_, Media>, options: Value) -> Res
     Ok(media.insert(&media.sources, source))
 }
 
+/// Cameras: `[{"id","name"}]`.
+#[tauri::command]
+pub async fn media_video_devices(media: State<'_, Media>) -> Result<Value> {
+    let engine = media.engine()?.clone();
+    blocking(move || engine.video_devices().map_err(err)).await
+}
+
+/// `{"device"?, "width"?, "height"?, "fps"?}`; fails when the camera is
+/// missing or busy.
+#[tauri::command]
+pub async fn media_source_camera(media: State<'_, Media>, options: Value) -> Result<u64> {
+    let engine = media.engine()?.clone();
+    let source = blocking(move || Source::camera(&engine, &options).map_err(err)).await?;
+    Ok(media.insert(&media.sources, source))
+}
+
 #[tauri::command]
 pub async fn media_source_state(media: State<'_, Media>, source: u64) -> Result<Value> {
     get(&media.sources, source, "source")?.state().map_err(err)

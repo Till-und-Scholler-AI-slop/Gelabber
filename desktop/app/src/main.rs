@@ -120,6 +120,8 @@ fn main() {
             media::media_transport_close,
             media::media_source_microphone,
             media::media_source_screen,
+            media::media_video_devices,
+            media::media_source_camera,
             media::media_source_state,
             media::media_source_set_enabled,
             media::media_source_close,

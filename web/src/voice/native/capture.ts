@@ -16,7 +16,12 @@ type NativeAudioDevices = {
 /** Device lists in the shape of the browser's, from the native engine. The
  * system default (id "") is the selects' own default entry. */
 export async function listNativeDevices(): Promise<DeviceList> {
-  const devices = await invokeNative<NativeAudioDevices>("media_audio_devices");
+  const [devices, cameras] = await Promise.all([
+    invokeNative<NativeAudioDevices>("media_audio_devices"),
+    invokeNative<Array<{ id: string; name: string }>>(
+      "media_video_devices",
+    ).catch(() => []),
+  ]);
   const options = (items: Array<{ id: string; name: string }>) =>
     items
       .filter((item) => item.id)
@@ -24,7 +29,7 @@ export async function listNativeDevices(): Promise<DeviceList> {
   return {
     audioinput: options(devices.inputs),
     audiooutput: options(devices.outputs),
-    videoinput: [],
+    videoinput: options(cameras),
   };
 }
 
@@ -41,12 +46,26 @@ export async function selectInput(id: string): Promise<string> {
   }
 }
 
+type Range = ConstrainULong | ConstrainDouble | undefined;
+
+function wanted(range: Range, fallback: number): number {
+  const value =
+    typeof range === "number"
+      ? range
+      : (range?.ideal ?? range?.max ?? range?.exact ?? range?.min);
+  return Math.round(value ?? fallback);
+}
+
 function frameRate(video: MediaStreamConstraints["video"]): number {
   if (!video || video === true) return 30;
-  const rate = video.frameRate;
-  const value =
-    typeof rate === "number" ? rate : (rate?.ideal ?? rate?.max ?? rate?.exact);
-  return Math.min(120, Math.max(1, Math.round(value ?? 30)));
+  return Math.min(120, Math.max(1, wanted(video.frameRate, 30)));
+}
+
+function deviceId(constraint: ConstrainDOMString | undefined): string {
+  if (typeof constraint === "string") return constraint;
+  if (Array.isArray(constraint)) return constraint[0] ?? "";
+  const value = constraint?.exact ?? constraint?.ideal;
+  return (Array.isArray(value) ? value[0] : value) ?? "";
 }
 
 const unsupported = (what: string) =>
@@ -55,13 +74,64 @@ const unsupported = (what: string) =>
     "NotSupportedError",
   );
 
-/** getUserMedia for the desktop app. The microphone goes through
- * `captureNativeMicrophone`; cameras arrive with the native video sources. */
+/** getUserMedia for the desktop app: cameras through the native core. The
+ * microphone goes through `captureNativeMicrophone`. A camera id the
+ * machine does not have falls back to the first camera, like `ideal`. */
 export async function nativeGetUserMedia(
   constraints: MediaStreamConstraints,
 ): Promise<MediaStream> {
-  if (constraints.video) throw unsupported("Kamera");
-  throw unsupported("Diese Mikrofonanfrage");
+  const video = constraints.video;
+  if (!video) throw unsupported("Diese Mikrofonanfrage");
+  const shape = video === true ? {} : video;
+  const options = {
+    width: Math.min(7680, Math.max(16, wanted(shape.width, 1280))),
+    height: Math.min(4320, Math.max(16, wanted(shape.height, 720))),
+    fps: frameRate(video),
+  };
+  const id = deviceId(shape.deviceId);
+  const strict =
+    typeof shape.deviceId === "object" &&
+    !Array.isArray(shape.deviceId) &&
+    shape.deviceId.exact !== undefined;
+  let source: number;
+  let used = id;
+  try {
+    source = await invokeNative<number>("media_source_camera", {
+      options: { ...options, device: id },
+    });
+  } catch (error) {
+    if (!id || strict)
+      throw new DOMException(
+        `Kamera nicht verfügbar: ${String(error)}`,
+        "NotReadableError",
+      );
+    used = "";
+    source = await invokeNative<number>("media_source_camera", {
+      options: { ...options, device: "" },
+    }).catch((fallback: unknown) => {
+      throw new DOMException(
+        `Kamera nicht verfügbar: ${String(fallback)}`,
+        "NotReadableError",
+      );
+    });
+  }
+  const state = await invokeNative<ScreenState>("media_source_state", {
+    source,
+  }).catch(() => ({ state: "live" }) as ScreenState);
+  const track = new NativeTrack(
+    "video",
+    "Kamera",
+    { source },
+    {
+      deviceId: used,
+      width: state.width || options.width,
+      height: state.height || options.height,
+      frameRate: options.fps,
+    },
+  );
+  return new NativeStream([
+    track as unknown as MediaStreamTrack,
+  ]) as unknown as MediaStream;
 }
 
 type ScreenState = {

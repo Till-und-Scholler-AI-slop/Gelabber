@@ -3,7 +3,7 @@
 
 use std::os::raw::{c_char, c_int, c_void};
 
-pub const GM_ABI_VERSION: u32 = 5;
+pub const GM_ABI_VERSION: u32 = 6;
 
 #[repr(C)]
 pub struct gm_video_frame {
@@ -107,6 +107,8 @@ unsafe extern "C" {
         fps: c_int,
     ) -> *mut gm_source;
     pub fn gm_source_new_screen(engine: *mut gm_engine, options: *const c_char) -> *mut gm_source;
+    pub fn gm_video_devices(engine: *mut gm_engine) -> *mut c_char;
+    pub fn gm_source_new_camera(engine: *mut gm_engine, options: *const c_char) -> *mut gm_source;
     pub fn gm_source_state(source: *mut gm_source) -> *mut c_char;
     pub fn gm_source_free(source: *mut gm_source);
     pub fn gm_source_set_enabled(source: *mut gm_source, enabled: c_int) -> c_int;

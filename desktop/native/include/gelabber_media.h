@@ -38,7 +38,7 @@
 extern "C" {
 #endif
 
-#define GM_ABI_VERSION 5
+#define GM_ABI_VERSION 6
 
 typedef struct gm_engine gm_engine;
 typedef struct gm_device gm_device;
@@ -141,6 +141,13 @@ GM_API gm_source* gm_source_new_test_pattern(gm_engine* engine, int width, int h
  * options_json: {"type"?: "any|screen|window", "fps"?: 30, "cursor"?: true,
  *                "contentHint"?: "detail|text|motion"} */
 GM_API gm_source* gm_source_new_screen(gm_engine* engine, const char* options_json);
+/* Cameras: [{"id","name"}] (Linux: V4L2 devices; ids are the module's
+ * unique ids). */
+GM_API char* gm_video_devices(gm_engine* engine);
+/* Camera at the closest format it supports:
+ * {"device"?: id (default: first camera), "width"?: 1280, "height"?: 720,
+ *  "fps"?: 30}. Fails when the camera is missing or busy. */
+GM_API gm_source* gm_source_new_camera(gm_engine* engine, const char* options_json);
 /* {"state":"pending|live|cancelled|ended|failed","width"?,"height"?,"frames"?}.
  * Microphone and test pattern are always live. */
 GM_API char* gm_source_state(gm_source* source);

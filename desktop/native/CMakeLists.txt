@@ -89,7 +89,7 @@ target_include_directories(rnnoise
   PRIVATE ${rnnoise_model_dir} ${rnnoise_SOURCE_DIR}/src "${CMAKE_CURRENT_BINARY_DIR}/rnnoise-shim")
 target_compile_options(rnnoise PRIVATE -w)
 
-add_library(gelabber_media SHARED src/gelabber_media.cc src/capture_dsp.cc)
+add_library(gelabber_media SHARED src/gelabber_media.cc src/capture_dsp.cc src/camera_source.cc)
 target_include_directories(gelabber_media
   PUBLIC include
   PRIVATE ${mediasoupclient_SOURCE_DIR}/include)

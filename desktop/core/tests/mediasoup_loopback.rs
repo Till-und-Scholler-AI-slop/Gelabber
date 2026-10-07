@@ -28,6 +28,17 @@ async fn native_client_round_trips_media_through_mediasoup() {
     let runtime = Handle::current();
 
     let engine = Engine::new(Audio::Dummy).unwrap();
+
+    // Cameras: CI runners have none, so opening the default one must fail
+    // cleanly; with a camera it must open and close.
+    let cameras = engine.video_devices().unwrap();
+    eprintln!("cameras: {cameras}");
+    let camera = Source::camera(&engine, &json!({"width": 640, "height": 360}));
+    match cameras.as_array().map(Vec::len) {
+        Some(0) => assert!(camera.is_err(), "no camera, no source"),
+        _ => eprintln!("camera: {:?}", camera.map(|c| c.state().unwrap())),
+    }
+
     let device = Device::new(&engine).unwrap();
     let caps = serde_json::to_value(server.router.rtp_capabilities()).unwrap();
     device.load(&caps).unwrap();

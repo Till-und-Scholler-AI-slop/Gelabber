@@ -9,7 +9,7 @@ import {
 import { listMediaDevices, useMediaSettings } from "../settings.ts";
 import { renderedVideoHeight } from "../viewerLayers.ts";
 import { setNativeBridgeForTests, type NativeBridge } from "./bridge.ts";
-import { nativeGetDisplayMedia } from "./capture.ts";
+import { nativeGetDisplayMedia, nativeGetUserMedia } from "./capture.ts";
 import { createNativeMicrophoneTest } from "./microphoneTest.ts";
 import {
   nativeVideoTrack,
@@ -65,6 +65,7 @@ type Message = Record<string, unknown>;
 class FakeCore implements NativeBridge {
   calls: Call[] = [];
   levels = { input: 0, processed: 0, clipping: false, blocks: 0 };
+  cameras = [{ id: "/dev/video0", name: "Webcam" }];
   screenStates: Array<Record<string, unknown>> = [];
   devices = {
     inputs: [
@@ -158,6 +159,14 @@ class FakeCore implements NativeBridge {
             consumer: ++this.next,
             id: (args.params as { id: string }).id,
           };
+        case "media_source_camera": {
+          const device = (args.options as { device: string }).device;
+          if (device && !this.cameras.some((c) => c.id === device))
+            throw new Error(`unknown camera ${device}`);
+          return ++this.next;
+        }
+        case "media_video_devices":
+          return this.cameras;
         case "media_source_microphone":
         case "media_source_screen":
           return ++this.next;
@@ -436,7 +445,7 @@ describe("desktop app media", () => {
     expect(await listMediaDevices()).toEqual({
       audioinput: [{ id: "Headset", label: "Headset" }],
       audiooutput: [{ id: "Speakers", label: "Speakers" }],
-      videoinput: [],
+      videoinput: [{ id: "/dev/video0", label: "Webcam" }],
     });
   });
 
@@ -542,6 +551,37 @@ describe("desktop app media", () => {
     expect(core.calledWith("media_viewer_close")).toEqual([{ consumer: 42 }]);
     track.end();
     expect(nativeVideoTrack(stream)).toBeNull();
+  });
+
+  it("captures a camera natively", async () => {
+    expect((await listMediaDevices()).videoinput).toEqual([
+      { id: "/dev/video0", label: "Webcam" },
+    ]);
+    const stream = await nativeGetUserMedia({
+      audio: false,
+      video: {
+        deviceId: { ideal: "/dev/video9" },
+        width: { ideal: 1920, max: 1920 },
+        height: { ideal: 1080, max: 1080 },
+        frameRate: { ideal: 60, max: 60 },
+      },
+    });
+    // An unknown camera falls back to the first one, like `ideal`.
+    expect(core.calledWith("media_source_camera")).toEqual([
+      {
+        options: { width: 1920, height: 1080, fps: 60, device: "/dev/video9" },
+      },
+      { options: { width: 1920, height: 1080, fps: 60, device: "" } },
+    ]);
+    const [track] = stream.getVideoTracks();
+    expect(isNativeTrack(track)).toBe(true);
+    expect(track.getSettings()).toMatchObject({ deviceId: "", frameRate: 60 });
+    await expect(
+      nativeGetUserMedia({ video: { deviceId: { exact: "/dev/video9" } } }),
+    ).rejects.toMatchObject({ name: "NotReadableError" });
+    track.stop();
+    await tick();
+    expect(core.calledWith("media_source_close")).toHaveLength(1);
   });
 
   it("reports a cancelled picker like the browser", async () => {

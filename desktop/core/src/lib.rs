@@ -157,6 +157,12 @@ impl Engine {
         check(unsafe { ffi::gm_audio_configure(self.raw(), options.as_ptr()) })
     }
 
+    /// Cameras: `[{"id","name"}]`.
+    pub fn video_devices(&self) -> Result<Value> {
+        // SAFETY: live engine.
+        owned_json(unsafe { ffi::gm_video_devices(self.raw()) })
+    }
+
     /// Microphone test: `Some(options)` (`{"processingMode","inputGain"}`)
     /// keeps capture running so the meters move without a call, `None` ends
     /// it. Mode and gain are engine-wide.
@@ -535,6 +541,16 @@ impl Source {
         // SAFETY: live engine, NUL-terminated JSON.
         Self::wrap(engine, unsafe {
             ffi::gm_source_new_screen(engine.raw(), options.as_ptr())
+        })
+    }
+
+    /// Camera at the closest format it supports: `{"device"?: id, "width"?,
+    /// "height"?, "fps"?}` (default: first camera, 1280x720 at 30).
+    pub fn camera(engine: &Engine, options: &Value) -> Result<Self> {
+        let options = json_arg(options)?;
+        // SAFETY: live engine, NUL-terminated JSON.
+        Self::wrap(engine, unsafe {
+            ffi::gm_source_new_camera(engine.raw(), options.as_ptr())
         })
     }
 

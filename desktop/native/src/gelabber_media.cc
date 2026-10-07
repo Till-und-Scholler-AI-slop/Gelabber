@@ -1489,6 +1489,40 @@ gm_source* gm_source_new_screen(gm_engine* engine, const char* optionsJson)
 	});
 }
 
+char* gm_video_devices(gm_engine*)
+{
+	return guarded<char*>(nullptr, [&] {
+		json out = json::array();
+		for (const auto& camera : gelabber::ListCameras())
+			out.push_back({ { "id", camera.id }, { "name", camera.name } });
+		return dupString(out.dump(-1, ' ', false, json::error_handler_t::replace));
+	});
+}
+
+gm_source* gm_source_new_camera(gm_engine* engine, const char* optionsJson)
+{
+	return guarded<gm_source*>(nullptr, [&]() -> gm_source* {
+		const auto options = optionsJson ? parseJson(optionsJson, "camera options") : json::object();
+		gelabber::CameraOptions camera;
+		camera.device = options.value("device", std::string());
+		camera.width  = options.value("width", 1280);
+		camera.height = options.value("height", 720);
+		camera.fps    = options.value("fps", 30);
+		if (camera.width < 16 || camera.height < 16 || camera.width > 7680 || camera.height > 4320 ||
+		    camera.fps < 1 || camera.fps > 120)
+			throw std::invalid_argument("camera size or rate out of range");
+		auto source = gelabber::CreateCameraSource(camera);
+		auto track  = engine->factory->CreateVideoTrack(source, engine->TrackId("camera"));
+		if (!track)
+		{
+			source->Stop();
+			throw std::runtime_error("failed to create video track");
+		}
+		track->set_content_hint(webrtc::VideoTrackInterface::ContentHint::kFluid);
+		return new gm_source{ engine, track, source };
+	});
+}
+
 char* gm_source_state(gm_source* source)
 {
 	return guarded<char*>(nullptr, [&] {

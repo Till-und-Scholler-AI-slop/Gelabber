@@ -15,6 +15,8 @@ pub const MEDIA_COMMANDS: &[&str] = &[
     "media_transport_close",
     "media_source_microphone",
     "media_source_screen",
+    "media_video_devices",
+    "media_source_camera",
     "media_source_state",
     "media_source_set_enabled",
     "media_source_close",

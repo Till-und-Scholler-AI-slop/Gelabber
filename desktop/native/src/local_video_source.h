@@ -1,4 +1,4 @@
-// Video sources the core drives itself (test pattern, screen capture).
+// Video sources the core drives itself (test pattern, screen, camera).
 #ifndef GELABBER_LOCAL_VIDEO_SOURCE_H
 #define GELABBER_LOCAL_VIDEO_SOURCE_H
 
@@ -7,6 +7,7 @@
 
 #include <optional>
 #include <string>
+#include <vector>
 
 namespace gelabber
 {
@@ -47,6 +48,27 @@ namespace gelabber
 		int fps{ 30 };
 		bool cursor{ true };
 	};
+
+	struct CameraInfo
+	{
+		std::string id;
+		std::string name;
+	};
+
+	struct CameraOptions
+	{
+		// Empty: the first camera.
+		std::string device;
+		int width{ 1280 };
+		int height{ 720 };
+		int fps{ 30 };
+	};
+
+	// Cameras the platform's capture module sees.
+	std::vector<CameraInfo> ListCameras();
+	// Starts capturing from a camera at the closest supported format.
+	// Throws when the camera is missing or busy.
+	webrtc::scoped_refptr<LocalVideoSource> CreateCameraSource(const CameraOptions& options);
 
 	// Screen or window chosen in the desktop's own picker. Starts capturing
 	// right away; the picker opens asynchronously. Throws when the platform
