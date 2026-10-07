@@ -42,6 +42,11 @@ namespace gelabber
 		using GstClockTime = uint64_t;
 		constexpr GstClockTime kClockTimeNone = ~GstClockTime(0);
 		constexpr GstClockTime kSecond        = 1'000'000'000;
+		// Input timestamps start here. Encoders built on GstVideoEncoder
+		// (x264enc, va, nvcodec) shift output timestamps below their
+		// "min PTS" (1000 hours) upwards, which would break matching an
+		// output buffer to its input frame by PTS.
+		constexpr GstClockTime kPtsBase = GstClockTime(10'000) * 3600 * kSecond;
 
 		struct GstMiniObject
 		{
@@ -443,7 +448,7 @@ namespace gelabber
 					std::lock_guard lock(mutex);
 					if (!firstUs)
 						firstUs = nowUs;
-					pts = static_cast<GstClockTime>(std::max<int64_t>(0, nowUs - *firstUs)) * 1000;
+					pts = kPtsBase + static_cast<GstClockTime>(std::max<int64_t>(0, nowUs - *firstUs)) * 1000;
 					if (!pending.empty() && pts <= pending.back().pts)
 						pts = pending.back().pts + 1;
 					pending.push_back({ pts,

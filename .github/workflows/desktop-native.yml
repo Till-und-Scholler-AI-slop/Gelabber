@@ -198,10 +198,11 @@ jobs:
         env:
           GELABBER_H264_ENCODER: x264enc
           GELABBER_EXPECT_ENCODER: GStreamer x264enc
+          GELABBER_MEDIA_LOG: "1"
         run: cargo test --manifest-path desktop/Cargo.toml --test mediasoup_loopback -- --nocapture
 
       # Real xdg-desktop-portal frontend and PipeWire, with a test backend
-      # whose monitor is a GStreamer test video (no compositor or GPU here).
+      # whose monitor is a shared-memory test stream (no compositor or GPU here).
       - name: Screen capture through the ScreenCast portal
         timeout-minutes: 15
         env:
