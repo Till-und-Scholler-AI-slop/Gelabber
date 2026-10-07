@@ -28,8 +28,11 @@ if (-not (Test-Path depot_tools)) {
 }
 $env:PATH = "$Work\depot_tools;$env:PATH"
 $env:DEPOT_TOOLS_WIN_TOOLCHAIN = '0'
-$env:DEPOT_TOOLS_UPDATE = '0'
 $env:vs2022_install = (& "${env:ProgramFiles(x86)}\Microsoft Visual Studio\Installer\vswhere.exe" -latest -property installationPath)
+
+# First run bootstraps depot_tools on Windows (git.bat, python3.bat via CIPD);
+# gclient's git cache lookup fails without it.
+gclient
 
 @"
 solutions = [{
