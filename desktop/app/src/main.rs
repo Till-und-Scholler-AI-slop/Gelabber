@@ -8,6 +8,7 @@
 #![cfg_attr(not(debug_assertions), windows_subsystem = "windows")]
 
 mod media;
+mod viewer;
 
 use serde::{Deserialize, Serialize};
 use std::{fs, path::PathBuf};
@@ -130,6 +131,8 @@ fn main() {
             media::media_consumer_set_volume,
             media::media_consumer_stats,
             media::media_consumer_close,
+            media::media_viewer_open,
+            media::media_viewer_close,
         ])
         .on_page_load(|webview, payload| {
             // A reload or navigation leaves the old page's calls and

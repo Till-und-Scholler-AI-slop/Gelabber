@@ -6,6 +6,7 @@
 //! requests through the server, produce local sources, consume announced
 //! producers. Objects are handles (numbers) into a per-app registry; a page
 //! load drops every object the previous page left behind.
+use crate::viewer::Viewer;
 use gelabber_media_core::{
     Audio, Consumer, Device, Direction, Engine, MediaKind, Producer, Source, Transport,
     TransportEvent,
@@ -74,6 +75,9 @@ impl Media {
         self.sources.lock().unwrap().clear();
         self.transports.lock().unwrap().clear();
         self.devices.lock().unwrap().clear();
+        if let Some(viewer) = Viewer::running() {
+            viewer.close_all();
+        }
         if let Some(engine) = self.engine.get() {
             // A microphone test the page left open.
             let _ = engine.monitor_audio(None);
@@ -436,8 +440,55 @@ pub async fn media_consumer_stats(media: State<'_, Media>, consumer: u64) -> Res
     blocking(move || consumer.lock().unwrap().stats().map_err(err)).await
 }
 
+/// Shows a video consumer in a native viewer window titled `title`.
+/// `events` receives `{"type":"closed"}` when the window goes away; the
+/// page then calls `media_viewer_close`.
+#[tauri::command]
+pub async fn media_viewer_open(
+    media: State<'_, Media>,
+    consumer: u64,
+    title: String,
+    events: Channel<Value>,
+) -> Result<()> {
+    let shared = self::consumer(&media, consumer)?;
+    let viewer = Viewer::get()?;
+    let sink = viewer.open(
+        consumer,
+        title,
+        Box::new(move || {
+            let _ = events.send(json!({"type": "closed"}));
+        }),
+    )?;
+    let installed = blocking(move || {
+        shared
+            .lock()
+            .unwrap()
+            .set_video_sink(Some(sink))
+            .map_err(err)
+    })
+    .await;
+    if installed.is_err() {
+        viewer.close(consumer);
+    }
+    installed
+}
+
+#[tauri::command]
+pub async fn media_viewer_close(media: State<'_, Media>, consumer: u64) -> Result<()> {
+    if let Some(viewer) = Viewer::running() {
+        viewer.close(consumer);
+    }
+    let Ok(shared) = self::consumer(&media, consumer) else {
+        return Ok(());
+    };
+    blocking(move || shared.lock().unwrap().set_video_sink(None).map_err(err)).await
+}
+
 #[tauri::command]
 pub async fn media_consumer_close(media: State<'_, Media>, consumer: u64) -> Result<()> {
+    if let Some(viewer) = Viewer::running() {
+        viewer.close(consumer);
+    }
     let removed = media.consumers.lock().unwrap().remove(&consumer);
     if let Some(consumer) = removed {
         blocking(move || {

@@ -11,6 +11,12 @@ import { setNativeBridgeForTests, type NativeBridge } from "./bridge.ts";
 import { nativeGetDisplayMedia } from "./capture.ts";
 import { createNativeMicrophoneTest } from "./microphoneTest.ts";
 import {
+  nativeVideoConsumer,
+  nativeViewerOpen,
+  openNativeViewer,
+  resetNativeViewersForTests,
+} from "./viewer.ts";
+import {
   NativeAudioOutput,
   NativeStream,
   NativeTrack,
@@ -510,6 +516,25 @@ describe("desktop app media", () => {
     } finally {
       vi.useRealTimers();
     }
+  });
+
+  it("opens remote video in a native viewer window", async () => {
+    resetNativeViewersForTests();
+    const track = new NativeTrack("video", "Bildschirm", { consumer: 42 });
+    const stream = createStream([track as unknown as MediaStreamTrack]);
+    expect(nativeVideoConsumer(stream)).toBe(42);
+    await openNativeViewer(42, "Alex – Gelabber");
+    expect(nativeViewerOpen(42)).toBe(true);
+    const [opened] = core.calledWith("media_viewer_open");
+    expect(opened).toMatchObject({ consumer: 42, title: "Alex – Gelabber" });
+    // The person closes the window.
+    (opened.events as { onMessage: (event: unknown) => void }).onMessage({
+      type: "closed",
+    });
+    expect(nativeViewerOpen(42)).toBe(false);
+    expect(core.calledWith("media_viewer_close")).toEqual([{ consumer: 42 }]);
+    track.end();
+    expect(nativeVideoConsumer(stream)).toBeNull();
   });
 
   it("reports a cancelled picker like the browser", async () => {

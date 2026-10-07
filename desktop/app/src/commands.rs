@@ -30,4 +30,6 @@ pub const MEDIA_COMMANDS: &[&str] = &[
     "media_consumer_set_volume",
     "media_consumer_stats",
     "media_consumer_close",
+    "media_viewer_open",
+    "media_viewer_close",
 ];

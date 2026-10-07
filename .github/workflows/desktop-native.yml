@@ -167,7 +167,8 @@ jobs:
         run: |
           sudo apt-get update
           sudo apt-get install -y --no-install-recommends ninja-build python3-venv \
-            libwebkit2gtk-4.1-dev libsoup-3.0-dev librsvg2-dev xvfb xauth
+            libwebkit2gtk-4.1-dev libsoup-3.0-dev librsvg2-dev xvfb xauth \
+            mesa-vulkan-drivers imagemagick
 
       - name: Rust toolchain
         uses: dtolnay/rust-toolchain@1.98.1
@@ -243,6 +244,11 @@ jobs:
           abi="$(sed -n 's/^#define GM_ABI_VERSION \([0-9]*\)$/\1/p' desktop/native/include/gelabber_media.h)"
           desktop/native/scripts/fake-desktop-session.sh \
             desktop/app/scripts/smoke.sh desktop/target/debug/gelabber-desktop "$abi"
+
+      # Software Vulkan (lavapipe) under Xvfb; the screenshot checks colors.
+      - name: Native video viewer
+        timeout-minutes: 10
+        run: xvfb-run -a cargo test --manifest-path desktop/Cargo.toml -p gelabber-desktop -- --ignored viewer --nocapture
 
       - name: Check and measure the core library
         run: |

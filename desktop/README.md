@@ -86,6 +86,12 @@ transports, producers and sources. WebKitGTK needs `libwebkit2gtk-4.1`.
   is a shared-memory PipeWire stream (`fake_screen.c`); CI uses it. The
   compositor side (xdg-desktop-portal-hyprland, DMA-BUF frames) needs a real
   desktop.
+- Video display: the webview cannot show the core's video, so remote video
+  opens in a native viewer window (`app/src/viewer.rs`): winit on its own
+  thread next to the webview's GTK loop, wgpu drawing the decoded I420
+  planes with a BT.601/709 shader, letterboxed. The window's Wayland app id
+  and X11 class are `gelabber-viewer` for compositor rules. CI draws a frame
+  through lavapipe under Xvfb and checks the colors on a screenshot.
 - Voice: libwebrtc's audio device module (Linux: PulseAudio API, served by
   pipewire-pulse) with its APM for echo cancellation, noise suppression and
   AGC. The web client's modes carry over: `enhanced` runs RNNoise (same
