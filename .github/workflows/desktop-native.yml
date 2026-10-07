@@ -191,6 +191,7 @@ jobs:
         timeout-minutes: 15
         env:
           GELABBER_TEST_SCREEN: "1"
+          GELABBER_MEDIA_LOG: "1"
         run: |
           sudo apt-get install -y --no-install-recommends pipewire wireplumber xdg-desktop-portal \
             gstreamer1.0-pipewire gstreamer1.0-plugins-base gstreamer1.0-tools python3-gi jq
