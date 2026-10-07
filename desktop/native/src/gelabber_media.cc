@@ -20,6 +20,7 @@
 #include <api/audio_codecs/builtin_audio_encoder_factory.h>
 #include <api/create_peerconnection_factory.h>
 #include <api/environment/environment_factory.h>
+#include <api/field_trials_view.h>
 #include <api/make_ref_counted.h>
 #include <api/media_stream_interface.h>
 #include <api/peer_connection_interface.h>
@@ -257,6 +258,21 @@ namespace
 
 	private:
 		const std::shared_ptr<gelabber::CaptureDsp> dsp;
+	};
+
+	// The APM's field trials. Each m-section has its own voice channel,
+	// and a channel whose only stream lost its track (a closed producer)
+	// reports "all muted" to the engine-wide APM, which then skips the
+	// capture post-processing (RNNoise, gain, meters) and its noise
+	// suppression for every other microphone stream too. The kill switch
+	// keeps the APM processing whatever the channels report.
+	class ApmFieldTrials : public webrtc::FieldTrialsView
+	{
+	public:
+		std::string Lookup(absl::string_view key) const override
+		{
+			return key == "WebRTC-MutedStateKillSwitch" ? "Enabled" : "";
+		}
 	};
 
 	// Decoded remote audio as it is played out: level (0..100, 80 ms
@@ -738,7 +754,7 @@ gm_engine* gm_engine_new(const char* optionsJson)
 		engine->dsp = std::make_shared<gelabber::CaptureDsp>();
 		engine->apm = webrtc::BuiltinAudioProcessingBuilder()
 		                .SetCapturePostProcessing(std::make_unique<CapturePostProcessor>(engine->dsp))
-		                .Build(webrtc::CreateEnvironment());
+		                .Build(webrtc::CreateEnvironment(std::make_unique<ApmFieldTrials>()));
 		if (!engine->apm)
 			throw std::runtime_error("failed to create audio processing");
 

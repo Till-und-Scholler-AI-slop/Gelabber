@@ -78,5 +78,8 @@ any glibc ≥ 2.31 system. PipeWire is loaded at runtime (`dlopen`), X11 is off.
   uses the APM's noise suppression/AGC, `original` captures stereo without
   either. Input gain and meters (0..100, the web formula) run in the same
   post-processor; per-consumer playback volume replaces the web's audio
-  elements. The test session also provides null-sink "speakers" and a
+  elements. The APM runs with `WebRTC-MutedStateKillSwitch`: otherwise
+  closing one audio producer marks the shared APM's output unused and stops
+  RNNoise, gain and meters for the remaining microphone stream. The test
+  session also provides null-sink "speakers" and a
   noise-playing "microphone" for `core/tests/voice.rs`.
