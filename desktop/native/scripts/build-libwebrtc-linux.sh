@@ -93,13 +93,18 @@ gn_args=(
 gn gen "$out" --args="${gn_args[*]}"
 ninja -C "$out" :default buildtools/third_party/libc++ buildtools/third_party/libc++abi
 
-rm -rf "$package"
+# Empty the package dir in place: CI pre-creates it under a root-owned /mnt.
+mkdir -p "$package"
+find "$package" -mindepth 1 -delete
 mkdir -p "$package/lib" "$package/include" "$package/toolchain/bin" "$package/toolchain/lib"
 
 # One archive with every object, like the upstream packagers do: libwebrtc's
 # own complete static library does not carry desktop_capture or libc++.
 llvm_ar="$src/third_party/llvm-build/Release+Asserts/bin/llvm-ar"
-(cd "$out/obj" && find . -name '*.o' -print0 | sort -z | xargs -0 "$llvm_ar" -rcs "$package/lib/libwebrtc.a")
+# Quick-append (q), not replace (r): many objects share a basename (utils.o,
+# ...) and r would keep only the last one.
+(cd "$out/obj" && find . -name '*.o' -print0 | sort -z | xargs -0 "$llvm_ar" qc "$package/lib/libwebrtc.a")
+"$llvm_ar" s "$package/lib/libwebrtc.a"
 
 rsync -a --prune-empty-dirs --exclude='out/' --include='*/' \
   --include='*.h' --include='*.hpp' --include='*.inc' --include='*.def' \
