@@ -13,7 +13,7 @@ import { CollapseIcon, ExpandIcon } from "../components/Icons.tsx";
 import { isNativeStream } from "./native/tracks.ts";
 import {
   closeNativeViewer,
-  nativeVideoConsumer,
+  nativeVideoTrack,
   nativeViewerOpen,
   nativeViewersVersion,
   openNativeViewer,
@@ -284,8 +284,9 @@ function NativeVideo({
 }) {
   useSyncExternalStore(subscribeNativeViewers, nativeViewersVersion);
   const [failed, setFailed] = useState(false);
-  const consumer = nativeVideoConsumer(stream);
-  if (consumer === null)
+  const track = nativeVideoTrack(stream);
+  const consumer = track?.handle.consumer;
+  if (!track || consumer === undefined)
     return (
       <span role="status" className="text-xs">
         Keine Vorschau in der Desktop-App.
@@ -301,7 +302,7 @@ function NativeVideo({
           setFailed(false);
           if (open) closeNativeViewer(consumer);
           else
-            openNativeViewer(consumer, `${label} – Gelabber`).catch(() =>
+            openNativeViewer(track, `${label} – Gelabber`).catch(() =>
               setFailed(true),
             );
         }}

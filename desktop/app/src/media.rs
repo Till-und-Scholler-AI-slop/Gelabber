@@ -6,7 +6,7 @@
 //! requests through the server, produce local sources, consume announced
 //! producers. Objects are handles (numbers) into a per-app registry; a page
 //! load drops every object the previous page left behind.
-use crate::viewer::Viewer;
+use crate::viewer::{Viewer, ViewerEvent};
 use gelabber_media_core::{
     Audio, Consumer, Device, Direction, Engine, MediaKind, Producer, Source, Transport,
     TransportEvent,
@@ -441,8 +441,9 @@ pub async fn media_consumer_stats(media: State<'_, Media>, consumer: u64) -> Res
 }
 
 /// Shows a video consumer in a native viewer window titled `title`.
-/// `events` receives `{"type":"closed"}` when the window goes away; the
-/// page then calls `media_viewer_close`.
+/// `events` receives `{"type":"height","height"}` (shown image height in
+/// physical pixels, for layer choice) and `{"type":"closed"}` when the
+/// window goes away; the page then calls `media_viewer_close`.
 #[tauri::command]
 pub async fn media_viewer_open(
     media: State<'_, Media>,
@@ -455,8 +456,11 @@ pub async fn media_viewer_open(
     let sink = viewer.open(
         consumer,
         title,
-        Box::new(move || {
-            let _ = events.send(json!({"type": "closed"}));
+        Box::new(move |event| {
+            let _ = events.send(match event {
+                ViewerEvent::Height(height) => json!({"type": "height", "height": height}),
+                ViewerEvent::Closed => json!({"type": "closed"}),
+            });
         }),
     )?;
     let installed = blocking(move || {

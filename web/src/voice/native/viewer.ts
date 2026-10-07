@@ -2,9 +2,10 @@
 // video, so a stream opens in a native viewer window. Which consumers have a
 // window is shared by every tile showing the same stream.
 import { invokeNative, nativeBridge } from "./bridge.ts";
-import { isNativeTrack } from "./tracks.ts";
+import { isNativeTrack, type NativeTrack } from "./tracks.ts";
 
-const open = new Set<number>();
+/** Open windows by consumer: the track they show and the shown height. */
+const open = new Map<number, { trackId: string; height: number }>();
 const listeners = new Set<() => void>();
 let version = 0;
 
@@ -23,12 +24,25 @@ export function nativeViewersVersion(): number {
   return version;
 }
 
-/** The native consumer behind a stream's video, if any. */
-export function nativeVideoConsumer(stream: MediaStream | null): number | null {
+/** The live remote video track of a stream in the desktop app, if any. */
+export function nativeVideoTrack(
+  stream: MediaStream | null,
+): NativeTrack | null {
   const track = stream?.getVideoTracks()[0];
-  return isNativeTrack(track) && track.readyState === "live"
-    ? (track.handle.consumer ?? null)
+  return isNativeTrack(track) &&
+    track.readyState === "live" &&
+    track.handle.consumer !== undefined
+    ? track
     : null;
+}
+
+/** Height a viewer window shows the track at, in physical pixels; 0 when
+ * no window shows it (the server then sends the low layer). */
+export function nativeViewerHeight(trackId: string): number {
+  let height = 0;
+  for (const view of open.values())
+    if (view.trackId === trackId) height = Math.max(height, view.height);
+  return height;
 }
 
 export function nativeViewerOpen(consumer: number): boolean {
@@ -36,14 +50,21 @@ export function nativeViewerOpen(consumer: number): boolean {
 }
 
 export async function openNativeViewer(
-  consumer: number,
+  track: NativeTrack,
   title: string,
 ): Promise<void> {
-  if (open.has(consumer)) return;
-  open.add(consumer);
+  const consumer = track.handle.consumer;
+  if (consumer === undefined || open.has(consumer)) return;
+  const view = { trackId: track.id, height: 0 };
+  open.set(consumer, view);
   changed();
-  const events = await nativeBridge().channel<{ type: string }>((event) => {
+  const events = await nativeBridge().channel<{
+    type: string;
+    height?: number;
+  }>((event) => {
     if (event.type === "closed") closeNativeViewer(consumer);
+    else if (event.type === "height" && typeof event.height === "number")
+      view.height = event.height;
   });
   try {
     await invokeNative("media_viewer_open", { consumer, title, events });

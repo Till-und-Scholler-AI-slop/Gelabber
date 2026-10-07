@@ -1,6 +1,10 @@
 import type { StatsEntry } from "./diagnostics.ts";
 import type { MediaRequests } from "./media.ts";
+import { isDesktopApp } from "./native/bridge.ts";
+import { nativeViewerHeight } from "./native/viewer.ts";
 export function renderedVideoHeight(trackId: string): number {
+  // The desktop app shows remote video in native windows only.
+  if (isDesktopApp()) return nativeViewerHeight(trackId);
   if (typeof document === "undefined") return 0;
   let height = 0;
   for (const video of document.querySelectorAll("video")) {

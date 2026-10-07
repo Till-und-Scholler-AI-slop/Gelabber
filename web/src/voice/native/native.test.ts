@@ -7,11 +7,13 @@ import {
   type ReceivedSource,
 } from "../mediasoupConnection.ts";
 import { listMediaDevices, useMediaSettings } from "../settings.ts";
+import { renderedVideoHeight } from "../viewerLayers.ts";
 import { setNativeBridgeForTests, type NativeBridge } from "./bridge.ts";
 import { nativeGetDisplayMedia } from "./capture.ts";
 import { createNativeMicrophoneTest } from "./microphoneTest.ts";
 import {
-  nativeVideoConsumer,
+  nativeVideoTrack,
+  nativeViewerHeight,
   nativeViewerOpen,
   openNativeViewer,
   resetNativeViewersForTests,
@@ -522,19 +524,24 @@ describe("desktop app media", () => {
     resetNativeViewersForTests();
     const track = new NativeTrack("video", "Bildschirm", { consumer: 42 });
     const stream = createStream([track as unknown as MediaStreamTrack]);
-    expect(nativeVideoConsumer(stream)).toBe(42);
-    await openNativeViewer(42, "Alex – Gelabber");
+    expect(nativeVideoTrack(stream)).toBe(track);
+    await openNativeViewer(track, "Alex – Gelabber");
     expect(nativeViewerOpen(42)).toBe(true);
     const [opened] = core.calledWith("media_viewer_open");
     expect(opened).toMatchObject({ consumer: 42, title: "Alex – Gelabber" });
+    const events = opened.events as { onMessage: (event: unknown) => void };
+    // Layer choice follows the window's shown height.
+    expect(renderedVideoHeight(track.id)).toBe(0);
+    events.onMessage({ type: "height", height: 1080 });
+    expect(nativeViewerHeight(track.id)).toBe(1080);
+    expect(renderedVideoHeight(track.id)).toBe(1080);
     // The person closes the window.
-    (opened.events as { onMessage: (event: unknown) => void }).onMessage({
-      type: "closed",
-    });
+    events.onMessage({ type: "closed" });
+    expect(renderedVideoHeight(track.id)).toBe(0);
     expect(nativeViewerOpen(42)).toBe(false);
     expect(core.calledWith("media_viewer_close")).toEqual([{ consumer: 42 }]);
     track.end();
-    expect(nativeVideoConsumer(stream)).toBeNull();
+    expect(nativeVideoTrack(stream)).toBeNull();
   });
 
   it("reports a cancelled picker like the browser", async () => {

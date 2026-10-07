@@ -42,14 +42,23 @@ fn copy_plane(dst: &mut Vec<u8>, src: &[u8], stride: usize, width: usize, rows: 
     }
 }
 
-/// Runs once when its window goes away, or when the window never opens.
-struct Closed(Option<Box<dyn FnOnce() + Send>>);
+/// What a viewer window reports to the page.
+#[derive(Debug, PartialEq)]
+pub enum ViewerEvent {
+    /// Height of the shown image in physical pixels (for layer choice).
+    Height(u32),
+    /// The window went away (or never opened); sent once, last.
+    Closed,
+}
 
-impl Drop for Closed {
+pub type ViewerEvents = Box<dyn Fn(ViewerEvent) + Send>;
+
+/// A window's listener; reports `Closed` when dropped.
+struct Events(ViewerEvents);
+
+impl Drop for Events {
     fn drop(&mut self) {
-        if let Some(closed) = self.0.take() {
-            closed();
-        }
+        (self.0)(ViewerEvent::Closed);
     }
 }
 
@@ -58,7 +67,7 @@ enum Command {
         id: u64,
         title: String,
         slot: Arc<Mutex<Slot>>,
-        closed: Closed,
+        events: Events,
     },
     Close {
         id: u64,
@@ -95,13 +104,13 @@ impl Viewer {
     }
 
     /// Opens a window for stream `id` and returns the sink that feeds it.
-    /// `closed` runs once when the window goes away (the person closed it,
-    /// or `close`).
+    /// `events` gets the shown height and, once, `Closed` when the window
+    /// goes away (the person closed it, or `close`).
     pub fn open(
         &self,
         id: u64,
         title: String,
-        closed: Box<dyn FnOnce() + Send>,
+        events: ViewerEvents,
     ) -> Result<gelabber_media_core::VideoSink, String> {
         let slot = Arc::new(Mutex::new(Slot::default()));
         let proxy = self.proxy.lock().unwrap().clone();
@@ -110,7 +119,7 @@ impl Viewer {
                 id,
                 title,
                 slot: slot.clone(),
-                closed: Closed(Some(closed)),
+                events: Events(events),
             })
             .map_err(|_| "viewer stopped".to_string())?;
         Ok(Box::new(move |frame: &VideoFrame<'_>| {
@@ -469,8 +478,9 @@ struct ViewerWindow {
     config: Option<wgpu::SurfaceConfiguration>,
     slot: Arc<Mutex<Slot>>,
     planes: Option<Planes>,
-    // Declared last: the window and surface are gone when it runs.
-    _closed: Closed,
+    reported_height: u32,
+    // Declared last: the window and surface are gone when it reports Closed.
+    events: Events,
 }
 
 struct App {
@@ -494,7 +504,7 @@ impl App {
         id: u64,
         title: String,
         slot: Arc<Mutex<Slot>>,
-        closed: Closed,
+        events: Events,
     ) -> Result<(), String> {
         self.close(id);
         let mut attributes = WindowAttributes::default()
@@ -532,7 +542,8 @@ impl App {
                 config: None,
                 slot,
                 planes: None,
-                _closed: closed,
+                reported_height: 0,
+                events,
             },
         );
         self.configure(window_id);
@@ -619,6 +630,19 @@ impl App {
         let format = config.format;
         let (surface_width, surface_height) = (config.width as f32, config.height as f32);
         let pipeline = gpu.pipeline(format).clone();
+        // Letterbox: the whole frame, centered, aspect kept.
+        let shown = view.planes.as_ref().map(|planes| {
+            let scale =
+                (surface_width / planes.width as f32).min(surface_height / planes.height as f32);
+            (planes.width as f32 * scale, planes.height as f32 * scale)
+        });
+        if let Some((_, h)) = shown {
+            let height = h.round() as u32;
+            if height != view.reported_height {
+                view.reported_height = height;
+                (view.events.0)(ViewerEvent::Height(height));
+            }
+        }
         let output = target
             .texture
             .create_view(&wgpu::TextureViewDescriptor::default());
@@ -641,11 +665,7 @@ impl App {
                 })],
                 ..Default::default()
             });
-            if let Some(planes) = &view.planes {
-                // Letterbox: the whole frame, centered, aspect kept.
-                let scale = (surface_width / planes.width as f32)
-                    .min(surface_height / planes.height as f32);
-                let (w, h) = (planes.width as f32 * scale, planes.height as f32 * scale);
+            if let (Some(planes), Some((w, h))) = (&view.planes, shown) {
                 pass.set_viewport(
                     (surface_width - w) / 2.0,
                     (surface_height - h) / 2.0,
@@ -674,10 +694,10 @@ impl ApplicationHandler<Command> for App {
                 id,
                 title,
                 slot,
-                closed,
+                events,
             } => {
-                // On failure `closed` runs as it drops.
-                if let Err(error) = self.open(event_loop, id, title, slot, closed) {
+                // On failure `events` reports Closed as it drops.
+                if let Err(error) = self.open(event_loop, id, title, slot, events) {
                     eprintln!("[gelabber] {error}");
                 }
             }
@@ -735,12 +755,12 @@ mod tests {
     #[ignore = "needs a display"]
     fn viewer_draws_frames() {
         let viewer = Viewer::get().unwrap();
-        let (closed_tx, closed_rx) = mpsc::channel();
+        let (events_tx, events_rx) = mpsc::channel();
         let mut sink = viewer
             .open(
                 7,
                 "viewer test".into(),
-                Box::new(move || closed_tx.send(()).unwrap()),
+                Box::new(move |event| events_tx.send(event).unwrap()),
             )
             .unwrap();
         // 640x360: left half red, right half blue (BT.601 limited range).
@@ -788,8 +808,15 @@ mod tests {
         let (r, g, b) = rgb(&right);
         assert!(r < 60 && g < 60 && b > 180, "right half blue: {right}");
         viewer.close(7);
-        closed_rx
-            .recv_timeout(Duration::from_secs(5))
-            .expect("closed callback");
+        let mut events = Vec::new();
+        while let Ok(event) = events_rx.recv_timeout(Duration::from_secs(5)) {
+            let closed = event == ViewerEvent::Closed;
+            events.push(event);
+            if closed {
+                break;
+            }
+        }
+        // 1280x720 window, 16:9 frame: the image fills it.
+        assert_eq!(events, [ViewerEvent::Height(720), ViewerEvent::Closed]);
     }
 }
