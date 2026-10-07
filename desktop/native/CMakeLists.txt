@@ -1,0 +1,67 @@
+cmake_minimum_required(VERSION 3.20)
+
+# Gelabber native media core: libmediasoupclient + libwebrtc behind a C ABI
+# (include/gelabber_media.h), built as one shared library.
+#
+# Configure with the package from scripts/build-libwebrtc-linux.sh:
+#   cmake -S desktop/native -B build -G Ninja \
+#     -DGELABBER_LIBWEBRTC_DIR=<package> \
+#     -DCMAKE_TOOLCHAIN_FILE=desktop/native/cmake/chromium-linux.cmake
+project(gelabber_media LANGUAGES C CXX)
+
+include(FetchContent)
+
+set(CMAKE_CXX_STANDARD 20)
+set(CMAKE_CXX_STANDARD_REQUIRED ON)
+set(CMAKE_POSITION_INDEPENDENT_CODE ON)
+set(CMAKE_CXX_VISIBILITY_PRESET hidden)
+set(CMAKE_VISIBILITY_INLINES_HIDDEN ON)
+# libwebrtc is a release build: class layouts behind RTC_DCHECK_IS_ON must
+# match, so every translation unit sees NDEBUG.
+add_compile_definitions(NDEBUG)
+
+set(GELABBER_LIBWEBRTC_DIR "" CACHE PATH "libwebrtc package (lib/, include/)")
+if(NOT GELABBER_LIBWEBRTC_DIR)
+  message(FATAL_ERROR "GELABBER_LIBWEBRTC_DIR is required")
+endif()
+
+file(STRINGS "${CMAKE_CURRENT_SOURCE_DIR}/libwebrtc.env" pins REGEX "^[A-Z_]+=")
+foreach(pin IN LISTS pins)
+  string(REGEX REPLACE "^([A-Z_]+)=(.*)$" "\\1" key "${pin}")
+  string(REGEX REPLACE "^([A-Z_]+)=(.*)$" "\\2" value "${pin}")
+  set(${key} "${value}")
+endforeach()
+
+# libmediasoupclient reads these two cache variables.
+set(LIBWEBRTC_INCLUDE_PATH "${GELABBER_LIBWEBRTC_DIR}/include" CACHE PATH "" FORCE)
+set(LIBWEBRTC_BINARY_PATH "${GELABBER_LIBWEBRTC_DIR}/lib" CACHE PATH "" FORCE)
+
+FetchContent_Declare(
+  mediasoupclient
+  GIT_REPOSITORY https://github.com/versatica/libmediasoupclient.git
+  GIT_TAG ${LIBMEDIASOUPCLIENT_COMMIT}
+)
+FetchContent_MakeAvailable(mediasoupclient)
+
+add_library(gelabber_media SHARED src/gelabber_media.cc)
+target_include_directories(gelabber_media
+  PUBLIC include
+  PRIVATE ${mediasoupclient_SOURCE_DIR}/include)
+target_link_libraries(gelabber_media PRIVATE mediasoupclient)
+
+if(UNIX AND NOT APPLE)
+  target_compile_definitions(gelabber_media PRIVATE WEBRTC_LINUX)
+  target_compile_definitions(mediasoupclient PUBLIC WEBRTC_LINUX)
+  target_link_options(gelabber_media PRIVATE
+    # Only the gm_* C ABI leaves the library; libwebrtc, libmediasoupclient and
+    # Chromium's libc++ (std::__Cr) stay internal.
+    "-Wl,--version-script=${CMAKE_CURRENT_SOURCE_DIR}/gelabber_media.map"
+    "-Wl,--exclude-libs,ALL"
+    "-Wl,--gc-sections"
+    "-Wl,-z,defs"
+    "-Wl,--as-needed")
+  target_link_libraries(gelabber_media PRIVATE pthread dl m rt)
+endif()
+
+install(TARGETS gelabber_media LIBRARY DESTINATION lib RUNTIME DESTINATION bin ARCHIVE DESTINATION lib)
+install(FILES include/gelabber_media.h DESTINATION include)

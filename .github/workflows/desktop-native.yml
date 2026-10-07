@@ -1,0 +1,209 @@
+# Desktop client native media core (libwebrtc + libmediasoupclient).
+# Build spike for issue #165: reproducible libwebrtc build, core library size,
+# and a loopback call against the server's mediasoup version.
+name: Desktop native core
+
+on:
+  workflow_dispatch:
+  pull_request:
+    paths:
+      - desktop/**
+      - .github/workflows/desktop-native.yml
+  push:
+    branches: [main, "v[0-9]*"]
+    paths:
+      - desktop/**
+      - .github/workflows/desktop-native.yml
+
+# Never cancel: a libwebrtc build takes hours and is cached for later runs.
+concurrency:
+  group: desktop-native-${{ github.ref }}
+  cancel-in-progress: false
+
+permissions:
+  contents: read
+
+env:
+  CARGO_TERM_COLOR: always
+
+jobs:
+  libwebrtc-linux:
+    name: libwebrtc (Linux x64)
+    runs-on: ubuntu-24.04
+    timeout-minutes: 330
+    outputs:
+      key: ${{ steps.key.outputs.key }}
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v7
+
+      - name: Cache key
+        id: key
+        run: |
+          echo "key=libwebrtc-linux-x64-${{ hashFiles('desktop/native/libwebrtc.env', 'desktop/native/scripts/build-libwebrtc-linux.sh', 'desktop/native/patches/**') }}" >> "$GITHUB_OUTPUT"
+
+      - name: Restore libwebrtc package
+        id: cache
+        uses: actions/cache/restore@v4
+        with:
+          path: /mnt/libwebrtc-package
+          key: ${{ steps.key.outputs.key }}
+          lookup-only: true
+
+      - name: Free disk space
+        if: steps.cache.outputs.cache-hit != 'true'
+        run: |
+          set -euo pipefail
+          df -h / /mnt
+          sudo rm -rf /usr/share/dotnet /usr/local/lib/android /opt/ghc /opt/hostedtoolcache/CodeQL /usr/local/share/boost
+          sudo docker image prune --all --force >/dev/null
+          sudo mkdir -p /mnt/webrtc /mnt/libwebrtc-package
+          sudo chown -R "$USER" /mnt/webrtc /mnt/libwebrtc-package
+          df -h / /mnt
+
+      - name: Build libwebrtc
+        if: steps.cache.outputs.cache-hit != 'true'
+        run: |
+          set -euo pipefail
+          start=$SECONDS
+          desktop/native/scripts/build-libwebrtc-linux.sh /mnt/webrtc /mnt/libwebrtc-package
+          minutes=$(( (SECONDS - start) / 60 ))
+          {
+            echo "### libwebrtc (Linux x64)"
+            echo
+            echo "Build time: ${minutes} min"
+            echo
+            echo '```'
+            cat /mnt/libwebrtc-package/VERSIONS
+            du -sh /mnt/libwebrtc-package/lib/libwebrtc.a /mnt/libwebrtc-package/include /mnt/libwebrtc-package/toolchain /mnt/libwebrtc-package/sysroot
+            du -sh /mnt/webrtc
+            echo '```'
+          } >> "$GITHUB_STEP_SUMMARY"
+          df -h / /mnt
+
+      - name: Save libwebrtc package
+        if: steps.cache.outputs.cache-hit != 'true'
+        uses: actions/cache/save@v4
+        with:
+          path: /mnt/libwebrtc-package
+          key: ${{ steps.key.outputs.key }}
+
+  libwebrtc-windows:
+    name: libwebrtc (Windows x64)
+    runs-on: windows-2022
+    timeout-minutes: 330
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v7
+
+      - name: Cache key
+        id: key
+        shell: bash
+        run: |
+          echo "key=libwebrtc-windows-x64-${{ hashFiles('desktop/native/libwebrtc.env', 'desktop/native/scripts/build-libwebrtc-windows.ps1', 'desktop/native/patches/**') }}" >> "$GITHUB_OUTPUT"
+
+      - name: Restore libwebrtc package
+        id: cache
+        uses: actions/cache/restore@v4
+        with:
+          path: C:\libwebrtc-package
+          key: ${{ steps.key.outputs.key }}
+          lookup-only: true
+
+      - name: Python
+        if: steps.cache.outputs.cache-hit != 'true'
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+
+      - name: Build libwebrtc
+        if: steps.cache.outputs.cache-hit != 'true'
+        shell: pwsh
+        run: |
+          git config --global core.longpaths true
+          $start = Get-Date
+          ./desktop/native/scripts/build-libwebrtc-windows.ps1 -Work C:\webrtc -Package C:\libwebrtc-package
+          $minutes = [int]((Get-Date) - $start).TotalMinutes
+          $lib = Get-Item C:\libwebrtc-package\lib\webrtc.lib
+          @(
+            "### libwebrtc (Windows x64)", "",
+            "Build time: $minutes min", "",
+            "webrtc.lib: $([math]::Round($lib.Length / 1MB)) MiB"
+          ) | Add-Content $env:GITHUB_STEP_SUMMARY
+
+      - name: Save libwebrtc package
+        if: steps.cache.outputs.cache-hit != 'true'
+        uses: actions/cache/save@v4
+        with:
+          path: C:\libwebrtc-package
+          key: ${{ steps.key.outputs.key }}
+
+  core-linux:
+    name: Native core (Linux x64)
+    needs: libwebrtc-linux
+    runs-on: ubuntu-24.04
+    timeout-minutes: 60
+    env:
+      GELABBER_LIBWEBRTC_DIR: /mnt/libwebrtc-package
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v7
+
+      - name: Prepare package directory
+        run: sudo mkdir -p /mnt/libwebrtc-package && sudo chown -R "$USER" /mnt/libwebrtc-package
+
+      - name: Restore libwebrtc package
+        uses: actions/cache/restore@v4
+        with:
+          path: /mnt/libwebrtc-package
+          key: ${{ needs.libwebrtc-linux.outputs.key }}
+          fail-on-cache-miss: true
+
+      - name: Build tools
+        run: sudo apt-get update && sudo apt-get install -y --no-install-recommends ninja-build python3-venv
+
+      - name: Rust toolchain
+        uses: dtolnay/rust-toolchain@1.98.1
+        with:
+          components: rustfmt, clippy
+
+      - name: Format
+        run: cargo fmt --manifest-path desktop/Cargo.toml --all -- --check
+
+      - name: Clippy
+        run: cargo clippy --manifest-path desktop/Cargo.toml --all-targets -- -D warnings
+
+      - name: Loopback call against mediasoup 0.29
+        run: cargo test --manifest-path desktop/Cargo.toml -- --nocapture --test-threads=1
+
+      - name: Check and measure the core library
+        run: |
+          set -euo pipefail
+          lib="$(find desktop/target -name libgelabber_media.so -path '*/out/lib/*' | head -n1)"
+          test -n "$lib"
+          echo "Dynamic dependencies:"
+          readelf -d "$lib" | grep NEEDED | tee /tmp/needed.txt
+          # Chromium's libc++ is linked in and hidden; no system C++ runtime.
+          if grep -E 'libstdc\+\+|libc\+\+' /tmp/needed.txt; then
+            echo "core must not depend on a shared C++ runtime"; exit 1
+          fi
+          exported="$(nm -D --defined-only "$lib" | awk '{print $3}' | sort)"
+          echo "$exported"
+          if echo "$exported" | grep -v '^gm_'; then
+            echo "only gm_* symbols may be exported"; exit 1
+          fi
+          stripped="$(mktemp)"
+          strip --strip-unneeded -o "$stripped" "$lib"
+          {
+            echo "### Native core (Linux x64)"
+            echo
+            echo "| file | size |"
+            echo "|---|---|"
+            echo "| libgelabber_media.so | $(du -h "$lib" | cut -f1) |"
+            echo "| libgelabber_media.so (stripped) | $(du -h "$stripped" | cut -f1) |"
+            echo "| gzip (stripped) | $(gzip -9 -c "$stripped" | wc -c | numfmt --to=iec) |"
+            echo
+            echo '```'
+            cat /tmp/needed.txt
+            echo '```'
+          } >> "$GITHUB_STEP_SUMMARY"
