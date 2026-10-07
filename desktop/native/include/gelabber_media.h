@@ -38,7 +38,7 @@
 extern "C" {
 #endif
 
-#define GM_ABI_VERSION 4
+#define GM_ABI_VERSION 5
 
 typedef struct gm_engine gm_engine;
 typedef struct gm_device gm_device;
@@ -182,6 +182,27 @@ GM_API const char* gm_consumer_id(gm_consumer* consumer);
 GM_API int gm_consumer_pause(gm_consumer* consumer, int paused);
 /* Playback volume of an audio consumer, 0..2 (1 = as received; 0 = silent). */
 GM_API int gm_consumer_set_volume(gm_consumer* consumer, double volume);
+/* A decoded video frame in I420, valid only during the sink call. rotation
+ * is 0, 90, 180 or 270 degrees clockwise to apply for display. */
+typedef struct gm_video_frame
+{
+  int width;
+  int height;
+  const uint8_t* y;
+  const uint8_t* u;
+  const uint8_t* v;
+  int stride_y;
+  int stride_u;
+  int stride_v;
+  int rotation;
+  int64_t timestamp_us;
+} gm_video_frame;
+typedef void (*gm_video_frame_fn)(void* user, const gm_video_frame* frame);
+/* Hands each decoded frame of a video consumer to fn on a decoder thread;
+ * fn NULL removes the sink. Once this returns, the previous sink is not
+ * running and is not called again. Free the consumer only after removing
+ * a sink whose user data dies first. */
+GM_API int gm_consumer_set_video_sink(gm_consumer* consumer, gm_video_frame_fn fn, void* user);
 /* {"framesReceived","width","height"} for video, {"audioLevel" 0..100,
  * "samplesPlayed"} for audio, plus libwebrtc stats under "rtc". Audio is only
  * decoded while playout runs. */

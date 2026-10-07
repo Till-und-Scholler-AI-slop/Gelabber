@@ -3,7 +3,23 @@
 
 use std::os::raw::{c_char, c_int, c_void};
 
-pub const GM_ABI_VERSION: u32 = 4;
+pub const GM_ABI_VERSION: u32 = 5;
+
+#[repr(C)]
+pub struct gm_video_frame {
+    pub width: c_int,
+    pub height: c_int,
+    pub y: *const u8,
+    pub u: *const u8,
+    pub v: *const u8,
+    pub stride_y: c_int,
+    pub stride_u: c_int,
+    pub stride_v: c_int,
+    pub rotation: c_int,
+    pub timestamp_us: i64,
+}
+pub type gm_video_frame_fn =
+    Option<unsafe extern "C" fn(user: *mut c_void, frame: *const gm_video_frame)>;
 
 #[repr(C)]
 pub struct gm_engine {
@@ -121,4 +137,9 @@ unsafe extern "C" {
     pub fn gm_consumer_pause(consumer: *mut gm_consumer, paused: c_int) -> c_int;
     pub fn gm_consumer_set_volume(consumer: *mut gm_consumer, volume: f64) -> c_int;
     pub fn gm_consumer_stats(consumer: *mut gm_consumer) -> *mut c_char;
+    pub fn gm_consumer_set_video_sink(
+        consumer: *mut gm_consumer,
+        sink: gm_video_frame_fn,
+        user: *mut c_void,
+    ) -> c_int;
 }

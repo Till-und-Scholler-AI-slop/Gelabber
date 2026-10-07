@@ -214,6 +214,8 @@ namespace
 		std::thread worker;
 	};
 
+	// Decoded remote video: counts frames and hands them, as I420, to the
+	// sink the app set (its viewer window).
 	class FrameCounter : public webrtc::VideoSinkInterface<webrtc::VideoFrame>
 	{
 	public:
@@ -222,11 +224,44 @@ namespace
 			frames.fetch_add(1, std::memory_order_relaxed);
 			width.store(frame.width(), std::memory_order_relaxed);
 			height.store(frame.height(), std::memory_order_relaxed);
+
+			std::lock_guard lock(sinkMutex);
+			if (!sink)
+				return;
+			const auto i420 = frame.video_frame_buffer()->ToI420();
+			if (!i420)
+				return;
+			const gm_video_frame out{
+				i420->width(),
+				i420->height(),
+				i420->DataY(),
+				i420->DataU(),
+				i420->DataV(),
+				i420->StrideY(),
+				i420->StrideU(),
+				i420->StrideV(),
+				static_cast<int>(frame.rotation()),
+				frame.timestamp_us(),
+			};
+			sink(sinkUser, &out);
+		}
+
+		// Returns once no call to the previous sink runs any more.
+		void SetSink(gm_video_frame_fn fn, void* user)
+		{
+			std::lock_guard lock(sinkMutex);
+			sink     = fn;
+			sinkUser = user;
 		}
 
 		std::atomic<uint64_t> frames{ 0 };
 		std::atomic<int> width{ 0 };
 		std::atomic<int> height{ 0 };
+
+	private:
+		std::mutex sinkMutex;
+		gm_video_frame_fn sink{ nullptr };
+		void* sinkUser{ nullptr };
 	};
 
 	// The APM's capture post-processor: RNNoise, gain and meters after
@@ -1777,6 +1812,16 @@ int gm_consumer_pause(gm_consumer* consumer, int paused)
 			consumer->consumer->Pause();
 		else
 			consumer->consumer->Resume();
+		return 0;
+	});
+}
+
+int gm_consumer_set_video_sink(gm_consumer* consumer, gm_video_frame_fn fn, void* user)
+{
+	return guarded<int>(-1, [&] {
+		if (!consumer->counter)
+			throw std::invalid_argument("a video sink needs a video consumer");
+		consumer->counter->SetSink(fn, user);
 		return 0;
 	});
 }

@@ -16,7 +16,7 @@ pub const ABI_VERSION: u32 = ffi::GM_ABI_VERSION;
 
 use serde_json::Value;
 use std::{
-    ffi::{CStr, CString, c_char, c_void},
+    ffi::{CStr, CString, c_char, c_int, c_void},
     ptr::NonNull,
     sync::{Arc, Mutex, mpsc},
 };
@@ -478,6 +478,7 @@ impl Transport {
             ptr,
             id,
             transport: self.clone(),
+            sink: None,
         })
     }
 }
@@ -632,15 +633,76 @@ impl Producer {
     }
 }
 
+/// A decoded video frame in I420, borrowed for the duration of the sink call.
+pub struct VideoFrame<'a> {
+    pub width: u32,
+    pub height: u32,
+    pub y: &'a [u8],
+    pub u: &'a [u8],
+    pub v: &'a [u8],
+    pub stride_y: usize,
+    pub stride_u: usize,
+    pub stride_v: usize,
+    /// Clockwise degrees to rotate for display: 0, 90, 180 or 270.
+    pub rotation: u32,
+    pub timestamp_us: i64,
+}
+
+/// Receives a video consumer's decoded frames on a decoder thread.
+pub type VideoSink = Box<dyn FnMut(&VideoFrame<'_>) + Send>;
+
+unsafe extern "C" fn video_sink_trampoline(user: *mut c_void, frame: *const ffi::gm_video_frame) {
+    // SAFETY: `user` is the boxed sink the consumer keeps alive until it is
+    // removed; the native side serializes calls and `frame` is valid for
+    // this call.
+    let (sink, frame) = unsafe { (&mut *(user as *mut VideoSink), &*frame) };
+    let (Ok(width), Ok(height)) = (u32::try_from(frame.width), u32::try_from(frame.height)) else {
+        return;
+    };
+    let rows = height as usize;
+    let chroma_rows = rows.div_ceil(2);
+    let stride = |s: c_int| usize::try_from(s).unwrap_or(0);
+    let (stride_y, stride_u, stride_v) = (
+        stride(frame.stride_y),
+        stride(frame.stride_u),
+        stride(frame.stride_v),
+    );
+    if frame.y.is_null() || frame.u.is_null() || frame.v.is_null() {
+        return;
+    }
+    // SAFETY: I420 planes of the given strides and heights.
+    let frame = unsafe {
+        VideoFrame {
+            width,
+            height,
+            y: std::slice::from_raw_parts(frame.y, stride_y * rows),
+            u: std::slice::from_raw_parts(frame.u, stride_u * chroma_rows),
+            v: std::slice::from_raw_parts(frame.v, stride_v * chroma_rows),
+            stride_y,
+            stride_u,
+            stride_v,
+            rotation: u32::try_from(frame.rotation).unwrap_or(0),
+            timestamp_us: frame.timestamp_us,
+        }
+    };
+    // A panicking sink must not unwind into C++.
+    let _ = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| sink(&frame)));
+}
+
 pub struct Consumer {
     ptr: NonNull<ffi::gm_consumer>,
     id: String,
     transport: Transport,
+    // Double box: the native side holds a thin pointer to the inner box.
+    sink: Option<Box<VideoSink>>,
 }
 // SAFETY: see Producer.
 unsafe impl Send for Consumer {}
 impl Drop for Consumer {
     fn drop(&mut self) {
+        if self.sink.is_some() {
+            let _ = self.set_video_sink(None);
+        }
         let _guard = self.transport.0.lock.lock().unwrap();
         // SAFETY: owned consumer, freed before its transport.
         unsafe { ffi::gm_consumer_free(self.ptr.as_ptr()) }
@@ -661,6 +723,25 @@ impl Consumer {
     pub fn set_volume(&self, volume: f64) -> Result<()> {
         // SAFETY: live consumer.
         check(unsafe { ffi::gm_consumer_set_volume(self.ptr.as_ptr(), volume) })
+    }
+
+    /// Hands each decoded frame of a video consumer to `sink` (on a decoder
+    /// thread); `None` removes it. The previous sink is not called again
+    /// once this returns.
+    pub fn set_video_sink(&mut self, sink: Option<VideoSink>) -> Result<()> {
+        let mut sink = sink.map(Box::new);
+        let (callback, user): (ffi::gm_video_frame_fn, *mut c_void) = match sink.as_mut() {
+            Some(sink) => (
+                Some(video_sink_trampoline),
+                &mut **sink as *mut VideoSink as *mut c_void,
+            ),
+            None => (None, std::ptr::null_mut()),
+        };
+        // SAFETY: live consumer; `user` stays alive in `self.sink` until
+        // replaced through this call, which waits for running calls.
+        check(unsafe { ffi::gm_consumer_set_video_sink(self.ptr.as_ptr(), callback, user) })?;
+        self.sink = sink;
+        Ok(())
     }
 
     /// `{"framesReceived","width","height"}` for video, `{"audioLevel",

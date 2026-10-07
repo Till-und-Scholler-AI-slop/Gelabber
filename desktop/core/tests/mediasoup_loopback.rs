@@ -8,7 +8,7 @@
 mod common;
 
 use common::{Server, blocking, check_encoder, serve_events, wait_for};
-use gelabber_media_core::{Audio, Device, Direction, Engine, Source, Transport};
+use gelabber_media_core::{Audio, Device, Direction, Engine, Source, Transport, VideoFrame};
 use mediasoup::prelude::*;
 // Trait methods (id, produce, consume); the name is taken by the native transport.
 use mediasoup::prelude::Transport as _;
@@ -263,6 +263,50 @@ async fn native_client_round_trips_media_through_mediasoup() {
         }
     }
     assert!(missing.is_empty(), "no decoded frames for {missing:?}");
+
+    // Frames for the viewer: I420 planes of the decoded size. A failed
+    // assertion in the sink is caught at the FFI boundary and shows as
+    // missing frames.
+    #[derive(Default)]
+    struct Seen {
+        frames: u64,
+        size: (u32, u32),
+        varied: bool,
+    }
+    let seen = Arc::new(Mutex::new(Seen::default()));
+    let sink_seen = seen.clone();
+    let viewer = &mut consumers[1].1;
+    viewer
+        .set_video_sink(Some(Box::new(move |frame: &VideoFrame<'_>| {
+            let (w, h) = (frame.width as usize, frame.height as usize);
+            assert!(frame.stride_y >= w && frame.stride_u >= w.div_ceil(2));
+            assert!(frame.y.len() >= frame.stride_y * h);
+            assert!(frame.v.len() >= frame.stride_v * h.div_ceil(2));
+            let row = &frame.y[..w];
+            let mut seen = sink_seen.lock().unwrap();
+            seen.frames += 1;
+            seen.size = (frame.width, frame.height);
+            seen.varied |= row.iter().min() != row.iter().max();
+        })))
+        .unwrap();
+    wait_for("frames at the video sink", Duration::from_secs(10), || {
+        let seen = seen.clone();
+        async move { seen.lock().unwrap().frames > 10 }
+    })
+    .await;
+    viewer.set_video_sink(None).unwrap();
+    let after_removal = {
+        let seen = seen.lock().unwrap();
+        eprintln!(
+            "video sink: {} frames, {:?}, varied {}",
+            seen.frames, seen.size, seen.varied
+        );
+        assert!(seen.size.0 >= 320 && seen.size.1 >= 180, "{:?}", seen.size);
+        assert!(seen.varied, "test pattern rows are not flat");
+        seen.frames
+    };
+    tokio::time::sleep(Duration::from_millis(300)).await;
+    assert_eq!(seen.lock().unwrap().frames, after_removal, "sink removed");
 
     // Sender controls the web client uses: encodings with bitrate caps and
     // priority, replaceTrack, and track enabled.
