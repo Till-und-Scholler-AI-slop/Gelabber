@@ -64,8 +64,12 @@ $gnArgs = @(
   'use_custom_libcxx=false', 'use_custom_libcxx_for_host=false',
   'rtc_use_h264=true',
   'enable_rust=false', 'enable_rust_cxx=false', 'enable_chromium_prelude=false', 'rtc_rusty_base64=false'
-) -join ' '
-gn gen out\gelabber "--args=$gnArgs"
+)
+# Write args.gn instead of passing --args: PowerShell strips the embedded
+# quotes of string values when calling gn.bat.
+New-Item -ItemType Directory -Force -Path out\gelabber | Out-Null
+$gnArgs | Set-Content -Encoding ascii out\gelabber\args.gn
+gn gen out\gelabber
 ninja -C out\gelabber :default
 
 if (Test-Path $Package) { Remove-Item -Recurse -Force $Package }
