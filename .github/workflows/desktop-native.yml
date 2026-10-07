@@ -15,11 +15,6 @@ on:
       - desktop/**
       - .github/workflows/desktop-native.yml
 
-# Never cancel: a libwebrtc build takes hours and is cached for later runs.
-concurrency:
-  group: desktop-native-${{ github.ref }}
-  cancel-in-progress: false
-
 permissions:
   contents: read
 
@@ -29,6 +24,10 @@ env:
 jobs:
   libwebrtc-linux:
     name: libwebrtc (Linux x64)
+    # Never cancel: a libwebrtc build takes hours and is cached for later runs.
+    concurrency:
+      group: desktop-libwebrtc-linux-${{ github.ref }}
+      cancel-in-progress: false
     runs-on: ubuntu-24.04
     timeout-minutes: 330
     outputs:
@@ -90,6 +89,10 @@ jobs:
 
   libwebrtc-windows:
     name: libwebrtc (Windows x64)
+    # Never cancel: a libwebrtc build takes hours and is cached for later runs.
+    concurrency:
+      group: desktop-libwebrtc-windows-${{ github.ref }}
+      cancel-in-progress: false
     runs-on: windows-2022
     timeout-minutes: 330
     steps:
