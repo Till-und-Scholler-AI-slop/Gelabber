@@ -75,9 +75,12 @@ ninja -C out\gelabber :default
 if (Test-Path $Package) { Remove-Item -Recurse -Force $Package }
 New-Item -ItemType Directory -Force -Path "$Package\lib", "$Package\include" | Out-Null
 Copy-Item out\gelabber\obj\webrtc.lib "$Package\lib\webrtc.lib"
-robocopy . "$Package\include" *.h *.hpp *.inc /S /XD out /NP /NFL /NDL | Out-Null
-if ($LASTEXITCODE -ge 4) { throw "robocopy failed" }
+# robocopy exits 1 when it copied files; only >= 8 is an error.
+$PSNativeCommandUseErrorActionPreference = $false
+robocopy . "$Package\include" *.h *.hpp *.inc *.def /S /XD out .git /NP /NFL /NDL | Out-Null
+if ($LASTEXITCODE -ge 8) { throw "robocopy failed with $LASTEXITCODE" }
 $global:LASTEXITCODE = 0
+$PSNativeCommandUseErrorActionPreference = $true
 Copy-Item out\gelabber\args.gn "$Package\args.gn"
 @(
   "WEBRTC_BRANCH=$($pins['WEBRTC_BRANCH'])",
