@@ -42,6 +42,7 @@
 #include <api/video_codecs/video_encoder_factory_template_libvpx_vp8_adapter.h>
 #include <api/video_codecs/video_encoder_factory_template_libvpx_vp9_adapter.h>
 #include <api/video_codecs/video_encoder_factory_template_open_h264_adapter.h>
+#include <audio/utility/audio_frame_operations.h>
 #include <media/base/adapted_video_track_source.h>
 #include <media/engine/simulcast_encoder_adapter.h>
 #include <modules/audio_processing/audio_buffer.h>
@@ -681,6 +682,15 @@ namespace
 			render.store(transport);
 		}
 
+		// Channels the APM and the microphone sources get: stereo only in
+		// original mode, like the engine's own path that remixes to the
+		// sending streams' format. The APM must not see stereo with its
+		// echo canceller configured for mono.
+		void SetChannels(size_t value)
+		{
+			channels.store(value);
+		}
+
 		int32_t RecordedDataIsAvailable(
 		  const void* samples,
 		  size_t samplesPerChannel,
@@ -732,6 +742,11 @@ namespace
 			  webrtc::AudioFrame::kNormalSpeech,
 			  webrtc::AudioFrame::kVadUnknown,
 			  channels);
+			const size_t wanted = this->channels.load();
+			if (frame.num_channels() > wanted)
+				webrtc::AudioFrameOperations::DownmixChannels(wanted, &frame);
+			else if (frame.num_channels() < wanted)
+				webrtc::AudioFrameOperations::UpmixChannels(wanted, &frame);
 			apm->set_stream_delay_ms(static_cast<int>(totalDelayMs));
 			apm->set_stream_analog_level(static_cast<int>(currentMicLevel));
 			apm->set_stream_key_pressed(keyPressed);
@@ -783,6 +798,7 @@ namespace
 		webrtc::AudioProcessing* const apm;
 		const std::shared_ptr<MicrophoneHub> hub;
 		std::atomic<webrtc::AudioTransport*> render{ nullptr };
+		std::atomic<size_t> channels{ 1 };
 		// Capture thread only.
 		webrtc::AudioFrame frame;
 	};
@@ -1252,6 +1268,7 @@ namespace
 		auto config                            = engine.apm->GetConfig();
 		config.pipeline.multi_channel_capture = mode == "original";
 		engine.apm->ApplyConfig(config);
+		engine.capture->SetChannels(mode == "original" ? 2 : 1);
 		engine.dsp->SetDenoise(mode == "enhanced");
 		engine.dsp->SetGain(static_cast<float>(options.value("inputGain", 1.0)));
 	}
