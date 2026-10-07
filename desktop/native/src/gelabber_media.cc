@@ -627,6 +627,13 @@ gm_transport* gm_device_create_transport(
 		if (params.value("iceTransportPolicy", std::string("all")) == "relay")
 			options.config.type = webrtc::PeerConnectionInterface::kRelay;
 
+		// mediasoup >= 3.13 (and the 0.29 Rust crate) names the candidate
+		// address `address`; libmediasoupclient still reads `ip`.
+		auto candidates = params["iceCandidates"];
+		for (auto& candidate : candidates)
+			if (!candidate.contains("ip") && candidate.contains("address"))
+				candidate["ip"] = candidate["address"];
+
 		auto transport       = std::make_unique<gm_transport>();
 		transport->device    = device;
 		transport->direction = direction;
@@ -639,7 +646,7 @@ gm_transport* gm_device_create_transport(
         transport->sendListener.get(),
         id,
         params["iceParameters"],
-        params["iceCandidates"],
+        candidates,
         params["dtlsParameters"],
         &options);
 		}
@@ -650,7 +657,7 @@ gm_transport* gm_device_create_transport(
         transport->recvListener.get(),
         id,
         params["iceParameters"],
-        params["iceCandidates"],
+        candidates,
         params["dtlsParameters"],
         &options);
 		}
