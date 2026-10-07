@@ -46,6 +46,8 @@ fn main() {
     };
 
     println!("cargo:rustc-link-search=native={}", lib_dir.display());
+    // For dependents' rpath (the desktop app's build script).
+    println!("cargo:lib_dir={}", lib_dir.display());
     println!("cargo:rustc-link-lib=dylib=gelabber_media");
     if env::var("CARGO_CFG_TARGET_OS").as_deref() == Ok("linux") {
         // Development and tests; packaged apps ship the library next to the binary.

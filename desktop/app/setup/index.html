@@ -1,0 +1,31 @@
+<!doctype html>
+<html lang="de">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <meta name="color-scheme" content="light dark" />
+    <title>Gelabber</title>
+    <link rel="stylesheet" href="setup.css" />
+    <script type="module" src="setup.js"></script>
+  </head>
+  <body>
+    <main>
+      <h1>Gelabber</h1>
+      <p>Mit welchem Gelabber-Server soll sich die App verbinden?</p>
+      <form id="server-form">
+        <label for="server">Serveradresse</label>
+        <input
+          id="server"
+          name="server"
+          type="url"
+          required
+          placeholder="https://gelabber.example.org"
+          autocomplete="url"
+          autofocus
+        />
+        <button type="submit">Verbinden</button>
+        <p id="error" role="alert" hidden></p>
+      </form>
+    </main>
+  </body>
+</html>

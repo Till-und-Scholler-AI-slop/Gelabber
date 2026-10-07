@@ -2,7 +2,7 @@
 # needs the native libwebrtc package (see native/README in desktop/README.md).
 [workspace]
 resolver = "3"
-members = ["core"]
+members = ["app", "core"]
 
 [workspace.package]
 version = "0.5.0-dev"

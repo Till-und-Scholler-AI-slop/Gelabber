@@ -162,8 +162,12 @@ jobs:
           key: ${{ needs.libwebrtc-linux.outputs.key }}
           fail-on-cache-miss: true
 
+      # WebKitGTK for the Tauri app; Xvfb for its smoke test.
       - name: Build tools
-        run: sudo apt-get update && sudo apt-get install -y --no-install-recommends ninja-build python3-venv
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y --no-install-recommends ninja-build python3-venv \
+            libwebkit2gtk-4.1-dev libsoup-3.0-dev librsvg2-dev xvfb xauth
 
       - name: Rust toolchain
         uses: dtolnay/rust-toolchain@1.98.1
@@ -228,6 +232,17 @@ jobs:
         run: |
           desktop/native/scripts/fake-desktop-session.sh \
             cargo test --manifest-path desktop/Cargo.toml --test voice -- --nocapture
+
+      # The Tauri app on a stand-in server origin: the page must reach the
+      # media commands through IPC (real audio devices from the test
+      # session) and must not reach the setup page's command.
+      - name: Desktop app smoke test
+        timeout-minutes: 10
+        run: |
+          cargo build --manifest-path desktop/Cargo.toml -p gelabber-desktop
+          abi="$(sed -n 's/^#define GM_ABI_VERSION \([0-9]*\)$/\1/p' desktop/native/include/gelabber_media.h)"
+          desktop/native/scripts/fake-desktop-session.sh \
+            desktop/app/scripts/smoke.sh desktop/target/debug/gelabber-desktop "$abi"
 
       - name: Check and measure the core library
         run: |

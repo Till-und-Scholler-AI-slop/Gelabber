@@ -6,6 +6,8 @@ rust-version.workspace = true
 license.workspace = true
 description = "Gelabber desktop media core: safe Rust over libmediasoupclient + libwebrtc"
 publish = false
+# Lets dependents read the library directory (DEP_GELABBER_MEDIA_LIB_DIR).
+links = "gelabber_media"
 
 [dependencies]
 serde_json = "1.0.151"

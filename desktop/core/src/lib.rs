@@ -11,6 +11,9 @@
 
 mod ffi;
 
+/// C ABI version of the native core this crate was written against.
+pub const ABI_VERSION: u32 = ffi::GM_ABI_VERSION;
+
 use serde_json::Value;
 use std::{
     ffi::{CStr, CString, c_char, c_void},

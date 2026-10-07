@@ -1303,11 +1303,14 @@ char* gm_producer_get_parameters(gm_producer* producer)
 				item["maxFramerate"] = *encoding.max_framerate;
 			if (encoding.scale_resolution_down_by)
 				item["scaleResolutionDownBy"] = *encoding.scale_resolution_down_by;
+			// Priorities are per sender (libwebrtc keeps them on the first
+			// encoding); report them on every encoding like the browser.
+			const auto& first = params.encodings.front();
 			for (const auto& [name, weight] : kPriorities)
-				if (encoding.bitrate_priority == weight)
+				if (first.bitrate_priority == weight)
 					item["priority"] = name;
 			for (const auto& [name, priority] : kNetworkPriorities)
-				if (encoding.network_priority == priority)
+				if (first.network_priority == priority)
 					item["networkPriority"] = name;
 			encodings.push_back(item);
 		}
@@ -1328,6 +1331,8 @@ int gm_producer_set_parameters(gm_producer* producer, const char* parametersJson
 		{
 			const auto& item = items[i];
 			auto& encoding   = params.encodings[i];
+			// Per-sender values: libwebrtc refuses them on later encodings.
+			auto& first = params.encodings.front();
 			if (item.contains("maxBitrate"))
 				encoding.max_bitrate_bps = item["maxBitrate"].is_null()
 				                             ? std::nullopt
@@ -1344,7 +1349,7 @@ int gm_producer_set_parameters(gm_producer* producer, const char* parametersJson
 				bool known      = false;
 				for (const auto& [candidate, weight] : kPriorities)
 					if (name == candidate)
-						encoding.bitrate_priority = weight, known = true;
+						first.bitrate_priority = weight, known = true;
 				if (!known)
 					throw std::invalid_argument("unknown priority " + name);
 			}
@@ -1354,7 +1359,7 @@ int gm_producer_set_parameters(gm_producer* producer, const char* parametersJson
 				bool known      = false;
 				for (const auto& [candidate, priority] : kNetworkPriorities)
 					if (name == candidate)
-						encoding.network_priority = priority, known = true;
+						first.network_priority = priority, known = true;
 				if (!known)
 					throw std::invalid_argument("unknown network priority " + name);
 			}

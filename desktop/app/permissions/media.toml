@@ -1,0 +1,35 @@
+# The server origin's only permissions: the media core commands
+# (src/commands.rs). Granted at runtime to the configured server origin.
+[[set]]
+identifier = "media"
+description = "Native media core commands for the Gelabber server's web client."
+permissions = [
+  "allow-media-info",
+  "allow-media-audio-devices",
+  "allow-media-audio-configure",
+  "allow-media-audio-levels",
+  "allow-media-device-load",
+  "allow-media-device-close",
+  "allow-media-transport-create",
+  "allow-media-transport-respond",
+  "allow-media-transport-restart-ice",
+  "allow-media-transport-stats",
+  "allow-media-transport-close",
+  "allow-media-source-microphone",
+  "allow-media-source-screen",
+  "allow-media-source-state",
+  "allow-media-source-set-enabled",
+  "allow-media-source-close",
+  "allow-media-produce",
+  "allow-media-producer-pause",
+  "allow-media-producer-replace-source",
+  "allow-media-producer-parameters",
+  "allow-media-producer-set-parameters",
+  "allow-media-producer-stats",
+  "allow-media-producer-close",
+  "allow-media-consume",
+  "allow-media-consumer-pause",
+  "allow-media-consumer-set-volume",
+  "allow-media-consumer-stats",
+  "allow-media-consumer-close",
+]

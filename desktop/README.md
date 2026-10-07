@@ -4,8 +4,8 @@ Native desktop client (issue #165): Tauri 2 shell around the existing web UI,
 with a native media core instead of the browser's WebRTC. Linux
 (Omarchy/Hyprland/Wayland) first, then Windows.
 
-Status: **spikes** (steps 1 to 3 of the ticket: build, Linux screen capture,
-voice in the core).
+Status: **spikes** (steps 1 to 4 of the ticket: build, Linux screen capture,
+voice in the core, Tauri shell in progress).
 Not a product yet.
 
 ## Layout
@@ -19,6 +19,8 @@ Not a product yet.
 | `core/` | Rust crate `gelabber-media-core`: safe API over the C ABI |
 | `core/tests/mediasoup_loopback.rs` | Loopback call against mediasoup 0.29 with the server's router codecs |
 | `core/tests/screen_capture.rs` | Screen capture through the portal, H264, mediasoup, native decode (`GELABBER_TEST_SCREEN=1`) |
+| `app/` | Tauri 2 app `gelabber-desktop`: window on the server origin, bundled setup page, media commands (`src/media.rs`) |
+| `app/scripts/smoke.sh` | Starts the app on a stand-in origin under Xvfb and checks which commands the page reaches |
 | `core/tests/voice.rs` | Microphone modes, RNNoise, device selection, Opus through mediasoup, playout (`GELABBER_TEST_AUDIO=1`) |
 
 ## Why a shared library with a C ABI
@@ -47,6 +49,19 @@ any glibc ≥ 2.31 system. PipeWire is loaded at runtime (`dlopen`), X11 is off.
 
 `GELABBER_MEDIA_LIB_DIR` points the Rust crate at an already built
 `libgelabber_media.so` instead of building it.
+
+## Running the app
+
+```sh
+cargo run --manifest-path desktop/Cargo.toml -p gelabber-desktop -- --server https://gelabber.example.org
+```
+
+Server choice, first match wins: `--server <url>`, `GELABBER_SERVER`, then
+`server` in `~/.config/io.github.till-und-scholler-ai-slop.gelabber/desktop.json`.
+Without one the window shows the bundled setup page, which writes that file.
+Only the configured origin gets the `media` permission set
+(`app/permissions/media.toml`); every page load closes the previous page's
+transports, producers and sources. WebKitGTK needs `libwebkit2gtk-4.1`.
 
 ## Design rules
 

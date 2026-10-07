@@ -165,7 +165,8 @@ GM_API int gm_producer_replace_source(gm_producer* producer, gm_source* source);
  *  "priority"?,"networkPriority"?: "very-low|low|medium|high"}]} */
 GM_API char* gm_producer_get_parameters(gm_producer* producer);
 /* Update encodings by index with the same keys; null clears maxBitrate or
- * maxFramerate. Keys left out stay unchanged. */
+ * maxFramerate. Keys left out stay unchanged. priority and networkPriority
+ * are per sender: set on any encoding, they apply to all. */
 GM_API int gm_producer_set_parameters(gm_producer* producer, const char* parameters_json);
 
 /* Consume a server `consumer` announcement:
