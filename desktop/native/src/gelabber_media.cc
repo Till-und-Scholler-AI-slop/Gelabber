@@ -606,6 +606,12 @@ namespace
 			sinks.erase(std::remove(sinks.begin(), sinks.end(), sink), sinks.end());
 		}
 
+		bool HasSinks()
+		{
+			std::lock_guard lock(sinkMutex);
+			return !sinks.empty();
+		}
+
 		// 16-bit interleaved PCM, 10 ms; from one thread at a time.
 		void Deliver(const int16_t* pcm, int sampleRate, size_t channels, size_t frames)
 		{
@@ -620,19 +626,47 @@ namespace
 		std::vector<webrtc::AudioTrackSinkInterface*> sinks;
 	};
 
+	class MicrophoneHub;
+
+	// A microphone track's source: stereo only in original mode.
+	class MicrophoneSource : public PushAudioSource
+	{
+	public:
+		MicrophoneSource(webrtc::AudioOptions options, size_t channels, std::shared_ptr<MicrophoneHub> hub);
+		~MicrophoneSource() override;
+
+		const size_t channels;
+
+	private:
+		const std::shared_ptr<MicrophoneHub> hub;
+	};
+
 	// The microphone sources of an engine; all get the processed capture.
 	class MicrophoneHub
 	{
 	public:
-		void Add(PushAudioSource* source)
+		void Add(MicrophoneSource* source)
 		{
 			std::lock_guard lock(mutex);
 			sources.push_back(source);
 		}
-		void Remove(PushAudioSource* source)
+		void Remove(MicrophoneSource* source)
 		{
 			std::lock_guard lock(mutex);
 			sources.erase(std::remove(sources.begin(), sources.end(), source), sources.end());
+		}
+		// The capture format, like the engine's own path that remixes to
+		// its sending streams: stereo once a stereo source sends. A source
+		// gets its sink only after the engine applied its options to the
+		// APM, so the APM never sees stereo under a mono configuration.
+		size_t Channels()
+		{
+			std::lock_guard lock(mutex);
+			size_t channels = 1;
+			for (auto* source : sources)
+				if (source->channels > channels && source->HasSinks())
+					channels = source->channels;
+			return channels;
 		}
 		void Deliver(const int16_t* pcm, int sampleRate, size_t channels, size_t frames)
 		{
@@ -643,25 +677,20 @@ namespace
 
 	private:
 		std::mutex mutex;
-		std::vector<PushAudioSource*> sources;
+		std::vector<MicrophoneSource*> sources;
 	};
 
-	class MicrophoneSource : public PushAudioSource
+	MicrophoneSource::MicrophoneSource(
+	  webrtc::AudioOptions options, size_t channels, std::shared_ptr<MicrophoneHub> hub)
+	  : PushAudioSource(std::move(options)), channels(channels), hub(std::move(hub))
 	{
-	public:
-		MicrophoneSource(webrtc::AudioOptions options, std::shared_ptr<MicrophoneHub> hub)
-		  : PushAudioSource(std::move(options)), hub(std::move(hub))
-		{
-			this->hub->Add(this);
-		}
-		~MicrophoneSource() override
-		{
-			hub->Remove(this);
-		}
+		this->hub->Add(this);
+	}
 
-	private:
-		const std::shared_ptr<MicrophoneHub> hub;
-	};
+	MicrophoneSource::~MicrophoneSource()
+	{
+		hub->Remove(this);
+	}
 
 	// Between the audio device module and the voice engine. Capture runs
 	// through the APM (echo cancellation against the playout, noise
@@ -680,15 +709,6 @@ namespace
 		void SetRender(webrtc::AudioTransport* transport)
 		{
 			render.store(transport);
-		}
-
-		// Channels the APM and the microphone sources get: stereo only in
-		// original mode, like the engine's own path that remixes to the
-		// sending streams' format. The APM must not see stereo with its
-		// echo canceller configured for mono.
-		void SetChannels(size_t value)
-		{
-			channels.store(value);
 		}
 
 		int32_t RecordedDataIsAvailable(
@@ -725,7 +745,7 @@ namespace
 		  uint32_t sampleRate,
 		  uint32_t totalDelayMs,
 		  int32_t /*clockDrift*/,
-		  uint32_t currentMicLevel,
+		  uint32_t /*currentMicLevel*/,
 		  bool keyPressed,
 		  uint32_t& newMicLevel,
 		  std::optional<int64_t> /*estimatedCaptureTimeNs*/) override
@@ -742,13 +762,12 @@ namespace
 			  webrtc::AudioFrame::kNormalSpeech,
 			  webrtc::AudioFrame::kVadUnknown,
 			  channels);
-			const size_t wanted = this->channels.load();
+			const size_t wanted = hub->Channels();
 			if (frame.num_channels() > wanted)
 				webrtc::AudioFrameOperations::DownmixChannels(wanted, &frame);
 			else if (frame.num_channels() < wanted)
 				webrtc::AudioFrameOperations::UpmixChannels(wanted, &frame);
 			apm->set_stream_delay_ms(static_cast<int>(totalDelayMs));
-			apm->set_stream_analog_level(static_cast<int>(currentMicLevel));
 			apm->set_stream_key_pressed(keyPressed);
 			webrtc::ProcessAudioFrame(apm, &frame);
 			hub->Deliver(frame.data(), frame.sample_rate_hz(), frame.num_channels(), frame.samples_per_channel());
@@ -798,7 +817,6 @@ namespace
 		webrtc::AudioProcessing* const apm;
 		const std::shared_ptr<MicrophoneHub> hub;
 		std::atomic<webrtc::AudioTransport*> render{ nullptr };
-		std::atomic<size_t> channels{ 1 };
 		// Capture thread only.
 		webrtc::AudioFrame frame;
 	};
@@ -1268,7 +1286,6 @@ namespace
 		auto config                            = engine.apm->GetConfig();
 		config.pipeline.multi_channel_capture = mode == "original";
 		engine.apm->ApplyConfig(config);
-		engine.capture->SetChannels(mode == "original" ? 2 : 1);
 		engine.dsp->SetDenoise(mode == "enhanced");
 		engine.dsp->SetGain(static_cast<float>(options.value("inputGain", 1.0)));
 	}
@@ -1681,7 +1698,8 @@ gm_source* gm_source_new_microphone(gm_engine* engine, const char* optionsJson)
 
 		ApplyCaptureMode(*engine, mode, options);
 
-		auto source = webrtc::make_ref_counted<MicrophoneSource>(audio, engine->microphones);
+		auto source = webrtc::make_ref_counted<MicrophoneSource>(
+		  audio, mode == "original" ? 2 : 1, engine->microphones);
 		auto track  = engine->factory->CreateAudioTrack(engine->TrackId("mic"), source.get());
 		if (!track)
 			throw std::runtime_error("failed to create audio track");

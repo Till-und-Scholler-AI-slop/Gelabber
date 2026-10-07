@@ -168,7 +168,7 @@ jobs:
           sudo apt-get update
           sudo apt-get install -y --no-install-recommends ninja-build python3-venv \
             libwebkit2gtk-4.1-dev libsoup-3.0-dev librsvg2-dev xvfb xauth \
-            mesa-vulkan-drivers imagemagick
+            mesa-vulkan-drivers imagemagick gdb
 
       - name: Rust toolchain
         uses: dtolnay/rust-toolchain@1.98.1
@@ -226,6 +226,7 @@ jobs:
       # the speakers. Covers device selection, the three processing modes
       # (RNNoise included), Opus through mediasoup and playout.
       - name: Voice through PulseAudio devices
+        id: voice
         timeout-minutes: 10
         env:
           GELABBER_TEST_AUDIO: "1"
@@ -233,6 +234,18 @@ jobs:
         run: |
           desktop/native/scripts/fake-desktop-session.sh \
             cargo test --manifest-path desktop/Cargo.toml --test voice -- --nocapture
+
+      # A native abort kills the test without a Rust backtrace.
+      - name: Voice test backtrace
+        if: failure() && steps.voice.outcome == 'failure'
+        timeout-minutes: 10
+        env:
+          GELABBER_TEST_AUDIO: "1"
+          CARGO_TARGET_X86_64_UNKNOWN_LINUX_GNU_RUNNER: >-
+            gdb -q -batch -ex run -ex "thread apply all bt 30" --args
+        run: |
+          desktop/native/scripts/fake-desktop-session.sh \
+            cargo test --manifest-path desktop/Cargo.toml --test voice -- --nocapture || true
 
       # The Tauri app on a stand-in server origin: the page must reach the
       # media commands through IPC (real audio devices from the test
