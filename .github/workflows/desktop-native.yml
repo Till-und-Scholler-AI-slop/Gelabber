@@ -170,6 +170,12 @@ jobs:
         with:
           components: rustfmt, clippy
 
+      # The mediasoup worker (dev-dependency) takes minutes to build.
+      - name: Rust cache
+        uses: Swatinem/rust-cache@v2
+        with:
+          workspaces: desktop
+
       - name: Format
         run: cargo fmt --manifest-path desktop/Cargo.toml --all -- --check
 

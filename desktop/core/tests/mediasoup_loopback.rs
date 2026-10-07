@@ -314,19 +314,52 @@ async fn native_client_round_trips_media_through_mediasoup() {
         )
         .await;
     }
-    // Simulcast layer report (both must eventually send; H264 simulcast relies on
-    // libwebrtc's simulcast adapter around OpenH264).
-    tokio::time::sleep(Duration::from_secs(3)).await;
-    for (name, producer) in [("H264", &h264_server), ("VP8", &vp8_server)] {
+    // Both simulcast layers must come up. The 720p layer only starts once
+    // libwebrtc's bandwidth estimate and CPU budget allow it, so poll; on
+    // failure print the sender's own per-layer view (qualityLimitationReason,
+    // frameWidth, active) next to the server's.
+    for (name, producer, native) in [("H264", &h264_server, &h264), ("VP8", &vp8_server, &vp8)] {
+        let start = Instant::now();
+        let mut live = 0;
+        while start.elapsed() < Duration::from_secs(20) {
+            let stats = producer.get_stats().await.unwrap();
+            live = stats.iter().filter(|s| s.byte_count > 0).count();
+            if live == 2 {
+                break;
+            }
+            tokio::time::sleep(Duration::from_millis(500)).await;
+        }
         let stats = producer.get_stats().await.unwrap();
-        let live = stats.iter().filter(|s| s.byte_count > 0).count();
         eprintln!(
-            "{name}: {live} live layer(s): {:?}",
+            "{name}: {live} live layer(s) after {:?}: {:?}",
+            start.elapsed(),
             stats
                 .iter()
-                .map(|s| (s.ssrc, s.byte_count, s.bitrate, s.score))
+                .map(|s| (s.ssrc, s.rid.clone(), s.byte_count, s.bitrate, s.score))
                 .collect::<Vec<_>>()
         );
+        if live != 2 {
+            let outbound: Vec<Value> = native
+                .stats()
+                .unwrap()
+                .as_array()
+                .cloned()
+                .unwrap_or_default()
+                .into_iter()
+                .filter(|s| s["type"] == "outbound-rtp")
+                .map(|s| {
+                    json!({
+                        "rid": s["rid"], "active": s["active"],
+                        "frameWidth": s["frameWidth"], "frameHeight": s["frameHeight"],
+                        "framesEncoded": s["framesEncoded"], "bytesSent": s["bytesSent"],
+                        "targetBitrate": s["targetBitrate"],
+                        "qualityLimitationReason": s["qualityLimitationReason"],
+                        "encoderImplementation": s["encoderImplementation"],
+                    })
+                })
+                .collect();
+            eprintln!("{name} native outbound-rtp: {}", Value::Array(outbound));
+        }
         assert_eq!(live, 2, "{name} sends both simulcast layers");
     }
 
