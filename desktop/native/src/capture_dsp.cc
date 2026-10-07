@@ -46,6 +46,11 @@ namespace gelabber
 		gain.store(std::clamp(std::isfinite(value) ? value : 1.0f, 0.0f, 2.0f));
 	}
 
+	float CaptureDsp::Gain() const
+	{
+		return gain.load();
+	}
+
 	void CaptureDsp::Initialize(int sampleRateHz, int numChannels)
 	{
 		sampleRate.store(sampleRateHz);

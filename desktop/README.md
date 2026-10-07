@@ -114,9 +114,12 @@ transports, producers and sources. WebKitGTK needs `libwebkit2gtk-4.1`.
   audio send stream, which would mix the microphone into source audio. The
   device module's callback is therefore our `CaptureTransport`: it runs the
   APM itself and feeds only the microphone sources; playout (and with it the
-  echo canceller's reference) passes straight through to the engine. Other
-  audio sources must report empty `AudioOptions`, because the voice engine
-  applies a source's options to the shared APM.
+  echo canceller's reference) passes straight through to the engine. The APM
+  always runs mono: switching its capture channel count mid-stream aborts in
+  its post filter (libc++ bounds check). Original mode without echo
+  cancellation gets the device's stereo past the APM, with only the gain
+  applied. Other audio sources must report empty `AudioOptions`, because the
+  voice engine applies a source's options to the shared APM.
 - Source audio (Linux): PipeWire, dlopened like libwebrtc does. One passive
   capture stream per playback node of the chosen application
   (`application.process.binary`; "" = every application but Gelabber),

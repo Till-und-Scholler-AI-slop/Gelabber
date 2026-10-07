@@ -38,6 +38,7 @@ namespace gelabber
 		bool Denoise() const;
 		// Linear, clamped to 0..2 (the web client's "Mic-Gain").
 		void SetGain(float gain);
+		float Gain() const;
 
 		void Initialize(int sampleRateHz, int numChannels);
 		// One block per call; samples in libwebrtc's FloatS16 scale
