@@ -30,7 +30,8 @@ if [ ! -d depot_tools ]; then
   git clone --depth 1 https://chromium.googlesource.com/chromium/tools/depot_tools.git
 fi
 export PATH="$work/depot_tools:$PATH"
-export DEPOT_TOOLS_UPDATE=0
+# First run bootstraps depot_tools (CIPD python, vpython); runhooks fails without it.
+gclient >/dev/null
 
 cat > .gclient <<EOF
 solutions = [{
