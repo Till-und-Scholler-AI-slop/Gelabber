@@ -250,6 +250,27 @@ jobs:
         timeout-minutes: 10
         run: xvfb-run -a cargo test --manifest-path desktop/Cargo.toml -p gelabber-desktop -- --ignored viewer --nocapture
 
+      # Test build for real desktops; the core comes from the steps above.
+      - name: Package the app
+        run: |
+          set -euo pipefail
+          lib="$(find desktop/target -name libgelabber_media.so -path '*/out/build/*' | head -n1)"
+          GELABBER_MEDIA_LIB_DIR="$(dirname "$lib")" \
+            cargo build --release --manifest-path desktop/Cargo.toml -p gelabber-desktop
+          pkg=gelabber-desktop-linux-x64
+          mkdir -p "$pkg"
+          strip --strip-unneeded -o "$pkg/gelabber-desktop" desktop/target/release/gelabber-desktop
+          strip --strip-unneeded -o "$pkg/libgelabber_media.so" "$lib"
+          cp desktop/app/package/README.txt "$pkg/"
+          tar -czf "$pkg.tar.gz" "$pkg"
+
+      - name: Upload the app
+        uses: actions/upload-artifact@v4
+        with:
+          name: gelabber-desktop-linux-x64
+          path: gelabber-desktop-linux-x64.tar.gz
+          retention-days: 14
+
       - name: Check and measure the core library
         run: |
           set -euo pipefail

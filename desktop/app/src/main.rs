@@ -98,6 +98,10 @@ fn set_server(app: AppHandle, server: String) -> Result<(), String> {
 }
 
 fn main() {
+    // Native media logging (libwebrtc, libmediasoupclient) to stderr.
+    if std::env::var_os("GELABBER_MEDIA_LOG").is_some() {
+        gelabber_media_core::set_log_level(gelabber_media_core::LogLevel::Info);
+    }
     tauri::Builder::default()
         .manage(media::Media::default())
         .invoke_handler(tauri::generate_handler![
