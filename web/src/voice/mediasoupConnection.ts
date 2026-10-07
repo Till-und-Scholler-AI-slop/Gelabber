@@ -234,11 +234,20 @@ export class MediasoupConnection implements MediaConnection {
       "recv",
     );
     this.live();
-    await this.sdk(
-      () => device.load({ routerRtpCapabilities: capabilities }),
-      "recv",
-    );
-    this.live();
+    // The desktop app's native device holds a handle until closed.
+    const release = () => (device as { close?: () => void }).close?.();
+    try {
+      await this.sdk(
+        () => device.load({ routerRtpCapabilities: capabilities }),
+        "recv",
+        true,
+        release,
+      );
+      this.live();
+    } catch (error) {
+      release();
+      throw error;
+    }
     this.device = device;
     await this.options.request("capabilities", {
       rtp: device.recvRtpCapabilities,
@@ -1125,6 +1134,10 @@ export class MediasoupConnection implements MediaConnection {
     for (const id of [...this.received.keys()]) this.removeConsumer(id);
     for (const transport of this.ownedTransports) transport.close();
     this.ownedTransports.clear();
+    // The desktop app's native device holds a handle; browser devices have
+    // nothing to release.
+    (this.device as { close?: () => void } | null)?.close?.();
+    this.device = null;
     this.send = null;
     this.recv = null;
     this.queued = [];

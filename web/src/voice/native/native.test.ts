@@ -303,6 +303,9 @@ describe("desktop app media", () => {
     media.close();
     await tick();
     expect(core.calledWith("media_transport_close")).toHaveLength(2);
+    expect(core.calledWith("media_device_close")).toEqual([
+      { device: expect.any(Number) },
+    ]);
   });
 
   it("plays consumers natively through audio outputs", async () => {

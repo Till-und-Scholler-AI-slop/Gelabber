@@ -513,6 +513,15 @@ export class NativeDevice {
   createRecvTransport(options: NativeTransportOptions): NativeTransport {
     return new NativeTransport(this, "recv", options);
   }
+  /** Releases the app's handle; open transports keep the native device. */
+  close(): void {
+    const handle = this.handle;
+    this.handle = null;
+    if (handle !== null)
+      void invokeNative("media_device_close", { device: handle }).catch(
+        () => undefined,
+      );
+  }
 }
 
 /** For MediasoupConnection's `deviceFactory`. */
