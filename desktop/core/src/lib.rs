@@ -531,6 +531,13 @@ impl Source {
         owned_json(unsafe { ffi::gm_source_state(self.raw()) })
     }
 
+    /// Like `MediaStreamTrack.enabled`: a disabled source keeps its
+    /// producers and sends silence or black frames.
+    pub fn set_enabled(&self, enabled: bool) -> Result<()> {
+        // SAFETY: live source.
+        check(unsafe { ffi::gm_source_set_enabled(self.raw(), enabled as i32) })
+    }
+
     fn wrap(engine: &Engine, ptr: *mut ffi::gm_source) -> Result<Self> {
         NonNull::new(ptr)
             .map(|ptr| {
@@ -577,6 +584,33 @@ impl Producer {
     pub fn set_paused(&self, paused: bool) -> Result<()> {
         // SAFETY: live producer.
         check(unsafe { ffi::gm_producer_pause(self.ptr.as_ptr(), paused as i32) })
+    }
+
+    /// Swaps the source, keeping the producer id (mediasoup `replaceTrack`).
+    pub fn replace_source(&mut self, source: &Source) -> Result<()> {
+        {
+            let _guard = self.transport.0.lock.lock().unwrap();
+            // SAFETY: live producer and source; the old source stays alive in
+            // `self._source` until the call returned.
+            check(unsafe { ffi::gm_producer_replace_source(self.ptr.as_ptr(), source.raw()) })?;
+        }
+        self._source = source.clone();
+        Ok(())
+    }
+
+    /// Sender encodings like `RTCRtpSender.getParameters()`:
+    /// `{"encodings":[{"active","maxBitrate"?,"maxFramerate"?,
+    /// "scaleResolutionDownBy"?,"priority"?,"networkPriority"?}]}`.
+    pub fn parameters(&self) -> Result<Value> {
+        // SAFETY: live producer.
+        owned_json(unsafe { ffi::gm_producer_get_parameters(self.ptr.as_ptr()) })
+    }
+
+    /// Updates encodings by index; `null` clears `maxBitrate`/`maxFramerate`.
+    pub fn set_parameters(&self, parameters: &Value) -> Result<()> {
+        let parameters = json_arg(parameters)?;
+        // SAFETY: live producer, NUL-terminated JSON.
+        check(unsafe { ffi::gm_producer_set_parameters(self.ptr.as_ptr(), parameters.as_ptr()) })
     }
 
     pub fn stats(&self) -> Result<Value> {

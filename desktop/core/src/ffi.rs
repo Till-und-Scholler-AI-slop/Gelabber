@@ -3,7 +3,7 @@
 
 use std::os::raw::{c_char, c_int, c_void};
 
-pub const GM_ABI_VERSION: u32 = 2;
+pub const GM_ABI_VERSION: u32 = 3;
 
 #[repr(C)]
 pub struct gm_engine {
@@ -92,6 +92,7 @@ unsafe extern "C" {
     pub fn gm_source_new_screen(engine: *mut gm_engine, options: *const c_char) -> *mut gm_source;
     pub fn gm_source_state(source: *mut gm_source) -> *mut c_char;
     pub fn gm_source_free(source: *mut gm_source);
+    pub fn gm_source_set_enabled(source: *mut gm_source, enabled: c_int) -> c_int;
 
     pub fn gm_transport_produce(
         transport: *mut gm_transport,
@@ -103,6 +104,12 @@ unsafe extern "C" {
     pub fn gm_producer_rtp_parameters(producer: *mut gm_producer) -> *mut c_char;
     pub fn gm_producer_pause(producer: *mut gm_producer, paused: c_int) -> c_int;
     pub fn gm_producer_stats(producer: *mut gm_producer) -> *mut c_char;
+    pub fn gm_producer_replace_source(producer: *mut gm_producer, source: *mut gm_source) -> c_int;
+    pub fn gm_producer_get_parameters(producer: *mut gm_producer) -> *mut c_char;
+    pub fn gm_producer_set_parameters(
+        producer: *mut gm_producer,
+        parameters_json: *const c_char,
+    ) -> c_int;
 
     pub fn gm_transport_consume(
         transport: *mut gm_transport,

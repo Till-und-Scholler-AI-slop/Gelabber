@@ -1254,6 +1254,126 @@ int gm_producer_pause(gm_producer* producer, int paused)
 	});
 }
 
+namespace
+{
+	// RTCRtpEncodingParameters.priority as the browser maps it to a bitrate
+	// weight (very-low 0.5, low 1, medium 2, high 4).
+	const std::pair<const char*, double> kPriorities[] = {
+		{ "very-low", 0.5 }, { "low", 1.0 }, { "medium", 2.0 }, { "high", 4.0 }
+	};
+	const std::pair<const char*, webrtc::Priority> kNetworkPriorities[] = {
+		{ "very-low", webrtc::Priority::kVeryLow },
+		{ "low", webrtc::Priority::kLow },
+		{ "medium", webrtc::Priority::kMedium },
+		{ "high", webrtc::Priority::kHigh },
+	};
+
+	webrtc::RtpSenderInterface* SenderOf(gm_producer* producer)
+	{
+		auto* sender = producer->producer->GetRtpSender();
+		if (!sender)
+			throw std::runtime_error("producer has no RTP sender");
+		return sender;
+	}
+} // namespace
+
+int gm_producer_replace_source(gm_producer* producer, gm_source* source)
+{
+	return guarded<int>(-1, [&] {
+		if (!source)
+			throw std::invalid_argument("source is null");
+		if (source->track->kind() != producer->producer->GetKind())
+			throw std::invalid_argument("replacement source is of another kind");
+		producer->producer->ReplaceTrack(source->track.get());
+		return 0;
+	});
+}
+
+char* gm_producer_get_parameters(gm_producer* producer)
+{
+	return guarded<char*>(nullptr, [&] {
+		const auto params = SenderOf(producer)->GetParameters();
+		json encodings    = json::array();
+		for (const auto& encoding : params.encodings)
+		{
+			json item{ { "active", encoding.active } };
+			if (encoding.max_bitrate_bps)
+				item["maxBitrate"] = *encoding.max_bitrate_bps;
+			if (encoding.max_framerate)
+				item["maxFramerate"] = *encoding.max_framerate;
+			if (encoding.scale_resolution_down_by)
+				item["scaleResolutionDownBy"] = *encoding.scale_resolution_down_by;
+			for (const auto& [name, weight] : kPriorities)
+				if (encoding.bitrate_priority == weight)
+					item["priority"] = name;
+			for (const auto& [name, priority] : kNetworkPriorities)
+				if (encoding.network_priority == priority)
+					item["networkPriority"] = name;
+			encodings.push_back(item);
+		}
+		return dupString(json{ { "encodings", encodings } }.dump());
+	});
+}
+
+int gm_producer_set_parameters(gm_producer* producer, const char* parametersJson)
+{
+	return guarded<int>(-1, [&] {
+		const auto update = json::parse(parametersJson ? parametersJson : "{}");
+		auto* sender      = SenderOf(producer);
+		auto params       = sender->GetParameters();
+		const auto& items = update.value("encodings", json::array());
+		if (items.size() > params.encodings.size())
+			throw std::invalid_argument("more encodings than the sender has");
+		for (size_t i = 0; i < items.size(); ++i)
+		{
+			const auto& item = items[i];
+			auto& encoding   = params.encodings[i];
+			if (item.contains("maxBitrate"))
+				encoding.max_bitrate_bps = item["maxBitrate"].is_null()
+				                             ? std::nullopt
+				                             : std::optional<int>(item["maxBitrate"].get<int>());
+			if (item.contains("maxFramerate"))
+				encoding.max_framerate = item["maxFramerate"].is_null()
+				                           ? std::nullopt
+				                           : std::optional<double>(item["maxFramerate"].get<double>());
+			if (item.contains("active"))
+				encoding.active = item["active"].get<bool>();
+			if (item.contains("priority"))
+			{
+				const auto name = item["priority"].get<std::string>();
+				bool known      = false;
+				for (const auto& [candidate, weight] : kPriorities)
+					if (name == candidate)
+						encoding.bitrate_priority = weight, known = true;
+				if (!known)
+					throw std::invalid_argument("unknown priority " + name);
+			}
+			if (item.contains("networkPriority"))
+			{
+				const auto name = item["networkPriority"].get<std::string>();
+				bool known      = false;
+				for (const auto& [candidate, priority] : kNetworkPriorities)
+					if (name == candidate)
+						encoding.network_priority = priority, known = true;
+				if (!known)
+					throw std::invalid_argument("unknown network priority " + name);
+			}
+		}
+		const auto result = sender->SetParameters(params);
+		if (!result.ok())
+			throw std::runtime_error(std::string("SetParameters: ") + result.message());
+		return 0;
+	});
+}
+
+int gm_source_set_enabled(gm_source* source, int enabled)
+{
+	return guarded<int>(-1, [&] {
+		source->track->set_enabled(enabled != 0);
+		return 0;
+	});
+}
+
 char* gm_producer_stats(gm_producer* producer)
 {
 	return guarded<char*>(nullptr, [&] { return dupString(producer->producer->GetStats().dump()); });

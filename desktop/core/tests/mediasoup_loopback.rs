@@ -264,6 +264,36 @@ async fn native_client_round_trips_media_through_mediasoup() {
     }
     assert!(missing.is_empty(), "no decoded frames for {missing:?}");
 
+    // Sender controls the web client uses: encodings with bitrate caps and
+    // priority, replaceTrack, and track enabled.
+    let params = vp8.parameters().unwrap();
+    assert_eq!(
+        params["encodings"].as_array().map(Vec::len),
+        Some(2),
+        "{params}"
+    );
+    vp8.set_parameters(&json!({"encodings": [
+        {"maxBitrate": 150_000},
+        {"maxBitrate": 1_200_000, "maxFramerate": 15, "priority": "high", "networkPriority": "high"},
+    ]}))
+    .unwrap();
+    let params = vp8.parameters().unwrap();
+    eprintln!("VP8 sender parameters: {params}");
+    assert_eq!(params["encodings"][0]["maxBitrate"], 150_000);
+    assert_eq!(params["encodings"][1]["maxBitrate"], 1_200_000);
+    assert_eq!(params["encodings"][1]["priority"], "high");
+    assert_eq!(params["encodings"][1]["networkPriority"], "high");
+    assert!(
+        vp8.set_parameters(&json!({"encodings": [{"priority": "urgent"}]}))
+            .is_err()
+    );
+    let mut vp8 = vp8;
+    let replacement = Source::test_pattern(&engine, 640, 360, 15).unwrap();
+    vp8.replace_source(&replacement).unwrap();
+    assert!(vp8.replace_source(&mic).is_err(), "kind mismatch refused");
+    replacement.set_enabled(false).unwrap();
+    replacement.set_enabled(true).unwrap();
+
     // Native objects close in dependency order.
     drop(consumers);
     drop((audio, h264, vp8));

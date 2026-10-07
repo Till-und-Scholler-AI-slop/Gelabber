@@ -38,7 +38,7 @@
 extern "C" {
 #endif
 
-#define GM_ABI_VERSION 2
+#define GM_ABI_VERSION 3
 
 typedef struct gm_engine gm_engine;
 typedef struct gm_device gm_device;
@@ -140,6 +140,9 @@ GM_API gm_source* gm_source_new_screen(gm_engine* engine, const char* options_js
  * Microphone and test pattern are always live. */
 GM_API char* gm_source_state(gm_source* source);
 GM_API void gm_source_free(gm_source* source);
+/* Disabled tracks keep their producer and send silence (audio) or black
+ * frames (video), like MediaStreamTrack.enabled. */
+GM_API int gm_source_set_enabled(gm_source* source, int enabled);
 
 /* Produce a source. options_json:
  * {"codec"?: "video/H264"|"video/VP8"|..., "encodings"?: [{"scaleResolutionDownBy":4},{...}],
@@ -153,6 +156,17 @@ GM_API const char* gm_producer_id(gm_producer* producer);
 GM_API char* gm_producer_rtp_parameters(gm_producer* producer);
 GM_API int gm_producer_pause(gm_producer* producer, int paused);
 GM_API char* gm_producer_stats(gm_producer* producer);
+/* Swap the source keeping the producer (mediasoup replaceTrack). The source
+ * must be of the producer's kind; the caller keeps the old one alive until
+ * this returns. */
+GM_API int gm_producer_replace_source(gm_producer* producer, gm_source* source);
+/* The RTP sender's encodings, shaped like RTCRtpSendParameters:
+ * {"encodings":[{"active","maxBitrate"?,"maxFramerate"?,"scaleResolutionDownBy"?,
+ *  "priority"?,"networkPriority"?: "very-low|low|medium|high"}]} */
+GM_API char* gm_producer_get_parameters(gm_producer* producer);
+/* Update encodings by index with the same keys; null clears maxBitrate or
+ * maxFramerate. Keys left out stay unchanged. */
+GM_API int gm_producer_set_parameters(gm_producer* producer, const char* parameters_json);
 
 /* Consume a server `consumer` announcement:
  * {"id","producerId","kind":"audio|video","rtpParameters":{...},"appData"?:{...}} */
