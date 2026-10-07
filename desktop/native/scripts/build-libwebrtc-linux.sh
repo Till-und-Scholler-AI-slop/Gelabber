@@ -94,7 +94,10 @@ gn_args=(
   use_debug_fission=false
 )
 gn gen "$out" --args="${gn_args[*]}"
-ninja -C "$out" :default buildtools/third_party/libc++ buildtools/third_party/libc++abi
+# :default leaves out SimulcastEncoderAdapter, which the core wraps around
+# hardware H264 encoders.
+ninja -C "$out" :default media:rtc_simulcast_encoder_adapter \
+  buildtools/third_party/libc++ buildtools/third_party/libc++abi
 
 # Empty the package dir in place: CI pre-creates it under a root-owned /mnt.
 mkdir -p "$package"

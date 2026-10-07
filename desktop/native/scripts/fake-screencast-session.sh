@@ -2,15 +2,15 @@
 # Runs a command inside a throwaway desktop session with a working ScreenCast
 # portal, to test screen capture without a monitor, GPU or dialog:
 # D-Bus session, PipeWire + WirePlumber, the real xdg-desktop-portal frontend,
-# and a test backend (fake_screencast_portal.py) whose "monitor" is a moving
-# GStreamer test video published as a PipeWire Video/Source node.
+# and a test backend (fake_screencast_portal.py) whose "monitor" is
+# fake_screen.c: a PipeWire Video/Source node with a moving pattern in
+# shared-memory buffers, like a compositor's screencast stream.
 #
 # The compositor side (xdg-desktop-portal-hyprland, DMA-BUF frames) is not
 # covered; that needs a real desktop.
 #
 # Ubuntu 24.04 packages: pipewire wireplumber xdg-desktop-portal
-# gstreamer1.0-pipewire gstreamer1.0-plugins-base gstreamer1.0-tools
-# python3-gi jq (dbus-run-session comes with dbus).
+# libpipewire-0.3-dev gcc python3-gi (dbus-run-session comes with dbus).
 #
 # Usage: fake-screencast-session.sh <command> [args...]
 set -euo pipefail
@@ -67,20 +67,15 @@ done
 wireplumber &
 pids+=($!)
 
-gst-launch-1.0 -q videotestsrc pattern=ball is-live=true \
-  ! "video/x-raw,format=BGRx,width=$width,height=$height,framerate=30/1" \
-  ! pipewiresink mode=provide \
-    stream-properties="properties,media.class=Video/Source,node.name=gelabber-test-screen" &
+"${GELABBER_HOST_CC:-gcc}" -O2 -o "$runtime/fake_screen" "$here/fake_screen.c" \
+  $(pkg-config --cflags --libs libpipewire-0.3)
+mkfifo "$runtime/node"
+"$runtime/fake_screen" "$width" "$height" 30 >"$runtime/node" &
 pids+=($!)
 node=""
-for _ in $(seq 100); do
-  node="$(pw-dump 2>/dev/null | jq -r '.[] | select(.type == "PipeWire:Interface:Node" and .info.props["node.name"] == "gelabber-test-screen") | .id' | head -n1)"
-  [[ -n "$node" ]] && break
-  sleep 0.1
-done
+read -r -t 10 node <"$runtime/node" || true
 if [[ -z "$node" ]]; then
-  echo "test video node did not appear" >&2
-  pw-dump >&2 || true
+  echo "test screen node did not appear" >&2
   exit 1
 fi
 echo "test screen: PipeWire node $node (${width}x${height})"

@@ -188,8 +188,8 @@ jobs:
       - name: Test packages
         run: |
           sudo apt-get install -y --no-install-recommends pipewire wireplumber xdg-desktop-portal \
-            gstreamer1.0-pipewire gstreamer1.0-plugins-base gstreamer1.0-plugins-bad \
-            gstreamer1.0-plugins-ugly gstreamer1.0-tools python3-gi jq
+            libpipewire-0.3-dev gstreamer1.0-plugins-base gstreamer1.0-plugins-bad \
+            gstreamer1.0-plugins-ugly python3-gi
 
       - name: Loopback call against mediasoup 0.29
         run: cargo test --manifest-path desktop/Cargo.toml -- --nocapture --test-threads=1

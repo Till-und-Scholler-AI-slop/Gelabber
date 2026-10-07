@@ -107,24 +107,19 @@ namespace gelabber
 					  capture, captureType(options.type));
 					capturer->GetDelegatedSourceListController()->Observe(this);
 					capturer->Start(this);
+					// Like Chromium: before the stream exists. The capture loop
+					// below paces delivery to `fps` either way.
+					capturer->SetMaxFrameRate(static_cast<uint32_t>(options.fps));
 
 					const auto interval = std::chrono::microseconds(1'000'000 / std::max(1, options.fps));
 					auto next           = std::chrono::steady_clock::now();
-					bool rateSet        = false;
 					while (running)
 					{
 						while (g_main_context_iteration(context, FALSE))
 						{
 						}
 						if (State() == "live")
-						{
-							if (!rateSet)
-							{
-								capturer->SetMaxFrameRate(static_cast<uint32_t>(options.fps));
-								rateSet = true;
-							}
 							capturer->CaptureFrame();
-						}
 						next += interval;
 						const auto now = std::chrono::steady_clock::now();
 						if (next < now)
