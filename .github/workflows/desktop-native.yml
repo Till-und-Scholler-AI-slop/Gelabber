@@ -254,7 +254,9 @@ jobs:
       - name: Package the app
         run: |
           set -euo pipefail
-          lib="$(find desktop/target -name libgelabber_media.so -path '*/out/build/*' | head -n1)"
+          # Absolute: cargo runs rustc from the workspace, not from here.
+          lib="$(realpath "$(find desktop/target -name libgelabber_media.so -path '*/out/build/*' | head -n1)")"
+          test -f "$lib"
           GELABBER_MEDIA_LIB_DIR="$(dirname "$lib")" \
             cargo build --release --manifest-path desktop/Cargo.toml -p gelabber-desktop
           pkg=gelabber-desktop-linux-x64
@@ -274,7 +276,9 @@ jobs:
       - name: Check and measure the core library
         run: |
           set -euo pipefail
-          lib="$(find desktop/target -name libgelabber_media.so -path '*/out/build/*' | head -n1)"
+          # Absolute: cargo runs rustc from the workspace, not from here.
+          lib="$(realpath "$(find desktop/target -name libgelabber_media.so -path '*/out/build/*' | head -n1)")"
+          test -f "$lib"
           test -n "$lib"
           echo "Dynamic dependencies:"
           readelf -d "$lib" | grep NEEDED | tee /tmp/needed.txt
