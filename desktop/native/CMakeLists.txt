@@ -114,6 +114,8 @@ if(UNIX AND NOT APPLE)
     # Application sound: libpipewire is dlopened, only its headers are used.
     "${CMAKE_SYSROOT}/usr/include/pipewire-0.3"
     "${CMAKE_SYSROOT}/usr/include/spa-0.2"
+    # Fallback: the PipeWire headers libwebrtc itself builds against.
+    "${GELABBER_LIBWEBRTC_DIR}/include/third_party/pipewire"
     "${CMAKE_SYSROOT}/usr/lib/x86_64-linux-gnu/glib-2.0/include")
   target_link_libraries(gelabber_media PRIVATE gio-2.0 gobject-2.0 glib-2.0 gbm drm)
   target_link_options(gelabber_media PRIVATE
