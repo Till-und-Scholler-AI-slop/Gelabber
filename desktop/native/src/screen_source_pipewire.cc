@@ -49,7 +49,7 @@ namespace gelabber
 			}
 		}
 
-		class PipeWireScreenSource final : public LocalVideoSource,
+		class PipeWireScreenSource : public LocalVideoSource,
 		                                   public webrtc::DesktopCapturer::Callback,
 		                                   public webrtc::DelegatedSourceListController::Observer
 		{
