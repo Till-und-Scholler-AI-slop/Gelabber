@@ -81,9 +81,12 @@ gn_args=(
   rtc_link_pipewire=false
   # Omarchy/Hyprland is Wayland-only; no X11 capture or link dependency.
   rtc_use_x11=false
-  # Software H264 fallback (OpenH264 encoder and decoder). Hardware
-  # encoders come from the core's own encoder factory.
+  # Software H264 fallback: OpenH264 encodes, FFmpeg decodes. FFmpeg only
+  # carries its H264 decoder with the "Chrome" branding. Hardware encoders
+  # come from the core's own encoder factory.
   rtc_use_h264=true
+  proprietary_codecs=true
+  'ffmpeg_branding="Chrome"'
   enable_rust=false
   enable_rust_cxx=false
   enable_chromium_prelude=false

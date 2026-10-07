@@ -54,4 +54,6 @@ any glibc ≥ 2.31 system. PipeWire is loaded at runtime (`dlopen`), X11 is off.
 - The Tauri window loads the server origin. Its native commands are narrow
   (media core only), because server-side XSS reaches them.
 - Video encode: H264 preferred (hardware encoders follow), VP8 fallback.
-  The spike uses libwebrtc's software encoders (OpenH264, libvpx).
+  The spike uses libwebrtc's software codecs: OpenH264 and libvpx encode,
+  FFmpeg (Chrome branding) and libvpx decode. Shipping software H264 needs a
+  licensing decision first.

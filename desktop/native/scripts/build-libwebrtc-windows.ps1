@@ -62,7 +62,8 @@ $gnArgs = @(
   'rtc_include_tests=false', 'rtc_build_examples=false', 'rtc_build_tools=false',
   'rtc_enable_protobuf=false', 'rtc_use_perfetto=false', 'use_rtti=true',
   'use_custom_libcxx=false', 'use_custom_libcxx_for_host=false',
-  'rtc_use_h264=true',
+  # OpenH264 encodes, FFmpeg decodes; FFmpeg's H264 decoder needs the Chrome branding.
+  'rtc_use_h264=true', 'proprietary_codecs=true', 'ffmpeg_branding="Chrome"',
   'enable_rust=false', 'enable_rust_cxx=false', 'enable_chromium_prelude=false', 'rtc_rusty_base64=false'
 )
 # Write args.gn instead of passing --args: PowerShell strips the embedded

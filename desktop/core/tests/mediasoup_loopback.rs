@@ -393,25 +393,54 @@ async fn native_client_round_trips_media_through_mediasoup() {
         server_consumer.resume().await.unwrap();
         consumers.push((server_consumer, native));
     }
+    // Wait for decoded frames at the native sinks; on failure report both
+    // ends (server consumer egress, libwebrtc inbound-rtp) for every codec
+    // before failing.
+    let mut missing = Vec::new();
     for (server_consumer, native) in &consumers {
         let mime =
             serde_json::to_value(&server_consumer.rtp_parameters().codecs[0]).unwrap()["mimeType"]
                 .clone();
-        wait_for(
-            &format!("decoded {mime} frames at the native client"),
-            Duration::from_secs(20),
-            || {
-                let stats = native.stats().unwrap();
-                async move { stats["framesReceived"].as_u64().unwrap_or(0) > 10 }
-            },
-        )
-        .await;
+        let start = Instant::now();
+        let mut frames = 0;
+        while start.elapsed() < Duration::from_secs(20) {
+            frames = native.stats().unwrap()["framesReceived"]
+                .as_u64()
+                .unwrap_or(0);
+            if frames > 10 {
+                break;
+            }
+            tokio::time::sleep(Duration::from_millis(200)).await;
+        }
         let stats = native.stats().unwrap();
         eprintln!(
-            "native consumer {mime}: {} frames, {}x{}",
-            stats["framesReceived"], stats["width"], stats["height"]
+            "native consumer {mime}: {frames} frames, {}x{} after {:?}",
+            stats["width"],
+            stats["height"],
+            start.elapsed()
         );
+        if frames <= 10 {
+            let inbound: Vec<Value> = stats["rtc"]
+                .as_array()
+                .cloned()
+                .unwrap_or_default()
+                .into_iter()
+                .filter(|s| s["type"] == "inbound-rtp" || s["type"] == "transport")
+                .collect();
+            eprintln!(
+                "{mime} native inbound-rtp/transport: {}",
+                Value::Array(inbound)
+            );
+            let server_stats = server_consumer.get_stats().await.unwrap();
+            eprintln!("{mime} server consumer stats: {server_stats:?}");
+            eprintln!(
+                "{mime} server consumer rtpParameters: {}",
+                serde_json::to_string(server_consumer.rtp_parameters()).unwrap()
+            );
+            missing.push(mime);
+        }
     }
+    assert!(missing.is_empty(), "no decoded frames for {missing:?}");
 
     // Native objects close in dependency order.
     drop(consumers);
