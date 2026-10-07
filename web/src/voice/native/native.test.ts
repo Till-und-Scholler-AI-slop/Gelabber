@@ -9,6 +9,7 @@ import {
 import { listMediaDevices, useMediaSettings } from "../settings.ts";
 import { setNativeBridgeForTests, type NativeBridge } from "./bridge.ts";
 import { nativeGetDisplayMedia } from "./capture.ts";
+import { createNativeMicrophoneTest } from "./microphoneTest.ts";
 import {
   NativeAudioOutput,
   NativeStream,
@@ -55,6 +56,7 @@ type Message = Record<string, unknown>;
  * for `produce`, both wait for media_transport_respond. */
 class FakeCore implements NativeBridge {
   calls: Call[] = [];
+  levels = { input: 0, processed: 0, clipping: false, blocks: 0 };
   screenStates: Array<Record<string, unknown>> = [];
   devices = {
     inputs: [
@@ -155,6 +157,8 @@ class FakeCore implements NativeBridge {
           return this.screenStates.shift() ?? { state: "live" };
         case "media_audio_devices":
           return this.devices;
+        case "media_audio_levels":
+          return this.levels;
         case "media_audio_configure": {
           const options = args.options as { input?: string };
           if (
@@ -450,6 +454,62 @@ describe("desktop app media", () => {
       timeout: 3_000,
     });
     expect(track.readyState).toBe("ended");
+  });
+
+  it("tests the microphone with the native meters", async () => {
+    const states: string[] = [];
+    const levels = vi.fn();
+    const test = createNativeMicrophoneTest(useMediaSettings.getState(), {
+      state: (state) => states.push(state.phase),
+      levels,
+      clips: vi.fn(),
+      recording: vi.fn(),
+    });
+    await test.start();
+    expect(states).toEqual(["pending", "active"]);
+    expect(core.calledWith("media_audio_monitor")).toEqual([
+      {
+        options: {
+          processingMode: useMediaSettings.getState().processingMode,
+          inputGain: useMediaSettings.getState().inputGain,
+        },
+      },
+    ]);
+    core.levels = { input: 40, processed: 12, clipping: false, blocks: 8 };
+    await vi.waitFor(() =>
+      expect(levels).toHaveBeenCalledWith({
+        before: 40,
+        after: 12,
+        clipping: false,
+      }),
+    );
+    test.stop();
+    await vi.waitFor(() =>
+      expect(core.calledWith("media_audio_monitor").at(-1)).toEqual({
+        options: null,
+      }),
+    );
+  });
+
+  it("fails the microphone test when capture delivers nothing", async () => {
+    vi.useFakeTimers();
+    try {
+      const states: string[] = [];
+      const test = createNativeMicrophoneTest(useMediaSettings.getState(), {
+        state: (state) => states.push(state.phase),
+        levels: vi.fn(),
+        clips: vi.fn(),
+        recording: vi.fn(),
+      });
+      await test.start();
+      await vi.advanceTimersByTimeAsync(2_500);
+      expect(states.at(-1)).toBe("error");
+      expect(core.calledWith("media_audio_monitor").at(-1)).toEqual({
+        options: null,
+      });
+    } finally {
+      vi.useRealTimers();
+    }
   });
 
   it("reports a cancelled picker like the browser", async () => {

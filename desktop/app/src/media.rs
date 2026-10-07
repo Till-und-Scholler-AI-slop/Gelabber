@@ -74,6 +74,10 @@ impl Media {
         self.sources.lock().unwrap().clear();
         self.transports.lock().unwrap().clear();
         self.devices.lock().unwrap().clear();
+        if let Some(engine) = self.engine.get() {
+            // A microphone test the page left open.
+            let _ = engine.monitor_audio(None);
+        }
     }
 }
 
@@ -107,6 +111,14 @@ pub async fn media_audio_configure(media: State<'_, Media>, options: Value) -> R
 #[tauri::command]
 pub async fn media_audio_levels(media: State<'_, Media>) -> Result<Value> {
     media.engine()?.audio_levels().map_err(err)
+}
+
+/// The microphone test: `options` (`{"processingMode","inputGain"}`) starts
+/// it, `null` ends it.
+#[tauri::command]
+pub async fn media_audio_monitor(media: State<'_, Media>, options: Option<Value>) -> Result<()> {
+    let engine = media.engine()?.clone();
+    blocking(move || engine.monitor_audio(options.as_ref()).map_err(err)).await
 }
 
 #[tauri::command]

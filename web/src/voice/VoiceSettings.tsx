@@ -226,17 +226,17 @@ export function MediaSettingsForm({
             <p role="status" className="text-xs text-neutral-500">
               {processing.message}
             </p>
-            {/* The comparison records through Web Audio; the desktop app's
-                microphone runs in the native core. */}
-            {!isDesktopApp() && (
-              <button
-                type="button"
-                className="self-start rounded border px-3 py-2 text-sm"
-                onClick={() => setMicrophoneTest(true)}
-              >
-                Mikrofon testen und vergleichen
-              </button>
-            )}
+            {/* The desktop app's test shows the native core's meters; the
+                A/B recording needs Web Audio. */}
+            <button
+              type="button"
+              className="self-start rounded border px-3 py-2 text-sm"
+              onClick={() => setMicrophoneTest(true)}
+            >
+              {isDesktopApp()
+                ? "Mikrofon testen"
+                : "Mikrofon testen und vergleichen"}
+            </button>
           </fieldset>
           <AdvancedAudio expanded={section === "all"}>
             <fieldset className="flex flex-col gap-2">

@@ -97,6 +97,13 @@ async fn voice_modes_reach_a_consumer() {
             .is_err()
     );
 
+    // The microphone test: capture without a call. It keeps running below,
+    // so the producers join capture that is already on.
+    engine
+        .monitor_audio(Some(&json!({"processingMode": "browser"})))
+        .unwrap();
+    levels_when(&engine, "microphone test", |_| true).await;
+
     let device = Device::new(&engine).unwrap();
     device
         .load(&serde_json::to_value(server.router.rtp_capabilities()).unwrap())
@@ -230,4 +237,12 @@ async fn voice_modes_reach_a_consumer() {
             && level(l, "processed") >= level(l, "input") * 0.7
     })
     .await;
+
+    // Ending the test leaves the call's capture running.
+    engine.monitor_audio(None).unwrap();
+    levels_when(&engine, "after the microphone test", |l| {
+        level(l, "input") >= 10.0
+    })
+    .await;
+    drop(original_producer);
 }

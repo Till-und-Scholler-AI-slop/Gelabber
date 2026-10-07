@@ -5,6 +5,7 @@ pub const MEDIA_COMMANDS: &[&str] = &[
     "media_audio_devices",
     "media_audio_configure",
     "media_audio_levels",
+    "media_audio_monitor",
     "media_device_load",
     "media_device_close",
     "media_transport_create",

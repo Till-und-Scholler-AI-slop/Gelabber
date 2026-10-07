@@ -8,6 +8,7 @@ permissions = [
   "allow-media-audio-devices",
   "allow-media-audio-configure",
   "allow-media-audio-levels",
+  "allow-media-audio-monitor",
   "allow-media-device-load",
   "allow-media-device-close",
   "allow-media-transport-create",

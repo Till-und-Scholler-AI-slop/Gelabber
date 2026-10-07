@@ -30,7 +30,7 @@ export async function listNativeDevices(): Promise<DeviceList> {
 
 /** Unknown ids (a device from another machine, or unplugged) fall back to the
  * system default like the browser's `ideal` constraint. */
-async function selectInput(id: string): Promise<string> {
+export async function selectInput(id: string): Promise<string> {
   try {
     await invokeNative("media_audio_configure", { options: { input: id } });
     return id;
@@ -134,7 +134,10 @@ export async function nativeGetDisplayMedia(
   ]) as unknown as MediaStream;
 }
 
-function nativeInfo(settings: MediaSettings, input: string): ProcessingInfo {
+export function nativeInfo(
+  settings: MediaSettings,
+  input: string,
+): ProcessingInfo {
   const mode = settings.processingMode;
   return {
     requested: mode,

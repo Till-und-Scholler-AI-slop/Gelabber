@@ -3,7 +3,7 @@
 
 use std::os::raw::{c_char, c_int, c_void};
 
-pub const GM_ABI_VERSION: u32 = 3;
+pub const GM_ABI_VERSION: u32 = 4;
 
 #[repr(C)]
 pub struct gm_engine {
@@ -53,6 +53,7 @@ unsafe extern "C" {
     pub fn gm_engine_free(engine: *mut gm_engine);
     pub fn gm_audio_devices(engine: *mut gm_engine) -> *mut c_char;
     pub fn gm_audio_configure(engine: *mut gm_engine, options: *const c_char) -> c_int;
+    pub fn gm_audio_monitor(engine: *mut gm_engine, options: *const c_char) -> c_int;
     pub fn gm_audio_levels(engine: *mut gm_engine) -> *mut c_char;
 
     pub fn gm_device_new(engine: *mut gm_engine) -> *mut gm_device;

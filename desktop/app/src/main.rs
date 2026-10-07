@@ -105,6 +105,7 @@ fn main() {
             media::media_audio_devices,
             media::media_audio_configure,
             media::media_audio_levels,
+            media::media_audio_monitor,
             media::media_device_load,
             media::media_device_close,
             media::media_transport_create,

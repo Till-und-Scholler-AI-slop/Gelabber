@@ -531,6 +531,291 @@ namespace
 		Bridge* bridge;
 	};
 
+	// The platform audio device module as the engine's voice pipeline sees
+	// it. libwebrtc records only while a microphone stream sends and stops
+	// the module when the last one goes; the microphone test needs meters
+	// without a call, so the module records while either wants it.
+	// Everything else is passed through. Called on the worker thread only.
+	class MonitoringAudioDevice : public webrtc::AudioDeviceModule
+	{
+	public:
+		explicit MonitoringAudioDevice(webrtc::scoped_refptr<webrtc::AudioDeviceModule> inner)
+		  : inner(std::move(inner))
+		{
+		}
+
+		// The test's side; returns false if capture cannot start.
+		bool SetMonitoring(bool on)
+		{
+			monitoring = on;
+			if (on)
+			{
+				if (inner->Recording())
+					return true;
+				if (!inner->RecordingIsInitialized() && inner->InitRecording() != 0)
+					return false;
+				return inner->StartRecording() == 0;
+			}
+			if (!streamsRecording && inner->Recording())
+				inner->StopRecording();
+			return true;
+		}
+
+		// The voice pipeline sees its own recording state, so a stream
+		// starting during the test still registers.
+		bool Recording() const override
+		{
+			return streamsRecording;
+		}
+		int32_t InitRecording() override
+		{
+			return inner->Recording() ? 0 : inner->InitRecording();
+		}
+		int32_t StartRecording() override
+		{
+			const int32_t result = inner->Recording() ? 0 : inner->StartRecording();
+			streamsRecording     = result == 0;
+			return result;
+		}
+		int32_t StopRecording() override
+		{
+			streamsRecording = false;
+			return monitoring ? 0 : inner->StopRecording();
+		}
+
+		int32_t ActiveAudioLayer(AudioLayer* layer) const override
+		{
+			return inner->ActiveAudioLayer(layer);
+		}
+		int32_t RegisterAudioCallback(webrtc::AudioTransport* callback) override
+		{
+			return inner->RegisterAudioCallback(callback);
+		}
+		int32_t Init() override
+		{
+			return inner->Init();
+		}
+		int32_t Terminate() override
+		{
+			return inner->Terminate();
+		}
+		bool Initialized() const override
+		{
+			return inner->Initialized();
+		}
+		int16_t PlayoutDevices() override
+		{
+			return inner->PlayoutDevices();
+		}
+		int16_t RecordingDevices() override
+		{
+			return inner->RecordingDevices();
+		}
+		int32_t PlayoutDeviceName(
+		  uint16_t index, char name[webrtc::kAdmMaxDeviceNameSize], char guid[webrtc::kAdmMaxGuidSize]) override
+		{
+			return inner->PlayoutDeviceName(index, name, guid);
+		}
+		int32_t RecordingDeviceName(
+		  uint16_t index, char name[webrtc::kAdmMaxDeviceNameSize], char guid[webrtc::kAdmMaxGuidSize]) override
+		{
+			return inner->RecordingDeviceName(index, name, guid);
+		}
+		int32_t SetPlayoutDevice(uint16_t index) override
+		{
+			return inner->SetPlayoutDevice(index);
+		}
+		int32_t SetPlayoutDevice(WindowsDeviceType device) override
+		{
+			return inner->SetPlayoutDevice(device);
+		}
+		int32_t SetRecordingDevice(uint16_t index) override
+		{
+			return inner->SetRecordingDevice(index);
+		}
+		int32_t SetRecordingDevice(WindowsDeviceType device) override
+		{
+			return inner->SetRecordingDevice(device);
+		}
+		int32_t PlayoutIsAvailable(bool* available) override
+		{
+			return inner->PlayoutIsAvailable(available);
+		}
+		int32_t InitPlayout() override
+		{
+			return inner->InitPlayout();
+		}
+		bool PlayoutIsInitialized() const override
+		{
+			return inner->PlayoutIsInitialized();
+		}
+		int32_t RecordingIsAvailable(bool* available) override
+		{
+			return inner->RecordingIsAvailable(available);
+		}
+		bool RecordingIsInitialized() const override
+		{
+			return inner->RecordingIsInitialized();
+		}
+		int32_t StartPlayout() override
+		{
+			return inner->StartPlayout();
+		}
+		int32_t StopPlayout() override
+		{
+			return inner->StopPlayout();
+		}
+		bool Playing() const override
+		{
+			return inner->Playing();
+		}
+		int32_t InitSpeaker() override
+		{
+			return inner->InitSpeaker();
+		}
+		bool SpeakerIsInitialized() const override
+		{
+			return inner->SpeakerIsInitialized();
+		}
+		int32_t InitMicrophone() override
+		{
+			return inner->InitMicrophone();
+		}
+		bool MicrophoneIsInitialized() const override
+		{
+			return inner->MicrophoneIsInitialized();
+		}
+		int32_t SpeakerVolumeIsAvailable(bool* available) override
+		{
+			return inner->SpeakerVolumeIsAvailable(available);
+		}
+		int32_t SetSpeakerVolume(uint32_t volume) override
+		{
+			return inner->SetSpeakerVolume(volume);
+		}
+		int32_t SpeakerVolume(uint32_t* volume) const override
+		{
+			return inner->SpeakerVolume(volume);
+		}
+		int32_t MaxSpeakerVolume(uint32_t* volume) const override
+		{
+			return inner->MaxSpeakerVolume(volume);
+		}
+		int32_t MinSpeakerVolume(uint32_t* volume) const override
+		{
+			return inner->MinSpeakerVolume(volume);
+		}
+		int32_t MicrophoneVolumeIsAvailable(bool* available) override
+		{
+			return inner->MicrophoneVolumeIsAvailable(available);
+		}
+		int32_t SetMicrophoneVolume(uint32_t volume) override
+		{
+			return inner->SetMicrophoneVolume(volume);
+		}
+		int32_t MicrophoneVolume(uint32_t* volume) const override
+		{
+			return inner->MicrophoneVolume(volume);
+		}
+		int32_t MaxMicrophoneVolume(uint32_t* volume) const override
+		{
+			return inner->MaxMicrophoneVolume(volume);
+		}
+		int32_t MinMicrophoneVolume(uint32_t* volume) const override
+		{
+			return inner->MinMicrophoneVolume(volume);
+		}
+		int32_t SpeakerMuteIsAvailable(bool* available) override
+		{
+			return inner->SpeakerMuteIsAvailable(available);
+		}
+		int32_t SetSpeakerMute(bool enable) override
+		{
+			return inner->SetSpeakerMute(enable);
+		}
+		int32_t SpeakerMute(bool* enabled) const override
+		{
+			return inner->SpeakerMute(enabled);
+		}
+		int32_t MicrophoneMuteIsAvailable(bool* available) override
+		{
+			return inner->MicrophoneMuteIsAvailable(available);
+		}
+		int32_t SetMicrophoneMute(bool enable) override
+		{
+			return inner->SetMicrophoneMute(enable);
+		}
+		int32_t MicrophoneMute(bool* enabled) const override
+		{
+			return inner->MicrophoneMute(enabled);
+		}
+		int32_t StereoPlayoutIsAvailable(bool* available) const override
+		{
+			return inner->StereoPlayoutIsAvailable(available);
+		}
+		int32_t SetStereoPlayout(bool enable) override
+		{
+			return inner->SetStereoPlayout(enable);
+		}
+		int32_t StereoPlayout(bool* enabled) const override
+		{
+			return inner->StereoPlayout(enabled);
+		}
+		int32_t StereoRecordingIsAvailable(bool* available) const override
+		{
+			return inner->StereoRecordingIsAvailable(available);
+		}
+		int32_t SetStereoRecording(bool enable) override
+		{
+			return inner->SetStereoRecording(enable);
+		}
+		int32_t StereoRecording(bool* enabled) const override
+		{
+			return inner->StereoRecording(enabled);
+		}
+		int32_t PlayoutDelay(uint16_t* delayMs) const override
+		{
+			return inner->PlayoutDelay(delayMs);
+		}
+		bool BuiltInAECIsAvailable() const override
+		{
+			return inner->BuiltInAECIsAvailable();
+		}
+		bool BuiltInAGCIsAvailable() const override
+		{
+			return inner->BuiltInAGCIsAvailable();
+		}
+		bool BuiltInNSIsAvailable() const override
+		{
+			return inner->BuiltInNSIsAvailable();
+		}
+		int32_t EnableBuiltInAEC(bool enable) override
+		{
+			return inner->EnableBuiltInAEC(enable);
+		}
+		int32_t EnableBuiltInAGC(bool enable) override
+		{
+			return inner->EnableBuiltInAGC(enable);
+		}
+		int32_t EnableBuiltInNS(bool enable) override
+		{
+			return inner->EnableBuiltInNS(enable);
+		}
+		int32_t GetPlayoutUnderrunCount() const override
+		{
+			return inner->GetPlayoutUnderrunCount();
+		}
+		std::optional<Stats> GetStats() const override
+		{
+			return inner->GetStats();
+		}
+
+	private:
+		const webrtc::scoped_refptr<webrtc::AudioDeviceModule> inner;
+		bool monitoring{ false };
+		bool streamsRecording{ false };
+	};
+
 	class NoopProducerListener : public mediasoupclient::Producer::Listener
 	{
 	public:
@@ -616,6 +901,8 @@ struct gm_engine
 	// Platform audio device module; null with "dummy" audio. Used on the
 	// worker thread only.
 	webrtc::scoped_refptr<webrtc::AudioDeviceModule> adm;
+	// `adm` as the voice pipeline sees it (microphone test monitoring).
+	webrtc::scoped_refptr<MonitoringAudioDevice> monitor;
 	webrtc::scoped_refptr<webrtc::AudioProcessing> apm;
 	std::shared_ptr<gelabber::CaptureDsp> dsp;
 	webrtc::scoped_refptr<webrtc::PeerConnectionFactoryInterface> factory;
@@ -681,6 +968,30 @@ struct gm_consumer
 	std::unique_ptr<AudioLevelSink> audio;
 	std::string id;
 };
+
+namespace
+{
+	std::string CaptureMode(const json& options)
+	{
+		auto mode = options.value("processingMode", std::string("enhanced"));
+		if (mode != "enhanced" && mode != "browser" && mode != "original")
+			throw std::invalid_argument("processingMode must be enhanced, browser or original");
+		return mode;
+	}
+
+	// The engine-wide part of a microphone's processing: one capture
+	// pipeline serves every microphone source and the microphone test.
+	void ApplyCaptureMode(gm_engine& engine, const std::string& mode, const json& options)
+	{
+		// Stereo capture only in original mode; the module records stereo
+		// when the device can, and the APM downmixes unless told otherwise.
+		auto config                            = engine.apm->GetConfig();
+		config.pipeline.multi_channel_capture = mode == "original";
+		engine.apm->ApplyConfig(config);
+		engine.dsp->SetDenoise(mode == "enhanced");
+		engine.dsp->SetGain(static_cast<float>(options.value("inputGain", 1.0)));
+	}
+} // namespace
 
 extern "C" {
 
@@ -748,7 +1059,8 @@ gm_engine* gm_engine_new(const char* optionsJson)
 			});
 			if (!engine->adm)
 				throw std::runtime_error("failed to create the audio device module");
-			adm = engine->adm;
+			engine->monitor = webrtc::make_ref_counted<MonitoringAudioDevice>(engine->adm);
+			adm             = engine->monitor;
 		}
 
 		engine->dsp = std::make_shared<gelabber::CaptureDsp>();
@@ -788,7 +1100,10 @@ void gm_engine_free(gm_engine* engine)
 		engine->factory = nullptr;
 		engine->apm     = nullptr;
 		if (engine->adm)
-			engine->worker->BlockingCall([&] { engine->adm = nullptr; });
+			engine->worker->BlockingCall([&] {
+				engine->monitor = nullptr;
+				engine->adm     = nullptr;
+			});
 		engine->signaling->Stop();
 		engine->worker->Stop();
 		engine->network->Stop();
@@ -878,6 +1193,24 @@ int gm_audio_configure(gm_engine* engine, const char* optionsJson)
 		});
 		if (!error.empty())
 			throw std::runtime_error(error);
+		return 0;
+	});
+}
+
+int gm_audio_monitor(gm_engine* engine, const char* optionsJson)
+{
+	return guarded<int>(-1, [&] {
+		if (!engine->monitor)
+			throw std::runtime_error("no audio devices with dummy audio");
+		const bool on = optionsJson != nullptr;
+		if (on)
+		{
+			const auto options = parseJson(optionsJson, "monitor options");
+			ApplyCaptureMode(*engine, CaptureMode(options), options);
+		}
+		const bool started = engine->worker->BlockingCall([&] { return engine->monitor->SetMonitoring(on); });
+		if (!started)
+			throw std::runtime_error("cannot start capture for the microphone test");
 		return 0;
 	});
 }
@@ -1045,9 +1378,7 @@ gm_source* gm_source_new_microphone(gm_engine* engine, const char* optionsJson)
 {
 	return guarded<gm_source*>(nullptr, [&]() -> gm_source* {
 		const auto options = optionsJson ? json::parse(optionsJson) : json::object();
-		const auto mode    = options.value("processingMode", std::string("enhanced"));
-		if (mode != "enhanced" && mode != "browser" && mode != "original")
-			throw std::invalid_argument("processingMode must be enhanced, browser or original");
+		const auto mode    = CaptureMode(options);
 		const bool echoCancellation = options.value("echoCancellation", true);
 
 		// Same switches as the web client's getUserMedia constraints
@@ -1058,13 +1389,7 @@ gm_source* gm_source_new_microphone(gm_engine* engine, const char* optionsJson)
 		audio.auto_gain_control = mode == "browser" && options.value("autoGainControl", true);
 		audio.highpass_filter   = mode != "original";
 
-		// Stereo capture only in original mode; the module records stereo
-		// when the device can, and the APM downmixes unless told otherwise.
-		auto config                            = engine->apm->GetConfig();
-		config.pipeline.multi_channel_capture = mode == "original";
-		engine->apm->ApplyConfig(config);
-		engine->dsp->SetDenoise(mode == "enhanced");
-		engine->dsp->SetGain(static_cast<float>(options.value("inputGain", 1.0)));
+		ApplyCaptureMode(*engine, mode, options);
 
 		auto source = engine->factory->CreateAudioSource(audio);
 		if (!source)

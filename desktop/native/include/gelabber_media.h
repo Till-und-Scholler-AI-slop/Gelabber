@@ -38,7 +38,7 @@
 extern "C" {
 #endif
 
-#define GM_ABI_VERSION 3
+#define GM_ABI_VERSION 4
 
 typedef struct gm_engine gm_engine;
 typedef struct gm_device gm_device;
@@ -89,6 +89,11 @@ GM_API char* gm_audio_devices(gm_engine* engine);
  * {"input"?: "<id>", "output"?: "<id>", "inputGain"?: 0..2}.
  * Switching a device restarts capture/playout if it runs. */
 GM_API int gm_audio_configure(gm_engine* engine, const char* options_json);
+/* Microphone test: with options ({"processingMode","inputGain"} as for
+ * gm_source_new_microphone) capture runs and the meters below move without
+ * a call; NULL ends the test. Capture a call needs keeps running either way.
+ * The mode and gain apply engine-wide, also to a microphone sending. */
+GM_API int gm_audio_monitor(gm_engine* engine, const char* options_json);
 /* Microphone meters while capture runs, 0..100 like the web client's:
  * {"input": before RNNoise and gain, "processed": as sent, "clipping": bool,
  *  "denoised": bool (RNNoise ran), "blocks": 10 ms blocks processed so far

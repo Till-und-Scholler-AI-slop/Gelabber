@@ -157,6 +157,16 @@ impl Engine {
         check(unsafe { ffi::gm_audio_configure(self.raw(), options.as_ptr()) })
     }
 
+    /// Microphone test: `Some(options)` (`{"processingMode","inputGain"}`)
+    /// keeps capture running so the meters move without a call, `None` ends
+    /// it. Mode and gain are engine-wide.
+    pub fn monitor_audio(&self, options: Option<&Value>) -> Result<()> {
+        let options = options.map(json_arg).transpose()?;
+        let ptr = options.as_ref().map_or(std::ptr::null(), |o| o.as_ptr());
+        // SAFETY: live engine; JSON is NUL-terminated or NULL.
+        check(unsafe { ffi::gm_audio_monitor(self.raw(), ptr) })
+    }
+
     /// Microphone meters while capture runs, 0..100:
     /// `{"input","processed","clipping","denoised","blocks","channels"}`.
     pub fn audio_levels(&self) -> Result<Value> {

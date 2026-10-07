@@ -95,6 +95,9 @@ transports, producers and sources. WebKitGTK needs `libwebkit2gtk-4.1`.
   post-processor; per-consumer playback volume replaces the web's audio
   elements. The APM runs with `WebRTC-MutedStateKillSwitch`: otherwise
   closing one audio producer marks the shared APM's output unused and stops
-  RNNoise, gain and meters for the remaining microphone stream. The test
+  RNNoise, gain and meters for the remaining microphone stream. The
+  microphone test (`gm_audio_monitor`) keeps the device module recording
+  without a call through a pass-through module that only holds back the
+  voice pipeline's stop while the test runs. The test
   session also provides null-sink "speakers" and a
   noise-playing "microphone" for `core/tests/voice.rs`.
