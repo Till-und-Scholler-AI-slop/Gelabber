@@ -64,8 +64,8 @@ if(UNIX AND NOT APPLE)
   # Screen capture: xdg-desktop-portal over GLib/GIO, PipeWire dlopened by
   # libwebrtc (rtc_link_pipewire=false), GBM/DRM for DMA-BUF frames. The
   # defines match libwebrtc's pipewire_config; DesktopCaptureOptions changes
-  # layout with them.
-  target_sources(gelabber_media PRIVATE src/screen_source_pipewire.cc)
+  # layout with them. Hardware H264 loads the system GStreamer with dlopen.
+  target_sources(gelabber_media PRIVATE src/screen_source_pipewire.cc src/gst_h264_encoder.cc)
   target_compile_definitions(gelabber_media PRIVATE WEBRTC_USE_PIPEWIRE WEBRTC_USE_GIO)
   target_include_directories(gelabber_media SYSTEM PRIVATE
     "${GELABBER_LIBWEBRTC_DIR}/include/third_party/libyuv/include"

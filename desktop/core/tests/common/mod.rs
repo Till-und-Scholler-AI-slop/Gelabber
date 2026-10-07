@@ -195,3 +195,23 @@ where
 pub async fn blocking<T: Send + 'static>(f: impl FnOnce() -> T + Send + 'static) -> T {
     tokio::task::spawn_blocking(f).await.unwrap()
 }
+
+/// With GELABBER_EXPECT_ENCODER set, some outbound-rtp entry's
+/// `encoderImplementation` must contain it (e.g. "GStreamer x264enc").
+pub fn check_encoder(name: &str, stats: &Value) {
+    let Ok(expected) = std::env::var("GELABBER_EXPECT_ENCODER") else {
+        return;
+    };
+    let found: Vec<String> = stats
+        .as_array()
+        .into_iter()
+        .flatten()
+        .filter(|s| s["type"] == "outbound-rtp")
+        .filter_map(|s| s["encoderImplementation"].as_str().map(str::to_owned))
+        .collect();
+    eprintln!("{name} encoder: {found:?}");
+    assert!(
+        found.iter().any(|i| i.contains(&expected)),
+        "{name} encoder {found:?}, expected {expected}"
+    );
+}

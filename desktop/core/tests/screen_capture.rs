@@ -8,7 +8,7 @@
 
 mod common;
 
-use common::{Server, blocking, serve_events, wait_for};
+use common::{Server, blocking, check_encoder, serve_events, wait_for};
 use gelabber_media_core::{Audio, Device, Direction, Engine, Source, Transport};
 use mediasoup::prelude::Transport as _;
 use mediasoup::prelude::*;
@@ -110,9 +110,8 @@ async fn screen_capture_reaches_a_consumer() {
         tokio::time::sleep(Duration::from_millis(200)).await;
         stats = consumer.stats().unwrap();
     }
-    let outbound: Vec<Value> = producer
-        .stats()
-        .unwrap()
+    let sender = producer.stats().unwrap();
+    let outbound: Vec<Value> = sender
         .as_array()
         .cloned()
         .unwrap_or_default()
@@ -141,6 +140,7 @@ async fn screen_capture_reaches_a_consumer() {
         "decoded screen frames"
     );
     assert!(stats["width"].as_u64().unwrap_or(0) >= 320);
+    check_encoder("screen", &sender);
 
     drop(consumer);
     drop(producer);

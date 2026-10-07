@@ -7,7 +7,7 @@
 
 mod common;
 
-use common::{Server, blocking, serve_events, wait_for};
+use common::{Server, blocking, check_encoder, serve_events, wait_for};
 use gelabber_media_core::{Audio, Device, Direction, Engine, Source, Transport};
 use mediasoup::prelude::*;
 // Trait methods (id, produce, consume); the name is taken by the native transport.
@@ -183,6 +183,7 @@ async fn native_client_round_trips_media_through_mediasoup() {
         }
         assert_eq!(live, 2, "{name} sends both simulcast layers");
     }
+    check_encoder("H264", &h264.stats().unwrap());
 
     // Receive side: the server consumes for the native client, paused until
     // the client is ready (like `consumerReady`).

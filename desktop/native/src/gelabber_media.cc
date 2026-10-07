@@ -3,6 +3,7 @@
 
 #define GM_BUILDING 1
 #include "gelabber_media.h"
+#include "gst_h264_encoder.h"
 #include "local_video_source.h"
 
 #include "mediasoupclient.hpp"
@@ -28,6 +29,7 @@
 #include <api/video_codecs/video_encoder_factory_template_libvpx_vp9_adapter.h>
 #include <api/video_codecs/video_encoder_factory_template_open_h264_adapter.h>
 #include <media/base/adapted_video_track_source.h>
+#include <media/engine/simulcast_encoder_adapter.h>
 #include <modules/audio_device/include/fake_audio_device.h>
 #include <rtc_base/logging.h>
 #include <rtc_base/thread.h>
@@ -389,6 +391,59 @@ namespace
 		}
 	};
 
+	using SoftwareEncoderFactory = webrtc::VideoEncoderFactoryTemplate<
+	  webrtc::OpenH264EncoderTemplateAdapter,
+	  webrtc::LibvpxVp8EncoderTemplateAdapter,
+	  webrtc::LibvpxVp9EncoderTemplateAdapter,
+	  webrtc::LibaomAv1EncoderTemplateAdapter>;
+
+	// libwebrtc's software encoders, with H264 moved to a hardware encoder
+	// (GStreamer: VA-API/NVENC) when the system has one. Hardware H264 runs
+	// per simulcast layer behind SimulcastEncoderAdapter, which also falls
+	// back to OpenH264 when the hardware encoder fails.
+	class EncoderFactory : public webrtc::VideoEncoderFactory
+	{
+	public:
+		EncoderFactory()
+		{
+#if defined(WEBRTC_LINUX)
+			const auto element = gelabber::FindGstH264Encoder();
+			if (!element.empty())
+			{
+				std::vector<webrtc::SdpVideoFormat> h264;
+				for (const auto& format : software.GetSupportedFormats())
+					if (lower(format.name) == "h264")
+						h264.push_back(format);
+				hardware = gelabber::CreateGstH264EncoderFactory(element, std::move(h264));
+				RTC_LOG(LS_INFO) << "H264 encoder: GStreamer " << element;
+			}
+#endif
+		}
+
+		std::vector<webrtc::SdpVideoFormat> GetSupportedFormats() const override
+		{
+			return software.GetSupportedFormats();
+		}
+
+		CodecSupport QueryCodecSupport(
+		  const webrtc::SdpVideoFormat& format, std::optional<std::string> scalabilityMode) const override
+		{
+			return software.QueryCodecSupport(format, scalabilityMode);
+		}
+
+		std::unique_ptr<webrtc::VideoEncoder> Create(
+		  const webrtc::Environment& env, const webrtc::SdpVideoFormat& format) override
+		{
+			if (hardware && lower(format.name) == "h264")
+				return std::make_unique<webrtc::SimulcastEncoderAdapter>(env, hardware.get(), &software, format);
+			return software.Create(env, format);
+		}
+
+	private:
+		SoftwareEncoderFactory software;
+		std::unique_ptr<webrtc::VideoEncoderFactory> hardware;
+	};
+
 	NoopProducerListener producerListener;
 	NoopConsumerListener consumerListener;
 
@@ -513,8 +568,7 @@ gm_engine* gm_engine_new(const char* optionsJson)
 			adm                = webrtc::scoped_refptr<webrtc::AudioDeviceModule>(engine->dummyAudio.get());
 		}
 
-		// TODO(desktop): hardware H264 encoder/decoder factory (VA-API/NVENC)
-		// in front of these software codecs.
+		// TODO(desktop): hardware H264 decoding.
 		engine->factory = webrtc::CreatePeerConnectionFactory(
 		  engine->network.get(),
 		  engine->worker.get(),
@@ -522,11 +576,7 @@ gm_engine* gm_engine_new(const char* optionsJson)
 		  adm,
 		  webrtc::CreateBuiltinAudioEncoderFactory(),
 		  webrtc::CreateBuiltinAudioDecoderFactory(),
-		  std::make_unique<webrtc::VideoEncoderFactoryTemplate<
-		    webrtc::OpenH264EncoderTemplateAdapter,
-		    webrtc::LibvpxVp8EncoderTemplateAdapter,
-		    webrtc::LibvpxVp9EncoderTemplateAdapter,
-		    webrtc::LibaomAv1EncoderTemplateAdapter>>(),
+		  std::make_unique<EncoderFactory>(),
 		  std::make_unique<webrtc::VideoDecoderFactoryTemplate<
 		    webrtc::OpenH264DecoderTemplateAdapter,
 		    webrtc::LibvpxVp8DecoderTemplateAdapter,

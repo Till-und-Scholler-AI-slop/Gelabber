@@ -182,8 +182,23 @@ jobs:
       - name: Clippy
         run: cargo clippy --manifest-path desktop/Cargo.toml --all-targets -- -D warnings
 
+      # GStreamer and the test desktop (PipeWire, xdg-desktop-portal). x264enc
+      # stands in for VA-API/NVENC, which runners lack, to test the GStreamer
+      # encoder path itself.
+      - name: Test packages
+        run: |
+          sudo apt-get install -y --no-install-recommends pipewire wireplumber xdg-desktop-portal \
+            gstreamer1.0-pipewire gstreamer1.0-plugins-base gstreamer1.0-plugins-bad \
+            gstreamer1.0-plugins-ugly gstreamer1.0-tools python3-gi jq
+
       - name: Loopback call against mediasoup 0.29
         run: cargo test --manifest-path desktop/Cargo.toml -- --nocapture --test-threads=1
+
+      - name: Loopback call with the GStreamer H264 encoder
+        env:
+          GELABBER_H264_ENCODER: x264enc
+          GELABBER_EXPECT_ENCODER: GStreamer x264enc
+        run: cargo test --manifest-path desktop/Cargo.toml --test mediasoup_loopback -- --nocapture
 
       # Real xdg-desktop-portal frontend and PipeWire, with a test backend
       # whose monitor is a GStreamer test video (no compositor or GPU here).
@@ -192,9 +207,9 @@ jobs:
         env:
           GELABBER_TEST_SCREEN: "1"
           GELABBER_MEDIA_LOG: "1"
+          GELABBER_H264_ENCODER: x264enc
+          GELABBER_EXPECT_ENCODER: GStreamer x264enc
         run: |
-          sudo apt-get install -y --no-install-recommends pipewire wireplumber xdg-desktop-portal \
-            gstreamer1.0-pipewire gstreamer1.0-plugins-base gstreamer1.0-tools python3-gi jq
           desktop/native/scripts/fake-screencast-session.sh \
             cargo test --manifest-path desktop/Cargo.toml --test screen_capture -- --nocapture
 
