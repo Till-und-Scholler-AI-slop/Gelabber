@@ -157,6 +157,13 @@ impl Engine {
         check(unsafe { ffi::gm_audio_configure(self.raw(), options.as_ptr()) })
     }
 
+    /// Applications playing sound, without this process:
+    /// `[{"id","name","streams"}]`.
+    pub fn audio_apps(&self) -> Result<Value> {
+        // SAFETY: live engine.
+        owned_json(unsafe { ffi::gm_audio_apps(self.raw()) })
+    }
+
     /// Cameras: `[{"id","name"}]`.
     pub fn video_devices(&self) -> Result<Value> {
         // SAFETY: live engine.
@@ -541,6 +548,17 @@ impl Source {
         // SAFETY: live engine, NUL-terminated JSON.
         Self::wrap(engine, unsafe {
             ffi::gm_source_new_screen(engine.raw(), options.as_ptr())
+        })
+    }
+
+    /// Sound of other applications (source audio), separate from the
+    /// microphone: `{"app"?: id from [`Engine::audio_apps`]}`; without an
+    /// id, every application but this one.
+    pub fn app_audio(engine: &Engine, options: &Value) -> Result<Self> {
+        let options = json_arg(options)?;
+        // SAFETY: live engine, NUL-terminated JSON.
+        Self::wrap(engine, unsafe {
+            ffi::gm_source_new_app_audio(engine.raw(), options.as_ptr())
         })
     }
 

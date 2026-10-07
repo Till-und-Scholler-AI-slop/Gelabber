@@ -3,6 +3,7 @@
 
 #define GM_BUILDING 1
 #include "gelabber_media.h"
+#include "app_audio.h"
 #include "capture_dsp.h"
 #include "gst_h264_encoder.h"
 #include "local_video_source.h"
@@ -10,6 +11,7 @@
 #include "mediasoupclient.hpp"
 
 #include <api/audio/audio_device.h>
+#include <api/audio/audio_frame.h>
 #include <api/audio/audio_processing.h>
 #include <api/audio/builtin_audio_processing_builder.h>
 #if __has_include(<api/audio/create_audio_device_module.h>)
@@ -23,6 +25,7 @@
 #include <api/field_trials_view.h>
 #include <api/make_ref_counted.h>
 #include <api/media_stream_interface.h>
+#include <api/notifier.h>
 #include <api/peer_connection_interface.h>
 #include <api/rtp_parameters.h>
 #include <api/task_queue/default_task_queue_factory.h>
@@ -42,6 +45,7 @@
 #include <media/base/adapted_video_track_source.h>
 #include <media/engine/simulcast_encoder_adapter.h>
 #include <modules/audio_processing/audio_buffer.h>
+#include <modules/audio_processing/include/audio_frame_proxies.h>
 #include <modules/audio_device/include/fake_audio_device.h>
 #include <rtc_base/logging.h>
 #include <rtc_base/thread.h>
@@ -566,6 +570,223 @@ namespace
 		Bridge* bridge;
 	};
 
+	// Source of a local audio track that the core feeds itself. libwebrtc's
+	// own capture path hands the microphone to every audio send stream; the
+	// core instead routes each track's audio from its source, so a
+	// microphone and an application's sound stay separate tracks.
+	class PushAudioSource : public webrtc::Notifier<webrtc::AudioSourceInterface>
+	{
+	public:
+		explicit PushAudioSource(webrtc::AudioOptions options) : audioOptions(std::move(options))
+		{
+		}
+
+		SourceState state() const override
+		{
+			return kLive;
+		}
+		bool remote() const override
+		{
+			return false;
+		}
+		// The voice engine applies these to the APM, as for its own sources.
+		const webrtc::AudioOptions options() const override
+		{
+			return audioOptions;
+		}
+		void AddSink(webrtc::AudioTrackSinkInterface* sink) override
+		{
+			std::lock_guard lock(sinkMutex);
+			sinks.push_back(sink);
+		}
+		void RemoveSink(webrtc::AudioTrackSinkInterface* sink) override
+		{
+			std::lock_guard lock(sinkMutex);
+			sinks.erase(std::remove(sinks.begin(), sinks.end(), sink), sinks.end());
+		}
+
+		// 16-bit interleaved PCM, 10 ms; from one thread at a time.
+		void Deliver(const int16_t* pcm, int sampleRate, size_t channels, size_t frames)
+		{
+			std::lock_guard lock(sinkMutex);
+			for (auto* sink : sinks)
+				sink->OnData(pcm, 16, sampleRate, channels, frames, std::nullopt);
+		}
+
+	private:
+		const webrtc::AudioOptions audioOptions;
+		std::mutex sinkMutex;
+		std::vector<webrtc::AudioTrackSinkInterface*> sinks;
+	};
+
+	// The microphone sources of an engine; all get the processed capture.
+	class MicrophoneHub
+	{
+	public:
+		void Add(PushAudioSource* source)
+		{
+			std::lock_guard lock(mutex);
+			sources.push_back(source);
+		}
+		void Remove(PushAudioSource* source)
+		{
+			std::lock_guard lock(mutex);
+			sources.erase(std::remove(sources.begin(), sources.end(), source), sources.end());
+		}
+		void Deliver(const int16_t* pcm, int sampleRate, size_t channels, size_t frames)
+		{
+			std::lock_guard lock(mutex);
+			for (auto* source : sources)
+				source->Deliver(pcm, sampleRate, channels, frames);
+		}
+
+	private:
+		std::mutex mutex;
+		std::vector<PushAudioSource*> sources;
+	};
+
+	class MicrophoneSource : public PushAudioSource
+	{
+	public:
+		MicrophoneSource(webrtc::AudioOptions options, std::shared_ptr<MicrophoneHub> hub)
+		  : PushAudioSource(std::move(options)), hub(std::move(hub))
+		{
+			this->hub->Add(this);
+		}
+		~MicrophoneSource() override
+		{
+			hub->Remove(this);
+		}
+
+	private:
+		const std::shared_ptr<MicrophoneHub> hub;
+	};
+
+	// Between the audio device module and the voice engine. Capture runs
+	// through the APM (echo cancellation against the playout, noise
+	// suppression, the post-processor) here and goes to the microphone
+	// sources only, instead of to every send stream. Playout passes through
+	// to the engine's own transport, which also feeds the APM's echo
+	// reference.
+	class CaptureTransport : public webrtc::AudioTransport
+	{
+	public:
+		CaptureTransport(webrtc::AudioProcessing* apm, std::shared_ptr<MicrophoneHub> hub)
+		  : apm(apm), hub(std::move(hub))
+		{
+		}
+
+		void SetRender(webrtc::AudioTransport* transport)
+		{
+			render.store(transport);
+		}
+
+		int32_t RecordedDataIsAvailable(
+		  const void* samples,
+		  size_t samplesPerChannel,
+		  size_t bytesPerSample,
+		  size_t channels,
+		  uint32_t sampleRate,
+		  uint32_t totalDelayMs,
+		  int32_t clockDrift,
+		  uint32_t currentMicLevel,
+		  bool keyPressed,
+		  uint32_t& newMicLevel) override
+		{
+			return RecordedDataIsAvailable(
+			  samples,
+			  samplesPerChannel,
+			  bytesPerSample,
+			  channels,
+			  sampleRate,
+			  totalDelayMs,
+			  clockDrift,
+			  currentMicLevel,
+			  keyPressed,
+			  newMicLevel,
+			  std::nullopt);
+		}
+
+		int32_t RecordedDataIsAvailable(
+		  const void* samples,
+		  size_t samplesPerChannel,
+		  size_t bytesPerSample,
+		  size_t channels,
+		  uint32_t sampleRate,
+		  uint32_t totalDelayMs,
+		  int32_t /*clockDrift*/,
+		  uint32_t currentMicLevel,
+		  bool keyPressed,
+		  uint32_t& newMicLevel,
+		  std::optional<int64_t> /*estimatedCaptureTimeNs*/) override
+		{
+			// The OS microphone volume stays where the person set it.
+			newMicLevel = 0;
+			if (bytesPerSample != channels * sizeof(int16_t) || !samples)
+				return -1;
+			frame.UpdateFrame(
+			  0,
+			  static_cast<const int16_t*>(samples),
+			  samplesPerChannel,
+			  static_cast<int>(sampleRate),
+			  webrtc::AudioFrame::kNormalSpeech,
+			  webrtc::AudioFrame::kVadUnknown,
+			  channels);
+			apm->set_stream_delay_ms(static_cast<int>(totalDelayMs));
+			apm->set_stream_analog_level(static_cast<int>(currentMicLevel));
+			apm->set_stream_key_pressed(keyPressed);
+			webrtc::ProcessAudioFrame(apm, &frame);
+			hub->Deliver(frame.data(), frame.sample_rate_hz(), frame.num_channels(), frame.samples_per_channel());
+			return 0;
+		}
+
+		int32_t NeedMorePlayData(
+		  size_t samplesPerChannel,
+		  size_t bytesPerSample,
+		  size_t channels,
+		  uint32_t sampleRate,
+		  void* audio,
+		  size_t& samplesOut,
+		  int64_t* elapsedTimeMs,
+		  int64_t* ntpTimeMs) override
+		{
+			if (auto* transport = render.load())
+				return transport->NeedMorePlayData(
+				  samplesPerChannel,
+				  bytesPerSample,
+				  channels,
+				  sampleRate,
+				  audio,
+				  samplesOut,
+				  elapsedTimeMs,
+				  ntpTimeMs);
+			std::memset(audio, 0, samplesPerChannel * bytesPerSample);
+			samplesOut = samplesPerChannel;
+			return 0;
+		}
+
+		void PullRenderData(
+		  int bitsPerSample,
+		  int sampleRate,
+		  size_t channels,
+		  size_t frames,
+		  void* audio,
+		  int64_t* elapsedTimeMs,
+		  int64_t* ntpTimeMs) override
+		{
+			if (auto* transport = render.load())
+				transport->PullRenderData(
+				  bitsPerSample, sampleRate, channels, frames, audio, elapsedTimeMs, ntpTimeMs);
+		}
+
+	private:
+		webrtc::AudioProcessing* const apm;
+		const std::shared_ptr<MicrophoneHub> hub;
+		std::atomic<webrtc::AudioTransport*> render{ nullptr };
+		// Capture thread only.
+		webrtc::AudioFrame frame;
+	};
+
 	// The platform audio device module as the engine's voice pipeline sees
 	// it. libwebrtc records only while a microphone stream sends and stops
 	// the module when the last one goes; the microphone test needs meters
@@ -574,8 +795,8 @@ namespace
 	class MonitoringAudioDevice : public webrtc::AudioDeviceModule
 	{
 	public:
-		explicit MonitoringAudioDevice(webrtc::scoped_refptr<webrtc::AudioDeviceModule> inner)
-		  : inner(std::move(inner))
+		MonitoringAudioDevice(webrtc::scoped_refptr<webrtc::AudioDeviceModule> inner, CaptureTransport* capture)
+		  : inner(std::move(inner)), capture(capture)
 		{
 		}
 
@@ -622,9 +843,12 @@ namespace
 		{
 			return inner->ActiveAudioLayer(layer);
 		}
+		// The module talks to the capture transport; the engine's own
+		// transport only plays out.
 		int32_t RegisterAudioCallback(webrtc::AudioTransport* callback) override
 		{
-			return inner->RegisterAudioCallback(callback);
+			capture->SetRender(callback);
+			return inner->RegisterAudioCallback(callback ? capture : nullptr);
 		}
 		int32_t Init() override
 		{
@@ -847,6 +1071,7 @@ namespace
 
 	private:
 		const webrtc::scoped_refptr<webrtc::AudioDeviceModule> inner;
+		CaptureTransport* const capture;
 		bool monitoring{ false };
 		bool streamsRecording{ false };
 	};
@@ -938,6 +1163,8 @@ struct gm_engine
 	webrtc::scoped_refptr<webrtc::AudioDeviceModule> adm;
 	// `adm` as the voice pipeline sees it (microphone test monitoring).
 	webrtc::scoped_refptr<MonitoringAudioDevice> monitor;
+	std::shared_ptr<MicrophoneHub> microphones{ std::make_shared<MicrophoneHub>() };
+	std::unique_ptr<CaptureTransport> capture;
 	webrtc::scoped_refptr<webrtc::AudioProcessing> apm;
 	std::shared_ptr<gelabber::CaptureDsp> dsp;
 	webrtc::scoped_refptr<webrtc::PeerConnectionFactoryInterface> factory;
@@ -986,8 +1213,10 @@ struct gm_source
 {
 	gm_engine* engine;
 	webrtc::scoped_refptr<webrtc::MediaStreamTrackInterface> track;
-	// Null for the microphone.
+	// Null for audio.
 	webrtc::scoped_refptr<gelabber::LocalVideoSource> video;
+	// Application sound only.
+	std::unique_ptr<gelabber::AppAudioCapture> appAudio;
 };
 
 struct gm_producer
@@ -1072,6 +1301,14 @@ gm_engine* gm_engine_new(const char* optionsJson)
 		if (!engine->network->Start() || !engine->worker->Start() || !engine->signaling->Start())
 			throw std::runtime_error("failed to start libwebrtc threads");
 
+		engine->dsp = std::make_shared<gelabber::CaptureDsp>();
+		engine->apm = webrtc::BuiltinAudioProcessingBuilder()
+		                .SetCapturePostProcessing(std::make_unique<CapturePostProcessor>(engine->dsp))
+		                .Build(webrtc::CreateEnvironment(std::make_unique<ApmFieldTrials>()));
+		if (!engine->apm)
+			throw std::runtime_error("failed to create audio processing");
+		engine->capture = std::make_unique<CaptureTransport>(engine->apm.get(), engine->microphones);
+
 		webrtc::scoped_refptr<webrtc::AudioDeviceModule> adm;
 		if (audio == "dummy")
 		{
@@ -1094,16 +1331,10 @@ gm_engine* gm_engine_new(const char* optionsJson)
 			});
 			if (!engine->adm)
 				throw std::runtime_error("failed to create the audio device module");
-			engine->monitor = webrtc::make_ref_counted<MonitoringAudioDevice>(engine->adm);
+			engine->monitor = webrtc::make_ref_counted<MonitoringAudioDevice>(engine->adm, engine->capture.get());
 			adm             = engine->monitor;
 		}
 
-		engine->dsp = std::make_shared<gelabber::CaptureDsp>();
-		engine->apm = webrtc::BuiltinAudioProcessingBuilder()
-		                .SetCapturePostProcessing(std::make_unique<CapturePostProcessor>(engine->dsp))
-		                .Build(webrtc::CreateEnvironment(std::make_unique<ApmFieldTrials>()));
-		if (!engine->apm)
-			throw std::runtime_error("failed to create audio processing");
 
 		// TODO(desktop): hardware H264 decoding.
 		engine->factory = webrtc::CreatePeerConnectionFactory(
@@ -1132,6 +1363,13 @@ void gm_engine_free(gm_engine* engine)
 	guarded<int>(0, [&] {
 		if (!engine)
 			return 0;
+		// Capture runs through the APM: stop it before anything goes,
+		// including a microphone test still holding it.
+		if (engine->adm)
+			engine->worker->BlockingCall([&] {
+				engine->monitor->SetMonitoring(false);
+				engine->adm->StopRecording();
+			});
 		engine->factory = nullptr;
 		engine->apm     = nullptr;
 		if (engine->adm)
@@ -1426,10 +1664,8 @@ gm_source* gm_source_new_microphone(gm_engine* engine, const char* optionsJson)
 
 		ApplyCaptureMode(*engine, mode, options);
 
-		auto source = engine->factory->CreateAudioSource(audio);
-		if (!source)
-			throw std::runtime_error("failed to create audio source");
-		auto track = engine->factory->CreateAudioTrack(engine->TrackId("mic"), source.get());
+		auto source = webrtc::make_ref_counted<MicrophoneSource>(audio, engine->microphones);
+		auto track  = engine->factory->CreateAudioTrack(engine->TrackId("mic"), source.get());
 		if (!track)
 			throw std::runtime_error("failed to create audio track");
 		return new gm_source{ engine, track, nullptr };
@@ -1489,6 +1725,39 @@ gm_source* gm_source_new_screen(gm_engine* engine, const char* optionsJson)
 	});
 }
 
+char* gm_audio_apps(gm_engine*)
+{
+	return guarded<char*>(nullptr, [&] {
+		json out = json::array();
+		for (const auto& app : gelabber::ListAudioApps())
+			out.push_back({ { "id", app.id }, { "name", app.name }, { "streams", app.streams } });
+		return dupString(out.dump(-1, ' ', false, json::error_handler_t::replace));
+	});
+}
+
+gm_source* gm_source_new_app_audio(gm_engine* engine, const char* optionsJson)
+{
+	return guarded<gm_source*>(nullptr, [&]() -> gm_source* {
+		const auto options = optionsJson ? parseJson(optionsJson, "application sound options") : json::object();
+		// No options: the voice engine would apply them to the shared APM.
+		auto source = webrtc::make_ref_counted<PushAudioSource>(webrtc::AudioOptions());
+		auto capture = gelabber::AppAudioCapture::Start(
+		  options.value("app", std::string()), [source](const int16_t* pcm) {
+			  source->Deliver(
+			    pcm,
+			    gelabber::AppAudioCapture::kSampleRate,
+			    gelabber::AppAudioCapture::kChannels,
+			    gelabber::AppAudioCapture::kFrames);
+		  });
+		auto track = engine->factory->CreateAudioTrack(engine->TrackId("app-audio"), source.get());
+		if (!track)
+			throw std::runtime_error("failed to create audio track");
+		auto* out     = new gm_source{ engine, track, nullptr };
+		out->appAudio = std::move(capture);
+		return out;
+	});
+}
+
 char* gm_video_devices(gm_engine*)
 {
 	return guarded<char*>(nullptr, [&] {
@@ -1526,7 +1795,11 @@ gm_source* gm_source_new_camera(gm_engine* engine, const char* optionsJson)
 char* gm_source_state(gm_source* source)
 {
 	return guarded<char*>(nullptr, [&] {
-		return dupString(source->video ? source->video->StateJson() : std::string(R"({"state":"live"})"));
+		if (source->video)
+			return dupString(source->video->StateJson());
+		if (source->appAudio)
+			return dupString(source->appAudio->StateJson());
+		return dupString(R"({"state":"live"})");
 	});
 }
 
@@ -1537,6 +1810,8 @@ void gm_source_free(gm_source* source)
 			return 0;
 		if (source->video)
 			source->video->Stop();
+		// Stops delivering before the track goes.
+		source->appAudio.reset();
 		delete source;
 		return 0;
 	});

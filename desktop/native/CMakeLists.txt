@@ -105,11 +105,15 @@ if(UNIX AND NOT APPLE)
   # libwebrtc (rtc_link_pipewire=false), GBM/DRM for DMA-BUF frames. The
   # defines match libwebrtc's pipewire_config; DesktopCaptureOptions changes
   # layout with them. Hardware H264 loads the system GStreamer with dlopen.
-  target_sources(gelabber_media PRIVATE src/screen_source_pipewire.cc src/gst_h264_encoder.cc)
+  target_sources(gelabber_media PRIVATE src/screen_source_pipewire.cc src/gst_h264_encoder.cc
+    src/app_audio_pipewire.cc)
   target_compile_definitions(gelabber_media PRIVATE WEBRTC_USE_PIPEWIRE WEBRTC_USE_GIO)
   target_include_directories(gelabber_media SYSTEM PRIVATE
     "${GELABBER_LIBWEBRTC_DIR}/include/third_party/libyuv/include"
     "${CMAKE_SYSROOT}/usr/include/glib-2.0"
+    # Application sound: libpipewire is dlopened, only its headers are used.
+    "${CMAKE_SYSROOT}/usr/include/pipewire-0.3"
+    "${CMAKE_SYSROOT}/usr/include/spa-0.2"
     "${CMAKE_SYSROOT}/usr/lib/x86_64-linux-gnu/glib-2.0/include")
   target_link_libraries(gelabber_media PRIVATE gio-2.0 gobject-2.0 glib-2.0 gbm drm)
   target_link_options(gelabber_media PRIVATE

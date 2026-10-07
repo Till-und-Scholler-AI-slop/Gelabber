@@ -143,11 +143,38 @@ type ScreenState = {
 const POLL_MS = 250;
 const WATCH_MS = 1_000;
 
+export type NativeAudioApp = { id: string; name: string; streams: number };
+
+/** Applications playing sound right now, for the source-audio choice. */
+export async function listNativeAudioApps(): Promise<NativeAudioApp[]> {
+  return invokeNative<NativeAudioApp[]>("media_audio_apps");
+}
+
+/** Sound of other applications for a screen share. Without it the share
+ * goes on with video only, like a browser source without audio. */
+async function captureAppAudio(app: string): Promise<NativeTrack | null> {
+  try {
+    const source = await invokeNative<number>("media_source_app_audio", {
+      options: { app },
+    });
+    return new NativeTrack(
+      "audio",
+      "Quellton",
+      { source },
+      { sampleRate: 48_000, channelCount: 2 },
+    );
+  } catch (error) {
+    console.warn("[native] source audio unavailable", error);
+    return null;
+  }
+}
+
 /** getDisplayMedia for the desktop app: the desktop's own picker chooses the
- * screen or window. Source audio follows with the native source-audio
- * capture; until then the stream has video only. */
+ * screen or window. With `audio`, the sound of `sourceApp` ("" = every
+ * application but Gelabber) is captured from the sound server. */
 export async function nativeGetDisplayMedia(
   constraints: MediaStreamConstraints,
+  sourceApp = "",
 ): Promise<MediaStream> {
   const fps = frameRate(constraints.video);
   const source = await invokeNative<number>("media_source_screen", {
@@ -199,9 +226,13 @@ export async function nativeGetDisplayMedia(
       });
   }, WATCH_MS);
   track.onStop(() => clearInterval(timer));
-  return new NativeStream([
-    track as unknown as MediaStreamTrack,
-  ]) as unknown as MediaStream;
+  const audio = constraints.audio ? await captureAppAudio(sourceApp) : null;
+  if (audio && track.readyState !== "live") audio.stop();
+  return new NativeStream(
+    [track, ...(audio?.readyState === "live" ? [audio] : [])].map(
+      (item) => item as unknown as MediaStreamTrack,
+    ),
+  ) as unknown as MediaStream;
 }
 
 export function nativeInfo(

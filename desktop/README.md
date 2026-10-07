@@ -110,3 +110,16 @@ transports, producers and sources. WebKitGTK needs `libwebkit2gtk-4.1`.
   voice pipeline's stop while the test runs. The test
   session also provides null-sink "speakers" and a
   noise-playing "microphone" for `core/tests/voice.rs`.
+- Microphone routing: libwebrtc's device module hands its capture to every
+  audio send stream, which would mix the microphone into source audio. The
+  device module's callback is therefore our `CaptureTransport`: it runs the
+  APM itself and feeds only the microphone sources; playout (and with it the
+  echo canceller's reference) passes straight through to the engine. Other
+  audio sources must report empty `AudioOptions`, because the voice engine
+  applies a source's options to the shared APM.
+- Source audio (Linux): PipeWire, dlopened like libwebrtc does. One passive
+  capture stream per playback node of the chosen application
+  (`application.process.binary`; "" = every application but Gelabber),
+  mixed to 48 kHz stereo and produced as the `sa`/`la` Opus stereo track.
+  Streams the application opens later are picked up. The voice test checks
+  it against a `pw-play` noise player.

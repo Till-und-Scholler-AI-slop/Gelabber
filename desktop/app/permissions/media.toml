@@ -19,6 +19,8 @@ permissions = [
   "allow-media-source-microphone",
   "allow-media-source-screen",
   "allow-media-video-devices",
+  "allow-media-audio-apps",
+  "allow-media-source-app-audio",
   "allow-media-source-camera",
   "allow-media-source-state",
   "allow-media-source-set-enabled",

@@ -67,6 +67,7 @@ class FakeCore implements NativeBridge {
   levels = { input: 0, processed: 0, clipping: false, blocks: 0 };
   cameras = [{ id: "/dev/video0", name: "Webcam" }];
   screenStates: Array<Record<string, unknown>> = [];
+  noAppAudio = false;
   devices = {
     inputs: [
       { id: "", name: "default: Headset" },
@@ -169,6 +170,9 @@ class FakeCore implements NativeBridge {
           return this.cameras;
         case "media_source_microphone":
         case "media_source_screen":
+          return ++this.next;
+        case "media_source_app_audio":
+          if (this.noAppAudio) throw new Error("no sound server");
           return ++this.next;
         case "media_source_state":
           return this.screenStates.shift() ?? { state: "live" };
@@ -471,6 +475,29 @@ describe("desktop app media", () => {
       timeout: 3_000,
     });
     expect(track.readyState).toBe("ended");
+  });
+
+  it("adds the chosen application's sound to a share", async () => {
+    const stream = await nativeGetDisplayMedia(
+      { video: true, audio: true },
+      "firefox",
+    );
+    expect(core.calledWith("media_source_app_audio")).toEqual([
+      { options: { app: "firefox" } },
+    ]);
+    const [audio] = stream.getAudioTracks();
+    expect(audio.label).toBe("Quellton");
+    audio.stop();
+    expect(core.calledWith("media_source_close")).toHaveLength(1);
+  });
+
+  it("shares video only when application sound is unavailable", async () => {
+    core.noAppAudio = true;
+    const warn = vi.spyOn(console, "warn").mockImplementation(() => undefined);
+    const stream = await nativeGetDisplayMedia({ video: true, audio: true });
+    expect(stream.getAudioTracks()).toHaveLength(0);
+    expect(stream.getVideoTracks()).toHaveLength(1);
+    warn.mockRestore();
   });
 
   it("tests the microphone with the native meters", async () => {

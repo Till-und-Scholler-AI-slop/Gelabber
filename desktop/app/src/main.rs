@@ -121,6 +121,8 @@ fn main() {
             media::media_source_microphone,
             media::media_source_screen,
             media::media_video_devices,
+            media::media_audio_apps,
+            media::media_source_app_audio,
             media::media_source_camera,
             media::media_source_state,
             media::media_source_set_enabled,

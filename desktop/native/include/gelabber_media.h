@@ -38,7 +38,7 @@
 extern "C" {
 #endif
 
-#define GM_ABI_VERSION 6
+#define GM_ABI_VERSION 7
 
 typedef struct gm_engine gm_engine;
 typedef struct gm_device gm_device;
@@ -141,6 +141,14 @@ GM_API gm_source* gm_source_new_test_pattern(gm_engine* engine, int width, int h
  * options_json: {"type"?: "any|screen|window", "fps"?: 30, "cursor"?: true,
  *                "contentHint"?: "detail|text|motion"} */
 GM_API gm_source* gm_source_new_screen(gm_engine* engine, const char* options_json);
+/* Applications playing sound, without this process:
+ * [{"id","name","streams"}] (Linux: PipeWire playback streams). */
+GM_API char* gm_audio_apps(gm_engine* engine);
+/* Sound of other applications as an audio track for source audio, 48 kHz
+ * stereo, separate from the microphone: {"app"?: id from gm_audio_apps;
+ * default "" = every application but this one}. Applications that start
+ * playing later are included. gm_source_state adds "streams". */
+GM_API gm_source* gm_source_new_app_audio(gm_engine* engine, const char* options_json);
 /* Cameras: [{"id","name"}] (Linux: V4L2 devices; ids are the module's
  * unique ids). */
 GM_API char* gm_video_devices(gm_engine* engine);

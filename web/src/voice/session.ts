@@ -365,7 +365,11 @@ async function defaultGetUserMedia(
 async function defaultGetDisplayMedia(
   constraints: MediaStreamConstraints,
 ): Promise<MediaStream> {
-  if (isDesktopApp()) return nativeGetDisplayMedia(constraints);
+  if (isDesktopApp())
+    return nativeGetDisplayMedia(
+      constraints,
+      useMediaSettings.getState().sourceAudioApp,
+    );
   return navigator.mediaDevices.getDisplayMedia(constraints);
 }
 

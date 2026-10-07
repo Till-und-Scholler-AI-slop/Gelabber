@@ -1,9 +1,10 @@
 import { useAudioProcessing } from "./audioProcessing.ts";
 import { isDesktopApp } from "./native/bridge.ts";
+import { listNativeAudioApps } from "./native/capture.ts";
 import { MicrophoneTest } from "./MicrophoneTest.tsx";
 // Shared Voice/Video + notification form. Used on /settings and in-call.
 
-import { useState, type ReactNode } from "react";
+import { useEffect, useState, type ReactNode } from "react";
 import "./quality.css";
 import { playCallSound } from "./callSounds.ts";
 
@@ -317,10 +318,19 @@ export function MediaSettingsForm({
                 settings.patch({ shareSourceAudio })
               }
             />
+            {isDesktopApp() && (
+              <SourceAudioApp
+                value={settings.sourceAudioApp}
+                onChange={(sourceAudioApp) =>
+                  settings.patch({ sourceAudioApp })
+                }
+              />
+            )}
             <p className="text-xs text-neutral-500 dark:text-neutral-400">
-              Gilt für die nächste Bildschirmfreigabe und Go Live. Wähle den Ton
-              im Browserdialog aus; je nach Browser und Quelle ist nur Video
-              verfügbar. Der Stream-Ton wird als Stereo-Musik übertragen, ohne
+              {isDesktopApp()
+                ? "Gilt für die nächste Bildschirmfreigabe und Go Live. Geteilt wird der Ton der gewählten Anwendung, nie dein Mikrofon oder der Ton des Anrufs."
+                : "Gilt für die nächste Bildschirmfreigabe und Go Live. Wähle den Ton im Browserdialog aus; je nach Browser und Quelle ist nur Video verfügbar."}{" "}
+              Der Stream-Ton wird als Stereo-Musik übertragen, ohne
               Mikrofonfilter.
             </p>
           </section>
@@ -570,6 +580,41 @@ function ApplyNote({ apply }: { apply: StreamApply }) {
     );
   }
   return null;
+}
+
+/** Desktop app: whose sound a share carries. Lists the applications playing
+ * right now; a saved choice that is quiet at the moment stays selectable. */
+function SourceAudioApp({
+  value,
+  onChange,
+}: {
+  value: string;
+  onChange: (value: string) => void;
+}) {
+  const [apps, setApps] = useState<{ id: string; label: string }[]>([]);
+  const load = () =>
+    void listNativeAudioApps()
+      .then((list) =>
+        setApps(list.map((app) => ({ id: app.id, label: app.name || app.id }))),
+      )
+      .catch(() => setApps([]));
+  useEffect(load, []);
+  return (
+    <div onFocus={load}>
+      <Select
+        id="source-audio-app"
+        label="Ton von"
+        value={value}
+        onChange={onChange}
+        options={
+          value && !apps.some((app) => app.id === value)
+            ? [{ id: value, label: `${value} (gerade still)` }, ...apps]
+            : apps
+        }
+        defaultLabel="Alle Anwendungen außer Gelabber"
+      />
+    </div>
+  );
 }
 
 function withCurrent(

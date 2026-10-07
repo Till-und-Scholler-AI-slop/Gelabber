@@ -238,6 +238,72 @@ async fn voice_modes_reach_a_consumer() {
     })
     .await;
 
+    // Source audio: the noise player (pw-play, another process) as an
+    // application, on its own track next to the microphone.
+    let apps = engine.audio_apps().unwrap();
+    eprintln!("audio apps: {apps}");
+    assert!(
+        apps.as_array()
+            .is_some_and(|list| list.iter().any(|app| app["id"] == "pw-play")),
+        "pw-play listed: {apps}"
+    );
+    let app_audio = Source::app_audio(&engine, &json!({"app": "pw-play"})).unwrap();
+    let capturing = &app_audio;
+    wait_for(
+        "application stream captured",
+        Duration::from_secs(10),
+        || {
+            let source = capturing;
+            async move { source.state().unwrap()["streams"].as_u64().unwrap_or(0) >= 1 }
+        },
+    )
+    .await;
+    let app_producer = produce(
+        &send,
+        &app_audio,
+        json!({"codecOptions": {"opusStereo": true, "opusDtx": false}}),
+    )
+    .await;
+    let server_app = server_producers.lock().unwrap().last().cloned().unwrap();
+    assert_ne!(server_app.id(), server_producer.id());
+    let caps: RtpCapabilities = serde_json::from_value(device.rtp_capabilities().unwrap()).unwrap();
+    let mut options = ConsumerOptions::new(server_app.id(), caps);
+    options.paused = true;
+    let server_app_consumer = server_recv.consume(options).await.unwrap();
+    let announcement = json!({
+        "id": server_app_consumer.id(),
+        "producerId": server_app.id(),
+        "kind": "audio",
+        "rtpParameters": server_app_consumer.rtp_parameters(),
+    });
+    let app_consumer: Consumer = {
+        let recv = recv.clone();
+        blocking(move || recv.consume(&announcement)).await.unwrap()
+    };
+    server_app_consumer.resume().await.unwrap();
+    let hearing = &app_consumer;
+    wait_for(
+        "application sound played out",
+        Duration::from_secs(20),
+        || {
+            let consumer = hearing;
+            async move {
+                let stats = consumer.stats().unwrap();
+                stats["samplesPlayed"].as_u64().unwrap_or(0) > 48_000
+                    && stats["audioLevel"].as_u64().unwrap_or(0) > 0
+            }
+        },
+    )
+    .await;
+    eprintln!(
+        "application sound: {} / consumer {}",
+        app_audio.state().unwrap(),
+        app_consumer.stats().unwrap()["audioLevel"]
+    );
+    drop(app_consumer);
+    drop(app_producer);
+    drop(app_audio);
+
     // Ending the test leaves the call's capture running.
     engine.monitor_audio(None).unwrap();
     levels_when(&engine, "after the microphone test", |l| {

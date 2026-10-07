@@ -262,6 +262,21 @@ pub async fn media_source_screen(media: State<'_, Media>, options: Value) -> Res
     Ok(media.insert(&media.sources, source))
 }
 
+/// Applications playing sound: `[{"id","name","streams"}]`.
+#[tauri::command]
+pub async fn media_audio_apps(media: State<'_, Media>) -> Result<Value> {
+    let engine = media.engine()?.clone();
+    blocking(move || engine.audio_apps().map_err(err)).await
+}
+
+/// Source audio: `{"app"?}`; without an id every application but this one.
+#[tauri::command]
+pub async fn media_source_app_audio(media: State<'_, Media>, options: Value) -> Result<u64> {
+    let engine = media.engine()?.clone();
+    let source = blocking(move || Source::app_audio(&engine, &options).map_err(err)).await?;
+    Ok(media.insert(&media.sources, source))
+}
+
 /// Cameras: `[{"id","name"}]`.
 #[tauri::command]
 pub async fn media_video_devices(media: State<'_, Media>) -> Result<Value> {
