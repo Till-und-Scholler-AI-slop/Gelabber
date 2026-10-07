@@ -60,6 +60,18 @@ if(UNIX AND NOT APPLE)
   # template adapters advertise no H264 formats.
   target_compile_definitions(gelabber_media PRIVATE WEBRTC_LINUX WEBRTC_USE_H264)
   target_compile_definitions(mediasoupclient PUBLIC WEBRTC_LINUX)
+
+  # Screen capture: xdg-desktop-portal over GLib/GIO, PipeWire dlopened by
+  # libwebrtc (rtc_link_pipewire=false), GBM/DRM for DMA-BUF frames. The
+  # defines match libwebrtc's pipewire_config; DesktopCaptureOptions changes
+  # layout with them.
+  target_sources(gelabber_media PRIVATE src/screen_source_pipewire.cc)
+  target_compile_definitions(gelabber_media PRIVATE WEBRTC_USE_PIPEWIRE WEBRTC_USE_GIO)
+  target_include_directories(gelabber_media SYSTEM PRIVATE
+    "${GELABBER_LIBWEBRTC_DIR}/include/third_party/libyuv/include"
+    "${CMAKE_SYSROOT}/usr/include/glib-2.0"
+    "${CMAKE_SYSROOT}/usr/lib/x86_64-linux-gnu/glib-2.0/include")
+  target_link_libraries(gelabber_media PRIVATE gio-2.0 gobject-2.0 glib-2.0 gbm drm)
   target_link_options(gelabber_media PRIVATE
     # Only the gm_* C ABI leaves the library; libwebrtc, libmediasoupclient and
     # Chromium's libc++ (std::__Cr) stay internal.

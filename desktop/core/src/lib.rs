@@ -482,6 +482,27 @@ impl Source {
         Self::wrap(engine, ptr)
     }
 
+    /// Screen or window chosen in the desktop's own picker (Linux:
+    /// xdg-desktop-portal + PipeWire). Returns while the picker is still open;
+    /// poll [`Source::state`] until it leaves `pending`.
+    ///
+    /// `options`: `{"type"?: "any|screen|window", "fps"?: 30, "cursor"?: true,
+    /// "contentHint"?: "detail|text|motion"}`.
+    pub fn screen(engine: &Engine, options: &Value) -> Result<Self> {
+        let options = json_arg(options)?;
+        // SAFETY: live engine, NUL-terminated JSON.
+        Self::wrap(engine, unsafe {
+            ffi::gm_source_new_screen(engine.raw(), options.as_ptr())
+        })
+    }
+
+    /// `{"state": "pending|live|cancelled|ended|failed", ...}`; microphone and
+    /// test pattern are always `live`.
+    pub fn state(&self) -> Result<Value> {
+        // SAFETY: live source.
+        owned_json(unsafe { ffi::gm_source_state(self.raw()) })
+    }
+
     fn wrap(engine: &Engine, ptr: *mut ffi::gm_source) -> Result<Self> {
         NonNull::new(ptr)
             .map(|ptr| {

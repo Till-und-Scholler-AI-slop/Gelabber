@@ -83,6 +83,8 @@ unsafe extern "C" {
         height: c_int,
         fps: c_int,
     ) -> *mut gm_source;
+    pub fn gm_source_new_screen(engine: *mut gm_engine, options: *const c_char) -> *mut gm_source;
+    pub fn gm_source_state(source: *mut gm_source) -> *mut c_char;
     pub fn gm_source_free(source: *mut gm_source);
 
     pub fn gm_transport_produce(

@@ -3,6 +3,7 @@
 
 #define GM_BUILDING 1
 #include "gelabber_media.h"
+#include "local_video_source.h"
 
 #include "mediasoupclient.hpp"
 
@@ -118,7 +119,7 @@ namespace
 	}
 
 	// Moving gradient so encoders produce real, changing frames.
-	class TestPatternSource : public webrtc::AdaptedVideoTrackSource
+	class TestPatternSource : public gelabber::LocalVideoSource
 	{
 	public:
 		TestPatternSource(int width, int height, int fps) : width(width), height(height), fps(fps)
@@ -136,26 +137,14 @@ namespace
 			worker  = std::thread([this] { Run(); });
 		}
 
-		void Stop()
+		void Stop() override
 		{
 			running = false;
 			if (worker.joinable())
 				worker.join();
 		}
 
-		SourceState state() const override
-		{
-			return kLive;
-		}
-		bool remote() const override
-		{
-			return false;
-		}
 		bool is_screencast() const override
-		{
-			return false;
-		}
-		std::optional<bool> needs_denoising() const override
 		{
 			return false;
 		}
@@ -456,7 +445,8 @@ struct gm_source
 {
 	gm_engine* engine;
 	webrtc::scoped_refptr<webrtc::MediaStreamTrackInterface> track;
-	webrtc::scoped_refptr<TestPatternSource> pattern;
+	// Null for the microphone.
+	webrtc::scoped_refptr<gelabber::LocalVideoSource> video;
 };
 
 struct gm_producer
@@ -736,13 +726,59 @@ gm_source* gm_source_new_test_pattern(gm_engine* engine, int width, int height, 
 	});
 }
 
+gm_source* gm_source_new_screen(gm_engine* engine, const char* optionsJson)
+{
+	return guarded<gm_source*>(nullptr, [&]() -> gm_source* {
+		const auto options = optionsJson ? json::parse(optionsJson) : json::object();
+		gelabber::ScreenOptions screen;
+		const auto type = options.value("type", std::string("any"));
+		if (type == "screen")
+			screen.type = gelabber::ScreenOptions::Type::Screen;
+		else if (type == "window")
+			screen.type = gelabber::ScreenOptions::Type::Window;
+		else if (type != "any")
+			throw std::invalid_argument("type must be any, screen or window");
+		screen.fps    = options.value("fps", 30);
+		screen.cursor = options.value("cursor", true);
+		if (screen.fps < 1 || screen.fps > 120)
+			throw std::invalid_argument("fps out of range");
+		const auto hint = options.value("contentHint", std::string("detail"));
+		webrtc::VideoTrackInterface::ContentHint contentHint;
+		if (hint == "detail")
+			contentHint = webrtc::VideoTrackInterface::ContentHint::kDetailed;
+		else if (hint == "text")
+			contentHint = webrtc::VideoTrackInterface::ContentHint::kText;
+		else if (hint == "motion")
+			contentHint = webrtc::VideoTrackInterface::ContentHint::kFluid;
+		else
+			throw std::invalid_argument("contentHint must be detail, text or motion");
+
+		auto source = gelabber::CreateScreenSource(screen);
+		auto track  = engine->factory->CreateVideoTrack(source, engine->TrackId("screen"));
+		if (!track)
+		{
+			source->Stop();
+			throw std::runtime_error("failed to create video track");
+		}
+		track->set_content_hint(contentHint);
+		return new gm_source{ engine, track, source };
+	});
+}
+
+char* gm_source_state(gm_source* source)
+{
+	return guarded<char*>(nullptr, [&] {
+		return dupString(source->video ? source->video->StateJson() : std::string(R"({"state":"live"})"));
+	});
+}
+
 void gm_source_free(gm_source* source)
 {
 	guarded<int>(0, [&] {
 		if (!source)
 			return 0;
-		if (source->pattern)
-			source->pattern->Stop();
+		if (source->video)
+			source->video->Stop();
 		delete source;
 		return 0;
 	});

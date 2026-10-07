@@ -185,6 +185,18 @@ jobs:
       - name: Loopback call against mediasoup 0.29
         run: cargo test --manifest-path desktop/Cargo.toml -- --nocapture --test-threads=1
 
+      # Real xdg-desktop-portal frontend and PipeWire, with a test backend
+      # whose monitor is a GStreamer test video (no compositor or GPU here).
+      - name: Screen capture through the ScreenCast portal
+        timeout-minutes: 15
+        env:
+          GELABBER_TEST_SCREEN: "1"
+        run: |
+          sudo apt-get install -y --no-install-recommends pipewire wireplumber xdg-desktop-portal \
+            gstreamer1.0-pipewire gstreamer1.0-plugins-base gstreamer1.0-tools python3-gi jq
+          desktop/native/scripts/fake-screencast-session.sh \
+            cargo test --manifest-path desktop/Cargo.toml --test screen_capture -- --nocapture
+
       - name: Check and measure the core library
         run: |
           set -euo pipefail

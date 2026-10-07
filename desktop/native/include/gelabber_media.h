@@ -107,6 +107,15 @@ GM_API char* gm_transport_stats(gm_transport* transport);
 GM_API gm_source* gm_source_new_microphone(gm_engine* engine);
 /* Synthetic moving test pattern (I420) for build/pipeline checks. */
 GM_API gm_source* gm_source_new_test_pattern(gm_engine* engine, int width, int height, int fps);
+/* Screen or window picked in the desktop's own dialog (Linux: xdg-desktop-portal
+ * ScreenCast + PipeWire). Returns at once; the dialog opens asynchronously and
+ * frames flow after the user picked a source. Poll gm_source_state.
+ * options_json: {"type"?: "any|screen|window", "fps"?: 30, "cursor"?: true,
+ *                "contentHint"?: "detail|text|motion"} */
+GM_API gm_source* gm_source_new_screen(gm_engine* engine, const char* options_json);
+/* {"state":"pending|live|cancelled|ended|failed","width"?,"height"?,"frames"?}.
+ * Microphone and test pattern are always live. */
+GM_API char* gm_source_state(gm_source* source);
 GM_API void gm_source_free(gm_source* source);
 
 /* Produce a source. options_json:
