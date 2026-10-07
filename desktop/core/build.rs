@@ -11,7 +11,14 @@ fn main() {
     println!("cargo:rerun-if-env-changed=GELABBER_MEDIA_LIB_DIR");
     println!("cargo:rerun-if-env-changed=GELABBER_LIBWEBRTC_DIR");
     let native = PathBuf::from(env::var("CARGO_MANIFEST_DIR").unwrap()).join("../native");
-    for path in ["CMakeLists.txt", "libwebrtc.env", "gelabber_media.map", "include", "src", "cmake"] {
+    for path in [
+        "CMakeLists.txt",
+        "libwebrtc.env",
+        "gelabber_media.map",
+        "include",
+        "src",
+        "cmake",
+    ] {
         println!("cargo:rerun-if-changed={}", native.join(path).display());
     }
 

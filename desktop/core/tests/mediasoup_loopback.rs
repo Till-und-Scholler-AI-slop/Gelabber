@@ -7,6 +7,8 @@
 
 use gelabber_media_core::{Audio, Device, Direction, Engine, Source, Transport, TransportEvent};
 use mediasoup::prelude::*;
+// Trait methods (id, produce, consume); the name is taken by the native transport.
+use mediasoup::prelude::Transport as _;
 use serde_json::{Value, json};
 use std::{
     net::{IpAddr, Ipv4Addr},
@@ -40,14 +42,20 @@ fn router_codecs() -> Vec<RtpCodecCapability> {
 
 /// Same checks as `validate_parameters` in media/src/sfu.rs.
 fn validate_like_server(kind: &str, rtp: &RtpParameters) {
-    assert!(!rtp.codecs.is_empty() && rtp.codecs.len() <= 16, "codec count");
+    assert!(
+        !rtp.codecs.is_empty() && rtp.codecs.len() <= 16,
+        "codec count"
+    );
     assert!(rtp.encodings.len() <= 2, "at most two encodings");
     assert!(rtp.header_extensions.len() <= 32, "header extension count");
     let first = serde_json::to_value(&rtp.codecs[0]).unwrap();
     let mime = first["mimeType"].as_str().unwrap().to_ascii_lowercase();
     if kind == "video" {
         assert!(
-            matches!(mime.as_str(), "video/vp8" | "video/vp9" | "video/h264" | "video/av1"),
+            matches!(
+                mime.as_str(),
+                "video/vp8" | "video/vp9" | "video/h264" | "video/av1"
+            ),
             "video codec {mime}"
         );
     } else {
@@ -65,7 +73,10 @@ struct Server {
 impl Server {
     async fn start() -> Self {
         let manager = WorkerManager::new();
-        let worker = manager.create_worker(WorkerSettings::default()).await.unwrap();
+        let worker = manager
+            .create_worker(WorkerSettings::default())
+            .await
+            .unwrap();
         let router = worker
             .create_router(RouterOptions::new(router_codecs()))
             .await
@@ -82,7 +93,9 @@ impl Server {
             recv_buffer_size: None,
         };
         let webrtc = worker
-            .create_webrtc_server(WebRtcServerOptions::new(WebRtcServerListenInfos::new(listen)))
+            .create_webrtc_server(WebRtcServerOptions::new(WebRtcServerListenInfos::new(
+                listen,
+            )))
             .await
             .unwrap();
         Self {
@@ -129,7 +142,10 @@ fn serve_events(
                         server.connect(WebRtcTransportRemoteParameters { dtls_parameters }),
                     );
                     native
-                        .respond(request, result.map(|()| json!({})).map_err(|e| e.to_string()))
+                        .respond(
+                            request,
+                            result.map(|()| json!({})).map_err(|e| e.to_string()),
+                        )
                         .unwrap();
                 }
                 TransportEvent::Produce {
@@ -194,8 +210,16 @@ async fn native_client_round_trips_media_through_mediasoup() {
     let device = Device::new(&engine).unwrap();
     let caps = serde_json::to_value(server.router.rtp_capabilities()).unwrap();
     device.load(&caps).unwrap();
-    assert!(device.can_produce(gelabber_media_core::MediaKind::Audio).unwrap());
-    assert!(device.can_produce(gelabber_media_core::MediaKind::Video).unwrap());
+    assert!(
+        device
+            .can_produce(gelabber_media_core::MediaKind::Audio)
+            .unwrap()
+    );
+    assert!(
+        device
+            .can_produce(gelabber_media_core::MediaKind::Video)
+            .unwrap()
+    );
     let recv_caps = device.rtp_capabilities().unwrap();
     let recv_codecs: Vec<String> = recv_caps["codecs"]
         .as_array()
@@ -205,7 +229,10 @@ async fn native_client_round_trips_media_through_mediasoup() {
         .collect();
     eprintln!("native receive codecs: {recv_codecs:?}");
     for mime in ["audio/opus", "video/vp8", "video/h264"] {
-        assert!(recv_codecs.iter().any(|c| c == mime), "native can receive {mime}");
+        assert!(
+            recv_codecs.iter().any(|c| c == mime),
+            "native can receive {mime}"
+        );
     }
     // The server parses this exact value in its `capabilities` handler.
     let _: RtpCapabilities = serde_json::from_value(recv_caps.clone()).unwrap();
@@ -228,9 +255,14 @@ async fn native_client_round_trips_media_through_mediasoup() {
 
     let audio = {
         let (send, mic) = (send.clone(), mic.clone());
-        blocking(move || send.produce(&mic, &json!({"codecOptions": {"opusStereo": false, "opusDtx": true}})))
-            .await
-            .unwrap()
+        blocking(move || {
+            send.produce(
+                &mic,
+                &json!({"codecOptions": {"opusStereo": false, "opusDtx": true}}),
+            )
+        })
+        .await
+        .unwrap()
     };
     // Two simulcast layers like the web client (scaleResolutionDownBy 4 and 1).
     let layers = json!([{ "scaleResolutionDownBy": 4 }, { "scaleResolutionDownBy": 1 }]);
@@ -269,13 +301,17 @@ async fn native_client_round_trips_media_through_mediasoup() {
     assert_eq!(audio_server.kind(), MediaKind::Audio);
 
     for (name, producer) in [("H264", &h264_server), ("VP8", &vp8_server)] {
-        wait_for(&format!("{name} RTP at the server"), Duration::from_secs(20), || {
-            let producer = producer.clone();
-            async move {
-                let stats = producer.get_stats().await.unwrap_or_default();
-                stats.iter().any(|s| s.byte_count > 0 && s.score > 0)
-            }
-        })
+        wait_for(
+            &format!("{name} RTP at the server"),
+            Duration::from_secs(20),
+            || {
+                let producer = producer.clone();
+                async move {
+                    let stats = producer.get_stats().await.unwrap_or_default();
+                    stats.iter().any(|s| s.byte_count > 0 && s.score > 0)
+                }
+            },
+        )
         .await;
     }
     // Simulcast layer report (both must eventually send; H264 simulcast relies on
@@ -325,9 +361,9 @@ async fn native_client_round_trips_media_through_mediasoup() {
         consumers.push((server_consumer, native));
     }
     for (server_consumer, native) in &consumers {
-        let mime = serde_json::to_value(&server_consumer.rtp_parameters().codecs[0]).unwrap()
-            ["mimeType"]
-            .clone();
+        let mime =
+            serde_json::to_value(&server_consumer.rtp_parameters().codecs[0]).unwrap()["mimeType"]
+                .clone();
         wait_for(
             &format!("decoded {mime} frames at the native client"),
             Duration::from_secs(20),

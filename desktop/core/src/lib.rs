@@ -58,7 +58,9 @@ fn owned_json(ptr: *mut c_char) -> Result<Value> {
         return Err(last_error());
     }
     // SAFETY: non-null result of a gm_* string function; freed exactly once below.
-    let text = unsafe { CStr::from_ptr(ptr) }.to_string_lossy().into_owned();
+    let text = unsafe { CStr::from_ptr(ptr) }
+        .to_string_lossy()
+        .into_owned();
     unsafe { ffi::gm_string_free(ptr) };
     serde_json::from_str(&text).map_err(|e| Error::Native(format!("invalid JSON from core: {e}")))
 }
@@ -68,7 +70,9 @@ fn borrowed_str(ptr: *const c_char) -> String {
         return String::new();
     }
     // SAFETY: points into a live native object owned by the caller's handle.
-    unsafe { CStr::from_ptr(ptr) }.to_string_lossy().into_owned()
+    unsafe { CStr::from_ptr(ptr) }
+        .to_string_lossy()
+        .into_owned()
 }
 
 fn check(code: i32) -> Result<()> {
@@ -225,7 +229,10 @@ pub enum Direction {
 #[derive(Debug)]
 pub enum TransportEvent {
     /// Run `connect` with these DtlsParameters, then [`Transport::respond`].
-    Connect { request: u64, dtls_parameters: Value },
+    Connect {
+        request: u64,
+        dtls_parameters: Value,
+    },
     /// Run `produce`, then respond with `{"id": producerId}`.
     Produce {
         request: u64,
@@ -404,7 +411,9 @@ impl Transport {
         let ptr = {
             let _guard = self.0.lock.lock().unwrap();
             // SAFETY: live transport and source.
-            unsafe { ffi::gm_transport_produce(self.0.ptr.as_ptr(), source.raw(), options.as_ptr()) }
+            unsafe {
+                ffi::gm_transport_produce(self.0.ptr.as_ptr(), source.raw(), options.as_ptr())
+            }
         };
         let ptr = NonNull::new(ptr).ok_or_else(last_error)?;
         // SAFETY: live producer.
@@ -459,7 +468,9 @@ pub struct Source(Arc<SourceInner>);
 impl Source {
     pub fn microphone(engine: &Engine) -> Result<Self> {
         // SAFETY: live engine.
-        Self::wrap(engine, unsafe { ffi::gm_source_new_microphone(engine.raw()) })
+        Self::wrap(engine, unsafe {
+            ffi::gm_source_new_microphone(engine.raw())
+        })
     }
 
     pub fn test_pattern(engine: &Engine, width: u32, height: u32, fps: u32) -> Result<Self> {
