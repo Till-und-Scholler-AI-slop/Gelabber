@@ -97,7 +97,22 @@ fn set_server(app: AppHandle, server: String) -> Result<(), String> {
     window.navigate(origin).map_err(|e| e.to_string())
 }
 
+/// WebKitGTK's DMA-BUF renderer dies on the NVIDIA driver under Wayland
+/// ("Error 71 (Protocol error) dispatching to Wayland display"). Fall back to
+/// its shared-memory renderer there; an explicit setting by the user wins.
+#[cfg(target_os = "linux")]
+fn webkit_workarounds() {
+    let nvidia = std::path::Path::new("/proc/driver/nvidia/version").exists()
+        || std::path::Path::new("/sys/module/nvidia_drm").exists();
+    if nvidia && std::env::var_os("WEBKIT_DISABLE_DMABUF_RENDERER").is_none() {
+        // SAFETY: called first thing in main, before any other thread exists.
+        unsafe { std::env::set_var("WEBKIT_DISABLE_DMABUF_RENDERER", "1") };
+    }
+}
+
 fn main() {
+    #[cfg(target_os = "linux")]
+    webkit_workarounds();
     // Native media logging (libwebrtc, libmediasoupclient) to stderr.
     if std::env::var_os("GELABBER_MEDIA_LOG").is_some() {
         gelabber_media_core::set_log_level(gelabber_media_core::LogLevel::Info);

@@ -62,6 +62,10 @@ Without one the window shows the bundled setup page, which writes that file.
 Only the configured origin gets the `media` permission set
 (`app/permissions/media.toml`); every page load closes the previous page's
 transports, producers and sources. WebKitGTK needs `libwebkit2gtk-4.1`.
+On the NVIDIA driver the app sets `WEBKIT_DISABLE_DMABUF_RENDERER=1`
+before GTK starts: WebKitGTK's DMA-BUF renderer otherwise fails under Wayland
+with "Error 71 (Protocol error) dispatching to Wayland display". Setting the
+variable yourself (e.g. `=0`) overrides that.
 
 ## Design rules
 
