@@ -20,6 +20,7 @@ import {
   toggleShare,
   useVoice,
 } from "../voice/session.ts";
+import { isDesktopApp } from "../voice/native/bridge.ts";
 import { useMediaSettings } from "../voice/settings.ts";
 import "../voice/room.css";
 
@@ -102,7 +103,11 @@ export function VoiceControls({
       </button>
       <label
         className="voice-share-audio"
-        title="Ton bei der nächsten Bildschirmfreigabe oder Go Live im Browser auswählen"
+        title={
+          isDesktopApp()
+            ? "Ton der in den Einstellungen gewählten Anwendung bei der nächsten Bildschirmfreigabe oder Go Live teilen"
+            : "Ton bei der nächsten Bildschirmfreigabe oder Go Live im Browser auswählen"
+        }
       >
         <input
           type="checkbox"

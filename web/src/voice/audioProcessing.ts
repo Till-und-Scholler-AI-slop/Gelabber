@@ -1,4 +1,6 @@
 import { create } from "zustand";
+import { isDesktopApp } from "./native/bridge.ts";
+import { captureNativeMicrophone } from "./native/capture.ts";
 import {
   micConstraints,
   type AudioProcessingMode,
@@ -347,6 +349,9 @@ export async function captureMicrophone(
   } = { current: () => true, acquired() {}, discarded() {} },
   onState?: (info: ProcessingInfo) => void,
 ): Promise<{ raw: MediaStream; processor: MicProcessor }> {
+  // The desktop app captures and processes natively (same modes).
+  if (isDesktopApp())
+    return captureNativeMicrophone(settings, ownership, onState);
   const unavailable =
     typeof AudioContext === "undefined" ||
     typeof AudioWorkletNode === "undefined" ||

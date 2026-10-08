@@ -19,3 +19,6 @@ vendor/
 *.iml
 .tools/
 deploy/compose/backups/
+
+# TypeScript incremental build state
+*.tsbuildinfo

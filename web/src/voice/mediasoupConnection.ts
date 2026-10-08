@@ -19,6 +19,9 @@ import {
 import { statsEntriesFromReport, type StatsEntry } from "./diagnostics.ts";
 import type { MediaPriority } from "./mediaPriority.ts";
 import { ViewerLayerController } from "./viewerLayers.ts";
+import { isDesktopApp } from "./native/bridge.ts";
+import { createNativeDevice } from "./native/device.ts";
+import { createStream } from "./native/tracks.ts";
 
 export type RtpSenderParameters = {
   encodings: Array<{
@@ -86,9 +89,15 @@ export interface MediaConnection {
   handleEvent(event: MediaEvent): void;
   close(): void;
 }
+/** In the desktop app the native core stands in for the browser's WebRTC. */
 export const createMediaConnection = (
   options: MediaConnectionOptions,
-): MediaConnection => new MediasoupConnection(options);
+): MediaConnection =>
+  new MediasoupConnection(
+    isDesktopApp() && !options.deviceFactory
+      ? { ...options, deviceFactory: createNativeDevice }
+      : options,
+  );
 
 const consumerKey = (source: { consumerId: string; generation: string }) =>
   `${source.consumerId}:${source.generation}`;
@@ -225,11 +234,20 @@ export class MediasoupConnection implements MediaConnection {
       "recv",
     );
     this.live();
-    await this.sdk(
-      () => device.load({ routerRtpCapabilities: capabilities }),
-      "recv",
-    );
-    this.live();
+    // The desktop app's native device holds a handle until closed.
+    const release = () => (device as { close?: () => void }).close?.();
+    try {
+      await this.sdk(
+        () => device.load({ routerRtpCapabilities: capabilities }),
+        "recv",
+        true,
+        release,
+      );
+      this.live();
+    } catch (error) {
+      release();
+      throw error;
+    }
     this.device = device;
     await this.options.request("capabilities", {
       rtp: device.recvRtpCapabilities,
@@ -931,7 +949,7 @@ export class MediasoupConnection implements MediaConnection {
         ...event,
         consumer,
         track: consumer.track,
-        stream: new MediaStream([consumer.track]),
+        stream: createStream([consumer.track]) as MediaStream,
         rtpReceiver: consumer.rtpReceiver,
         layers: { spatial: null, temporal: null },
       };
@@ -1116,6 +1134,10 @@ export class MediasoupConnection implements MediaConnection {
     for (const id of [...this.received.keys()]) this.removeConsumer(id);
     for (const transport of this.ownedTransports) transport.close();
     this.ownedTransports.clear();
+    // The desktop app's native device holds a handle; browser devices have
+    // nothing to release.
+    (this.device as { close?: () => void } | null)?.close?.();
+    this.device = null;
     this.send = null;
     this.recv = null;
     this.queued = [];

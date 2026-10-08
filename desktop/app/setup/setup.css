@@ -1,0 +1,37 @@
+:root {
+  color-scheme: light dark;
+  font-family: system-ui, sans-serif;
+  background: #f8f5f0;
+  color: #17191a;
+}
+@media (prefers-color-scheme: dark) {
+  :root {
+    background: #17191a;
+    color: #f8f5f0;
+  }
+}
+main {
+  max-width: 28rem;
+  margin: 15vh auto 0;
+  padding: 0 1rem;
+}
+form {
+  display: grid;
+  gap: 0.5rem;
+}
+input,
+button {
+  font: inherit;
+  padding: 0.5rem 0.75rem;
+  border-radius: 0.5rem;
+  border: 1px solid #8a8580;
+}
+button {
+  background: #e89b5a;
+  color: #17191a;
+  border-color: transparent;
+  cursor: pointer;
+}
+#error {
+  color: #c0392b;
+}

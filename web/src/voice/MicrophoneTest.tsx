@@ -6,6 +6,8 @@ import {
   type ComparisonState,
   type ComparisonClips,
 } from "./microphoneComparison.ts";
+import { isDesktopApp } from "./native/bridge.ts";
+import { createNativeMicrophoneTest } from "./native/microphoneTest.ts";
 import { useMediaSettings } from "./settings.ts";
 import "./room.css";
 
@@ -28,7 +30,10 @@ export function MicrophoneTest({ onClose }: { onClose: () => void }) {
   useEffect(() => () => session.current?.stop(), []);
   function start() {
     session.current?.stop();
-    session.current = createMicrophoneComparison(useMediaSettings.getState(), {
+    const create = isDesktopApp()
+      ? createNativeMicrophoneTest
+      : createMicrophoneComparison;
+    session.current = create(useMediaSettings.getState(), {
       state: setState,
       levels: setLevels,
       clips: setClips,
@@ -54,9 +59,9 @@ export function MicrophoneTest({ onClose }: { onClose: () => void }) {
         <MicIcon size={36} />
         <p>Nur du und dein Mikrofon.</p>
         <p className="voice-room-muted">
-          Der Test bleibt lokal. Eine Aufnahme startet erst mit deinem Klick,
-          dauert höchstens acht Sekunden und wird beim Löschen oder Schließen
-          entfernt. Es wird nichts übertragen.
+          {isDesktopApp()
+            ? "Der Test bleibt lokal. Es wird nichts aufgenommen oder übertragen."
+            : "Der Test bleibt lokal. Eine Aufnahme startet erst mit deinem Klick, dauert höchstens acht Sekunden und wird beim Löschen oder Schließen entfernt. Es wird nichts übertragen."}
         </p>
         <label htmlFor={`${id}-before`}>Eingangspegel</label>
         <meter id={`${id}-before`} min={0} max={100} value={levels.before}>
@@ -86,7 +91,7 @@ export function MicrophoneTest({ onClose }: { onClose: () => void }) {
               Test starten
             </button>
           )}
-          {state.phase === "active" && (
+          {state.phase === "active" && !isDesktopApp() && (
             <button
               type="button"
               className="voice-room-button"

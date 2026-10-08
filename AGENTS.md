@@ -55,18 +55,22 @@ The subsequent mediasoup implementation remains feature-PR work targeting
 PR protection still apply. Physical iOS/Omarchy acceptance remains deferred.
 This instruction does not authorize main merges, release or deployment.
 
-## Current development line: none yet
+## Current development line: v0.5
 
-`v0.4` is complete and shipped as `v0.4.0`. The next major starts on a new
-protected `v0.5` branch cut from `main`; the active **Version branches** ruleset
-covers `refs/heads/v[0-9]*` and requires PRs with the same review requirements
-as `main`. Until that branch exists, do not start major product work. Do not
-target new feature PRs at `v0.4`. Release a completed line only from `main`
-after its version PR, CI and image publishing have finished.
+`v0.5` was cut from `main` (`v0.4.0` plus the shipped-docs update) on
+2026-10-07 at Silas' request and is protected by the **Version branches**
+ruleset (`refs/heads/v[0-9]*`: PRs required, same review requirements as
+`main`). Major product work for the next line, starting with the native
+desktop client (issue #165), targets `v0.5` through feature PRs. Do not target
+new feature PRs at `v0.4`. Release a completed line only from `main` after its
+version PR, CI and image publishing have finished.
+
+On 2026-10-08 Silas decided to release `v0.5.0` with the Linux desktop app
+(#170); Windows and the remaining steps of #165 follow on the next line.
 
 ## Shipped line: latest published main tag
 
-The latest published release is currently `v0.4.0`. Hotfixes for the shipped
+The latest published release is currently `v0.5.0`. Hotfixes for the shipped
 minor go to `main`, followed by a sync PR to the current development branch once
 one exists; a feature-branch version is not a release.
 
@@ -75,7 +79,9 @@ account themes, configurable stream quality, fullscreen viewing, and separate
 screen/Go Live audio, alongside existing permissions, chat, direct messages,
 screen share, Go Live and moderation. Configurable join/leave and mute/deafen
 sounds, unread state, search, drafts, reactions, local RNNoise audio processing
-and the mediasoup media backend shipped with `v0.4.0`.
+and the mediasoup media backend shipped with `v0.4.0`. The native Linux desktop
+app (Tauri shell, native libwebrtc/libmediasoupclient media core, pacman
+repository) shipped with `v0.5.0`.
 
 Hotfix work for the shipped line stays on `main`; future major product work uses
 its own protected version branch.

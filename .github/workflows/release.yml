@@ -21,7 +21,8 @@ concurrency:
   cancel-in-progress: false
 
 permissions:
-  actions: read
+  # write: dispatches the desktop workflow for the new release.
+  actions: write
   contents: write
   packages: write
 
@@ -61,3 +62,11 @@ jobs:
           else
             python3 .github/workflows/scripts/image_set.py release
           fi
+      # A release created with the workflow token raises no release event, so
+      # the desktop app (Linux tarball, pacman repository) is dispatched here.
+      - name: Desktop app for the release
+        if: ${{ !inputs.refresh_latest_only }}
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          RELEASE_TAG: ${{ inputs.tag }}
+        run: gh workflow run desktop-native.yml --repo "$GITHUB_REPOSITORY" --ref "$RELEASE_TAG" -f release_tag="$RELEASE_TAG"

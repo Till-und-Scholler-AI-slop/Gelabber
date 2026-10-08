@@ -1,0 +1,21 @@
+[package]
+name = "gelabber-media-core"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+description = "Gelabber desktop media core: safe Rust over libmediasoupclient + libwebrtc"
+publish = false
+# Lets dependents read the library directory (DEP_GELABBER_MEDIA_LIB_DIR).
+links = "gelabber_media"
+
+[dependencies]
+serde_json = "1.0.151"
+thiserror = "2"
+
+[build-dependencies]
+cmake = "0.1.54"
+
+[dev-dependencies]
+mediasoup = "=0.29.0"
+tokio = { version = "1.53.1", features = ["rt-multi-thread", "macros", "time"] }
