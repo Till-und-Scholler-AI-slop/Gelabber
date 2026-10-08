@@ -56,14 +56,15 @@ build_one() {
   local target
   target="$(cd "$work" && bash -c 'source ./PKGBUILD; echo "$pkgname-$pkgver-$pkgrel.tar.gz"')"
   [ "$target" = "$name" ] || as_builder cp "$work/$name" "$work/$target"
-  as_builder mkdir -p "$work/pkg"
-  (cd "$work" && as_builder env GPGKEY="$fpr" PKGDEST="$work/pkg" makepkg --sign --nodeps --noconfirm)
+  # The package lands next to the PKGBUILD (makepkg rejects a PKGDEST
+  # elsewhere under fakeroot in the CI container).
+  (cd "$work" && as_builder env GPGKEY="$fpr" PKGDEST="$work" makepkg --sign --nodeps --noconfirm)
   mkdir -p "$out/x86_64"
-  cp "$work"/pkg/*.pkg.tar.zst "$work"/pkg/*.pkg.tar.zst.sig "$out/x86_64/"
+  cp "$work"/*.pkg.tar.zst "$work"/*.pkg.tar.zst.sig "$out/x86_64/"
   cp "$work/PKGBUILD" "$work/.SRCINFO" "$out/"
   chown -R "$builder" "$out"
   local pkg
-  pkg="$(ls "$work"/pkg/*.pkg.tar.zst)"
+  pkg="$(ls "$work"/*.pkg.tar.zst)"
   (cd "$out/x86_64" && as_builder repo-add --sign --key "$fpr" gelabber.db.tar.zst "$(basename "$pkg")")
   # Static hosting serves files, not symlinks.
   for link in "$out"/x86_64/gelabber.db "$out"/x86_64/gelabber.files \
