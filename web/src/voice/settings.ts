@@ -1,10 +1,13 @@
 // Voice/video + in-app notification prefs. Persisted per browser.
 // Capture quality and microphone processing are independent of bandwidth.
 // No application bitrate limit unless the user explicitly selects economy/custom.
-// Capture devices are the browser's own list.
+// Capture devices are the browser's own list (the native engine's in the
+// desktop app).
 
 import { create } from "zustand";
 import { createJSONStorage, persist } from "zustand/middleware";
+import { isDesktopApp } from "./native/bridge.ts";
+import { listNativeDevices } from "./native/capture.ts";
 
 /** Explicit economy presets retained for migration; never applied by default. */
 export const AUDIO_QUALITY = {
@@ -130,6 +133,9 @@ export type MediaSettings = {
   inputGain: number;
   /** Request browser-selected tab/window/system audio on the next capture. */
   shareSourceAudio: boolean;
+  /** Desktop app: application whose sound is shared ("" = every application
+   * but Gelabber). The browser picks the source in its own dialog. */
+  sourceAudioApp: string;
   sourceAudioVolume: number;
   sourceAudioMuted: boolean;
   quality: AudioQuality;
@@ -158,6 +164,7 @@ export const DEFAULT_MEDIA_SETTINGS: MediaSettings = {
   outputVolume: 1,
   inputGain: 1,
   shareSourceAudio: false,
+  sourceAudioApp: "",
   sourceAudioVolume: 1,
   sourceAudioMuted: false,
   quality: "normal",
@@ -253,6 +260,7 @@ function snapshot(state: MediaSettingsState): MediaSettings {
     outputVolume: state.outputVolume,
     inputGain: state.inputGain,
     shareSourceAudio: state.shareSourceAudio,
+    sourceAudioApp: state.sourceAudioApp,
     sourceAudioVolume: state.sourceAudioVolume,
     sourceAudioMuted: state.sourceAudioMuted,
     quality: state.quality,
@@ -311,6 +319,7 @@ export const useMediaSettings = create<MediaSettingsState>()(
               ? clampGain(partial.inputGain)
               : prev.inputGain,
           shareSourceAudio: partial.shareSourceAudio ?? prev.shareSourceAudio,
+          sourceAudioApp: partial.sourceAudioApp ?? prev.sourceAudioApp,
           sourceAudioVolume:
             partial.sourceAudioVolume !== undefined
               ? clampVolume(partial.sourceAudioVolume)
@@ -393,6 +402,10 @@ export const useMediaSettings = create<MediaSettingsState>()(
           ),
           videoUploadLimit: clampVideoUploadLimit(stored.videoUploadLimit),
           shareSourceAudio: stored.shareSourceAudio === true,
+          sourceAudioApp:
+            typeof stored.sourceAudioApp === "string"
+              ? stored.sourceAudioApp
+              : "",
           sourceAudioVolume: clampVolume(stored.sourceAudioVolume ?? 1),
           sourceAudioMuted: stored.sourceAudioMuted === true,
           cameraProfileApply: current.cameraProfileApply,
@@ -641,6 +654,7 @@ export type DeviceList = {
 
 export async function listMediaDevices(): Promise<DeviceList> {
   const empty: DeviceList = { audioinput: [], audiooutput: [], videoinput: [] };
+  if (isDesktopApp()) return listNativeDevices();
   if (
     typeof navigator === "undefined" ||
     !navigator.mediaDevices?.enumerateDevices

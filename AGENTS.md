@@ -55,14 +55,15 @@ The subsequent mediasoup implementation remains feature-PR work targeting
 PR protection still apply. Physical iOS/Omarchy acceptance remains deferred.
 This instruction does not authorize main merges, release or deployment.
 
-## Current development line: none yet
+## Current development line: v0.5
 
-`v0.4` is complete and shipped as `v0.4.0`. The next major starts on a new
-protected `v0.5` branch cut from `main`; the active **Version branches** ruleset
-covers `refs/heads/v[0-9]*` and requires PRs with the same review requirements
-as `main`. Until that branch exists, do not start major product work. Do not
-target new feature PRs at `v0.4`. Release a completed line only from `main`
-after its version PR, CI and image publishing have finished.
+`v0.5` was cut from `main` (`v0.4.0` plus the shipped-docs update) on
+2026-10-07 at Silas' request and is protected by the **Version branches**
+ruleset (`refs/heads/v[0-9]*`: PRs required, same review requirements as
+`main`). Major product work for the next line, starting with the native
+desktop client (issue #165), targets `v0.5` through feature PRs. Do not target
+new feature PRs at `v0.4`. Release a completed line only from `main` after its
+version PR, CI and image publishing have finished.
 
 ## Shipped line: latest published main tag
 

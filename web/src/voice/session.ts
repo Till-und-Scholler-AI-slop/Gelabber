@@ -45,6 +45,9 @@ import {
   MediaError,
 } from "./media.ts";
 import { MediaPeer, MediaRetry } from "./mediaPeer.ts";
+import { isDesktopApp } from "./native/bridge.ts";
+import { nativeGetDisplayMedia, nativeGetUserMedia } from "./native/capture.ts";
+import { createAudioOutput, createStream } from "./native/tracks.ts";
 import {
   createMediaConnection,
   type MediaConnection,
@@ -355,19 +358,25 @@ function currentUserId(): string | null {
 async function defaultGetUserMedia(
   constraints: MediaStreamConstraints,
 ): Promise<MediaStream> {
+  if (isDesktopApp()) return nativeGetUserMedia(constraints);
   return navigator.mediaDevices.getUserMedia(constraints);
 }
 
 async function defaultGetDisplayMedia(
   constraints: MediaStreamConstraints,
 ): Promise<MediaStream> {
+  if (isDesktopApp())
+    return nativeGetDisplayMedia(
+      constraints,
+      useMediaSettings.getState().sourceAudioApp,
+    );
   return navigator.mediaDevices.getDisplayMedia(constraints);
 }
 
 function defaultAttachRemote(stream: MediaStream): void {
-  if (typeof Audio === "undefined") return;
   if (!remoteAudio) {
-    remoteAudio = new Audio();
+    remoteAudio = createAudioOutput();
+    if (!remoteAudio) return;
     remoteAudio.autoplay = true;
     remoteAudio.setAttribute("playsinline", "true");
   }
@@ -3135,7 +3144,7 @@ function attachSourceAudio(
   if (
     !allowed ||
     parsed.userId === currentUserId() ||
-    typeof Audio === "undefined"
+    (typeof Audio === "undefined" && !isDesktopApp())
   )
     return true;
   if (sameSource) return true;
@@ -3148,12 +3157,11 @@ function attachSourceAudio(
     )
       receivedSourceAudio.delete(previous);
   }
-  const el = new Audio();
+  const el = createAudioOutput();
+  if (!el) return true;
   el.autoplay = true;
   el.setAttribute("playsinline", "true");
-  el.srcObject =
-    stream ??
-    (typeof MediaStream === "undefined" ? null : new MediaStream([track]));
+  el.srcObject = stream ?? createStream([track]);
   el.setAttribute("data-source-audio", kind);
   el.setAttribute("data-publisher", parsed.userId);
   el.setAttribute("data-connection", role);
@@ -3194,11 +3202,11 @@ function attachIncoming(track: MediaStreamTrack, stream?: MediaStream): void {
     if (attachSourceAudio(track, stream, "voice")) return;
     forgetSourceAudioReceiver(track);
     receivedAudioSources.set(track, { role: "voice", source: "voice" });
-    if (typeof MediaStream === "undefined") {
+    if (!remoteMix) remoteMix = createStream();
+    if (!remoteMix) {
       if (stream) (deps?.attachRemote ?? defaultAttachRemote)(stream);
       return;
     }
-    if (!remoteMix) remoteMix = new MediaStream();
     if (!remoteMix.getTracks().includes(track)) {
       remoteMix.addTrack(track);
     }
@@ -3211,7 +3219,8 @@ function attachIncoming(track: MediaStreamTrack, stream?: MediaStream): void {
     return;
   }
   logVoice("info", "track", { track: parsed.k, peer: parsed.userId });
-  const attached = stream ?? new MediaStream([track]);
+  const attached = stream ?? createStream([track]);
+  if (!attached) return;
   noteReceived(parsed.userId, parsed.k, attached, track);
   const state = useVoice.getState();
   if (
@@ -3506,17 +3515,14 @@ function attachWatchIncoming(
     if (attachSourceAudio(track, stream, "watch")) return;
     forgetSourceAudioReceiver(track);
     receivedAudioSources.set(track, { role: "watch", source: "voice" });
-    if (typeof Audio === "undefined") return;
     if (watchAudio.has(track)) return;
-    const el = new Audio();
+    const el = createAudioOutput();
+    if (!el) return;
     el.autoplay = true;
     el.setAttribute("playsinline", "true");
     // One element per track: a MediaStream's multiple audio tracks must not
     // compete for an HTML media element's single selected audio track.
-    el.srcObject =
-      typeof MediaStream === "undefined"
-        ? (stream ?? null)
-        : new MediaStream([track]);
+    el.srcObject = createStream([track]) ?? stream ?? null;
     watchAudio.set(track, el);
     track.addEventListener("ended", () => {
       if (watchAudio.get(track) !== el) return;
@@ -3531,9 +3537,9 @@ function attachWatchIncoming(
     return;
   }
   const parsed = parseIncomingVideo(track);
-  const attached = stream ?? new MediaStream([track]);
+  const attached = stream ?? createStream([track]);
   const state = useVoice.getState();
-  if (!parsed) {
+  if (!parsed || !attached) {
     // An untagged track cannot identify the selected publisher.
     return;
   }

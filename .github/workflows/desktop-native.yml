@@ -1,0 +1,441 @@
+# Desktop client native media core (libwebrtc + libmediasoupclient).
+# Build spike for issue #165: reproducible libwebrtc build, core library size,
+# and a loopback call against the server's mediasoup version.
+name: Desktop native core
+
+on:
+  workflow_dispatch:
+  pull_request:
+    paths:
+      - desktop/**
+      - .github/workflows/desktop-native.yml
+  push:
+    branches: [main, "v[0-9]*"]
+    paths:
+      - desktop/**
+      - .github/workflows/desktop-native.yml
+  # Attaches the Linux app to the release (pre-releases too) and, once
+  # enabled, publishes the pacman repository; see desktop/packaging/arch.
+  release:
+    types: [published]
+
+permissions:
+  contents: read
+
+env:
+  CARGO_TERM_COLOR: always
+
+jobs:
+  libwebrtc-linux:
+    name: libwebrtc (Linux x64)
+    # Never cancel: a libwebrtc build takes hours and is cached for later runs.
+    concurrency:
+      group: desktop-libwebrtc-linux-${{ github.ref }}
+      cancel-in-progress: false
+    runs-on: ubuntu-24.04
+    timeout-minutes: 330
+    outputs:
+      key: ${{ steps.key.outputs.key }}
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v7
+
+      - name: Cache key
+        id: key
+        run: |
+          echo "key=libwebrtc-linux-x64-${{ hashFiles('desktop/native/libwebrtc.env', 'desktop/native/scripts/build-libwebrtc-linux.sh', 'desktop/native/patches/**') }}" >> "$GITHUB_OUTPUT"
+
+      - name: Restore libwebrtc package
+        id: cache
+        uses: actions/cache/restore@v4
+        with:
+          path: /mnt/libwebrtc-package
+          key: ${{ steps.key.outputs.key }}
+          lookup-only: true
+
+      - name: Free disk space
+        if: steps.cache.outputs.cache-hit != 'true'
+        run: |
+          set -euo pipefail
+          df -h / /mnt
+          sudo rm -rf /usr/share/dotnet /usr/local/lib/android /opt/ghc /opt/hostedtoolcache/CodeQL /usr/local/share/boost
+          sudo docker image prune --all --force >/dev/null
+          sudo mkdir -p /mnt/webrtc /mnt/libwebrtc-package
+          sudo chown -R "$USER" /mnt/webrtc /mnt/libwebrtc-package
+          df -h / /mnt
+
+      - name: Build libwebrtc
+        if: steps.cache.outputs.cache-hit != 'true'
+        run: |
+          set -euo pipefail
+          start=$SECONDS
+          desktop/native/scripts/build-libwebrtc-linux.sh /mnt/webrtc /mnt/libwebrtc-package
+          minutes=$(( (SECONDS - start) / 60 ))
+          {
+            echo "### libwebrtc (Linux x64)"
+            echo
+            echo "Build time: ${minutes} min"
+            echo
+            echo '```'
+            cat /mnt/libwebrtc-package/VERSIONS
+            du -sh /mnt/libwebrtc-package/lib/libwebrtc.a /mnt/libwebrtc-package/include /mnt/libwebrtc-package/toolchain /mnt/libwebrtc-package/sysroot
+            du -sh /mnt/webrtc
+            echo '```'
+          } >> "$GITHUB_STEP_SUMMARY"
+          df -h / /mnt
+
+      - name: Save libwebrtc package
+        if: steps.cache.outputs.cache-hit != 'true'
+        uses: actions/cache/save@v4
+        with:
+          path: /mnt/libwebrtc-package
+          key: ${{ steps.key.outputs.key }}
+
+  libwebrtc-windows:
+    name: libwebrtc (Windows x64)
+    # Never cancel: a libwebrtc build takes hours and is cached for later runs.
+    concurrency:
+      group: desktop-libwebrtc-windows-${{ github.ref }}
+      cancel-in-progress: false
+    runs-on: windows-2022
+    timeout-minutes: 330
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v7
+
+      - name: Cache key
+        id: key
+        shell: bash
+        run: |
+          echo "key=libwebrtc-windows-x64-${{ hashFiles('desktop/native/libwebrtc.env', 'desktop/native/scripts/build-libwebrtc-windows.ps1', 'desktop/native/patches/**') }}" >> "$GITHUB_OUTPUT"
+
+      - name: Restore libwebrtc package
+        id: cache
+        uses: actions/cache/restore@v4
+        with:
+          path: C:\libwebrtc-package
+          key: ${{ steps.key.outputs.key }}
+          lookup-only: true
+
+      - name: Python
+        if: steps.cache.outputs.cache-hit != 'true'
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+
+      - name: Build libwebrtc
+        if: steps.cache.outputs.cache-hit != 'true'
+        shell: pwsh
+        run: |
+          git config --global core.longpaths true
+          $start = Get-Date
+          ./desktop/native/scripts/build-libwebrtc-windows.ps1 -Work C:\webrtc -Package C:\libwebrtc-package
+          $minutes = [int]((Get-Date) - $start).TotalMinutes
+          $lib = Get-Item C:\libwebrtc-package\lib\webrtc.lib
+          @(
+            "### libwebrtc (Windows x64)", "",
+            "Build time: $minutes min", "",
+            "webrtc.lib: $([math]::Round($lib.Length / 1MB)) MiB"
+          ) | Add-Content $env:GITHUB_STEP_SUMMARY
+
+      - name: Save libwebrtc package
+        if: steps.cache.outputs.cache-hit != 'true'
+        uses: actions/cache/save@v4
+        with:
+          path: C:\libwebrtc-package
+          key: ${{ steps.key.outputs.key }}
+
+  core-linux:
+    name: Native core (Linux x64)
+    needs: libwebrtc-linux
+    runs-on: ubuntu-24.04
+    timeout-minutes: 60
+    env:
+      GELABBER_LIBWEBRTC_DIR: /mnt/libwebrtc-package
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v7
+
+      - name: Prepare package directory
+        run: sudo mkdir -p /mnt/libwebrtc-package && sudo chown -R "$USER" /mnt/libwebrtc-package
+
+      - name: Restore libwebrtc package
+        uses: actions/cache/restore@v4
+        with:
+          path: /mnt/libwebrtc-package
+          key: ${{ needs.libwebrtc-linux.outputs.key }}
+          fail-on-cache-miss: true
+
+      # WebKitGTK for the Tauri app; Xvfb for its smoke test.
+      - name: Build tools
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y --no-install-recommends ninja-build python3-venv \
+            libwebkit2gtk-4.1-dev libsoup-3.0-dev librsvg2-dev xvfb xauth \
+            mesa-vulkan-drivers imagemagick gdb
+
+      - name: Rust toolchain
+        uses: dtolnay/rust-toolchain@1.98.1
+        with:
+          components: rustfmt, clippy
+
+      # The mediasoup worker (dev-dependency) takes minutes to build.
+      - name: Rust cache
+        uses: Swatinem/rust-cache@v2
+        with:
+          workspaces: desktop
+
+      - name: Format
+        run: cargo fmt --manifest-path desktop/Cargo.toml --all -- --check
+
+      - name: Clippy
+        run: cargo clippy --manifest-path desktop/Cargo.toml --all-targets -- -D warnings
+
+      # GStreamer and the test desktop (PipeWire, pipewire-pulse,
+      # xdg-desktop-portal). x264enc
+      # stands in for VA-API/NVENC, which runners lack, to test the GStreamer
+      # encoder path itself.
+      - name: Test packages
+        run: |
+          sudo apt-get install -y --no-install-recommends pipewire wireplumber pipewire-pulse \
+            pulseaudio-utils xdg-desktop-portal \
+            libpipewire-0.3-dev gstreamer1.0-plugins-base gstreamer1.0-plugins-bad \
+            gstreamer1.0-plugins-ugly python3-gi
+
+      - name: Loopback call against mediasoup 0.29
+        run: cargo test --manifest-path desktop/Cargo.toml -- --nocapture --test-threads=1
+
+      - name: Loopback call with the GStreamer H264 encoder
+        env:
+          GELABBER_H264_ENCODER: x264enc
+          GELABBER_EXPECT_ENCODER: GStreamer x264enc
+          GELABBER_MEDIA_LOG: "1"
+        run: cargo test --manifest-path desktop/Cargo.toml --test mediasoup_loopback -- --nocapture
+
+      # Real xdg-desktop-portal frontend and PipeWire, with a test backend
+      # whose monitor is a shared-memory test stream (no compositor or GPU here).
+      - name: Screen capture through the ScreenCast portal
+        timeout-minutes: 15
+        env:
+          GELABBER_TEST_SCREEN: "1"
+          GELABBER_MEDIA_LOG: "1"
+          GELABBER_H264_ENCODER: x264enc
+          GELABBER_EXPECT_ENCODER: GStreamer x264enc
+        run: |
+          desktop/native/scripts/fake-desktop-session.sh \
+            cargo test --manifest-path desktop/Cargo.toml --test screen_capture -- --nocapture
+
+      # libwebrtc's PulseAudio device module on pipewire-pulse: white noise
+      # from a null sink's monitor as the microphone, another null sink as
+      # the speakers. Covers device selection, the three processing modes
+      # (RNNoise included), Opus through mediasoup and playout.
+      - name: Voice through PulseAudio devices
+        id: voice
+        timeout-minutes: 10
+        env:
+          GELABBER_TEST_AUDIO: "1"
+          GELABBER_MEDIA_LOG: "1"
+        run: |
+          desktop/native/scripts/fake-desktop-session.sh \
+            cargo test --manifest-path desktop/Cargo.toml --test voice -- --nocapture
+
+      # A native abort kills the test without a Rust backtrace.
+      - name: Voice test backtrace
+        if: failure() && steps.voice.outcome == 'failure'
+        timeout-minutes: 10
+        env:
+          GELABBER_TEST_AUDIO: "1"
+          CARGO_TARGET_X86_64_UNKNOWN_LINUX_GNU_RUNNER: ${{ github.workspace }}/desktop/native/scripts/gdb-backtrace.sh
+        run: |
+          desktop/native/scripts/fake-desktop-session.sh \
+            cargo test --manifest-path desktop/Cargo.toml --test voice -- --nocapture || true
+
+      # The Tauri app on a stand-in server origin: the page must reach the
+      # media commands through IPC (real audio devices from the test
+      # session) and must not reach the setup page's command.
+      - name: Desktop app smoke test
+        timeout-minutes: 10
+        run: |
+          cargo build --manifest-path desktop/Cargo.toml -p gelabber-desktop
+          abi="$(sed -n 's/^#define GM_ABI_VERSION \([0-9]*\)$/\1/p' desktop/native/include/gelabber_media.h)"
+          desktop/native/scripts/fake-desktop-session.sh \
+            desktop/app/scripts/smoke.sh desktop/target/debug/gelabber-desktop "$abi"
+
+      # Software Vulkan (lavapipe) under Xvfb; the screenshot checks colors.
+      - name: Native video viewer
+        timeout-minutes: 10
+        run: xvfb-run -a cargo test --manifest-path desktop/Cargo.toml -p gelabber-desktop -- --ignored viewer --nocapture
+
+      # Test build for real desktops; the core comes from the steps above.
+      - name: Package the app
+        run: |
+          set -euo pipefail
+          # Absolute: cargo runs rustc from the workspace, not from here.
+          lib="$(realpath "$(find desktop/target -name libgelabber_media.so -path '*/out/build/*' | head -n1)")"
+          test -f "$lib"
+          GELABBER_MEDIA_LIB_DIR="$(dirname "$lib")" \
+            cargo build --release --manifest-path desktop/Cargo.toml -p gelabber-desktop
+          pkg=gelabber-desktop-linux-x64
+          mkdir -p "$pkg"
+          strip --strip-unneeded -o "$pkg/gelabber-desktop" desktop/target/release/gelabber-desktop
+          strip --strip-unneeded -o "$pkg/libgelabber_media.so" "$lib"
+          cp desktop/app/package/README.txt "$pkg/"
+          cp desktop/packaging/arch/gelabber-desktop.desktop desktop/app/icons/icon.png "$pkg/"
+          tar -czf "$pkg.tar.gz" "$pkg"
+
+      - name: Upload the app
+        uses: actions/upload-artifact@v4
+        with:
+          name: gelabber-desktop-linux-x64
+          path: gelabber-desktop-linux-x64.tar.gz
+          retention-days: 14
+
+      - name: Check and measure the core library
+        run: |
+          set -euo pipefail
+          # Absolute: cargo runs rustc from the workspace, not from here.
+          lib="$(realpath "$(find desktop/target -name libgelabber_media.so -path '*/out/build/*' | head -n1)")"
+          test -f "$lib"
+          test -n "$lib"
+          echo "Dynamic dependencies:"
+          readelf -d "$lib" | grep NEEDED | tee /tmp/needed.txt
+          # Chromium's libc++ is linked in and hidden; no system C++ runtime.
+          if grep -E 'libstdc\+\+|libc\+\+' /tmp/needed.txt; then
+            echo "core must not depend on a shared C++ runtime"; exit 1
+          fi
+          exported="$(nm -D --defined-only "$lib" | awk '{print $3}' | sort)"
+          echo "$exported"
+          if echo "$exported" | grep -v '^gm_'; then
+            echo "only gm_* symbols may be exported"; exit 1
+          fi
+          stripped="$(mktemp)"
+          strip --strip-unneeded -o "$stripped" "$lib"
+          {
+            echo "### Native core (Linux x64)"
+            echo
+            echo "| file | size |"
+            echo "|---|---|"
+            echo "| libgelabber_media.so | $(du -h "$lib" | cut -f1) |"
+            echo "| libgelabber_media.so (stripped) | $(du -h "$stripped" | cut -f1) |"
+            echo "| gzip (stripped) | $(gzip -9 -c "$stripped" | wc -c | numfmt --to=iec) |"
+            echo
+            echo '```'
+            cat /tmp/needed.txt
+            echo '```'
+          } | tee -a "$GITHUB_STEP_SUMMARY"
+
+  # The pacman repository (Arch/Omarchy): package, signed database, and a
+  # user's install, upgrade and removal against it. Publishing is separate.
+  arch-repo:
+    name: Arch package and repository
+    needs: core-linux
+    runs-on: ubuntu-24.04
+    container: archlinux:base-devel
+    timeout-minutes: 30
+    env:
+      # Releases sign with the repository key; everything else with a
+      # throwaway key that only this job trusts.
+      ARCH_REPO_GPG_KEY: ${{ github.event_name == 'release' && secrets.ARCH_REPO_GPG_KEY || '' }}
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v7
+
+      - name: Download the app
+        uses: actions/download-artifact@v4
+        with:
+          name: gelabber-desktop-linux-x64
+
+      - name: Check PKGBUILD and .SRCINFO
+        run: |
+          pacman -Syu --noconfirm --needed git
+          useradd -m builder
+          cp -r desktop/packaging/arch /tmp/arch && chown -R builder /tmp/arch
+          cd /tmp/arch
+          sudo -u builder makepkg --printsrcinfo | diff -u .SRCINFO -
+
+      - name: Build package and repository
+        env:
+          TAG: ${{ github.event.release.tag_name }}
+          PUBLISH: ${{ vars.ARCH_REPO_PUBLISH }}
+        run: |
+          set -euo pipefail
+          if [ -n "$TAG" ]; then
+            if [ "$PUBLISH" = true ] && [ -z "$ARCH_REPO_GPG_KEY" ]; then
+              echo "ARCH_REPO_PUBLISH is on but the ARCH_REPO_GPG_KEY secret is missing"; exit 1
+            fi
+            version="$TAG"
+            url="https://github.com/${GITHUB_REPOSITORY}/releases/download/${TAG}/gelabber-desktop-linux-x64.tar.gz"
+          else
+            # Test builds: the workspace version plus the run number.
+            version="$(sed -n 's/^version = "\(.*\)"$/\1/p' desktop/Cargo.toml | head -n1).r${GITHUB_RUN_NUMBER}"
+            url=""
+          fi
+          desktop/packaging/arch/repo.sh build "$version" gelabber-desktop-linux-x64.tar.gz site $url
+          cp desktop/packaging/arch/README.md site/README.md
+
+      - name: Install, upgrade and remove like a user
+        run: desktop/packaging/arch/repo.sh test site gelabber-desktop-linux-x64.tar.gz
+
+      # The repository as built before the upgrade test added a pkgrel 2.
+      - name: Rebuild the repository for upload
+        if: github.event_name == 'release'
+        env:
+          TAG: ${{ github.event.release.tag_name }}
+        run: |
+          rm -rf site
+          desktop/packaging/arch/repo.sh build "$TAG" gelabber-desktop-linux-x64.tar.gz site \
+            "https://github.com/${GITHUB_REPOSITORY}/releases/download/${TAG}/gelabber-desktop-linux-x64.tar.gz"
+          cp desktop/packaging/arch/README.md site/README.md
+
+      - name: Upload the repository
+        uses: actions/upload-artifact@v4
+        with:
+          name: arch-repo
+          path: site
+          retention-days: 14
+
+  # Release only: the app tarball becomes a release asset, which the
+  # PKGBUILD downloads.
+  release-asset:
+    name: Attach the Linux app to the release
+    if: github.event_name == 'release'
+    needs: arch-repo
+    runs-on: ubuntu-24.04
+    permissions:
+      contents: write
+    steps:
+      - name: Download the app
+        uses: actions/download-artifact@v4
+        with:
+          name: gelabber-desktop-linux-x64
+      - name: Upload to the release
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          TAG: ${{ github.event.release.tag_name }}
+        run: gh release upload "$TAG" gelabber-desktop-linux-x64.tar.gz --clobber --repo "$GITHUB_REPOSITORY"
+
+  # Public: the repository on GitHub Pages. Off until the repository
+  # variable ARCH_REPO_PUBLISH is "true", and the github-pages environment
+  # should require an approval (desktop/packaging/arch/README.md).
+  arch-repo-publish:
+    name: Publish the pacman repository
+    if: github.event_name == 'release' && vars.ARCH_REPO_PUBLISH == 'true'
+    needs: [arch-repo, release-asset]
+    runs-on: ubuntu-24.04
+    permissions:
+      pages: write
+      id-token: write
+    environment:
+      name: github-pages
+      url: ${{ steps.deploy.outputs.page_url }}
+    steps:
+      - name: Download the repository
+        uses: actions/download-artifact@v4
+        with:
+          name: arch-repo
+          path: site
+      - uses: actions/upload-pages-artifact@v3
+        with:
+          path: site
+      - id: deploy
+        uses: actions/deploy-pages@v4

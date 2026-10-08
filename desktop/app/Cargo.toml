@@ -1,0 +1,22 @@
+[package]
+name = "gelabber-desktop"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+description = "Gelabber desktop client: Tauri window on the server origin plus the native media core"
+publish = false
+
+[dependencies]
+gelabber-media-core = { path = "../core" }
+serde = { version = "1", features = ["derive"] }
+serde_json = "1.0.151"
+tauri = { version = "2.12.1", features = [] }
+url = "2"
+# Native video viewer: its own window and GPU renderer next to the webview.
+pollster = "0.4"
+wgpu = "30"
+winit = "0.30"
+
+[build-dependencies]
+tauri-build = { version = "2", features = [] }
