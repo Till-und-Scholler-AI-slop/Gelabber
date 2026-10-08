@@ -59,7 +59,8 @@ always holds only the newest release.
 - `.github/workflows/desktop-native.yml`:
   - every run: job "Arch package and repository" builds with a throwaway
     key and runs the test; the repository is the `arch-repo` artifact.
-  - on a published GitHub release (pre-releases included): attaches
+  - on a published GitHub release (pre-releases included; releases made by
+    `release.yml` dispatch this workflow on their tag instead): attaches
     `gelabber-desktop-linux-x64.tar.gz` to the release, builds the
     repository with the real key, and, only if publishing is on, deploys it
     to GitHub Pages.

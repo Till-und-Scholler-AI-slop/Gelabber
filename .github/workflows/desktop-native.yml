@@ -5,6 +5,11 @@ name: Desktop native core
 
 on:
   workflow_dispatch:
+    inputs:
+      release_tag:
+        description: Published release to attach the app to and build the pacman repository for (run on that tag)
+        required: false
+        default: ""
   pull_request:
     paths:
       - desktop/**
@@ -16,6 +21,8 @@ on:
       - .github/workflows/desktop-native.yml
   # Attaches the Linux app to the release (pre-releases too) and, once
   # enabled, publishes the pacman repository; see desktop/packaging/arch.
+  # Releases made by release.yml use the workflow token, which triggers no
+  # release event; it dispatches this workflow with release_tag instead.
   release:
     types: [published]
 
@@ -24,6 +31,7 @@ permissions:
 
 env:
   CARGO_TERM_COLOR: always
+  RELEASE_TAG: ${{ github.event.release.tag_name || inputs.release_tag || '' }}
 
 jobs:
   libwebrtc-linux:
@@ -335,7 +343,7 @@ jobs:
     env:
       # Releases sign with the repository key; everything else with a
       # throwaway key that only this job trusts.
-      ARCH_REPO_GPG_KEY: ${{ github.event_name == 'release' && secrets.ARCH_REPO_GPG_KEY || '' }}
+      ARCH_REPO_GPG_KEY: ${{ (github.event_name == 'release' || (github.event_name == 'workflow_dispatch' && inputs.release_tag != '')) && secrets.ARCH_REPO_GPG_KEY || '' }}
     steps:
       - name: Checkout
         uses: actions/checkout@v7
@@ -355,11 +363,15 @@ jobs:
 
       - name: Build package and repository
         env:
-          TAG: ${{ github.event.release.tag_name }}
+          TAG: ${{ env.RELEASE_TAG }}
           PUBLISH: ${{ vars.ARCH_REPO_PUBLISH }}
         run: |
           set -euo pipefail
           if [ -n "$TAG" ]; then
+            # The package must be built from the released source.
+            if [ "$GITHUB_REF" != "refs/tags/$TAG" ]; then
+              echo "release $TAG must be built from its tag, not $GITHUB_REF"; exit 1
+            fi
             if [ "$PUBLISH" = true ] && [ -z "$ARCH_REPO_GPG_KEY" ]; then
               echo "ARCH_REPO_PUBLISH is on but the ARCH_REPO_GPG_KEY secret is missing"; exit 1
             fi
@@ -378,9 +390,9 @@ jobs:
 
       # The repository as built before the upgrade test added a pkgrel 2.
       - name: Rebuild the repository for upload
-        if: github.event_name == 'release'
+        if: github.event_name == 'release' || (github.event_name == 'workflow_dispatch' && inputs.release_tag != '')
         env:
-          TAG: ${{ github.event.release.tag_name }}
+          TAG: ${{ env.RELEASE_TAG }}
         run: |
           rm -rf site
           desktop/packaging/arch/repo.sh build "$TAG" gelabber-desktop-linux-x64.tar.gz site \
@@ -398,7 +410,7 @@ jobs:
   # PKGBUILD downloads.
   release-asset:
     name: Attach the Linux app to the release
-    if: github.event_name == 'release'
+    if: github.event_name == 'release' || (github.event_name == 'workflow_dispatch' && inputs.release_tag != '')
     needs: arch-repo
     runs-on: ubuntu-24.04
     permissions:
@@ -411,7 +423,7 @@ jobs:
       - name: Upload to the release
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-          TAG: ${{ github.event.release.tag_name }}
+          TAG: ${{ env.RELEASE_TAG }}
         run: gh release upload "$TAG" gelabber-desktop-linux-x64.tar.gz --clobber --repo "$GITHUB_REPOSITORY"
 
   # Public: the repository on GitHub Pages. Off until the repository
@@ -419,7 +431,7 @@ jobs:
   # should require an approval (desktop/packaging/arch/README.md).
   arch-repo-publish:
     name: Publish the pacman repository
-    if: github.event_name == 'release' && vars.ARCH_REPO_PUBLISH == 'true'
+    if: (github.event_name == 'release' || (github.event_name == 'workflow_dispatch' && inputs.release_tag != '')) && vars.ARCH_REPO_PUBLISH == 'true'
     needs: [arch-repo, release-asset]
     runs-on: ubuntu-24.04
     permissions:
