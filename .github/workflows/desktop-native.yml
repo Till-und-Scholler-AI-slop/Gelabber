@@ -14,6 +14,10 @@ on:
     paths:
       - desktop/**
       - .github/workflows/desktop-native.yml
+  # Attaches the Linux app to the release (pre-releases too) and, once
+  # enabled, publishes the pacman repository; see desktop/packaging/arch.
+  release:
+    types: [published]
 
 permissions:
   contents: read
@@ -276,6 +280,7 @@ jobs:
           strip --strip-unneeded -o "$pkg/gelabber-desktop" desktop/target/release/gelabber-desktop
           strip --strip-unneeded -o "$pkg/libgelabber_media.so" "$lib"
           cp desktop/app/package/README.txt "$pkg/"
+          cp desktop/packaging/arch/gelabber-desktop.desktop desktop/app/icons/icon.png "$pkg/"
           tar -czf "$pkg.tar.gz" "$pkg"
 
       - name: Upload the app
@@ -318,3 +323,119 @@ jobs:
             cat /tmp/needed.txt
             echo '```'
           } | tee -a "$GITHUB_STEP_SUMMARY"
+
+  # The pacman repository (Arch/Omarchy): package, signed database, and a
+  # user's install, upgrade and removal against it. Publishing is separate.
+  arch-repo:
+    name: Arch package and repository
+    needs: core-linux
+    runs-on: ubuntu-24.04
+    container: archlinux:base-devel
+    timeout-minutes: 30
+    env:
+      # Releases sign with the repository key; everything else with a
+      # throwaway key that only this job trusts.
+      ARCH_REPO_GPG_KEY: ${{ github.event_name == 'release' && secrets.ARCH_REPO_GPG_KEY || '' }}
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v7
+
+      - name: Download the app
+        uses: actions/download-artifact@v4
+        with:
+          name: gelabber-desktop-linux-x64
+
+      - name: Check PKGBUILD and .SRCINFO
+        run: |
+          pacman -Syu --noconfirm --needed git
+          useradd -m builder
+          cp -r desktop/packaging/arch /tmp/arch && chown -R builder /tmp/arch
+          cd /tmp/arch
+          sudo -u builder makepkg --printsrcinfo | diff -u .SRCINFO -
+
+      - name: Build package and repository
+        env:
+          TAG: ${{ github.event.release.tag_name }}
+          PUBLISH: ${{ vars.ARCH_REPO_PUBLISH }}
+        run: |
+          set -euo pipefail
+          if [ -n "$TAG" ]; then
+            if [ "$PUBLISH" = true ] && [ -z "$ARCH_REPO_GPG_KEY" ]; then
+              echo "ARCH_REPO_PUBLISH is on but the ARCH_REPO_GPG_KEY secret is missing"; exit 1
+            fi
+            version="$TAG"
+            url="https://github.com/${GITHUB_REPOSITORY}/releases/download/${TAG}/gelabber-desktop-linux-x64.tar.gz"
+          else
+            # Test builds: the workspace version plus the run number.
+            version="$(sed -n 's/^version = "\(.*\)"$/\1/p' desktop/Cargo.toml | head -n1).r${GITHUB_RUN_NUMBER}"
+            url=""
+          fi
+          desktop/packaging/arch/repo.sh build "$version" gelabber-desktop-linux-x64.tar.gz site $url
+          cp desktop/packaging/arch/README.md site/README.md
+
+      - name: Install, upgrade and remove like a user
+        run: desktop/packaging/arch/repo.sh test site gelabber-desktop-linux-x64.tar.gz
+
+      # The repository as built before the upgrade test added a pkgrel 2.
+      - name: Rebuild the repository for upload
+        if: github.event_name == 'release'
+        env:
+          TAG: ${{ github.event.release.tag_name }}
+        run: |
+          rm -rf site
+          desktop/packaging/arch/repo.sh build "$TAG" gelabber-desktop-linux-x64.tar.gz site \
+            "https://github.com/${GITHUB_REPOSITORY}/releases/download/${TAG}/gelabber-desktop-linux-x64.tar.gz"
+          cp desktop/packaging/arch/README.md site/README.md
+
+      - name: Upload the repository
+        uses: actions/upload-artifact@v4
+        with:
+          name: arch-repo
+          path: site
+          retention-days: 14
+
+  # Release only: the app tarball becomes a release asset, which the
+  # PKGBUILD downloads.
+  release-asset:
+    name: Attach the Linux app to the release
+    if: github.event_name == 'release'
+    needs: arch-repo
+    runs-on: ubuntu-24.04
+    permissions:
+      contents: write
+    steps:
+      - name: Download the app
+        uses: actions/download-artifact@v4
+        with:
+          name: gelabber-desktop-linux-x64
+      - name: Upload to the release
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          TAG: ${{ github.event.release.tag_name }}
+        run: gh release upload "$TAG" gelabber-desktop-linux-x64.tar.gz --clobber --repo "$GITHUB_REPOSITORY"
+
+  # Public: the repository on GitHub Pages. Off until the repository
+  # variable ARCH_REPO_PUBLISH is "true", and the github-pages environment
+  # should require an approval (desktop/packaging/arch/README.md).
+  arch-repo-publish:
+    name: Publish the pacman repository
+    if: github.event_name == 'release' && vars.ARCH_REPO_PUBLISH == 'true'
+    needs: [arch-repo, release-asset]
+    runs-on: ubuntu-24.04
+    permissions:
+      pages: write
+      id-token: write
+    environment:
+      name: github-pages
+      url: ${{ steps.deploy.outputs.page_url }}
+    steps:
+      - name: Download the repository
+        uses: actions/download-artifact@v4
+        with:
+          name: arch-repo
+          path: site
+      - uses: actions/upload-pages-artifact@v3
+        with:
+          path: site
+      - id: deploy
+        uses: actions/deploy-pages@v4
