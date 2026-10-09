@@ -8,11 +8,14 @@
 //! Opus and VP8 always run. H264 runs where the core has it (not on Windows);
 //! GELABBER_EXPECT_H264=1 makes a core without it fail, and so does
 //! GELABBER_EXPECT_ENCODER, which names the H264 encoder to find.
+//! GELABBER_TEST_LISTEN_IP puts the server on another address of the machine
+//! than 127.0.0.1 (see `listen_ip_from`).
 
 mod common;
 
 use common::{
-    Server, blocking, check_encoder, h264_demanded_by, h264_under_test, serve_events, wait_for,
+    Server, blocking, check_encoder, h264_demanded_by, h264_under_test, listen_ip, listen_ip_from,
+    serve_events, wait_for,
 };
 use gelabber_media_core::{Audio, Device, Direction, Engine, Source, Transport, VideoFrame};
 use mediasoup::prelude::*;
@@ -392,6 +395,17 @@ fn an_expected_encoder_demands_h264() {
     );
 }
 
+/// The server stays on 127.0.0.1 unless GELABBER_TEST_LISTEN_IP names an
+/// address; a variable left empty counts as unset.
+#[test]
+fn the_server_listens_on_loopback_unless_told_otherwise() {
+    let loopback: std::net::IpAddr = "127.0.0.1".parse().unwrap();
+    let other: std::net::IpAddr = "192.0.2.7".parse().unwrap();
+    assert_eq!(listen_ip_from(None), loopback);
+    assert_eq!(listen_ip_from(Some("")), loopback);
+    assert_eq!(listen_ip_from(Some("192.0.2.7")), other);
+}
+
 fn local_candidates(transport: &Transport) -> Vec<Value> {
     transport
         .stats()
@@ -415,7 +429,7 @@ async fn assert_no_tcp_candidates(
     mic: &Source,
     runtime: &Handle,
 ) {
-    let silent = std::net::UdpSocket::bind("127.0.0.1:0").unwrap();
+    let silent = std::net::UdpSocket::bind((listen_ip(), 0)).unwrap();
     let port = silent.local_addr().unwrap().port();
     let (server_transport, mut params) = server.transport().await;
     for candidate in params["iceCandidates"].as_array_mut().unwrap() {
