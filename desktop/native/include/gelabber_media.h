@@ -3,7 +3,8 @@
  *
  * Only this C surface leaves the shared library. libwebrtc, libmediasoupclient
  * and Chromium's libc++ stay hidden inside it so they cannot clash with the
- * libstdc++ that WebKitGTK/Tauri load into the same process.
+ * libstdc++ that WebKitGTK/Tauri load into the same process. On Windows the
+ * DLL links its own static C/C++ runtime for the same reason.
  *
  * Conventions
  * - All JSON is UTF-8 and uses mediasoup's own parameter shapes, the same the
@@ -142,19 +143,22 @@ GM_API gm_source* gm_source_new_test_pattern(gm_engine* engine, int width, int h
 /* Screen or window picked in the desktop's own dialog (Linux: xdg-desktop-portal
  * ScreenCast + PipeWire). Returns at once; the dialog opens asynchronously and
  * frames flow after the user picked a source. Poll gm_source_state.
+ * Not available on Windows yet: fails with an error there.
  * options_json: {"type"?: "any|screen|window", "fps"?: 30, "cursor"?: true,
  *                "contentHint"?: "detail|text|motion"} */
 GM_API gm_source* gm_source_new_screen(gm_engine* engine, const char* options_json);
 /* Applications playing sound, without this process:
- * [{"id","name","streams"}] (Linux: PipeWire playback streams). */
+ * [{"id","name","streams"}] (Linux: PipeWire playback streams; Windows: not
+ * available yet, an empty list). */
 GM_API char* gm_audio_apps(gm_engine* engine);
 /* Sound of other applications as an audio track for source audio, 48 kHz
  * stereo, separate from the microphone: {"app"?: id from gm_audio_apps;
  * default "" = every application but this one}. Applications that start
- * playing later are included. gm_source_state adds "streams". */
+ * playing later are included. gm_source_state adds "streams".
+ * Not available on Windows yet: fails with an error there. */
 GM_API gm_source* gm_source_new_app_audio(gm_engine* engine, const char* options_json);
-/* Cameras: [{"id","name"}] (Linux: V4L2 devices; ids are the module's
- * unique ids). */
+/* Cameras: [{"id","name"}] (Linux: V4L2 devices; Windows: DirectShow; ids
+ * are the module's unique ids). */
 GM_API char* gm_video_devices(gm_engine* engine);
 /* Camera at the closest format it supports:
  * {"device"?: id (default: first camera), "width"?: 1280, "height"?: 720,
@@ -171,7 +175,8 @@ GM_API int gm_source_set_enabled(gm_source* source, int enabled);
 /* Produce a source. options_json:
  * {"codec"?: "video/H264"|"video/VP8"|..., "encodings"?: [{"scaleResolutionDownBy":4},{...}],
  *  "codecOptions"?: {...}, "appData"?: {...}}
- * Without "codec", video prefers H264 and falls back to VP8. */
+ * Without "codec", video prefers H264 and falls back to VP8. The Windows
+ * build has no H264. */
 GM_API gm_producer* gm_transport_produce(gm_transport* transport, gm_source* source,
                                          const char* options_json);
 GM_API void gm_producer_free(gm_producer* producer);

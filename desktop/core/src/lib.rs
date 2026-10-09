@@ -541,7 +541,8 @@ impl Source {
 
     /// Screen or window chosen in the desktop's own picker (Linux:
     /// xdg-desktop-portal + PipeWire). Returns while the picker is still open;
-    /// poll [`Source::state`] until it leaves `pending`.
+    /// poll [`Source::state`] until it leaves `pending`. Not available on
+    /// Windows yet: an error there.
     ///
     /// `options`: `{"type"?: "any|screen|window", "fps"?: 30, "cursor"?: true,
     /// "contentHint"?: "detail|text|motion"}`.
@@ -555,7 +556,8 @@ impl Source {
 
     /// Sound of other applications (source audio), separate from the
     /// microphone: `{"app"?: id from [`Engine::audio_apps`]}`; without an
-    /// id, every application but this one.
+    /// id, every application but this one. Not available on Windows yet: an
+    /// error there, and [`Engine::audio_apps`] lists nothing.
     pub fn app_audio(engine: &Engine, options: &Value) -> Result<Self> {
         let options = json_arg(options)?;
         // SAFETY: live engine, NUL-terminated JSON.
