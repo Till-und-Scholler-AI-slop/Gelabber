@@ -736,10 +736,19 @@ async function messageNotifications() {
   await page.getByTestId("message-pane").waitFor();
   await controlled(page);
   await gateway.subscribed(ADA, GRACE, LINUS);
+  // A notification that one window shows while another one lists them can be
+  // missing from every later list (Chromium 153: 95 of 150 tries, none with
+  // both under one lock). The app's windows show and list under a lock of
+  // their own; the test lists under the same one, or its looking now and then
+  // loses the notification it is waiting for.
   const shown = () =>
-    page.evaluate(async () => {
+    page.evaluate(async (lock) => {
       const registration = await navigator.serviceWorker.getRegistration();
-      return (await registration.getNotifications())
+      return (
+        await navigator.locks.request(lock, () =>
+          registration.getNotifications(),
+        )
+      )
         .map(({ title, body, tag, data, silent, renotify }) => ({
           title,
           body,
@@ -749,7 +758,7 @@ async function messageNotifications() {
           renotify,
         }))
         .sort((a, b) => a.tag.localeCompare(b.tag));
-    });
+    }, `gelabber:notifications:${USER}`);
   const tags = async () =>
     (await shown()).map((notification) => notification.tag);
   const left = (count) =>
