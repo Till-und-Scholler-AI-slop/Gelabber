@@ -143,7 +143,13 @@ async fn blocking<T: Send + 'static>(
 ///
 /// The only place that decides the list. An app before v0.6 reports none.
 const FEATURES: &[&str] = if cfg!(target_os = "linux") {
-    &["screen", "camera", "app-audio", "video-frames"]
+    &[
+        "screen",
+        "camera",
+        "app-audio",
+        "app-audio-excludes-self",
+        "video-frames",
+    ]
 } else if cfg!(windows) {
     &["camera", "video-frames"]
 } else {
@@ -814,7 +820,13 @@ mod tests {
         assert_eq!(info["version"], env!("CARGO_PKG_VERSION"));
         assert_eq!(info["platform"], std::env::consts::OS);
         let today: &[&str] = if cfg!(target_os = "linux") {
-            &["screen", "camera", "app-audio", "video-frames"]
+            &[
+                "screen",
+                "camera",
+                "app-audio",
+                "app-audio-excludes-self",
+                "video-frames",
+            ]
         } else if cfg!(windows) {
             &["camera", "video-frames"]
         } else {
