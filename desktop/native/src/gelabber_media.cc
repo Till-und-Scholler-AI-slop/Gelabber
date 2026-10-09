@@ -219,8 +219,8 @@ namespace
 		std::thread worker;
 	};
 
-	// Decoded remote video: counts frames and hands them, as I420, to the
-	// sink the app set (its viewer window).
+	// Counts the frames of a video track and hands them, as I420 within the
+	// sink's limits, to the sink the app set (its views of the stream).
 	class FrameCounter : public webrtc::VideoSinkInterface<webrtc::VideoFrame>
 	{
 	public:
@@ -231,11 +231,39 @@ namespace
 			height.store(frame.height(), std::memory_order_relaxed);
 
 			std::lock_guard lock(sinkMutex);
-			if (!sink)
+			if (!sink || !Due(webrtc::TimeMicros()))
 				return;
-			const auto i420 = frame.video_frame_buffer()->ToI420();
+			auto i420 = frame.video_frame_buffer()->ToI420();
 			if (!i420)
 				return;
+			const int sourceWidth  = i420->width();
+			const int sourceHeight = i420->height();
+			// The limits are for the picture as displayed.
+			const bool sideways =
+			  frame.rotation() == webrtc::kVideoRotation_90 || frame.rotation() == webrtc::kVideoRotation_270;
+			int outWidth  = sourceWidth;
+			int outHeight = sourceHeight;
+			if (Fit(
+			      sideways ? limits.max_height : limits.max_width,
+			      sideways ? limits.max_width : limits.max_height,
+			      outWidth,
+			      outHeight))
+			{
+				// libyuv's box filter divides by a rounded-down reciprocal of
+				// the box area: exact enough up to 16x16 source pixels per
+				// pixel, visibly dark far beyond. Quarter the picture first.
+				while (int64_t{ i420->width() } * i420->height() > int64_t{ 256 } * outWidth * outHeight)
+				{
+					auto quarter = webrtc::I420Buffer::Create((i420->width() + 3) / 4, (i420->height() + 3) / 4);
+					quarter->ScaleFrom(*i420);
+					i420 = quarter;
+				}
+				// One buffer for every frame: the sink reads it during the call only.
+				if (!scaled || scaled->width() != outWidth || scaled->height() != outHeight)
+					scaled = webrtc::I420Buffer::Create(outWidth, outHeight);
+				scaled->ScaleFrom(*i420);
+				i420 = scaled;
+			}
 			const gm_video_frame out{
 				i420->width(),
 				i420->height(),
@@ -247,6 +275,8 @@ namespace
 				i420->StrideV(),
 				static_cast<int>(frame.rotation()),
 				frame.timestamp_us(),
+				sourceWidth,
+				sourceHeight,
 			};
 			sink(sinkUser, &out);
 		}
@@ -259,14 +289,78 @@ namespace
 			sinkUser = user;
 		}
 
+		void SetLimits(const gm_video_sink_limits* wanted)
+		{
+			const gm_video_sink_limits next = wanted ? *wanted : gm_video_sink_limits{ 0, 0, 0 };
+			if (next.max_width < 0 || next.max_height < 0 || next.max_fps < 0)
+				throw std::invalid_argument("video sink limits must not be negative");
+			std::lock_guard lock(sinkMutex);
+			limits = next;
+			nextDue.reset();
+			scaled = nullptr;
+		}
+
 		std::atomic<uint64_t> frames{ 0 };
 		std::atomic<int> width{ 0 };
 		std::atomic<int> height{ 0 };
 
 	private:
+		// Shrinks width x height to fit the limits (0: none), aspect kept, to
+		// even dimensions. False when the picture fits as it is.
+		static bool Fit(int maxWidth, int maxHeight, int& width, int& height)
+		{
+			const bool wide = maxWidth > 0 && width > maxWidth;
+			const bool tall = maxHeight > 0 && height > maxHeight;
+			if (!wide && !tall)
+				return false;
+			const int64_t w = width;
+			const int64_t h = height;
+			// The side that has to shrink more decides.
+			if (wide && (!tall || int64_t{ maxWidth } * h <= int64_t{ maxHeight } * w))
+			{
+				height = static_cast<int>(h * maxWidth / w);
+				width  = maxWidth;
+			}
+			else
+			{
+				width  = static_cast<int>(w * maxHeight / h);
+				height = maxHeight;
+			}
+			width  = std::max(2, width & ~1);
+			height = std::max(2, height & ~1);
+			return true;
+		}
+
+		// Drops frames above max_fps the way libwebrtc's FramerateController
+		// does: evenly, and half an interval lenient, so a stream at about the
+		// limit loses nothing to jitter.
+		bool Due(int64_t nowUs)
+		{
+			if (limits.max_fps <= 0)
+				return true;
+			const int64_t interval = 1'000'000 / limits.max_fps;
+			if (nextDue)
+			{
+				const int64_t ahead = *nextDue - nowUs;
+				if (ahead > -2 * interval && ahead < 2 * interval)
+				{
+					if (ahead > 0)
+						return false;
+					*nextDue += interval;
+					return true;
+				}
+			}
+			// The first frame, or one far off the schedule: start over.
+			nextDue = nowUs + interval / 2;
+			return true;
+		}
+
 		std::mutex sinkMutex;
 		gm_video_frame_fn sink{ nullptr };
 		void* sinkUser{ nullptr };
+		gm_video_sink_limits limits{ 0, 0, 0 };
+		std::optional<int64_t> nextDue;
+		webrtc::scoped_refptr<webrtc::I420Buffer> scaled;
 	};
 
 	// The APM's capture post-processor: RNNoise, gain and meters after
@@ -1274,6 +1368,19 @@ struct gm_source
 	webrtc::scoped_refptr<gelabber::LocalVideoSource> video;
 	// Application sound only.
 	std::unique_ptr<gelabber::AppAudioCapture> appAudio;
+	// The app's sink for a self view. On the track only while a sink is set,
+	// so an unwatched source still captures nothing before it is produced.
+	std::unique_ptr<FrameCounter> preview;
+	bool previewOnTrack{ false };
+
+	// Takes the self view's sink off the track; returns once it is not running.
+	void DetachPreview()
+	{
+		if (!previewOnTrack)
+			return;
+		static_cast<webrtc::VideoTrackInterface*>(track.get())->RemoveSink(preview.get());
+		previewOnTrack = false;
+	}
 };
 
 struct gm_producer
@@ -1861,6 +1968,7 @@ void gm_source_free(gm_source* source)
 	guarded<int>(0, [&] {
 		if (!source)
 			return 0;
+		source->DetachPreview();
 		if (source->video)
 			source->video->Stop();
 		// Stops delivering before the track goes.
@@ -2184,6 +2292,56 @@ int gm_consumer_set_video_sink(gm_consumer* consumer, gm_video_frame_fn fn, void
 		if (!consumer->counter)
 			throw std::invalid_argument("a video sink needs a video consumer");
 		consumer->counter->SetSink(fn, user);
+		return 0;
+	});
+}
+
+int gm_consumer_set_video_sink_limits(gm_consumer* consumer, const gm_video_sink_limits* limits)
+{
+	return guarded<int>(-1, [&] {
+		if (!consumer->counter)
+			throw std::invalid_argument("a video sink needs a video consumer");
+		consumer->counter->SetLimits(limits);
+		return 0;
+	});
+}
+
+int gm_source_set_video_sink(gm_source* source, gm_video_frame_fn fn, void* user)
+{
+	return guarded<int>(-1, [&] {
+		if (!fn)
+		{
+			// Also fine for a source that never had one (audio included).
+			source->DetachPreview();
+			if (source->preview)
+				source->preview->SetSink(nullptr, nullptr);
+			return 0;
+		}
+		if (!source->video)
+			throw std::invalid_argument("a video sink needs a video source");
+		if (!source->preview)
+			source->preview = std::make_unique<FrameCounter>();
+		source->preview->SetSink(fn, user);
+		if (!source->previewOnTrack)
+		{
+			// No wants: the self view takes what the encoders get and never
+			// limits them (the broadcaster keeps the smallest request).
+			static_cast<webrtc::VideoTrackInterface*>(source->track.get())
+			  ->AddOrUpdateSink(source->preview.get(), webrtc::VideoSinkWants());
+			source->previewOnTrack = true;
+		}
+		return 0;
+	});
+}
+
+int gm_source_set_video_sink_limits(gm_source* source, const gm_video_sink_limits* limits)
+{
+	return guarded<int>(-1, [&] {
+		if (!source->video)
+			throw std::invalid_argument("a video sink needs a video source");
+		if (!source->preview)
+			source->preview = std::make_unique<FrameCounter>();
+		source->preview->SetLimits(limits);
 		return 0;
 	});
 }
