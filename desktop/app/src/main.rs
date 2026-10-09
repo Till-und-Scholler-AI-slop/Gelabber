@@ -8,7 +8,8 @@
 //! There is no menu bar: an unreachable server at start opens that page with
 //! the reason, and Ctrl+Shift+S or the web client's user menu ("Server
 //! wechseln …") lead back to it at any time, so a wrong server never locks the
-//! app. F5 / Ctrl+R reload.
+//! app. F5 / Ctrl+R reload. Those keys are a script of the page: when WebKit's
+//! web process dies, the app loads the page again itself (Linux).
 #![cfg_attr(not(debug_assertions), windows_subsystem = "windows")]
 
 mod frames;
@@ -16,6 +17,8 @@ mod media;
 mod viewer;
 
 use serde::{Deserialize, Serialize};
+#[cfg(target_os = "linux")]
+use std::time::Instant;
 use std::{
     fs,
     net::{SocketAddr, TcpStream},
@@ -138,6 +141,14 @@ fn setup_url(server: Option<&str>, error: Option<&str>) -> Url {
         url.query_pairs_mut().append_pair("error", error);
     }
     url
+}
+
+/// Whether `url` is a page of the bundled frontend, the setup page.
+#[cfg(target_os = "linux")]
+fn is_setup_page(url: &str) -> bool {
+    let setup = setup_url(None, None);
+    Url::parse(url)
+        .is_ok_and(|url| url.scheme() == setup.scheme() && url.host_str() == setup.host_str())
 }
 
 fn current_server(app: &AppHandle) -> Option<Url> {
@@ -265,6 +276,86 @@ fn end_web_process(window: &tauri::Window) {
     }
 }
 
+/// A web process that ends again within this time of the app's last answer
+/// to one ending did not get better by that answer.
+#[cfg(target_os = "linux")]
+const ENDED_AGAIN: Duration = Duration::from_secs(60);
+
+/// What the setup page says when it is shown for that reason.
+#[cfg(target_os = "linux")]
+const PAGE_KEEPS_ENDING: &str =
+    "Die Seite ist wiederholt abgestürzt. Mikrofon, Kamera und Bildschirmfreigabe wurden beendet.";
+
+/// The app's answer to a web process that ended by itself.
+#[cfg(target_os = "linux")]
+#[derive(Debug, PartialEq)]
+enum Recovery {
+    /// Loads the page again, which starts a new web process.
+    Reload,
+    /// Shows the setup page with the reason: loading the server's page once
+    /// more may end the same way, for as long as nobody looks.
+    Setup,
+    /// Leaves the dead view: not even the setup page stays up.
+    GiveUp,
+}
+
+/// `shown` is the page the web process ended with, `again` whether that was
+/// within [`ENDED_AGAIN`] of the last time.
+#[cfg(target_os = "linux")]
+fn recovery(shown: Option<&str>, again: bool) -> Recovery {
+    match (shown.map(is_setup_page), again) {
+        (Some(_), false) => Recovery::Reload,
+        (Some(true), true) => Recovery::GiveUp,
+        // The server's page ended twice, or nothing was loaded to load again.
+        (Some(false), true) | (None, _) => Recovery::Setup,
+    }
+}
+
+/// Answers the end of WebKit's web process: a crash, the kernel's
+/// out-of-memory killer, a GPU driver (the page draws video with WebGL). No
+/// page load follows by itself, so nothing ended what the page had running:
+/// microphone, camera and screen capture went on behind a dead view, and the
+/// keys that reload or lead to the setup page are a script of the page that
+/// is gone. Windows is left to WebView2, which by its documentation starts a
+/// new renderer and loads an error page, a page load like any other; that
+/// was not tried.
+#[cfg(target_os = "linux")]
+fn watch_web_process(app: &AppHandle, window: &tauri::WebviewWindow) {
+    use webkit2gtk::{WebProcessTerminationReason, WebViewExt};
+    let app = app.clone();
+    let watching = window.with_webview(move |webview| {
+        let last = std::cell::Cell::new(None::<Instant>);
+        let ended = move |view: &webkit2gtk::WebView, reason| {
+            // The app's own doing, when its window closes (`end_web_process`).
+            if reason == WebProcessTerminationReason::TerminatedByApi {
+                return;
+            }
+            app.state::<media::Media>().reset();
+            let now = Instant::now();
+            let again = last
+                .replace(Some(now))
+                .is_some_and(|last| now.duration_since(last) < ENDED_AGAIN);
+            let action = recovery(view.uri().as_deref(), again);
+            eprintln!("gelabber: web process ended ({reason:?}): {action:?}");
+            // On the view itself: this runs inside WebKit's signal, on the
+            // main thread.
+            match action {
+                Recovery::Reload => view.reload(),
+                Recovery::Setup => {
+                    let server = current_server(&app);
+                    let server = server.as_ref().map(Url::as_str);
+                    view.load_uri(setup_url(server, Some(PAGE_KEEPS_ENDING)).as_str());
+                }
+                Recovery::GiveUp => {}
+            }
+        };
+        webview.inner().connect_web_process_terminated(ended);
+    });
+    if let Err(error) = watching {
+        eprintln!("gelabber: web process: {error}");
+    }
+}
+
 fn main() {
     #[cfg(target_os = "linux")]
     webkit_workarounds();
@@ -345,7 +436,7 @@ fn main() {
                 }
                 None => WebviewUrl::App("index.html".into()),
             };
-            WebviewWindowBuilder::new(app, WINDOW, url.clone())
+            let window = WebviewWindowBuilder::new(app, WINDOW, url.clone())
                 .title("Gelabber")
                 .inner_size(1280.0, 800.0)
                 .min_inner_size(480.0, 360.0)
@@ -353,6 +444,10 @@ fn main() {
                 // Only WebView2 takes them; ignored on the other platforms.
                 .additional_browser_args(WEBVIEW2_ARGS)
                 .build()?;
+            #[cfg(target_os = "linux")]
+            watch_web_process(&handle, &window);
+            #[cfg(not(target_os = "linux"))]
+            let _ = window;
             // Opening a stored server that does not answer would end on
             // WebKit's error page; show the setup page with the reason instead.
             if let WebviewUrl::External(origin) = url {
@@ -393,6 +488,29 @@ mod tests {
             None
         );
         assert_eq!(webkit_workaround(true, chose(&[WEBKIT_FORCE_SHM])), None);
+    }
+
+    /// One reload; the setup page when that did not help; nothing when not
+    /// even the setup page stays up, or the app would start web processes
+    /// for as long as they end.
+    #[cfg(target_os = "linux")]
+    #[test]
+    fn a_web_process_that_ended_is_answered_once_by_a_reload() {
+        use super::{Recovery, is_setup_page, recovery};
+        let server = "https://chat.example.org/channels/7";
+        let setup = setup_url(Some("https://chat.example.org/"), Some("abgestürzt"));
+        assert!(is_setup_page(setup.as_str()));
+        assert!(is_setup_page("tauri://localhost/"));
+        assert!(!is_setup_page(server));
+        assert!(!is_setup_page("https://localhost/index.html"));
+        assert!(!is_setup_page("about:blank"));
+
+        assert_eq!(recovery(Some(server), false), Recovery::Reload);
+        assert_eq!(recovery(Some(server), true), Recovery::Setup);
+        assert_eq!(recovery(Some(setup.as_str()), false), Recovery::Reload);
+        assert_eq!(recovery(Some(setup.as_str()), true), Recovery::GiveUp);
+        assert_eq!(recovery(None, false), Recovery::Setup);
+        assert_eq!(recovery(None, true), Recovery::Setup);
     }
 
     #[test]

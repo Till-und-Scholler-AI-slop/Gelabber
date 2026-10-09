@@ -84,6 +84,12 @@ down crashes inside the driver when it frees its GL contexts
 2.52.6, with either renderer setting), which left a core dump and a crash
 notification behind every close. An app that is killed instead of closed
 (SIGTERM, the end of the session) still leaves the web process to that.
+When the web process ends by itself while the app runs (a crash, the
+kernel's out-of-memory killer), the app closes what the page had running,
+as a page load does, and loads the page again: the reload keys are a script
+of the page and gone with it. If it ends again within a minute, the setup
+page opens with the reason; if that does not stay up either, the view is
+left as it is.
 
 ## Design rules
 
