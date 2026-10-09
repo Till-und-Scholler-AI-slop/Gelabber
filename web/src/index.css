@@ -1263,13 +1263,18 @@ summary {
     width: 44px;
     height: 44px;
   }
-  /* The list virtualizer fixes these rows at 34px. */
-  .sidebar-action-small {
-    width: 36px;
-    height: 34px;
+  /* ChannelSidebar lays its virtual rows out at the matching pitch. */
+  .channel-row,
+  .sidebar-category-row {
+    height: 44px;
   }
-  .sidebar-category-row .sidebar-action-small {
-    height: 29px;
+  .sidebar-category-row {
+    align-items: center;
+    padding-bottom: 0;
+  }
+  .sidebar-action-small {
+    width: 44px;
+    height: 44px;
   }
   .sidebar-create-menu > nav {
     top: 48px;
