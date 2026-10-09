@@ -15,7 +15,7 @@ import {
   utimes,
   writeFile,
 } from "node:fs/promises";
-import { createServer } from "node:http";
+import { createServer, request as forward } from "node:http";
 import { tmpdir } from "node:os";
 import { join, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
@@ -256,6 +256,11 @@ async function serving() {
     /<meta\s+name="viewport"\s+content="[^"]*viewport-fit=cover[^"]*"/,
     "safe-area insets need viewport-fit=cover",
   );
+  assert.match(
+    html,
+    /<link\s+rel="manifest"[^>]*\scrossorigin="use-credentials"/,
+    "the built shell must ask for the manifest with cookies",
+  );
   console.log(
     "PASS: app shell never stored (no-store), hashed assets immutable and gzip, missing files 404, small favicon",
   );
@@ -379,6 +384,78 @@ async function androidInstallAndOffline() {
     "PASS: production manifest/icons, real service worker, Android install-event UI, offline deep link kept on retry, automatic reload when back online",
   );
   await android.close();
+}
+
+// Behind an access proxy that lets nothing through without its cookie
+// (Authelia, oauth2-proxy, Cloudflare Access). A browser asks for a manifest
+// without cookies unless the link says `use-credentials`. The proxy then
+// answers with its own login, the browser has no manifest and never offers
+// installation. The stand-in sends a visitor without its cookie through a
+// sign-in address and passes every request that carries the cookie on to the
+// server under test.
+async function manifestBehindAccessProxy() {
+  const refused = [];
+  const proxy = createServer((request, response) => {
+    if (request.url === "/access") {
+      response.writeHead(302, {
+        "set-cookie": "access=granted; Path=/; HttpOnly; SameSite=Lax",
+        location: "/login",
+      });
+      response.end();
+      return;
+    }
+    if (!/(?:^|;\s*)access=granted(?:;|$)/.test(request.headers.cookie ?? "")) {
+      refused.push(request.url);
+      response.writeHead(302, { location: "/access" });
+      response.end();
+      return;
+    }
+    request.pipe(
+      forward(
+        new URL(request.url, origin),
+        { method: request.method, headers: request.headers },
+        (answer) => {
+          response.writeHead(answer.statusCode, answer.headers);
+          answer.pipe(response);
+        },
+      ),
+    );
+  });
+  await new Promise((resolve) => proxy.listen(0, "127.0.0.1", resolve));
+  const context = await contextFor(devices["Pixel 7"]);
+  try {
+    const page = await context.newPage();
+    await page.goto(`http://127.0.0.1:${proxy.address().port}/login`);
+    await installHeading(page).waitFor();
+    await controlled(page);
+    const cdp = await context.newCDPSession(page);
+    const manifest = await cdp.send("Page.getAppManifest");
+    assert.deepEqual(manifest.errors, []);
+    assert.equal(
+      manifest.data ? JSON.parse(manifest.data).id : undefined,
+      "/",
+      "the browser must get the manifest through the access proxy",
+    );
+    const installability = await cdp.send("Page.getInstallabilityErrors");
+    assert.deepEqual(
+      installability.installabilityErrors.filter(
+        (error) => error.errorId !== "in-incognito",
+      ),
+      [],
+    );
+    assert.deepEqual(
+      refused,
+      ["/login"],
+      "after the first visit every request must carry the proxy's cookie",
+    );
+  } finally {
+    await context.close();
+    proxy.close();
+    proxy.closeAllConnections();
+  }
+  console.log(
+    "PASS: manifest and installability behind an access proxy that requires its cookie on every path",
+  );
 }
 
 async function installPanelPlacement() {
@@ -916,6 +993,7 @@ async function secondDeployment() {
 try {
   await serving();
   await androidInstallAndOffline();
+  await manifestBehindAccessProxy();
   await installPanelPlacement();
   await themeColour();
   await messageNotifications();
