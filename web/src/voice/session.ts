@@ -2772,6 +2772,16 @@ async function startLocalVideo(kind: "v" | "s" | "l"): Promise<void> {
     stopTracks(stream);
     return;
   }
+  // The source can end while its profile is still being applied ("stop
+  // sharing", a closed portal session). Its "ended" event is gone by now, so
+  // nothing would ever take this capture down again.
+  if (!hasLiveTrack(stream, "video")) {
+    stopTracks(stream);
+    if (kind === "v") useVoice.setState({ camera: false });
+    else if (kind === "s") useVoice.setState({ sharing: false });
+    else releaseUnstartedLive();
+    return;
+  }
   const self = currentUserId();
   if (kind !== "v") {
     const sharingAudio = hasLiveTrack(stream, "audio");

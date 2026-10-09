@@ -1532,6 +1532,57 @@ describe("voice session", () => {
     expect(env.errors).toHaveLength(0);
   });
 
+  it("gives a capture back when its source ended before it could start", async () => {
+    // "Stop sharing" while the stream profile is still being applied: the
+    // picker has answered, and the track's only "ended" event is already gone.
+    const ended = (id: string) => {
+      const stream = fakeVideoStream(id, true);
+      const video = stream.getVideoTracks()[0]!;
+      video.applyConstraints = async () => {
+        video.dispatchEvent(new Event("ended"));
+        throw new DOMException("Track ended", "InvalidStateError");
+      };
+      return stream;
+    };
+    const captures = [ended("ended-live"), ended("ended-share")];
+    // A camera that is unplugged while its prompt is open.
+    const camera = fakeVideoStream("ended-cam");
+    camera.getVideoTracks()[0]!.stop();
+    const env = install({
+      displayStreamFor: (index) => captures[index]!,
+      mediaStreamFor: (index, constraints) =>
+        constraints.video ? camera : fakeStream(`mic-${index}`),
+    });
+    joinVoice({ serverId: "srv", channelId: "voice", channelName: "Voice" });
+    await vi.waitFor(() => expect(env.peers[0]?.audio).toBeTruthy());
+
+    toggleGoLive();
+    await vi.waitFor(() => expect(useVoice.getState().live).toBe(false));
+    expect(useVoice.getState().localLive).toBeNull();
+    expect(useVoiceRoster.getState().live.srv?.voice).toBeUndefined();
+    expect(liveClaimFrames(env.sent)).toEqual(["p", "u"]);
+    expect(useVoice.getState().participants["u-self"]?.pubs).not.toContain("l");
+    expect(streamStopped(captures[0])).toBe(true);
+
+    toggleShare();
+    await vi.waitFor(() => expect(useVoice.getState().sharing).toBe(false));
+    expect(useVoice.getState().localScreen).toBeNull();
+    expect(useVoice.getState().participants["u-self"]?.pubs).not.toContain("s");
+    expect(streamStopped(captures[1])).toBe(true);
+
+    toggleCamera();
+    await vi.waitFor(() => expect(useVoice.getState().camera).toBe(false));
+    expect(useVoice.getState().localCamera).toBeNull();
+    expect(useVoice.getState().participants["u-self"]?.pubs).not.toContain("v");
+
+    expect(env.getDisplayMediaCalls()).toBe(2);
+    expect(
+      env.mediaSent.some((frame) => frame.op === "produce" && frame.k !== "a"),
+    ).toBe(false);
+    expect(env.errors).toHaveLength(0);
+    expect(useVoice.getState().status).toBe("joined");
+  });
+
   it("matches watch events by server and channel", async () => {
     const { emitSig, peers } = install();
     watchLive({
