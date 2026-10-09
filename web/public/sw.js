@@ -2,8 +2,14 @@
    stay on the network, so deployment updates never mix cached app versions. */
 /* global self, caches, fetch, URL, Request, Response */
 const CACHE_PREFIX = "gelabber-pwa-offline-";
-const CACHE_NAME = `${CACHE_PREFIX}v1`;
+// Raise with every change to offline.html: nothing else replaces the cached
+// copy. src/pwa/worker.test.mjs fails when the page changes without it.
+const CACHE_NAME = `${CACHE_PREFIX}v2`;
 const OFFLINE_URL = "/offline.html";
+// Pages of the app itself. API, gateway/media traffic, attachment downloads
+// and static files never match.
+const APP_PAGE =
+  /^(?:\/(?:login|register|profile|settings)\/?|\/(?:s|d|invite)(?:\/.*)?|\/)$/;
 
 self.addEventListener("install", (event) => {
   event.waitUntil(
@@ -36,13 +42,11 @@ self.addEventListener("fetch", (event) => {
   const url = new URL(request.url);
   // Only real app-page navigations receive an offline fallback. In particular,
   // API, gateway/media traffic and attachment downloads are never intercepted.
-  const appPage =
-    /^(?:\/(?:login|register|profile|settings)\/?|\/(?:s|d|invite)(?:\/.*)?|\/)$/;
   if (
     request.method !== "GET" ||
     request.mode !== "navigate" ||
     url.origin !== self.location.origin ||
-    !appPage.test(url.pathname)
+    !APP_PAGE.test(url.pathname)
   ) {
     return;
   }

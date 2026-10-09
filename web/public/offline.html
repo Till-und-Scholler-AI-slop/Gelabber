@@ -2,15 +2,54 @@
 <html lang="de">
   <head>
     <meta charset="UTF-8" />
-    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <meta
+      name="viewport"
+      content="width=device-width, initial-scale=1.0, viewport-fit=cover"
+    />
     <meta name="theme-color" content="#17191a" />
     <title>Keine Verbindung · Gelabber</title>
+    <script>
+      // Same colours as the app: reuse the palette it cached for its own first
+      // paint (theme/theme.ts). Anything unexpected keeps the dark default.
+      try {
+        const cache = JSON.parse(
+          localStorage.getItem("gelabber.theme.paint") ?? "null",
+        );
+        const hex = (value) => /^#[0-9a-f]{6}$/i.test(value);
+        let mode = cache?.theme?.mode;
+        let colors = cache?.theme?.colors;
+        if (cache?.system === true) {
+          const dark = matchMedia("(prefers-color-scheme: dark)").matches;
+          mode = dark ? "dark" : "light";
+          colors = dark
+            ? { background: "#17191a", text: "#eef0ee", muted: "#a4abb1" }
+            : { background: "#f8f5f0", text: "#252829", muted: "#646d74" };
+        }
+        if (
+          ["light", "dark"].includes(mode) &&
+          hex(colors?.background) &&
+          hex(colors?.text) &&
+          hex(colors?.muted)
+        ) {
+          const root = document.documentElement;
+          root.style.colorScheme = mode;
+          root.style.setProperty("--bg", colors.background);
+          root.style.setProperty("--text", colors.text);
+          root.style.setProperty("--muted", colors.muted);
+          document
+            .querySelector('meta[name="theme-color"]')
+            .setAttribute("content", colors.background);
+        }
+      } catch {
+        // Blocked storage or a broken cache entry: the defaults below apply.
+      }
+    </script>
     <style>
       :root {
         color-scheme: dark;
         font-family: system-ui, sans-serif;
-        background: #17191a;
-        color: #eef0ee;
+        background: var(--bg, #17191a);
+        color: var(--text, #eef0ee);
       }
       body {
         margin: 0;
@@ -20,14 +59,17 @@
       }
       main {
         max-width: 28rem;
-        padding: 2rem;
+        padding: max(2rem, env(safe-area-inset-top))
+          max(2rem, env(safe-area-inset-right))
+          max(2rem, env(safe-area-inset-bottom))
+          max(2rem, env(safe-area-inset-left));
       }
       h1 {
         font-size: 1.75rem;
       }
       p {
         line-height: 1.6;
-        color: #a4abb1;
+        color: var(--muted, #a4abb1);
       }
       a {
         display: inline-block;
@@ -40,7 +82,7 @@
         text-decoration: none;
       }
       a:focus-visible {
-        outline: 2px solid #eef0ee;
+        outline: 2px solid var(--text, #eef0ee);
         outline-offset: 4px;
       }
     </style>
@@ -51,9 +93,28 @@
       <h1>Gerade keine Verbindung</h1>
       <p>
         Für Nachrichten und Gespräche brauchst du eine Internetverbindung.
-        Sobald du wieder online bist, kannst du Gelabber erneut öffnen.
+        Sobald du wieder online bist, lädt Gelabber diese Seite von selbst neu.
       </p>
-      <a href="/">Erneut verbinden</a>
+      <a id="retry" href="">Erneut verbinden</a>
     </main>
+    <script>
+      // The worker shows this page at the address the user asked for. Retrying
+      // therefore loads that same address again, so an invite, a channel link
+      // or a login redirect survives; a link to "/" would drop it.
+      const retry = () => {
+        if (location.pathname === "/offline.html") location.replace("/");
+        else location.reload();
+      };
+      document.getElementById("retry").addEventListener("click", (event) => {
+        event.preventDefault();
+        retry();
+      });
+      addEventListener("online", retry);
+      // A phone can suspend this page while it is in the background and never
+      // deliver `online`; check again when the user comes back to it.
+      document.addEventListener("visibilitychange", () => {
+        if (!document.hidden && navigator.onLine) retry();
+      });
+    </script>
   </body>
 </html>
