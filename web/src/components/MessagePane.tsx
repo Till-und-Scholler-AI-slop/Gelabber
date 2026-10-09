@@ -945,6 +945,20 @@ function Composer({
     revealComposerFocus();
     return () => observer.disconnect();
   }, [canSend, revealComposerFocus]);
+  // chat.css sizes the field by its draft on phones. Browsers without
+  // field-sizing (iOS before 26.2) get the same height from here, under the
+  // same max-height.
+  useLayoutEffect(() => {
+    const input = composerInput.current;
+    if (
+      !input ||
+      CSS.supports("field-sizing", "content") ||
+      !window.matchMedia("(pointer: coarse)").matches
+    )
+      return;
+    input.style.height = "auto";
+    input.style.height = `${input.scrollHeight}px`;
+  }, [draft, canSend]);
   const error = draft.length === 0 ? null : validateContent(draft);
   const remaining = CONTENT_MAX - Array.from(normalisedLength(draft)).length;
   const emptyText = draft.trim().length === 0;

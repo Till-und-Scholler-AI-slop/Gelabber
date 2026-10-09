@@ -406,7 +406,7 @@
 }
 @media (pointer: coarse) {
   /* Phones show the whole draft, up to max-height. Browsers without
-     field-sizing keep the single scrolling line. */
+     field-sizing get the height from the Composer instead. */
   .lr-composer-row textarea {
     field-sizing: content;
   }
