@@ -41,6 +41,7 @@ import {
   diagnosticsPolling,
   useVoiceDiagnostics,
 } from "./diagnostics.ts";
+import { setNativeBridgeForTests } from "./native/bridge.ts";
 import { resetVoiceRoster, useVoiceRoster, voiceOf } from "./roster.ts";
 import {
   allocateVideoBitrates,
@@ -369,6 +370,8 @@ function install(opts?: {
   holdDisplay?: Promise<void>;
   /** Per getDisplayMedia call index (0-based). An open picker. */
   gateDisplay?: (callIndex: number) => Promise<void> | void;
+  /** The desktop app: the session's own display capture, through the bridge. */
+  nativeDisplay?: boolean;
   /** Per getUserMedia call index (0-based). Controlled promise resolution. */
   gateMedia?: (
     callIndex: number,
@@ -606,6 +609,7 @@ function install(opts?: {
       return socket;
     },
     onError: (error) => errors.push(error),
+    ...(opts?.nativeDisplay ? { getDisplayMedia: undefined } : {}),
   });
 
   return {
@@ -3982,6 +3986,12 @@ describe("display-source audio", () => {
     ).toBe(false);
   });
 
+  /** "p" and "u" the gateway heard for one source kind. */
+  const announced = (env: ReturnType<typeof install>, kind: TrackKind) =>
+    env.sent.flatMap((frame) =>
+      frame.op === "sig" && "k" in frame && frame.k === kind ? [frame.t] : [],
+    );
+
   it.each(["s", "l"] as const)(
     "asks the browser for no %s sound while the user has not chosen it",
     async (kind) => {
@@ -3996,4 +4006,449 @@ describe("display-source audio", () => {
       expect(env.peers[0]?.sender(kind === "s" ? "sa" : "la")).toBeUndefined();
     },
   );
+
+  it("takes the sound out of a running share at once; a browser adds none without a new picker", async () => {
+    useMediaSettings.getState().patch({ sourceAudioShare: "on" });
+    const env = await joined();
+    toggleShare();
+    await vi.waitFor(() => expect(env.peers[0]?.sender("sa")).toBeTruthy());
+    const capture = useVoice.getState().localScreen!;
+    const video = env.peers[0]!.sender("s");
+
+    useMediaSettings.getState().patch({ sourceAudioShare: "off" });
+    await vi.waitFor(() => expect(env.peers[0]?.sender("sa")).toBeUndefined());
+    expect(trackStopped(capture.getAudioTracks()[0])).toBe(true);
+    expect(trackStopped(capture.getVideoTracks()[0])).toBe(false);
+    // Switched off is not "ended": no notice about lost sound.
+    expect(useVoice.getState().sourceAudio.s).toBe("off");
+    expect(useVoice.getState().localScreen).toBe(capture);
+    expect(env.peers[0]!.sender("s")).toBe(video);
+    expect(announced(env, "sa")).toEqual(["p", "u"]);
+    expect(announced(env, "s")).toEqual(["p"]);
+
+    useMediaSettings.getState().patch({ sourceAudioShare: "on" });
+    await Promise.resolve();
+    await Promise.resolve();
+    expect(env.getDisplayMediaCalls()).toBe(1);
+    expect(useVoice.getState().sourceAudio.s).toBe("off");
+    expect(env.peers[0]?.sender("sa")).toBeUndefined();
+    expect(env.errors).toEqual([]);
+  });
+
+  it("forgets that the browser gave no sound once the user switches it off", async () => {
+    useMediaSettings.getState().patch({ sourceAudioShare: "on" });
+    await joined({ displayStreamFor: () => fakeVideoStream("without-audio") });
+    toggleShare();
+    await vi.waitFor(() =>
+      expect(useVoice.getState().sourceAudio.s).toBe("unavailable"),
+    );
+    useMediaSettings.getState().patch({ sourceAudioShare: "off" });
+    expect(useVoice.getState().sourceAudio.s).toBe("off");
+    expect(useVoice.getState().sharing).toBe(true);
+  });
+
+  it("shares no sound that was switched off while the picker was open", async () => {
+    useMediaSettings.getState().patch({ sourceAudioShare: "on" });
+    const picker = deferred();
+    const stream = fakeVideoStream("picked-late", true);
+    const env = await joined({
+      holdDisplay: picker.promise,
+      displayStreamFor: () => stream,
+    });
+    toggleShare();
+    await Promise.resolve();
+    useMediaSettings.getState().patch({ sourceAudioShare: "off" });
+    picker.resolve();
+    await vi.waitFor(() => expect(env.peers[0]?.sender("s")).toBeTruthy());
+    expect(env.lastDisplayMedia()?.audio).toBeTruthy();
+    expect(trackStopped(stream.getAudioTracks()[0])).toBe(true);
+    expect(trackStopped(stream.getVideoTracks()[0])).toBe(false);
+    expect(useVoice.getState().sourceAudio.s).toBe("off");
+    expect(
+      env.mediaSent.some((frame) => frame.op === "produce" && frame.k === "sa"),
+    ).toBe(false);
+  });
+});
+
+describe("stream sound in the desktop app", () => {
+  afterEach(() => {
+    resetVoiceForTests();
+    resetVoiceRoster();
+    resetMediaSettingsForTests();
+    setNativeBridgeForTests(undefined);
+    vi.restoreAllMocks();
+    vi.useRealTimers();
+    trackSeq = 0;
+  });
+
+  /** Released 0.5.x: no feature list, and "every application" includes the
+   * app's own playout. */
+  const APP_05 = { abi: 7, version: "0.5.2", platform: "linux" };
+  /** A v0.6 build whose core still captures itself. */
+  const APP_06_CAPTURES_ITSELF = {
+    abi: 8,
+    version: "0.6.0",
+    platform: "linux",
+    features: ["screen", "camera", "app-audio", "video-frames"],
+  };
+  const APP_06 = {
+    ...APP_06_CAPTURES_ITSELF,
+    features: [...APP_06_CAPTURES_ITSELF.features, "app-audio-excludes-self"],
+  };
+
+  /** The desktop app as the session meets it: `media_info`, the desktop's
+   * picker and application sound. Every other command answers null. */
+  function desktopApp(info: Record<string, unknown>) {
+    const calls: Array<{ command: string; args: Record<string, unknown> }> = [];
+    const sounds: number[] = [];
+    let next = 0;
+    const app = {
+      /** The core's reason for giving no application sound. */
+      soundError: null as string | null,
+      /** Playback streams the chosen application has. */
+      streams: 1,
+      /** Application-sound sources handed out, oldest first. */
+      sounds,
+      called: (command: string) =>
+        calls.filter((call) => call.command === command).map((c) => c.args),
+    };
+    setNativeBridgeForTests({
+      async invoke<T>(command: string, args: Record<string, unknown> = {}) {
+        calls.push({ command, args });
+        const answer = (): unknown => {
+          switch (command) {
+            case "media_info":
+              return info;
+            case "media_source_screen":
+            case "media_source_microphone":
+              return ++next;
+            case "media_source_app_audio":
+              // The app rejects with the core's message as a plain string.
+              if (app.soundError) return Promise.reject(app.soundError);
+              sounds.push(++next);
+              return next;
+            case "media_source_state":
+              return sounds.includes(args.source as number)
+                ? { state: "live", streams: app.streams, frames: 0 }
+                : { state: "live", width: 1920, height: 1080 };
+            default:
+              return null;
+          }
+        };
+        return (await answer()) as T;
+      },
+      async channel() {
+        return null;
+      },
+    });
+    return app;
+  }
+
+  async function joined(
+    info: Record<string, unknown>,
+    options?: Parameters<typeof install>[0],
+  ) {
+    const app = desktopApp(info);
+    const env = install({ ...options, nativeDisplay: true });
+    joinVoice({ serverId: "srv", channelId: "voice", channelName: "Lounge" });
+    await vi.waitFor(() => expect(env.peers[0]?.audio).toBeTruthy());
+    return { env, app };
+  }
+
+  const soundOf = (kind: "s" | "l") => (kind === "s" ? "sa" : "la");
+  const produced = (env: ReturnType<typeof install>, kind: TrackKind) =>
+    env.mediaSent.filter((frame) => frame.op === "produce" && frame.k === kind);
+
+  it.each([
+    ["0.5.x app, nothing chosen", APP_05, "auto", "", null],
+    ["0.5.x app, switched on", APP_05, "on", "", ""],
+    // 0.5.x named applications by their name; the fixed core still takes it.
+    ["0.5.x app, one application", APP_05, "on", "Firefox", "Firefox"],
+    [
+      "v0.6 app that captures itself, nothing chosen",
+      APP_06_CAPTURES_ITSELF,
+      "auto",
+      "",
+      null,
+    ],
+    ["v0.6 app, nothing chosen", APP_06, "auto", "", ""],
+    ["v0.6 app, an old application name", APP_06, "auto", "Spotify", "Spotify"],
+    ["v0.6 app, one application", APP_06, "on", "spotify", "spotify"],
+    ["v0.6 app, switched off", APP_06, "off", "", null],
+  ] as const)(
+    "%s: what screen share and Go Live ask the app for",
+    async (_name, info, sourceAudioShare, sourceAudioApp, expected) => {
+      useMediaSettings.getState().patch({ sourceAudioShare, sourceAudioApp });
+      const { env, app } = await joined(info);
+      for (const kind of ["s", "l"] as const) {
+        (kind === "s" ? toggleShare : toggleGoLive)();
+        await vi.waitFor(() => expect(env.peers[0]?.sender(kind)).toBeTruthy());
+        if (expected !== null)
+          await vi.waitFor(() =>
+            expect(env.peers[0]?.sender(soundOf(kind))).toBeTruthy(),
+          );
+      }
+      // One picker each, and never a browser capture inside the app.
+      expect(app.called("media_source_screen")).toHaveLength(2);
+      expect(env.getDisplayMediaCalls()).toBe(0);
+      expect(app.called("media_source_app_audio")).toEqual(
+        expected === null
+          ? []
+          : [{ options: { app: expected } }, { options: { app: expected } }],
+      );
+      for (const kind of ["s", "l"] as const) {
+        const video = env.peers[0]!.sender(kind)!;
+        const sound = env.peers[0]!.sender(soundOf(kind));
+        const capture =
+          kind === "s"
+            ? useVoice.getState().localScreen!
+            : useVoice.getState().localLive!;
+        if (expected === null) {
+          expect(sound).toBeUndefined();
+          expect(capture.getAudioTracks()).toEqual([]);
+          expect(useVoice.getState().sourceAudio[kind]).toBe("off");
+          continue;
+        }
+        expect(sound?.track).toBe(capture.getAudioTracks()[0]);
+        expect(produced(env, soundOf(kind))).toEqual([
+          expect.objectContaining({
+            parent: video.producerId,
+            epoch: video.epoch,
+          }),
+        ]);
+        expect(useVoice.getState().sourceAudio[kind]).toBe("sharing");
+      }
+      expect(useVoice.getState().sourceAudioNote).toEqual({ s: null, l: null });
+      expect(env.errors).toEqual([]);
+    },
+  );
+
+  it("adds and removes application sound while the share runs, without a picker or a new video", async () => {
+    useMediaSettings.getState().patch({ sourceAudioShare: "off" });
+    const { env, app } = await joined(APP_06);
+    toggleShare();
+    await vi.waitFor(() => expect(env.peers[0]?.sender("s")).toBeTruthy());
+    const capture = useVoice.getState().localScreen!;
+    const video = env.peers[0]!.sender("s")!;
+    expect(app.called("media_source_app_audio")).toEqual([]);
+
+    useMediaSettings.getState().patch({ sourceAudioShare: "on" });
+    await vi.waitFor(() => expect(env.peers[0]?.sender("sa")).toBeTruthy());
+    expect(app.called("media_source_app_audio")).toEqual([
+      { options: { app: "" } },
+    ]);
+    expect(app.called("media_source_screen")).toHaveLength(1);
+    const [sound] = capture.getAudioTracks();
+    expect(env.peers[0]!.sender("sa")?.track).toBe(sound);
+    expect((sound as unknown as { contentHint: string }).contentHint).toBe(
+      "music",
+    );
+    expect(produced(env, "sa")).toEqual([
+      expect.objectContaining({
+        parent: video.producerId,
+        epoch: video.epoch,
+      }),
+    ]);
+    await vi.waitFor(() =>
+      expect(useVoice.getState().participants["u-self"]?.pubs).toContain("sa"),
+    );
+    expect(useVoice.getState().sourceAudio.s).toBe("sharing");
+
+    useMediaSettings.getState().patch({ sourceAudioShare: "off" });
+    await vi.waitFor(() => expect(env.peers[0]?.sender("sa")).toBeUndefined());
+    expect(sound.readyState).toBe("ended");
+    expect(app.called("media_source_close")).toEqual([
+      { source: app.sounds[0] },
+    ]);
+    expect(useVoice.getState().sourceAudio.s).toBe("off");
+    expect(useVoice.getState().participants["u-self"]?.pubs).not.toContain(
+      "sa",
+    );
+
+    // The video never moved.
+    expect(useVoice.getState().localScreen).toBe(capture);
+    expect(capture.getVideoTracks()[0]!.readyState).toBe("live");
+    expect(env.peers[0]!.sender("s")).toBe(video);
+    expect(produced(env, "s")).toHaveLength(1);
+    expect(app.called("media_source_screen")).toHaveLength(1);
+    expect(env.errors).toEqual([]);
+  });
+
+  it("adds application sound to a running Go Live under its claim", async () => {
+    useMediaSettings.getState().patch({ sourceAudioShare: "off" });
+    const { env, app } = await joined(APP_06);
+    toggleGoLive();
+    await vi.waitFor(() => expect(env.peers[0]?.sender("l")).toBeTruthy());
+    const video = env.peers[0]!.sender("l")!;
+    useMediaSettings.getState().patch({ sourceAudioShare: "on" });
+    await vi.waitFor(() => expect(env.peers[0]?.sender("la")).toBeTruthy());
+    expect(app.called("media_source_screen")).toHaveLength(1);
+    expect(produced(env, "la")).toEqual([
+      expect.objectContaining({
+        parent: video.producerId,
+        epoch: video.epoch,
+        lc: "00000000-0000-0000-0000-000000000001",
+      }),
+    ]);
+    expect(useVoice.getState().sourceAudio).toEqual({ s: "off", l: "sharing" });
+    expect(liveClaimFrames(env.sent)).toEqual(["p"]);
+  });
+
+  it("changes the application of a running share to the one just chosen", async () => {
+    const { env, app } = await joined(APP_06);
+    toggleShare();
+    await vi.waitFor(() => expect(env.peers[0]?.sender("sa")).toBeTruthy());
+    const capture = useVoice.getState().localScreen!;
+    const [first] = capture.getAudioTracks();
+
+    useMediaSettings.getState().patch({ sourceAudioApp: "spotify" });
+    await vi.waitFor(() =>
+      expect(app.called("media_source_app_audio")).toEqual([
+        { options: { app: "" } },
+        { options: { app: "spotify" } },
+      ]),
+    );
+    await vi.waitFor(() => {
+      const sender = env.peers[0]?.sender("sa");
+      expect(sender).toBeTruthy();
+      expect(sender!.track).not.toBe(first);
+    });
+    expect(first.readyState).toBe("ended");
+    expect(app.called("media_source_close")).toEqual([
+      { source: app.sounds[0] },
+    ]);
+    // The share holds the new sound only; the old track is not kept around.
+    expect(capture.getAudioTracks()).toEqual([
+      env.peers[0]!.sender("sa")!.track,
+    ]);
+    expect(useVoice.getState().sourceAudio.s).toBe("sharing");
+    expect(app.called("media_source_screen")).toHaveLength(1);
+  });
+
+  it("says why the app captured no sound and tries again when asked", async () => {
+    const warn = vi.spyOn(console, "warn").mockImplementation(() => undefined);
+    const { env, app } = await joined(APP_06);
+    app.soundError = "cannot connect to PipeWire";
+    toggleShare();
+    await vi.waitFor(() => expect(env.peers[0]?.sender("s")).toBeTruthy());
+    expect(useVoice.getState().sourceAudio.s).toBe("unavailable");
+    expect(useVoice.getState().sourceAudioNote.s).toEqual({
+      failed: "cannot connect to PipeWire",
+    });
+    expect(useVoice.getState().sharing).toBe(true);
+    expect(env.peers[0]?.sender("sa")).toBeUndefined();
+    // Reported next to the control, not as a passing toast.
+    expect(env.errors).toEqual([]);
+    expect(warn).toHaveBeenCalledWith(
+      "[gelabber:voice]",
+      expect.objectContaining({
+        step: "source-audio",
+        detail: "cannot connect to PipeWire",
+      }),
+    );
+
+    useMediaSettings.getState().patch({ sourceAudioShare: "off" });
+    expect(useVoice.getState().sourceAudio.s).toBe("off");
+    expect(useVoice.getState().sourceAudioNote.s).toBeNull();
+
+    // Still failing: the reason comes back with the next attempt.
+    useMediaSettings.getState().patch({ sourceAudioShare: "on" });
+    await vi.waitFor(() =>
+      expect(useVoice.getState().sourceAudio.s).toBe("unavailable"),
+    );
+    expect(useVoice.getState().sourceAudioNote.s).toEqual({
+      failed: "cannot connect to PipeWire",
+    });
+
+    app.soundError = null;
+    useMediaSettings.getState().patch({ sourceAudioShare: "off" });
+    useMediaSettings.getState().patch({ sourceAudioShare: "on" });
+    await vi.waitFor(() => expect(env.peers[0]?.sender("sa")).toBeTruthy());
+    expect(useVoice.getState().sourceAudio.s).toBe("sharing");
+    expect(useVoice.getState().sourceAudioNote.s).toBeNull();
+    expect(app.called("media_source_screen")).toHaveLength(1);
+  });
+
+  it("keeps the video when sound added to a running share is refused", async () => {
+    vi.spyOn(console, "warn").mockImplementation(() => undefined);
+    useMediaSettings.getState().patch({ sourceAudioShare: "off" });
+    const { env, app } = await joined(APP_06, {
+      produceError: (kind) =>
+        kind === "sa" ? new Error("negotiation_failed") : undefined,
+    });
+    toggleShare();
+    await vi.waitFor(() => expect(env.peers[0]?.sender("s")).toBeTruthy());
+    const capture = useVoice.getState().localScreen!;
+    useMediaSettings.getState().patch({ sourceAudioShare: "on" });
+    await vi.waitFor(() =>
+      expect(useVoice.getState().sourceAudio.s).toBe("unavailable"),
+    );
+    expect(useVoice.getState().sourceAudioNote.s).toEqual({
+      failed: expect.stringContaining("negotiation_failed"),
+    });
+    expect(useVoice.getState().localScreen).toBe(capture);
+    expect(capture.getVideoTracks()[0]!.readyState).toBe("live");
+    expect(env.peers[0]?.sender("s")).toBeTruthy();
+    expect(env.peers[0]?.sender("sa")).toBeUndefined();
+    // The capture it started for nothing is released.
+    expect(app.called("media_source_close")).toEqual([
+      { source: app.sounds[0] },
+    ]);
+    expect(
+      capture.getAudioTracks().every((track) => track.readyState === "ended"),
+    ).toBe(true);
+  });
+
+  it("tells when the chosen application plays nothing, not for a short pause", async () => {
+    useMediaSettings
+      .getState()
+      .patch({ sourceAudioShare: "on", sourceAudioApp: "spotify" });
+    const { env, app } = await joined(APP_06);
+    app.streams = 0;
+    vi.useFakeTimers();
+    toggleShare();
+    await vi.advanceTimersByTimeAsync(0);
+    expect(env.peers[0]?.sender("sa")).toBeTruthy();
+    expect(useVoice.getState().sourceAudioNote.s).toBeNull();
+    await vi.advanceTimersByTimeAsync(2_000);
+    expect(useVoice.getState().sourceAudioNote.s).toBeNull();
+    await vi.advanceTimersByTimeAsync(1_000);
+    expect(useVoice.getState().sourceAudioNote.s).toEqual({
+      silent: "spotify",
+    });
+    // Silence is still a running share.
+    expect(useVoice.getState().sourceAudio.s).toBe("sharing");
+    expect(env.peers[0]?.sender("sa")).toBeTruthy();
+
+    app.streams = 1;
+    await vi.advanceTimersByTimeAsync(1_000);
+    expect(useVoice.getState().sourceAudioNote.s).toBeNull();
+    app.streams = 0;
+    await vi.advanceTimersByTimeAsync(2_000);
+    expect(useVoice.getState().sourceAudioNote.s).toBeNull();
+
+    // Stopped: nobody asks the gone source any more.
+    toggleShare();
+    const asked = app.called("media_source_state").length;
+    await vi.advanceTimersByTimeAsync(5_000);
+    expect(app.called("media_source_state")).toHaveLength(asked);
+    expect(useVoice.getState().sourceAudioNote.s).toBeNull();
+  });
+
+  it("takes the silence of every application for what it is", async () => {
+    const { env, app } = await joined(APP_06);
+    app.streams = 0;
+    vi.useFakeTimers();
+    toggleShare();
+    await vi.advanceTimersByTimeAsync(0);
+    expect(env.peers[0]?.sender("sa")).toBeTruthy();
+    await vi.advanceTimersByTimeAsync(10_000);
+    expect(useVoice.getState().sourceAudio.s).toBe("sharing");
+    expect(useVoice.getState().sourceAudioNote.s).toBeNull();
+    expect(
+      app
+        .called("media_source_state")
+        .some((args) => args.source === app.sounds[0]),
+    ).toBe(false);
+  });
 });
