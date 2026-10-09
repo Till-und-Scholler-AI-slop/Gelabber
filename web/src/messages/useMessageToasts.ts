@@ -20,6 +20,7 @@ import {
 import {
   conversationPath,
   createNotificationDedupe,
+  createNotificationPacing,
   isDmTopic,
   messageNotificationDecision,
   previewText,
@@ -92,7 +93,7 @@ export function useMessageToastsBridge(): void {
     userId: string | undefined;
     generation: number;
     first: ReturnType<typeof createNotificationDedupe>;
-    desktopAt: Map<string, number>;
+    pacing: ReturnType<typeof createNotificationPacing>;
   } | null>(null);
 
   useEffect(() => {
@@ -106,7 +107,7 @@ export function useMessageToastsBridge(): void {
         userId,
         generation,
         first: createNotificationDedupe(),
-        desktopAt: new Map(),
+        pacing: createNotificationPacing(),
       };
     }
     const firstDelivery = deliveries.current.first;
@@ -143,16 +144,15 @@ export function useMessageToastsBridge(): void {
           preview,
         });
       const now = Date.now();
-      const desktopAt = deliveries.current!.desktopAt;
+      const pacing = deliveries.current!.pacing;
       // Replays older than the live delivery window do not generate a burst.
       // Age is measured on the server clock: a fast local clock must not
       // suppress every live notification.
       if (
         decision.desktop &&
         serverNow() - Date.parse(message.created_at) < 30_000 &&
-        now - (desktopAt.get(event.c) ?? 0) >= 5_000
+        pacing.take(event.c, now)
       ) {
-        desktopAt.set(event.c, now);
         const channelId = event.c;
         void showMessageNotification(
           {
@@ -175,7 +175,11 @@ export function useMessageToastsBridge(): void {
               });
             }
           },
-        );
+        ).then((shown) => {
+          // Read in another window instead of announced. Should that window
+          // be gone a second later, the next message is not held back.
+          if (shown === "viewed") pacing.giveBack(channelId, now);
+        });
       }
     });
   }, [client, me, navigate, viewingChannelId]);

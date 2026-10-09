@@ -102,6 +102,27 @@ export function createNotificationDedupe(limit = 2048) {
   };
 }
 
+/**
+ * One system notification per conversation in `gapMs`, however fast the
+ * messages come. The turn is taken before the notification is shown, which
+ * takes a moment. One that then was not shown is given back, so that the next
+ * message is not held back for nothing.
+ */
+export function createNotificationPacing(gapMs = 5_000) {
+  const taken = new Map<string, number>();
+  return {
+    take(channelId: string, now: number): boolean {
+      const last = taken.get(channelId);
+      if (last !== undefined && now - last < gapMs) return false;
+      taken.set(channelId, now);
+      return true;
+    },
+    giveBack(channelId: string, at: number): void {
+      if (taken.get(channelId) === at) taken.delete(channelId);
+    },
+  };
+}
+
 export function previewText(content: string, hasAttachment: boolean): string {
   const trimmed = content.trim().replace(/\s+/g, " ");
   if (trimmed) {

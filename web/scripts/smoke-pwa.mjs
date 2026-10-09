@@ -834,6 +834,7 @@ async function messageNotifications() {
   gateway.message(GRACE, "Hörst du mich?");
   await second.getByText("Hörst du mich?").first().waitFor();
   await second.evaluate(() => window.pwaBackground(true));
+  const read = Date.now();
   gateway.message(ADA, "Liest du das gerade?");
   await page.getByText("Liest du das gerade?").first().waitFor();
   // What it does about Grace's message comes after what it did about Ada's.
@@ -847,6 +848,25 @@ async function messageNotifications() {
     [`gelabber:${USER}:${GRACE.id}`],
     "a conversation that is on screen in another window must not raise a notification",
   );
+
+  // The window in front moves on to Grace. Ada's next message is on nobody's
+  // screen, and the window behind, which kept quiet about her a moment ago,
+  // must not make her wait out its pause between two notifications for that.
+  await page.evaluate(
+    (path) => window.history.pushState({}, "", path),
+    `/d/${GRACE.id}`,
+  );
+  await left(0);
+  const intoThePause = Date.now() - read < 5000;
+  const next = gateway.message(ADA, "Und jetzt?");
+  await until(
+    async () => (await shown()).some(({ data }) => data.message === next),
+    "a message that was read in another window must not hold back the next notification",
+  );
+  if (!intoThePause)
+    console.log(
+      "NOTE: too slow to tell whether a message read in another window holds back the next notification (the pause of five seconds was over)",
+    );
 
   // Both windows in the background, as with the phone in a pocket. Each of
   // them hears Linus, and the phone must sound once.
@@ -878,7 +898,7 @@ async function messageNotifications() {
   assert.deepEqual(errors, []);
   await context.close();
   console.log(
-    "PASS: gateway message in the background becomes an audible notification through the worker; a starting window keeps them, the conversation on screen and a sign-out withdraw them; a window in the background stays quiet about what another one shows, two of them announce a message once (scripted gateway and visibility)",
+    "PASS: gateway message in the background becomes an audible notification through the worker; a starting window keeps them, the conversation on screen and a sign-out withdraw them; a window in the background stays quiet about what another one shows and speaks up once that one has moved on, two of them announce a message once (scripted gateway and visibility)",
   );
 }
 

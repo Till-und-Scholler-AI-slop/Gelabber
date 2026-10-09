@@ -5,6 +5,7 @@ import {
   isConversationPath,
   isDmTopic,
   createNotificationDedupe,
+  createNotificationPacing,
   messageNotificationDecision,
   notificationPermissionText,
   previewText,
@@ -57,6 +58,30 @@ describe("message toast rules", () => {
     expect(first("c", "m2")).toBe(true);
     expect(first("c", "m1")).toBe(true);
   });
+  it("paces system notifications per conversation", () => {
+    const pacing = createNotificationPacing(5_000);
+    expect(pacing.take("c", 1_000)).toBe(true);
+    expect(pacing.take("c", 5_999)).toBe(false);
+    expect(pacing.take("other", 5_999)).toBe(true);
+    expect(pacing.take("c", 6_000)).toBe(true);
+    // A refused turn does not push the next one out.
+    expect(pacing.take("c", 10_999)).toBe(false);
+    expect(pacing.take("c", 11_000)).toBe(true);
+  });
+
+  // The conversation was on screen in another window, so nothing was shown
+  // for the message. That window may be gone a second later.
+  it("gives a turn back that announced nothing", () => {
+    const pacing = createNotificationPacing(5_000);
+    expect(pacing.take("c", 1_000)).toBe(true);
+    pacing.giveBack("c", 1_000);
+    expect(pacing.take("c", 2_000)).toBe(true);
+    // Only its own turn: a later one of the conversation stands.
+    pacing.giveBack("c", 1_000);
+    pacing.giveBack("other", 2_000);
+    expect(pacing.take("c", 3_000)).toBe(false);
+  });
+
   it("skips own messages, edits, the open channel, and a disabled setting", () => {
     const base = {
       enabled: true,

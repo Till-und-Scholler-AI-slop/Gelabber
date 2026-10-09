@@ -134,6 +134,8 @@ async function announced(
  * requested from a button, never from here.
  * `onClick` runs for a notification the page created itself. A tap on one the
  * worker showed arrives through `followNotificationTaps`.
+ * The result names who showed it: the worker, the page, nobody because the
+ * conversation is `viewed` in a visible window, or nobody for another reason.
  *
  * On a phone the notification is all there is to notice a message by: it
  * sounds and vibrates as the device is set, and again for each later message
@@ -143,11 +145,11 @@ async function announced(
 export async function showMessageNotification(
   message: MessageNotification,
   onClick: () => void,
-): Promise<"worker" | "page" | "none"> {
+): Promise<"worker" | "page" | "viewed" | "none"> {
   const api = (globalThis as { Notification?: NotificationApi }).Notification;
   if (!api || api.permission !== "granted") return "none";
   return alone(message.user, async () => {
-    if (await onScreen(message.user, message.channelId)) return "none";
+    if (await onScreen(message.user, message.channelId)) return "viewed";
     const tag = tagOf(message.user, message.channelId);
     const phone = useInstallation.getState().mobile;
     const options: Options = {

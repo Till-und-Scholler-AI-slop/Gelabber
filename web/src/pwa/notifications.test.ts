@@ -347,7 +347,7 @@ describe("a conversation on screen", () => {
     pageApi();
     const active = worker();
     const front = viewer("user-1", "chan", true);
-    expect(await showMessageNotification(message, vi.fn())).toBe("none");
+    expect(await showMessageNotification(message, vi.fn())).toBe("viewed");
     expect(active.showNotification).not.toHaveBeenCalled();
 
     // Other conversations and other accounts are not on screen.
@@ -363,7 +363,7 @@ describe("a conversation on screen", () => {
     front.show(false);
     expect(await showMessageNotification(message, vi.fn())).toBe("worker");
     front.show(true);
-    expect(await showMessageNotification(message, vi.fn())).toBe("none");
+    expect(await showMessageNotification(message, vi.fn())).toBe("viewed");
     front.stop();
     expect(await showMessageNotification(message, vi.fn())).toBe("worker");
     expect(active.showNotification).toHaveBeenCalledTimes(4);
@@ -372,7 +372,7 @@ describe("a conversation on screen", () => {
   it("keeps a page-level notification back the same way", async () => {
     const created = pageApi();
     viewer("user-1", "chan", true);
-    expect(await showMessageNotification(message, vi.fn())).toBe("none");
+    expect(await showMessageNotification(message, vi.fn())).toBe("viewed");
     expect(created).toEqual([]);
   });
 
@@ -382,7 +382,7 @@ describe("a conversation on screen", () => {
     const one = viewer("user-1", "chan", true);
     const two = viewer("user-1", "chan", true);
     one.show(false);
-    expect(await showMessageNotification(message, vi.fn())).toBe("none");
+    expect(await showMessageNotification(message, vi.fn())).toBe("viewed");
     two.stop();
     expect(await showMessageNotification(message, vi.fn())).toBe("worker");
     expect(active.showNotification).toHaveBeenCalledOnce();
