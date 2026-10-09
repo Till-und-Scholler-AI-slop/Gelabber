@@ -445,12 +445,17 @@ jobs:
           cargo --version --verbose
 
       # The mediasoup worker and the release build take long: they are kept
-      # when a later step fails. A cache saved by a tag run could only be
-      # read by that tag.
+      # when a later step fails. The cache of a key (this job, the toolchain,
+      # Cargo.toml and Cargo.lock) is written once, by the first run that
+      # does not find it, and never refreshed. `key` is its generation: raise
+      # it when what was saved is not worth having; the next run then starts
+      # from nothing. A cache saved by a tag run could only be read by that
+      # tag.
       - name: Rust cache
         uses: Swatinem/rust-cache@v2
         with:
           workspaces: desktop -> ../../../t
+          key: "1"
           cache-on-failure: true
           save-if: ${{ github.ref_type != 'tag' }}
 
@@ -464,6 +469,14 @@ jobs:
       - name: Desktop app (gelabber-desktop.exe)
         id: app
         run: cargo build --release --locked --manifest-path desktop/Cargo.toml -p gelabber-desktop
+
+      # A run that never built the app's dependencies would write a cache
+      # without them, and it would stay (see "Rust cache"). The variable is
+      # what the saving half of rust-cache goes by after a failure (post-if in
+      # its action.yml); should it stop reading it, raising `key` is the way.
+      - name: No Rust cache from a run without the app
+        if: ${{ always() && steps.app.outcome != 'success' }}
+        run: Add-Content $env:GITHUB_ENV 'CACHE_ON_FAILURE=false'
 
       # The inputs as desktop/app/tauri.bundle.windows.json names them: the
       # core in bundle-input/, the notices of the libraries in package/. The
