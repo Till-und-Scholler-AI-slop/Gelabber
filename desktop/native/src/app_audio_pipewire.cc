@@ -65,6 +65,7 @@ namespace gelabber
 			decltype(&pw_stream_destroy) stream_destroy{};
 			decltype(&pw_stream_add_listener) stream_add_listener{};
 			decltype(&pw_stream_connect) stream_connect{};
+			decltype(&pw_stream_get_node_id) stream_get_node_id{};
 			decltype(&pw_stream_dequeue_buffer) stream_dequeue_buffer{};
 			decltype(&pw_stream_queue_buffer) stream_queue_buffer{};
 			bool loaded{ false };
@@ -101,6 +102,7 @@ namespace gelabber
 				GM_PW_LOAD(stream_destroy)
 				GM_PW_LOAD(stream_add_listener)
 				GM_PW_LOAD(stream_connect)
+				GM_PW_LOAD(stream_get_node_id)
 				GM_PW_LOAD(stream_dequeue_buffer)
 				GM_PW_LOAD(stream_queue_buffer)
 #undef GM_PW_LOAD
@@ -277,16 +279,19 @@ namespace gelabber
 		};
 
 		// Reports the playback streams of other applications, each once its
-		// owner is known, and their end. Created and destroyed with the loop's
-		// lock held; the events arrive on the loop thread.
+		// owner is known, and their end; and nodes that lost the links into
+		// them. Created and destroyed with the loop's lock held; the events
+		// arrive on the loop thread.
 		class PlaybackWatcher
 		{
 		public:
-			using Added   = std::function<void(const PlaybackStream&)>;
-			using Removed = std::function<void(uint32_t node)>;
+			using Added    = std::function<void(const PlaybackStream&)>;
+			using Removed  = std::function<void(uint32_t node)>;
+			using Unlinked = std::function<void(uint32_t node)>;
 
-			PlaybackWatcher(Connection& connection, Added added, Removed removed)
-			  : connection(connection), added(std::move(added)), removed(std::move(removed))
+			PlaybackWatcher(Connection& connection, Added added, Removed removed, Unlinked unlinked = {})
+			  : connection(connection), added(std::move(added)), removed(std::move(removed)),
+			    unlinked(std::move(unlinked))
 			{
 				static const pw_registry_events events = [] {
 					pw_registry_events e{};
@@ -304,14 +309,25 @@ namespace gelabber
 					};
 					return e;
 				}();
+				static const pw_core_events coreEvents = [] {
+					pw_core_events e{};
+					e.version = PW_VERSION_CORE_EVENTS;
+					e.done    = [](void* data, uint32_t id, int seq) {
+						if (id == PW_ID_CORE)
+							static_cast<PlaybackWatcher*>(data)->OnDone(seq);
+					};
+					return e;
+				}();
 				registry = pw_core_get_registry(connection.core, PW_VERSION_REGISTRY, 0);
 				if (!registry)
 					throw std::runtime_error("PipeWire registry");
 				pw_registry_add_listener(registry, &registryListener, &events, this);
+				pw_core_add_listener(connection.core, &coreListener, &coreEvents, this);
 			}
 
 			~PlaybackWatcher()
 			{
+				spa_hook_remove(&coreListener);
 				spa_hook_remove(&registryListener);
 				for (auto& [id, client] : clients)
 					Release(*client);
@@ -375,6 +391,13 @@ namespace gelabber
 					  reinterpret_cast<pw_client*>(client.proxy), &client.listener, &events, &client);
 					return;
 				}
+				if (std::strcmp(type, PW_TYPE_INTERFACE_Link) == 0)
+				{
+					const auto input = Lookup(props, PW_KEY_LINK_INPUT_NODE);
+					if (unlinked && !input.empty())
+						links.try_emplace(id, static_cast<uint32_t>(std::strtoul(input.c_str(), nullptr, 10)));
+					return;
+				}
 				if (std::strcmp(type, PW_TYPE_INTERFACE_Node) != 0 ||
 				    Lookup(props, PW_KEY_MEDIA_CLASS) != "Stream/Output/Audio")
 					return;
@@ -399,6 +422,19 @@ namespace gelabber
 					clients.erase(client);
 					return;
 				}
+				if (const auto link = links.find(id); link != links.end())
+				{
+					// Told after a round trip: when a playback stream ends, its
+					// links go first, and what follows settles the matter.
+					const uint32_t node = link->second;
+					links.erase(link);
+					if (!Linked(node))
+					{
+						cut.push_back(node);
+						cutSeq = pw_core_sync(connection.core, PW_ID_CORE, 0);
+					}
+					return;
+				}
 				const auto stream = streams.find(id);
 				if (stream == streams.end())
 					return;
@@ -406,6 +442,23 @@ namespace gelabber
 				streams.erase(stream);
 				if (reported)
 					removed(id);
+			}
+
+			bool Linked(uint32_t node) const
+			{
+				return std::any_of(
+				  links.begin(), links.end(), [node](const auto& link) { return link.second == node; });
+			}
+
+			void OnDone(int seq)
+			{
+				if (cut.empty() || seq != cutSeq)
+					return;
+				const auto nodes = std::move(cut);
+				cut.clear();
+				for (const uint32_t node : nodes)
+					if (!Linked(node))
+						unlinked(node);
 			}
 
 			void OnClientInfo(Client& client, const pw_client_info* info)
@@ -463,10 +516,17 @@ namespace gelabber
 			Connection& connection;
 			const Added added;
 			const Removed removed;
+			const Unlinked unlinked;
 			pw_registry* registry{ nullptr };
 			spa_hook registryListener{};
+			spa_hook coreListener{};
 			std::map<uint32_t, std::unique_ptr<Client>> clients;
 			std::map<uint32_t, Stream> streams;
+			// Link -> the node it leads into.
+			std::map<uint32_t, uint32_t> links;
+			// Nodes whose last link went, until the round trip is back.
+			std::vector<uint32_t> cut;
+			int cutSeq{ 0 };
 		};
 
 		class PipeWireAppAudio : public AppAudioCapture
@@ -484,7 +544,8 @@ namespace gelabber
 					watcher = std::make_unique<PlaybackWatcher>(
 					  *connection,
 					  [this](const PlaybackStream& playback) { OnStream(playback); },
-					  [this](uint32_t node) { OnStreamRemoved(node); });
+					  [this](uint32_t node) { OnStreamRemoved(node); },
+					  [this](uint32_t node) { OnUnlinked(node); });
 				}
 				running = true;
 				mixer   = std::thread([this] { Mix(); });
@@ -520,6 +581,8 @@ namespace gelabber
 			{
 				PipeWireAppAudio* owner{ nullptr };
 				uint32_t node{ 0 };
+				// The playback stream: its object.serial.
+				std::string target;
 				pw_stream* stream{ nullptr };
 				spa_hook listener{};
 				// Interleaved stereo samples waiting for the mixer (mutex).
@@ -530,14 +593,21 @@ namespace gelabber
 			// On the loop thread with its lock held, like the stream events.
 			void OnStream(const PlaybackStream& playback)
 			{
-				const uint32_t id = playback.node;
 				if (!app.empty() && playback.app.id != app && playback.oldId != app)
 					return;
-				auto capture   = std::make_unique<Capture>();
-				capture->owner = this;
-				capture->node  = id;
-				const auto target = playback.serial.empty() ? std::to_string(id) : playback.serial;
-				auto* props2      = connection->api.properties_new(
+				auto capture    = std::make_unique<Capture>();
+				capture->owner  = this;
+				capture->node   = playback.node;
+				capture->target = playback.serial.empty() ? std::to_string(playback.node) : playback.serial;
+				if (!Connect(*capture))
+					return;
+				std::lock_guard lock(mutex);
+				captures[playback.node] = std::move(capture);
+			}
+
+			bool Connect(Capture& capture)
+			{
+				auto* props = connection->api.properties_new(
                   PW_KEY_MEDIA_TYPE,
                   "Audio",
                   PW_KEY_MEDIA_CATEGORY,
@@ -549,17 +619,24 @@ namespace gelabber
                   PW_KEY_NODE_NAME,
                   "gelabber-source-audio",
                   "target.object",
-                  target.c_str(),
+                  capture.target.c_str(),
                   PW_KEY_NODE_DONT_RECONNECT,
+                  "true",
+                  // This stream or none: a session manager that has not
+                  // prepared the playback stream yet would link the default
+                  // source instead, the microphone, and leave it there
+                  // (WirePlumber 0.5). Lingering, the capture waits.
+                  "node.dont-fallback",
+                  "true",
+                  "node.linger",
                   "true",
                   // Capturing must not keep a paused application's output running.
                   "node.passive",
                   "true",
                   nullptr);
-				capture->stream =
-				  connection->api.stream_new(connection->core, "Gelabber source audio", props2);
-				if (!capture->stream)
-					return;
+				capture.stream = connection->api.stream_new(connection->core, "Gelabber source audio", props);
+				if (!capture.stream)
+					return false;
 				static const pw_stream_events events = [] {
 					pw_stream_events e{};
 					e.version = PW_VERSION_STREAM_EVENTS;
@@ -569,7 +646,8 @@ namespace gelabber
 					};
 					return e;
 				}();
-				connection->api.stream_add_listener(capture->stream, &capture->listener, &events, capture.get());
+				spa_zero(capture.listener);
+				connection->api.stream_add_listener(capture.stream, &capture.listener, &events, &capture);
 
 				uint8_t buffer[1024];
 				spa_pod_builder builder;
@@ -584,14 +662,34 @@ namespace gelabber
 				const spa_pod* params[1] = { spa_format_audio_raw_build(&builder, SPA_PARAM_EnumFormat, &info) };
 				const auto flags         = static_cast<pw_stream_flags>(
                   PW_STREAM_FLAG_AUTOCONNECT | PW_STREAM_FLAG_MAP_BUFFERS);
-				if (connection->api.stream_connect(capture->stream, PW_DIRECTION_INPUT, PW_ID_ANY, flags, params, 1) <
+				if (connection->api.stream_connect(capture.stream, PW_DIRECTION_INPUT, PW_ID_ANY, flags, params, 1) <
 				    0)
 				{
+					DestroyStream(capture);
+					return false;
+				}
+				return true;
+			}
+
+			// The session manager links a capture once. When the application
+			// changes to an output with another channel layout, its ports are
+			// replaced and the links with them, for good: a new capture stream
+			// is linked again.
+			void OnUnlinked(uint32_t node)
+			{
+				for (auto& [id, capture] : captures)
+				{
+					if (!capture->stream || connection->api.stream_get_node_id(capture->stream) != node)
+						continue;
 					DestroyStream(*capture);
+					{
+						std::lock_guard lock(mutex);
+						capture->samples.clear();
+						capture->primed = false;
+					}
+					Connect(*capture);
 					return;
 				}
-				std::lock_guard lock(mutex);
-				captures[id] = std::move(capture);
 			}
 
 			void OnStreamRemoved(uint32_t id)

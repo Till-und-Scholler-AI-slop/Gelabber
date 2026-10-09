@@ -142,5 +142,12 @@ variable yourself (e.g. `=0`) overrides that.
   helper in a pid namespace of its own is only recognized as a native
   PipeWire client (`pipewire.sec.pid`); pipewire-pulse passes on the pid the
   client reports.
+  A capture stream takes its playback stream or nothing (`node.dont-fallback`,
+  and `node.linger` to wait for it): WirePlumber 0.5 otherwise links the
+  default source, the microphone, to a capture whose target it has not
+  prepared yet. When the application changes to an output with another
+  channel layout, its ports and the links from them are replaced and the
+  session manager leaves the capture unlinked, so the core replaces a capture
+  stream that lost its links.
   The voice test checks the list, "" and both ways to select against a
   `pw-play` noise player while the test process plays a consumer out.
