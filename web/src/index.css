@@ -1282,6 +1282,13 @@ summary {
     padding-block: 12px;
   }
 }
+/* A phone on its side has room for the call and the user panel only if the
+   channel list gives up its minimum and scrolls. */
+@media (pointer: coarse) and (max-height: 500px) {
+  .sidebar-list-scroll {
+    min-height: 72px;
+  }
+}
 
 /* Theme styles share the same component geometry and hit targets. */
 dialog,
