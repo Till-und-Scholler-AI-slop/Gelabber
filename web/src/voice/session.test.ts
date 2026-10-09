@@ -3468,6 +3468,56 @@ describe("authoritative mediasoup session lifecycle", () => {
     expect(el.srcObject).toBeNull();
     expect(useVoice.getState().playbackBlocked).toBe(false);
   });
+  it("replays call audio when the page is shown again after an interruption", async () => {
+    const elements = playback();
+    let onVisibility: (() => void) | undefined;
+    const page = {
+      visibilityState: "visible",
+      addEventListener: (type: string, listener: () => void) => {
+        if (type === "visibilitychange") onVisibility = listener;
+      },
+      removeEventListener: () => undefined,
+      querySelectorAll: () => [],
+    };
+    vi.stubGlobal("document", page);
+    const env = await joined();
+    toggleSourceWatch("u-bob", "s");
+    const source = env.peers[0]!.receive("u-bob", "sa", fakeStream("source"));
+    const el = elements.find(
+      (candidate) => candidate.srcObject === source.stream,
+    )!;
+    el.play.mockClear();
+    expect(onVisibility).toBeTypeOf("function");
+
+    // A phone call or the lock screen hides the page and pauses the element.
+    page.visibilityState = "hidden";
+    onVisibility!();
+    expect(el.play).not.toHaveBeenCalled();
+    page.visibilityState = "visible";
+    onVisibility!();
+    expect(el.play).toHaveBeenCalledTimes(1);
+    expect(useVoice.getState().playbackBlocked).toBe(false);
+
+    // A browser that wants a gesture first raises the "Ton starten" recovery.
+    el.play.mockRejectedValueOnce(
+      Object.assign(new Error("gesture"), { name: "NotAllowedError" }),
+    );
+    onVisibility!();
+    await vi.waitFor(() =>
+      expect(useVoice.getState().playbackBlocked).toBe(true),
+    );
+    retryPlayback();
+    await vi.waitFor(() =>
+      expect(useVoice.getState().playbackBlocked).toBe(false),
+    );
+
+    leaveVoice();
+    el.play.mockClear();
+    onVisibility!();
+    expect(el.play).not.toHaveBeenCalled();
+    expect(useVoice.getState().playbackBlocked).toBe(false);
+  });
+
   it("ends only source audio first and then stops both captures when the parent video ends", async () => {
     useMediaSettings.getState().patch({ shareSourceAudio: true });
     const env = await joined();

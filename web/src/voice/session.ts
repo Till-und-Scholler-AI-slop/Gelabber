@@ -428,6 +428,15 @@ export function retryPlayback(): void {
   }
 }
 
+/**
+ * A phone call or the lock screen can pause call audio while the page is
+ * hidden. Replay it once the page is back; where that needs a gesture, the
+ * refused replay raises the "Ton starten" recovery instead of staying silent.
+ */
+function resumePlayback(): void {
+  if (document.visibilityState === "visible") retryPlayback();
+}
+
 function hintTrack(
   track: MediaStreamTrack,
   hint: "speech" | "detail" | "music",
@@ -481,6 +490,9 @@ function ensureBound(): void {
   gateway.onErr(onErr);
   gateway.onReady(onReady);
   onMediaSettingsChange(handleSettingsChange);
+  // Re-adding the same listener after a rebind is a no-op.
+  if (typeof document !== "undefined")
+    document.addEventListener("visibilitychange", resumePlayback);
   bound = true;
 }
 
