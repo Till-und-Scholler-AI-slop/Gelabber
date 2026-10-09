@@ -236,6 +236,9 @@ export async function startHarness() {
     await owner.page.waitForURL((url) => url.pathname === textPath);
     async function channel(name, kind = "Voice") {
       await owner.page
+        .locator('summary[aria-label="Kanal oder Kategorie erstellen"]')
+        .click();
+      await owner.page
         .getByRole("button", { name: "Kanal erstellen", exact: true })
         .click();
       dialog = owner.page.getByRole("dialog", { name: "Kanal erstellen" });
@@ -595,7 +598,14 @@ export async function click(actor, name) {
   ) {
     await actor.page.locator('summary[aria-label="Benutzermenü"]').click();
   }
-  await actor.page.getByRole("button", { name, exact: true }).first().click();
+  const target = actor.page.getByRole("button", { name, exact: true }).first();
+  // Message actions live in a toolbar that takes pointer events only while
+  // its row is hovered or focused.
+  const row = target.locator(
+    "xpath=ancestor::*[contains(concat(' ', normalize-space(@class), ' '), ' lr-message-row ')][1]",
+  );
+  if ((await row.count()) > 0) await row.hover();
+  await target.click();
 }
 export async function navigate(actor, path, base) {
   await actor.page.goto(`${base}${path}`);

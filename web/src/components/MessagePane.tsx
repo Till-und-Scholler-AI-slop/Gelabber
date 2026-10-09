@@ -59,9 +59,20 @@ import type { Attachment, Message } from "../messages/types.ts";
 import { asAttachmentList } from "../messages/types.ts";
 import { Avatar } from "./Avatar.tsx";
 import { ReactionBar } from "./ReactionBar.tsx";
-import { PaperclipIcon, PencilIcon, TrashIcon } from "./Icons.tsx";
+import {
+  ArrowDownIcon,
+  CloseIcon,
+  PaperclipIcon,
+  PencilIcon,
+  SearchIcon,
+  SendIcon,
+  TrashIcon,
+} from "./Icons.tsx";
+import "./chat.css";
 
 export function MessagePane({
+  title,
+  notice,
   channelId,
   channelName,
   canSend,
@@ -72,6 +83,10 @@ export function MessagePane({
   onDraftChange,
   onDraftStop,
 }: {
+  /** Header content left of the search button: icon and channel name. */
+  title: ReactNode;
+  /** Optional strip below the header, e.g. the live hint. */
+  notice?: ReactNode;
   channelId: string;
   channelName: string;
   canSend: boolean;
@@ -149,20 +164,25 @@ export function MessagePane({
 
   return (
     <div className="lr-message-pane flex min-h-0 flex-1 flex-col">
-      <div className="lr-search-toggle flex shrink-0 justify-end border-b px-4 py-1">
+      <header className="lr-channel-header">
+        {title}
         <button
           ref={searchButton}
           type="button"
           onClick={() => setSearchingScope(searching ? null : searchScope)}
-          className="rounded px-3 py-2 text-sm"
+          className="lr-header-search"
           aria-expanded={searching}
+          aria-label="Nachrichten suchen"
+          title="Nachrichten suchen"
         >
-          Nachrichten suchen
+          <SearchIcon size={16} />
+          <span>Suchen</span>
         </button>
-      </div>
+      </header>
+      {notice}
       {read.error ? (
-        <p className="px-4 py-1 text-xs" role="status">
-          Lesestatus konnte nicht gespeichert werden.{" "}
+        <p className="lr-inline-notice" role="status">
+          <span>Lesestatus nicht gespeichert.</span>
           <button type="button" onClick={read.retry}>
             Erneut versuchen
           </button>
@@ -226,16 +246,17 @@ export function MessagePane({
             />
           </div>
         ) : null}
+        {!searching && !atLatest && items.length > 0 ? (
+          <button
+            type="button"
+            onClick={() => setLatestRequest((value) => value + 1)}
+            className="lr-jump-latest"
+          >
+            <ArrowDownIcon size={15} />
+            Zu den neuesten Nachrichten
+          </button>
+        ) : null}
       </div>
-      {!searching && !atLatest && items.length > 0 ? (
-        <button
-          type="button"
-          onClick={() => setLatestRequest((value) => value + 1)}
-          className="shrink-0 border-t px-4 py-2 text-sm"
-        >
-          Zu den neuesten Nachrichten
-        </button>
-      ) : null}
       {footer}
       <Composer
         key={user?.id ?? "anonymous"}
@@ -520,7 +541,7 @@ function MessageList({
       className="flex min-h-0 flex-1 flex-col overflow-y-auto"
     >
       {loadError ? (
-        <div role="alert" className="px-4 py-3 text-center text-sm">
+        <div role="alert" className="lr-list-state">
           <p>
             {loadError === "paging"
               ? "Ältere Nachrichten konnten nicht geladen werden."
@@ -530,19 +551,19 @@ function MessageList({
             type="button"
             onClick={onRetry}
             disabled={!ready || loadingOlder}
-            className="mt-2 rounded border px-3 py-1 disabled:opacity-50"
+            className="lr-button-secondary"
           >
             Erneut laden
           </button>
         </div>
       ) : null}
       {ready && !loadError && items.length === 0 ? (
-        <div className="flex h-full items-center justify-center px-6 text-center text-sm text-neutral-500 dark:text-neutral-400">
+        <div className="lr-list-empty">
           Noch keine Nachrichten. Schreib die erste.
         </div>
       ) : null}
       {hasOlder || loadingOlder ? (
-        <p className="px-4 py-2 text-center text-xs text-neutral-400 dark:text-neutral-500">
+        <p className="lr-list-loading">
           {loadingOlder ? "Ältere Nachrichten…" : ""}
         </p>
       ) : null}
@@ -643,10 +664,15 @@ function MessageRow({
     : null;
   const showDelete = canDelete && !pending && !editing;
   const showEdit = mine && canSend && !pending && !editing;
+  const canReact = canSend && !pending && !editing;
+  const [reactionSlot, setReactionSlot] = useState<HTMLSpanElement | null>(
+    null,
+  );
 
   const actions =
-    showEdit || showDelete ? (
-      <span className="flex shrink-0 items-center opacity-70 transition group-hover:opacity-100 group-focus-within:opacity-100">
+    showEdit || showDelete || canReact ? (
+      <span className="lr-message-actions">
+        <span ref={setReactionSlot} className="lr-message-reaction-slot" />
         {showEdit ? (
           <IconButton
             buttonRef={editButton}
@@ -657,7 +683,7 @@ function MessageRow({
           </IconButton>
         ) : null}
         {showDelete ? (
-          <IconButton label="Nachricht löschen" onClick={onDelete}>
+          <IconButton label="Nachricht löschen" onClick={onDelete} danger>
             <TrashIcon size={14} />
           </IconButton>
         ) : null}
@@ -669,24 +695,26 @@ function MessageRow({
       <div
         tabIndex={-1}
         className={[
-          "lr-message-row lr-message-continued group flex items-start gap-3 px-4 py-0.5 hover:bg-neutral-100/80 dark:hover:bg-neutral-800/80",
+          "lr-message-row lr-message-continued group flex items-start gap-3",
           pending ? "opacity-60" : "",
         ].join(" ")}
       >
         <span className="w-8 shrink-0" aria-hidden />
         <div className="min-w-0 flex-1">
           {message.content ? (
-            <p className="whitespace-pre-wrap break-words text-sm text-neutral-800 dark:text-neutral-200">
+            <p className="lr-message-text">
               {message.content}
               {message.edited_at ? (
-                <span className="ml-1 text-xs text-neutral-400 dark:text-neutral-500">
-                  (bearbeitet)
-                </span>
+                <span className="lr-message-edited">(bearbeitet)</span>
               ) : null}
             </p>
           ) : null}
           <AttachmentList attachments={message.attachments ?? []} />
-          <ReactionBar message={message} canSend={canSend} />
+          <ReactionBar
+            message={message}
+            canSend={canSend}
+            addSlot={reactionSlot}
+          />
         </div>
         {actions}
       </div>
@@ -697,26 +725,21 @@ function MessageRow({
     <div
       tabIndex={-1}
       className={[
-        "lr-message-row group flex items-start gap-3 px-4 py-1.5 hover:bg-neutral-100/80 dark:hover:bg-neutral-800/80",
+        "lr-message-row group flex items-start gap-3",
         pending ? "opacity-60" : "",
       ].join(" ")}
     >
       <Avatar name={message.author.name} url={message.author.avatar_url} />
       <div className="min-w-0 flex-1">
         <div className="flex flex-wrap items-baseline gap-2">
-          <span className="text-sm font-semibold text-neutral-900 dark:text-neutral-100">
-            {message.author.name}
-          </span>
-          <time
-            dateTime={message.created_at}
-            className="text-xs text-neutral-400 dark:text-neutral-500"
-          >
+          <span className="lr-message-author">{message.author.name}</span>
+          <time dateTime={message.created_at} className="lr-message-time">
             {when}
           </time>
         </div>
         {editing ? (
           <form
-            className="mt-1 flex flex-col gap-1.5"
+            className="lr-message-edit"
             onSubmit={(event) => {
               event.preventDefault();
               if (error) return;
@@ -745,45 +768,40 @@ function MessageRow({
                 }
               }}
               rows={2}
-              className="w-full resize-none rounded-md border border-neutral-300 dark:border-neutral-600 bg-white dark:bg-neutral-900 px-2 py-1.5 text-sm outline-none focus:border-neutral-500 dark:focus:border-neutral-400 focus:ring-2 focus:ring-neutral-200 dark:focus:ring-neutral-700"
+              aria-label="Nachricht bearbeiten"
               autoFocus
             />
             {error ? (
-              <p className="text-xs text-red-600 dark:text-red-400">
-                {fieldMessage("content", error)}
-              </p>
+              <p className="lr-field-error">{fieldMessage("content", error)}</p>
             ) : null}
-            <div className="flex gap-2 text-xs">
-              <button
-                type="submit"
-                disabled={Boolean(error)}
-                className="rounded-md bg-neutral-900 dark:bg-neutral-700 px-2 py-1 font-medium text-white disabled:opacity-50"
-              >
-                Speichern
-              </button>
-              <button
-                type="button"
-                onClick={cancelEdit}
-                className="rounded-md px-2 py-1 text-neutral-600 dark:text-neutral-400 hover:bg-neutral-100 dark:hover:bg-neutral-800"
-              >
+            <div className="lr-message-edit-actions">
+              <span>Esc bricht ab · Enter speichert</span>
+              <button type="button" onClick={cancelEdit}>
                 Abbrechen
+              </button>
+              <button type="submit" disabled={Boolean(error)}>
+                Speichern
               </button>
             </div>
           </form>
         ) : (
-          <p className="whitespace-pre-wrap break-words text-sm text-neutral-800 dark:text-neutral-200">
+          <p className="lr-message-text">
             {message.content}
             {message.edited_at ? (
-              <span className="ml-1 text-xs text-neutral-400 dark:text-neutral-500">
-                (bearbeitet)
-              </span>
+              <span className="lr-message-edited">(bearbeitet)</span>
             ) : null}
           </p>
         )}
         {!editing ? (
           <AttachmentList attachments={message.attachments ?? []} />
         ) : null}
-        {!editing && <ReactionBar message={message} canSend={canSend} />}
+        {!editing && (
+          <ReactionBar
+            message={message}
+            canSend={canSend}
+            addSlot={reactionSlot}
+          />
+        )}
       </div>
       {actions}
     </div>
@@ -907,7 +925,7 @@ function Composer({
 
   if (!canSend) {
     return (
-      <p className="border-t border-neutral-200 dark:border-neutral-700 px-4 py-3 text-sm text-neutral-500 dark:text-neutral-400">
+      <p className="lr-composer-readonly">
         Du kannst in diesem Kanal nicht schreiben.
       </p>
     );
@@ -918,25 +936,21 @@ function Composer({
       ref={composerForm}
       onFocusCapture={revealComposerFocus}
       onSubmit={submit}
-      className="lr-composer border-t border-neutral-200 dark:border-neutral-700 bg-white dark:bg-neutral-900 px-4 py-3"
+      className="lr-composer"
     >
       {attempts
         .filter((attempt) => attempt.status !== "sending")
         .map((attempt) => (
-          <div
-            key={attempt.id}
-            role="alert"
-            className="mb-2 rounded border border-red-300 p-2 text-sm dark:border-red-800"
-          >
+          <div key={attempt.id} role="alert" className="lr-send-failure">
             <p>
               {attempt.error}{" "}
               {attempt.status === "uncertain"
                 ? "Die Nachricht kann bereits gespeichert sein. Prüfe den Verlauf vor erneutem Senden."
                 : "Text und Datei bleiben für dich erhalten."}
             </p>
-            <p className="whitespace-pre-wrap break-words">{attempt.content}</p>
+            <p className="lr-send-failure-content">{attempt.content}</p>
             {attempt.file ? <p>{attempt.file.name}</p> : null}
-            <div className="mt-2 flex gap-3">
+            <div className="lr-send-failure-actions">
               {attempt.status === "failed" ? (
                 <button
                   type="button"
@@ -972,100 +986,91 @@ function Composer({
         Nachricht in {mention}
         {channelName}
       </label>
-      {file ? (
-        <div className="mb-2 flex items-center gap-2 rounded-lg border border-neutral-200 dark:border-neutral-700 bg-neutral-50 dark:bg-neutral-950 px-2 py-1.5">
-          {preview ? (
-            <img
-              src={preview}
-              alt=""
-              className="h-12 w-12 rounded object-cover"
-            />
-          ) : null}
-          <div className="min-w-0 flex-1">
-            <p className="truncate text-sm text-neutral-800 dark:text-neutral-200">
-              {file.name}
-            </p>
-            <p className="text-xs text-neutral-400 dark:text-neutral-500">
-              {(file.size / 1024).toFixed(0)} KB
-            </p>
-          </div>
-          <button
-            type="button"
-            onClick={() => pickFile(null)}
-            className="rounded-md px-2 py-1 text-xs text-neutral-600 dark:text-neutral-400 hover:bg-neutral-200 dark:hover:bg-neutral-700"
-          >
-            Entfernen
-          </button>
-        </div>
-      ) : null}
-      <div className="flex items-end gap-2">
-        {canSendFiles ? (
-          <>
-            <input
-              ref={fileInput}
-              type="file"
-              accept={ALLOWED_TYPES.join(",")}
-              className="sr-only"
-              onChange={(event) => {
-                const selected = event.target.files?.[0] ?? null;
-                pickFile(selected);
-                event.target.value = "";
-                if (selected) composerInput.current?.focus();
-              }}
-            />
+      <div className="lr-composer-field">
+        {file ? (
+          <div className="lr-composer-attachment">
+            {preview ? <img src={preview} alt="" /> : null}
+            <div>
+              <p>{file.name}</p>
+              <p>{(file.size / 1024).toFixed(0)} KB</p>
+            </div>
             <button
               type="button"
-              title="Datei anhängen"
-              aria-label="Datei anhängen"
-              onClick={() => fileInput.current?.click()}
-              className="rounded-lg p-2 text-neutral-500 dark:text-neutral-400 transition hover:bg-neutral-100 dark:hover:bg-neutral-800 hover:text-neutral-900 dark:hover:text-neutral-100"
+              onClick={() => pickFile(null)}
+              aria-label="Anhang entfernen"
+              title="Anhang entfernen"
             >
-              <PaperclipIcon size={18} />
+              <CloseIcon size={14} />
             </button>
-          </>
+          </div>
         ) : null}
-        <textarea
-          ref={composerInput}
-          id={`compose-${channelId}`}
-          value={draft}
-          onChange={(e) => {
-            setDraft(e.target.value);
-            onDraftChange?.(e.target.value);
-          }}
-          onBlur={() => onDraftStop?.()}
-          onKeyDown={onKeyDown}
-          rows={1}
-          placeholder={`Nachricht an ${mention}${channelName}`}
-          className="max-h-40 min-h-10 flex-1 resize-none rounded-lg border border-neutral-300 dark:border-neutral-600 bg-neutral-50 dark:bg-neutral-950 px-3 py-2 text-sm outline-none focus:border-neutral-500 dark:focus:border-neutral-400 focus:bg-white dark:focus:bg-neutral-900 focus:ring-2 focus:ring-neutral-200 dark:focus:ring-neutral-700"
-        />
-        <button
-          type="submit"
-          disabled={disabled}
-          className="rounded-lg bg-neutral-900 dark:bg-neutral-700 px-3 py-2 text-sm font-medium text-white transition hover:bg-neutral-700 dark:hover:bg-neutral-600 disabled:cursor-not-allowed disabled:opacity-50"
-        >
-          Senden
-        </button>
-      </div>
-      <div className="mt-1 flex justify-between text-xs text-neutral-400 dark:text-neutral-500">
-        <span>Enter sendet · Shift+Enter neue Zeile</span>
-        {remaining < 200 ? (
-          <span
-            className={
-              remaining < 0 ? "text-red-600 dark:text-red-400" : undefined
-            }
+        <div className="lr-composer-row">
+          {canSendFiles ? (
+            <>
+              <input
+                ref={fileInput}
+                type="file"
+                accept={ALLOWED_TYPES.join(",")}
+                className="sr-only"
+                onChange={(event) => {
+                  const selected = event.target.files?.[0] ?? null;
+                  pickFile(selected);
+                  event.target.value = "";
+                  if (selected) composerInput.current?.focus();
+                }}
+              />
+              <button
+                type="button"
+                title="Datei anhängen"
+                aria-label="Datei anhängen"
+                onClick={() => fileInput.current?.click()}
+                className="lr-composer-icon"
+              >
+                <PaperclipIcon size={18} />
+              </button>
+            </>
+          ) : null}
+          <textarea
+            ref={composerInput}
+            id={`compose-${channelId}`}
+            value={draft}
+            onChange={(e) => {
+              setDraft(e.target.value);
+              onDraftChange?.(e.target.value);
+            }}
+            onBlur={() => onDraftStop?.()}
+            onKeyDown={onKeyDown}
+            rows={1}
+            placeholder={`Nachricht an ${mention}${channelName}`}
+          />
+          <button
+            type="submit"
+            disabled={disabled}
+            aria-label="Senden"
+            title="Senden"
+            className="lr-composer-send"
           >
-            {remaining}
-          </span>
-        ) : null}
-        {error ? (
-          <span className="text-red-600 dark:text-red-400">
-            {fieldMessage("content", error)}
-          </span>
-        ) : null}
-        {fileError ? (
-          <span className="text-red-600 dark:text-red-400">{fileError}</span>
-        ) : null}
+            <SendIcon size={17} />
+          </button>
+        </div>
       </div>
+      {remaining < 200 || error || fileError ? (
+        <div className="lr-composer-status">
+          {remaining < 200 ? (
+            <span className={remaining < 0 ? "lr-field-error" : undefined}>
+              {remaining}
+            </span>
+          ) : null}
+          {error ? (
+            <span className="lr-field-error">
+              {fieldMessage("content", error)}
+            </span>
+          ) : null}
+          {fileError ? (
+            <span className="lr-field-error">{fileError}</span>
+          ) : null}
+        </div>
+      ) : null}
     </form>
   );
 }
@@ -1074,7 +1079,7 @@ function AttachmentList({ attachments }: { attachments: Attachment[] }) {
   const files = asAttachmentList(attachments);
   if (files.length === 0) return null;
   return (
-    <div className="mt-1 flex flex-col gap-1.5">
+    <div className="lr-attachments">
       {files.map((attachment) => {
         const src = attachment.preview_url ?? attachmentUrl(attachment.id);
         if (isImageType(attachment.content_type)) {
@@ -1084,13 +1089,9 @@ function AttachmentList({ attachments }: { attachments: Attachment[] }) {
               href={src}
               target="_blank"
               rel="noreferrer"
-              className="block max-w-xs"
+              className="lr-attachment-image"
             >
-              <img
-                src={src}
-                alt={attachment.filename}
-                className="max-h-56 max-w-full rounded-lg border border-neutral-200 dark:border-neutral-700 object-contain"
-              />
+              <img src={src} alt={attachment.filename} />
             </a>
           );
         }
@@ -1098,12 +1099,11 @@ function AttachmentList({ attachments }: { attachments: Attachment[] }) {
           <a
             key={attachment.id}
             href={attachmentUrl(attachment.id)}
-            className="inline-flex max-w-full items-center gap-2 rounded-md border border-neutral-200 dark:border-neutral-700 bg-neutral-50 dark:bg-neutral-950 px-2 py-1 text-sm text-neutral-800 dark:text-neutral-200 hover:bg-neutral-100 dark:hover:bg-neutral-800"
+            className="lr-attachment-file"
           >
-            <span className="truncate">{attachment.filename}</span>
-            <span className="shrink-0 text-xs text-neutral-400 dark:text-neutral-500">
-              {(attachment.size / 1024).toFixed(0)} KB
-            </span>
+            <PaperclipIcon size={15} />
+            <span>{attachment.filename}</span>
+            <span>{(attachment.size / 1024).toFixed(0)} KB</span>
           </a>
         );
       })}
@@ -1135,11 +1135,13 @@ function IconButton({
   label,
   onClick,
   children,
+  danger = false,
 }: {
   buttonRef?: Ref<HTMLButtonElement>;
   label: string;
   onClick: () => void;
   children: ReactNode;
+  danger?: boolean;
 }) {
   return (
     <button
@@ -1148,7 +1150,7 @@ function IconButton({
       title={label}
       aria-label={label}
       onClick={onClick}
-      className="rounded-md p-1 text-neutral-500 dark:text-neutral-400 transition hover:bg-neutral-200 dark:hover:bg-neutral-700 hover:text-neutral-900 dark:hover:text-neutral-100"
+      className={`lr-message-action${danger ? " is-danger" : ""}`}
     >
       {children}
     </button>

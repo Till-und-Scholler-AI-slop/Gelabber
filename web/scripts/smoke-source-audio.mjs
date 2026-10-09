@@ -401,7 +401,10 @@ const sourcePlayback = (sample, kind) =>
   sample.playback.filter((el) => el.source === kind);
 const micPlayback = (sample) =>
   sample.playback.filter((el) => !el.source && el.tracks.length > 0);
-const dock = (actor) => actor.page.locator(".voice-session-dock");
+// The bottom bar on narrow windows, the sidebar card on wide ones; the
+// hidden one is excluded from the accessibility tree.
+const dock = (actor) =>
+  actor.page.getByRole("region", { name: "Aktive Medien", exact: true });
 const tile = (actor, kind) =>
   actor.page.locator("figure").filter({
     has: actor.page.locator("figcaption", {
@@ -867,7 +870,11 @@ try {
   }
   await progress(owner, ["a"], receiver.id);
   await progress(receiver, ["a"], owner.id);
-  await dock(owner).getByLabel("Ton teilen", { exact: true }).check();
+  await dock(owner)
+    .getByRole("button", { name: "Voice-Einstellungen", exact: true })
+    .click();
+  await owner.page.getByLabel("Ton teilen", { exact: true }).check();
+  await owner.page.keyboard.press("Escape");
   await sourceScenario(receiver, "s");
   await sourceScenario(receiver, "l");
 
