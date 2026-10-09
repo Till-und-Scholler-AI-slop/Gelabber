@@ -15,6 +15,7 @@ import {
   utimes,
   writeFile,
 } from "node:fs/promises";
+import { createServer } from "node:http";
 import { tmpdir } from "node:os";
 import { join, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
@@ -163,8 +164,7 @@ const get = (path, headers = {}) =>
   });
 
 async function serving() {
-  const shell = await get("/");
-  const html = await shell.text();
+  const html = await (await get("/")).text();
   for (const path of [
     "/",
     "/login",
@@ -177,16 +177,12 @@ async function serving() {
     assert.match(response.headers.get("content-type"), /text\/html/, path);
     assert.equal(
       response.headers.get("cache-control"),
-      "no-cache",
-      `${path}: the app shell must be revalidated on every load`,
+      "no-store",
+      `${path}: no browser may keep the app shell`,
     );
     assert.equal(response.headers.get("content-encoding"), "gzip", path);
     assert.equal(await response.text(), html, path);
   }
-  const unchanged = await get("/login", {
-    "if-none-match": shell.headers.get("etag"),
-  });
-  assert.equal(unchanged.status, 304, "revalidation must be a cheap 304");
 
   const assets = [...html.matchAll(/(?:src|href)="(\/assets\/[^"]+)"/g)].map(
     (match) => match[1],
@@ -261,7 +257,7 @@ async function serving() {
     "safe-area insets need viewport-fit=cover",
   );
   console.log(
-    "PASS: app shell revalidated (no-cache, 304), hashed assets immutable and gzip, missing files 404, small favicon",
+    "PASS: app shell never stored (no-store), hashed assets immutable and gzip, missing files 404, small favicon",
   );
 }
 
@@ -806,11 +802,18 @@ async function notificationTap() {
   );
 }
 
-// The installed app after a server upgrade. A real browser profile with its
-// HTTP cache and no request routing (routing would switch the cache off).
-// The first build's shell is given an old date, as on a server that has been
-// running for weeks: without `Cache-Control: no-cache` a browser then treats
-// it as fresh for days and never asks for the new one.
+// The app after a server upgrade. A real browser profile with its HTTP cache
+// and no request routing (routing would switch the cache off). The first
+// build's shell is given an old date, as on a server that has been running
+// for weeks: a browser that is allowed to keep it then treats it as fresh for
+// days and never asks for the new one.
+//
+// Going back to the app stands for every load that takes a stored copy
+// without asking the server, whatever its age: Chromium loads a tab restored
+// at browser start and a discarded tab coming back the same way. Under
+// `no-cache` this step starts the old client. (Playwright runs Chromium
+// without the back/forward cache, so going back builds the document anew
+// instead of reviving the page that was left.)
 async function secondDeployment() {
   const indexFile = join(dist, "index.html");
   const html = await readFile(indexFile, "utf8");
@@ -834,27 +837,49 @@ async function secondDeployment() {
     page.waitForFunction(
       () => document.getElementById("root").childElementCount > 0,
     );
+  const failures = [];
+  const watched = (page) => {
+    page.on("console", (message) => {
+      if (message.type() === "error") failures.push(message.text());
+    });
+    return page;
+  };
+  // Another site, to leave the app for and come back from.
+  const elsewhere = createServer((_request, response) => {
+    response.writeHead(200, {
+      "content-type": "text/html",
+      "cache-control": "no-store",
+    });
+    response.end("<!doctype html><title>Elsewhere</title>");
+  });
+  await new Promise((resolve) => elsewhere.listen(0, "127.0.0.1", resolve));
   let context;
   try {
     await utimes(indexFile, weeksAgo, weeksAgo);
     context = await chromium.launchPersistentContext(profile, launch);
-    let page = await context.newPage();
+    let page = watched(await context.newPage());
     await page.goto(url("/login"));
     await started(page);
     await controlled(page);
     assert.equal(await entryOf(page), `/assets/${entry}`);
-    await context.close();
+    await page.goto(`http://127.0.0.1:${elsewhere.address().port}/`);
 
     // Deploy: same code under a new hashed name, the old file is gone.
     await rename(join(dist, "assets", entry), join(dist, "assets", nextEntry));
     await writeFile(indexFile, html.replace(entry, nextEntry));
 
+    await page.goBack();
+    assert.equal(page.url(), url("/login"));
+    assert.equal(
+      await entryOf(page),
+      `/assets/${nextEntry}`,
+      "going back to the app after a deployment must load the new shell, not a copy the browser kept",
+    );
+    await started(page);
+    await context.close();
+
     context = await chromium.launchPersistentContext(profile, launch);
-    page = await context.newPage();
-    const failures = [];
-    page.on("console", (message) => {
-      if (message.type() === "error") failures.push(message.text());
-    });
+    page = watched(await context.newPage());
     await page.goto(url("/login"));
     assert.equal(
       await entryOf(page),
@@ -873,6 +898,8 @@ async function secondDeployment() {
     assert.equal((await get(`/assets/${entry}`)).status, 404);
   } finally {
     await context?.close().catch(() => {});
+    elsewhere.close();
+    elsewhere.closeAllConnections();
     await rename(
       join(dist, "assets", nextEntry),
       join(dist, "assets", entry),
@@ -882,7 +909,7 @@ async function secondDeployment() {
     await rm(profile, { recursive: true, force: true });
   }
   console.log(
-    "PASS: second deployment with new asset names is loaded on the next launch and after reload; removed chunk is a 404",
+    "PASS: second deployment with new asset names is loaded when going back to the app, on the next launch and after reload; removed chunk is a 404",
   );
 }
 

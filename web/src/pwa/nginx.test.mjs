@@ -33,11 +33,15 @@ function parse(text) {
 const blocks = parse(source);
 const location = (name) => blocks.get(name) ?? [];
 const NO_CACHE = 'add_header Cache-Control "no-cache" always';
+const NO_STORE = 'add_header Cache-Control "no-store" always';
 const MISSING_IS_404 = "try_files $uri =404";
 
 describe("production nginx config", () => {
-  it("revalidates the app shell on every load, including deep links", () => {
-    expect(location("= /index.html")).toContain(NO_CACHE);
+  it("lets no browser keep the app shell, including deep links", () => {
+    // Not `no-cache`: a restored tab, a discarded tab coming back and a back
+    // navigation take a stored copy without asking the server, and the old
+    // shell then starts the old client from its immutable files.
+    expect(location("= /index.html")).toEqual([NO_STORE]);
     // Unknown paths are app routes and end in the shell by internal redirect,
     // which is what brings them under the location above.
     expect(location("/")).toEqual(["try_files $uri $uri/ /index.html"]);
