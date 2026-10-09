@@ -3,6 +3,13 @@
 // mixed to 48 kHz stereo in 10 ms blocks. WirePlumber links each capture
 // stream to its target; the applications keep playing to their own output.
 //
+// Whose stream it is comes from the stream's client object: the registry
+// lists a playback node with application.name and client.id, and only the
+// client's info has application.process.id and application.process.binary
+// (for native, ALSA plug-in and pipewire-pulse clients alike). Streams of this
+// process and of the processes it started (the webview's helpers) are never
+// captured: they carry the call itself.
+//
 // libpipewire is loaded at runtime like libwebrtc's own PipeWire use, so the
 // core has no link-time dependency on it.
 
@@ -20,10 +27,15 @@
 #include <chrono>
 #include <cmath>
 #include <condition_variable>
+#include <cstdlib>
 #include <cstring>
 #include <deque>
+#include <fstream>
+#include <functional>
+#include <iterator>
 #include <map>
 #include <mutex>
+#include <set>
 #include <stdexcept>
 #include <thread>
 
@@ -54,6 +66,7 @@ namespace gelabber
 			decltype(&pw_stream_destroy) stream_destroy{};
 			decltype(&pw_stream_add_listener) stream_add_listener{};
 			decltype(&pw_stream_connect) stream_connect{};
+			decltype(&pw_stream_get_node_id) stream_get_node_id{};
 			decltype(&pw_stream_dequeue_buffer) stream_dequeue_buffer{};
 			decltype(&pw_stream_queue_buffer) stream_queue_buffer{};
 			bool loaded{ false };
@@ -90,6 +103,7 @@ namespace gelabber
 				GM_PW_LOAD(stream_destroy)
 				GM_PW_LOAD(stream_add_listener)
 				GM_PW_LOAD(stream_connect)
+				GM_PW_LOAD(stream_get_node_id)
 				GM_PW_LOAD(stream_dequeue_buffer)
 				GM_PW_LOAD(stream_queue_buffer)
 #undef GM_PW_LOAD
@@ -108,34 +122,67 @@ namespace gelabber
 			return value ? value : "";
 		}
 
+		pid_t ToPid(const std::string& value)
+		{
+			return static_cast<pid_t>(std::strtol(value.c_str(), nullptr, 10));
+		}
+
+		// Parent of a process, 0 when unknown. /proc/<pid>/stat reads
+		// "pid (name) state parent ..." and the name may contain anything.
+		pid_t ParentOf(pid_t pid)
+		{
+			std::ifstream file("/proc/" + std::to_string(pid) + "/stat");
+			const std::string stat((std::istreambuf_iterator<char>(file)), std::istreambuf_iterator<char>());
+			const auto name = stat.rfind(')');
+			// ") S <parent>"
+			if (name == std::string::npos || name + 4 >= stat.size())
+				return 0;
+			return ToPid(stat.substr(name + 4));
+		}
+
+		// This process or one it started.
+		bool OwnProcess(pid_t pid)
+		{
+			const pid_t self = getpid();
+			for (int depth = 0; pid > 1 && depth < 32; ++depth)
+			{
+				if (pid == self)
+					return true;
+				pid = ParentOf(pid);
+			}
+			return false;
+		}
+
+		// Names sound libraries give every application that uses them.
+		bool GenericName(const std::string& name)
+		{
+			return name.empty() || name == "WEBRTC VoiceEngine" || name.rfind("PipeWire ALSA [", 0) == 0 ||
+			       name.rfind("ALSA plug-in [", 0) == 0 || name.rfind("Lavf", 0) == 0;
+		}
+
 		struct PlaybackStream
 		{
 			uint32_t node{ 0 };
 			std::string serial;
 			AudioApp app;
+			// The id up to 0.5.2 (application.name); clients may have stored it.
+			std::string oldId;
+
+			// Whether choosing `id` means this stream.
+			bool ChosenBy(const std::string& id) const
+			{
+				return app.id == id || oldId == id;
+			}
+
+			// The application gave itself a name that chooses it and is not
+			// its binary's.
+			bool Named() const
+			{
+				return oldId != app.id && oldId == app.name;
+			}
 		};
 
-		// A playback stream of another process, or nothing.
-		bool ReadPlaybackStream(uint32_t id, const char* type, const spa_dict* props, PlaybackStream& out)
-		{
-			if (std::strcmp(type, PW_TYPE_INTERFACE_Node) != 0 ||
-			    Lookup(props, PW_KEY_MEDIA_CLASS) != "Stream/Output/Audio")
-				return false;
-			if (Lookup(props, PW_KEY_APP_PROCESS_ID) == std::to_string(getpid()))
-				return false;
-			out.node      = id;
-			out.serial    = Lookup(props, "object.serial");
-			out.app.name  = Lookup(props, PW_KEY_APP_NAME);
-			const auto binary = Lookup(props, PW_KEY_APP_PROCESS_BINARY);
-			out.app.id    = !binary.empty() ? binary : out.app.name;
-			if (out.app.id.empty())
-				out.app.id = Lookup(props, PW_KEY_NODE_NAME);
-			if (out.app.name.empty())
-				out.app.name = out.app.id;
-			return !out.app.id.empty();
-		}
-
-		// A thread loop with a connected core and a registry.
+		// A thread loop with a connected core.
 		class Connection
 		{
 		public:
@@ -158,14 +205,6 @@ namespace gelabber
 					Close();
 					throw std::runtime_error("cannot connect to PipeWire");
 				}
-			}
-
-			// With the lock held; the events arrive on the loop thread.
-			void Listen(const pw_registry_events* events, void* data)
-			{
-				registry = pw_core_get_registry(core, PW_VERSION_REGISTRY, 0);
-				spa_zero(registryListener);
-				pw_registry_add_listener(registry, &registryListener, events, data);
 			}
 
 			~Connection()
@@ -234,12 +273,6 @@ namespace gelabber
 				if (loop)
 				{
 					api.thread_loop_lock(loop);
-					if (registry)
-					{
-						spa_hook_remove(&registryListener);
-						api.proxy_destroy(reinterpret_cast<pw_proxy*>(registry));
-						registry = nullptr;
-					}
 					if (core)
 						api.core_disconnect(core);
 					core = nullptr;
@@ -255,10 +288,259 @@ namespace gelabber
 			}
 
 			pw_context* context{ nullptr };
-			pw_registry* registry{ nullptr };
-			spa_hook registryListener{};
 			int pending{ 0 };
 			bool synced{ false };
+		};
+
+		// Reports the playback streams of other applications, each once its
+		// owner is known, and their end; and nodes that lost the links into
+		// them. Created and destroyed with the loop's lock held; the events
+		// arrive on the loop thread.
+		class PlaybackWatcher
+		{
+		public:
+			using Added    = std::function<void(const PlaybackStream&)>;
+			using Removed  = std::function<void(uint32_t node)>;
+			using Unlinked = std::function<void(uint32_t node)>;
+
+			PlaybackWatcher(Connection& connection, Added added, Removed removed, Unlinked unlinked = {})
+			  : connection(connection), added(std::move(added)), removed(std::move(removed)),
+			    unlinked(std::move(unlinked))
+			{
+				static const pw_registry_events events = [] {
+					pw_registry_events e{};
+					e.version = PW_VERSION_REGISTRY_EVENTS;
+					e.global  = [](void* data,
+					              uint32_t id,
+					              uint32_t /*permissions*/,
+					              const char* type,
+					              uint32_t /*version*/,
+					              const spa_dict* props) {
+						static_cast<PlaybackWatcher*>(data)->OnGlobal(id, type, props);
+					};
+					e.global_remove = [](void* data, uint32_t id) {
+						static_cast<PlaybackWatcher*>(data)->OnGlobalRemove(id);
+					};
+					return e;
+				}();
+				static const pw_core_events coreEvents = [] {
+					pw_core_events e{};
+					e.version = PW_VERSION_CORE_EVENTS;
+					e.done    = [](void* data, uint32_t id, int seq) {
+						if (id == PW_ID_CORE)
+							static_cast<PlaybackWatcher*>(data)->OnDone(seq);
+					};
+					return e;
+				}();
+				registry = pw_core_get_registry(connection.core, PW_VERSION_REGISTRY, 0);
+				if (!registry)
+					throw std::runtime_error("PipeWire registry");
+				pw_registry_add_listener(registry, &registryListener, &events, this);
+				pw_core_add_listener(connection.core, &coreListener, &coreEvents, this);
+			}
+
+			~PlaybackWatcher()
+			{
+				spa_hook_remove(&coreListener);
+				spa_hook_remove(&registryListener);
+				for (auto& [id, client] : clients)
+					Release(*client);
+				connection.api.proxy_destroy(reinterpret_cast<pw_proxy*>(registry));
+			}
+
+		private:
+			struct Client
+			{
+				PlaybackWatcher* watcher{ nullptr };
+				uint32_t id{ 0 };
+				pw_proxy* proxy{ nullptr };
+				spa_hook listener{};
+				// The info arrived; the rest is from it.
+				bool known{ false };
+				// As the application reports it. Inside a sandbox that is the
+				// pid of its own namespace.
+				pid_t pid{ 0 };
+				// The process on the socket as the server saw it: the
+				// application for native clients, pipewire-pulse for
+				// PulseAudio ones.
+				pid_t peer{ 0 };
+				std::string binary;
+				std::string name;
+			};
+
+			struct Stream
+			{
+				uint32_t client{ SPA_ID_INVALID };
+				std::string serial;
+				std::string appName;
+				std::string nodeName;
+				enum { Waiting, Skipped, Reported } state{ Waiting };
+			};
+
+			void OnGlobal(uint32_t id, const char* type, const spa_dict* props)
+			{
+				if (std::strcmp(type, PW_TYPE_INTERFACE_Client) == 0)
+				{
+					const auto [entry, fresh] = clients.try_emplace(id);
+					if (!fresh)
+						return;
+					entry->second  = std::make_unique<Client>();
+					auto& client   = *entry->second;
+					client.watcher = this;
+					client.id      = id;
+					client.proxy   =
+					  static_cast<pw_proxy*>(pw_registry_bind(registry, id, type, PW_VERSION_CLIENT, 0));
+					if (!client.proxy)
+						return;
+					static const pw_client_events events = [] {
+						pw_client_events e{};
+						e.version = PW_VERSION_CLIENT_EVENTS;
+						e.info    = [](void* data, const pw_client_info* info) {
+							auto* client = static_cast<Client*>(data);
+							client->watcher->OnClientInfo(*client, info);
+						};
+						return e;
+					}();
+					pw_client_add_listener(
+					  reinterpret_cast<pw_client*>(client.proxy), &client.listener, &events, &client);
+					return;
+				}
+				if (std::strcmp(type, PW_TYPE_INTERFACE_Link) == 0)
+				{
+					const auto input = Lookup(props, PW_KEY_LINK_INPUT_NODE);
+					if (unlinked && !input.empty())
+						links.try_emplace(id, static_cast<uint32_t>(std::strtoul(input.c_str(), nullptr, 10)));
+					return;
+				}
+				if (std::strcmp(type, PW_TYPE_INTERFACE_Node) != 0 ||
+				    Lookup(props, PW_KEY_MEDIA_CLASS) != "Stream/Output/Audio")
+					return;
+				const auto [entry, fresh] = streams.try_emplace(id);
+				if (!fresh)
+					return;
+				auto& stream     = entry->second;
+				stream.serial    = Lookup(props, "object.serial");
+				stream.appName   = Lookup(props, PW_KEY_APP_NAME);
+				stream.nodeName  = Lookup(props, PW_KEY_NODE_NAME);
+				const auto owner = Lookup(props, PW_KEY_CLIENT_ID);
+				if (!owner.empty())
+					stream.client = static_cast<uint32_t>(std::strtoul(owner.c_str(), nullptr, 10));
+				Decide(id, stream);
+			}
+
+			void OnGlobalRemove(uint32_t id)
+			{
+				if (const auto client = clients.find(id); client != clients.end())
+				{
+					Release(*client->second);
+					clients.erase(client);
+					return;
+				}
+				if (const auto link = links.find(id); link != links.end())
+				{
+					// Told after a round trip: when a playback stream ends, its
+					// links go first, and what follows settles the matter.
+					const uint32_t node = link->second;
+					links.erase(link);
+					if (!Linked(node))
+					{
+						cut.push_back(node);
+						cutSeq = pw_core_sync(connection.core, PW_ID_CORE, 0);
+					}
+					return;
+				}
+				const auto stream = streams.find(id);
+				if (stream == streams.end())
+					return;
+				const bool reported = stream->second.state == Stream::Reported;
+				streams.erase(stream);
+				if (reported)
+					removed(id);
+			}
+
+			bool Linked(uint32_t node) const
+			{
+				return std::any_of(
+				  links.begin(), links.end(), [node](const auto& link) { return link.second == node; });
+			}
+
+			void OnDone(int seq)
+			{
+				if (cut.empty() || seq != cutSeq)
+					return;
+				const auto nodes = std::move(cut);
+				cut.clear();
+				for (const uint32_t node : nodes)
+					if (!Linked(node))
+						unlinked(node);
+			}
+
+			void OnClientInfo(Client& client, const pw_client_info* info)
+			{
+				if (!info || !info->props || !(info->change_mask & PW_CLIENT_CHANGE_MASK_PROPS))
+					return;
+				client.known  = true;
+				client.pid    = ToPid(Lookup(info->props, PW_KEY_APP_PROCESS_ID));
+				client.peer   = ToPid(Lookup(info->props, PW_KEY_SEC_PID));
+				client.binary = Lookup(info->props, PW_KEY_APP_PROCESS_BINARY);
+				client.name   = Lookup(info->props, PW_KEY_APP_NAME);
+				for (auto& [id, stream] : streams)
+					if (stream.client == client.id && stream.state == Stream::Waiting)
+						Decide(id, stream);
+			}
+
+			// A stream waits for its owner's info: without it the stream might
+			// be this application's own. A client that leaves first takes its
+			// streams along.
+			void Decide(uint32_t id, Stream& stream)
+			{
+				const Client* owner = nullptr;
+				if (stream.client != SPA_ID_INVALID)
+				{
+					const auto found = clients.find(stream.client);
+					if (found == clients.end() || !found->second->known)
+						return;
+					owner = found->second.get();
+				}
+				stream.state = Stream::Skipped;
+				if (owner && (OwnProcess(owner->pid) || OwnProcess(owner->peer)))
+					return;
+				PlaybackStream playback;
+				playback.node     = id;
+				playback.serial   = stream.serial;
+				playback.oldId    = !stream.appName.empty() ? stream.appName : stream.nodeName;
+				playback.app.id   = owner && !owner->binary.empty() ? owner->binary : playback.oldId;
+				const auto& name  = !stream.appName.empty() || !owner ? stream.appName : owner->name;
+				playback.app.name = GenericName(name) ? playback.app.id : name;
+				if (playback.app.id.empty())
+					return;
+				stream.state = Stream::Reported;
+				added(playback);
+			}
+
+			void Release(Client& client)
+			{
+				if (!client.proxy)
+					return;
+				spa_hook_remove(&client.listener);
+				connection.api.proxy_destroy(client.proxy);
+				client.proxy = nullptr;
+			}
+
+			Connection& connection;
+			const Added added;
+			const Removed removed;
+			const Unlinked unlinked;
+			pw_registry* registry{ nullptr };
+			spa_hook registryListener{};
+			spa_hook coreListener{};
+			std::map<uint32_t, std::unique_ptr<Client>> clients;
+			std::map<uint32_t, Stream> streams;
+			// Link -> the node it leads into.
+			std::map<uint32_t, uint32_t> links;
+			// Nodes whose last link went, until the round trip is back.
+			std::vector<uint32_t> cut;
+			int cutSeq{ 0 };
 		};
 
 		class PipeWireAppAudio : public AppAudioCapture
@@ -270,29 +552,17 @@ namespace gelabber
 
 			void Start()
 			{
-				static const pw_registry_events events = [] {
-					pw_registry_events e{};
-					e.version = PW_VERSION_REGISTRY_EVENTS;
-					e.global  = [](void* data,
-					              uint32_t id,
-					              uint32_t /*permissions*/,
-					              const char* type,
-					              uint32_t /*version*/,
-					              const spa_dict* props) {
-						static_cast<PipeWireAppAudio*>(data)->OnGlobal(id, type, props);
-					};
-					e.global_remove = [](void* data, uint32_t id) {
-						static_cast<PipeWireAppAudio*>(data)->OnGlobalRemove(id);
-					};
-					return e;
-				}();
 				connection = std::make_unique<Connection>("gelabber-app-audio");
 				{
 					Connection::Lock lock(*connection);
-					connection->Listen(&events, this);
+					watcher = std::make_unique<PlaybackWatcher>(
+					  *connection,
+					  [this](const PlaybackStream& playback) { OnStream(playback); },
+					  [this](uint32_t node) { OnStreamRemoved(node); },
+					  [this](uint32_t node) { OnUnlinked(node); });
 				}
 				running = true;
-				mixer      = std::thread([this] { Mix(); });
+				mixer   = std::thread([this] { Mix(); });
 			}
 
 			~PipeWireAppAudio() override
@@ -303,7 +573,9 @@ namespace gelabber
 				if (connection)
 				{
 					{
+						// The watcher first: no stream is added after this.
 						Connection::Lock lock(*connection);
+						watcher.reset();
 						for (auto& [node, capture] : captures)
 							DestroyStream(*capture);
 					}
@@ -323,6 +595,8 @@ namespace gelabber
 			{
 				PipeWireAppAudio* owner{ nullptr };
 				uint32_t node{ 0 };
+				// The playback stream: its object.serial.
+				std::string target;
 				pw_stream* stream{ nullptr };
 				spa_hook listener{};
 				// Interleaved stereo samples waiting for the mixer (mutex).
@@ -330,19 +604,24 @@ namespace gelabber
 				bool primed{ false };
 			};
 
-			// Registry events run on the loop thread with its lock held.
-			void OnGlobal(uint32_t id, const char* type, const spa_dict* props)
+			// On the loop thread with its lock held, like the stream events.
+			void OnStream(const PlaybackStream& playback)
 			{
-				PlaybackStream playback;
-				if (!ReadPlaybackStream(id, type, props, playback))
+				if (!app.empty() && !playback.ChosenBy(app))
 					return;
-				if (!app.empty() && playback.app.id != app)
+				auto capture    = std::make_unique<Capture>();
+				capture->owner  = this;
+				capture->node   = playback.node;
+				capture->target = playback.serial.empty() ? std::to_string(playback.node) : playback.serial;
+				if (!Connect(*capture))
 					return;
-				auto capture   = std::make_unique<Capture>();
-				capture->owner = this;
-				capture->node  = id;
-				const auto target = playback.serial.empty() ? std::to_string(id) : playback.serial;
-				auto* props2      = connection->api.properties_new(
+				std::lock_guard lock(mutex);
+				captures[playback.node] = std::move(capture);
+			}
+
+			bool Connect(Capture& capture)
+			{
+				auto* props = connection->api.properties_new(
                   PW_KEY_MEDIA_TYPE,
                   "Audio",
                   PW_KEY_MEDIA_CATEGORY,
@@ -354,17 +633,24 @@ namespace gelabber
                   PW_KEY_NODE_NAME,
                   "gelabber-source-audio",
                   "target.object",
-                  target.c_str(),
+                  capture.target.c_str(),
                   PW_KEY_NODE_DONT_RECONNECT,
+                  "true",
+                  // This stream or none: a session manager that has not
+                  // prepared the playback stream yet would link the default
+                  // source instead, the microphone, and leave it there
+                  // (WirePlumber 0.5). Lingering, the capture waits.
+                  "node.dont-fallback",
+                  "true",
+                  "node.linger",
                   "true",
                   // Capturing must not keep a paused application's output running.
                   "node.passive",
                   "true",
                   nullptr);
-				capture->stream =
-				  connection->api.stream_new(connection->core, "Gelabber source audio", props2);
-				if (!capture->stream)
-					return;
+				capture.stream = connection->api.stream_new(connection->core, "Gelabber source audio", props);
+				if (!capture.stream)
+					return false;
 				static const pw_stream_events events = [] {
 					pw_stream_events e{};
 					e.version = PW_VERSION_STREAM_EVENTS;
@@ -374,7 +660,8 @@ namespace gelabber
 					};
 					return e;
 				}();
-				connection->api.stream_add_listener(capture->stream, &capture->listener, &events, capture.get());
+				spa_zero(capture.listener);
+				connection->api.stream_add_listener(capture.stream, &capture.listener, &events, &capture);
 
 				uint8_t buffer[1024];
 				spa_pod_builder builder;
@@ -389,17 +676,37 @@ namespace gelabber
 				const spa_pod* params[1] = { spa_format_audio_raw_build(&builder, SPA_PARAM_EnumFormat, &info) };
 				const auto flags         = static_cast<pw_stream_flags>(
                   PW_STREAM_FLAG_AUTOCONNECT | PW_STREAM_FLAG_MAP_BUFFERS);
-				if (connection->api.stream_connect(capture->stream, PW_DIRECTION_INPUT, PW_ID_ANY, flags, params, 1) <
+				if (connection->api.stream_connect(capture.stream, PW_DIRECTION_INPUT, PW_ID_ANY, flags, params, 1) <
 				    0)
 				{
-					DestroyStream(*capture);
-					return;
+					DestroyStream(capture);
+					return false;
 				}
-				std::lock_guard lock(mutex);
-				captures[id] = std::move(capture);
+				return true;
 			}
 
-			void OnGlobalRemove(uint32_t id)
+			// The session manager links a capture once. When the application
+			// changes to an output with another channel layout, its ports are
+			// replaced and the links with them, for good: a new capture stream
+			// is linked again.
+			void OnUnlinked(uint32_t node)
+			{
+				for (auto& [id, capture] : captures)
+				{
+					if (!capture->stream || connection->api.stream_get_node_id(capture->stream) != node)
+						continue;
+					DestroyStream(*capture);
+					{
+						std::lock_guard lock(mutex);
+						capture->samples.clear();
+						capture->primed = false;
+					}
+					Connect(*capture);
+					return;
+				}
+			}
+
+			void OnStreamRemoved(uint32_t id)
 			{
 				std::unique_ptr<Capture> gone;
 				{
@@ -494,6 +801,7 @@ namespace gelabber
 			const std::string app;
 			const Sink sink;
 			std::unique_ptr<Connection> connection;
+			std::unique_ptr<PlaybackWatcher> watcher;
 			mutable std::mutex mutex;
 			std::map<uint32_t, std::unique_ptr<Capture>> captures;
 			uint64_t delivered{ 0 };
@@ -504,34 +812,56 @@ namespace gelabber
 
 	std::vector<AudioApp> ListAudioApps()
 	{
-		std::map<std::string, AudioApp> apps;
-		static const pw_registry_events events = [] {
-			pw_registry_events e{};
-			e.version = PW_VERSION_REGISTRY_EVENTS;
-			e.global  = [](void* data,
-			              uint32_t id,
-			              uint32_t /*permissions*/,
-			              const char* type,
-			              uint32_t /*version*/,
-			              const spa_dict* props) {
-				PlaybackStream playback;
-				if (!ReadPlaybackStream(id, type, props, playback))
-					return;
-				auto& apps = *static_cast<std::map<std::string, AudioApp>*>(data);
-				auto& app  = apps[playback.app.id];
-				app.id     = playback.app.id;
-				app.name   = playback.app.name;
-				++app.streams;
-			};
-			return e;
-		}();
+		std::vector<PlaybackStream> playing;
 		Connection connection("gelabber-app-list");
-		std::vector<AudioApp> out;
 		Connection::Lock lock(connection);
-		connection.Listen(&events, &apps);
-		connection.Sync(2);
-		for (auto& [id, app] : apps)
-			out.push_back(app);
+		PlaybackWatcher watcher(
+		  connection,
+		  [&playing](const PlaybackStream& playback) { playing.push_back(playback); },
+		  [&playing](uint32_t node) {
+			  std::erase_if(
+			    playing, [node](const PlaybackStream& playback) { return playback.node == node; });
+		  });
+		// One round trip for the registry's listing, one for the info of the
+		// clients in it.
+		if (connection.Sync(2))
+			connection.Sync(2);
+
+		// An entry for each binary. Programs that share one (Electron, Wine, an
+		// interpreter) are told apart by the names they gave themselves: where
+		// a binary's streams carry several, each name is an entry as well,
+		// next to the binary, which chooses them all.
+		std::map<std::string, std::set<std::string>> names;
+		for (const auto& playback : playing)
+		{
+			auto& ofBinary = names[playback.app.id];
+			if (playback.Named())
+				ofBinary.insert(playback.oldId);
+		}
+		std::set<std::string> ids;
+		for (const auto& [binary, ofBinary] : names)
+		{
+			ids.insert(binary);
+			if (ofBinary.size() > 1)
+				ids.insert(ofBinary.begin(), ofBinary.end());
+		}
+		std::vector<AudioApp> out;
+		for (const auto& id : ids)
+		{
+			AudioApp app;
+			app.id = id;
+			// Called what its streams are called when they agree.
+			for (const auto& playback : playing)
+			{
+				if (!playback.ChosenBy(id))
+					continue;
+				if (app.streams++ == 0)
+					app.name = playback.app.name;
+				else if (app.name != playback.app.name)
+					app.name = id;
+			}
+			out.push_back(std::move(app));
+		}
 		return out;
 	}
 

@@ -172,8 +172,37 @@ set them.
   applied. Other audio sources must report empty `AudioOptions`, because the
   voice engine applies a source's options to the shared APM.
 - Source audio (Linux): PipeWire, dlopened like libwebrtc does. One passive
-  capture stream per playback node of the chosen application
-  (`application.process.binary`; "" = every application but Gelabber),
-  mixed to 48 kHz stereo and produced as the `sa`/`la` Opus stereo track.
-  Streams the application opens later are picked up. The voice test checks
-  it against a `pw-play` noise player.
+  capture stream per playback node of the chosen application ("" = every
+  application), mixed to 48 kHz stereo and produced as the `sa`/`la` Opus
+  stereo track. Streams the application opens later are picked up. Whose a
+  playback node is comes from its client object: the registry lists the node
+  with `application.name` and `client.id` only, the client's info has
+  `application.process.id` and `application.process.binary`. The binary is
+  the application's id; its name, the id up to 0.5.2, still selects it.
+  Applications that run the same binary (a system Electron, Wine, an
+  interpreter) are that binary's one entry, which selects them all. While
+  they play under different names of their own, each name is listed as a
+  further entry with the name as its id; a name a sound library gives
+  (`WEBRTC VoiceEngine`, `PipeWire ALSA [...]`) does not count.
+  Gelabber's own process and the ones it started (the webview's helpers) are
+  never captured, whatever is selected: the stream would carry the call. A
+  helper in a pid namespace of its own is only recognized as a native
+  PipeWire client (`pipewire.sec.pid`); pipewire-pulse passes on the pid the
+  client reports.
+  Only the process a playback stream belongs to decides. Sound that another
+  process plays on is that process's stream: behind a virtual sink of
+  PipeWire's loopback or filter-chain module, "" captures an application
+  twice, at its own stream and at the chain's output, and Gelabber's playout
+  routed through such a sink is captured at the chain's output. A chosen
+  application is captured at its own stream alone.
+  A capture stream takes its playback stream or nothing (`node.dont-fallback`,
+  and `node.linger` to wait for it): WirePlumber 0.5 otherwise links the
+  default source, the microphone, to a capture whose target it has not
+  prepared yet. When the application changes to an output with another
+  channel layout, its ports and the links from them are replaced and the
+  session manager leaves the capture unlinked, so the core replaces a capture
+  stream that lost its links.
+  The voice test covers the list and "" while the test process plays a
+  consumer out and a player it started plays too, a player of its own that is
+  chosen by name and changes outputs, and two players on one binary under
+  different names.
