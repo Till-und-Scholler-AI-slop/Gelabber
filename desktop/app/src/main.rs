@@ -191,16 +191,31 @@ async fn set_server(app: AppHandle, server: String) -> Result<(), String> {
     window.navigate(origin).map_err(|e| e.to_string())
 }
 
-/// WebKitGTK's DMA-BUF renderer dies on the NVIDIA driver under Wayland
-/// ("Error 71 (Protocol error) dispatching to Wayland display"). Fall back to
-/// its shared-memory renderer there; an explicit setting by the user wins.
+#[cfg(target_os = "linux")]
+const WEBKIT_DISABLE_DMABUF: &str = "WEBKIT_DISABLE_DMABUF_RENDERER";
+#[cfg(target_os = "linux")]
+const WEBKIT_FORCE_SHM: &str = "WEBKIT_DMABUF_RENDERER_FORCE_SHM";
+
+/// The WebKitGTK variable to set on the NVIDIA driver. Its DMA-BUF renderer
+/// dies there under Wayland ("Error 71 (Protocol error) dispatching to
+/// Wayland display") when it hands buffers over as DMA-BUFs. Handing them
+/// over through shared memory works and keeps accelerated compositing, which
+/// video on a canvas needs: with the renderer disabled, the web process
+/// paints every frame on the CPU, half a core and more for one stream across
+/// the window. An explicit setting of either variable by the user wins.
+#[cfg(target_os = "linux")]
+fn webkit_workaround(nvidia: bool, set_by_user: impl Fn(&str) -> bool) -> Option<&'static str> {
+    (nvidia && !set_by_user(WEBKIT_DISABLE_DMABUF) && !set_by_user(WEBKIT_FORCE_SHM))
+        .then_some(WEBKIT_FORCE_SHM)
+}
+
 #[cfg(target_os = "linux")]
 fn webkit_workarounds() {
     let nvidia = std::path::Path::new("/proc/driver/nvidia/version").exists()
         || std::path::Path::new("/sys/module/nvidia_drm").exists();
-    if nvidia && std::env::var_os("WEBKIT_DISABLE_DMABUF_RENDERER").is_none() {
+    if let Some(name) = webkit_workaround(nvidia, |name| std::env::var_os(name).is_some()) {
         // SAFETY: called first thing in main, before any other thread exists.
-        unsafe { std::env::set_var("WEBKIT_DISABLE_DMABUF_RENDERER", "1") };
+        unsafe { std::env::set_var(name, "1") };
     }
 }
 
@@ -310,6 +325,20 @@ fn main() {
 mod tests {
     use super::{check_reachable, server_addrs, server_origin, setup_url};
     use std::net::TcpListener;
+
+    #[cfg(target_os = "linux")]
+    #[test]
+    fn nvidia_gets_the_shared_memory_renderer_unless_the_user_chose() {
+        use super::{WEBKIT_DISABLE_DMABUF, WEBKIT_FORCE_SHM, webkit_workaround};
+        let chose = |chosen: &'static [&'static str]| move |name: &str| chosen.contains(&name);
+        assert_eq!(webkit_workaround(true, chose(&[])), Some(WEBKIT_FORCE_SHM));
+        assert_eq!(webkit_workaround(false, chose(&[])), None);
+        assert_eq!(
+            webkit_workaround(true, chose(&[WEBKIT_DISABLE_DMABUF])),
+            None
+        );
+        assert_eq!(webkit_workaround(true, chose(&[WEBKIT_FORCE_SHM])), None);
+    }
 
     #[test]
     fn server_origin_keeps_only_the_origin() {

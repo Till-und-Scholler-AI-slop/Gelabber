@@ -68,10 +68,15 @@ the web client's user menu lead back to that page at any time; **F5** or
 Only the configured origin gets the `media` permission set
 (`app/permissions/media.toml`) plus `allow-open-setup`; every page load closes the previous page's
 transports, producers and sources. WebKitGTK needs `libwebkit2gtk-4.1`.
-On the NVIDIA driver the app sets `WEBKIT_DISABLE_DMABUF_RENDERER=1`
+On the NVIDIA driver the app sets `WEBKIT_DMABUF_RENDERER_FORCE_SHM=1`
 before GTK starts: WebKitGTK's DMA-BUF renderer otherwise fails under Wayland
-with "Error 71 (Protocol error) dispatching to Wayland display". Setting the
-variable yourself (e.g. `=0`) overrides that.
+with "Error 71 (Protocol error) dispatching to Wayland display". Handing its
+buffers over through shared memory avoids that and keeps accelerated
+compositing; with the renderer disabled altogether (what the app set up to
+0.5.2) the web process paints video on the CPU, half a core and more for one
+stream across the window. Setting that variable or
+`WEBKIT_DISABLE_DMABUF_RENDERER` yourself (to any value) leaves both as you
+set them.
 
 ## Design rules
 
