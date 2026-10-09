@@ -5,8 +5,10 @@
 //! Server choice, first match wins: `--server <url>`, `GELABBER_SERVER`,
 //! `server` in `<config dir>/desktop.json`. Without one the window shows the
 //! bundled setup page, which stores the choice and reloads onto the server.
-//! The window menu leads back to that page at any time, so an unreachable or
-//! wrong server never locks the app.
+//! There is no menu bar: an unreachable server at start opens that page with
+//! the reason, and Ctrl+Shift+S or the web client's user menu ("Server
+//! wechseln …") lead back to it at any time, so a wrong server never locks the
+//! app. F5 / Ctrl+R reload.
 #![cfg_attr(not(debug_assertions), windows_subsystem = "windows")]
 
 mod media;
@@ -20,16 +22,29 @@ use std::{
     time::Duration,
 };
 use tauri::{
-    AppHandle, Manager, WebviewUrl, WebviewWindowBuilder,
-    ipc::CapabilityBuilder,
-    menu::{Menu, MenuItem, Submenu},
+    AppHandle, Manager, WebviewUrl, WebviewWindowBuilder, ipc::CapabilityBuilder,
     webview::PageLoadEvent,
 };
 use url::Url;
 
 const WINDOW: &str = "main";
-const MENU_CHANGE_SERVER: &str = "change-server";
-const MENU_RELOAD: &str = "reload";
+/// Runs in every page of the window, the server's and the setup page. Plain
+/// shortcuts instead of a menu bar: reload, and the way back to the setup
+/// page. WebKit's own error page runs no scripts; the start-up reachability
+/// check covers the usual way into it.
+const SHORTCUTS: &str = r#"
+addEventListener("keydown", (event) => {
+  const key = event.key.toLowerCase();
+  const command = event.ctrlKey || event.metaKey;
+  if (event.key === "F5" || (command && !event.shiftKey && key === "r")) {
+    event.preventDefault();
+    location.reload();
+  } else if (command && event.shiftKey && key === "s") {
+    event.preventDefault();
+    window.__TAURI_INTERNALS__?.invoke("open_setup").catch(() => {});
+  }
+}, true);
+"#;
 /// Per address; a typo'd host fails at DNS long before that.
 const CONNECT_TIMEOUT: Duration = Duration::from_secs(5);
 
@@ -77,7 +92,8 @@ fn configured_server(app: &AppHandle) -> Option<String> {
         .or_else(|| load_settings(app).server)
 }
 
-/// The server's pages may call the media commands, nothing else.
+/// The server's pages may call the media commands and open the setup page,
+/// nothing else.
 fn allow_server(app: &AppHandle, origin: &Url) -> tauri::Result<()> {
     let origin = origin.origin().ascii_serialization();
     app.add_capability(
@@ -85,12 +101,14 @@ fn allow_server(app: &AppHandle, origin: &Url) -> tauri::Result<()> {
             .remote(origin)
             .local(false)
             .window(WINDOW)
-            .permission("media"),
+            .permission("media")
+            .permission("allow-open-setup"),
     )
 }
 
-/// The setup page, with the current server filled in when there is one.
-fn setup_url(server: Option<&str>) -> Url {
+/// The setup page, with the current server and the reason it is shown
+/// filled in when there are.
+fn setup_url(server: Option<&str>, error: Option<&str>) -> Url {
     // Where Tauri serves the bundled frontend.
     let base = if cfg!(windows) {
         "http://tauri.localhost/index.html"
@@ -101,7 +119,24 @@ fn setup_url(server: Option<&str>) -> Url {
     if let Some(server) = server {
         url.query_pairs_mut().append_pair("server", server);
     }
+    if let Some(error) = error {
+        url.query_pairs_mut().append_pair("error", error);
+    }
     url
+}
+
+fn current_server(app: &AppHandle) -> Option<Url> {
+    configured_server(app).and_then(|value| server_origin(&value).ok())
+}
+
+/// "Server wechseln": the setup page with the current server filled in.
+#[tauri::command]
+fn open_setup(app: AppHandle) -> Result<(), String> {
+    let server = current_server(&app);
+    app.get_webview_window(WINDOW)
+        .ok_or("main window missing")?
+        .navigate(setup_url(server.as_ref().map(Url::as_str), None))
+        .map_err(|e| e.to_string())
 }
 
 /// Catches typos and wrong ports before the address is stored: something has
@@ -174,6 +209,7 @@ fn main() {
         .manage(media::Media::default())
         .invoke_handler(tauri::generate_handler![
             set_server,
+            open_setup,
             media::media_info,
             media::media_audio_devices,
             media::media_audio_configure,
@@ -231,47 +267,29 @@ fn main() {
                 }
                 None => WebviewUrl::App("index.html".into()),
             };
-            let menu = Menu::with_items(
-                app,
-                &[&Submenu::with_items(
-                    app,
-                    "Gelabber",
-                    true,
-                    &[
-                        &MenuItem::with_id(
-                            app,
-                            MENU_CHANGE_SERVER,
-                            "Server wechseln …",
-                            true,
-                            None::<&str>,
-                        )?,
-                        &MenuItem::with_id(app, MENU_RELOAD, "Neu laden", true, None::<&str>)?,
-                    ],
-                )?],
-            )?;
-            WebviewWindowBuilder::new(app, WINDOW, url)
+            WebviewWindowBuilder::new(app, WINDOW, url.clone())
                 .title("Gelabber")
                 .inner_size(1280.0, 800.0)
                 .min_inner_size(480.0, 360.0)
-                .menu(menu)
-                .on_menu_event(|window, event| {
-                    let Some(webview) = window.app_handle().get_webview_window(WINDOW) else {
-                        return;
-                    };
-                    let result = match event.id().as_ref() {
-                        MENU_CHANGE_SERVER => {
-                            let server = configured_server(window.app_handle())
-                                .and_then(|value| server_origin(&value).ok());
-                            webview.navigate(setup_url(server.as_ref().map(Url::as_str)))
-                        }
-                        MENU_RELOAD => webview.reload(),
-                        _ => Ok(()),
-                    };
-                    if let Err(error) = result {
-                        eprintln!("gelabber: menu: {error}");
-                    }
-                })
+                .initialization_script(SHORTCUTS)
                 .build()?;
+            // Opening a stored server that does not answer would end on
+            // WebKit's error page; show the setup page with the reason instead.
+            if let WebviewUrl::External(origin) = url {
+                tauri::async_runtime::spawn(async move {
+                    let probe = origin.clone();
+                    let reachable =
+                        tauri::async_runtime::spawn_blocking(move || check_reachable(&probe)).await;
+                    if let Ok(Err(reason)) = reachable
+                        && let Some(window) = handle.get_webview_window(WINDOW)
+                    {
+                        let setup = setup_url(Some(origin.as_str()), Some(reason.as_str()));
+                        if let Err(error) = window.navigate(setup) {
+                            eprintln!("gelabber: setup page: {error}");
+                        }
+                    }
+                });
+            }
             Ok(())
         })
         .run(tauri::generate_context!())
@@ -302,13 +320,21 @@ mod tests {
 
     #[test]
     fn setup_url_carries_the_current_server() {
-        let url = setup_url(Some("https://chat.example.org/"));
+        let url = setup_url(Some("https://chat.example.org/"), None);
         assert_eq!(url.path(), "/index.html");
         assert_eq!(
             url.query_pairs().collect::<Vec<_>>(),
             [("server".into(), "https://chat.example.org/".into())]
         );
-        assert_eq!(setup_url(None).query(), None);
+        assert_eq!(setup_url(None, None).query(), None);
+        let failed = setup_url(Some("https://chat.example.org/"), Some("nicht erreichbar"));
+        assert_eq!(
+            failed.query_pairs().collect::<Vec<_>>(),
+            [
+                ("server".into(), "https://chat.example.org/".into()),
+                ("error".into(), "nicht erreichbar".into())
+            ]
+        );
     }
 
     #[test]

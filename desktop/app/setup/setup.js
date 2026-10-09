@@ -1,6 +1,8 @@
 // Bundled setup page: checks and stores the server, then navigates the
-// window there. Opened from the menu ("Server wechseln"), it carries the
-// current server in ?server= and offers the way back to it.
+// window there. Opened via "Server wechseln" (Ctrl+Shift+S or the web
+// client's user menu), it carries the current server in ?server= and offers
+// the way back to it; when that server did not answer at start, ?error= says
+// why.
 const form = document.getElementById("server-form");
 const input = document.getElementById("server");
 const submit = form.querySelector('button[type="submit"]');
@@ -20,12 +22,19 @@ async function connect(server) {
   }
 }
 
-const current = new URLSearchParams(location.search).get("server");
+const params = new URLSearchParams(location.search);
+const current = params.get("server");
+const failure = params.get("error");
 if (current) {
   input.value = current;
   back.querySelector("span").textContent = new URL(current).host;
   back.hidden = false;
   back.addEventListener("click", () => connect(current));
+}
+if (failure) {
+  error.textContent = failure;
+  error.hidden = false;
+  back.firstChild.textContent = "Erneut verbinden mit ";
 }
 
 form.addEventListener("submit", (event) => {

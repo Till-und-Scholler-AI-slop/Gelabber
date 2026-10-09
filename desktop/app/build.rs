@@ -10,12 +10,13 @@ fn main() {
         println!("cargo:rustc-link-arg-bins=-Wl,-rpath,$ORIGIN");
     }
     // `allow-<command>` permissions for the app's own commands; the server
-    // origin gets the `media` set (permissions/media.toml), the bundled setup
-    // page only `allow-set-server` (capabilities/setup.json).
+    // origin gets the `media` set (permissions/media.toml) plus
+    // `allow-open-setup`, the bundled setup page only `allow-set-server`
+    // (capabilities/setup.json).
     let commands: Vec<&'static str> = MEDIA_COMMANDS
         .iter()
         .copied()
-        .chain(["set_server"])
+        .chain(["set_server", "open_setup"])
         .collect();
     let commands: &'static [&'static str] = Box::leak(commands.into_boxed_slice());
     tauri_build::try_build(
