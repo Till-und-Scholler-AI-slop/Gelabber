@@ -410,11 +410,17 @@ describe("stream sound that also carries the call", () => {
   );
 
   it("promises a call-free share only to an app that leaves itself out", async () => {
-    await cases.linuxApp05();
-    expect(form()).not.toContain("Ton des Anrufs");
-    expect(form()).toContain("nie dein Mikrofon.");
+    for (const name of ["linuxApp05", "linuxApp06CapturesItself"] as const) {
+      await cases[name]();
+      expect(form()).not.toContain("Ton des Anrufs");
+      expect(form()).toContain("nie dein Mikrofon.");
+      // Nor does the application choice: every application is all of them.
+      expect(form()).toContain(">Alle Anwendungen</option>");
+      expect(form()).not.toContain("außer Gelabber");
+    }
     await cases.linuxApp06();
     expect(form()).toContain("nie dein Mikrofon oder der Ton des Anrufs");
+    expect(form()).toContain(">Alle Anwendungen außer Gelabber</option>");
   });
 
   it.each(["linuxApp06", "desktopBrowser"] as const)(
