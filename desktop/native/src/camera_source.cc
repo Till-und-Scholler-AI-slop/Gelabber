@@ -1,6 +1,11 @@
 // Cameras through libwebrtc's video capture module (V4L2 on Linux,
 // DirectShow on Windows). The module captures on its own thread and hands
 // over I420 frames; they are adapted to the sinks' wants here.
+//
+// Device lists and modules are created, started, stopped and destroyed on one
+// thread of their own. DirectShow initialises COM on the thread that creates
+// them and gives it up on the thread that destroys them, while callers come
+// from any thread (the app's thread pool, its UI thread when a page reloads).
 
 #include "local_video_source.h"
 
@@ -12,20 +17,116 @@
 #include <modules/video_capture/video_capture_defines.h>
 #include <modules/video_capture/video_capture_factory.h>
 #include <rtc_base/logging.h>
+#include <rtc_base/thread.h>
 #include <rtc_base/time_utils.h>
 
+#include <cstdint>
+#include <exception>
 #include <memory>
 #include <mutex>
 #include <stdexcept>
+#include <string>
+#include <vector>
 
 namespace gelabber
 {
 	namespace
 	{
+		// Lives as long as the process: nothing joins it at exit.
+		webrtc::Thread& CameraThread()
+		{
+			static webrtc::Thread* const thread = [] {
+				auto created = webrtc::Thread::Create();
+				created->SetName("gm_camera", nullptr);
+				if (!created->Start())
+					throw std::runtime_error("failed to start the camera thread");
+				return created.release();
+			}();
+			return *thread;
+		}
+
+		// Runs `task` on the camera thread and waits for it. Exceptions come
+		// back to the caller: libwebrtc is built without them, so none may
+		// unwind through its thread loop.
+		template<typename Task>
+		void OnCameraThread(Task&& task)
+		{
+			std::exception_ptr error;
+			CameraThread().BlockingCall([&] {
+				try
+				{
+					task();
+				}
+				catch (...)
+				{
+					error = std::current_exception();
+				}
+			});
+			if (error)
+				std::rethrow_exception(error);
+		}
+
+		// Camera thread only.
+		std::vector<CameraInfo> EnumerateCameras()
+		{
+			std::vector<CameraInfo> out;
+			std::unique_ptr<webrtc::VideoCaptureModule::DeviceInfo> info(
+			  webrtc::VideoCaptureFactory::CreateDeviceInfo());
+			if (!info)
+				return out;
+			char name[256];
+			char id[256];
+			for (uint32_t i = 0, n = info->NumberOfDevices(); i < n; ++i)
+			{
+				name[0] = id[0] = '\0';
+				if (info->GetDeviceName(i, name, sizeof(name), id, sizeof(id)) == 0 && id[0] != '\0')
+					out.push_back({ id, name[0] != '\0' ? name : id });
+			}
+			return out;
+		}
+
 		class CameraSource : public LocalVideoSource
 		{
 		public:
 			void Start(const CameraOptions& options)
+			{
+				OnCameraThread([&] { Open(options); });
+			}
+
+			void Stop() override
+			{
+				{
+					// Nothing running: no trip to the camera thread, which a
+					// destructor on one of libwebrtc's threads would wait for.
+					std::lock_guard lock(mutex);
+					stopped = true;
+					if (!module)
+						return;
+				}
+				OnCameraThread([&] { Close(); });
+			}
+
+			bool is_screencast() const override
+			{
+				return false;
+			}
+
+			std::string StateJson() const override
+			{
+				std::lock_guard lock(mutex);
+				return std::string(R"({"state":")") + (stopped ? "ended" : "live") + R"(","width":)" +
+				       std::to_string(width) + R"(,"height":)" + std::to_string(height) +
+				       R"(,"frames":)" + std::to_string(frames) + "}";
+			}
+
+			~CameraSource() override
+			{
+				Stop();
+			}
+
+		private:
+			// Camera thread only.
+			void Open(const CameraOptions& options)
 			{
 				std::unique_ptr<webrtc::VideoCaptureModule::DeviceInfo> info(
 				  webrtc::VideoCaptureFactory::CreateDeviceInfo());
@@ -34,7 +135,7 @@ namespace gelabber
 				std::string id = options.device;
 				if (id.empty())
 				{
-					const auto cameras = ListCameras();
+					const auto cameras = EnumerateCameras();
 					if (cameras.empty())
 						throw std::runtime_error("no camera found");
 					id = cameras.front().id;
@@ -63,7 +164,8 @@ namespace gelabber
 				                 << chosen.maxFPS;
 			}
 
-			void Stop() override
+			// Camera thread only; the module's last reference goes here.
+			void Close()
 			{
 				webrtc::scoped_refptr<webrtc::VideoCaptureModule> running;
 				{
@@ -80,25 +182,6 @@ namespace gelabber
 				}
 			}
 
-			bool is_screencast() const override
-			{
-				return false;
-			}
-
-			std::string StateJson() const override
-			{
-				std::lock_guard lock(mutex);
-				return std::string(R"({"state":")") + (stopped ? "ended" : "live") + R"(","width":)" +
-				       std::to_string(width) + R"(,"height":)" + std::to_string(height) +
-				       R"(,"frames":)" + std::to_string(frames) + "}";
-			}
-
-			~CameraSource() override
-			{
-				Stop();
-			}
-
-		private:
 			void Deliver(const webrtc::VideoFrame& frame)
 			{
 				const int srcWidth  = frame.width();
@@ -163,18 +246,7 @@ namespace gelabber
 	std::vector<CameraInfo> ListCameras()
 	{
 		std::vector<CameraInfo> out;
-		std::unique_ptr<webrtc::VideoCaptureModule::DeviceInfo> info(
-		  webrtc::VideoCaptureFactory::CreateDeviceInfo());
-		if (!info)
-			return out;
-		char name[256];
-		char id[256];
-		for (uint32_t i = 0, n = info->NumberOfDevices(); i < n; ++i)
-		{
-			name[0] = id[0] = '\0';
-			if (info->GetDeviceName(i, name, sizeof(name), id, sizeof(id)) == 0 && id[0] != '\0')
-				out.push_back({ id, name[0] != '\0' ? name : id });
-		}
+		OnCameraThread([&] { out = EnumerateCameras(); });
 		return out;
 	}
 
