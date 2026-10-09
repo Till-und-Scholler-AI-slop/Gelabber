@@ -8,6 +8,7 @@ import {
 import { useReadBridge } from "../messages/readState.ts";
 import { logout, useSession } from "../auth/session.ts";
 import { leaveVoice, stopWatching, useVoice } from "../voice/session.ts";
+import { useCallWakeLock } from "../voice/wakeLock.ts";
 import {
   useAuthenticatedSubscriptions,
   useGatewaySession,
@@ -42,6 +43,9 @@ export function AppShell() {
   useGatewaySession(user?.id ?? null);
   useIdlePresence(user?.id ?? null);
   useMessageToastsBridge();
+  useCallWakeLock(
+    useVoice((state) => state.status === "joined" || state.watching),
+  );
 
   const onLogout = () => {
     // Store flips first, so the header and guards react before the request
