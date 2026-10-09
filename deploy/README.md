@@ -32,6 +32,10 @@ gelabber.example.com {
 
 `header_up Host {hostport}` ist für den App-vHost Pflicht. `/ws` vergleicht Browser-`Origin` mit `Host`, einschließlich Port: `{host}` schneidet einen Nicht-Standard-Port (z. B. `:8443` oder `GELABBER_HTTP_PORT`) ab, und jeder WebSocket-Handshake endet mit 403. Ohne Override lässt Caddy bei **HTTP**-Upstreams den eingehenden `Host` standardmäßig durch; bei **HTTPS**-Upstreams setzt Caddy (ab v2.11) den Host auf den Upstream. Explizites Forwarding macht die Absicht klar und verhindert Signature-/Origin-Fehler. Siehe [reverse_proxy Headers](https://caddyserver.com/docs/caddyfile/directives/reverse_proxy#headers).
 
+**Anderer Proxy davor (Nginx, Traefik, …).** Seit v0.6 reicht auch der mitgelieferte Caddy `Host` mit Port an die Dienste weiter; bis 0.5.x schnitt er den Port ab. Was den Stack erreicht, muss deshalb der `Host` des Browsers sein: derselbe Name und, wenn der Browser einen Nicht-Standard-Port benutzt, genau dieser Port. Nginx: `proxy_set_header Host $http_host;` (`$host` reicht nur, solange der Browser den Standardport benutzt). Der ausgeschriebene Standardport des Schemas ist erlaubt (`Host: example.com:443` bei HTTPS, `:80` bei HTTP).
+
+Schreibt der vorgelagerte Proxy dagegen einen Port in `Host`, den der Browser nicht benutzt, antwortet `/ws` seit v0.6 mit 403 („Cross-origin WebSocket is not allowed.“). Das passiert mit `proxy_set_header Host $host:$proxy_port;` (der Port des Upstreams, oben 8088) und mit `$host:$server_port` hinter einer Portumsetzung (außen 443, Nginx auf 8443). Unter 0.5.x lief eine solche Konfiguration, weil der Port abgeschnitten wurde. Mit der v0.6-Caddyfile bleiben Anmeldung und REST-API intakt, aber der Chat aktualisiert sich nicht mehr und Voice verbindet nicht. Abhilfe ist die `Host`-Zeile am vorgelagerten Proxy, nicht die Caddyfile.
+
 **Ohne Compose-Caddy:** Overlay published web/api/media (und MinIO) auf Loopback. Vorlage: `deploy/compose/Caddyfile.homelab` (zwei aktive Site-Blöcke: App + MinIO).
 
 Wichtig: Die Compose-`.env` exportiert **nicht** automatisch Variablen an einen externen Caddy-Dienst oder einen Caddy-Container in einem anderen Stack. Einrichtung:
