@@ -1,22 +1,34 @@
-import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
+import {
+  afterEach,
+  beforeEach,
+  describe,
+  expect,
+  it,
+  type Mock,
+  vi,
+} from "vitest";
 
 import {
   closeMessageNotifications,
   followNotificationTaps,
   NOTIFICATION_OPEN,
   showMessageNotification,
-  withdrawWhileViewing,
+  silenceWhileViewing,
 } from "./notifications.ts";
 import { activeServiceWorker } from "./register.ts";
 
 vi.mock("./register.ts", () => ({ activeServiceWorker: vi.fn() }));
 const registration = vi.mocked(activeServiceWorker);
 
+// Windows that say they show a conversation; each test's are closed after it.
+const windows: (() => void)[] = [];
+
 beforeEach(() => {
   registration.mockReset().mockResolvedValue(undefined);
 });
-afterEach(() => {
-  closeMessageNotifications({ user: "user-1" });
+afterEach(async () => {
+  for (const close of windows.splice(0)) close();
+  await closeMessageNotifications({ user: "user-1" });
   vi.unstubAllGlobals();
 });
 
@@ -205,6 +217,13 @@ describe("a conversation on screen", () => {
       },
     };
   }
+  /** A window of the app with the conversation open. */
+  function viewer(user: string, channelId: string, visible: boolean) {
+    const tab = page(!visible);
+    const stop = silenceWhileViewing(user, channelId, tab);
+    windows.push(stop);
+    return { show: tab.show, stop };
+  }
   const shown = () => ({
     viewed: { tag: "gelabber:user-1:chan", close: vi.fn() },
     other: { tag: "gelabber:user-1:dm", close: vi.fn() },
@@ -213,10 +232,9 @@ describe("a conversation on screen", () => {
   it("loses its notification at once in a visible page", async () => {
     const { viewed, other } = shown();
     worker([viewed, other]);
-    const stop = withdrawWhileViewing("user-1", "chan", page(false));
+    viewer("user-1", "chan", true);
     await vi.waitFor(() => expect(viewed.close).toHaveBeenCalledOnce());
     expect(other.close).not.toHaveBeenCalled();
-    stop();
   });
 
   // The phone case: the notification arrives while the app is in the
@@ -224,18 +242,121 @@ describe("a conversation on screen", () => {
   it("loses it when a hidden page comes back, and only then", async () => {
     const { viewed, other } = shown();
     worker([viewed, other]);
-    const background = page(true);
-    const stop = withdrawWhileViewing("user-1", "chan", background);
+    const background = viewer("user-1", "chan", false);
     background.show(false);
+    await new Promise((resolve) => setTimeout(resolve, 20));
     expect(registration).not.toHaveBeenCalled();
     background.show(true);
     await vi.waitFor(() => expect(viewed.close).toHaveBeenCalledOnce());
     expect(other.close).not.toHaveBeenCalled();
 
     // Another conversation is opened: this one is no longer watched.
-    stop();
+    background.stop();
     background.show(true);
+    await new Promise((resolve) => setTimeout(resolve, 20));
     expect(registration).toHaveBeenCalledOnce();
+  });
+
+  // Every window hears the same message and decides from its own visibility.
+  // The one in the background (a browser tab left behind after installing
+  // the app, a second tab) must not notify about what is being read in the
+  // one in front.
+  it("raises no notification from another window while it is visible", async () => {
+    pageApi();
+    const active = worker();
+    const front = viewer("user-1", "chan", true);
+    expect(await showMessageNotification(message, vi.fn())).toBe("none");
+    expect(active.showNotification).not.toHaveBeenCalled();
+
+    // Other conversations and other accounts are not on screen.
+    expect(
+      await showMessageNotification({ ...message, channelId: "dm" }, vi.fn()),
+    ).toBe("worker");
+    expect(
+      await showMessageNotification({ ...message, user: "user-2" }, vi.fn()),
+    ).toBe("worker");
+    expect(active.showNotification).toHaveBeenCalledTimes(2);
+
+    // In the background itself, or on another conversation: no longer read.
+    front.show(false);
+    expect(await showMessageNotification(message, vi.fn())).toBe("worker");
+    front.show(true);
+    expect(await showMessageNotification(message, vi.fn())).toBe("none");
+    front.stop();
+    expect(await showMessageNotification(message, vi.fn())).toBe("worker");
+    expect(active.showNotification).toHaveBeenCalledTimes(4);
+  });
+
+  it("keeps a page-level notification back the same way", async () => {
+    const created = pageApi();
+    viewer("user-1", "chan", true);
+    expect(await showMessageNotification(message, vi.fn())).toBe("none");
+    expect(created).toEqual([]);
+  });
+
+  it("counts every visible window that shows the conversation", async () => {
+    pageApi();
+    const active = worker();
+    const one = viewer("user-1", "chan", true);
+    const two = viewer("user-1", "chan", true);
+    one.show(false);
+    expect(await showMessageNotification(message, vi.fn())).toBe("none");
+    two.stop();
+    expect(await showMessageNotification(message, vi.fn())).toBe("worker");
+    expect(active.showNotification).toHaveBeenCalledOnce();
+  });
+
+  // A window in the background is showing a notification at the moment the
+  // conversation comes on screen in another one. Closing must wait for it,
+  // or the notification appears after the look and stays.
+  it("takes away what another window is just showing as it comes on screen", async () => {
+    pageApi();
+    const onScreen: { tag: string; close: Mock<() => void> }[] = [];
+    const active = worker(onScreen);
+    let landed = () => {};
+    active.showNotification.mockImplementation(
+      (_title: string, options: { tag: string }) =>
+        new Promise<void>((resolve) => {
+          landed = () => {
+            onScreen.push({ tag: options.tag, close: vi.fn<() => void>() });
+            resolve();
+          };
+        }),
+    );
+    const showing = showMessageNotification(message, vi.fn());
+    await vi.waitFor(() =>
+      expect(active.showNotification).toHaveBeenCalledOnce(),
+    );
+    viewer("user-1", "chan", true);
+    await new Promise((resolve) => setTimeout(resolve, 20));
+    expect(active.getNotifications).not.toHaveBeenCalled();
+    landed();
+    expect(await showing).toBe("worker");
+    await vi.waitFor(() => expect(onScreen[0].close).toHaveBeenCalledOnce());
+  });
+
+  it("works as before where the browser has no lock manager", async () => {
+    vi.stubGlobal("navigator", {});
+    pageApi();
+    const { viewed } = shown();
+    const active = worker([viewed]);
+    viewer("user-1", "chan", true);
+    await vi.waitFor(() => expect(viewed.close).toHaveBeenCalledOnce());
+    expect(await showMessageNotification(message, vi.fn())).toBe("worker");
+    expect(active.showNotification).toHaveBeenCalledOnce();
+  });
+
+  it("works as before where the lock manager refuses", async () => {
+    const refused = () =>
+      Promise.reject(new DOMException("denied", "SecurityError"));
+    vi.stubGlobal("navigator", { locks: { request: refused, query: refused } });
+    pageApi();
+    const { viewed } = shown();
+    const active = worker([viewed]);
+    viewer("user-1", "chan", true);
+    await vi.waitFor(() => expect(viewed.close).toHaveBeenCalledOnce());
+    expect(await showMessageNotification(message, vi.fn())).toBe("worker");
+    expect(active.showNotification).toHaveBeenCalledOnce();
   });
 });
 

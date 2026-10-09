@@ -787,6 +787,28 @@ async function messageNotifications() {
   await page.waitForTimeout(500);
   assert.deepEqual(await tags(), [`gelabber:${USER}:${GRACE.id}`]);
 
+  // Two windows of the app, as with the browser tab that stays behind after
+  // installing. The one in front shows Ada's conversation, the one in the
+  // background hears the same messages and decides from its own visibility.
+  // (A toast in the second window first: it is connected and listening.)
+  gateway.message(GRACE, "Hörst du mich?");
+  await second.getByText("Hörst du mich?").first().waitFor();
+  await second.evaluate(() => window.pwaBackground(true));
+  gateway.message(ADA, "Liest du das gerade?");
+  await page.getByText("Liest du das gerade?").first().waitFor();
+  // What it does about Grace's message comes after what it did about Ada's.
+  gateway.message(GRACE, "Und du?");
+  await until(
+    async () => (await shown()).some(({ body }) => body === "Und du?"),
+    "a window in the background must still notify about other conversations",
+  );
+  assert.deepEqual(
+    await tags(),
+    [`gelabber:${USER}:${GRACE.id}`],
+    "a conversation that is on screen in another window must not raise a notification",
+  );
+  await second.evaluate(() => window.pwaBackground(false));
+
   // Signing out in any window takes the account's notifications along.
   await signOut.click();
   await second
@@ -796,7 +818,7 @@ async function messageNotifications() {
   assert.deepEqual(errors, []);
   await context.close();
   console.log(
-    "PASS: gateway message in the background becomes a notification through the worker; a starting window keeps them, the conversation on screen and a sign-out withdraw them (scripted gateway and visibility)",
+    "PASS: gateway message in the background becomes a notification through the worker; a starting window keeps them, the conversation on screen and a sign-out withdraw them; a window in the background stays quiet about what another one shows (scripted gateway and visibility)",
   );
 }
 

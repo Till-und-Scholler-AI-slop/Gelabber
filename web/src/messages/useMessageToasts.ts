@@ -15,7 +15,7 @@ import type { ChatEvent } from "../ws/protocol.ts";
 import {
   closeMessageNotifications,
   showMessageNotification,
-  withdrawWhileViewing,
+  silenceWhileViewing,
 } from "../pwa/notifications.ts";
 import {
   conversationPath,
@@ -82,11 +82,11 @@ export function useMessageToastsBridge(): void {
   // An account takes its notifications with it. A window that only just
   // learns who is signed in closes nothing: they belong to all windows.
   useEffect(() => {
-    if (me) return () => closeMessageNotifications({ user: me });
+    if (me) return () => void closeMessageNotifications({ user: me });
   }, [me]);
   useEffect(() => {
     if (me && viewingChannelId)
-      return withdrawWhileViewing(me, viewingChannelId);
+      return silenceWhileViewing(me, viewingChannelId);
   }, [me, viewingChannelId]);
   const deliveries = useRef<{
     userId: string | undefined;
