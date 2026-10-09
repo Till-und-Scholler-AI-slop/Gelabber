@@ -1,9 +1,10 @@
 // Production-build smoke against the real nginx: cache headers and a second
 // deployment, real Chromium manifest/SW, emulated mobile UI. Install-dialog
-// events and the notification tap are synthetic (OS installation and system
-// notifications remain device checks).
+// events, the gateway, the page going to the background and the notification
+// tap are synthetic (OS installation and system notifications remain device
+// checks).
 /* global process, URL, window, navigator, caches, document, console, Event,
-   fetch, localStorage, getComputedStyle, self, NotificationEvent */
+   fetch, localStorage, getComputedStyle, self, NotificationEvent, setTimeout */
 import assert from "node:assert/strict";
 import {
   mkdtemp,
@@ -50,10 +51,26 @@ const launch = {
 const browser = await chromium.launch(launch);
 const USER = "00000000-0000-4000-8000-000000000006";
 const url = (path) => new URL(path, origin).href;
+const dm = (id, peer, name) => ({
+  id,
+  kind: "dm",
+  created_at: "2026-01-01T00:00:00Z",
+  peer: { id: peer, name, avatar_url: null },
+});
+const ADA = dm(
+  "00000000-0000-4000-8000-0000000000d1",
+  "00000000-0000-4000-8000-0000000000a1",
+  "Ada",
+);
+const GRACE = dm(
+  "00000000-0000-4000-8000-0000000000d2",
+  "00000000-0000-4000-8000-0000000000a2",
+  "Grace",
+);
 
 async function contextFor(
   device,
-  { standalone = false, authenticated = false, themes = {} } = {},
+  { standalone = false, authenticated = false, themes = {}, dms = [] } = {},
 ) {
   const context = await browser.newContext({
     ...device,
@@ -61,9 +78,11 @@ async function contextFor(
   });
   // Isolated fixture responses; this smoke neither connects to a database nor
   // creates real accounts. Real browser and worker behavior remains unmocked.
+  let signedIn = authenticated;
   await context.route("**/api/**", async (route) => {
     const path = new URL(route.request().url()).pathname;
-    const user = authenticated
+    if (path === "/api/auth/logout") signedIn = false;
+    const user = signedIn
       ? {
           id: USER,
           email: "pwa@example.test",
@@ -74,11 +93,15 @@ async function contextFor(
     const json =
       path === "/api/auth/session"
         ? { user, csrf_token: "a".repeat(64) }
-        : path === "/api/servers" || path === "/api/dms"
-          ? []
-          : path === "/api/me/themes"
-            ? themes
-            : {};
+        : path === "/api/dms"
+          ? dms
+          : path === "/api/servers" || path === "/api/messages/unread"
+            ? []
+            : path === "/api/me/themes"
+              ? themes
+              : /^\/api\/channels\/[^/]+\/messages$/.test(path)
+                ? { messages: [], has_more: false }
+                : (dms.find((row) => path === `/api/dms/${row.id}`) ?? {});
     await route.fulfill({
       status: 200,
       contentType: "application/json",
@@ -99,6 +122,15 @@ async function contextFor(
   return context;
 }
 
+// For page state that is only readable asynchronously: waitForFunction does
+// not await an async predicate, it takes the pending promise for a yes.
+async function until(check, message) {
+  for (let waited = 0; waited < 15000; waited += 50) {
+    if (await check()) return;
+    await new Promise((resolve) => setTimeout(resolve, 50));
+  }
+  assert.fail(message);
+}
 const controlled = (page) =>
   page.waitForFunction(
     () => navigator.serviceWorker.controller !== null,
@@ -530,10 +562,180 @@ async function themeColour() {
   );
 }
 
+// A gateway that acknowledges subscriptions and delivers what the test says.
+async function gatewayFor(context) {
+  const sockets = new Set();
+  const subscribed = new Set();
+  const heads = new Map();
+  await context.routeWebSocket("**/ws", (socket) => {
+    sockets.add(socket);
+    socket.onMessage((raw) => {
+      const frame = JSON.parse(raw);
+      if (frame.op !== "s") return;
+      subscribed.add(frame.c);
+      socket.send(
+        JSON.stringify({
+          op: "ok",
+          s: frame.s,
+          c: frame.c,
+          n: heads.get(frame.c) ?? 0,
+        }),
+      );
+    });
+  });
+  return {
+    subscribed: (...conversations) =>
+      until(
+        () => conversations.every((row) => subscribed.has(row.id)),
+        "the app did not subscribe to its conversations",
+      ),
+    message(conversation, content) {
+      const n = (heads.get(conversation.id) ?? 0) + 1;
+      heads.set(conversation.id, n);
+      const frame = JSON.stringify({
+        op: "e",
+        t: "c",
+        s: conversation.id,
+        c: conversation.id,
+        n,
+        d: {
+          id: `00000000-0000-4000-8000-${String(n).padStart(8, "0")}${conversation.id.slice(-4)}`,
+          channel_id: conversation.id,
+          author: conversation.peer,
+          content,
+          created_at: new Date().toISOString(),
+          edited_at: null,
+          attachments: [],
+        },
+      });
+      for (const socket of sockets) socket.send(frame);
+    },
+  };
+}
+
+// From a gateway message to a notification on a phone, and what takes it away
+// again. Headless Chromium never hides a page, so the page is told it is in
+// the background; the gateway is the stand-in above. The rest is the real
+// app: its decision, the worker registration and the browser's own list.
+async function messageNotifications() {
+  const context = await contextFor(devices["Pixel 7"], {
+    authenticated: true,
+    dms: [ADA, GRACE],
+  });
+  await context.grantPermissions(["notifications"], { origin: origin.origin });
+  const gateway = await gatewayFor(context);
+  await context.addInitScript(() => {
+    // "Benachrichtigung, wenn der Tab im Hintergrund ist" switched on.
+    localStorage.setItem(
+      "gelabber.media",
+      JSON.stringify({ state: { desktopNotify: true }, version: 0 }),
+    );
+    let hidden = false;
+    Object.defineProperty(document, "hidden", { get: () => hidden });
+    Object.defineProperty(document, "visibilityState", {
+      get: () => (hidden ? "hidden" : "visible"),
+    });
+    window.pwaBackground = (value) => {
+      hidden = value;
+      document.dispatchEvent(new Event("visibilitychange"));
+    };
+  });
+  const errors = [];
+  const page = await context.newPage();
+  page.on("pageerror", (error) => errors.push(error.message));
+  await page.goto(url(`/d/${ADA.id}`));
+  await page.getByTestId("message-pane").waitFor();
+  await controlled(page);
+  await gateway.subscribed(ADA, GRACE);
+  const shown = () =>
+    page.evaluate(async () => {
+      const registration = await navigator.serviceWorker.getRegistration();
+      return (await registration.getNotifications())
+        .map(({ title, body, tag, data }) => ({ title, body, tag, data }))
+        .sort((a, b) => a.tag.localeCompare(b.tag));
+    });
+  const tags = async () =>
+    (await shown()).map((notification) => notification.tag);
+  const left = (count) =>
+    until(
+      async () => (await shown()).length === count,
+      `expected ${count} notification(s) on screen`,
+    );
+
+  // In the foreground a message is a toast in the app, not a notification.
+  gateway.message(GRACE, "Bist du da?");
+  await page.getByText("Bist du da?").first().waitFor();
+  await page.waitForTimeout(500);
+  assert.deepEqual(await shown(), []);
+
+  await page.evaluate(() => window.pwaBackground(true));
+  gateway.message(ADA, "Hallo");
+  gateway.message(GRACE, "Noch da?");
+  await left(2);
+  assert.deepEqual(await shown(), [
+    {
+      title: "Ada · Ada",
+      body: "Hallo",
+      tag: `gelabber:${USER}:${ADA.id}`,
+      data: { path: `/d/${ADA.id}`, user: USER },
+    },
+    {
+      title: "Grace · Grace",
+      body: "Noch da?",
+      tag: `gelabber:${USER}:${GRACE.id}`,
+      data: { path: `/d/${GRACE.id}`, user: USER },
+    },
+  ]);
+
+  // A second app window starts, as after a tap when the phone had discarded
+  // the app, and is reloaded. Each time it learns who is signed in and must
+  // leave both notifications where they are.
+  const both = [`gelabber:${USER}:${ADA.id}`, `gelabber:${USER}:${GRACE.id}`];
+  const second = await context.newPage();
+  second.on("pageerror", (error) => errors.push(error.message));
+  await second.goto(url("/"));
+  await second.getByRole("heading", { name: "Hallo PWA" }).waitFor();
+  await second.waitForTimeout(500);
+  assert.deepEqual(
+    await tags(),
+    both,
+    "a starting app window must not close the notifications on screen",
+  );
+  await second.goto(url("/settings"));
+  const signOut = second.getByRole("button", { name: "Abmelden", exact: true });
+  await signOut.waitFor();
+  await second.waitForTimeout(500);
+  assert.deepEqual(await tags(), both);
+
+  // Back through the app switcher instead of the tap: the conversation that
+  // is on screen loses its notification, the other one keeps it.
+  await page.evaluate(() => window.pwaBackground(false));
+  await left(1);
+  await page.waitForTimeout(500);
+  assert.deepEqual(await tags(), [`gelabber:${USER}:${GRACE.id}`]);
+
+  // Signing out in any window takes the account's notifications along.
+  await signOut.click();
+  await second
+    .getByRole("heading", { name: "Anmelden", exact: true })
+    .waitFor();
+  await left(0);
+  assert.deepEqual(errors, []);
+  await context.close();
+  console.log(
+    "PASS: gateway message in the background becomes a notification through the worker; a starting window keeps them, the conversation on screen and a sign-out withdraw them (scripted gateway and visibility)",
+  );
+}
+
 async function notificationTap() {
-  const context = await contextFor(devices["Pixel 7"], { authenticated: true });
+  const context = await contextFor(devices["Pixel 7"], {
+    authenticated: true,
+    dms: [ADA, GRACE],
+  });
   await context.grantPermissions(["notifications"], { origin: origin.origin });
   const page = await context.newPage();
+  const errors = [];
+  page.on("pageerror", (error) => errors.push(error.message));
   await page.goto(url("/settings"));
   await controlled(page);
   // What src/pwa/notifications.ts sends through the worker's registration.
@@ -571,7 +773,7 @@ async function notificationTap() {
       return (await registration.getNotifications()).length;
     });
 
-  const conversation = "00000000-0000-4000-8000-0000000000d1";
+  const conversation = ADA.id;
   assert.deepEqual(await show(USER, conversation), [
     `gelabber:${USER}:${conversation}`,
   ]);
@@ -580,6 +782,7 @@ async function notificationTap() {
   });
   await tap();
   await page.waitForURL(url(`/d/${conversation}`));
+  await page.getByTestId("message-pane").waitFor();
   assert.equal(
     await page.evaluate(() => window.pwaSamePage),
     true,
@@ -588,14 +791,15 @@ async function notificationTap() {
   assert.equal(await shown(), 0, "a tapped notification must be closed");
 
   // Shown for another account: the tap leads nowhere.
-  await show("someone-else", "00000000-0000-4000-8000-0000000000d2");
+  await show("someone-else", GRACE.id);
   await tap();
-  await page.waitForFunction(async () => {
-    const registration = await navigator.serviceWorker.getRegistration();
-    return (await registration.getNotifications()).length === 0;
-  });
+  await until(
+    async () => (await shown()) === 0,
+    "a tapped notification of another account must be closed too",
+  );
   await page.waitForTimeout(300);
   assert.equal(page.url(), url(`/d/${conversation}`));
+  assert.deepEqual(errors, []);
   await context.close();
   console.log(
     "PASS: notification through the worker registration, tap takes the running app to the conversation (synthetic tap event)",
@@ -687,6 +891,7 @@ try {
   await androidInstallAndOffline();
   await installPanelPlacement();
   await themeColour();
+  await messageNotifications();
   await notificationTap();
   await secondDeployment();
 } finally {
