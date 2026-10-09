@@ -250,6 +250,8 @@ export async function chatFaultScenarios(h, f) {
         });
         try {
           if (method === "PATCH") {
+            // Message actions take pointer events only on a hovered row.
+            await row(f.owner, original).hover();
             await row(f.owner, original)
               .getByRole("button", {
                 name: "Nachricht bearbeiten",
@@ -261,6 +263,7 @@ export async function chatFaultScenarios(h, f) {
             await present(f.owner, "E2E optimistic edit");
           } else {
             f.owner.page.once("dialog", (d) => d.accept());
+            await row(f.owner, original).hover();
             await row(f.owner, original)
               .getByRole("button", { name: "Nachricht löschen", exact: true })
               .click();

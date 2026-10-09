@@ -190,3 +190,62 @@ export function CollapseIcon(props: IconProps) {
     </svg>
   );
 }
+
+export function SearchIcon(props: IconProps) {
+  return (
+    <svg {...base(props)}>
+      <circle cx="11" cy="11" r="7" />
+      <path d="m20 20-4-4" />
+    </svg>
+  );
+}
+
+export function SendIcon(props: IconProps) {
+  return (
+    <svg {...base(props)}>
+      <path d="M4 12 20 4l-6 16-3-7-7-1Z" />
+      <path d="m11 13 9-9" />
+    </svg>
+  );
+}
+
+export function ArrowDownIcon(props: IconProps) {
+  return (
+    <svg {...base(props)}>
+      <path d="M12 5v14M6 13l6 6 6-6" />
+    </svg>
+  );
+}
+
+export function CloseIcon(props: IconProps) {
+  return (
+    <svg {...base(props)}>
+      <path d="M6 6l12 12M18 6 6 18" />
+    </svg>
+  );
+}
+
+export function HangUpIcon(props: IconProps) {
+  return (
+    <svg {...base(props)}>
+      <path d="M3 14.5c5.5-5 12.5-5 18 0l-2.5 2.5-3.5-1.5v-2.5c-2-.7-4-.7-6 0v2.5L5.5 17Z" />
+    </svg>
+  );
+}
+
+export function SignalIcon(props: IconProps) {
+  return (
+    <svg {...base(props)}>
+      <path d="M5 19v-3M10 19v-7M15 19V8M20 19V5" />
+    </svg>
+  );
+}
+
+export function SmileIcon(props: IconProps) {
+  return (
+    <svg {...base(props)}>
+      <circle cx="12" cy="12" r="9" />
+      <path d="M8.5 14.5a4.5 4.5 0 0 0 7 0M9 9.5h.01M15 9.5h.01" />
+    </svg>
+  );
+}

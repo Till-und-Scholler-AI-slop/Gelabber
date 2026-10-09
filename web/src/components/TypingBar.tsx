@@ -32,9 +32,16 @@ export function TypingBar({
     <div
       data-testid="typing-bar"
       aria-live="polite"
-      className="flex shrink-0 items-center px-4 text-xs text-neutral-500 dark:text-neutral-400"
+      className="lr-typing-bar"
       style={{ height: TYPING_BAR_PX }}
     >
+      {names.length > 0 ? (
+        <span className="lr-typing-dots" aria-hidden="true">
+          <i />
+          <i />
+          <i />
+        </span>
+      ) : null}
       <span className="truncate">{formatTyping(names)}</span>
     </div>
   );
