@@ -1,4 +1,4 @@
-# App icons
+# App icons (web/public/icons)
 
 These icons reuse the Gelabber speech-bubble mark from
 `desktop/app/icons/icon.png`. The normal 192/512 px PNGs and the 180 px Apple

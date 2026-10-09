@@ -90,6 +90,11 @@ export function applyDefinition(theme: ThemeDefinition, system = false): void {
   root.style.colorScheme = theme.mode;
   for (const [name, value] of Object.entries(themeVariables(theme)))
     root.style.setProperty(name, value);
+  // Browser toolbar, Android status bar and task switcher take the page colour.
+  // The boot script in index.html sets the same value before the first paint.
+  document
+    .querySelector('meta[name="theme-color"]')
+    ?.setAttribute("content", theme.colors.background);
   try {
     localStorage.setItem(
       "gelabber.theme.paint",

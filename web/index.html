@@ -2,7 +2,7 @@
 <html lang="de">
   <head>
     <meta charset="UTF-8" />
-    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0, viewport-fit=cover, interactive-widget=resizes-content" />
     <meta name="color-scheme" content="light dark" />
     <meta name="theme-color" content="#17191a" />
     <meta name="mobile-web-app-capable" content="yes" />
@@ -18,19 +18,25 @@
     <link
       rel="icon"
       type="image/png"
-      href="/images/living-room/community-banner.png"
+      sizes="192x192"
+      href="/icons/icon-192.png"
     />
     <script>
+      const setInitialColours = (background, text) => {
+        document.documentElement.style.setProperty("--lr-bg", background);
+        document.documentElement.style.setProperty("--lr-text", text);
+        // The browser and system bars around the app take the page colour.
+        // theme/theme.ts keeps this in step once the app runs.
+        document
+          .querySelector('meta[name="theme-color"]')
+          ?.setAttribute("content", background);
+      };
       const setInitialTheme = (dark) => {
         document.documentElement.classList.toggle("dark", dark);
         document.documentElement.dataset.theme = dark ? "dark" : "light";
         document.documentElement.style.colorScheme = dark ? "dark" : "light";
-        document.documentElement.style.setProperty(
-          "--lr-bg",
+        setInitialColours(
           dark ? "#17191a" : "#f8f5f0",
-        );
-        document.documentElement.style.setProperty(
-          "--lr-text",
           dark ? "#eef0ee" : "#252829",
         );
       };
@@ -60,14 +66,7 @@
           /^#[0-9a-f]{6}$/i.test(paint.colors?.text)
         ) {
           setInitialTheme(paint.mode === "dark");
-          document.documentElement.style.setProperty(
-            "--lr-bg",
-            paint.colors.background,
-          );
-          document.documentElement.style.setProperty(
-            "--lr-text",
-            paint.colors.text,
-          );
+          setInitialColours(paint.colors.background, paint.colors.text);
         }
       } catch {
         setInitialTheme(true);
