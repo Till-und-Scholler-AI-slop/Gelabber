@@ -8,6 +8,8 @@ import { useFormErrors } from "../auth/useFormErrors.ts";
 import { Field } from "../components/Field.tsx";
 import { FormError } from "../components/FormError.tsx";
 import { SubmitButton } from "../components/SubmitButton.tsx";
+import { InstallApp } from "../pwa/InstallApp.tsx";
+import { installHintUseful, useInstallation } from "../pwa/install.ts";
 
 export function LoginPage() {
   const navigate = useNavigate();
@@ -15,6 +17,7 @@ export function LoginPage() {
   const [email, setEmail] = useState("");
   const [password, setPassword] = useState("");
   const { errors, clearField, setFields, fromError } = useFormErrors();
+  const installHint = useInstallation(installHintUseful);
 
   const mutation = useMutation({
     mutationFn: () => login(email, password),
@@ -86,6 +89,7 @@ export function LoginPage() {
           Anmelden
         </SubmitButton>
       </form>
+      {installHint && <InstallApp />}
     </section>
   );
 }

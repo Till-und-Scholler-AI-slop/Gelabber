@@ -62,6 +62,12 @@
   --lr-navigation-width: calc(var(--lr-rail-width) + var(--lr-sidebar-width));
   --lr-members-width: 248px;
   --lr-header-height: 52px;
+  /* Zero unless the screen has a notch or home indicator; index.html opts in
+     with viewport-fit=cover. */
+  --lr-safe-top: env(safe-area-inset-top, 0px);
+  --lr-safe-right: env(safe-area-inset-right, 0px);
+  --lr-safe-bottom: env(safe-area-inset-bottom, 0px);
+  --lr-safe-left: env(safe-area-inset-left, 0px);
 }
 html.dark {
   --lr-bg: #17191a;
@@ -83,6 +89,16 @@ body,
 #root {
   min-height: 100%;
   background: var(--lr-bg);
+}
+html,
+body {
+  /* Pulling down must neither reload the app, which would drop a call, nor
+     stretch its chrome. */
+  overscroll-behavior-y: none;
+}
+html {
+  /* Quick taps on a control are taps, not a double-tap zoom. */
+  touch-action: manipulation;
 }
 body {
   margin: 0;
@@ -107,6 +123,9 @@ summary {
 }
 .app-shell {
   min-height: 100dvh;
+  /* The bottom inset is added where content ends, so the call dock and the
+     drawers still reach the screen edge. */
+  padding: var(--lr-safe-top) var(--lr-safe-right) 0 var(--lr-safe-left);
   background: var(--lr-bg);
   color: var(--lr-text);
 }
@@ -140,7 +159,7 @@ summary {
 }
 .workspace {
   display: flex;
-  height: 100dvh;
+  height: 100%;
   min-height: 0;
   overflow: hidden;
 }
@@ -151,6 +170,7 @@ summary {
   flex-direction: column;
   min-width: 0;
   min-height: 0;
+  anchor-name: --lr-main;
 }
 .workspace-content {
   display: flex;
@@ -164,11 +184,15 @@ summary {
   display: none;
 }
 
+.workspace-content,
+.app-shell:not(.app-shell-workspace) > #app-content {
+  padding-bottom: var(--lr-safe-bottom);
+}
 /* Reserve the measured dock height on every viewport so active calls never
    cover a chat composer or the last controls in an account form. */
 .has-active-media .workspace-content,
 .has-active-media:not(.app-shell-workspace) > #app-content {
-  padding-bottom: var(--lr-media-space);
+  padding-bottom: max(var(--lr-media-space), var(--lr-safe-bottom));
 }
 
 /* Single instances become top-layer native dialogs at their breakpoints. */
@@ -211,9 +235,21 @@ summary {
   background: #090c0dc9;
 }
 .gel-modal {
-  max-height: calc(100dvh - 32px);
+  max-height: calc(
+    100dvh - 32px - 2 * max(var(--lr-safe-top), var(--lr-safe-bottom))
+  );
   overflow-y: auto;
   overscroll-behavior: contain;
+}
+/* Notices sit bottom centre, above whatever owns the bottom edge. */
+.gel-toasts {
+  --lr-toast-floor: var(--lr-safe-bottom);
+  bottom: calc(16px + var(--lr-toast-floor));
+}
+/* New messages are announced top right, below the header line. */
+.gel-message-toasts {
+  top: calc(64px + var(--lr-safe-top));
+  right: calc(16px + var(--lr-safe-right));
 }
 .workspace-drawer-close {
   display: inline-flex;
@@ -318,7 +354,7 @@ summary {
   justify-content: center;
   width: 100%;
   flex-shrink: 0;
-  padding: 5px 0 16px;
+  padding: 5px 0 max(16px, var(--lr-safe-bottom));
 }
 .server-create-button {
   display: grid;
@@ -628,7 +664,7 @@ summary {
   align-items: center;
   gap: 4px;
   min-height: 58px;
-  padding: 8px;
+  padding: 8px 8px max(8px, var(--lr-safe-bottom));
   border-top: 1px solid var(--lr-border);
   background: var(--lr-bg);
 }
@@ -965,9 +1001,10 @@ summary {
     right: 0;
     bottom: auto;
     left: auto;
-    width: var(--lr-members-width);
+    width: calc(var(--lr-members-width) + var(--lr-safe-right));
     max-width: calc(100vw - 28px);
     height: 100dvh;
+    padding: var(--lr-safe-top) var(--lr-safe-right) var(--lr-safe-bottom) 0;
     border-left: 1px solid var(--lr-border);
   }
   .member-panel-drawer .workspace-drawer-header {
@@ -994,8 +1031,8 @@ summary {
     align-items: center;
     gap: 7px;
     position: fixed;
-    top: calc((var(--lr-header-height) - 32px) / 2);
-    right: 12px;
+    top: calc(var(--lr-safe-top) + (var(--lr-header-height) - 32px) / 2);
+    right: calc(12px + var(--lr-safe-right));
     z-index: 25;
     height: 32px;
     padding: 0 10px;
@@ -1018,9 +1055,10 @@ summary {
   .workspace-navigation {
     position: fixed;
     inset: 0 auto auto 0;
-    width: var(--lr-navigation-width);
+    width: calc(var(--lr-navigation-width) + var(--lr-safe-left));
     max-width: calc(100vw - 28px);
     height: 100dvh;
+    padding: var(--lr-safe-top) 0 0 var(--lr-safe-left);
     border-right: 1px solid var(--lr-border);
   }
   .workspace-navigation .workspace-drawer-header {
@@ -1051,6 +1089,7 @@ summary {
     border-bottom: 1px solid var(--lr-border);
   }
   .workspace-navigation-trigger {
+    position: relative;
     display: inline-flex;
     align-items: center;
     gap: 9px;
@@ -1063,6 +1102,18 @@ summary {
   .workspace-navigation-trigger svg {
     transform: rotate(-90deg);
     color: var(--lr-muted);
+  }
+  /* Every unread badge sits inside the closed drawer; its button shows that
+     there is something to find. */
+  .workspace-navigation-unread {
+    position: absolute;
+    top: calc(50% - 15px);
+    left: 13px;
+    width: 11px;
+    height: 11px;
+    border: 2px solid var(--lr-bg);
+    border-radius: 50%;
+    background: var(--lr-accent);
   }
   /* Conversations bring their own header: the navigation button joins it
      instead of stacking a second bar above it. */
@@ -1082,15 +1133,20 @@ summary {
     height: 44px;
     padding: 0;
   }
-  .workspace-main:has(.lr-channel-header) .workspace-navigation-trigger > span {
+  .workspace-main:has(.lr-channel-header)
+    .workspace-navigation-trigger
+    > span:not(.workspace-navigation-unread) {
     display: none;
+  }
+  .workspace-main:has(.lr-channel-header) .workspace-navigation-unread {
+    left: 25px;
   }
   .workspace-main:has(.lr-channel-header) .lr-channel-header {
     padding-left: 50px;
   }
   .user-panel {
     min-height: 62px;
-    padding-bottom: max(12px, env(safe-area-inset-bottom));
+    padding-bottom: max(12px, var(--lr-safe-bottom));
   }
   .app-header > div {
     flex-wrap: wrap;
@@ -1107,6 +1163,26 @@ summary {
   }
   .living-room-title {
     font-size: 34px;
+  }
+}
+/* On phones, upright or on their side, the bottom edge belongs to the call
+   dock and, in a conversation, to the composer above it. */
+@media (max-width: 800px), (pointer: coarse) {
+  .has-active-media .gel-toasts {
+    /* No dock, and no space, where the call sits in the sidebar instead. */
+    --lr-toast-floor: max(var(--lr-media-space), var(--lr-safe-bottom));
+  }
+  .app-shell-workspace .gel-toasts {
+    /* One composer line, for browsers without anchor positioning. */
+    bottom: calc(74px + var(--lr-toast-floor));
+  }
+  @supports (anchor-name: --lr-composer) {
+    /* Centred over the content column, clear of a sidebar beside it. */
+    .app-shell-workspace .gel-toasts {
+      right: anchor(--lr-main right, 0px);
+      bottom: calc(16px + anchor(--lr-composer top, var(--lr-toast-floor)));
+      left: anchor(--lr-main left, 0px);
+    }
   }
 }
 @media (max-width: 370px) {
@@ -1145,6 +1221,82 @@ summary {
 @media (hover: none) {
   .sidebar-row-actions {
     opacity: 1;
+  }
+}
+@media (pointer: coarse) {
+  :root {
+    /* Room for finger-sized actions next to a server or channel name. */
+    --lr-sidebar-width: 256px;
+  }
+  /* iOS zooms the page when a focused field's text is smaller than 16px. */
+  input,
+  textarea,
+  select {
+    font-size: max(16px, 1em) !important;
+  }
+  /* A long press on chrome must not select its labels or raise the link
+     callout. Messages and dialogs keep the platform behaviour. */
+  .workspace-drawer,
+  .workspace-mobile-topbar,
+  .lr-channel-header,
+  .app-header,
+  .voice-session-dock,
+  button,
+  summary {
+    -webkit-touch-callout: none;
+    user-select: none;
+  }
+  .gel-modal {
+    -webkit-touch-callout: default;
+    user-select: text;
+  }
+  /* 44px targets in both drawers. */
+  .workspace-drawer .workspace-drawer-header {
+    padding-block: 4px;
+  }
+  .workspace-drawer-close,
+  .sidebar-overview,
+  .member-profile-button {
+    min-height: 44px;
+  }
+  .server-home-link {
+    height: 44px;
+  }
+  .server-create-button,
+  .server-sidebar-actions .shell-icon-button,
+  .user-panel .shell-icon-button {
+    width: 44px;
+    height: 44px;
+  }
+  /* ChannelSidebar lays its virtual rows out at the matching pitch. */
+  .channel-row,
+  .sidebar-category-row {
+    height: 44px;
+  }
+  .sidebar-category-row {
+    align-items: center;
+    padding-bottom: 0;
+  }
+  .sidebar-action-small {
+    width: 44px;
+    height: 44px;
+  }
+  .sidebar-create-menu > nav {
+    top: 48px;
+  }
+  .user-panel-menu > nav {
+    bottom: 52px;
+  }
+  .sidebar-create-menu > nav > button,
+  .user-panel-menu > nav > :is(a, button) {
+    padding-block: 12px;
+  }
+}
+/* A phone on its side has room for the call and the user panel only if the
+   channel list gives up its minimum and scrolls. */
+@media (pointer: coarse) and (max-height: 500px) {
+  .sidebar-list-scroll {
+    min-height: 72px;
   }
 }
 

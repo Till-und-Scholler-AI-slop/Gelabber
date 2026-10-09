@@ -1,5 +1,6 @@
 //! Screen capture through xdg-desktop-portal and PipeWire, encoded as H264,
-//! sent through mediasoup 0.29 and decoded by a native consumer.
+//! sent through mediasoup 0.29 and decoded by a native consumer; then shared
+//! the way the web client does it, as VP8 in two simulcast layers.
 //!
 //! Needs a Wayland session with PipeWire and a portal that answers without a
 //! dialog; CI runs it in desktop/native/scripts/fake-desktop-session.sh (real
@@ -8,7 +9,7 @@
 
 mod common;
 
-use common::{Server, blocking, check_encoder, serve_events, wait_for};
+use common::{Server, blocking, check_encoder, layers_of, simulcast_sizes, wait_for};
 use gelabber_media_core::{Audio, Device, Direction, Engine, Source, Transport};
 use mediasoup::prelude::Transport as _;
 use mediasoup::prelude::*;
@@ -17,7 +18,6 @@ use std::{
     sync::{Arc, Mutex},
     time::{Duration, Instant},
 };
-use tokio::runtime::Handle;
 
 #[tokio::test(flavor = "multi_thread", worker_threads = 4)]
 async fn screen_capture_reaches_a_consumer() {
@@ -29,7 +29,12 @@ async fn screen_capture_reaches_a_consumer() {
         gelabber_media_core::set_log_level(gelabber_media_core::LogLevel::Info);
     }
     let server = Server::start().await;
-    let runtime = Handle::current();
+    share_a_screen(&server).await;
+    server.close().await;
+}
+
+/// The call of the test above, dropped on return.
+async fn share_a_screen(server: &Server) {
     let engine = Engine::new(Audio::Dummy).unwrap();
     let device = Device::new(&engine).unwrap();
     device
@@ -54,8 +59,7 @@ async fn screen_capture_reaches_a_consumer() {
     let server_producers = Arc::new(Mutex::new(Vec::new()));
     let (server_send, send_params) = server.transport().await;
     let (send, send_events) = Transport::new(&device, Direction::Send, &send_params).unwrap();
-    serve_events(
-        runtime.clone(),
+    server.serve(
         send.clone(),
         server_send.clone(),
         send_events,
@@ -79,8 +83,7 @@ async fn screen_capture_reaches_a_consumer() {
 
     let (server_recv, recv_params) = server.transport().await;
     let (recv, recv_events) = Transport::new(&device, Direction::Recv, &recv_params).unwrap();
-    serve_events(
-        runtime,
+    server.serve(
         recv.clone(),
         server_recv.clone(),
         recv_events,
@@ -141,9 +144,38 @@ async fn screen_capture_reaches_a_consumer() {
     );
     assert!(stats["width"].as_u64().unwrap_or(0) >= 320);
     check_encoder("screen", &sender);
-
     drop(consumer);
     drop(producer);
+
+    // A share from the web client: VP8 with a layer at a quarter and one in
+    // full. The session's monitor is 1366 wide, which no quarter comes out
+    // of; libvpx would encode neither layer of it.
+    let captured = screen.state().unwrap();
+    let (width, height) = (
+        captured["width"].as_u64().unwrap(),
+        captured["height"].as_u64().unwrap(),
+    );
+    let shared = {
+        let (send, screen) = (send.clone(), screen.clone());
+        // The start bitrate carries both layers at once; the page leaves
+        // that to the bandwidth estimate.
+        let options = json!({
+            "codec": "video/VP8",
+            "encodings": [{ "scaleResolutionDownBy": 4 }, { "scaleResolutionDownBy": 1 }],
+            "codecOptions": { "videoGoogleStartBitrate": 3000 },
+        });
+        blocking(move || send.produce(&screen, &options))
+            .await
+            .unwrap()
+    };
+    let shared_at_server = server_producers.lock().unwrap()[1].clone();
+    assert_eq!(
+        simulcast_sizes("screen as VP8", &shared, &shared_at_server).await,
+        layers_of(width, height, 4),
+        "layers of the {width}x{height} screen"
+    );
+
+    drop(shared);
     drop((send, recv));
     drop(screen);
 }

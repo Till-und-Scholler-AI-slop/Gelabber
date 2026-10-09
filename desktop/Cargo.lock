@@ -1604,7 +1604,7 @@ dependencies = [
 
 [[package]]
 name = "gelabber-desktop"
-version = "0.5.2"
+version = "0.6.0-alpha.1"
 dependencies = [
  "gelabber-media-core",
  "pollster",
@@ -1613,13 +1613,14 @@ dependencies = [
  "tauri",
  "tauri-build",
  "url",
+ "webkit2gtk",
  "wgpu",
  "winit",
 ]
 
 [[package]]
 name = "gelabber-media-core"
-version = "0.5.2"
+version = "0.6.0-alpha.1"
 dependencies = [
  "cmake",
  "mediasoup",

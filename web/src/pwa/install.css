@@ -1,0 +1,40 @@
+.pwa-install {
+  margin-top: 24px;
+  padding: 18px;
+  border: 1px solid var(--lr-border);
+  border-radius: var(--lr-radius);
+  background: var(--lr-panel);
+  font-size: 14px;
+  line-height: 1.6;
+  overflow-wrap: anywhere;
+}
+.pwa-install-heading {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  margin-bottom: 16px;
+}
+.pwa-install-heading img {
+  flex-shrink: 0;
+  border-radius: 10px;
+}
+.pwa-install h2 {
+  font-size: 16px;
+  font-weight: 650;
+}
+.pwa-install p + p,
+.pwa-install button + p,
+.pwa-install ol {
+  margin-top: 12px;
+}
+.pwa-install ol {
+  list-style: decimal;
+  padding-left: 22px;
+}
+.pwa-install li + li {
+  margin-top: 6px;
+}
+.pwa-install-heading p,
+.pwa-install-note {
+  color: var(--lr-muted);
+}

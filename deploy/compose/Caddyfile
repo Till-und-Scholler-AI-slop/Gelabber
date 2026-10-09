@@ -4,10 +4,15 @@
 
 # TCP only. coturn and SFU ICE bind UDP themselves.
 # /ws compares Origin to Host — pass Host through or the handshake is 403.
+# {hostport}, not {host}: the browser's Origin carries a non-default port
+# (GELABBER_HTTP_PORT, a proxy on :8443), and {host} would drop it.
 :80 {
+	# API JSON and whatever the web container did not compress itself.
+	encode zstd gzip
+
 	handle /health {
 		reverse_proxy api:8080 {
-			header_up Host {host}
+			header_up Host {hostport}
 			transport http {
 				dial_timeout 2s
 				response_header_timeout 5s
@@ -19,7 +24,7 @@
 
 	handle /ready {
 		reverse_proxy api:8080 {
-			header_up Host {host}
+			header_up Host {hostport}
 			transport http {
 				dial_timeout 2s
 				response_header_timeout 5s
@@ -31,7 +36,7 @@
 
 	handle /ws {
 		reverse_proxy api:8080 {
-			header_up Host {host}
+			header_up Host {hostport}
 			transport http {
 				dial_timeout 5s
 				read_timeout 0
@@ -43,7 +48,7 @@
 	@api path /api /api/*
 	handle @api {
 		reverse_proxy api:8080 {
-			header_up Host {host}
+			header_up Host {hostport}
 			transport http {
 				dial_timeout 5s
 				response_header_timeout 30s
@@ -61,7 +66,7 @@
 	@media path /media /media/*
 	handle @media {
 		reverse_proxy media:8081 {
-			header_up Host {host}
+			header_up Host {hostport}
 			transport http {
 				dial_timeout 5s
 				read_timeout 0
@@ -72,7 +77,7 @@
 
 	handle {
 		reverse_proxy web:80 {
-			header_up Host {host}
+			header_up Host {hostport}
 			transport http {
 				dial_timeout 5s
 				response_header_timeout 30s

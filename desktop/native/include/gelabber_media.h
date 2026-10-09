@@ -3,7 +3,8 @@
  *
  * Only this C surface leaves the shared library. libwebrtc, libmediasoupclient
  * and Chromium's libc++ stay hidden inside it so they cannot clash with the
- * libstdc++ that WebKitGTK/Tauri load into the same process.
+ * libstdc++ that WebKitGTK/Tauri load into the same process. On Windows the
+ * DLL links its own static C/C++ runtime for the same reason.
  *
  * Conventions
  * - All JSON is UTF-8 and uses mediasoup's own parameter shapes, the same the
@@ -38,7 +39,7 @@
 extern "C" {
 #endif
 
-#define GM_ABI_VERSION 7
+#define GM_ABI_VERSION 8
 
 typedef struct gm_engine gm_engine;
 typedef struct gm_device gm_device;
@@ -80,10 +81,14 @@ GM_API gm_engine* gm_engine_new(const char* options_json);
 GM_API void gm_engine_free(gm_engine* engine);
 
 /* Audio devices of the engine's audio device module (Linux: PulseAudio API,
- * which PipeWire serves). {"inputs":[{"id","name"}],"outputs":[{"id","name"}],
+ * which PipeWire serves; Windows: Core Audio).
+ * {"inputs":[{"id","name"}],"outputs":[{"id","name"}],
  * "input":"<id>","output":"<id>"}. The id "" is the system default; other ids
- * are the platform's device GUID where it reports one, else the display name
- * (PulseAudio). Monitor sources are not listed. */
+ * are the platform's device GUID where it reports one (Windows endpoint ids),
+ * else the display name (PulseAudio). Monitor sources are not listed.
+ * On Windows "" is the default device, not the default communications device:
+ * streams on the latter make Windows turn other applications down. It is
+ * looked up when capture or playout starts. */
 GM_API char* gm_audio_devices(gm_engine* engine);
 /* Live audio settings; every key is optional:
  * {"input"?: "<id>", "output"?: "<id>", "inputGain"?: 0..2}.
@@ -138,19 +143,30 @@ GM_API gm_source* gm_source_new_test_pattern(gm_engine* engine, int width, int h
 /* Screen or window picked in the desktop's own dialog (Linux: xdg-desktop-portal
  * ScreenCast + PipeWire). Returns at once; the dialog opens asynchronously and
  * frames flow after the user picked a source. Poll gm_source_state.
+ * Not available on Windows yet: fails with an error there.
  * options_json: {"type"?: "any|screen|window", "fps"?: 30, "cursor"?: true,
  *                "contentHint"?: "detail|text|motion"} */
 GM_API gm_source* gm_source_new_screen(gm_engine* engine, const char* options_json);
 /* Applications playing sound, without this process:
- * [{"id","name","streams"}] (Linux: PipeWire playback streams). */
+ * [{"id","name","streams"}] (Linux: PipeWire playback streams; Windows: not
+ * available yet, an empty list). What a virtual output device plays on to
+ * the next (an echo canceller, an equaliser, a combined sink, a loopback) is
+ * no application's sound and not listed. "name" is for showing and differs
+ * between any two entries: applications that call themselves the same are
+ * "name (id)", next to an entry whose id is that name and chooses them all. */
 GM_API char* gm_audio_apps(gm_engine* engine);
 /* Sound of other applications as an audio track for source audio, 48 kHz
  * stereo, separate from the microphone: {"app"?: id from gm_audio_apps;
  * default "" = every application but this one}. Applications that start
- * playing later are included. gm_source_state adds "streams". */
+ * playing later are included. This process's own sound stays out also where
+ * it plays through a virtual output device: each application is captured
+ * where it plays, never where such a device plays it on.
+ * gm_source_state adds "streams", and "underruns" and "overruns": how often
+ * a stream that was playing ran dry or was cut back for being too far ahead.
+ * Not available on Windows yet: fails with an error there. */
 GM_API gm_source* gm_source_new_app_audio(gm_engine* engine, const char* options_json);
-/* Cameras: [{"id","name"}] (Linux: V4L2 devices; ids are the module's
- * unique ids). */
+/* Cameras: [{"id","name"}] (Linux: V4L2 devices; Windows: DirectShow; ids
+ * are the module's unique ids). */
 GM_API char* gm_video_devices(gm_engine* engine);
 /* Camera at the closest format it supports:
  * {"device"?: id (default: first camera), "width"?: 1280, "height"?: 720,
@@ -167,7 +183,13 @@ GM_API int gm_source_set_enabled(gm_source* source, int enabled);
 /* Produce a source. options_json:
  * {"codec"?: "video/H264"|"video/VP8"|..., "encodings"?: [{"scaleResolutionDownBy":4},{...}],
  *  "codecOptions"?: {...}, "appData"?: {...}}
- * Without "codec", video prefers H264 and falls back to VP8. */
+ * Without "codec", video prefers H264 and falls back to VP8. The Windows
+ * build has no H264.
+ * Simulcast layers ("encodings") are a picture divided by their
+ * scaleResolutionDownBy, to the pixel: a video source crops its picture to
+ * what divides. That is up to 3 columns and rows for factors of 1, 2 and 4,
+ * which every picture is ready for, and more for others once they are asked
+ * for. */
 GM_API gm_producer* gm_transport_produce(gm_transport* transport, gm_source* source,
                                          const char* options_json);
 GM_API void gm_producer_free(gm_producer* producer);
@@ -197,8 +219,10 @@ GM_API const char* gm_consumer_id(gm_consumer* consumer);
 GM_API int gm_consumer_pause(gm_consumer* consumer, int paused);
 /* Playback volume of an audio consumer, 0..2 (1 = as received; 0 = silent). */
 GM_API int gm_consumer_set_volume(gm_consumer* consumer, double volume);
-/* A decoded video frame in I420, valid only during the sink call. rotation
- * is 0, 90, 180 or 270 degrees clockwise to apply for display. */
+/* A video frame in I420, valid only during the sink call. rotation is 0, 90,
+ * 180 or 270 degrees clockwise to apply for display. source_width and
+ * source_height are the size of the picture before the sink's limits scaled
+ * it down (width and height when they did not). */
 typedef struct gm_video_frame
 {
   int width;
@@ -211,13 +235,40 @@ typedef struct gm_video_frame
   int stride_v;
   int rotation;
   int64_t timestamp_us;
+  int source_width;
+  int source_height;
 } gm_video_frame;
 typedef void (*gm_video_frame_fn)(void* user, const gm_video_frame* frame);
+/* What a video sink gets at most; 0 leaves a value unlimited. A picture
+ * larger than max_width x max_height (as displayed, i.e. after rotation) is
+ * scaled down to fit, aspect kept, to even dimensions; it is never scaled up.
+ * Frames that arrive faster than max_fps are dropped. */
+typedef struct gm_video_sink_limits
+{
+  int max_width;
+  int max_height;
+  int max_fps;
+} gm_video_sink_limits;
 /* Hands each decoded frame of a video consumer to fn on a decoder thread;
  * fn NULL removes the sink. Once this returns, the previous sink is not
  * running and is not called again. Free the consumer only after removing
  * a sink whose user data dies first. */
 GM_API int gm_consumer_set_video_sink(gm_consumer* consumer, gm_video_frame_fn fn, void* user);
+/* Limits for the consumer's sink, kept across sinks; NULL lifts them. */
+GM_API int gm_consumer_set_video_sink_limits(gm_consumer* consumer,
+                                             const gm_video_sink_limits* limits);
+/* The same for a local video source (camera, screen, test pattern): each
+ * frame as it goes to the encoders, black while the source is disabled, on
+ * the source's capture thread, so fn has to return quickly. That is the
+ * picture after the encoders' adaptation: while an encoder has the source
+ * step down (a weak uplink, the first seconds of a producer) the sink gets
+ * the smaller picture or lower rate too, and source_width/source_height are
+ * that size, not the capture's. A sink keeps the source delivering without a
+ * producer. gm_source_free removes a sink that is still set. Setting a sink
+ * or limits on an audio source fails; removing a sink is fine for any
+ * source. Calls for one source must not overlap. */
+GM_API int gm_source_set_video_sink(gm_source* source, gm_video_frame_fn fn, void* user);
+GM_API int gm_source_set_video_sink_limits(gm_source* source, const gm_video_sink_limits* limits);
 /* {"framesReceived","width","height"} for video, {"audioLevel" 0..100,
  * "samplesPlayed"} for audio, plus libwebrtc stats under "rtc". Audio is only
  * decoded while playout runs. */

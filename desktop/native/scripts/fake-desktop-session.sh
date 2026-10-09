@@ -7,16 +7,23 @@
 #   Video/Source with a moving pattern in shared-memory buffers like a
 #   compositor's screencast stream;
 # - a null sink "Gelabber-Speakers" as the output, and a microphone
-#   "Gelabber-Mic" that hears white noise: a source remapped from the monitor
-#   of a second null sink the noise plays into (libwebrtc lists no monitor
-#   sources). GELABBER_TEST_MIC / GELABBER_TEST_SPEAKERS name both.
+#   "Gelabber-Mic" that hears white noise for ten minutes: a source remapped
+#   from the monitor of a second null sink the noise plays into (libwebrtc
+#   lists no monitor sources). GELABBER_TEST_MIC / GELABBER_TEST_SPEAKERS
+#   name both.
 #
 # The compositor side (xdg-desktop-portal-hyprland, DMA-BUF frames) is not
 # covered; that needs a real desktop.
 #
+# On a desktop the session keeps to itself: its own runtime, configuration and
+# state directories, and a WirePlumber that leaves sound cards, Bluetooth and
+# cameras to the desktop's own (WirePlumber 0.5 or newer; 0.4 does not know
+# the setting).
+#
 # Ubuntu 24.04 packages: pipewire wireplumber pipewire-pulse pulseaudio-utils
 # xdg-desktop-portal libpipewire-0.3-dev gcc python3-gi (dbus-run-session
-# comes with dbus).
+# comes with dbus). Arch: pipewire pipewire-audio pipewire-pulse wireplumber
+# libpulse xdg-desktop-portal python-gobject gcc.
 #
 # Usage: fake-desktop-session.sh <command> [args...]
 set -euo pipefail
@@ -27,19 +34,36 @@ if [[ -z "${GELABBER_FAKE_SESSION:-}" ]]; then
 fi
 
 here="$(cd "$(dirname "$0")" && pwd)"
-width=1280
-height=720
+# A monitor whose width does not divide by four, like a 1366x768 laptop's and
+# most windows: the core crops what it shares to fit its simulcast layers.
+width=1366
+height=768
 runtime="$(mktemp -d)"
 chmod 700 "$runtime"
+# Whatever names the desktop's own sound server.
+unset PULSE_SERVER PULSE_RUNTIME_PATH PIPEWIRE_REMOTE PIPEWIRE_RUNTIME_DIR
 export XDG_RUNTIME_DIR="$runtime"
 export XDG_CONFIG_HOME="$runtime/config"
+# WirePlumber keeps default devices and volumes here.
+export XDG_STATE_HOME="$runtime/state"
 export XDG_DESKTOP_PORTAL_DIR="$runtime/portals"
 # libwebrtc only uses its PipeWire capturer in a Wayland session; it never
 # connects to the compositor itself.
 export XDG_SESSION_TYPE=wayland
 export WAYLAND_DISPLAY=wayland-gelabber-test
 export XDG_CURRENT_DESKTOP=gelabbertest
-mkdir -p "$XDG_CONFIG_HOME" "$XDG_DESKTOP_PORTAL_DIR"
+mkdir -p "$XDG_CONFIG_HOME/wireplumber/wireplumber.conf.d" "$XDG_STATE_HOME" "$XDG_DESKTOP_PORTAL_DIR"
+
+# Only the null sinks below: the desktop's own session has the real devices.
+cat >"$XDG_CONFIG_HOME/wireplumber/wireplumber.conf.d/90-no-hardware.conf" <<'CONF'
+wireplumber.profiles = {
+  main = {
+    hardware.audio = disabled
+    hardware.bluetooth = disabled
+    hardware.video-capture = disabled
+  }
+}
+CONF
 
 cat >"$XDG_DESKTOP_PORTAL_DIR/gelabbertest.portal" <<'PORTAL'
 [portal]
@@ -83,18 +107,26 @@ pactl load-module module-null-sink sink_name=gelabber-speakers \
   sink_properties=device.description=Gelabber-Speakers >/dev/null
 pactl load-module module-null-sink sink_name=gelabber-mic-feed rate=48000 channels=1 \
   sink_properties=device.description=Gelabber-Mic-Feed >/dev/null
-# 60 s of white noise at -20 dBFS RMS, 48 kHz mono.
+# White noise at -20 dBFS RMS, 48 kHz mono: a minute of it, ten times over.
+# The microphone hears the file once through, and that is how long the
+# session has sound; the voice test needs it to its end (GELABBER_TEST_NOISE_ENDS,
+# seconds since the epoch). A minute was not enough for a test that cargo
+# still had to build inside the session.
+noise_minutes=10
 "${GELABBER_PYTHON:-/usr/bin/python3}" -I -c '
 import random, struct, sys, wave
 w = wave.open(sys.argv[1], "wb")
 w.setnchannels(1); w.setsampwidth(2); w.setframerate(48000)
 r = random.Random(1)
-w.writeframes(b"".join(struct.pack("<h", max(-32767, min(32767, int(r.gauss(0, 3277))))) for _ in range(48000 * 60)))
-' "$runtime/noise.wav"
+minute = b"".join(struct.pack("<h", max(-32767, min(32767, int(r.gauss(0, 3277))))) for _ in range(48000 * 60))
+for _ in range(int(sys.argv[2])):
+    w.writeframes(minute)
+' "$runtime/noise.wav" "$noise_minutes"
 pactl load-module module-remap-source master=gelabber-mic-feed.monitor source_name=gelabber-mic \
   source_properties=device.description=Gelabber-Mic >/dev/null
 pw-play --target gelabber-mic-feed "$runtime/noise.wav" &
 pids+=($!)
+export GELABBER_TEST_NOISE_ENDS=$(($(date +%s) + noise_minutes * 60))
 export GELABBER_TEST_MIC=Gelabber-Mic
 export GELABBER_TEST_SPEAKERS=Gelabber-Speakers
 
@@ -116,7 +148,10 @@ dbus-update-activation-environment XDG_RUNTIME_DIR XDG_CONFIG_HOME XDG_DESKTOP_P
 "${GELABBER_PYTHON:-/usr/bin/python3}" -I "$here/fake_screencast_portal.py" "$node" "$width" "$height" &
 pids+=($!)
 gdbus wait --session --timeout 15 org.freedesktop.impl.portal.desktop.gelabbertest
-/usr/libexec/xdg-desktop-portal ${GELABBER_PORTAL_VERBOSE:+--verbose} &
+# Debian and Ubuntu keep the frontend in /usr/libexec, Arch in /usr/lib.
+portal=/usr/libexec/xdg-desktop-portal
+[[ -x "$portal" ]] || portal=/usr/lib/xdg-desktop-portal
+"$portal" ${GELABBER_PORTAL_VERBOSE:+--verbose} &
 pids+=($!)
 gdbus wait --session --timeout 15 org.freedesktop.portal.Desktop
 

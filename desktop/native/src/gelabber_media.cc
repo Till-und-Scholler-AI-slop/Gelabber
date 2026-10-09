@@ -5,7 +5,6 @@
 #include "gelabber_media.h"
 #include "app_audio.h"
 #include "capture_dsp.h"
-#include "gst_h264_encoder.h"
 #include "local_video_source.h"
 
 #include "mediasoupclient.hpp"
@@ -37,6 +36,7 @@
 #include <api/video_codecs/video_decoder_factory_template_libvpx_vp8_adapter.h>
 #include <api/video_codecs/video_decoder_factory_template_libvpx_vp9_adapter.h>
 #include <api/video_codecs/video_decoder_factory_template_open_h264_adapter.h>
+#include <api/video_codecs/video_encoder.h>
 #include <api/video_codecs/video_encoder_factory_template.h>
 #include <api/video_codecs/video_encoder_factory_template_libaom_av1_adapter.h>
 #include <api/video_codecs/video_encoder_factory_template_libvpx_vp8_adapter.h>
@@ -44,7 +44,6 @@
 #include <api/video_codecs/video_encoder_factory_template_open_h264_adapter.h>
 #include <audio/utility/audio_frame_operations.h>
 #include <media/base/adapted_video_track_source.h>
-#include <media/engine/simulcast_encoder_adapter.h>
 #include <modules/audio_processing/audio_buffer.h>
 #include <modules/audio_processing/include/audio_frame_proxies.h>
 #include <modules/audio_device/include/fake_audio_device.h>
@@ -52,19 +51,34 @@
 #include <rtc_base/thread.h>
 #include <rtc_base/time_utils.h>
 
+#if defined(WEBRTC_LINUX)
+// Hardware H264 through GStreamer, behind libwebrtc's simulcast adapter. The
+// Windows libwebrtc package does not carry the adapter.
+#  include "gst_h264_encoder.h"
+#  include <media/engine/simulcast_encoder_adapter.h>
+#endif
+#if defined(WEBRTC_WIN)
+#  include <rtc_base/win32_socket_init.h>
+#endif
+
 #include <algorithm>
 #include <atomic>
 #include <cctype>
 #include <cmath>
 #include <chrono>
+#include <cstdint>
+#include <cstdlib>
 #include <cstring>
+#include <exception>
 #include <future>
 #include <map>
 #include <memory>
 #include <mutex>
 #include <optional>
+#include <stdexcept>
 #include <string>
 #include <thread>
+#include <utility>
 #include <vector>
 
 using json = nlohmann::json;
@@ -219,8 +233,8 @@ namespace
 		std::thread worker;
 	};
 
-	// Decoded remote video: counts frames and hands them, as I420, to the
-	// sink the app set (its viewer window).
+	// Counts the frames of a video track and hands them, as I420 within the
+	// sink's limits, to the sink the app set (its views of the stream).
 	class FrameCounter : public webrtc::VideoSinkInterface<webrtc::VideoFrame>
 	{
 	public:
@@ -231,11 +245,39 @@ namespace
 			height.store(frame.height(), std::memory_order_relaxed);
 
 			std::lock_guard lock(sinkMutex);
-			if (!sink)
+			if (!sink || !Due(webrtc::TimeMicros()))
 				return;
-			const auto i420 = frame.video_frame_buffer()->ToI420();
+			auto i420 = frame.video_frame_buffer()->ToI420();
 			if (!i420)
 				return;
+			const int sourceWidth  = i420->width();
+			const int sourceHeight = i420->height();
+			// The limits are for the picture as displayed.
+			const bool sideways =
+			  frame.rotation() == webrtc::kVideoRotation_90 || frame.rotation() == webrtc::kVideoRotation_270;
+			int outWidth  = sourceWidth;
+			int outHeight = sourceHeight;
+			if (Fit(
+			      sideways ? limits.max_height : limits.max_width,
+			      sideways ? limits.max_width : limits.max_height,
+			      outWidth,
+			      outHeight))
+			{
+				// libyuv's box filter divides by a rounded-down reciprocal of
+				// the box area: exact enough up to 16x16 source pixels per
+				// pixel, visibly dark far beyond. Quarter the picture first.
+				while (int64_t{ i420->width() } * i420->height() > int64_t{ 256 } * outWidth * outHeight)
+				{
+					auto quarter = webrtc::I420Buffer::Create((i420->width() + 3) / 4, (i420->height() + 3) / 4);
+					quarter->ScaleFrom(*i420);
+					i420 = quarter;
+				}
+				// One buffer for every frame: the sink reads it during the call only.
+				if (!scaled || scaled->width() != outWidth || scaled->height() != outHeight)
+					scaled = webrtc::I420Buffer::Create(outWidth, outHeight);
+				scaled->ScaleFrom(*i420);
+				i420 = scaled;
+			}
 			const gm_video_frame out{
 				i420->width(),
 				i420->height(),
@@ -247,6 +289,8 @@ namespace
 				i420->StrideV(),
 				static_cast<int>(frame.rotation()),
 				frame.timestamp_us(),
+				sourceWidth,
+				sourceHeight,
 			};
 			sink(sinkUser, &out);
 		}
@@ -259,14 +303,78 @@ namespace
 			sinkUser = user;
 		}
 
+		void SetLimits(const gm_video_sink_limits* wanted)
+		{
+			const gm_video_sink_limits next = wanted ? *wanted : gm_video_sink_limits{ 0, 0, 0 };
+			if (next.max_width < 0 || next.max_height < 0 || next.max_fps < 0)
+				throw std::invalid_argument("video sink limits must not be negative");
+			std::lock_guard lock(sinkMutex);
+			limits = next;
+			nextDue.reset();
+			scaled = nullptr;
+		}
+
 		std::atomic<uint64_t> frames{ 0 };
 		std::atomic<int> width{ 0 };
 		std::atomic<int> height{ 0 };
 
 	private:
+		// Shrinks width x height to fit the limits (0: none), aspect kept, to
+		// even dimensions. False when the picture fits as it is.
+		static bool Fit(int maxWidth, int maxHeight, int& width, int& height)
+		{
+			const bool wide = maxWidth > 0 && width > maxWidth;
+			const bool tall = maxHeight > 0 && height > maxHeight;
+			if (!wide && !tall)
+				return false;
+			const int64_t w = width;
+			const int64_t h = height;
+			// The side that has to shrink more decides.
+			if (wide && (!tall || int64_t{ maxWidth } * h <= int64_t{ maxHeight } * w))
+			{
+				height = static_cast<int>(h * maxWidth / w);
+				width  = maxWidth;
+			}
+			else
+			{
+				width  = static_cast<int>(w * maxHeight / h);
+				height = maxHeight;
+			}
+			width  = std::max(2, width & ~1);
+			height = std::max(2, height & ~1);
+			return true;
+		}
+
+		// Drops frames above max_fps the way libwebrtc's FramerateController
+		// does: evenly, and half an interval lenient, so a stream at about the
+		// limit loses nothing to jitter.
+		bool Due(int64_t nowUs)
+		{
+			if (limits.max_fps <= 0)
+				return true;
+			const int64_t interval = 1'000'000 / limits.max_fps;
+			if (nextDue)
+			{
+				const int64_t ahead = *nextDue - nowUs;
+				if (ahead > -2 * interval && ahead < 2 * interval)
+				{
+					if (ahead > 0)
+						return false;
+					*nextDue += interval;
+					return true;
+				}
+			}
+			// The first frame, or one far off the schedule: start over.
+			nextDue = nowUs + interval / 2;
+			return true;
+		}
+
 		std::mutex sinkMutex;
 		gm_video_frame_fn sink{ nullptr };
 		void* sinkUser{ nullptr };
+		gm_video_sink_limits limits{ 0, 0, 0 };
+		std::optional<int64_t> nextDue;
+		webrtc::scoped_refptr<webrtc::I420Buffer> scaled;
 	};
 
 	// The APM's capture post-processor: RNNoise, gain and meters after
@@ -355,21 +463,35 @@ namespace
 		size_t window{ 0 };
 	};
 
+	// Stands for the system default where the module has no index for it.
+	constexpr int kDefaultAudioDevice = -1;
+#if defined(WEBRTC_WIN)
+	// Core Audio lists the endpoints only; the default is a role that is
+	// selected on its own (SelectRecordingDevice, SelectPlayoutDevice).
+	constexpr bool kDefaultAudioDeviceIsListed = false;
+#else
+	// Index 0 is the system default (PulseAudio).
+	constexpr bool kDefaultAudioDeviceIsListed = true;
+#endif
+
 	struct AudioDeviceEntry
 	{
-		uint16_t index;
+		// The module's index, or kDefaultAudioDevice.
+		int index;
 		std::string id;
 		std::string name;
 	};
 
-	// Devices in module order. Index 0 is the system default with id "".
-	// Other ids are the module's GUID where it has one (Windows endpoint
-	// ids); libwebrtc's PulseAudio module reports none, so there the
-	// display name is the id, numbered when names repeat.
+	// Devices in module order, the system default first with id "". Other
+	// ids are the module's GUID where it has one (Windows endpoint ids);
+	// libwebrtc's PulseAudio module reports none, so there the display
+	// name is the id, numbered when names repeat.
 	template<typename Count, typename NameOf>
 	std::vector<AudioDeviceEntry> ListAudioDevices(Count count, NameOf nameOf)
 	{
 		std::vector<AudioDeviceEntry> out;
+		if (!kDefaultAudioDeviceIsListed)
+			out.push_back({ kDefaultAudioDevice, "", "Default" });
 		std::map<std::string, int> seen;
 		char name[webrtc::kAdmMaxDeviceNameSize];
 		char guid[webrtc::kAdmMaxGuidSize];
@@ -379,13 +501,13 @@ namespace
 			if (nameOf(static_cast<uint16_t>(i), name, guid) != 0)
 				continue;
 			std::string id;
-			if (i > 0)
+			if (i > 0 || !kDefaultAudioDeviceIsListed)
 			{
 				id = guid[0] != '\0' ? guid : name;
 				if (const int repeat = ++seen[id]; repeat > 1)
 					id += " (" + std::to_string(repeat) + ")";
 			}
-			out.push_back({ static_cast<uint16_t>(i), id, name });
+			out.push_back({ i, id, name });
 		}
 		return out;
 	}
@@ -404,12 +526,28 @@ namespace
 		  [&](uint16_t i, char* name, char* guid) { return adm.PlayoutDeviceName(i, name, guid); });
 	}
 
-	int FindAudioDevice(const std::vector<AudioDeviceEntry>& devices, const std::string& id)
+	// The index of the device with this id, if there is one.
+	std::optional<int> FindAudioDevice(const std::vector<AudioDeviceEntry>& devices, const std::string& id)
 	{
 		for (const auto& device : devices)
 			if (device.id == id)
 				return device.index;
-		return -1;
+		return std::nullopt;
+	}
+
+	// Windows has two defaults. The system default is the console role:
+	// streams on the communications role make Windows turn every other
+	// application down for as long as they run.
+	int32_t SelectRecordingDevice(webrtc::AudioDeviceModule& adm, int index)
+	{
+		return index == kDefaultAudioDevice ? adm.SetRecordingDevice(webrtc::AudioDeviceModule::kDefaultDevice)
+		                                    : adm.SetRecordingDevice(static_cast<uint16_t>(index));
+	}
+
+	int32_t SelectPlayoutDevice(webrtc::AudioDeviceModule& adm, int index)
+	{
+		return index == kDefaultAudioDevice ? adm.SetPlayoutDevice(webrtc::AudioDeviceModule::kDefaultDevice)
+		                                    : adm.SetPlayoutDevice(static_cast<uint16_t>(index));
 	}
 
 	// Shared by send and receive listeners: turns libmediasoupclient's
@@ -941,17 +1079,20 @@ namespace
 		{
 			return inner->SetPlayoutDevice(index);
 		}
-		int32_t SetPlayoutDevice(WindowsDeviceType device) override
+		// Only called on Windows, where the voice engine starts on the
+		// default communications device. It gets the system default
+		// instead (see SelectPlayoutDevice), the device of the id "".
+		int32_t SetPlayoutDevice(WindowsDeviceType) override
 		{
-			return inner->SetPlayoutDevice(device);
+			return inner->SetPlayoutDevice(kDefaultDevice);
 		}
 		int32_t SetRecordingDevice(uint16_t index) override
 		{
 			return inner->SetRecordingDevice(index);
 		}
-		int32_t SetRecordingDevice(WindowsDeviceType device) override
+		int32_t SetRecordingDevice(WindowsDeviceType) override
 		{
-			return inner->SetRecordingDevice(device);
+			return inner->SetRecordingDevice(kDefaultDevice);
 		}
 		int32_t PlayoutIsAvailable(bool* available) override
 		{
@@ -1093,29 +1234,33 @@ namespace
 		{
 			return inner->PlayoutDelay(delayMs);
 		}
+		// No processing in the device: the voice engine would switch the
+		// APM's own off for it. Windows offers an echo canceller that
+		// records 16 kHz mono, which RNNoise (48 kHz) and stereo cannot
+		// use. libwebrtc's PulseAudio module has none to begin with.
 		bool BuiltInAECIsAvailable() const override
 		{
-			return inner->BuiltInAECIsAvailable();
+			return false;
 		}
 		bool BuiltInAGCIsAvailable() const override
 		{
-			return inner->BuiltInAGCIsAvailable();
+			return false;
 		}
 		bool BuiltInNSIsAvailable() const override
 		{
-			return inner->BuiltInNSIsAvailable();
+			return false;
 		}
-		int32_t EnableBuiltInAEC(bool enable) override
+		int32_t EnableBuiltInAEC(bool /*enable*/) override
 		{
-			return inner->EnableBuiltInAEC(enable);
+			return -1;
 		}
-		int32_t EnableBuiltInAGC(bool enable) override
+		int32_t EnableBuiltInAGC(bool /*enable*/) override
 		{
-			return inner->EnableBuiltInAGC(enable);
+			return -1;
 		}
-		int32_t EnableBuiltInNS(bool enable) override
+		int32_t EnableBuiltInNS(bool /*enable*/) override
 		{
-			return inner->EnableBuiltInNS(enable);
+			return -1;
 		}
 		int32_t GetPlayoutUnderrunCount() const override
 		{
@@ -1155,10 +1300,86 @@ namespace
 	  webrtc::LibvpxVp9EncoderTemplateAdapter,
 	  webrtc::LibaomAv1EncoderTemplateAdapter>;
 
-	// libwebrtc's software encoders, with H264 moved to a hardware encoder
-	// (GStreamer: VA-API/NVENC) when the system has one. Hardware H264 runs
-	// per simulcast layer behind SimulcastEncoderAdapter, which also falls
-	// back to OpenH264 when the hardware encoder fails.
+	// A software encoder that holds libwebrtc to its simulcast layers. libvpx
+	// (VP8) and OpenH264 encode the layers of a producer in one encoder and
+	// refuse a set in which a layer has not exactly the top layer's aspect
+	// (WEBRTC_VIDEO_CODEC_ERR_SIMULCAST_PARAMETERS_NOT_SUPPORTED): the frame
+	// has to divide by every layer's scaleResolutionDownBy. libwebrtc's own
+	// factory puts them behind SimulcastEncoderAdapter, which then gives each
+	// layer an encoder; the Windows package does not carry it. Told that the
+	// encoder's alignment holds for every layer, libwebrtc works out what the
+	// layers need (AlignmentAdjuster) and asks the source for such frames.
+	// The sources crop to LocalVideoSource::kResolutionAlignment on their
+	// own, so the web client's layers never wait for that.
+	class SimulcastAlignedEncoder : public webrtc::VideoEncoder
+	{
+	public:
+		explicit SimulcastAlignedEncoder(std::unique_ptr<webrtc::VideoEncoder> encoder)
+		  : encoder(std::move(encoder))
+		{
+		}
+
+		void SetFecControllerOverride(webrtc::FecControllerOverride* fecControllerOverride) override
+		{
+			encoder->SetFecControllerOverride(fecControllerOverride);
+		}
+
+		int InitEncode(const webrtc::VideoCodec* codec, const Settings& settings) override
+		{
+			return encoder->InitEncode(codec, settings);
+		}
+
+		int32_t RegisterEncodeCompleteCallback(webrtc::EncodedImageCallback* callback) override
+		{
+			return encoder->RegisterEncodeCompleteCallback(callback);
+		}
+
+		int32_t Release() override
+		{
+			return encoder->Release();
+		}
+
+		int32_t Encode(
+		  const webrtc::VideoFrame& frame, const std::vector<webrtc::VideoFrameType>* types) override
+		{
+			return encoder->Encode(frame, types);
+		}
+
+		void SetRates(const RateControlParameters& parameters) override
+		{
+			encoder->SetRates(parameters);
+		}
+
+		void OnPacketLossRateUpdate(float packetLossRate) override
+		{
+			encoder->OnPacketLossRateUpdate(packetLossRate);
+		}
+
+		void OnRttUpdate(int64_t rttMs) override
+		{
+			encoder->OnRttUpdate(rttMs);
+		}
+
+		void OnLossNotification(const LossNotification& lossNotification) override
+		{
+			encoder->OnLossNotification(lossNotification);
+		}
+
+		EncoderInfo GetEncoderInfo() const override
+		{
+			auto info = encoder->GetEncoderInfo();
+			info.apply_alignment_to_all_simulcast_layers = true;
+			return info;
+		}
+
+	private:
+		const std::unique_ptr<webrtc::VideoEncoder> encoder;
+	};
+
+	// libwebrtc's software encoders. On Linux H264 moves to a hardware
+	// encoder (GStreamer: VA-API/NVENC) when the system has one. Hardware
+	// H264 runs per simulcast layer behind SimulcastEncoderAdapter, which
+	// also falls back to OpenH264 when the hardware encoder fails.
 	class EncoderFactory : public webrtc::VideoEncoderFactory
 	{
 	public:
@@ -1192,20 +1413,39 @@ namespace
 		std::unique_ptr<webrtc::VideoEncoder> Create(
 		  const webrtc::Environment& env, const webrtc::SdpVideoFormat& format) override
 		{
+#if defined(WEBRTC_LINUX)
 			if (hardware && lower(format.name) == "h264")
 				return std::make_unique<webrtc::SimulcastEncoderAdapter>(env, hardware.get(), &software, format);
-			return software.Create(env, format);
+#endif
+			auto encoder = software.Create(env, format);
+			if (!encoder)
+				return nullptr;
+			return std::make_unique<SimulcastAlignedEncoder>(std::move(encoder));
 		}
 
 	private:
 		SoftwareEncoderFactory software;
+#if defined(WEBRTC_LINUX)
 		std::unique_ptr<webrtc::VideoEncoderFactory> hardware;
+#endif
 	};
 
 	NoopProducerListener producerListener;
 	NoopConsumerListener consumerListener;
 
 	std::once_flag initialized;
+
+#if defined(WEBRTC_WIN)
+	// libwebrtc leaves Winsock to its embedder, and the network thread's
+	// socket server needs it from its constructor on. Never cleaned up:
+	// WSACleanup would run while the library unloads, where it must not.
+	void StartWinsock()
+	{
+		static webrtc::WinsockInitializer* const winsock = new webrtc::WinsockInitializer();
+		if (winsock->error() != 0)
+			throw std::runtime_error("WSAStartup failed with error " + std::to_string(winsock->error()));
+	}
+#endif
 } // namespace
 
 struct gm_engine
@@ -1234,6 +1474,11 @@ struct gm_engine
 	{
 		mediasoupclient::PeerConnection::Options options;
 		options.factory = factory.get();
+		// The media server has no ICE-TCP (media/src/sfu.rs), so TCP host
+		// candidates can never pair. Gathering them opens a listening
+		// socket per interface, which is what makes the Windows firewall
+		// ask about the app. TURN over TCP or TLS is a relay port and stays.
+		options.config.tcp_candidate_policy = webrtc::PeerConnectionInterface::kTcpCandidatePolicyDisabled;
 		return options;
 	}
 
@@ -1274,6 +1519,19 @@ struct gm_source
 	webrtc::scoped_refptr<gelabber::LocalVideoSource> video;
 	// Application sound only.
 	std::unique_ptr<gelabber::AppAudioCapture> appAudio;
+	// The app's sink for a self view. On the track only while a sink is set,
+	// so an unwatched source still captures nothing before it is produced.
+	std::unique_ptr<FrameCounter> preview;
+	bool previewOnTrack{ false };
+
+	// Takes the self view's sink off the track; returns once it is not running.
+	void DetachPreview()
+	{
+		if (!previewOnTrack)
+			return;
+		static_cast<webrtc::VideoTrackInterface*>(track.get())->RemoveSink(preview.get());
+		previewOnTrack = false;
+	}
 };
 
 struct gm_producer
@@ -1337,6 +1595,9 @@ void gm_set_log_level(int level)
 gm_engine* gm_engine_new(const char* optionsJson)
 {
 	return guarded<gm_engine*>(nullptr, [&]() -> gm_engine* {
+#if defined(WEBRTC_WIN)
+		StartWinsock();
+#endif
 		std::call_once(initialized, [] { mediasoupclient::Initialize(); });
 		const auto options = optionsJson ? json::parse(optionsJson) : json::object();
 		const auto audio   = options.value("audio", std::string("default"));
@@ -1475,9 +1736,9 @@ int gm_audio_configure(gm_engine* engine, const char* optionsJson)
 			auto& adm = *engine->adm;
 			if (input)
 			{
-				const auto id   = options["input"].get<std::string>();
-				const int index = FindAudioDevice(RecordingDevices(adm), id);
-				if (index < 0)
+				const auto id    = options["input"].get<std::string>();
+				const auto index = FindAudioDevice(RecordingDevices(adm), id);
+				if (!index)
 				{
 					error = "unknown input device " + id;
 					return;
@@ -1485,7 +1746,7 @@ int gm_audio_configure(gm_engine* engine, const char* optionsJson)
 				const bool running = adm.Recording();
 				if (running)
 					adm.StopRecording();
-				if (adm.SetRecordingDevice(static_cast<uint16_t>(index)) != 0)
+				if (SelectRecordingDevice(adm, *index) != 0)
 					error = "cannot select input device " + id;
 				if (running && (adm.InitRecording() != 0 || adm.StartRecording() != 0))
 					error = "cannot restart capture on " + id;
@@ -1496,9 +1757,9 @@ int gm_audio_configure(gm_engine* engine, const char* optionsJson)
 			}
 			if (output)
 			{
-				const auto id   = options["output"].get<std::string>();
-				const int index = FindAudioDevice(PlayoutDevices(adm), id);
-				if (index < 0)
+				const auto id    = options["output"].get<std::string>();
+				const auto index = FindAudioDevice(PlayoutDevices(adm), id);
+				if (!index)
 				{
 					error = "unknown output device " + id;
 					return;
@@ -1506,7 +1767,7 @@ int gm_audio_configure(gm_engine* engine, const char* optionsJson)
 				const bool running = adm.Playing();
 				if (running)
 					adm.StopPlayout();
-				if (adm.SetPlayoutDevice(static_cast<uint16_t>(index)) != 0)
+				if (SelectPlayoutDevice(adm, *index) != 0)
 					error = "cannot select output device " + id;
 				if (running && (adm.InitPlayout() != 0 || adm.StartPlayout() != 0))
 					error = "cannot restart playout on " + id;
@@ -1861,6 +2122,7 @@ void gm_source_free(gm_source* source)
 	guarded<int>(0, [&] {
 		if (!source)
 			return 0;
+		source->DetachPreview();
 		if (source->video)
 			source->video->Stop();
 		// Stops delivering before the track goes.
@@ -2184,6 +2446,56 @@ int gm_consumer_set_video_sink(gm_consumer* consumer, gm_video_frame_fn fn, void
 		if (!consumer->counter)
 			throw std::invalid_argument("a video sink needs a video consumer");
 		consumer->counter->SetSink(fn, user);
+		return 0;
+	});
+}
+
+int gm_consumer_set_video_sink_limits(gm_consumer* consumer, const gm_video_sink_limits* limits)
+{
+	return guarded<int>(-1, [&] {
+		if (!consumer->counter)
+			throw std::invalid_argument("a video sink needs a video consumer");
+		consumer->counter->SetLimits(limits);
+		return 0;
+	});
+}
+
+int gm_source_set_video_sink(gm_source* source, gm_video_frame_fn fn, void* user)
+{
+	return guarded<int>(-1, [&] {
+		if (!fn)
+		{
+			// Also fine for a source that never had one (audio included).
+			source->DetachPreview();
+			if (source->preview)
+				source->preview->SetSink(nullptr, nullptr);
+			return 0;
+		}
+		if (!source->video)
+			throw std::invalid_argument("a video sink needs a video source");
+		if (!source->preview)
+			source->preview = std::make_unique<FrameCounter>();
+		source->preview->SetSink(fn, user);
+		if (!source->previewOnTrack)
+		{
+			// No wants: the self view takes what the encoders get and never
+			// limits them (the broadcaster keeps the smallest request).
+			static_cast<webrtc::VideoTrackInterface*>(source->track.get())
+			  ->AddOrUpdateSink(source->preview.get(), webrtc::VideoSinkWants());
+			source->previewOnTrack = true;
+		}
+		return 0;
+	});
+}
+
+int gm_source_set_video_sink_limits(gm_source* source, const gm_video_sink_limits* limits)
+{
+	return guarded<int>(-1, [&] {
+		if (!source->video)
+			throw std::invalid_argument("a video sink needs a video source");
+		if (!source->preview)
+			source->preview = std::make_unique<FrameCounter>();
+		source->preview->SetLimits(limits);
 		return 0;
 	});
 }

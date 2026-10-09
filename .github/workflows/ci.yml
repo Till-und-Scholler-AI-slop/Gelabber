@@ -23,9 +23,13 @@ on:
       - docker/**
       - .dockerignore
       - deploy/compose/**
+      # Operator advice that deploy/compose/tests reads (Caddy's Host header).
+      - deploy/README.md
       - Cargo.toml
       - Cargo.lock
       - rust-toolchain.toml
+      # Its version against the server's (deploy/compose/tests).
+      - desktop/Cargo.toml
       - .github/workflows/**
   push:
     branches: [main]

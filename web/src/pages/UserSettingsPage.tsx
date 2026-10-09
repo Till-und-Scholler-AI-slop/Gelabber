@@ -11,9 +11,17 @@ import { MediaSettingsForm } from "../voice/VoiceSettings.tsx";
 import { ThemesPanel } from "../theme/ThemesPanel.tsx";
 import { useInterfacePreferences } from "../interface/preferences.ts";
 import { NotificationPermissionStatus } from "../components/NotificationPermission.tsx";
+import { InstallApp } from "../pwa/InstallApp.tsx";
+import { useInstallation } from "../pwa/install.ts";
 import "./settings.css";
 
 const areas = [
+  {
+    id: "install",
+    label: "App",
+    description: "Gelabber wie eine eigene App öffnen.",
+    icon: ScreenIcon,
+  },
   {
     id: "appearance",
     label: "Darstellung",
@@ -47,6 +55,10 @@ const areas = [
 ] as const;
 
 export function UserSettingsPage() {
+  // Nothing to install inside the desktop app or the installed web app.
+  const installable = useInstallation(
+    (state) => !state.native && !state.standalone,
+  );
   const router = useRouter();
   const canGoBack = useCanGoBack();
   const goBack = () => {
@@ -81,26 +93,30 @@ export function UserSettingsPage() {
       </header>
       <div className="settings-layout">
         <nav className="settings-navigation" aria-label="Einstellungsbereiche">
-          {areas.map(({ id, label, icon: Icon }) => (
-            <button
-              key={id}
-              type="button"
-              aria-current={area === id ? "page" : undefined}
-              aria-controls="settings-content"
-              onClick={() => {
-                if (
-                  id !== area &&
-                  themeDirty &&
-                  !window.confirm("Ungespeicherten Theme-Entwurf verwerfen?")
-                )
-                  return;
-                setArea(id);
-              }}
-            >
-              <Icon size={18} />
-              <span>{label}</span>
-            </button>
-          ))}
+          {areas
+            .filter(
+              ({ id }) => id !== "install" || installable || area === "install",
+            )
+            .map(({ id, label, icon: Icon }) => (
+              <button
+                key={id}
+                type="button"
+                aria-current={area === id ? "page" : undefined}
+                aria-controls="settings-content"
+                onClick={() => {
+                  if (
+                    id !== area &&
+                    themeDirty &&
+                    !window.confirm("Ungespeicherten Theme-Entwurf verwerfen?")
+                  )
+                    return;
+                  setArea(id);
+                }}
+              >
+                <Icon size={18} />
+                <span>{label}</span>
+              </button>
+            ))}
         </nav>
         <section
           id="settings-content"
@@ -111,7 +127,9 @@ export function UserSettingsPage() {
             <h2 id="settings-area-heading">{selected.label}</h2>
             <p>{selected.description}</p>
           </header>
-          {area === "themes" ? (
+          {area === "install" ? (
+            <InstallApp />
+          ) : area === "themes" ? (
             <ThemesPanel onDirtyChange={setThemeDirty} />
           ) : area === "appearance" ? (
             <>
@@ -155,11 +173,13 @@ export function UserSettingsPage() {
               {area === "notifications" && <NotificationPermissionStatus />}
             </>
           )}
-          <p className="settings-save-note">
-            {area === "themes"
-              ? "Themes werden in deinem Account gespeichert."
-              : "Änderungen werden automatisch in diesem Browser gespeichert."}
-          </p>
+          {area !== "install" && (
+            <p className="settings-save-note">
+              {area === "themes"
+                ? "Themes werden in deinem Account gespeichert."
+                : "Änderungen werden automatisch in diesem Browser gespeichert."}
+            </p>
+          )}
         </section>
       </div>
     </section>

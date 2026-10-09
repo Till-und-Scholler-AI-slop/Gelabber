@@ -13,7 +13,14 @@ import { useMediaSettings } from "../voice/settings.ts";
 import { getGateway } from "../ws/client.ts";
 import type { ChatEvent } from "../ws/protocol.ts";
 import {
+  closeMessageNotifications,
+  showMessageNotification,
+  silenceWhileViewing,
+} from "../pwa/notifications.ts";
+import {
+  conversationPath,
   createNotificationDedupe,
+  createNotificationPacing,
   isDmTopic,
   messageNotificationDecision,
   previewText,
@@ -67,70 +74,26 @@ function channelLabel(
   return channel ? `#${channel.name}` : "Kanal";
 }
 
-const desktopNotifications = new Map<string, { close: () => void }>();
-
-function maybeDesktopNotify(
-  title: string,
-  body: string,
-  onClick: () => void,
-  tag: string,
-): void {
-  if (typeof document === "undefined" || !document.hidden) return;
-  if (!useMediaSettings.getState().desktopNotify) return;
-  const Notify = (
-    globalThis as unknown as {
-      Notification?: {
-        permission: string;
-        new (
-          title: string,
-          opts?: {
-            body: string;
-            silent?: boolean;
-            tag?: string;
-            renotify?: boolean;
-          },
-        ): { onclick: (() => void) | null; close: () => void };
-      };
-    }
-  ).Notification;
-  if (!Notify || Notify.permission !== "granted") return;
-  try {
-    desktopNotifications.get(tag)?.close();
-    const notification = new Notify(title, {
-      body,
-      silent: true,
-      tag,
-      renotify: false,
-    });
-    desktopNotifications.set(tag, notification);
-    notification.onclick = () => {
-      notification.close();
-      onClick();
-    };
-  } catch {
-    // permission revoked mid-flight
-  }
-}
-
 /** Toast + optional desktop notification for creates in another chat. */
 export function useMessageToastsBridge(): void {
   const client = useQueryClient();
   const navigate = useNavigate();
   const me = useSession((s) => s.user?.id);
   const viewingChannelId = useParams({ strict: false }).channelId;
-  useEffect(
-    () => () => {
-      for (const notification of desktopNotifications.values())
-        notification.close();
-      desktopNotifications.clear();
-    },
-    [me],
-  );
+  // An account takes its notifications with it. A window that only just
+  // learns who is signed in closes nothing: they belong to all windows.
+  useEffect(() => {
+    if (me) return () => void closeMessageNotifications({ user: me });
+  }, [me]);
+  useEffect(() => {
+    if (me && viewingChannelId)
+      return silenceWhileViewing(me, viewingChannelId);
+  }, [me, viewingChannelId]);
   const deliveries = useRef<{
     userId: string | undefined;
     generation: number;
     first: ReturnType<typeof createNotificationDedupe>;
-    desktopAt: Map<string, number>;
+    pacing: ReturnType<typeof createNotificationPacing>;
   } | null>(null);
 
   useEffect(() => {
@@ -144,7 +107,7 @@ export function useMessageToastsBridge(): void {
         userId,
         generation,
         first: createNotificationDedupe(),
-        desktopAt: new Map(),
+        pacing: createNotificationPacing(),
       };
     }
     const firstDelivery = deliveries.current.first;
@@ -181,20 +144,26 @@ export function useMessageToastsBridge(): void {
           preview,
         });
       const now = Date.now();
-      const desktopAt = deliveries.current!.desktopAt;
+      const pacing = deliveries.current!.pacing;
       // Replays older than the live delivery window do not generate a burst.
       // Age is measured on the server clock: a fast local clock must not
       // suppress every live notification.
       if (
         decision.desktop &&
         serverNow() - Date.parse(message.created_at) < 30_000 &&
-        now - (desktopAt.get(event.c) ?? 0) >= 5_000
+        pacing.take(event.c, now)
       ) {
-        desktopAt.set(event.c, now);
         const channelId = event.c;
-        maybeDesktopNotify(
-          `${message.author.name} · ${label}`,
-          preview,
+        void showMessageNotification(
+          {
+            title: `${message.author.name} · ${label}`,
+            body: preview,
+            channelId,
+            messageId: message.id,
+            createdAt: message.created_at,
+            path: conversationPath(dm, event.s, channelId),
+            user: userId,
+          },
           () => {
             if (!stampHolds({ userId, generation })) return;
             window.focus();
@@ -207,8 +176,11 @@ export function useMessageToastsBridge(): void {
               });
             }
           },
-          `gelabber:${userId}:${channelId}`,
-        );
+        ).then((shown) => {
+          // Read in another window instead of announced. Should that window
+          // be gone a second later, the next message is not held back.
+          if (shown === "viewed") pacing.giveBack(channelId, now);
+        });
       }
     });
   }, [client, me, navigate, viewingChannelId]);

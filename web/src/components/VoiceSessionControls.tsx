@@ -17,7 +17,15 @@ import {
   SignalIcon,
   SpeakerIcon,
 } from "./Icons.tsx";
-import { useMediaSettings } from "../voice/settings.ts";
+import { useCapabilities } from "../voice/capabilities.ts";
+import { isDesktopApp } from "../voice/native/bridge.ts";
+import {
+  SOURCE_AUDIO_CARRIES_CALL,
+  sharesSourceAudio,
+  sourceAudioCarriesCall,
+  sourceAudioScope,
+  useMediaSettings,
+} from "../voice/settings.ts";
 import "../voice/room.css";
 
 /** Active sessions stay controllable independently of the currently open
@@ -33,8 +41,11 @@ export function VoiceSessionControls({
   const volume = useMediaSettings((s) => s.outputVolume);
   const sourceVolume = useMediaSettings((s) => s.sourceAudioVolume);
   const sourceMuted = useMediaSettings((s) => s.sourceAudioMuted);
+  const sourceAudioShare = useMediaSettings((s) => s.sourceAudioShare);
+  const sourceAudioApp = useMediaSettings((s) => s.sourceAudioApp);
   const patch = useMediaSettings((s) => s.patch);
   const openSettings = useMediaSettings((s) => s.openDialog);
+  const capable = useCapabilities();
   const { data: server } = useServer(voice.serverId ?? undefined);
   const visible =
     voice.status === "joined" || voice.watching || voice.playbackBlocked;
@@ -68,6 +79,31 @@ export function VoiceSessionControls({
     Object.values(voice.sourceSubscriptions).some(
       (source) => source.s || source.l,
     );
+  // The sound of the own share: why it is missing, and what the control
+  // next to the share button will do.
+  const desktop = isDesktopApp();
+  const sharesSound =
+    joined !== null &&
+    capable.appAudio &&
+    sharesSourceAudio({ sourceAudioShare });
+  const notes = voice.sourceAudioNote;
+  const failed = notes.s?.failed ?? notes.l?.failed;
+  const silent = notes.s?.silent ?? notes.l?.silent;
+  // Without a chosen application the desktop app sends the sound of all of
+  // them with the one window that was picked, and it does so unasked. While
+  // such a share runs, the dock says so next to the switch that ends it.
+  const everyApplication =
+    sourceAudioApp === "" &&
+    (voice.sourceAudio.s === "sharing" || voice.sourceAudio.l === "sharing")
+      ? sourceAudioScope({ sourceAudioApp })
+      : null;
+  // A browser hands sound over in its picker only: a share that started
+  // without it stays without it.
+  const nextShare =
+    sharesSound &&
+    !desktop &&
+    ((voice.localScreen && voice.sourceAudio.s === "off") ||
+      (voice.localLive && voice.sourceAudio.l === "off"));
 
   return (
     <section
@@ -199,7 +235,14 @@ export function VoiceSessionControls({
       {(voice.sourceAudio.s === "unavailable" ||
         voice.sourceAudio.l === "unavailable") && (
         <p role="status" className="voice-source-audio-notice">
-          Der Browser hat keinen Stream-Ton freigegeben. Das Video läuft weiter.
+          {!desktop
+            ? "Der Browser hat keinen Stream-Ton freigegeben."
+            : !capable.appAudio
+              ? "Diese Desktop-App kann keinen Ton von Anwendungen teilen."
+              : failed
+                ? `Der Stream-Ton konnte nicht aufgenommen werden (${failed}).`
+                : "Der Stream-Ton konnte nicht aufgenommen werden."}{" "}
+          Das Video läuft weiter.
         </p>
       )}
       {(voice.sourceAudio.s === "unsupported" ||
@@ -214,6 +257,27 @@ export function VoiceSessionControls({
           Der Stream-Ton wurde beendet. Das Video läuft weiter.
         </p>
       )}
+      {silent ? (
+        <p role="status" className="voice-source-audio-notice">
+          Von „{silent}“ kommt gerade kein Ton.
+        </p>
+      ) : null}
+      {everyApplication ? (
+        <p role="status" className="voice-source-audio-notice">
+          Dein Stream sendet den {everyApplication}.
+        </p>
+      ) : null}
+      {sharesSound &&
+      sourceAudioCarriesCall({ sourceAudioShare, sourceAudioApp }) ? (
+        <p role="status" className="voice-source-audio-notice">
+          {SOURCE_AUDIO_CARRIES_CALL}
+        </p>
+      ) : null}
+      {nextShare ? (
+        <p role="status" className="voice-source-audio-notice">
+          Der Stream-Ton kommt mit der nächsten Freigabe dazu.
+        </p>
+      ) : null}
       {voice.playbackBlocked && !voice.deafened ? (
         <div role="status" className="voice-session-playback">
           <span>Der Browser blockiert den Ton.</span>

@@ -24,6 +24,7 @@ import { ApiError, type ApiErrorCode } from "../api/client.ts";
 import { errorMessage } from "../auth/rules.ts";
 import { useSession } from "../auth/session.ts";
 import { notifyError } from "../components/toasts.ts";
+import { randomUuid } from "../lib/uuid.ts";
 import { getGateway, type Gateway } from "../ws/client.ts";
 import type { ErrFrame, SigEvent, TrackKind } from "../ws/protocol.ts";
 import {
@@ -46,7 +47,12 @@ import {
 } from "./media.ts";
 import { MediaPeer, MediaRetry } from "./mediaPeer.ts";
 import { isDesktopApp } from "./native/bridge.ts";
-import { nativeGetDisplayMedia, nativeGetUserMedia } from "./native/capture.ts";
+import {
+  captureAppAudio,
+  nativeGetDisplayMedia,
+  nativeGetUserMedia,
+} from "./native/capture.ts";
+import { loadNativeFeatures } from "./native/features.ts";
 import { createAudioOutput, createStream } from "./native/tracks.ts";
 import {
   createMediaConnection,
@@ -80,6 +86,7 @@ import {
   isOverconstrainedError,
   noteStreamProfileApply,
   onMediaSettingsChange,
+  sharesSourceAudio,
   streamProfileFps,
   useMediaSettings,
   videoConstraintLadder,
@@ -88,6 +95,10 @@ import {
 
 export type SourceAudioStatus =
   "off" | "sharing" | "unavailable" | "ended" | "unsupported";
+/** What the status alone does not say: the desktop capture's own reason for
+ * "unavailable", or the chosen application that plays nothing while
+ * "sharing". */
+export type SourceAudioNote = { failed?: string; silent?: string };
 
 export type VoiceStatus = "idle" | "joined";
 
@@ -113,6 +124,7 @@ export type VoiceState = {
   live: boolean;
   sourceWatchSupported: boolean;
   sourceAudio: Record<"s" | "l", SourceAudioStatus>;
+  sourceAudioNote: Record<"s" | "l", SourceAudioNote | null>;
   sourceSubscriptions: Record<string, Partial<Record<"s" | "l", boolean>>>;
   localCamera: MediaStream | null;
   localScreen: MediaStream | null;
@@ -140,6 +152,7 @@ const idle: VoiceState = {
   live: false,
   sourceWatchSupported: false,
   sourceAudio: { s: "off", l: "off" },
+  sourceAudioNote: { s: null, l: null },
   sourceSubscriptions: {},
   localCamera: null,
   localScreen: null,
@@ -298,7 +311,7 @@ const captureEpochs = new WeakMap<MediaStream, string>();
 function captureEpoch(stream: MediaStream): string {
   let epoch = captureEpochs.get(stream);
   if (!epoch) {
-    epoch = crypto.randomUUID();
+    epoch = randomUuid();
     captureEpochs.set(stream, epoch);
   }
   return epoch;
@@ -365,11 +378,7 @@ async function defaultGetUserMedia(
 async function defaultGetDisplayMedia(
   constraints: MediaStreamConstraints,
 ): Promise<MediaStream> {
-  if (isDesktopApp())
-    return nativeGetDisplayMedia(
-      constraints,
-      useMediaSettings.getState().sourceAudioApp,
-    );
+  if (isDesktopApp()) return nativeGetDisplayMedia(constraints);
   return navigator.mediaDevices.getDisplayMedia(constraints);
 }
 
@@ -427,6 +436,15 @@ export function retryPlayback(): void {
   }
 }
 
+/**
+ * A phone call or the lock screen can pause call audio while the page is
+ * hidden. Replay it once the page is back; where that needs a gesture, the
+ * refused replay raises the "Ton starten" recovery instead of staying silent.
+ */
+function resumePlayback(): void {
+  if (document.visibilityState === "visible") retryPlayback();
+}
+
 function hintTrack(
   track: MediaStreamTrack,
   hint: "speech" | "detail" | "music",
@@ -480,6 +498,9 @@ function ensureBound(): void {
   gateway.onErr(onErr);
   gateway.onReady(onReady);
   onMediaSettingsChange(handleSettingsChange);
+  // Re-adding the same listener after a rebind is a no-op.
+  if (typeof document !== "undefined")
+    document.addEventListener("visibilitychange", resumePlayback);
   bound = true;
 }
 
@@ -1089,6 +1110,19 @@ function makeMediaConnection(
   return connection;
 }
 
+/** Seat connections whose `start` is through. Before that a connection is
+ * the seat's already, for the server's events, but its device has not
+ * loaded and it turns every publication down. */
+const startedConnections = new WeakSet<MediaConnection>();
+
+/** The seat's connection once it takes publications. What is captured or
+ * changed while it starts is published by `startPeer` when the start is
+ * through. */
+function publishingConnection(): MediaConnection | null {
+  const connection = seat.connection;
+  return connection && startedConnections.has(connection) ? connection : null;
+}
+
 function hasLiveTrack(
   stream: MediaStream | null,
   kind: "audio" | "video",
@@ -1104,6 +1138,10 @@ function stopPeer(preserveCapture = false): void {
   if (!preserveCapture) micForceBrowser = false;
   if (!preserveCapture) clearLiveClaim();
   seatRetry.cancel(!preserveCapture);
+  // A rebuild keeps what is captured, and with it a picker or camera prompt
+  // that is still open: what the user answers there goes to the next
+  // connection, a Go Live under the claim it already holds.
+  const open = new Set<"v" | "s" | "l">();
   if (preserveCapture) {
     for (const [kind, stream] of [
       ["v", cameraStream],
@@ -1112,6 +1150,11 @@ function stopPeer(preserveCapture = false): void {
     ] as const) {
       if (stream && !hasLiveTrack(stream, "video")) stopLocalVideo(kind);
     }
+    for (const kind of ["v", "s", "l"] as const)
+      if (captureOpen(kind)) open.add(kind);
+    // A Live with neither a stream nor a picker has nothing left to start.
+    if (useVoice.getState().live && !liveStream && !open.has("l"))
+      releaseUnstartedLive();
   }
   streamReported = false;
   clearSeatReconnectTimer();
@@ -1119,21 +1162,30 @@ function stopPeer(preserveCapture = false): void {
   detachDiagnostics("voice");
   seat.close();
   micEpoch += 1;
-  cameraEpoch += 1;
   cameraProfileEpoch += 1;
   screenProfileEpoch += 1;
-  screenEpoch += 1;
-  liveEpoch += 1;
+  // The epoch is what an open capture is held to when it answers.
+  for (const kind of ["v", "s", "l"] as const)
+    if (!open.has(kind)) bumpVideoEpoch(kind);
   audioCommitChain = Promise.resolve();
   cameraCommitChain = Promise.resolve();
   resetVideoLimitQueue();
+  // The next connection announces what it publishes itself. A Go Live claim
+  // is the gateway's and outlasts the connection: a Live that is kept stays
+  // announced, or giving the media up later would not hand the claim back.
+  const claimed = preserveCapture && announced.has("l");
   announced.clear();
+  if (claimed) announced.add("l");
   for (const stream of pendingMicRaw) stopTracks(stream);
   pendingMicRaw.clear();
   for (const stream of pendingCameraStreams) stopTracks(stream);
   pendingCameraStreams.clear();
-  for (const stream of pendingDisplayStreams.keys()) stopTracks(stream);
-  pendingDisplayStreams.clear();
+  for (const [stream, kind] of pendingDisplayStreams) {
+    // Picked already; its sound or profile is still under way.
+    if (open.has(kind)) continue;
+    stopTracks(stream);
+    pendingDisplayStreams.delete(stream);
+  }
   if (
     !preserveCapture ||
     !hasLiveTrack(localStream, "audio") ||
@@ -1175,11 +1227,14 @@ function stopPeer(preserveCapture = false): void {
     sourceAudio: preserveCapture
       ? useVoice.getState().sourceAudio
       : { s: "off", l: "off" },
+    sourceAudioNote: preserveCapture
+      ? useVoice.getState().sourceAudioNote
+      : { s: null, l: null },
     ...(preserveCapture
       ? {
-          camera: !!cameraStream,
-          sharing: !!screenStream,
-          live: !!liveStream,
+          camera: !!cameraStream || open.has("v"),
+          sharing: !!screenStream || open.has("s"),
+          live: !!liveStream || open.has("l"),
         }
       : {}),
     remote: {},
@@ -1501,16 +1556,31 @@ async function captureVideo(kind: "v" | "s" | "l"): Promise<MediaStream> {
       ? (deps?.getUserMedia ?? defaultGetUserMedia)
       : (deps?.getDisplayMedia ?? defaultGetDisplayMedia);
   if (kind !== "v") {
+    const desktop = isDesktopApp();
+    // The app's features decide the default. It answered while the page
+    // loaded; a browser must reach its picker within the click.
+    if (desktop) await loadNativeFeatures();
     // One browser picker supplies both tracks; profile fallback never reopens it.
+    const asked = !desktop && sharesSourceAudio();
     const stream = await getMedia({
-      audio: settings.shareSourceAudio
-        ? { ...SOURCE_AUDIO_CONSTRAINTS }
-        : false,
+      audio: asked ? { ...SOURCE_AUDIO_CONSTRAINTS } : false,
       video: ladder[0] ?? true,
     });
     pendingDisplayStreams.set(stream, kind);
-    if (!settings.shareSourceAudio)
-      stream.getAudioTracks().forEach((track) => track.stop());
+    if (!asked) stream.getAudioTracks().forEach((track) => track.stop());
+    // The desktop's picker gives no sound; the app captures it by itself,
+    // by the choice as it is now that the picker has closed.
+    const sound: { asked: boolean; failed?: string } = {
+      asked: desktop ? sharesSourceAudio() : asked,
+    };
+    displaySound.set(stream, sound);
+    if (desktop && sound.asked) {
+      const captured = await captureNativeSourceAudio(kind, stream);
+      if ("failed" in captured) sound.failed = captured.failed;
+      // Stopped while the sound was being captured: nothing may outlive it.
+      else if (!hasLiveTrack(stream, "video")) captured.track.stop();
+      else stream.addTrack(captured.track);
+    }
     const track = stream.getVideoTracks()[0];
     if (track?.applyConstraints) {
       for (let index = 0; index < ladder.length; index += 1) {
@@ -2115,10 +2185,13 @@ function handleSettingsChange(prev: MediaSettings, next: MediaSettings): void {
     void applySendBitrate();
     void refreshAudioCodecs();
   }
+  const sourceAppChanged = prev.sourceAudioApp !== next.sourceAudioApp;
+  if (sharesSourceAudio(prev) !== sharesSourceAudio(next) || sourceAppChanged)
+    applySourceAudioChoice(sourceAppChanged);
 }
 
 async function refreshAudioCodecs(): Promise<void> {
-  const connection = seat.connection,
+  const connection = publishingConnection(),
     mine = seat.generation;
   if (!connection) return;
   try {
@@ -2721,19 +2794,54 @@ function bumpVideoEpoch(kind: "v" | "s" | "l"): number {
   return ++liveEpoch;
 }
 
+/** Epoch of the start whose picker or camera prompt has not answered yet. */
+const openCaptures = new Map<"v" | "s" | "l", number>();
+
+/** Stopping bumps the epoch, so an abandoned start is not open. A rebuild of
+ * the seat's connection leaves an open start its epoch. */
+function captureOpen(kind: "v" | "s" | "l"): boolean {
+  return openCaptures.get(kind) === videoEpoch(kind);
+}
+
+/** A camera that is missing, busy or broken: `NotFoundError` and
+ * `NotReadableError` of getUserMedia, the latter also what the desktop app's
+ * capture reports. A refused permission or a closed prompt is the user's
+ * own answer and gets no message. */
+function cameraUnavailable(error: unknown): boolean {
+  const name = (error as { name?: unknown } | null)?.name;
+  return name === "NotFoundError" || name === "NotReadableError";
+}
+
+/** A display capture the user called off: a browser's picker and the
+ * desktop's own both answer that with `NotAllowedError`. Everything else is
+ * a capture that could not start. */
+function displayCancelled(error: unknown): boolean {
+  return (error as { name?: unknown } | null)?.name === "NotAllowedError";
+}
+
+/** What the user is told then. The desktop app's core refuses with its own
+ * reason as a plain string ("screen capture needs a Wayland session with
+ * PipeWire"); nothing else in the app would show it. */
+function displayFailure(error: unknown): Error {
+  const reason = typeof error === "string" ? error.trim() : "";
+  return new Error(
+    `Die Bildschirmaufnahme konnte nicht gestartet werden${reason ? ` (${reason})` : ""}.`,
+  );
+}
+
 async function startLocalVideo(kind: "v" | "s" | "l"): Promise<void> {
   const epoch = bumpVideoEpoch(kind);
-  const mine = seat.generation;
+  openCaptures.set(kind, epoch);
+  // Stopping this kind, leaving the seat and a newer start all move the
+  // epoch on. A rebuild of the seat's connection does not: the picker or
+  // prompt may answer whenever the user is done with it.
+  const newest = () => videoEpoch(kind) === epoch;
   // A display capture owns its video and optional browser-selected audio.
   let stream: MediaStream;
   try {
     stream = await captureVideo(kind);
   } catch (error) {
-    if (
-      isOverconstrainedError(error) &&
-      seat.generation === mine &&
-      videoEpoch(kind) === epoch
-    ) {
+    if (isOverconstrainedError(error) && newest()) {
       deps?.onError?.(
         new Error(
           kind === "v"
@@ -2741,52 +2849,64 @@ async function startLocalVideo(kind: "v" | "s" | "l"): Promise<void> {
             : "Die Bildschirmfreigabe unterstützt das Streamprofil nicht.",
         ),
       );
+    } else if (kind === "v" && cameraUnavailable(error) && newest()) {
+      // Otherwise the button just springs back and nothing says why.
+      deps?.onError?.(new Error("Die Kamera ist nicht verfügbar."));
+    } else if (kind !== "v" && !displayCancelled(error) && newest()) {
+      // The same for a share or a Live: only a cancel needs no word.
+      logVoice("warn", "capture", {
+        track: kind,
+        detail:
+          error instanceof Error
+            ? `${error.name}: ${error.message}`
+            : String(error),
+      });
+      deps?.onError?.(displayFailure(error));
     }
-    if (kind === "v" && cameraEpoch === epoch) {
+    if (kind === "v" && newest()) {
       useVoice.setState({ camera: false });
     }
-    if (kind === "s" && screenEpoch === epoch) {
+    if (kind === "s" && newest()) {
       useVoice.setState({ sharing: false });
     }
-    if (kind === "l" && liveEpoch === epoch) {
-      const state = useVoice.getState();
-      awaitingLive = null;
-      useVoice.setState({ live: false, localLive: null });
-      if (state.serverId && state.channelId) {
-        applyLiveEnd(
-          state.serverId,
-          state.channelId,
-          currentUserId() ?? undefined,
-        );
-      }
-    }
+    // Only the newest attempt owns the claim; a later start keeps its own.
+    if (kind === "l" && newest()) releaseUnstartedLive();
     return;
+  } finally {
+    if (openCaptures.get(kind) === epoch) openCaptures.delete(kind);
   }
   pendingDisplayStreams.delete(stream);
-  if (seat.generation !== mine || videoEpoch(kind) !== epoch) {
+  if (!newest()) {
     stopTracks(stream);
+    return;
+  }
+  // The source can end while its profile is still being applied ("stop
+  // sharing", a closed portal session). Its "ended" event is gone by now, so
+  // nothing would ever take this capture down again.
+  if (!hasLiveTrack(stream, "video")) {
+    stopTracks(stream);
+    if (kind === "v") useVoice.setState({ camera: false });
+    else if (kind === "s") useVoice.setState({ sharing: false });
+    else releaseUnstartedLive();
     return;
   }
   const self = currentUserId();
   if (kind !== "v") {
-    const sharingAudio = hasLiveTrack(stream, "audio");
-    useVoice.setState({
-      sourceAudio: {
-        ...useVoice.getState().sourceAudio,
-        [kind]: sharingAudio
-          ? "sharing"
-          : useMediaSettings.getState().shareSourceAudio
-            ? "unavailable"
-            : "off",
-      },
-    });
-    for (const track of stream.getAudioTracks()) {
-      hintTrack(track, "music");
-      track.addEventListener("ended", () => {
-        const active = kind === "s" ? screenStream : liveStream;
-        if (active === stream) stopLocalSourceAudio(kind);
-      });
-    }
+    const sound = displaySound.get(stream);
+    if (!sharesSourceAudio()) {
+      // Switched off while the picker or the capture was still busy.
+      stream.getAudioTracks().forEach((track) => track.stop());
+      setSourceAudio(kind, "off");
+    } else if (hasLiveTrack(stream, "audio")) setSourceAudio(kind, "sharing");
+    else if (sound?.asked)
+      setSourceAudio(
+        kind,
+        "unavailable",
+        sound.failed ? { failed: sound.failed } : null,
+      );
+    else setSourceAudio(kind, "off");
+    for (const track of stream.getAudioTracks())
+      bindSourceAudio(kind, stream, track);
   }
   bindEnded(stream, kind);
   if (kind === "v") {
@@ -2809,10 +2929,27 @@ async function startLocalVideo(kind: "v" | "s" | "l"): Promise<void> {
   noteStream(kind, true);
   // Yield so the local tile paints before publishing.
   await Promise.resolve();
-  if (seat.generation !== mine || videoEpoch(kind) !== epoch) {
-    return;
-  }
+  if (!newest()) return;
+  // Without a connection that publishes, the seat's next one takes it.
   await publishLocal(kind, stream);
+}
+
+/**
+ * Go Live claims the channel before display capture answers. A capture that
+ * never yields a stream (cancelled picker, no display capture on this device,
+ * a source that ended before it could start) hands the claim back, or the
+ * room keeps a phantom Live that blocks everyone else until this seat leaves.
+ */
+function releaseUnstartedLive(): void {
+  const state = useVoice.getState();
+  const self = currentUserId();
+  clearLiveClaim();
+  awaitingLive = null;
+  useVoice.setState({ live: false, localLive: null });
+  if (state.serverId && state.channelId)
+    applyLiveEnd(state.serverId, state.channelId, self ?? undefined);
+  if (self) setPub(self, "l", false);
+  sendPub("l", false);
 }
 
 function stopLocalVideo(kind: "v" | "s" | "l"): void {
@@ -2868,9 +3005,7 @@ function stopLocalVideo(kind: "v" | "s" | "l"): void {
   }
   stopTracks(stream);
   if (kind !== "v") {
-    useVoice.setState({
-      sourceAudio: { ...useVoice.getState().sourceAudio, [kind]: "off" },
-    });
+    setSourceAudio(kind, "off");
     const audioKind = kind === "s" ? "sa" : "la";
     if (self) setPub(self, audioKind, false);
     sendPub(audioKind, false);
@@ -2887,7 +3022,7 @@ async function publishLocal(
   kind: "v" | "s" | "l",
   stream: MediaStream,
 ): Promise<void> {
-  const connection = seat.connection;
+  const connection = publishingConnection();
   if (!connection || (kind === "l" && !liveClaimNonce)) return;
   const mine = seat.generation,
     epoch = videoEpoch(kind),
@@ -3017,8 +3152,17 @@ async function publishLocal(
               .catch(() => {});
           return;
         }
-        if (self) setPub(self, audioKind, true);
-        sendPub(audioKind, true);
+        if (audio.readyState === "ended") {
+          // Switched off, or gone, while the publish was under way: the room
+          // has been told so. Close this producer only, never a newer sound.
+          if (connection.sender(audioKind) === audioSender)
+            await connection
+              .closeSource(audioKind, audioSender.producerId)
+              .catch(() => {});
+        } else {
+          if (self) setPub(self, audioKind, true);
+          sendPub(audioKind, true);
+        }
       }
     }
     if (current()) {
@@ -3035,7 +3179,37 @@ async function publishLocal(
   }
 }
 
-function stopLocalSourceAudio(kind: "s" | "l"): void {
+function setSourceAudio(
+  kind: "s" | "l",
+  status: SourceAudioStatus,
+  note: SourceAudioNote | null = null,
+): void {
+  const state = useVoice.getState();
+  useVoice.setState({
+    sourceAudio: { ...state.sourceAudio, [kind]: status },
+    sourceAudioNote: { ...state.sourceAudioNote, [kind]: note },
+  });
+}
+
+function bindSourceAudio(
+  kind: "s" | "l",
+  stream: MediaStream,
+  track: MediaStreamTrack,
+): void {
+  hintTrack(track, "music");
+  track.addEventListener("ended", () => {
+    const active = kind === "s" ? screenStream : liveStream;
+    if (active === stream) stopLocalSourceAudio(kind);
+  });
+}
+
+/** The sound leaves, the video stays: "ended" when the source went away by
+ * itself, "off" when the user switched it off. */
+function stopLocalSourceAudio(
+  kind: "s" | "l",
+  status: SourceAudioStatus = "ended",
+  note: SourceAudioNote | null = null,
+): void {
   const stream = kind === "s" ? screenStream : liveStream;
   const audioKind = kind === "s" ? "sa" : "la";
   const connection = seat.connection;
@@ -3047,9 +3221,147 @@ function stopLocalSourceAudio(kind: "s" | "l"): void {
   const self = currentUserId();
   if (self) setPub(self, audioKind, false);
   sendPub(audioKind, false);
-  useVoice.setState({
-    sourceAudio: { ...useVoice.getState().sourceAudio, [kind]: "ended" },
-  });
+  setSourceAudio(kind, status, note);
+}
+
+/** Whether a display capture was asked for sound, and the desktop app's
+ * reason when it could not give it. */
+const displaySound = new WeakMap<
+  MediaStream,
+  { asked: boolean; failed?: string }
+>();
+/** Latest change of the sound of a running share; older ones give way. */
+const sourceAudioChanges = { s: 0, l: 0 };
+/** A chosen application may pause between two songs; only one that stays
+ * without a playback stream for this many seconds is reported. */
+const SILENT_SECONDS = 3;
+
+/** Desktop app: the chosen application's sound for `stream`'s share, or the
+ * core's reason why there is none. */
+async function captureNativeSourceAudio(
+  kind: "s" | "l",
+  stream: MediaStream,
+): Promise<{ track: MediaStreamTrack } | { failed: string }> {
+  const app = useMediaSettings.getState().sourceAudioApp;
+  let silent = 0;
+  // "Every application" with nothing playing is ordinary silence.
+  const heard = (streams: number) => {
+    silent = streams > 0 ? 0 : silent + 1;
+    noteSilentSource(kind, stream, silent >= SILENT_SECONDS ? app : null);
+  };
+  try {
+    return { track: await captureAppAudio(app, app ? heard : undefined) };
+  } catch (error) {
+    const failed = error instanceof Error ? error.message : String(error);
+    logVoice("warn", "source-audio", { detail: failed });
+    return { failed };
+  }
+}
+
+function noteSilentSource(
+  kind: "s" | "l",
+  stream: MediaStream,
+  app: string | null,
+): void {
+  const state = useVoice.getState();
+  if ((kind === "s" ? screenStream : liveStream) !== stream) return;
+  if (state.sourceAudio[kind] !== "sharing") return;
+  if ((state.sourceAudioNote[kind]?.silent ?? null) === app) return;
+  setSourceAudio(kind, "sharing", app ? { silent: app } : null);
+}
+
+/**
+ * The stream-sound choice changed. Switching it off takes the sound out of a
+ * running share at once. Switching it on, or choosing another application,
+ * needs a new capture: the desktop app starts one next to the running video,
+ * a browser could only reopen its picker, so there it waits for the next
+ * share.
+ */
+function applySourceAudioChoice(appChanged: boolean): void {
+  const wanted = sharesSourceAudio();
+  const desktop = isDesktopApp();
+  for (const kind of ["s", "l"] as const) {
+    const stream = kind === "s" ? screenStream : liveStream;
+    if (!stream) continue;
+    sourceAudioChanges[kind] += 1;
+    const running = hasLiveTrack(stream, "audio");
+    if (running && (!wanted || (desktop && appChanged)))
+      stopLocalSourceAudio(kind, "off");
+    else if (!wanted && useVoice.getState().sourceAudio[kind] !== "off")
+      setSourceAudio(kind, "off");
+    if (wanted && desktop && (!running || appChanged))
+      void addLocalSourceAudio(kind, stream);
+  }
+}
+
+/** Desktop app: application sound joins a share that already runs. */
+async function addLocalSourceAudio(
+  kind: "s" | "l",
+  stream: MediaStream,
+): Promise<void> {
+  const change = sourceAudioChanges[kind];
+  const current = () =>
+    sourceAudioChanges[kind] === change &&
+    (kind === "s" ? screenStream : liveStream) === stream &&
+    hasLiveTrack(stream, "video");
+  const captured = await captureNativeSourceAudio(kind, stream);
+  if (!current()) {
+    if ("track" in captured) captured.track.stop();
+    return;
+  }
+  if ("failed" in captured) {
+    setSourceAudio(kind, "unavailable", captured);
+    return;
+  }
+  const track = captured.track;
+  // Sound that was switched off before leaves its ended track behind.
+  for (const old of stream.getAudioTracks())
+    if (old.readyState === "ended") stream.removeTrack(old);
+  stream.addTrack(track);
+  bindSourceAudio(kind, stream, track);
+  setSourceAudio(kind, "sharing");
+  // Before the video is on the wire, `publishLocal` sends both.
+  const connection = seat.connection;
+  const parent = connection?.sender(kind);
+  const claim = liveClaimNonce;
+  if (!connection || !parent || (kind === "l" && !claim)) return;
+  const audioKind = kind === "s" ? "sa" : "la";
+  const mine = () =>
+    current() && seat.connection === connection && track.readyState === "live";
+  try {
+    const sender = await connection.publish({
+      kind: audioKind,
+      track,
+      streamId: stream.id,
+      epoch: captureEpoch(stream),
+      parent: parent.producerId,
+      ...(kind === "l" ? { lc: claim! } : {}),
+    });
+    if (!mine()) {
+      if (connection.sender(audioKind) === sender)
+        await connection
+          .closeSource(audioKind, sender.producerId)
+          .catch(() => {});
+      return;
+    }
+    const self = currentUserId();
+    if (self) setPub(self, audioKind, true);
+    sendPub(audioKind, true);
+    await applySendBitrate();
+  } catch (error) {
+    // The video is untouched: only the sound did not make it.
+    if (!mine()) return;
+    // The media socket went away under it. The sound stays in the share, and
+    // the seat's next connection publishes it with the video.
+    if (
+      !seat.isOpen() ||
+      (error instanceof MediaError && error.code === "connection_closed")
+    )
+      return;
+    const failed = error instanceof Error ? error.message : String(error);
+    logVoice("warn", "source-audio", { detail: failed });
+    stopLocalSourceAudio(kind, "unavailable", { failed });
+  }
 }
 
 /** A user's source subscription survives route changes and transport recovery. */
@@ -3318,6 +3630,7 @@ async function startPeer(
     );
     await pc.start(joined.routerRtpCapabilities);
     if (seat.generation !== mine || seat.connection !== pc) return;
+    startedConnections.add(pc);
     useVoice.setState({ sourceWatchSupported: true });
     for (const [userId, subscriptions] of Object.entries(
       useVoice.getState().sourceSubscriptions,
@@ -3453,7 +3766,8 @@ async function startPeer(
 
   if (seat.generation !== mine) return;
 
-  if (seat.generation !== mine) return;
+  // What the connection before this one carried, and what was captured
+  // while this one could not publish yet.
   const pending = useVoice.getState();
   if (pending.localCamera) {
     await publishLocal("v", pending.localCamera);
@@ -3464,24 +3778,30 @@ async function startPeer(
   if (pending.localLive) {
     await publishLocal("l", pending.localLive);
   }
+  // A button pressed during the connect has opened its own picker or prompt,
+  // and may have been switched off again while the publishes above ran.
+  const wanted = useVoice.getState();
   if (
     !recovering &&
-    (pending.camera || resumeCamera) &&
-    !useVoice.getState().localCamera
+    (wanted.camera || resumeCamera) &&
+    !wanted.localCamera &&
+    !captureOpen("v")
   ) {
     void startLocalVideo("v");
   }
   if (
     !recovering &&
-    (pending.sharing || resumeShare) &&
-    !useVoice.getState().localScreen
+    (wanted.sharing || resumeShare) &&
+    !wanted.localScreen &&
+    !captureOpen("s")
   ) {
     void startLocalVideo("s");
   }
   if (
     !recovering &&
-    (pending.live || resumeLive) &&
-    !useVoice.getState().localLive
+    (wanted.live || resumeLive) &&
+    !wanted.localLive &&
+    !captureOpen("l")
   ) {
     void startLocalVideo("l");
   }

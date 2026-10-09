@@ -1,6 +1,8 @@
 import { useAudioProcessing } from "./audioProcessing.ts";
+import { canChooseSpeaker, useCapabilities } from "./capabilities.ts";
 import { isDesktopApp } from "./native/bridge.ts";
 import { listNativeAudioApps } from "./native/capture.ts";
+import { hasNativeFeature } from "./native/features.ts";
 import { MicrophoneTest } from "./MicrophoneTest.tsx";
 // Shared Voice/Video + notification form. Used on /settings and in-call.
 
@@ -10,6 +12,7 @@ import { playCallSound } from "./callSounds.ts";
 
 import {
   AUDIO_PROCESSING,
+  AUDIO_PROCESSING_DESKTOP,
   audioBitrate,
   type AudioProcessingMode,
   type DeviceList,
@@ -24,6 +27,10 @@ import {
   type VideoFrameRate,
   formatVideoBitrate,
   listMediaDevices,
+  sharesSourceAudio,
+  SOURCE_AUDIO_CARRIES_CALL,
+  sourceAudioCarriesCall,
+  sourceAudioChoice,
   useMediaSettings,
   videoSendBudget,
 } from "./settings.ts";
@@ -50,6 +57,12 @@ export function MediaSettingsForm({
   const videoLimit = videoSendBudget(settings);
   const [microphoneTest, setMicrophoneTest] = useState(false);
   const [devices, setDevices] = useState<DeviceList>(emptyDevices);
+  // The desktop app's native core captures, filters and sends; the texts
+  // must not credit a browser with it.
+  const desktop = isDesktopApp();
+  const chooseSpeaker = canChooseSpeaker();
+  const capable = useCapabilities();
+  const processingModes = desktop ? AUDIO_PROCESSING_DESKTOP : AUDIO_PROCESSING;
 
   const refresh = async () => {
     // The desktop app lists the native engine's devices; no permission probe.
@@ -107,7 +120,7 @@ export function MediaSettingsForm({
               options={withCurrent(devices.audioinput, settings.audioInputId)}
             />
           )}
-          {showAudio && (
+          {showAudio && chooseSpeaker && (
             <Select
               id="audio-output"
               label="Lautsprecher"
@@ -115,6 +128,12 @@ export function MediaSettingsForm({
               onChange={(value) => settings.patch({ audioOutputId: value })}
               options={withCurrent(devices.audiooutput, settings.audioOutputId)}
             />
+          )}
+          {showAudio && !chooseSpeaker && (
+            <p className="text-xs text-neutral-500">
+              Dieser Browser kann den Lautsprecher nicht wählen. Der Ton folgt
+              der Ausgabe deines Geräts.
+            </p>
           )}
           {(showAudio || showVideo) && (
             <fieldset className="flex flex-col gap-2">
@@ -132,7 +151,9 @@ export function MediaSettingsForm({
                   ? `Ausdrückliche Obergrenzen: Sprache ${audioLimit! / 1000} kbit/s, Stream-Ton 128 kbit/s, Video gemeinsam ${formatVideoBitrate(videoLimit!)}.`
                   : videoLimit
                     ? `Audio ohne Bitratengrenze durch Gelabber; Video mit deinem gemeinsamen Limit von ${formatVideoBitrate(videoLimit)}.`
-                    : "Keine Bitratengrenze durch Gelabber. Browser, Codec und Verbindung bestimmen die tatsächliche Datenrate."}
+                    : desktop
+                      ? "Keine Bitratengrenze durch Gelabber. Codec und Verbindung bestimmen die tatsächliche Datenrate."
+                      : "Keine Bitratengrenze durch Gelabber. Browser, Codec und Verbindung bestimmen die tatsächliche Datenrate."}
               </p>
             </fieldset>
           )}
@@ -199,14 +220,18 @@ export function MediaSettingsForm({
               value={Math.round(settings.inputGain * 100)}
               suffix={`${Math.round(settings.inputGain * 100)} %`}
               onChange={(value) => settings.patch({ inputGain: value / 100 })}
-              hint="100 % fügt keine Verstärkung hinzu. Andere Werte laufen über Web Audio."
+              hint={
+                desktop
+                  ? "100 % fügt keine Verstärkung hinzu."
+                  : "100 % fügt keine Verstärkung hinzu. Andere Werte laufen über Web Audio."
+              }
             />
           </fieldset>
           <fieldset className="flex flex-col gap-3">
             <legend className="text-sm font-semibold">
               Mikrofonverarbeitung
             </legend>
-            {(Object.keys(AUDIO_PROCESSING) as AudioProcessingMode[]).map(
+            {(Object.keys(processingModes) as AudioProcessingMode[]).map(
               (mode) => (
                 <label key={mode} className="flex items-start gap-2 text-sm">
                   <input
@@ -216,9 +241,9 @@ export function MediaSettingsForm({
                     onChange={() => settings.patch({ processingMode: mode })}
                   />
                   <span>
-                    {AUDIO_PROCESSING[mode].label}
+                    {processingModes[mode].label}
                     <small className="block text-neutral-500">
-                      {AUDIO_PROCESSING[mode].hint}
+                      {processingModes[mode].hint}
                     </small>
                   </span>
                 </label>
@@ -234,15 +259,13 @@ export function MediaSettingsForm({
               className="self-start rounded border px-3 py-2 text-sm"
               onClick={() => setMicrophoneTest(true)}
             >
-              {isDesktopApp()
-                ? "Mikrofon testen"
-                : "Mikrofon testen und vergleichen"}
+              {desktop ? "Mikrofon testen" : "Mikrofon testen und vergleichen"}
             </button>
           </fieldset>
           <AdvancedAudio expanded={section === "all"}>
             <fieldset className="flex flex-col gap-2">
               <legend className="text-sm font-semibold">
-                Echo und Browserfilter
+                {desktop ? "Echo und WebRTC-Filter" : "Echo und Browserfilter"}
               </legend>
               <Toggle
                 id="aec"
@@ -260,7 +283,11 @@ export function MediaSettingsForm({
                 <>
                   <Toggle
                     id="ns"
-                    label="Rauschunterdrückung des Browsers"
+                    label={
+                      desktop
+                        ? "Rauschunterdrückung von WebRTC"
+                        : "Rauschunterdrückung des Browsers"
+                    }
                     checked={settings.noiseSuppression}
                     onChange={(noiseSuppression) =>
                       settings.patch({ noiseSuppression })
@@ -268,7 +295,11 @@ export function MediaSettingsForm({
                   />
                   <Toggle
                     id="agc"
-                    label="Auto-Gain des Browsers"
+                    label={
+                      desktop
+                        ? "Auto-Gain von WebRTC"
+                        : "Auto-Gain des Browsers"
+                    }
                     checked={settings.autoGainControl}
                     onChange={(autoGainControl) =>
                       settings.patch({ autoGainControl })
@@ -306,34 +337,48 @@ export function MediaSettingsForm({
             apply={settings.screenProfileApply}
             onChange={(screenProfile) => settings.patch({ screenProfile })}
           />
-          <section
-            className="stream-source-audio"
-            aria-label="Ton der Bildschirmfreigabe"
-          >
-            <Toggle
-              id="share-source-audio"
-              label="Ton teilen"
-              checked={settings.shareSourceAudio}
-              onChange={(shareSourceAudio) =>
-                settings.patch({ shareSourceAudio })
-              }
-            />
-            {isDesktopApp() && (
-              <SourceAudioApp
-                value={settings.sourceAudioApp}
-                onChange={(sourceAudioApp) =>
-                  settings.patch({ sourceAudioApp })
+          {/* Only where a share can carry sound; the same switch sits next
+              to the share button in the call controls. */}
+          {capable.appAudio && (
+            <section
+              className="stream-source-audio"
+              aria-label="Ton der Bildschirmfreigabe"
+            >
+              <Toggle
+                id="share-source-audio"
+                label="Ton teilen"
+                checked={sharesSourceAudio(settings)}
+                onChange={(on) =>
+                  settings.patch({ sourceAudioShare: sourceAudioChoice(on) })
                 }
               />
-            )}
-            <p className="text-xs text-neutral-500 dark:text-neutral-400">
-              {isDesktopApp()
-                ? "Gilt für die nächste Bildschirmfreigabe und Go Live. Geteilt wird der Ton der gewählten Anwendung, nie dein Mikrofon oder der Ton des Anrufs."
-                : "Gilt für die nächste Bildschirmfreigabe und Go Live. Wähle den Ton im Browserdialog aus; je nach Browser und Quelle ist nur Video verfügbar."}{" "}
-              Der Stream-Ton wird als Stereo-Musik übertragen, ohne
-              Mikrofonfilter.
-            </p>
-          </section>
+              {desktop && (
+                <SourceAudioApp
+                  value={settings.sourceAudioApp}
+                  onChange={(sourceAudioApp) =>
+                    settings.patch({ sourceAudioApp })
+                  }
+                />
+              )}
+              {sourceAudioCarriesCall(settings) && (
+                <p
+                  role="status"
+                  className="text-xs text-amber-800 dark:text-amber-200"
+                >
+                  {SOURCE_AUDIO_CARRIES_CALL}
+                </p>
+              )}
+              <p className="text-xs text-neutral-500 dark:text-neutral-400">
+                {!desktop
+                  ? "Gilt für die nächste Bildschirmfreigabe und Go Live; Ausschalten wirkt sofort. Wähle den Ton im Browserdialog aus; je nach Browser und Quelle ist nur Video verfügbar."
+                  : hasNativeFeature("app-audio-excludes-self")
+                    ? "Gilt für Bildschirmfreigabe und Go Live, auch während sie laufen. Geteilt wird der Ton anderer Anwendungen, nie dein Mikrofon oder der Ton des Anrufs."
+                    : "Gilt für Bildschirmfreigabe und Go Live, auch während sie laufen. Geteilt wird der Ton der gewählten Anwendung, nie dein Mikrofon."}{" "}
+                Der Stream-Ton wird als Stereo-Musik übertragen, ohne
+                Mikrofonfilter.
+              </p>
+            </section>
+          )}
           <section className="stream-upload" aria-label="Video-Upload">
             <div className="stream-quality-heading">
               <h3>Video-Upload</h3>
@@ -385,8 +430,9 @@ export function MediaSettingsForm({
               </div>
             )}
             <p className="stream-quality-budget">
-              Der Browser passt die tatsächliche Bitrate an die Verbindung an.
-              Das Limit ist eine Obergrenze, keine feste Datenrate.
+              {desktop ? "Die Desktop-App" : "Der Browser"} passt die
+              tatsächliche Bitrate an die Verbindung an. Das Limit ist eine
+              Obergrenze, keine feste Datenrate.
             </p>
           </section>
           <p className="stream-quality-budget">
@@ -420,7 +466,13 @@ export function MediaSettingsForm({
             value={settings.callSoundVolume}
             suffix={`${Math.round(settings.callSoundVolume * 100)} %`}
             onChange={(callSoundVolume) => settings.patch({ callSoundVolume })}
-            hint="Nutzt deinen gewählten Lautsprecher und die Wiedergabelautstärke."
+            hint={
+              desktop
+                ? "Nutzt die Wiedergabelautstärke. Signaltöne spielen auf dem Standard-Ausgabegerät des Systems."
+                : chooseSpeaker
+                  ? "Nutzt deinen gewählten Lautsprecher und die Wiedergabelautstärke."
+                  : "Nutzt die Wiedergabelautstärke."
+            }
           />
           <button
             type="button"
@@ -452,7 +504,11 @@ export function MediaSettingsForm({
           />
           <Toggle
             id="desktop-notify"
-            label="Browser-Benachrichtigung, wenn der Tab im Hintergrund ist"
+            label={
+              desktop
+                ? "Benachrichtigung, wenn Gelabber im Hintergrund ist"
+                : "Browser-Benachrichtigung, wenn der Tab im Hintergrund ist"
+            }
             checked={settings.desktopNotify}
             onChange={(desktopNotify) => {
               settings.patch({ desktopNotify });
@@ -599,19 +655,29 @@ function SourceAudioApp({
       )
       .catch(() => setApps([]));
   useEffect(load, []);
+  // An app before v0.6 saved the application's name as its id. The core
+  // still takes it; the list shows the application it means.
+  const chosen = apps.some((app) => app.id === value)
+    ? value
+    : (apps.find((app) => app.label === value)?.id ?? value);
   return (
     <div onFocus={load}>
       <Select
         id="source-audio-app"
         label="Ton von"
-        value={value}
+        value={chosen}
         onChange={onChange}
         options={
-          value && !apps.some((app) => app.id === value)
-            ? [{ id: value, label: `${value} (gerade still)` }, ...apps]
+          chosen && !apps.some((app) => app.id === chosen)
+            ? [{ id: chosen, label: `${chosen} (gerade still)` }, ...apps]
             : apps
         }
-        defaultLabel="Alle Anwendungen außer Gelabber"
+        // An app that captures its own playout leaves nothing out.
+        defaultLabel={
+          hasNativeFeature("app-audio-excludes-self")
+            ? "Alle Anwendungen außer Gelabber"
+            : "Alle Anwendungen"
+        }
       />
     </div>
   );
@@ -631,7 +697,7 @@ function Select({
   value,
   onChange,
   options,
-  defaultLabel = "Browser-Default",
+  defaultLabel = isDesktopApp() ? "Systemstandard" : "Browser-Default",
 }: {
   id: string;
   label: string;

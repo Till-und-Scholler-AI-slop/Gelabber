@@ -4,6 +4,7 @@
 import type { MicProcessor, ProcessingInfo } from "../audioProcessing.ts";
 import type { DeviceList, MediaSettings } from "../settings.ts";
 import { invokeNative } from "./bridge.ts";
+import { hasNativeFeature, SCREEN_CANCEL_FEATURE } from "./features.ts";
 import { NativeStream, NativeTrack } from "./tracks.ts";
 
 type NativeAudioDevices = {
@@ -150,41 +151,72 @@ export async function listNativeAudioApps(): Promise<NativeAudioApp[]> {
   return invokeNative<NativeAudioApp[]>("media_audio_apps");
 }
 
-/** Sound of other applications for a screen share. Without it the share
- * goes on with video only, like a browser source without audio. */
-async function captureAppAudio(app: string): Promise<NativeTrack | null> {
-  try {
-    const source = await invokeNative<number>("media_source_app_audio", {
-      options: { app },
-    });
-    return new NativeTrack(
-      "audio",
-      "Quellton",
-      { source },
-      { sampleRate: 48_000, channelCount: 2 },
-    );
-  } catch (error) {
-    console.warn("[native] source audio unavailable", error);
-    return null;
+/** Sound of other applications for a share, captured from the sound server:
+ * `app` is an id from `listNativeAudioApps`, "" every application but
+ * Gelabber. No picker is involved, so it can join a share that already runs.
+ * Rejects with the core's own reason. `onStreams` hears once a second how
+ * many of the application's playback streams feed the track; with none there
+ * is nothing to hear. */
+export async function captureAppAudio(
+  app: string,
+  onStreams?: (streams: number) => void,
+): Promise<MediaStreamTrack> {
+  const source = await invokeNative<number>("media_source_app_audio", {
+    options: { app },
+  });
+  const track = new NativeTrack(
+    "audio",
+    "Quellton",
+    { source },
+    { sampleRate: 48_000, channelCount: 2 },
+  );
+  if (onStreams) {
+    const timer = setInterval(() => {
+      void invokeNative<{ streams?: unknown }>("media_source_state", { source })
+        .then((state) => {
+          if (track.readyState === "live" && typeof state?.streams === "number")
+            onStreams(state.streams);
+        })
+        .catch(() => undefined);
+    }, WATCH_MS);
+    track.onStop(() => clearInterval(timer));
   }
+  return track as unknown as MediaStreamTrack;
+}
+
+/** Whether a screen source that did not go live was the user's own answer.
+ * The pinned libwebrtc reports every non-zero portal response as an error,
+ * and xdg-desktop-portal-hyprland answers a closed picker with one, so a
+ * source that was waiting for the picker and then failed is taken as a
+ * cancel: no message for a plain cancel is worth more than one for the rare
+ * portal error. A source that failed before the picker came up stays a
+ * failure, and an app with `SCREEN_CANCEL_FEATURE` is taken at its word. */
+function screenCancelled(
+  state: ScreenState["state"],
+  pending: boolean,
+): boolean {
+  if (state === "cancelled") return true;
+  if (state !== "failed" || !pending) return false;
+  return !hasNativeFeature(SCREEN_CANCEL_FEATURE);
 }
 
 /** getDisplayMedia for the desktop app: the desktop's own picker chooses the
- * screen or window. With `audio`, the sound of `sourceApp` ("" = every
- * application but Gelabber) is captured from the sound server. */
+ * screen or window. Its sound is not the picker's to give: the session adds
+ * `captureAppAudio` to the share. */
 export async function nativeGetDisplayMedia(
   constraints: MediaStreamConstraints,
-  sourceApp = "",
 ): Promise<MediaStream> {
   const fps = frameRate(constraints.video);
   const source = await invokeNative<number>("media_source_screen", {
     options: { type: "any", fps, cursor: true, contentHint: "detail" },
   });
   let state: ScreenState;
+  let pending = false;
   try {
     for (;;) {
       state = await invokeNative<ScreenState>("media_source_state", { source });
       if (state.state !== "pending") break;
+      pending = true;
       await new Promise((resolve) => setTimeout(resolve, POLL_MS));
     }
   } catch (error) {
@@ -193,7 +225,7 @@ export async function nativeGetDisplayMedia(
   }
   if (state.state !== "live") {
     void invokeNative("media_source_close", { source }).catch(() => undefined);
-    throw state.state === "cancelled"
+    throw screenCancelled(state.state, pending)
       ? new DOMException("Freigabe abgebrochen", "NotAllowedError")
       : new DOMException("Bildschirmaufnahme fehlgeschlagen", "AbortError");
   }
@@ -226,13 +258,9 @@ export async function nativeGetDisplayMedia(
       });
   }, WATCH_MS);
   track.onStop(() => clearInterval(timer));
-  const audio = constraints.audio ? await captureAppAudio(sourceApp) : null;
-  if (audio && track.readyState !== "live") audio.stop();
-  return new NativeStream(
-    [track, ...(audio?.readyState === "live" ? [audio] : [])].map(
-      (item) => item as unknown as MediaStreamTrack,
-    ),
-  ) as unknown as MediaStream;
+  return new NativeStream([
+    track as unknown as MediaStreamTrack,
+  ]) as unknown as MediaStream;
 }
 
 export function nativeInfo(

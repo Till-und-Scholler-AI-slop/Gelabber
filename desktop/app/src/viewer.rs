@@ -254,15 +254,71 @@ struct Gpu {
     sampler: wgpu::Sampler,
 }
 
+/// Which of `adapters` draws. They can all present to the window and come in
+/// the system's order: Vulkan before GL, and Vulkan lists the GPU that drives
+/// the screen first (Mesa's device-select layer asks the compositor, the
+/// loader prefers a discrete GPU). The first one wins, not the low-power one:
+/// a second GPU's images reach a compositor on the NVIDIA driver as a black
+/// window (AMD iGPU next to an RTX card: v0.5.2). A software renderer only
+/// wins when nothing else is there; a GPU without a Vulkan driver is listed
+/// after lavapipe, through GL.
+/// `named` (WGPU_ADAPTER_NAME, part of the name) and `power`
+/// (WGPU_POWER_PREF: low, high) override the choice.
+fn choose_adapter(
+    adapters: &[wgpu::AdapterInfo],
+    named: Option<&str>,
+    power: wgpu::PowerPreference,
+) -> Result<usize, String> {
+    use wgpu::{DeviceType, PowerPreference};
+    if let Some(named) = named {
+        let wanted = named.to_lowercase();
+        return adapters
+            .iter()
+            .position(|info| info.name.to_lowercase().contains(&wanted))
+            .ok_or_else(|| {
+                let names: Vec<_> = adapters.iter().map(|info| &info.name).collect();
+                format!("no GPU adapter named {named:?} (WGPU_ADAPTER_NAME) among {names:?}")
+            });
+    }
+    // With a power preference wgpu's own order, otherwise the system's.
+    let rank = |info: &wgpu::AdapterInfo| match (power, info.device_type) {
+        (_, DeviceType::Cpu) => 5,
+        (PowerPreference::None, _) => 0,
+        (PowerPreference::LowPower, DeviceType::IntegratedGpu)
+        | (PowerPreference::HighPerformance, DeviceType::DiscreteGpu) => 1,
+        (_, DeviceType::IntegratedGpu | DeviceType::DiscreteGpu) => 2,
+        (_, DeviceType::Other) => 3,
+        (_, DeviceType::VirtualGpu) => 4,
+    };
+    // The first of the best: min_by_key keeps the earliest of equals.
+    (0..adapters.len())
+        .min_by_key(|&index| rank(&adapters[index]))
+        .ok_or_else(|| "no GPU adapter".to_string())
+}
+
 impl Gpu {
     fn new(instance: wgpu::Instance, surface: &wgpu::Surface<'_>) -> Result<Self, String> {
-        let adapter = pollster::block_on(instance.request_adapter(&wgpu::RequestAdapterOptions {
-            power_preference: wgpu::PowerPreference::LowPower,
-            compatible_surface: Some(surface),
-            force_fallback_adapter: false,
-            apply_limit_buckets: false,
-        }))
-        .map_err(|e| format!("no GPU adapter: {e}"))?;
+        let mut adapters = pollster::block_on(instance.enumerate_adapters(wgpu::Backends::all()));
+        let listed = adapters.len();
+        adapters.retain(|adapter| adapter.is_surface_supported(surface));
+        if adapters.is_empty() {
+            return Err(format!(
+                "no GPU adapter can draw to the window ({listed} listed)"
+            ));
+        }
+        let infos: Vec<_> = adapters.iter().map(wgpu::Adapter::get_info).collect();
+        let named = std::env::var("WGPU_ADAPTER_NAME")
+            .ok()
+            .filter(|name| !name.is_empty());
+        let power = wgpu::PowerPreference::from_env().unwrap_or_default();
+        let chosen = choose_adapter(&infos, named.as_deref(), power)?;
+        let adapter = adapters.swap_remove(chosen);
+        // Once per run: the GPU is kept for every later window.
+        let info = &infos[chosen];
+        eprintln!(
+            "[gelabber] viewer GPU: {} ({:?}, {:?})",
+            info.name, info.backend, info.device_type
+        );
         let (device, queue) = pollster::block_on(adapter.request_device(&wgpu::DeviceDescriptor {
             label: Some("viewer"),
             required_limits:
@@ -392,8 +448,10 @@ impl Planes {
             plane("u", cw, ch),
             plane("v", cw, ch),
         ];
-        // Video from 720 lines up is HD and BT.709 by convention.
-        let bt709: f32 = if height >= 720 { 1.0 } else { 0.0 };
+        // BT.601 at any size, as the views in the page (frames.rs): what
+        // Chromium takes video as that does not say. By size, a stream
+        // changed its colours with its simulcast layer.
+        let bt709: f32 = 0.0;
         let colors = gpu.device.create_buffer(&wgpu::BufferDescriptor {
             label: Some("viewer colors"),
             size: 16,
@@ -507,15 +565,15 @@ impl App {
         events: Events,
     ) -> Result<(), String> {
         self.close(id);
-        let mut attributes = WindowAttributes::default()
+        let attributes = WindowAttributes::default()
             .with_title(title)
             .with_inner_size(LogicalSize::new(1280.0, 720.0));
         #[cfg(any(target_os = "linux", target_os = "freebsd"))]
-        {
+        let attributes = {
             // Window rules in tiling compositors (Hyprland) match the class.
             use winit::platform::wayland::WindowAttributesExtWayland;
-            attributes = attributes.with_name("gelabber-viewer", "gelabber-viewer");
-        }
+            attributes.with_name("gelabber-viewer", "gelabber-viewer")
+        };
         let window = Arc::new(
             event_loop
                 .create_window(attributes)
@@ -738,8 +796,71 @@ impl ApplicationHandler<Command> for App {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use std::{process::Command as Process, time::Duration};
+    use std::{
+        process::Command as Process,
+        time::{Duration, Instant},
+    };
 
+    fn adapter(name: &str, device_type: wgpu::DeviceType) -> wgpu::AdapterInfo {
+        let mut info = wgpu::AdapterInfo::new(device_type, wgpu::Backend::Vulkan);
+        info.name = name.into();
+        info
+    }
+
+    #[test]
+    fn adapter_choice_follows_the_system_order() {
+        use wgpu::{DeviceType::*, PowerPreference as Power};
+        // v0.5.2's black window: an RTX card drives the screens, next to an
+        // AMD iGPU.
+        let two = [
+            adapter("NVIDIA GeForce RTX 5080", DiscreteGpu),
+            adapter("AMD Radeon Graphics (RADV RAPHAEL)", IntegratedGpu),
+            adapter("llvmpipe (LLVM 21.1.2, 256 bits)", Cpu),
+        ];
+        assert_eq!(choose_adapter(&two, None, Power::None), Ok(0));
+        assert_eq!(choose_adapter(&two, None, Power::HighPerformance), Ok(0));
+        assert_eq!(choose_adapter(&two, None, Power::LowPower), Ok(1));
+        assert_eq!(choose_adapter(&two, Some("radv"), Power::None), Ok(1));
+        assert_eq!(choose_adapter(&two, Some("LLVMpipe"), Power::None), Ok(2));
+        // A laptop whose iGPU drives the panel lists it first.
+        let laptop = [
+            adapter("Intel(R) Graphics (ADL GT2)", IntegratedGpu),
+            adapter("NVIDIA GeForce RTX 4060 Laptop GPU", DiscreteGpu),
+        ];
+        assert_eq!(choose_adapter(&laptop, None, Power::None), Ok(0));
+        assert_eq!(choose_adapter(&laptop, None, Power::HighPerformance), Ok(1));
+        // No Vulkan driver for the GPU: lavapipe is listed ahead of its GL
+        // driver, which does not tell what kind of device it is.
+        let no_vulkan = [
+            adapter("llvmpipe (LLVM 21.1.2, 256 bits)", Cpu),
+            adapter("Mesa Intel(R) HD Graphics 4000 (IVB GT2)", Other),
+        ];
+        assert_eq!(choose_adapter(&no_vulkan, None, Power::None), Ok(1));
+        assert_eq!(choose_adapter(&no_vulkan, None, Power::LowPower), Ok(1));
+        // Software only (CI): better than no picture.
+        assert_eq!(choose_adapter(&no_vulkan[..1], None, Power::None), Ok(0));
+    }
+
+    /// wgpu's own helper panics here, which would end the viewer thread.
+    #[test]
+    fn adapter_choice_reports_a_name_nothing_matches() {
+        use wgpu::{DeviceType::DiscreteGpu, PowerPreference as Power};
+        let adapters = [adapter("NVIDIA GeForce RTX 5080", DiscreteGpu)];
+        assert_eq!(
+            choose_adapter(&adapters, Some("nvdia"), Power::None).unwrap_err(),
+            r#"no GPU adapter named "nvdia" (WGPU_ADAPTER_NAME) among ["NVIDIA GeForce RTX 5080"]"#
+        );
+        assert!(choose_adapter(&[], None, Power::None).is_err());
+    }
+
+    /// winit's rule: a Wayland session wins over `DISPLAY`.
+    fn on_wayland() -> bool {
+        ["WAYLAND_DISPLAY", "WAYLAND_SOCKET"]
+            .iter()
+            .any(|name| std::env::var_os(name).is_some_and(|value| !value.is_empty()))
+    }
+
+    /// X11: one pixel of the screen.
     fn pixel(x: u32, y: u32) -> String {
         let out = Process::new("import")
             .args(["-window", "root", "-crop", &format!("1x1+{x}+{y}"), "txt:-"])
@@ -748,9 +869,54 @@ mod tests {
         String::from_utf8_lossy(&out.stdout).into_owned()
     }
 
-    /// Draws a frame in a real window: run under Xvfb with a GPU or a
-    /// software Vulkan/GL driver, and ImageMagick for the screenshot:
+    /// Wayland: how much of the screen is the test frame's red and its blue,
+    /// as `(pixels, mean column)` each. `GELABBER_TEST_OUTPUT` names the
+    /// output to look at; without it grim scales all of them into one image.
+    fn red_and_blue() -> [(f64, f64); 2] {
+        let mut grim = Process::new("grim");
+        grim.args(["-t", "ppm"]);
+        if let Some(output) = std::env::var_os("GELABBER_TEST_OUTPUT") {
+            grim.arg("-o").arg(output);
+        }
+        let out = grim.arg("-").output().expect("grim");
+        assert!(
+            out.status.success(),
+            "grim: {}",
+            String::from_utf8_lossy(&out.stderr)
+        );
+        // "P6\n<width> <height>\n255\n", then RGB rows.
+        let mut parts = out.stdout.splitn(5, u8::is_ascii_whitespace);
+        let header: Vec<_> = parts
+            .by_ref()
+            .take(4)
+            .map(String::from_utf8_lossy)
+            .collect();
+        let rgb = parts.next().expect("PPM from grim");
+        assert_eq!((&*header[0], &*header[3]), ("P6", "255"));
+        let width: usize = header[1].parse().unwrap();
+        // Pixels and the sum of their columns, red then blue.
+        let mut areas = [(0u64, 0u64); 2];
+        for (index, pixel) in rgb.as_chunks::<3>().0.iter().enumerate() {
+            let area = match *pixel {
+                [r, g, b] if r > 180 && g < 60 && b < 60 => &mut areas[0],
+                [r, g, b] if r < 60 && g < 60 && b > 180 => &mut areas[1],
+                _ => continue,
+            };
+            area.0 += 1;
+            area.1 += (index % width) as u64;
+        }
+        areas.map(|(pixels, columns)| (pixels as f64, columns as f64 / pixels.max(1) as f64))
+    }
+
+    /// Draws a frame in a real window and checks the colors on a screenshot.
+    /// Needs a GPU or a software Vulkan/GL driver. On X11 also a 1280x720
+    /// frame, for the matrix (BT.601 at any size); a compositor may tint what
+    /// grim sees, so the Wayland run leaves that to the X11 one.
+    /// X11, without a window manager (ImageMagick takes the screenshot):
     /// `xvfb-run -a cargo test -p gelabber-desktop -- --ignored viewer`.
+    /// Wayland (grim takes the screenshot): the window opens in the running
+    /// session, also under xvfb-run as long as `WAYLAND_DISPLAY` is set:
+    /// `GELABBER_TEST_OUTPUT=<output> cargo test -p gelabber-desktop -- --ignored viewer`.
     #[test]
     #[ignore = "needs a display"]
     fn viewer_draws_frames() {
@@ -763,6 +929,26 @@ mod tests {
                 Box::new(move |event| events_tx.send(event).unwrap()),
             )
             .unwrap();
+        // The same frame `times`, 50 ms apart.
+        let mut show = |w: usize, h: usize, y: &[u8], u: &[u8], v: &[u8], times: u32| {
+            for _ in 0..times {
+                sink(&VideoFrame {
+                    width: w as u32,
+                    height: h as u32,
+                    y,
+                    u,
+                    v,
+                    stride_y: w,
+                    stride_u: w / 2,
+                    stride_v: w / 2,
+                    rotation: 0,
+                    timestamp_us: 0,
+                    source_width: w as u32,
+                    source_height: h as u32,
+                });
+                std::thread::sleep(Duration::from_millis(50));
+            }
+        };
         // 640x360: left half red, right half blue (BT.601 limited range).
         let (w, h) = (640usize, 360usize);
         let mut y = vec![0u8; w * h];
@@ -780,35 +966,63 @@ mod tests {
                 v[row * w / 2 + col] = if left { 240 } else { 110 };
             }
         }
-        for _ in 0..30 {
-            sink(&VideoFrame {
-                width: w as u32,
-                height: h as u32,
-                y: &y,
-                u: &u,
-                v: &v,
-                stride_y: w,
-                stride_u: w / 2,
-                stride_v: w / 2,
-                rotation: 0,
-                timestamp_us: 0,
-            });
-            std::thread::sleep(Duration::from_millis(50));
-        }
-        let (left, right) = (pixel(320, 360), pixel(960, 360));
-        eprintln!("left {left}right {right}");
-        // "0,0: (...)  #RRRRGGGGBBBB  ..." with 16-bit channels.
-        let rgb = |text: &str| -> (u32, u32, u32) {
-            let hex = &text[text.rfind('#').expect(text) + 1..][..12];
-            let channel = |i: usize| u32::from_str_radix(&hex[i * 4..i * 4 + 4], 16).unwrap() >> 8;
-            (channel(0), channel(1), channel(2))
-        };
-        let (r, g, b) = rgb(&left);
-        assert!(r > 180 && g < 60 && b < 60, "left half red: {left}");
-        let (r, g, b) = rgb(&right);
-        assert!(r < 60 && g < 60 && b > 180, "right half blue: {right}");
-        viewer.close(7);
+        show(w, h, &y, &u, &v, 30);
         let mut events = Vec::new();
+        if on_wayland() {
+            // The compositor places and sizes the window (and animates it
+            // in): look for the halves by color until both have the size
+            // the viewer reports, red left of blue.
+            let deadline = Instant::now() + Duration::from_secs(5);
+            loop {
+                events.extend(events_rx.try_iter());
+                let shown = match events.last() {
+                    Some(ViewerEvent::Height(height)) => f64::from(*height),
+                    _ => 0.0,
+                };
+                let half = shown * (shown * w as f64 / h as f64) / 2.0;
+                let [red, blue] = red_and_blue();
+                let fits = |pixels: f64| pixels > half * 0.9 && pixels < half * 1.1;
+                if half > 0.0 && fits(red.0) && fits(blue.0) && red.1 < blue.1 {
+                    eprintln!("{half} pixels each: red {red:?}, blue {blue:?}");
+                    break;
+                }
+                assert!(
+                    Instant::now() < deadline,
+                    "red left, blue right, {half} pixels each: red {red:?}, blue {blue:?}"
+                );
+                std::thread::sleep(Duration::from_millis(100));
+            }
+        } else {
+            let (left, right) = (pixel(320, 360), pixel(960, 360));
+            eprintln!("left {left}right {right}");
+            // "0,0: (...)  #RRRRGGGGBBBB  ..." with 16-bit channels.
+            let rgb = |text: &str| -> (u32, u32, u32) {
+                let hex = &text[text.rfind('#').expect(text) + 1..][..12];
+                let channel =
+                    |i: usize| u32::from_str_radix(&hex[i * 4..i * 4 + 4], 16).unwrap() >> 8;
+                (channel(0), channel(1), channel(2))
+            };
+            let (r, g, b) = rgb(&left);
+            assert!(r > 180 && g < 60 && b < 60, "left half red: {left}");
+            let (r, g, b) = rgb(&right);
+            assert!(r < 60 && g < 60 && b > 180, "right half blue: {right}");
+
+            // 1280x720, all of it the green of BT.601 (Y 145, Cb 54, Cr 34):
+            // 255 with that matrix. With BT.709, the window's matrix from
+            // 720 lines up in v0.5, it comes out at 216.
+            let (w, h) = (1280usize, 720usize);
+            let chroma = w / 2 * h / 2;
+            let (y, u, v) = (vec![145u8; w * h], vec![54u8; chroma], vec![34u8; chroma]);
+            show(w, h, &y, &u, &v, 20);
+            let middle = pixel(640, 360);
+            eprintln!("middle {middle}");
+            let (r, g, b) = rgb(&middle);
+            assert!(
+                r < 60 && g > 240 && b < 60,
+                "BT.601 green at 720 lines: {middle}"
+            );
+        }
+        viewer.close(7);
         while let Ok(event) = events_rx.recv_timeout(Duration::from_secs(5)) {
             let closed = event == ViewerEvent::Closed;
             events.push(event);
@@ -816,7 +1030,20 @@ mod tests {
                 break;
             }
         }
-        // 1280x720 window, 16:9 frame: the image fills it.
-        assert_eq!(events, [ViewerEvent::Height(720), ViewerEvent::Closed]);
+        if on_wayland() {
+            // One height per size the compositor gave the window.
+            let (closed, heights) = events.split_last().unwrap();
+            assert_eq!(closed, &ViewerEvent::Closed);
+            assert!(
+                !heights.is_empty()
+                    && heights
+                        .iter()
+                        .all(|event| matches!(event, ViewerEvent::Height(1..))),
+                "heights, then closed: {events:?}"
+            );
+        } else {
+            // 1280x720 window, 16:9 frame: the image fills it.
+            assert_eq!(events, [ViewerEvent::Height(720), ViewerEvent::Closed]);
+        }
     }
 }

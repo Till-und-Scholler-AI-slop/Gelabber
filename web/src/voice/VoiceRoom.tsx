@@ -18,6 +18,7 @@ import {
   toggleSourceWatch,
 } from "./session.ts";
 import { useMediaSettings } from "./settings.ts";
+import { isDesktopApp } from "./native/bridge.ts";
 import { EMPTY_OCCUPANCY, liveOf, useVoiceRoster } from "./roster.ts";
 import { VoiceTile } from "./VoiceTile.tsx";
 import { MicrophoneTest } from "./MicrophoneTest.tsx";
@@ -146,14 +147,21 @@ export function VoiceRoom({
     const kind = tileId.endsWith("-s") ? ("s" as const) : ("l" as const);
     if (userId === me && here) {
       const status = voice.sourceAudio[kind];
+      // The reason stands next to the call controls. A picker withholds
+      // sound in a browser only; the desktop app captures it by itself.
+      const silent = voice.sourceAudioNote[kind]?.silent;
       return {
         sourceAudioNotice:
           status === "unavailable"
-            ? "Kein Stream-Ton freigegeben · Video läuft weiter"
+            ? isDesktopApp()
+              ? "Stream-Ton nicht aufgenommen · Video läuft weiter"
+              : "Kein Stream-Ton freigegeben · Video läuft weiter"
             : status === "ended"
               ? "Stream-Ton beendet · Video läuft weiter"
               : status === "sharing"
-                ? "Ton wird geteilt"
+                ? silent
+                  ? `Kein Ton von „${silent}“`
+                  : "Ton wird geteilt"
                 : undefined,
       };
     }

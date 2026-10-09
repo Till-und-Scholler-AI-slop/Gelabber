@@ -231,6 +231,22 @@
     visibility: visible;
   }
 }
+@media (pointer: coarse) {
+  /* A toolbar of finger-sized buttons would cover the message text, so each
+     button keeps its size and gets a 44px hit area instead. */
+  .lr-message-actions {
+    gap: 14px;
+    padding-inline: 9px;
+  }
+  .lr-message-action {
+    position: relative;
+  }
+  .lr-message-action::after {
+    content: "";
+    position: absolute;
+    inset: -8px -7px;
+  }
+}
 
 .lr-message-edit {
   display: flex;
@@ -338,6 +354,11 @@
   flex-shrink: 0;
   padding: 0 16px 14px;
 }
+.lr-composer,
+.lr-composer-readonly {
+  /* Toasts on phones sit above it, however tall the draft is. */
+  anchor-name: --lr-composer;
+}
 .lr-composer-readonly {
   flex-shrink: 0;
   margin: 0 16px 14px;
@@ -382,6 +403,19 @@
 }
 .lr-composer-row textarea:focus-visible {
   outline: none;
+}
+@media (pointer: coarse) {
+  /* Phones show the whole draft, up to max-height. Browsers without
+     field-sizing get the height from the Composer instead. */
+  .lr-composer-row textarea {
+    field-sizing: content;
+  }
+  /* Sized by its content, the empty field would otherwise wrap a long hint. */
+  .lr-composer-row textarea::placeholder {
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+  }
 }
 .lr-composer-icon,
 .lr-composer-send {

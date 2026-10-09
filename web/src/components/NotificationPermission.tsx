@@ -1,6 +1,12 @@
 import { useEffect, useState } from "react";
 
-function permission(): NotificationPermission | "unsupported" {
+import {
+  notificationPermissionText,
+  type NotificationPermissionState,
+} from "../messages/notify.ts";
+import { useInstallation } from "../pwa/install.ts";
+
+function permission(): NotificationPermissionState {
   return typeof Notification === "undefined"
     ? "unsupported"
     : Notification.permission;
@@ -10,6 +16,7 @@ export function NotificationPermissionStatus() {
   const [state, setState] = useState(permission);
   const [pending, setPending] = useState(false);
   const [failed, setFailed] = useState(false);
+  const device = useInstallation();
   useEffect(() => {
     const refresh = () => setState(permission());
     window.addEventListener("focus", refresh);
@@ -24,7 +31,9 @@ export function NotificationPermissionStatus() {
     setPending(true);
     setFailed(false);
     try {
-      setState(await Notification.requestPermission());
+      // Called straight from the click: browsers only ask on a user gesture.
+      // Older Safari answers through a callback and returns nothing.
+      setState((await Notification.requestPermission()) ?? permission());
     } catch {
       setFailed(true);
     } finally {
@@ -34,14 +43,20 @@ export function NotificationPermissionStatus() {
   return (
     <div className="rounded-lg border border-neutral-300 p-3 text-sm dark:border-neutral-700">
       <p role="status">
-        {state === "granted"
-          ? "Browser-Benachrichtigungen sind erlaubt."
-          : state === "denied"
-            ? "Browser-Benachrichtigungen sind blockiert. Du kannst sie in den Website-Einstellungen deines Browsers erlauben."
-            : state === "unsupported"
-              ? "Dieser Browser unterstützt hier keine Desktop-Benachrichtigungen."
-              : "Der Browser benötigt noch deine Erlaubnis für Benachrichtigungen."}
+        {notificationPermissionText(state, {
+          // The desktop app is not bound by the browser's HTTPS rule.
+          secure: device.secure || device.native,
+          ios: device.ios,
+          standalone: device.standalone,
+        })}
       </p>
+      {device.mobile && (state === "granted" || state === "default") && (
+        <p className="mt-2">
+          Auf dem Handy kommen Benachrichtigungen nur an, solange Gelabber im
+          Hintergrund noch läuft, zum Beispiel während eines Gesprächs. Ist die
+          App geschlossen, kommt nichts an.
+        </p>
+      )}
       {state === "default" && (
         <button
           type="button"

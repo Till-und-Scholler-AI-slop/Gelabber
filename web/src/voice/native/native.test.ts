@@ -9,8 +9,19 @@ import {
 import { listMediaDevices, useMediaSettings } from "../settings.ts";
 import { renderedVideoHeight } from "../viewerLayers.ts";
 import { setNativeBridgeForTests, type NativeBridge } from "./bridge.ts";
-import { nativeGetDisplayMedia, nativeGetUserMedia } from "./capture.ts";
+import {
+  captureAppAudio,
+  nativeGetDisplayMedia,
+  nativeGetUserMedia,
+} from "./capture.ts";
+import { loadNativeFeatures, SCREEN_CANCEL_FEATURE } from "./features.ts";
 import { createNativeMicrophoneTest } from "./microphoneTest.ts";
+import {
+  attachNativeVideo,
+  nativeCanvasHeight,
+  resetNativeVideoForTests,
+  type NativeVideoHost,
+} from "./videoFeed.ts";
 import {
   nativeVideoTrack,
   nativeViewerHeight,
@@ -67,7 +78,12 @@ class FakeCore implements NativeBridge {
   levels = { input: 0, processed: 0, clipping: false, blocks: 0 };
   cameras = [{ id: "/dev/video0", name: "Webcam" }];
   screenStates: Array<Record<string, unknown>> = [];
+  /** `media_info`'s answer; null is a 0.5.x app. */
+  info: unknown = null;
   noAppAudio = false;
+  /** Playback streams feeding an application-sound source. */
+  appStreams = 1;
+  private appAudio = new Set<number>();
   devices = {
     inputs: [
       { id: "", name: "default: Headset" },
@@ -172,14 +188,25 @@ class FakeCore implements NativeBridge {
         case "media_source_screen":
           return ++this.next;
         case "media_source_app_audio":
-          if (this.noAppAudio) throw new Error("no sound server");
-          return ++this.next;
+          // The app rejects with the core's message as a plain string.
+          if (this.noAppAudio) return Promise.reject("no sound server");
+          this.appAudio.add(++this.next);
+          return this.next;
         case "media_source_state":
+          if (this.appAudio.has(args.source as number))
+            return { state: "live", streams: this.appStreams, frames: 0 };
           return this.screenStates.shift() ?? { state: "live" };
+        case "media_info":
+          return this.info;
         case "media_audio_devices":
           return this.devices;
         case "media_audio_levels":
           return this.levels;
+        case "media_view_open":
+          return { view: ++this.next };
+        case "media_view_frame":
+          // No frame yet: the request waits.
+          return new Promise(() => undefined);
         case "media_audio_configure": {
           const options = args.options as { input?: string };
           if (
@@ -477,27 +504,74 @@ describe("desktop app media", () => {
     expect(track.readyState).toBe("ended");
   });
 
-  it("adds the chosen application's sound to a share", async () => {
-    const stream = await nativeGetDisplayMedia(
-      { video: true, audio: true },
-      "firefox",
-    );
+  it("captures the chosen application's sound without a picker", async () => {
+    const audio = await captureAppAudio("firefox");
     expect(core.calledWith("media_source_app_audio")).toEqual([
       { options: { app: "firefox" } },
     ]);
-    const [audio] = stream.getAudioTracks();
+    expect(core.calledWith("media_source_screen")).toEqual([]);
+    expect(isNativeTrack(audio)).toBe(true);
+    expect(audio.kind).toBe("audio");
     expect(audio.label).toBe("Quellton");
+    expect(audio.getSettings()).toMatchObject({ channelCount: 2 });
     audio.stop();
     expect(core.calledWith("media_source_close")).toHaveLength(1);
+    // "" is every application but Gelabber.
+    (await captureAppAudio("")).stop();
+    expect(core.calledWith("media_source_app_audio").at(-1)).toEqual({
+      options: { app: "" },
+    });
   });
 
-  it("shares video only when application sound is unavailable", async () => {
-    core.noAppAudio = true;
-    const warn = vi.spyOn(console, "warn").mockImplementation(() => undefined);
+  it("leaves sound out of the desktop's picker", async () => {
+    // The session adds application sound itself; the picker has none to give.
     const stream = await nativeGetDisplayMedia({ video: true, audio: true });
+    expect(core.calledWith("media_source_app_audio")).toEqual([]);
     expect(stream.getAudioTracks()).toHaveLength(0);
     expect(stream.getVideoTracks()).toHaveLength(1);
-    warn.mockRestore();
+    stream.getTracks().forEach((track) => track.stop());
+  });
+
+  it("says why application sound is unavailable", async () => {
+    core.noAppAudio = true;
+    await expect(captureAppAudio("")).rejects.toBe("no sound server");
+    expect(core.calledWith("media_source_close")).toEqual([]);
+  });
+
+  it("reports how many playback streams feed the sound while it runs", async () => {
+    vi.useFakeTimers();
+    try {
+      core.appStreams = 0;
+      const streams = vi.fn();
+      const audio = await captureAppAudio("spotify", streams);
+      const source = (audio as unknown as NativeTrack).handle.source;
+      expect(streams).not.toHaveBeenCalled();
+      await vi.advanceTimersByTimeAsync(1_000);
+      expect(core.calledWith("media_source_state")).toEqual([{ source }]);
+      expect(streams.mock.calls).toEqual([[0]]);
+      core.appStreams = 2;
+      await vi.advanceTimersByTimeAsync(1_000);
+      expect(streams.mock.calls).toEqual([[0], [2]]);
+      // A stopped track is not asked about any more.
+      audio.stop();
+      await vi.advanceTimersByTimeAsync(3_000);
+      expect(core.calledWith("media_source_state")).toHaveLength(2);
+      expect(streams).toHaveBeenCalledTimes(2);
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
+  it("does not watch a source nobody asks about", async () => {
+    vi.useFakeTimers();
+    try {
+      const audio = await captureAppAudio("");
+      await vi.advanceTimersByTimeAsync(3_000);
+      expect(core.calledWith("media_source_state")).toEqual([]);
+      audio.stop();
+    } finally {
+      vi.useRealTimers();
+    }
   });
 
   it("tests the microphone with the native meters", async () => {
@@ -575,9 +649,76 @@ describe("desktop app media", () => {
     events.onMessage({ type: "closed" });
     expect(renderedVideoHeight(track.id)).toBe(0);
     expect(nativeViewerOpen(42)).toBe(false);
+    await tick();
     expect(core.calledWith("media_viewer_close")).toEqual([{ consumer: 42 }]);
     track.end();
     expect(nativeVideoTrack(stream)).toBeNull();
+  });
+
+  it("chooses layers by the canvas in the page or by the viewer window", async () => {
+    resetNativeViewersForTests();
+    const boxes = new Map<unknown, { width: number; height: number }>();
+    resetNativeVideoForTests({
+      painter: () => ({
+        painter: { load: () => true, show: () => undefined, dispose() {} },
+        software: false,
+      }),
+      requestFrame: () => 0,
+      cancelFrame: () => undefined,
+      hidden: () => false,
+      watch: () => () => undefined,
+      box: (canvas) => boxes.get(canvas) ?? null,
+      covers: () => false,
+      observe: () => () => undefined,
+      pixelRatio: () => 1.6,
+    } satisfies NativeVideoHost);
+    try {
+      const track = new NativeTrack("video", "Bildschirm", { consumer: 42 });
+      // Nothing shows the stream: the server sends the low layer.
+      expect(renderedVideoHeight(track.id)).toBe(0);
+      // A tile that holds a 16:9 picture letterboxed in a 4:3 box.
+      const tile = { width: 1280, height: 720 } as HTMLCanvasElement;
+      boxes.set(tile, { width: 480, height: 360 });
+      const leave = attachNativeVideo(track, tile);
+      await tick();
+      // The page's first view starts small; the layer does not wait for it.
+      expect(core.calledWith("media_view_open")).toEqual([
+        { consumer: 42, maxWidth: 320, maxHeight: 180 },
+      ]);
+      // 480 * 9 / 16 lines at a device pixel ratio of 1.6.
+      expect(renderedVideoHeight(track.id)).toBe(432);
+
+      // A viewer window takes the stream over from the tile. Until it says
+      // how large it shows the stream, the layer the tile had asked for
+      // stays: no drop to the low one while the window opens.
+      const opening = openNativeViewer(track, "Alex – Gelabber");
+      expect(nativeCanvasHeight(track.id)).toBe(0);
+      expect(renderedVideoHeight(track.id)).toBe(432);
+      await opening;
+      expect(core.calledWith("media_view_close")).toEqual([{ view: 1 }]);
+      const [opened] = core.calledWith("media_viewer_open");
+      const events = opened.events as { onMessage: (event: unknown) => void };
+      expect(renderedVideoHeight(track.id)).toBe(432);
+      // From then on the window alone decides, also when it is small.
+      events.onMessage({ type: "height", height: 1080 });
+      expect(renderedVideoHeight(track.id)).toBe(1080);
+      events.onMessage({ type: "height", height: 200 });
+      expect(renderedVideoHeight(track.id)).toBe(200);
+      events.onMessage({ type: "closed" });
+      expect(renderedVideoHeight(track.id)).toBe(0);
+      leave();
+
+      // The tile draws the stream again, grows to the large view and goes.
+      await tick();
+      const again = attachNativeVideo(track, tile);
+      expect(renderedVideoHeight(track.id)).toBe(432);
+      boxes.set(tile, { width: 1600, height: 900 });
+      expect(renderedVideoHeight(track.id)).toBe(1440);
+      again();
+      expect(renderedVideoHeight(track.id)).toBe(0);
+    } finally {
+      resetNativeVideoForTests();
+    }
   });
 
   it("captures a camera natively", async () => {
@@ -609,6 +750,41 @@ describe("desktop app media", () => {
     track.stop();
     await tick();
     expect(core.calledWith("media_source_close")).toHaveLength(1);
+  });
+
+  // Hyprland's portal answers a closed picker with a non-zero response, which
+  // the pinned libwebrtc reports as a failure.
+  it.each([
+    ["a 0.5.x app", null],
+    ["a v0.6 app", { abi: 8, features: ["screen", "camera", "video-frames"] }],
+  ])(
+    "takes a picker that was open and then failed as a cancel in %s",
+    async (_name, info) => {
+      core.info = info;
+      await loadNativeFeatures();
+      core.screenStates = [{ state: "pending" }, { state: "failed" }];
+      await expect(nativeGetDisplayMedia({ video: true })).rejects.toMatchObject(
+        { name: "NotAllowedError" },
+      );
+      await tick();
+      expect(core.calledWith("media_source_close")).toHaveLength(1);
+    },
+  );
+
+  it("reports a capture that failed before the picker came up", async () => {
+    core.screenStates = [{ state: "failed" }];
+    await expect(nativeGetDisplayMedia({ video: true })).rejects.toMatchObject({
+      name: "AbortError",
+    });
+  });
+
+  it("believes an app that tells a cancel from a failure", async () => {
+    core.info = { abi: 9, features: ["screen", SCREEN_CANCEL_FEATURE] };
+    await loadNativeFeatures();
+    core.screenStates = [{ state: "pending" }, { state: "failed" }];
+    await expect(nativeGetDisplayMedia({ video: true })).rejects.toMatchObject({
+      name: "AbortError",
+    });
   });
 
   it("reports a cancelled picker like the browser", async () => {
