@@ -256,13 +256,24 @@ struct Gpu {
 
 impl Gpu {
     fn new(instance: wgpu::Instance, surface: &wgpu::Surface<'_>) -> Result<Self, String> {
-        let adapter = pollster::block_on(instance.request_adapter(&wgpu::RequestAdapterOptions {
-            power_preference: wgpu::PowerPreference::LowPower,
-            compatible_surface: Some(surface),
-            force_fallback_adapter: false,
-            apply_limit_buckets: false,
-        }))
+        // The first adapter the system lists that can present to this window,
+        // not the low-power one: Vulkan lists the GPU that drives the screen
+        // first (Mesa's device-select layer asks the compositor, the loader
+        // prefers a discrete GPU), and a second GPU's images reach a
+        // compositor on the NVIDIA driver as a black window (AMD iGPU next
+        // to an RTX card: v0.5.2). WGPU_ADAPTER_NAME (part of the name) and
+        // WGPU_POWER_PREF (low, high) override the choice.
+        let adapter = pollster::block_on(wgpu::util::initialize_adapter_from_env_or_default(
+            &instance,
+            Some(surface),
+        ))
         .map_err(|e| format!("no GPU adapter: {e}"))?;
+        // Once per run: the GPU is kept for every later window.
+        let info = adapter.get_info();
+        eprintln!(
+            "[gelabber] viewer GPU: {} ({:?}, {:?})",
+            info.name, info.backend, info.device_type
+        );
         let (device, queue) = pollster::block_on(adapter.request_device(&wgpu::DeviceDescriptor {
             label: Some("viewer"),
             required_limits:
