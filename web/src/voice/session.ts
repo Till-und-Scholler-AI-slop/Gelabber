@@ -2744,6 +2744,15 @@ function captureOpen(kind: "v" | "s" | "l"): boolean {
   return openCaptures.get(kind) === videoEpoch(kind);
 }
 
+/** A camera that is missing, busy or broken: `NotFoundError` and
+ * `NotReadableError` of getUserMedia, the latter also what the desktop app's
+ * capture reports. A refused permission or a closed prompt is the user's
+ * own answer and gets no message. */
+function cameraUnavailable(error: unknown): boolean {
+  const name = (error as { name?: unknown } | null)?.name;
+  return name === "NotFoundError" || name === "NotReadableError";
+}
+
 async function startLocalVideo(kind: "v" | "s" | "l"): Promise<void> {
   const epoch = bumpVideoEpoch(kind);
   const mine = seat.generation;
@@ -2765,6 +2774,14 @@ async function startLocalVideo(kind: "v" | "s" | "l"): Promise<void> {
             : "Die Bildschirmfreigabe unterstützt das Streamprofil nicht.",
         ),
       );
+    } else if (
+      kind === "v" &&
+      cameraUnavailable(error) &&
+      seat.generation === mine &&
+      cameraEpoch === epoch
+    ) {
+      // Otherwise the button just springs back and nothing says why.
+      deps?.onError?.(new Error("Die Kamera ist nicht verfügbar."));
     }
     if (kind === "v" && cameraEpoch === epoch) {
       useVoice.setState({ camera: false });

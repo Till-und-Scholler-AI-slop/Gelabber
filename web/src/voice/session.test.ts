@@ -1257,6 +1257,38 @@ describe("voice session", () => {
     });
   });
 
+  it("says so when the camera is missing or busy, and nothing after a refusal", async () => {
+    let failure = Object.assign(new Error("no camera"), {
+      name: "NotFoundError",
+    });
+    const { peers, errors } = install({
+      mediaError: (_call, constraints) =>
+        constraints.video ? failure : undefined,
+    });
+    joinVoice({ serverId: "srv", channelId: "voice", channelName: "Lounge" });
+    await vi.waitFor(() => expect(peers.length).toBe(1));
+    const attempt = async () => {
+      toggleCamera();
+      expect(useVoice.getState().camera).toBe(true);
+      await vi.waitFor(() => expect(useVoice.getState().camera).toBe(false));
+    };
+    await attempt();
+    expect(errors.map((error) => (error as Error).message)).toEqual([
+      "Die Kamera ist nicht verfügbar.",
+    ]);
+    // What the desktop app's capture throws for a camera it cannot open.
+    failure = Object.assign(new Error("Kamera nicht verfügbar: busy"), {
+      name: "NotReadableError",
+    });
+    await attempt();
+    expect(errors).toHaveLength(2);
+    // The user said no, or closed the prompt.
+    failure = Object.assign(new Error("denied"), { name: "NotAllowedError" });
+    await attempt();
+    expect(errors).toHaveLength(2);
+    expect(useVoice.getState().localCamera).toBeNull();
+  });
+
   it("shows a local camera preview before any publication", async () => {
     const publication = deferred();
     const { sent, mediaSent, peers } = install({
