@@ -19,7 +19,9 @@ import { isNativeStream, type NativeTrack } from "./native/tracks.ts";
 import {
   nativeDisplayTrack,
   nativeVideoLimit,
+  nativeVideoSuspended,
   subscribeNativeVideoLimit,
+  subscribeNativeVideoSuspensions,
 } from "./native/videoFeed.ts";
 import {
   closeNativeViewer,
@@ -111,7 +113,18 @@ function VideoSurface({
     videoFrames,
     videoFrames,
   );
-  const drawn = nativeVideo && inPage ? nativeDisplayTrack(given) : null;
+  const track = nativeVideo && inPage ? nativeDisplayTrack(given) : null;
+  // A stream that plays in its viewer window is not drawn here as well: the
+  // page has no frames of it meanwhile (videoFeed.ts).
+  const consumer = track?.handle.consumer;
+  const suspended = () =>
+    consumer !== undefined && nativeVideoSuspended(consumer);
+  const inWindow = useSyncExternalStore(
+    subscribeNativeVideoSuspensions,
+    suspended,
+    suspended,
+  );
+  const drawn = inWindow ? null : track;
   const [painted, setPainted] = useState<NativeTrack | null>(null);
   const showing = stream !== null || (drawn !== null && painted === drawn);
   const limit = useSyncExternalStore(
@@ -259,6 +272,11 @@ function VideoSurface({
           {nativeVideo && !inPage ? (
             <NativeVideo stream={given} label={label} />
           ) : null}
+          {inWindow ? (
+            <span role="status" className="text-xs">
+              Läuft im eigenen Fenster.
+            </span>
+          ) : null}
         </div>
       ) : null}
       <figcaption className="absolute inset-x-0 bottom-0 truncate bg-black/50 px-2 py-1 text-left text-xs">
@@ -298,11 +316,12 @@ function VideoSurface({
             {expanded ? <CollapseIcon size={16} /> : <ExpandIcon size={16} />}
           </button>
         )}
-        {drawn && drawn.handle.consumer !== undefined && !viewer ? (
+        {track && consumer !== undefined ? (
           <OwnWindow
-            track={drawn}
+            track={track}
             label={label}
-            onFailed={(failed) => setWindowFailed(failed ? drawn : null)}
+            closeOnly={viewer ?? false}
+            onFailed={(failed) => setWindowFailed(failed ? track : null)}
           />
         ) : null}
         {onEnlarge && !fullscreen && (
@@ -331,7 +350,7 @@ function VideoSurface({
           )}
         </p>
       )}
-      {drawn && windowFailed === drawn && !fullscreenError ? (
+      {track && windowFailed === track && !fullscreenError ? (
         <p role="status" className="voice-fullscreen-error">
           Das Videofenster konnte nicht geöffnet werden.
         </p>
@@ -348,15 +367,18 @@ const LIMIT_REASON = {
   renderer: "WebGL ist hier nicht verfügbar. Das Bild bleibt deshalb klein.",
 };
 
-/** Someone's stream in a window of its own, next to the tile that shows it:
- * for a second monitor or a tiling compositor. */
+/** Someone's stream in a window of its own instead of in its tiles: for a
+ * second monitor or a tiling compositor. `closeOnly`: the large view offers
+ * no window, but one that is open can be closed where its stream would be. */
 function OwnWindow({
   track,
   label,
+  closeOnly,
   onFailed,
 }: {
   track: NativeTrack;
   label: string;
+  closeOnly: boolean;
   onFailed: (failed: boolean) => void;
 }) {
   useSyncExternalStore(
@@ -367,6 +389,7 @@ function OwnWindow({
   const consumer = track.handle.consumer;
   if (consumer === undefined) return null;
   const open = nativeViewerOpen(consumer);
+  if (closeOnly && !open) return null;
   return (
     <button
       type="button"

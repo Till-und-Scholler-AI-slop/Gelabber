@@ -96,6 +96,10 @@ function desktopApp(options) {
     contexts: [],
     /** Bytes of the largest frame the page was sent. */
     largest: 0,
+    /** Consumers with a viewer window, as "consumer:1". */
+    windows: new Set(),
+    /** Views that were open while a viewer window had their consumer. */
+    beside: [],
     /** A new frame for every view of `target`. */
     push(target, spec) {
       app.sources.set(target, spec);
@@ -108,6 +112,12 @@ function desktopApp(options) {
     },
     views: (target) =>
       [...views.values()].filter((view) => view.target === target),
+    /** Ids of the views of `target` the page has open. */
+    open: (target) =>
+      app
+        .views(target)
+        .filter((view) => !view.closed)
+        .map((view) => view.id),
     /** True when the page holds the newest frame of every open view of
      * `target` and waits for the next. */
     caughtUp(target) {
@@ -123,13 +133,16 @@ function desktopApp(options) {
   window.smokeApp = app;
 
   /** With `options.scale`, what the app makes of a frame for a view: scaled
-   * down into the size the view asked for, same shape, even sides. */
+   * down into the size the view asked for, same shape, even sides. Not next
+   * to a viewer window: that shows the stream as it is, and the app hands
+   * its frames to the stream's views unscaled (desktop/app/src/frames.rs). */
   function fitted(spec, view) {
     const scale = Math.min(
       view.maxWidth / spec.width,
       view.maxHeight / spec.height,
     );
-    if (!options.scale || scale >= 1) return spec;
+    if (!options.scale || scale >= 1 || app.windows.has(view.target))
+      return spec;
     const side = (pixels) => Math.max(2, 2 * Math.round((pixels * scale) / 2));
     return { ...spec, width: side(spec.width), height: side(spec.height) };
   }
@@ -181,6 +194,7 @@ function desktopApp(options) {
               : `consumer:${args.consumer}`;
           const spec = app.sources.get(target) ?? null;
           const id = views.size + 1;
+          if (app.windows.has(target)) app.beside.push(id);
           views.set(id, {
             id,
             target,
@@ -213,8 +227,14 @@ function desktopApp(options) {
             view.waiting = null;
           }
           return null;
-        case "media_viewer_open":
+        case "media_viewer_open": {
+          const target = `consumer:${args.consumer}`;
+          app.windows.add(target);
+          app.beside.push(...app.open(target));
+          return null;
+        }
         case "media_viewer_close":
+          app.windows.delete(`consumer:${args.consumer}`);
           return null;
         default:
           throw `${command} not allowed`;
@@ -310,6 +330,9 @@ const push = (page, target, spec) =>
   page.evaluate(([to, what]) => window.smokeApp.push(to, what), [target, spec]);
 const named = (page, command) =>
   page.evaluate((name) => window.smokeApp.named(name), command);
+/** Ids of the views of `target` the page has open. */
+const viewsOf = (page, target) =>
+  page.evaluate((to) => window.smokeApp.open(to), target);
 const frames = (page, count = 2) =>
   page.evaluate(async (left) => {
     while (left-- > 0) await new Promise(requestAnimationFrame);
@@ -508,26 +531,63 @@ try {
     );
     console.log("PASS: own camera mirrored and cropped, own Live uncropped");
 
-    // The window stays an extra for other people's streams.
+    // The window stays an extra for other people's streams. Next to one the
+    // app hands the stream's views the window's frames, so the tile leaves
+    // the stream to the window: its view closes before the window opens.
     await page.getByRole("button", { name: "Eigenes Fenster" }).click();
     await page.getByRole("button", { name: "Fenster schließen" }).waitFor();
+    await page.waitForFunction(
+      () => window.smokeApp.named("media_viewer_open").length === 1,
+    );
     const [viewer] = await named(page, "media_viewer_open");
     assert.equal(viewer.consumer, 1);
     assert.equal(viewer.title, "Alex – Gelabber");
+    assert.deepEqual(await named(page, "media_view_close"), [{ view: 1 }]);
+    assert.equal(
+      await page.locator(`canvas[data-native-track="${ids.Alex}"]`).count(),
+      0,
+    );
+    await page.getByText("Läuft im eigenen Fenster.").waitFor();
+    // The switch stays where it was pressed and keeps the focus.
+    const focused = () =>
+      page.evaluate(() => document.activeElement?.textContent);
+    assert.equal(await focused(), "Fenster schließen");
+    assert.equal(
+      await page.getByRole("button", { name: "Eigenes Fenster" }).count(),
+      0,
+    );
+    // The stream goes on in the window; nothing of it comes to the page.
+    const asked = (await named(page, "media_view_frame")).length;
+    await push(page, remote, { width: 1920, height: 1080, colours: BARS });
+    await frames(page, 5);
+    assert.equal((await named(page, "media_view_frame")).length, asked);
+    assert.deepEqual(await viewsOf(page, remote), []);
+    // Closed: the tile draws the stream again, on a new view of its size.
+    await page.getByRole("button", { name: "Fenster schließen" }).click();
     await bars(
       page,
       ids.Alex,
       remote,
       { width: 640, height: 360, colours: BARS },
-      "next to a viewer window",
+      "back from the viewer window",
     );
-    await page.getByRole("button", { name: "Fenster schließen" }).click();
     assert.deepEqual(await named(page, "media_viewer_close"), [
       { consumer: 1 },
     ]);
-    console.log("PASS: viewer window as a second way to watch");
+    const [reopened] = await viewsOf(page, remote);
+    assert.equal(reopened, 4);
+    assert.deepEqual((await named(page, "media_view_open")).at(-1), {
+      consumer: 1,
+      maxWidth: 960,
+      maxHeight: 540,
+    });
+    assert.equal(await focused(), "Eigenes Fenster");
+    assert.equal(await page.getByText("Läuft im eigenen Fenster.").count(), 0);
+    assert.deepEqual(await page.evaluate(() => window.smokeApp.beside), []);
+    console.log("PASS: a viewer window takes the stream over from the tile");
 
     // The large view shows the same stream on a second canvas.
+    const opens = (await named(page, "media_view_open")).length;
     await page
       .locator('[data-tile="Alex"]')
       .getByRole("button", { name: "Vergrößern" })
@@ -548,19 +608,23 @@ try {
       return [2 * rect.width, 2 * rect.height];
     });
     assert.ok(box[0] > 1920 && box[1] > 1080 && box[0] / box[1] < 1.6, box);
-    await page.waitForFunction(() =>
-      window.smokeApp
-        .named("media_view_configure")
-        .some((args) => args.view === 1 && args.maxWidth > 960),
-    );
-    assert.deepEqual(
-      await page.evaluate(() =>
+    await page.waitForFunction(
+      (view) =>
         window.smokeApp
           .named("media_view_configure")
-          .filter((args) => args.view === 1)
-          .at(-1),
+          .some((args) => args.view === view && args.maxWidth > 960),
+      reopened,
+    );
+    assert.deepEqual(
+      await page.evaluate(
+        (view) =>
+          window.smokeApp
+            .named("media_view_configure")
+            .filter((args) => args.view === view)
+            .at(-1),
+        reopened,
       ),
-      { view: 1, maxWidth: 1920, maxHeight: 1080 },
+      { view: reopened, maxWidth: 1920, maxHeight: 1080 },
     );
     assert.ok(
       (await page.evaluate(
@@ -568,11 +632,7 @@ try {
         ids.Alex,
       )) > 540,
     );
-    assert.equal(
-      (await named(page, "media_view_open")).filter((args) => args.consumer)
-        .length,
-      1,
-    );
+    assert.equal((await named(page, "media_view_open")).length, opens);
     await bars(
       page,
       ids.Alex,
@@ -586,13 +646,13 @@ try {
       .locator("dialog")
       .getByRole("button", { name: "Schließen" })
       .click();
-    await page.waitForFunction(() => {
+    await page.waitForFunction((view) => {
       const last = window.smokeApp
         .named("media_view_configure")
-        .filter((args) => args.view === 1)
+        .filter((args) => args.view === view)
         .at(-1);
       return last.maxWidth === 960 && last.maxHeight === 540;
-    });
+    }, reopened);
     console.log("PASS: tile and large view share one view, size follows");
 
     // Room focus mounts the tile somewhere else: same view, same picture.
@@ -784,11 +844,13 @@ try {
         window.smokeApp.named("media_view_close").length ===
         window.smokeApp.named("media_view_open").length,
     );
-    assert.equal((await named(page, "media_view_open")).length, 23);
+    // 23 tiles, one of them twice: before and after its viewer window.
+    assert.equal((await named(page, "media_view_open")).length, 24);
     const before = (await named(page, "media_view_frame")).length;
     await frames(page, 30);
     assert.equal((await named(page, "media_view_frame")).length, before);
     assert.deepEqual(await page.evaluate(() => window.smokeApp.violations), []);
+    assert.deepEqual(await page.evaluate(() => window.smokeApp.beside), []);
     assert.deepEqual(problems, []);
     assert.deepEqual(warnings, []);
     assert.equal(
@@ -865,10 +927,99 @@ try {
       await page.evaluate(() => window.smokeApp.largest),
       32 + 320 * 180 * 1.5,
     );
+    console.log("PASS: JSON fallback detected, video kept small, hint shown");
+
+    // The way to a sharp picture here is the viewer window. Its frames are
+    // the stream's own 1920x1080, and a view of the stream next to it would
+    // get each as three million numbers: the page has none meanwhile, in
+    // the tile or in the large view.
+    const alex = page.locator('[data-tile="Alex"]');
+    await alex.getByRole("button", { name: "Eigenes Fenster" }).click();
+    await page.waitForFunction(
+      () => window.smokeApp.named("media_viewer_open").length === 1,
+    );
+    await alex.getByRole("button", { name: "Vergrößern" }).click();
+    const dialog = page.locator("dialog");
+    await dialog.getByRole("button", { name: "Fenster schließen" }).waitFor();
+    for (const colours of [BARS, [...BARS].reverse(), BARS]) {
+      await push(page, "consumer:1", { ...source, colours });
+      await frames(page, 3);
+    }
+    assert.deepEqual(await viewsOf(page, "consumer:1"), []);
+    assert.equal(
+      await page.locator(`canvas[data-native-track="${ids.Alex}"]`).count(),
+      0,
+    );
+    assert.equal(await alex.getByText("Geringe Bildqualität").count(), 0);
+    // Closed from the large view: tile and large view draw the stream
+    // again, as small as before.
+    await dialog.getByRole("button", { name: "Fenster schließen" }).click();
+    await dialog.locator("canvas").waitFor();
+    await bars(
+      page,
+      ids.Alex,
+      "consumer:1",
+      { ...source, colours: [...BARS].reverse() },
+      "JSON frames after the viewer window",
+      [320, 180],
+    );
+    assert.deepEqual(await named(page, "media_viewer_close"), [
+      { consumer: 1 },
+    ]);
+    assert.deepEqual((await named(page, "media_view_open")).at(-1), {
+      consumer: 1,
+      maxWidth: 320,
+      maxHeight: 180,
+      maxFps: 15,
+    });
+    assert.deepEqual(await page.evaluate(() => window.smokeApp.beside), []);
+    assert.equal(
+      await page.evaluate(() => window.smokeApp.largest),
+      32 + 320 * 180 * 1.5,
+      "numbers in the largest JSON frame, with a viewer window",
+    );
     assert.equal(warnings.length, 1, "one warning for the whole page");
     assert.match(warnings[0], /connect-src/);
     assert.deepEqual(problems, []);
-    console.log("PASS: JSON fallback detected, video kept small, hint shown");
+    console.log("PASS: a viewer window brings no large JSON frames");
+    await context.close();
+  }
+
+  // The same server, and a viewer window before the page has had a frame:
+  // it does not know yet that frames arrive as JSON.
+  {
+    const { page, context, problems, warnings } = await open({
+      features: ["video-frames"],
+      json: true,
+      scale: true,
+    });
+    const ids = await show(page, [
+      { name: "Alex", consumer: 1, width: 960, screen: true },
+    ]);
+    await page.getByRole("button", { name: "Eigenes Fenster" }).click();
+    await page.waitForFunction(
+      () => window.smokeApp.named("media_viewer_open").length === 1,
+    );
+    const source = { width: 1920, height: 1080, colours: BARS, bt709: true };
+    await push(page, "consumer:1", source);
+    await frames(page, 5);
+    assert.equal(await page.evaluate(() => window.smokeApp.largest), 0);
+    assert.equal(
+      await page.evaluate(() => window.smoke.nativeVideoLimit()),
+      null,
+    );
+    await page.getByRole("button", { name: "Fenster schließen" }).click();
+    await bars(page, ids.Alex, "consumer:1", source, "first frame", [320, 180]);
+    await page.getByText("Geringe Bildqualität").waitFor();
+    assert.deepEqual(await page.evaluate(() => window.smokeApp.beside), []);
+    assert.equal(
+      await page.evaluate(() => window.smokeApp.largest),
+      32 + 320 * 180 * 1.5,
+      "numbers in the largest JSON frame, window first",
+    );
+    assert.equal(warnings.length, 1);
+    assert.deepEqual(problems, []);
+    console.log("PASS: nor when it opens before the first frame");
     await context.close();
   }
 

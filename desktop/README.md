@@ -165,11 +165,15 @@ left as it is.
   (camera, screen, test pattern): they adapt before they hand a frame on.
 - Viewer window: `media_viewer_open` shows a remote video in a native
   window (`app/src/viewer.rs`), for web clients from before the views in the
-  page and as a pop-out next to them: winit on its own thread next to the
+  page and as a pop-out for newer ones: winit on its own thread next to the
   webview's GTK loop, wgpu drawing the decoded I420 planes (BT.601, as the
   views in the page), letterboxed. It shares the consumer's sink with the page views and
   shows the stream unscaled, so while a window is open the views of that
-  consumer get full-size frames too. The window's Wayland app id and X11
+  consumer get full-size frames too, whatever size they asked for; only a
+  view's own `maxFps` still holds. The web client therefore keeps no view
+  next to a window: it closes its views of the consumer before it opens the
+  window and draws the stream in the page again once the window is closed.
+  The window's Wayland app id and X11
   class are `gelabber-viewer` for compositor rules. CI draws a frame through
   lavapipe under Xvfb and checks the colors on a screenshot.
 - Voice: libwebrtc's audio device module (Linux: PulseAudio API, served by

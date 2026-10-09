@@ -3,6 +3,12 @@
 // or capture source in the app, pulls its frames with one request at a time
 // and paints the newest one per display refresh. The app scales frames to
 // the size the feed reports, so a small tile costs little.
+//
+// Not next to a viewer window (viewer.ts): the app feeds the window and the
+// views of a consumer from one sink and hands the views the window's frames,
+// unscaled (desktop/README.md), a 4K picture where a tile asked for 320x180.
+// So the page has no view of a consumer while a window shows it
+// (`suspendNativeVideo`).
 import { invokeNative } from "./bridge.ts";
 import {
   createFramePainter,
@@ -132,6 +138,11 @@ const limitListeners = new Set<() => void>();
  * how the app's IPC carries frames here, and a large one as JSON would be
  * millions of numbers: until then every view asks for a small picture. */
 let carried = false;
+/** Consumers the page shows no video of. `count`: how many times that was
+ * asked for (a viewer window that is closing and its successor overlap).
+ * `closed` settles when the app has closed the views there were. */
+const suspended = new Map<number, { count: number; closed: Promise<void> }>();
+const suspensionListeners = new Set<() => void>();
 /** The feeds a refresh paints, and the picture size the last one left the
  * painters' canvas at. */
 const due: Feed[] = [];
@@ -215,12 +226,17 @@ function packet(body: unknown): ArrayBuffer {
 /** Up to the next even number; arithmetic's last digits do not count. */
 const even = (pixels: number) => 2 * Math.ceil(pixels / 2 - 1e-6);
 
-/** A command whose failure changes nothing here: the view is gone anyway. */
-function tell(command: string, args: Record<string, unknown>): void {
+/** A command whose failure changes nothing here: the view is gone anyway.
+ * Resolves when the app has answered, whatever it said. */
+function tell(command: string, args: Record<string, unknown>): Promise<void> {
   try {
-    void invokeNative(command, args).catch(() => undefined);
+    return invokeNative(command, args).then(
+      () => undefined,
+      () => undefined,
+    );
   } catch {
     // No app around the page any more.
+    return Promise.resolve();
   }
 }
 
@@ -238,6 +254,10 @@ class Feed {
   /** `open` from the app's answer on; `closed` is final. */
   private state: "new" | "opening" | "open" | "closed" = "new";
   private view: number | null = null;
+  /** The app's answer to `media_view_open`: the view, or null without one. */
+  private opened: Promise<number | null> | null = null;
+  /** From `close` on: settles when the app has no view of this feed left. */
+  private ended: Promise<void> | null = null;
   private inFlight = false;
   private latest: Frame | null = null;
   /** `latest` is not on the canvases yet. */
@@ -263,6 +283,11 @@ class Feed {
     return this.state !== "closed";
   }
 
+  /** Whether this is the feed of that consumer's stream. */
+  shows(consumer: number): boolean {
+    return "consumer" in this.target && this.target.consumer === consumer;
+  }
+
   attach(canvas: HTMLCanvasElement, onFrame: () => void): void {
     clearTimeout(this.linger);
     const entry: Canvas = {
@@ -272,7 +297,7 @@ class Feed {
       painted: false,
     };
     this.canvases.push(entry);
-    if (this.state === "new") void this.open();
+    if (this.state === "new") this.opened = this.open();
     // A canvas that joins a running feed starts with its current picture.
     if (this.latest && this.painter.load(this.latest)) this.show(entry);
     this.resize();
@@ -286,10 +311,11 @@ class Feed {
     if (this.state === "closed") return;
     if (this.canvases.length > 0) return this.resize();
     clearTimeout(this.linger);
-    this.linger = setTimeout(() => this.close(), LINGER_MS);
+    this.linger = setTimeout(() => void this.close(), LINGER_MS);
   }
 
-  private async open(): Promise<void> {
+  /** Resolves with the view the app opened, or with null when it gave none. */
+  private async open(): Promise<number | null> {
     this.state = "opening";
     const request = this.request();
     let view: number;
@@ -302,15 +328,18 @@ class Feed {
       // A track that ended in the meantime has nothing to show.
       if (this.live && this.track.readyState === "live")
         console.warn("[gelabber] in-app video: no view", error);
-      return this.close();
+      void this.close();
+      return null;
     }
-    // Every canvas left while the app was opening the view.
-    if (!this.live) return tell("media_view_close", { view });
+    // The feed ended while the app was opening the view: `close` waits for
+    // this answer and closes it.
+    if (!this.live) return view;
     this.state = "open";
     this.view = view;
     this.reported = request;
     this.configure();
     this.pull();
+    return view;
   }
 
   /** Asks for the next frame, unless a request is out or nothing would
@@ -337,7 +366,7 @@ class Feed {
       () => {
         // The view is gone: its consumer or source was freed.
         this.inFlight = false;
-        this.close();
+        void this.close();
       },
     );
   }
@@ -349,7 +378,8 @@ class Feed {
       frame = parsePacket(packet(body));
     } catch (error) {
       console.warn("[gelabber] in-app video: bad frame", error);
-      return this.close();
+      void this.close();
+      return;
     }
     const previous = this.latest;
     this.latest = frame;
@@ -492,7 +522,7 @@ class Feed {
     )
       return;
     this.reported = request;
-    tell("media_view_configure", { view: this.view, ...request });
+    void tell("media_view_configure", { view: this.view, ...request });
   }
 
   /** Height of the picture the page shows, in physical pixels: the measure
@@ -514,8 +544,10 @@ class Feed {
     return limit === null ? height : Math.min(height, LIMITED.maxHeight);
   }
 
-  close(): void {
-    if (!this.live) return;
+  /** Ends the feed. Resolves once the app has closed its view, also one it
+   * was still opening: the app makes no frame for this feed after that. */
+  close(): Promise<void> {
+    if (!this.live) return this.ended ?? Promise.resolve();
     this.state = "closed";
     clearTimeout(this.linger);
     clearTimeout(this.settle);
@@ -529,14 +561,25 @@ class Feed {
     this.painter.dispose();
     // The canvases keep their last picture until the tile lets go of them.
     this.latest = null;
-    if (this.view !== null) tell("media_view_close", { view: this.view });
+    const view = this.view;
     this.view = null;
+    this.ended =
+      view !== null
+        ? tell("media_view_close", { view })
+        : (this.opened ?? Promise.resolve(null)).then((late) =>
+            late === null
+              ? undefined
+              : tell("media_view_close", { view: late }),
+          );
+    return this.ended;
   }
 }
 
 /** Draws `track` on `canvas` until the returned function is called. Several
  * canvases may show one track; the app delivers its frames once. `onFrame`
- * runs when the canvas shows its first picture. */
+ * runs when the canvas shows its first picture. Draws nothing for a consumer
+ * that is suspended: its tiles show something else until it is resumed and
+ * attach a new canvas then (`subscribeNativeVideoSuspensions`). */
 export function attachNativeVideo(
   track: NativeTrack,
   canvas: HTMLCanvasElement,
@@ -544,6 +587,8 @@ export function attachNativeVideo(
 ): () => void {
   const target = nativeVideoTarget(track);
   if (!target || track.readyState !== "live") return () => undefined;
+  if ("consumer" in target && suspended.has(target.consumer))
+    return () => undefined;
   let feed = feeds.get(track.id);
   if (!feed) {
     feed = new Feed(track, target);
@@ -561,16 +606,63 @@ export function nativeCanvasHeight(trackId: string): number {
   return feeds.get(trackId)?.shownHeight() ?? 0;
 }
 
+function suspensionsChanged(): void {
+  for (const listener of [...suspensionListeners]) listener();
+}
+
+/** Takes `consumer`'s video out of the page until `resumeNativeVideo`: its
+ * views close now and none opens meanwhile. Resolves once the app has closed
+ * them, also one it was still opening: whatever the app does with the
+ * consumer after that reaches no view of the page. */
+export function suspendNativeVideo(consumer: number): Promise<void> {
+  const already = suspended.get(consumer);
+  if (already) {
+    already.count++;
+    return already.closed;
+  }
+  const suspension = { count: 1, closed: Promise.resolve() };
+  suspended.set(consumer, suspension);
+  const closing: Promise<void>[] = [];
+  for (const feed of [...feeds.values()])
+    if (feed.shows(consumer)) closing.push(feed.close());
+  suspension.closed = Promise.all(closing).then(() => undefined);
+  suspensionsChanged();
+  return suspension.closed;
+}
+
+/** Ends one `suspendNativeVideo` of `consumer`; after the last one its
+ * tiles may draw it again. */
+export function resumeNativeVideo(consumer: number): void {
+  const suspension = suspended.get(consumer);
+  if (!suspension || --suspension.count > 0) return;
+  suspended.delete(consumer);
+  suspensionsChanged();
+}
+
+/** Whether the page shows no video of `consumer` for now. */
+export function nativeVideoSuspended(consumer: number): boolean {
+  return suspended.has(consumer);
+}
+
+export function subscribeNativeVideoSuspensions(
+  listener: () => void,
+): () => void {
+  suspensionListeners.add(listener);
+  return () => suspensionListeners.delete(listener);
+}
+
 /** Tests: a page of their own (`undefined`: the real one), nothing open.
  * `bytes`: as if a frame had already arrived as bytes. */
 export function resetNativeVideoForTests(
   replacement?: NativeVideoHost,
   bytes = false,
 ): void {
-  for (const feed of [...feeds.values()]) feed.close();
+  for (const feed of [...feeds.values()]) void feed.close();
   host = replacement ?? page;
   limit = null;
   limitListeners.clear();
+  suspended.clear();
+  suspensionListeners.clear();
   carried = bytes;
   left = 0;
 }
