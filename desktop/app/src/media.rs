@@ -990,6 +990,12 @@ pub async fn media_consumer_close(media: State<'_, Media>, consumer: u64) -> Res
 /// benches: `media_view_open` takes it only while this variable is set.
 const TEST_PATTERN_ENV: &str = "GELABBER_VIDEO_TEST_PATTERN";
 
+/// Whether this app was started for tests ([`TEST_PATTERN_ENV`]): only then
+/// may a page open a view of a test pattern.
+fn test_patterns_allowed() -> bool {
+    std::env::var_os(TEST_PATTERN_ENV).is_some()
+}
+
 #[derive(serde::Deserialize)]
 pub struct PatternOptions {
     width: u32,
@@ -1045,8 +1051,8 @@ pub async fn media_view_open(
 ) -> Result<Value> {
     let page = media.page();
     let request = request(max_width, max_height, max_fps)?;
-    let patterns = std::env::var_os(TEST_PATTERN_ENV).is_some();
-    let (origin, tap) = media.view_target(consumer, source, test_pattern, patterns)?;
+    let (origin, tap) =
+        media.view_target(consumer, source, test_pattern, test_patterns_allowed())?;
     let view = open_view(&media, page, origin, request, tap).await?;
     Ok(json!({ "view": view }))
 }
@@ -1566,6 +1572,25 @@ mod tests {
         assert_eq!(
             target(None, Some(987654), None, false),
             Err("unknown source 987654".into())
+        );
+    }
+
+    /// An app started without the variable refuses a test pattern; nothing
+    /// in `cargo test` sets it (smoke.sh and smoke.ps1 do, for the built app).
+    #[test]
+    fn without_the_variable_a_test_pattern_view_is_refused() {
+        assert_eq!(std::env::var_os(TEST_PATTERN_ENV), None);
+        assert!(!test_patterns_allowed());
+        let media = Media::default();
+        let pattern = PatternOptions {
+            width: 640,
+            height: 360,
+            fps: 30,
+        };
+        let target = media.view_target(None, None, Some(pattern), test_patterns_allowed());
+        assert_eq!(
+            target.map(|(origin, _)| origin),
+            Err("a view shows either a consumer or a source".to_string())
         );
     }
 
