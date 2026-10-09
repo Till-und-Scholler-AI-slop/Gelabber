@@ -62,6 +62,26 @@ pub fn validate_like_server(kind: &str, rtp: &RtpParameters) {
     }
 }
 
+/// Where the test's mediasoup listens, given the value of
+/// GELABBER_TEST_LISTEN_IP: 127.0.0.1 unless it names another address of this
+/// machine. libwebrtc gathers no loopback candidate and sends from the
+/// machine's own address. Linux carries that to 127.0.0.1; a system that
+/// keeps the two apart (reported of Windows, whose CI job tries it and sets
+/// the variable) needs the server on the machine's address.
+pub fn listen_ip_from(configured: Option<&str>) -> IpAddr {
+    match configured {
+        Some(ip) if !ip.is_empty() => ip
+            .parse()
+            .unwrap_or_else(|_| panic!("GELABBER_TEST_LISTEN_IP is no IP address: {ip}")),
+        _ => IpAddr::V4(Ipv4Addr::LOCALHOST),
+    }
+}
+
+/// The address for this run, from its environment.
+pub fn listen_ip() -> IpAddr {
+    listen_ip_from(std::env::var("GELABBER_TEST_LISTEN_IP").ok().as_deref())
+}
+
 pub struct Server {
     pub router: Router,
     webrtc: WebRtcServer,
@@ -81,7 +101,7 @@ impl Server {
             .unwrap();
         let listen = ListenInfo {
             protocol: Protocol::Udp,
-            ip: IpAddr::V4(Ipv4Addr::LOCALHOST),
+            ip: listen_ip(),
             announced_address: None,
             expose_internal_ip: false,
             port: None,
