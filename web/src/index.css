@@ -84,6 +84,16 @@ body,
   min-height: 100%;
   background: var(--lr-bg);
 }
+html,
+body {
+  /* Pulling down must neither reload the app, which would drop a call, nor
+     stretch its chrome. */
+  overscroll-behavior-y: none;
+}
+html {
+  /* Quick taps on a control are taps, not a double-tap zoom. */
+  touch-action: manipulation;
+}
 body {
   margin: 0;
   font-family: var(--lr-font);
