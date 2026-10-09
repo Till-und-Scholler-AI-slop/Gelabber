@@ -403,16 +403,27 @@
   background: var(--lr-danger-bg);
   color: #fff;
 }
-.voice-session-row .voice-playback-volume {
-  flex: 1;
-  gap: 8px;
-  min-height: 30px;
-  font-size: 12px;
-}
-.voice-session-row .voice-volume-slider {
-  flex: 1;
+/* Volumes: one grid so labels, sliders and buttons line up. */
+.voice-session-mix {
+  display: grid;
+  grid-template-columns: auto minmax(0, 1fr) 30px;
+  align-items: center;
+  gap: 2px 10px;
   min-width: 0;
-  width: auto;
+  padding: 2px 2px 0 4px;
+}
+.voice-session-mix-row {
+  display: contents;
+}
+.voice-session-mix-row > label {
+  font-size: 12px;
+  color: var(--lr-muted);
+  white-space: nowrap;
+}
+.voice-session-mix-row > .voice-control-compact {
+  width: 30px;
+  height: 30px;
+  min-height: 30px;
 }
 .voice-session-playback {
   display: flex;
