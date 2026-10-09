@@ -12,6 +12,13 @@ const offlinePage = readFileSync(
   new URL("../../public/offline.html", import.meta.url),
   "utf8",
 );
+// Every address the router knows, with its parameters filled in. The worker
+// cannot import the route table and keeps a pattern of its own (APP_PAGE).
+const appPages = [
+  ...readFileSync(new URL("../routes.tsx", import.meta.url), "utf8").matchAll(
+    /\bpath:\s*"([^"]+)"/g,
+  ),
+].map(([, path]) => path.replace(/\$\w+/g, "x1"));
 const origin = "https://gelabber.example";
 // The cache name under which browsers keep their copy of offline.html, and
 // the page it was last raised for. See the test at the end of this file.
@@ -158,6 +165,34 @@ describe("PWA offline worker", () => {
       expect(await w.navigate(path)).toBe(w.entries.get("/offline.html"));
     }
     expect(w.add).toHaveBeenCalledOnce();
+  });
+
+  // A page the pattern in sw.js leaves out gets the browser's error page when
+  // the connection is gone, and a notification tap cannot lead to it.
+  it("knows every route of the app as an app page", async () => {
+    // Fails first if routes.tsx no longer spells its paths this way.
+    expect(appPages).toEqual(
+      expect.arrayContaining([
+        "/",
+        "/login",
+        "/register",
+        "/profile",
+        "/settings",
+        "/invite/x1",
+        "/s/x1/c/x1",
+        "/d/x1",
+      ]),
+    );
+    const w = worker();
+    await w.lifecycle("install");
+    w.fetch.mockRejectedValue(new TypeError("offline"));
+    for (const path of appPages) {
+      expect(await w.navigate(path), `offline at ${path}`).toBe(
+        w.entries.get("/offline.html"),
+      );
+      await w.tap({ path, user: "user-1" });
+      expect(w.openWindow, `tap to ${path}`).toHaveBeenLastCalledWith(path);
+    }
   });
 
   it("never substitutes HTML for API, media, uploads or static resources", async () => {

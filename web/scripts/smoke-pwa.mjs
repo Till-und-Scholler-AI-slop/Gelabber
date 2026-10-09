@@ -1,10 +1,11 @@
 // Production-build smoke against the real nginx: cache headers and a second
 // deployment, real Chromium manifest/SW, emulated mobile UI. Install-dialog
-// events, the gateway, the page going to the background and the notification
-// tap are synthetic (OS installation and system notifications remain device
-// checks).
+// events, the gateway, the access proxy, the page going to the background and
+// the notification tap are synthetic (OS installation and system
+// notifications remain device checks).
 /* global process, URL, window, navigator, caches, document, console, Event,
-   fetch, localStorage, getComputedStyle, self, NotificationEvent, setTimeout */
+   fetch, localStorage, getComputedStyle, self, NotificationEvent, setTimeout,
+   ServiceWorkerRegistration */
 import assert from "node:assert/strict";
 import {
   mkdtemp,
@@ -15,6 +16,7 @@ import {
   utimes,
   writeFile,
 } from "node:fs/promises";
+import { createServer, request as forward } from "node:http";
 import { tmpdir } from "node:os";
 import { join, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
@@ -66,6 +68,11 @@ const GRACE = dm(
   "00000000-0000-4000-8000-0000000000d2",
   "00000000-0000-4000-8000-0000000000a2",
   "Grace",
+);
+const LINUS = dm(
+  "00000000-0000-4000-8000-0000000000d3",
+  "00000000-0000-4000-8000-0000000000a3",
+  "Linus",
 );
 
 async function contextFor(
@@ -163,8 +170,7 @@ const get = (path, headers = {}) =>
   });
 
 async function serving() {
-  const shell = await get("/");
-  const html = await shell.text();
+  const html = await (await get("/")).text();
   for (const path of [
     "/",
     "/login",
@@ -177,16 +183,12 @@ async function serving() {
     assert.match(response.headers.get("content-type"), /text\/html/, path);
     assert.equal(
       response.headers.get("cache-control"),
-      "no-cache",
-      `${path}: the app shell must be revalidated on every load`,
+      "no-store",
+      `${path}: no browser may keep the app shell`,
     );
     assert.equal(response.headers.get("content-encoding"), "gzip", path);
     assert.equal(await response.text(), html, path);
   }
-  const unchanged = await get("/login", {
-    "if-none-match": shell.headers.get("etag"),
-  });
-  assert.equal(unchanged.status, 304, "revalidation must be a cheap 304");
 
   const assets = [...html.matchAll(/(?:src|href)="(\/assets\/[^"]+)"/g)].map(
     (match) => match[1],
@@ -260,8 +262,13 @@ async function serving() {
     /<meta\s+name="viewport"\s+content="[^"]*viewport-fit=cover[^"]*"/,
     "safe-area insets need viewport-fit=cover",
   );
+  assert.match(
+    html,
+    /<link\s+rel="manifest"[^>]*\scrossorigin="use-credentials"/,
+    "the built shell must ask for the manifest with cookies",
+  );
   console.log(
-    "PASS: app shell revalidated (no-cache, 304), hashed assets immutable and gzip, missing files 404, small favicon",
+    "PASS: app shell never stored (no-store), hashed assets immutable and gzip, missing files 404, small favicon",
   );
 }
 
@@ -383,6 +390,78 @@ async function androidInstallAndOffline() {
     "PASS: production manifest/icons, real service worker, Android install-event UI, offline deep link kept on retry, automatic reload when back online",
   );
   await android.close();
+}
+
+// Behind an access proxy that lets nothing through without its cookie
+// (Authelia, oauth2-proxy, Cloudflare Access). A browser asks for a manifest
+// without cookies unless the link says `use-credentials`. The proxy then
+// answers with its own login, the browser has no manifest and never offers
+// installation. The stand-in sends a visitor without its cookie through a
+// sign-in address and passes every request that carries the cookie on to the
+// server under test.
+async function manifestBehindAccessProxy() {
+  const refused = [];
+  const proxy = createServer((request, response) => {
+    if (request.url === "/access") {
+      response.writeHead(302, {
+        "set-cookie": "access=granted; Path=/; HttpOnly; SameSite=Lax",
+        location: "/login",
+      });
+      response.end();
+      return;
+    }
+    if (!/(?:^|;\s*)access=granted(?:;|$)/.test(request.headers.cookie ?? "")) {
+      refused.push(request.url);
+      response.writeHead(302, { location: "/access" });
+      response.end();
+      return;
+    }
+    request.pipe(
+      forward(
+        new URL(request.url, origin),
+        { method: request.method, headers: request.headers },
+        (answer) => {
+          response.writeHead(answer.statusCode, answer.headers);
+          answer.pipe(response);
+        },
+      ),
+    );
+  });
+  await new Promise((resolve) => proxy.listen(0, "127.0.0.1", resolve));
+  const context = await contextFor(devices["Pixel 7"]);
+  try {
+    const page = await context.newPage();
+    await page.goto(`http://127.0.0.1:${proxy.address().port}/login`);
+    await installHeading(page).waitFor();
+    await controlled(page);
+    const cdp = await context.newCDPSession(page);
+    const manifest = await cdp.send("Page.getAppManifest");
+    assert.deepEqual(manifest.errors, []);
+    assert.equal(
+      manifest.data ? JSON.parse(manifest.data).id : undefined,
+      "/",
+      "the browser must get the manifest through the access proxy",
+    );
+    const installability = await cdp.send("Page.getInstallabilityErrors");
+    assert.deepEqual(
+      installability.installabilityErrors.filter(
+        (error) => error.errorId !== "in-incognito",
+      ),
+      [],
+    );
+    assert.deepEqual(
+      refused,
+      ["/login"],
+      "after the first visit every request must carry the proxy's cookie",
+    );
+  } finally {
+    await context.close();
+    proxy.close();
+    proxy.closeAllConnections();
+  }
+  console.log(
+    "PASS: manifest and installability behind an access proxy that requires its cookie on every path",
+  );
 }
 
 async function installPanelPlacement() {
@@ -589,9 +668,11 @@ async function gatewayFor(context) {
         () => conversations.every((row) => subscribed.has(row.id)),
         "the app did not subscribe to its conversations",
       ),
+    /** Delivers a message to every window and returns its id. */
     message(conversation, content) {
       const n = (heads.get(conversation.id) ?? 0) + 1;
       heads.set(conversation.id, n);
+      const id = `00000000-0000-4000-8000-${String(n).padStart(8, "0")}${conversation.id.slice(-4)}`;
       const frame = JSON.stringify({
         op: "e",
         t: "c",
@@ -599,7 +680,7 @@ async function gatewayFor(context) {
         c: conversation.id,
         n,
         d: {
-          id: `00000000-0000-4000-8000-${String(n).padStart(8, "0")}${conversation.id.slice(-4)}`,
+          id,
           channel_id: conversation.id,
           author: conversation.peer,
           content,
@@ -609,6 +690,7 @@ async function gatewayFor(context) {
         },
       });
       for (const socket of sockets) socket.send(frame);
+      return id;
     },
   };
 }
@@ -620,7 +702,7 @@ async function gatewayFor(context) {
 async function messageNotifications() {
   const context = await contextFor(devices["Pixel 7"], {
     authenticated: true,
-    dms: [ADA, GRACE],
+    dms: [ADA, GRACE, LINUS],
   });
   await context.grantPermissions(["notifications"], { origin: origin.origin });
   const gateway = await gatewayFor(context);
@@ -639,6 +721,13 @@ async function messageNotifications() {
       hidden = value;
       document.dispatchEvent(new Event("visibilitychange"));
     };
+    // How often this window asks the browser for a notification.
+    window.pwaAsked = 0;
+    const show = ServiceWorkerRegistration.prototype.showNotification;
+    ServiceWorkerRegistration.prototype.showNotification = function (...args) {
+      window.pwaAsked++;
+      return show.apply(this, args);
+    };
   });
   const errors = [];
   const page = await context.newPage();
@@ -646,14 +735,30 @@ async function messageNotifications() {
   await page.goto(url(`/d/${ADA.id}`));
   await page.getByTestId("message-pane").waitFor();
   await controlled(page);
-  await gateway.subscribed(ADA, GRACE);
+  await gateway.subscribed(ADA, GRACE, LINUS);
+  // A notification that one window shows while another one lists them can be
+  // missing from every later list (Chromium 153: 95 of 150 tries, none with
+  // both under one lock). The app's windows show and list under a lock of
+  // their own; the test lists under the same one, or its looking now and then
+  // loses the notification it is waiting for.
   const shown = () =>
-    page.evaluate(async () => {
+    page.evaluate(async (lock) => {
       const registration = await navigator.serviceWorker.getRegistration();
-      return (await registration.getNotifications())
-        .map(({ title, body, tag, data }) => ({ title, body, tag, data }))
+      return (
+        await navigator.locks.request(lock, () =>
+          registration.getNotifications(),
+        )
+      )
+        .map(({ title, body, tag, data, silent, renotify }) => ({
+          title,
+          body,
+          tag,
+          data,
+          silent,
+          renotify,
+        }))
         .sort((a, b) => a.tag.localeCompare(b.tag));
-    });
+    }, `gelabber:notifications:${USER}`);
   const tags = async () =>
     (await shown()).map((notification) => notification.tag);
   const left = (count) =>
@@ -668,22 +773,30 @@ async function messageNotifications() {
   await page.waitForTimeout(500);
   assert.deepEqual(await shown(), []);
 
+  // On a phone (this is one, by its user agent) the notification sounds and
+  // vibrates as the device is set, and again for a later message of the
+  // conversation: nothing else tells of a message while the app is not in
+  // front.
   await page.evaluate(() => window.pwaBackground(true));
-  gateway.message(ADA, "Hallo");
-  gateway.message(GRACE, "Noch da?");
+  const hallo = gateway.message(ADA, "Hallo");
+  const nochDa = gateway.message(GRACE, "Noch da?");
   await left(2);
   assert.deepEqual(await shown(), [
     {
       title: "Ada · Ada",
       body: "Hallo",
       tag: `gelabber:${USER}:${ADA.id}`,
-      data: { path: `/d/${ADA.id}`, user: USER },
+      data: { path: `/d/${ADA.id}`, user: USER, message: hallo },
+      silent: false,
+      renotify: true,
     },
     {
       title: "Grace · Grace",
       body: "Noch da?",
       tag: `gelabber:${USER}:${GRACE.id}`,
-      data: { path: `/d/${GRACE.id}`, user: USER },
+      data: { path: `/d/${GRACE.id}`, user: USER, message: nochDa },
+      silent: false,
+      renotify: true,
     },
   ]);
 
@@ -714,6 +827,68 @@ async function messageNotifications() {
   await page.waitForTimeout(500);
   assert.deepEqual(await tags(), [`gelabber:${USER}:${GRACE.id}`]);
 
+  // Two windows of the app, as with the browser tab that stays behind after
+  // installing. The one in front shows Ada's conversation, the one in the
+  // background hears the same messages and decides from its own visibility.
+  // (A toast in the second window first: it is connected and listening.)
+  gateway.message(GRACE, "Hörst du mich?");
+  await second.getByText("Hörst du mich?").first().waitFor();
+  await second.evaluate(() => window.pwaBackground(true));
+  const read = Date.now();
+  gateway.message(ADA, "Liest du das gerade?");
+  await page.getByText("Liest du das gerade?").first().waitFor();
+  // What it does about Grace's message comes after what it did about Ada's.
+  gateway.message(GRACE, "Und du?");
+  await until(
+    async () => (await shown()).some(({ body }) => body === "Und du?"),
+    "a window in the background must still notify about other conversations",
+  );
+  assert.deepEqual(
+    await tags(),
+    [`gelabber:${USER}:${GRACE.id}`],
+    "a conversation that is on screen in another window must not raise a notification",
+  );
+
+  // The window in front moves on to Grace. Ada's next message is on nobody's
+  // screen, and the window behind, which kept quiet about her a moment ago,
+  // must not make her wait out its pause between two notifications for that.
+  await page.evaluate(
+    (path) => window.history.pushState({}, "", path),
+    `/d/${GRACE.id}`,
+  );
+  await left(0);
+  const intoThePause = Date.now() - read < 5000;
+  const next = gateway.message(ADA, "Und jetzt?");
+  await until(
+    async () => (await shown()).some(({ data }) => data.message === next),
+    "a message that was read in another window must not hold back the next notification",
+  );
+  if (!intoThePause)
+    console.log(
+      "NOTE: too slow to tell whether a message read in another window holds back the next notification (the pause of five seconds was over)",
+    );
+
+  // Both windows in the background, as with the phone in a pocket. Each of
+  // them hears Linus, and the phone must sound once.
+  const asked = async () =>
+    (await page.evaluate(() => window.pwaAsked)) +
+    (await second.evaluate(() => window.pwaAsked));
+  const askedBefore = await asked();
+  await page.evaluate(() => window.pwaBackground(true));
+  const linus = gateway.message(LINUS, "Zwei Fenster");
+  await until(
+    async () => (await shown()).some(({ data }) => data.message === linus),
+    "two windows in the background must still announce a message",
+  );
+  await page.waitForTimeout(500);
+  assert.equal(
+    (await asked()) - askedBefore,
+    1,
+    "two windows in the background must announce a message once",
+  );
+  await page.evaluate(() => window.pwaBackground(false));
+  await second.evaluate(() => window.pwaBackground(false));
+
   // Signing out in any window takes the account's notifications along.
   await signOut.click();
   await second
@@ -723,7 +898,7 @@ async function messageNotifications() {
   assert.deepEqual(errors, []);
   await context.close();
   console.log(
-    "PASS: gateway message in the background becomes a notification through the worker; a starting window keeps them, the conversation on screen and a sign-out withdraw them (scripted gateway and visibility)",
+    "PASS: gateway message in the background becomes an audible notification through the worker; a starting window keeps them, the conversation on screen and a sign-out withdraw them; a window in the background stays quiet about what another one shows and speaks up once that one has moved on, two of them announce a message once (scripted gateway and visibility)",
   );
 }
 
@@ -745,11 +920,11 @@ async function notificationTap() {
         const registration = await navigator.serviceWorker.getRegistration();
         await registration.showNotification("Ada · DM", {
           body: "Hallo",
-          silent: true,
+          silent: false,
           tag: `gelabber:${user}:${conversation}`,
-          renotify: false,
+          renotify: true,
           icon: "/icons/icon-192.png",
-          data: { path: `/d/${conversation}`, user },
+          data: { path: `/d/${conversation}`, user, message: "message-1" },
         });
         return (await registration.getNotifications()).map(
           (notification) => notification.tag,
@@ -806,11 +981,18 @@ async function notificationTap() {
   );
 }
 
-// The installed app after a server upgrade. A real browser profile with its
-// HTTP cache and no request routing (routing would switch the cache off).
-// The first build's shell is given an old date, as on a server that has been
-// running for weeks: without `Cache-Control: no-cache` a browser then treats
-// it as fresh for days and never asks for the new one.
+// The app after a server upgrade. A real browser profile with its HTTP cache
+// and no request routing (routing would switch the cache off). The first
+// build's shell is given an old date, as on a server that has been running
+// for weeks: a browser that is allowed to keep it then treats it as fresh for
+// days and never asks for the new one.
+//
+// Going back to the app stands for every load that takes a stored copy
+// without asking the server, whatever its age: Chromium loads a tab restored
+// at browser start and a discarded tab coming back the same way. Under
+// `no-cache` this step starts the old client. (Playwright runs Chromium
+// without the back/forward cache, so going back builds the document anew
+// instead of reviving the page that was left.)
 async function secondDeployment() {
   const indexFile = join(dist, "index.html");
   const html = await readFile(indexFile, "utf8");
@@ -834,27 +1016,49 @@ async function secondDeployment() {
     page.waitForFunction(
       () => document.getElementById("root").childElementCount > 0,
     );
+  const failures = [];
+  const watched = (page) => {
+    page.on("console", (message) => {
+      if (message.type() === "error") failures.push(message.text());
+    });
+    return page;
+  };
+  // Another site, to leave the app for and come back from.
+  const elsewhere = createServer((_request, response) => {
+    response.writeHead(200, {
+      "content-type": "text/html",
+      "cache-control": "no-store",
+    });
+    response.end("<!doctype html><title>Elsewhere</title>");
+  });
+  await new Promise((resolve) => elsewhere.listen(0, "127.0.0.1", resolve));
   let context;
   try {
     await utimes(indexFile, weeksAgo, weeksAgo);
     context = await chromium.launchPersistentContext(profile, launch);
-    let page = await context.newPage();
+    let page = watched(await context.newPage());
     await page.goto(url("/login"));
     await started(page);
     await controlled(page);
     assert.equal(await entryOf(page), `/assets/${entry}`);
-    await context.close();
+    await page.goto(`http://127.0.0.1:${elsewhere.address().port}/`);
 
     // Deploy: same code under a new hashed name, the old file is gone.
     await rename(join(dist, "assets", entry), join(dist, "assets", nextEntry));
     await writeFile(indexFile, html.replace(entry, nextEntry));
 
+    await page.goBack();
+    assert.equal(page.url(), url("/login"));
+    assert.equal(
+      await entryOf(page),
+      `/assets/${nextEntry}`,
+      "going back to the app after a deployment must load the new shell, not a copy the browser kept",
+    );
+    await started(page);
+    await context.close();
+
     context = await chromium.launchPersistentContext(profile, launch);
-    page = await context.newPage();
-    const failures = [];
-    page.on("console", (message) => {
-      if (message.type() === "error") failures.push(message.text());
-    });
+    page = watched(await context.newPage());
     await page.goto(url("/login"));
     assert.equal(
       await entryOf(page),
@@ -873,6 +1077,8 @@ async function secondDeployment() {
     assert.equal((await get(`/assets/${entry}`)).status, 404);
   } finally {
     await context?.close().catch(() => {});
+    elsewhere.close();
+    elsewhere.closeAllConnections();
     await rename(
       join(dist, "assets", nextEntry),
       join(dist, "assets", entry),
@@ -882,13 +1088,14 @@ async function secondDeployment() {
     await rm(profile, { recursive: true, force: true });
   }
   console.log(
-    "PASS: second deployment with new asset names is loaded on the next launch and after reload; removed chunk is a 404",
+    "PASS: second deployment with new asset names is loaded when going back to the app, on the next launch and after reload; removed chunk is a 404",
   );
 }
 
 try {
   await serving();
   await androidInstallAndOffline();
+  await manifestBehindAccessProxy();
   await installPanelPlacement();
   await themeColour();
   await messageNotifications();

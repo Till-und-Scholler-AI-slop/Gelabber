@@ -9,7 +9,13 @@
     <meta name="apple-mobile-web-app-capable" content="yes" />
     <meta name="apple-mobile-web-app-title" content="Gelabber" />
     <meta name="apple-mobile-web-app-status-bar-style" content="default" />
-    <link rel="manifest" href="/manifest.webmanifest" />
+    <!-- use-credentials: without it a browser asks for the manifest without
+         cookies, and an access proxy in front answers with its login page. -->
+    <link
+      rel="manifest"
+      href="/manifest.webmanifest"
+      crossorigin="use-credentials"
+    />
     <link
       rel="apple-touch-icon"
       sizes="180x180"

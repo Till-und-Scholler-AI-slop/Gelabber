@@ -5,6 +5,7 @@
 // shows it directly, as it always did. Either way this only works while the
 // page is alive; delivery to a closed app would need Web Push.
 import { isConversationPath } from "../messages/notify.ts";
+import { useInstallation } from "./install.ts";
 import { activeServiceWorker } from "./register.ts";
 
 /** Posted by sw.js to the window it brought forward after a tap. */
@@ -15,6 +16,8 @@ export type MessageNotification = {
   body: string;
   /** Conversation it is about. A newer one replaces the older. */
   channelId: string;
+  /** The message itself. Every window hears it; only one may announce it. */
+  messageId: string;
   /** Where a tap leads; see `conversationPath` in messages/notify.ts. */
   path: string;
   /** Account it is shown for. A tap after an account change goes nowhere. */
@@ -28,7 +31,7 @@ type Options = {
   tag: string;
   renotify: boolean;
   icon?: string;
-  data?: { path: string; user: string };
+  data?: { path: string; user: string; message: string };
 };
 type NotificationApi = {
   permission: string;
@@ -38,7 +41,9 @@ type NotificationApi = {
 // (lib.dom no longer lists `renotify`).
 type Registration = {
   showNotification(title: string, options: Options): Promise<void>;
-  getNotifications(): Promise<{ tag: string; close(): void }[]>;
+  getNotifications(filter?: {
+    tag: string;
+  }): Promise<{ tag: string; data?: unknown; close(): void }[]>;
 };
 
 // One notification per account and conversation. Without a conversation this
@@ -46,51 +51,149 @@ type Registration = {
 const tagOf = (user: string, channelId = "") => `gelabber:${user}:${channelId}`;
 const shownByPage = new Map<string, PageNotification>();
 
+// Every window of the app hears the same messages, and each decides from its
+// own visibility. Two Web Locks keep the windows of one account in step; the
+// lock manager is shared by all windows of the origin and lets go of the locks
+// of a window that closes or crashes.
+//  - A visible window holds the first one, shared, for the conversation it
+//    shows. A window in the background that finds it held shows nothing.
+//  - The second is held, alone, for the moment a window shows, lists or
+//    closes notifications of the account. A window coming back on screen
+//    therefore closes what another one was about to show, instead of missing
+//    it. And Chromium loses a notification that one window shows while
+//    another one lists them: it is gone from every later list.
+const viewingLock = (user: string, channelId: string) =>
+  `gelabber:viewing:${user}:${channelId}`;
+const changeLock = (user: string) => `gelabber:notifications:${user}`;
+const lockManager = (): LockManager | undefined =>
+  typeof navigator === "undefined" ? undefined : navigator.locks;
+// Viewing locks this window has let go of. The lock manager may still list
+// them for a moment.
+let letGo: Promise<unknown> = Promise.resolve();
+// How long one change may keep the other windows waiting. A browser call that
+// never answers must not stop every window's notifications for good.
+const CHANGE_HOLD_MS = 5_000;
+
+/** Run `change` while no other window shows or closes this account's notifications. */
+async function alone<T>(user: string, change: () => Promise<T>): Promise<T> {
+  const locks = lockManager();
+  if (!locks) return change();
+  let changing: Promise<T> | undefined;
+  try {
+    await locks.request(changeLock(user), () => {
+      const work = (changing = change());
+      return new Promise<void>((through) => {
+        const limit = setTimeout(through, CHANGE_HOLD_MS);
+        const done = () => {
+          clearTimeout(limit);
+          through();
+        };
+        work.then(done, done);
+      });
+    });
+  } catch {
+    // The lock manager refused (blocked storage, for one). That must not
+    // cost the notification.
+  }
+  return changing ?? change();
+}
+
+/** Whether a visible window of the app shows this conversation right now. */
+async function onScreen(user: string, channelId: string): Promise<boolean> {
+  const locks = lockManager();
+  if (!locks) return false;
+  try {
+    await letGo;
+    const name = viewingLock(user, channelId);
+    const { held = [] } = await locks.query();
+    return held.some((lock) => lock.name === name);
+  } catch {
+    return false;
+  }
+}
+
+/** Whether a window of the app has already put this message on screen. */
+async function announced(
+  registration: Registration,
+  tag: string,
+  messageId: string,
+): Promise<boolean> {
+  try {
+    return (await registration.getNotifications({ tag })).some(
+      (shown) =>
+        (shown.data as { message?: unknown } | null | undefined)?.message ===
+        messageId,
+    );
+  } catch {
+    return false;
+  }
+}
+
 /**
- * Show one notification. The caller has already decided that it is wanted;
- * permission is only ever requested from a button, never from here.
+ * Show one notification, unless a visible window of the app shows that
+ * conversation or another window has already shown this message. Apart from
+ * that the caller has decided that it is wanted; permission is only ever
+ * requested from a button, never from here.
  * `onClick` runs for a notification the page created itself. A tap on one the
  * worker showed arrives through `followNotificationTaps`.
+ * The result names who showed it: the worker, the page, nobody because the
+ * conversation is `viewed` in a visible window, or nobody for another reason.
+ *
+ * On a phone the notification is all there is to notice a message by: it
+ * sounds and vibrates as the device is set, and again for each later message
+ * of the conversation (the caller spaces those out). On a desktop it stays
+ * silent, as it always was.
  */
 export async function showMessageNotification(
   message: MessageNotification,
   onClick: () => void,
-): Promise<"worker" | "page" | "none"> {
+): Promise<"worker" | "page" | "viewed" | "none"> {
   const api = (globalThis as { Notification?: NotificationApi }).Notification;
   if (!api || api.permission !== "granted") return "none";
-  const tag = tagOf(message.user, message.channelId);
-  const options: Options = {
-    body: message.body,
-    silent: true,
-    tag,
-    renotify: false,
-  };
-  const registration: Registration | undefined = await activeServiceWorker();
-  if (registration) {
-    try {
-      await registration.showNotification(message.title, {
-        ...options,
-        icon: "/icons/icon-192.png",
-        data: { path: message.path, user: message.user },
-      });
-      return "worker";
-    } catch {
-      // A desktop browser can still show it from the page.
-    }
-  }
-  try {
-    shownByPage.get(tag)?.close();
-    const notification = new api(message.title, options);
-    shownByPage.set(tag, notification);
-    notification.onclick = () => {
-      notification.close();
-      onClick();
+  return alone(message.user, async () => {
+    if (await onScreen(message.user, message.channelId)) return "viewed";
+    const tag = tagOf(message.user, message.channelId);
+    const phone = useInstallation.getState().mobile;
+    const options: Options = {
+      body: message.body,
+      silent: !phone,
+      tag,
+      // Without it a newer message replaces the older one unnoticed.
+      renotify: phone,
     };
-    return "page";
-  } catch {
-    // Permission revoked mid-flight, or a phone without an active worker.
-    return "none";
-  }
+    const registration: Registration | undefined = await activeServiceWorker();
+    if (registration) {
+      // Showing it a second time would sound a second time.
+      if (await announced(registration, tag, message.messageId)) return "none";
+      try {
+        await registration.showNotification(message.title, {
+          ...options,
+          icon: "/icons/icon-192.png",
+          data: {
+            path: message.path,
+            user: message.user,
+            message: message.messageId,
+          },
+        });
+        return "worker";
+      } catch {
+        // A desktop browser can still show it from the page.
+      }
+    }
+    try {
+      shownByPage.get(tag)?.close();
+      const notification = new api(message.title, options);
+      shownByPage.set(tag, notification);
+      notification.onclick = () => {
+        notification.close();
+        onClick();
+      };
+      return "page";
+    } catch {
+      // Permission revoked mid-flight, or a phone without an active worker.
+      return "none";
+    }
+  }).catch(() => "none" as const);
 }
 
 /**
@@ -103,7 +206,7 @@ export async function showMessageNotification(
 export function closeMessageNotifications(of: {
   user: string;
   channelId?: string;
-}): void {
+}): Promise<void> {
   const tag = tagOf(of.user, of.channelId);
   const meant = (shown: string) =>
     of.channelId === undefined ? shown.startsWith(tag) : shown === tag;
@@ -112,23 +215,56 @@ export function closeMessageNotifications(of: {
     notification.close();
     shownByPage.delete(shown);
   }
-  void activeServiceWorker()
-    .then(async (registration: Registration | undefined) => {
-      for (const shown of (await registration?.getNotifications()) ?? [])
-        if (meant(shown.tag)) shown.close();
-    })
-    .catch(() => {
-      // Nothing to clean up where the worker cannot list its notifications.
-    });
+  return alone(of.user, async () => {
+    const registration: Registration | undefined = await activeServiceWorker();
+    for (const shown of (await registration?.getNotifications()) ?? [])
+      if (meant(shown.tag)) shown.close();
+  }).catch(() => {
+    // Nothing to clean up where the worker cannot list its notifications.
+  });
 }
 
 /**
- * A conversation that is on screen no longer needs its notification: it was
- * only shown because the page was hidden. Withdraws it now if the page is
- * visible, and whenever the page becomes visible with that conversation open
- * (a phone user coming back through the app switcher instead of the tap).
+ * This window shows the conversation, until the returned function is called.
+ * Its notification goes, and no window of the app raises a new one.
  */
-export function withdrawWhileViewing(
+function viewing(user: string, channelId: string): () => void {
+  const withdraw = () => void closeMessageNotifications({ user, channelId });
+  const locks = lockManager();
+  if (!locks) {
+    withdraw();
+    return () => {};
+  }
+  let left = false;
+  let leave = () => {};
+  const until = new Promise<void>((resolve) => {
+    leave = resolve;
+  });
+  const released = locks
+    .request(viewingLock(user, channelId), { mode: "shared" }, () => {
+      // Held from here on. A window that shows a notification after this
+      // finds the lock; what one showed before this is taken away now.
+      if (!left) withdraw();
+      return until;
+    })
+    .catch(() => {
+      if (!left) withdraw();
+    });
+  return () => {
+    left = true;
+    leave();
+    letGo = Promise.all([letGo, released]);
+  };
+}
+
+/**
+ * A conversation that is on screen needs no notification. While the page is
+ * visible its notification is withdrawn and the other windows of the app are
+ * kept from raising one; both again whenever the page becomes visible with
+ * that conversation open (a phone user coming back through the app switcher
+ * instead of the tap).
+ */
+export function silenceWhileViewing(
   user: string,
   channelId: string,
   page: Pick<
@@ -136,12 +272,19 @@ export function withdrawWhileViewing(
     "hidden" | "addEventListener" | "removeEventListener"
   > = document,
 ): () => void {
+  let leave: (() => void) | undefined;
   const seen = () => {
-    if (!page.hidden) closeMessageNotifications({ user, channelId });
+    if (page.hidden) {
+      leave?.();
+      leave = undefined;
+    } else leave ??= viewing(user, channelId);
   };
   seen();
   page.addEventListener("visibilitychange", seen);
-  return () => page.removeEventListener("visibilitychange", seen);
+  return () => {
+    page.removeEventListener("visibilitychange", seen);
+    leave?.();
+  };
 }
 
 /**

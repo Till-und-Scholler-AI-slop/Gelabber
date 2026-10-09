@@ -228,6 +228,118 @@ async fn default_port_in_host_is_the_same_origin(pool: PgPool) {
     }
 }
 
+/// A gateway of a deployment behind TLS: `API_COOKIE_SECURE=true`.
+async fn serve_behind_tls(pool: PgPool) -> std::net::SocketAddr {
+    let mut state = common::ws_state(pool);
+    state.cookie_secure = true;
+    let listener = tokio::net::TcpListener::bind("127.0.0.1:0")
+        .await
+        .expect("bind test listener");
+    let addr = listener.local_addr().expect("local addr");
+    let router = gelabber_api::app(state.clone());
+    tokio::spawn(async move {
+        axum::serve(listener, router).await.expect("serve");
+    });
+    state
+        .gateway
+        .wait_ready(Duration::from_secs(2))
+        .await
+        .expect("redis pub/sub");
+    addr
+}
+
+/// Behind TLS the app has no `http://` pages. One under the same host name
+/// was served by someone else and gets no socket, even with a valid session
+/// cookie: Firefox sends that cookie along with such a page's handshake.
+#[sqlx::test]
+async fn http_page_of_the_same_host_is_rejected_behind_tls(pool: PgPool) {
+    let (owner, _) = two_users(pool.clone()).await;
+    let cookie = session_cookie(&owner);
+    let addr = serve_behind_tls(pool).await;
+    let upgrade = |origin: &str, host: &str| {
+        let mut request = format!("ws://{addr}/ws").into_client_request().unwrap();
+        let headers = request.headers_mut();
+        headers.insert(COOKIE, format!("{SESSION}={cookie}").parse().unwrap());
+        headers.insert(ORIGIN, origin.parse().unwrap());
+        headers.insert(HOST, host.parse().unwrap());
+        tokio_tungstenite::connect_async(request)
+    };
+
+    for (origin, host) in [
+        ("http://gelabber.example", "gelabber.example"),
+        ("http://gelabber.example:8443", "gelabber.example:8443"),
+    ] {
+        let text = upgrade(origin, host)
+            .await
+            .expect_err("an http page of an HTTPS deployment")
+            .to_string();
+        assert!(
+            text.contains("403") || text.contains("Forbidden"),
+            "{origin}: expected 403, got {text}"
+        );
+    }
+
+    for (origin, host) in [
+        ("https://gelabber.example", "gelabber.example"),
+        ("https://gelabber.example:8443", "gelabber.example:8443"),
+        // Browsers keep `Secure` cookies for loopback pages over HTTP.
+        ("http://localhost:8080", "localhost:8080"),
+    ] {
+        let (_ws, response) = upgrade(origin, host)
+            .await
+            .unwrap_or_else(|err| panic!("{origin}: {err}"));
+        assert_eq!(response.status(), StatusCode::SWITCHING_PROTOCOLS);
+    }
+}
+
+/// The status line a handshake written out by hand gets. tungstenite will not
+/// send a header value that is not UTF-8.
+async fn raw_handshake(addr: std::net::SocketAddr, cookie: &str, origin: Option<&[u8]>) -> String {
+    let mut request = format!(
+        "GET /ws HTTP/1.1\r\nHost: {addr}\r\nConnection: Upgrade\r\nUpgrade: websocket\r\n\
+         Sec-WebSocket-Version: 13\r\nSec-WebSocket-Key: dGhlIHNhbXBsZSBub25jZQ==\r\n\
+         Cookie: {SESSION}={cookie}\r\n"
+    )
+    .into_bytes();
+    if let Some(origin) = origin {
+        request.extend_from_slice(b"Origin: ");
+        request.extend_from_slice(origin);
+        request.extend_from_slice(b"\r\n");
+    }
+    request.extend_from_slice(b"\r\n");
+    tokio::task::spawn_blocking(move || {
+        use std::io::{Read, Write};
+        let mut stream = std::net::TcpStream::connect(addr).expect("connect");
+        stream
+            .set_read_timeout(Some(Duration::from_secs(5)))
+            .expect("read timeout");
+        stream.write_all(&request).expect("send handshake");
+        let mut head = [0u8; 12];
+        stream.read_exact(&mut head).expect("status line");
+        String::from_utf8_lossy(&head).into_owned()
+    })
+    .await
+    .expect("handshake task")
+}
+
+/// An `Origin` that is not plain ASCII is present, not missing: it must not
+/// pass as the request of a client that sends none.
+#[sqlx::test]
+async fn origin_that_is_not_ascii_is_rejected(pool: PgPool) {
+    let (owner, _) = two_users(pool.clone()).await;
+    let cookie = session_cookie(&owner);
+    let (addr, _) = common::serve_ws(pool).await;
+
+    assert_eq!(raw_handshake(addr, &cookie, None).await, "HTTP/1.1 101");
+    for origin in [&b"https://evil.example\xff"[..], &b"\xff"[..]] {
+        assert_eq!(
+            raw_handshake(addr, &cookie, Some(origin)).await,
+            "HTTP/1.1 403",
+            "{origin:?}"
+        );
+    }
+}
+
 #[sqlx::test]
 async fn events_only_reach_matching_subscribers(pool: PgPool) {
     let (mut owner, mut member) = two_users(pool.clone()).await;
