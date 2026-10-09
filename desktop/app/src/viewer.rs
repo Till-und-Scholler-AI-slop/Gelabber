@@ -518,15 +518,15 @@ impl App {
         events: Events,
     ) -> Result<(), String> {
         self.close(id);
-        let mut attributes = WindowAttributes::default()
+        let attributes = WindowAttributes::default()
             .with_title(title)
             .with_inner_size(LogicalSize::new(1280.0, 720.0));
         #[cfg(any(target_os = "linux", target_os = "freebsd"))]
-        {
+        let attributes = {
             // Window rules in tiling compositors (Hyprland) match the class.
             use winit::platform::wayland::WindowAttributesExtWayland;
-            attributes = attributes.with_name("gelabber-viewer", "gelabber-viewer");
-        }
+            attributes.with_name("gelabber-viewer", "gelabber-viewer")
+        };
         let window = Arc::new(
             event_loop
                 .create_window(attributes)
