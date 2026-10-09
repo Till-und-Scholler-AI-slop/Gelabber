@@ -178,20 +178,18 @@ jobs:
           key: ${{ needs.libwebrtc-linux.outputs.key }}
           fail-on-cache-miss: true
 
-      # WebKitGTK for the Tauri app; Xvfb for its smoke test; llvm-rc for the
-      # Windows type check (the app's resource file).
+      # WebKitGTK for the Tauri app; Xvfb for its smoke test.
       - name: Build tools
         run: |
           sudo apt-get update
           sudo apt-get install -y --no-install-recommends ninja-build python3-venv \
             libwebkit2gtk-4.1-dev libsoup-3.0-dev librsvg2-dev xvfb xauth \
-            mesa-vulkan-drivers imagemagick gdb llvm
+            mesa-vulkan-drivers imagemagick gdb
 
       - name: Rust toolchain
         uses: dtolnay/rust-toolchain@1.98.1
         with:
           components: rustfmt, clippy
-          targets: x86_64-pc-windows-msvc
 
       # The mediasoup worker (dev-dependency) takes minutes to build.
       - name: Rust cache
@@ -204,20 +202,6 @@ jobs:
 
       - name: Clippy
         run: cargo clippy --manifest-path desktop/Cargo.toml --all-targets -- -D warnings
-
-      # The Windows side of the Rust code, type-checked and linted here within
-      # minutes; the Windows job needs the native build first. Nothing is
-      # linked: an empty directory stands in for the core. The core's tests
-      # stay out, they would build the mediasoup worker once more.
-      - name: Clippy for Windows
-        run: |
-          set -euo pipefail
-          GELABBER_MEDIA_LIB_DIR="$(mktemp -d)"
-          export GELABBER_MEDIA_LIB_DIR
-          cargo clippy --locked --manifest-path desktop/Cargo.toml --target x86_64-pc-windows-msvc \
-            -p gelabber-desktop --all-targets -- -D warnings
-          cargo clippy --locked --manifest-path desktop/Cargo.toml --target x86_64-pc-windows-msvc \
-            -p gelabber-media-core --lib -- -D warnings
 
       # GStreamer and the test desktop (PipeWire, pipewire-pulse,
       # xdg-desktop-portal). x264enc
@@ -359,6 +343,45 @@ jobs:
             cat /tmp/needed.txt
             echo '```'
           } | tee -a "$GITHUB_STEP_SUMMARY"
+
+  # The Windows side of the Rust code, type-checked and linted on Linux within
+  # minutes; core-windows needs the native build first. Nothing is linked and
+  # no libwebrtc package is needed: an empty directory stands in for the
+  # core. The core's tests stay out, they would build the mediasoup worker.
+  # No job waits for this one: an error that only Windows has must not hold
+  # up the Linux app and the pacman repository. No Rust cache either: the
+  # check is short without one (some 280 crates, most of them only type
+  # checked), and the repository's cache space is better left to the
+  # libwebrtc packages and the two builds.
+  rust-windows:
+    name: Rust for Windows (type check on Linux)
+    runs-on: ubuntu-24.04
+    timeout-minutes: 20
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v7
+
+      # llvm-rc compiles the app's resource file.
+      - name: Build tools
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y --no-install-recommends llvm
+
+      - name: Rust toolchain
+        uses: dtolnay/rust-toolchain@1.98.1
+        with:
+          components: clippy
+          targets: x86_64-pc-windows-msvc
+
+      - name: Clippy for Windows
+        run: |
+          set -euo pipefail
+          GELABBER_MEDIA_LIB_DIR="$(mktemp -d)"
+          export GELABBER_MEDIA_LIB_DIR
+          cargo clippy --locked --manifest-path desktop/Cargo.toml --target x86_64-pc-windows-msvc \
+            -p gelabber-desktop --all-targets -- -D warnings
+          cargo clippy --locked --manifest-path desktop/Cargo.toml --target x86_64-pc-windows-msvc \
+            -p gelabber-media-core --lib -- -D warnings
 
   # The same core as a DLL, the app around it and its installer. First the
   # steps that build on each other, up to the app installed, started and
