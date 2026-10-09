@@ -1,6 +1,6 @@
 // The sound of the own screen share or Go Live as the user meets it: the
 // switch next to the share button, the same switch in the settings, and what
-// they say when sound is missing.
+// they and the own tile say when sound is missing.
 
 import { createElement, isValidElement, type ReactNode } from "react";
 import { renderToStaticMarkup } from "react-dom/server";
@@ -20,9 +20,32 @@ vi.mock("./session.ts", () => ({
   toggleGoLive: vi.fn(),
   toggleMute: vi.fn(),
   toggleShare: vi.fn(),
+  joinVoice: vi.fn(),
+  watchLive: vi.fn(),
+  toggleSourceWatch: vi.fn(),
 }));
 vi.mock("../servers/queries.ts", () => ({
   useServer: () => ({ data: { permissions: ["go_live"] } }),
+}));
+vi.mock("../auth/session.ts", () => ({
+  useSession: (select: (state: unknown) => unknown) =>
+    select({ user: { id: "self", name: "Rafi", avatar_url: null } }),
+}));
+vi.mock("./roster.ts", () => ({
+  EMPTY_OCCUPANCY: {},
+  useVoiceRoster: (select: (state: unknown) => unknown) =>
+    select({ byServer: {}, live: {} }),
+  liveOf: () => null,
+}));
+// A tile as its label and what it says about the sound.
+vi.mock("./VoiceTile.tsx", () => ({
+  VoiceTile: ({
+    label,
+    sourceAudioNotice,
+  }: {
+    label: string;
+    sourceAudioNotice?: string;
+  }) => <span data-tile={label}>{sourceAudioNotice}</span>,
 }));
 vi.mock("@tanstack/react-router", () => ({
   Link: ({ children }: { children: ReactNode }) => <a>{children}</a>,
@@ -52,6 +75,8 @@ import {
   type MediaSettings,
 } from "./settings.ts";
 import { MediaSettingsForm } from "./VoiceSettings.tsx";
+import { VoiceRoom } from "./VoiceRoom.tsx";
+import type { ServerDetail } from "../servers/types.ts";
 
 const capture = () => {};
 
@@ -110,6 +135,8 @@ beforeEach(() => {
     sourceSubscriptions: {},
     localScreen: null,
     localLive: null,
+    participants: {},
+    remote: {},
     watching: false,
     playbackBlocked: false,
   } as unknown as VoiceState;
@@ -430,5 +457,81 @@ describe("why a share has no sound", () => {
     });
     expect(session()).not.toContain("nächsten Freigabe");
     expect(form()).not.toContain("nächste Bildschirmfreigabe");
+  });
+});
+
+describe("the own share's tile", () => {
+  const server = {
+    id: "a",
+    role: "member",
+    permissions: ["join_voice", "go_live"],
+    members: [],
+  } as unknown as ServerDetail;
+  /** What the tile with this label says about its sound. */
+  function tile(label: string): string | null {
+    const html = renderToStaticMarkup(
+      <VoiceRoom server={server} channelId="stage" channelName="Stage" />,
+    );
+    return (
+      html.match(new RegExp(`<span data-tile="${label}">(.*?)</span>`))?.[1] ??
+      null
+    );
+  }
+  const SCREEN = "Du \\(du\\) — Bildschirm";
+  const LIVE = "Du \\(du\\) — Live";
+  const running = { id: "capture" } as MediaStream;
+
+  it("browser: a picker gave no sound", async () => {
+    await cases.desktopBrowser();
+    Object.assign(fixture.voice, { sharing: true, localScreen: running });
+    expect(tile(SCREEN)).toBe("");
+    fixture.voice.sourceAudio = { s: "sharing", l: "off" };
+    expect(tile(SCREEN)).toBe("Ton wird geteilt");
+    fixture.voice.sourceAudio = { s: "unavailable", l: "off" };
+    expect(tile(SCREEN)).toBe(
+      "Kein Stream-Ton freigegeben · Video läuft weiter",
+    );
+  });
+
+  it("desktop app: blames no picker for sound the app could not capture", async () => {
+    await cases.linuxApp06();
+    Object.assign(fixture.voice, {
+      sharing: true,
+      localScreen: running,
+      live: true,
+      localLive: running,
+    });
+    fixture.voice.sourceAudio = { s: "unavailable", l: "unavailable" };
+    fixture.voice.sourceAudioNote = {
+      s: { failed: "cannot connect to PipeWire" },
+      l: { failed: "cannot connect to PipeWire" },
+    };
+    for (const label of [SCREEN, LIVE]) {
+      expect(tile(label)).toBe(
+        "Stream-Ton nicht aufgenommen · Video läuft weiter",
+      );
+      expect(tile(label)).not.toContain("freigegeben");
+    }
+    // The reason itself stands next to the controls.
+    expect(session()).toContain("(cannot connect to PipeWire)");
+  });
+
+  it("claims no shared sound while the chosen application is silent", async () => {
+    await cases.linuxApp06();
+    Object.assign(fixture.voice, {
+      sharing: true,
+      localScreen: running,
+      live: true,
+      localLive: running,
+    });
+    fixture.voice.sourceAudio = { s: "sharing", l: "sharing" };
+    expect(tile(SCREEN)).toBe("Ton wird geteilt");
+    fixture.voice.sourceAudioNote = { s: { silent: "spotify" }, l: null };
+    expect(tile(SCREEN)).toBe("Kein Ton von „spotify“");
+    // Go Live has its own sound, and its own tile.
+    expect(tile(LIVE)).toBe("Ton wird geteilt");
+    fixture.voice.sourceAudioNote = { s: null, l: { silent: "spotify" } };
+    expect(tile(SCREEN)).toBe("Ton wird geteilt");
+    expect(tile(LIVE)).toBe("Kein Ton von „spotify“");
   });
 });
