@@ -17,6 +17,7 @@ import { useIdlePresence } from "../ws/useLive.ts";
 import { useMessageToastsBridge } from "../messages/useMessageToasts.ts";
 import { Avatar } from "./Avatar.tsx";
 import { GearIcon } from "./Icons.tsx";
+import { isChromeLongPress } from "./longPress.ts";
 import { MessageToasts } from "./MessageToasts.tsx";
 import { Toasts } from "./Toasts.tsx";
 import { VoiceSettingsDialog } from "./VoiceSettingsDialog.tsx";
@@ -59,6 +60,16 @@ export function AppShell() {
   return (
     <div
       className={`app-shell ${workspace ? "app-shell-workspace" : ""} ${activeMedia ? "has-active-media" : ""}`}
+      onContextMenu={(event) => {
+        // Android's link and image menu; index.css covers selection and iOS.
+        if (
+          isChromeLongPress(
+            event.nativeEvent,
+            window.matchMedia("(pointer: coarse)").matches,
+          )
+        )
+          event.preventDefault();
+      }}
     >
       <a
         className="shell-skip-link"
