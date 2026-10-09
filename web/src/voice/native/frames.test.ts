@@ -5,6 +5,7 @@ import {
   FrameRenderer,
   convertFrame,
   parsePacket,
+  resetShaderFailureLogForTests,
   type Frame,
 } from "./frames.ts";
 
@@ -277,7 +278,7 @@ describe("frame conversion without a GPU", () => {
 type GlCall = [name: string, ...args: unknown[]];
 
 /** A WebGL context that only records: constants are their names. */
-function fakeContext() {
+function fakeContext(failing?: "compile" | "link") {
   const calls: GlCall[] = [];
   let textures = 0;
   const gl = new Proxy(
@@ -290,8 +291,10 @@ function fakeContext() {
           calls.push([name, ...args]);
           if (name === "createTexture") return { texture: ++textures };
           if (name === "getUniformLocation") return args[1];
-          if (name === "getShaderParameter" || name === "getProgramParameter")
-            return true;
+          if (name === "getShaderParameter") return failing !== "compile";
+          if (name === "getProgramParameter") return failing !== "link";
+          if (name === "getShaderInfoLog") return "ERROR: 0:3: 'turn' : syntax";
+          if (name === "getProgramInfoLog") return "varying mismatch";
           if (name.startsWith("create")) return {};
           return null;
         };
@@ -531,6 +534,27 @@ describe("frame renderer", () => {
     expect(context.named("texImage2D")).toHaveLength(6);
     expect(context.named("deleteTexture")).toHaveLength(0);
   });
+
+  it.each([
+    ["compile", "WebGL vertex shader: ERROR: 0:3: 'turn' : syntax"],
+    ["link", "WebGL program: varying mismatch"],
+  ] as const)(
+    "logs a shader that does not %s, once, with its info log",
+    (failing, logged) => {
+      resetShaderFailureLogForTests();
+      const warn = vi.spyOn(console, "warn").mockImplementation(() => {});
+      try {
+        const context = fakeContext(failing);
+        expect(() => new FrameRenderer(context.canvas)).toThrow();
+        expect(() => new FrameRenderer(fakeContext(failing).canvas)).toThrow();
+        expect(warn.mock.calls).toEqual([
+          [`[gelabber] in-app video: ${logged}`],
+        ]);
+      } finally {
+        warn.mockRestore();
+      }
+    },
+  );
 
   it("says so when the page has no WebGL", () => {
     const canvas = { getContext: () => null } as unknown as HTMLCanvasElement;

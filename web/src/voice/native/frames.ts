@@ -233,7 +233,10 @@ export class FrameRenderer {
       gl.shaderSource(shader, source);
       gl.compileShader(shader);
       if (!gl.getShaderParameter(shader, gl.COMPILE_STATUS))
-        throw new Error(gl.getShaderInfoLog(shader) ?? "shader");
+        throw shaderFailure(
+          type === gl.VERTEX_SHADER ? "vertex shader" : "fragment shader",
+          gl.getShaderInfoLog(shader),
+        );
       return shader;
     };
     const program = gl.createProgram();
@@ -243,7 +246,7 @@ export class FrameRenderer {
     gl.bindAttribLocation(program, 0, "position");
     gl.linkProgram(program);
     if (!gl.getProgramParameter(program, gl.LINK_STATUS))
-      throw new Error(gl.getProgramInfoLog(program) ?? "program");
+      throw shaderFailure("program", gl.getProgramInfoLog(program));
     gl.useProgram(program);
     // One triangle covering the viewport.
     gl.bindBuffer(gl.ARRAY_BUFFER, gl.createBuffer());
@@ -450,6 +453,25 @@ let painters = 0;
  *   canvas that stays at 1080p, 4 to 6 ms with one that is the picture.
  * - In Chromium (headless here, WebView2 not measured) a copy costs the
  *   same from any canvas and a new size about 1 ms: 0.2 ms against 2.2 ms. */
+let shaderFailureLogged = false;
+
+/** A shader that does not compile or link leaves the page without WebGL
+ * pictures; the driver's info log is the only clue, so it is logged, once a
+ * page. */
+function shaderFailure(what: string, log: string | null): Error {
+  const error = new Error(`${what}: ${log?.trim() || "no info log"}`);
+  if (!shaderFailureLogged) {
+    shaderFailureLogged = true;
+    console.warn(`[gelabber] in-app video: WebGL ${error.message}`);
+  }
+  return error;
+}
+
+/** For tests: the next failure is logged again. */
+export function resetShaderFailureLogForTests(): void {
+  shaderFailureLogged = false;
+}
+
 function canvasGrows(): boolean {
   return /Chrom(e|ium)\//.test(navigator.userAgent);
 }
