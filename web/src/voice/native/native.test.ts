@@ -14,6 +14,7 @@ import {
   nativeGetDisplayMedia,
   nativeGetUserMedia,
 } from "./capture.ts";
+import { loadNativeFeatures, SCREEN_CANCEL_FEATURE } from "./features.ts";
 import { createNativeMicrophoneTest } from "./microphoneTest.ts";
 import {
   attachNativeVideo,
@@ -77,6 +78,8 @@ class FakeCore implements NativeBridge {
   levels = { input: 0, processed: 0, clipping: false, blocks: 0 };
   cameras = [{ id: "/dev/video0", name: "Webcam" }];
   screenStates: Array<Record<string, unknown>> = [];
+  /** `media_info`'s answer; null is a 0.5.x app. */
+  info: unknown = null;
   noAppAudio = false;
   /** Playback streams feeding an application-sound source. */
   appStreams = 1;
@@ -193,6 +196,8 @@ class FakeCore implements NativeBridge {
           if (this.appAudio.has(args.source as number))
             return { state: "live", streams: this.appStreams, frames: 0 };
           return this.screenStates.shift() ?? { state: "live" };
+        case "media_info":
+          return this.info;
         case "media_audio_devices":
           return this.devices;
         case "media_audio_levels":
@@ -745,6 +750,41 @@ describe("desktop app media", () => {
     track.stop();
     await tick();
     expect(core.calledWith("media_source_close")).toHaveLength(1);
+  });
+
+  // Hyprland's portal answers a closed picker with a non-zero response, which
+  // the pinned libwebrtc reports as a failure.
+  it.each([
+    ["a 0.5.x app", null],
+    ["a v0.6 app", { abi: 8, features: ["screen", "camera", "video-frames"] }],
+  ])(
+    "takes a picker that was open and then failed as a cancel in %s",
+    async (_name, info) => {
+      core.info = info;
+      await loadNativeFeatures();
+      core.screenStates = [{ state: "pending" }, { state: "failed" }];
+      await expect(nativeGetDisplayMedia({ video: true })).rejects.toMatchObject(
+        { name: "NotAllowedError" },
+      );
+      await tick();
+      expect(core.calledWith("media_source_close")).toHaveLength(1);
+    },
+  );
+
+  it("reports a capture that failed before the picker came up", async () => {
+    core.screenStates = [{ state: "failed" }];
+    await expect(nativeGetDisplayMedia({ video: true })).rejects.toMatchObject({
+      name: "AbortError",
+    });
+  });
+
+  it("believes an app that tells a cancel from a failure", async () => {
+    core.info = { abi: 9, features: ["screen", SCREEN_CANCEL_FEATURE] };
+    await loadNativeFeatures();
+    core.screenStates = [{ state: "pending" }, { state: "failed" }];
+    await expect(nativeGetDisplayMedia({ video: true })).rejects.toMatchObject({
+      name: "AbortError",
+    });
   });
 
   it("reports a cancelled picker like the browser", async () => {

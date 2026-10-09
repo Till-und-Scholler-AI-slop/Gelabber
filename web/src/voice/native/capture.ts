@@ -4,6 +4,7 @@
 import type { MicProcessor, ProcessingInfo } from "../audioProcessing.ts";
 import type { DeviceList, MediaSettings } from "../settings.ts";
 import { invokeNative } from "./bridge.ts";
+import { hasNativeFeature, SCREEN_CANCEL_FEATURE } from "./features.ts";
 import { NativeStream, NativeTrack } from "./tracks.ts";
 
 type NativeAudioDevices = {
@@ -183,6 +184,22 @@ export async function captureAppAudio(
   return track as unknown as MediaStreamTrack;
 }
 
+/** Whether a screen source that did not go live was the user's own answer.
+ * The pinned libwebrtc reports every non-zero portal response as an error,
+ * and xdg-desktop-portal-hyprland answers a closed picker with one, so a
+ * source that was waiting for the picker and then failed is taken as a
+ * cancel: no message for a plain cancel is worth more than one for the rare
+ * portal error. A source that failed before the picker came up stays a
+ * failure, and an app with `SCREEN_CANCEL_FEATURE` is taken at its word. */
+function screenCancelled(
+  state: ScreenState["state"],
+  pending: boolean,
+): boolean {
+  if (state === "cancelled") return true;
+  if (state !== "failed" || !pending) return false;
+  return !hasNativeFeature(SCREEN_CANCEL_FEATURE);
+}
+
 /** getDisplayMedia for the desktop app: the desktop's own picker chooses the
  * screen or window. Its sound is not the picker's to give: the session adds
  * `captureAppAudio` to the share. */
@@ -194,10 +211,12 @@ export async function nativeGetDisplayMedia(
     options: { type: "any", fps, cursor: true, contentHint: "detail" },
   });
   let state: ScreenState;
+  let pending = false;
   try {
     for (;;) {
       state = await invokeNative<ScreenState>("media_source_state", { source });
       if (state.state !== "pending") break;
+      pending = true;
       await new Promise((resolve) => setTimeout(resolve, POLL_MS));
     }
   } catch (error) {
@@ -206,7 +225,7 @@ export async function nativeGetDisplayMedia(
   }
   if (state.state !== "live") {
     void invokeNative("media_source_close", { source }).catch(() => undefined);
-    throw state.state === "cancelled"
+    throw screenCancelled(state.state, pending)
       ? new DOMException("Freigabe abgebrochen", "NotAllowedError")
       : new DOMException("Bildschirmaufnahme fehlgeschlagen", "AbortError");
   }

@@ -18,7 +18,17 @@ export type NativeFeature =
    * carry sound without sending the call back into it. */
   | "app-audio-excludes-self"
   /** The page gets video frames and draws them itself. */
-  | "video-frames";
+  | "video-frames"
+  /** The core tells a picker the user closed ("cancelled") from a capture
+   * that failed. No app sends it yet: at the pinned libwebrtc a portal that
+   * answers a cancel with a non-zero response (xdg-desktop-portal-hyprland)
+   * reads as "failed", so without it a source that was pending and then
+   * failed counts as the user's own answer. */
+  | typeof SCREEN_CANCEL_FEATURE;
+
+/** The feature name an app will send once its core tells cancel from
+ * failure (see `nativeGetDisplayMedia`). */
+export const SCREEN_CANCEL_FEATURE = "screen-cancel-distinct";
 
 export type NativeFeatures = ReadonlySet<string>;
 

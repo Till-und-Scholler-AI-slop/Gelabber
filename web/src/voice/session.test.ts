@@ -4569,6 +4569,8 @@ describe("stream sound in the desktop app", () => {
       screenError: null as string | null,
       /** What the desktop's picker has answered so far. */
       screen: "live" as "pending" | "live" | "cancelled" | "failed",
+      /** Answers given before `screen`, oldest first. */
+      screenSteps: [] as Array<"pending" | "live" | "cancelled" | "failed">,
       /** The core's reason for giving no application sound. */
       soundError: null as string | null,
       /** Playback streams the chosen application has. */
@@ -4598,9 +4600,12 @@ describe("stream sound in the desktop app", () => {
             case "media_source_state":
               if (sounds.includes(args.source as number))
                 return { state: "live", streams: app.streams, frames: 0 };
-              return app.screen === "live"
-                ? { state: "live", width: 1920, height: 1080 }
-                : { state: app.screen };
+              {
+                const screen = app.screenSteps.shift() ?? app.screen;
+                return screen === "live"
+                  ? { state: "live", width: 1920, height: 1080 }
+                  : { state: screen };
+              }
             default:
               return null;
           }
@@ -4719,9 +4724,18 @@ describe("stream sound in the desktop app", () => {
     await vi.waitFor(() => expect(useVoice.getState().live).toBe(false));
     expect(env.errors).toHaveLength(2);
 
+    // Hyprland's portal answers a closed dialog with an error: the picker was
+    // open, so that is the user's answer too.
+    app.screenSteps = ["pending"];
+    app.screen = "failed";
+    toggleShare();
+    await vi.waitFor(() => expect(useVoice.getState().sharing).toBe(false));
+    expect(app.called("media_source_screen")).toHaveLength(5);
+    expect(env.errors).toHaveLength(2);
+
     // Neither a share nor sound for one was left behind.
-    expect(app.called("media_source_screen")).toHaveLength(4);
-    expect(app.called("media_source_close")).toHaveLength(3);
+    expect(app.called("media_source_screen")).toHaveLength(5);
+    expect(app.called("media_source_close")).toHaveLength(4);
     expect(app.called("media_source_app_audio")).toEqual([]);
     expect(env.peers[0]!.sender("s")).toBeUndefined();
     expect(env.peers[0]!.sender("l")).toBeUndefined();
