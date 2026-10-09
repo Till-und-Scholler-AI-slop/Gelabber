@@ -67,11 +67,8 @@ export function MessageSearch({
       />
     );
   return (
-    <section
-      className="flex min-h-0 flex-1 flex-col"
-      aria-label="Nachrichten suchen"
-    >
-      <form onSubmit={submit} className="flex flex-wrap gap-2 border-b p-3">
+    <section className="lr-search" aria-label="Nachrichten suchen">
+      <form onSubmit={submit} className="lr-search-form">
         <label className="sr-only" htmlFor={`search-${channelId}`}>
           In dieser Unterhaltung suchen
         </label>
@@ -82,31 +79,26 @@ export function MessageSearch({
           value={input}
           maxLength={200}
           onChange={(event) => setInput(event.target.value)}
-          className="min-w-0 flex-1 rounded border px-3 py-2"
           placeholder="In dieser Unterhaltung suchen"
         />
         <button
           type="submit"
           disabled={!input.trim()}
-          className="rounded border px-3 py-2"
+          className="lr-search-submit"
         >
           Suchen
         </button>
-        <button
-          type="button"
-          onClick={onClose}
-          className="rounded border px-3 py-2"
-        >
+        <button type="button" onClick={onClose} className="lr-search-close">
           Zurück zum Chat
         </button>
       </form>
       <div
-        className="min-h-0 flex-1 overflow-y-auto px-4 py-3"
+        className="lr-search-results"
         aria-live="polite"
         aria-busy={query.isFetching || undefined}
       >
         {!q ? (
-          <p className="text-sm">
+          <p className="lr-search-hint">
             Suche nach Wörtern oder einer Phrase in Anführungszeichen.
           </p>
         ) : null}
@@ -130,7 +122,7 @@ export function MessageSearch({
           <p>Keine Nachrichten gefunden.</p>
         ) : null}
         {rows.map((message) => (
-          <article key={message.id} className="border-b py-3">
+          <article key={message.id}>
             <button
               type="button"
               ref={(node) => {
@@ -139,20 +131,16 @@ export function MessageSearch({
               }}
               onClick={() => setSelected(message.id)}
               aria-label={`Zur Nachricht von ${message.author.name}: ${message.content || "Datei"}`}
-              className="w-full rounded p-2 text-left hover:bg-neutral-100 focus-visible:outline-2 dark:hover:bg-neutral-800"
+              className="lr-search-hit"
             >
-              <p className="text-sm">
+              <p>
                 <strong>{message.author.name}</strong>{" "}
                 <time dateTime={message.created_at}>
                   {new Date(message.created_at).toLocaleString("de-DE")}
                 </time>
               </p>
-              <p className="whitespace-pre-wrap break-words">
-                {message.content}
-              </p>
-              <span className="text-xs underline">
-                Nachricht im Kontext öffnen
-              </span>
+              <p>{message.content}</p>
+              <span>Nachricht im Kontext öffnen</span>
             </button>
           </article>
         ))}
@@ -161,7 +149,7 @@ export function MessageSearch({
             type="button"
             disabled={query.isFetchingNextPage}
             onClick={() => void query.fetchNextPage()}
-            className="mt-3 rounded border px-3 py-2"
+            className="lr-button-secondary"
           >
             {query.isFetchingNextPage ? "Lädt…" : "Ältere Treffer"}
           </button>

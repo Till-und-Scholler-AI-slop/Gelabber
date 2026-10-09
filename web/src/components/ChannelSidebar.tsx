@@ -74,7 +74,7 @@ function sidebarRows(server: ServerDetail): SidebarRow[] {
 
 function sidebarRowHeight(row: SidebarRow | undefined): number {
   if (row?.kind === "category" || row?.kind === "section") return 34;
-  return row?.kind === "empty" ? 28 : 42;
+  return row?.kind === "empty" ? 28 : 36;
 }
 
 export function ChannelSidebar({
@@ -102,12 +102,6 @@ export function ChannelSidebar({
 
   return (
     <aside aria-label="Kanäle" className="channel-sidebar">
-      <Link to="/" className="sidebar-brand">
-        Gelabber
-      </Link>
-      <div className="sidebar-banner">
-        <img src="/images/living-room/community-banner.png" alt="" />
-      </div>
       <header className="server-sidebar-heading">
         <h2 className="server-sidebar-name" title={server.name}>
           {server.name}
@@ -116,30 +110,54 @@ export function ChannelSidebar({
           <IconButton label="Leute einladen" onClick={() => setInviting(true)}>
             <LinkIcon />
           </IconButton>
+          {manageChannels ? (
+            <details className="sidebar-create-menu">
+              <summary
+                className="shell-icon-button"
+                aria-label="Kanal oder Kategorie erstellen"
+                title="Erstellen"
+              >
+                <PlusIcon size={17} />
+              </summary>
+              <nav aria-label="Erstellen">
+                <button
+                  type="button"
+                  onClick={(event) => {
+                    event.currentTarget
+                      .closest("details")
+                      ?.removeAttribute("open");
+                    setChannelDialog({ mode: "create", categoryId: null });
+                  }}
+                >
+                  Kanal erstellen
+                </button>
+                <button
+                  type="button"
+                  onClick={(event) => {
+                    event.currentTarget
+                      .closest("details")
+                      ?.removeAttribute("open");
+                    setCategoryDialog({ mode: "create" });
+                  }}
+                >
+                  Kategorie erstellen
+                </button>
+              </nav>
+            </details>
+          ) : null}
           <Link
             to="/s/$serverId/settings"
             params={{ serverId: server.id }}
             title={manageServer ? "Servereinstellungen" : "Mitglieder"}
             aria-label={manageServer ? "Servereinstellungen" : "Mitglieder"}
-            className="rounded-md p-1.5 text-neutral-500 dark:text-neutral-400 transition hover:bg-neutral-100 dark:hover:bg-neutral-800 hover:text-neutral-900 dark:hover:text-neutral-100"
-            activeProps={{
-              className:
-                "bg-neutral-100 dark:bg-neutral-800 text-neutral-900 dark:text-neutral-100",
-            }}
+            className="shell-icon-button"
+            activeProps={{ className: "is-active" }}
           >
             <GearIcon />
           </Link>
         </div>
       </header>
 
-      <Link
-        to="/s/$serverId/settings"
-        params={{ serverId: server.id }}
-        className="sidebar-member-count"
-      >
-        {server.members.length}{" "}
-        {server.members.length === 1 ? "Mitglied" : "Mitglieder"}
-      </Link>
       <Link
         to="/s/$serverId"
         params={{ serverId: server.id }}
@@ -165,21 +183,6 @@ export function ChannelSidebar({
           setCategoryDialog({ mode: "edit", category })
         }
       />
-
-      {manageChannels ? (
-        <footer className="sidebar-management">
-          <FooterButton
-            onClick={() =>
-              setChannelDialog({ mode: "create", categoryId: null })
-            }
-          >
-            <PlusIcon size={14} /> Kanal erstellen
-          </FooterButton>
-          <FooterButton onClick={() => setCategoryDialog({ mode: "create" })}>
-            <PlusIcon size={14} /> Kategorie erstellen
-          </FooterButton>
-        </footer>
-      ) : null}
 
       <UserPanel contextId={server.id} />
       <ChannelDialog
@@ -291,9 +294,7 @@ function ChannelList({
                   }}
                 />
               ) : (
-                <p className="px-2 text-xs text-neutral-400 dark:text-neutral-500">
-                  Leer
-                </p>
+                <p className="sidebar-empty-category">Leer</p>
               )}
             </div>
           );
@@ -367,14 +368,9 @@ function ChannelRow({
       <span className="channel-row-name">{channel.name}</span>
       {channel.kind === "text" ? <UnreadBadge channelId={channel.id} /> : null}
       {live ? (
-        <span className="ml-auto shrink-0 rounded bg-red-600 px-1 py-px text-[10px] font-semibold tracking-wide text-white uppercase">
-          Live
-        </span>
+        <span className="channel-row-live">Live</span>
       ) : inVoice ? (
-        <span
-          className="ml-auto h-2 w-2 shrink-0 rounded-full bg-emerald-500"
-          title="Verbunden"
-        />
+        <span className="channel-row-connected" title="Verbunden" />
       ) : null}
     </>
   );
@@ -437,24 +433,6 @@ function IconButton({
         "shell-icon-button",
         small ? "sidebar-action-small" : "",
       ].join(" ")}
-    >
-      {children}
-    </button>
-  );
-}
-
-function FooterButton({
-  onClick,
-  children,
-}: {
-  onClick: () => void;
-  children: ReactNode;
-}) {
-  return (
-    <button
-      type="button"
-      onClick={onClick}
-      className="sidebar-management-button"
     >
       {children}
     </button>
