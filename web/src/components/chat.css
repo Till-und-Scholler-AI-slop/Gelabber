@@ -354,6 +354,11 @@
   flex-shrink: 0;
   padding: 0 16px 14px;
 }
+.lr-composer,
+.lr-composer-readonly {
+  /* Toasts on phones sit above it, however tall the draft is. */
+  anchor-name: --lr-composer;
+}
 .lr-composer-readonly {
   flex-shrink: 0;
   margin: 0 16px 14px;

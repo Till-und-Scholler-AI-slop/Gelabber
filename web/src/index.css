@@ -240,6 +240,11 @@ summary {
   overflow-y: auto;
   overscroll-behavior: contain;
 }
+/* Notices sit bottom centre, above whatever owns the bottom edge. */
+.gel-toasts {
+  --lr-toast-floor: var(--lr-safe-bottom);
+  bottom: calc(16px + var(--lr-toast-floor));
+}
 .workspace-drawer-close {
   display: inline-flex;
   align-items: center;
@@ -1134,6 +1139,20 @@ summary {
   }
   .living-room-title {
     font-size: 34px;
+  }
+  /* On phones the bottom edge belongs to the call dock and, in a
+     conversation, to the composer above it. */
+  .has-active-media .gel-toasts {
+    --lr-toast-floor: var(--lr-media-space);
+  }
+  .app-shell-workspace .gel-toasts {
+    /* One composer line, for browsers without anchor positioning. */
+    bottom: calc(74px + var(--lr-toast-floor));
+  }
+  @supports (anchor-name: --lr-composer) {
+    .app-shell-workspace .gel-toasts {
+      bottom: calc(16px + anchor(--lr-composer top, var(--lr-toast-floor)));
+    }
   }
 }
 @media (max-width: 370px) {
