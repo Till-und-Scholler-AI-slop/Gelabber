@@ -1083,6 +1083,7 @@ summary {
     border-bottom: 1px solid var(--lr-border);
   }
   .workspace-navigation-trigger {
+    position: relative;
     display: inline-flex;
     align-items: center;
     gap: 9px;
@@ -1095,6 +1096,18 @@ summary {
   .workspace-navigation-trigger svg {
     transform: rotate(-90deg);
     color: var(--lr-muted);
+  }
+  /* Every unread badge sits inside the closed drawer; its button shows that
+     there is something to find. */
+  .workspace-navigation-unread {
+    position: absolute;
+    top: calc(50% - 15px);
+    left: 13px;
+    width: 11px;
+    height: 11px;
+    border: 2px solid var(--lr-bg);
+    border-radius: 50%;
+    background: var(--lr-accent);
   }
   /* Conversations bring their own header: the navigation button joins it
      instead of stacking a second bar above it. */
@@ -1114,8 +1127,13 @@ summary {
     height: 44px;
     padding: 0;
   }
-  .workspace-main:has(.lr-channel-header) .workspace-navigation-trigger > span {
+  .workspace-main:has(.lr-channel-header)
+    .workspace-navigation-trigger
+    > span:not(.workspace-navigation-unread) {
     display: none;
+  }
+  .workspace-main:has(.lr-channel-header) .workspace-navigation-unread {
+    left: 25px;
   }
   .workspace-main:has(.lr-channel-header) .lr-channel-header {
     padding-left: 50px;
