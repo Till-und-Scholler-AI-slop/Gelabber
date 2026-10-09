@@ -246,6 +246,11 @@ summary {
   --lr-toast-floor: var(--lr-safe-bottom);
   bottom: calc(16px + var(--lr-toast-floor));
 }
+/* New messages are announced top right, below the header line. */
+.gel-message-toasts {
+  top: calc(64px + var(--lr-safe-top));
+  right: calc(16px + var(--lr-safe-right));
+}
 .workspace-drawer-close {
   display: inline-flex;
   align-items: center;

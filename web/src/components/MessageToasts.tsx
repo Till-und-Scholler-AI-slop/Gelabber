@@ -11,7 +11,7 @@ export function MessageToasts() {
   return (
     <div
       aria-live="polite"
-      className="pointer-events-none fixed top-16 right-4 z-50 flex w-[min(100%-2rem,20rem)] flex-col gap-2"
+      className="gel-message-toasts pointer-events-none fixed z-50 flex w-[min(100%-2rem,20rem)] flex-col gap-2"
     >
       {toasts.map((toast) => {
         const title =
