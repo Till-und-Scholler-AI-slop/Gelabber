@@ -595,11 +595,12 @@ impl Source {
 
     /// Hands each frame of a local video source (camera, screen, test
     /// pattern) to `sink` as it goes to the encoders: I420, black while the
-    /// source is disabled. `sink` runs on the capture thread and holds it
-    /// up, so it copies what it needs and returns; it must not call back
-    /// into this source. `None` removes it; the previous sink is not called
-    /// again once this returns. A sink keeps the source capturing without a
-    /// producer. Fails for audio sources.
+    /// source is disabled, and at the size and rate an encoder has the
+    /// source step down to (a weak uplink), not the capture's. `sink` runs
+    /// on the capture thread and holds it up, so it copies what it needs and
+    /// returns; it must not call back into this source. `None` removes it;
+    /// the previous sink is not called again once this returns. A sink keeps
+    /// the source capturing without a producer. Fails for audio sources.
     pub fn set_video_sink(&self, sink: Option<VideoSink>) -> Result<()> {
         let mut sink = sink.map(Box::new);
         let (callback, user) = sink_arguments(&mut sink);

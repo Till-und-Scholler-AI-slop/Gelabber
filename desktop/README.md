@@ -131,6 +131,12 @@ set them.
   `GELABBER_VIDEO_TEST_PATTERN=1` lets `media_view_open` take
   `testPattern: {width, height, fps}` (colour bars) instead of a consumer
   or source; the smoke test uses it.
+- Self view: a view of a local source shows the picture as it goes to the
+  encoders, not the capture. While an encoder has the source step down (a
+  weak uplink, the first seconds of a producer) the view shows that smaller
+  picture or lower rate, unlike a browser's local `<video>`. A view from
+  before that adaptation would need a second output in every source
+  (camera, screen, test pattern): they adapt before they hand a frame on.
 - Viewer window: `media_viewer_open` shows a remote video in a native
   window (`app/src/viewer.rs`), for web clients from before the views in the
   page and as a pop-out next to them: winit on its own thread next to the

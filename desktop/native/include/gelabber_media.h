@@ -237,10 +237,14 @@ GM_API int gm_consumer_set_video_sink_limits(gm_consumer* consumer,
                                              const gm_video_sink_limits* limits);
 /* The same for a local video source (camera, screen, test pattern): each
  * frame as it goes to the encoders, black while the source is disabled, on
- * the source's capture thread, so fn has to return quickly. A sink keeps the
- * source delivering without a producer. gm_source_free removes a sink that
- * is still set. Setting a sink or limits on an audio source fails; removing
- * a sink is fine for any source. Calls for one source must not overlap. */
+ * the source's capture thread, so fn has to return quickly. That is the
+ * picture after the encoders' adaptation: while an encoder has the source
+ * step down (a weak uplink, the first seconds of a producer) the sink gets
+ * the smaller picture or lower rate too, and source_width/source_height are
+ * that size, not the capture's. A sink keeps the source delivering without a
+ * producer. gm_source_free removes a sink that is still set. Setting a sink
+ * or limits on an audio source fails; removing a sink is fine for any
+ * source. Calls for one source must not overlap. */
 GM_API int gm_source_set_video_sink(gm_source* source, gm_video_frame_fn fn, void* user);
 GM_API int gm_source_set_video_sink_limits(gm_source* source, const gm_video_sink_limits* limits);
 /* {"framesReceived","width","height"} for video, {"audioLevel" 0..100,
