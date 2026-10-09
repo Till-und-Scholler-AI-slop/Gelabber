@@ -1,6 +1,7 @@
 # Host Caddy (systemd or another stack). TLS stays with you.
-# Import this site block, or copy it. `header_up Host {host}` is required
-# (`/ws` compares Origin to Host).
+# Import this site block, or copy it. `header_up Host {hostport}` is required
+# (`/ws` compares Origin to Host, including a non-default port such as :8443;
+# `{host}` would drop the port and every WebSocket handshake would be 403).
 #
 # Caddy container on network `gelabber`:
 #   GELABBER_API_UPSTREAM=api:8080
@@ -9,11 +10,11 @@
 #   GELABBER_MINIO_UPSTREAM=minio:9000
 
 {$GELABBER_DOMAIN:gelabber.home.arpa} {
-	encode gzip
+	encode zstd gzip
 
 	handle /health {
 		reverse_proxy {$GELABBER_API_UPSTREAM:127.0.0.1:18080} {
-			header_up Host {host}
+			header_up Host {hostport}
 			transport http {
 				dial_timeout 2s
 				response_header_timeout 5s
@@ -25,7 +26,7 @@
 
 	handle /ready {
 		reverse_proxy {$GELABBER_API_UPSTREAM:127.0.0.1:18080} {
-			header_up Host {host}
+			header_up Host {hostport}
 			transport http {
 				dial_timeout 2s
 				response_header_timeout 5s
@@ -37,7 +38,7 @@
 
 	handle /ws {
 		reverse_proxy {$GELABBER_API_UPSTREAM:127.0.0.1:18080} {
-			header_up Host {host}
+			header_up Host {hostport}
 			transport http {
 				dial_timeout 5s
 				read_timeout 0
@@ -49,7 +50,7 @@
 	@api path /api /api/*
 	handle @api {
 		reverse_proxy {$GELABBER_API_UPSTREAM:127.0.0.1:18080} {
-			header_up Host {host}
+			header_up Host {hostport}
 			transport http {
 				dial_timeout 5s
 				response_header_timeout 30s
@@ -67,7 +68,7 @@
 	@media path /media /media/*
 	handle @media {
 		reverse_proxy {$GELABBER_MEDIA_UPSTREAM:127.0.0.1:18081} {
-			header_up Host {host}
+			header_up Host {hostport}
 			transport http {
 				dial_timeout 5s
 				read_timeout 0
@@ -78,7 +79,7 @@
 
 	handle {
 		reverse_proxy {$GELABBER_WEB_UPSTREAM:127.0.0.1:8088} {
-			header_up Host {host}
+			header_up Host {hostport}
 			transport http {
 				dial_timeout 5s
 				response_header_timeout 30s
