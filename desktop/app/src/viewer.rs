@@ -254,22 +254,67 @@ struct Gpu {
     sampler: wgpu::Sampler,
 }
 
+/// Which of `adapters` draws. They can all present to the window and come in
+/// the system's order: Vulkan before GL, and Vulkan lists the GPU that drives
+/// the screen first (Mesa's device-select layer asks the compositor, the
+/// loader prefers a discrete GPU). The first one wins, not the low-power one:
+/// a second GPU's images reach a compositor on the NVIDIA driver as a black
+/// window (AMD iGPU next to an RTX card: v0.5.2). A software renderer only
+/// wins when nothing else is there; a GPU without a Vulkan driver is listed
+/// after lavapipe, through GL.
+/// `named` (WGPU_ADAPTER_NAME, part of the name) and `power`
+/// (WGPU_POWER_PREF: low, high) override the choice.
+fn choose_adapter(
+    adapters: &[wgpu::AdapterInfo],
+    named: Option<&str>,
+    power: wgpu::PowerPreference,
+) -> Result<usize, String> {
+    use wgpu::{DeviceType, PowerPreference};
+    if let Some(named) = named {
+        let wanted = named.to_lowercase();
+        return adapters
+            .iter()
+            .position(|info| info.name.to_lowercase().contains(&wanted))
+            .ok_or_else(|| {
+                let names: Vec<_> = adapters.iter().map(|info| &info.name).collect();
+                format!("no GPU adapter named {named:?} (WGPU_ADAPTER_NAME) among {names:?}")
+            });
+    }
+    // With a power preference wgpu's own order, otherwise the system's.
+    let rank = |info: &wgpu::AdapterInfo| match (power, info.device_type) {
+        (_, DeviceType::Cpu) => 5,
+        (PowerPreference::None, _) => 0,
+        (PowerPreference::LowPower, DeviceType::IntegratedGpu)
+        | (PowerPreference::HighPerformance, DeviceType::DiscreteGpu) => 1,
+        (_, DeviceType::IntegratedGpu | DeviceType::DiscreteGpu) => 2,
+        (_, DeviceType::Other) => 3,
+        (_, DeviceType::VirtualGpu) => 4,
+    };
+    // The first of the best: min_by_key keeps the earliest of equals.
+    (0..adapters.len())
+        .min_by_key(|&index| rank(&adapters[index]))
+        .ok_or_else(|| "no GPU adapter".to_string())
+}
+
 impl Gpu {
     fn new(instance: wgpu::Instance, surface: &wgpu::Surface<'_>) -> Result<Self, String> {
-        // The first adapter the system lists that can present to this window,
-        // not the low-power one: Vulkan lists the GPU that drives the screen
-        // first (Mesa's device-select layer asks the compositor, the loader
-        // prefers a discrete GPU), and a second GPU's images reach a
-        // compositor on the NVIDIA driver as a black window (AMD iGPU next
-        // to an RTX card: v0.5.2). WGPU_ADAPTER_NAME (part of the name) and
-        // WGPU_POWER_PREF (low, high) override the choice.
-        let adapter = pollster::block_on(wgpu::util::initialize_adapter_from_env_or_default(
-            &instance,
-            Some(surface),
-        ))
-        .map_err(|e| format!("no GPU adapter: {e}"))?;
+        let mut adapters = pollster::block_on(instance.enumerate_adapters(wgpu::Backends::all()));
+        let listed = adapters.len();
+        adapters.retain(|adapter| adapter.is_surface_supported(surface));
+        if adapters.is_empty() {
+            return Err(format!(
+                "no GPU adapter can draw to the window ({listed} listed)"
+            ));
+        }
+        let infos: Vec<_> = adapters.iter().map(wgpu::Adapter::get_info).collect();
+        let named = std::env::var("WGPU_ADAPTER_NAME")
+            .ok()
+            .filter(|name| !name.is_empty());
+        let power = wgpu::PowerPreference::from_env().unwrap_or_default();
+        let chosen = choose_adapter(&infos, named.as_deref(), power)?;
+        let adapter = adapters.swap_remove(chosen);
         // Once per run: the GPU is kept for every later window.
-        let info = adapter.get_info();
+        let info = &infos[chosen];
         eprintln!(
             "[gelabber] viewer GPU: {} ({:?}, {:?})",
             info.name, info.backend, info.device_type
@@ -753,6 +798,58 @@ mod tests {
         process::Command as Process,
         time::{Duration, Instant},
     };
+
+    fn adapter(name: &str, device_type: wgpu::DeviceType) -> wgpu::AdapterInfo {
+        let mut info = wgpu::AdapterInfo::new(device_type, wgpu::Backend::Vulkan);
+        info.name = name.into();
+        info
+    }
+
+    #[test]
+    fn adapter_choice_follows_the_system_order() {
+        use wgpu::{DeviceType::*, PowerPreference as Power};
+        // v0.5.2's black window: an RTX card drives the screens, next to an
+        // AMD iGPU.
+        let two = [
+            adapter("NVIDIA GeForce RTX 5080", DiscreteGpu),
+            adapter("AMD Radeon Graphics (RADV RAPHAEL)", IntegratedGpu),
+            adapter("llvmpipe (LLVM 21.1.2, 256 bits)", Cpu),
+        ];
+        assert_eq!(choose_adapter(&two, None, Power::None), Ok(0));
+        assert_eq!(choose_adapter(&two, None, Power::HighPerformance), Ok(0));
+        assert_eq!(choose_adapter(&two, None, Power::LowPower), Ok(1));
+        assert_eq!(choose_adapter(&two, Some("radv"), Power::None), Ok(1));
+        assert_eq!(choose_adapter(&two, Some("LLVMpipe"), Power::None), Ok(2));
+        // A laptop whose iGPU drives the panel lists it first.
+        let laptop = [
+            adapter("Intel(R) Graphics (ADL GT2)", IntegratedGpu),
+            adapter("NVIDIA GeForce RTX 4060 Laptop GPU", DiscreteGpu),
+        ];
+        assert_eq!(choose_adapter(&laptop, None, Power::None), Ok(0));
+        assert_eq!(choose_adapter(&laptop, None, Power::HighPerformance), Ok(1));
+        // No Vulkan driver for the GPU: lavapipe is listed ahead of its GL
+        // driver, which does not tell what kind of device it is.
+        let no_vulkan = [
+            adapter("llvmpipe (LLVM 21.1.2, 256 bits)", Cpu),
+            adapter("Mesa Intel(R) HD Graphics 4000 (IVB GT2)", Other),
+        ];
+        assert_eq!(choose_adapter(&no_vulkan, None, Power::None), Ok(1));
+        assert_eq!(choose_adapter(&no_vulkan, None, Power::LowPower), Ok(1));
+        // Software only (CI): better than no picture.
+        assert_eq!(choose_adapter(&no_vulkan[..1], None, Power::None), Ok(0));
+    }
+
+    /// wgpu's own helper panics here, which would end the viewer thread.
+    #[test]
+    fn adapter_choice_reports_a_name_nothing_matches() {
+        use wgpu::{DeviceType::DiscreteGpu, PowerPreference as Power};
+        let adapters = [adapter("NVIDIA GeForce RTX 5080", DiscreteGpu)];
+        assert_eq!(
+            choose_adapter(&adapters, Some("nvdia"), Power::None).unwrap_err(),
+            r#"no GPU adapter named "nvdia" (WGPU_ADAPTER_NAME) among ["NVIDIA GeForce RTX 5080"]"#
+        );
+        assert!(choose_adapter(&[], None, Power::None).is_err());
+    }
 
     /// winit's rule: a Wayland session wins over `DISPLAY`.
     fn on_wayland() -> bool {
