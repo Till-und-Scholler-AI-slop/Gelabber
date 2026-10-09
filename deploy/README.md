@@ -189,6 +189,14 @@ docker compose --env-file .env --env-file next.env up -d --no-deps --no-build --
 
 `--no-build` verhindert einen unbemerkten lokalen Ersatzbuild, der explizite Pull löst das bisherige `pull_policy: missing`-Problem. Bereits im Shell-Environment exportierte `GELABBER_*_IMAGE`-Variablen vorher entfernen, da sie Env-Dateien übersteuern. Homelab behält sein `COMPOSE_FILE`; alternativ dieselben `-f`-Overlays bei **allen** Befehlen verwenden. Images werden als Satz vorab geladen; Containerwechsel sind nicht atomar und benötigen ein Wartungsfenster.
 
+**Die Deploy-Dateien gehören zum Satz.** Die Befehle oben tauschen nur Images; `Caddyfile` und `compose.yaml` kommen aus dem Checkout. Ändert ein Release sie, vor diesen Befehlen den Checkout auf dessen Tag bringen und nach dem Imagewechsel auch den Proxy neu erstellen:
+
+```bash
+docker compose --env-file .env --env-file next.env up -d --no-deps --force-recreate proxy
+```
+
+Ein `caddy reload` reicht dafür nicht. Der Proxy bindet `./Caddyfile` als einzelne Datei ein, und `git` ersetzt die Datei beim Aktualisieren: Der laufende Container sieht weiter die alte, und ein Reload lädt wieder den alten Text. Erst der neu gestartete Container (`docker compose restart proxy` genügt, wenn sich nur die Caddyfile geändert hat) liest die neue. **v0.6 ist ein solches Release:** Die Caddyfile reicht `Host` mit Port weiter (`{hostport}`, siehe „Bestehendes Caddy“) und komprimiert Antworten. Ohne diesen Schritt bleibt beides aus und kommt erst unangekündigt mit dem nächsten Neustart des Containers. Wer den Site-Block aus `Caddyfile.homelab` in ein eigenes Caddy kopiert hat, überträgt die Änderung dort von Hand.
+
 **v0.4 → v0.3.1 funktioniert nicht durch einen Imagewechsel:** Migrationen
 0010/0011 verändern das SQLx-Migrationsledger. Vor dem Start von v0.3.1 muss
 das vor dem Upgrade gesicherte PostgreSQL-/MinIO-Snapshotpaar auf geprüfte
@@ -202,6 +210,8 @@ docker compose --env-file .env --env-file previous.env config -q
 docker compose --env-file .env --env-file previous.env pull --policy always api web media minio
 docker compose --env-file .env --env-file previous.env up -d --no-deps --no-build --pull never --force-recreate api web media minio
 ```
+
+Auch hier gehört die Caddyfile zum Satz. Die v0.6-Caddyfile (`{hostport}`) passt zu einer API ab 0.6: Eine ältere API vergleicht `Origin` und `Host` buchstäblich und lehnt jeden WebSocket-Handshake mit 403 ab, sobald ein vorgelagerter Proxy den Standardport ausschreibt (`Host: example.com:443`). Mit der alten Caddyfile lief dieselbe Konfiguration. Für einen Rollback auf 0.5.x deshalb auch den Checkout auf den alten Tag zurücksetzen und den Proxy wie oben neu erstellen, mit `previous.env`.
 
 Kein `down -v`, keine Volumes löschen oder neu benennen: Postgres-/MinIO-Daten bleiben an denselben Volumes. Ein Image-Rollback ersetzt **keinen** Datenbank-Restore; vor Releases müssen Migrationen auf Rückwärtskompatibilität geprüft und Backups erstellt werden. Nach inkompatiblen Migrationen ist der separat geprüfte Restore erforderlich. Readiness alleine ist keine Medien-/Storage-Abnahme.
 
