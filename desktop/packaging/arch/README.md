@@ -7,21 +7,23 @@ any other repository: `yay -S` once, updates with `yay -Syu`, removal with
 `gelabber-desktop-linux-x64.tar.gz`; nothing is compiled on the user's
 machine.
 
-Status: **test setup**. CI builds and checks everything on every desktop
-change, but nothing is public until a maintainer turns publishing on (see
-below). The build contains libwebrtc's H264 decoder (FFmpeg); do not turn
-publishing on before the H264 licensing question in #165 is settled.
+Status: **published** since v0.5.0. Every release from `main` updates the
+repository after a maintainer approves the `github-pages` deployment. The
+build contains libwebrtc's H264 decoder (FFmpeg); the licensing question in
+#165 is still open.
+
+Signing key fingerprint: `5992A8FD7578E86E36D45A4001C81EE2C2C0BBC5`
 
 ## For users
 
 One time, as root:
 
 ```sh
-# 1. The repository's signing key. Check the fingerprint against the one in
-#    the release notes before trusting it.
+# 1. The repository's signing key. Check that `gpg --show-keys gelabber.asc`
+#    shows the fingerprint above before trusting it.
 curl -fsSLO https://till-und-scholler-ai-slop.github.io/Gelabber/gelabber.asc
 sudo pacman-key --add gelabber.asc
-sudo pacman-key --lsign-key <FINGERPRINT>
+sudo pacman-key --lsign-key 5992A8FD7578E86E36D45A4001C81EE2C2C0BBC5
 
 # 2. The repository, at the end of /etc/pacman.conf:
 #    [gelabber]
