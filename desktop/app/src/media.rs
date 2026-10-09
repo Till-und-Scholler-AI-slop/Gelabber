@@ -1341,7 +1341,7 @@ mod tests {
         // The command starts and opens its source.
         let page = media.page();
         let source = Source::test_pattern(&engine, 320, 180, 15).unwrap();
-        let (sink, freed_on) = window_sink();
+        let (sink, freed_on) = quiet_sink();
         source.set_video_sink(Some(sink)).unwrap();
         media.reset();
         let late = media.insert(page, &media.sources, source);
@@ -1446,8 +1446,9 @@ mod tests {
         }
     }
 
-    /// A sink for a viewer window, and the word when it is dropped.
-    fn window_sink() -> (VideoSink, mpsc::Receiver<std::thread::ThreadId>) {
+    /// A sink that takes frames and does nothing, and the word when it is
+    /// dropped: with the window it fed, or with the source it was set on.
+    fn quiet_sink() -> (VideoSink, mpsc::Receiver<std::thread::ThreadId>) {
         let (dropped, gone) = mpsc::channel();
         let dropped = Dropped(dropped);
         let sink = move |_: &gelabber_media_core::VideoFrame<'_>| {
@@ -1629,7 +1630,7 @@ mod tests {
         let origin = Origin::Consumer(7);
         let request = DEFAULT_REQUEST;
         let view = media.frames.open(origin, request, consumer.tap()).unwrap();
-        let (sink, window_gone) = window_sink();
+        let (sink, window_gone) = quiet_sink();
         let window = media.frames.set_window(origin, sink, consumer.tap());
         window.unwrap();
         assert_eq!(consumer.sinks(), [true]);
@@ -1651,7 +1652,7 @@ mod tests {
         let origin = Origin::Consumer(7);
         let small = request(Some(320.0), Some(180.0), Some(15.0)).unwrap();
         let view = media.frames.open(origin, small, consumer.tap()).unwrap();
-        let (sink, window_gone) = window_sink();
+        let (sink, window_gone) = quiet_sink();
         let window = media.frames.set_window(origin, sink, consumer.tap());
         window.unwrap();
         // The window shows the stream as it is.
@@ -1673,7 +1674,7 @@ mod tests {
     fn a_window_of_a_consumer_closed_while_it_opened_is_ended() {
         let media = Media::default();
         let consumer = Noted::default();
-        let (sink, window_gone) = window_sink();
+        let (sink, window_gone) = quiet_sink();
         let opened = block_on(open_window(&media, 7, sink, consumer.tap()));
         assert_eq!(opened, Err("unknown consumer 7".into()));
         assert_eq!(consumer.sinks(), [true, false]);
@@ -2019,13 +2020,8 @@ mod tests {
         let engine = Engine::new(Audio::Dummy).unwrap();
         let source = Source::test_pattern(&engine, 320, 180, 15).unwrap();
         // A sink is freed with its source.
-        let (dropped, freed_on) = mpsc::channel();
-        let dropped = Dropped(dropped);
-        source
-            .set_video_sink(Some(Box::new(move |_| {
-                let _ = &dropped;
-            })))
-            .unwrap();
+        let (sink, freed_on) = quiet_sink();
+        source.set_video_sink(Some(sink)).unwrap();
         held(&media, source);
         media.reset();
         let freed_on = freed_on.recv_timeout(LIMIT).expect("the source is freed");
