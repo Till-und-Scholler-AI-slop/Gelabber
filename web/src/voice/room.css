@@ -562,6 +562,14 @@
     justify-content: center;
   }
 }
+@media (pointer: coarse) and (max-height: 500px) {
+  /* A phone on its side, or one with its keyboard open, shows only the first
+     rows of the call: the card runs below the screen, the dock scrolls. The
+     way out of blocked sound comes first there. */
+  .voice-session-playback {
+    order: -1;
+  }
+}
 
 /* Participants as tiles, like video tiles without video. */
 .voice-room {
