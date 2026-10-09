@@ -231,6 +231,22 @@
     visibility: visible;
   }
 }
+@media (pointer: coarse) {
+  /* A toolbar of finger-sized buttons would cover the message text, so each
+     button keeps its size and gets a 44px hit area instead. */
+  .lr-message-actions {
+    gap: 14px;
+    padding-inline: 9px;
+  }
+  .lr-message-action {
+    position: relative;
+  }
+  .lr-message-action::after {
+    content: "";
+    position: absolute;
+    inset: -8px -7px;
+  }
+}
 
 .lr-message-edit {
   display: flex;

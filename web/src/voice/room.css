@@ -539,6 +539,29 @@
     justify-content: space-between;
   }
 }
+@media (pointer: coarse) {
+  /* Finger-sized dock controls, with leaving kept apart from the toggles.
+     The taller rows need the full height limit to keep "Ton starten" in view. */
+  .voice-session-dock {
+    max-height: 50dvh;
+  }
+  .voice-session-dock .voice-control-compact {
+    width: 44px;
+    min-height: 44px;
+    height: 44px;
+  }
+  .voice-session-dock .voice-session-call > .voice-control-leave {
+    margin-left: 8px;
+  }
+  .voice-session-dock .voice-session-link,
+  .voice-session-dock .voice-playback-volume,
+  .voice-session-playback > button {
+    min-height: 44px;
+  }
+  .voice-session-dock .voice-session-link {
+    justify-content: center;
+  }
+}
 
 /* Participants as tiles, like video tiles without video. */
 .voice-room {

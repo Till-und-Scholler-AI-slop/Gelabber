@@ -1174,6 +1174,70 @@ summary {
     opacity: 1;
   }
 }
+@media (pointer: coarse) {
+  :root {
+    /* Room for finger-sized actions next to a server or channel name. */
+    --lr-sidebar-width: 256px;
+  }
+  /* iOS zooms the page when a focused field's text is smaller than 16px. */
+  input,
+  textarea,
+  select {
+    font-size: max(16px, 1em) !important;
+  }
+  /* A long press on chrome must not select its labels or raise the link
+     callout. Messages and dialogs keep the platform behaviour. */
+  .workspace-drawer,
+  .workspace-mobile-topbar,
+  .lr-channel-header,
+  .app-header,
+  .voice-session-dock,
+  button,
+  summary {
+    -webkit-touch-callout: none;
+    user-select: none;
+  }
+  .gel-modal {
+    -webkit-touch-callout: default;
+    user-select: text;
+  }
+  /* 44px targets in both drawers. */
+  .workspace-drawer .workspace-drawer-header {
+    padding-block: 4px;
+  }
+  .workspace-drawer-close,
+  .sidebar-overview,
+  .member-profile-button {
+    min-height: 44px;
+  }
+  .server-home-link {
+    height: 44px;
+  }
+  .server-create-button,
+  .server-sidebar-actions .shell-icon-button,
+  .user-panel .shell-icon-button {
+    width: 44px;
+    height: 44px;
+  }
+  /* The list virtualizer fixes these rows at 34px. */
+  .sidebar-action-small {
+    width: 36px;
+    height: 34px;
+  }
+  .sidebar-category-row .sidebar-action-small {
+    height: 29px;
+  }
+  .sidebar-create-menu > nav {
+    top: 48px;
+  }
+  .user-panel-menu > nav {
+    bottom: 52px;
+  }
+  .sidebar-create-menu > nav > button,
+  .user-panel-menu > nav > :is(a, button) {
+    padding-block: 12px;
+  }
+}
 
 /* Theme styles share the same component geometry and hit targets. */
 dialog,
