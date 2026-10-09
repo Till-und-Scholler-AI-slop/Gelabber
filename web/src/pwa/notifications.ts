@@ -57,9 +57,11 @@ const shownByPage = new Map<string, PageNotification>();
 // of a window that closes or crashes.
 //  - A visible window holds the first one, shared, for the conversation it
 //    shows. A window in the background that finds it held shows nothing.
-//  - The second is held, alone, for the moment a window shows or closes
-//    notifications of the account. A window coming back on screen therefore
-//    closes what another one was about to show, instead of missing it.
+//  - The second is held, alone, for the moment a window shows, lists or
+//    closes notifications of the account. A window coming back on screen
+//    therefore closes what another one was about to show, instead of missing
+//    it. And Chromium loses a notification that one window shows while
+//    another one lists them: it is gone from every later list.
 const viewingLock = (user: string, channelId: string) =>
   `gelabber:viewing:${user}:${channelId}`;
 const changeLock = (user: string) => `gelabber:notifications:${user}`;
