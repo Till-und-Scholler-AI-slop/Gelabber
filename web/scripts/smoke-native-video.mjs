@@ -1023,6 +1023,44 @@ try {
     await context.close();
   }
 
+  // A viewer window closed from the large view: its switch goes with it, the
+  // focus stays in the dialog.
+  {
+    const { page, context, problems } = await open({
+      features: ["video-frames"],
+    });
+    await show(page, [{ name: "Alex", consumer: 1, width: 960, screen: true }]);
+    await page.getByRole("button", { name: "Eigenes Fenster" }).click();
+    await page.waitForFunction(
+      () => window.smokeApp.named("media_viewer_open").length === 1,
+    );
+    await page
+      .locator('[data-tile="Alex"]')
+      .getByRole("button", { name: "Vergrößern" })
+      .click();
+    const dialog = page.locator("dialog");
+    await dialog.getByRole("button", { name: "Fenster schließen" }).click();
+    await page.waitForFunction(
+      () => window.smokeApp.named("media_viewer_close").length === 1,
+    );
+    await dialog.getByRole("button", { name: "Fenster schließen" }).waitFor({
+      state: "detached",
+    });
+    const focus = await page.evaluate(() => ({
+      text: document.activeElement?.textContent,
+      inDialog: Boolean(document.activeElement?.closest("dialog")),
+    }));
+    assert.deepEqual(focus, { text: "Schließen ×", inDialog: true });
+    await dialog.getByRole("button", { name: "Schließen", exact: true }).click();
+    assert.equal(
+      await page.evaluate(() => document.activeElement?.textContent),
+      "Vergrößern",
+    );
+    assert.deepEqual(problems, []);
+    console.log("PASS: closing the window from the large view keeps the focus");
+    await context.close();
+  }
+
   // No WebGL in the page: converted in script, and kept small.
   {
     const { page, context, problems, warnings } = await open({

@@ -81,7 +81,12 @@ function StreamViewer(props: VoiceTileProps & { onClose: () => void }) {
     >
       <header className="stream-viewer-header">
         <strong>{props.label}</strong>
-        <button type="button" onClick={props.onClose} autoFocus>
+        <button
+          type="button"
+          onClick={props.onClose}
+          autoFocus
+          data-viewer-close=""
+        >
           Schließen <span aria-hidden="true">×</span>
         </button>
       </header>
@@ -394,10 +399,18 @@ function OwnWindow({
     <button
       type="button"
       aria-pressed={open}
-      onClick={() => {
+      onClick={(event) => {
         onFailed(false);
-        if (open) closeNativeViewer(consumer);
-        else
+        if (open) {
+          // In the large view the switch goes with the window; the focus
+          // goes to the dialog's own close button, not out of the dialog.
+          if (closeOnly)
+            event.currentTarget
+              .closest("dialog")
+              ?.querySelector<HTMLElement>("[data-viewer-close]")
+              ?.focus();
+          closeNativeViewer(consumer);
+        } else
           openNativeViewer(track, `${label} – Gelabber`).catch(() =>
             onFailed(true),
           );
