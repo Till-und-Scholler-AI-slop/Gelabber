@@ -576,15 +576,24 @@ mod tests {
         "video-frames",
     ];
 
-    /// What the web client reads: the fields of v0.5 stay, `features` lists
-    /// known names only.
+    /// What the web client reads: the fields of v0.5 stay, and `features` is
+    /// what this platform's build can do today, in known names. The web
+    /// client offers and hides functions by this list, so a change to
+    /// `FEATURES` is repeated here on purpose.
     #[test]
-    fn media_info_reports_known_features() {
+    fn media_info_reports_the_platform_features() {
         let info = pollster::block_on(media_info());
         assert_eq!(info["abi"], gelabber_media_core::ABI_VERSION);
         assert_eq!(info["version"], env!("CARGO_PKG_VERSION"));
         assert_eq!(info["platform"], std::env::consts::OS);
-        assert_eq!(info["features"], serde_json::json!(FEATURES));
+        let today: &[&str] = if cfg!(target_os = "linux") {
+            &["screen", "camera", "app-audio"]
+        } else if cfg!(windows) {
+            &["camera"]
+        } else {
+            &[]
+        };
+        assert_eq!(info["features"], serde_json::json!(today));
         for feature in FEATURES {
             assert!(
                 KNOWN_FEATURES.contains(feature),
