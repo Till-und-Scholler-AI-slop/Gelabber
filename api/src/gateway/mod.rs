@@ -62,6 +62,10 @@ async fn upgrade(
 /// Same-origin check when the browser sends `Origin`. Non-browser clients
 /// (tests, future native apps) omit it and pass. Vite and Caddy keep `Host`
 /// as the page host when `changeOrigin` is false, so the hosts match.
+///
+/// A browser leaves the scheme's default port out of `Origin`; a proxy in
+/// front may still write it into `Host` (`Host: example.com:443`). Both name
+/// the same origin, so that port is ignored on either side.
 pub fn origin_allowed(headers: &HeaderMap) -> bool {
     let Some(origin) = headers.get(ORIGIN).and_then(|value| value.to_str().ok()) else {
         return true;
@@ -72,11 +76,18 @@ pub fn origin_allowed(headers: &HeaderMap) -> bool {
     let Some(host) = headers.get(HOST).and_then(|value| value.to_str().ok()) else {
         return false;
     };
-    let origin_host = origin
-        .strip_prefix("https://")
-        .or_else(|| origin.strip_prefix("http://"))
-        .unwrap_or(origin);
-    origin_host.eq_ignore_ascii_case(host)
+    let (origin_host, default_port) = if let Some(rest) = origin.strip_prefix("https://") {
+        (rest, ":443")
+    } else if let Some(rest) = origin.strip_prefix("http://") {
+        (rest, ":80")
+    } else {
+        return origin.eq_ignore_ascii_case(host);
+    };
+    without_port(origin_host, default_port).eq_ignore_ascii_case(without_port(host, default_port))
+}
+
+fn without_port<'a>(host: &'a str, port: &str) -> &'a str {
+    host.strip_suffix(port).unwrap_or(host)
 }
 
 /// Publish a compact create/edit/delete event on a **channel** topic.
@@ -158,5 +169,48 @@ mod tests {
             Some("gelabber.example")
         )));
         assert!(!origin_allowed(&headers(Some("null"), Some("localhost"))));
+    }
+
+    #[test]
+    fn default_port_is_the_same_origin() {
+        // An outer proxy with `Host $host:$server_port` in front of Caddy,
+        // which forwards the port since v0.6.
+        for (origin, host) in [
+            ("https://gelabber.example", "gelabber.example:443"),
+            ("https://gelabber.example:443", "gelabber.example"),
+            ("http://gelabber.example", "gelabber.example:80"),
+            ("https://[2001:db8::1]", "[2001:db8::1]:443"),
+            ("https://Gelabber.Example", "gelabber.example:443"),
+        ] {
+            assert!(
+                origin_allowed(&headers(Some(origin), Some(host))),
+                "{origin} {host}"
+            );
+        }
+    }
+
+    #[test]
+    fn other_ports_still_differ() {
+        for (origin, host) in [
+            // The other scheme's default is not this scheme's default.
+            ("https://gelabber.example", "gelabber.example:80"),
+            ("http://gelabber.example", "gelabber.example:443"),
+            ("https://gelabber.example:8443", "gelabber.example"),
+            ("https://gelabber.example:8443", "gelabber.example:443"),
+            ("https://gelabber.example", "gelabber.example:8443"),
+            ("https://gelabber.example", "gelabber.example:4430"),
+            ("https://evil.example", "gelabber.example:443"),
+            ("https://evil.example:443", "gelabber.example"),
+            ("https://[2001:db8::1]:8443", "[2001:db8::1]"),
+        ] {
+            assert!(
+                !origin_allowed(&headers(Some(origin), Some(host))),
+                "{origin} {host}"
+            );
+        }
+        assert!(origin_allowed(&headers(
+            Some("https://gelabber.example:8443"),
+            Some("gelabber.example:8443")
+        )));
     }
 }

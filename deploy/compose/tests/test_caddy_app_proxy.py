@@ -1,7 +1,8 @@
 """Regression tests for the app-facing Caddy sites (bundled and homelab).
 
 The API accepts a browser WebSocket only when the host[:port] of `Origin`
-equals the `Host` header it receives (api/src/gateway/mod.rs, origin_allowed).
+equals the `Host` header it receives, the scheme's default port aside
+(api/src/gateway/mod.rs, origin_allowed).
 Caddy's `{host}` placeholder has no port, so forwarding it turns every `/ws`
 handshake into a 403 as soon as the stack is opened on a non-default port
 (GELABBER_HTTP_PORT, or a TLS proxy on :8443). Every app upstream must
