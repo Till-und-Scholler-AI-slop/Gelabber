@@ -1112,6 +1112,8 @@ function stopPeer(preserveCapture = false): void {
     ] as const) {
       if (stream && !hasLiveTrack(stream, "video")) stopLocalVideo(kind);
     }
+    // The epoch bump below abandons a picker that is still open.
+    if (useVoice.getState().live && !liveStream) releaseUnstartedLive();
   }
   streamReported = false;
   clearSeatReconnectTimer();
@@ -2748,18 +2750,8 @@ async function startLocalVideo(kind: "v" | "s" | "l"): Promise<void> {
     if (kind === "s" && screenEpoch === epoch) {
       useVoice.setState({ sharing: false });
     }
-    if (kind === "l" && liveEpoch === epoch) {
-      const state = useVoice.getState();
-      awaitingLive = null;
-      useVoice.setState({ live: false, localLive: null });
-      if (state.serverId && state.channelId) {
-        applyLiveEnd(
-          state.serverId,
-          state.channelId,
-          currentUserId() ?? undefined,
-        );
-      }
-    }
+    // Only the newest attempt owns the claim; a later start keeps its own.
+    if (kind === "l" && liveEpoch === epoch) releaseUnstartedLive();
     return;
   }
   pendingDisplayStreams.delete(stream);
@@ -2813,6 +2805,24 @@ async function startLocalVideo(kind: "v" | "s" | "l"): Promise<void> {
     return;
   }
   await publishLocal(kind, stream);
+}
+
+/**
+ * Go Live claims the channel before display capture answers. A capture that
+ * never yields a stream (cancelled picker, no display capture on this device,
+ * a picker left open across a seat rebuild) hands the claim back, or the room
+ * keeps a phantom Live that blocks everyone else until this seat leaves.
+ */
+function releaseUnstartedLive(): void {
+  const state = useVoice.getState();
+  const self = currentUserId();
+  clearLiveClaim();
+  awaitingLive = null;
+  useVoice.setState({ live: false, localLive: null });
+  if (state.serverId && state.channelId)
+    applyLiveEnd(state.serverId, state.channelId, self ?? undefined);
+  if (self) setPub(self, "l", false);
+  sendPub("l", false);
 }
 
 function stopLocalVideo(kind: "v" | "s" | "l"): void {
