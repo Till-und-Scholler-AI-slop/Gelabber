@@ -4,9 +4,12 @@ Native desktop client (issue #165): Tauri 2 shell around the existing web UI,
 with a native media core instead of the browser's WebRTC. Linux
 (Omarchy/Hyprland/Wayland) first, then Windows.
 
-Status: **spikes** (steps 1 to 4 of the ticket: build, Linux screen capture,
-voice in the core, Tauri shell in progress).
-Not a product yet.
+Status: **released** for Linux x64 since v0.5.0, as a tarball on the release
+page and as a pacman package (`packaging/arch/`). From v0.6 on a Windows x64
+installer is built, installed and smoke-tested by CI and attached to the
+release; that app has voice, camera and watching, but no screen share, Go
+Live or application sound yet. What users get to read ships from
+`app/package/`.
 
 ## Layout
 
@@ -22,6 +25,11 @@ Not a product yet.
 | `core/tests/screen_capture.rs` | Screen capture through the portal, H264, mediasoup, native decode (`GELABBER_TEST_SCREEN=1`) |
 | `app/` | Tauri 2 app `gelabber-desktop`: window on the server origin, bundled setup page, media commands (`src/media.rs`) |
 | `app/scripts/smoke.sh` | Starts the app on a stand-in origin under Xvfb and checks which commands the page reaches and that the frames of a test-pattern view arrive |
+| `app/scripts/smoke.ps1` | The same on Windows, against a built or installed `gelabber-desktop.exe` |
+| `app/tauri.bundle.windows.json` | What the Windows installer (NSIS) holds: the app, `gelabber_media.dll` from `app/bundle-input/`, README and third-party notices |
+| `app/package/` | What ships next to the binaries: `README.txt` (Linux), `README-windows.txt` (installed as `README.txt`), `THIRD-PARTY-NOTICES.txt` (generated) |
+| `packaging/third-party-notices.py` | Writes `THIRD-PARTY-NOTICES.txt`; its tests are in `packaging/tests/` |
+| `packaging/arch/` | The pacman package and repository; see its README |
 | `core/tests/voice.rs` | Microphone modes, RNNoise, device selection, Opus through mediasoup, playout (`GELABBER_TEST_AUDIO=1`) |
 
 ## Why a shared library with a C ABI
@@ -51,6 +59,86 @@ any glibc ≥ 2.31 system. PipeWire is loaded at runtime (`dlopen`), X11 is off.
 `GELABBER_MEDIA_LIB_DIR` points the Rust crate at an already built
 `libgelabber_media.so` instead of building it.
 
+## Building (Windows)
+
+CI builds, installs and tests the Windows app in the job `core-windows` of
+`.github/workflows/desktop-native.yml`; what follows is that job by hand.
+Needed: Visual Studio 2022 with the C++ workload and a Windows SDK, and on
+`PATH` `clang-cl` (LLVM), CMake, Ninja, Python, Node and the Rust toolchain
+of `rust-toolchain.toml`.
+
+```powershell
+git config --global core.longpaths true
+pwsh desktop\native\scripts\build-libwebrtc-windows.ps1 -Work C:\webrtc -Package C:\libwebrtc-package
+$env:GELABBER_LIBWEBRTC_DIR = 'C:\libwebrtc-package'
+# MSVC's tools stop at 260 characters; the CMake and Meson trees are deep.
+$env:CARGO_TARGET_DIR = 'C:\t'
+# The C runtime linked statically, as in the release: without it the app
+# needs the Visual C++ redistributable.
+$env:RUSTFLAGS = '-C target-feature=+crt-static'
+cargo build --release --locked --manifest-path desktop\Cargo.toml -p gelabber-media-core
+cargo build --release --locked --manifest-path desktop\Cargo.toml -p gelabber-desktop
+```
+
+The libwebrtc build takes hours, like the Linux one. The core is compiled
+with `clang-cl`, which built the package, and linked with Visual Studio's
+libraries; `GELABBER_MEDIA_COMPILER` names another compiler (`cl`, or a
+path). The result is `gelabber_media.dll` with its import library, and the
+app's build script copies the DLL next to `gelabber-desktop.exe` in
+`C:\t\release`: Windows has no rpath, the DLL must stay next to the
+executable. `GELABBER_MEDIA_LIB_DIR` points at a prebuilt core here too.
+
+The installer, from what was just built (the pinned Tauri CLI only bundles):
+
+```powershell
+New-Item -ItemType Directory -Force desktop\app\bundle-input
+Copy-Item C:\t\release\gelabber_media.dll desktop\app\bundle-input\
+cd desktop\app
+npx.cmd --yes '@tauri-apps/cli@2.12.1' bundle --bundles nsis --config tauri.bundle.windows.json
+# -> C:\t\release\bundle\nsis\Gelabber_<version>_x64-setup.exe
+```
+
+`<version>` is the one of `desktop/Cargo.toml`. CI builds a release only
+when its tag is that version (`v<version>`).
+
+The smoke test takes a built or an installed app and the ABI version it
+must report (`GM_ABI_VERSION` in `native/include/gelabber_media.h`). It
+needs Python and the WebView2 Runtime and asks for dummy audio itself
+(`GELABBER_AUDIO=dummy`, for machines without audio devices):
+
+```powershell
+pwsh desktop\app\scripts\smoke.ps1 -App C:\t\release\gelabber-desktop.exe -Abi <GM_ABI_VERSION>
+```
+
+The core's tests call a mediasoup worker that is built with Meson, against
+the same static C runtime:
+
+```powershell
+# mediasoup-sys does not find its own copy of invoke when the cargo registry
+# and the target directory are on different drives.
+python -m pip install invoke==3.0.3
+$env:PYTHON = 'python'
+$env:MESON_ARGS = '--vsenv -Db_vscrt=mt'
+cargo test --release --locked --manifest-path desktop\Cargo.toml -p gelabber-media-core -- --nocapture --test-threads=1
+```
+
+libwebrtc sends from the machine's own address. Where that address does not
+reach `127.0.0.1`, as reported of Windows, `GELABBER_TEST_LISTEN_IP=<address>`
+puts the tests' mediasoup on it; the CI job tries which one works.
+
+## Third-party notices
+
+Every package ships `app/package/THIRD-PARTY-NOTICES.txt`. It is generated;
+`packaging/third-party-notices.py` writes it (Linux x86-64 only, with the
+toolchain of `rust-toolchain.toml`). Run without arguments it lists the Rust
+crates afresh from `desktop/Cargo.lock` and keeps the two parts on the
+native core. Run it after every change to `desktop/Cargo.lock` and commit
+the file: the CI job "Third-party notices" fails when the committed file is
+not what the script would write (`--check`), and the uploads to a release
+wait for that job. When a pin of the native core or the build configuration
+the file describes has changed, the script stops and says what it needs
+(`--webrtc-src`, `--core-build`; its header has the details).
+
 ## Running the app
 
 ```sh
@@ -58,7 +146,8 @@ cargo run --manifest-path desktop/Cargo.toml -p gelabber-desktop -- --server htt
 ```
 
 Server choice, first match wins: `--server <url>`, `GELABBER_SERVER`, then
-`server` in `~/.config/io.github.till-und-scholler-ai-slop.gelabber/desktop.json`.
+`server` in `~/.config/io.github.till-und-scholler-ai-slop.gelabber/desktop.json`
+(Windows: `%APPDATA%\io.github.till-und-scholler-ai-slop.gelabber\desktop.json`).
 Without one the window shows the bundled setup page, which writes that file
 once something accepts connections at the address. The window has no menu
 bar. If the stored server does not answer at start, the setup page opens with
