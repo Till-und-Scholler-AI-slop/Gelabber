@@ -749,8 +749,19 @@ impl ApplicationHandler<Command> for App {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use std::{process::Command as Process, time::Duration};
+    use std::{
+        process::Command as Process,
+        time::{Duration, Instant},
+    };
 
+    /// winit's rule: a Wayland session wins over `DISPLAY`.
+    fn on_wayland() -> bool {
+        ["WAYLAND_DISPLAY", "WAYLAND_SOCKET"]
+            .iter()
+            .any(|name| std::env::var_os(name).is_some_and(|value| !value.is_empty()))
+    }
+
+    /// X11: one pixel of the screen.
     fn pixel(x: u32, y: u32) -> String {
         let out = Process::new("import")
             .args(["-window", "root", "-crop", &format!("1x1+{x}+{y}"), "txt:-"])
@@ -759,9 +770,52 @@ mod tests {
         String::from_utf8_lossy(&out.stdout).into_owned()
     }
 
-    /// Draws a frame in a real window: run under Xvfb with a GPU or a
-    /// software Vulkan/GL driver, and ImageMagick for the screenshot:
+    /// Wayland: how much of the screen is the test frame's red and its blue,
+    /// as `(pixels, mean column)` each. `GELABBER_TEST_OUTPUT` names the
+    /// output to look at; without it grim scales all of them into one image.
+    fn red_and_blue() -> [(f64, f64); 2] {
+        let mut grim = Process::new("grim");
+        grim.args(["-t", "ppm"]);
+        if let Some(output) = std::env::var_os("GELABBER_TEST_OUTPUT") {
+            grim.arg("-o").arg(output);
+        }
+        let out = grim.arg("-").output().expect("grim");
+        assert!(
+            out.status.success(),
+            "grim: {}",
+            String::from_utf8_lossy(&out.stderr)
+        );
+        // "P6\n<width> <height>\n255\n", then RGB rows.
+        let mut parts = out.stdout.splitn(5, u8::is_ascii_whitespace);
+        let header: Vec<_> = parts
+            .by_ref()
+            .take(4)
+            .map(String::from_utf8_lossy)
+            .collect();
+        let rgb = parts.next().expect("PPM from grim");
+        assert_eq!((&*header[0], &*header[3]), ("P6", "255"));
+        let width: usize = header[1].parse().unwrap();
+        // Pixels and the sum of their columns, red then blue.
+        let mut areas = [(0u64, 0u64); 2];
+        for (index, pixel) in rgb.as_chunks::<3>().0.iter().enumerate() {
+            let area = match *pixel {
+                [r, g, b] if r > 180 && g < 60 && b < 60 => &mut areas[0],
+                [r, g, b] if r < 60 && g < 60 && b > 180 => &mut areas[1],
+                _ => continue,
+            };
+            area.0 += 1;
+            area.1 += (index % width) as u64;
+        }
+        areas.map(|(pixels, columns)| (pixels as f64, columns as f64 / pixels.max(1) as f64))
+    }
+
+    /// Draws a frame in a real window and checks the colors on a screenshot.
+    /// Needs a GPU or a software Vulkan/GL driver.
+    /// X11, without a window manager (ImageMagick takes the screenshot):
     /// `xvfb-run -a cargo test -p gelabber-desktop -- --ignored viewer`.
+    /// Wayland (grim takes the screenshot): the window opens in the running
+    /// session, also under xvfb-run as long as `WAYLAND_DISPLAY` is set:
+    /// `GELABBER_TEST_OUTPUT=<output> cargo test -p gelabber-desktop -- --ignored viewer`.
     #[test]
     #[ignore = "needs a display"]
     fn viewer_draws_frames() {
@@ -806,20 +860,47 @@ mod tests {
             });
             std::thread::sleep(Duration::from_millis(50));
         }
-        let (left, right) = (pixel(320, 360), pixel(960, 360));
-        eprintln!("left {left}right {right}");
-        // "0,0: (...)  #RRRRGGGGBBBB  ..." with 16-bit channels.
-        let rgb = |text: &str| -> (u32, u32, u32) {
-            let hex = &text[text.rfind('#').expect(text) + 1..][..12];
-            let channel = |i: usize| u32::from_str_radix(&hex[i * 4..i * 4 + 4], 16).unwrap() >> 8;
-            (channel(0), channel(1), channel(2))
-        };
-        let (r, g, b) = rgb(&left);
-        assert!(r > 180 && g < 60 && b < 60, "left half red: {left}");
-        let (r, g, b) = rgb(&right);
-        assert!(r < 60 && g < 60 && b > 180, "right half blue: {right}");
-        viewer.close(7);
         let mut events = Vec::new();
+        if on_wayland() {
+            // The compositor places and sizes the window (and animates it
+            // in): look for the halves by color until both have the size
+            // the viewer reports, red left of blue.
+            let deadline = Instant::now() + Duration::from_secs(5);
+            loop {
+                events.extend(events_rx.try_iter());
+                let shown = match events.last() {
+                    Some(ViewerEvent::Height(height)) => f64::from(*height),
+                    _ => 0.0,
+                };
+                let half = shown * (shown * w as f64 / h as f64) / 2.0;
+                let [red, blue] = red_and_blue();
+                let fits = |pixels: f64| pixels > half * 0.9 && pixels < half * 1.1;
+                if half > 0.0 && fits(red.0) && fits(blue.0) && red.1 < blue.1 {
+                    eprintln!("{half} pixels each: red {red:?}, blue {blue:?}");
+                    break;
+                }
+                assert!(
+                    Instant::now() < deadline,
+                    "red left, blue right, {half} pixels each: red {red:?}, blue {blue:?}"
+                );
+                std::thread::sleep(Duration::from_millis(100));
+            }
+        } else {
+            let (left, right) = (pixel(320, 360), pixel(960, 360));
+            eprintln!("left {left}right {right}");
+            // "0,0: (...)  #RRRRGGGGBBBB  ..." with 16-bit channels.
+            let rgb = |text: &str| -> (u32, u32, u32) {
+                let hex = &text[text.rfind('#').expect(text) + 1..][..12];
+                let channel =
+                    |i: usize| u32::from_str_radix(&hex[i * 4..i * 4 + 4], 16).unwrap() >> 8;
+                (channel(0), channel(1), channel(2))
+            };
+            let (r, g, b) = rgb(&left);
+            assert!(r > 180 && g < 60 && b < 60, "left half red: {left}");
+            let (r, g, b) = rgb(&right);
+            assert!(r < 60 && g < 60 && b > 180, "right half blue: {right}");
+        }
+        viewer.close(7);
         while let Ok(event) = events_rx.recv_timeout(Duration::from_secs(5)) {
             let closed = event == ViewerEvent::Closed;
             events.push(event);
@@ -827,7 +908,20 @@ mod tests {
                 break;
             }
         }
-        // 1280x720 window, 16:9 frame: the image fills it.
-        assert_eq!(events, [ViewerEvent::Height(720), ViewerEvent::Closed]);
+        if on_wayland() {
+            // One height per size the compositor gave the window.
+            let (closed, heights) = events.split_last().unwrap();
+            assert_eq!(closed, &ViewerEvent::Closed);
+            assert!(
+                !heights.is_empty()
+                    && heights
+                        .iter()
+                        .all(|event| matches!(event, ViewerEvent::Height(1..))),
+                "heights, then closed: {events:?}"
+            );
+        } else {
+            // 1280x720 window, 16:9 frame: the image fills it.
+            assert_eq!(events, [ViewerEvent::Height(720), ViewerEvent::Closed]);
+        }
     }
 }
