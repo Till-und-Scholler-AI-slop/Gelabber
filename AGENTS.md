@@ -70,7 +70,7 @@ On 2026-10-08 Silas decided to release `v0.5.0` with the Linux desktop app
 
 ## Shipped line: latest published main tag
 
-The latest published release is currently `v0.5.1`. Hotfixes for the shipped
+The latest published release is currently `v0.5.2`. Hotfixes for the shipped
 minor go to `main`, followed by a sync PR to the current development branch once
 one exists; a feature-branch version is not a release.
 
