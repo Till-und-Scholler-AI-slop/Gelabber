@@ -1,6 +1,6 @@
 import type { ReactNode } from "react";
 import { renderToStaticMarkup } from "react-dom/server";
-import { beforeEach, describe, expect, it, vi } from "vitest";
+import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
 import type { ServerDetail } from "../servers/types.ts";
 import type { VoiceFlags } from "./roster.ts";
@@ -101,7 +101,12 @@ beforeEach(() => {
   fixture.live = { a: { stage: "alice" }, b: { stage: "bob" } };
   fixture.server = undefined;
   fixture.requestedServer = undefined;
+  // A desktop browser: the capture controls depend on what the client can do.
+  vi.stubGlobal("navigator", {
+    mediaDevices: { getDisplayMedia() {}, getUserMedia() {} },
+  });
 });
+afterEach(() => vi.unstubAllGlobals());
 
 describe("active media UI", () => {
   it("renders only the Watch session's exact server, channel and publisher", () => {

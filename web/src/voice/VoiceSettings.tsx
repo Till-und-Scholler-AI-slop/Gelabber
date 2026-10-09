@@ -1,4 +1,5 @@
 import { useAudioProcessing } from "./audioProcessing.ts";
+import { canChooseSpeaker } from "./capabilities.ts";
 import { isDesktopApp } from "./native/bridge.ts";
 import { listNativeAudioApps } from "./native/capture.ts";
 import { MicrophoneTest } from "./MicrophoneTest.tsx";
@@ -10,6 +11,7 @@ import { playCallSound } from "./callSounds.ts";
 
 import {
   AUDIO_PROCESSING,
+  AUDIO_PROCESSING_DESKTOP,
   audioBitrate,
   type AudioProcessingMode,
   type DeviceList,
@@ -50,6 +52,11 @@ export function MediaSettingsForm({
   const videoLimit = videoSendBudget(settings);
   const [microphoneTest, setMicrophoneTest] = useState(false);
   const [devices, setDevices] = useState<DeviceList>(emptyDevices);
+  // The desktop app's native core captures, filters and sends; the texts
+  // must not credit a browser with it.
+  const desktop = isDesktopApp();
+  const chooseSpeaker = canChooseSpeaker();
+  const processingModes = desktop ? AUDIO_PROCESSING_DESKTOP : AUDIO_PROCESSING;
 
   const refresh = async () => {
     // The desktop app lists the native engine's devices; no permission probe.
@@ -107,7 +114,7 @@ export function MediaSettingsForm({
               options={withCurrent(devices.audioinput, settings.audioInputId)}
             />
           )}
-          {showAudio && (
+          {showAudio && chooseSpeaker && (
             <Select
               id="audio-output"
               label="Lautsprecher"
@@ -115,6 +122,12 @@ export function MediaSettingsForm({
               onChange={(value) => settings.patch({ audioOutputId: value })}
               options={withCurrent(devices.audiooutput, settings.audioOutputId)}
             />
+          )}
+          {showAudio && !chooseSpeaker && (
+            <p className="text-xs text-neutral-500">
+              Dieser Browser kann den Lautsprecher nicht wählen. Der Ton folgt
+              der Ausgabe deines Geräts.
+            </p>
           )}
           {(showAudio || showVideo) && (
             <fieldset className="flex flex-col gap-2">
@@ -132,7 +145,9 @@ export function MediaSettingsForm({
                   ? `Ausdrückliche Obergrenzen: Sprache ${audioLimit! / 1000} kbit/s, Stream-Ton 128 kbit/s, Video gemeinsam ${formatVideoBitrate(videoLimit!)}.`
                   : videoLimit
                     ? `Audio ohne Bitratengrenze durch Gelabber; Video mit deinem gemeinsamen Limit von ${formatVideoBitrate(videoLimit)}.`
-                    : "Keine Bitratengrenze durch Gelabber. Browser, Codec und Verbindung bestimmen die tatsächliche Datenrate."}
+                    : desktop
+                      ? "Keine Bitratengrenze durch Gelabber. Codec und Verbindung bestimmen die tatsächliche Datenrate."
+                      : "Keine Bitratengrenze durch Gelabber. Browser, Codec und Verbindung bestimmen die tatsächliche Datenrate."}
               </p>
             </fieldset>
           )}
@@ -199,14 +214,18 @@ export function MediaSettingsForm({
               value={Math.round(settings.inputGain * 100)}
               suffix={`${Math.round(settings.inputGain * 100)} %`}
               onChange={(value) => settings.patch({ inputGain: value / 100 })}
-              hint="100 % fügt keine Verstärkung hinzu. Andere Werte laufen über Web Audio."
+              hint={
+                desktop
+                  ? "100 % fügt keine Verstärkung hinzu."
+                  : "100 % fügt keine Verstärkung hinzu. Andere Werte laufen über Web Audio."
+              }
             />
           </fieldset>
           <fieldset className="flex flex-col gap-3">
             <legend className="text-sm font-semibold">
               Mikrofonverarbeitung
             </legend>
-            {(Object.keys(AUDIO_PROCESSING) as AudioProcessingMode[]).map(
+            {(Object.keys(processingModes) as AudioProcessingMode[]).map(
               (mode) => (
                 <label key={mode} className="flex items-start gap-2 text-sm">
                   <input
@@ -216,9 +235,9 @@ export function MediaSettingsForm({
                     onChange={() => settings.patch({ processingMode: mode })}
                   />
                   <span>
-                    {AUDIO_PROCESSING[mode].label}
+                    {processingModes[mode].label}
                     <small className="block text-neutral-500">
-                      {AUDIO_PROCESSING[mode].hint}
+                      {processingModes[mode].hint}
                     </small>
                   </span>
                 </label>
@@ -234,15 +253,13 @@ export function MediaSettingsForm({
               className="self-start rounded border px-3 py-2 text-sm"
               onClick={() => setMicrophoneTest(true)}
             >
-              {isDesktopApp()
-                ? "Mikrofon testen"
-                : "Mikrofon testen und vergleichen"}
+              {desktop ? "Mikrofon testen" : "Mikrofon testen und vergleichen"}
             </button>
           </fieldset>
           <AdvancedAudio expanded={section === "all"}>
             <fieldset className="flex flex-col gap-2">
               <legend className="text-sm font-semibold">
-                Echo und Browserfilter
+                {desktop ? "Echo und WebRTC-Filter" : "Echo und Browserfilter"}
               </legend>
               <Toggle
                 id="aec"
@@ -260,7 +277,11 @@ export function MediaSettingsForm({
                 <>
                   <Toggle
                     id="ns"
-                    label="Rauschunterdrückung des Browsers"
+                    label={
+                      desktop
+                        ? "Rauschunterdrückung von WebRTC"
+                        : "Rauschunterdrückung des Browsers"
+                    }
                     checked={settings.noiseSuppression}
                     onChange={(noiseSuppression) =>
                       settings.patch({ noiseSuppression })
@@ -268,7 +289,11 @@ export function MediaSettingsForm({
                   />
                   <Toggle
                     id="agc"
-                    label="Auto-Gain des Browsers"
+                    label={
+                      desktop
+                        ? "Auto-Gain von WebRTC"
+                        : "Auto-Gain des Browsers"
+                    }
                     checked={settings.autoGainControl}
                     onChange={(autoGainControl) =>
                       settings.patch({ autoGainControl })
@@ -385,8 +410,9 @@ export function MediaSettingsForm({
               </div>
             )}
             <p className="stream-quality-budget">
-              Der Browser passt die tatsächliche Bitrate an die Verbindung an.
-              Das Limit ist eine Obergrenze, keine feste Datenrate.
+              {desktop ? "Die Desktop-App" : "Der Browser"} passt die
+              tatsächliche Bitrate an die Verbindung an. Das Limit ist eine
+              Obergrenze, keine feste Datenrate.
             </p>
           </section>
           <p className="stream-quality-budget">
@@ -420,7 +446,13 @@ export function MediaSettingsForm({
             value={settings.callSoundVolume}
             suffix={`${Math.round(settings.callSoundVolume * 100)} %`}
             onChange={(callSoundVolume) => settings.patch({ callSoundVolume })}
-            hint="Nutzt deinen gewählten Lautsprecher und die Wiedergabelautstärke."
+            hint={
+              desktop
+                ? "Nutzt die Wiedergabelautstärke. Signaltöne spielen auf dem Standard-Ausgabegerät des Systems."
+                : chooseSpeaker
+                  ? "Nutzt deinen gewählten Lautsprecher und die Wiedergabelautstärke."
+                  : "Nutzt die Wiedergabelautstärke."
+            }
           />
           <button
             type="button"
@@ -452,7 +484,11 @@ export function MediaSettingsForm({
           />
           <Toggle
             id="desktop-notify"
-            label="Browser-Benachrichtigung, wenn der Tab im Hintergrund ist"
+            label={
+              desktop
+                ? "Benachrichtigung, wenn Gelabber im Hintergrund ist"
+                : "Browser-Benachrichtigung, wenn der Tab im Hintergrund ist"
+            }
             checked={settings.desktopNotify}
             onChange={(desktopNotify) => {
               settings.patch({ desktopNotify });
@@ -631,7 +667,7 @@ function Select({
   value,
   onChange,
   options,
-  defaultLabel = "Browser-Default",
+  defaultLabel = isDesktopApp() ? "Systemstandard" : "Browser-Default",
 }: {
   id: string;
   label: string;
