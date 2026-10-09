@@ -26,8 +26,32 @@ import {
   asStreamProfile,
   videoConstraintsFor,
   isOverconstrainedError,
+  type SourceAudioShare,
 } from "./settings.ts";
 afterEach(resetMediaSettingsForTests);
+
+/** The web client of v0.5.2 on the same storage, as after a rollback of the
+ * server. It reads `shareSourceAudio === true` and knows nothing of the newer
+ * choice; its next save (any slider) writes the keys it knows and drops the
+ * rest. `pressed` is its own "Ton teilen" being set. Answers what it shares. */
+async function v05Client(pressed?: boolean): Promise<boolean> {
+  const storage = useMediaSettings.persist.getOptions().storage!;
+  const saved = await storage.getItem("gelabber.media");
+  const known = { ...saved?.state } as Record<string, unknown>;
+  delete known.sourceAudioShare;
+  const shareSourceAudio = pressed ?? known.shareSourceAudio === true;
+  await storage.setItem("gelabber.media", {
+    state: { ...known, shareSourceAudio } as never,
+    version: 0,
+  });
+  return shareSourceAudio;
+}
+
+/** This client again, loading what is stored now. */
+async function v06Client(): Promise<SourceAudioShare> {
+  await useMediaSettings.persist.rehydrate();
+  return useMediaSettings.getState().sourceAudioShare;
+}
 describe("capture and explicit bandwidth preferences", () => {
   it("defaults to enhanced speech with no application bitrate cap", () => {
     expect(useMediaSettings.getState().processingMode).toBe("enhanced");
@@ -246,15 +270,18 @@ describe("stream sound: the stored choice", () => {
     expect(await reloadWith({ shareSourceAudio: false })).toBe("auto");
     expect(await reloadWith({ shareSourceAudio: true })).toBe("on");
     expect(await reloadWith({ quality: "high" })).toBe("auto");
-    // The old key does not linger in the state or the next save.
+    // The old key is storage only: it does not linger in the state.
     expect(useMediaSettings.getState()).not.toHaveProperty("shareSourceAudio");
   });
 
   it("keeps an explicit off apart from the old default across reloads", async () => {
     useMediaSettings.getState().patch({ sourceAudioShare: "off" });
     const saved = (await storage().getItem("gelabber.media"))!;
-    expect(saved.state).toMatchObject({ sourceAudioShare: "off" });
-    expect(saved.state).not.toHaveProperty("shareSourceAudio");
+    // Next to it the boolean an older client reads: not switched on.
+    expect(saved.state).toMatchObject({
+      sourceAudioShare: "off",
+      shareSourceAudio: false,
+    });
     resetMediaSettingsForTests();
     await storage().setItem("gelabber.media", saved);
     await useMediaSettings.persist.rehydrate();
@@ -273,6 +300,70 @@ describe("stream sound: the stored choice", () => {
     expect(await reloadWith({ sourceAudioShare: "yes" })).toBe("auto");
     useMediaSettings.getState().patch({ sourceAudioShare: "loud" as never });
     expect(useMediaSettings.getState().sourceAudioShare).toBe("auto");
+  });
+});
+
+describe("stream sound: a rollback to v0.5 and back", () => {
+  const choose = (sourceAudioShare: SourceAudioShare) =>
+    useMediaSettings.getState().patch({ sourceAudioShare });
+  const stored = async () =>
+    (await useMediaSettings.persist
+      .getOptions()
+      .storage!.getItem("gelabber.media"))!.state as Record<string, unknown>;
+
+  it("leaves the old client its boolean: switched on stays on there", async () => {
+    choose("on");
+    expect(await stored()).toMatchObject({
+      sourceAudioShare: "on",
+      shareSourceAudio: true,
+    });
+    expect(await v05Client()).toBe(true);
+    // Its save has dropped the newer key; the boolean still says on.
+    expect(await stored()).not.toHaveProperty("sourceAudioShare");
+    expect(await v06Client()).toBe("on");
+
+    // Neither an off nor no choice is anything it would share.
+    choose("off");
+    expect(await v05Client()).toBe(false);
+    choose("auto");
+    expect(await v05Client()).toBe(false);
+  });
+
+  it("finds an off again that the old client could not keep", async () => {
+    choose("off");
+    expect(await v05Client()).toBe(false);
+    expect(await stored()).not.toHaveProperty("sourceAudioShare");
+    expect(await v06Client()).toBe("off");
+    // And saves it as before.
+    useMediaSettings.getState().patch({ outputVolume: 0.5 });
+    expect(await stored()).toMatchObject({
+      sourceAudioShare: "off",
+      shareSourceAudio: false,
+    });
+  });
+
+  it("takes what was switched in the old client over what it had stored", async () => {
+    // Off here, switched on there.
+    choose("off");
+    expect(await v05Client(true)).toBe(true);
+    expect(await v06Client()).toBe("on");
+    // On here, switched off there: the old false, no choice as on a first
+    // upgrade.
+    choose("on");
+    expect(await v05Client(false)).toBe(false);
+    expect(await v06Client()).toBe("auto");
+    // On, off again there, both in the old client, after an off here.
+    choose("off");
+    await v05Client(true);
+    await v05Client(false);
+    expect(await v06Client()).toBe("off");
+  });
+
+  it("has nothing to restore for a client that never chose", async () => {
+    expect(await v05Client()).toBe(false);
+    expect(await v06Client()).toBe("auto");
+    expect(await v05Client(true)).toBe(true);
+    expect(await v06Client()).toBe("on");
   });
 });
 
@@ -395,6 +486,23 @@ describe("stream sound: what a share does", () => {
     expect(sharesSourceAudio()).toBe(false);
     flip(true);
     expect((await restart()).sourceAudioShare).toBe("on");
+    expect(sharesSourceAudio()).toBe(true);
+  });
+
+  it("switched off in the v0.6 app, a server rolled back and updated again shares no sound", async () => {
+    await desktopApp(APP_06);
+    useMediaSettings
+      .getState()
+      .patch({ sourceAudioShare: sourceAudioChoice(false) });
+    expect(sharesSourceAudio()).toBe(false);
+    // The v0.5 web client in the same app saves once, and v0.6 returns.
+    expect(await v05Client()).toBe(false);
+    expect(await v06Client()).toBe("off");
+    expect(sharesSourceAudio()).toBe(false);
+    // Without that off the app shares sound unasked, as on a first upgrade.
+    useMediaSettings.getState().patch({ sourceAudioShare: "auto" });
+    await v05Client();
+    expect(await v06Client()).toBe("auto");
     expect(sharesSourceAudio()).toBe(true);
   });
 });
