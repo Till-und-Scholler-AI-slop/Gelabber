@@ -2,7 +2,8 @@
 # desktop app around it, for Linux and Windows: reproducible libwebrtc builds,
 # a loopback call against the server's mediasoup version, the packaged apps
 # (Linux tarball and pacman repository, Windows installer) and, for a
-# release, their upload. The two platforms share no job.
+# release, their upload. The two platforms share no job but the check of the
+# third-party notices, which both uploads wait for.
 name: Desktop native core
 
 on:
@@ -383,15 +384,36 @@ jobs:
           cargo clippy --locked --manifest-path desktop/Cargo.toml --target x86_64-pc-windows-msvc \
             -p gelabber-media-core --lib -- -D warnings
 
-      # The packages ship desktop/app/package/THIRD-PARTY-NOTICES.txt. Its
-      # crate list comes from Cargo.lock for both targets, which this job has
-      # at hand: a dependency change without a refreshed file fails here
-      # (desktop/packaging/third-party-notices.py without arguments writes it).
-      - name: Third-party notices are current
-        run: |
-          set -euo pipefail
-          python3 -m unittest discover -s desktop/packaging/tests
-          python3 desktop/packaging/third-party-notices.py --check
+  # The packages of both systems ship
+  # desktop/app/package/THIRD-PARTY-NOTICES.txt. Its crate list comes from
+  # desktop/Cargo.lock for both targets, some of its sentences from the
+  # build configuration. A change of either without a refreshed file fails
+  # here; desktop/packaging/third-party-notices.py without arguments writes
+  # the file, or says what else it needs. The builds do not wait for this
+  # job, so a run still reports what else is wrong. The two jobs that attach
+  # the apps to a release do, and with them the pacman repository: no
+  # release goes out with notices that are out of date. No build and no Rust
+  # cache: cargo only reads the lock file and the crates' manifests.
+  notices:
+    name: Third-party notices
+    runs-on: ubuntu-24.04
+    timeout-minutes: 15
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v7
+
+      - name: Rust toolchain
+        uses: dtolnay/rust-toolchain@1.98.1
+
+      - name: Notices are current
+        run: python3 desktop/packaging/third-party-notices.py --check
+
+      # After the check, which has fetched the crates of the lock file: one
+      # of the tests runs the script again without the network and, in CI,
+      # fails where it cannot (elsewhere it skips).
+      - name: Tests of the notices script
+        if: ${{ !cancelled() }}
+        run: python3 -m unittest discover -s desktop/packaging/tests -v
 
   # The same core as a DLL, the app around it and its installer. First the
   # steps that build on each other, up to the app installed, started and
@@ -471,19 +493,24 @@ jobs:
           node --version
           cargo --version --verbose
 
-      # The mediasoup worker and the release build take long: they are kept
-      # when a later step fails. The cache of a key (this job, the toolchain,
-      # Cargo.toml and Cargo.lock) is written once, by the first run that
-      # does not find it, and never refreshed. `key` is its generation: raise
-      # it when what was saved is not worth having; the next run then starts
-      # from nothing. A cache saved by a tag run could only be read by that
+      # The cache of a key (this job, the toolchain, Cargo.toml and
+      # Cargo.lock, RUSTFLAGS, MESON_ARGS) is written once, by the first run
+      # that does not find it, and never refreshed. What takes long must
+      # therefore be in it: the app's release dependencies and the mediasoup
+      # worker of the tests. A failed run saves nothing until both are built
+      # ("Rust cache also from a run that fails from here on"). `key` is the
+      # cache's generation: raise it when what was saved is not worth having;
+      # the next run then starts from nothing. MESON_ARGS is part of the key
+      # because the worker's build script does not tell cargo that it reads
+      # the variable: a cache would go on handing out the worker built with
+      # the old value. A cache saved by a tag run could only be read by that
       # tag.
       - name: Rust cache
         uses: Swatinem/rust-cache@v2
         with:
           workspaces: desktop -> ../../../t
           key: "1"
-          cache-on-failure: true
+          env-vars: MESON_ARGS
           save-if: ${{ github.ref_type != 'tag' }}
 
       # The C++ core alone first: its compile and link errors come up before
@@ -496,14 +523,6 @@ jobs:
       - name: Desktop app (gelabber-desktop.exe)
         id: app
         run: cargo build --release --locked --manifest-path desktop/Cargo.toml -p gelabber-desktop
-
-      # A run that never built the app's dependencies would write a cache
-      # without them, and it would stay (see "Rust cache"). The variable is
-      # what the saving half of rust-cache goes by after a failure (post-if in
-      # its action.yml); should it stop reading it, raising `key` is the way.
-      - name: No Rust cache from a run without the app
-        if: ${{ always() && steps.app.outcome != 'success' }}
-        run: Add-Content $env:GITHUB_ENV 'CACHE_ON_FAILURE=false'
 
       # The inputs as desktop/app/tauri.bundle.windows.json names them: the
       # core in bundle-input/, the notices of the libraries in package/. The
@@ -529,6 +548,19 @@ jobs:
           }
           $built = @(Get-ChildItem (Join-Path $release 'bundle\nsis') -Filter '*-setup.exe')
           if ($built.Count -ne 1) { throw "expected one installer in bundle\nsis, found $($built.Count)" }
+          # The version of the desktop workspace is the app's: in the name
+          # Tauri gives the installer, among the installed apps, in the file
+          # properties and in media_info. A release must have its tag there,
+          # and release.yml only holds the server's workspace to the tag.
+          $version = Select-String -Path desktop\Cargo.toml -Pattern '^version = "(.+)"\s*$' | Select-Object -First 1
+          if (-not $version) { throw 'no version in desktop\Cargo.toml' }
+          $version = $version.Matches[0].Groups[1].Value
+          if ($built[0].Name -ne "Gelabber_${version}_x64-setup.exe") {
+            throw "the installer is $($built[0].Name): not version $version of desktop\Cargo.toml"
+          }
+          if ($env:RELEASE_TAG -and $env:RELEASE_TAG -ne "v$version") {
+            throw "release $($env:RELEASE_TAG): desktop\Cargo.toml, and with it the app, says $version"
+          }
           $name = 'gelabber-desktop-windows-x64-setup.exe'
           Copy-Item $built[0].FullName $name
           $hash = (Get-FileHash $name -Algorithm SHA256).Hash.ToLowerInvariant()
@@ -727,6 +759,29 @@ jobs:
             throw "$($problems.Count) of the checks on the binaries failed"
           }
 
+      # The core's tests, built and not yet run: the mediasoup worker they
+      # call (a dev-dependency; Meson and C++, some ten minutes) and the test
+      # programs. A step of its own, so that the next one knows whether the
+      # worker is there.
+      - name: Tests of the core with their mediasoup worker (build)
+        id: worker
+        if: ${{ !cancelled() && steps.core.outcome == 'success' }}
+        timeout-minutes: 45
+        run: cargo test --release --locked --manifest-path desktop/Cargo.toml -p gelabber-media-core --no-run
+
+      # From here on the target directory holds both long builds, and a run
+      # that fails (a test, Clippy, one of the installer steps above) saves
+      # its cache all the same: see "Rust cache". Before this point it must
+      # not: a run that stopped at the core, at the app or in the worker's
+      # build (its Python, Meson, a timeout) would pin a cache without them.
+      # The variable is what the saving half of rust-cache goes by after a
+      # failure (post-if in its action.yml; its first half sets it to
+      # false). Should it stop reading it, failed runs save nothing, which
+      # costs time and no more.
+      - name: Rust cache also from a run that fails from here on
+        if: ${{ !cancelled() && steps.app.outcome == 'success' && steps.worker.outcome == 'success' }}
+        run: Add-Content $env:GITHUB_ENV 'CACHE_ON_FAILURE=true'
+
       # Where the mediasoup of the tests below listens. libwebrtc gathers no
       # loopback candidate: it sends from the machine's own address and gets
       # its answers there. Linux carries that to and from 127.0.0.1; Windows
@@ -797,11 +852,12 @@ jobs:
       # decode, and the video sinks of views inside the app. This core has no
       # H264, so neither GELABBER_EXPECT_H264 nor GELABBER_EXPECT_ENCODER.
       # The voice and screen tests need devices and skip without their
-      # GELABBER_TEST_* switch.
+      # GELABBER_TEST_* switch. Everything it runs was built by "Tests of the
+      # core with their mediasoup worker (build)".
       - name: Loopback call against mediasoup 0.29
         id: tests
-        if: ${{ !cancelled() && steps.core.outcome == 'success' }}
-        timeout-minutes: 45
+        if: ${{ !cancelled() && steps.worker.outcome == 'success' }}
+        timeout-minutes: 20
         env:
           RUST_BACKTRACE: "1"
         run: cargo test --release --locked --manifest-path desktop/Cargo.toml -p gelabber-media-core -- --nocapture --test-threads=1
@@ -889,6 +945,13 @@ jobs:
             if [ "$PUBLISH" = true ] && [ -z "$ARCH_REPO_GPG_KEY" ]; then
               echo "ARCH_REPO_PUBLISH is on but the ARCH_REPO_GPG_KEY secret is missing"; exit 1
             fi
+            # The package gets its version from the tag, the app in it (what
+            # media_info reports) from the desktop workspace: the same, or
+            # the release is not built.
+            app="v$(sed -n 's/^version = "\(.*\)"$/\1/p' desktop/Cargo.toml | head -n1)"
+            if [ "$app" != "$TAG" ]; then
+              echo "release $TAG: desktop/Cargo.toml, and with it the app, says $app"; exit 1
+            fi
             version="$TAG"
             url="https://github.com/${GITHUB_REPOSITORY}/releases/download/${TAG}/gelabber-desktop-linux-x64.tar.gz"
           else
@@ -921,11 +984,11 @@ jobs:
           retention-days: 14
 
   # Release only: the app tarball becomes a release asset, which the
-  # PKGBUILD downloads.
+  # PKGBUILD downloads. Not with third-party notices that are out of date.
   release-asset:
     name: Attach the Linux app to the release
     if: github.event_name == 'release' || (github.event_name == 'workflow_dispatch' && inputs.release_tag != '')
-    needs: arch-repo
+    needs: [arch-repo, notices]
     runs-on: ubuntu-24.04
     permissions:
       contents: write
@@ -943,11 +1006,11 @@ jobs:
   # Release only: the Windows installer and its checksum become release
   # assets. Apart from the Linux jobs in both directions: a failure here
   # leaves the tarball and the pacman repository alone, and the other way
-  # round.
+  # round. The third-party notices are the one thing both wait for.
   release-asset-windows:
     name: Attach the Windows app to the release
     if: github.event_name == 'release' || (github.event_name == 'workflow_dispatch' && inputs.release_tag != '')
-    needs: core-windows
+    needs: [core-windows, notices]
     runs-on: ubuntu-24.04
     permissions:
       contents: write

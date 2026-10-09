@@ -59,9 +59,11 @@ How this file was produced
     Linux x86-64, the crate sources in the cargo registry, and the licence
     texts in the Rust toolchain that rust-toolchain.toml pins
   Nothing was built or run for Windows to produce it; what it says about the
-  Windows package is derived from the build scripts and the lock file. What
-  part 2 says about the contents of the Linux media core was found in a build
-  made on the machine that generated it, not in the released library.
+  Windows package is derived from the build scripts, from the workflow that
+  builds the packages (.github/workflows/desktop-native.yml) and from the lock
+  file. What part 2 says about the contents of the Linux media core was found
+  in a build made on the machine that generated it, not in the released
+  library.
 
 Open points
   - H.264 on Linux. libwebrtc is built with rtc_use_h264=true for Linux, so
@@ -75,13 +77,24 @@ Open points
   - H.264 on Windows. The libwebrtc package for Windows is built with
     rtc_use_h264=true as well, but the media core is compiled without
     WEBRTC_USE_H264 there, so its own code refers to neither OpenH264 nor
-    FFmpeg. That gelabber_media.dll holds no code of either was not checked on
-    a Windows build when this file was written.
-  - Microsoft runtime in gelabber_media.dll. The DLL links Microsoft's C
-    runtime and C++ standard library statically (CMAKE_MSVC_RUNTIME_LIBRARY
-    MultiThreaded), and clang's compiler-rt builtins when the build finds
-    them. Their versions and licence texts are not listed: they come from the
-    Visual Studio and LLVM installation of the build machine.
+    FFmpeg. Whether the linker left code of either in gelabber_media.dll was
+    not looked at for this file, which is written on Linux. The job that
+    builds the Windows package (core-windows in the workflow named above)
+    searches the gelabber_media.dll of every build for names from OpenH264,
+    from FFmpeg and from libwebrtc's wrappers around the two, and fails when
+    it finds one; a release takes its installer from a run of that job only.
+    That is a search for names in the file, not proof that it holds none of
+    that code.
+  - Microsoft's runtime in the Windows programs. gelabber_media.dll links
+    Microsoft's C runtime and C++ standard library statically
+    (CMAKE_MSVC_RUNTIME_LIBRARY MultiThreaded), and clang's compiler-rt
+    builtins when the build finds them. gelabber-desktop.exe links Microsoft's
+    C runtime statically as well: the job core-windows builds it with
+    RUSTFLAGS "-C target-feature=+crt-static". Which other parts of
+    Microsoft's runtime libraries the code linked into the application pulls
+    in was not established. Versions and licence texts of these libraries are
+    not listed: they come from the Visual Studio and LLVM installation of the
+    build machine.
   - The Windows installer. It is made by Tauri's bundler with NSIS
     (desktop/app/tauri.bundle.windows.json) and embeds Microsoft's WebView2
     Runtime bootstrapper (webviewInstallMode embedBootstrapper). The installer

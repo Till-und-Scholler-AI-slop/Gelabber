@@ -4,9 +4,12 @@ Native desktop client (issue #165): Tauri 2 shell around the existing web UI,
 with a native media core instead of the browser's WebRTC. Linux
 (Omarchy/Hyprland/Wayland) first, then Windows.
 
-Status: **spikes** (steps 1 to 4 of the ticket: build, Linux screen capture,
-voice in the core, Tauri shell in progress).
-Not a product yet.
+Status: **released** for Linux x64 since v0.5.0, as a tarball on the release
+page and as a pacman package (`packaging/arch/`). From v0.6 on a Windows x64
+installer is built, installed and smoke-tested by CI and attached to the
+release; that app has voice, camera and watching, but no screen share, Go
+Live or application sound yet. What users get to read ships from
+`app/package/`.
 
 ## Layout
 
@@ -23,6 +26,11 @@ Not a product yet.
 | `core/tests/screen_capture.rs` | Screen capture through the portal, H264, mediasoup, native decode, and the screen as the web client shares it: VP8 in two simulcast layers (`GELABBER_TEST_SCREEN=1`) |
 | `app/` | Tauri 2 app `gelabber-desktop`: window on the server origin, bundled setup page, media commands (`src/media.rs`) |
 | `app/scripts/smoke.sh` | Starts the app on a stand-in origin under Xvfb and checks which commands the page reaches and that the frames of a test-pattern view arrive; then kills the page's web process and checks that the app loads the page again |
+| `app/scripts/smoke.ps1` | The same on Windows, against a built or installed `gelabber-desktop.exe` |
+| `app/tauri.bundle.windows.json` | What the Windows installer (NSIS) holds: the app, `gelabber_media.dll` from `app/bundle-input/`, README and third-party notices |
+| `app/package/` | What ships next to the binaries: `README.txt` (Linux), `README-windows.txt` (installed as `README.txt`), `THIRD-PARTY-NOTICES.txt` (generated) |
+| `packaging/third-party-notices.py` | Writes `THIRD-PARTY-NOTICES.txt`; its tests are in `packaging/tests/` |
+| `packaging/arch/` | The pacman package and repository; see its README |
 | `core/tests/voice.rs` | Microphone modes, RNNoise, device selection, Opus through mediasoup, playout (`GELABBER_TEST_AUDIO=1`) |
 
 ## Why a shared library with a C ABI
@@ -52,6 +60,106 @@ any glibc ≥ 2.31 system. PipeWire is loaded at runtime (`dlopen`), X11 is off.
 `GELABBER_MEDIA_LIB_DIR` points the Rust crate at an already built
 `libgelabber_media.so` instead of building it.
 
+## Building (Windows)
+
+CI builds, installs and tests the Windows app in the job `core-windows` of
+`.github/workflows/desktop-native.yml`; what follows is that job by hand.
+Needed: Visual Studio 2022 with the C++ workload and a Windows SDK, and on
+`PATH` `clang-cl` (LLVM), CMake, Ninja, Python, Node and the Rust toolchain
+of `rust-toolchain.toml`.
+
+```powershell
+git config --global core.longpaths true
+pwsh desktop\native\scripts\build-libwebrtc-windows.ps1 -Work C:\webrtc -Package C:\libwebrtc-package
+$env:GELABBER_LIBWEBRTC_DIR = 'C:\libwebrtc-package'
+# MSVC's tools stop at 260 characters; the CMake and Meson trees are deep.
+$env:CARGO_TARGET_DIR = 'C:\t'
+# The C runtime linked statically, as in the release: without it the app
+# needs the Visual C++ redistributable.
+$env:RUSTFLAGS = '-C target-feature=+crt-static'
+cargo build --release --locked --manifest-path desktop\Cargo.toml -p gelabber-media-core
+cargo build --release --locked --manifest-path desktop\Cargo.toml -p gelabber-desktop
+```
+
+The libwebrtc build takes hours, like the Linux one. The core is compiled
+with `clang-cl`, which built the package, and linked with Visual Studio's
+libraries; `GELABBER_MEDIA_COMPILER` names another compiler (`cl`, or a
+path). The result is `gelabber_media.dll` with its import library, and the
+app's build script copies the DLL next to `gelabber-desktop.exe` in
+`C:\t\release`: Windows has no rpath, the DLL must stay next to the
+executable. `GELABBER_MEDIA_LIB_DIR` points at a prebuilt core here too.
+
+The installer, from what was just built (the pinned Tauri CLI only bundles):
+
+```powershell
+New-Item -ItemType Directory -Force desktop\app\bundle-input
+Copy-Item C:\t\release\gelabber_media.dll desktop\app\bundle-input\
+cd desktop\app
+npx.cmd --yes '@tauri-apps/cli@2.12.1' bundle --bundles nsis --config tauri.bundle.windows.json
+# -> C:\t\release\bundle\nsis\Gelabber_<version>_x64-setup.exe
+```
+
+`<version>` is the one of `desktop/Cargo.toml`. CI builds a release only
+when its tag is that version (`v<version>`).
+
+The smoke test takes a built or an installed app and the ABI version it
+must report (`GM_ABI_VERSION` in `native/include/gelabber_media.h`). It
+needs Python and the WebView2 Runtime and asks for dummy audio itself
+(`GELABBER_AUDIO=dummy`, for machines without audio devices):
+
+```powershell
+pwsh desktop\app\scripts\smoke.ps1 -App C:\t\release\gelabber-desktop.exe -Abi <GM_ABI_VERSION>
+```
+
+The core's tests call a mediasoup worker that is built with Meson, against
+the same static C runtime:
+
+```powershell
+# mediasoup-sys does not find its own copy of invoke when the cargo registry
+# and the target directory are on different drives.
+python -m pip install invoke==3.0.3
+$env:PYTHON = 'python'
+$env:MESON_ARGS = '--vsenv -Db_vscrt=mt'
+cargo test --release --locked --manifest-path desktop\Cargo.toml -p gelabber-media-core -- --nocapture --test-threads=1
+```
+
+libwebrtc sends from the machine's own address. Where that address does not
+reach `127.0.0.1`, as reported of Windows, `GELABBER_TEST_LISTEN_IP=<address>`
+puts the tests' mediasoup on it; the CI job tries which one works.
+
+## Tests
+
+| What | How | Where |
+|---|---|---|
+| Core: loopback call, video sinks; with their switches screen capture and voice | `cargo test --manifest-path desktop/Cargo.toml`; `GELABBER_TEST_SCREEN=1`, `GELABBER_TEST_AUDIO=1` inside `native/scripts/fake-desktop-session.sh` | CI, Linux and Windows (screen and voice: Linux) |
+| App: the commands a server origin reaches, frames of a test pattern | `app/scripts/smoke.sh`, `app/scripts/smoke.ps1` | CI, Linux and Windows |
+| Viewer window: colours on a screenshot | `cargo test --manifest-path desktop/Cargo.toml -p gelabber-desktop -- --ignored viewer` under Xvfb | CI, Linux |
+| Video inside the page: the web client's renderer, feed and tiles on real pixels | in `web/`: `npm run test:native-video-smoke` | **only locally** |
+| Third-party notices | `python3 -m unittest discover -s desktop/packaging/tests`, `packaging/third-party-notices.py --check` | CI |
+
+The video inside the page is drawn by the web client
+(`web/src/voice/native/frames.ts`, `videoFeed.ts`, the tiles), and `npm test`
+drives that renderer against a stand-in for WebGL: it never compiles the
+shaders. `npm run test:native-video-smoke` does, in headless Chromium with a
+stand-in for the app, and reads the tiles' pixels back; no server, about ten
+seconds. It needs a Chromium (`npx playwright install chromium` once, or
+`GELABBER_NATIVE_VIDEO_BROWSER_EXECUTABLE=/usr/bin/chromium`). CI runs no
+browser smoke tests (`.github/workflows/ci.yml`), so run it after a change to
+those files. WebKitGTK itself is not covered by it.
+
+## Third-party notices
+
+Every package ships `app/package/THIRD-PARTY-NOTICES.txt`. It is generated;
+`packaging/third-party-notices.py` writes it (Linux x86-64 only, with the
+toolchain of `rust-toolchain.toml`). Run without arguments it lists the Rust
+crates afresh from `desktop/Cargo.lock` and keeps the two parts on the
+native core. Run it after every change to `desktop/Cargo.lock` and commit
+the file: the CI job "Third-party notices" fails when the committed file is
+not what the script would write (`--check`), and the uploads to a release
+wait for that job. When a pin of the native core or the build configuration
+the file describes has changed, the script stops and says what it needs
+(`--webrtc-src`, `--core-build`; its header has the details).
+
 ## Running the app
 
 ```sh
@@ -59,7 +167,8 @@ cargo run --manifest-path desktop/Cargo.toml -p gelabber-desktop -- --server htt
 ```
 
 Server choice, first match wins: `--server <url>`, `GELABBER_SERVER`, then
-`server` in `~/.config/io.github.till-und-scholler-ai-slop.gelabber/desktop.json`.
+`server` in `~/.config/io.github.till-und-scholler-ai-slop.gelabber/desktop.json`
+(Windows: `%APPDATA%\io.github.till-und-scholler-ai-slop.gelabber\desktop.json`).
 Without one the window shows the bundled setup page, which writes that file
 once something accepts connections at the address. The window has no menu
 bar. If the stored server does not answer at start, the setup page opens with
@@ -101,12 +210,37 @@ left as it is.
   by the caller after the server replied).
 - The Tauri window loads the server origin. Its native commands are narrow
   (media core only), because server-side XSS reaches them.
-- Video encode: H264 preferred, VP8 fallback. H264 uses the system's
-  GStreamer when it has a hardware element (`nvh264enc`, `vah264enc`,
-  `vah264lpenc`, `vaapih264enc`; needs gst-plugins-bad), otherwise OpenH264.
-  `GELABBER_H264_ENCODER=<element>|none` overrides the choice. Decode is
-  libwebrtc's: FFmpeg (Chrome branding) for H264, libvpx for VP8/VP9.
-  Shipping software H264 needs a licensing decision first.
+- Features: one web client is served to every installed app, old and new,
+  on both systems, so it asks. `media_info` answers with `features`, what
+  this build can do besides voice and watching (`FEATURES` in
+  `app/src/media.rs`; the Windows app has `camera` and `video-frames`, no
+  `screen` and no `app-audio`). The web client (`web/src/voice/capabilities.ts`)
+  keeps the button of a capture the app lacks in its place, greyed out and
+  with the reason, and hides the controls for application sound. An app up
+  to 0.5.x answers without a list and is taken for what it was: the Linux
+  app with screen capture, camera and application sound. The other way
+  round nothing can be done: a web client before v0.6 does not ask, and
+  offers the Windows app screen share and Go Live. Screen share then simply
+  does not start. Go Live leaves a claim on the server that blocks Go Live
+  for the whole channel until that user leaves the call: the old client
+  sends the claim before the capture starts and does not take it back when
+  the capture is refused. Hence "a server from 0.6 on" in
+  `app/package/README-windows.txt`.
+- Video encode: the app sends VP8, encoded in software by libwebrtc's
+  libvpx. The web client names the codec of every producer and takes VP8
+  wherever the device has it (`codec` in
+  `web/src/voice/mediasoupConnection.ts`), and the core produces what it is
+  asked for. The Linux core has H264 all the same, and its tests run it:
+  through the system's GStreamer when that has a hardware element
+  (`nvh264enc`, `vah264enc`, `vah264lpenc`, `vaapih264enc`; gst-plugins-bad),
+  otherwise OpenH264; `GELABBER_H264_ENCODER=<element>|none` overrides the
+  choice, and a caller that names no codec gets H264 before VP8. None of
+  that reaches the app: there gst-plugins-bad and the variable change
+  nothing. Hardware encoding in the app would start in the web client (ask
+  for `video/h264` when the core reports a hardware encoder), and shipping
+  H264 needs a licensing decision first. The Windows core is built without
+  H264. Decode is libwebrtc's: libvpx for VP8/VP9, on Linux FFmpeg (Chrome
+  branding) for H264.
 - Simulcast: libvpx and OpenH264 encode a producer's layers in one encoder,
   and only when every layer has exactly the top layer's aspect. A layer is
   the picture divided by its `scaleResolutionDownBy`, so a 1366x768 screen

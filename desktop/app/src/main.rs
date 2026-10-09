@@ -359,7 +359,8 @@ fn watch_web_process(app: &AppHandle, window: &tauri::WebviewWindow) {
 fn main() {
     #[cfg(target_os = "linux")]
     webkit_workarounds();
-    // Native media logging (libwebrtc, libmediasoupclient) to stderr.
+    // Native media logging: libwebrtc to stderr, libmediasoupclient to
+    // stdout (its default log handler).
     if std::env::var_os("GELABBER_MEDIA_LOG").is_some() {
         gelabber_media_core::set_log_level(gelabber_media_core::LogLevel::Info);
     }

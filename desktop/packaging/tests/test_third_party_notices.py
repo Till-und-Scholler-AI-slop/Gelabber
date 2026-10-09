@@ -1,6 +1,7 @@
 """Checks of desktop/packaging/third-party-notices.py that need neither the
 libwebrtc checkout nor a build: python3 -m unittest discover -s desktop/packaging/tests"""
 import importlib.util
+import os
 from pathlib import Path
 import struct
 import subprocess
@@ -260,9 +261,111 @@ class SystemHeaderTests(unittest.TestCase):
         self.assertNotIn('cxx_only', block)
 
 
+class WorkflowFactTests(unittest.TestCase):
+    """What part 1 says about the job that builds the Windows package."""
+
+    WORKFLOW = (
+        'name: Desktop\n'
+        'jobs:\n'
+        '  # RUSTFLAGS in a comment is not a second place that sets it.\n'
+        '  core-windows:\n'
+        '    name: Windows\n'
+        '    env:\n'
+        '      PYTHON: python\n'
+        '      # The app must start without the redistributable.\n'
+        '      RUSTFLAGS: -C target-feature=+crt-static\n'
+        '    steps:\n'
+        '      - name: Check and measure the binaries\n'
+        '        run: |\n'
+        "          $h264 = @('WelsInitEncoderExt', 'avcodec_open2') |\n"
+        '            Where-Object { $content.Contains($_) }\n'
+        '          $problems = @(\n'
+        '            if ($h264) { "gelabber_media.dll carries H264 code of OpenH264 or FFmpeg: $h264" }\n'
+        '          )\n'
+        '      - name: Upload the app\n'
+        '        with:\n'
+        '          path: gelabber-desktop-windows-x64-setup.exe\n'
+        '\n'
+        '  release-asset-windows:\n'
+        '    needs: [core-windows, notices]\n'
+        '    steps:\n'
+        '      - run: gh release upload "$TAG" gelabber-desktop-windows-x64-setup.exe\n'
+    )
+    RUNTIME, H264, RELEASE = notices.EXPECTED_WORKFLOW_FACTS
+
+    def reading(self, workflow):
+        """The script reads this text in place of the repository's workflow."""
+        tmp = tempfile.TemporaryDirectory()
+        self.addCleanup(tmp.cleanup)
+        file = tree(tmp.name, {'workflow.yml': workflow}) / 'workflow.yml'
+        return mock.patch.object(notices, 'WORKFLOW', file)
+
+    def facts(self, workflow):
+        with self.reading(workflow):
+            return notices.workflow_facts()
+
+    def untrue(self, workflow):
+        return [name for name, holds in self.facts(workflow).items() if not holds]
+
+    def test_the_workflow_of_the_repository_is_the_one_described(self):
+        self.assertEqual(notices.workflow_facts(), notices.EXPECTED_WORKFLOW_FACTS)
+
+    def test_a_job_like_the_described_one_is_recognised(self):
+        self.assertEqual(self.facts(self.WORKFLOW), notices.EXPECTED_WORKFLOW_FACTS)
+        quoted = self.WORKFLOW.replace('-C target-feature=+crt-static', '"-C target-feature=+crt-static"')
+        self.assertEqual(self.untrue(quoted), [])
+
+    def test_another_c_runtime_for_the_app_is_noticed(self):
+        flags = '      RUSTFLAGS: -C target-feature=+crt-static\n'
+        self.assertIn(flags, self.WORKFLOW)
+        for workflow in (
+            self.WORKFLOW.replace(flags, ''),
+            self.WORKFLOW.replace(flags, '      RUSTFLAGS: -C target-feature=-crt-static\n'),
+            self.WORKFLOW.replace(flags, '      RUSTFLAGS: -C target-cpu=x86-64-v2\n'),
+            # Another job has it, the Windows one does not.
+            self.WORKFLOW.replace(flags, '').replace(
+                '  release-asset-windows:\n', '  release-asset-windows:\n    env:\n' + flags),
+            # A step sets the variable again.
+            self.WORKFLOW.replace(
+                '      - name: Upload the app\n',
+                '      - name: Upload the app\n        env:\n          RUSTFLAGS: ""\n'),
+        ):
+            self.assertEqual(self.untrue(workflow), [self.RUNTIME], workflow)
+
+    def test_a_missing_search_for_h264_names_is_noticed(self):
+        for gone in ("'avcodec_open2'", "'WelsInitEncoderExt', ", 'if ($h264) { ', '.Contains($_)'):
+            self.assertIn(gone, self.WORKFLOW)
+            self.assertEqual(self.untrue(self.WORKFLOW.replace(gone, '')), [self.H264], gone)
+
+    def test_an_installer_from_elsewhere_is_noticed(self):
+        other = (
+            '\n  nightly:\n    steps:\n'
+            '      - run: gh release upload nightly gelabber-desktop-windows-x64-setup.exe\n'
+        )
+        for workflow in (
+            self.WORKFLOW.replace('needs: [core-windows, notices]', 'needs: [notices]'),
+            self.WORKFLOW.replace('needs: [core-windows, notices]', 'needs: core-windows-arm'),
+            self.WORKFLOW.replace('    needs: [core-windows, notices]\n', ''),
+            self.WORKFLOW + other,
+        ):
+            self.assertEqual(self.untrue(workflow), [self.RELEASE], workflow)
+        alone = self.WORKFLOW.replace('needs: [core-windows, notices]', 'needs: core-windows')
+        self.assertEqual(self.untrue(alone), [])
+
+    def test_part_1_is_not_written_for_another_workflow(self):
+        with self.reading(self.WORKFLOW.replace('+crt-static', '-crt-static')):
+            with self.assertRaisesRegex(SystemExit, r'part 1 describes .* no longer true: \[.*\+crt-static'):
+                notices.scope_part()
+        with self.reading(self.WORKFLOW):
+            self.assertIn('RUSTFLAGS "-C target-feature=+crt-static"', ' '.join(notices.scope_part().split()))
+
+
 class CheckTests(unittest.TestCase):
     """--check on the committed file, where the script's own needs are met
-    (Linux x86-64, the pinned toolchain, the crates of the lock file)."""
+    (Linux x86-64, the pinned toolchain, the crates of the lock file).
+    Elsewhere the test skips. Not in CI: the workflow's job runs the check
+    itself first, which fetches the crates, so a script that cannot run
+    there is a failure, and no run goes green with this test left out."""
 
     def check(self, path):
         return subprocess.run(
@@ -277,6 +380,8 @@ class CheckTests(unittest.TestCase):
             result = self.check(copy)
             stale = ('is out of date', 'is not the text the script wrote', 'the inputs of part')
             if result.returncode and not any(reason in result.stderr for reason in stale):
+                if os.environ.get('CI'):
+                    self.fail(f'--check could not run:\n{result.stderr.strip()}')
                 self.skipTest(result.stderr.strip())
             self.assertEqual(result.returncode, 0, result.stderr)
             self.assertIn('  Licence   ISC\n', committed)

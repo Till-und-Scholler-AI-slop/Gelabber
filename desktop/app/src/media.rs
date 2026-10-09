@@ -466,8 +466,10 @@ async fn off_runtime(job: impl FnOnce() + Send + 'static) -> Result<()> {
 }
 
 /// What this build can do besides voice and watching streams
-/// (`media_info.features`); the web client hides what is missing. The names
-/// are a contract with it (`KNOWN_FEATURES` in the tests):
+/// (`media_info.features`). For a capture that is missing the web client
+/// keeps the button in its place, greyed out, and says why; only the
+/// controls for application sound are hidden. The names are a contract with
+/// it (`KNOWN_FEATURES` in the tests):
 /// - "screen": screen and window capture (`media_source_screen`)
 /// - "camera": `media_video_devices`, `media_source_camera`
 /// - "app-audio": sound of other applications (`media_audio_apps`,

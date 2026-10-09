@@ -47,6 +47,12 @@ from pathlib import Path
 REPO = Path(__file__).resolve().parents[2]
 NATIVE = REPO / "desktop/native"
 OUTPUT = REPO / "desktop/app/package/THIRD-PARTY-NOTICES.txt"
+# The workflow that builds the packages, and its job for the Windows one.
+WORKFLOW_NAME = ".github/workflows/desktop-native.yml"
+WORKFLOW = REPO / WORKFLOW_NAME
+WINDOWS_JOB = "core-windows"
+WINDOWS_UPLOAD_JOB = "release-asset-windows"
+WINDOWS_INSTALLER = "gelabber-desktop-windows-x64-setup.exe"
 GELABBER_URL = "https://github.com/Till-und-Scholler-AI-slop/Gelabber"
 TARGETS = {"x86_64-unknown-linux-gnu": "Linux", "x86_64-pc-windows-msvc": "Windows"}
 HOST = "x86_64-unknown-linux-gnu"
@@ -67,6 +73,14 @@ EXPECTED_FACTS = {
     "the core defines WEBRTC_USE_H264 on Linux only": True,
     "the core links the static MSVC runtime on Windows": True,
     "the Windows installer embeds the WebView2 bootstrapper": True,
+}
+# The same for the sentences of part 1 on what the workflow does when it
+# builds the Windows package. Kept apart: part 2 says nothing that depends on
+# them, so they are not among its inputs.
+EXPECTED_WORKFLOW_FACTS = {
+    "the Windows job builds the app with RUSTFLAGS -C target-feature=+crt-static": True,
+    "the Windows job fails when gelabber_media.dll holds names of OpenH264 or FFmpeg": True,
+    "a release takes the Windows installer from that job only": True,
 }
 
 LICENCE_NAME = re.compile(r"(licen[sc]e|copying|copyright|notice|unlicense|patents)", re.I)
@@ -352,6 +366,56 @@ def build_facts():
             and bundle["windows"]["webviewInstallMode"]["type"] == "embedBootstrapper"
         ),
     }
+
+
+def workflow_jobs(text):
+    """The jobs of a workflow file: id -> its lines, comment lines left out.
+    Read as text: the script needs nothing beyond Python's own library."""
+    found = {}
+    for block in re.split(r"^(?=  [\w-]+:[ \t]*$)", text.partition("\njobs:\n")[2], flags=re.M):
+        head = re.match(r"  ([\w-]+):[ \t]*\n", block)
+        if head:
+            found[head[1]] = "".join(
+                f"{line}\n" for line in block[head.end():].splitlines()
+                if not line.lstrip().startswith("#")
+            )
+    return found
+
+
+def workflow_facts():
+    jobs = workflow_jobs(read(WORKFLOW))
+    windows, upload = jobs.get(WINDOWS_JOB, ""), jobs.get(WINDOWS_UPLOAD_JOB, "")
+    # The job's own environment: a step could set the variable again.
+    environment = re.search(r"^    env:\n((?:      \S.*\n)+)", windows, re.M)
+    variables = dict(re.findall(r"^      (\w+): (.*)$", environment[1] if environment else "", re.M))
+    needs = re.search(r"^    needs: (.*)$", upload, re.M)
+    return {
+        "the Windows job builds the app with RUSTFLAGS -C target-feature=+crt-static": (
+            variables.get("RUSTFLAGS", "").strip("\"'").split() == ["-C", "target-feature=+crt-static"]
+            and windows.count("RUSTFLAGS") == 1
+        ),
+        # The step "Check and measure the binaries".
+        "the Windows job fails when gelabber_media.dll holds names of OpenH264 or FFmpeg": all(
+            mark in windows for mark in (
+                "'WelsInitEncoderExt'", "'avcodec_open2'", "$content.Contains($_)",
+                'if ($h264) { "gelabber_media.dll carries H264 code of OpenH264 or FFmpeg',
+            )
+        ),
+        "a release takes the Windows installer from that job only": (
+            bool(needs) and WINDOWS_JOB in re.findall(r"[\w-]+", needs[1])
+            and WINDOWS_INSTALLER in upload
+            and not any(
+                WINDOWS_INSTALLER in job for name, job in jobs.items()
+                if name not in (WINDOWS_JOB, WINDOWS_UPLOAD_JOB)
+            )
+        ),
+    }
+
+
+def expected(facts, wanted, described_by):
+    if facts != wanted:
+        differing = [name for name in wanted if facts.get(name) != wanted[name]]
+        die(f"{described_by} another build configuration; no longer true: {differing}")
 
 
 # --- part 2: libwebrtc -------------------------------------------------------
@@ -1387,10 +1451,8 @@ def std_part(toolchain):
 
 
 def scope_part():
-    facts = build_facts()
-    if facts != EXPECTED_FACTS:
-        differing = [name for name in facts if facts[name] != EXPECTED_FACTS[name]]
-        die(f"parts 1 and 2 describe another build configuration; no longer true: {differing}")
+    expected(build_facts(), EXPECTED_FACTS, "parts 1 and 2 describe")
+    expected(workflow_facts(), EXPECTED_WORKFLOW_FACTS, "part 1 describes")
     pin = pins()
     out = "What is covered\n"
     out += para("The programs of the packages and what is linked statically into them:", 2)
@@ -1439,9 +1501,10 @@ def scope_part():
         "Rust toolchain that rust-toolchain.toml pins")
     out += para(
         "Nothing was built or run for Windows to produce it; what it says about the "
-        "Windows package is derived from the build scripts and the lock file. What part 2 "
-        "says about the contents of the Linux media core was found in a build made on the "
-        "machine that generated it, not in the released library.", 2)
+        "Windows package is derived from the build scripts, from the workflow that builds "
+        f"the packages ({WORKFLOW_NAME}) and from the lock file. "
+        "What part 2 says about the contents of the Linux media core was found in a build "
+        "made on the machine that generated it, not in the released library.", 2)
     out += "\nOpen points\n"
     out += item(
         "H.264 on Linux. libwebrtc is built with rtc_use_h264=true for Linux, so "
@@ -1456,14 +1519,23 @@ def scope_part():
         "H.264 on Windows. The libwebrtc package for Windows is built with "
         "rtc_use_h264=true as well, but the media core is compiled without "
         "WEBRTC_USE_H264 there, so its own code refers to neither OpenH264 nor FFmpeg. "
-        "That gelabber_media.dll holds no code of either was not checked on a Windows "
-        "build when this file was written.")
+        "Whether the linker left code of either in gelabber_media.dll was not looked at "
+        "for this file, which is written on Linux. The job that builds the Windows "
+        f"package ({WINDOWS_JOB} in the workflow named above) searches the "
+        "gelabber_media.dll of every build for names from OpenH264, from FFmpeg and from "
+        "libwebrtc's wrappers around the two, and fails when it finds one; a release takes "
+        "its installer from a run of that job only. That is a search for names in the "
+        "file, not proof that it holds none of that code.")
     out += item(
-        "Microsoft runtime in gelabber_media.dll. The DLL links Microsoft's C runtime and "
-        "C++ standard library statically (CMAKE_MSVC_RUNTIME_LIBRARY MultiThreaded), and "
-        "clang's compiler-rt builtins when the build finds them. Their versions and "
-        "licence texts are not listed: they come from the Visual Studio and LLVM "
-        "installation of the build machine.")
+        "Microsoft's runtime in the Windows programs. gelabber_media.dll links "
+        "Microsoft's C runtime and C++ standard library statically "
+        "(CMAKE_MSVC_RUNTIME_LIBRARY MultiThreaded), and clang's compiler-rt builtins "
+        "when the build finds them. gelabber-desktop.exe links Microsoft's C runtime "
+        f"statically as well: the job {WINDOWS_JOB} builds it with RUSTFLAGS "
+        "\"-C target-feature=+crt-static\". Which other parts of Microsoft's runtime "
+        "libraries the code linked into the application pulls in was not established. "
+        "Versions and licence texts of these libraries are not listed: they come from the "
+        "Visual Studio and LLVM installation of the build machine.")
     out += item(
         "The Windows installer. It is made by Tauri's bundler with NSIS "
         "(desktop/app/tauri.bundle.windows.json) and embeds Microsoft's WebView2 Runtime "

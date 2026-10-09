@@ -32,6 +32,12 @@ gelabber.example.com {
 
 `header_up Host {hostport}` ist für den App-vHost Pflicht. `/ws` vergleicht Browser-`Origin` mit `Host`, einschließlich Port: `{host}` schneidet einen Nicht-Standard-Port (z. B. `:8443` oder `GELABBER_HTTP_PORT`) ab, und jeder WebSocket-Handshake endet mit 403. Ohne Override lässt Caddy bei **HTTP**-Upstreams den eingehenden `Host` standardmäßig durch; bei **HTTPS**-Upstreams setzt Caddy (ab v2.11) den Host auf den Upstream. Explizites Forwarding macht die Absicht klar und verhindert Signature-/Origin-Fehler. Siehe [reverse_proxy Headers](https://caddyserver.com/docs/caddyfile/directives/reverse_proxy#headers).
 
+**Anderer Proxy davor (Nginx, Traefik, …).** Seit v0.6 reicht auch der mitgelieferte Caddy `Host` mit Port an die Dienste weiter; bis 0.5.x schnitt er den Port ab. Was den Stack erreicht, muss deshalb der `Host` des Browsers sein: derselbe Name und, wenn der Browser einen Nicht-Standard-Port benutzt, genau dieser Port. Nginx: `proxy_set_header Host $http_host;` (`$host` reicht nur, solange der Browser den Standardport benutzt). Der ausgeschriebene Standardport des Schemas ist erlaubt (`Host: example.com:443` bei HTTPS, `:80` bei HTTP).
+
+Schreibt der vorgelagerte Proxy dagegen einen Port in `Host`, den der Browser nicht benutzt, antwortet `/ws` seit v0.6 mit 403 („Cross-origin WebSocket is not allowed.“). Das passiert mit `proxy_set_header Host $host:$proxy_port;` (der Port des Upstreams, oben 8088) und mit `$host:$server_port` hinter einer Portumsetzung (außen 443, Nginx auf 8443). Unter 0.5.x lief eine solche Konfiguration, weil der Port abgeschnitten wurde. Mit der v0.6-Caddyfile bleiben Anmeldung und REST-API intakt, aber der Chat aktualisiert sich nicht mehr und Voice verbindet nicht. Abhilfe ist die `Host`-Zeile am vorgelagerten Proxy, nicht die Caddyfile.
+
+**Content-Security-Policy.** Der Stack setzt keine. Wer am eigenen Proxy eine für den App-Host setzt, muss der Desktop-App den Weg zu ihrem nativen Teil lassen: in `connect-src` zusätzlich `ipc:` (Linux) und `http://ipc.localhost` (Windows), zum Beispiel `connect-src 'self' ipc: http://ipc.localhost`. Fehlt `connect-src`, gilt dafür `default-src`. Ohne diese Quellen weicht die App auf einen langsamen Weg aus: Sie funktioniert weiter, aber Video in ihren Kacheln bleibt bei 320×180 mit 15 Bildern pro Sekunde, und die Kachel meldet „Geringe Bildqualität“ mit der Content-Security-Policy als Grund. Browser und die installierte PWA betrifft das nicht.
+
 **Ohne Compose-Caddy:** Overlay published web/api/media (und MinIO) auf Loopback. Vorlage: `deploy/compose/Caddyfile.homelab` (zwei aktive Site-Blöcke: App + MinIO).
 
 Wichtig: Die Compose-`.env` exportiert **nicht** automatisch Variablen an einen externen Caddy-Dienst oder einen Caddy-Container in einem anderen Stack. Einrichtung:
@@ -163,7 +169,7 @@ Das Artifact `image-set` enthält:
 - `image-set.json`: Revision, Version, CI-/Publish-Run, Promotionsstatus, API/Web/Media-Digests und separaten MinIO-Pin/Digest.
 - `image-set.env`: vier `GELABBER_*_IMAGE=ghcr.io/…@sha256:…`-Referenzen für Compose.
 
-Kandidatensätze sind **keine Releases**. Ein abgeschlossener Hotfix bekommt erst nach koordinierter Abnahme eine neue Workspace-/Compose-Version. Der Koordinator startet danach den Workflow `Release` **auf main** mit passendem `tag` und erfolgreicher `image_run_id`. Dieser prüft Manifest, CI, aktuellen main-Stand und Versionsdigests erneut, bewahrt existierende Tags/Releases und hängt den Satz an den neuen GitHub-Release. Es gibt keinen automatischen Release auf jedem Push und keinen Release von Feature-/Major-Zwischenständen. Kein Trigger durch beliebige `v*`-Tag-Pushes.
+Kandidatensätze sind **keine Releases**. Ein abgeschlossener Hotfix bekommt erst nach koordinierter Abnahme eine neue Workspace-/Compose-Version. Dieselbe Version gehört in `desktop/Cargo.toml` und `desktop/Cargo.lock`: Die Desktop-Apps (Windows-Installer, Linux-Tarball, pacman-Paket) tragen die Version dieses eigenen Workspace, `Release` bricht bei einer anderen ab, bevor Tag und Release entstehen, und der Desktop-Workflow hängt die Apps nur an ein Release mit genau ihrer Version. Der Koordinator startet danach den Workflow `Release` **auf main** mit passendem `tag` und erfolgreicher `image_run_id`. Dieser prüft Manifest, CI, aktuellen main-Stand und Versionsdigests erneut, bewahrt existierende Tags/Releases und hängt den Satz an den neuen GitHub-Release. Es gibt keinen automatischen Release auf jedem Push und keinen Release von Feature-/Major-Zwischenständen. Kein Trigger durch beliebige `v*`-Tag-Pushes.
 
 Falls ein Alias-Update unterbrochen wurde oder bei einem älteren Release fehlte: `Release` auf **main** mit dessen `tag` und `image_run_id` starten und **refresh_latest_only** aktivieren. Das repariert ausschließlich die Aliase des aktuell als latest veröffentlichten stabilen GitHub-Releases, ohne Builds, neue Releases oder Änderungen an festen Tags. Für v0.2.5: `tag=v0.2.5`, `image_run_id=36549037951`. Alle vier Aliase werden einzeln geschrieben; bei einem Fehler bleibt der Workflow rot und kann erneut gestartet werden.
 
@@ -185,6 +191,14 @@ docker compose --env-file .env --env-file next.env up -d --no-deps --no-build --
 
 `--no-build` verhindert einen unbemerkten lokalen Ersatzbuild, der explizite Pull löst das bisherige `pull_policy: missing`-Problem. Bereits im Shell-Environment exportierte `GELABBER_*_IMAGE`-Variablen vorher entfernen, da sie Env-Dateien übersteuern. Homelab behält sein `COMPOSE_FILE`; alternativ dieselben `-f`-Overlays bei **allen** Befehlen verwenden. Images werden als Satz vorab geladen; Containerwechsel sind nicht atomar und benötigen ein Wartungsfenster.
 
+**Die Deploy-Dateien gehören zum Satz.** Die Befehle oben tauschen nur Images; `Caddyfile` und `compose.yaml` kommen aus dem Checkout. Ändert ein Release sie, vor diesen Befehlen den Checkout auf dessen Tag bringen und nach dem Imagewechsel auch den Proxy neu erstellen:
+
+```bash
+docker compose --env-file .env --env-file next.env up -d --no-deps --force-recreate proxy
+```
+
+Ein `caddy reload` reicht dafür nicht. Der Proxy bindet `./Caddyfile` als einzelne Datei ein, und `git` ersetzt die Datei beim Aktualisieren: Der laufende Container sieht weiter die alte, und ein Reload lädt wieder den alten Text. Erst der neu gestartete Container (`docker compose restart proxy` genügt, wenn sich nur die Caddyfile geändert hat) liest die neue. **v0.6 ist ein solches Release:** Die Caddyfile reicht `Host` mit Port weiter (`{hostport}`, siehe „Bestehendes Caddy“) und komprimiert Antworten. Ohne diesen Schritt bleibt beides aus und kommt erst unangekündigt mit dem nächsten Neustart des Containers. Wer den Site-Block aus `Caddyfile.homelab` in ein eigenes Caddy kopiert hat, überträgt die Änderung dort von Hand.
+
 **v0.4 → v0.3.1 funktioniert nicht durch einen Imagewechsel:** Migrationen
 0010/0011 verändern das SQLx-Migrationsledger. Vor dem Start von v0.3.1 muss
 das vor dem Upgrade gesicherte PostgreSQL-/MinIO-Snapshotpaar auf geprüfte
@@ -198,6 +212,8 @@ docker compose --env-file .env --env-file previous.env config -q
 docker compose --env-file .env --env-file previous.env pull --policy always api web media minio
 docker compose --env-file .env --env-file previous.env up -d --no-deps --no-build --pull never --force-recreate api web media minio
 ```
+
+Auch hier gehört die Caddyfile zum Satz. Die v0.6-Caddyfile (`{hostport}`) passt zu einer API ab 0.6: Eine ältere API vergleicht `Origin` und `Host` buchstäblich und lehnt jeden WebSocket-Handshake mit 403 ab, sobald ein vorgelagerter Proxy den Standardport ausschreibt (`Host: example.com:443`). Mit der alten Caddyfile lief dieselbe Konfiguration. Für einen Rollback auf 0.5.x deshalb auch den Checkout auf den alten Tag zurücksetzen und den Proxy wie oben neu erstellen, mit `previous.env`.
 
 Kein `down -v`, keine Volumes löschen oder neu benennen: Postgres-/MinIO-Daten bleiben an denselben Volumes. Ein Image-Rollback ersetzt **keinen** Datenbank-Restore; vor Releases müssen Migrationen auf Rückwärtskompatibilität geprüft und Backups erstellt werden. Nach inkompatiblen Migrationen ist der separat geprüfte Restore erforderlich. Readiness alleine ist keine Medien-/Storage-Abnahme.
 
