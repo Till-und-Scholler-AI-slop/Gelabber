@@ -48,6 +48,7 @@ import {
 import { MediaPeer, MediaRetry } from "./mediaPeer.ts";
 import { isDesktopApp } from "./native/bridge.ts";
 import { nativeGetDisplayMedia, nativeGetUserMedia } from "./native/capture.ts";
+import { loadNativeFeatures } from "./native/features.ts";
 import { createAudioOutput, createStream } from "./native/tracks.ts";
 import {
   createMediaConnection,
@@ -81,6 +82,7 @@ import {
   isOverconstrainedError,
   noteStreamProfileApply,
   onMediaSettingsChange,
+  sharesSourceAudio,
   streamProfileFps,
   useMediaSettings,
   videoConstraintLadder,
@@ -1516,16 +1518,17 @@ async function captureVideo(kind: "v" | "s" | "l"): Promise<MediaStream> {
       ? (deps?.getUserMedia ?? defaultGetUserMedia)
       : (deps?.getDisplayMedia ?? defaultGetDisplayMedia);
   if (kind !== "v") {
+    // The app's features decide the default. It answered while the page
+    // loaded; a browser must reach its picker within the click.
+    if (isDesktopApp()) await loadNativeFeatures();
+    const asked = sharesSourceAudio();
     // One browser picker supplies both tracks; profile fallback never reopens it.
     const stream = await getMedia({
-      audio: settings.shareSourceAudio
-        ? { ...SOURCE_AUDIO_CONSTRAINTS }
-        : false,
+      audio: asked ? { ...SOURCE_AUDIO_CONSTRAINTS } : false,
       video: ladder[0] ?? true,
     });
     pendingDisplayStreams.set(stream, kind);
-    if (!settings.shareSourceAudio)
-      stream.getAudioTracks().forEach((track) => track.stop());
+    if (!asked) stream.getAudioTracks().forEach((track) => track.stop());
     const track = stream.getVideoTracks()[0];
     if (track?.applyConstraints) {
       for (let index = 0; index < ladder.length; index += 1) {
@@ -2801,7 +2804,7 @@ async function startLocalVideo(kind: "v" | "s" | "l"): Promise<void> {
         ...useVoice.getState().sourceAudio,
         [kind]: sharingAudio
           ? "sharing"
-          : useMediaSettings.getState().shareSourceAudio
+          : sharesSourceAudio()
             ? "unavailable"
             : "off",
       },

@@ -26,6 +26,7 @@ import {
   type VideoFrameRate,
   formatVideoBitrate,
   listMediaDevices,
+  sharesSourceAudio,
   useMediaSettings,
   videoSendBudget,
 } from "./settings.ts";
@@ -338,9 +339,9 @@ export function MediaSettingsForm({
             <Toggle
               id="share-source-audio"
               label="Ton teilen"
-              checked={settings.shareSourceAudio}
-              onChange={(shareSourceAudio) =>
-                settings.patch({ shareSourceAudio })
+              checked={sharesSourceAudio(settings)}
+              onChange={(on) =>
+                settings.patch({ sourceAudioShare: on ? "on" : "off" })
               }
             />
             {isDesktopApp() && (

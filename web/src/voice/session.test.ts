@@ -2437,7 +2437,7 @@ describe("bounded Live lease recovery", () => {
   }
 
   it("retries only live_busy with one retained capture, epoch and nonce, then publishes parent before audio", async () => {
-    useMediaSettings.getState().patch({ shareSourceAudio: true });
+    useMediaSettings.getState().patch({ sourceAudioShare: "on" });
     let attempts = 0;
     const env = await joined({
       produceError: (kind) =>
@@ -3294,7 +3294,7 @@ describe("source and transport continuity", () => {
   it("does not reopen the display picker after rejected capture constraints", async () => {
     useMediaSettings
       .getState()
-      .patch({ screenProfile: "detail", shareSourceAudio: true });
+      .patch({ screenProfile: "detail", sourceAudioShare: "on" });
     const error = new Error("profile rejected");
     error.name = "OverconstrainedError";
     const env = install({ displayError: () => error });
@@ -3732,7 +3732,7 @@ describe("authoritative mediasoup session lifecycle", () => {
   });
 
   it("ends only source audio first and then stops both captures when the parent video ends", async () => {
-    useMediaSettings.getState().patch({ shareSourceAudio: true });
+    useMediaSettings.getState().patch({ sourceAudioShare: "on" });
     const env = await joined();
     toggleShare();
     await vi.waitFor(() => expect(env.peers[0]?.sender("sa")).toBeTruthy());
@@ -3791,7 +3791,7 @@ describe("display-source audio", () => {
     async (kind) => {
       useMediaSettings
         .getState()
-        .patch({ shareSourceAudio: true, quality: "phone" });
+        .patch({ sourceAudioShare: "on", quality: "phone" });
       const elements = audioElements();
       const env = await joined();
       const mic = env.streams[0]?.getAudioTracks()[0];
@@ -3856,7 +3856,7 @@ describe("display-source audio", () => {
   );
 
   it("continues video with an unavailable-audio status when the browser supplies no audio", async () => {
-    useMediaSettings.getState().patch({ shareSourceAudio: true });
+    useMediaSettings.getState().patch({ sourceAudioShare: "on" });
     const env = await joined({
       displayStreamFor: () => fakeVideoStream("without-audio"),
     });
@@ -3875,7 +3875,7 @@ describe("display-source audio", () => {
 
   it("preserves capture, subscriptions and source preferences on media reconnect without a new picker", async () => {
     useMediaSettings.getState().patch({
-      shareSourceAudio: true,
+      sourceAudioShare: "on",
       sourceAudioVolume: 0.4,
       sourceAudioMuted: true,
     });
@@ -3906,14 +3906,14 @@ describe("display-source audio", () => {
       env.mediaSent.filter((frame) => frame.op === "w" && frame.on),
     ).toHaveLength(2);
     expect(useMediaSettings.getState()).toMatchObject({
-      shareSourceAudio: true,
+      sourceAudioShare: "on",
       sourceAudioVolume: 0.4,
       sourceAudioMuted: true,
     });
   });
 
   it("cleans both source tracks after rejected source-audio production while keeping the microphone", async () => {
-    useMediaSettings.getState().patch({ shareSourceAudio: true });
+    useMediaSettings.getState().patch({ sourceAudioShare: "on" });
     const capture = fakeVideoStream("rejected-source", true);
     const env = await joined({
       displayStreamFor: () => capture,
@@ -3939,7 +3939,7 @@ describe("display-source audio", () => {
   it("falls back on the granted display track without reopening capture", async () => {
     useMediaSettings
       .getState()
-      .patch({ screenProfile: "detail", shareSourceAudio: true });
+      .patch({ screenProfile: "detail", sourceAudioShare: "on" });
     const stream = fakeVideoStream("fallback", true);
     const rejection = new Error("size");
     rejection.name = "OverconstrainedError";
@@ -3963,7 +3963,7 @@ describe("display-source audio", () => {
   });
 
   it("stops a granted video/audio capture immediately when leaving during profile application", async () => {
-    useMediaSettings.getState().patch({ shareSourceAudio: true });
+    useMediaSettings.getState().patch({ sourceAudioShare: "on" });
     const stream = fakeVideoStream("pending-profile", true);
     const gate = deferred();
     const apply = vi.fn(() => gate.promise);
@@ -3981,4 +3981,19 @@ describe("display-source audio", () => {
       env.mediaSent.some((frame) => frame.op === "produce" && frame.k === "sa"),
     ).toBe(false);
   });
+
+  it.each(["s", "l"] as const)(
+    "asks the browser for no %s sound while the user has not chosen it",
+    async (kind) => {
+      const env = await joined({
+        displayStreamFor: (_index, constraints) =>
+          fakeVideoStream("as-asked", Boolean(constraints.audio)),
+      });
+      (kind === "s" ? toggleShare : toggleGoLive)();
+      await vi.waitFor(() => expect(env.peers[0]?.sender(kind)).toBeTruthy());
+      expect(env.lastDisplayMedia()?.audio).toBe(false);
+      expect(useVoice.getState().sourceAudio[kind]).toBe("off");
+      expect(env.peers[0]?.sender(kind === "s" ? "sa" : "la")).toBeUndefined();
+    },
+  );
 });
