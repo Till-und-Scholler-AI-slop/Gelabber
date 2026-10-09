@@ -203,6 +203,22 @@ notification behind every close. An app that is killed instead of closed
   by the caller after the server replied).
 - The Tauri window loads the server origin. Its native commands are narrow
   (media core only), because server-side XSS reaches them.
+- Features: one web client is served to every installed app, old and new,
+  on both systems, so it asks. `media_info` answers with `features`, what
+  this build can do besides voice and watching (`FEATURES` in
+  `app/src/media.rs`; the Windows app has `camera` and `video-frames`, no
+  `screen` and no `app-audio`). The web client (`web/src/voice/capabilities.ts`)
+  keeps the button of a capture the app lacks in its place, greyed out and
+  with the reason, and hides the controls for application sound. An app up
+  to 0.5.x answers without a list and is taken for what it was: the Linux
+  app with screen capture, camera and application sound. The other way
+  round nothing can be done: a web client before v0.6 does not ask, and
+  offers the Windows app screen share and Go Live. Screen share then simply
+  does not start. Go Live leaves a claim on the server that blocks Go Live
+  for the whole channel until that user leaves the call: the old client
+  sends the claim before the capture starts and does not take it back when
+  the capture is refused. Hence "a server from 0.6 on" in
+  `app/package/README-windows.txt`.
 - Video encode: the app sends VP8, encoded in software by libwebrtc's
   libvpx. The web client names the codec of every producer and takes VP8
   wherever the device has it (`codec` in
