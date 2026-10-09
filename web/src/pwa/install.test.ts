@@ -1,5 +1,6 @@
 import { afterEach, describe, expect, it, vi } from "vitest";
 import {
+  installHintUseful,
   promptInstallation,
   trackInstallation,
   useInstallation,
@@ -157,18 +158,78 @@ describe("browser installation", () => {
     const browser = new Browser();
     browser.navigator.standalone = true;
     track(browser);
-    expect(useInstallation.getState().installed).toBe(true);
+    expect(useInstallation.getState()).toMatchObject({
+      installed: true,
+      standalone: true,
+    });
     expect(offer(browser).defaultPrevented).toBe(false);
     cleanup?.();
     browser.navigator.standalone = false;
     track(browser);
     offer(browser);
+    expect(useInstallation.getState().standalone).toBe(false);
     browser.display.matches = true;
     browser.display.dispatchEvent(new Event("change"));
     expect(useInstallation.getState()).toMatchObject({
       installed: true,
+      standalone: true,
       available: false,
     });
+  });
+
+  it("tells phones from desktop browsers", () => {
+    const browser = new Browser();
+    track(browser);
+    expect(useInstallation.getState().mobile).toBe(true);
+    cleanup?.();
+    browser.navigator.userAgent = "iPhone";
+    track(browser);
+    expect(useInstallation.getState().mobile).toBe(true);
+    cleanup?.();
+    browser.navigator.userAgent = "Mozilla/5.0 (X11; Linux x86_64) Firefox";
+    track(browser);
+    expect(useInstallation.getState().mobile).toBe(false);
+  });
+
+  it("advertises installation on the login page only where it helps", () => {
+    const hint = () => installHintUseful(useInstallation.getState());
+    // Phones: always, including the HTTPS notice on an insecure address.
+    const phone = track();
+    expect(hint()).toBe(true);
+    cleanup?.();
+    phone.isSecureContext = false;
+    track(phone);
+    expect(hint()).toBe(true);
+    cleanup?.();
+
+    // Desktop browsers: only while the browser itself offers a prompt.
+    const desktop = new Browser();
+    desktop.navigator.userAgent = "Mozilla/5.0 (X11; Linux x86_64) Chrome";
+    track(desktop);
+    expect(hint()).toBe(false);
+    offer(desktop);
+    expect(hint()).toBe(true);
+    // Just installed from this tab: keep the confirmation visible.
+    desktop.dispatchEvent(new Event("appinstalled"));
+    expect(useInstallation.getState()).toMatchObject({
+      installed: true,
+      standalone: false,
+    });
+    expect(hint()).toBe(true);
+    cleanup?.();
+    desktop.isSecureContext = false;
+    track(desktop);
+    expect(hint()).toBe(false);
+    cleanup?.();
+
+    // Inside the installed app or the desktop app there is nothing to offer.
+    const app = new Browser();
+    app.display.matches = true;
+    track(app);
+    expect(hint()).toBe(false);
+    cleanup?.();
+    track(new Browser(), true);
+    expect(hint()).toBe(false);
   });
 
   it("does not offer installation over insecure HTTP or in the native desktop app", () => {

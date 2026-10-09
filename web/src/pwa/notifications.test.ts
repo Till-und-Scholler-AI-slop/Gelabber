@@ -1,0 +1,298 @@
+import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
+
+import {
+  closeMessageNotifications,
+  followNotificationTaps,
+  NOTIFICATION_OPEN,
+  showMessageNotification,
+  withdrawWhileViewing,
+} from "./notifications.ts";
+import { activeServiceWorker } from "./register.ts";
+
+vi.mock("./register.ts", () => ({ activeServiceWorker: vi.fn() }));
+const registration = vi.mocked(activeServiceWorker);
+
+beforeEach(() => {
+  registration.mockReset().mockResolvedValue(undefined);
+});
+afterEach(() => {
+  closeMessageNotifications({ user: "user-1" });
+  vi.unstubAllGlobals();
+});
+
+const message = {
+  title: "Ada · #allgemein",
+  body: "Hallo",
+  channelId: "chan",
+  path: "/s/srv/c/chan",
+  user: "user-1",
+};
+
+/** Page-level API as browsers expose it; phones throw from the constructor. */
+function pageApi(permission = "granted", phone = false) {
+  const created: {
+    title: string;
+    options: Record<string, unknown>;
+    onclick: (() => void) | null;
+    close: ReturnType<typeof vi.fn>;
+  }[] = [];
+  class Api {
+    static permission = permission;
+    onclick: (() => void) | null = null;
+    close = vi.fn();
+    constructor(
+      public title: string,
+      public options: Record<string, unknown>,
+    ) {
+      if (phone) throw new TypeError("Illegal constructor");
+      created.push(this);
+    }
+  }
+  vi.stubGlobal("Notification", Api);
+  return created;
+}
+
+function worker(shown: { tag: string; close: () => void }[] = []) {
+  const active = {
+    showNotification: vi.fn().mockResolvedValue(undefined),
+    getNotifications: vi.fn().mockResolvedValue(shown),
+  };
+  registration.mockResolvedValue(
+    active as unknown as ServiceWorkerRegistration,
+  );
+  return active;
+}
+
+describe("message notifications", () => {
+  it("goes through the service worker where one is active, as phones require", async () => {
+    const created = pageApi("granted", true);
+    const active = worker();
+    const onClick = vi.fn();
+    expect(await showMessageNotification(message, onClick)).toBe("worker");
+    expect(active.showNotification).toHaveBeenCalledExactlyOnceWith(
+      "Ada · #allgemein",
+      {
+        body: "Hallo",
+        silent: true,
+        tag: "gelabber:user-1:chan",
+        renotify: false,
+        icon: "/icons/icon-192.png",
+        data: { path: "/s/srv/c/chan", user: "user-1" },
+      },
+    );
+    expect(created).toEqual([]);
+    expect(onClick).not.toHaveBeenCalled();
+  });
+
+  it("keeps the page-level notification where no worker runs", async () => {
+    const created = pageApi();
+    registration.mockResolvedValue(undefined);
+    const onClick = vi.fn();
+    expect(await showMessageNotification(message, onClick)).toBe("page");
+    expect(created).toHaveLength(1);
+    expect(created[0]).toMatchObject({
+      title: "Ada · #allgemein",
+      options: {
+        body: "Hallo",
+        silent: true,
+        tag: "gelabber:user-1:chan",
+        renotify: false,
+      },
+    });
+    created[0].onclick?.();
+    expect(created[0].close).toHaveBeenCalledOnce();
+    expect(onClick).toHaveBeenCalledOnce();
+
+    // A newer message in the same conversation replaces the older one.
+    await showMessageNotification({ ...message, body: "Noch da?" }, onClick);
+    expect(created).toHaveLength(2);
+    expect(created[0].close).toHaveBeenCalledTimes(2);
+    closeMessageNotifications({ user: "user-1" });
+    expect(created[1].close).toHaveBeenCalledOnce();
+  });
+
+  it("falls back to the page when the worker refuses", async () => {
+    const created = pageApi();
+    worker().showNotification.mockRejectedValue(new TypeError("no worker"));
+    expect(await showMessageNotification(message, vi.fn())).toBe("page");
+    expect(created).toHaveLength(1);
+  });
+
+  it("stays silent without permission, without the API and on a phone without a worker", async () => {
+    const active = worker();
+    expect(await showMessageNotification(message, vi.fn())).toBe("none");
+    for (const permission of ["default", "denied"]) {
+      const created = pageApi(permission);
+      expect(await showMessageNotification(message, vi.fn())).toBe("none");
+      expect(created).toEqual([]);
+    }
+    expect(active.showNotification).not.toHaveBeenCalled();
+    expect(registration).not.toHaveBeenCalled();
+
+    pageApi("granted", true);
+    registration.mockResolvedValue(undefined);
+    expect(await showMessageNotification(message, vi.fn())).toBe("none");
+  });
+
+  // What the worker shows belongs to every window of the app. Closing more
+  // than the account that left took the other conversations' notifications
+  // away each time a window started.
+  it("closes the notifications of the account that leaves and no others", async () => {
+    const mine = { tag: "gelabber:user-1:chan", close: vi.fn() };
+    const alsoMine = { tag: "gelabber:user-1:dm", close: vi.fn() };
+    const theirs = { tag: "gelabber:user-12:chan", close: vi.fn() };
+    const foreign = { tag: "something-else", close: vi.fn() };
+    worker([mine, alsoMine, theirs, foreign]);
+    closeMessageNotifications({ user: "user-1" });
+    await vi.waitFor(() => expect(alsoMine.close).toHaveBeenCalledOnce());
+    expect(mine.close).toHaveBeenCalledOnce();
+    expect(theirs.close).not.toHaveBeenCalled();
+    expect(foreign.close).not.toHaveBeenCalled();
+  });
+
+  it("withdraws one conversation's notification and leaves the others", async () => {
+    const read = { tag: "gelabber:user-1:chan", close: vi.fn() };
+    const longer = { tag: "gelabber:user-1:chan-2", close: vi.fn() };
+    const theirs = { tag: "gelabber:user-2:chan", close: vi.fn() };
+    const active = worker([read, longer, theirs]);
+    closeMessageNotifications({ user: "user-1", channelId: "chan" });
+    await vi.waitFor(() => expect(read.close).toHaveBeenCalledOnce());
+    expect(active.getNotifications).toHaveBeenCalledOnce();
+    expect(longer.close).not.toHaveBeenCalled();
+    expect(theirs.close).not.toHaveBeenCalled();
+  });
+
+  it("withdraws page-level notifications the same way", async () => {
+    const created = pageApi();
+    await showMessageNotification(message, vi.fn());
+    await showMessageNotification({ ...message, channelId: "dm" }, vi.fn());
+    closeMessageNotifications({ user: "user-2" });
+    closeMessageNotifications({ user: "user-1", channelId: "d" });
+    expect(created.map((shown) => shown.close.mock.calls.length)).toEqual([
+      0, 0,
+    ]);
+    closeMessageNotifications({ user: "user-1", channelId: "dm" });
+    expect(created.map((shown) => shown.close.mock.calls.length)).toEqual([
+      0, 1,
+    ]);
+    // Closed once; the page no longer holds it.
+    closeMessageNotifications({ user: "user-1" });
+    expect(created.map((shown) => shown.close.mock.calls.length)).toEqual([
+      1, 1,
+    ]);
+  });
+
+  it("survives a browser whose worker cannot list notifications", async () => {
+    registration.mockResolvedValue({} as ServiceWorkerRegistration);
+    closeMessageNotifications({ user: "user-1" });
+    await vi.waitFor(() => expect(registration).toHaveBeenCalledOnce());
+  });
+});
+
+describe("a conversation on screen", () => {
+  function page(hidden: boolean) {
+    const target = new EventTarget();
+    const state = { hidden };
+    return {
+      get hidden() {
+        return state.hidden;
+      },
+      addEventListener: target.addEventListener.bind(target),
+      removeEventListener: target.removeEventListener.bind(target),
+      show(visible: boolean) {
+        state.hidden = !visible;
+        target.dispatchEvent(new Event("visibilitychange"));
+      },
+    };
+  }
+  const shown = () => ({
+    viewed: { tag: "gelabber:user-1:chan", close: vi.fn() },
+    other: { tag: "gelabber:user-1:dm", close: vi.fn() },
+  });
+
+  it("loses its notification at once in a visible page", async () => {
+    const { viewed, other } = shown();
+    worker([viewed, other]);
+    const stop = withdrawWhileViewing("user-1", "chan", page(false));
+    await vi.waitFor(() => expect(viewed.close).toHaveBeenCalledOnce());
+    expect(other.close).not.toHaveBeenCalled();
+    stop();
+  });
+
+  // The phone case: the notification arrives while the app is in the
+  // background, and the user comes back through the app switcher.
+  it("loses it when a hidden page comes back, and only then", async () => {
+    const { viewed, other } = shown();
+    worker([viewed, other]);
+    const background = page(true);
+    const stop = withdrawWhileViewing("user-1", "chan", background);
+    background.show(false);
+    expect(registration).not.toHaveBeenCalled();
+    background.show(true);
+    await vi.waitFor(() => expect(viewed.close).toHaveBeenCalledOnce());
+    expect(other.close).not.toHaveBeenCalled();
+
+    // Another conversation is opened: this one is no longer watched.
+    stop();
+    background.show(true);
+    expect(registration).toHaveBeenCalledOnce();
+  });
+});
+
+describe("notification taps", () => {
+  function app(user: string | null = "user-1") {
+    const serviceWorker = new EventTarget();
+    vi.stubGlobal("navigator", { serviceWorker });
+    const open = vi.fn();
+    const stop = followNotificationTaps({
+      user: () => user ?? undefined,
+      open,
+    });
+    const tap = (data: unknown) =>
+      serviceWorker.dispatchEvent(new MessageEvent("message", { data }));
+    return { open, stop, tap };
+  }
+  const tapped = {
+    type: NOTIFICATION_OPEN,
+    path: "/s/srv/c/chan",
+    user: "user-1",
+  };
+
+  it("opens the conversation the worker names", () => {
+    const { open, stop, tap } = app();
+    tap(tapped);
+    tap({ ...tapped, path: "/d/dm-1" });
+    expect(open.mock.calls).toEqual([["/s/srv/c/chan"], ["/d/dm-1"]]);
+    stop();
+    tap(tapped);
+    expect(open).toHaveBeenCalledTimes(2);
+  });
+
+  it("ignores other messages, other addresses and other accounts", () => {
+    const { open, tap } = app();
+    for (const data of [
+      null,
+      "text",
+      { type: "something-else", path: "/d/dm-1", user: "user-1" },
+      { ...tapped, path: "/" },
+      { ...tapped, path: "https://evil.example/d/x" },
+      { ...tapped, path: "//evil.example/d/x" },
+      { ...tapped, user: "user-2" },
+      { ...tapped, user: undefined },
+    ]) {
+      tap(data);
+    }
+    expect(open).not.toHaveBeenCalled();
+    const loggedOut = app(null);
+    loggedOut.tap({ ...tapped, user: undefined });
+    loggedOut.tap(tapped);
+    expect(loggedOut.open).not.toHaveBeenCalled();
+  });
+
+  it("does nothing where the browser has no service workers", () => {
+    vi.stubGlobal("navigator", {});
+    expect(
+      followNotificationTaps({ user: () => "user-1", open: vi.fn() }),
+    ).toBeTypeOf("function");
+  });
+});

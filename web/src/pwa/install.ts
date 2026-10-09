@@ -6,10 +6,15 @@ export interface InstallPromptEvent extends Event {
   userChoice: Promise<InstallChoice>;
 }
 
-type InstallState = {
+export type InstallState = {
   secure: boolean;
+  /** Installed as far as this page can tell: running as the app, or just set up. */
   installed: boolean;
+  /** This window is the installed app, not a browser tab. */
+  standalone: boolean;
   ios: boolean;
+  /** A phone or tablet: installing means the home screen, not an app window. */
+  mobile: boolean;
   native: boolean;
   available: boolean;
   pending: boolean;
@@ -20,7 +25,9 @@ type InstallState = {
 const initial: InstallState = {
   secure: false,
   installed: false,
+  standalone: false,
   ios: false,
+  mobile: false,
   native: false,
   available: false,
   pending: false,
@@ -39,14 +46,17 @@ export function trackInstallation(target: Window, native: boolean): () => void {
   const display = target.matchMedia("(display-mode: standalone)");
   const nav = target.navigator as Navigator & { standalone?: boolean };
   const standalone = () => display.matches || nav.standalone === true;
+  const ios =
+    /iPad|iPhone|iPod/.test(nav.userAgent) ||
+    (nav.platform === "MacIntel" && nav.maxTouchPoints > 1);
   useInstallation.setState({
     ...initial,
     secure: target.isSecureContext,
     installed: standalone(),
+    standalone: standalone(),
     native,
-    ios:
-      /iPad|iPhone|iPod/.test(nav.userAgent) ||
-      (nav.platform === "MacIntel" && nav.maxTouchPoints > 1),
+    ios,
+    mobile: ios || /Android/.test(nav.userAgent),
   });
   if (native) return () => {};
 
@@ -71,7 +81,9 @@ export function trackInstallation(target: Window, native: boolean): () => void {
     });
   };
   const refresh = () => {
-    if (standalone()) installed();
+    if (!standalone()) return;
+    installed();
+    useInstallation.setState({ standalone: true });
   };
   target.addEventListener("beforeinstallprompt", beforeInstall);
   target.addEventListener("appinstalled", installed);
@@ -87,6 +99,21 @@ export function trackInstallation(target: Window, native: boolean): () => void {
       deferredPrompt = null;
     }
   };
+}
+
+/**
+ * Whether a page that is about something else (login) should advertise
+ * installation. A phone can always be told how, or that HTTPS is missing. A
+ * desktop browser is only worth the space while it actually offers a prompt.
+ */
+export function installHintUseful(state: InstallState): boolean {
+  if (state.native || state.standalone) return false;
+  // `installed` without `standalone` is the confirmation right after setup.
+  if (state.installed || state.mobile) return true;
+  return (
+    state.secure &&
+    (state.available || state.pending || state.accepted || state.failed)
+  );
 }
 
 /** Called directly from a button click to preserve the browser's user gesture. */

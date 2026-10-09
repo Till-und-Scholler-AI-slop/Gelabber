@@ -12,7 +12,7 @@ use serde_json::{Value, json};
 use sqlx::PgPool;
 use tokio_tungstenite::tungstenite::Message;
 use tokio_tungstenite::tungstenite::client::IntoClientRequest;
-use tokio_tungstenite::tungstenite::http::header::{COOKIE, ORIGIN};
+use tokio_tungstenite::tungstenite::http::header::{COOKIE, HOST, ORIGIN};
 use uuid::Uuid;
 
 use common::{Client, SESSION};
@@ -193,6 +193,39 @@ async fn foreign_origin_is_rejected(pool: PgPool) {
     // Same-origin Origin (Vite/Caddy keep Host as the page host) is fine.
     let _ws = connect(addr, &cookie, Some(&format!("http://{addr}"))).await;
     let _ = owner;
+}
+
+/// A proxy in front may write the scheme's default port into `Host`, and
+/// Caddy forwards it. The browser's `Origin` never carries that port.
+#[sqlx::test]
+async fn default_port_in_host_is_the_same_origin(pool: PgPool) {
+    let (owner, _) = two_users(pool.clone()).await;
+    let cookie = session_cookie(&owner);
+    let (addr, _) = common::serve_ws(pool).await;
+    let upgrade = |host: &str| {
+        let mut request = format!("ws://{addr}/ws").into_client_request().unwrap();
+        let headers = request.headers_mut();
+        headers.insert(COOKIE, format!("{SESSION}={cookie}").parse().unwrap());
+        headers.insert(ORIGIN, "https://gelabber.example".parse().unwrap());
+        headers.insert(HOST, host.parse().unwrap());
+        tokio_tungstenite::connect_async(request)
+    };
+
+    let (_ws, response) = upgrade("gelabber.example:443")
+        .await
+        .expect("default port in Host");
+    assert_eq!(response.status(), StatusCode::SWITCHING_PROTOCOLS);
+
+    for host in ["gelabber.example:8443", "gelabber.example:80"] {
+        let text = upgrade(host)
+            .await
+            .expect_err("another port is another origin")
+            .to_string();
+        assert!(
+            text.contains("403") || text.contains("Forbidden"),
+            "{host}: expected 403, got {text}"
+        );
+    }
 }
 
 #[sqlx::test]

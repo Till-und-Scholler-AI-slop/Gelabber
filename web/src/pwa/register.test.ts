@@ -1,5 +1,5 @@
 import { afterEach, describe, expect, it, vi } from "vitest";
-import { registerServiceWorker } from "./register.ts";
+import { activeServiceWorker, registerServiceWorker } from "./register.ts";
 
 afterEach(() => {
   vi.unstubAllGlobals();
@@ -51,5 +51,37 @@ describe("service worker registration", () => {
     registerServiceWorker();
     await new Promise((resolve) => setTimeout(resolve, 0));
     expect(warn).toHaveBeenCalledOnce();
+  });
+});
+
+describe("the worker this page registered", () => {
+  it("is not looked up where none was registered (vite dev, desktop app)", async () => {
+    vi.resetModules();
+    const fresh = await import("./register.ts");
+    const getRegistration = vi.fn();
+    vi.stubGlobal("navigator", { serviceWorker: { getRegistration } });
+    expect(await fresh.activeServiceWorker()).toBeUndefined();
+    // Insecure HTTP never registers either.
+    vi.stubGlobal("window", { isSecureContext: false });
+    fresh.registerServiceWorker();
+    expect(await fresh.activeServiceWorker()).toBeUndefined();
+    expect(getRegistration).not.toHaveBeenCalled();
+  });
+
+  it("is available once active, and not before or when the lookup fails", async () => {
+    const { register } = browser();
+    registerServiceWorker();
+    expect(register).toHaveBeenCalledOnce();
+    const getRegistration = vi.fn();
+    vi.stubGlobal("navigator", { serviceWorker: { getRegistration } });
+    const active = { active: {} };
+    getRegistration.mockResolvedValueOnce(active);
+    expect(await activeServiceWorker()).toBe(active);
+    getRegistration.mockResolvedValueOnce({ active: null, installing: {} });
+    expect(await activeServiceWorker()).toBeUndefined();
+    getRegistration.mockResolvedValueOnce(undefined);
+    expect(await activeServiceWorker()).toBeUndefined();
+    getRegistration.mockRejectedValueOnce(new Error("SecurityError"));
+    expect(await activeServiceWorker()).toBeUndefined();
   });
 });

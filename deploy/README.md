@@ -25,12 +25,12 @@ GELABBER_HTTP_PORT=8088
 ```
 gelabber.example.com {
 	reverse_proxy 127.0.0.1:8088 {
-		header_up Host {host}
+		header_up Host {hostport}
 	}
 }
 ```
 
-`header_up Host {host}` ist für den App-vHost Pflicht. `/ws` vergleicht Browser-`Origin` mit `Host`. Ohne Override lässt Caddy bei **HTTP**-Upstreams den eingehenden `Host` standardmäßig durch; bei **HTTPS**-Upstreams setzt Caddy (ab v2.11) den Host auf den Upstream. Explizites Forwarding macht die Absicht klar und verhindert Signature-/Origin-Fehler. Siehe [reverse_proxy Headers](https://caddyserver.com/docs/caddyfile/directives/reverse_proxy#headers).
+`header_up Host {hostport}` ist für den App-vHost Pflicht. `/ws` vergleicht Browser-`Origin` mit `Host`, einschließlich Port: `{host}` schneidet einen Nicht-Standard-Port (z. B. `:8443` oder `GELABBER_HTTP_PORT`) ab, und jeder WebSocket-Handshake endet mit 403. Ohne Override lässt Caddy bei **HTTP**-Upstreams den eingehenden `Host` standardmäßig durch; bei **HTTPS**-Upstreams setzt Caddy (ab v2.11) den Host auf den Upstream. Explizites Forwarding macht die Absicht klar und verhindert Signature-/Origin-Fehler. Siehe [reverse_proxy Headers](https://caddyserver.com/docs/caddyfile/directives/reverse_proxy#headers).
 
 **Ohne Compose-Caddy:** Overlay published web/api/media (und MinIO) auf Loopback. Vorlage: `deploy/compose/Caddyfile.homelab` (zwei aktive Site-Blöcke: App + MinIO).
 

@@ -13,6 +13,12 @@ import { useMediaSettings } from "../voice/settings.ts";
 import { getGateway } from "../ws/client.ts";
 import type { ChatEvent } from "../ws/protocol.ts";
 import {
+  closeMessageNotifications,
+  showMessageNotification,
+  withdrawWhileViewing,
+} from "../pwa/notifications.ts";
+import {
+  conversationPath,
   createNotificationDedupe,
   isDmTopic,
   messageNotificationDecision,
@@ -67,65 +73,21 @@ function channelLabel(
   return channel ? `#${channel.name}` : "Kanal";
 }
 
-const desktopNotifications = new Map<string, { close: () => void }>();
-
-function maybeDesktopNotify(
-  title: string,
-  body: string,
-  onClick: () => void,
-  tag: string,
-): void {
-  if (typeof document === "undefined" || !document.hidden) return;
-  if (!useMediaSettings.getState().desktopNotify) return;
-  const Notify = (
-    globalThis as unknown as {
-      Notification?: {
-        permission: string;
-        new (
-          title: string,
-          opts?: {
-            body: string;
-            silent?: boolean;
-            tag?: string;
-            renotify?: boolean;
-          },
-        ): { onclick: (() => void) | null; close: () => void };
-      };
-    }
-  ).Notification;
-  if (!Notify || Notify.permission !== "granted") return;
-  try {
-    desktopNotifications.get(tag)?.close();
-    const notification = new Notify(title, {
-      body,
-      silent: true,
-      tag,
-      renotify: false,
-    });
-    desktopNotifications.set(tag, notification);
-    notification.onclick = () => {
-      notification.close();
-      onClick();
-    };
-  } catch {
-    // permission revoked mid-flight
-  }
-}
-
 /** Toast + optional desktop notification for creates in another chat. */
 export function useMessageToastsBridge(): void {
   const client = useQueryClient();
   const navigate = useNavigate();
   const me = useSession((s) => s.user?.id);
   const viewingChannelId = useParams({ strict: false }).channelId;
-  useEffect(
-    () => () => {
-      for (const notification of desktopNotifications.values())
-        notification.close();
-      desktopNotifications.clear();
-    },
-    [me],
-  );
+  // An account takes its notifications with it. A window that only just
+  // learns who is signed in closes nothing: they belong to all windows.
+  useEffect(() => {
+    if (me) return () => closeMessageNotifications({ user: me });
+  }, [me]);
+  useEffect(() => {
+    if (me && viewingChannelId)
+      return withdrawWhileViewing(me, viewingChannelId);
+  }, [me, viewingChannelId]);
   const deliveries = useRef<{
     userId: string | undefined;
     generation: number;
@@ -192,9 +154,14 @@ export function useMessageToastsBridge(): void {
       ) {
         desktopAt.set(event.c, now);
         const channelId = event.c;
-        maybeDesktopNotify(
-          `${message.author.name} · ${label}`,
-          preview,
+        void showMessageNotification(
+          {
+            title: `${message.author.name} · ${label}`,
+            body: preview,
+            channelId,
+            path: conversationPath(dm, event.s, channelId),
+            user: userId,
+          },
           () => {
             if (!stampHolds({ userId, generation })) return;
             window.focus();
@@ -207,7 +174,6 @@ export function useMessageToastsBridge(): void {
               });
             }
           },
-          `gelabber:${userId}:${channelId}`,
         );
       }
     });

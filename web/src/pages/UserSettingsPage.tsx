@@ -18,8 +18,8 @@ import "./settings.css";
 const areas = [
   {
     id: "install",
-    label: "App installieren",
-    description: "Gelabber direkt von deinem Startbildschirm öffnen.",
+    label: "App",
+    description: "Gelabber wie eine eigene App öffnen.",
     icon: ScreenIcon,
   },
   {
@@ -55,7 +55,10 @@ const areas = [
 ] as const;
 
 export function UserSettingsPage() {
-  const native = useInstallation((state) => state.native);
+  // Nothing to install inside the desktop app or the installed web app.
+  const installable = useInstallation(
+    (state) => !state.native && !state.standalone,
+  );
   const router = useRouter();
   const canGoBack = useCanGoBack();
   const goBack = () => {
@@ -91,7 +94,9 @@ export function UserSettingsPage() {
       <div className="settings-layout">
         <nav className="settings-navigation" aria-label="Einstellungsbereiche">
           {areas
-            .filter(({ id }) => id !== "install" || !native)
+            .filter(
+              ({ id }) => id !== "install" || installable || area === "install",
+            )
             .map(({ id, label, icon: Icon }) => (
               <button
                 key={id}

@@ -1,16 +1,28 @@
-import { promptInstallation, useInstallation } from "./install.ts";
+import {
+  promptInstallation,
+  useInstallation,
+  type InstallState,
+} from "./install.ts";
 import "./install.css";
 
 export function InstallApp() {
-  const state = useInstallation();
+  return <InstallPanel state={useInstallation()} />;
+}
+
+export function InstallPanel({ state }: { state: InstallState }) {
   if (state.native) return null;
+  const offered = state.available || state.pending;
   return (
     <section className="pwa-install" aria-label="Gelabber installieren">
       <div className="pwa-install-heading">
         <img src="/icons/icon-192.png" alt="" width={48} height={48} />
         <div>
           <h2>Gelabber als App</h2>
-          <p>Direkt vom Startbildschirm öffnen.</p>
+          <p>
+            {state.mobile
+              ? "Direkt vom Startbildschirm öffnen."
+              : "In einem eigenen Fenster öffnen."}
+          </p>
         </div>
       </div>
       {state.installed ? (
@@ -23,7 +35,7 @@ export function InstallApp() {
         </p>
       ) : (
         <>
-          {state.available || state.pending ? (
+          {offered ? (
             <button
               type="button"
               className="living-room-primary"
@@ -53,12 +65,17 @@ export function InstallApp() {
                 „Hinzufügen“.
               </li>
             </ol>
-          ) : (
+          ) : state.accepted ? null : state.mobile ? (
             <p>
-              Du kannst auch im Browsermenü „App installieren“ oder „Zum
-              Startbildschirm hinzufügen“ wählen. Falls dein Browser das nicht
-              anbietet, öffne Gelabber in Chrome auf Android oder Safari auf dem
-              iPhone/iPad.
+              {offered
+                ? "Du kannst auch im Browsermenü „App installieren“ oder „Zum Startbildschirm hinzufügen“ wählen."
+                : "Wähle im Browsermenü „App installieren“ oder „Zum Startbildschirm hinzufügen“. Bietet dein Browser das nicht an, öffne Gelabber in Chrome."}
+            </p>
+          ) : offered ? null : (
+            <p>
+              Wenn dein Browser Web-Apps unterstützt, findest du die
+              Installation in der Adressleiste oder im Browsermenü, zum Beispiel
+              in Chrome oder Edge.
             </p>
           )}
           <p className="pwa-install-note">
