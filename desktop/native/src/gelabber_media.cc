@@ -1234,6 +1234,11 @@ struct gm_engine
 	{
 		mediasoupclient::PeerConnection::Options options;
 		options.factory = factory.get();
+		// The media server has no ICE-TCP (media/src/sfu.rs), so TCP host
+		// candidates can never pair. Gathering them opens a listening
+		// socket per interface, which is what makes the Windows firewall
+		// ask about the app. TURN over TCP or TLS is a relay port and stays.
+		options.config.tcp_candidate_policy = webrtc::PeerConnectionInterface::kTcpCandidatePolicyDisabled;
 		return options;
 	}
 

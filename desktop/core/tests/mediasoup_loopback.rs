@@ -349,8 +349,74 @@ async fn native_client_round_trips_media_through_mediasoup() {
     replacement.set_enabled(false).unwrap();
     replacement.set_enabled(true).unwrap();
 
+    assert_no_tcp_candidates(&server, &device, &mic, &runtime).await;
+
     // Native objects close in dependency order.
     drop(consumers);
     drop((audio, h264, vp8));
     drop((send, recv));
+}
+
+fn local_candidates(transport: &Transport) -> Vec<Value> {
+    transport
+        .stats()
+        .unwrap()
+        .as_array()
+        .cloned()
+        .unwrap_or_default()
+        .into_iter()
+        .filter(|s| s["type"] == "local-candidate")
+        .collect()
+}
+
+/// The media server has no ICE-TCP, so the core gathers no TCP candidates:
+/// each would be a listening socket, which is what the Windows firewall asks
+/// about. libwebrtc only gets to its TCP gathering phase while ICE is still
+/// unconnected, so this transport's remote candidates point at a local socket
+/// that never answers.
+async fn assert_no_tcp_candidates(
+    server: &Server,
+    device: &Device,
+    mic: &Source,
+    runtime: &Handle,
+) {
+    let silent = std::net::UdpSocket::bind("127.0.0.1:0").unwrap();
+    let port = silent.local_addr().unwrap().port();
+    let (server_transport, mut params) = server.transport().await;
+    for candidate in params["iceCandidates"].as_array_mut().unwrap() {
+        candidate["port"] = json!(port);
+    }
+    let (transport, events) = Transport::new(device, Direction::Send, &params).unwrap();
+    serve_events(
+        runtime.clone(),
+        transport.clone(),
+        server_transport,
+        events,
+        Arc::new(Mutex::new(Vec::new())),
+    );
+    let producer = {
+        let (transport, mic) = (transport.clone(), mic.clone());
+        blocking(move || transport.produce(&mic, &json!({})))
+            .await
+            .unwrap()
+    };
+    wait_for("local ICE candidates", Duration::from_secs(10), || {
+        let transport = transport.clone();
+        async move { !local_candidates(&transport).is_empty() }
+    })
+    .await;
+    // The gathering phases (UDP, relay, TCP) start 50 ms apart.
+    tokio::time::sleep(Duration::from_secs(1)).await;
+    let candidates = local_candidates(&transport);
+    eprintln!(
+        "local candidates without a connection: {:?}",
+        candidates
+            .iter()
+            .map(|c| (c["protocol"].clone(), c["candidateType"].clone()))
+            .collect::<Vec<_>>()
+    );
+    for candidate in &candidates {
+        assert_eq!(candidate["protocol"], "udp", "{candidate}");
+    }
+    drop(producer);
 }
