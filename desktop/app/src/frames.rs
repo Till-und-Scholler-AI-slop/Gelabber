@@ -1320,11 +1320,39 @@ mod tests {
         if cfg!(target_os = "linux") {
             assert_eq!(threads(), 1);
         }
-        // The last view ends the pattern's thread.
+        // The last view ends the pattern's thread. The kernel lists a thread
+        // a moment longer than a join of it takes to return, so the count
+        // gets time to follow.
         frames.close(view);
+        let deadline = Instant::now() + Duration::from_secs(5);
+        while threads() != 0 && Instant::now() < deadline {
+            std::thread::sleep(Duration::from_millis(5));
+        }
         assert_eq!(threads(), 0);
         assert!(TestPattern::new(8, 8, 30).is_err());
         assert!(TestPattern::new(1280, 720, 0).is_err());
+
+        // Taking the sink off waits for the thread, as the core's taps wait
+        // for a frame in delivery: the thread is through with the sink, and
+        // has dropped it, when the call returns.
+        struct Gone(mpsc::Sender<()>);
+        impl Drop for Gone {
+            fn drop(&mut self) {
+                let _ = self.0.send(());
+            }
+        }
+        let mut pattern = TestPattern::new(64, 36, 60).unwrap();
+        let (gone, dropped) = mpsc::channel();
+        let (drawn, arrived) = mpsc::channel();
+        let gone = Gone(gone);
+        let sink = move |_: &VideoFrame<'_>| {
+            let _ = &gone;
+            let _ = drawn.send(());
+        };
+        pattern.set_sink(Some(Box::new(sink))).unwrap();
+        arrived.recv_timeout(Duration::from_secs(5)).unwrap();
+        pattern.set_sink(None).unwrap();
+        dropped.try_recv().expect("the thread let go of the sink");
     }
 
     #[test]

@@ -1363,37 +1363,22 @@ mod tests {
     #[test]
     fn a_pattern_view_opened_for_a_page_that_left_is_ended() {
         let media = Media::default();
-        let pattern = || {
-            let pattern = PatternOptions {
-                width: 320,
-                height: 180,
-                fps: 30,
-            };
-            let target = media.view_target(None, None, Some(pattern), true);
-            let (origin, tap) = target.unwrap();
-            let (tap, stopped) = watched(tap);
-            (origin, tap, stopped)
-        };
+        let origin = Origin::Pattern(320, 180, 30);
+        // In place of the pattern, whose thread the test in frames.rs counts.
+        let pattern = Noted::default();
         let page = media.page();
-        let (origin, tap, stopped) = pattern();
         media.reset();
-        let late = block_on(open_view(&media, page, origin, DEFAULT_REQUEST, tap));
-        assert_eq!(late, Err(PAGE_GONE.into()));
-        stopped.try_recv().expect("the pattern stopped");
+        let late = open_view(&media, page, origin, DEFAULT_REQUEST, pattern.tap());
+        assert_eq!(block_on(late), Err(PAGE_GONE.into()));
+        assert_eq!(pattern.sinks(), [true, false]);
 
         // The page that is there now gets its view.
-        let (origin, tap, stopped) = pattern();
-        let opened = block_on(open_view(
-            &media,
-            media.page(),
-            origin,
-            DEFAULT_REQUEST,
-            tap,
-        ));
-        let view = opened.unwrap();
-        next_frame(&media.frames, view, None);
-        assert!(stopped.try_recv().is_err());
-        media.frames.close(view);
+        let pattern = Noted::default();
+        let page = media.page();
+        let opened = open_view(&media, page, origin, DEFAULT_REQUEST, pattern.tap());
+        let view = block_on(opened).unwrap();
+        assert!(media.frames.view(view).is_ok());
+        assert_eq!(pattern.sinks(), [true]);
     }
 
     /// The microphone test is the engine's, not an object with a handle:
