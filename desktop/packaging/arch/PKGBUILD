@@ -46,6 +46,7 @@ package() {
   install -Dm755 gelabber-desktop "${pkgdir}/opt/${pkgname}/gelabber-desktop"
   install -Dm755 libgelabber_media.so "${pkgdir}/opt/${pkgname}/libgelabber_media.so"
   install -Dm644 README.txt "${pkgdir}/usr/share/doc/${pkgname}/README.txt"
+  install -Dm644 THIRD-PARTY-NOTICES.txt "${pkgdir}/usr/share/licenses/${pkgname}/THIRD-PARTY-NOTICES.txt"
   install -Dm755 /dev/stdin "${pkgdir}/usr/bin/gelabber-desktop" <<'SH'
 #!/bin/sh
 exec /opt/gelabber-desktop/gelabber-desktop "$@"

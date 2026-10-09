@@ -37,6 +37,8 @@ try {
   $env:GELABBER_SERVER = "http://127.0.0.1:$port"
   # Runners have no audio endpoints; the commands must answer all the same.
   $env:GELABBER_AUDIO = 'dummy'
+  # The page asks for views of the test pattern, which the app only has then.
+  $env:GELABBER_VIDEO_TEST_PATTERN = '1'
   $appProcess = Start-Process -FilePath (Resolve-Path $App).Path -PassThru `
     -RedirectStandardOutput "$logs\app.txt" -RedirectStandardError "$logs\app-error.txt"
   if (-not $server.WaitForExit(120000)) { throw 'no report from the app within 120 s' }

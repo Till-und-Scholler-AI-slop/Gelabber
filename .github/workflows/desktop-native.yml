@@ -299,7 +299,7 @@ jobs:
           mkdir -p "$pkg"
           strip --strip-unneeded -o "$pkg/gelabber-desktop" desktop/target/release/gelabber-desktop
           strip --strip-unneeded -o "$pkg/libgelabber_media.so" "$lib"
-          cp desktop/app/package/README.txt "$pkg/"
+          cp desktop/app/package/README.txt desktop/app/package/THIRD-PARTY-NOTICES.txt "$pkg/"
           cp desktop/packaging/arch/gelabber-desktop.desktop desktop/app/icons/icon.png "$pkg/"
           tar -czf "$pkg.tar.gz" "$pkg"
 
@@ -383,6 +383,16 @@ jobs:
           cargo clippy --locked --manifest-path desktop/Cargo.toml --target x86_64-pc-windows-msvc \
             -p gelabber-media-core --lib -- -D warnings
 
+      # The packages ship desktop/app/package/THIRD-PARTY-NOTICES.txt. Its
+      # crate list comes from Cargo.lock for both targets, which this job has
+      # at hand: a dependency change without a refreshed file fails here
+      # (desktop/packaging/third-party-notices.py without arguments writes it).
+      - name: Third-party notices are current
+        run: |
+          set -euo pipefail
+          python3 -m unittest discover -s desktop/packaging/tests
+          python3 desktop/packaging/third-party-notices.py --check
+
   # The same core as a DLL, the app around it and its installer. First the
   # steps that build on each other, up to the app installed, started and
   # removed again; then the checks nothing else needs. Each of those runs
@@ -403,6 +413,14 @@ jobs:
       GELABBER_LIBWEBRTC_DIR: C:\libwebrtc-package
       # mediasoup-sys (the worker the core's tests call) runs "$PYTHON -m invoke".
       PYTHON: python
+      # The app must start on a Windows without the Visual C++
+      # redistributable ("Check and measure the binaries" holds it to that):
+      # Rust links the C runtime statically, as the core's DLL does. The
+      # mediasoup worker of the tests is linked into a Rust binary too, so
+      # Meson builds it against the same runtime; --vsenv is mediasoup's own
+      # default for MESON_ARGS and must stay when the variable is set.
+      RUSTFLAGS: -C target-feature=+crt-static
+      MESON_ARGS: --vsenv -Db_vscrt=mt
     steps:
       - name: Checkout
         uses: actions/checkout@v7
