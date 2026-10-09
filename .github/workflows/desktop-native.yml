@@ -548,6 +548,19 @@ jobs:
           }
           $built = @(Get-ChildItem (Join-Path $release 'bundle\nsis') -Filter '*-setup.exe')
           if ($built.Count -ne 1) { throw "expected one installer in bundle\nsis, found $($built.Count)" }
+          # The version of the desktop workspace is the app's: in the name
+          # Tauri gives the installer, among the installed apps, in the file
+          # properties and in media_info. A release must have its tag there,
+          # and release.yml only holds the server's workspace to the tag.
+          $version = Select-String -Path desktop\Cargo.toml -Pattern '^version = "(.+)"\s*$' | Select-Object -First 1
+          if (-not $version) { throw 'no version in desktop\Cargo.toml' }
+          $version = $version.Matches[0].Groups[1].Value
+          if ($built[0].Name -ne "Gelabber_${version}_x64-setup.exe") {
+            throw "the installer is $($built[0].Name): not version $version of desktop\Cargo.toml"
+          }
+          if ($env:RELEASE_TAG -and $env:RELEASE_TAG -ne "v$version") {
+            throw "release $($env:RELEASE_TAG): desktop\Cargo.toml, and with it the app, says $version"
+          }
           $name = 'gelabber-desktop-windows-x64-setup.exe'
           Copy-Item $built[0].FullName $name
           $hash = (Get-FileHash $name -Algorithm SHA256).Hash.ToLowerInvariant()
@@ -931,6 +944,13 @@ jobs:
             fi
             if [ "$PUBLISH" = true ] && [ -z "$ARCH_REPO_GPG_KEY" ]; then
               echo "ARCH_REPO_PUBLISH is on but the ARCH_REPO_GPG_KEY secret is missing"; exit 1
+            fi
+            # The package gets its version from the tag, the app in it (what
+            # media_info reports) from the desktop workspace: the same, or
+            # the release is not built.
+            app="v$(sed -n 's/^version = "\(.*\)"$/\1/p' desktop/Cargo.toml | head -n1)"
+            if [ "$app" != "$TAG" ]; then
+              echo "release $TAG: desktop/Cargo.toml, and with it the app, says $app"; exit 1
             fi
             version="$TAG"
             url="https://github.com/${GITHUB_REPOSITORY}/releases/download/${TAG}/gelabber-desktop-linux-x64.tar.gz"
