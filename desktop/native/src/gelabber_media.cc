@@ -5,7 +5,6 @@
 #include "gelabber_media.h"
 #include "app_audio.h"
 #include "capture_dsp.h"
-#include "gst_h264_encoder.h"
 #include "local_video_source.h"
 
 #include "mediasoupclient.hpp"
@@ -44,7 +43,6 @@
 #include <api/video_codecs/video_encoder_factory_template_open_h264_adapter.h>
 #include <audio/utility/audio_frame_operations.h>
 #include <media/base/adapted_video_track_source.h>
-#include <media/engine/simulcast_encoder_adapter.h>
 #include <modules/audio_processing/audio_buffer.h>
 #include <modules/audio_processing/include/audio_frame_proxies.h>
 #include <modules/audio_device/include/fake_audio_device.h>
@@ -52,19 +50,34 @@
 #include <rtc_base/thread.h>
 #include <rtc_base/time_utils.h>
 
+#if defined(WEBRTC_LINUX)
+// Hardware H264 through GStreamer, behind libwebrtc's simulcast adapter. The
+// Windows libwebrtc package does not carry the adapter.
+#  include "gst_h264_encoder.h"
+#  include <media/engine/simulcast_encoder_adapter.h>
+#endif
+#if defined(WEBRTC_WIN)
+#  include <rtc_base/win32_socket_init.h>
+#endif
+
 #include <algorithm>
 #include <atomic>
 #include <cctype>
 #include <cmath>
 #include <chrono>
+#include <cstdint>
+#include <cstdlib>
 #include <cstring>
+#include <exception>
 #include <future>
 #include <map>
 #include <memory>
 #include <mutex>
 #include <optional>
+#include <stdexcept>
 #include <string>
 #include <thread>
+#include <utility>
 #include <vector>
 
 using json = nlohmann::json;
@@ -1192,10 +1205,10 @@ namespace
 	  webrtc::LibvpxVp9EncoderTemplateAdapter,
 	  webrtc::LibaomAv1EncoderTemplateAdapter>;
 
-	// libwebrtc's software encoders, with H264 moved to a hardware encoder
-	// (GStreamer: VA-API/NVENC) when the system has one. Hardware H264 runs
-	// per simulcast layer behind SimulcastEncoderAdapter, which also falls
-	// back to OpenH264 when the hardware encoder fails.
+	// libwebrtc's software encoders. On Linux H264 moves to a hardware
+	// encoder (GStreamer: VA-API/NVENC) when the system has one. Hardware
+	// H264 runs per simulcast layer behind SimulcastEncoderAdapter, which
+	// also falls back to OpenH264 when the hardware encoder fails.
 	class EncoderFactory : public webrtc::VideoEncoderFactory
 	{
 	public:
@@ -1229,20 +1242,36 @@ namespace
 		std::unique_ptr<webrtc::VideoEncoder> Create(
 		  const webrtc::Environment& env, const webrtc::SdpVideoFormat& format) override
 		{
+#if defined(WEBRTC_LINUX)
 			if (hardware && lower(format.name) == "h264")
 				return std::make_unique<webrtc::SimulcastEncoderAdapter>(env, hardware.get(), &software, format);
+#endif
 			return software.Create(env, format);
 		}
 
 	private:
 		SoftwareEncoderFactory software;
+#if defined(WEBRTC_LINUX)
 		std::unique_ptr<webrtc::VideoEncoderFactory> hardware;
+#endif
 	};
 
 	NoopProducerListener producerListener;
 	NoopConsumerListener consumerListener;
 
 	std::once_flag initialized;
+
+#if defined(WEBRTC_WIN)
+	// libwebrtc leaves Winsock to its embedder, and the network thread's
+	// socket server needs it from its constructor on. Never cleaned up:
+	// WSACleanup would run while the library unloads, where it must not.
+	void StartWinsock()
+	{
+		static webrtc::WinsockInitializer* const winsock = new webrtc::WinsockInitializer();
+		if (winsock->error() != 0)
+			throw std::runtime_error("WSAStartup failed with error " + std::to_string(winsock->error()));
+	}
+#endif
 } // namespace
 
 struct gm_engine
@@ -1379,6 +1408,9 @@ void gm_set_log_level(int level)
 gm_engine* gm_engine_new(const char* optionsJson)
 {
 	return guarded<gm_engine*>(nullptr, [&]() -> gm_engine* {
+#if defined(WEBRTC_WIN)
+		StartWinsock();
+#endif
 		std::call_once(initialized, [] { mediasoupclient::Initialize(); });
 		const auto options = optionsJson ? json::parse(optionsJson) : json::object();
 		const auto audio   = options.value("audio", std::string("default"));
