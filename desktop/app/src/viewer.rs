@@ -909,7 +909,9 @@ mod tests {
     }
 
     /// Draws a frame in a real window and checks the colors on a screenshot.
-    /// Needs a GPU or a software Vulkan/GL driver.
+    /// Needs a GPU or a software Vulkan/GL driver. On X11 also a 1280x720
+    /// frame, for the matrix (BT.601 at any size); a compositor may tint what
+    /// grim sees, so the Wayland run leaves that to the X11 one.
     /// X11, without a window manager (ImageMagick takes the screenshot):
     /// `xvfb-run -a cargo test -p gelabber-desktop -- --ignored viewer`.
     /// Wayland (grim takes the screenshot): the window opens in the running
@@ -927,6 +929,26 @@ mod tests {
                 Box::new(move |event| events_tx.send(event).unwrap()),
             )
             .unwrap();
+        // The same frame `times`, 50 ms apart.
+        let mut show = |w: usize, h: usize, y: &[u8], u: &[u8], v: &[u8], times: u32| {
+            for _ in 0..times {
+                sink(&VideoFrame {
+                    width: w as u32,
+                    height: h as u32,
+                    y,
+                    u,
+                    v,
+                    stride_y: w,
+                    stride_u: w / 2,
+                    stride_v: w / 2,
+                    rotation: 0,
+                    timestamp_us: 0,
+                    source_width: w as u32,
+                    source_height: h as u32,
+                });
+                std::thread::sleep(Duration::from_millis(50));
+            }
+        };
         // 640x360: left half red, right half blue (BT.601 limited range).
         let (w, h) = (640usize, 360usize);
         let mut y = vec![0u8; w * h];
@@ -944,23 +966,7 @@ mod tests {
                 v[row * w / 2 + col] = if left { 240 } else { 110 };
             }
         }
-        for _ in 0..30 {
-            sink(&VideoFrame {
-                width: w as u32,
-                height: h as u32,
-                y: &y,
-                u: &u,
-                v: &v,
-                stride_y: w,
-                stride_u: w / 2,
-                stride_v: w / 2,
-                rotation: 0,
-                timestamp_us: 0,
-                source_width: w as u32,
-                source_height: h as u32,
-            });
-            std::thread::sleep(Duration::from_millis(50));
-        }
+        show(w, h, &y, &u, &v, 30);
         let mut events = Vec::new();
         if on_wayland() {
             // The compositor places and sizes the window (and animates it
@@ -1000,6 +1006,21 @@ mod tests {
             assert!(r > 180 && g < 60 && b < 60, "left half red: {left}");
             let (r, g, b) = rgb(&right);
             assert!(r < 60 && g < 60 && b > 180, "right half blue: {right}");
+
+            // 1280x720, all of it the green of BT.601 (Y 145, Cb 54, Cr 34):
+            // 255 with that matrix. With BT.709, the window's matrix from
+            // 720 lines up in v0.5, it comes out at 216.
+            let (w, h) = (1280usize, 720usize);
+            let chroma = w / 2 * h / 2;
+            let (y, u, v) = (vec![145u8; w * h], vec![54u8; chroma], vec![34u8; chroma]);
+            show(w, h, &y, &u, &v, 20);
+            let middle = pixel(640, 360);
+            eprintln!("middle {middle}");
+            let (r, g, b) = rgb(&middle);
+            assert!(
+                r < 60 && g > 240 && b < 60,
+                "BT.601 green at 720 lines: {middle}"
+            );
         }
         viewer.close(7);
         while let Ok(event) = events_rx.recv_timeout(Duration::from_secs(5)) {
