@@ -83,16 +83,28 @@ impl Media {
         }
     }
 
-    /// Drops every object of a page that went away. Views go first: they
-    /// hold the sinks of consumers and sources. Then producers and consumers,
+    /// Drops every object of a page that went away. The registries are
+    /// emptied before anything is freed: the old page lives on until the
+    /// navigation commits, and a view it opens meanwhile has to find its
+    /// consumer or source gone (`closed_meanwhile`), or a camera would go on
+    /// capturing with no handle left to close it. Then the views end, which
+    /// hold the sinks of consumers and sources; then producers and consumers,
     /// which close on their transports.
     pub fn reset(&self) {
+        fn take<T>(map: &Mutex<HashMap<u64, T>>) -> HashMap<u64, T> {
+            std::mem::take(&mut *map.lock().unwrap())
+        }
+        let consumers = take(&self.consumers);
+        let producers = take(&self.producers);
+        let sources = take(&self.sources);
+        let transports = take(&self.transports);
+        let devices = take(&self.devices);
         self.frames.reset();
-        self.consumers.lock().unwrap().clear();
-        self.producers.lock().unwrap().clear();
-        self.sources.lock().unwrap().clear();
-        self.transports.lock().unwrap().clear();
-        self.devices.lock().unwrap().clear();
+        drop(consumers);
+        drop(producers);
+        drop(sources);
+        drop(transports);
+        drop(devices);
         if let Some(viewer) = Viewer::running() {
             viewer.close_all();
         }
@@ -874,6 +886,63 @@ mod tests {
             .open(Origin::Source(2), small, tap(&microphone))
             .unwrap_err();
         assert!(error.contains("video source"), "{error}");
+    }
+
+    /// The page's source is gone from the registry by the time a page load
+    /// ends its views, so a view the old page opens during the load (its
+    /// command had the source already) is ended and frees the source.
+    #[test]
+    fn a_page_load_forgets_a_source_before_it_ends_its_views() {
+        /// Says whether the page still holds `origin` when its feed ends.
+        struct Witness {
+            media: Arc<Media>,
+            origin: Origin,
+            held: mpsc::Sender<bool>,
+        }
+        impl Tap for Witness {
+            fn set_sink(&mut self, sink: Option<VideoSink>) -> Result<()> {
+                if sink.is_none() {
+                    self.held.send(self.media.holds(self.origin)).unwrap();
+                }
+                Ok(())
+            }
+
+            fn set_limits(&mut self, _: VideoSinkLimits) -> Result<()> {
+                Ok(())
+            }
+        }
+
+        let media = Arc::new(Media::default());
+        let engine = Engine::new(Audio::Dummy).unwrap();
+        let source = Source::test_pattern(&engine, 640, 360, 30).unwrap();
+        let handle = media.insert(&media.sources, source);
+        let origin = Origin::Source(handle);
+        let (held, held_at_the_end) = mpsc::channel();
+        let witness = Witness {
+            media: media.clone(),
+            origin,
+            held,
+        };
+        let tap = || Ok(Box::new(witness) as Box<dyn Tap>);
+        let open = media.frames.open(origin, DEFAULT_REQUEST, tap).unwrap();
+        // A `media_view_open` of the old page that has looked its source up.
+        let in_flight = get(&media.sources, handle, "source").unwrap();
+
+        media.reset();
+        assert_eq!(held_at_the_end.try_recv(), Ok(false));
+        assert!(media.frames.view(open).is_err());
+        assert!(!media.holds(origin));
+
+        // The command goes on after the load: its view gets frames, then
+        // the check that follows every open ends it.
+        let tap = move || Ok(Box::new(SourceTap(in_flight)) as Box<dyn Tap>);
+        let late = media.frames.open(origin, DEFAULT_REQUEST, tap).unwrap();
+        next_frame(&media.frames, late, None);
+        assert_eq!(
+            tauri::async_runtime::block_on(closed_meanwhile(&media, origin)),
+            Ok(true)
+        );
+        assert!(media.frames.view(late).is_err());
     }
 
     /// The server origin's permission set grants exactly the media commands.
