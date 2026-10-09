@@ -2,6 +2,8 @@
 # Import this site block, or copy it. `header_up Host {hostport}` is required
 # (`/ws` compares Origin to Host, including a non-default port such as :8443;
 # `{host}` would drop the port and every WebSocket handshake would be 403).
+# With API_COOKIE_SECURE=true, the overlay's default, `/ws` also refuses pages
+# from `http://` origins: the app is served over HTTPS only.
 #
 # Caddy container on network `gelabber`:
 #   GELABBER_API_UPSTREAM=api:8080

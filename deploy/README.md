@@ -83,7 +83,7 @@ Compose bietet TURN über UDP und TCP an. TCP ist der Ausweichpfad für Clients,
 
 ## Hinter TLS
 
-- `API_COOKIE_SECURE=true`
+- `API_COOKIE_SECURE=true`. Die API nimmt den WebSocket (`/ws`) dann nur noch von `https://`-Seiten an; `http://` bleibt nur für `localhost` erlaubt.
 - `GELABBER_MINIO_DOMAIN` (Caddy-Host, z. B. `minio.example.com`) und `MINIO_PUBLIC_ENDPOINT` (volle URL, z. B. `https://minio.example.com`) müssen zur aktiven MinIO-Site in der **echten** Caddy-Config passen (Compose-`.env` allein reicht für externes Caddy nicht); kein Path-Prefix — Presigns signieren Host und Pfad. `MINIO_API_CORS_ALLOW_ORIGIN` = Gelabber-Origin
 - `TURN_PUBLIC_HOST`, `TURN_EXTERNAL_IP`, `MEDIA_ADVERTISED_IP` = Adresse, die Clients erreichen
 
