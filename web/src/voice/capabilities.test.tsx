@@ -34,6 +34,7 @@ import {
 } from "./capabilities.ts";
 import { setNativeBridgeForTests, type NativeBridge } from "./native/bridge.ts";
 import { loadNativeFeatures } from "./native/features.ts";
+import { MediaSettingsForm } from "./VoiceSettings.tsx";
 
 const capture = () => {};
 
@@ -298,4 +299,62 @@ describe("stream sound notice", () => {
     );
     expect(html).not.toContain("Browser");
   });
+});
+
+describe("settings form", () => {
+  const form = () => renderToStaticMarkup(<MediaSettingsForm />);
+
+  it("desktop browser: browser wording and a speaker choice", async () => {
+    await cases.desktopBrowser();
+    const html = form();
+    expect(html).toContain('id="audio-output"');
+    expect(html).toContain("Browser-Default");
+    expect(html).toContain("Browserfilter");
+    expect(html).toContain("Andere Werte laufen über Web Audio.");
+    expect(html).toContain(
+      "Der Browser passt die tatsächliche Bitrate an die Verbindung an.",
+    );
+    expect(html).toContain(
+      "Nutzt deinen gewählten Lautsprecher und die Wiedergabelautstärke.",
+    );
+    expect(html).not.toContain("Systemstandard");
+  });
+
+  it("phone browser: no speaker select where setSinkId is missing", async () => {
+    await cases.phoneBrowser();
+    const html = form();
+    expect(html).toContain('id="audio-input"');
+    expect(html).not.toContain('id="audio-output"');
+    expect(html).toContain(
+      "Dieser Browser kann den Lautsprecher nicht wählen.",
+    );
+    expect(html).toContain("Nutzt die Wiedergabelautstärke.");
+    expect(html).not.toContain("gewählten Lautsprecher");
+    // Per section too: the notice belongs to the audio devices.
+    expect(
+      renderToStaticMarkup(<MediaSettingsForm section="video" />),
+    ).not.toContain("Lautsprecher nicht wählen");
+  });
+
+  it.each(["linuxApp05", "windowsApp"] as const)(
+    "%s: native speaker list and no browser wording",
+    async (name) => {
+      await cases[name]();
+      const html = form();
+      // The webview has no setSinkId here; the list is the native core's.
+      expect(html).toContain('id="audio-output"');
+      expect(html).not.toContain("Lautsprecher nicht wählen");
+      expect(html.match(/Systemstandard/g)).toHaveLength(3);
+      expect(html).toContain("WebRTC-Filter");
+      expect(html).toContain("Echo und WebRTC-Filter");
+      expect(html).toContain(
+        "Die Desktop-App passt die tatsächliche Bitrate an die Verbindung an.",
+      );
+      expect(html).toContain("Standard-Ausgabegerät des Systems");
+      expect(html).toContain(
+        "Benachrichtigung, wenn Gelabber im Hintergrund ist",
+      );
+      expect(html).not.toMatch(/Browser|Web Audio|\bTab\b/);
+    },
+  );
 });

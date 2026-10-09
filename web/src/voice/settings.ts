@@ -44,6 +44,22 @@ export const AUDIO_PROCESSING = {
     hint: "Stereo sofern unterstützt, ohne Rauschfilter, Auto-Gain oder Sprechpausen-Erkennung",
   },
 } as const;
+/** The same modes as the desktop app words them: its native core does the
+ * filtering, no browser is involved. */
+export const AUDIO_PROCESSING_DESKTOP: Record<
+  AudioProcessingMode,
+  { label: string; hint: string }
+> = {
+  enhanced: {
+    label: AUDIO_PROCESSING.enhanced.label,
+    hint: "Lokale Rauschunterdrückung",
+  },
+  browser: {
+    label: "WebRTC-Filter",
+    hint: "Rauschunterdrückung und Auto-Gain von WebRTC",
+  },
+  original: AUDIO_PROCESSING.original,
+};
 export function asProcessingMode(value: unknown): AudioProcessingMode {
   return value === "browser" || value === "original" ? value : "enhanced";
 }
