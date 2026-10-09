@@ -137,6 +137,11 @@ variable yourself (e.g. `=0`) overrides that.
   with `application.name` and `client.id` only, the client's info has
   `application.process.id` and `application.process.binary`. The binary is
   the application's id; its name, the id up to 0.5.2, still selects it.
+  Applications that run the same binary (a system Electron, Wine, an
+  interpreter) are that binary's one entry, which selects them all. While
+  they play under different names of their own, each name is listed as a
+  further entry with the name as its id; a name a sound library gives
+  (`WEBRTC VoiceEngine`, `PipeWire ALSA [...]`) does not count.
   Gelabber's own process and the ones it started (the webview's helpers) are
   never captured, whatever is selected: the stream would carry the call. A
   helper in a pid namespace of its own is only recognized as a native

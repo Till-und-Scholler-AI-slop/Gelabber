@@ -18,11 +18,13 @@ namespace gelabber
 		// Its binary; an application that reports none goes by its name.
 		std::string id;
 		std::string name;
-		// Playback streams it has right now.
+		// Playback streams the id chooses right now.
 		int streams{ 0 };
 	};
 
 	// Applications playing sound, without this process and those it started.
+	// Applications that share a binary and call themselves differently are
+	// listed by name as well, next to the binary, which chooses them all.
 	std::vector<AudioApp> ListAudioApps();
 
 	class AppAudioCapture

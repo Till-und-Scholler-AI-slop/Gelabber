@@ -35,6 +35,7 @@
 #include <iterator>
 #include <map>
 #include <mutex>
+#include <set>
 #include <stdexcept>
 #include <thread>
 
@@ -166,6 +167,19 @@ namespace gelabber
 			AudioApp app;
 			// The id up to 0.5.2 (application.name); clients may have stored it.
 			std::string oldId;
+
+			// Whether choosing `id` means this stream.
+			bool ChosenBy(const std::string& id) const
+			{
+				return app.id == id || oldId == id;
+			}
+
+			// The application gave itself a name that chooses it and is not
+			// its binary's.
+			bool Named() const
+			{
+				return oldId != app.id && oldId == app.name;
+			}
 		};
 
 		// A thread loop with a connected core.
@@ -593,7 +607,7 @@ namespace gelabber
 			// On the loop thread with its lock held, like the stream events.
 			void OnStream(const PlaybackStream& playback)
 			{
-				if (!app.empty() && playback.app.id != app && playback.oldId != app)
+				if (!app.empty() && !playback.ChosenBy(app))
 					return;
 				auto capture    = std::make_unique<Capture>();
 				capture->owner  = this;
@@ -798,29 +812,56 @@ namespace gelabber
 
 	std::vector<AudioApp> ListAudioApps()
 	{
-		std::map<std::string, AudioApp> apps;
+		std::vector<PlaybackStream> playing;
 		Connection connection("gelabber-app-list");
 		Connection::Lock lock(connection);
 		PlaybackWatcher watcher(
 		  connection,
-		  [&apps](const PlaybackStream& playback) {
-			  auto& app = apps[playback.app.id];
-			  app.id    = playback.app.id;
-			  // Programs that share a binary (Electron, Wine) are one entry; when
-			  // their names differ, the binary is the one that fits them all.
-			  if (app.streams++ == 0)
-				  app.name = playback.app.name;
-			  else if (app.name != playback.app.name)
-				  app.name = app.id;
-		  },
-		  [](uint32_t) {});
+		  [&playing](const PlaybackStream& playback) { playing.push_back(playback); },
+		  [&playing](uint32_t node) {
+			  std::erase_if(
+			    playing, [node](const PlaybackStream& playback) { return playback.node == node; });
+		  });
 		// One round trip for the registry's listing, one for the info of the
 		// clients in it.
 		if (connection.Sync(2))
 			connection.Sync(2);
+
+		// An entry for each binary. Programs that share one (Electron, Wine, an
+		// interpreter) are told apart by the names they gave themselves: where
+		// a binary's streams carry several, each name is an entry as well,
+		// next to the binary, which chooses them all.
+		std::map<std::string, std::set<std::string>> names;
+		for (const auto& playback : playing)
+		{
+			auto& ofBinary = names[playback.app.id];
+			if (playback.Named())
+				ofBinary.insert(playback.oldId);
+		}
+		std::set<std::string> ids;
+		for (const auto& [binary, ofBinary] : names)
+		{
+			ids.insert(binary);
+			if (ofBinary.size() > 1)
+				ids.insert(ofBinary.begin(), ofBinary.end());
+		}
 		std::vector<AudioApp> out;
-		for (auto& [id, app] : apps)
-			out.push_back(app);
+		for (const auto& id : ids)
+		{
+			AudioApp app;
+			app.id = id;
+			// Called what its streams are called when they agree.
+			for (const auto& playback : playing)
+			{
+				if (!playback.ChosenBy(id))
+					continue;
+				if (app.streams++ == 0)
+					app.name = playback.app.name;
+				else if (app.name != playback.app.name)
+					app.name = id;
+			}
+			out.push_back(std::move(app));
+		}
 		return out;
 	}
 
