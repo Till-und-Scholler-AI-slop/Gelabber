@@ -347,11 +347,15 @@ describe("stream sound: a rollback to v0.5 and back", () => {
     choose("off");
     expect(await v05Client(true)).toBe(true);
     expect(await v06Client()).toBe("on");
-    // On here, switched off there: the old false, no choice as on a first
-    // upgrade.
+    // On here, switched off there: the old client read the on, so its false
+    // is the user's off.
     choose("on");
     expect(await v05Client(false)).toBe(false);
-    expect(await v06Client()).toBe("auto");
+    expect(await v06Client()).toBe("off");
+    // On here and left alone there stays on.
+    choose("on");
+    expect(await v05Client()).toBe(true);
+    expect(await v06Client()).toBe("on");
     // On, off again there, both in the old client, after an off here.
     choose("off");
     await v05Client(true);

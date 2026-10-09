@@ -293,10 +293,12 @@ const settingsStorage: PersistStorage<StoredMediaSettings> = {
  * true is "on". Its false was the default as well as a choice, and its
  * control had moved out of sight, so by itself it is no choice; it stands for
  * the "off" this client had stored before it, which that boolean cannot
- * hold. */
+ * hold. After an "on" of ours, which that client read as true, a false is
+ * its user switching sound off there. */
 function restoredSourceAudioShare(sharedBefore: boolean): SourceAudioShare {
   if (sharedBefore) return "on";
-  return keptSourceAudioShare() === "off" ? "off" : "auto";
+  const kept = keptSourceAudioShare();
+  return kept === "off" || kept === "on" ? "off" : "auto";
 }
 
 /** Session registers this so a slider change hits the live peer without reload. */
