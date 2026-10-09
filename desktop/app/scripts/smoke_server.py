@@ -15,6 +15,12 @@ the view the first one left. Its request is answered only after HOLD_SECOND
 seconds: until the new page commits, only the app's own answer to the ended
 web process can have closed what the old page left (smoke.sh looks then).
 
+On Windows the page also asks for screen capture and application sound, which
+the Windows core does not have yet: the answers must be an empty application
+list and a clean "not available on Windows yet" for both sources, as an older
+server's web client, which asks without looking at the features, meets them.
+On Linux they are left out: a screen capture would open the portal's picker.
+
 Usage: smoke_server.py <port> <ABI version> [<file to create after the first report>]
 """
 
@@ -28,6 +34,8 @@ from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 # ended, report included.
 BACK_WITHIN = 30
 
+WINDOWS = sys.platform == "win32"
+
 # How long the page's second request waits for its answer.
 HOLD_SECOND = 2
 
@@ -36,8 +44,8 @@ PAGE = b"""<!doctype html>
 <html><head><meta charset="utf-8"><title>smoke</title></head><body>
 <script>
 // Whether this page leaves a view open for the page after it, and the view
-// the page before it left.
-const LEAVE = __LEAVE__, LEFT = __LEFT__;
+// the page before it left; whether the app runs on Windows.
+const LEAVE = __LEAVE__, LEFT = __LEFT__, WINDOWS = __WINDOWS__;
 (async () => {
   const ipc = window.__TAURI_INTERNALS__;
   const report = { ipc: Boolean(ipc) };
@@ -54,6 +62,11 @@ const LEAVE = __LEAVE__, LEFT = __LEFT__;
     await call("devices", "media_audio_devices");
     await call("levels", "media_audio_levels");
     await call("setServer", "set_server", { server: "https://elsewhere.invalid" });
+    if (WINDOWS) {
+      await call("audioApps", "media_audio_apps");
+      await call("screen", "media_source_screen", { options: { type: "any", fps: 30, cursor: true, contentHint: "detail" } });
+      await call("appAudio", "media_source_app_audio", { options: { app: "" } });
+    }
     report.video = await video(ipc).catch((error) => ({ failed: String(error) }));
     if (LEAVE) {
       report.left = await ipc.invoke("media_view_open", { testPattern: { width: 640, height: 360, fps: 30 } })
@@ -212,6 +225,17 @@ def check_video(video, problems):
             problems.append(f"video: {name} did not fail")
 
 
+def check_windows_stubs(report, problems):
+    apps = report.get("audioApps", {})
+    if apps != {"ok": []}:
+        problems.append(f"media_audio_apps on Windows: {apps}, expected an empty list")
+    for name, what in (("screen", "screen capture"), ("appAudio", "application sound")):
+        answer = report.get(name, {})
+        expected = f"{what} is not available on Windows yet"
+        if expected not in str(answer.get("error", "")):
+            problems.append(f"{name} on Windows: {answer}, expected the error {expected!r}")
+
+
 class Handler(BaseHTTPRequestHandler):
     def do_GET(self):
         self.server.gets += 1
@@ -223,6 +247,7 @@ class Handler(BaseHTTPRequestHandler):
         leave = self.server.created is not None and left is None
         page = PAGE.replace(b"__LEAVE__", b"true" if leave else b"false")
         page = page.replace(b"__LEFT__", b"null" if left is None else str(left).encode())
+        page = page.replace(b"__WINDOWS__", b"true" if WINDOWS else b"false")
         self.send_response(200)
         self.send_header("Content-Type", "text/html; charset=utf-8")
         # Loaded again, the page has to come from here: it differs.
@@ -254,6 +279,8 @@ class Handler(BaseHTTPRequestHandler):
             problems.append("media_audio_levels failed")
         if "ok" in report.get("setServer", {}):
             problems.append("the server origin may call set_server")
+        if WINDOWS:
+            check_windows_stubs(report, problems)
         check_video(report.get("video", {}), problems)
         leaves = self.server.created is not None and not back
         if leaves and not isinstance(report.get("left"), int):
