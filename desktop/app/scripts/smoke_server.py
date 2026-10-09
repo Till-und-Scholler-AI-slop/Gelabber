@@ -6,16 +6,33 @@ checks the report the page posts back. Exits 0 when the server origin reaches
 the media core and nothing else, and video frames reach the page: views of a
 test pattern (the app runs with GELABBER_VIDEO_TEST_PATTERN) deliver packets
 with the right header and pixels.
+
+With a third argument, a file name (smoke.sh): the page's first report is not
+the end. The page leaves a view open, this server creates the file, and the
+caller ends the page's web process as a crash would. The app has to load the
+page again by itself; that page reports as the first did and must not find
+the view the first one left.
+
+Usage: smoke_server.py <port> <ABI version> [<file to create after the first report>]
 """
 
 import json
+import pathlib
 import sys
 import time
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 
+# How long the app may take to bring the page back after its web process
+# ended, report included.
+BACK_WITHIN = 30
+
+# LEAVE and LEFT are filled in per page load (Handler.do_GET).
 PAGE = b"""<!doctype html>
 <html><head><meta charset="utf-8"><title>smoke</title></head><body>
 <script>
+// Whether this page leaves a view open for the page after it, and the view
+// the page before it left.
+const LEAVE = __LEAVE__, LEFT = __LEFT__;
 (async () => {
   const ipc = window.__TAURI_INTERNALS__;
   const report = { ipc: Boolean(ipc) };
@@ -24,11 +41,19 @@ PAGE = b"""<!doctype html>
     catch (error) { report[name] = { error: String(error) }; }
   };
   if (ipc) {
+    if (LEFT !== null) {
+      report.leftover = await ipc.invoke("media_view_frame", { view: LEFT })
+        .then(() => "the view is still there", (error) => String(error));
+    }
     await call("info", "media_info");
     await call("devices", "media_audio_devices");
     await call("levels", "media_audio_levels");
     await call("setServer", "set_server", { server: "https://elsewhere.invalid" });
     report.video = await video(ipc).catch((error) => ({ failed: String(error) }));
+    if (LEAVE) {
+      report.left = await ipc.invoke("media_view_open", { testPattern: { width: 640, height: 360, fps: 30 } })
+        .then((opened) => opened.view, (error) => String(error));
+    }
   }
   await fetch("/report", { method: "POST", body: JSON.stringify(report) });
 })();
@@ -184,10 +209,18 @@ def check_video(video, problems):
 
 class Handler(BaseHTTPRequestHandler):
     def do_GET(self):
+        # The first page leaves a view open when its web process is to end;
+        # the page after it is told which.
+        left = self.server.left
+        leave = self.server.created is not None and left is None
+        page = PAGE.replace(b"__LEAVE__", b"true" if leave else b"false")
+        page = page.replace(b"__LEFT__", b"null" if left is None else str(left).encode())
         self.send_response(200)
         self.send_header("Content-Type", "text/html; charset=utf-8")
+        # Loaded again, the page has to come from here: it differs.
+        self.send_header("Cache-Control", "no-store")
         self.end_headers()
-        self.wfile.write(PAGE)
+        self.wfile.write(page)
 
     def do_POST(self):
         length = int(self.headers.get("Content-Length", "0"))
@@ -196,6 +229,9 @@ class Handler(BaseHTTPRequestHandler):
         self.end_headers()
         print("report:", json.dumps(report, indent=2), flush=True)
         problems = []
+        back = self.server.left is not None
+        if back and "unknown view" not in str(report.get("leftover")):
+            problems.append(f"the page that came back still reaches the view left open: {report.get('leftover')}")
         if not report.get("ipc"):
             problems.append("no Tauri IPC on the server page")
         info = report.get("info", {}).get("ok", {})
@@ -211,8 +247,18 @@ class Handler(BaseHTTPRequestHandler):
         if "ok" in report.get("setServer", {}):
             problems.append("the server origin may call set_server")
         check_video(report.get("video", {}), problems)
+        leaves = self.server.created is not None and not back
+        if leaves and not isinstance(report.get("left"), int):
+            problems.append(f"the view to leave open: {report.get('left')}")
         for problem in problems:
             print("FAIL:", problem, flush=True)
+        if leaves and not problems:
+            # Not the end: the caller ends the web process now.
+            self.server.left = report["left"]
+            self.server.back_by = time.monotonic() + BACK_WITHIN
+            self.server.created.touch()
+            print("first report good; waiting for the page to come back", flush=True)
+            return
         self.server.result = 1 if problems else 0
 
     def log_message(self, *args):
@@ -224,6 +270,14 @@ class Handler(BaseHTTPRequestHandler):
 server = ThreadingHTTPServer(("127.0.0.1", int(sys.argv[1])), Handler)
 server.result = None
 server.timeout = 1
+# The file that tells the caller to end the web process, if it asked for that;
+# the view the first page left open; when the page has to be back.
+server.created = pathlib.Path(sys.argv[3]) if len(sys.argv) > 3 else None
+server.left = None
+server.back_by = None
 while server.result is None:
     server.handle_request()
+    if server.result is None and server.back_by is not None and time.monotonic() > server.back_by:
+        print(f"FAIL: the page did not come back within {BACK_WITHIN} s of its web process ending", flush=True)
+        server.result = 1
 sys.exit(server.result)
