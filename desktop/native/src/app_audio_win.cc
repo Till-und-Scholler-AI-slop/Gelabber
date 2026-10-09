@@ -1,6 +1,7 @@
 // Application sound on Windows. Not implemented yet: no applications are
 // listed and starting a capture fails. The implementation belongs in this
 // file, behind the same interface as the PipeWire capture.
+// desktop/core/tests/mediasoup_loopback.rs holds both to that.
 
 #include "app_audio.h"
 
