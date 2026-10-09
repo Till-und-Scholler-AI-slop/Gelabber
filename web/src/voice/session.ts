@@ -3275,6 +3275,13 @@ async function addLocalSourceAudio(
   } catch (error) {
     // The video is untouched: only the sound did not make it.
     if (!mine()) return;
+    // The media socket went away under it. The sound stays in the share, and
+    // the seat's next connection publishes it with the video.
+    if (
+      !seat.isOpen() ||
+      (error instanceof MediaError && error.code === "connection_closed")
+    )
+      return;
     const failed = error instanceof Error ? error.message : String(error);
     logVoice("warn", "source-audio", { detail: failed });
     stopLocalSourceAudio(kind, "unavailable", { failed });

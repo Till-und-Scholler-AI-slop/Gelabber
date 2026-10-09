@@ -402,6 +402,8 @@ function install(opts?: {
   holdReplaceTrack?: Promise<void>;
   holdPublish?: Promise<void>;
   produceError?: (kind: TrackKind) => Error | undefined;
+  /** The server's answer to a "produce" waits for this. */
+  gateProduce?: (kind: TrackKind) => Promise<void> | undefined;
   /** Hold the versioned Join response while rejection/cancellation is tested. */
   holdJoin?: boolean;
   holdLiveClaim?: boolean;
@@ -555,7 +557,7 @@ function install(opts?: {
             );
             return;
           }
-          queueMicrotask(() => {
+          const answer = () => {
             if (!alive) return;
             (onMedia ?? lingering)?.({
               op: "result",
@@ -580,7 +582,11 @@ function install(opts?: {
                         }
                       : {},
             });
-          });
+          };
+          const gate =
+            frame.op === "produce" ? opts?.gateProduce?.(frame.k) : undefined;
+          if (gate) void gate.then(answer);
+          else queueMicrotask(answer);
         },
         close() {
           if (!alive) return;
@@ -4398,6 +4404,80 @@ describe("stream sound in the desktop app", () => {
       capture.getAudioTracks().every((track) => track.readyState === "ended"),
     ).toBe(true);
   });
+
+  it.each([
+    ["s", "before its publish"],
+    ["s", "during its publish"],
+    ["l", "before its publish"],
+    ["l", "during its publish"],
+  ] as const)(
+    "keeps %s sound switched on as the media connection drops %s, and sends it with the new one",
+    async (kind, moment) => {
+      const warn = vi
+        .spyOn(console, "warn")
+        .mockImplementation(() => undefined);
+      useMediaSettings.getState().patch({ sourceAudioShare: "off" });
+      const lost = deferred();
+      let held = false;
+      const { env, app } = await joined(APP_06, {
+        // The first answer never comes: the socket dies under it.
+        gateProduce: (asked) => {
+          if (moment !== "during its publish" || held) return undefined;
+          if (asked !== soundOf(kind)) return undefined;
+          held = true;
+          return lost.promise;
+        },
+      });
+      (kind === "s" ? toggleShare : toggleGoLive)();
+      await vi.waitFor(() => expect(env.peers[0]?.sender(kind)).toBeTruthy());
+      const capture =
+        kind === "s"
+          ? useVoice.getState().localScreen!
+          : useVoice.getState().localLive!;
+
+      // The seat holds the dead connection until its first rebuild.
+      if (moment === "before its publish") env.closeMedia();
+      useMediaSettings.getState().patch({ sourceAudioShare: "on" });
+      await vi.waitFor(() =>
+        expect(
+          env.peers[0]!.publicationInputs.some(
+            (input) => input.kind === soundOf(kind),
+          ),
+        ).toBe(true),
+      );
+      if (moment === "during its publish") {
+        expect(produced(env, soundOf(kind))).toHaveLength(1);
+        env.closeMedia();
+      }
+
+      await vi.waitFor(() =>
+        expect(env.peers[1]?.sender(soundOf(kind))).toBeTruthy(),
+      );
+      const [sound] = capture.getAudioTracks();
+      expect(sound.readyState).toBe("live");
+      expect(env.peers[1]!.sender(soundOf(kind))!.track).toBe(sound);
+      expect(produced(env, soundOf(kind)).at(-1)).toMatchObject({
+        parent: env.peers[1]!.sender(kind)!.producerId,
+      });
+      await vi.waitFor(() =>
+        expect(useVoice.getState().participants["u-self"]?.pubs).toContain(
+          soundOf(kind),
+        ),
+      );
+      expect(useVoice.getState().sourceAudio[kind]).toBe("sharing");
+      expect(useVoice.getState().sourceAudioNote[kind]).toBeNull();
+      // One capture: nothing was given up and asked for again.
+      expect(app.called("media_source_app_audio")).toHaveLength(1);
+      expect(app.called("media_source_close")).toEqual([]);
+      expect(app.called("media_source_screen")).toHaveLength(1);
+      expect(capture.getVideoTracks()[0]!.readyState).toBe("live");
+      expect(warn).not.toHaveBeenCalledWith(
+        "[gelabber:voice]",
+        expect.objectContaining({ step: "source-audio" }),
+      );
+      expect(env.errors).toEqual([]);
+    },
+  );
 
   it("tells when the chosen application plays nothing, not for a short pause", async () => {
     useMediaSettings
