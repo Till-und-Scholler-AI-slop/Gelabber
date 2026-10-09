@@ -126,6 +126,26 @@ libwebrtc sends from the machine's own address. Where that address does not
 reach `127.0.0.1`, as reported of Windows, `GELABBER_TEST_LISTEN_IP=<address>`
 puts the tests' mediasoup on it; the CI job tries which one works.
 
+## Tests
+
+| What | How | Where |
+|---|---|---|
+| Core: loopback call, video sinks; with their switches screen capture and voice | `cargo test --manifest-path desktop/Cargo.toml`; `GELABBER_TEST_SCREEN=1`, `GELABBER_TEST_AUDIO=1` inside `native/scripts/fake-desktop-session.sh` | CI, Linux and Windows (screen and voice: Linux) |
+| App: the commands a server origin reaches, frames of a test pattern | `app/scripts/smoke.sh`, `app/scripts/smoke.ps1` | CI, Linux and Windows |
+| Viewer window: colours on a screenshot | `cargo test --manifest-path desktop/Cargo.toml -p gelabber-desktop -- --ignored viewer` under Xvfb | CI, Linux |
+| Video inside the page: the web client's renderer, feed and tiles on real pixels | in `web/`: `npm run test:native-video-smoke` | **only locally** |
+| Third-party notices | `python3 -m unittest discover -s desktop/packaging/tests`, `packaging/third-party-notices.py --check` | CI |
+
+The video inside the page is drawn by the web client
+(`web/src/voice/native/frames.ts`, `videoFeed.ts`, the tiles), and `npm test`
+drives that renderer against a stand-in for WebGL: it never compiles the
+shaders. `npm run test:native-video-smoke` does, in headless Chromium with a
+stand-in for the app, and reads the tiles' pixels back; no server, about ten
+seconds. It needs a Chromium (`npx playwright install chromium` once, or
+`GELABBER_NATIVE_VIDEO_BROWSER_EXECUTABLE=/usr/bin/chromium`). CI runs no
+browser smoke tests (`.github/workflows/ci.yml`), so run it after a change to
+those files. WebKitGTK itself is not covered by it.
+
 ## Third-party notices
 
 Every package ships `app/package/THIRD-PARTY-NOTICES.txt`. It is generated;
