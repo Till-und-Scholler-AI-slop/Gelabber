@@ -38,8 +38,12 @@ pub struct Media {
     next: AtomicU64,
     /// Page loads so far. A command that makes something for the page notes
     /// the count when it starts ([`Media::page`]); what it made is the
-    /// page's only while the count stands ([`Media::insert`]).
-    page: AtomicU64,
+    /// page's only while the count stands ([`Media::insert`]). Shared with
+    /// the blocking pool, where the microphone test is switched.
+    page: Arc<AtomicU64>,
+    /// Held while the engine's microphone test is switched on or off
+    /// ([`switch_monitor`]).
+    monitor: Arc<Mutex<()>>,
     devices: Mutex<HashMap<u64, Device>>,
     transports: Mutex<HashMap<u64, Arc<PageTransport>>>,
     sources: Mutex<HashMap<u64, Source>>,
@@ -439,7 +443,9 @@ impl Media {
             viewer.close_all();
         }
         if let Some(engine) = self.engine.get() {
-            // A microphone test the page left open.
+            // A microphone test the page left open. After a switch that is
+            // under way, so that this is the last word (`switch_monitor`).
+            let _switching = self.monitor.lock().unwrap();
             let _ = engine.monitor_audio(None);
         }
         leftovers
@@ -515,8 +521,31 @@ pub async fn media_audio_levels(media: State<'_, Media>) -> Result<Value> {
 /// it, `null` ends it.
 #[tauri::command]
 pub async fn media_audio_monitor(media: State<'_, Media>, options: Option<Value>) -> Result<()> {
+    let page = media.page();
     let engine = media.engine()?.clone();
-    blocking(move || engine.monitor_audio(options.as_ref()).map_err(err)).await
+    let (loads, switching) = (media.page.clone(), media.monitor.clone());
+    blocking(move || {
+        let switch = || engine.monitor_audio(options.as_ref()).map_err(err);
+        switch_monitor(&loads, &switching, page, switch)
+    })
+    .await
+}
+
+/// Switches the engine's microphone test for a command that started at the
+/// page count `page`. The test has no handle a page load could take away:
+/// the load ends it, under the lock held here, and nothing may switch it on
+/// for the page that left, or it would capture with nobody to end it.
+fn switch_monitor(
+    loads: &AtomicU64,
+    switching: &Mutex<()>,
+    page: u64,
+    switch: impl FnOnce() -> Result<()>,
+) -> Result<()> {
+    let _switching = switching.lock().unwrap();
+    if loads.load(Ordering::SeqCst) != page {
+        return Err(PAGE_GONE.into());
+    }
+    switch()
 }
 
 #[tauri::command]
@@ -1365,6 +1394,62 @@ mod tests {
         next_frame(&media.frames, view, None);
         assert!(stopped.try_recv().is_err());
         media.frames.close(view);
+    }
+
+    /// The microphone test is the engine's, not an object with a handle:
+    /// a start that a command of the old page gets to after the page load
+    /// would run with no page to end it.
+    #[test]
+    fn the_microphone_test_is_not_switched_for_a_page_that_left() {
+        let media = Media::default();
+        let switched = std::cell::Cell::new(0);
+        let switch = |page| {
+            switch_monitor(&media.page, &media.monitor, page, || {
+                switched.set(switched.get() + 1);
+                Ok(())
+            })
+        };
+        let page = media.page();
+        assert_eq!(switch(page), Ok(()));
+        assert_eq!(switched.get(), 1);
+        media.reset();
+        assert_eq!(switch(page), Err(PAGE_GONE.into()));
+        assert_eq!(switched.get(), 1);
+        assert_eq!(switch(media.page()), Ok(()));
+        assert_eq!(switched.get(), 2);
+    }
+
+    /// A page load ends the microphone test after a switch that is under
+    /// way: a start that was let through before the load must not come out
+    /// behind the load's stop.
+    #[test]
+    fn a_page_load_ends_the_microphone_test_after_a_switch_under_way() {
+        let media = Arc::new(Media::default());
+        // The page load only ends a test of an engine that exists.
+        let engine = Engine::new(Audio::Dummy).unwrap();
+        assert!(media.engine.set(engine).is_ok());
+        let (begun, in_the_switch) = mpsc::channel();
+        let (go_on, waits) = mpsc::channel::<()>();
+        let (switching, page) = (media.clone(), media.page());
+        let switch = std::thread::spawn(move || {
+            switch_monitor(&switching.page, &switching.monitor, page, || {
+                begun.send(()).unwrap();
+                waits.recv().map_err(err)
+            })
+        });
+        in_the_switch.recv_timeout(LIMIT).unwrap();
+        let (loaded, load) = mpsc::channel();
+        let loading = media.clone();
+        std::thread::spawn(move || {
+            loading.reset();
+            let _ = loaded.send(());
+        });
+        // The load waits for the switch: not being through is no timing
+        // matter, only being through would be.
+        assert!(load.recv_timeout(Duration::from_millis(300)).is_err());
+        go_on.send(()).unwrap();
+        assert_eq!(switch.join().unwrap(), Ok(()));
+        load.recv_timeout(LIMIT).expect("the page load goes on");
     }
 
     /// Reports the thread it is dropped on.
