@@ -6,7 +6,7 @@ import { useEffect, type ReactNode } from "react";
 
 import { useUserId } from "../auth/scope.ts";
 import { HashIcon, SpeakerIcon } from "../components/Icons.tsx";
-import { MemberPanel } from "../components/MemberPanel.tsx";
+import { MemberPanel, MemberPanelToggle } from "../components/MemberPanel.tsx";
 import { MessagePane } from "../components/MessagePane.tsx";
 import "../components/chat.css";
 import { Redirect } from "../components/Redirect.tsx";
@@ -43,6 +43,7 @@ export function ChannelPage() {
     <>
       <Icon size={18} />
       <h1>{channel.name}</h1>
+      <LiveHint server={server} variant="pill" />
     </>
   );
 
@@ -51,7 +52,11 @@ export function ChannelPage() {
       <div className="lr-channel-content flex min-w-0 flex-1 flex-col overflow-hidden">
         {channel.kind === "voice" ? (
           <>
-            <header className="lr-channel-header">{title}</header>
+            <header className="lr-channel-header">
+              {title}
+              <span className="lr-channel-header-spacer" />
+              <MemberPanelToggle />
+            </header>
             <div className="min-h-0 flex-1 overflow-y-auto">
               <VoiceRoom
                 server={server}
@@ -71,6 +76,7 @@ export function ChannelPage() {
                 channel={channel}
                 title={title}
                 notice={<LiveHint server={server} />}
+                actions={<MemberPanelToggle />}
               />
             </div>
           </div>
@@ -86,11 +92,13 @@ function TextChat({
   channel,
   title,
   notice,
+  actions,
 }: {
   server: ServerDetail;
   channel: Channel;
   title: ReactNode;
   notice: ReactNode;
+  actions: ReactNode;
 }) {
   const canWrite = can(server, "send_messages");
   const typing = useTypingInput(server.id, channel.id, canWrite);
@@ -99,6 +107,7 @@ function TextChat({
       key={channel.id}
       title={title}
       notice={notice}
+      actions={actions}
       channelId={channel.id}
       channelName={channel.name}
       canSend={canWrite}

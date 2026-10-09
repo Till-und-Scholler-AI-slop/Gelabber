@@ -1209,3 +1209,35 @@ dialog,
   border-radius: 50%;
   background: var(--lr-range-fill);
 }
+
+/* Voice participants right under their channel. */
+.sidebar-participant {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  height: 28px;
+  padding: 0 8px 0 36px;
+  color: var(--lr-muted);
+  font-size: 13px;
+}
+.sidebar-participant .gel-avatar {
+  --avatar-size: 20px;
+  font-size: 9px;
+}
+.sidebar-participant-name {
+  flex: 1;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.sidebar-participant-state {
+  display: inline-flex;
+  flex-shrink: 0;
+  color: var(--lr-danger);
+}
+.sidebar-participant-live {
+  display: inline-flex;
+  flex-shrink: 0;
+  color: var(--lr-danger);
+}

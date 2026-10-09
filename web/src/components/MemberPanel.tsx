@@ -6,13 +6,34 @@ import type { ServerDetail } from "../servers/types.ts";
 import { useVoiceRoster, voiceOf, type VoiceFlags } from "../voice/roster.ts";
 import { useVoice } from "../voice/session.ts";
 import { groupMembers, presenceOf, usePresenceStore } from "../ws/live.ts";
-import { ScreenIcon } from "./Icons.tsx";
+import { ScreenIcon, UsersIcon } from "./Icons.tsx";
+import { toggleMemberPanel, useMemberPanelHidden } from "./memberPanelState.ts";
 import { MemberProfileDialog } from "./MemberProfileDialog.tsx";
 import { PresenceAvatar } from "./PresenceAvatar.tsx";
 import { VoiceStateIcons } from "./VoiceStateIcons.tsx";
 import { WorkspaceDrawer } from "./WorkspaceNavigation.tsx";
 
+/** Header button: show or hide the member list on wide screens. */
+export function MemberPanelToggle() {
+  const hidden = useMemberPanelHidden();
+  return (
+    <button
+      type="button"
+      className={`lr-header-icon member-panel-toggle${hidden ? "" : " is-on"}`}
+      aria-pressed={!hidden}
+      aria-label="Mitgliederliste"
+      title={
+        hidden ? "Mitgliederliste einblenden" : "Mitgliederliste ausblenden"
+      }
+      onClick={() => toggleMemberPanel()}
+    >
+      <UsersIcon size={18} />
+    </button>
+  );
+}
+
 export function MemberPanel({ server }: { server: ServerDetail }) {
+  const hidden = useMemberPanelHidden();
   const serverId = server.id;
   const members = server.members;
   const me = useSession((state) => state.user?.id);
@@ -52,7 +73,7 @@ export function MemberPanel({ server }: { server: ServerDetail }) {
         open={drawerOpen}
         onClose={() => setDrawerOpen(false)}
         breakpoint={1130}
-        className="member-panel-drawer"
+        className={`member-panel-drawer${hidden ? " is-collapsed" : ""}`}
       >
         <aside className="member-panel" aria-label="Mitglieder">
           <header className="member-panel-heading">
