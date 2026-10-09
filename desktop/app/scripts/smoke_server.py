@@ -11,7 +11,9 @@ With a third argument, a file name (smoke.sh): the page's first report is not
 the end. The page leaves a view open, this server creates the file, and the
 caller ends the page's web process as a crash would. The app has to load the
 page again by itself; that page reports as the first did and must not find
-the view the first one left.
+the view the first one left. Its request is answered only after HOLD_SECOND
+seconds: until the new page commits, only the app's own answer to the ended
+web process can have closed what the old page left (smoke.sh looks then).
 
 Usage: smoke_server.py <port> <ABI version> [<file to create after the first report>]
 """
@@ -25,6 +27,9 @@ from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 # How long the app may take to bring the page back after its web process
 # ended, report included.
 BACK_WITHIN = 30
+
+# How long the page's second request waits for its answer.
+HOLD_SECOND = 2
 
 # LEAVE and LEFT are filled in per page load (Handler.do_GET).
 PAGE = b"""<!doctype html>
@@ -209,6 +214,9 @@ def check_video(video, problems):
 
 class Handler(BaseHTTPRequestHandler):
     def do_GET(self):
+        self.server.gets += 1
+        if self.server.created is not None and self.server.gets == 2:
+            time.sleep(HOLD_SECOND)
         # The first page leaves a view open when its web process is to end;
         # the page after it is told which.
         left = self.server.left
@@ -275,6 +283,7 @@ server.timeout = 1
 server.created = pathlib.Path(sys.argv[3]) if len(sys.argv) > 3 else None
 server.left = None
 server.back_by = None
+server.gets = 0
 while server.result is None:
     server.handle_request()
     if server.result is None and server.back_by is not None and time.monotonic() > server.back_by:
