@@ -1126,29 +1126,33 @@ namespace
 		{
 			return inner->PlayoutDelay(delayMs);
 		}
+		// No processing in the device: the voice engine would switch the
+		// APM's own off for it. Windows offers an echo canceller that
+		// records 16 kHz mono, which RNNoise (48 kHz) and stereo cannot
+		// use. libwebrtc's PulseAudio module has none to begin with.
 		bool BuiltInAECIsAvailable() const override
 		{
-			return inner->BuiltInAECIsAvailable();
+			return false;
 		}
 		bool BuiltInAGCIsAvailable() const override
 		{
-			return inner->BuiltInAGCIsAvailable();
+			return false;
 		}
 		bool BuiltInNSIsAvailable() const override
 		{
-			return inner->BuiltInNSIsAvailable();
+			return false;
 		}
-		int32_t EnableBuiltInAEC(bool enable) override
+		int32_t EnableBuiltInAEC(bool /*enable*/) override
 		{
-			return inner->EnableBuiltInAEC(enable);
+			return -1;
 		}
-		int32_t EnableBuiltInAGC(bool enable) override
+		int32_t EnableBuiltInAGC(bool /*enable*/) override
 		{
-			return inner->EnableBuiltInAGC(enable);
+			return -1;
 		}
-		int32_t EnableBuiltInNS(bool enable) override
+		int32_t EnableBuiltInNS(bool /*enable*/) override
 		{
-			return inner->EnableBuiltInNS(enable);
+			return -1;
 		}
 		int32_t GetPlayoutUnderrunCount() const override
 		{
