@@ -2807,6 +2807,23 @@ function cameraUnavailable(error: unknown): boolean {
   return name === "NotFoundError" || name === "NotReadableError";
 }
 
+/** A display capture the user called off: a browser's picker and the
+ * desktop's own both answer that with `NotAllowedError`. Everything else is
+ * a capture that could not start. */
+function displayCancelled(error: unknown): boolean {
+  return (error as { name?: unknown } | null)?.name === "NotAllowedError";
+}
+
+/** What the user is told then. The desktop app's core refuses with its own
+ * reason as a plain string ("screen capture needs a Wayland session with
+ * PipeWire"); nothing else in the app would show it. */
+function displayFailure(error: unknown): Error {
+  const reason = typeof error === "string" ? error.trim() : "";
+  return new Error(
+    `Die Bildschirmaufnahme konnte nicht gestartet werden${reason ? ` (${reason})` : ""}.`,
+  );
+}
+
 async function startLocalVideo(kind: "v" | "s" | "l"): Promise<void> {
   const epoch = bumpVideoEpoch(kind);
   openCaptures.set(kind, epoch);
@@ -2830,6 +2847,16 @@ async function startLocalVideo(kind: "v" | "s" | "l"): Promise<void> {
     } else if (kind === "v" && cameraUnavailable(error) && newest()) {
       // Otherwise the button just springs back and nothing says why.
       deps?.onError?.(new Error("Die Kamera ist nicht verfügbar."));
+    } else if (kind !== "v" && !displayCancelled(error) && newest()) {
+      // The same for a share or a Live: only a cancel needs no word.
+      logVoice("warn", "capture", {
+        track: kind,
+        detail:
+          error instanceof Error
+            ? `${error.name}: ${error.message}`
+            : String(error),
+      });
+      deps?.onError?.(displayFailure(error));
     }
     if (kind === "v" && newest()) {
       useVoice.setState({ camera: false });

@@ -364,6 +364,14 @@ function liveClaimFrames(sent: ClientFrame[]): string[] {
   );
 }
 
+/** What the user was told. */
+function messages(errors: unknown[]): string[] {
+  return errors.map((error) => (error as Error).message);
+}
+
+/** A screen share or Go Live whose capture could not start. */
+const CAPTURE_FAILED = "Die Bildschirmaufnahme konnte nicht gestartet werden.";
+
 function install(opts?: {
   media?: boolean;
   display?: boolean;
@@ -1309,6 +1317,65 @@ describe("voice session", () => {
     expect(useVoice.getState().localCamera).toBeNull();
   });
 
+  it("says so when a share or Go Live cannot be captured, and nothing after a cancel", async () => {
+    let failure: Error = new DOMException(
+      "Could not start video source",
+      "NotReadableError",
+    );
+    const env = install({ displayError: () => failure });
+    joinVoice({ serverId: "srv", channelId: "voice", channelName: "Lounge" });
+    await vi.waitFor(() => expect(env.peers[0]?.audio).toBeTruthy());
+    const share = async () => {
+      toggleShare();
+      expect(useVoice.getState().sharing).toBe(true);
+      await vi.waitFor(() => expect(useVoice.getState().sharing).toBe(false));
+    };
+    const goLive = async () => {
+      toggleGoLive();
+      expect(useVoice.getState().live).toBe(true);
+      await vi.waitFor(() => expect(useVoice.getState().live).toBe(false));
+    };
+    await share();
+    expect(messages(env.errors)).toEqual([CAPTURE_FAILED]);
+    // What a capture that broke down for another reason is rejected with.
+    failure = new DOMException("Error starting screen capture", "AbortError");
+    await goLive();
+    expect(messages(env.errors)).toEqual([CAPTURE_FAILED, CAPTURE_FAILED]);
+    expect(liveClaimFrames(env.sent)).toEqual(["p", "u"]);
+    // The user closed the picker: his own answer.
+    failure = new DOMException("Permission denied", "NotAllowedError");
+    await share();
+    await goLive();
+    expect(env.errors).toHaveLength(2);
+    expect(liveClaimFrames(env.sent)).toEqual(["p", "u", "p", "u"]);
+    expect(useVoice.getState().localScreen).toBeNull();
+    expect(useVoice.getState().localLive).toBeNull();
+    expect(
+      env.mediaSent.some((frame) => frame.op === "produce" && frame.k !== "a"),
+    ).toBe(false);
+    expect(useVoice.getState().status).toBe("joined");
+  });
+
+  it("says nothing about a capture that failed after the share was called off", async () => {
+    const picker = deferred();
+    const env = install({
+      gateDisplay: () => picker.promise,
+      displayError: () =>
+        new DOMException("Could not start video source", "NotReadableError"),
+    });
+    joinVoice({ serverId: "srv", channelId: "voice", channelName: "Lounge" });
+    await vi.waitFor(() => expect(env.peers[0]?.audio).toBeTruthy());
+    toggleShare();
+    await Promise.resolve();
+    toggleShare();
+    expect(useVoice.getState().sharing).toBe(false);
+    picker.resolve();
+    await new Promise((resolve) => setTimeout(resolve, 0));
+    expect(env.getDisplayMediaCalls()).toBe(1);
+    expect(env.errors).toHaveLength(0);
+    expect(useVoice.getState().sharing).toBe(false);
+  });
+
   it("shows a local camera preview before any publication", async () => {
     const publication = deferred();
     const { sent, mediaSent, peers } = install({
@@ -1507,10 +1574,13 @@ describe("voice session", () => {
         c: "voice",
         k: "l",
       });
-      // No stale confirmation timer, no late toast, the seat stays.
+      // A capture that failed says so, a cancelled one says nothing. No
+      // stale confirmation timer, no late toast, the seat stays.
+      const said = error.name === "NotAllowedError" ? [] : [CAPTURE_FAILED];
+      expect(messages(env.errors)).toEqual(said);
       expect(vi.getTimerCount()).toBe(0);
       await vi.advanceTimersByTimeAsync(10000);
-      expect(env.errors).toHaveLength(0);
+      expect(messages(env.errors)).toEqual(said);
       expect(useVoice.getState().status).toBe("joined");
       expect(liveClaimFrames(env.sent)).toEqual(["p", "u"]);
 
@@ -1627,7 +1697,8 @@ describe("voice session", () => {
     expect(useVoice.getState().localLive).toBeNull();
     expect(useVoice.getState().participants["u-self"]?.pubs).not.toContain("l");
     await vi.advanceTimersByTimeAsync(10000);
-    expect(env.errors).toHaveLength(0);
+    // The failed capture was reported; no confirmation ran out after it.
+    expect(messages(env.errors)).toEqual([CAPTURE_FAILED]);
     expect(liveClaimFrames(env.sent)).toEqual(["p", "u"]);
     expect(
       env.mediaSent.some((frame) => frame.op === "produce" && frame.k === "l"),
@@ -4451,6 +4522,8 @@ describe("stream sound in the desktop app", () => {
     const sounds: number[] = [];
     let next = 0;
     const app = {
+      /** The core's reason for refusing a screen capture outright. */
+      screenError: null as string | null,
       /** What the desktop's picker has answered so far. */
       screen: "live" as "pending" | "live" | "cancelled" | "failed",
       /** The core's reason for giving no application sound. */
@@ -4470,10 +4543,12 @@ describe("stream sound in the desktop app", () => {
             case "media_info":
               return info;
             case "media_source_screen":
+              // The app rejects with the core's message as a plain string.
+              if (app.screenError) return Promise.reject(app.screenError);
+              return ++next;
             case "media_source_microphone":
               return ++next;
             case "media_source_app_audio":
-              // The app rejects with the core's message as a plain string.
               if (app.soundError) return Promise.reject(app.soundError);
               sounds.push(++next);
               return next;
@@ -4574,6 +4649,41 @@ describe("stream sound in the desktop app", () => {
       expect(env.errors).toEqual([]);
     },
   );
+
+  it("says why the app could not capture the screen, and nothing when its picker was closed", async () => {
+    const { env, app } = await joined(APP_06);
+    // No Wayland session with PipeWire: the core refuses with its reason.
+    app.screenError = "screen capture needs a Wayland session with PipeWire";
+    toggleShare();
+    await vi.waitFor(() => expect(useVoice.getState().sharing).toBe(false));
+    expect(messages(env.errors)).toEqual([
+      "Die Bildschirmaufnahme konnte nicht gestartet werden (screen capture needs a Wayland session with PipeWire).",
+    ]);
+
+    // The portal ran into an error of its own, after the capture was asked.
+    app.screenError = null;
+    app.screen = "failed";
+    toggleGoLive();
+    await vi.waitFor(() => expect(useVoice.getState().live).toBe(false));
+    expect(messages(env.errors).slice(1)).toEqual([CAPTURE_FAILED]);
+    expect(liveClaimFrames(env.sent)).toEqual(["p", "u"]);
+
+    // The user closed the portal's dialog.
+    app.screen = "cancelled";
+    toggleShare();
+    await vi.waitFor(() => expect(useVoice.getState().sharing).toBe(false));
+    toggleGoLive();
+    await vi.waitFor(() => expect(useVoice.getState().live).toBe(false));
+    expect(env.errors).toHaveLength(2);
+
+    // Neither a share nor sound for one was left behind.
+    expect(app.called("media_source_screen")).toHaveLength(4);
+    expect(app.called("media_source_close")).toHaveLength(3);
+    expect(app.called("media_source_app_audio")).toEqual([]);
+    expect(env.peers[0]!.sender("s")).toBeUndefined();
+    expect(env.peers[0]!.sender("l")).toBeUndefined();
+    expect(useVoice.getState().status).toBe("joined");
+  });
 
   it("keeps the desktop's picker open across media recovery, and the share its sound", async () => {
     const { env, app } = await joined(APP_06);
