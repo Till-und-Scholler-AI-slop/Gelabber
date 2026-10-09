@@ -438,6 +438,15 @@ jobs:
         with:
           python-version: "3.12"
 
+      # mediasoup-sys installs invoke into its build directory and names that
+      # directory in PYTHONPATH with every ":" turned into ";", the drive
+      # letter's too. What is left is a path without a drive, which Python
+      # reads on the drive of the build script's directory: the cargo
+      # registry on C:, while the target directory is on D:. Installed here,
+      # invoke is found without that path.
+      - name: Python packages for the mediasoup worker
+        run: python -m pip install invoke==3.0.3
+
       - name: Rust toolchain
         id: toolchain
         uses: dtolnay/rust-toolchain@1.98.1
