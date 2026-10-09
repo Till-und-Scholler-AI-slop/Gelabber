@@ -28,6 +28,13 @@ from test_homelab_caddy import (
 
 COMPOSE = Path(__file__).resolve().parents[1]
 CADDYFILES = (COMPOSE / "Caddyfile", COMPOSE / "Caddyfile.homelab")
+# What an operator copies into a Caddy of their own.
+OPERATOR_GUIDES = (
+    COMPOSE.parent / "README.md",
+    COMPOSE / ".env.example",
+    COMPOSE / ".env.homelab.example",
+    *CADDYFILES,
+)
 APP_UPSTREAMS = {
     "Caddyfile": {"api:8080", "media:8081", "web:80"},
     "Caddyfile.homelab": {"127.0.0.1:18080", "127.0.0.1:18081", "127.0.0.1:8088"},
@@ -70,6 +77,14 @@ class CaddyfileTextTest(unittest.TestCase):
                     ["header_up Host {hostport}"] * len(proxies),
                     "each reverse_proxy must forward Host as {hostport}; "
                     "{host} drops a non-default port and /ws answers 403",
+                )
+
+    def test_no_guide_recommends_host_without_port(self) -> None:
+        for path in OPERATOR_GUIDES:
+            with self.subTest(path.name):
+                self.assertFalse(
+                    "header_up Host {host}" in path.read_text(encoding="utf-8"),
+                    "an operator's own Caddy must forward {hostport} as well",
                 )
 
     def test_responses_are_compressed(self) -> None:
