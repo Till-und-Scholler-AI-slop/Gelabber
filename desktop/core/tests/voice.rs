@@ -56,6 +56,26 @@ fn level(levels: &Value, key: &str) -> f64 {
     levels[key].as_f64().unwrap_or(0.0)
 }
 
+/// File name of the program `name` runs (pw-play is a link to pw-cat).
+fn binary_of(name: &str) -> String {
+    std::env::split_paths(&std::env::var_os("PATH").expect("PATH"))
+        .find_map(|dir| std::fs::canonicalize(dir.join(name)).ok())
+        .and_then(|path| Some(path.file_name()?.to_str()?.to_owned()))
+        .unwrap_or_else(|| panic!("{name} on PATH"))
+}
+
+/// Playback streams an application-sound source captures once it settled.
+async fn captured_streams(source: &Source, expected: u64) -> u64 {
+    let streams = || source.state().unwrap()["streams"].as_u64().unwrap_or(0);
+    let start = Instant::now();
+    while streams() < expected && start.elapsed() < Duration::from_secs(10) {
+        tokio::time::sleep(Duration::from_millis(200)).await;
+    }
+    // A stream too many shows up with the others, in the first listing.
+    tokio::time::sleep(Duration::from_secs(1)).await;
+    streams()
+}
+
 #[tokio::test(flavor = "multi_thread", worker_threads = 4)]
 async fn voice_modes_reach_a_consumer() {
     if std::env::var_os("GELABBER_TEST_AUDIO").is_none() {
@@ -238,26 +258,39 @@ async fn voice_modes_reach_a_consumer() {
     })
     .await;
 
-    // Source audio: the noise player (pw-play, another process) as an
-    // application, on its own track next to the microphone.
+    // Source audio. The noise player (pw-play, another process) is an
+    // application. This process is not, although it is playing the consumer
+    // out through the device module all along.
+    let samples_played = || {
+        consumer.stats().unwrap()["samplesPlayed"]
+            .as_u64()
+            .unwrap_or(0)
+    };
+    let played_before = samples_played();
     let apps = engine.audio_apps().unwrap();
     eprintln!("audio apps: {apps}");
-    assert!(
-        apps.as_array()
-            .is_some_and(|list| list.iter().any(|app| app["id"] == "pw-play")),
-        "pw-play listed: {apps}"
+    let listed = apps.as_array().expect("application list");
+    assert_eq!(listed.len(), 1, "the noise player and nothing else: {apps}");
+    let player = &listed[0];
+    assert_eq!(player["name"], "pw-play", "{apps}");
+    assert_eq!(player["streams"], 1, "{apps}");
+    // The id is the binary, whatever the application calls itself.
+    let player_id = player["id"].as_str().expect("application id").to_owned();
+    assert_eq!(player_id, binary_of("pw-play"), "{apps}");
+
+    // "": every application, on its own track next to the microphone. That
+    // is the noise player's stream and not this process's playout.
+    let app_audio = Source::app_audio(&engine, &json!({"app": ""})).unwrap();
+    assert_eq!(
+        captured_streams(&app_audio, 1).await,
+        1,
+        "the noise player and not this process: {}",
+        app_audio.state().unwrap()
     );
-    let app_audio = Source::app_audio(&engine, &json!({"app": "pw-play"})).unwrap();
-    let capturing = &app_audio;
-    wait_for(
-        "application stream captured",
-        Duration::from_secs(10),
-        || {
-            let source = capturing;
-            async move { source.state().unwrap()["streams"].as_u64().unwrap_or(0) >= 1 }
-        },
-    )
-    .await;
+    assert!(
+        samples_played() > played_before,
+        "this process played sound in the meantime"
+    );
     let app_producer = produce(
         &send,
         &app_audio,
@@ -303,6 +336,22 @@ async fn voice_modes_reach_a_consumer() {
     drop(app_consumer);
     drop(app_producer);
     drop(app_audio);
+
+    // One application: by its id, or by its name, which was the id up to
+    // 0.5.2 and may be what a client stored. Back then this process was
+    // listed as well, under the name libwebrtc gives its playout.
+    for (app, expected) in [
+        (player_id.as_str(), 1),
+        ("pw-play", 1),
+        ("WEBRTC VoiceEngine", 0),
+    ] {
+        let chosen = Source::app_audio(&engine, &json!({"app": app})).unwrap();
+        assert_eq!(
+            captured_streams(&chosen, expected).await,
+            expected,
+            "streams captured for {app:?}"
+        );
+    }
 
     // Ending the test leaves the call's capture running.
     engine.monitor_audio(None).unwrap();
