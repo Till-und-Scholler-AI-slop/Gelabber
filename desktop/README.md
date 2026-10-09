@@ -147,6 +147,12 @@ variable yourself (e.g. `=0`) overrides that.
   helper in a pid namespace of its own is only recognized as a native
   PipeWire client (`pipewire.sec.pid`); pipewire-pulse passes on the pid the
   client reports.
+  Only the process a playback stream belongs to decides. Sound that another
+  process plays on is that process's stream: behind a virtual sink of
+  PipeWire's loopback or filter-chain module, "" captures an application
+  twice, at its own stream and at the chain's output, and Gelabber's playout
+  routed through such a sink is captured at the chain's output. A chosen
+  application is captured at its own stream alone.
   A capture stream takes its playback stream or nothing (`node.dont-fallback`,
   and `node.linger` to wait for it): WirePlumber 0.5 otherwise links the
   default source, the microphone, to a capture whose target it has not
