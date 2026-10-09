@@ -5,6 +5,7 @@
 export type DraftHeight = {
   /** Measures again; for a changed draft, before the browser paints it. */
   fit: () => void;
+  stop: () => void;
 };
 
 /** Sizes `field` by its draft where the stylesheet cannot, null where it can.
@@ -17,6 +18,8 @@ export function sizeByDraft(
   if (target.CSS.supports("field-sizing", "content")) return null;
   // The stylesheet's own condition, asked each time like a media query.
   const touch = target.matchMedia("(pointer: coarse)");
+  let width = 0;
+  let frame = 0;
 
   const fit = () => {
     if (!touch.matches) return;
@@ -27,9 +30,30 @@ export function sizeByDraft(
     const held = form.style.minHeight;
     form.style.minHeight = `${Math.ceil(form.getBoundingClientRect().height)}px`;
     field.style.height = "auto";
-    field.style.height = `${field.scrollHeight}px`;
+    const height = field.scrollHeight;
+    width = field.offsetWidth;
+    field.style.height = `${height}px`;
     form.style.minHeight = held;
   };
 
-  return { fit };
+  // The same draft wraps differently at another width (phone rotated).
+  const observer = new target.ResizeObserver(() => {
+    const next = field.offsetWidth;
+    // No width: hidden, e.g. behind the search on a short screen.
+    if (!touch.matches || next === 0 || next === width) return;
+    target.cancelAnimationFrame(frame);
+    // In the next frame: a new height from inside the observer would change
+    // the sizes it and the pane's other observers have just reported, which
+    // the browser reports as a ResizeObserver loop.
+    frame = target.requestAnimationFrame(fit);
+  });
+  observer.observe(field);
+
+  return {
+    fit,
+    stop() {
+      observer.disconnect();
+      target.cancelAnimationFrame(frame);
+    },
+  };
 }

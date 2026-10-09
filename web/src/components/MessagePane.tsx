@@ -952,8 +952,13 @@ function Composer({
   useLayoutEffect(() => {
     const input = composerInput.current;
     const form = composerForm.current;
-    draftHeight.current =
-      input && form ? sizeByDraft(window, input, form) : null;
+    if (!input || !form) return;
+    const sizing = sizeByDraft(window, input, form);
+    draftHeight.current = sizing;
+    return () => {
+      draftHeight.current = null;
+      sizing?.stop();
+    };
   }, [canSend]);
   useLayoutEffect(() => draftHeight.current?.fit(), [draft, canSend]);
   const error = draft.length === 0 ? null : validateContent(draft);
