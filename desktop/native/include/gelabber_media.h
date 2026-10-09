@@ -176,7 +176,12 @@ GM_API int gm_source_set_enabled(gm_source* source, int enabled);
  * {"codec"?: "video/H264"|"video/VP8"|..., "encodings"?: [{"scaleResolutionDownBy":4},{...}],
  *  "codecOptions"?: {...}, "appData"?: {...}}
  * Without "codec", video prefers H264 and falls back to VP8. The Windows
- * build has no H264. */
+ * build has no H264.
+ * Simulcast layers ("encodings") are a picture divided by their
+ * scaleResolutionDownBy, to the pixel: a video source crops its picture to
+ * what divides. That is up to 3 columns and rows for factors of 1, 2 and 4,
+ * which every picture is ready for, and more for others once they are asked
+ * for. */
 GM_API gm_producer* gm_transport_produce(gm_transport* transport, gm_source* source,
                                          const char* options_json);
 GM_API void gm_producer_free(gm_producer* producer);

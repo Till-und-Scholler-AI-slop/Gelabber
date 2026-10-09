@@ -19,7 +19,7 @@ Not a product yet.
 | `core/` | Rust crate `gelabber-media-core`: safe API over the C ABI |
 | `core/tests/mediasoup_loopback.rs` | Loopback call against mediasoup 0.29 with the server's router codecs |
 | `core/tests/source_preview.rs` | Video sinks for views in the app: a local source without a producer, scaling and rate limits, sinks going away mid-frame |
-| `core/tests/screen_capture.rs` | Screen capture through the portal, H264, mediasoup, native decode (`GELABBER_TEST_SCREEN=1`) |
+| `core/tests/screen_capture.rs` | Screen capture through the portal, H264, mediasoup, native decode, and the screen as the web client shares it: VP8 in two simulcast layers (`GELABBER_TEST_SCREEN=1`) |
 | `app/` | Tauri 2 app `gelabber-desktop`: window on the server origin, bundled setup page, media commands (`src/media.rs`) |
 | `app/scripts/smoke.sh` | Starts the app on a stand-in origin under Xvfb and checks which commands the page reaches and that the frames of a test-pattern view arrive |
 | `core/tests/voice.rs` | Microphone modes, RNNoise, device selection, Opus through mediasoup, playout (`GELABBER_TEST_AUDIO=1`) |
@@ -100,6 +100,15 @@ notification behind every close. An app that is killed instead of closed
   `GELABBER_H264_ENCODER=<element>|none` overrides the choice. Decode is
   libwebrtc's: FFmpeg (Chrome branding) for H264, libvpx for VP8/VP9.
   Shipping software H264 needs a licensing decision first.
+- Simulcast: libvpx and OpenH264 encode a producer's layers in one encoder,
+  and only when every layer has exactly the top layer's aspect. A layer is
+  the picture divided by its `scaleResolutionDownBy`, so a 1366x768 screen
+  over the web client's 4 and 1 would be 342x192 below 1366x768: refused,
+  and nothing is sent. Local video sources therefore crop to multiples of 4
+  (1364x768), and the software encoders tell libwebrtc that their alignment
+  holds for every layer, which makes it ask the source for what other
+  factors need. libwebrtc's own answer, `SimulcastEncoderAdapter` with an
+  encoder per layer, is not in the Windows package.
 - Screen capture (Linux): xdg-desktop-portal ScreenCast picks the source,
   PipeWire delivers frames (libwebrtc's `BaseCapturerPipeWire`). The portal's
   GLib callbacks run on the capture thread, so no host main loop is needed.

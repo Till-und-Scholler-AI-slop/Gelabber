@@ -216,6 +216,71 @@ pub async fn blocking<T: Send + 'static>(f: impl FnOnce() -> T + Send + 'static)
     tokio::task::spawn_blocking(f).await.unwrap()
 }
 
+/// The sender's own view of each layer it encodes.
+pub fn outbound_rtp(producer: &gelabber_media_core::Producer) -> Value {
+    let layers = producer.stats().unwrap();
+    let layers = layers.as_array().into_iter().flatten();
+    layers
+        .filter(|s| s["type"] == "outbound-rtp")
+        .map(|s| {
+            json!({
+                "rid": s["rid"], "active": s["active"],
+                "frameWidth": s["frameWidth"], "frameHeight": s["frameHeight"],
+                "framesEncoded": s["framesEncoded"], "bytesSent": s["bytesSent"],
+                "targetBitrate": s["targetBitrate"],
+                "qualityLimitationReason": s["qualityLimitationReason"],
+                "encoderImplementation": s["encoderImplementation"],
+            })
+        })
+        .collect()
+}
+
+/// Waits until RTP of two simulcast layers reached the server's producer and
+/// returns the sizes the native producer encodes them at, the small layer
+/// first. Fails with the sender's view of its layers when they do not come.
+pub async fn simulcast_sizes(
+    name: &str,
+    native: &gelabber_media_core::Producer,
+    at_server: &Producer,
+) -> Vec<(u64, u64)> {
+    let start = Instant::now();
+    let (mut live, mut sizes) = (0, Vec::new());
+    while (live, sizes.len()) != (2, 2) && start.elapsed() < Duration::from_secs(30) {
+        tokio::time::sleep(Duration::from_millis(200)).await;
+        let stats = at_server.get_stats().await.unwrap_or_default();
+        live = stats.iter().filter(|s| s.byte_count > 0).count();
+        sizes = outbound_rtp(native)
+            .as_array()
+            .into_iter()
+            .flatten()
+            .filter_map(|layer| {
+                Some((
+                    layer["frameWidth"].as_u64()?,
+                    layer["frameHeight"].as_u64()?,
+                ))
+            })
+            .collect();
+    }
+    eprintln!(
+        "{name}: {live} live layer(s) after {:?}: {}",
+        start.elapsed(),
+        outbound_rtp(native)
+    );
+    assert_eq!(live, 2, "{name} sends both simulcast layers");
+    sizes.sort_unstable();
+    sizes
+}
+
+/// The two layers of a `width` x `height` picture with the small one at
+/// 1/`factor`, the small one first: the picture keeps of each side what
+/// divides by the factor, and the small layer is that divided, to the pixel.
+/// (A local source keeps multiples of 4 by itself; the factors here are 4
+/// and 8.)
+pub fn layers_of(width: u64, height: u64, factor: u64) -> Vec<(u64, u64)> {
+    let whole = (width - width % factor, height - height % factor);
+    vec![(whole.0 / factor, whole.1 / factor), whole]
+}
+
 /// Whether the native device's RTP capabilities list `mime` (e.g.
 /// "video/h264").
 pub fn can_receive(capabilities: &Value, mime: &str) -> bool {

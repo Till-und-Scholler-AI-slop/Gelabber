@@ -14,8 +14,8 @@
 mod common;
 
 use common::{
-    Server, blocking, check_encoder, h264_demanded_by, h264_under_test, listen_ip, listen_ip_from,
-    serve_events, wait_for,
+    Server, blocking, check_encoder, h264_demanded_by, h264_under_test, layers_of, listen_ip,
+    listen_ip_from, outbound_rtp, serve_events, simulcast_sizes, wait_for,
 };
 use gelabber_media_core::{Audio, Device, Direction, Engine, Source, Transport, VideoFrame};
 use mediasoup::prelude::*;
@@ -188,26 +188,7 @@ async fn native_client_round_trips_media_through_mediasoup() {
                 .collect::<Vec<_>>()
         );
         if live != 2 {
-            let outbound: Vec<Value> = native
-                .stats()
-                .unwrap()
-                .as_array()
-                .cloned()
-                .unwrap_or_default()
-                .into_iter()
-                .filter(|s| s["type"] == "outbound-rtp")
-                .map(|s| {
-                    json!({
-                        "rid": s["rid"], "active": s["active"],
-                        "frameWidth": s["frameWidth"], "frameHeight": s["frameHeight"],
-                        "framesEncoded": s["framesEncoded"], "bytesSent": s["bytesSent"],
-                        "targetBitrate": s["targetBitrate"],
-                        "qualityLimitationReason": s["qualityLimitationReason"],
-                        "encoderImplementation": s["encoderImplementation"],
-                    })
-                })
-                .collect();
-            eprintln!("{name} native outbound-rtp: {}", Value::Array(outbound));
+            eprintln!("{name} native outbound-rtp: {}", outbound_rtp(native));
         }
         assert_eq!(live, 2, "{name} sends both simulcast layers");
     }
@@ -377,6 +358,87 @@ async fn native_client_round_trips_media_through_mediasoup() {
     drop(consumers);
     drop((audio, video));
     drop((send, recv));
+}
+
+/// Simulcast from pictures whose sides do not divide by the layers' scale
+/// factors: a 1366x768 screen, a window, a camera picture libwebrtc stepped
+/// down, with the web client's layers (a quarter and the whole). libvpx
+/// encodes the layers only when each has exactly the picture's aspect and
+/// sends nothing otherwise, so the picture loses the columns and rows that
+/// do not divide. Layers at an eighth, which no source is prepared for, get
+/// there through what the encoder asks of its source.
+#[tokio::test(flavor = "multi_thread", worker_threads = 4)]
+async fn simulcast_layers_fit_a_picture_of_any_size() {
+    if std::env::var_os("GELABBER_MEDIA_LOG").is_some() {
+        gelabber_media_core::set_log_level(gelabber_media_core::LogLevel::Info);
+    }
+    let server = Server::start().await;
+    let engine = Engine::new(Audio::Dummy).unwrap();
+    let device = Device::new(&engine).unwrap();
+    let caps = serde_json::to_value(server.router.rtp_capabilities()).unwrap();
+    device.load(&caps).unwrap();
+
+    let server_producers = Arc::new(Mutex::new(Vec::new()));
+    let (server_send, send_params) = server.transport().await;
+    let (send, send_events) = Transport::new(&device, Direction::Send, &send_params).unwrap();
+    serve_events(
+        Handle::current(),
+        send.clone(),
+        server_send,
+        send_events,
+        server_producers.clone(),
+    );
+    // Audio first: the harness, unlike the gateway, passes an empty CNAME
+    // on, which mediasoup refuses for a transport's first producer.
+    let mic = Source::microphone(&engine, &json!({})).unwrap();
+    let audio = {
+        let (send, mic) = (send.clone(), mic.clone());
+        blocking(move || send.produce(&mic, &json!({})))
+            .await
+            .unwrap()
+    };
+
+    // Width, height and the scale factor of the small layer.
+    for (width, height, factor) in [
+        (1366u32, 768u32, 4u64),
+        (1894, 1012, 4),
+        (480, 270, 4),
+        (1366, 768, 8),
+    ] {
+        let name = format!("{width}x{height} over {factor} and 1");
+        // Ten pictures a second, so that a slow machine does not step the
+        // picture down before its size is read.
+        let source = Source::test_pattern(&engine, width, height, 10).unwrap();
+        // With a start bitrate that carries both layers: what is under
+        // test is their sizes, not how soon the bandwidth estimate of a new
+        // transport lets the large one start.
+        let options = json!({
+            "codec": "video/VP8",
+            "encodings": [{ "scaleResolutionDownBy": factor }, { "scaleResolutionDownBy": 1 }],
+            "codecOptions": { "videoGoogleStartBitrate": 3000 },
+        });
+        let native = {
+            let send = send.clone();
+            blocking(move || send.produce(&source, &options))
+                .await
+                .unwrap()
+        };
+        let at_server = server_producers
+            .lock()
+            .unwrap()
+            .iter()
+            .find(|producer| producer.id().to_string() == native.id())
+            .cloned()
+            .unwrap();
+        assert_eq!(
+            simulcast_sizes(&name, &native, &at_server).await,
+            layers_of(width.into(), height.into(), factor),
+            "{name}"
+        );
+    }
+
+    drop(audio);
+    drop(send);
 }
 
 /// A run that names the H264 encoder to find must not pass on a core without

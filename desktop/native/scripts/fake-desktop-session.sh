@@ -33,8 +33,10 @@ if [[ -z "${GELABBER_FAKE_SESSION:-}" ]]; then
 fi
 
 here="$(cd "$(dirname "$0")" && pwd)"
-width=1280
-height=720
+# A monitor whose width does not divide by four, like a 1366x768 laptop's and
+# most windows: the core crops what it shares to fit its simulcast layers.
+width=1366
+height=768
 runtime="$(mktemp -d)"
 chmod 700 "$runtime"
 # Whatever names the desktop's own sound server.

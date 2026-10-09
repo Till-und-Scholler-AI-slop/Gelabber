@@ -453,12 +453,16 @@ async fn a_consumer_sink_keeps_the_same_limits() {
             seen.threads
         );
         assert_eq!(seen.broken, None);
-        assert_eq!(seen.size, (128, 72));
+        // The pattern, or a step down from it. A local source keeps both
+        // sides of what it hands on a multiple of 4, so three quarters of
+        // 640x360 are 480x264.
+        let (width, height) = seen.source;
         assert!(
-            seen.source.0 > 128 && seen.source.0 * 9 == seen.source.1 * 16,
+            [(640, 360), (480, 264), (320, 180)].contains(&seen.source),
             "decoded size {:?}",
             seen.source
         );
+        assert_eq!(seen.size, (128, (height * 128 / width) & !1));
         // At most the limit; how much less is up to the decoder's pace.
         assert!((5.0..=11.0).contains(&seen.fps()), "got {}", seen.fps());
     }
