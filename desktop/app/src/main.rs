@@ -17,7 +17,7 @@ mod viewer;
 use serde::{Deserialize, Serialize};
 use std::{
     fs,
-    net::{TcpStream, ToSocketAddrs},
+    net::{SocketAddr, TcpStream},
     path::PathBuf,
     time::Duration,
 };
@@ -147,9 +147,7 @@ fn check_reachable(origin: &Url) -> Result<(), String> {
         .port_or_known_default()
         .ok_or("Serveradresse ohne Port")?;
     let unreachable = |reason: String| format!("{host}:{port} ist nicht erreichbar ({reason}).");
-    let addrs = (host, port)
-        .to_socket_addrs()
-        .map_err(|e| unreachable(e.to_string()))?;
+    let addrs = server_addrs(origin).map_err(|e| unreachable(e.to_string()))?;
     let mut last = "keine Adresse".to_owned();
     for addr in addrs {
         match TcpStream::connect_timeout(&addr, CONNECT_TIMEOUT) {
@@ -158,6 +156,13 @@ fn check_reachable(origin: &Url) -> Result<(), String> {
         }
     }
     Err(unreachable(last))
+}
+
+/// The origin's socket addresses: DNS for names, none for IP literals.
+fn server_addrs(origin: &Url) -> std::io::Result<Vec<SocketAddr>> {
+    // `host_str()` keeps IPv6 brackets ("[::1]"), which the resolver would
+    // send to DNS; `socket_addrs` uses the typed host instead.
+    origin.socket_addrs(|| None)
 }
 
 /// Setup page only: check and store the server, then open it.
@@ -298,7 +303,7 @@ fn main() {
 
 #[cfg(test)]
 mod tests {
-    use super::{check_reachable, server_origin, setup_url};
+    use super::{check_reachable, server_addrs, server_origin, setup_url};
     use std::net::TcpListener;
 
     #[test]
@@ -345,5 +350,28 @@ mod tests {
         drop(listener);
         assert!(check_reachable(&origin).is_err());
         assert!(check_reachable(&server_origin("https://gelabber.invalid").unwrap()).is_err());
+    }
+
+    #[test]
+    fn server_addrs_take_ip_literals_without_dns() {
+        let v6 = server_origin("http://[::1]:8080").unwrap();
+        assert_eq!(v6.host_str(), Some("[::1]"));
+        assert_eq!(server_addrs(&v6).unwrap(), ["[::1]:8080".parse().unwrap()]);
+        let v4 = server_origin("https://127.0.0.1").unwrap();
+        assert_eq!(
+            server_addrs(&v4).unwrap(),
+            ["127.0.0.1:443".parse().unwrap()]
+        );
+    }
+
+    #[test]
+    fn check_reachable_takes_ipv6_literals() {
+        // Hosts without IPv6 loopback cannot run this case.
+        let Ok(listener) = TcpListener::bind("[::1]:0") else {
+            return;
+        };
+        let origin = server_origin(&format!("http://{}", listener.local_addr().unwrap())).unwrap();
+        assert_eq!(origin.host_str(), Some("[::1]"));
+        assert_eq!(check_reachable(&origin), Ok(()));
     }
 }
