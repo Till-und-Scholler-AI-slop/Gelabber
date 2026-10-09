@@ -15,6 +15,7 @@ import {
   showMessageNotification,
   silenceWhileViewing,
 } from "./notifications.ts";
+import { useInstallation } from "./install.ts";
 import { activeServiceWorker } from "./register.ts";
 
 vi.mock("./register.ts", () => ({ activeServiceWorker: vi.fn() }));
@@ -25,6 +26,7 @@ const windows: (() => void)[] = [];
 
 beforeEach(() => {
   registration.mockReset().mockResolvedValue(undefined);
+  useInstallation.setState({ mobile: false });
 });
 afterEach(async () => {
   for (const close of windows.splice(0)) close();
@@ -36,6 +38,7 @@ const message = {
   title: "Ada · #allgemein",
   body: "Hallo",
   channelId: "chan",
+  messageId: "msg-1",
   path: "/s/srv/c/chan",
   user: "user-1",
 };
@@ -64,10 +67,14 @@ function pageApi(permission = "granted", phone = false) {
   return created;
 }
 
-function worker(shown: { tag: string; close: () => void }[] = []) {
+function worker(
+  shown: { tag: string; data?: unknown; close: () => void }[] = [],
+) {
   const active = {
     showNotification: vi.fn().mockResolvedValue(undefined),
-    getNotifications: vi.fn().mockResolvedValue(shown),
+    getNotifications: vi.fn(async (filter?: { tag: string }) =>
+      shown.filter((one) => !filter || one.tag === filter.tag),
+    ),
   };
   registration.mockResolvedValue(
     active as unknown as ServiceWorkerRegistration,
@@ -76,7 +83,11 @@ function worker(shown: { tag: string; close: () => void }[] = []) {
 }
 
 describe("message notifications", () => {
-  it("goes through the service worker where one is active, as phones require", async () => {
+  // On a phone the notification is the only thing that tells of a message:
+  // the app has no message sound, and the phone is in a pocket. `silent` was
+  // carried over from the desktop path, where the banner pops up anyway.
+  it("goes through the service worker on a phone, with sound and for every message", async () => {
+    useInstallation.setState({ mobile: true });
     const created = pageApi("granted", true);
     const active = worker();
     const onClick = vi.fn();
@@ -85,15 +96,85 @@ describe("message notifications", () => {
       "Ada · #allgemein",
       {
         body: "Hallo",
-        silent: true,
+        silent: false,
         tag: "gelabber:user-1:chan",
-        renotify: false,
+        // The next message of the conversation replaces this one. Without
+        // `renotify` it would do so without a sound.
+        renotify: true,
         icon: "/icons/icon-192.png",
-        data: { path: "/s/srv/c/chan", user: "user-1" },
+        data: { path: "/s/srv/c/chan", user: "user-1", message: "msg-1" },
       },
     );
     expect(created).toEqual([]);
     expect(onClick).not.toHaveBeenCalled();
+  });
+
+  it("stays silent through the worker of a desktop browser, as before", async () => {
+    const created = pageApi();
+    const active = worker();
+    expect(await showMessageNotification(message, vi.fn())).toBe("worker");
+    expect(active.showNotification).toHaveBeenCalledExactlyOnceWith(
+      "Ada · #allgemein",
+      {
+        body: "Hallo",
+        silent: true,
+        tag: "gelabber:user-1:chan",
+        renotify: false,
+        icon: "/icons/icon-192.png",
+        data: { path: "/s/srv/c/chan", user: "user-1", message: "msg-1" },
+      },
+    );
+    expect(created).toEqual([]);
+  });
+
+  // Every window of the account hears the message. Shown twice it would
+  // sound twice on a phone.
+  it("announces a message once, whichever window is first", async () => {
+    useInstallation.setState({ mobile: true });
+    pageApi("granted", true);
+    const onScreen: { tag: string; data?: unknown; close: () => void }[] = [];
+    const active = worker(onScreen);
+    active.showNotification.mockImplementation(
+      async (_title: string, options: { tag: string; data: unknown }) => {
+        // As a browser does it: the list has it once the promise resolves.
+        await new Promise((resolve) => setTimeout(resolve, 5));
+        const same = onScreen.findIndex((one) => one.tag === options.tag);
+        if (same >= 0) onScreen.splice(same, 1);
+        onScreen.push({ tag: options.tag, data: options.data, close: vi.fn() });
+      },
+    );
+    // Two windows at the same moment.
+    expect(
+      await Promise.all([
+        showMessageNotification(message, vi.fn()),
+        showMessageNotification(message, vi.fn()),
+      ]),
+    ).toEqual(["worker", "none"]);
+    // One that hears it later, as after a reconnect.
+    expect(await showMessageNotification(message, vi.fn())).toBe("none");
+    expect(active.showNotification).toHaveBeenCalledOnce();
+
+    // The next message of the conversation, and another conversation.
+    const next = { ...message, messageId: "msg-2", body: "Noch da?" };
+    expect(await showMessageNotification(next, vi.fn())).toBe("worker");
+    expect(
+      await showMessageNotification({ ...message, channelId: "dm" }, vi.fn()),
+    ).toBe("worker");
+    expect(active.showNotification).toHaveBeenCalledTimes(3);
+    expect(onScreen.map((one) => one.data)).toEqual([
+      { path: "/s/srv/c/chan", user: "user-1", message: "msg-2" },
+      { path: "/s/srv/c/chan", user: "user-1", message: "msg-1" },
+    ]);
+  });
+
+  it("shows a message next to notifications that name none, and where the worker cannot list them", async () => {
+    pageApi();
+    const older = { tag: "gelabber:user-1:chan", close: vi.fn() };
+    const active = worker([older, { ...older, data: null }]);
+    expect(await showMessageNotification(message, vi.fn())).toBe("worker");
+    active.getNotifications.mockRejectedValue(new TypeError("not here"));
+    expect(await showMessageNotification(message, vi.fn())).toBe("worker");
+    expect(active.showNotification).toHaveBeenCalledTimes(2);
   });
 
   it("keeps the page-level notification where no worker runs", async () => {
@@ -119,7 +200,7 @@ describe("message notifications", () => {
     await showMessageNotification({ ...message, body: "Noch da?" }, onClick);
     expect(created).toHaveLength(2);
     expect(created[0].close).toHaveBeenCalledTimes(2);
-    closeMessageNotifications({ user: "user-1" });
+    void closeMessageNotifications({ user: "user-1" });
     expect(created[1].close).toHaveBeenCalledOnce();
   });
 
@@ -324,13 +405,19 @@ describe("a conversation on screen", () => {
         }),
     );
     const showing = showMessageNotification(message, vi.fn());
-    await vi.waitFor(() =>
-      expect(active.showNotification).toHaveBeenCalledOnce(),
-    );
-    viewer("user-1", "chan", true);
-    await new Promise((resolve) => setTimeout(resolve, 20));
-    expect(active.getNotifications).not.toHaveBeenCalled();
-    landed();
+    try {
+      await vi.waitFor(() =>
+        expect(active.showNotification).toHaveBeenCalledOnce(),
+      );
+      // The one look so far is the showing window's own, for this message.
+      expect(active.getNotifications).toHaveBeenCalledOnce();
+      viewer("user-1", "chan", true);
+      await new Promise((resolve) => setTimeout(resolve, 20));
+      expect(active.getNotifications).toHaveBeenCalledOnce();
+    } finally {
+      // Whatever fails above, the window lets go of the account's lock.
+      landed();
+    }
     expect(await showing).toBe("worker");
     await vi.waitFor(() => expect(onScreen[0].close).toHaveBeenCalledOnce());
   });

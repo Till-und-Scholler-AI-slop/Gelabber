@@ -5,6 +5,7 @@
 // shows it directly, as it always did. Either way this only works while the
 // page is alive; delivery to a closed app would need Web Push.
 import { isConversationPath } from "../messages/notify.ts";
+import { useInstallation } from "./install.ts";
 import { activeServiceWorker } from "./register.ts";
 
 /** Posted by sw.js to the window it brought forward after a tap. */
@@ -15,6 +16,8 @@ export type MessageNotification = {
   body: string;
   /** Conversation it is about. A newer one replaces the older. */
   channelId: string;
+  /** The message itself. Every window hears it; only one may announce it. */
+  messageId: string;
   /** Where a tap leads; see `conversationPath` in messages/notify.ts. */
   path: string;
   /** Account it is shown for. A tap after an account change goes nowhere. */
@@ -28,7 +31,7 @@ type Options = {
   tag: string;
   renotify: boolean;
   icon?: string;
-  data?: { path: string; user: string };
+  data?: { path: string; user: string; message: string };
 };
 type NotificationApi = {
   permission: string;
@@ -38,7 +41,9 @@ type NotificationApi = {
 // (lib.dom no longer lists `renotify`).
 type Registration = {
   showNotification(title: string, options: Options): Promise<void>;
-  getNotifications(): Promise<{ tag: string; close(): void }[]>;
+  getNotifications(filter?: {
+    tag: string;
+  }): Promise<{ tag: string; data?: unknown; close(): void }[]>;
 };
 
 // One notification per account and conversation. Without a conversation this
@@ -96,12 +101,35 @@ async function onScreen(user: string, channelId: string): Promise<boolean> {
   }
 }
 
+/** Whether a window of the app has already put this message on screen. */
+async function announced(
+  registration: Registration,
+  tag: string,
+  messageId: string,
+): Promise<boolean> {
+  try {
+    return (await registration.getNotifications({ tag })).some(
+      (shown) =>
+        (shown.data as { message?: unknown } | null | undefined)?.message ===
+        messageId,
+    );
+  } catch {
+    return false;
+  }
+}
+
 /**
  * Show one notification, unless a visible window of the app shows that
- * conversation. Apart from that the caller has decided that it is wanted;
- * permission is only ever requested from a button, never from here.
+ * conversation or another window has already shown this message. Apart from
+ * that the caller has decided that it is wanted; permission is only ever
+ * requested from a button, never from here.
  * `onClick` runs for a notification the page created itself. A tap on one the
  * worker showed arrives through `followNotificationTaps`.
+ *
+ * On a phone the notification is all there is to notice a message by: it
+ * sounds and vibrates as the device is set, and again for each later message
+ * of the conversation (the caller spaces those out). On a desktop it stays
+ * silent, as it always was.
  */
 export async function showMessageNotification(
   message: MessageNotification,
@@ -112,19 +140,27 @@ export async function showMessageNotification(
   return alone(message.user, async () => {
     if (await onScreen(message.user, message.channelId)) return "none";
     const tag = tagOf(message.user, message.channelId);
+    const phone = useInstallation.getState().mobile;
     const options: Options = {
       body: message.body,
-      silent: true,
+      silent: !phone,
       tag,
-      renotify: false,
+      // Without it a newer message replaces the older one unnoticed.
+      renotify: phone,
     };
     const registration: Registration | undefined = await activeServiceWorker();
     if (registration) {
+      // Showing it a second time would sound a second time.
+      if (await announced(registration, tag, message.messageId)) return "none";
       try {
         await registration.showNotification(message.title, {
           ...options,
           icon: "/icons/icon-192.png",
-          data: { path: message.path, user: message.user },
+          data: {
+            path: message.path,
+            user: message.user,
+            message: message.messageId,
+          },
         });
         return "worker";
       } catch {

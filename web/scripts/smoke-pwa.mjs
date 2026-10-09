@@ -4,7 +4,8 @@
 // tap are synthetic (OS installation and system notifications remain device
 // checks).
 /* global process, URL, window, navigator, caches, document, console, Event,
-   fetch, localStorage, getComputedStyle, self, NotificationEvent, setTimeout */
+   fetch, localStorage, getComputedStyle, self, NotificationEvent, setTimeout,
+   ServiceWorkerRegistration */
 import assert from "node:assert/strict";
 import {
   mkdtemp,
@@ -67,6 +68,11 @@ const GRACE = dm(
   "00000000-0000-4000-8000-0000000000d2",
   "00000000-0000-4000-8000-0000000000a2",
   "Grace",
+);
+const LINUS = dm(
+  "00000000-0000-4000-8000-0000000000d3",
+  "00000000-0000-4000-8000-0000000000a3",
+  "Linus",
 );
 
 async function contextFor(
@@ -662,9 +668,11 @@ async function gatewayFor(context) {
         () => conversations.every((row) => subscribed.has(row.id)),
         "the app did not subscribe to its conversations",
       ),
+    /** Delivers a message to every window and returns its id. */
     message(conversation, content) {
       const n = (heads.get(conversation.id) ?? 0) + 1;
       heads.set(conversation.id, n);
+      const id = `00000000-0000-4000-8000-${String(n).padStart(8, "0")}${conversation.id.slice(-4)}`;
       const frame = JSON.stringify({
         op: "e",
         t: "c",
@@ -672,7 +680,7 @@ async function gatewayFor(context) {
         c: conversation.id,
         n,
         d: {
-          id: `00000000-0000-4000-8000-${String(n).padStart(8, "0")}${conversation.id.slice(-4)}`,
+          id,
           channel_id: conversation.id,
           author: conversation.peer,
           content,
@@ -682,6 +690,7 @@ async function gatewayFor(context) {
         },
       });
       for (const socket of sockets) socket.send(frame);
+      return id;
     },
   };
 }
@@ -693,7 +702,7 @@ async function gatewayFor(context) {
 async function messageNotifications() {
   const context = await contextFor(devices["Pixel 7"], {
     authenticated: true,
-    dms: [ADA, GRACE],
+    dms: [ADA, GRACE, LINUS],
   });
   await context.grantPermissions(["notifications"], { origin: origin.origin });
   const gateway = await gatewayFor(context);
@@ -712,6 +721,13 @@ async function messageNotifications() {
       hidden = value;
       document.dispatchEvent(new Event("visibilitychange"));
     };
+    // How often this window asks the browser for a notification.
+    window.pwaAsked = 0;
+    const show = ServiceWorkerRegistration.prototype.showNotification;
+    ServiceWorkerRegistration.prototype.showNotification = function (...args) {
+      window.pwaAsked++;
+      return show.apply(this, args);
+    };
   });
   const errors = [];
   const page = await context.newPage();
@@ -719,12 +735,19 @@ async function messageNotifications() {
   await page.goto(url(`/d/${ADA.id}`));
   await page.getByTestId("message-pane").waitFor();
   await controlled(page);
-  await gateway.subscribed(ADA, GRACE);
+  await gateway.subscribed(ADA, GRACE, LINUS);
   const shown = () =>
     page.evaluate(async () => {
       const registration = await navigator.serviceWorker.getRegistration();
       return (await registration.getNotifications())
-        .map(({ title, body, tag, data }) => ({ title, body, tag, data }))
+        .map(({ title, body, tag, data, silent, renotify }) => ({
+          title,
+          body,
+          tag,
+          data,
+          silent,
+          renotify,
+        }))
         .sort((a, b) => a.tag.localeCompare(b.tag));
     });
   const tags = async () =>
@@ -741,22 +764,30 @@ async function messageNotifications() {
   await page.waitForTimeout(500);
   assert.deepEqual(await shown(), []);
 
+  // On a phone (this is one, by its user agent) the notification sounds and
+  // vibrates as the device is set, and again for a later message of the
+  // conversation: nothing else tells of a message while the app is not in
+  // front.
   await page.evaluate(() => window.pwaBackground(true));
-  gateway.message(ADA, "Hallo");
-  gateway.message(GRACE, "Noch da?");
+  const hallo = gateway.message(ADA, "Hallo");
+  const nochDa = gateway.message(GRACE, "Noch da?");
   await left(2);
   assert.deepEqual(await shown(), [
     {
       title: "Ada · Ada",
       body: "Hallo",
       tag: `gelabber:${USER}:${ADA.id}`,
-      data: { path: `/d/${ADA.id}`, user: USER },
+      data: { path: `/d/${ADA.id}`, user: USER, message: hallo },
+      silent: false,
+      renotify: true,
     },
     {
       title: "Grace · Grace",
       body: "Noch da?",
       tag: `gelabber:${USER}:${GRACE.id}`,
-      data: { path: `/d/${GRACE.id}`, user: USER },
+      data: { path: `/d/${GRACE.id}`, user: USER, message: nochDa },
+      silent: false,
+      renotify: true,
     },
   ]);
 
@@ -807,6 +838,26 @@ async function messageNotifications() {
     [`gelabber:${USER}:${GRACE.id}`],
     "a conversation that is on screen in another window must not raise a notification",
   );
+
+  // Both windows in the background, as with the phone in a pocket. Each of
+  // them hears Linus, and the phone must sound once.
+  const asked = async () =>
+    (await page.evaluate(() => window.pwaAsked)) +
+    (await second.evaluate(() => window.pwaAsked));
+  const askedBefore = await asked();
+  await page.evaluate(() => window.pwaBackground(true));
+  const linus = gateway.message(LINUS, "Zwei Fenster");
+  await until(
+    async () => (await shown()).some(({ data }) => data.message === linus),
+    "two windows in the background must still announce a message",
+  );
+  await page.waitForTimeout(500);
+  assert.equal(
+    (await asked()) - askedBefore,
+    1,
+    "two windows in the background must announce a message once",
+  );
+  await page.evaluate(() => window.pwaBackground(false));
   await second.evaluate(() => window.pwaBackground(false));
 
   // Signing out in any window takes the account's notifications along.
@@ -818,7 +869,7 @@ async function messageNotifications() {
   assert.deepEqual(errors, []);
   await context.close();
   console.log(
-    "PASS: gateway message in the background becomes a notification through the worker; a starting window keeps them, the conversation on screen and a sign-out withdraw them; a window in the background stays quiet about what another one shows (scripted gateway and visibility)",
+    "PASS: gateway message in the background becomes an audible notification through the worker; a starting window keeps them, the conversation on screen and a sign-out withdraw them; a window in the background stays quiet about what another one shows, two of them announce a message once (scripted gateway and visibility)",
   );
 }
 
@@ -840,11 +891,11 @@ async function notificationTap() {
         const registration = await navigator.serviceWorker.getRegistration();
         await registration.showNotification("Ada · DM", {
           body: "Hallo",
-          silent: true,
+          silent: false,
           tag: `gelabber:${user}:${conversation}`,
-          renotify: false,
+          renotify: true,
           icon: "/icons/icon-192.png",
-          data: { path: `/d/${conversation}`, user },
+          data: { path: `/d/${conversation}`, user, message: "message-1" },
         });
         return (await registration.getNotifications()).map(
           (notification) => notification.tag,

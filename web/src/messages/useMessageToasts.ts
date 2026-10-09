@@ -159,6 +159,7 @@ export function useMessageToastsBridge(): void {
             title: `${message.author.name} · ${label}`,
             body: preview,
             channelId,
+            messageId: message.id,
             path: conversationPath(dm, event.s, channelId),
             user: userId,
           },
