@@ -11,7 +11,11 @@ import { asReactionList, type Message } from "../messages/types.ts";
 import { SmileIcon } from "./Icons.tsx";
 import { Modal } from "./Modal.tsx";
 
-function PickerLoader({ onSelect }: { onSelect: (emoji: string) => void }) {
+export function EmojiPickerLoader({
+  onSelect,
+}: {
+  onSelect: (emoji: string) => void;
+}) {
   const [load, setLoad] = useState<{
     Picker?: ComponentType<{ onSelect: (emoji: string) => void }>;
     failed?: boolean;
@@ -147,7 +151,7 @@ export function ReactionBar({
         wide
       >
         {open && (
-          <PickerLoader
+          <EmojiPickerLoader
             onSelect={(emoji) => {
               const mine =
                 asReactionList(message.reactions)
