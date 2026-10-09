@@ -1110,6 +1110,19 @@ function makeMediaConnection(
   return connection;
 }
 
+/** Seat connections whose `start` is through. Before that a connection is
+ * the seat's already, for the server's events, but its device has not
+ * loaded and it turns every publication down. */
+const startedConnections = new WeakSet<MediaConnection>();
+
+/** The seat's connection once it takes publications. What is captured or
+ * changed while it starts is published by `startPeer` when the start is
+ * through. */
+function publishingConnection(): MediaConnection | null {
+  const connection = seat.connection;
+  return connection && startedConnections.has(connection) ? connection : null;
+}
+
 function hasLiveTrack(
   stream: MediaStream | null,
   kind: "audio" | "video",
@@ -1125,6 +1138,10 @@ function stopPeer(preserveCapture = false): void {
   if (!preserveCapture) micForceBrowser = false;
   if (!preserveCapture) clearLiveClaim();
   seatRetry.cancel(!preserveCapture);
+  // A rebuild keeps what is captured, and with it a picker or camera prompt
+  // that is still open: what the user answers there goes to the next
+  // connection, a Go Live under the claim it already holds.
+  const open = new Set<"v" | "s" | "l">();
   if (preserveCapture) {
     for (const [kind, stream] of [
       ["v", cameraStream],
@@ -1133,8 +1150,11 @@ function stopPeer(preserveCapture = false): void {
     ] as const) {
       if (stream && !hasLiveTrack(stream, "video")) stopLocalVideo(kind);
     }
-    // The epoch bump below abandons a picker that is still open.
-    if (useVoice.getState().live && !liveStream) releaseUnstartedLive();
+    for (const kind of ["v", "s", "l"] as const)
+      if (captureOpen(kind)) open.add(kind);
+    // A Live with neither a stream nor a picker has nothing left to start.
+    if (useVoice.getState().live && !liveStream && !open.has("l"))
+      releaseUnstartedLive();
   }
   streamReported = false;
   clearSeatReconnectTimer();
@@ -1142,21 +1162,30 @@ function stopPeer(preserveCapture = false): void {
   detachDiagnostics("voice");
   seat.close();
   micEpoch += 1;
-  cameraEpoch += 1;
   cameraProfileEpoch += 1;
   screenProfileEpoch += 1;
-  screenEpoch += 1;
-  liveEpoch += 1;
+  // The epoch is what an open capture is held to when it answers.
+  for (const kind of ["v", "s", "l"] as const)
+    if (!open.has(kind)) bumpVideoEpoch(kind);
   audioCommitChain = Promise.resolve();
   cameraCommitChain = Promise.resolve();
   resetVideoLimitQueue();
+  // The next connection announces what it publishes itself. A Go Live claim
+  // is the gateway's and outlasts the connection: a Live that is kept stays
+  // announced, or giving the media up later would not hand the claim back.
+  const claimed = preserveCapture && announced.has("l");
   announced.clear();
+  if (claimed) announced.add("l");
   for (const stream of pendingMicRaw) stopTracks(stream);
   pendingMicRaw.clear();
   for (const stream of pendingCameraStreams) stopTracks(stream);
   pendingCameraStreams.clear();
-  for (const stream of pendingDisplayStreams.keys()) stopTracks(stream);
-  pendingDisplayStreams.clear();
+  for (const [stream, kind] of pendingDisplayStreams) {
+    // Picked already; its sound or profile is still under way.
+    if (open.has(kind)) continue;
+    stopTracks(stream);
+    pendingDisplayStreams.delete(stream);
+  }
   if (
     !preserveCapture ||
     !hasLiveTrack(localStream, "audio") ||
@@ -1203,9 +1232,9 @@ function stopPeer(preserveCapture = false): void {
       : { s: null, l: null },
     ...(preserveCapture
       ? {
-          camera: !!cameraStream,
-          sharing: !!screenStream,
-          live: !!liveStream,
+          camera: !!cameraStream || open.has("v"),
+          sharing: !!screenStream || open.has("s"),
+          live: !!liveStream || open.has("l"),
         }
       : {}),
     remote: {},
@@ -2162,7 +2191,7 @@ function handleSettingsChange(prev: MediaSettings, next: MediaSettings): void {
 }
 
 async function refreshAudioCodecs(): Promise<void> {
-  const connection = seat.connection,
+  const connection = publishingConnection(),
     mine = seat.generation;
   if (!connection) return;
   try {
@@ -2768,7 +2797,8 @@ function bumpVideoEpoch(kind: "v" | "s" | "l"): number {
 /** Epoch of the start whose picker or camera prompt has not answered yet. */
 const openCaptures = new Map<"v" | "s" | "l", number>();
 
-/** Stopping or rebuilding bumps the epoch, so an abandoned start is not open. */
+/** Stopping bumps the epoch, so an abandoned start is not open. A rebuild of
+ * the seat's connection leaves an open start its epoch. */
 function captureOpen(kind: "v" | "s" | "l"): boolean {
   return openCaptures.get(kind) === videoEpoch(kind);
 }
@@ -2782,20 +2812,36 @@ function cameraUnavailable(error: unknown): boolean {
   return name === "NotFoundError" || name === "NotReadableError";
 }
 
+/** A display capture the user called off: a browser's picker and the
+ * desktop's own both answer that with `NotAllowedError`. Everything else is
+ * a capture that could not start. */
+function displayCancelled(error: unknown): boolean {
+  return (error as { name?: unknown } | null)?.name === "NotAllowedError";
+}
+
+/** What the user is told then. The desktop app's core refuses with its own
+ * reason as a plain string ("screen capture needs a Wayland session with
+ * PipeWire"); nothing else in the app would show it. */
+function displayFailure(error: unknown): Error {
+  const reason = typeof error === "string" ? error.trim() : "";
+  return new Error(
+    `Die Bildschirmaufnahme konnte nicht gestartet werden${reason ? ` (${reason})` : ""}.`,
+  );
+}
+
 async function startLocalVideo(kind: "v" | "s" | "l"): Promise<void> {
   const epoch = bumpVideoEpoch(kind);
-  const mine = seat.generation;
   openCaptures.set(kind, epoch);
+  // Stopping this kind, leaving the seat and a newer start all move the
+  // epoch on. A rebuild of the seat's connection does not: the picker or
+  // prompt may answer whenever the user is done with it.
+  const newest = () => videoEpoch(kind) === epoch;
   // A display capture owns its video and optional browser-selected audio.
   let stream: MediaStream;
   try {
     stream = await captureVideo(kind);
   } catch (error) {
-    if (
-      isOverconstrainedError(error) &&
-      seat.generation === mine &&
-      videoEpoch(kind) === epoch
-    ) {
+    if (isOverconstrainedError(error) && newest()) {
       deps?.onError?.(
         new Error(
           kind === "v"
@@ -2803,29 +2849,34 @@ async function startLocalVideo(kind: "v" | "s" | "l"): Promise<void> {
             : "Die Bildschirmfreigabe unterstützt das Streamprofil nicht.",
         ),
       );
-    } else if (
-      kind === "v" &&
-      cameraUnavailable(error) &&
-      seat.generation === mine &&
-      cameraEpoch === epoch
-    ) {
+    } else if (kind === "v" && cameraUnavailable(error) && newest()) {
       // Otherwise the button just springs back and nothing says why.
       deps?.onError?.(new Error("Die Kamera ist nicht verfügbar."));
+    } else if (kind !== "v" && !displayCancelled(error) && newest()) {
+      // The same for a share or a Live: only a cancel needs no word.
+      logVoice("warn", "capture", {
+        track: kind,
+        detail:
+          error instanceof Error
+            ? `${error.name}: ${error.message}`
+            : String(error),
+      });
+      deps?.onError?.(displayFailure(error));
     }
-    if (kind === "v" && cameraEpoch === epoch) {
+    if (kind === "v" && newest()) {
       useVoice.setState({ camera: false });
     }
-    if (kind === "s" && screenEpoch === epoch) {
+    if (kind === "s" && newest()) {
       useVoice.setState({ sharing: false });
     }
     // Only the newest attempt owns the claim; a later start keeps its own.
-    if (kind === "l" && liveEpoch === epoch) releaseUnstartedLive();
+    if (kind === "l" && newest()) releaseUnstartedLive();
     return;
   } finally {
     if (openCaptures.get(kind) === epoch) openCaptures.delete(kind);
   }
   pendingDisplayStreams.delete(stream);
-  if (seat.generation !== mine || videoEpoch(kind) !== epoch) {
+  if (!newest()) {
     stopTracks(stream);
     return;
   }
@@ -2878,17 +2929,16 @@ async function startLocalVideo(kind: "v" | "s" | "l"): Promise<void> {
   noteStream(kind, true);
   // Yield so the local tile paints before publishing.
   await Promise.resolve();
-  if (seat.generation !== mine || videoEpoch(kind) !== epoch) {
-    return;
-  }
+  if (!newest()) return;
+  // Without a connection that publishes, the seat's next one takes it.
   await publishLocal(kind, stream);
 }
 
 /**
  * Go Live claims the channel before display capture answers. A capture that
  * never yields a stream (cancelled picker, no display capture on this device,
- * a picker left open across a seat rebuild) hands the claim back, or the room
- * keeps a phantom Live that blocks everyone else until this seat leaves.
+ * a source that ended before it could start) hands the claim back, or the
+ * room keeps a phantom Live that blocks everyone else until this seat leaves.
  */
 function releaseUnstartedLive(): void {
   const state = useVoice.getState();
@@ -2972,7 +3022,7 @@ async function publishLocal(
   kind: "v" | "s" | "l",
   stream: MediaStream,
 ): Promise<void> {
-  const connection = seat.connection;
+  const connection = publishingConnection();
   if (!connection || (kind === "l" && !liveClaimNonce)) return;
   const mine = seat.generation,
     epoch = videoEpoch(kind),
@@ -3580,6 +3630,7 @@ async function startPeer(
     );
     await pc.start(joined.routerRtpCapabilities);
     if (seat.generation !== mine || seat.connection !== pc) return;
+    startedConnections.add(pc);
     useVoice.setState({ sourceWatchSupported: true });
     for (const [userId, subscriptions] of Object.entries(
       useVoice.getState().sourceSubscriptions,
@@ -3715,7 +3766,8 @@ async function startPeer(
 
   if (seat.generation !== mine) return;
 
-  if (seat.generation !== mine) return;
+  // What the connection before this one carried, and what was captured
+  // while this one could not publish yet.
   const pending = useVoice.getState();
   if (pending.localCamera) {
     await publishLocal("v", pending.localCamera);

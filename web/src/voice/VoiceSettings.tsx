@@ -672,7 +672,12 @@ function SourceAudioApp({
             ? [{ id: chosen, label: `${chosen} (gerade still)` }, ...apps]
             : apps
         }
-        defaultLabel="Alle Anwendungen außer Gelabber"
+        // An app that captures its own playout leaves nothing out.
+        defaultLabel={
+          hasNativeFeature("app-audio-excludes-self")
+            ? "Alle Anwendungen außer Gelabber"
+            : "Alle Anwendungen"
+        }
       />
     </div>
   );
