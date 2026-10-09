@@ -1,6 +1,7 @@
 """Checks of desktop/packaging/third-party-notices.py that need neither the
 libwebrtc checkout nor a build: python3 -m unittest discover -s desktop/packaging/tests"""
 import importlib.util
+import os
 from pathlib import Path
 import struct
 import subprocess
@@ -262,7 +263,10 @@ class SystemHeaderTests(unittest.TestCase):
 
 class CheckTests(unittest.TestCase):
     """--check on the committed file, where the script's own needs are met
-    (Linux x86-64, the pinned toolchain, the crates of the lock file)."""
+    (Linux x86-64, the pinned toolchain, the crates of the lock file).
+    Elsewhere the test skips. Not in CI: the workflow's job runs the check
+    itself first, which fetches the crates, so a script that cannot run
+    there is a failure, and no run goes green with this test left out."""
 
     def check(self, path):
         return subprocess.run(
@@ -277,6 +281,8 @@ class CheckTests(unittest.TestCase):
             result = self.check(copy)
             stale = ('is out of date', 'is not the text the script wrote', 'the inputs of part')
             if result.returncode and not any(reason in result.stderr for reason in stale):
+                if os.environ.get('CI'):
+                    self.fail(f'--check could not run:\n{result.stderr.strip()}')
                 self.skipTest(result.stderr.strip())
             self.assertEqual(result.returncode, 0, result.stderr)
             self.assertIn('  Licence   ISC\n', committed)

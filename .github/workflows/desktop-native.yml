@@ -406,10 +406,14 @@ jobs:
         uses: dtolnay/rust-toolchain@1.98.1
 
       - name: Notices are current
-        run: |
-          set -euo pipefail
-          python3 -m unittest discover -s desktop/packaging/tests
-          python3 desktop/packaging/third-party-notices.py --check
+        run: python3 desktop/packaging/third-party-notices.py --check
+
+      # After the check, which has fetched the crates of the lock file: one
+      # of the tests runs the script again without the network and, in CI,
+      # fails where it cannot (elsewhere it skips).
+      - name: Tests of the notices script
+        if: ${{ !cancelled() }}
+        run: python3 -m unittest discover -s desktop/packaging/tests -v
 
   # The same core as a DLL, the app around it and its installer. First the
   # steps that build on each other, up to the app installed, started and
