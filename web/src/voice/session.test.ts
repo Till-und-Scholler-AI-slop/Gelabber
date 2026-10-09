@@ -3049,6 +3049,49 @@ describe("source and transport continuity", () => {
   });
 
   it.each([
+    ["a running Live", false],
+    ["a Live whose picker is still open", true],
+  ] as const)(
+    "hands the claim of %s back when the reconnected seat gets no media",
+    async (_name, open) => {
+      const picker = deferred();
+      const late = fakeVideoStream("late-live");
+      const env = await connected({
+        holdDisplay: open ? picker.promise : undefined,
+        displayStreamFor: () => late,
+      });
+      const pubs = () => useVoice.getState().participants["u-self"]?.pubs;
+      toggleGoLive();
+      await vi.waitFor(() => expect(pubs()).toContain("l"));
+      if (!open)
+        await vi.waitFor(() => expect(env.peers[0]!.sender("l")).toBeTruthy());
+      env.closeMedia();
+      await vi.waitFor(() => expect(env.peers[1]?.audio).toBeTruthy());
+      if (!open)
+        await vi.waitFor(() => expect(env.peers[1]!.sender("l")).toBeTruthy());
+      expect(useVoice.getState().live).toBe(true);
+      expect(liveClaimFrames(env.sent)).toEqual(["p"]);
+
+      // The recovery is through. Later the server has no seat for the media.
+      env.peers[1]!.setTransportState("send", "connected");
+      env.emitMedia({ op: "err", e: "unavailable" });
+      expect(useVoice.getState().live).toBe(false);
+      expect(useVoiceRoster.getState().live.srv?.voice).toBeUndefined();
+      expect(liveClaimFrames(env.sent)).toEqual(["p", "u"]);
+      expect(pubs()).not.toContain("l");
+      expect(messages(env.errors)).toEqual(["Kein freier Sprachplatz."]);
+
+      // A pick that comes after that starts nothing.
+      picker.resolve();
+      await vi.waitFor(() => expect(streamStopped(late)).toBe(true));
+      expect(useVoice.getState().live).toBe(false);
+      expect(useVoice.getState().localLive).toBeNull();
+      expect(liveClaimFrames(env.sent)).toEqual(["p", "u"]);
+      expect(useVoice.getState().status).toBe("joined");
+    },
+  );
+
+  it.each([
     ["camera prompt", "v"],
     ["share picker", "s"],
   ] as const)(

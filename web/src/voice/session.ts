@@ -1170,7 +1170,12 @@ function stopPeer(preserveCapture = false): void {
   audioCommitChain = Promise.resolve();
   cameraCommitChain = Promise.resolve();
   resetVideoLimitQueue();
+  // The next connection announces what it publishes itself. A Go Live claim
+  // is the gateway's and outlasts the connection: a Live that is kept stays
+  // announced, or giving the media up later would not hand the claim back.
+  const claimed = preserveCapture && announced.has("l");
   announced.clear();
+  if (claimed) announced.add("l");
   for (const stream of pendingMicRaw) stopTracks(stream);
   pendingMicRaw.clear();
   for (const stream of pendingCameraStreams) stopTracks(stream);
