@@ -29,6 +29,7 @@ beforeEach(() => {
   useInstallation.setState({ mobile: false });
 });
 afterEach(async () => {
+  vi.useRealTimers();
   for (const close of windows.splice(0)) close();
   await closeMessageNotifications({ user: "user-1" });
   vi.unstubAllGlobals();
@@ -420,6 +421,27 @@ describe("a conversation on screen", () => {
     }
     expect(await showing).toBe("worker");
     await vi.waitFor(() => expect(onScreen[0].close).toHaveBeenCalledOnce());
+  });
+
+  // Showing and closing wait for each other across windows. A browser that
+  // never answers one window's request must not stop the others for good.
+  it("stops waiting for a window whose notification never lands", async () => {
+    const later = setTimeout;
+    vi.useFakeTimers({ toFake: ["setTimeout", "clearTimeout"] });
+    pageApi();
+    const { viewed } = shown();
+    const active = worker([viewed]);
+    active.showNotification.mockReturnValueOnce(new Promise(() => {}));
+    void showMessageNotification({ ...message, channelId: "dm" }, vi.fn());
+    // On the real clock: vi.waitFor would move the stopped one along.
+    while (active.showNotification.mock.calls.length === 0)
+      await new Promise((resolve) => later(resolve, 1));
+    const closing = closeMessageNotifications({ user: "user-1" });
+    await vi.advanceTimersByTimeAsync(4_000);
+    expect(viewed.close).not.toHaveBeenCalled();
+    await vi.advanceTimersByTimeAsync(1_500);
+    await closing;
+    expect(viewed.close).toHaveBeenCalledOnce();
   });
 
   it("works as before where the browser has no lock manager", async () => {

@@ -68,23 +68,32 @@ const lockManager = (): LockManager | undefined =>
 // Viewing locks this window has let go of. The lock manager may still list
 // them for a moment.
 let letGo: Promise<unknown> = Promise.resolve();
+// How long one change may keep the other windows waiting. A browser call that
+// never answers must not stop every window's notifications for good.
+const CHANGE_HOLD_MS = 5_000;
 
 /** Run `change` while no other window shows or closes this account's notifications. */
 async function alone<T>(user: string, change: () => Promise<T>): Promise<T> {
   const locks = lockManager();
   if (!locks) return change();
-  let entered = false;
+  let changing: Promise<T> | undefined;
   try {
-    return await locks.request(changeLock(user), () => {
-      entered = true;
-      return change();
+    await locks.request(changeLock(user), () => {
+      const work = (changing = change());
+      return new Promise<void>((through) => {
+        const limit = setTimeout(through, CHANGE_HOLD_MS);
+        const done = () => {
+          clearTimeout(limit);
+          through();
+        };
+        work.then(done, done);
+      });
     });
-  } catch (error) {
-    if (entered) throw error;
+  } catch {
     // The lock manager refused (blocked storage, for one). That must not
     // cost the notification.
-    return change();
   }
+  return changing ?? change();
 }
 
 /** Whether a visible window of the app shows this conversation right now. */
