@@ -52,6 +52,19 @@ async fn upgrade(
     ws: WebSocketUpgrade,
 ) -> Result<Response, ApiError> {
     if !origin_allowed(&headers, state.cookie_secure) {
+        // Behind a proxy that rewrites `Host` every browser lands here; the
+        // two values say which. Header values only, never cookies.
+        let value = |name| {
+            headers.get(name).map(|value: &axum::http::HeaderValue| {
+                String::from_utf8_lossy(value.as_bytes()).into_owned()
+            })
+        };
+        tracing::warn!(
+            origin = ?value(ORIGIN),
+            host = ?value(HOST),
+            secure_cookies = state.cookie_secure,
+            "refused WebSocket upgrade: Origin does not match Host"
+        );
         return Err(ApiError::Forbidden(
             "Cross-origin WebSocket is not allowed.",
         ));
