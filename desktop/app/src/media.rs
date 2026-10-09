@@ -56,7 +56,13 @@ impl Media {
         if let Some(engine) = self.engine.get() {
             return Ok(engine);
         }
-        let engine = Engine::new(Audio::Default).map_err(err)?;
+        // GELABBER_AUDIO=dummy: no audio devices at all, for smoke tests on
+        // machines without audio endpoints (CI runners).
+        let audio = match std::env::var("GELABBER_AUDIO").as_deref() {
+            Ok("dummy") => Audio::Dummy,
+            _ => Audio::Default,
+        };
+        let engine = Engine::new(audio).map_err(err)?;
         // A racing first call loses its engine; both are equivalent.
         Ok(self.engine.get_or_init(|| engine))
     }
@@ -93,12 +99,34 @@ async fn blocking<T: Send + 'static>(
     spawn_blocking(job).await.map_err(err)?
 }
 
+/// What this build can do besides voice and watching streams
+/// (`media_info.features`); the web client hides what is missing. The names
+/// are a contract with it (`KNOWN_FEATURES` in the tests):
+/// - "screen": screen and window capture (`media_source_screen`)
+/// - "camera": `media_video_devices`, `media_source_camera`
+/// - "app-audio": sound of other applications (`media_audio_apps`,
+///   `media_source_app_audio`)
+/// - "app-audio-excludes-self": sharing every application's sound leaves
+///   out this app's own, so a call is not sent back into itself
+/// - "video-frames": decoded frames for the page to draw inside the app
+///   window
+///
+/// The only place that decides the list. An app before v0.6 reports none.
+const FEATURES: &[&str] = if cfg!(target_os = "linux") {
+    &["screen", "camera", "app-audio"]
+} else if cfg!(windows) {
+    &["camera"]
+} else {
+    &[]
+};
+
 #[tauri::command]
 pub async fn media_info() -> Value {
     json!({
         "abi": gelabber_media_core::ABI_VERSION,
         "version": env!("CARGO_PKG_VERSION"),
         "platform": std::env::consts::OS,
+        "features": FEATURES,
     })
 }
 
@@ -537,7 +565,42 @@ pub async fn media_consumer_close(media: State<'_, Media>, consumer: u64) -> Res
 
 #[cfg(test)]
 mod tests {
-    use super::MEDIA_COMMANDS;
+    use super::{FEATURES, MEDIA_COMMANDS, media_info};
+
+    /// Every name the web client knows.
+    const KNOWN_FEATURES: &[&str] = &[
+        "screen",
+        "camera",
+        "app-audio",
+        "app-audio-excludes-self",
+        "video-frames",
+    ];
+
+    /// What the web client reads: the fields of v0.5 stay, and `features` is
+    /// what this platform's build can do today, in known names. The web
+    /// client offers and hides functions by this list, so a change to
+    /// `FEATURES` is repeated here on purpose.
+    #[test]
+    fn media_info_reports_the_platform_features() {
+        let info = pollster::block_on(media_info());
+        assert_eq!(info["abi"], gelabber_media_core::ABI_VERSION);
+        assert_eq!(info["version"], env!("CARGO_PKG_VERSION"));
+        assert_eq!(info["platform"], std::env::consts::OS);
+        let today: &[&str] = if cfg!(target_os = "linux") {
+            &["screen", "camera", "app-audio"]
+        } else if cfg!(windows) {
+            &["camera"]
+        } else {
+            &[]
+        };
+        assert_eq!(info["features"], serde_json::json!(today));
+        for feature in FEATURES {
+            assert!(
+                KNOWN_FEATURES.contains(feature),
+                "unknown feature {feature}"
+            );
+        }
+    }
 
     /// The server origin's permission set grants exactly the media commands.
     #[test]

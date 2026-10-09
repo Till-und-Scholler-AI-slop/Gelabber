@@ -45,6 +45,20 @@ addEventListener("keydown", (event) => {
   }
 }, true);
 "#;
+/// WebView2 (Windows) arguments. Setting any replaces wry's defaults, so
+/// those are repeated: the three `ms*` features off (no Edge mini menus, no
+/// SmartScreen) and autoplay (call sounds without a click). The rest keeps
+/// the page's timers running while the window is minimized or covered: the
+/// gateway heartbeat and the signaling live in the page, and unlike in a
+/// browser nothing there (no RTCPeerConnection, no playing audio: media is
+/// in the native core) exempts it from Chromium's background throttling.
+const WEBVIEW2_ARGS: &str = concat!(
+    "--disable-features=msWebOOUI,msPdfOOUI,msSmartScreenProtection,IntensiveWakeUpThrottling",
+    " --autoplay-policy=no-user-gesture-required",
+    " --disable-background-timer-throttling",
+    " --disable-renderer-backgrounding",
+    " --disable-backgrounding-occluded-windows",
+);
 /// Per address; a typo'd host fails at DNS long before that.
 const CONNECT_TIMEOUT: Duration = Duration::from_secs(5);
 
@@ -277,6 +291,8 @@ fn main() {
                 .inner_size(1280.0, 800.0)
                 .min_inner_size(480.0, 360.0)
                 .initialization_script(SHORTCUTS)
+                // Only WebView2 takes them; ignored on the other platforms.
+                .additional_browser_args(WEBVIEW2_ARGS)
                 .build()?;
             // Opening a stored server that does not answer would end on
             // WebKit's error page; show the setup page with the reason instead.
