@@ -170,6 +170,7 @@ summary {
   flex-direction: column;
   min-width: 0;
   min-height: 0;
+  anchor-name: --lr-main;
 }
 .workspace-content {
   display: flex;
@@ -1158,18 +1159,24 @@ summary {
   .living-room-title {
     font-size: 34px;
   }
-  /* On phones the bottom edge belongs to the call dock and, in a
-     conversation, to the composer above it. */
+}
+/* On phones, upright or on their side, the bottom edge belongs to the call
+   dock and, in a conversation, to the composer above it. */
+@media (max-width: 800px), (pointer: coarse) {
   .has-active-media .gel-toasts {
-    --lr-toast-floor: var(--lr-media-space);
+    /* No dock, and no space, where the call sits in the sidebar instead. */
+    --lr-toast-floor: max(var(--lr-media-space), var(--lr-safe-bottom));
   }
   .app-shell-workspace .gel-toasts {
     /* One composer line, for browsers without anchor positioning. */
     bottom: calc(74px + var(--lr-toast-floor));
   }
   @supports (anchor-name: --lr-composer) {
+    /* Centred over the content column, clear of a sidebar beside it. */
     .app-shell-workspace .gel-toasts {
+      right: anchor(--lr-main right, 0px);
       bottom: calc(16px + anchor(--lr-composer top, var(--lr-toast-floor)));
+      left: anchor(--lr-main left, 0px);
     }
   }
 }
