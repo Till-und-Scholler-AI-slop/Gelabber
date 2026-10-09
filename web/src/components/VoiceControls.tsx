@@ -29,7 +29,11 @@ import {
   useVoice,
 } from "../voice/session.ts";
 import { useCapabilities } from "../voice/capabilities.ts";
-import { sharesSourceAudio, useMediaSettings } from "../voice/settings.ts";
+import {
+  sharesSourceAudio,
+  sourceAudioChoice,
+  useMediaSettings,
+} from "../voice/settings.ts";
 import { notify } from "./toasts.ts";
 import "../voice/room.css";
 
@@ -152,7 +156,7 @@ export function VoiceControls({ canGoLive = false }: { canGoLive?: boolean }) {
             sound ? "Stream-Ton nicht mehr teilen" : "Stream-Ton teilen"
           }
           title={sound ? "Stream-Ton nicht mehr teilen" : "Stream-Ton teilen"}
-          onClick={() => patch({ sourceAudioShare: sound ? "off" : "on" })}
+          onClick={() => patch({ sourceAudioShare: sourceAudioChoice(!sound) })}
           className={btn}
         >
           <MusicIcon size={17} />

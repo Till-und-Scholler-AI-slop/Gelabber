@@ -2,7 +2,7 @@
 // switch next to the share button, the same switch in the settings, and what
 // they say when sound is missing.
 
-import type { ReactNode } from "react";
+import { createElement, isValidElement, type ReactNode } from "react";
 import { renderToStaticMarkup } from "react-dom/server";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
@@ -148,6 +148,52 @@ function soundSetting(): "on" | "off" | null {
   return input.includes("checked") ? "on" : "off";
 }
 
+/** What a component hands to React, handlers included: a static render
+ * leaves them out. */
+function elements(component: () => ReactNode): ReactNode {
+  let out: ReactNode = null;
+  const probe = () => {
+    out = component();
+    return null;
+  };
+  renderToStaticMarkup(createElement(probe));
+  return out;
+}
+type Props = Record<string, unknown>;
+function propsOf(node: ReactNode, wanted: (props: Props) => boolean): Props {
+  const search = (at: ReactNode): Props | null => {
+    if (Array.isArray(at)) {
+      for (const child of at) {
+        const found = search(child);
+        if (found) return found;
+      }
+      return null;
+    }
+    if (!isValidElement(at)) return null;
+    const props = at.props as Props;
+    return wanted(props) ? props : search(props.children as ReactNode);
+  };
+  const found = search(node);
+  if (!found) throw new Error("no such element");
+  return found;
+}
+/** Presses the switch among the call controls. */
+function pressSoundControl(): void {
+  const button = propsOf(
+    elements(() => VoiceControls({ canGoLive: true })),
+    (props) => String(props["aria-label"] ?? "").startsWith("Stream-Ton"),
+  );
+  (button.onClick as () => void)();
+}
+/** Sets the switch in the settings form. */
+function setSoundSetting(on: boolean): void {
+  const toggle = propsOf(
+    elements(() => MediaSettingsForm({})),
+    (props) => props.id === "share-source-audio",
+  );
+  (toggle.onChange as (on: boolean) => void)(on);
+}
+
 describe("stream sound switch", () => {
   it.each([
     ["desktopBrowser", "off"],
@@ -169,6 +215,55 @@ describe("stream sound switch", () => {
       expect(soundSetting()).toBe("off");
     },
   );
+
+  it.each([
+    ["desktopBrowser", "auto"],
+    ["linuxApp05", "auto"],
+    ["linuxApp06CapturesItself", "auto"],
+    // Only here is off something the app would not do by itself.
+    ["linuxApp06", "off"],
+  ] as const)(
+    "%s: pressed on and off again, either switch leaves %s behind",
+    async (name: Case, left) => {
+      await cases[name]();
+      const stored = () => useMediaSettings.getState().sourceAudioShare;
+      for (const flip of [
+        pressSoundControl,
+        () => setSoundSetting(soundSetting() !== "on"),
+      ]) {
+        choose({ sourceAudioShare: "auto" });
+        // Where the app shares unasked, off comes first: "on" is a press too.
+        if (soundControl() === "on") flip();
+        expect(soundControl()).toBe("off");
+        flip();
+        expect(stored()).toBe("on");
+        expect(soundControl()).toBe("on");
+        expect(soundSetting()).toBe("on");
+        flip();
+        expect(stored()).toBe(left);
+        expect(soundControl()).toBe("off");
+        expect(soundSetting()).toBe("off");
+      }
+    },
+  );
+
+  it("an app before v0.6 keeps no off that would hold back the updated app's sound", async () => {
+    await cases.linuxApp05();
+    pressSoundControl();
+    expect(session()).toContain(SOURCE_AUDIO_CARRIES_CALL);
+    pressSoundControl();
+    expect(session()).not.toContain(SOURCE_AUDIO_CARRIES_CALL);
+    expect(soundControl()).toBe("off");
+    // The update the warning asked for.
+    await cases.linuxApp06();
+    expect(soundControl()).toBe("on");
+    expect(soundSetting()).toBe("on");
+    // Switched off there, it stays off.
+    setSoundSetting(false);
+    expect(soundControl()).toBe("off");
+    await cases.linuxApp06();
+    expect(soundControl()).toBe("off");
+  });
 
   it.each([
     "phoneBrowser",

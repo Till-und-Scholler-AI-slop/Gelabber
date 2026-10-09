@@ -16,6 +16,7 @@ import {
   resetMediaSettingsForTests,
   sharesSourceAudio,
   sourceAudioCarriesCall,
+  sourceAudioChoice,
   useMediaSettings,
   videoSendBudget,
   videoConstraintLadder,
@@ -294,21 +295,33 @@ describe("stream sound: what a share does", () => {
   });
   const carriesCall = (sourceAudioShare: "auto" | "on", sourceAudioApp = "") =>
     sourceAudioCarriesCall({ sourceAudioShare, sourceAudioApp });
+  /** What the switch stores when it is flipped. */
+  const switched = () => ({
+    on: sourceAudioChoice(true),
+    off: sourceAudioChoice(false),
+  });
+  const APP_05 = { abi: 7, version: "0.5.2", platform: "linux" };
+  const APP_06 = {
+    features: ["screen", "camera", "app-audio", "app-audio-excludes-self"],
+  };
 
   it("browser: off unless switched on, as before", () => {
     setNativeBridgeForTests(null);
     expect(choices()).toEqual({ auto: false, on: true, off: false });
     expect(sharesSourceAudio()).toBe(false);
     expect(carriesCall("on")).toBe(false);
+    // Off is what a browser does anyway: nothing to remember.
+    expect(switched()).toEqual({ on: "on", off: "auto" });
   });
 
   it("0.5.x app: off by default, and switched on it also carries the call", async () => {
-    await desktopApp({ abi: 7, version: "0.5.2", platform: "linux" });
+    await desktopApp(APP_05);
     expect(choices()).toEqual({ auto: false, on: true, off: false });
     expect(carriesCall("auto")).toBe(false);
     expect(carriesCall("on")).toBe(true);
     // One application's sound is not the call's.
     expect(carriesCall("on", "firefox")).toBe(false);
+    expect(switched()).toEqual({ on: "on", off: "auto" });
   });
 
   it("v0.6 app whose core still captures itself: like 0.5.x", async () => {
@@ -317,12 +330,11 @@ describe("stream sound: what a share does", () => {
     });
     expect(choices()).toEqual({ auto: false, on: true, off: false });
     expect(carriesCall("on")).toBe(true);
+    expect(switched()).toEqual({ on: "on", off: "auto" });
   });
 
   it("v0.6 app that leaves itself out: on unless switched off", async () => {
-    await desktopApp({
-      features: ["screen", "camera", "app-audio", "app-audio-excludes-self"],
-    });
+    await desktopApp(APP_06);
     expect(choices()).toEqual({ auto: true, on: true, off: false });
     expect(sharesSourceAudio()).toBe(true);
     expect(carriesCall("auto")).toBe(false);
@@ -330,12 +342,15 @@ describe("stream sound: what a share does", () => {
     // A choice from before v0.6 was none: such users get the new default.
     useMediaSettings.getState().patch({ sourceAudioShare: "off" });
     expect(sharesSourceAudio()).toBe(false);
+    // Here off differs from what the app does unasked: it is kept.
+    expect(switched()).toEqual({ on: "on", off: "off" });
   });
 
   it("an app without application sound shares none, whatever was chosen", async () => {
     await desktopApp({ features: ["camera", "video-frames"] });
     expect(choices()).toEqual({ auto: false, on: false, off: false });
     expect(carriesCall("on")).toBe(false);
+    expect(switched().off).toBe("auto");
   });
 
   it("promises nothing before the desktop app has answered", () => {
@@ -344,5 +359,42 @@ describe("stream sound: what a share does", () => {
       channel: async () => null,
     } as unknown as NativeBridge);
     expect(choices()).toEqual({ auto: false, on: false, off: false });
+    expect(switched().off).toBe("auto");
+  });
+
+  it("switched on and off again in a 0.5.x app, the updated app still shares sound unasked", async () => {
+    const storage = useMediaSettings.persist.getOptions().storage!;
+    const flip = (on: boolean) =>
+      useMediaSettings
+        .getState()
+        .patch({ sourceAudioShare: sourceAudioChoice(on) });
+    /** The same stored settings, read by the app that runs now. */
+    async function restart() {
+      const saved = (await storage.getItem("gelabber.media"))!;
+      resetMediaSettingsForTests();
+      await storage.setItem("gelabber.media", saved);
+      await useMediaSettings.persist.rehydrate();
+      return saved.state as { sourceAudioShare?: unknown };
+    }
+
+    await desktopApp(APP_05);
+    flip(true);
+    // The warning that sends the user to the update.
+    expect(sourceAudioCarriesCall()).toBe(true);
+    flip(false);
+    expect(sharesSourceAudio()).toBe(false);
+    expect(sourceAudioCarriesCall()).toBe(false);
+
+    await desktopApp(APP_06);
+    expect((await restart()).sourceAudioShare).toBe("auto");
+    expect(sharesSourceAudio()).toBe(true);
+
+    // Switched off in the updated app is a choice, and stays one.
+    flip(false);
+    expect((await restart()).sourceAudioShare).toBe("off");
+    expect(sharesSourceAudio()).toBe(false);
+    flip(true);
+    expect((await restart()).sourceAudioShare).toBe("on");
+    expect(sharesSourceAudio()).toBe(true);
   });
 });

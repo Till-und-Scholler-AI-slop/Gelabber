@@ -46,6 +46,7 @@ import { resetVoiceRoster, useVoiceRoster, voiceOf } from "./roster.ts";
 import {
   allocateVideoBitrates,
   resetMediaSettingsForTests,
+  sourceAudioChoice,
   useMediaSettings,
   videoConstraintsFor,
 } from "./settings.ts";
@@ -4318,6 +4319,25 @@ describe("stream sound in the desktop app", () => {
     expect(produced(env, "s")).toHaveLength(1);
     expect(app.called("media_source_screen")).toHaveLength(1);
     expect(env.errors).toEqual([]);
+  });
+
+  it("takes the sound out of a running share when the switch keeps no off", async () => {
+    useMediaSettings.getState().patch({ sourceAudioShare: "on" });
+    const { env, app } = await joined(APP_05);
+    toggleShare();
+    await vi.waitFor(() => expect(env.peers[0]?.sender("sa")).toBeTruthy());
+    const video = env.peers[0]!.sender("s");
+    // Off is what this app does unasked: the switch stores no choice.
+    expect(sourceAudioChoice(false)).toBe("auto");
+    useMediaSettings
+      .getState()
+      .patch({ sourceAudioShare: sourceAudioChoice(false) });
+    await vi.waitFor(() => expect(env.peers[0]?.sender("sa")).toBeUndefined());
+    expect(app.called("media_source_close")).toEqual([
+      { source: app.sounds[0] },
+    ]);
+    expect(useVoice.getState().sourceAudio.s).toBe("off");
+    expect(env.peers[0]!.sender("s")).toBe(video);
   });
 
   it("adds application sound to a running Go Live under its claim", async () => {

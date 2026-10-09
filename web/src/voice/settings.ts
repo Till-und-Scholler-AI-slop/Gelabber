@@ -483,6 +483,14 @@ export function sharesSourceAudio(
   return hasNativeFeature("app-audio-excludes-self");
 }
 
+/** What the switch stores. Off where a share carries no sound unasked is no
+ * choice to keep: remembered, it would hold the sound back in a desktop app
+ * that leaves the call out, once the user has updated to one. */
+export function sourceAudioChoice(on: boolean): SourceAudioShare {
+  if (on) return "on";
+  return sharesSourceAudio({ sourceAudioShare: "auto" }) ? "off" : "auto";
+}
+
 /** A desktop app before v0.6 captures its own playout with "every
  * application": switched on there, a share also carries the call. */
 export const SOURCE_AUDIO_CARRIES_CALL =

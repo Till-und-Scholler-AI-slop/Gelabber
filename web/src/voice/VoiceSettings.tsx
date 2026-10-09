@@ -30,6 +30,7 @@ import {
   sharesSourceAudio,
   SOURCE_AUDIO_CARRIES_CALL,
   sourceAudioCarriesCall,
+  sourceAudioChoice,
   useMediaSettings,
   videoSendBudget,
 } from "./settings.ts";
@@ -348,7 +349,7 @@ export function MediaSettingsForm({
                 label="Ton teilen"
                 checked={sharesSourceAudio(settings)}
                 onChange={(on) =>
-                  settings.patch({ sourceAudioShare: on ? "on" : "off" })
+                  settings.patch({ sourceAudioShare: sourceAudioChoice(on) })
                 }
               />
               {desktop && (
