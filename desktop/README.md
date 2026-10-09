@@ -76,7 +76,14 @@ compositing; with the renderer disabled altogether (what the app set up to
 0.5.2) the web process paints video on the CPU, half a core and more for one
 stream across the window. Setting that variable or
 `WEBKIT_DISABLE_DMABUF_RENDERER` yourself (to any value) leaves both as you
-set them.
+set them. On the same driver the app ends WebKit's web process the moment
+its window is closed (`webkit_web_view_terminate_web_process`): once a page
+has drawn with WebGL, as the video tiles do, a web process left to shut
+down crashes inside the driver when it frees its GL contexts
+(`eglDestroyContext` in libnvidia-eglcore; driver 610.57.04, WebKitGTK
+2.52.6, with either renderer setting), which left a core dump and a crash
+notification behind every close. An app that is killed instead of closed
+(SIGTERM, the end of the session) still leaves the web process to that.
 
 ## Design rules
 
@@ -118,10 +125,13 @@ set them.
   Rust the core scales them down to the largest view (libyuv; never up, so a
   4K screen costs a small tile little) and drops those above the views' rate
   limit. Views end with the page and with their consumer or source. The
-  header says which matrix the colours need: BT.709 for remote video from
-  720 lines up (the convention of browsers and of the viewer window), BT.601
-  otherwise and always for a self view, because that is what the core
-  converts a captured screen with and what cameras deliver as a rule. Frames
+  header says which matrix the colours need: BT.601 for remote video and for
+  a self view at any size, because that is what the core converts a captured
+  screen with and what Chromium takes received video as when the stream does
+  not say (one 1280x720 VP8 stream measured in a Chromium 153 tile and in the
+  app; by size, as up to 0.5 in the viewer window, a stream also changed its
+  colours with its simulcast layer). A stream that does carry its colour
+  description (H.264 with VUI, VP9, AV1) is not looked at yet. Frames
   go through an ordinary command because Tauri checks commands against the
   server origin's capability; a scheme of the app's own or a pushed channel
   measured no faster. A Content-Security-Policy on the server that keeps the
@@ -140,8 +150,8 @@ set them.
 - Viewer window: `media_viewer_open` shows a remote video in a native
   window (`app/src/viewer.rs`), for web clients from before the views in the
   page and as a pop-out next to them: winit on its own thread next to the
-  webview's GTK loop, wgpu drawing the decoded I420 planes with a BT.601/709
-  shader, letterboxed. It shares the consumer's sink with the page views and
+  webview's GTK loop, wgpu drawing the decoded I420 planes (BT.601, as the
+  views in the page), letterboxed. It shares the consumer's sink with the page views and
   shows the stream unscaled, so while a window is open the views of that
   consumer get full-size frames too. The window's Wayland app id and X11
   class are `gelabber-viewer` for compositor rules. CI draws a frame through

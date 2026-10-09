@@ -27,10 +27,13 @@
 //! | 20     | u32  | reserved, 0                                        |
 //! | 24     | i64  | frame timestamp, microseconds                      |
 //!
-//! Frames do not say which matrix made them. Remote video from 720 lines up
-//! is flagged BT.709, the convention of browsers and of viewer.rs; a local
-//! source never is, because the core converts what it captures with BT.601
-//! at any size.
+//! Frames do not say which matrix made them. Video is BT.601 at any size,
+//! remote and local: that is what the core converts a captured screen with
+//! and what Chromium takes received video as when the stream does not say
+//! (measured with Chromium 153: one 1280x720 VP8 stream in a browser tile
+//! and here). A rule by size also changes a stream's colours with its
+//! simulcast layer. Only the app's own test pattern is flagged BT.709, from
+//! 720 lines up, because it draws its bars that way.
 use gelabber_media_core::{VideoFrame, VideoSink, VideoSinkLimits};
 use std::{
     collections::{HashMap, hash_map::Entry},
@@ -287,12 +290,11 @@ pub enum Origin {
 
 impl Origin {
     /// Whether the frame's colours are BT.709 (else BT.601). Remote video
-    /// from 720 lines up is HD and BT.709 by convention (as viewer.rs);
-    /// scaling it down for a small view does not change its colours. A local
-    /// source is BT.601 at any size: that is the matrix the core converts a
-    /// captured screen with, and the usual one of cameras.
+    /// and local sources are BT.601 at any size (see the module's header);
+    /// the test pattern draws BT.709 from 720 lines up, also when it is
+    /// scaled down for a small view.
     fn bt709(self, frame: &VideoFrame<'_>) -> bool {
-        !matches!(self, Origin::Source(_)) && frame.source_height >= 720
+        matches!(self, Origin::Pattern(..)) && frame.source_height >= 720
     }
 }
 
@@ -872,21 +874,24 @@ mod tests {
     }
 
     #[test]
-    fn remote_video_is_bt709_from_720_lines_and_a_local_source_never() {
+    fn video_is_bt601_at_any_size_and_only_the_test_pattern_bt709() {
         let planes = Planes::bars(64, 36, false);
         let lines = |height: u32| {
             let mut frame = frame(&planes, 0);
             frame.source_height = height;
             frame
         };
-        // Also when scaled down for a small view.
-        assert!(Origin::Consumer(1).bt709(&lines(1080)));
-        assert!(Origin::Consumer(1).bt709(&lines(720)));
-        assert!(!Origin::Consumer(1).bt709(&lines(718)));
-        assert!(Origin::Pattern(1280, 720, 30).bt709(&lines(720)));
+        // A stream keeps its colours whichever simulcast layer arrives.
+        assert!(!Origin::Consumer(1).bt709(&lines(1080)));
+        assert!(!Origin::Consumer(1).bt709(&lines(720)));
+        assert!(!Origin::Consumer(1).bt709(&lines(180)));
         // The core converts a captured screen with BT.601 at any size.
         assert!(!Origin::Source(1).bt709(&lines(1080)));
         assert!(!Origin::Source(1).bt709(&lines(360)));
+        // The pattern draws its bars in BT.709 from 720 lines up, also when
+        // it is scaled down for a small view.
+        assert!(Origin::Pattern(1280, 720, 30).bt709(&lines(720)));
+        assert!(!Origin::Pattern(640, 360, 30).bt709(&lines(360)));
 
         // And that is what a view's packets say.
         let frames = Frames::default();
@@ -899,7 +904,7 @@ mod tests {
             frames.close(view);
             packet.try_recv().unwrap().unwrap()[7]
         };
-        assert_eq!(flags(Origin::Consumer(1)), FLAG_BT709);
+        assert_eq!(flags(Origin::Consumer(1)), 0);
         assert_eq!(flags(Origin::Source(1)), 0);
     }
 

@@ -223,13 +223,45 @@ fn webkit_workaround(nvidia: bool, set_by_user: impl Fn(&str) -> bool) -> Option
         .then_some(WEBKIT_FORCE_SHM)
 }
 
+/// Whether the machine runs the NVIDIA driver.
+#[cfg(target_os = "linux")]
+fn nvidia_driver() -> bool {
+    std::path::Path::new("/proc/driver/nvidia/version").exists()
+        || std::path::Path::new("/sys/module/nvidia_drm").exists()
+}
+
 #[cfg(target_os = "linux")]
 fn webkit_workarounds() {
-    let nvidia = std::path::Path::new("/proc/driver/nvidia/version").exists()
-        || std::path::Path::new("/sys/module/nvidia_drm").exists();
+    let nvidia = nvidia_driver();
     if let Some(name) = webkit_workaround(nvidia, |name| std::env::var_os(name).is_some()) {
         // SAFETY: called first thing in main, before any other thread exists.
         unsafe { std::env::set_var(name, "1") };
+    }
+}
+
+/// Ends WebKit's web process the moment the window is closed, on the NVIDIA
+/// driver. Left to shut down by itself it crashes once a page has drawn with
+/// WebGL, which the video tiles do: when its connection to the app closes,
+/// WebKitGTK frees its GL contexts, and `eglDestroyContext` then reads
+/// through a null pointer inside libnvidia-eglcore (seen with driver
+/// 610.57.04 and WebKitGTK 2.52.6, in shared-memory mode and with the
+/// DMA-BUF renderer disabled alike; leaving the page first does not help).
+/// Nothing was lost by that crash, but every close of the app left a core
+/// dump and, on desktops that announce them, a crash notification. A web
+/// process that is killed frees nothing.
+///
+/// Only a window that is closed gets here. An app that is killed itself
+/// still leaves the web process to that shutdown.
+#[cfg(target_os = "linux")]
+fn end_web_process(window: &tauri::Window) {
+    use webkit2gtk::WebViewExt;
+    let Some(window) = window.get_webview_window(window.label()) else {
+        return;
+    };
+    // The event comes on the main thread, where this runs at once: before
+    // the window and its webview are destroyed.
+    if let Err(error) = window.with_webview(|webview| webview.inner().terminate_web_process()) {
+        eprintln!("gelabber: web process: {error}");
     }
 }
 
@@ -240,7 +272,14 @@ fn main() {
     if std::env::var_os("GELABBER_MEDIA_LOG").is_some() {
         gelabber_media_core::set_log_level(gelabber_media_core::LogLevel::Info);
     }
-    tauri::Builder::default()
+    let builder = tauri::Builder::default();
+    #[cfg(target_os = "linux")]
+    let builder = builder.on_window_event(|window, event| {
+        if matches!(event, tauri::WindowEvent::CloseRequested { .. }) && nvidia_driver() {
+            end_web_process(window);
+        }
+    });
+    builder
         .manage(media::Media::default())
         .invoke_handler(tauri::generate_handler![
             set_server,

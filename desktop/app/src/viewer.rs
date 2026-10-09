@@ -448,8 +448,10 @@ impl Planes {
             plane("u", cw, ch),
             plane("v", cw, ch),
         ];
-        // Video from 720 lines up is HD and BT.709 by convention.
-        let bt709: f32 = if height >= 720 { 1.0 } else { 0.0 };
+        // BT.601 at any size, as the views in the page (frames.rs): what
+        // Chromium takes video as that does not say. By size, a stream
+        // changed its colours with its simulcast layer.
+        let bt709: f32 = 0.0;
         let colors = gpu.device.create_buffer(&wgpu::BufferDescriptor {
             label: Some("viewer colors"),
             size: 16,

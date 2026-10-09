@@ -1613,6 +1613,7 @@ dependencies = [
  "tauri",
  "tauri-build",
  "url",
+ "webkit2gtk",
  "wgpu",
  "winit",
 ]
