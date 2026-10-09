@@ -39,7 +39,7 @@
 extern "C" {
 #endif
 
-#define GM_ABI_VERSION 7
+#define GM_ABI_VERSION 8
 
 typedef struct gm_engine gm_engine;
 typedef struct gm_device gm_device;
@@ -206,8 +206,10 @@ GM_API const char* gm_consumer_id(gm_consumer* consumer);
 GM_API int gm_consumer_pause(gm_consumer* consumer, int paused);
 /* Playback volume of an audio consumer, 0..2 (1 = as received; 0 = silent). */
 GM_API int gm_consumer_set_volume(gm_consumer* consumer, double volume);
-/* A decoded video frame in I420, valid only during the sink call. rotation
- * is 0, 90, 180 or 270 degrees clockwise to apply for display. */
+/* A video frame in I420, valid only during the sink call. rotation is 0, 90,
+ * 180 or 270 degrees clockwise to apply for display. source_width and
+ * source_height are the size of the picture before the sink's limits scaled
+ * it down (width and height when they did not). */
 typedef struct gm_video_frame
 {
   int width;
@@ -220,13 +222,40 @@ typedef struct gm_video_frame
   int stride_v;
   int rotation;
   int64_t timestamp_us;
+  int source_width;
+  int source_height;
 } gm_video_frame;
 typedef void (*gm_video_frame_fn)(void* user, const gm_video_frame* frame);
+/* What a video sink gets at most; 0 leaves a value unlimited. A picture
+ * larger than max_width x max_height (as displayed, i.e. after rotation) is
+ * scaled down to fit, aspect kept, to even dimensions; it is never scaled up.
+ * Frames that arrive faster than max_fps are dropped. */
+typedef struct gm_video_sink_limits
+{
+  int max_width;
+  int max_height;
+  int max_fps;
+} gm_video_sink_limits;
 /* Hands each decoded frame of a video consumer to fn on a decoder thread;
  * fn NULL removes the sink. Once this returns, the previous sink is not
  * running and is not called again. Free the consumer only after removing
  * a sink whose user data dies first. */
 GM_API int gm_consumer_set_video_sink(gm_consumer* consumer, gm_video_frame_fn fn, void* user);
+/* Limits for the consumer's sink, kept across sinks; NULL lifts them. */
+GM_API int gm_consumer_set_video_sink_limits(gm_consumer* consumer,
+                                             const gm_video_sink_limits* limits);
+/* The same for a local video source (camera, screen, test pattern): each
+ * frame as it goes to the encoders, black while the source is disabled, on
+ * the source's capture thread, so fn has to return quickly. That is the
+ * picture after the encoders' adaptation: while an encoder has the source
+ * step down (a weak uplink, the first seconds of a producer) the sink gets
+ * the smaller picture or lower rate too, and source_width/source_height are
+ * that size, not the capture's. A sink keeps the source delivering without a
+ * producer. gm_source_free removes a sink that is still set. Setting a sink
+ * or limits on an audio source fails; removing a sink is fine for any
+ * source. Calls for one source must not overlap. */
+GM_API int gm_source_set_video_sink(gm_source* source, gm_video_frame_fn fn, void* user);
+GM_API int gm_source_set_video_sink_limits(gm_source* source, const gm_video_sink_limits* limits);
 /* {"framesReceived","width","height"} for video, {"audioLevel" 0..100,
  * "samplesPlayed"} for audio, plus libwebrtc stats under "rtc". Audio is only
  * decoded while playout runs. */

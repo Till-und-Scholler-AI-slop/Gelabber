@@ -954,6 +954,8 @@ mod tests {
                 stride_v: w / 2,
                 rotation: 0,
                 timestamp_us: 0,
+                source_width: w as u32,
+                source_height: h as u32,
             });
             std::thread::sleep(Duration::from_millis(50));
         }
