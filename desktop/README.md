@@ -117,7 +117,11 @@ set them.
   `gm_source_set_video_sink`) feeds all its views. Before frames cross into
   Rust the core scales them down to the largest view (libyuv; never up, so a
   4K screen costs a small tile little) and drops those above the views' rate
-  limit. Views end with the page and with their consumer or source. Frames
+  limit. Views end with the page and with their consumer or source. The
+  header says which matrix the colours need: BT.709 for remote video from
+  720 lines up (the convention of browsers and of the viewer window), BT.601
+  otherwise and always for a self view, because that is what the core
+  converts a captured screen with and what cameras deliver as a rule. Frames
   go through an ordinary command because Tauri checks commands against the
   server origin's capability; a scheme of the app's own or a pushed channel
   measured no faster. A Content-Security-Policy on the server that keeps the

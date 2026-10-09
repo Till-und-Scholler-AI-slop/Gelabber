@@ -26,6 +26,11 @@
 //! | 16     | u32  | sequence number of the view, from 1                |
 //! | 20     | u32  | reserved, 0                                        |
 //! | 24     | i64  | frame timestamp, microseconds                      |
+//!
+//! Frames do not say which matrix made them. Remote video from 720 lines up
+//! is flagged BT.709, the convention of browsers and of viewer.rs; a local
+//! source never is, because the core converts what it captures with BT.601
+//! at any size.
 use gelabber_media_core::{VideoFrame, VideoSink, VideoSinkLimits};
 use std::{
     collections::{HashMap, hash_map::Entry},
@@ -64,9 +69,10 @@ fn copy_plane(out: &mut Vec<u8>, src: &[u8], stride: usize, width: usize, rows: 
     }
 }
 
-/// Writes the frame's packet into `out`. False, with `out` untouched, for a
-/// frame whose planes are shorter than its size says.
-fn pack(out: &mut Vec<u8>, frame: &VideoFrame<'_>, seq: u32) -> bool {
+/// Writes the frame's packet into `out`; `bt709` is the matrix of its
+/// colours ([`Origin::bt709`]). False, with `out` untouched, for a frame
+/// whose planes are shorter than its size says.
+fn pack(out: &mut Vec<u8>, frame: &VideoFrame<'_>, seq: u32, bt709: bool) -> bool {
     let (width, height) = (frame.width as usize, frame.height as usize);
     let (chroma_width, chroma_height) = (width.div_ceil(2), height.div_ceil(2));
     let holds = |plane: &[u8], stride: usize, width: usize, rows: usize| {
@@ -78,13 +84,7 @@ fn pack(out: &mut Vec<u8>, frame: &VideoFrame<'_>, seq: u32) -> bool {
     {
         return false;
     }
-    // Video from 720 lines up is HD and BT.709 by convention (as viewer.rs);
-    // scaling it down for a small view does not change its colours.
-    let mut flags = if frame.source_height >= 720 {
-        FLAG_BT709
-    } else {
-        0
-    };
+    let mut flags = if bt709 { FLAG_BT709 } else { 0 };
     flags |= (((frame.rotation / 90) & 3) as u8) << 1;
     out.clear();
     out.reserve(HEADER_LEN + width * height + 2 * chroma_width * chroma_height);
@@ -166,12 +166,14 @@ struct Slot {
 /// One canvas's view of a stream: its newest frame and the request waiting
 /// for the next.
 pub struct View {
+    origin: Origin,
     slot: Mutex<Slot>,
 }
 
 impl View {
-    fn new(request: VideoSinkLimits) -> Self {
+    fn new(origin: Origin, request: VideoSinkLimits) -> Self {
         Self {
+            origin,
             slot: Mutex::new(Slot {
                 seq: 0,
                 latest: None,
@@ -204,7 +206,7 @@ impl View {
         let waiting = slot.latest.take();
         let kept = waiting.is_some();
         let mut packet = waiting.unwrap_or_default();
-        if !pack(&mut packet, frame, seq) {
+        if !pack(&mut packet, frame, seq, self.origin.bt709(frame)) {
             slot.latest = kept.then_some(packet);
             return;
         }
@@ -281,6 +283,17 @@ pub enum Origin {
     Source(u64),
     /// The synthetic pattern of that width, height and rate.
     Pattern(u32, u32, u32),
+}
+
+impl Origin {
+    /// Whether the frame's colours are BT.709 (else BT.601). Remote video
+    /// from 720 lines up is HD and BT.709 by convention (as viewer.rs);
+    /// scaling it down for a small view does not change its colours. A local
+    /// source is BT.601 at any size: that is the matrix the core converts a
+    /// captured screen with, and the usual one of cameras.
+    fn bt709(self, frame: &VideoFrame<'_>) -> bool {
+        !matches!(self, Origin::Source(_)) && frame.source_height >= 720
+    }
 }
 
 /// Where a feed's frames go. The frame thread holds this for one frame at a
@@ -445,7 +458,7 @@ impl Frames {
         tap: impl FnOnce() -> Result<Box<dyn Tap>>,
     ) -> Result<u64> {
         let handle = self.0.next.fetch_add(1, Ordering::Relaxed) + 1;
-        let view = Arc::new(View::new(request));
+        let view = Arc::new(View::new(origin, request));
         let mut feeds = self.0.feeds.lock().unwrap();
         let targets = Registry::feed(&mut feeds, origin, tap)?.targets.clone();
         targets.lock().unwrap().views.push((handle, view.clone()));
@@ -819,7 +832,7 @@ mod tests {
         padded.y = &y;
         padded.stride_y = 80;
         let mut packet = vec![0xaa; 7];
-        assert!(pack(&mut packet, &padded, 7));
+        assert!(pack(&mut packet, &padded, 7, false));
         assert_eq!(packet.len(), HEADER_LEN + 64 * 36 * 3 / 2);
         assert_eq!(&packet[..4], b"GFR1");
         assert_eq!(u16::from_le_bytes([packet[4], packet[5]]), 32);
@@ -838,38 +851,61 @@ mod tests {
 
         // Odd sizes round the chroma planes up.
         let odd = Planes::bars(33, 19, false);
-        assert!(pack(&mut packet, &frame(&odd, 0), 1));
+        assert!(pack(&mut packet, &frame(&odd, 0), 1, false));
         assert_eq!(packet.len(), HEADER_LEN + 33 * 19 + 2 * 17 * 10);
 
-        // 720 lines and up are BT.709, also when scaled down for a small
-        // view; the rotation is in bits 1 and 2.
-        assert!(pack(
-            &mut packet,
-            &frame(&Planes::bars(1280, 720, true), 0),
-            1
-        ));
-        assert_eq!(packet[7], FLAG_BT709);
-        let mut scaled = frame(&planes, 0);
-        scaled.source_height = 1080;
-        scaled.rotation = 270;
-        assert!(pack(&mut packet, &scaled, 1));
+        // The matrix is bit 0 of the flags, the rotation bits 1 and 2.
+        let mut turned = frame(&planes, 0);
+        turned.rotation = 270;
+        assert!(pack(&mut packet, &turned, 1, true));
         assert_eq!(packet[7], FLAG_BT709 | 3 << 1);
-        scaled.source_height = 480;
-        scaled.rotation = 90;
-        assert!(pack(&mut packet, &scaled, 1));
+        turned.rotation = 90;
+        assert!(pack(&mut packet, &turned, 1, false));
         assert_eq!(packet[7], 1 << 1);
 
         // A plane shorter than its size says is dropped, not read past.
         let before = packet.clone();
         let mut short = frame(&planes, 0);
         short.v = &planes.v[..10];
-        assert!(!pack(&mut packet, &short, 2));
+        assert!(!pack(&mut packet, &short, 2, false));
         assert_eq!(packet, before);
     }
 
     #[test]
+    fn remote_video_is_bt709_from_720_lines_and_a_local_source_never() {
+        let planes = Planes::bars(64, 36, false);
+        let lines = |height: u32| {
+            let mut frame = frame(&planes, 0);
+            frame.source_height = height;
+            frame
+        };
+        // Also when scaled down for a small view.
+        assert!(Origin::Consumer(1).bt709(&lines(1080)));
+        assert!(Origin::Consumer(1).bt709(&lines(720)));
+        assert!(!Origin::Consumer(1).bt709(&lines(718)));
+        assert!(Origin::Pattern(1280, 720, 30).bt709(&lines(720)));
+        // The core converts a captured screen with BT.601 at any size.
+        assert!(!Origin::Source(1).bt709(&lines(1080)));
+        assert!(!Origin::Source(1).bt709(&lines(360)));
+
+        // And that is what a view's packets say.
+        let frames = Frames::default();
+        let flags = |origin: Origin| {
+            let probe = Probe::default();
+            let view = frames.open(origin, DEFAULT_REQUEST, probe.tap()).unwrap();
+            let hd = Planes::bars(1280, 720, true);
+            assert!(probe.push(&hd));
+            let packet = pull(&frames.view(view).unwrap(), None);
+            frames.close(view);
+            packet.try_recv().unwrap().unwrap()[7]
+        };
+        assert_eq!(flags(Origin::Consumer(1)), FLAG_BT709);
+        assert_eq!(flags(Origin::Source(1)), 0);
+    }
+
+    #[test]
     fn a_request_gets_the_newest_frame_once_then_waits_for_the_next() {
-        let view = View::new(DEFAULT_REQUEST);
+        let view = View::new(Origin::Consumer(1), DEFAULT_REQUEST);
         let planes = Planes::bars(32, 18, false);
         let now = Instant::now();
         let publish = |timestamp| view.publish(&frame(&planes, timestamp), 0, now);
@@ -916,7 +952,7 @@ mod tests {
         let start = Instant::now();
         // 60 frames a second for one second.
         let count = |request: VideoSinkLimits, feed_fps: u32| {
-            let view = View::new(request);
+            let view = View::new(Origin::Consumer(1), request);
             for tick in 0..60u64 {
                 let now = start + Duration::from_micros(tick * 16_667);
                 view.publish(&frame(&planes, 0), feed_fps, now);
@@ -931,7 +967,7 @@ mod tests {
         assert_eq!(count(limits(0, 0, 60), 60), 60);
         assert_eq!(count(limits(0, 0, 30), 30), 60);
         // A stream at the limit keeps every frame despite jitter.
-        let view = View::new(limits(0, 0, 30));
+        let view = View::new(Origin::Consumer(1), limits(0, 0, 30));
         for tick in 0..30u64 {
             let jitter = if tick % 2 == 0 { 0 } else { 9_000 };
             let now = start + Duration::from_micros(tick * 33_333 + jitter);
