@@ -3,21 +3,30 @@
 software built into the desktop packages, with the licence texts it ships.
 
   desktop/packaging/third-party-notices.py
-      Rust parts afresh from desktop/Cargo.lock (cargo tree, cargo metadata
-      and the crate sources in the cargo registry). The two parts on the
-      native media core are kept from the existing file as long as their
-      pins have not changed.
+      Rust parts afresh from desktop/Cargo.lock (cargo tree, cargo metadata,
+      the crate sources in the cargo registry and the licence texts of the
+      pinned Rust toolchain). The two parts on the native media core are
+      kept from the existing file as long as their pins have not changed
+      and their text still has the digest written next to them.
   desktop/packaging/third-party-notices.py \\
       --webrtc-src <work-dir>/src --core-build <cmake build dir of the core>
       Everything afresh. <work-dir> is the one of build-libwebrtc-linux.sh
       (a finished Linux build, out/gelabber); the CMake build directory is
-      <target>/<profile>/build/gelabber-media-core-*/out/build.
+      <target>/<profile>/build/gelabber-media-core-*/out/build and holds
+      the unstripped libgelabber_media.so of that build. --core-build alone
+      renews only the part that does not need the libwebrtc checkout.
   desktop/packaging/third-party-notices.py --check
       Exit status 1 when the committed file is not what the first form
-      would write.
+      would write, or when a kept part was changed by hand.
 
-Needs python3, git and cargo; no network beyond what cargo needs to read
-the crates of the lock file. Nothing is written outside the output file.
+Runs on Linux x86-64 only: cargo works out what build scripts and macros
+depend on for the machine it runs on, so the list of build-time crates is
+defined as the one of that host. Needs python3, git, cargo and the rustup
+toolchain of rust-toolchain.toml, for everything afresh also nm; no network
+beyond what cargo needs to read the crates of the lock file. Nothing is
+written outside the output file.
+
+Tests: python3 -m unittest discover -s desktop/packaging/tests
 """
 
 import argparse
@@ -40,11 +49,13 @@ NATIVE = REPO / "desktop/native"
 OUTPUT = REPO / "desktop/app/package/THIRD-PARTY-NOTICES.txt"
 GELABBER_URL = "https://github.com/Till-und-Scholler-AI-slop/Gelabber"
 TARGETS = {"x86_64-unknown-linux-gnu": "Linux", "x86_64-pc-windows-msvc": "Windows"}
+HOST = "x86_64-unknown-linux-gnu"
+CORE_LIBRARY = "libgelabber_media.so"
 WIDTH = 78
 
 # Raise when the wording or layout of a kept part changes, so that an old
 # copy of it is not taken over.
-LIBWEBRTC_PART = 1
+LIBWEBRTC_PART = 2
 CORE_PART = 1
 
 # The build configuration the fixed sentences of parts 1 and 2 describe.
@@ -58,11 +69,86 @@ EXPECTED_FACTS = {
     "the Windows installer embeds the WebView2 bootstrapper": True,
 }
 
-# Licence files libwebrtc's generator is given beyond the one that a
-# library's README.chromium names (only for libraries its table lacks).
-EXTRA_LICENCE_FILES = {"ffmpeg": ["third_party/ffmpeg/COPYING.LGPLv2.1"]}
-
 LICENCE_NAME = re.compile(r"(licen[sc]e|copying|copyright|notice|unlicense|patents)", re.I)
+# Source files whose name begins like a licence file (protobuf's notices.h).
+CODE = (".h", ".c", ".cc", ".cpp", ".py", ".gn", ".gni", ".asm", ".S", ".inc", ".js", ".java", ".json")
+
+# Files that stand next to a library's licence file in libwebrtc's tree and
+# that neither libwebrtc's generator nor the library's README.chromium names,
+# looked at by hand: True prints the file, a sentence says why it is not
+# printed. A licence file found there without an entry stops the script,
+# unless its text is already part of a printed one.
+FFMPEG_OTHER_CONFIGURATIONS = (
+    "FFmpeg's licence texts for builds configured with --enable-gpl or --enable-version3. "
+    "The config.h of this build says CONFIG_GPL 0 and CONFIG_VERSION3 0."
+)
+BESIDE_THE_LICENCE = {
+    "PATENTS": True,
+    "license_template.txt": (
+        "The comment that WebRTC's own source files begin with; it refers to LICENSE and "
+        "PATENTS."
+    ),
+    "third_party/ffmpeg/COPYING.LGPLv2.1": True,
+    "third_party/ffmpeg/COPYING.GPLv2": FFMPEG_OTHER_CONFIGURATIONS,
+    "third_party/ffmpeg/COPYING.GPLv3": FFMPEG_OTHER_CONFIGURATIONS,
+    "third_party/ffmpeg/COPYING.LGPLv3": FFMPEG_OTHER_CONFIGURATIONS,
+    # LICENSE.md names it as the place of the IJG licence.
+    "third_party/libjpeg_turbo/README.ijg": True,
+    "third_party/libyuv/PATENTS": True,
+    "third_party/opus/src/LICENSE_PLEASE_READ.txt": True,
+}
+
+# The compiler's own header directory in libwebrtc's tree: files of it that
+# the build read are not a library missing from the list.
+COMPILER_DIRECTORY = "third_party/llvm-build/"
+
+# Wording by which a licence is recognised in a printed text, to compare a
+# library's licence file with what its README.chromium calls it.
+WORDING = {
+    "Apache-2.0": r"Apache License,? Version 2\.0",
+    "the LLVM exceptions": r"LLVM Exceptions to the Apache 2\.0 License",
+    "NCSA": r"to deal with the Software without restriction",
+    "MIT": r"to deal in the Software without restriction",
+    "BSD": r"Redistribution and use in source and binary forms",
+    "ISC": (
+        r"Permission to use, copy, modify, and(/or)? distribute this software for any purpose "
+        r"with or without fee is hereby granted"
+    ),
+    "LGPL-2.1": r"GNU LESSER GENERAL PUBLIC LICENSE Version 2\.1",
+    "IJG": r"The authors make NO WARRANTY or representation",
+    "Zlib": r"The origin of this software must not be misrepresented",
+    "the SQLite blessing": r"In place of a legal notice, here is a blessing",
+    "OpenSSL": r"OpenSSL",
+    "SSLeay": r"SSLeay",
+    "a statement on patents": r"(?i)\bpatents?\b",
+}
+# Looked for in every text; the others only where README.chromium names them.
+ALWAYS_LOOKED_FOR = (
+    "Apache-2.0", "the LLVM exceptions", "NCSA", "MIT", "BSD", "ISC", "LGPL-2.1", "IJG", "Zlib",
+    "the SQLite blessing",
+)
+# What the licence names in the README.chromium files stand for in WORDING.
+# Names that libwebrtc's tree gives to one-off texts stand for nothing that
+# could be looked for. A name without an entry stops the script.
+NAMED_LICENCES = {
+    "Apache-2.0": ["Apache-2.0"],
+    "Apache-with-LLVM-Exception": ["Apache-2.0", "the LLVM exceptions"],
+    "BSD": ["BSD"], "BSD-2-Clause": ["BSD"], "BSD-3-Clause": ["BSD"], "BSD-3": ["BSD"],
+    "3-clause BSD": ["BSD"],
+    "MIT": ["MIT"], "NCSA": ["NCSA"], "ISC": ["ISC"], "LGPL 2.1": ["LGPL-2.1"],
+    "IJG": ["IJG"], "Zlib": ["Zlib"], "blessing": ["the SQLite blessing"],
+    "OpenSSL": ["OpenSSL"], "SSLeay": ["SSLeay"],
+    "Patent": ["a statement on patents"],
+    "Opus-Patent-BSD-3-Clause": ["BSD", "a statement on patents"],
+    "Custom license": [], "Ignorable": [], "LicenseRef-takuya-ooura": [], "SPL-SQRT-FLOOR": [],
+    "pffft": [],
+}
+
+# Inline functions in C header files of the sysroot.
+INLINE_FUNCTION = re.compile(
+    r"\b(?:static|extern)\s+(?:__always_inline\s+)?(?:__inline__|__inline|inline)\b"
+    r"[^;{}()]*?\b([A-Za-z_]\w*)\s*\("
+)
 LICENCE_DIR = re.compile(r"licen[sc]es?", re.I)
 BUNDLED = (".ttf", ".otf", ".woff", ".woff2", ".a", ".lib", ".dll", ".so", ".dylib", ".o", ".obj")
 NOT_SHIPPED_DIRS = {"tests", "test", "examples", "example", "benches", "fuzz", "doc", "docs", ".github"}
@@ -293,6 +379,14 @@ def chromium_readme(src, licence_file):
     return None, {}
 
 
+def readme_licence_files(src, readme, fields):
+    """The files a README.chromium names as "License File", as paths in the tree."""
+    return [
+        (readme.parent / name.strip()).relative_to(src).as_posix()
+        for name in fields.get("License File", "").split(",") if name.strip()
+    ]
+
+
 def run_webrtc_generator(src, out_dir, targets):
     """libwebrtc's own generate_licenses.py: [(library, [licence files])], notes."""
     sys.dont_write_bytecode = True
@@ -329,18 +423,11 @@ def run_webrtc_generator(src, out_dir, targets):
                     readme, fields = chromium_readme(src, f"third_party/{name}/README.chromium")
                     if "License File" not in fields:
                         die(f"no licence file known for third_party/{name}")
-                    table[name] = [
-                        str((readme.parent / f.strip()).relative_to(src))
-                        for f in fields["License File"].split(",")
-                    ] + EXTRA_LICENCE_FILES.get(name, [])
-                extra = [
-                    f"{n} also {', '.join(EXTRA_LICENCE_FILES[n])}" for n in names if n in EXTRA_LICENCE_FILES
-                ]
+                    table[name] = readme_licence_files(src, readme, fields)
                 notes.append(
                     f"The generator's table has no entry for {' and '.join(names)}: it stops with "
                     f"\"{error}\". For these libraries it was given the licence file that the "
-                    "library's README.chromium names in the field \"License File\""
-                    + (f" (for {'; '.join(extra)})" if extra else "") + "."
+                    "library's README.chromium names in the field \"License File\"."
                 )
         os.environ["PATH"] = path
         with open(Path(scratch) / "LICENSE.md") as produced_file:
@@ -363,7 +450,208 @@ def run_webrtc_generator(src, out_dir, targets):
     return libraries, notes
 
 
-def ffmpeg_configuration(src, gn_args):
+def ninja_build(src, out_name):
+    """What the build in a GN directory compiled, from ninja's own record:
+    object file -> (its source, every file the compile read), as paths in
+    the checkout. A generated file stands for the directory it was generated
+    for; files outside the checkout and other build products are left out."""
+    out_dir = src / out_name
+    generated = f"{out_name}/gen/"
+
+    def in_tree(path):
+        path = os.path.normpath(os.path.join(out_name, path))
+        if path.startswith(generated):
+            return path[len(generated):]
+        outside = path.startswith((f"{out_name}/", "../")) or os.path.isabs(path)
+        return None if outside else path
+
+    # .ninja_deps: the files each compile reported having read.
+    data = (out_dir / ".ninja_deps").read_bytes()
+    version = struct.unpack_from("<i", data, 12)[0] if data.startswith(b"# ninjadeps\n") else 0
+    if version not in (3, 4):
+        die(f"{out_dir}/.ninja_deps is not a deps log of ninja that this script knows")
+    paths, read_by, position = [], {}, 16
+    while position < len(data):
+        (size,) = struct.unpack_from("<I", data, position)
+        record = data[position + 4:position + 4 + (size & 0x7FFFFFFF)]
+        position += 4 + len(record)
+        if size >> 31:
+            # Output, its time (two fields from version 4 on), the inputs.
+            ids = struct.unpack(f"<{len(record) // 4}i", record)
+            read_by[paths[ids[0]]] = [paths[i] for i in ids[version - 1:]]
+        else:
+            paths.append(record[:-4].rstrip(b"\0").decode())
+    # The assembler writes dependency files instead.
+    for depfile in (out_dir / "obj").rglob("*.o.d"):
+        target, _, inputs = read(depfile).replace("\\\n", " ").partition(":")
+        read_by.setdefault(target.strip(), []).extend(inputs.split())
+    sources = {}
+    for ninja in out_dir.rglob("*.ninja"):
+        sources.update(re.findall(r"^build (obj/\S+\.o): \w+ (\S+)", read(ninja), re.M))
+
+    objects = {}
+    for path in sorted((out_dir / "obj").rglob("*.o")):
+        name = path.relative_to(out_dir).as_posix()
+        source = in_tree(sources[name]) if name in sources else None
+        if source is None:
+            die(f"{out_dir}: no source in the checkout found for {name}")
+        objects[name] = (source, {in_tree(p) for p in read_by.get(name, [])} - {None} | {source})
+    return objects
+
+
+def nm(files, cwd=None):
+    """The symbols files define: file -> {name: nm's type letter}."""
+    found = {}
+    for start in range(0, len(files), 500):
+        cmd = ["nm", "-A", "-P", "--defined-only", *(str(f) for f in files[start:start + 500])]
+        try:
+            result = subprocess.run(cmd, cwd=cwd, capture_output=True, text=True)
+        except FileNotFoundError:
+            die("nm (binutils) is needed to look into the object files and the media core")
+        if any("no symbols" not in line for line in result.stderr.splitlines()):
+            die(f"nm failed:\n{result.stderr.strip()}")
+        for line in result.stdout.splitlines():
+            file, _, symbol = line.partition(": ")
+            name, kind = symbol.split()[:2]
+            found.setdefault(file, {})[name] = kind
+    return found
+
+
+def linked_objects(objects, out_dir, core_library):
+    """The symbols of the media core, and the object files of libwebrtc's
+    build that left one there: a function or variable the object defines
+    for other files (not weak, not file-local) is a symbol of the library."""
+    if not core_library.is_file():
+        die(f"{core_library} not found: --core-build is the CMake build directory of the core")
+    library = nm([core_library]).get(str(core_library), {})
+    if "t" not in library.values():
+        die(f"{core_library} is stripped: its symbol table is needed")
+    present = {
+        name for name, symbols in nm(sorted(objects), cwd=out_dir).items()
+        if any(kind in "BCDGRST" and symbol in library for symbol, kind in symbols.items())
+    }
+    return library, present
+
+
+def licence_named(name):
+    return bool(LICENCE_NAME.match(name)) and not name.endswith(CODE)
+
+
+def plain(text):
+    """A text without its line breaks and comment marks, to look for wording."""
+    return " ".join(" ".join(line.strip(" \t*/#") for line in text.splitlines()).split())
+
+
+def series(names):
+    names = list(names)
+    return names[0] if len(names) == 1 else f"{', '.join(names[:-1])} and {names[-1]}"
+
+
+def compared(library, declared, texts):
+    """Where the licence names of a README.chromium and the wording found in
+    the printed licence files differ, as sentences."""
+    names = [name.strip() for name in declared.split(",") if name.strip()]
+    unknown = [name for name in names if name not in NAMED_LICENCES]
+    if unknown:
+        die(f"README.chromium of {library} names {unknown}: say in NAMED_LICENCES what to look for")
+    found = {kind for kind, wording in WORDING.items() if any(re.search(wording, t) for t in texts)}
+    missing = [name for name in names if not set(NAMED_LICENCES[name]) <= found]
+    named = {kind for name in names for kind in NAMED_LICENCES[name]}
+    unnamed = [kind for kind in ALWAYS_LOOKED_FOR if kind in found and kind not in named]
+    files = "file" if len(texts) == 1 else "files"
+    out = []
+    if missing:
+        out.append(
+            f"README.chromium names {series(missing)}; the wording of "
+            f"{'that' if len(missing) == 1 else 'these'} was not found in the library's licence "
+            f"{files} printed here.")
+    if unnamed:
+        out.append(
+            f"The licence {files} printed here {'holds' if len(texts) == 1 else 'hold'} the "
+            f"wording of {series(unnamed)}, which README.chromium does not name.")
+    return " ".join(out)
+
+
+def build_survey(src, objects, roots):
+    """What ninja's record says per library and directory. roots says where
+    the libraries live (directory -> name, "" for libwebrtc itself). Returns
+    the object files compiled from a library's sources, those of others that
+    read one of its files, the object files that read a file in a directory
+    or below it, and per library the licence files in those directories."""
+    owners = {}
+
+    def owner(folder):
+        if folder not in owners:
+            owners[folder] = roots[folder] if folder in roots else owner(os.path.dirname(folder))
+        return owners[folder]
+
+    own, readers, users = {}, {}, {}
+    for name, (source, files) in objects.items():
+        source_owner = owner(os.path.dirname(source))
+        own.setdefault(source_owner, set()).add(name)
+        folders = set()
+        for file in files:
+            folder = os.path.dirname(file)
+            if owner(folder) == roots[""] and re.search(r"(^|/)third_party/", file) \
+                    and not file.startswith(COMPILER_DIRECTORY):
+                die(f"the build read {file}, which is in no library of the generator's list")
+            if owner(folder) != source_owner:
+                readers.setdefault(owner(folder), set()).add(name)
+            while folder not in folders:
+                folders.add(folder)
+                folder = os.path.dirname(folder)
+        for folder in folders:
+            users.setdefault(folder, set()).add(name)
+
+    licence_files = {}
+    for folder in sorted(users):
+        if (src / folder).is_dir():
+            for file in sorted(os.listdir(src / folder)):
+                if licence_named(file) and (src / folder / file).is_file():
+                    licence_files.setdefault(owner(folder), []).append(os.path.join(folder, file))
+    return own, readers, users, licence_files
+
+
+def library_texts(src, name, generator_files, named, found):
+    """The licence files of a library: those of libwebrtc's generator and of
+    its README.chromium (named), what stands next to them, and of the files
+    the survey found, those of directories below the library. Returns the
+    files to print, {reason: [files next to them that are not printed]} and
+    the files of directories below."""
+    printed = generator_files + [file for file in named if file not in generator_files]
+    beside_these = {os.path.dirname(file) for file in printed}
+    beside = {
+        os.path.join(folder, file) for folder in beside_these for file in os.listdir(src / folder)
+        if licence_named(file) and (src / folder / file).is_file()
+    } | {
+        file for file, verdict in BESIDE_THE_LICENCE.items()
+        if verdict is True and os.path.dirname(file) in beside_these
+    }
+    left_out = {}
+    for file in sorted(beside - set(printed)):
+        verdict = BESIDE_THE_LICENCE.get(file)
+        if verdict is True:
+            printed.append(file)
+            continue
+        if not verdict:
+            holder = next((p for p in printed if plain(read(src / file)) in plain(read(src / p))), None)
+            if not holder:
+                die(f"{file} stands next to the licence file of {name}: add it to BESIDE_THE_LICENCE")
+            verdict = f"Its text is part of {holder}, printed here."
+        left_out.setdefault(verdict, []).append(os.path.basename(file))
+    below = [
+        file for file in found if file not in printed and os.path.dirname(file) not in beside_these
+    ]
+    return printed, left_out, below
+
+
+def field(label, text):
+    """A heading line "  Label     text"; long text continues below its start."""
+    lines = textwrap.wrap(text, WIDTH - 12, break_long_words=False, break_on_hyphens=False)
+    return [f"  {label:<9} {lines[0]}"] + [" " * 12 + line for line in lines[1:]]
+
+
+def ffmpeg_configuration(src, gn_args, library):
     branding = next(a.split("=", 1)[1].strip('"') for a in gn_args if a.startswith("ffmpeg_branding="))
     config = Path("third_party/ffmpeg/chromium/config") / branding / "linux/x64"
     header = read(src / config / "config.h")
@@ -371,23 +659,89 @@ def ffmpeg_configuration(src, gn_args):
     switches = {
         name: re.search(rf"#define CONFIG_{name} (\d)", header)[1] for name in ("GPL", "NONFREE", "VERSION3")
     }
+    if licence != "LGPL version 2.1 or later" or set(switches.values()) != {"0"}:
+        die(f"{config}/config.h: the sentences on FFmpeg describe an LGPL 2.1 configuration")
     enabled = {}
     components = read(src / config / "config_components.h")
     for name, kind in re.findall(r"#define CONFIG_(\w+)_(DECODER|PARSER|DEMUXER|ENCODER|MUXER) 1", components):
-        enabled.setdefault(kind.lower() + "s", []).append(name.lower())
+        enabled.setdefault(kind.lower(), []).append(name.lower())
     out = para(
         f"Licence of this build as its configuration states it ({config}/config.h): "
         f"FFMPEG_LICENSE \"{licence}\", CONFIG_GPL {switches['GPL']}, CONFIG_NONFREE "
         f"{switches['NONFREE']}, CONFIG_VERSION3 {switches['VERSION3']}.")
     out += para(
         "Components that configuration enables, which are compiled into the libwebrtc "
-        "package (the linker decides which of them reach the media core):")
+        f"package, and which of them are among the symbols of {CORE_LIBRARY} (Linux; FFmpeg "
+        "registers a component as ff_<name>_<kind>):")
     for kind in sorted(enabled):
-        out += f"  {kind}:\n" + listing(sorted(enabled[kind]), 4)
+        names = sorted(enabled[kind])
+        linked = [name for name in names if f"ff_{name}_{kind}" in library]
+        which = "none" if not linked else "all" if linked == names else series(linked)
+        out += para(f"{kind}s ({len(names)}; in {CORE_LIBRARY}: {which}):", 2) + listing(names, 4)
     return out
 
 
-def libwebrtc_part(src, out_name):
+def leading_comment(text):
+    comment = re.match(r"\s*/\*(.*?)\*/", text, re.S)
+    lines = [re.sub(r"^\s*\*? ?", "", line).rstrip() for line in comment[1].splitlines()] if comment else []
+    return "\n".join(lines).strip("\n")
+
+
+def system_headers(src, library):
+    """Inline functions that C header files of the sysroot define and that
+    are file-local functions of the media core, by name; with the notice
+    each such header begins with."""
+    sysroots = sorted((src / "build/linux").glob("debian_*amd64-sysroot"))
+    if len(sysroots) != 1:
+        die(f"{src}/build/linux: expected one amd64 sysroot, found {len(sysroots)}")
+    sysroot = sysroots[0]
+    local = set()
+    for name, kind in library.items():
+        if kind == "t":
+            mangled = re.match(r"_ZL(\d+)", name)
+            if mangled:
+                local.add(name[mangled.end():mangled.end() + int(mangled[1])])
+            elif not name.startswith("_Z"):
+                local.add(name)
+    notices = {}  # notice -> [(header, functions)]
+    for folder, folders, files in os.walk(sysroot / "usr/include"):
+        folders.sort()
+        if "c++" in folders and Path(folder) == sysroot / "usr/include":
+            folders.remove("c++")
+        for file in sorted(files):
+            if not (Path(folder) / file).is_file():
+                continue
+            text = read(Path(folder) / file)
+            names = sorted(set(INLINE_FUNCTION.findall(text)) & local) if "inline" in text else []
+            if names:
+                header = (Path(folder) / file).relative_to(sysroot).as_posix()
+                notices.setdefault(leading_comment(text), []).append((header, names))
+
+    stamp = sysroot / ".stamp"
+    heading = ["Header files of system libraries"]
+    heading += field("From", f"{sysroot.relative_to(src).as_posix()} in libwebrtc's tree")
+    if stamp.is_file():
+        heading += field("", read(stamp).strip())
+    body = para(
+        "libwebrtc and the media core are compiled for Linux against this sysroot: header "
+        "files of Debian packages for the system libraries the programs load when they run. "
+        "A function that such a header defines inline is compiled into the code that uses "
+        f"it. Looked for by name: the file-local functions among the symbols of {CORE_LIBRARY} "
+        "that a C header of the sysroot defines as an inline function (the headers of the "
+        "C++ standard library left out). Inline code that the compiler merged into its "
+        "callers, macros and templates leave no symbol and are not found this way; nothing "
+        "else was collected for system header files.")
+    if not notices:
+        body += "\n" + para("No such function was found.")
+    for notice, headers in notices.items():
+        body += "\n"
+        for header, names in headers:
+            body += f"[{header}]\n" + para(f"Functions: {', '.join(names)}.")
+        body += "\n" + (clean(notice) if notice else para("The file does not begin with a notice."))
+    return text_block(heading, body)
+
+
+def libwebrtc_part(src, out_name, core_build):
     src = Path(src).resolve()
     pin = pins()
     if git(src, "rev-parse", "HEAD") != pin["WEBRTC_COMMIT"]:
@@ -412,6 +766,40 @@ def libwebrtc_part(src, out_name):
     if not {"libc++", "libc++abi", "llvm-libc", "ffmpeg", "openh264"} <= set(names):
         die("the Windows paragraph of part 2 names libraries that are no longer in the list")
 
+    # Where each library lives in the tree: the directory of its
+    # README.chromium, else that of its licence file; the rest is libwebrtc.
+    readmes, roots = {}, {"": "webrtc"}
+    for name, files in libraries:
+        readme, fields = chromium_readme(src, files[0])
+        if name != "webrtc" and readme and readme.parent == src:
+            readme, fields = None, {}
+        readmes[name] = (readme, fields)
+        if name != "webrtc":
+            root = (readme.parent if readme else (src / files[0]).parent).relative_to(src).as_posix()
+            if roots.setdefault(root, name) != name:
+                die(f"{name} and {roots[root]} share the directory {root}")
+
+    # What the build compiled, and what of it is in the Linux library.
+    objects = ninja_build(src, out_name)
+    library, present = linked_objects(objects, out_dir, Path(core_build).resolve() / CORE_LIBRARY)
+    own, readers, users, licence_files = build_survey(src, objects, roots)
+    if not own.get("webrtc", set()) & present:
+        die(f"{CORE_LIBRARY} has no symbol of libwebrtc's object files: not built against {out_dir}?")
+    for name in ("ffmpeg", "openh264"):
+        if not own.get(name, set()) & present:
+            die(f"parts 1 and 2 say that {name} is in {CORE_LIBRARY}, but no object file of it is")
+
+    def on_linux(name):
+        mine, others = own.get(name, set()), readers.get(name, set())
+        line = (
+            f"in {CORE_LIBRARY}: {len(mine & present)} of its {len(mine)} object files"
+            if mine else "no object files of its own in the build"
+        )
+        if others:
+            line += (", and " if mine else f"; in {CORE_LIBRARY}: ")
+            line += f"{len(others & present)} of the {len(others)} other object files that read its files"
+        return line
+
     out = para(
         "libwebrtc is built from source at the pinned commit and linked statically into the "
         "native media core, together with the third-party libraries of its source tree that "
@@ -432,12 +820,53 @@ def libwebrtc_part(src, out_name):
     for note in notes:
         out += para(note, 2)
     out += para(
-        "This is a list of dependencies. It can name more than the binary holds: the linker "
-        "drops code that nothing references, and tools of the build are dependencies too "
-        "(nasm is an assembler). \"From\" is the git repository and commit the licence file "
-        "was checked out from; apart from the change named above, none of these checkouts "
-        "differed from its commit. The other fields quote the README.chromium that "
-        "libwebrtc's tree keeps for the library.", 2)
+        "The generator's table names one licence file per library. Added from the same "
+        "checkout and build directory:", 2)
+    out += item(
+        "the files that a library's README.chromium names as \"License File\" and the "
+        "generator's table lacks;")
+    out += item(
+        "licence files of directories below a library. ninja's record of the build (its "
+        "dependency log, the assembler's dependency files and the build statements) says "
+        "which files every compile read. A file named like a licence file that stands in "
+        "the directory of such a file, or in a directory above it, and is neither one of "
+        "the library's own licence files nor next to them, is printed under the library it "
+        "belongs to, with what the build read from that directory;")
+    out += item(
+        "files next to a library's licence file that neither the generator nor "
+        "README.chromium names. They were looked at one by one (the table "
+        "BESIDE_THE_LICENCE of the script); an entry says which of them it does not print "
+        "and why.")
+    out += para(
+        "The same record was used to check the list against the build: every object file "
+        "was compiled from a file of libwebrtc's own checkouts or of a listed library, and "
+        "no file a compile read lies in a third_party directory outside the listed "
+        f"libraries, apart from the compiler's own headers ({COMPILER_DIRECTORY.rstrip('/')}).", 2)
+    out += para(
+        "Not collected: notices that stand only at the head of individual source files and "
+        "not in a licence file.", 2)
+    out += para(
+        "\"From\" is the git repository and commit the licence file was checked out from; "
+        "apart from the change named above, none of these checkouts differed from its "
+        "commit. \"README\" quotes the README.chromium that libwebrtc's tree keeps for the "
+        "library. Those are statements of that file and were not verified, with one "
+        "exception: the script looks in the library's printed licence files for the wording "
+        "of each licence README.chromium names, and in every case for the wording of "
+        f"{series(ALWAYS_LOOKED_FOR)}. Where the two differ, the entry says so. That is a "
+        "search for wording, not a reading of the texts.", 2)
+    out += "\nWhat is in the Linux library\n"
+    out += para(
+        "The generator's list is a list of dependencies. It can name more than the binary "
+        "holds: the linker leaves out object files that nothing refers to, and tools of the "
+        f"build are dependencies too. The lines \"Linux\" say what was found in a {CORE_LIBRARY} "
+        "with its symbol table, built from the pins of parts 2 and 3 on the machine that "
+        "generated this part. An object file of libwebrtc's build counts as being in the "
+        "library when a function or variable that it defines for other files (not weak, not "
+        "file-local) is among the library's symbols. \"Other object files that read its "
+        "files\" were compiled with a file of the library, usually a header, without "
+        "belonging to it; whether code from that file reached them is not visible. The "
+        "library in the packages is built separately from the same sources and was not "
+        "looked into.", 2)
     out += "\nWindows\n"
     out += para(
         "No list was generated for the Windows build of libwebrtc (target_os=\"win\", "
@@ -453,16 +882,18 @@ def libwebrtc_part(src, out_name):
         "Windows, so its own code refers to neither (see part 1).")
     out += para(
         "Whether the Windows build depends on third-party libraries that the Linux build "
-        "lacks was not established.", 2)
+        "lacks was not established. gelabber_media.dll was not looked into: the lines "
+        "\"Linux\" and the entry on system header files describe the Linux library only.", 2)
     out += "\nLibraries\n"
     out += listing(names, 2)
+    out += para("After them: header files of system libraries.", 2)
 
-    for name, files in libraries:
-        folder = (src / files[0]).parent
+    for name, generator_files in libraries:
+        readme, fields = readmes[name]
+        folder = (src / generator_files[0]).parent
         top = Path(git(folder, "rev-parse", "--show-toplevel"))
         if top != src and git(top, "status", "--porcelain", "--untracked-files=no"):
             die(f"{top} has local changes")
-        readme, fields = chromium_readme(src, files[0])
         heading = [
             name,
             f"  From      {git(top, 'config', '--get', 'remote.origin.url')}",
@@ -474,35 +905,65 @@ def libwebrtc_part(src, out_name):
             if nested.parent != top:
                 heading.append(f"  Code      {git(nested.parent, 'config', '--get', 'remote.origin.url')}")
                 heading.append(f"            commit {git(nested.parent, 'rev-parse', 'HEAD')}")
-        if name != "webrtc":
-            for label, field in (("Name", "Name"), ("Version", "Version"), ("Revision", "Revision")):
-                if fields.get(field, "N/A") not in ("N/A", "DEPS"):
-                    heading.append(f"  {label:<9} {fields[field]}")
-        if fields.get("License"):
-            heading.append(f"  Declared  {fields['License']}")
-        heading.append(f"  Text      {', '.join(files)}")
+        quoted = [
+            f"{key}: {fields[key]}"
+            for key in (("License",) if name == "webrtc" else ("Name", "Version", "Revision", "License", "Shipped"))
+            if fields.get(key, "N/A") not in ("N/A", "DEPS")
+        ]
+        if quoted:
+            heading += field("README", f"{readme.relative_to(src).as_posix()} says")
+            for line in quoted:
+                heading += field("", line)
+
+        named = readme_licence_files(src, readme, fields) if readme else []
+        printed, left_out, below = library_texts(
+            src, name, generator_files, named, licence_files.get(name, []))
+        files = printed + below
+        for index, file in enumerate(files):
+            heading.append(f"  {'Text' if index == 0 else '':<9} {file}")
+        heading += field("Linux", on_linux(name))
+
         body = ""
         if name == "ffmpeg":
             body += para(
-                "FFmpeg is linked statically, as part of libwebrtc, into libgelabber_media.so "
+                f"FFmpeg is linked statically, as part of libwebrtc, into {CORE_LIBRARY} "
                 "(Linux). It is Chromium's copy of FFmpeg, unchanged. The source code is the "
                 "repository and commit named above; the commands that build it into the media "
                 "core are desktop/native/scripts/build-libwebrtc-linux.sh "
                 f"and desktop/native/CMakeLists.txt in the Gelabber repository ({GELABBER_URL}) "
                 "at the tag of the release.")
-            body += ffmpeg_configuration(src, gn_args) + "\n"
+            body += ffmpeg_configuration(src, gn_args, library) + "\n"
         if name == "openh264":
             body += para(
-                "OpenH264 is linked statically, as part of libwebrtc, into libgelabber_media.so "
+                f"OpenH264 is linked statically, as part of libwebrtc, into {CORE_LIBRARY} "
                 "(Linux), built from the source named above. The README.chromium of libwebrtc's "
                 "tree notes for it that licences other than the BSD licence of the source apply "
                 "to builds (MPEG LA patents) and refers to www.openh264.org.") + "\n"
+        difference = compared(name, fields.get("License", ""), [plain(read(src / f)) for f in printed])
+        if difference:
+            body += para(difference) + "\n"
+        for reason, others in left_out.items():
+            body += para(f"Not printed: {series(others)}, next to the licence file. {reason}") + "\n"
+        described = set()
         for file in files:
             if len(files) > 1:
                 body += f"[{file}]\n\n"
+            directory = os.path.dirname(file)
+            if file in below and directory not in described:
+                described.add(directory)
+                read_there = sorted({
+                    f[len(directory) + 1:] for user in users[directory] for f in objects[user][1]
+                    if f.startswith(directory + "/")
+                })
+                which = f" ({', '.join(read_there)})" if len(read_there) <= 8 else ""
+                body += para(
+                    f"A directory below {name} with licence files of its own. The build read "
+                    f"{len(read_there)} of its files{which}. In {CORE_LIBRARY} (Linux): "
+                    f"{len(users[directory] & present)} of the {len(users[directory])} object "
+                    "files compiled with them.") + "\n"
             body += clean(read(src / file)) + "\n"
         out += "\n" + text_block(heading, body)
-    return out
+    return out + "\n" + system_headers(src, library)
 
 
 # --- part 3: the other libraries of the media core ---------------------------
@@ -638,6 +1099,20 @@ def core_part(build_dir):
 # --- parts 4 to 6: the application -------------------------------------------
 
 
+def rust_toolchain():
+    """Channel and directory of the toolchain that rust-toolchain.toml pins.
+    cargo works out what build scripts and macros depend on for the machine
+    it runs on, so the file is defined as the one a Linux x86-64 host writes."""
+    channel = re.search(r'channel\s*=\s*"([^"]+)"', read(REPO / "rust-toolchain.toml"))[1]
+    version = run("rustc", "-vV", cwd=REPO)
+    host, release = (re.search(rf"^{key}: (\S+)", version, re.M)[1] for key in ("host", "release"))
+    if host != HOST:
+        die(f"run this on {HOST}: on {host} cargo reports other build-time crates")
+    if release != channel:
+        die(f"rustc is {release}, rust-toolchain.toml pins {channel}: run it through rustup")
+    return channel, Path(run("rustc", "--print", "sysroot", cwd=REPO).strip())
+
+
 def cargo(*args, offline):
     cmd = ["cargo", *args, "--locked", "--manifest-path", REPO / "desktop/Cargo.toml"]
     return run(*cmd, *(["--offline"] if offline else []), cwd=REPO)
@@ -725,6 +1200,7 @@ def below_root(name, root, below, features):
 
 def rust_parts(offline):
     packages, features, linked, build_time = {}, {}, {}, set()
+    graphs, reported = {}, {}
     for target, system in TARGETS.items():
         # Per target: without the filter cargo wants every crate of the lock
         # file, also those of systems the app is not built for.
@@ -735,12 +1211,34 @@ def rust_parts(offline):
             known = packages.setdefault((package["name"], package["version"]), package)
             if known["id"] != package["id"]:
                 die(f"two packages are called {package['name']} {package['version']}")
+        graphs[target] = {node["id"]: node for node in metadata["resolve"]["nodes"]}
         for node in metadata["resolve"]["nodes"]:
             features.setdefault(node["id"], set()).update(node["features"])
         in_binary = cargo_tree(target, "normal,no-proc-macro", offline)
         for key in in_binary:
             linked.setdefault(key, []).append(system)
-        build_time |= cargo_tree(target, "normal,build", offline)
+        reported[target] = cargo_tree(target, "normal,build", offline)
+        build_time |= reported[target]
+
+    # cargo works out what build scripts and macros depend on for the machine
+    # it runs on, here Linux. What a build on Windows adds: the dependencies
+    # for Windows that the manifest of a reported crate names as not
+    # optional, and theirs in turn.
+    windows = next(target for target, system in TARGETS.items() if system == "Windows")
+    by_id = {package["id"]: key for key, package in packages.items()}
+    on_windows, queue = set(), [packages[key]["id"] for key in reported[windows]]
+    while queue:
+        node = graphs[windows][queue.pop()]
+        required = {
+            dependency["name"] for dependency in packages[by_id[node["id"]]]["dependencies"]
+            if dependency["kind"] in (None, "build") and not dependency["optional"]
+        }
+        for dependency in node["deps"]:
+            key = by_id[dependency["pkg"]]
+            if key[0] in required and key not in reported[windows] | on_windows \
+                    and any(kind["kind"] in (None, "build") for kind in dependency["dep_kinds"]):
+                on_windows.add(key)
+                queue.append(dependency["pkg"])
 
     def third_party(keys):
         # Without a source it is a crate of this workspace.
@@ -819,17 +1317,28 @@ def rust_parts(offline):
         "crate, outside its tests and examples:",
         remarks, "Nothing found.")
 
+    def named(keys):
+        return "".join(
+            f"  {key[0]} {key[1]} | "
+            f"{packages[key]['license'] or 'see ' + str(packages[key]['license_file'])}\n"
+            for key in third_party(keys)
+        )
+
     crates += "\nBuild time only\n"
     crates += para(
         "Procedural macros, build scripts and what those depend on. They run on the "
         "machine that builds the application; their own code is not linked into it, the "
-        "code they generate is. As reported by cargo for the same two targets (-e "
+        "code they generate is. cargo works out this group for the machine it runs on: "
+        "the list is what cargo reports on Linux x86-64 for the two targets (-e "
         "normal,build, without the crates listed above). No texts are reproduced for "
         "them.", 2)
-    crates += "\n"
-    for key in third_party(build_time - set(linked)):
-        package = packages[key]
-        crates += f"  {key[0]} {key[1]} | {package['license'] or 'see ' + str(package['license_file'])}\n"
+    crates += "\n" + named(build_time - set(linked)) + "\n"
+    crates += para(
+        "The Windows package is built on Windows. For that machine the manifests of the "
+        "crates cargo reported name further dependencies as not optional, which cargo on "
+        "Linux leaves out. These and what they depend on in turn, taken from cargo "
+        "metadata and not from a build:", 2)
+    crates += "\n" + (named(on_windows - set(linked)) or "  None.\n")
 
     licence_texts = para(
         "Each distinct licence file of the crates in part 5, with the file names and the "
@@ -842,8 +1351,12 @@ def rust_parts(offline):
     return crates, licence_texts
 
 
-def std_part():
-    channel = re.search(r'channel\s*=\s*"([^"]+)"', read(REPO / "rust-toolchain.toml"))[1]
+def std_part(toolchain):
+    channel, sysroot = toolchain
+    licences = {name: sysroot / f"share/doc/rust/licenses/{name}.txt" for name in ("Apache-2.0", "MIT")}
+    for path in licences.values():
+        if not path.is_file():
+            die(f"{path} not found: the rustc component of the rustup toolchain ships it")
     out = para(
         f"The application is compiled with Rust {channel} (rust-toolchain.toml). The Rust "
         "standard library of that toolchain (std, core, alloc and the crates they are built "
@@ -851,10 +1364,22 @@ def std_part():
     out += "\n"
     out += para(
         "The Rust project states for it: licensed under Apache-2.0 or MIT, at the user's "
-        "option, copyright The Rust Project Developers. The standard library has "
-        "third-party dependencies of its own. The Rust project documents them and their "
-        "notices in the file share/doc/rust/COPYRIGHT-library.html of the installed "
-        "toolchain. That document is not reproduced here.")
+        "option, copyright The Rust Project Developers. The two texts below are the ones "
+        "the toolchain ships for these licences, in its rustc component."
+        + (
+            " Its MIT text is the general form of that licence, with a placeholder where the "
+            "copyright line stands."
+            if "<copyright holders>" in read(licences["MIT"]) else ""
+        ))
+    out += "\n"
+    out += para(
+        "The standard library has third-party dependencies of its own. The toolchain "
+        "describes them and their notices in share/doc/rust/COPYRIGHT-library.html, also in "
+        "the rustc component. That document is not in the packages and is not reproduced "
+        "here, and which of the crates it names are in the application was not established.")
+    for name, path in licences.items():
+        heading = [name, f"  Text      {path.relative_to(sysroot).as_posix()} of Rust {channel}"]
+        out += "\n" + text_block(heading, read(path))
     return out
 
 
@@ -880,7 +1405,12 @@ def scope_part():
     out += item(
         "Libraries the programs load from the operating system when they run, for example "
         "glibc, GLib, GTK 3, WebKitGTK, libdbus, PipeWire and GStreamer on Linux, the "
-        "system DLLs and the WebView2 Runtime on Windows. They are not in the packages.")
+        "system DLLs and the WebView2 Runtime on Windows. The libraries are not in the "
+        "packages. Their header files are used when the programs are compiled, and inline "
+        "functions and macros of those headers become part of the programs. The last entry "
+        "of part 2 says what a search of the Linux media core found of them and prints the "
+        "notices of those headers. Nothing else was collected for header files of system "
+        "libraries or of the compilers.")
     out += item(
         "The web client. The application shows the pages of the Gelabber server it is "
         "connected to; they are not in the packages.")
@@ -894,17 +1424,21 @@ def scope_part():
         "refresh it. Inputs:", 2)
     out += item(
         f"part 2: a checkout of libwebrtc at {pin['WEBRTC_COMMIT']} with a finished Linux "
-        "build, read with libwebrtc's own licence generator")
+        "build, read with libwebrtc's own licence generator and through ninja's record of "
+        "that build, and a Linux build of the media core with its symbol table")
     out += item(
         "part 3: the sources that desktop/native/CMakeLists.txt fetched for a build of the "
         "media core, checked against the pins in desktop/native/libwebrtc.env and "
         "CMakeLists.txt")
     out += item(
-        "parts 4 to 6: desktop/Cargo.lock through cargo tree and cargo metadata, and the "
-        "crate sources in the cargo registry")
+        "parts 4 to 6: desktop/Cargo.lock through cargo tree and cargo metadata on Linux "
+        "x86-64, the crate sources in the cargo registry, and the licence texts in the "
+        "Rust toolchain that rust-toolchain.toml pins")
     out += para(
         "Nothing was built or run for Windows to produce it; what it says about the "
-        "Windows package is derived from the build scripts and the lock file.", 2)
+        "Windows package is derived from the build scripts and the lock file. What part 2 "
+        "says about the contents of the Linux media core was found in a build made on the "
+        "machine that generated it, not in the released library.", 2)
     out += "\nOpen points\n"
     out += item(
         "H.264 on Linux. libwebrtc is built with rtc_use_h264=true for Linux, so "
@@ -944,11 +1478,20 @@ def scope_part():
 
 # --- the file -----------------------------------------------------------------
 
-KEPT = "[inputs {}: the script keeps this part while they are unchanged]\n\n"
+# A part that is kept names a digest of its inputs and one of its own text.
+KEPT = (
+    "[the script keeps this part while its inputs have the digest {}\n"
+    " and its text has the digest {}]\n\n"
+)
+
+
+def text_digest(text):
+    return sha256(text.encode())[:32]
 
 
 def kept_parts(text):
-    """The parts of an existing file that name their inputs: number -> (inputs, body)."""
+    """The parts of an existing file that are marked as kept:
+    number -> (inputs, digest of the text, text)."""
     found = {}
     starts = list(re.finditer(r"^#{78}\n(\d)\. [^\n]*\n#{78}\n\n", text, re.M))
     for index, start in enumerate(starts):
@@ -956,8 +1499,29 @@ def kept_parts(text):
         body = text[start.end():end]
         marker = re.match(re.escape(KEPT).replace(r"\{\}", r"(\w+)"), body)
         if marker:
-            found[int(start[1])] = (marker[1], body[marker.end():])
+            found[int(start[1])] = (marker[1], marker[2], body[marker.end():].strip("\n"))
     return found
+
+
+def native_part(kept, number, inputs, source, make, flag, file_name):
+    """A part on the native media core: made from its sources when they are
+    given, else the one of the existing file, provided that its inputs are
+    the current ones and that nobody changed its text."""
+    if source:
+        text = make(source).strip("\n")
+        return KEPT.format(inputs, text_digest(text)) + text
+    if kept.get(number, ("",))[0] != inputs:
+        die(
+            f"the inputs of part {number} changed or {file_name} does not have it yet: "
+            f"run again with {flag} (see the header of this script)"
+        )
+    _, digest, text = kept[number]
+    if text_digest(text) != digest:
+        die(
+            f"part {number} of {file_name} is not the text the script wrote (changed by hand "
+            f"or damaged): restore it from git or run again with {flag}"
+        )
+    return KEPT.format(inputs, digest) + text
 
 
 def main():
@@ -965,40 +1529,36 @@ def main():
     option = parser.add_argument
     option("--webrtc-src", help="libwebrtc checkout (the src directory) at the pinned commit")
     option("--webrtc-out", default="out/gelabber", help="its GN build directory (default: %(default)s)")
-    option("--core-build", help="CMake build directory of the media core (contains _deps)")
+    option("--core-build", help=f"CMake build directory of the media core (_deps, {CORE_LIBRARY})")
     option("--output", type=Path, default=OUTPUT, help="default: %(default)s")
     option("--offline", action="store_true", help="pass --offline to cargo")
     option("--check", action="store_true", help="compare instead of writing; exit status 1 on a difference")
     args = parser.parse_args()
+    if args.webrtc_src and not args.core_build:
+        die(f"--webrtc-src needs --core-build: part 2 says what of libwebrtc is in {CORE_LIBRARY}")
 
     existing = read(args.output).replace("\r\n", "\n") if args.output.is_file() else ""
     kept = kept_parts(existing)
-
-    def native_part(number, inputs, source, make, flag):
-        if source:
-            return KEPT.format(inputs) + make(source)
-        if kept.get(number, ("",))[0] != inputs:
-            die(
-                f"the inputs of part {number} changed or {args.output.name} does not have it yet: "
-                f"run again with {flag} (see the header of this script)"
-            )
-        return KEPT.format(inputs) + kept[number][1]
-
+    toolchain = rust_toolchain()
     crates, licence_texts = rust_parts(args.offline)
     parts = [
         ("Scope, sources and open points", scope_part()),
         (
             "Native media core: libwebrtc and the libraries built with it",
             native_part(
-                2, libwebrtc_fingerprint(), args.webrtc_src,
-                lambda src: libwebrtc_part(src, args.webrtc_out), "--webrtc-src",
+                kept, 2, libwebrtc_fingerprint(), args.webrtc_src,
+                lambda src: libwebrtc_part(src, args.webrtc_out, args.core_build),
+                "--webrtc-src and --core-build", args.output.name,
             ),
         ),
         (
             "Native media core: other libraries",
-            native_part(3, core_fingerprint(), args.core_build, core_part, "--core-build"),
+            native_part(
+                kept, 3, core_fingerprint(), args.core_build, core_part, "--core-build",
+                args.output.name,
+            ),
         ),
-        ("Application: Rust standard library", std_part()),
+        ("Application: Rust standard library", std_part(toolchain)),
         ("Application: Rust crates", crates),
         ("Application: licence texts of the Rust crates", licence_texts),
     ]
