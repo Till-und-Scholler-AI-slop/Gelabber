@@ -16,9 +16,13 @@ import {
   nativeCanvasHeight,
   nativeDisplayTrack,
   nativeVideoLimit,
+  nativeVideoSuspended,
   nativeVideoTarget,
   resetNativeVideoForTests,
+  resumeNativeVideo,
   subscribeNativeVideoLimit,
+  subscribeNativeVideoSuspensions,
+  suspendNativeVideo,
   type NativeVideoHost,
 } from "./videoFeed.ts";
 
@@ -55,6 +59,9 @@ class FakeApp implements NativeBridge {
   release: (() => void) | null = null;
   holdOpen = false;
   failOpen = false;
+  /** Holds the answers to `media_view_close` back until called. */
+  closed: Array<() => void> = [];
+  holdClose = false;
   private views = 0;
 
   async channel() {
@@ -84,6 +91,8 @@ class FakeApp implements NativeBridge {
         );
       case "media_view_close":
         this.end(view);
+        if (this.holdClose)
+          await new Promise<void>((resolve) => this.closed.push(resolve));
         return null as T;
       default:
         return null as T;
@@ -752,6 +761,148 @@ describe("native video feed", () => {
     attachNativeVideo(track, { name: "x", width: 0, height: 0 } as FakeCanvas);
     expect(nativeCanvasHeight(track.id)).toBe(1800);
     expect(nativeCanvasHeight("other")).toBe(0);
+  });
+});
+
+describe("video of a consumer that is suspended", () => {
+  it("closes the consumer's view at once and opens none until it is resumed", async () => {
+    const changed = vi.fn();
+    subscribeNativeVideoSuspensions(changed);
+    const track = remote();
+    // A source with the consumer's number, and another consumer.
+    const own = new NativeTrack("video", "Kamera", { source: 42 });
+    const other = new NativeTrack("video", "x", { consumer: 43 });
+    const leaveTile = attachNativeVideo(track, page.canvas("tile"));
+    attachNativeVideo(track, page.canvas("large", 1000, 500));
+    attachNativeVideo(own, page.canvas("self"));
+    attachNativeVideo(other, page.canvas("other"));
+    await settled();
+    expect(app.named("media_view_open").map((args) => args.consumer)).toEqual([
+      42,
+      undefined,
+      43,
+    ]);
+    expect(nativeVideoSuspended(42)).toBe(false);
+    expect(app.waiting.size).toBe(3);
+
+    const done = vi.fn();
+    void suspendNativeVideo(42).then(done);
+    // Now, not after the grace period of a tile that moves, and with its
+    // canvases still attached.
+    expect(app.named("media_view_close")).toEqual([{ view: 1 }]);
+    expect(nativeVideoSuspended(42)).toBe(true);
+    expect(nativeVideoSuspended(43)).toBe(false);
+    expect(changed).toHaveBeenCalledTimes(1);
+    expect(nativeCanvasHeight(track.id)).toBe(0);
+    await settled();
+    expect(done).toHaveBeenCalledTimes(1);
+    // The request that waited went with the view.
+    expect([...app.waiting.keys()]).toEqual([2, 3]);
+
+    // The tiles let go as React gets to them; one that comes gets nothing.
+    leaveTile();
+    const painted = vi.fn();
+    const leaveLate = attachNativeVideo(track, page.canvas("late"), painted);
+    await vi.advanceTimersByTimeAsync(1_000);
+    expect(app.named("media_view_open")).toHaveLength(3);
+    expect(app.named("media_view_close")).toHaveLength(1);
+    expect(nativeCanvasHeight(track.id)).toBe(0);
+    leaveLate();
+
+    // The source and the other consumer go on.
+    app.deliver(2, packet(1));
+    app.deliver(3, packet(1));
+    await settled();
+    page.frame();
+    expect(page.shows).toEqual(["self:1", "other:1"]);
+    expect(painted).not.toHaveBeenCalled();
+
+    resumeNativeVideo(42);
+    expect(nativeVideoSuspended(42)).toBe(false);
+    expect(changed).toHaveBeenCalledTimes(2);
+    // Nothing comes back by itself: the tile mounts its canvas again.
+    await vi.advanceTimersByTimeAsync(1_000);
+    expect(app.named("media_view_open")).toHaveLength(3);
+    attachNativeVideo(track, page.canvas("again"));
+    await settled();
+    expect(app.named("media_view_open")[3]).toEqual({
+      consumer: 42,
+      maxWidth: 800,
+      maxHeight: 450,
+    });
+    expect(app.named("media_view_frame").at(-1)).toEqual({ view: 4 });
+  });
+
+  it("is done when the app has closed the view", async () => {
+    app.holdClose = true;
+    attachNativeVideo(remote(), page.canvas("tile"));
+    await settled();
+    const done = vi.fn();
+    void suspendNativeVideo(42).then(done);
+    // A second suspension on top of it waits for the same view.
+    const again = vi.fn();
+    void suspendNativeVideo(42).then(again);
+    await settled();
+    expect(app.named("media_view_close")).toEqual([{ view: 1 }]);
+    expect(done).not.toHaveBeenCalled();
+    expect(again).not.toHaveBeenCalled();
+    app.closed.shift()?.();
+    await settled();
+    expect(done).toHaveBeenCalledTimes(1);
+    expect(again).toHaveBeenCalledTimes(1);
+  });
+
+  it("waits for a view the app was still opening, and closes it", async () => {
+    app.holdOpen = true;
+    app.holdClose = true;
+    attachNativeVideo(remote(), page.canvas("tile"));
+    await settled();
+    const done = vi.fn();
+    void suspendNativeVideo(42).then(done);
+    await settled();
+    expect(app.named("media_view_close")).toEqual([]);
+    expect(done).not.toHaveBeenCalled();
+    // The app answers the open: the view exists there until it is closed.
+    app.release?.();
+    await settled();
+    expect(app.named("media_view_close")).toEqual([{ view: 1 }]);
+    expect(app.named("media_view_frame")).toEqual([]);
+    expect(done).not.toHaveBeenCalled();
+    app.closed.shift()?.();
+    await settled();
+    expect(done).toHaveBeenCalledTimes(1);
+  });
+
+  it("is done at once when nothing shows the consumer", async () => {
+    const own = new NativeTrack("video", "Kamera", { source: 42 });
+    attachNativeVideo(own, page.canvas("self"));
+    await settled();
+    const done = vi.fn();
+    void suspendNativeVideo(42).then(done);
+    await settled();
+    expect(done).toHaveBeenCalledTimes(1);
+    expect(app.named("media_view_close")).toEqual([]);
+  });
+
+  it("stays suspended until every suspension has ended", () => {
+    const changed = vi.fn();
+    subscribeNativeVideoSuspensions(changed);
+    // A viewer window that is closing and the one opened after it.
+    void suspendNativeVideo(42);
+    void suspendNativeVideo(42);
+    resumeNativeVideo(42);
+    expect(nativeVideoSuspended(42)).toBe(true);
+    resumeNativeVideo(42);
+    expect(nativeVideoSuspended(42)).toBe(false);
+    // Told when it starts and when it ends.
+    expect(changed).toHaveBeenCalledTimes(2);
+    // One too many changes nothing, now or for the next suspension.
+    resumeNativeVideo(42);
+    expect(changed).toHaveBeenCalledTimes(2);
+    void suspendNativeVideo(42);
+    expect(nativeVideoSuspended(42)).toBe(true);
+    resumeNativeVideo(42);
+    expect(nativeVideoSuspended(42)).toBe(false);
   });
 });
 
