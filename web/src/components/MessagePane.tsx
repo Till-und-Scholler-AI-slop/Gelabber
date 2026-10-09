@@ -913,6 +913,7 @@ function Composer({
   const fileInput = useRef<HTMLInputElement>(null);
   const composerInput = useRef<HTMLTextAreaElement>(null);
   const composerForm = useRef<HTMLFormElement>(null);
+  const keepKeyboard = useRef(false);
   const revealComposerFocus = useCallback(() => {
     const form = composerForm.current;
     const pane = form?.closest<HTMLElement>(".lr-message-pane");
@@ -944,6 +945,20 @@ function Composer({
     revealComposerFocus();
     return () => observer.disconnect();
   }, [canSend, revealComposerFocus]);
+  // chat.css sizes the field by its draft on phones. Browsers without
+  // field-sizing (iOS before 26.2) get the same height from here, under the
+  // same max-height.
+  useLayoutEffect(() => {
+    const input = composerInput.current;
+    if (
+      !input ||
+      CSS.supports("field-sizing", "content") ||
+      !window.matchMedia("(pointer: coarse)").matches
+    )
+      return;
+    input.style.height = "auto";
+    input.style.height = `${input.scrollHeight}px`;
+  }, [draft, canSend]);
   const error = draft.length === 0 ? null : validateContent(draft);
   const remaining = CONTENT_MAX - Array.from(normalisedLength(draft)).length;
   const emptyText = draft.trim().length === 0;
@@ -978,6 +993,8 @@ function Composer({
     setDraft("");
     pickFile(null);
     onDraftStop?.();
+    if (keepKeyboard.current) composerInput.current?.focus();
+    keepKeyboard.current = false;
   };
 
   const insertText = (text: string) => {
@@ -1138,6 +1155,14 @@ function Composer({
             disabled={disabled}
             aria-label="Senden"
             title="Senden"
+            // A tap would move focus to the button and close the on-screen
+            // keyboard after every message.
+            onPointerDown={(event) => {
+              keepKeyboard.current =
+                event.pointerType !== "mouse" &&
+                document.activeElement === composerInput.current;
+              if (keepKeyboard.current) event.preventDefault();
+            }}
             className="lr-composer-send"
           >
             <SendIcon size={17} />
@@ -1204,6 +1229,8 @@ function AttachmentList({ attachments }: { attachments: Attachment[] }) {
           <a
             key={attachment.id}
             href={attachmentUrl(attachment.id)}
+            // An installed app has no back button to return from a file.
+            download={attachment.filename}
             className="lr-attachment-file"
           >
             <PaperclipIcon size={15} />
