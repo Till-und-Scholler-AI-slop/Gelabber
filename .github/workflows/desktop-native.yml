@@ -174,18 +174,20 @@ jobs:
           key: ${{ needs.libwebrtc-linux.outputs.key }}
           fail-on-cache-miss: true
 
-      # WebKitGTK for the Tauri app; Xvfb for its smoke test.
+      # WebKitGTK for the Tauri app; Xvfb for its smoke test; llvm-rc for the
+      # Windows type check (the app's resource file).
       - name: Build tools
         run: |
           sudo apt-get update
           sudo apt-get install -y --no-install-recommends ninja-build python3-venv \
             libwebkit2gtk-4.1-dev libsoup-3.0-dev librsvg2-dev xvfb xauth \
-            mesa-vulkan-drivers imagemagick gdb
+            mesa-vulkan-drivers imagemagick gdb llvm
 
       - name: Rust toolchain
         uses: dtolnay/rust-toolchain@1.98.1
         with:
           components: rustfmt, clippy
+          targets: x86_64-pc-windows-msvc
 
       # The mediasoup worker (dev-dependency) takes minutes to build.
       - name: Rust cache
@@ -199,6 +201,20 @@ jobs:
       - name: Clippy
         run: cargo clippy --manifest-path desktop/Cargo.toml --all-targets -- -D warnings
 
+      # The Windows side of the Rust code, type-checked and linted here within
+      # minutes; the Windows job needs the native build first. Nothing is
+      # linked: an empty directory stands in for the core. The core's tests
+      # stay out, they would build the mediasoup worker once more.
+      - name: Clippy for Windows
+        run: |
+          set -euo pipefail
+          GELABBER_MEDIA_LIB_DIR="$(mktemp -d)"
+          export GELABBER_MEDIA_LIB_DIR
+          cargo clippy --locked --manifest-path desktop/Cargo.toml --target x86_64-pc-windows-msvc \
+            -p gelabber-desktop --all-targets -- -D warnings
+          cargo clippy --locked --manifest-path desktop/Cargo.toml --target x86_64-pc-windows-msvc \
+            -p gelabber-media-core --lib -- -D warnings
+
       # GStreamer and the test desktop (PipeWire, pipewire-pulse,
       # xdg-desktop-portal). x264enc
       # stands in for VA-API/NVENC, which runners lack, to test the GStreamer
@@ -210,11 +226,18 @@ jobs:
             libpipewire-0.3-dev gstreamer1.0-plugins-base gstreamer1.0-plugins-bad \
             gstreamer1.0-plugins-ugly python3-gi
 
+      # Every test of the workspace: the loopback call, the video sinks of
+      # views inside the app (source_preview), the app's unit tests. The
+      # loopback call covers H264 only where the core has it (the Windows core
+      # has none), so this core, built with H264, must be held to it.
       - name: Loopback call against mediasoup 0.29
+        env:
+          GELABBER_EXPECT_H264: "1"
         run: cargo test --manifest-path desktop/Cargo.toml -- --nocapture --test-threads=1
 
       - name: Loopback call with the GStreamer H264 encoder
         env:
+          GELABBER_EXPECT_H264: "1"
           GELABBER_H264_ENCODER: x264enc
           GELABBER_EXPECT_ENCODER: GStreamer x264enc
           GELABBER_MEDIA_LOG: "1"
@@ -260,7 +283,8 @@ jobs:
 
       # The Tauri app on a stand-in server origin: the page must reach the
       # media commands through IPC (real audio devices from the test
-      # session) and must not reach the setup page's command.
+      # session), must not reach the setup page's command, and must get the
+      # frames of a test-pattern view (smoke.sh switches the pattern on).
       - name: Desktop app smoke test
         timeout-minutes: 10
         run: |
