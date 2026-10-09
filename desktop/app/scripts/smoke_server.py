@@ -47,8 +47,12 @@ class Handler(BaseHTTPRequestHandler):
         problems = []
         if not report.get("ipc"):
             problems.append("no Tauri IPC on the server page")
-        if report.get("info", {}).get("ok", {}).get("abi") != int(sys.argv[2]):
+        info = report.get("info", {}).get("ok", {})
+        if info.get("abi") != int(sys.argv[2]):
             problems.append("media_info did not answer with the core's ABI")
+        features = info.get("features")
+        if not isinstance(features, list) or not all(isinstance(f, str) for f in features):
+            problems.append("media_info did not list the app's features")
         if "inputs" not in report.get("devices", {}).get("ok", {}):
             problems.append("media_audio_devices failed")
         if "ok" not in report.get("levels", {}):
