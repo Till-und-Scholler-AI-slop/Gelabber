@@ -59,3 +59,50 @@ self.addEventListener("fetch", (event) => {
     }),
   );
 });
+
+// Message notifications are shown through this worker's registration
+// (src/pwa/notifications.ts), because phones do not let a page create one
+// itself. Nothing arrives here while the app is closed: there is no push.
+function notificationTarget(data) {
+  try {
+    const url = new URL(data.path, self.location.origin);
+    if (url.origin === self.location.origin && APP_PAGE.test(url.pathname)) {
+      return url.pathname;
+    }
+  } catch {
+    // No usable address on the notification.
+  }
+  return "/";
+}
+
+self.addEventListener("notificationclick", (event) => {
+  const data = event.notification.data ?? {};
+  const path = notificationTarget(data);
+  event.notification.close();
+  event.waitUntil(
+    self.clients
+      .matchAll({ type: "window", includeUncontrolled: true })
+      .then(async (clients) => {
+        // A tab showing an attachment shares the origin but is not the app.
+        const windows = clients.filter((client) =>
+          APP_PAGE.test(new URL(client.url).pathname),
+        );
+        const open =
+          windows.find((client) => client.focused) ??
+          windows.find((client) => client.visibilityState === "visible") ??
+          windows[0];
+        if (!open) {
+          await self.clients.openWindow(path);
+          return;
+        }
+        // The running app changes route itself. Navigating its window from
+        // here would reload the page and end a call.
+        open.postMessage({
+          type: "gelabber:open-conversation",
+          path,
+          user: data.user,
+        });
+        await open.focus().catch(() => {});
+      }),
+  );
+});

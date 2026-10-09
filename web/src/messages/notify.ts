@@ -1,5 +1,6 @@
 // Decide whether a chat create should surface as a toast, and how to
-// label / stack it. No DOM here — the hook owns permission + navigation.
+// label / stack it. No DOM here — the hook owns permission + navigation,
+// and pwa/notifications.ts the delivery of system notifications.
 
 export type ToastDecision = {
   show: boolean;
@@ -41,6 +42,52 @@ export function messageNotificationDecision(input: {
     desktop:
       input.desktopEnabled && input.hidden && input.type === "c" && !input.own,
   };
+}
+
+/** Where a tap on a message notification leads, as the router spells it. */
+export function conversationPath(
+  dm: boolean,
+  serverId: string,
+  channelId: string,
+): string {
+  return dm
+    ? `/d/${encodeURIComponent(channelId)}`
+    : `/s/${encodeURIComponent(serverId)}/c/${encodeURIComponent(channelId)}`;
+}
+
+/**
+ * A notification tap comes back through the service worker as a message.
+ * Only an address `conversationPath` could have produced is navigated to.
+ */
+export function isConversationPath(value: unknown): value is string {
+  return (
+    typeof value === "string" &&
+    /^\/(?:d\/[^/?#]+|s\/[^/?#]+\/c\/[^/?#]+)$/.test(value)
+  );
+}
+
+export type NotificationPermissionState =
+  "granted" | "denied" | "default" | "unsupported";
+
+/**
+ * What the permission box in the settings says. The reasons a browser has no
+ * notifications differ by device, and "blocked" is the wrong advice where the
+ * address itself rules them out.
+ */
+export function notificationPermissionText(
+  state: NotificationPermissionState,
+  device: { secure: boolean; ios: boolean; standalone: boolean },
+): string {
+  if (state === "granted") return "Browser-Benachrichtigungen sind erlaubt.";
+  if (state === "default")
+    return "Der Browser benötigt noch deine Erlaubnis für Benachrichtigungen.";
+  if (!device.secure)
+    return "Benachrichtigungen gibt es nur, wenn Gelabber über HTTPS geöffnet ist.";
+  if (state === "denied")
+    return "Browser-Benachrichtigungen sind blockiert. Du kannst sie in den Website-Einstellungen deines Browsers erlauben.";
+  if (device.ios && !device.standalone)
+    return "Auf iPhone und iPad gibt es Benachrichtigungen nur in der installierten App. Füge Gelabber über „Teilen“ zum Home-Bildschirm hinzu und öffne es von dort.";
+  return "Dieser Browser unterstützt hier keine Desktop-Benachrichtigungen.";
 }
 
 /** Bound replay suppression to the active account/session listener. */
