@@ -16,8 +16,11 @@ Voraussetzungen
   - Windows 10 oder 11 (64 Bit, x64).
   - Microsoft Edge WebView2 Runtime. Windows 11 bringt sie mit; fehlt sie,
     lädt das Setup sie nach und braucht dafür eine Internetverbindung.
-  - Ein Gelabber-Server ab Version 0.6. Ältere Server bieten in der App auch
-    das an, was unter Windows noch fehlt (siehe unten); es schlägt dort fehl.
+  - Ein Gelabber-Server ab Version 0.6. Ein älterer Server weiß nicht, was
+    der App unter Windows noch fehlt (siehe unten), und bietet es trotzdem
+    an. Dort "Go Live" nicht anklicken: Der Kanal führt dich dann als live,
+    ohne Bild, und niemand sonst kann live gehen, bis du das Gespräch
+    verlässt.
 
 Starten
   Über das Startmenü ("Gelabber"). Beim ersten Start die Adresse des Servers
@@ -29,8 +32,17 @@ Noch nicht verfügbar unter Windows
   - Bildschirm teilen
   - Go Live senden
   - Anwendungston teilen (Ton anderer Programme)
-  Bildschirme und Go-Live-Streams anderer lassen sich ansehen. Ein Server ab
-  Version 0.6 blendet die fehlenden Funktionen in der App aus.
+  Bildschirme und Go-Live-Streams anderer lassen sich ansehen.
+
+  Mit einem Server ab Version 0.6 bleiben die Knöpfe "Bildschirm teilen" und
+  "Go Live" in der App an ihrem Platz ("Go Live" wie überall nur mit dem
+  Recht dazu), sind aber ausgegraut und nennen den Grund, beim Darüberfahren
+  und beim Anklicken. Nur die Bedienelemente für den Anwendungston fehlen
+  ganz.
+
+  Mit einem älteren Server sehen beide Knöpfe benutzbar aus. "Bildschirm
+  teilen" startet dann einfach nicht. "Go Live" blockiert Go Live für den
+  ganzen Kanal (siehe Voraussetzungen).
 
 Einstellungen und Daten
   Serveradresse:
@@ -52,7 +64,9 @@ Entfernen
 Fehlersuche
   Protokoll der Medienschicht, in der Eingabeaufforderung (cmd.exe):
     set GELABBER_MEDIA_LOG=1
-    "%LOCALAPPDATA%\Gelabber\gelabber-desktop.exe" 2> "%USERPROFILE%\gelabber.log"
+    "%LOCALAPPDATA%\Gelabber\gelabber-desktop.exe" > "%USERPROFILE%\gelabber.log" 2>&1
+  Beide Umleitungen sind nötig: Ein Teil des Protokolls geht auf die
+  Standardausgabe, der andere auf die Fehlerausgabe.
 
 Lizenzen
   THIRD-PARTY-NOTICES.txt im Installationsordner (englisch) nennt die
