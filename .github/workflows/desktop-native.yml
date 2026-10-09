@@ -1,13 +1,15 @@
-# Desktop client native media core (libwebrtc + libmediasoupclient).
-# Build spike for issue #165: reproducible libwebrtc build, core library size,
-# and a loopback call against the server's mediasoup version.
+# Desktop client native media core (libwebrtc + libmediasoupclient) and the
+# desktop app around it, for Linux and Windows: reproducible libwebrtc builds,
+# a loopback call against the server's mediasoup version, the packaged apps
+# (Linux tarball and pacman repository, Windows installer) and, for a
+# release, their upload. The two platforms share no job.
 name: Desktop native core
 
 on:
   workflow_dispatch:
     inputs:
       release_tag:
-        description: Published release to attach the app to and build the pacman repository for (run on that tag)
+        description: Published release to attach the apps to and build the pacman repository for (run on that tag)
         required: false
         default: ""
   pull_request:
@@ -19,8 +21,8 @@ on:
     paths:
       - desktop/**
       - .github/workflows/desktop-native.yml
-  # Attaches the Linux app to the release (pre-releases too) and, once
-  # enabled, publishes the pacman repository; see desktop/packaging/arch.
+  # Attaches the Linux and Windows apps to the release (pre-releases too) and,
+  # once enabled, publishes the pacman repository; see desktop/packaging/arch.
   # Releases made by release.yml use the workflow token, which triggers no
   # release event; it dispatches this workflow with release_tag instead.
   release:
@@ -107,6 +109,8 @@ jobs:
       cancel-in-progress: false
     runs-on: windows-2022
     timeout-minutes: 330
+    outputs:
+      key: ${{ steps.key.outputs.key }}
     steps:
       - name: Checkout
         uses: actions/checkout@v7
@@ -356,6 +360,390 @@ jobs:
             echo '```'
           } | tee -a "$GITHUB_STEP_SUMMARY"
 
+  # The same core as a DLL, the app around it and its installer. First the
+  # steps that build on each other, up to the app installed, started and
+  # removed again; then the checks nothing else needs. Each of those runs
+  # whenever what it looks at was built, so one run reports all that is wrong.
+  # Everything is built in the release profile: the core and the mediasoup
+  # worker once, and the tests run against the DLL that ships.
+  # PowerShell only looks at the exit code of a step's last command; scripts
+  # with more than one set $PSNativeCommandUseErrorActionPreference.
+  core-windows:
+    name: Native core and app (Windows x64)
+    needs: libwebrtc-windows
+    runs-on: windows-2022
+    timeout-minutes: 120
+    defaults:
+      run:
+        shell: pwsh
+    env:
+      GELABBER_LIBWEBRTC_DIR: C:\libwebrtc-package
+      # mediasoup-sys (the worker the core's tests call) runs "$PYTHON -m invoke".
+      PYTHON: python
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v7
+
+      - name: Restore libwebrtc package
+        uses: actions/cache/restore@v4
+        with:
+          path: C:\libwebrtc-package
+          key: ${{ needs.libwebrtc-windows.outputs.key }}
+          fail-on-cache-miss: true
+
+      # For the mediasoup worker's build (Meson) and the smoke test's server.
+      - name: Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+
+      - name: Rust toolchain
+        id: toolchain
+        uses: dtolnay/rust-toolchain@1.98.1
+        with:
+          components: rustfmt, clippy
+
+      # MSVC's tools stop at 260 characters, and the CMake and Meson trees
+      # below the target directory are deep. A short one, two levels above
+      # the checkout: the Rust cache can only name a target directory
+      # relative to the workspace (desktop/). The core is compiled with the
+      # image's clang-cl and linked with Visual Studio's libraries.
+      - name: Build tools and target directory
+        run: |
+          $PSNativeCommandUseErrorActionPreference = $true
+          $target = [IO.Path]::GetFullPath((Join-Path $env:GITHUB_WORKSPACE '..\..\t'))
+          Add-Content $env:GITHUB_ENV "CARGO_TARGET_DIR=$target"
+          "target directory: $target"
+          cmake --version
+          ninja --version
+          clang-cl --version
+          python --version
+          node --version
+          cargo --version --verbose
+
+      # The mediasoup worker and the release build take long: they are kept
+      # when a later step fails. A cache saved by a tag run could only be
+      # read by that tag.
+      - name: Rust cache
+        uses: Swatinem/rust-cache@v2
+        with:
+          workspaces: desktop -> ../../../t
+          cache-on-failure: true
+          save-if: ${{ github.ref_type != 'tag' }}
+
+      # The C++ core alone first: its compile and link errors come up before
+      # the long Rust builds.
+      - name: Native core (gelabber_media.dll)
+        id: core
+        run: cargo build --release --locked --manifest-path desktop/Cargo.toml -p gelabber-media-core
+
+      # The app's build script puts gelabber_media.dll next to the binary.
+      - name: Desktop app (gelabber-desktop.exe)
+        id: app
+        run: cargo build --release --locked --manifest-path desktop/Cargo.toml -p gelabber-desktop
+
+      # The inputs as desktop/app/tauri.bundle.windows.json names them: the
+      # core in bundle-input/, the notices of the libraries in package/. The
+      # pinned Tauri CLI only bundles what cargo built above.
+      - name: Installer
+        id: installer
+        timeout-minutes: 20
+        run: |
+          $PSNativeCommandUseErrorActionPreference = $true
+          $notices = 'desktop\app\package\THIRD-PARTY-NOTICES.txt'
+          if (-not (Test-Path $notices)) {
+            throw "$notices is missing: the installer ships the notices of the libraries in the app and is not built without them"
+          }
+          $release = Join-Path $env:CARGO_TARGET_DIR 'release'
+          $staged = New-Item -ItemType Directory -Force desktop\app\bundle-input
+          Copy-Item (Join-Path $release 'gelabber_media.dll') $staged.FullName
+          Push-Location desktop\app
+          try {
+            # Quoted: a bare @ would start a splatted variable.
+            npx.cmd --yes '@tauri-apps/cli@2.12.1' bundle --bundles nsis --config tauri.bundle.windows.json
+          } finally {
+            Pop-Location
+          }
+          $built = @(Get-ChildItem (Join-Path $release 'bundle\nsis') -Filter '*-setup.exe')
+          if ($built.Count -ne 1) { throw "expected one installer in bundle\nsis, found $($built.Count)" }
+          $name = 'gelabber-desktop-windows-x64-setup.exe'
+          Copy-Item $built[0].FullName $name
+          $hash = (Get-FileHash $name -Algorithm SHA256).Hash.ToLowerInvariant()
+          # A line as sha256sum writes it; checked again before the release upload.
+          [IO.File]::WriteAllText((Join-Path $PWD "$name.sha256"), "$hash  $name`n")
+          @(
+            '### Desktop app (Windows x64)', '',
+            '| file | size | sha256 |', '|---|---|---|',
+            "| $name ($($built[0].Name)) | $([math]::Round((Get-Item $name).Length / 1MB, 1)) MiB | $hash |"
+          ) | Add-Content $env:GITHUB_STEP_SUMMARY
+
+      # Silent, into the account's own folders: the setup asks for no
+      # administrator rights. It brings the WebView2 Runtime where the image
+      # has none.
+      - name: Install like a user
+        id: install
+        timeout-minutes: 20
+        run: |
+          $PSNativeCommandUseErrorActionPreference = $true
+          function WebView2Runtime {
+            $client = 'Microsoft\EdgeUpdate\Clients\{F3017226-FE2A-4295-8BDF-00C3A9A7E4C5}'
+            foreach ($key in "HKLM:\SOFTWARE\WOW6432Node\$client", "HKLM:\SOFTWARE\$client", "HKCU:\SOFTWARE\$client") {
+              $version = (Get-ItemProperty -LiteralPath $key -ErrorAction SilentlyContinue).pv
+              if ($version -and $version -ne '0.0.0.0') { return $version }
+            }
+          }
+          $before = WebView2Runtime
+          "WebView2 Runtime before the install: $(if ($before) { $before } else { 'none' })"
+          $install = Join-Path $env:LOCALAPPDATA 'Gelabber'
+          $setup = Start-Process -FilePath (Resolve-Path gelabber-desktop-windows-x64-setup.exe).Path -ArgumentList '/S' -PassThru
+          # Without the handle taken now, the exit code is gone once the process ends.
+          $null = $setup.Handle
+          if (-not $setup.WaitForExit(15 * 60 * 1000)) {
+            $setup.Kill()
+            throw 'the setup did not finish within 15 minutes'
+          }
+          if ($setup.ExitCode -ne 0) { throw "the setup ended with exit code $($setup.ExitCode)" }
+          foreach ($file in 'gelabber-desktop.exe', 'gelabber_media.dll', 'README.txt', 'THIRD-PARTY-NOTICES.txt', 'uninstall.exe') {
+            if (-not (Test-Path (Join-Path $install $file))) { throw "missing after the install: $file" }
+          }
+          # The core that was built here, not another copy.
+          $built = Get-FileHash (Join-Path $env:CARGO_TARGET_DIR 'release\gelabber_media.dll')
+          if ((Get-FileHash (Join-Path $install 'gelabber_media.dll')).Hash -ne $built.Hash) {
+            throw 'the installed gelabber_media.dll is not the one built here'
+          }
+          $entry = Get-ItemProperty -LiteralPath 'HKCU:\Software\Microsoft\Windows\CurrentVersion\Uninstall\Gelabber' -ErrorAction SilentlyContinue
+          if (-not $entry) { throw 'no entry among the installed apps (uninstall key of the account)' }
+          "installed: $($entry.DisplayName) $($entry.DisplayVersion) in $install"
+          $after = WebView2Runtime
+          if (-not $after) { throw 'no WebView2 Runtime after the install: the app cannot open its window' }
+          "WebView2 Runtime: $after"
+
+      # The installed app on a stand-in server origin, as on Linux: the page
+      # must reach the media commands through IPC, and only those, and get the
+      # frames of a test-pattern view. smoke.ps1 asks for dummy audio itself
+      # (runners have no audio devices); the test pattern is switched on here.
+      # Its own PowerShell, so it runs as it does for a developer.
+      - name: Desktop app smoke test
+        timeout-minutes: 10
+        env:
+          GELABBER_VIDEO_TEST_PATTERN: "1"
+        run: |
+          $PSNativeCommandUseErrorActionPreference = $true
+          $define = Select-String -Path desktop\native\include\gelabber_media.h -Pattern '^#define GM_ABI_VERSION (\d+)\s*$' | Select-Object -First 1
+          if (-not $define) { throw 'no GM_ABI_VERSION in gelabber_media.h' }
+          $abi = $define.Matches[0].Groups[1].Value
+          $app = Join-Path $env:LOCALAPPDATA 'Gelabber\gelabber-desktop.exe'
+          pwsh -NoProfile -File desktop\app\scripts\smoke.ps1 -App $app -Abi $abi
+
+      # NSIS goes on from a copy of the uninstaller in the temporary
+      # directory: the process started here ends long before the files are
+      # gone. Settings and login (the app data folders, and the installer's
+      # note of where the app was) stay unless a user ticks their removal.
+      - name: Remove like a user
+        if: ${{ !cancelled() && steps.install.outcome == 'success' }}
+        timeout-minutes: 10
+        run: |
+          $PSNativeCommandUseErrorActionPreference = $true
+          $install = Join-Path $env:LOCALAPPDATA 'Gelabber'
+          Start-Process -FilePath (Join-Path $install 'uninstall.exe') -ArgumentList '/S'
+          $left = {
+            @(
+              $install,
+              (Join-Path ([Environment]::GetFolderPath('Programs')) 'Gelabber.lnk'),
+              (Join-Path ([Environment]::GetFolderPath('DesktopDirectory')) 'Gelabber.lnk'),
+              'HKCU:\Software\Microsoft\Windows\CurrentVersion\Uninstall\Gelabber'
+            ) | Where-Object { Test-Path -LiteralPath $_ }
+          }
+          $deadline = (Get-Date).AddMinutes(3)
+          while ((& $left) -and (Get-Date) -lt $deadline) { Start-Sleep -Seconds 1 }
+          $rest = @(& $left)
+          if ($rest) {
+            Get-ChildItem -LiteralPath $install -Recurse -Force -ErrorAction SilentlyContinue | ForEach-Object FullName
+            throw "left behind by the uninstaller: $($rest -join ', ')"
+          }
+          $id = 'io.github.till-und-scholler-ai-slop.gelabber'
+          foreach ($kept in (Join-Path $env:APPDATA $id), (Join-Path $env:LOCALAPPDATA $id), 'HKCU:\Software\Gelabber\Gelabber') {
+            "kept on purpose: $kept ($(if (Test-Path -LiteralPath $kept) { 'present' } else { 'never written' }))"
+          }
+
+      # Also from a run whose later steps fail, to look at the setup by hand;
+      # a release only takes it from a run in which every step passed.
+      - name: Upload the app
+        if: ${{ !cancelled() && steps.installer.outcome == 'success' }}
+        uses: actions/upload-artifact@v4
+        with:
+          name: gelabber-desktop-windows-x64
+          path: |
+            gelabber-desktop-windows-x64-setup.exe
+            gelabber-desktop-windows-x64-setup.exe.sha256
+          if-no-files-found: error
+          retention-days: 14
+
+      # What ships, read with dumpbin:
+      # - the DLL exports the C ABI (gm_*) and nothing else;
+      # - no H264 encoder or decoder is linked in: the libwebrtc package holds
+      #   OpenH264 and FFmpeg, the Windows core is built without H264;
+      # - neither file needs anything a clean Windows 10 or 11 lacks.
+      #   Acceptable are DLLs of Windows itself (in System32 of this image),
+      #   API sets (api-ms-win-*, ext-ms-win-*) and with them the Universal
+      #   CRT (api-ms-win-crt-*, ucrtbase.dll), part of Windows since 10, and
+      #   for the app gelabber_media.dll, installed next to it. Not
+      #   acceptable are the Visual C++ runtime in any version or flavour
+      #   (vcruntime*, msvcp*, msvcr*, concrt*, vccorlib*, vcomp*, vcamp*,
+      #   mfc*, atl* followed by a number: this image has them in System32,
+      #   a user's machine need not), the debug CRT (ucrtbased.dll) and
+      #   whatever else is not part of Windows, such as WebView2Loader.dll.
+      - name: Check and measure the binaries
+        if: ${{ !cancelled() && steps.app.outcome == 'success' }}
+        run: |
+          $PSNativeCommandUseErrorActionPreference = $true
+          $release = Join-Path $env:CARGO_TARGET_DIR 'release'
+          $dll = Get-Item (Join-Path $release 'gelabber_media.dll')
+          $exe = Get-Item (Join-Path $release 'gelabber-desktop.exe')
+          $vswhere = Join-Path ${env:ProgramFiles(x86)} 'Microsoft Visual Studio\Installer\vswhere.exe'
+          $dumpbin = & $vswhere -latest -products '*' -find 'VC\Tools\MSVC\**\bin\Hostx64\x64\dumpbin.exe' |
+            Sort-Object | Select-Object -Last 1
+          if (-not $dumpbin) { throw 'no dumpbin.exe in the Visual Studio installation' }
+
+          # Rows "ordinal hint RVA name" of the export table.
+          $listing = & $dumpbin /nologo /exports $dll.FullName
+          $exports = @($listing | ForEach-Object {
+              if ($_ -match '^\s+\d+\s+[0-9A-Fa-f]+\s+[0-9A-Fa-f]{8}\s+(\S+)') { $Matches[1] }
+            })
+          $names = $listing | Select-String '^\s+(\d+) number of names' | Select-Object -First 1
+          if (-not $names -or $exports.Count -ne [int]$names.Matches[0].Groups[1].Value) {
+            $listing
+            throw "could not read the export table of gelabber_media.dll ($($exports.Count) names found)"
+          }
+          $foreign = @($exports | Where-Object { $_ -notmatch '^gm_' })
+
+          function Needs($file) {
+            & $dumpbin /nologo /dependents $file |
+              ForEach-Object { if ($_ -match '^\s+(\S+\.(dll|drv))\s*$') { $Matches[1].ToLowerInvariant() } } |
+              Sort-Object -Unique
+          }
+          $redistributable = '^(vcruntime|msvcp|msvcr|concrt|vccorlib|vcomp|vcamp|mfc|atl)\d|^ucrtbased\.'
+          function Missing($needs, $shipped) {
+            $needs | Where-Object {
+              $_ -match $redistributable -or -not (
+                $_ -match '^(api|ext)-ms-win-' -or $shipped -contains $_ -or
+                (Test-Path -LiteralPath (Join-Path $env:SystemRoot "System32\$_")))
+            }
+          }
+          $dllNeeds = @(Needs $dll.FullName)
+          $exeNeeds = @(Needs $exe.FullName)
+          $dllMissing = @(Missing $dllNeeds @())
+          $exeMissing = @(Missing $exeNeeds @('gelabber_media.dll'))
+
+          $content = [Text.Encoding]::Latin1.GetString([IO.File]::ReadAllBytes($dll.FullName))
+          # Names from OpenH264, from libwebrtc's wrappers around it and FFmpeg,
+          # and from FFmpeg. "OpenH264" alone is no sign: the encoder factory's
+          # type name has it in every build.
+          $h264 = @('CWelsH264SVCEncoder', 'WelsInitEncoderExt', 'H264EncoderImpl', 'H264DecoderImpl',
+              'libavcodec', 'avcodec_open2', 'third_party/ffmpeg') |
+            Where-Object { $content.Contains($_) }
+
+          @(
+            '### Native core and app (Windows x64)', '',
+            '| file | size | needs |', '|---|---|---|',
+            "| gelabber_media.dll | $([math]::Round($dll.Length / 1MB, 1)) MiB | $($dllNeeds -join ', ') |",
+            "| gelabber-desktop.exe | $([math]::Round($exe.Length / 1MB, 1)) MiB | $($exeNeeds -join ', ') |", '',
+            "Exports of gelabber_media.dll: $($exports.Count)"
+          ) | Tee-Object -FilePath $env:GITHUB_STEP_SUMMARY -Append
+
+          $problems = @(
+            if ($foreign) { "gelabber_media.dll exports more than gm_*: $($foreign -join ', ')" }
+            if ($h264) { "gelabber_media.dll carries H264 code of OpenH264 or FFmpeg: $($h264 -join ', ')" }
+            if (-not $dllNeeds -or $exeNeeds -notcontains 'gelabber_media.dll') { 'could not read the dependencies with dumpbin' }
+            if ($dllMissing) { "gelabber_media.dll needs what a clean Windows lacks: $($dllMissing -join ', ')" }
+            if ($exeMissing) { "gelabber-desktop.exe needs what a clean Windows lacks: $($exeMissing -join ', ')" }
+          )
+          if ($problems) {
+            # One annotation each: PowerShell folds a long error message.
+            $problems | ForEach-Object { "::error::$_" }
+            throw "$($problems.Count) of the checks on the binaries failed"
+          }
+
+      # The call the Linux job makes, on dummy audio and test patterns through
+      # an in-process mediasoup worker: ICE, DTLS, SRTP, Opus, VP8 simulcast,
+      # decode, and the video sinks of views inside the app. This core has no
+      # H264, so neither GELABBER_EXPECT_H264 nor GELABBER_EXPECT_ENCODER.
+      # The voice and screen tests need devices and skip without their
+      # GELABBER_TEST_* switch.
+      - name: Loopback call against mediasoup 0.29
+        id: tests
+        if: ${{ !cancelled() && steps.core.outcome == 'success' }}
+        timeout-minutes: 45
+        env:
+          RUST_BACKTRACE: "1"
+        run: cargo test --release --locked --manifest-path desktop/Cargo.toml -p gelabber-media-core -- --nocapture --test-threads=1
+
+      # A native crash ends the test without a word; libwebrtc's log says
+      # where it got to. Before it, whether this machine carries the call at
+      # all: the test's mediasoup listens on 127.0.0.1, libwebrtc sends from
+      # the machine's own address, and Windows keeps the two apart more
+      # strictly than Linux. Never fails by itself.
+      - name: Loopback call with libwebrtc logs
+        if: ${{ failure() && steps.tests.outcome == 'failure' }}
+        timeout-minutes: 10
+        env:
+          GELABBER_MEDIA_LOG: "1"
+          RUST_BACKTRACE: "1"
+        run: |
+          $PSNativeCommandUseErrorActionPreference = $false
+          function Reaches($from, $to) {
+            $sender = [Net.Sockets.UdpClient]::new([Net.IPEndPoint]::new($from, 0))
+            $receiver = [Net.Sockets.UdpClient]::new([Net.IPEndPoint]::new($to, 0))
+            $receiver.Client.ReceiveTimeout = 2000
+            try {
+              $null = $sender.Send([byte[]]@(1), 1, [Net.IPEndPoint]$receiver.Client.LocalEndPoint)
+              $source = [Net.IPEndPoint]::new([Net.IPAddress]::Any, 0)
+              $null = $receiver.Receive([ref]$source)
+              "UDP from $from to ${to}: arrives"
+            } catch {
+              "UDP from $from to ${to}: $($_.Exception.Message)"
+            } finally {
+              $sender.Dispose()
+              $receiver.Dispose()
+            }
+          }
+          $own = [Net.NetworkInformation.NetworkInterface]::GetAllNetworkInterfaces() |
+            Where-Object { $_.OperationalStatus -eq 'Up' -and $_.NetworkInterfaceType -ne 'Loopback' } |
+            ForEach-Object { $_.GetIPProperties().UnicastAddresses.Address } |
+            Where-Object { $_.AddressFamily -eq 'InterNetwork' } | Select-Object -First 1
+          if ($own) {
+            Reaches $own ([Net.IPAddress]::Loopback)
+            Reaches ([Net.IPAddress]::Loopback) $own
+          }
+          cargo test --release --locked --manifest-path desktop/Cargo.toml -p gelabber-media-core --test mediasoup_loopback -- --nocapture --test-threads=1
+          exit 0
+
+      - name: App unit tests
+        if: ${{ !cancelled() && steps.app.outcome == 'success' }}
+        timeout-minutes: 20
+        env:
+          RUST_BACKTRACE: "1"
+        run: cargo test --release --locked --manifest-path desktop/Cargo.toml -p gelabber-desktop -- --test-threads=1
+
+      # Package by package like the builds and tests above: one call for the
+      # whole workspace would settle on other features and build the mediasoup
+      # worker again. Clippy runs its own copy of the workspace's build
+      # scripts; an empty directory in place of the core keeps that copy from
+      # compiling the C++ a second time, and lets this step run when the core
+      # did not build.
+      - name: Clippy
+        if: ${{ !cancelled() && steps.toolchain.outcome == 'success' }}
+        timeout-minutes: 45
+        run: |
+          $PSNativeCommandUseErrorActionPreference = $true
+          $env:GELABBER_MEDIA_LIB_DIR = (New-Item -ItemType Directory -Force (Join-Path $env:RUNNER_TEMP 'no-core')).FullName
+          cargo clippy --release --locked --manifest-path desktop/Cargo.toml -p gelabber-media-core --all-targets -- -D warnings
+          cargo clippy --release --locked --manifest-path desktop/Cargo.toml -p gelabber-desktop --all-targets -- -D warnings
+
+      - name: Format
+        if: ${{ !cancelled() && steps.toolchain.outcome == 'success' }}
+        run: cargo fmt --manifest-path desktop/Cargo.toml --all -- --check
+
   # The pacman repository (Arch/Omarchy): package, signed database, and a
   # user's install, upgrade and removal against it. Publishing is separate.
   arch-repo:
@@ -449,6 +837,37 @@ jobs:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
           TAG: ${{ env.RELEASE_TAG }}
         run: gh release upload "$TAG" gelabber-desktop-linux-x64.tar.gz --clobber --repo "$GITHUB_REPOSITORY"
+
+  # Release only: the Windows installer and its checksum become release
+  # assets. Apart from the Linux jobs in both directions: a failure here
+  # leaves the tarball and the pacman repository alone, and the other way
+  # round.
+  release-asset-windows:
+    name: Attach the Windows app to the release
+    if: github.event_name == 'release' || (github.event_name == 'workflow_dispatch' && inputs.release_tag != '')
+    needs: core-windows
+    runs-on: ubuntu-24.04
+    permissions:
+      contents: write
+    steps:
+      - name: Download the app
+        uses: actions/download-artifact@v4
+        with:
+          name: gelabber-desktop-windows-x64
+      - name: Upload to the release
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          TAG: ${{ env.RELEASE_TAG }}
+        run: |
+          set -euo pipefail
+          # The installer must be built from the released source, as the
+          # Linux package is.
+          if [ "$GITHUB_REF" != "refs/tags/$TAG" ]; then
+            echo "release $TAG must be built from its tag, not $GITHUB_REF"; exit 1
+          fi
+          sha256sum --check gelabber-desktop-windows-x64-setup.exe.sha256
+          gh release upload "$TAG" gelabber-desktop-windows-x64-setup.exe \
+            gelabber-desktop-windows-x64-setup.exe.sha256 --clobber --repo "$GITHUB_REPOSITORY"
 
   # Public: the repository on GitHub Pages. Off until the repository
   # variable ARCH_REPO_PUBLISH is "true", and the github-pages environment
