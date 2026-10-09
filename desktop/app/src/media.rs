@@ -703,7 +703,8 @@ fn request(
 /// of views may show the same consumer or source, next to a viewer window.
 /// Frames are at most `maxWidth` x `maxHeight` physical pixels (1280x720
 /// until the page says, here or with `media_view_configure`) and come at
-/// most `maxFps` times a second.
+/// most `maxFps` times a second. Next to a viewer window of the consumer
+/// only `maxFps` holds: its views get the window's frames, unscaled.
 #[tauri::command]
 pub async fn media_view_open(
     media: State<'_, Media>,
