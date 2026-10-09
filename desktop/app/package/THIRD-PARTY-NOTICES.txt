@@ -32,8 +32,13 @@ What is covered
 What is not covered
   - Libraries the programs load from the operating system when they run, for
     example glibc, GLib, GTK 3, WebKitGTK, libdbus, PipeWire and GStreamer on
-    Linux, the system DLLs and the WebView2 Runtime on Windows. They are not
-    in the packages.
+    Linux, the system DLLs and the WebView2 Runtime on Windows. The libraries
+    are not in the packages. Their header files are used when the programs are
+    compiled, and inline functions and macros of those headers become part of
+    the programs. The last entry of part 2 says what a search of the Linux
+    media core found of them and prints the notices of those headers. Nothing
+    else was collected for header files of system libraries or of the
+    compilers.
   - The web client. The application shows the pages of the Gelabber server it
     is connected to; they are not in the packages.
   - Notices that stand only inside individual source files and not in a
@@ -45,14 +50,18 @@ How this file was produced
   hand. The script's header says how to refresh it. Inputs:
   - part 2: a checkout of libwebrtc at
     36ea4535a500ac137dbf1f577ce40dc1aaa774ef with a finished Linux build, read
-    with libwebrtc's own licence generator
+    with libwebrtc's own licence generator and through ninja's record of that
+    build, and a Linux build of the media core with its symbol table
   - part 3: the sources that desktop/native/CMakeLists.txt fetched for a build
     of the media core, checked against the pins in
     desktop/native/libwebrtc.env and CMakeLists.txt
-  - parts 4 to 6: desktop/Cargo.lock through cargo tree and cargo metadata,
-    and the crate sources in the cargo registry
+  - parts 4 to 6: desktop/Cargo.lock through cargo tree and cargo metadata on
+    Linux x86-64, the crate sources in the cargo registry, and the licence
+    texts in the Rust toolchain that rust-toolchain.toml pins
   Nothing was built or run for Windows to produce it; what it says about the
-  Windows package is derived from the build scripts and the lock file.
+  Windows package is derived from the build scripts and the lock file. What
+  part 2 says about the contents of the Linux media core was found in a build
+  made on the machine that generated it, not in the released library.
 
 Open points
   - H.264 on Linux. libwebrtc is built with rtc_use_h264=true for Linux, so
@@ -88,7 +97,8 @@ Open points
 2. Native media core: libwebrtc and the libraries built with it
 ##############################################################################
 
-[inputs 20a8f1780397daab: the script keeps this part while they are unchanged]
+[the script keeps this part while its inputs have the digest 37b15dce018dc6ea
+ and its text has the digest 159d7c408e56a6ba43457a3384c99753]
 
 libwebrtc is built from source at the pinned commit and linked statically into
 the native media core, together with the third-party libraries of its source
@@ -119,14 +129,51 @@ How the list was made
   The generator's table has no entry for ffmpeg and openh264: it stops with
   "Missing licenses for third_party targets: ffmpeg, openh264". For these
   libraries it was given the licence file that the library's README.chromium
-  names in the field "License File" (for ffmpeg also
-  third_party/ffmpeg/COPYING.LGPLv2.1).
-  This is a list of dependencies. It can name more than the binary holds: the
-  linker drops code that nothing references, and tools of the build are
-  dependencies too (nasm is an assembler). "From" is the git repository and
-  commit the licence file was checked out from; apart from the change named
-  above, none of these checkouts differed from its commit. The other fields
-  quote the README.chromium that libwebrtc's tree keeps for the library.
+  names in the field "License File".
+  The generator's table names one licence file per library. Added from the
+  same checkout and build directory:
+  - the files that a library's README.chromium names as "License File" and the
+    generator's table lacks;
+  - licence files of directories below a library. ninja's record of the build
+    (its dependency log, the assembler's dependency files and the build
+    statements) says which files every compile read. A file named like a
+    licence file that stands in the directory of such a file, or in a
+    directory above it, and is neither one of the library's own licence files
+    nor next to them, is printed under the library it belongs to, with what
+    the build read from that directory;
+  - files next to a library's licence file that neither the generator nor
+    README.chromium names. They were looked at one by one (the table
+    BESIDE_THE_LICENCE of the script); an entry says which of them it does not
+    print and why.
+  The same record was used to check the list against the build: every object
+  file was compiled from a file of libwebrtc's own checkouts or of a listed
+  library, and no file a compile read lies in a third_party directory outside
+  the listed libraries, apart from the compiler's own headers
+  (third_party/llvm-build).
+  Not collected: notices that stand only at the head of individual source
+  files and not in a licence file.
+  "From" is the git repository and commit the licence file was checked out
+  from; apart from the change named above, none of these checkouts differed
+  from its commit. "README" quotes the README.chromium that libwebrtc's tree
+  keeps for the library. Those are statements of that file and were not
+  verified, with one exception: the script looks in the library's printed
+  licence files for the wording of each licence README.chromium names, and in
+  every case for the wording of Apache-2.0, the LLVM exceptions, NCSA, MIT,
+  BSD, ISC, LGPL-2.1, IJG, Zlib and the SQLite blessing. Where the two differ,
+  the entry says so. That is a search for wording, not a reading of the texts.
+
+What is in the Linux library
+  The generator's list is a list of dependencies. It can name more than the
+  binary holds: the linker leaves out object files that nothing refers to, and
+  tools of the build are dependencies too. The lines "Linux" say what was
+  found in a libgelabber_media.so with its symbol table, built from the pins
+  of parts 2 and 3 on the machine that generated this part. An object file of
+  libwebrtc's build counts as being in the library when a function or variable
+  that it defines for other files (not weak, not file-local) is among the
+  library's symbols. "Other object files that read its files" were compiled
+  with a file of the library, usually a header, without belonging to it;
+  whether code from that file reached them is not visible. The library in the
+  packages is built separately from the same sources and was not looked into.
 
 Windows
   No list was generated for the Windows build of libwebrtc (target_os="win",
@@ -141,13 +188,16 @@ Windows
     WEBRTC_USE_H264 on Windows, so its own code refers to neither (see part
     1).
   Whether the Windows build depends on third-party libraries that the Linux
-  build lacks was not established.
+  build lacks was not established. gelabber_media.dll was not looked into: the
+  lines "Linux" and the entry on system header files describe the Linux
+  library only.
 
 Libraries
   webrtc abseil-cpp boringssl compiler-rt crc32c dav1d ffmpeg fft fiat g711
   g722 libaom libc++ libc++abi libjpeg_turbo libsrtp libvpx libyuv llvm-libc
   nasm ooura openh264 opus perfetto pffft protobuf rnnoise sigslot
   spl_sqrt_floor
+  After them: header files of system libraries.
 
 ------------------------------------------------------------------------------
 webrtc
@@ -163,9 +213,18 @@ webrtc
             commit e30091e8987ee0bb0cd30bc467250a96a7614762
   Code      https://chromium.googlesource.com/chromium/src/tools
             commit ec8f1c6113753a31c55b6d6bddfbe198046029a8
-  Declared  BSD
+  README    README.chromium says
+            License: BSD
   Text      LICENSE
+            PATENTS
+  Linux     in libgelabber_media.so: 1027 of its 1120 object files, and 304 of
+            the 1069 other object files that read its files
 ------------------------------------------------------------------------------
+Not printed: license_template.txt, next to the licence file. The comment that
+WebRTC's own source files begin with; it refers to LICENSE and PATENTS.
+
+[LICENSE]
+
 Copyright (c) 2011, The WebRTC project authors. All rights reserved.
 
 Redistribution and use in source and binary forms, with or without
@@ -196,15 +255,46 @@ THEORY OF LIABILITY, WHETHER IN CONTRACT, STRICT LIABILITY, OR TORT
 (INCLUDING NEGLIGENCE OR OTHERWISE) ARISING IN ANY WAY OUT OF THE USE
 OF THIS SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
 
+[PATENTS]
+
+Additional IP Rights Grant (Patents)
+
+"This implementation" means the copyrightable works distributed by
+Google as part of the WebRTC code package.
+
+Google hereby grants to you a perpetual, worldwide, non-exclusive,
+no-charge, irrevocable (except as stated in this section) patent
+license to make, have made, use, offer to sell, sell, import,
+transfer, and otherwise run, modify and propagate the contents of this
+implementation of the WebRTC code package, where such license applies
+only to those patent claims, both currently owned by Google and
+acquired in the future, licensable by Google that are necessarily
+infringed by this implementation of the WebRTC code package. This
+grant does not include claims that would be infringed only as a
+consequence of further modification of this implementation. If you or
+your agent or exclusive licensee institute or order or agree to the
+institution of patent litigation against any entity (including a
+cross-claim or counterclaim in a lawsuit) alleging that this
+implementation of the WebRTC code package or any code incorporated
+within this implementation of the WebRTC code package constitutes
+direct or contributory patent infringement, or inducement of patent
+infringement, then any patent rights granted to you under this License
+for this implementation of the WebRTC code package shall terminate as
+of the date such litigation is filed.
+
 
 ------------------------------------------------------------------------------
 abseil-cpp
   From      https://chromium.googlesource.com/chromium/src/third_party
             commit e30091e8987ee0bb0cd30bc467250a96a7614762
-  Name      Abseil
-  Revision  56945519b5d17dcec0982ac6cdf4b6420f03c9c3
-  Declared  Apache-2.0
+  README    third_party/abseil-cpp/README.chromium says
+            Name: Abseil
+            Revision: 56945519b5d17dcec0982ac6cdf4b6420f03c9c3
+            License: Apache-2.0
+            Shipped: yes
   Text      third_party/abseil-cpp/LICENSE
+  Linux     in libgelabber_media.so: 20 of its 133 object files, and 942 of
+            the 1149 other object files that read its files
 ------------------------------------------------------------------------------
                                  Apache License
                            Version 2.0, January 2004
@@ -413,11 +503,19 @@ abseil-cpp
 boringssl
   From      https://boringssl.googlesource.com/boringssl.git
             commit ddb2ca4b48fca9a1c468d83dc513b837331843ac
-  Name      BoringSSL
-  Version   git
-  Declared  MIT, BSD-3-Clause, OpenSSL, ISC, SSLeay
+  README    third_party/boringssl/README.chromium says
+            Name: BoringSSL
+            Version: git
+            License: MIT, BSD-3-Clause, OpenSSL, ISC, SSLeay
+            Shipped: yes
   Text      third_party/boringssl/src/LICENSE
+  Linux     in libgelabber_media.so: 208 of its 438 object files, and 21 of
+            the 23 other object files that read its files
 ------------------------------------------------------------------------------
+README.chromium names MIT, OpenSSL, ISC and SSLeay; the wording of these was
+not found in the library's licence file printed here. The licence file printed
+here holds the wording of Apache-2.0, which README.chromium does not name.
+
                                  Apache License
                            Version 2.0, January 2004
                         http://www.apache.org/licenses/
@@ -661,9 +759,12 @@ OF THIS SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
 compiler-rt
   From      https://chromium.googlesource.com/external/github.com/llvm/llvm-project/compiler-rt.git
             commit dc425afb37a69b60c8c02fef815af29e91b61773
-  Name      compiler-rt
-  Declared  NCSA, Apache-with-LLVM-Exception, MIT
+  README    third_party/compiler-rt/README.chromium says
+            Name: compiler-rt
+            License: NCSA, Apache-with-LLVM-Exception, MIT
+            Shipped: yes
   Text      third_party/compiler-rt/src/LICENSE.TXT
+  Linux     in libgelabber_media.so: 0 of its 1 object files
 ------------------------------------------------------------------------------
 ==============================================================================
 The LLVM Project is under the Apache License v2.0 with LLVM Exceptions:
@@ -982,10 +1083,14 @@ THE SOFTWARE.
 crc32c
   From      https://chromium.googlesource.com/external/github.com/google/crc32c.git
             commit d3d60ac6e0f16780bcfcc825385e1d338801a558
-  Name      CRC32C
-  Version   1.0.7.git-5998f8451548244de8cde7fab387a550e7c4497d
-  Declared  BSD-3-Clause
+  README    third_party/crc32c/README.chromium says
+            Name: CRC32C
+            Version: 1.0.7.git-5998f8451548244de8cde7fab387a550e7c4497d
+            License: BSD-3-Clause
+            Shipped: yes
   Text      third_party/crc32c/src/LICENSE
+  Linux     in libgelabber_media.so: 3 of its 4 object files, and 1 of the 1
+            other object files that read its files
 ------------------------------------------------------------------------------
 Copyright 2017, The CRC32C Authors.
 
@@ -1023,12 +1128,49 @@ dav1d
             commit e30091e8987ee0bb0cd30bc467250a96a7614762
   Code      https://chromium.googlesource.com/external/github.com/videolan/dav1d.git
             commit 716164239ad6e6b11c5dcdaa3fb540309d499833
-  Name      dav1d is an AV1 decoder :)
-  Version   master
-  Declared  BSD-2-Clause
+  README    third_party/dav1d/README.chromium says
+            Name: dav1d is an AV1 decoder :)
+            Version: master
+            License: BSD-2-Clause
+            Shipped: yes
   Text      third_party/dav1d/LICENSE
+            third_party/dav1d/libdav1d/COPYING
+  Linux     in libgelabber_media.so: 98 of its 98 object files, and 1 of the 1
+            other object files that read its files
 ------------------------------------------------------------------------------
+[third_party/dav1d/LICENSE]
+
 Copyright © 2018, VideoLAN and dav1d authors
+All rights reserved.
+
+Redistribution and use in source and binary forms, with or without
+modification, are permitted provided that the following conditions are met:
+
+1. Redistributions of source code must retain the above copyright notice, this
+   list of conditions and the following disclaimer.
+
+2. Redistributions in binary form must reproduce the above copyright notice,
+   this list of conditions and the following disclaimer in the documentation
+   and/or other materials provided with the distribution.
+
+THIS SOFTWARE IS PROVIDED BY THE COPYRIGHT HOLDERS AND CONTRIBUTORS "AS IS" AND
+ANY EXPRESS OR IMPLIED WARRANTIES, INCLUDING, BUT NOT LIMITED TO, THE IMPLIED
+WARRANTIES OF MERCHANTABILITY AND FITNESS FOR A PARTICULAR PURPOSE ARE
+DISCLAIMED. IN NO EVENT SHALL THE COPYRIGHT OWNER OR CONTRIBUTORS BE LIABLE FOR
+ANY DIRECT, INDIRECT, INCIDENTAL, SPECIAL, EXEMPLARY, OR CONSEQUENTIAL DAMAGES
+(INCLUDING, BUT NOT LIMITED TO, PROCUREMENT OF SUBSTITUTE GOODS OR SERVICES;
+LOSS OF USE, DATA, OR PROFITS; OR BUSINESS INTERRUPTION) HOWEVER CAUSED AND
+ON ANY THEORY OF LIABILITY, WHETHER IN CONTRACT, STRICT LIABILITY, OR TORT
+(INCLUDING NEGLIGENCE OR OTHERWISE) ARISING IN ANY WAY OUT OF THE USE OF THIS
+SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
+
+[third_party/dav1d/libdav1d/COPYING]
+
+A directory below dav1d with licence files of its own. The build read 152 of
+its files. In libgelabber_media.so (Linux): 99 of the 99 object files compiled
+with them.
+
+Copyright © 2018-2019, VideoLAN and dav1d authors
 All rights reserved.
 
 Redistribution and use in source and binary forms, with or without
@@ -1057,9 +1199,14 @@ SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
 ffmpeg
   From      https://chromium.googlesource.com/chromium/third_party/ffmpeg.git
             commit d2d06b12c22d27af58114e779270521074ff1f85
-  Name      ffmpeg
-  Declared  LGPL 2.1
-  Text      third_party/ffmpeg/CREDITS.chromium, third_party/ffmpeg/COPYING.LGPLv2.1
+  README    third_party/ffmpeg/README.chromium says
+            Name: ffmpeg
+            License: LGPL 2.1
+            Shipped: yes
+  Text      third_party/ffmpeg/CREDITS.chromium
+            third_party/ffmpeg/COPYING.LGPLv2.1
+  Linux     in libgelabber_media.so: 170 of its 290 object files, and 3 of the
+            3 other object files that read its files
 ------------------------------------------------------------------------------
 FFmpeg is linked statically, as part of libwebrtc, into libgelabber_media.so
 (Linux). It is Chromium's copy of FFmpeg, unchanged. The source code is the
@@ -1073,14 +1220,26 @@ Licence of this build as its configuration states it
 "LGPL version 2.1 or later", CONFIG_GPL 0, CONFIG_NONFREE 0, CONFIG_VERSION3
 0.
 Components that configuration enables, which are compiled into the libwebrtc
-package (the linker decides which of them reach the media core):
-  decoders:
+package, and which of them are among the symbols of libgelabber_media.so
+(Linux; FFmpeg registers a component as ff_<name>_<kind>):
+  decoders (15; in libgelabber_media.so: all):
     aac flac h264 libopus mp3 pcm_alaw pcm_f32le pcm_mulaw pcm_s16be pcm_s16le
     pcm_s24be pcm_s24le pcm_s32le pcm_u8 vorbis
-  demuxers:
+  demuxers (7; in libgelabber_media.so: none):
     aac flac matroska mov mp3 ogg wav
-  parsers:
+  parsers (7; in libgelabber_media.so: none):
     aac flac h264 mpegaudio opus vorbis vp9
+
+The licence files printed here hold the wording of MIT, BSD and ISC, which
+README.chromium does not name.
+
+Not printed: COPYING.GPLv2, COPYING.GPLv3 and COPYING.LGPLv3, next to the
+licence file. FFmpeg's licence texts for builds configured with --enable-gpl
+or --enable-version3. The config.h of this build says CONFIG_GPL 0 and
+CONFIG_VERSION3 0.
+
+Not printed: LICENSE.md, next to the licence file. Its text is part of
+third_party/ffmpeg/CREDITS.chromium, printed here.
 
 [third_party/ffmpeg/CREDITS.chromium]
 
@@ -2529,9 +2688,13 @@ That's all there is to it!
 fft
   From      https://webrtc.googlesource.com/src.git
             commit 36ea4535a500ac137dbf1f577ce40dc1aaa774ef
-  Name      fft
-  Declared  Custom license
+  README    modules/third_party/fft/README.chromium says
+            Name: fft
+            License: Custom license
+            Shipped: yes
   Text      modules/third_party/fft/LICENSE
+  Linux     in libgelabber_media.so: 0 of its 1 object files, and 5 of the 5
+            other object files that read its files
 ------------------------------------------------------------------------------
 /*
  * Copyright(c)1995,97 Mark Olesen <olesen@me.QueensU.CA>
@@ -2564,11 +2727,16 @@ fft
 fiat
   From      https://boringssl.googlesource.com/boringssl.git
             commit ddb2ca4b48fca9a1c468d83dc513b837331843ac
-  Name      Fiat-Crypto: Synthesizing Correct-by-Construction Code for Cryptographic Primitives
-  Version   git (see METADATA)
-  Revision  6ccc6638716d4632304baf1adbb5c47c3a12ea6f
-  Declared  Apache-2.0
+  README    third_party/boringssl/src/third_party/fiat/README.chromium says
+            Name: Fiat-Crypto: Synthesizing Correct-by-Construction Code for
+            Cryptographic Primitives
+            Version: git (see METADATA)
+            Revision: 6ccc6638716d4632304baf1adbb5c47c3a12ea6f
+            License: Apache-2.0
+            Shipped: yes
   Text      third_party/boringssl/src/third_party/fiat/LICENSE
+  Linux     in libgelabber_media.so: 2 of its 4 object files, and 2 of the 2
+            other object files that read its files
 ------------------------------------------------------------------------------
 The Apache License, Version 2.0 (Apache-2.0)
 
@@ -2591,9 +2759,13 @@ limitations under the License.
 g711
   From      https://webrtc.googlesource.com/src.git
             commit 36ea4535a500ac137dbf1f577ce40dc1aaa774ef
-  Name      In line A-law and u-law conversion routines
-  Declared  Custom license
+  README    modules/third_party/g711/README.chromium says
+            Name: In line A-law and u-law conversion routines
+            License: Custom license
+            Shipped: yes
   Text      modules/third_party/g711/LICENSE
+  Linux     in libgelabber_media.so: 0 of its 1 object files, and 1 of the 1
+            other object files that read its files
 ------------------------------------------------------------------------------
 /*
  * SpanDSP - a series of DSP components for telephony
@@ -2615,9 +2787,13 @@ g711
 g722
   From      https://webrtc.googlesource.com/src.git
             commit 36ea4535a500ac137dbf1f577ce40dc1aaa774ef
-  Name      The ITU G.722 codec, encode and decode part.
-  Declared  Custom license
+  README    modules/third_party/g722/README.chromium says
+            Name: The ITU G.722 codec, encode and decode part.
+            License: Custom license
+            Shipped: yes
   Text      modules/third_party/g722/LICENSE
+  Linux     in libgelabber_media.so: 2 of its 2 object files, and 1 of the 1
+            other object files that read its files
 ------------------------------------------------------------------------------
 /*
  * SpanDSP - a series of DSP components for telephony
@@ -2645,11 +2821,23 @@ g722
 libaom
   From      https://aomedia.googlesource.com/aom.git
             commit e91b7aa26d6d0979bba2bee5e1c27a7a695e0226
-  Name      Alliance for Open Media Video Codec
-  Revision  e91b7aa26d6d0979bba2bee5e1c27a7a695e0226
-  Declared  BSD-2-Clause, Patent
+  README    third_party/libaom/README.chromium says
+            Name: Alliance for Open Media Video Codec
+            Revision: e91b7aa26d6d0979bba2bee5e1c27a7a695e0226
+            License: BSD-2-Clause, Patent
+            Shipped: yes
   Text      third_party/libaom/source/libaom/LICENSE
+            third_party/libaom/source/libaom/PATENTS
+            third_party/libaom/source/libaom/third_party/SVT-AV1/LICENSE.md
+            third_party/libaom/source/libaom/third_party/SVT-AV1/PATENTS.md
+            third_party/libaom/source/libaom/third_party/fastfeat/LICENSE
+            third_party/libaom/source/libaom/third_party/vector/LICENSE
+            third_party/libaom/source/libaom/third_party/x86inc/LICENSE
+  Linux     in libgelabber_media.so: 212 of its 232 object files, and 1 of the
+            1 other object files that read its files
 ------------------------------------------------------------------------------
+[third_party/libaom/source/libaom/LICENSE]
+
 Copyright (c) 2016, Alliance for Open Media. All rights reserved.
 
 Redistribution and use in source and binary forms, with or without
@@ -2677,15 +2865,367 @@ LIABILITY, OR TORT (INCLUDING NEGLIGENCE OR OTHERWISE) ARISING IN
 ANY WAY OUT OF THE USE OF THIS SOFTWARE, EVEN IF ADVISED OF THE
 POSSIBILITY OF SUCH DAMAGE.
 
+[third_party/libaom/source/libaom/PATENTS]
+
+Alliance for Open Media Patent License 1.0
+
+1. License Terms.
+
+1.1. Patent License. Subject to the terms and conditions of this License, each
+     Licensor, on behalf of itself and successors in interest and assigns,
+     grants Licensee a non-sublicensable, perpetual, worldwide, non-exclusive,
+     no-charge, royalty-free, irrevocable (except as expressly stated in this
+     License) patent license to its Necessary Claims to make, use, sell, offer
+     for sale, import or distribute any Implementation.
+
+1.2. Conditions.
+
+1.2.1. Availability. As a condition to the grant of rights to Licensee to make,
+       sell, offer for sale, import or distribute an Implementation under
+       Section 1.1, Licensee must make its Necessary Claims available under
+       this License, and must reproduce this License with any Implementation
+       as follows:
+
+       a. For distribution in source code, by including this License in the
+          root directory of the source code with its Implementation.
+
+       b. For distribution in any other form (including binary, object form,
+          and/or hardware description code (e.g., HDL, RTL, Gate Level Netlist,
+          GDSII, etc.)), by including this License in the documentation, legal
+          notices, and/or other written materials provided with the
+          Implementation.
+
+1.2.2. Additional Conditions. This license is directly from Licensor to
+       Licensee.  Licensee acknowledges as a condition of benefiting from it
+       that no rights from Licensor are received from suppliers, distributors,
+       or otherwise in connection with this License.
+
+1.3. Defensive Termination. If any Licensee, its Affiliates, or its agents
+     initiates patent litigation or files, maintains, or voluntarily
+     participates in a lawsuit against another entity or any person asserting
+     that any Implementation infringes Necessary Claims, any patent licenses
+     granted under this License directly to the Licensee are immediately
+     terminated as of the date of the initiation of action unless 1) that suit
+     was in response to a corresponding suit regarding an Implementation first
+     brought against an initiating entity, or 2) that suit was brought to
+     enforce the terms of this License (including intervention in a third-party
+     action by a Licensee).
+
+1.4. Disclaimers. The Reference Implementation and Specification are provided
+     "AS IS" and without warranty. The entire risk as to implementing or
+     otherwise using the Reference Implementation or Specification is assumed
+     by the implementer and user. Licensor expressly disclaims any warranties
+     (express, implied, or otherwise), including implied warranties of
+     merchantability, non-infringement, fitness for a particular purpose, or
+     title, related to the material. IN NO EVENT WILL LICENSOR BE LIABLE TO
+     ANY OTHER PARTY FOR LOST PROFITS OR ANY FORM OF INDIRECT, SPECIAL,
+     INCIDENTAL, OR CONSEQUENTIAL DAMAGES OF ANY CHARACTER FROM ANY CAUSES OF
+     ACTION OF ANY KIND WITH RESPECT TO THIS LICENSE, WHETHER BASED ON BREACH
+     OF CONTRACT, TORT (INCLUDING NEGLIGENCE), OR OTHERWISE, AND WHETHER OR
+     NOT THE OTHER PARTY HAS BEEN ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
+
+2. Definitions.
+
+2.1. Affiliate.  "Affiliate" means an entity that directly or indirectly
+     Controls, is Controlled by, or is under common Control of that party.
+
+2.2. Control. "Control" means direct or indirect control of more than 50% of
+     the voting power to elect directors of that corporation, or for any other
+     entity, the power to direct management of such entity.
+
+2.3. Decoder.  "Decoder" means any decoder that conforms fully with all
+     non-optional portions of the Specification.
+
+2.4. Encoder.  "Encoder" means any encoder that produces a bitstream that can
+     be decoded by a Decoder only to the extent it produces such a bitstream.
+
+2.5. Final Deliverable.  "Final Deliverable" means the final version of a
+     deliverable approved by the Alliance for Open Media as a Final
+     Deliverable.
+
+2.6. Implementation.  "Implementation" means any implementation, including the
+     Reference Implementation, that is an Encoder and/or a Decoder. An
+     Implementation also includes components of an Implementation only to the
+     extent they are used as part of an Implementation.
+
+2.7. License. "License" means this license.
+
+2.8. Licensee. "Licensee" means any person or entity who exercises patent
+     rights granted under this License.
+
+2.9. Licensor.  "Licensor" means (i) any Licensee that makes, sells, offers
+     for sale, imports or distributes any Implementation, or (ii) a person
+     or entity that has a licensing obligation to the Implementation as a
+     result of its membership and/or participation in the Alliance for Open
+     Media working group that developed the Specification.
+
+2.10. Necessary Claims.  "Necessary Claims" means all claims of patents or
+      patent applications, (a) that currently or at any time in the future,
+      are owned or controlled by the Licensor, and (b) (i) would be an
+      Essential Claim as defined by the W3C Policy as of February 5, 2004
+      (https://www.w3.org/Consortium/Patent-Policy-20040205/#def-essential)
+      as if the Specification was a W3C Recommendation; or (ii) are infringed
+      by the Reference Implementation.
+
+2.11. Reference Implementation. "Reference Implementation" means an Encoder
+      and/or Decoder released by the Alliance for Open Media as a Final
+      Deliverable.
+
+2.12. Specification. "Specification" means the specification designated by
+      the Alliance for Open Media as a Final Deliverable for which this
+      License was issued.
+
+[third_party/libaom/source/libaom/third_party/SVT-AV1/LICENSE.md]
+
+A directory below libaom with licence files of its own. The build read 5 of
+its files (EbMemory_AVX2.h, EbMemory_SSE4_1.h, convolve_2d_avx2.h,
+convolve_avx2.h, synonyms.h). In libgelabber_media.so (Linux): 2 of the 2
+object files compiled with them.
+
+BSD 3-Clause Clear License
+The Clear BSD License
+
+Copyright (c) 2021, Alliance for Open Media
+
+All rights reserved.
+
+Redistribution and use in source and binary forms, with or without
+modification, are permitted (subject to the limitations in the disclaimer below)
+provided that the following conditions are met:
+
+1. Redistributions of source code must retain the above copyright
+   notice, this list of conditions and the following disclaimer.
+
+2. Redistributions in binary form must reproduce the above copyright
+   notice, this list of conditions and the following disclaimer in
+   the documentation and/or other materials provided with the distribution.
+
+3. Neither the name of the Alliance for Open Media nor the names of its
+   contributors may be used to endorse or promote products derived from
+   this software without specific prior written permission.
+
+NO EXPRESS OR IMPLIED LICENSES TO ANY PARTY'S PATENT RIGHTS ARE GRANTED BY THIS LICENSE.
+THIS SOFTWARE IS PROVIDED BY THE COPYRIGHT HOLDERS AND CONTRIBUTORS "AS IS" AND ANY
+EXPRESS OR IMPLIED WARRANTIES, INCLUDING, BUT NOT LIMITED TO, THE IMPLIED WARRANTIES
+OF MERCHANTABILITY AND FITNESS FOR A PARTICULAR PURPOSE ARE DISCLAIMED. IN NO EVENT SHALL
+THE COPYRIGHT HOLDER OR CONTRIBUTORS BE LIABLE FOR ANY DIRECT, INDIRECT, INCIDENTAL,
+SPECIAL, EXEMPLARY, OR CONSEQUENTIAL DAMAGES (INCLUDING, BUT NOT LIMITED TO, PROCUREMENT
+OF SUBSTITUTE GOODS OR SERVICES; LOSS OF USE, DATA, OR PROFITS; OR BUSINESS INTERRUPTION)
+HOWEVER CAUSED AND ON ANY THEORY OF LIABILITY, WHETHER IN CONTRACT, STRICT LIABILITY,
+OR TORT (INCLUDING NEGLIGENCE OR OTHERWISE) ARISING IN ANY WAY OUT OF THE USE OF THIS
+SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
+
+[third_party/libaom/source/libaom/third_party/SVT-AV1/PATENTS.md]
+
+**Alliance for Open Media Patent License 1.0**
+
+ 1. **License Terms.**
+
+    **Patent License.** Subject to the terms and conditions of this License, each
+     Licensor, on behalf of itself and successors in interest and assigns,
+     grants Licensee a non-sublicensable, perpetual, worldwide, non-exclusive,
+     no-charge, royalty-free, irrevocable (except as expressly stated in this
+     License) patent license to its Necessary Claims to make, use, sell, offer
+     for sale, import or distribute any Implementation.
+
+     **Conditions.**
+
+    *Availability.* As a condition to the grant of rights to Licensee to make,
+       sell, offer for sale, import or distribute an Implementation under
+       Section 1.1, Licensee must make its Necessary Claims available under
+       this License, and must reproduce this License with any Implementation
+       as follows:
+
+          a. For distribution in source code, by including this License in the
+          root directory of the source code with its Implementation.
+
+          b. For distribution in any other form (including binary, object form,
+          and/or hardware description code (e.g., HDL, RTL, Gate Level Netlist,
+          GDSII, etc.)), by including this License in the documentation, legal
+          notices, and/or other written materials provided with the
+          Implementation.
+
+    *Additional Conditions.* This license is directly from Licensor to
+       Licensee.  Licensee acknowledges as a condition of benefiting from it
+       that no rights from Licensor are received from suppliers, distributors,
+       or otherwise in connection with this License.
+
+    **Defensive Termination**. If any Licensee, its Affiliates, or its agents
+     initiates patent litigation or files, maintains, or voluntarily
+     participates in a lawsuit against another entity or any person asserting
+     that any Implementation infringes Necessary Claims, any patent licenses
+     granted under this License directly to the Licensee are immediately
+     terminated as of the date of the initiation of action unless 1) that suit
+     was in response to a corresponding suit regarding an Implementation first
+     brought against an initiating entity, or 2) that suit was brought to
+     enforce the terms of this License (including intervention in a third-party
+     action by a Licensee).
+
+    **Disclaimers.** The Reference Implementation and Specification are provided
+     "AS IS" and without warranty. The entire risk as to implementing or
+     otherwise using the Reference Implementation or Specification is assumed
+     by the implementer and user. Licensor expressly disclaims any warranties
+     (express, implied, or otherwise), including implied warranties of
+     merchantability, non-infringement, fitness for a particular purpose, or
+     title, related to the material. IN NO EVENT WILL LICENSOR BE LIABLE TO
+     ANY OTHER PARTY FOR LOST PROFITS OR ANY FORM OF INDIRECT, SPECIAL,
+     INCIDENTAL, OR CONSEQUENTIAL DAMAGES OF ANY CHARACTER FROM ANY CAUSES OF
+     ACTION OF ANY KIND WITH RESPECT TO THIS LICENSE, WHETHER BASED ON BREACH
+     OF CONTRACT, TORT (INCLUDING NEGLIGENCE), OR OTHERWISE, AND WHETHER OR
+     NOT THE OTHER PARTRY HAS BEEN ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
+
+2. **Definitions.**
+
+     **Affiliate.**  "Affiliate" means an entity that directly or indirectly
+     Controls, is Controlled by, or is under common Control of that party.
+
+    **Control.** "Control" means direct or indirect control of more than 50% of
+     the voting power to elect directors of that corporation, or for any other
+     entity, the power to direct management of such entity.
+
+    **Decoder.**  "Decoder" means any decoder that conforms fully with all
+     non-optional portions of the Specification.
+
+    **Encoder.**  "Encoder" means any encoder that produces a bitstream that can
+     be decoded by a Decoder only to the extent it produces such a bitstream.
+
+    **Final Deliverable.**  "Final Deliverable" means the final version of a
+     deliverable approved by the Alliance for Open Media as a Final
+     Deliverable.
+
+    **Implementation.**  "Implementation" means any implementation, including the
+     Reference Implementation, that is an Encoder and/or a Decoder. An
+     Implementation also includes components of an Implementation only to the
+     extent they are used as part of an Implementation.
+
+    **License.** "License" means this license.
+
+    **Licensee.** "Licensee" means any person or entity who exercises patent
+     rights granted under this License.
+
+    **Licensor.**  "Licensor" means (i) any Licensee that makes, sells, offers
+     for sale, imports or distributes any Implementation, or (ii) a person
+     or entity that has a licensing obligation to the Implementation as a
+     result of its membership and/or participation in the Alliance for Open
+     Media working group that developed the Specification.
+
+    **Necessary Claims.**  "Necessary Claims" means all claims of patents or
+      patent applications, (a) that currently or at any time in the future,
+      are owned or controlled by the Licensor, and (b) (i) would be an
+      Essential Claim as defined by the W3C Policy as of February 5, 2004
+      (https://www.w3.org/Consortium/Patent-Policy-20040205/#def-essential)
+      as if the Specification was a W3C Recommendation; or (ii) are infringed
+      by the Reference Implementation.
+
+     **Reference Implementation.** "Reference Implementation" means an Encoder
+      and/or Decoder released by the Alliance for Open Media as a Final
+      Deliverable.
+
+     **Specification.** "Specification" means the specification designated by
+      the Alliance for Open Media as a Final Deliverable for which this
+      License was issued.
+
+[third_party/libaom/source/libaom/third_party/fastfeat/LICENSE]
+
+A directory below libaom with licence files of its own. The build read 4 of
+its files (fast.c, fast.h, fast_9.c, nonmax.c). In libgelabber_media.so
+(Linux): 0 of the 3 object files compiled with them.
+
+Copyright (c) 2006, 2008 Edward Rosten
+All rights reserved.
+
+Redistribution and use in source and binary forms, with or without
+modification, are permitted provided that the following conditions
+are met:
+
+
+        *Redistributions of source code must retain the above copyright
+         notice, this list of conditions and the following disclaimer.
+
+        *Redistributions in binary form must reproduce the above copyright
+         notice, this list of conditions and the following disclaimer in the
+         documentation and/or other materials provided with the distribution.
+
+        *Neither the name of the University of Cambridge nor the names of
+         its contributors may be used to endorse or promote products derived
+         from this software without specific prior written permission.
+
+THIS SOFTWARE IS PROVIDED BY THE COPYRIGHT HOLDERS AND CONTRIBUTORS
+"AS IS" AND ANY EXPRESS OR IMPLIED WARRANTIES, INCLUDING, BUT NOT
+LIMITED TO, THE IMPLIED WARRANTIES OF MERCHANTABILITY AND FITNESS FOR
+A PARTICULAR PURPOSE ARE DISCLAIMED.  IN NO EVENT SHALL THE COPYRIGHT OWNER OR
+CONTRIBUTORS BE LIABLE FOR ANY DIRECT, INDIRECT, INCIDENTAL, SPECIAL,
+EXEMPLARY, OR CONSEQUENTIAL DAMAGES (INCLUDING, BUT NOT LIMITED TO,
+PROCUREMENT OF SUBSTITUTE GOODS OR SERVICES; LOSS OF USE, DATA, OR
+PROFITS; OR BUSINESS INTERRUPTION) HOWEVER CAUSED AND ON ANY THEORY OF
+LIABILITY, WHETHER IN CONTRACT, STRICT LIABILITY, OR TORT (INCLUDING
+NEGLIGENCE OR OTHERWISE) ARISING IN ANY WAY OUT OF THE USE OF THIS
+SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
+
+[third_party/libaom/source/libaom/third_party/vector/LICENSE]
+
+A directory below libaom with licence files of its own. The build read 2 of
+its files (vector.c, vector.h). In libgelabber_media.so (Linux): 50 of the 50
+object files compiled with them.
+
+The MIT License (MIT)
+Copyright (c) 2016 Peter Goldsborough
+
+Permission is hereby granted, free of charge, to any person obtaining a copy of
+this software and associated documentation files (the "Software"), to deal in
+the Software without restriction, including without limitation the rights to
+use, copy, modify, merge, publish, distribute, sublicense, and/or sell copies of
+the Software, and to permit persons to whom the Software is furnished to do so,
+subject to the following conditions:
+
+The above copyright notice and this permission notice shall be included in all
+copies or substantial portions of the Software.
+
+THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND, EXPRESS OR
+IMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES OF MERCHANTABILITY, FITNESS
+FOR A PARTICULAR PURPOSE AND NONINFRINGEMENT. IN NO EVENT SHALL THE AUTHORS OR
+COPYRIGHT HOLDERS BE LIABLE FOR ANY CLAIM, DAMAGES OR OTHER LIABILITY, WHETHER
+IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM, OUT OF OR IN
+CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE SOFTWARE.
+
+[third_party/libaom/source/libaom/third_party/x86inc/LICENSE]
+
+A directory below libaom with licence files of its own. The build read 1 of
+its files (x86inc.asm). In libgelabber_media.so (Linux): 8 of the 11 object
+files compiled with them.
+
+Copyright (C) 2005-2012 x264 project
+
+Authors: Loren Merritt <lorenm@u.washington.edu>
+         Anton Mitrofanov <BugMaster@narod.ru>
+         Jason Garrett-Glaser <darkshikari@gmail.com>
+         Henrik Gramner <hengar-6@student.ltu.se>
+
+Permission to use, copy, modify, and/or distribute this software for any
+purpose with or without fee is hereby granted, provided that the above
+copyright notice and this permission notice appear in all copies.
+
+THE SOFTWARE IS PROVIDED "AS IS" AND THE AUTHOR DISCLAIMS ALL WARRANTIES
+WITH REGARD TO THIS SOFTWARE INCLUDING ALL IMPLIED WARRANTIES OF
+MERCHANTABILITY AND FITNESS. IN NO EVENT SHALL THE AUTHOR BE LIABLE FOR
+ANY SPECIAL, DIRECT, INDIRECT, OR CONSEQUENTIAL DAMAGES OR ANY DAMAGES
+WHATSOEVER RESULTING FROM LOSS OF USE, DATA OR PROFITS, WHETHER IN AN
+ACTION OF CONTRACT, NEGLIGENCE OR OTHER TORTIOUS ACTION, ARISING OUT OF
+OR IN CONNECTION WITH THE USE OR PERFORMANCE OF THIS SOFTWARE.
+
 
 ------------------------------------------------------------------------------
 libc++
   From      https://chromium.googlesource.com/external/github.com/llvm/llvm-project/libcxx.git
             commit adbb4a5210ae2a8a4e27fa6199221156c02a9b1a
-  Name      libcxx
-  Version   1.0
-  Declared  NCSA, Apache-with-LLVM-Exception, MIT
+  README    third_party/libc++/README.chromium says
+            Name: libcxx
+            Version: 1.0
+            License: NCSA, Apache-with-LLVM-Exception, MIT
+            Shipped: yes
   Text      third_party/libc++/src/LICENSE.TXT
+  Linux     in libgelabber_media.so: 21 of its 49 object files, and 1296 of
+            the 2149 other object files that read its files
 ------------------------------------------------------------------------------
 ==============================================================================
 The LLVM Project is under the Apache License v2.0 with LLVM Exceptions:
@@ -3004,10 +3544,13 @@ THE SOFTWARE.
 libc++abi
   From      https://chromium.googlesource.com/external/github.com/llvm/llvm-project/libcxxabi.git
             commit a6c815c69d55ec59d020abde636754d120b402ad
-  Name      libcxxabi
-  Version   1.0
-  Declared  NCSA, Apache-with-LLVM-Exception, MIT
+  README    third_party/libc++abi/README.chromium says
+            Name: libcxxabi
+            Version: 1.0
+            License: NCSA, Apache-with-LLVM-Exception, MIT
+            Shipped: yes
   Text      third_party/libc++abi/src/LICENSE.TXT
+  Linux     in libgelabber_media.so: 14 of its 17 object files
 ------------------------------------------------------------------------------
 ==============================================================================
 The LLVM Project is under the Apache License v2.0 with LLVM Exceptions:
@@ -3326,11 +3869,21 @@ THE SOFTWARE.
 libjpeg_turbo
   From      https://chromium.googlesource.com/chromium/deps/libjpeg_turbo.git
             commit e14cbfaa85529d47f9f55b0f104a579c1061f9ad
-  Name      libjpeg-turbo
-  Version   3.1.0
-  Declared  IJG, BSD-3, Zlib
+  README    third_party/libjpeg_turbo/README.chromium says
+            Name: libjpeg-turbo
+            Version: 3.1.0
+            License: IJG, BSD-3, Zlib
+            Shipped: yes
   Text      third_party/libjpeg_turbo/LICENSE.md
+            third_party/libjpeg_turbo/README.ijg
+  Linux     in libgelabber_media.so: 64 of its 126 object files, and 1 of the
+            1 other object files that read its files
 ------------------------------------------------------------------------------
+README.chromium names Zlib; the wording of that was not found in the library's
+licence files printed here.
+
+[third_party/libjpeg_turbo/LICENSE.md]
+
 libjpeg-turbo Licenses
 ======================
 
@@ -3467,15 +4020,282 @@ attribution and endorsement protections to other entities.  Thus, it was
 desirable to choose a license that granted us the same protections for new code
 that were granted to the IJG for code derived from their software.
 
+[third_party/libjpeg_turbo/README.ijg]
+
+libjpeg-turbo note:  This file has been modified by The libjpeg-turbo Project
+to include only information relevant to libjpeg-turbo, to wordsmith certain
+sections, and to remove impolitic language that existed in the libjpeg v8
+README.  It is included only for reference.  Please see README.md for
+information specific to libjpeg-turbo.
+
+
+The Independent JPEG Group's JPEG software
+==========================================
+
+This distribution contains a release of the Independent JPEG Group's free JPEG
+software.  You are welcome to redistribute this software and to use it for any
+purpose, subject to the conditions under LEGAL ISSUES, below.
+
+This software is the work of Tom Lane, Guido Vollbeding, Philip Gladstone,
+Bill Allombert, Jim Boucher, Lee Crocker, Bob Friesenhahn, Ben Jackson,
+Julian Minguillon, Luis Ortiz, George Phillips, Davide Rossi, Ge' Weijers,
+and other members of the Independent JPEG Group.
+
+IJG is not affiliated with the ISO/IEC JTC1/SC29/WG1 standards committee
+(also known as JPEG, together with ITU-T SG16).
+
+
+DOCUMENTATION ROADMAP
+=====================
+
+This file contains the following sections:
+
+OVERVIEW            General description of JPEG and the IJG software.
+LEGAL ISSUES        Copyright, lack of warranty, terms of distribution.
+REFERENCES          Where to learn more about JPEG.
+ARCHIVE LOCATIONS   Where to find newer versions of this software.
+FILE FORMAT WARS    Software *not* to get.
+TO DO               Plans for future IJG releases.
+
+Other documentation files in the distribution are:
+
+User documentation:
+  doc/usage.txt         Usage instructions for cjpeg, djpeg, jpegtran,
+                        rdjpgcom, and wrjpgcom.
+  doc/*.1               Unix-style man pages for programs (same info as
+                        usage.txt).
+  doc/wizard.txt        Advanced usage instructions for JPEG wizards only.
+  doc/change.log        Version-to-version change highlights.
+Programmer and internal documentation:
+  doc/libjpeg.txt       How to use the JPEG library in your own programs.
+  src/example.c         Sample code for calling the JPEG library.
+  doc/structure.txt     Overview of the JPEG library's internal structure.
+  doc/coderules.txt     Coding style rules --- please read if you contribute
+                        code.
+
+Please read at least usage.txt.  Some information can also be found in the JPEG
+FAQ (Frequently Asked Questions) article.  See ARCHIVE LOCATIONS below to find
+out where to obtain the FAQ article.
+
+If you want to understand how the JPEG code works, we suggest reading one or
+more of the REFERENCES, then looking at the documentation files (in roughly
+the order listed) before diving into the code.
+
+
+OVERVIEW
+========
+
+This package contains C software to implement JPEG image encoding, decoding,
+and transcoding.  JPEG (pronounced "jay-peg") is a standardized compression
+method for full-color and grayscale images.  JPEG's strong suit is compressing
+photographic images or other types of images that have smooth color and
+brightness transitions between neighboring pixels.  Images with sharp lines or
+other abrupt features may not compress well with JPEG, and a higher JPEG
+quality may have to be used to avoid visible compression artifacts with such
+images.
+
+JPEG is normally lossy, meaning that the output pixels are not necessarily
+identical to the input pixels.  However, on photographic content and other
+"smooth" images, very good compression ratios can be obtained with no visible
+compression artifacts, and extremely high compression ratios are possible if
+you are willing to sacrifice image quality (by reducing the "quality" setting
+in the compressor.)
+
+This software implements JPEG baseline, extended-sequential, progressive, and
+lossless compression processes.  Provision is made for supporting all variants
+of these processes, although some uncommon parameter settings aren't
+implemented yet.  We have made no provision for supporting the hierarchical
+processes defined in the standard.
+
+We provide a set of library routines for reading and writing JPEG image files,
+plus two sample applications "cjpeg" and "djpeg", which use the library to
+perform conversion between JPEG and some other popular image file formats.
+The library is intended to be reused in other applications.
+
+In order to support file conversion and viewing software, we have included
+considerable functionality beyond the bare JPEG coding/decoding capability;
+for example, the color quantization modules are not strictly part of JPEG
+decoding, but they are essential for output to colormapped file formats.  These
+extra functions can be compiled out of the library if not required for a
+particular application.
+
+We have also included "jpegtran", a utility for lossless transcoding between
+different JPEG processes, and "rdjpgcom" and "wrjpgcom", two simple
+applications for inserting and extracting textual comments in JFIF files.
+
+The emphasis in designing this software has been on achieving portability and
+flexibility, while also making it fast enough to be useful.  In particular,
+the software is not intended to be read as a tutorial on JPEG.  (See the
+REFERENCES section for introductory material.)  Rather, it is intended to
+be reliable, portable, industrial-strength code.  We do not claim to have
+achieved that goal in every aspect of the software, but we strive for it.
+
+We welcome the use of this software as a component of commercial products.
+No royalty is required, but we do ask for an acknowledgement in product
+documentation, as described under LEGAL ISSUES.
+
+
+LEGAL ISSUES
+============
+
+In plain English:
+
+1. We don't promise that this software works.  (But if you find any bugs,
+   please let us know!)
+2. You can use this software for whatever you want.  You don't have to pay us.
+3. You may not pretend that you wrote this software.  If you use it in a
+   program, you must acknowledge somewhere in your documentation that
+   you've used the IJG code.
+
+In legalese:
+
+The authors make NO WARRANTY or representation, either express or implied,
+with respect to this software, its quality, accuracy, merchantability, or
+fitness for a particular purpose.  This software is provided "AS IS", and you,
+its user, assume the entire risk as to its quality and accuracy.
+
+This software is copyright (C) 1991-2020, Thomas G. Lane, Guido Vollbeding.
+All Rights Reserved except as specified below.
+
+Permission is hereby granted to use, copy, modify, and distribute this
+software (or portions thereof) for any purpose, without fee, subject to these
+conditions:
+(1) If any part of the source code for this software is distributed, then this
+README file must be included, with this copyright and no-warranty notice
+unaltered; and any additions, deletions, or changes to the original files
+must be clearly indicated in accompanying documentation.
+(2) If only executable code is distributed, then the accompanying
+documentation must state that "this software is based in part on the work of
+the Independent JPEG Group".
+(3) Permission for use of this software is granted only if the user accepts
+full responsibility for any undesirable consequences; the authors accept
+NO LIABILITY for damages of any kind.
+
+These conditions apply to any software derived from or based on the IJG code,
+not just to the unmodified library.  If you use our work, you ought to
+acknowledge us.
+
+Permission is NOT granted for the use of any IJG author's name or company name
+in advertising or publicity relating to this software or products derived from
+it.  This software may be referred to only as "the Independent JPEG Group's
+software".
+
+We specifically permit and encourage the use of this software as the basis of
+commercial products, provided that all warranty or liability claims are
+assumed by the product vendor.
+
+
+REFERENCES
+==========
+
+We recommend reading one or more of these references before trying to
+understand the innards of the JPEG software.
+
+The best short technical introduction to the JPEG compression algorithm is
+        Wallace, Gregory K.  "The JPEG Still Picture Compression Standard",
+        Communications of the ACM, April 1991 (vol. 34 no. 4), pp. 30-44.
+(Adjacent articles in that issue discuss MPEG motion picture compression,
+applications of JPEG, and related topics.)  If you don't have the CACM issue
+handy, a PDF file containing a revised version of Wallace's article is
+available at http://www.ijg.org/files/Wallace.JPEG.pdf.  The file (actually
+a preprint for an article that appeared in IEEE Trans. Consumer Electronics)
+omits the sample images that appeared in CACM, but it includes corrections
+and some added material.  Note: the Wallace article is copyright ACM and IEEE,
+and it may not be used for commercial purposes.
+
+A somewhat less technical, more leisurely introduction to JPEG can be found in
+"The Data Compression Book" by Mark Nelson and Jean-loup Gailly, published by
+M&T Books (New York), 2nd ed. 1996, ISBN 1-55851-434-1.  This book provides
+good explanations and example C code for a multitude of compression methods
+including JPEG.  It is an excellent source if you are comfortable reading C
+code but don't know much about data compression in general.  The book's JPEG
+sample code is far from industrial-strength, but when you are ready to look
+at a full implementation, you've got one here...
+
+The best currently available description of JPEG is the textbook "JPEG Still
+Image Data Compression Standard" by William B. Pennebaker and Joan L.
+Mitchell, published by Van Nostrand Reinhold, 1993, ISBN 0-442-01272-1.
+Price US$59.95, 638 pp.  The book includes the complete text of the ISO JPEG
+standards (DIS 10918-1 and draft DIS 10918-2).
+
+The original JPEG standard is divided into two parts, Part 1 being the actual
+specification, while Part 2 covers compliance testing methods.  Part 1 is
+titled "Digital Compression and Coding of Continuous-tone Still Images,
+Part 1: Requirements and guidelines" and has document numbers ISO/IEC IS
+10918-1, ITU-T T.81.  Part 2 is titled "Digital Compression and Coding of
+Continuous-tone Still Images, Part 2: Compliance testing" and has document
+numbers ISO/IEC IS 10918-2, ITU-T T.83.
+
+The JPEG standard does not specify all details of an interchangeable file
+format.  For the omitted details, we follow the "JFIF" conventions, revision
+1.02.  JFIF version 1 has been adopted as ISO/IEC 10918-5 (05/2013) and
+Recommendation ITU-T T.871 (05/2011): Information technology - Digital
+compression and coding of continuous-tone still images: JPEG File Interchange
+Format (JFIF).  It is available as a free download in PDF file format from
+https://www.iso.org/standard/54989.html and http://www.itu.int/rec/T-REC-T.871.
+A PDF file of the older JFIF 1.02 specification is available at
+http://www.w3.org/Graphics/JPEG/jfif3.pdf.
+
+The TIFF 6.0 file format specification can be obtained from
+http://mirrors.ctan.org/graphics/tiff/TIFF6.ps.gz.  The JPEG incorporation
+scheme found in the TIFF 6.0 spec of 3-June-92 has a number of serious
+problems.  IJG does not recommend use of the TIFF 6.0 design (TIFF Compression
+tag 6).  Instead, we recommend the JPEG design proposed by TIFF Technical Note
+#2 (Compression tag 7).  Copies of this Note can be obtained from
+http://www.ijg.org/files/.  It is expected that the next revision
+of the TIFF spec will replace the 6.0 JPEG design with the Note's design.
+Although IJG's own code does not support TIFF/JPEG, the free libtiff library
+uses our library to implement TIFF/JPEG per the Note.
+
+
+ARCHIVE LOCATIONS
+=================
+
+The "official" archive site for this software is www.ijg.org.
+The most recent released version can always be found there in
+directory "files".
+
+The JPEG FAQ (Frequently Asked Questions) article is a source of some
+general information about JPEG.  It is available at
+http://www.faqs.org/faqs/jpeg-faq.
+
+
+FILE FORMAT COMPATIBILITY
+=========================
+
+This software implements ITU T.81 | ISO/IEC 10918 with some extensions from
+ITU T.871 | ISO/IEC 10918-5 (JPEG File Interchange Format-- see REFERENCES).
+Informally, the term "JPEG image" or "JPEG file" most often refers to JFIF or
+a subset thereof, but there are other formats containing the name "JPEG" that
+are incompatible with the original JPEG standard or with JFIF (for instance,
+JPEG 2000 and JPEG XR).  This software therefore does not support these
+formats.  Indeed, one of the original reasons for developing this free software
+was to help force convergence on a common, interoperable format standard for
+JPEG files.
+
+JFIF is a minimal or "low end" representation.  TIFF/JPEG (TIFF revision 6.0 as
+modified by TIFF Technical Note #2) can be used for "high end" applications
+that need to record a lot of additional data about an image.
+
+
+TO DO
+=====
+
+Please send bug reports, offers of help, etc. to jpeg-info@jpegclub.org.
+
 
 ------------------------------------------------------------------------------
 libsrtp
   From      https://chromium.googlesource.com/chromium/deps/libsrtp.git
             commit a52756acb1c5e133089c798736dd171567df11f5
-  Name      libsrtp
-  Version   fd08747fa6800b321d53e15feb34da12dc697dee
-  Declared  3-clause BSD
+  README    third_party/libsrtp/README.chromium says
+            Name: libsrtp
+            Version: fd08747fa6800b321d53e15feb34da12dc697dee
+            License: 3-clause BSD
+            Shipped: yes
   Text      third_party/libsrtp/LICENSE
+  Linux     in libgelabber_media.so: 17 of its 17 object files, and 2 of the 2
+            other object files that read its files
 ------------------------------------------------------------------------------
 /*
  *
@@ -3518,11 +4338,19 @@ libsrtp
 libvpx
   From      https://chromium.googlesource.com/webm/libvpx.git
             commit a985e5e847a2fe69bef3e547cf25088132194e39
-  Name      libvpx
-  Revision  a985e5e847a2fe69bef3e547cf25088132194e39
-  Declared  BSD-3-Clause, Patent
+  README    third_party/libvpx/README.chromium says
+            Name: libvpx
+            Revision: a985e5e847a2fe69bef3e547cf25088132194e39
+            License: BSD-3-Clause, Patent
+            Shipped: yes
   Text      third_party/libvpx/source/libvpx/LICENSE
+            third_party/libvpx/source/libvpx/PATENTS
+            third_party/libvpx/source/libvpx/third_party/x86inc/LICENSE
+  Linux     in libgelabber_media.so: 256 of its 268 object files, and 7 of the
+            7 other object files that read its files
 ------------------------------------------------------------------------------
+[third_party/libvpx/source/libvpx/LICENSE]
+
 Copyright (c) 2010, The WebM Project authors. All rights reserved.
 
 Redistribution and use in source and binary forms, with or without
@@ -3554,16 +4382,74 @@ THEORY OF LIABILITY, WHETHER IN CONTRACT, STRICT LIABILITY, OR TORT
 (INCLUDING NEGLIGENCE OR OTHERWISE) ARISING IN ANY WAY OUT OF THE USE
 OF THIS SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
 
+[third_party/libvpx/source/libvpx/PATENTS]
+
+Additional IP Rights Grant (Patents)
+------------------------------------
+
+"These implementations" means the copyrightable works that implement the WebM
+codecs distributed by Google as part of the WebM Project.
+
+Google hereby grants to you a perpetual, worldwide, non-exclusive, no-charge,
+royalty-free, irrevocable (except as stated in this section) patent license to
+make, have made, use, offer to sell, sell, import, transfer, and otherwise
+run, modify and propagate the contents of these implementations of WebM, where
+such license applies only to those patent claims, both currently owned by
+Google and acquired in the future, licensable by Google that are necessarily
+infringed by these implementations of WebM. This grant does not include claims
+that would be infringed only as a consequence of further modification of these
+implementations. If you or your agent or exclusive licensee institute or order
+or agree to the institution of patent litigation or any other patent
+enforcement activity against any entity (including a cross-claim or
+counterclaim in a lawsuit) alleging that any of these implementations of WebM
+or any code incorporated within any of these implementations of WebM
+constitute direct or contributory patent infringement, or inducement of
+patent infringement, then any patent rights granted to you under this License
+for these implementations of WebM shall terminate as of the date such
+litigation is filed.
+
+[third_party/libvpx/source/libvpx/third_party/x86inc/LICENSE]
+
+A directory below libvpx with licence files of its own. The build read 1 of
+its files (x86inc.asm). In libgelabber_media.so (Linux): 16 of the 17 object
+files compiled with them.
+
+Copyright (C) 2005-2012 x264 project
+
+Authors: Loren Merritt <lorenm@u.washington.edu>
+         Anton Mitrofanov <BugMaster@narod.ru>
+         Jason Garrett-Glaser <darkshikari@gmail.com>
+         Henrik Gramner <hengar-6@student.ltu.se>
+
+Permission to use, copy, modify, and/or distribute this software for any
+purpose with or without fee is hereby granted, provided that the above
+copyright notice and this permission notice appear in all copies.
+
+THE SOFTWARE IS PROVIDED "AS IS" AND THE AUTHOR DISCLAIMS ALL WARRANTIES
+WITH REGARD TO THIS SOFTWARE INCLUDING ALL IMPLIED WARRANTIES OF
+MERCHANTABILITY AND FITNESS. IN NO EVENT SHALL THE AUTHOR BE LIABLE FOR
+ANY SPECIAL, DIRECT, INDIRECT, OR CONSEQUENTIAL DAMAGES OR ANY DAMAGES
+WHATSOEVER RESULTING FROM LOSS OF USE, DATA OR PROFITS, WHETHER IN AN
+ACTION OF CONTRACT, NEGLIGENCE OR OTHER TORTIOUS ACTION, ARISING OUT OF
+OR IN CONNECTION WITH THE USE OR PERFORMANCE OF THIS SOFTWARE.
+
 
 ------------------------------------------------------------------------------
 libyuv
   From      https://chromium.googlesource.com/libyuv/libyuv.git
             commit cdd3bae84818e78466fec1ce954eead8f403d10c
-  Name      libyuv
-  Version   1915
-  Declared  BSD-3-Clause
+  README    third_party/libyuv/README.chromium says
+            Name: libyuv
+            Version: 1915
+            License: BSD-3-Clause
+            Shipped: yes
   Text      third_party/libyuv/LICENSE
+            third_party/libyuv/PATENTS
+  Linux     in libgelabber_media.so: 21 of its 36 object files, and 13 of the
+            14 other object files that read its files
 ------------------------------------------------------------------------------
+[third_party/libyuv/LICENSE]
+
 Copyright 2011 The LibYuv Project Authors. All rights reserved.
 
 Redistribution and use in source and binary forms, with or without
@@ -3594,15 +4480,50 @@ THEORY OF LIABILITY, WHETHER IN CONTRACT, STRICT LIABILITY, OR TORT
 (INCLUDING NEGLIGENCE OR OTHERWISE) ARISING IN ANY WAY OUT OF THE USE
 OF THIS SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
 
+[third_party/libyuv/PATENTS]
+
+Additional IP Rights Grant (Patents)
+
+"This implementation" means the copyrightable works distributed by
+Google as part of the LibYuv code package.
+
+Google hereby grants to you a perpetual, worldwide, non-exclusive,
+no-charge, irrevocable (except as stated in this section) patent
+license to make, have made, use, offer to sell, sell, import,
+transfer, and otherwise run, modify and propagate the contents of this
+implementation of the LibYuv code package, where such license applies
+only to those patent claims, both currently owned by Google and
+acquired in the future, licensable by Google that are necessarily
+infringed by this implementation of the LibYuv code package. This
+grant does not include claims that would be infringed only as a
+consequence of further modification of this implementation. If you or
+your agent or exclusive licensee institute or order or agree to the
+institution of patent litigation against any entity (including a
+cross-claim or counterclaim in a lawsuit) alleging that this
+implementation of the LibYuv code package or any code incorporated
+within this implementation of the LibYuv code package constitutes
+direct or contributory patent infringement, or inducement of patent
+infringement, then any patent rights granted to you under this License
+for this implementation of the LibYuv code package shall terminate as
+of the date such litigation is filed.
+
 
 ------------------------------------------------------------------------------
 llvm-libc
   From      https://chromium.googlesource.com/external/github.com/llvm/llvm-project/libc.git
             commit 8ec6b26421b5fa7aa876fdab486fa1decc558326
-  Name      llvm-libc
-  Declared  MIT, NCSA
+  README    third_party/llvm-libc/README.chromium says
+            Name: llvm-libc
+            License: MIT, NCSA
+            Shipped: yes
   Text      third_party/llvm-libc/src/LICENSE.TXT
+  Linux     no object files of its own in the build; in libgelabber_media.so:
+            0 of the 1 other object files that read its files
 ------------------------------------------------------------------------------
+README.chromium names MIT; the wording of that was not found in the library's
+licence file printed here. The licence file printed here holds the wording of
+Apache-2.0 and the LLVM exceptions, which README.chromium does not name.
+
 ==============================================================================
 The LLVM Project is under the Apache License v2.0 with LLVM Exceptions:
 ==============================================================================
@@ -3887,10 +4808,13 @@ SOFTWARE.
 nasm
   From      https://chromium.googlesource.com/chromium/deps/nasm.git
             commit e2c93c34982b286b27ce8b56dd7159e0b90869a2
-  Name      Netwide Assembler
-  Version   2.16.03 / 888d9ab55012d25059da81fed6575ef3a004726f
-  Declared  BSD-2-Clause
+  README    third_party/nasm/README.chromium says
+            Name: Netwide Assembler
+            Version: 2.16.03 / 888d9ab55012d25059da81fed6575ef3a004726f
+            License: BSD-2-Clause
+            Shipped: no
   Text      third_party/nasm/LICENSE
+  Linux     in libgelabber_media.so: 0 of its 81 object files
 ------------------------------------------------------------------------------
 NASM is now licensed under the 2-clause BSD license, also known as the
 simplified BSD license.
@@ -3927,9 +4851,14 @@ simplified BSD license.
 ooura
   From      https://webrtc.googlesource.com/src.git
             commit 36ea4535a500ac137dbf1f577ce40dc1aaa774ef
-  Name      General Purpose FFT (Fast Fourier/Cosine/Sine Transform) Package
-  Declared  LicenseRef-takuya-ooura
+  README    common_audio/third_party/ooura/README.chromium says
+            Name: General Purpose FFT (Fast Fourier/Cosine/Sine Transform)
+            Package
+            License: LicenseRef-takuya-ooura
+            Shipped: yes
   Text      common_audio/third_party/ooura/LICENSE
+  Linux     in libgelabber_media.so: 3 of its 3 object files, and 9 of the 10
+            other object files that read its files
 ------------------------------------------------------------------------------
 /*
  * http://www.kurims.kyoto-u.ac.jp/~ooura/fft.html
@@ -3945,9 +4874,13 @@ ooura
 openh264
   From      https://chromium.googlesource.com/external/github.com/cisco/openh264
             commit 652bdb7719f30b52b08e506645a7322ff1b2cc6f
-  Name      OpenH264
-  Declared  BSD-2-Clause
+  README    third_party/openh264/README.chromium says
+            Name: OpenH264
+            License: BSD-2-Clause
+            Shipped: yes
   Text      third_party/openh264/src/LICENSE
+  Linux     in libgelabber_media.so: 86 of its 87 object files, and 2 of the 2
+            other object files that read its files
 ------------------------------------------------------------------------------
 OpenH264 is linked statically, as part of libwebrtc, into libgelabber_media.so
 (Linux), built from the source named above. The README.chromium of libwebrtc's
@@ -3983,12 +4916,19 @@ SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
 opus
   From      https://chromium.googlesource.com/chromium/src/third_party
             commit e30091e8987ee0bb0cd30bc467250a96a7614762
-  Name      opus
-  Version   55513e81
-  Revision  55513e81d8f606bd75d0ff773d2144e5f2a732f5
-  Declared  Opus-Patent-BSD-3-Clause
+  README    third_party/opus/README.chromium says
+            Name: opus
+            Version: 55513e81
+            Revision: 55513e81d8f606bd75d0ff773d2144e5f2a732f5
+            License: Opus-Patent-BSD-3-Clause
+            Shipped: yes
   Text      third_party/opus/src/COPYING
+            third_party/opus/src/LICENSE_PLEASE_READ.txt
+  Linux     in libgelabber_media.so: 139 of its 149 object files, and 11 of
+            the 11 other object files that read its files
 ------------------------------------------------------------------------------
+[third_party/opus/src/COPYING]
+
 Copyright 2001-2023 Xiph.Org, Skype Limited, Octasic,
                     Jean-Marc Valin, Timothy B. Terriberry,
                     CSIRO, Gregory Maxwell, Mark Borgerding,
@@ -4034,15 +4974,44 @@ https://datatracker.ietf.org/ipr/1914/
 Broadcom Corporation:
 https://datatracker.ietf.org/ipr/1526/
 
+[third_party/opus/src/LICENSE_PLEASE_READ.txt]
+
+Contributions to the collaboration shall not be considered confidential.
+
+Each contributor represents and warrants that it has the right and
+authority to license copyright in its contributions to the collaboration.
+
+Each contributor agrees to license the copyright in the contributions
+under the Modified (2-clause or 3-clause) BSD License or the Clear BSD License.
+
+Please see the IPR statements submitted to the IETF for the complete
+patent licensing details:
+
+Xiph.Org Foundation:
+https://datatracker.ietf.org/ipr/1524/
+
+Microsoft Corporation:
+https://datatracker.ietf.org/ipr/1914/
+
+Skype Limited:
+https://datatracker.ietf.org/ipr/1602/
+
+Broadcom Corporation:
+https://datatracker.ietf.org/ipr/1526/
+
 
 ------------------------------------------------------------------------------
 perfetto
   From      https://chromium.googlesource.com/external/github.com/google/perfetto.git
             commit 0c893ed6bf6b42e3fee58daf3380d301c72550ed
-  Name      Perfetto
-  Version   unknown
-  Declared  blessing, BSD-3-Clause, Apache-2.0
+  README    third_party/perfetto/README.chromium says
+            Name: Perfetto
+            Version: unknown
+            License: blessing, BSD-3-Clause, Apache-2.0
+            Shipped: yes
   Text      third_party/perfetto/LICENSE
+  Linux     in libgelabber_media.so: 0 of its 383 object files, and 65 of the
+            67 other object files that read its files
 ------------------------------------------------------------------------------
                                  Apache License
                            Version 2.0, January 2004
@@ -4315,10 +5284,14 @@ THIS SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
 pffft
   From      https://chromium.googlesource.com/chromium/src/third_party
             commit e30091e8987ee0bb0cd30bc467250a96a7614762
-  Name      PFFFT: a pretty fast FFT.
-  Revision  483453d8f766
-  Declared  pffft
+  README    third_party/pffft/README.chromium says
+            Name: PFFFT: a pretty fast FFT.
+            Revision: 483453d8f766
+            License: pffft
+            Shipped: yes
   Text      third_party/pffft/LICENSE
+  Linux     in libgelabber_media.so: 1 of its 1 object files, and 1 of the 1
+            other object files that read its files
 ------------------------------------------------------------------------------
 Copyright (c) 2013  Julien Pommier ( pommier@modartt.com )
 
@@ -4371,12 +5344,19 @@ SOFTWARE.
 protobuf
   From      https://chromium.googlesource.com/chromium/src/third_party
             commit e30091e8987ee0bb0cd30bc467250a96a7614762
-  Name      Protocol Buffers
-  Version   31.0
-  Revision  3d4adad5c4c4e6a6f9f038769b8c90716065b0e4
-  Declared  BSD-3-Clause
+  README    third_party/protobuf/README.chromium says
+            Name: Protocol Buffers
+            Version: 31.0
+            Revision: 3d4adad5c4c4e6a6f9f038769b8c90716065b0e4
+            License: BSD-3-Clause
+            Shipped: yes
   Text      third_party/protobuf/LICENSE
+            third_party/protobuf/third_party/utf8_range/LICENSE
+  Linux     in libgelabber_media.so: 0 of its 125 object files, and 0 of the 2
+            other object files that read its files
 ------------------------------------------------------------------------------
+[third_party/protobuf/LICENSE]
+
 Copyright 2008 Google Inc.  All rights reserved.
 
 Redistribution and use in source and binary forms, with or without
@@ -4410,15 +5390,48 @@ of the input file used when generating it.  This code is not
 standalone and requires a support library to be linked with it.  This
 support library is itself covered by the above license.
 
+[third_party/protobuf/third_party/utf8_range/LICENSE]
+
+A directory below protobuf with licence files of its own. The build read 3 of
+its files (utf8_range.c, utf8_range.h, utf8_validity.h). In
+libgelabber_media.so (Linux): 0 of the 5 object files compiled with them.
+
+MIT License
+
+Copyright (c) 2019 Yibo Cai
+Copyright 2022 Google LLC
+
+Permission is hereby granted, free of charge, to any person obtaining a copy
+of this software and associated documentation files (the "Software"), to deal
+in the Software without restriction, including without limitation the rights
+to use, copy, modify, merge, publish, distribute, sublicense, and/or sell
+copies of the Software, and to permit persons to whom the Software is
+furnished to do so, subject to the following conditions:
+
+The above copyright notice and this permission notice shall be included in all
+copies or substantial portions of the Software.
+
+THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND, EXPRESS OR
+IMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES OF MERCHANTABILITY,
+FITNESS FOR A PARTICULAR PURPOSE AND NONINFRINGEMENT. IN NO EVENT SHALL THE
+AUTHORS OR COPYRIGHT HOLDERS BE LIABLE FOR ANY CLAIM, DAMAGES OR OTHER
+LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM,
+OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE
+SOFTWARE.
+
 
 ------------------------------------------------------------------------------
 rnnoise
   From      https://chromium.googlesource.com/chromium/src/third_party
             commit e30091e8987ee0bb0cd30bc467250a96a7614762
-  Name      Recurrent neural network for audio noise reduction
-  Revision  91ef401f4c3536c6de999ac609262691ec888c4c
-  Declared  BSD-3-Clause
+  README    third_party/rnnoise/README.chromium says
+            Name: Recurrent neural network for audio noise reduction
+            Revision: 91ef401f4c3536c6de999ac609262691ec888c4c
+            License: BSD-3-Clause
+            Shipped: yes
   Text      third_party/rnnoise/COPYING
+  Linux     in libgelabber_media.so: 1 of its 1 object files, and 3 of the 3
+            other object files that read its files
 ------------------------------------------------------------------------------
 Copyright (c) 2017, Mozilla
 Copyright (c) 2007-2017, Jean-Marc Valin
@@ -4457,9 +5470,13 @@ OF THIS SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
 sigslot
   From      https://webrtc.googlesource.com/src.git
             commit 36ea4535a500ac137dbf1f577ce40dc1aaa774ef
-  Name      C++ Signal/Slot Library
-  Declared  Ignorable
+  README    rtc_base/third_party/sigslot/README.chromium says
+            Name: C++ Signal/Slot Library
+            License: Ignorable
+            Shipped: yes
   Text      rtc_base/third_party/sigslot/LICENSE
+  Linux     in libgelabber_media.so: 0 of its 1 object files, and 96 of the
+            100 other object files that read its files
 ------------------------------------------------------------------------------
 // sigslot.h: Signal/Slot classes
 //
@@ -4474,9 +5491,13 @@ sigslot
 spl_sqrt_floor
   From      https://webrtc.googlesource.com/src.git
             commit 36ea4535a500ac137dbf1f577ce40dc1aaa774ef
-  Name      spl sqrt floor
-  Declared  SPL-SQRT-FLOOR
+  README    common_audio/third_party/spl_sqrt_floor/README.chromium says
+            Name: spl sqrt floor
+            License: SPL-SQRT-FLOOR
+            Shipped: yes
   Text      common_audio/third_party/spl_sqrt_floor/LICENSE
+  Linux     in libgelabber_media.so: 1 of its 1 object files, and 48 of the 53
+            other object files that read its files
 ------------------------------------------------------------------------------
 /*
  * Written by Wilco Dijkstra, 1996. The following email exchange establishes the
@@ -4507,11 +5528,82 @@ spl_sqrt_floor
  */
 
 
+------------------------------------------------------------------------------
+Header files of system libraries
+  From      build/linux/debian_bullseye_amd64-sysroot in libwebrtc's tree
+            https://commondatastorage.googleapis.com/chrome-linux-sysroot/36a164623d03f525e3dfb783a5e9b8a00e98e1ddd2b5cff4e449bd016dd27e50
+------------------------------------------------------------------------------
+libwebrtc and the media core are compiled for Linux against this sysroot:
+header files of Debian packages for the system libraries the programs load
+when they run. A function that such a header defines inline is compiled into
+the code that uses it. Looked for by name: the file-local functions among the
+symbols of libgelabber_media.so that a C header of the sysroot defines as an
+inline function (the headers of the C++ standard library left out). Inline
+code that the compiler merged into its callers, macros and templates leave no
+symbol and are not found this way; nothing else was collected for system
+header files.
+
+[usr/include/spa-0.2/spa/pod/builder.h]
+Functions: spa_pod_builder_add, spa_pod_builder_pop,
+spa_pod_builder_primitive, spa_pod_builder_raw_padded,
+spa_pod_builder_string_len.
+
+Simple Plugin API
+
+Copyright © 2018 Wim Taymans
+
+Permission is hereby granted, free of charge, to any person obtaining a
+copy of this software and associated documentation files (the "Software"),
+to deal in the Software without restriction, including without limitation
+the rights to use, copy, modify, merge, publish, distribute, sublicense,
+and/or sell copies of the Software, and to permit persons to whom the
+Software is furnished to do so, subject to the following conditions:
+
+The above copyright notice and this permission notice (including the next
+paragraph) shall be included in all copies or substantial portions of the
+Software.
+
+THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND, EXPRESS OR
+IMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES OF MERCHANTABILITY,
+FITNESS FOR A PARTICULAR PURPOSE AND NONINFRINGEMENT.  IN NO EVENT SHALL
+THE AUTHORS OR COPYRIGHT HOLDERS BE LIABLE FOR ANY CLAIM, DAMAGES OR OTHER
+LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING
+FROM, OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER
+DEALINGS IN THE SOFTWARE.
+
+[usr/include/spa-0.2/spa/pod/parser.h]
+Functions: spa_pod_parser_get.
+
+Spa
+
+Copyright © 2018 Wim Taymans
+
+Permission is hereby granted, free of charge, to any person obtaining a
+copy of this software and associated documentation files (the "Software"),
+to deal in the Software without restriction, including without limitation
+the rights to use, copy, modify, merge, publish, distribute, sublicense,
+and/or sell copies of the Software, and to permit persons to whom the
+Software is furnished to do so, subject to the following conditions:
+
+The above copyright notice and this permission notice (including the next
+paragraph) shall be included in all copies or substantial portions of the
+Software.
+
+THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND, EXPRESS OR
+IMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES OF MERCHANTABILITY,
+FITNESS FOR A PARTICULAR PURPOSE AND NONINFRINGEMENT.  IN NO EVENT SHALL
+THE AUTHORS OR COPYRIGHT HOLDERS BE LIABLE FOR ANY CLAIM, DAMAGES OR OTHER
+LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING
+FROM, OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER
+DEALINGS IN THE SOFTWARE.
+
+
 ##############################################################################
 3. Native media core: other libraries
 ##############################################################################
 
-[inputs 55b5b778350ce0cb: the script keeps this part while they are unchanged]
+[the script keeps this part while its inputs have the digest 55b5b778350ce0cb
+ and its text has the digest 7fb501974a2dafee55abfad9d93c9906]
 
 Linked statically into the native media core on both systems, built from
 source by desktop/native/CMakeLists.txt at the versions pinned there and in
@@ -4654,10 +5746,109 @@ built from) is linked statically into gelabber-desktop and
 gelabber-desktop.exe.
 
 The Rust project states for it: licensed under Apache-2.0 or MIT, at the
-user's option, copyright The Rust Project Developers. The standard library has
-third-party dependencies of its own. The Rust project documents them and their
-notices in the file share/doc/rust/COPYRIGHT-library.html of the installed
-toolchain. That document is not reproduced here.
+user's option, copyright The Rust Project Developers. The two texts below are
+the ones the toolchain ships for these licences, in its rustc component. Its
+MIT text is the general form of that licence, with a placeholder where the
+copyright line stands.
+
+The standard library has third-party dependencies of its own. The toolchain
+describes them and their notices in share/doc/rust/COPYRIGHT-library.html,
+also in the rustc component. That document is not in the packages and is not
+reproduced here, and which of the crates it names are in the application was
+not established.
+
+------------------------------------------------------------------------------
+Apache-2.0
+  Text      share/doc/rust/licenses/Apache-2.0.txt of Rust 1.98.1
+------------------------------------------------------------------------------
+Apache License
+Version 2.0, January 2004
+http://www.apache.org/licenses/
+
+TERMS AND CONDITIONS FOR USE, REPRODUCTION, AND DISTRIBUTION
+
+1. Definitions.
+
+"License" shall mean the terms and conditions for use, reproduction, and distribution as defined by Sections 1 through 9 of this document.
+
+"Licensor" shall mean the copyright owner or entity authorized by the copyright owner that is granting the License.
+
+"Legal Entity" shall mean the union of the acting entity and all other entities that control, are controlled by, or are under common control with that entity. For the purposes of this definition, "control" means (i) the power, direct or indirect, to cause the direction or management of such entity, whether by contract or otherwise, or (ii) ownership of fifty percent (50%) or more of the outstanding shares, or (iii) beneficial ownership of such entity.
+
+"You" (or "Your") shall mean an individual or Legal Entity exercising permissions granted by this License.
+
+"Source" form shall mean the preferred form for making modifications, including but not limited to software source code, documentation source, and configuration files.
+
+"Object" form shall mean any form resulting from mechanical transformation or translation of a Source form, including but not limited to compiled object code, generated documentation, and conversions to other media types.
+
+"Work" shall mean the work of authorship, whether in Source or Object form, made available under the License, as indicated by a copyright notice that is included in or attached to the work (an example is provided in the Appendix below).
+
+"Derivative Works" shall mean any work, whether in Source or Object form, that is based on (or derived from) the Work and for which the editorial revisions, annotations, elaborations, or other modifications represent, as a whole, an original work of authorship. For the purposes of this License, Derivative Works shall not include works that remain separable from, or merely link (or bind by name) to the interfaces of, the Work and Derivative Works thereof.
+
+"Contribution" shall mean any work of authorship, including the original version of the Work and any modifications or additions to that Work or Derivative Works thereof, that is intentionally submitted to Licensor for inclusion in the Work by the copyright owner or by an individual or Legal Entity authorized to submit on behalf of the copyright owner. For the purposes of this definition, "submitted" means any form of electronic, verbal, or written communication sent to the Licensor or its representatives, including but not limited to communication on electronic mailing lists, source code control systems, and issue tracking systems that are managed by, or on behalf of, the Licensor for the purpose of discussing and improving the Work, but excluding communication that is conspicuously marked or otherwise designated in writing by the copyright owner as "Not a Contribution."
+
+"Contributor" shall mean Licensor and any individual or Legal Entity on behalf of whom a Contribution has been received by Licensor and subsequently incorporated within the Work.
+
+2. Grant of Copyright License. Subject to the terms and conditions of this License, each Contributor hereby grants to You a perpetual, worldwide, non-exclusive, no-charge, royalty-free, irrevocable copyright license to reproduce, prepare Derivative Works of, publicly display, publicly perform, sublicense, and distribute the Work and such Derivative Works in Source or Object form.
+
+3. Grant of Patent License. Subject to the terms and conditions of this License, each Contributor hereby grants to You a perpetual, worldwide, non-exclusive, no-charge, royalty-free, irrevocable (except as stated in this section) patent license to make, have made, use, offer to sell, sell, import, and otherwise transfer the Work, where such license applies only to those patent claims licensable by such Contributor that are necessarily infringed by their Contribution(s) alone or by combination of their Contribution(s) with the Work to which such Contribution(s) was submitted. If You institute patent litigation against any entity (including a cross-claim or counterclaim in a lawsuit) alleging that the Work or a Contribution incorporated within the Work constitutes direct or contributory patent infringement, then any patent licenses granted to You under this License for that Work shall terminate as of the date such litigation is filed.
+
+4. Redistribution. You may reproduce and distribute copies of the Work or Derivative Works thereof in any medium, with or without modifications, and in Source or Object form, provided that You meet the following conditions:
+
+     (a) You must give any other recipients of the Work or Derivative Works a copy of this License; and
+
+     (b) You must cause any modified files to carry prominent notices stating that You changed the files; and
+
+     (c) You must retain, in the Source form of any Derivative Works that You distribute, all copyright, patent, trademark, and attribution notices from the Source form of the Work, excluding those notices that do not pertain to any part of the Derivative Works; and
+
+     (d) If the Work includes a "NOTICE" text file as part of its distribution, then any Derivative Works that You distribute must include a readable copy of the attribution notices contained within such NOTICE file, excluding those notices that do not pertain to any part of the Derivative Works, in at least one of the following places: within a NOTICE text file distributed as part of the Derivative Works; within the Source form or documentation, if provided along with the Derivative Works; or, within a display generated by the Derivative Works, if and wherever such third-party notices normally appear. The contents of the NOTICE file are for informational purposes only and do not modify the License. You may add Your own attribution notices within Derivative Works that You distribute, alongside or as an addendum to the NOTICE text from the Work, provided that such additional attribution notices cannot be construed as modifying the License.
+
+     You may add Your own copyright statement to Your modifications and may provide additional or different license terms and conditions for use, reproduction, or distribution of Your modifications, or for any such Derivative Works as a whole, provided Your use, reproduction, and distribution of the Work otherwise complies with the conditions stated in this License.
+
+5. Submission of Contributions. Unless You explicitly state otherwise, any Contribution intentionally submitted for inclusion in the Work by You to the Licensor shall be under the terms and conditions of this License, without any additional terms or conditions. Notwithstanding the above, nothing herein shall supersede or modify the terms of any separate license agreement you may have executed with Licensor regarding such Contributions.
+
+6. Trademarks. This License does not grant permission to use the trade names, trademarks, service marks, or product names of the Licensor, except as required for reasonable and customary use in describing the origin of the Work and reproducing the content of the NOTICE file.
+
+7. Disclaimer of Warranty. Unless required by applicable law or agreed to in writing, Licensor provides the Work (and each Contributor provides its Contributions) on an "AS IS" BASIS, WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied, including, without limitation, any warranties or conditions of TITLE, NON-INFRINGEMENT, MERCHANTABILITY, or FITNESS FOR A PARTICULAR PURPOSE. You are solely responsible for determining the appropriateness of using or redistributing the Work and assume any risks associated with Your exercise of permissions under this License.
+
+8. Limitation of Liability. In no event and under no legal theory, whether in tort (including negligence), contract, or otherwise, unless required by applicable law (such as deliberate and grossly negligent acts) or agreed to in writing, shall any Contributor be liable to You for damages, including any direct, indirect, special, incidental, or consequential damages of any character arising as a result of this License or out of the use or inability to use the Work (including but not limited to damages for loss of goodwill, work stoppage, computer failure or malfunction, or any and all other commercial damages or losses), even if such Contributor has been advised of the possibility of such damages.
+
+9. Accepting Warranty or Additional Liability. While redistributing the Work or Derivative Works thereof, You may choose to offer, and charge a fee for, acceptance of support, warranty, indemnity, or other liability obligations and/or rights consistent with this License. However, in accepting such obligations, You may act only on Your own behalf and on Your sole responsibility, not on behalf of any other Contributor, and only if You agree to indemnify, defend, and hold each Contributor harmless for any liability incurred by, or claims asserted against, such Contributor by reason of your accepting any such warranty or additional liability.
+
+END OF TERMS AND CONDITIONS
+
+APPENDIX: How to apply the Apache License to your work.
+
+To apply the Apache License to your work, attach the following boilerplate notice, with the fields enclosed by brackets "[]" replaced with your own identifying information. (Don't include the brackets!)  The text should be enclosed in the appropriate comment syntax for the file format. We also recommend that a file or class name and description of purpose be included on the same "printed page" as the copyright notice for easier identification within third-party archives.
+
+Copyright [yyyy] [name of copyright owner]
+
+Licensed under the Apache License, Version 2.0 (the "License");
+you may not use this file except in compliance with the License.
+You may obtain a copy of the License at
+
+http://www.apache.org/licenses/LICENSE-2.0
+
+Unless required by applicable law or agreed to in writing, software
+distributed under the License is distributed on an "AS IS" BASIS,
+WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+See the License for the specific language governing permissions and
+limitations under the License.
+
+
+------------------------------------------------------------------------------
+MIT
+  Text      share/doc/rust/licenses/MIT.txt of Rust 1.98.1
+------------------------------------------------------------------------------
+MIT License
+
+Copyright (c) <year> <copyright holders>
+
+Permission is hereby granted, free of charge, to any person obtaining a copy of this software and associated documentation files (the "Software"), to deal in the Software without restriction, including without limitation the rights to use, copy, modify, merge, publish, distribute, sublicense, and/or sell copies of the Software, and to permit persons to whom the Software is furnished to do so, subject to the following conditions:
+
+The above copyright notice and this permission notice shall be included in all copies or substantial portions of the Software.
+
+THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND, EXPRESS OR IMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES OF MERCHANTABILITY, FITNESS FOR A PARTICULAR PURPOSE AND NONINFRINGEMENT. IN NO EVENT SHALL THE AUTHORS OR COPYRIGHT HOLDERS BE LIABLE FOR ANY CLAIM, DAMAGES OR OTHER LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM, OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE SOFTWARE.
 
 
 ##############################################################################
@@ -5012,9 +6203,10 @@ Below the root
 Build time only
   Procedural macros, build scripts and what those depend on. They run on the
   machine that builds the application; their own code is not linked into it,
-  the code they generate is. As reported by cargo for the same two targets (-e
-  normal,build, without the crates listed above). No texts are reproduced for
-  them.
+  the code they generate is. cargo works out this group for the machine it
+  runs on: the list is what cargo reports on Linux x86-64 for the two targets
+  (-e normal,build, without the crates listed above). No texts are reproduced
+  for them.
 
   adler2 2.0.1 | 0BSD OR MIT OR Apache-2.0
   autocfg 1.5.1 | Apache-2.0 OR MIT
@@ -5137,6 +6329,15 @@ Build time only
   zerocopy-derive 0.8.61 | BSD-2-Clause OR Apache-2.0 OR MIT
   zerofrom-derive 0.1.8 | Unicode-3.0
   zerovec-derive 0.11.6 | Unicode-3.0
+
+  The Windows package is built on Windows. For that machine the manifests of
+  the crates cargo reported name further dependencies as not optional, which
+  cargo on Linux leaves out. These and what they depend on in turn, taken from
+  cargo metadata and not from a build:
+
+  vswhom 0.1.0 | MIT
+  vswhom-sys 0.1.3 | MIT
+  winreg 0.56.0 | MIT
 
 
 ##############################################################################
