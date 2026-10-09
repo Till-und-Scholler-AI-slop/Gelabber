@@ -17,6 +17,8 @@ import {
   SignalIcon,
   SpeakerIcon,
 } from "./Icons.tsx";
+import { useCapabilities } from "../voice/capabilities.ts";
+import { isDesktopApp } from "../voice/native/bridge.ts";
 import { useMediaSettings } from "../voice/settings.ts";
 import "../voice/room.css";
 
@@ -35,6 +37,7 @@ export function VoiceSessionControls({
   const sourceMuted = useMediaSettings((s) => s.sourceAudioMuted);
   const patch = useMediaSettings((s) => s.patch);
   const openSettings = useMediaSettings((s) => s.openDialog);
+  const capable = useCapabilities();
   const { data: server } = useServer(voice.serverId ?? undefined);
   const visible =
     voice.status === "joined" || voice.watching || voice.playbackBlocked;
@@ -199,7 +202,12 @@ export function VoiceSessionControls({
       {(voice.sourceAudio.s === "unavailable" ||
         voice.sourceAudio.l === "unavailable") && (
         <p role="status" className="voice-source-audio-notice">
-          Der Browser hat keinen Stream-Ton freigegeben. Das Video läuft weiter.
+          {!isDesktopApp()
+            ? "Der Browser hat keinen Stream-Ton freigegeben."
+            : capable.appAudio
+              ? "Der Stream-Ton konnte nicht aufgenommen werden."
+              : "Diese Desktop-App kann keinen Ton von Anwendungen teilen."}{" "}
+          Das Video läuft weiter.
         </p>
       )}
       {(voice.sourceAudio.s === "unsupported" ||
