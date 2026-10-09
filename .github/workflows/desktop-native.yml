@@ -2,7 +2,8 @@
 # desktop app around it, for Linux and Windows: reproducible libwebrtc builds,
 # a loopback call against the server's mediasoup version, the packaged apps
 # (Linux tarball and pacman repository, Windows installer) and, for a
-# release, their upload. The two platforms share no job.
+# release, their upload. The two platforms share no job but the check of the
+# third-party notices, which both uploads wait for.
 name: Desktop native core
 
 on:
@@ -383,11 +384,28 @@ jobs:
           cargo clippy --locked --manifest-path desktop/Cargo.toml --target x86_64-pc-windows-msvc \
             -p gelabber-media-core --lib -- -D warnings
 
-      # The packages ship desktop/app/package/THIRD-PARTY-NOTICES.txt. Its
-      # crate list comes from Cargo.lock for both targets, which this job has
-      # at hand: a dependency change without a refreshed file fails here
-      # (desktop/packaging/third-party-notices.py without arguments writes it).
-      - name: Third-party notices are current
+  # The packages of both systems ship
+  # desktop/app/package/THIRD-PARTY-NOTICES.txt. Its crate list comes from
+  # desktop/Cargo.lock for both targets, some of its sentences from the
+  # build configuration. A change of either without a refreshed file fails
+  # here; desktop/packaging/third-party-notices.py without arguments writes
+  # the file, or says what else it needs. The builds do not wait for this
+  # job, so a run still reports what else is wrong. The two jobs that attach
+  # the apps to a release do, and with them the pacman repository: no
+  # release goes out with notices that are out of date. No build and no Rust
+  # cache: cargo only reads the lock file and the crates' manifests.
+  notices:
+    name: Third-party notices
+    runs-on: ubuntu-24.04
+    timeout-minutes: 15
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v7
+
+      - name: Rust toolchain
+        uses: dtolnay/rust-toolchain@1.98.1
+
+      - name: Notices are current
         run: |
           set -euo pipefail
           python3 -m unittest discover -s desktop/packaging/tests
@@ -942,11 +960,11 @@ jobs:
           retention-days: 14
 
   # Release only: the app tarball becomes a release asset, which the
-  # PKGBUILD downloads.
+  # PKGBUILD downloads. Not with third-party notices that are out of date.
   release-asset:
     name: Attach the Linux app to the release
     if: github.event_name == 'release' || (github.event_name == 'workflow_dispatch' && inputs.release_tag != '')
-    needs: arch-repo
+    needs: [arch-repo, notices]
     runs-on: ubuntu-24.04
     permissions:
       contents: write
@@ -964,11 +982,11 @@ jobs:
   # Release only: the Windows installer and its checksum become release
   # assets. Apart from the Linux jobs in both directions: a failure here
   # leaves the tarball and the pacman repository alone, and the other way
-  # round.
+  # round. The third-party notices are the one thing both wait for.
   release-asset-windows:
     name: Attach the Windows app to the release
     if: github.event_name == 'release' || (github.event_name == 'workflow_dispatch' && inputs.release_tag != '')
-    needs: core-windows
+    needs: [core-windows, notices]
     runs-on: ubuntu-24.04
     permissions:
       contents: write
