@@ -15,5 +15,8 @@ Intel/AMD VA-API). Without it the app encodes in software.
 Logs: GELABBER_MEDIA_LOG=1 ./gelabber-desktop ...
 Force an H264 encoder: GELABBER_H264_ENCODER=nvh264enc|vah264enc|none
 
-The build contains libwebrtc's H264 decoder (FFmpeg); do not redistribute
-it until the H264 licensing question is settled.
+Licences: THIRD-PARTY-NOTICES.txt lists the third-party software in the two
+binaries, with its licences and their texts, and what is still open.
+libgelabber_media.so contains OpenH264 (H264 encoder) and FFmpeg decoders
+from libwebrtc (LGPL; H264, AAC and others). How H264 licensing applies to
+this build is not settled (issue #165); do not redistribute it until it is.

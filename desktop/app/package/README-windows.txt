@@ -55,5 +55,6 @@ Fehlersuche
     "%LOCALAPPDATA%\Gelabber\gelabber-desktop.exe" 2> "%USERPROFILE%\gelabber.log"
 
 Lizenzen
-  Hinweise zu den enthaltenen Bibliotheken: THIRD-PARTY-NOTICES.txt im
-  Installationsordner.
+  THIRD-PARTY-NOTICES.txt im Installationsordner (englisch) nennt die
+  enthaltene Software Dritter mit ihren Lizenzen und Lizenztexten. Teil 1
+  der Datei sagt auch, was für die Windows-Version noch nicht erfasst ist.
