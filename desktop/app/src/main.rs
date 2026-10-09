@@ -11,6 +11,7 @@
 //! app. F5 / Ctrl+R reload.
 #![cfg_attr(not(debug_assertions), windows_subsystem = "windows")]
 
+mod frames;
 mod media;
 mod viewer;
 
@@ -250,6 +251,10 @@ fn main() {
             media::media_consumer_close,
             media::media_viewer_open,
             media::media_viewer_close,
+            media::media_view_open,
+            media::media_view_configure,
+            media::media_view_frame,
+            media::media_view_close,
         ])
         .on_page_load(|webview, payload| {
             // A reload or navigation leaves the old page's calls and

@@ -18,9 +18,10 @@ Not a product yet.
 | `native/patches/` | Patches applied to libwebrtc |
 | `core/` | Rust crate `gelabber-media-core`: safe API over the C ABI |
 | `core/tests/mediasoup_loopback.rs` | Loopback call against mediasoup 0.29 with the server's router codecs |
+| `core/tests/source_preview.rs` | Video sinks for views in the app: a local source without a producer, scaling and rate limits, sinks going away mid-frame |
 | `core/tests/screen_capture.rs` | Screen capture through the portal, H264, mediasoup, native decode (`GELABBER_TEST_SCREEN=1`) |
 | `app/` | Tauri 2 app `gelabber-desktop`: window on the server origin, bundled setup page, media commands (`src/media.rs`) |
-| `app/scripts/smoke.sh` | Starts the app on a stand-in origin under Xvfb and checks which commands the page reaches |
+| `app/scripts/smoke.sh` | Starts the app on a stand-in origin under Xvfb and checks which commands the page reaches and that the frames of a test-pattern view arrive |
 | `core/tests/voice.rs` | Microphone modes, RNNoise, device selection, Opus through mediasoup, playout (`GELABBER_TEST_AUDIO=1`) |
 
 ## Why a shared library with a C ABI
@@ -98,12 +99,38 @@ variable yourself (e.g. `=0`) overrides that.
 - Camera: libwebrtc's video capture module (V4L2 on Linux, DirectShow on
   Windows) at the closest format to the requested profile. CI runners have
   no camera, so only the "no camera" path is tested there.
-- Video display: the webview cannot show the core's video, so remote video
-  opens in a native viewer window (`app/src/viewer.rs`): winit on its own
-  thread next to the webview's GTK loop, wgpu drawing the decoded I420
-  planes with a BT.601/709 shader, letterboxed. The window's Wayland app id
-  and X11 class are `gelabber-viewer` for compositor rules. CI draws a frame
-  through lavapipe under Xvfb and checks the colors on a screenshot.
+- Video display: WebKitGTK has no WebRTC and cannot take a native texture,
+  so the page pulls the core's frames and draws them itself, on a `<canvas>`
+  where the browser build has a `<video>` (`app/src/frames.rs`).
+  `media_view_open` opens a view of a remote video consumer or of a local
+  source (camera, screen: the self view, which needs no producer),
+  `media_view_frame` answers with the next frame the page has not seen (a
+  long poll with a raw response: a 32-byte header, then the I420 planes),
+  `media_view_configure` says how large the page draws, `media_view_close`
+  ends it. A slow page skips frames: a view keeps only the newest. One native
+  sink per consumer or source (`gm_consumer_set_video_sink`,
+  `gm_source_set_video_sink`) feeds all its views. Before frames cross into
+  Rust the core scales them down to the largest view (libyuv; never up, so a
+  4K screen costs a small tile little) and drops those above the views' rate
+  limit. Views end with the page and with their consumer or source. Frames
+  go through an ordinary command because Tauri checks commands against the
+  server origin's capability; a scheme of the app's own or a pushed channel
+  measured no faster. A Content-Security-Policy on the server that keeps the
+  page from fetching `ipc://localhost` (Windows: `http://ipc.localhost`)
+  makes Tauri fall back to postMessage with frames as JSON number arrays,
+  which is far too slow for video: allow it in `connect-src`.
+  `GELABBER_VIDEO_TEST_PATTERN=1` lets `media_view_open` take
+  `testPattern: {width, height, fps}` (colour bars) instead of a consumer
+  or source; the smoke test uses it.
+- Viewer window: `media_viewer_open` shows a remote video in a native
+  window (`app/src/viewer.rs`), for web clients from before the views in the
+  page and as a pop-out next to them: winit on its own thread next to the
+  webview's GTK loop, wgpu drawing the decoded I420 planes with a BT.601/709
+  shader, letterboxed. It shares the consumer's sink with the page views and
+  shows the stream unscaled, so while a window is open the views of that
+  consumer get full-size frames too. The window's Wayland app id and X11
+  class are `gelabber-viewer` for compositor rules. CI draws a frame through
+  lavapipe under Xvfb and checks the colors on a screenshot.
 - Voice: libwebrtc's audio device module (Linux: PulseAudio API, served by
   pipewire-pulse) with its APM for echo cancellation, noise suppression and
   AGC. The web client's modes carry over: `enhanced` runs RNNoise (same
