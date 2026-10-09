@@ -218,7 +218,10 @@ def die(message):
 
 
 def run(*cmd, cwd=None):
-    result = subprocess.run([str(c) for c in cmd], cwd=cwd, capture_output=True, text=True)
+    try:
+        result = subprocess.run([str(c) for c in cmd], cwd=cwd, capture_output=True, text=True)
+    except FileNotFoundError:
+        die(f"{cmd[0]} is needed and was not found")
     if result.returncode != 0:
         die(f"{' '.join(str(c) for c in cmd)} failed:\n{result.stderr.strip()}")
     return result.stdout
