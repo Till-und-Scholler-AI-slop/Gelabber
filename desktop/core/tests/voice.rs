@@ -117,6 +117,39 @@ impl Drop for Player {
     }
 }
 
+/// Starts the noise player as the application `name`. Its shell is gone
+/// before it plays, so it is no process of this test. Returns its pid.
+fn start_player(name: &str) -> String {
+    let started = std::process::Command::new("sh")
+        .args([
+            "-c",
+            &format!("{NOISE_PLAYER} >/dev/null 2>&1 & echo $!"),
+            name,
+        ])
+        .output()
+        .expect("paplay");
+    String::from_utf8_lossy(&started.stdout).trim().to_owned()
+}
+
+/// Ends a player from [`start_player`], which has to be playing still.
+fn stop_player(pid: &str) {
+    assert!(
+        std::process::Command::new("kill")
+            .arg(pid)
+            .status()
+            .expect("kill")
+            .success(),
+        "player {pid} was running"
+    );
+}
+
+/// The application list in a fixed order.
+fn by_id(apps: &Value) -> Vec<Value> {
+    let mut apps = apps.as_array().expect("application list").clone();
+    apps.sort_by_key(|app| app["id"].as_str().unwrap_or_default().to_owned());
+    apps
+}
+
 /// Playback streams an application-sound source captures once it settled.
 async fn captured_streams(source: &Source, expected: u64) -> u64 {
     let streams = || source.state().unwrap()["streams"].as_u64().unwrap_or(0);
@@ -362,12 +395,7 @@ async fn voice_modes_reach_a_consumer() {
     // application. It is chosen by its name here: the id up to 0.5.2, which
     // a client may have stored. Its sound goes on a track of its own next
     // to the microphone.
-    let started = std::process::Command::new("sh")
-        .args(["-c", &format!("{NOISE_PLAYER} >/dev/null 2>&1 & echo $!")])
-        .arg("gelabber-test-player")
-        .output()
-        .expect("paplay");
-    let player_pid = String::from_utf8_lossy(&started.stdout).trim().to_owned();
+    let player_pid = start_player("gelabber-test-player");
     let player_stream = sink_input_of("gelabber-test-player").await;
     let app_audio = Source::app_audio(&engine, &json!({"app": "gelabber-test-player"})).unwrap();
     assert_eq!(captured_streams(&app_audio, 1).await, 1);
@@ -451,17 +479,38 @@ async fn voice_modes_reach_a_consumer() {
     drop(app_consumer);
     drop(app_producer);
     drop(app_audio);
-    assert!(
-        std::process::Command::new("kill")
-            .arg(&player_pid)
-            .status()
-            .expect("kill")
-            .success()
+    stop_player(&player_pid);
+
+    // Two applications that run one binary, as on a shared Electron or Wine.
+    // The binary's entry is both; each is listed by the name it gave itself
+    // as well.
+    let pair = ["gelabber-test-one", "gelabber-test-two"];
+    let pair_pids = pair.map(start_player);
+    for name in pair {
+        sink_input_of(name).await;
+    }
+    let shared = binary_of("paplay");
+    let apps = engine.audio_apps().unwrap();
+    eprintln!("audio apps, two on one binary: {apps}");
+    assert_eq!(
+        by_id(&apps),
+        by_id(&json!([
+            {"id": pair[0], "name": pair[0], "streams": 1},
+            {"id": pair[1], "name": pair[1], "streams": 1},
+            {"id": shared, "name": shared, "streams": 2},
+            {"id": player_id, "name": "pw-play", "streams": 1},
+        ]))
     );
 
     // An application chosen by its id. Up to 0.5.2 this process was listed as
-    // well, under the name libwebrtc gives its playout.
-    for (app, expected) in [(player_id.as_str(), 1), ("WEBRTC VoiceEngine", 0)] {
+    // well, under the name libwebrtc gives its playout. One of the two by
+    // its name, both by their binary.
+    for (app, expected) in [
+        (player_id.as_str(), 1),
+        ("WEBRTC VoiceEngine", 0),
+        (pair[1], 1),
+        (shared.as_str(), 2),
+    ] {
         let chosen = Source::app_audio(&engine, &json!({"app": app})).unwrap();
         assert_eq!(
             captured_streams(&chosen, expected).await,
@@ -469,6 +518,21 @@ async fn voice_modes_reach_a_consumer() {
             "streams captured for {app:?}"
         );
     }
+
+    // One of the two alone is the binary's entry, under its name.
+    stop_player(&pair_pids[1]);
+    let alone = by_id(&json!([
+        {"id": shared, "name": pair[0], "streams": 1},
+        {"id": player_id, "name": "pw-play", "streams": 1},
+    ]));
+    let (listing, alone) = (&engine, &alone);
+    wait_for(
+        "one application left on the binary",
+        Duration::from_secs(10),
+        || async move { by_id(&listing.audio_apps().unwrap()) == *alone },
+    )
+    .await;
+    stop_player(&pair_pids[0]);
 
     // Ending the test leaves the call's capture running.
     engine.monitor_audio(None).unwrap();

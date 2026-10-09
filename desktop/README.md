@@ -155,5 +155,6 @@ variable yourself (e.g. `=0`) overrides that.
   session manager leaves the capture unlinked, so the core replaces a capture
   stream that lost its links.
   The voice test covers the list and "" while the test process plays a
-  consumer out and a player it started plays too, and a player of its own
-  that is chosen by name and changes outputs.
+  consumer out and a player it started plays too, a player of its own that is
+  chosen by name and changes outputs, and two players on one binary under
+  different names.
