@@ -76,7 +76,14 @@ compositing; with the renderer disabled altogether (what the app set up to
 0.5.2) the web process paints video on the CPU, half a core and more for one
 stream across the window. Setting that variable or
 `WEBKIT_DISABLE_DMABUF_RENDERER` yourself (to any value) leaves both as you
-set them.
+set them. On the same driver the app ends WebKit's web process the moment
+its window is closed (`webkit_web_view_terminate_web_process`): once a page
+has drawn with WebGL, as the video tiles do, a web process left to shut
+down crashes inside the driver when it frees its GL contexts
+(`eglDestroyContext` in libnvidia-eglcore; driver 610.57.04, WebKitGTK
+2.52.6, with either renderer setting), which left a core dump and a crash
+notification behind every close. An app that is killed instead of closed
+(SIGTERM, the end of the session) still leaves the web process to that.
 
 ## Design rules
 
