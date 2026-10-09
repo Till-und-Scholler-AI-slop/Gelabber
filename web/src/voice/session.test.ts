@@ -1583,6 +1583,117 @@ describe("voice session", () => {
     expect(useVoice.getState().status).toBe("joined");
   });
 
+  it("opens one picker when Go Live is clicked while the seat is still connecting", async () => {
+    const ticket = deferred();
+    const picker = deferred();
+    const env = install({
+      gateTicket: () => ticket.promise,
+      gateDisplay: (index) => (index === 0 ? picker.promise : undefined),
+      // A browser refuses a second picker that no click asked for.
+      displayError: (index) =>
+        index > 0
+          ? new DOMException("Kein Klick", "InvalidStateError")
+          : undefined,
+    });
+    joinVoice({ serverId: "srv", channelId: "voice", channelName: "Voice" });
+    toggleGoLive();
+    expect(env.getDisplayMediaCalls()).toBe(1);
+    ticket.resolve();
+    await vi.waitFor(() => expect(env.peers[0]?.audio).toBeTruthy());
+    await new Promise((resolve) => setTimeout(resolve, 0));
+    expect(env.getDisplayMediaCalls()).toBe(1);
+    expect(useVoice.getState().live).toBe(true);
+    expect(liveClaimFrames(env.sent)).toEqual(["p"]);
+
+    // The source the user picks is the one that goes live.
+    picker.resolve();
+    await vi.waitFor(() =>
+      expect(env.peers[0]!.sender("l")?.track).toBeTruthy(),
+    );
+    const stream = useVoice.getState().localLive!;
+    expect(streamStopped(stream)).toBe(false);
+    expect(env.peers[0]!.sender("l")?.track).toBe(stream.getVideoTracks()[0]);
+    expect(env.getDisplayMediaCalls()).toBe(1);
+    expect(liveClaimFrames(env.sent)).toEqual(["p"]);
+    expect(useVoiceRoster.getState().live.srv?.voice).toBe("u-self");
+    expect(env.errors).toHaveLength(0);
+  });
+
+  it("captures camera and share once when both start while the seat is still connecting", async () => {
+    const ticket = deferred();
+    const prompt = deferred();
+    const picker = deferred();
+    const env = install({
+      gateTicket: () => ticket.promise,
+      gateMedia: (_index, constraints) =>
+        constraints.video ? prompt.promise : undefined,
+      gateDisplay: () => picker.promise,
+    });
+    joinVoice({ serverId: "srv", channelId: "voice", channelName: "Voice" });
+    toggleCamera();
+    toggleShare();
+    ticket.resolve();
+    await vi.waitFor(() => expect(env.peers[0]?.audio).toBeTruthy());
+    await new Promise((resolve) => setTimeout(resolve, 0));
+    // Camera and microphone; the share picker only once.
+    expect(env.getUserMediaCalls()).toBe(2);
+    expect(env.getDisplayMediaCalls()).toBe(1);
+
+    prompt.resolve();
+    picker.resolve();
+    await vi.waitFor(() => {
+      expect(env.peers[0]!.sender("v")?.track).toBeTruthy();
+      expect(env.peers[0]!.sender("s")?.track).toBeTruthy();
+    });
+    expect(streamStopped(useVoice.getState().localCamera)).toBe(false);
+    expect(
+      trackStopped(useVoice.getState().localScreen?.getVideoTracks()[0]),
+    ).toBe(false);
+    expect(env.getUserMediaCalls()).toBe(2);
+    expect(env.getDisplayMediaCalls()).toBe(1);
+    expect(env.errors).toHaveLength(0);
+  });
+
+  it("does not reopen a picker cancelled while the seat finished connecting", async () => {
+    const ticket = deferred();
+    const picker = deferred();
+    const publish = deferred();
+    const env = install({
+      gateTicket: () => ticket.promise,
+      gateDisplay: () => picker.promise,
+      displayError: () =>
+        new DOMException("Freigabe abgebrochen", "NotAllowedError"),
+      holdPublish: publish.promise,
+    });
+    joinVoice({ serverId: "srv", channelId: "voice", channelName: "Voice" });
+    toggleCamera();
+    toggleGoLive();
+    await vi.waitFor(() =>
+      expect(useVoice.getState().localCamera).toBeTruthy(),
+    );
+    ticket.resolve();
+    // The connect is past its last look at the buttons: the camera publishes.
+    await vi.waitFor(() =>
+      expect(
+        env.peers[0]?.publicationInputs.some((input) => input.kind === "v"),
+      ).toBe(true),
+    );
+    picker.resolve();
+    await vi.waitFor(() => expect(useVoice.getState().live).toBe(false));
+    expect(liveClaimFrames(env.sent)).toEqual(["p", "u"]);
+
+    publish.resolve();
+    await vi.waitFor(() =>
+      expect(env.peers[0]!.sender("v")?.track).toBeTruthy(),
+    );
+    await new Promise((resolve) => setTimeout(resolve, 0));
+    expect(env.getDisplayMediaCalls()).toBe(1);
+    expect(liveClaimFrames(env.sent)).toEqual(["p", "u"]);
+    expect(useVoice.getState().live).toBe(false);
+    expect(useVoice.getState().localLive).toBeNull();
+    expect(env.errors).toHaveLength(0);
+  });
+
   it("matches watch events by server and channel", async () => {
     const { emitSig, peers } = install();
     watchLive({

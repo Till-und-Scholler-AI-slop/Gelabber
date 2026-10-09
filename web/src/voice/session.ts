@@ -2736,9 +2736,18 @@ function bumpVideoEpoch(kind: "v" | "s" | "l"): number {
   return ++liveEpoch;
 }
 
+/** Epoch of the start whose picker or camera prompt has not answered yet. */
+const openCaptures = new Map<"v" | "s" | "l", number>();
+
+/** Stopping or rebuilding bumps the epoch, so an abandoned start is not open. */
+function captureOpen(kind: "v" | "s" | "l"): boolean {
+  return openCaptures.get(kind) === videoEpoch(kind);
+}
+
 async function startLocalVideo(kind: "v" | "s" | "l"): Promise<void> {
   const epoch = bumpVideoEpoch(kind);
   const mine = seat.generation;
+  openCaptures.set(kind, epoch);
   // A display capture owns its video and optional browser-selected audio.
   let stream: MediaStream;
   try {
@@ -2766,6 +2775,8 @@ async function startLocalVideo(kind: "v" | "s" | "l"): Promise<void> {
     // Only the newest attempt owns the claim; a later start keeps its own.
     if (kind === "l" && liveEpoch === epoch) releaseUnstartedLive();
     return;
+  } finally {
+    if (openCaptures.get(kind) === epoch) openCaptures.delete(kind);
   }
   pendingDisplayStreams.delete(stream);
   if (seat.generation !== mine || videoEpoch(kind) !== epoch) {
@@ -3497,24 +3508,30 @@ async function startPeer(
   if (pending.localLive) {
     await publishLocal("l", pending.localLive);
   }
+  // A button pressed during the connect has opened its own picker or prompt,
+  // and may have been switched off again while the publishes above ran.
+  const wanted = useVoice.getState();
   if (
     !recovering &&
-    (pending.camera || resumeCamera) &&
-    !useVoice.getState().localCamera
+    (wanted.camera || resumeCamera) &&
+    !wanted.localCamera &&
+    !captureOpen("v")
   ) {
     void startLocalVideo("v");
   }
   if (
     !recovering &&
-    (pending.sharing || resumeShare) &&
-    !useVoice.getState().localScreen
+    (wanted.sharing || resumeShare) &&
+    !wanted.localScreen &&
+    !captureOpen("s")
   ) {
     void startLocalVideo("s");
   }
   if (
     !recovering &&
-    (pending.live || resumeLive) &&
-    !useVoice.getState().localLive
+    (wanted.live || resumeLive) &&
+    !wanted.localLive &&
+    !captureOpen("l")
   ) {
     void startLocalVideo("l");
   }
