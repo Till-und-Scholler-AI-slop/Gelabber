@@ -417,7 +417,9 @@ fn main() {
         ])
         .on_page_load(|webview, payload| {
             // A reload or navigation leaves the old page's calls and
-            // transports orphaned; close them before the new page starts.
+            // transports orphaned: they are taken from it before the new
+            // page starts. This is the UI thread, so closing them in the
+            // core happens elsewhere (`Media::reset`).
             if payload.event() == PageLoadEvent::Started {
                 webview.state::<media::Media>().reset();
             }
