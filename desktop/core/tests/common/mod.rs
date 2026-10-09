@@ -196,6 +196,50 @@ pub async fn blocking<T: Send + 'static>(f: impl FnOnce() -> T + Send + 'static)
     tokio::task::spawn_blocking(f).await.unwrap()
 }
 
+/// Whether the native device's RTP capabilities list `mime` (e.g.
+/// "video/h264").
+pub fn can_receive(capabilities: &Value, mime: &str) -> bool {
+    capabilities["codecs"]
+        .as_array()
+        .into_iter()
+        .flatten()
+        .filter_map(|codec| codec["mimeType"].as_str())
+        .any(|found| found.eq_ignore_ascii_case(mime))
+}
+
+/// What in the environment says the core must have H264, given the values of
+/// GELABBER_EXPECT_H264 and GELABBER_EXPECT_ENCODER: the first set to 1, or
+/// the second naming the H264 encoder a test is to find.
+pub fn h264_demanded_by(
+    expect_h264: Option<&str>,
+    expect_encoder: Option<&str>,
+) -> Option<&'static str> {
+    if expect_h264 == Some("1") {
+        Some("GELABBER_EXPECT_H264=1")
+    } else if expect_encoder.is_some_and(|name| !name.is_empty()) {
+        Some("GELABBER_EXPECT_ENCODER is set")
+    } else {
+        None
+    }
+}
+
+/// Whether the H264 half of a test runs. The Windows core has no H264, so a
+/// device without it only skips that half; GELABBER_EXPECT_H264=1 (set where
+/// the core is built with H264, as on Linux) turns a missing codec into a
+/// failure instead, and so does GELABBER_EXPECT_ENCODER: its check needs an
+/// H264 producer.
+pub fn h264_under_test(capabilities: &Value) -> bool {
+    let available = can_receive(capabilities, "video/h264");
+    let (expect_h264, expect_encoder) = (
+        std::env::var("GELABBER_EXPECT_H264").ok(),
+        std::env::var("GELABBER_EXPECT_ENCODER").ok(),
+    );
+    if let Some(demand) = h264_demanded_by(expect_h264.as_deref(), expect_encoder.as_deref()) {
+        assert!(available, "{demand}, but the native device has no H264");
+    }
+    available
+}
+
 /// With GELABBER_EXPECT_ENCODER set, some outbound-rtp entry's
 /// `encoderImplementation` must contain it (e.g. "GStreamer x264enc").
 pub fn check_encoder(name: &str, stats: &Value) {

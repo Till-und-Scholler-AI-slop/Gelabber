@@ -99,7 +99,8 @@ pub fn set_log_level(level: LogLevel) {
 
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
 pub enum Audio {
-    /// System audio devices (PulseAudio API, served by pipewire-pulse on Omarchy).
+    /// System audio devices (Linux: PulseAudio API, served by pipewire-pulse
+    /// on Omarchy; Windows: Core Audio).
     #[default]
     Default,
     /// No audio devices; for tests and headless runs.
@@ -143,7 +144,8 @@ impl Engine {
     }
 
     /// `{"inputs":[{"id","name"}],"outputs":[...],"input","output"}`; id `""`
-    /// is the system default.
+    /// is the system default (on Windows the default device, not the default
+    /// communications device).
     pub fn audio_devices(&self) -> Result<Value> {
         // SAFETY: live engine.
         owned_json(unsafe { ffi::gm_audio_devices(self.raw()) })
@@ -539,7 +541,8 @@ impl Source {
 
     /// Screen or window chosen in the desktop's own picker (Linux:
     /// xdg-desktop-portal + PipeWire). Returns while the picker is still open;
-    /// poll [`Source::state`] until it leaves `pending`.
+    /// poll [`Source::state`] until it leaves `pending`. Not available on
+    /// Windows yet: an error there.
     ///
     /// `options`: `{"type"?: "any|screen|window", "fps"?: 30, "cursor"?: true,
     /// "contentHint"?: "detail|text|motion"}`.
@@ -553,7 +556,8 @@ impl Source {
 
     /// Sound of other applications (source audio), separate from the
     /// microphone: `{"app"?: id from [`Engine::audio_apps`]}`; without an
-    /// id, every application but this one.
+    /// id, every application but this one. Not available on Windows yet: an
+    /// error there, and [`Engine::audio_apps`] lists nothing.
     pub fn app_audio(engine: &Engine, options: &Value) -> Result<Self> {
         let options = json_arg(options)?;
         // SAFETY: live engine, NUL-terminated JSON.

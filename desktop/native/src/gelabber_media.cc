@@ -5,7 +5,6 @@
 #include "gelabber_media.h"
 #include "app_audio.h"
 #include "capture_dsp.h"
-#include "gst_h264_encoder.h"
 #include "local_video_source.h"
 
 #include "mediasoupclient.hpp"
@@ -44,7 +43,6 @@
 #include <api/video_codecs/video_encoder_factory_template_open_h264_adapter.h>
 #include <audio/utility/audio_frame_operations.h>
 #include <media/base/adapted_video_track_source.h>
-#include <media/engine/simulcast_encoder_adapter.h>
 #include <modules/audio_processing/audio_buffer.h>
 #include <modules/audio_processing/include/audio_frame_proxies.h>
 #include <modules/audio_device/include/fake_audio_device.h>
@@ -52,19 +50,34 @@
 #include <rtc_base/thread.h>
 #include <rtc_base/time_utils.h>
 
+#if defined(WEBRTC_LINUX)
+// Hardware H264 through GStreamer, behind libwebrtc's simulcast adapter. The
+// Windows libwebrtc package does not carry the adapter.
+#  include "gst_h264_encoder.h"
+#  include <media/engine/simulcast_encoder_adapter.h>
+#endif
+#if defined(WEBRTC_WIN)
+#  include <rtc_base/win32_socket_init.h>
+#endif
+
 #include <algorithm>
 #include <atomic>
 #include <cctype>
 #include <cmath>
 #include <chrono>
+#include <cstdint>
+#include <cstdlib>
 #include <cstring>
+#include <exception>
 #include <future>
 #include <map>
 #include <memory>
 #include <mutex>
 #include <optional>
+#include <stdexcept>
 #include <string>
 #include <thread>
+#include <utility>
 #include <vector>
 
 using json = nlohmann::json;
@@ -355,21 +368,35 @@ namespace
 		size_t window{ 0 };
 	};
 
+	// Stands for the system default where the module has no index for it.
+	constexpr int kDefaultAudioDevice = -1;
+#if defined(WEBRTC_WIN)
+	// Core Audio lists the endpoints only; the default is a role that is
+	// selected on its own (SelectRecordingDevice, SelectPlayoutDevice).
+	constexpr bool kDefaultAudioDeviceIsListed = false;
+#else
+	// Index 0 is the system default (PulseAudio).
+	constexpr bool kDefaultAudioDeviceIsListed = true;
+#endif
+
 	struct AudioDeviceEntry
 	{
-		uint16_t index;
+		// The module's index, or kDefaultAudioDevice.
+		int index;
 		std::string id;
 		std::string name;
 	};
 
-	// Devices in module order. Index 0 is the system default with id "".
-	// Other ids are the module's GUID where it has one (Windows endpoint
-	// ids); libwebrtc's PulseAudio module reports none, so there the
-	// display name is the id, numbered when names repeat.
+	// Devices in module order, the system default first with id "". Other
+	// ids are the module's GUID where it has one (Windows endpoint ids);
+	// libwebrtc's PulseAudio module reports none, so there the display
+	// name is the id, numbered when names repeat.
 	template<typename Count, typename NameOf>
 	std::vector<AudioDeviceEntry> ListAudioDevices(Count count, NameOf nameOf)
 	{
 		std::vector<AudioDeviceEntry> out;
+		if (!kDefaultAudioDeviceIsListed)
+			out.push_back({ kDefaultAudioDevice, "", "Default" });
 		std::map<std::string, int> seen;
 		char name[webrtc::kAdmMaxDeviceNameSize];
 		char guid[webrtc::kAdmMaxGuidSize];
@@ -379,13 +406,13 @@ namespace
 			if (nameOf(static_cast<uint16_t>(i), name, guid) != 0)
 				continue;
 			std::string id;
-			if (i > 0)
+			if (i > 0 || !kDefaultAudioDeviceIsListed)
 			{
 				id = guid[0] != '\0' ? guid : name;
 				if (const int repeat = ++seen[id]; repeat > 1)
 					id += " (" + std::to_string(repeat) + ")";
 			}
-			out.push_back({ static_cast<uint16_t>(i), id, name });
+			out.push_back({ i, id, name });
 		}
 		return out;
 	}
@@ -404,12 +431,28 @@ namespace
 		  [&](uint16_t i, char* name, char* guid) { return adm.PlayoutDeviceName(i, name, guid); });
 	}
 
-	int FindAudioDevice(const std::vector<AudioDeviceEntry>& devices, const std::string& id)
+	// The index of the device with this id, if there is one.
+	std::optional<int> FindAudioDevice(const std::vector<AudioDeviceEntry>& devices, const std::string& id)
 	{
 		for (const auto& device : devices)
 			if (device.id == id)
 				return device.index;
-		return -1;
+		return std::nullopt;
+	}
+
+	// Windows has two defaults. The system default is the console role:
+	// streams on the communications role make Windows turn every other
+	// application down for as long as they run.
+	int32_t SelectRecordingDevice(webrtc::AudioDeviceModule& adm, int index)
+	{
+		return index == kDefaultAudioDevice ? adm.SetRecordingDevice(webrtc::AudioDeviceModule::kDefaultDevice)
+		                                    : adm.SetRecordingDevice(static_cast<uint16_t>(index));
+	}
+
+	int32_t SelectPlayoutDevice(webrtc::AudioDeviceModule& adm, int index)
+	{
+		return index == kDefaultAudioDevice ? adm.SetPlayoutDevice(webrtc::AudioDeviceModule::kDefaultDevice)
+		                                    : adm.SetPlayoutDevice(static_cast<uint16_t>(index));
 	}
 
 	// Shared by send and receive listeners: turns libmediasoupclient's
@@ -941,17 +984,20 @@ namespace
 		{
 			return inner->SetPlayoutDevice(index);
 		}
-		int32_t SetPlayoutDevice(WindowsDeviceType device) override
+		// Only called on Windows, where the voice engine starts on the
+		// default communications device. It gets the system default
+		// instead (see SelectPlayoutDevice), the device of the id "".
+		int32_t SetPlayoutDevice(WindowsDeviceType) override
 		{
-			return inner->SetPlayoutDevice(device);
+			return inner->SetPlayoutDevice(kDefaultDevice);
 		}
 		int32_t SetRecordingDevice(uint16_t index) override
 		{
 			return inner->SetRecordingDevice(index);
 		}
-		int32_t SetRecordingDevice(WindowsDeviceType device) override
+		int32_t SetRecordingDevice(WindowsDeviceType) override
 		{
-			return inner->SetRecordingDevice(device);
+			return inner->SetRecordingDevice(kDefaultDevice);
 		}
 		int32_t PlayoutIsAvailable(bool* available) override
 		{
@@ -1093,29 +1139,33 @@ namespace
 		{
 			return inner->PlayoutDelay(delayMs);
 		}
+		// No processing in the device: the voice engine would switch the
+		// APM's own off for it. Windows offers an echo canceller that
+		// records 16 kHz mono, which RNNoise (48 kHz) and stereo cannot
+		// use. libwebrtc's PulseAudio module has none to begin with.
 		bool BuiltInAECIsAvailable() const override
 		{
-			return inner->BuiltInAECIsAvailable();
+			return false;
 		}
 		bool BuiltInAGCIsAvailable() const override
 		{
-			return inner->BuiltInAGCIsAvailable();
+			return false;
 		}
 		bool BuiltInNSIsAvailable() const override
 		{
-			return inner->BuiltInNSIsAvailable();
+			return false;
 		}
-		int32_t EnableBuiltInAEC(bool enable) override
+		int32_t EnableBuiltInAEC(bool /*enable*/) override
 		{
-			return inner->EnableBuiltInAEC(enable);
+			return -1;
 		}
-		int32_t EnableBuiltInAGC(bool enable) override
+		int32_t EnableBuiltInAGC(bool /*enable*/) override
 		{
-			return inner->EnableBuiltInAGC(enable);
+			return -1;
 		}
-		int32_t EnableBuiltInNS(bool enable) override
+		int32_t EnableBuiltInNS(bool /*enable*/) override
 		{
-			return inner->EnableBuiltInNS(enable);
+			return -1;
 		}
 		int32_t GetPlayoutUnderrunCount() const override
 		{
@@ -1155,10 +1205,10 @@ namespace
 	  webrtc::LibvpxVp9EncoderTemplateAdapter,
 	  webrtc::LibaomAv1EncoderTemplateAdapter>;
 
-	// libwebrtc's software encoders, with H264 moved to a hardware encoder
-	// (GStreamer: VA-API/NVENC) when the system has one. Hardware H264 runs
-	// per simulcast layer behind SimulcastEncoderAdapter, which also falls
-	// back to OpenH264 when the hardware encoder fails.
+	// libwebrtc's software encoders. On Linux H264 moves to a hardware
+	// encoder (GStreamer: VA-API/NVENC) when the system has one. Hardware
+	// H264 runs per simulcast layer behind SimulcastEncoderAdapter, which
+	// also falls back to OpenH264 when the hardware encoder fails.
 	class EncoderFactory : public webrtc::VideoEncoderFactory
 	{
 	public:
@@ -1192,20 +1242,36 @@ namespace
 		std::unique_ptr<webrtc::VideoEncoder> Create(
 		  const webrtc::Environment& env, const webrtc::SdpVideoFormat& format) override
 		{
+#if defined(WEBRTC_LINUX)
 			if (hardware && lower(format.name) == "h264")
 				return std::make_unique<webrtc::SimulcastEncoderAdapter>(env, hardware.get(), &software, format);
+#endif
 			return software.Create(env, format);
 		}
 
 	private:
 		SoftwareEncoderFactory software;
+#if defined(WEBRTC_LINUX)
 		std::unique_ptr<webrtc::VideoEncoderFactory> hardware;
+#endif
 	};
 
 	NoopProducerListener producerListener;
 	NoopConsumerListener consumerListener;
 
 	std::once_flag initialized;
+
+#if defined(WEBRTC_WIN)
+	// libwebrtc leaves Winsock to its embedder, and the network thread's
+	// socket server needs it from its constructor on. Never cleaned up:
+	// WSACleanup would run while the library unloads, where it must not.
+	void StartWinsock()
+	{
+		static webrtc::WinsockInitializer* const winsock = new webrtc::WinsockInitializer();
+		if (winsock->error() != 0)
+			throw std::runtime_error("WSAStartup failed with error " + std::to_string(winsock->error()));
+	}
+#endif
 } // namespace
 
 struct gm_engine
@@ -1234,6 +1300,11 @@ struct gm_engine
 	{
 		mediasoupclient::PeerConnection::Options options;
 		options.factory = factory.get();
+		// The media server has no ICE-TCP (media/src/sfu.rs), so TCP host
+		// candidates can never pair. Gathering them opens a listening
+		// socket per interface, which is what makes the Windows firewall
+		// ask about the app. TURN over TCP or TLS is a relay port and stays.
+		options.config.tcp_candidate_policy = webrtc::PeerConnectionInterface::kTcpCandidatePolicyDisabled;
 		return options;
 	}
 
@@ -1337,6 +1408,9 @@ void gm_set_log_level(int level)
 gm_engine* gm_engine_new(const char* optionsJson)
 {
 	return guarded<gm_engine*>(nullptr, [&]() -> gm_engine* {
+#if defined(WEBRTC_WIN)
+		StartWinsock();
+#endif
 		std::call_once(initialized, [] { mediasoupclient::Initialize(); });
 		const auto options = optionsJson ? json::parse(optionsJson) : json::object();
 		const auto audio   = options.value("audio", std::string("default"));
@@ -1475,9 +1549,9 @@ int gm_audio_configure(gm_engine* engine, const char* optionsJson)
 			auto& adm = *engine->adm;
 			if (input)
 			{
-				const auto id   = options["input"].get<std::string>();
-				const int index = FindAudioDevice(RecordingDevices(adm), id);
-				if (index < 0)
+				const auto id    = options["input"].get<std::string>();
+				const auto index = FindAudioDevice(RecordingDevices(adm), id);
+				if (!index)
 				{
 					error = "unknown input device " + id;
 					return;
@@ -1485,7 +1559,7 @@ int gm_audio_configure(gm_engine* engine, const char* optionsJson)
 				const bool running = adm.Recording();
 				if (running)
 					adm.StopRecording();
-				if (adm.SetRecordingDevice(static_cast<uint16_t>(index)) != 0)
+				if (SelectRecordingDevice(adm, *index) != 0)
 					error = "cannot select input device " + id;
 				if (running && (adm.InitRecording() != 0 || adm.StartRecording() != 0))
 					error = "cannot restart capture on " + id;
@@ -1496,9 +1570,9 @@ int gm_audio_configure(gm_engine* engine, const char* optionsJson)
 			}
 			if (output)
 			{
-				const auto id   = options["output"].get<std::string>();
-				const int index = FindAudioDevice(PlayoutDevices(adm), id);
-				if (index < 0)
+				const auto id    = options["output"].get<std::string>();
+				const auto index = FindAudioDevice(PlayoutDevices(adm), id);
+				if (!index)
 				{
 					error = "unknown output device " + id;
 					return;
@@ -1506,7 +1580,7 @@ int gm_audio_configure(gm_engine* engine, const char* optionsJson)
 				const bool running = adm.Playing();
 				if (running)
 					adm.StopPlayout();
-				if (adm.SetPlayoutDevice(static_cast<uint16_t>(index)) != 0)
+				if (SelectPlayoutDevice(adm, *index) != 0)
 					error = "cannot select output device " + id;
 				if (running && (adm.InitPlayout() != 0 || adm.StartPlayout() != 0))
 					error = "cannot restart playout on " + id;
