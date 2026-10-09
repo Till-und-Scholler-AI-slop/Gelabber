@@ -291,6 +291,78 @@ impl Media {
         }
     }
 
+    /// The page closes a source: it is out of the registry at once. What is
+    /// returned ends the page's views of it and frees it, unless a producer
+    /// keeps it running until that closes too. That waits for a frame in
+    /// delivery, so it is for the blocking pool.
+    fn close_source(&self, source: u64) -> impl FnOnce() + Send + use<> {
+        // Out of the registry first: a view opening right now then finds the
+        // source gone, or is closed with the others.
+        let removed = self.sources.lock().unwrap().remove(&source);
+        let frames = self.frames.clone();
+        move || {
+            frames.close_origin(Origin::Source(source));
+            drop(removed);
+        }
+    }
+
+    /// The page closes a consumer: its viewer window and its views in the
+    /// page go with it. Returns what is left to do on the blocking pool, as
+    /// [`Media::close_source`] does.
+    fn close_consumer(&self, consumer: u64) -> impl FnOnce() + Send + use<> {
+        if let Some(viewer) = Viewer::running() {
+            viewer.close(consumer);
+        }
+        // Out of the registry first, as in `close_source`.
+        let removed = self.consumers.lock().unwrap().remove(&consumer);
+        let frames = self.frames.clone();
+        move || {
+            frames.close_origin(Origin::Consumer(consumer));
+            drop(removed);
+        }
+    }
+
+    /// The page closes a consumer's viewer window, or the person did. The
+    /// consumer's views in the page stay and get the stream at their own
+    /// size again. Returns what is left to do on the blocking pool.
+    fn close_viewer(&self, consumer: u64) -> impl FnOnce() + Send + use<> {
+        if let Some(viewer) = Viewer::running() {
+            viewer.close(consumer);
+        }
+        let frames = self.frames.clone();
+        move || frames.clear_window(Origin::Consumer(consumer))
+    }
+
+    /// What a view shows and how to make the native end of its feed: a
+    /// video consumer or a video source of the page, exactly one of them.
+    /// A test pattern instead only when `patterns` is set
+    /// ([`TEST_PATTERN_ENV`]).
+    fn view_target(
+        &self,
+        consumer: Option<u64>,
+        source: Option<u64>,
+        pattern: Option<PatternOptions>,
+        patterns: bool,
+    ) -> Result<(Origin, MakeTap)> {
+        match (consumer, source, pattern.filter(|_| patterns)) {
+            (Some(handle), None, None) => {
+                let shared = self::consumer(self, handle)?;
+                Ok((Origin::Consumer(handle), consumer_tap(shared)))
+            }
+            (None, Some(handle), None) => {
+                let source = get(&self.sources, handle, "source")?;
+                let tap = move || Ok(Box::new(SourceTap(source)) as Box<dyn Tap>);
+                Ok((Origin::Source(handle), Box::new(tap)))
+            }
+            (None, None, Some(PatternOptions { width, height, fps })) => {
+                let tap =
+                    move || Ok(Box::new(TestPattern::new(width, height, fps)?) as Box<dyn Tap>);
+                Ok((Origin::Pattern(width, height, fps), Box::new(tap)))
+            }
+            _ => Err("a view shows either a consumer or a source".into()),
+        }
+    }
+
     /// Drops every object of a page that went away. A page load calls this
     /// on the UI thread, which must not wait for the core: closing a producer
     /// or consumer takes its transport's lock and may take the core a while,
@@ -341,6 +413,11 @@ async fn blocking<T: Send + 'static>(
     job: impl FnOnce() -> Result<T> + Send + 'static,
 ) -> Result<T> {
     spawn_blocking(job).await.map_err(err)?
+}
+
+/// [`blocking`] for work that cannot fail.
+async fn off_runtime(job: impl FnOnce() + Send + 'static) -> Result<()> {
+    spawn_blocking(job).await.map_err(err)
 }
 
 /// What this build can do besides voice and watching streams
@@ -545,16 +622,7 @@ pub async fn media_source_set_enabled(
 /// views of it end here.
 #[tauri::command]
 pub async fn media_source_close(media: State<'_, Media>, source: u64) -> Result<()> {
-    // Out of the registry first: a view opening right now then finds the
-    // source gone, or is closed with the others.
-    let removed = media.sources.lock().unwrap().remove(&source);
-    let frames = media.frames.clone();
-    blocking(move || {
-        frames.close_origin(Origin::Source(source));
-        drop(removed);
-        Ok(())
-    })
-    .await
+    off_runtime(media.close_source(source)).await
 }
 
 #[tauri::command]
@@ -760,6 +828,36 @@ async fn closed_meanwhile(media: &Media, origin: Origin) -> Result<bool> {
     .await
 }
 
+/// Opens a view of `origin` in the page and returns its handle. The page
+/// may close the consumer or source in the same moment, or be replaced: the
+/// feed made for the view would then keep a camera capturing with nothing
+/// left to end it, so the view is checked once it stands.
+async fn open_view(
+    media: &Media,
+    origin: Origin,
+    request: VideoSinkLimits,
+    tap: MakeTap,
+) -> Result<u64> {
+    let frames = media.frames.clone();
+    let view = blocking(move || frames.open(origin, request, tap)).await?;
+    if closed_meanwhile(media, origin).await? {
+        return Err("the stream of the view was closed".into());
+    }
+    Ok(view)
+}
+
+/// Feeds a consumer's viewer window through `sink`, with the same check as
+/// [`open_view`].
+async fn open_window(media: &Media, consumer: u64, sink: VideoSink, tap: MakeTap) -> Result<()> {
+    let origin = Origin::Consumer(consumer);
+    let frames = media.frames.clone();
+    blocking(move || frames.set_window(origin, sink, tap)).await?;
+    if closed_meanwhile(media, origin).await? {
+        return Err(format!("unknown consumer {consumer}"));
+    }
+    Ok(())
+}
+
 /// Shows a video consumer in a native viewer window titled `title`, alone
 /// or next to views of it in the page. `events` receives
 /// `{"type":"height","height"}` (shown image height in physical pixels, for
@@ -784,13 +882,7 @@ pub async fn media_viewer_open(
             });
         }),
     )?;
-    let origin = Origin::Consumer(consumer);
-    let frames = media.frames.clone();
-    let mut installed =
-        blocking(move || frames.set_window(origin, sink, consumer_tap(shared))).await;
-    if installed.is_ok() && closed_meanwhile(&media, origin).await? {
-        installed = Err(format!("unknown consumer {consumer}"));
-    }
+    let installed = open_window(&media, consumer, sink, consumer_tap(shared)).await;
     if installed.is_err() {
         viewer.close(consumer);
     }
@@ -799,31 +891,12 @@ pub async fn media_viewer_open(
 
 #[tauri::command]
 pub async fn media_viewer_close(media: State<'_, Media>, consumer: u64) -> Result<()> {
-    if let Some(viewer) = Viewer::running() {
-        viewer.close(consumer);
-    }
-    let frames = media.frames.clone();
-    blocking(move || {
-        frames.clear_window(Origin::Consumer(consumer));
-        Ok(())
-    })
-    .await
+    off_runtime(media.close_viewer(consumer)).await
 }
 
 #[tauri::command]
 pub async fn media_consumer_close(media: State<'_, Media>, consumer: u64) -> Result<()> {
-    if let Some(viewer) = Viewer::running() {
-        viewer.close(consumer);
-    }
-    // Out of the registry first, as in `media_source_close`.
-    let removed = media.consumers.lock().unwrap().remove(&consumer);
-    let frames = media.frames.clone();
-    blocking(move || {
-        frames.close_origin(Origin::Consumer(consumer));
-        drop(removed);
-        Ok(())
-    })
-    .await
+    off_runtime(media.close_consumer(consumer)).await
 }
 
 /// A test pattern instead of a consumer or source, for smoke tests and
@@ -883,28 +956,9 @@ pub async fn media_view_open(
     max_fps: Option<f64>,
 ) -> Result<Value> {
     let request = request(max_width, max_height, max_fps)?;
-    let test_pattern = test_pattern.filter(|_| std::env::var_os(TEST_PATTERN_ENV).is_some());
-    let (origin, tap): (Origin, MakeTap) = match (consumer, source, test_pattern) {
-        (Some(handle), None, None) => {
-            let shared = self::consumer(&media, handle)?;
-            (Origin::Consumer(handle), consumer_tap(shared))
-        }
-        (None, Some(handle), None) => {
-            let source = get(&media.sources, handle, "source")?;
-            let tap = move || Ok(Box::new(SourceTap(source)) as Box<dyn Tap>);
-            (Origin::Source(handle), Box::new(tap))
-        }
-        (None, None, Some(PatternOptions { width, height, fps })) => {
-            let tap = move || Ok(Box::new(TestPattern::new(width, height, fps)?) as Box<dyn Tap>);
-            (Origin::Pattern(width, height, fps), Box::new(tap))
-        }
-        _ => return Err("a view shows either a consumer or a source".into()),
-    };
-    let frames = media.frames.clone();
-    let view = blocking(move || frames.open(origin, request, tap)).await?;
-    if closed_meanwhile(&media, origin).await? {
-        return Err("the stream of the view was closed".into());
-    }
+    let patterns = std::env::var_os(TEST_PATTERN_ENV).is_some();
+    let (origin, tap) = media.view_target(consumer, source, test_pattern, patterns)?;
+    let view = open_view(&media, origin, request, tap).await?;
     Ok(json!({ "view": view }))
 }
 
@@ -967,6 +1021,7 @@ mod tests {
         sync::mpsc,
         time::{Duration, Instant},
     };
+    use tauri::async_runtime::block_on;
 
     /// Every name the web client knows.
     const KNOWN_FEATURES: &[&str] = &[
@@ -1169,23 +1224,257 @@ mod tests {
         let tap = || Ok(Box::new(witness) as Box<dyn Tap>);
         let open = media.frames.open(origin, DEFAULT_REQUEST, tap).unwrap();
         // A `media_view_open` of the old page that has looked its source up.
-        let in_flight = get(&media.sources, handle, "source").unwrap();
+        let (_, in_flight) = media.view_target(None, Some(handle), None, false).unwrap();
+        let (in_flight, let_go) = watched(in_flight);
 
         media.reset();
         assert_eq!(held_at_the_end.try_recv(), Ok(false));
         assert!(media.frames.view(open).is_err());
         assert!(!media.holds(origin));
 
-        // The command goes on after the load: its view gets frames, then
-        // the check that follows every open ends it.
-        let tap = move || Ok(Box::new(SourceTap(in_flight)) as Box<dyn Tap>);
-        let late = media.frames.open(origin, DEFAULT_REQUEST, tap).unwrap();
-        next_frame(&media.frames, late, None);
+        // The command goes on after the load: the view it opens is ended
+        // again, and nothing keeps the source.
+        let late = block_on(open_view(&media, origin, DEFAULT_REQUEST, in_flight));
+        assert_eq!(late, Err("the stream of the view was closed".into()));
+        let_go.try_recv().expect("the feed of the late view ended");
+    }
+
+    /// Reports the thread it is dropped on.
+    struct Dropped(mpsc::Sender<std::thread::ThreadId>);
+
+    impl Drop for Dropped {
+        fn drop(&mut self) {
+            let _ = self.0.send(std::thread::current().id());
+        }
+    }
+
+    /// A sink for a viewer window, and the word when it is dropped.
+    fn window_sink() -> (VideoSink, mpsc::Receiver<std::thread::ThreadId>) {
+        let (dropped, gone) = mpsc::channel();
+        let dropped = Dropped(dropped);
+        let sink = move |_: &gelabber_media_core::VideoFrame<'_>| {
+            let _ = &dropped;
+        };
+        (Box::new(sink), gone)
+    }
+
+    /// A feed's tap that says when the feed lets go of it, and with it of
+    /// the consumer or source behind it.
+    struct Watched {
+        tap: Box<dyn Tap>,
+        _dropped: Dropped,
+    }
+
+    impl Tap for Watched {
+        fn set_sink(&mut self, sink: Option<VideoSink>) -> Result<()> {
+            self.tap.set_sink(sink)
+        }
+
+        fn set_limits(&mut self, limits: VideoSinkLimits) -> Result<()> {
+            self.tap.set_limits(limits)
+        }
+    }
+
+    fn watched(make: MakeTap) -> (MakeTap, mpsc::Receiver<std::thread::ThreadId>) {
+        let (dropped, let_go) = mpsc::channel();
+        let _dropped = Dropped(dropped);
+        let make = move || {
+            Ok(Box::new(Watched {
+                tap: make()?,
+                _dropped,
+            }) as Box<dyn Tap>)
+        };
+        (Box::new(make), let_go)
+    }
+
+    /// A tap in place of a consumer's: notes what the feed asks of it.
+    #[derive(Clone, Default)]
+    struct Noted(Arc<Mutex<Asked>>);
+
+    #[derive(Default)]
+    struct Asked {
+        /// A sink set (true) or taken off (false), in order.
+        sinks: Vec<bool>,
+        limits: Vec<VideoSinkLimits>,
+    }
+
+    impl Tap for Noted {
+        fn set_sink(&mut self, sink: Option<VideoSink>) -> Result<()> {
+            self.0.lock().unwrap().sinks.push(sink.is_some());
+            Ok(())
+        }
+
+        fn set_limits(&mut self, limits: VideoSinkLimits) -> Result<()> {
+            self.0.lock().unwrap().limits.push(limits);
+            Ok(())
+        }
+    }
+
+    impl Noted {
+        fn tap(&self) -> MakeTap {
+            let tap = self.clone();
+            Box::new(move || Ok(Box::new(tap) as Box<dyn Tap>))
+        }
+
+        fn sinks(&self) -> Vec<bool> {
+            self.0.lock().unwrap().sinks.clone()
+        }
+
+        fn limits(&self) -> VideoSinkLimits {
+            *self.0.lock().unwrap().limits.last().unwrap()
+        }
+    }
+
+    /// A consumer or a source of the page, exactly one; a test pattern only
+    /// in an app that was started for tests.
+    #[test]
+    fn a_view_shows_a_consumer_or_a_source_and_a_pattern_only_in_tests() {
+        let media = Media::default();
+        let engine = Engine::new(Audio::Dummy).unwrap();
+        let source = Source::test_pattern(&engine, 640, 360, 30).unwrap();
+        let source = media.insert(&media.sources, source);
+        let pattern = || {
+            Some(PatternOptions {
+                width: 640,
+                height: 360,
+                fps: 30,
+            })
+        };
+        let target = |consumer, source, pattern, patterns| {
+            let target = media.view_target(consumer, source, pattern, patterns);
+            target.map(|(origin, _)| origin)
+        };
+        let neither = Err("a view shows either a consumer or a source".to_string());
         assert_eq!(
-            tauri::async_runtime::block_on(closed_meanwhile(&media, origin)),
-            Ok(true)
+            target(None, Some(source), None, false),
+            Ok(Origin::Source(source))
         );
-        assert!(media.frames.view(late).is_err());
+        assert_eq!(
+            target(None, None, pattern(), true),
+            Ok(Origin::Pattern(640, 360, 30))
+        );
+        assert_eq!(target(None, None, pattern(), false), neither);
+        assert_eq!(target(None, None, None, true), neither);
+        assert_eq!(target(Some(1), Some(source), None, false), neither);
+        assert_eq!(target(None, Some(source), pattern(), true), neither);
+        assert_eq!(
+            target(Some(987654), None, None, false),
+            Err("unknown consumer 987654".into())
+        );
+        assert_eq!(
+            target(None, Some(987654), None, false),
+            Err("unknown source 987654".into())
+        );
+    }
+
+    /// The page closes a source while a view shows it: the view ends, its
+    /// waiting frame request fails, and nothing keeps the source capturing.
+    #[test]
+    fn closing_a_source_ends_the_views_of_it() {
+        let media = Media::default();
+        let engine = Engine::new(Audio::Dummy).unwrap();
+        let source = Source::test_pattern(&engine, 640, 360, 30).unwrap();
+        let handle = media.insert(&media.sources, source);
+        let (origin, tap) = media.view_target(None, Some(handle), None, false).unwrap();
+        let (tap, let_go) = watched(tap);
+        let view = block_on(open_view(&media, origin, DEFAULT_REQUEST, tap)).unwrap();
+        let (_, seen) = next_frame(&media.frames, view, None);
+        let (answer, waiting) = mpsc::channel();
+        let pulled = media.frames.view(view).unwrap();
+        pulled.pull(
+            Some(seen),
+            Box::new(move |frame| answer.send(frame).unwrap()),
+        );
+
+        media.close_source(handle)();
+        assert!(!media.holds(origin));
+        assert!(media.frames.view(view).is_err());
+        // (The next frame may have won the race against the close.)
+        let ended = waiting.recv_timeout(LIMIT).unwrap();
+        assert!(ended.is_ok() || ended == Err("view closed"));
+        let_go.try_recv().expect("the feed of the view ended");
+        // Closing it again, or a source that never was, is fine.
+        media.close_source(handle)();
+        media.close_source(987654)();
+    }
+
+    /// The page closes a source in the moment a view of it opens: the
+    /// command had looked the source up, so its feed would keep the source
+    /// capturing with nothing left to end it.
+    #[test]
+    fn a_view_of_a_source_closed_while_it_opened_is_ended() {
+        let media = Media::default();
+        let engine = Engine::new(Audio::Dummy).unwrap();
+        let source = Source::test_pattern(&engine, 640, 360, 30).unwrap();
+        let handle = media.insert(&media.sources, source);
+        let (origin, tap) = media.view_target(None, Some(handle), None, false).unwrap();
+        let (tap, let_go) = watched(tap);
+        media.close_source(handle)();
+        let opened = block_on(open_view(&media, origin, DEFAULT_REQUEST, tap));
+        assert_eq!(opened, Err("the stream of the view was closed".into()));
+        let_go.try_recv().expect("the feed of the view ended");
+    }
+
+    /// The page closes a consumer that it shows in the page and in a viewer
+    /// window: both end.
+    #[test]
+    fn closing_a_consumer_ends_its_views_and_its_window() {
+        let media = Media::default();
+        let consumer = Noted::default();
+        let origin = Origin::Consumer(7);
+        let request = DEFAULT_REQUEST;
+        let view = media.frames.open(origin, request, consumer.tap()).unwrap();
+        let (sink, window_gone) = window_sink();
+        let window = media.frames.set_window(origin, sink, consumer.tap());
+        window.unwrap();
+        assert_eq!(consumer.sinks(), [true]);
+
+        media.close_consumer(7)();
+        assert!(media.frames.view(view).is_err());
+        assert_eq!(consumer.sinks(), [true, false]);
+        window_gone
+            .try_recv()
+            .expect("the window's sink is dropped");
+    }
+
+    /// A viewer window closes: the consumer's views in the page stay and
+    /// get the stream at their own size again, not the window's.
+    #[test]
+    fn closing_a_viewer_window_leaves_the_views_in_the_page() {
+        let media = Media::default();
+        let consumer = Noted::default();
+        let origin = Origin::Consumer(7);
+        let small = request(Some(320.0), Some(180.0), Some(15.0)).unwrap();
+        let view = media.frames.open(origin, small, consumer.tap()).unwrap();
+        let (sink, window_gone) = window_sink();
+        let window = media.frames.set_window(origin, sink, consumer.tap());
+        window.unwrap();
+        // The window shows the stream as it is.
+        assert_eq!(consumer.limits(), VideoSinkLimits::default());
+
+        media.close_viewer(7)();
+        window_gone
+            .try_recv()
+            .expect("the window's sink is dropped");
+        assert_eq!(consumer.limits(), small);
+        assert!(media.frames.view(view).is_ok());
+        assert_eq!(consumer.sinks(), [true]);
+        media.close_viewer(7)();
+    }
+
+    /// A viewer window opens for a consumer the page closed in the same
+    /// moment: its feed ends again, for nothing else would end it.
+    #[test]
+    fn a_window_of_a_consumer_closed_while_it_opened_is_ended() {
+        let media = Media::default();
+        let consumer = Noted::default();
+        let (sink, window_gone) = window_sink();
+        let opened = block_on(open_window(&media, 7, sink, consumer.tap()));
+        assert_eq!(opened, Err("unknown consumer 7".into()));
+        assert_eq!(consumer.sinks(), [true, false]);
+        window_gone
+            .try_recv()
+            .expect("the window's sink is dropped");
     }
 
     /// How long a test waits for something that has to happen.
@@ -1518,13 +1807,6 @@ mod tests {
     /// the UI's: closing in the core may take a while.
     #[test]
     fn a_page_load_frees_the_leftovers_off_its_thread() {
-        struct Dropped(mpsc::Sender<std::thread::ThreadId>);
-        impl Drop for Dropped {
-            fn drop(&mut self) {
-                let _ = self.0.send(std::thread::current().id());
-            }
-        }
-
         let media = Media::default();
         let engine = Engine::new(Audio::Dummy).unwrap();
         let source = Source::test_pattern(&engine, 320, 180, 15).unwrap();
