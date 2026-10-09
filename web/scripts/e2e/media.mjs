@@ -626,15 +626,20 @@ export async function mediaScenarios(h, f) {
         const metrics = await until(
           () =>
             nativeEvaluate(f.owner, () => {
-              const send = [...document.querySelectorAll("button")].find(
-                (button) => button.textContent.trim() === "Senden",
+              const send = document.querySelector(
+                'button[aria-label="Senden"]',
               );
               const rect = send.getBoundingClientRect();
               const hit = document.elementFromPoint(
                 rect.x + rect.width / 2,
                 rect.y + rect.height / 2,
               );
-              const dock = document.querySelector(".voice-session-dock");
+              // Bottom bar up to 800 px, sidebar card above.
+              const dock = [
+                ...document.querySelectorAll(
+                  ".voice-session-dock, .voice-session-card",
+                ),
+              ].find((element) => element.getClientRects().length > 0);
               const dockBounds = dock.getBoundingClientRect();
               const callControlsUncovered = [
                 ...dock.querySelectorAll("button"),
@@ -650,6 +655,7 @@ export async function mediaScenarios(h, f) {
                 sendUncovered: hit === send || send.contains(hit),
                 callControlsUncovered,
                 dockAtBottom:
+                  dock.classList.contains("voice-session-card") ||
                   Math.abs(dockBounds.bottom - window.innerHeight) <= 1,
                 overflow: document.documentElement.scrollWidth > innerWidth,
                 channelsHeight: document
@@ -670,6 +676,9 @@ export async function mediaScenarios(h, f) {
           check(metrics.channelsHeight >= 156, "channel-navigation-collapsed");
         }
         // Scroll to the owner's controls, including on short landscape drawers.
+        await page
+          .locator('summary[aria-label="Kanal oder Kategorie erstellen"]')
+          .click();
         await page
           .getByRole("button", { name: "Kanal erstellen", exact: true })
           .click();

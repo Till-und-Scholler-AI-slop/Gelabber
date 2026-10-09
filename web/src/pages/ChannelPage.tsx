@@ -2,12 +2,13 @@
 // Voice uses the own-protocol room, not LiveKit.
 
 import { useParams } from "@tanstack/react-router";
-import { useEffect } from "react";
+import { useEffect, type ReactNode } from "react";
 
 import { useUserId } from "../auth/scope.ts";
 import { HashIcon, SpeakerIcon } from "../components/Icons.tsx";
 import { MemberPanel } from "../components/MemberPanel.tsx";
 import { MessagePane } from "../components/MessagePane.tsx";
+import "../components/chat.css";
 import { Redirect } from "../components/Redirect.tsx";
 import { TypingBar } from "../components/TypingBar.tsx";
 import { VoiceRoom } from "../voice/VoiceRoom.tsx";
@@ -38,31 +39,39 @@ export function ChannelPage() {
 
   const Icon = channel.kind === "voice" ? SpeakerIcon : HashIcon;
 
+  const title = (
+    <>
+      <Icon size={18} />
+      <h1>{channel.name}</h1>
+    </>
+  );
+
   return (
     <div className="flex min-h-0 flex-1 overflow-hidden">
       <div className="lr-channel-content flex min-w-0 flex-1 flex-col overflow-hidden">
-        <header className="lr-channel-header flex h-12 shrink-0 items-center gap-2 border-b border-neutral-200 dark:border-neutral-700 bg-white dark:bg-neutral-900 px-4">
-          <Icon size={18} className="text-neutral-400 dark:text-neutral-500" />
-          <h1 className="truncate font-semibold tracking-tight">
-            {channel.name}
-          </h1>
-        </header>
         {channel.kind === "voice" ? (
-          <div className="min-h-0 flex-1 overflow-y-auto">
-            <VoiceRoom
-              server={server}
-              channelId={channel.id}
-              channelName={channel.name}
-            />
-          </div>
+          <>
+            <header className="lr-channel-header">{title}</header>
+            <div className="min-h-0 flex-1 overflow-y-auto">
+              <VoiceRoom
+                server={server}
+                channelId={channel.id}
+                channelName={channel.name}
+              />
+            </div>
+          </>
         ) : (
           <div className="relative min-h-0 flex-1">
             <div
               data-testid="message-pane"
               className="absolute inset-0 flex min-h-0 flex-col"
             >
-              <LiveHint server={server} />
-              <TextChat server={server} channel={channel} />
+              <TextChat
+                server={server}
+                channel={channel}
+                title={title}
+                notice={<LiveHint server={server} />}
+              />
             </div>
           </div>
         )}
@@ -75,15 +84,21 @@ export function ChannelPage() {
 function TextChat({
   server,
   channel,
+  title,
+  notice,
 }: {
   server: ServerDetail;
   channel: Channel;
+  title: ReactNode;
+  notice: ReactNode;
 }) {
   const canWrite = can(server, "send_messages");
   const typing = useTypingInput(server.id, channel.id, canWrite);
   return (
     <MessagePane
       key={channel.id}
+      title={title}
+      notice={notice}
       channelId={channel.id}
       channelName={channel.name}
       canSend={canWrite}

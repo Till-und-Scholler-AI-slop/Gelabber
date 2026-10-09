@@ -1,4 +1,6 @@
-// Mute / deafen / camera / screen / leave. The click flips local state first.
+// Mute / deafen / camera / screen / Go Live / settings as icon buttons. The
+// click flips local state first. Volumes and "share audio" live in the voice
+// settings dialog; leaving is the session's own button.
 
 import {
   CameraIcon,
@@ -12,7 +14,6 @@ import {
   ScreenIcon,
 } from "./Icons.tsx";
 import {
-  leaveVoice,
   toggleCamera,
   toggleDeafen,
   toggleGoLive,
@@ -20,47 +21,24 @@ import {
   toggleShare,
   useVoice,
 } from "../voice/session.ts";
-import { isDesktopApp } from "../voice/native/bridge.ts";
 import { useMediaSettings } from "../voice/settings.ts";
 import "../voice/room.css";
 
-export function VoiceControls({
-  compact = false,
-  canGoLive = false,
-}: {
-  compact?: boolean;
-  canGoLive?: boolean;
-}) {
+function VoiceAudioToggles({ className }: { className: string }) {
   const muted = useVoice((s) => s.muted);
   const deafened = useVoice((s) => s.deafened);
-  const camera = useVoice((s) => s.camera);
-  const sharing = useVoice((s) => s.sharing);
-  const live = useVoice((s) => s.live);
-  const shareSourceAudio = useMediaSettings((s) => s.shareSourceAudio);
-  const volume = useMediaSettings((s) => s.outputVolume);
-  const patch = useMediaSettings((s) => s.patch);
-  const openSettings = useMediaSettings((s) => s.openDialog);
   const micOff = muted || deafened;
-  const btn = `voice-control${compact ? " voice-control-compact" : ""}`;
-  const liveBtn = `${btn}${live ? " voice-control-live" : ""}`;
-  const leave = `${btn} voice-control-leave`;
-
   return (
-    <div
-      className={`voice-controls${compact ? " voice-controls-compact" : ""}`}
-    >
+    <>
       <button
         type="button"
         aria-pressed={micOff}
         aria-label={micOff ? "Mikrofon an" : "Mikrofon aus"}
         title={micOff ? "Mikrofon an" : "Mikrofon aus"}
         onClick={() => toggleMute()}
-        className={btn}
+        className={`${className}${micOff ? " is-off" : ""}`}
       >
-        {micOff ? <MicOffIcon size={16} /> : <MicIcon size={16} />}
-        {compact ? null : (
-          <span className="ml-1.5">{micOff ? "Stumm" : "Mikrofon"}</span>
-        )}
+        {micOff ? <MicOffIcon size={17} /> : <MicIcon size={17} />}
       </button>
       <button
         type="button"
@@ -68,13 +46,24 @@ export function VoiceControls({
         aria-label={deafened ? "Hören" : "Taub stellen"}
         title={deafened ? "Hören" : "Taub stellen"}
         onClick={() => toggleDeafen()}
-        className={btn}
+        className={`${className}${deafened ? " is-off" : ""}`}
       >
-        {deafened ? <HeadsetOffIcon size={16} /> : <HeadsetIcon size={16} />}
-        {compact ? null : (
-          <span className="ml-1.5">{deafened ? "Taub" : "Hören"}</span>
-        )}
+        {deafened ? <HeadsetOffIcon size={17} /> : <HeadsetIcon size={17} />}
       </button>
+    </>
+  );
+}
+
+export function VoiceControls({ canGoLive = false }: { canGoLive?: boolean }) {
+  const camera = useVoice((s) => s.camera);
+  const sharing = useVoice((s) => s.sharing);
+  const live = useVoice((s) => s.live);
+  const openSettings = useMediaSettings((s) => s.openDialog);
+  const btn = "voice-control voice-control-compact";
+
+  return (
+    <div className="voice-controls voice-controls-compact">
+      <VoiceAudioToggles className={btn} />
       <button
         type="button"
         aria-pressed={camera}
@@ -83,10 +72,7 @@ export function VoiceControls({
         onClick={() => toggleCamera()}
         className={btn}
       >
-        {camera ? <CameraOffIcon size={16} /> : <CameraIcon size={16} />}
-        {compact ? null : (
-          <span className="ml-1.5">{camera ? "Kamera aus" : "Kamera"}</span>
-        )}
+        {camera ? <CameraOffIcon size={17} /> : <CameraIcon size={17} />}
       </button>
       <button
         type="button"
@@ -96,28 +82,8 @@ export function VoiceControls({
         onClick={() => toggleShare()}
         className={btn}
       >
-        <ScreenIcon size={16} />
-        {compact ? null : (
-          <span className="ml-1.5">{sharing ? "Stopp" : "Bildschirm"}</span>
-        )}
+        <ScreenIcon size={17} />
       </button>
-      <label
-        className="voice-share-audio"
-        title={
-          isDesktopApp()
-            ? "Ton der in den Einstellungen gewählten Anwendung bei der nächsten Bildschirmfreigabe oder Go Live teilen"
-            : "Ton bei der nächsten Bildschirmfreigabe oder Go Live im Browser auswählen"
-        }
-      >
-        <input
-          type="checkbox"
-          checked={shareSourceAudio}
-          onChange={(event) =>
-            patch({ shareSourceAudio: event.target.checked })
-          }
-        />
-        Ton teilen
-      </label>
       {canGoLive || live ? (
         <button
           type="button"
@@ -125,29 +91,11 @@ export function VoiceControls({
           aria-label={live ? "Live beenden" : "Go Live"}
           title={live ? "Live beenden" : "Go Live"}
           onClick={() => toggleGoLive()}
-          className={liveBtn}
+          className={`${btn}${live ? " voice-control-live" : ""}`}
         >
-          <LiveIcon size={16} />
-          {compact ? null : (
-            <span className="ml-1.5">{live ? "Live aus" : "Go Live"}</span>
-          )}
+          <LiveIcon size={17} />
         </button>
       ) : null}
-      <label className="voice-playback-volume">
-        <span className="sr-only">Wiedergabe</span>
-        <input
-          type="range"
-          min={0}
-          max={100}
-          value={Math.round(volume * 100)}
-          aria-label="Wiedergabe-Lautstärke"
-          disabled={deafened}
-          onChange={(event) =>
-            patch({ outputVolume: Number(event.target.value) / 100 })
-          }
-          className="voice-volume-slider"
-        />
-      </label>
       <button
         type="button"
         aria-label="Voice-Einstellungen"
@@ -155,11 +103,7 @@ export function VoiceControls({
         onClick={() => openSettings()}
         className={btn}
       >
-        <GearIcon size={16} />
-        {compact ? null : <span className="ml-1.5">Einstellungen</span>}
-      </button>
-      <button type="button" onClick={() => leaveVoice()} className={leave}>
-        Verlassen
+        <GearIcon size={17} />
       </button>
     </div>
   );

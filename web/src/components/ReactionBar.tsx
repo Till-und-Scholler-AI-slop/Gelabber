@@ -1,4 +1,5 @@
 import { useEffect, useRef, useState, type ComponentType } from "react";
+import { createPortal } from "react-dom";
 import { useMutation, useQueryClient } from "@tanstack/react-query";
 import { stampHolds, takeStamp } from "../auth/scope.ts";
 import { useSession } from "../auth/session.ts";
@@ -7,6 +8,7 @@ import {
   reactionMutationOptions,
 } from "../messages/reactions.ts";
 import { asReactionList, type Message } from "../messages/types.ts";
+import { SmileIcon } from "./Icons.tsx";
 import { Modal } from "./Modal.tsx";
 
 function PickerLoader({ onSelect }: { onSelect: (emoji: string) => void }) {
@@ -48,9 +50,12 @@ function PickerLoader({ onSelect }: { onSelect: (emoji: string) => void }) {
 export function ReactionBar({
   message,
   canSend,
+  addSlot,
 }: {
   message: Message;
   canSend: boolean;
+  /** The row's hover toolbar; the add button renders there when given. */
+  addSlot?: HTMLElement | null;
 }) {
   const client = useQueryClient();
   const userId = useSession((state) => state.user?.id ?? "");
@@ -81,7 +86,7 @@ export function ReactionBar({
   };
   return (
     <div
-      className="mt-1 flex flex-wrap items-center gap-1.5"
+      className={`lr-reactions${reactions.length === 0 ? " is-empty" : ""}`}
       aria-label="Reaktionen"
     >
       {reactions.map(({ emoji, user_ids }) => {
@@ -106,7 +111,7 @@ export function ReactionBar({
                 fallback?.focus({ preventScroll: true });
               }
             }}
-            className={`min-h-9 rounded-full border px-2.5 text-sm disabled:opacity-50 aria-disabled:opacity-50 ${mine ? "border-blue-500 bg-blue-50 text-blue-800 dark:bg-blue-950 dark:text-blue-200" : "border-neutral-300 dark:border-neutral-600"}`}
+            className={`lr-reaction${mine ? " is-mine" : ""}`}
           >
             <span aria-hidden="true">
               {emoji} {user_ids.length}
@@ -114,21 +119,27 @@ export function ReactionBar({
           </button>
         );
       })}
-      {canSend && (
-        <button
-          ref={addButton}
-          type="button"
-          aria-label="Reaktion hinzufügen"
-          // Transient API work must not make the modal's opener unfocusable.
-          aria-disabled={busy || undefined}
-          onClick={() => {
-            if (!busy) setOpen(true);
-          }}
-          className="min-h-9 rounded-full border border-neutral-300 px-2.5 text-sm aria-disabled:opacity-50 dark:border-neutral-600"
-        >
-          ＋ <span aria-hidden="true">☺</span>
-        </button>
-      )}
+      {canSend
+        ? (() => {
+            const button = (
+              <button
+                ref={addButton}
+                type="button"
+                aria-label="Reaktion hinzufügen"
+                title="Reaktion hinzufügen"
+                // Transient API work must not make the modal's opener unfocusable.
+                aria-disabled={busy || undefined}
+                onClick={() => {
+                  if (!busy) setOpen(true);
+                }}
+                className={addSlot ? "lr-message-action" : "lr-reaction"}
+              >
+                <SmileIcon size={addSlot ? 16 : 15} />
+              </button>
+            );
+            return addSlot ? createPortal(button, addSlot) : button;
+          })()
+        : null}
       <Modal
         open={open}
         onClose={() => setOpen(false)}

@@ -236,6 +236,9 @@ export async function startHarness() {
     await owner.page.waitForURL((url) => url.pathname === textPath);
     async function channel(name, kind = "Voice") {
       await owner.page
+        .locator('summary[aria-label="Kanal oder Kategorie erstellen"]')
+        .click();
+      await owner.page
         .getByRole("button", { name: "Kanal erstellen", exact: true })
         .click();
       dialog = owner.page.getByRole("dialog", { name: "Kanal erstellen" });
