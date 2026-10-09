@@ -36,6 +36,10 @@ type Shared<T> = Arc<Mutex<T>>;
 pub struct Media {
     engine: OnceLock<Engine>,
     next: AtomicU64,
+    /// Page loads so far. A command that makes something for the page notes
+    /// the count when it starts ([`Media::page`]); what it made is the
+    /// page's only while the count stands ([`Media::insert`]).
+    page: AtomicU64,
     devices: Mutex<HashMap<u64, Device>>,
     transports: Mutex<HashMap<u64, Arc<PageTransport>>>,
     sources: Mutex<HashMap<u64, Source>>,
@@ -51,8 +55,9 @@ fn err(error: impl std::fmt::Display) -> String {
     error.to_string()
 }
 
-/// Why a transport's request is refused: the page that would answer it was
-/// replaced by a page load.
+/// How a command ends whose page was replaced by a page load before the
+/// command was through, and why a transport refuses the requests of such a
+/// page: nobody is left to answer them.
 const PAGE_GONE: &str = "the page went away";
 /// Or the page closed the transport, and with it its way to answer.
 const TRANSPORT_CLOSED: &str = "transport closed";
@@ -234,10 +239,38 @@ impl Media {
         Ok(self.engine.get_or_init(|| engine))
     }
 
-    fn insert<T>(&self, map: &Mutex<HashMap<u64, T>>, value: T) -> u64 {
+    /// The count of page loads, for a command to note before it makes
+    /// anything or looks anything up. Tauri starts a command on the async
+    /// runtime, a moment after the UI thread took it from the page: one the
+    /// page sent in the last instant before a page load may note the count
+    /// after it, and then counts for the page that follows.
+    fn page(&self) -> u64 {
+        self.page.load(Ordering::SeqCst)
+    }
+
+    /// Registers what a command made for the page and returns its handle;
+    /// `page` is the count the command noted when it started. After a page
+    /// load the handle would reach nobody and the object would stay, a
+    /// camera capturing with nothing left to close it. It is freed then, on
+    /// the blocking pool because that may wait for the core.
+    fn insert<T: Send + 'static>(
+        &self,
+        page: u64,
+        map: &Mutex<HashMap<u64, T>>,
+        value: T,
+    ) -> Result<u64> {
+        let mut registry = map.lock().unwrap();
+        // Under the registry's lock: a page load counts first and empties
+        // the registries after, so it finds the object here or the object
+        // finds the new count.
+        if self.page() != page {
+            drop(registry);
+            spawn_blocking(move || drop(value));
+            return Err(PAGE_GONE.into());
+        }
         let handle = self.next.fetch_add(1, Ordering::Relaxed) + 1;
-        map.lock().unwrap().insert(handle, value);
-        handle
+        registry.insert(handle, value);
+        Ok(handle)
     }
 
     /// Whether the page still holds the consumer or source a feed shows.
@@ -249,11 +282,13 @@ impl Media {
         }
     }
 
-    /// Creates a transport of `device` for the page. `send` hands the page
-    /// its events and is false when the page cannot be reached. Returns the
-    /// transport's handle and its id on the server.
+    /// Creates a transport of `device` for the page, for a command that
+    /// started at the page count `page`. `send` hands the page its events
+    /// and is false when the page cannot be reached. Returns the transport's
+    /// handle and its id on the server.
     fn open_transport(
         &self,
+        page: u64,
         device: u64,
         direction: &str,
         options: &Value,
@@ -278,7 +313,7 @@ impl Media {
             .name("gelabber-transport-events".into())
             .spawn(move || forward_events(weak, events, send))
             .map_err(err)?;
-        Ok((self.insert(&self.transports, transport), id))
+        Ok((self.insert(page, &self.transports, transport)?, id))
     }
 
     /// The page closes a transport. Producers and consumers keep it alive
@@ -373,9 +408,12 @@ impl Media {
     }
 
     /// The part of [`Media::reset`] the next page must find done; returns
-    /// what is left to free. The registries are emptied before anything is
-    /// freed: the old page lives on until the navigation commits, and a view
-    /// it opens meanwhile has to find its consumer or source gone
+    /// what is left to free. A page load is reported when the navigation
+    /// commits: the old page is gone by then, but commands it sent may still
+    /// be at work. So the page count moves first, and what such a command
+    /// makes from here on is not registered ([`Media::insert`]). Then the
+    /// registries are emptied, before anything is freed: a view such a
+    /// command opens has to find its consumer or source gone
     /// (`closed_meanwhile`), or a camera would go on capturing with no handle
     /// left to close it. Then the views end, which hold the sinks of
     /// consumers and sources.
@@ -383,6 +421,7 @@ impl Media {
         fn take<T>(map: &Mutex<HashMap<u64, T>>) -> HashMap<u64, T> {
             std::mem::take(&mut *map.lock().unwrap())
         }
+        self.page.fetch_add(1, Ordering::SeqCst);
         let leftovers = Leftovers {
             consumers: take(&self.consumers),
             producers: take(&self.producers),
@@ -482,6 +521,7 @@ pub async fn media_audio_monitor(media: State<'_, Media>, options: Option<Value>
 
 #[tauri::command]
 pub async fn media_device_load(media: State<'_, Media>, capabilities: Value) -> Result<Value> {
+    let page = media.page();
     let device = Device::new(media.engine()?).map_err(err)?;
     device.load(&capabilities).map_err(err)?;
     let mut result = json!({
@@ -491,7 +531,7 @@ pub async fn media_device_load(media: State<'_, Media>, capabilities: Value) -> 
             "video": device.can_produce(MediaKind::Video).map_err(err)?,
         },
     });
-    result["device"] = media.insert(&media.devices, device).into();
+    result["device"] = media.insert(page, &media.devices, device)?.into();
     Ok(result)
 }
 
@@ -513,8 +553,9 @@ pub async fn media_transport_create(
     options: Value,
     events: Channel<Value>,
 ) -> Result<Value> {
+    let page = media.page();
     let send = move |message| events.send(message).is_ok();
-    let (handle, id) = media.open_transport(device, &direction, &options, send)?;
+    let (handle, id) = media.open_transport(page, device, &direction, &options, send)?;
     Ok(json!({ "transport": handle, "id": id }))
 }
 
@@ -560,15 +601,17 @@ pub async fn media_transport_close(media: State<'_, Media>, transport: u64) -> R
 
 #[tauri::command]
 pub async fn media_source_microphone(media: State<'_, Media>, options: Value) -> Result<u64> {
+    let page = media.page();
     let source = Source::microphone(media.engine()?, &options).map_err(err)?;
-    Ok(media.insert(&media.sources, source))
+    media.insert(page, &media.sources, source)
 }
 
 /// Opens the desktop's own screen/window picker; poll `media_source_state`.
 #[tauri::command]
 pub async fn media_source_screen(media: State<'_, Media>, options: Value) -> Result<u64> {
+    let page = media.page();
     let source = Source::screen(media.engine()?, &options).map_err(err)?;
-    Ok(media.insert(&media.sources, source))
+    media.insert(page, &media.sources, source)
 }
 
 /// Applications playing sound: `[{"id","name","streams"}]`.
@@ -581,9 +624,10 @@ pub async fn media_audio_apps(media: State<'_, Media>) -> Result<Value> {
 /// Source audio: `{"app"?}`; without an id every application but this one.
 #[tauri::command]
 pub async fn media_source_app_audio(media: State<'_, Media>, options: Value) -> Result<u64> {
+    let page = media.page();
     let engine = media.engine()?.clone();
     let source = blocking(move || Source::app_audio(&engine, &options).map_err(err)).await?;
-    Ok(media.insert(&media.sources, source))
+    media.insert(page, &media.sources, source)
 }
 
 /// Cameras: `[{"id","name"}]`.
@@ -597,9 +641,10 @@ pub async fn media_video_devices(media: State<'_, Media>) -> Result<Value> {
 /// missing or busy.
 #[tauri::command]
 pub async fn media_source_camera(media: State<'_, Media>, options: Value) -> Result<u64> {
+    let page = media.page();
     let engine = media.engine()?.clone();
     let source = blocking(move || Source::camera(&engine, &options).map_err(err)).await?;
-    Ok(media.insert(&media.sources, source))
+    media.insert(page, &media.sources, source)
 }
 
 #[tauri::command]
@@ -632,6 +677,7 @@ pub async fn media_produce(
     source: u64,
     options: Value,
 ) -> Result<Value> {
+    let page = media.page();
     let transport = get(&media.transports, transport, "transport")?;
     let source = get(&media.sources, source, "source")?;
     let producer = blocking(move || transport.produce(&source, &options)).await?;
@@ -640,7 +686,7 @@ pub async fn media_produce(
         "rtpParameters": producer.rtp_parameters().map_err(err)?,
     });
     result["producer"] = media
-        .insert(&media.producers, Arc::new(Mutex::new(producer)))
+        .insert(page, &media.producers, Arc::new(Mutex::new(producer)))?
         .into();
     Ok(result)
 }
@@ -730,6 +776,7 @@ pub async fn media_consume(
     transport: u64,
     params: Value,
 ) -> Result<Value> {
+    let page = media.page();
     let transport = get(&media.transports, transport, "transport")?;
     let audio = params["kind"] == "audio";
     let consumer = blocking(move || {
@@ -743,7 +790,7 @@ pub async fn media_consume(
     })
     .await?;
     let id = consumer.id().to_owned();
-    let handle = media.insert(&media.consumers, Arc::new(Mutex::new(consumer)));
+    let handle = media.insert(page, &media.consumers, Arc::new(Mutex::new(consumer)))?;
     Ok(json!({ "consumer": handle, "id": id }))
 }
 
@@ -828,12 +875,14 @@ async fn closed_meanwhile(media: &Media, origin: Origin) -> Result<bool> {
     .await
 }
 
-/// Opens a view of `origin` in the page and returns its handle. The page
-/// may close the consumer or source in the same moment, or be replaced: the
-/// feed made for the view would then keep a camera capturing with nothing
-/// left to end it, so the view is checked once it stands.
+/// Opens a view of `origin` in the page, for a command that started at the
+/// page count `page`, and returns its handle. The page may close the
+/// consumer or source in the same moment, or be replaced: the feed made for
+/// the view would then keep a camera capturing with nothing left to end it,
+/// so the view is checked once it stands.
 async fn open_view(
     media: &Media,
+    page: u64,
     origin: Origin,
     request: VideoSinkLimits,
     tap: MakeTap,
@@ -842,6 +891,13 @@ async fn open_view(
     let view = blocking(move || frames.open(origin, request, tap)).await?;
     if closed_meanwhile(media, origin).await? {
         return Err("the stream of the view was closed".into());
+    }
+    // A test pattern is nobody's to close, so no registry says that the
+    // page left: the page count does.
+    if media.page() != page {
+        let frames = media.frames.clone();
+        off_runtime(move || frames.close(view)).await?;
+        return Err(PAGE_GONE.into());
     }
     Ok(view)
 }
@@ -955,10 +1011,11 @@ pub async fn media_view_open(
     max_height: Option<f64>,
     max_fps: Option<f64>,
 ) -> Result<Value> {
+    let page = media.page();
     let request = request(max_width, max_height, max_fps)?;
     let patterns = std::env::var_os(TEST_PATTERN_ENV).is_some();
     let (origin, tap) = media.view_target(consumer, source, test_pattern, patterns)?;
-    let view = open_view(&media, origin, request, tap).await?;
+    let view = open_view(&media, page, origin, request, tap).await?;
     Ok(json!({ "view": view }))
 }
 
@@ -1213,7 +1270,7 @@ mod tests {
         let media = Arc::new(Media::default());
         let engine = Engine::new(Audio::Dummy).unwrap();
         let source = Source::test_pattern(&engine, 640, 360, 30).unwrap();
-        let handle = media.insert(&media.sources, source);
+        let handle = held(&media, source);
         let origin = Origin::Source(handle);
         let (held, held_at_the_end) = mpsc::channel();
         let witness = Witness {
@@ -1224,6 +1281,7 @@ mod tests {
         let tap = || Ok(Box::new(witness) as Box<dyn Tap>);
         let open = media.frames.open(origin, DEFAULT_REQUEST, tap).unwrap();
         // A `media_view_open` of the old page that has looked its source up.
+        let page = media.page();
         let (_, in_flight) = media.view_target(None, Some(handle), None, false).unwrap();
         let (in_flight, let_go) = watched(in_flight);
 
@@ -1234,9 +1292,79 @@ mod tests {
 
         // The command goes on after the load: the view it opens is ended
         // again, and nothing keeps the source.
-        let late = block_on(open_view(&media, origin, DEFAULT_REQUEST, in_flight));
+        let late = block_on(open_view(&media, page, origin, DEFAULT_REQUEST, in_flight));
         assert_eq!(late, Err("the stream of the view was closed".into()));
         let_go.try_recv().expect("the feed of the late view ended");
+    }
+
+    /// Registers a source as a command of the present page does.
+    fn held(media: &Media, source: Source) -> u64 {
+        media.insert(media.page(), &media.sources, source).unwrap()
+    }
+
+    /// A camera takes its time to open, and the page is reloaded
+    /// meanwhile: the source is nobody's when the command gets to register
+    /// it. It stayed in the registry, capturing, until the next page load.
+    #[test]
+    fn what_a_command_makes_for_a_page_that_left_is_freed_not_registered() {
+        let media = Media::default();
+        let engine = Engine::new(Audio::Dummy).unwrap();
+        // The command starts and opens its source.
+        let page = media.page();
+        let source = Source::test_pattern(&engine, 320, 180, 15).unwrap();
+        let (sink, freed_on) = window_sink();
+        source.set_video_sink(Some(sink)).unwrap();
+        media.reset();
+        let late = media.insert(page, &media.sources, source);
+        assert_eq!(late, Err(PAGE_GONE.into()));
+        assert!(media.sources.lock().unwrap().is_empty());
+        // A sink is freed with its source, here off the command's thread.
+        let freed_on = freed_on.recv_timeout(LIMIT).expect("the source is freed");
+        assert_ne!(freed_on, std::thread::current().id());
+
+        // A command of the page that is there now registers as ever.
+        let source = Source::test_pattern(&engine, 320, 180, 15).unwrap();
+        let handle = held(&media, source);
+        assert!(media.holds(Origin::Source(handle)));
+    }
+
+    /// A view of the test pattern opens while the page is replaced. The
+    /// pattern is nobody's to close, so no registry tells the view that its
+    /// page left: the page count does.
+    #[test]
+    fn a_pattern_view_opened_for_a_page_that_left_is_ended() {
+        let media = Media::default();
+        let pattern = || {
+            let pattern = PatternOptions {
+                width: 320,
+                height: 180,
+                fps: 30,
+            };
+            let target = media.view_target(None, None, Some(pattern), true);
+            let (origin, tap) = target.unwrap();
+            let (tap, stopped) = watched(tap);
+            (origin, tap, stopped)
+        };
+        let page = media.page();
+        let (origin, tap, stopped) = pattern();
+        media.reset();
+        let late = block_on(open_view(&media, page, origin, DEFAULT_REQUEST, tap));
+        assert_eq!(late, Err(PAGE_GONE.into()));
+        stopped.try_recv().expect("the pattern stopped");
+
+        // The page that is there now gets its view.
+        let (origin, tap, stopped) = pattern();
+        let opened = block_on(open_view(
+            &media,
+            media.page(),
+            origin,
+            DEFAULT_REQUEST,
+            tap,
+        ));
+        let view = opened.unwrap();
+        next_frame(&media.frames, view, None);
+        assert!(stopped.try_recv().is_err());
+        media.frames.close(view);
     }
 
     /// Reports the thread it is dropped on.
@@ -1332,7 +1460,7 @@ mod tests {
         let media = Media::default();
         let engine = Engine::new(Audio::Dummy).unwrap();
         let source = Source::test_pattern(&engine, 640, 360, 30).unwrap();
-        let source = media.insert(&media.sources, source);
+        let source = held(&media, source);
         let pattern = || {
             Some(PatternOptions {
                 width: 640,
@@ -1374,10 +1502,11 @@ mod tests {
         let media = Media::default();
         let engine = Engine::new(Audio::Dummy).unwrap();
         let source = Source::test_pattern(&engine, 640, 360, 30).unwrap();
-        let handle = media.insert(&media.sources, source);
+        let handle = held(&media, source);
         let (origin, tap) = media.view_target(None, Some(handle), None, false).unwrap();
         let (tap, let_go) = watched(tap);
-        let view = block_on(open_view(&media, origin, DEFAULT_REQUEST, tap)).unwrap();
+        let page = media.page();
+        let view = block_on(open_view(&media, page, origin, DEFAULT_REQUEST, tap)).unwrap();
         let (_, seen) = next_frame(&media.frames, view, None);
         let (answer, waiting) = mpsc::channel();
         let pulled = media.frames.view(view).unwrap();
@@ -1406,11 +1535,17 @@ mod tests {
         let media = Media::default();
         let engine = Engine::new(Audio::Dummy).unwrap();
         let source = Source::test_pattern(&engine, 640, 360, 30).unwrap();
-        let handle = media.insert(&media.sources, source);
+        let handle = held(&media, source);
         let (origin, tap) = media.view_target(None, Some(handle), None, false).unwrap();
         let (tap, let_go) = watched(tap);
         media.close_source(handle)();
-        let opened = block_on(open_view(&media, origin, DEFAULT_REQUEST, tap));
+        let opened = block_on(open_view(
+            &media,
+            media.page(),
+            origin,
+            DEFAULT_REQUEST,
+            tap,
+        ));
         assert_eq!(opened, Err("the stream of the view was closed".into()));
         let_go.try_recv().expect("the feed of the view ended");
     }
@@ -1617,7 +1752,7 @@ mod tests {
             let engine = Engine::new(Audio::Dummy).unwrap();
             let device = Device::new(&engine).unwrap();
             device.load(&router_capabilities()).unwrap();
-            let device = media.insert(&media.devices, device);
+            let device = media.insert(media.page(), &media.devices, device).unwrap();
             let (to_test, events) = mpsc::channel();
             let seen_by = media.clone();
             let send = move |message: Value| {
@@ -1625,7 +1760,7 @@ mod tests {
                 to_test.send(message).is_ok()
             };
             let (transport, id) = media
-                .open_transport(device, direction, &transport_options(), send)
+                .open_transport(media.page(), device, direction, &transport_options(), send)
                 .unwrap();
             assert_eq!(id, "11111111-1111-4111-8111-111111111111");
             Self {
@@ -1724,8 +1859,11 @@ mod tests {
         );
         let producer = produced.recv_timeout(LIMIT).unwrap().unwrap();
         assert_eq!(producer.id(), "22222222-2222-4222-8222-222222222222");
-        call.media
-            .insert(&call.media.producers, Arc::new(Mutex::new(producer)));
+        let producer = Arc::new(Mutex::new(producer));
+        let registered = call
+            .media
+            .insert(call.media.page(), &call.media.producers, producer);
+        registered.unwrap();
 
         let camera = Source::test_pattern(&call.engine, 320, 180, 15).unwrap();
         let pending = call.produce(&camera);
@@ -1818,7 +1956,7 @@ mod tests {
                 let _ = &dropped;
             })))
             .unwrap();
-        media.insert(&media.sources, source);
+        held(&media, source);
         media.reset();
         let freed_on = freed_on.recv_timeout(LIMIT).expect("the source is freed");
         assert_ne!(freed_on, std::thread::current().id());
