@@ -1532,6 +1532,57 @@ describe("voice session", () => {
     expect(env.errors).toHaveLength(0);
   });
 
+  it("releases a Live claim the server has not confirmed yet", async () => {
+    // A phone fails the capture before the claim's round trip is back.
+    const env = install({
+      holdLiveClaim: true,
+      displayError: () =>
+        new TypeError(
+          "navigator.mediaDevices.getDisplayMedia is not a function",
+        ),
+    });
+    joinVoice({ serverId: "srv", channelId: "voice", channelName: "Voice" });
+    await vi.waitFor(() => expect(env.peers[0]?.audio).toBeTruthy());
+    vi.useFakeTimers();
+    toggleGoLive();
+    expect(vi.getTimerCount()).toBe(1);
+    await vi.advanceTimersByTimeAsync(0);
+    expect(useVoice.getState().live).toBe(false);
+    expect(liveClaimFrames(env.sent)).toEqual(["p", "u"]);
+    // The confirmation deadline went with the claim.
+    expect(vi.getTimerCount()).toBe(0);
+
+    // Both echoes arrive late, in socket order.
+    env.emitSig({
+      op: "sig",
+      t: "p",
+      s: "srv",
+      c: "voice",
+      u: "u-self",
+      k: "l",
+      lc: "00000000-0000-0000-0000-000000000042",
+    });
+    expect(useVoice.getState().live).toBe(false);
+    env.emitSig({
+      op: "sig",
+      t: "u",
+      s: "srv",
+      c: "voice",
+      u: "u-self",
+      k: "l",
+    });
+    expect(useVoice.getState().live).toBe(false);
+    expect(useVoice.getState().localLive).toBeNull();
+    expect(useVoice.getState().participants["u-self"]?.pubs).not.toContain("l");
+    await vi.advanceTimersByTimeAsync(10000);
+    expect(env.errors).toHaveLength(0);
+    expect(liveClaimFrames(env.sent)).toEqual(["p", "u"]);
+    expect(
+      env.mediaSent.some((frame) => frame.op === "produce" && frame.k === "l"),
+    ).toBe(false);
+    expect(useVoice.getState().status).toBe("joined");
+  });
+
   it("gives a capture back when its source ended before it could start", async () => {
     // "Stop sharing" while the stream profile is still being applied: the
     // picker has answered, and the track's only "ended" event is already gone.
