@@ -1,8 +1,14 @@
 import { renderToStaticMarkup } from "react-dom/server";
-import { beforeEach, describe, expect, it, vi } from "vitest";
+import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
+import { setNativeBridgeForTests } from "./native/bridge.ts";
 import { NativeStream, NativeTrack } from "./native/tracks.ts";
 import type { NativeVideoLimit } from "./native/videoFeed.ts";
+import {
+  closeNativeViewer,
+  openNativeViewer,
+  resetNativeViewersForTests,
+} from "./native/viewer.ts";
 
 // What the app around the page says it can do, and how in-page video fares.
 const app = vi.hoisted(() => ({
@@ -34,9 +40,27 @@ function surface(html: string): { tag: string; classes: string[] } {
   };
 }
 
+/** Opens the viewer window of `watched`'s stream, in an app that answers
+ * every command. */
+async function openViewer(watched: MediaStream): Promise<void> {
+  setNativeBridgeForTests({
+    invoke: async <T,>() => null as T,
+    channel: async () => ({}),
+  });
+  const [track] = watched.getVideoTracks() as unknown as NativeTrack[];
+  await openNativeViewer(track, "Alex – Gelabber");
+}
+
+/** Until the app has answered what the page asked of it. */
+const answered = () => new Promise((resolve) => setTimeout(resolve, 0));
+
 beforeEach(() => {
   app.features = [];
   app.limit = null;
+});
+afterEach(() => {
+  resetNativeViewersForTests();
+  setNativeBridgeForTests(undefined);
 });
 
 describe("video tile in a browser", () => {
@@ -117,6 +141,19 @@ describe("video tile in a desktop app up to 0.5.x", () => {
     expect(html).not.toContain("<canvas");
     expect(html).toContain("Im Fenster ansehen");
   });
+
+  it("has the tile close the viewer window it opened", async () => {
+    const watched = stream({ consumer: 42 });
+    await openViewer(watched);
+    const html = renderToStaticMarkup(
+      <VoiceTile stream={watched} label="Alex" screen />,
+    );
+    expect(html).toContain(
+      '<span>Alex</span><button type="button" class="rounded-md bg-white px-3 py-2 font-medium text-neutral-900">Fenster schließen</button></div>',
+    );
+    expect(html).not.toContain("<canvas");
+    expect(html).not.toContain("Läuft im eigenen Fenster");
+  });
 });
 
 describe("video tile in a desktop app with in-page video", () => {
@@ -196,6 +233,47 @@ describe("video tile in a desktop app with in-page video", () => {
     ]);
     expect(actions).toContain('aria-label="Im Raum hervorheben"');
     expect(actions).toContain('aria-pressed="false">Eigenes Fenster');
+  });
+
+  it("leaves a stream to its viewer window", async () => {
+    const watched = stream({ consumer: 42 });
+    const tile = (of: MediaStream, label: string) =>
+      renderToStaticMarkup(<VoiceTile stream={of} label={label} screen live />);
+    app.limit = "transport";
+    await openViewer(watched);
+    const html = tile(watched, "Alex — Live");
+    // No canvas that would ask the app for frames: next to a window they
+    // are the window's. The tile says where the stream is.
+    expect(html).not.toContain("<canvas");
+    expect(surface(html)).toEqual({
+      tag: "video",
+      classes: ["size-full", "object-contain", "opacity-0"],
+    });
+    expect(html).toContain(
+      '<span>Alex — Live</span><span role="status" class="text-xs">Läuft im eigenen Fenster.</span></div>',
+    );
+    // The switch that opened the window stays where it was.
+    expect(html).toContain('aria-pressed="true">Fenster schließen');
+    expect(html).not.toContain("Eigenes Fenster");
+    expect(html).not.toContain("Im Fenster ansehen");
+    expect(html).not.toContain("Geringe Bildqualität");
+    expect(html).toContain("Vergrößern");
+    // Another stream, and the own source with the consumer's number.
+    expect(tile(stream({ consumer: 43 }), "Kim")).toContain("<canvas");
+    const own = tile(stream({ source: 42 }), "Rafi — Live");
+    expect(own).toContain("<canvas");
+    expect(own).not.toContain("Fenster");
+
+    // Closed: the tile waits for the app to let go of the window.
+    closeNativeViewer(42);
+    const closing = tile(watched, "Alex — Live");
+    expect(closing).not.toContain("<canvas");
+    expect(closing).toContain('aria-pressed="false">Eigenes Fenster');
+    await answered();
+    const back = tile(watched, "Alex — Live");
+    expect(back).toContain("<canvas");
+    expect(back).toContain("Geringe Bildqualität");
+    expect(back).not.toContain("Läuft im eigenen Fenster");
   });
 
   it("keeps the placeholder for a stream without live video", () => {

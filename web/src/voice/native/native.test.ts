@@ -17,6 +17,7 @@ import {
 import { createNativeMicrophoneTest } from "./microphoneTest.ts";
 import {
   attachNativeVideo,
+  nativeCanvasHeight,
   resetNativeVideoForTests,
   type NativeVideoHost,
 } from "./videoFeed.ts";
@@ -643,12 +644,13 @@ describe("desktop app media", () => {
     events.onMessage({ type: "closed" });
     expect(renderedVideoHeight(track.id)).toBe(0);
     expect(nativeViewerOpen(42)).toBe(false);
+    await tick();
     expect(core.calledWith("media_viewer_close")).toEqual([{ consumer: 42 }]);
     track.end();
     expect(nativeVideoTrack(stream)).toBeNull();
   });
 
-  it("chooses layers by the canvases in the page and the viewer windows", async () => {
+  it("chooses layers by the canvas in the page or by the viewer window", async () => {
     resetNativeViewersForTests();
     const boxes = new Map<unknown, { width: number; height: number }>();
     resetNativeVideoForTests({
@@ -681,21 +683,33 @@ describe("desktop app media", () => {
       // 480 * 9 / 16 lines at a device pixel ratio of 1.6.
       expect(renderedVideoHeight(track.id)).toBe(432);
 
-      // A viewer window next to the tile: the larger of the two decides.
-      await openNativeViewer(track, "Alex – Gelabber");
+      // A viewer window takes the stream over from the tile. Until it says
+      // how large it shows the stream, the layer the tile had asked for
+      // stays: no drop to the low one while the window opens.
+      const opening = openNativeViewer(track, "Alex – Gelabber");
+      expect(nativeCanvasHeight(track.id)).toBe(0);
+      expect(renderedVideoHeight(track.id)).toBe(432);
+      await opening;
+      expect(core.calledWith("media_view_close")).toEqual([{ view: 1 }]);
       const [opened] = core.calledWith("media_viewer_open");
       const events = opened.events as { onMessage: (event: unknown) => void };
+      expect(renderedVideoHeight(track.id)).toBe(432);
+      // From then on the window alone decides, also when it is small.
       events.onMessage({ type: "height", height: 1080 });
       expect(renderedVideoHeight(track.id)).toBe(1080);
       events.onMessage({ type: "height", height: 200 });
-      expect(renderedVideoHeight(track.id)).toBe(432);
+      expect(renderedVideoHeight(track.id)).toBe(200);
       events.onMessage({ type: "closed" });
-      expect(renderedVideoHeight(track.id)).toBe(432);
+      expect(renderedVideoHeight(track.id)).toBe(0);
+      leave();
 
-      // The tile grows to the large view, then goes.
+      // The tile draws the stream again, grows to the large view and goes.
+      await tick();
+      const again = attachNativeVideo(track, tile);
+      expect(renderedVideoHeight(track.id)).toBe(432);
       boxes.set(tile, { width: 1600, height: 900 });
       expect(renderedVideoHeight(track.id)).toBe(1440);
-      leave();
+      again();
       expect(renderedVideoHeight(track.id)).toBe(0);
     } finally {
       resetNativeVideoForTests();
