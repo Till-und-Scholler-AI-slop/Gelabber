@@ -1,6 +1,7 @@
 import { useEffect, useRef, useState } from "react";
 import { ScreenIcon } from "../components/Icons.tsx";
 import { useBlocker } from "@tanstack/react-router";
+import { randomUuid } from "../lib/uuid.ts";
 import { BUILTIN_THEMES, builtinTheme } from "./presets.ts";
 import {
   COLOR_KEYS,
@@ -35,7 +36,7 @@ const styles = { clear: "Klar", soft: "Weich", terminal: "Terminal" } as const;
 function copyTheme(theme: ThemeDefinition): ThemeDefinition {
   return {
     ...theme,
-    id: `custom-${crypto.randomUUID()}`,
+    id: `custom-${randomUuid()}`,
     name: `${theme.name.slice(0, 48)} – Eigene`,
     colors: { ...theme.colors },
   };

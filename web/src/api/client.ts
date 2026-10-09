@@ -3,6 +3,7 @@
 // forever, and the API's error envelope surfaced as `ApiError`.
 
 import type { SessionStamp } from "../auth/scope.ts";
+import { randomUuid } from "../lib/uuid.ts";
 
 export type FieldCode =
   "required" | "invalid" | "too_short" | "too_long" | "taken";
@@ -345,7 +346,7 @@ async function performAuthApi<T>(
   let changing: CookieState | null = null;
   if (explicit && typeof window !== "undefined") {
     changing = {
-      generation: crypto.randomUUID(),
+      generation: randomUuid(),
       phase: "changing",
       userId: previous?.userId ?? stamp.userId,
     };
@@ -393,7 +394,7 @@ function settleCookieIdentity(
       generation ??
       (previous?.phase === "settled" && previous.userId === userId
         ? previous.generation
-        : crypto.randomUUID()),
+        : randomUuid()),
     phase: "settled",
     userId,
   });

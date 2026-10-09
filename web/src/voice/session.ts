@@ -24,6 +24,7 @@ import { ApiError, type ApiErrorCode } from "../api/client.ts";
 import { errorMessage } from "../auth/rules.ts";
 import { useSession } from "../auth/session.ts";
 import { notifyError } from "../components/toasts.ts";
+import { randomUuid } from "../lib/uuid.ts";
 import { getGateway, type Gateway } from "../ws/client.ts";
 import type { ErrFrame, SigEvent, TrackKind } from "../ws/protocol.ts";
 import {
@@ -298,7 +299,7 @@ const captureEpochs = new WeakMap<MediaStream, string>();
 function captureEpoch(stream: MediaStream): string {
   let epoch = captureEpochs.get(stream);
   if (!epoch) {
-    epoch = crypto.randomUUID();
+    epoch = randomUuid();
     captureEpochs.set(stream, epoch);
   }
   return epoch;
@@ -427,6 +428,15 @@ export function retryPlayback(): void {
   }
 }
 
+/**
+ * A phone call or the lock screen can pause call audio while the page is
+ * hidden. Replay it once the page is back; where that needs a gesture, the
+ * refused replay raises the "Ton starten" recovery instead of staying silent.
+ */
+function resumePlayback(): void {
+  if (document.visibilityState === "visible") retryPlayback();
+}
+
 function hintTrack(
   track: MediaStreamTrack,
   hint: "speech" | "detail" | "music",
@@ -480,6 +490,9 @@ function ensureBound(): void {
   gateway.onErr(onErr);
   gateway.onReady(onReady);
   onMediaSettingsChange(handleSettingsChange);
+  // Re-adding the same listener after a rebind is a no-op.
+  if (typeof document !== "undefined")
+    document.addEventListener("visibilitychange", resumePlayback);
   bound = true;
 }
 
@@ -1112,6 +1125,8 @@ function stopPeer(preserveCapture = false): void {
     ] as const) {
       if (stream && !hasLiveTrack(stream, "video")) stopLocalVideo(kind);
     }
+    // The epoch bump below abandons a picker that is still open.
+    if (useVoice.getState().live && !liveStream) releaseUnstartedLive();
   }
   streamReported = false;
   clearSeatReconnectTimer();
@@ -2721,9 +2736,18 @@ function bumpVideoEpoch(kind: "v" | "s" | "l"): number {
   return ++liveEpoch;
 }
 
+/** Epoch of the start whose picker or camera prompt has not answered yet. */
+const openCaptures = new Map<"v" | "s" | "l", number>();
+
+/** Stopping or rebuilding bumps the epoch, so an abandoned start is not open. */
+function captureOpen(kind: "v" | "s" | "l"): boolean {
+  return openCaptures.get(kind) === videoEpoch(kind);
+}
+
 async function startLocalVideo(kind: "v" | "s" | "l"): Promise<void> {
   const epoch = bumpVideoEpoch(kind);
   const mine = seat.generation;
+  openCaptures.set(kind, epoch);
   // A display capture owns its video and optional browser-selected audio.
   let stream: MediaStream;
   try {
@@ -2748,23 +2772,25 @@ async function startLocalVideo(kind: "v" | "s" | "l"): Promise<void> {
     if (kind === "s" && screenEpoch === epoch) {
       useVoice.setState({ sharing: false });
     }
-    if (kind === "l" && liveEpoch === epoch) {
-      const state = useVoice.getState();
-      awaitingLive = null;
-      useVoice.setState({ live: false, localLive: null });
-      if (state.serverId && state.channelId) {
-        applyLiveEnd(
-          state.serverId,
-          state.channelId,
-          currentUserId() ?? undefined,
-        );
-      }
-    }
+    // Only the newest attempt owns the claim; a later start keeps its own.
+    if (kind === "l" && liveEpoch === epoch) releaseUnstartedLive();
     return;
+  } finally {
+    if (openCaptures.get(kind) === epoch) openCaptures.delete(kind);
   }
   pendingDisplayStreams.delete(stream);
   if (seat.generation !== mine || videoEpoch(kind) !== epoch) {
     stopTracks(stream);
+    return;
+  }
+  // The source can end while its profile is still being applied ("stop
+  // sharing", a closed portal session). Its "ended" event is gone by now, so
+  // nothing would ever take this capture down again.
+  if (!hasLiveTrack(stream, "video")) {
+    stopTracks(stream);
+    if (kind === "v") useVoice.setState({ camera: false });
+    else if (kind === "s") useVoice.setState({ sharing: false });
+    else releaseUnstartedLive();
     return;
   }
   const self = currentUserId();
@@ -2813,6 +2839,24 @@ async function startLocalVideo(kind: "v" | "s" | "l"): Promise<void> {
     return;
   }
   await publishLocal(kind, stream);
+}
+
+/**
+ * Go Live claims the channel before display capture answers. A capture that
+ * never yields a stream (cancelled picker, no display capture on this device,
+ * a picker left open across a seat rebuild) hands the claim back, or the room
+ * keeps a phantom Live that blocks everyone else until this seat leaves.
+ */
+function releaseUnstartedLive(): void {
+  const state = useVoice.getState();
+  const self = currentUserId();
+  clearLiveClaim();
+  awaitingLive = null;
+  useVoice.setState({ live: false, localLive: null });
+  if (state.serverId && state.channelId)
+    applyLiveEnd(state.serverId, state.channelId, self ?? undefined);
+  if (self) setPub(self, "l", false);
+  sendPub("l", false);
 }
 
 function stopLocalVideo(kind: "v" | "s" | "l"): void {
@@ -3464,24 +3508,30 @@ async function startPeer(
   if (pending.localLive) {
     await publishLocal("l", pending.localLive);
   }
+  // A button pressed during the connect has opened its own picker or prompt,
+  // and may have been switched off again while the publishes above ran.
+  const wanted = useVoice.getState();
   if (
     !recovering &&
-    (pending.camera || resumeCamera) &&
-    !useVoice.getState().localCamera
+    (wanted.camera || resumeCamera) &&
+    !wanted.localCamera &&
+    !captureOpen("v")
   ) {
     void startLocalVideo("v");
   }
   if (
     !recovering &&
-    (pending.sharing || resumeShare) &&
-    !useVoice.getState().localScreen
+    (wanted.sharing || resumeShare) &&
+    !wanted.localScreen &&
+    !captureOpen("s")
   ) {
     void startLocalVideo("s");
   }
   if (
     !recovering &&
-    (pending.live || resumeLive) &&
-    !useVoice.getState().localLive
+    (wanted.live || resumeLive) &&
+    !wanted.localLive &&
+    !captureOpen("l")
   ) {
     void startLocalVideo("l");
   }
