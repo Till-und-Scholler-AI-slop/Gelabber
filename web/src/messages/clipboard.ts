@@ -1,6 +1,7 @@
-// Files pasted into the composer. Screenshots arrive as clipboard items,
-// copied files as `files`; WebKit may leave the name empty. Office apps put a
-// picture of the selection next to its text: text wins then.
+// Files pasted or dropped into the composer. Screenshots arrive as
+// clipboard items, copied files as `files`; WebKit may leave the name empty.
+// Office apps put a picture of the selection next to its text: on paste, text
+// wins then.
 
 type ClipboardFiles = {
   getData?(format: string): string;
@@ -26,7 +27,27 @@ export function pastedFile(
     const item = data.items[i];
     if (item?.kind === "file") file = item.getAsFile();
   }
-  if (!file || file.name.trim()) return file;
+  return file && named(file, now);
+}
+
+/** The first dropped file; a drag of text or links carries none. */
+export function droppedFile(
+  data: ClipboardFiles | null | undefined,
+  now = new Date(),
+): File | null {
+  const file = data?.files?.[0] ?? null;
+  return file && named(file, now);
+}
+
+/** Whether a drag carries files, readable before the drop. */
+export function carriesFiles(
+  data: { types?: ArrayLike<string> } | null | undefined,
+): boolean {
+  return Array.from(data?.types ?? []).includes("Files");
+}
+
+function named(file: File, now: Date): File {
+  if (file.name.trim()) return file;
   const stamp = now
     .toISOString()
     .slice(0, 19)

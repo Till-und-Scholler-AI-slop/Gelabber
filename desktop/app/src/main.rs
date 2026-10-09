@@ -277,6 +277,9 @@ fn main() {
                 .inner_size(1280.0, 800.0)
                 .min_inner_size(480.0, 360.0)
                 .initialization_script(SHORTCUTS)
+                // Tauri's native handler swallows file drops; the chat
+                // composer takes them as HTML5 drops instead.
+                .disable_drag_drop_handler()
                 .build()?;
             // Opening a stored server that does not answer would end on
             // WebKit's error page; show the setup page with the reason instead.
