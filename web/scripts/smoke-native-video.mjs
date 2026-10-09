@@ -232,12 +232,26 @@ const browser = await chromium.launch({
   ],
 });
 
+/** The renderer sizes its conversion canvas by engine (frames.ts): as in
+ * Chromium, which this is and WebView2 has, and as in the Linux app's
+ * WebKitGTK, whose name is all this Chromium takes from it. */
+const ENGINES = [
+  { name: "Chromium", userAgent: undefined, canvasGrows: true },
+  {
+    name: "WebKitGTK",
+    userAgent:
+      "Mozilla/5.0 (X11; Linux x86_64) AppleWebKit/605.1.15 (KHTML, like Gecko) Version/60.5 Safari/605.1.15",
+    canvasGrows: false,
+  },
+];
+
 /** A page whose desktop app is `desktopApp(options)`. */
-async function open(options) {
+async function open(options, userAgent) {
   // The device pixel ratio WebKitGTK reports on a scaled display.
   const context = await browser.newContext({
     viewport: { width: 1280, height: 900 },
     deviceScaleFactor: 2,
+    userAgent,
   });
   const page = await context.newPage();
   const problems = [];
@@ -353,10 +367,12 @@ async function turned(page, id, target, turns, corners, what) {
 
 try {
   // A 0.6 app: remote and own video in the tiles.
-  {
-    const { page, context, problems, warnings } = await open({
-      features: ["video-frames"],
-    });
+  for (const engine of ENGINES) {
+    console.log(`With the conversion canvas of ${engine.name}:`);
+    const { page, context, problems, warnings } = await open(
+      { features: ["video-frames"] },
+      engine.userAgent,
+    );
     const remote = "consumer:1";
     const ids = await show(page, [
       { name: "Alex", consumer: 1, width: 480, screen: true },
@@ -601,6 +617,80 @@ try {
     assert.equal(await page.evaluate(() => window.smokeApp.contexts.length), 1);
     console.log("PASS: 23 tiles drawn through one WebGL context");
 
+    // Pictures of four sizes in one refresh, small and large mixed as the
+    // tiles are.
+    const converter = () =>
+      page.evaluate(() => {
+        const [{ canvas }] = window.smokeApp.contexts;
+        return [canvas.width, canvas.height];
+      });
+    const stage = { width: 1920, height: 1080, colours: BARS, bt709: true };
+    const selfView = { width: 640, height: 480, colours: [...BARS].reverse() };
+    const ownLive = { width: 1280, height: 720, colours: [BLUE, RED] };
+    const guest = (tile) => ({
+      width: 320,
+      height: 180,
+      colours: [colourOf(19 - tile), WHITE],
+    });
+    await page.evaluate(
+      (pushes) => {
+        for (const [target, spec] of pushes) window.smokeApp.push(target, spec);
+      },
+      [
+        ...many
+          .slice(0, 10)
+          .map(({ consumer }, tile) => [`consumer:${consumer}`, guest(tile)]),
+        [remote, stage],
+        ["source:7", selfView],
+        ...many
+          .slice(10)
+          .map(({ consumer }, tile) => [
+            `consumer:${consumer}`,
+            guest(tile + 10),
+          ]),
+        ["source:8", ownLive],
+      ],
+    );
+    for (const target of [remote, "source:7", "source:8"])
+      await painted(page, target);
+    for (const { consumer } of many)
+      await painted(page, `consumer:${consumer}`);
+    for (const [name, spec] of [
+      ["Alex", stage],
+      ["Ich", selfView],
+      ["Mein Live", ownLive],
+      ...many.map(({ name }, tile) => [name, guest(tile)]),
+    ]) {
+      const { width, height, colours } = spec;
+      const got = await read(
+        page,
+        ids[name],
+        centres(colours.length, width, height),
+      );
+      assert.deepEqual(got.size, [width, height], `${name}: bitmap size`);
+      colours.forEach((colour, bar) =>
+        same(got.pixels[bar], colour, `${name} among other sizes, bar ${bar}`),
+      );
+    }
+    // In WebKitGTK copying a tile's picture costs by the canvas it is
+    // converted on, not by the picture: there a camera must not go on
+    // paying for a stage. Chromium keeps its canvas at the largest size.
+    await bars(
+      page,
+      ids["Gast 7"],
+      "consumer:107",
+      { width: 320, height: 180, colours: BARS },
+      "camera after the stage",
+    );
+    assert.deepEqual(
+      await converter(),
+      engine.canvasGrows ? [1920, 1080] : [320, 180],
+    );
+    await bars(page, ids.Alex, remote, stage, "stage after the camera");
+    assert.deepEqual(await converter(), [1920, 1080]);
+    assert.equal(await page.evaluate(() => window.smokeApp.contexts.length), 1);
+    console.log("PASS: pictures of four sizes mixed in one refresh");
+
     // A lost context: nothing is drawn until it is back, then the newest.
     await page.evaluate(() => {
       const [gl] = window.smokeApp.contexts;
@@ -620,7 +710,7 @@ try {
     const stale = await read(page, ids.Alex, [[160, 90]]);
     assert.deepEqual(
       stale.size,
-      [640, 360],
+      [1920, 1080],
       "the picture from before the loss",
     );
     // Only a context whose loss the page handled can come back.

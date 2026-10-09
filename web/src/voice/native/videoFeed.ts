@@ -126,10 +126,31 @@ let unwatch: (() => void) | null = null;
 let raf: number | null = null;
 let limit: NativeVideoLimit | null = null;
 const limitListeners = new Set<() => void>();
+/** The feeds a refresh paints, and the picture size the last one left the
+ * painters' canvas at. */
+const due: Feed[] = [];
+let left = 0;
+
+/** Same sizes in a row, starting with the one the canvas already has. */
+function bySize(a: Feed, b: Feed): number {
+  const first = a.pending();
+  const second = b.pending();
+  return (first === left ? 0 : first) - (second === left ? 0 : second);
+}
 
 function paintAll(): void {
   raf = null;
-  for (const feed of feeds.values()) feed.paint();
+  for (const feed of feeds.values()) if (feed.pending() > 0) due.push(feed);
+  // The painters' canvas may be reallocated for each new size (frames.ts).
+  if (due.length > 1) due.sort(bySize);
+  try {
+    for (let index = 0; index < due.length; index++) {
+      left = due[index].pending();
+      due[index].paint();
+    }
+  } finally {
+    due.length = 0;
+  }
 }
 
 function schedulePaint(): void {
@@ -329,6 +350,15 @@ class Feed {
     this.pull();
   }
 
+  /** Picture size of the frame `paint` would draw, as one number; 0 when
+   * there is nothing new. */
+  pending(): number {
+    const frame = this.latest;
+    return frame && this.unpainted
+      ? frame.displayWidth * 0x10000 + frame.displayHeight
+      : 0;
+  }
+
   /** Per display refresh: the newest frame onto the canvases. */
   paint(): void {
     const frame = this.latest;
@@ -508,4 +538,5 @@ export function resetNativeVideoForTests(replacement?: NativeVideoHost): void {
   host = replacement ?? page;
   limit = null;
   limitListeners.clear();
+  left = 0;
 }

@@ -299,9 +299,24 @@ function fakeContext() {
     },
   );
   const listeners = new Map<string, (event: Event) => void>();
+  const size = { width: 300, height: 150 };
+  let resizes = 0;
   const canvas = {
-    width: 300,
-    height: 150,
+    get width() {
+      return size.width;
+    },
+    // Like the real one, every assignment allocates anew.
+    set width(value: number) {
+      size.width = value;
+      resizes++;
+    },
+    get height() {
+      return size.height;
+    },
+    set height(value: number) {
+      size.height = value;
+      resizes++;
+    },
     getContext: (kind: string) => (kind === "webgl" ? gl : null),
     addEventListener: (type: string, listener: (event: Event) => void) =>
       listeners.set(type, listener),
@@ -309,6 +324,7 @@ function fakeContext() {
   };
   return {
     canvas: canvas as unknown as HTMLCanvasElement,
+    resizes: () => resizes,
     calls,
     named: (name: string) => calls.filter((call) => call[0] === name),
     emit: (type: string) => {
@@ -357,17 +373,18 @@ describe("frame renderer", () => {
     expect(context.named("createTexture")).toHaveLength(3);
   });
 
-  it("draws every stream into the top left of one canvas", () => {
+  it("gives the canvas the size of the picture it converts", () => {
     const context = fakeContext();
     const renderer = new FrameRenderer(context.canvas);
     const stage = renderer.surface();
     const camera = renderer.surface();
+    const other = renderer.surface();
     renderer.draw(stage, frame({ width: 1280, height: 720, flags: 1 }));
-    expect([context.canvas.width, context.canvas.height]).toEqual([1280, 768]);
+    expect([context.canvas.width, context.canvas.height]).toEqual([1280, 720]);
     expect(context.named("viewport").at(-1)).toEqual([
       "viewport",
       0,
-      48,
+      0,
       1280,
       720,
     ]);
@@ -379,13 +396,14 @@ describe("frame renderer", () => {
       0.4681,
       1.8556,
     ]);
-    // A smaller stream leaves the canvas as it is.
+    // A smaller stream gets a smaller canvas: a copy from it costs by the
+    // canvas, so a camera must not pay for the stage.
     renderer.draw(camera, frame({ width: 320, height: 180 }));
-    expect([context.canvas.width, context.canvas.height]).toEqual([1280, 768]);
+    expect([context.canvas.width, context.canvas.height]).toEqual([320, 180]);
     expect(context.named("viewport").at(-1)).toEqual([
       "viewport",
       0,
-      588,
+      0,
       320,
       180,
     ]);
@@ -399,9 +417,55 @@ describe("frame renderer", () => {
     const bound = context.named("bindTexture").slice(-3);
     expect(bound.map((call) => call[2])).toEqual(camera.textures);
 
+    // Pictures of the same size leave the canvas alone.
+    const resizes = context.resizes();
+    renderer.draw(other, frame({ width: 320, height: 180 }));
+    renderer.draw(camera, frame({ width: 320, height: 180, seq: 2 }));
+    expect(context.resizes()).toBe(resizes);
+    // A turned picture counts by what is shown.
+    renderer.draw(other, frame({ width: 180, height: 320, flags: 0b010 }));
+    expect(context.resizes()).toBe(resizes);
+    renderer.draw(other, frame({ width: 320, height: 180, flags: 0b010 }));
+    expect([context.canvas.width, context.canvas.height]).toEqual([180, 320]);
+
     renderer.release(camera);
     expect(context.named("deleteTexture")).toHaveLength(3);
     expect(camera.textures).toBeNull();
+    renderer.shrink();
+    expect([context.canvas.width, context.canvas.height]).toEqual([1, 1]);
+  });
+
+  it("keeps the largest size where a new one costs more than a large canvas", () => {
+    const context = fakeContext();
+    const renderer = new FrameRenderer(context.canvas, true);
+    const stage = renderer.surface();
+    const camera = renderer.surface();
+    renderer.draw(stage, frame({ width: 1280, height: 720 }));
+    expect([context.canvas.width, context.canvas.height]).toEqual([1280, 720]);
+    const resizes = context.resizes();
+    // The camera's picture is the canvas's top left; WebGL counts rows from
+    // the bottom.
+    renderer.draw(camera, frame({ width: 320, height: 180 }));
+    renderer.draw(stage, frame({ width: 1280, height: 720, seq: 2 }));
+    renderer.draw(camera, frame({ width: 320, height: 180, seq: 2 }));
+    expect(context.resizes()).toBe(resizes);
+    expect(context.named("viewport").at(-1)).toEqual([
+      "viewport",
+      0,
+      540,
+      320,
+      180,
+    ]);
+    // A turned picture needs more height.
+    renderer.draw(camera, frame({ width: 1000, height: 600, flags: 0b110 }));
+    expect([context.canvas.width, context.canvas.height]).toEqual([1280, 1000]);
+    expect(context.named("viewport").at(-1)).toEqual([
+      "viewport",
+      0,
+      0,
+      600,
+      1000,
+    ]);
     renderer.shrink();
     expect([context.canvas.width, context.canvas.height]).toEqual([1, 1]);
   });

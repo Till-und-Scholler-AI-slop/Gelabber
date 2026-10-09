@@ -153,8 +153,6 @@ void main() {
 }`;
 
 const PLANES = ["planeY", "planeU", "planeV"] as const;
-/** The shared canvas grows in steps, so nearby sizes do not reallocate it. */
-const CANVAS_STEP = 256;
 
 type GL = WebGLRenderingContext | WebGL2RenderingContext;
 
@@ -169,11 +167,12 @@ export type FrameSurface = {
   epoch: number;
 };
 
-/** Converts frames on one WebGL context. The picture lands in the top left
- * corner of `canvas`, `displayWidth` x `displayHeight` pixels, until the
- * next `draw`. */
+/** Converts frames on one WebGL context. The picture of the last `draw` is
+ * the top left `displayWidth` x `displayHeight` pixels of `canvas` until the
+ * next one: all of the canvas, unless it `grows`. */
 export class FrameRenderer {
   readonly canvas: HTMLCanvasElement;
+  private readonly grows: boolean;
   /** Runs when a lost context is back and pictures can be drawn again. */
   onRestored: (() => void) | null = null;
   private readonly gl: GL;
@@ -198,9 +197,11 @@ export class FrameRenderer {
     this.onRestored?.();
   };
 
-  /** Throws when the page has no WebGL. */
-  constructor(canvas: HTMLCanvasElement) {
+  /** Throws when the page has no WebGL. The canvas takes the size of each
+   * picture, or with `grows` keeps the largest it had. */
+  constructor(canvas: HTMLCanvasElement, grows = false) {
     this.canvas = canvas;
+    this.grows = grows;
     const attributes: WebGLContextAttributes = {
       alpha: false,
       antialias: false,
@@ -323,11 +324,17 @@ export class FrameRenderer {
 
     const { displayWidth, displayHeight } = frame;
     const canvas = this.canvas;
-    // Resizing clears and reallocates, so it only ever grows.
-    if (canvas.width < displayWidth)
-      canvas.width = Math.ceil(displayWidth / CANVAS_STEP) * CANVAS_STEP;
-    if (canvas.height < displayHeight)
-      canvas.height = Math.ceil(displayHeight / CANVAS_STEP) * CANVAS_STEP;
+    // A new size clears and reallocates.
+    if (this.grows) {
+      if (canvas.width < displayWidth) canvas.width = displayWidth;
+      if (canvas.height < displayHeight) canvas.height = displayHeight;
+    } else if (
+      canvas.width !== displayWidth ||
+      canvas.height !== displayHeight
+    ) {
+      canvas.width = displayWidth;
+      canvas.height = displayHeight;
+    }
     // WebGL counts rows from the bottom: this is the canvas's top left.
     gl.viewport(0, canvas.height - displayHeight, displayWidth, displayHeight);
     if (frame.rotation === 90) {
@@ -398,7 +405,9 @@ export class FrameRenderer {
 /** Puts the frames of one stream on the canvases that show it. */
 export type FramePainter = {
   /** Makes `frame` the picture `show` copies; false when it cannot be drawn
-   * right now (lost context). */
+   * right now (lost context). Cheapest when the painters of one refresh
+   * load their pictures ordered by size: a change of size may reallocate
+   * the canvas they share. */
   load(frame: Frame): boolean;
   /** Copies the loaded picture onto a tile's canvas, whose bitmap takes the
    * picture's size: CSS (`object-fit`, `transform`) fits, crops and mirrors
@@ -433,10 +442,25 @@ let shared: FrameRenderer | null | undefined;
 const restored = new Set<() => void>();
 let painters = 0;
 
+/** Whether the conversion canvas keeps the largest size it had. Engines
+ * differ in what copying from it and resizing it cost; measured on one
+ * machine, per refresh that paints a 1080p picture and eight of 320x180:
+ * - In WebKitGTK a copy costs by the size of the whole canvas, whatever
+ *   part of it is wanted, and a new size about 0.2 ms: 13 to 20 ms with a
+ *   canvas that stays at 1080p, 4 to 6 ms with one that is the picture.
+ * - In Chromium (headless here, WebView2 not measured) a copy costs the
+ *   same from any canvas and a new size about 1 ms: 0.2 ms against 2.2 ms. */
+function canvasGrows(): boolean {
+  return /Chrom(e|ium)\//.test(navigator.userAgent);
+}
+
 function sharedRenderer(): FrameRenderer | null {
   if (shared === undefined) {
     try {
-      shared = new FrameRenderer(document.createElement("canvas"));
+      shared = new FrameRenderer(
+        document.createElement("canvas"),
+        canvasGrows(),
+      );
       shared.onRestored = () => {
         for (const listener of [...restored]) listener();
       };

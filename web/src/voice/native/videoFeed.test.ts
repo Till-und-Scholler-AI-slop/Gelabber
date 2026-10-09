@@ -119,6 +119,8 @@ function fakePage() {
     watcher: null as (() => void) | null,
     restore: [] as Array<() => void>,
     loads: [] as number[],
+    /** Sizes of the pictures the painters loaded, in that order. */
+    pictures: [] as string[],
     shows: [] as string[],
     disposed: 0,
     canvas(name: string, width = 400, height = 225, cover = false) {
@@ -149,6 +151,7 @@ function fakePage() {
           load(frame) {
             if (page.lost) return false;
             page.loads.push(frame.seq);
+            page.pictures.push(`${frame.displayWidth}x${frame.displayHeight}`);
             loaded = frame;
             return true;
           },
@@ -617,6 +620,48 @@ describe("native video feed", () => {
     page.frame();
     expect(page.shows).toEqual(["tile:1"]);
     expect(painted).toHaveBeenCalledTimes(1);
+  });
+
+  it("paints pictures of one size after another", async () => {
+    // Attached in this order: camera, stage, camera, another size.
+    const sizes = [
+      [320, 180],
+      [1280, 720],
+      [320, 180],
+      [640, 360],
+    ];
+    sizes.forEach((_, index) =>
+      attachNativeVideo(
+        new NativeTrack("video", "x", { consumer: index }),
+        page.canvas(`tile ${index}`),
+      ),
+    );
+    await settled();
+    const deliver = async (seq: number, views = [1, 2, 3, 4]) => {
+      for (const view of views)
+        app.deliver(view, packet(seq, ...sizes[view - 1]));
+      await settled();
+      page.pictures.length = 0;
+      page.frame();
+      return page.pictures;
+    };
+    // The painters' canvas is reallocated for every change of size.
+    expect(await deliver(1)).toEqual([
+      "320x180",
+      "320x180",
+      "640x360",
+      "1280x720",
+    ]);
+    // The next refresh starts with the size the canvas was left at.
+    expect(await deliver(2)).toEqual([
+      "1280x720",
+      "320x180",
+      "320x180",
+      "640x360",
+    ]);
+    // Only what has a new frame is painted.
+    expect(await deliver(3, [1, 4])).toEqual(["640x360", "320x180"]);
+    expect(page.shows.slice(-2)).toEqual(["tile 3:3", "tile 0:3"]);
   });
 
   it("measures the picture's height for the layer choice", async () => {
