@@ -5,6 +5,7 @@ import {
   followNotificationTaps,
   NOTIFICATION_OPEN,
   showMessageNotification,
+  withdrawWhileViewing,
 } from "./notifications.ts";
 import { activeServiceWorker } from "./register.ts";
 
@@ -15,14 +16,14 @@ beforeEach(() => {
   registration.mockReset().mockResolvedValue(undefined);
 });
 afterEach(() => {
-  closeMessageNotifications();
+  closeMessageNotifications({ user: "user-1" });
   vi.unstubAllGlobals();
 });
 
 const message = {
   title: "Ada · #allgemein",
   body: "Hallo",
-  tag: "gelabber:user-1:chan",
+  channelId: "chan",
   path: "/s/srv/c/chan",
   user: "user-1",
 };
@@ -106,7 +107,7 @@ describe("message notifications", () => {
     await showMessageNotification({ ...message, body: "Noch da?" }, onClick);
     expect(created).toHaveLength(2);
     expect(created[0].close).toHaveBeenCalledTimes(2);
-    closeMessageNotifications();
+    closeMessageNotifications({ user: "user-1" });
     expect(created[1].close).toHaveBeenCalledOnce();
   });
 
@@ -133,13 +134,108 @@ describe("message notifications", () => {
     expect(await showMessageNotification(message, vi.fn())).toBe("none");
   });
 
-  it("closes only Gelabber's worker notifications when the account changes", async () => {
+  // What the worker shows belongs to every window of the app. Closing more
+  // than the account that left took the other conversations' notifications
+  // away each time a window started.
+  it("closes the notifications of the account that leaves and no others", async () => {
     const mine = { tag: "gelabber:user-1:chan", close: vi.fn() };
-    const other = { tag: "something-else", close: vi.fn() };
-    worker([mine, other]);
-    closeMessageNotifications();
-    await vi.waitFor(() => expect(mine.close).toHaveBeenCalledOnce());
+    const alsoMine = { tag: "gelabber:user-1:dm", close: vi.fn() };
+    const theirs = { tag: "gelabber:user-12:chan", close: vi.fn() };
+    const foreign = { tag: "something-else", close: vi.fn() };
+    worker([mine, alsoMine, theirs, foreign]);
+    closeMessageNotifications({ user: "user-1" });
+    await vi.waitFor(() => expect(alsoMine.close).toHaveBeenCalledOnce());
+    expect(mine.close).toHaveBeenCalledOnce();
+    expect(theirs.close).not.toHaveBeenCalled();
+    expect(foreign.close).not.toHaveBeenCalled();
+  });
+
+  it("withdraws one conversation's notification and leaves the others", async () => {
+    const read = { tag: "gelabber:user-1:chan", close: vi.fn() };
+    const longer = { tag: "gelabber:user-1:chan-2", close: vi.fn() };
+    const theirs = { tag: "gelabber:user-2:chan", close: vi.fn() };
+    const active = worker([read, longer, theirs]);
+    closeMessageNotifications({ user: "user-1", channelId: "chan" });
+    await vi.waitFor(() => expect(read.close).toHaveBeenCalledOnce());
+    expect(active.getNotifications).toHaveBeenCalledOnce();
+    expect(longer.close).not.toHaveBeenCalled();
+    expect(theirs.close).not.toHaveBeenCalled();
+  });
+
+  it("withdraws page-level notifications the same way", async () => {
+    const created = pageApi();
+    await showMessageNotification(message, vi.fn());
+    await showMessageNotification({ ...message, channelId: "dm" }, vi.fn());
+    closeMessageNotifications({ user: "user-2" });
+    closeMessageNotifications({ user: "user-1", channelId: "d" });
+    expect(created.map((shown) => shown.close.mock.calls.length)).toEqual([
+      0, 0,
+    ]);
+    closeMessageNotifications({ user: "user-1", channelId: "dm" });
+    expect(created.map((shown) => shown.close.mock.calls.length)).toEqual([
+      0, 1,
+    ]);
+    // Closed once; the page no longer holds it.
+    closeMessageNotifications({ user: "user-1" });
+    expect(created.map((shown) => shown.close.mock.calls.length)).toEqual([
+      1, 1,
+    ]);
+  });
+
+  it("survives a browser whose worker cannot list notifications", async () => {
+    registration.mockResolvedValue({} as ServiceWorkerRegistration);
+    closeMessageNotifications({ user: "user-1" });
+    await vi.waitFor(() => expect(registration).toHaveBeenCalledOnce());
+  });
+});
+
+describe("a conversation on screen", () => {
+  function page(hidden: boolean) {
+    const target = new EventTarget();
+    const state = { hidden };
+    return {
+      get hidden() {
+        return state.hidden;
+      },
+      addEventListener: target.addEventListener.bind(target),
+      removeEventListener: target.removeEventListener.bind(target),
+      show(visible: boolean) {
+        state.hidden = !visible;
+        target.dispatchEvent(new Event("visibilitychange"));
+      },
+    };
+  }
+  const shown = () => ({
+    viewed: { tag: "gelabber:user-1:chan", close: vi.fn() },
+    other: { tag: "gelabber:user-1:dm", close: vi.fn() },
+  });
+
+  it("loses its notification at once in a visible page", async () => {
+    const { viewed, other } = shown();
+    worker([viewed, other]);
+    const stop = withdrawWhileViewing("user-1", "chan", page(false));
+    await vi.waitFor(() => expect(viewed.close).toHaveBeenCalledOnce());
     expect(other.close).not.toHaveBeenCalled();
+    stop();
+  });
+
+  // The phone case: the notification arrives while the app is in the
+  // background, and the user comes back through the app switcher.
+  it("loses it when a hidden page comes back, and only then", async () => {
+    const { viewed, other } = shown();
+    worker([viewed, other]);
+    const background = page(true);
+    const stop = withdrawWhileViewing("user-1", "chan", background);
+    background.show(false);
+    expect(registration).not.toHaveBeenCalled();
+    background.show(true);
+    await vi.waitFor(() => expect(viewed.close).toHaveBeenCalledOnce());
+    expect(other.close).not.toHaveBeenCalled();
+
+    // Another conversation is opened: this one is no longer watched.
+    stop();
+    background.show(true);
+    expect(registration).toHaveBeenCalledOnce();
   });
 });
 

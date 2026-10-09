@@ -13,8 +13,8 @@ export const NOTIFICATION_OPEN = "gelabber:open-conversation";
 export type MessageNotification = {
   title: string;
   body: string;
-  /** Replaces an older notification of the same conversation. */
-  tag: string;
+  /** Conversation it is about. A newer one replaces the older. */
+  channelId: string;
   /** Where a tap leads; see `conversationPath` in messages/notify.ts. */
   path: string;
   /** Account it is shown for. A tap after an account change goes nowhere. */
@@ -41,7 +41,9 @@ type Registration = {
   getNotifications(): Promise<{ tag: string; close(): void }[]>;
 };
 
-const TAG_PREFIX = "gelabber:";
+// One notification per account and conversation. Without a conversation this
+// is what all tags of the account start with.
+const tagOf = (user: string, channelId = "") => `gelabber:${user}:${channelId}`;
 const shownByPage = new Map<string, PageNotification>();
 
 /**
@@ -56,10 +58,11 @@ export async function showMessageNotification(
 ): Promise<"worker" | "page" | "none"> {
   const api = (globalThis as { Notification?: NotificationApi }).Notification;
   if (!api || api.permission !== "granted") return "none";
+  const tag = tagOf(message.user, message.channelId);
   const options: Options = {
     body: message.body,
     silent: true,
-    tag: message.tag,
+    tag,
     renotify: false,
   };
   const registration: Registration | undefined = await activeServiceWorker();
@@ -76,9 +79,9 @@ export async function showMessageNotification(
     }
   }
   try {
-    shownByPage.get(message.tag)?.close();
+    shownByPage.get(tag)?.close();
     const notification = new api(message.title, options);
-    shownByPage.set(message.tag, notification);
+    shownByPage.set(tag, notification);
     notification.onclick = () => {
       notification.close();
       onClick();
@@ -90,18 +93,55 @@ export async function showMessageNotification(
   }
 }
 
-/** Take down what is still on screen, for example when the account changes. */
-export function closeMessageNotifications(): void {
-  for (const notification of shownByPage.values()) notification.close();
-  shownByPage.clear();
+/**
+ * Take down what is on screen for an account that leaves, or for one of its
+ * conversations once that is being read. Never more than that: what the worker
+ * shows belongs to every window of the app, and a window that merely starts
+ * (as after a tap, when the phone had discarded the app) must leave the
+ * notifications of the other conversations alone.
+ */
+export function closeMessageNotifications(of: {
+  user: string;
+  channelId?: string;
+}): void {
+  const tag = tagOf(of.user, of.channelId);
+  const meant = (shown: string) =>
+    of.channelId === undefined ? shown.startsWith(tag) : shown === tag;
+  for (const [shown, notification] of shownByPage) {
+    if (!meant(shown)) continue;
+    notification.close();
+    shownByPage.delete(shown);
+  }
   void activeServiceWorker()
     .then(async (registration: Registration | undefined) => {
       for (const shown of (await registration?.getNotifications()) ?? [])
-        if (shown.tag.startsWith(TAG_PREFIX)) shown.close();
+        if (meant(shown.tag)) shown.close();
     })
     .catch(() => {
       // Nothing to clean up where the worker cannot list its notifications.
     });
+}
+
+/**
+ * A conversation that is on screen no longer needs its notification: it was
+ * only shown because the page was hidden. Withdraws it now if the page is
+ * visible, and whenever the page becomes visible with that conversation open
+ * (a phone user coming back through the app switcher instead of the tap).
+ */
+export function withdrawWhileViewing(
+  user: string,
+  channelId: string,
+  page: Pick<
+    Document,
+    "hidden" | "addEventListener" | "removeEventListener"
+  > = document,
+): () => void {
+  const seen = () => {
+    if (!page.hidden) closeMessageNotifications({ user, channelId });
+  };
+  seen();
+  page.addEventListener("visibilitychange", seen);
+  return () => page.removeEventListener("visibilitychange", seen);
 }
 
 /**
