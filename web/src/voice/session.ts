@@ -1138,6 +1138,10 @@ function stopPeer(preserveCapture = false): void {
   if (!preserveCapture) micForceBrowser = false;
   if (!preserveCapture) clearLiveClaim();
   seatRetry.cancel(!preserveCapture);
+  // A rebuild keeps what is captured, and with it a picker or camera prompt
+  // that is still open: what the user answers there goes to the next
+  // connection, a Go Live under the claim it already holds.
+  const open = new Set<"v" | "s" | "l">();
   if (preserveCapture) {
     for (const [kind, stream] of [
       ["v", cameraStream],
@@ -1146,8 +1150,11 @@ function stopPeer(preserveCapture = false): void {
     ] as const) {
       if (stream && !hasLiveTrack(stream, "video")) stopLocalVideo(kind);
     }
-    // The epoch bump below abandons a picker that is still open.
-    if (useVoice.getState().live && !liveStream) releaseUnstartedLive();
+    for (const kind of ["v", "s", "l"] as const)
+      if (captureOpen(kind)) open.add(kind);
+    // A Live with neither a stream nor a picker has nothing left to start.
+    if (useVoice.getState().live && !liveStream && !open.has("l"))
+      releaseUnstartedLive();
   }
   streamReported = false;
   clearSeatReconnectTimer();
@@ -1155,11 +1162,11 @@ function stopPeer(preserveCapture = false): void {
   detachDiagnostics("voice");
   seat.close();
   micEpoch += 1;
-  cameraEpoch += 1;
   cameraProfileEpoch += 1;
   screenProfileEpoch += 1;
-  screenEpoch += 1;
-  liveEpoch += 1;
+  // The epoch is what an open capture is held to when it answers.
+  for (const kind of ["v", "s", "l"] as const)
+    if (!open.has(kind)) bumpVideoEpoch(kind);
   audioCommitChain = Promise.resolve();
   cameraCommitChain = Promise.resolve();
   resetVideoLimitQueue();
@@ -1168,8 +1175,12 @@ function stopPeer(preserveCapture = false): void {
   pendingMicRaw.clear();
   for (const stream of pendingCameraStreams) stopTracks(stream);
   pendingCameraStreams.clear();
-  for (const stream of pendingDisplayStreams.keys()) stopTracks(stream);
-  pendingDisplayStreams.clear();
+  for (const [stream, kind] of pendingDisplayStreams) {
+    // Picked already; its sound or profile is still under way.
+    if (open.has(kind)) continue;
+    stopTracks(stream);
+    pendingDisplayStreams.delete(stream);
+  }
   if (
     !preserveCapture ||
     !hasLiveTrack(localStream, "audio") ||
@@ -1216,9 +1227,9 @@ function stopPeer(preserveCapture = false): void {
       : { s: null, l: null },
     ...(preserveCapture
       ? {
-          camera: !!cameraStream,
-          sharing: !!screenStream,
-          live: !!liveStream,
+          camera: !!cameraStream || open.has("v"),
+          sharing: !!screenStream || open.has("s"),
+          live: !!liveStream || open.has("l"),
         }
       : {}),
     remote: {},
@@ -2781,7 +2792,8 @@ function bumpVideoEpoch(kind: "v" | "s" | "l"): number {
 /** Epoch of the start whose picker or camera prompt has not answered yet. */
 const openCaptures = new Map<"v" | "s" | "l", number>();
 
-/** Stopping or rebuilding bumps the epoch, so an abandoned start is not open. */
+/** Stopping bumps the epoch, so an abandoned start is not open. A rebuild of
+ * the seat's connection leaves an open start its epoch. */
 function captureOpen(kind: "v" | "s" | "l"): boolean {
   return openCaptures.get(kind) === videoEpoch(kind);
 }
@@ -2797,18 +2809,17 @@ function cameraUnavailable(error: unknown): boolean {
 
 async function startLocalVideo(kind: "v" | "s" | "l"): Promise<void> {
   const epoch = bumpVideoEpoch(kind);
-  const mine = seat.generation;
   openCaptures.set(kind, epoch);
+  // Stopping this kind, leaving the seat and a newer start all move the
+  // epoch on. A rebuild of the seat's connection does not: the picker or
+  // prompt may answer whenever the user is done with it.
+  const newest = () => videoEpoch(kind) === epoch;
   // A display capture owns its video and optional browser-selected audio.
   let stream: MediaStream;
   try {
     stream = await captureVideo(kind);
   } catch (error) {
-    if (
-      isOverconstrainedError(error) &&
-      seat.generation === mine &&
-      videoEpoch(kind) === epoch
-    ) {
+    if (isOverconstrainedError(error) && newest()) {
       deps?.onError?.(
         new Error(
           kind === "v"
@@ -2816,29 +2827,24 @@ async function startLocalVideo(kind: "v" | "s" | "l"): Promise<void> {
             : "Die Bildschirmfreigabe unterstützt das Streamprofil nicht.",
         ),
       );
-    } else if (
-      kind === "v" &&
-      cameraUnavailable(error) &&
-      seat.generation === mine &&
-      cameraEpoch === epoch
-    ) {
+    } else if (kind === "v" && cameraUnavailable(error) && newest()) {
       // Otherwise the button just springs back and nothing says why.
       deps?.onError?.(new Error("Die Kamera ist nicht verfügbar."));
     }
-    if (kind === "v" && cameraEpoch === epoch) {
+    if (kind === "v" && newest()) {
       useVoice.setState({ camera: false });
     }
-    if (kind === "s" && screenEpoch === epoch) {
+    if (kind === "s" && newest()) {
       useVoice.setState({ sharing: false });
     }
     // Only the newest attempt owns the claim; a later start keeps its own.
-    if (kind === "l" && liveEpoch === epoch) releaseUnstartedLive();
+    if (kind === "l" && newest()) releaseUnstartedLive();
     return;
   } finally {
     if (openCaptures.get(kind) === epoch) openCaptures.delete(kind);
   }
   pendingDisplayStreams.delete(stream);
-  if (seat.generation !== mine || videoEpoch(kind) !== epoch) {
+  if (!newest()) {
     stopTracks(stream);
     return;
   }
@@ -2891,17 +2897,16 @@ async function startLocalVideo(kind: "v" | "s" | "l"): Promise<void> {
   noteStream(kind, true);
   // Yield so the local tile paints before publishing.
   await Promise.resolve();
-  if (seat.generation !== mine || videoEpoch(kind) !== epoch) {
-    return;
-  }
+  if (!newest()) return;
+  // Without a connection that publishes, the seat's next one takes it.
   await publishLocal(kind, stream);
 }
 
 /**
  * Go Live claims the channel before display capture answers. A capture that
  * never yields a stream (cancelled picker, no display capture on this device,
- * a picker left open across a seat rebuild) hands the claim back, or the room
- * keeps a phantom Live that blocks everyone else until this seat leaves.
+ * a source that ended before it could start) hands the claim back, or the
+ * room keeps a phantom Live that blocks everyone else until this seat leaves.
  */
 function releaseUnstartedLive(): void {
   const state = useVoice.getState();
