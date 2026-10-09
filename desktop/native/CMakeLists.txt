@@ -26,6 +26,12 @@ foreach(flag IN LISTS GELABBER_LIBCXX_FLAGS)
   add_compile_options("$<$<COMPILE_LANGUAGE:CXX>:${flag}>")
 endforeach()
 
+# libsdptransform, which libmediasoupclient fetches, declares CMake 3.0;
+# CMake 4 refuses anything below 3.5. Older CMake ignores the variable.
+if(NOT DEFINED CMAKE_POLICY_VERSION_MINIMUM)
+  set(CMAKE_POLICY_VERSION_MINIMUM 3.5)
+endif()
+
 set(GELABBER_LIBWEBRTC_DIR "" CACHE PATH "libwebrtc package (lib/, include/)")
 if(NOT GELABBER_LIBWEBRTC_DIR)
   message(FATAL_ERROR "GELABBER_LIBWEBRTC_DIR is required")
