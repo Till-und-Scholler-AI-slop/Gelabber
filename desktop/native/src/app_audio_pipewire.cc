@@ -1,7 +1,8 @@
 // Application sound on Linux through PipeWire: one capture stream per
 // playback stream of the chosen applications (pw-record --target style),
-// mixed to 48 kHz stereo in 10 ms blocks. WirePlumber links each capture
-// stream to its target; the applications keep playing to their own output.
+// mixed to 48 kHz stereo in 10 ms blocks at the pace their sound card sets
+// (app_audio_mix.h). WirePlumber links each capture stream to its target;
+// the applications keep playing to their own output.
 //
 // Whose stream it is comes from the stream's client object: the registry
 // lists a playback node with application.name and client.id, and only the
@@ -10,10 +11,17 @@
 // process and of the processes it started (the webview's helpers) are never
 // captured: they carry the call itself.
 //
+// Nor is the playback stream of a virtual device: an echo canceller, a
+// loopback, a filter chain (equaliser, virtual surround) or a combined sink
+// plays on what was played into it, the call included when it is this
+// application's output, and every application's sound a second time. Only
+// the node's own info tells (node.virtual, node.link-group).
+//
 // libpipewire is loaded at runtime like libwebrtc's own PipeWire use, so the
 // core has no link-time dependency on it.
 
 #include "app_audio.h"
+#include "app_audio_mix.h"
 
 #include <dlfcn.h>
 #include <pipewire/pipewire.h>
@@ -29,15 +37,16 @@
 #include <condition_variable>
 #include <cstdlib>
 #include <cstring>
-#include <deque>
 #include <fstream>
 #include <functional>
 #include <iterator>
 #include <map>
 #include <mutex>
+#include <optional>
 #include <set>
 #include <stdexcept>
 #include <thread>
+#include <vector>
 
 namespace gelabber
 {
@@ -158,6 +167,18 @@ namespace gelabber
 		{
 			return name.empty() || name == "WEBRTC VoiceEngine" || name.rfind("PipeWire ALSA [", 0) == 0 ||
 			       name.rfind("ALSA plug-in [", 0) == 0 || name.rfind("Lavf", 0) == 0;
+		}
+
+		// The playback half of a virtual device: PipeWire's loopback,
+		// filter-chain, echo-cancel and combine-stream modules, which are also
+		// what pipewire-pulse loads for module-loopback, -echo-cancel,
+		// -combine-sink, -remap-sink and -virtual-sink. They mark both of
+		// their streams virtual and put them in a link group, by which the
+		// session manager keeps a device from being linked to itself.
+		bool VirtualDevice(const spa_dict* props)
+		{
+			const auto isVirtual = Lookup(props, "node.virtual");
+			return isVirtual == "true" || isVirtual == "1" || !Lookup(props, "node.link-group").empty();
 		}
 
 		struct PlaybackStream
@@ -293,9 +314,9 @@ namespace gelabber
 		};
 
 		// Reports the playback streams of other applications, each once its
-		// owner is known, and their end; and nodes that lost the links into
-		// them. Created and destroyed with the loop's lock held; the events
-		// arrive on the loop thread.
+		// own properties and its owner are known, and their end; and nodes
+		// that lost the links into them. Created and destroyed with the
+		// loop's lock held; the events arrive on the loop thread.
 		class PlaybackWatcher
 		{
 		public:
@@ -345,6 +366,8 @@ namespace gelabber
 				spa_hook_remove(&registryListener);
 				for (auto& [id, client] : clients)
 					Release(*client);
+				for (auto& [id, stream] : streams)
+					Release(*stream);
 				connection.api.proxy_destroy(reinterpret_cast<pw_proxy*>(registry));
 			}
 
@@ -370,6 +393,14 @@ namespace gelabber
 
 			struct Stream
 			{
+				PlaybackWatcher* watcher{ nullptr };
+				uint32_t id{ 0 };
+				pw_proxy* proxy{ nullptr };
+				spa_hook listener{};
+				// The node's info arrived; `device` is from it.
+				bool known{ false };
+				// A virtual device's playback half, no application's sound.
+				bool device{ false };
 				uint32_t client{ SPA_ID_INVALID };
 				std::string serial;
 				std::string appName;
@@ -418,14 +449,33 @@ namespace gelabber
 				const auto [entry, fresh] = streams.try_emplace(id);
 				if (!fresh)
 					return;
-				auto& stream     = entry->second;
+				entry->second    = std::make_unique<Stream>();
+				auto& stream     = *entry->second;
+				stream.watcher   = this;
+				stream.id        = id;
 				stream.serial    = Lookup(props, "object.serial");
 				stream.appName   = Lookup(props, PW_KEY_APP_NAME);
 				stream.nodeName  = Lookup(props, PW_KEY_NODE_NAME);
 				const auto owner = Lookup(props, PW_KEY_CLIENT_ID);
 				if (!owner.empty())
 					stream.client = static_cast<uint32_t>(std::strtoul(owner.c_str(), nullptr, 10));
-				Decide(id, stream);
+				// The listing has a few of the node's properties only; whether
+				// it belongs to a virtual device is in its info.
+				stream.proxy =
+				  static_cast<pw_proxy*>(pw_registry_bind(registry, id, type, PW_VERSION_NODE, 0));
+				if (!stream.proxy)
+					return;
+				static const pw_node_events events = [] {
+					pw_node_events e{};
+					e.version = PW_VERSION_NODE_EVENTS;
+					e.info    = [](void* data, const pw_node_info* info) {
+						auto* stream = static_cast<Stream*>(data);
+						stream->watcher->OnNodeInfo(*stream, info);
+					};
+					return e;
+				}();
+				pw_node_add_listener(
+				  reinterpret_cast<pw_node*>(stream.proxy), &stream.listener, &events, &stream);
 			}
 
 			void OnGlobalRemove(uint32_t id)
@@ -452,7 +502,8 @@ namespace gelabber
 				const auto stream = streams.find(id);
 				if (stream == streams.end())
 					return;
-				const bool reported = stream->second.state == Stream::Reported;
+				const bool reported = stream->second->state == Stream::Reported;
+				Release(*stream->second);
 				streams.erase(stream);
 				if (reported)
 					removed(id);
@@ -485,15 +536,28 @@ namespace gelabber
 				client.binary = Lookup(info->props, PW_KEY_APP_PROCESS_BINARY);
 				client.name   = Lookup(info->props, PW_KEY_APP_NAME);
 				for (auto& [id, stream] : streams)
-					if (stream.client == client.id && stream.state == Stream::Waiting)
-						Decide(id, stream);
+					if (stream->client == client.id)
+						Decide(*stream);
 			}
 
-			// A stream waits for its owner's info: without it the stream might
-			// be this application's own. A client that leaves first takes its
-			// streams along.
-			void Decide(uint32_t id, Stream& stream)
+			// Sent when the node is bound and again whenever it changes (its
+			// state, with every start and stop): the first one counts.
+			void OnNodeInfo(Stream& stream, const pw_node_info* info)
 			{
+				if (stream.known || !info || !info->props || !(info->change_mask & PW_NODE_CHANGE_MASK_PROPS))
+					return;
+				stream.known  = true;
+				stream.device = VirtualDevice(info->props);
+				Decide(stream);
+			}
+
+			// A stream waits for its own info and for its owner's: without
+			// them it might be a virtual device's or this application's own.
+			// A node or a client that leaves first takes the stream along.
+			void Decide(Stream& stream)
+			{
+				if (stream.state != Stream::Waiting || !stream.known)
+					return;
 				const Client* owner = nullptr;
 				if (stream.client != SPA_ID_INVALID)
 				{
@@ -503,10 +567,12 @@ namespace gelabber
 					owner = found->second.get();
 				}
 				stream.state = Stream::Skipped;
+				if (stream.device)
+					return;
 				if (owner && (OwnProcess(owner->pid) || OwnProcess(owner->peer)))
 					return;
 				PlaybackStream playback;
-				playback.node     = id;
+				playback.node     = stream.id;
 				playback.serial   = stream.serial;
 				playback.oldId    = !stream.appName.empty() ? stream.appName : stream.nodeName;
 				playback.app.id   = owner && !owner->binary.empty() ? owner->binary : playback.oldId;
@@ -527,6 +593,15 @@ namespace gelabber
 				client.proxy = nullptr;
 			}
 
+			void Release(Stream& stream)
+			{
+				if (!stream.proxy)
+					return;
+				spa_hook_remove(&stream.listener);
+				connection.api.proxy_destroy(stream.proxy);
+				stream.proxy = nullptr;
+			}
+
 			Connection& connection;
 			const Added added;
 			const Removed removed;
@@ -535,13 +610,16 @@ namespace gelabber
 			spa_hook registryListener{};
 			spa_hook coreListener{};
 			std::map<uint32_t, std::unique_ptr<Client>> clients;
-			std::map<uint32_t, Stream> streams;
+			std::map<uint32_t, std::unique_ptr<Stream>> streams;
 			// Link -> the node it leads into.
 			std::map<uint32_t, uint32_t> links;
 			// Nodes whose last link went, until the round trip is back.
 			std::vector<uint32_t> cut;
 			int cutSeq{ 0 };
 		};
+
+		static_assert(MixInput::kBlockFrames == AppAudioCapture::kFrames);
+		static_assert(MixInput::kChannels == static_cast<size_t>(AppAudioCapture::kChannels));
 
 		class PipeWireAppAudio : public AppAudioCapture
 		{
@@ -586,8 +664,16 @@ namespace gelabber
 			std::string StateJson() const override
 			{
 				std::lock_guard lock(mutex);
+				uint64_t underruns = endedUnderruns;
+				uint64_t overruns  = endedOverruns;
+				for (const auto& [node, capture] : captures)
+				{
+					underruns += capture->input.underruns;
+					overruns += capture->input.overruns;
+				}
 				return R"({"state":"live","streams":)" + std::to_string(captures.size()) + R"(,"frames":)" +
-				       std::to_string(delivered) + "}";
+				       std::to_string(delivered) + R"(,"underruns":)" + std::to_string(underruns) +
+				       R"(,"overruns":)" + std::to_string(overruns) + "}";
 			}
 
 		private:
@@ -599,9 +685,8 @@ namespace gelabber
 				std::string target;
 				pw_stream* stream{ nullptr };
 				spa_hook listener{};
-				// Interleaved stereo samples waiting for the mixer (mutex).
-				std::deque<float> samples;
-				bool primed{ false };
+				// Its samples waiting for the mixer (mutex).
+				MixInput input;
 			};
 
 			// On the loop thread with its lock held, like the stream events.
@@ -698,8 +783,7 @@ namespace gelabber
 					DestroyStream(*capture);
 					{
 						std::lock_guard lock(mutex);
-						capture->samples.clear();
-						capture->primed = false;
+						capture->input.Clear();
 					}
 					Connect(*capture);
 					return;
@@ -716,6 +800,11 @@ namespace gelabber
 						return;
 					gone = std::move(it->second);
 					captures.erase(it);
+					endedUnderruns += gone->input.underruns;
+					endedOverruns += gone->input.overruns;
+					// The end of its sound is still on the way into the mix.
+					gone->input.End();
+					ending.push_back(std::move(gone->input));
 				}
 				DestroyStream(*gone);
 			}
@@ -740,22 +829,19 @@ namespace gelabber
 				{
 					const auto* begin = reinterpret_cast<const float*>(
 					  static_cast<const uint8_t*>(data.data) + data.chunk->offset);
-					const size_t count = std::min<size_t>(data.chunk->size, data.maxsize) / sizeof(float);
+					// Whole frames.
+					const size_t count =
+					  std::min<size_t>(data.chunk->size, data.maxsize) / (sizeof(float) * kChannels) * kChannels;
 					std::lock_guard lock(mutex);
-					capture.samples.insert(capture.samples.end(), begin, begin + count);
-					// More than 100 ms behind: drop to 40 ms (clock drift).
-					constexpr size_t block = kFrames * kChannels;
-					if (capture.samples.size() > 10 * block)
-						capture.samples.erase(
-						  capture.samples.begin(),
-						  capture.samples.begin() + static_cast<long>(capture.samples.size() - 4 * block));
+					capture.input.Push(begin, count);
 				}
 				api.stream_queue_buffer(capture.stream, b);
 			}
 
-			// Every 10 ms: one block from each stream, summed. A stream plays
-			// once 20 ms are buffered, so small timing differences between
-			// the sound server and this thread do not click.
+			// A block from each playing stream, summed, about every 10 ms: as
+			// much sooner or later as keeps the streams' buffers level against
+			// the sound card that fills them (app_audio_mix.h). Silence goes
+			// out on the system clock.
 			void Mix()
 			{
 				constexpr size_t block = kFrames * kChannels;
@@ -765,22 +851,17 @@ namespace gelabber
 				while (running)
 				{
 					std::fill(mix.begin(), mix.end(), 0.0f);
+					// What the stream with the least to spare has beyond its
+					// cushion.
+					std::optional<double> lead;
 					{
 						std::lock_guard lock(mutex);
 						for (auto& [node, capture] : captures)
-						{
-							auto& samples = capture->samples;
-							if (!capture->primed && samples.size() >= 2 * block)
-								capture->primed = true;
-							if (!capture->primed)
-								continue;
-							const size_t take = std::min(block, samples.size());
-							for (size_t i = 0; i < take; ++i)
-								mix[i] += samples[i];
-							samples.erase(samples.begin(), samples.begin() + static_cast<long>(take));
-							if (take < block)
-								capture->primed = false;
-						}
+							if (const auto ahead = capture->input.Mix(mix.data()))
+								lead = lead ? std::min(*lead, *ahead) : *ahead;
+						for (auto& input : ending)
+							input.Mix(mix.data());
+						std::erase_if(ending, [](const MixInput& input) { return input.Done(); });
 						++delivered;
 					}
 					for (size_t i = 0; i < block; ++i)
@@ -790,7 +871,7 @@ namespace gelabber
 					}
 					sink(pcm.data());
 
-					next += std::chrono::milliseconds(10);
+					next += MixInterval(lead);
 					const auto now = std::chrono::steady_clock::now();
 					if (next + std::chrono::milliseconds(50) < now)
 						next = now;
@@ -804,6 +885,11 @@ namespace gelabber
 			std::unique_ptr<PlaybackWatcher> watcher;
 			mutable std::mutex mutex;
 			std::map<uint32_t, std::unique_ptr<Capture>> captures;
+			// What streams that are gone left for the mix (mutex), and what
+			// they counted.
+			std::vector<MixInput> ending;
+			uint64_t endedUnderruns{ 0 };
+			uint64_t endedOverruns{ 0 };
 			uint64_t delivered{ 0 };
 			std::atomic<bool> running{ false };
 			std::thread mixer;
@@ -823,20 +909,27 @@ namespace gelabber
 			    playing, [node](const PlaybackStream& playback) { return playback.node == node; });
 		  });
 		// One round trip for the registry's listing, one for the info of the
-		// clients in it.
+		// clients and nodes in it.
 		if (connection.Sync(2))
 			connection.Sync(2);
 
 		// An entry for each binary. Programs that share one (Electron, Wine, an
 		// interpreter) are told apart by the names they gave themselves: where
 		// a binary's streams carry several, each name is an entry as well,
-		// next to the binary, which chooses them all.
+		// next to the binary, which chooses them all. The other way round,
+		// a name that programs on several binaries give themselves (their own
+		// Electron each, all "Chromium") is an entry next to the binaries and
+		// chooses all of them: what 0.5.2 listed, and a client may have
+		// stored.
 		std::map<std::string, std::set<std::string>> names;
+		std::map<std::string, std::set<std::string>> binaries;
 		for (const auto& playback : playing)
 		{
 			auto& ofBinary = names[playback.app.id];
-			if (playback.Named())
-				ofBinary.insert(playback.oldId);
+			if (!playback.Named())
+				continue;
+			ofBinary.insert(playback.oldId);
+			binaries[playback.oldId].insert(playback.app.id);
 		}
 		std::set<std::string> ids;
 		for (const auto& [binary, ofBinary] : names)
@@ -845,6 +938,9 @@ namespace gelabber
 			if (ofBinary.size() > 1)
 				ids.insert(ofBinary.begin(), ofBinary.end());
 		}
+		for (const auto& [name, ofName] : binaries)
+			if (ofName.size() > 1)
+				ids.insert(name);
 		std::vector<AudioApp> out;
 		for (const auto& id : ids)
 		{
@@ -862,6 +958,14 @@ namespace gelabber
 			}
 			out.push_back(std::move(app));
 		}
+		// No two entries under one name: where several are called the same,
+		// each says which it is. The one that is the name itself keeps it.
+		std::map<std::string, int> called;
+		for (const auto& app : out)
+			++called[app.name];
+		for (auto& app : out)
+			if (app.name != app.id && called[app.name] > 1)
+				app.name += " (" + app.id + ")";
 		return out;
 	}
 

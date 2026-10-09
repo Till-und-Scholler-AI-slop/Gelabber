@@ -16,10 +16,11 @@ Not a product yet.
 | `native/libwebrtc.env` | Pins: libwebrtc M140 commit, libmediasoupclient commit, libsdptransform tag |
 | `native/scripts/` | Reproducible libwebrtc builds (Linux, Windows); a test desktop session with a ScreenCast portal |
 | `native/patches/` | Patches applied to libwebrtc |
+| `native/tests/app_audio_mix_test.cc` | The source-audio mix against simulated sound cards whose clocks are off; plain C++, built and run by `core/tests/voice.rs` with the host's compiler |
 | `core/` | Rust crate `gelabber-media-core`: safe API over the C ABI |
 | `core/tests/mediasoup_loopback.rs` | Loopback call against mediasoup 0.29 with the server's router codecs |
 | `core/tests/source_preview.rs` | Video sinks for views in the app: a local source without a producer, scaling and rate limits, sinks going away mid-frame |
-| `core/tests/screen_capture.rs` | Screen capture through the portal, H264, mediasoup, native decode (`GELABBER_TEST_SCREEN=1`) |
+| `core/tests/screen_capture.rs` | Screen capture through the portal, H264, mediasoup, native decode, and the screen as the web client shares it: VP8 in two simulcast layers (`GELABBER_TEST_SCREEN=1`) |
 | `app/` | Tauri 2 app `gelabber-desktop`: window on the server origin, bundled setup page, media commands (`src/media.rs`) |
 | `app/scripts/smoke.sh` | Starts the app on a stand-in origin under Xvfb and checks which commands the page reaches and that the frames of a test-pattern view arrive |
 | `core/tests/voice.rs` | Microphone modes, RNNoise, device selection, Opus through mediasoup, playout (`GELABBER_TEST_AUDIO=1`) |
@@ -100,6 +101,15 @@ notification behind every close. An app that is killed instead of closed
   `GELABBER_H264_ENCODER=<element>|none` overrides the choice. Decode is
   libwebrtc's: FFmpeg (Chrome branding) for H264, libvpx for VP8/VP9.
   Shipping software H264 needs a licensing decision first.
+- Simulcast: libvpx and OpenH264 encode a producer's layers in one encoder,
+  and only when every layer has exactly the top layer's aspect. A layer is
+  the picture divided by its `scaleResolutionDownBy`, so a 1366x768 screen
+  over the web client's 4 and 1 would be 342x192 below 1366x768: refused,
+  and nothing is sent. Local video sources therefore crop to multiples of 4
+  (1364x768), and the software encoders tell libwebrtc that their alignment
+  holds for every layer, which makes it ask the source for what other
+  factors need. libwebrtc's own answer, `SimulcastEncoderAdapter` with an
+  encoder per layer, is not in the Windows package.
 - Screen capture (Linux): xdg-desktop-portal ScreenCast picks the source,
   PipeWire delivers frames (libwebrtc's `BaseCapturerPipeWire`). The portal's
   GLib callbacks run on the capture thread, so no host main loop is needed.
@@ -170,7 +180,10 @@ notification behind every close. An app that is killed instead of closed
   without a call through a pass-through module that only holds back the
   voice pipeline's stop while the test runs. The test
   session also provides null-sink "speakers" and a
-  noise-playing "microphone" for `core/tests/voice.rs`.
+  noise-playing "microphone" for `core/tests/voice.rs`. The noise lasts
+  ten minutes from the session's start; the test says so when it is started
+  too late in it, so build it before the session
+  (`cargo test --no-run`).
 - Microphone routing: libwebrtc's device module hands its capture to every
   audio send stream, which would mix the microphone into source audio. The
   device module's callback is therefore our `CaptureTransport`: it runs the
@@ -193,18 +206,31 @@ notification behind every close. An app that is killed instead of closed
   interpreter) are that binary's one entry, which selects them all. While
   they play under different names of their own, each name is listed as a
   further entry with the name as its id; a name a sound library gives
-  (`WEBRTC VoiceEngine`, `PipeWire ALSA [...]`) does not count.
+  (`WEBRTC VoiceEngine`, `PipeWire ALSA [...]`) does not count. The other
+  way round, programs on different binaries may call themselves the same
+  (each with an Electron of its own, all "Chromium"): their entries are
+  shown as `name (binary)`, and the name is an entry as well, which selects
+  them all as it did when it was the id. No two entries share a name.
   Gelabber's own process and the ones it started (the webview's helpers) are
   never captured, whatever is selected: the stream would carry the call. A
   helper in a pid namespace of its own is only recognized as a native
   PipeWire client (`pipewire.sec.pid`); pipewire-pulse passes on the pid the
   client reports.
-  Only the process a playback stream belongs to decides. Sound that another
-  process plays on is that process's stream: behind a virtual sink of
-  PipeWire's loopback or filter-chain module, "" captures an application
-  twice, at its own stream and at the chain's output, and Gelabber's playout
-  routed through such a sink is captured at the chain's output. A chosen
-  application is captured at its own stream alone.
+  The playback stream of a virtual device is no application's either: an
+  echo canceller, an equaliser or virtual surround (filter chain), a combined
+  or remapped sink and a loopback play on what was played into them, which
+  is Gelabber's playout where such a device is its output, and every other
+  application a second time. PipeWire builds them all from its loopback,
+  filter-chain, echo-cancel and combine-stream modules (pipewire-pulse's
+  `module-loopback`, `-echo-cancel`, `-combine-sink`, `-remap-sink` and
+  `-virtual-sink` included), which mark both of their streams `node.virtual`
+  and give them a `node.link-group`. Neither is in the registry's listing,
+  so the watcher binds each playback node and a stream waits for the node's
+  own info as well; a node with either property is left out of capture and
+  list. That also drops a loopback of a line input or a microphone monitor
+  from "every application". What it cannot tell is a program that records
+  other programs and plays the result as an ordinary stream of its own:
+  that stream is its application's, with whatever it carries.
   A capture stream takes its playback stream or nothing (`node.dont-fallback`,
   and `node.linger` to wait for it): WirePlumber 0.5 otherwise links the
   default source, the microphone, to a capture whose target it has not
@@ -212,7 +238,21 @@ notification behind every close. An app that is killed instead of closed
   channel layout, its ports and the links from them are replaced and the
   session manager leaves the capture unlinked, so the core replaces a capture
   stream that lost its links.
+  The mix goes at the pace of the sound card. Samples arrive a graph
+  quantum at a time at the card's rate, and a mix on the system clock ran a
+  stream's buffer dry every few seconds when the card was a little slower
+  (every 13 s at 50 ppm and a quantum of 1024), each time with a block that
+  was part silence. Each stream keeps 20 ms below its bursts, and the time
+  to the next block shifts by up to 0.3 % with what the stream that has
+  least to spare is off that cushion (`native/src/app_audio_mix.h`); the
+  samples are left alone. With applications on two cards the mix keeps to
+  the slower one and cuts the other back when it is too far ahead.
+  `gm_source_state` counts both (`underruns`, `overruns`). A test session's
+  null sinks run on the system clock, so
+  `native/tests/app_audio_mix_test.cc` runs the mix against simulated cards.
   The voice test covers the list and "" while the test process plays a
-  consumer out and a player it started plays too, a player of its own that is
-  chosen by name and changes outputs, and two players on one binary under
-  different names.
+  consumer out and a player it started plays too, the same with the consumer
+  played out through a null sink that a loopback plays on to the speakers, a
+  player of its own that is chosen by name and changes outputs, two players
+  on one binary under different names, and two on different binaries under
+  the same name.

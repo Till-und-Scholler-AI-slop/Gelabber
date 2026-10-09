@@ -36,6 +36,7 @@
 #include <api/video_codecs/video_decoder_factory_template_libvpx_vp8_adapter.h>
 #include <api/video_codecs/video_decoder_factory_template_libvpx_vp9_adapter.h>
 #include <api/video_codecs/video_decoder_factory_template_open_h264_adapter.h>
+#include <api/video_codecs/video_encoder.h>
 #include <api/video_codecs/video_encoder_factory_template.h>
 #include <api/video_codecs/video_encoder_factory_template_libaom_av1_adapter.h>
 #include <api/video_codecs/video_encoder_factory_template_libvpx_vp8_adapter.h>
@@ -1299,6 +1300,82 @@ namespace
 	  webrtc::LibvpxVp9EncoderTemplateAdapter,
 	  webrtc::LibaomAv1EncoderTemplateAdapter>;
 
+	// A software encoder that holds libwebrtc to its simulcast layers. libvpx
+	// (VP8) and OpenH264 encode the layers of a producer in one encoder and
+	// refuse a set in which a layer has not exactly the top layer's aspect
+	// (WEBRTC_VIDEO_CODEC_ERR_SIMULCAST_PARAMETERS_NOT_SUPPORTED): the frame
+	// has to divide by every layer's scaleResolutionDownBy. libwebrtc's own
+	// factory puts them behind SimulcastEncoderAdapter, which then gives each
+	// layer an encoder; the Windows package does not carry it. Told that the
+	// encoder's alignment holds for every layer, libwebrtc works out what the
+	// layers need (AlignmentAdjuster) and asks the source for such frames.
+	// The sources crop to LocalVideoSource::kResolutionAlignment on their
+	// own, so the web client's layers never wait for that.
+	class SimulcastAlignedEncoder : public webrtc::VideoEncoder
+	{
+	public:
+		explicit SimulcastAlignedEncoder(std::unique_ptr<webrtc::VideoEncoder> encoder)
+		  : encoder(std::move(encoder))
+		{
+		}
+
+		void SetFecControllerOverride(webrtc::FecControllerOverride* fecControllerOverride) override
+		{
+			encoder->SetFecControllerOverride(fecControllerOverride);
+		}
+
+		int InitEncode(const webrtc::VideoCodec* codec, const Settings& settings) override
+		{
+			return encoder->InitEncode(codec, settings);
+		}
+
+		int32_t RegisterEncodeCompleteCallback(webrtc::EncodedImageCallback* callback) override
+		{
+			return encoder->RegisterEncodeCompleteCallback(callback);
+		}
+
+		int32_t Release() override
+		{
+			return encoder->Release();
+		}
+
+		int32_t Encode(
+		  const webrtc::VideoFrame& frame, const std::vector<webrtc::VideoFrameType>* types) override
+		{
+			return encoder->Encode(frame, types);
+		}
+
+		void SetRates(const RateControlParameters& parameters) override
+		{
+			encoder->SetRates(parameters);
+		}
+
+		void OnPacketLossRateUpdate(float packetLossRate) override
+		{
+			encoder->OnPacketLossRateUpdate(packetLossRate);
+		}
+
+		void OnRttUpdate(int64_t rttMs) override
+		{
+			encoder->OnRttUpdate(rttMs);
+		}
+
+		void OnLossNotification(const LossNotification& lossNotification) override
+		{
+			encoder->OnLossNotification(lossNotification);
+		}
+
+		EncoderInfo GetEncoderInfo() const override
+		{
+			auto info = encoder->GetEncoderInfo();
+			info.apply_alignment_to_all_simulcast_layers = true;
+			return info;
+		}
+
+	private:
+		const std::unique_ptr<webrtc::VideoEncoder> encoder;
+	};
+
 	// libwebrtc's software encoders. On Linux H264 moves to a hardware
 	// encoder (GStreamer: VA-API/NVENC) when the system has one. Hardware
 	// H264 runs per simulcast layer behind SimulcastEncoderAdapter, which
@@ -1340,7 +1417,10 @@ namespace
 			if (hardware && lower(format.name) == "h264")
 				return std::make_unique<webrtc::SimulcastEncoderAdapter>(env, hardware.get(), &software, format);
 #endif
-			return software.Create(env, format);
+			auto encoder = software.Create(env, format);
+			if (!encoder)
+				return nullptr;
+			return std::make_unique<SimulcastAlignedEncoder>(std::move(encoder));
 		}
 
 	private:

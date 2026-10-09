@@ -159,8 +159,9 @@ impl Engine {
         check(unsafe { ffi::gm_audio_configure(self.raw(), options.as_ptr()) })
     }
 
-    /// Applications playing sound, without this process:
-    /// `[{"id","name","streams"}]`.
+    /// Applications playing sound, without this process and without what
+    /// virtual output devices play on: `[{"id","name","streams"}]`. No two
+    /// entries have the same `name`, which is the one to show.
     pub fn audio_apps(&self) -> Result<Value> {
         // SAFETY: live engine.
         owned_json(unsafe { ffi::gm_audio_apps(self.raw()) })
@@ -563,8 +564,10 @@ impl Source {
 
     /// Sound of other applications (source audio), separate from the
     /// microphone: `{"app"?: id from [`Engine::audio_apps`]}`; without an
-    /// id, every application but this one. Not available on Windows yet: an
-    /// error there, and [`Engine::audio_apps`] lists nothing.
+    /// id, every application but this one, each captured where it plays and
+    /// not where a virtual output device (an echo canceller, a combined
+    /// sink) plays it on. Not available on Windows yet: an error there, and
+    /// [`Engine::audio_apps`] lists nothing.
     pub fn app_audio(engine: &Engine, options: &Value) -> Result<Self> {
         let options = json_arg(options)?;
         // SAFETY: live engine, NUL-terminated JSON.

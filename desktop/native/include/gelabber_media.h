@@ -149,12 +149,20 @@ GM_API gm_source* gm_source_new_test_pattern(gm_engine* engine, int width, int h
 GM_API gm_source* gm_source_new_screen(gm_engine* engine, const char* options_json);
 /* Applications playing sound, without this process:
  * [{"id","name","streams"}] (Linux: PipeWire playback streams; Windows: not
- * available yet, an empty list). */
+ * available yet, an empty list). What a virtual output device plays on to
+ * the next (an echo canceller, an equaliser, a combined sink, a loopback) is
+ * no application's sound and not listed. "name" is for showing and differs
+ * between any two entries: applications that call themselves the same are
+ * "name (id)", next to an entry whose id is that name and chooses them all. */
 GM_API char* gm_audio_apps(gm_engine* engine);
 /* Sound of other applications as an audio track for source audio, 48 kHz
  * stereo, separate from the microphone: {"app"?: id from gm_audio_apps;
  * default "" = every application but this one}. Applications that start
- * playing later are included. gm_source_state adds "streams".
+ * playing later are included. This process's own sound stays out also where
+ * it plays through a virtual output device: each application is captured
+ * where it plays, never where such a device plays it on.
+ * gm_source_state adds "streams", and "underruns" and "overruns": how often
+ * a stream that was playing ran dry or was cut back for being too far ahead.
  * Not available on Windows yet: fails with an error there. */
 GM_API gm_source* gm_source_new_app_audio(gm_engine* engine, const char* options_json);
 /* Cameras: [{"id","name"}] (Linux: V4L2 devices; Windows: DirectShow; ids
@@ -176,7 +184,12 @@ GM_API int gm_source_set_enabled(gm_source* source, int enabled);
  * {"codec"?: "video/H264"|"video/VP8"|..., "encodings"?: [{"scaleResolutionDownBy":4},{...}],
  *  "codecOptions"?: {...}, "appData"?: {...}}
  * Without "codec", video prefers H264 and falls back to VP8. The Windows
- * build has no H264. */
+ * build has no H264.
+ * Simulcast layers ("encodings") are a picture divided by their
+ * scaleResolutionDownBy, to the pixel: a video source crops its picture to
+ * what divides. That is up to 3 columns and rows for factors of 1, 2 and 4,
+ * which every picture is ready for, and more for others once they are asked
+ * for. */
 GM_API gm_producer* gm_transport_produce(gm_transport* transport, gm_source* source,
                                          const char* options_json);
 GM_API void gm_producer_free(gm_producer* producer);

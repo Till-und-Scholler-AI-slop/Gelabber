@@ -1,6 +1,7 @@
 // Screen capture on Windows. Not implemented yet: creating a source fails, and
 // the app reports the reason. The implementation belongs in this file, behind
 // the same CreateScreenSource as the PipeWire source.
+// desktop/core/tests/mediasoup_loopback.rs holds the refusal to its wording.
 
 #include "local_video_source.h"
 

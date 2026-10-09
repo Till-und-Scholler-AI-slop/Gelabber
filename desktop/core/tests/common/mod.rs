@@ -9,8 +9,14 @@ use mediasoup::prelude::*;
 use mediasoup::prelude::Transport as _;
 use serde_json::{Value, json};
 use std::{
+    cell::RefCell,
     net::{IpAddr, Ipv4Addr},
-    sync::{Arc, Mutex},
+    sync::{
+        Arc, Mutex,
+        atomic::{AtomicBool, Ordering},
+        mpsc::{self, RecvTimeoutError},
+    },
+    thread::JoinHandle,
     time::{Duration, Instant},
 };
 use tokio::runtime::Handle;
@@ -82,19 +88,43 @@ pub fn listen_ip() -> IpAddr {
     listen_ip_from(std::env::var("GELABBER_TEST_LISTEN_IP").ok().as_deref())
 }
 
+thread_local! {
+    /// On a worker's thread: dropped when the thread ends, which is how
+    /// [`Server::close`] knows.
+    static WORKER_THREAD: RefCell<Option<mpsc::Sender<()>>> = const { RefCell::new(None) };
+}
+
+/// A thread that answers a native transport's events.
+struct Serving {
+    stop: Arc<AtomicBool>,
+    thread: JoinHandle<()>,
+}
+
+/// The server's side of a test: a mediasoup worker with the gateway's router.
+/// A test ends with [`Server::close`], after the function that held the call
+/// has returned and dropped everything in it.
 pub struct Server {
     pub router: Router,
     webrtc: WebRtcServer,
-    _worker: Worker,
+    worker: Worker,
+    /// Carries the worker's requests, its closing among them.
+    manager: WorkerManager,
+    runtime: Handle,
+    serving: Mutex<Vec<Serving>>,
+    /// Disconnected once the worker's thread has ended.
+    worker_thread: Mutex<mpsc::Receiver<()>>,
 }
 
 impl Server {
     pub async fn start() -> Self {
         let manager = WorkerManager::new();
-        let worker = manager
-            .create_worker(WorkerSettings::default())
-            .await
-            .unwrap();
+        let (alive, worker_thread) = mpsc::channel();
+        let mut settings = WorkerSettings::default();
+        // Runs on the worker's thread, and is dropped before the worker runs.
+        settings.thread_initializer = Some(Arc::new(move || {
+            WORKER_THREAD.with(|slot| *slot.borrow_mut() = Some(alive.clone()));
+        }));
+        let worker = manager.create_worker(settings).await.unwrap();
         let router = worker
             .create_router(RouterOptions::new(router_codecs()))
             .await
@@ -119,7 +149,11 @@ impl Server {
         Self {
             router,
             webrtc,
-            _worker: worker,
+            worker,
+            manager,
+            runtime: Handle::current(),
+            serving: Mutex::new(Vec::new()),
+            worker_thread: Mutex::new(worker_thread),
         }
     }
 
@@ -137,64 +171,132 @@ impl Server {
         });
         (transport, params)
     }
-}
 
-/// Answers native transport events the way the media gateway does.
-pub fn serve_events(
-    runtime: Handle,
-    native: Transport,
-    server: WebRtcTransport,
-    events: std::sync::mpsc::Receiver<TransportEvent>,
-    producers: Arc<Mutex<Vec<Producer>>>,
-) {
-    std::thread::spawn(move || {
-        for event in events {
-            match event {
-                TransportEvent::Connect {
-                    request,
-                    dtls_parameters,
-                } => {
-                    let dtls_parameters: DtlsParameters =
-                        serde_json::from_value(dtls_parameters).unwrap();
-                    let result = runtime.block_on(
-                        server.connect(WebRtcTransportRemoteParameters { dtls_parameters }),
-                    );
-                    native
-                        .respond(
-                            request,
-                            result.map(|()| json!({})).map_err(|e| e.to_string()),
-                        )
-                        .unwrap();
-                }
-                TransportEvent::Produce {
-                    request,
-                    kind,
-                    rtp_parameters,
-                    ..
-                } => {
-                    let rtp: RtpParameters = serde_json::from_value(rtp_parameters).unwrap();
-                    validate_like_server(&kind, &rtp);
-                    let media = if kind == "audio" {
-                        MediaKind::Audio
-                    } else {
-                        MediaKind::Video
-                    };
-                    let result = runtime.block_on(server.produce(ProducerOptions::new(media, rtp)));
-                    let answer = result
-                        .map(|producer| {
-                            let id = producer.id().to_string();
-                            producers.lock().unwrap().push(producer);
-                            json!({ "id": id })
-                        })
-                        .map_err(|e| e.to_string());
-                    native.respond(request, answer).unwrap();
-                }
-                TransportEvent::ConnectionState(state) => {
-                    eprintln!("native {:?} transport: {state}", native.direction());
+    /// Answers the events of `native` the way the media gateway does, on a
+    /// thread of its own until [`Server::close`]. The thread holds the native
+    /// transport, which holds the sender of `events`: the transport closes
+    /// only once the thread has ended, however many handles the test drops.
+    pub fn serve(
+        &self,
+        native: Transport,
+        server: WebRtcTransport,
+        events: mpsc::Receiver<TransportEvent>,
+        producers: Arc<Mutex<Vec<Producer>>>,
+    ) {
+        let stop = Arc::new(AtomicBool::new(false));
+        let (stopped, runtime) = (stop.clone(), self.runtime.clone());
+        let thread = std::thread::spawn(move || {
+            while !stopped.load(Ordering::Acquire) {
+                match events.recv_timeout(Duration::from_millis(50)) {
+                    Ok(event) => answer(&runtime, &native, &server, &producers, event),
+                    Err(RecvTimeoutError::Timeout) => {}
+                    Err(RecvTimeoutError::Disconnected) => break,
                 }
             }
+        });
+        self.serving.lock().unwrap().push(Serving { stop, thread });
+    }
+
+    /// Ends the call and returns once nothing of it runs any more: the
+    /// threads that answered the native transports, with them the native
+    /// transports, devices and engines the test has dropped, and then the
+    /// worker and its thread.
+    ///
+    /// A test that returns without it leaves all of that running while the
+    /// process exits. libwebrtc keeps sending STUN requests, the worker
+    /// checks them with OpenSSL, and exit handlers take OpenSSL apart under
+    /// it: a segmentation fault after every test passed.
+    ///
+    /// Every transport, producer and consumer of the server keeps the worker
+    /// running. They are to be dropped before this, most simply by returning
+    /// from the function that held them.
+    pub async fn close(self) {
+        let Self {
+            router,
+            webrtc,
+            worker,
+            manager,
+            serving,
+            worker_thread,
+            ..
+        } = self;
+        blocking(move || {
+            for serving in serving.into_inner().unwrap() {
+                serving.stop.store(true, Ordering::Release);
+                serving
+                    .thread
+                    .join()
+                    .expect("the thread that answers a native transport");
+            }
+        })
+        .await;
+        drop((router, webrtc, worker));
+        let ended = blocking(move || {
+            let worker_thread = worker_thread.into_inner().unwrap();
+            worker_thread.recv_timeout(Duration::from_secs(20))
+        })
+        .await;
+        assert_eq!(
+            ended,
+            Err(RecvTimeoutError::Disconnected),
+            "the mediasoup worker still runs: a transport, producer or consumer of the server \
+             outlived the test"
+        );
+        // Only now: the worker's closing went through its executor.
+        drop(manager);
+    }
+}
+
+/// One native transport event, answered the way the media gateway does.
+fn answer(
+    runtime: &Handle,
+    native: &Transport,
+    server: &WebRtcTransport,
+    producers: &Mutex<Vec<Producer>>,
+    event: TransportEvent,
+) {
+    match event {
+        TransportEvent::Connect {
+            request,
+            dtls_parameters,
+        } => {
+            let dtls_parameters: DtlsParameters = serde_json::from_value(dtls_parameters).unwrap();
+            let result = runtime
+                .block_on(server.connect(WebRtcTransportRemoteParameters { dtls_parameters }));
+            native
+                .respond(
+                    request,
+                    result.map(|()| json!({})).map_err(|e| e.to_string()),
+                )
+                .unwrap();
         }
-    });
+        TransportEvent::Produce {
+            request,
+            kind,
+            rtp_parameters,
+            ..
+        } => {
+            let rtp: RtpParameters = serde_json::from_value(rtp_parameters).unwrap();
+            validate_like_server(&kind, &rtp);
+            let media = if kind == "audio" {
+                MediaKind::Audio
+            } else {
+                MediaKind::Video
+            };
+            let result = runtime.block_on(server.produce(ProducerOptions::new(media, rtp)));
+            let answer = result
+                .map(|producer| {
+                    let id = producer.id().to_string();
+                    producers.lock().unwrap().push(producer);
+                    json!({ "id": id })
+                })
+                .map_err(|e| e.to_string());
+            native.respond(request, answer).unwrap();
+        }
+        TransportEvent::ConnectionState(state) => {
+            eprintln!("native {:?} transport: {state}", native.direction());
+        }
+    }
 }
 
 pub async fn wait_for<F, Fut>(what: &str, timeout: Duration, mut check: F)
@@ -214,6 +316,71 @@ where
 
 pub async fn blocking<T: Send + 'static>(f: impl FnOnce() -> T + Send + 'static) -> T {
     tokio::task::spawn_blocking(f).await.unwrap()
+}
+
+/// The sender's own view of each layer it encodes.
+pub fn outbound_rtp(producer: &gelabber_media_core::Producer) -> Value {
+    let layers = producer.stats().unwrap();
+    let layers = layers.as_array().into_iter().flatten();
+    layers
+        .filter(|s| s["type"] == "outbound-rtp")
+        .map(|s| {
+            json!({
+                "rid": s["rid"], "active": s["active"],
+                "frameWidth": s["frameWidth"], "frameHeight": s["frameHeight"],
+                "framesEncoded": s["framesEncoded"], "bytesSent": s["bytesSent"],
+                "targetBitrate": s["targetBitrate"],
+                "qualityLimitationReason": s["qualityLimitationReason"],
+                "encoderImplementation": s["encoderImplementation"],
+            })
+        })
+        .collect()
+}
+
+/// Waits until RTP of two simulcast layers reached the server's producer and
+/// returns the sizes the native producer encodes them at, the small layer
+/// first. Fails with the sender's view of its layers when they do not come.
+pub async fn simulcast_sizes(
+    name: &str,
+    native: &gelabber_media_core::Producer,
+    at_server: &Producer,
+) -> Vec<(u64, u64)> {
+    let start = Instant::now();
+    let (mut live, mut sizes) = (0, Vec::new());
+    while (live, sizes.len()) != (2, 2) && start.elapsed() < Duration::from_secs(30) {
+        tokio::time::sleep(Duration::from_millis(200)).await;
+        let stats = at_server.get_stats().await.unwrap_or_default();
+        live = stats.iter().filter(|s| s.byte_count > 0).count();
+        sizes = outbound_rtp(native)
+            .as_array()
+            .into_iter()
+            .flatten()
+            .filter_map(|layer| {
+                Some((
+                    layer["frameWidth"].as_u64()?,
+                    layer["frameHeight"].as_u64()?,
+                ))
+            })
+            .collect();
+    }
+    eprintln!(
+        "{name}: {live} live layer(s) after {:?}: {}",
+        start.elapsed(),
+        outbound_rtp(native)
+    );
+    assert_eq!(live, 2, "{name} sends both simulcast layers");
+    sizes.sort_unstable();
+    sizes
+}
+
+/// The two layers of a `width` x `height` picture with the small one at
+/// 1/`factor`, the small one first: the picture keeps of each side what
+/// divides by the factor, and the small layer is that divided, to the pixel.
+/// (A local source keeps multiples of 4 by itself; the factors here are 4
+/// and 8.)
+pub fn layers_of(width: u64, height: u64, factor: u64) -> Vec<(u64, u64)> {
+    let whole = (width - width % factor, height - height % factor);
+    vec![(whole.0 / factor, whole.1 / factor), whole]
 }
 
 /// Whether the native device's RTP capabilities list `mime` (e.g.

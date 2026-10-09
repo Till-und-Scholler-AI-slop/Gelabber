@@ -6,7 +6,7 @@
 
 mod common;
 
-use common::{Server, blocking, serve_events};
+use common::{Server, blocking};
 use gelabber_media_core::{
     Audio, Device, Direction, Engine, Source, Transport, VideoFrame, VideoSink, VideoSinkLimits,
 };
@@ -21,7 +21,6 @@ use std::{
     },
     time::{Duration, Instant},
 };
-use tokio::runtime::Handle;
 
 #[derive(Default)]
 struct Seen {
@@ -354,7 +353,12 @@ fn removing_a_sink_waits_for_the_frame_in_delivery() {
 #[tokio::test(flavor = "multi_thread", worker_threads = 4)]
 async fn a_consumer_sink_keeps_the_same_limits() {
     let server = Server::start().await;
-    let runtime = Handle::current();
+    consumer_sink_limits(&server).await;
+    server.close().await;
+}
+
+/// The call of the test above, dropped on return.
+async fn consumer_sink_limits(server: &Server) {
     let engine = Engine::new(Audio::Dummy).unwrap();
     let device = Device::new(&engine).unwrap();
     let caps = serde_json::to_value(server.router.rtp_capabilities()).unwrap();
@@ -363,13 +367,7 @@ async fn a_consumer_sink_keeps_the_same_limits() {
     let producers = Arc::new(Mutex::new(Vec::new()));
     let (server_send, send_params) = server.transport().await;
     let (send, send_events) = Transport::new(&device, Direction::Send, &send_params).unwrap();
-    serve_events(
-        runtime.clone(),
-        send.clone(),
-        server_send,
-        send_events,
-        producers.clone(),
-    );
+    server.serve(send.clone(), server_send, send_events, producers.clone());
     // Audio first: the harness, unlike the gateway, passes an empty CNAME
     // on, which mediasoup refuses for a transport's first producer.
     let mic = Source::microphone(&engine, &json!({})).unwrap();
@@ -395,8 +393,7 @@ async fn a_consumer_sink_keeps_the_same_limits() {
 
     let (server_recv, recv_params) = server.transport().await;
     let (recv, recv_events) = Transport::new(&device, Direction::Recv, &recv_params).unwrap();
-    serve_events(
-        runtime.clone(),
+    server.serve(
         recv.clone(),
         server_recv.clone(),
         recv_events,
@@ -453,12 +450,16 @@ async fn a_consumer_sink_keeps_the_same_limits() {
             seen.threads
         );
         assert_eq!(seen.broken, None);
-        assert_eq!(seen.size, (128, 72));
+        // The pattern, or a step down from it. A local source keeps both
+        // sides of what it hands on a multiple of 4, so three quarters of
+        // 640x360 are 480x264.
+        let (width, height) = seen.source;
         assert!(
-            seen.source.0 > 128 && seen.source.0 * 9 == seen.source.1 * 16,
+            [(640, 360), (480, 264), (320, 180)].contains(&seen.source),
             "decoded size {:?}",
             seen.source
         );
+        assert_eq!(seen.size, (128, (height * 128 / width) & !1));
         // At most the limit; how much less is up to the decoder's pace.
         assert!((5.0..=11.0).contains(&seen.fps()), "got {}", seen.fps());
     }
