@@ -35,6 +35,7 @@ import type {
 } from "./mediasoupConnection.ts";
 import type { TrackKind } from "../ws/protocol.ts";
 import { resetSessionForTests, useSession } from "../auth/session.ts";
+import { randomUuid } from "../lib/uuid.ts";
 import {
   buildDiagnosticExport,
   diagnosticsPolling,
@@ -562,7 +563,7 @@ function install(opts?: {
                       c: "voice",
                       u: opts?.userId ?? "u-self",
                       v: opts?.mediaVersion ?? 4,
-                      generation: crypto.randomUUID(),
+                      generation: randomUuid(),
                       routerRtpCapabilities: { codecs: [] },
                     }
                   : frame.op === "produce"
@@ -3187,6 +3188,25 @@ describe("authoritative mediasoup session lifecycle", () => {
     vi.stubGlobal("Audio", Playback);
     return elements;
   }
+  it("joins and publishes without crypto.randomUUID, as on a plain-http origin", async () => {
+    const real = globalThis.crypto;
+    vi.stubGlobal("crypto", {
+      getRandomValues: (bytes: Uint8Array<ArrayBuffer>) =>
+        real.getRandomValues(bytes),
+    });
+    const env = await joined();
+    toggleShare();
+    await vi.waitFor(() => expect(env.peers[0]!.sender("s")).toBeTruthy());
+    const epochs = env.peers[0]!.publicationInputs.map((input) => input.epoch);
+    expect(epochs).toHaveLength(2);
+    for (const epoch of epochs)
+      expect(epoch).toMatch(
+        /^[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/,
+      );
+    expect(new Set(epochs).size).toBe(2);
+    expect(env.errors).toHaveLength(0);
+  });
+
   it("fails closed before ticket creation when Watch has no current Live publisher", () => {
     const env = install();
     useVoiceRoster.setState({ live: {} });

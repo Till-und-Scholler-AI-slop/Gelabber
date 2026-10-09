@@ -20,6 +20,7 @@ import { ApiError } from "../api/client.ts";
 import { scopeGeneration, stampHolds, takeStamp } from "../auth/scope.ts";
 import { useSession } from "../auth/session.ts";
 import { notifyError } from "../components/toasts.ts";
+import { randomUuid } from "../lib/uuid.ts";
 import { isPendingId } from "../servers/queries.ts";
 import { refreshChatWorkflows } from "./readState.ts";
 import * as remote from "./api.ts";
@@ -63,7 +64,7 @@ type Cache = InfiniteData<MessagePage, string | undefined>;
 const STALE_MS = 30_000;
 
 function tmpId(): string {
-  return `tmp:${crypto.randomUUID()}`;
+  return `tmp:${randomUuid()}`;
 }
 
 function now(): string {
@@ -296,7 +297,7 @@ export type SendInput = {
 function localAttachment(file: File): Attachment {
   const contentType = inferContentType(file);
   return {
-    id: `tmp:${crypto.randomUUID()}`,
+    id: `tmp:${randomUuid()}`,
     filename: file.name.replace(/^.*[/\\]/, ""),
     content_type: contentType,
     size: file.size,

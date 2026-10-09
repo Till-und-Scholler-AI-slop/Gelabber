@@ -24,6 +24,7 @@ import { ApiError, type ApiErrorCode } from "../api/client.ts";
 import { errorMessage } from "../auth/rules.ts";
 import { useSession } from "../auth/session.ts";
 import { notifyError } from "../components/toasts.ts";
+import { randomUuid } from "../lib/uuid.ts";
 import { getGateway, type Gateway } from "../ws/client.ts";
 import type { ErrFrame, SigEvent, TrackKind } from "../ws/protocol.ts";
 import {
@@ -298,7 +299,7 @@ const captureEpochs = new WeakMap<MediaStream, string>();
 function captureEpoch(stream: MediaStream): string {
   let epoch = captureEpochs.get(stream);
   if (!epoch) {
-    epoch = crypto.randomUUID();
+    epoch = randomUuid();
     captureEpochs.set(stream, epoch);
   }
   return epoch;
