@@ -130,8 +130,17 @@ variable yourself (e.g. `=0`) overrides that.
   applied. Other audio sources must report empty `AudioOptions`, because the
   voice engine applies a source's options to the shared APM.
 - Source audio (Linux): PipeWire, dlopened like libwebrtc does. One passive
-  capture stream per playback node of the chosen application
-  (`application.process.binary`; "" = every application but Gelabber),
-  mixed to 48 kHz stereo and produced as the `sa`/`la` Opus stereo track.
-  Streams the application opens later are picked up. The voice test checks
-  it against a `pw-play` noise player.
+  capture stream per playback node of the chosen application ("" = every
+  application), mixed to 48 kHz stereo and produced as the `sa`/`la` Opus
+  stereo track. Streams the application opens later are picked up. Whose a
+  playback node is comes from its client object: the registry lists the node
+  with `application.name` and `client.id` only, the client's info has
+  `application.process.id` and `application.process.binary`. The binary is
+  the application's id; its name, the id up to 0.5.2, still selects it.
+  Gelabber's own process and the ones it started (the webview's helpers) are
+  never captured, whatever is selected: the stream would carry the call. A
+  helper in a pid namespace of its own is only recognized as a native
+  PipeWire client (`pipewire.sec.pid`); pipewire-pulse passes on the pid the
+  client reports.
+  The voice test checks the list, "" and both ways to select against a
+  `pw-play` noise player while the test process plays a consumer out.

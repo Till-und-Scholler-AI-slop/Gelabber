@@ -15,14 +15,14 @@ namespace gelabber
 {
 	struct AudioApp
 	{
-		// Stable while the application runs (its binary or name).
+		// Its binary; an application that reports none goes by its name.
 		std::string id;
 		std::string name;
 		// Playback streams it has right now.
 		int streams{ 0 };
 	};
 
-	// Applications playing sound, without this process.
+	// Applications playing sound, without this process and those it started.
 	std::vector<AudioApp> ListAudioApps();
 
 	class AppAudioCapture
@@ -36,9 +36,10 @@ namespace gelabber
 		// while the captured applications play nothing.
 		using Sink = std::function<void(const int16_t* pcm)>;
 
-		// `app`: an AudioApp id, or "" for every application but this one.
-		// Streams the applications open later are picked up. Throws when the
-		// platform's sound server is unavailable.
+		// `app`: an AudioApp id, or "" for every application. This process and
+		// those it started are never captured. The application's name, the id
+		// up to 0.5.2, selects it as well. Streams the applications open later
+		// are picked up. Throws when the platform's sound server is unavailable.
 		static std::unique_ptr<AppAudioCapture> Start(const std::string& app, Sink sink);
 
 		virtual ~AppAudioCapture() = default;
