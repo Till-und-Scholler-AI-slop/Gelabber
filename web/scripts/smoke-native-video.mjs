@@ -94,6 +94,8 @@ function desktopApp(options) {
     violations: [],
     /** WebGL contexts the page created. */
     contexts: [],
+    /** Bytes of the largest frame the page was sent. */
+    largest: 0,
     /** A new frame for every view of `target`. */
     push(target, spec) {
       app.sources.set(target, spec);
@@ -120,12 +122,25 @@ function desktopApp(options) {
   };
   window.smokeApp = app;
 
+  /** With `options.scale`, what the app makes of a frame for a view: scaled
+   * down into the size the view asked for, same shape, even sides. */
+  function fitted(spec, view) {
+    const scale = Math.min(
+      view.maxWidth / spec.width,
+      view.maxHeight / spec.height,
+    );
+    if (!options.scale || scale >= 1) return spec;
+    const side = (pixels) => Math.max(2, 2 * Math.round((pixels * scale) / 2));
+    return { ...spec, width: side(spec.width), height: side(spec.height) };
+  }
+
   /** The long poll: the waiting request gets the frame it has not seen. */
   function answer(view) {
     const waiting = view.waiting;
     if (!waiting || view.seq === 0 || waiting.after === view.seq) return;
     view.waiting = null;
-    const packet = encode(view.spec, view.seq);
+    const packet = encode(fitted(view.spec, view), view.seq);
+    app.largest = Math.max(app.largest, packet.byteLength);
     // Tauri's postMessage fallback hands raw bytes over as a number array.
     waiting.resolve(options.json ? Array.from(new Uint8Array(packet)) : packet);
   }
@@ -166,7 +181,16 @@ function desktopApp(options) {
               : `consumer:${args.consumer}`;
           const spec = app.sources.get(target) ?? null;
           const id = views.size + 1;
-          views.set(id, { id, target, spec, seq: spec ? 1 : 0, waiting: null });
+          views.set(id, {
+            id,
+            target,
+            spec,
+            seq: spec ? 1 : 0,
+            waiting: null,
+            // Until a view says otherwise it is limited to 1280x720.
+            maxWidth: args.maxWidth ?? 1280,
+            maxHeight: args.maxHeight ?? 720,
+          });
           return { view: id };
         }
         case "media_view_frame":
@@ -179,6 +203,8 @@ function desktopApp(options) {
           });
         case "media_view_configure":
           if (!view || view.closed) throw "unknown view";
+          view.maxWidth = args.maxWidth;
+          view.maxHeight = args.maxHeight;
           return null;
         case "media_view_close":
           if (view && !view.closed) {
@@ -335,10 +361,19 @@ const centres = (count, width, height) =>
     height >> 1,
   ]);
 
-async function bars(page, id, target, spec, what) {
+/** Pushes `spec` and compares the bars the tile then shows; `width` and
+ * `height` when the picture is to arrive at another size than it was sent. */
+async function bars(
+  page,
+  id,
+  target,
+  spec,
+  what,
+  [width, height] = [spec.width, spec.height],
+) {
   await push(page, target, spec);
   await painted(page, target);
-  const { width, height, colours } = spec;
+  const { colours } = spec;
   const got = await read(page, id, centres(colours.length, width, height));
   assert.deepEqual(got.size, [width, height], `${what}: bitmap size`);
   assert.ok(got.shown, `${what}: the canvas is visible`);
@@ -384,9 +419,14 @@ try {
       { width: 640, height: 360, colours: BARS },
       "BT.601",
     );
-    // 480x270 CSS pixels at a device pixel ratio of 2.
+    // The page's first view opens small: how frames are carried shows in
+    // the first answer only. That one came as bytes, so the view went to the
+    // tile's size at once, 480x270 CSS pixels at a device pixel ratio of 2.
     assert.deepEqual(await named(page, "media_view_open"), [
-      { consumer: 1, maxWidth: 960, maxHeight: 540 },
+      { consumer: 1, maxWidth: 320, maxHeight: 180 },
+    ]);
+    assert.deepEqual(await named(page, "media_view_configure"), [
+      { view: 1, maxWidth: 960, maxHeight: 540 },
     ]);
     assert.equal(
       await page.evaluate(
@@ -764,34 +804,38 @@ try {
     const { page, context, problems, warnings } = await open({
       features: ["video-frames"],
       json: true,
+      scale: true,
     });
+    // An expanded tile, 1920x1080 physical pixels, on a 1080p stream.
     const ids = await show(page, [
-      { name: "Alex", consumer: 1, width: 480, screen: true },
+      { name: "Alex", consumer: 1, width: 960, screen: true },
     ]);
-    await bars(
-      page,
-      ids.Alex,
-      "consumer:1",
-      { width: 640, height: 360, colours: BARS },
-      "JSON frames",
-    );
+    const source = { width: 1920, height: 1080, colours: BARS, bt709: true };
+    await bars(page, ids.Alex, "consumer:1", source, "JSON frames", [320, 180]);
     await page.getByText("Geringe Bildqualität").waitFor();
     assert.equal(
       await page.evaluate(() => window.smoke.nativeVideoLimit()),
       "transport",
     );
-    assert.deepEqual((await named(page, "media_view_configure"))[0], {
-      view: 1,
-      maxWidth: 320,
-      maxHeight: 180,
-      maxFps: 15,
-    });
+    // The view never asked for more: not even the first frame came large.
+    assert.deepEqual(await named(page, "media_view_open"), [
+      { consumer: 1, maxWidth: 320, maxHeight: 180 },
+    ]);
+    assert.deepEqual(await named(page, "media_view_configure"), [
+      { view: 1, maxWidth: 320, maxHeight: 180, maxFps: 15 },
+    ]);
+    assert.equal(
+      await page.evaluate(() => window.smokeApp.largest),
+      32 + 320 * 180 * 1.5,
+      "numbers in the largest JSON frame",
+    );
     await bars(
       page,
       ids.Alex,
       "consumer:1",
-      { width: 320, height: 180, colours: BARS },
-      "small JSON frames",
+      { ...source, colours: [...BARS].reverse() },
+      "the next JSON frames",
+      [320, 180],
     );
     assert.equal(
       await page.evaluate(
@@ -804,7 +848,7 @@ try {
     Object.assign(
       ids,
       await show(page, [
-        { name: "Alex", consumer: 1, width: 480, screen: true },
+        { name: "Alex", consumer: 1, width: 960, screen: true },
         { name: "Ich", source: 7, width: 480, mirror: true },
       ]),
     );
@@ -817,6 +861,10 @@ try {
       maxHeight: 180,
       maxFps: 15,
     });
+    assert.equal(
+      await page.evaluate(() => window.smokeApp.largest),
+      32 + 320 * 180 * 1.5,
+    );
     assert.equal(warnings.length, 1, "one warning for the whole page");
     assert.match(warnings[0], /connect-src/);
     assert.deepEqual(problems, []);

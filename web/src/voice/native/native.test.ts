@@ -616,8 +616,9 @@ describe("desktop app media", () => {
       boxes.set(tile, { width: 480, height: 360 });
       const leave = attachNativeVideo(track, tile);
       await tick();
+      // The page's first view starts small; the layer does not wait for it.
       expect(core.calledWith("media_view_open")).toEqual([
-        { consumer: 42, maxWidth: 768, maxHeight: 576 },
+        { consumer: 42, maxWidth: 320, maxHeight: 180 },
       ]);
       // 480 * 9 / 16 lines at a device pixel ratio of 1.6.
       expect(renderedVideoHeight(track.id)).toBe(432);

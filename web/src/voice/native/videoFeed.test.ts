@@ -189,15 +189,16 @@ async function settled(): Promise<void> {
 
 let app: FakeApp;
 let page: ReturnType<typeof fakePage>["page"];
+let host: NativeVideoHost;
 let warn: MockInstance<typeof console.warn>;
 
 beforeEach(() => {
   vi.useFakeTimers();
   app = new FakeApp();
   setNativeBridgeForTests(app);
-  const fake = fakePage();
-  page = fake.page;
-  resetNativeVideoForTests(fake.host);
+  ({ page, host } = fakePage());
+  // A page that has had its first frame; the start of one is further down.
+  resetNativeVideoForTests(host, true);
   warn = vi.spyOn(console, "warn").mockImplementation(() => undefined);
 });
 afterEach(() => {
@@ -754,8 +755,80 @@ describe("native video feed", () => {
   });
 });
 
-describe("in-page video that has to stay small", () => {
-  it("detects frames that arrive as JSON and stops asking for large ones", async () => {
+describe("in-page video on a page that has had no frame yet", () => {
+  beforeEach(() => resetNativeVideoForTests(host));
+
+  it("opens views small until a frame has arrived as bytes", async () => {
+    const changed = vi.fn();
+    subscribeNativeVideoLimit(changed);
+    const track = remote();
+    attachNativeVideo(track, page.canvas("tile", 800, 450));
+    attachNativeVideo(
+      new NativeTrack("video", "Kamera", { source: 7 }),
+      page.canvas("self", 100, 50),
+    );
+    await settled();
+    // How frames are carried shows in the first answer only; as JSON a
+    // 1600x900 one would be two million numbers.
+    expect(app.named("media_view_open")).toEqual([
+      { consumer: 42, maxWidth: 320, maxHeight: 180 },
+      { source: 7, maxWidth: 200, maxHeight: 100 },
+    ]);
+    // The server is asked for the layer the tile will show all the same.
+    expect(nativeCanvasHeight(track.id)).toBe(900);
+    await vi.advanceTimersByTimeAsync(1_000);
+    expect(app.named("media_view_configure")).toEqual([]);
+
+    app.deliver(1, packet(1, 320, 180));
+    await settled();
+    // Bytes: every open view goes to its canvas's size, without the wait.
+    expect(app.named("media_view_configure")).toEqual([
+      { view: 1, maxWidth: 1600, maxHeight: 900 },
+    ]);
+    expect(nativeVideoLimit()).toBeNull();
+    expect(changed).not.toHaveBeenCalled();
+    expect(warn).not.toHaveBeenCalled();
+    page.frame();
+    expect(page.shows).toEqual(["tile:1"]);
+
+    // Views that open from now on start at their canvas's size.
+    attachNativeVideo(
+      new NativeTrack("video", "x", { consumer: 43 }),
+      page.canvas("late", 640, 360),
+    );
+    await settled();
+    expect(app.named("media_view_open")[2]).toEqual({
+      consumer: 43,
+      maxWidth: 1280,
+      maxHeight: 720,
+    });
+  });
+
+  it("lets a view grow that was still opening when the first frame came", async () => {
+    attachNativeVideo(remote(), page.canvas("tile", 800, 450));
+    await settled();
+    app.holdOpen = true;
+    attachNativeVideo(
+      new NativeTrack("video", "x", { consumer: 43 }),
+      page.canvas("late", 640, 360),
+    );
+    await settled();
+    expect(app.named("media_view_open")[1]).toEqual({
+      consumer: 43,
+      maxWidth: 320,
+      maxHeight: 180,
+    });
+    app.deliver(1, packet(1, 320, 180));
+    await settled();
+    app.release?.();
+    await settled();
+    expect(app.named("media_view_configure")).toEqual([
+      { view: 1, maxWidth: 1600, maxHeight: 900 },
+      { view: 2, maxWidth: 1280, maxHeight: 720 },
+    ]);
+  });
+
+  it("detects frames that arrive as JSON and never asks for large ones", async () => {
     const changed = vi.fn();
     subscribeNativeVideoLimit(changed);
     const track = remote();
@@ -763,18 +836,18 @@ describe("in-page video that has to stay small", () => {
     attachNativeVideo(track, page.canvas("tile", 800, 450), painted);
     await settled();
     expect(app.named("media_view_open")).toEqual([
-      { consumer: 42, maxWidth: 1600, maxHeight: 900 },
+      { consumer: 42, maxWidth: 320, maxHeight: 180 },
     ]);
     expect(nativeVideoLimit()).toBeNull();
 
     // Tauri's postMessage fallback: the bytes as a number array.
-    app.deliver(1, Array.from(new Uint8Array(packet(1, 1280, 720))));
+    app.deliver(1, Array.from(new Uint8Array(packet(1, 320, 180))));
     await settled();
     expect(nativeVideoLimit()).toBe("transport");
     expect(changed).toHaveBeenCalledTimes(1);
     expect(warn).toHaveBeenCalledTimes(1);
     expect(String(warn.mock.calls[0][0])).toContain("connect-src");
-    // At once, not after the usual wait.
+    // At once, not after the usual wait: fewer frames as well.
     expect(app.named("media_view_configure")).toEqual([
       { view: 1, maxWidth: 320, maxHeight: 180, maxFps: 15 },
     ]);
@@ -805,6 +878,27 @@ describe("in-page video that has to stay small", () => {
       { source: 7, maxWidth: 200, maxHeight: 100, maxFps: 15 },
       { consumer: 43, maxWidth: 320, maxHeight: 180, maxFps: 15 },
     ]);
+    // Nothing ever asked for more.
+    await vi.advanceTimersByTimeAsync(1_000);
+    for (const args of [
+      ...app.named("media_view_open"),
+      ...app.named("media_view_configure"),
+    ]) {
+      expect(args.maxWidth).toBeLessThanOrEqual(320);
+      expect(args.maxHeight).toBeLessThanOrEqual(180);
+    }
+  });
+
+  it("opens a view small that has no canvas with a layout", async () => {
+    attachNativeVideo(remote(), {
+      name: "no layout",
+      width: 0,
+      height: 0,
+    } as FakeCanvas);
+    await settled();
+    expect(app.named("media_view_open")).toEqual([
+      { consumer: 42, maxWidth: 320, maxHeight: 180 },
+    ]);
   });
 
   it("takes a typed array for what it is", async () => {
@@ -817,6 +911,10 @@ describe("in-page video that has to stay small", () => {
     page.frame();
     expect(page.shows).toEqual(["tile:1"]);
     expect(nativeVideoLimit()).toBeNull();
+    // Bytes like any other: the view grows.
+    expect(app.named("media_view_configure")).toEqual([
+      { view: 1, maxWidth: 800, maxHeight: 450 },
+    ]);
   });
 
   it("keeps video small on a page without WebGL", async () => {
@@ -828,5 +926,10 @@ describe("in-page video that has to stay small", () => {
     expect(app.named("media_view_open")).toEqual([
       { consumer: 42, maxWidth: 320, maxHeight: 180, maxFps: 15 },
     ]);
+    // Frames as bytes change nothing about that.
+    app.deliver(1, packet(1, 320, 180));
+    await settled();
+    await vi.advanceTimersByTimeAsync(1_000);
+    expect(app.named("media_view_configure")).toEqual([]);
   });
 });

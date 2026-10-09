@@ -50,7 +50,8 @@ const HYSTERESIS = 0.1;
  * side when measured, four times that at 2160p. Larger canvases scale the
  * picture up. */
 const MAX_PIXELS = 1920 * 1080;
-/** What a view gets when frames cannot be carried or converted quickly. */
+/** What a view gets when frames cannot be carried or converted quickly, and
+ * the size of every view until the page knows that they can. */
 const LIMITED = { maxWidth: 320, maxHeight: 180, maxFps: 15 };
 
 /** `transport`: the app's binary IPC is blocked for this origin and frames
@@ -127,6 +128,10 @@ let unwatch: (() => void) | null = null;
 let raf: number | null = null;
 let limit: NativeVideoLimit | null = null;
 const limitListeners = new Set<() => void>();
+/** A frame has arrived as bytes on this page. Only the first answer tells
+ * how the app's IPC carries frames here, and a large one as JSON would be
+ * millions of numbers: until then every view asks for a small picture. */
+let carried = false;
 /** The feeds a refresh paints, and the picture size the last one left the
  * painters' canvas at. */
 const due: Feed[] = [];
@@ -172,6 +177,14 @@ function limitTo(reason: NativeVideoLimit): void {
   );
   for (const feed of feeds.values()) feed.resize(true);
   for (const listener of [...limitListeners]) listener();
+}
+
+/** The app's IPC carries frames as bytes: the views may grow to what their
+ * canvases show. */
+function bytesCarried(): void {
+  if (carried) return;
+  carried = true;
+  for (const feed of feeds.values()) feed.resize(true);
 }
 
 /** Why in-page video is kept small on this page, if it is. */
@@ -278,7 +291,7 @@ class Feed {
 
   private async open(): Promise<void> {
     this.state = "opening";
-    const request = this.wanted();
+    const request = this.request();
     let view: number;
     try {
       ({ view } = await invokeNative<{ view: number }>("media_view_open", {
@@ -349,6 +362,8 @@ class Feed {
       previous.displayHeight !== frame.displayHeight
     )
       this.resize(previous === null);
+    // After the frame, so that the size asked for fits its shape.
+    if (limit === null) bytesCarried();
     schedulePaint();
     this.pull();
   }
@@ -419,15 +434,6 @@ class Feed {
       width = Math.max(width, wide);
       height = Math.max(height, high);
     }
-    if (limit !== null)
-      return {
-        maxWidth: Math.min(even(width) || LIMITED.maxWidth, LIMITED.maxWidth),
-        maxHeight: Math.min(
-          even(height) || LIMITED.maxHeight,
-          LIMITED.maxHeight,
-        ),
-        maxFps: LIMITED.maxFps,
-      };
     if (width === 0) return null;
     // A turned picture: whichever way round the app reads the limits, the
     // longer side has to fit.
@@ -443,6 +449,25 @@ class Feed {
     };
   }
 
+  /** What the app is asked for: `wanted`, or no more than a small picture
+   * while the page cannot take large ones or does not know yet. */
+  private request(): Request | null {
+    const wanted = this.wanted();
+    if (limit === null && carried) return wanted;
+    const small: Request = {
+      maxWidth: Math.min(
+        wanted?.maxWidth ?? LIMITED.maxWidth,
+        LIMITED.maxWidth,
+      ),
+      maxHeight: Math.min(
+        wanted?.maxHeight ?? LIMITED.maxHeight,
+        LIMITED.maxHeight,
+      ),
+    };
+    if (limit !== null) small.maxFps = LIMITED.maxFps;
+    return small;
+  }
+
   /** A canvas came, went or changed its box. `now` skips the wait. */
   resize(now = false): void {
     if (!this.live) return;
@@ -454,7 +479,7 @@ class Feed {
 
   private configure(): void {
     if (this.state !== "open") return;
-    const request = this.wanted();
+    const request = this.request();
     const reported = this.reported;
     if (
       !request ||
@@ -536,11 +561,16 @@ export function nativeCanvasHeight(trackId: string): number {
   return feeds.get(trackId)?.shownHeight() ?? 0;
 }
 
-/** Tests: a page of their own (`undefined`: the real one), nothing open. */
-export function resetNativeVideoForTests(replacement?: NativeVideoHost): void {
+/** Tests: a page of their own (`undefined`: the real one), nothing open.
+ * `bytes`: as if a frame had already arrived as bytes. */
+export function resetNativeVideoForTests(
+  replacement?: NativeVideoHost,
+  bytes = false,
+): void {
   for (const feed of [...feeds.values()]) feed.close();
   host = replacement ?? page;
   limit = null;
   limitListeners.clear();
+  carried = bytes;
   left = 0;
 }
