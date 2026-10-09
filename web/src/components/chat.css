@@ -399,6 +399,19 @@
 .lr-composer-row textarea:focus-visible {
   outline: none;
 }
+@media (pointer: coarse) {
+  /* Phones show the whole draft, up to max-height. Browsers without
+     field-sizing keep the single scrolling line. */
+  .lr-composer-row textarea {
+    field-sizing: content;
+  }
+  /* Sized by its content, the empty field would otherwise wrap a long hint. */
+  .lr-composer-row textarea::placeholder {
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+  }
+}
 .lr-composer-icon,
 .lr-composer-send {
   display: grid;

@@ -913,6 +913,7 @@ function Composer({
   const fileInput = useRef<HTMLInputElement>(null);
   const composerInput = useRef<HTMLTextAreaElement>(null);
   const composerForm = useRef<HTMLFormElement>(null);
+  const keepKeyboard = useRef(false);
   const revealComposerFocus = useCallback(() => {
     const form = composerForm.current;
     const pane = form?.closest<HTMLElement>(".lr-message-pane");
@@ -978,6 +979,8 @@ function Composer({
     setDraft("");
     pickFile(null);
     onDraftStop?.();
+    if (keepKeyboard.current) composerInput.current?.focus();
+    keepKeyboard.current = false;
   };
 
   const insertText = (text: string) => {
@@ -1138,6 +1141,14 @@ function Composer({
             disabled={disabled}
             aria-label="Senden"
             title="Senden"
+            // A tap would move focus to the button and close the on-screen
+            // keyboard after every message.
+            onPointerDown={(event) => {
+              keepKeyboard.current =
+                event.pointerType !== "mouse" &&
+                document.activeElement === composerInput.current;
+              if (keepKeyboard.current) event.preventDefault();
+            }}
             className="lr-composer-send"
           >
             <SendIcon size={17} />
