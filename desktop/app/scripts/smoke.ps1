@@ -1,6 +1,8 @@
 # Starts the built desktop app on a stand-in server origin (smoke_server.py)
 # and fails unless the page reached the media commands, and only those. The
-# Windows counterpart of smoke.sh; needs python and the WebView2 Runtime.
+# Windows counterpart of smoke.sh, without its second part: what the app does
+# when the page's web process ended is Linux only. Needs python and the
+# WebView2 Runtime.
 # Usage: smoke.ps1 -App <path to gelabber-desktop.exe> -Abi <expected ABI version>
 param(
   [Parameter(Mandatory = $true)][string]$App,

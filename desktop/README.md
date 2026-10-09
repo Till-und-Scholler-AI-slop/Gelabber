@@ -22,7 +22,7 @@ Not a product yet.
 | `core/tests/source_preview.rs` | Video sinks for views in the app: a local source without a producer, scaling and rate limits, sinks going away mid-frame |
 | `core/tests/screen_capture.rs` | Screen capture through the portal, H264, mediasoup, native decode, and the screen as the web client shares it: VP8 in two simulcast layers (`GELABBER_TEST_SCREEN=1`) |
 | `app/` | Tauri 2 app `gelabber-desktop`: window on the server origin, bundled setup page, media commands (`src/media.rs`) |
-| `app/scripts/smoke.sh` | Starts the app on a stand-in origin under Xvfb and checks which commands the page reaches and that the frames of a test-pattern view arrive |
+| `app/scripts/smoke.sh` | Starts the app on a stand-in origin under Xvfb and checks which commands the page reaches and that the frames of a test-pattern view arrive; then kills the page's web process and checks that the app loads the page again |
 | `core/tests/voice.rs` | Microphone modes, RNNoise, device selection, Opus through mediasoup, playout (`GELABBER_TEST_AUDIO=1`) |
 
 ## Why a shared library with a C ABI
@@ -85,6 +85,12 @@ down crashes inside the driver when it frees its GL contexts
 2.52.6, with either renderer setting), which left a core dump and a crash
 notification behind every close. An app that is killed instead of closed
 (SIGTERM, the end of the session) still leaves the web process to that.
+When the web process ends by itself while the app runs (a crash, the
+kernel's out-of-memory killer), the app closes what the page had running,
+as a page load does, and loads the page again: the reload keys are a script
+of the page and gone with it. If it ends again within a minute, the setup
+page opens with the reason; if that does not stay up either, the view is
+left as it is.
 
 ## Design rules
 
