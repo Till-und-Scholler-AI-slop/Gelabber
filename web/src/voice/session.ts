@@ -3085,8 +3085,17 @@ async function publishLocal(
               .catch(() => {});
           return;
         }
-        if (self) setPub(self, audioKind, true);
-        sendPub(audioKind, true);
+        if (audio.readyState === "ended") {
+          // Switched off, or gone, while the publish was under way: the room
+          // has been told so. Close this producer only, never a newer sound.
+          if (connection.sender(audioKind) === audioSender)
+            await connection
+              .closeSource(audioKind, audioSender.producerId)
+              .catch(() => {});
+        } else {
+          if (self) setPub(self, audioKind, true);
+          sendPub(audioKind, true);
+        }
       }
     }
     if (current()) {

@@ -4053,6 +4053,46 @@ describe("display-source audio", () => {
     expect(useVoice.getState().sharing).toBe(true);
   });
 
+  it("does not announce sound that was switched off while its publish was under way", async () => {
+    useMediaSettings.getState().patch({ sourceAudioShare: "on" });
+    const answer = deferred();
+    const env = await joined({
+      gateProduce: (kind) => (kind === "sa" ? answer.promise : undefined),
+    });
+    toggleShare();
+    await vi.waitFor(() =>
+      expect(
+        env.mediaSent.some(
+          (frame) => frame.op === "produce" && frame.k === "sa",
+        ),
+      ).toBe(true),
+    );
+    const capture = useVoice.getState().localScreen!;
+    useMediaSettings.getState().patch({ sourceAudioShare: "off" });
+    expect(trackStopped(capture.getAudioTracks()[0])).toBe(true);
+    expect(announced(env, "sa")).toEqual(["u"]);
+
+    // The producer that arrives after all is closed, not announced.
+    answer.resolve();
+    await vi.waitFor(() =>
+      expect(env.mediaSent.some((frame) => frame.op === "closeProducer")).toBe(
+        true,
+      ),
+    );
+    expect(env.peers[0]?.sender("sa")).toBeUndefined();
+    expect(announced(env, "sa")).toEqual(["u"]);
+    expect(useVoice.getState().participants["u-self"]?.pubs).toEqual([
+      "a",
+      "s",
+    ]);
+    expect(useVoice.getState().sourceAudio.s).toBe("off");
+    // The video is not part of it.
+    expect(env.peers[0]?.sender("s")).toBeTruthy();
+    expect(trackStopped(capture.getVideoTracks()[0])).toBe(false);
+    expect(useVoice.getState().sharing).toBe(true);
+    expect(env.errors).toEqual([]);
+  });
+
   it("shares no sound that was switched off while the picker was open", async () => {
     useMediaSettings.getState().patch({ sourceAudioShare: "on" });
     const picker = deferred();
@@ -4478,6 +4518,57 @@ describe("stream sound in the desktop app", () => {
       expect(env.errors).toEqual([]);
     },
   );
+
+  it("leaves the sound switched on again alone when the one before it arrives late", async () => {
+    const answer = deferred();
+    let held = false;
+    const { env, app } = await joined(APP_06, {
+      gateProduce: (kind) => {
+        if (kind !== "sa" || held) return undefined;
+        held = true;
+        return answer.promise;
+      },
+    });
+    toggleShare();
+    await vi.waitFor(() => expect(produced(env, "sa")).toHaveLength(1));
+    const capture = useVoice.getState().localScreen!;
+    const [first] = capture.getAudioTracks();
+
+    useMediaSettings.getState().patch({ sourceAudioShare: "off" });
+    expect(first.readyState).toBe("ended");
+    useMediaSettings.getState().patch({ sourceAudioShare: "on" });
+    await vi.waitFor(() => expect(env.peers[0]?.sender("sa")).toBeTruthy());
+    const second = env.peers[0]!.sender("sa")!;
+    expect(second.track).not.toBe(first);
+    await vi.waitFor(() =>
+      expect(useVoice.getState().participants["u-self"]?.pubs).toContain("sa"),
+    );
+
+    // Microphone, video and both sounds: the late one is through as well.
+    answer.resolve();
+    await vi.waitFor(() => expect(env.peers[0]!.tracks).toBe(4));
+    await new Promise((resolve) => setTimeout(resolve, 0));
+    expect(env.peers[0]!.sender("sa")).toBe(second);
+    expect(second.track?.readyState).toBe("live");
+    expect(
+      env.mediaSent.some(
+        (frame) =>
+          frame.op === "closeProducer" &&
+          frame.producerId === second.producerId,
+      ),
+    ).toBe(false);
+    expect(
+      env.sent.flatMap((frame) =>
+        frame.op === "sig" && "k" in frame && frame.k === "sa" ? [frame.t] : [],
+      ),
+    ).toEqual(["u", "p"]);
+    expect(useVoice.getState().participants["u-self"]?.pubs).toContain("sa");
+    expect(useVoice.getState().sourceAudio.s).toBe("sharing");
+    expect(app.called("media_source_close")).toEqual([
+      { source: app.sounds[0] },
+    ]);
+    expect(env.errors).toEqual([]);
+  });
 
   it("tells when the chosen application plays nothing, not for a short pause", async () => {
     useMediaSettings
