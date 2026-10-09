@@ -14,10 +14,11 @@ use gelabber_media_core::{
 };
 use serde_json::{Value, json};
 use std::{
-    collections::HashMap,
+    collections::{HashMap, HashSet},
     sync::{
-        Arc, Mutex, OnceLock,
+        Arc, Mutex, OnceLock, Weak,
         atomic::{AtomicU64, Ordering},
+        mpsc,
     },
 };
 use tauri::{
@@ -36,7 +37,7 @@ pub struct Media {
     engine: OnceLock<Engine>,
     next: AtomicU64,
     devices: Mutex<HashMap<u64, Device>>,
-    transports: Mutex<HashMap<u64, Transport>>,
+    transports: Mutex<HashMap<u64, Arc<PageTransport>>>,
     sources: Mutex<HashMap<u64, Source>>,
     producers: Mutex<HashMap<u64, Shared<Producer>>>,
     consumers: Mutex<HashMap<u64, Shared<Consumer>>>,
@@ -48,6 +49,165 @@ type Result<T> = std::result::Result<T, String>;
 
 fn err(error: impl std::fmt::Display) -> String {
     error.to_string()
+}
+
+/// Why a transport's request is refused: the page that would answer it was
+/// replaced by a page load.
+const PAGE_GONE: &str = "the page went away";
+/// Or the page closed the transport, and with it its way to answer.
+const TRANSPORT_CLOSED: &str = "transport closed";
+
+/// A transport and what the page still owes it. The core waits for the
+/// page's answer to a `connect` or `produce` request without a limit and
+/// holds the transport's lock meanwhile, which closing a producer or consumer
+/// of the transport needs too. So every request gets an answer: the page's,
+/// or a refusal from here once the page cannot give one any more.
+struct PageTransport {
+    native: Transport,
+    requests: Mutex<Requests>,
+}
+
+#[derive(Default)]
+struct Requests {
+    /// Sent to the page and not answered yet.
+    open: HashSet<u64>,
+    /// Why nobody answers any more, once that is so.
+    refused: Option<&'static str>,
+}
+
+impl PageTransport {
+    /// Waits in the core for the page's answers, so it runs on the blocking
+    /// pool. The call holds `self` until it ends, which is how the events
+    /// thread reaches the transport to refuse a request of the call.
+    fn produce(&self, source: &Source, options: &Value) -> Result<Producer> {
+        self.native.produce(source, options).map_err(err)
+    }
+
+    /// Like [`PageTransport::produce`], for the first consumer.
+    fn consume(&self, params: &Value) -> Result<Consumer> {
+        self.native.consume(params).map_err(err)
+    }
+
+    /// Notes a request on its way to the page. False when nobody answers
+    /// any more: the request is refused then.
+    fn ask(&self, request: u64) -> bool {
+        let refused = {
+            let mut requests = self.requests.lock().unwrap();
+            if requests.refused.is_none() {
+                requests.open.insert(request);
+            }
+            requests.refused
+        };
+        if let Some(reason) = refused {
+            self.refuse(request, reason);
+        }
+        refused.is_none()
+    }
+
+    /// The page's answer to a request.
+    fn answer(&self, request: u64, answer: std::result::Result<Value, String>) -> Result<()> {
+        self.native.respond(request, answer).map_err(err)?;
+        self.requests.lock().unwrap().open.remove(&request);
+        Ok(())
+    }
+
+    /// Nobody answers the transport's requests from here on: the open ones
+    /// are refused, and so is every later one (`ask`). A call that waited for
+    /// the page ends with an error and lets go of the transport's lock.
+    fn orphan(&self, reason: &'static str) {
+        let open = {
+            let mut requests = self.requests.lock().unwrap();
+            requests.refused.get_or_insert(reason);
+            std::mem::take(&mut requests.open)
+        };
+        for request in open {
+            self.refuse(request, reason);
+        }
+    }
+
+    fn refuse(&self, request: u64, reason: &str) {
+        // Unknown by now when the page answered in the same moment.
+        let _ = self.native.respond(request, Err(reason.into()));
+    }
+}
+
+/// Hands a transport's events to the page until the transport is freed,
+/// which ends `events`. `send` is false when the page cannot be reached.
+fn forward_events(
+    transport: Weak<PageTransport>,
+    events: mpsc::Receiver<TransportEvent>,
+    send: impl Fn(Value) -> bool,
+) {
+    for event in events {
+        let (request, message) = match event {
+            TransportEvent::Connect {
+                request,
+                dtls_parameters,
+            } => (
+                Some(request),
+                json!({
+                    "type": "connect",
+                    "request": request,
+                    "dtlsParameters": dtls_parameters,
+                }),
+            ),
+            TransportEvent::Produce {
+                request,
+                kind,
+                rtp_parameters,
+                app_data,
+            } => (
+                Some(request),
+                json!({
+                    "type": "produce",
+                    "request": request,
+                    "kind": kind,
+                    "rtpParameters": rtp_parameters,
+                    "appData": app_data,
+                }),
+            ),
+            TransportEvent::ConnectionState(state) => (
+                None,
+                json!({
+                    "type": "connectionstatechange",
+                    "state": state,
+                }),
+            ),
+        };
+        let Some(request) = request else {
+            send(message);
+            continue;
+        };
+        // A request comes from a produce or consume in progress, which holds
+        // the transport until it has the answer; without one nothing waits.
+        let Some(transport) = transport.upgrade() else {
+            continue;
+        };
+        if transport.ask(request) && !send(message) {
+            transport.orphan(PAGE_GONE);
+        }
+    }
+}
+
+/// What a page left behind.
+struct Leftovers {
+    consumers: HashMap<u64, Shared<Consumer>>,
+    producers: HashMap<u64, Shared<Producer>>,
+    sources: HashMap<u64, Source>,
+    transports: HashMap<u64, Arc<PageTransport>>,
+    devices: HashMap<u64, Device>,
+}
+
+impl Leftovers {
+    /// Producers and consumers close on their transports, a transport on its
+    /// device. Each may wait for the core.
+    fn free(self) {
+        drop(self.consumers);
+        drop(self.producers);
+        drop(self.sources);
+        drop(self.transports);
+        drop(self.devices);
+    }
 }
 
 fn get<T: Clone>(map: &Mutex<HashMap<u64, T>>, handle: u64, what: &str) -> Result<T> {
@@ -89,28 +249,81 @@ impl Media {
         }
     }
 
-    /// Drops every object of a page that went away. The registries are
-    /// emptied before anything is freed: the old page lives on until the
-    /// navigation commits, and a view it opens meanwhile has to find its
-    /// consumer or source gone (`closed_meanwhile`), or a camera would go on
-    /// capturing with no handle left to close it. Then the views end, which
-    /// hold the sinks of consumers and sources; then producers and consumers,
-    /// which close on their transports.
+    /// Creates a transport of `device` for the page. `send` hands the page
+    /// its events and is false when the page cannot be reached. Returns the
+    /// transport's handle and its id on the server.
+    fn open_transport(
+        &self,
+        device: u64,
+        direction: &str,
+        options: &Value,
+        send: impl Fn(Value) -> bool + Send + 'static,
+    ) -> Result<(u64, String)> {
+        let device = get(&self.devices, device, "device")?;
+        let direction = match direction {
+            "send" => Direction::Send,
+            "recv" => Direction::Recv,
+            other => return Err(format!("unknown direction {other}")),
+        };
+        let (native, events) = Transport::new(&device, direction, options).map_err(err)?;
+        let id = native.id().to_owned();
+        let transport = Arc::new(PageTransport {
+            native,
+            requests: Mutex::default(),
+        });
+        // Not the transport itself: the thread ends when the transport is
+        // freed, which it would keep from happening.
+        let weak = Arc::downgrade(&transport);
+        std::thread::Builder::new()
+            .name("gelabber-transport-events".into())
+            .spawn(move || forward_events(weak, events, send))
+            .map_err(err)?;
+        Ok((self.insert(&self.transports, transport), id))
+    }
+
+    /// The page closes a transport. Producers and consumers keep it alive
+    /// until they close; a request the page has not answered is refused, for
+    /// `media_transport_respond` no longer finds the transport.
+    fn close_transport(&self, transport: u64) {
+        let removed = self.transports.lock().unwrap().remove(&transport);
+        if let Some(transport) = removed {
+            transport.orphan(TRANSPORT_CLOSED);
+        }
+    }
+
+    /// Drops every object of a page that went away. A page load calls this
+    /// on the UI thread, which must not wait for the core: closing a producer
+    /// or consumer takes its transport's lock and may take the core a while,
+    /// so what is left is freed on the blocking pool.
     pub fn reset(&self) {
+        let leftovers = self.forget();
+        spawn_blocking(move || leftovers.free());
+    }
+
+    /// The part of [`Media::reset`] the next page must find done; returns
+    /// what is left to free. The registries are emptied before anything is
+    /// freed: the old page lives on until the navigation commits, and a view
+    /// it opens meanwhile has to find its consumer or source gone
+    /// (`closed_meanwhile`), or a camera would go on capturing with no handle
+    /// left to close it. Then the views end, which hold the sinks of
+    /// consumers and sources.
+    fn forget(&self) -> Leftovers {
         fn take<T>(map: &Mutex<HashMap<u64, T>>) -> HashMap<u64, T> {
             std::mem::take(&mut *map.lock().unwrap())
         }
-        let consumers = take(&self.consumers);
-        let producers = take(&self.producers);
-        let sources = take(&self.sources);
-        let transports = take(&self.transports);
-        let devices = take(&self.devices);
+        let leftovers = Leftovers {
+            consumers: take(&self.consumers),
+            producers: take(&self.producers),
+            sources: take(&self.sources),
+            transports: take(&self.transports),
+            devices: take(&self.devices),
+        };
+        // A produce or consume of the old page may still wait for its answer,
+        // with the lock of its transport that freeing the leftovers needs.
+        for transport in leftovers.transports.values() {
+            transport.orphan(PAGE_GONE);
+        }
         self.frames.reset();
-        drop(consumers);
-        drop(producers);
-        drop(sources);
-        drop(transports);
-        drop(devices);
         if let Some(viewer) = Viewer::running() {
             viewer.close_all();
         }
@@ -118,6 +331,7 @@ impl Media {
             // A microphone test the page left open.
             let _ = engine.monitor_audio(None);
         }
+        leftovers
     }
 }
 
@@ -222,52 +436,8 @@ pub async fn media_transport_create(
     options: Value,
     events: Channel<Value>,
 ) -> Result<Value> {
-    let device = get(&media.devices, device, "device")?;
-    let direction = match direction.as_str() {
-        "send" => Direction::Send,
-        "recv" => Direction::Recv,
-        other => return Err(format!("unknown direction {other}")),
-    };
-    let (transport, receiver) = Transport::new(&device, direction, &options).map_err(err)?;
-    let id = transport.id().to_owned();
-    std::thread::Builder::new()
-        .name("gelabber-transport-events".into())
-        .spawn(move || {
-            // Ends when the transport is freed and drops its sender.
-            for event in receiver {
-                let message = match event {
-                    TransportEvent::Connect {
-                        request,
-                        dtls_parameters,
-                    } => json!({
-                        "type": "connect",
-                        "request": request,
-                        "dtlsParameters": dtls_parameters,
-                    }),
-                    TransportEvent::Produce {
-                        request,
-                        kind,
-                        rtp_parameters,
-                        app_data,
-                    } => json!({
-                        "type": "produce",
-                        "request": request,
-                        "kind": kind,
-                        "rtpParameters": rtp_parameters,
-                        "appData": app_data,
-                    }),
-                    TransportEvent::ConnectionState(state) => json!({
-                        "type": "connectionstatechange",
-                        "state": state,
-                    }),
-                };
-                if events.send(message).is_err() {
-                    break;
-                }
-            }
-        })
-        .map_err(err)?;
-    let handle = media.insert(&media.transports, transport);
+    let send = move |message| events.send(message).is_ok();
+    let (handle, id) = media.open_transport(device, &direction, &options, send)?;
     Ok(json!({ "transport": handle, "id": id }))
 }
 
@@ -286,7 +456,7 @@ pub async fn media_transport_respond(
         (None, Some(message)) => Err(message),
         _ => return Err("respond with either result or error".into()),
     };
-    transport.respond(request, answer).map_err(err)
+    transport.answer(request, answer)
 }
 
 #[tauri::command]
@@ -296,20 +466,18 @@ pub async fn media_transport_restart_ice(
     ice_parameters: Value,
 ) -> Result<()> {
     let transport = get(&media.transports, transport, "transport")?;
-    blocking(move || transport.restart_ice(&ice_parameters).map_err(err)).await
+    blocking(move || transport.native.restart_ice(&ice_parameters).map_err(err)).await
 }
 
 #[tauri::command]
 pub async fn media_transport_stats(media: State<'_, Media>, transport: u64) -> Result<Value> {
     let transport = get(&media.transports, transport, "transport")?;
-    blocking(move || transport.stats().map_err(err)).await
+    blocking(move || transport.native.stats().map_err(err)).await
 }
 
 #[tauri::command]
 pub async fn media_transport_close(media: State<'_, Media>, transport: u64) -> Result<()> {
-    let removed = media.transports.lock().unwrap().remove(&transport);
-    // Producers and consumers keep the transport alive until they close.
-    drop(removed);
+    media.close_transport(transport);
     Ok(())
 }
 
@@ -398,7 +566,7 @@ pub async fn media_produce(
 ) -> Result<Value> {
     let transport = get(&media.transports, transport, "transport")?;
     let source = get(&media.sources, source, "source")?;
-    let producer = blocking(move || transport.produce(&source, &options).map_err(err)).await?;
+    let producer = blocking(move || transport.produce(&source, &options)).await?;
     let mut result = json!({
         "id": producer.id(),
         "rtpParameters": producer.rtp_parameters().map_err(err)?,
@@ -497,7 +665,7 @@ pub async fn media_consume(
     let transport = get(&media.transports, transport, "transport")?;
     let audio = params["kind"] == "audio";
     let consumer = blocking(move || {
-        let consumer = transport.consume(&params).map_err(err)?;
+        let consumer = transport.consume(&params)?;
         // Silent until the page attaches it to an output, like a browser
         // track without an audio element.
         if audio {
@@ -1018,6 +1186,360 @@ mod tests {
             Ok(true)
         );
         assert!(media.frames.view(late).is_err());
+    }
+
+    /// How long a test waits for something that has to happen.
+    const LIMIT: Duration = Duration::from_secs(10);
+
+    /// Runs `job` on a thread of its own and gives up after [`LIMIT`]: what a
+    /// page load or a closing transport does must not wait for the page.
+    fn within<T: Send + 'static>(what: &str, job: impl FnOnce() -> T + Send + 'static) -> T {
+        let (done, result) = mpsc::channel();
+        std::thread::spawn(move || {
+            let _ = done.send(job());
+        });
+        result
+            .recv_timeout(LIMIT)
+            .unwrap_or_else(|_| panic!("{what} did not return"))
+    }
+
+    /// What a router offers, enough to load a device without a server.
+    fn router_capabilities() -> Value {
+        let feedback = json!([
+            {"type": "nack", "parameter": ""},
+            {"type": "nack", "parameter": "pli"},
+            {"type": "ccm", "parameter": "fir"},
+            {"type": "goog-remb", "parameter": ""},
+            {"type": "transport-cc", "parameter": ""},
+        ]);
+        let extension = |kind: &str, uri: &str, id: u32| {
+            json!({
+                "kind": kind,
+                "uri": uri,
+                "preferredId": id,
+                "preferredEncrypt": false,
+                "direction": "sendrecv",
+            })
+        };
+        let mid = "urn:ietf:params:rtp-hdrext:sdes:mid";
+        let send_time = "http://www.webrtc.org/experiments/rtp-hdrext/abs-send-time";
+        json!({
+            "codecs": [
+                {
+                    "kind": "audio",
+                    "mimeType": "audio/opus",
+                    "clockRate": 48000,
+                    "channels": 2,
+                    "preferredPayloadType": 100,
+                    "parameters": {},
+                    "rtcpFeedback": [
+                        {"type": "nack", "parameter": ""},
+                        {"type": "transport-cc", "parameter": ""},
+                    ],
+                },
+                {
+                    "kind": "video",
+                    "mimeType": "video/VP8",
+                    "clockRate": 90000,
+                    "preferredPayloadType": 101,
+                    "parameters": {},
+                    "rtcpFeedback": feedback,
+                },
+                {
+                    "kind": "video",
+                    "mimeType": "video/rtx",
+                    "clockRate": 90000,
+                    "preferredPayloadType": 102,
+                    "parameters": {"apt": 101},
+                    "rtcpFeedback": [],
+                },
+            ],
+            "headerExtensions": [
+                extension("audio", mid, 1),
+                extension("video", mid, 1),
+                extension("audio", send_time, 4),
+                extension("video", send_time, 4),
+            ],
+        })
+    }
+
+    /// A transport no server stands behind, without an address to try.
+    fn transport_options() -> Value {
+        json!({
+            "id": "11111111-1111-4111-8111-111111111111",
+            "iceParameters": {
+                "usernameFragment": "abcdabcdabcdabcd",
+                "password": "abcdefghijklmnopqrstuvwxyz012345",
+                "iceLite": true,
+            },
+            "iceCandidates": [],
+            "dtlsParameters": {
+                "role": "auto",
+                "fingerprints": [{
+                    "algorithm": "sha-256",
+                    "value": "82:5A:68:3D:36:C3:0A:DE:AF:E7:32:43:D2:88:83:57:\
+                              AC:2D:65:E5:80:C4:B6:FB:AF:1A:A0:21:9F:6D:0C:AD",
+                }],
+            },
+        })
+    }
+
+    /// What the server announces for somebody's microphone.
+    fn consumer_announcement(number: u32) -> Value {
+        json!({
+            "id": format!("33333333-3333-4333-8333-{number:012}"),
+            "producerId": format!("44444444-4444-4444-8444-{number:012}"),
+            "kind": "audio",
+            "rtpParameters": {
+                "mid": number.to_string(),
+                "codecs": [{
+                    "mimeType": "audio/opus",
+                    "payloadType": 100,
+                    "clockRate": 48000,
+                    "channels": 2,
+                    "parameters": {},
+                    "rtcpFeedback": [],
+                }],
+                "headerExtensions": [],
+                "encodings": [{"ssrc": 1000 + number}],
+                "rtcp": {"cname": "gelabber", "reducedSize": true, "mux": true},
+            },
+        })
+    }
+
+    /// A transport of a page in a call without a server. Its events arrive
+    /// here where the page's channel would get them; the test plays the page.
+    struct Call {
+        media: Arc<Media>,
+        engine: Engine,
+        transport: u64,
+        events: mpsc::Receiver<Value>,
+    }
+
+    impl Call {
+        fn new(direction: &str) -> Self {
+            Self::with_page(direction, |_, _| {})
+        }
+
+        /// `page` sees every event as the page would, on the events thread
+        /// and before the next event is looked at.
+        fn with_page(direction: &str, page: impl Fn(&Media, &Value) + Send + 'static) -> Self {
+            let media = Arc::new(Media::default());
+            let engine = Engine::new(Audio::Dummy).unwrap();
+            let device = Device::new(&engine).unwrap();
+            device.load(&router_capabilities()).unwrap();
+            let device = media.insert(&media.devices, device);
+            let (to_test, events) = mpsc::channel();
+            let seen_by = media.clone();
+            let send = move |message: Value| {
+                page(&seen_by, &message);
+                to_test.send(message).is_ok()
+            };
+            let (transport, id) = media
+                .open_transport(device, direction, &transport_options(), send)
+                .unwrap();
+            assert_eq!(id, "11111111-1111-4111-8111-111111111111");
+            Self {
+                media,
+                engine,
+                transport,
+                events,
+            }
+        }
+
+        fn transport(&self) -> Arc<PageTransport> {
+            get(&self.media.transports, self.transport, "transport").unwrap()
+        }
+
+        /// The transport's next request to the page: its type and number.
+        fn request(&self) -> (String, u64) {
+            loop {
+                let event = self.events.recv_timeout(LIMIT).expect("a request");
+                if let Some(request) = event["request"].as_u64() {
+                    return (event["type"].as_str().unwrap().to_owned(), request);
+                }
+            }
+        }
+
+        /// The page's `media_transport_respond`.
+        fn answer(&self, request: u64, result: Value) {
+            self.transport().answer(request, Ok(result)).unwrap();
+        }
+
+        fn produce(&self, source: &Source) -> mpsc::Receiver<Result<Producer>> {
+            produce(self.transport(), source)
+        }
+
+        /// What `media_consume` runs on the blocking pool.
+        fn consume(&self, number: u32) -> mpsc::Receiver<Result<Consumer>> {
+            let transport = self.transport();
+            let (done, outcome) = mpsc::channel();
+            std::thread::spawn(move || {
+                let _ = done.send(transport.consume(&consumer_announcement(number)));
+            });
+            outcome
+        }
+
+        /// Whether the transport is freed, which ends its events. Nothing
+        /// holds it any more then: no producer, no consumer, no call.
+        fn freed(&self) -> bool {
+            let deadline = Instant::now() + LIMIT;
+            loop {
+                let left = deadline.saturating_duration_since(Instant::now());
+                match self.events.recv_timeout(left) {
+                    Ok(_) => {}
+                    Err(mpsc::RecvTimeoutError::Disconnected) => return true,
+                    Err(mpsc::RecvTimeoutError::Timeout) => return false,
+                }
+            }
+        }
+    }
+
+    /// What `media_produce` runs on the blocking pool, on the transport it
+    /// looked up; the outcome arrives when the call ends.
+    fn produce(transport: Arc<PageTransport>, source: &Source) -> mpsc::Receiver<Result<Producer>> {
+        let source = source.clone();
+        let (done, outcome) = mpsc::channel();
+        std::thread::spawn(move || {
+            let _ = done.send(transport.produce(&source, &json!({})));
+        });
+        outcome
+    }
+
+    /// The error a call ended with.
+    fn failure<T>(outcome: &mpsc::Receiver<Result<T>>, what: &str) -> String {
+        match outcome.recv_timeout(LIMIT) {
+            Ok(Err(error)) => error,
+            Ok(Ok(_)) => panic!("{what} succeeded"),
+            Err(_) => panic!("{what} still waits for the page"),
+        }
+    }
+
+    /// In a call, the page starts another producer and is reloaded before it
+    /// answered the `produce` request. The call in the core waits for that
+    /// answer with the transport's lock, which closing the microphone's
+    /// producer needs: the page load froze the app for good.
+    #[test]
+    fn a_page_load_ends_a_produce_that_waits_for_the_page() {
+        let call = Call::new("send");
+        let microphone = Source::microphone(&call.engine, &json!({})).unwrap();
+        let produced = call.produce(&microphone);
+        let (kind, request) = call.request();
+        assert_eq!(kind, "connect");
+        call.answer(request, json!({}));
+        let (kind, request) = call.request();
+        assert_eq!(kind, "produce");
+        call.answer(
+            request,
+            json!({"id": "22222222-2222-4222-8222-222222222222"}),
+        );
+        let producer = produced.recv_timeout(LIMIT).unwrap().unwrap();
+        assert_eq!(producer.id(), "22222222-2222-4222-8222-222222222222");
+        call.media
+            .insert(&call.media.producers, Arc::new(Mutex::new(producer)));
+
+        let camera = Source::test_pattern(&call.engine, 320, 180, 15).unwrap();
+        let pending = call.produce(&camera);
+        assert_eq!(call.request().0, "produce");
+        let media = call.media.clone();
+        within("the page load", move || media.reset());
+        let error = failure(&pending, "the produce");
+        assert!(error.contains(PAGE_GONE), "{error}");
+        // The microphone's producer could close.
+        assert!(call.freed());
+        assert!(call.media.producers.lock().unwrap().is_empty());
+        assert!(call.media.transports.lock().unwrap().is_empty());
+    }
+
+    /// The page answered `connect` and was replaced before the `produce`
+    /// request that follows reached it: that one was not open at the page
+    /// load, and still nobody is left to answer it.
+    #[test]
+    fn a_request_after_the_page_load_is_refused() {
+        let call = Call::with_page("send", |media, event| {
+            if event["type"] == "connect" {
+                let transports = media.transports.lock().unwrap();
+                let transport = transports.values().next().cloned().unwrap();
+                drop(transports);
+                let request = event["request"].as_u64().unwrap();
+                transport.answer(request, Ok(json!({}))).unwrap();
+                media.reset();
+            }
+        });
+        let camera = Source::test_pattern(&call.engine, 320, 180, 15).unwrap();
+        let pending = call.produce(&camera);
+        let error = failure(&pending, "the produce");
+        assert!(error.contains(PAGE_GONE), "{error}");
+        assert!(call.freed());
+    }
+
+    /// Joining a call with several people in it: the consumers are made at
+    /// once. The first waits for the page's answer to `connect`, the others
+    /// for the transport's lock, and each of them asks to connect again when
+    /// its turn comes, because the transport still is not connected.
+    #[test]
+    fn a_page_load_ends_the_calls_queued_behind_one_that_waits() {
+        let call = Call::new("recv");
+        let first = call.consume(1);
+        assert_eq!(call.request().0, "connect");
+        let queued = [call.consume(2), call.consume(3)];
+        let media = call.media.clone();
+        within("the page load", move || media.reset());
+        failure(&first, "the first consume");
+        for consume in &queued {
+            failure(consume, "a queued consume");
+        }
+        assert!(call.freed());
+    }
+
+    /// The page closes a transport while a produce on it waits for the
+    /// page: `media_transport_respond` no longer finds the transport, so
+    /// the page's answer would never arrive.
+    #[test]
+    fn closing_a_transport_ends_a_produce_that_waits_for_the_page() {
+        let call = Call::new("send");
+        let camera = Source::test_pattern(&call.engine, 320, 180, 15).unwrap();
+        let pending = call.produce(&camera);
+        assert_eq!(call.request().0, "connect");
+        // Another produce of the page has looked the transport up.
+        let looked_up = call.transport();
+        let media = call.media.clone();
+        let transport = call.transport;
+        within("closing the transport", move || {
+            media.close_transport(transport)
+        });
+        failure(&pending, "the produce");
+        // It asks to connect after the close.
+        failure(&produce(looked_up, &camera), "a produce after the close");
+        assert!(call.freed());
+    }
+
+    /// A page load frees what the page left on another thread than its own,
+    /// the UI's: closing in the core may take a while.
+    #[test]
+    fn a_page_load_frees_the_leftovers_off_its_thread() {
+        struct Dropped(mpsc::Sender<std::thread::ThreadId>);
+        impl Drop for Dropped {
+            fn drop(&mut self) {
+                let _ = self.0.send(std::thread::current().id());
+            }
+        }
+
+        let media = Media::default();
+        let engine = Engine::new(Audio::Dummy).unwrap();
+        let source = Source::test_pattern(&engine, 320, 180, 15).unwrap();
+        // A sink is freed with its source.
+        let (dropped, freed_on) = mpsc::channel();
+        let dropped = Dropped(dropped);
+        source
+            .set_video_sink(Some(Box::new(move |_| {
+                let _ = &dropped;
+            })))
+            .unwrap();
+        media.insert(&media.sources, source);
+        media.reset();
+        let freed_on = freed_on.recv_timeout(LIMIT).expect("the source is freed");
+        assert_ne!(freed_on, std::thread::current().id());
     }
 
     /// The server origin's permission set grants exactly the media commands.
