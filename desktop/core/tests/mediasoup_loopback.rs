@@ -6,11 +6,14 @@
 //! mediasoup version the Gelabber media gateway runs, and media flows both ways.
 //!
 //! Opus and VP8 always run. H264 runs where the core has it (not on Windows);
-//! GELABBER_EXPECT_H264=1 makes a core without it fail.
+//! GELABBER_EXPECT_H264=1 makes a core without it fail, and so does
+//! GELABBER_EXPECT_ENCODER, which names the H264 encoder to find.
 
 mod common;
 
-use common::{Server, blocking, check_encoder, h264_under_test, serve_events, wait_for};
+use common::{
+    Server, blocking, check_encoder, h264_demanded_by, h264_under_test, serve_events, wait_for,
+};
 use gelabber_media_core::{Audio, Device, Direction, Engine, Source, Transport, VideoFrame};
 use mediasoup::prelude::*;
 // Trait methods (id, produce, consume); the name is taken by the native transport.
@@ -371,6 +374,22 @@ async fn native_client_round_trips_media_through_mediasoup() {
     drop(consumers);
     drop((audio, video));
     drop((send, recv));
+}
+
+/// A run that names the H264 encoder to find must not pass on a core without
+/// H264 by skipping the H264 half.
+#[test]
+fn an_expected_encoder_demands_h264() {
+    assert_eq!(h264_demanded_by(None, None), None);
+    assert_eq!(h264_demanded_by(Some("0"), Some("")), None);
+    assert_eq!(
+        h264_demanded_by(Some("1"), None),
+        Some("GELABBER_EXPECT_H264=1")
+    );
+    assert_eq!(
+        h264_demanded_by(None, Some("GStreamer x264enc")),
+        Some("GELABBER_EXPECT_ENCODER is set")
+    );
 }
 
 fn local_candidates(transport: &Transport) -> Vec<Value> {
