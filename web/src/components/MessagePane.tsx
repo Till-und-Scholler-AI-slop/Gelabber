@@ -52,6 +52,7 @@ import {
   useSendMessage,
 } from "../messages/queries.ts";
 import { attachmentUrl } from "../messages/api.ts";
+import { pastedFile } from "../messages/clipboard.ts";
 import {
   ALLOWED_TYPES,
   CONTENT_MAX,
@@ -1121,6 +1122,13 @@ function Composer({
             }}
             onBlur={() => onDraftStop?.()}
             onKeyDown={onKeyDown}
+            onPaste={(event) => {
+              if (!canSendFiles) return;
+              const pasted = pastedFile(event.clipboardData);
+              if (!pasted) return;
+              event.preventDefault();
+              pickFile(pasted);
+            }}
             rows={1}
             placeholder={`Nachricht an ${mention}${channelName}`}
           />
