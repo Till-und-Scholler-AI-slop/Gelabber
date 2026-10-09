@@ -700,6 +700,71 @@ jobs:
             throw "$($problems.Count) of the checks on the binaries failed"
           }
 
+      # Where the mediasoup of the tests below listens. libwebrtc gathers no
+      # loopback candidate: it sends from the machine's own address and gets
+      # its answers there. Linux carries that to and from 127.0.0.1; Windows
+      # is reported to keep a socket on an adapter's address and 127.0.0.1
+      # apart. What this machine does is tried here, with datagrams between
+      # sockets bound like the two ends of the call, and where 127.0.0.1 is
+      # out of reach the tests' server moves to the machine's address
+      # (GELABBER_TEST_LISTEN_IP, desktop/core/tests/common/mod.rs).
+      - name: Address for the loopback call
+        if: ${{ !cancelled() && steps.core.outcome == 'success' }}
+        run: |
+          $PSNativeCommandUseErrorActionPreference = $true
+          # Whether a datagram from a socket on $from reaches one on $to, and as coming from $from.
+          function Reaches($from, $to) {
+            $sender = $null
+            $receiver = $null
+            try {
+              $sender = [Net.Sockets.UdpClient]::new([Net.IPEndPoint]::new($from, 0))
+              $receiver = [Net.Sockets.UdpClient]::new([Net.IPEndPoint]::new($to, 0))
+              $receiver.Client.ReceiveTimeout = 2000
+              $null = $sender.Send([byte[]]@(1), 1, [Net.IPEndPoint]$receiver.Client.LocalEndPoint)
+              $source = [Net.IPEndPoint]::new([Net.IPAddress]::Any, 0)
+              $null = $receiver.Receive([ref]$source)
+              Write-Host "UDP from $from to ${to}: arrives, sent by $($source.Address)"
+              return $source.Address.Equals($from)
+            } catch {
+              Write-Host "UDP from $from to ${to}: $($_.Exception.Message)"
+              return $false
+            } finally {
+              if ($sender) { $sender.Dispose() }
+              if ($receiver) { $receiver.Dispose() }
+            }
+          }
+          # The address this machine sends from: a UDP socket takes it on when
+          # it is connected, without sending anything.
+          $own = $null
+          $route = [Net.Sockets.UdpClient]::new([Net.Sockets.AddressFamily]::InterNetwork)
+          try {
+            $route.Connect('192.0.2.1', 9)
+            $own = ([Net.IPEndPoint]$route.Client.LocalEndPoint).Address
+          } catch {
+            Write-Host "no route to tell this machine's address by: $($_.Exception.Message)"
+          } finally {
+            $route.Dispose()
+          }
+          $loopback = [Net.IPAddress]::Loopback
+          $listen = $null
+          if ($own -and -not [Net.IPAddress]::IsLoopback($own)) {
+            $there = Reaches $own $loopback
+            $back = Reaches $loopback $own
+            if ($there -and $back) {
+              $listen = $loopback
+            } elseif (Reaches $own $own) {
+              $listen = $own
+            }
+          }
+          if (-not $listen) {
+            '::warning::No address was found that this machine reaches from its own: the tests keep their server on 127.0.0.1'
+          } elseif ($listen.Equals($loopback)) {
+            'the server of the tests stays on 127.0.0.1'
+          } else {
+            "the server of the tests listens on ${listen}: 127.0.0.1 is out of reach from there"
+            Add-Content $env:GITHUB_ENV "GELABBER_TEST_LISTEN_IP=$listen"
+          }
+
       # The call the Linux job makes, on dummy audio and test patterns through
       # an in-process mediasoup worker: ICE, DTLS, SRTP, Opus, VP8 simulcast,
       # decode, and the video sinks of views inside the app. This core has no
@@ -715,10 +780,8 @@ jobs:
         run: cargo test --release --locked --manifest-path desktop/Cargo.toml -p gelabber-media-core -- --nocapture --test-threads=1
 
       # A native crash ends the test without a word; libwebrtc's log says
-      # where it got to. Before it, whether this machine carries the call at
-      # all: the test's mediasoup listens on 127.0.0.1, libwebrtc sends from
-      # the machine's own address, and Windows keeps the two apart more
-      # strictly than Linux. Never fails by itself.
+      # where it got to, and how far ICE came on the address chosen above.
+      # Never fails by itself.
       - name: Loopback call with libwebrtc logs
         if: ${{ failure() && steps.tests.outcome == 'failure' }}
         timeout-minutes: 10
@@ -727,30 +790,6 @@ jobs:
           RUST_BACKTRACE: "1"
         run: |
           $PSNativeCommandUseErrorActionPreference = $false
-          function Reaches($from, $to) {
-            $sender = [Net.Sockets.UdpClient]::new([Net.IPEndPoint]::new($from, 0))
-            $receiver = [Net.Sockets.UdpClient]::new([Net.IPEndPoint]::new($to, 0))
-            $receiver.Client.ReceiveTimeout = 2000
-            try {
-              $null = $sender.Send([byte[]]@(1), 1, [Net.IPEndPoint]$receiver.Client.LocalEndPoint)
-              $source = [Net.IPEndPoint]::new([Net.IPAddress]::Any, 0)
-              $null = $receiver.Receive([ref]$source)
-              "UDP from $from to ${to}: arrives"
-            } catch {
-              "UDP from $from to ${to}: $($_.Exception.Message)"
-            } finally {
-              $sender.Dispose()
-              $receiver.Dispose()
-            }
-          }
-          $own = [Net.NetworkInformation.NetworkInterface]::GetAllNetworkInterfaces() |
-            Where-Object { $_.OperationalStatus -eq 'Up' -and $_.NetworkInterfaceType -ne 'Loopback' } |
-            ForEach-Object { $_.GetIPProperties().UnicastAddresses.Address } |
-            Where-Object { $_.AddressFamily -eq 'InterNetwork' } | Select-Object -First 1
-          if ($own) {
-            Reaches $own ([Net.IPAddress]::Loopback)
-            Reaches ([Net.IPAddress]::Loopback) $own
-          }
           cargo test --release --locked --manifest-path desktop/Cargo.toml -p gelabber-media-core --test mediasoup_loopback -- --nocapture --test-threads=1
           exit 0
 
