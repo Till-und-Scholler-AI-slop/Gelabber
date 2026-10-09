@@ -32,6 +32,7 @@ import { useCapabilities } from "../voice/capabilities.ts";
 import {
   sharesSourceAudio,
   sourceAudioChoice,
+  sourceAudioScope,
   useMediaSettings,
 } from "../voice/settings.ts";
 import { notify } from "./toasts.ts";
@@ -100,9 +101,16 @@ export function VoiceControls({ canGoLive = false }: { canGoLive?: boolean }) {
   const live = useVoice((s) => s.live);
   const openSettings = useMediaSettings((s) => s.openDialog);
   const sourceAudioShare = useMediaSettings((s) => s.sourceAudioShare);
+  const sourceAudioApp = useMediaSettings((s) => s.sourceAudioApp);
   const patch = useMediaSettings((s) => s.patch);
   const capable = useCapabilities();
   const sound = sharesSourceAudio({ sourceAudioShare });
+  // The desktop app captures the sound without a picker: the switch itself
+  // says whose it is, before a share and while one runs.
+  const soundScope = sourceAudioScope({ sourceAudioApp });
+  const soundLabel =
+    (sound ? "Stream-Ton nicht mehr teilen" : "Stream-Ton teilen") +
+    (soundScope ? ` (${soundScope})` : "");
   const btn = "voice-control voice-control-compact";
 
   return (
@@ -152,10 +160,8 @@ export function VoiceControls({ canGoLive = false }: { canGoLive?: boolean }) {
         <button
           type="button"
           aria-pressed={sound}
-          aria-label={
-            sound ? "Stream-Ton nicht mehr teilen" : "Stream-Ton teilen"
-          }
-          title={sound ? "Stream-Ton nicht mehr teilen" : "Stream-Ton teilen"}
+          aria-label={soundLabel}
+          title={soundLabel}
           onClick={() => patch({ sourceAudioShare: sourceAudioChoice(!sound) })}
           className={btn}
         >

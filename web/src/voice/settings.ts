@@ -570,6 +570,20 @@ export function sourceAudioCarriesCall(
   );
 }
 
+/** Whose sound a share carries in the desktop app, for the controls to name:
+ * the chosen application's, or every application's. The app captures it by
+ * itself, so no picker has told the user; a browser's own picker has, and
+ * there is nothing to name. */
+export function sourceAudioScope(
+  settings: Pick<MediaSettings, "sourceAudioApp"> = useMediaSettings.getState(),
+): string | null {
+  if (!hasNativeFeature("app-audio")) return null;
+  if (settings.sourceAudioApp) return `Ton von „${settings.sourceAudioApp}“`;
+  return hasNativeFeature("app-audio-excludes-self")
+    ? "Ton aller Anwendungen außer Gelabber"
+    : "Ton aller Anwendungen";
+}
+
 export function resetMediaSettingsForTests(): void {
   useMediaSettings.setState({
     ...DEFAULT_MEDIA_SETTINGS,

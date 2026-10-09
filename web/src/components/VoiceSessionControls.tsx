@@ -23,6 +23,7 @@ import {
   SOURCE_AUDIO_CARRIES_CALL,
   sharesSourceAudio,
   sourceAudioCarriesCall,
+  sourceAudioScope,
   useMediaSettings,
 } from "../voice/settings.ts";
 import "../voice/room.css";
@@ -88,6 +89,14 @@ export function VoiceSessionControls({
   const notes = voice.sourceAudioNote;
   const failed = notes.s?.failed ?? notes.l?.failed;
   const silent = notes.s?.silent ?? notes.l?.silent;
+  // Without a chosen application the desktop app sends the sound of all of
+  // them with the one window that was picked, and it does so unasked. While
+  // such a share runs, the dock says so next to the switch that ends it.
+  const everyApplication =
+    sourceAudioApp === "" &&
+    (voice.sourceAudio.s === "sharing" || voice.sourceAudio.l === "sharing")
+      ? sourceAudioScope({ sourceAudioApp })
+      : null;
   // A browser hands sound over in its picker only: a share that started
   // without it stays without it.
   const nextShare =
@@ -251,6 +260,11 @@ export function VoiceSessionControls({
       {silent ? (
         <p role="status" className="voice-source-audio-notice">
           Von „{silent}“ kommt gerade kein Ton.
+        </p>
+      ) : null}
+      {everyApplication ? (
+        <p role="status" className="voice-source-audio-notice">
+          Dein Stream sendet den {everyApplication}.
         </p>
       ) : null}
       {sharesSound &&
