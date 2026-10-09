@@ -1,4 +1,4 @@
-# The server origin's only permissions: the media core commands
+# The server origin's permissions besides `allow-open-setup`: the media core commands
 # (src/commands.rs). Granted at runtime to the configured server origin.
 [[set]]
 identifier = "media"

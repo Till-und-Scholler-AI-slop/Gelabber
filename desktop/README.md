@@ -59,11 +59,13 @@ cargo run --manifest-path desktop/Cargo.toml -p gelabber-desktop -- --server htt
 Server choice, first match wins: `--server <url>`, `GELABBER_SERVER`, then
 `server` in `~/.config/io.github.till-und-scholler-ai-slop.gelabber/desktop.json`.
 Without one the window shows the bundled setup page, which writes that file
-once something accepts connections at the address. The window menu
-(Gelabber → Server wechseln …) leads back to that page at any time, also from
-an error page; "Neu laden" reloads the current page.
+once something accepts connections at the address. The window has no menu
+bar. If the stored server does not answer at start, the setup page opens with
+the reason and a retry button. **Strg+Umschalt+S** and "Server wechseln …" in
+the web client's user menu lead back to that page at any time; **F5** or
+**Strg+R** reload the current page.
 Only the configured origin gets the `media` permission set
-(`app/permissions/media.toml`); every page load closes the previous page's
+(`app/permissions/media.toml`) plus `allow-open-setup`; every page load closes the previous page's
 transports, producers and sources. WebKitGTK needs `libwebkit2gtk-4.1`.
 On the NVIDIA driver the app sets `WEBKIT_DISABLE_DMABUF_RENDERER=1`
 before GTK starts: WebKitGTK's DMA-BUF renderer otherwise fails under Wayland
