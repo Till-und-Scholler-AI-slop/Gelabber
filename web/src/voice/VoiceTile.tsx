@@ -10,7 +10,17 @@ import {
 } from "react";
 
 import { CollapseIcon, ExpandIcon } from "../components/Icons.tsx";
-import { isNativeStream } from "./native/tracks.ts";
+import {
+  hasNativeFeature,
+  subscribeNativeFeatures,
+} from "./native/features.ts";
+import { NativeVideoCanvas } from "./native/NativeVideoCanvas.tsx";
+import { isNativeStream, type NativeTrack } from "./native/tracks.ts";
+import {
+  nativeDisplayTrack,
+  nativeVideoLimit,
+  subscribeNativeVideoLimit,
+} from "./native/videoFeed.ts";
 import {
   closeNativeViewer,
   nativeVideoTrack,
@@ -91,10 +101,25 @@ function VideoSurface({
   sourceWatch,
   sourceAudioNotice,
 }: VoiceTileProps & { onEnlarge?: () => void; viewer?: boolean }) {
-  // Native streams (desktop app) are decoded by the native core; the webview
-  // cannot show them, so the tile keeps its placeholder.
+  // Native streams (desktop app) are decoded by the native core and cannot
+  // feed a <video>. An app that hands frames to the page has them drawn on
+  // a canvas in its place; an app up to 0.5.x keeps the placeholder.
   const nativeVideo = isNativeStream(given);
   const stream = nativeVideo ? null : given;
+  const inPage = useSyncExternalStore(
+    subscribeNativeFeatures,
+    videoFrames,
+    videoFrames,
+  );
+  const drawn = nativeVideo && inPage ? nativeDisplayTrack(given) : null;
+  const [painted, setPainted] = useState<NativeTrack | null>(null);
+  const showing = stream !== null || (drawn !== null && painted === drawn);
+  const limit = useSyncExternalStore(
+    subscribeNativeVideoLimit,
+    nativeVideoLimit,
+    nativeVideoLimit,
+  );
+  const [windowFailed, setWindowFailed] = useState<NativeTrack | null>(null);
   const figureRef = useRef<HTMLElement>(null);
   const [fullscreen, setFullscreen] = useState(false);
   const [fullscreenError, setFullscreenError] = useState(false);
@@ -173,19 +198,34 @@ function VideoSurface({
         expanded && !viewer ? "min-h-[40vh] sm:min-h-[56vh]" : "",
       ].join(" ")}
     >
-      <video
-        ref={ref}
-        autoPlay
-        playsInline
-        muted
-        onDoubleClick={() => void toggleFullscreen()}
-        className={[
-          "size-full",
-          screen || expanded ? "object-contain" : "object-cover",
-          mirror ? "-scale-x-100" : "",
-          stream ? "" : "opacity-0",
-        ].join(" ")}
-      />
+      {drawn ? (
+        <NativeVideoCanvas
+          key={drawn.id}
+          track={drawn}
+          onDoubleClick={() => void toggleFullscreen()}
+          onPainted={(done) => setPainted(done ? drawn : null)}
+          className={[
+            "size-full",
+            screen || expanded ? "object-contain" : "object-cover",
+            mirror ? "-scale-x-100" : "",
+            painted === drawn ? "" : "opacity-0",
+          ].join(" ")}
+        />
+      ) : (
+        <video
+          ref={ref}
+          autoPlay
+          playsInline
+          muted
+          onDoubleClick={() => void toggleFullscreen()}
+          className={[
+            "size-full",
+            screen || expanded ? "object-contain" : "object-cover",
+            mirror ? "-scale-x-100" : "",
+            stream ? "" : "opacity-0",
+          ].join(" ")}
+        />
+      )}
       {stream && blockedStream === stream ? (
         <div className="absolute inset-0 flex flex-col items-center justify-center gap-2 bg-black/65 p-3 text-sm">
           <p role="status">Die Videowiedergabe ist blockiert.</p>
@@ -213,10 +253,12 @@ function VideoSurface({
           {sourceAudioNotice}
         </p>
       ) : null}
-      {!stream ? (
+      {!showing ? (
         <div className="absolute inset-0 flex flex-col items-center justify-center gap-1 p-3 text-center text-sm text-neutral-400 dark:text-neutral-500">
           <span>{label}</span>
-          {nativeVideo ? <NativeVideo stream={given} label={label} /> : null}
+          {nativeVideo && !inPage ? (
+            <NativeVideo stream={given} label={label} />
+          ) : null}
         </div>
       ) : null}
       <figcaption className="absolute inset-x-0 bottom-0 truncate bg-black/50 px-2 py-1 text-left text-xs">
@@ -225,6 +267,18 @@ function VideoSurface({
       {live ? (
         <span className="absolute top-2 left-2 rounded bg-red-600 px-1.5 py-0.5 text-[10px] font-semibold tracking-wide uppercase">
           Live
+        </span>
+      ) : null}
+      {drawn && limit ? (
+        <span
+          role="status"
+          title={LIMIT_REASON[limit]}
+          className={[
+            "absolute left-2 rounded bg-black/60 px-1.5 py-0.5 text-[10px]",
+            live ? "top-8" : "top-2",
+          ].join(" ")}
+        >
+          Geringe Bildqualität
         </span>
       ) : null}
       <div className="voice-video-actions">
@@ -244,6 +298,13 @@ function VideoSurface({
             {expanded ? <CollapseIcon size={16} /> : <ExpandIcon size={16} />}
           </button>
         )}
+        {drawn && drawn.handle.consumer !== undefined && !viewer ? (
+          <OwnWindow
+            track={drawn}
+            label={label}
+            onFailed={(failed) => setWindowFailed(failed ? drawn : null)}
+          />
+        ) : null}
         {onEnlarge && !fullscreen && (
           <button type="button" onClick={onEnlarge}>
             Vergrößern
@@ -270,11 +331,62 @@ function VideoSurface({
           )}
         </p>
       )}
+      {drawn && windowFailed === drawn && !fullscreenError ? (
+        <p role="status" className="voice-fullscreen-error">
+          Das Videofenster konnte nicht geöffnet werden.
+        </p>
+      ) : null}
     </figure>
   );
 }
 
-/** The desktop app shows remote video in a native window. */
+const videoFrames = () => hasNativeFeature("video-frames");
+
+const LIMIT_REASON = {
+  transport:
+    "Der Server blockiert die schnelle Bildübertragung der Desktop-App (Content-Security-Policy). Das Bild bleibt deshalb klein.",
+  renderer: "WebGL ist hier nicht verfügbar. Das Bild bleibt deshalb klein.",
+};
+
+/** Someone's stream in a window of its own, next to the tile that shows it:
+ * for a second monitor or a tiling compositor. */
+function OwnWindow({
+  track,
+  label,
+  onFailed,
+}: {
+  track: NativeTrack;
+  label: string;
+  onFailed: (failed: boolean) => void;
+}) {
+  useSyncExternalStore(
+    subscribeNativeViewers,
+    nativeViewersVersion,
+    nativeViewersVersion,
+  );
+  const consumer = track.handle.consumer;
+  if (consumer === undefined) return null;
+  const open = nativeViewerOpen(consumer);
+  return (
+    <button
+      type="button"
+      aria-pressed={open}
+      onClick={() => {
+        onFailed(false);
+        if (open) closeNativeViewer(consumer);
+        else
+          openNativeViewer(track, `${label} – Gelabber`).catch(() =>
+            onFailed(true),
+          );
+      }}
+    >
+      {open ? "Fenster schließen" : "Eigenes Fenster"}
+    </button>
+  );
+}
+
+/** Desktop apps up to 0.5.x: remote video only in a native window, no
+ * picture of the own camera or screen. */
 function NativeVideo({
   stream,
   label,
@@ -282,7 +394,11 @@ function NativeVideo({
   stream: MediaStream | null;
   label: string;
 }) {
-  useSyncExternalStore(subscribeNativeViewers, nativeViewersVersion);
+  useSyncExternalStore(
+    subscribeNativeViewers,
+    nativeViewersVersion,
+    nativeViewersVersion,
+  );
   const [failed, setFailed] = useState(false);
   const track = nativeVideoTrack(stream);
   const consumer = track?.handle.consumer;

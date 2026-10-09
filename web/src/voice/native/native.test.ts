@@ -12,6 +12,11 @@ import { setNativeBridgeForTests, type NativeBridge } from "./bridge.ts";
 import { nativeGetDisplayMedia, nativeGetUserMedia } from "./capture.ts";
 import { createNativeMicrophoneTest } from "./microphoneTest.ts";
 import {
+  attachNativeVideo,
+  resetNativeVideoForTests,
+  type NativeVideoHost,
+} from "./videoFeed.ts";
+import {
   nativeVideoTrack,
   nativeViewerHeight,
   nativeViewerOpen,
@@ -180,6 +185,11 @@ class FakeCore implements NativeBridge {
           return this.devices;
         case "media_audio_levels":
           return this.levels;
+        case "media_view_open":
+          return { view: ++this.next };
+        case "media_view_frame":
+          // No frame yet: the request waits.
+          return new Promise(() => undefined);
         case "media_audio_configure": {
           const options = args.options as { input?: string };
           if (
@@ -578,6 +588,60 @@ describe("desktop app media", () => {
     expect(core.calledWith("media_viewer_close")).toEqual([{ consumer: 42 }]);
     track.end();
     expect(nativeVideoTrack(stream)).toBeNull();
+  });
+
+  it("chooses layers by the canvases in the page and the viewer windows", async () => {
+    resetNativeViewersForTests();
+    const boxes = new Map<unknown, { width: number; height: number }>();
+    resetNativeVideoForTests({
+      painter: () => ({
+        painter: { load: () => true, show: () => undefined, dispose() {} },
+        software: false,
+      }),
+      requestFrame: () => 0,
+      cancelFrame: () => undefined,
+      hidden: () => false,
+      watch: () => () => undefined,
+      box: (canvas) => boxes.get(canvas) ?? null,
+      covers: () => false,
+      observe: () => () => undefined,
+      pixelRatio: () => 1.6,
+    } satisfies NativeVideoHost);
+    try {
+      const track = new NativeTrack("video", "Bildschirm", { consumer: 42 });
+      // Nothing shows the stream: the server sends the low layer.
+      expect(renderedVideoHeight(track.id)).toBe(0);
+      // A tile that holds a 16:9 picture letterboxed in a 4:3 box.
+      const tile = { width: 1280, height: 720 } as HTMLCanvasElement;
+      boxes.set(tile, { width: 480, height: 360 });
+      const leave = attachNativeVideo(track, tile);
+      await tick();
+      // The page's first view starts small; the layer does not wait for it.
+      expect(core.calledWith("media_view_open")).toEqual([
+        { consumer: 42, maxWidth: 320, maxHeight: 180 },
+      ]);
+      // 480 * 9 / 16 lines at a device pixel ratio of 1.6.
+      expect(renderedVideoHeight(track.id)).toBe(432);
+
+      // A viewer window next to the tile: the larger of the two decides.
+      await openNativeViewer(track, "Alex – Gelabber");
+      const [opened] = core.calledWith("media_viewer_open");
+      const events = opened.events as { onMessage: (event: unknown) => void };
+      events.onMessage({ type: "height", height: 1080 });
+      expect(renderedVideoHeight(track.id)).toBe(1080);
+      events.onMessage({ type: "height", height: 200 });
+      expect(renderedVideoHeight(track.id)).toBe(432);
+      events.onMessage({ type: "closed" });
+      expect(renderedVideoHeight(track.id)).toBe(432);
+
+      // The tile grows to the large view, then goes.
+      boxes.set(tile, { width: 1600, height: 900 });
+      expect(renderedVideoHeight(track.id)).toBe(1440);
+      leave();
+      expect(renderedVideoHeight(track.id)).toBe(0);
+    } finally {
+      resetNativeVideoForTests();
+    }
   });
 
   it("captures a camera natively", async () => {
