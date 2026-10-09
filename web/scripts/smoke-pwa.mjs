@@ -1,8 +1,8 @@
 // Production-build smoke against the real nginx: cache headers and a second
 // deployment, real Chromium manifest/SW, emulated mobile UI. Install-dialog
-// events, the gateway, the page going to the background and the notification
-// tap are synthetic (OS installation and system notifications remain device
-// checks).
+// events, the gateway, the access proxy, the page going to the background and
+// the notification tap are synthetic (OS installation and system
+// notifications remain device checks).
 /* global process, URL, window, navigator, caches, document, console, Event,
    fetch, localStorage, getComputedStyle, self, NotificationEvent, setTimeout,
    ServiceWorkerRegistration */
