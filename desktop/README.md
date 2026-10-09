@@ -94,12 +94,21 @@ notification behind every close. An app that is killed instead of closed
   by the caller after the server replied).
 - The Tauri window loads the server origin. Its native commands are narrow
   (media core only), because server-side XSS reaches them.
-- Video encode: H264 preferred, VP8 fallback. H264 uses the system's
-  GStreamer when it has a hardware element (`nvh264enc`, `vah264enc`,
-  `vah264lpenc`, `vaapih264enc`; needs gst-plugins-bad), otherwise OpenH264.
-  `GELABBER_H264_ENCODER=<element>|none` overrides the choice. Decode is
-  libwebrtc's: FFmpeg (Chrome branding) for H264, libvpx for VP8/VP9.
-  Shipping software H264 needs a licensing decision first.
+- Video encode: the app sends VP8, encoded in software by libwebrtc's
+  libvpx. The web client names the codec of every producer and takes VP8
+  wherever the device has it (`codec` in
+  `web/src/voice/mediasoupConnection.ts`), and the core produces what it is
+  asked for. The Linux core has H264 all the same, and its tests run it:
+  through the system's GStreamer when that has a hardware element
+  (`nvh264enc`, `vah264enc`, `vah264lpenc`, `vaapih264enc`; gst-plugins-bad),
+  otherwise OpenH264; `GELABBER_H264_ENCODER=<element>|none` overrides the
+  choice, and a caller that names no codec gets H264 before VP8. None of
+  that reaches the app: there gst-plugins-bad and the variable change
+  nothing. Hardware encoding in the app would start in the web client (ask
+  for `video/h264` when the core reports a hardware encoder), and shipping
+  H264 needs a licensing decision first. The Windows core is built without
+  H264. Decode is libwebrtc's: libvpx for VP8/VP9, on Linux FFmpeg (Chrome
+  branding) for H264.
 - Screen capture (Linux): xdg-desktop-portal ScreenCast picks the source,
   PipeWire delivers frames (libwebrtc's `BaseCapturerPipeWire`). The portal's
   GLib callbacks run on the capture thread, so no host main loop is needed.

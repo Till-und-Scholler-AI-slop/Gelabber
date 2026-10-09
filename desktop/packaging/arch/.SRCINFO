@@ -23,7 +23,6 @@ pkgbase = gelabber-desktop
 	optdepends = xdg-desktop-portal-hyprland: screen share on Hyprland (Omarchy)
 	optdepends = xdg-desktop-portal-gnome: screen share on GNOME
 	optdepends = xdg-desktop-portal-kde: screen share on KDE Plasma
-	optdepends = gst-plugins-bad: hardware H264 encoding (nvh264enc, vah264enc)
 	optdepends = vulkan-driver: video window (nvidia-utils, vulkan-intel, vulkan-radeon)
 	conflicts = gelabber-desktop-bin
 	conflicts = gelabber-desktop-git

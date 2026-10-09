@@ -31,7 +31,6 @@ optdepends=(
   'xdg-desktop-portal-hyprland: screen share on Hyprland (Omarchy)'
   'xdg-desktop-portal-gnome: screen share on GNOME'
   'xdg-desktop-portal-kde: screen share on KDE Plasma'
-  'gst-plugins-bad: hardware H264 encoding (nvh264enc, vah264enc)'
   'vulkan-driver: video window (nvidia-utils, vulkan-intel, vulkan-radeon)'
 )
 conflicts=('gelabber-desktop-bin' 'gelabber-desktop-git')

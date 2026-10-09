@@ -17,11 +17,11 @@ them as optional):
   webkit2gtk-4.1 gtk3 libsoup3 gst-plugins-base gst-plugins-good
   pipewire pipewire-pulse xdg-desktop-portal xdg-desktop-portal-hyprland
   vulkan-icd-loader plus the GPU's Vulkan driver (nvidia-utils, vulkan-intel)
-Hardware H264 encode: gst-plugins-bad (nvh264enc for NVIDIA, vah264enc for
-Intel/AMD VA-API). Without it the app encodes in software.
+Camera, screen and Go Live are sent as VP8, encoded in software. No
+package adds hardware encoding: the app does not use the H264 encoders of
+gst-plugins-bad.
 
 Logs: GELABBER_MEDIA_LOG=1 ./gelabber-desktop ...
-Force an H264 encoder: GELABBER_H264_ENCODER=nvh264enc|vah264enc|none
 
 Licences: THIRD-PARTY-NOTICES.txt lists the third-party software in the two
 binaries, with its licences and their texts, and what is still open. It is
