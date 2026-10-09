@@ -1,6 +1,8 @@
-// Remote video in the desktop app: the webview cannot show the native core's
-// video, so a stream opens in a native viewer window. Which consumers have a
-// window is shared by every tile showing the same stream.
+// Remote video in a native viewer window of the desktop app. Apps up to
+// 0.5.x have nothing else: their webview cannot show the native core's video.
+// Newer apps draw it in the page (videoFeed.ts) and keep the window as an
+// extra. Which consumers have a window is shared by every tile showing the
+// same stream.
 import { invokeNative, nativeBridge } from "./bridge.ts";
 import { isNativeTrack, type NativeTrack } from "./tracks.ts";
 
