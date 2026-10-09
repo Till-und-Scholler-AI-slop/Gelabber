@@ -208,12 +208,21 @@ notification behind every close. An app that is killed instead of closed
   helper in a pid namespace of its own is only recognized as a native
   PipeWire client (`pipewire.sec.pid`); pipewire-pulse passes on the pid the
   client reports.
-  Only the process a playback stream belongs to decides. Sound that another
-  process plays on is that process's stream: behind a virtual sink of
-  PipeWire's loopback or filter-chain module, "" captures an application
-  twice, at its own stream and at the chain's output, and Gelabber's playout
-  routed through such a sink is captured at the chain's output. A chosen
-  application is captured at its own stream alone.
+  The playback stream of a virtual device is no application's either: an
+  echo canceller, an equaliser or virtual surround (filter chain), a combined
+  or remapped sink and a loopback play on what was played into them, which
+  is Gelabber's playout where such a device is its output, and every other
+  application a second time. PipeWire builds them all from its loopback,
+  filter-chain, echo-cancel and combine-stream modules (pipewire-pulse's
+  `module-loopback`, `-echo-cancel`, `-combine-sink`, `-remap-sink` and
+  `-virtual-sink` included), which mark both of their streams `node.virtual`
+  and give them a `node.link-group`. Neither is in the registry's listing,
+  so the watcher binds each playback node and a stream waits for the node's
+  own info as well; a node with either property is left out of capture and
+  list. That also drops a loopback of a line input or a microphone monitor
+  from "every application". What it cannot tell is a program that records
+  other programs and plays the result as an ordinary stream of its own:
+  that stream is its application's, with whatever it carries.
   A capture stream takes its playback stream or nothing (`node.dont-fallback`,
   and `node.linger` to wait for it): WirePlumber 0.5 otherwise links the
   default source, the microphone, to a capture whose target it has not
@@ -222,6 +231,7 @@ notification behind every close. An app that is killed instead of closed
   session manager leaves the capture unlinked, so the core replaces a capture
   stream that lost its links.
   The voice test covers the list and "" while the test process plays a
-  consumer out and a player it started plays too, a player of its own that is
-  chosen by name and changes outputs, and two players on one binary under
-  different names.
+  consumer out and a player it started plays too, the same with the consumer
+  played out through a null sink that a loopback plays on to the speakers, a
+  player of its own that is chosen by name and changes outputs, and two
+  players on one binary under different names.

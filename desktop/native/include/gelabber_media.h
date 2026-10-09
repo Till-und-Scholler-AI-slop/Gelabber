@@ -149,12 +149,17 @@ GM_API gm_source* gm_source_new_test_pattern(gm_engine* engine, int width, int h
 GM_API gm_source* gm_source_new_screen(gm_engine* engine, const char* options_json);
 /* Applications playing sound, without this process:
  * [{"id","name","streams"}] (Linux: PipeWire playback streams; Windows: not
- * available yet, an empty list). */
+ * available yet, an empty list). What a virtual output device plays on to
+ * the next (an echo canceller, an equaliser, a combined sink, a loopback) is
+ * no application's sound and not listed. */
 GM_API char* gm_audio_apps(gm_engine* engine);
 /* Sound of other applications as an audio track for source audio, 48 kHz
  * stereo, separate from the microphone: {"app"?: id from gm_audio_apps;
  * default "" = every application but this one}. Applications that start
- * playing later are included. gm_source_state adds "streams".
+ * playing later are included. This process's own sound stays out also where
+ * it plays through a virtual output device: each application is captured
+ * where it plays, never where such a device plays it on.
+ * gm_source_state adds "streams".
  * Not available on Windows yet: fails with an error there. */
 GM_API gm_source* gm_source_new_app_audio(gm_engine* engine, const char* options_json);
 /* Cameras: [{"id","name"}] (Linux: V4L2 devices; Windows: DirectShow; ids

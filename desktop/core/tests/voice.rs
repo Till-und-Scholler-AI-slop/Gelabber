@@ -102,6 +102,23 @@ async fn sink_input_of(name: &str) -> String {
     panic!("no sink input of {name}");
 }
 
+/// Waits for the playback stream ("sink input") of a virtual device: one
+/// that carries what the core tells such a stream by.
+async fn playback_of_a_virtual_device() {
+    let start = Instant::now();
+    while start.elapsed() < Duration::from_secs(10) {
+        if pactl(&["list", "sink-inputs"])
+            .await
+            .lines()
+            .any(|line| line.trim_start().starts_with("node.link-group = "))
+        {
+            return;
+        }
+        tokio::time::sleep(Duration::from_millis(200)).await;
+    }
+    panic!("no sink input with a node.link-group: the loopback has no playback stream");
+}
+
 /// For `sh -c`: paplay as the application `$0` with the session's noise
 /// file, read as raw stereo.
 const NOISE_PLAYER: &str = r#"paplay --raw --rate=48000 --channels=2 --format=s16le \
@@ -390,6 +407,55 @@ async fn voice_modes_reach_a_consumer() {
     );
     drop(everything);
     drop(helper);
+
+    // The call played out through a virtual device: a sink whose sound a
+    // loopback plays on to the speakers, the way an echo canceller, an
+    // equaliser or a combined sink is built. The loopback's playback stream
+    // carries the call and is the sound server's, not this process's. It is
+    // no application: neither listed nor captured.
+    let virtual_sink = pactl(&[
+        "load-module",
+        "module-null-sink",
+        "sink_name=gelabber-virtual",
+        "sink_properties=device.description=Gelabber-Virtual",
+    ])
+    .await;
+    let loopback = pactl(&[
+        "load-module",
+        "module-loopback",
+        "source=gelabber-virtual.monitor",
+        "sink=gelabber-speakers",
+    ])
+    .await;
+    playback_of_a_virtual_device().await;
+    engine
+        .configure_audio(&json!({"output": "Gelabber-Virtual"}))
+        .unwrap();
+    let played_before = samples_played();
+    let everything = Source::app_audio(&engine, &json!({"app": ""})).unwrap();
+    assert_eq!(
+        captured_streams(&everything, 1).await,
+        1,
+        "the noise player and not the virtual device's output: {}",
+        everything.state().unwrap()
+    );
+    assert!(
+        samples_played() > played_before,
+        "this process played sound through the virtual device in the meantime"
+    );
+    let apps = engine.audio_apps().unwrap();
+    assert_eq!(
+        by_id(&apps),
+        std::slice::from_ref(player),
+        "the noise player and no virtual device"
+    );
+    drop(everything);
+    engine
+        .configure_audio(&json!({"output": speakers_id}))
+        .unwrap();
+    for module in [loopback, virtual_sink] {
+        pactl(&["unload-module", module.trim()]).await;
+    }
 
     // The same player on its own (its shell is gone before it plays) is an
     // application. It is chosen by its name here: the id up to 0.5.2, which

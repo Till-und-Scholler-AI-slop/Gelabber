@@ -22,7 +22,10 @@ namespace gelabber
 		int streams{ 0 };
 	};
 
-	// Applications playing sound, without this process and those it started.
+	// Applications playing sound, without this process and those it started,
+	// and without the playback streams of virtual devices (a loopback, a
+	// filter chain, an echo canceller, a combined sink), which play on what
+	// applications played into them.
 	// Applications that share a binary and call themselves differently are
 	// listed by name as well, next to the binary, which chooses them all.
 	std::vector<AudioApp> ListAudioApps();
@@ -39,9 +42,10 @@ namespace gelabber
 		using Sink = std::function<void(const int16_t* pcm)>;
 
 		// `app`: an AudioApp id, or "" for every application. This process and
-		// those it started are never captured. The application's name, the id
-		// up to 0.5.2, selects it as well. Streams the applications open later
-		// are picked up. Throws when the platform's sound server is unavailable.
+		// those it started are never captured, nor is what a virtual device
+		// plays on. The application's name, the id up to 0.5.2, selects it as
+		// well. Streams the applications open later are picked up. Throws
+		// when the platform's sound server is unavailable.
 		static std::unique_ptr<AppAudioCapture> Start(const std::string& app, Sink sink);
 
 		virtual ~AppAudioCapture() = default;

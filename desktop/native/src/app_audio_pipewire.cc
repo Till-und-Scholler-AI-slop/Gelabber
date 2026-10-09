@@ -10,6 +10,12 @@
 // process and of the processes it started (the webview's helpers) are never
 // captured: they carry the call itself.
 //
+// Nor is the playback stream of a virtual device: an echo canceller, a
+// loopback, a filter chain (equaliser, virtual surround) or a combined sink
+// plays on what was played into it, the call included when it is this
+// application's output, and every application's sound a second time. Only
+// the node's own info tells (node.virtual, node.link-group).
+//
 // libpipewire is loaded at runtime like libwebrtc's own PipeWire use, so the
 // core has no link-time dependency on it.
 
@@ -160,6 +166,18 @@ namespace gelabber
 			       name.rfind("ALSA plug-in [", 0) == 0 || name.rfind("Lavf", 0) == 0;
 		}
 
+		// The playback half of a virtual device: PipeWire's loopback,
+		// filter-chain, echo-cancel and combine-stream modules, which are also
+		// what pipewire-pulse loads for module-loopback, -echo-cancel,
+		// -combine-sink, -remap-sink and -virtual-sink. They mark both of
+		// their streams virtual and put them in a link group, by which the
+		// session manager keeps a device from being linked to itself.
+		bool VirtualDevice(const spa_dict* props)
+		{
+			const auto isVirtual = Lookup(props, "node.virtual");
+			return isVirtual == "true" || isVirtual == "1" || !Lookup(props, "node.link-group").empty();
+		}
+
 		struct PlaybackStream
 		{
 			uint32_t node{ 0 };
@@ -293,9 +311,9 @@ namespace gelabber
 		};
 
 		// Reports the playback streams of other applications, each once its
-		// owner is known, and their end; and nodes that lost the links into
-		// them. Created and destroyed with the loop's lock held; the events
-		// arrive on the loop thread.
+		// own properties and its owner are known, and their end; and nodes
+		// that lost the links into them. Created and destroyed with the
+		// loop's lock held; the events arrive on the loop thread.
 		class PlaybackWatcher
 		{
 		public:
@@ -345,6 +363,8 @@ namespace gelabber
 				spa_hook_remove(&registryListener);
 				for (auto& [id, client] : clients)
 					Release(*client);
+				for (auto& [id, stream] : streams)
+					Release(*stream);
 				connection.api.proxy_destroy(reinterpret_cast<pw_proxy*>(registry));
 			}
 
@@ -370,6 +390,14 @@ namespace gelabber
 
 			struct Stream
 			{
+				PlaybackWatcher* watcher{ nullptr };
+				uint32_t id{ 0 };
+				pw_proxy* proxy{ nullptr };
+				spa_hook listener{};
+				// The node's info arrived; `device` is from it.
+				bool known{ false };
+				// A virtual device's playback half, no application's sound.
+				bool device{ false };
 				uint32_t client{ SPA_ID_INVALID };
 				std::string serial;
 				std::string appName;
@@ -418,14 +446,33 @@ namespace gelabber
 				const auto [entry, fresh] = streams.try_emplace(id);
 				if (!fresh)
 					return;
-				auto& stream     = entry->second;
+				entry->second    = std::make_unique<Stream>();
+				auto& stream     = *entry->second;
+				stream.watcher   = this;
+				stream.id        = id;
 				stream.serial    = Lookup(props, "object.serial");
 				stream.appName   = Lookup(props, PW_KEY_APP_NAME);
 				stream.nodeName  = Lookup(props, PW_KEY_NODE_NAME);
 				const auto owner = Lookup(props, PW_KEY_CLIENT_ID);
 				if (!owner.empty())
 					stream.client = static_cast<uint32_t>(std::strtoul(owner.c_str(), nullptr, 10));
-				Decide(id, stream);
+				// The listing has a few of the node's properties only; whether
+				// it belongs to a virtual device is in its info.
+				stream.proxy =
+				  static_cast<pw_proxy*>(pw_registry_bind(registry, id, type, PW_VERSION_NODE, 0));
+				if (!stream.proxy)
+					return;
+				static const pw_node_events events = [] {
+					pw_node_events e{};
+					e.version = PW_VERSION_NODE_EVENTS;
+					e.info    = [](void* data, const pw_node_info* info) {
+						auto* stream = static_cast<Stream*>(data);
+						stream->watcher->OnNodeInfo(*stream, info);
+					};
+					return e;
+				}();
+				pw_node_add_listener(
+				  reinterpret_cast<pw_node*>(stream.proxy), &stream.listener, &events, &stream);
 			}
 
 			void OnGlobalRemove(uint32_t id)
@@ -452,7 +499,8 @@ namespace gelabber
 				const auto stream = streams.find(id);
 				if (stream == streams.end())
 					return;
-				const bool reported = stream->second.state == Stream::Reported;
+				const bool reported = stream->second->state == Stream::Reported;
+				Release(*stream->second);
 				streams.erase(stream);
 				if (reported)
 					removed(id);
@@ -485,15 +533,28 @@ namespace gelabber
 				client.binary = Lookup(info->props, PW_KEY_APP_PROCESS_BINARY);
 				client.name   = Lookup(info->props, PW_KEY_APP_NAME);
 				for (auto& [id, stream] : streams)
-					if (stream.client == client.id && stream.state == Stream::Waiting)
-						Decide(id, stream);
+					if (stream->client == client.id)
+						Decide(*stream);
 			}
 
-			// A stream waits for its owner's info: without it the stream might
-			// be this application's own. A client that leaves first takes its
-			// streams along.
-			void Decide(uint32_t id, Stream& stream)
+			// Sent when the node is bound and again whenever it changes (its
+			// state, with every start and stop): the first one counts.
+			void OnNodeInfo(Stream& stream, const pw_node_info* info)
 			{
+				if (stream.known || !info || !info->props || !(info->change_mask & PW_NODE_CHANGE_MASK_PROPS))
+					return;
+				stream.known  = true;
+				stream.device = VirtualDevice(info->props);
+				Decide(stream);
+			}
+
+			// A stream waits for its own info and for its owner's: without
+			// them it might be a virtual device's or this application's own.
+			// A node or a client that leaves first takes the stream along.
+			void Decide(Stream& stream)
+			{
+				if (stream.state != Stream::Waiting || !stream.known)
+					return;
 				const Client* owner = nullptr;
 				if (stream.client != SPA_ID_INVALID)
 				{
@@ -503,10 +564,12 @@ namespace gelabber
 					owner = found->second.get();
 				}
 				stream.state = Stream::Skipped;
+				if (stream.device)
+					return;
 				if (owner && (OwnProcess(owner->pid) || OwnProcess(owner->peer)))
 					return;
 				PlaybackStream playback;
-				playback.node     = id;
+				playback.node     = stream.id;
 				playback.serial   = stream.serial;
 				playback.oldId    = !stream.appName.empty() ? stream.appName : stream.nodeName;
 				playback.app.id   = owner && !owner->binary.empty() ? owner->binary : playback.oldId;
@@ -527,6 +590,15 @@ namespace gelabber
 				client.proxy = nullptr;
 			}
 
+			void Release(Stream& stream)
+			{
+				if (!stream.proxy)
+					return;
+				spa_hook_remove(&stream.listener);
+				connection.api.proxy_destroy(stream.proxy);
+				stream.proxy = nullptr;
+			}
+
 			Connection& connection;
 			const Added added;
 			const Removed removed;
@@ -535,7 +607,7 @@ namespace gelabber
 			spa_hook registryListener{};
 			spa_hook coreListener{};
 			std::map<uint32_t, std::unique_ptr<Client>> clients;
-			std::map<uint32_t, Stream> streams;
+			std::map<uint32_t, std::unique_ptr<Stream>> streams;
 			// Link -> the node it leads into.
 			std::map<uint32_t, uint32_t> links;
 			// Nodes whose last link went, until the round trip is back.
@@ -823,7 +895,7 @@ namespace gelabber
 			    playing, [node](const PlaybackStream& playback) { return playback.node == node; });
 		  });
 		// One round trip for the registry's listing, one for the info of the
-		// clients in it.
+		// clients and nodes in it.
 		if (connection.Sync(2))
 			connection.Sync(2);
 
