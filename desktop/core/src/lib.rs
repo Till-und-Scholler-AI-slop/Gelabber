@@ -99,7 +99,8 @@ pub fn set_log_level(level: LogLevel) {
 
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
 pub enum Audio {
-    /// System audio devices (PulseAudio API, served by pipewire-pulse on Omarchy).
+    /// System audio devices (Linux: PulseAudio API, served by pipewire-pulse
+    /// on Omarchy; Windows: Core Audio).
     #[default]
     Default,
     /// No audio devices; for tests and headless runs.
@@ -143,7 +144,8 @@ impl Engine {
     }
 
     /// `{"inputs":[{"id","name"}],"outputs":[...],"input","output"}`; id `""`
-    /// is the system default.
+    /// is the system default (on Windows the default device, not the default
+    /// communications device).
     pub fn audio_devices(&self) -> Result<Value> {
         // SAFETY: live engine.
         owned_json(unsafe { ffi::gm_audio_devices(self.raw()) })

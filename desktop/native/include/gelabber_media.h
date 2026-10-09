@@ -80,10 +80,14 @@ GM_API gm_engine* gm_engine_new(const char* options_json);
 GM_API void gm_engine_free(gm_engine* engine);
 
 /* Audio devices of the engine's audio device module (Linux: PulseAudio API,
- * which PipeWire serves). {"inputs":[{"id","name"}],"outputs":[{"id","name"}],
+ * which PipeWire serves; Windows: Core Audio).
+ * {"inputs":[{"id","name"}],"outputs":[{"id","name"}],
  * "input":"<id>","output":"<id>"}. The id "" is the system default; other ids
- * are the platform's device GUID where it reports one, else the display name
- * (PulseAudio). Monitor sources are not listed. */
+ * are the platform's device GUID where it reports one (Windows endpoint ids),
+ * else the display name (PulseAudio). Monitor sources are not listed.
+ * On Windows "" is the default device, not the default communications device:
+ * streams on the latter make Windows turn other applications down. It is
+ * looked up when capture or playout starts. */
 GM_API char* gm_audio_devices(gm_engine* engine);
 /* Live audio settings; every key is optional:
  * {"input"?: "<id>", "output"?: "<id>", "inputGain"?: 0..2}.
