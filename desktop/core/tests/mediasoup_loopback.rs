@@ -4,10 +4,13 @@
 //!
 //! Proves the spike: libmediasoupclient's parameters are accepted by the same
 //! mediasoup version the Gelabber media gateway runs, and media flows both ways.
+//!
+//! Opus and VP8 always run. H264 runs where the core has it (not on Windows);
+//! GELABBER_EXPECT_H264=1 makes a core without it fail.
 
 mod common;
 
-use common::{Server, blocking, check_encoder, serve_events, wait_for};
+use common::{Server, blocking, check_encoder, h264_under_test, serve_events, wait_for};
 use gelabber_media_core::{Audio, Device, Direction, Engine, Source, Transport, VideoFrame};
 use mediasoup::prelude::*;
 // Trait methods (id, produce, consume); the name is taken by the native transport.
@@ -60,11 +63,15 @@ async fn native_client_round_trips_media_through_mediasoup() {
         .map(|c| c["mimeType"].as_str().unwrap().to_ascii_lowercase())
         .collect();
     eprintln!("native receive codecs: {recv_codecs:?}");
-    for mime in ["audio/opus", "video/vp8", "video/h264"] {
+    for mime in ["audio/opus", "video/vp8"] {
         assert!(
             recv_codecs.iter().any(|c| c == mime),
             "native can receive {mime}"
         );
+    }
+    let with_h264 = h264_under_test(&recv_caps);
+    if !with_h264 {
+        eprintln!("no H264 in this core: Opus and VP8 only");
     }
     // The server parses this exact value in its `capabilities` handler.
     let _: RtpCapabilities = serde_json::from_value(recv_caps.clone()).unwrap();
@@ -82,8 +89,6 @@ async fn native_client_round_trips_media_through_mediasoup() {
     );
 
     let mic = Source::microphone(&engine, &json!({})).unwrap();
-    let h264_source = Source::test_pattern(&engine, 1280, 720, 30).unwrap();
-    let vp8_source = Source::test_pattern(&engine, 1280, 720, 30).unwrap();
 
     let audio = {
         let (send, mic) = (send.clone(), mic.clone());
@@ -98,25 +103,28 @@ async fn native_client_round_trips_media_through_mediasoup() {
     };
     // Two simulcast layers like the web client (scaleResolutionDownBy 4 and 1).
     let layers = json!([{ "scaleResolutionDownBy": 4 }, { "scaleResolutionDownBy": 1 }]);
-    let h264 = {
-        let (send, source, layers) = (send.clone(), h264_source.clone(), layers.clone());
-        blocking(move || {
-            send.produce(
-                &source,
-                &json!({"codec": "video/H264", "encodings": layers, "codecOptions": {"videoGoogleStartBitrate": 1000}}),
-            )
-        })
-        .await
-        .unwrap()
-    };
-    let vp8 = {
-        let (send, source) = (send.clone(), vp8_source.clone());
-        blocking(move || send.produce(&source, &json!({"codec": "video/VP8", "encodings": layers})))
+    let mut codecs = Vec::new();
+    if with_h264 {
+        codecs.push((
+            "H264",
+            json!({"codec": "video/H264", "encodings": layers, "codecOptions": {"videoGoogleStartBitrate": 1000}}),
+        ));
+    }
+    codecs.push(("VP8", json!({"codec": "video/VP8", "encodings": layers})));
+    // Per codec: its name and the native producer of its own test pattern.
+    let mut produced = Vec::new();
+    for (name, options) in codecs {
+        let source = Source::test_pattern(&engine, 1280, 720, 30).unwrap();
+        let send = send.clone();
+        let producer = blocking(move || send.produce(&source, &options))
             .await
-            .unwrap()
-    };
-    eprintln!("H264 rtpParameters: {}", h264.rtp_parameters().unwrap());
-    assert_eq!(server_producers.lock().unwrap().len(), 3);
+            .unwrap();
+        if name == "H264" {
+            eprintln!("H264 rtpParameters: {}", producer.rtp_parameters().unwrap());
+        }
+        produced.push((name, producer));
+    }
+    assert_eq!(server_producers.lock().unwrap().len(), 1 + produced.len());
 
     let server_producer = |id: String| {
         server_producers
@@ -127,12 +135,15 @@ async fn native_client_round_trips_media_through_mediasoup() {
             .cloned()
             .unwrap()
     };
-    let h264_server = server_producer(h264.id().to_owned());
-    let vp8_server = server_producer(vp8.id().to_owned());
+    // Per codec: name, the server's producer, the native producer.
+    let mut video: Vec<_> = produced
+        .into_iter()
+        .map(|(name, native)| (name, server_producer(native.id().to_owned()), native))
+        .collect();
     let audio_server = server_producer(audio.id().to_owned());
     assert_eq!(audio_server.kind(), MediaKind::Audio);
 
-    for (name, producer) in [("H264", &h264_server), ("VP8", &vp8_server)] {
+    for (name, producer, _) in &video {
         wait_for(
             &format!("{name} RTP at the server"),
             Duration::from_secs(20),
@@ -150,7 +161,7 @@ async fn native_client_round_trips_media_through_mediasoup() {
     // libwebrtc's bandwidth estimate and CPU budget allow it, so poll; on
     // failure print the sender's own per-layer view (qualityLimitationReason,
     // frameWidth, active) next to the server's.
-    for (name, producer, native) in [("H264", &h264_server, &h264), ("VP8", &vp8_server, &vp8)] {
+    for (name, producer, native) in &video {
         let start = Instant::now();
         let mut live = 0;
         while start.elapsed() < Duration::from_secs(20) {
@@ -194,7 +205,9 @@ async fn native_client_round_trips_media_through_mediasoup() {
         }
         assert_eq!(live, 2, "{name} sends both simulcast layers");
     }
-    check_encoder("H264", &h264.stats().unwrap());
+    if let Some((name, _, native)) = video.iter().find(|(name, ..)| *name == "H264") {
+        check_encoder(name, &native.stats().unwrap());
+    }
 
     // Receive side: the server consumes for the native client, paused until
     // the client is ready (like `consumerReady`).
@@ -209,7 +222,7 @@ async fn native_client_round_trips_media_through_mediasoup() {
     );
     let client_caps: RtpCapabilities = serde_json::from_value(recv_caps).unwrap();
     let mut consumers = Vec::new();
-    for producer in [&h264_server, &vp8_server] {
+    for (name, producer, _) in &video {
         let mut options = ConsumerOptions::new(producer.id(), client_caps.clone());
         options.paused = true;
         let server_consumer = server_recv.consume(options).await.unwrap();
@@ -224,13 +237,13 @@ async fn native_client_round_trips_media_through_mediasoup() {
             blocking(move || recv.consume(&announcement)).await.unwrap()
         };
         server_consumer.resume().await.unwrap();
-        consumers.push((server_consumer, native));
+        consumers.push((*name, server_consumer, native));
     }
     // Wait for decoded frames at the native sinks; on failure report both
     // ends (server consumer egress, libwebrtc inbound-rtp) for every codec
     // before failing.
     let mut missing = Vec::new();
-    for (server_consumer, native) in &consumers {
+    for (_, server_consumer, native) in &consumers {
         let mime =
             serde_json::to_value(&server_consumer.rtp_parameters().codecs[0]).unwrap()["mimeType"]
                 .clone();
@@ -286,7 +299,10 @@ async fn native_client_round_trips_media_through_mediasoup() {
     }
     let seen = Arc::new(Mutex::new(Seen::default()));
     let sink_seen = seen.clone();
-    let viewer = &mut consumers[1].1;
+    let (_, _, viewer) = consumers
+        .iter_mut()
+        .find(|(name, ..)| *name == "VP8")
+        .unwrap();
     viewer
         .set_video_sink(Some(Box::new(move |frame: &VideoFrame<'_>| {
             let (w, h) = (frame.width as usize, frame.height as usize);
@@ -321,6 +337,7 @@ async fn native_client_round_trips_media_through_mediasoup() {
 
     // Sender controls the web client uses: encodings with bitrate caps and
     // priority, replaceTrack, and track enabled.
+    let (_, _, vp8) = video.iter_mut().find(|(name, ..)| *name == "VP8").unwrap();
     let params = vp8.parameters().unwrap();
     assert_eq!(
         params["encodings"].as_array().map(Vec::len),
@@ -342,7 +359,6 @@ async fn native_client_round_trips_media_through_mediasoup() {
         vp8.set_parameters(&json!({"encodings": [{"priority": "urgent"}]}))
             .is_err()
     );
-    let mut vp8 = vp8;
     let replacement = Source::test_pattern(&engine, 640, 360, 15).unwrap();
     vp8.replace_source(&replacement).unwrap();
     assert!(vp8.replace_source(&mic).is_err(), "kind mismatch refused");
@@ -353,7 +369,7 @@ async fn native_client_round_trips_media_through_mediasoup() {
 
     // Native objects close in dependency order.
     drop(consumers);
-    drop((audio, h264, vp8));
+    drop((audio, video));
     drop((send, recv));
 }
 

@@ -196,6 +196,31 @@ pub async fn blocking<T: Send + 'static>(f: impl FnOnce() -> T + Send + 'static)
     tokio::task::spawn_blocking(f).await.unwrap()
 }
 
+/// Whether the native device's RTP capabilities list `mime` (e.g.
+/// "video/h264").
+pub fn can_receive(capabilities: &Value, mime: &str) -> bool {
+    capabilities["codecs"]
+        .as_array()
+        .into_iter()
+        .flatten()
+        .filter_map(|codec| codec["mimeType"].as_str())
+        .any(|found| found.eq_ignore_ascii_case(mime))
+}
+
+/// Whether the H264 half of a test runs. The Windows core has no H264, so a
+/// device without it only skips that half; GELABBER_EXPECT_H264=1 (set where
+/// the core is built with H264, as on Linux) turns a missing codec into a
+/// failure instead.
+pub fn h264_under_test(capabilities: &Value) -> bool {
+    let available = can_receive(capabilities, "video/h264");
+    let expected = std::env::var("GELABBER_EXPECT_H264").is_ok_and(|value| value == "1");
+    assert!(
+        available || !expected,
+        "GELABBER_EXPECT_H264=1, but the native device has no H264"
+    );
+    available
+}
+
 /// With GELABBER_EXPECT_ENCODER set, some outbound-rtp entry's
 /// `encoderImplementation` must contain it (e.g. "GStreamer x264enc").
 pub fn check_encoder(name: &str, stats: &Value) {
