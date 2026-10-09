@@ -1,5 +1,5 @@
 import { renderToStaticMarkup } from "react-dom/server";
-import { describe, expect, it } from "vitest";
+import { afterEach, describe, expect, it, vi } from "vitest";
 
 import { MediaSettingsForm } from "./VoiceSettings.tsx";
 
@@ -20,7 +20,13 @@ describe("stream settings form", () => {
 });
 
 describe("source-audio form", () => {
+  afterEach(() => vi.unstubAllGlobals());
+
   it("explains browser-selected capture and separate listening controls", () => {
+    // A desktop browser: sound for a share needs a share to begin with.
+    vi.stubGlobal("navigator", {
+      mediaDevices: { getDisplayMedia() {}, getUserMedia() {} },
+    });
     const html = renderToStaticMarkup(<MediaSettingsForm />);
     expect(html).toContain('id="share-source-audio"');
     expect(html).toContain("Ton teilen");

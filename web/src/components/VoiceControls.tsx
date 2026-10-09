@@ -1,9 +1,10 @@
-// Mute / deafen / camera / screen / Go Live / settings as icon buttons. The
-// click flips local state first. Volumes and "share audio" live in the voice
+// Mute / deafen / camera / screen / stream sound / Go Live / settings as icon
+// buttons. The click flips local state first. Volumes live in the voice
 // settings dialog; leaving is the session's own button.
 //
 // Camera, screen and Go Live start only where this client can capture
-// (voice/capabilities.ts). Stopping is always offered.
+// (voice/capabilities.ts). Stopping is always offered. Whether a share
+// carries sound is decided here, next to it, where a share can carry any.
 
 import type { ReactNode } from "react";
 
@@ -16,6 +17,7 @@ import {
   LiveIcon,
   MicIcon,
   MicOffIcon,
+  MusicIcon,
   ScreenIcon,
 } from "./Icons.tsx";
 import {
@@ -27,7 +29,7 @@ import {
   useVoice,
 } from "../voice/session.ts";
 import { useCapabilities } from "../voice/capabilities.ts";
-import { useMediaSettings } from "../voice/settings.ts";
+import { sharesSourceAudio, useMediaSettings } from "../voice/settings.ts";
 import { notify } from "./toasts.ts";
 import "../voice/room.css";
 
@@ -93,7 +95,10 @@ export function VoiceControls({ canGoLive = false }: { canGoLive?: boolean }) {
   const sharing = useVoice((s) => s.sharing);
   const live = useVoice((s) => s.live);
   const openSettings = useMediaSettings((s) => s.openDialog);
+  const sourceAudioShare = useMediaSettings((s) => s.sourceAudioShare);
+  const patch = useMediaSettings((s) => s.patch);
   const capable = useCapabilities();
+  const sound = sharesSourceAudio({ sourceAudioShare });
   const btn = "voice-control voice-control-compact";
 
   return (
@@ -138,6 +143,20 @@ export function VoiceControls({ canGoLive = false }: { canGoLive?: boolean }) {
         >
           <ScreenIcon size={17} />
         </Unavailable>
+      ) : null}
+      {capable.appAudio ? (
+        <button
+          type="button"
+          aria-pressed={sound}
+          aria-label={
+            sound ? "Stream-Ton nicht mehr teilen" : "Stream-Ton teilen"
+          }
+          title={sound ? "Stream-Ton nicht mehr teilen" : "Stream-Ton teilen"}
+          onClick={() => patch({ sourceAudioShare: sound ? "off" : "on" })}
+          className={btn}
+        >
+          <MusicIcon size={17} />
+        </button>
       ) : null}
       {live || (canGoLive && capable.screen) ? (
         <button
