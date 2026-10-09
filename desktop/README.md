@@ -149,5 +149,6 @@ variable yourself (e.g. `=0`) overrides that.
   channel layout, its ports and the links from them are replaced and the
   session manager leaves the capture unlinked, so the core replaces a capture
   stream that lost its links.
-  The voice test checks the list, "" and both ways to select against a
-  `pw-play` noise player while the test process plays a consumer out.
+  The voice test covers the list and "" while the test process plays a
+  consumer out and a player it started plays too, and a player of its own
+  that is chosen by name and changes outputs.

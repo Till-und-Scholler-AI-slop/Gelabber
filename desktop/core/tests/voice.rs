@@ -64,6 +64,59 @@ fn binary_of(name: &str) -> String {
         .unwrap_or_else(|| panic!("{name} on PATH"))
 }
 
+/// pactl in the test session.
+async fn pactl(args: &[&str]) -> String {
+    let args: Vec<String> = args.iter().map(|arg| (*arg).to_owned()).collect();
+    blocking(move || {
+        let output = std::process::Command::new("pactl")
+            .env("LC_ALL", "C")
+            .args(&args)
+            .output()
+            .expect("pactl");
+        assert!(
+            output.status.success(),
+            "pactl {args:?}: {}",
+            String::from_utf8_lossy(&output.stderr)
+        );
+        String::from_utf8_lossy(&output.stdout).into_owned()
+    })
+    .await
+}
+
+/// Index of the playback stream ("sink input") of the application `name`,
+/// once it plays.
+async fn sink_input_of(name: &str) -> String {
+    let wanted = format!("application.name = \"{name}\"");
+    let start = Instant::now();
+    while start.elapsed() < Duration::from_secs(10) {
+        let mut index = None;
+        for line in pactl(&["list", "sink-inputs"]).await.lines() {
+            if let Some(number) = line.strip_prefix("Sink Input #") {
+                index = Some(number.trim().to_owned());
+            } else if line.contains(&wanted) {
+                return index.expect("sink input before its properties");
+            }
+        }
+        tokio::time::sleep(Duration::from_millis(200)).await;
+    }
+    panic!("no sink input of {name}");
+}
+
+/// For `sh -c`: paplay as the application `$0` with the session's noise
+/// file, read as raw stereo.
+const NOISE_PLAYER: &str = r#"paplay --raw --rate=48000 --channels=2 --format=s16le \
+    --device=gelabber-speakers --client-name="$0" "$XDG_RUNTIME_DIR/noise.wav""#;
+
+/// A sound player that ends with the test.
+struct Player(std::process::Child);
+
+impl Drop for Player {
+    fn drop(&mut self) {
+        let _ = self.0.kill();
+        let _ = self.0.wait();
+    }
+}
+
 /// Playback streams an application-sound source captures once it settled.
 async fn captured_streams(source: &Source, expected: u64) -> u64 {
     let streams = || source.state().unwrap()["streams"].as_u64().unwrap_or(0);
@@ -260,13 +313,25 @@ async fn voice_modes_reach_a_consumer() {
 
     // Source audio. The noise player (pw-play, another process) is an
     // application. This process is not, although it is playing the consumer
-    // out through the device module all along.
+    // out through the device module all along, and neither is a player it
+    // started, which stands for the app's webview helpers.
     let samples_played = || {
         consumer.stats().unwrap()["samplesPlayed"]
             .as_u64()
             .unwrap_or(0)
     };
     let played_before = samples_played();
+    let helper = Player(
+        std::process::Command::new("sh")
+            .args([
+                "-c",
+                &format!("exec {NOISE_PLAYER}"),
+                "gelabber-test-helper",
+            ])
+            .spawn()
+            .expect("paplay"),
+    );
+    sink_input_of("gelabber-test-helper").await;
     let apps = engine.audio_apps().unwrap();
     eprintln!("audio apps: {apps}");
     let listed = apps.as_array().expect("application list");
@@ -278,19 +343,34 @@ async fn voice_modes_reach_a_consumer() {
     let player_id = player["id"].as_str().expect("application id").to_owned();
     assert_eq!(player_id, binary_of("pw-play"), "{apps}");
 
-    // "": every application, on its own track next to the microphone. That
-    // is the noise player's stream and not this process's playout.
-    let app_audio = Source::app_audio(&engine, &json!({"app": ""})).unwrap();
+    // "" is every application: the noise player's stream alone.
+    let everything = Source::app_audio(&engine, &json!({"app": ""})).unwrap();
     assert_eq!(
-        captured_streams(&app_audio, 1).await,
+        captured_streams(&everything, 1).await,
         1,
         "the noise player and not this process: {}",
-        app_audio.state().unwrap()
+        everything.state().unwrap()
     );
     assert!(
         samples_played() > played_before,
         "this process played sound in the meantime"
     );
+    drop(everything);
+    drop(helper);
+
+    // The same player on its own (its shell is gone before it plays) is an
+    // application. It is chosen by its name here: the id up to 0.5.2, which
+    // a client may have stored. Its sound goes on a track of its own next
+    // to the microphone.
+    let started = std::process::Command::new("sh")
+        .args(["-c", &format!("{NOISE_PLAYER} >/dev/null 2>&1 & echo $!")])
+        .arg("gelabber-test-player")
+        .output()
+        .expect("paplay");
+    let player_pid = String::from_utf8_lossy(&started.stdout).trim().to_owned();
+    let player_stream = sink_input_of("gelabber-test-player").await;
+    let app_audio = Source::app_audio(&engine, &json!({"app": "gelabber-test-player"})).unwrap();
+    assert_eq!(captured_streams(&app_audio, 1).await, 1);
     let app_producer = produce(
         &send,
         &app_audio,
@@ -333,18 +413,55 @@ async fn voice_modes_reach_a_consumer() {
         app_audio.state().unwrap(),
         app_consumer.stats().unwrap()["audioLevel"]
     );
+
+    // The player changes to an output with another channel layout. Its ports
+    // are replaced and the links to the capture stream go with them; the
+    // session manager does not put them back.
+    pactl(&[
+        "load-module",
+        "module-null-sink",
+        "sink_name=gelabber-surround",
+        "channels=6",
+        "channel_map=front-left,front-right,front-center,lfe,rear-left,rear-right",
+    ])
+    .await;
+    pactl(&["move-sink-input", &player_stream, "gelabber-surround"]).await;
+    // Longer than a level from before the change lasts.
+    tokio::time::sleep(Duration::from_secs(2)).await;
+    wait_for(
+        "application sound after the player changed outputs",
+        Duration::from_secs(10),
+        || {
+            let consumer = hearing;
+            async move {
+                consumer.stats().unwrap()["audioLevel"]
+                    .as_u64()
+                    .unwrap_or(0)
+                    > 0
+            }
+        },
+    )
+    .await;
+    eprintln!(
+        "after the player changed outputs: {} / consumer {}",
+        app_audio.state().unwrap(),
+        app_consumer.stats().unwrap()["audioLevel"]
+    );
+    assert_eq!(app_audio.state().unwrap()["streams"], 1);
     drop(app_consumer);
     drop(app_producer);
     drop(app_audio);
+    assert!(
+        std::process::Command::new("kill")
+            .arg(&player_pid)
+            .status()
+            .expect("kill")
+            .success()
+    );
 
-    // One application: by its id, or by its name, which was the id up to
-    // 0.5.2 and may be what a client stored. Back then this process was
-    // listed as well, under the name libwebrtc gives its playout.
-    for (app, expected) in [
-        (player_id.as_str(), 1),
-        ("pw-play", 1),
-        ("WEBRTC VoiceEngine", 0),
-    ] {
+    // An application chosen by its id. Up to 0.5.2 this process was listed as
+    // well, under the name libwebrtc gives its playout.
+    for (app, expected) in [(player_id.as_str(), 1), ("WEBRTC VoiceEngine", 0)] {
         let chosen = Source::app_audio(&engine, &json!({"app": app})).unwrap();
         assert_eq!(
             captured_streams(&chosen, expected).await,
