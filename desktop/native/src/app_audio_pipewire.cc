@@ -172,13 +172,14 @@ namespace gelabber
 		// The playback half of a virtual device: PipeWire's loopback,
 		// filter-chain, echo-cancel and combine-stream modules, which are also
 		// what pipewire-pulse loads for module-loopback, -echo-cancel,
-		// -combine-sink, -remap-sink and -virtual-sink. They mark both of
-		// their streams virtual and put them in a link group, by which the
-		// session manager keeps a device from being linked to itself.
+		// -combine-sink, -remap-sink and -virtual-sink. They put both of
+		// their streams in a link group, by which the session manager keeps a
+		// device from being linked to itself. `node.virtual` alone does not
+		// tell: network receivers (RTP, VBAN, ROC) set it on streams that
+		// carry sound from elsewhere, which a share may well want.
 		bool VirtualDevice(const spa_dict* props)
 		{
-			const auto isVirtual = Lookup(props, "node.virtual");
-			return isVirtual == "true" || isVirtual == "1" || !Lookup(props, "node.link-group").empty();
+			return !Lookup(props, "node.link-group").empty();
 		}
 
 		struct PlaybackStream
