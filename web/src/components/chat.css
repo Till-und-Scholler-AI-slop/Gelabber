@@ -194,11 +194,15 @@
   background: var(--lr-panel);
   box-shadow: 0 4px 14px #00000029;
   opacity: 0;
+  /* Hidden toolbars reach over the previous row; they must not catch its
+     clicks. Keyboard focus still reaches them and reveals them. */
+  pointer-events: none;
   transition: opacity 0.12s;
 }
 .lr-message-row:hover .lr-message-actions,
 .lr-message-row:focus-within .lr-message-actions {
   opacity: 1;
+  pointer-events: auto;
 }
 .lr-message-continued .lr-message-actions {
   top: -16px;

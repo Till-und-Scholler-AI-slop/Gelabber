@@ -308,6 +308,7 @@
 }
 .voice-session-dock .voice-session-head {
   flex: 1;
+  min-width: 96px;
 }
 .voice-session-signal {
   flex-shrink: 0;
@@ -515,11 +516,24 @@
   text-align: center;
 }
 
-@media (max-width: 420px) {
-  .voice-session-dock .voice-control-compact {
-    width: 34px;
+@media (max-width: 480px) {
+  /* Too narrow for one row: destination and leave on top, controls below,
+     so the route back to the call never shrinks away. */
+  .voice-session-dock .voice-session-call {
+    flex-wrap: wrap;
+    row-gap: 2px;
   }
-  .voice-session-dock .voice-session-link > strong {
-    display: none;
+  .voice-session-dock .voice-session-head {
+    flex: 1 1 0;
+    min-width: 0;
+    order: 0;
+  }
+  .voice-session-dock .voice-session-call > .voice-control-leave {
+    order: 1;
+  }
+  .voice-session-dock .voice-session-call > .voice-controls {
+    order: 2;
+    flex-basis: 100%;
+    justify-content: space-between;
   }
 }

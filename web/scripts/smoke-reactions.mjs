@@ -104,6 +104,8 @@ for (const engine of [chromium, firefox]) {
     await row(member)
       .getByRole("button", { name: "Reaktion hinzufügen", exact: true })
       .waitFor();
+    // The add button sits in the row's hover toolbar.
+    await row(member).hover();
     await row(member)
       .getByRole("button", { name: "Reaktion hinzufügen", exact: true })
       .click();
@@ -215,6 +217,8 @@ for (const engine of [chromium, firefox]) {
     assert.equal(snapshot.content, message.content);
     assert.equal(snapshot.edited_at, null);
     assert.equal(snapshot.reactions.length, 2);
+    // The add button sits in the row's hover toolbar.
+    await row(member).hover();
     await row(member)
       .getByRole("button", { name: "Reaktion hinzufügen", exact: true })
       .click();
@@ -231,6 +235,8 @@ for (const engine of [chromium, firefox]) {
       fullPage: true,
     });
     await member.setViewportSize({ width: 320, height: 520 });
+    // The add button sits in the row's hover toolbar.
+    await row(member).hover();
     await row(member)
       .getByRole("button", { name: "Reaktion hinzufügen", exact: true })
       .click();
@@ -499,6 +505,8 @@ for (const engine of [chromium, firefox]) {
     const dmRow = member
       .locator(".lr-message-row")
       .filter({ hasText: "DM reaction" });
+    // The add button sits in the row's hover toolbar.
+    await dmRow.hover();
     await dmRow
       .getByRole("button", { name: "Reaktion hinzufügen", exact: true })
       .click();

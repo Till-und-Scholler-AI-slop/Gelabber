@@ -598,7 +598,14 @@ export async function click(actor, name) {
   ) {
     await actor.page.locator('summary[aria-label="Benutzermenü"]').click();
   }
-  await actor.page.getByRole("button", { name, exact: true }).first().click();
+  const target = actor.page.getByRole("button", { name, exact: true }).first();
+  // Message actions live in a toolbar that takes pointer events only while
+  // its row is hovered or focused.
+  const row = target.locator(
+    "xpath=ancestor::*[contains(concat(' ', normalize-space(@class), ' '), ' lr-message-row ')][1]",
+  );
+  if ((await row.count()) > 0) await row.hover();
+  await target.click();
 }
 export async function navigate(actor, path, base) {
   await actor.page.goto(`${base}${path}`);
