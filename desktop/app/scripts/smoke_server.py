@@ -78,18 +78,7 @@ async function video(ipc) {
   for (let tries = 0; tries < 30 && last.width !== 640; tries++) last = await frame(view, last.seq);
   out.grown = last;
 
-  // A second view of the same stream counts its own frames; one a second,
-  // its request is still waiting when the view closes.
-  const other = (await ipc.invoke("media_view_open", { testPattern: pattern })).view;
-  out.otherFirst = await frame(other);
-  await ipc.invoke("media_view_configure", { view: other, maxWidth: 640, maxHeight: 360, maxFps: 1 });
-  const paced = await frame(other, out.otherFirst.seq);
-  const waiting = error(ipc.invoke("media_view_frame", { view: other, after: paced.seq }));
-  await ipc.invoke("media_view_close", { view: other });
-  out.closedWhileWaiting = await waiting;
-  out.afterClose = await error(ipc.invoke("media_view_frame", { view: other }));
-
-  // The first view runs on: about a second of frames.
+  // About a second of frames.
   const started = performance.now();
   out.frames = 0;
   while (performance.now() - started < 1000) {
@@ -98,6 +87,19 @@ async function video(ipc) {
     last = next;
     out.frames++;
   }
+  out.last = last;
+
+  // A second view of the same stream counts its own frames. At one frame a
+  // second its third is a second away when the view closes, so the request
+  // for it is still waiting then, also on a slow runner.
+  const other = (await ipc.invoke("media_view_open", { testPattern: pattern, maxFps: 1 })).view;
+  out.otherFirst = await frame(other);
+  out.paced = await frame(other, out.otherFirst.seq);
+  const waiting = error(ipc.invoke("media_view_frame", { view: other, after: out.paced.seq }));
+  await ipc.invoke("media_view_close", { view: other });
+  out.closedWhileWaiting = await waiting;
+  out.afterClose = await error(ipc.invoke("media_view_frame", { view: other }));
+
   await ipc.invoke("media_view_close", { view });
   out.closed = await error(ipc.invoke("media_view_frame", { view }));
 
@@ -158,11 +160,22 @@ def check_video(video, problems):
     check_frame("second frame", video.get("second"), 320, 180, problems)
     check_frame("frame of the grown view", video.get("grown"), 640, 360, problems)
     check_frame("first frame of the second view", video.get("otherFirst"), 640, 360, problems)
-    numbers = [video.get(name, {}).get("seq") for name in ("first", "second", "otherFirst")]
-    if numbers[0] != 1 or not numbers[1] or numbers[1] <= 1 or numbers[2] != 1:
-        problems.append(f"sequence numbers of the views are {numbers}, expected 1, more, 1")
+    check_frame("second frame of the second view", video.get("paced"), 640, 360, problems)
     if not video.get("inOrder") or video.get("frames", 0) < 5:
         problems.append(f"{video.get('frames')} frames in a second, in order: {video.get('inOrder')}")
+    names = ("first", "second", "grown", "last", "otherFirst", "paced")
+    frames = {name: video.get(name) if isinstance(video.get(name), dict) else {} for name in names}
+    seq = {name: frame.get("seq", 0) for name, frame in frames.items()}
+    # Numbers start at 1 and grow (a slow page misses frames, so not by one);
+    # the second view starts over, below where the first one was by then.
+    if not (1 <= seq["first"] < seq["second"] < seq["grown"] < seq["last"]
+            and 1 <= seq["otherFirst"] < seq["paced"] < seq["last"]):
+        problems.append(f"sequence numbers of the views are {seq}")
+    # At one frame a second, the second frame is due half a second after the
+    # first (frames.rs, Pace).
+    apart = (frames["paced"].get("timestampUs", 0) - frames["otherFirst"].get("timestampUs", 0)) / 1e6
+    if apart < 0.4:
+        problems.append(f"frames of the view limited to 1 fps are {apart:.3f} s apart")
     for name in ("closedWhileWaiting", "afterClose", "closed", "neither", "both", "unknownConsumer",
                  "unknownSource", "unknownView"):
         if not video.get(name):
