@@ -62,6 +62,12 @@
   --lr-navigation-width: calc(var(--lr-rail-width) + var(--lr-sidebar-width));
   --lr-members-width: 248px;
   --lr-header-height: 52px;
+  /* Zero unless the screen has a notch or home indicator; index.html opts in
+     with viewport-fit=cover. */
+  --lr-safe-top: env(safe-area-inset-top, 0px);
+  --lr-safe-right: env(safe-area-inset-right, 0px);
+  --lr-safe-bottom: env(safe-area-inset-bottom, 0px);
+  --lr-safe-left: env(safe-area-inset-left, 0px);
 }
 html.dark {
   --lr-bg: #17191a;
@@ -117,6 +123,9 @@ summary {
 }
 .app-shell {
   min-height: 100dvh;
+  /* The bottom inset is added where content ends, so the call dock and the
+     drawers still reach the screen edge. */
+  padding: var(--lr-safe-top) var(--lr-safe-right) 0 var(--lr-safe-left);
   background: var(--lr-bg);
   color: var(--lr-text);
 }
@@ -150,7 +159,7 @@ summary {
 }
 .workspace {
   display: flex;
-  height: 100dvh;
+  height: 100%;
   min-height: 0;
   overflow: hidden;
 }
@@ -174,11 +183,15 @@ summary {
   display: none;
 }
 
+.workspace-content,
+.app-shell:not(.app-shell-workspace) > #app-content {
+  padding-bottom: var(--lr-safe-bottom);
+}
 /* Reserve the measured dock height on every viewport so active calls never
    cover a chat composer or the last controls in an account form. */
 .has-active-media .workspace-content,
 .has-active-media:not(.app-shell-workspace) > #app-content {
-  padding-bottom: var(--lr-media-space);
+  padding-bottom: max(var(--lr-media-space), var(--lr-safe-bottom));
 }
 
 /* Single instances become top-layer native dialogs at their breakpoints. */
@@ -221,7 +234,9 @@ summary {
   background: #090c0dc9;
 }
 .gel-modal {
-  max-height: calc(100dvh - 32px);
+  max-height: calc(
+    100dvh - 32px - 2 * max(var(--lr-safe-top), var(--lr-safe-bottom))
+  );
   overflow-y: auto;
   overscroll-behavior: contain;
 }
@@ -328,7 +343,7 @@ summary {
   justify-content: center;
   width: 100%;
   flex-shrink: 0;
-  padding: 5px 0 16px;
+  padding: 5px 0 max(16px, var(--lr-safe-bottom));
 }
 .server-create-button {
   display: grid;
@@ -638,7 +653,7 @@ summary {
   align-items: center;
   gap: 4px;
   min-height: 58px;
-  padding: 8px;
+  padding: 8px 8px max(8px, var(--lr-safe-bottom));
   border-top: 1px solid var(--lr-border);
   background: var(--lr-bg);
 }
@@ -975,9 +990,10 @@ summary {
     right: 0;
     bottom: auto;
     left: auto;
-    width: var(--lr-members-width);
+    width: calc(var(--lr-members-width) + var(--lr-safe-right));
     max-width: calc(100vw - 28px);
     height: 100dvh;
+    padding: var(--lr-safe-top) var(--lr-safe-right) var(--lr-safe-bottom) 0;
     border-left: 1px solid var(--lr-border);
   }
   .member-panel-drawer .workspace-drawer-header {
@@ -1004,8 +1020,8 @@ summary {
     align-items: center;
     gap: 7px;
     position: fixed;
-    top: calc((var(--lr-header-height) - 32px) / 2);
-    right: 12px;
+    top: calc(var(--lr-safe-top) + (var(--lr-header-height) - 32px) / 2);
+    right: calc(12px + var(--lr-safe-right));
     z-index: 25;
     height: 32px;
     padding: 0 10px;
@@ -1028,9 +1044,10 @@ summary {
   .workspace-navigation {
     position: fixed;
     inset: 0 auto auto 0;
-    width: var(--lr-navigation-width);
+    width: calc(var(--lr-navigation-width) + var(--lr-safe-left));
     max-width: calc(100vw - 28px);
     height: 100dvh;
+    padding: var(--lr-safe-top) 0 0 var(--lr-safe-left);
     border-right: 1px solid var(--lr-border);
   }
   .workspace-navigation .workspace-drawer-header {
@@ -1100,7 +1117,7 @@ summary {
   }
   .user-panel {
     min-height: 62px;
-    padding-bottom: max(12px, env(safe-area-inset-bottom));
+    padding-bottom: max(12px, var(--lr-safe-bottom));
   }
   .app-header > div {
     flex-wrap: wrap;
