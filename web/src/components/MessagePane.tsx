@@ -62,6 +62,7 @@ import {
 import type { Attachment, Message } from "../messages/types.ts";
 import { asAttachmentList } from "../messages/types.ts";
 import { Avatar } from "./Avatar.tsx";
+import { sizeByDraft, type DraftHeight } from "./composerHeight.ts";
 import { EmojiPickerLoader, ReactionBar } from "./ReactionBar.tsx";
 import { Modal } from "./Modal.tsx";
 import {
@@ -946,19 +947,15 @@ function Composer({
     return () => observer.disconnect();
   }, [canSend, revealComposerFocus]);
   // chat.css sizes the field by its draft on phones. Browsers without
-  // field-sizing (iOS before 26.2) get the same height from here, under the
-  // same max-height.
+  // field-sizing (iOS before 26.2) get the same height from composerHeight.
+  const draftHeight = useRef<DraftHeight | null>(null);
   useLayoutEffect(() => {
     const input = composerInput.current;
-    if (
-      !input ||
-      CSS.supports("field-sizing", "content") ||
-      !window.matchMedia("(pointer: coarse)").matches
-    )
-      return;
-    input.style.height = "auto";
-    input.style.height = `${input.scrollHeight}px`;
-  }, [draft, canSend]);
+    const form = composerForm.current;
+    draftHeight.current =
+      input && form ? sizeByDraft(window, input, form) : null;
+  }, [canSend]);
+  useLayoutEffect(() => draftHeight.current?.fit(), [draft, canSend]);
   const error = draft.length === 0 ? null : validateContent(draft);
   const remaining = CONTENT_MAX - Array.from(normalisedLength(draft)).length;
   const emptyText = draft.trim().length === 0;
