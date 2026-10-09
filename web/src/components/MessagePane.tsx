@@ -1215,6 +1215,8 @@ function AttachmentList({ attachments }: { attachments: Attachment[] }) {
           <a
             key={attachment.id}
             href={attachmentUrl(attachment.id)}
+            // An installed app has no back button to return from a file.
+            download={attachment.filename}
             className="lr-attachment-file"
           >
             <PaperclipIcon size={15} />
