@@ -133,5 +133,31 @@ class CaddyfileEffectiveConfigTest(unittest.TestCase):
                 self.assertIn("gzip", encoders[0].get("encodings", {}))
 
 
+class OperatorGuideTriggerTest(unittest.TestCase):
+    """A pull request that changes nothing but a guide must still run this file."""
+
+    def test_every_guide_starts_ci(self) -> None:
+        repo = COMPOSE.parents[1]
+        workflow = (repo / ".github/workflows/ci.yml").read_text(encoding="utf-8")
+        block = workflow.split("  pull_request:", 1)[1].split("\n\n", 1)[0]
+        filters = [
+            line.strip()[2:]
+            for line in block.splitlines()
+            if line.strip().startswith("- ")
+        ]
+        self.assertIn("deploy/compose/**", filters)
+        for path in OPERATOR_GUIDES:
+            name = path.relative_to(repo).as_posix()
+            with self.subTest(name):
+                self.assertTrue(
+                    any(
+                        name == entry
+                        or (entry.endswith("/**") and name.startswith(entry[:-2]))
+                        for entry in filters
+                    ),
+                    f"a pull request that only changes {name} starts no CI run",
+                )
+
+
 if __name__ == "__main__":
     unittest.main()
