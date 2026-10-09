@@ -8,13 +8,17 @@
 //!   `build-libwebrtc-windows.ps1`; the core is built here with CMake. On
 //!   Linux the package brings its own toolchain. On Windows the compiler is
 //!   `clang-cl` from `PATH`, which built the package; `GELABBER_MEDIA_COMPILER`
-//!   names another one (`cl`, or a path).
+//!   names another one (`cl`, or a path). A core configured for another
+//!   compiler is built from scratch.
 //!
 //! Windows has no rpath: the loader takes `gelabber_media.dll` from the
 //! executable's directory or `PATH`. Cargo puts the directory of a core built
 //! here on `PATH` for `cargo run` and `cargo test`; everything else (a
 //! prebuilt core, a packaged app) needs the DLL next to the executable.
-use std::{env, path::PathBuf};
+use std::{
+    env, fs,
+    path::{Path, PathBuf},
+};
 
 /// A path as a CMake `-D` value: CMake reads `\` as an escape once the value
 /// reaches a generated file.
@@ -24,6 +28,45 @@ fn cmake_path(path: &str) -> String {
     } else {
         path.to_owned()
     }
+}
+
+/// The file a bare program name stands for on `PATH`.
+fn on_path(program: &str) -> Option<PathBuf> {
+    if Path::new(program).components().count() != 1 {
+        return None;
+    }
+    env::split_paths(&env::var_os("PATH")?)
+        .flat_map(|dir| [dir.join(format!("{program}.exe")), dir.join(program)])
+        .find(|file| file.is_file())
+}
+
+/// Removes a CMake tree in `out_dir` that was configured for another compiler.
+///
+/// CMake answers a changed compiler by dropping its cache and configuring
+/// again without the other `-D` values, which ends in "GELABBER_LIBWEBRTC_DIR
+/// is required". A bare name counts as changed when `PATH` leads to another
+/// file than before.
+fn start_over_for(compiler: &str, out_dir: &Path) {
+    let wanted = match on_path(compiler) {
+        Some(file) => format!("{compiler}\n{}\n", file.display()),
+        None => format!("{compiler}\n"),
+    };
+    let note = out_dir.join("compiler");
+    if fs::read_to_string(&note).is_ok_and(|configured| configured == wanted) {
+        return;
+    }
+    let tree = out_dir.join("build");
+    if tree.exists() {
+        println!("detected compiler change, cleaning out entire build directory");
+        fs::remove_dir_all(&tree).unwrap_or_else(|error| {
+            panic!(
+                "{} was configured for another compiler and could not be removed \
+                 (is a program still using gelabber_media.dll?): {error}",
+                tree.display()
+            )
+        });
+    }
+    fs::write(&note, wanted).unwrap();
 }
 
 fn main() {
@@ -72,6 +115,8 @@ fn main() {
                 let compiler =
                     env::var("GELABBER_MEDIA_COMPILER").unwrap_or_else(|_| "clang-cl".to_owned());
                 let compiler = cmake_path(&compiler);
+                // The cmake crate builds in OUT_DIR/build.
+                start_over_for(&compiler, Path::new(&env::var("OUT_DIR").unwrap()));
                 config
                     .define("CMAKE_C_COMPILER", &compiler)
                     .define("CMAKE_CXX_COMPILER", &compiler);
