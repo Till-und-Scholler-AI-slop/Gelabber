@@ -160,7 +160,8 @@ impl Engine {
     }
 
     /// Applications playing sound, without this process and without what
-    /// virtual output devices play on: `[{"id","name","streams"}]`.
+    /// virtual output devices play on: `[{"id","name","streams"}]`. No two
+    /// entries have the same `name`, which is the one to show.
     pub fn audio_apps(&self) -> Result<Value> {
         // SAFETY: live engine.
         owned_json(unsafe { ffi::gm_audio_apps(self.raw()) })

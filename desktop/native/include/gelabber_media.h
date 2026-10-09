@@ -151,7 +151,9 @@ GM_API gm_source* gm_source_new_screen(gm_engine* engine, const char* options_js
  * [{"id","name","streams"}] (Linux: PipeWire playback streams; Windows: not
  * available yet, an empty list). What a virtual output device plays on to
  * the next (an echo canceller, an equaliser, a combined sink, a loopback) is
- * no application's sound and not listed. */
+ * no application's sound and not listed. "name" is for showing and differs
+ * between any two entries: applications that call themselves the same are
+ * "name (id)", next to an entry whose id is that name and chooses them all. */
 GM_API char* gm_audio_apps(gm_engine* engine);
 /* Sound of other applications as an audio track for source audio, 48 kHz
  * stereo, separate from the microphone: {"app"?: id from gm_audio_apps;

@@ -202,7 +202,11 @@ notification behind every close. An app that is killed instead of closed
   interpreter) are that binary's one entry, which selects them all. While
   they play under different names of their own, each name is listed as a
   further entry with the name as its id; a name a sound library gives
-  (`WEBRTC VoiceEngine`, `PipeWire ALSA [...]`) does not count.
+  (`WEBRTC VoiceEngine`, `PipeWire ALSA [...]`) does not count. The other
+  way round, programs on different binaries may call themselves the same
+  (each with an Electron of its own, all "Chromium"): their entries are
+  shown as `name (binary)`, and the name is an entry as well, which selects
+  them all as it did when it was the id. No two entries share a name.
   Gelabber's own process and the ones it started (the webview's helpers) are
   never captured, whatever is selected: the stream would carry the call. A
   helper in a pid namespace of its own is only recognized as a native
@@ -233,5 +237,6 @@ notification behind every close. An app that is killed instead of closed
   The voice test covers the list and "" while the test process plays a
   consumer out and a player it started plays too, the same with the consumer
   played out through a null sink that a loopback plays on to the speakers, a
-  player of its own that is chosen by name and changes outputs, and two
-  players on one binary under different names.
+  player of its own that is chosen by name and changes outputs, two players
+  on one binary under different names, and two on different binaries under
+  the same name.

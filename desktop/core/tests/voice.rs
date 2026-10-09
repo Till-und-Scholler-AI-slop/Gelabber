@@ -56,12 +56,17 @@ fn level(levels: &Value, key: &str) -> f64 {
     levels[key].as_f64().unwrap_or(0.0)
 }
 
-/// File name of the program `name` runs (pw-play is a link to pw-cat).
-fn binary_of(name: &str) -> String {
+/// The file the program `name` runs (pw-play is a link to pw-cat).
+fn program_of(name: &str) -> std::path::PathBuf {
     std::env::split_paths(&std::env::var_os("PATH").expect("PATH"))
         .find_map(|dir| std::fs::canonicalize(dir.join(name)).ok())
-        .and_then(|path| Some(path.file_name()?.to_str()?.to_owned()))
         .unwrap_or_else(|| panic!("{name} on PATH"))
+}
+
+/// Its file name, which is what the sound server knows the program by.
+fn binary_of(name: &str) -> String {
+    let program = program_of(name);
+    program.file_name().unwrap().to_str().unwrap().to_owned()
 }
 
 /// pactl in the test session.
@@ -83,23 +88,31 @@ async fn pactl(args: &[&str]) -> String {
     .await
 }
 
-/// Index of the playback stream ("sink input") of the application `name`,
-/// once it plays.
-async fn sink_input_of(name: &str) -> String {
+/// Indices of the playback streams ("sink inputs") of the applications
+/// called `name`, once there are `count` of them.
+async fn sink_inputs_of(name: &str, count: usize) -> Vec<String> {
     let wanted = format!("application.name = \"{name}\"");
     let start = Instant::now();
     while start.elapsed() < Duration::from_secs(10) {
-        let mut index = None;
+        let (mut index, mut found) = (None, Vec::new());
         for line in pactl(&["list", "sink-inputs"]).await.lines() {
             if let Some(number) = line.strip_prefix("Sink Input #") {
                 index = Some(number.trim().to_owned());
             } else if line.contains(&wanted) {
-                return index.expect("sink input before its properties");
+                found.push(index.clone().expect("sink input before its properties"));
             }
+        }
+        if found.len() >= count {
+            return found;
         }
         tokio::time::sleep(Duration::from_millis(200)).await;
     }
-    panic!("no sink input of {name}");
+    panic!("no {count} sink input(s) of {name}");
+}
+
+/// Index of the playback stream of the application `name`, once it plays.
+async fn sink_input_of(name: &str) -> String {
+    sink_inputs_of(name, 1).await.remove(0)
 }
 
 /// Waits for the playback stream ("sink input") of a virtual device: one
@@ -119,10 +132,10 @@ async fn playback_of_a_virtual_device() {
     panic!("no sink input with a node.link-group: the loopback has no playback stream");
 }
 
-/// For `sh -c`: paplay as the application `$0` with the session's noise
-/// file, read as raw stereo.
-const NOISE_PLAYER: &str = r#"paplay --raw --rate=48000 --channels=2 --format=s16le \
-    --device=gelabber-speakers --client-name="$0" "$XDG_RUNTIME_DIR/noise.wav""#;
+/// For `sh -c`: paplay, or the copy of it `$1`, as the application `$0` with
+/// the session's noise file, read as raw stereo.
+const NOISE_PLAYER: &str = r#""${1:-paplay}" --playback --raw --rate=48000 --channels=2 \
+    --format=s16le --device=gelabber-speakers --client-name="$0" "$XDG_RUNTIME_DIR/noise.wav""#;
 
 /// A sound player that ends with the test.
 struct Player(std::process::Child);
@@ -137,14 +150,22 @@ impl Drop for Player {
 /// Starts the noise player as the application `name`. Its shell is gone
 /// before it plays, so it is no process of this test. Returns its pid.
 fn start_player(name: &str) -> String {
-    let started = std::process::Command::new("sh")
-        .args([
-            "-c",
-            &format!("{NOISE_PLAYER} >/dev/null 2>&1 & echo $!"),
-            name,
-        ])
-        .output()
-        .expect("paplay");
+    start_player_of(name, None)
+}
+
+/// The same from `program`, a copy of paplay under another file name: to
+/// the sound server another binary.
+fn start_player_of(name: &str, program: Option<&std::path::Path>) -> String {
+    let mut shell = std::process::Command::new("sh");
+    shell.args([
+        "-c",
+        &format!("{NOISE_PLAYER} >/dev/null 2>&1 & echo $!"),
+        name,
+    ]);
+    if let Some(program) = program {
+        shell.arg(program);
+    }
+    let started = shell.output().expect("paplay");
     String::from_utf8_lossy(&started.stdout).trim().to_owned()
 }
 
@@ -599,6 +620,74 @@ async fn voice_modes_reach_a_consumer() {
     )
     .await;
     stop_player(&pair_pids[0]);
+
+    // Two programs on different binaries that call themselves the same, as
+    // programs with an Electron of their own all play as "Chromium". Each
+    // binary's entry says which it is, and the name is an entry too: it
+    // chooses both, as it did when it was the id (up to 0.5.2).
+    let same = "gelabber-test-same";
+    let twin = "gelabber-test-twin";
+    let twin_program =
+        std::path::Path::new(&std::env::var_os("XDG_RUNTIME_DIR").expect("XDG_RUNTIME_DIR"))
+            .join(twin);
+    std::fs::copy(program_of("paplay"), &twin_program).expect("a copy of paplay");
+    let same_pids = [
+        start_player(same),
+        start_player_of(same, Some(&twin_program)),
+    ];
+    sink_inputs_of(same, 2).await;
+    let told_apart = by_id(&json!([
+        {"id": same, "name": same, "streams": 2},
+        {"id": twin, "name": format!("{same} ({twin})"), "streams": 1},
+        {"id": shared, "name": format!("{same} ({shared})"), "streams": 1},
+        {"id": player_id, "name": "pw-play", "streams": 1},
+    ]));
+    let (listing, told_apart) = (&engine, &told_apart);
+    wait_for(
+        "two binaries under one name, told apart",
+        Duration::from_secs(10),
+        || async move {
+            let apps = listing.audio_apps().unwrap();
+            eprintln!("audio apps, one name on two binaries: {apps}");
+            by_id(&apps) == *told_apart
+        },
+    )
+    .await;
+    for (app, expected) in [(same, 2), (twin, 1), (shared.as_str(), 1)] {
+        let chosen = Source::app_audio(&engine, &json!({"app": app})).unwrap();
+        assert_eq!(
+            captured_streams(&chosen, expected).await,
+            expected,
+            "streams captured for {app:?}"
+        );
+    }
+    // With a second program on the first binary, that binary's entry goes by
+    // its id, and the name's entry is the one a binary already has for each
+    // of its names. The other binary still says which it is.
+    let other = "gelabber-test-other";
+    let other_pid = start_player(other);
+    sink_input_of(other).await;
+    let told_apart = by_id(&json!([
+        {"id": other, "name": other, "streams": 1},
+        {"id": same, "name": same, "streams": 2},
+        {"id": twin, "name": format!("{same} ({twin})"), "streams": 1},
+        {"id": shared, "name": shared, "streams": 2},
+        {"id": player_id, "name": "pw-play", "streams": 1},
+    ]));
+    let (listing, told_apart) = (&engine, &told_apart);
+    wait_for(
+        "a name of one binary's programs that another binary carries too",
+        Duration::from_secs(10),
+        || async move {
+            let apps = listing.audio_apps().unwrap();
+            eprintln!("audio apps, a shared binary's name on another binary: {apps}");
+            by_id(&apps) == *told_apart
+        },
+    )
+    .await;
+    for pid in same_pids.iter().chain([&other_pid]) {
+        stop_player(pid);
+    }
 
     // Ending the test leaves the call's capture running.
     engine.monitor_audio(None).unwrap();

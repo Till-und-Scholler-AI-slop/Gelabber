@@ -17,6 +17,7 @@ namespace gelabber
 	{
 		// Its binary; an application that reports none goes by its name.
 		std::string id;
+		// What to show it as: no two in a list are called the same.
 		std::string name;
 		// Playback streams the id chooses right now.
 		int streams{ 0 };
@@ -28,6 +29,8 @@ namespace gelabber
 	// applications played into them.
 	// Applications that share a binary and call themselves differently are
 	// listed by name as well, next to the binary, which chooses them all.
+	// Applications on different binaries that call themselves the same are
+	// listed as "name (binary)", next to the name, which chooses them all.
 	std::vector<AudioApp> ListAudioApps();
 
 	class AppAudioCapture

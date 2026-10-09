@@ -902,13 +902,20 @@ namespace gelabber
 		// An entry for each binary. Programs that share one (Electron, Wine, an
 		// interpreter) are told apart by the names they gave themselves: where
 		// a binary's streams carry several, each name is an entry as well,
-		// next to the binary, which chooses them all.
+		// next to the binary, which chooses them all. The other way round,
+		// a name that programs on several binaries give themselves (their own
+		// Electron each, all "Chromium") is an entry next to the binaries and
+		// chooses all of them: what 0.5.2 listed, and a client may have
+		// stored.
 		std::map<std::string, std::set<std::string>> names;
+		std::map<std::string, std::set<std::string>> binaries;
 		for (const auto& playback : playing)
 		{
 			auto& ofBinary = names[playback.app.id];
-			if (playback.Named())
-				ofBinary.insert(playback.oldId);
+			if (!playback.Named())
+				continue;
+			ofBinary.insert(playback.oldId);
+			binaries[playback.oldId].insert(playback.app.id);
 		}
 		std::set<std::string> ids;
 		for (const auto& [binary, ofBinary] : names)
@@ -917,6 +924,9 @@ namespace gelabber
 			if (ofBinary.size() > 1)
 				ids.insert(ofBinary.begin(), ofBinary.end());
 		}
+		for (const auto& [name, ofName] : binaries)
+			if (ofName.size() > 1)
+				ids.insert(name);
 		std::vector<AudioApp> out;
 		for (const auto& id : ids)
 		{
@@ -934,6 +944,14 @@ namespace gelabber
 			}
 			out.push_back(std::move(app));
 		}
+		// No two entries under one name: where several are called the same,
+		// each says which it is. The one that is the name itself keeps it.
+		std::map<std::string, int> called;
+		for (const auto& app : out)
+			++called[app.name];
+		for (auto& app : out)
+			if (app.name != app.id && called[app.name] > 1)
+				app.name += " (" + app.id + ")";
 		return out;
 	}
 
