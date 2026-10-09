@@ -179,7 +179,10 @@ notification behind every close. An app that is killed instead of closed
   without a call through a pass-through module that only holds back the
   voice pipeline's stop while the test runs. The test
   session also provides null-sink "speakers" and a
-  noise-playing "microphone" for `core/tests/voice.rs`.
+  noise-playing "microphone" for `core/tests/voice.rs`. The noise lasts
+  ten minutes from the session's start; the test says so when it is started
+  too late in it, so build it before the session
+  (`cargo test --no-run`).
 - Microphone routing: libwebrtc's device module hands its capture to every
   audio send stream, which would mix the microphone into source audio. The
   device module's callback is therefore our `CaptureTransport`: it runs the

@@ -4,8 +4,9 @@
 //! on a null sink.
 //!
 //! Needs the session from desktop/native/scripts/fake-desktop-session.sh,
-//! which plays white noise into the microphone. Skipped unless
-//! GELABBER_TEST_AUDIO=1 so a developer machine's real devices stay alone.
+//! which plays white noise into the microphone for ten minutes. Skipped
+//! unless GELABBER_TEST_AUDIO=1 so a developer machine's real devices stay
+//! alone.
 
 mod common;
 
@@ -54,6 +55,19 @@ async fn levels_when(engine: &Engine, what: &str, ready: impl Fn(&Value) -> bool
 
 fn level(levels: &Value, key: &str) -> f64 {
     levels[key].as_f64().unwrap_or(0.0)
+}
+
+/// How long the session's noise still plays, where the session says when it
+/// ends (GELABBER_TEST_NOISE_ENDS, seconds since the epoch).
+fn noise_left() -> Option<Duration> {
+    let ends = std::env::var("GELABBER_TEST_NOISE_ENDS")
+        .ok()?
+        .parse()
+        .ok()?;
+    let now = std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .ok()?;
+    Some(Duration::from_secs(ends).saturating_sub(now))
 }
 
 /// The file the program `name` runs (pw-play is a link to pw-cat).
@@ -211,6 +225,17 @@ async fn voice_modes_reach_a_consumer() {
     }
     let mic_id = std::env::var("GELABBER_TEST_MIC").expect("GELABBER_TEST_MIC");
     let speakers_id = std::env::var("GELABBER_TEST_SPEAKERS").expect("GELABBER_TEST_SPEAKERS");
+    // The session's noise is the microphone and one of the applications
+    // from the first step to the last, and it plays once through. A run that
+    // starts late in it would fail at whatever step the silence reaches.
+    if let Some(left) = noise_left() {
+        assert!(
+            left >= Duration::from_secs(120),
+            "the session's noise ends in {} s, before this test would: start a new session, \
+             with the test built beforehand (cargo test --no-run)",
+            left.as_secs()
+        );
+    }
 
     let server = Server::start().await;
     let runtime = Handle::current();
