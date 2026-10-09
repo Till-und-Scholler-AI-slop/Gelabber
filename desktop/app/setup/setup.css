@@ -32,6 +32,15 @@ button {
   border-color: transparent;
   cursor: pointer;
 }
+button:disabled {
+  opacity: 0.6;
+  cursor: progress;
+}
+#back {
+  background: transparent;
+  color: inherit;
+  border-color: #8a8580;
+}
 #error {
   color: #c0392b;
 }

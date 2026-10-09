@@ -58,7 +58,10 @@ cargo run --manifest-path desktop/Cargo.toml -p gelabber-desktop -- --server htt
 
 Server choice, first match wins: `--server <url>`, `GELABBER_SERVER`, then
 `server` in `~/.config/io.github.till-und-scholler-ai-slop.gelabber/desktop.json`.
-Without one the window shows the bundled setup page, which writes that file.
+Without one the window shows the bundled setup page, which writes that file
+once something accepts connections at the address. The window menu
+(Gelabber → Server wechseln …) leads back to that page at any time, also from
+an error page; "Neu laden" reloads the current page.
 Only the configured origin gets the `media` permission set
 (`app/permissions/media.toml`); every page load closes the previous page's
 transports, producers and sources. WebKitGTK needs `libwebkit2gtk-4.1`.

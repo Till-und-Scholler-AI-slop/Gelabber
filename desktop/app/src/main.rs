@@ -5,20 +5,33 @@
 //! Server choice, first match wins: `--server <url>`, `GELABBER_SERVER`,
 //! `server` in `<config dir>/desktop.json`. Without one the window shows the
 //! bundled setup page, which stores the choice and reloads onto the server.
+//! The window menu leads back to that page at any time, so an unreachable or
+//! wrong server never locks the app.
 #![cfg_attr(not(debug_assertions), windows_subsystem = "windows")]
 
 mod media;
 mod viewer;
 
 use serde::{Deserialize, Serialize};
-use std::{fs, path::PathBuf};
+use std::{
+    fs,
+    net::{TcpStream, ToSocketAddrs},
+    path::PathBuf,
+    time::Duration,
+};
 use tauri::{
-    AppHandle, Manager, WebviewUrl, WebviewWindowBuilder, ipc::CapabilityBuilder,
+    AppHandle, Manager, WebviewUrl, WebviewWindowBuilder,
+    ipc::CapabilityBuilder,
+    menu::{Menu, MenuItem, Submenu},
     webview::PageLoadEvent,
 };
 use url::Url;
 
 const WINDOW: &str = "main";
+const MENU_CHANGE_SERVER: &str = "change-server";
+const MENU_RELOAD: &str = "reload";
+/// Per address; a typo'd host fails at DNS long before that.
+const CONNECT_TIMEOUT: Duration = Duration::from_secs(5);
 
 #[derive(Default, Serialize, Deserialize)]
 struct Settings {
@@ -41,9 +54,9 @@ fn load_settings(app: &AppHandle) -> Settings {
 
 /// Only http(s) origins; the window loads the server root.
 fn server_origin(input: &str) -> Result<Url, String> {
-    let url = Url::parse(input.trim()).map_err(|e| format!("invalid server address: {e}"))?;
+    let url = Url::parse(input.trim()).map_err(|e| format!("Ungültige Serveradresse: {e}"))?;
     if !matches!(url.scheme(), "https" | "http") || url.host().is_none() {
-        return Err("the server address needs http:// or https:// and a host".into());
+        return Err("Die Serveradresse braucht http:// oder https:// und einen Host.".into());
     }
     Url::parse(&url.origin().ascii_serialization()).map_err(|e| e.to_string())
 }
@@ -76,10 +89,50 @@ fn allow_server(app: &AppHandle, origin: &Url) -> tauri::Result<()> {
     )
 }
 
-/// Setup page only: store the server and open it.
+/// The setup page, with the current server filled in when there is one.
+fn setup_url(server: Option<&str>) -> Url {
+    // Where Tauri serves the bundled frontend.
+    let base = if cfg!(windows) {
+        "http://tauri.localhost/index.html"
+    } else {
+        "tauri://localhost/index.html"
+    };
+    let mut url = Url::parse(base).expect("static URL");
+    if let Some(server) = server {
+        url.query_pairs_mut().append_pair("server", server);
+    }
+    url
+}
+
+/// Catches typos and wrong ports before the address is stored: something has
+/// to accept a connection there.
+fn check_reachable(origin: &Url) -> Result<(), String> {
+    let host = origin.host_str().ok_or("Serveradresse ohne Host")?;
+    let port = origin
+        .port_or_known_default()
+        .ok_or("Serveradresse ohne Port")?;
+    let unreachable = |reason: String| format!("{host}:{port} ist nicht erreichbar ({reason}).");
+    let addrs = (host, port)
+        .to_socket_addrs()
+        .map_err(|e| unreachable(e.to_string()))?;
+    let mut last = "keine Adresse".to_owned();
+    for addr in addrs {
+        match TcpStream::connect_timeout(&addr, CONNECT_TIMEOUT) {
+            Ok(_) => return Ok(()),
+            Err(e) => last = e.to_string(),
+        }
+    }
+    Err(unreachable(last))
+}
+
+/// Setup page only: check and store the server, then open it.
 #[tauri::command]
-fn set_server(app: AppHandle, server: String) -> Result<(), String> {
+async fn set_server(app: AppHandle, server: String) -> Result<(), String> {
     let origin = server_origin(&server)?;
+    let probe = origin.clone();
+    tauri::async_runtime::spawn_blocking(move || check_reachable(&probe))
+        .await
+        .map_err(|e| e.to_string())??;
     if let Some(path) = settings_path(&app) {
         if let Some(dir) = path.parent() {
             fs::create_dir_all(dir).map_err(|e| e.to_string())?;
@@ -178,10 +231,46 @@ fn main() {
                 }
                 None => WebviewUrl::App("index.html".into()),
             };
+            let menu = Menu::with_items(
+                app,
+                &[&Submenu::with_items(
+                    app,
+                    "Gelabber",
+                    true,
+                    &[
+                        &MenuItem::with_id(
+                            app,
+                            MENU_CHANGE_SERVER,
+                            "Server wechseln …",
+                            true,
+                            None::<&str>,
+                        )?,
+                        &MenuItem::with_id(app, MENU_RELOAD, "Neu laden", true, None::<&str>)?,
+                    ],
+                )?],
+            )?;
             WebviewWindowBuilder::new(app, WINDOW, url)
                 .title("Gelabber")
                 .inner_size(1280.0, 800.0)
                 .min_inner_size(480.0, 360.0)
+                .menu(menu)
+                .on_menu_event(|window, event| {
+                    let Some(webview) = window.app_handle().get_webview_window(WINDOW) else {
+                        return;
+                    };
+                    let result = match event.id().as_ref() {
+                        MENU_CHANGE_SERVER => {
+                            let server = configured_server(window.app_handle())
+                                .and_then(|value| server_origin(&value).ok());
+                            webview.navigate(setup_url(server.as_ref().map(Url::as_str)))
+                        }
+                        MENU_RELOAD => webview.reload(),
+                        _ => Ok(()),
+                    };
+                    if let Err(error) = result {
+                        eprintln!("gelabber: menu: {error}");
+                    }
+                })
                 .build()?;
             Ok(())
         })
@@ -191,7 +280,8 @@ fn main() {
 
 #[cfg(test)]
 mod tests {
-    use super::server_origin;
+    use super::{check_reachable, server_origin, setup_url};
+    use std::net::TcpListener;
 
     #[test]
     fn server_origin_keeps_only_the_origin() {
@@ -208,5 +298,26 @@ mod tests {
         assert!(server_origin("file:///etc/passwd").is_err());
         assert!(server_origin("javascript:alert(1)").is_err());
         assert!(server_origin("chat.example.org").is_err());
+    }
+
+    #[test]
+    fn setup_url_carries_the_current_server() {
+        let url = setup_url(Some("https://chat.example.org/"));
+        assert_eq!(url.path(), "/index.html");
+        assert_eq!(
+            url.query_pairs().collect::<Vec<_>>(),
+            [("server".into(), "https://chat.example.org/".into())]
+        );
+        assert_eq!(setup_url(None).query(), None);
+    }
+
+    #[test]
+    fn check_reachable_needs_a_listener() {
+        let listener = TcpListener::bind("127.0.0.1:0").unwrap();
+        let origin = server_origin(&format!("http://{}", listener.local_addr().unwrap())).unwrap();
+        assert!(check_reachable(&origin).is_ok());
+        drop(listener);
+        assert!(check_reachable(&origin).is_err());
+        assert!(check_reachable(&server_origin("https://gelabber.invalid").unwrap()).is_err());
     }
 }
