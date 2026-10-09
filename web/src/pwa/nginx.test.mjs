@@ -70,6 +70,14 @@ describe("production nginx config", () => {
     }
   });
 
+  it("has no regex location that would outrank the rules above", () => {
+    // nginx asks its regex locations before it settles on a prefix one. A
+    // `location ~* \.js$` would take /assets/*.js away from the block that
+    // answers 404 for a missing file, and every test above would still pass.
+    const regex = [...blocks.keys()].filter((name) => name.startsWith("~"));
+    expect(regex).toEqual([]);
+  });
+
   it("keeps manifest, worker and offline page out of the persistent cache", () => {
     for (const file of ["/manifest.webmanifest", "/sw.js", "/offline.html"]) {
       expect(location(`= ${file}`), file).toContain(NO_CACHE);
