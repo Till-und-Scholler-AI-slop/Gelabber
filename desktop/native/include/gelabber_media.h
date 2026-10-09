@@ -161,7 +161,8 @@ GM_API char* gm_audio_apps(gm_engine* engine);
  * playing later are included. This process's own sound stays out also where
  * it plays through a virtual output device: each application is captured
  * where it plays, never where such a device plays it on.
- * gm_source_state adds "streams".
+ * gm_source_state adds "streams", and "underruns" and "overruns": how often
+ * a stream that was playing ran dry or was cut back for being too far ahead.
  * Not available on Windows yet: fails with an error there. */
 GM_API gm_source* gm_source_new_app_audio(gm_engine* engine, const char* options_json);
 /* Cameras: [{"id","name"}] (Linux: V4L2 devices; Windows: DirectShow; ids

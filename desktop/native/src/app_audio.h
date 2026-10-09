@@ -41,7 +41,9 @@ namespace gelabber
 		static constexpr size_t kFrames  = kSampleRate / 100;
 
 		// 10 ms of 16-bit interleaved stereo at 48 kHz, from one thread. Silence
-		// while the captured applications play nothing.
+		// while the captured applications play nothing. The blocks come at
+		// the pace of the sound card the applications play on, which is up to
+		// 0.3 % off the system clock's 10 ms.
 		using Sink = std::function<void(const int16_t* pcm)>;
 
 		// `app`: an AudioApp id, or "" for every application. This process and
@@ -52,7 +54,10 @@ namespace gelabber
 		static std::unique_ptr<AppAudioCapture> Start(const std::string& app, Sink sink);
 
 		virtual ~AppAudioCapture() = default;
-		// {"state":"live","streams":n,"frames":n}
+		// {"state":"live","streams":n,"frames":n,"underruns":n,"overruns":n}:
+		// streams captured now, blocks delivered, and how often a playing
+		// stream ran dry (its application paused, or its sound came too
+		// late) or was cut back for being too far ahead.
 		virtual std::string StateJson() const = 0;
 	};
 } // namespace gelabber

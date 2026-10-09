@@ -7,6 +7,10 @@
 //! which plays white noise into the microphone for ten minutes. Skipped
 //! unless GELABBER_TEST_AUDIO=1 so a developer machine's real devices stay
 //! alone.
+//!
+//! The session's sound cards are null sinks on the system clock. What the
+//! source-audio mix does with a card whose clock is off is simulated, in a
+//! test of its own that needs no session.
 
 mod common;
 
@@ -720,4 +724,50 @@ async fn voice_modes(server: &Server, mic_id: &str, speakers_id: &str) {
     })
     .await;
     drop(original_producer);
+}
+
+/// Source audio against sound cards whose clocks are off the system clock,
+/// which a real card's always is and the session's null sinks never are.
+/// desktop/native/tests/app_audio_mix_test.cc runs the mix's buffering and
+/// pacing against simulated cards; it is plain C++ without the core's
+/// libraries, built here with the host's compiler (GELABBER_HOST_CXX, else
+/// c++).
+#[test]
+fn the_source_audio_mix_follows_a_sound_card_whose_clock_is_off() {
+    if !cfg!(target_os = "linux") {
+        eprintln!("skipped: the mix belongs to the PipeWire capture");
+        return;
+    }
+    let native = std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("../native");
+    let compiler = std::env::var("GELABBER_HOST_CXX").unwrap_or_else(|_| "c++".to_owned());
+    let program = std::path::Path::new(env!("CARGO_TARGET_TMPDIR")).join("app_audio_mix_test");
+    let built = std::process::Command::new(&compiler)
+        .args(["-std=c++20", "-O2", "-I"])
+        .arg(native.join("src"))
+        .arg("-o")
+        .arg(&program)
+        .arg(native.join("tests/app_audio_mix_test.cc"))
+        .output();
+    let built = match built {
+        Ok(built) => built,
+        Err(error) if error.kind() == std::io::ErrorKind::NotFound => {
+            eprintln!("skipped: no C++ compiler {compiler:?} on this machine");
+            return;
+        }
+        Err(error) => panic!("{compiler}: {error}"),
+    };
+    assert!(
+        built.status.success(),
+        "{compiler} on app_audio_mix_test.cc: {}",
+        String::from_utf8_lossy(&built.stderr)
+    );
+    let run = std::process::Command::new(&program)
+        .output()
+        .expect("the built test");
+    let said = String::from_utf8_lossy(&run.stdout);
+    eprint!("{said}");
+    assert!(
+        run.status.success(),
+        "the mix against simulated cards:\n{said}"
+    );
 }

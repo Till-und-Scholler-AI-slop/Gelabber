@@ -1,7 +1,8 @@
 // Application sound on Linux through PipeWire: one capture stream per
 // playback stream of the chosen applications (pw-record --target style),
-// mixed to 48 kHz stereo in 10 ms blocks. WirePlumber links each capture
-// stream to its target; the applications keep playing to their own output.
+// mixed to 48 kHz stereo in 10 ms blocks at the pace their sound card sets
+// (app_audio_mix.h). WirePlumber links each capture stream to its target;
+// the applications keep playing to their own output.
 //
 // Whose stream it is comes from the stream's client object: the registry
 // lists a playback node with application.name and client.id, and only the
@@ -20,6 +21,7 @@
 // core has no link-time dependency on it.
 
 #include "app_audio.h"
+#include "app_audio_mix.h"
 
 #include <dlfcn.h>
 #include <pipewire/pipewire.h>
@@ -35,15 +37,16 @@
 #include <condition_variable>
 #include <cstdlib>
 #include <cstring>
-#include <deque>
 #include <fstream>
 #include <functional>
 #include <iterator>
 #include <map>
 #include <mutex>
+#include <optional>
 #include <set>
 #include <stdexcept>
 #include <thread>
+#include <vector>
 
 namespace gelabber
 {
@@ -615,6 +618,9 @@ namespace gelabber
 			int cutSeq{ 0 };
 		};
 
+		static_assert(MixInput::kBlockFrames == AppAudioCapture::kFrames);
+		static_assert(MixInput::kChannels == static_cast<size_t>(AppAudioCapture::kChannels));
+
 		class PipeWireAppAudio : public AppAudioCapture
 		{
 		public:
@@ -658,8 +664,16 @@ namespace gelabber
 			std::string StateJson() const override
 			{
 				std::lock_guard lock(mutex);
+				uint64_t underruns = endedUnderruns;
+				uint64_t overruns  = endedOverruns;
+				for (const auto& [node, capture] : captures)
+				{
+					underruns += capture->input.underruns;
+					overruns += capture->input.overruns;
+				}
 				return R"({"state":"live","streams":)" + std::to_string(captures.size()) + R"(,"frames":)" +
-				       std::to_string(delivered) + "}";
+				       std::to_string(delivered) + R"(,"underruns":)" + std::to_string(underruns) +
+				       R"(,"overruns":)" + std::to_string(overruns) + "}";
 			}
 
 		private:
@@ -671,9 +685,8 @@ namespace gelabber
 				std::string target;
 				pw_stream* stream{ nullptr };
 				spa_hook listener{};
-				// Interleaved stereo samples waiting for the mixer (mutex).
-				std::deque<float> samples;
-				bool primed{ false };
+				// Its samples waiting for the mixer (mutex).
+				MixInput input;
 			};
 
 			// On the loop thread with its lock held, like the stream events.
@@ -770,8 +783,7 @@ namespace gelabber
 					DestroyStream(*capture);
 					{
 						std::lock_guard lock(mutex);
-						capture->samples.clear();
-						capture->primed = false;
+						capture->input.Clear();
 					}
 					Connect(*capture);
 					return;
@@ -788,6 +800,11 @@ namespace gelabber
 						return;
 					gone = std::move(it->second);
 					captures.erase(it);
+					endedUnderruns += gone->input.underruns;
+					endedOverruns += gone->input.overruns;
+					// The end of its sound is still on the way into the mix.
+					gone->input.End();
+					ending.push_back(std::move(gone->input));
 				}
 				DestroyStream(*gone);
 			}
@@ -812,22 +829,19 @@ namespace gelabber
 				{
 					const auto* begin = reinterpret_cast<const float*>(
 					  static_cast<const uint8_t*>(data.data) + data.chunk->offset);
-					const size_t count = std::min<size_t>(data.chunk->size, data.maxsize) / sizeof(float);
+					// Whole frames.
+					const size_t count =
+					  std::min<size_t>(data.chunk->size, data.maxsize) / (sizeof(float) * kChannels) * kChannels;
 					std::lock_guard lock(mutex);
-					capture.samples.insert(capture.samples.end(), begin, begin + count);
-					// More than 100 ms behind: drop to 40 ms (clock drift).
-					constexpr size_t block = kFrames * kChannels;
-					if (capture.samples.size() > 10 * block)
-						capture.samples.erase(
-						  capture.samples.begin(),
-						  capture.samples.begin() + static_cast<long>(capture.samples.size() - 4 * block));
+					capture.input.Push(begin, count);
 				}
 				api.stream_queue_buffer(capture.stream, b);
 			}
 
-			// Every 10 ms: one block from each stream, summed. A stream plays
-			// once 20 ms are buffered, so small timing differences between
-			// the sound server and this thread do not click.
+			// A block from each playing stream, summed, about every 10 ms: as
+			// much sooner or later as keeps the streams' buffers level against
+			// the sound card that fills them (app_audio_mix.h). Silence goes
+			// out on the system clock.
 			void Mix()
 			{
 				constexpr size_t block = kFrames * kChannels;
@@ -837,22 +851,17 @@ namespace gelabber
 				while (running)
 				{
 					std::fill(mix.begin(), mix.end(), 0.0f);
+					// What the stream with the least to spare has beyond its
+					// cushion.
+					std::optional<double> lead;
 					{
 						std::lock_guard lock(mutex);
 						for (auto& [node, capture] : captures)
-						{
-							auto& samples = capture->samples;
-							if (!capture->primed && samples.size() >= 2 * block)
-								capture->primed = true;
-							if (!capture->primed)
-								continue;
-							const size_t take = std::min(block, samples.size());
-							for (size_t i = 0; i < take; ++i)
-								mix[i] += samples[i];
-							samples.erase(samples.begin(), samples.begin() + static_cast<long>(take));
-							if (take < block)
-								capture->primed = false;
-						}
+							if (const auto ahead = capture->input.Mix(mix.data()))
+								lead = lead ? std::min(*lead, *ahead) : *ahead;
+						for (auto& input : ending)
+							input.Mix(mix.data());
+						std::erase_if(ending, [](const MixInput& input) { return input.Done(); });
 						++delivered;
 					}
 					for (size_t i = 0; i < block; ++i)
@@ -862,7 +871,7 @@ namespace gelabber
 					}
 					sink(pcm.data());
 
-					next += std::chrono::milliseconds(10);
+					next += MixInterval(lead);
 					const auto now = std::chrono::steady_clock::now();
 					if (next + std::chrono::milliseconds(50) < now)
 						next = now;
@@ -876,6 +885,11 @@ namespace gelabber
 			std::unique_ptr<PlaybackWatcher> watcher;
 			mutable std::mutex mutex;
 			std::map<uint32_t, std::unique_ptr<Capture>> captures;
+			// What streams that are gone left for the mix (mutex), and what
+			// they counted.
+			std::vector<MixInput> ending;
+			uint64_t endedUnderruns{ 0 };
+			uint64_t endedOverruns{ 0 };
 			uint64_t delivered{ 0 };
 			std::atomic<bool> running{ false };
 			std::thread mixer;

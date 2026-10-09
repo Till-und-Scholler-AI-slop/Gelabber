@@ -16,6 +16,7 @@ Not a product yet.
 | `native/libwebrtc.env` | Pins: libwebrtc M140 commit, libmediasoupclient commit, libsdptransform tag |
 | `native/scripts/` | Reproducible libwebrtc builds (Linux, Windows); a test desktop session with a ScreenCast portal |
 | `native/patches/` | Patches applied to libwebrtc |
+| `native/tests/app_audio_mix_test.cc` | The source-audio mix against simulated sound cards whose clocks are off; plain C++, built and run by `core/tests/voice.rs` with the host's compiler |
 | `core/` | Rust crate `gelabber-media-core`: safe API over the C ABI |
 | `core/tests/mediasoup_loopback.rs` | Loopback call against mediasoup 0.29 with the server's router codecs |
 | `core/tests/source_preview.rs` | Video sinks for views in the app: a local source without a producer, scaling and rate limits, sinks going away mid-frame |
@@ -237,6 +238,18 @@ notification behind every close. An app that is killed instead of closed
   channel layout, its ports and the links from them are replaced and the
   session manager leaves the capture unlinked, so the core replaces a capture
   stream that lost its links.
+  The mix goes at the pace of the sound card. Samples arrive a graph
+  quantum at a time at the card's rate, and a mix on the system clock ran a
+  stream's buffer dry every few seconds when the card was a little slower
+  (every 13 s at 50 ppm and a quantum of 1024), each time with a block that
+  was part silence. Each stream keeps 20 ms below its bursts, and the time
+  to the next block shifts by up to 0.3 % with what the stream that has
+  least to spare is off that cushion (`native/src/app_audio_mix.h`); the
+  samples are left alone. With applications on two cards the mix keeps to
+  the slower one and cuts the other back when it is too far ahead.
+  `gm_source_state` counts both (`underruns`, `overruns`). A test session's
+  null sinks run on the system clock, so
+  `native/tests/app_audio_mix_test.cc` runs the mix against simulated cards.
   The voice test covers the list and "" while the test process plays a
   consumer out and a player it started plays too, the same with the consumer
   played out through a null sink that a loopback plays on to the speakers, a
