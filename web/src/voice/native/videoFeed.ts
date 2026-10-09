@@ -45,9 +45,10 @@ const LINGER_MS = 250;
 const SETTLE_MS = 150;
 /** ... and differ this much from what the app delivers, to be reported. */
 const HYSTERESIS = 0.1;
-/** Most pixels a view asks for. Carrying frames into the page costs per
- * byte: one 1080p30 stream took 0.4 of a core on each side when measured,
- * four times that at 2160p. Larger canvases scale the picture up. */
+/** Most pixels a view asks for, give or take a row. Carrying frames into
+ * the page costs per byte: one 1080p30 stream took 0.4 of a core on each
+ * side when measured, four times that at 2160p. Larger canvases scale the
+ * picture up. */
 const MAX_PIXELS = 1920 * 1080;
 /** What a view gets when frames cannot be carried or converted quickly. */
 const LIMITED = { maxWidth: 320, maxHeight: 180, maxFps: 15 };
@@ -198,7 +199,8 @@ function packet(body: unknown): ArrayBuffer {
   return Uint8Array.from(body as number[]).buffer;
 }
 
-const even = (pixels: number) => 2 * Math.ceil(pixels / 2);
+/** Up to the next even number; arithmetic's last digits do not count. */
+const even = (pixels: number) => 2 * Math.ceil(pixels / 2 - 1e-6);
 
 /** A command whose failure changes nothing here: the view is gone anyway. */
 function tell(command: string, args: Record<string, unknown>): void {
@@ -340,12 +342,13 @@ class Feed {
     this.latest = frame;
     if (this.unpainted) this.behind = true;
     this.unpainted = true;
-    // The picture's shape decides what a cropping canvas needs.
+    // The picture's shape decides what the canvases need; the first one
+    // has no reason to wait.
     if (
       previous?.displayWidth !== frame.displayWidth ||
       previous.displayHeight !== frame.displayHeight
     )
-      this.resize();
+      this.resize(previous === null);
     schedulePaint();
     this.pull();
   }
@@ -404,13 +407,14 @@ class Feed {
       if (!box) continue;
       let wide = box.width * ratio;
       let high = box.height * ratio;
-      if (frame && host.covers(canvas)) {
-        const scale = Math.max(
-          wide / frame.displayWidth,
-          high / frame.displayHeight,
-        );
-        wide = frame.displayWidth * scale;
-        high = frame.displayHeight * scale;
+      // Once the picture's shape is known, the picture counts instead of
+      // the box: it fills a cropping canvas and fits inside any other.
+      if (frame) {
+        const byWidth = wide / frame.displayWidth;
+        const byHeight = high / frame.displayHeight;
+        if (host.covers(canvas) ? byWidth > byHeight : byWidth < byHeight)
+          high = frame.displayHeight * byWidth;
+        else wide = frame.displayWidth * byHeight;
       }
       width = Math.max(width, wide);
       height = Math.max(height, high);
@@ -429,13 +433,13 @@ class Feed {
     // longer side has to fit.
     if (frame && frame.displayWidth !== frame.width)
       width = height = Math.max(width, height);
-    if (width * height <= MAX_PIXELS)
-      return { maxWidth: even(width), maxHeight: even(height) };
-    // The same shape with fewer pixels, rounded down to stay below.
-    const shrink = Math.sqrt(MAX_PIXELS / (width * height));
+    // Over the limit: the same shape with fewer pixels. Rounded up like any
+    // other size: the frames the shape is taken from are rounded too, and a
+    // 1080p picture has to fit either way.
+    const shrink = Math.min(1, Math.sqrt(MAX_PIXELS / (width * height)));
     return {
-      maxWidth: 2 * Math.floor((width * shrink) / 2),
-      maxHeight: 2 * Math.floor((height * shrink) / 2),
+      maxWidth: even(width * shrink),
+      maxHeight: even(height * shrink),
     };
   }
 

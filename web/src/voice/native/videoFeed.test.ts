@@ -320,11 +320,12 @@ describe("native video feed", () => {
     expect(largePainted).toHaveBeenCalledTimes(1);
     await settled();
     expect(app.named("media_view_open")).toHaveLength(1);
-    // The app scales to the largest canvas, once the size has held.
+    // The app scales to the largest canvas, once the size has held: 16:9
+    // inside 2000x1000 physical pixels.
     expect(app.named("media_view_configure")).toEqual([]);
     await vi.advanceTimersByTimeAsync(150);
     expect(app.named("media_view_configure")).toEqual([
-      { view: 1, maxWidth: 2000, maxHeight: 1000 },
+      { view: 1, maxWidth: 1778, maxHeight: 1000 },
     ]);
 
     app.deliver(1, packet(2, 1280, 720));
@@ -455,6 +456,72 @@ describe("native video feed", () => {
     ]);
   });
 
+  it("limits the picture's pixels, not the box's", async () => {
+    // The large view in a tall window: the box alone is over the limit.
+    const tall = page.canvas("tall", 1150, 1230);
+    attachNativeVideo(remote(), tall);
+    await settled();
+    const [opened] = app.named("media_view_open");
+    expect(opened).toEqual({ consumer: 42, maxWidth: 1394, maxHeight: 1490 });
+    // What the app makes of 1080p for that. On the screen it is 2300x1294:
+    // the limit leaves room for all of 1920x1080, not for the 1394x784 the
+    // box's shape would.
+    app.deliver(1, packet(1, 1394, 784));
+    await settled();
+    expect(app.named("media_view_configure")).toEqual([
+      { view: 1, maxWidth: 1922, maxHeight: 1080 },
+    ]);
+    app.deliver(1, packet(2, 1920, 1080));
+    await settled();
+    await vi.advanceTimersByTimeAsync(150);
+    expect(app.named("media_view_configure")).toHaveLength(1);
+
+    // Fullscreen on a 3440x1440 display.
+    const wide = page.canvas("wide", 1720, 720);
+    attachNativeVideo(new NativeTrack("video", "x", { consumer: 43 }), wide);
+    await settled();
+    expect(app.named("media_view_open")[1]).toEqual({
+      consumer: 43,
+      maxWidth: 2226,
+      maxHeight: 932,
+    });
+    app.deliver(2, packet(1, 1656, 932));
+    await settled();
+    expect(app.named("media_view_configure").at(-1)).toEqual({
+      view: 2,
+      maxWidth: 1920,
+      maxHeight: 1082,
+    });
+
+    // And a 16:9 box asks for exactly 1080p, whatever the frames' rounding.
+    const full = page.canvas("full", 1920, 1080);
+    attachNativeVideo(new NativeTrack("video", "y", { consumer: 44 }), full);
+    await settled();
+    expect(app.named("media_view_open")[2]).toEqual({
+      consumer: 44,
+      maxWidth: 1920,
+      maxHeight: 1080,
+    });
+    app.deliver(3, packet(1, 1280, 720));
+    await settled();
+    await vi.advanceTimersByTimeAsync(150);
+    expect(app.named("media_view_configure").at(-1)?.view).toBe(2);
+  });
+
+  it("asks for the picture a fitting canvas shows, not for its box", async () => {
+    // A 4:3 camera in the 16:9 large view.
+    attachNativeVideo(remote(), page.canvas("large", 800, 450));
+    await settled();
+    expect(app.named("media_view_open")).toEqual([
+      { consumer: 42, maxWidth: 1600, maxHeight: 900 },
+    ]);
+    app.deliver(1, packet(1, 1200, 900));
+    await settled();
+    expect(app.named("media_view_configure")).toEqual([
+      { view: 1, maxWidth: 1200, maxHeight: 900 },
+    ]);
+  });
+
   it("asks for a picture that fills a cropping canvas", async () => {
     // A 4:3 camera in a 16:9 tile with object-fit: cover.
     const tile = page.canvas("tile", 400, 225, true);
@@ -463,10 +530,10 @@ describe("native video feed", () => {
     expect(app.named("media_view_open")).toEqual([
       { consumer: 42, maxWidth: 800, maxHeight: 450 },
     ]);
-    // The app fits 4:3 into that: 600x450, too narrow for the tile.
+    // The app fits 4:3 into that: 600x450, too narrow for the tile. The
+    // first picture's shape is acted on at once.
     app.deliver(1, packet(1, 600, 450));
     await settled();
-    await vi.advanceTimersByTimeAsync(150);
     expect(app.named("media_view_configure")).toEqual([
       { view: 1, maxWidth: 800, maxHeight: 600 },
     ]);

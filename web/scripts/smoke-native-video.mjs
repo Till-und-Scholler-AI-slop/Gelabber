@@ -498,22 +498,30 @@ try {
     BARS.forEach((colour, bar) =>
       same(large.pixels[bar], colour, "large view"),
     );
-    // The app is asked for more, but never for more than 1080p's pixels.
-    const sizeOf = () =>
-      page.evaluate(() =>
-        window.smokeApp
-          .named("media_view_configure")
-          .filter((args) => args.view === 1)
-          .at(-1),
-      );
+    // The app is asked for more, but for no more than 1080p's pixels, and
+    // those count for the picture: the large view's box here has another
+    // shape than 16:9 and would leave it fewer lines.
+    const box = await page.evaluate(() => {
+      const rect = document
+        .querySelector("dialog canvas")
+        .getBoundingClientRect();
+      return [2 * rect.width, 2 * rect.height];
+    });
+    assert.ok(box[0] > 1920 && box[1] > 1080 && box[0] / box[1] < 1.6, box);
     await page.waitForFunction(() =>
       window.smokeApp
         .named("media_view_configure")
         .some((args) => args.view === 1 && args.maxWidth > 960),
     );
-    const grown = await sizeOf();
-    assert.ok(grown.maxWidth > 960 && grown.maxHeight > 540);
-    assert.ok(grown.maxWidth * grown.maxHeight <= 1920 * 1080);
+    assert.deepEqual(
+      await page.evaluate(() =>
+        window.smokeApp
+          .named("media_view_configure")
+          .filter((args) => args.view === 1)
+          .at(-1),
+      ),
+      { view: 1, maxWidth: 1920, maxHeight: 1080 },
+    );
     assert.ok(
       (await page.evaluate(
         (id) => window.smoke.renderedVideoHeight(id),
