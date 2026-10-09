@@ -10,7 +10,7 @@
 
 mod common;
 
-use common::{Server, blocking, serve_events, wait_for};
+use common::{Server, blocking, wait_for};
 use gelabber_media_core::{
     Audio, Consumer, Device, Direction, Engine, Producer, Source, Transport,
 };
@@ -21,7 +21,6 @@ use std::{
     sync::{Arc, Mutex},
     time::{Duration, Instant},
 };
-use tokio::runtime::Handle;
 
 async fn produce(send: &Transport, source: &Source, options: Value) -> Producer {
     let (send, source) = (send.clone(), source.clone());
@@ -238,7 +237,12 @@ async fn voice_modes_reach_a_consumer() {
     }
 
     let server = Server::start().await;
-    let runtime = Handle::current();
+    voice_modes(&server, &mic_id, &speakers_id).await;
+    server.close().await;
+}
+
+/// The call of the test above, dropped on return.
+async fn voice_modes(server: &Server, mic_id: &str, speakers_id: &str) {
     let engine = Engine::new(Audio::Default).unwrap();
 
     let devices = engine.audio_devices().unwrap();
@@ -248,18 +252,15 @@ async fn voice_modes_reach_a_consumer() {
             .as_array()
             .is_some_and(|items| items.iter().any(|d| d["id"] == id))
     };
-    assert!(has("inputs", &mic_id), "microphone {mic_id} listed");
-    assert!(
-        has("outputs", &speakers_id),
-        "speakers {speakers_id} listed"
-    );
+    assert!(has("inputs", mic_id), "microphone {mic_id} listed");
+    assert!(has("outputs", speakers_id), "speakers {speakers_id} listed");
     assert!(has("inputs", ""), "system default input listed");
     engine
         .configure_audio(&json!({"input": mic_id, "output": speakers_id}))
         .unwrap();
     let selected = engine.audio_devices().unwrap();
-    assert_eq!(selected["input"], mic_id.as_str());
-    assert_eq!(selected["output"], speakers_id.as_str());
+    assert_eq!(selected["input"], mic_id);
+    assert_eq!(selected["output"], speakers_id);
     assert!(
         engine
             .configure_audio(&json!({"input": "no-such-device"}))
@@ -280,8 +281,7 @@ async fn voice_modes_reach_a_consumer() {
     let server_producers = Arc::new(Mutex::new(Vec::new()));
     let (server_send, send_params) = server.transport().await;
     let (send, send_events) = Transport::new(&device, Direction::Send, &send_params).unwrap();
-    serve_events(
-        runtime.clone(),
+    server.serve(
         send.clone(),
         server_send.clone(),
         send_events,
@@ -289,8 +289,7 @@ async fn voice_modes_reach_a_consumer() {
     );
     let (server_recv, recv_params) = server.transport().await;
     let (recv, recv_events) = Transport::new(&device, Direction::Recv, &recv_params).unwrap();
-    serve_events(
-        runtime,
+    server.serve(
         recv.clone(),
         server_recv.clone(),
         recv_events,

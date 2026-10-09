@@ -15,7 +15,7 @@ mod common;
 
 use common::{
     Server, blocking, check_encoder, h264_demanded_by, h264_under_test, layers_of, listen_ip,
-    listen_ip_from, outbound_rtp, serve_events, simulcast_sizes, wait_for,
+    listen_ip_from, outbound_rtp, simulcast_sizes, wait_for,
 };
 use gelabber_media_core::{Audio, Device, Direction, Engine, Source, Transport, VideoFrame};
 use mediasoup::prelude::*;
@@ -26,7 +26,6 @@ use std::{
     sync::{Arc, Mutex},
     time::{Duration, Instant},
 };
-use tokio::runtime::Handle;
 
 #[tokio::test(flavor = "multi_thread", worker_threads = 4)]
 async fn native_client_round_trips_media_through_mediasoup() {
@@ -34,8 +33,13 @@ async fn native_client_round_trips_media_through_mediasoup() {
         gelabber_media_core::set_log_level(gelabber_media_core::LogLevel::Info);
     }
     let server = Server::start().await;
-    let runtime = Handle::current();
+    round_trip(&server).await;
+    server.close().await;
+}
 
+/// The call of the test above. All of it is dropped on return, which the
+/// server needs to close.
+async fn round_trip(server: &Server) {
     let engine = Engine::new(Audio::Dummy).unwrap();
 
     // Cameras: CI runners have none, so opening the default one must fail
@@ -86,8 +90,7 @@ async fn native_client_round_trips_media_through_mediasoup() {
     let server_producers = Arc::new(Mutex::new(Vec::new()));
     let (server_send, send_params) = server.transport().await;
     let (send, send_events) = Transport::new(&device, Direction::Send, &send_params).unwrap();
-    serve_events(
-        runtime.clone(),
+    server.serve(
         send.clone(),
         server_send.clone(),
         send_events,
@@ -200,8 +203,7 @@ async fn native_client_round_trips_media_through_mediasoup() {
     // the client is ready (like `consumerReady`).
     let (server_recv, recv_params) = server.transport().await;
     let (recv, recv_events) = Transport::new(&device, Direction::Recv, &recv_params).unwrap();
-    serve_events(
-        runtime.clone(),
+    server.serve(
         recv.clone(),
         server_recv.clone(),
         recv_events,
@@ -352,7 +354,7 @@ async fn native_client_round_trips_media_through_mediasoup() {
     replacement.set_enabled(false).unwrap();
     replacement.set_enabled(true).unwrap();
 
-    assert_no_tcp_candidates(&server, &device, &mic, &runtime).await;
+    assert_no_tcp_candidates(server, &device, &mic).await;
 
     // Native objects close in dependency order.
     drop(consumers);
@@ -373,6 +375,12 @@ async fn simulcast_layers_fit_a_picture_of_any_size() {
         gelabber_media_core::set_log_level(gelabber_media_core::LogLevel::Info);
     }
     let server = Server::start().await;
+    layers_by_size(&server).await;
+    server.close().await;
+}
+
+/// The call of the test above, dropped on return.
+async fn layers_by_size(server: &Server) {
     let engine = Engine::new(Audio::Dummy).unwrap();
     let device = Device::new(&engine).unwrap();
     let caps = serde_json::to_value(server.router.rtp_capabilities()).unwrap();
@@ -381,8 +389,7 @@ async fn simulcast_layers_fit_a_picture_of_any_size() {
     let server_producers = Arc::new(Mutex::new(Vec::new()));
     let (server_send, send_params) = server.transport().await;
     let (send, send_events) = Transport::new(&device, Direction::Send, &send_params).unwrap();
-    serve_events(
-        Handle::current(),
+    server.serve(
         send.clone(),
         server_send,
         send_events,
@@ -485,12 +492,7 @@ fn local_candidates(transport: &Transport) -> Vec<Value> {
 /// about. libwebrtc only gets to its TCP gathering phase while ICE is still
 /// unconnected, so this transport's remote candidates point at a local socket
 /// that never answers.
-async fn assert_no_tcp_candidates(
-    server: &Server,
-    device: &Device,
-    mic: &Source,
-    runtime: &Handle,
-) {
+async fn assert_no_tcp_candidates(server: &Server, device: &Device, mic: &Source) {
     let silent = std::net::UdpSocket::bind((listen_ip(), 0)).unwrap();
     let port = silent.local_addr().unwrap().port();
     let (server_transport, mut params) = server.transport().await;
@@ -498,8 +500,7 @@ async fn assert_no_tcp_candidates(
         candidate["port"] = json!(port);
     }
     let (transport, events) = Transport::new(device, Direction::Send, &params).unwrap();
-    serve_events(
-        runtime.clone(),
+    server.serve(
         transport.clone(),
         server_transport,
         events,

@@ -9,7 +9,7 @@
 
 mod common;
 
-use common::{Server, blocking, check_encoder, layers_of, serve_events, simulcast_sizes, wait_for};
+use common::{Server, blocking, check_encoder, layers_of, simulcast_sizes, wait_for};
 use gelabber_media_core::{Audio, Device, Direction, Engine, Source, Transport};
 use mediasoup::prelude::Transport as _;
 use mediasoup::prelude::*;
@@ -18,7 +18,6 @@ use std::{
     sync::{Arc, Mutex},
     time::{Duration, Instant},
 };
-use tokio::runtime::Handle;
 
 #[tokio::test(flavor = "multi_thread", worker_threads = 4)]
 async fn screen_capture_reaches_a_consumer() {
@@ -30,7 +29,12 @@ async fn screen_capture_reaches_a_consumer() {
         gelabber_media_core::set_log_level(gelabber_media_core::LogLevel::Info);
     }
     let server = Server::start().await;
-    let runtime = Handle::current();
+    share_a_screen(&server).await;
+    server.close().await;
+}
+
+/// The call of the test above, dropped on return.
+async fn share_a_screen(server: &Server) {
     let engine = Engine::new(Audio::Dummy).unwrap();
     let device = Device::new(&engine).unwrap();
     device
@@ -55,8 +59,7 @@ async fn screen_capture_reaches_a_consumer() {
     let server_producers = Arc::new(Mutex::new(Vec::new()));
     let (server_send, send_params) = server.transport().await;
     let (send, send_events) = Transport::new(&device, Direction::Send, &send_params).unwrap();
-    serve_events(
-        runtime.clone(),
+    server.serve(
         send.clone(),
         server_send.clone(),
         send_events,
@@ -80,8 +83,7 @@ async fn screen_capture_reaches_a_consumer() {
 
     let (server_recv, recv_params) = server.transport().await;
     let (recv, recv_events) = Transport::new(&device, Direction::Recv, &recv_params).unwrap();
-    serve_events(
-        runtime,
+    server.serve(
         recv.clone(),
         server_recv.clone(),
         recv_events,
