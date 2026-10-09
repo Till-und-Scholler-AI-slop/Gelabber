@@ -1110,6 +1110,19 @@ function makeMediaConnection(
   return connection;
 }
 
+/** Seat connections whose `start` is through. Before that a connection is
+ * the seat's already, for the server's events, but its device has not
+ * loaded and it turns every publication down. */
+const startedConnections = new WeakSet<MediaConnection>();
+
+/** The seat's connection once it takes publications. What is captured or
+ * changed while it starts is published by `startPeer` when the start is
+ * through. */
+function publishingConnection(): MediaConnection | null {
+  const connection = seat.connection;
+  return connection && startedConnections.has(connection) ? connection : null;
+}
+
 function hasLiveTrack(
   stream: MediaStream | null,
   kind: "audio" | "video",
@@ -2162,7 +2175,7 @@ function handleSettingsChange(prev: MediaSettings, next: MediaSettings): void {
 }
 
 async function refreshAudioCodecs(): Promise<void> {
-  const connection = seat.connection,
+  const connection = publishingConnection(),
     mine = seat.generation;
   if (!connection) return;
   try {
@@ -2972,7 +2985,7 @@ async function publishLocal(
   kind: "v" | "s" | "l",
   stream: MediaStream,
 ): Promise<void> {
-  const connection = seat.connection;
+  const connection = publishingConnection();
   if (!connection || (kind === "l" && !liveClaimNonce)) return;
   const mine = seat.generation,
     epoch = videoEpoch(kind),
@@ -3580,6 +3593,7 @@ async function startPeer(
     );
     await pc.start(joined.routerRtpCapabilities);
     if (seat.generation !== mine || seat.connection !== pc) return;
+    startedConnections.add(pc);
     useVoice.setState({ sourceWatchSupported: true });
     for (const [userId, subscriptions] of Object.entries(
       useVoice.getState().sourceSubscriptions,
@@ -3715,7 +3729,8 @@ async function startPeer(
 
   if (seat.generation !== mine) return;
 
-  if (seat.generation !== mine) return;
+  // What the connection before this one carried, and what was captured
+  // while this one could not publish yet.
   const pending = useVoice.getState();
   if (pending.localCamera) {
     await publishLocal("v", pending.localCamera);

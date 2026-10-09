@@ -3,11 +3,12 @@ import { useAudioProcessing } from "./audioProcessing.ts";
 import { afterEach, describe, expect, it, vi } from "vitest";
 
 import type { ClientFrame, ErrFrame, SigEvent } from "../ws/protocol.ts";
-import type {
-  IceServer,
-  MediaClientFrame,
-  MediaServerFrame,
-  MediaSocket,
+import {
+  MediaError,
+  type IceServer,
+  type MediaClientFrame,
+  type MediaServerFrame,
+  type MediaSocket,
 } from "./media.ts";
 import {
   configureVoice,
@@ -80,14 +81,18 @@ class FakeConnection implements MediaConnection {
     readonly options: MediaConnectionOptions,
     readonly holdReplace?: Promise<void>,
     readonly holdPublish?: Promise<void>,
+    readonly holdStart?: Promise<void>,
   ) {
     this.iceServers = options.iceServers;
   }
   async start(): Promise<void> {
+    if (this.holdStart) await this.holdStart;
     this.started = true;
   }
   async publish(input: MediaPublication): Promise<MediaSender> {
     if (this.closed) throw new Error("closed");
+    // The real connection's answer while its device has not loaded yet.
+    if (!this.started) throw new MediaError("unsupported_codec");
     this.publicationInputs.push(input);
     if (this.holdPublish && input.track.kind === "video")
       await this.holdPublish;
@@ -402,6 +407,9 @@ function install(opts?: {
   ) => Error | undefined;
   holdReplaceTrack?: Promise<void>;
   holdPublish?: Promise<void>;
+  /** Per connection (0-based): its `start` waits for this, as while its
+   * device is still loading. */
+  holdStart?: (index: number) => Promise<void> | undefined;
   produceError?: (kind: TrackKind) => Error | undefined;
   /** The server's answer to a "produce" waits for this. */
   gateProduce?: (kind: TrackKind) => Promise<void> | undefined;
@@ -482,6 +490,7 @@ function install(opts?: {
         options,
         opts?.holdReplaceTrack,
         opts?.holdPublish,
+        opts?.holdStart?.(peers.length),
       );
       peers.push(peer);
       return peer;
@@ -1788,6 +1797,67 @@ describe("voice session", () => {
     expect(env.errors).toHaveLength(0);
   });
 
+  it.each([
+    ["camera", "v"],
+    ["screen share", "s"],
+    ["Go Live", "l"],
+  ] as const)(
+    "publishes a %s captured while the seat's connection is still starting",
+    async (_name, kind) => {
+      const start = deferred();
+      const capture = deferred();
+      const env = install({
+        holdStart: () => start.promise,
+        gateMedia: (_index, constraints) =>
+          constraints.video ? capture.promise : undefined,
+        gateDisplay: () => capture.promise,
+      });
+      const local = () => {
+        const state = useVoice.getState();
+        if (kind === "v") return state.localCamera;
+        return kind === "s" ? state.localScreen : state.localLive;
+      };
+      const on = () => {
+        const state = useVoice.getState();
+        if (kind === "v") return state.camera;
+        return kind === "s" ? state.sharing : state.live;
+      };
+      joinVoice({ serverId: "srv", channelId: "voice", channelName: "Voice" });
+      (kind === "v"
+        ? toggleCamera
+        : kind === "s"
+          ? toggleShare
+          : toggleGoLive)();
+      // The seat has its connection, whose device has not loaded yet.
+      await vi.waitFor(() => expect(env.peers).toHaveLength(1));
+      expect(env.peers[0]!.started).toBe(false);
+      capture.resolve();
+      await vi.waitFor(() => expect(local()).toBeTruthy());
+      await new Promise((resolve) => setTimeout(resolve, 0));
+      // Nothing was asked of that connection, and nothing was given up.
+      expect(env.peers[0]!.publicationInputs).toEqual([]);
+      expect(on()).toBe(true);
+      expect(env.errors).toHaveLength(0);
+
+      start.resolve();
+      await vi.waitFor(() =>
+        expect(env.peers[0]!.sender(kind)?.track).toBeTruthy(),
+      );
+      const stream = local()!;
+      expect(env.peers[0]!.sender(kind)?.track).toBe(
+        stream.getVideoTracks()[0],
+      );
+      expect(trackStopped(stream.getVideoTracks()[0])).toBe(false);
+      expect(on()).toBe(true);
+      expect(useVoice.getState().participants["u-self"]?.pubs).toContain(kind);
+      expect(env.getDisplayMediaCalls()).toBe(kind === "v" ? 0 : 1);
+      // The camera once, and the microphone.
+      expect(env.getUserMediaCalls()).toBe(kind === "v" ? 2 : 1);
+      if (kind === "l") expect(liveClaimFrames(env.sent)).toEqual(["p"]);
+      expect(env.errors).toHaveLength(0);
+    },
+  );
+
   it("matches watch events by server and channel", async () => {
     const { emitSig, peers } = install();
     watchLive({
@@ -2816,6 +2886,33 @@ describe("source and transport continuity", () => {
     for (const key of ["localCamera", "localScreen", "localLive"] as const)
       expect(streamStopped(before[key])).toBe(true);
     expect(trackStopped(mic)).toBe(true);
+  });
+
+  it("leaves a quality change to a reconnecting connection's own start", async () => {
+    const start = deferred();
+    const env = await connected({
+      holdStart: (index) => (index === 1 ? start.promise : undefined),
+    });
+    const mic = env.peers[0]!.audio;
+    env.closeMedia();
+    await vi.waitFor(() => expect(env.peers).toHaveLength(2));
+    // The new connection's device has not loaded: it can publish nothing.
+    useMediaSettings.getState().patch({ economyMode: true, quality: "high" });
+    await new Promise((resolve) => setTimeout(resolve, 0));
+    expect(env.peers[1]!.publicationInputs).toEqual([]);
+    expect(env.errors).toHaveLength(0);
+
+    start.resolve();
+    await vi.waitFor(() => expect(env.peers[1]!.audio).toBe(mic));
+    await vi.waitFor(() =>
+      expect(
+        env.peers[1]!.sender("a")?.getParameters().encodings[0]?.maxBitrate,
+      ).toBe(128_000),
+    );
+    expect(
+      env.peers[1]!.publicationInputs.filter((input) => input.kind === "a"),
+    ).toHaveLength(1);
+    expect(env.errors).toHaveLength(0);
   });
 
   it("releases the Live claim when media recovery abandons an open picker", async () => {
