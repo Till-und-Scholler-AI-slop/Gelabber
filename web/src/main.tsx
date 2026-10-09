@@ -9,6 +9,14 @@ import { queryClient } from "./queryClient.ts";
 import { router } from "./routes.tsx";
 import { ThemeController } from "./theme/ThemeController.tsx";
 import { InterfacePreferences } from "./interface/InterfacePreferences.tsx";
+import { isDesktopApp } from "./voice/native/bridge.ts";
+import { trackInstallation } from "./pwa/install.ts";
+import { registerServiceWorker } from "./pwa/register.ts";
+
+const desktop = isDesktopApp();
+const stopInstallTracking = trackInstallation(window, desktop);
+if (import.meta.hot) import.meta.hot.dispose(stopInstallTracking);
+if (import.meta.env.PROD && !desktop) registerServiceWorker();
 
 // Kick off the session bootstrap in parallel with the first render; the
 // route guards await the same promise instead of starting a second request.

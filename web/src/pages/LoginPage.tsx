@@ -8,6 +8,7 @@ import { useFormErrors } from "../auth/useFormErrors.ts";
 import { Field } from "../components/Field.tsx";
 import { FormError } from "../components/FormError.tsx";
 import { SubmitButton } from "../components/SubmitButton.tsx";
+import { InstallApp } from "../pwa/InstallApp.tsx";
 
 export function LoginPage() {
   const navigate = useNavigate();
@@ -86,6 +87,7 @@ export function LoginPage() {
           Anmelden
         </SubmitButton>
       </form>
+      <InstallApp />
     </section>
   );
 }
