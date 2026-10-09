@@ -62,7 +62,19 @@ describe("app shell", () => {
   it("loads the entry point that starts worker and notification taps", () => {
     expect(html).toContain('<script type="module" src="/src/main.tsx">');
     const entry = read("src/main.tsx").toString("utf8");
-    expect(entry).toMatch(/^startPwa\(\{$/m);
+    // The whole call: the desktop app keeps out of the worker, taps reach
+    // the signed-in account, and the router changes route without a reload.
+    expect(entry).toContain(
+      [
+        "startPwa({",
+        "  desktop,",
+        "  user: () => useSession.getState().user?.id,",
+        "  navigate: (to) => router.navigate(to),",
+        "});",
+      ].join("\n"),
+    );
+    expect(entry.match(/startPwa\(/g)).toHaveLength(1);
+    expect(entry).toMatch(/^const desktop = isDesktopApp\(\);$/m);
   });
 });
 
