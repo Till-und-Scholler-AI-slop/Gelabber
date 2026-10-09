@@ -36,6 +36,8 @@ gelabber.example.com {
 
 Schreibt der vorgelagerte Proxy dagegen einen Port in `Host`, den der Browser nicht benutzt, antwortet `/ws` seit v0.6 mit 403 („Cross-origin WebSocket is not allowed.“). Das passiert mit `proxy_set_header Host $host:$proxy_port;` (der Port des Upstreams, oben 8088) und mit `$host:$server_port` hinter einer Portumsetzung (außen 443, Nginx auf 8443). Unter 0.5.x lief eine solche Konfiguration, weil der Port abgeschnitten wurde. Mit der v0.6-Caddyfile bleiben Anmeldung und REST-API intakt, aber der Chat aktualisiert sich nicht mehr und Voice verbindet nicht. Abhilfe ist die `Host`-Zeile am vorgelagerten Proxy, nicht die Caddyfile.
 
+**Content-Security-Policy.** Der Stack setzt keine. Wer am eigenen Proxy eine für den App-Host setzt, muss der Desktop-App den Weg zu ihrem nativen Teil lassen: in `connect-src` zusätzlich `ipc:` (Linux) und `http://ipc.localhost` (Windows), zum Beispiel `connect-src 'self' ipc: http://ipc.localhost`. Fehlt `connect-src`, gilt dafür `default-src`. Ohne diese Quellen weicht die App auf einen langsamen Weg aus: Sie funktioniert weiter, aber Video in ihren Kacheln bleibt bei 320×180 mit 15 Bildern pro Sekunde, und die Kachel meldet „Geringe Bildqualität“ mit der Content-Security-Policy als Grund. Browser und die installierte PWA betrifft das nicht.
+
 **Ohne Compose-Caddy:** Overlay published web/api/media (und MinIO) auf Loopback. Vorlage: `deploy/compose/Caddyfile.homelab` (zwei aktive Site-Blöcke: App + MinIO).
 
 Wichtig: Die Compose-`.env` exportiert **nicht** automatisch Variablen an einen externen Caddy-Dienst oder einen Caddy-Container in einem anderen Stack. Einrichtung:

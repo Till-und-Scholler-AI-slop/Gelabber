@@ -68,6 +68,12 @@ Fehlersuche
   Beide Umleitungen sind nötig: Ein Teil des Protokolls geht auf die
   Standardausgabe, der andere auf die Fehlerausgabe.
 
+  Kleines Video: Meldet eine Videokachel "Geringe Bildqualität" und nennt
+  beim Darüberfahren die Content-Security-Policy des Servers, dann versperrt
+  diese Richtlinie der App den schnellen Weg für Bilder. Wer den Server
+  betreibt, muss in connect-src zusätzlich ipc: und http://ipc.localhost
+  erlauben; siehe deploy/README.md im Gelabber-Repository.
+
 Lizenzen
   THIRD-PARTY-NOTICES.txt im Installationsordner (englisch) nennt die
   enthaltene Software Dritter mit ihren Lizenzen und Lizenztexten. Teil 1

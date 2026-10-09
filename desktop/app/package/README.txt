@@ -22,6 +22,11 @@ package adds hardware encoding: the app does not use the H264 encoders of
 gst-plugins-bad.
 
 Logs: GELABBER_MEDIA_LOG=1 ./gelabber-desktop ...
+Small video: when a video tile says "Geringe Bildqualität" and, with the
+pointer over it, names the server's Content-Security-Policy, that policy
+keeps the app from fetching pictures the fast way. Whoever runs the server
+has to allow ipc: and http://ipc.localhost in connect-src; see
+deploy/README.md in the Gelabber repository.
 
 Licences: THIRD-PARTY-NOTICES.txt lists the third-party software in the two
 binaries, with its licences and their texts, and what is still open. It is
