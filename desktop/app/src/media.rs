@@ -56,7 +56,13 @@ impl Media {
         if let Some(engine) = self.engine.get() {
             return Ok(engine);
         }
-        let engine = Engine::new(Audio::Default).map_err(err)?;
+        // GELABBER_AUDIO=dummy: no audio devices at all, for smoke tests on
+        // machines without audio endpoints (CI runners).
+        let audio = match std::env::var("GELABBER_AUDIO").as_deref() {
+            Ok("dummy") => Audio::Dummy,
+            _ => Audio::Default,
+        };
+        let engine = Engine::new(audio).map_err(err)?;
         // A racing first call loses its engine; both are equivalent.
         Ok(self.engine.get_or_init(|| engine))
     }

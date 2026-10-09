@@ -8,7 +8,7 @@ the media core and nothing else.
 
 import json
 import sys
-from http.server import BaseHTTPRequestHandler, HTTPServer
+from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 
 PAGE = b"""<!doctype html>
 <html><head><meta charset="utf-8"><title>smoke</title></head><body>
@@ -67,7 +67,9 @@ class Handler(BaseHTTPRequestHandler):
         pass
 
 
-server = HTTPServer(("127.0.0.1", int(sys.argv[1])), Handler)
+# A thread per connection: Chromium (WebView2) opens connections ahead of use,
+# and one that stays idle must not hold up the report.
+server = ThreadingHTTPServer(("127.0.0.1", int(sys.argv[1])), Handler)
 server.result = None
 server.timeout = 1
 while server.result is None:
