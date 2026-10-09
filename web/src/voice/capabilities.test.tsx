@@ -97,6 +97,7 @@ beforeEach(() => {
     sharing: false,
     live: false,
     sourceAudio: { s: "off", l: "off" },
+    sourceAudioNote: { s: null, l: null },
     sourceSubscriptions: {},
     watching: false,
     playbackBlocked: false,

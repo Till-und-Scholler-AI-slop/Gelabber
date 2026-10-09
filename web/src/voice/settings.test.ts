@@ -1,4 +1,6 @@
 import { afterEach, describe, expect, it } from "vitest";
+import { setNativeBridgeForTests, type NativeBridge } from "./native/bridge.ts";
+import { loadNativeFeatures } from "./native/features.ts";
 import {
   DEFAULT_MEDIA_SETTINGS,
   AUDIO_QUALITY,
@@ -12,6 +14,9 @@ import {
   cameraConstraints,
   micConstraints,
   resetMediaSettingsForTests,
+  sharesSourceAudio,
+  sourceAudioCarriesCall,
+  sourceAudioChoice,
   useMediaSettings,
   videoSendBudget,
   videoConstraintLadder,
@@ -134,7 +139,7 @@ describe("capture and explicit bandwidth preferences", () => {
     useMediaSettings.getState().patch({
       processingMode: "original",
       economyMode: false,
-      shareSourceAudio: true,
+      sourceAudioShare: "on",
       sourceAudioVolume: 0.35,
       callSounds: false,
       callSoundVolume: 2,
@@ -147,7 +152,7 @@ describe("capture and explicit bandwidth preferences", () => {
     expect(useMediaSettings.getState()).toMatchObject({
       processingMode: "original",
       economyMode: false,
-      shareSourceAudio: true,
+      sourceAudioShare: "on",
       sourceAudioVolume: 0.35,
       callSounds: false,
       callSoundVolume: 1,
@@ -199,21 +204,19 @@ describe("capture and explicit bandwidth preferences", () => {
     expect(useMediaSettings.getState().screenProfile).toBe("detail");
   });
   it("keeps source audio and conversation playback independent across reloads", async () => {
-    useMediaSettings
-      .getState()
-      .patch({
-        shareSourceAudio: true,
-        sourceAudioVolume: 0.35,
-        sourceAudioMuted: true,
-        outputVolume: 0.8,
-      });
+    useMediaSettings.getState().patch({
+      sourceAudioShare: "on",
+      sourceAudioVolume: 0.35,
+      sourceAudioMuted: true,
+      outputVolume: 0.8,
+    });
     const storage = useMediaSettings.persist.getOptions().storage!,
       saved = await storage.getItem("gelabber.media");
     resetMediaSettingsForTests();
     await storage.setItem("gelabber.media", saved!);
     await useMediaSettings.persist.rehydrate();
     expect(useMediaSettings.getState()).toMatchObject({
-      shareSourceAudio: true,
+      sourceAudioShare: "on",
       sourceAudioVolume: 0.35,
       sourceAudioMuted: true,
       outputVolume: 0.8,
@@ -221,5 +224,177 @@ describe("capture and explicit bandwidth preferences", () => {
     useMediaSettings.getState().patch({ sourceAudioVolume: -5 });
     expect(useMediaSettings.getState().sourceAudioVolume).toBe(0);
     expect(useMediaSettings.getState().outputVolume).toBe(0.8);
+  });
+});
+
+describe("stream sound: the stored choice", () => {
+  const storage = () => useMediaSettings.persist.getOptions().storage!;
+  async function reloadWith(state: Record<string, unknown>) {
+    resetMediaSettingsForTests();
+    await storage().setItem("gelabber.media", { state: state as never });
+    await useMediaSettings.persist.rehydrate();
+    return useMediaSettings.getState().sourceAudioShare;
+  }
+
+  it("has made no choice by default", () => {
+    expect(DEFAULT_MEDIA_SETTINGS.sourceAudioShare).toBe("auto");
+    expect(useMediaSettings.getState().sourceAudioShare).toBe("auto");
+  });
+
+  it("reads the old boolean: false was nobody's choice, true was", async () => {
+    // Up to v0.5 the default was stored as false like a deliberate "off".
+    expect(await reloadWith({ shareSourceAudio: false })).toBe("auto");
+    expect(await reloadWith({ shareSourceAudio: true })).toBe("on");
+    expect(await reloadWith({ quality: "high" })).toBe("auto");
+    // The old key does not linger in the state or the next save.
+    expect(useMediaSettings.getState()).not.toHaveProperty("shareSourceAudio");
+  });
+
+  it("keeps an explicit off apart from the old default across reloads", async () => {
+    useMediaSettings.getState().patch({ sourceAudioShare: "off" });
+    const saved = (await storage().getItem("gelabber.media"))!;
+    expect(saved.state).toMatchObject({ sourceAudioShare: "off" });
+    expect(saved.state).not.toHaveProperty("shareSourceAudio");
+    resetMediaSettingsForTests();
+    await storage().setItem("gelabber.media", saved);
+    await useMediaSettings.persist.rehydrate();
+    expect(useMediaSettings.getState().sourceAudioShare).toBe("off");
+    // The new choice wins over a leftover of the old boolean.
+    expect(
+      await reloadWith({ sourceAudioShare: "off", shareSourceAudio: true }),
+    ).toBe("off");
+    expect(
+      await reloadWith({ sourceAudioShare: "on", shareSourceAudio: false }),
+    ).toBe("on");
+  });
+
+  it("takes anything else for no choice", async () => {
+    expect(await reloadWith({ sourceAudioShare: true })).toBe("auto");
+    expect(await reloadWith({ sourceAudioShare: "yes" })).toBe("auto");
+    useMediaSettings.getState().patch({ sourceAudioShare: "loud" as never });
+    expect(useMediaSettings.getState().sourceAudioShare).toBe("auto");
+  });
+});
+
+describe("stream sound: what a share does", () => {
+  afterEach(() => setNativeBridgeForTests(undefined));
+
+  /** The desktop app, answering `media_info` with `info`. */
+  async function desktopApp(info: unknown) {
+    setNativeBridgeForTests({
+      invoke: async (command: string) =>
+        command === "media_info" ? info : Promise.reject(new Error(command)),
+      channel: async () => null,
+    } as unknown as NativeBridge);
+    await loadNativeFeatures();
+  }
+  const choices = () => ({
+    auto: sharesSourceAudio({ sourceAudioShare: "auto" }),
+    on: sharesSourceAudio({ sourceAudioShare: "on" }),
+    off: sharesSourceAudio({ sourceAudioShare: "off" }),
+  });
+  const carriesCall = (sourceAudioShare: "auto" | "on", sourceAudioApp = "") =>
+    sourceAudioCarriesCall({ sourceAudioShare, sourceAudioApp });
+  /** What the switch stores when it is flipped. */
+  const switched = () => ({
+    on: sourceAudioChoice(true),
+    off: sourceAudioChoice(false),
+  });
+  const APP_05 = { abi: 7, version: "0.5.2", platform: "linux" };
+  const APP_06 = {
+    features: ["screen", "camera", "app-audio", "app-audio-excludes-self"],
+  };
+
+  it("browser: off unless switched on, as before", () => {
+    setNativeBridgeForTests(null);
+    expect(choices()).toEqual({ auto: false, on: true, off: false });
+    expect(sharesSourceAudio()).toBe(false);
+    expect(carriesCall("on")).toBe(false);
+    // Off is what a browser does anyway: nothing to remember.
+    expect(switched()).toEqual({ on: "on", off: "auto" });
+  });
+
+  it("0.5.x app: off by default, and switched on it also carries the call", async () => {
+    await desktopApp(APP_05);
+    expect(choices()).toEqual({ auto: false, on: true, off: false });
+    expect(carriesCall("auto")).toBe(false);
+    expect(carriesCall("on")).toBe(true);
+    // One application's sound is not the call's.
+    expect(carriesCall("on", "firefox")).toBe(false);
+    expect(switched()).toEqual({ on: "on", off: "auto" });
+  });
+
+  it("v0.6 app whose core still captures itself: like 0.5.x", async () => {
+    await desktopApp({
+      features: ["screen", "camera", "app-audio", "video-frames"],
+    });
+    expect(choices()).toEqual({ auto: false, on: true, off: false });
+    expect(carriesCall("on")).toBe(true);
+    expect(switched()).toEqual({ on: "on", off: "auto" });
+  });
+
+  it("v0.6 app that leaves itself out: on unless switched off", async () => {
+    await desktopApp(APP_06);
+    expect(choices()).toEqual({ auto: true, on: true, off: false });
+    expect(sharesSourceAudio()).toBe(true);
+    expect(carriesCall("auto")).toBe(false);
+    expect(carriesCall("on")).toBe(false);
+    // A choice from before v0.6 was none: such users get the new default.
+    useMediaSettings.getState().patch({ sourceAudioShare: "off" });
+    expect(sharesSourceAudio()).toBe(false);
+    // Here off differs from what the app does unasked: it is kept.
+    expect(switched()).toEqual({ on: "on", off: "off" });
+  });
+
+  it("an app without application sound shares none, whatever was chosen", async () => {
+    await desktopApp({ features: ["camera", "video-frames"] });
+    expect(choices()).toEqual({ auto: false, on: false, off: false });
+    expect(carriesCall("on")).toBe(false);
+    expect(switched().off).toBe("auto");
+  });
+
+  it("promises nothing before the desktop app has answered", () => {
+    setNativeBridgeForTests({
+      invoke: () => new Promise(() => {}),
+      channel: async () => null,
+    } as unknown as NativeBridge);
+    expect(choices()).toEqual({ auto: false, on: false, off: false });
+    expect(switched().off).toBe("auto");
+  });
+
+  it("switched on and off again in a 0.5.x app, the updated app still shares sound unasked", async () => {
+    const storage = useMediaSettings.persist.getOptions().storage!;
+    const flip = (on: boolean) =>
+      useMediaSettings
+        .getState()
+        .patch({ sourceAudioShare: sourceAudioChoice(on) });
+    /** The same stored settings, read by the app that runs now. */
+    async function restart() {
+      const saved = (await storage.getItem("gelabber.media"))!;
+      resetMediaSettingsForTests();
+      await storage.setItem("gelabber.media", saved);
+      await useMediaSettings.persist.rehydrate();
+      return saved.state as { sourceAudioShare?: unknown };
+    }
+
+    await desktopApp(APP_05);
+    flip(true);
+    // The warning that sends the user to the update.
+    expect(sourceAudioCarriesCall()).toBe(true);
+    flip(false);
+    expect(sharesSourceAudio()).toBe(false);
+    expect(sourceAudioCarriesCall()).toBe(false);
+
+    await desktopApp(APP_06);
+    expect((await restart()).sourceAudioShare).toBe("auto");
+    expect(sharesSourceAudio()).toBe(true);
+
+    // Switched off in the updated app is a choice, and stays one.
+    flip(false);
+    expect((await restart()).sourceAudioShare).toBe("off");
+    expect(sharesSourceAudio()).toBe(false);
+    flip(true);
+    expect((await restart()).sourceAudioShare).toBe("on");
+    expect(sharesSourceAudio()).toBe(true);
   });
 });

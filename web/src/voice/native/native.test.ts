@@ -9,7 +9,11 @@ import {
 import { listMediaDevices, useMediaSettings } from "../settings.ts";
 import { renderedVideoHeight } from "../viewerLayers.ts";
 import { setNativeBridgeForTests, type NativeBridge } from "./bridge.ts";
-import { nativeGetDisplayMedia, nativeGetUserMedia } from "./capture.ts";
+import {
+  captureAppAudio,
+  nativeGetDisplayMedia,
+  nativeGetUserMedia,
+} from "./capture.ts";
 import { createNativeMicrophoneTest } from "./microphoneTest.ts";
 import {
   attachNativeVideo,
@@ -73,6 +77,9 @@ class FakeCore implements NativeBridge {
   cameras = [{ id: "/dev/video0", name: "Webcam" }];
   screenStates: Array<Record<string, unknown>> = [];
   noAppAudio = false;
+  /** Playback streams feeding an application-sound source. */
+  appStreams = 1;
+  private appAudio = new Set<number>();
   devices = {
     inputs: [
       { id: "", name: "default: Headset" },
@@ -177,9 +184,13 @@ class FakeCore implements NativeBridge {
         case "media_source_screen":
           return ++this.next;
         case "media_source_app_audio":
-          if (this.noAppAudio) throw new Error("no sound server");
-          return ++this.next;
+          // The app rejects with the core's message as a plain string.
+          if (this.noAppAudio) return Promise.reject("no sound server");
+          this.appAudio.add(++this.next);
+          return this.next;
         case "media_source_state":
+          if (this.appAudio.has(args.source as number))
+            return { state: "live", streams: this.appStreams, frames: 0 };
           return this.screenStates.shift() ?? { state: "live" };
         case "media_audio_devices":
           return this.devices;
@@ -487,27 +498,74 @@ describe("desktop app media", () => {
     expect(track.readyState).toBe("ended");
   });
 
-  it("adds the chosen application's sound to a share", async () => {
-    const stream = await nativeGetDisplayMedia(
-      { video: true, audio: true },
-      "firefox",
-    );
+  it("captures the chosen application's sound without a picker", async () => {
+    const audio = await captureAppAudio("firefox");
     expect(core.calledWith("media_source_app_audio")).toEqual([
       { options: { app: "firefox" } },
     ]);
-    const [audio] = stream.getAudioTracks();
+    expect(core.calledWith("media_source_screen")).toEqual([]);
+    expect(isNativeTrack(audio)).toBe(true);
+    expect(audio.kind).toBe("audio");
     expect(audio.label).toBe("Quellton");
+    expect(audio.getSettings()).toMatchObject({ channelCount: 2 });
     audio.stop();
     expect(core.calledWith("media_source_close")).toHaveLength(1);
+    // "" is every application but Gelabber.
+    (await captureAppAudio("")).stop();
+    expect(core.calledWith("media_source_app_audio").at(-1)).toEqual({
+      options: { app: "" },
+    });
   });
 
-  it("shares video only when application sound is unavailable", async () => {
-    core.noAppAudio = true;
-    const warn = vi.spyOn(console, "warn").mockImplementation(() => undefined);
+  it("leaves sound out of the desktop's picker", async () => {
+    // The session adds application sound itself; the picker has none to give.
     const stream = await nativeGetDisplayMedia({ video: true, audio: true });
+    expect(core.calledWith("media_source_app_audio")).toEqual([]);
     expect(stream.getAudioTracks()).toHaveLength(0);
     expect(stream.getVideoTracks()).toHaveLength(1);
-    warn.mockRestore();
+    stream.getTracks().forEach((track) => track.stop());
+  });
+
+  it("says why application sound is unavailable", async () => {
+    core.noAppAudio = true;
+    await expect(captureAppAudio("")).rejects.toBe("no sound server");
+    expect(core.calledWith("media_source_close")).toEqual([]);
+  });
+
+  it("reports how many playback streams feed the sound while it runs", async () => {
+    vi.useFakeTimers();
+    try {
+      core.appStreams = 0;
+      const streams = vi.fn();
+      const audio = await captureAppAudio("spotify", streams);
+      const source = (audio as unknown as NativeTrack).handle.source;
+      expect(streams).not.toHaveBeenCalled();
+      await vi.advanceTimersByTimeAsync(1_000);
+      expect(core.calledWith("media_source_state")).toEqual([{ source }]);
+      expect(streams.mock.calls).toEqual([[0]]);
+      core.appStreams = 2;
+      await vi.advanceTimersByTimeAsync(1_000);
+      expect(streams.mock.calls).toEqual([[0], [2]]);
+      // A stopped track is not asked about any more.
+      audio.stop();
+      await vi.advanceTimersByTimeAsync(3_000);
+      expect(core.calledWith("media_source_state")).toHaveLength(2);
+      expect(streams).toHaveBeenCalledTimes(2);
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
+  it("does not watch a source nobody asks about", async () => {
+    vi.useFakeTimers();
+    try {
+      const audio = await captureAppAudio("");
+      await vi.advanceTimersByTimeAsync(3_000);
+      expect(core.calledWith("media_source_state")).toEqual([]);
+      audio.stop();
+    } finally {
+      vi.useRealTimers();
+    }
   });
 
   it("tests the microphone with the native meters", async () => {

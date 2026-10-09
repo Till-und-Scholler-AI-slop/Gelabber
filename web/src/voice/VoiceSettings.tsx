@@ -1,7 +1,8 @@
 import { useAudioProcessing } from "./audioProcessing.ts";
-import { canChooseSpeaker } from "./capabilities.ts";
+import { canChooseSpeaker, useCapabilities } from "./capabilities.ts";
 import { isDesktopApp } from "./native/bridge.ts";
 import { listNativeAudioApps } from "./native/capture.ts";
+import { hasNativeFeature } from "./native/features.ts";
 import { MicrophoneTest } from "./MicrophoneTest.tsx";
 // Shared Voice/Video + notification form. Used on /settings and in-call.
 
@@ -26,6 +27,10 @@ import {
   type VideoFrameRate,
   formatVideoBitrate,
   listMediaDevices,
+  sharesSourceAudio,
+  SOURCE_AUDIO_CARRIES_CALL,
+  sourceAudioCarriesCall,
+  sourceAudioChoice,
   useMediaSettings,
   videoSendBudget,
 } from "./settings.ts";
@@ -56,6 +61,7 @@ export function MediaSettingsForm({
   // must not credit a browser with it.
   const desktop = isDesktopApp();
   const chooseSpeaker = canChooseSpeaker();
+  const capable = useCapabilities();
   const processingModes = desktop ? AUDIO_PROCESSING_DESKTOP : AUDIO_PROCESSING;
 
   const refresh = async () => {
@@ -331,34 +337,48 @@ export function MediaSettingsForm({
             apply={settings.screenProfileApply}
             onChange={(screenProfile) => settings.patch({ screenProfile })}
           />
-          <section
-            className="stream-source-audio"
-            aria-label="Ton der Bildschirmfreigabe"
-          >
-            <Toggle
-              id="share-source-audio"
-              label="Ton teilen"
-              checked={settings.shareSourceAudio}
-              onChange={(shareSourceAudio) =>
-                settings.patch({ shareSourceAudio })
-              }
-            />
-            {isDesktopApp() && (
-              <SourceAudioApp
-                value={settings.sourceAudioApp}
-                onChange={(sourceAudioApp) =>
-                  settings.patch({ sourceAudioApp })
+          {/* Only where a share can carry sound; the same switch sits next
+              to the share button in the call controls. */}
+          {capable.appAudio && (
+            <section
+              className="stream-source-audio"
+              aria-label="Ton der Bildschirmfreigabe"
+            >
+              <Toggle
+                id="share-source-audio"
+                label="Ton teilen"
+                checked={sharesSourceAudio(settings)}
+                onChange={(on) =>
+                  settings.patch({ sourceAudioShare: sourceAudioChoice(on) })
                 }
               />
-            )}
-            <p className="text-xs text-neutral-500 dark:text-neutral-400">
-              {isDesktopApp()
-                ? "Gilt für die nächste Bildschirmfreigabe und Go Live. Geteilt wird der Ton der gewählten Anwendung, nie dein Mikrofon oder der Ton des Anrufs."
-                : "Gilt für die nächste Bildschirmfreigabe und Go Live. Wähle den Ton im Browserdialog aus; je nach Browser und Quelle ist nur Video verfügbar."}{" "}
-              Der Stream-Ton wird als Stereo-Musik übertragen, ohne
-              Mikrofonfilter.
-            </p>
-          </section>
+              {desktop && (
+                <SourceAudioApp
+                  value={settings.sourceAudioApp}
+                  onChange={(sourceAudioApp) =>
+                    settings.patch({ sourceAudioApp })
+                  }
+                />
+              )}
+              {sourceAudioCarriesCall(settings) && (
+                <p
+                  role="status"
+                  className="text-xs text-amber-800 dark:text-amber-200"
+                >
+                  {SOURCE_AUDIO_CARRIES_CALL}
+                </p>
+              )}
+              <p className="text-xs text-neutral-500 dark:text-neutral-400">
+                {!desktop
+                  ? "Gilt für die nächste Bildschirmfreigabe und Go Live; Ausschalten wirkt sofort. Wähle den Ton im Browserdialog aus; je nach Browser und Quelle ist nur Video verfügbar."
+                  : hasNativeFeature("app-audio-excludes-self")
+                    ? "Gilt für Bildschirmfreigabe und Go Live, auch während sie laufen. Geteilt wird der Ton anderer Anwendungen, nie dein Mikrofon oder der Ton des Anrufs."
+                    : "Gilt für Bildschirmfreigabe und Go Live, auch während sie laufen. Geteilt wird der Ton der gewählten Anwendung, nie dein Mikrofon."}{" "}
+                Der Stream-Ton wird als Stereo-Musik übertragen, ohne
+                Mikrofonfilter.
+              </p>
+            </section>
+          )}
           <section className="stream-upload" aria-label="Video-Upload">
             <div className="stream-quality-heading">
               <h3>Video-Upload</h3>
@@ -635,16 +655,21 @@ function SourceAudioApp({
       )
       .catch(() => setApps([]));
   useEffect(load, []);
+  // An app before v0.6 saved the application's name as its id. The core
+  // still takes it; the list shows the application it means.
+  const chosen = apps.some((app) => app.id === value)
+    ? value
+    : (apps.find((app) => app.label === value)?.id ?? value);
   return (
     <div onFocus={load}>
       <Select
         id="source-audio-app"
         label="Ton von"
-        value={value}
+        value={chosen}
         onChange={onChange}
         options={
-          value && !apps.some((app) => app.id === value)
-            ? [{ id: value, label: `${value} (gerade still)` }, ...apps]
+          chosen && !apps.some((app) => app.id === chosen)
+            ? [{ id: chosen, label: `${chosen} (gerade still)` }, ...apps]
             : apps
         }
         defaultLabel="Alle Anwendungen außer Gelabber"
