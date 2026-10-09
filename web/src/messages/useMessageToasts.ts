@@ -160,6 +160,7 @@ export function useMessageToastsBridge(): void {
             body: preview,
             channelId,
             messageId: message.id,
+            createdAt: message.created_at,
             path: conversationPath(dm, event.s, channelId),
             user: userId,
           },

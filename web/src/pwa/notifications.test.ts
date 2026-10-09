@@ -40,6 +40,7 @@ const message = {
   body: "Hallo",
   channelId: "chan",
   messageId: "msg-1",
+  createdAt: "2026-10-09T12:00:00.000001Z",
   path: "/s/srv/c/chan",
   user: "user-1",
 };
@@ -103,7 +104,12 @@ describe("message notifications", () => {
         // `renotify` it would do so without a sound.
         renotify: true,
         icon: "/icons/icon-192.png",
-        data: { path: "/s/srv/c/chan", user: "user-1", message: "msg-1" },
+        data: {
+          path: "/s/srv/c/chan",
+          user: "user-1",
+          message: "msg-1",
+          at: "2026-10-09T12:00:00.000001Z",
+        },
       },
     );
     expect(created).toEqual([]);
@@ -122,7 +128,12 @@ describe("message notifications", () => {
         tag: "gelabber:user-1:chan",
         renotify: false,
         icon: "/icons/icon-192.png",
-        data: { path: "/s/srv/c/chan", user: "user-1", message: "msg-1" },
+        data: {
+          path: "/s/srv/c/chan",
+          user: "user-1",
+          message: "msg-1",
+          at: "2026-10-09T12:00:00.000001Z",
+        },
       },
     );
     expect(created).toEqual([]);
@@ -156,16 +167,70 @@ describe("message notifications", () => {
     expect(active.showNotification).toHaveBeenCalledOnce();
 
     // The next message of the conversation, and another conversation.
-    const next = { ...message, messageId: "msg-2", body: "Noch da?" };
+    const next = {
+      ...message,
+      messageId: "msg-2",
+      createdAt: "2026-10-09T12:00:01Z",
+      body: "Noch da?",
+    };
     expect(await showMessageNotification(next, vi.fn())).toBe("worker");
     expect(
       await showMessageNotification({ ...message, channelId: "dm" }, vi.fn()),
     ).toBe("worker");
     expect(active.showNotification).toHaveBeenCalledTimes(3);
     expect(onScreen.map((one) => one.data)).toEqual([
-      { path: "/s/srv/c/chan", user: "user-1", message: "msg-2" },
-      { path: "/s/srv/c/chan", user: "user-1", message: "msg-1" },
+      {
+        path: "/s/srv/c/chan",
+        user: "user-1",
+        message: "msg-2",
+        at: "2026-10-09T12:00:01Z",
+      },
+      {
+        path: "/s/srv/c/chan",
+        user: "user-1",
+        message: "msg-1",
+        at: "2026-10-09T12:00:00.000001Z",
+      },
     ]);
+  });
+
+  // A window that was offline catches up and hears M1 and M2 late, after
+  // another window has announced both.
+  it("does not announce an older message over a newer one", async () => {
+    useInstallation.setState({ mobile: true });
+    pageApi("granted", true);
+    const onScreen: { tag: string; data?: unknown; close: () => void }[] = [];
+    const active = worker(onScreen);
+    active.showNotification.mockImplementation(
+      async (_title: string, options: { tag: string; data: unknown }) => {
+        const same = onScreen.findIndex((one) => one.tag === options.tag);
+        if (same >= 0) onScreen.splice(same, 1);
+        onScreen.push({ tag: options.tag, data: options.data, close: vi.fn() });
+      },
+    );
+    const m1 = message;
+    // Same millisecond, later by the database's finer digits.
+    const m2 = {
+      ...message,
+      messageId: "msg-2",
+      createdAt: "2026-10-09T12:00:00.000002Z",
+      body: "Noch da?",
+    };
+    expect(await showMessageNotification(m1, vi.fn())).toBe("worker");
+    expect(await showMessageNotification(m2, vi.fn())).toBe("worker");
+    // The second window, late.
+    expect(await showMessageNotification(m1, vi.fn())).toBe("none");
+    expect(await showMessageNotification(m2, vi.fn())).toBe("none");
+    expect(active.showNotification).toHaveBeenCalledTimes(2);
+    expect(onScreen.map((one) => (one.data as { message: string }).message))
+      .toEqual(["msg-2"]);
+    // A notification of an older client names only its message.
+    onScreen.splice(0, 1, {
+      tag: "gelabber:user-1:chan",
+      data: { path: "/s/srv/c/chan", user: "user-1", message: "msg-2" },
+      close: vi.fn(),
+    });
+    expect(await showMessageNotification(m1, vi.fn())).toBe("worker");
   });
 
   it("shows a message next to notifications that name none, and where the worker cannot list them", async () => {

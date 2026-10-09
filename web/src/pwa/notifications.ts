@@ -5,6 +5,7 @@
 // shows it directly, as it always did. Either way this only works while the
 // page is alive; delivery to a closed app would need Web Push.
 import { isConversationPath } from "../messages/notify.ts";
+import { chronological } from "../messages/pages.ts";
 import { useInstallation } from "./install.ts";
 import { activeServiceWorker } from "./register.ts";
 
@@ -18,6 +19,8 @@ export type MessageNotification = {
   channelId: string;
   /** The message itself. Every window hears it; only one may announce it. */
   messageId: string;
+  /** When it was created, as the server says: with the id its order. */
+  createdAt: string;
   /** Where a tap leads; see `conversationPath` in messages/notify.ts. */
   path: string;
   /** Account it is shown for. A tap after an account change goes nowhere. */
@@ -31,7 +34,7 @@ type Options = {
   tag: string;
   renotify: boolean;
   icon?: string;
-  data?: { path: string; user: string; message: string };
+  data?: { path: string; user: string; message: string; at: string };
 };
 type NotificationApi = {
   permission: string;
@@ -112,18 +115,30 @@ async function onScreen(user: string, channelId: string): Promise<boolean> {
   }
 }
 
-/** Whether a window of the app has already put this message on screen. */
+/** Whether a window of the app has already put this message, or a newer one
+ * of its conversation, on screen. A window that catches up after a reconnect
+ * hears older messages late; announcing one of those would sound again and
+ * put it over the newer one. Notifications of clients before this order was
+ * kept name only their message. */
 async function announced(
   registration: Registration,
   tag: string,
-  messageId: string,
+  message: Pick<MessageNotification, "messageId" | "createdAt">,
 ): Promise<boolean> {
+  const mine = { id: message.messageId, created_at: message.createdAt };
   try {
-    return (await registration.getNotifications({ tag })).some(
-      (shown) =>
-        (shown.data as { message?: unknown } | null | undefined)?.message ===
-        messageId,
-    );
+    return (await registration.getNotifications({ tag })).some((shown) => {
+      const data = shown.data as
+        | { message?: unknown; at?: unknown }
+        | null
+        | undefined;
+      if (typeof data?.message !== "string") return false;
+      if (data.message === message.messageId) return true;
+      return (
+        typeof data.at === "string" &&
+        chronological({ id: data.message, created_at: data.at }, mine) >= 0
+      );
+    });
   } catch {
     return false;
   }
@@ -164,7 +179,7 @@ export async function showMessageNotification(
     const registration: Registration | undefined = await activeServiceWorker();
     if (registration) {
       // Showing it a second time would sound a second time.
-      if (await announced(registration, tag, message.messageId)) return "none";
+      if (await announced(registration, tag, message)) return "none";
       try {
         await registration.showNotification(message.title, {
           ...options,
@@ -173,6 +188,7 @@ export async function showMessageNotification(
             path: message.path,
             user: message.user,
             message: message.messageId,
+            at: message.createdAt,
           },
         });
         return "worker";
