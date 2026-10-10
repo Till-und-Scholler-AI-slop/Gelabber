@@ -403,16 +403,27 @@
   background: var(--lr-danger-bg);
   color: #fff;
 }
-.voice-session-row .voice-playback-volume {
-  flex: 1;
-  gap: 8px;
-  min-height: 30px;
-  font-size: 12px;
-}
-.voice-session-row .voice-volume-slider {
-  flex: 1;
+/* Volumes: one grid so labels, sliders and buttons line up. */
+.voice-session-mix {
+  display: grid;
+  grid-template-columns: auto minmax(0, 1fr) 30px;
+  align-items: center;
+  gap: 2px 10px;
   min-width: 0;
-  width: auto;
+  padding: 2px 2px 0 4px;
+}
+.voice-session-mix-row {
+  display: contents;
+}
+.voice-session-mix-row > label {
+  font-size: 12px;
+  color: var(--lr-muted);
+  white-space: nowrap;
+}
+.voice-session-mix-row > .voice-control-compact {
+  width: 30px;
+  height: 30px;
+  min-height: 30px;
 }
 .voice-session-playback {
   display: flex;
@@ -536,4 +547,61 @@
     flex-basis: 100%;
     justify-content: space-between;
   }
+}
+
+/* Participants as tiles, like video tiles without video. */
+.voice-room {
+  padding: 20px 20px 28px;
+}
+.voice-room-heading > svg {
+  display: none;
+}
+.voice-room-heading h2 {
+  font-size: 20px;
+}
+.voice-room-heading p {
+  margin-top: 2px;
+  font-size: 13px;
+}
+.voice-room-participants {
+  grid-template-columns: repeat(auto-fill, minmax(min(100%, 200px), 1fr));
+  gap: 12px;
+  max-width: 1100px;
+  margin-top: 18px;
+}
+.voice-room-participant {
+  position: relative;
+  justify-content: center;
+  aspect-ratio: 16 / 10;
+  padding: 14px 12px 12px;
+  border: 1px solid var(--lr-border);
+  border-radius: calc(var(--lr-radius) + 5px);
+  background: var(--lr-surface);
+  gap: 2px;
+}
+.voice-room-participant .voice-room-avatar {
+  width: 64px;
+}
+.voice-room-participant strong {
+  margin-top: 6px;
+  font-size: 13px;
+}
+.voice-room-participant-status,
+.voice-room-participant-media {
+  font-size: 11px;
+}
+.voice-room-participant > span[title] {
+  position: absolute;
+  top: 8px;
+  right: 8px;
+}
+.voice-room-disconnected {
+  border-style: dashed;
+  background: transparent;
+}
+html[data-compact-rooms="true"] .voice-room-participant {
+  aspect-ratio: auto;
+}
+.voice-room-participant .voice-room-avatar > span:first-child {
+  background: var(--lr-panel);
 }

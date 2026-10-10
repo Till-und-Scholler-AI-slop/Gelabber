@@ -14,6 +14,13 @@ import { InterfacePreferences } from "./interface/InterfacePreferences.tsx";
 // route guards await the same promise instead of starting a second request.
 void ensureSession();
 
+// A file dropped outside a drop target would replace the app with the file.
+for (const type of ["dragover", "drop"] as const) {
+  window.addEventListener(type, (event) => {
+    if (event.dataTransfer?.types.includes("Files")) event.preventDefault();
+  });
+}
+
 const root = document.getElementById("root");
 if (!root) {
   throw new Error("root element missing");

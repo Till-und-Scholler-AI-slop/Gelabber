@@ -1,5 +1,5 @@
 import { Link } from "@tanstack/react-router";
-import { useEffect, useRef } from "react";
+import { useEffect, useId, useRef, type CSSProperties } from "react";
 
 import { can } from "../servers/permissions.ts";
 import { useServer } from "../servers/queries.ts";
@@ -16,6 +16,7 @@ import {
   HangUpIcon,
   SignalIcon,
   SpeakerIcon,
+  SpeakerOffIcon,
 } from "./Icons.tsx";
 import { useMediaSettings } from "../voice/settings.ts";
 import "../voice/room.css";
@@ -29,6 +30,7 @@ export function VoiceSessionControls({
   variant?: "bar" | "card";
 }) {
   const dockRef = useRef<HTMLElement>(null);
+  const ids = useId();
   const voice = useVoice();
   const volume = useMediaSettings((s) => s.outputVolume);
   const sourceVolume = useMediaSettings((s) => s.sourceAudioVolume);
@@ -120,80 +122,73 @@ export function VoiceSessionControls({
           </button>
         </div>
       ) : null}
-      {voice.status !== "joined" ? (
-        <div className="voice-session-row">
-          <label className="voice-playback-volume">
-            <SpeakerIcon size={15} />
+      {voice.status !== "joined" || streamAudio ? (
+        <div className="voice-session-mix">
+          <div className="voice-session-mix-row">
+            <label htmlFor={`${ids}-voices`}>
+              {voice.status === "joined" ? "Stimmen" : "Lautstärke"}
+            </label>
             <input
+              id={`${ids}-voices`}
               type="range"
               min={0}
               max={100}
               value={Math.round(volume * 100)}
+              style={rangeFill(volume)}
               aria-label="Wiedergabe-Lautstärke"
               disabled={voice.deafened}
               onChange={(event) =>
                 patch({ outputVolume: Number(event.target.value) / 100 })
               }
-              className="voice-volume-slider"
+              className="lr-range"
             />
-          </label>
-          <button
-            type="button"
-            aria-label="Voice-Einstellungen"
-            title="Voice-Einstellungen"
-            onClick={() => openSettings()}
-            className="voice-control voice-control-compact"
-          >
-            <GearIcon size={17} />
-          </button>
-        </div>
-      ) : null}
-      {streamAudio && voice.status === "joined" ? (
-        <div className="voice-session-row">
-          <label className="voice-playback-volume">
-            <span>Stimmen</span>
-            <input
-              type="range"
-              min={0}
-              max={100}
-              value={Math.round(volume * 100)}
-              aria-label="Wiedergabe-Lautstärke"
-              disabled={voice.deafened}
-              onChange={(event) =>
-                patch({ outputVolume: Number(event.target.value) / 100 })
-              }
-              className="voice-volume-slider"
-            />
-          </label>
-        </div>
-      ) : null}
-      {streamAudio ? (
-        <div className="voice-session-row" aria-label="Stream-Ton">
-          <button
-            type="button"
-            className="voice-control voice-control-compact"
-            aria-pressed={sourceMuted}
-            aria-label={sourceMuted ? "Stream-Ton an" : "Stream-Ton aus"}
-            title={sourceMuted ? "Stream-Ton an" : "Stream-Ton aus"}
-            onClick={() => patch({ sourceAudioMuted: !sourceMuted })}
-          >
-            <SpeakerIcon size={17} />
-          </button>
-          <label className="voice-playback-volume">
-            <span>Stream-Ton</span>
-            <input
-              type="range"
-              min={0}
-              max={100}
-              value={Math.round(sourceVolume * 100)}
-              aria-label="Stream-Ton-Lautstärke"
-              disabled={voice.deafened}
-              onChange={(event) =>
-                patch({ sourceAudioVolume: Number(event.target.value) / 100 })
-              }
-              className="voice-volume-slider"
-            />
-          </label>
+            {voice.status !== "joined" ? (
+              <button
+                type="button"
+                aria-label="Voice-Einstellungen"
+                title="Voice-Einstellungen"
+                onClick={() => openSettings()}
+                className="voice-control voice-control-compact"
+              >
+                <GearIcon size={16} />
+              </button>
+            ) : (
+              <span aria-hidden="true" />
+            )}
+          </div>
+          {streamAudio ? (
+            <div className="voice-session-mix-row" aria-label="Stream-Ton">
+              <label htmlFor={`${ids}-stream`}>Stream-Ton</label>
+              <input
+                id={`${ids}-stream`}
+                type="range"
+                min={0}
+                max={100}
+                value={Math.round(sourceVolume * 100)}
+                style={rangeFill(sourceVolume)}
+                aria-label="Stream-Ton-Lautstärke"
+                disabled={voice.deafened}
+                onChange={(event) =>
+                  patch({ sourceAudioVolume: Number(event.target.value) / 100 })
+                }
+                className="lr-range"
+              />
+              <button
+                type="button"
+                className={`voice-control voice-control-compact${sourceMuted ? " is-off" : ""}`}
+                aria-pressed={sourceMuted}
+                aria-label={sourceMuted ? "Stream-Ton an" : "Stream-Ton aus"}
+                title={sourceMuted ? "Stream-Ton an" : "Stream-Ton aus"}
+                onClick={() => patch({ sourceAudioMuted: !sourceMuted })}
+              >
+                {sourceMuted ? (
+                  <SpeakerOffIcon size={16} />
+                ) : (
+                  <SpeakerIcon size={16} />
+                )}
+              </button>
+            </div>
+          ) : null}
         </div>
       ) : null}
       {(voice.sourceAudio.s === "unavailable" ||
@@ -228,6 +223,11 @@ export function VoiceSessionControls({
       ) : null}
     </section>
   );
+}
+
+/** Filled share of a `.lr-range` track (WebKit has no progress pseudo). */
+function rangeFill(value: number): CSSProperties {
+  return { "--lr-range-value": `${Math.round(value * 100)}%` } as CSSProperties;
 }
 
 function LeaveButton() {

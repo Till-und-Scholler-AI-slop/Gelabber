@@ -8,7 +8,12 @@ import { useVirtualizer } from "@tanstack/react-virtual";
 import { useMemo, useRef, useState, type ReactNode } from "react";
 
 import { useVoice } from "../voice/session.ts";
-import { EMPTY_LIVE, useVoiceRoster } from "../voice/roster.ts";
+import {
+  EMPTY_LIVE,
+  EMPTY_OCCUPANCY,
+  useVoiceRoster,
+  type VoiceFlags,
+} from "../voice/roster.ts";
 import { can } from "../servers/permissions.ts";
 import { buildRows, type Row } from "../servers/rows.ts";
 import {
@@ -16,11 +21,20 @@ import {
   useDeleteCategory,
   useDeleteChannel,
 } from "../servers/queries.ts";
-import type { Category, Channel, ServerDetail } from "../servers/types.ts";
+import type {
+  Category,
+  Channel,
+  Member,
+  ServerDetail,
+} from "../servers/types.ts";
+import { Avatar } from "./Avatar.tsx";
 import {
   ChatIcon,
   GearIcon,
   HashIcon,
+  HeadsetOffIcon,
+  LiveIcon,
+  MicOffIcon,
   LinkIcon,
   PencilIcon,
   PlusIcon,
@@ -36,7 +50,51 @@ import {
   type ChannelDialogState,
 } from "./ServerDialogs.tsx";
 
-type SidebarRow = Row | { kind: "section"; key: string; label: string };
+type ParticipantRow = {
+  kind: "participant";
+  key: string;
+  member: Pick<Member, "user_id" | "name" | "avatar_url">;
+  flags: VoiceFlags;
+  live: boolean;
+};
+
+type SidebarRow =
+  Row | { kind: "section"; key: string; label: string } | ParticipantRow;
+
+/** Who sits in each voice channel, listed right below it. */
+function withParticipants(
+  rows: SidebarRow[],
+  server: ServerDetail,
+  occupancy: Record<string, VoiceFlags>,
+  live: Record<string, string>,
+): SidebarRow[] {
+  const members = new Map(server.members.map((m) => [m.user_id, m]));
+  const byChannel = new Map<string, ParticipantRow[]>();
+  for (const [userId, flags] of Object.entries(occupancy)) {
+    const member = members.get(userId) ?? {
+      user_id: userId,
+      name: "Jemand",
+      avatar_url: null,
+    };
+    const list = byChannel.get(flags.channelId) ?? [];
+    list.push({
+      kind: "participant",
+      key: `participant:${flags.channelId}:${userId}`,
+      member,
+      flags,
+      live: live[flags.channelId] === userId,
+    });
+    byChannel.set(flags.channelId, list);
+  }
+  if (byChannel.size === 0) return rows;
+  return rows.flatMap((row) => {
+    if (row.kind !== "channel" || row.channel.kind !== "voice") return [row];
+    const inside = byChannel.get(row.channel.id);
+    if (!inside) return [row];
+    inside.sort((a, b) => a.member.name.localeCompare(b.member.name, "de"));
+    return [row, ...inside];
+  });
+}
 
 // Keep categories intact; give uncategorized voice rooms their own heading.
 function sidebarRows(server: ServerDetail): SidebarRow[] {
@@ -74,6 +132,7 @@ function sidebarRows(server: ServerDetail): SidebarRow[] {
 
 function sidebarRowHeight(row: SidebarRow | undefined): number {
   if (row?.kind === "category" || row?.kind === "section") return 34;
+  if (row?.kind === "participant") return 28;
   return row?.kind === "empty" ? 28 : 36;
 }
 
@@ -91,14 +150,19 @@ export function ChannelSidebar({
   const manageServer = can(server, "manage_server");
   const voice = useVoice();
   const live = useVoiceRoster((s) => s.live[server.id] ?? EMPTY_LIVE);
+  const occupancy = useVoiceRoster(
+    (s) => s.byServer[server.id] ?? EMPTY_OCCUPANCY,
+  );
+  const rows = useMemo(
+    () => withParticipants(sidebarRows(server), server, occupancy, live),
+    [server, occupancy, live],
+  );
   const [channelDialog, setChannelDialog] = useState<ChannelDialogState | null>(
     null,
   );
   const [categoryDialog, setCategoryDialog] =
     useState<CategoryDialogState | null>(null);
   const [inviting, setInviting] = useState(false);
-
-  const rows = useMemo(() => sidebarRows(server), [server]);
 
   return (
     <aside aria-label="Kanäle" className="channel-sidebar">
@@ -293,6 +357,8 @@ function ChannelList({
                       });
                   }}
                 />
+              ) : row.kind === "participant" ? (
+                <ParticipantRowView row={row} />
               ) : (
                 <p className="sidebar-empty-category">Leer</p>
               )}
@@ -300,6 +366,33 @@ function ChannelList({
           );
         })}
       </div>
+    </div>
+  );
+}
+
+function ParticipantRowView({ row }: { row: ParticipantRow }) {
+  const { member, flags, live } = row;
+  const state = flags.deafened ? "taub" : flags.muted ? "stumm" : null;
+  return (
+    <div className="sidebar-participant">
+      <Avatar name={member.name} url={member.avatar_url} />
+      <span className="sidebar-participant-name">{member.name}</span>
+      {live ? (
+        <span className="sidebar-participant-live" title="Live">
+          <LiveIcon size={13} />
+          <span className="sr-only">Live</span>
+        </span>
+      ) : null}
+      {state ? (
+        <span className="sidebar-participant-state" title={state}>
+          {flags.deafened ? (
+            <HeadsetOffIcon size={13} />
+          ) : (
+            <MicOffIcon size={13} />
+          )}
+          <span className="sr-only">{state}</span>
+        </span>
+      ) : null}
     </div>
   );
 }

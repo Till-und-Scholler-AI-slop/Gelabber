@@ -7,6 +7,7 @@ import { useVirtualizer } from "@tanstack/react-virtual";
 import {
   useCallback,
   useEffect,
+  useEffectEvent,
   useLayoutEffect,
   useMemo,
   useRef,
@@ -24,7 +25,11 @@ import {
 } from "../messages/scrollPosition.ts";
 import { MessageSearch } from "../messages/MessageSearch.tsx";
 import { useChatDraft } from "../messages/drafts.ts";
-import { readBoundary, useMarkRead } from "../messages/readState.ts";
+import {
+  readBoundary,
+  useMarkRead,
+  useReadState,
+} from "../messages/readState.ts";
 
 import { useSession } from "../auth/session.ts";
 import { fieldMessage } from "../auth/rules.ts";
@@ -49,6 +54,11 @@ import {
 } from "../messages/queries.ts";
 import { attachmentUrl } from "../messages/api.ts";
 import {
+  carriesFiles,
+  droppedFile,
+  pastedFile,
+} from "../messages/clipboard.ts";
+import {
   ALLOWED_TYPES,
   CONTENT_MAX,
   isImageType,
@@ -58,7 +68,8 @@ import {
 import type { Attachment, Message } from "../messages/types.ts";
 import { asAttachmentList } from "../messages/types.ts";
 import { Avatar } from "./Avatar.tsx";
-import { ReactionBar } from "./ReactionBar.tsx";
+import { EmojiPickerLoader, ReactionBar } from "./ReactionBar.tsx";
+import { Modal } from "./Modal.tsx";
 import {
   ArrowDownIcon,
   CloseIcon,
@@ -66,6 +77,7 @@ import {
   PencilIcon,
   SearchIcon,
   SendIcon,
+  SmileIcon,
   TrashIcon,
 } from "./Icons.tsx";
 import "./chat.css";
@@ -73,6 +85,7 @@ import "./chat.css";
 export function MessagePane({
   title,
   notice,
+  actions,
   channelId,
   channelName,
   canSend,
@@ -87,6 +100,8 @@ export function MessagePane({
   title: ReactNode;
   /** Optional strip below the header, e.g. the live hint. */
   notice?: ReactNode;
+  /** Extra header buttons right of the search, e.g. the member list toggle. */
+  actions?: ReactNode;
   channelId: string;
   channelName: string;
   canSend: boolean;
@@ -115,6 +130,31 @@ export function MessagePane({
       searchButton.current?.focus({ preventScroll: true });
     }
   }, [searching]);
+  useEffect(() => {
+    const onKey = (event: globalThis.KeyboardEvent) => {
+      if (
+        (event.ctrlKey || event.metaKey) &&
+        !event.shiftKey &&
+        !event.altKey &&
+        event.key.toLowerCase() === "k"
+      ) {
+        event.preventDefault();
+        setSearchingScope(searchScope);
+      }
+    };
+    window.addEventListener("keydown", onKey);
+    return () => window.removeEventListener("keydown", onKey);
+  }, [searchScope]);
+  // Where "Neu" goes: the read position when the channel was opened, kept
+  // while reading so the divider does not jump.
+  const { data: readRows } = useReadState();
+  const [newAfter, setNewAfter] = useState<string | null | undefined>(
+    undefined,
+  );
+  if (newAfter === undefined && readRows) {
+    const row = readRows.find((entry) => entry.channel_id === channelId);
+    setNewAfter(row && row.unread_count > 0 ? row.read_message_id : null);
+  }
   const contextEdit = useEditMessage(channelId);
   const contextRemove = useDeleteMessage(channelId);
   const [atLatest, setAtLatest] = useState(false);
@@ -177,7 +217,9 @@ export function MessagePane({
         >
           <SearchIcon size={16} />
           <span>Suchen</span>
+          <kbd>Strg K</kbd>
         </button>
+        {actions}
       </header>
       {notice}
       {read.error ? (
@@ -202,6 +244,7 @@ export function MessagePane({
             onAtLatest={setAtLatest}
             latestRequest={latestRequest}
             meId={user?.id}
+            newAfter={newAfter ?? null}
             canModerate={canModerate}
             canSend={canSend}
             hasOlder={Boolean(hasNextPage)}
@@ -283,6 +326,7 @@ function MessageList({
   channelId,
   items,
   meId,
+  newAfter,
   canModerate,
   canSend,
   hasOlder,
@@ -298,6 +342,8 @@ function MessageList({
   channelId: string;
   items: Message[];
   meId: string | undefined;
+  /** Last read message when the channel opened; "Neu" goes after it. */
+  newAfter: string | null;
   canModerate: boolean;
   canSend: boolean;
   hasOlder: boolean;
@@ -320,6 +366,11 @@ function MessageList({
   const pin = useRef<{ id: string; offset: number } | null>(null);
   const edit = useEditMessage(channelId);
   const remove = useDeleteMessage(channelId);
+  const readIndex = newAfter
+    ? items.findIndex((message) => message.id === newAfter)
+    : -1;
+  const newIndex =
+    readIndex >= 0 && readIndex + 1 < items.length ? readIndex + 1 : -1;
 
   // Not on the React Compiler; the warning is about memoising its return value.
   // eslint-disable-next-line react-hooks/incompatible-library
@@ -331,8 +382,12 @@ function MessageList({
       const image = (message.attachments ?? []).some((a) =>
         isImageType(a.content_type),
       );
-      if (image) return isContinued(items[index - 1], message) ? 168 : 220;
-      return isContinued(items[index - 1], message) ? 28 : 72;
+      const breaks =
+        (dayBreak(items[index - 1], message) ? 40 : 0) +
+        (index === newIndex ? 28 : 0);
+      if (image)
+        return breaks + (isContinued(items[index - 1], message) ? 168 : 220);
+      return breaks + (isContinued(items[index - 1], message) ? 28 : 72);
     },
     getItemKey: (index) => items[index]?.id ?? index,
     overscan: 12,
@@ -577,7 +632,11 @@ function MessageList({
         {virtualizer.getVirtualItems().map((row) => {
           const message = items[row.index];
           if (!message) return null;
-          const continued = isContinued(items[row.index - 1], message);
+          const previous = items[row.index - 1];
+          const newDay = dayBreak(previous, message);
+          const firstNew = row.index === newIndex;
+          const continued =
+            !newDay && !firstNew && isContinued(previous, message);
           return (
             <div
               key={row.key}
@@ -586,6 +645,20 @@ function MessageList({
               className="absolute inset-x-0"
               style={{ top: row.start }}
             >
+              {newDay ? (
+                <div className="lr-day-divider" role="separator">
+                  <span>{dayLabel(message.created_at)}</span>
+                </div>
+              ) : null}
+              {firstNew ? (
+                <div
+                  className="lr-new-divider"
+                  role="separator"
+                  aria-label="Neue Nachrichten"
+                >
+                  <span>Neu</span>
+                </div>
+              ) : null}
               <MessageRow
                 message={message}
                 continued={continued}
@@ -842,6 +915,7 @@ function Composer({
   const setDraft = (text: string) => updateDraft({ text });
   const setFile = (file: File | null) => updateDraft({ file });
   const [fileError, setFileError] = useState<string | null>(null);
+  const [emojiOpen, setEmojiOpen] = useState(false);
   const fileInput = useRef<HTMLInputElement>(null);
   const composerInput = useRef<HTMLTextAreaElement>(null);
   const composerForm = useRef<HTMLFormElement>(null);
@@ -901,6 +975,58 @@ function Composer({
     setFile(next);
   };
 
+  // Files dropped anywhere on the conversation attach like the paperclip.
+  const [dropping, setDropping] = useState(false);
+  const attachDropped = useEffectEvent((next: File) => {
+    pickFile(next);
+    composerInput.current?.focus();
+  });
+  useEffect(() => {
+    const pane = composerForm.current?.closest<HTMLElement>(".lr-message-pane");
+    if (!pane || !canSendFiles) return;
+    // enter/leave fire for every child the pointer crosses.
+    let depth = 0;
+    const show = (on: boolean) => {
+      pane.classList.toggle("is-drop-target", on);
+      setDropping(on);
+    };
+    const enter = (event: DragEvent) => {
+      if (!carriesFiles(event.dataTransfer)) return;
+      event.preventDefault();
+      depth += 1;
+      show(true);
+    };
+    const over = (event: DragEvent) => {
+      if (!carriesFiles(event.dataTransfer) || !event.dataTransfer) return;
+      event.preventDefault();
+      event.dataTransfer.dropEffect = "copy";
+    };
+    const leave = (event: DragEvent) => {
+      if (!carriesFiles(event.dataTransfer)) return;
+      depth = Math.max(0, depth - 1);
+      if (depth === 0) show(false);
+    };
+    const drop = (event: DragEvent) => {
+      if (!carriesFiles(event.dataTransfer)) return;
+      event.preventDefault();
+      depth = 0;
+      show(false);
+      const file = droppedFile(event.dataTransfer);
+      if (file) attachDropped(file);
+    };
+    pane.addEventListener("dragenter", enter);
+    pane.addEventListener("dragover", over);
+    pane.addEventListener("dragleave", leave);
+    pane.addEventListener("drop", drop);
+    return () => {
+      pane.removeEventListener("dragenter", enter);
+      pane.removeEventListener("dragover", over);
+      pane.removeEventListener("dragleave", leave);
+      pane.removeEventListener("drop", drop);
+      show(false);
+    };
+  }, [canSend, canSendFiles]);
+
   const submit = (event?: FormEvent) => {
     event?.preventDefault();
     if (disabled) return;
@@ -910,6 +1036,19 @@ function Composer({
     setDraft("");
     pickFile(null);
     onDraftStop?.();
+  };
+
+  const insertText = (text: string) => {
+    const input = composerInput.current;
+    const start = input?.selectionStart ?? draft.length;
+    const end = input?.selectionEnd ?? draft.length;
+    const next = draft.slice(0, start) + text + draft.slice(end);
+    setDraft(next);
+    onDraftChange?.(next);
+    requestAnimationFrame(() => {
+      input?.focus();
+      input?.setSelectionRange(start + text.length, start + text.length);
+    });
   };
 
   const onKeyDown = (event: KeyboardEvent<HTMLTextAreaElement>) => {
@@ -987,6 +1126,11 @@ function Composer({
         {channelName}
       </label>
       <div className="lr-composer-field">
+        {dropping ? (
+          <p className="lr-composer-drop" aria-hidden="true">
+            Loslassen zum Anhängen
+          </p>
+        ) : null}
         {file ? (
           <div className="lr-composer-attachment">
             {preview ? <img src={preview} alt="" /> : null}
@@ -1040,9 +1184,25 @@ function Composer({
             }}
             onBlur={() => onDraftStop?.()}
             onKeyDown={onKeyDown}
+            onPaste={(event) => {
+              if (!canSendFiles) return;
+              const pasted = pastedFile(event.clipboardData);
+              if (!pasted) return;
+              event.preventDefault();
+              pickFile(pasted);
+            }}
             rows={1}
             placeholder={`Nachricht an ${mention}${channelName}`}
           />
+          <button
+            type="button"
+            title="Emoji einfügen"
+            aria-label="Emoji einfügen"
+            onClick={() => setEmojiOpen(true)}
+            className="lr-composer-icon"
+          >
+            <SmileIcon size={18} />
+          </button>
           <button
             type="submit"
             disabled={disabled}
@@ -1054,6 +1214,21 @@ function Composer({
           </button>
         </div>
       </div>
+      <Modal
+        open={emojiOpen}
+        onClose={() => setEmojiOpen(false)}
+        title="Emoji einfügen"
+        wide
+      >
+        {emojiOpen ? (
+          <EmojiPickerLoader
+            onSelect={(emoji) => {
+              setEmojiOpen(false);
+              insertText(emoji);
+            }}
+          />
+        ) : null}
+      </Modal>
       {remaining < 200 || error || fileError ? (
         <div className="lr-composer-status">
           {remaining < 200 ? (
@@ -1109,6 +1284,33 @@ function AttachmentList({ attachments }: { attachments: Attachment[] }) {
       })}
     </div>
   );
+}
+
+function dayKey(iso: string): string {
+  const date = new Date(iso);
+  return `${date.getFullYear()}-${date.getMonth()}-${date.getDate()}`;
+}
+
+function dayBreak(previous: Message | undefined, message: Message): boolean {
+  return (
+    !previous || dayKey(previous.created_at) !== dayKey(message.created_at)
+  );
+}
+
+function dayLabel(iso: string): string {
+  const date = new Date(iso);
+  if (Number.isNaN(date.getTime())) return "";
+  const today = new Date();
+  const yesterday = new Date(today);
+  yesterday.setDate(today.getDate() - 1);
+  if (dayKey(iso) === dayKey(today.toISOString())) return "Heute";
+  if (dayKey(iso) === dayKey(yesterday.toISOString())) return "Gestern";
+  return new Intl.DateTimeFormat("de-DE", {
+    weekday: "long",
+    day: "numeric",
+    month: "long",
+    ...(date.getFullYear() === today.getFullYear() ? {} : { year: "numeric" }),
+  }).format(date);
 }
 
 function normalisedLength(raw: string): string {
