@@ -8,17 +8,17 @@ cd deploy/compose
 docker compose up -d
 ```
 
-App: `http://localhost` (Caddy :80). Daten und MinIO nur auf `127.0.0.1`. Passwörter in `.env` eintragen (siehe unten).
+App: `http://localhost` (Caddy :80). Daten und MinIO nur auf `127.0.0.1`. Set the passwords in `.env` (see Security below).
 
-## Sicherheit
+## Security
 
-Ab v0.6 (#188) startet der Stack nicht mehr mit bekannten Werten:
+Since v0.6 (#188) the stack no longer starts with known values:
 
-- **Keine Standardpasswörter.** `POSTGRES_PASSWORD`, `MINIO_ROOT_PASSWORD` und `TURN_PASSWORD` (mit Observability auch `GRAFANA_ADMIN_PASSWORD`) müssen in `.env` stehen, sonst bricht `docker compose` mit einer Meldung ab. Zum Erzeugen: `openssl rand -hex 24`. `POSTGRES_PASSWORD` wirkt nur beim Anlegen des Datenbank-Volumes; ein bestehendes behält sein Passwort, bis es mit `ALTER USER gelabber PASSWORD '…'` geändert wird.
-- **Mit `API_COOKIE_SECURE=true`** (also hinter TLS) verweigert die API den Start, wenn eines dieser Passwörter noch ein früherer Repo-Default ist (`gelabber`, `gelabbergelabber`, `gelabberturn`, `change-me…`). Dann zuerst das Passwort ändern (Postgres siehe oben, MinIO und TURN in `.env`) und neu starten.
-- **HTTP nur auf diesem Rechner.** Der mitgelieferte Caddy lauscht standardmäßig auf `127.0.0.1`. Ohne `API_COOKIE_SECURE=true` meldet die API nur auf `localhost`/`127.0.0.1` an; von anderen Rechnern antwortet sie mit `insecure_transport`, weil das Session-Cookie sonst unverschlüsselt durchs Netz ginge. Für andere Rechner TLS davor (eigenes Caddy, siehe unten) und `API_COOKIE_SECURE=true` setzen. Nur für ein vertrauenswürdiges Testnetz: `API_ALLOW_PLAIN_HTTP=true`.
-- **HSTS.** Mit `API_COOKIE_SECURE=true` schickt die API `Strict-Transport-Security: max-age=31536000` (ohne Subdomains), egal welcher Proxy TLS terminiert.
-- **Anmeldeschutz.** Neben 20 Versuchen pro Minute und Adresse sperrt die API ein Konto nach 10 Fehlversuchen für 15 Minuten (`API_RATE_LOGIN_FAILURES_PER_ACCOUNT`, `0` schaltet es ab). Die Adresse ist der rechteste `X-Forwarded-For`-Eintrag, also der, den der Caddy vor der API geschrieben hat.
+- **No default passwords.** `POSTGRES_PASSWORD`, `MINIO_ROOT_PASSWORD` and `TURN_PASSWORD` (plus `GRAFANA_ADMIN_PASSWORD` with observability) must be set in `.env`; otherwise `docker compose` stops with a message. Generate one with `openssl rand -hex 24`. `POSTGRES_PASSWORD` only applies when the database volume is created; an existing volume keeps its password until you change it with `ALTER USER gelabber PASSWORD '…'`.
+- **With `API_COOKIE_SECURE=true`** (that is, behind TLS) the API refuses to start while one of these passwords is still a former repository default (`gelabber`, `gelabbergelabber`, `gelabberturn`, `change-me…`). Change the password first (Postgres as above, MinIO and TURN in `.env`), then restart.
+- **Plain HTTP on this machine only.** The bundled Caddy listens on `127.0.0.1` by default. Without `API_COOKIE_SECURE=true` the API signs in only on `localhost`/`127.0.0.1`; other machines get `insecure_transport`, because the session cookie would otherwise cross the network unencrypted. For other machines put TLS in front (your own Caddy, see below) and set `API_COOKIE_SECURE=true`. For a trusted test network only: `API_ALLOW_PLAIN_HTTP=true`.
+- **HSTS.** With `API_COOKIE_SECURE=true` the API sends `Strict-Transport-Security: max-age=31536000` (without subdomains), whichever proxy terminates TLS.
+- **Sign-in protection.** Besides 20 attempts per minute and address, the API locks an account for 15 minutes after 10 failed attempts (`API_RATE_LOGIN_FAILURES_PER_ACCOUNT`, `0` turns it off). The address is the rightmost `X-Forwarded-For` entry, the one the Caddy in front of the API wrote.
 
 ## Bestehendes Caddy
 
@@ -115,11 +115,11 @@ cd deploy/compose
 sh ../backup.sh
 ```
 
-Backups, die den Server verlassen, verschlüsselt ablegen: mit
-`GELABBER_BACKUP_AGE_RECIPIENT=age1…` (öffentlicher Schlüssel von
-[age](https://age-encryption.org)) liegen Dump und MinIO-Archiv nur als
-`*.age` vor. Vor dem Restore mit `age -d -i schluessel.txt -o database.pgdump
-database.pgdump.age` (ebenso `minio-data.tgz`) entschlüsseln, dann
+Encrypt backups that leave the server: with
+`GELABBER_BACKUP_AGE_RECIPIENT=age1…` (an [age](https://age-encryption.org)
+public key) the dump and the MinIO archive are stored only as `*.age`. Before a
+restore, decrypt them with `age -d -i key.txt -o database.pgdump
+database.pgdump.age` (likewise `minio-data.tgz`), then run
 `sha256sum -c SHA256SUMS`.
 
 Bei einem Fehler bleiben die Schreiber gestoppt, bis das unvollständige Backup

@@ -6,7 +6,7 @@
 set -eu
 backup_age_recipient=${GELABBER_BACKUP_AGE_RECIPIENT:-}
 if [ -n "$backup_age_recipient" ] && ! command -v age >/dev/null 2>&1; then
-  printf '%s\n' "GELABBER_BACKUP_AGE_RECIPIENT ist gesetzt, aber age fehlt. Nichts gestoppt." >&2
+  printf '%s\n' "GELABBER_BACKUP_AGE_RECIPIENT is set, but age is missing. Nothing was stopped." >&2
   exit 1
 fi
 trap 'code=$?; if [ "$code" -ne 0 ]; then printf "%s\n" "Backup fehlgeschlagen. Teilbackup prüfen; ggf. docker compose start minio api web media ausführen." >&2; fi' 0
