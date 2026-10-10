@@ -342,6 +342,7 @@ summary {
   min-width: 0;
   flex-shrink: 0;
   flex-direction: column;
+  overflow-x: hidden;
   overflow-y: auto;
   scrollbar-width: thin;
   border-right: 1px solid var(--lr-border);
@@ -1153,6 +1154,60 @@ dialog,
 .media-settings-form fieldset,
 .theme-card {
   box-shadow: var(--lr-shadow);
+}
+
+/* Slim theme-coloured range, used for volumes. */
+.lr-range {
+  width: 100%;
+  min-width: 0;
+  height: 20px;
+  margin: 0;
+  background: transparent;
+  appearance: none;
+  cursor: pointer;
+  --lr-range-fill: var(--lr-accent);
+}
+.lr-range:disabled {
+  opacity: 0.45;
+  cursor: default;
+}
+.lr-range::-webkit-slider-runnable-track {
+  height: 4px;
+  border-radius: 2px;
+  background: linear-gradient(
+    to right,
+    var(--lr-range-fill) var(--lr-range-value, 0%),
+    color-mix(in srgb, var(--lr-text) 18%, transparent)
+      var(--lr-range-value, 0%)
+  );
+}
+.lr-range::-webkit-slider-thumb {
+  appearance: none;
+  width: 14px;
+  height: 14px;
+  margin-top: -5px;
+  border: 0;
+  border-radius: 50%;
+  background: var(--lr-range-fill);
+  box-shadow: 0 0 0 3px
+    color-mix(in srgb, var(--lr-range-fill) 22%, transparent);
+}
+.lr-range::-moz-range-track {
+  height: 4px;
+  border-radius: 2px;
+  background: color-mix(in srgb, var(--lr-text) 18%, transparent);
+}
+.lr-range::-moz-range-progress {
+  height: 4px;
+  border-radius: 2px;
+  background: var(--lr-range-fill);
+}
+.lr-range::-moz-range-thumb {
+  width: 14px;
+  height: 14px;
+  border: 0;
+  border-radius: 50%;
+  background: var(--lr-range-fill);
 }
 
 /* Voice participants right under their channel. */
