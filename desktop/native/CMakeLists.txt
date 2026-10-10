@@ -177,7 +177,8 @@ endif()
 if(WIN32)
   # Screen capture: the system picker and Windows.Graphics.Capture through
   # C++/WinRT, Direct3D 11 for the frames (src/screen_source_win.cc).
-  # Application sound is a stub that fails with an error so far.
+  # Application sound: WASAPI process loopback (src/app_audio_win.cc), which
+  # needs a Windows SDK of 10.0.20348 or later to build.
   # WEBRTC_USE_H264 stays undefined: video is VP8 (which the web client asks
   # for everywhere), and no OpenH264 or FFmpeg H264 code is referenced.
   target_sources(gelabber_media PRIVATE src/screen_source_win.cc src/app_audio_win.cc)
@@ -242,6 +243,8 @@ if(WIN32)
     # functions for libwebrtc. An unresolved WINRT_IMPL_* symbol names a
     # function missing from these.
     d3d11 runtimeobject
+    # application sound: ActivateAudioInterfaceAsync
+    mmdevapi
     # abseil
     dbghelp bcrypt
     ole32 oleaut32 uuid user32 gdi32 advapi32 shell32 shlwapi version)

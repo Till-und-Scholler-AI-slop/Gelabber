@@ -151,8 +151,9 @@ GM_API gm_source* gm_source_new_test_pattern(gm_engine* engine, int width, int h
  *                "contentHint"?: "detail|text|motion"} */
 GM_API gm_source* gm_source_new_screen(gm_engine* engine, const char* options_json);
 /* Applications playing sound, without this process:
- * [{"id","name","streams"}] (Linux: PipeWire playback streams; Windows: not
- * available yet, an empty list). What a virtual output device plays on to
+ * [{"id","name","streams"}] (Linux: PipeWire playback streams; Windows: the
+ * audio sessions of the active playback devices, by binary, "streams" being
+ * sessions, without this process's tree). What a virtual output device plays on to
  * the next (an echo canceller, an equaliser, a combined sink, a loopback) is
  * no application's sound and not listed. "name" is for showing and differs
  * between any two entries: applications that call themselves the same are
@@ -166,7 +167,9 @@ GM_API char* gm_audio_apps(gm_engine* engine);
  * where it plays, never where such a device plays it on.
  * gm_source_state adds "streams", and "underruns" and "overruns": how often
  * a stream that was playing ran dry or was cut back for being too far ahead.
- * Not available on Windows yet: fails with an error there. */
+ * Windows: WASAPI process loopback (Windows 10 2004 on), one client for ""
+ * (all but this process's tree) or one per process tree of the chosen
+ * binary; "streams" counts the clients. */
 GM_API gm_source* gm_source_new_app_audio(gm_engine* engine, const char* options_json);
 /* Cameras: [{"id","name"}] (Linux: V4L2 devices; Windows: DirectShow; ids
  * are the module's unique ids). */

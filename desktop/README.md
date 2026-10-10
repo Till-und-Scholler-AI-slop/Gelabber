@@ -8,8 +8,8 @@ Status: **released** for Linux x64 since v0.5.0, as a tarball on the release
 page and as a pacman package (`packaging/arch/`). From v0.6 on a Windows x64
 installer is built, installed and smoke-tested by CI and attached to the
 release; that app has voice, camera, screen share and Go Live (through the
-system's capture picker) and watching, but no application sound yet. What
-users get to read ships from `app/package/`.
+system's capture picker) with application sound (WASAPI process loopback),
+and watching. What users get to read ships from `app/package/`.
 
 ## Layout
 
@@ -21,7 +21,7 @@ users get to read ships from `app/package/`.
 | `native/patches/` | Patches applied to libwebrtc |
 | `native/tests/app_audio_mix_test.cc` | The source-audio mix against simulated sound cards whose clocks are off; plain C++, built and run by `core/tests/voice.rs` with the host's compiler |
 | `core/` | Rust crate `gelabber-media-core`: safe API over the C ABI |
-| `core/tests/mediasoup_loopback.rs` | Loopback call against mediasoup 0.29 with the server's router codecs |
+| `core/tests/mediasoup_loopback.rs` | Loopback call against mediasoup 0.29 with the server's router codecs; on Windows also application sound through process loopback |
 | `core/tests/source_preview.rs` | Video sinks for views in the app: a local source without a producer, scaling and rate limits, sinks going away mid-frame |
 | `core/tests/screen_capture.rs` | Screen capture through the portal, H264, mediasoup, native decode, and the screen as the web client shares it: VP8 in two simulcast layers (`GELABBER_TEST_SCREEN=1`); on Windows the primary monitor through Windows.Graphics.Capture as VP8 in two layers (`GELABBER_TEST_SCREEN_MONITOR=1`) |
 | `app/` | Tauri 2 app `gelabber-desktop`: window on the server origin, bundled setup page, media commands (`src/media.rs`) |
@@ -213,20 +213,19 @@ left as it is.
 - Features: one web client is served to every installed app, old and new,
   on both systems, so it asks. `media_info` answers with `features`, what
   this build can do besides voice and watching (`FEATURES` in
-  `app/src/media.rs`; the Windows app has `screen`, `camera` and
-  `video-frames`, no `app-audio`). The web client (`web/src/voice/capabilities.ts`)
-  keeps the button of a capture the app lacks in its place, greyed out and
-  with the reason, and hides the controls for application sound. An app up
-  to 0.5.x answers without a list and is taken for what it was: the Linux
-  app with screen capture, camera and application sound. The other way
-  round nothing can be done: a web client before v0.6 does not ask, and
-  offers the Windows app application sound. Its share then goes on with
-  video only, as it does when the sound server is missing. Hence "a server
-  from 0.6 on" in `app/package/README-windows.txt`. (Up to the Windows
-  screen capture, the same old client also offered screen share and Go
-  Live, and a refused Go Live left a claim that blocked the channel; a
-  capture of the Windows app that fails or is cancelled still does that
-  with such a client.)
+  `app/src/media.rs`; the Windows app has the Linux app's list since it
+  captures screens and application sound too). The web client
+  (`web/src/voice/capabilities.ts`) keeps the button of a capture the app
+  lacks in its place, greyed out and with the reason, and hides the
+  controls for application sound. An app up to 0.5.x answers without a list
+  and is taken for what it was: the Linux app with screen capture, camera
+  and application sound. The other way round, a web client before v0.6
+  does not ask and takes every app for that Linux app, which the Windows
+  app now matches; the alpha of 0.6.0 for Windows without screen capture
+  needed a server from 0.6 on, because such a client offered it Go Live and
+  a refused Go Live left a claim that blocked the channel. (A capture that
+  fails or is cancelled still does that with such a client, on either
+  system.)
 - Video encode: the app sends VP8, encoded in software by libwebrtc's
   libvpx. The web client names the codec of every producer and takes VP8
   wherever the device has it (`codec` in
@@ -423,3 +422,29 @@ left as it is.
   player of its own that is chosen by name and changes outputs, two players
   on one binary under different names, and two on different binaries under
   the same name.
+- Source audio (Windows): WASAPI process loopback
+  (`ActivateAudioInterfaceAsync` on `VIRTUAL_AUDIO_DEVICE_PROCESS_LOOPBACK`,
+  `native/src/app_audio_win.cc`), mixed by the same code as on Linux
+  (`native/src/app_audio_mix.h`) to the same `sa`/`la` track. "" (every
+  application) is one loopback client that excludes Gelabber's own process
+  tree, so the call's playout and the webview's processes stay out. An
+  application is chosen by its binary (`firefox.exe`, lowercased): one
+  client per process tree of that binary, each including its tree, looked
+  for again every second so processes that start playing later are picked
+  up, and dropped when the process ends. A binary with no process playing
+  yet is a live source with no streams, as on Linux. The list comes from
+  the audio sessions of the active playback devices
+  (`IAudioSessionManager2`), without Gelabber's tree and the system sounds;
+  programs on one binary are one entry, named by the session's display name
+  or else the binary's file description. Windows has no virtual devices
+  that play applications on, so nothing like PipeWire's loopback streams
+  has to be left out. Process loopback needs Windows 10 2004; an older
+  Windows fails the source with that reason, and the share goes on with
+  video only. Building needs a Windows SDK of 10.0.20348 or later (the
+  activation parameters), checked at compile time. Threads: one capture
+  thread per source in the multithreaded apartment owns and reads the
+  clients, the mixer thread paces the blocks; the list is made on a thread
+  of its own in the multithreaded apartment. The loopback test checks the
+  list's shape, a binary that is not running (live, no streams, blocks
+  flowing) and "" (live with one stream, or a clear failure where the
+  runner's Windows has no process loopback or no audio device).

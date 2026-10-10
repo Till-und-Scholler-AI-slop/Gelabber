@@ -16,10 +16,11 @@ Voraussetzungen
   - Windows 10 oder 11 (64 Bit, x64).
   - Microsoft Edge WebView2 Runtime. Windows 11 bringt sie mit; fehlt sie,
     lädt das Setup sie nach und braucht dafür eine Internetverbindung.
-  - Ein Gelabber-Server ab Version 0.6. Ein älterer Server weiß nicht, was
-    der App unter Windows noch fehlt (siehe unten), und bietet den
-    Anwendungston trotzdem an; geteilt wird dann ohne Ton.
+  - Ein Gelabber-Server, empfohlen ab Version 0.6. Mit einem älteren
+    Server kann ein abgebrochenes oder fehlgeschlagenes "Go Live" (etwa
+    die Auswahl geschlossen) den Kanal für Go Live belegt lassen.
   - Für "Bildschirm teilen" und "Go Live": Windows 10 ab Version 1903.
+  - Für den Anwendungston: Windows 10 ab Version 2004.
 
 Starten
   Über das Startmenü ("Gelabber"). Beim ersten Start die Adresse des Servers
@@ -34,11 +35,14 @@ Bildschirm teilen und Go Live
   Geteilte gelb ein. Wird ein geteiltes Fenster geschlossen, endet die
   Freigabe.
 
-Noch nicht verfügbar unter Windows
-  - Anwendungston teilen (Ton anderer Programme): Bildschirm und Go Live
-    gehen ohne Ton hinaus.
-  Mit einem Server ab Version 0.6 fehlen die Bedienelemente für den
-  Anwendungston in der App ganz.
+Anwendungston
+  Beim Teilen und bei Go Live kann der Ton anderer Programme mitgehen:
+  entweder der Ton aller Programme oder der eines gewählten Programms. Zur
+  Wahl stehen die Programme, die gerade Ton abspielen; ein Programm, das
+  erst später zu spielen beginnt, wird innerhalb einer Sekunde
+  aufgenommen. Gelabber selbst, also der Ton des Gesprächs, wird nie
+  mitgeschickt. Unter Windows vor Version 2004 geht die Freigabe ohne Ton
+  hinaus.
 
 Einstellungen und Daten
   Serveradresse:

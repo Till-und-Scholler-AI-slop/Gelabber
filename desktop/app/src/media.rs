@@ -480,7 +480,7 @@ async fn off_runtime(job: impl FnOnce() + Send + 'static) -> Result<()> {
 ///   window
 ///
 /// The only place that decides the list. An app before v0.6 reports none.
-const FEATURES: &[&str] = if cfg!(target_os = "linux") {
+const FEATURES: &[&str] = if cfg!(any(target_os = "linux", windows)) {
     &[
         "screen",
         "camera",
@@ -488,8 +488,6 @@ const FEATURES: &[&str] = if cfg!(target_os = "linux") {
         "app-audio-excludes-self",
         "video-frames",
     ]
-} else if cfg!(windows) {
-    &["screen", "camera", "video-frames"]
 } else {
     &[]
 };
@@ -1140,7 +1138,7 @@ mod tests {
         assert_eq!(info["abi"], gelabber_media_core::ABI_VERSION);
         assert_eq!(info["version"], env!("CARGO_PKG_VERSION"));
         assert_eq!(info["platform"], std::env::consts::OS);
-        let today: &[&str] = if cfg!(target_os = "linux") {
+        let today: &[&str] = if cfg!(any(target_os = "linux", windows)) {
             &[
                 "screen",
                 "camera",
@@ -1148,8 +1146,6 @@ mod tests {
                 "app-audio-excludes-self",
                 "video-frames",
             ]
-        } else if cfg!(windows) {
-            &["screen", "camera", "video-frames"]
         } else {
             &[]
         };

@@ -569,8 +569,9 @@ impl Source {
     /// microphone: `{"app"?: id from [`Engine::audio_apps`]}`; without an
     /// id, every application but this one, each captured where it plays and
     /// not where a virtual output device (an echo canceller, a combined
-    /// sink) plays it on. Not available on Windows yet: an error there, and
-    /// [`Engine::audio_apps`] lists nothing.
+    /// sink) plays it on. On Windows WASAPI process loopback (Windows 10
+    /// 2004 and later): ids are binaries ("firefox.exe"), and "" leaves out
+    /// this process's tree.
     pub fn app_audio(engine: &Engine, options: &Value) -> Result<Self> {
         let options = json_arg(options)?;
         // SAFETY: live engine, NUL-terminated JSON.
