@@ -1,5 +1,6 @@
 """Real Compose config validation; no Docker daemon, pulls, or rollout required."""
 import json
+import os
 from pathlib import Path
 import shutil
 import subprocess
@@ -79,7 +80,11 @@ class SecureDefaults(unittest.TestCase):
             cmd = ['docker', 'compose', '--project-directory', str(ROOT),
                    '--env-file', str(env), '-f', str(ROOT / 'compose.yaml'),
                    'config', '--format', 'json']
-            return subprocess.run(cmd, capture_output=True, text=True)
+            # The shell's environment wins over --env-file (CI exports
+            # MINIO_ROOT_PASSWORD for its own MinIO); test the file alone.
+            environ = {key: value for key, value in os.environ.items()
+                       if not key.endswith('PASSWORD')}
+            return subprocess.run(cmd, capture_output=True, text=True, env=environ)
 
     def test_every_password_is_required(self):
         for key in ('POSTGRES_PASSWORD', 'MINIO_ROOT_PASSWORD', 'TURN_PASSWORD'):
