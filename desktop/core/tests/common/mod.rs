@@ -276,7 +276,13 @@ fn answer(
             rtp_parameters,
             ..
         } => {
-            let rtp: RtpParameters = serde_json::from_value(rtp_parameters).unwrap();
+            let mut rtp: RtpParameters = serde_json::from_value(rtp_parameters).unwrap();
+            // As media/src/sfu.rs: a RID-only offer (simulcast without an
+            // audio or single-layer section before it) carries no CNAME, and
+            // the worker refuses Some("") but picks one for None.
+            if rtp.rtcp.cname.as_deref() == Some("") {
+                rtp.rtcp.cname = None;
+            }
             validate_like_server(&kind, &rtp);
             let media = if kind == "audio" {
                 MediaKind::Audio
