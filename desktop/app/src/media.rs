@@ -489,7 +489,7 @@ const FEATURES: &[&str] = if cfg!(target_os = "linux") {
         "video-frames",
     ]
 } else if cfg!(windows) {
-    &["camera", "video-frames"]
+    &["screen", "camera", "video-frames"]
 } else {
     &[]
 };
@@ -638,10 +638,13 @@ pub async fn media_source_microphone(media: State<'_, Media>, options: Value) ->
 }
 
 /// Opens the desktop's own screen/window picker; poll `media_source_state`.
+/// Off the runtime: on Windows the core waits for its capture thread to
+/// find the window the picker opens over.
 #[tauri::command]
 pub async fn media_source_screen(media: State<'_, Media>, options: Value) -> Result<u64> {
     let page = media.page();
-    let source = Source::screen(media.engine()?, &options).map_err(err)?;
+    let engine = media.engine()?.clone();
+    let source = blocking(move || Source::screen(&engine, &options).map_err(err)).await?;
     media.insert(page, &media.sources, source)
 }
 
@@ -1146,7 +1149,7 @@ mod tests {
                 "video-frames",
             ]
         } else if cfg!(windows) {
-            &["camera", "video-frames"]
+            &["screen", "camera", "video-frames"]
         } else {
             &[]
         };

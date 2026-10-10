@@ -141,9 +141,12 @@ GM_API gm_source* gm_source_new_microphone(gm_engine* engine, const char* option
 /* Synthetic moving test pattern (I420) for build/pipeline checks. */
 GM_API gm_source* gm_source_new_test_pattern(gm_engine* engine, int width, int height, int fps);
 /* Screen or window picked in the desktop's own dialog (Linux: xdg-desktop-portal
- * ScreenCast + PipeWire). Returns at once; the dialog opens asynchronously and
- * frames flow after the user picked a source. Poll gm_source_state.
- * Not available on Windows yet: fails with an error there.
+ * ScreenCast + PipeWire; Windows: the system's capture picker over a visible
+ * window of this process + Windows.Graphics.Capture). Returns at once; the
+ * dialog opens asynchronously and frames flow after the user picked a source.
+ * Poll gm_source_state. Fails where the system cannot capture (Windows before
+ * 10 1903) and on Windows when the process has no visible window. Windows'
+ * picker offers screens and windows whatever "type" says.
  * options_json: {"type"?: "any|screen|window", "fps"?: 30, "cursor"?: true,
  *                "contentHint"?: "detail|text|motion"} */
 GM_API gm_source* gm_source_new_screen(gm_engine* engine, const char* options_json);

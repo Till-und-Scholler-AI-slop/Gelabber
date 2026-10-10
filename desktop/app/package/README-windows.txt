@@ -17,10 +17,9 @@ Voraussetzungen
   - Microsoft Edge WebView2 Runtime. Windows 11 bringt sie mit; fehlt sie,
     lädt das Setup sie nach und braucht dafür eine Internetverbindung.
   - Ein Gelabber-Server ab Version 0.6. Ein älterer Server weiß nicht, was
-    der App unter Windows noch fehlt (siehe unten), und bietet es trotzdem
-    an. Dort "Go Live" nicht anklicken: Der Kanal führt dich dann als live,
-    ohne Bild, und niemand sonst kann live gehen, bis du das Gespräch
-    verlässt.
+    der App unter Windows noch fehlt (siehe unten), und bietet den
+    Anwendungston trotzdem an; geteilt wird dann ohne Ton.
+  - Für "Bildschirm teilen" und "Go Live": Windows 10 ab Version 1903.
 
 Starten
   Über das Startmenü ("Gelabber"). Beim ersten Start die Adresse des Servers
@@ -28,21 +27,18 @@ Starten
     "%LOCALAPPDATA%\Gelabber\gelabber-desktop.exe" --server https://dein-gelabber-server
   Strg+Umschalt+S führt zurück zur Serverauswahl, F5 lädt die Seite neu.
 
+Bildschirm teilen und Go Live
+  Beide öffnen die Auswahl von Windows: Dort einen Bildschirm oder ein
+  Fenster wählen. Erst danach nimmt die App etwas auf; wer die Auswahl
+  schließt, teilt nichts. Solange aufgenommen wird, rahmt Windows das
+  Geteilte gelb ein. Wird ein geteiltes Fenster geschlossen, endet die
+  Freigabe.
+
 Noch nicht verfügbar unter Windows
-  - Bildschirm teilen
-  - Go Live senden
-  - Anwendungston teilen (Ton anderer Programme)
-  Bildschirme und Go-Live-Streams anderer lassen sich ansehen.
-
-  Mit einem Server ab Version 0.6 bleiben die Knöpfe "Bildschirm teilen" und
-  "Go Live" in der App an ihrem Platz ("Go Live" wie überall nur mit dem
-  Recht dazu), sind aber ausgegraut und nennen den Grund, beim Darüberfahren
-  und beim Anklicken. Nur die Bedienelemente für den Anwendungston fehlen
-  ganz.
-
-  Mit einem älteren Server sehen beide Knöpfe benutzbar aus. "Bildschirm
-  teilen" startet dann einfach nicht. "Go Live" blockiert Go Live für den
-  ganzen Kanal (siehe Voraussetzungen).
+  - Anwendungston teilen (Ton anderer Programme): Bildschirm und Go Live
+    gehen ohne Ton hinaus.
+  Mit einem Server ab Version 0.6 fehlen die Bedienelemente für den
+  Anwendungston in der App ganz.
 
 Einstellungen und Daten
   Serveradresse:

@@ -7,9 +7,9 @@ with a native media core instead of the browser's WebRTC. Linux
 Status: **released** for Linux x64 since v0.5.0, as a tarball on the release
 page and as a pacman package (`packaging/arch/`). From v0.6 on a Windows x64
 installer is built, installed and smoke-tested by CI and attached to the
-release; that app has voice, camera and watching, but no screen share, Go
-Live or application sound yet. What users get to read ships from
-`app/package/`.
+release; that app has voice, camera, screen share and Go Live (through the
+system's capture picker) and watching, but no application sound yet. What
+users get to read ships from `app/package/`.
 
 ## Layout
 
@@ -23,7 +23,7 @@ Live or application sound yet. What users get to read ships from
 | `core/` | Rust crate `gelabber-media-core`: safe API over the C ABI |
 | `core/tests/mediasoup_loopback.rs` | Loopback call against mediasoup 0.29 with the server's router codecs |
 | `core/tests/source_preview.rs` | Video sinks for views in the app: a local source without a producer, scaling and rate limits, sinks going away mid-frame |
-| `core/tests/screen_capture.rs` | Screen capture through the portal, H264, mediasoup, native decode, and the screen as the web client shares it: VP8 in two simulcast layers (`GELABBER_TEST_SCREEN=1`) |
+| `core/tests/screen_capture.rs` | Screen capture through the portal, H264, mediasoup, native decode, and the screen as the web client shares it: VP8 in two simulcast layers (`GELABBER_TEST_SCREEN=1`); on Windows the primary monitor through Windows.Graphics.Capture as VP8 in two layers (`GELABBER_TEST_SCREEN_MONITOR=1`) |
 | `app/` | Tauri 2 app `gelabber-desktop`: window on the server origin, bundled setup page, media commands (`src/media.rs`) |
 | `app/scripts/smoke.sh` | Starts the app on a stand-in origin under Xvfb and checks which commands the page reaches and that the frames of a test-pattern view arrive; then kills the page's web process and checks that the app loads the page again |
 | `app/scripts/smoke.ps1` | The same on Windows, against a built or installed `gelabber-desktop.exe` |
@@ -131,7 +131,7 @@ puts the tests' mediasoup on it; the CI job tries which one works.
 
 | What | How | Where |
 |---|---|---|
-| Core: loopback call, video sinks; with their switches screen capture and voice | `cargo test --manifest-path desktop/Cargo.toml`; `GELABBER_TEST_SCREEN=1`, `GELABBER_TEST_AUDIO=1` inside `native/scripts/fake-desktop-session.sh` | CI, Linux and Windows (screen and voice: Linux) |
+| Core: loopback call, video sinks; with their switches screen capture and voice | `cargo test --manifest-path desktop/Cargo.toml`; `GELABBER_TEST_SCREEN=1`, `GELABBER_TEST_AUDIO=1` inside `native/scripts/fake-desktop-session.sh`; on Windows `GELABBER_TEST_SCREEN_MONITOR=1` | CI, Linux and Windows (voice: Linux) |
 | App: the commands a server origin reaches, frames of a test pattern | `app/scripts/smoke.sh`, `app/scripts/smoke.ps1` | CI, Linux and Windows |
 | Viewer window: colours on a screenshot | `cargo test --manifest-path desktop/Cargo.toml -p gelabber-desktop -- --ignored viewer` under Xvfb | CI, Linux |
 | Video inside the page: the web client's renderer, feed and tiles on real pixels | in `web/`: `npm run test:native-video-smoke` | **only locally** |
@@ -213,19 +213,20 @@ left as it is.
 - Features: one web client is served to every installed app, old and new,
   on both systems, so it asks. `media_info` answers with `features`, what
   this build can do besides voice and watching (`FEATURES` in
-  `app/src/media.rs`; the Windows app has `camera` and `video-frames`, no
-  `screen` and no `app-audio`). The web client (`web/src/voice/capabilities.ts`)
+  `app/src/media.rs`; the Windows app has `screen`, `camera` and
+  `video-frames`, no `app-audio`). The web client (`web/src/voice/capabilities.ts`)
   keeps the button of a capture the app lacks in its place, greyed out and
   with the reason, and hides the controls for application sound. An app up
   to 0.5.x answers without a list and is taken for what it was: the Linux
   app with screen capture, camera and application sound. The other way
   round nothing can be done: a web client before v0.6 does not ask, and
-  offers the Windows app screen share and Go Live. Screen share then simply
-  does not start. Go Live leaves a claim on the server that blocks Go Live
-  for the whole channel until that user leaves the call: the old client
-  sends the claim before the capture starts and does not take it back when
-  the capture is refused. Hence "a server from 0.6 on" in
-  `app/package/README-windows.txt`.
+  offers the Windows app application sound. Its share then goes on with
+  video only, as it does when the sound server is missing. Hence "a server
+  from 0.6 on" in `app/package/README-windows.txt`. (Up to the Windows
+  screen capture, the same old client also offered screen share and Go
+  Live, and a refused Go Live left a claim that blocked the channel; a
+  capture of the Windows app that fails or is cancelled still does that
+  with such a client.)
 - Video encode: the app sends VP8, encoded in software by libwebrtc's
   libvpx. The web client names the codec of every producer and takes VP8
   wherever the device has it (`codec` in
@@ -258,6 +259,28 @@ left as it is.
   is a shared-memory PipeWire stream (`fake_screen.c`); CI uses it. The
   compositor side (xdg-desktop-portal-hyprland, DMA-BUF frames) needs a real
   desktop.
+- Screen capture (Windows): the system's `GraphicsCapturePicker` picks the
+  screen or window, Windows.Graphics.Capture delivers it
+  (`native/src/screen_source_win.cc`, C++/WinRT from the Windows SDK; not
+  libwebrtc's DesktopCapturer, which lists sources for the caller to choose
+  from). The page cannot name a screen or a window, and nothing is captured
+  before the user picked one. The picker needs an owner window: the core
+  takes the app's own visible top-level window (the foreground one if it is
+  the app's), so no window handle crosses the C ABI or comes from the page;
+  without one the source fails. One thread per source, a single-threaded
+  apartment that pumps its messages while it waits, shows the picker and
+  then polls a free-threaded frame pool at the requested rate: a Direct3D 11
+  copy to a staging texture, BGRA to I420 with libyuv, the newest frame
+  again when the picture did not change (Windows sends frames only on a
+  change). Closing the picker is `cancelled`, a captured window that closes
+  or a monitor that goes away is `ended`. Windows draws its yellow capture
+  border (`IsBorderRequired` is left alone); `cursor` maps to
+  `IsCursorCaptureEnabled` from Windows 10 2004 on. Needs Windows 10 1903
+  (`GraphicsCaptureSession::IsSupported`). `GELABBER_TEST_SCREEN_MONITOR=1`
+  in the process's environment captures the primary monitor without the
+  picker (`IGraphicsCaptureItemInterop::CreateForMonitor`), for CI, where
+  nobody could pick; a page cannot set it. The picker itself (owner
+  window, cancel, a window closed while shared) is only tested by hand.
 - Camera: libwebrtc's video capture module (V4L2 on Linux, DirectShow on
   Windows) at the closest format to the requested profile. CI runners have
   no camera, so only the "no camera" path is tested there.

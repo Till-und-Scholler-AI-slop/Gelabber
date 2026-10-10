@@ -6,6 +6,11 @@
 //! dialog; CI runs it in desktop/native/scripts/fake-desktop-session.sh (real
 //! portal frontend, test ScreenCast backend). Skipped unless
 //! GELABBER_TEST_SCREEN=1 so a developer desktop never opens a picker.
+//!
+//! On Windows the primary monitor through Windows.Graphics.Capture, shared
+//! as the web client does it. The core captures it without the system picker
+//! only with GELABBER_TEST_SCREEN_MONITOR=1 in its environment (CI's
+//! Windows job); skipped without that, and where Windows cannot capture.
 
 mod common;
 
@@ -177,5 +182,103 @@ async fn share_a_screen(server: &Server) {
 
     drop(shared);
     drop((send, recv));
+    drop(screen);
+}
+
+#[tokio::test(flavor = "multi_thread", worker_threads = 4)]
+async fn windows_capture_of_the_primary_monitor_reaches_mediasoup() {
+    if !cfg!(windows) {
+        eprintln!("skipped: Windows.Graphics.Capture is the Windows core's");
+        return;
+    }
+    if std::env::var("GELABBER_TEST_SCREEN_MONITOR").as_deref() != Ok("1") {
+        eprintln!(
+            "skipped: set GELABBER_TEST_SCREEN_MONITOR=1 to capture the primary monitor without the picker"
+        );
+        return;
+    }
+    if std::env::var_os("GELABBER_MEDIA_LOG").is_some() {
+        gelabber_media_core::set_log_level(gelabber_media_core::LogLevel::Info);
+    }
+    let server = Server::start().await;
+    share_the_primary_monitor(&server).await;
+    server.close().await;
+}
+
+/// The call of the test above, dropped on return.
+async fn share_the_primary_monitor(server: &Server) {
+    let engine = Engine::new(Audio::Dummy).unwrap();
+    let screen = match Source::screen(&engine, &json!({"type": "screen", "fps": 30})) {
+        Ok(screen) => screen,
+        // GraphicsCaptureSession::IsSupported() said no: Windows before 10
+        // 1903, or a session that cannot capture.
+        Err(error) if error.to_string().contains("not supported on this Windows") => {
+            eprintln!("skipped: {error}");
+            return;
+        }
+        Err(error) => panic!("screen source on Windows: {error}"),
+    };
+    let start = Instant::now();
+    let mut state = screen.state().unwrap();
+    while state["state"] == "pending" && start.elapsed() < Duration::from_secs(20) {
+        tokio::time::sleep(Duration::from_millis(100)).await;
+        state = screen.state().unwrap();
+    }
+    eprintln!("screen source after {:?}: {state}", start.elapsed());
+    assert_eq!(state["state"], "live", "the primary monitor is captured");
+    wait_for("captured frames", Duration::from_secs(20), || {
+        let screen = screen.clone();
+        async move { screen.state().unwrap()["frames"].as_u64().unwrap_or(0) > 5 }
+    })
+    .await;
+    let captured = screen.state().unwrap();
+    eprintln!("screen source: {captured}");
+    let (width, height) = (
+        captured["width"].as_u64().unwrap(),
+        captured["height"].as_u64().unwrap(),
+    );
+    assert!(
+        width >= 320 && height >= 200,
+        "a monitor of {width}x{height}"
+    );
+
+    let device = Device::new(&engine).unwrap();
+    device
+        .load(&serde_json::to_value(server.router.rtp_capabilities()).unwrap())
+        .unwrap();
+    let server_producers = Arc::new(Mutex::new(Vec::new()));
+    let (server_send, send_params) = server.transport().await;
+    let (send, send_events) = Transport::new(&device, Direction::Send, &send_params).unwrap();
+    server.serve(
+        send.clone(),
+        server_send.clone(),
+        send_events,
+        server_producers.clone(),
+    );
+    // As the web client shares a screen: VP8, a layer at a quarter and one
+    // in full. The source crops to multiples of 4, so both come out.
+    let shared = {
+        let (send, screen) = (send.clone(), screen.clone());
+        let options = json!({
+            "codec": "video/VP8",
+            "encodings": [{ "scaleResolutionDownBy": 4 }, { "scaleResolutionDownBy": 1 }],
+            "codecOptions": { "videoGoogleStartBitrate": 3000 },
+        });
+        blocking(move || send.produce(&screen, &options))
+            .await
+            .unwrap()
+    };
+    let shared_at_server = server_producers.lock().unwrap()[0].clone();
+    assert_eq!(
+        simulcast_sizes("primary monitor as VP8", &shared, &shared_at_server).await,
+        layers_of(width, height, 4),
+        "layers of the {width}x{height} monitor"
+    );
+    let state = screen.state().unwrap();
+    eprintln!("screen source at the end: {state}");
+    assert_eq!(state["state"], "live", "still capturing");
+
+    drop(shared);
+    drop(send);
     drop(screen);
 }

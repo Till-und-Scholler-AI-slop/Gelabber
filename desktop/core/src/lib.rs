@@ -548,12 +548,15 @@ impl Source {
     }
 
     /// Screen or window chosen in the desktop's own picker (Linux:
-    /// xdg-desktop-portal + PipeWire). Returns while the picker is still open;
-    /// poll [`Source::state`] until it leaves `pending`. Not available on
-    /// Windows yet: an error there.
+    /// xdg-desktop-portal + PipeWire; Windows: the system's capture picker
+    /// over the app's window + Windows.Graphics.Capture). Returns while the
+    /// picker is still open; poll [`Source::state`] until it leaves `pending`.
+    /// An error where the system cannot capture (Windows before 10 1903) and
+    /// on Windows in a process without a visible window for the picker.
     ///
     /// `options`: `{"type"?: "any|screen|window", "fps"?: 30, "cursor"?: true,
-    /// "contentHint"?: "detail|text|motion"}`.
+    /// "contentHint"?: "detail|text|motion"}`. Windows' picker always offers
+    /// screens and windows, whatever `type` says.
     pub fn screen(engine: &Engine, options: &Value) -> Result<Self> {
         let options = json_arg(options)?;
         // SAFETY: live engine, NUL-terminated JSON.

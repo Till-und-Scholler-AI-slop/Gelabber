@@ -175,16 +175,56 @@ if(UNIX AND NOT APPLE)
 endif()
 
 if(WIN32)
-  # Screen capture and application sound are stubs that fail with an error so
-  # far. WEBRTC_USE_H264 stays undefined: video is VP8 (which the web client
-  # asks for everywhere), and no OpenH264 or FFmpeg H264 code is referenced.
+  # Screen capture: the system picker and Windows.Graphics.Capture through
+  # C++/WinRT, Direct3D 11 for the frames (src/screen_source_win.cc).
+  # Application sound is a stub that fails with an error so far.
+  # WEBRTC_USE_H264 stays undefined: video is VP8 (which the web client asks
+  # for everywhere), and no OpenH264 or FFmpeg H264 code is referenced.
   target_sources(gelabber_media PRIVATE src/screen_source_win.cc src/app_audio_win.cc)
   # WEBRTC_WIN, NOMINMAX and WIN32_LEAN_AND_MEAN come from libmediasoupclient;
-  # these are the other Windows defines libwebrtc is built with. A screen
-  # source on libwebrtc's DesktopCapturer also needs RTC_ENABLE_WIN_WGC:
-  # DesktopCaptureOptions changes layout with it.
+  # these are the other Windows defines libwebrtc is built with. The screen
+  # source does not use libwebrtc's DesktopCapturer, so RTC_ENABLE_WIN_WGC
+  # (which changes DesktopCaptureOptions' layout) is not needed.
   target_compile_definitions(gelabber_media PRIVATE UNICODE _UNICODE _WIN32_WINNT=0x0A00 WINVER=0x0A00)
   target_compile_options(gelabber_media PRIVATE /bigobj)
+  # libyuv (BGRA to I420) is inside webrtc.lib; its headers are in the package.
+  target_include_directories(gelabber_media SYSTEM PRIVATE
+    "${GELABBER_LIBWEBRTC_DIR}/include/third_party/libyuv/include")
+  # C++/WinRT ships with the Windows SDK, in Include/<version>/cppwinrt next
+  # to um/ and winrt/. clang-cl and the developer prompt's INCLUDE usually
+  # name it; where neither does, the newest SDK's copy is added.
+  include(CheckIncludeFileCXX)
+  check_include_file_cxx("winrt/base.h" GELABBER_HAVE_CPPWINRT)
+  if(NOT GELABBER_HAVE_CPPWINRT)
+    set(program_files_x86 "ProgramFiles(x86)")
+    set(kits_roots "$ENV{WindowsSdkDir}" "$ENV{${program_files_x86}}/Windows Kits/10")
+    set(cppwinrt_dirs "")
+    if(DEFINED ENV{WindowsSDKVersion} AND NOT "$ENV{WindowsSdkDir}" STREQUAL "")
+      string(REGEX REPLACE "[\\\\/]+$" "" sdk_version "$ENV{WindowsSDKVersion}")
+      file(TO_CMAKE_PATH "$ENV{WindowsSdkDir}/Include/${sdk_version}/cppwinrt" wanted)
+      list(APPEND cppwinrt_dirs "${wanted}")
+    endif()
+    foreach(root IN LISTS kits_roots)
+      if(root)
+        file(TO_CMAKE_PATH "${root}" root)
+        file(GLOB found LIST_DIRECTORIES true "${root}/Include/*/cppwinrt")
+        list(SORT found COMPARE NATURAL ORDER DESCENDING)
+        list(APPEND cppwinrt_dirs ${found})
+      endif()
+    endforeach()
+    set(GELABBER_CPPWINRT_DIR "")
+    foreach(dir IN LISTS cppwinrt_dirs)
+      if(EXISTS "${dir}/winrt/base.h")
+        set(GELABBER_CPPWINRT_DIR "${dir}")
+        break()
+      endif()
+    endforeach()
+    if(NOT GELABBER_CPPWINRT_DIR)
+      message(FATAL_ERROR "C++/WinRT (winrt/base.h) not found: install a Windows 10 SDK of 10.0.17134 or later, or put its Include/<version>/cppwinrt on INCLUDE")
+    endif()
+    message(STATUS "C++/WinRT: ${GELABBER_CPPWINRT_DIR}")
+    target_include_directories(gelabber_media SYSTEM PRIVATE "${GELABBER_CPPWINRT_DIR}")
+  endif()
   # MSVC cl defines no __SSE2__ on x64, which would send RNNoise down its
   # scalar C99 path; clang-cl defines it itself.
   target_compile_definitions(rnnoise PRIVATE OPUS_X86_MAY_HAVE_SSE OPUS_X86_MAY_HAVE_SSE2)
@@ -196,6 +236,12 @@ if(WIN32)
     avrt dmoguids wmcodecdspuuid amstrmid msdmo
     # video capture module: DirectShow
     strmiids
+    # screen capture: Direct3D 11 and its WinRT interop (d3d11), the WinRT
+    # runtime C++/WinRT calls into (Ro*, Windows*String: runtimeobject).
+    # Not windowsapp.lib: that umbrella would also take over kernel32's
+    # functions for libwebrtc. An unresolved WINRT_IMPL_* symbol names a
+    # function missing from these.
+    d3d11 runtimeobject
     # abseil
     dbghelp bcrypt
     ole32 oleaut32 uuid user32 gdi32 advapi32 shell32 shlwapi version)

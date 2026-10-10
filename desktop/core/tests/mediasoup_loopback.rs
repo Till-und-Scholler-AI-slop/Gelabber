@@ -448,40 +448,30 @@ async fn layers_by_size(server: &Server) {
     drop(send);
 }
 
-/// What the Windows core does not have yet: screen capture and application
-/// sound. An older server's web client knows no feature list and asks the app
-/// for both, so the core has to answer with an error that says so and with
-/// an empty application list. Nothing else on Windows calls these three: a
-/// change that let them crash, or the stub's exception escape, would
-/// otherwise ship.
+/// What the Windows core does not have yet: application sound. An older
+/// server's web client knows no feature list and asks the app for it, so the
+/// core has to answer with an error that says so and with an empty
+/// application list. Nothing else on Windows calls these two: a change that
+/// let them crash, or the stub's exception escape, would otherwise ship.
+/// (Screen capture on Windows opens the system picker; its test is in
+/// screen_capture.rs.)
 #[test]
 fn what_the_windows_core_lacks_fails_with_an_error() {
     if !cfg!(windows) {
-        eprintln!("skipped: the Linux core has screen capture and application sound");
+        eprintln!("skipped: the Linux core has application sound");
         return;
     }
     let engine = Engine::new(Audio::Dummy).unwrap();
     assert_eq!(engine.audio_apps().unwrap(), json!([]));
-    for (what, source) in [
-        (
-            "screen capture",
-            Source::screen(&engine, &json!({"type": "screen"})),
-        ),
-        (
-            "application sound",
-            Source::app_audio(&engine, &json!({"app": ""})),
-        ),
-    ] {
-        let error = source
-            .err()
-            .unwrap_or_else(|| panic!("{what} gave a source on Windows"));
-        eprintln!("{what}: {error}");
-        assert!(
-            error.to_string().contains("not available on Windows"),
-            "{what}: {error}"
-        );
-    }
-    // The refusals leave the engine as it was.
+    let error = Source::app_audio(&engine, &json!({"app": ""}))
+        .err()
+        .expect("application sound gave a source on Windows");
+    eprintln!("application sound: {error}");
+    assert!(
+        error.to_string().contains("not available on Windows"),
+        "application sound: {error}"
+    );
+    // The refusal leaves the engine as it was.
     assert_eq!(engine.audio_apps().unwrap(), json!([]));
     Source::test_pattern(&engine, 640, 360, 30).unwrap();
 }
