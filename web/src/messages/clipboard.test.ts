@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { pastedFile } from "./clipboard.ts";
+import { carriesFiles, droppedFile, pastedFile } from "./clipboard.ts";
 
 const png = (name: string) =>
   new File([new Uint8Array([1, 2, 3])], name, { type: "image/png" });
@@ -51,5 +51,30 @@ describe("pasted files", () => {
     expect(named?.name).toBe("Bild-20261009-123456.png");
     expect(named?.type).toBe("image/png");
     expect(named?.size).toBe(3);
+  });
+});
+
+describe("dropped files", () => {
+  it("only reacts to drags that carry files", () => {
+    expect(carriesFiles({ types: ["Files", "text/uri-list"] })).toBe(true);
+    expect(carriesFiles({ types: ["text/plain", "text/html"] })).toBe(false);
+    expect(carriesFiles(null)).toBe(false);
+  });
+
+  it("takes the first file even when text comes along", () => {
+    const file = png("urlaub.png");
+    expect(
+      droppedFile({
+        getData: () => "file:///home/kim/urlaub.png",
+        files: [file, png("zwei.png")],
+      }),
+    ).toBe(file);
+    expect(droppedFile({ files: [] })).toBeNull();
+  });
+
+  it("names an unnamed drop", () => {
+    expect(
+      droppedFile({ files: [png("")] }, new Date("2026-10-09T08:00:01Z"))?.name,
+    ).toBe("Bild-20261009-080001.png");
   });
 });

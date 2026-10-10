@@ -356,6 +356,22 @@
 .lr-composer-field:focus-within {
   border-color: color-mix(in srgb, var(--lr-accent) 70%, var(--lr-border));
 }
+/* A file dragged over the conversation: the pane outlines, the field says
+   what letting go does. */
+.lr-message-pane.is-drop-target {
+  outline: 2px dashed color-mix(in srgb, var(--lr-accent) 70%, transparent);
+  outline-offset: -6px;
+}
+.lr-message-pane.is-drop-target .lr-composer-field {
+  border-color: var(--lr-accent);
+}
+.lr-composer-drop {
+  margin: 0;
+  padding: 10px 14px 0;
+  color: var(--lr-accent);
+  font-size: 13px;
+  font-weight: 600;
+}
 .lr-composer-row {
   display: flex;
   align-items: flex-end;
