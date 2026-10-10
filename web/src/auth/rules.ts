@@ -60,6 +60,7 @@ export function validateAvatarUrl(raw: string): FieldCode | null {
 type FieldName =
   | "email"
   | "password"
+  | "current_password"
   | "name"
   | "avatar_url"
   | "kind"
@@ -80,6 +81,7 @@ type FieldName =
 const FIELD_LABEL: Record<FieldName, string> = {
   email: "E-Mail-Adresse",
   password: "Passwort",
+  current_password: "Aktuelles Passwort",
   name: "Name",
   avatar_url: "Avatar-URL",
   kind: "Kanaltyp",
@@ -114,6 +116,8 @@ export function fieldMessage(field: string, code: FieldCode): string {
         : `${label} ist zu lang.`;
     case "taken":
       return "Diese E-Mail-Adresse ist schon registriert.";
+    case "wrong":
+      return "Das Passwort stimmt nicht.";
     case "invalid":
       switch (field) {
         case "email":
@@ -141,6 +145,8 @@ export function errorMessage(code: ApiErrorCode): string {
       return "Bitte melde dich erneut an.";
     case "csrf_invalid":
       return "Sicherheits-Token abgelaufen. Bitte noch einmal versuchen.";
+    case "insecure_transport":
+      return "Anmelden geht nur über eine verschlüsselte Verbindung. Öffne Gelabber mit https:// (oder auf diesem Rechner über http://localhost).";
     case "forbidden":
       return "Dafür fehlt dir die Berechtigung.";
     case "not_found":

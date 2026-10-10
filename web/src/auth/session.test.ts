@@ -2,9 +2,11 @@ import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
 import { ApiError, getCsrfToken } from "../api/client.ts";
 import {
+  changePassword,
   ensureSession,
   login,
   logout,
+  logoutEverywhere,
   register,
   resetSessionForTests,
   updateProfile,
@@ -139,6 +141,60 @@ describe("session store", () => {
     release?.();
     await done;
     expect(getCsrfToken()).toBe("c4");
+  });
+
+  it("logoutEverywhere ends this tab at once and asks the server to end all", async () => {
+    const calls = fakeApi({
+      "POST /api/auth/login": () => json(200, { user: ada, csrf_token: "c2" }),
+      "POST /api/auth/logout-all": () => json(200, { csrf_token: "c5" }),
+    });
+    await login("ada@example.com", "password123");
+
+    const done = logoutEverywhere();
+    expect(useSession.getState()).toEqual({ status: "anonymous", user: null });
+    await done;
+    expect(calls).toContain("POST /api/auth/logout-all");
+    expect(getCsrfToken()).toBe("c5");
+    expect(useSessionProblems.getState().logout).toBeNull();
+  });
+
+  it("changePassword keeps the account signed in with the new token", async () => {
+    fakeApi({
+      "POST /api/auth/login": () => json(200, { user: ada, csrf_token: "c2" }),
+      "POST /api/auth/password": () =>
+        json(200, { user: ada, csrf_token: "c6" }),
+    });
+    await login("ada@example.com", "password123");
+
+    await expect(
+      changePassword("password123", "battery staple"),
+    ).resolves.toEqual(ada);
+    expect(useSession.getState()).toEqual({
+      status: "authenticated",
+      user: ada,
+    });
+    expect(getCsrfToken()).toBe("c6");
+  });
+
+  it("changePassword surfaces a wrong current password as a field error", async () => {
+    fakeApi({
+      "POST /api/auth/login": () => json(200, { user: ada, csrf_token: "c2" }),
+      "POST /api/auth/password": () =>
+        json(422, {
+          error: "validation_failed",
+          message: "Some fields are invalid.",
+          fields: { current_password: "wrong" },
+        }),
+    });
+    await login("ada@example.com", "password123");
+
+    await expect(
+      changePassword("nope", "battery staple"),
+    ).rejects.toMatchObject({
+      code: "validation_failed",
+      fields: { current_password: "wrong" },
+    });
+    expect(useSession.getState().status).toBe("authenticated");
   });
 
   it("keeps local logout but exposes failed server revocation for retry", async () => {
