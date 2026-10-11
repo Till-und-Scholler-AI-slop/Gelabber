@@ -99,9 +99,10 @@ describe("durable send attempts with controlled HTTP responses", () => {
     expect(attempts()).toMatchObject([
       { content: "A", status: "failed", stage: "bind" },
     ]);
+    // Off screen the confirmed B is released; the failed A row stays.
     expect(
       usePendingMessages.getState().byChannel.c?.map((m) => m.content),
-    ).toEqual(["A", "B"]);
+    ).toEqual(["A"]);
     // Navigation does not own or remove the store; an exact retry reuses A's id.
     const failed = attempts()[0]!;
     routes(() => json(200, row("server-a", "A")));
@@ -110,9 +111,7 @@ describe("durable send attempts with controlled HTTP responses", () => {
       attemptId: failed.id,
     });
     expect(attempts()).toEqual([]);
-    expect(usePendingMessages.getState().byChannel.c?.map((m) => m.id)).toEqual(
-      ["server-a", "server-b"],
-    );
+    expect(usePendingMessages.getState().byChannel.c).toEqual([]);
     expect(requests.filter((k) => k.includes("/messages"))).toHaveLength(3);
   });
   it("retries only bind after PUT succeeded, keeps the file and blocks double retry", async () => {

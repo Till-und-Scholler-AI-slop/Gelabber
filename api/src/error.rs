@@ -36,6 +36,9 @@ pub enum ApiError {
     InvalidCredentials,
     /// 403: mutation without a matching `X-CSRF-Token`.
     Csrf,
+    /// 403: sign-in over plain HTTP from another machine; the session cookie
+    /// would cross the network unencrypted.
+    InsecureTransport,
     /// 403: signed in, but the membership/permission does not allow it. The
     /// string is the public message (static copy, no user data).
     Forbidden(&'static str),
@@ -76,6 +79,7 @@ impl ApiError {
             Self::Unauthenticated => "unauthenticated",
             Self::InvalidCredentials => "invalid_credentials",
             Self::Csrf => "csrf_invalid",
+            Self::InsecureTransport => "insecure_transport",
             Self::Forbidden(_) => "forbidden",
             Self::NotFound => "not_found",
             Self::EmailTaken => "email_taken",
@@ -93,7 +97,9 @@ impl ApiError {
             Self::Validation(_) => StatusCode::UNPROCESSABLE_ENTITY,
             Self::BadRequest(_) => StatusCode::BAD_REQUEST,
             Self::Unauthenticated | Self::InvalidCredentials => StatusCode::UNAUTHORIZED,
-            Self::Csrf | Self::Forbidden(_) | Self::Banned => StatusCode::FORBIDDEN,
+            Self::Csrf | Self::InsecureTransport | Self::Forbidden(_) | Self::Banned => {
+                StatusCode::FORBIDDEN
+            }
             Self::NotFound => StatusCode::NOT_FOUND,
             Self::EmailTaken | Self::ThemeConflict => StatusCode::CONFLICT,
             Self::InviteInvalid => StatusCode::GONE,
@@ -109,6 +115,9 @@ impl ApiError {
             Self::Unauthenticated => "Sign in required.",
             Self::InvalidCredentials => "E-mail or password is wrong.",
             Self::Csrf => "Missing or invalid CSRF token.",
+            Self::InsecureTransport => {
+                "Sign-in needs HTTPS. Open the app over https:// (or http://localhost on this machine)."
+            }
             Self::Forbidden(message) => message,
             Self::NotFound => "Not found.",
             Self::EmailTaken => "This e-mail address is already registered.",

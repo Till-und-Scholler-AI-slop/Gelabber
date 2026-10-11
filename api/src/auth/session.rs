@@ -156,6 +156,27 @@ pub fn fingerprint(hash: &[u8]) -> String {
     hash.iter().map(|byte| format!("{byte:02x}")).collect()
 }
 
+/// Every session of `user_id`: "sign out everywhere". Same order as
+/// [`revoke_current`]: rows first, then the sockets and tickets they back.
+pub async fn revoke_all(state: &AppState, user_id: Uuid) -> Result<(), ApiError> {
+    let revoked: Vec<Vec<u8>> =
+        sqlx::query_scalar("DELETE FROM sessions WHERE user_id = $1 RETURNING token_hash")
+            .bind(user_id)
+            .fetch_all(&state.db)
+            .await?;
+    disconnect(state, &revoked).await;
+    Ok(())
+}
+
+/// Closes the sockets and media tickets of sessions already deleted.
+pub async fn disconnect(state: &AppState, hashes: &[Vec<u8>]) {
+    for hash in hashes {
+        let key = fingerprint(hash);
+        state.gateway.revoke_session(&key).await;
+        crate::media::cleanup_session(state.redis.clone(), key).await;
+    }
+}
+
 /// Delete first, then notify only sockets/tickets bound to that session hash.
 /// Database revalidation also covers other API instances and a lost notification.
 pub async fn revoke_current(state: &AppState, raw: Option<&str>) -> Result<(), ApiError> {

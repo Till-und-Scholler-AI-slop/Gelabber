@@ -60,6 +60,9 @@ describe("copy", () => {
     expect(fieldMessage("password", "too_short")).toBe("Mindestens 8 Zeichen.");
     expect(fieldMessage("email", "taken")).toMatch(/schon registriert/);
     expect(fieldMessage("avatar_url", "invalid")).toMatch(/https-URL/);
+    expect(fieldMessage("current_password", "wrong")).toBe(
+      "Das Passwort stimmt nicht.",
+    );
     expect(fieldMessage("unknown_field", "invalid")).toBe(
       "Eingabe ist ungültig.",
     );
@@ -80,5 +83,6 @@ describe("copy", () => {
     expect(errorMessage("network")).toMatch(/Keine Verbindung/);
     expect(errorMessage("rate_limited")).toMatch(/Zu viele Anfragen/);
     expect(errorMessage("quota_exceeded")).toMatch(/Tageslimit/);
+    expect(errorMessage("insecure_transport")).toMatch(/https:\/\//);
   });
 });
