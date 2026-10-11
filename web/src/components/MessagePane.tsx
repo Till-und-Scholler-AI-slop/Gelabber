@@ -40,6 +40,7 @@ import {
 import {
   nonePending,
   discardAttempt,
+  displayPending,
   type SendAttempt,
   removePending,
   usePendingMessages,
@@ -177,6 +178,7 @@ export function MessagePane({
     !query.isFetching && (!query.error || query.isFetchNextPageError),
   );
 
+  useEffect(() => displayPending(channelId), [channelId]);
   useEffect(() => {
     const pages = query.data?.pages ?? [];
     for (const id of confirmedPendingIds(pages, pending)) {

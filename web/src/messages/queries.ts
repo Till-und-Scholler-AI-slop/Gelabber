@@ -26,6 +26,7 @@ import * as remote from "./api.ts";
 import {
   applyMessageChanges,
   combineMessageChange,
+  encodeCursor,
   newerMessage,
   olderCursor,
   stampOlder,
@@ -77,6 +78,12 @@ type EntityScope = {
   scope: string;
   channels: Map<string, Map<string, MessageChange>>;
 };
+// Floors outlive a REST read so a stale page or a replayed event cannot
+// overwrite a newer row or revive a delete. A channel with a cached query
+// keeps its most recently touched rows; without one only compact tombstones
+// remain, since delivery follows the commit and its next GET is never older
+// than an event already seen.
+export const ENTITY_LIMIT = 500;
 const entities = new WeakMap<QueryClient, EntityScope>();
 const entityCleanup = new WeakSet<QueryClient>();
 function channelEntities(
@@ -89,14 +96,20 @@ function channelEntities(
     entityCleanup.add(client);
     client.getQueryCache().subscribe((event) => {
       const state = entities.get(client);
-      if (event.type === "removed" && state) {
-        // Scope is stored as a tuple; compare the current identity explicitly.
-        const [owner, epoch] = JSON.parse(state.scope) as [string, number];
-        if (!stampHolds({ userId: owner, generation: epoch })) {
-          entities.delete(client);
-          rowVersions.delete(client);
-        }
+      if (event.type !== "removed" || !state) return;
+      // Scope is stored as a tuple; compare the current identity explicitly.
+      const [owner, epoch] = JSON.parse(state.scope) as [string, number];
+      if (!stampHolds({ userId: owner, generation: epoch })) {
+        entities.delete(client);
+        rowVersions.delete(client);
+        return;
       }
+      const key = event.query.queryKey;
+      if (key[3] !== "messages" || key[1] !== owner || key[2] !== epoch) return;
+      const rows = state.channels.get(String(key[4]));
+      if (!rows) return;
+      for (const [id, change] of rows) if (change.message) rows.delete(id);
+      if (rows.size === 0) state.channels.delete(String(key[4]));
     });
   }
   const scope = JSON.stringify([userId, generation]);
@@ -113,18 +126,40 @@ function channelEntities(
   return channel;
 }
 
+/** Re-inserted on every touch, so the first key is the least recent one. */
+function keepEntity(
+  rows: Map<string, MessageChange>,
+  change: MessageChange,
+): void {
+  rows.delete(change.id);
+  // A retained entity is a floor/overlay, not evidence of complete history.
+  rows.set(change.id, { ...change, created: false });
+  for (const id of rows.keys()) {
+    if (rows.size <= ENTITY_LIMIT) break;
+    rows.delete(id);
+  }
+}
+
+/** Rows retained across all channels of this client's current scope. */
+export function retainedEntityCount(client: QueryClient): number {
+  let count = 0;
+  for (const rows of entities.get(client)?.channels.values() ?? [])
+    count += rows.size;
+  return count;
+}
+
 function retainChange(
   client: QueryClient,
   userId: string,
   generation: number,
   channelId: string,
   incoming: MessageChange,
+  cached: boolean,
 ): MessageChange {
   const rows = channelEntities(client, userId, generation, channelId);
   const previous = rows.get(incoming.id);
   const change = combineMessageChange(previous, incoming);
-  // A retained entity is a floor/overlay, not evidence of complete history.
-  rows.set(change.id, { ...change, created: false });
+  if (cached || change.message === null) keepEntity(rows, change);
   return { ...change, created: incoming.created && change.message !== null };
 }
 
@@ -157,11 +192,11 @@ function recordChange(
   channelId: string,
   change: MessageChange,
 ): MessageChange {
-  change = retainChange(client, userId, generation, channelId, change);
   const query = client.getQueryCache().find({
     queryKey: messageKeys.channel(userId, generation, channelId),
     exact: true,
   });
+  change = retainChange(client, userId, generation, channelId, change, !!query);
   if (!query) return change;
   const read = readJournals(client).get(query.queryHash);
   if (!read) return change;
@@ -182,6 +217,7 @@ function patchPages(
   const query = client.getQueryCache().find({ queryKey: key, exact: true });
   const previous = query?.state;
   const read = query && readJournals(client).get(query.queryHash);
+  const observed = (query?.getObserversCount() ?? 0) > 0;
   if (read) read.manual = true;
   manualPatches.add(client);
   try {
@@ -190,7 +226,10 @@ function patchPages(
       (current) => {
         // An event is a delta, never proof that an unopened history is complete.
         if (!current) return undefined;
-        return { ...current, pages: update(current.pages) };
+        return capLatestPage(
+          { ...current, pages: update(current.pages) },
+          observed,
+        );
       },
       { updatedAt: previous?.dataUpdatedAt },
     );
@@ -205,6 +244,38 @@ function patchPages(
       refetchType: "none",
     });
   }
+}
+
+/**
+ * Live creates land in the newest page; keep it at one page of rows. Off
+ * screen the oldest rows (and every older page, which they would otherwise
+ * split from) are dropped and paged back in on scroll. On screen with older
+ * pages loaded they move one page down so the reader's history stays put.
+ */
+function capLatestPage(data: Cache, observed: boolean): Cache {
+  const [latest, next, ...rest] = data.pages;
+  if (!latest || latest.messages.length <= PAGE_SIZE) return data;
+  const cut = latest.messages.length - PAGE_SIZE;
+  const kept = latest.messages.slice(cut);
+  const head = {
+    ...latest,
+    messages: kept,
+    has_more: true,
+    older: encodeCursor(kept[0]!),
+  };
+  if (observed && next)
+    return {
+      ...data,
+      pages: [
+        head,
+        {
+          ...next,
+          messages: [...next.messages, ...latest.messages.slice(0, cut)],
+        },
+        ...rest,
+      ],
+    };
+  return { pages: [head], pageParams: data.pageParams.slice(0, 1) };
 }
 
 function mapMessages(
@@ -257,17 +328,15 @@ export function messageQueryOptions(
       if (!manualPatches.has(client)) {
         const floors = channelEntities(client, userId, generation, channelId);
         for (const page of data.pages)
-          for (const message of page.messages) {
-            const known = floors.get(message.id);
-            floors.set(message.id, {
-              ...combineMessageChange(known, {
+          for (const message of page.messages)
+            keepEntity(
+              floors,
+              combineMessageChange(floors.get(message.id), {
                 id: message.id,
                 message,
                 created: false,
               }),
-              created: false,
-            });
-          }
+            );
         data = {
           ...data,
           pages: applyMessageChanges(data.pages, floors.values()),
@@ -458,6 +527,20 @@ function rowVersion(
   if (bump) versions.set(key, version);
   return version;
 }
+/** A live change only needs to outdate the token of an in-flight mutation. */
+function bumpRowVersion(
+  client: QueryClient,
+  userId: string,
+  generation: number,
+  channelId: string,
+  id: string,
+): void {
+  const state = rowVersions.get(client);
+  if (state?.scope !== JSON.stringify([userId, generation])) return;
+  const key = JSON.stringify([channelId, id]);
+  const version = state.versions.get(key);
+  if (version !== undefined) state.versions.set(key, version + 1);
+}
 
 export function editMessageOptions(client: QueryClient, channelId: string) {
   return {
@@ -603,7 +686,7 @@ export function applyMessageCreated(
   channelId: string,
   message: Message,
 ): void {
-  rowVersion(client, userId, generation, channelId, message.id, true);
+  bumpRowVersion(client, userId, generation, channelId, message.id);
   const change = recordChange(client, userId, generation, channelId, {
     id: message.id,
     message,
@@ -622,7 +705,7 @@ export function applyMessageEdited(
   channelId: string,
   message: Message,
 ): void {
-  rowVersion(client, userId, generation, channelId, message.id, true);
+  bumpRowVersion(client, userId, generation, channelId, message.id);
   const change = recordChange(client, userId, generation, channelId, {
     id: message.id,
     message,
@@ -642,7 +725,7 @@ export function applyMessageDeleted(
   messageId: string,
   revision?: number,
 ): void {
-  rowVersion(client, userId, generation, channelId, messageId, true);
+  bumpRowVersion(client, userId, generation, channelId, messageId);
   const change = recordChange(client, userId, generation, channelId, {
     id: messageId,
     message: null,
