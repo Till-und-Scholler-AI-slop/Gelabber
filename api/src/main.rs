@@ -54,9 +54,14 @@ async fn run() -> Result<(), Box<dyn std::error::Error>> {
         "gelabber-api listening"
     );
 
-    axum::serve(listener, app(state))
-        .with_graceful_shutdown(shutdown_signal())
-        .await?;
+    // The peer address is the rate-limit key when no proxy wrote
+    // `X-Forwarded-For` (`limits::client_ip`).
+    axum::serve(
+        listener,
+        app(state).into_make_service_with_connect_info::<std::net::SocketAddr>(),
+    )
+    .with_graceful_shutdown(shutdown_signal())
+    .await?;
 
     info!("gelabber-api stopped");
     Ok(())

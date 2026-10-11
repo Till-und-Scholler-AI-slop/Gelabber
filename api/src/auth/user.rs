@@ -17,7 +17,7 @@ pub struct User {
     pub created_at: DateTime<Utc>,
 }
 
-/// Internal row used only by login.
+/// Internal row used only by login and password changes.
 #[derive(Debug, FromRow)]
 pub struct Credentials {
     pub id: Uuid,
@@ -60,6 +60,38 @@ pub async fn credentials_by_email(
             .fetch_optional(db)
             .await?,
     )
+}
+
+pub async fn password_hash_by_id(db: &PgPool, id: Uuid) -> Result<Option<String>, ApiError> {
+    Ok(
+        sqlx::query_scalar("SELECT password_hash FROM users WHERE id = $1")
+            .bind(id)
+            .fetch_optional(db)
+            .await?,
+    )
+}
+
+/// Replaces the hash and drops every session of the account in the same
+/// transaction, so no cookie issued under the old password outlives it.
+/// Returns the removed session hashes for the live-connection cleanup.
+pub async fn set_password_hash(
+    db: &PgPool,
+    id: Uuid,
+    password_hash: &str,
+) -> Result<Vec<Vec<u8>>, ApiError> {
+    let mut tx = db.begin().await?;
+    sqlx::query("UPDATE users SET password_hash = $2, updated_at = now() WHERE id = $1")
+        .bind(id)
+        .bind(password_hash)
+        .execute(&mut *tx)
+        .await?;
+    let revoked =
+        sqlx::query_scalar("DELETE FROM sessions WHERE user_id = $1 RETURNING token_hash")
+            .bind(id)
+            .fetch_all(&mut *tx)
+            .await?;
+    tx.commit().await?;
+    Ok(revoked)
 }
 
 pub async fn by_id(db: &PgPool, id: Uuid) -> Result<Option<User>, ApiError> {

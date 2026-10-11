@@ -8,7 +8,17 @@ cd deploy/compose
 docker compose up -d
 ```
 
-App: `http://localhost` (Caddy :80). Daten und MinIO nur auf `127.0.0.1`. Secrets in `.env` ändern.
+App: `http://localhost` (Caddy :80). Daten und MinIO nur auf `127.0.0.1`. Set the passwords in `.env` (see Security below).
+
+## Security
+
+Since v0.6 (#188) the stack no longer starts with known values:
+
+- **No default passwords.** `POSTGRES_PASSWORD`, `MINIO_ROOT_PASSWORD` and `TURN_PASSWORD` (plus `GRAFANA_ADMIN_PASSWORD` with observability) must be set in `.env`; otherwise `docker compose` stops with a message. Generate one with `openssl rand -hex 24`. `POSTGRES_PASSWORD` only applies when the database volume is created; an existing volume keeps its password until you change it with `ALTER USER gelabber PASSWORD '…'`.
+- **With `API_COOKIE_SECURE=true`** (that is, behind TLS) the API refuses to start while one of these passwords is still a former repository default (`gelabber`, `gelabbergelabber`, `gelabberturn`, `change-me…`). Change the password first (Postgres as above, MinIO and TURN in `.env`), then restart.
+- **Plain HTTP on this machine only.** The bundled Caddy listens on `127.0.0.1` by default. Without `API_COOKIE_SECURE=true` the API signs in only on `localhost`/`127.0.0.1`; other machines get `insecure_transport`, because the session cookie would otherwise cross the network unencrypted. For other machines put TLS in front (your own Caddy, see below) and set `API_COOKIE_SECURE=true`. For a trusted test network only: `API_ALLOW_PLAIN_HTTP=true`.
+- **HSTS.** With `API_COOKIE_SECURE=true` the API sends `Strict-Transport-Security: max-age=31536000` (without subdomains), whichever proxy terminates TLS.
+- **Sign-in protection.** Besides 20 attempts per minute and address, the API locks an account for 15 minutes after 10 failed attempts (`API_RATE_LOGIN_FAILURES_PER_ACCOUNT`, `0` turns it off). The address is the rightmost `X-Forwarded-For` entry, the one the Caddy in front of the API wrote.
 
 ## Bestehendes Caddy
 
@@ -104,6 +114,13 @@ MinIO-Volume und das laufende Image werden vor dem Stop ermittelt):
 cd deploy/compose
 sh ../backup.sh
 ```
+
+Encrypt backups that leave the server: with
+`GELABBER_BACKUP_AGE_RECIPIENT=age1…` (an [age](https://age-encryption.org)
+public key) the dump and the MinIO archive are stored only as `*.age`. Before a
+restore, decrypt them with `age -d -i key.txt -o database.pgdump
+database.pgdump.age` (likewise `minio-data.tgz`), then run
+`sha256sum -c SHA256SUMS`.
 
 Bei einem Fehler bleiben die Schreiber gestoppt, bis das unvollständige Backup
 untersucht ist. Den freigegebenen
