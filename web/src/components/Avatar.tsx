@@ -30,6 +30,9 @@ export function Avatar({
         <img
           src={url}
           alt={`Avatar von ${name}`}
+          // Avatar URLs may point anywhere (#208); do not tell that host
+          // which Gelabber page the viewer is on.
+          referrerPolicy="no-referrer"
           onError={() => setFailedUrl(url)}
         />
       ) : (
