@@ -1470,6 +1470,18 @@ describe("voice session", () => {
     expect(useVoice.getState().sharing).toBe(false);
   });
 
+  it("says so instead of nothing when someone else is live already", async () => {
+    const { peers, errors, sent } = install();
+    joinVoice({ serverId: "srv", channelId: "stage", channelName: "Stage" });
+    await vi.waitFor(() => expect(peers.length).toBe(1));
+    toggleGoLive();
+    expect(useVoice.getState().live).toBe(false);
+    expect(messages(errors)).toEqual([
+      "In diesem Kanal ist schon jemand live.",
+    ]);
+    expect(liveClaimFrames(sent)).toEqual([]);
+  });
+
   it("shows the Live badge immediately and publishes after display capture", async () => {
     const publication = deferred();
     const { sent, mediaSent, peers } = install({
