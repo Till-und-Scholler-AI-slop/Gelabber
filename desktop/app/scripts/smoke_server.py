@@ -15,11 +15,15 @@ the view the first one left. Its request is answered only after HOLD_SECOND
 seconds: until the new page commits, only the app's own answer to the ended
 web process can have closed what the old page left (smoke.sh looks then).
 
-On Windows the page also asks for screen capture and application sound, which
-the Windows core does not have yet: the answers must be an empty application
-list and a clean "not available on Windows yet" for both sources, as an older
-server's web client, which asks without looking at the features, meets them.
-On Linux they are left out: a screen capture would open the portal's picker.
+On Windows the page also asks for application sound: a list of applications
+(the runner plays nothing, so it is usually empty), and "every application",
+which gives a source, or, on a machine whose audio Windows cannot capture
+from, the core's own reason; it is closed again. And it asks for a screen
+capture, which opens the system's picker over the app's window: the page
+must get a source, and the source must not go live in the seconds it is
+watched, since nobody picks anything (a capture without the picker would).
+It is closed again, which closes the picker. On Linux both are left out, as
+before: a screen capture would open the portal's picker.
 
 Usage: smoke_server.py <port> <ABI version> [<file to create after the first report>]
 """
@@ -65,7 +69,19 @@ const LEAVE = __LEAVE__, LEFT = __LEFT__, WINDOWS = __WINDOWS__;
     if (WINDOWS) {
       await call("audioApps", "media_audio_apps");
       await call("screen", "media_source_screen", { options: { type: "any", fps: 30, cursor: true, contentHint: "detail" } });
+      if (typeof report.screen.ok === "number") {
+        const source = report.screen.ok;
+        report.screenStates = [];
+        const started = performance.now();
+        while (performance.now() - started < 3000) {
+          report.screenStates.push(await ipc.invoke("media_source_state", { source }).catch((error) => ({ error: String(error) })));
+          await new Promise((resolve) => setTimeout(resolve, 250));
+        }
+        await call("screenClose", "media_source_close", { source });
+      }
       await call("appAudio", "media_source_app_audio", { options: { app: "" } });
+      if (typeof report.appAudio.ok === "number")
+        await call("appAudioClose", "media_source_close", { source: report.appAudio.ok });
     }
     report.video = await video(ipc).catch((error) => ({ failed: String(error) }));
     if (LEAVE) {
@@ -225,15 +241,44 @@ def check_video(video, problems):
             problems.append(f"video: {name} did not fail")
 
 
-def check_windows_stubs(report, problems):
+def check_windows_app_audio(report, problems):
     apps = report.get("audioApps", {})
-    if apps != {"ok": []}:
-        problems.append(f"media_audio_apps on Windows: {apps}, expected an empty list")
-    for name, what in (("screen", "screen capture"), ("appAudio", "application sound")):
-        answer = report.get(name, {})
-        expected = f"{what} is not available on Windows yet"
-        if expected not in str(answer.get("error", "")):
-            problems.append(f"{name} on Windows: {answer}, expected the error {expected!r}")
+    if not isinstance(apps.get("ok"), list):
+        problems.append(f"media_audio_apps on Windows: {apps}, expected a list")
+    answer = report.get("appAudio", {})
+    print("application sound of every application:", answer, flush=True)
+    if isinstance(answer.get("ok"), int):
+        if "ok" not in report.get("appAudioClose", {}):
+            problems.append(f"media_source_close of the application sound: {report.get('appAudioClose')}")
+    elif "application sound" not in str(answer.get("error", "")) or "not available" in str(answer.get("error")):
+        problems.append(f"appAudio on Windows: {answer}, expected a source or the core's reason")
+
+
+def check_windows_screen(report, problems):
+    """The picker's source: there, and never live without a pick.
+
+    "pending" is the picker open. "failed" (the picker could not open on
+    this machine) and "cancelled" (it closed by itself) are reported but
+    pass: neither captures anything.
+    """
+    answer = report.get("screen", {})
+    if not isinstance(answer.get("ok"), int):
+        problems.append(f"media_source_screen on Windows: {answer}, expected a source")
+        return
+    states = report.get("screenStates") or []
+    names = [state.get("state") if isinstance(state, dict) else None for state in states]
+    print("screen source states while nobody picks:", names, flush=True)
+    if not states:
+        problems.append("the screen source was not looked at")
+    if any(name == "live" for name in names):
+        problems.append(f"the screen source went live without a pick in the picker: {states}")
+    unexpected = [state for state, name in zip(states, names) if name not in ("pending", "failed", "cancelled")]
+    if unexpected:
+        problems.append(f"screen source states: {unexpected}")
+    if any(name in ("failed", "cancelled") for name in names):
+        print(f"NOTE: the system picker did not stay open: {states[-1]}", flush=True)
+    if "ok" not in report.get("screenClose", {}):
+        problems.append(f"media_source_close of the screen source: {report.get('screenClose')}")
 
 
 class Handler(BaseHTTPRequestHandler):
@@ -280,7 +325,8 @@ class Handler(BaseHTTPRequestHandler):
         if "ok" in report.get("setServer", {}):
             problems.append("the server origin may call set_server")
         if WINDOWS:
-            check_windows_stubs(report, problems)
+            check_windows_app_audio(report, problems)
+            check_windows_screen(report, problems)
         check_video(report.get("video", {}), problems)
         leaves = self.server.created is not None and not back
         if leaves and not isinstance(report.get("left"), int):

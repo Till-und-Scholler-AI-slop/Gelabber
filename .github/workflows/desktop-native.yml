@@ -851,15 +851,21 @@ jobs:
       # an in-process mediasoup worker: ICE, DTLS, SRTP, Opus, VP8 simulcast,
       # decode, and the video sinks of views inside the app. This core has no
       # H264, so neither GELABBER_EXPECT_H264 nor GELABBER_EXPECT_ENCODER.
-      # The voice and screen tests need devices and skip without their
-      # GELABBER_TEST_* switch. Everything it runs was built by "Tests of the
-      # core with their mediasoup worker (build)".
+      # The voice test needs devices and skips without its GELABBER_TEST_*
+      # switch. GELABBER_TEST_SCREEN_MONITOR lets the core capture the
+      # primary monitor without the system picker, which nobody could click
+      # here: Windows.Graphics.Capture, the copy to the CPU and VP8 simulcast
+      # as the web client shares a screen (core/tests/screen_capture.rs). The
+      # test skips, with the reason in the log, where Windows says it cannot
+      # capture. Everything it runs was built by "Tests of the core with their
+      # mediasoup worker (build)".
       - name: Loopback call against mediasoup 0.29
         id: tests
         if: ${{ !cancelled() && steps.worker.outcome == 'success' }}
         timeout-minutes: 20
         env:
           RUST_BACKTRACE: "1"
+          GELABBER_TEST_SCREEN_MONITOR: "1"
         run: cargo test --release --locked --manifest-path desktop/Cargo.toml -p gelabber-media-core -- --nocapture --test-threads=1
 
       # A native crash ends the test without a word; libwebrtc's log says
@@ -871,9 +877,10 @@ jobs:
         env:
           GELABBER_MEDIA_LOG: "1"
           RUST_BACKTRACE: "1"
+          GELABBER_TEST_SCREEN_MONITOR: "1"
         run: |
           $PSNativeCommandUseErrorActionPreference = $false
-          cargo test --release --locked --manifest-path desktop/Cargo.toml -p gelabber-media-core --test mediasoup_loopback -- --nocapture --test-threads=1
+          cargo test --release --locked --manifest-path desktop/Cargo.toml -p gelabber-media-core --test mediasoup_loopback --test screen_capture -- --nocapture --test-threads=1
           exit 0
 
       - name: App unit tests

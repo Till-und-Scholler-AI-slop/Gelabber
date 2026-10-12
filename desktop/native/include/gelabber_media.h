@@ -141,15 +141,19 @@ GM_API gm_source* gm_source_new_microphone(gm_engine* engine, const char* option
 /* Synthetic moving test pattern (I420) for build/pipeline checks. */
 GM_API gm_source* gm_source_new_test_pattern(gm_engine* engine, int width, int height, int fps);
 /* Screen or window picked in the desktop's own dialog (Linux: xdg-desktop-portal
- * ScreenCast + PipeWire). Returns at once; the dialog opens asynchronously and
- * frames flow after the user picked a source. Poll gm_source_state.
- * Not available on Windows yet: fails with an error there.
+ * ScreenCast + PipeWire; Windows: the system's capture picker over a visible
+ * window of this process + Windows.Graphics.Capture). Returns at once; the
+ * dialog opens asynchronously and frames flow after the user picked a source.
+ * Poll gm_source_state. Fails where the system cannot capture (Windows before
+ * 10 1903) and on Windows when the process has no visible window. Windows'
+ * picker offers screens and windows whatever "type" says.
  * options_json: {"type"?: "any|screen|window", "fps"?: 30, "cursor"?: true,
  *                "contentHint"?: "detail|text|motion"} */
 GM_API gm_source* gm_source_new_screen(gm_engine* engine, const char* options_json);
 /* Applications playing sound, without this process:
- * [{"id","name","streams"}] (Linux: PipeWire playback streams; Windows: not
- * available yet, an empty list). What a virtual output device plays on to
+ * [{"id","name","streams"}] (Linux: PipeWire playback streams; Windows: the
+ * audio sessions of the active playback devices, by binary, "streams" being
+ * sessions, without this process's tree). What a virtual output device plays on to
  * the next (an echo canceller, an equaliser, a combined sink, a loopback) is
  * no application's sound and not listed. "name" is for showing and differs
  * between any two entries: applications that call themselves the same are
@@ -163,7 +167,9 @@ GM_API char* gm_audio_apps(gm_engine* engine);
  * where it plays, never where such a device plays it on.
  * gm_source_state adds "streams", and "underruns" and "overruns": how often
  * a stream that was playing ran dry or was cut back for being too far ahead.
- * Not available on Windows yet: fails with an error there. */
+ * Windows: WASAPI process loopback (Windows 10 2004 on), one client for ""
+ * (all but this process's tree) or one per process tree of the chosen
+ * binary; "streams" counts the clients. */
 GM_API gm_source* gm_source_new_app_audio(gm_engine* engine, const char* options_json);
 /* Cameras: [{"id","name"}] (Linux: V4L2 devices; Windows: DirectShow; ids
  * are the module's unique ids). */

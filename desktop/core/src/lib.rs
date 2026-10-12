@@ -548,12 +548,15 @@ impl Source {
     }
 
     /// Screen or window chosen in the desktop's own picker (Linux:
-    /// xdg-desktop-portal + PipeWire). Returns while the picker is still open;
-    /// poll [`Source::state`] until it leaves `pending`. Not available on
-    /// Windows yet: an error there.
+    /// xdg-desktop-portal + PipeWire; Windows: the system's capture picker
+    /// over the app's window + Windows.Graphics.Capture). Returns while the
+    /// picker is still open; poll [`Source::state`] until it leaves `pending`.
+    /// An error where the system cannot capture (Windows before 10 1903) and
+    /// on Windows in a process without a visible window for the picker.
     ///
     /// `options`: `{"type"?: "any|screen|window", "fps"?: 30, "cursor"?: true,
-    /// "contentHint"?: "detail|text|motion"}`.
+    /// "contentHint"?: "detail|text|motion"}`. Windows' picker always offers
+    /// screens and windows, whatever `type` says.
     pub fn screen(engine: &Engine, options: &Value) -> Result<Self> {
         let options = json_arg(options)?;
         // SAFETY: live engine, NUL-terminated JSON.
@@ -566,8 +569,9 @@ impl Source {
     /// microphone: `{"app"?: id from [`Engine::audio_apps`]}`; without an
     /// id, every application but this one, each captured where it plays and
     /// not where a virtual output device (an echo canceller, a combined
-    /// sink) plays it on. Not available on Windows yet: an error there, and
-    /// [`Engine::audio_apps`] lists nothing.
+    /// sink) plays it on. On Windows WASAPI process loopback (Windows 10
+    /// 2004 and later): ids are binaries ("firefox.exe"), and "" leaves out
+    /// this process's tree.
     pub fn app_audio(engine: &Engine, options: &Value) -> Result<Self> {
         let options = json_arg(options)?;
         // SAFETY: live engine, NUL-terminated JSON.

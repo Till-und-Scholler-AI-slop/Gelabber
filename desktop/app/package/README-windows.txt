@@ -16,11 +16,11 @@ Voraussetzungen
   - Windows 10 oder 11 (64 Bit, x64).
   - Microsoft Edge WebView2 Runtime. Windows 11 bringt sie mit; fehlt sie,
     lädt das Setup sie nach und braucht dafür eine Internetverbindung.
-  - Ein Gelabber-Server ab Version 0.6. Ein älterer Server weiß nicht, was
-    der App unter Windows noch fehlt (siehe unten), und bietet es trotzdem
-    an. Dort "Go Live" nicht anklicken: Der Kanal führt dich dann als live,
-    ohne Bild, und niemand sonst kann live gehen, bis du das Gespräch
-    verlässt.
+  - Ein Gelabber-Server, empfohlen ab Version 0.6. Mit einem älteren
+    Server kann ein abgebrochenes oder fehlgeschlagenes "Go Live" (etwa
+    die Auswahl geschlossen) den Kanal für Go Live belegt lassen.
+  - Für "Bildschirm teilen" und "Go Live": Windows 10 ab Version 1903.
+  - Für den Anwendungston: Windows 10 ab Version 2004.
 
 Starten
   Über das Startmenü ("Gelabber"). Beim ersten Start die Adresse des Servers
@@ -28,21 +28,21 @@ Starten
     "%LOCALAPPDATA%\Gelabber\gelabber-desktop.exe" --server https://dein-gelabber-server
   Strg+Umschalt+S führt zurück zur Serverauswahl, F5 lädt die Seite neu.
 
-Noch nicht verfügbar unter Windows
-  - Bildschirm teilen
-  - Go Live senden
-  - Anwendungston teilen (Ton anderer Programme)
-  Bildschirme und Go-Live-Streams anderer lassen sich ansehen.
+Bildschirm teilen und Go Live
+  Beide öffnen die Auswahl von Windows: Dort einen Bildschirm oder ein
+  Fenster wählen. Erst danach nimmt die App etwas auf; wer die Auswahl
+  schließt, teilt nichts. Solange aufgenommen wird, rahmt Windows das
+  Geteilte gelb ein. Wird ein geteiltes Fenster geschlossen, endet die
+  Freigabe.
 
-  Mit einem Server ab Version 0.6 bleiben die Knöpfe "Bildschirm teilen" und
-  "Go Live" in der App an ihrem Platz ("Go Live" wie überall nur mit dem
-  Recht dazu), sind aber ausgegraut und nennen den Grund, beim Darüberfahren
-  und beim Anklicken. Nur die Bedienelemente für den Anwendungston fehlen
-  ganz.
-
-  Mit einem älteren Server sehen beide Knöpfe benutzbar aus. "Bildschirm
-  teilen" startet dann einfach nicht. "Go Live" blockiert Go Live für den
-  ganzen Kanal (siehe Voraussetzungen).
+Anwendungston
+  Beim Teilen und bei Go Live kann der Ton anderer Programme mitgehen:
+  entweder der Ton aller Programme oder der eines gewählten Programms. Zur
+  Wahl stehen die Programme, die gerade Ton abspielen; ein Programm, das
+  erst später zu spielen beginnt, wird innerhalb einer Sekunde
+  aufgenommen. Gelabber selbst, also der Ton des Gesprächs, wird nie
+  mitgeschickt. Unter Windows vor Version 2004 geht die Freigabe ohne Ton
+  hinaus.
 
 Einstellungen und Daten
   Serveradresse:

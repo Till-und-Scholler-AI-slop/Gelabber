@@ -448,41 +448,57 @@ async fn layers_by_size(server: &Server) {
     drop(send);
 }
 
-/// What the Windows core does not have yet: screen capture and application
-/// sound. An older server's web client knows no feature list and asks the app
-/// for both, so the core has to answer with an error that says so and with
-/// an empty application list. Nothing else on Windows calls these three: a
-/// change that let them crash, or the stub's exception escape, would
-/// otherwise ship.
+/// Application sound on Windows (WASAPI process loopback), as far as a
+/// machine without sound devices takes it. The list is an array of
+/// applications, without this process. A binary that plays nothing is no
+/// error: the capture starts, mixes silence on the system clock and waits
+/// for the binary to play (no loopback client yet). "Every application"
+/// either captures or says why with Windows' reason, not with the stub's
+/// "not available" of 0.6.0-alpha.1. Both captures end cleanly when dropped,
+/// and the engine goes on. Nothing else in CI calls these on Windows.
 #[test]
-fn what_the_windows_core_lacks_fails_with_an_error() {
+fn windows_application_sound_starts_and_ends() {
     if !cfg!(windows) {
-        eprintln!("skipped: the Linux core has screen capture and application sound");
+        eprintln!("skipped: the Linux voice test (GELABBER_TEST_AUDIO) covers PipeWire");
         return;
     }
     let engine = Engine::new(Audio::Dummy).unwrap();
-    assert_eq!(engine.audio_apps().unwrap(), json!([]));
-    for (what, source) in [
-        (
-            "screen capture",
-            Source::screen(&engine, &json!({"type": "screen"})),
-        ),
-        (
-            "application sound",
-            Source::app_audio(&engine, &json!({"app": ""})),
-        ),
-    ] {
-        let error = source
-            .err()
-            .unwrap_or_else(|| panic!("{what} gave a source on Windows"));
-        eprintln!("{what}: {error}");
-        assert!(
-            error.to_string().contains("not available on Windows"),
-            "{what}: {error}"
-        );
+    let apps = engine.audio_apps().unwrap();
+    eprintln!("applications playing: {apps}");
+    for app in apps.as_array().expect("a list") {
+        assert!(app["id"].is_string() && app["name"].is_string(), "{app}");
+        assert!(app["streams"].as_u64().unwrap_or(0) > 0, "{app}");
     }
-    // The refusals leave the engine as it was.
-    assert_eq!(engine.audio_apps().unwrap(), json!([]));
+
+    let waiting = Source::app_audio(&engine, &json!({"app": "no-such-program.exe"}))
+        .expect("a binary that plays nothing is no error");
+    let first = waiting.state().unwrap();
+    std::thread::sleep(Duration::from_millis(500));
+    let later = waiting.state().unwrap();
+    eprintln!("waiting for no-such-program.exe: {first} -> {later}");
+    assert_eq!(later["state"], "live");
+    assert_eq!(later["streams"], 0);
+    assert!(
+        later["frames"].as_u64().unwrap() >= first["frames"].as_u64().unwrap() + 20,
+        "the mix goes on in 10 ms blocks"
+    );
+    drop(waiting);
+
+    match Source::app_audio(&engine, &json!({"app": ""})) {
+        Ok(every) => {
+            std::thread::sleep(Duration::from_millis(300));
+            let state = every.state().unwrap();
+            eprintln!("every application: {state}");
+            assert_eq!(state["state"], "live");
+            assert_eq!(state["streams"], 1, "one client for all but this process");
+        }
+        Err(error) => {
+            eprintln!("every application: {error}");
+            let error = error.to_string();
+            assert!(!error.contains("not available on Windows"), "{error}");
+            assert!(error.contains("application sound"), "{error}");
+        }
+    }
     Source::test_pattern(&engine, 640, 360, 30).unwrap();
 }
 
