@@ -1285,6 +1285,22 @@ describe("voice session", () => {
     });
   });
 
+  it("tells a listener without a microphone in German, not the browser's words", async () => {
+    const { peers, errors } = install({
+      mediaError: () =>
+        Object.assign(new Error("Requested device not found"), {
+          name: "NotFoundError",
+        }),
+    });
+    joinVoice({ serverId: "srv", channelId: "voice", channelName: "Lounge" });
+    await vi.waitFor(() => expect(errors).toHaveLength(1));
+    expect(messages(errors)).toEqual([
+      "Kein Mikrofon gefunden, du hörst nur zu.",
+    ]);
+    expect(peers).toHaveLength(1);
+    expect(useVoice.getState().status).toBe("joined");
+  });
+
   it("says so when the camera is missing or busy, and nothing after a refusal", async () => {
     let failure = Object.assign(new Error("no camera"), {
       name: "NotFoundError",

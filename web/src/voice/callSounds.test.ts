@@ -62,6 +62,27 @@ describe("call sounds", () => {
     expect(audio.play).toHaveBeenCalledTimes(2);
   });
 
+  it("gives the source up once a cue ends or is stopped", () => {
+    const { audio, player } = harness();
+    const element = Object.assign(audio, {
+      onended: null as ((event: Event) => unknown) | null,
+      removeAttribute: vi.fn((name: string) => {
+        if (name === "src") element.src = "";
+      }),
+      load: vi.fn(),
+    });
+    player.play("leave");
+    expect(element.src).toMatch(/^data:audio\/wav/);
+    element.onended?.(new Event("ended"));
+    expect(element.src).toBe("");
+    expect(element.load).toHaveBeenCalledTimes(1);
+    player.play("join");
+    player.stop();
+    expect(element.pause).toHaveBeenCalled();
+    expect(element.src).toBe("");
+    expect(element.load).toHaveBeenCalledTimes(2);
+  });
+
   it("cancels pending sounds and serializes device switches without late playback", async () => {
     const { settings, audio } = harness();
     let finish!: () => void;

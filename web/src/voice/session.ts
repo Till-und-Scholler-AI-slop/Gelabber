@@ -1216,6 +1216,9 @@ function stopPeer(preserveCapture = false): void {
     if (source.role === "voice") receivedAudioSources.delete(track);
   clearReceived();
   if (remoteAudio) {
+    // Paused and detached: an element left playing keeps the tab's
+    // "playing audio" indicator after the call is over.
+    remoteAudio.pause?.();
     remoteAudio.srcObject = null;
     blockedPlayback.delete(remoteAudio);
     updatePlaybackBlocked();
@@ -1866,7 +1869,8 @@ async function refreshMic(): Promise<void> {
       micCurrent(pc, session, request),
     );
   } catch (error) {
-    if (micCurrent(pc, session, request)) deps?.onError?.(error);
+    if (micCurrent(pc, session, request))
+      deps?.onError?.(microphoneFailure(error));
     return;
   }
   const { raw, processor: insert } = candidate;
@@ -2801,6 +2805,26 @@ const openCaptures = new Map<"v" | "s" | "l", number>();
  * the seat's connection leaves an open start its epoch. */
 function captureOpen(kind: "v" | "s" | "l"): boolean {
   return openCaptures.get(kind) === videoEpoch(kind);
+}
+
+/** The browser's own getUserMedia reasons are English ("Requested device not
+ * found"). The call goes on without a microphone; say that in German. */
+function microphoneFailure(error: unknown): unknown {
+  switch ((error as { name?: unknown } | null)?.name) {
+    case "NotFoundError":
+    case "OverconstrainedError":
+      return new Error("Kein Mikrofon gefunden, du hörst nur zu.");
+    case "NotAllowedError":
+    case "SecurityError":
+      return new Error("Mikrofonzugriff nicht erlaubt, du hörst nur zu.");
+    case "NotReadableError":
+    case "AbortError":
+      return new Error(
+        "Das Mikrofon ist gerade nicht verfügbar, du hörst nur zu.",
+      );
+    default:
+      return error;
+  }
 }
 
 /** A camera that is missing, busy or broken: `NotFoundError` and
@@ -3752,7 +3776,7 @@ async function startPeer(
       }
     } catch (error) {
       if (seat.generation === mine) {
-        deps?.onError?.(error);
+        deps?.onError?.(microphoneFailure(error));
         noteAudioProcessing(null);
         const info = useAudioProcessing.getState();
         noteAudioProcessing({
