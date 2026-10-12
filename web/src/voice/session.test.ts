@@ -1301,6 +1301,26 @@ describe("voice session", () => {
     expect(useVoice.getState().status).toBe("joined");
   });
 
+  it("keeps the call's microphone and says the switch failed when the new one is missing", async () => {
+    const { peers, errors } = install({
+      mediaError: (index) =>
+        index === 1
+          ? Object.assign(new Error("Requested device not found"), {
+              name: "NotFoundError",
+            })
+          : undefined,
+    });
+    joinVoice({ serverId: "srv", channelId: "voice", channelName: "Lounge" });
+    await vi.waitFor(() => expect(peers[0]?.audio).toBeTruthy());
+    const sending = peers[0]!.audio;
+    useMediaSettings.getState().patch({ audioInputId: "missing-mic" });
+    await vi.waitFor(() => expect(errors).toHaveLength(1));
+    expect(messages(errors)).toEqual([
+      "Kein Mikrofon gefunden, der Wechsel hat nicht geklappt.",
+    ]);
+    expect(peers[0]!.audio).toBe(sending);
+  });
+
   it("says so when the camera is missing or busy, and nothing after a refusal", async () => {
     let failure = Object.assign(new Error("no camera"), {
       name: "NotFoundError",

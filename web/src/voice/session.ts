@@ -1869,8 +1869,11 @@ async function refreshMic(): Promise<void> {
       micCurrent(pc, session, request),
     );
   } catch (error) {
+    // The track already sending stays until a new one replaces it.
     if (micCurrent(pc, session, request))
-      deps?.onError?.(microphoneFailure(error));
+      deps?.onError?.(
+        microphoneFailure(error, "der Wechsel hat nicht geklappt"),
+      );
     return;
   }
   const { raw, processor: insert } = candidate;
@@ -2808,19 +2811,23 @@ function captureOpen(kind: "v" | "s" | "l"): boolean {
 }
 
 /** The browser's own getUserMedia reasons are English ("Requested device not
- * found"). The call goes on without a microphone; say that in German. */
-function microphoneFailure(error: unknown): unknown {
+ * found"); say them in German with what follows for the call: on joining it
+ * goes on without a microphone, a failed switch keeps the previous one. */
+function microphoneFailure(
+  error: unknown,
+  consequence = "du hörst nur zu",
+): unknown {
   switch ((error as { name?: unknown } | null)?.name) {
     case "NotFoundError":
     case "OverconstrainedError":
-      return new Error("Kein Mikrofon gefunden, du hörst nur zu.");
+      return new Error(`Kein Mikrofon gefunden, ${consequence}.`);
     case "NotAllowedError":
     case "SecurityError":
-      return new Error("Mikrofonzugriff nicht erlaubt, du hörst nur zu.");
+      return new Error(`Mikrofonzugriff nicht erlaubt, ${consequence}.`);
     case "NotReadableError":
     case "AbortError":
       return new Error(
-        "Das Mikrofon ist gerade nicht verfügbar, du hörst nur zu.",
+        `Das Mikrofon ist gerade nicht verfügbar, ${consequence}.`,
       );
     default:
       return error;
