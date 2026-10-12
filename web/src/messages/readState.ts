@@ -51,9 +51,17 @@ const SNAPSHOT_FRESH_MS = 10_000;
 
 export const readStateOptions = (stamp: ScopeStamp) => ({
   queryKey: readKey(stamp),
-  queryFn: ({ signal }: { signal: AbortSignal }) => {
-    snapshotStarted.set(snapshotSlot(stamp), Date.now());
-    return listReadState(signal);
+  // The request's start time, recorded only once it succeeded: a failed or
+  // aborted snapshot covers nothing.
+  queryFn: async ({ signal }: { signal: AbortSignal }) => {
+    const started = Date.now();
+    const snapshot = await listReadState(signal);
+    const slot = snapshotSlot(stamp);
+    snapshotStarted.set(
+      slot,
+      Math.max(snapshotStarted.get(slot) ?? 0, started),
+    );
+    return snapshot;
   },
   staleTime: 15_000,
   retry: false,

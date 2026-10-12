@@ -418,9 +418,20 @@ describe("read eligibility and recovery", () => {
       onResync: register("resync"),
       onDm: register("dm"),
     } as unknown as Gateway;
+    // Enough browser for the snapshot request itself to succeed.
+    Object.assign(window, {
+      localStorage: {
+        getItem: () => null,
+        setItem: () => {},
+        removeItem: () => {},
+      },
+    });
+    vi.stubGlobal("navigator", {
+      locks: {
+        request: (_n: string, _o: unknown, run: () => unknown) => run(),
+      },
+    });
     const stamp = takeStamp()!;
-    // The stubbed window has no navigator.locks, so the request itself is
-    // refused; what counts here is how often a snapshot is asked for.
     const options = readStateOptions(stamp);
     const queryFn = vi.fn(options.queryFn);
     const snapshots = () => queryFn.mock.calls.length;
@@ -451,6 +462,16 @@ describe("read eligibility and recovery", () => {
     window.dispatchEvent(new Event("focus"));
     await vi.advanceTimersByTimeAsync(750);
     expect(snapshots()).toBeGreaterThanOrEqual(4);
+    // A snapshot that failed covers nothing: focus right after asks again.
+    await vi.advanceTimersByTimeAsync(10_000);
+    response = () => new Response("{}", { status: 500 });
+    window.dispatchEvent(new Event("focus"));
+    await vi.advanceTimersByTimeAsync(750);
+    const failed = snapshots();
+    response = () => json([]);
+    window.dispatchEvent(new Event("focus"));
+    await vi.advanceTimersByTimeAsync(750);
+    expect(snapshots()).toBe(failed + 1);
     cleanup();
     stop();
     observer.destroy();
