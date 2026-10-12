@@ -95,14 +95,18 @@ export function applyMessageChanges(
   let result = pages;
   for (const change of changes) {
     let found = false;
-    result = result.map((page) => ({
-      ...page,
-      messages: page.messages.flatMap((row) => {
-        if (row.id !== change.id) return [row];
-        found = true;
-        return change.message ? [newerMessage(row, change.message)] : [];
-      }),
-    }));
+    // Copy only the page holding the row; a live event touches one row.
+    result = result.map((page) => {
+      if (!page.messages.some((row) => row.id === change.id)) return page;
+      found = true;
+      return {
+        ...page,
+        messages: page.messages.flatMap((row) => {
+          if (row.id !== change.id) return [row];
+          return change.message ? [newerMessage(row, change.message)] : [];
+        }),
+      };
+    });
     if (!found && change.created && change.message && result[0]) {
       const message = change.message;
       let index = result.findIndex((page) => {
