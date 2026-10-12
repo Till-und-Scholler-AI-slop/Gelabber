@@ -2,12 +2,14 @@ name: gelabber
 
 # Product stack for one operator. UDP (coturn + SFU ICE) is not on Caddy.
 # No LiveKit. Existing host Caddy: see compose.homelab.yaml.
+# Defaults serve this machine only (plain HTTP on 127.0.0.1); for other
+# machines put TLS in front (deploy/README.md). Passwords have no defaults.
 
 services:
   proxy:
     image: caddy:2.11.4-alpine
     ports:
-      - "${GELABBER_HTTP_BIND:-0.0.0.0}:${GELABBER_HTTP_PORT:-80}:80"
+      - "${GELABBER_HTTP_BIND:-127.0.0.1}:${GELABBER_HTTP_PORT:-80}:80"
     volumes:
       - ./Caddyfile:/etc/caddy/Caddyfile:ro
     depends_on:
@@ -17,38 +19,38 @@ services:
     restart: unless-stopped
 
   web:
-    image: ${GELABBER_WEB_IMAGE:-ghcr.io/till-und-scholler-ai-slop/gelabber/web:v0.5.2}
+    image: ${GELABBER_WEB_IMAGE:-ghcr.io/till-und-scholler-ai-slop/gelabber/web:v0.6.0}
     pull_policy: missing
     build:
       context: ../../web
       dockerfile: Dockerfile
       tags:
-        - gelabber/web:v0.5.2
+        - gelabber/web:v0.6.0
     expose:
       - "80"
     restart: unless-stopped
 
   api:
-    image: ${GELABBER_API_IMAGE:-ghcr.io/till-und-scholler-ai-slop/gelabber/api:v0.5.2}
+    image: ${GELABBER_API_IMAGE:-ghcr.io/till-und-scholler-ai-slop/gelabber/api:v0.6.0}
     pull_policy: missing
     build:
       context: ../..
       dockerfile: api/Dockerfile
       tags:
-        - gelabber/api:v0.5.2
+        - gelabber/api:v0.6.0
     environment:
       API_ADDR: 0.0.0.0:8080
-      DATABASE_URL: postgres://${POSTGRES_USER:-gelabber}:${POSTGRES_PASSWORD:-gelabber}@postgres:5432/${POSTGRES_DB:-gelabber}
+      DATABASE_URL: postgres://${POSTGRES_USER:-gelabber}:${POSTGRES_PASSWORD:?set POSTGRES_PASSWORD in .env (see deploy/README.md)}@postgres:5432/${POSTGRES_DB:-gelabber}
       REDIS_URL: redis://redis:6379
       MINIO_ENDPOINT: http://minio:9000
       MINIO_PUBLIC_ENDPOINT: ${MINIO_PUBLIC_ENDPOINT:-http://localhost:9000}
       MINIO_ROOT_USER: ${MINIO_ROOT_USER:-gelabber}
-      MINIO_ROOT_PASSWORD: ${MINIO_ROOT_PASSWORD:-gelabbergelabber}
+      MINIO_ROOT_PASSWORD: ${MINIO_ROOT_PASSWORD:?set MINIO_ROOT_PASSWORD in .env (see deploy/README.md)}
       MINIO_BUCKET: ${MINIO_BUCKET:-gelabber}
       API_COOKIE_SECURE: ${API_COOKIE_SECURE:-false}
       TURN_URLS: ${TURN_URLS:-stun:${TURN_PUBLIC_HOST:-127.0.0.1}:${TURN_PORT:-3478},turn:${TURN_PUBLIC_HOST:-127.0.0.1}:${TURN_PORT:-3478}?transport=udp,turn:${TURN_PUBLIC_HOST:-127.0.0.1}:${TURN_PORT:-3478}?transport=tcp}
       TURN_USERNAME: ${TURN_USERNAME:-gelabber}
-      TURN_PASSWORD: ${TURN_PASSWORD:-gelabberturn}
+      TURN_PASSWORD: ${TURN_PASSWORD:?set TURN_PASSWORD in .env (see deploy/README.md)}
       # Empty keeps static TURN credentials. Set a private secret (same value
       # on coturn) to mint REST credentials. gelabberturnsecret is rejected.
       TURN_AUTH_SECRET: ${TURN_AUTH_SECRET:-}
@@ -66,13 +68,13 @@ services:
     restart: unless-stopped
 
   media:
-    image: ${GELABBER_MEDIA_IMAGE:-ghcr.io/till-und-scholler-ai-slop/gelabber/media:v0.5.2}
+    image: ${GELABBER_MEDIA_IMAGE:-ghcr.io/till-und-scholler-ai-slop/gelabber/media:v0.6.0}
     pull_policy: missing
     build:
       context: ../..
       dockerfile: media/Dockerfile
       tags:
-        - gelabber/media:v0.5.2
+        - gelabber/media:v0.6.0
     environment:
       MEDIA_ADDR: 0.0.0.0:8081
       REDIS_URL: redis://redis:6379
@@ -99,7 +101,7 @@ services:
     environment:
       TURN_AUTH_SECRET: ${TURN_AUTH_SECRET:-}
       TURN_USERNAME: ${TURN_USERNAME:-gelabber}
-      TURN_PASSWORD: ${TURN_PASSWORD:-gelabberturn}
+      TURN_PASSWORD: ${TURN_PASSWORD:?set TURN_PASSWORD in .env (see deploy/README.md)}
       TURN_REALM: ${TURN_REALM:-gelabber.local}
       TURN_EXTERNAL_IP: ${TURN_EXTERNAL_IP:-127.0.0.1}
       TURN_RELAY_MIN: ${TURN_RELAY_MIN:-49160}
@@ -117,7 +119,7 @@ services:
     image: postgres:18.6-alpine3.24
     environment:
       POSTGRES_USER: ${POSTGRES_USER:-gelabber}
-      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:-gelabber}
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:?set POSTGRES_PASSWORD in .env (see deploy/README.md)}
       POSTGRES_DB: ${POSTGRES_DB:-gelabber}
     ports:
       - "${POSTGRES_BIND:-127.0.0.1}:${POSTGRES_PORT:-5432}:5432"
@@ -156,7 +158,7 @@ services:
     command: ["server", "/data", "--console-address", ":9001"]
     environment:
       MINIO_ROOT_USER: ${MINIO_ROOT_USER:-gelabber}
-      MINIO_ROOT_PASSWORD: ${MINIO_ROOT_PASSWORD:-gelabbergelabber}
+      MINIO_ROOT_PASSWORD: ${MINIO_ROOT_PASSWORD:?set MINIO_ROOT_PASSWORD in .env (see deploy/README.md)}
       MINIO_API_CORS_ALLOW_ORIGIN: ${MINIO_API_CORS_ALLOW_ORIGIN:-*}
     ports:
       - "${MINIO_API_BIND:-127.0.0.1}:${MINIO_API_PORT:-9000}:9000"

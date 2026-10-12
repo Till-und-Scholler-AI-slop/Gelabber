@@ -21,6 +21,7 @@ import {
   useUserId,
 } from "../auth/scope.ts";
 import { notifyError } from "../components/toasts.ts";
+import { randomUuid } from "../lib/uuid.ts";
 import * as remote from "./api.ts";
 import { slugifyChannelName } from "./rules.ts";
 import type {
@@ -62,7 +63,7 @@ export function isPendingId(id: string): boolean {
 }
 
 function tmpId(): string {
-  return `${TMP_PREFIX}${crypto.randomUUID()}`;
+  return `${TMP_PREFIX}${randomUuid()}`;
 }
 
 function now(): string {

@@ -36,4 +36,8 @@ pub const MEDIA_COMMANDS: &[&str] = &[
     "media_consumer_close",
     "media_viewer_open",
     "media_viewer_close",
+    "media_view_open",
+    "media_view_configure",
+    "media_view_frame",
+    "media_view_close",
 ];

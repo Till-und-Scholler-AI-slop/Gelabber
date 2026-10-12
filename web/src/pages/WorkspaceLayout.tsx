@@ -18,6 +18,7 @@ import { ServerRail } from "../components/ServerRail.tsx";
 import { UserPanel } from "../components/UserPanel.tsx";
 import { WorkspaceDrawer } from "../components/WorkspaceNavigation.tsx";
 import { useDms } from "../dms/queries.ts";
+import { useReadState, useReadingChannel } from "../messages/readState.ts";
 import { forgetServer, useServer } from "../servers/queries.ts";
 
 export function WorkspaceLayout() {
@@ -60,6 +61,13 @@ function WorkspaceFrame({
 }) {
   const [navigationOpen, setNavigationOpen] = useState(false);
   const navigationId = useId();
+  const unreadId = useId();
+  // Phones keep every unread badge inside the closed drawer.
+  const reading = useReadingChannel();
+  const { data: readRows } = useReadState();
+  const unread = (readRows ?? []).some(
+    (row) => row.channel_id !== reading && row.unread_count > 0,
+  );
   return (
     <div className="workspace">
       <WorkspaceDrawer
@@ -82,9 +90,18 @@ function WorkspaceFrame({
             aria-label="Navigation öffnen"
             aria-expanded={navigationOpen}
             aria-controls={navigationId}
+            aria-describedby={unread ? unreadId : undefined}
             onClick={() => setNavigationOpen(true)}
           >
             <ChevronIcon size={21} />
+            {unread ? (
+              <span
+                id={unreadId}
+                role="img"
+                aria-label="Ungelesene Nachrichten"
+                className="workspace-navigation-unread"
+              />
+            ) : null}
             <span>Gelabber</span>
           </button>
         </header>

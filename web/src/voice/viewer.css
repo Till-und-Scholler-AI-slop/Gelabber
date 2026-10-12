@@ -34,10 +34,16 @@
   outline-offset: 2px;
 }
 .stream-viewer {
+  /* 12px from every edge, more where a notch or home indicator cuts in. */
+  --viewer-top: max(12px, var(--lr-safe-top));
+  --viewer-right: max(12px, var(--lr-safe-right));
+  --viewer-bottom: max(12px, var(--lr-safe-bottom));
+  --viewer-left: max(12px, var(--lr-safe-left));
   position: fixed;
-  inset: 12px;
-  width: calc(100vw - 24px);
-  height: calc(100dvh - 24px);
+  inset: var(--viewer-top) var(--viewer-right) var(--viewer-bottom)
+    var(--viewer-left);
+  width: calc(100vw - var(--viewer-left) - var(--viewer-right));
+  height: calc(100dvh - var(--viewer-top) - var(--viewer-bottom));
   max-width: none;
   max-height: none;
   margin: auto;
@@ -107,6 +113,9 @@
     inset: 0;
     width: 100vw;
     height: 100dvh;
+    /* Edge to edge, with only the content clear of the cut-outs. */
+    padding: var(--lr-safe-top) var(--lr-safe-right) var(--lr-safe-bottom)
+      var(--lr-safe-left);
     border: 0;
     border-radius: 0;
   }

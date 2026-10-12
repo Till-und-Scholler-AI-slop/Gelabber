@@ -34,6 +34,10 @@ function revoke(message: Message): void {
   }
 }
 
+/** Mounted message panes per channel. Only a pane drops a confirmed row once
+ *  its page has it, so off screen nothing would ever release that row. */
+const displayed = new Map<string, number>();
+
 type PendingState = {
   attempts: Record<string, SendAttempt>;
   byChannel: Record<string, Message[]>;
@@ -57,17 +61,24 @@ export const usePendingMessages = create<PendingState>((set) => ({
     set((state) => ({
       byChannel: {
         ...state.byChannel,
-        [channelId]: (state.byChannel[channelId] ?? []).map((row) => {
-          if (row.id !== tmpId) return row;
-          return {
-            ...message,
-            attachments: asAttachmentList(message.attachments).map(
-              (attachment, index) => ({
-                ...attachment,
-                preview_url: row.attachments[index]?.preview_url,
-              }),
-            ),
-          };
+        [channelId]: (state.byChannel[channelId] ?? []).flatMap((row) => {
+          if (row.id !== tmpId) return [row];
+          // Nobody sees it; the page or the next read shows the server row.
+          if (!displayed.has(channelId)) {
+            revoke(row);
+            return [];
+          }
+          return [
+            {
+              ...message,
+              attachments: asAttachmentList(message.attachments).map(
+                (attachment, index) => ({
+                  ...attachment,
+                  preview_url: row.attachments[index]?.preview_url,
+                }),
+              ),
+            },
+          ];
         }),
       },
     })),
@@ -94,6 +105,22 @@ export const usePendingMessages = create<PendingState>((set) => ({
       return { byChannel: next };
     }),
 }));
+
+/** A pane shows the overlay; leaving drops its confirmed rows and previews.
+ *  Unsent and failed `tmp:` rows stay with their recoverable attempts. */
+export function displayPending(channelId: string): () => void {
+  displayed.set(channelId, (displayed.get(channelId) ?? 0) + 1);
+  return () => {
+    const count = (displayed.get(channelId) ?? 1) - 1;
+    if (count > 0) {
+      displayed.set(channelId, count);
+      return;
+    }
+    displayed.delete(channelId);
+    for (const row of usePendingMessages.getState().byChannel[channelId] ?? [])
+      if (!row.id.startsWith("tmp:")) removePending(channelId, row.id);
+  };
+}
 
 export function addPending(channelId: string, message: Message): void {
   usePendingMessages.getState().add(channelId, message);

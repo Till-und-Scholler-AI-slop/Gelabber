@@ -23,6 +23,23 @@ pub fn get(headers: &HeaderMap, name: &str) -> Option<String> {
         .next()
 }
 
+/// `localhost` (and `*.localhost`), `127.0.0.0/8` or `[::1]`, with or without
+/// a port: hosts a browser reaches without leaving the machine, so a cookie
+/// without `Secure` crosses no network there.
+pub fn is_loopback_host(authority: &str) -> bool {
+    let host = match authority.rsplit_once(':') {
+        Some((host, port)) if !port.is_empty() && port.bytes().all(|b| b.is_ascii_digit()) => host,
+        _ => authority,
+    };
+    let host = host.to_ascii_lowercase();
+    host == "localhost"
+        || host.ends_with(".localhost")
+        || host == "[::1]"
+        || host
+            .parse::<std::net::Ipv4Addr>()
+            .is_ok_and(|address| address.is_loopback())
+}
+
 #[derive(Debug, Clone)]
 pub struct SetCookie {
     name: &'static str,
@@ -100,6 +117,32 @@ mod tests {
             .secure(true)
             .header_value();
         assert!(secure.to_str().unwrap().ends_with("; Secure"));
+    }
+
+    #[test]
+    fn loopback_hosts() {
+        for host in [
+            "localhost",
+            "localhost:5173",
+            "LOCALHOST",
+            "app.localhost:8080",
+            "127.0.0.1",
+            "127.1.2.3:80",
+            "[::1]",
+            "[::1]:8080",
+        ] {
+            assert!(is_loopback_host(host), "{host}");
+        }
+        for host in [
+            "192.168.1.20",
+            "192.168.1.20:80",
+            "example.com",
+            "localhost.example.com",
+            "[::2]:80",
+            "10.0.0.1",
+        ] {
+            assert!(!is_loopback_host(host), "{host}");
+        }
     }
 
     #[test]

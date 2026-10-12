@@ -202,13 +202,24 @@ export function register(
 }
 
 /** Optimistically release the current account, then revoke its cookie. */
-export async function logout(): Promise<void> {
+export function logout(): Promise<void> {
+  return endSession("/auth/logout");
+}
+
+/** Like `logout`, and every other session of the account ends too. */
+export function logoutEverywhere(): Promise<void> {
+  return endSession("/auth/logout-all");
+}
+
+async function endSession(
+  path: "/auth/logout" | "/auth/logout-all",
+): Promise<void> {
   const logoutUserId = useSession.getState().user?.id ?? failedLogoutUserId;
   const intent = startAuthIntent();
   useSessionProblems.setState({ logout: null });
   applySession(null);
   try {
-    await api<LogoutResponse>("/auth/logout", {
+    await api<LogoutResponse>(path, {
       method: "POST",
       logoutUserId,
       authIntent: () => authIntent === intent,
@@ -225,6 +236,21 @@ export async function logout(): Promise<void> {
   } finally {
     finishAuthIntent(intent);
   }
+}
+
+/**
+ * Sets a new password. The server ends every session of the account and
+ * answers with a fresh one for this browser; the account and its caches stay.
+ */
+export async function changePassword(
+  currentPassword: string,
+  password: string,
+): Promise<User> {
+  const session = await api<SessionResponse>("/auth/password", {
+    method: "POST",
+    body: { current_password: currentPassword, password },
+  });
+  return session.user as User;
 }
 
 /**

@@ -27,7 +27,12 @@ where
 
 fn map_rejection(rejection: JsonRejection) -> ApiError {
     match rejection {
-        JsonRejection::JsonDataError(err) => ApiError::BadRequest(err.body_text()),
+        // serde names the offending value ("invalid type: integer `1234`"),
+        // which can be a password. The detail is only logged, never sent;
+        // keep it free of request data.
+        JsonRejection::JsonDataError(_) => {
+            ApiError::BadRequest("JSON body does not match the expected shape".to_owned())
+        }
         JsonRejection::JsonSyntaxError(err) => ApiError::BadRequest(err.body_text()),
         JsonRejection::MissingJsonContentType(err) => ApiError::BadRequest(err.body_text()),
         JsonRejection::BytesRejection(err) => ApiError::BadRequest(err.body_text()),
