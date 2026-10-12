@@ -889,6 +889,52 @@ describe("voice session", () => {
     expect(useVoice.getState().status).toBe("joined");
   });
 
+  it("publishes a microphone allowed while the media connection was rebuilt", async () => {
+    const prompt = deferred();
+    const f = install({
+      gateMedia: (index) => (index === 0 ? prompt.promise : undefined),
+    });
+    joinVoice({ serverId: "srv", channelId: "voice", channelName: "Lounge" });
+    await vi.waitFor(() => expect(f.getUserMediaCalls()).toBe(1));
+    // The permission prompt is still open when the media socket drops.
+    f.closeMedia();
+    await vi.waitFor(() => expect(f.peers).toHaveLength(2));
+    await vi.waitFor(() =>
+      expect(
+        f.mediaSent.filter((frame) => frame.op === "j").length,
+      ).toBeGreaterThanOrEqual(2),
+    );
+    prompt.resolve();
+    await vi.waitFor(() => expect(f.peers[1]?.audio).toBeTruthy());
+    expect(streamStopped(f.streams[0])).toBe(true);
+    expect(f.peers[0]?.audio).toBeFalsy();
+    expect(f.errors).toEqual([]);
+  });
+
+  it("asks the next connection for the microphone when the prompt is answered mid-rebuild", async () => {
+    const prompt = deferred();
+    let holdSecond: (() => void) | undefined;
+    const f = install({
+      gateMedia: (index) => (index === 0 ? prompt.promise : undefined),
+      holdStart: (index) =>
+        index === 1
+          ? new Promise<void>((resolve) => {
+              holdSecond = resolve;
+            })
+          : undefined,
+    });
+    joinVoice({ serverId: "srv", channelId: "voice", channelName: "Lounge" });
+    await vi.waitFor(() => expect(f.getUserMediaCalls()).toBe(1));
+    f.closeMedia();
+    await vi.waitFor(() => expect(holdSecond).toBeDefined());
+    // Answered while the next connection is still loading its device.
+    prompt.resolve();
+    await vi.waitFor(() => expect(streamStopped(f.streams[0])).toBe(true));
+    holdSecond!();
+    await vi.waitFor(() => expect(f.peers[1]?.audio).toBeTruthy());
+    expect(f.getUserMediaCalls()).toBe(2);
+  });
+
   it("re-announces active tracks after the gateway join is confirmed", async () => {
     const { sent, peers, emitReady, emitSig, emitErr, getDisplayMediaCalls } =
       install();

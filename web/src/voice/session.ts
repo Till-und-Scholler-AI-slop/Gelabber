@@ -233,6 +233,10 @@ const blockedPlayback = new Set<HTMLAudioElement>();
 let remoteMix: MediaStream | null = null;
 let bound = false;
 let micEpoch = 0;
+/** A microphone prompt that a seat rebuild overtook. Its answer belonged to
+ * the old connection and was dropped with it, and a rebuild does not ask for
+ * the microphone on its own: the next connection has to. */
+let micOvertaken = false;
 /** One stream toast per join. Further failures stay in the console. */
 let streamReported = false;
 let watchReported = false;
@@ -1136,6 +1140,7 @@ function hasLiveTrack(
 
 function stopPeer(preserveCapture = false): void {
   if (!preserveCapture) micForceBrowser = false;
+  if (!preserveCapture) micOvertaken = false;
   if (!preserveCapture) clearLiveClaim();
   seatRetry.cancel(!preserveCapture);
   // A rebuild keeps what is captured, and with it a picker or camera prompt
@@ -1844,6 +1849,21 @@ function discardFailedMicCandidate(
   }
 }
 
+/** Capture again for the connection that replaced the one a microphone
+ * prompt was answered for, or have the next connection do it. */
+function resumeOvertakenMic(): void {
+  if (
+    useVoice.getState().status !== "joined" ||
+    hasLiveTrack(localStream, "audio")
+  )
+    return;
+  const pc = seat.connection;
+  if (pc && startedConnections.has(pc)) {
+    micOvertaken = false;
+    void refreshMic();
+  } else micOvertaken = true;
+}
+
 function announceMicrophone(): void {
   if (announced.has("a")) return;
   const { serverId, channelId } = useVoice.getState();
@@ -1867,6 +1887,7 @@ async function refreshMic(): Promise<void> {
     );
   } catch (error) {
     if (micCurrent(pc, session, request)) deps?.onError?.(error);
+    else if (seat.generation !== session) resumeOvertakenMic();
     return;
   }
   const { raw, processor: insert } = candidate;
@@ -3679,7 +3700,8 @@ async function startPeer(
       k: "a",
     });
     await applySendBitrate().catch(() => undefined);
-  } else if (!recovering) {
+  } else if (!recovering || micOvertaken) {
+    micOvertaken = false;
     const micRequest = ++micEpoch;
     try {
       const { raw: stream, processor: insert } = await acquireMic(
@@ -3693,6 +3715,7 @@ async function startPeer(
       if (seat.generation !== mine) {
         insert.dispose();
         stopTracks(stream);
+        resumeOvertakenMic();
         return;
       }
       if (micEpoch !== micRequest) {
@@ -3712,6 +3735,7 @@ async function startPeer(
             insert?.dispose();
             stopTracks(stream);
             pendingMicRaw.delete(stream);
+            if (seat.generation !== mine) resumeOvertakenMic();
             return;
           }
           if (!insert.usable()) {
@@ -3751,7 +3775,8 @@ async function startPeer(
         });
       }
     } catch (error) {
-      if (seat.generation === mine) {
+      if (seat.generation !== mine) resumeOvertakenMic();
+      else {
         deps?.onError?.(error);
         noteAudioProcessing(null);
         const info = useAudioProcessing.getState();
