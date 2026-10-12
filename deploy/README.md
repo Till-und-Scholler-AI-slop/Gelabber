@@ -89,6 +89,18 @@ Compose offers TURN over UDP and TCP. TCP is the fallback for clients whose netw
 2. Bundled coturn without your own `TURN_AUTH_SECRET` line: add nothing. The API and coturn move together from the public REST default to static user/password credentials.
 3. REST wanted: generate a new, non-public secret, write it identically into the API environment and into coturn (`static-auth-secret`), restart both. Only then issue tickets with HMAC credentials. An external TURN must get the same secret before the variable is set.
 
+### After changing TURN values
+
+The API and coturn read `TURN_*` from `.env` only when their containers are created. Watchtower swaps images and keeps each container's old environment, and `up … api` recreates only the services it names. After any change to `TURN_AUTH_SECRET`, `TURN_USERNAME` or `TURN_PASSWORD` (also when a release removes a default, as v0.6 did for `TURN_PASSWORD`), recreate both:
+
+```bash
+cd deploy/compose
+docker compose up -d --force-recreate coturn api
+./turn-check.sh
+```
+
+`turn-check.sh` compares the values the running API and coturn were started with and names the keys that differ, without printing them. A mismatch looks like a working call without sound: the client connects, but coturn refuses the relay. With an external TURN (homelab overlay without `bundled-coturn`) the script only reminds you to check that server yourself.
+
 ## TURN port in use
 
 `Bind for 0.0.0.0:3478 failed`: usually a coturn is already running.
@@ -201,8 +213,13 @@ docker compose --env-file .env --env-file next.env config --images
 # Backup as in the Backup section; keep the old manifest/env files.
 docker compose --env-file .env --env-file next.env pull --policy always api web media minio
 docker compose --env-file .env --env-file next.env up -d --no-deps --no-build --pull never --force-recreate api web media minio
+# Bundled coturn only (skip with the homelab overlay unless COMPOSE_PROFILES=bundled-coturn):
+docker compose --env-file .env --env-file next.env up -d --no-deps --force-recreate coturn
+./turn-check.sh
 # Then: /ready, /media/ready, login, upload and a real media/relay acceptance.
 ```
+
+coturn is not part of the image set, but it carries the TURN credentials from `.env`. Without this step it keeps the values from its last start while the API hands out the new ones (see "After changing TURN values").
 
 `--no-build` prevents an unnoticed local replacement build; the explicit pull solves the earlier `pull_policy: missing` problem. Remove `GELABBER_*_IMAGE` variables already exported in the shell environment first, since they override env files. Homelab keeps its `COMPOSE_FILE`; alternatively use the same `-f` overlays with **all** commands. Images are pulled ahead as a set; container switches are not atomic and need a maintenance window.
 
