@@ -64,6 +64,21 @@ async fn upload_serves_bytes_and_replaces_the_old_object(pool: PgPool) {
     let (status, _, _) = ada.send_raw(Method::GET, &first_url, None).await;
     assert_eq!(status, StatusCode::NOT_FOUND, "replaced avatar is deleted");
 
+    // A stale form (other tab) echoing the earlier upload must neither
+    // point at the deleted object nor delete the current one.
+    let res = ada
+        .send(
+            Method::PATCH,
+            "/api/me",
+            Some(json!({ "name": "Ada S", "avatar_url": first_url })),
+        )
+        .await;
+    assert_eq!(res.status, StatusCode::UNPROCESSABLE_ENTITY, "{}", res.body);
+    assert_eq!(res.body["fields"]["avatar_url"], "stale");
+    let (status, _, bytes) = ada.send_raw(Method::GET, &second_url, None).await;
+    assert_eq!(status, StatusCode::OK);
+    assert_eq!(bytes, WEBP);
+
     // Switching to an external URL deletes the upload as well.
     let res = ada
         .send(
@@ -120,5 +135,50 @@ async fn refuses_non_images_strangers_and_foreign_paths(pool: PgPool) {
     let (status, _, _) = bob
         .send_raw(Method::GET, "/api/avatars/not-a-uuid/x", None)
         .await;
+    assert_eq!(status, StatusCode::NOT_FOUND);
+}
+
+/// The same flow against the local MinIO test service (CI starts it). The
+/// public endpoint is unreachable on purpose: avatars must only use the
+/// internal one.
+#[sqlx::test(migrations = "./migrations")]
+async fn real_minio_avatar_upload_fetch_and_replace(pool: PgPool) {
+    let endpoint = std::env::var("MINIO_ENDPOINT").expect("source local minio-test.env");
+    assert!(
+        endpoint.starts_with("http://127.0.0.1:"),
+        "only the local test service is allowed"
+    );
+    let config = gelabber_api::config::MinioConfig {
+        endpoint,
+        public_endpoint: "http://127.0.0.1:1".into(),
+        access_key: std::env::var("MINIO_ROOT_USER").expect("local test username"),
+        secret_key: std::env::var("MINIO_ROOT_PASSWORD").expect("local test password"),
+        bucket: format!("gb-test-{}", uuid::Uuid::new_v4().simple()),
+    };
+    let mut state = common::state(pool);
+    state.store = gelabber_api::storage::ObjectStore::from_minio(Some(&config)).unwrap();
+    state.store.ensure_ready().await.unwrap();
+    let mut ada = signed_in(&state, "ada@example.com").await;
+
+    let (status, first) = ada
+        .send_bytes(Method::PUT, "/api/me/avatar", "image/png", PNG.to_vec())
+        .await;
+    assert_eq!(status, StatusCode::OK, "{first}");
+    let first_url = first["avatar_url"].as_str().unwrap().to_owned();
+    let (status, headers, bytes) = ada.send_raw(Method::GET, &first_url, None).await;
+    assert_eq!(status, StatusCode::OK);
+    assert_eq!(bytes, PNG);
+    assert_eq!(headers["content-type"], "image/png");
+
+    let (status, second) = ada
+        .send_bytes(Method::PUT, "/api/me/avatar", "image/webp", WEBP.to_vec())
+        .await;
+    assert_eq!(status, StatusCode::OK, "{second}");
+    let (status, _, bytes) = ada
+        .send_raw(Method::GET, second["avatar_url"].as_str().unwrap(), None)
+        .await;
+    assert_eq!(status, StatusCode::OK);
+    assert_eq!(bytes, WEBP);
+    let (status, _, _) = ada.send_raw(Method::GET, &first_url, None).await;
     assert_eq!(status, StatusCode::NOT_FOUND);
 }

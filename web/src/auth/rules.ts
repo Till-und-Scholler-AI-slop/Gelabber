@@ -127,6 +127,8 @@ export function fieldMessage(field: string, code: FieldCode): string {
       return "Diese E-Mail-Adresse ist schon registriert.";
     case "wrong":
       return "Das Passwort stimmt nicht.";
+    case "stale":
+      return "Dein Bild wurde inzwischen woanders geändert. Lade die Seite neu.";
     case "invalid":
       switch (field) {
         case "email":

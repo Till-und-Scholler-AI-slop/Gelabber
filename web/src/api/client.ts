@@ -6,7 +6,13 @@ import type { SessionStamp } from "../auth/scope.ts";
 import { randomUuid } from "../lib/uuid.ts";
 
 export type FieldCode =
-  "required" | "invalid" | "too_short" | "too_long" | "taken" | "wrong";
+  | "required"
+  | "invalid"
+  | "too_short"
+  | "too_long"
+  | "taken"
+  | "wrong"
+  | "stale";
 
 export type FieldErrors = Partial<Record<string, FieldCode>>;
 

@@ -35,18 +35,24 @@ async fn update_me(
     Body(body): Body<UpdateMeBody>,
 ) -> Result<Json<User>, ApiError> {
     let mut errors = FieldErrors::new();
-    let patch = ProfilePatch {
+    let mut patch = ProfilePatch {
         name: body.name.and_then(|raw| validate::name(&raw, &mut errors)),
         avatar_url: body
             .avatar_url
             .and_then(|raw| validate::avatar_url(&raw, &mut errors)),
     };
-    // An uploaded path is only ever the caller's own (see `avatars`).
+    // Uploads are set by `PUT /api/me/avatar` only. A form may echo the
+    // current one back, which changes nothing; any other upload path (a
+    // stale tab's earlier one, already deleted, or someone else's) would
+    // point the profile at a missing object and delete the current one.
     if let Some(Some(url)) = &patch.avatar_url
-        && let Some((owner, _)) = crate::avatars::parse_url(url)
-        && owner != current.id
+        && crate::avatars::parse_url(url).is_some()
     {
-        errors.insert("avatar_url", "invalid");
+        if current.avatar_url.as_deref() == Some(url.as_str()) {
+            patch.avatar_url = None;
+        } else {
+            errors.insert("avatar_url", "stale");
+        }
     }
     validate::finish(errors)?;
 

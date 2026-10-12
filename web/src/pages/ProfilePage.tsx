@@ -49,8 +49,15 @@ function ProfileForm({ user }: { user: User }) {
   const { errors, clearField, setFields, fromError } = useFormErrors();
 
   const mutation = useMutation({
+    // Only what changed: echoing an avatar this form loaded earlier would
+    // undo an upload made since in another tab (#218 review).
     mutationFn: () =>
-      updateProfile({ name: name.trim(), avatar_url: avatarUrl.trim() }),
+      updateProfile({
+        name: name.trim(),
+        ...(avatarUrl.trim() !== (user.avatar_url ?? "")
+          ? { avatar_url: avatarUrl.trim() }
+          : {}),
+      }),
     onSuccess: (updated) => {
       setName(updated.name);
       setAvatarUrl(updated.avatar_url ?? "");
@@ -195,7 +202,7 @@ function ProfileForm({ user }: { user: User }) {
           <SubmitButton
             pending={mutation.isPending}
             pendingLabel="Speichern…"
-            disabled={!dirty}
+            disabled={!dirty || upload.isPending}
           >
             Speichern
           </SubmitButton>
