@@ -27,6 +27,8 @@ sha2 = "0.11.0"
 subtle = "2.6.1"
 # S3-compatible presign for MinIO (issue #7). Sans-IO; reqwest sends Head/Put.
 rusty-s3 = "0.10.2"
+# rusty-s3's own clock type, for download links signed per window (issue #201).
+jiff = { version = "0.2.37", default-features = false, features = ["std"] }
 reqwest = { version = "0.13.5", default-features = false, features = ["rustls"] }
 url = "2.5.8"
 gelabber-shared.workspace = true

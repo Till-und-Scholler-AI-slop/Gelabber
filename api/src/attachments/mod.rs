@@ -9,6 +9,7 @@ pub mod cleanup;
 pub mod validate;
 
 use std::collections::HashMap;
+use std::time::SystemTime;
 
 use axum::Router;
 use axum::extract::State;
@@ -28,7 +29,7 @@ use crate::limits;
 use crate::messages::{self, Message};
 use crate::path::Id;
 use crate::state::AppState;
-use crate::storage::{ObjectBody, ObjectStore, PUT_TTL, StoreError};
+use crate::storage::{self, ObjectBody, ObjectStore, PUT_TTL, StoreError};
 
 use self::validate::is_image;
 
@@ -221,7 +222,16 @@ async fn download(
     messages::messaging_channel(&state.db, row.channel_id, user.id).await?;
 
     match state.store.get(&row.object_key).await {
-        Ok(ObjectBody::Redirect(url)) => Ok(Redirect::temporary(&url).into_response()),
+        Ok(ObjectBody::Redirect(url)) => {
+            // The link is the same for the rest of its signing window; the
+            // browser may reuse this redirect until then.
+            let (_, left) = storage::get_window(SystemTime::now());
+            let mut response = Redirect::temporary(&url).into_response();
+            if let Ok(value) = HeaderValue::from_str(&format!("private, max-age={left}")) {
+                response.headers_mut().insert(CACHE_CONTROL, value);
+            }
+            Ok(response)
+        }
         Ok(ObjectBody::Bytes {
             content_type,
             bytes,
@@ -238,7 +248,8 @@ fn inline_bytes(filename: &str, content_type: &str, bytes: Vec<u8>) -> Response 
     }
     headers.insert(
         CACHE_CONTROL,
-        HeaderValue::from_static("private, max-age=60"),
+        // Attachments never change; the membership check ran just now.
+        HeaderValue::from_static("private, max-age=3600"),
     );
     let disposition = if is_image(content_type) {
         format!("inline; filename=\"{}\"", sanitize_disposition(filename))

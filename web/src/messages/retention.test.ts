@@ -184,4 +184,25 @@ describe("the newest page stays one page", () => {
     expect(pages("on")[0]!.messages).toHaveLength(PAGE_SIZE);
     expect(flattenPages(pages("on"))).toEqual(history.get("on"));
   });
+
+  it("keeps the rows of a shown single page instead of dropping them", async () => {
+    for (let n = 0; n < 70; n++)
+      history.set("one", [...(history.get("one") ?? []), row("one", n)]);
+    const observer = new InfiniteQueryObserver(client, options("one"));
+    const off = observer.subscribe(() => undefined);
+    await vi.waitFor(() =>
+      expect(observer.getCurrentResult().data).toBeDefined(),
+    );
+    expect(pages("one")).toHaveLength(1);
+    const shown = flattenPages(pages("one"))[0];
+    for (let n = 70; n < 75; n++) create("one", n);
+    // A reader scrolled up keeps seeing the same first row.
+    expect(flattenPages(pages("one"))[0]).toEqual(shown);
+    expect(pages("one")[0]!.messages).toHaveLength(PAGE_SIZE);
+    while (observer.getCurrentResult().hasNextPage)
+      await observer.fetchNextPage();
+    off();
+    observer.destroy();
+    expect(flattenPages(pages("one"))).toEqual(history.get("one"));
+  });
 });

@@ -72,6 +72,7 @@ import { Avatar } from "./Avatar.tsx";
 import { sizeByDraft, type DraftHeight } from "./composerHeight.ts";
 import { EmojiPickerLoader, ReactionBar } from "./ReactionBar.tsx";
 import { Modal } from "./Modal.tsx";
+import { ImageLightbox } from "./ImageLightbox.tsx";
 import {
   ArrowDownIcon,
   CloseIcon,
@@ -364,8 +365,12 @@ function MessageList({
   const lastPosition = useRef<ScrollPosition | null>(null);
   const touchY = useRef<number | null>(null);
   const lastRequest = useRef(latestRequest);
-  const olderAnchor = useRef<string | null>(null);
+  // Older history was asked for; its rows are prepended above `pin`.
+  const olderAnchor = useRef(false);
   const lastCount = useRef(0);
+  const lastFirst = useRef<string | undefined>(undefined);
+  // The rows the virtualizer measured, as committed (not as rendering).
+  const itemsRef = useRef(items);
   const pin = useRef<{ id: string; offset: number } | null>(null);
   const edit = useEditMessage(channelId);
   const remove = useDeleteMessage(channelId);
@@ -388,31 +393,50 @@ function MessageList({
       const breaks =
         (dayBreak(items[index - 1], message) ? 40 : 0) +
         (index === newIndex ? 28 : 0);
+      // The image box is a fixed 240 px (chat.css), plus header and gaps.
       if (image)
-        return breaks + (isContinued(items[index - 1], message) ? 168 : 220);
+        return breaks + (isContinued(items[index - 1], message) ? 256 : 300);
       return breaks + (isContinued(items[index - 1], message) ? 28 : 72);
     },
     getItemKey: (index) => items[index]?.id ?? index,
     overscan: 12,
   });
 
-  const updateLatest = useCallback(() => {
-    const element = scrollRef.current;
-    if (!element) return;
-    if (stickToBottom.current) element.scrollTop = element.scrollHeight;
-    const position = {
-      top: element.scrollTop,
-      height: element.scrollHeight,
-      viewport: element.clientHeight,
-    };
-    lastPosition.current = position;
-    onAtLatest(
-      active &&
-        stickToBottom.current &&
-        position.viewport > 16 &&
-        endDistance(position) <= 16,
-    );
-  }, [active, onAtLatest]);
+  useLayoutEffect(() => {
+    itemsRef.current = items;
+  }, [items]);
+
+  // `pinEnd` is for size changes only. Scroll handlers just read: writing
+  // scrollTop while the user scrolls cuts WebKit's momentum scrolling.
+  const updateLatest = useCallback(
+    (pinEnd = true) => {
+      const element = scrollRef.current;
+      if (!element) return;
+      if (pinEnd && stickToBottom.current)
+        element.scrollTop = element.scrollHeight;
+      const position = {
+        top: element.scrollTop,
+        height: element.scrollHeight,
+        viewport: element.clientHeight,
+      };
+      lastPosition.current = position;
+      // The row at the top and its offset as of the last scroll or resize:
+      // what a prepend or a vanished row must not move.
+      const first = virtualizer
+        .getVirtualItems()
+        .find((row) => row.end > element.scrollTop);
+      const firstId = first ? itemsRef.current[first.index]?.id : undefined;
+      if (first && firstId)
+        pin.current = { id: firstId, offset: first.start - element.scrollTop };
+      onAtLatest(
+        active &&
+          stickToBottom.current &&
+          position.viewport > 16 &&
+          endDistance(position) <= 16,
+      );
+    },
+    [active, onAtLatest, virtualizer],
+  );
 
   useLayoutEffect(() => {
     const element = scrollRef.current,
@@ -420,7 +444,7 @@ function MessageList({
     if (!element || !content) return;
     // The viewport also changes when the keyboard model, dock, or search
     // controls resize. Keep history intent even if the browser clamps to end.
-    const observer = new ResizeObserver(updateLatest);
+    const observer = new ResizeObserver(() => updateLatest());
     observer.observe(element);
     observer.observe(content);
     updateLatest();
@@ -442,23 +466,31 @@ function MessageList({
       stickToBottom.current = true;
       lastRequest.current = latestRequest;
     }
-    const prepended =
-      olderAnchor.current !== null && items.length > lastCount.current;
+    const prepended = olderAnchor.current && items.length > lastCount.current;
+    const firstChanged =
+      lastFirst.current !== undefined && items[0]?.id !== lastFirst.current;
 
     if (prepended) {
-      const idx = items.findIndex((m) => m.id === olderAnchor.current);
-      olderAnchor.current = null;
-      if (idx >= 0) virtualizer.scrollToIndex(idx, { align: "start" });
+      // Keep the row that was on top at the same place, offset included;
+      // later size corrections above it are the virtualizer's own.
+      olderAnchor.current = false;
+      const anchor = pin.current;
+      const idx = anchor ? items.findIndex((m) => m.id === anchor.id) : -1;
+      const offset =
+        idx >= 0 ? virtualizer.getOffsetForIndex(idx, "start") : undefined;
+      if (anchor && offset && scrollRef.current)
+        scrollRef.current.scrollTop = offset[0] - anchor.offset;
     } else if (stickToBottom.current) {
       // Native bottom pin below owns the end. scrollToIndex's asynchronous
       // measurement retries can otherwise pull a measured list back upwards.
     } else if (
-      items.length < lastCount.current &&
+      (items.length < lastCount.current || firstChanged) &&
       pin.current &&
       scrollRef.current
     ) {
-      // A row vanished (own delete or WS). Keep the first visible id
-      // at the same offset so the list does not jump.
+      // A row vanished (own delete or WS), or the oldest rows moved out of
+      // the list. Keep the first visible id at the same offset so the list
+      // does not jump.
       const idx = items.findIndex((m) => m.id === pin.current?.id);
       if (idx >= 0) {
         const offset = virtualizer.getOffsetForIndex(idx, "start");
@@ -470,6 +502,7 @@ function MessageList({
 
     updateLatest();
     lastCount.current = items.length;
+    lastFirst.current = items[0]?.id;
     const first = virtualizer.getVirtualItems()[0];
     const firstMessage = first ? items[first.index] : undefined;
     if (first && firstMessage && scrollRef.current) {
@@ -488,7 +521,7 @@ function MessageList({
     // until the user actually scrolls up.
     if (stickToBottom.current) return;
     if (firstVisible > 4) return;
-    olderAnchor.current = firstId ?? null;
+    olderAnchor.current = true;
     onLoadOlder();
   }, [
     active,
@@ -525,7 +558,7 @@ function MessageList({
           endDistance(lastPosition.current) < 96
         )
           stickToBottom.current = true;
-        updateLatest();
+        updateLatest(false);
       }}
       onKeyDownCapture={(event) => {
         if (
@@ -542,7 +575,7 @@ function MessageList({
         )
           stickToBottom.current = false;
         if (event.key === "End") stickToBottom.current = true;
-        updateLatest();
+        updateLatest(false);
       }}
       onTouchStartCapture={(event) => {
         if (
@@ -573,7 +606,7 @@ function MessageList({
         )
           stickToBottom.current = true;
         touchY.current = current;
-        updateLatest();
+        updateLatest(false);
       }}
       onTouchEndCapture={() => {
         touchY.current = null;
@@ -592,10 +625,9 @@ function MessageList({
             viewport: element.clientHeight,
           },
         );
-        updateLatest();
+        updateLatest(false);
       }}
-      onScroll={updateLatest}
-      style={{ overflowAnchor: "none" }}
+      style={{ overflowAnchor: "none", overscrollBehavior: "contain" }}
       className="flex min-h-0 flex-1 flex-col overflow-y-auto"
     >
       {loadError ? (
@@ -620,7 +652,9 @@ function MessageList({
           Noch keine Nachrichten. Schreib die erste.
         </div>
       ) : null}
-      {hasOlder || loadingOlder ? (
+      {items.length > 0 || hasOlder || loadingOlder ? (
+        // Always there with one height: a row above the list that changes
+        // size shifts everything below it.
         <p className="lr-list-loading">
           {loadingOlder ? "Ältere Nachrichten…" : ""}
         </p>
@@ -1280,22 +1314,52 @@ function Composer({
 }
 
 function AttachmentList({ attachments }: { attachments: Attachment[] }) {
+  const [shown, setShown] = useState<number | null>(null);
   const files = asAttachmentList(attachments);
   if (files.length === 0) return null;
+  const images = files
+    .filter((attachment) => isImageType(attachment.content_type))
+    .map((attachment) => ({
+      id: attachment.id,
+      src: attachment.preview_url ?? attachmentUrl(attachment.id),
+      filename: attachment.filename,
+    }));
   return (
     <div className="lr-attachments">
       {files.map((attachment) => {
         const src = attachment.preview_url ?? attachmentUrl(attachment.id);
         if (isImageType(attachment.content_type)) {
+          const index = images.findIndex((image) => image.id === attachment.id);
           return (
             <a
               key={attachment.id}
               href={src}
-              target="_blank"
-              rel="noreferrer"
+              // The link stays for "open in new tab"; a click shows the
+              // picture here, also where no new tab exists (desktop app,
+              // installed web app).
+              onClick={(event) => {
+                if (
+                  event.button !== 0 ||
+                  event.metaKey ||
+                  event.ctrlKey ||
+                  event.shiftKey ||
+                  event.altKey
+                )
+                  return;
+                event.preventDefault();
+                setShown(index);
+              }}
+              aria-label={`${attachment.filename} vergrößern`}
               className="lr-attachment-image"
             >
-              <img src={src} alt={attachment.filename} />
+              {/* A fixed-height box: the row has its final height before the
+                  picture arrives, so loading never moves the list. */}
+              <img
+                src={src}
+                alt={attachment.filename}
+                decoding="async"
+                loading="lazy"
+              />
             </a>
           );
         }
@@ -1313,6 +1377,15 @@ function AttachmentList({ attachments }: { attachments: Attachment[] }) {
           </a>
         );
       })}
+      {shown !== null ? (
+        <ImageLightbox
+          images={images}
+          index={shown}
+          downloadUrl={attachmentUrl}
+          onIndex={setShown}
+          onClose={() => setShown(null)}
+        />
+      ) : null}
     </div>
   );
 }
