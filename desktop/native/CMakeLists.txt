@@ -7,6 +7,12 @@ cmake_minimum_required(VERSION 3.20)
 #   cmake -S desktop/native -B build -G Ninja \
 #     -DGELABBER_LIBWEBRTC_DIR=<package> \
 #     -DCMAKE_TOOLCHAIN_FILE=desktop/native/cmake/chromium-linux.cmake
+# On Windows, with the package from scripts/build-libwebrtc-windows.ps1, from
+# a Visual Studio x64 developer prompt (clang-cl built the package; MSVC cl
+# speaks the same ABI):
+#   cmake -S desktop/native -B build -G Ninja -DCMAKE_BUILD_TYPE=Release ^
+#     -DGELABBER_LIBWEBRTC_DIR=<package> ^
+#     -DCMAKE_C_COMPILER=clang-cl -DCMAKE_CXX_COMPILER=clang-cl
 project(gelabber_media LANGUAGES C CXX)
 
 include(FetchContent)
@@ -26,6 +32,29 @@ foreach(flag IN LISTS GELABBER_LIBCXX_FLAGS)
   add_compile_options("$<$<COMPILE_LANGUAGE:CXX>:${flag}>")
 endforeach()
 
+if(WIN32)
+  if(NOT MSVC)
+    message(FATAL_ERROR "Windows builds need clang-cl or MSVC cl: libwebrtc is built for the MSVC ABI")
+  endif()
+  # The libwebrtc package is a static Chromium release build: MSVC STL and the
+  # static CRT (/MT). Every object in the DLL has to match it (LNK2038
+  # otherwise); the C ABI keeps this CRT apart from the executable's.
+  # libmediasoupclient and libsdptransform ask for a CMake older than CMP0091,
+  # hence the policy default.
+  set(CMAKE_POLICY_DEFAULT_CMP0091 NEW)
+  set(CMAKE_MSVC_RUNTIME_LIBRARY "MultiThreaded")
+  # CMake's default /EHsc is lost when CMAKE_CXX_FLAGS is passed explicitly
+  # (the Rust cmake crate always does); the core, libmediasoupclient and
+  # nlohmann/json throw.
+  add_compile_options("$<$<COMPILE_LANGUAGE:CXX>:/EHsc>")
+endif()
+
+# libsdptransform, which libmediasoupclient fetches, declares CMake 3.0;
+# CMake 4 refuses anything below 3.5. Older CMake ignores the variable.
+if(NOT DEFINED CMAKE_POLICY_VERSION_MINIMUM)
+  set(CMAKE_POLICY_VERSION_MINIMUM 3.5)
+endif()
+
 set(GELABBER_LIBWEBRTC_DIR "" CACHE PATH "libwebrtc package (lib/, include/)")
 if(NOT GELABBER_LIBWEBRTC_DIR)
   message(FATAL_ERROR "GELABBER_LIBWEBRTC_DIR is required")
@@ -38,9 +67,25 @@ foreach(pin IN LISTS pins)
   set(${key} "${value}")
 endforeach()
 
+if(WIN32)
+  # Backslashes would turn into escapes in generated files.
+  file(TO_CMAKE_PATH "${GELABBER_LIBWEBRTC_DIR}" GELABBER_LIBWEBRTC_DIR)
+endif()
+
 # libmediasoupclient reads these two cache variables.
 set(LIBWEBRTC_INCLUDE_PATH "${GELABBER_LIBWEBRTC_DIR}/include" CACHE PATH "" FORCE)
 set(LIBWEBRTC_BINARY_PATH "${GELABBER_LIBWEBRTC_DIR}/lib" CACHE PATH "" FORCE)
+if(WIN32 AND NOT EXISTS "${GELABBER_LIBWEBRTC_DIR}/lib/libwebrtc.lib")
+  # libmediasoupclient links <LIBWEBRTC_BINARY_PATH>/libwebrtc.lib; the package
+  # holds the library under GN's name. The package itself stays as it is: its
+  # script is part of the CI cache key.
+  if(NOT EXISTS "${GELABBER_LIBWEBRTC_DIR}/lib/webrtc.lib")
+    message(FATAL_ERROR "${GELABBER_LIBWEBRTC_DIR}/lib/webrtc.lib not found: build the package with scripts/build-libwebrtc-windows.ps1")
+  endif()
+  configure_file("${GELABBER_LIBWEBRTC_DIR}/lib/webrtc.lib"
+    "${CMAKE_CURRENT_BINARY_DIR}/libwebrtc/libwebrtc.lib" COPYONLY)
+  set(LIBWEBRTC_BINARY_PATH "${CMAKE_CURRENT_BINARY_DIR}/libwebrtc" CACHE PATH "" FORCE)
+endif()
 
 FetchContent_Declare(
   mediasoupclient
@@ -127,6 +172,58 @@ if(UNIX AND NOT APPLE)
     "-Wl,-z,defs"
     "-Wl,--as-needed")
   target_link_libraries(gelabber_media PRIVATE pthread dl m rt)
+endif()
+
+if(WIN32)
+  # Screen capture and application sound are stubs that fail with an error so
+  # far. WEBRTC_USE_H264 stays undefined: video is VP8 (which the web client
+  # asks for everywhere), and no OpenH264 or FFmpeg H264 code is referenced.
+  target_sources(gelabber_media PRIVATE src/screen_source_win.cc src/app_audio_win.cc)
+  # WEBRTC_WIN, NOMINMAX and WIN32_LEAN_AND_MEAN come from libmediasoupclient;
+  # these are the other Windows defines libwebrtc is built with. A screen
+  # source on libwebrtc's DesktopCapturer also needs RTC_ENABLE_WIN_WGC:
+  # DesktopCaptureOptions changes layout with it.
+  target_compile_definitions(gelabber_media PRIVATE UNICODE _UNICODE _WIN32_WINNT=0x0A00 WINVER=0x0A00)
+  target_compile_options(gelabber_media PRIVATE /bigobj)
+  # MSVC cl defines no __SSE2__ on x64, which would send RNNoise down its
+  # scalar C99 path; clang-cl defines it itself.
+  target_compile_definitions(rnnoise PRIVATE OPUS_X86_MAY_HAVE_SSE OPUS_X86_MAY_HAVE_SSE2)
+
+  target_link_libraries(gelabber_media PRIVATE
+    # rtc_base: timers, sockets, network interfaces, certificates
+    winmm ws2_32 iphlpapi crypt32 secur32
+    # audio device module: Core Audio and the echo canceller DMO it links
+    avrt dmoguids wmcodecdspuuid amstrmid msdmo
+    # video capture module: DirectShow
+    strmiids
+    # abseil
+    dbghelp bcrypt
+    ole32 oleaut32 uuid user32 gdi32 advapi32 shell32 shlwapi version)
+  # Chromium links clang's builtins (128-bit arithmetic) into every binary;
+  # the static library does not carry them. clang-cl knows where its copy is.
+  set(GELABBER_CLANG_BUILTINS "" CACHE FILEPATH "clang_rt.builtins library for libwebrtc's objects")
+  if(NOT GELABBER_CLANG_BUILTINS AND CMAKE_CXX_COMPILER_ID STREQUAL "Clang")
+    execute_process(
+      COMMAND "${CMAKE_CXX_COMPILER}" /clang:-rtlib=compiler-rt /clang:-print-libgcc-file-name
+      OUTPUT_VARIABLE clang_builtins OUTPUT_STRIP_TRAILING_WHITESPACE ERROR_QUIET)
+    file(TO_CMAKE_PATH "${clang_builtins}" clang_builtins)
+    if(EXISTS "${clang_builtins}")
+      set(GELABBER_CLANG_BUILTINS "${clang_builtins}")
+    endif()
+  endif()
+  if(GELABBER_CLANG_BUILTINS)
+    target_link_libraries(gelabber_media PRIVATE "${GELABBER_CLANG_BUILTINS}")
+  endif()
+  message(STATUS "clang builtins: ${GELABBER_CLANG_BUILTINS}")
+
+  # Only the GM_API functions (__declspec(dllexport)) leave the DLL; nothing
+  # else in it is declared for export, so there is no version script here.
+  target_link_options(gelabber_media PRIVATE
+    /OPT:REF
+    /OPT:ICF
+    # A DLL with a static CRT needs no manifest, and without one the build
+    # does not depend on a manifest tool.
+    /MANIFEST:NO)
 endif()
 
 install(TARGETS gelabber_media LIBRARY DESTINATION lib RUNTIME DESTINATION bin ARCHIVE DESTINATION lib)

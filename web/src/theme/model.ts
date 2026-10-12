@@ -1,3 +1,5 @@
+import { randomUuid } from "../lib/uuid.ts";
+
 export const COLOR_KEYS = [
   "background",
   "panel",
@@ -101,7 +103,7 @@ export function importTheme(text: string): ThemeDefinition {
     throw new Error(
       "Das Theme-Format ist ungültig oder wird noch nicht unterstützt.",
     );
-  return { ...parsed, id: `custom-${crypto.randomUUID()}` };
+  return { ...parsed, id: `custom-${randomUuid()}` };
 }
 export function luminance(hex: string): number {
   const rgb = [1, 3, 5]

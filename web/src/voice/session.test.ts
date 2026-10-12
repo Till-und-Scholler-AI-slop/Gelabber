@@ -3,11 +3,12 @@ import { useAudioProcessing } from "./audioProcessing.ts";
 import { afterEach, describe, expect, it, vi } from "vitest";
 
 import type { ClientFrame, ErrFrame, SigEvent } from "../ws/protocol.ts";
-import type {
-  IceServer,
-  MediaClientFrame,
-  MediaServerFrame,
-  MediaSocket,
+import {
+  MediaError,
+  type IceServer,
+  type MediaClientFrame,
+  type MediaServerFrame,
+  type MediaSocket,
 } from "./media.ts";
 import {
   configureVoice,
@@ -35,15 +36,18 @@ import type {
 } from "./mediasoupConnection.ts";
 import type { TrackKind } from "../ws/protocol.ts";
 import { resetSessionForTests, useSession } from "../auth/session.ts";
+import { randomUuid } from "../lib/uuid.ts";
 import {
   buildDiagnosticExport,
   diagnosticsPolling,
   useVoiceDiagnostics,
 } from "./diagnostics.ts";
+import { setNativeBridgeForTests } from "./native/bridge.ts";
 import { resetVoiceRoster, useVoiceRoster, voiceOf } from "./roster.ts";
 import {
   allocateVideoBitrates,
   resetMediaSettingsForTests,
+  sourceAudioChoice,
   useMediaSettings,
   videoConstraintsFor,
 } from "./settings.ts";
@@ -77,14 +81,18 @@ class FakeConnection implements MediaConnection {
     readonly options: MediaConnectionOptions,
     readonly holdReplace?: Promise<void>,
     readonly holdPublish?: Promise<void>,
+    readonly holdStart?: Promise<void>,
   ) {
     this.iceServers = options.iceServers;
   }
   async start(): Promise<void> {
+    if (this.holdStart) await this.holdStart;
     this.started = true;
   }
   async publish(input: MediaPublication): Promise<MediaSender> {
     if (this.closed) throw new Error("closed");
+    // The real connection's answer while its device has not loaded yet.
+    if (!this.started) throw new MediaError("unsupported_codec");
     this.publicationInputs.push(input);
     if (this.holdPublish && input.track.kind === "video")
       await this.holdPublish;
@@ -349,6 +357,21 @@ function videoBitrates(
     });
 }
 
+/** Go Live claim traffic on the chat socket: "p" claims, "u" releases. */
+function liveClaimFrames(sent: ClientFrame[]): string[] {
+  return sent.flatMap((frame) =>
+    frame.op === "sig" && "k" in frame && frame.k === "l" ? [frame.t] : [],
+  );
+}
+
+/** What the user was told. */
+function messages(errors: unknown[]): string[] {
+  return errors.map((error) => (error as Error).message);
+}
+
+/** A screen share or Go Live whose capture could not start. */
+const CAPTURE_FAILED = "Die Bildschirmaufnahme konnte nicht gestartet werden.";
+
 function install(opts?: {
   media?: boolean;
   display?: boolean;
@@ -359,6 +382,10 @@ function install(opts?: {
   iceServersFor?: (index: number) => IceServer[];
   holdMedia?: Promise<void>;
   holdDisplay?: Promise<void>;
+  /** Per getDisplayMedia call index (0-based). An open picker. */
+  gateDisplay?: (callIndex: number) => Promise<void> | void;
+  /** The desktop app: the session's own display capture, through the bridge. */
+  nativeDisplay?: boolean;
   /** Per getUserMedia call index (0-based). Controlled promise resolution. */
   gateMedia?: (
     callIndex: number,
@@ -388,7 +415,12 @@ function install(opts?: {
   ) => Error | undefined;
   holdReplaceTrack?: Promise<void>;
   holdPublish?: Promise<void>;
+  /** Per connection (0-based): its `start` waits for this, as while its
+   * device is still loading. */
+  holdStart?: (index: number) => Promise<void> | undefined;
   produceError?: (kind: TrackKind) => Error | undefined;
+  /** The server's answer to a "produce" waits for this. */
+  gateProduce?: (kind: TrackKind) => Promise<void> | undefined;
   /** Hold the versioned Join response while rejection/cancellation is tested. */
   holdJoin?: boolean;
   holdLiveClaim?: boolean;
@@ -466,6 +498,7 @@ function install(opts?: {
         options,
         opts?.holdReplaceTrack,
         opts?.holdPublish,
+        opts?.holdStart?.(peers.length),
       );
       peers.push(peer);
       return peer;
@@ -499,7 +532,8 @@ function install(opts?: {
       const callIndex = getDisplayMediaCalls;
       getDisplayMediaCalls += 1;
       lastDisplayMedia = constraints;
-      if (opts?.holdDisplay) await opts.holdDisplay;
+      if (opts?.gateDisplay) await opts.gateDisplay(callIndex);
+      else if (opts?.holdDisplay) await opts.holdDisplay;
       const displayError = opts?.displayError?.(callIndex, constraints);
       if (displayError) throw displayError;
       if (opts?.display === false) throw new Error("denied");
@@ -541,7 +575,7 @@ function install(opts?: {
             );
             return;
           }
-          queueMicrotask(() => {
+          const answer = () => {
             if (!alive) return;
             (onMedia ?? lingering)?.({
               op: "result",
@@ -552,7 +586,7 @@ function install(opts?: {
                       c: "voice",
                       u: opts?.userId ?? "u-self",
                       v: opts?.mediaVersion ?? 4,
-                      generation: crypto.randomUUID(),
+                      generation: randomUuid(),
                       routerRtpCapabilities: { codecs: [] },
                     }
                   : frame.op === "produce"
@@ -566,7 +600,11 @@ function install(opts?: {
                         }
                       : {},
             });
-          });
+          };
+          const gate =
+            frame.op === "produce" ? opts?.gateProduce?.(frame.k) : undefined;
+          if (gate) void gate.then(answer);
+          else queueMicrotask(answer);
         },
         close() {
           if (!alive) return;
@@ -595,6 +633,7 @@ function install(opts?: {
       return socket;
     },
     onError: (error) => errors.push(error),
+    ...(opts?.nativeDisplay ? { getDisplayMedia: undefined } : {}),
   });
 
   return {
@@ -1246,6 +1285,97 @@ describe("voice session", () => {
     });
   });
 
+  it("says so when the camera is missing or busy, and nothing after a refusal", async () => {
+    let failure = Object.assign(new Error("no camera"), {
+      name: "NotFoundError",
+    });
+    const { peers, errors } = install({
+      mediaError: (_call, constraints) =>
+        constraints.video ? failure : undefined,
+    });
+    joinVoice({ serverId: "srv", channelId: "voice", channelName: "Lounge" });
+    await vi.waitFor(() => expect(peers.length).toBe(1));
+    const attempt = async () => {
+      toggleCamera();
+      expect(useVoice.getState().camera).toBe(true);
+      await vi.waitFor(() => expect(useVoice.getState().camera).toBe(false));
+    };
+    await attempt();
+    expect(errors.map((error) => (error as Error).message)).toEqual([
+      "Die Kamera ist nicht verfügbar.",
+    ]);
+    // What the desktop app's capture throws for a camera it cannot open.
+    failure = Object.assign(new Error("Kamera nicht verfügbar: busy"), {
+      name: "NotReadableError",
+    });
+    await attempt();
+    expect(errors).toHaveLength(2);
+    // The user said no, or closed the prompt.
+    failure = Object.assign(new Error("denied"), { name: "NotAllowedError" });
+    await attempt();
+    expect(errors).toHaveLength(2);
+    expect(useVoice.getState().localCamera).toBeNull();
+  });
+
+  it("says so when a share or Go Live cannot be captured, and nothing after a cancel", async () => {
+    let failure: Error = new DOMException(
+      "Could not start video source",
+      "NotReadableError",
+    );
+    const env = install({ displayError: () => failure });
+    joinVoice({ serverId: "srv", channelId: "voice", channelName: "Lounge" });
+    await vi.waitFor(() => expect(env.peers[0]?.audio).toBeTruthy());
+    const share = async () => {
+      toggleShare();
+      expect(useVoice.getState().sharing).toBe(true);
+      await vi.waitFor(() => expect(useVoice.getState().sharing).toBe(false));
+    };
+    const goLive = async () => {
+      toggleGoLive();
+      expect(useVoice.getState().live).toBe(true);
+      await vi.waitFor(() => expect(useVoice.getState().live).toBe(false));
+    };
+    await share();
+    expect(messages(env.errors)).toEqual([CAPTURE_FAILED]);
+    // What a capture that broke down for another reason is rejected with.
+    failure = new DOMException("Error starting screen capture", "AbortError");
+    await goLive();
+    expect(messages(env.errors)).toEqual([CAPTURE_FAILED, CAPTURE_FAILED]);
+    expect(liveClaimFrames(env.sent)).toEqual(["p", "u"]);
+    // The user closed the picker: his own answer.
+    failure = new DOMException("Permission denied", "NotAllowedError");
+    await share();
+    await goLive();
+    expect(env.errors).toHaveLength(2);
+    expect(liveClaimFrames(env.sent)).toEqual(["p", "u", "p", "u"]);
+    expect(useVoice.getState().localScreen).toBeNull();
+    expect(useVoice.getState().localLive).toBeNull();
+    expect(
+      env.mediaSent.some((frame) => frame.op === "produce" && frame.k !== "a"),
+    ).toBe(false);
+    expect(useVoice.getState().status).toBe("joined");
+  });
+
+  it("says nothing about a capture that failed after the share was called off", async () => {
+    const picker = deferred();
+    const env = install({
+      gateDisplay: () => picker.promise,
+      displayError: () =>
+        new DOMException("Could not start video source", "NotReadableError"),
+    });
+    joinVoice({ serverId: "srv", channelId: "voice", channelName: "Lounge" });
+    await vi.waitFor(() => expect(env.peers[0]?.audio).toBeTruthy());
+    toggleShare();
+    await Promise.resolve();
+    toggleShare();
+    expect(useVoice.getState().sharing).toBe(false);
+    picker.resolve();
+    await new Promise((resolve) => setTimeout(resolve, 0));
+    expect(env.getDisplayMediaCalls()).toBe(1);
+    expect(env.errors).toHaveLength(0);
+    expect(useVoice.getState().sharing).toBe(false);
+  });
+
   it("shows a local camera preview before any publication", async () => {
     const publication = deferred();
     const { sent, mediaSent, peers } = install({
@@ -1418,6 +1548,386 @@ describe("voice session", () => {
     leaveVoice();
     expect(vi.getTimerCount()).toBe(0);
   });
+
+  it("releases the Live claim when display capture is cancelled or fails", async () => {
+    for (const error of [
+      new DOMException("Freigabe abgebrochen", "NotAllowedError"),
+      // A phone has no getDisplayMedia at all.
+      new TypeError("navigator.mediaDevices.getDisplayMedia is not a function"),
+    ]) {
+      const env = install({ displayError: () => error });
+      joinVoice({ serverId: "srv", channelId: "voice", channelName: "Voice" });
+      await vi.waitFor(() => expect(env.peers[0]?.audio).toBeTruthy());
+      vi.useFakeTimers();
+      toggleGoLive();
+      expect(useVoice.getState().live).toBe(true);
+      expect(liveClaimFrames(env.sent)).toEqual(["p"]);
+      await vi.advanceTimersByTimeAsync(0);
+      expect(useVoice.getState().live).toBe(false);
+      expect(useVoice.getState().localLive).toBeNull();
+      expect(useVoiceRoster.getState().live.srv?.voice).toBeUndefined();
+      expect(liveClaimFrames(env.sent)).toEqual(["p", "u"]);
+      expect(env.sent.at(-1)).toEqual({
+        op: "sig",
+        t: "u",
+        s: "srv",
+        c: "voice",
+        k: "l",
+      });
+      // A capture that failed says so, a cancelled one says nothing. No
+      // stale confirmation timer, no late toast, the seat stays.
+      const said = error.name === "NotAllowedError" ? [] : [CAPTURE_FAILED];
+      expect(messages(env.errors)).toEqual(said);
+      expect(vi.getTimerCount()).toBe(0);
+      await vi.advanceTimersByTimeAsync(10000);
+      expect(messages(env.errors)).toEqual(said);
+      expect(useVoice.getState().status).toBe("joined");
+      expect(liveClaimFrames(env.sent)).toEqual(["p", "u"]);
+
+      // The channel is free again: the next attempt claims afresh.
+      toggleGoLive();
+      expect(liveClaimFrames(env.sent)).toEqual(["p", "u", "p"]);
+      await vi.advanceTimersByTimeAsync(0);
+      expect(liveClaimFrames(env.sent)).toEqual(["p", "u", "p", "u"]);
+
+      vi.useRealTimers();
+      resetVoiceForTests();
+      resetVoiceRoster();
+    }
+  });
+
+  it("releases the Live claim when the picker is cancelled after the claim was confirmed", async () => {
+    const picker = deferred();
+    const env = install({
+      holdDisplay: picker.promise,
+      displayError: () =>
+        new DOMException("Freigabe abgebrochen", "NotAllowedError"),
+    });
+    joinVoice({ serverId: "srv", channelId: "voice", channelName: "Voice" });
+    await vi.waitFor(() => expect(env.peers[0]?.audio).toBeTruthy());
+    toggleGoLive();
+    // The harness confirms the claim while the picker is still open.
+    await vi.waitFor(() =>
+      expect(useVoice.getState().participants["u-self"]?.pubs).toContain("l"),
+    );
+    expect(useVoice.getState().live).toBe(true);
+    picker.resolve();
+    await vi.waitFor(() => expect(useVoice.getState().live).toBe(false));
+    expect(liveClaimFrames(env.sent)).toEqual(["p", "u"]);
+    expect(useVoice.getState().participants["u-self"]?.pubs).not.toContain("l");
+    expect(useVoiceRoster.getState().live.srv?.voice).toBeUndefined();
+    expect(
+      env.mediaSent.some((frame) => frame.op === "produce" && frame.k === "l"),
+    ).toBe(false);
+    expect(env.errors).toHaveLength(0);
+  });
+
+  it("keeps a newer Live claim when an abandoned picker is cancelled late", async () => {
+    const first = deferred();
+    const env = install({
+      gateDisplay: (index) => (index === 0 ? first.promise : undefined),
+      displayError: (index) =>
+        index === 0
+          ? new DOMException("Freigabe abgebrochen", "NotAllowedError")
+          : undefined,
+    });
+    joinVoice({ serverId: "srv", channelId: "voice", channelName: "Voice" });
+    await vi.waitFor(() => expect(env.peers[0]?.audio).toBeTruthy());
+    toggleGoLive();
+    toggleGoLive();
+    expect(liveClaimFrames(env.sent)).toEqual(["p", "u"]);
+    toggleGoLive();
+    await vi.waitFor(() =>
+      expect(env.peers[0]!.sender("l")?.track).toBeTruthy(),
+    );
+    const stream = useVoice.getState().localLive!;
+    expect(liveClaimFrames(env.sent)).toEqual(["p", "u", "p"]);
+
+    first.resolve();
+    for (let i = 0; i < 30; i++) await Promise.resolve();
+    expect(liveClaimFrames(env.sent)).toEqual(["p", "u", "p"]);
+    expect(useVoice.getState().live).toBe(true);
+    expect(useVoice.getState().localLive).toBe(stream);
+    expect(streamStopped(stream)).toBe(false);
+    expect(useVoiceRoster.getState().live.srv?.voice).toBe("u-self");
+    expect(env.peers[0]!.sender("l")?.track).toBe(stream.getVideoTracks()[0]);
+    expect(env.errors).toHaveLength(0);
+  });
+
+  it("releases a Live claim the server has not confirmed yet", async () => {
+    // A phone fails the capture before the claim's round trip is back.
+    const env = install({
+      holdLiveClaim: true,
+      displayError: () =>
+        new TypeError(
+          "navigator.mediaDevices.getDisplayMedia is not a function",
+        ),
+    });
+    joinVoice({ serverId: "srv", channelId: "voice", channelName: "Voice" });
+    await vi.waitFor(() => expect(env.peers[0]?.audio).toBeTruthy());
+    vi.useFakeTimers();
+    toggleGoLive();
+    expect(vi.getTimerCount()).toBe(1);
+    await vi.advanceTimersByTimeAsync(0);
+    expect(useVoice.getState().live).toBe(false);
+    expect(liveClaimFrames(env.sent)).toEqual(["p", "u"]);
+    // The confirmation deadline went with the claim.
+    expect(vi.getTimerCount()).toBe(0);
+
+    // Both echoes arrive late, in socket order.
+    env.emitSig({
+      op: "sig",
+      t: "p",
+      s: "srv",
+      c: "voice",
+      u: "u-self",
+      k: "l",
+      lc: "00000000-0000-0000-0000-000000000042",
+    });
+    expect(useVoice.getState().live).toBe(false);
+    env.emitSig({
+      op: "sig",
+      t: "u",
+      s: "srv",
+      c: "voice",
+      u: "u-self",
+      k: "l",
+    });
+    expect(useVoice.getState().live).toBe(false);
+    expect(useVoice.getState().localLive).toBeNull();
+    expect(useVoice.getState().participants["u-self"]?.pubs).not.toContain("l");
+    await vi.advanceTimersByTimeAsync(10000);
+    // The failed capture was reported; no confirmation ran out after it.
+    expect(messages(env.errors)).toEqual([CAPTURE_FAILED]);
+    expect(liveClaimFrames(env.sent)).toEqual(["p", "u"]);
+    expect(
+      env.mediaSent.some((frame) => frame.op === "produce" && frame.k === "l"),
+    ).toBe(false);
+    expect(useVoice.getState().status).toBe("joined");
+  });
+
+  it("gives a capture back when its source ended before it could start", async () => {
+    // "Stop sharing" while the stream profile is still being applied: the
+    // picker has answered, and the track's only "ended" event is already gone.
+    const ended = (id: string) => {
+      const stream = fakeVideoStream(id, true);
+      const video = stream.getVideoTracks()[0]!;
+      video.applyConstraints = async () => {
+        video.dispatchEvent(new Event("ended"));
+        throw new DOMException("Track ended", "InvalidStateError");
+      };
+      return stream;
+    };
+    const captures = [ended("ended-live"), ended("ended-share")];
+    // A camera that is unplugged while its prompt is open.
+    const camera = fakeVideoStream("ended-cam");
+    camera.getVideoTracks()[0]!.stop();
+    const env = install({
+      displayStreamFor: (index) => captures[index]!,
+      mediaStreamFor: (index, constraints) =>
+        constraints.video ? camera : fakeStream(`mic-${index}`),
+    });
+    joinVoice({ serverId: "srv", channelId: "voice", channelName: "Voice" });
+    await vi.waitFor(() => expect(env.peers[0]?.audio).toBeTruthy());
+
+    toggleGoLive();
+    await vi.waitFor(() => expect(useVoice.getState().live).toBe(false));
+    expect(useVoice.getState().localLive).toBeNull();
+    expect(useVoiceRoster.getState().live.srv?.voice).toBeUndefined();
+    expect(liveClaimFrames(env.sent)).toEqual(["p", "u"]);
+    expect(useVoice.getState().participants["u-self"]?.pubs).not.toContain("l");
+    expect(streamStopped(captures[0])).toBe(true);
+
+    toggleShare();
+    await vi.waitFor(() => expect(useVoice.getState().sharing).toBe(false));
+    expect(useVoice.getState().localScreen).toBeNull();
+    expect(useVoice.getState().participants["u-self"]?.pubs).not.toContain("s");
+    expect(streamStopped(captures[1])).toBe(true);
+
+    toggleCamera();
+    await vi.waitFor(() => expect(useVoice.getState().camera).toBe(false));
+    expect(useVoice.getState().localCamera).toBeNull();
+    expect(useVoice.getState().participants["u-self"]?.pubs).not.toContain("v");
+
+    expect(env.getDisplayMediaCalls()).toBe(2);
+    expect(
+      env.mediaSent.some((frame) => frame.op === "produce" && frame.k !== "a"),
+    ).toBe(false);
+    expect(env.errors).toHaveLength(0);
+    expect(useVoice.getState().status).toBe("joined");
+  });
+
+  it("opens one picker when Go Live is clicked while the seat is still connecting", async () => {
+    const ticket = deferred();
+    const picker = deferred();
+    const env = install({
+      gateTicket: () => ticket.promise,
+      gateDisplay: (index) => (index === 0 ? picker.promise : undefined),
+      // A browser refuses a second picker that no click asked for.
+      displayError: (index) =>
+        index > 0
+          ? new DOMException("Kein Klick", "InvalidStateError")
+          : undefined,
+    });
+    joinVoice({ serverId: "srv", channelId: "voice", channelName: "Voice" });
+    toggleGoLive();
+    expect(env.getDisplayMediaCalls()).toBe(1);
+    ticket.resolve();
+    await vi.waitFor(() => expect(env.peers[0]?.audio).toBeTruthy());
+    await new Promise((resolve) => setTimeout(resolve, 0));
+    expect(env.getDisplayMediaCalls()).toBe(1);
+    expect(useVoice.getState().live).toBe(true);
+    expect(liveClaimFrames(env.sent)).toEqual(["p"]);
+
+    // The source the user picks is the one that goes live.
+    picker.resolve();
+    await vi.waitFor(() =>
+      expect(env.peers[0]!.sender("l")?.track).toBeTruthy(),
+    );
+    const stream = useVoice.getState().localLive!;
+    expect(streamStopped(stream)).toBe(false);
+    expect(env.peers[0]!.sender("l")?.track).toBe(stream.getVideoTracks()[0]);
+    expect(env.getDisplayMediaCalls()).toBe(1);
+    expect(liveClaimFrames(env.sent)).toEqual(["p"]);
+    expect(useVoiceRoster.getState().live.srv?.voice).toBe("u-self");
+    expect(env.errors).toHaveLength(0);
+  });
+
+  it("captures camera and share once when both start while the seat is still connecting", async () => {
+    const ticket = deferred();
+    const prompt = deferred();
+    const picker = deferred();
+    const env = install({
+      gateTicket: () => ticket.promise,
+      gateMedia: (_index, constraints) =>
+        constraints.video ? prompt.promise : undefined,
+      gateDisplay: () => picker.promise,
+    });
+    joinVoice({ serverId: "srv", channelId: "voice", channelName: "Voice" });
+    toggleCamera();
+    toggleShare();
+    ticket.resolve();
+    await vi.waitFor(() => expect(env.peers[0]?.audio).toBeTruthy());
+    await new Promise((resolve) => setTimeout(resolve, 0));
+    // Camera and microphone; the share picker only once.
+    expect(env.getUserMediaCalls()).toBe(2);
+    expect(env.getDisplayMediaCalls()).toBe(1);
+
+    prompt.resolve();
+    picker.resolve();
+    await vi.waitFor(() => {
+      expect(env.peers[0]!.sender("v")?.track).toBeTruthy();
+      expect(env.peers[0]!.sender("s")?.track).toBeTruthy();
+    });
+    expect(streamStopped(useVoice.getState().localCamera)).toBe(false);
+    expect(
+      trackStopped(useVoice.getState().localScreen?.getVideoTracks()[0]),
+    ).toBe(false);
+    expect(env.getUserMediaCalls()).toBe(2);
+    expect(env.getDisplayMediaCalls()).toBe(1);
+    expect(env.errors).toHaveLength(0);
+  });
+
+  it("does not reopen a picker cancelled while the seat finished connecting", async () => {
+    const ticket = deferred();
+    const picker = deferred();
+    const publish = deferred();
+    const env = install({
+      gateTicket: () => ticket.promise,
+      gateDisplay: () => picker.promise,
+      displayError: () =>
+        new DOMException("Freigabe abgebrochen", "NotAllowedError"),
+      holdPublish: publish.promise,
+    });
+    joinVoice({ serverId: "srv", channelId: "voice", channelName: "Voice" });
+    toggleCamera();
+    toggleGoLive();
+    await vi.waitFor(() =>
+      expect(useVoice.getState().localCamera).toBeTruthy(),
+    );
+    ticket.resolve();
+    // The connect is past its last look at the buttons: the camera publishes.
+    await vi.waitFor(() =>
+      expect(
+        env.peers[0]?.publicationInputs.some((input) => input.kind === "v"),
+      ).toBe(true),
+    );
+    picker.resolve();
+    await vi.waitFor(() => expect(useVoice.getState().live).toBe(false));
+    expect(liveClaimFrames(env.sent)).toEqual(["p", "u"]);
+
+    publish.resolve();
+    await vi.waitFor(() =>
+      expect(env.peers[0]!.sender("v")?.track).toBeTruthy(),
+    );
+    await new Promise((resolve) => setTimeout(resolve, 0));
+    expect(env.getDisplayMediaCalls()).toBe(1);
+    expect(liveClaimFrames(env.sent)).toEqual(["p", "u"]);
+    expect(useVoice.getState().live).toBe(false);
+    expect(useVoice.getState().localLive).toBeNull();
+    expect(env.errors).toHaveLength(0);
+  });
+
+  it.each([
+    ["camera", "v"],
+    ["screen share", "s"],
+    ["Go Live", "l"],
+  ] as const)(
+    "publishes a %s captured while the seat's connection is still starting",
+    async (_name, kind) => {
+      const start = deferred();
+      const capture = deferred();
+      const env = install({
+        holdStart: () => start.promise,
+        gateMedia: (_index, constraints) =>
+          constraints.video ? capture.promise : undefined,
+        gateDisplay: () => capture.promise,
+      });
+      const local = () => {
+        const state = useVoice.getState();
+        if (kind === "v") return state.localCamera;
+        return kind === "s" ? state.localScreen : state.localLive;
+      };
+      const on = () => {
+        const state = useVoice.getState();
+        if (kind === "v") return state.camera;
+        return kind === "s" ? state.sharing : state.live;
+      };
+      joinVoice({ serverId: "srv", channelId: "voice", channelName: "Voice" });
+      (kind === "v"
+        ? toggleCamera
+        : kind === "s"
+          ? toggleShare
+          : toggleGoLive)();
+      // The seat has its connection, whose device has not loaded yet.
+      await vi.waitFor(() => expect(env.peers).toHaveLength(1));
+      expect(env.peers[0]!.started).toBe(false);
+      capture.resolve();
+      await vi.waitFor(() => expect(local()).toBeTruthy());
+      await new Promise((resolve) => setTimeout(resolve, 0));
+      // Nothing was asked of that connection, and nothing was given up.
+      expect(env.peers[0]!.publicationInputs).toEqual([]);
+      expect(on()).toBe(true);
+      expect(env.errors).toHaveLength(0);
+
+      start.resolve();
+      await vi.waitFor(() =>
+        expect(env.peers[0]!.sender(kind)?.track).toBeTruthy(),
+      );
+      const stream = local()!;
+      expect(env.peers[0]!.sender(kind)?.track).toBe(
+        stream.getVideoTracks()[0],
+      );
+      expect(trackStopped(stream.getVideoTracks()[0])).toBe(false);
+      expect(on()).toBe(true);
+      expect(useVoice.getState().participants["u-self"]?.pubs).toContain(kind);
+      expect(env.getDisplayMediaCalls()).toBe(kind === "v" ? 0 : 1);
+      // The camera once, and the microphone.
+      expect(env.getUserMediaCalls()).toBe(kind === "v" ? 2 : 1);
+      if (kind === "l") expect(liveClaimFrames(env.sent)).toEqual(["p"]);
+      expect(env.errors).toHaveLength(0);
+    },
+  );
 
   it("matches watch events by server and channel", async () => {
     const { emitSig, peers } = install();
@@ -2111,7 +2621,7 @@ describe("bounded Live lease recovery", () => {
   }
 
   it("retries only live_busy with one retained capture, epoch and nonce, then publishes parent before audio", async () => {
-    useMediaSettings.getState().patch({ shareSourceAudio: true });
+    useMediaSettings.getState().patch({ sourceAudioShare: "on" });
     let attempts = 0;
     const env = await joined({
       produceError: (kind) =>
@@ -2447,6 +2957,277 @@ describe("source and transport continuity", () => {
     for (const key of ["localCamera", "localScreen", "localLive"] as const)
       expect(streamStopped(before[key])).toBe(true);
     expect(trackStopped(mic)).toBe(true);
+  });
+
+  it("leaves a quality change to a reconnecting connection's own start", async () => {
+    const start = deferred();
+    const env = await connected({
+      holdStart: (index) => (index === 1 ? start.promise : undefined),
+    });
+    const mic = env.peers[0]!.audio;
+    env.closeMedia();
+    await vi.waitFor(() => expect(env.peers).toHaveLength(2));
+    // The new connection's device has not loaded: it can publish nothing.
+    useMediaSettings.getState().patch({ economyMode: true, quality: "high" });
+    await new Promise((resolve) => setTimeout(resolve, 0));
+    expect(env.peers[1]!.publicationInputs).toEqual([]);
+    expect(env.errors).toHaveLength(0);
+
+    start.resolve();
+    await vi.waitFor(() => expect(env.peers[1]!.audio).toBe(mic));
+    await vi.waitFor(() =>
+      expect(
+        env.peers[1]!.sender("a")?.getParameters().encodings[0]?.maxBitrate,
+      ).toBe(128_000),
+    );
+    expect(
+      env.peers[1]!.publicationInputs.filter((input) => input.kind === "a"),
+    ).toHaveLength(1);
+    expect(env.errors).toHaveLength(0);
+  });
+
+  it("keeps a Go Live picker and its claim open across media recovery", async () => {
+    const picker = deferred();
+    const late = fakeVideoStream("late-live");
+    const env = await connected({
+      holdDisplay: picker.promise,
+      displayStreamFor: () => late,
+    });
+    toggleGoLive();
+    await vi.waitFor(() =>
+      expect(useVoice.getState().participants["u-self"]?.pubs).toContain("l"),
+    );
+    env.closeMedia();
+    await vi.waitFor(() => expect(env.peers[1]?.audio).toBeTruthy());
+    // The picker is still open: the button stays pressed, the claim stands.
+    expect(useVoice.getState().live).toBe(true);
+    expect(useVoiceRoster.getState().live.srv?.voice).toBe("u-self");
+    expect(liveClaimFrames(env.sent)).toEqual(["p"]);
+    expect(env.peers[1]!.sender("l")).toBeUndefined();
+
+    // What the user picks then goes live on the new connection.
+    picker.resolve();
+    await vi.waitFor(() =>
+      expect(env.peers[1]!.sender("l")?.track).toBe(late.getVideoTracks()[0]),
+    );
+    expect(useVoice.getState().live).toBe(true);
+    expect(useVoice.getState().localLive).toBe(late);
+    expect(streamStopped(late)).toBe(false);
+    expect(liveClaimFrames(env.sent)).toEqual(["p"]);
+    expect(
+      env.peers[1]!.publicationInputs.find((input) => input.kind === "l")?.lc,
+    ).toBe("00000000-0000-0000-0000-000000000001");
+    expect(env.getDisplayMediaCalls()).toBe(1);
+    expect(env.errors).toHaveLength(0);
+    expect(useVoice.getState().status).toBe("joined");
+  });
+
+  it("releases the Live claim when a picker that outlived media recovery is cancelled", async () => {
+    const picker = deferred();
+    const env = await connected({
+      holdDisplay: picker.promise,
+      displayError: () =>
+        new DOMException("Freigabe abgebrochen", "NotAllowedError"),
+    });
+    toggleGoLive();
+    await vi.waitFor(() =>
+      expect(useVoice.getState().participants["u-self"]?.pubs).toContain("l"),
+    );
+    env.closeMedia();
+    await vi.waitFor(() => expect(env.peers[1]?.audio).toBeTruthy());
+    expect(liveClaimFrames(env.sent)).toEqual(["p"]);
+
+    picker.resolve();
+    await vi.waitFor(() => expect(useVoice.getState().live).toBe(false));
+    expect(useVoice.getState().localLive).toBeNull();
+    expect(useVoiceRoster.getState().live.srv?.voice).toBeUndefined();
+    expect(liveClaimFrames(env.sent)).toEqual(["p", "u"]);
+    expect(useVoice.getState().participants["u-self"]?.pubs).not.toContain("l");
+    expect(env.peers[1]!.sender("l")).toBeUndefined();
+    expect(env.errors).toHaveLength(0);
+    expect(useVoice.getState().status).toBe("joined");
+  });
+
+  it.each([
+    ["a running Live", false],
+    ["a Live whose picker is still open", true],
+  ] as const)(
+    "hands the claim of %s back when the reconnected seat gets no media",
+    async (_name, open) => {
+      const picker = deferred();
+      const late = fakeVideoStream("late-live");
+      const env = await connected({
+        holdDisplay: open ? picker.promise : undefined,
+        displayStreamFor: () => late,
+      });
+      const pubs = () => useVoice.getState().participants["u-self"]?.pubs;
+      toggleGoLive();
+      await vi.waitFor(() => expect(pubs()).toContain("l"));
+      if (!open)
+        await vi.waitFor(() => expect(env.peers[0]!.sender("l")).toBeTruthy());
+      env.closeMedia();
+      await vi.waitFor(() => expect(env.peers[1]?.audio).toBeTruthy());
+      if (!open)
+        await vi.waitFor(() => expect(env.peers[1]!.sender("l")).toBeTruthy());
+      expect(useVoice.getState().live).toBe(true);
+      expect(liveClaimFrames(env.sent)).toEqual(["p"]);
+
+      // The recovery is through. Later the server has no seat for the media.
+      env.peers[1]!.setTransportState("send", "connected");
+      env.emitMedia({ op: "err", e: "unavailable" });
+      expect(useVoice.getState().live).toBe(false);
+      expect(useVoiceRoster.getState().live.srv?.voice).toBeUndefined();
+      expect(liveClaimFrames(env.sent)).toEqual(["p", "u"]);
+      expect(pubs()).not.toContain("l");
+      expect(messages(env.errors)).toEqual(["Kein freier Sprachplatz."]);
+
+      // A pick that comes after that starts nothing.
+      picker.resolve();
+      await vi.waitFor(() => expect(streamStopped(late)).toBe(true));
+      expect(useVoice.getState().live).toBe(false);
+      expect(useVoice.getState().localLive).toBeNull();
+      expect(liveClaimFrames(env.sent)).toEqual(["p", "u"]);
+      expect(useVoice.getState().status).toBe("joined");
+    },
+  );
+
+  it.each([
+    ["camera prompt", "v"],
+    ["share picker", "s"],
+  ] as const)(
+    "publishes what a %s answers after media recovery on the new connection",
+    async (_name, kind) => {
+      const answer = deferred();
+      const env = await connected({
+        gateMedia: (_index, constraints) =>
+          constraints.video ? answer.promise : undefined,
+        gateDisplay: () => answer.promise,
+      });
+      const on = () =>
+        kind === "v" ? useVoice.getState().camera : useVoice.getState().sharing;
+      (kind === "v" ? toggleCamera : toggleShare)();
+      await Promise.resolve();
+      env.closeMedia();
+      await vi.waitFor(() => expect(env.peers[1]?.audio).toBeTruthy());
+      // Still asked: the button stays pressed, and nothing is sent yet.
+      expect(on()).toBe(true);
+      expect(env.peers[1]!.sender(kind)).toBeUndefined();
+
+      answer.resolve();
+      await vi.waitFor(() =>
+        expect(env.peers[1]!.sender(kind)?.track).toBeTruthy(),
+      );
+      const stream =
+        kind === "v"
+          ? useVoice.getState().localCamera!
+          : useVoice.getState().localScreen!;
+      expect(env.peers[1]!.sender(kind)?.track).toBe(
+        stream.getVideoTracks()[0],
+      );
+      expect(trackStopped(stream.getVideoTracks()[0])).toBe(false);
+      expect(on()).toBe(true);
+      expect(useVoice.getState().participants["u-self"]?.pubs).toContain(kind);
+      // One prompt or picker, and no second microphone capture.
+      expect(env.getDisplayMediaCalls()).toBe(kind === "v" ? 0 : 1);
+      expect(env.getUserMediaCalls()).toBe(kind === "v" ? 2 : 1);
+      expect(env.errors).toHaveLength(0);
+    },
+  );
+
+  it.each([
+    ["waits for its ticket", "ticket"],
+    ["is still starting", "start"],
+  ] as const)(
+    "hands a share picked while the seat's next connection %s to that connection",
+    async (_name, held) => {
+      const gate = deferred();
+      const picker = deferred();
+      const env = await connected({
+        gateTicket: (index) =>
+          held === "ticket" && index > 0 ? gate.promise : undefined,
+        holdStart: (index) =>
+          held === "start" && index > 0 ? gate.promise : undefined,
+        holdDisplay: picker.promise,
+      });
+      toggleShare();
+      await Promise.resolve();
+      env.closeMedia();
+      // The old connection is gone, the next one cannot publish yet.
+      await vi.waitFor(() =>
+        held === "ticket"
+          ? expect(env.ticketCalls()).toBe(2)
+          : expect(env.peers).toHaveLength(2),
+      );
+      expect(env.peers[0]!.closed).toBe(true);
+      picker.resolve();
+      await vi.waitFor(() =>
+        expect(useVoice.getState().localScreen).toBeTruthy(),
+      );
+      await new Promise((resolve) => setTimeout(resolve, 0));
+      const stream = useVoice.getState().localScreen!;
+      expect(useVoice.getState().sharing).toBe(true);
+      expect(env.peers.flatMap((peer) => peer.publicationInputs)).toEqual(
+        env.peers[0]!.publicationInputs,
+      );
+      expect(env.errors).toHaveLength(0);
+
+      gate.resolve();
+      await vi.waitFor(() =>
+        expect(env.peers[1]?.sender("s")?.track).toBe(
+          stream.getVideoTracks()[0],
+        ),
+      );
+      expect(trackStopped(stream.getVideoTracks()[0])).toBe(false);
+      expect(useVoice.getState().sharing).toBe(true);
+      expect(env.getDisplayMediaCalls()).toBe(1);
+      expect(env.errors).toHaveLength(0);
+    },
+  );
+
+  it("keeps a share whose profile is still being applied when the connection is rebuilt", async () => {
+    const stream = fakeVideoStream("pending-profile");
+    const gate = deferred();
+    const apply = vi.fn(() => gate.promise);
+    stream.getVideoTracks()[0]!.applyConstraints = apply;
+    const env = await connected({ displayStreamFor: () => stream });
+    toggleShare();
+    await vi.waitFor(() => expect(apply).toHaveBeenCalled());
+    env.closeMedia();
+    await vi.waitFor(() => expect(env.peers[1]?.audio).toBeTruthy());
+    expect(streamStopped(stream)).toBe(false);
+    expect(useVoice.getState().sharing).toBe(true);
+
+    gate.resolve();
+    await vi.waitFor(() =>
+      expect(env.peers[1]!.sender("s")?.track).toBe(stream.getVideoTracks()[0]),
+    );
+    expect(useVoice.getState().localScreen).toBe(stream);
+    expect(streamStopped(stream)).toBe(false);
+    expect(env.getDisplayMediaCalls()).toBe(1);
+    expect(env.errors).toHaveLength(0);
+  });
+
+  it("gives up a picker that is still open when the seat is left", async () => {
+    const picker = deferred();
+    const late = fakeVideoStream("late-share");
+    const env = await connected({
+      gateDisplay: (index) => (index === 0 ? picker.promise : undefined),
+      displayStreamFor: () => late,
+    });
+    toggleShare();
+    await Promise.resolve();
+    leaveVoice();
+    joinVoice({ serverId: "srv", channelId: "voice", channelName: "Lounge" });
+    await vi.waitFor(() => expect(env.peers[1]?.audio).toBeTruthy());
+    expect(useVoice.getState().sharing).toBe(false);
+
+    // The answer belongs to the seat that is gone.
+    picker.resolve();
+    await vi.waitFor(() => expect(streamStopped(late)).toBe(true));
+    expect(useVoice.getState().sharing).toBe(false);
+    expect(useVoice.getState().localScreen).toBeNull();
+    expect(env.peers[1]!.sender("s")).toBeUndefined();
+    expect(env.errors).toHaveLength(0);
   });
 
   it("bounds failed ticket retries and reports one failure", async () => {
@@ -2939,7 +3720,7 @@ describe("source and transport continuity", () => {
   it("does not reopen the display picker after rejected capture constraints", async () => {
     useMediaSettings
       .getState()
-      .patch({ screenProfile: "detail", shareSourceAudio: true });
+      .patch({ screenProfile: "detail", sourceAudioShare: "on" });
     const error = new Error("profile rejected");
     error.name = "OverconstrainedError";
     const env = install({ displayError: () => error });
@@ -3046,6 +3827,25 @@ describe("authoritative mediasoup session lifecycle", () => {
     vi.stubGlobal("Audio", Playback);
     return elements;
   }
+  it("joins and publishes without crypto.randomUUID, as on a plain-http origin", async () => {
+    const real = globalThis.crypto;
+    vi.stubGlobal("crypto", {
+      getRandomValues: (bytes: Uint8Array<ArrayBuffer>) =>
+        real.getRandomValues(bytes),
+    });
+    const env = await joined();
+    toggleShare();
+    await vi.waitFor(() => expect(env.peers[0]!.sender("s")).toBeTruthy());
+    const epochs = env.peers[0]!.publicationInputs.map((input) => input.epoch);
+    expect(epochs).toHaveLength(2);
+    for (const epoch of epochs)
+      expect(epoch).toMatch(
+        /^[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/,
+      );
+    expect(new Set(epochs).size).toBe(2);
+    expect(env.errors).toHaveLength(0);
+  });
+
   it("fails closed before ticket creation when Watch has no current Live publisher", () => {
     const env = install();
     useVoiceRoster.setState({ live: {} });
@@ -3307,8 +4107,58 @@ describe("authoritative mediasoup session lifecycle", () => {
     expect(el.srcObject).toBeNull();
     expect(useVoice.getState().playbackBlocked).toBe(false);
   });
+  it("replays call audio when the page is shown again after an interruption", async () => {
+    const elements = playback();
+    let onVisibility: (() => void) | undefined;
+    const page = {
+      visibilityState: "visible",
+      addEventListener: (type: string, listener: () => void) => {
+        if (type === "visibilitychange") onVisibility = listener;
+      },
+      removeEventListener: () => undefined,
+      querySelectorAll: () => [],
+    };
+    vi.stubGlobal("document", page);
+    const env = await joined();
+    toggleSourceWatch("u-bob", "s");
+    const source = env.peers[0]!.receive("u-bob", "sa", fakeStream("source"));
+    const el = elements.find(
+      (candidate) => candidate.srcObject === source.stream,
+    )!;
+    el.play.mockClear();
+    expect(onVisibility).toBeTypeOf("function");
+
+    // A phone call or the lock screen hides the page and pauses the element.
+    page.visibilityState = "hidden";
+    onVisibility!();
+    expect(el.play).not.toHaveBeenCalled();
+    page.visibilityState = "visible";
+    onVisibility!();
+    expect(el.play).toHaveBeenCalledTimes(1);
+    expect(useVoice.getState().playbackBlocked).toBe(false);
+
+    // A browser that wants a gesture first raises the "Ton starten" recovery.
+    el.play.mockRejectedValueOnce(
+      Object.assign(new Error("gesture"), { name: "NotAllowedError" }),
+    );
+    onVisibility!();
+    await vi.waitFor(() =>
+      expect(useVoice.getState().playbackBlocked).toBe(true),
+    );
+    retryPlayback();
+    await vi.waitFor(() =>
+      expect(useVoice.getState().playbackBlocked).toBe(false),
+    );
+
+    leaveVoice();
+    el.play.mockClear();
+    onVisibility!();
+    expect(el.play).not.toHaveBeenCalled();
+    expect(useVoice.getState().playbackBlocked).toBe(false);
+  });
+
   it("ends only source audio first and then stops both captures when the parent video ends", async () => {
-    useMediaSettings.getState().patch({ shareSourceAudio: true });
+    useMediaSettings.getState().patch({ sourceAudioShare: "on" });
     const env = await joined();
     toggleShare();
     await vi.waitFor(() => expect(env.peers[0]?.sender("sa")).toBeTruthy());
@@ -3367,7 +4217,7 @@ describe("display-source audio", () => {
     async (kind) => {
       useMediaSettings
         .getState()
-        .patch({ shareSourceAudio: true, quality: "phone" });
+        .patch({ sourceAudioShare: "on", quality: "phone" });
       const elements = audioElements();
       const env = await joined();
       const mic = env.streams[0]?.getAudioTracks()[0];
@@ -3432,7 +4282,7 @@ describe("display-source audio", () => {
   );
 
   it("continues video with an unavailable-audio status when the browser supplies no audio", async () => {
-    useMediaSettings.getState().patch({ shareSourceAudio: true });
+    useMediaSettings.getState().patch({ sourceAudioShare: "on" });
     const env = await joined({
       displayStreamFor: () => fakeVideoStream("without-audio"),
     });
@@ -3451,7 +4301,7 @@ describe("display-source audio", () => {
 
   it("preserves capture, subscriptions and source preferences on media reconnect without a new picker", async () => {
     useMediaSettings.getState().patch({
-      shareSourceAudio: true,
+      sourceAudioShare: "on",
       sourceAudioVolume: 0.4,
       sourceAudioMuted: true,
     });
@@ -3482,14 +4332,14 @@ describe("display-source audio", () => {
       env.mediaSent.filter((frame) => frame.op === "w" && frame.on),
     ).toHaveLength(2);
     expect(useMediaSettings.getState()).toMatchObject({
-      shareSourceAudio: true,
+      sourceAudioShare: "on",
       sourceAudioVolume: 0.4,
       sourceAudioMuted: true,
     });
   });
 
   it("cleans both source tracks after rejected source-audio production while keeping the microphone", async () => {
-    useMediaSettings.getState().patch({ shareSourceAudio: true });
+    useMediaSettings.getState().patch({ sourceAudioShare: "on" });
     const capture = fakeVideoStream("rejected-source", true);
     const env = await joined({
       displayStreamFor: () => capture,
@@ -3515,7 +4365,7 @@ describe("display-source audio", () => {
   it("falls back on the granted display track without reopening capture", async () => {
     useMediaSettings
       .getState()
-      .patch({ screenProfile: "detail", shareSourceAudio: true });
+      .patch({ screenProfile: "detail", sourceAudioShare: "on" });
     const stream = fakeVideoStream("fallback", true);
     const rejection = new Error("size");
     rejection.name = "OverconstrainedError";
@@ -3539,7 +4389,7 @@ describe("display-source audio", () => {
   });
 
   it("stops a granted video/audio capture immediately when leaving during profile application", async () => {
-    useMediaSettings.getState().patch({ shareSourceAudio: true });
+    useMediaSettings.getState().patch({ sourceAudioShare: "on" });
     const stream = fakeVideoStream("pending-profile", true);
     const gate = deferred();
     const apply = vi.fn(() => gate.promise);
@@ -3555,6 +4405,744 @@ describe("display-source audio", () => {
     expect(useVoice.getState().localScreen).toBeNull();
     expect(
       env.mediaSent.some((frame) => frame.op === "produce" && frame.k === "sa"),
+    ).toBe(false);
+  });
+
+  /** "p" and "u" the gateway heard for one source kind. */
+  const announced = (env: ReturnType<typeof install>, kind: TrackKind) =>
+    env.sent.flatMap((frame) =>
+      frame.op === "sig" && "k" in frame && frame.k === kind ? [frame.t] : [],
+    );
+
+  it.each(["s", "l"] as const)(
+    "asks the browser for no %s sound while the user has not chosen it",
+    async (kind) => {
+      const env = await joined({
+        displayStreamFor: (_index, constraints) =>
+          fakeVideoStream("as-asked", Boolean(constraints.audio)),
+      });
+      (kind === "s" ? toggleShare : toggleGoLive)();
+      await vi.waitFor(() => expect(env.peers[0]?.sender(kind)).toBeTruthy());
+      expect(env.lastDisplayMedia()?.audio).toBe(false);
+      expect(useVoice.getState().sourceAudio[kind]).toBe("off");
+      expect(env.peers[0]?.sender(kind === "s" ? "sa" : "la")).toBeUndefined();
+    },
+  );
+
+  it("takes the sound out of a running share at once; a browser adds none without a new picker", async () => {
+    useMediaSettings.getState().patch({ sourceAudioShare: "on" });
+    const env = await joined();
+    toggleShare();
+    await vi.waitFor(() => expect(env.peers[0]?.sender("sa")).toBeTruthy());
+    const capture = useVoice.getState().localScreen!;
+    const video = env.peers[0]!.sender("s");
+
+    useMediaSettings.getState().patch({ sourceAudioShare: "off" });
+    await vi.waitFor(() => expect(env.peers[0]?.sender("sa")).toBeUndefined());
+    expect(trackStopped(capture.getAudioTracks()[0])).toBe(true);
+    expect(trackStopped(capture.getVideoTracks()[0])).toBe(false);
+    // Switched off is not "ended": no notice about lost sound.
+    expect(useVoice.getState().sourceAudio.s).toBe("off");
+    expect(useVoice.getState().localScreen).toBe(capture);
+    expect(env.peers[0]!.sender("s")).toBe(video);
+    expect(announced(env, "sa")).toEqual(["p", "u"]);
+    expect(announced(env, "s")).toEqual(["p"]);
+
+    useMediaSettings.getState().patch({ sourceAudioShare: "on" });
+    await Promise.resolve();
+    await Promise.resolve();
+    expect(env.getDisplayMediaCalls()).toBe(1);
+    expect(useVoice.getState().sourceAudio.s).toBe("off");
+    expect(env.peers[0]?.sender("sa")).toBeUndefined();
+    expect(env.errors).toEqual([]);
+  });
+
+  it("forgets that the browser gave no sound once the user switches it off", async () => {
+    useMediaSettings.getState().patch({ sourceAudioShare: "on" });
+    await joined({ displayStreamFor: () => fakeVideoStream("without-audio") });
+    toggleShare();
+    await vi.waitFor(() =>
+      expect(useVoice.getState().sourceAudio.s).toBe("unavailable"),
+    );
+    useMediaSettings.getState().patch({ sourceAudioShare: "off" });
+    expect(useVoice.getState().sourceAudio.s).toBe("off");
+    expect(useVoice.getState().sharing).toBe(true);
+  });
+
+  it("does not announce sound that was switched off while its publish was under way", async () => {
+    useMediaSettings.getState().patch({ sourceAudioShare: "on" });
+    const answer = deferred();
+    const env = await joined({
+      gateProduce: (kind) => (kind === "sa" ? answer.promise : undefined),
+    });
+    toggleShare();
+    await vi.waitFor(() =>
+      expect(
+        env.mediaSent.some(
+          (frame) => frame.op === "produce" && frame.k === "sa",
+        ),
+      ).toBe(true),
+    );
+    const capture = useVoice.getState().localScreen!;
+    useMediaSettings.getState().patch({ sourceAudioShare: "off" });
+    expect(trackStopped(capture.getAudioTracks()[0])).toBe(true);
+    expect(announced(env, "sa")).toEqual(["u"]);
+
+    // The producer that arrives after all is closed, not announced.
+    answer.resolve();
+    await vi.waitFor(() =>
+      expect(env.mediaSent.some((frame) => frame.op === "closeProducer")).toBe(
+        true,
+      ),
+    );
+    expect(env.peers[0]?.sender("sa")).toBeUndefined();
+    expect(announced(env, "sa")).toEqual(["u"]);
+    expect(useVoice.getState().participants["u-self"]?.pubs).toEqual([
+      "a",
+      "s",
+    ]);
+    expect(useVoice.getState().sourceAudio.s).toBe("off");
+    // The video is not part of it.
+    expect(env.peers[0]?.sender("s")).toBeTruthy();
+    expect(trackStopped(capture.getVideoTracks()[0])).toBe(false);
+    expect(useVoice.getState().sharing).toBe(true);
+    expect(env.errors).toEqual([]);
+  });
+
+  it("shares no sound that was switched off while the picker was open", async () => {
+    useMediaSettings.getState().patch({ sourceAudioShare: "on" });
+    const picker = deferred();
+    const stream = fakeVideoStream("picked-late", true);
+    const env = await joined({
+      holdDisplay: picker.promise,
+      displayStreamFor: () => stream,
+    });
+    toggleShare();
+    await Promise.resolve();
+    useMediaSettings.getState().patch({ sourceAudioShare: "off" });
+    picker.resolve();
+    await vi.waitFor(() => expect(env.peers[0]?.sender("s")).toBeTruthy());
+    expect(env.lastDisplayMedia()?.audio).toBeTruthy();
+    expect(trackStopped(stream.getAudioTracks()[0])).toBe(true);
+    expect(trackStopped(stream.getVideoTracks()[0])).toBe(false);
+    expect(useVoice.getState().sourceAudio.s).toBe("off");
+    expect(
+      env.mediaSent.some((frame) => frame.op === "produce" && frame.k === "sa"),
+    ).toBe(false);
+  });
+});
+
+describe("stream sound in the desktop app", () => {
+  afterEach(() => {
+    resetVoiceForTests();
+    resetVoiceRoster();
+    resetMediaSettingsForTests();
+    setNativeBridgeForTests(undefined);
+    vi.restoreAllMocks();
+    vi.useRealTimers();
+    trackSeq = 0;
+  });
+
+  /** Released 0.5.x: no feature list, and "every application" includes the
+   * app's own playout. */
+  const APP_05 = { abi: 7, version: "0.5.2", platform: "linux" };
+  /** A v0.6 build whose core still captures itself. */
+  const APP_06_CAPTURES_ITSELF = {
+    abi: 8,
+    version: "0.6.0",
+    platform: "linux",
+    features: ["screen", "camera", "app-audio", "video-frames"],
+  };
+  const APP_06 = {
+    ...APP_06_CAPTURES_ITSELF,
+    features: [...APP_06_CAPTURES_ITSELF.features, "app-audio-excludes-self"],
+  };
+
+  /** The desktop app as the session meets it: `media_info`, the desktop's
+   * picker and application sound. Every other command answers null. */
+  function desktopApp(info: Record<string, unknown>) {
+    const calls: Array<{ command: string; args: Record<string, unknown> }> = [];
+    const sounds: number[] = [];
+    let next = 0;
+    const app = {
+      /** The core's reason for refusing a screen capture outright. */
+      screenError: null as string | null,
+      /** What the desktop's picker has answered so far. */
+      screen: "live" as "pending" | "live" | "cancelled" | "failed",
+      /** Answers given before `screen`, oldest first. */
+      screenSteps: [] as Array<"pending" | "live" | "cancelled" | "failed">,
+      /** The core's reason for giving no application sound. */
+      soundError: null as string | null,
+      /** Playback streams the chosen application has. */
+      streams: 1,
+      /** Application-sound sources handed out, oldest first. */
+      sounds,
+      called: (command: string) =>
+        calls.filter((call) => call.command === command).map((c) => c.args),
+    };
+    setNativeBridgeForTests({
+      async invoke<T>(command: string, args: Record<string, unknown> = {}) {
+        calls.push({ command, args });
+        const answer = (): unknown => {
+          switch (command) {
+            case "media_info":
+              return info;
+            case "media_source_screen":
+              // The app rejects with the core's message as a plain string.
+              if (app.screenError) return Promise.reject(app.screenError);
+              return ++next;
+            case "media_source_microphone":
+              return ++next;
+            case "media_source_app_audio":
+              if (app.soundError) return Promise.reject(app.soundError);
+              sounds.push(++next);
+              return next;
+            case "media_source_state":
+              if (sounds.includes(args.source as number))
+                return { state: "live", streams: app.streams, frames: 0 };
+              {
+                const screen = app.screenSteps.shift() ?? app.screen;
+                return screen === "live"
+                  ? { state: "live", width: 1920, height: 1080 }
+                  : { state: screen };
+              }
+            default:
+              return null;
+          }
+        };
+        return (await answer()) as T;
+      },
+      async channel() {
+        return null;
+      },
+    });
+    return app;
+  }
+
+  async function joined(
+    info: Record<string, unknown>,
+    options?: Parameters<typeof install>[0],
+  ) {
+    const app = desktopApp(info);
+    const env = install({ ...options, nativeDisplay: true });
+    joinVoice({ serverId: "srv", channelId: "voice", channelName: "Lounge" });
+    await vi.waitFor(() => expect(env.peers[0]?.audio).toBeTruthy());
+    return { env, app };
+  }
+
+  const soundOf = (kind: "s" | "l") => (kind === "s" ? "sa" : "la");
+  const produced = (env: ReturnType<typeof install>, kind: TrackKind) =>
+    env.mediaSent.filter((frame) => frame.op === "produce" && frame.k === kind);
+
+  it.each([
+    ["0.5.x app, nothing chosen", APP_05, "auto", "", null],
+    ["0.5.x app, switched on", APP_05, "on", "", ""],
+    // 0.5.x named applications by their name; the fixed core still takes it.
+    ["0.5.x app, one application", APP_05, "on", "Firefox", "Firefox"],
+    [
+      "v0.6 app that captures itself, nothing chosen",
+      APP_06_CAPTURES_ITSELF,
+      "auto",
+      "",
+      null,
+    ],
+    ["v0.6 app, nothing chosen", APP_06, "auto", "", ""],
+    ["v0.6 app, an old application name", APP_06, "auto", "Spotify", "Spotify"],
+    ["v0.6 app, one application", APP_06, "on", "spotify", "spotify"],
+    ["v0.6 app, switched off", APP_06, "off", "", null],
+  ] as const)(
+    "%s: what screen share and Go Live ask the app for",
+    async (_name, info, sourceAudioShare, sourceAudioApp, expected) => {
+      useMediaSettings.getState().patch({ sourceAudioShare, sourceAudioApp });
+      const { env, app } = await joined(info);
+      for (const kind of ["s", "l"] as const) {
+        (kind === "s" ? toggleShare : toggleGoLive)();
+        await vi.waitFor(() => expect(env.peers[0]?.sender(kind)).toBeTruthy());
+        if (expected !== null)
+          await vi.waitFor(() =>
+            expect(env.peers[0]?.sender(soundOf(kind))).toBeTruthy(),
+          );
+      }
+      // One picker each, and never a browser capture inside the app.
+      expect(app.called("media_source_screen")).toHaveLength(2);
+      expect(env.getDisplayMediaCalls()).toBe(0);
+      expect(app.called("media_source_app_audio")).toEqual(
+        expected === null
+          ? []
+          : [{ options: { app: expected } }, { options: { app: expected } }],
+      );
+      for (const kind of ["s", "l"] as const) {
+        const video = env.peers[0]!.sender(kind)!;
+        const sound = env.peers[0]!.sender(soundOf(kind));
+        const capture =
+          kind === "s"
+            ? useVoice.getState().localScreen!
+            : useVoice.getState().localLive!;
+        if (expected === null) {
+          expect(sound).toBeUndefined();
+          expect(capture.getAudioTracks()).toEqual([]);
+          expect(useVoice.getState().sourceAudio[kind]).toBe("off");
+          continue;
+        }
+        expect(sound?.track).toBe(capture.getAudioTracks()[0]);
+        expect(produced(env, soundOf(kind))).toEqual([
+          expect.objectContaining({
+            parent: video.producerId,
+            epoch: video.epoch,
+          }),
+        ]);
+        expect(useVoice.getState().sourceAudio[kind]).toBe("sharing");
+      }
+      expect(useVoice.getState().sourceAudioNote).toEqual({ s: null, l: null });
+      expect(env.errors).toEqual([]);
+    },
+  );
+
+  it("says why the app could not capture the screen, and nothing when its picker was closed", async () => {
+    const { env, app } = await joined(APP_06);
+    // No Wayland session with PipeWire: the core refuses with its reason.
+    app.screenError = "screen capture needs a Wayland session with PipeWire";
+    toggleShare();
+    await vi.waitFor(() => expect(useVoice.getState().sharing).toBe(false));
+    expect(messages(env.errors)).toEqual([
+      "Die Bildschirmaufnahme konnte nicht gestartet werden (screen capture needs a Wayland session with PipeWire).",
+    ]);
+
+    // The portal ran into an error of its own, after the capture was asked.
+    app.screenError = null;
+    app.screen = "failed";
+    toggleGoLive();
+    await vi.waitFor(() => expect(useVoice.getState().live).toBe(false));
+    expect(messages(env.errors).slice(1)).toEqual([CAPTURE_FAILED]);
+    expect(liveClaimFrames(env.sent)).toEqual(["p", "u"]);
+
+    // The user closed the portal's dialog.
+    app.screen = "cancelled";
+    toggleShare();
+    await vi.waitFor(() => expect(useVoice.getState().sharing).toBe(false));
+    toggleGoLive();
+    await vi.waitFor(() => expect(useVoice.getState().live).toBe(false));
+    expect(env.errors).toHaveLength(2);
+
+    // Hyprland's portal answers a closed dialog with an error: the picker was
+    // open, so that is the user's answer too.
+    app.screenSteps = ["pending"];
+    app.screen = "failed";
+    toggleShare();
+    await vi.waitFor(() => expect(useVoice.getState().sharing).toBe(false));
+    expect(app.called("media_source_screen")).toHaveLength(5);
+    expect(env.errors).toHaveLength(2);
+
+    // Neither a share nor sound for one was left behind.
+    expect(app.called("media_source_screen")).toHaveLength(5);
+    expect(app.called("media_source_close")).toHaveLength(4);
+    expect(app.called("media_source_app_audio")).toEqual([]);
+    expect(env.peers[0]!.sender("s")).toBeUndefined();
+    expect(env.peers[0]!.sender("l")).toBeUndefined();
+    expect(useVoice.getState().status).toBe("joined");
+  });
+
+  it("keeps the desktop's picker open across media recovery, and the share its sound", async () => {
+    const { env, app } = await joined(APP_06);
+    app.screen = "pending";
+    toggleShare();
+    await vi.waitFor(() =>
+      expect(app.called("media_source_screen")).toHaveLength(1),
+    );
+    env.closeMedia();
+    await vi.waitFor(() => expect(env.peers[1]?.audio).toBeTruthy());
+    expect(useVoice.getState().sharing).toBe(true);
+    expect(app.called("media_source_close")).toEqual([]);
+
+    // The user is done with the portal's dialog only now.
+    app.screen = "live";
+    await vi.waitFor(() => expect(env.peers[1]?.sender("sa")).toBeTruthy(), {
+      timeout: 2000,
+    });
+    const capture = useVoice.getState().localScreen!;
+    expect(env.peers[1]!.sender("s")?.track).toBe(capture.getVideoTracks()[0]);
+    expect(env.peers[1]!.sender("sa")?.track).toBe(capture.getAudioTracks()[0]);
+    expect(useVoice.getState().sharing).toBe(true);
+    expect(useVoice.getState().sourceAudio.s).toBe("sharing");
+    // One picker, one sound capture, and neither was given back.
+    expect(app.called("media_source_screen")).toHaveLength(1);
+    expect(app.called("media_source_app_audio")).toEqual([
+      { options: { app: "" } },
+    ]);
+    expect(app.called("media_source_close")).toEqual([]);
+    expect(env.errors).toEqual([]);
+  });
+
+  it("adds and removes application sound while the share runs, without a picker or a new video", async () => {
+    useMediaSettings.getState().patch({ sourceAudioShare: "off" });
+    const { env, app } = await joined(APP_06);
+    toggleShare();
+    await vi.waitFor(() => expect(env.peers[0]?.sender("s")).toBeTruthy());
+    const capture = useVoice.getState().localScreen!;
+    const video = env.peers[0]!.sender("s")!;
+    expect(app.called("media_source_app_audio")).toEqual([]);
+
+    useMediaSettings.getState().patch({ sourceAudioShare: "on" });
+    await vi.waitFor(() => expect(env.peers[0]?.sender("sa")).toBeTruthy());
+    expect(app.called("media_source_app_audio")).toEqual([
+      { options: { app: "" } },
+    ]);
+    expect(app.called("media_source_screen")).toHaveLength(1);
+    const [sound] = capture.getAudioTracks();
+    expect(env.peers[0]!.sender("sa")?.track).toBe(sound);
+    expect((sound as unknown as { contentHint: string }).contentHint).toBe(
+      "music",
+    );
+    expect(produced(env, "sa")).toEqual([
+      expect.objectContaining({
+        parent: video.producerId,
+        epoch: video.epoch,
+      }),
+    ]);
+    await vi.waitFor(() =>
+      expect(useVoice.getState().participants["u-self"]?.pubs).toContain("sa"),
+    );
+    expect(useVoice.getState().sourceAudio.s).toBe("sharing");
+
+    useMediaSettings.getState().patch({ sourceAudioShare: "off" });
+    await vi.waitFor(() => expect(env.peers[0]?.sender("sa")).toBeUndefined());
+    expect(sound.readyState).toBe("ended");
+    expect(app.called("media_source_close")).toEqual([
+      { source: app.sounds[0] },
+    ]);
+    expect(useVoice.getState().sourceAudio.s).toBe("off");
+    expect(useVoice.getState().participants["u-self"]?.pubs).not.toContain(
+      "sa",
+    );
+
+    // The video never moved.
+    expect(useVoice.getState().localScreen).toBe(capture);
+    expect(capture.getVideoTracks()[0]!.readyState).toBe("live");
+    expect(env.peers[0]!.sender("s")).toBe(video);
+    expect(produced(env, "s")).toHaveLength(1);
+    expect(app.called("media_source_screen")).toHaveLength(1);
+    expect(env.errors).toEqual([]);
+  });
+
+  it("takes the sound out of a running share when the switch keeps no off", async () => {
+    useMediaSettings.getState().patch({ sourceAudioShare: "on" });
+    const { env, app } = await joined(APP_05);
+    toggleShare();
+    await vi.waitFor(() => expect(env.peers[0]?.sender("sa")).toBeTruthy());
+    const video = env.peers[0]!.sender("s");
+    // Off is what this app does unasked: the switch stores no choice.
+    expect(sourceAudioChoice(false)).toBe("auto");
+    useMediaSettings
+      .getState()
+      .patch({ sourceAudioShare: sourceAudioChoice(false) });
+    await vi.waitFor(() => expect(env.peers[0]?.sender("sa")).toBeUndefined());
+    expect(app.called("media_source_close")).toEqual([
+      { source: app.sounds[0] },
+    ]);
+    expect(useVoice.getState().sourceAudio.s).toBe("off");
+    expect(env.peers[0]!.sender("s")).toBe(video);
+  });
+
+  it("adds application sound to a running Go Live under its claim", async () => {
+    useMediaSettings.getState().patch({ sourceAudioShare: "off" });
+    const { env, app } = await joined(APP_06);
+    toggleGoLive();
+    await vi.waitFor(() => expect(env.peers[0]?.sender("l")).toBeTruthy());
+    const video = env.peers[0]!.sender("l")!;
+    useMediaSettings.getState().patch({ sourceAudioShare: "on" });
+    await vi.waitFor(() => expect(env.peers[0]?.sender("la")).toBeTruthy());
+    expect(app.called("media_source_screen")).toHaveLength(1);
+    expect(produced(env, "la")).toEqual([
+      expect.objectContaining({
+        parent: video.producerId,
+        epoch: video.epoch,
+        lc: "00000000-0000-0000-0000-000000000001",
+      }),
+    ]);
+    expect(useVoice.getState().sourceAudio).toEqual({ s: "off", l: "sharing" });
+    expect(liveClaimFrames(env.sent)).toEqual(["p"]);
+  });
+
+  it("changes the application of a running share to the one just chosen", async () => {
+    const { env, app } = await joined(APP_06);
+    toggleShare();
+    await vi.waitFor(() => expect(env.peers[0]?.sender("sa")).toBeTruthy());
+    const capture = useVoice.getState().localScreen!;
+    const [first] = capture.getAudioTracks();
+
+    useMediaSettings.getState().patch({ sourceAudioApp: "spotify" });
+    await vi.waitFor(() =>
+      expect(app.called("media_source_app_audio")).toEqual([
+        { options: { app: "" } },
+        { options: { app: "spotify" } },
+      ]),
+    );
+    await vi.waitFor(() => {
+      const sender = env.peers[0]?.sender("sa");
+      expect(sender).toBeTruthy();
+      expect(sender!.track).not.toBe(first);
+    });
+    expect(first.readyState).toBe("ended");
+    expect(app.called("media_source_close")).toEqual([
+      { source: app.sounds[0] },
+    ]);
+    // The share holds the new sound only; the old track is not kept around.
+    expect(capture.getAudioTracks()).toEqual([
+      env.peers[0]!.sender("sa")!.track,
+    ]);
+    expect(useVoice.getState().sourceAudio.s).toBe("sharing");
+    expect(app.called("media_source_screen")).toHaveLength(1);
+  });
+
+  it("says why the app captured no sound and tries again when asked", async () => {
+    const warn = vi.spyOn(console, "warn").mockImplementation(() => undefined);
+    const { env, app } = await joined(APP_06);
+    app.soundError = "cannot connect to PipeWire";
+    toggleShare();
+    await vi.waitFor(() => expect(env.peers[0]?.sender("s")).toBeTruthy());
+    expect(useVoice.getState().sourceAudio.s).toBe("unavailable");
+    expect(useVoice.getState().sourceAudioNote.s).toEqual({
+      failed: "cannot connect to PipeWire",
+    });
+    expect(useVoice.getState().sharing).toBe(true);
+    expect(env.peers[0]?.sender("sa")).toBeUndefined();
+    // Reported next to the control, not as a passing toast.
+    expect(env.errors).toEqual([]);
+    expect(warn).toHaveBeenCalledWith(
+      "[gelabber:voice]",
+      expect.objectContaining({
+        step: "source-audio",
+        detail: "cannot connect to PipeWire",
+      }),
+    );
+
+    useMediaSettings.getState().patch({ sourceAudioShare: "off" });
+    expect(useVoice.getState().sourceAudio.s).toBe("off");
+    expect(useVoice.getState().sourceAudioNote.s).toBeNull();
+
+    // Still failing: the reason comes back with the next attempt.
+    useMediaSettings.getState().patch({ sourceAudioShare: "on" });
+    await vi.waitFor(() =>
+      expect(useVoice.getState().sourceAudio.s).toBe("unavailable"),
+    );
+    expect(useVoice.getState().sourceAudioNote.s).toEqual({
+      failed: "cannot connect to PipeWire",
+    });
+
+    app.soundError = null;
+    useMediaSettings.getState().patch({ sourceAudioShare: "off" });
+    useMediaSettings.getState().patch({ sourceAudioShare: "on" });
+    await vi.waitFor(() => expect(env.peers[0]?.sender("sa")).toBeTruthy());
+    expect(useVoice.getState().sourceAudio.s).toBe("sharing");
+    expect(useVoice.getState().sourceAudioNote.s).toBeNull();
+    expect(app.called("media_source_screen")).toHaveLength(1);
+  });
+
+  it("keeps the video when sound added to a running share is refused", async () => {
+    vi.spyOn(console, "warn").mockImplementation(() => undefined);
+    useMediaSettings.getState().patch({ sourceAudioShare: "off" });
+    const { env, app } = await joined(APP_06, {
+      produceError: (kind) =>
+        kind === "sa" ? new Error("negotiation_failed") : undefined,
+    });
+    toggleShare();
+    await vi.waitFor(() => expect(env.peers[0]?.sender("s")).toBeTruthy());
+    const capture = useVoice.getState().localScreen!;
+    useMediaSettings.getState().patch({ sourceAudioShare: "on" });
+    await vi.waitFor(() =>
+      expect(useVoice.getState().sourceAudio.s).toBe("unavailable"),
+    );
+    expect(useVoice.getState().sourceAudioNote.s).toEqual({
+      failed: expect.stringContaining("negotiation_failed"),
+    });
+    expect(useVoice.getState().localScreen).toBe(capture);
+    expect(capture.getVideoTracks()[0]!.readyState).toBe("live");
+    expect(env.peers[0]?.sender("s")).toBeTruthy();
+    expect(env.peers[0]?.sender("sa")).toBeUndefined();
+    // The capture it started for nothing is released.
+    expect(app.called("media_source_close")).toEqual([
+      { source: app.sounds[0] },
+    ]);
+    expect(
+      capture.getAudioTracks().every((track) => track.readyState === "ended"),
+    ).toBe(true);
+  });
+
+  it.each([
+    ["s", "before its publish"],
+    ["s", "during its publish"],
+    ["l", "before its publish"],
+    ["l", "during its publish"],
+  ] as const)(
+    "keeps %s sound switched on as the media connection drops %s, and sends it with the new one",
+    async (kind, moment) => {
+      const warn = vi
+        .spyOn(console, "warn")
+        .mockImplementation(() => undefined);
+      useMediaSettings.getState().patch({ sourceAudioShare: "off" });
+      const lost = deferred();
+      let held = false;
+      const { env, app } = await joined(APP_06, {
+        // The first answer never comes: the socket dies under it.
+        gateProduce: (asked) => {
+          if (moment !== "during its publish" || held) return undefined;
+          if (asked !== soundOf(kind)) return undefined;
+          held = true;
+          return lost.promise;
+        },
+      });
+      (kind === "s" ? toggleShare : toggleGoLive)();
+      await vi.waitFor(() => expect(env.peers[0]?.sender(kind)).toBeTruthy());
+      const capture =
+        kind === "s"
+          ? useVoice.getState().localScreen!
+          : useVoice.getState().localLive!;
+
+      // The seat holds the dead connection until its first rebuild.
+      if (moment === "before its publish") env.closeMedia();
+      useMediaSettings.getState().patch({ sourceAudioShare: "on" });
+      await vi.waitFor(() =>
+        expect(
+          env.peers[0]!.publicationInputs.some(
+            (input) => input.kind === soundOf(kind),
+          ),
+        ).toBe(true),
+      );
+      if (moment === "during its publish") {
+        expect(produced(env, soundOf(kind))).toHaveLength(1);
+        env.closeMedia();
+      }
+
+      await vi.waitFor(() =>
+        expect(env.peers[1]?.sender(soundOf(kind))).toBeTruthy(),
+      );
+      const [sound] = capture.getAudioTracks();
+      expect(sound.readyState).toBe("live");
+      expect(env.peers[1]!.sender(soundOf(kind))!.track).toBe(sound);
+      expect(produced(env, soundOf(kind)).at(-1)).toMatchObject({
+        parent: env.peers[1]!.sender(kind)!.producerId,
+      });
+      await vi.waitFor(() =>
+        expect(useVoice.getState().participants["u-self"]?.pubs).toContain(
+          soundOf(kind),
+        ),
+      );
+      expect(useVoice.getState().sourceAudio[kind]).toBe("sharing");
+      expect(useVoice.getState().sourceAudioNote[kind]).toBeNull();
+      // One capture: nothing was given up and asked for again.
+      expect(app.called("media_source_app_audio")).toHaveLength(1);
+      expect(app.called("media_source_close")).toEqual([]);
+      expect(app.called("media_source_screen")).toHaveLength(1);
+      expect(capture.getVideoTracks()[0]!.readyState).toBe("live");
+      expect(warn).not.toHaveBeenCalledWith(
+        "[gelabber:voice]",
+        expect.objectContaining({ step: "source-audio" }),
+      );
+      expect(env.errors).toEqual([]);
+    },
+  );
+
+  it("leaves the sound switched on again alone when the one before it arrives late", async () => {
+    const answer = deferred();
+    let held = false;
+    const { env, app } = await joined(APP_06, {
+      gateProduce: (kind) => {
+        if (kind !== "sa" || held) return undefined;
+        held = true;
+        return answer.promise;
+      },
+    });
+    toggleShare();
+    await vi.waitFor(() => expect(produced(env, "sa")).toHaveLength(1));
+    const capture = useVoice.getState().localScreen!;
+    const [first] = capture.getAudioTracks();
+
+    useMediaSettings.getState().patch({ sourceAudioShare: "off" });
+    expect(first.readyState).toBe("ended");
+    useMediaSettings.getState().patch({ sourceAudioShare: "on" });
+    await vi.waitFor(() => expect(env.peers[0]?.sender("sa")).toBeTruthy());
+    const second = env.peers[0]!.sender("sa")!;
+    expect(second.track).not.toBe(first);
+    await vi.waitFor(() =>
+      expect(useVoice.getState().participants["u-self"]?.pubs).toContain("sa"),
+    );
+
+    // Microphone, video and both sounds: the late one is through as well.
+    answer.resolve();
+    await vi.waitFor(() => expect(env.peers[0]!.tracks).toBe(4));
+    await new Promise((resolve) => setTimeout(resolve, 0));
+    expect(env.peers[0]!.sender("sa")).toBe(second);
+    expect(second.track?.readyState).toBe("live");
+    expect(
+      env.mediaSent.some(
+        (frame) =>
+          frame.op === "closeProducer" &&
+          frame.producerId === second.producerId,
+      ),
+    ).toBe(false);
+    expect(
+      env.sent.flatMap((frame) =>
+        frame.op === "sig" && "k" in frame && frame.k === "sa" ? [frame.t] : [],
+      ),
+    ).toEqual(["u", "p"]);
+    expect(useVoice.getState().participants["u-self"]?.pubs).toContain("sa");
+    expect(useVoice.getState().sourceAudio.s).toBe("sharing");
+    expect(app.called("media_source_close")).toEqual([
+      { source: app.sounds[0] },
+    ]);
+    expect(env.errors).toEqual([]);
+  });
+
+  it("tells when the chosen application plays nothing, not for a short pause", async () => {
+    useMediaSettings
+      .getState()
+      .patch({ sourceAudioShare: "on", sourceAudioApp: "spotify" });
+    const { env, app } = await joined(APP_06);
+    app.streams = 0;
+    vi.useFakeTimers();
+    toggleShare();
+    await vi.advanceTimersByTimeAsync(0);
+    expect(env.peers[0]?.sender("sa")).toBeTruthy();
+    expect(useVoice.getState().sourceAudioNote.s).toBeNull();
+    await vi.advanceTimersByTimeAsync(2_000);
+    expect(useVoice.getState().sourceAudioNote.s).toBeNull();
+    await vi.advanceTimersByTimeAsync(1_000);
+    expect(useVoice.getState().sourceAudioNote.s).toEqual({
+      silent: "spotify",
+    });
+    // Silence is still a running share.
+    expect(useVoice.getState().sourceAudio.s).toBe("sharing");
+    expect(env.peers[0]?.sender("sa")).toBeTruthy();
+
+    app.streams = 1;
+    await vi.advanceTimersByTimeAsync(1_000);
+    expect(useVoice.getState().sourceAudioNote.s).toBeNull();
+    app.streams = 0;
+    await vi.advanceTimersByTimeAsync(2_000);
+    expect(useVoice.getState().sourceAudioNote.s).toBeNull();
+
+    // Stopped: nobody asks the gone source any more.
+    toggleShare();
+    const asked = app.called("media_source_state").length;
+    await vi.advanceTimersByTimeAsync(5_000);
+    expect(app.called("media_source_state")).toHaveLength(asked);
+    expect(useVoice.getState().sourceAudioNote.s).toBeNull();
+  });
+
+  it("takes the silence of every application for what it is", async () => {
+    const { env, app } = await joined(APP_06);
+    app.streams = 0;
+    vi.useFakeTimers();
+    toggleShare();
+    await vi.advanceTimersByTimeAsync(0);
+    expect(env.peers[0]?.sender("sa")).toBeTruthy();
+    await vi.advanceTimersByTimeAsync(10_000);
+    expect(useVoice.getState().sourceAudio.s).toBe("sharing");
+    expect(useVoice.getState().sourceAudioNote.s).toBeNull();
+    expect(
+      app
+        .called("media_source_state")
+        .some((args) => args.source === app.sounds[0]),
     ).toBe(false);
   });
 });

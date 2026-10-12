@@ -11,7 +11,9 @@ export type MessageChange = {
   revision?: number;
 };
 
-function chronological(
+/** Messages' order: by creation time, then by id. Negative when `a` is
+ * older. */
+export function chronological(
   a: Pick<Message, "id" | "created_at">,
   b: Pick<Message, "id" | "created_at">,
 ): number {

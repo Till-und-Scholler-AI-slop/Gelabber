@@ -99,7 +99,8 @@ pub fn set_log_level(level: LogLevel) {
 
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
 pub enum Audio {
-    /// System audio devices (PulseAudio API, served by pipewire-pulse on Omarchy).
+    /// System audio devices (Linux: PulseAudio API, served by pipewire-pulse
+    /// on Omarchy; Windows: Core Audio).
     #[default]
     Default,
     /// No audio devices; for tests and headless runs.
@@ -143,7 +144,8 @@ impl Engine {
     }
 
     /// `{"inputs":[{"id","name"}],"outputs":[...],"input","output"}`; id `""`
-    /// is the system default.
+    /// is the system default (on Windows the default device, not the default
+    /// communications device).
     pub fn audio_devices(&self) -> Result<Value> {
         // SAFETY: live engine.
         owned_json(unsafe { ffi::gm_audio_devices(self.raw()) })
@@ -157,8 +159,9 @@ impl Engine {
         check(unsafe { ffi::gm_audio_configure(self.raw(), options.as_ptr()) })
     }
 
-    /// Applications playing sound, without this process:
-    /// `[{"id","name","streams"}]`.
+    /// Applications playing sound, without this process and without what
+    /// virtual output devices play on: `[{"id","name","streams"}]`. No two
+    /// entries have the same `name`, which is the one to show.
     pub fn audio_apps(&self) -> Result<Value> {
         // SAFETY: live engine.
         owned_json(unsafe { ffi::gm_audio_apps(self.raw()) })
@@ -499,13 +502,20 @@ impl Transport {
 struct SourceInner {
     ptr: NonNull<ffi::gm_source>,
     _engine: Engine,
+    /// The video sink the native side calls (double box: it holds a thin
+    /// pointer to the inner box). Also keeps the calls that change the sink
+    /// or its limits apart.
+    sink: Mutex<Option<Box<VideoSink>>>,
 }
-// SAFETY: sources are libwebrtc tracks, internally synchronized.
+// SAFETY: sources are libwebrtc tracks, internally synchronized; the sink is
+// only touched under its mutex.
 unsafe impl Send for SourceInner {}
 unsafe impl Sync for SourceInner {}
 impl Drop for SourceInner {
     fn drop(&mut self) {
         // SAFETY: last reference; producers hold an Arc to their source.
+        // gm_source_free removes a sink that is still set and returns once
+        // it no longer runs; `sink` drops after this body.
         unsafe { ffi::gm_source_free(self.ptr.as_ptr()) }
     }
 }
@@ -539,7 +549,8 @@ impl Source {
 
     /// Screen or window chosen in the desktop's own picker (Linux:
     /// xdg-desktop-portal + PipeWire). Returns while the picker is still open;
-    /// poll [`Source::state`] until it leaves `pending`.
+    /// poll [`Source::state`] until it leaves `pending`. Not available on
+    /// Windows yet: an error there.
     ///
     /// `options`: `{"type"?: "any|screen|window", "fps"?: 30, "cursor"?: true,
     /// "contentHint"?: "detail|text|motion"}`.
@@ -553,7 +564,10 @@ impl Source {
 
     /// Sound of other applications (source audio), separate from the
     /// microphone: `{"app"?: id from [`Engine::audio_apps`]}`; without an
-    /// id, every application but this one.
+    /// id, every application but this one, each captured where it plays and
+    /// not where a virtual output device (an echo canceller, a combined
+    /// sink) plays it on. Not available on Windows yet: an error there, and
+    /// [`Engine::audio_apps`] lists nothing.
     pub fn app_audio(engine: &Engine, options: &Value) -> Result<Self> {
         let options = json_arg(options)?;
         // SAFETY: live engine, NUL-terminated JSON.
@@ -586,12 +600,41 @@ impl Source {
         check(unsafe { ffi::gm_source_set_enabled(self.raw(), enabled as i32) })
     }
 
+    /// Hands each frame of a local video source (camera, screen, test
+    /// pattern) to `sink` as it goes to the encoders: I420, black while the
+    /// source is disabled, and at the size and rate an encoder has the
+    /// source step down to (a weak uplink), not the capture's. `sink` runs
+    /// on the capture thread and holds it up, so it copies what it needs and
+    /// returns; it must not call back into this source. `None` removes it;
+    /// the previous sink is not called again once this returns. A sink keeps
+    /// the source capturing without a producer. Fails for audio sources.
+    pub fn set_video_sink(&self, sink: Option<VideoSink>) -> Result<()> {
+        let mut sink = sink.map(Box::new);
+        let (callback, user) = sink_arguments(&mut sink);
+        let mut held = self.0.sink.lock().unwrap();
+        // SAFETY: live source; `user` stays alive in `held` until replaced
+        // through this call, which waits for a running call; the mutex keeps
+        // calls for one source from overlapping.
+        check(unsafe { ffi::gm_source_set_video_sink(self.raw(), callback, user) })?;
+        *held = sink;
+        Ok(())
+    }
+
+    /// What the source's sink gets at most; kept across sinks.
+    pub fn set_video_sink_limits(&self, limits: VideoSinkLimits) -> Result<()> {
+        let limits = limits.raw()?;
+        let _held = self.0.sink.lock().unwrap();
+        // SAFETY: live source, valid limits; no other sink call overlaps.
+        check(unsafe { ffi::gm_source_set_video_sink_limits(self.raw(), &limits) })
+    }
+
     fn wrap(engine: &Engine, ptr: *mut ffi::gm_source) -> Result<Self> {
         NonNull::new(ptr)
             .map(|ptr| {
                 Self(Arc::new(SourceInner {
                     ptr,
                     _engine: engine.clone(),
+                    sink: Mutex::new(None),
                 }))
             })
             .ok_or_else(last_error)
@@ -667,7 +710,7 @@ impl Producer {
     }
 }
 
-/// A decoded video frame in I420, borrowed for the duration of the sink call.
+/// A video frame in I420, borrowed for the duration of the sink call.
 pub struct VideoFrame<'a> {
     pub width: u32,
     pub height: u32,
@@ -680,15 +723,53 @@ pub struct VideoFrame<'a> {
     /// Clockwise degrees to rotate for display: 0, 90, 180 or 270.
     pub rotation: u32,
     pub timestamp_us: i64,
+    /// Size of the picture before the sink's limits scaled it down; `width`
+    /// and `height` when they did not.
+    pub source_width: u32,
+    pub source_height: u32,
 }
 
-/// Receives a video consumer's decoded frames on a decoder thread.
+/// Receives a video consumer's decoded frames on a decoder thread, or a
+/// local video source's frames on its capture thread.
 pub type VideoSink = Box<dyn FnMut(&VideoFrame<'_>) + Send>;
 
+/// What a video sink gets at most; `0` leaves a value unlimited. A picture
+/// larger than `max_width` x `max_height` (as displayed, after rotation) is
+/// scaled down to fit, aspect kept, to even dimensions; it is never scaled
+/// up. Frames that arrive faster than `max_fps` are dropped.
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+pub struct VideoSinkLimits {
+    pub max_width: u32,
+    pub max_height: u32,
+    pub max_fps: u32,
+}
+
+impl VideoSinkLimits {
+    fn raw(self) -> Result<ffi::gm_video_sink_limits> {
+        let arg = |v: u32| c_int::try_from(v).map_err(|_| Error::Invalid("video sink limit"));
+        Ok(ffi::gm_video_sink_limits {
+            max_width: arg(self.max_width)?,
+            max_height: arg(self.max_height)?,
+            max_fps: arg(self.max_fps)?,
+        })
+    }
+}
+
+/// The native arguments for a boxed sink: the callback and its user data.
+fn sink_arguments(sink: &mut Option<Box<VideoSink>>) -> (ffi::gm_video_frame_fn, *mut c_void) {
+    match sink.as_mut() {
+        Some(sink) => (
+            Some(video_sink_trampoline),
+            &mut **sink as *mut VideoSink as *mut c_void,
+        ),
+        None => (None, std::ptr::null_mut()),
+    }
+}
+
 unsafe extern "C" fn video_sink_trampoline(user: *mut c_void, frame: *const ffi::gm_video_frame) {
-    // SAFETY: `user` is the boxed sink the consumer keeps alive until it is
-    // removed; the native side serializes calls and `frame` is valid for
-    // this call.
+    // SAFETY: `user` is the boxed sink the consumer or source keeps alive
+    // until it is removed; the native side serializes calls and `frame` is
+    // valid for this call.
     let (sink, frame) = unsafe { (&mut *(user as *mut VideoSink), &*frame) };
     let (Ok(width), Ok(height)) = (u32::try_from(frame.width), u32::try_from(frame.height)) else {
         return;
@@ -717,6 +798,8 @@ unsafe extern "C" fn video_sink_trampoline(user: *mut c_void, frame: *const ffi:
             stride_v,
             rotation: u32::try_from(frame.rotation).unwrap_or(0),
             timestamp_us: frame.timestamp_us,
+            source_width: u32::try_from(frame.source_width).unwrap_or(width),
+            source_height: u32::try_from(frame.source_height).unwrap_or(height),
         }
     };
     // A panicking sink must not unwind into C++.
@@ -764,18 +847,19 @@ impl Consumer {
     /// once this returns.
     pub fn set_video_sink(&mut self, sink: Option<VideoSink>) -> Result<()> {
         let mut sink = sink.map(Box::new);
-        let (callback, user): (ffi::gm_video_frame_fn, *mut c_void) = match sink.as_mut() {
-            Some(sink) => (
-                Some(video_sink_trampoline),
-                &mut **sink as *mut VideoSink as *mut c_void,
-            ),
-            None => (None, std::ptr::null_mut()),
-        };
+        let (callback, user) = sink_arguments(&mut sink);
         // SAFETY: live consumer; `user` stays alive in `self.sink` until
         // replaced through this call, which waits for running calls.
         check(unsafe { ffi::gm_consumer_set_video_sink(self.ptr.as_ptr(), callback, user) })?;
         self.sink = sink;
         Ok(())
+    }
+
+    /// What the consumer's sink gets at most; kept across sinks.
+    pub fn set_video_sink_limits(&self, limits: VideoSinkLimits) -> Result<()> {
+        let limits = limits.raw()?;
+        // SAFETY: live consumer, valid limits.
+        check(unsafe { ffi::gm_consumer_set_video_sink_limits(self.ptr.as_ptr(), &limits) })
     }
 
     /// `{"framesReceived","width","height"}` for video, `{"audioLevel",

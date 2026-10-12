@@ -16,6 +16,8 @@ Postgres, Redis und MinIO-Konsole hängen nur an Loopback. UDP für Voice (cotur
 
 Operator-Doku (bestehendes Caddy, TURN-Port, TLS, Backup, Grafana): [deploy/README.md](deploy/README.md).
 
+Für v0.6 vorbereitet: [Gelabber auf dem Handy als PWA installieren](docs/v0.6-pwa.md).
+
 ## Layout
 
 | Pfad | Rolle |

@@ -1,10 +1,18 @@
 import type { StatsEntry } from "./diagnostics.ts";
 import type { MediaRequests } from "./media.ts";
 import { isDesktopApp } from "./native/bridge.ts";
+import { nativeCanvasHeight } from "./native/videoFeed.ts";
 import { nativeViewerHeight } from "./native/viewer.ts";
 export function renderedVideoHeight(trackId: string): number {
-  // The desktop app shows remote video in native windows only.
-  if (isDesktopApp()) return nativeViewerHeight(trackId);
+  // The desktop app shows remote video on canvases in the page (not before
+  // 0.6) and in viewer windows; the largest of them decides.
+  if (isDesktopApp())
+    return Math.min(
+      16384,
+      Math.ceil(
+        Math.max(nativeViewerHeight(trackId), nativeCanvasHeight(trackId)),
+      ),
+    );
   if (typeof document === "undefined") return 0;
   let height = 0;
   for (const video of document.querySelectorAll("video")) {

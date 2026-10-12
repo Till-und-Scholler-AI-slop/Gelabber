@@ -8,13 +8,17 @@
 //! There is no menu bar: an unreachable server at start opens that page with
 //! the reason, and Ctrl+Shift+S or the web client's user menu ("Server
 //! wechseln …") lead back to it at any time, so a wrong server never locks the
-//! app. F5 / Ctrl+R reload.
+//! app. F5 / Ctrl+R reload. Those keys are a script of the page: when WebKit's
+//! web process dies, the app loads the page again itself (Linux).
 #![cfg_attr(not(debug_assertions), windows_subsystem = "windows")]
 
+mod frames;
 mod media;
 mod viewer;
 
 use serde::{Deserialize, Serialize};
+#[cfg(target_os = "linux")]
+use std::time::Instant;
 use std::{
     fs,
     net::{SocketAddr, TcpStream},
@@ -45,6 +49,20 @@ addEventListener("keydown", (event) => {
   }
 }, true);
 "#;
+/// WebView2 (Windows) arguments. Setting any replaces wry's defaults, so
+/// those are repeated: the three `ms*` features off (no Edge mini menus, no
+/// SmartScreen) and autoplay (call sounds without a click). The rest keeps
+/// the page's timers running while the window is minimized or covered: the
+/// gateway heartbeat and the signaling live in the page, and unlike in a
+/// browser nothing there (no RTCPeerConnection, no playing audio: media is
+/// in the native core) exempts it from Chromium's background throttling.
+const WEBVIEW2_ARGS: &str = concat!(
+    "--disable-features=msWebOOUI,msPdfOOUI,msSmartScreenProtection,IntensiveWakeUpThrottling",
+    " --autoplay-policy=no-user-gesture-required",
+    " --disable-background-timer-throttling",
+    " --disable-renderer-backgrounding",
+    " --disable-backgrounding-occluded-windows",
+);
 /// Per address; a typo'd host fails at DNS long before that.
 const CONNECT_TIMEOUT: Duration = Duration::from_secs(5);
 
@@ -125,6 +143,14 @@ fn setup_url(server: Option<&str>, error: Option<&str>) -> Url {
     url
 }
 
+/// Whether `url` is a page of the bundled frontend, the setup page.
+#[cfg(target_os = "linux")]
+fn is_setup_page(url: &str) -> bool {
+    let setup = setup_url(None, None);
+    Url::parse(url)
+        .is_ok_and(|url| url.scheme() == setup.scheme() && url.host_str() == setup.host_str())
+}
+
 fn current_server(app: &AppHandle) -> Option<Url> {
     configured_server(app).and_then(|value| server_origin(&value).ok())
 }
@@ -190,27 +216,162 @@ async fn set_server(app: AppHandle, server: String) -> Result<(), String> {
     window.navigate(origin).map_err(|e| e.to_string())
 }
 
-/// WebKitGTK's DMA-BUF renderer dies on the NVIDIA driver under Wayland
-/// ("Error 71 (Protocol error) dispatching to Wayland display"). Fall back to
-/// its shared-memory renderer there; an explicit setting by the user wins.
+#[cfg(target_os = "linux")]
+const WEBKIT_DISABLE_DMABUF: &str = "WEBKIT_DISABLE_DMABUF_RENDERER";
+#[cfg(target_os = "linux")]
+const WEBKIT_FORCE_SHM: &str = "WEBKIT_DMABUF_RENDERER_FORCE_SHM";
+
+/// The WebKitGTK variable to set on the NVIDIA driver. Its DMA-BUF renderer
+/// dies there under Wayland ("Error 71 (Protocol error) dispatching to
+/// Wayland display") when it hands buffers over as DMA-BUFs. Handing them
+/// over through shared memory works and keeps accelerated compositing, which
+/// video on a canvas needs: with the renderer disabled, the web process
+/// paints every frame on the CPU, half a core and more for one stream across
+/// the window. An explicit setting of either variable by the user wins.
+#[cfg(target_os = "linux")]
+fn webkit_workaround(nvidia: bool, set_by_user: impl Fn(&str) -> bool) -> Option<&'static str> {
+    (nvidia && !set_by_user(WEBKIT_DISABLE_DMABUF) && !set_by_user(WEBKIT_FORCE_SHM))
+        .then_some(WEBKIT_FORCE_SHM)
+}
+
+/// Whether the machine runs the NVIDIA driver.
+#[cfg(target_os = "linux")]
+fn nvidia_driver() -> bool {
+    std::path::Path::new("/proc/driver/nvidia/version").exists()
+        || std::path::Path::new("/sys/module/nvidia_drm").exists()
+}
+
 #[cfg(target_os = "linux")]
 fn webkit_workarounds() {
-    let nvidia = std::path::Path::new("/proc/driver/nvidia/version").exists()
-        || std::path::Path::new("/sys/module/nvidia_drm").exists();
-    if nvidia && std::env::var_os("WEBKIT_DISABLE_DMABUF_RENDERER").is_none() {
+    let nvidia = nvidia_driver();
+    if let Some(name) = webkit_workaround(nvidia, |name| std::env::var_os(name).is_some()) {
         // SAFETY: called first thing in main, before any other thread exists.
-        unsafe { std::env::set_var("WEBKIT_DISABLE_DMABUF_RENDERER", "1") };
+        unsafe { std::env::set_var(name, "1") };
+    }
+}
+
+/// Ends WebKit's web process the moment the window is closed, on the NVIDIA
+/// driver. Left to shut down by itself it crashes once a page has drawn with
+/// WebGL, which the video tiles do: when its connection to the app closes,
+/// WebKitGTK frees its GL contexts, and `eglDestroyContext` then reads
+/// through a null pointer inside libnvidia-eglcore (seen with driver
+/// 610.57.04 and WebKitGTK 2.52.6, in shared-memory mode and with the
+/// DMA-BUF renderer disabled alike; leaving the page first does not help).
+/// Nothing was lost by that crash, but every close of the app left a core
+/// dump and, on desktops that announce them, a crash notification. A web
+/// process that is killed frees nothing.
+///
+/// Only a window that is closed gets here. An app that is killed itself
+/// still leaves the web process to that shutdown.
+#[cfg(target_os = "linux")]
+fn end_web_process(window: &tauri::Window) {
+    use webkit2gtk::WebViewExt;
+    let Some(window) = window.get_webview_window(window.label()) else {
+        return;
+    };
+    // The event comes on the main thread, where this runs at once: before
+    // the window and its webview are destroyed.
+    if let Err(error) = window.with_webview(|webview| webview.inner().terminate_web_process()) {
+        eprintln!("gelabber: web process: {error}");
+    }
+}
+
+/// A web process that ends again within this time of the app's last answer
+/// to one ending did not get better by that answer.
+#[cfg(target_os = "linux")]
+const ENDED_AGAIN: Duration = Duration::from_secs(60);
+
+/// What the setup page says when it is shown for that reason.
+#[cfg(target_os = "linux")]
+const PAGE_KEEPS_ENDING: &str =
+    "Die Seite ist wiederholt abgestürzt. Mikrofon, Kamera und Bildschirmfreigabe wurden beendet.";
+
+/// The app's answer to a web process that ended by itself.
+#[cfg(target_os = "linux")]
+#[derive(Debug, PartialEq)]
+enum Recovery {
+    /// Loads the page again, which starts a new web process.
+    Reload,
+    /// Shows the setup page with the reason: loading the server's page once
+    /// more may end the same way, for as long as nobody looks.
+    Setup,
+    /// Leaves the dead view: not even the setup page stays up.
+    GiveUp,
+}
+
+/// `shown` is the page the web process ended with, `again` whether that was
+/// within [`ENDED_AGAIN`] of the last time.
+#[cfg(target_os = "linux")]
+fn recovery(shown: Option<&str>, again: bool) -> Recovery {
+    match (shown.map(is_setup_page), again) {
+        (Some(_), false) => Recovery::Reload,
+        (Some(true), true) => Recovery::GiveUp,
+        // The server's page ended twice, or nothing was loaded to load again.
+        (Some(false), true) | (None, _) => Recovery::Setup,
+    }
+}
+
+/// Answers the end of WebKit's web process: a crash, the kernel's
+/// out-of-memory killer, a GPU driver (the page draws video with WebGL). No
+/// page load follows by itself, so nothing ended what the page had running:
+/// microphone, camera and screen capture went on behind a dead view, and the
+/// keys that reload or lead to the setup page are a script of the page that
+/// is gone. Windows is left to WebView2, which by its documentation starts a
+/// new renderer and loads an error page, a page load like any other; that
+/// was not tried.
+#[cfg(target_os = "linux")]
+fn watch_web_process(app: &AppHandle, window: &tauri::WebviewWindow) {
+    use webkit2gtk::{WebProcessTerminationReason, WebViewExt};
+    let app = app.clone();
+    let watching = window.with_webview(move |webview| {
+        let last = std::cell::Cell::new(None::<Instant>);
+        let ended = move |view: &webkit2gtk::WebView, reason| {
+            // The app's own doing, when its window closes (`end_web_process`).
+            if reason == WebProcessTerminationReason::TerminatedByApi {
+                return;
+            }
+            app.state::<media::Media>().reset();
+            let now = Instant::now();
+            let again = last
+                .replace(Some(now))
+                .is_some_and(|last| now.duration_since(last) < ENDED_AGAIN);
+            let action = recovery(view.uri().as_deref(), again);
+            eprintln!("gelabber: web process ended ({reason:?}): {action:?}");
+            // On the view itself: this runs inside WebKit's signal, on the
+            // main thread.
+            match action {
+                Recovery::Reload => view.reload(),
+                Recovery::Setup => {
+                    let server = current_server(&app);
+                    let server = server.as_ref().map(Url::as_str);
+                    view.load_uri(setup_url(server, Some(PAGE_KEEPS_ENDING)).as_str());
+                }
+                Recovery::GiveUp => {}
+            }
+        };
+        webview.inner().connect_web_process_terminated(ended);
+    });
+    if let Err(error) = watching {
+        eprintln!("gelabber: web process: {error}");
     }
 }
 
 fn main() {
     #[cfg(target_os = "linux")]
     webkit_workarounds();
-    // Native media logging (libwebrtc, libmediasoupclient) to stderr.
+    // Native media logging: libwebrtc to stderr, libmediasoupclient to
+    // stdout (its default log handler).
     if std::env::var_os("GELABBER_MEDIA_LOG").is_some() {
         gelabber_media_core::set_log_level(gelabber_media_core::LogLevel::Info);
     }
-    tauri::Builder::default()
+    let builder = tauri::Builder::default();
+    #[cfg(target_os = "linux")]
+    let builder = builder.on_window_event(|window, event| {
+        if matches!(event, tauri::WindowEvent::CloseRequested { .. }) && nvidia_driver() {
+            end_web_process(window);
+        }
+    });
+    builder
         .manage(media::Media::default())
         .invoke_handler(tauri::generate_handler![
             set_server,
@@ -250,10 +411,16 @@ fn main() {
             media::media_consumer_close,
             media::media_viewer_open,
             media::media_viewer_close,
+            media::media_view_open,
+            media::media_view_configure,
+            media::media_view_frame,
+            media::media_view_close,
         ])
         .on_page_load(|webview, payload| {
             // A reload or navigation leaves the old page's calls and
-            // transports orphaned; close them before the new page starts.
+            // transports orphaned: they are taken from it before the new
+            // page starts. This is the UI thread, so closing them in the
+            // core happens elsewhere (`Media::reset`).
             if payload.event() == PageLoadEvent::Started {
                 webview.state::<media::Media>().reset();
             }
@@ -272,12 +439,18 @@ fn main() {
                 }
                 None => WebviewUrl::App("index.html".into()),
             };
-            WebviewWindowBuilder::new(app, WINDOW, url.clone())
+            let window = WebviewWindowBuilder::new(app, WINDOW, url.clone())
                 .title("Gelabber")
                 .inner_size(1280.0, 800.0)
                 .min_inner_size(480.0, 360.0)
                 .initialization_script(SHORTCUTS)
+                // Only WebView2 takes them; ignored on the other platforms.
+                .additional_browser_args(WEBVIEW2_ARGS)
                 .build()?;
+            #[cfg(target_os = "linux")]
+            watch_web_process(&handle, &window);
+            #[cfg(not(target_os = "linux"))]
+            let _ = window;
             // Opening a stored server that does not answer would end on
             // WebKit's error page; show the setup page with the reason instead.
             if let WebviewUrl::External(origin) = url {
@@ -305,6 +478,43 @@ fn main() {
 mod tests {
     use super::{check_reachable, server_addrs, server_origin, setup_url};
     use std::net::TcpListener;
+
+    #[cfg(target_os = "linux")]
+    #[test]
+    fn nvidia_gets_the_shared_memory_renderer_unless_the_user_chose() {
+        use super::{WEBKIT_DISABLE_DMABUF, WEBKIT_FORCE_SHM, webkit_workaround};
+        let chose = |chosen: &'static [&'static str]| move |name: &str| chosen.contains(&name);
+        assert_eq!(webkit_workaround(true, chose(&[])), Some(WEBKIT_FORCE_SHM));
+        assert_eq!(webkit_workaround(false, chose(&[])), None);
+        assert_eq!(
+            webkit_workaround(true, chose(&[WEBKIT_DISABLE_DMABUF])),
+            None
+        );
+        assert_eq!(webkit_workaround(true, chose(&[WEBKIT_FORCE_SHM])), None);
+    }
+
+    /// One reload; the setup page when that did not help; nothing when not
+    /// even the setup page stays up, or the app would start web processes
+    /// for as long as they end.
+    #[cfg(target_os = "linux")]
+    #[test]
+    fn a_web_process_that_ended_is_answered_once_by_a_reload() {
+        use super::{Recovery, is_setup_page, recovery};
+        let server = "https://chat.example.org/channels/7";
+        let setup = setup_url(Some("https://chat.example.org/"), Some("abgestürzt"));
+        assert!(is_setup_page(setup.as_str()));
+        assert!(is_setup_page("tauri://localhost/"));
+        assert!(!is_setup_page(server));
+        assert!(!is_setup_page("https://localhost/index.html"));
+        assert!(!is_setup_page("about:blank"));
+
+        assert_eq!(recovery(Some(server), false), Recovery::Reload);
+        assert_eq!(recovery(Some(server), true), Recovery::Setup);
+        assert_eq!(recovery(Some(setup.as_str()), false), Recovery::Reload);
+        assert_eq!(recovery(Some(setup.as_str()), true), Recovery::GiveUp);
+        assert_eq!(recovery(None, false), Recovery::Setup);
+        assert_eq!(recovery(None, true), Recovery::Setup);
+    }
 
     #[test]
     fn server_origin_keeps_only_the_origin() {

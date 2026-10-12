@@ -5,9 +5,14 @@
 // desktop app).
 
 import { create } from "zustand";
-import { createJSONStorage, persist } from "zustand/middleware";
+import {
+  createJSONStorage,
+  persist,
+  type PersistStorage,
+} from "zustand/middleware";
 import { isDesktopApp } from "./native/bridge.ts";
 import { listNativeDevices } from "./native/capture.ts";
+import { hasNativeFeature } from "./native/features.ts";
 
 /** Explicit economy presets retained for migration; never applied by default. */
 export const AUDIO_QUALITY = {
@@ -44,8 +49,31 @@ export const AUDIO_PROCESSING = {
     hint: "Stereo sofern unterstützt, ohne Rauschfilter, Auto-Gain oder Sprechpausen-Erkennung",
   },
 } as const;
+/** The same modes as the desktop app words them: its native core does the
+ * filtering, no browser is involved. */
+export const AUDIO_PROCESSING_DESKTOP: Record<
+  AudioProcessingMode,
+  { label: string; hint: string }
+> = {
+  enhanced: {
+    label: AUDIO_PROCESSING.enhanced.label,
+    hint: "Lokale Rauschunterdrückung",
+  },
+  browser: {
+    label: "WebRTC-Filter",
+    hint: "Rauschunterdrückung und Auto-Gain von WebRTC",
+  },
+  original: AUDIO_PROCESSING.original,
+};
 export function asProcessingMode(value: unknown): AudioProcessingMode {
   return value === "browser" || value === "original" ? value : "enhanced";
+}
+
+/** Sound for a share: the user's own choice, or "auto" while he has made
+ * none. Up to v0.5 this was a boolean, off by default. */
+export type SourceAudioShare = "auto" | "on" | "off";
+export function asSourceAudioShare(value: unknown): SourceAudioShare {
+  return value === "on" || value === "off" ? value : "auto";
 }
 
 /** Display-source music stays separate from the speech encoder. */
@@ -131,8 +159,8 @@ export type MediaSettings = {
   outputVolume: number;
   /** Pre-send gain, 0–2. 1 = identity (no Web Audio insert). */
   inputGain: number;
-  /** Request browser-selected tab/window/system audio on the next capture. */
-  shareSourceAudio: boolean;
+  /** Whether a share carries sound; `sharesSourceAudio` reads it. */
+  sourceAudioShare: SourceAudioShare;
   /** Desktop app: application whose sound is shared ("" = every application
    * but Gelabber). The browser picks the source in its own dialog. */
   sourceAudioApp: string;
@@ -163,7 +191,7 @@ export const DEFAULT_MEDIA_SETTINGS: MediaSettings = {
   autoGainControl: true,
   outputVolume: 1,
   inputGain: 1,
-  shareSourceAudio: false,
+  sourceAudioShare: "auto",
   sourceAudioApp: "",
   sourceAudioVolume: 1,
   sourceAudioMuted: false,
@@ -214,6 +242,65 @@ function mediaStorage() {
   return memoryStorage;
 }
 
+const SETTINGS_KEY = "gelabber.media";
+/** The stream-sound choice once more, in an entry of its own. A web client
+ * up to v0.5 on the same storage (the server rolled back, and updated again
+ * later) rewrites the settings with the keys it knows; this entry it leaves
+ * alone. */
+const SOURCE_AUDIO_SHARE_KEY = "gelabber.media.source-audio-share";
+
+/** The settings as they are stored: with the stream-sound choice also as the
+ * boolean a web client up to v0.5 reads. Only "on" is a choice it knows. */
+type StoredMediaSettings = MediaSettings & { shareSourceAudio: boolean };
+
+const backing = mediaStorage();
+// Undefined only for a getter that throws.
+const settingsJson = createJSONStorage<StoredMediaSettings>(() => backing)!;
+
+/** The choice as this client stored it last, if it ever did. */
+function keptSourceAudioShare(): SourceAudioShare | null {
+  try {
+    const kept = backing.getItem(SOURCE_AUDIO_SHARE_KEY);
+    return kept === "auto" || kept === "on" || kept === "off" ? kept : null;
+  } catch {
+    return null;
+  }
+}
+
+/** Saves the settings and, in step with them, the choice in its own entry.
+ * Settings without a choice, which this client never writes, leave that
+ * entry as it is. */
+const settingsStorage: PersistStorage<StoredMediaSettings> = {
+  getItem: (name) => settingsJson.getItem(name),
+  setItem: (name, value) => {
+    settingsJson.setItem(name, value);
+    const choice: unknown =
+      name === SETTINGS_KEY ? value.state.sourceAudioShare : undefined;
+    if (choice !== "auto" && choice !== "on" && choice !== "off") return;
+    try {
+      backing.setItem(SOURCE_AUDIO_SHARE_KEY, choice);
+    } catch {
+      // The settings themselves are saved; only a rollback loses an "off".
+    }
+  },
+  removeItem: (name) => {
+    settingsJson.removeItem(name);
+    if (name === SETTINGS_KEY) backing.removeItem(SOURCE_AUDIO_SHARE_KEY);
+  },
+};
+
+/** The choice where a web client up to v0.5 saved last and dropped ours. Its
+ * true is "on". Its false was the default as well as a choice, and its
+ * control had moved out of sight, so by itself it is no choice; it stands for
+ * the "off" this client had stored before it, which that boolean cannot
+ * hold. After an "on" of ours, which that client read as true, a false is
+ * its user switching sound off there. */
+function restoredSourceAudioShare(sharedBefore: boolean): SourceAudioShare {
+  if (sharedBefore) return "on";
+  const kept = keptSourceAudioShare();
+  return kept === "off" || kept === "on" ? "off" : "auto";
+}
+
 /** Session registers this so a slider change hits the live peer without reload. */
 export function onMediaSettingsChange(
   fn: ((prev: MediaSettings, next: MediaSettings) => void) | null,
@@ -259,7 +346,7 @@ function snapshot(state: MediaSettingsState): MediaSettings {
     autoGainControl: state.autoGainControl,
     outputVolume: state.outputVolume,
     inputGain: state.inputGain,
-    shareSourceAudio: state.shareSourceAudio,
+    sourceAudioShare: state.sourceAudioShare,
     sourceAudioApp: state.sourceAudioApp,
     sourceAudioVolume: state.sourceAudioVolume,
     sourceAudioMuted: state.sourceAudioMuted,
@@ -318,7 +405,10 @@ export const useMediaSettings = create<MediaSettingsState>()(
             partial.inputGain !== undefined
               ? clampGain(partial.inputGain)
               : prev.inputGain,
-          shareSourceAudio: partial.shareSourceAudio ?? prev.shareSourceAudio,
+          sourceAudioShare:
+            partial.sourceAudioShare !== undefined
+              ? asSourceAudioShare(partial.sourceAudioShare)
+              : prev.sourceAudioShare,
           sourceAudioApp: partial.sourceAudioApp ?? prev.sourceAudioApp,
           sourceAudioVolume:
             partial.sourceAudioVolume !== undefined
@@ -366,12 +456,18 @@ export const useMediaSettings = create<MediaSettingsState>()(
       closeDialog: () => set({ dialogOpen: false }),
     }),
     {
-      name: "gelabber.media",
-      storage: createJSONStorage(mediaStorage),
-      partialize: (state) => snapshot(state),
+      name: SETTINGS_KEY,
+      storage: settingsStorage,
+      partialize: (state): StoredMediaSettings => ({
+        ...snapshot(state),
+        shareSourceAudio: state.sourceAudioShare === "on",
+      }),
       merge: (persisted, current) => {
         if (!persisted || typeof persisted !== "object") return current;
-        const stored = persisted as Partial<MediaSettings>;
+        // `shareSourceAudio` is the boolean of v0.5 and earlier. It is stored
+        // for such a client and is not part of the settings here.
+        const { shareSourceAudio: sharedBefore, ...stored } =
+          persisted as Partial<MediaSettings> & { shareSourceAudio?: unknown };
         return {
           ...current,
           ...stored,
@@ -401,7 +497,10 @@ export const useMediaSettings = create<MediaSettingsState>()(
               : current.screenProfile,
           ),
           videoUploadLimit: clampVideoUploadLimit(stored.videoUploadLimit),
-          shareSourceAudio: stored.shareSourceAudio === true,
+          sourceAudioShare:
+            "sourceAudioShare" in stored
+              ? asSourceAudioShare(stored.sourceAudioShare)
+              : restoredSourceAudioShare(sharedBefore === true),
           sourceAudioApp:
             typeof stored.sourceAudioApp === "string"
               ? stored.sourceAudioApp
@@ -429,6 +528,62 @@ export function sourceAudioBitrate(
   settings: Pick<MediaSettings, "economyMode"> = useMediaSettings.getState(),
 ): number | null {
   return settings.economyMode ? 128_000 : null;
+}
+
+/** Whether screen share and Go Live carry sound. Without a choice of his own
+ * the user gets it where the call stays out of it: in a desktop app whose
+ * "every application" leaves out Gelabber itself. A browser captures whatever
+ * its picker hands over, the call included, so there it stays off. */
+export function sharesSourceAudio(
+  settings: Pick<
+    MediaSettings,
+    "sourceAudioShare"
+  > = useMediaSettings.getState(),
+): boolean {
+  if (isDesktopApp() && !hasNativeFeature("app-audio")) return false;
+  if (settings.sourceAudioShare !== "auto")
+    return settings.sourceAudioShare === "on";
+  return hasNativeFeature("app-audio-excludes-self");
+}
+
+/** What the switch stores. Off where a share carries no sound unasked is no
+ * choice to keep: remembered, it would hold the sound back in a desktop app
+ * that leaves the call out, once the user has updated to one. */
+export function sourceAudioChoice(on: boolean): SourceAudioShare {
+  if (on) return "on";
+  return sharesSourceAudio({ sourceAudioShare: "auto" }) ? "off" : "auto";
+}
+
+/** A desktop app before v0.6 captures its own playout with "every
+ * application": switched on there, a share also carries the call. */
+export const SOURCE_AUDIO_CARRIES_CALL =
+  "Diese App-Version sendet mit dem Stream-Ton auch den Ton des Anrufs; ein Update der Desktop-App behebt das.";
+export function sourceAudioCarriesCall(
+  settings: Pick<
+    MediaSettings,
+    "sourceAudioShare" | "sourceAudioApp"
+  > = useMediaSettings.getState(),
+): boolean {
+  return (
+    hasNativeFeature("app-audio") &&
+    !hasNativeFeature("app-audio-excludes-self") &&
+    settings.sourceAudioShare === "on" &&
+    settings.sourceAudioApp === ""
+  );
+}
+
+/** Whose sound a share carries in the desktop app, for the controls to name:
+ * the chosen application's, or every application's. The app captures it by
+ * itself, so no picker has told the user; a browser's own picker has, and
+ * there is nothing to name. */
+export function sourceAudioScope(
+  settings: Pick<MediaSettings, "sourceAudioApp"> = useMediaSettings.getState(),
+): string | null {
+  if (!hasNativeFeature("app-audio")) return null;
+  if (settings.sourceAudioApp) return `Ton von „${settings.sourceAudioApp}“`;
+  return hasNativeFeature("app-audio-excludes-self")
+    ? "Ton aller Anwendungen außer Gelabber"
+    : "Ton aller Anwendungen";
 }
 
 export function resetMediaSettingsForTests(): void {

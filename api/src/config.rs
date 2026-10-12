@@ -66,6 +66,8 @@ pub struct Config {
     pub db_max_connections: u32,
     /// Adds `Secure` to the session and CSRF cookies. Off by default because
     /// the Compose dev entry is plain HTTP on Caddy; set to `true` behind TLS.
+    /// The gateway takes it as "the app's pages are `https://`" and refuses
+    /// `http://` origins then (`gateway::origin_allowed`).
     pub cookie_secure: bool,
     /// With `cookie_secure` on, responses also carry HSTS and the shipped
     /// default passwords are refused at startup ([`refuse_public_defaults`]).

@@ -55,18 +55,20 @@ The subsequent mediasoup implementation remains feature-PR work targeting
 PR protection still apply. Physical iOS/Omarchy acceptance remains deferred.
 This instruction does not authorize main merges, release or deployment.
 
-## Current development line: v0.5
+## Current development line: v0.6
 
-`v0.5` was cut from `main` (`v0.4.0` plus the shipped-docs update) on
-2026-10-07 at Silas' request and is protected by the **Version branches**
+`v0.6` was cut from `main` (`v0.5.2` plus the design follow-up #184, `502274d`)
+on 2026-10-09 at Rafael's request and is protected by the **Version branches**
 ruleset (`refs/heads/v[0-9]*`: PRs required, same review requirements as
-`main`). Major product work for the next line, starting with the native
-desktop client (issue #165), targets `v0.5` through feature PRs. Do not target
-new feature PRs at `v0.4`. Release a completed line only from `main` after its
-version PR, CI and image publishing have finished.
+`main`). Major product work for this line targets `v0.6` through feature PRs:
+the installable phone PWA, the Windows desktop release (step 6 of #165, a
+download on the GitHub release), and video inside the desktop app (watched
+streams, own camera and own stream) with sound for shared screens. Do not
+target new feature PRs at `v0.5`. Release a completed line only from `main`
+after its version PR, CI and image publishing have finished.
 
-On 2026-10-08 Silas decided to release `v0.5.0` with the Linux desktop app
-(#170); Windows and the remaining steps of #165 follow on the next line.
+`v0.5` shipped the Linux desktop app as `v0.5.0` on 2026-10-08 (#170, decided
+by Silas) and is complete.
 
 ## Shipped line: latest published main tag
 

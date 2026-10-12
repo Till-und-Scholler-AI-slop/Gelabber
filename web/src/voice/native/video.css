@@ -1,0 +1,8 @@
+/* The desktop app's canvas where the browser has its <video>: the same rule
+   as for the video in fullscreen and in the large view (viewer.css). */
+.voice-video-tile:fullscreen canvas,
+.voice-video-viewer canvas {
+  width: 100%;
+  height: 100%;
+  object-fit: contain;
+}

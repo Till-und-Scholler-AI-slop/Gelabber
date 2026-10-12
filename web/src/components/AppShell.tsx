@@ -8,6 +8,7 @@ import {
 import { useReadBridge } from "../messages/readState.ts";
 import { logout, useSession } from "../auth/session.ts";
 import { leaveVoice, stopWatching, useVoice } from "../voice/session.ts";
+import { useCallWakeLock } from "../voice/wakeLock.ts";
 import {
   useAuthenticatedSubscriptions,
   useGatewaySession,
@@ -16,6 +17,7 @@ import { useIdlePresence } from "../ws/useLive.ts";
 import { useMessageToastsBridge } from "../messages/useMessageToasts.ts";
 import { Avatar } from "./Avatar.tsx";
 import { GearIcon } from "./Icons.tsx";
+import { isChromeLongPress } from "./longPress.ts";
 import { MessageToasts } from "./MessageToasts.tsx";
 import { Toasts } from "./Toasts.tsx";
 import { VoiceSettingsDialog } from "./VoiceSettingsDialog.tsx";
@@ -42,6 +44,9 @@ export function AppShell() {
   useGatewaySession(user?.id ?? null);
   useIdlePresence(user?.id ?? null);
   useMessageToastsBridge();
+  useCallWakeLock(
+    useVoice((state) => state.status === "joined" || state.watching),
+  );
 
   const onLogout = () => {
     // Store flips first, so the header and guards react before the request
@@ -55,6 +60,16 @@ export function AppShell() {
   return (
     <div
       className={`app-shell ${workspace ? "app-shell-workspace" : ""} ${activeMedia ? "has-active-media" : ""}`}
+      onContextMenu={(event) => {
+        // Android's link and image menu; index.css covers selection and iOS.
+        if (
+          isChromeLongPress(
+            event.nativeEvent,
+            window.matchMedia("(pointer: coarse)").matches,
+          )
+        )
+          event.preventDefault();
+      }}
     >
       <a
         className="shell-skip-link"

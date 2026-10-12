@@ -1,5 +1,6 @@
-import { describe, expect, it, vi } from "vitest";
+import { afterEach, describe, expect, it, vi } from "vitest";
 import { CallSoundPlayer, callSoundWave } from "./callSounds.ts";
+import { setNativeBridgeForTests } from "./native/bridge.ts";
 import { DEFAULT_MEDIA_SETTINGS } from "./settings.ts";
 
 function harness() {
@@ -19,6 +20,8 @@ function harness() {
     ),
   };
 }
+
+afterEach(() => setNativeBridgeForTests(undefined));
 
 describe("call sounds", () => {
   it("produces short, distinct, bounded PCM with silent ends", () => {
@@ -90,6 +93,58 @@ describe("call sounds", () => {
     player.stop();
     await Promise.resolve();
     expect(audio.play).toHaveBeenCalledTimes(1);
+  });
+
+  it("still plays when the chosen speaker is refused or gone", async () => {
+    const { settings, audio } = harness();
+    const routed = {
+      ...audio,
+      setSinkId: vi
+        .fn()
+        .mockRejectedValueOnce(
+          new DOMException("No permission to use requested device"),
+        )
+        .mockImplementationOnce(() => {
+          throw new TypeError("not a device");
+        })
+        .mockResolvedValue(undefined),
+    };
+    const player = new CallSoundPlayer(
+      () => settings,
+      () => routed,
+    );
+    settings.audioOutputId = "unplugged-headset";
+    player.play("join");
+    await vi.waitFor(() => expect(audio.play).toHaveBeenCalledTimes(1));
+    expect(routed.src).toContain("data:audio/wav");
+    // Neither failure blocks the cues after it.
+    player.play("leave");
+    await vi.waitFor(() => expect(audio.play).toHaveBeenCalledTimes(2));
+    player.play("mute");
+    await vi.waitFor(() => expect(audio.play).toHaveBeenCalledTimes(3));
+    expect(routed.setSinkId).toHaveBeenCalledTimes(3);
+  });
+
+  it("does not hand the desktop app's device ids to the webview", () => {
+    const { settings, audio } = harness();
+    const routed = {
+      ...audio,
+      // What Chromium answers to an id it never issued.
+      setSinkId: vi.fn().mockRejectedValue(new DOMException("SecurityError")),
+    };
+    const player = new CallSoundPlayer(
+      () => settings,
+      () => routed,
+    );
+    setNativeBridgeForTests({
+      invoke: async () => null as never,
+      channel: async () => null,
+    });
+    settings.audioOutputId =
+      "{0.0.0.00000000}.{6f1f0e4a-9a36-4f0c-8f0e-1c2d3e4f5a6b}";
+    player.play("join");
+    expect(audio.play).toHaveBeenCalledTimes(1);
+    expect(routed.setSinkId).not.toHaveBeenCalled();
   });
 
   it("unlocks silently and tolerates blocked autoplay or missing browser APIs", async () => {
