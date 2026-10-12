@@ -6,8 +6,9 @@
 # (#200). Compares the running containers, never prints the values.
 set -eu
 api=$(docker compose ps -q api)
+# -a: a crashed or stopped bundled coturn must not pass as "none bundled".
 # Inactive profile (homelab overlay): compose may not know the service.
-coturn=$(docker compose ps -q coturn 2>/dev/null || true)
+coturn=$(docker compose ps -a -q coturn 2>/dev/null || true)
 if [ -z "$api" ]; then
   printf '%s\n' "api läuft nicht." >&2
   exit 1
@@ -15,6 +16,11 @@ fi
 if [ -z "$coturn" ]; then
   printf '%s\n' "Kein mitgelieferter coturn aktiv; externen TURN-Server selbst gegen TURN_USERNAME/TURN_PASSWORD bzw. TURN_AUTH_SECRET prüfen."
   exit 0
+fi
+if [ "$(docker inspect --format '{{.State.Running}}' "$coturn")" != "true" ]; then
+  printf '%s\n' "coturn läuft nicht; Calls haben kein TURN-Relay." \
+    "Ursache: docker compose logs coturn. Starten: docker compose up -d --force-recreate coturn" >&2
+  exit 1
 fi
 value() {
   docker inspect --format '{{range .Config.Env}}{{println .}}{{end}}' "$1" |
