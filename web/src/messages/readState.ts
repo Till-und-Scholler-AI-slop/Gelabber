@@ -41,15 +41,30 @@ export function useReadingChannel(): string | null {
   return view.stamp && stampHolds(view.stamp) ? view.channel : null;
 }
 
+/** When the newest unread snapshot of a scope was asked for. A snapshot
+ * asked for after an event already counts it; no second one is needed. */
+const snapshotStarted = new Map<string, number>();
+const snapshotSlot = (stamp: ScopeStamp) =>
+  `${stamp.userId}:${stamp.generation}`;
+/** Focus and the poll refresh only a snapshot at least this old. */
+const SNAPSHOT_FRESH_MS = 10_000;
+
+export const readStateOptions = (stamp: ScopeStamp) => ({
+  queryKey: readKey(stamp),
+  queryFn: ({ signal }: { signal: AbortSignal }) => {
+    snapshotStarted.set(snapshotSlot(stamp), Date.now());
+    return listReadState(signal);
+  },
+  staleTime: 15_000,
+  retry: false,
+});
+
 export function useReadState() {
   const userId = useUserId();
   const generation = scopeGeneration();
   return useQuery({
-    queryKey: readKey({ userId, generation }),
-    queryFn: ({ signal }) => listReadState(signal),
+    ...readStateOptions({ userId, generation }),
     enabled: Boolean(userId),
-    staleTime: 15_000,
-    retry: false,
   });
 }
 
@@ -87,10 +102,14 @@ export function attachReadRecovery(
   };
   const channels = new Set<string>();
   let all = false;
+  // When the first refresh of the pending batch was asked for.
+  let since: number | undefined;
+  const started = () => snapshotStarted.get(snapshotSlot(stamp)) ?? 0;
   const refresh = (channelId?: string) => {
     if (!active || !stampHolds(stamp)) return;
     if (channelId) channels.add(channelId);
     else all = true;
+    since ??= Date.now();
     clearTimeout(timer);
     const flush = () => {
       clearTimeout(timer);
@@ -100,9 +119,12 @@ export function attachReadRecovery(
       const pending = all ? [undefined] : [...channels];
       all = false;
       channels.clear();
+      const covered = since !== undefined && started() > since;
+      since = undefined;
       // WS frames arrive in separate tasks. A trailing debounce coalesces
       // replay bursts without repeatedly aborting SQL or paginated searches.
-      invalidate(readKey(stamp));
+      // A snapshot asked for since the first of them already has them.
+      if (!covered) invalidate(readKey(stamp));
       for (const channel of pending) {
         for (const kind of ["message-search", "message-context"]) {
           invalidate([
@@ -118,8 +140,15 @@ export function attachReadRecovery(
     timer = setTimeout(flush, 750);
     maxTimer ??= setTimeout(flush, 5_000);
   };
+  // Focus, visibility and the poll catch what other devices did. A snapshot
+  // younger than that already has it: clicking back into the window must
+  // not ask again.
   const focus = () => {
-    if (document.visibilityState === "visible") refresh();
+    if (
+      document.visibilityState === "visible" &&
+      Date.now() - started() >= SNAPSHOT_FRESH_MS
+    )
+      refresh();
   };
   const cleanup = [
     gateway.onEvent((event) => refresh(event.c)),

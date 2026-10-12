@@ -9,6 +9,7 @@ import {
   mayMarkRead,
   readBoundary,
   readKey,
+  readStateOptions,
   refreshChatWorkflows,
 } from "./readState.ts";
 import { messageContext, searchMessages } from "./search.ts";
@@ -387,5 +388,71 @@ describe("read eligibility and recovery", () => {
     expect(cancel).not.toHaveBeenCalled();
     cleanup();
     expect(Object.keys(callbacks)).toEqual([]);
+  });
+
+  it("asks for no second snapshot when the first one already covers the events or focus", async () => {
+    vi.useFakeTimers();
+    const window = new EventTarget() as EventTarget & {
+      setInterval: typeof setInterval;
+      clearInterval: typeof clearInterval;
+    };
+    window.setInterval = setInterval;
+    window.clearInterval = clearInterval;
+    const document = new EventTarget() as EventTarget & {
+      visibilityState: string;
+    };
+    document.visibilityState = "visible";
+    vi.stubGlobal("window", window);
+    vi.stubGlobal("document", document);
+    const callbacks: Record<string, (...args: never[]) => void> = {};
+    const register = (type: string) => (cb: () => void) => {
+      callbacks[type] = cb;
+      return () => {
+        delete callbacks[type];
+      };
+    };
+    const gateway = {
+      onEvent: register("event"),
+      onReady: register("ready"),
+      onGap: register("gap"),
+      onResync: register("resync"),
+      onDm: register("dm"),
+    } as unknown as Gateway;
+    const stamp = takeStamp()!;
+    // The stubbed window has no navigator.locks, so the request itself is
+    // refused; what counts here is how often a snapshot is asked for.
+    const options = readStateOptions(stamp);
+    const queryFn = vi.fn(options.queryFn);
+    const snapshots = () => queryFn.mock.calls.length;
+    const observer = new QueryObserver(client, { ...options, queryFn });
+    const stop = observer.subscribe(() => {});
+    await vi.advanceTimersByTimeAsync(0);
+    expect(snapshots()).toBe(1);
+    const cleanup = attachReadRecovery(client, stamp, gateway);
+    // Connect replays after the snapshot was asked for: one more.
+    await vi.advanceTimersByTimeAsync(1);
+    callbacks.ready();
+    callbacks.dm("dm" as never);
+    await vi.advanceTimersByTimeAsync(750);
+    expect(snapshots()).toBe(2);
+    // An event, then a snapshot asked for by someone else before the flush.
+    callbacks.event({ c: "channel" } as never);
+    await vi.advanceTimersByTimeAsync(100);
+    void observer.refetch();
+    await vi.advanceTimersByTimeAsync(750);
+    expect(snapshots()).toBe(3);
+    // Clicking back into the window right after a snapshot.
+    window.dispatchEvent(new Event("focus"));
+    document.dispatchEvent(new Event("visibilitychange"));
+    await vi.advanceTimersByTimeAsync(750);
+    expect(snapshots()).toBe(3);
+    // Later, focus catches up with other devices.
+    await vi.advanceTimersByTimeAsync(10_000);
+    window.dispatchEvent(new Event("focus"));
+    await vi.advanceTimersByTimeAsync(750);
+    expect(snapshots()).toBeGreaterThanOrEqual(4);
+    cleanup();
+    stop();
+    observer.destroy();
   });
 });
