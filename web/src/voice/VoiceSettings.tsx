@@ -153,7 +153,7 @@ export function MediaSettingsForm({
           </button>
         </fieldset>
       )}
-      {showVideo && (
+      {(showAudio || showVideo) && (
         <fieldset className="flex flex-col gap-2">
           <legend className="text-sm font-semibold text-neutral-800 dark:text-neutral-200">
             Bandbreite
