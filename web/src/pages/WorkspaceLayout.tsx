@@ -17,6 +17,7 @@ import { RequireUser } from "../components/RequireUser.tsx";
 import { ServerRail } from "../components/ServerRail.tsx";
 import { UserPanel } from "../components/UserPanel.tsx";
 import { WorkspaceDrawer } from "../components/WorkspaceNavigation.tsx";
+import { notify } from "../components/toasts.ts";
 import { useDms } from "../dms/queries.ts";
 import { useReadState, useReadingChannel } from "../messages/readState.ts";
 import { forgetServer, useServer } from "../servers/queries.ts";
@@ -42,7 +43,10 @@ function Workspace() {
       sidebar={
         <aside className="channel-sidebar" aria-label="Navigation">
           <div className="sidebar-brand">Gelabber</div>
-          <div className="sidebar-empty">Dein Platz für gemeinsame Abende.</div>
+          <div className="sidebar-empty">
+            Dein Platz für gemeinsame Abende. Erstelle einen Server mit dem Plus
+            in der Serverleiste oder öffne einen Einladungslink.
+          </div>
           <UserPanel />
         </aside>
       }
@@ -134,6 +138,7 @@ function SelectedServer({
 
   useEffect(() => {
     if (!gone || !userId) return;
+    notify("Server nicht gefunden oder kein Zugriff.");
     forgetServer(client, userId, serverId, { keepDetail: true });
     void navigate({ to: "/", replace: true }).then(() =>
       forgetServer(client, userId, serverId),

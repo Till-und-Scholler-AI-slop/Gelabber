@@ -14,6 +14,7 @@ import { DmChannelPage } from "./pages/DmChannelPage.tsx";
 import { DmIndexPage } from "./pages/DmIndexPage.tsx";
 import { InvitePage } from "./pages/InvitePage.tsx";
 import { LoginPage } from "./pages/LoginPage.tsx";
+import { NotFoundPage } from "./pages/NotFoundPage.tsx";
 import { ProfilePage } from "./pages/ProfilePage.tsx";
 import { RegisterPage } from "./pages/RegisterPage.tsx";
 import { ServerPage } from "./pages/ServerPage.tsx";
@@ -195,6 +196,7 @@ export const router = createRouter({
   // nothing rather than a spinner for that split second.
   defaultPendingComponent: () => null,
   defaultPendingMs: 0,
+  defaultNotFoundComponent: NotFoundPage,
 });
 
 declare module "@tanstack/react-router" {

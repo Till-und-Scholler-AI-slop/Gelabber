@@ -17,11 +17,13 @@ import {
 import type { User } from "../auth/types.ts";
 import { useFormErrors } from "../auth/useFormErrors.ts";
 import { Avatar } from "../components/Avatar.tsx";
+import { BackToApp } from "../components/BackToApp.tsx";
 import { Field } from "../components/Field.tsx";
 import { FormError } from "../components/FormError.tsx";
 import { SubmitButton } from "../components/SubmitButton.tsx";
 import { useDebouncedValue } from "../components/useDebouncedValue.ts";
 import { leaveVoice, stopWatching } from "../voice/session.ts";
+import "./settings.css";
 
 export function ProfilePage() {
   const user = useSession((state) => state.user);
@@ -77,6 +79,7 @@ function ProfileForm({ user }: { user: User }) {
 
   return (
     <section className="lr-account-page mx-auto max-w-md">
+      <BackToApp />
       <h1 className="text-2xl font-semibold tracking-tight">Profil</h1>
       <p className="mt-1 text-sm text-neutral-600 dark:text-neutral-400">
         {user.email}
@@ -126,6 +129,7 @@ function ProfileForm({ user }: { user: User }) {
             pending={mutation.isPending}
             pendingLabel="Speichern…"
             disabled={!dirty}
+            title={dirty ? undefined : "Noch nichts geändert"}
           >
             Speichern
           </SubmitButton>
