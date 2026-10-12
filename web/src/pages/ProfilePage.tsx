@@ -1,9 +1,15 @@
 import { useMutation } from "@tanstack/react-query";
 import { useNavigate } from "@tanstack/react-router";
-import { useState, type FormEvent } from "react";
+import { useRef, useState, type ChangeEvent, type FormEvent } from "react";
 
 import {
+  AvatarImageError,
+  avatarImageMessage,
+  prepareAvatar,
+} from "../auth/avatarImage.ts";
+import {
   fieldMessage,
+  isUploadedAvatar,
   validateAvatarUrl,
   validateName,
   validatePassword,
@@ -12,6 +18,7 @@ import {
   changePassword,
   logoutEverywhere,
   updateProfile,
+  uploadAvatar,
   useSession,
 } from "../auth/session.ts";
 import type { User } from "../auth/types.ts";
@@ -55,6 +62,32 @@ function ProfileForm({ user }: { user: User }) {
   const dirty =
     name.trim() !== user.name || avatarUrl.trim() !== (user.avatar_url ?? "");
 
+  // Uploads apply at once; the URL field and Speichern are for links.
+  const picker = useRef<HTMLInputElement>(null);
+  const upload = useMutation({
+    mutationFn: async (file: File) => uploadAvatar(await prepareAvatar(file)),
+    onSuccess: (updated) => {
+      setAvatarUrl(updated.avatar_url ?? "");
+      clearField("avatar_url");
+    },
+    onError: (error) => {
+      if (error instanceof AvatarImageError) {
+        setFields({ avatar_url: avatarImageMessage(error) });
+      } else {
+        fromError(error);
+      }
+    },
+  });
+  const onPick = (event: ChangeEvent<HTMLInputElement>) => {
+    const file = event.target.files?.[0];
+    event.target.value = "";
+    if (file) {
+      setSaved(false);
+      upload.mutate(file);
+    }
+  };
+  const uploaded = isUploadedAvatar(avatarUrl);
+
   const onSubmit = (event: FormEvent<HTMLFormElement>) => {
     event.preventDefault();
     setSaved(false);
@@ -85,10 +118,43 @@ function ProfileForm({ user }: { user: User }) {
       <form onSubmit={onSubmit} noValidate className="mt-8 flex flex-col gap-6">
         <div className="flex items-center gap-4">
           <Avatar name={name || user.name} url={previewUrl || null} size="lg" />
-          <p className="text-sm text-neutral-600 dark:text-neutral-400">
-            Dein Bild begleitet dich in Chats und Sprachräumen. Ohne Bild zeigen
-            wir deine Initialen.
-          </p>
+          <div className="flex flex-col gap-2">
+            <p className="text-sm text-neutral-600 dark:text-neutral-400">
+              Dein Bild begleitet dich in Chats und Sprachräumen. Ohne Bild
+              zeigen wir deine Initialen.
+            </p>
+            <div className="flex flex-wrap gap-2">
+              <button
+                type="button"
+                onClick={() => picker.current?.click()}
+                disabled={upload.isPending}
+                className="rounded-lg border border-neutral-300 px-3 py-1.5 text-sm font-medium transition hover:bg-neutral-100 disabled:opacity-60 dark:border-neutral-700 dark:hover:bg-neutral-800"
+              >
+                {upload.isPending ? "Lädt hoch…" : "Bild hochladen"}
+              </button>
+              {avatarUrl.trim() ? (
+                <button
+                  type="button"
+                  onClick={() => {
+                    setAvatarUrl("");
+                    setSaved(false);
+                    clearField("avatar_url");
+                  }}
+                  className="rounded-lg px-3 py-1.5 text-sm font-medium text-neutral-600 transition hover:bg-neutral-100 dark:text-neutral-400 dark:hover:bg-neutral-800"
+                >
+                  Entfernen
+                </button>
+              ) : null}
+            </div>
+            <input
+              ref={picker}
+              type="file"
+              accept="image/png,image/jpeg,image/webp,image/gif"
+              className="hidden"
+              aria-label="Avatar-Bild auswählen"
+              onChange={onPick}
+            />
+          </div>
         </div>
 
         <Field
@@ -110,15 +176,19 @@ function ProfileForm({ user }: { user: User }) {
           label="Avatar-URL"
           type="url"
           inputMode="url"
-          placeholder="https://…"
-          value={avatarUrl}
+          placeholder={uploaded ? "Hochgeladenes Bild" : "https://…"}
+          value={uploaded ? "" : avatarUrl}
           onChange={(event) => {
             setAvatarUrl(event.target.value);
             setSaved(false);
             clearField("avatar_url");
           }}
           error={errors.fields.avatar_url}
-          hint="Leer lassen, um das Bild zu entfernen."
+          hint={
+            uploaded
+              ? "Eine URL hier ersetzt das hochgeladene Bild."
+              : "Lieber hochladen: Links laden das Bild bei jedem Aufruf von der fremden Seite."
+          }
         />
         <FormError message={errors.form} />
         <div className="flex items-center gap-4">

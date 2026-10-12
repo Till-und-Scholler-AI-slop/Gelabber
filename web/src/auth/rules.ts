@@ -48,9 +48,18 @@ export function validateName(raw: string): FieldCode | null {
   return null;
 }
 
+const UUID = "[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}";
+const UPLOADED_AVATAR = new RegExp(`^/api/avatars/${UUID}/${UUID}$`, "i");
+
+/** An avatar the API stores itself (`PUT /api/me/avatar`), not a link. */
+export function isUploadedAvatar(url: string | null | undefined): boolean {
+  return url != null && UPLOADED_AVATAR.test(url.trim());
+}
+
 export function validateAvatarUrl(raw: string): FieldCode | null {
   const value = raw.trim();
   if (value.length === 0) return null;
+  if (isUploadedAvatar(value)) return null;
   if (chars(value) > AVATAR_URL_MAX) return "too_long";
   // https only: an http image would be mixed content behind TLS.
   if (!/^https:\/\/[^\s/.?#]\S*$/i.test(value)) return "invalid";

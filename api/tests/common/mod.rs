@@ -217,6 +217,37 @@ impl Client {
         (status, headers, bytes)
     }
 
+    /// A non-JSON body (avatar upload); answers are JSON as usual.
+    pub async fn send_bytes(
+        &mut self,
+        method: Method,
+        path: &str,
+        content_type: &str,
+        bytes: Vec<u8>,
+    ) -> (StatusCode, Value) {
+        let mut builder = Request::builder().method(method).uri(path);
+        let cookie = self
+            .jar
+            .iter()
+            .map(|(k, v)| format!("{k}={v}"))
+            .collect::<Vec<_>>()
+            .join("; ");
+        builder = builder
+            .header(COOKIE, cookie)
+            .header(CONTENT_TYPE, content_type);
+        if let Some(token) = &self.csrf {
+            builder = builder.header("x-csrf-token", token);
+        }
+        let request = builder.body(Body::from(bytes)).unwrap();
+        let response = self.app.clone().oneshot(request).await.unwrap();
+        let status = response.status();
+        let bytes = to_bytes(response.into_body(), 1 << 20).await.unwrap();
+        (
+            status,
+            serde_json::from_slice(&bytes).unwrap_or(Value::Null),
+        )
+    }
+
     pub async fn send_with(
         &mut self,
         method: Method,

@@ -296,6 +296,24 @@ export async function updateProfile(patch: ProfilePatch): Promise<User> {
   }
 }
 
+/**
+ * Uploads an image prepared by `prepareAvatar`; the profile then points at
+ * it (#208). Not optimistic: the new URL only exists once the server
+ * stored the file.
+ */
+export async function uploadAvatar(image: Blob): Promise<User> {
+  const stamp = takeStamp();
+  const user = await api<User>("/me/avatar", { method: "PUT", body: image });
+  if (stampHolds(stamp)) {
+    if (user.id === stamp.userId) {
+      useSession.setState({ status: "authenticated", user });
+    } else {
+      applySession(user);
+    }
+  }
+  return user;
+}
+
 /** Test/dev helper: forget everything this tab knows. */
 export function resetSessionForTests(): void {
   bootstrap = null;

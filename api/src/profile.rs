@@ -41,6 +41,13 @@ async fn update_me(
             .avatar_url
             .and_then(|raw| validate::avatar_url(&raw, &mut errors)),
     };
+    // An uploaded path is only ever the caller's own (see `avatars`).
+    if let Some(Some(url)) = &patch.avatar_url
+        && let Some((owner, _)) = crate::avatars::parse_url(url)
+        && owner != current.id
+    {
+        errors.insert("avatar_url", "invalid");
+    }
     validate::finish(errors)?;
 
     if patch == ProfilePatch::default() {
@@ -48,7 +55,10 @@ async fn update_me(
     }
 
     match user::update_profile(&state.db, current.id, &patch).await? {
-        Some(updated) => Ok(Json(updated)),
+        Some(updated) => {
+            crate::avatars::discard_replaced(&state, &current, &updated).await;
+            Ok(Json(updated))
+        }
         // The row disappeared between the extractor and the update (account
         // deleted in another tab); report it as a plain re-login.
         None => Err(ApiError::Unauthenticated),

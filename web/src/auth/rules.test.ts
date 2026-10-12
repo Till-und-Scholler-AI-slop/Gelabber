@@ -52,6 +52,15 @@ describe("validation rules (mirror of api/src/auth/validate.rs)", () => {
     expect(validateAvatarUrl("http://cdn.example/a.png")).toBe("invalid");
     expect(validateAvatarUrl("https://a b")).toBe("invalid");
   });
+
+  it("avatar url accepts the API's own uploaded path, nothing else relative", () => {
+    const uploaded =
+      "/api/avatars/0b8d6a8e-3f1c-4f7e-9a51-2a1c3e4d5f60/7c9e6679-7425-40de-944b-e07fc1f90ae7";
+    expect(validateAvatarUrl(uploaded)).toBeNull();
+    expect(validateAvatarUrl("/api/avatars/x/y")).toBe("invalid");
+    expect(validateAvatarUrl("/etc/passwd")).toBe("invalid");
+    expect(validateAvatarUrl(`${uploaded}/../x`)).toBe("invalid");
+  });
 });
 
 describe("copy", () => {
