@@ -446,6 +446,9 @@ fn main() {
                 .initialization_script(SHORTCUTS)
                 // Only WebView2 takes them; ignored on the other platforms.
                 .additional_browser_args(WEBVIEW2_ARGS)
+                // Tauri's native handler swallows file drops; the chat
+                // composer takes them as HTML5 drops instead.
+                .disable_drag_drop_handler()
                 .build()?;
             #[cfg(target_os = "linux")]
             watch_web_process(&handle, &window);

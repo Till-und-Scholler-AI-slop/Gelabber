@@ -7,6 +7,7 @@ import { useVirtualizer } from "@tanstack/react-virtual";
 import {
   useCallback,
   useEffect,
+  useEffectEvent,
   useLayoutEffect,
   useMemo,
   useRef,
@@ -53,6 +54,11 @@ import {
   useSendMessage,
 } from "../messages/queries.ts";
 import { attachmentUrl } from "../messages/api.ts";
+import {
+  carriesFiles,
+  droppedFile,
+  pastedFile,
+} from "../messages/clipboard.ts";
 import {
   ALLOWED_TYPES,
   CONTENT_MAX,
@@ -988,6 +994,58 @@ function Composer({
     setFile(next);
   };
 
+  // Files dropped anywhere on the conversation attach like the paperclip.
+  const [dropping, setDropping] = useState(false);
+  const attachDropped = useEffectEvent((next: File) => {
+    pickFile(next);
+    composerInput.current?.focus();
+  });
+  useEffect(() => {
+    const pane = composerForm.current?.closest<HTMLElement>(".lr-message-pane");
+    if (!pane || !canSendFiles) return;
+    // enter/leave fire for every child the pointer crosses.
+    let depth = 0;
+    const show = (on: boolean) => {
+      pane.classList.toggle("is-drop-target", on);
+      setDropping(on);
+    };
+    const enter = (event: DragEvent) => {
+      if (!carriesFiles(event.dataTransfer)) return;
+      event.preventDefault();
+      depth += 1;
+      show(true);
+    };
+    const over = (event: DragEvent) => {
+      if (!carriesFiles(event.dataTransfer) || !event.dataTransfer) return;
+      event.preventDefault();
+      event.dataTransfer.dropEffect = "copy";
+    };
+    const leave = (event: DragEvent) => {
+      if (!carriesFiles(event.dataTransfer)) return;
+      depth = Math.max(0, depth - 1);
+      if (depth === 0) show(false);
+    };
+    const drop = (event: DragEvent) => {
+      if (!carriesFiles(event.dataTransfer)) return;
+      event.preventDefault();
+      depth = 0;
+      show(false);
+      const file = droppedFile(event.dataTransfer);
+      if (file) attachDropped(file);
+    };
+    pane.addEventListener("dragenter", enter);
+    pane.addEventListener("dragover", over);
+    pane.addEventListener("dragleave", leave);
+    pane.addEventListener("drop", drop);
+    return () => {
+      pane.removeEventListener("dragenter", enter);
+      pane.removeEventListener("dragover", over);
+      pane.removeEventListener("dragleave", leave);
+      pane.removeEventListener("drop", drop);
+      show(false);
+    };
+  }, [canSend, canSendFiles]);
+
   const submit = (event?: FormEvent) => {
     event?.preventDefault();
     if (disabled) return;
@@ -1089,6 +1147,11 @@ function Composer({
         {channelName}
       </label>
       <div className="lr-composer-field">
+        {dropping ? (
+          <p className="lr-composer-drop" aria-hidden="true">
+            Loslassen zum Anhängen
+          </p>
+        ) : null}
         {file ? (
           <div className="lr-composer-attachment">
             {preview ? <img src={preview} alt="" /> : null}
@@ -1142,6 +1205,13 @@ function Composer({
             }}
             onBlur={() => onDraftStop?.()}
             onKeyDown={onKeyDown}
+            onPaste={(event) => {
+              if (!canSendFiles) return;
+              const pasted = pastedFile(event.clipboardData);
+              if (!pasted) return;
+              event.preventDefault();
+              pickFile(pasted);
+            }}
             rows={1}
             placeholder={`Nachricht an ${mention}${channelName}`}
           />
