@@ -3,6 +3,7 @@
 // painted in the same frame; the server answer swaps the `tmp:` id, an
 // error retains an independently recoverable send attempt.
 
+import { anchoredScrollTop } from "./scrollAnchor.ts";
 import { useVirtualizer } from "@tanstack/react-virtual";
 import {
   useCallback,
@@ -461,6 +462,10 @@ function MessageList({
   }, [virtualizer]);
 
   const totalSize = virtualizer.getTotalSize();
+  const startOf = useCallback(
+    (index: number) => virtualizer.getOffsetForIndex(index, "start")?.[0],
+    [virtualizer],
+  );
   useLayoutEffect(() => {
     if (latestRequest !== lastRequest.current) {
       stickToBottom.current = true;
@@ -474,12 +479,9 @@ function MessageList({
       // Keep the row that was on top at the same place, offset included;
       // later size corrections above it are the virtualizer's own.
       olderAnchor.current = false;
-      const anchor = pin.current;
-      const idx = anchor ? items.findIndex((m) => m.id === anchor.id) : -1;
-      const offset =
-        idx >= 0 ? virtualizer.getOffsetForIndex(idx, "start") : undefined;
-      if (anchor && offset && scrollRef.current)
-        scrollRef.current.scrollTop = offset[0] - anchor.offset;
+      const top = anchoredScrollTop(items, pin.current, startOf);
+      if (top !== undefined && scrollRef.current)
+        scrollRef.current.scrollTop = top;
     } else if (stickToBottom.current) {
       // Native bottom pin below owns the end. scrollToIndex's asynchronous
       // measurement retries can otherwise pull a measured list back upwards.
@@ -491,13 +493,8 @@ function MessageList({
       // A row vanished (own delete or WS), or the oldest rows moved out of
       // the list. Keep the first visible id at the same offset so the list
       // does not jump.
-      const idx = items.findIndex((m) => m.id === pin.current?.id);
-      if (idx >= 0) {
-        const offset = virtualizer.getOffsetForIndex(idx, "start");
-        if (offset) {
-          scrollRef.current.scrollTop = offset[0] - pin.current.offset;
-        }
-      }
+      const top = anchoredScrollTop(items, pin.current, startOf);
+      if (top !== undefined) scrollRef.current.scrollTop = top;
     }
 
     updateLatest();
@@ -511,7 +508,7 @@ function MessageList({
         offset: first.start - scrollRef.current.scrollTop,
       };
     }
-  }, [items, virtualizer, updateLatest, totalSize, latestRequest]);
+  }, [items, virtualizer, startOf, updateLatest, totalSize, latestRequest]);
 
   const firstVisible = virtualizer.getVirtualItems()[0]?.index ?? 0;
   const firstId = items[0]?.id;
