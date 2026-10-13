@@ -1939,15 +1939,12 @@ async function refreshMic(): Promise<void> {
     // (a failed processor took it off the sender, or a rebuild asks again)
     // the call goes on without a microphone.
     if (micCurrent(pc, session, request)) {
-      logMicFailure(error);
-      deps?.onError?.(
-        microphoneFailure(
-          error,
-          hasLiveTrack(localStream, "audio")
-            ? "der Wechsel hat nicht geklappt"
-            : "du hörst nur zu",
-        ),
-      );
+      if (hasLiveTrack(localStream, "audio")) {
+        logMicFailure(error);
+        deps?.onError?.(
+          microphoneFailure(error, "der Wechsel hat nicht geklappt"),
+        );
+      } else reportJoinMicFailure(error);
     } else if (seat.generation !== session) resumeOvertakenMic(join, error);
     return;
   }

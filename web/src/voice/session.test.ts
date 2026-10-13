@@ -1037,6 +1037,129 @@ describe("voice session", () => {
     expect(f.errors).toEqual([]);
   });
 
+  it("leaves the resumed capture to the next rebuild when the socket closes during its publish", async () => {
+    const prompt = deferred();
+    const produce = deferred();
+    let produceGated = false;
+    const f = install({
+      gateMedia: (index) => (index === 0 ? prompt.promise : undefined),
+      gateProduce: (kind) => {
+        if (kind !== "a" || produceGated) return undefined;
+        produceGated = true;
+        return produce.promise;
+      },
+    });
+    joinVoice({ serverId: "srv", channelId: "voice", channelName: "Lounge" });
+    await vi.waitFor(() => expect(f.getUserMediaCalls()).toBe(1));
+    f.closeMedia();
+    await vi.waitFor(() =>
+      expect(f.mediaSent.filter((frame) => frame.op === "j")).toHaveLength(2),
+    );
+    prompt.resolve();
+    await vi.waitFor(() => expect(produceGated).toBe(true));
+    // The socket drops between the answer and the publish; its rebuild has
+    // not started yet.
+    f.closeMedia();
+    produce.resolve();
+    await vi.waitFor(() => expect(f.peers[2]?.audio).toBeTruthy());
+    expect(f.getUserMediaCalls()).toBe(3);
+    expect(f.errors).toEqual([]);
+  });
+
+  it("does not capture for a connection whose socket already closed", async () => {
+    const prompt = deferred();
+    const f = install({
+      gateMedia: (index) => (index === 0 ? prompt.promise : undefined),
+    });
+    joinVoice({ serverId: "srv", channelId: "voice", channelName: "Lounge" });
+    await vi.waitFor(() => expect(f.getUserMediaCalls()).toBe(1));
+    f.closeMedia();
+    await vi.waitFor(() => expect(f.peers[1]?.started).toBe(true));
+    // The rebuilt connection loses its socket too; the prompt is answered
+    // before the next rebuild starts.
+    f.closeMedia();
+    prompt.resolve();
+    await vi.waitFor(() => expect(f.peers[2]?.audio).toBeTruthy());
+    expect(f.getUserMediaCalls()).toBe(2);
+    expect(f.errors).toEqual([]);
+  });
+
+  it("reports a failed resumed capture once, as a call without a microphone", async () => {
+    const prompt = deferred();
+    let holdSecond: (() => void) | undefined;
+    const f = install({
+      gateMedia: (index) => (index === 0 ? prompt.promise : undefined),
+      mediaError: (index) =>
+        index === 1
+          ? Object.assign(new Error("Could not start audio source"), {
+              name: "NotReadableError",
+            })
+          : undefined,
+      holdStart: (index) =>
+        index === 1
+          ? new Promise<void>((resolve) => {
+              holdSecond = resolve;
+            })
+          : undefined,
+    });
+    joinVoice({ serverId: "srv", channelId: "voice", channelName: "Lounge" });
+    await vi.waitFor(() => expect(f.getUserMediaCalls()).toBe(1));
+    f.closeMedia();
+    await vi.waitFor(() => expect(holdSecond).toBeDefined());
+    prompt.resolve();
+    await vi.waitFor(() => expect(streamStopped(f.streams[0])).toBe(true));
+    holdSecond!();
+    await vi.waitFor(() => expect(f.errors).toHaveLength(1));
+    expect(messages(f.errors)).toEqual([
+      "Das Mikrofon ist gerade nicht verfügbar, du hörst nur zu.",
+    ]);
+    expect(useAudioProcessing.getState().message).toBe(
+      "Mikrofon konnte nicht aktiviert werden; du hörst weiter zu",
+    );
+    // The next rebuild does not ask again.
+    f.closeMedia();
+    await vi.waitFor(() =>
+      expect(f.mediaSent.filter((frame) => frame.op === "j")).toHaveLength(3),
+    );
+    await vi.waitFor(() => expect(f.peers[2]?.started).toBe(true));
+    await new Promise((resolve) => setTimeout(resolve, 10));
+    expect(f.getUserMediaCalls()).toBe(2);
+    expect(f.errors).toHaveLength(1);
+  });
+
+  it("does not carry a pending microphone resume into the next join", async () => {
+    const prompt = deferred();
+    const f = install({
+      gateMedia: (index) => (index === 0 ? prompt.promise : undefined),
+      holdStart: (index) =>
+        index === 1 ? new Promise<void>(() => {}) : undefined,
+      mediaError: (index) =>
+        index === 1
+          ? Object.assign(new Error("Permission denied"), {
+              name: "NotAllowedError",
+            })
+          : undefined,
+    });
+    joinVoice({ serverId: "srv", channelId: "voice", channelName: "Lounge" });
+    await vi.waitFor(() => expect(f.getUserMediaCalls()).toBe(1));
+    f.closeMedia();
+    await vi.waitFor(() => expect(f.peers).toHaveLength(2));
+    // Answered while the rebuilt connection is still loading: the resume
+    // waits for it ...
+    prompt.resolve();
+    await vi.waitFor(() => expect(streamStopped(f.streams[0])).toBe(true));
+    // ... but the user joins another channel and refuses the microphone.
+    joinVoice({ serverId: "srv", channelId: "other", channelName: "Other" });
+    await vi.waitFor(() => expect(f.errors).toHaveLength(1));
+    expect(f.getUserMediaCalls()).toBe(2);
+    // A rebuild of that join does not ask on behalf of the earlier one.
+    f.closeMedia();
+    await vi.waitFor(() => expect(f.peers[3]?.started).toBe(true));
+    await new Promise((resolve) => setTimeout(resolve, 10));
+    expect(f.getUserMediaCalls()).toBe(2);
+    expect(f.errors).toHaveLength(1);
+  });
+
   it("does not ask again for a microphone refused while the connection was rebuilt", async () => {
     const prompt = deferred();
     const f = install({
