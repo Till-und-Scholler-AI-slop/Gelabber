@@ -109,8 +109,8 @@ Browsers upload and download attachments directly from MinIO through presigned U
 
 1. DNS for `minio.example.com`, and the MinIO site from `Caddyfile.homelab` in your Caddy (`header_up Host {hostport}`, URI unchanged).
 2. `.env`: `MINIO_PUBLIC_ENDPOINT=https://minio.example.com`, `MINIO_API_BIND=127.0.0.1`, `MINIO_CONSOLE_BIND=127.0.0.1`, `MINIO_API_CORS_ALLOW_ORIGIN=https://example.com`.
-3. `docker compose up -d minio api`, then close 9000/9001 in the firewall.
-4. Check from outside: `curl -I https://example.com:9000/minio/health/live` must fail; an attachment link must redirect to `https://minio.example.com/…`.
+3. `docker compose up -d minio api`. Check that an attachment link now redirects to `https://minio.example.com/…`: with `curl -I` and your session cookie, or in a private window. An open browser does not show it yet: it caches the attachment redirect for the rest of its signing window and keeps following the old `:9000` link for up to 30 minutes.
+4. About 30 minutes later, close 9000/9001 in the firewall. Check from outside: `curl -I https://example.com:9000/minio/health/live` must fail.
 
 A path prefix (`https://example.com/s3/…`) does not work: presigns sign host and path.
 
