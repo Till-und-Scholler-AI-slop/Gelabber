@@ -25,8 +25,7 @@ async fn run() -> Result<(), Box<dyn std::error::Error>> {
     let config = Config::from_env()?;
     if let Some(port) = config.minio.as_ref().and_then(|minio| minio.public_port()) {
         tracing::warn!(
-            port,
-            "MINIO_PUBLIC_ENDPOINT is not on 443: attachments load only where this port is open, and MinIO faces the internet; serve it on its own subdomain (deploy/README.md, \"MinIO on 443\")"
+            "MINIO_PUBLIC_ENDPOINT uses port {port} instead of 443: attachments load and upload only on networks that allow this port (deploy/README.md, MinIO on 443)"
         );
     }
     let state = AppState::from_config(&config)?;
