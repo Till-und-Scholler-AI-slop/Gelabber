@@ -14,7 +14,7 @@ import { DmChannelPage } from "./pages/DmChannelPage.tsx";
 import { DmIndexPage } from "./pages/DmIndexPage.tsx";
 import { InvitePage } from "./pages/InvitePage.tsx";
 import { LoginPage } from "./pages/LoginPage.tsx";
-import { NotFoundPage } from "./pages/NotFoundPage.tsx";
+import { NotFoundCard, NotFoundPage } from "./pages/NotFoundPage.tsx";
 import { ProfilePage } from "./pages/ProfilePage.tsx";
 import { RegisterPage } from "./pages/RegisterPage.tsx";
 import { ServerPage } from "./pages/ServerPage.tsx";
@@ -75,6 +75,7 @@ const centeredLayout = createRoute({
       <Outlet />
     </main>
   ),
+  notFoundComponent: NotFoundCard,
 });
 
 const profileRoute = createRoute({
@@ -134,6 +135,7 @@ const workspaceLayout = createRoute({
   id: "workspace",
   beforeLoad: requireUser,
   component: WorkspaceLayout,
+  notFoundComponent: NotFoundCard,
 });
 
 const indexRoute = createRoute({
