@@ -57,7 +57,9 @@ for (const engine of [chromium, firefox]) {
             window.probe.ended++;
             clip.duration = this.duration;
           },
-          { once: true },
+          // Capture runs before the cue's own `onended`, which releases the
+          // source (and with it the duration).
+          { once: true, capture: true },
         );
         return original.call(this).then(
           () => {
