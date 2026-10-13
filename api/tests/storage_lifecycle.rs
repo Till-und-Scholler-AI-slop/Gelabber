@@ -557,6 +557,79 @@ async fn real_minio_failed_delete_retains_job_and_later_retry_removes_only_its_o
     state.store.delete(&foreign).await.unwrap();
 }
 
+/// The windowed download link (#201) and its save variant against real
+/// MinIO: the redirect is cacheable per session for the rest of its window,
+/// the signed link serves the bytes with the signed cache header, and the
+/// variant makes MinIO itself answer `Content-Disposition: attachment`.
+#[sqlx::test]
+async fn real_minio_download_links_serve_the_object(pool: PgPool) {
+    use axum::http::header::{CACHE_CONTROL, LOCATION, VARY};
+    let endpoint = std::env::var("MINIO_ENDPOINT").expect("source local minio-test.env");
+    let config = minio_config(&endpoint);
+    let mut state = state(pool, 0);
+    state.store = ObjectStore::from_minio(Some(&config)).unwrap();
+    state.store.ensure_ready().await.unwrap();
+    let (mut client, _, channel) = owner(&state).await;
+    let signed = presign(&mut client, &channel).await;
+    let id = signed["id"].as_str().unwrap().to_owned();
+    let key = format!("att/{id}");
+    state
+        .store
+        .put(&key, "image/png", vec![1, 2, 3, 4])
+        .await
+        .unwrap();
+    message(&mut client, &channel, &id).await;
+    let http = reqwest::Client::new();
+
+    let (status, headers, _) = client
+        .send_raw(Method::GET, &format!("/api/attachments/{id}"), None)
+        .await;
+    assert_eq!(status, StatusCode::TEMPORARY_REDIRECT);
+    assert_eq!(headers[VARY], "Cookie");
+    let cache = headers[CACHE_CONTROL].to_str().unwrap();
+    let left: u64 = cache
+        .strip_prefix("private, max-age=")
+        .unwrap_or_else(|| panic!("{cache}"))
+        .parse()
+        .unwrap();
+    assert!((1..=1_800).contains(&left), "{cache}");
+    let link = headers[LOCATION].to_str().unwrap().to_owned();
+    let (_, again, _) = client
+        .send_raw(Method::GET, &format!("/api/attachments/{id}"), None)
+        .await;
+    if left > 5 {
+        assert_eq!(again[LOCATION], link.as_str(), "same window, same link");
+    }
+    let object = http.get(&link).send().await.unwrap();
+    assert_eq!(object.status(), reqwest::StatusCode::OK);
+    assert_eq!(
+        object.headers()[reqwest::header::CACHE_CONTROL],
+        "private, max-age=1800"
+    );
+    assert_eq!(object.bytes().await.unwrap().as_ref(), [1, 2, 3, 4]);
+
+    let (status, headers, _) = client
+        .send_raw(
+            Method::GET,
+            &format!("/api/attachments/{id}?download=1"),
+            None,
+        )
+        .await;
+    assert_eq!(status, StatusCode::TEMPORARY_REDIRECT);
+    assert_eq!(headers[CACHE_CONTROL], "private, no-store");
+    assert_eq!(headers[VARY], "Cookie");
+    let save = headers[LOCATION].to_str().unwrap();
+    assert_ne!(save, link);
+    let object = http.get(save).send().await.unwrap();
+    assert_eq!(object.status(), reqwest::StatusCode::OK);
+    assert_eq!(
+        object.headers()[reqwest::header::CONTENT_DISPOSITION],
+        "attachment; filename=\"x.png\""
+    );
+    assert_eq!(object.bytes().await.unwrap().as_ref(), [1, 2, 3, 4]);
+    state.store.delete(&key).await.unwrap();
+}
+
 #[tokio::test]
 async fn missing_production_storage_is_rejected_and_memory_requires_explicit_opt_in() {
     let config = Config::from_source(|key| match key {

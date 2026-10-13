@@ -18,6 +18,30 @@ configuration always takes precedence. Temporary MinIO unavailability retains
 retry work; presign/bind expose the existing internal-error response. HTTP
 transport errors strip signed URLs before logging. No stack pins changed.
 
+## Download links and access revocation (#201)
+
+`GET /api/attachments/{id}` checks membership on every request it receives,
+then redirects (`307`) to a presigned MinIO GET. So that a picture keeps one
+URL, and the browser its cached copy, the link is signed as of the start of a
+30-minute window (`GET_WINDOW`) and stays valid for 60 minutes (`GET_TTL`)
+from that start. The redirect carries `Cache-Control: private, max-age=<rest
+of the window>` and `Vary: Cookie`; MinIO answers the object with
+`Cache-Control: private, max-age=1800`.
+
+Consequence, accepted by Silas on 2026-10-12: after a member leaves, is
+removed, is banned or logs out, a link already handed out, a cached redirect
+or a cached picture can still show that attachment for **up to 60 minutes**.
+`Vary: Cookie` makes a new session (another account in the same browser, or
+logging in again) ask the API anew instead of reusing the old redirect; it
+does not shorten the lifetime of a link someone copied.
+
+`?download=1` is the save variant: the signed link also carries
+`response-content-disposition=attachment; filename="…"` (plus RFC 6266
+`filename*` for non-ASCII names), so MinIO itself asks the browser to save the
+file. A browser ignores `<a download>` after a cross-origin redirect. That
+redirect is `Cache-Control: private, no-store`. The memory store answers
+`attachment` instead of `inline` for it.
+
 ## Transactions and cleanup
 
 Migration 0008 adds `storage_cleanup` and an attachment DELETE trigger. Message,
