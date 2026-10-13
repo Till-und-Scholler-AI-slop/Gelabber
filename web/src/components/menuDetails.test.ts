@@ -98,7 +98,10 @@ describe("details menus", () => {
     // Focus leaving the page entirely is the pointer handler's business.
     focusOut(null);
     expect(details.open).toBe(true);
-    focusOut({ outside: true });
+    // Pressing the menu's own padding focuses an enclosing <dialog>.
+    focusOut({ contains: (node: unknown) => node === details });
+    expect(details.open).toBe(true);
+    focusOut({ contains: () => false });
     expect(details.open).toBe(false);
   });
 });

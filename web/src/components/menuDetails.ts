@@ -32,8 +32,17 @@ export function attachMenuDetails(details: HTMLDetailsElement): () => void {
   const onFocusOut = (event: FocusEvent) => {
     const next = event.relatedTarget as Node | null;
     // Tabbing out of an open menu closes it; a click away from the page
-    // (no next target) is left to the pointer handler.
-    if (details.open && next && !details.contains(next)) close();
+    // (no next target) is left to the pointer handler. Focus moving to an
+    // ancestor (a press on the menu's own padding hands focus to the
+    // enclosing <dialog>) is not leaving: closing in the middle of that
+    // mousedown focus change crashes Chromium's renderer.
+    if (
+      details.open &&
+      next &&
+      !details.contains(next) &&
+      !next.contains(details)
+    )
+      close();
   };
   const onClick = (event: Event) => {
     const target = event.target as Element | null;
