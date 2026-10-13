@@ -36,6 +36,7 @@ import type {
 } from "./mediasoupConnection.ts";
 import type { TrackKind } from "../ws/protocol.ts";
 import { resetSessionForTests, useSession } from "../auth/session.ts";
+import { errorMessage } from "../auth/rules.ts";
 import { randomUuid } from "../lib/uuid.ts";
 import {
   buildDiagnosticExport,
@@ -1891,8 +1892,39 @@ describe("voice session", () => {
     emitErr({ op: "err", e: "forbidden", s: "srv", c: "voice" });
     expect(useVoice.getState().live).toBe(false);
     expect(useVoiceRoster.getState().live.srv?.voice).toBeUndefined();
-    expect(errors).toHaveLength(1);
+    expect(messages(errors)).toEqual(["Dafür fehlt dir die Berechtigung."]);
     expect(useVoice.getState().status).toBe("joined");
+  });
+
+  it("says someone is live when the gateway refuses a claim that raced their Live", async () => {
+    const { emitErr, emitSig, errors, peers, sent } = install();
+    joinVoice({ serverId: "srv", channelId: "voice", channelName: "Lounge" });
+    await vi.waitFor(() => expect(peers.length).toBe(1));
+    emitSig({ op: "sig", t: "j", s: "srv", c: "voice", u: "u-self" });
+    toggleGoLive();
+    expect(liveClaimFrames(sent)).toHaveLength(1);
+    emitErr({ op: "err", e: "bad_request", s: "srv", c: "voice" });
+    expect(useVoice.getState().live).toBe(false);
+    expect(useVoice.getState().status).toBe("joined");
+    expect(messages(errors)).toEqual([
+      "In diesem Kanal ist schon jemand live.",
+    ]);
+  });
+
+  it("keeps the generic message when a re-claim of a running Live is refused", async () => {
+    const { emitErr, emitReady, emitSig, errors, peers, sent } = install();
+    joinVoice({ serverId: "srv", channelId: "voice", channelName: "Lounge" });
+    await vi.waitFor(() => expect(peers.length).toBe(1));
+    emitSig({ op: "sig", t: "j", s: "srv", c: "voice", u: "u-self" });
+    toggleGoLive();
+    await vi.waitFor(() => expect(useVoice.getState().localLive).toBeTruthy());
+    await Promise.resolve();
+    emitReady();
+    emitSig({ op: "sig", t: "j", s: "srv", c: "voice", u: "u-self" });
+    expect(liveClaimFrames(sent)).toHaveLength(2);
+    emitErr({ op: "err", e: "bad_request", s: "srv", c: "voice" });
+    expect(useVoice.getState().live).toBe(false);
+    expect(messages(errors)).toEqual([errorMessage("bad_request")]);
   });
 
   it("bounds a missing Live acknowledgement and rejects a late one after Stop", async () => {
