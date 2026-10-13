@@ -70,6 +70,15 @@ const server = {
   permissions: ["join_voice"],
   members: [],
 } as unknown as ServerDetail;
+/** The one Go Live / Live beenden button in rendered markup. */
+function goLiveControl(html: string): string {
+  const match = html.match(
+    /<button[^>]*aria-label="(?:Go Live|Live beenden)"[^>]*>/,
+  );
+  expect(match).not.toBeNull();
+  return match![0];
+}
+
 beforeEach(() => {
   fixture.voice = {
     status: "idle",
@@ -316,9 +325,16 @@ describe("active media UI", () => {
       'aria-label="Go Live"',
     );
     fixture.server.permissions = ["go_live"];
-    expect(renderToStaticMarkup(<VoiceSessionControls />)).toContain(
-      'aria-label="Go Live"',
-    );
+    // alice is live in this channel and the members list does not name her.
+    const taken = goLiveControl(renderToStaticMarkup(<VoiceSessionControls />));
+    expect(taken).toContain('aria-label="Go Live"');
+    expect(taken).toContain('title="Jemand ist gerade live."');
+    expect(taken).toContain('aria-disabled="true"');
+    fixture.voice.live = true;
+    const own = goLiveControl(renderToStaticMarkup(<VoiceSessionControls />));
+    expect(own).toContain('aria-label="Live beenden"');
+    expect(own).toContain('title="Live beenden"');
+    expect(own).not.toContain("aria-disabled");
   });
   it("shows a playback action while blocked and hides it while deafened", () => {
     fixture.voice.playbackBlocked = true;
