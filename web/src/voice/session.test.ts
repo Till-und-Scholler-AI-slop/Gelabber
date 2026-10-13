@@ -1566,6 +1566,21 @@ describe("voice session", () => {
     expect(useVoice.getState().status).toBe("joined");
   });
 
+  it("says someone is live when the gateway refuses a claim that raced their Live", async () => {
+    const { emitErr, emitSig, errors, peers, sent } = install();
+    joinVoice({ serverId: "srv", channelId: "voice", channelName: "Lounge" });
+    await vi.waitFor(() => expect(peers.length).toBe(1));
+    emitSig({ op: "sig", t: "j", s: "srv", c: "voice", u: "u-self" });
+    toggleGoLive();
+    expect(liveClaimFrames(sent)).toHaveLength(1);
+    emitErr({ op: "err", e: "bad_request", s: "srv", c: "voice" });
+    expect(useVoice.getState().live).toBe(false);
+    expect(useVoice.getState().status).toBe("joined");
+    expect(messages(errors)).toEqual([
+      "In diesem Kanal ist schon jemand live.",
+    ]);
+  });
+
   it("bounds a missing Live acknowledgement and rejects a late one after Stop", async () => {
     const env = install({ holdLiveClaim: true });
     joinVoice({ serverId: "srv", channelId: "voice", channelName: "Voice" });

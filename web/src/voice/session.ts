@@ -243,6 +243,7 @@ let screenProfileEpoch = 0;
 let liveEpoch = 0;
 let awaitingJoin: { serverId: string; channelId: string } | null = null;
 let awaitingLive: { serverId: string; channelId: string } | null = null;
+const LIVE_TAKEN_MESSAGE = "In diesem Kanal ist schon jemand live.";
 let liveClaimNonce: string | null = null;
 let liveClaimTimer: ReturnType<typeof setTimeout> | null = null;
 let withdrawnLiveNonce: string | null = null;
@@ -813,9 +814,14 @@ function onErr(err: ErrFrame): void {
     if (useVoice.getState().live) {
       stopLocalVideo("l");
     }
-    const code: ApiErrorCode =
-      err.e === "forbidden" || err.e === "bad_request" ? err.e : "bad_request";
-    deps?.onError?.(new ApiError(code, 0, errorMessage(code)));
+    if (err.e === "bad_request") {
+      // The gateway answers a taken Live claim with `bad_request`: someone's
+      // Live had not reached this roster yet, or this user is live in
+      // another tab. The seat itself was checked first, so say what it is.
+      deps?.onError?.(new Error(LIVE_TAKEN_MESSAGE));
+      return;
+    }
+    deps?.onError?.(new ApiError("forbidden", 0, errorMessage("forbidden")));
   }
 }
 
@@ -2677,7 +2683,7 @@ export function toggleGoLive(): void {
   if (holder && holder !== self) {
     // The controls say whose Live it is; this is the backstop for a roster
     // that changed under the click.
-    deps?.onError?.(new Error("In diesem Kanal ist schon jemand live."));
+    deps?.onError?.(new Error(LIVE_TAKEN_MESSAGE));
     return;
   }
   useVoice.setState({ live: true });
