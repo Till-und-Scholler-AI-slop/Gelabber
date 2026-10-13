@@ -242,7 +242,13 @@ let cameraProfileEpoch = 0;
 let screenProfileEpoch = 0;
 let liveEpoch = 0;
 let awaitingJoin: { serverId: string; channelId: string } | null = null;
-let awaitingLive: { serverId: string; channelId: string } | null = null;
+let awaitingLive: {
+  serverId: string;
+  channelId: string;
+  /** Started by a click, not a re-claim of a Live that was already running. */
+  fresh: boolean;
+} | null = null;
+const LIVE_TAKEN_MESSAGE = "In diesem Kanal ist schon jemand live.";
 let liveClaimNonce: string | null = null;
 let liveClaimTimer: ReturnType<typeof setTimeout> | null = null;
 let withdrawnLiveNonce: string | null = null;
@@ -270,12 +276,16 @@ function clearLiveClaim(): void {
   liveRecoveryDeadline = null;
 }
 
-function requestLiveClaim(): void {
+function requestLiveClaim(fresh = false): void {
   const state = useVoice.getState();
   if (!state.serverId || !state.channelId || !state.live) return;
   if (liveClaimTimer !== null) clearTimeout(liveClaimTimer);
   liveClaimNonce = null;
-  awaitingLive = { serverId: state.serverId, channelId: state.channelId };
+  awaitingLive = {
+    serverId: state.serverId,
+    channelId: state.channelId,
+    fresh,
+  };
   liveClaimTimer = setTimeout(
     () => {
       liveClaimTimer = null;
@@ -809,13 +819,25 @@ function onErr(err: ErrFrame): void {
     err.c === awaitingLive.channelId &&
     (err.e === "forbidden" || err.e === "bad_request")
   ) {
+    const fresh = awaitingLive.fresh;
     awaitingLive = null;
     if (useVoice.getState().live) {
       stopLocalVideo("l");
     }
-    const code: ApiErrorCode =
-      err.e === "forbidden" || err.e === "bad_request" ? err.e : "bad_request";
-    deps?.onError?.(new ApiError(code, 0, errorMessage(code)));
+    if (err.e === "bad_request") {
+      // The gateway answers a taken Live claim with `bad_request`, but also a
+      // missing seat or session. For a click that most likely means someone's
+      // Live had not reached this roster yet, or this user is live in another
+      // tab. A re-claim after a reconnect can be refused by this user's own
+      // old connection, so keep the generic advice to try again there.
+      deps?.onError?.(
+        fresh
+          ? new Error(LIVE_TAKEN_MESSAGE)
+          : new ApiError("bad_request", 0, errorMessage("bad_request")),
+      );
+      return;
+    }
+    deps?.onError?.(new ApiError("forbidden", 0, errorMessage("forbidden")));
   }
 }
 
@@ -2677,13 +2699,13 @@ export function toggleGoLive(): void {
   if (holder && holder !== self) {
     // The controls say whose Live it is; this is the backstop for a roster
     // that changed under the click.
-    deps?.onError?.(new Error("In diesem Kanal ist schon jemand live."));
+    deps?.onError?.(new Error(LIVE_TAKEN_MESSAGE));
     return;
   }
   useVoice.setState({ live: true });
   applyLiveStart(state.serverId, state.channelId, self);
   void startLocalVideo("l");
-  requestLiveClaim();
+  requestLiveClaim(true);
 }
 
 /**
