@@ -89,6 +89,22 @@ Compose offers TURN over UDP and TCP. TCP is the fallback for clients whose netw
 2. Bundled coturn without your own `TURN_AUTH_SECRET` line: add nothing. The API and coturn move together from the public REST default to static user/password credentials.
 3. REST wanted: generate a new, non-public secret, write it identically into the API environment and into coturn (`static-auth-secret`), restart both. Only then issue tickets with HMAC credentials. An external TURN must get the same secret before the variable is set.
 
+### After changing TURN values
+
+The API and coturn read `TURN_*` from `.env` only when their containers are created. Watchtower swaps images and keeps each container's old environment, and `up … api` recreates only the services it names. After any change to `TURN_AUTH_SECRET`, `TURN_USERNAME` or `TURN_PASSWORD` (also when a release removes a default, as v0.6 did for `TURN_PASSWORD`), recreate both:
+
+```bash
+cd deploy/compose
+# Homelab overlay without COMPOSE_PROFILES=bundled-coturn: leave out `coturn`
+# (naming it starts the bundled one) and update your own TURN server instead.
+docker compose up -d --no-deps --force-recreate coturn api
+./turn-check.sh
+```
+
+For a digest rollout use the same `--env-file` / `-f` arguments as the rollout. If you started the bundled coturn by mistake on the homelab overlay, remove it with `docker compose rm -sf coturn`.
+
+`turn-check.sh` compares the values the running API and coturn were started with and names the keys that differ, without printing them. A mismatch looks like a working call without sound: the client connects, but coturn refuses the relay. With an external TURN (homelab overlay without `bundled-coturn`) the script only reminds you to check that server yourself.
+
 ## TURN port in use
 
 `Bind for 0.0.0.0:3478 failed`: usually a coturn is already running.
@@ -105,12 +121,14 @@ Compose offers TURN over UDP and TCP. TCP is the fallback for clients whose netw
 
 ### MinIO on 443
 
-Browsers upload and download attachments directly from MinIO through presigned URLs, so `MINIO_PUBLIC_ENDPOINT` is public by design. Put it on its own subdomain behind your TLS Caddy, not on a published port such as `https://example.com:9000`: networks that only allow 80/443 then load no images, and the S3 API (plus the console on 9001, if published) faces the internet without the proxy in front. The API logs a warning at startup when an `https://` endpoint carries a port other than 443.
+Browsers upload and download attachments directly from MinIO through presigned URLs, so `MINIO_PUBLIC_ENDPOINT` is public by design. Put it on its own subdomain behind your TLS Caddy, not on a published port such as `https://example.com:9000`: networks that only allow 80/443 then load no images, and the S3 API (plus the console on 9001, if published) faces the internet without the proxy in front. The move fixes reachability and removes the directly published 9000/9001 (console included), but it does not shrink the S3 API's attack surface: the Caddy MinIO site forwards every path and method, so `https://minio.example.com` still serves the whole S3/admin API, and the API keeps signing with the MinIO root account. The API logs a warning at startup when an `https://` endpoint carries a port other than 443.
 
-1. DNS for `minio.example.com`, and the MinIO site from `Caddyfile.homelab` in your Caddy (`header_up Host {hostport}`, URI unchanged).
-2. `.env`: `MINIO_PUBLIC_ENDPOINT=https://minio.example.com`, `MINIO_API_BIND=127.0.0.1`, `MINIO_CONSOLE_BIND=127.0.0.1`, `MINIO_API_CORS_ALLOW_ORIGIN=https://example.com`.
-3. `docker compose up -d minio api`. Check that an attachment link now redirects to `https://minio.example.com/…`: with `curl -I` and your session cookie, or in a private window. An open browser does not show it yet: it caches the attachment redirect for the rest of its signing window and keeps following the old `:9000` link for up to 30 minutes.
-4. About 30 minutes later, close 9000/9001 in the firewall. Check from outside: `curl -I https://example.com:9000/minio/health/live` must fail.
+1. DNS for `minio.example.com`, and the MinIO site from `Caddyfile.homelab` in your Caddy with `minio.example.com` as its address (the default is `minio.home.arpa`; `header_up Host {hostport}`, URI unchanged).
+2. `.env`: `MINIO_PUBLIC_ENDPOINT=https://minio.example.com`, `MINIO_API_CORS_ALLOW_ORIGIN=https://example.com`. Leave `MINIO_API_BIND` and `MINIO_CONSOLE_BIND` as they are for now: open browsers cache the attachment redirect for the rest of its signing window and keep following the old `:9000` link for up to 30 minutes, so the old port must stay reachable that long.
+3. `docker compose up -d minio api`. Check from outside that `curl -I https://minio.example.com/minio/health/live` answers 200, and that an attachment link now redirects to `https://minio.example.com/…`: with `curl -I` and your session cookie, or in a private window.
+4. About 30 minutes later, set `MINIO_API_BIND=127.0.0.1` and `MINIO_CONSOLE_BIND=127.0.0.1` in `.env`, run `docker compose up -d minio`, and close 9000/9001 in the firewall. Check from outside that `curl -I https://example.com:9000/minio/health/live` fails. In the app, upload a new image and check that it loads (its redirect cannot come from a cache), then hard-reload (Ctrl+Shift+R) and check that an existing image still loads.
+
+If you cannot wait, do step 4 right after step 3: browsers that were already open may then miss some images for up to 30 minutes, until their cached redirects run out or the page is hard-reloaded.
 
 A path prefix (`https://example.com/s3/…`) does not work: presigns sign host and path.
 
@@ -212,8 +230,13 @@ docker compose --env-file .env --env-file next.env config --images
 # Backup as in the Backup section; keep the old manifest/env files.
 docker compose --env-file .env --env-file next.env pull --policy always api web media minio
 docker compose --env-file .env --env-file next.env up -d --no-deps --no-build --pull never --force-recreate api web media minio
+# Bundled coturn only (skip with the homelab overlay unless COMPOSE_PROFILES=bundled-coturn):
+docker compose --env-file .env --env-file next.env up -d --no-deps --force-recreate coturn
+./turn-check.sh
 # Then: /ready, /media/ready, login, upload and a real media/relay acceptance.
 ```
+
+coturn is not part of the image set, but it carries the TURN credentials from `.env`. Without this step it keeps the values from its last start while the API hands out the new ones (see "After changing TURN values").
 
 `--no-build` prevents an unnoticed local replacement build; the explicit pull solves the earlier `pull_policy: missing` problem. Remove `GELABBER_*_IMAGE` variables already exported in the shell environment first, since they override env files. Homelab keeps its `COMPOSE_FILE`; alternatively use the same `-f` overlays with **all** commands. Images are pulled ahead as a set; container switches are not atomic and need a maintenance window.
 
