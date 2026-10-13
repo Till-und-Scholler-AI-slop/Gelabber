@@ -120,6 +120,21 @@ pub struct MinioConfig {
     pub bucket: String,
 }
 
+impl MinioConfig {
+    /// The explicit port of an `https://` public endpoint other than 443.
+    /// Attachments then load only where that port is open, and MinIO itself
+    /// faces the internet next to the app (#206).
+    pub fn public_port(&self) -> Option<&str> {
+        let rest = self.public_endpoint.strip_prefix("https://")?;
+        let authority = rest.split(['/', '?', '#']).next()?;
+        let (_, port) = authority.rsplit_once(':')?;
+        // `[::1]` without a port splits inside the brackets; digits only.
+        Some(port).filter(|port| {
+            *port != "443" && !port.is_empty() && port.bytes().all(|b| b.is_ascii_digit())
+        })
+    }
+}
+
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum ConfigError {
     Missing(&'static str),
@@ -544,6 +559,28 @@ mod tests {
         let message = error.to_string();
         assert!(message.contains(TURN_AUTH_SECRET), "{message}");
         assert!(message.contains("public default"), "{message}");
+    }
+
+    #[test]
+    fn flags_a_public_https_endpoint_off_443() {
+        let port = |url: &str| {
+            MinioConfig {
+                endpoint: "http://minio:9000".into(),
+                public_endpoint: url.into(),
+                access_key: String::new(),
+                secret_key: String::new(),
+                bucket: String::new(),
+            }
+            .public_port()
+            .map(str::to_owned)
+        };
+        assert_eq!(port("https://example.com:9000").as_deref(), Some("9000"));
+        assert_eq!(port("https://[2001:db8::1]:9000/").as_deref(), Some("9000"));
+        assert_eq!(port("https://minio.example.com"), None);
+        assert_eq!(port("https://minio.example.com:443"), None);
+        assert_eq!(port("https://[2001:db8::1]"), None);
+        // Plain HTTP is the loopback default, not a public deployment.
+        assert_eq!(port("http://localhost:9000"), None);
     }
 
     #[test]

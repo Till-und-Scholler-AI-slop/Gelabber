@@ -19,6 +19,8 @@ import {
   SpeakerOffIcon,
 } from "./Icons.tsx";
 import { useCapabilities } from "../voice/capabilities.ts";
+import { liveOf, useVoiceRoster } from "../voice/roster.ts";
+import { useUserId } from "../auth/scope.ts";
 import { isDesktopApp } from "../voice/native/bridge.ts";
 import {
   SOURCE_AUDIO_CARRIES_CALL,
@@ -49,6 +51,19 @@ export function VoiceSessionControls({
   const openSettings = useMediaSettings((s) => s.openDialog);
   const capable = useCapabilities();
   const { data: server } = useServer(voice.serverId ?? undefined);
+  const self = useUserId();
+  const liveHolder = useVoiceRoster((s) =>
+    voice.serverId && voice.channelId
+      ? liveOf(s.live, voice.serverId, voice.channelId)
+      : null,
+  );
+  // Someone else's Live in this channel: Go Live says whose instead of
+  // doing nothing.
+  const liveTakenBy =
+    liveHolder && liveHolder !== self && !voice.live
+      ? (server?.members.find((member) => member.user_id === liveHolder)
+          ?.name ?? "Jemand")
+      : null;
   const visible =
     voice.status === "joined" || voice.watching || voice.playbackBlocked;
   const bar = variant === "bar";
@@ -128,7 +143,10 @@ export function VoiceSessionControls({
             </Link>
             {bar ? null : <LeaveButton />}
           </div>
-          <VoiceControls canGoLive={can(server, "go_live")} />
+          <VoiceControls
+            canGoLive={can(server, "go_live")}
+            liveTakenBy={liveTakenBy}
+          />
           {bar ? <LeaveButton /> : null}
         </div>
       ) : null}

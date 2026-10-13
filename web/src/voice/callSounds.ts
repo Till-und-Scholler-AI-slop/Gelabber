@@ -69,6 +69,9 @@ type SoundAudio = Pick<
   "src" | "volume" | "play" | "pause"
 > & {
   setSinkId?: (id: string) => Promise<void>;
+  onended?: ((event: Event) => unknown) | null;
+  removeAttribute?: (name: string) => void;
+  load?: () => void;
 };
 
 /** One reusable element, no backlog. A new cue replaces the previous one.
@@ -87,6 +90,26 @@ export class CallSoundPlayer {
   stop(): void {
     this.generation++;
     this.audio?.pause();
+    this.release();
+  }
+
+  /** A finished or stopped cue gives its source up, so no idle element
+   * keeps the tab marked as playing audio. */
+  private release(): void {
+    const audio = this.audio;
+    if (!audio?.src) return;
+    audio.removeAttribute?.("src");
+    audio.load?.();
+  }
+
+  private start(audio: SoundAudio, src: string, volume: number): void {
+    const generation = this.generation;
+    audio.onended = () => {
+      if (generation === this.generation) this.release();
+    };
+    audio.src = src;
+    audio.volume = volume;
+    void audio.play().catch(() => {});
   }
 
   setDeafened(value: boolean): void {
@@ -99,9 +122,7 @@ export class CallSoundPlayer {
     this.stop();
     this.audio ??= this.createAudio();
     if (!this.audio) return;
-    this.audio.src = source("silent");
-    this.audio.volume = 0;
-    void this.audio.play().catch(() => {});
+    this.start(this.audio, source("silent"), 0);
   }
 
   play(kind: CallSound): void {
@@ -124,9 +145,11 @@ export class CallSoundPlayer {
       const latest = this.settings();
       if (!latest.callSounds || !latest.callSoundVolume || !latest.outputVolume)
         return;
-      audio.src = source(kind);
-      audio.volume = latest.callSoundVolume * latest.outputVolume;
-      void audio.play().catch(() => {});
+      this.start(
+        audio,
+        source(kind),
+        latest.callSoundVolume * latest.outputVolume,
+      );
     };
     // The desktop app's output ids belong to its native engine. The webview
     // does not know them and would reject them, so cues stay on its default
