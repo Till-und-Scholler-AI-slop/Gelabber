@@ -1,11 +1,12 @@
 import { useState } from "react";
-import { useCanGoBack, useRouter } from "@tanstack/react-router";
-import { useVoice } from "../voice/session.ts";
+import { BackToApp } from "../components/BackToApp.tsx";
 import {
   CameraIcon,
   ChatIcon,
+  DownloadIcon,
+  LayoutIcon,
   MicIcon,
-  ScreenIcon,
+  PaletteIcon,
 } from "../components/Icons.tsx";
 import { MediaSettingsForm } from "../voice/VoiceSettings.tsx";
 import { ThemesPanel } from "../theme/ThemesPanel.tsx";
@@ -17,22 +18,16 @@ import "./settings.css";
 
 const areas = [
   {
-    id: "install",
-    label: "App",
-    description: "Gelabber wie eine eigene App öffnen.",
-    icon: ScreenIcon,
-  },
-  {
     id: "appearance",
     label: "Darstellung",
     description: "Mach Gelabber zu deinem Platz.",
-    icon: ScreenIcon,
+    icon: LayoutIcon,
   },
   {
     id: "themes",
     label: "Themes",
     description: "Farben und Designs, die zu dir passen.",
-    icon: ScreenIcon,
+    icon: PaletteIcon,
   },
   {
     id: "audio",
@@ -52,6 +47,13 @@ const areas = [
     description: "Entscheide, wie neue Nachrichten dich erreichen.",
     icon: ChatIcon,
   },
+  // Last: installing is done once, the rest is what people come back for.
+  {
+    id: "install",
+    label: "App",
+    description: "Gelabber wie eine eigene App öffnen.",
+    icon: DownloadIcon,
+  },
 ] as const;
 
 export function UserSettingsPage() {
@@ -59,34 +61,13 @@ export function UserSettingsPage() {
   const installable = useInstallation(
     (state) => !state.native && !state.standalone,
   );
-  const router = useRouter();
-  const canGoBack = useCanGoBack();
-  const goBack = () => {
-    if (canGoBack) {
-      router.history.back();
-      return;
-    }
-    const voice = useVoice.getState();
-    const serverId = voice.serverId ?? voice.watchServerId;
-    const channelId = voice.channelId ?? voice.watchChannelId;
-    if (serverId && channelId) {
-      void router.navigate({
-        to: "/s/$serverId/c/$channelId",
-        params: { serverId, channelId },
-      });
-    } else {
-      void router.navigate({ to: "/" });
-    }
-  };
   const [area, setArea] = useState<(typeof areas)[number]["id"]>("appearance");
   const [themeDirty, setThemeDirty] = useState(false);
   const preferences = useInterfacePreferences();
   const selected = areas.find((item) => item.id === area)!;
   return (
     <section className="settings-page" aria-labelledby="settings-heading">
-      <button type="button" className="settings-back" onClick={goBack}>
-        <span aria-hidden="true">←</span> Zurück
-      </button>
+      <BackToApp />
       <header className="settings-page-heading">
         <h1 id="settings-heading">Einstellungen</h1>
         <p>Dein Gelabber. So, wie es dir gefällt.</p>

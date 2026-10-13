@@ -1,6 +1,12 @@
 import { useMutation } from "@tanstack/react-query";
 import { useNavigate } from "@tanstack/react-router";
-import { useRef, useState, type ChangeEvent, type FormEvent } from "react";
+import {
+  useId,
+  useRef,
+  useState,
+  type ChangeEvent,
+  type FormEvent,
+} from "react";
 
 import {
   AvatarImageError,
@@ -29,11 +35,13 @@ import {
 import type { User } from "../auth/types.ts";
 import { useFormErrors } from "../auth/useFormErrors.ts";
 import { Avatar } from "../components/Avatar.tsx";
+import { BackToApp } from "../components/BackToApp.tsx";
 import { Field } from "../components/Field.tsx";
 import { FormError } from "../components/FormError.tsx";
 import { SubmitButton } from "../components/SubmitButton.tsx";
 import { useDebouncedValue } from "../components/useDebouncedValue.ts";
 import { leaveVoice, stopWatching } from "../voice/session.ts";
+import "./settings.css";
 
 export function ProfilePage() {
   const user = useSession((state) => state.user);
@@ -77,6 +85,7 @@ function ProfileForm({ user }: { user: User }) {
 
   const dirty =
     name.trim() !== user.name || avatarUrl.trim() !== (user.avatar_url ?? "");
+  const unchangedId = useId();
 
   // Uploads apply at once; the URL field and Speichern are for links.
   const picker = useRef<HTMLInputElement>(null);
@@ -91,6 +100,7 @@ function ProfileForm({ user }: { user: User }) {
     onSuccess: (updated) => {
       setAvatarUrl(updated.avatar_url ?? "");
       clearField("avatar_url");
+      setSaved(true);
     },
     onError: (error) => {
       if (error instanceof AvatarImageError) {
@@ -113,6 +123,7 @@ function ProfileForm({ user }: { user: User }) {
     onSuccess: () => {
       setAvatarUrl(avatarFieldAfterRemoval);
       clearField("avatar_url");
+      setSaved(true);
     },
     onError: fromError,
   });
@@ -120,6 +131,8 @@ function ProfileForm({ user }: { user: User }) {
   // failed answer of one would otherwise put an older user back into the
   // session store.
   const busy = useProfileWrites((state) => state.pending > 0);
+  // Upload and removal save at once, so after them it says "Gespeichert.".
+  const unchanged = !dirty && !saved && !busy;
   const onPick = (event: ChangeEvent<HTMLInputElement>) => {
     const file = event.target.files?.[0];
     event.target.value = "";
@@ -167,6 +180,7 @@ function ProfileForm({ user }: { user: User }) {
 
   return (
     <section className="lr-account-page mx-auto max-w-md">
+      <BackToApp />
       <h1 className="text-2xl font-semibold tracking-tight">Profil</h1>
       <p className="mt-1 text-sm text-neutral-600 dark:text-neutral-400">
         {user.email}
@@ -252,9 +266,18 @@ function ProfileForm({ user }: { user: User }) {
             pending={mutation.isPending}
             pendingLabel="Speichern…"
             disabled={!dirty || (busy && !mutation.isPending)}
+            aria-describedby={unchanged ? unchangedId : undefined}
           >
             Speichern
           </SubmitButton>
+          {unchanged ? (
+            <span
+              id={unchangedId}
+              className="text-sm text-neutral-600 dark:text-neutral-400"
+            >
+              Noch nichts geändert.
+            </span>
+          ) : null}
           {saved && !dirty ? (
             <span
               role="status"
