@@ -330,6 +330,7 @@ describe("active media UI", () => {
     expect(taken).toContain('aria-label="Go Live"');
     expect(taken).toContain('title="Jemand ist gerade live."');
     expect(taken).toContain('aria-disabled="true"');
+    expect(taken).toContain('aria-pressed="false"');
     fixture.voice.live = true;
     const own = goLiveControl(renderToStaticMarkup(<VoiceSessionControls />));
     expect(own).toContain('aria-label="Live beenden"');
