@@ -162,6 +162,17 @@ describe("capabilities", () => {
     });
   });
 
+  it("Go Live says whose Live it is when someone else is live already", async () => {
+    await cases.desktopBrowser();
+    const html = renderToStaticMarkup(
+      <VoiceControls canGoLive liveTakenBy="Bob" />,
+    );
+    const goLive = control(html, "Go Live");
+    expect(goLive).toContain('aria-disabled="true"');
+    expect(goLive).toContain('title="Bob ist gerade live."');
+    expect(control(controls(), "Go Live")).not.toContain("aria-disabled");
+  });
+
   it("a page without mediaDevices (insecure origin) captures nothing", () => {
     browser(undefined, true);
     expect(answers()).toEqual({

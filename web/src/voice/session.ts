@@ -1221,6 +1221,9 @@ function stopPeer(preserveCapture = false): void {
     if (source.role === "voice") receivedAudioSources.delete(track);
   clearReceived();
   if (remoteAudio) {
+    // Paused and detached: an element left playing keeps the tab's
+    // "playing audio" indicator after the call is over.
+    remoteAudio.pause?.();
     remoteAudio.srcObject = null;
     blockedPlayback.delete(remoteAudio);
     updatePlaybackBlocked();
@@ -1886,7 +1889,11 @@ async function refreshMic(): Promise<void> {
       micCurrent(pc, session, request),
     );
   } catch (error) {
-    if (micCurrent(pc, session, request)) deps?.onError?.(error);
+    // The track already sending stays until a new one replaces it.
+    if (micCurrent(pc, session, request))
+      deps?.onError?.(
+        microphoneFailure(error, "der Wechsel hat nicht geklappt"),
+      );
     else if (seat.generation !== session) resumeOvertakenMic();
     return;
   }
@@ -2689,6 +2696,9 @@ export function toggleGoLive(): void {
     state.channelId,
   );
   if (holder && holder !== self) {
+    // The controls say whose Live it is; this is the backstop for a roster
+    // that changed under the click.
+    deps?.onError?.(new Error("In diesem Kanal ist schon jemand live."));
     return;
   }
   useVoice.setState({ live: true });
@@ -2822,6 +2832,30 @@ const openCaptures = new Map<"v" | "s" | "l", number>();
  * the seat's connection leaves an open start its epoch. */
 function captureOpen(kind: "v" | "s" | "l"): boolean {
   return openCaptures.get(kind) === videoEpoch(kind);
+}
+
+/** The browser's own getUserMedia reasons are English ("Requested device not
+ * found"); say them in German with what follows for the call: on joining it
+ * goes on without a microphone, a failed switch keeps the previous one. */
+function microphoneFailure(
+  error: unknown,
+  consequence = "du hörst nur zu",
+): unknown {
+  switch ((error as { name?: unknown } | null)?.name) {
+    case "NotFoundError":
+    case "OverconstrainedError":
+      return new Error(`Kein Mikrofon gefunden, ${consequence}.`);
+    case "NotAllowedError":
+    case "SecurityError":
+      return new Error(`Mikrofonzugriff nicht erlaubt, ${consequence}.`);
+    case "NotReadableError":
+    case "AbortError":
+      return new Error(
+        `Das Mikrofon ist gerade nicht verfügbar, ${consequence}.`,
+      );
+    default:
+      return error;
+  }
 }
 
 /** A camera that is missing, busy or broken: `NotFoundError` and
@@ -3777,7 +3811,7 @@ async function startPeer(
     } catch (error) {
       if (seat.generation !== mine) resumeOvertakenMic();
       else {
-        deps?.onError?.(error);
+        deps?.onError?.(microphoneFailure(error));
         noteAudioProcessing(null);
         const info = useAudioProcessing.getState();
         noteAudioProcessing({
