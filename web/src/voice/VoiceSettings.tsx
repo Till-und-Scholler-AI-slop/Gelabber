@@ -135,28 +135,6 @@ export function MediaSettingsForm({
               der Ausgabe deines Geräts.
             </p>
           )}
-          {(showAudio || showVideo) && (
-            <fieldset className="flex flex-col gap-2">
-              <legend className="text-sm font-semibold">Bandbreite</legend>
-              <Toggle
-                id="economy-mode"
-                label="Sparmodus für wenig Upload"
-                checked={settings.economyMode}
-                onChange={(economyMode) =>
-                  settings.patch({ economyMode, quality: "normal" })
-                }
-              />
-              <p className="text-xs text-neutral-500">
-                {settings.economyMode
-                  ? `Ausdrückliche Obergrenzen: Sprache ${audioLimit! / 1000} kbit/s, Stream-Ton 128 kbit/s, Video gemeinsam ${formatVideoBitrate(videoLimit!)}.`
-                  : videoLimit
-                    ? `Audio ohne Bitratengrenze durch Gelabber; Video mit deinem gemeinsamen Limit von ${formatVideoBitrate(videoLimit)}.`
-                    : desktop
-                      ? "Keine Bitratengrenze durch Gelabber. Codec und Verbindung bestimmen die tatsächliche Datenrate."
-                      : "Keine Bitratengrenze durch Gelabber. Browser, Codec und Verbindung bestimmen die tatsächliche Datenrate."}
-              </p>
-            </fieldset>
-          )}
           {showVideo && (
             <Select
               id="video-input"
@@ -171,8 +149,32 @@ export function MediaSettingsForm({
             onClick={() => void refresh()}
             className="self-start text-sm font-medium text-neutral-700 dark:text-neutral-300 underline-offset-2 hover:underline"
           >
-            Geräte laden
+            Geräteliste aktualisieren
           </button>
+        </fieldset>
+      )}
+      {(showAudio || showVideo) && (
+        <fieldset className="flex flex-col gap-2">
+          <legend className="text-sm font-semibold text-neutral-800 dark:text-neutral-200">
+            Bandbreite
+          </legend>
+          <Toggle
+            id="economy-mode"
+            label="Sparmodus für wenig Upload"
+            checked={settings.economyMode}
+            onChange={(economyMode) =>
+              settings.patch({ economyMode, quality: "normal" })
+            }
+          />
+          <p className="text-xs text-neutral-500">
+            {settings.economyMode
+              ? `Ausdrückliche Obergrenzen: Sprache ${audioLimit! / 1000} kbit/s, Stream-Ton 128 kbit/s, Video gemeinsam ${formatVideoBitrate(videoLimit!)}.`
+              : videoLimit
+                ? `Audio ohne Bitratengrenze durch Gelabber; Video mit deinem gemeinsamen Limit von ${formatVideoBitrate(videoLimit)}.`
+                : desktop
+                  ? "Keine Bitratengrenze durch Gelabber. Codec und Verbindung bestimmen die tatsächliche Datenrate."
+                  : "Keine Bitratengrenze durch Gelabber. Browser, Codec und Verbindung bestimmen die tatsächliche Datenrate."}
+          </p>
         </fieldset>
       )}
       {showAudio && (
@@ -219,6 +221,7 @@ export function MediaSettingsForm({
               max={200}
               value={Math.round(settings.inputGain * 100)}
               suffix={`${Math.round(settings.inputGain * 100)} %`}
+              scale={["0 %", "100 %", "200 %"]}
               onChange={(value) => settings.patch({ inputGain: value / 100 })}
               hint={
                 desktop
@@ -441,7 +444,7 @@ export function MediaSettingsForm({
           </p>
         </fieldset>
       )}
-      {(showAudio || showNotifications) && (
+      {showAudio && (
         <fieldset className="flex flex-col gap-2">
           <legend className="text-sm font-semibold text-neutral-800 dark:text-neutral-200">
             Call-Sounds
@@ -765,6 +768,7 @@ function Slider({
   step,
   onChange,
   hint,
+  scale,
 }: {
   id: string;
   label: string;
@@ -775,6 +779,8 @@ function Slider({
   step?: number;
   onChange: (value: number) => void;
   hint?: string;
+  /** Labels under the start, middle and end of the track. */
+  scale?: readonly [string, string, string];
 }) {
   return (
     <div className="flex flex-col gap-1">
@@ -799,6 +805,16 @@ function Slider({
         onChange={(event) => onChange(Number(event.target.value))}
         className="w-full"
       />
+      {scale ? (
+        <div
+          aria-hidden="true"
+          className="flex justify-between text-xs tabular-nums text-neutral-500 dark:text-neutral-400"
+        >
+          {scale.map((mark) => (
+            <span key={mark}>{mark}</span>
+          ))}
+        </div>
+      ) : null}
       {hint ? (
         <p className="text-xs text-neutral-500 dark:text-neutral-400">{hint}</p>
       ) : null}

@@ -31,7 +31,9 @@ export function DmSidebar({
       </header>
       {dms.length === 0 ? (
         <p className="sidebar-empty">
-          Noch keine Unterhaltungen. Öffne eine über die Mitgliederliste.
+          Noch keine Unterhaltungen. Öffne eine über die Mitgliederliste eines
+          Servers. Noch in keinem Server? Erstelle einen mit dem Plus in der
+          Serverleiste oder öffne einen Einladungslink.
         </p>
       ) : (
         <DmList dms={dms} activeChannelId={activeChannelId} />

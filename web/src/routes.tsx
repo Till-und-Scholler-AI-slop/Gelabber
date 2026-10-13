@@ -14,6 +14,7 @@ import { DmChannelPage } from "./pages/DmChannelPage.tsx";
 import { DmIndexPage } from "./pages/DmIndexPage.tsx";
 import { InvitePage } from "./pages/InvitePage.tsx";
 import { LoginPage } from "./pages/LoginPage.tsx";
+import { NotFoundCard, NotFoundPage } from "./pages/NotFoundPage.tsx";
 import { ProfilePage } from "./pages/ProfilePage.tsx";
 import { RegisterPage } from "./pages/RegisterPage.tsx";
 import { ServerPage } from "./pages/ServerPage.tsx";
@@ -74,6 +75,7 @@ const centeredLayout = createRoute({
       <Outlet />
     </main>
   ),
+  notFoundComponent: NotFoundCard,
 });
 
 const profileRoute = createRoute({
@@ -133,6 +135,12 @@ const workspaceLayout = createRoute({
   id: "workspace",
   beforeLoad: requireUser,
   component: WorkspaceLayout,
+  // The workspace <main> has no padding of its own (the centered one does).
+  notFoundComponent: () => (
+    <div className="px-6 py-10">
+      <NotFoundCard />
+    </div>
+  ),
 });
 
 const indexRoute = createRoute({
@@ -195,6 +203,7 @@ export const router = createRouter({
   // nothing rather than a spinner for that split second.
   defaultPendingComponent: () => null,
   defaultPendingMs: 0,
+  defaultNotFoundComponent: NotFoundPage,
 });
 
 declare module "@tanstack/react-router" {

@@ -39,7 +39,7 @@ for (const engine of [chromium, firefox]) {
         const { default: React } = await import('/node_modules/.vite/deps/react.js');
         const { default: { createRoot } } = await import('/node_modules/.vite/deps/react-dom_client.js');
         const { MediaSettingsForm } = await import('/src/voice/VoiceSettings.tsx');
-        createRoot(document.querySelector('#settings')).render(React.createElement(MediaSettingsForm, { section: 'notifications' }));
+        createRoot(document.querySelector('#settings')).render(React.createElement(MediaSettingsForm, { section: 'audio' }));
         document.body.style.padding = '16px';
         window.ready = true;
       </script></body></html>`,
@@ -57,7 +57,9 @@ for (const engine of [chromium, firefox]) {
             window.probe.ended++;
             clip.duration = this.duration;
           },
-          { once: true },
+          // Capture runs before the cue's own `onended`, which releases the
+          // source (and with it the duration).
+          { once: true, capture: true },
         );
         return original.call(this).then(
           () => {
