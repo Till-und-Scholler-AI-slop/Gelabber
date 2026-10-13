@@ -122,16 +122,14 @@ pub struct MinioConfig {
 
 impl MinioConfig {
     /// The explicit port of an `https://` public endpoint other than 443.
-    /// Attachments then load only where that port is open, and MinIO itself
-    /// faces the internet next to the app (#206).
-    pub fn public_port(&self) -> Option<&str> {
-        let rest = self.public_endpoint.strip_prefix("https://")?;
-        let authority = rest.split(['/', '?', '#']).next()?;
-        let (_, port) = authority.rsplit_once(':')?;
-        // `[::1]` without a port splits inside the brackets; digits only.
-        Some(port).filter(|port| {
-            *port != "443" && !port.is_empty() && port.bytes().all(|b| b.is_ascii_digit())
-        })
+    /// Attachments then load and upload only on networks that allow that
+    /// port (#206). Parsed with `url` like the presigner; `Url::port` is
+    /// `None` for the scheme default, so 443 never shows.
+    pub fn public_port(&self) -> Option<u16> {
+        url::Url::parse(&self.public_endpoint)
+            .ok()
+            .filter(|url| url.scheme() == "https")
+            .and_then(|url| url.port())
     }
 }
 
@@ -572,10 +570,9 @@ mod tests {
                 bucket: String::new(),
             }
             .public_port()
-            .map(str::to_owned)
         };
-        assert_eq!(port("https://example.com:9000").as_deref(), Some("9000"));
-        assert_eq!(port("https://[2001:db8::1]:9000/").as_deref(), Some("9000"));
+        assert_eq!(port("https://example.com:9000"), Some(9000));
+        assert_eq!(port("https://[2001:db8::1]:9000/"), Some(9000));
         assert_eq!(port("https://minio.example.com"), None);
         assert_eq!(port("https://minio.example.com:443"), None);
         assert_eq!(port("https://[2001:db8::1]"), None);
