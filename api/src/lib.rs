@@ -1,5 +1,6 @@
 pub mod attachments;
 pub mod auth;
+pub mod avatars;
 pub mod config;
 pub mod cookies;
 pub mod csrf;
@@ -45,6 +46,7 @@ pub fn app(state: AppState) -> Router {
     let api = Router::new()
         .merge(auth::router())
         .merge(profile::router())
+        .merge(avatars::router())
         .merge(themes::router())
         .merge(servers::router())
         .merge(dms::router())

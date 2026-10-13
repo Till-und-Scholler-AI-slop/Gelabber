@@ -250,8 +250,10 @@ function patchPages(
 /**
  * Live creates land in the newest page; keep it at one page of rows. Off
  * screen the oldest rows (and every older page, which they would otherwise
- * split from) are dropped and paged back in on scroll. On screen with older
- * pages loaded they move one page down so the reader's history stays put.
+ * split from) are dropped and paged back in on scroll. On screen they move
+ * one page down so the reader's history stays put: into the older page that
+ * is loaded, or else into a new one (dropping them would shift everything a
+ * reader scrolled up to by one row per message).
  */
 function capLatestPage(data: Cache, observed: boolean): Cache {
   const [latest, next, ...rest] = data.pages;
@@ -264,6 +266,11 @@ function capLatestPage(data: Cache, observed: boolean): Cache {
     has_more: true,
     older: encodeCursor(kept[0]!),
   };
+  if (observed && !next)
+    return {
+      pages: [head, { ...latest, messages: latest.messages.slice(0, cut) }],
+      pageParams: [...data.pageParams.slice(0, 1), head.older],
+    };
   if (observed && next)
     return {
       ...data,

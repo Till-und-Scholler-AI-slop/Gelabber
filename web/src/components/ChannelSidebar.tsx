@@ -22,6 +22,7 @@ import {
   type VoiceFlags,
 } from "../voice/roster.ts";
 import { can } from "../servers/permissions.ts";
+import { useMenuDetails } from "./menuDetails.ts";
 import { buildRows, type Row } from "../servers/rows.ts";
 import {
   isPendingId,
@@ -182,6 +183,7 @@ export function ChannelSidebar({
   const [categoryDialog, setCategoryDialog] =
     useState<CategoryDialogState | null>(null);
   const [inviting, setInviting] = useState(false);
+  const createMenu = useMenuDetails();
 
   return (
     <aside aria-label="Kanäle" className="channel-sidebar">
@@ -194,7 +196,7 @@ export function ChannelSidebar({
             <LinkIcon />
           </IconButton>
           {manageChannels ? (
-            <details className="sidebar-create-menu">
+            <details ref={createMenu} className="sidebar-create-menu">
               <summary
                 className="shell-icon-button"
                 aria-label="Kanal oder Kategorie erstellen"
@@ -205,10 +207,7 @@ export function ChannelSidebar({
               <nav aria-label="Erstellen">
                 <button
                   type="button"
-                  onClick={(event) => {
-                    event.currentTarget
-                      .closest("details")
-                      ?.removeAttribute("open");
+                  onClick={() => {
                     setChannelDialog({ mode: "create", categoryId: null });
                   }}
                 >
@@ -216,10 +215,7 @@ export function ChannelSidebar({
                 </button>
                 <button
                   type="button"
-                  onClick={(event) => {
-                    event.currentTarget
-                      .closest("details")
-                      ?.removeAttribute("open");
+                  onClick={() => {
                     setCategoryDialog({ mode: "create" });
                   }}
                 >

@@ -95,7 +95,14 @@ function Unavailable({
   );
 }
 
-export function VoiceControls({ canGoLive = false }: { canGoLive?: boolean }) {
+export function VoiceControls({
+  canGoLive = false,
+  liveTakenBy = null,
+}: {
+  canGoLive?: boolean;
+  /** Who is live in this channel already, when it is someone else. */
+  liveTakenBy?: string | null;
+}) {
   const camera = useVoice((s) => s.camera);
   const sharing = useVoice((s) => s.sharing);
   const live = useVoice((s) => s.live);
@@ -112,6 +119,8 @@ export function VoiceControls({ canGoLive = false }: { canGoLive?: boolean }) {
     (sound ? "Stream-Ton nicht mehr teilen" : "Stream-Ton teilen") +
     (soundScope ? ` (${soundScope})` : "");
   const btn = "voice-control voice-control-compact";
+  const takenReason =
+    !live && liveTakenBy ? `${liveTakenBy} ist gerade live.` : null;
 
   return (
     <div className="voice-controls voice-controls-compact">
@@ -169,13 +178,16 @@ export function VoiceControls({ canGoLive = false }: { canGoLive?: boolean }) {
         </button>
       ) : null}
       {live || (canGoLive && capable.screen) ? (
+        // One node whether or not someone else is live: the roster can flip
+        // under a focused button, and swapping elements would drop focus.
         <button
           type="button"
           aria-pressed={live}
+          aria-disabled={takenReason ? "true" : undefined}
           aria-label={live ? "Live beenden" : "Go Live"}
-          title={live ? "Live beenden" : "Go Live"}
-          onClick={() => toggleGoLive()}
-          className={`${btn}${live ? " voice-control-live" : ""}`}
+          title={takenReason ?? (live ? "Live beenden" : "Go Live")}
+          onClick={() => (takenReason ? notify(takenReason) : toggleGoLive())}
+          className={`${btn}${live ? " voice-control-live" : ""}${takenReason ? " opacity-50" : ""}`}
         >
           <LiveIcon size={17} />
         </button>

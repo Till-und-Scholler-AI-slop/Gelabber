@@ -6,6 +6,7 @@ import { leaveVoice, stopWatching } from "../voice/session.ts";
 import { usePresenceStore } from "../ws/live.ts";
 import { Avatar } from "./Avatar.tsx";
 import { ChevronIcon, GearIcon } from "./Icons.tsx";
+import { useMenuDetails } from "./menuDetails.ts";
 import { PresenceAvatar } from "./PresenceAvatar.tsx";
 import { VoiceSessionControls } from "./VoiceSessionControls.tsx";
 
@@ -15,6 +16,7 @@ export function UserPanel({ contextId }: { contextId?: string }) {
     user && contextId ? state.byServer[contextId]?.[user.id] : undefined,
   );
   const navigate = useNavigate();
+  const menu = useMenuDetails();
   if (!user) return null;
 
   function onLogout() {
@@ -60,7 +62,7 @@ export function UserPanel({ contextId }: { contextId?: string }) {
         >
           <GearIcon size={21} />
         </Link>
-        <details className="user-panel-menu">
+        <details ref={menu} className="user-panel-menu">
           <summary className="shell-icon-button" aria-label="Benutzermenü">
             <ChevronIcon size={18} />
           </summary>

@@ -6,7 +6,13 @@ import type { SessionStamp } from "../auth/scope.ts";
 import { randomUuid } from "../lib/uuid.ts";
 
 export type FieldCode =
-  "required" | "invalid" | "too_short" | "too_long" | "taken" | "wrong";
+  | "required"
+  | "invalid"
+  | "too_short"
+  | "too_long"
+  | "taken"
+  | "wrong"
+  | "stale";
 
 export type FieldErrors = Partial<Record<string, FieldCode>>;
 
@@ -564,7 +570,11 @@ function rememberServerClock(response: Response): void {
 async function send(path: string, options: RequestOptions): Promise<Response> {
   const method = options.method ?? "GET";
   const headers = new Headers({ Accept: "application/json" });
-  if (options.body !== undefined) {
+  // A Blob (avatar upload) goes out as is, typed by the browser.
+  const raw = options.body instanceof Blob ? options.body : null;
+  if (raw) {
+    headers.set("Content-Type", raw.type || "application/octet-stream");
+  } else if (options.body !== undefined) {
     headers.set("Content-Type", "application/json");
   }
   if (method !== "GET" && csrfToken) {
@@ -581,7 +591,8 @@ async function send(path: string, options: RequestOptions): Promise<Response> {
       headers,
       credentials: "same-origin",
       body:
-        options.body === undefined ? undefined : JSON.stringify(options.body),
+        raw ??
+        (options.body === undefined ? undefined : JSON.stringify(options.body)),
       signal,
     });
     rememberServerClock(response);

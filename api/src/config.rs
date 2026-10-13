@@ -120,6 +120,19 @@ pub struct MinioConfig {
     pub bucket: String,
 }
 
+impl MinioConfig {
+    /// The explicit port of an `https://` public endpoint other than 443.
+    /// Attachments then load and upload only on networks that allow that
+    /// port (#206). Parsed with `url` like the presigner; `Url::port` is
+    /// `None` for the scheme default, so 443 never shows.
+    pub fn public_port(&self) -> Option<u16> {
+        url::Url::parse(&self.public_endpoint)
+            .ok()
+            .filter(|url| url.scheme() == "https")
+            .and_then(|url| url.port())
+    }
+}
+
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum ConfigError {
     Missing(&'static str),
@@ -544,6 +557,27 @@ mod tests {
         let message = error.to_string();
         assert!(message.contains(TURN_AUTH_SECRET), "{message}");
         assert!(message.contains("public default"), "{message}");
+    }
+
+    #[test]
+    fn flags_a_public_https_endpoint_off_443() {
+        let port = |url: &str| {
+            MinioConfig {
+                endpoint: "http://minio:9000".into(),
+                public_endpoint: url.into(),
+                access_key: String::new(),
+                secret_key: String::new(),
+                bucket: String::new(),
+            }
+            .public_port()
+        };
+        assert_eq!(port("https://example.com:9000"), Some(9000));
+        assert_eq!(port("https://[2001:db8::1]:9000/"), Some(9000));
+        assert_eq!(port("https://minio.example.com"), None);
+        assert_eq!(port("https://minio.example.com:443"), None);
+        assert_eq!(port("https://[2001:db8::1]"), None);
+        // Plain HTTP is the loopback default, not a public deployment.
+        assert_eq!(port("http://localhost:9000"), None);
     }
 
     #[test]

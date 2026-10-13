@@ -3,6 +3,7 @@ import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { ApiError, getCsrfToken } from "../api/client.ts";
 import {
   changePassword,
+  claimProfileWrite,
   ensureSession,
   login,
   logout,
@@ -10,6 +11,8 @@ import {
   register,
   resetSessionForTests,
   updateProfile,
+  uploadAvatar,
+  useProfileWrites,
   useSession,
   useSessionProblems,
 } from "./session.ts";
@@ -348,6 +351,45 @@ describe("session store", () => {
     });
   });
 
+  it("avatar upload sends the image as is and stores the server row", async () => {
+    const uploaded = {
+      ...ada,
+      avatar_url: "/api/avatars/u1/7c9e6679-7425-40de-944b-e07fc1f90ae7",
+    };
+    fakeApi({
+      "POST /api/auth/login": () => json(200, { user: ada, csrf_token: "c2" }),
+      "PUT /api/me/avatar": () => json(200, uploaded),
+    });
+    const fetchMock = vi.mocked(fetch);
+    await login("ada@example.com", "password123");
+
+    const image = new Blob(["jpeg bytes"], { type: "image/jpeg" });
+    const pending = uploadAvatar(image);
+    // Not optimistic: nothing changes before the server stored the file.
+    expect(useSession.getState().user).toEqual(ada);
+    await expect(pending).resolves.toEqual(uploaded);
+    const sent = fetchMock.mock.calls.at(-1)?.[1];
+    expect(sent?.body).toBe(image);
+    expect(new Headers(sent?.headers).get("Content-Type")).toBe("image/jpeg");
+    expect(new Headers(sent?.headers).get("x-csrf-token")).toBe("c2");
+    expect(useSession.getState().user).toEqual(uploaded);
+  });
+
+  it("a failed avatar upload leaves the signed-in user unchanged", async () => {
+    fakeApi({
+      "POST /api/auth/login": () => json(200, { user: ada, csrf_token: "c2" }),
+      "PUT /api/me/avatar": () =>
+        json(429, { error: "rate_limited", message: "x" }),
+    });
+    await login("ada@example.com", "password123");
+
+    const error = await uploadAvatar(new Blob(["x"], { type: "image/png" }))
+      .then(() => null)
+      .catch((e: unknown) => e);
+    expect(error).toBeInstanceOf(ApiError);
+    expect(useSession.getState().user).toEqual(ada);
+  });
+
   it("profile update rolls back on error", async () => {
     fakeApi({
       "POST /api/auth/login": () => json(200, { user: ada, csrf_token: "c2" }),
@@ -366,5 +408,33 @@ describe("session store", () => {
     expect(error).toBeInstanceOf(ApiError);
     expect((error as ApiError).fields).toEqual({ avatar_url: "invalid" });
     expect(useSession.getState().user).toEqual(ada);
+  });
+});
+
+describe("profile write slot", () => {
+  it("allows one profile write at a time, across form instances", () => {
+    // Form A starts a write, unmounts; form B mounts and tries another.
+    const releaseA = claimProfileWrite();
+    expect(releaseA).not.toBeNull();
+    expect(useProfileWrites.getState().pending).toBe(1);
+    expect(claimProfileWrite()).toBeNull();
+
+    releaseA?.();
+    expect(useProfileWrites.getState().pending).toBe(0);
+    const releaseB = claimProfileWrite();
+    expect(releaseB).not.toBeNull();
+    releaseB?.();
+  });
+
+  it("releases only once", () => {
+    const release = claimProfileWrite();
+    release?.();
+    release?.();
+    expect(useProfileWrites.getState().pending).toBe(0);
+    const next = claimProfileWrite();
+    expect(next).not.toBeNull();
+    expect(claimProfileWrite()).toBeNull();
+    next?.();
+    expect(useProfileWrites.getState().pending).toBe(0);
   });
 });

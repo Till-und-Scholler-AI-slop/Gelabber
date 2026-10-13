@@ -1043,13 +1043,14 @@ dependencies = [
 
 [[package]]
 name = "gelabber-api"
-version = "0.6.0"
+version = "0.6.1"
 dependencies = [
  "argon2",
  "axum",
  "chrono",
  "futures-util",
  "gelabber-shared",
+ "jiff",
  "rand 0.10.2",
  "redis",
  "reqwest",
@@ -1071,7 +1072,7 @@ dependencies = [
 
 [[package]]
 name = "gelabber-media"
-version = "0.6.0"
+version = "0.6.1"
 dependencies = [
  "axum",
  "futures-util",
@@ -1092,7 +1093,7 @@ dependencies = [
 
 [[package]]
 name = "gelabber-shared"
-version = "0.6.0"
+version = "0.6.1"
 dependencies = [
  "base64 0.22.1",
  "hmac 0.12.1",
