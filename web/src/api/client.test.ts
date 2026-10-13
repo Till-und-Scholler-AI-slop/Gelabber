@@ -81,6 +81,18 @@ describe("api client", () => {
     expect(calls[1]?.init.body).toBe(JSON.stringify({ email: "a@b.co" }));
   });
 
+  it("sends a Blob body raw with its own type", async () => {
+    setCsrfToken("tok-1");
+    const calls = install(() => jsonResponse(200, { id: "u" }));
+    const image = new Blob(["RIFF....WEBP"], { type: "image/webp" });
+
+    await api("/me/avatar", { method: "PUT", body: image });
+
+    expect(calls[0]?.init.body).toBe(image);
+    expect(header(calls[0]!, "Content-Type")).toBe("image/webp");
+    expect(header(calls[0]!, "X-CSRF-Token")).toBe("tok-1");
+  });
+
   it("surfaces the error envelope as ApiError with fields", async () => {
     install(() =>
       jsonResponse(422, {

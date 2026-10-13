@@ -51,6 +51,25 @@ that interval is not proven covered by this change. Existing bound-object PUT
 URLs remain usable until their ordinary ten-minute expiry. This change does not
 seal/copy bound objects into a second immutable storage key.
 
+## Avatars
+
+Uploaded avatars (#208, `api/src/avatars.rs`) use the same `storage_cleanup`
+table and worker, with keys `avatars/{user}/{file}`. `PUT /api/me/avatar`
+records a pending row (`next_attempt` and `retain_until` ten minutes ahead)
+before storing the bytes. A failed PUT returns its error and leaves that row,
+because a PUT that only timed out on the client side may still complete in
+MinIO; the worker deletes the key once the row is due. The profile update
+withdraws the pending row in the same transaction that points the profile at
+the object, and records the avatar it really replaced (read under the row
+lock) for deletion before commit.
+
+The withdrawal is `DELETE ... WHERE object_key=$1 AND attempts=0`. It relies
+on the worker incrementing `attempts` in its claim statement and on nothing
+ever resetting it: once the worker has claimed a row (and may be deleting the
+object), a late profile save finds no row to withdraw and is refused instead
+of pointing the profile at an object that is being deleted. Changing the claim
+protocol so that `attempts` is incremented later, or reset, breaks this.
+
 ## Atomic daily quota
 
 `upload_daily_usage` is keyed by uploader and UTC date, with `reserved` and

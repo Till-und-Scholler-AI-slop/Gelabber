@@ -1,17 +1,35 @@
 import { useMutation } from "@tanstack/react-query";
 import { useNavigate } from "@tanstack/react-router";
-import { useId, useState, type FormEvent } from "react";
+import {
+  useId,
+  useRef,
+  useState,
+  type ChangeEvent,
+  type FormEvent,
+} from "react";
 
 import {
+  AvatarImageError,
+  avatarImageMessage,
+  prepareAvatar,
+} from "../auth/avatarImage.ts";
+import {
+  avatarFieldAfterRemoval,
   fieldMessage,
+  isUploadedAvatar,
+  profileFormPatch,
+  removesAvatarAtOnce,
   validateAvatarUrl,
   validateName,
   validatePassword,
 } from "../auth/rules.ts";
 import {
   changePassword,
+  claimProfileWrite,
   logoutEverywhere,
   updateProfile,
+  uploadAvatar,
+  useProfileWrites,
   useSession,
 } from "../auth/session.ts";
 import type { User } from "../auth/types.ts";
@@ -37,15 +55,26 @@ export function ProfilePage() {
   );
 }
 
+type Upload = { file: File; release: () => void };
+
 function ProfileForm({ user }: { user: User }) {
   const [name, setName] = useState(user.name);
   const [avatarUrl, setAvatarUrl] = useState(user.avatar_url ?? "");
   const [saved, setSaved] = useState(false);
   const { errors, clearField, setFields, fromError } = useFormErrors();
 
+  // Every write below holds the tab-wide profile write slot (claimed by the
+  // handler, released when the write settles, even after an unmount).
   const mutation = useMutation({
-    mutationFn: () =>
-      updateProfile({ name: name.trim(), avatar_url: avatarUrl.trim() }),
+    mutationFn: async (release: () => void) => {
+      try {
+        return await updateProfile(
+          profileFormPatch(name, avatarUrl, user.avatar_url),
+        );
+      } finally {
+        release();
+      }
+    },
     onSuccess: (updated) => {
       setName(updated.name);
       setAvatarUrl(updated.avatar_url ?? "");
@@ -57,10 +86,79 @@ function ProfileForm({ user }: { user: User }) {
   const dirty =
     name.trim() !== user.name || avatarUrl.trim() !== (user.avatar_url ?? "");
   const unchangedId = useId();
-  const unchanged = !dirty && !saved && !mutation.isPending;
+
+  // Uploads apply at once; the URL field and Speichern are for links.
+  const picker = useRef<HTMLInputElement>(null);
+  const upload = useMutation({
+    mutationFn: async ({ file, release }: Upload) => {
+      try {
+        return await uploadAvatar(await prepareAvatar(file));
+      } finally {
+        release();
+      }
+    },
+    onSuccess: (updated) => {
+      setAvatarUrl(updated.avatar_url ?? "");
+      clearField("avatar_url");
+      setSaved(true);
+    },
+    onError: (error) => {
+      if (error instanceof AvatarImageError) {
+        setFields({ avatar_url: avatarImageMessage(error) });
+      } else {
+        fromError(error);
+      }
+    },
+  });
+  // Removing an uploaded image applies at once, like the upload; a link is
+  // only cleared in the form until Speichern.
+  const removal = useMutation({
+    mutationFn: async (release: () => void) => {
+      try {
+        return await updateProfile({ avatar_url: "" });
+      } finally {
+        release();
+      }
+    },
+    onSuccess: () => {
+      setAvatarUrl(avatarFieldAfterRemoval);
+      clearField("avatar_url");
+      setSaved(true);
+    },
+    onError: fromError,
+  });
+  // One profile write at a time, across remounts of this form: a late or
+  // failed answer of one would otherwise put an older user back into the
+  // session store.
+  const busy = useProfileWrites((state) => state.pending > 0);
+  // Upload and removal save at once, so after them it says "Gespeichert.".
+  const unchanged = !dirty && !saved && !busy;
+  const onPick = (event: ChangeEvent<HTMLInputElement>) => {
+    const file = event.target.files?.[0];
+    event.target.value = "";
+    if (!file) return;
+    const release = claimProfileWrite();
+    if (!release) return;
+    setSaved(false);
+    upload.mutate({ file, release });
+  };
+  const onRemove = () => {
+    if (busy) return;
+    setSaved(false);
+    clearField("avatar_url");
+    if (removesAvatarAtOnce(user.avatar_url, avatarUrl)) {
+      const release = claimProfileWrite();
+      if (release) removal.mutate(release);
+    } else {
+      setAvatarUrl("");
+    }
+  };
+  const uploaded = isUploadedAvatar(avatarUrl);
+  const removalUnsaved = avatarUrl.trim() === "" && Boolean(user.avatar_url);
 
   const onSubmit = (event: FormEvent<HTMLFormElement>) => {
     event.preventDefault();
+    if (busy) return;
     setSaved(false);
     const fields: Record<string, string> = {};
     const nameCode = validateName(name);
@@ -71,7 +169,8 @@ function ProfileForm({ user }: { user: User }) {
       setFields(fields);
       return;
     }
-    mutation.mutate();
+    const release = claimProfileWrite();
+    if (release) mutation.mutate(release);
   };
 
   // Preview trails typing so the browser does not fetch every half-typed URL.
@@ -90,10 +189,40 @@ function ProfileForm({ user }: { user: User }) {
       <form onSubmit={onSubmit} noValidate className="mt-8 flex flex-col gap-6">
         <div className="flex items-center gap-4">
           <Avatar name={name || user.name} url={previewUrl || null} size="lg" />
-          <p className="text-sm text-neutral-600 dark:text-neutral-400">
-            Dein Bild begleitet dich in Chats und Sprachräumen. Ohne Bild zeigen
-            wir deine Initialen.
-          </p>
+          <div className="flex flex-col gap-2">
+            <p className="text-sm text-neutral-600 dark:text-neutral-400">
+              Dein Bild begleitet dich in Chats und Sprachräumen. Ohne Bild
+              zeigen wir deine Initialen.
+            </p>
+            <div className="flex flex-wrap gap-2">
+              <button
+                type="button"
+                onClick={() => picker.current?.click()}
+                disabled={busy}
+                className="rounded-lg border border-neutral-300 px-3 py-1.5 text-sm font-medium transition hover:bg-neutral-100 disabled:opacity-60 dark:border-neutral-700 dark:hover:bg-neutral-800"
+              >
+                {upload.isPending ? "Lädt hoch…" : "Bild hochladen"}
+              </button>
+              {avatarUrl.trim() ? (
+                <button
+                  type="button"
+                  onClick={onRemove}
+                  disabled={busy}
+                  className="rounded-lg px-3 py-1.5 text-sm font-medium text-neutral-600 transition hover:bg-neutral-100 disabled:opacity-60 dark:text-neutral-400 dark:hover:bg-neutral-800"
+                >
+                  {removal.isPending ? "Entfernt…" : "Entfernen"}
+                </button>
+              ) : null}
+            </div>
+            <input
+              ref={picker}
+              type="file"
+              accept="image/png,image/jpeg,image/webp,image/gif"
+              className="hidden"
+              aria-label="Avatar-Bild auswählen"
+              onChange={onPick}
+            />
+          </div>
         </div>
 
         <Field
@@ -115,22 +244,28 @@ function ProfileForm({ user }: { user: User }) {
           label="Avatar-URL"
           type="url"
           inputMode="url"
-          placeholder="https://…"
-          value={avatarUrl}
+          placeholder={uploaded ? "Hochgeladenes Bild" : "https://…"}
+          value={uploaded ? "" : avatarUrl}
           onChange={(event) => {
             setAvatarUrl(event.target.value);
             setSaved(false);
             clearField("avatar_url");
           }}
           error={errors.fields.avatar_url}
-          hint="Leer lassen, um das Bild zu entfernen."
+          hint={
+            uploaded
+              ? "Eine URL hier ersetzt das hochgeladene Bild."
+              : removalUnsaved
+                ? "Noch nicht gespeichert: Speichern entfernt das Bild."
+                : "Lieber hochladen: Links laden das Bild bei jedem Aufruf von der fremden Seite."
+          }
         />
         <FormError message={errors.form} />
         <div className="flex items-center gap-4">
           <SubmitButton
             pending={mutation.isPending}
             pendingLabel="Speichern…"
-            disabled={!dirty}
+            disabled={!dirty || (busy && !mutation.isPending)}
             aria-describedby={unchanged ? unchangedId : undefined}
           >
             Speichern

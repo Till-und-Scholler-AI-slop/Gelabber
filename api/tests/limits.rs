@@ -174,3 +174,26 @@ async fn daily_upload_quota_is_server_side(pool: PgPool) {
     );
     assert_eq!(denied.body["error"], "quota_exceeded");
 }
+
+#[sqlx::test]
+async fn avatar_uploads_count_against_the_upload_rate(pool: PgPool) {
+    let mut client = Client::from_state(state_with(pool, &[("API_RATE_UPLOAD_PER_HOUR", "2")]));
+    client.bootstrap().await;
+    let res = client
+        .register("ada@example.com", "password123", "Ada")
+        .await;
+    assert_eq!(res.status, StatusCode::CREATED, "{}", res.body);
+
+    let png = b"\x89PNG\r\n\x1a\nnot really pixels".to_vec();
+    for _ in 0..2 {
+        let (status, body) = client
+            .send_bytes(Method::PUT, "/api/me/avatar", "image/png", png.clone())
+            .await;
+        assert_eq!(status, StatusCode::OK, "{body}");
+    }
+    let (status, body) = client
+        .send_bytes(Method::PUT, "/api/me/avatar", "image/png", png)
+        .await;
+    assert_eq!(status, StatusCode::TOO_MANY_REQUESTS, "{body}");
+    assert_eq!(body["error"], "rate_limited");
+}

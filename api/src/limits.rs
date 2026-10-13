@@ -162,7 +162,9 @@ pub async fn gate(
             state.limits.auth_per_min,
             MINUTE,
         )
-    } else if request.method() == Method::POST && path.ends_with("/attachments") {
+    } else if (request.method() == Method::POST && path.ends_with("/attachments"))
+        || (request.method() == Method::PUT && path == "/api/me/avatar")
+    {
         check(
             &state.limiter,
             "up",
