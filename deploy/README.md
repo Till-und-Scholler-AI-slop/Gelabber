@@ -124,9 +124,11 @@ For a digest rollout use the same `--env-file` / `-f` arguments as the rollout. 
 Browsers upload and download attachments directly from MinIO through presigned URLs, so `MINIO_PUBLIC_ENDPOINT` is public by design. Put it on its own subdomain behind your TLS Caddy, not on a published port such as `https://example.com:9000`: networks that only allow 80/443 then load no images, and the S3 API (plus the console on 9001, if published) faces the internet without the proxy in front. The move fixes reachability and removes the directly published 9000/9001 (console included), but it does not shrink the S3 API's attack surface: the Caddy MinIO site forwards every path and method, so `https://minio.example.com` still serves the whole S3/admin API, and the API keeps signing with the MinIO root account. The API logs a warning at startup when an `https://` endpoint carries a port other than 443.
 
 1. DNS for `minio.example.com`, and the MinIO site from `Caddyfile.homelab` in your Caddy with `minio.example.com` as its address (the default is `minio.home.arpa`; `header_up Host {hostport}`, URI unchanged).
-2. `.env`: `MINIO_PUBLIC_ENDPOINT=https://minio.example.com`, `MINIO_API_BIND=127.0.0.1`, `MINIO_CONSOLE_BIND=127.0.0.1`, `MINIO_API_CORS_ALLOW_ORIGIN=https://example.com`.
-3. `docker compose up -d minio api`, then close 9000/9001 in the firewall.
-4. Check from outside: `curl -I https://minio.example.com/minio/health/live` answers 200; in the app an existing image loads and a new upload works.
+2. `.env`: `MINIO_PUBLIC_ENDPOINT=https://minio.example.com`, `MINIO_API_CORS_ALLOW_ORIGIN=https://example.com`. Leave `MINIO_API_BIND` and `MINIO_CONSOLE_BIND` as they are for now: open browsers cache the attachment redirect for the rest of its signing window and keep following the old `:9000` link for up to 30 minutes, so the old port must stay reachable that long.
+3. `docker compose up -d minio api`. Check from outside that `curl -I https://minio.example.com/minio/health/live` answers 200, and that an attachment link now redirects to `https://minio.example.com/…`: with `curl -I` and your session cookie, or in a private window.
+4. About 30 minutes later, set `MINIO_API_BIND=127.0.0.1` and `MINIO_CONSOLE_BIND=127.0.0.1` in `.env`, run `docker compose up -d minio`, and close 9000/9001 in the firewall. Check from outside that `curl -I https://example.com:9000/minio/health/live` fails. In the app, upload a new image and check that it loads (its redirect cannot come from a cache), then hard-reload (Ctrl+Shift+R) and check that an existing image still loads.
+
+If you cannot wait, do step 4 right after step 3: browsers that were already open may then miss some images for up to 30 minutes, until their cached redirects run out or the page is hard-reloaded.
 
 A path prefix (`https://example.com/s3/…`) does not work: presigns sign host and path.
 

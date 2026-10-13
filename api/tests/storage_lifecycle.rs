@@ -55,11 +55,15 @@ async fn owner(state: &AppState) -> (Client, Value, String) {
 }
 
 async fn presign(client: &mut Client, channel: &str) -> Value {
+    presign_named(client, channel, "x.png").await
+}
+
+async fn presign_named(client: &mut Client, channel: &str, filename: &str) -> Value {
     let res = client
         .send(
             Method::POST,
             &format!("/api/channels/{channel}/attachments"),
-            Some(json!({"filename":"x.png","content_type":"image/png","size":4})),
+            Some(json!({"filename":filename,"content_type":"image/png","size":4})),
         )
         .await;
     assert_eq!(res.status, StatusCode::CREATED);
@@ -555,6 +559,111 @@ async fn real_minio_failed_delete_retains_job_and_later_retry_removes_only_its_o
         0
     );
     state.store.delete(&foreign).await.unwrap();
+}
+
+/// The windowed download link (#201) and its save variant against real
+/// MinIO: the redirect is cacheable per session for the rest of its window,
+/// the signed link serves the bytes with the signed cache header, and the
+/// variant makes MinIO itself answer `Content-Disposition: attachment`.
+#[sqlx::test]
+async fn real_minio_download_links_serve_the_object(pool: PgPool) {
+    use axum::http::header::{CACHE_CONTROL, LOCATION, VARY};
+    let endpoint = std::env::var("MINIO_ENDPOINT").expect("source local minio-test.env");
+    let config = minio_config(&endpoint);
+    let mut state = state(pool, 0);
+    state.store = ObjectStore::from_minio(Some(&config)).unwrap();
+    state.store.ensure_ready().await.unwrap();
+    let (mut client, _, channel) = owner(&state).await;
+    let signed = presign(&mut client, &channel).await;
+    let id = signed["id"].as_str().unwrap().to_owned();
+    let key = format!("att/{id}");
+    state
+        .store
+        .put(&key, "image/png", vec![1, 2, 3, 4])
+        .await
+        .unwrap();
+    message(&mut client, &channel, &id).await;
+    let http = reqwest::Client::new();
+
+    let (status, headers, _) = client
+        .send_raw(Method::GET, &format!("/api/attachments/{id}"), None)
+        .await;
+    assert_eq!(status, StatusCode::TEMPORARY_REDIRECT);
+    assert_eq!(headers[VARY], "Cookie");
+    let cache = headers[CACHE_CONTROL].to_str().unwrap();
+    let left: u64 = cache
+        .strip_prefix("private, max-age=")
+        .unwrap_or_else(|| panic!("{cache}"))
+        .parse()
+        .unwrap();
+    assert!((1..=1_800).contains(&left), "{cache}");
+    let link = headers[LOCATION].to_str().unwrap().to_owned();
+    let (_, again, _) = client
+        .send_raw(Method::GET, &format!("/api/attachments/{id}"), None)
+        .await;
+    if left > 5 {
+        assert_eq!(again[LOCATION], link.as_str(), "same window, same link");
+    }
+    let object = http.get(&link).send().await.unwrap();
+    assert_eq!(object.status(), reqwest::StatusCode::OK);
+    assert_eq!(
+        object.headers()[reqwest::header::CACHE_CONTROL],
+        "private, max-age=1800"
+    );
+    assert_eq!(object.bytes().await.unwrap().as_ref(), [1, 2, 3, 4]);
+
+    let (status, headers, _) = client
+        .send_raw(
+            Method::GET,
+            &format!("/api/attachments/{id}?download=1"),
+            None,
+        )
+        .await;
+    assert_eq!(status, StatusCode::TEMPORARY_REDIRECT);
+    assert_eq!(headers[CACHE_CONTROL], "private, no-store");
+    assert_eq!(headers[VARY], "Cookie");
+    let save = headers[LOCATION].to_str().unwrap();
+    assert_ne!(save, link);
+    let object = http.get(save).send().await.unwrap();
+    assert_eq!(object.status(), reqwest::StatusCode::OK);
+    assert_eq!(
+        object.headers()[reqwest::header::CONTENT_DISPOSITION],
+        "attachment; filename=\"x.png\""
+    );
+    assert_eq!(object.bytes().await.unwrap().as_ref(), [1, 2, 3, 4]);
+    state.store.delete(&key).await.unwrap();
+
+    // A name with a quote and a non-ASCII letter survives signing into the
+    // link and MinIO's answer: quoted fallback plus RFC 6266 `filename*`.
+    let signed = presign_named(&mut client, &channel, "Bär \"1\".png").await;
+    let id = signed["id"].as_str().unwrap().to_owned();
+    let key = format!("att/{id}");
+    state
+        .store
+        .put(&key, "image/png", vec![5, 6, 7, 8])
+        .await
+        .unwrap();
+    message(&mut client, &channel, &id).await;
+    let (status, headers, _) = client
+        .send_raw(
+            Method::GET,
+            &format!("/api/attachments/{id}?download=1"),
+            None,
+        )
+        .await;
+    assert_eq!(status, StatusCode::TEMPORARY_REDIRECT);
+    let object = http
+        .get(headers[LOCATION].to_str().unwrap())
+        .send()
+        .await
+        .unwrap();
+    assert_eq!(object.status(), reqwest::StatusCode::OK);
+    assert_eq!(
+        object.headers()[reqwest::header::CONTENT_DISPOSITION],
+        "attachment; filename=\"B_r _1_.png\"; filename*=UTF-8''B%C3%A4r%20%221%22.png"
+    );
+    assert_eq!(object.bytes().await.unwrap().as_ref(), [5, 6, 7, 8]);
+    state.store.delete(&key).await.unwrap();
 }
 
 #[tokio::test]

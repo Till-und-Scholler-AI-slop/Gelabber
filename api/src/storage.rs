@@ -6,7 +6,7 @@
 
 use std::collections::HashMap;
 use std::sync::{Arc, Mutex};
-use std::time::Duration;
+use std::time::{Duration, SystemTime, UNIX_EPOCH};
 
 use rusty_s3::actions::S3Action;
 use rusty_s3::{Bucket, Credentials, UrlStyle};
@@ -16,7 +16,28 @@ use crate::config::MinioConfig;
 
 const REGION: &str = "us-east-1";
 pub const PUT_TTL: Duration = Duration::from_secs(600);
-pub const GET_TTL: Duration = Duration::from_secs(60);
+/// Download links are signed at the start of a window, not per request: the
+/// same object keeps the same URL, and with it the browser's cached copy, for
+/// the whole window (issue #201). A link stays valid `GET_TTL` from the start
+/// of its window, so even one handed out at the end of a window has
+/// `GET_TTL - GET_WINDOW` left, which is what the object's own cache header
+/// promises.
+pub const GET_WINDOW: Duration = Duration::from_secs(30 * 60);
+/// Access revocation: a download link, and the browser's cached copy of the
+/// redirect and of the picture, keeps working for up to `GET_TTL`, 60
+/// minutes, after the membership check that handed it out, also after the
+/// member left, was removed or logged out. Accepted by Silas on 2026-10-12;
+/// see `api/STORAGE_LIFECYCLE.md`.
+pub const GET_TTL: Duration = Duration::from_secs(60 * 60);
+
+/// The current signing window: its start (Unix seconds) and the seconds left
+/// until the next one, at least one.
+pub fn get_window(now: SystemTime) -> (u64, u64) {
+    let now = now.duration_since(UNIX_EPOCH).unwrap_or_default().as_secs();
+    let window = GET_WINDOW.as_secs();
+    let start = now - now % window;
+    (start, (start + window - now).max(1))
+}
 
 #[derive(Debug)]
 pub enum StoreError {
@@ -105,10 +126,28 @@ impl ObjectStore {
         }
     }
 
-    pub async fn get(&self, key: &str) -> Result<ObjectBody, StoreError> {
+    /// The object for display (`<img src>`): one stable link per window,
+    /// the window of `now`.
+    pub async fn get(&self, key: &str, now: SystemTime) -> Result<ObjectBody, StoreError> {
         match self {
             Self::Memory(store) => store.get(key),
-            Self::Minio(store) => store.get(key),
+            Self::Minio(store) => store.get_at(key, None, now),
+        }
+    }
+
+    /// The object as a file to save. MinIO answers with `disposition` as its
+    /// `Content-Disposition`: a browser ignores `<a download>` once the link
+    /// redirects to another origin, so the header has to come from there.
+    /// The memory store streams through the API, which sets it itself.
+    pub async fn download(
+        &self,
+        key: &str,
+        disposition: &str,
+        now: SystemTime,
+    ) -> Result<ObjectBody, StoreError> {
+        match self {
+            Self::Memory(store) => store.get(key),
+            Self::Minio(store) => store.get_at(key, Some(disposition), now),
         }
     }
 
@@ -318,9 +357,29 @@ impl MinioStore {
         object_meta_from_head(response.headers())
     }
 
-    fn get(&self, key: &str) -> Result<ObjectBody, StoreError> {
-        let action = self.inner.public.get_object(Some(&self.inner.creds), key);
-        let url = action.sign(GET_TTL);
+    /// Signed as of the start of `now`'s window (see `GET_WINDOW`).
+    fn get_at(
+        &self,
+        key: &str,
+        disposition: Option<&str>,
+        now: SystemTime,
+    ) -> Result<ObjectBody, StoreError> {
+        let mut action = self.inner.public.get_object(Some(&self.inner.creds), key);
+        // Signed into the URL, so MinIO answers with it: the object never
+        // changes, and the link outlives this cache time (see GET_WINDOW).
+        action.query_mut().insert(
+            "response-cache-control",
+            format!("private, max-age={}", (GET_TTL - GET_WINDOW).as_secs()),
+        );
+        if let Some(disposition) = disposition {
+            action
+                .query_mut()
+                .insert("response-content-disposition", disposition.to_owned());
+        }
+        let (start, _) = get_window(now);
+        let time = jiff::Timestamp::from_second(start as i64)
+            .map_err(|err| StoreError::Other(format!("signing time: {err}")))?;
+        let url = action.sign_with_time(GET_TTL, &time);
         Ok(ObjectBody::Redirect(url.to_string()))
     }
 
@@ -484,6 +543,84 @@ mod tests {
             url.contains("content-length"),
             "signed headers must include content-length: {url}"
         );
+    }
+
+    #[test]
+    fn get_window_is_aligned_and_never_empty() {
+        let at = |secs| UNIX_EPOCH + Duration::from_secs(secs);
+        assert_eq!(get_window(at(3_600)), (3_600, 1_800));
+        assert_eq!(get_window(at(3_601)), (3_600, 1_799));
+        assert_eq!(get_window(at(5_399)), (3_600, 1));
+        assert_eq!(get_window(at(5_400)), (5_400, 1_800));
+    }
+
+    fn minio() -> MinioStore {
+        MinioStore::new(&MinioConfig {
+            endpoint: "http://minio:9000".into(),
+            public_endpoint: "http://localhost:9000".into(),
+            access_key: "gelabber".into(),
+            secret_key: "gelabbergelabber".into(),
+            bucket: "gelabber".into(),
+        })
+        .expect("minio store")
+    }
+
+    fn link(body: Result<ObjectBody, StoreError>) -> String {
+        match body.expect("get") {
+            ObjectBody::Redirect(url) => url,
+            ObjectBody::Bytes { .. } => panic!("minio redirects"),
+        }
+    }
+
+    fn query(url: &str, name: &str) -> Option<String> {
+        url::Url::parse(url)
+            .expect("url")
+            .query_pairs()
+            .find(|(k, _)| k == name)
+            .map(|(_, v)| v.into_owned())
+    }
+
+    #[test]
+    fn minio_download_link_is_stable_within_its_window() {
+        let store = minio();
+        // 2026-10-12T10:00:00Z, the start of a window.
+        let start = UNIX_EPOCH + Duration::from_secs(1_791_799_200);
+        assert_eq!(get_window(start).1, 1_800);
+        let at = |secs| link(store.get_at("att/x", None, start + Duration::from_secs(secs)));
+        let first = at(0);
+        assert_eq!(first, at(1));
+        assert_eq!(first, at(1_799));
+        assert_ne!(first, at(1_800));
+        // Signed as of the window start, not of the request.
+        assert_eq!(
+            query(&at(1_799), "X-Amz-Date").as_deref(),
+            Some("20261012T100000Z")
+        );
+        assert_eq!(
+            query(&at(1_800), "X-Amz-Date").as_deref(),
+            Some("20261012T103000Z")
+        );
+        assert_eq!(query(&first, "X-Amz-Expires").as_deref(), Some("3600"));
+        assert_eq!(
+            query(&first, "response-cache-control").as_deref(),
+            Some("private, max-age=1800")
+        );
+        assert_eq!(query(&first, "response-content-disposition"), None);
+    }
+
+    #[test]
+    fn minio_download_variant_signs_its_disposition() {
+        let store = minio();
+        let now = UNIX_EPOCH + Duration::from_secs(1_791_799_200);
+        let disposition = "attachment; filename=\"B_r.png\"; filename*=UTF-8''B%C3%A4r.png";
+        let url = link(store.get_at("att/x", Some(disposition), now));
+        assert_eq!(
+            query(&url, "response-content-disposition").as_deref(),
+            Some(disposition)
+        );
+        assert!(query(&url, "X-Amz-Signature").is_some(), "{url}");
+        // The display link of the same window stays as it was.
+        assert_ne!(url, link(store.get_at("att/x", None, now)));
     }
 
     /// MinIO HEAD carries the object size in `Content-Length` and an empty

@@ -3,9 +3,12 @@
 // painted in the same frame; the server answer swaps the `tmp:` id, an
 // error retains an independently recoverable send attempt.
 
+import { anchoredScrollTop } from "./scrollAnchor.ts";
 import { useVirtualizer } from "@tanstack/react-virtual";
 import {
+  createContext,
   useCallback,
+  useContext,
   useEffect,
   useEffectEvent,
   useLayoutEffect,
@@ -53,7 +56,7 @@ import {
   useMessages,
   useSendMessage,
 } from "../messages/queries.ts";
-import { attachmentUrl } from "../messages/api.ts";
+import { attachmentDownloadUrl, attachmentUrl } from "../messages/api.ts";
 import {
   carriesFiles,
   droppedFile,
@@ -72,6 +75,8 @@ import { Avatar } from "./Avatar.tsx";
 import { sizeByDraft, type DraftHeight } from "./composerHeight.ts";
 import { EmojiPickerLoader, ReactionBar } from "./ReactionBar.tsx";
 import { Modal } from "./Modal.tsx";
+import { ImageLightbox, type LightboxImage } from "./ImageLightbox.tsx";
+import { isPlainClick } from "./plainClick.ts";
 import {
   ArrowDownIcon,
   CloseIcon,
@@ -83,6 +88,10 @@ import {
   TrashIcon,
 } from "./Icons.tsx";
 import "./chat.css";
+
+// Opens the one lightbox of the pane. It lives outside the virtual rows: a
+// row scrolled out of the overscan unmounts, and would close it with it.
+const OpenImage = createContext<(image: LightboxImage) => void>(() => {});
 
 export function MessagePane({
   title,
@@ -120,6 +129,29 @@ export function MessagePane({
   const searchScope = `${user?.id ?? "anonymous"}:${channelId}`;
   const [searchingScope, setSearchingScope] = useState<string | null>(null);
   const searching = searchingScope === searchScope;
+  // Per channel and account, like the search: a switch closes it.
+  const [lightbox, setLightbox] = useState<{
+    scope: string;
+    image: LightboxImage;
+    /** Its message was in the list; gone from it again means deleted. */
+    listed?: boolean;
+  } | null>(null);
+  const openImage = useCallback(
+    (image: LightboxImage) => setLightbox({ scope: searchScope, image }),
+    [searchScope],
+  );
+  const panesRef = useRef<HTMLDivElement>(null);
+  // The opening row is gone: the topmost row in view, so a keyboard user
+  // stays in the list instead of on <body>.
+  const focusList = useCallback(() => {
+    const log = panesRef.current?.querySelector<HTMLElement>('[role="log"]');
+    if (!log) return;
+    const top = log.getBoundingClientRect().top;
+    const row = [...log.querySelectorAll<HTMLElement>(".lr-message-row")].find(
+      (candidate) => candidate.getBoundingClientRect().bottom > top,
+    );
+    row?.focus({ preventScroll: true });
+  }, []);
   const searchButton = useRef<HTMLButtonElement>(null);
   const restoreSearchFocus = useRef(false);
   const closeSearch = useCallback(() => {
@@ -177,6 +209,18 @@ export function MessagePane({
     [query.data?.pages, pending],
   );
 
+  // Close the picture with its message when that is deleted. A result of
+  // the search may not be in the loaded list: only "was there, now gone".
+  if (lightbox) {
+    const listed = items.some((message) =>
+      (message.attachments ?? []).some(
+        (attachment) => attachment.id === lightbox.image.id,
+      ),
+    );
+    if (listed && !lightbox.listed) setLightbox({ ...lightbox, listed });
+    else if (!listed && lightbox.listed) setLightbox(null);
+  }
+
   const latest = readBoundary(items);
   const read = useMarkRead(
     channelId,
@@ -233,76 +277,86 @@ export function MessagePane({
           </button>
         </p>
       ) : null}
-      <div className="relative flex min-h-0 flex-1 flex-col">
-        <div
-          className={`flex min-h-0 flex-1 flex-col ${searching ? "invisible" : ""}`}
-          inert={searching}
-          aria-hidden={searching || undefined}
-        >
-          <MessageList
-            key={searchScope}
-            active={!searching}
-            channelId={channelId}
-            items={items}
-            onAtLatest={setAtLatest}
-            latestRequest={latestRequest}
-            meId={user?.id}
-            newAfter={newAfter ?? null}
-            canModerate={canModerate}
-            canSend={canSend}
-            hasOlder={Boolean(hasNextPage)}
-            loadingOlder={isFetchingNextPage}
-            onLoadOlder={onLoadOlder}
-            ready={!query.isPending}
-            loadError={
-              query.error
-                ? query.isFetchNextPageError
-                  ? "paging"
-                  : "history"
-                : null
-            }
-            onRetry={() => {
-              if (query.isFetchNextPageError) void fetchNextPage();
-              else void query.refetch();
-            }}
-          />
-        </div>
-        {searching ? (
-          <div className="lr-search-overlay absolute inset-0 flex min-h-0 flex-col">
-            <MessageSearch
+      <OpenImage.Provider value={openImage}>
+        <div ref={panesRef} className="relative flex min-h-0 flex-1 flex-col">
+          <div
+            className={`flex min-h-0 flex-1 flex-col ${searching ? "invisible" : ""}`}
+            inert={searching}
+            aria-hidden={searching || undefined}
+          >
+            <MessageList
               key={searchScope}
+              active={!searching}
               channelId={channelId}
-              onClose={closeSearch}
-              renderMessage={(message) => (
-                <MessageRow
-                  message={message}
-                  continued={false}
-                  canSend={canSend}
-                  mine={message.author.id === user?.id}
-                  canDelete={message.author.id === user?.id || canModerate}
-                  onEdit={(content) =>
-                    contextEdit.mutate({ id: message.id, content })
-                  }
-                  onDelete={() => {
-                    if (window.confirm("Diese Nachricht wirklich löschen?"))
-                      contextRemove.mutate(message.id);
-                  }}
-                />
-              )}
+              items={items}
+              onAtLatest={setAtLatest}
+              latestRequest={latestRequest}
+              meId={user?.id}
+              newAfter={newAfter ?? null}
+              canModerate={canModerate}
+              canSend={canSend}
+              hasOlder={Boolean(hasNextPage)}
+              loadingOlder={isFetchingNextPage}
+              onLoadOlder={onLoadOlder}
+              ready={!query.isPending}
+              loadError={
+                query.error
+                  ? query.isFetchNextPageError
+                    ? "paging"
+                    : "history"
+                  : null
+              }
+              onRetry={() => {
+                if (query.isFetchNextPageError) void fetchNextPage();
+                else void query.refetch();
+              }}
             />
           </div>
-        ) : null}
-        {!searching && !atLatest && items.length > 0 ? (
-          <button
-            type="button"
-            onClick={() => setLatestRequest((value) => value + 1)}
-            className="lr-jump-latest"
-          >
-            <ArrowDownIcon size={15} />
-            Zu den neuesten Nachrichten
-          </button>
-        ) : null}
-      </div>
+          {searching ? (
+            <div className="lr-search-overlay absolute inset-0 flex min-h-0 flex-col">
+              <MessageSearch
+                key={searchScope}
+                channelId={channelId}
+                onClose={closeSearch}
+                renderMessage={(message) => (
+                  <MessageRow
+                    message={message}
+                    continued={false}
+                    canSend={canSend}
+                    mine={message.author.id === user?.id}
+                    canDelete={message.author.id === user?.id || canModerate}
+                    onEdit={(content) =>
+                      contextEdit.mutate({ id: message.id, content })
+                    }
+                    onDelete={() => {
+                      if (window.confirm("Diese Nachricht wirklich löschen?"))
+                        contextRemove.mutate(message.id);
+                    }}
+                  />
+                )}
+              />
+            </div>
+          ) : null}
+          {!searching && !atLatest && items.length > 0 ? (
+            <button
+              type="button"
+              onClick={() => setLatestRequest((value) => value + 1)}
+              className="lr-jump-latest"
+            >
+              <ArrowDownIcon size={15} />
+              Zu den neuesten Nachrichten
+            </button>
+          ) : null}
+        </div>
+      </OpenImage.Provider>
+      {lightbox?.scope === searchScope ? (
+        <ImageLightbox
+          key={lightbox.image.id}
+          image={lightbox.image}
+          onClose={() => setLightbox(null)}
+          fallbackFocus={focusList}
+        />
+      ) : null}
       {footer}
       <Composer
         key={user?.id ?? "anonymous"}
@@ -364,9 +418,21 @@ function MessageList({
   const lastPosition = useRef<ScrollPosition | null>(null);
   const touchY = useRef<number | null>(null);
   const lastRequest = useRef(latestRequest);
-  const olderAnchor = useRef<string | null>(null);
+  // Older history was asked for; its rows are prepended above `pin`.
+  const olderAnchor = useRef(false);
   const lastCount = useRef(0);
+  const lastFirst = useRef<string | undefined>(undefined);
+  // The rows the virtualizer measured, as committed (not as rendering).
+  const itemsRef = useRef(items);
   const pin = useRef<{ id: string; offset: number } | null>(null);
+  // The row a prepend or trim must keep in place, held until the reader
+  // scrolls: the new rows above it are measured (and grow) in later commits.
+  // Not `pin`, which every scroll and layout pass rewrites.
+  const hold = useRef<{ id: string; offset: number } | null>(null);
+  // Where the held anchor put the list; a scroll elsewhere is the reader's.
+  const heldTop = useRef<number | null>(null);
+  // Whether the browser put the list exactly at the held position.
+  const heldLanded = useRef(false);
   const edit = useEditMessage(channelId);
   const remove = useDeleteMessage(channelId);
   const readIndex = newAfter
@@ -388,31 +454,51 @@ function MessageList({
       const breaks =
         (dayBreak(items[index - 1], message) ? 40 : 0) +
         (index === newIndex ? 28 : 0);
+      // The image box is a fixed 240 px (chat.css), plus header and gaps.
       if (image)
-        return breaks + (isContinued(items[index - 1], message) ? 168 : 220);
+        return breaks + (isContinued(items[index - 1], message) ? 256 : 300);
       return breaks + (isContinued(items[index - 1], message) ? 28 : 72);
     },
     getItemKey: (index) => items[index]?.id ?? index,
     overscan: 12,
   });
 
-  const updateLatest = useCallback(() => {
-    const element = scrollRef.current;
-    if (!element) return;
-    if (stickToBottom.current) element.scrollTop = element.scrollHeight;
-    const position = {
-      top: element.scrollTop,
-      height: element.scrollHeight,
-      viewport: element.clientHeight,
-    };
-    lastPosition.current = position;
-    onAtLatest(
-      active &&
-        stickToBottom.current &&
-        position.viewport > 16 &&
-        endDistance(position) <= 16,
-    );
-  }, [active, onAtLatest]);
+  useLayoutEffect(() => {
+    itemsRef.current = items;
+  }, [items]);
+
+  // `pinEnd` is for size changes only. Scroll handlers just read: writing
+  // scrollTop while the user scrolls cuts WebKit's momentum scrolling.
+  const updateLatest = useCallback(
+    (pinEnd = true) => {
+      const element = scrollRef.current;
+      if (!element) return;
+      if (pinEnd && stickToBottom.current)
+        element.scrollTop = element.scrollHeight;
+      const position = {
+        top: element.scrollTop,
+        height: element.scrollHeight,
+        viewport: element.clientHeight,
+      };
+      lastPosition.current = position;
+      // The row at the top and its offset as of the last scroll or resize:
+      // what a prepend or a vanished row must not move. From the
+      // measurements, not the rendered range: this runs before the
+      // virtualizer's own scroll listener, and after a long jump that range
+      // still describes the old position.
+      const first = virtualizer.getVirtualItemForOffset(element.scrollTop);
+      const firstId = first ? itemsRef.current[first.index]?.id : undefined;
+      if (first && firstId)
+        pin.current = { id: firstId, offset: first.start - element.scrollTop };
+      onAtLatest(
+        active &&
+          stickToBottom.current &&
+          position.viewport > 16 &&
+          endDistance(position) <= 16,
+      );
+    },
+    [active, onAtLatest, virtualizer],
+  );
 
   useLayoutEffect(() => {
     const element = scrollRef.current,
@@ -420,7 +506,7 @@ function MessageList({
     if (!element || !content) return;
     // The viewport also changes when the keyboard model, dock, or search
     // controls resize. Keep history intent even if the browser clamps to end.
-    const observer = new ResizeObserver(updateLatest);
+    const observer = new ResizeObserver(() => updateLatest());
     observer.observe(element);
     observer.observe(content);
     updateLatest();
@@ -433,52 +519,85 @@ function MessageList({
       item,
       _delta,
       instance,
-    ) => !stickToBottom.current && item.start < (instance.scrollOffset ?? 0);
+    ) =>
+      !stickToBottom.current &&
+      // A held anchor sets the position itself, absolutely.
+      !hold.current &&
+      item.start < (instance.scrollOffset ?? 0);
   }, [virtualizer]);
 
   const totalSize = virtualizer.getTotalSize();
+  // Fresh and unclamped: getTotalSize() recomputes the measurements from
+  // the sizes measured so far. getOffsetForIndex() would clamp to a scroll
+  // height the list has not grown to yet, and so jump (#201).
+  const startOf = useCallback(
+    (index: number) => {
+      virtualizer.getTotalSize();
+      return virtualizer.measurementsCache[index]?.start;
+    },
+    [virtualizer],
+  );
+  // The reader moved the list: from here on the position is theirs.
+  const release = () => {
+    hold.current = null;
+    heldTop.current = null;
+  };
+  // Any difference from where the hold put the list, unless the browser
+  // clamped that position: the rows above were not laid out yet, and the
+  // browser moves a clamped scrollTop on its own as they are.
+  const movedByReader = (top: number) =>
+    heldTop.current !== null && heldLanded.current && top !== heldTop.current;
   useLayoutEffect(() => {
     if (latestRequest !== lastRequest.current) {
       stickToBottom.current = true;
       lastRequest.current = latestRequest;
     }
-    const prepended =
-      olderAnchor.current !== null && items.length > lastCount.current;
+    // The reader moved the list since the hold was applied, possibly before
+    // the scroll event fired: even one pixel is theirs.
+    if (scrollRef.current && movedByReader(scrollRef.current.scrollTop))
+      release();
+    const prepended = olderAnchor.current && items.length > lastCount.current;
+    const firstChanged =
+      lastFirst.current !== undefined && items[0]?.id !== lastFirst.current;
 
     if (prepended) {
-      const idx = items.findIndex((m) => m.id === olderAnchor.current);
-      olderAnchor.current = null;
-      if (idx >= 0) virtualizer.scrollToIndex(idx, { align: "start" });
+      // Keep the row that was on top at the same place, offset included,
+      // also while the new rows above it are measured in later commits.
+      olderAnchor.current = false;
+      hold.current = pin.current;
     } else if (stickToBottom.current) {
       // Native bottom pin below owns the end. scrollToIndex's asynchronous
       // measurement retries can otherwise pull a measured list back upwards.
+      hold.current = null;
+      heldTop.current = null;
     } else if (
-      items.length < lastCount.current &&
-      pin.current &&
-      scrollRef.current
+      (items.length < lastCount.current || firstChanged) &&
+      pin.current
     ) {
-      // A row vanished (own delete or WS). Keep the first visible id
-      // at the same offset so the list does not jump.
-      const idx = items.findIndex((m) => m.id === pin.current?.id);
-      if (idx >= 0) {
-        const offset = virtualizer.getOffsetForIndex(idx, "start");
-        if (offset) {
-          scrollRef.current.scrollTop = offset[0] - pin.current.offset;
-        }
+      // A row vanished (own delete or WS), or the oldest rows moved out of
+      // the list. Keep the first visible id at the same offset so the list
+      // does not jump.
+      hold.current = pin.current;
+    }
+    if (hold.current && scrollRef.current) {
+      const top = anchoredScrollTop(items, hold.current, startOf);
+      if (top === undefined) {
+        // The row itself is gone: nothing left to hold.
+        hold.current = null;
+        heldTop.current = null;
+      } else {
+        scrollRef.current.scrollTop = top;
+        heldTop.current = scrollRef.current.scrollTop;
+        heldLanded.current = Math.abs(heldTop.current - top) < 1;
       }
     }
 
     updateLatest();
     lastCount.current = items.length;
-    const first = virtualizer.getVirtualItems()[0];
-    const firstMessage = first ? items[first.index] : undefined;
-    if (first && firstMessage && scrollRef.current) {
-      pin.current = {
-        id: firstMessage.id,
-        offset: first.start - scrollRef.current.scrollTop,
-      };
-    }
-  }, [items, virtualizer, updateLatest, totalSize, latestRequest]);
+    lastFirst.current = items[0]?.id;
+    // `updateLatest()` pinned the row at scrollTop. Not the first rendered
+    // row: that can be an overscan row far above the viewport.
+  }, [items, virtualizer, startOf, updateLatest, totalSize, latestRequest]);
 
   const firstVisible = virtualizer.getVirtualItems()[0]?.index ?? 0;
   const firstId = items[0]?.id;
@@ -488,7 +607,7 @@ function MessageList({
     // until the user actually scrolls up.
     if (stickToBottom.current) return;
     if (firstVisible > 4) return;
-    olderAnchor.current = firstId ?? null;
+    olderAnchor.current = true;
     onLoadOlder();
   }, [
     active,
@@ -513,6 +632,7 @@ function MessageList({
           event.target.closest("dialog:modal")
         )
           return;
+        release();
         if (
           event.deltaY < 0 &&
           event.currentTarget.scrollHeight >
@@ -525,7 +645,7 @@ function MessageList({
           endDistance(lastPosition.current) < 96
         )
           stickToBottom.current = true;
-        updateLatest();
+        updateLatest(false);
       }}
       onKeyDownCapture={(event) => {
         if (
@@ -535,6 +655,7 @@ function MessageList({
           )
         )
           return;
+        release();
         if (
           ["ArrowUp", "PageUp", "Home"].includes(event.key) &&
           event.currentTarget.scrollHeight >
@@ -542,7 +663,7 @@ function MessageList({
         )
           stickToBottom.current = false;
         if (event.key === "End") stickToBottom.current = true;
-        updateLatest();
+        updateLatest(false);
       }}
       onTouchStartCapture={(event) => {
         if (
@@ -560,6 +681,7 @@ function MessageList({
           return;
         const current = event.touches[0]?.clientY;
         if (current === undefined || touchY.current === null) return;
+        release();
         if (
           current > touchY.current &&
           event.currentTarget.scrollHeight >
@@ -573,15 +695,21 @@ function MessageList({
         )
           stickToBottom.current = true;
         touchY.current = current;
-        updateLatest();
+        updateLatest(false);
       }}
       onTouchEndCapture={() => {
         touchY.current = null;
+      }}
+      onPointerDownCapture={(event) => {
+        // On the list itself, not a row: its scrollbar.
+        if (event.target === event.currentTarget) release();
       }}
       onScrollCapture={(event) => {
         if (event.target !== event.currentTarget) return;
         const element = scrollRef.current;
         if (!element) return;
+        // Momentum or a scrollbar drag moved it away from the held anchor.
+        if (movedByReader(element.scrollTop)) release();
         // Observe intent before virtualizer measurement adjusts the geometry.
         stickToBottom.current = scrollEndIntent(
           stickToBottom.current,
@@ -592,10 +720,9 @@ function MessageList({
             viewport: element.clientHeight,
           },
         );
-        updateLatest();
+        updateLatest(false);
       }}
-      onScroll={updateLatest}
-      style={{ overflowAnchor: "none" }}
+      style={{ overflowAnchor: "none", overscrollBehavior: "contain" }}
       className="flex min-h-0 flex-1 flex-col overflow-y-auto"
     >
       {loadError ? (
@@ -620,7 +747,9 @@ function MessageList({
           Noch keine Nachrichten. Schreib die erste.
         </div>
       ) : null}
-      {hasOlder || loadingOlder ? (
+      {items.length > 0 || hasOlder || loadingOlder ? (
+        // Always there with one height: a row above the list that changes
+        // size shifts everything below it.
         <p className="lr-list-loading">
           {loadingOlder ? "Ältere Nachrichten…" : ""}
         </p>
@@ -1280,6 +1409,7 @@ function Composer({
 }
 
 function AttachmentList({ attachments }: { attachments: Attachment[] }) {
+  const openImage = useContext(OpenImage);
   const files = asAttachmentList(attachments);
   if (files.length === 0) return null;
   return (
@@ -1291,19 +1421,40 @@ function AttachmentList({ attachments }: { attachments: Attachment[] }) {
             <a
               key={attachment.id}
               href={src}
-              target="_blank"
-              rel="noreferrer"
+              // The link stays for "open in new tab"; a click shows the
+              // picture here, also where no new tab exists (desktop app,
+              // installed web app).
+              onClick={(event) => {
+                if (!isPlainClick(event)) return;
+                event.preventDefault();
+                openImage({
+                  id: attachment.id,
+                  src,
+                  filename: attachment.filename,
+                  download: attachmentDownloadUrl(attachment.id),
+                });
+              }}
+              aria-label={`${attachment.filename} vergrößern`}
               className="lr-attachment-image"
             >
-              <img src={src} alt={attachment.filename} />
+              {/* A fixed-height box: the row has its final height before the
+                  picture arrives, so loading never moves the list. */}
+              <img
+                src={src}
+                alt={attachment.filename}
+                decoding="async"
+                loading="lazy"
+              />
             </a>
           );
         }
         return (
           <a
             key={attachment.id}
-            href={attachmentUrl(attachment.id)}
-            // An installed app has no back button to return from a file.
+            // Saved, never opened: an installed app has no back button to
+            // return from a file, and after MinIO's redirect the browser
+            // ignores `download` and would leave the app (and a call).
+            href={attachmentDownloadUrl(attachment.id)}
             download={attachment.filename}
             className="lr-attachment-file"
           >
