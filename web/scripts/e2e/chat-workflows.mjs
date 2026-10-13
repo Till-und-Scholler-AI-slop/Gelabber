@@ -267,6 +267,8 @@ try {
           .count(),
       (count) => count === 0,
       "badge-device-convergence",
+      // The focus refresh waits until the previous snapshot is 10 s old.
+      15_000,
     );
   });
   await check("DM drafts and search use the same scoped workflow", async () => {
