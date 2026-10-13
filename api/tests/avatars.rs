@@ -54,6 +54,9 @@ async fn upload_serves_bytes_and_replaces_the_old_object(pool: PgPool) {
         .await;
     assert_eq!(res.status, StatusCode::OK, "{}", res.body);
     assert_eq!(res.body["avatar_url"], first_url.as_str());
+    let (status, _, bytes) = ada.send_raw(Method::GET, &first_url, None).await;
+    assert_eq!(status, StatusCode::OK, "an echo must not delete the upload");
+    assert_eq!(bytes, PNG);
 
     let (status, second) = ada
         .send_bytes(Method::PUT, "/api/me/avatar", "image/webp", WEBP.to_vec())
@@ -136,6 +139,147 @@ async fn refuses_non_images_strangers_and_foreign_paths(pool: PgPool) {
         .send_raw(Method::GET, "/api/avatars/not-a-uuid/x", None)
         .await;
     assert_eq!(status, StatusCode::NOT_FOUND);
+}
+
+async fn cleanup_rows(pool: &PgPool) -> Vec<String> {
+    sqlx::query_scalar("SELECT object_key FROM storage_cleanup ORDER BY object_key")
+        .fetch_all(pool)
+        .await
+        .unwrap()
+}
+
+fn key_of(url: &str) -> String {
+    format!("avatars/{}", url.strip_prefix("/api/avatars/").unwrap())
+}
+
+#[sqlx::test(migrations = "./migrations")]
+async fn clearing_an_uploaded_avatar_deletes_it(pool: PgPool) {
+    let state = common::state(pool.clone());
+    let mut ada = signed_in(&state, "ada@example.com").await;
+    let (status, uploaded) = ada
+        .send_bytes(Method::PUT, "/api/me/avatar", "image/png", PNG.to_vec())
+        .await;
+    assert_eq!(status, StatusCode::OK, "{uploaded}");
+    let url = uploaded["avatar_url"].as_str().unwrap().to_owned();
+    assert!(
+        cleanup_rows(&pool).await.is_empty(),
+        "saved upload has no pending cleanup"
+    );
+
+    let res = ada
+        .send(Method::PATCH, "/api/me", Some(json!({ "avatar_url": "" })))
+        .await;
+    assert_eq!(res.status, StatusCode::OK, "{}", res.body);
+    assert!(res.body["avatar_url"].is_null());
+    let (status, _, _) = ada.send_raw(Method::GET, &url, None).await;
+    assert_eq!(status, StatusCode::NOT_FOUND);
+    assert!(cleanup_rows(&pool).await.is_empty());
+}
+
+/// Two overlapping writes by the same user both read avatar A at request
+/// start. The first commits upload B; the second (here: clearing the
+/// avatar) must delete B, which its UPDATE really replaced, and not A
+/// again, else B stays in the store unreferenced.
+#[sqlx::test(migrations = "./migrations")]
+async fn overlapping_writes_delete_what_they_really_replaced(pool: PgPool) {
+    let state = common::state(pool.clone());
+    let mut ada = signed_in(&state, "ada@example.com").await;
+    let id = uuid::Uuid::parse_str(ada.user_id()).unwrap();
+    let (_, first) = ada
+        .send_bytes(Method::PUT, "/api/me/avatar", "image/png", PNG.to_vec())
+        .await;
+    let a = first["avatar_url"].as_str().unwrap().to_owned();
+
+    // The other request's upload commits between our read and our UPDATE.
+    let b = format!("/api/avatars/{id}/{}", uuid::Uuid::new_v4());
+    state
+        .store
+        .put(&key_of(&b), "image/webp", WEBP.to_vec())
+        .await
+        .unwrap();
+    sqlx::query("UPDATE users SET avatar_url=$2 WHERE id=$1")
+        .bind(id)
+        .bind(&b)
+        .execute(&pool)
+        .await
+        .unwrap();
+
+    let patch = gelabber_api::auth::user::ProfilePatch {
+        name: None,
+        avatar_url: Some(None),
+    };
+    let updated = gelabber_api::avatars::save_profile(&state, id, &patch, None)
+        .await
+        .unwrap()
+        .unwrap();
+    assert_eq!(updated.avatar_url, None);
+    let (status, _, _) = ada.send_raw(Method::GET, &b, None).await;
+    assert_eq!(status, StatusCode::NOT_FOUND, "the replaced upload is gone");
+    let (status, _, _) = ada.send_raw(Method::GET, &a, None).await;
+    assert_eq!(
+        status,
+        StatusCode::OK,
+        "A is not this write's to delete (its own replacer handles it)"
+    );
+    assert!(cleanup_rows(&pool).await.is_empty());
+}
+
+/// A request that dies after the PUT (client abort, crash) leaves its
+/// pending cleanup row; the worker deletes the orphan once it is due. A
+/// late profile update for it is then refused instead of pointing at a
+/// deleted object.
+#[sqlx::test(migrations = "./migrations")]
+async fn abandoned_upload_is_removed_by_the_cleanup_worker(pool: PgPool) {
+    let state = common::state(pool.clone());
+    let ada = signed_in(&state, "ada@example.com").await;
+    let id = uuid::Uuid::parse_str(ada.user_id()).unwrap();
+    let url = format!("/api/avatars/{id}/{}", uuid::Uuid::new_v4());
+    let key = key_of(&url);
+    // What `PUT /api/me/avatar` records before storing the bytes.
+    sqlx::query(
+        "INSERT INTO storage_cleanup (object_key, next_attempt, retain_until) \
+         VALUES ($1, now() + interval '10 minutes', now() + interval '10 minutes')",
+    )
+    .bind(&key)
+    .execute(&pool)
+    .await
+    .unwrap();
+    state
+        .store
+        .put(&key, "image/png", PNG.to_vec())
+        .await
+        .unwrap();
+
+    gelabber_api::attachments::cleanup::delete_pending(&state, 32)
+        .await
+        .unwrap();
+    assert!(state.store.head(&key).await.is_ok(), "not due yet");
+
+    sqlx::query("UPDATE storage_cleanup SET next_attempt=now(), retain_until=now()")
+        .execute(&pool)
+        .await
+        .unwrap();
+    gelabber_api::attachments::cleanup::delete_pending(&state, 32)
+        .await
+        .unwrap();
+    assert!(state.store.head(&key).await.is_err(), "orphan deleted");
+    assert!(cleanup_rows(&pool).await.is_empty());
+
+    let patch = gelabber_api::auth::user::ProfilePatch {
+        name: None,
+        avatar_url: Some(Some(url)),
+    };
+    assert!(
+        gelabber_api::avatars::save_profile(&state, id, &patch, Some(&key))
+            .await
+            .is_err()
+    );
+    let avatar: Option<String> = sqlx::query_scalar("SELECT avatar_url FROM users WHERE id=$1")
+        .bind(id)
+        .fetch_one(&pool)
+        .await
+        .unwrap();
+    assert_eq!(avatar, None);
 }
 
 /// The same flow against the local MinIO test service (CI starts it). The

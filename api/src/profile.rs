@@ -7,7 +7,7 @@ use axum::routing::get;
 use serde::Deserialize;
 
 use crate::auth::session::CurrentUser;
-use crate::auth::user::{self, ProfilePatch, User};
+use crate::auth::user::{ProfilePatch, User};
 use crate::auth::validate;
 use crate::error::{ApiError, FieldErrors};
 use crate::json::Body;
@@ -60,11 +60,8 @@ async fn update_me(
         return Ok(Json(current));
     }
 
-    match user::update_profile(&state.db, current.id, &patch).await? {
-        Some(updated) => {
-            crate::avatars::discard_replaced(&state, &current, &updated).await;
-            Ok(Json(updated))
-        }
+    match crate::avatars::save_profile(&state, current.id, &patch, None).await? {
+        Some(updated) => Ok(Json(updated)),
         // The row disappeared between the extractor and the update (account
         // deleted in another tab); report it as a plain re-login.
         None => Err(ApiError::Unauthenticated),

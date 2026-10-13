@@ -19,7 +19,7 @@ use crate::error::ApiError;
 use crate::state::AppState;
 use crate::storage::StoreError;
 
-/// The web client sends 256×256 WebP or PNG, far below this.
+/// The web client sends 256×256 WebP, JPEG or PNG, far below this.
 pub const MAX_BYTES: usize = 512 * 1024;
 const URL_PREFIX: &str = "/api/avatars/";
 
@@ -67,37 +67,117 @@ async fn upload(
         .ok_or_else(|| ApiError::BadRequest("avatar must be a PNG, JPEG or WebP image".into()))?;
     let file = Uuid::new_v4();
     let key = object_key(current.id, file);
-    state
-        .store
-        .put(&key, content_type, body.to_vec())
-        .await
-        .map_err(store_internal)?;
+    // Durable intent first: if the request dies after the PUT (client
+    // abort, crash, failed update), the cleanup worker removes the object.
+    sqlx::query(
+        "INSERT INTO storage_cleanup (object_key, next_attempt, retain_until) \
+         VALUES ($1, now() + $2 * interval '1 second', now() + $2 * interval '1 second')",
+    )
+    .bind(&key)
+    .bind(PENDING_SECS)
+    .execute(&state.db)
+    .await?;
+    if let Err(err) = state.store.put(&key, content_type, body.to_vec()).await {
+        discard(&state, &key).await;
+        return Err(store_internal(err));
+    }
     let patch = ProfilePatch {
         name: None,
         avatar_url: Some(Some(url_for(current.id, file))),
     };
-    let Some(updated) = user::update_profile(&state.db, current.id, &patch).await? else {
-        discard(&state, &key).await;
-        return Err(ApiError::Unauthenticated);
-    };
-    discard_replaced(&state, &current, &updated).await;
-    Ok(Json(updated))
-}
-
-/// Deletes the previous upload once the profile no longer points at it.
-/// Another user's path set through `PATCH /api/me` is never touched.
-pub async fn discard_replaced(state: &AppState, before: &User, after: &User) {
-    let Some((owner, file)) = before.avatar_url.as_deref().and_then(parse_url) else {
-        return;
-    };
-    if owner == before.id && before.avatar_url != after.avatar_url {
-        discard(state, &object_key(owner, file)).await;
+    match save_profile(&state, current.id, &patch, Some(&key)).await? {
+        Some(updated) => Ok(Json(updated)),
+        None => Err(ApiError::Unauthenticated),
     }
 }
 
+/// How long an upload may take from its PUT to the profile update before
+/// the cleanup worker treats it as abandoned.
+const PENDING_SECS: f64 = 600.0;
+
+/// Updates the profile and deletes the upload that this update really
+/// replaced (as returned by the locked `UPDATE`, not as read at request
+/// start), so overlapping writes never delete the object that stays.
+/// `uploaded` is the new object's key: its pending cleanup is withdrawn in
+/// the same transaction that points the profile at it. Deletion of the
+/// replaced object is recorded in `storage_cleanup` before commit, so a
+/// failed or interrupted delete is retried by the cleanup worker.
+/// Another user's path is never touched.
+pub async fn save_profile(
+    state: &AppState,
+    user_id: Uuid,
+    patch: &ProfilePatch,
+    uploaded: Option<&str>,
+) -> Result<Option<User>, ApiError> {
+    let staged = async {
+        let mut tx = state.db.begin().await?;
+        if let Some(key) = uploaded {
+            // `attempts = 0`: the worker has not started deleting it.
+            let kept =
+                sqlx::query("DELETE FROM storage_cleanup WHERE object_key=$1 AND attempts=0")
+                    .bind(key)
+                    .execute(&mut *tx)
+                    .await?
+                    .rows_affected();
+            if kept == 0 {
+                return Err(ApiError::Internal("avatar upload expired".into()));
+            }
+        }
+        let Some(row) = user::update_profile(&mut *tx, user_id, patch).await? else {
+            return Ok(None);
+        };
+        let replaced = row
+            .previous_avatar_url
+            .filter(|previous| row.user.avatar_url.as_deref() != Some(previous.as_str()))
+            .and_then(|previous| parse_url(&previous))
+            .filter(|(owner, _)| *owner == user_id)
+            .map(|(owner, file)| object_key(owner, file));
+        if let Some(key) = &replaced {
+            sqlx::query(
+                "INSERT INTO storage_cleanup (object_key, retain_until) VALUES ($1, now()) \
+                 ON CONFLICT (object_key) DO UPDATE SET next_attempt=now()",
+            )
+            .bind(key)
+            .execute(&mut *tx)
+            .await?;
+        }
+        Ok(Some((tx, row.user, replaced)))
+    }
+    .await;
+    let (tx, updated, replaced) = match staged {
+        Ok(Some(staged)) => staged,
+        // Rolled back: the profile does not point at the new object.
+        Ok(None) | Err(_) => {
+            if let Some(key) = uploaded {
+                discard(state, key).await;
+            }
+            return staged.map(|_| None);
+        }
+    };
+    // A commit error is ambiguous: keep the new object; if the commit did
+    // not happen its pending cleanup is still there.
+    tx.commit().await?;
+    if let Some(key) = replaced {
+        discard(state, &key).await;
+    }
+    Ok(Some(updated))
+}
+
+/// Best-effort immediate delete; the `storage_cleanup` row recorded
+/// before stays until the object is gone, so the worker retries failures.
 async fn discard(state: &AppState, key: &str) {
-    if let Err(err) = state.store.delete(key).await {
-        tracing::warn!(error = %err, key, "avatar object not deleted");
+    match state.store.delete(key).await {
+        Ok(()) => {
+            if let Err(err) =
+                sqlx::query("DELETE FROM storage_cleanup WHERE object_key=$1 AND claim IS NULL")
+                    .bind(key)
+                    .execute(&state.db)
+                    .await
+            {
+                tracing::warn!(error = %err, key, "avatar cleanup row not removed");
+            }
+        }
+        Err(err) => tracing::warn!(error = %err, key, "avatar object not deleted; worker retries"),
     }
 }
 
