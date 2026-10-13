@@ -452,16 +452,24 @@ describe("read eligibility and recovery", () => {
     void observer.refetch();
     await vi.advanceTimersByTimeAsync(750);
     expect(snapshots()).toBe(3);
+    // An event after that snapshot was asked for, in the same batch, is not
+    // in it: the flush asks again.
+    callbacks.event({ c: "channel" } as never);
+    await vi.advanceTimersByTimeAsync(100);
+    void observer.refetch();
+    await vi.advanceTimersByTimeAsync(100);
+    callbacks.event({ c: "other" } as never);
+    await vi.advanceTimersByTimeAsync(750);
+    expect(snapshots()).toBe(5);
     // Clicking back into the window right after a snapshot.
     window.dispatchEvent(new Event("focus"));
     document.dispatchEvent(new Event("visibilitychange"));
     await vi.advanceTimersByTimeAsync(750);
-    expect(snapshots()).toBe(3);
-    // Later, focus catches up with other devices.
+    expect(snapshots()).toBe(5);
+    // Deferred, not dropped: once that snapshot is 10 s old, exactly one
+    // more catches up with other devices.
     await vi.advanceTimersByTimeAsync(10_000);
-    window.dispatchEvent(new Event("focus"));
-    await vi.advanceTimersByTimeAsync(750);
-    expect(snapshots()).toBeGreaterThanOrEqual(4);
+    expect(snapshots()).toBe(6);
     // A snapshot that failed covers nothing: focus right after asks again.
     await vi.advanceTimersByTimeAsync(10_000);
     response = () => new Response("{}", { status: 500 });

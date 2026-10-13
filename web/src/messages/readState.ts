@@ -41,30 +41,37 @@ export function useReadingChannel(): string | null {
   return view.stamp && stampHolds(view.stamp) ? view.channel : null;
 }
 
-/** When the newest unread snapshot of a scope was asked for. A snapshot
- * asked for after an event already counts it; no second one is needed. */
-const snapshotStarted = new Map<string, number>();
+/** The newest successful unread snapshot of a scope: its request number and
+ * when it was asked for. A snapshot asked for after an event already counts
+ * it; no second one is needed. Request numbers instead of wall-clock times:
+ * they never tie and do not move when the system clock is set back. */
+type Snapshot = { request: number; at: number };
+let snapshotRequests = 0;
+const snapshots = new Map<string, Snapshot>();
 const snapshotSlot = (stamp: ScopeStamp) =>
   `${stamp.userId}:${stamp.generation}`;
+const NO_SNAPSHOT: Snapshot = { request: 0, at: -Infinity };
+const latestSnapshot = (stamp: ScopeStamp) =>
+  snapshots.get(snapshotSlot(stamp)) ?? NO_SNAPSHOT;
 /** Focus and the poll refresh only a snapshot at least this old. */
 const SNAPSHOT_FRESH_MS = 10_000;
 
 export const readStateOptions = (stamp: ScopeStamp) => ({
   queryKey: readKey(stamp),
-  // The request's start time, recorded only once it succeeded: a failed or
-  // aborted snapshot covers nothing.
+  // The request's number and monotonic start time, recorded only once it
+  // succeeded: a failed or aborted snapshot covers nothing.
   queryFn: async ({ signal }: { signal: AbortSignal }) => {
-    const started = Date.now();
+    const asked = { request: ++snapshotRequests, at: performance.now() };
     const snapshot = await listReadState(signal);
     const slot = snapshotSlot(stamp);
-    snapshotStarted.set(
-      slot,
-      Math.max(snapshotStarted.get(slot) ?? 0, started),
-    );
+    const latest = snapshots.get(slot);
+    if (!latest || asked.request > latest.request) snapshots.set(slot, asked);
     return snapshot;
   },
   staleTime: 15_000,
   retry: false,
+  // attachReadRecovery refreshes on focus, unless a snapshot is still fresh.
+  refetchOnWindowFocus: false,
 });
 
 export function useReadState() {
@@ -110,14 +117,14 @@ export function attachReadRecovery(
   };
   const channels = new Set<string>();
   let all = false;
-  // When the first refresh of the pending batch was asked for.
+  // The newest request number when the latest event of the pending batch
+  // arrived. Only a snapshot asked for after that has every event of it.
   let since: number | undefined;
-  const started = () => snapshotStarted.get(snapshotSlot(stamp)) ?? 0;
   const refresh = (channelId?: string) => {
     if (!active || !stampHolds(stamp)) return;
     if (channelId) channels.add(channelId);
     else all = true;
-    since ??= Date.now();
+    since = snapshotRequests;
     clearTimeout(timer);
     const flush = () => {
       clearTimeout(timer);
@@ -127,11 +134,12 @@ export function attachReadRecovery(
       const pending = all ? [undefined] : [...channels];
       all = false;
       channels.clear();
-      const covered = since !== undefined && started() > since;
+      const covered =
+        since !== undefined && latestSnapshot(stamp).request > since;
       since = undefined;
       // WS frames arrive in separate tasks. A trailing debounce coalesces
       // replay bursts without repeatedly aborting SQL or paginated searches.
-      // A snapshot asked for since the first of them already has them.
+      // A snapshot asked for after the latest of them already has them all.
       if (!covered) invalidate(readKey(stamp));
       for (const channel of pending) {
         for (const kind of ["message-search", "message-context"]) {
@@ -150,13 +158,20 @@ export function attachReadRecovery(
   };
   // Focus, visibility and the poll catch what other devices did. A snapshot
   // younger than that already has it: clicking back into the window must
-  // not ask again.
+  // not ask again right away, only once that snapshot has aged.
+  let deferred: ReturnType<typeof setTimeout> | undefined;
   const focus = () => {
-    if (
-      document.visibilityState === "visible" &&
-      Date.now() - started() >= SNAPSHOT_FRESH_MS
-    )
+    if (!active || document.visibilityState !== "visible") return;
+    const age = performance.now() - latestSnapshot(stamp).at;
+    if (age >= SNAPSHOT_FRESH_MS) {
+      clearTimeout(deferred);
+      deferred = undefined;
       refresh();
+    } else
+      deferred ??= setTimeout(() => {
+        deferred = undefined;
+        focus();
+      }, SNAPSHOT_FRESH_MS - age);
   };
   const cleanup = [
     gateway.onEvent((event) => refresh(event.c)),
@@ -173,6 +188,7 @@ export function attachReadRecovery(
     cleanup.forEach((fn) => fn());
     clearTimeout(timer);
     clearTimeout(maxTimer);
+    clearTimeout(deferred);
     waiting.forEach((stop) => stop());
     window.clearInterval(poll);
     window.removeEventListener("focus", focus);
