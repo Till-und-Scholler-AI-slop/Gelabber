@@ -10,6 +10,7 @@ import {
 import {
   fieldMessage,
   isUploadedAvatar,
+  profileFormPatch,
   validateAvatarUrl,
   validateName,
   validatePassword,
@@ -49,15 +50,8 @@ function ProfileForm({ user }: { user: User }) {
   const { errors, clearField, setFields, fromError } = useFormErrors();
 
   const mutation = useMutation({
-    // Only what changed: echoing an avatar this form loaded earlier would
-    // undo an upload made since in another tab (#218 review).
     mutationFn: () =>
-      updateProfile({
-        name: name.trim(),
-        ...(avatarUrl.trim() !== (user.avatar_url ?? "")
-          ? { avatar_url: avatarUrl.trim() }
-          : {}),
-      }),
+      updateProfile(profileFormPatch(name, avatarUrl, user.avatar_url)),
     onSuccess: (updated) => {
       setName(updated.name);
       setAvatarUrl(updated.avatar_url ?? "");
@@ -85,18 +79,46 @@ function ProfileForm({ user }: { user: User }) {
       }
     },
   });
+  // Removing an uploaded image applies at once, like the upload; a link is
+  // only cleared in the form until Speichern.
+  const removal = useMutation({
+    mutationFn: () => updateProfile({ avatar_url: "" }),
+    onSuccess: () => {
+      setAvatarUrl("");
+      clearField("avatar_url");
+    },
+    onError: fromError,
+  });
+  // One profile write at a time: a late or failed answer of one would
+  // otherwise put an older user back into the session store.
+  const busy = upload.isPending || mutation.isPending || removal.isPending;
   const onPick = (event: ChangeEvent<HTMLInputElement>) => {
     const file = event.target.files?.[0];
     event.target.value = "";
-    if (file) {
+    if (file && !busy) {
       setSaved(false);
       upload.mutate(file);
     }
   };
+  const onRemove = () => {
+    if (busy) return;
+    setSaved(false);
+    clearField("avatar_url");
+    if (
+      isUploadedAvatar(user.avatar_url) &&
+      avatarUrl.trim() === user.avatar_url
+    ) {
+      removal.mutate();
+    } else {
+      setAvatarUrl("");
+    }
+  };
   const uploaded = isUploadedAvatar(avatarUrl);
+  const removalUnsaved = avatarUrl.trim() === "" && Boolean(user.avatar_url);
 
   const onSubmit = (event: FormEvent<HTMLFormElement>) => {
     event.preventDefault();
+    if (busy) return;
     setSaved(false);
     const fields: Record<string, string> = {};
     const nameCode = validateName(name);
@@ -134,7 +156,7 @@ function ProfileForm({ user }: { user: User }) {
               <button
                 type="button"
                 onClick={() => picker.current?.click()}
-                disabled={upload.isPending}
+                disabled={busy}
                 className="rounded-lg border border-neutral-300 px-3 py-1.5 text-sm font-medium transition hover:bg-neutral-100 disabled:opacity-60 dark:border-neutral-700 dark:hover:bg-neutral-800"
               >
                 {upload.isPending ? "Lädt hoch…" : "Bild hochladen"}
@@ -142,14 +164,11 @@ function ProfileForm({ user }: { user: User }) {
               {avatarUrl.trim() ? (
                 <button
                   type="button"
-                  onClick={() => {
-                    setAvatarUrl("");
-                    setSaved(false);
-                    clearField("avatar_url");
-                  }}
-                  className="rounded-lg px-3 py-1.5 text-sm font-medium text-neutral-600 transition hover:bg-neutral-100 dark:text-neutral-400 dark:hover:bg-neutral-800"
+                  onClick={onRemove}
+                  disabled={busy}
+                  className="rounded-lg px-3 py-1.5 text-sm font-medium text-neutral-600 transition hover:bg-neutral-100 disabled:opacity-60 dark:text-neutral-400 dark:hover:bg-neutral-800"
                 >
-                  Entfernen
+                  {removal.isPending ? "Entfernt…" : "Entfernen"}
                 </button>
               ) : null}
             </div>
@@ -194,7 +213,9 @@ function ProfileForm({ user }: { user: User }) {
           hint={
             uploaded
               ? "Eine URL hier ersetzt das hochgeladene Bild."
-              : "Lieber hochladen: Links laden das Bild bei jedem Aufruf von der fremden Seite."
+              : removalUnsaved
+                ? "Noch nicht gespeichert: Speichern entfernt das Bild."
+                : "Lieber hochladen: Links laden das Bild bei jedem Aufruf von der fremden Seite."
           }
         />
         <FormError message={errors.form} />
@@ -202,7 +223,7 @@ function ProfileForm({ user }: { user: User }) {
           <SubmitButton
             pending={mutation.isPending}
             pendingLabel="Speichern…"
-            disabled={!dirty || upload.isPending}
+            disabled={!dirty || upload.isPending || removal.isPending}
           >
             Speichern
           </SubmitButton>

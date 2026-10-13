@@ -56,6 +56,23 @@ export function isUploadedAvatar(url: string | null | undefined): boolean {
   return url != null && UPLOADED_AVATAR.test(url.trim());
 }
 
+/**
+ * The PATCH the profile form sends. The avatar goes along only when the
+ * field differs from the saved value: echoing an avatar this form loaded
+ * earlier would undo an upload made since in another tab (#218 review).
+ */
+export function profileFormPatch(
+  name: string,
+  avatarUrl: string,
+  savedAvatarUrl: string | null,
+): { name: string; avatar_url?: string } {
+  const avatar = avatarUrl.trim();
+  return {
+    name: name.trim(),
+    ...(avatar !== (savedAvatarUrl ?? "") ? { avatar_url: avatar } : {}),
+  };
+}
+
 export function validateAvatarUrl(raw: string): FieldCode | null {
   const value = raw.trim();
   if (value.length === 0) return null;
