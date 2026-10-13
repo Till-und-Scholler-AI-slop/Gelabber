@@ -17,6 +17,7 @@
     "test:source-audio-smoke": "node scripts/smoke-source-audio.mjs",
     "test:native-video-smoke": "node scripts/smoke-native-video.mjs",
     "test:phone-smoke": "node scripts/smoke-phone-layout.mjs",
+    "test:chat-scroll-smoke": "node scripts/smoke-chat-scroll.mjs",
     "test:browser-smoke": "node scripts/smoke-two-browsers.mjs",
     "test:e2e-app": "node scripts/e2e/run.mjs",
     "test:e2e-harness": "node scripts/e2e/harness.checks.mjs",
