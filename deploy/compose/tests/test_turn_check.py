@@ -17,7 +17,7 @@ if [ "$1" = compose ]; then
   exit 0
 fi
 case "$3" in
-  *State.Running*) [ "$last" = coturn-id ] && echo "${COTURN_RUNNING:-true}" || echo true; exit 0 ;;
+  *State.Status*) [ "$last" = coturn-id ] && echo "${COTURN_STATUS:-running}" || echo running; exit 0 ;;
 esac
 case "$last" in
   api-id) printf '%s\\n' $API_ENV ;;
@@ -27,15 +27,16 @@ esac
 
 
 class TurnCheck(unittest.TestCase):
-    def run_check(self, api_env, coturn_env, coturn_running='true'):
+    def run_check(self, api_env, coturn_env, coturn_status='running',
+                  shell=('sh',)):
         with tempfile.TemporaryDirectory() as tmp:
             docker = Path(tmp) / 'docker'
             docker.write_text(FAKE_DOCKER)
             docker.chmod(0o755)
             env = dict(os.environ, PATH=f'{tmp}:{os.environ["PATH"]}',
                        API_ENV=api_env, COTURN_ENV=coturn_env,
-                       COTURN_RUNNING=coturn_running)
-            return subprocess.run(['sh', str(ROOT / 'turn-check.sh')], env=env,
+                       COTURN_STATUS=coturn_status)
+            return subprocess.run([*shell, str(ROOT / 'turn-check.sh')], env=env,
                                   capture_output=True, text=True)
 
     def test_matching_values_pass(self):
@@ -50,15 +51,30 @@ class TurnCheck(unittest.TestCase):
         self.assertEqual(result.returncode, 1)
         self.assertIn('TURN_PASSWORD', result.stderr)
         self.assertNotIn('TURN_USERNAME', result.stderr)
-        self.assertIn('--force-recreate coturn api', result.stderr)
+        self.assertIn('--no-deps --force-recreate coturn api', result.stderr)
         self.assertNotIn('neu-geheim', result.stderr + result.stdout)
         self.assertNotIn('gelabberturn', result.stderr + result.stdout)
 
     def test_stopped_bundled_coturn_fails(self):
         same = 'TURN_USERNAME=gelabber TURN_PASSWORD=neu'
-        result = self.run_check(same, same, coturn_running='false')
+        result = self.run_check(same, same, coturn_status='exited')
         self.assertEqual(result.returncode, 1)
         self.assertIn('coturn läuft nicht', result.stderr)
+
+    def test_restarting_or_paused_coturn_fails(self):
+        # State.Running stays true in restart backoff; Status does not.
+        same = 'TURN_USERNAME=gelabber TURN_PASSWORD=neu'
+        for status in ('restarting', 'paused'):
+            with self.subTest(status=status):
+                result = self.run_check(same, same, coturn_status=status)
+                self.assertEqual(result.returncode, 1)
+                self.assertIn(f'coturn läuft nicht ({status})', result.stderr)
+
+    def test_xtrace_does_not_leak_values(self):
+        result = self.run_check('TURN_PASSWORD=api-geheim',
+                                'TURN_PASSWORD=coturn-geheim', shell=['sh', '-x'])
+        self.assertEqual(result.returncode, 1)
+        self.assertNotIn('geheim', result.stderr + result.stdout)
 
     def test_without_bundled_coturn_only_hints(self):
         result = self.run_check('TURN_PASSWORD=x', '')
