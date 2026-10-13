@@ -5,7 +5,11 @@
 // older page is asked for and stops; that page arrives about 400 ms later,
 // well after the last scroll event, with rows much taller than the list's
 // estimate. The row at the top of the list must stay where it was, while
-// the new rows are laid out and measured above it.
+// the new rows are laid out and measured above it. The same must hold when
+// an edit arrives while that page is on its way, and for a reader who sits
+// scrolled up while rows below are deleted and rows above grow (#215).
+// Afterwards the reader must still be able to scroll away. A picture's
+// lightbox closes when its message is deleted.
 // Run in web/: node scripts/smoke-chat-scroll.mjs
 // GELABBER_CHAT_BROWSER_EXECUTABLE names a Chromium other than Playwright's.
 /* global process, console, window, document, URL, requestAnimationFrame, setTimeout */
@@ -78,11 +82,6 @@ const all = Array.from({ length: 100 }, (_, n) => message(n));
 const newest = all.slice(50);
 const older = all.slice(0, 50);
 
-/** Settles once the older page was asked for; `release` answers it. */
-let asked;
-let olderAsked;
-let releaseOlder;
-
 function answer(path, method) {
   if (path === "/api/auth/session")
     return {
@@ -146,27 +145,40 @@ const rowTop = (page, name) =>
 const out = await mkdtemp(join(tmpdir(), "gelabber-chat-scroll-"));
 let browser;
 const problems = [];
+let files;
 
-try {
-  await build({
-    root: web,
-    logLevel: "error",
-    build: { outDir: out, emptyOutDir: true },
+/** The rows of `name` that are visible now: the first whose bottom is in. */
+const visibleNames = (page) =>
+  page.evaluate(() => {
+    const log = document.querySelector('[role="log"]');
+    const box = log.getBoundingClientRect();
+    return [...log.querySelectorAll("[data-index]")]
+      .map((row) => ({ row, rect: row.getBoundingClientRect() }))
+      .filter(
+        ({ rect }) => rect.bottom > box.top + 1 && rect.top < box.bottom - 1,
+      )
+      .sort((a, b) => a.rect.top - b.rect.top)
+      .map(
+        ({ row }) =>
+          (row.querySelector(".lr-message-text")?.textContent ?? "").split(
+            ".",
+          )[0],
+      );
   });
-  const files = new Set(
-    (await readdir(out, { recursive: true })).map((name) => `/${name}`),
-  );
-  browser = await chromium.launch({
-    executablePath: process.env.GELABBER_CHAT_BROWSER_EXECUTABLE || undefined,
-    headless: true,
-    env: { ...process.env, DBUS_SESSION_BUS_ADDRESS: "disabled:" },
-  });
+
+/**
+ * A fresh page on the channel. The older page waits until `releaseOlder()`;
+ * `send()` pushes a chat event for the channel through the gateway.
+ */
+async function open() {
   const context = await browser.newContext({
     viewport: { width: 1100, height: 760 },
     locale: "de-DE",
     serviceWorkers: "block",
   });
-  asked = new Promise((resolve) => {
+  let olderAsked;
+  let releaseOlder;
+  const asked = new Promise((resolve) => {
     olderAsked = resolve;
   });
   const held = new Promise((resolve) => {
@@ -198,13 +210,34 @@ try {
       path: join(out, files.has(url.pathname) ? url.pathname : "index.html"),
     });
   });
+  let gateway;
+  let subscribed;
+  const channelSubscribed = new Promise((resolve) => {
+    subscribed = resolve;
+  });
   await context.routeWebSocket("**/ws", (socket) => {
+    gateway = socket;
     socket.onMessage((raw) => {
       const frame = JSON.parse(raw);
-      if (frame.op === "s")
+      if (frame.op === "s") {
         socket.send(JSON.stringify({ op: "ok", s: frame.s, c: frame.c, n: 0 }));
+        if (frame.c === TEXT) subscribed();
+      }
     });
   });
+  let sequence = 0;
+  let revision = 1;
+  const send = (event) =>
+    gateway.send(
+      JSON.stringify({
+        op: "e",
+        s: SERVER,
+        c: TEXT,
+        n: ++sequence,
+        r: ++revision,
+        ...event,
+      }),
+    );
   await context.addInitScript(() => {
     window.smokeErrors = [];
     window.addEventListener("error", (event) =>
@@ -216,26 +249,98 @@ try {
   page.on("pageerror", (error) => problems.push(error.message));
   await page.goto(`${ORIGIN}/s/${SERVER}/c/${TEXT}`);
   await page.getByText("Nachricht 99.").waitFor();
+  await channelSubscribed;
   await frames(page, 8);
-
-  // Scroll up the way a reader does until the older page is asked for.
   const box = await page.locator('[role="log"]').boundingBox();
   await page.mouse.move(box.x + box.width / 2, box.y + box.height / 2);
+  const close = async () => {
+    problems.push(...(await page.evaluate(() => window.smokeErrors)));
+    await context.close();
+  };
+  return { page, asked, releaseOlder, send, close };
+}
+
+/** An edit of message `n`: the same text (same length) or `content`. */
+const edited = (n, content) => ({
+  t: "e",
+  d: {
+    ...all[n],
+    content: content ?? all[n].content,
+    edited_at: "2026-01-01T13:00:00Z",
+  },
+});
+
+/** Where `name` is over the next frames, relative to `top`. */
+async function drift(page, name, top) {
+  const seen = [];
+  for (let pass = 0; pass < 12; pass++) {
+    await frames(page, 4);
+    seen.push(await rowTop(page, name));
+  }
+  return seen.map((at) => (at === null ? "off screen" : Math.round(at - top)));
+}
+
+const still = (moves) =>
+  moves.every((delta) => typeof delta === "number" && Math.abs(delta) <= 2);
+
+/**
+ * The hold must end with the reader's scroll: a wheel up moves the row
+ * down, and a later edit does not pull it back.
+ */
+async function scrollsAway({ page, send }, name, label) {
+  const from = await rowTop(page, name);
+  for (let step = 0; step < 3; step++) {
+    await page.mouse.wheel(0, -120);
+    await new Promise((resolve) => setTimeout(resolve, 40));
+  }
+  await frames(page, 8);
+  const moved = await rowTop(page, name);
+  send(edited(97));
+  await frames(page, 12);
+  const after = await rowTop(page, name);
+  assert.ok(
+    moved !== null && moved - from > 100,
+    `${label}: the reader could not scroll away ("${name}" ${Math.round(from)} -> ${moved === null ? "off screen" : Math.round(moved)} px)`,
+  );
+  assert.ok(
+    after !== null && Math.abs(after - moved) <= 2,
+    `${label}: an edit pulled the list back after the reader scrolled ("${name}" ${Math.round(moved)} -> ${after === null ? "off screen" : Math.round(after)} px)`,
+  );
+  console.log(
+    `PASS: ${label}: the reader scrolls away afterwards (+${Math.round(moved - from)} px) and an edit leaves it there`,
+  );
+}
+
+/**
+ * Scroll up in `wheel` px steps until the older page is asked for, stop,
+ * then let it arrive `hold` ms later; `whileWaiting` runs before it does.
+ */
+async function olderPage(
+  label,
+  { wheel = 240, hold = HOLD_MS } = {},
+  whileWaiting,
+) {
+  const opened = await open();
+  const { page, asked, releaseOlder } = opened;
   let askedAt = null;
   asked.then((at) => {
     askedAt = at;
   });
   for (let step = 0; step < 200 && askedAt === null; step++) {
-    await page.mouse.wheel(0, -240);
+    await page.mouse.wheel(0, -wheel);
     await new Promise((resolve) => setTimeout(resolve, 40));
   }
-  assert.ok(askedAt !== null, "scrolling up never asked for older history");
+  assert.ok(
+    askedAt !== null,
+    `${label}: scrolling up never asked for older history`,
+  );
 
   // Stopped: let the last scroll settle, then note the top row.
   await frames(page, 6);
   const before = await firstVisible(page);
-  assert.ok(before.top !== null, "no row at the top of the list");
-  const wait = askedAt + HOLD_MS - Date.now();
+  assert.ok(before.top !== null, `${label}: no row at the top of the list`);
+  await whileWaiting?.(opened);
+  const wait = askedAt + hold - Date.now();
   if (wait > 0) await new Promise((resolve) => setTimeout(resolve, wait));
   releaseOlder();
 
@@ -247,24 +352,133 @@ try {
     }),
   );
   // Layout, measurement of the new rows above, and their corrections.
-  const seen = [];
-  for (let pass = 0; pass < 12; pass++) {
-    await frames(page, 4);
-    seen.push(await rowTop(page, before.name));
-  }
-  const drift = seen.map((top) =>
-    top === null ? "off screen" : Math.round(top - before.top),
-  );
+  const moves = await drift(page, before.name, before.top);
   assert.ok(
-    drift.every((delta) => typeof delta === "number" && Math.abs(delta) <= 2),
-    `"${before.name}" was ${Math.round(before.top)}px from the list's top and moved by ${drift.join(", ")} px while the older page was laid out`,
+    still(moves),
+    `${label}: "${before.name}" was ${Math.round(before.top)}px from the list's top and moved by ${moves.join(", ")} px while the older page was laid out`,
   );
   console.log(
-    `PASS: "${before.name}" stays at ${Math.round(before.top)}px while the older page (held ${HOLD_MS} ms) is laid out and measured`,
+    `PASS: ${label}: "${before.name}" stays at ${Math.round(before.top)}px while the older page (held ${hold} ms) is laid out and measured`,
+  );
+  await scrollsAway(opened, before.name, label);
+  await opened.close();
+}
+
+try {
+  await build({
+    root: web,
+    logLevel: "error",
+    build: { outDir: out, emptyOutDir: true },
+  });
+  files = new Set(
+    (await readdir(out, { recursive: true })).map((name) => `/${name}`),
+  );
+  browser = await chromium.launch({
+    executablePath: process.env.GELABBER_CHAT_BROWSER_EXECUTABLE || undefined,
+    headless: true,
+    env: { ...process.env, DBUS_SESSION_BUS_ADDRESS: "disabled:" },
+  });
+
+  await olderPage("older page");
+  // An edit commit while the page is on its way must not move the anchor
+  // to a row rendered above the viewport. Longer steps leave the reader
+  // mid-list when the page is asked for: before #215's fix, 38 px.
+  await olderPage(
+    "older page after an edit",
+    { wheel: 500, hold: 600 },
+    async ({ page, send }) => {
+      send(edited(98));
+      await frames(page, 6);
+    },
   );
 
-  problems.push(...(await page.evaluate(() => window.smokeErrors)));
-  await context.close();
+  {
+    // A reader scrolled up a bit, not far enough to page, and idle.
+    const label = "idle reader";
+    const opened = await open();
+    const { page, send } = opened;
+    for (let step = 0; step < 5; step++) {
+      await page.mouse.wheel(0, -240);
+      await new Promise((resolve) => setTimeout(resolve, 40));
+    }
+    await frames(page, 8);
+    const before = await firstVisible(page);
+    const top = Number(before.name.split(" ")[1]);
+    const shown = await visibleNames(page);
+    const below = Number(shown.at(-1).split(" ")[1]) + 2;
+    assert.ok(
+      top - 3 >= 50 && below <= 99,
+      `${label}: unexpected rows in view (${shown.join(", ")})`,
+    );
+    // Same-length edit, a delete below the viewport, then a row three
+    // above the viewport grows.
+    send(edited(99));
+    await frames(page, 6);
+    send({ t: "d", i: all[below].id });
+    await frames(page, 6);
+    send(edited(top - 3, `${all[top - 3].content}${WORDS.repeat(12)}`));
+    const moves = await drift(page, before.name, before.top);
+    assert.ok(
+      still(moves),
+      `${label}: "${before.name}" was ${Math.round(before.top)}px from the list's top and moved by ${moves.join(", ")} px after a delete below and an edit above`,
+    );
+    console.log(
+      `PASS: ${label}: "${before.name}" stays at ${Math.round(before.top)}px through a same-length edit, a delete below and a row above growing`,
+    );
+    await scrollsAway(opened, before.name, label);
+    await opened.close();
+  }
+
+  {
+    // The picture of a deleted message closes with it, and focus stays in
+    // the list although the opening row is gone.
+    const label = "lightbox";
+    const opened = await open();
+    const { page, send } = opened;
+    const picture = {
+      ...message(100),
+      content: "Nachricht 100. Ein Bild.",
+      attachments: [
+        {
+          id: id(5000),
+          filename: "bild.png",
+          content_type: "image/png",
+          size: 1,
+        },
+      ],
+    };
+    send({ t: "c", d: picture });
+    const link = page.getByRole("link", { name: "bild.png vergrößern" });
+    await link.click();
+    const dialog = page.getByRole("dialog", { name: "bild.png" });
+    await dialog.waitFor();
+    await page.keyboard.press("Escape");
+    await dialog.waitFor({ state: "detached" });
+    assert.ok(
+      await link.evaluate((element) => element === document.activeElement),
+      `${label}: focus did not return to the picture after Esc`,
+    );
+    await link.click();
+    await dialog.waitFor();
+    send({ t: "d", i: picture.id });
+    await dialog.waitFor({ state: "detached" });
+    const focus = await page.evaluate(() => {
+      const active = document.activeElement;
+      return {
+        inList: !!active?.closest('[role="log"]'),
+        tag: active?.tagName,
+      };
+    });
+    assert.ok(
+      focus.inList,
+      `${label}: focus went to ${focus.tag}, not the list, after the message was deleted`,
+    );
+    console.log(
+      `PASS: ${label}: Esc returns focus to the picture; deleting its message closes it and focus stays in the list`,
+    );
+    await opened.close();
+  }
+
   // Scrolling up through rows not measured yet makes Chromium report a
   // ResizeObserver loop; main without #201 shows the same. Said, not failed.
   const loop = "ResizeObserver loop completed with undelivered notifications.";

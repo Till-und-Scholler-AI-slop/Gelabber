@@ -13,15 +13,23 @@ export type LightboxImage = {
 /**
  * A chat image at full size, inside the app: a new tab does not exist in the
  * desktop app or the installed web app. Esc, "Schließen" or a click next to
- * the image closes it; focus starts on "Schließen" and returns to the opener.
+ * the image closes it; focus starts on "Schließen" and returns to the opener,
+ * or, when that is gone (its row scrolled away or was deleted), to
+ * `fallbackFocus`.
  */
 export function ImageLightbox({
   image,
   onClose,
+  fallbackFocus,
 }: {
   image: LightboxImage;
   onClose: () => void;
+  fallbackFocus?: () => void;
 }) {
+  const fallback = useRef(fallbackFocus);
+  useEffect(() => {
+    fallback.current = fallbackFocus;
+  });
   const ref = useRef<HTMLDialogElement>(null);
   const close = useRef<HTMLButtonElement>(null);
   useEffect(() => {
@@ -37,6 +45,7 @@ export function ImageLightbox({
     return () => {
       if (dialog.open) dialog.close();
       if (opener?.isConnected) opener.focus({ preventScroll: true });
+      else fallback.current?.();
     };
   }, []);
   return (

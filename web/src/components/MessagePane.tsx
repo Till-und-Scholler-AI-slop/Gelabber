@@ -133,11 +133,25 @@ export function MessagePane({
   const [lightbox, setLightbox] = useState<{
     scope: string;
     image: LightboxImage;
+    /** Its message was in the list; gone from it again means deleted. */
+    listed?: boolean;
   } | null>(null);
   const openImage = useCallback(
     (image: LightboxImage) => setLightbox({ scope: searchScope, image }),
     [searchScope],
   );
+  const panesRef = useRef<HTMLDivElement>(null);
+  // The opening row is gone: the topmost row in view, so a keyboard user
+  // stays in the list instead of on <body>.
+  const focusList = useCallback(() => {
+    const log = panesRef.current?.querySelector<HTMLElement>('[role="log"]');
+    if (!log) return;
+    const top = log.getBoundingClientRect().top;
+    const row = [...log.querySelectorAll<HTMLElement>(".lr-message-row")].find(
+      (candidate) => candidate.getBoundingClientRect().bottom > top,
+    );
+    row?.focus({ preventScroll: true });
+  }, []);
   const searchButton = useRef<HTMLButtonElement>(null);
   const restoreSearchFocus = useRef(false);
   const closeSearch = useCallback(() => {
@@ -194,6 +208,18 @@ export function MessagePane({
     () => visibleMessages(query.data?.pages ?? [], pending),
     [query.data?.pages, pending],
   );
+
+  // Close the picture with its message when that is deleted. A result of
+  // the search may not be in the loaded list: only "was there, now gone".
+  if (lightbox) {
+    const listed = items.some((message) =>
+      (message.attachments ?? []).some(
+        (attachment) => attachment.id === lightbox.image.id,
+      ),
+    );
+    if (listed && !lightbox.listed) setLightbox({ ...lightbox, listed });
+    else if (!listed && lightbox.listed) setLightbox(null);
+  }
 
   const latest = readBoundary(items);
   const read = useMarkRead(
@@ -252,7 +278,7 @@ export function MessagePane({
         </p>
       ) : null}
       <OpenImage.Provider value={openImage}>
-        <div className="relative flex min-h-0 flex-1 flex-col">
+        <div ref={panesRef} className="relative flex min-h-0 flex-1 flex-col">
           <div
             className={`flex min-h-0 flex-1 flex-col ${searching ? "invisible" : ""}`}
             inert={searching}
@@ -328,6 +354,7 @@ export function MessagePane({
           key={lightbox.image.id}
           image={lightbox.image}
           onClose={() => setLightbox(null)}
+          fallbackFocus={focusList}
         />
       ) : null}
       {footer}
@@ -404,6 +431,8 @@ function MessageList({
   const hold = useRef<{ id: string; offset: number } | null>(null);
   // Where the held anchor put the list; a scroll elsewhere is the reader's.
   const heldTop = useRef<number | null>(null);
+  // Whether the browser put the list exactly at the held position.
+  const heldLanded = useRef(false);
   const edit = useEditMessage(channelId);
   const remove = useDeleteMessage(channelId);
   const readIndex = newAfter
@@ -513,11 +542,20 @@ function MessageList({
     hold.current = null;
     heldTop.current = null;
   };
+  // Any difference from where the hold put the list, unless the browser
+  // clamped that position: the rows above were not laid out yet, and the
+  // browser moves a clamped scrollTop on its own as they are.
+  const movedByReader = (top: number) =>
+    heldTop.current !== null && heldLanded.current && top !== heldTop.current;
   useLayoutEffect(() => {
     if (latestRequest !== lastRequest.current) {
       stickToBottom.current = true;
       lastRequest.current = latestRequest;
     }
+    // The reader moved the list since the hold was applied, possibly before
+    // the scroll event fired: even one pixel is theirs.
+    if (scrollRef.current && movedByReader(scrollRef.current.scrollTop))
+      release();
     const prepended = olderAnchor.current && items.length > lastCount.current;
     const firstChanged =
       lastFirst.current !== undefined && items[0]?.id !== lastFirst.current;
@@ -550,20 +588,15 @@ function MessageList({
       } else {
         scrollRef.current.scrollTop = top;
         heldTop.current = scrollRef.current.scrollTop;
+        heldLanded.current = Math.abs(heldTop.current - top) < 1;
       }
     }
 
     updateLatest();
     lastCount.current = items.length;
     lastFirst.current = items[0]?.id;
-    const first = virtualizer.getVirtualItems()[0];
-    const firstMessage = first ? items[first.index] : undefined;
-    if (first && firstMessage && scrollRef.current) {
-      pin.current = {
-        id: firstMessage.id,
-        offset: first.start - scrollRef.current.scrollTop,
-      };
-    }
+    // `updateLatest()` pinned the row at scrollTop. Not the first rendered
+    // row: that can be an overscan row far above the viewport.
   }, [items, virtualizer, startOf, updateLatest, totalSize, latestRequest]);
 
   const firstVisible = virtualizer.getVirtualItems()[0]?.index ?? 0;
@@ -676,11 +709,7 @@ function MessageList({
         const element = scrollRef.current;
         if (!element) return;
         // Momentum or a scrollbar drag moved it away from the held anchor.
-        if (
-          heldTop.current !== null &&
-          Math.abs(element.scrollTop - heldTop.current) > 1
-        )
-          release();
+        if (movedByReader(element.scrollTop)) release();
         // Observe intent before virtualizer measurement adjusts the geometry.
         stickToBottom.current = scrollEndIntent(
           stickToBottom.current,
