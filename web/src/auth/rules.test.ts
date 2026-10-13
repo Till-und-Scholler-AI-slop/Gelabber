@@ -2,10 +2,12 @@ import { describe, expect, it } from "vitest";
 
 import {
   PASSWORD_MAX,
+  avatarFieldAfterRemoval,
   errorMessage,
   fieldMessage,
   fieldMessages,
   profileFormPatch,
+  removesAvatarAtOnce,
   validateAvatarUrl,
   validateEmail,
   validateName,
@@ -116,5 +118,30 @@ describe("profileFormPatch", () => {
       name: "Ada",
       avatar_url: "",
     });
+  });
+});
+
+describe("avatar removal", () => {
+  const uploaded =
+    "/api/avatars/0b8d6a8e-3f1c-4f7e-9a51-2a1c3e4d5f60/7c9e6679-7425-40de-944b-e07fc1f90ae7";
+  const link = "https://cdn.example/a.png";
+
+  it("removes a saved upload at once", () => {
+    expect(removesAvatarAtOnce(uploaded, uploaded)).toBe(true);
+    expect(removesAvatarAtOnce(uploaded, ` ${uploaded} `)).toBe(true);
+  });
+
+  it("only clears the field for a link or an edited field", () => {
+    expect(removesAvatarAtOnce(link, link)).toBe(false);
+    expect(removesAvatarAtOnce(null, "")).toBe(false);
+    // The field already holds something else: that edit is cleared, unsaved.
+    expect(removesAvatarAtOnce(uploaded, link)).toBe(false);
+  });
+
+  it("keeps a link typed while the removal ran", () => {
+    expect(avatarFieldAfterRemoval(uploaded)).toBe("");
+    expect(avatarFieldAfterRemoval(link)).toBe(link);
+    expect(avatarFieldAfterRemoval("https://cdn.exa")).toBe("https://cdn.exa");
+    expect(avatarFieldAfterRemoval("")).toBe("");
   });
 });

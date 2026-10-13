@@ -3,6 +3,7 @@ import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { ApiError, getCsrfToken } from "../api/client.ts";
 import {
   changePassword,
+  claimProfileWrite,
   ensureSession,
   login,
   logout,
@@ -11,6 +12,7 @@ import {
   resetSessionForTests,
   updateProfile,
   uploadAvatar,
+  useProfileWrites,
   useSession,
   useSessionProblems,
 } from "./session.ts";
@@ -406,5 +408,33 @@ describe("session store", () => {
     expect(error).toBeInstanceOf(ApiError);
     expect((error as ApiError).fields).toEqual({ avatar_url: "invalid" });
     expect(useSession.getState().user).toEqual(ada);
+  });
+});
+
+describe("profile write slot", () => {
+  it("allows one profile write at a time, across form instances", () => {
+    // Form A starts a write, unmounts; form B mounts and tries another.
+    const releaseA = claimProfileWrite();
+    expect(releaseA).not.toBeNull();
+    expect(useProfileWrites.getState().pending).toBe(1);
+    expect(claimProfileWrite()).toBeNull();
+
+    releaseA?.();
+    expect(useProfileWrites.getState().pending).toBe(0);
+    const releaseB = claimProfileWrite();
+    expect(releaseB).not.toBeNull();
+    releaseB?.();
+  });
+
+  it("releases only once", () => {
+    const release = claimProfileWrite();
+    release?.();
+    release?.();
+    expect(useProfileWrites.getState().pending).toBe(0);
+    const next = claimProfileWrite();
+    expect(next).not.toBeNull();
+    expect(claimProfileWrite()).toBeNull();
+    next?.();
+    expect(useProfileWrites.getState().pending).toBe(0);
   });
 });

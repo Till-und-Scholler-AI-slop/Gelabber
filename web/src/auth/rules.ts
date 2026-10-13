@@ -73,6 +73,27 @@ export function profileFormPatch(
   };
 }
 
+/**
+ * Whether "Entfernen" removes the avatar at once (an uploaded image that is
+ * still the saved one) instead of only clearing the field until Speichern.
+ */
+export function removesAvatarAtOnce(
+  savedAvatarUrl: string | null,
+  avatarUrl: string,
+): boolean {
+  return (
+    isUploadedAvatar(savedAvatarUrl) && avatarUrl.trim() === savedAvatarUrl
+  );
+}
+
+/**
+ * The avatar field once an immediate removal succeeded: the removed upload
+ * goes, a link typed while the removal ran stays.
+ */
+export function avatarFieldAfterRemoval(current: string): string {
+  return isUploadedAvatar(current) ? "" : current;
+}
+
 export function validateAvatarUrl(raw: string): FieldCode | null {
   const value = raw.trim();
   if (value.length === 0) return null;

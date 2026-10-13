@@ -121,7 +121,9 @@ pub struct ProfileUpdate {
 
 /// Applies `patch` and returns the avatar value this very statement
 /// overwrote, read under the row lock, not one read earlier in the request:
-/// two overlapping writes each see their own predecessor.
+/// two overlapping writes each see their own predecessor. `FOR NO KEY
+/// UPDATE` is the lock the `UPDATE` takes anyway; it does not wait for the
+/// key-share locks that foreign-key checks (e.g. message inserts) hold.
 pub async fn update_profile(
     db: impl sqlx::PgExecutor<'_>,
     id: Uuid,
@@ -132,10 +134,10 @@ pub async fn update_profile(
          SET name = COALESCE($2, u.name), \
              avatar_url = CASE WHEN $3 THEN $4 ELSE u.avatar_url END, \
              updated_at = now() \
-         FROM (SELECT id, avatar_url FROM users WHERE id = $1 FOR UPDATE) old \
-         WHERE u.id = old.id \
+         FROM (SELECT id, avatar_url FROM users WHERE id = $1 FOR NO KEY UPDATE) prev \
+         WHERE u.id = prev.id \
          RETURNING u.id, u.email, u.name, u.avatar_url, u.created_at, \
-             old.avatar_url AS previous_avatar_url",
+             prev.avatar_url AS previous_avatar_url",
     )
     .bind(id)
     .bind(patch.name.as_deref())

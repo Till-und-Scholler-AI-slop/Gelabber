@@ -77,10 +77,14 @@ async fn upload(
     .bind(PENDING_SECS)
     .execute(&state.db)
     .await?;
-    if let Err(err) = state.store.put(&key, content_type, body.to_vec()).await {
-        discard(&state, &key).await;
-        return Err(store_internal(err));
-    }
+    // A failed PUT may still land (a client-side timeout does not stop
+    // MinIO), so its pending cleanup row stays: the worker deletes the key
+    // once it is due. No immediate delete, which would withdraw the row.
+    state
+        .store
+        .put(&key, content_type, body.to_vec())
+        .await
+        .map_err(store_internal)?;
     let patch = ProfilePatch {
         name: None,
         avatar_url: Some(Some(url_for(current.id, file))),
@@ -112,7 +116,10 @@ pub async fn save_profile(
     let staged = async {
         let mut tx = state.db.begin().await?;
         if let Some(key) = uploaded {
-            // `attempts = 0`: the worker has not started deleting it.
+            // `attempts = 0`: the worker has not started deleting it. The
+            // claim statement in `attachments::cleanup::delete_pending`
+            // increments `attempts` and nothing ever resets it, so a row
+            // the worker has claimed once can never be withdrawn here.
             let kept =
                 sqlx::query("DELETE FROM storage_cleanup WHERE object_key=$1 AND attempts=0")
                     .bind(key)

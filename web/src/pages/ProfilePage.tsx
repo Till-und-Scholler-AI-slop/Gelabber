@@ -8,18 +8,22 @@ import {
   prepareAvatar,
 } from "../auth/avatarImage.ts";
 import {
+  avatarFieldAfterRemoval,
   fieldMessage,
   isUploadedAvatar,
   profileFormPatch,
+  removesAvatarAtOnce,
   validateAvatarUrl,
   validateName,
   validatePassword,
 } from "../auth/rules.ts";
 import {
   changePassword,
+  claimProfileWrite,
   logoutEverywhere,
   updateProfile,
   uploadAvatar,
+  useProfileWrites,
   useSession,
 } from "../auth/session.ts";
 import type { User } from "../auth/types.ts";
@@ -43,15 +47,26 @@ export function ProfilePage() {
   );
 }
 
+type Upload = { file: File; release: () => void };
+
 function ProfileForm({ user }: { user: User }) {
   const [name, setName] = useState(user.name);
   const [avatarUrl, setAvatarUrl] = useState(user.avatar_url ?? "");
   const [saved, setSaved] = useState(false);
   const { errors, clearField, setFields, fromError } = useFormErrors();
 
+  // Every write below holds the tab-wide profile write slot (claimed by the
+  // handler, released when the write settles, even after an unmount).
   const mutation = useMutation({
-    mutationFn: () =>
-      updateProfile(profileFormPatch(name, avatarUrl, user.avatar_url)),
+    mutationFn: async (release: () => void) => {
+      try {
+        return await updateProfile(
+          profileFormPatch(name, avatarUrl, user.avatar_url),
+        );
+      } finally {
+        release();
+      }
+    },
     onSuccess: (updated) => {
       setName(updated.name);
       setAvatarUrl(updated.avatar_url ?? "");
@@ -66,7 +81,13 @@ function ProfileForm({ user }: { user: User }) {
   // Uploads apply at once; the URL field and Speichern are for links.
   const picker = useRef<HTMLInputElement>(null);
   const upload = useMutation({
-    mutationFn: async (file: File) => uploadAvatar(await prepareAvatar(file)),
+    mutationFn: async ({ file, release }: Upload) => {
+      try {
+        return await uploadAvatar(await prepareAvatar(file));
+      } finally {
+        release();
+      }
+    },
     onSuccess: (updated) => {
       setAvatarUrl(updated.avatar_url ?? "");
       clearField("avatar_url");
@@ -82,33 +103,39 @@ function ProfileForm({ user }: { user: User }) {
   // Removing an uploaded image applies at once, like the upload; a link is
   // only cleared in the form until Speichern.
   const removal = useMutation({
-    mutationFn: () => updateProfile({ avatar_url: "" }),
+    mutationFn: async (release: () => void) => {
+      try {
+        return await updateProfile({ avatar_url: "" });
+      } finally {
+        release();
+      }
+    },
     onSuccess: () => {
-      setAvatarUrl("");
+      setAvatarUrl(avatarFieldAfterRemoval);
       clearField("avatar_url");
     },
     onError: fromError,
   });
-  // One profile write at a time: a late or failed answer of one would
-  // otherwise put an older user back into the session store.
-  const busy = upload.isPending || mutation.isPending || removal.isPending;
+  // One profile write at a time, across remounts of this form: a late or
+  // failed answer of one would otherwise put an older user back into the
+  // session store.
+  const busy = useProfileWrites((state) => state.pending > 0);
   const onPick = (event: ChangeEvent<HTMLInputElement>) => {
     const file = event.target.files?.[0];
     event.target.value = "";
-    if (file && !busy) {
-      setSaved(false);
-      upload.mutate(file);
-    }
+    if (!file) return;
+    const release = claimProfileWrite();
+    if (!release) return;
+    setSaved(false);
+    upload.mutate({ file, release });
   };
   const onRemove = () => {
     if (busy) return;
     setSaved(false);
     clearField("avatar_url");
-    if (
-      isUploadedAvatar(user.avatar_url) &&
-      avatarUrl.trim() === user.avatar_url
-    ) {
-      removal.mutate();
+    if (removesAvatarAtOnce(user.avatar_url, avatarUrl)) {
+      const release = claimProfileWrite();
+      if (release) removal.mutate(release);
     } else {
       setAvatarUrl("");
     }
@@ -129,7 +156,8 @@ function ProfileForm({ user }: { user: User }) {
       setFields(fields);
       return;
     }
-    mutation.mutate();
+    const release = claimProfileWrite();
+    if (release) mutation.mutate(release);
   };
 
   // Preview trails typing so the browser does not fetch every half-typed URL.
@@ -223,7 +251,7 @@ function ProfileForm({ user }: { user: User }) {
           <SubmitButton
             pending={mutation.isPending}
             pendingLabel="Speichern…"
-            disabled={!dirty || upload.isPending || removal.isPending}
+            disabled={!dirty || (busy && !mutation.isPending)}
           >
             Speichern
           </SubmitButton>

@@ -262,6 +262,34 @@ export async function changePassword(
  * previous account cannot overwrite whoever is signed in now. A response
  * that actually changes the user id still goes through `applySession`.
  */
+/**
+ * Profile writes in flight, for every profile form of this tab. The count
+ * lives here, not in the form: a write keeps running after its form
+ * unmounts, and a form mounted again meanwhile must not start a second one,
+ * whose late or failed answer would put an older user back into the store.
+ */
+export const useProfileWrites = create<{ pending: number }>(() => ({
+  pending: 0,
+}));
+
+/**
+ * Claims the single profile write slot synchronously, before the write
+ * starts. Returns its (idempotent) release, or `null` while another
+ * profile write is in flight.
+ */
+export function claimProfileWrite(): (() => void) | null {
+  if (useProfileWrites.getState().pending > 0) return null;
+  useProfileWrites.setState((state) => ({ pending: state.pending + 1 }));
+  let released = false;
+  return () => {
+    if (released) return;
+    released = true;
+    useProfileWrites.setState((state) => ({
+      pending: Math.max(0, state.pending - 1),
+    }));
+  };
+}
+
 export async function updateProfile(patch: ProfilePatch): Promise<User> {
   const previous = useSession.getState().user;
   const stamp = takeStamp();
