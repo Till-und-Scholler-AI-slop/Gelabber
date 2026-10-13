@@ -2668,6 +2668,9 @@ export function toggleGoLive(): void {
     state.channelId,
   );
   if (holder && holder !== self) {
+    // The controls say whose Live it is; this is the backstop for a roster
+    // that changed under the click.
+    deps?.onError?.(new Error("In diesem Kanal ist schon jemand live."));
     return;
   }
   useVoice.setState({ live: true });

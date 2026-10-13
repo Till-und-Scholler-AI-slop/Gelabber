@@ -95,7 +95,14 @@ function Unavailable({
   );
 }
 
-export function VoiceControls({ canGoLive = false }: { canGoLive?: boolean }) {
+export function VoiceControls({
+  canGoLive = false,
+  liveTakenBy = null,
+}: {
+  canGoLive?: boolean;
+  /** Who is live in this channel already, when it is someone else. */
+  liveTakenBy?: string | null;
+}) {
   const camera = useVoice((s) => s.camera);
   const sharing = useVoice((s) => s.sharing);
   const live = useVoice((s) => s.live);
@@ -168,7 +175,15 @@ export function VoiceControls({ canGoLive = false }: { canGoLive?: boolean }) {
           <MusicIcon size={17} />
         </button>
       ) : null}
-      {live || (canGoLive && capable.screen) ? (
+      {!live && canGoLive && capable.screen && liveTakenBy ? (
+        <Unavailable
+          label="Go Live"
+          reason={`${liveTakenBy} ist gerade live.`}
+          className={btn}
+        >
+          <LiveIcon size={17} />
+        </Unavailable>
+      ) : live || (canGoLive && capable.screen) ? (
         <button
           type="button"
           aria-pressed={live}
