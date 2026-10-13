@@ -115,6 +115,17 @@ docker compose up -d --force-recreate coturn api
 - `GELABBER_MINIO_DOMAIN` (Caddy host, for example `minio.example.com`) and `MINIO_PUBLIC_ENDPOINT` (full URL, for example `https://minio.example.com`) must match the active MinIO site in the **real** Caddy config (the Compose `.env` alone is not enough for an external Caddy); no path prefix, presigns sign host and path. `MINIO_API_CORS_ALLOW_ORIGIN` = the Gelabber origin
 - `TURN_PUBLIC_HOST`, `TURN_EXTERNAL_IP`, `MEDIA_ADVERTISED_IP` = the address clients reach
 
+### MinIO on 443
+
+Browsers upload and download attachments directly from MinIO through presigned URLs, so `MINIO_PUBLIC_ENDPOINT` is public by design. Put it on its own subdomain behind your TLS Caddy, not on a published port such as `https://example.com:9000`: networks that only allow 80/443 then load no images, and the S3 API (plus the console on 9001, if published) faces the internet without the proxy in front. The API logs a warning at startup when an `https://` endpoint carries a port other than 443.
+
+1. DNS for `minio.example.com`, and the MinIO site from `Caddyfile.homelab` in your Caddy (`header_up Host {hostport}`, URI unchanged).
+2. `.env`: `MINIO_PUBLIC_ENDPOINT=https://minio.example.com`, `MINIO_API_BIND=127.0.0.1`, `MINIO_CONSOLE_BIND=127.0.0.1`, `MINIO_API_CORS_ALLOW_ORIGIN=https://example.com`.
+3. `docker compose up -d minio api`, then close 9000/9001 in the firewall.
+4. Check from outside: `curl -I https://example.com:9000/minio/health/live` must fail; an attachment link must redirect to `https://minio.example.com/…`.
+
+A path prefix (`https://example.com/s3/…`) does not work: presigns sign host and path.
+
 ## Backup
 
 PostgreSQL metadata and MinIO attachments form **one snapshot pair**. Before
