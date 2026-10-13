@@ -44,10 +44,9 @@ cd web && npm run dev
 ## Call-Sounds
 
 Kurze Signaltöne melden Beitritt und Verlassen im eigenen Call sowie das eigene
-Stummschalten und Taubstellen. Unter **Einstellungen → Audio** oder
-**Benachrichtigungen** lassen sie sich abschalten, in der Lautstärke anpassen und
-vorhören. Die Auswahl gilt pro Browser. Teilnehmer-Töne bleiben beim Taubstellen
-stumm; Wiederholungen beim Verbinden lösen keine Beitrittstöne aus.
+Stummschalten und Taubstellen. Unter **Einstellungen → Audio** lassen sie sich
+abschalten, in der Lautstärke anpassen und vorhören. Die Auswahl gilt pro
+Browser. Teilnehmer-Töne bleiben beim Taubstellen stumm; Wiederholungen beim Verbinden lösen keine Beitrittstöne aus.
 
 Lokale Browserprüfung ohne API oder Testkonten: Vite starten und im `web`-Ordner
 `npm run test:call-sounds-smoke` ausführen. Prüft native Wiedergabe in Chromium und
