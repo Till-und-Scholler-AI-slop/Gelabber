@@ -135,7 +135,12 @@ const workspaceLayout = createRoute({
   id: "workspace",
   beforeLoad: requireUser,
   component: WorkspaceLayout,
-  notFoundComponent: NotFoundCard,
+  // The workspace <main> has no padding of its own (the centered one does).
+  notFoundComponent: () => (
+    <div className="px-6 py-10">
+      <NotFoundCard />
+    </div>
+  ),
 });
 
 const indexRoute = createRoute({
