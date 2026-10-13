@@ -1,7 +1,7 @@
 import { QueryClient, QueryObserver } from "@tanstack/react-query";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { login, resetSessionForTests } from "../auth/session.ts";
-import { takeStamp } from "../auth/scope.ts";
+import { nextScopeGeneration, takeStamp } from "../auth/scope.ts";
 import {
   applyMarkedRead,
   attachReadRecovery,
@@ -483,5 +483,139 @@ describe("read eligibility and recovery", () => {
     cleanup();
     stop();
     observer.destroy();
+  });
+});
+
+describe("focus refresh of the unread snapshot", () => {
+  /** Fake window, document and gateway with a working snapshot request. */
+  const browser = () => {
+    vi.useFakeTimers();
+    const window = new EventTarget() as EventTarget & {
+      setInterval: typeof setInterval;
+      clearInterval: typeof clearInterval;
+    };
+    Object.assign(window, {
+      setInterval,
+      clearInterval,
+      localStorage: {
+        getItem: () => null,
+        setItem: () => {},
+        removeItem: () => {},
+      },
+    });
+    const document = Object.assign(new EventTarget(), {
+      visibilityState: "visible",
+    });
+    vi.stubGlobal("window", window);
+    vi.stubGlobal("document", document);
+    vi.stubGlobal("navigator", {
+      locks: {
+        request: (_n: string, _o: unknown, run: () => unknown) => run(),
+      },
+    });
+    const gateway = {
+      onEvent: () => () => {},
+      onReady: () => () => {},
+      onGap: () => () => {},
+      onResync: () => () => {},
+      onDm: () => () => {},
+    } as unknown as Gateway;
+    const focus = () => window.dispatchEvent(new Event("focus"));
+    return { document, gateway, focus };
+  };
+  /** A first unread snapshot, observed so that invalidation refetches it. */
+  const snapshot = async () => {
+    const stamp = takeStamp()!;
+    const options = readStateOptions(stamp);
+    const queryFn = vi.fn(options.queryFn);
+    const observer = new QueryObserver(client, { ...options, queryFn });
+    const stop = observer.subscribe(() => {});
+    await vi.advanceTimersByTimeAsync(0);
+    expect(queryFn).toHaveBeenCalledTimes(1);
+    return {
+      stamp,
+      observer,
+      snapshots: () => queryFn.mock.calls.length,
+      stop: () => {
+        stop();
+        observer.destroy();
+      },
+    };
+  };
+  const invalidated = (
+    spy: { mock: { calls: unknown[][] } },
+    kind: string,
+  ): readonly unknown[][] =>
+    spy.mock.calls
+      .map(([filter]) => (filter as { queryKey?: unknown[] }).queryKey ?? [])
+      .filter((key) => key[3] === kind);
+
+  it("leaves window focus to attachReadRecovery", () => {
+    expect(readStateOptions(takeStamp()!).refetchOnWindowFocus).toBe(false);
+  });
+
+  it("refreshes on the first focus of a scope without any snapshot", async () => {
+    const { gateway, focus } = browser();
+    nextScopeGeneration();
+    const stamp = takeStamp()!;
+    const spy = vi.spyOn(client, "invalidateQueries");
+    const cleanup = attachReadRecovery(client, stamp, gateway);
+    focus();
+    await vi.advanceTimersByTimeAsync(750);
+    expect(invalidated(spy, "unread")).toHaveLength(1);
+    cleanup();
+  });
+
+  it("measures snapshot age on a monotonic clock, not the system clock", async () => {
+    const { gateway, focus } = browser();
+    const { stamp, snapshots, stop } = await snapshot();
+    const cleanup = attachReadRecovery(client, stamp, gateway);
+    vi.setSystemTime(Date.now() - 3_600_000);
+    focus();
+    await vi.advanceTimersByTimeAsync(750);
+    expect(snapshots()).toBe(1);
+    await vi.advanceTimersByTimeAsync(10_000);
+    expect(snapshots()).toBe(2);
+    cleanup();
+    stop();
+  });
+
+  it("drops a deferred focus refresh while the tab is hidden", async () => {
+    const { document, gateway, focus } = browser();
+    const { stamp, snapshots, stop } = await snapshot();
+    const cleanup = attachReadRecovery(client, stamp, gateway);
+    focus();
+    await vi.advanceTimersByTimeAsync(750);
+    document.visibilityState = "hidden";
+    await vi.advanceTimersByTimeAsync(10_000);
+    expect(snapshots()).toBe(1);
+    cleanup();
+    stop();
+  });
+
+  it("skips a deferred unread request that a newer snapshot covers, but refreshes searches", async () => {
+    const { gateway, focus } = browser();
+    const { stamp, observer, snapshots, stop } = await snapshot();
+    const spy = vi.spyOn(client, "invalidateQueries");
+    const cleanup = attachReadRecovery(client, stamp, gateway);
+    focus();
+    await vi.advanceTimersByTimeAsync(5_000);
+    // Asked for after the focus, e.g. by an event-driven refresh.
+    void observer.refetch();
+    await vi.advanceTimersByTimeAsync(0);
+    expect(snapshots()).toBe(2);
+    spy.mockClear();
+    await vi.advanceTimersByTimeAsync(5_750);
+    expect(snapshots()).toBe(2);
+    expect(invalidated(spy, "unread")).toHaveLength(0);
+    // Every channel, not only the ones events named.
+    expect(invalidated(spy, "message-search")).toEqual([
+      ["user", stamp.userId, stamp.generation, "message-search"],
+    ]);
+    expect(invalidated(spy, "message-context")).toEqual([
+      ["user", stamp.userId, stamp.generation, "message-context"],
+    ]);
+    cleanup();
+    stop();
   });
 });

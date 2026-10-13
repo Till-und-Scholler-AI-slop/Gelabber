@@ -115,6 +115,16 @@ export function attachReadRecovery(
     }
     void client.invalidateQueries({ queryKey }, { cancelRefetch: false });
   };
+  const invalidateWorkflows = (channel?: string) => {
+    for (const kind of ["message-search", "message-context"])
+      invalidate([
+        "user",
+        stamp.userId,
+        stamp.generation,
+        kind,
+        ...(channel ? [channel] : []),
+      ]);
+  };
   const channels = new Set<string>();
   let all = false;
   // The newest request number when the latest event of the pending batch
@@ -141,17 +151,7 @@ export function attachReadRecovery(
       // replay bursts without repeatedly aborting SQL or paginated searches.
       // A snapshot asked for after the latest of them already has them all.
       if (!covered) invalidate(readKey(stamp));
-      for (const channel of pending) {
-        for (const kind of ["message-search", "message-context"]) {
-          invalidate([
-            "user",
-            stamp.userId,
-            stamp.generation,
-            kind,
-            ...(channel ? [channel] : []),
-          ]);
-        }
-      }
+      pending.forEach(invalidateWorkflows);
     };
     timer = setTimeout(flush, 750);
     maxTimer ??= setTimeout(flush, 5_000);
@@ -167,11 +167,19 @@ export function attachReadRecovery(
       clearTimeout(deferred);
       deferred = undefined;
       refresh();
-    } else
-      deferred ??= setTimeout(() => {
+    } else if (deferred === undefined) {
+      const after = snapshotRequests;
+      deferred = setTimeout(() => {
         deferred = undefined;
-        focus();
+        if (!active || !stampHolds(stamp)) return;
+        if (document.visibilityState !== "visible") return;
+        // A snapshot asked for after the focus already has the unread
+        // state; searches and contexts still need their refresh. Without
+        // this, snapshots arriving less than 10 s apart re-defer forever.
+        if (latestSnapshot(stamp).request > after) invalidateWorkflows();
+        else focus();
       }, SNAPSHOT_FRESH_MS - age);
+    }
   };
   const cleanup = [
     gateway.onEvent((event) => refresh(event.c)),
