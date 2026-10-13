@@ -372,8 +372,7 @@
   text-decoration: underline;
   text-underline-offset: 2px;
 }
-.lr-lightbox-bar button,
-.lr-lightbox-step {
+.lr-lightbox-bar button {
   display: inline-flex;
   align-items: center;
   justify-content: center;
@@ -382,19 +381,6 @@
   border-radius: 999px;
   background: rgb(255 255 255 / 0.12);
   color: inherit;
-}
-.lr-lightbox-step {
-  position: fixed;
-  top: 50%;
-  translate: 0 -50%;
-}
-.lr-lightbox-step.is-previous {
-  left: 16px;
-  rotate: 90deg;
-}
-.lr-lightbox-step.is-next {
-  right: 16px;
-  rotate: -90deg;
 }
 .lr-attachment-file {
   display: inline-flex;

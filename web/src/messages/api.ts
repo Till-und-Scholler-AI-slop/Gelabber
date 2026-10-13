@@ -93,3 +93,10 @@ export async function putPresigned(
 export function attachmentUrl(id: string): string {
   return `/api/attachments/${id}`;
 }
+
+/** The same file, answered with `Content-Disposition: attachment`: a
+ * browser ignores `<a download>` after the redirect to MinIO and would
+ * otherwise navigate away from the app (and end a call). */
+export function attachmentDownloadUrl(id: string): string {
+  return `/api/attachments/${id}?download=1`;
+}

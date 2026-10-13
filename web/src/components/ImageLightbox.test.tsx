@@ -1,39 +1,62 @@
 import { renderToStaticMarkup } from "react-dom/server";
 import { describe, expect, it } from "vitest";
 
+import { attachmentDownloadUrl, attachmentUrl } from "../messages/api.ts";
 import { ImageLightbox } from "./ImageLightbox.tsx";
+import { isPlainClick } from "./plainClick.ts";
 
-const images = [
-  { id: "a", src: "/a.png", filename: "erstes.png" },
-  { id: "b", src: "/b.png", filename: "zweites.png" },
-  { id: "c", src: "/c.png", filename: "drittes.png" },
-];
-const render = (list: typeof images, index: number) =>
-  renderToStaticMarkup(
+// Markup only: node has no <dialog>, so showModal, Esc (onCancel), the
+// backdrop click and the focus on "Schließen" are not exercised here.
+describe("image lightbox", () => {
+  const html = renderToStaticMarkup(
     <ImageLightbox
-      images={list}
-      index={index}
-      downloadUrl={(id) => `/api/attachments/${id}?download=1`}
-      onIndex={() => {}}
+      image={{
+        id: "b",
+        src: attachmentUrl("b"),
+        filename: "zweites.png",
+        download: attachmentDownloadUrl("b"),
+      }}
       onClose={() => {}}
     />,
   );
 
-describe("image lightbox", () => {
-  it("shows the chosen image with its name, download and position", () => {
-    const html = render(images, 1);
-    expect(html).toContain('src="/b.png"');
+  it("shows the picture from its display link, named", () => {
+    expect(html).toContain('src="/api/attachments/b"');
+    expect(html).toContain('alt="zweites.png"');
     expect(html).toContain('aria-label="zweites.png"');
-    expect(html).toContain('href="/api/attachments/b?download=1"');
-    expect(html).toContain('download="zweites.png"');
-    expect(html).toContain("2 / 3");
-    expect(html).toContain("Schließen");
+    expect(html).toContain('aria-label="Schließen"');
   });
 
-  it("has no stepping for a single image and renders nothing out of range", () => {
-    const single = render(images.slice(0, 1), 0);
-    expect(single).not.toContain("1 / 1");
-    expect(single).not.toContain("Vorheriges");
-    expect(render(images, 5)).toBe("");
+  it("saves through the download variant, not the display link", () => {
+    expect(html).toContain('href="/api/attachments/b?download=1"');
+    expect(html).toContain('download="zweites.png"');
+  });
+
+  it("has no stepping: a message carries one attachment", () => {
+    expect(html).not.toContain("Vorheriges");
+    expect(html).not.toContain("Nächstes");
+    expect(html).not.toContain("lr-lightbox-count");
+  });
+});
+
+describe("plain click", () => {
+  const click = {
+    button: 0,
+    metaKey: false,
+    ctrlKey: false,
+    shiftKey: false,
+    altKey: false,
+  };
+
+  it("takes a plain primary click", () => {
+    expect(isPlainClick(click)).toBe(true);
+  });
+
+  it("leaves new tab, window, save and middle click to the browser", () => {
+    expect(isPlainClick({ ...click, ctrlKey: true })).toBe(false);
+    expect(isPlainClick({ ...click, metaKey: true })).toBe(false);
+    expect(isPlainClick({ ...click, shiftKey: true })).toBe(false);
+    expect(isPlainClick({ ...click, altKey: true })).toBe(false);
+    expect(isPlainClick({ ...click, button: 1 })).toBe(false);
   });
 });

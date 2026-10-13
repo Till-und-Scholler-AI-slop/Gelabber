@@ -15,8 +15,11 @@ function layout(rows: { id: string; height: number }[]) {
 const rows = (...spec: [string, number][]) =>
   spec.map(([id, height]) => ({ id, height }));
 
+// The arithmetic only. The #201 jump came from where the start offsets were
+// read (clamped, before the new rows were measured) and from when they were
+// applied; this cannot see either. That behaviour is checked in a browser by
+// `scripts/smoke-chat-scroll.mjs`.
 describe("scroll anchor", () => {
-  // #201: loading older history jumped from "Nachricht 106" to "Nachricht 40".
   it("keeps the top row in place when older rows load above it", () => {
     const before = rows(["m105", 80], ["m106", 260], ["m107", 80]);
     // Scrolled so m106 starts 30 px above the viewport top.

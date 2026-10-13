@@ -1,29 +1,29 @@
 import { useEffect, useRef } from "react";
 
-import { ChevronIcon, CloseIcon } from "./Icons.tsx";
+import { CloseIcon } from "./Icons.tsx";
 
-export type LightboxImage = { id: string; src: string; filename: string };
+export type LightboxImage = {
+  id: string;
+  src: string;
+  filename: string;
+  /** Saves the file (`?download=1`), see `attachmentDownloadUrl`. */
+  download: string;
+};
 
 /**
  * A chat image at full size, inside the app: a new tab does not exist in the
- * desktop app or the installed web app. Esc or a click next to the image
- * closes it, the arrow keys step through the message's images.
+ * desktop app or the installed web app. Esc, "Schließen" or a click next to
+ * the image closes it; focus starts on "Schließen" and returns to the opener.
  */
 export function ImageLightbox({
-  images,
-  index,
-  downloadUrl,
-  onIndex,
+  image,
   onClose,
 }: {
-  images: LightboxImage[];
-  index: number;
-  downloadUrl: (id: string) => string;
-  onIndex: (index: number) => void;
+  image: LightboxImage;
   onClose: () => void;
 }) {
   const ref = useRef<HTMLDialogElement>(null);
-  const image = images[index];
+  const close = useRef<HTMLButtonElement>(null);
   useEffect(() => {
     const dialog = ref.current;
     if (!dialog) return;
@@ -32,15 +32,13 @@ export function ImageLightbox({
         ? document.activeElement
         : null;
     if (!dialog.open) dialog.showModal();
+    // Not the download link, which showModal would pick as the first one.
+    close.current?.focus({ preventScroll: true });
     return () => {
       if (dialog.open) dialog.close();
       if (opener?.isConnected) opener.focus({ preventScroll: true });
     };
   }, []);
-  if (!image) return null;
-  const many = images.length > 1;
-  const step = (delta: number) =>
-    onIndex((index + delta + images.length) % images.length);
   return (
     <dialog
       ref={ref}
@@ -50,11 +48,6 @@ export function ImageLightbox({
         event.preventDefault();
         onClose();
       }}
-      onKeyDown={(event) => {
-        if (!many) return;
-        if (event.key === "ArrowLeft") step(-1);
-        else if (event.key === "ArrowRight") step(1);
-      }}
       onClick={(event) => {
         // The backdrop and the empty space around the picture.
         if (event.target === event.currentTarget) onClose();
@@ -63,38 +56,21 @@ export function ImageLightbox({
       <img src={image.src} alt={image.filename} />
       <div className="lr-lightbox-bar">
         <span title={image.filename}>{image.filename}</span>
-        {many ? (
-          <span className="lr-lightbox-count">
-            {index + 1} / {images.length}
-          </span>
-        ) : null}
-        <a href={downloadUrl(image.id)} download={image.filename}>
+        {/* The API answers this link with `Content-Disposition: attachment`
+            (from MinIO after its redirect too), so the file is saved and the
+            app, with a running call, stays where it is. */}
+        <a href={image.download} download={image.filename}>
           Herunterladen
         </a>
-        <button type="button" aria-label="Schließen" onClick={onClose}>
+        <button
+          ref={close}
+          type="button"
+          aria-label="Schließen"
+          onClick={onClose}
+        >
           <CloseIcon size={18} />
         </button>
       </div>
-      {many ? (
-        <>
-          <button
-            type="button"
-            className="lr-lightbox-step is-previous"
-            aria-label="Vorheriges Bild"
-            onClick={() => step(-1)}
-          >
-            <ChevronIcon size={22} />
-          </button>
-          <button
-            type="button"
-            className="lr-lightbox-step is-next"
-            aria-label="Nächstes Bild"
-            onClick={() => step(1)}
-          >
-            <ChevronIcon size={22} />
-          </button>
-        </>
-      ) : null}
     </dialog>
   );
 }
