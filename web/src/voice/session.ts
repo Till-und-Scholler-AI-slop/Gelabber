@@ -1983,7 +1983,11 @@ async function refreshMic(): Promise<void> {
       insert?.dispose();
       stopTracks(raw);
       pendingMicRaw.delete(raw);
-      if (
+      if (seat.generation !== session) {
+        // A rebuild closed this connection while the publish was in flight
+        // (socket still open, e.g. an "unavailable" answer or ICE recovery).
+        resumeOvertakenMic(join);
+      } else if (
         micCurrent(pc, session, request) &&
         !hasLiveTrack(localStream, "audio") &&
         !seat.isOpen()

@@ -1006,6 +1006,37 @@ describe("voice session", () => {
     expect(f.errors).toEqual([]);
   });
 
+  it("resumes the microphone when a rebuild overtakes the resumed capture's publish", async () => {
+    const prompt = deferred();
+    const produce = deferred();
+    let produceGated = false;
+    const f = install({
+      gateMedia: (index) => (index === 0 ? prompt.promise : undefined),
+      gateProduce: (kind) => {
+        if (kind !== "a" || produceGated) return undefined;
+        produceGated = true;
+        return produce.promise;
+      },
+    });
+    joinVoice({ serverId: "srv", channelId: "voice", channelName: "Lounge" });
+    await vi.waitFor(() => expect(f.getUserMediaCalls()).toBe(1));
+    f.closeMedia();
+    await vi.waitFor(() => expect(f.peers).toHaveLength(2));
+    await vi.waitFor(() =>
+      expect(f.mediaSent.filter((frame) => frame.op === "j")).toHaveLength(2),
+    );
+    prompt.resolve();
+    // The resumed capture is granted and its publish is in flight ...
+    await vi.waitFor(() => expect(produceGated).toBe(true));
+    // ... when the media server sends the seat into another rebuild while
+    // the socket is still open.
+    f.emitMedia({ op: "err", e: "unavailable" });
+    produce.resolve();
+    await vi.waitFor(() => expect(f.peers[2]?.audio).toBeTruthy());
+    expect(f.peers[1]?.audio).toBeFalsy();
+    expect(f.errors).toEqual([]);
+  });
+
   it("does not ask again for a microphone refused while the connection was rebuilt", async () => {
     const prompt = deferred();
     const f = install({
