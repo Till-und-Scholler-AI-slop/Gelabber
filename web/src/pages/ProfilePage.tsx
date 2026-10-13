@@ -1,6 +1,6 @@
 import { useMutation } from "@tanstack/react-query";
 import { useNavigate } from "@tanstack/react-router";
-import { useState, type FormEvent } from "react";
+import { useId, useState, type FormEvent } from "react";
 
 import {
   fieldMessage,
@@ -56,6 +56,8 @@ function ProfileForm({ user }: { user: User }) {
 
   const dirty =
     name.trim() !== user.name || avatarUrl.trim() !== (user.avatar_url ?? "");
+  const unchangedId = useId();
+  const unchanged = !dirty && !saved && !mutation.isPending;
 
   const onSubmit = (event: FormEvent<HTMLFormElement>) => {
     event.preventDefault();
@@ -129,10 +131,18 @@ function ProfileForm({ user }: { user: User }) {
             pending={mutation.isPending}
             pendingLabel="Speichern…"
             disabled={!dirty}
-            title={dirty ? undefined : "Noch nichts geändert"}
+            aria-describedby={unchanged ? unchangedId : undefined}
           >
             Speichern
           </SubmitButton>
+          {unchanged ? (
+            <span
+              id={unchangedId}
+              className="text-sm text-neutral-600 dark:text-neutral-400"
+            >
+              Noch nichts geändert.
+            </span>
+          ) : null}
           {saved && !dirty ? (
             <span
               role="status"
