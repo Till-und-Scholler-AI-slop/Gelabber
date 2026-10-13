@@ -238,10 +238,16 @@ async fn download(
         },
         &row.filename,
     );
+    // One clock read: the link's signing window and the redirect's cache
+    // time must come from the same window.
+    let now = SystemTime::now();
     let body = if save {
-        state.store.download(&row.object_key, &disposition).await
+        state
+            .store
+            .download(&row.object_key, &disposition, now)
+            .await
     } else {
-        state.store.get(&row.object_key).await
+        state.store.get(&row.object_key, now).await
     };
     match body {
         Ok(ObjectBody::Redirect(url)) => {
@@ -256,7 +262,7 @@ async fn download(
             } else {
                 // The link is the same for the rest of its signing window;
                 // the browser may reuse this redirect until then.
-                let (_, left) = storage::get_window(SystemTime::now());
+                let (_, left) = storage::get_window(now);
                 if let Ok(value) = HeaderValue::from_str(&format!("private, max-age={left}")) {
                     headers.insert(CACHE_CONTROL, value);
                 }

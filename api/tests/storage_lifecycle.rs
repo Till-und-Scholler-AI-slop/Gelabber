@@ -55,11 +55,15 @@ async fn owner(state: &AppState) -> (Client, Value, String) {
 }
 
 async fn presign(client: &mut Client, channel: &str) -> Value {
+    presign_named(client, channel, "x.png").await
+}
+
+async fn presign_named(client: &mut Client, channel: &str, filename: &str) -> Value {
     let res = client
         .send(
             Method::POST,
             &format!("/api/channels/{channel}/attachments"),
-            Some(json!({"filename":"x.png","content_type":"image/png","size":4})),
+            Some(json!({"filename":filename,"content_type":"image/png","size":4})),
         )
         .await;
     assert_eq!(res.status, StatusCode::CREATED);
@@ -627,6 +631,38 @@ async fn real_minio_download_links_serve_the_object(pool: PgPool) {
         "attachment; filename=\"x.png\""
     );
     assert_eq!(object.bytes().await.unwrap().as_ref(), [1, 2, 3, 4]);
+    state.store.delete(&key).await.unwrap();
+
+    // A name with a quote and a non-ASCII letter survives signing into the
+    // link and MinIO's answer: quoted fallback plus RFC 6266 `filename*`.
+    let signed = presign_named(&mut client, &channel, "Bär \"1\".png").await;
+    let id = signed["id"].as_str().unwrap().to_owned();
+    let key = format!("att/{id}");
+    state
+        .store
+        .put(&key, "image/png", vec![5, 6, 7, 8])
+        .await
+        .unwrap();
+    message(&mut client, &channel, &id).await;
+    let (status, headers, _) = client
+        .send_raw(
+            Method::GET,
+            &format!("/api/attachments/{id}?download=1"),
+            None,
+        )
+        .await;
+    assert_eq!(status, StatusCode::TEMPORARY_REDIRECT);
+    let object = http
+        .get(headers[LOCATION].to_str().unwrap())
+        .send()
+        .await
+        .unwrap();
+    assert_eq!(object.status(), reqwest::StatusCode::OK);
+    assert_eq!(
+        object.headers()[reqwest::header::CONTENT_DISPOSITION],
+        "attachment; filename=\"B_r _1_.png\"; filename*=UTF-8''B%C3%A4r%20%221%22.png"
+    );
+    assert_eq!(object.bytes().await.unwrap().as_ref(), [5, 6, 7, 8]);
     state.store.delete(&key).await.unwrap();
 }
 

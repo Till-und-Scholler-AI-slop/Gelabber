@@ -126,11 +126,12 @@ impl ObjectStore {
         }
     }
 
-    /// The object for display (`<img src>`): one stable link per window.
-    pub async fn get(&self, key: &str) -> Result<ObjectBody, StoreError> {
+    /// The object for display (`<img src>`): one stable link per window,
+    /// the window of `now`.
+    pub async fn get(&self, key: &str, now: SystemTime) -> Result<ObjectBody, StoreError> {
         match self {
             Self::Memory(store) => store.get(key),
-            Self::Minio(store) => store.get_at(key, None, SystemTime::now()),
+            Self::Minio(store) => store.get_at(key, None, now),
         }
     }
 
@@ -138,10 +139,15 @@ impl ObjectStore {
     /// `Content-Disposition`: a browser ignores `<a download>` once the link
     /// redirects to another origin, so the header has to come from there.
     /// The memory store streams through the API, which sets it itself.
-    pub async fn download(&self, key: &str, disposition: &str) -> Result<ObjectBody, StoreError> {
+    pub async fn download(
+        &self,
+        key: &str,
+        disposition: &str,
+        now: SystemTime,
+    ) -> Result<ObjectBody, StoreError> {
         match self {
             Self::Memory(store) => store.get(key),
-            Self::Minio(store) => store.get_at(key, Some(disposition), SystemTime::now()),
+            Self::Minio(store) => store.get_at(key, Some(disposition), now),
         }
     }
 

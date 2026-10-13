@@ -33,7 +33,11 @@ removed, is banned or logs out, a link already handed out, a cached redirect
 or a cached picture can still show that attachment for **up to 60 minutes**.
 `Vary: Cookie` makes a new session (another account in the same browser, or
 logging in again) ask the API anew instead of reusing the old redirect; it
-does not shorten the lifetime of a link someone copied.
+does not shorten the lifetime of a link someone copied. It also does not
+cover a session ended on the server while the browser keeps the same cookie
+(for example "log out everywhere" from another device, or a revoked or
+expired session): that browser can still follow its cached redirect until the
+window ends, up to 30 minutes, within the 60-minute bound above.
 
 `?download=1` is the save variant: the signed link also carries
 `response-content-disposition=attachment; filename="…"` (plus RFC 6266
