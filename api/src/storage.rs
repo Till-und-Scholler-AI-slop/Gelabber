@@ -151,6 +151,14 @@ impl ObjectStore {
         }
     }
 
+    /// The object's bytes through the API (small objects only: avatars).
+    pub async fn fetch(&self, key: &str) -> Result<(String, Vec<u8>), StoreError> {
+        match self {
+            Self::Memory(store) => store.fetch(key),
+            Self::Minio(store) => store.fetch(key).await,
+        }
+    }
+
     pub async fn put(
         &self,
         key: &str,
@@ -216,6 +224,11 @@ impl MemoryStore {
             content_type: content_type.clone(),
             bytes: bytes.clone(),
         })
+    }
+
+    fn fetch(&self, key: &str) -> Result<(String, Vec<u8>), StoreError> {
+        let map = self.inner.lock().expect("memory store");
+        map.get(key).cloned().ok_or(StoreError::NotFound)
     }
 
     fn put(&self, key: &str, content_type: &str, bytes: Vec<u8>) {
@@ -370,13 +383,51 @@ impl MinioStore {
         Ok(ObjectBody::Redirect(url.to_string()))
     }
 
-    async fn put(&self, key: &str, content_type: &str, bytes: Vec<u8>) -> Result<(), StoreError> {
-        let signed = self.presign_put(key, content_type, bytes.len() as i64)?;
-        let mut request = self.inner.http.put(&signed.url);
-        for (name, value) in &signed.headers {
-            request = request.header(name.as_str(), value.as_str());
+    async fn fetch(&self, key: &str) -> Result<(String, Vec<u8>), StoreError> {
+        let action = self.inner.internal.get_object(Some(&self.inner.creds), key);
+        let url = action.sign(Duration::from_secs(30));
+        let response = self
+            .inner
+            .http
+            .get(url)
+            .send()
+            .await
+            .map_err(|err| StoreError::Other(format!("get object: {}", err.without_url())))?;
+        if response.status().as_u16() == 404 {
+            return Err(StoreError::NotFound);
         }
-        let response = request
+        if !response.status().is_success() {
+            return Err(StoreError::Other(format!(
+                "get object returned {}",
+                response.status()
+            )));
+        }
+        let content_type = response
+            .headers()
+            .get(reqwest::header::CONTENT_TYPE)
+            .and_then(|value| value.to_str().ok())
+            .unwrap_or("application/octet-stream")
+            .to_owned();
+        let bytes = response
+            .bytes()
+            .await
+            .map_err(|err| StoreError::Other(format!("get object: {}", err.without_url())))?;
+        Ok((content_type, bytes.to_vec()))
+    }
+
+    /// Server-side upload over the internal endpoint; the public one may
+    /// not be reachable from inside the container network.
+    async fn put(&self, key: &str, content_type: &str, bytes: Vec<u8>) -> Result<(), StoreError> {
+        let mut action = self.inner.internal.put_object(Some(&self.inner.creds), key);
+        action
+            .headers_mut()
+            .insert("content-type", content_type.to_owned());
+        let url = action.sign(Duration::from_secs(30));
+        let response = self
+            .inner
+            .http
+            .put(url)
+            .header("content-type", content_type)
             .body(bytes)
             .send()
             .await

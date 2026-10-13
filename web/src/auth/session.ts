@@ -262,6 +262,34 @@ export async function changePassword(
  * previous account cannot overwrite whoever is signed in now. A response
  * that actually changes the user id still goes through `applySession`.
  */
+/**
+ * Profile writes in flight, for every profile form of this tab. The count
+ * lives here, not in the form: a write keeps running after its form
+ * unmounts, and a form mounted again meanwhile must not start a second one,
+ * whose late or failed answer would put an older user back into the store.
+ */
+export const useProfileWrites = create<{ pending: number }>(() => ({
+  pending: 0,
+}));
+
+/**
+ * Claims the single profile write slot synchronously, before the write
+ * starts. Returns its (idempotent) release, or `null` while another
+ * profile write is in flight.
+ */
+export function claimProfileWrite(): (() => void) | null {
+  if (useProfileWrites.getState().pending > 0) return null;
+  useProfileWrites.setState((state) => ({ pending: state.pending + 1 }));
+  let released = false;
+  return () => {
+    if (released) return;
+    released = true;
+    useProfileWrites.setState((state) => ({
+      pending: Math.max(0, state.pending - 1),
+    }));
+  };
+}
+
 export async function updateProfile(patch: ProfilePatch): Promise<User> {
   const previous = useSession.getState().user;
   const stamp = takeStamp();
@@ -294,6 +322,24 @@ export async function updateProfile(patch: ProfilePatch): Promise<User> {
     }
     throw error;
   }
+}
+
+/**
+ * Uploads an image prepared by `prepareAvatar`; the profile then points at
+ * it (#208). Not optimistic: the new URL only exists once the server
+ * stored the file.
+ */
+export async function uploadAvatar(image: Blob): Promise<User> {
+  const stamp = takeStamp();
+  const user = await api<User>("/me/avatar", { method: "PUT", body: image });
+  if (stampHolds(stamp)) {
+    if (user.id === stamp.userId) {
+      useSession.setState({ status: "authenticated", user });
+    } else {
+      applySession(user);
+    }
+  }
+  return user;
 }
 
 /** Test/dev helper: forget everything this tab knows. */

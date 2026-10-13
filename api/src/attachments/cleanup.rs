@@ -1,4 +1,6 @@
 //! Durable object cleanup. No pool connection is held during S3 requests.
+//! `storage_cleanup` holds attachment keys and uploaded avatar keys
+//! (`avatars/{user}/{file}`, see `crate::avatars`); this worker deletes both.
 use std::sync::atomic::Ordering;
 use std::time::Duration;
 
@@ -148,6 +150,11 @@ struct Job {
 /// Claim a bounded batch, release the DB connection, then perform I/O. Claim
 /// expiry handles API crashes; acknowledgements compare the generation so an
 /// older worker cannot delete a newer worker's retry job.
+///
+/// `attempts` is incremented in the claim statement itself and never reset.
+/// `crate::avatars::save_profile` relies on that: it withdraws a pending
+/// avatar row only while `attempts = 0`, so a row this worker has claimed
+/// (and may be deleting) is never taken back for a late profile save.
 pub async fn delete_pending(state: &AppState, limit: i64) -> Result<(), ApiError> {
     let jobs = sqlx::query_as::<_, Job>(
         "WITH due AS (SELECT object_key FROM storage_cleanup \
@@ -216,7 +223,7 @@ async fn delete_one(state: &AppState, job: Job) -> Result<(), ApiError> {
             false
         }
     };
-    // Keys are immutable random attachment IDs. Check there is still no
+    // Keys are immutable random attachment or avatar IDs. Check there is still no
     // metadata before ack, in addition to comparing the worker generation.
     if deleted {
         sqlx::query(

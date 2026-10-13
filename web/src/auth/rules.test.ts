@@ -2,9 +2,12 @@ import { describe, expect, it } from "vitest";
 
 import {
   PASSWORD_MAX,
+  avatarFieldAfterRemoval,
   errorMessage,
   fieldMessage,
   fieldMessages,
+  profileFormPatch,
+  removesAvatarAtOnce,
   validateAvatarUrl,
   validateEmail,
   validateName,
@@ -52,6 +55,15 @@ describe("validation rules (mirror of api/src/auth/validate.rs)", () => {
     expect(validateAvatarUrl("http://cdn.example/a.png")).toBe("invalid");
     expect(validateAvatarUrl("https://a b")).toBe("invalid");
   });
+
+  it("avatar url accepts the API's own uploaded path, nothing else relative", () => {
+    const uploaded =
+      "/api/avatars/0b8d6a8e-3f1c-4f7e-9a51-2a1c3e4d5f60/7c9e6679-7425-40de-944b-e07fc1f90ae7";
+    expect(validateAvatarUrl(uploaded)).toBeNull();
+    expect(validateAvatarUrl("/api/avatars/x/y")).toBe("invalid");
+    expect(validateAvatarUrl("/etc/passwd")).toBe("invalid");
+    expect(validateAvatarUrl(`${uploaded}/../x`)).toBe("invalid");
+  });
 });
 
 describe("copy", () => {
@@ -84,5 +96,52 @@ describe("copy", () => {
     expect(errorMessage("rate_limited")).toMatch(/Zu viele Anfragen/);
     expect(errorMessage("quota_exceeded")).toMatch(/Tageslimit/);
     expect(errorMessage("insecure_transport")).toMatch(/https:\/\//);
+  });
+});
+
+describe("profileFormPatch", () => {
+  const uploaded =
+    "/api/avatars/0b8d6a8e-3f1c-4f7e-9a51-2a1c3e4d5f60/7c9e6679-7425-40de-944b-e07fc1f90ae7";
+
+  it("leaves an unchanged avatar out, so a stale form cannot undo an upload", () => {
+    expect(profileFormPatch(" Ada ", uploaded, uploaded)).toEqual({
+      name: "Ada",
+    });
+    expect(profileFormPatch("Ada", "", null)).toEqual({ name: "Ada" });
+  });
+
+  it("sends a changed or cleared avatar, trimmed", () => {
+    expect(
+      profileFormPatch("Ada", " https://cdn.example/a.png ", uploaded),
+    ).toEqual({ name: "Ada", avatar_url: "https://cdn.example/a.png" });
+    expect(profileFormPatch("Ada", "  ", "https://cdn.example/a.png")).toEqual({
+      name: "Ada",
+      avatar_url: "",
+    });
+  });
+});
+
+describe("avatar removal", () => {
+  const uploaded =
+    "/api/avatars/0b8d6a8e-3f1c-4f7e-9a51-2a1c3e4d5f60/7c9e6679-7425-40de-944b-e07fc1f90ae7";
+  const link = "https://cdn.example/a.png";
+
+  it("removes a saved upload at once", () => {
+    expect(removesAvatarAtOnce(uploaded, uploaded)).toBe(true);
+    expect(removesAvatarAtOnce(uploaded, ` ${uploaded} `)).toBe(true);
+  });
+
+  it("only clears the field for a link or an edited field", () => {
+    expect(removesAvatarAtOnce(link, link)).toBe(false);
+    expect(removesAvatarAtOnce(null, "")).toBe(false);
+    // The field already holds something else: that edit is cleared, unsaved.
+    expect(removesAvatarAtOnce(uploaded, link)).toBe(false);
+  });
+
+  it("keeps a link typed while the removal ran", () => {
+    expect(avatarFieldAfterRemoval(uploaded)).toBe("");
+    expect(avatarFieldAfterRemoval(link)).toBe(link);
+    expect(avatarFieldAfterRemoval("https://cdn.exa")).toBe("https://cdn.exa");
+    expect(avatarFieldAfterRemoval("")).toBe("");
   });
 });
