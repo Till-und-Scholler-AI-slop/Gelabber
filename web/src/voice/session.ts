@@ -233,6 +233,14 @@ const blockedPlayback = new Set<HTMLAudioElement>();
 let remoteMix: MediaStream | null = null;
 let bound = false;
 let micEpoch = 0;
+/** A microphone prompt that a seat rebuild overtook. Its answer belonged to
+ * the old connection and was dropped with it, and a rebuild does not ask for
+ * the microphone on its own: the next connection has to. */
+let micOvertaken = false;
+/** Which join a microphone prompt belongs to. A rebuild keeps it, a new
+ * join (another channel, or leaving and joining again) moves it on, so an
+ * answer from an earlier join never takes over the current one's capture. */
+let micJoin = 0;
 /** One stream toast per join. Further failures stay in the console. */
 let streamReported = false;
 let watchReported = false;
@@ -1158,6 +1166,10 @@ function hasLiveTrack(
 
 function stopPeer(preserveCapture = false): void {
   if (!preserveCapture) micForceBrowser = false;
+  if (!preserveCapture) {
+    micOvertaken = false;
+    micJoin += 1;
+  }
   if (!preserveCapture) clearLiveClaim();
   seatRetry.cancel(!preserveCapture);
   // A rebuild keeps what is captured, and with it a picker or camera prompt
@@ -1869,6 +1881,59 @@ function discardFailedMicCandidate(
   }
 }
 
+/** A refused or blocked microphone: the user's own answer, asked again
+ * only when they ask for it. */
+function micRefused(error: unknown): boolean {
+  const name = (error as { name?: unknown } | null)?.name;
+  return name === "NotAllowedError" || name === "SecurityError";
+}
+
+/** The browser's reason stays in the console; the toast says it in German. */
+function logMicFailure(error: unknown): void {
+  logVoice("warn", "microphone", {
+    detail:
+      error instanceof Error
+        ? `${error.name}: ${error.message}`
+        : String(error),
+  });
+}
+
+/** A join that goes on without a microphone. */
+function reportJoinMicFailure(error: unknown): void {
+  logMicFailure(error);
+  deps?.onError?.(microphoneFailure(error));
+  noteAudioProcessing(null);
+  const info = useAudioProcessing.getState();
+  noteAudioProcessing({
+    ...info,
+    requested: useMediaSettings.getState().processingMode,
+    message: "Mikrofon konnte nicht aktiviert werden; du hörst weiter zu",
+  });
+}
+
+/** Capture again for the connection that replaced the one a microphone
+ * prompt was answered for, or have the next connection do it. Only within
+ * the same join: a new join asks for its own microphone. A refused prompt is
+ * not asked again but reported once. */
+function resumeOvertakenMic(join: number, error?: unknown): void {
+  if (
+    join !== micJoin ||
+    useVoice.getState().status !== "joined" ||
+    hasLiveTrack(localStream, "audio")
+  )
+    return;
+  if (micRefused(error)) {
+    micOvertaken = false;
+    reportJoinMicFailure(error);
+    return;
+  }
+  const pc = seat.connection;
+  if (pc && startedConnections.has(pc) && seat.isOpen()) {
+    micOvertaken = false;
+    void refreshMic();
+  } else micOvertaken = true;
+}
+
 function announceMicrophone(): void {
   if (announced.has("a")) return;
   const { serverId, channelId } = useVoice.getState();
@@ -1883,6 +1948,7 @@ async function refreshMic(): Promise<void> {
   const pc = seat.connection;
   if (!pc || useVoice.getState().status !== "joined") return;
   const session = seat.generation;
+  const join = micJoin;
   const request = ++micEpoch;
   const getUserMedia = deps?.getUserMedia ?? defaultGetUserMedia;
   let candidate: Awaited<ReturnType<typeof acquireMic>>;
@@ -1891,11 +1957,17 @@ async function refreshMic(): Promise<void> {
       micCurrent(pc, session, request),
     );
   } catch (error) {
-    // The track already sending stays until a new one replaces it.
-    if (micCurrent(pc, session, request))
-      deps?.onError?.(
-        microphoneFailure(error, "der Wechsel hat nicht geklappt"),
-      );
+    // A track still sending stays until a new one replaces it. Without one
+    // (a failed processor took it off the sender, or a rebuild asks again)
+    // the call goes on without a microphone.
+    if (micCurrent(pc, session, request)) {
+      if (hasLiveTrack(localStream, "audio")) {
+        logMicFailure(error);
+        deps?.onError?.(
+          microphoneFailure(error, "der Wechsel hat nicht geklappt"),
+        );
+      } else reportJoinMicFailure(error);
+    } else if (seat.generation !== session) resumeOvertakenMic(join, error);
     return;
   }
   const { raw, processor: insert } = candidate;
@@ -1903,6 +1975,7 @@ async function refreshMic(): Promise<void> {
   if (!micCurrent(pc, session, request)) {
     insert.dispose();
     stopTracks(raw);
+    if (seat.generation !== session) resumeOvertakenMic(join);
     return;
   }
   disableAudio(raw);
@@ -1913,6 +1986,7 @@ async function refreshMic(): Promise<void> {
       insert?.dispose();
       stopTracks(raw);
       pendingMicRaw.delete(raw);
+      if (seat.generation !== session) resumeOvertakenMic(join);
       return;
     }
     if (!insert.usable()) {
@@ -1928,7 +2002,19 @@ async function refreshMic(): Promise<void> {
       insert?.dispose();
       stopTracks(raw);
       pendingMicRaw.delete(raw);
-      if (micCurrent(pc, session, request)) {
+      if (seat.generation !== session) {
+        // A rebuild closed this connection while the publish was in flight
+        // (socket still open, e.g. an "unavailable" answer or ICE recovery).
+        resumeOvertakenMic(join);
+      } else if (
+        micCurrent(pc, session, request) &&
+        !hasLiveTrack(localStream, "audio") &&
+        !seat.isOpen()
+      ) {
+        // The media socket just closed and its rebuild has not started yet:
+        // that one asks for the microphone again.
+        micOvertaken = true;
+      } else if (micCurrent(pc, session, request)) {
         deps?.onError?.(
           error instanceof Error
             ? error
@@ -2836,8 +2922,9 @@ function captureOpen(kind: "v" | "s" | "l"): boolean {
 }
 
 /** The browser's own getUserMedia reasons are English ("Requested device not
- * found"); say them in German with what follows for the call: on joining it
- * goes on without a microphone, a failed switch keeps the previous one. */
+ * found"); say them in German with what follows for the call: without a
+ * sending microphone it goes on without one, a failed switch keeps the
+ * previous one. */
 function microphoneFailure(
   error: unknown,
   consequence = "du hörst nur zu",
@@ -3649,6 +3736,7 @@ async function startPeer(
   const resumeLive = useVoice.getState().live;
   stopPeer(recovering);
   seat.generation = mine;
+  const join = micJoin;
   if (!recovering) {
     if (resumeCamera) useVoice.setState({ camera: true });
     if (resumeShare) useVoice.setState({ sharing: true });
@@ -3735,6 +3823,10 @@ async function startPeer(
       k: "a",
     });
     await applySendBitrate().catch(() => undefined);
+  } else if (recovering && micOvertaken) {
+    // A rebuild does not wait for a prompt: what it carried goes out first.
+    micOvertaken = false;
+    void refreshMic();
   } else if (!recovering) {
     const micRequest = ++micEpoch;
     try {
@@ -3749,6 +3841,7 @@ async function startPeer(
       if (seat.generation !== mine) {
         insert.dispose();
         stopTracks(stream);
+        resumeOvertakenMic(join);
         return;
       }
       if (micEpoch !== micRequest) {
@@ -3768,6 +3861,7 @@ async function startPeer(
             insert?.dispose();
             stopTracks(stream);
             pendingMicRaw.delete(stream);
+            if (seat.generation !== mine) resumeOvertakenMic(join);
             return;
           }
           if (!insert.usable()) {
@@ -3807,16 +3901,8 @@ async function startPeer(
         });
       }
     } catch (error) {
-      if (seat.generation === mine) {
-        deps?.onError?.(microphoneFailure(error));
-        noteAudioProcessing(null);
-        const info = useAudioProcessing.getState();
-        noteAudioProcessing({
-          ...info,
-          requested: useMediaSettings.getState().processingMode,
-          message: "Mikrofon konnte nicht aktiviert werden; du hörst weiter zu",
-        });
-      }
+      if (seat.generation !== mine) resumeOvertakenMic(join, error);
+      else reportJoinMicFailure(error);
     }
   }
 
