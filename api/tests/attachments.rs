@@ -508,3 +508,56 @@ async fn member_can_download_after_message_is_posted(pool: PgPool) {
     assert_eq!(headers["content-type"], "image/png");
     assert_eq!(bytes, png);
 }
+
+/// `?download=1` saves the file instead of showing it (#201 review): the
+/// picture link stays `inline`, the variant says `attachment`, with the exact
+/// name as `filename*` and a quote-free ASCII fallback.
+#[sqlx::test]
+async fn download_variant_asks_to_save_the_file(pool: PgPool) {
+    let (mut owner, mut member) = two_users(pool).await;
+    let server = server_with_member(&mut owner, &mut member).await;
+    let channel_id = text_channel_id(&server);
+    let png = [0x89, 1, 2, 3];
+    let name = "Bär \"1\".png";
+    let signed = presign_ok(&mut owner, &channel_id, name, "image/png", 4).await;
+    let attachment_id = signed["id"].as_str().unwrap();
+    put_object(&owner, attachment_id, "image/png", &png).await;
+    let posted = owner
+        .send(
+            Method::POST,
+            &format!("/api/channels/{channel_id}/messages"),
+            Some(json!({ "content": "", "attachment_ids": [attachment_id] })),
+        )
+        .await;
+    assert_eq!(posted.status, StatusCode::CREATED, "{}", posted.body);
+
+    let (status, headers, bytes) = member
+        .send_raw(
+            Method::GET,
+            &format!("/api/attachments/{attachment_id}"),
+            None,
+        )
+        .await;
+    assert_eq!(status, StatusCode::OK);
+    assert_eq!(
+        headers["content-disposition"],
+        "inline; filename=\"B_r _1_.png\"; filename*=UTF-8''B%C3%A4r%20%221%22.png"
+    );
+    assert_eq!(headers["vary"], "Cookie");
+    assert_eq!(bytes, png);
+
+    let (status, headers, bytes) = member
+        .send_raw(
+            Method::GET,
+            &format!("/api/attachments/{attachment_id}?download=1"),
+            None,
+        )
+        .await;
+    assert_eq!(status, StatusCode::OK);
+    assert_eq!(
+        headers["content-disposition"],
+        "attachment; filename=\"B_r _1_.png\"; filename*=UTF-8''B%C3%A4r%20%221%22.png"
+    );
+    assert_eq!(headers["content-type"], "image/png");
+    assert_eq!(bytes, png);
+}

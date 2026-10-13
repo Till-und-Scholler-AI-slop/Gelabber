@@ -9,10 +9,11 @@ pub mod cleanup;
 pub mod validate;
 
 use std::collections::HashMap;
+use std::time::SystemTime;
 
 use axum::Router;
-use axum::extract::State;
-use axum::http::header::{CACHE_CONTROL, CONTENT_DISPOSITION, CONTENT_TYPE};
+use axum::extract::{Query, State};
+use axum::http::header::{CACHE_CONTROL, CONTENT_DISPOSITION, CONTENT_TYPE, VARY};
 use axum::http::{HeaderMap, HeaderValue, StatusCode};
 use axum::response::{IntoResponse, Json, Redirect, Response};
 use axum::routing::{get, post};
@@ -28,7 +29,7 @@ use crate::limits;
 use crate::messages::{self, Message};
 use crate::path::Id;
 use crate::state::AppState;
-use crate::storage::{ObjectBody, ObjectStore, PUT_TTL, StoreError};
+use crate::storage::{self, ObjectBody, ObjectStore, PUT_TTL, StoreError};
 
 use self::validate::is_image;
 
@@ -198,10 +199,18 @@ async fn presign(
     ))
 }
 
+#[derive(Debug, Default, Deserialize)]
+struct DownloadParams {
+    /// `?download=1`: the file to save, not to show (see `ObjectStore::download`).
+    #[serde(default)]
+    download: Option<String>,
+}
+
 async fn download(
     State(state): State<AppState>,
     CurrentUser(user): CurrentUser,
     Id(attachment_id): Id,
+    Query(params): Query<DownloadParams>,
 ) -> Result<Response, ApiError> {
     let row = sqlx::query_as::<_, StoredRow>(
         "SELECT id, message_id, channel_id, uploader_id, object_key, \
@@ -220,44 +229,98 @@ async fn download(
     }
     messages::messaging_channel(&state.db, row.channel_id, user.id).await?;
 
-    match state.store.get(&row.object_key).await {
-        Ok(ObjectBody::Redirect(url)) => Ok(Redirect::temporary(&url).into_response()),
+    let save = params.download.as_deref() == Some("1");
+    let disposition = content_disposition(
+        if save || !is_image(&row.content_type) {
+            "attachment"
+        } else {
+            "inline"
+        },
+        &row.filename,
+    );
+    // One clock read: the link's signing window and the redirect's cache
+    // time must come from the same window.
+    let now = SystemTime::now();
+    let body = if save {
+        state
+            .store
+            .download(&row.object_key, &disposition, now)
+            .await
+    } else {
+        state.store.get(&row.object_key, now).await
+    };
+    match body {
+        Ok(ObjectBody::Redirect(url)) => {
+            let mut response = Redirect::temporary(&url).into_response();
+            let headers = response.headers_mut();
+            // The answer belongs to this session: after a logout, or for
+            // another account in the same browser, it is asked for anew.
+            headers.insert(VARY, HeaderValue::from_static("Cookie"));
+            if save {
+                // A click on "Herunterladen" is rare; check membership anew.
+                headers.insert(CACHE_CONTROL, HeaderValue::from_static("private, no-store"));
+            } else {
+                // The link is the same for the rest of its signing window;
+                // the browser may reuse this redirect until then.
+                let (_, left) = storage::get_window(now);
+                if let Ok(value) = HeaderValue::from_str(&format!("private, max-age={left}")) {
+                    headers.insert(CACHE_CONTROL, value);
+                }
+            }
+            Ok(response)
+        }
         Ok(ObjectBody::Bytes {
             content_type,
             bytes,
-        }) => Ok(inline_bytes(&row.filename, &content_type, bytes)),
+        }) => Ok(inline_bytes(&disposition, &content_type, bytes)),
         Err(StoreError::NotFound) => Err(ApiError::NotFound),
         Err(err) => Err(store_internal(err)),
     }
 }
 
-fn inline_bytes(filename: &str, content_type: &str, bytes: Vec<u8>) -> Response {
+fn inline_bytes(disposition: &str, content_type: &str, bytes: Vec<u8>) -> Response {
     let mut headers = HeaderMap::new();
     if let Ok(value) = HeaderValue::from_str(content_type) {
         headers.insert(CONTENT_TYPE, value);
     }
     headers.insert(
         CACHE_CONTROL,
-        HeaderValue::from_static("private, max-age=60"),
+        // Attachments never change; the membership check ran just now.
+        HeaderValue::from_static("private, max-age=3600"),
     );
-    let disposition = if is_image(content_type) {
-        format!("inline; filename=\"{}\"", sanitize_disposition(filename))
-    } else {
-        format!(
-            "attachment; filename=\"{}\"",
-            sanitize_disposition(filename)
-        )
-    };
-    if let Ok(value) = HeaderValue::from_str(&disposition) {
+    headers.insert(VARY, HeaderValue::from_static("Cookie"));
+    if let Ok(value) = HeaderValue::from_str(disposition) {
         headers.insert(CONTENT_DISPOSITION, value);
     }
     (headers, bytes).into_response()
 }
 
-fn sanitize_disposition(name: &str) -> String {
-    name.chars()
-        .map(|c| if c == '"' || c.is_control() { '_' } else { c })
-        .collect()
+/// `Content-Disposition` with an ASCII `filename` every browser reads and,
+/// for any other name, the exact one as RFC 6266 `filename*`. Quotes,
+/// backslashes and control characters never reach the header.
+fn content_disposition(kind: &str, filename: &str) -> String {
+    let ascii: String = filename
+        .chars()
+        .map(|c| {
+            if c == '"' || c == '\\' || c.is_control() || !c.is_ascii() {
+                '_'
+            } else {
+                c
+            }
+        })
+        .collect();
+    let mut value = format!("{kind}; filename=\"{ascii}\"");
+    if !filename.is_ascii() {
+        value.push_str("; filename*=UTF-8''");
+        for byte in filename.bytes() {
+            if byte.is_ascii_alphanumeric() || b"!#$&+-.^_`|~".contains(&byte) {
+                value.push(byte as char);
+            } else {
+                value.push_str(&format!("%{byte:02X}"));
+            }
+        }
+    }
+    value
 }
 
 /// Load attachments for a page of messages (one query).
@@ -367,5 +430,30 @@ fn store_internal(err: StoreError) -> ApiError {
     match err {
         StoreError::Unconfigured => ApiError::Internal("object store is not configured".into()),
         other => ApiError::Internal(format!("object store: {other}")),
+    }
+}
+
+#[cfg(test)]
+mod disposition_tests {
+    use super::content_disposition;
+
+    #[test]
+    fn ascii_names_stay_and_quotes_or_controls_never_reach_the_header() {
+        assert_eq!(
+            content_disposition("attachment", "pic.png"),
+            "attachment; filename=\"pic.png\""
+        );
+        assert_eq!(
+            content_disposition("inline", "a\"b\\c\r\nd.png"),
+            "inline; filename=\"a_b_c__d.png\""
+        );
+    }
+
+    #[test]
+    fn other_names_carry_the_exact_name_encoded() {
+        assert_eq!(
+            content_disposition("attachment", "Bär 1.png"),
+            "attachment; filename=\"B_r 1.png\"; filename*=UTF-8''B%C3%A4r%201.png"
+        );
     }
 }
