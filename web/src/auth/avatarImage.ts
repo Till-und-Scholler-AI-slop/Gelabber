@@ -5,8 +5,8 @@ export const AVATAR_INPUT_MAX = 20 * 1024 * 1024;
 
 /**
  * Crops the picked image to its centered square and scales it to
- * `AVATAR_SIZE`. WebP where the browser can encode it, PNG otherwise
- * (Safari). Animated GIFs keep their first frame.
+ * `AVATAR_SIZE`. WebP where the browser can encode it, otherwise JPEG, or
+ * PNG when the image has transparency. Animated GIFs keep their first frame.
  */
 export async function prepareAvatar(file: Blob): Promise<Blob> {
   if (file.size > AVATAR_INPUT_MAX) throw new AvatarImageError("too_large");
@@ -37,12 +37,32 @@ export async function prepareAvatar(file: Blob): Promise<Blob> {
     );
     const webp = await toBlob(canvas, "image/webp", 0.85);
     if (webp?.type === "image/webp") return webp;
+    // No WebP encoder (Safari, WebKitGTK in the Linux app): lossless PNG is
+    // several times larger, so only keep it where transparency needs it.
+    const pixels = context.getImageData(0, 0, AVATAR_SIZE, AVATAR_SIZE).data;
+    if (fallbackType(pixels) === "image/jpeg") {
+      const jpeg = await toBlob(canvas, "image/jpeg", 0.85);
+      if (jpeg?.type === "image/jpeg") return jpeg;
+    }
     const png = await toBlob(canvas, "image/png");
     if (!png) throw new AvatarImageError("unreadable");
     return png;
   } finally {
     bitmap.close();
   }
+}
+
+/**
+ * Format when WebP is unavailable: JPEG unless a pixel is not fully
+ * opaque (RGBA bytes, as from `getImageData`).
+ */
+export function fallbackType(
+  rgba: ArrayLike<number>,
+): "image/jpeg" | "image/png" {
+  for (let alpha = 3; alpha < rgba.length; alpha += 4) {
+    if (rgba[alpha] !== 255) return "image/png";
+  }
+  return "image/jpeg";
 }
 
 function toBlob(
