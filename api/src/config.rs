@@ -39,6 +39,9 @@ pub const API_RATE_MSG_PER_MIN: &str = "API_RATE_MSG_PER_MIN";
 pub const API_RATE_UPLOAD_PER_HOUR: &str = "API_RATE_UPLOAD_PER_HOUR";
 pub const API_UPLOAD_QUOTA_BYTES_PER_DAY: &str = "API_UPLOAD_QUOTA_BYTES_PER_DAY";
 pub const API_RATE_LOGIN_FAILURES_PER_ACCOUNT: &str = "API_RATE_LOGIN_FAILURES_PER_ACCOUNT";
+pub const API_RATE_GIF_PER_MIN: &str = "API_RATE_GIF_PER_MIN";
+pub const KLIPY_API_KEY: &str = "KLIPY_API_KEY";
+pub const KLIPY_CONTENT_FILTER: &str = "KLIPY_CONTENT_FILTER";
 /// Read by `telemetry::init`, not by `Config`, because the subscriber has to
 /// exist before anything else can be logged.
 pub const RUST_LOG: &str = "RUST_LOG";
@@ -107,7 +110,43 @@ pub struct Config {
     pub allow_memory_store: bool,
     /// Request windows and daily upload bytes (issue #16).
     pub limits: Limits,
+    /// GIF search through the API (Klipy). `None` turns GIFs off.
+    pub gifs: Option<GifConfig>,
 }
+
+/// Klipy is only ever called by the API: the key stays on the server and
+/// browsers load GIF bytes from `/api/gifs/media`, never from Klipy.
+#[derive(Clone, PartialEq, Eq)]
+pub struct GifConfig {
+    pub api_key: String,
+    /// `https://api.klipy.com`; tests point it at a local stand-in.
+    pub api_base: String,
+    /// Origins `/api/gifs/media` fetches from. Klipy's documented media
+    /// hosts; anything else is refused, so the proxy cannot be aimed
+    /// elsewhere.
+    pub media_origins: Vec<String>,
+    /// Klipy's `content_filter`: `off`, `low`, `medium` or `high`.
+    pub content_filter: String,
+}
+
+impl fmt::Debug for GifConfig {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        f.debug_struct("GifConfig")
+            .field("api_key", &"<redacted>")
+            .field("api_base", &self.api_base)
+            .field("media_origins", &self.media_origins)
+            .field("content_filter", &self.content_filter)
+            .finish()
+    }
+}
+
+pub const KLIPY_API_BASE: &str = "https://api.klipy.com";
+pub const KLIPY_MEDIA_ORIGINS: &[&str] = &[
+    "https://static.klipy.com",
+    "https://static1.klipy.com",
+    "https://static2.klipy.com",
+];
+const DEFAULT_KLIPY_CONTENT_FILTER: &str = "medium";
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct MinioConfig {
@@ -257,6 +296,7 @@ impl Config {
             None => false,
         };
         let limits = parse_limits(&get)?;
+        let gifs = parse_gifs(&get)?;
         if cookie_secure {
             refuse_public_defaults(
                 &database_url,
@@ -288,8 +328,49 @@ impl Config {
             minio,
             allow_memory_store,
             limits,
+            gifs,
         })
     }
+}
+
+fn parse_gifs(get: &impl Fn(&str) -> Option<String>) -> Result<Option<GifConfig>, ConfigError> {
+    let Some(api_key) = get(KLIPY_API_KEY).map(|key| key.trim().to_owned()) else {
+        return Ok(None);
+    };
+    // The key is a path segment of every Klipy URL.
+    if !api_key
+        .chars()
+        .all(|c| c.is_ascii_alphanumeric() || c == '-' || c == '_')
+    {
+        return Err(ConfigError::Invalid {
+            key: KLIPY_API_KEY,
+            value: "<redacted>".to_owned(),
+            reason: "expected letters, digits, '-' or '_'".to_owned(),
+        });
+    }
+    let content_filter = match get(KLIPY_CONTENT_FILTER) {
+        Some(raw) => {
+            let value = raw.trim().to_ascii_lowercase();
+            if !["off", "low", "medium", "high"].contains(&value.as_str()) {
+                return Err(invalid(
+                    KLIPY_CONTENT_FILTER,
+                    &raw,
+                    "expected off, low, medium or high",
+                ));
+            }
+            value
+        }
+        None => DEFAULT_KLIPY_CONTENT_FILTER.to_owned(),
+    };
+    Ok(Some(GifConfig {
+        api_key,
+        api_base: KLIPY_API_BASE.to_owned(),
+        media_origins: KLIPY_MEDIA_ORIGINS
+            .iter()
+            .map(|o| (*o).to_owned())
+            .collect(),
+        content_filter,
+    }))
 }
 
 fn parse_limits(get: &impl Fn(&str) -> Option<String>) -> Result<Limits, ConfigError> {
@@ -318,6 +399,10 @@ fn parse_limits(get: &impl Fn(&str) -> Option<String>) -> Result<Limits, ConfigE
         Some(raw) => parse_u32_allow_zero(API_RATE_LOGIN_FAILURES_PER_ACCOUNT, &raw)?,
         None => defaults.login_failures_per_account,
     };
+    let gif_per_min = match get(API_RATE_GIF_PER_MIN) {
+        Some(raw) => parse_u32_allow_zero(API_RATE_GIF_PER_MIN, &raw)?,
+        None => defaults.gif_per_min,
+    };
     Ok(Limits {
         auth_per_min,
         api_per_min,
@@ -325,6 +410,7 @@ fn parse_limits(get: &impl Fn(&str) -> Option<String>) -> Result<Limits, ConfigE
         upload_per_hour,
         upload_bytes_per_day,
         login_failures_per_account,
+        gif_per_min,
     })
 }
 
@@ -506,6 +592,62 @@ mod tests {
         assert_eq!(config.media_ticket_ttl, Duration::from_secs(30));
         assert!(config.minio.is_none());
         assert_eq!(config.limits, Limits::default());
+        assert!(config.gifs.is_none());
+    }
+
+    #[test]
+    fn klipy_key_turns_gifs_on_with_the_klipy_hosts() {
+        let config = Config::from_source(source(&[
+            (DATABASE_URL, "postgres://u:p@localhost/db"),
+            (REDIS_URL, "redis://localhost"),
+            (KLIPY_API_KEY, " key-123_A "),
+        ]))
+        .expect("valid config");
+        let gifs = config.gifs.expect("gifs on");
+        assert_eq!(gifs.api_key, "key-123_A");
+        assert_eq!(gifs.api_base, "https://api.klipy.com");
+        assert_eq!(gifs.content_filter, "medium");
+        assert!(
+            gifs.media_origins
+                .contains(&"https://static.klipy.com".to_owned())
+        );
+        assert!(!format!("{gifs:?}").contains("key-123_A"));
+
+        // Compose passes an unset key through as an empty value.
+        let config = Config::from_source(source(&[
+            (DATABASE_URL, "postgres://u:p@localhost/db"),
+            (REDIS_URL, "redis://localhost"),
+            (KLIPY_API_KEY, " "),
+        ]))
+        .expect("valid config");
+        assert!(config.gifs.is_none());
+    }
+
+    #[test]
+    fn rejects_an_unknown_klipy_filter_and_a_key_that_is_no_path_segment() {
+        let err = Config::from_source(source(&[
+            (DATABASE_URL, "postgres://u:p@localhost/db"),
+            (REDIS_URL, "redis://localhost"),
+            (KLIPY_API_KEY, "key"),
+            (KLIPY_CONTENT_FILTER, "strict"),
+        ]))
+        .unwrap_err();
+        assert!(matches!(
+            err,
+            ConfigError::Invalid {
+                key: KLIPY_CONTENT_FILTER,
+                ..
+            }
+        ));
+        let err = Config::from_source(source(&[
+            (DATABASE_URL, "postgres://u:p@localhost/db"),
+            (REDIS_URL, "redis://localhost"),
+            (KLIPY_API_KEY, "a/b?c"),
+        ]))
+        .unwrap_err();
+        assert!(
+            matches!(err, ConfigError::Invalid { key: KLIPY_API_KEY, ref value, .. } if value == "<redacted>")
+        );
     }
 
     #[test]

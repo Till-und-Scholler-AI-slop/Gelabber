@@ -57,6 +57,9 @@ pub enum ApiError {
     RateLimited { retry_after: u64 },
     /// 429: the caller's daily upload byte quota is full.
     QuotaExceeded,
+    /// 502: an outside service the API relays (the GIF provider) failed.
+    /// The string is logged, not returned.
+    Upstream(String),
     /// 500: anything unexpected. The string is logged, not returned.
     Internal(String),
 }
@@ -88,6 +91,7 @@ impl ApiError {
             Self::Banned => "banned",
             Self::RateLimited { .. } => "rate_limited",
             Self::QuotaExceeded => "quota_exceeded",
+            Self::Upstream(_) => "upstream_unavailable",
             Self::Internal(_) => "internal",
         }
     }
@@ -104,6 +108,7 @@ impl ApiError {
             Self::EmailTaken | Self::ThemeConflict => StatusCode::CONFLICT,
             Self::InviteInvalid => StatusCode::GONE,
             Self::RateLimited { .. } | Self::QuotaExceeded => StatusCode::TOO_MANY_REQUESTS,
+            Self::Upstream(_) => StatusCode::BAD_GATEWAY,
             Self::Internal(_) => StatusCode::INTERNAL_SERVER_ERROR,
         }
     }
@@ -126,6 +131,7 @@ impl ApiError {
             Self::Banned => "You are banned from this server.",
             Self::RateLimited { .. } => "Too many requests. Try again in a moment.",
             Self::QuotaExceeded => "Daily upload quota reached.",
+            Self::Upstream(_) => "The GIF service did not answer. Try again in a moment.",
             Self::Internal(_) => "Something went wrong on our side.",
         }
     }
@@ -153,6 +159,7 @@ impl IntoResponse for ApiError {
     fn into_response(self) -> Response {
         match &self {
             Self::Internal(detail) => error!(error = %detail, "request failed"),
+            Self::Upstream(detail) => tracing::warn!(error = %detail, "upstream failed"),
             Self::BadRequest(detail) => tracing::debug!(error = %detail, "bad request"),
             _ => {}
         }
