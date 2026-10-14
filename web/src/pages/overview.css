@@ -132,20 +132,78 @@
   flex-direction: column;
   gap: 22px;
 }
-.member-profile__person {
-  display: flex;
-  align-items: center;
-  gap: 20px;
-  min-width: 0;
+.profile-card {
+  --lr-bg: var(--lr-panel);
+  position: relative;
+  overflow: hidden;
+  border: 1px solid var(--lr-border);
+  border-radius: 14px;
+  background: var(--lr-panel);
+  color: var(--lr-text);
 }
-.member-profile__person h3 {
-  font-size: 25px;
+.profile-card__banner {
+  height: 96px;
+  background: color-mix(
+    in srgb,
+    var(--profile-accent, var(--lr-accent)) 65%,
+    var(--lr-panel)
+  );
+}
+.profile-card__banner img {
+  display: block;
+  width: 100%;
+  height: 100%;
+  object-fit: cover;
+}
+.profile-card__avatar {
+  position: absolute;
+  top: 60px;
+  left: 18px;
+  display: inline-flex;
+  padding: 4px;
+  border-radius: 50%;
+  background: var(--lr-panel);
+}
+.profile-card__body {
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+  min-width: 0;
+  padding: 46px 18px 18px;
+}
+.profile-card__identity h3 {
+  font-size: 22px;
   font-weight: 650;
   overflow-wrap: anywhere;
 }
-.member-profile__person p {
-  margin-top: 4px;
+.profile-card__pronouns,
+.profile-card__presence {
+  margin-top: 2px;
   color: var(--lr-muted);
+  font-size: 13px;
+  overflow-wrap: anywhere;
+}
+.profile-card__status {
+  padding: 8px 10px;
+  border-left: 3px solid var(--profile-accent, var(--lr-accent));
+  border-radius: 8px;
+  background: var(--lr-surface);
+  font-size: 14px;
+  overflow-wrap: anywhere;
+}
+.profile-card__about h4 {
+  margin-bottom: 4px;
+  color: var(--lr-muted);
+  font-size: 11px;
+  font-weight: 650;
+  letter-spacing: 0.6px;
+  text-transform: uppercase;
+}
+.profile-card__about p {
+  font-size: 14px;
+  line-height: 1.45;
+  white-space: pre-line;
+  overflow-wrap: anywhere;
 }
 .member-profile__details {
   display: grid;
