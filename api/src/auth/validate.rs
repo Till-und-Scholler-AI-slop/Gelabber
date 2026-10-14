@@ -299,6 +299,7 @@ mod tests {
             Some(&"invalid")
         );
         assert_eq!(run(|e| bio("a\tb", e)).1.get("bio"), Some(&"invalid"));
+        assert_eq!(run(|e| bio("a\u{85}b", e)).1.get("bio"), Some(&"invalid"));
         assert!(run(|e| bio(&"ä".repeat(BIO_MAX), e)).0.is_some());
         assert_eq!(
             run(|e| bio(&"x".repeat(BIO_MAX + 1), e)).1.get("bio"),
