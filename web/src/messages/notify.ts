@@ -123,11 +123,16 @@ export function createNotificationPacing(gapMs = 5_000) {
   };
 }
 
-export function previewText(content: string, hasAttachment: boolean): string {
+export function previewText(
+  content: string,
+  hasAttachment: boolean,
+  isGif = false,
+): string {
   const trimmed = content.trim().replace(/\s+/g, " ");
   if (trimmed) {
     return trimmed.length > 140 ? `${trimmed.slice(0, 137)}…` : trimmed;
   }
+  if (isGif) return "GIF";
   return hasAttachment ? "Datei" : "Neue Nachricht";
 }
 

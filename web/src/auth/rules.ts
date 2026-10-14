@@ -123,7 +123,9 @@ type FieldName =
   | "filename"
   | "content_type"
   | "size"
-  | "attachment_ids";
+  | "attachment_ids"
+  | "gif"
+  | "q";
 
 const FIELD_LABEL: Record<FieldName, string> = {
   email: "E-Mail-Adresse",
@@ -145,6 +147,8 @@ const FIELD_LABEL: Record<FieldName, string> = {
   content_type: "Dateityp",
   size: "Datei",
   attachment_ids: "Anhang",
+  gif: "GIF",
+  q: "Suche",
 };
 
 /** German inline copy for a field code. Unknown fields fall back to generic text. */
@@ -167,6 +171,12 @@ export function fieldMessage(field: string, code: FieldCode): string {
       return "Das Passwort stimmt nicht.";
     case "stale":
       return "Dein Bild wurde inzwischen woanders geändert. Lade die Seite neu.";
+    case "exclusive":
+      return "Ein GIF wird ohne Text und Anhang gesendet.";
+    case "unavailable":
+      return "GIFs sind auf diesem Server nicht eingerichtet.";
+    case "not_editable":
+      return "Ein GIF lässt sich nicht bearbeiten.";
     case "invalid":
       switch (field) {
         case "email":
@@ -208,6 +218,8 @@ export function errorMessage(code: ApiErrorCode): string {
       return "Zu viele Anfragen. Bitte kurz warten und noch einmal versuchen.";
     case "quota_exceeded":
       return "Tageslimit für Uploads erreicht.";
+    case "upstream_unavailable":
+      return "Der GIF-Dienst antwortet gerade nicht. Bitte gleich noch einmal versuchen.";
     case "validation_failed":
       return "Bitte die markierten Felder prüfen.";
     case "timeout":

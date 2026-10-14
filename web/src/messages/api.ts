@@ -1,4 +1,5 @@
 import { ApiError, api } from "../api/client.ts";
+import type { GifPick } from "../gifs/api.ts";
 import type {
   ListMessagesParams,
   Message,
@@ -29,10 +30,13 @@ export const createMessage = (
   channelId: string,
   content: string,
   attachmentIds: string[] = [],
+  gif?: GifPick,
 ) =>
   api<Message>(`/channels/${channelId}/messages`, {
     method: "POST",
-    body: { content, attachment_ids: attachmentIds },
+    body: gif
+      ? { content: "", gif: { slug: gif.slug, query: gif.query } }
+      : { content, attachment_ids: attachmentIds },
   });
 
 export const updateMessage = (id: string, content: string) =>
