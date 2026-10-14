@@ -668,6 +668,14 @@ html[data-compact-rooms="true"] .voice-room-participant {
     inset 0 0 14px 2px color-mix(in srgb, var(--lr-speaking) 35%, transparent);
   animation: lr-speaking-tile 1.2s ease-in-out infinite;
 }
+@media (prefers-reduced-motion: reduce) {
+  .voice-video-tile.is-speaking::after {
+    animation: none;
+  }
+}
+html[data-reduced-motion="true"] .voice-video-tile.is-speaking::after {
+  animation: none;
+}
 @keyframes lr-speaking-tile {
   50% {
     box-shadow:
@@ -686,6 +694,7 @@ html[data-compact-rooms="true"] .voice-room-participant {
 .voice-session-people .gel-avatar {
   --avatar-size: 22px;
   font-size: 9px;
+  background: var(--lr-panel);
 }
 .voice-session-people-more {
   color: var(--lr-muted);

@@ -781,6 +781,14 @@ summary {
       0 0 8px 4px color-mix(in srgb, var(--lr-speaking) 45%, transparent);
   }
 }
+@media (prefers-reduced-motion: reduce) {
+  .gel-avatar.is-speaking {
+    animation: none;
+  }
+}
+html[data-reduced-motion="true"] .gel-avatar.is-speaking {
+  animation: none;
+}
 .gel-avatar-md {
   --avatar-size: 36px;
   font-size: 14px;
