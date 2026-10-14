@@ -57,7 +57,10 @@ redis.call('SET', KEYS[1], '0', 'NX')
 return {redis.call('GET', KEYS[1]), epoch, redis.call('LRANGE', KEYS[2], 0, -1)}
 "#;
 
-pub const OUTBOUND_CAPACITY: usize = 128;
+/// A reconnecting socket receives one presence frame per member that comes
+/// back with it while it is still busy subscribing, so this bounds how many
+/// members can reconnect at once (after a deploy) without overflowing.
+pub const OUTBOUND_CAPACITY: usize = 1024;
 const CATCH_UP_CAPACITY: usize = 128;
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
