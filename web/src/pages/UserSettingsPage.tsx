@@ -9,6 +9,7 @@ import {
   PaletteIcon,
 } from "../components/Icons.tsx";
 import { MediaSettingsForm } from "../voice/VoiceSettings.tsx";
+import { confirmDiscardThemeDraft } from "../theme/discardDraft.ts";
 import { ThemesPanel } from "../theme/ThemesPanel.tsx";
 import { useInterfacePreferences } from "../interface/preferences.ts";
 import { NotificationPermissionStatus } from "../components/NotificationPermission.tsx";
@@ -84,11 +85,11 @@ export function UserSettingsPage() {
                 type="button"
                 aria-current={area === id ? "page" : undefined}
                 aria-controls="settings-content"
-                onClick={() => {
+                onClick={async () => {
                   if (
                     id !== area &&
                     themeDirty &&
-                    !window.confirm("Ungespeicherten Theme-Entwurf verwerfen?")
+                    !(await confirmDiscardThemeDraft())
                   )
                     return;
                   setArea(id);
