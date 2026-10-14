@@ -24,6 +24,7 @@ import {
 } from "../voice/roster.ts";
 import { can } from "../servers/permissions.ts";
 import { useMenuDetails } from "./menuDetails.ts";
+import { moveWithinRow, ROW_ITEM } from "./rowKeys.ts";
 import { buildRows, type Row } from "../servers/rows.ts";
 import {
   isPendingId,
@@ -52,7 +53,6 @@ import {
 } from "./Icons.tsx";
 import { UserPanel } from "./UserPanel.tsx";
 import { InviteDialog } from "./InviteDialog.tsx";
-import { moveWithinRow, ROW_ITEM } from "./rowKeys.ts";
 import {
   CategoryDialog,
   ChannelDialog,
