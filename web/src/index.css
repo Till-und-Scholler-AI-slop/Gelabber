@@ -607,6 +607,26 @@ summary {
   font-size: 14px;
   line-height: 1.6;
 }
+.sidebar-failed {
+  display: flex;
+  flex-direction: column;
+  align-items: flex-start;
+  gap: 12px;
+}
+.sidebar-failed button {
+  min-height: 36px;
+  padding: 0 12px;
+  border: 1px solid var(--lr-border);
+  border-radius: var(--lr-radius-small);
+  color: var(--lr-text);
+  font-weight: 600;
+}
+.sidebar-failed button:hover:not(:disabled) {
+  background: var(--lr-hover);
+}
+.sidebar-failed button:disabled {
+  opacity: 0.6;
+}
 .sidebar-skeleton {
   flex: 1;
   padding: 24px 18px;

@@ -9,7 +9,13 @@ import { useServers } from "../servers/queries.ts";
 
 export function WorkspaceIndexPage() {
   const user = useSession((state) => state.user);
-  const { data: servers, isPending, isError } = useServers();
+  const {
+    data: servers,
+    isPending,
+    isError,
+    isFetching,
+    refetch,
+  } = useServers();
   const [creating, setCreating] = useState(false);
 
   const first = servers?.[0];
@@ -27,12 +33,25 @@ export function WorkspaceIndexPage() {
       <h1 className="text-3xl font-semibold tracking-tight">
         {user ? `Hallo ${user.name}` : "Hallo"}
       </h1>
-      <p className="text-neutral-600 dark:text-neutral-400">
+      <p
+        role={isError ? "alert" : undefined}
+        className="text-neutral-600 dark:text-neutral-400"
+      >
         {isError
           ? "Deine Server konnten gerade nicht geladen werden."
           : "Du bist noch in keinem Server. Erstelle einen — oder öffne einen Einladungslink, den dir jemand geschickt hat."}
       </p>
-      <div>
+      <div className="flex flex-wrap gap-3">
+        {isError ? (
+          <button
+            type="button"
+            disabled={isFetching}
+            onClick={() => void refetch()}
+            className="rounded-lg border border-neutral-300 dark:border-neutral-600 px-4 py-2 text-sm font-medium transition hover:bg-neutral-100 dark:hover:bg-neutral-800 disabled:opacity-50"
+          >
+            {isFetching ? "Wird geladen…" : "Erneut versuchen"}
+          </button>
+        ) : null}
         <button
           type="button"
           onClick={() => setCreating(true)}

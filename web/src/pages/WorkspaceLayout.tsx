@@ -136,7 +136,7 @@ function SelectedServer({
   const client = useQueryClient();
   const navigate = useNavigate();
   const userId = useUserId();
-  const { data: server, error } = useServer(serverId);
+  const { data: server, error, isFetching, refetch } = useServer(serverId);
   const gone =
     error instanceof ApiError &&
     (error.code === "not_found" || error.code === "forbidden");
@@ -157,6 +157,12 @@ function SelectedServer({
       sidebar={
         server ? (
           <ChannelSidebar server={server} activeChannelId={channelId} />
+        ) : error ? (
+          <SidebarFailed
+            message="Die Kanäle konnten gerade nicht geladen werden."
+            pending={isFetching}
+            onRetry={() => void refetch()}
+          />
         ) : (
           <SidebarSkeleton />
         )
@@ -166,18 +172,48 @@ function SelectedServer({
 }
 
 function SelectedDms({ channelId }: { channelId: string | undefined }) {
-  const { data: dms } = useDms();
+  const { data: dms, error, isFetching, refetch } = useDms();
   return (
     <WorkspaceFrame
       dmActive
       sidebar={
         dms ? (
           <DmSidebar dms={dms} activeChannelId={channelId} />
+        ) : error ? (
+          <SidebarFailed
+            message="Deine Unterhaltungen konnten gerade nicht geladen werden."
+            pending={isFetching}
+            onRetry={() => void refetch()}
+          />
         ) : (
           <SidebarSkeleton />
         )
       }
     />
+  );
+}
+
+/** The page beside it carries the alert; this only offers the retry. */
+function SidebarFailed({
+  message,
+  pending,
+  onRetry,
+}: {
+  message: string;
+  pending: boolean;
+  onRetry: () => void;
+}) {
+  return (
+    <aside className="channel-sidebar" aria-label="Navigation">
+      <div className="sidebar-brand">Gelabber</div>
+      <div className="sidebar-empty sidebar-failed">
+        <p>{message}</p>
+        <button type="button" disabled={pending} onClick={onRetry}>
+          {pending ? "Wird geladen…" : "Erneut versuchen"}
+        </button>
+      </div>
+      <UserPanel />
+    </aside>
   );
 }
 

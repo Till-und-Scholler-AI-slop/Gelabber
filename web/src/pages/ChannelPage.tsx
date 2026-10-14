@@ -6,6 +6,7 @@ import { useEffect, type ReactNode } from "react";
 
 import { useUserId } from "../auth/scope.ts";
 import { HashIcon, SpeakerIcon } from "../components/Icons.tsx";
+import { LoadError } from "../components/LoadError.tsx";
 import { MemberPanel, MemberPanelToggle } from "../components/MemberPanel.tsx";
 import { MessagePane } from "../components/MessagePane.tsx";
 import "../components/chat.css";
@@ -23,7 +24,7 @@ export function ChannelPage() {
   const { serverId, channelId } = useParams({
     from: "/workspace/s/$serverId/c/$channelId",
   });
-  const { data: server } = useServer(serverId);
+  const { data: server, error, isFetching, refetch } = useServer(serverId);
   const userId = useUserId();
   const remember = useLastChannel((s) => s.remember);
   const channel = server?.channels.find((c) => c.id === channelId);
@@ -32,6 +33,16 @@ export function ChannelPage() {
     if (channel && userId) remember(userId, serverId, channel.id);
   }, [channel, serverId, remember, userId]);
 
+  if (error && !server)
+    return (
+      <div className="p-6">
+        <LoadError
+          message="Dieser Kanal konnte gerade nicht geladen werden."
+          pending={isFetching}
+          onRetry={() => void refetch()}
+        />
+      </div>
+    );
   if (!server) return null;
   if (!channel) {
     return <Redirect to="/s/$serverId" params={{ serverId }} />;
