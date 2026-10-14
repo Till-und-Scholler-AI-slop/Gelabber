@@ -10,8 +10,11 @@ import type { MediaSender, ReceivedSource } from "./mediasoupConnection.ts";
 import { useVoice, voiceMicrophones } from "./session.ts";
 
 /** RMS share of full scale (about -34 dBFS) that counts as speech; the
- * meters below all report on that scale. */
+ * readers below all report on that scale. */
 export const SPEAKING_LEVEL = 0.02;
+/** libwebrtc's stats `audioLevel` is the peak sample of about 100 ms, where
+ * speech runs some three times its RMS. */
+const PEAK_PER_RMS = 3;
 /** Pauses between words shorter than this keep the indicator on. */
 export const SPEAKING_HOLD_MS = 400;
 /** A received level this old belongs to a source that went quiet (DTX). */
@@ -93,7 +96,7 @@ export async function receiverLevel(
   let level: number | null = null;
   report.forEach((entry: { type?: string; audioLevel?: unknown }) => {
     if (entry.type === "inbound-rtp" && typeof entry.audioLevel === "number")
-      level = entry.audioLevel;
+      level = entry.audioLevel / PEAK_PER_RMS;
   });
   return level;
 }
@@ -103,13 +106,22 @@ function clocks() {
   return { epoch: performance.timeOrigin + page, page };
 }
 
-type NativeConsumerLevel = { playoutLevel?: () => Promise<number | null> };
+type NativeConsumerLevel = {
+  playoutLevel?: () => Promise<{ level: number; samples: number } | null>;
+};
+
+/** Samples each native consumer had played at the last poll. */
+const playedSamples = new WeakMap<object, number>();
 
 async function receivedLevel(source: ReceivedSource): Promise<number | null> {
   const consumer = source.consumer as unknown as NativeConsumerLevel;
   if (typeof consumer.playoutLevel === "function") {
-    const level = await consumer.playoutLevel();
-    return level === null ? null : level / NATIVE_METER_SCALE;
+    const meter = await consumer.playoutLevel();
+    if (meter === null) return null;
+    // The meter keeps its last window while playout pulls no audio.
+    const moved = playedSamples.get(consumer) !== meter.samples;
+    playedSamples.set(consumer, meter.samples);
+    return moved ? meter.level / NATIVE_METER_SCALE : 0;
   }
   return source.rtpReceiver ? receiverLevel(source.rtpReceiver) : null;
 }
@@ -127,7 +139,7 @@ export async function senderLevel(
         entry.kind === "audio" &&
         typeof entry.audioLevel === "number"
       )
-        level = entry.audioLevel;
+        level = entry.audioLevel / PEAK_PER_RMS;
     },
   );
   return level;
@@ -191,7 +203,8 @@ class TrackMeter {
 export function watchSpeaking(): () => void {
   let timer: ReturnType<typeof setInterval> | null = null;
   let polling = false;
-  let stopped = false;
+  /** Moves on with every leave and on stop: a poll from before is void. */
+  let session = 0;
   let call: string | null = null;
   const lastLoud = new Map<string, number>();
   const meter = new TrackMeter();
@@ -199,7 +212,7 @@ export function watchSpeaking(): () => void {
   /** Whether the browser reports the send track's level; null: not asked. */
   let senderReports: boolean | null = null;
 
-  async function selfLevel(sender: MediaSender | undefined) {
+  async function selfLevel(sender: MediaSender | undefined, mine: number) {
     if (isDesktopApp()) {
       const levels = await invokeNative<{ processed: number; blocks: number }>(
         "media_audio_levels",
@@ -216,7 +229,7 @@ export function watchSpeaking(): () => void {
       senderReports = level !== null;
       if (level !== null) return level;
     }
-    return meter.level(track);
+    return session === mine ? meter.level(track) : null;
   }
 
   async function poll() {
@@ -224,6 +237,7 @@ export function watchSpeaking(): () => void {
     if (state.status !== "joined" || !state.serverId || !state.channelId)
       return;
     const current = callKey(state.serverId, state.channelId);
+    const mine = session;
     const { self, sender, received } = voiceMicrophones();
     const levels = new Map<string, number>();
     const note = (user: string, level: number | null) => {
@@ -232,7 +246,7 @@ export function watchSpeaking(): () => void {
     };
     await Promise.all([
       self && !state.muted && !state.deafened
-        ? selfLevel(sender).then(
+        ? selfLevel(sender, mine).then(
             (level) => note(self, level),
             () => undefined,
           )
@@ -253,7 +267,7 @@ export function watchSpeaking(): () => void {
     ]);
     const after = useVoice.getState();
     if (
-      stopped ||
+      session !== mine ||
       after.status !== "joined" ||
       after.serverId !== state.serverId ||
       after.channelId !== state.channelId
@@ -297,6 +311,7 @@ export function watchSpeaking(): () => void {
     }
     if (timer !== null) clearInterval(timer);
     timer = null;
+    session++;
     call = null;
     lastLoud.clear();
     nativeBlocks = -1;
@@ -308,7 +323,7 @@ export function watchSpeaking(): () => void {
   const unsubscribe = useVoice.subscribe(sync);
   sync();
   return () => {
-    stopped = true;
+    session++;
     unsubscribe();
     if (timer !== null) clearInterval(timer);
     timer = null;

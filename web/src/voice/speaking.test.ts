@@ -101,7 +101,7 @@ describe("receiverLevel", () => {
     ).toBe(0);
   });
 
-  it("falls back to the decoder's level without the header extension", async () => {
+  it("falls back to the decoder's peak level, on the RMS scale", async () => {
     const r = receiver(
       [],
       [
@@ -109,7 +109,7 @@ describe("receiverLevel", () => {
         { type: "inbound-rtp", kind: "audio", audioLevel: 0.12 },
       ],
     );
-    expect(await receiverLevel(r, now)).toBe(0.12);
+    expect(await receiverLevel(r, now)).toBeCloseTo(0.04);
   });
 
   it("reports nothing where the browser knows no level", async () => {
@@ -120,7 +120,7 @@ describe("receiverLevel", () => {
 });
 
 describe("senderLevel", () => {
-  it("reads the audio media-source", async () => {
+  it("reads the audio media-source's peak on the RMS scale", async () => {
     const sender = {
       getStats: async () =>
         new Map([
@@ -128,7 +128,7 @@ describe("senderLevel", () => {
           ["a", { type: "media-source", kind: "audio", audioLevel: 0.4 }],
         ]),
     } as unknown as RTCRtpSender;
-    expect(await senderLevel(sender)).toBe(0.4);
+    expect(await senderLevel(sender)).toBeCloseTo(0.4 / 3);
   });
 });
 
@@ -200,7 +200,8 @@ describe("watchSpeaking", () => {
     const invoke = vi.fn(async (command: string) => {
       if (command === "media_audio_levels")
         return { processed: 30, blocks: invoke.mock.calls.length };
-      if (command === "media_consumer_stats") return { audioLevel: 20 };
+      if (command === "media_consumer_stats")
+        return { audioLevel: 20, samplesPlayed: invoke.mock.calls.length };
       throw new Error(command);
     });
     setNativeBridgeForTests({ invoke, channel: async () => null } as never);
@@ -212,9 +213,13 @@ describe("watchSpeaking", () => {
         consumer: {
           closed: false,
           paused: false,
-          playoutLevel: async () =>
-            ((await invoke("media_consumer_stats")) as { audioLevel: number })
-              .audioLevel,
+          playoutLevel: async () => {
+            const stats = (await invoke("media_consumer_stats")) as {
+              audioLevel: number;
+              samplesPlayed: number;
+            };
+            return { level: stats.audioLevel, samples: stats.samplesPlayed };
+          },
         },
       },
     ];
@@ -228,5 +233,58 @@ describe("watchSpeaking", () => {
     join({ muted: true });
     await vi.advanceTimersByTimeAsync(260);
     expect(useSpeakingStore.getState().users).toEqual({ u1: true });
+  });
+
+  it("does not take a frozen native playout meter for speech", async () => {
+    setNativeBridgeForTests({
+      invoke: async () => ({ processed: 0, blocks: 1 }),
+      channel: async () => null,
+    } as never);
+    fixture.microphones.received = [
+      {
+        owner: "u1",
+        kind: "audio",
+        k: "a",
+        consumer: {
+          closed: false,
+          paused: false,
+          playoutLevel: async () => ({ level: 40, samples: 4800 }),
+        },
+      },
+    ];
+    stop = watchSpeaking();
+    join();
+    await vi.advanceTimersByTimeAsync(260);
+    expect(useSpeakingStore.getState().users).toEqual({ u1: true });
+    await vi.advanceTimersByTimeAsync(SPEAKING_HOLD_MS + 300);
+    expect(useSpeakingStore.getState().users).toEqual({});
+  });
+
+  it("drops a poll that outlived a leave, even into the same channel", async () => {
+    let release: (value: unknown) => void = () => {};
+    const pending = remote("u1", () => 0.3);
+    (
+      pending.rtpReceiver as { getSynchronizationSources: () => never[] }
+    ).getSynchronizationSources = () => [];
+    (pending.rtpReceiver as { getStats: () => Promise<unknown> }).getStats =
+      () =>
+        new Promise((resolve) => {
+          release = () =>
+            resolve(new Map([["a", { type: "inbound-rtp", audioLevel: 0.9 }]]));
+        });
+    fixture.microphones.received = [pending];
+    stop = watchSpeaking();
+    join();
+    await vi.advanceTimersByTimeAsync(130);
+    useVoice.setState({
+      status: "idle",
+      serverId: null,
+      channelId: null,
+    } as never);
+    fixture.microphones.received = [];
+    join();
+    release(undefined);
+    await vi.advanceTimersByTimeAsync(0);
+    expect(useSpeakingStore.getState().users).toEqual({});
   });
 });
