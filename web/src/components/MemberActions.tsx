@@ -6,6 +6,10 @@ import { can } from "../servers/permissions.ts";
 import { useBanMember, useKickMember } from "../servers/queries.ts";
 import type { Member, Server } from "../servers/types.ts";
 
+// Big enough to hit, and a finger's width on touch screens.
+const ACTION =
+  "inline-flex min-h-8 items-center rounded-lg border px-3 text-sm font-medium transition pointer-coarse:min-h-11 pointer-coarse:px-4";
+
 export function MemberActions({
   server,
   member,
@@ -20,7 +24,7 @@ export function MemberActions({
   if (member.role === "owner" || member.user_id === me) return null;
 
   return (
-    <span className="flex shrink-0 items-center gap-1">
+    <span className="flex shrink-0 items-center gap-2">
       <button
         type="button"
         onClick={() => {
@@ -32,7 +36,8 @@ export function MemberActions({
             kick.mutate(member.user_id);
           }
         }}
-        className="rounded-md px-1.5 py-0.5 text-xs font-medium text-neutral-600 dark:text-neutral-400 hover:bg-neutral-100 dark:hover:bg-neutral-800 hover:text-neutral-900 dark:hover:text-neutral-100"
+        aria-label={`Kick ${member.name}`}
+        className={`${ACTION} border-neutral-300 dark:border-neutral-700 text-neutral-700 dark:text-neutral-300 hover:bg-neutral-100 dark:hover:bg-neutral-800 hover:text-neutral-900 dark:hover:text-neutral-100`}
       >
         Kick
       </button>
@@ -47,7 +52,8 @@ export function MemberActions({
             ban.mutate(member.user_id);
           }
         }}
-        className="rounded-md px-1.5 py-0.5 text-xs font-medium text-red-700 dark:text-red-300 hover:bg-red-50 dark:hover:bg-red-950"
+        aria-label={`Ban ${member.name}`}
+        className={`${ACTION} border-red-300 dark:border-red-800 text-red-700 dark:text-red-300 hover:bg-red-50 dark:hover:bg-red-950`}
       >
         Ban
       </button>
