@@ -7,6 +7,7 @@ import { Link, useNavigate, useRouterState } from "@tanstack/react-router";
 import { useVirtualizer } from "@tanstack/react-virtual";
 import {
   useEffect,
+  useId,
   useMemo,
   useRef,
   useState,
@@ -51,6 +52,7 @@ import {
 } from "./Icons.tsx";
 import { UserPanel } from "./UserPanel.tsx";
 import { InviteDialog } from "./InviteDialog.tsx";
+import { moveWithinRow, ROW_ITEM } from "./rowKeys.ts";
 import {
   CategoryDialog,
   ChannelDialog,
@@ -324,6 +326,7 @@ function ChannelList({
   const deleteChannel = useDeleteChannel(server.id);
   const deleteCategory = useDeleteCategory(server.id);
   const navigate = useNavigate();
+  const rowHintId = useId();
 
   if (rows.length === 0) {
     return <p className="sidebar-empty">Noch keine Kanäle.</p>;
@@ -331,6 +334,11 @@ function ChannelList({
 
   return (
     <div ref={scrollRef} className="sidebar-list-scroll">
+      {manageChannels ? (
+        <p id={rowHintId} className="sr-only">
+          Weitere Aktionen mit den Pfeiltasten links und rechts.
+        </p>
+      ) : null}
       <div style={{ height: virtualizer.getTotalSize() }} className="relative">
         {virtualizer.getVirtualItems().map((item) => {
           const row = rows[item.index];
@@ -348,6 +356,7 @@ function ChannelList({
                 <CategoryRow
                   category={row.category}
                   manage={manageChannels}
+                  hintId={rowHintId}
                   onAdd={() => onCreateChannel(row.category.id)}
                   onEdit={() => onEditCategory(row.category)}
                   onDelete={() => {
@@ -366,6 +375,7 @@ function ChannelList({
                   inVoice={row.channel.id === voiceChannelId}
                   live={Boolean(liveChannels[row.channel.id])}
                   manage={manageChannels}
+                  hintId={rowHintId}
                   onEdit={() => onEditChannel(row.channel)}
                   onDelete={() => {
                     if (!window.confirm(`Kanal „${row.channel.name}“ löschen?`))
@@ -422,12 +432,14 @@ function ParticipantRowView({ row }: { row: ParticipantRow }) {
 function CategoryRow({
   category,
   manage,
+  hintId,
   onAdd,
   onEdit,
   onDelete,
 }: {
   category: Category;
   manage: boolean;
+  hintId: string;
   onAdd: () => void;
   onEdit: () => void;
   onDelete: () => void;
@@ -439,17 +451,28 @@ function CategoryRow({
         "group sidebar-category-row",
         pending ? "opacity-50" : "",
       ].join(" ")}
+      onKeyDown={moveWithinRow}
     >
       <span className="sidebar-category-name">{category.name}</span>
       {manage && !pending ? (
         <span className="sidebar-row-actions flex shrink-0 items-center opacity-0 transition group-focus-within:opacity-100 group-hover:opacity-100">
-          <IconButton label="Kanal in dieser Kategorie" onClick={onAdd} small>
+          <IconButton
+            label="Kanal in dieser Kategorie"
+            onClick={onAdd}
+            small
+            describedBy={hintId}
+          >
             <PlusIcon size={14} />
           </IconButton>
-          <IconButton label="Kategorie umbenennen" onClick={onEdit} small>
+          <IconButton
+            label="Kategorie umbenennen"
+            onClick={onEdit}
+            small
+            roving
+          >
             <PencilIcon size={14} />
           </IconButton>
-          <IconButton label="Kategorie löschen" onClick={onDelete} small>
+          <IconButton label="Kategorie löschen" onClick={onDelete} small roving>
             <TrashIcon size={14} />
           </IconButton>
         </span>
@@ -464,6 +487,7 @@ function ChannelRow({
   inVoice,
   live,
   manage,
+  hintId,
   onEdit,
   onDelete,
 }: {
@@ -472,6 +496,7 @@ function ChannelRow({
   inVoice: boolean;
   live: boolean;
   manage: boolean;
+  hintId: string;
   onEdit: () => void;
   onDelete: () => void;
 }) {
@@ -496,7 +521,7 @@ function ChannelRow({
   ].join(" ");
 
   return (
-    <div className={rowClass}>
+    <div className={rowClass} onKeyDown={moveWithinRow}>
       {pending ? (
         <span className="channel-row-link">{body}</span>
       ) : (
@@ -504,7 +529,9 @@ function ChannelRow({
           to="/s/$serverId/c/$channelId"
           params={{ serverId: channel.server_id, channelId: channel.id }}
           aria-current={active ? "page" : undefined}
+          aria-describedby={manage ? hintId : undefined}
           className="channel-row-link"
+          {...ROW_ITEM}
         >
           {body}
         </Link>
@@ -515,10 +542,10 @@ function ChannelRow({
             "sidebar-row-actions flex shrink-0 items-center opacity-0 transition group-focus-within:opacity-100 group-hover:opacity-100",
           ].join(" ")}
         >
-          <IconButton label="Kanal bearbeiten" onClick={onEdit} small>
+          <IconButton label="Kanal bearbeiten" onClick={onEdit} small roving>
             <PencilIcon size={14} />
           </IconButton>
-          <IconButton label="Kanal löschen" onClick={onDelete} small>
+          <IconButton label="Kanal löschen" onClick={onDelete} small roving>
             <TrashIcon size={14} />
           </IconButton>
         </span>
@@ -532,18 +559,26 @@ function IconButton({
   onClick,
   children,
   small,
+  roving,
+  describedBy,
 }: {
   label: string;
   onClick: () => void;
   children: ReactNode;
   small?: boolean;
+  /** Reached with the arrow keys from the row's first item, not with Tab. */
+  roving?: boolean;
+  describedBy?: string;
 }) {
   return (
     <button
       type="button"
       title={label}
       aria-label={label}
+      aria-describedby={describedBy}
+      tabIndex={roving ? -1 : undefined}
       onClick={onClick}
+      {...ROW_ITEM}
       className={[
         "shell-icon-button",
         small ? "sidebar-action-small" : "",
