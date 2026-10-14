@@ -20,7 +20,7 @@ pub struct User {
     pub card: ProfileCard,
 }
 
-/// The optional profile card fields (migration 0012). `None` everywhere is
+/// The optional profile card fields (migration 0013). `None` everywhere is
 /// "not set"; clients render their defaults then.
 #[derive(Debug, Clone, Default, Serialize, FromRow, PartialEq, Eq)]
 pub struct ProfileCard {

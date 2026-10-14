@@ -749,9 +749,9 @@ async fn stale_cleanup_ack_cannot_remove_a_new_claim_and_s3_does_not_hold_pool_c
 
 #[sqlx::test(migrations = false)]
 async fn migration_backfills_existing_bytes_and_rollback_preserves_metadata_and_jobs(pool: PgPool) {
-    // 0012 only adds `users` columns, which the current binary's sign-up
+    // 0013 only adds `users` columns, which the current binary's sign-up
     // below reads back; it does not touch the storage schema under test.
-    const USER_COLUMNS: i64 = 12;
+    const USER_COLUMNS: i64 = 13;
     for migration in sqlx::migrate!("./migrations")
         .iter()
         .filter(|m| m.version < 8 || m.version == USER_COLUMNS)
