@@ -48,7 +48,12 @@ class FakeContext {
     release: new FakeParam(),
   });
   destination = Object.assign(new FakeNode(), { stream: { id: "boost" } });
-  resume = vi.fn(async () => {});
+  resume = vi.fn(async () => {
+    this.state = "running";
+  });
+  suspend = vi.fn(async () => {
+    this.state = "suspended";
+  });
   close = vi.fn(async () => {
     this.state = "closed";
   });
@@ -61,9 +66,13 @@ class FakeContext {
   createMediaStreamDestination() {
     return this.destination;
   }
+  trims: FakeGainNode[] = [];
   createGain() {
     const gain = new FakeGainNode();
-    this.gains.push(gain);
+    // The first gain is the graph's makeup trim; later ones belong to elements.
+    if (this.limiter.connected.length === 0 && this.trims.length === 0)
+      this.trims.push(gain);
+    else this.gains.push(gain);
     return gain;
   }
   createMediaStreamSource(stream: FakeMediaStream) {
@@ -127,8 +136,16 @@ describe("playback boost", () => {
     expect(ctx.gains).toHaveLength(1);
     expect(ctx.gains[0]!.gain.value).toBe(1.5);
     expect(ctx.gains[0]!.connected).toEqual([ctx.limiter]);
-    expect(ctx.limiter.connected).toEqual([ctx.destination]);
-    expect(ctx.limiter.threshold.value).toBeLessThan(0);
+    expect(ctx.limiter.connected).toEqual([ctx.trims[0]]);
+    expect(ctx.trims[0]!.connected).toEqual([ctx.destination]);
+    // The trim cancels the compressor's makeup gain (0.6 × 5.7 dB here).
+    const { threshold, ratio } = ctx.limiter;
+    const lossDb = threshold.value * (1 - 1 / ratio.value);
+    expect(20 * Math.log10(ctx.trims[0]!.gain.value)).toBeCloseTo(
+      0.6 * lossDb,
+      6,
+    );
+    expect(threshold.value).toBe(-6);
     expect(ctx.sources.map((source) => source.stream.getTracks())).toEqual([
       [a],
       [b],
@@ -147,7 +164,7 @@ describe("playback boost", () => {
     expect(ctx.sources[2]!.stream.getTracks()).toEqual([c]);
   });
 
-  it("shares one context and closes it with the last boost", () => {
+  it("shares one context and idles it with the last boost", async () => {
     install();
     const first = element([track("a")]),
       second = element([track("b")]);
@@ -159,10 +176,20 @@ describe("playback boost", () => {
     expect(releaseBoost(first)).toBe(true);
     expect(ctx.close).not.toHaveBeenCalled();
     expect(isBoosted(first)).toBe(false);
+    const out = boostOutput() as unknown as FakeAudio;
     expect(releaseBoost(second)).toBe(true);
-    expect(ctx.close).toHaveBeenCalled();
-    expect(boostOutput()).toBeNull();
+    expect(ctx.suspend).toHaveBeenCalled();
+    expect(out.pause).toHaveBeenCalled();
+    expect(ctx.close).not.toHaveBeenCalled();
     expect(releaseBoost(second)).toBe(false);
+
+    // Crossing 100 % again reuses the same context and output.
+    boost(first, 1.5);
+    expect(FakeContext.instances).toHaveLength(1);
+    expect(boostOutput()).toBe(out as unknown as HTMLAudioElement);
+    await startBoostOutput();
+    expect(ctx.resume).toHaveBeenCalled();
+    expect(out.play).toHaveBeenCalled();
   });
 
   it("stays on the element where Web Audio or a stream is missing", () => {

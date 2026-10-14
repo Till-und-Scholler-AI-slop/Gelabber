@@ -148,8 +148,8 @@ export class CallSoundPlayer {
       this.start(
         audio,
         source(kind),
-        // Playback above 100 % boosts calls only; an element stops at 1.
-        Math.min(1, latest.callSoundVolume * latest.outputVolume),
+        // Playback above 100 % boosts calls only, not the cues.
+        latest.callSoundVolume * Math.min(1, latest.outputVolume),
       );
     };
     // The desktop app's output ids belong to its native engine. The webview

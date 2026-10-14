@@ -7,6 +7,15 @@
 // the element path the session already uses. The desktop app's native
 // outputs scale playout themselves and never come here.
 
+/** Peaks above this are compressed 20:1, so a boost cannot clip. */
+const LIMIT_THRESHOLD_DB = -6;
+const LIMIT_RATIO = 20;
+/** A compressor adds makeup gain of 0.6 × its loss at full scale (Web Audio
+ * spec, as Chromium and Firefox implement it). This trim takes it back, so
+ * speech below the threshold keeps exactly the slider's gain. */
+const MAKEUP_TRIM =
+  10 ** ((0.6 * LIMIT_THRESHOLD_DB * (1 - 1 / LIMIT_RATIO)) / 20);
+
 type Boost = {
   gain: GainNode;
   sources: Map<MediaStreamTrack, MediaStreamAudioSourceNode>;
@@ -31,16 +40,19 @@ function ensureGraph(): Graph | null {
   let ctx: AudioContext | undefined;
   try {
     ctx = new AudioContext({ latencyHint: "interactive" });
-    // Peaks the gain pushes past full scale are held just below it instead
-    // of clipping; normal speech stays below the threshold untouched.
+    // Peaks the gain pushes towards full scale end below it instead of
+    // clipping; quieter speech passes at the slider's gain.
     const limiter = ctx.createDynamicsCompressor();
-    limiter.threshold.value = -3;
+    limiter.threshold.value = LIMIT_THRESHOLD_DB;
     limiter.knee.value = 0;
-    limiter.ratio.value = 20;
+    limiter.ratio.value = LIMIT_RATIO;
     limiter.attack.value = 0.003;
     limiter.release.value = 0.1;
+    const trim = ctx.createGain();
+    trim.gain.value = MAKEUP_TRIM;
     const destination = ctx.createMediaStreamDestination();
-    limiter.connect(destination);
+    limiter.connect(trim);
+    trim.connect(destination);
     const out = new Audio();
     out.autoplay = true;
     out.setAttribute("playsinline", "true");
@@ -51,6 +63,15 @@ function ensureGraph(): Graph | null {
     void ctx?.close().catch(() => {});
     return null;
   }
+}
+
+/** Without boosts the graph idles: a later boost (the slider crossing
+ * 100 %, a reconnect) resumes it instead of needing a new context. */
+function idleGraph(): void {
+  const shared = graph;
+  if (!shared) return;
+  shared.out.pause?.();
+  void shared.ctx.suspend().catch(() => {});
 }
 
 function closeGraph(): void {
@@ -116,7 +137,7 @@ export function releaseBoost(el: HTMLAudioElement): boolean {
   boosts.delete(el);
   for (const node of entry.sources.values()) node.disconnect();
   entry.gain.disconnect();
-  if (boosts.size === 0) closeGraph();
+  if (boosts.size === 0) idleGraph();
   return true;
 }
 

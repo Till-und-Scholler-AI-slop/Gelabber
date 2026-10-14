@@ -243,6 +243,8 @@ const sourceAudio = new Map<
 >();
 const blockedPlayback = new Set<HTMLAudioElement>();
 let remoteMix: MediaStream | null = null;
+/** The browser blocked the boost output: play at 100 % until a click. */
+let boostBlocked = false;
 let bound = false;
 let micEpoch = 0;
 /** A microphone prompt that a seat rebuild overtook. Its answer belonged to
@@ -432,6 +434,7 @@ function updatePlaybackBlocked(): void {
 function playAudio(el: HTMLAudioElement): void {
   const stream = el.srcObject;
   if (!stream) return;
+  const boosted = isBoosted(el);
   const failed = (error: unknown) => {
     if (
       el.srcObject !== stream ||
@@ -439,12 +442,17 @@ function playAudio(el: HTMLAudioElement): void {
     )
       return;
     blockedPlayback.add(el);
+    if (boosted && isBoosted(el)) {
+      // The muted element would stay silent: play it at 100 % meanwhile.
+      boostBlocked = true;
+      applyPlayback();
+    }
     updatePlaybackBlocked();
   };
   try {
     const started = el.play();
     // A boosted element is heard through the shared boost output instead.
-    void (isBoosted(el) ? Promise.all([started, startBoostOutput()]) : started)
+    void (boosted ? Promise.all([started, startBoostOutput()]) : started)
       ?.then(() => {
         if (el.srcObject !== stream) return;
         blockedPlayback.delete(el);
@@ -458,6 +466,9 @@ function playAudio(el: HTMLAudioElement): void {
 
 /** Call synchronously from a click so the browser grants playback activation. */
 export function retryPlayback(): void {
+  // The click also allows the boost again; applyPlayback restarts it.
+  boostBlocked = false;
+  applyPlayback();
   for (const el of [
     remoteAudio,
     ...watchAudio.values(),
@@ -1390,7 +1401,7 @@ function setOutputVolume(
   muted: boolean,
   volume: number,
 ): void {
-  if (!muted && volume > 1 && !isNativeAudioOutput(el)) {
+  if (!muted && volume > 1 && !boostBlocked && !isNativeAudioOutput(el)) {
     const wasBoosted = isBoosted(el);
     if (boost(el, volume)) {
       // Still playing, so Chromium keeps feeding the boost; heard through it.
@@ -2916,6 +2927,7 @@ export function resetVoiceForTests(): void {
   stopWatchPeer();
   stopPeer();
   resetPlaybackBoostForTests();
+  boostBlocked = false;
   remoteAudio = null;
   sourceAudio.clear();
   watchAudio.clear();

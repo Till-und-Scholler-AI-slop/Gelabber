@@ -308,8 +308,8 @@ export function VoiceSessionControls({
   );
 }
 
-/** Filled share of a `.lr-range` track (WebKit has no progress pseudo). */
-/** Filled share of a 0–200 % playback slider. */
+/** Filled share of a 0–200 % `.lr-range` playback slider (WebKit has no
+ * progress pseudo). */
 function rangeFill(value: number): CSSProperties {
   return {
     "--lr-range-value": `${Math.round((value / MAX_PLAYBACK_VOLUME) * 100)}%`,

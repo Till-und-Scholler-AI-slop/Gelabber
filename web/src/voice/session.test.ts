@@ -4484,9 +4484,8 @@ describe("authoritative mediasoup session lifecycle", () => {
     expect(env.getUserMediaCalls()).toBe(1);
     expect(env.getDisplayMediaCalls()).toBe(0);
   });
-  it("plays conversations above 100 % through a Web Audio boost and below it on the element", async () => {
-    const elements = playback();
-    const env = await joined();
+  /** `blocked`: contexts start suspended and cannot resume (no gesture). */
+  function boostAudio(blocked = false) {
     class Node {
       connect() {}
       disconnect() {}
@@ -4494,10 +4493,12 @@ describe("authoritative mediasoup session lifecycle", () => {
     const param = () => ({ value: 0 });
     const contexts: Context[] = [];
     class Context {
-      state = "running";
+      state: AudioContextState = blocked ? "suspended" : "running";
       currentTime = 0;
       closed = false;
       gains: Array<{ gain: { value: number } }> = [];
+      sources: MediaStream[] = [];
+      resumable = !blocked;
       constructor() {
         contexts.push(this);
       }
@@ -4525,10 +4526,18 @@ describe("authoritative mediasoup session lifecycle", () => {
         this.gains.push(gain);
         return gain;
       }
-      createMediaStreamSource() {
+      createMediaStreamSource(stream: MediaStream) {
+        this.sources.push(stream);
         return new Node();
       }
-      async resume() {}
+      resume() {
+        if (!this.resumable) return new Promise<void>(() => {});
+        this.state = "running";
+        return Promise.resolve();
+      }
+      async suspend() {
+        this.state = "suspended";
+      }
       async close() {
         this.closed = true;
       }
@@ -4553,6 +4562,12 @@ describe("authoritative mediasoup session lifecycle", () => {
     }
     vi.stubGlobal("AudioContext", Context);
     vi.stubGlobal("MediaStream", Stream);
+    return contexts;
+  }
+  it("plays conversations above 100 % through a Web Audio boost and below it on the element", async () => {
+    const elements = playback();
+    const env = await joined();
+    const contexts = boostAudio();
     env.peers[0]!.receive("u-bob", "a", fakeStream("bob"));
     const voice = elements.find((el) => el.srcObject)!;
     expect(voice.volume).toBe(1);
@@ -4560,24 +4575,69 @@ describe("authoritative mediasoup session lifecycle", () => {
 
     useMediaSettings.getState().patch({ outputVolume: 1.5 });
     expect(voice.muted).toBe(true);
-    expect(contexts[0]!.gains.map((gain) => gain.gain.value)).toEqual([1.5]);
+    const ctx = contexts[0]!;
+    // The 1st gain is the limiter's makeup trim, the 2nd the element's.
+    expect(ctx.gains[1]!.gain.value).toBe(1.5);
+    expect(ctx.sources).toHaveLength(1);
     const out = elements.find(
       (el) => (el.srcObject as { id?: string } | null)?.id === "boost",
     )!;
     await vi.waitFor(() => expect(out.play).toHaveBeenCalled());
 
+    // A second speaker joins the boosted mix.
+    env.peers[0]!.receive("u-cara", "a", fakeStream("cara"));
+    expect(ctx.sources).toHaveLength(2);
+
+    // An output-device change reaches the boost output too.
+    const setSinkId = vi.fn(async () => {});
+    Object.assign(out, { setSinkId });
+    useMediaSettings.getState().patch({ audioOutputId: "headset" });
+    expect(setSinkId).toHaveBeenCalledWith("headset");
+
     toggleDeafen();
     expect(voice.muted).toBe(true);
     expect(voice.volume).toBe(0);
-    expect(contexts[0]!.closed).toBe(true);
+    expect(ctx.state).toBe("suspended");
     toggleDeafen();
     expect(voice.muted).toBe(true);
-    expect(contexts[1]!.gains.map((gain) => gain.gain.value)).toEqual([1.5]);
+    expect(ctx.gains.at(-1)!.gain.value).toBe(1.5);
 
+    // Down to 80 % and back reuses the idle context.
     useMediaSettings.getState().patch({ outputVolume: 0.8 });
     expect(voice.muted).toBe(false);
     expect(voice.volume).toBe(0.8);
-    expect(contexts[1]!.closed).toBe(true);
+    expect(ctx.state).toBe("suspended");
+    useMediaSettings.getState().patch({ outputVolume: 1.5 });
+    expect(voice.muted).toBe(true);
+    await vi.waitFor(() => expect(ctx.state).toBe("running"));
+    expect(contexts).toHaveLength(1);
+    expect(ctx.closed).toBe(false);
+  });
+  it("plays at 100 % while the browser blocks the boost and boosts again on the click", async () => {
+    const elements = playback();
+    const env = await joined();
+    const contexts = boostAudio(true);
+    env.peers[0]!.receive("u-bob", "a", fakeStream("bob"));
+    const voice = elements.find((el) => el.srcObject)!;
+    vi.useFakeTimers();
+    useMediaSettings.getState().patch({ outputVolume: 1.5 });
+    const ctx = contexts[0]!;
+    expect(voice.muted).toBe(true);
+    await vi.advanceTimersByTimeAsync(1000);
+    expect(useVoice.getState().playbackBlocked).toBe(true);
+    expect(voice.muted).toBe(false);
+    expect(voice.volume).toBe(1);
+    // Slider moves do not mute it again before the click.
+    useMediaSettings.getState().patch({ outputVolume: 1.8 });
+    expect(voice.muted).toBe(false);
+
+    ctx.resumable = true;
+    retryPlayback();
+    expect(voice.muted).toBe(true);
+    await vi.waitFor(() =>
+      expect(useVoice.getState().playbackBlocked).toBe(false),
+    );
+    expect(ctx.gains.at(-1)!.gain.value).toBe(1.8);
   });
   it("retries blocked source playback on the user gesture and ignores late failure after Consumer close", async () => {
     const elements = playback();

@@ -44,11 +44,11 @@ describe("call sounds", () => {
     settings.outputVolume = 0.5;
     player.play("join");
     expect(audio.volume).toBe(0.175);
-    // Playback above 100 % never pushes a cue past the element's limit.
+    // Playback above 100 % boosts calls, not the cues.
     settings.callSoundVolume = 0.8;
     settings.outputVolume = 2;
     player.play("join");
-    expect(audio.volume).toBe(1);
+    expect(audio.volume).toBe(0.8);
     settings.callSoundVolume = DEFAULT_MEDIA_SETTINGS.callSoundVolume;
     settings.outputVolume = 0.5;
     player.setDeafened(true);
