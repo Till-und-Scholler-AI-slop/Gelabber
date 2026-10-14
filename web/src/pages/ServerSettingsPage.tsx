@@ -12,6 +12,7 @@ import { fieldMessage } from "../auth/rules.ts";
 import { useFormErrors } from "../auth/useFormErrors.ts";
 import { PresenceAvatar } from "../components/PresenceAvatar.tsx";
 import { Field } from "../components/Field.tsx";
+import { confirmAction } from "../components/confirm.ts";
 import { LoadError } from "../components/LoadError.tsx";
 import { FormError } from "../components/FormError.tsx";
 import { GhostButton } from "../components/Modal.tsx";
@@ -380,8 +381,15 @@ function BansSection({ server }: { server: ServerDetail }) {
               </span>
               <GhostButton
                 tone="danger"
-                onClick={() => {
-                  if (window.confirm(`${ban.name} wieder zulassen?`))
+                onClick={async () => {
+                  if (
+                    await confirmAction({
+                      title: `${ban.name} wieder zulassen?`,
+                      message: "Mit einem Einladungslink geht es dann wieder.",
+                      confirmLabel: "Entsperren",
+                      tone: "neutral",
+                    })
+                  )
                     unban.mutate(ban.user_id);
                 }}
               >
@@ -422,13 +430,26 @@ function DangerSection({ server }: { server: ServerDetail }) {
       <div>
         <button
           type="button"
-          onClick={() => {
+          onClick={async () => {
             if (owner) {
-              if (!window.confirm(`Server „${server.name}“ endgültig löschen?`))
+              if (
+                !(await confirmAction({
+                  title: `Server „${server.name}“ endgültig löschen?`,
+                  message:
+                    "Kanäle, Nachrichten, Einladungen und Mitgliedschaften sind danach weg.",
+                  confirmLabel: "Server löschen",
+                }))
+              )
                 return;
               remove.mutate(server.id);
             } else {
-              if (!window.confirm(`Server „${server.name}“ verlassen?`)) return;
+              if (
+                !(await confirmAction({
+                  title: `Server „${server.name}“ verlassen?`,
+                  confirmLabel: "Verlassen",
+                }))
+              )
+                return;
               leave.mutate(server.id);
             }
             // Optimistic: the server is already gone from the rail.

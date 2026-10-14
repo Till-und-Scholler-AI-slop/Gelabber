@@ -4,6 +4,7 @@ import {
   api,
   check,
   click,
+  confirmDialog,
   navigate,
   observe,
   snapshot,
@@ -262,11 +263,11 @@ export async function chatFaultScenarios(h, f) {
             await click(f.owner, "Speichern");
             await present(f.owner, "E2E optimistic edit");
           } else {
-            f.owner.page.once("dialog", (d) => d.accept());
             await row(f.owner, original).hover();
             await row(f.owner, original)
               .getByRole("button", { name: "Nachricht löschen", exact: true })
               .click();
+            await confirmDialog(f.owner, "Löschen");
             await log(f.owner)
               .getByText(original, { exact: true })
               .waitFor({ state: "hidden" });

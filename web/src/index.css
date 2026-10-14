@@ -241,6 +241,10 @@ summary {
   overflow-y: auto;
   overscroll-behavior: contain;
 }
+.gel-confirm-danger {
+  background: var(--lr-danger-bg);
+  color: #fff;
+}
 /* Notices sit bottom centre, above whatever owns the bottom edge. */
 .gel-toasts {
   --lr-toast-floor: var(--lr-safe-bottom);

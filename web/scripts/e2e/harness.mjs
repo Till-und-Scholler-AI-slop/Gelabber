@@ -588,6 +588,13 @@ export async function startHarness() {
 export async function snapshot(actor) {
   return nativeEvaluate(actor, sample);
 }
+/** Answers the app's own confirm dialog (not a native `window.confirm`). */
+export async function confirmDialog(actor, label) {
+  await actor.page
+    .getByRole("dialog")
+    .getByRole("button", { name: label, exact: true })
+    .click();
+}
 export async function click(actor, name) {
   if (
     name === "Abmelden" &&

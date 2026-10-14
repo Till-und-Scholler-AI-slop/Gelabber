@@ -5,6 +5,7 @@ import { useSession } from "../auth/session.ts";
 import { can } from "../servers/permissions.ts";
 import { useBanMember, useKickMember } from "../servers/queries.ts";
 import type { Member, Server } from "../servers/types.ts";
+import { confirmAction } from "./confirm.ts";
 
 export function MemberActions({
   server,
@@ -23,11 +24,13 @@ export function MemberActions({
     <span className="flex shrink-0 items-center gap-1">
       <button
         type="button"
-        onClick={() => {
+        onClick={async () => {
           if (
-            window.confirm(
-              `${member.name} vom Server entfernen? Mit einem neuen Link können sie wieder beitreten.`,
-            )
+            await confirmAction({
+              title: `${member.name} vom Server entfernen?`,
+              message: "Mit einem neuen Link können sie wieder beitreten.",
+              confirmLabel: "Entfernen",
+            })
           ) {
             kick.mutate(member.user_id);
           }
@@ -38,11 +41,14 @@ export function MemberActions({
       </button>
       <button
         type="button"
-        onClick={() => {
+        onClick={async () => {
           if (
-            window.confirm(
-              `${member.name} sperren? Sie können nicht wieder beitreten, auch nicht mit einem Einladungslink.`,
-            )
+            await confirmAction({
+              title: `${member.name} sperren?`,
+              message:
+                "Sie können nicht wieder beitreten, auch nicht mit einem Einladungslink.",
+              confirmLabel: "Sperren",
+            })
           ) {
             ban.mutate(member.user_id);
           }
