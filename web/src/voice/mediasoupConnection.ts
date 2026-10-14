@@ -1,4 +1,4 @@
-import { Device } from "mediasoup-client";
+import type { Device } from "mediasoup-client";
 import type {
   Consumer,
   Producer,
@@ -89,6 +89,22 @@ export interface MediaConnection {
   handleEvent(event: MediaEvent): void;
   close(): void;
 }
+// The browser SDK is a large part of the app; it loads with the first call.
+let browserSdk: Promise<typeof import("mediasoup-client")> | null = null;
+const loadBrowserSdk = () => {
+  browserSdk ??= import("mediasoup-client").catch((error: unknown) => {
+    browserSdk = null;
+    throw error;
+  });
+  return browserSdk;
+};
+const browserDevice = async (): Promise<Device> =>
+  (await loadBrowserSdk()).Device.factory();
+/** Starts fetching the browser SDK, e.g. while a call's ticket is requested. */
+export const preloadMediaSdk = (): void => {
+  if (!isDesktopApp()) void loadBrowserSdk().catch(() => {});
+};
+
 /** In the desktop app the native core stands in for the browser's WebRTC. */
 export const createMediaConnection = (
   options: MediaConnectionOptions,
@@ -230,7 +246,7 @@ export class MediasoupConnection implements MediaConnection {
   async start(capabilities: RtpCapabilities): Promise<void> {
     this.live();
     const device = await this.sdk(
-      () => this.options.deviceFactory?.() ?? Device.factory(),
+      () => this.options.deviceFactory?.() ?? browserDevice(),
       "recv",
     );
     this.live();

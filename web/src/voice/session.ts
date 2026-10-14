@@ -56,6 +56,7 @@ import { loadNativeFeatures } from "./native/features.ts";
 import { createAudioOutput, createStream } from "./native/tracks.ts";
 import {
   createMediaConnection,
+  preloadMediaSdk,
   type MediaConnection,
   type MediaConnectionOptions,
   type MediaPublication,
@@ -3746,6 +3747,7 @@ async function startPeer(
   const openMedia = deps?.openMedia ?? openMediaSocket;
   const getUserMedia = deps?.getUserMedia ?? defaultGetUserMedia;
   let pc: MediaConnection;
+  if (!deps?.createMediaConnection) preloadMediaSdk();
   try {
     const ticket = await fetchTicket(channelId);
     if (seat.generation !== mine) return;
@@ -4078,6 +4080,7 @@ async function startWatchPeer(
   try {
     const publisher = useVoice.getState().watchPublisherId;
     if (!publisher) throw new MediaError("watch_unavailable");
+    if (!deps?.createMediaConnection) preloadMediaSdk();
     const ticket = await fetchTicket(channelId);
     if (watchCall.generation !== mine) return;
     if (useVoice.getState().watchPublisherId !== publisher)
