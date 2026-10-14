@@ -5,6 +5,7 @@ import { useQueryClient } from "@tanstack/react-query";
 import { useEffect } from "react";
 
 import { useUserId } from "../auth/scope.ts";
+import { DmRow } from "../components/DmSidebar.tsx";
 import { Redirect } from "../components/Redirect.tsx";
 import { LoadError } from "../components/LoadError.tsx";
 import { lastDmId, useLastDm } from "../dms/lastDm.ts";
@@ -54,15 +55,23 @@ export function DmIndexPage() {
       </div>
     );
 
+  if (dms && dms.length > 0)
+    return (
+      <div className="dm-index">
+        <p className="dm-index-hint">Wähle eine Unterhaltung.</p>
+        {/* Phones keep the sidebar in a closed drawer; list them here. */}
+        <nav aria-label="Unterhaltungen" className="dm-index-list">
+          <h1>Nachrichten</h1>
+          {dms.map((dm) => (
+            <DmRow key={dm.id} dm={dm} active={false} />
+          ))}
+        </nav>
+      </div>
+    );
+
   return (
     <div className="flex flex-1 items-center justify-center p-8 text-center text-neutral-500 dark:text-neutral-400">
-      <p>
-        {isError
-          ? "Deine Direktnachrichten konnten gerade nicht geladen werden."
-          : dms && dms.length > 0
-            ? "Wähle eine Unterhaltung."
-            : "Öffne eine Direktnachricht über die Mitgliederliste eines Servers."}
-      </p>
+      <p>Öffne eine Direktnachricht über die Mitgliederliste eines Servers.</p>
     </div>
   );
 }

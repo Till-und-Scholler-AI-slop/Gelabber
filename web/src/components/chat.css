@@ -837,6 +837,15 @@
   font-size: 13px;
   font-weight: 600;
 }
+/* Beside both buttons a phone leaves the field a few letters wide. */
+@media (max-width: 520px) {
+  .lr-search-form input {
+    flex-basis: 100%;
+  }
+  .lr-search-submit {
+    flex: 1;
+  }
+}
 .lr-search-submit {
   background: var(--lr-accent);
   color: var(--lr-accent-ink);

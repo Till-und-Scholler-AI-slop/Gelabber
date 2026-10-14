@@ -179,7 +179,7 @@ function PermissionsSection({ server }: { server: ServerDetail }) {
                   type="checkbox"
                   checked={checked}
                   onChange={() => toggle(permission.id)}
-                  className="mt-1 size-4 accent-neutral-900 dark:accent-neutral-100"
+                  className="mt-1 size-4 shrink-0 accent-neutral-900 dark:accent-neutral-100"
                 />
                 <span className="flex flex-col">
                   <span className="text-sm font-medium text-neutral-900 dark:text-neutral-100">
