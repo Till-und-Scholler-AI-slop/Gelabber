@@ -17,7 +17,7 @@ import {
   SignalIcon,
   SpeakerIcon,
 } from "./Icons.tsx";
-import { useMediaSettings } from "../voice/settings.ts";
+import { MAX_PLAYBACK_VOLUME, useMediaSettings } from "../voice/settings.ts";
 import "../voice/room.css";
 
 /** Active sessions stay controllable independently of the currently open
@@ -127,7 +127,7 @@ export function VoiceSessionControls({
             <input
               type="range"
               min={0}
-              max={100}
+              max={MAX_PLAYBACK_VOLUME * 100}
               value={Math.round(volume * 100)}
               aria-label="Wiedergabe-Lautstärke"
               disabled={voice.deafened}
@@ -155,7 +155,7 @@ export function VoiceSessionControls({
             <input
               type="range"
               min={0}
-              max={100}
+              max={MAX_PLAYBACK_VOLUME * 100}
               value={Math.round(volume * 100)}
               aria-label="Wiedergabe-Lautstärke"
               disabled={voice.deafened}
@@ -184,7 +184,7 @@ export function VoiceSessionControls({
             <input
               type="range"
               min={0}
-              max={100}
+              max={MAX_PLAYBACK_VOLUME * 100}
               value={Math.round(sourceVolume * 100)}
               aria-label="Stream-Ton-Lautstärke"
               disabled={voice.deafened}

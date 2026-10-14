@@ -24,6 +24,7 @@ import {
   type VideoFrameRate,
   formatVideoBitrate,
   listMediaDevices,
+  MAX_PLAYBACK_VOLUME,
   useMediaSettings,
   videoSendBudget,
 } from "./settings.ts";
@@ -164,18 +165,19 @@ export function MediaSettingsForm({
               id="output-volume"
               label="Gespräche"
               min={0}
-              max={100}
+              max={MAX_PLAYBACK_VOLUME * 100}
               value={Math.round(settings.outputVolume * 100)}
               suffix={`${Math.round(settings.outputVolume * 100)} %`}
               onChange={(value) =>
                 settings.patch({ outputVolume: value / 100 })
               }
+              hint="Über 100 % wird der Ton digital verstärkt."
             />
             <Slider
               id="source-audio-volume"
               label="Stream-Ton"
               min={0}
-              max={100}
+              max={MAX_PLAYBACK_VOLUME * 100}
               value={Math.round(settings.sourceAudioVolume * 100)}
               suffix={`${Math.round(settings.sourceAudioVolume * 100)} %`}
               onChange={(value) =>
@@ -257,23 +259,29 @@ export function MediaSettingsForm({
                 sie ausschalten.
               </p>
               {settings.processingMode === "browser" && (
+                <Toggle
+                  id="ns"
+                  label="Rauschunterdrückung des Browsers"
+                  checked={settings.noiseSuppression}
+                  onChange={(noiseSuppression) =>
+                    settings.patch({ noiseSuppression })
+                  }
+                />
+              )}
+              {settings.processingMode !== "original" && (
                 <>
                   <Toggle
-                    id="ns"
-                    label="Rauschunterdrückung des Browsers"
-                    checked={settings.noiseSuppression}
-                    onChange={(noiseSuppression) =>
-                      settings.patch({ noiseSuppression })
-                    }
-                  />
-                  <Toggle
                     id="agc"
-                    label="Auto-Gain des Browsers"
+                    label="Auto-Gain"
                     checked={settings.autoGainControl}
                     onChange={(autoGainControl) =>
                       settings.patch({ autoGainControl })
                     }
                   />
+                  <p className="text-xs text-neutral-500">
+                    Gleicht leise und laute Mikrofone auf einen hörbaren Pegel
+                    an.
+                  </p>
                 </>
               )}
             </fieldset>

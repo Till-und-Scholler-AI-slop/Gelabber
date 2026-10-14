@@ -196,10 +196,12 @@ async fn voice_modes_reach_a_consumer() {
     // (a remapped null-sink monitor) records only zeros after a quick
     // capture restart.
 
-    // "enhanced": RNNoise takes the noise out.
+    // "enhanced": RNNoise takes the noise out (AGC off, so the levels
+    // compare RNNoise alone).
     let enhanced = Source::microphone(
         &engine,
-        &json!({"processingMode": "enhanced", "echoCancellation": false}),
+        &json!({"processingMode": "enhanced", "autoGainControl": false,
+                "echoCancellation": false}),
     )
     .unwrap();
     let enhanced_producer =

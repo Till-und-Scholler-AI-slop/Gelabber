@@ -3275,6 +3275,101 @@ describe("authoritative mediasoup session lifecycle", () => {
     expect(env.getUserMediaCalls()).toBe(1);
     expect(env.getDisplayMediaCalls()).toBe(0);
   });
+  it("plays conversations above 100 % through a Web Audio boost and below it on the element", async () => {
+    const elements = playback();
+    const env = await joined();
+    class Node {
+      connect() {}
+      disconnect() {}
+    }
+    const param = () => ({ value: 0 });
+    const contexts: Context[] = [];
+    class Context {
+      state = "running";
+      currentTime = 0;
+      closed = false;
+      gains: Array<{ gain: { value: number } }> = [];
+      constructor() {
+        contexts.push(this);
+      }
+      createDynamicsCompressor() {
+        return Object.assign(new Node(), {
+          threshold: param(),
+          knee: param(),
+          ratio: param(),
+          attack: param(),
+          release: param(),
+        });
+      }
+      createMediaStreamDestination() {
+        return Object.assign(new Node(), { stream: { id: "boost" } });
+      }
+      createGain() {
+        const gain = Object.assign(new Node(), {
+          gain: {
+            value: 1,
+            setTargetAtTime(value: number) {
+              this.value = value;
+            },
+          },
+        });
+        this.gains.push(gain);
+        return gain;
+      }
+      createMediaStreamSource() {
+        return new Node();
+      }
+      async resume() {}
+      async close() {
+        this.closed = true;
+      }
+    }
+    class Stream {
+      constructor(private tracks: MediaStreamTrack[] = []) {}
+      getTracks() {
+        return [...this.tracks];
+      }
+      getAudioTracks() {
+        return this.tracks.filter((track) => track.kind === "audio");
+      }
+      getVideoTracks() {
+        return [];
+      }
+      addTrack(track: MediaStreamTrack) {
+        if (!this.tracks.includes(track)) this.tracks.push(track);
+      }
+      removeTrack(track: MediaStreamTrack) {
+        this.tracks = this.tracks.filter((item) => item !== track);
+      }
+    }
+    vi.stubGlobal("AudioContext", Context);
+    vi.stubGlobal("MediaStream", Stream);
+    env.peers[0]!.receive("u-bob", "a", fakeStream("bob"));
+    const voice = elements.find((el) => el.srcObject)!;
+    expect(voice.volume).toBe(1);
+    expect(contexts).toHaveLength(0);
+
+    useMediaSettings.getState().patch({ outputVolume: 1.5 });
+    expect(voice.muted).toBe(true);
+    expect(contexts[0]!.gains.map((gain) => gain.gain.value)).toEqual([1.5]);
+    const out = elements.find(
+      (el) => (el.srcObject as { id?: string } | null)?.id === "boost",
+    )!;
+    await vi.waitFor(() => expect(out.play).toHaveBeenCalled());
+
+    toggleDeafen();
+    expect(voice.muted).toBe(true);
+    expect(voice.volume).toBe(0);
+    expect(contexts[0]!.closed).toBe(true);
+    toggleDeafen();
+    expect(voice.muted).toBe(true);
+    expect(contexts[1]!.gains.map((gain) => gain.gain.value)).toEqual([1.5]);
+
+    useMediaSettings.getState().patch({ outputVolume: 0.8 });
+    expect(voice.muted).toBe(false);
+    expect(voice.volume).toBe(0.8);
+    expect(contexts[1]!.closed).toBe(true);
+  });
   it("retries blocked source playback on the user gesture and ignores late failure after Consumer close", async () => {
     const elements = playback();
     const env = await joined();
