@@ -13,6 +13,7 @@
   },
   "bundle": {
     "active": false,
-    "icon": ["icons/icon.png"]
+    "publisher": "Gelabber",
+    "icon": ["icons/icon.png", "icons/icon.ico"]
   }
 }

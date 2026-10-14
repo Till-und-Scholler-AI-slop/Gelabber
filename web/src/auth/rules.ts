@@ -48,9 +48,56 @@ export function validateName(raw: string): FieldCode | null {
   return null;
 }
 
+const UUID = "[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}";
+const UPLOADED_AVATAR = new RegExp(`^/api/avatars/${UUID}/${UUID}$`, "i");
+
+/** An avatar the API stores itself (`PUT /api/me/avatar`), not a link. */
+export function isUploadedAvatar(url: string | null | undefined): boolean {
+  return url != null && UPLOADED_AVATAR.test(url.trim());
+}
+
+/**
+ * The PATCH the profile form sends. The avatar goes along only when the
+ * field differs from the saved value: echoing an avatar this form loaded
+ * earlier would undo an upload made since in another tab (#218 review).
+ */
+export function profileFormPatch(
+  name: string,
+  avatarUrl: string,
+  savedAvatarUrl: string | null,
+): { name: string; avatar_url?: string } {
+  const avatar = avatarUrl.trim();
+  return {
+    name: name.trim(),
+    ...(avatar !== (savedAvatarUrl ?? "") ? { avatar_url: avatar } : {}),
+  };
+}
+
+/**
+ * Whether "Entfernen" removes the avatar at once (an uploaded image that is
+ * still the saved one) instead of only clearing the field until Speichern.
+ */
+export function removesAvatarAtOnce(
+  savedAvatarUrl: string | null,
+  avatarUrl: string,
+): boolean {
+  return (
+    isUploadedAvatar(savedAvatarUrl) && avatarUrl.trim() === savedAvatarUrl
+  );
+}
+
+/**
+ * The avatar field once an immediate removal succeeded: the removed upload
+ * goes, a link typed while the removal ran stays.
+ */
+export function avatarFieldAfterRemoval(current: string): string {
+  return isUploadedAvatar(current) ? "" : current;
+}
+
 export function validateAvatarUrl(raw: string): FieldCode | null {
   const value = raw.trim();
   if (value.length === 0) return null;
+  if (isUploadedAvatar(value)) return null;
   if (chars(value) > AVATAR_URL_MAX) return "too_long";
   // https only: an http image would be mixed content behind TLS.
   if (!/^https:\/\/[^\s/.?#]\S*$/i.test(value)) return "invalid";
@@ -60,6 +107,7 @@ export function validateAvatarUrl(raw: string): FieldCode | null {
 type FieldName =
   | "email"
   | "password"
+  | "current_password"
   | "name"
   | "avatar_url"
   | "kind"
@@ -80,6 +128,7 @@ type FieldName =
 const FIELD_LABEL: Record<FieldName, string> = {
   email: "E-Mail-Adresse",
   password: "Passwort",
+  current_password: "Aktuelles Passwort",
   name: "Name",
   avatar_url: "Avatar-URL",
   kind: "Kanaltyp",
@@ -114,6 +163,10 @@ export function fieldMessage(field: string, code: FieldCode): string {
         : `${label} ist zu lang.`;
     case "taken":
       return "Diese E-Mail-Adresse ist schon registriert.";
+    case "wrong":
+      return "Das Passwort stimmt nicht.";
+    case "stale":
+      return "Dein Bild wurde inzwischen woanders geändert. Lade die Seite neu.";
     case "invalid":
       switch (field) {
         case "email":
@@ -141,6 +194,8 @@ export function errorMessage(code: ApiErrorCode): string {
       return "Bitte melde dich erneut an.";
     case "csrf_invalid":
       return "Sicherheits-Token abgelaufen. Bitte noch einmal versuchen.";
+    case "insecure_transport":
+      return "Anmelden geht nur über eine verschlüsselte Verbindung. Öffne Gelabber mit https:// (oder auf diesem Rechner über http://localhost).";
     case "forbidden":
       return "Dafür fehlt dir die Berechtigung.";
     case "not_found":

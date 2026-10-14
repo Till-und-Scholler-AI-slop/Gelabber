@@ -1,6 +1,6 @@
 # Deploy
 
-Ein Operator, ein Node. Stack: Caddy, Postgres, Redis, MinIO, coturn, api, web, media. Kein LiveKit.
+One operator, one node. Stack: Caddy, Postgres, Redis, MinIO, coturn, api, web, media. No LiveKit.
 
 ```bash
 cp deploy/compose/.env.example deploy/compose/.env
@@ -8,13 +8,23 @@ cd deploy/compose
 docker compose up -d
 ```
 
-App: `http://localhost` (Caddy :80). Daten und MinIO nur auf `127.0.0.1`. Secrets in `.env` ändern.
+App: `http://localhost` (Caddy :80). Data and MinIO on `127.0.0.1` only. Set the passwords in `.env` (see Security below).
 
-## Bestehendes Caddy
+## Security
 
-UDP (TURN + SFU-ICE 10000) geht nicht durch Caddy — Host/Router-Ports bleiben offen.
+Since v0.6 (#188) the stack no longer starts with known values:
 
-**Kleiner Diff:** bundled Caddy auf Loopback, dein Caddy davor.
+- **No default passwords.** `POSTGRES_PASSWORD`, `MINIO_ROOT_PASSWORD` and `TURN_PASSWORD` (plus `GRAFANA_ADMIN_PASSWORD` with observability) must be set in `.env`; otherwise `docker compose` stops with a message. Generate one with `openssl rand -hex 24`. `POSTGRES_PASSWORD` only applies when the database volume is created; an existing volume keeps its password until you change it with `ALTER USER gelabber PASSWORD '…'`.
+- **With `API_COOKIE_SECURE=true`** (that is, behind TLS) the API refuses to start while one of these passwords is still a former repository default (`gelabber`, `gelabbergelabber`, `gelabberturn`, `change-me…`). Change the password first (Postgres as above, MinIO and TURN in `.env`), then restart.
+- **Plain HTTP on this machine only.** The bundled Caddy listens on `127.0.0.1` by default. Without `API_COOKIE_SECURE=true` the API signs in only on `localhost`/`127.0.0.1`; other machines get `insecure_transport`, because the session cookie would otherwise cross the network unencrypted. For other machines put TLS in front (your own Caddy, see below) and set `API_COOKIE_SECURE=true`. For a trusted test network only: `API_ALLOW_PLAIN_HTTP=true`.
+- **HSTS.** With `API_COOKIE_SECURE=true` the API sends `Strict-Transport-Security: max-age=31536000` (without subdomains), whichever proxy terminates TLS.
+- **Sign-in protection.** Besides 20 attempts per minute and address, the API locks an account for 15 minutes after 10 failed attempts (`API_RATE_LOGIN_FAILURES_PER_ACCOUNT`, `0` turns it off). The address is the rightmost `X-Forwarded-For` entry, the one the Caddy in front of the API wrote.
+
+## Existing Caddy
+
+UDP (TURN + SFU ICE 10000) does not go through Caddy; the host/router ports stay open.
+
+**Small diff:** bundled Caddy on loopback, your Caddy in front of it.
 
 ```bash
 # deploy/compose/.env
@@ -25,173 +35,229 @@ GELABBER_HTTP_PORT=8088
 ```
 gelabber.example.com {
 	reverse_proxy 127.0.0.1:8088 {
-		header_up Host {host}
+		header_up Host {hostport}
 	}
 }
 ```
 
-`header_up Host {host}` ist für den App-vHost Pflicht. `/ws` vergleicht Browser-`Origin` mit `Host`. Ohne Override lässt Caddy bei **HTTP**-Upstreams den eingehenden `Host` standardmäßig durch; bei **HTTPS**-Upstreams setzt Caddy (ab v2.11) den Host auf den Upstream. Explizites Forwarding macht die Absicht klar und verhindert Signature-/Origin-Fehler. Siehe [reverse_proxy Headers](https://caddyserver.com/docs/caddyfile/directives/reverse_proxy#headers).
+`header_up Host {hostport}` is mandatory for the app vhost. `/ws` compares the browser's `Origin` with `Host`, port included: `{host}` cuts off a non-default port (for example `:8443` or `GELABBER_HTTP_PORT`), and every WebSocket handshake ends with 403. Without an override, Caddy passes the incoming `Host` through to **HTTP** upstreams by default; for **HTTPS** upstreams Caddy (from v2.11) sets the Host to the upstream. Explicit forwarding makes the intent clear and prevents signature/origin errors. See [reverse_proxy headers](https://caddyserver.com/docs/caddyfile/directives/reverse_proxy#headers).
 
-**Ohne Compose-Caddy:** Overlay published web/api/media (und MinIO) auf Loopback. Vorlage: `deploy/compose/Caddyfile.homelab` (zwei aktive Site-Blöcke: App + MinIO).
+**Another proxy in front (Nginx, Traefik, …).** Since v0.6 the bundled Caddy also hands `Host` on to the services with its port; up to 0.5.x it cut the port off. What reaches the stack must therefore be the browser's `Host`: the same name and, when the browser uses a non-default port, exactly that port. Nginx: `proxy_set_header Host $http_host;` (`$host` is enough only while the browser uses the default port). The scheme's default port written out is allowed (`Host: example.com:443` for HTTPS, `:80` for HTTP).
 
-Wichtig: Die Compose-`.env` exportiert **nicht** automatisch Variablen an einen externen Caddy-Dienst oder einen Caddy-Container in einem anderen Stack. Einrichtung:
+If the proxy in front instead writes a port into `Host` that the browser does not use, `/ws` answers 403 since v0.6 ("Cross-origin WebSocket is not allowed."). That happens with `proxy_set_header Host $host:$proxy_port;` (the upstream's port, 8088 above) and with `$host:$server_port` behind a port translation (443 outside, Nginx on 8443). Under 0.5.x such a configuration worked because the port was cut off. With the v0.6 Caddyfile, login and the REST API keep working, but chat no longer updates and voice does not connect. The remedy is the `Host` line on the proxy in front, not the Caddyfile.
 
-1. Beide Site-Blöcke aus `Caddyfile.homelab` in die tatsächlich verwendete Caddy-Konfiguration kopieren/importieren.
-2. Domain und Upstream am Caddy-Dienst/Container setzen **oder** fest in der Caddyfile eintragen. Host und URL unterscheiden:
-   - `GELABBER_MINIO_DOMAIN=minio.example.com` (Caddy-Site / Host)
-   - `MINIO_PUBLIC_ENDPOINT=https://minio.example.com` (API-Presign-URL, inkl. Schema)
-3. Bei geändertem `MINIO_API_PORT` den Upstream anpassen; im Docker-Netz `gelabber` Upstream `minio:9000` (kein Host-Port nötig). App-Upstreams analog: `web:80`, `api:8080`, `media:8081`.
-4. MinIO-Block: `header_up Host {hostport}` (Port erhalten, z. B. `:8443`), URI unverändert — Presigns signieren Host und Pfad.
-5. Konfiguration validieren (`caddy validate` / `caddy adapt`) und Caddy neu laden.
-6. Bei `.home.arpa`: lokale CA auf den Browser-Clients vertrauenswürdig machen ([Local HTTPS](https://caddyserver.com/docs/automatic-https#local-https)).
+**Content-Security-Policy.** The stack sets none. If you set one for the app host on your own proxy, it must let the desktop app reach its native part: add `ipc:` (Linux) and `http://ipc.localhost` (Windows) to `connect-src`, for example `connect-src 'self' ipc: http://ipc.localhost`. Without `connect-src`, `default-src` applies. Without these sources the app falls back to a slow path: it keeps working, but video in its tiles stays at 320×180 with 15 frames per second, and the tile reports "Geringe Bildqualität" (low picture quality) with the Content-Security-Policy as the reason. Browsers and the installed PWA are not affected.
 
-Umgebungsvariablen in Caddy: [Caddyfile environment variables](https://caddyserver.com/docs/caddyfile/concepts#environment-variables).
+**Without the Compose Caddy:** the overlay publishes web/api/media (and MinIO) on loopback. Template: `deploy/compose/Caddyfile.homelab` (two active site blocks: app + MinIO).
+
+Important: the Compose `.env` does **not** automatically export variables to an external Caddy service or to a Caddy container in another stack. Setup:
+
+1. Copy/import both site blocks from `Caddyfile.homelab` into the Caddy configuration actually in use.
+2. Set the domain and upstream on the Caddy service/container **or** write them into the Caddyfile. Keep host and URL apart:
+   - `GELABBER_MINIO_DOMAIN=minio.example.com` (Caddy site / host)
+   - `MINIO_PUBLIC_ENDPOINT=https://minio.example.com` (API presign URL, scheme included)
+3. With a changed `MINIO_API_PORT`, adjust the upstream; in the Docker network `gelabber` the upstream is `minio:9000` (no host port needed). App upstreams likewise: `web:80`, `api:8080`, `media:8081`.
+4. MinIO block: `header_up Host {hostport}` (keep the port, for example `:8443`), URI unchanged; presigns sign host and path.
+5. Validate the configuration (`caddy validate` / `caddy adapt`) and reload Caddy.
+6. With `.home.arpa`: make the browser clients trust the local CA ([Local HTTPS](https://caddyserver.com/docs/automatic-https#local-https)).
+
+Environment variables in Caddy: [Caddyfile environment variables](https://caddyserver.com/docs/caddyfile/concepts#environment-variables).
 
 ```bash
 cp deploy/compose/.env.homelab.example deploy/compose/.env
-# App- und MinIO-Domain, IPs und Secrets setzen; beide Namen müssen in DNS stehen.
-# Caddy separat mit beiden Site-Blöcken + denselben Domain-/Upstream-Werten versorgen.
+# Set the app and MinIO domains, IPs and secrets; both names must be in DNS.
+# Give Caddy both site blocks + the same domain/upstream values separately.
 cd deploy/compose
 docker compose up -d
 ```
 
-## TURN-Zugangsdaten
+## TURN credentials
 
-Zwei Modi. Sie müssen auf API und coturn gleich sein.
+Two modes. They must be the same on the API and on coturn.
 
-Compose bietet TURN über UDP und TCP an. TCP ist der Ausweichpfad für Clients, deren Netz UDP zum Server blockiert; coturn leitet von dort weiterhin per UDP zum SFU weiter. Bei einem eigenen `TURN_URLS`-Eintrag beide Varianten aufnehmen, beispielsweise `stun:example.com:3478,turn:example.com:3478?transport=udp,turn:example.com:3478?transport=tcp`. Bestehende `.env`-Overrides werden durch ein Image-Update nicht ergänzt. TCP 3478 muss neben den dokumentierten UDP-Ports erreichbar sein; der gebündelte coturn veröffentlicht beide.
+Compose offers TURN over UDP and TCP. TCP is the fallback for clients whose network blocks UDP to the server; coturn still relays from there to the SFU over UDP. With your own `TURN_URLS` entry, include both variants, for example `stun:example.com:3478,turn:example.com:3478?transport=udp,turn:example.com:3478?transport=tcp`. An image update does not extend existing `.env` overrides. TCP 3478 must be reachable next to the documented UDP ports; the bundled coturn publishes both.
 
-**Statisch (Default).** `TURN_AUTH_SECRET` leer lassen. Das Ticket schickt `TURN_USERNAME` / `TURN_PASSWORD`. Der gebündelte coturn prüft genau diese Langzeit-Credentials (`--lt-cred-mech`). Ein externes TURN, das schon User/Passwort kennt, bleibt so erreichbar — auch wenn das Homelab-Overlay den gebündelten coturn abschaltet.
+**Static (default).** Leave `TURN_AUTH_SECRET` empty. The ticket sends `TURN_USERNAME` / `TURN_PASSWORD`. The bundled coturn checks exactly these long-term credentials (`--lt-cred-mech`). An external TURN that already knows the user/password stays reachable this way, even when the homelab overlay turns the bundled coturn off.
 
-**REST.** Denselben privaten Secret auf der API und auf coturn setzen (`TURN_AUTH_SECRET`, coturn `--use-auth-secret` / `--static-auth-secret`). Jedes Ticket bekommt dann zeitlich begrenzte HMAC-Credentials (`expiry:user`) statt des statischen Passworts. `TURN_CRED_TTL_SECS` (Default 21600) ist die Gültigkeit. Der gebündelte coturn schaltet dabei von allein auf REST um.
+**REST.** Set the same private secret on the API and on coturn (`TURN_AUTH_SECRET`, coturn `--use-auth-secret` / `--static-auth-secret`). Every ticket then gets time-limited HMAC credentials (`expiry:user`) instead of the static password. `TURN_CRED_TTL_SECS` (default 21600) is their lifetime. The bundled coturn switches to REST on its own.
 
-`gelabberturnsecret` ist kein Secret. Der alte Compose-Default hat ihn in jeden Stack geschrieben; API und gebündelter coturn starten damit nicht mehr. Wer ihn in der `.env` stehen hat, löscht die Zeile (statisch) oder setzt ein eigenes Secret auf beiden Seiten.
+`gelabberturnsecret` is not a secret. The old Compose default wrote it into every stack; the API and the bundled coturn no longer start with it. If it is in your `.env`, delete the line (static) or set your own secret on both sides.
 
 ### Migration
 
-1. Bisher nur `TURN_USERNAME` / `TURN_PASSWORD` (externes TURN, Homelab ohne umgebauten coturn): `TURN_AUTH_SECRET` nicht setzen. Relays bleiben bei den bestehenden Credentials.
-2. Gebündelter coturn ohne eigene `TURN_AUTH_SECRET`-Zeile: nichts eintragen. API und coturn wechseln zusammen von dem öffentlichen REST-Default auf statische User/Passwort-Credentials.
-3. REST gewollt: ein neues, nicht öffentliches Secret erzeugen, identisch in die API-Umgebung und in coturn (`static-auth-secret`) schreiben, beide neu starten. Erst dann Tickets mit HMAC-Credentials ausstellen. Ein externes TURN muss denselben Secret bekommen, bevor die Variable gesetzt wird.
+1. Only `TURN_USERNAME` / `TURN_PASSWORD` so far (external TURN, homelab without a rebuilt coturn): do not set `TURN_AUTH_SECRET`. Relays keep the existing credentials.
+2. Bundled coturn without your own `TURN_AUTH_SECRET` line: add nothing. The API and coturn move together from the public REST default to static user/password credentials.
+3. REST wanted: generate a new, non-public secret, write it identically into the API environment and into coturn (`static-auth-secret`), restart both. Only then issue tickets with HMAC credentials. An external TURN must get the same secret before the variable is set.
 
-## TURN-Port belegt
+### After changing TURN values
 
-`Bind for 0.0.0.0:3478 failed` — meist schon ein coturn.
+The API and coturn read `TURN_*` from `.env` only when their containers are created. Watchtower swaps images and keeps each container's old environment, and `up … api` recreates only the services it names. After any change to `TURN_AUTH_SECRET`, `TURN_USERNAME` or `TURN_PASSWORD` (also when a release removes a default, as v0.6 did for `TURN_PASSWORD`), recreate both:
 
-- Overlay (Weg 2) startet Gelabbers coturn nicht. `TURN_PUBLIC_HOST` / `TURN_PORT` / User / Pass auf den bestehenden Server. Aus einem Container ist `127.0.0.1` falsch (LAN-IP oder `host.docker.internal`).
-- Zweiter coturn: `COMPOSE_PROFILES=bundled-coturn` plus freien `TURN_PORT` (z. B. 3479) und Relays (`TURN_RELAY_MIN` / `TURN_RELAY_MAX`). `TURN_URLS` hängt am API-Ticket; der SFU liest sie nicht.
-- Ohne Overlay: in `.env` nur `TURN_PORT=3479` (und freie Relays).
+```bash
+cd deploy/compose
+# Homelab overlay without COMPOSE_PROFILES=bundled-coturn: leave out `coturn`
+# (naming it starts the bundled one) and update your own TURN server instead.
+docker compose up -d --no-deps --force-recreate coturn api
+./turn-check.sh
+```
 
-## Hinter TLS
+For a digest rollout use the same `--env-file` / `-f` arguments as the rollout. If you started the bundled coturn by mistake on the homelab overlay, remove it with `docker compose rm -sf coturn`.
 
-- `API_COOKIE_SECURE=true`
-- `GELABBER_MINIO_DOMAIN` (Caddy-Host, z. B. `minio.example.com`) und `MINIO_PUBLIC_ENDPOINT` (volle URL, z. B. `https://minio.example.com`) müssen zur aktiven MinIO-Site in der **echten** Caddy-Config passen (Compose-`.env` allein reicht für externes Caddy nicht); kein Path-Prefix — Presigns signieren Host und Pfad. `MINIO_API_CORS_ALLOW_ORIGIN` = Gelabber-Origin
-- `TURN_PUBLIC_HOST`, `TURN_EXTERNAL_IP`, `MEDIA_ADVERTISED_IP` = Adresse, die Clients erreichen
+`turn-check.sh` compares the values the running API and coturn were started with and names the keys that differ, without printing them. A mismatch looks like a working call without sound: the client connects, but coturn refuses the relay. With an external TURN (homelab overlay without `bundled-coturn`) the script only reminds you to check that server yourself.
+
+## TURN port in use
+
+`Bind for 0.0.0.0:3478 failed`: usually a coturn is already running.
+
+- The overlay (way 2) does not start Gelabber's coturn. Point `TURN_PUBLIC_HOST` / `TURN_PORT` / user / password at the existing server. From a container, `127.0.0.1` is wrong (use the LAN IP or `host.docker.internal`).
+- A second coturn: `COMPOSE_PROFILES=bundled-coturn` plus a free `TURN_PORT` (for example 3479) and relays (`TURN_RELAY_MIN` / `TURN_RELAY_MAX`). `TURN_URLS` goes on the API ticket; the SFU does not read it.
+- Without the overlay: only `TURN_PORT=3479` in `.env` (and free relays).
+
+## Behind TLS
+
+- `API_COOKIE_SECURE=true`. The API then accepts the WebSocket (`/ws`) only from `https://` pages; `http://` stays allowed for `localhost` only.
+- `GELABBER_MINIO_DOMAIN` (Caddy host, for example `minio.example.com`) and `MINIO_PUBLIC_ENDPOINT` (full URL, for example `https://minio.example.com`) must match the active MinIO site in the **real** Caddy config (the Compose `.env` alone is not enough for an external Caddy); no path prefix, presigns sign host and path. `MINIO_API_CORS_ALLOW_ORIGIN` = the Gelabber origin
+- `TURN_PUBLIC_HOST`, `TURN_EXTERNAL_IP`, `MEDIA_ADVERTISED_IP` = the address clients reach
+
+### MinIO on 443
+
+Browsers upload and download attachments directly from MinIO through presigned URLs, so `MINIO_PUBLIC_ENDPOINT` is public by design. Put it on its own subdomain behind your TLS Caddy, not on a published port such as `https://example.com:9000`: networks that only allow 80/443 then load no images, and the S3 API (plus the console on 9001, if published) faces the internet without the proxy in front. The move fixes reachability and removes the directly published 9000/9001 (console included), but it does not shrink the S3 API's attack surface: the Caddy MinIO site forwards every path and method, so `https://minio.example.com` still serves the whole S3/admin API, and the API keeps signing with the MinIO root account. The API logs a warning at startup when an `https://` endpoint carries a port other than 443.
+
+1. DNS for `minio.example.com`, and the MinIO site from `Caddyfile.homelab` in your Caddy with `minio.example.com` as its address (the default is `minio.home.arpa`; `header_up Host {hostport}`, URI unchanged).
+2. `.env`: `MINIO_PUBLIC_ENDPOINT=https://minio.example.com`, `MINIO_API_CORS_ALLOW_ORIGIN=https://example.com`. Leave `MINIO_API_BIND` and `MINIO_CONSOLE_BIND` as they are for now: open browsers cache the attachment redirect for the rest of its signing window and keep following the old `:9000` link for up to 30 minutes, so the old port must stay reachable that long.
+3. `docker compose up -d minio api`. Check from outside that `curl -I https://minio.example.com/minio/health/live` answers 200, and that an attachment link now redirects to `https://minio.example.com/…`: with `curl -I` and your session cookie, or in a private window.
+4. About 30 minutes later, set `MINIO_API_BIND=127.0.0.1` and `MINIO_CONSOLE_BIND=127.0.0.1` in `.env`, run `docker compose up -d minio`, and close 9000/9001 in the firewall. Check from outside that `curl -I https://example.com:9000/minio/health/live` fails. In the app, upload a new image and check that it loads (its redirect cannot come from a cache), then hard-reload (Ctrl+Shift+R) and check that an existing image still loads.
+
+If you cannot wait, do step 4 right after step 3: browsers that were already open may then miss some images for up to 30 minutes, until their cached redirects run out or the page is hard-reloaded.
+
+A path prefix (`https://example.com/s3/…`) does not work: presigns sign host and path.
 
 ## Backup
 
-PostgreSQL-Metadaten und MinIO-Anhänge bilden **ein Snapshotpaar**. Vor dem
-Backup alle App-Schreiber anhalten, einschließlich API-Hintergrundjobs und
-noch gültiger direkter MinIO-Uploads. Die API zuerst drainen, dann MinIO stoppen;
-erst danach beide Datenbestände sichern. Ein laufendes PostgreSQL-Datenvolume
-per `tar` ist kein konsistentes physisches Backup. Hier verwenden wir stattdessen
-`pg_dump` mit dem vollständigen SQLx-Migrationsledger. Redis ist flüchtig und
-gehört nicht zum Daten-Restore.
+PostgreSQL metadata and MinIO attachments form **one snapshot pair**. Before
+the backup, stop all app writers, including API background jobs and still
+valid direct MinIO uploads. Drain the API first, then stop MinIO; only then
+back up both data sets. A `tar` of a running PostgreSQL data volume is not a
+consistent physical backup. Here we use `pg_dump` with the complete SQLx
+migration ledger instead. Redis is volatile and not part of a data restore.
 
-Beispiel für den Compose-Stack mit Wartungsfenster (die tatsächlich gemountete
-MinIO-Volume und das laufende Image werden vor dem Stop ermittelt):
+Example for the Compose stack with a maintenance window (the MinIO volume
+actually mounted and the running image are determined before the stop):
 
 ```bash
 cd deploy/compose
 sh ../backup.sh
 ```
 
-Bei einem Fehler bleiben die Schreiber gestoppt, bis das unvollständige Backup
-untersucht ist. Den freigegebenen
-`image-set.json`/`image-set.env`, die aktive Compose-Konfiguration und den
-Backup-Zeitpunkt zum Paar archivieren; Secrets dabei privat halten. Ein lokales
-Image-ID allein ist kein portabler Ersatz für den archivierten Registry-Digest.
+Encrypt backups that leave the server: with
+`GELABBER_BACKUP_AGE_RECIPIENT=age1…` (an [age](https://age-encryption.org)
+public key) the dump and the MinIO archive are stored only as `*.age`. Before a
+restore, decrypt them with `age -d -i key.txt -o database.pgdump
+database.pgdump.age` (likewise `minio-data.tgz`), then run
+`sha256sum -c SHA256SUMS`.
 
-Restore zuerst auf **frische Zielbestände** prüfen: `sha256sum -c SHA256SUMS`,
-eine neue leere PostgreSQL-Datenbank und ein neues leeres MinIO-Volume mit
-`pg_restore --exit-on-error --no-owner` beziehungsweise dem vollständig
-extrahierten MinIO-Archiv befüllen. Den Objectstore mit demselben MinIO-Pin
-starten und die passende API-/Image-Version auf dieses Paar konfigurieren.
-Quellbestände erhalten, bis Bytehashes, Dateityp, Nachrichten-Metadaten,
-Mitgliedschaft, DM-Scope und verweigerte Downloads/Uploads geprüft sind.
-Neue Presigns verwenden, keine abgelaufenen Download-URLs aus dem Backup.
+On an error the writers stay stopped until the incomplete backup has been
+examined. Archive the released `image-set.json`/`image-set.env`, the active
+Compose configuration and the backup time with the pair; keep secrets private.
+A local image ID alone is not a portable replacement for the archived registry
+digest.
 
-Ein Binary-/Image-Rückweg auf einen alten Snapshot verliert absichtlich alle
-Änderungen nach dessen Zeitpunkt. Ein altes Binary gegen das neue Schema zu
-starten ist ein separates Gate: selbst additive SQL-Änderungen können am
-SQLx-Migrationsledger scheitern. Deshalb ersetzt ein Imagewechsel den geprüften
-Restore des passenden alten DB-/Objectstore-Paars nicht.
+Test a restore on **fresh targets** first: `sha256sum -c SHA256SUMS`, then fill
+a new empty PostgreSQL database and a new empty MinIO volume with
+`pg_restore --exit-on-error --no-owner` and the fully extracted MinIO archive
+respectively. Start the object store with the same MinIO pin and configure the
+matching API/image version for this pair. Keep the source data until byte
+hashes, file type, message metadata, membership, DM scope and refused
+downloads/uploads have been checked. Use new presigns, not expired download
+URLs from the backup.
 
-Der lokale vollständige Drill ist in [Upgrade/Storage/Restore](../docs/upgrade-storage-restore.md)
-beschrieben. Er benutzt ausschließlich eigene Wegwerf-Container und führt einen
-echten alten API-Binary-Rückweg aus; das ältere
-`tools/check-chat-migration-restore.py` bleibt als schneller Schema-/Daten-Drill
-ohne Objectstore oder Binary-Abnahme verfügbar.
+Going back to an old snapshot with a binary/image deliberately loses all
+changes after its time. Starting an old binary against the new schema is a
+separate gate: even additive SQL changes can fail on the SQLx migration
+ledger. That is why an image change does not replace the tested restore of the
+matching old DB/object store pair.
 
-## Metriken
+The full local drill is described in [Upgrade/Storage/Restore](../docs/upgrade-storage-restore.md).
+It uses only its own throwaway containers and runs a real rollback to an old
+API binary; the older `tools/check-chat-migration-restore.py` stays available
+as a quick schema/data drill without object store or binary acceptance.
 
-Kein Debug-UI in `web`. Grafana startet nicht mit `docker compose up`:
+## Metrics
+
+No debug UI in `web`. Grafana does not start with `docker compose up`:
 
 ```bash
 cd deploy/compose
 docker compose -f compose.yaml -f compose.observability.yaml up -d
-# Homelab: drittes -f compose.homelab.yaml
+# Homelab: a third -f compose.homelab.yaml
 ```
 
-Grafana 13.2.1: `http://127.0.0.1:3000/d/gelabber/gelabber` (admin / `gelabber`, anonym Viewer). Datei: `deploy/compose/grafana/dashboards/gelabber.json`. Prometheus v3.14.0: `http://127.0.0.1:9090`, scrapet `api:8080/metrics` und `media:8081/metrics`. Nicht hinter Caddy. Prozess-Tracing ist JSON auf stdout (`RUST_LOG`), kein Jaeger.
+Grafana 13.2.1: `http://127.0.0.1:3000/d/gelabber/gelabber` (admin / `gelabber`, anonymous viewer). File: `deploy/compose/grafana/dashboards/gelabber.json`. Prometheus v3.14.0: `http://127.0.0.1:9090`, scrapes `api:8080/metrics` and `media:8081/metrics`. Not behind Caddy. Process tracing is JSON on stdout (`RUST_LOG`), no Jaeger.
 
-## Images und Release-Gate
+## Images and release gate
 
-API- und Media-Dockerbuilds halten kompilierte externe Rust-Abhängigkeiten in einer eigenen Layer-Cache-Stufe. Das Rezept übernimmt die Manifeste, das Lockfile und die Toolchain, enthält aber nur Platzhalterquellen. Nur die Versionen der drei lokalen Workspace-Pakete werden in diesem temporären Rezept auf `0.0.0` gesetzt; externe Versionen, Checksummen und Features bleiben erhalten. Dadurch invalidieren Quelländerungen und reine App-Versionsanhebungen nicht den Abhängigkeits-Layer. Vor dem eigentlichen Build werden die Platzhalter-Artefakte mit paketbezogenem `cargo clean` entfernt und alle Originalmanifeste, das Original-Lockfile sowie die echten Quellen übernommen. Der fertige Build verwendet weiterhin `--locked` und die tatsächliche Release-Version. API-Quelländerungen invalidieren den Media-Build nicht und umgekehrt; Änderungen an `shared` betreffen beide.
+The API and media Docker builds keep compiled external Rust dependencies in a layer cache stage of their own. The recipe takes the manifests, the lockfile and the toolchain, but contains only placeholder sources. Only the versions of the three local workspace packages are set to `0.0.0` in this temporary recipe; external versions, checksums and features stay as they are. Source changes and pure app version bumps therefore do not invalidate the dependency layer. Before the actual build, the placeholder artifacts are removed with a per-package `cargo clean`, and all original manifests, the original lockfile and the real sources are taken over. The finished build still uses `--locked` and the actual release version. API source changes do not invalidate the media build and vice versa; changes to `shared` affect both.
 
-Die bestehenden getrennten GitHub-Actions-Layer-Caches für API und Media bleiben bestehen. Kalte Builds müssen die Abhängigkeiten einmal kompilieren; warme Builds können sie wiederverwenden. Cache-Rezeptprüfungen laufen mit den Deployment-Konfigurationstests, tatsächliche Laufzeiten und Container-Readiness müssen zusätzlich mit Docker geprüft werden.
+The existing separate GitHub Actions layer caches for API and media stay. Cold builds have to compile the dependencies once; warm builds can reuse them. Cache recipe checks run with the deployment configuration tests; actual run times and container readiness must also be checked with Docker.
 
-Die langsame lokale Cache-Abnahme startet mit `python3 docker/check-rust-cache.py --baseline-ref <commit-vor-cache-aenderung> --output /tmp/gelabber-rust-cache`. Sie prüft Quell-, Shared-, Versions- und Feature-Änderungen in eigenen Buildx-Caches und vergleicht drei unterschiedliche Quell-Rebuilds mit den bisherigen Dockerfiles. JSON und vollständige Logs enthalten die Cache-Treffer und gemessenen Laufzeiten der Build-Stufe, ohne Image-Export; mindestens 20 Prozent Verbesserung wird geprüft. `--keep-images` exportiert anschließend Images aus dem unveränderten Quellstand für eine separate Readiness-Prüfung. Dieser Runner gehört zur lokalen Abnahme und läuft nicht in CI.
+The slow local cache acceptance starts with `python3 docker/check-rust-cache.py --baseline-ref <commit-before-cache-change> --output /tmp/gelabber-rust-cache`. It checks source, shared, version and feature changes in buildx caches of their own and compares three different source rebuilds with the previous Dockerfiles. JSON and full logs contain the cache hits and the measured run times of the build stage, without image export; at least 20 percent improvement is checked. `--keep-images` then exports images from the unchanged source state for a separate readiness check. This runner belongs to local acceptance and does not run in CI.
 
-Der Compose-Default ist die veröffentlichte Version `v0.5.2`. Bestehende Release-Tags werden nicht überschrieben. MinIO verwendet unabhängig davon den bestehenden CE-Pin `RELEASE.2025-10-15T17-29-55Z`. Org-Pakete können privat sein: `docker login ghcr.io` oder lokal bauen. Alle Stack-Pins bleiben bestehen. Source-Build setzt `CARGO_HTTP_CAINFO`; bei TLS-Inspection hängt `docker/rust-build-ca.sh` die präsentierte Kette an.
+The Compose default is the published version `v0.6.1`. Existing release tags are not overwritten. MinIO independently uses the existing CE pin `RELEASE.2025-10-15T17-29-55Z`. Org packages can be private: `docker login ghcr.io` or build locally. All stack pins stay. The source build sets `CARGO_HTTP_CAINFO`; with TLS inspection, `docker/rust-build-ca.sh` appends the presented chain.
 
-CI läuft für **jeden main-Commit**, damit auch Deploy-/Workflow-Änderungen eine eindeutige CI-SHA besitzen. PR-Pfadfilter erfassen `shared/**`, alle Workspace-Mitglieder, Docker-Kontexte, Lockfiles und Workflows. Der Image-Workflow baut PRs ohne Push. Auf main startet er erst nach erfolgreichem `CI`-Push-Lauf derselben SHA; fehlgeschlagene/abgebrochene CI startet keinen Publish-Job.
+CI runs for **every main commit**, so that deploy/workflow changes have a definite CI SHA too. PR path filters cover `shared/**`, all workspace members, Docker contexts, lockfiles and workflows. The image workflow builds PRs without pushing. On main it starts only after a successful `CI` push run of the same SHA; failed/cancelled CI starts no publish job.
 
-Zuerst entstehen App-Tags `sha-<volle SHA>-<Run-ID>-<Attempt>`; OCI-Labels enthalten Revision, Version, Commitzeit und Source-URL. Die zusätzlichen Run-Felder verhindern, dass ein erneuter Build derselben SHA einen vorherigen Build überschreibt. Die Promotion prüft CI erneut und prüft **alle drei** Versionsdigests vor dem ersten Schreibvorgang. Ein bestehender Versionsdigest muss exakt identisch sein. Ein vorhandener Git-Release-Tag mit anderer SHA oder inzwischen verschobenes main führt zu einem reinen Kandidatensatz ohne Version-Promotion. Der Build-/Promotionslauf schreibt kein `latest`. Erst der erfolgreiche `Release`-Workflow setzt für API, Web, Media und MinIO den Alias `latest` auf die Digests des veröffentlichten stabilen Releases. Zuvor prüft er den ganzen Satz, den Git-Tag, CI und Publish-Lauf; ältere Releases und Kandidaten dürfen die Aliase nicht zurücksetzen. MinIO behält seinen separaten Pin; dessen `latest` zeigt auf den MinIO-Digest aus dem Release-Satz.
+First, app tags `sha-<full SHA>-<run ID>-<attempt>` are created; OCI labels contain revision, version, commit time and source URL. The extra run fields prevent a rebuild of the same SHA from overwriting an earlier build. The promotion checks CI again and checks **all three** version digests before the first write. An existing version digest must be exactly identical. An existing Git release tag with another SHA, or main having moved on in the meantime, leads to a plain candidate set without version promotion. The build/promotion run writes no `latest`. Only the successful `Release` workflow sets the `latest` alias for API, web, media and MinIO to the digests of the published stable release. Before that it checks the whole set, the Git tag, CI and the publish run; older releases and candidates must not reset the aliases. MinIO keeps its separate pin; its `latest` points to the MinIO digest from the release set.
 
-Das Artifact `image-set` enthält:
+The `image-set` artifact contains:
 
-- `image-set.json`: Revision, Version, CI-/Publish-Run, Promotionsstatus, API/Web/Media-Digests und separaten MinIO-Pin/Digest.
-- `image-set.env`: vier `GELABBER_*_IMAGE=ghcr.io/…@sha256:…`-Referenzen für Compose.
+- `image-set.json`: revision, version, CI/publish run, promotion status, API/web/media digests and the separate MinIO pin/digest.
+- `image-set.env`: four `GELABBER_*_IMAGE=ghcr.io/…@sha256:…` references for Compose.
 
-Kandidatensätze sind **keine Releases**. Ein abgeschlossener Hotfix bekommt erst nach koordinierter Abnahme eine neue Workspace-/Compose-Version. Der Koordinator startet danach den Workflow `Release` **auf main** mit passendem `tag` und erfolgreicher `image_run_id`. Dieser prüft Manifest, CI, aktuellen main-Stand und Versionsdigests erneut, bewahrt existierende Tags/Releases und hängt den Satz an den neuen GitHub-Release. Es gibt keinen automatischen Release auf jedem Push und keinen Release von Feature-/Major-Zwischenständen. Kein Trigger durch beliebige `v*`-Tag-Pushes.
+Candidate sets are **not releases**. A finished hotfix gets a new workspace/Compose version only after coordinated acceptance. The same version belongs in `desktop/Cargo.toml` and `desktop/Cargo.lock`: the desktop apps (Windows installer, Linux tarball, pacman package) carry the version of this workspace of their own, `Release` stops on a different one before tag and release are created, and the desktop workflow attaches the apps only to a release with exactly their version. The coordinator then starts the `Release` workflow **on main** with the matching `tag` and a successful `image_run_id`. It checks manifest, CI, the current main state and version digests again, keeps existing tags/releases and attaches the set to the new GitHub release. There is no automatic release on every push and no release of feature/major intermediate states. No trigger by arbitrary `v*` tag pushes.
 
-Falls ein Alias-Update unterbrochen wurde oder bei einem älteren Release fehlte: `Release` auf **main** mit dessen `tag` und `image_run_id` starten und **refresh_latest_only** aktivieren. Das repariert ausschließlich die Aliase des aktuell als latest veröffentlichten stabilen GitHub-Releases, ohne Builds, neue Releases oder Änderungen an festen Tags. Für v0.2.5: `tag=v0.2.5`, `image_run_id=36549037951`. Alle vier Aliase werden einzeln geschrieben; bei einem Fehler bleibt der Workflow rot und kann erneut gestartet werden.
+If an alias update was interrupted or was missing for an older release: start `Release` on **main** with its `tag` and `image_run_id` and turn on **refresh_latest_only**. That repairs only the aliases of the stable GitHub release currently published as latest, without builds, new releases or changes to fixed tags. For v0.2.5: `tag=v0.2.5`, `image_run_id=36549037951`. All four aliases are written one by one; on an error the workflow stays red and can be started again.
 
-## Rollout und Rollback mit exakten Digests
+## Rollout and rollback with exact digests
 
-Den Satz nach Abnahme aus dem freigegebenen Release herunterladen und dauerhaft beim Deployment archivieren. Für die erste Migration den **tatsächlich laufenden** bisherigen Satz sichern: `docker compose images` / Container-Inspect und Registry-Digests erfassen; nicht annehmen, dass ein alter mutable Tag dem laufenden Container entspricht. Diesen alten Satz als `previous.env` speichern (alle vier Image-Variablen). Zugangsdaten bleiben ausschließlich in `.env`, nicht im Manifest.
+After acceptance, download the set from the released release and archive it permanently with the deployment. For the first migration, record the previous set **actually running**: capture `docker compose images` / container inspect and registry digests; do not assume that an old mutable tag matches the running container. Save this old set as `previous.env` (all four image variables). Credentials stay in `.env` only, not in the manifest.
 
 ```bash
 cd deploy/compose
-# Freigegebenes image-set.env hier als next.env ablegen.
-# .env enthält wie bisher Secrets und ggf. COMPOSE_FILE für Homelab.
+# Put the released image-set.env here as next.env.
+# .env holds the secrets as before, and COMPOSE_FILE for homelab if used.
 docker compose --env-file .env --env-file next.env config -q
 docker compose --env-file .env --env-file next.env config --images
-# Backup gemäß Abschnitt Backup; alte Manifest-/Env-Dateien behalten.
+# Backup as in the Backup section; keep the old manifest/env files.
 docker compose --env-file .env --env-file next.env pull --policy always api web media minio
 docker compose --env-file .env --env-file next.env up -d --no-deps --no-build --pull never --force-recreate api web media minio
-# Anschließend: /ready, /media/ready, Login, Upload und echte Medien/Relay-Abnahme.
+# Bundled coturn only (skip with the homelab overlay unless COMPOSE_PROFILES=bundled-coturn):
+docker compose --env-file .env --env-file next.env up -d --no-deps --force-recreate coturn
+./turn-check.sh
+# Then: /ready, /media/ready, login, upload and a real media/relay acceptance.
 ```
 
-`--no-build` verhindert einen unbemerkten lokalen Ersatzbuild, der explizite Pull löst das bisherige `pull_policy: missing`-Problem. Bereits im Shell-Environment exportierte `GELABBER_*_IMAGE`-Variablen vorher entfernen, da sie Env-Dateien übersteuern. Homelab behält sein `COMPOSE_FILE`; alternativ dieselben `-f`-Overlays bei **allen** Befehlen verwenden. Images werden als Satz vorab geladen; Containerwechsel sind nicht atomar und benötigen ein Wartungsfenster.
+coturn is not part of the image set, but it carries the TURN credentials from `.env`. Without this step it keeps the values from its last start while the API hands out the new ones (see "After changing TURN values").
 
-**v0.4 → v0.3.1 funktioniert nicht durch einen Imagewechsel:** Migrationen
-0010/0011 verändern das SQLx-Migrationsledger. Vor dem Start von v0.3.1 muss
-das vor dem Upgrade gesicherte PostgreSQL-/MinIO-Snapshotpaar auf geprüfte
-Zielbestände zurückgespielt werden. Änderungen seit diesem Backup gehen verloren.
+`--no-build` prevents an unnoticed local replacement build; the explicit pull solves the earlier `pull_policy: missing` problem. Remove `GELABBER_*_IMAGE` variables already exported in the shell environment first, since they override env files. Homelab keeps its `COMPOSE_FILE`; alternatively use the same `-f` overlays with **all** commands. Images are pulled ahead as a set; container switches are not atomic and need a maintenance window.
 
-Nur bei nachgewiesener Schema-/Ledger-Kompatibilität den archivierten vorherigen
-vollständigen API-/Web-/Media-Satz verwenden (kein einzelnes altes Media-Image):
+**The deploy files belong to the set.** The commands above swap only images; `Caddyfile` and `compose.yaml` come from the checkout. If a release changes them, bring the checkout to its tag before these commands and, after the image switch, recreate the proxy too, **only where the bundled Caddy runs** (default Compose without the homelab overlay):
+
+```bash
+# Do not run with compose.homelab.yaml (see below).
+docker compose --env-file .env --env-file next.env up -d --no-deps --force-recreate proxy
+```
+
+A `caddy reload` is not enough for this. The proxy mounts `./Caddyfile` as a single file, and `git` replaces the file when updating: the running container keeps seeing the old one, and a reload loads the old text again. Only the restarted container (`docker compose restart proxy` is enough when only the Caddyfile changed) reads the new one. **v0.6 is such a release:** the Caddyfile hands `Host` on with its port (`{hostport}`, see "Existing Caddy") and compresses responses. Without this step both stay off and arrive unannounced with the container's next restart.
+
+**Do not run this step with the homelab overlay (`compose.homelab.yaml`, your own Caddy in front).** The overlay only puts the bundled `proxy` into the `bundled-caddy` profile; a service named explicitly starts anyway. `up … proxy` would therefore start the bundled Caddy on `${GELABBER_HTTP_BIND:-0.0.0.0}:${GELABBER_HTTP_PORT:-80}`: next to your own Caddy, which usually holds port 80 already (the start fails), or open on the network without TLS. Homelab operators instead carry the change from `deploy/compose/Caddyfile.homelab` (v0.6: `header_up Host {hostport}`) into their own Caddy's configuration and reload it there.
+
+**v0.4 → v0.3.1 does not work through an image change:** migrations
+0010/0011 change the SQLx migration ledger. Before starting v0.3.1, the
+PostgreSQL/MinIO snapshot pair backed up before the upgrade must be restored
+to tested targets. Changes since that backup are lost.
+
+Only with proven schema/ledger compatibility, use the archived previous
+complete API/web/media set (no single old media image):
 
 ```bash
 docker compose --env-file .env --env-file previous.env config -q
@@ -199,8 +265,10 @@ docker compose --env-file .env --env-file previous.env pull --policy always api 
 docker compose --env-file .env --env-file previous.env up -d --no-deps --no-build --pull never --force-recreate api web media minio
 ```
 
-Kein `down -v`, keine Volumes löschen oder neu benennen: Postgres-/MinIO-Daten bleiben an denselben Volumes. Ein Image-Rollback ersetzt **keinen** Datenbank-Restore; vor Releases müssen Migrationen auf Rückwärtskompatibilität geprüft und Backups erstellt werden. Nach inkompatiblen Migrationen ist der separat geprüfte Restore erforderlich. Readiness alleine ist keine Medien-/Storage-Abnahme.
+Here too the Caddyfile belongs to the set. The v0.6 Caddyfile (`{hostport}`) fits an API from 0.6 on: an older API compares `Origin` and `Host` literally and refuses every WebSocket handshake with 403 as soon as a proxy in front writes out the default port (`Host: example.com:443`). With the old Caddyfile the same configuration worked. For a rollback to 0.5.x, therefore also reset the checkout to the old tag and recreate the proxy as above, with `previous.env`; with the homelab overlay, restore the old line in your own Caddy instead.
 
-Die Pipeline verhindert Überschreiben innerhalb dieser Workflows durch gemeinsamen Promotions-/Release-Lock und Digest-Prüfung. GHCR bietet damit keine transaktionsweite Unveränderlichkeit gegen externe Maintainer-Pushes. Bei abgebrochener Promotion können einzelne neue Versionstags bereits existieren; der Lauf liefert dann keinen freigegebenen Satz, und `Release` bleibt gesperrt. Wiederholungsbuilds mit anderen Digests werden ebenfalls gesperrt, statt Tags zu reparieren/überschreiben. CI-/Artifact-Aufbewahrung ist 90 Tage; freigegebene Sätze zusätzlich dauerhaft archivieren.
+No `down -v`, do not delete or rename volumes: Postgres/MinIO data stays on the same volumes. An image rollback does **not** replace a database restore; before releases, migrations must be checked for backward compatibility and backups made. After incompatible migrations the separately tested restore is required. Readiness alone is not a media/storage acceptance.
 
-Lokale Prüfung für Auftrag09: [Belege und Grenzen](stability-09-evidence.md). Buildidentität ist über OCI/Manifest verfügbar; Health-Responses und Produktquellcode wurden nicht verändert. Compose-/Browser-Smoke-Tests laufen lokal: nach dem Start des lokalen Stacks in `web` mit `npm run test:browser-smoke` beziehungsweise `npm run test:e2e-app`. Der Compose-Smoke-Job wurde aus GitHub Actions entfernt; die reguläre CI prüft Rust, Frontend und Deployment-Konfiguration.
+The pipeline prevents overwrites within these workflows through a shared promotion/release lock and digest checks. GHCR thereby offers no transaction-wide immutability against external maintainer pushes. With an aborted promotion, single new version tags may already exist; the run then delivers no released set, and `Release` stays locked. Rebuilds with other digests are locked as well, instead of repairing/overwriting tags. CI/artifact retention is 90 days; archive released sets permanently as well.
+
+Local check for Auftrag09: [evidence and limits](stability-09-evidence.md). Build identity is available through OCI/manifest; health responses and product source code were not changed. Compose/browser smoke tests run locally: after starting the local stack, in `web` with `npm run test:browser-smoke` or `npm run test:e2e-app`. The Compose smoke job was removed from GitHub Actions; regular CI checks Rust, frontend and deployment configuration.

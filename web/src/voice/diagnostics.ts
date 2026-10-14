@@ -10,6 +10,7 @@ import { create } from "zustand";
 import { APP_VERSION } from "../version.ts";
 import {
   audioBitrate,
+  sharesSourceAudio,
   sourceAudioBitrate,
   videoSendBudget,
   streamProfileFps,
@@ -1077,7 +1078,7 @@ export function relevantSettings(
     autoGainControl: settings.autoGainControl,
     outputVolume: settings.outputVolume,
     inputGain: settings.inputGain,
-    shareSourceAudio: settings.shareSourceAudio,
+    shareSourceAudio: sharesSourceAudio(settings),
     sourceAudioVolume: settings.sourceAudioVolume,
     sourceAudioMuted: settings.sourceAudioMuted,
     sourceAudioMaxBitrate: sourceAudioBitrate(settings),

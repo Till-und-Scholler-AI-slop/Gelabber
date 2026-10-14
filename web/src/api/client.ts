@@ -3,9 +3,16 @@
 // forever, and the API's error envelope surfaced as `ApiError`.
 
 import type { SessionStamp } from "../auth/scope.ts";
+import { randomUuid } from "../lib/uuid.ts";
 
 export type FieldCode =
-  "required" | "invalid" | "too_short" | "too_long" | "taken";
+  | "required"
+  | "invalid"
+  | "too_short"
+  | "too_long"
+  | "taken"
+  | "wrong"
+  | "stale";
 
 export type FieldErrors = Partial<Record<string, FieldCode>>;
 
@@ -15,6 +22,7 @@ export type ApiErrorCode =
   | "unauthenticated"
   | "invalid_credentials"
   | "csrf_invalid"
+  | "insecure_transport"
   | "forbidden"
   | "not_found"
   | "email_taken"
@@ -213,8 +221,14 @@ function changesAuthCookies(path: string): boolean {
     path === "/auth/session" ||
     path === "/auth/login" ||
     path === "/auth/register" ||
-    path === "/auth/logout"
+    path === "/auth/password" ||
+    isLogoutPath(path)
   );
+}
+
+/** Both end this browser's session; "everywhere" also ends all others. */
+function isLogoutPath(path: string): boolean {
+  return path === "/auth/logout" || path === "/auth/logout-all";
 }
 
 export function setSessionSink(sink: SessionSink | null): void {
@@ -285,6 +299,7 @@ const KNOWN_CODES: ReadonlySet<string> = new Set<ApiErrorCode>([
   "unauthenticated",
   "invalid_credentials",
   "csrf_invalid",
+  "insecure_transport",
   "forbidden",
   "not_found",
   "email_taken",
@@ -345,7 +360,7 @@ async function performAuthApi<T>(
   let changing: CookieState | null = null;
   if (explicit && typeof window !== "undefined") {
     changing = {
-      generation: crypto.randomUUID(),
+      generation: randomUuid(),
       phase: "changing",
       userId: previous?.userId ?? stamp.userId,
     };
@@ -357,7 +372,7 @@ async function performAuthApi<T>(
     // Even a superseded response has already changed the browser's cookies.
     // Publish its actual identity before allowing the next auth intent to send.
     const valid = response.ok && isSessionPayload(payload);
-    const logout = response.ok && path === "/auth/logout";
+    const logout = response.ok && isLogoutPath(path);
     const user = logout ? null : valid ? payload.user : undefined;
     if (user !== undefined) {
       settleCookieIdentity(user?.id ?? null, changing?.generation);
@@ -371,7 +386,8 @@ async function performAuthApi<T>(
     rememberCsrf(payload);
     if (user !== undefined && !(logout && sessionScope().userId === null)) {
       sessionSink?.(user, {
-        force: explicit && !logout,
+        // A password change keeps the account, and with it its caches.
+        force: explicit && !logout && path !== "/auth/password",
       });
     }
     return payload as T;
@@ -393,7 +409,7 @@ function settleCookieIdentity(
       generation ??
       (previous?.phase === "settled" && previous.userId === userId
         ? previous.generation
-        : crypto.randomUUID()),
+        : randomUuid()),
     phase: "settled",
     userId,
   });
@@ -480,7 +496,7 @@ async function retryWithSession(
   // A failed or malformed bootstrap cannot authorize another write.
   if (!session.ok || !isSessionPayload(payload)) return first;
 
-  const isLogout = path === "/auth/logout";
+  const isLogout = isLogoutPath(path);
   const isSignIn = path === "/auth/login" || path === "/auth/register";
   const expectedId =
     isLogout && options.logoutUserId !== undefined
@@ -554,7 +570,11 @@ function rememberServerClock(response: Response): void {
 async function send(path: string, options: RequestOptions): Promise<Response> {
   const method = options.method ?? "GET";
   const headers = new Headers({ Accept: "application/json" });
-  if (options.body !== undefined) {
+  // A Blob (avatar upload) goes out as is, typed by the browser.
+  const raw = options.body instanceof Blob ? options.body : null;
+  if (raw) {
+    headers.set("Content-Type", raw.type || "application/octet-stream");
+  } else if (options.body !== undefined) {
     headers.set("Content-Type", "application/json");
   }
   if (method !== "GET" && csrfToken) {
@@ -571,7 +591,8 @@ async function send(path: string, options: RequestOptions): Promise<Response> {
       headers,
       credentials: "same-origin",
       body:
-        options.body === undefined ? undefined : JSON.stringify(options.body),
+        raw ??
+        (options.body === undefined ? undefined : JSON.stringify(options.body)),
       signal,
     });
     rememberServerClock(response);

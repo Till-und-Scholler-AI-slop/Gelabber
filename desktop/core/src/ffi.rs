@@ -3,7 +3,7 @@
 
 use std::os::raw::{c_char, c_int, c_void};
 
-pub const GM_ABI_VERSION: u32 = 7;
+pub const GM_ABI_VERSION: u32 = 8;
 
 #[repr(C)]
 pub struct gm_video_frame {
@@ -17,9 +17,18 @@ pub struct gm_video_frame {
     pub stride_v: c_int,
     pub rotation: c_int,
     pub timestamp_us: i64,
+    pub source_width: c_int,
+    pub source_height: c_int,
 }
 pub type gm_video_frame_fn =
     Option<unsafe extern "C" fn(user: *mut c_void, frame: *const gm_video_frame)>;
+
+#[repr(C)]
+pub struct gm_video_sink_limits {
+    pub max_width: c_int,
+    pub max_height: c_int,
+    pub max_fps: c_int,
+}
 
 #[repr(C)]
 pub struct gm_engine {
@@ -117,6 +126,15 @@ unsafe extern "C" {
     pub fn gm_source_state(source: *mut gm_source) -> *mut c_char;
     pub fn gm_source_free(source: *mut gm_source);
     pub fn gm_source_set_enabled(source: *mut gm_source, enabled: c_int) -> c_int;
+    pub fn gm_source_set_video_sink(
+        source: *mut gm_source,
+        sink: gm_video_frame_fn,
+        user: *mut c_void,
+    ) -> c_int;
+    pub fn gm_source_set_video_sink_limits(
+        source: *mut gm_source,
+        limits: *const gm_video_sink_limits,
+    ) -> c_int;
 
     pub fn gm_transport_produce(
         transport: *mut gm_transport,
@@ -148,5 +166,9 @@ unsafe extern "C" {
         consumer: *mut gm_consumer,
         sink: gm_video_frame_fn,
         user: *mut c_void,
+    ) -> c_int;
+    pub fn gm_consumer_set_video_sink_limits(
+        consumer: *mut gm_consumer,
+        limits: *const gm_video_sink_limits,
     ) -> c_int;
 }

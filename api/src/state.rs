@@ -30,6 +30,7 @@ pub struct AppState {
     pub redis: redis::Client,
     pub ready_timeout: Duration,
     pub cookie_secure: bool,
+    pub allow_plain_http: bool,
     pub session_ttl: Duration,
     /// Native WS gateway (issue #6). Facade over the three realtime jobs.
     pub gateway: Gateway,
@@ -112,6 +113,7 @@ impl AppState {
             redis: redis.clone(),
             ready_timeout: config.ready_timeout,
             cookie_secure: config.cookie_secure,
+            allow_plain_http: config.allow_plain_http,
             session_ttl: config.session_ttl,
             connections: gateway.connections.clone(),
             events: gateway.events.clone(),

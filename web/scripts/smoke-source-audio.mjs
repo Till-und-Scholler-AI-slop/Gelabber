@@ -930,7 +930,7 @@ try {
   const input = owner.page.locator("#audio-input");
   await input.waitFor();
   await owner.page
-    .getByRole("button", { name: "Geräte laden", exact: true })
+    .getByRole("button", { name: "Geräteliste aktualisieren", exact: true })
     .click();
   const device = await until(
     () =>

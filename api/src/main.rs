@@ -23,6 +23,11 @@ async fn main() -> ExitCode {
 
 async fn run() -> Result<(), Box<dyn std::error::Error>> {
     let config = Config::from_env()?;
+    if let Some(port) = config.minio.as_ref().and_then(|minio| minio.public_port()) {
+        tracing::warn!(
+            "MINIO_PUBLIC_ENDPOINT uses port {port} instead of 443: attachments load and upload only on networks that allow this port (deploy/README.md, MinIO on 443)"
+        );
+    }
     let state = AppState::from_config(&config)?;
 
     // Schema first, traffic second. Compose only starts the API once
@@ -54,9 +59,14 @@ async fn run() -> Result<(), Box<dyn std::error::Error>> {
         "gelabber-api listening"
     );
 
-    axum::serve(listener, app(state))
-        .with_graceful_shutdown(shutdown_signal())
-        .await?;
+    // The peer address is the rate-limit key when no proxy wrote
+    // `X-Forwarded-For` (`limits::client_ip`).
+    axum::serve(
+        listener,
+        app(state).into_make_service_with_connect_info::<std::net::SocketAddr>(),
+    )
+    .with_graceful_shutdown(shutdown_signal())
+    .await?;
 
     info!("gelabber-api stopped");
     Ok(())

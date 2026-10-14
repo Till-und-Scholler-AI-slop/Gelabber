@@ -17,8 +17,10 @@ import { RequireUser } from "../components/RequireUser.tsx";
 import { ServerRail } from "../components/ServerRail.tsx";
 import { UserPanel } from "../components/UserPanel.tsx";
 import { WorkspaceDrawer } from "../components/WorkspaceNavigation.tsx";
+import { notify } from "../components/toasts.ts";
 import { useDms } from "../dms/queries.ts";
-import { forgetServer, useServer } from "../servers/queries.ts";
+import { useReadState, useReadingChannel } from "../messages/readState.ts";
+import { forgetServer, useServer, useServers } from "../servers/queries.ts";
 
 export function WorkspaceLayout() {
   return (
@@ -32,6 +34,8 @@ function Workspace() {
   const { serverId, channelId } = useParams({ strict: false });
   const pathname = useRouterState({ select: (s) => s.location.pathname });
   const onDms = pathname === "/d" || pathname.startsWith("/d/");
+  // Before the early returns so hooks keep their order; the rail shares it.
+  const { data: servers } = useServers();
 
   if (serverId)
     return <SelectedServer serverId={serverId} channelId={channelId} />;
@@ -41,7 +45,13 @@ function Workspace() {
       sidebar={
         <aside className="channel-sidebar" aria-label="Navigation">
           <div className="sidebar-brand">Gelabber</div>
-          <div className="sidebar-empty">Dein Platz für gemeinsame Abende.</div>
+          <div className="sidebar-empty">
+            Dein Platz für gemeinsame Abende.
+            {/* Only once the list says so: never flash it at members. */}
+            {servers?.length === 0
+              ? " Erstelle einen Server mit dem Plus in der Serverleiste oder öffne einen Einladungslink."
+              : null}
+          </div>
           <UserPanel />
         </aside>
       }
@@ -60,6 +70,13 @@ function WorkspaceFrame({
 }) {
   const [navigationOpen, setNavigationOpen] = useState(false);
   const navigationId = useId();
+  const unreadId = useId();
+  // Phones keep every unread badge inside the closed drawer.
+  const reading = useReadingChannel();
+  const { data: readRows } = useReadState();
+  const unread = (readRows ?? []).some(
+    (row) => row.channel_id !== reading && row.unread_count > 0,
+  );
   return (
     <div className="workspace">
       <WorkspaceDrawer
@@ -82,9 +99,18 @@ function WorkspaceFrame({
             aria-label="Navigation öffnen"
             aria-expanded={navigationOpen}
             aria-controls={navigationId}
+            aria-describedby={unread ? unreadId : undefined}
             onClick={() => setNavigationOpen(true)}
           >
             <ChevronIcon size={21} />
+            {unread ? (
+              <span
+                id={unreadId}
+                role="img"
+                aria-label="Ungelesene Nachrichten"
+                className="workspace-navigation-unread"
+              />
+            ) : null}
             <span>Gelabber</span>
           </button>
         </header>
@@ -117,6 +143,7 @@ function SelectedServer({
 
   useEffect(() => {
     if (!gone || !userId) return;
+    notify("Server nicht gefunden oder kein Zugriff.");
     forgetServer(client, userId, serverId, { keepDetail: true });
     void navigate({ to: "/", replace: true }).then(() =>
       forgetServer(client, userId, serverId),

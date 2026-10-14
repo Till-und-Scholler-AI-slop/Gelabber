@@ -15,14 +15,22 @@ namespace gelabber
 {
 	struct AudioApp
 	{
-		// Stable while the application runs (its binary or name).
+		// Its binary; an application that reports none goes by its name.
 		std::string id;
+		// What to show it as: no two in a list are called the same.
 		std::string name;
-		// Playback streams it has right now.
+		// Playback streams the id chooses right now.
 		int streams{ 0 };
 	};
 
-	// Applications playing sound, without this process.
+	// Applications playing sound, without this process and those it started,
+	// and without the playback streams of virtual devices (a loopback, a
+	// filter chain, an echo canceller, a combined sink), which play on what
+	// applications played into them.
+	// Applications that share a binary and call themselves differently are
+	// listed by name as well, next to the binary, which chooses them all.
+	// Applications on different binaries that call themselves the same are
+	// listed as "name (binary)", next to the name, which chooses them all.
 	std::vector<AudioApp> ListAudioApps();
 
 	class AppAudioCapture
@@ -33,16 +41,23 @@ namespace gelabber
 		static constexpr size_t kFrames  = kSampleRate / 100;
 
 		// 10 ms of 16-bit interleaved stereo at 48 kHz, from one thread. Silence
-		// while the captured applications play nothing.
+		// while the captured applications play nothing. The blocks come at
+		// the pace of the sound card the applications play on, which is up to
+		// 0.3 % off the system clock's 10 ms.
 		using Sink = std::function<void(const int16_t* pcm)>;
 
-		// `app`: an AudioApp id, or "" for every application but this one.
-		// Streams the applications open later are picked up. Throws when the
-		// platform's sound server is unavailable.
+		// `app`: an AudioApp id, or "" for every application. This process and
+		// those it started are never captured, nor is what a virtual device
+		// plays on. The application's name, the id up to 0.5.2, selects it as
+		// well. Streams the applications open later are picked up. Throws
+		// when the platform's sound server is unavailable.
 		static std::unique_ptr<AppAudioCapture> Start(const std::string& app, Sink sink);
 
 		virtual ~AppAudioCapture() = default;
-		// {"state":"live","streams":n,"frames":n}
+		// {"state":"live","streams":n,"frames":n,"underruns":n,"overruns":n}:
+		// streams captured now, blocks delivered, and how often a playing
+		// stream ran dry (its application paused, or its sound came too
+		// late) or was cut back for being too far ahead.
 		virtual std::string StateJson() const = 0;
 	};
 } // namespace gelabber

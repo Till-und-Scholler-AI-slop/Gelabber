@@ -132,6 +132,17 @@ export function ScreenIcon(props: IconProps) {
   );
 }
 
+/** The sound a share sends; the speaker stands for what is heard. */
+export function MusicIcon(props: IconProps) {
+  return (
+    <svg {...base(props)}>
+      <path d="M9 18V5l11-2v13" />
+      <circle cx="6.5" cy="18" r="2.5" />
+      <circle cx="17.5" cy="16" r="2.5" />
+    </svg>
+  );
+}
+
 export function LiveIcon(props: IconProps) {
   return (
     <svg {...base(props)}>
@@ -250,11 +261,51 @@ export function SmileIcon(props: IconProps) {
   );
 }
 
+export function SpeakerOffIcon(props: IconProps) {
+  return (
+    <svg {...base(props)}>
+      <path d="M11 5 6 9H3v6h3l5 4V5Z" />
+      <path d="m22 9-6 6M16 9l6 6" />
+    </svg>
+  );
+}
+
 export function UsersIcon(props: IconProps) {
   return (
     <svg {...base(props)}>
       <circle cx="9" cy="7.5" r="3.5" />
       <path d="M2.5 20a6.5 6.5 0 0 1 13 0M16 4.5a3.5 3.5 0 0 1 0 6.5M18 14a6 6 0 0 1 3.5 6" />
+    </svg>
+  );
+}
+
+/** Colors and designs: the themes. */
+export function PaletteIcon(props: IconProps) {
+  return (
+    <svg {...base(props)}>
+      <path d="M12 3a9 9 0 1 0 0 18c1.1 0 1.8-.8 1.8-1.7 0-.5-.2-.9-.5-1.2-.3-.3-.5-.7-.5-1.2 0-.9.8-1.7 1.7-1.7H17a4 4 0 0 0 4-4c0-4.4-4-8.2-9-8.2Z" />
+      <circle cx="7.5" cy="11" r="1" />
+      <circle cx="10" cy="7" r="1" />
+      <circle cx="15" cy="7.5" r="1" />
+    </svg>
+  );
+}
+
+/** Layout and motion: how the app looks. */
+export function LayoutIcon(props: IconProps) {
+  return (
+    <svg {...base(props)}>
+      <rect x="3" y="4" width="18" height="16" rx="2" />
+      <path d="M9 4v16M9 10h12" />
+    </svg>
+  );
+}
+
+/** Installing the app. */
+export function DownloadIcon(props: IconProps) {
+  return (
+    <svg {...base(props)}>
+      <path d="M12 4v11M7 10l5 5 5-5M5 20h14" />
     </svg>
   );
 }

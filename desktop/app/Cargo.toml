@@ -18,5 +18,10 @@ pollster = "0.4"
 wgpu = "30"
 winit = "0.30"
 
+# WebKitGTK's own API for the web process (main.rs `end_web_process`). The
+# crate and version Tauri brings; the feature is the API level of the call.
+[target.'cfg(target_os = "linux")'.dependencies]
+webkit2gtk = { version = "2.0", features = ["v2_34"] }
+
 [build-dependencies]
 tauri-build = { version = "2", features = [] }

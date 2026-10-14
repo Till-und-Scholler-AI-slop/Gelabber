@@ -30,11 +30,11 @@ let tauriBridge: NativeBridge | null = null;
 /** True inside the desktop app, whose native core replaces browser media. */
 export function isDesktopApp(): boolean {
   if (override !== undefined) return override !== null;
-  return (
-    typeof window !== "undefined" &&
-    typeof (window as unknown as { __TAURI_INTERNALS__?: unknown })
-      .__TAURI_INTERNALS__ === "object"
-  );
+  if (typeof window === "undefined") return false;
+  const internals = (window as unknown as { __TAURI_INTERNALS__?: unknown })
+    .__TAURI_INTERNALS__;
+  // `typeof null` is "object" too.
+  return typeof internals === "object" && internals !== null;
 }
 
 export function nativeBridge(): NativeBridge {

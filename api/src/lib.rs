@@ -1,5 +1,6 @@
 pub mod attachments;
 pub mod auth;
+pub mod avatars;
 pub mod config;
 pub mod cookies;
 pub mod csrf;
@@ -23,8 +24,11 @@ pub mod themes;
 pub mod token;
 
 use axum::Router;
-use axum::http::Request;
-use axum::middleware;
+use axum::extract::State;
+use axum::http::header::STRICT_TRANSPORT_SECURITY;
+use axum::http::{HeaderValue, Request};
+use axum::middleware::{self, Next};
+use axum::response::Response;
 use tower_http::trace::{DefaultOnResponse, TraceLayer};
 use tracing::{Level, info_span};
 
@@ -42,6 +46,7 @@ pub fn app(state: AppState) -> Router {
     let api = Router::new()
         .merge(auth::router())
         .merge(profile::router())
+        .merge(avatars::router())
         .merge(themes::router())
         .merge(servers::router())
         .merge(dms::router())
@@ -79,5 +84,27 @@ pub fn app(state: AppState) -> Router {
             state.clone(),
             metrics::track,
         ))
+        .layer(middleware::from_fn_with_state(state.clone(), hsts))
         .with_state(state)
+}
+
+/// A year, this host only: subdomains may be other people's services.
+const HSTS: HeaderValue = HeaderValue::from_static("max-age=31536000");
+
+/// Behind TLS (`API_COOKIE_SECURE`) every response tells the browser to stay
+/// on HTTPS for this host, whatever proxy terminates TLS. The web client
+/// asks `/api/auth/session` on every start, so the first visit sets it.
+async fn hsts(
+    State(state): State<AppState>,
+    request: axum::extract::Request,
+    next: Next,
+) -> Response {
+    let mut response = next.run(request).await;
+    if state.cookie_secure {
+        response
+            .headers_mut()
+            .entry(STRICT_TRANSPORT_SECURITY)
+            .or_insert(HSTS);
+    }
+    response
 }

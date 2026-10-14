@@ -10,11 +10,13 @@ cd deploy/compose
 docker compose up
 ```
 
-Dann [http://localhost](http://localhost). App-Images: `ghcr.io/till-und-scholler-ai-slop/gelabber/{api,web,media}:v0.5.2`. Fehlt das Paket (GHCR oft privat), baut Compose aus dem Source. `docker compose up --build` erzwingt den Build; auf arm64 ist er nötig, Image-CI baut `linux/amd64`. MinIO bleibt auf `ghcr.io/till-und-scholler-ai-slop/gelabber/minio:RELEASE.2025-10-15T17-29-55Z`.
+Dann [http://localhost](http://localhost). App-Images: `ghcr.io/till-und-scholler-ai-slop/gelabber/{api,web,media}:v0.6.1`. Fehlt das Paket (GHCR oft privat), baut Compose aus dem Source. `docker compose up --build` erzwingt den Build; auf arm64 ist er nötig, Image-CI baut `linux/amd64`. MinIO bleibt auf `ghcr.io/till-und-scholler-ai-slop/gelabber/minio:RELEASE.2025-10-15T17-29-55Z`.
 
 Postgres, Redis und MinIO-Konsole hängen nur an Loopback. UDP für Voice (coturn 3478 + Relay, SFU 10000) geht nicht durch Caddy.
 
 Operator-Doku (bestehendes Caddy, TURN-Port, TLS, Backup, Grafana): [deploy/README.md](deploy/README.md).
+
+Für v0.6 vorbereitet: [Gelabber auf dem Handy als PWA installieren](docs/v0.6-pwa.md).
 
 ## Layout
 
@@ -25,7 +27,7 @@ Operator-Doku (bestehendes Caddy, TURN-Port, TLS, Backup, Grafana): [deploy/READ
 | `media/` | Eigener Media-Gateway, offizielle Rust-Bindung mediasoup 0.29.0 als einzige SFU-Engine |
 | `deploy/compose` | Caddy 2.11.4, Postgres 18.6, Redis 8.10.1, MinIO CE `RELEASE.2025-10-15T17-29-55Z`, coturn 4.18.0 |
 
-Aktuell veröffentlicht: [v0.5.2](https://github.com/Till-und-Scholler-AI-slop/Gelabber/releases/tag/v0.5.2).
+Aktuell veröffentlicht: [v0.6.1](https://github.com/Till-und-Scholler-AI-slop/Gelabber/releases/tag/v0.6.1).
 
 ## Dev ohne Compose
 
@@ -42,10 +44,9 @@ cd web && npm run dev
 ## Call-Sounds
 
 Kurze Signaltöne melden Beitritt und Verlassen im eigenen Call sowie das eigene
-Stummschalten und Taubstellen. Unter **Einstellungen → Audio** oder
-**Benachrichtigungen** lassen sie sich abschalten, in der Lautstärke anpassen und
-vorhören. Die Auswahl gilt pro Browser. Teilnehmer-Töne bleiben beim Taubstellen
-stumm; Wiederholungen beim Verbinden lösen keine Beitrittstöne aus.
+Stummschalten und Taubstellen. Unter **Einstellungen → Audio** lassen sie sich
+abschalten, in der Lautstärke anpassen und vorhören. Die Auswahl gilt pro
+Browser. Teilnehmer-Töne bleiben beim Taubstellen stumm; Wiederholungen beim Verbinden lösen keine Beitrittstöne aus.
 
 Lokale Browserprüfung ohne API oder Testkonten: Vite starten und im `web`-Ordner
 `npm run test:call-sounds-smoke` ausführen. Prüft native Wiedergabe in Chromium und

@@ -18,6 +18,34 @@ configuration always takes precedence. Temporary MinIO unavailability retains
 retry work; presign/bind expose the existing internal-error response. HTTP
 transport errors strip signed URLs before logging. No stack pins changed.
 
+## Download links and access revocation (#201)
+
+`GET /api/attachments/{id}` checks membership on every request it receives,
+then redirects (`307`) to a presigned MinIO GET. So that a picture keeps one
+URL, and the browser its cached copy, the link is signed as of the start of a
+30-minute window (`GET_WINDOW`) and stays valid for 60 minutes (`GET_TTL`)
+from that start. The redirect carries `Cache-Control: private, max-age=<rest
+of the window>` and `Vary: Cookie`; MinIO answers the object with
+`Cache-Control: private, max-age=1800`.
+
+Consequence, accepted by Silas on 2026-10-12: after a member leaves, is
+removed, is banned or logs out, a link already handed out, a cached redirect
+or a cached picture can still show that attachment for **up to 60 minutes**.
+`Vary: Cookie` makes a new session (another account in the same browser, or
+logging in again) ask the API anew instead of reusing the old redirect; it
+does not shorten the lifetime of a link someone copied. It also does not
+cover a session ended on the server while the browser keeps the same cookie
+(for example "log out everywhere" from another device, or a revoked or
+expired session): that browser can still follow its cached redirect until the
+window ends, up to 30 minutes, within the 60-minute bound above.
+
+`?download=1` is the save variant: the signed link also carries
+`response-content-disposition=attachment; filename="…"` (plus RFC 6266
+`filename*` for non-ASCII names), so MinIO itself asks the browser to save the
+file. A browser ignores `<a download>` after a cross-origin redirect. That
+redirect is `Cache-Control: private, no-store`. The memory store answers
+`attachment` instead of `inline` for it.
+
 ## Transactions and cleanup
 
 Migration 0008 adds `storage_cleanup` and an attachment DELETE trigger. Message,
@@ -50,6 +78,25 @@ The fifteen-minute grace is bounded; an upload that remains in flight beyond
 that interval is not proven covered by this change. Existing bound-object PUT
 URLs remain usable until their ordinary ten-minute expiry. This change does not
 seal/copy bound objects into a second immutable storage key.
+
+## Avatars
+
+Uploaded avatars (#208, `api/src/avatars.rs`) use the same `storage_cleanup`
+table and worker, with keys `avatars/{user}/{file}`. `PUT /api/me/avatar`
+records a pending row (`next_attempt` and `retain_until` ten minutes ahead)
+before storing the bytes. A failed PUT returns its error and leaves that row,
+because a PUT that only timed out on the client side may still complete in
+MinIO; the worker deletes the key once the row is due. The profile update
+withdraws the pending row in the same transaction that points the profile at
+the object, and records the avatar it really replaced (read under the row
+lock) for deletion before commit.
+
+The withdrawal is `DELETE ... WHERE object_key=$1 AND attempts=0`. It relies
+on the worker incrementing `attempts` in its claim statement and on nothing
+ever resetting it: once the worker has claimed a row (and may be deleting the
+object), a late profile save finds no row to withdraw and is refused instead
+of pointing the profile at an object that is being deleted. Changing the claim
+protocol so that `attempts` is incremented later, or reset, breaks this.
 
 ## Atomic daily quota
 

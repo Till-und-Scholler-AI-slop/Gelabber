@@ -2,7 +2,9 @@
 //!
 //! Mutations under `/api` go through [`gate`] before CSRF. Auth (login /
 //! register) is keyed by client IP; everything else by session cookie (or
-//! IP if there is none). Upload *bytes* are a durable daily quota in
+//! IP if there is none). Failed logins are also counted per account
+//! ([`login_blocked`] / [`login_failed`]), so spreading guesses over many
+//! addresses does not multiply them. Upload *bytes* are a durable daily quota in
 //! Postgres so a restart cannot reset them. Request windows live in
 //! process — v1 is a single node.
 //!
@@ -11,10 +13,11 @@
 //! spin.
 
 use std::collections::HashMap;
+use std::net::{IpAddr, SocketAddr};
 use std::sync::Mutex;
 use std::time::{Duration, Instant};
 
-use axum::extract::{Request, State};
+use axum::extract::{ConnectInfo, Request, State};
 use axum::http::{HeaderMap, Method};
 use axum::middleware::Next;
 use axum::response::Response;
@@ -29,6 +32,9 @@ pub const API_PER_MIN: u32 = 180;
 pub const MSG_PER_MIN: u32 = 60;
 pub const UPLOAD_PER_HOUR: u32 = 60;
 pub const UPLOAD_BYTES_PER_DAY: u64 = 1024 * 1024 * 1024; // 1 GiB
+pub const LOGIN_FAILURES_PER_ACCOUNT: u32 = 10;
+/// Window of the per-account failure count, and so the longest wait.
+pub const LOGIN_FAILURE_WINDOW: Duration = Duration::from_secs(15 * 60);
 
 const MINUTE: Duration = Duration::from_secs(60);
 const HOUR: Duration = Duration::from_secs(3600);
@@ -40,6 +46,9 @@ pub struct Limits {
     pub msg_per_min: u32,
     pub upload_per_hour: u32,
     pub upload_bytes_per_day: u64,
+    /// Failed logins per account within [`LOGIN_FAILURE_WINDOW`]; `0` turns
+    /// the per-account count off.
+    pub login_failures_per_account: u32,
 }
 
 impl Default for Limits {
@@ -50,6 +59,7 @@ impl Default for Limits {
             msg_per_min: MSG_PER_MIN,
             upload_per_hour: UPLOAD_PER_HOUR,
             upload_bytes_per_day: UPLOAD_BYTES_PER_DAY,
+            login_failures_per_account: LOGIN_FAILURES_PER_ACCOUNT,
         }
     }
 }
@@ -99,6 +109,23 @@ impl Limiter {
         slot.count += 1;
         Ok(())
     }
+
+    /// Like [`Self::hit`] once the window is full, without recording a hit.
+    pub fn blocked(&self, bucket: &str, id: &str, max: u32) -> Option<u64> {
+        if max == 0 {
+            return None;
+        }
+        let key = format!("{bucket}:{id}");
+        let now = Instant::now();
+        let map = self.windows.lock().unwrap_or_else(|err| err.into_inner());
+        let slot = map.get(&key).filter(|slot| now < slot.reset_at)?;
+        (slot.count >= max).then(|| {
+            slot.reset_at
+                .saturating_duration_since(now)
+                .as_secs()
+                .max(1)
+        })
+    }
 }
 
 impl Default for Limiter {
@@ -119,7 +146,11 @@ pub async fn gate(
     }
 
     let path = request.uri().path();
-    let ip = client_ip(request.headers());
+    let peer = request
+        .extensions()
+        .get::<ConnectInfo<SocketAddr>>()
+        .map(|info| info.0.ip());
+    let ip = client_ip(request.headers(), peer);
     let session = cookies::get(request.headers(), SESSION_COOKIE);
     let actor = session.as_deref().unwrap_or(ip.as_str());
 
@@ -131,7 +162,9 @@ pub async fn gate(
             state.limits.auth_per_min,
             MINUTE,
         )
-    } else if request.method() == Method::POST && path.ends_with("/attachments") {
+    } else if (request.method() == Method::POST && path.ends_with("/attachments"))
+        || (request.method() == Method::PUT && path == "/api/me/avatar")
+    {
         check(
             &state.limiter,
             "up",
@@ -199,25 +232,57 @@ fn check(
         .map_err(|retry| (bucket, retry))
 }
 
-fn client_ip(headers: &HeaderMap) -> String {
-    forwarded_ip(headers).unwrap_or_else(|| "unknown".to_owned())
+/// Refuses a login for an account with too many recent failures. Checked
+/// before the password hash, so a blocked guess costs no Argon2 run, and
+/// answered like every other limit (`429 rate_limited`, `Retry-After`).
+pub fn login_blocked(state: &AppState, email: &str) -> Result<(), ApiError> {
+    let max = state.limits.login_failures_per_account;
+    match state.limiter.blocked("login", &account_key(email), max) {
+        Some(retry_after) => {
+            state.metrics.rate_limited("login");
+            Err(ApiError::RateLimited { retry_after })
+        }
+        None => Ok(()),
+    }
+}
+
+/// Counts one failed login against `email`, known account or not, so the
+/// answer does not tell the two apart.
+pub fn login_failed(state: &AppState, email: &str) {
+    let max = state.limits.login_failures_per_account;
+    // Over the limit is already refused by `login_blocked` next time.
+    let _ = state
+        .limiter
+        .hit("login", &account_key(email), max, LOGIN_FAILURE_WINDOW);
+}
+
+/// The address is normalized by validation; hashed so the limiter's keys
+/// hold no addresses.
+fn account_key(email: &str) -> String {
+    crate::auth::session::fingerprint(&crate::token::hash(email))
+}
+
+/// The address the rate limits are keyed by. Caddy, in front of the API in
+/// every supported setup, overwrites `X-Forwarded-For` with the peer it saw
+/// (it trusts no proxy before it), and a proxy that does trust one appends
+/// its own peer last. So the rightmost entry is the one written by the
+/// proxy next to the API; entries to its left come from the client and are
+/// not believed. Without the header (the API reached directly) the TCP
+/// peer is the client.
+fn client_ip(headers: &HeaderMap, peer: Option<IpAddr>) -> String {
+    forwarded_ip(headers)
+        .or_else(|| peer.map(|ip| ip.to_string()))
+        .unwrap_or_else(|| "unknown".to_owned())
 }
 
 fn forwarded_ip(headers: &HeaderMap) -> Option<String> {
-    let forwarded = headers
-        .get("x-forwarded-for")
-        .and_then(|value| value.to_str().ok())
-        .and_then(|raw| raw.split(',').next())
-        .map(str::trim)
-        .filter(|ip| !ip.is_empty());
-    if let Some(ip) = forwarded {
-        return Some(ip.to_owned());
-    }
     headers
-        .get("x-real-ip")
-        .and_then(|value| value.to_str().ok())
+        .get_all("x-forwarded-for")
+        .iter()
+        .filter_map(|value| value.to_str().ok())
+        .flat_map(|raw| raw.split(','))
         .map(str::trim)
-        .filter(|ip| !ip.is_empty())
+        .rfind(|ip| !ip.is_empty())
         .map(str::to_owned)
 }
 
@@ -293,9 +358,33 @@ mod tests {
     }
 
     #[test]
-    fn forwarded_for_takes_the_leftmost_ip() {
+    fn forwarded_for_takes_the_rightmost_ip() {
         let mut headers = HeaderMap::new();
         headers.insert("x-forwarded-for", "10.0.0.9, 10.0.0.1".parse().unwrap());
-        assert_eq!(client_ip(&headers), "10.0.0.9");
+        assert_eq!(client_ip(&headers, None), "10.0.0.1");
+        headers.append("x-forwarded-for", "10.0.0.2".parse().unwrap());
+        assert_eq!(client_ip(&headers, None), "10.0.0.2");
+    }
+
+    #[test]
+    fn without_forwarded_for_the_peer_is_the_client() {
+        let mut headers = HeaderMap::new();
+        // Nothing in front of the API wrote this; the client did.
+        headers.insert("x-real-ip", "10.9.9.9".parse().unwrap());
+        let peer = Some(IpAddr::from([192, 0, 2, 7]));
+        assert_eq!(client_ip(&headers, peer), "192.0.2.7");
+        assert_eq!(client_ip(&headers, None), "unknown");
+    }
+
+    #[test]
+    fn blocked_reports_a_full_window_without_counting() {
+        let limiter = Limiter::new();
+        assert_eq!(limiter.blocked("login", "a", 2), None);
+        limiter.hit("login", "a", 2, MINUTE).unwrap();
+        assert_eq!(limiter.blocked("login", "a", 2), None);
+        limiter.hit("login", "a", 2, MINUTE).unwrap();
+        assert!(limiter.blocked("login", "a", 2).is_some());
+        assert_eq!(limiter.blocked("login", "b", 2), None);
+        assert_eq!(limiter.blocked("login", "a", 0), None);
     }
 }

@@ -1,6 +1,6 @@
 import type { ReactNode } from "react";
 import { renderToStaticMarkup } from "react-dom/server";
-import { beforeEach, describe, expect, it, vi } from "vitest";
+import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
 import type { ServerDetail } from "../servers/types.ts";
 import type { VoiceFlags } from "./roster.ts";
@@ -70,6 +70,15 @@ const server = {
   permissions: ["join_voice"],
   members: [],
 } as unknown as ServerDetail;
+/** The one Go Live / Live beenden button in rendered markup. */
+function goLiveControl(html: string): string {
+  const match = html.match(
+    /<button[^>]*aria-label="(?:Go Live|Live beenden)"[^>]*>/,
+  );
+  expect(match).not.toBeNull();
+  return match![0];
+}
+
 beforeEach(() => {
   fixture.voice = {
     status: "idle",
@@ -83,6 +92,7 @@ beforeEach(() => {
     live: false,
     sourceWatchSupported: true,
     sourceAudio: { s: "off", l: "off" },
+    sourceAudioNote: { s: null, l: null },
     sourceSubscriptions: {},
     localCamera: null,
     localScreen: null,
@@ -101,7 +111,12 @@ beforeEach(() => {
   fixture.live = { a: { stage: "alice" }, b: { stage: "bob" } };
   fixture.server = undefined;
   fixture.requestedServer = undefined;
+  // A desktop browser: the capture controls depend on what the client can do.
+  vi.stubGlobal("navigator", {
+    mediaDevices: { getDisplayMedia() {}, getUserMedia() {} },
+  });
 });
+afterEach(() => vi.unstubAllGlobals());
 
 describe("active media UI", () => {
   it("renders only the Watch session's exact server, channel and publisher", () => {
@@ -310,9 +325,17 @@ describe("active media UI", () => {
       'aria-label="Go Live"',
     );
     fixture.server.permissions = ["go_live"];
-    expect(renderToStaticMarkup(<VoiceSessionControls />)).toContain(
-      'aria-label="Go Live"',
-    );
+    // alice is live in this channel and the members list does not name her.
+    const taken = goLiveControl(renderToStaticMarkup(<VoiceSessionControls />));
+    expect(taken).toContain('aria-label="Go Live"');
+    expect(taken).toContain('title="Jemand ist gerade live."');
+    expect(taken).toContain('aria-disabled="true"');
+    expect(taken).toContain('aria-pressed="false"');
+    fixture.voice.live = true;
+    const own = goLiveControl(renderToStaticMarkup(<VoiceSessionControls />));
+    expect(own).toContain('aria-label="Live beenden"');
+    expect(own).toContain('title="Live beenden"');
+    expect(own).not.toContain("aria-disabled");
   });
   it("shows a playback action while blocked and hides it while deafened", () => {
     fixture.voice.playbackBlocked = true;

@@ -1,5 +1,5 @@
 import { Link } from "@tanstack/react-router";
-import { useEffect, useRef } from "react";
+import { useEffect, useId, useRef, type CSSProperties } from "react";
 
 import { can } from "../servers/permissions.ts";
 import { useServer } from "../servers/queries.ts";
@@ -16,8 +16,20 @@ import {
   HangUpIcon,
   SignalIcon,
   SpeakerIcon,
+  SpeakerOffIcon,
 } from "./Icons.tsx";
-import { MAX_PLAYBACK_VOLUME, useMediaSettings } from "../voice/settings.ts";
+import { useCapabilities } from "../voice/capabilities.ts";
+import { liveOf, useVoiceRoster } from "../voice/roster.ts";
+import { useUserId } from "../auth/scope.ts";
+import { isDesktopApp } from "../voice/native/bridge.ts";
+import {
+  MAX_PLAYBACK_VOLUME,
+  SOURCE_AUDIO_CARRIES_CALL,
+  sharesSourceAudio,
+  sourceAudioCarriesCall,
+  sourceAudioScope,
+  useMediaSettings,
+} from "../voice/settings.ts";
 import "../voice/room.css";
 
 /** Active sessions stay controllable independently of the currently open
@@ -29,13 +41,30 @@ export function VoiceSessionControls({
   variant?: "bar" | "card";
 }) {
   const dockRef = useRef<HTMLElement>(null);
+  const ids = useId();
   const voice = useVoice();
   const volume = useMediaSettings((s) => s.outputVolume);
   const sourceVolume = useMediaSettings((s) => s.sourceAudioVolume);
   const sourceMuted = useMediaSettings((s) => s.sourceAudioMuted);
+  const sourceAudioShare = useMediaSettings((s) => s.sourceAudioShare);
+  const sourceAudioApp = useMediaSettings((s) => s.sourceAudioApp);
   const patch = useMediaSettings((s) => s.patch);
   const openSettings = useMediaSettings((s) => s.openDialog);
+  const capable = useCapabilities();
   const { data: server } = useServer(voice.serverId ?? undefined);
+  const self = useUserId();
+  const liveHolder = useVoiceRoster((s) =>
+    voice.serverId && voice.channelId
+      ? liveOf(s.live, voice.serverId, voice.channelId)
+      : null,
+  );
+  // Someone else's Live in this channel: Go Live says whose instead of
+  // doing nothing.
+  const liveTakenBy =
+    liveHolder && liveHolder !== self && !voice.live
+      ? (server?.members.find((member) => member.user_id === liveHolder)
+          ?.name ?? "Jemand")
+      : null;
   const visible =
     voice.status === "joined" || voice.watching || voice.playbackBlocked;
   const bar = variant === "bar";
@@ -68,6 +97,31 @@ export function VoiceSessionControls({
     Object.values(voice.sourceSubscriptions).some(
       (source) => source.s || source.l,
     );
+  // The sound of the own share: why it is missing, and what the control
+  // next to the share button will do.
+  const desktop = isDesktopApp();
+  const sharesSound =
+    joined !== null &&
+    capable.appAudio &&
+    sharesSourceAudio({ sourceAudioShare });
+  const notes = voice.sourceAudioNote;
+  const failed = notes.s?.failed ?? notes.l?.failed;
+  const silent = notes.s?.silent ?? notes.l?.silent;
+  // Without a chosen application the desktop app sends the sound of all of
+  // them with the one window that was picked, and it does so unasked. While
+  // such a share runs, the dock says so next to the switch that ends it.
+  const everyApplication =
+    sourceAudioApp === "" &&
+    (voice.sourceAudio.s === "sharing" || voice.sourceAudio.l === "sharing")
+      ? sourceAudioScope({ sourceAudioApp })
+      : null;
+  // A browser hands sound over in its picker only: a share that started
+  // without it stays without it.
+  const nextShare =
+    sharesSound &&
+    !desktop &&
+    ((voice.localScreen && voice.sourceAudio.s === "off") ||
+      (voice.localLive && voice.sourceAudio.l === "off"));
 
   return (
     <section
@@ -90,7 +144,10 @@ export function VoiceSessionControls({
             </Link>
             {bar ? null : <LeaveButton />}
           </div>
-          <VoiceControls canGoLive={can(server, "go_live")} />
+          <VoiceControls
+            canGoLive={can(server, "go_live")}
+            liveTakenBy={liveTakenBy}
+          />
           {bar ? <LeaveButton /> : null}
         </div>
       ) : null}
@@ -120,86 +177,86 @@ export function VoiceSessionControls({
           </button>
         </div>
       ) : null}
-      {voice.status !== "joined" ? (
-        <div className="voice-session-row">
-          <label className="voice-playback-volume">
-            <SpeakerIcon size={15} />
+      {voice.status !== "joined" || streamAudio ? (
+        <div className="voice-session-mix">
+          <div className="voice-session-mix-row">
+            <label htmlFor={`${ids}-voices`}>
+              {voice.status === "joined" ? "Stimmen" : "Lautstärke"}
+            </label>
             <input
+              id={`${ids}-voices`}
               type="range"
               min={0}
               max={MAX_PLAYBACK_VOLUME * 100}
               value={Math.round(volume * 100)}
+              style={rangeFill(volume)}
               aria-label="Wiedergabe-Lautstärke"
               disabled={voice.deafened}
               onChange={(event) =>
                 patch({ outputVolume: Number(event.target.value) / 100 })
               }
-              className="voice-volume-slider"
+              className="lr-range"
             />
-          </label>
-          <button
-            type="button"
-            aria-label="Voice-Einstellungen"
-            title="Voice-Einstellungen"
-            onClick={() => openSettings()}
-            className="voice-control voice-control-compact"
-          >
-            <GearIcon size={17} />
-          </button>
-        </div>
-      ) : null}
-      {streamAudio && voice.status === "joined" ? (
-        <div className="voice-session-row">
-          <label className="voice-playback-volume">
-            <span>Stimmen</span>
-            <input
-              type="range"
-              min={0}
-              max={MAX_PLAYBACK_VOLUME * 100}
-              value={Math.round(volume * 100)}
-              aria-label="Wiedergabe-Lautstärke"
-              disabled={voice.deafened}
-              onChange={(event) =>
-                patch({ outputVolume: Number(event.target.value) / 100 })
-              }
-              className="voice-volume-slider"
-            />
-          </label>
-        </div>
-      ) : null}
-      {streamAudio ? (
-        <div className="voice-session-row" aria-label="Stream-Ton">
-          <button
-            type="button"
-            className="voice-control voice-control-compact"
-            aria-pressed={sourceMuted}
-            aria-label={sourceMuted ? "Stream-Ton an" : "Stream-Ton aus"}
-            title={sourceMuted ? "Stream-Ton an" : "Stream-Ton aus"}
-            onClick={() => patch({ sourceAudioMuted: !sourceMuted })}
-          >
-            <SpeakerIcon size={17} />
-          </button>
-          <label className="voice-playback-volume">
-            <span>Stream-Ton</span>
-            <input
-              type="range"
-              min={0}
-              max={MAX_PLAYBACK_VOLUME * 100}
-              value={Math.round(sourceVolume * 100)}
-              aria-label="Stream-Ton-Lautstärke"
-              disabled={voice.deafened}
-              onChange={(event) =>
-                patch({ sourceAudioVolume: Number(event.target.value) / 100 })
-              }
-              className="voice-volume-slider"
-            />
-          </label>
+            {voice.status !== "joined" ? (
+              <button
+                type="button"
+                aria-label="Voice-Einstellungen"
+                title="Voice-Einstellungen"
+                onClick={() => openSettings()}
+                className="voice-control voice-control-compact"
+              >
+                <GearIcon size={16} />
+              </button>
+            ) : (
+              <span aria-hidden="true" />
+            )}
+          </div>
+          {streamAudio ? (
+            <div className="voice-session-mix-row" aria-label="Stream-Ton">
+              <label htmlFor={`${ids}-stream`}>Stream-Ton</label>
+              <input
+                id={`${ids}-stream`}
+                type="range"
+                min={0}
+                max={MAX_PLAYBACK_VOLUME * 100}
+                value={Math.round(sourceVolume * 100)}
+                style={rangeFill(sourceVolume)}
+                aria-label="Stream-Ton-Lautstärke"
+                disabled={voice.deafened}
+                onChange={(event) =>
+                  patch({ sourceAudioVolume: Number(event.target.value) / 100 })
+                }
+                className="lr-range"
+              />
+              <button
+                type="button"
+                className={`voice-control voice-control-compact${sourceMuted ? " is-off" : ""}`}
+                aria-pressed={sourceMuted}
+                aria-label={sourceMuted ? "Stream-Ton an" : "Stream-Ton aus"}
+                title={sourceMuted ? "Stream-Ton an" : "Stream-Ton aus"}
+                onClick={() => patch({ sourceAudioMuted: !sourceMuted })}
+              >
+                {sourceMuted ? (
+                  <SpeakerOffIcon size={16} />
+                ) : (
+                  <SpeakerIcon size={16} />
+                )}
+              </button>
+            </div>
+          ) : null}
         </div>
       ) : null}
       {(voice.sourceAudio.s === "unavailable" ||
         voice.sourceAudio.l === "unavailable") && (
         <p role="status" className="voice-source-audio-notice">
-          Der Browser hat keinen Stream-Ton freigegeben. Das Video läuft weiter.
+          {!desktop
+            ? "Der Browser hat keinen Stream-Ton freigegeben."
+            : !capable.appAudio
+              ? "Diese Desktop-App kann keinen Ton von Anwendungen teilen."
+              : failed
+                ? `Der Stream-Ton konnte nicht aufgenommen werden (${failed}).`
+                : "Der Stream-Ton konnte nicht aufgenommen werden."}{" "}
+          Das Video läuft weiter.
         </p>
       )}
       {(voice.sourceAudio.s === "unsupported" ||
@@ -214,6 +271,27 @@ export function VoiceSessionControls({
           Der Stream-Ton wurde beendet. Das Video läuft weiter.
         </p>
       )}
+      {silent ? (
+        <p role="status" className="voice-source-audio-notice">
+          Von „{silent}“ kommt gerade kein Ton.
+        </p>
+      ) : null}
+      {everyApplication ? (
+        <p role="status" className="voice-source-audio-notice">
+          Dein Stream sendet den {everyApplication}.
+        </p>
+      ) : null}
+      {sharesSound &&
+      sourceAudioCarriesCall({ sourceAudioShare, sourceAudioApp }) ? (
+        <p role="status" className="voice-source-audio-notice">
+          {SOURCE_AUDIO_CARRIES_CALL}
+        </p>
+      ) : null}
+      {nextShare ? (
+        <p role="status" className="voice-source-audio-notice">
+          Der Stream-Ton kommt mit der nächsten Freigabe dazu.
+        </p>
+      ) : null}
       {voice.playbackBlocked && !voice.deafened ? (
         <div role="status" className="voice-session-playback">
           <span>Der Browser blockiert den Ton.</span>
@@ -228,6 +306,14 @@ export function VoiceSessionControls({
       ) : null}
     </section>
   );
+}
+
+/** Filled share of a `.lr-range` track (WebKit has no progress pseudo). */
+/** Filled share of a 0–200 % playback slider. */
+function rangeFill(value: number): CSSProperties {
+  return {
+    "--lr-range-value": `${Math.round((value / MAX_PLAYBACK_VOLUME) * 100)}%`,
+  } as CSSProperties;
 }
 
 function LeaveButton() {

@@ -39,4 +39,8 @@ permissions = [
   "allow-media-consumer-close",
   "allow-media-viewer-open",
   "allow-media-viewer-close",
+  "allow-media-view-open",
+  "allow-media-view-configure",
+  "allow-media-view-frame",
+  "allow-media-view-close",
 ]

@@ -78,12 +78,15 @@ pub fn name(raw: &str, errors: &mut FieldErrors) -> Option<String> {
 
 /// `None` (empty string) clears the avatar; otherwise an absolute `https://`
 /// URL — plain `http://` would be mixed content once the app sits behind
-/// TLS. The API stores the reference only; file upload lands with the
-/// MinIO/files issue, not here.
+/// TLS — or an uploaded avatar's own path (`crate::avatars`), which the
+/// profile form sends back unchanged with every save.
 pub fn avatar_url(raw: &str, errors: &mut FieldErrors) -> Option<Option<String>> {
     let value = raw.trim();
     if value.is_empty() {
         return Some(None);
+    }
+    if crate::avatars::parse_url(value).is_some() {
+        return Some(Some(value.to_owned()));
     }
     if value.chars().count() > AVATAR_URL_MAX {
         errors.insert("avatar_url", "too_long");

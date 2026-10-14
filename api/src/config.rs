@@ -14,6 +14,7 @@ pub const REDIS_URL: &str = "REDIS_URL";
 pub const API_READY_TIMEOUT_MS: &str = "API_READY_TIMEOUT_MS";
 pub const API_DB_MAX_CONNECTIONS: &str = "API_DB_MAX_CONNECTIONS";
 pub const API_COOKIE_SECURE: &str = "API_COOKIE_SECURE";
+pub const API_ALLOW_PLAIN_HTTP: &str = "API_ALLOW_PLAIN_HTTP";
 pub const API_SESSION_TTL_HOURS: &str = "API_SESSION_TTL_HOURS";
 pub const API_WS_HEARTBEAT_MS: &str = "API_WS_HEARTBEAT_MS";
 pub const API_WS_DEAD_MS: &str = "API_WS_DEAD_MS";
@@ -37,6 +38,7 @@ pub const API_RATE_API_PER_MIN: &str = "API_RATE_API_PER_MIN";
 pub const API_RATE_MSG_PER_MIN: &str = "API_RATE_MSG_PER_MIN";
 pub const API_RATE_UPLOAD_PER_HOUR: &str = "API_RATE_UPLOAD_PER_HOUR";
 pub const API_UPLOAD_QUOTA_BYTES_PER_DAY: &str = "API_UPLOAD_QUOTA_BYTES_PER_DAY";
+pub const API_RATE_LOGIN_FAILURES_PER_ACCOUNT: &str = "API_RATE_LOGIN_FAILURES_PER_ACCOUNT";
 /// Read by `telemetry::init`, not by `Config`, because the subscriber has to
 /// exist before anything else can be logged.
 pub const RUST_LOG: &str = "RUST_LOG";
@@ -64,7 +66,16 @@ pub struct Config {
     pub db_max_connections: u32,
     /// Adds `Secure` to the session and CSRF cookies. Off by default because
     /// the Compose dev entry is plain HTTP on Caddy; set to `true` behind TLS.
+    /// The gateway takes it as "the app's pages are `https://`" and refuses
+    /// `http://` origins then (`gateway::origin_allowed`).
     pub cookie_secure: bool,
+    /// With `cookie_secure` on, responses also carry HSTS and the shipped
+    /// default passwords are refused at startup ([`refuse_public_defaults`]).
+    /// With `cookie_secure` off, sign-in is only offered to loopback hosts
+    /// (`http://localhost`): a session cookie without `Secure` would travel
+    /// in clear text over any other network. This lets a trusted test
+    /// network sign in over plain HTTP anyway.
+    pub allow_plain_http: bool,
     /// Lifetime of a session cookie and its database row.
     pub session_ttl: Duration,
     /// How often the gateway sends an application heartbeat (`{"op":"h"}`).
@@ -107,6 +118,19 @@ pub struct MinioConfig {
     pub access_key: String,
     pub secret_key: String,
     pub bucket: String,
+}
+
+impl MinioConfig {
+    /// The explicit port of an `https://` public endpoint other than 443.
+    /// Attachments then load and upload only on networks that allow that
+    /// port (#206). Parsed with `url` like the presigner; `Url::port` is
+    /// `None` for the scheme default, so 443 never shows.
+    pub fn public_port(&self) -> Option<u16> {
+        url::Url::parse(&self.public_endpoint)
+            .ok()
+            .filter(|url| url.scheme() == "https")
+            .and_then(|url| url.port())
+    }
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -162,6 +186,10 @@ impl Config {
 
         let cookie_secure = match get(API_COOKIE_SECURE) {
             Some(raw) => parse_bool(API_COOKIE_SECURE, &raw)?,
+            None => false,
+        };
+        let allow_plain_http = match get(API_ALLOW_PLAIN_HTTP) {
+            Some(raw) => parse_bool(API_ALLOW_PLAIN_HTTP, &raw)?,
             None => false,
         };
 
@@ -229,6 +257,14 @@ impl Config {
             None => false,
         };
         let limits = parse_limits(&get)?;
+        if cookie_secure {
+            refuse_public_defaults(
+                &database_url,
+                minio.as_ref(),
+                get(TURN_PASSWORD).as_deref(),
+                turn_auth_secret.is_some(),
+            )?;
+        }
 
         Ok(Self {
             api_addr,
@@ -237,6 +273,7 @@ impl Config {
             ready_timeout: Duration::from_millis(ready_timeout_ms),
             db_max_connections,
             cookie_secure,
+            allow_plain_http,
             session_ttl: Duration::from_secs(session_ttl_hours * 3600),
             ws_heartbeat: Duration::from_millis(ws_heartbeat_ms),
             ws_dead: Duration::from_millis(ws_dead_ms),
@@ -277,12 +314,17 @@ fn parse_limits(get: &impl Fn(&str) -> Option<String>) -> Result<Limits, ConfigE
         Some(raw) => parse_u64_allow_zero(API_UPLOAD_QUOTA_BYTES_PER_DAY, &raw)?,
         None => defaults.upload_bytes_per_day,
     };
+    let login_failures_per_account = match get(API_RATE_LOGIN_FAILURES_PER_ACCOUNT) {
+        Some(raw) => parse_u32_allow_zero(API_RATE_LOGIN_FAILURES_PER_ACCOUNT, &raw)?,
+        None => defaults.login_failures_per_account,
+    };
     Ok(Limits {
         auth_per_min,
         api_per_min,
         msg_per_min,
         upload_per_hour,
         upload_bytes_per_day,
+        login_failures_per_account,
     })
 }
 
@@ -374,6 +416,48 @@ fn parse_turn_auth_secret(raw: Option<String>) -> Result<Option<String>, ConfigE
         ));
     }
     Ok(Some(secret.to_owned()))
+}
+
+/// Passwords that shipped in `deploy/compose/*.example` and as Compose
+/// fallbacks before v0.6. Anyone who read the repository knows them.
+const PUBLIC_POSTGRES_PASSWORDS: &[&str] = &["gelabber", "change-me"];
+const PUBLIC_MINIO_ROOT_PASSWORDS: &[&str] = &["gelabbergelabber", "change-me-minio"];
+const PUBLIC_TURN_PASSWORDS: &[&str] = &["gelabberturn", "change-me-turn"];
+
+/// A deployment behind TLS (`API_COOKIE_SECURE=true`) is reachable from
+/// elsewhere, so it must not run on the public defaults: with them the
+/// database, every attachment in MinIO and the TURN relay are open to whoever
+/// reaches those ports. Plain-HTTP development on localhost keeps them.
+/// The values themselves are not echoed in the error.
+fn refuse_public_defaults(
+    database_url: &str,
+    minio: Option<&MinioConfig>,
+    turn_password: Option<&str>,
+    turn_rest: bool,
+) -> Result<(), ConfigError> {
+    let refuse = |key: &'static str| ConfigError::Invalid {
+        key,
+        value: "<public default>".to_owned(),
+        reason: format!(
+            "refusing a password from the repository while {API_COOKIE_SECURE}=true; set a private one (see deploy/README.md)"
+        ),
+    };
+    let db_password = url::Url::parse(database_url)
+        .ok()
+        .and_then(|url| url.password().map(str::to_owned));
+    if db_password.is_some_and(|password| PUBLIC_POSTGRES_PASSWORDS.contains(&password.as_str())) {
+        return Err(refuse(DATABASE_URL));
+    }
+    if minio.is_some_and(|minio| PUBLIC_MINIO_ROOT_PASSWORDS.contains(&minio.secret_key.as_str())) {
+        return Err(refuse(MINIO_ROOT_PASSWORD));
+    }
+    // REST mode never hands out the static password.
+    if !turn_rest
+        && turn_password.is_some_and(|password| PUBLIC_TURN_PASSWORDS.contains(&password.trim()))
+    {
+        return Err(refuse(TURN_PASSWORD));
+    }
+    Ok(())
 }
 
 fn invalid(key: &'static str, value: &str, reason: impl fmt::Display) -> ConfigError {
@@ -473,6 +557,27 @@ mod tests {
         let message = error.to_string();
         assert!(message.contains(TURN_AUTH_SECRET), "{message}");
         assert!(message.contains("public default"), "{message}");
+    }
+
+    #[test]
+    fn flags_a_public_https_endpoint_off_443() {
+        let port = |url: &str| {
+            MinioConfig {
+                endpoint: "http://minio:9000".into(),
+                public_endpoint: url.into(),
+                access_key: String::new(),
+                secret_key: String::new(),
+                bucket: String::new(),
+            }
+            .public_port()
+        };
+        assert_eq!(port("https://example.com:9000"), Some(9000));
+        assert_eq!(port("https://[2001:db8::1]:9000/"), Some(9000));
+        assert_eq!(port("https://minio.example.com"), None);
+        assert_eq!(port("https://minio.example.com:443"), None);
+        assert_eq!(port("https://[2001:db8::1]"), None);
+        // Plain HTTP is the loopback default, not a public deployment.
+        assert_eq!(port("http://localhost:9000"), None);
     }
 
     #[test]
@@ -602,5 +707,75 @@ mod tests {
         ]))
         .unwrap_err();
         assert!(matches!(err, ConfigError::Invalid { key: API_ADDR, .. }));
+    }
+
+    fn secure_source(extra: &[(&str, &str)]) -> impl Fn(&str) -> Option<String> + use<> {
+        let mut map: HashMap<String, String> = [
+            (DATABASE_URL, "postgres://gelabber:private-db@localhost/db"),
+            (REDIS_URL, "redis://localhost"),
+            (API_COOKIE_SECURE, "true"),
+            (MINIO_ENDPOINT, "http://minio:9000"),
+            (MINIO_ROOT_USER, "gelabber"),
+            (MINIO_ROOT_PASSWORD, "private-minio"),
+            (MINIO_BUCKET, "gelabber"),
+            (TURN_PASSWORD, "private-turn"),
+        ]
+        .iter()
+        .map(|(k, v)| ((*k).to_owned(), (*v).to_owned()))
+        .collect();
+        for (key, value) in extra {
+            map.insert((*key).to_owned(), (*value).to_owned());
+        }
+        move |key| map.get(key).cloned()
+    }
+
+    #[test]
+    fn behind_tls_private_passwords_pass() {
+        let config = Config::from_source(secure_source(&[])).expect("valid config");
+        assert!(config.cookie_secure);
+        assert!(!config.allow_plain_http);
+    }
+
+    #[test]
+    fn behind_tls_public_default_passwords_are_refused() {
+        for (key, value) in [
+            (
+                DATABASE_URL,
+                "postgres://gelabber:gelabber@postgres:5432/gelabber",
+            ),
+            (MINIO_ROOT_PASSWORD, "gelabbergelabber"),
+            (TURN_PASSWORD, "gelabberturn"),
+        ] {
+            let err = Config::from_source(secure_source(&[(key, value)])).unwrap_err();
+            assert!(
+                matches!(&err, ConfigError::Invalid { key: refused, value, .. } if *refused == key && value == "<public default>"),
+                "{key}: {err}"
+            );
+        }
+    }
+
+    #[test]
+    fn turn_rest_mode_does_not_use_the_static_password() {
+        Config::from_source(secure_source(&[
+            (TURN_PASSWORD, "gelabberturn"),
+            (TURN_AUTH_SECRET, "private-secret"),
+        ]))
+        .expect("valid config");
+    }
+
+    #[test]
+    fn plain_http_development_keeps_the_public_defaults() {
+        let config = Config::from_source(source(&[
+            (
+                DATABASE_URL,
+                "postgres://gelabber:gelabber@127.0.0.1:5432/gelabber",
+            ),
+            (REDIS_URL, "redis://localhost"),
+            (TURN_PASSWORD, "gelabberturn"),
+            (API_ALLOW_PLAIN_HTTP, "true"),
+        ]))
+        .expect("valid config");
+        assert!(!config.cookie_secure);
+        assert!(config.allow_plain_http);
     }
 }

@@ -5,7 +5,14 @@ import { UnreadBadge } from "../messages/UnreadBadge.tsx";
 
 import { Link, useNavigate, useRouterState } from "@tanstack/react-router";
 import { useVirtualizer } from "@tanstack/react-virtual";
-import { useMemo, useRef, useState, type ReactNode } from "react";
+import {
+  useEffect,
+  useMemo,
+  useRef,
+  useState,
+  useSyncExternalStore,
+  type ReactNode,
+} from "react";
 
 import { useVoice } from "../voice/session.ts";
 import {
@@ -15,6 +22,7 @@ import {
   type VoiceFlags,
 } from "../voice/roster.ts";
 import { can } from "../servers/permissions.ts";
+import { useMenuDetails } from "./menuDetails.ts";
 import { buildRows, type Row } from "../servers/rows.ts";
 import {
   isPendingId,
@@ -130,10 +138,22 @@ function sidebarRows(server: ServerDetail): SidebarRow[] {
   ];
 }
 
-function sidebarRowHeight(row: SidebarRow | undefined): number {
-  if (row?.kind === "category" || row?.kind === "section") return 34;
+// Touch screens get finger-sized channel and category rows; index.css sizes
+// their content to match under the same media query.
+const TOUCH_ROWS = "(pointer: coarse)";
+
+function subscribeTouchRows(notify: () => void) {
+  const media = window.matchMedia(TOUCH_ROWS);
+  media.addEventListener("change", notify);
+  return () => media.removeEventListener("change", notify);
+}
+
+function sidebarRowHeight(row: SidebarRow | undefined, touch: boolean): number {
+  if (row?.kind === "section") return 34;
+  if (row?.kind === "category") return touch ? 44 : 34;
   if (row?.kind === "participant") return 28;
-  return row?.kind === "empty" ? 28 : 36;
+  if (row?.kind === "empty") return 28;
+  return touch ? 46 : 36;
 }
 
 export function ChannelSidebar({
@@ -163,6 +183,7 @@ export function ChannelSidebar({
   const [categoryDialog, setCategoryDialog] =
     useState<CategoryDialogState | null>(null);
   const [inviting, setInviting] = useState(false);
+  const createMenu = useMenuDetails();
 
   return (
     <aside aria-label="Kanäle" className="channel-sidebar">
@@ -175,7 +196,7 @@ export function ChannelSidebar({
             <LinkIcon />
           </IconButton>
           {manageChannels ? (
-            <details className="sidebar-create-menu">
+            <details ref={createMenu} className="sidebar-create-menu">
               <summary
                 className="shell-icon-button"
                 aria-label="Kanal oder Kategorie erstellen"
@@ -186,10 +207,7 @@ export function ChannelSidebar({
               <nav aria-label="Erstellen">
                 <button
                   type="button"
-                  onClick={(event) => {
-                    event.currentTarget
-                      .closest("details")
-                      ?.removeAttribute("open");
+                  onClick={() => {
                     setChannelDialog({ mode: "create", categoryId: null });
                   }}
                 >
@@ -197,10 +215,7 @@ export function ChannelSidebar({
                 </button>
                 <button
                   type="button"
-                  onClick={(event) => {
-                    event.currentTarget
-                      .closest("details")
-                      ?.removeAttribute("open");
+                  onClick={() => {
                     setCategoryDialog({ mode: "create" });
                   }}
                 >
@@ -290,15 +305,22 @@ function ChannelList({
   onEditCategory: (category: Category) => void;
 }) {
   const scrollRef = useRef<HTMLDivElement>(null);
+  const touch = useSyncExternalStore(
+    subscribeTouchRows,
+    () => window.matchMedia(TOUCH_ROWS).matches,
+    () => false,
+  );
   // Not on the React Compiler; the warning is about memoising its return value.
   // eslint-disable-next-line react-hooks/incompatible-library
   const virtualizer = useVirtualizer({
     count: rows.length,
     getScrollElement: () => scrollRef.current,
-    estimateSize: (index) => sidebarRowHeight(rows[index]),
+    estimateSize: (index) => sidebarRowHeight(rows[index], touch),
     getItemKey: (index) => rows[index]?.key ?? index,
     overscan: 10,
   });
+  // Cached row positions still use the previous pitch.
+  useEffect(() => virtualizer.measure(), [touch, virtualizer]);
   const deleteChannel = useDeleteChannel(server.id);
   const deleteCategory = useDeleteCategory(server.id);
   const navigate = useNavigate();
