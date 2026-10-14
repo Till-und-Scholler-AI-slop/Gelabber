@@ -19,7 +19,10 @@ import {
   SpeakerOffIcon,
 } from "./Icons.tsx";
 import { useCapabilities } from "../voice/capabilities.ts";
-import { liveOf, useVoiceRoster } from "../voice/roster.ts";
+import { EMPTY_OCCUPANCY, liveOf, useVoiceRoster } from "../voice/roster.ts";
+import { useSpeakingUsers } from "../voice/speaking.ts";
+import type { ServerDetail } from "../servers/types.ts";
+import { Avatar } from "./Avatar.tsx";
 import { useUserId } from "../auth/scope.ts";
 import { isDesktopApp } from "../voice/native/bridge.ts";
 import {
@@ -141,6 +144,11 @@ export function VoiceSessionControls({
               <strong>Verbunden</strong>
               <span>{voice.channelName ?? "Voice"}</span>
             </Link>
+            <CallPeople
+              server={server}
+              serverId={joined.serverId}
+              channelId={joined.channelId}
+            />
             {bar ? null : <LeaveButton />}
           </div>
           <VoiceControls
@@ -304,6 +312,72 @@ export function VoiceSessionControls({
         </div>
       ) : null}
     </section>
+  );
+}
+
+const SHOWN_PEOPLE = 3;
+
+/** Who is in the call, at a glance: whoever speaks is always among the
+ * avatars shown, the rest keep their alphabetical place. */
+function CallPeople({
+  server,
+  serverId,
+  channelId,
+}: {
+  server: ServerDetail | undefined;
+  serverId: string;
+  channelId: string;
+}) {
+  const voice = useVoice();
+  const self = useUserId();
+  const occupancy = useVoiceRoster(
+    (s) => s.byServer[serverId] ?? EMPTY_OCCUPANCY,
+  );
+  const speaking = useSpeakingUsers(serverId, channelId);
+  const members = new Map(
+    (server?.members ?? []).map((member) => [member.user_id, member]),
+  );
+  const people = Object.entries(occupancy)
+    .filter(([, flags]) => flags.channelId === channelId)
+    .map(([id, flags]) => {
+      const silenced =
+        id === self
+          ? voice.muted || voice.deafened
+          : flags.muted || flags.deafened;
+      return {
+        id,
+        name: members.get(id)?.name ?? "Jemand",
+        url: members.get(id)?.avatar_url ?? null,
+        speaking: speaking[id] === true && !silenced,
+      };
+    })
+    .sort((a, b) => a.name.localeCompare(b.name, "de"));
+  if (people.length === 0) return null;
+  const shown = [
+    ...people.filter((person) => person.speaking),
+    ...people.filter((person) => !person.speaking),
+  ]
+    .slice(0, SHOWN_PEOPLE)
+    .sort((a, b) => a.name.localeCompare(b.name, "de"));
+  const more = people.length - shown.length;
+  return (
+    <span
+      className="voice-session-people"
+      title={people.map((person) => person.name).join(", ")}
+      aria-hidden="true"
+    >
+      {shown.map((person) => (
+        <Avatar
+          key={person.id}
+          name={person.name}
+          url={person.url}
+          className={person.speaking ? "is-speaking" : ""}
+        />
+      ))}
+      {more > 0 ? (
+        <span className="voice-session-people-more">+{more}</span>
+      ) : null}
+    </span>
   );
 }
 

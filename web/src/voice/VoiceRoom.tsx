@@ -20,6 +20,7 @@ import {
 import { useMediaSettings } from "./settings.ts";
 import { isDesktopApp } from "./native/bridge.ts";
 import { EMPTY_OCCUPANCY, liveOf, useVoiceRoster } from "./roster.ts";
+import { useSpeakingUsers } from "./speaking.ts";
 import { VoiceTile } from "./VoiceTile.tsx";
 import { MicrophoneTest } from "./MicrophoneTest.tsx";
 import "./room.css";
@@ -53,6 +54,7 @@ export function VoiceRoom({
   const liveStreamFor = (id: string) =>
     (here ? voice.remote[id]?.l : null) ??
     (watching && voice.watchPublisherId === id ? voice.watchStream : null);
+  const speakingUsers = useSpeakingUsers(server.id, channelId);
   const roomKey = `${server.id}/${channelId}`;
   const [testingMicrophone, setTestingMicrophone] = useState<string | null>(
     null,
@@ -90,13 +92,19 @@ export function VoiceRoom({
     stream: MediaStream | null;
     name: string;
     mirror: boolean;
+    speaking: boolean;
   }[] = [];
+  const speaks = (id: string, flags: { muted: boolean; deafened: boolean }) =>
+    speakingUsers[id] === true &&
+    !(id === me && here
+      ? voice.muted || voice.deafened
+      : flags.muted || flags.deafened);
   let liveTile: {
     id: string;
     stream: MediaStream | null;
     name: string;
   } | null = null;
-  for (const [id] of occupants) {
+  for (const [id, flags] of occupants) {
     const pubs = here ? (voice.participants[id]?.pubs ?? []) : [];
     const self = here && id === me;
     const name = self
@@ -125,6 +133,7 @@ export function VoiceRoom({
         stream: self ? voice.localCamera : (voice.remote[id]?.v ?? null),
         name,
         mirror: self,
+        speaking: speaks(id, flags),
       });
     }
   }
@@ -226,7 +235,14 @@ export function VoiceRoom({
           const muted = self && here ? voice.muted : flags.muted;
           const deafened = self && here ? voice.deafened : flags.deafened;
           const isLive = liveUser === id || (self && here && voice.live);
-          const status = deafened ? "Taub" : muted ? "Stumm" : "Im Raum";
+          const speaking = speaks(id, flags);
+          const status = deafened
+            ? "Taub"
+            : muted
+              ? "Stumm"
+              : speaking
+                ? "Spricht"
+                : "Im Raum";
           const media = isLive
             ? "Live"
             : pubs.includes("s") || (self && here && voice.sharing)
@@ -235,7 +251,10 @@ export function VoiceRoom({
                 ? "Kamera an"
                 : null;
           return (
-            <li key={id} className="voice-room-participant">
+            <li
+              key={id}
+              className={`voice-room-participant${speaking ? " is-speaking" : ""}`}
+            >
               <button
                 type="button"
                 className="voice-room-avatar"
@@ -252,6 +271,7 @@ export function VoiceRoom({
                     (self ? (user?.avatar_url ?? null) : null)
                   }
                   size="lg"
+                  className={speaking ? "is-speaking" : ""}
                 />
                 <span className="voice-room-connection" aria-hidden="true" />
               </button>
@@ -397,6 +417,11 @@ export function VoiceRoom({
                   ? Boolean("mirror" in focused.tile && focused.tile.mirror)
                   : false
               }
+              speaking={
+                focused.kind === "camera" &&
+                "speaking" in focused.tile &&
+                focused.tile.speaking
+              }
               expanded
               onToggleExpand={() => toggleFocus(focused.tile.id)}
             />
@@ -431,6 +456,7 @@ export function VoiceRoom({
                       stream={tile.stream}
                       label={tile.name}
                       mirror={tile.mirror}
+                      speaking={tile.speaking}
                       onToggleExpand={() => toggleFocus(tile.id)}
                     />
                   ))}

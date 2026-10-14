@@ -201,6 +201,15 @@ export class NativeConsumer {
     );
     return Array.isArray(stats.rtc) ? stats.rtc : [];
   }
+  /** The core's playout meter (0..100, like the microphone meter), or null
+   * where it has none: video, or audio that is not played out. */
+  async playoutLevel(): Promise<number | null> {
+    const stats = await invokeNative<{ audioLevel?: unknown }>(
+      "media_consumer_stats",
+      { consumer: this.handle },
+    );
+    return typeof stats.audioLevel === "number" ? stats.audioLevel : null;
+  }
   close(): void {
     if (this.closed) return;
     this.closed = true;

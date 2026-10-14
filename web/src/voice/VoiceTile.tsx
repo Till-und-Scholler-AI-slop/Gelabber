@@ -39,6 +39,8 @@ type VoiceTileProps = {
   mirror?: boolean;
   screen?: boolean;
   live?: boolean;
+  /** The camera's owner is speaking. */
+  speaking?: boolean;
   expanded?: boolean;
   onToggleExpand?: () => void;
   sourceWatch?: { watching: boolean; toggle: () => void };
@@ -101,6 +103,7 @@ function VideoSurface({
   mirror,
   screen,
   live,
+  speaking,
   expanded,
   onToggleExpand,
   onEnlarge,
@@ -211,6 +214,7 @@ function VideoSurface({
       className={[
         "voice-video-tile",
         viewer ? "voice-video-viewer" : "",
+        speaking ? "is-speaking" : "",
         "relative overflow-hidden rounded-lg bg-neutral-900 dark:bg-neutral-700 text-white",
         screen || expanded ? "aspect-video w-full" : "aspect-video",
         expanded && !viewer ? "min-h-[40vh] sm:min-h-[56vh]" : "",

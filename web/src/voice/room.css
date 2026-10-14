@@ -638,3 +638,57 @@ html[data-compact-rooms="true"] .voice-room-participant {
 .voice-room-participant .voice-room-avatar > span:first-child {
   background: var(--lr-panel);
 }
+
+/* Speaking (index.css has the avatar ring): the participant tile and the
+   camera tile take the same green edge. */
+.voice-room-participant {
+  transition:
+    border-color 0.15s ease-out,
+    box-shadow 0.15s ease-out;
+}
+.voice-room-participant.is-speaking {
+  border-color: var(--lr-speaking);
+  box-shadow: 0 0 0 1px var(--lr-speaking);
+}
+.voice-room-participant.is-speaking .voice-room-participant-status {
+  color: var(--lr-speaking);
+}
+.voice-video-tile::after {
+  content: "";
+  position: absolute;
+  inset: 0;
+  border-radius: inherit;
+  pointer-events: none;
+  box-shadow: inset 0 0 0 0 transparent;
+  transition: box-shadow 0.15s ease-out;
+}
+.voice-video-tile.is-speaking::after {
+  box-shadow:
+    inset 0 0 0 3px var(--lr-speaking),
+    inset 0 0 14px 2px color-mix(in srgb, var(--lr-speaking) 35%, transparent);
+  animation: lr-speaking-tile 1.2s ease-in-out infinite;
+}
+@keyframes lr-speaking-tile {
+  50% {
+    box-shadow:
+      inset 0 0 0 3px var(--lr-speaking),
+      inset 0 0 22px 6px color-mix(in srgb, var(--lr-speaking) 50%, transparent);
+  }
+}
+/* The call dock: who is in the call, the speakers ringed. */
+.voice-session-people {
+  display: inline-flex;
+  flex-shrink: 0;
+  align-items: center;
+  gap: 4px;
+  padding: 0 2px;
+}
+.voice-session-people .gel-avatar {
+  --avatar-size: 22px;
+  font-size: 9px;
+}
+.voice-session-people-more {
+  color: var(--lr-muted);
+  font-size: 11px;
+  font-weight: 600;
+}

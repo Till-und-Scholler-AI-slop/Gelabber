@@ -48,6 +48,8 @@
   --lr-rail: #eee9e1;
   --lr-online: #389257;
   --lr-away: #b87813;
+  /* Follows each theme's own green, which keeps its contrast (model.ts). */
+  --lr-speaking: var(--lr-online);
   --lr-media-space: 64px;
   --gel-bg: var(--lr-bg);
   --gel-panel: var(--lr-panel);
@@ -762,6 +764,22 @@ summary {
   font-weight: 600;
   font-size: 12px;
   user-select: none;
+  transition: box-shadow 0.15s ease-out;
+}
+/* Speaking: a ring in the theme's green that breathes while the voice
+   lasts. Reduced motion (system or app setting) keeps the still ring. */
+.gel-avatar.is-speaking {
+  box-shadow:
+    0 0 0 2px var(--lr-speaking),
+    0 0 0 4px color-mix(in srgb, var(--lr-speaking) 30%, transparent);
+  animation: lr-speaking 1.2s ease-in-out infinite;
+}
+@keyframes lr-speaking {
+  50% {
+    box-shadow:
+      0 0 0 2px var(--lr-speaking),
+      0 0 8px 4px color-mix(in srgb, var(--lr-speaking) 45%, transparent);
+  }
 }
 .gel-avatar-md {
   --avatar-size: 36px;
@@ -1382,6 +1400,9 @@ dialog,
   overflow: hidden;
   text-overflow: ellipsis;
   white-space: nowrap;
+}
+.sidebar-participant.is-speaking .sidebar-participant-name {
+  color: var(--lr-text);
 }
 .sidebar-participant-state {
   display: inline-flex;

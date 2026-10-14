@@ -15,6 +15,7 @@ import {
 } from "react";
 
 import { useVoice } from "../voice/session.ts";
+import { useSpeaking } from "../voice/speaking.ts";
 import {
   EMPTY_LIVE,
   EMPTY_OCCUPANCY,
@@ -380,7 +381,7 @@ function ChannelList({
                   }}
                 />
               ) : row.kind === "participant" ? (
-                <ParticipantRowView row={row} />
+                <ParticipantRowView row={row} serverId={server.id} />
               ) : (
                 <p className="sidebar-empty-category">Leer</p>
               )}
@@ -392,12 +393,24 @@ function ChannelList({
   );
 }
 
-function ParticipantRowView({ row }: { row: ParticipantRow }) {
+function ParticipantRowView({
+  row,
+  serverId,
+}: {
+  row: ParticipantRow;
+  serverId: string;
+}) {
   const { member, flags, live } = row;
   const state = flags.deafened ? "taub" : flags.muted ? "stumm" : null;
+  const speaking =
+    useSpeaking(serverId, flags.channelId, member.user_id) && state === null;
   return (
-    <div className="sidebar-participant">
-      <Avatar name={member.name} url={member.avatar_url} />
+    <div className={`sidebar-participant${speaking ? " is-speaking" : ""}`}>
+      <Avatar
+        name={member.name}
+        url={member.avatar_url}
+        className={speaking ? "is-speaking" : ""}
+      />
       <span className="sidebar-participant-name">{member.name}</span>
       {live ? (
         <span className="sidebar-participant-live" title="Live">
