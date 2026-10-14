@@ -90,11 +90,15 @@ body,
   min-height: 100%;
   background: var(--lr-bg);
 }
-html,
-body {
-  /* Pulling down must neither reload the app, which would drop a call, nor
-     stretch its chrome. */
-  overscroll-behavior-y: none;
+/* Pulling down must neither reload the app, which would drop a call, nor
+   stretch its chrome. Touch only: on the root element, WebKit then ignores
+   mouse wheels, so pages scrolled by the document (the settings) froze in
+   the Linux desktop app. */
+@media (pointer: coarse) {
+  html,
+  body {
+    overscroll-behavior-y: none;
+  }
 }
 html {
   /* Quick taps on a control are taps, not a double-tap zoom. */
