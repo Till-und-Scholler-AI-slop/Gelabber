@@ -172,9 +172,13 @@ impl Gateway {
         Ok(())
     }
 
-    /// Add the user to a server's presence set. First time: publish current status.
+    /// Add the user to a server's presence set and mark this connection
+    /// online. Publishes at most one frame per server: an aggregate change
+    /// already reaches this server, otherwise a first announce publishes the
+    /// current status. Both publishes follow the SADD, so a concurrent
+    /// snapshot either lists the user or its socket receives the frame.
     pub async fn announce_server(&self, id: ConnId, server_id: Uuid) -> Result<(), ApiError> {
-        let Some((user_id, _)) = self.socket_meta(id).await else {
+        let Some((user_id, local)) = self.socket_meta(id).await else {
             return Ok(());
         };
         let px = ttl_ms(self.presence_ttl());
@@ -210,12 +214,15 @@ impl Gateway {
             })
             .await
             .map_err(super::hub::redis_err)?;
-        if added == 1 {
-            let st = self
-                .user_status(user_id)
-                .await?
-                .unwrap_or(PresenceStatus::Online);
-            self.publish_presence(server_id, user_id, st).await?;
+        let (prev, agg) = self
+            .write_presence(user_id, id, PresenceStatus::Online)
+            .await?;
+        if prev != agg {
+            let mut servers = self.presence_targets(user_id, &local).await?;
+            servers.insert(server_id);
+            self.broadcast_presence(user_id, agg, &servers).await?;
+        } else if added == 1 {
+            self.publish_presence(server_id, user_id, agg).await?;
         }
         Ok(())
     }

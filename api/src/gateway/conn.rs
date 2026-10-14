@@ -310,10 +310,6 @@ async fn subscribe(
 
     // Presence is ephemeral: announce after the sequenced `ok` so a snapshot
     // never looks like catch-up and never bumps `n`.
-    state
-        .gateway
-        .set_conn_status(conn, PresenceStatus::Online)
-        .await?;
     state.gateway.announce_server(conn, server_id).await?;
     let snap = state.gateway.presence_snapshot(server_id).await?;
     send(sink, ServerFrame::presence_snap(server_id, snap)).await?;
