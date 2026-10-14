@@ -31,6 +31,7 @@ use crate::auth::session::CurrentUser;
 use crate::auth::user::User;
 use crate::error::{ApiError, FieldErrors};
 use crate::gateway::{EventDraft, EventKind, delivery};
+use crate::gifs::{self, Gif, GifPick};
 use crate::json::Body;
 use crate::path::Id;
 use crate::servers::channel::{self, ChannelKind};
@@ -76,6 +77,9 @@ pub struct Message {
     pub attachments: Vec<Attachment>,
     #[serde(default)]
     pub reactions: Vec<reactions::Reaction>,
+    /// A GIF message: empty content, no attachments.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub gif: Option<Gif>,
 }
 
 #[derive(Debug, Clone, Serialize, PartialEq, Eq)]
@@ -101,6 +105,7 @@ struct MessageRow {
     revision: i64,
     created_order: i64,
     reactions: sqlx::types::Json<Vec<reactions::Reaction>>,
+    gif: Option<sqlx::types::Json<Gif>>,
 }
 
 impl From<MessageRow> for Message {
@@ -120,6 +125,7 @@ impl From<MessageRow> for Message {
             created_order: row.created_order,
             attachments: Vec::new(),
             reactions: row.reactions.0,
+            gif: row.gif.map(|gif| gif.0),
         }
     }
 }
@@ -133,6 +139,7 @@ struct MessageInsert {
     edited_at: Option<DateTime<Utc>>,
     revision: i64,
     created_order: i64,
+    gif: Option<sqlx::types::Json<Gif>>,
 }
 
 impl MessageInsert {
@@ -152,6 +159,7 @@ impl MessageInsert {
             created_order: self.created_order,
             attachments: Vec::new(),
             reactions: Vec::new(),
+            gif: self.gif.map(|gif| gif.0),
         }
     }
 }
@@ -162,6 +170,9 @@ pub struct CreateBody {
     pub content: String,
     #[serde(default)]
     pub attachment_ids: Vec<Uuid>,
+    /// Post this GIF instead of text or files.
+    #[serde(default)]
+    pub gif: Option<GifPick>,
 }
 
 #[derive(Debug, Deserialize)]
@@ -214,7 +225,11 @@ async fn create_message(
     validate::finish(errors)?;
     let content = content.expect("validated");
     let attachment_ids = attachment_ids.expect("validated");
-    if content.is_empty() && attachment_ids.is_empty() {
+    let gif = match &body.gif {
+        Some(pick) => Some(resolve_gif(&state, pick, &content, &attachment_ids).await?),
+        None => None,
+    };
+    if content.is_empty() && attachment_ids.is_empty() && gif.is_none() {
         return Err(ApiError::Validation(FieldErrors::from([(
             "content", "required",
         )])));
@@ -226,12 +241,13 @@ async fn create_message(
     let mut tx = state.db.begin().await?;
     delivery::lock_channel(&mut tx, channel_id).await?;
     let row = sqlx::query_as::<_, MessageInsert>(
-        "INSERT INTO messages (channel_id, author_id, content) VALUES ($1, $2, $3) \
-         RETURNING id, channel_id, content, created_at, edited_at, revision, created_order",
+        "INSERT INTO messages (channel_id, author_id, content, gif) VALUES ($1, $2, $3, $4) \
+         RETURNING id, channel_id, content, created_at, edited_at, revision, created_order, gif",
     )
     .bind(channel_id)
     .bind(user.id)
     .bind(&content)
+    .bind(gif.as_ref().map(sqlx::types::Json))
     .fetch_one(&mut *tx)
     .await?;
     let bound = attachments::bind_to_message(
@@ -273,6 +289,9 @@ async fn create_message(
     .await?;
     tx.commit().await?;
     info!(channel_id = %channel_id, message_id = %message.id, "message created");
+    if let (Some(gif), Some(pick), Some(gifs)) = (&message.gif, &body.gif, &state.gifs) {
+        gifs.shared(&gif.slug, pick.query.trim(), user.id);
+    }
     let _ = delivery::deliver_pending(&state, 32).await;
     Ok((StatusCode::CREATED, Json(message)).into_response())
 }
@@ -288,6 +307,12 @@ async fn update_message(
         return Err(ApiError::Forbidden("You can only edit your own messages."));
     }
     access.require_send()?;
+    if current.gif.is_some() {
+        return Err(ApiError::Validation(FieldErrors::from([(
+            "gif",
+            "not_editable",
+        )])));
+    }
 
     let mut errors = FieldErrors::new();
     let content = validate::content_optional(&body.content, &mut errors);
@@ -308,7 +333,7 @@ async fn update_message(
     delivery::lock_channel(&mut tx, current.channel_id).await?;
     let row = sqlx::query_as::<_, MessageInsert>(
         "UPDATE messages SET content = $2, edited_at = now() WHERE id = $1 \
-         RETURNING id, channel_id, content, created_at, edited_at, revision, created_order",
+         RETURNING id, channel_id, content, created_at, edited_at, revision, created_order, gif",
     )
     .bind(message_id)
     .bind(&content)
@@ -397,6 +422,26 @@ async fn persist_event(
     .await
 }
 
+/// A picked GIF as stored: alone in its message, resolved by Klipy so its
+/// URLs and size are Klipy's and not the client's.
+async fn resolve_gif(
+    state: &AppState,
+    pick: &GifPick,
+    content: &str,
+    attachment_ids: &[Uuid],
+) -> Result<Gif, ApiError> {
+    let fail = |code: &'static str| ApiError::Validation(FieldErrors::from([("gif", code)]));
+    if !content.is_empty() || !attachment_ids.is_empty() {
+        return Err(fail("exclusive"));
+    }
+    let gifs = state.gifs.as_ref().ok_or_else(|| fail("unavailable"))?;
+    let slug = pick.slug.trim();
+    if !gifs::klipy::valid_slug(slug) || pick.query.chars().count() > gifs::QUERY_MAX {
+        return Err(fail("invalid"));
+    }
+    gifs.resolve(slug).await?.ok_or_else(|| fail("invalid"))
+}
+
 /// Best-effort notice in the server's oldest text channel when Go Live starts.
 /// The badge is already local; this must not fail the signaling frame.
 pub(crate) async fn post_live_hint(state: &AppState, user: &User, server_id: Uuid, voice_id: Uuid) {
@@ -438,7 +483,7 @@ pub(crate) async fn post_live_hint(state: &AppState, user: &User, server_id: Uui
     let result: Result<(),ApiError> = async {
         let mut tx=state.db.begin().await?;
         delivery::lock_channel(&mut tx,text_id).await?;
-        let row=sqlx::query_as::<_,MessageInsert>("INSERT INTO messages (channel_id, author_id, content) VALUES ($1,$2,$3) RETURNING id,channel_id,content,created_at,edited_at,revision,created_order").bind(text_id).bind(user.id).bind(content).fetch_one(&mut *tx).await?;
+        let row=sqlx::query_as::<_,MessageInsert>("INSERT INTO messages (channel_id, author_id, content) VALUES ($1,$2,$3) RETURNING id,channel_id,content,created_at,edited_at,revision,created_order,gif").bind(text_id).bind(user.id).bind(content).fetch_one(&mut *tx).await?;
         let mut message=row.into_message(user);
         persist_event(&mut tx,server_id,EventKind::C,&mut message).await?;
         tx.commit().await?;
@@ -512,7 +557,7 @@ pub(crate) async fn messaging_channel(
 }
 
 const MESSAGE_BY_ID_SQL: &str = "SELECT m.id, m.channel_id, m.author_id, u.name AS author_name, \
-                u.avatar_url AS author_avatar_url, m.content, m.created_at, m.edited_at, m.revision, m.created_order, COALESCE((SELECT jsonb_agg(jsonb_build_object('emoji', r.emoji, 'user_ids', r.user_ids) ORDER BY r.emoji) FROM (SELECT emoji,jsonb_agg(user_id ORDER BY user_id) AS user_ids FROM message_reactions WHERE message_id=m.id GROUP BY emoji) r),'[]'::jsonb) AS reactions \
+                u.avatar_url AS author_avatar_url, m.content, m.created_at, m.edited_at, m.revision, m.created_order, m.gif, COALESCE((SELECT jsonb_agg(jsonb_build_object('emoji', r.emoji, 'user_ids', r.user_ids) ORDER BY r.emoji) FROM (SELECT emoji,jsonb_agg(user_id ORDER BY user_id) AS user_ids FROM message_reactions WHERE message_id=m.id GROUP BY emoji) r),'[]'::jsonb) AS reactions \
          FROM messages m JOIN users u ON u.id = m.author_id \
          WHERE m.id = $1";
 
@@ -544,7 +589,7 @@ async fn load_page(
         let (at, id) = resolve_bound(db, channel_id, cursor, Bound::Before, "before").await?;
         sqlx::query_as::<_, MessageRow>(
             "SELECT m.id, m.channel_id, m.author_id, u.name AS author_name, \
-                    u.avatar_url AS author_avatar_url, m.content, m.created_at, m.edited_at, m.revision, m.created_order, COALESCE((SELECT jsonb_agg(jsonb_build_object('emoji', r.emoji, 'user_ids', r.user_ids) ORDER BY r.emoji) FROM (SELECT emoji,jsonb_agg(user_id ORDER BY user_id) AS user_ids FROM message_reactions WHERE message_id=m.id GROUP BY emoji) r),'[]'::jsonb) AS reactions \
+                    u.avatar_url AS author_avatar_url, m.content, m.created_at, m.edited_at, m.revision, m.created_order, m.gif, COALESCE((SELECT jsonb_agg(jsonb_build_object('emoji', r.emoji, 'user_ids', r.user_ids) ORDER BY r.emoji) FROM (SELECT emoji,jsonb_agg(user_id ORDER BY user_id) AS user_ids FROM message_reactions WHERE message_id=m.id GROUP BY emoji) r),'[]'::jsonb) AS reactions \
              FROM messages m JOIN users u ON u.id = m.author_id \
              WHERE m.channel_id = $1 AND (m.created_at, m.id) < ($2, $3) \
              ORDER BY m.created_at DESC, m.id DESC \
@@ -560,7 +605,7 @@ async fn load_page(
         let (at, id) = resolve_bound(db, channel_id, cursor, Bound::After, "after").await?;
         let mut newer = sqlx::query_as::<_, MessageRow>(
             "SELECT m.id, m.channel_id, m.author_id, u.name AS author_name, \
-                    u.avatar_url AS author_avatar_url, m.content, m.created_at, m.edited_at, m.revision, m.created_order, COALESCE((SELECT jsonb_agg(jsonb_build_object('emoji', r.emoji, 'user_ids', r.user_ids) ORDER BY r.emoji) FROM (SELECT emoji,jsonb_agg(user_id ORDER BY user_id) AS user_ids FROM message_reactions WHERE message_id=m.id GROUP BY emoji) r),'[]'::jsonb) AS reactions \
+                    u.avatar_url AS author_avatar_url, m.content, m.created_at, m.edited_at, m.revision, m.created_order, m.gif, COALESCE((SELECT jsonb_agg(jsonb_build_object('emoji', r.emoji, 'user_ids', r.user_ids) ORDER BY r.emoji) FROM (SELECT emoji,jsonb_agg(user_id ORDER BY user_id) AS user_ids FROM message_reactions WHERE message_id=m.id GROUP BY emoji) r),'[]'::jsonb) AS reactions \
              FROM messages m JOIN users u ON u.id = m.author_id \
              WHERE m.channel_id = $1 AND (m.created_at, m.id) > ($2, $3) \
              ORDER BY m.created_at ASC, m.id ASC \
@@ -585,7 +630,7 @@ async fn load_page(
     } else {
         sqlx::query_as::<_, MessageRow>(
             "SELECT m.id, m.channel_id, m.author_id, u.name AS author_name, \
-                    u.avatar_url AS author_avatar_url, m.content, m.created_at, m.edited_at, m.revision, m.created_order, COALESCE((SELECT jsonb_agg(jsonb_build_object('emoji', r.emoji, 'user_ids', r.user_ids) ORDER BY r.emoji) FROM (SELECT emoji,jsonb_agg(user_id ORDER BY user_id) AS user_ids FROM message_reactions WHERE message_id=m.id GROUP BY emoji) r),'[]'::jsonb) AS reactions \
+                    u.avatar_url AS author_avatar_url, m.content, m.created_at, m.edited_at, m.revision, m.created_order, m.gif, COALESCE((SELECT jsonb_agg(jsonb_build_object('emoji', r.emoji, 'user_ids', r.user_ids) ORDER BY r.emoji) FROM (SELECT emoji,jsonb_agg(user_id ORDER BY user_id) AS user_ids FROM message_reactions WHERE message_id=m.id GROUP BY emoji) r),'[]'::jsonb) AS reactions \
              FROM messages m JOIN users u ON u.id = m.author_id \
              WHERE m.channel_id = $1 \
              ORDER BY m.created_at DESC, m.id DESC \
