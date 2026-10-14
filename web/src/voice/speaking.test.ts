@@ -262,16 +262,19 @@ describe("watchSpeaking", () => {
 
   it("drops a poll that outlived a leave, even into the same channel", async () => {
     let release: (value: unknown) => void = () => {};
-    const pending = remote("u1", () => 0.3);
-    (
-      pending.rtpReceiver as { getSynchronizationSources: () => never[] }
-    ).getSynchronizationSources = () => [];
-    (pending.rtpReceiver as { getStats: () => Promise<unknown> }).getStats =
-      () =>
-        new Promise((resolve) => {
-          release = () =>
-            resolve(new Map([["a", { type: "inbound-rtp", audioLevel: 0.9 }]]));
-        });
+    const pending = {
+      ...remote("u1", () => 0.3),
+      rtpReceiver: {
+        getSynchronizationSources: () => [],
+        getStats: () =>
+          new Promise((resolve) => {
+            release = () =>
+              resolve(
+                new Map([["a", { type: "inbound-rtp", audioLevel: 0.9 }]]),
+              );
+          }),
+      } as unknown as RTCRtpReceiver,
+    };
     fixture.microphones.received = [pending];
     stop = watchSpeaking();
     join();
