@@ -227,6 +227,7 @@ export function ProfileCardForm({ user }: { user: User }) {
             id="banner_color"
             label="Bannerfarbe"
             value={form.banner_color}
+            fallback={form.accent_color}
             onChange={(value) => edit("banner_color", value)}
             error={errors.fields.banner_color}
           />
@@ -372,12 +373,15 @@ function ColorField({
   id,
   label,
   value,
+  fallback,
   onChange,
   error,
 }: {
   id: string;
   label: string;
   value: string;
+  /** What the card shows while this color is unset. */
+  fallback?: string | undefined;
   onChange: (value: string) => void;
   error?: string | undefined;
 }) {
@@ -393,11 +397,11 @@ function ColorField({
         <input
           id={id}
           type="color"
-          value={value || PICKER_DEFAULT}
+          value={value || fallback || PICKER_DEFAULT}
           onChange={(event) => onChange(event.target.value)}
           aria-invalid={error ? true : undefined}
           aria-describedby={error ? `${id}-error` : `${id}-value`}
-          className="h-9 w-12 cursor-pointer rounded-md border border-neutral-300 bg-transparent p-0.5 dark:border-neutral-600"
+          className="h-9 w-12 shrink-0 cursor-pointer rounded-md border border-neutral-300 bg-transparent p-0.5 dark:border-neutral-600"
         />
         <span
           id={`${id}-value`}

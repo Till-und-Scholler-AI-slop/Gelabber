@@ -12,7 +12,9 @@ pub const AVATAR_URL_MAX: usize = 2048;
 pub const BIO_MAX: usize = 190;
 pub const PRONOUNS_MAX: usize = 40;
 pub const STATUS_TEXT_MAX: usize = 80;
-/// Drawn by the client in CSS; no images, nothing to upload.
+/// Drawn by the client in CSS; no images, nothing to upload. The database
+/// check `users_avatar_decoration_known` (migration 0012) lists the same
+/// names, so a new one needs a migration as well.
 pub const AVATAR_DECORATIONS: [&str; 4] = ["ring", "glow", "rainbow", "stars"];
 
 /// Trims and lower-cases; accepts the pragmatic `local@domain.tld` shape.
