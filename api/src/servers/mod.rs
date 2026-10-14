@@ -96,6 +96,11 @@ pub struct MemberRow {
     pub name: String,
     pub avatar_url: Option<String>,
     pub joined_at: DateTime<Utc>,
+    /// The parts of the profile card the member list shows; the rest comes
+    /// from `GET /api/users/{id}` when a card opens.
+    pub status_text: Option<String>,
+    pub accent_color: Option<String>,
+    pub avatar_decoration: Option<String>,
 }
 
 #[derive(Debug, Clone, Serialize, PartialEq, Eq)]
@@ -244,7 +249,8 @@ async fn load_detail(db: &PgPool, member: Membership) -> Result<ServerDetail, Ap
 
 async fn list_members(db: &PgPool, server_id: Uuid) -> Result<Vec<MemberRow>, ApiError> {
     Ok(sqlx::query_as::<_, MemberRow>(
-        "SELECT m.user_id, u.name, u.avatar_url, m.joined_at \
+        "SELECT m.user_id, u.name, u.avatar_url, m.joined_at, u.status_text, u.accent_color, \
+             u.avatar_decoration \
          FROM server_members m JOIN users u ON u.id = m.user_id \
          WHERE m.server_id = $1 \
          ORDER BY m.joined_at, m.user_id",

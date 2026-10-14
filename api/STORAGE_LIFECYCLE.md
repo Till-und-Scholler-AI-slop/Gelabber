@@ -79,11 +79,13 @@ that interval is not proven covered by this change. Existing bound-object PUT
 URLs remain usable until their ordinary ten-minute expiry. This change does not
 seal/copy bound objects into a second immutable storage key.
 
-## Avatars
+## Avatars and banners
 
-Uploaded avatars (#208, `api/src/avatars.rs`) use the same `storage_cleanup`
-table and worker, with keys `avatars/{user}/{file}`. `PUT /api/me/avatar`
-records a pending row (`next_attempt` and `retain_until` ten minutes ahead)
+Uploaded avatars (#208, `api/src/avatars.rs`) and profile card banners use the
+same `storage_cleanup` table and worker, with keys `avatars/{user}/{file}` and
+`banners/{user}/{file}`. Everything below holds for both; `PUT /api/me/banner`
+behaves like `PUT /api/me/avatar`, and one profile update may replace (and
+delete) one of each. `PUT /api/me/avatar` records a pending row (`next_attempt` and `retain_until` ten minutes ahead)
 before storing the bytes. A failed PUT returns its error and leaves that row,
 because a PUT that only timed out on the client side may still complete in
 MinIO; the worker deletes the key once the row is due. The profile update

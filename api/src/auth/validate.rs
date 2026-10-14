@@ -9,6 +9,11 @@ pub const PASSWORD_MAX: usize = 128;
 pub const NAME_MAX: usize = 64;
 pub const EMAIL_MAX: usize = 254;
 pub const AVATAR_URL_MAX: usize = 2048;
+pub const BIO_MAX: usize = 190;
+pub const PRONOUNS_MAX: usize = 40;
+pub const STATUS_TEXT_MAX: usize = 80;
+/// Drawn by the client in CSS; no images, nothing to upload.
+pub const AVATAR_DECORATIONS: [&str; 4] = ["ring", "glow", "rainbow", "stars"];
 
 /// Trims and lower-cases; accepts the pragmatic `local@domain.tld` shape.
 pub fn email(raw: &str, errors: &mut FieldErrors) -> Option<String> {
@@ -100,6 +105,75 @@ pub fn avatar_url(raw: &str, errors: &mut FieldErrors) -> Option<Option<String>>
         && !value[SCHEME.len()..].starts_with(['/', '.', '?', '#']);
     if !has_host || value.chars().any(|c| c.is_whitespace() || c.is_control()) {
         errors.insert("avatar_url", "invalid");
+        return None;
+    }
+    Some(Some(value.to_owned()))
+}
+
+/// Optional free text: trimmed; empty clears (`Some(None)`). Line breaks
+/// only where `multiline`, and then as plain `\n`.
+fn optional_text(
+    field: &'static str,
+    raw: &str,
+    max: usize,
+    multiline: bool,
+    errors: &mut FieldErrors,
+) -> Option<Option<String>> {
+    let normalised = raw.replace("\r\n", "\n");
+    let value = normalised.trim();
+    if value.is_empty() {
+        return Some(None);
+    }
+    if value.chars().count() > max {
+        errors.insert(field, "too_long");
+        return None;
+    }
+    if value
+        .chars()
+        .any(|c| c.is_control() && !(multiline && c == '\n'))
+    {
+        errors.insert(field, "invalid");
+        return None;
+    }
+    Some(Some(value.to_owned()))
+}
+
+pub fn bio(raw: &str, errors: &mut FieldErrors) -> Option<Option<String>> {
+    optional_text("bio", raw, BIO_MAX, true, errors)
+}
+
+pub fn pronouns(raw: &str, errors: &mut FieldErrors) -> Option<Option<String>> {
+    optional_text("pronouns", raw, PRONOUNS_MAX, false, errors)
+}
+
+pub fn status_text(raw: &str, errors: &mut FieldErrors) -> Option<Option<String>> {
+    optional_text("status_text", raw, STATUS_TEXT_MAX, false, errors)
+}
+
+/// `#rrggbb` in any case, stored lower-case; empty clears. No names, no
+/// alpha: the value goes into inline styles and must stay a plain color.
+pub fn color(field: &'static str, raw: &str, errors: &mut FieldErrors) -> Option<Option<String>> {
+    let value = raw.trim();
+    if value.is_empty() {
+        return Some(None);
+    }
+    let ok = value.len() == 7
+        && value.starts_with('#')
+        && value[1..].chars().all(|c| c.is_ascii_hexdigit());
+    if !ok {
+        errors.insert(field, "invalid");
+        return None;
+    }
+    Some(Some(value.to_ascii_lowercase()))
+}
+
+pub fn avatar_decoration(raw: &str, errors: &mut FieldErrors) -> Option<Option<String>> {
+    let value = raw.trim();
+    if value.is_empty() {
+        return Some(None);
+    }
+    if !AVATAR_DECORATIONS.contains(&value) {
+        errors.insert("avatar_decoration", "invalid");
         return None;
     }
     Some(Some(value.to_owned()))
@@ -206,5 +280,86 @@ mod tests {
             assert!(value.is_none(), "{raw:?}");
             assert_eq!(errors.get("avatar_url"), Some(&"invalid"), "{raw:?}");
         }
+    }
+
+    #[test]
+    fn profile_texts_trim_clear_and_limit() {
+        assert_eq!(
+            run(|e| pronouns("  sie/ihr ", e)).0,
+            Some(Some("sie/ihr".into()))
+        );
+        assert_eq!(run(|e| status_text("   ", e)).0, Some(None));
+        assert_eq!(run(|e| bio("", e)).0, Some(None));
+        assert_eq!(
+            run(|e| bio(" Hallo\r\nWelt ", e)).0,
+            Some(Some("Hallo\nWelt".into()))
+        );
+        assert_eq!(
+            run(|e| status_text("a\nb", e)).1.get("status_text"),
+            Some(&"invalid")
+        );
+        assert_eq!(run(|e| bio("a\tb", e)).1.get("bio"), Some(&"invalid"));
+        assert!(run(|e| bio(&"ä".repeat(BIO_MAX), e)).0.is_some());
+        assert_eq!(
+            run(|e| bio(&"x".repeat(BIO_MAX + 1), e)).1.get("bio"),
+            Some(&"too_long")
+        );
+        assert_eq!(
+            run(|e| pronouns(&"x".repeat(PRONOUNS_MAX + 1), e))
+                .1
+                .get("pronouns"),
+            Some(&"too_long")
+        );
+        assert_eq!(
+            run(|e| status_text(&"x".repeat(STATUS_TEXT_MAX + 1), e))
+                .1
+                .get("status_text"),
+            Some(&"too_long")
+        );
+    }
+
+    #[test]
+    fn colors_are_six_digit_hex_stored_lower_case() {
+        assert_eq!(
+            run(|e| color("accent_color", " #A1b2C3 ", e)).0,
+            Some(Some("#a1b2c3".into()))
+        );
+        assert_eq!(run(|e| color("accent_color", "", e)).0, Some(None));
+        for raw in [
+            "a1b2c3",
+            "#abc",
+            "#a1b2c3d4",
+            "#gggggg",
+            "red",
+            "#ä1b2c",
+            "url(x)",
+        ] {
+            let (value, errors) = run(|e| color("banner_color", raw, e));
+            assert!(value.is_none(), "{raw:?}");
+            assert_eq!(errors.get("banner_color"), Some(&"invalid"), "{raw:?}");
+        }
+    }
+
+    #[test]
+    fn decorations_come_from_the_fixed_set() {
+        for name in AVATAR_DECORATIONS {
+            assert_eq!(
+                run(|e| avatar_decoration(name, e)).0,
+                Some(Some(name.into()))
+            );
+        }
+        assert_eq!(run(|e| avatar_decoration("", e)).0, Some(None));
+        assert_eq!(
+            run(|e| avatar_decoration("Ring", e))
+                .1
+                .get("avatar_decoration"),
+            Some(&"invalid")
+        );
+        assert_eq!(
+            run(|e| avatar_decoration("../x", e))
+                .1
+                .get("avatar_decoration"),
+            Some(&"invalid")
+        );
     }
 }

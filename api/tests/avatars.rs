@@ -207,6 +207,7 @@ async fn overlapping_writes_delete_what_they_really_replaced(pool: PgPool) {
     let patch = gelabber_api::auth::user::ProfilePatch {
         name: None,
         avatar_url: Some(None),
+        ..Default::default()
     };
     let updated = gelabber_api::avatars::save_profile(&state, id, &patch, None)
         .await
@@ -268,6 +269,7 @@ async fn abandoned_upload_is_removed_by_the_cleanup_worker(pool: PgPool) {
     let patch = gelabber_api::auth::user::ProfilePatch {
         name: None,
         avatar_url: Some(Some(url)),
+        ..Default::default()
     };
     assert!(
         gelabber_api::avatars::save_profile(&state, id, &patch, Some(&key))
@@ -332,6 +334,7 @@ async fn concurrent_write_reads_its_predecessor_under_the_row_lock(pool: PgPool)
         let patch = gelabber_api::auth::user::ProfilePatch {
             name: None,
             avatar_url: Some(None),
+            ..Default::default()
         };
         gelabber_api::avatars::save_profile(&writer, id, &patch, None).await
     });
@@ -365,6 +368,7 @@ async fn profile_write_does_not_wait_for_foreign_key_share_locks(pool: PgPool) {
     let patch = gelabber_api::auth::user::ProfilePatch {
         name: Some("Ada L".into()),
         avatar_url: None,
+        ..Default::default()
     };
     let updated = tokio::time::timeout(
         std::time::Duration::from_secs(5),
@@ -415,6 +419,7 @@ async fn late_save_is_refused_once_the_worker_claimed_the_upload(pool: PgPool) {
     let patch = gelabber_api::auth::user::ProfilePatch {
         name: None,
         avatar_url: Some(Some(url)),
+        ..Default::default()
     };
     assert!(
         gelabber_api::avatars::save_profile(&state, id, &patch, Some(&key))
