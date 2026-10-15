@@ -59,6 +59,8 @@ services:
       # Empty turns GIF search off. The key never reaches a browser.
       KLIPY_API_KEY: ${KLIPY_API_KEY:-}
       KLIPY_CONTENT_FILTER: ${KLIPY_CONTENT_FILTER:-medium}
+      API_RATE_GIF_PER_MIN: ${API_RATE_GIF_PER_MIN:-30}
+      API_RATE_GIF_MEDIA_PER_MIN: ${API_RATE_GIF_MEDIA_PER_MIN:-240}
     expose:
       - "8080"
     depends_on:

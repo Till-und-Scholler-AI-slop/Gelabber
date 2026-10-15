@@ -141,7 +141,10 @@ The API makes every KLIPY call itself and relays the GIF images from KLIPY's med
 KLIPY's terms require their written approval for server-side requests and for proxying or caching their media (developers@klipy.com). Get it before you set the key. Testing keys are limited to 100 requests per hour, shared by every user of the instance.
 
 - `KLIPY_CONTENT_FILTER`: `off`, `low`, `medium` (default) or `high`.
-- `API_RATE_GIF_PER_MIN`: search and trending calls (each a KLIPY API request) per user per minute (default 30, `0` turns the limit off). Image loads through the relay are not counted; they go to KLIPY's media hosts, not its API. KLIPY's own 429 reaches the client as `rate_limited`.
+- `API_RATE_GIF_PER_MIN`: search, trending and sent GIFs (each a KLIPY API request) per user per minute (default 30, `0` turns the limit off). It is per user; it does not keep the whole instance under a testing key's 100 per hour.
+- `API_RATE_GIF_MEDIA_PER_MIN`: image loads through the relay per user per minute (default 240, `0` turns the limit off). They go to KLIPY's media hosts, not its API. At most 128 relay streams run at once across all users; past that the relay answers 502.
+
+When KLIPY itself answers 429, the key's quota is used up for every user. The API logs it, counts it as `gelabber_rate_limited_total{bucket="klipy"}` and answers the client 502 `upstream_unavailable`, not as the user's own limit.
 
 After changing these values, recreate the API: `docker compose up -d --no-deps --force-recreate api`.
 
