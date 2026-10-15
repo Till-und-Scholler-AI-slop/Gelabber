@@ -3719,6 +3719,21 @@ function scheduleSeatRebuild(): void {
   );
 }
 
+/** The browser SDK's chunk did not arrive (`sdk_load_*`); `again` says how
+ * to retry. A tab whose chunk a deploy replaced only recovers by reloading. */
+function sdkLoadError(error: unknown, again: string): Error | null {
+  if (!(error instanceof MediaError)) return null;
+  if (error.code === "sdk_load_failed")
+    return new Error(
+      `Die Anruffunktion konnte nicht geladen werden. Bitte Gelabber neu laden und ${again}`,
+    );
+  if (error.code === "sdk_load_timeout")
+    return new Error(
+      `Die Anruffunktion lädt gerade sehr langsam. Bitte gleich ${again}`,
+    );
+  return null;
+}
+
 function retryableTicketError(error: unknown): boolean {
   return (
     !(error instanceof ApiError) ||
@@ -3793,6 +3808,11 @@ async function startPeer(
           "Bitte Gelabber aktualisieren und den Sprachkanal erneut betreten.",
         ),
       );
+      return;
+    }
+    const unloaded = sdkLoadError(error, "den Sprachkanal erneut betreten.");
+    if (unloaded) {
+      rollbackSeat(unloaded);
       return;
     }
     if (recovering && retryableTicketError(error)) {
@@ -4114,6 +4134,12 @@ async function startWatchPeer(
       attachWatchDiagnostics(mine);
   } catch (error) {
     if (watchCall.generation !== mine) return;
+    const unloaded = sdkLoadError(error, "den Stream erneut öffnen.");
+    if (unloaded) {
+      stopWatching();
+      deps?.onError?.(unloaded);
+      return;
+    }
     if (
       recovering &&
       retryableTicketError(error) &&

@@ -74,6 +74,8 @@ export type MediaConnectionOptions = {
   deviceFactory?: () => Promise<Device>;
   /** Test injection; production SDK operations are bounded to ten seconds. */
   sdkTimeoutMs?: number;
+  /** Test injection; production waits SDK_LOAD_TIMEOUT_MS for the chunk. */
+  sdkLoadTimeoutMs?: number;
 };
 export interface MediaConnection {
   start(capabilities: RtpCapabilities): Promise<void>;
@@ -90,20 +92,36 @@ export interface MediaConnection {
   close(): void;
 }
 // The browser SDK is a large part of the app; it loads with the first call.
-let browserSdk: Promise<typeof import("mediasoup-client")> | null = null;
-const loadBrowserSdk = () => {
-  browserSdk ??= import("mediasoup-client").catch((error: unknown) => {
+type BrowserSdk = typeof import("mediasoup-client");
+const importBrowserSdk = (): Promise<BrowserSdk> => import("mediasoup-client");
+let importSdk = importBrowserSdk;
+let browserSdk: Promise<BrowserSdk> | null = null;
+/** A failed import is not kept: the next call asks again. It fails as
+ * `sdk_load_failed`, e.g. when a deploy replaced the chunk this tab knows. */
+const loadBrowserSdk = (): Promise<BrowserSdk> => {
+  browserSdk ??= importSdk().catch((error: unknown) => {
     browserSdk = null;
-    throw error;
+    const failure = new MediaError("sdk_load_failed");
+    failure.cause = error;
+    throw failure;
   });
   return browserSdk;
 };
-const browserDevice = async (): Promise<Device> =>
-  (await loadBrowserSdk()).Device.factory();
+/** How long a call waits for the SDK's chunk on a slow first download. It
+ * has its own budget: the ten seconds of SDK operations start after it. */
+export const SDK_LOAD_TIMEOUT_MS = 60_000;
 /** Starts fetching the browser SDK, e.g. while a call's ticket is requested. */
 export const preloadMediaSdk = (): void => {
   if (!isDesktopApp()) void loadBrowserSdk().catch(() => {});
 };
+/** Tests: replaces the SDK's import (`undefined` restores it) and forgets
+ * what was loaded. */
+export function setBrowserSdkImportForTests(
+  load: (() => Promise<BrowserSdk>) | undefined,
+): void {
+  importSdk = load ?? importBrowserSdk;
+  browserSdk = null;
+}
 
 /** In the desktop app the native core stands in for the browser's WebRTC. */
 export const createMediaConnection = (
@@ -243,12 +261,37 @@ export class MediasoupConnection implements MediaConnection {
         );
     });
   }
+  /** The browser SDK, outside the SDK operations' budget; a close stops
+   * the wait, the download goes on for the next call. */
+  private async browserSdk(): Promise<BrowserSdk> {
+    this.live();
+    let cancel = () => {};
+    let timer: ReturnType<typeof setTimeout> | undefined;
+    try {
+      return await Promise.race([
+        loadBrowserSdk(),
+        new Promise<never>((_, reject) => {
+          cancel = () => reject(new MediaError("connection_closed"));
+          this.sdkWaits.add(cancel);
+          timer = setTimeout(
+            () => reject(new MediaError("sdk_load_timeout")),
+            this.options.sdkLoadTimeoutMs ?? SDK_LOAD_TIMEOUT_MS,
+          );
+        }),
+      ]);
+    } finally {
+      clearTimeout(timer);
+      this.sdkWaits.delete(cancel);
+    }
+  }
   async start(capabilities: RtpCapabilities): Promise<void> {
     this.live();
-    const device = await this.sdk(
-      () => this.options.deviceFactory?.() ?? browserDevice(),
-      "recv",
-    );
+    let factory = this.options.deviceFactory;
+    if (!factory) {
+      const { Device } = await this.browserSdk();
+      factory = () => Device.factory();
+    }
+    const device = await this.sdk(factory, "recv");
     this.live();
     // The desktop app's native device holds a handle until closed.
     const release = () => (device as { close?: () => void }).close?.();
