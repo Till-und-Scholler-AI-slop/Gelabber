@@ -1,18 +1,32 @@
 import { useEffect, useId, useRef, type ReactNode } from "react";
 
+import { dialogInitialFocus } from "./dialogFocus.ts";
+
 type ModalProps = {
   open: boolean;
   onClose: () => void;
   title: string;
   children: ReactNode;
   wide?: boolean;
+  /** `alertdialog` for questions that interrupt, like a confirm. */
+  role?: "dialog" | "alertdialog";
+  /** Id of the element that explains the dialog. */
+  describedBy?: string;
 };
 
 /**
  * Native `<dialog>` so focus trapping, Escape and the backdrop come from the
  * browser. Closes on Escape and on a click outside the panel.
  */
-export function Modal({ open, onClose, title, children, wide }: ModalProps) {
+export function Modal({
+  open,
+  onClose,
+  title,
+  children,
+  wide,
+  role,
+  describedBy,
+}: ModalProps) {
   const ref = useRef<HTMLDialogElement>(null);
   const openerRef = useRef<HTMLElement | null>(null);
   const titleId = useId();
@@ -46,7 +60,9 @@ export function Modal({ open, onClose, title, children, wide }: ModalProps) {
   return (
     <dialog
       ref={ref}
+      role={role === "alertdialog" ? role : undefined}
       aria-labelledby={titleId}
+      aria-describedby={describedBy}
       onCancel={(event) => {
         event.preventDefault();
         event.stopPropagation();
@@ -87,16 +103,20 @@ export function GhostButton({
   disabled,
   tone = "neutral",
   type = "button",
+  initialFocus,
 }: {
   children: ReactNode;
   onClick?: () => void;
   disabled?: boolean;
   tone?: "neutral" | "danger";
   type?: "button" | "submit";
+  /** Focus this button when its dialog opens. */
+  initialFocus?: boolean;
 }) {
   return (
     <button
       type={type}
+      {...dialogInitialFocus(initialFocus)}
       onClick={onClick}
       disabled={disabled}
       className={[
