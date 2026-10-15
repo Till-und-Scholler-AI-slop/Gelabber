@@ -105,10 +105,11 @@ impl AppState {
             ObjectStore::from_minio(config.minio.as_ref())
         }
         .map_err(|err| StateError::Store(err.to_string()))?;
+        let metrics = Arc::new(HttpMetrics::new());
         let gifs = config
             .gifs
             .as_ref()
-            .map(Gifs::new)
+            .map(|gifs| Gifs::new(gifs, metrics.clone()))
             .transpose()
             .map_err(|err| StateError::Http(err.to_string()))?;
         let gateway = Gateway::new(
@@ -142,7 +143,7 @@ impl AppState {
             storage_worker_started: Arc::new(AtomicBool::new(false)),
             limits: config.limits,
             limiter: Arc::new(Limiter::new()),
-            metrics: Arc::new(HttpMetrics::new()),
+            metrics,
             gifs,
         })
     }

@@ -8,20 +8,27 @@ use std::sync::{Arc, Mutex};
 use std::time::Duration;
 
 use axum::Router;
+use axum::body::{Body, to_bytes};
 use axum::extract::{Path, Query, State};
-use axum::http::header::{CONTENT_TYPE, ETAG, IF_NONE_MATCH, LOCATION};
-use axum::http::{HeaderMap, Method, StatusCode};
+use axum::http::header::{CONTENT_TYPE, COOKIE, ETAG, IF_NONE_MATCH, LOCATION};
+use axum::http::{HeaderMap, Method, Request, StatusCode};
 use axum::response::{IntoResponse, Response};
 use axum::routing::{get, post};
+use futures_util::{SinkExt, StreamExt};
 use gelabber_api::config::GifConfig;
 use gelabber_api::{AppState, Config};
 use serde_json::{Value, json};
 use sqlx::PgPool;
+use tokio_tungstenite::tungstenite::Message as WsMessage;
+use tokio_tungstenite::tungstenite::client::IntoClientRequest;
+use tower::ServiceExt;
 
 use common::Client;
 
 const KEY: &str = "test-klipy-key";
 const WEBP: &[u8] = b"RIFF\x10\x00\x00\x00WEBPVP8 fake";
+/// Just over the relay's 16 MiB media cap.
+const OVERSIZED: usize = 16 * 1024 * 1024 + 1024;
 
 #[derive(Clone)]
 struct Klipy {
@@ -70,8 +77,16 @@ async fn feed(
         .iter()
         .find(|(k, _)| k == "q")
         .map_or("Trending", |(_, v)| v.as_str());
-    match kind.as_str() {
-        "trending" | "search" => axum::Json(json!({
+    match (kind.as_str(), title) {
+        (_, "boom") => StatusCode::INTERNAL_SERVER_ERROR.into_response(),
+        (_, "busy") => StatusCode::TOO_MANY_REQUESTS.into_response(),
+        (_, "refused") => axum::Json(json!({ "result": false })).into_response(),
+        (_, "flood") => (
+            [(CONTENT_TYPE, "application/json")],
+            format!("{{\"result\":true,\"pad\":\"{}\"}}", "x".repeat(3 << 20)),
+        )
+            .into_response(),
+        ("trending" | "search", _) => axum::Json(json!({
             "result": true,
             "data": {
                 "data": [{ "type": "ad", "content": "<div>ad</div>" }, klipy.item("hello-hi-662", title)],
@@ -79,7 +94,7 @@ async fn feed(
             }
         }))
         .into_response(),
-        "items" => {
+        ("items", _) => {
             let slugs = query
                 .iter()
                 .find(|(k, _)| k == "slugs")
@@ -109,8 +124,23 @@ async fn share(
     axum::Json(json!({ "result": true }))
 }
 
-async fn media(Path(name): Path<String>, headers: HeaderMap) -> Response {
+async fn media(
+    State(klipy): State<Klipy>,
+    Path(name): Path<String>,
+    headers: HeaderMap,
+) -> Response {
+    klipy.seen.lock().unwrap().push(format!("MEDIA {name}"));
     match name.as_str() {
+        // With a Content-Length the relay refuses before streaming.
+        "huge.webp" => ([(CONTENT_TYPE, "image/webp")], vec![0u8; OVERSIZED]).into_response(),
+        // Chunked, no length: the relay has to cut the stream itself.
+        "endless.webp" => {
+            let chunks = futures_util::stream::iter(
+                (0..OVERSIZED / (64 * 1024) + 1)
+                    .map(|_| Ok::<_, std::io::Error>(vec![0u8; 64 * 1024])),
+            );
+            ([(CONTENT_TYPE, "image/webp")], Body::from_stream(chunks)).into_response()
+        }
         "redirect.webp" => {
             (StatusCode::FOUND, [(LOCATION, "http://127.0.0.1:1/x")]).into_response()
         }
@@ -502,4 +532,306 @@ async fn media_is_streamed_only_from_the_allowed_origin(pool: PgPool) {
         let (got, _, _) = ada.send_raw(Method::GET, &media_path(&url), None).await;
         assert_eq!(got, status, "{url}");
     }
+}
+
+fn media_count(klipy: &Klipy) -> usize {
+    klipy
+        .seen()
+        .iter()
+        .filter(|line| line.starts_with("MEDIA"))
+        .count()
+}
+
+fn api_count(klipy: &Klipy) -> usize {
+    klipy
+        .seen()
+        .iter()
+        .filter(|line| line.starts_with("GET"))
+        .count()
+}
+
+#[sqlx::test]
+async fn media_loads_have_their_own_rate_limit(pool: PgPool) {
+    let klipy = klipy().await;
+    let state = app_state(
+        pool,
+        Some(&klipy),
+        &[
+            ("API_RATE_GIF_MEDIA_PER_MIN", "2"),
+            ("API_RATE_GIF_PER_MIN", "1"),
+        ],
+    );
+    let mut ada = user(&state, "ada@example.com", "Ada").await;
+    let mut bob = user(&state, "bob@example.com", "Bob").await;
+    let path = media_path(&format!("{}/media/a.webp", klipy.origin));
+    for _ in 0..2 {
+        let (status, _, _) = ada.send_raw(Method::GET, &path, None).await;
+        assert_eq!(status, StatusCode::OK);
+    }
+    let res = ada.send(Method::GET, &path, None).await;
+    assert_eq!(res.status, StatusCode::TOO_MANY_REQUESTS);
+    assert_eq!(res.body["error"], "rate_limited");
+    assert_eq!(
+        media_count(&klipy),
+        2,
+        "the third load never left the server"
+    );
+    assert!(
+        state
+            .metrics
+            .render()
+            .contains("gelabber_rate_limited_total{bucket=\"gif_media\"} 1")
+    );
+
+    // Per user, and apart from the search bucket.
+    let (status, _, _) = bob.send_raw(Method::GET, &path, None).await;
+    assert_eq!(status, StatusCode::OK);
+    let res = ada.send(Method::GET, "/api/gifs/trending", None).await;
+    assert_eq!(res.status, StatusCode::OK, "{}", res.body);
+}
+
+#[sqlx::test]
+async fn provider_failures_are_upstream_errors_not_the_users_limit(pool: PgPool) {
+    let klipy = klipy().await;
+    let state = app_state(pool, Some(&klipy), &[]);
+    let mut ada = user(&state, "ada@example.com", "Ada").await;
+    for q in ["boom", "busy", "refused", "flood"] {
+        let res = ada
+            .send(Method::GET, &format!("/api/gifs/search?q={q}"), None)
+            .await;
+        assert_eq!(res.status, StatusCode::BAD_GATEWAY, "{q}: {}", res.body);
+        assert_eq!(res.body["error"], "upstream_unavailable", "{q}");
+        assert!(!res.body.to_string().contains(KEY), "{q}");
+    }
+    assert_eq!(api_count(&klipy), 4);
+    assert!(
+        state
+            .metrics
+            .render()
+            .contains("gelabber_rate_limited_total{bucket=\"klipy\"} 1"),
+        "Klipy's 429 is counted for the operator"
+    );
+}
+
+#[sqlx::test]
+async fn oversized_media_is_refused_or_cut_off(pool: PgPool) {
+    let klipy = klipy().await;
+    let state = app_state(pool, Some(&klipy), &[]);
+    let mut ada = user(&state, "ada@example.com", "Ada").await;
+
+    let res = ada
+        .send(
+            Method::GET,
+            &media_path(&format!("{}/media/huge.webp", klipy.origin)),
+            None,
+        )
+        .await;
+    assert_eq!(res.status, StatusCode::BAD_GATEWAY);
+
+    // Without a length the headers are already out; the body must break off
+    // instead of passing the cap.
+    let cookie = ada
+        .jar
+        .iter()
+        .map(|(k, v)| format!("{k}={v}"))
+        .collect::<Vec<_>>()
+        .join("; ");
+    let request = Request::builder()
+        .uri(media_path(&format!("{}/media/endless.webp", klipy.origin)))
+        .header(COOKIE, cookie)
+        .body(Body::empty())
+        .unwrap();
+    let response = ada.app.clone().oneshot(request).await.unwrap();
+    assert_eq!(response.status(), StatusCode::OK);
+    assert!(
+        to_bytes(response.into_body(), 32 << 20).await.is_err(),
+        "the stream ends in an error, not with 16 MiB+ of data"
+    );
+}
+
+#[sqlx::test]
+async fn sending_a_gif_needs_send_messages_before_klipy_is_asked(pool: PgPool) {
+    let klipy = klipy().await;
+    let state = app_state(pool, Some(&klipy), &[]);
+    let mut owner = user(&state, "ada@example.com", "Ada").await;
+    let mut member = user(&state, "bob@example.com", "Bob").await;
+    let res = owner
+        .send(
+            Method::POST,
+            "/api/servers",
+            Some(json!({ "name": "Team" })),
+        )
+        .await;
+    let server = res.body;
+    let server_id = server["id"].as_str().unwrap();
+    let channel = server["channels"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .find(|ch| ch["kind"] == "text")
+        .unwrap()["id"]
+        .as_str()
+        .unwrap()
+        .to_owned();
+    let invite = owner
+        .send(
+            Method::POST,
+            &format!("/api/servers/{server_id}/invites"),
+            Some(json!({})),
+        )
+        .await;
+    let res = member
+        .send(
+            Method::POST,
+            &format!(
+                "/api/invites/{}/join",
+                invite.body["code"].as_str().unwrap()
+            ),
+            None,
+        )
+        .await;
+    assert_eq!(res.status, StatusCode::OK, "{}", res.body);
+    let res = owner
+        .send(
+            Method::PATCH,
+            &format!("/api/servers/{server_id}"),
+            Some(json!({ "member_permissions": ["send_files", "join_voice", "go_live"] })),
+        )
+        .await;
+    assert_eq!(res.status, StatusCode::OK, "{}", res.body);
+
+    let res = member
+        .send(
+            Method::POST,
+            &format!("/api/channels/{channel}/messages"),
+            Some(json!({ "gif": { "slug": "hello-hi-662" } })),
+        )
+        .await;
+    assert_eq!(res.status, StatusCode::FORBIDDEN, "{}", res.body);
+    assert!(klipy.seen().is_empty(), "{:?}", klipy.seen());
+}
+
+#[sqlx::test]
+async fn sending_a_gif_counts_against_the_gif_bucket(pool: PgPool) {
+    let klipy = klipy().await;
+    let state = app_state(pool, Some(&klipy), &[("API_RATE_GIF_PER_MIN", "1")]);
+    let mut ada = user(&state, "ada@example.com", "Ada").await;
+    let channel = text_channel(&mut ada).await;
+    let path = format!("/api/channels/{channel}/messages");
+    let pick = json!({ "gif": { "slug": "hello-hi-662" } });
+    let res = ada.send(Method::POST, &path, Some(pick.clone())).await;
+    assert_eq!(res.status, StatusCode::CREATED, "{}", res.body);
+    let res = ada.send(Method::POST, &path, Some(pick)).await;
+    assert_eq!(res.status, StatusCode::TOO_MANY_REQUESTS, "{}", res.body);
+    assert_eq!(res.body["error"], "rate_limited");
+    assert_eq!(api_count(&klipy), 1, "the second lookup stayed local");
+    let res = ada
+        .send(
+            Method::POST,
+            &path,
+            Some(json!({ "content": "text still works" })),
+        )
+        .await;
+    assert_eq!(res.status, StatusCode::CREATED, "{}", res.body);
+}
+
+#[sqlx::test]
+async fn the_schema_keeps_a_gif_alone_in_its_message(pool: PgPool) {
+    let klipy = klipy().await;
+    let state = app_state(pool.clone(), Some(&klipy), &[]);
+    let mut ada = user(&state, "ada@example.com", "Ada").await;
+    let channel = text_channel(&mut ada).await;
+    let res = ada
+        .send(
+            Method::POST,
+            &format!("/api/channels/{channel}/messages"),
+            Some(json!({ "gif": { "slug": "hello-hi-662" } })),
+        )
+        .await;
+    assert_eq!(res.status, StatusCode::CREATED, "{}", res.body);
+    let id: uuid::Uuid = res.body["id"].as_str().unwrap().parse().unwrap();
+    let err = sqlx::query("UPDATE messages SET content = 'caption' WHERE id = $1")
+        .bind(id)
+        .execute(&pool)
+        .await
+        .unwrap_err();
+    assert!(err.to_string().contains("messages_gif_alone"), "{err}");
+    let err = sqlx::query("UPDATE messages SET gif = '\"x\"'::jsonb WHERE id = $1")
+        .bind(id)
+        .execute(&pool)
+        .await
+        .unwrap_err();
+    assert!(err.to_string().contains("messages_gif_alone"), "{err}");
+}
+
+#[sqlx::test]
+async fn a_gif_message_reaches_subscribers_through_the_gateway(pool: PgPool) {
+    let klipy = klipy().await;
+    let state = app_state(pool, Some(&klipy), &[]);
+    let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+    let addr = listener.local_addr().unwrap();
+    let router = gelabber_api::app(state.clone());
+    tokio::spawn(async move { axum::serve(listener, router).await.unwrap() });
+
+    let mut ada = user(&state, "ada@example.com", "Ada").await;
+    let bob = user(&state, "bob@example.com", "Bob").await;
+    let res = ada
+        .send(
+            Method::POST,
+            "/api/dms",
+            Some(json!({ "user_id": bob.user_id() })),
+        )
+        .await;
+    let dm = res.body["id"].as_str().unwrap().to_owned();
+
+    let mut request = format!("ws://{addr}/ws").into_client_request().unwrap();
+    let cookie = format!("{}={}", common::SESSION, bob.jar[common::SESSION]);
+    request
+        .headers_mut()
+        .insert(COOKIE, cookie.parse().unwrap());
+    let (mut ws, _) = tokio_tungstenite::connect_async(request).await.unwrap();
+    let subscribe = json!({ "op": "s", "s": dm, "c": dm }).to_string();
+    ws.send(WsMessage::Text(subscribe.into())).await.unwrap();
+    let mut next = async || -> Value {
+        loop {
+            let frame = tokio::time::timeout(Duration::from_secs(5), ws.next())
+                .await
+                .expect("ws frame")
+                .expect("ws open")
+                .expect("ws ok");
+            if let WsMessage::Text(text) = frame {
+                let frame: Value = serde_json::from_str(text.as_str()).unwrap();
+                if frame["op"] == "h" {
+                    let pong = json!({ "op": "h" }).to_string();
+                    ws.send(WsMessage::Text(pong.into())).await.unwrap();
+                    continue;
+                }
+                return frame;
+            }
+        }
+    };
+    loop {
+        let frame = next().await;
+        if frame["op"] == "ok" && frame["c"] == dm {
+            break;
+        }
+    }
+
+    let posted = ada
+        .send(
+            Method::POST,
+            &format!("/api/channels/{dm}/messages"),
+            Some(json!({ "gif": { "slug": "hello-hi-662" } })),
+        )
+        .await;
+    assert_eq!(posted.status, StatusCode::CREATED, "{}", posted.body);
+    let event = loop {
+        let frame = next().await;
+        if frame["op"] == "e" && frame["t"] == "c" && frame["c"] == dm {
+            break frame;
+        }
+    };
+    assert_eq!(event["i"], posted.body["id"]);
+    assert_eq!(event["d"]["content"], "");
+    assert_eq!(event["d"]["gif"], posted.body["gif"]);
 }

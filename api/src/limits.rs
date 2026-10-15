@@ -33,9 +33,13 @@ pub const MSG_PER_MIN: u32 = 60;
 pub const UPLOAD_PER_HOUR: u32 = 60;
 pub const UPLOAD_BYTES_PER_DAY: u64 = 1024 * 1024 * 1024; // 1 GiB
 pub const LOGIN_FAILURES_PER_ACCOUNT: u32 = 10;
-/// GIF search/trending per user. Each one is a request against the
-/// operator's Klipy key, whose testing tier allows 100 per hour in total.
+/// GIF search, trending and sends per user. Each one is a request against
+/// the operator's Klipy key, whose testing tier allows 100 per hour in total.
 pub const GIF_PER_MIN: u32 = 30;
+/// GIF image loads through `/api/gifs/media` per user. Far above
+/// [`GIF_PER_MIN`]: one picker page is 24 tiles and a chat history can hold
+/// dozens of GIFs, each with a still and an animated rendition.
+pub const GIF_MEDIA_PER_MIN: u32 = 240;
 /// Window of the per-account failure count, and so the longest wait.
 pub const LOGIN_FAILURE_WINDOW: Duration = Duration::from_secs(15 * 60);
 
@@ -52,8 +56,10 @@ pub struct Limits {
     /// Failed logins per account within [`LOGIN_FAILURE_WINDOW`]; `0` turns
     /// the per-account count off.
     pub login_failures_per_account: u32,
-    /// GIF search/trending requests per user per minute (`0` = off).
+    /// GIF search/trending/send requests per user per minute (`0` = off).
     pub gif_per_min: u32,
+    /// GIF media loads through the relay per user per minute (`0` = off).
+    pub gif_media_per_min: u32,
 }
 
 impl Default for Limits {
@@ -66,6 +72,7 @@ impl Default for Limits {
             upload_bytes_per_day: UPLOAD_BYTES_PER_DAY,
             login_failures_per_account: LOGIN_FAILURES_PER_ACCOUNT,
             gif_per_min: GIF_PER_MIN,
+            gif_media_per_min: GIF_MEDIA_PER_MIN,
         }
     }
 }

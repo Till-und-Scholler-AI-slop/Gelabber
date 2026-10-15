@@ -238,6 +238,27 @@ mod tests {
         ));
         assert!(!media_allowed("/api/gifs/media", &o));
         assert!(!media_allowed("https://127.0.0.1/a.webp", &o));
+        assert!(!media_allowed("https://[::1]/a.webp", &o));
+        assert!(!media_allowed("https://[::ffff:127.0.0.1]/a.webp", &o));
+        // A trailing dot is another origin string, so it is refused too.
+        assert!(!media_allowed("https://static.klipy.com./a.webp", &o));
+        // Look-alike hosts become punycode and never match.
+        assert!(!media_allowed("https://ѕtatic.klipy.com/a.webp", &o));
+        assert!(!media_allowed(
+            "https://static.klipy.com%2eevil.example/a.webp",
+            &o
+        ));
+        assert!(!media_allowed(
+            "https://static.klipy.com@evil.example/a.webp",
+            &o
+        ));
+        // Case and an escaped dot normalise to the allowed host itself.
+        assert!(media_allowed("HTTPS://STATIC.KLIPY.COM/ii/a/b.webp", &o));
+        assert!(media_allowed("https://static%2Eklipy.com/ii/a/b.webp", &o));
+        assert!(media_allowed(
+            "https://static.klipy.com:443/ii/a/b.webp",
+            &o
+        ));
     }
 
     #[test]

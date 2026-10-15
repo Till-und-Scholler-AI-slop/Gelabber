@@ -40,6 +40,7 @@ pub const API_RATE_UPLOAD_PER_HOUR: &str = "API_RATE_UPLOAD_PER_HOUR";
 pub const API_UPLOAD_QUOTA_BYTES_PER_DAY: &str = "API_UPLOAD_QUOTA_BYTES_PER_DAY";
 pub const API_RATE_LOGIN_FAILURES_PER_ACCOUNT: &str = "API_RATE_LOGIN_FAILURES_PER_ACCOUNT";
 pub const API_RATE_GIF_PER_MIN: &str = "API_RATE_GIF_PER_MIN";
+pub const API_RATE_GIF_MEDIA_PER_MIN: &str = "API_RATE_GIF_MEDIA_PER_MIN";
 pub const KLIPY_API_KEY: &str = "KLIPY_API_KEY";
 pub const KLIPY_CONTENT_FILTER: &str = "KLIPY_CONTENT_FILTER";
 /// Read by `telemetry::init`, not by `Config`, because the subscriber has to
@@ -403,6 +404,10 @@ fn parse_limits(get: &impl Fn(&str) -> Option<String>) -> Result<Limits, ConfigE
         Some(raw) => parse_u32_allow_zero(API_RATE_GIF_PER_MIN, &raw)?,
         None => defaults.gif_per_min,
     };
+    let gif_media_per_min = match get(API_RATE_GIF_MEDIA_PER_MIN) {
+        Some(raw) => parse_u32_allow_zero(API_RATE_GIF_MEDIA_PER_MIN, &raw)?,
+        None => defaults.gif_media_per_min,
+    };
     Ok(Limits {
         auth_per_min,
         api_per_min,
@@ -411,6 +416,7 @@ fn parse_limits(get: &impl Fn(&str) -> Option<String>) -> Result<Limits, ConfigE
         upload_bytes_per_day,
         login_failures_per_account,
         gif_per_min,
+        gif_media_per_min,
     })
 }
 
@@ -657,10 +663,13 @@ mod tests {
             (REDIS_URL, "redis://localhost"),
             (API_RATE_AUTH_PER_MIN, "3"),
             (API_UPLOAD_QUOTA_BYTES_PER_DAY, "0"),
+            (API_RATE_GIF_MEDIA_PER_MIN, "500"),
         ]))
         .expect("valid config");
         assert_eq!(config.limits.auth_per_min, 3);
         assert_eq!(config.limits.upload_bytes_per_day, 0);
+        assert_eq!(config.limits.gif_media_per_min, 500);
+        assert_eq!(config.limits.gif_per_min, Limits::default().gif_per_min);
         assert_eq!(config.limits.api_per_min, Limits::default().api_per_min);
     }
 

@@ -225,8 +225,10 @@ async fn create_message(
     validate::finish(errors)?;
     let content = content.expect("validated");
     let attachment_ids = attachment_ids.expect("validated");
+    // Resolving asks Klipy (up to its 8 s timeout) before the channel lock
+    // is taken, so a slow provider holds only this request, not the channel.
     let gif = match &body.gif {
-        Some(pick) => Some(resolve_gif(&state, pick, &content, &attachment_ids).await?),
+        Some(pick) => Some(resolve_gif(&state, user.id, pick, &content, &attachment_ids).await?),
         None => None,
     };
     if content.is_empty() && attachment_ids.is_empty() && gif.is_none() {
@@ -423,9 +425,12 @@ async fn persist_event(
 }
 
 /// A picked GIF as stored: alone in its message, resolved by Klipy so its
-/// URLs and size are Klipy's and not the client's.
+/// URLs and size are Klipy's and not the client's. The lookup is a Klipy API
+/// request, so it counts against the sender's `gif` bucket like a search,
+/// on top of the `msg` bucket the gate already charged.
 async fn resolve_gif(
     state: &AppState,
+    user_id: Uuid,
     pick: &GifPick,
     content: &str,
     attachment_ids: &[Uuid],
@@ -439,6 +444,7 @@ async fn resolve_gif(
     if !gifs::klipy::valid_slug(slug) || pick.query.chars().count() > gifs::QUERY_MAX {
         return Err(fail("invalid"));
     }
+    gifs::rate_limit(state, user_id)?;
     gifs.resolve(slug).await?.ok_or_else(|| fail("invalid"))
 }
 

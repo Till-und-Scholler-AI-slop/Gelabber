@@ -26,7 +26,8 @@ use axum::routing::get;
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
 use sha2::{Digest, Sha256};
-use tracing::warn;
+use tokio::sync::{OwnedSemaphorePermit, Semaphore};
+use tracing::{debug, warn};
 use url::Url;
 use uuid::Uuid;
 
@@ -34,6 +35,7 @@ use crate::auth::session::CurrentUser;
 use crate::config::GifConfig;
 use crate::error::{ApiError, FieldErrors};
 use crate::limits::MINUTE;
+use crate::metrics::HttpMetrics;
 use crate::state::AppState;
 
 use self::klipy::Size;
@@ -47,6 +49,15 @@ const MEDIA_TIMEOUT: Duration = Duration::from_secs(30);
 /// Klipy's largest GIF renditions average about 4 MB; a message uses WebP.
 const MEDIA_MAX_BYTES: u64 = 16 * 1024 * 1024;
 const MEDIA_TYPES: &[&str] = &["image/webp", "image/gif", "image/jpeg"];
+/// Klipy's search and item answers are tens of KiB; anything near this cap
+/// is a broken or hostile upstream, not a page of GIFs.
+const JSON_MAX_BYTES: u64 = 2 * 1024 * 1024;
+/// Media streams open at once across all users. Each holds an upstream
+/// connection for up to [`MEDIA_TIMEOUT`]; past this the relay answers 502
+/// instead of opening more.
+const MEDIA_STREAMS_MAX: usize = 128;
+/// Share triggers in flight. They are best effort: past this one is dropped.
+const SHARES_MAX: usize = 8;
 const FORMATS: &str = "webp,gif,jpg";
 
 pub fn router() -> Router<AppState> {
@@ -98,6 +109,9 @@ pub struct Gifs {
 struct Inner {
     config: GifConfig,
     http: reqwest::Client,
+    metrics: Arc<HttpMetrics>,
+    media_streams: Arc<Semaphore>,
+    shares: Arc<Semaphore>,
 }
 
 enum Feed<'a> {
@@ -106,7 +120,7 @@ enum Feed<'a> {
 }
 
 impl Gifs {
-    pub fn new(config: &GifConfig) -> Result<Self, reqwest::Error> {
+    pub fn new(config: &GifConfig, metrics: Arc<HttpMetrics>) -> Result<Self, reqwest::Error> {
         let http = reqwest::Client::builder()
             .connect_timeout(Duration::from_secs(5))
             // The media allowlist is checked once; a redirect would leave it.
@@ -117,6 +131,9 @@ impl Gifs {
             inner: Arc::new(Inner {
                 config: config.clone(),
                 http,
+                metrics,
+                media_streams: Arc::new(Semaphore::new(MEDIA_STREAMS_MAX)),
+                shares: Arc::new(Semaphore::new(SHARES_MAX)),
             }),
         })
     }
@@ -158,15 +175,18 @@ impl Gifs {
             .map_err(|err| ApiError::Upstream(format!("klipy: {}", err.without_url())))?;
         let status = response.status();
         if status == reqwest::StatusCode::TOO_MANY_REQUESTS {
-            return Err(ApiError::RateLimited { retry_after: 60 });
+            // The key's quota is shared by every user of the instance, so this
+            // is not the caller's own limit: an upstream failure the operator
+            // has to see (log line and `rate_limited{bucket="klipy"}`).
+            self.inner.metrics.rate_limited("klipy");
+            return Err(ApiError::Upstream(
+                "klipy returned 429: API key quota exhausted".to_owned(),
+            ));
         }
         if !status.is_success() {
             return Err(ApiError::Upstream(format!("klipy returned {status}")));
         }
-        let bytes = response
-            .bytes()
-            .await
-            .map_err(|err| ApiError::Upstream(format!("klipy body: {}", err.without_url())))?;
+        let bytes = read_capped(response, JSON_MAX_BYTES).await?;
         let body: Value = serde_json::from_slice(&bytes)
             .map_err(|err| ApiError::Upstream(format!("klipy json: {err}")))?;
         if !klipy::ok(&body) {
@@ -225,8 +245,14 @@ impl Gifs {
     }
 
     /// Klipy's share trigger after a GIF was posted. Best effort, off the
-    /// request path: the message is already stored.
+    /// request path: the message is already stored. At most [`SHARES_MAX`]
+    /// run at once; with Klipy hanging, further ones are dropped rather than
+    /// piling up. Shutdown does not wait for them.
     pub fn shared(&self, slug: &str, query: &str, user_id: Uuid) {
+        let Ok(permit) = self.inner.shares.clone().try_acquire_owned() else {
+            debug!("gif share trigger dropped: too many in flight");
+            return;
+        };
         let Ok(url) = self.endpoint(&format!("share/{slug}")) else {
             return;
         };
@@ -237,6 +263,7 @@ impl Gifs {
         .to_string();
         let http = self.inner.http.clone();
         tokio::spawn(async move {
+            let _permit = permit;
             let result = http
                 .post(url)
                 .timeout(API_TIMEOUT)
@@ -255,25 +282,63 @@ impl Gifs {
     fn media_allowed(&self, url: &str) -> bool {
         klipy::media_allowed(url, &self.inner.config.media_origins)
     }
+
+    fn media_slot(&self) -> Result<OwnedSemaphorePermit, ApiError> {
+        self.inner
+            .media_streams
+            .clone()
+            .try_acquire_owned()
+            .map_err(|_| {
+                self.inner.metrics.rate_limited("gif_media_streams");
+                ApiError::Upstream("gif media: all relay streams busy".to_owned())
+            })
+    }
 }
 
 fn enabled(state: &AppState) -> Result<&Gifs, ApiError> {
     state.gifs.as_ref().ok_or(ApiError::NotFound)
 }
 
-fn rate_limit(state: &AppState, user_id: Uuid) -> Result<(), ApiError> {
+/// One Klipy API request (search, trending, or resolving a sent GIF) for
+/// this user.
+pub(crate) fn rate_limit(state: &AppState, user_id: Uuid) -> Result<(), ApiError> {
+    hit(state, "gif", user_id, state.limits.gif_per_min)
+}
+
+/// One image load through `/api/gifs/media` for this user.
+fn rate_limit_media(state: &AppState, user_id: Uuid) -> Result<(), ApiError> {
+    hit(state, "gif_media", user_id, state.limits.gif_media_per_min)
+}
+
+fn hit(state: &AppState, bucket: &'static str, user_id: Uuid, max: u32) -> Result<(), ApiError> {
     state
         .limiter
-        .hit(
-            "gif",
-            &user_id.to_string(),
-            state.limits.gif_per_min,
-            MINUTE,
-        )
+        .hit(bucket, &user_id.to_string(), max, MINUTE)
         .map_err(|retry_after| {
-            state.metrics.rate_limited("gif");
+            state.metrics.rate_limited(bucket);
             ApiError::RateLimited { retry_after }
         })
+}
+
+/// The whole body, or an upstream error once it passes `max` bytes (by its
+/// `Content-Length` or while reading).
+async fn read_capped(mut response: reqwest::Response, max: u64) -> Result<Vec<u8>, ApiError> {
+    let too_large = || ApiError::Upstream("klipy body too large".to_owned());
+    if response.content_length().is_some_and(|length| length > max) {
+        return Err(too_large());
+    }
+    let mut bytes = Vec::new();
+    while let Some(chunk) = response
+        .chunk()
+        .await
+        .map_err(|err| ApiError::Upstream(format!("klipy body: {}", err.without_url())))?
+    {
+        if (bytes.len() + chunk.len()) as u64 > max {
+            return Err(too_large());
+        }
+        bytes.extend_from_slice(&chunk);
+    }
+    Ok(bytes)
 }
 
 fn page(raw: Option<u32>) -> Result<u32, ApiError> {
@@ -375,10 +440,13 @@ struct MediaParams {
 
 /// Streams one GIF rendition from Klipy's media hosts. Signed-in users
 /// only, allowlisted origins only, no redirects, bounded size; nothing is
-/// stored here. The browser keeps it in its private cache.
+/// stored here. The browser keeps it in its private cache. Loads are
+/// counted per user (`gif_media`, GETs pass the global gate) and at most
+/// [`MEDIA_STREAMS_MAX`] run at once, so the relay cannot be turned into a
+/// bandwidth amplifier against Klipy or our own egress.
 async fn media(
     State(state): State<AppState>,
-    CurrentUser(_user): CurrentUser,
+    CurrentUser(user): CurrentUser,
     headers: HeaderMap,
     Query(params): Query<MediaParams>,
 ) -> Result<Response, ApiError> {
@@ -386,6 +454,8 @@ async fn media(
     if !gifs.media_allowed(&params.url) {
         return Err(ApiError::NotFound);
     }
+    rate_limit_media(&state, user.id)?;
+    let permit = gifs.media_slot()?;
     let mut request = gifs
         .inner
         .http
@@ -451,20 +521,23 @@ async fn media(
     if let Some(length) = length {
         response = response.header(CONTENT_LENGTH, length);
     }
-    let stream =
-        futures_util::stream::try_unfold((upstream, 0u64), |(mut upstream, seen)| async move {
+    // The slot stays taken until the stream ends or the client goes away.
+    let stream = futures_util::stream::try_unfold(
+        (upstream, 0u64, permit),
+        |(mut upstream, seen, permit)| async move {
             match upstream.chunk().await {
                 Ok(Some(chunk)) => {
                     let seen = seen + chunk.len() as u64;
                     if seen > MEDIA_MAX_BYTES {
                         return Err(io::Error::other("gif media too large"));
                     }
-                    Ok(Some((chunk, (upstream, seen))))
+                    Ok(Some((chunk, (upstream, seen, permit))))
                 }
                 Ok(None) => Ok(None),
                 Err(err) => Err(io::Error::other(err.without_url().to_string())),
             }
-        });
+        },
+    );
     response
         .status(StatusCode::OK)
         .body(Body::from_stream(stream))
@@ -493,12 +566,15 @@ mod tests {
 
     #[test]
     fn customer_id_is_stable_per_user_and_hides_the_account_id() {
-        let gifs = Gifs::new(&GifConfig {
-            api_key: "key".into(),
-            api_base: "https://api.klipy.com".into(),
-            media_origins: vec![],
-            content_filter: "medium".into(),
-        })
+        let gifs = Gifs::new(
+            &GifConfig {
+                api_key: "key".into(),
+                api_base: "https://api.klipy.com".into(),
+                media_origins: vec![],
+                content_filter: "medium".into(),
+            },
+            Arc::new(HttpMetrics::new()),
+        )
         .unwrap();
         let user = Uuid::from_u128(7);
         assert_eq!(gifs.customer_id(user), gifs.customer_id(user));
