@@ -74,7 +74,7 @@ import { asAttachmentList, asGif } from "../messages/types.ts";
 import { gifBox, gifLabel, type GifPick } from "../gifs/api.ts";
 import { useGifStatus } from "../gifs/queries.ts";
 import { useReducedMotion } from "../interface/useReducedMotion.ts";
-import GifPicker, { GifImage } from "./GifPicker.tsx";
+import GifPicker, { GifMessageButton } from "./GifPicker.tsx";
 import { Avatar } from "./Avatar.tsx";
 import { sizeByDraft, type DraftHeight } from "./composerHeight.ts";
 import { EmojiPickerLoader, ReactionBar } from "./ReactionBar.tsx";
@@ -1457,41 +1457,8 @@ function Composer({
   );
 }
 
-/** Plays in place unless reduced motion is asked for; then the first frame,
- *  animated while hovered. A click pauses or plays either way. */
 function GifMessage({ gif }: { gif: Gif }) {
-  const reduced = useReducedMotion();
-  const [chosen, setChosen] = useState<boolean | null>(null);
-  const [hover, setHover] = useState(false);
-  const playing = chosen ?? (!reduced || hover);
-  const box = gifBox(gif);
-  const label = gifLabel(gif);
-  return (
-    <button
-      type="button"
-      className="lr-message-gif"
-      style={{ width: box.width, height: box.height }}
-      aria-label={`${label} abspielen`}
-      aria-pressed={playing}
-      title={gif.title || undefined}
-      onClick={() => setChosen(!playing)}
-      onPointerEnter={() => setHover(true)}
-      onPointerLeave={() => setHover(false)}
-    >
-      <GifImage
-        gif={gif}
-        playing={playing}
-        alt={label}
-        width={box.width}
-        height={box.height}
-      />
-      {playing ? null : (
-        <span className="lr-message-gif-badge" aria-hidden="true">
-          GIF
-        </span>
-      )}
-    </button>
-  );
+  return <GifMessageButton gif={gif} reduced={useReducedMotion()} />;
 }
 
 function AttachmentList({ attachments }: { attachments: Attachment[] }) {
