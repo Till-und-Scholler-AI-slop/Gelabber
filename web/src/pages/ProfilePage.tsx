@@ -42,6 +42,7 @@ import { FormError } from "../components/FormError.tsx";
 import { SubmitButton } from "../components/SubmitButton.tsx";
 import { useDebouncedValue } from "../components/useDebouncedValue.ts";
 import { leaveVoice, stopWatching } from "../voice/session.ts";
+import { ProfileCardForm } from "./ProfileCardForm.tsx";
 import "./settings.css";
 
 export function ProfilePage() {
@@ -51,6 +52,7 @@ export function ProfilePage() {
   return (
     <>
       <ProfileForm key={user.id} user={user} />
+      <ProfileCardForm key={`card-${user.id}`} user={user} />
       <AccountSecurity key={`security-${user.id}`} />
     </>
   );

@@ -132,21 +132,6 @@
   flex-direction: column;
   gap: 22px;
 }
-.member-profile__person {
-  display: flex;
-  align-items: center;
-  gap: 20px;
-  min-width: 0;
-}
-.member-profile__person h3 {
-  font-size: 25px;
-  font-weight: 650;
-  overflow-wrap: anywhere;
-}
-.member-profile__person p {
-  margin-top: 4px;
-  color: var(--lr-muted);
-}
 .member-profile__details {
   display: grid;
   gap: 12px;

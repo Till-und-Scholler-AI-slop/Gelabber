@@ -176,7 +176,7 @@ pub async fn gate(
             MINUTE,
         )
     } else if (request.method() == Method::POST && path.ends_with("/attachments"))
-        || (request.method() == Method::PUT && path == "/api/me/avatar")
+        || (request.method() == Method::PUT && matches!(path, "/api/me/avatar" | "/api/me/banner"))
     {
         check(
             &state.limiter,

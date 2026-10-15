@@ -1,8 +1,16 @@
-//! Uploaded avatars (#208). The browser sends a small square image; the API
-//! keeps it in the object store and serves the bytes itself, so viewers
-//! never contact a foreign host and MinIO stays off the avatar path. The
-//! profile stores `/api/avatars/{user}/{file}`: no schema change, and each
+//! Uploaded profile images: avatars (#208) and profile card banners. The
+//! browser sends a small, already scaled image; the API keeps it in the
+//! object store and serves the bytes itself, so viewers never contact a
+//! foreign host and MinIO stays off the image path. The profile stores
+//! `/api/avatars/{user}/{file}` or `/api/banners/{user}/{file}`; each
 //! upload gets a new file name, so a URL never changes its content.
+//!
+//! Who may download: any signed-in account may load an avatar, as with
+//! names, because avatars travel with message authors, ban lists and other
+//! places that outlive a shared server. A banner appears only on the
+//! profile card, so it follows the card's rule (`user::card_visible`).
+//! Both are checked for their declared pixel size on upload and again on
+//! download (`image_size`), so no viewer decodes an oversized image.
 
 use axum::Router;
 use axum::body::Bytes;
@@ -21,27 +29,99 @@ use crate::storage::StoreError;
 
 /// The web client sends 256×256 WebP, JPEG or PNG, far below this.
 pub const MAX_BYTES: usize = 512 * 1024;
-const URL_PREFIX: &str = "/api/avatars/";
+/// The web client sends 960×320 WebP or JPEG.
+pub const BANNER_MAX_BYTES: usize = 1024 * 1024;
+/// Largest accepted size in pixels: what the web client produces
+/// (`web/src/auth/avatarImage.ts`), smaller is fine.
+pub const AVATAR_MAX_EDGE: u32 = 256;
+pub const BANNER_MAX_WIDTH: u32 = 960;
+pub const BANNER_MAX_HEIGHT: u32 = 320;
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum ImageKind {
+    Avatar,
+    Banner,
+}
+
+impl ImageKind {
+    const ALL: [Self; 2] = [Self::Avatar, Self::Banner];
+
+    fn url_prefix(self) -> &'static str {
+        match self {
+            Self::Avatar => "/api/avatars/",
+            Self::Banner => "/api/banners/",
+        }
+    }
+
+    fn key_prefix(self) -> &'static str {
+        match self {
+            Self::Avatar => "avatars",
+            Self::Banner => "banners",
+        }
+    }
+
+    /// `{prefix}{user}/{file}` with both parts as UUIDs, else `None`.
+    pub fn parse(self, url: &str) -> Option<(Uuid, Uuid)> {
+        let (user, file) = url.strip_prefix(self.url_prefix())?.split_once('/')?;
+        Some((Uuid::parse_str(user).ok()?, Uuid::parse_str(file).ok()?))
+    }
+
+    fn url_for(self, user: Uuid, file: Uuid) -> String {
+        format!("{}{user}/{file}", self.url_prefix())
+    }
+
+    /// Width and height an image of this kind may declare.
+    fn max_size(self) -> (u32, u32) {
+        match self {
+            Self::Avatar => (AVATAR_MAX_EDGE, AVATAR_MAX_EDGE),
+            Self::Banner => (BANNER_MAX_WIDTH, BANNER_MAX_HEIGHT),
+        }
+    }
+
+    /// The bytes' declared size fits this kind (see `image_size`).
+    fn fits(self, bytes: &[u8]) -> bool {
+        let (width, height) = self.max_size();
+        crate::image_size::fits(bytes, width, height)
+    }
+
+    fn object_key(self, user: Uuid, file: Uuid) -> String {
+        format!("{}/{user}/{file}", self.key_prefix())
+    }
+
+    fn patch(self, url: String) -> ProfilePatch {
+        match self {
+            Self::Avatar => ProfilePatch {
+                avatar_url: Some(Some(url)),
+                ..ProfilePatch::default()
+            },
+            Self::Banner => ProfilePatch {
+                banner_url: Some(Some(url)),
+                ..ProfilePatch::default()
+            },
+        }
+    }
+}
 
 pub fn router() -> Router<AppState> {
-    Router::new()
-        .route("/api/me/avatar", put(upload))
-        .route("/api/avatars/{user}/{file}", get(download))
-        .layer(DefaultBodyLimit::max(MAX_BYTES))
+    let avatars = Router::new()
+        .route("/api/me/avatar", put(upload_avatar))
+        .route("/api/avatars/{user}/{file}", get(download_avatar))
+        .layer(DefaultBodyLimit::max(MAX_BYTES));
+    let banners = Router::new()
+        .route("/api/me/banner", put(upload_banner))
+        .route("/api/banners/{user}/{file}", get(download_banner))
+        .layer(DefaultBodyLimit::max(BANNER_MAX_BYTES));
+    avatars.merge(banners)
 }
 
 /// `/api/avatars/{user}/{file}` with both parts as UUIDs, else `None`.
 pub fn parse_url(url: &str) -> Option<(Uuid, Uuid)> {
-    let (user, file) = url.strip_prefix(URL_PREFIX)?.split_once('/')?;
-    Some((Uuid::parse_str(user).ok()?, Uuid::parse_str(file).ok()?))
+    ImageKind::Avatar.parse(url)
 }
 
-fn url_for(user: Uuid, file: Uuid) -> String {
-    format!("{URL_PREFIX}{user}/{file}")
-}
-
-fn object_key(user: Uuid, file: Uuid) -> String {
-    format!("avatars/{user}/{file}")
+/// `/api/banners/{user}/{file}` with both parts as UUIDs, else `None`.
+pub fn parse_banner_url(url: &str) -> Option<(Uuid, Uuid)> {
+    ImageKind::Banner.parse(url)
 }
 
 /// The type comes from the bytes, never from the request header. No SVG:
@@ -58,15 +138,40 @@ fn sniff(bytes: &[u8]) -> Option<&'static str> {
     }
 }
 
+async fn upload_avatar(
+    state: State<AppState>,
+    current: CurrentUser,
+    body: Bytes,
+) -> Result<Json<User>, ApiError> {
+    upload(ImageKind::Avatar, state, current, body).await
+}
+
+async fn upload_banner(
+    state: State<AppState>,
+    current: CurrentUser,
+    body: Bytes,
+) -> Result<Json<User>, ApiError> {
+    upload(ImageKind::Banner, state, current, body).await
+}
+
 async fn upload(
+    kind: ImageKind,
     State(state): State<AppState>,
     CurrentUser(current): CurrentUser,
     body: Bytes,
 ) -> Result<Json<User>, ApiError> {
     let content_type = sniff(&body)
-        .ok_or_else(|| ApiError::BadRequest("avatar must be a PNG, JPEG or WebP image".into()))?;
+        .ok_or_else(|| ApiError::BadRequest("image must be PNG, JPEG or WebP".into()))?;
+    // A small file can declare a huge canvas (decompression bomb); only
+    // what the header proves to be within the client's size is stored.
+    if !kind.fits(&body) {
+        let (width, height) = kind.max_size();
+        return Err(ApiError::BadRequest(format!(
+            "image must be at most {width}x{height} pixels"
+        )));
+    }
     let file = Uuid::new_v4();
-    let key = object_key(current.id, file);
+    let key = kind.object_key(current.id, file);
     // Durable intent first: if the request dies after the PUT (client
     // abort, crash, failed update), the cleanup worker removes the object.
     sqlx::query(
@@ -85,10 +190,7 @@ async fn upload(
         .put(&key, content_type, body.to_vec())
         .await
         .map_err(store_internal)?;
-    let patch = ProfilePatch {
-        name: None,
-        avatar_url: Some(Some(url_for(current.id, file))),
-    };
+    let patch = kind.patch(kind.url_for(current.id, file));
     match save_profile(&state, current.id, &patch, Some(&key)).await? {
         Some(updated) => Ok(Json(updated)),
         None => Err(ApiError::Unauthenticated),
@@ -133,20 +235,28 @@ pub async fn save_profile(
         let Some(row) = user::update_profile(&mut *tx, user_id, patch).await? else {
             return Ok(None);
         };
-        let replaced = row
-            .previous_avatar_url
-            .filter(|previous| row.user.avatar_url.as_deref() != Some(previous.as_str()))
-            .and_then(|previous| parse_url(&previous))
-            .filter(|(owner, _)| *owner == user_id)
-            .map(|(owner, file)| object_key(owner, file));
-        if let Some(key) = &replaced {
-            sqlx::query(
-                "INSERT INTO storage_cleanup (object_key, retain_until) VALUES ($1, now()) \
-                 ON CONFLICT (object_key) DO UPDATE SET next_attempt=now()",
-            )
-            .bind(key)
-            .execute(&mut *tx)
-            .await?;
+        let mut replaced = Vec::new();
+        for kind in ImageKind::ALL {
+            let (previous, current) = match kind {
+                ImageKind::Avatar => (&row.previous_avatar_url, &row.user.avatar_url),
+                ImageKind::Banner => (&row.previous_banner_url, &row.user.card.banner_url),
+            };
+            let key = previous
+                .as_deref()
+                .filter(|previous| current.as_deref() != Some(*previous))
+                .and_then(|previous| kind.parse(previous))
+                .filter(|(owner, _)| *owner == user_id)
+                .map(|(owner, file)| kind.object_key(owner, file));
+            if let Some(key) = key {
+                sqlx::query(
+                    "INSERT INTO storage_cleanup (object_key, retain_until) VALUES ($1, now()) \
+                     ON CONFLICT (object_key) DO UPDATE SET next_attempt=now()",
+                )
+                .bind(&key)
+                .execute(&mut *tx)
+                .await?;
+                replaced.push(key);
+            }
         }
         Ok(Some((tx, row.user, replaced)))
     }
@@ -164,7 +274,7 @@ pub async fn save_profile(
     // A commit error is ambiguous: keep the new object; if the commit did
     // not happen its pending cleanup is still there.
     tx.commit().await?;
-    if let Some(key) = replaced {
+    for key in replaced {
         discard(state, &key).await;
     }
     Ok(Some(updated))
@@ -188,15 +298,35 @@ async fn discard(state: &AppState, key: &str) {
     }
 }
 
+async fn download_avatar(
+    state: State<AppState>,
+    current: CurrentUser,
+    path: Path<(String, String)>,
+) -> Result<Response, ApiError> {
+    download(ImageKind::Avatar, state, current, path).await
+}
+
+async fn download_banner(
+    state: State<AppState>,
+    current: CurrentUser,
+    path: Path<(String, String)>,
+) -> Result<Response, ApiError> {
+    download(ImageKind::Banner, state, current, path).await
+}
+
 async fn download(
+    kind: ImageKind,
     State(state): State<AppState>,
-    CurrentUser(_): CurrentUser,
+    CurrentUser(viewer): CurrentUser,
     Path((user, file)): Path<(String, String)>,
 ) -> Result<Response, ApiError> {
     let (Ok(user), Ok(file)) = (Uuid::parse_str(&user), Uuid::parse_str(&file)) else {
         return Err(ApiError::NotFound);
     };
-    let (_, bytes) = match state.store.fetch(&object_key(user, file)).await {
+    if kind == ImageKind::Banner && !user::card_visible(&state.db, viewer.id, user).await? {
+        return Err(ApiError::NotFound);
+    }
+    let (_, bytes) = match state.store.fetch(&kind.object_key(user, file)).await {
         Ok(object) => object,
         Err(StoreError::NotFound) => return Err(ApiError::NotFound),
         Err(err) => return Err(store_internal(err)),
@@ -204,6 +334,11 @@ async fn download(
     // Served under our own origin: only what the bytes prove, never the
     // stored header, and no sniffing by the browser.
     let content_type = sniff(&bytes).ok_or(ApiError::NotFound)?;
+    // Uploads stored before the size check (avatars since v0.6.1) are not
+    // trusted either.
+    if !kind.fits(&bytes) {
+        return Err(ApiError::NotFound);
+    }
     Ok((
         [
             (CONTENT_TYPE, HeaderValue::from_static(content_type)),
@@ -233,7 +368,16 @@ mod tests {
     fn parses_only_our_own_avatar_paths() {
         let user = Uuid::new_v4();
         let file = Uuid::new_v4();
+        let url_for = |user, file| ImageKind::Avatar.url_for(user, file);
         assert_eq!(parse_url(&url_for(user, file)), Some((user, file)));
+        let banner = ImageKind::Banner.url_for(user, file);
+        assert_eq!(parse_banner_url(&banner), Some((user, file)));
+        assert_eq!(parse_url(&banner), None, "a banner is not an avatar");
+        assert_eq!(parse_banner_url(&url_for(user, file)), None);
+        assert_eq!(
+            ImageKind::Banner.object_key(user, file),
+            format!("banners/{user}/{file}")
+        );
         assert_eq!(parse_url("https://example.com/api/avatars/a/b"), None);
         assert_eq!(parse_url(&format!("/api/avatars/{user}")), None);
         assert_eq!(parse_url(&format!("/api/avatars/{user}/{file}/x")), None);

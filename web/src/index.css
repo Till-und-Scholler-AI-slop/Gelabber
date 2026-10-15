@@ -747,6 +747,9 @@ summary {
   font-size: 11px;
   color: var(--lr-muted);
   margin-top: 2px;
+  overflow: hidden;
+  white-space: nowrap;
+  text-overflow: ellipsis;
 }
 .shell-icon-button {
   display: inline-flex;
@@ -860,6 +863,83 @@ summary {
 .gel-presence-x {
   background: var(--lr-muted);
 }
+/* Avatar decorations (profile card). Drawn around the avatar in the
+   person's accent color; the gap ring uses the surface behind it. */
+.gel-deco {
+  --deco-color: var(--profile-accent, var(--lr-accent));
+  display: inline-flex;
+  position: relative;
+  flex-shrink: 0;
+  border-radius: 50%;
+  isolation: isolate;
+  --deco-avatar: 32px;
+}
+.gel-deco:has(> .gel-avatar-md) {
+  --deco-avatar: 36px;
+}
+.gel-deco:has(> .gel-avatar-lg) {
+  --deco-avatar: 64px;
+}
+.gel-deco:has(> :is(.gel-avatar-hero, .gel-avatar-room)) {
+  --deco-avatar: 112px;
+}
+.gel-deco-ring > .gel-avatar {
+  box-shadow:
+    0 0 0 2px var(--lr-bg),
+    0 0 0 4px var(--deco-color);
+}
+.gel-deco-glow > .gel-avatar {
+  box-shadow:
+    0 0 0 2px var(--deco-color),
+    0 0 10px 3px color-mix(in srgb, var(--deco-color) 55%, transparent);
+}
+.gel-deco-rainbow::before {
+  content: "";
+  position: absolute;
+  inset: -3px;
+  z-index: -1;
+  border-radius: 50%;
+  background: conic-gradient(
+    #ff5f6d,
+    #ffc371,
+    #f9f871,
+    #5ee7a1,
+    #4fb3ff,
+    #a07cff,
+    #ff5f6d
+  );
+}
+.gel-deco-rainbow > .gel-avatar {
+  box-shadow: 0 0 0 1.5px var(--lr-bg);
+}
+.gel-deco-stars > .gel-avatar {
+  box-shadow:
+    0 0 0 2px var(--lr-bg),
+    0 0 0 3.5px var(--deco-color);
+}
+.gel-deco-stars::before,
+.gel-deco-stars::after {
+  content: "✦";
+  /* Decoration only: empty alternative text for screen readers. Browsers
+     without the syntax keep the line above. */
+  content: "✦" / "";
+  position: absolute;
+  z-index: 1;
+  color: var(--deco-color);
+  line-height: 1;
+  text-shadow: 0 0 2px var(--lr-bg);
+  pointer-events: none;
+}
+.gel-deco-stars::before {
+  top: -14%;
+  right: -10%;
+  font-size: max(10px, calc(var(--deco-avatar) * 0.36));
+}
+.gel-deco-stars::after {
+  bottom: -6%;
+  left: -12%;
+  font-size: max(8px, calc(var(--deco-avatar) * 0.24));
+}
 
 .member-panel {
   display: flex;
@@ -960,6 +1040,11 @@ summary {
   margin-top: 2px;
   color: var(--lr-muted);
   font-size: 12px;
+}
+.member-description > .member-status-text {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
 }
 .member-description > small {
   display: block;

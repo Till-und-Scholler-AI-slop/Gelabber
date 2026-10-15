@@ -294,13 +294,17 @@ export async function updateProfile(patch: ProfilePatch): Promise<User> {
   const previous = useSession.getState().user;
   const stamp = takeStamp();
   if (previous && stamp) {
+    const optional: Partial<User> = {};
+    for (const [field, value] of Object.entries(patch)) {
+      if (field !== "name" && typeof value === "string") {
+        Object.assign(optional, { [field]: value.trim() || null });
+      }
+    }
     useSession.setState({
       user: {
         ...previous,
+        ...optional,
         ...(patch.name !== undefined ? { name: patch.name.trim() } : {}),
-        ...(patch.avatar_url !== undefined
-          ? { avatar_url: patch.avatar_url.trim() || null }
-          : {}),
       },
     });
   }
@@ -330,8 +334,17 @@ export async function updateProfile(patch: ProfilePatch): Promise<User> {
  * stored the file.
  */
 export async function uploadAvatar(image: Blob): Promise<User> {
+  return uploadProfileImage("/me/avatar", image);
+}
+
+/** Uploads a banner prepared by `prepareBanner`; same rules as the avatar. */
+export async function uploadBanner(image: Blob): Promise<User> {
+  return uploadProfileImage("/me/banner", image);
+}
+
+async function uploadProfileImage(path: string, image: Blob): Promise<User> {
   const stamp = takeStamp();
-  const user = await api<User>("/me/avatar", { method: "PUT", body: image });
+  const user = await api<User>(path, { method: "PUT", body: image });
   if (stampHolds(stamp)) {
     if (user.id === stamp.userId) {
       useSession.setState({ status: "authenticated", user });

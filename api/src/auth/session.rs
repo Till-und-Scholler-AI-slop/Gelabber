@@ -41,7 +41,8 @@ pub async fn resolve<'e, E: sqlx::Executor<'e, Database = sqlx::Postgres>>(
         return Ok(None);
     }
     Ok(sqlx::query_as::<_, User>(
-        "SELECT u.id, u.email, u.name, u.avatar_url, u.created_at \
+        "SELECT u.id, u.email, u.name, u.avatar_url, u.created_at, u.bio, u.pronouns, \
+             u.status_text, u.accent_color, u.banner_color, u.banner_url, u.avatar_decoration \
          FROM sessions s JOIN users u ON u.id = s.user_id \
          WHERE s.token_hash = $1 AND s.expires_at > now()",
     )
@@ -140,7 +141,7 @@ impl FromRequestParts<AppState> for CurrentSession {
             expires_at: chrono::DateTime<Utc>,
         }
         let row = sqlx::query_as::<_, Row>(
-            "SELECT u.id, u.email, u.name, u.avatar_url, u.created_at, s.expires_at FROM sessions s JOIN users u ON u.id = s.user_id WHERE s.token_hash = $1 AND s.expires_at > now()",
+            "SELECT u.id, u.email, u.name, u.avatar_url, u.created_at, u.bio, u.pronouns, u.status_text, u.accent_color, u.banner_color, u.banner_url, u.avatar_decoration, s.expires_at FROM sessions s JOIN users u ON u.id = s.user_id WHERE s.token_hash = $1 AND s.expires_at > now()",
         ).bind(&hash).fetch_optional(&state.db).await?.ok_or(ApiError::Unauthenticated)?;
         let Row { user, expires_at } = row;
         Ok(Self {

@@ -1,5 +1,8 @@
 /** Edge length of uploaded avatars; shown at most at 96 CSS px (×2 for HiDPI). */
 export const AVATAR_SIZE = 256;
+/** Uploaded banners: 3:1, shown at most ~480 CSS px wide on profile cards. */
+export const BANNER_WIDTH = 960;
+export const BANNER_HEIGHT = 320;
 /** Refuse absurd inputs before decoding them. */
 export const AVATAR_INPUT_MAX = 20 * 1024 * 1024;
 
@@ -8,7 +11,43 @@ export const AVATAR_INPUT_MAX = 20 * 1024 * 1024;
  * `AVATAR_SIZE`. WebP where the browser can encode it, otherwise JPEG, or
  * PNG when the image has transparency. Animated GIFs keep their first frame.
  */
-export async function prepareAvatar(file: Blob): Promise<Blob> {
+export function prepareAvatar(file: Blob): Promise<Blob> {
+  return prepareImage(file, AVATAR_SIZE, AVATAR_SIZE, false);
+}
+
+/**
+ * Crops the picked image to its centered 3:1 strip and scales it to
+ * `BANNER_WIDTH`×`BANNER_HEIGHT`. Always opaque (transparent parts become
+ * black), so the fallback is JPEG and stays far below the API's 1 MiB.
+ */
+export function prepareBanner(file: Blob): Promise<Blob> {
+  return prepareImage(file, BANNER_WIDTH, BANNER_HEIGHT, true);
+}
+
+/** The centered source rectangle with the target's aspect ratio. */
+export function centeredCrop(
+  width: number,
+  height: number,
+  targetWidth: number,
+  targetHeight: number,
+): { x: number; y: number; width: number; height: number } {
+  const ratio = targetWidth / targetHeight;
+  const cropWidth = Math.min(width, height * ratio);
+  const cropHeight = cropWidth / ratio;
+  return {
+    x: (width - cropWidth) / 2,
+    y: (height - cropHeight) / 2,
+    width: cropWidth,
+    height: cropHeight,
+  };
+}
+
+async function prepareImage(
+  file: Blob,
+  targetWidth: number,
+  targetHeight: number,
+  opaque: boolean,
+): Promise<Blob> {
   if (file.size > AVATAR_INPUT_MAX) throw new AvatarImageError("too_large");
   let bitmap: ImageBitmap;
   try {
@@ -17,29 +56,39 @@ export async function prepareAvatar(file: Blob): Promise<Blob> {
     throw new AvatarImageError("unreadable");
   }
   try {
-    const side = Math.min(bitmap.width, bitmap.height);
+    const crop = centeredCrop(
+      bitmap.width,
+      bitmap.height,
+      targetWidth,
+      targetHeight,
+    );
     const canvas = document.createElement("canvas");
-    canvas.width = AVATAR_SIZE;
-    canvas.height = AVATAR_SIZE;
+    canvas.width = targetWidth;
+    canvas.height = targetHeight;
     const context = canvas.getContext("2d");
-    if (!context || side === 0) throw new AvatarImageError("unreadable");
+    if (!context || crop.width === 0 || crop.height === 0)
+      throw new AvatarImageError("unreadable");
+    if (opaque) {
+      context.fillStyle = "#000";
+      context.fillRect(0, 0, targetWidth, targetHeight);
+    }
     context.imageSmoothingQuality = "high";
     context.drawImage(
       bitmap,
-      (bitmap.width - side) / 2,
-      (bitmap.height - side) / 2,
-      side,
-      side,
+      crop.x,
+      crop.y,
+      crop.width,
+      crop.height,
       0,
       0,
-      AVATAR_SIZE,
-      AVATAR_SIZE,
+      targetWidth,
+      targetHeight,
     );
     const webp = await toBlob(canvas, "image/webp", 0.85);
     if (webp?.type === "image/webp") return webp;
     // No WebP encoder (Safari, WebKitGTK in the Linux app): lossless PNG is
     // several times larger, so only keep it where transparency needs it.
-    const pixels = context.getImageData(0, 0, AVATAR_SIZE, AVATAR_SIZE).data;
+    const pixels = context.getImageData(0, 0, targetWidth, targetHeight).data;
     if (fallbackType(pixels) === "image/jpeg") {
       const jpeg = await toBlob(canvas, "image/jpeg", 0.85);
       if (jpeg?.type === "image/jpeg") return jpeg;

@@ -3,12 +3,17 @@
 // field codes render through the same `fieldMessage` table.
 
 import type { ApiErrorCode, FieldCode, FieldErrors } from "../api/client.ts";
+import type { AvatarDecoration, ProfileCard, ProfilePatch } from "./types.ts";
 
 export const PASSWORD_MIN = 8;
 export const PASSWORD_MAX = 128;
 export const NAME_MAX = 64;
 export const EMAIL_MAX = 254;
 export const AVATAR_URL_MAX = 2048;
+export const BIO_MAX = 190;
+export const PRONOUNS_MAX = 40;
+export const STATUS_TEXT_MAX = 80;
+export const AVATAR_DECORATIONS = ["ring", "glow", "rainbow", "stars"] as const;
 
 const chars = (value: string): number => Array.from(value).length;
 
@@ -104,12 +109,157 @@ export function validateAvatarUrl(raw: string): FieldCode | null {
   return null;
 }
 
+const UPLOADED_BANNER = new RegExp(`^/api/banners/${UUID}/${UUID}$`, "i");
+
+/** A banner the API stores itself (`PUT /api/me/banner`). */
+export function isUploadedBanner(url: string | null | undefined): boolean {
+  return url != null && UPLOADED_BANNER.test(url.trim());
+}
+
+/** Characters as the API counts them, after its `\r\n` → `\n` and trim. */
+export function profileTextLength(raw: string): number {
+  return chars(raw.replace(/\r\n/g, "\n").trim());
+}
+
+function validateOptionalText(
+  raw: string,
+  max: number,
+  multiline: boolean,
+): FieldCode | null {
+  const value = raw.replace(/\r\n/g, "\n").trim();
+  if (value.length === 0) return null;
+  if (chars(value) > max) return "too_long";
+  for (const char of value) {
+    if (multiline && char === "\n") continue;
+    if (isControl(char)) return "invalid";
+  }
+  return null;
+}
+
+/**
+ * Rust's `char::is_control` (C0, DEL and C1) plus explicit bidi
+ * embeddings, overrides and isolates, as the API's `optional_text`.
+ */
+function isControl(char: string): boolean {
+  const code = char.codePointAt(0) ?? 0;
+  return (
+    code < 0x20 ||
+    (code >= 0x7f && code <= 0x9f) ||
+    (code >= 0x202a && code <= 0x202e) ||
+    (code >= 0x2066 && code <= 0x2069)
+  );
+}
+
+export const validateBio = (raw: string) =>
+  validateOptionalText(raw, BIO_MAX, true);
+export const validatePronouns = (raw: string) =>
+  validateOptionalText(raw, PRONOUNS_MAX, false);
+export const validateStatusText = (raw: string) =>
+  validateOptionalText(raw, STATUS_TEXT_MAX, false);
+
+/** `#rrggbb` or empty (unset). */
+export function validateColor(raw: string): FieldCode | null {
+  const value = raw.trim();
+  if (value.length === 0) return null;
+  return /^#[0-9a-f]{6}$/i.test(value) ? null : "invalid";
+}
+
+/** A stored color as a CSS value, or `null` for anything else. */
+export function safeColor(value: string | null | undefined): string | null {
+  return value != null && /^#[0-9a-f]{6}$/i.test(value) ? value : null;
+}
+
+/** The editable card fields as form strings ("" = unset). */
+export type CardForm = {
+  bio: string;
+  pronouns: string;
+  status_text: string;
+  accent_color: string;
+  banner_color: string;
+  avatar_decoration: AvatarDecoration | "";
+};
+
+const CARD_FIELDS = [
+  "bio",
+  "pronouns",
+  "status_text",
+  "accent_color",
+  "banner_color",
+  "avatar_decoration",
+] as const;
+
+export function cardFormOf(card: ProfileCard): CardForm {
+  return {
+    bio: card.bio ?? "",
+    pronouns: card.pronouns ?? "",
+    status_text: card.status_text ?? "",
+    accent_color: card.accent_color ?? "",
+    banner_color: card.banner_color ?? "",
+    avatar_decoration: card.avatar_decoration ?? "",
+  };
+}
+
+function normalisedCardValue(field: keyof CardForm, raw: string): string {
+  const value = raw.replace(/\r\n/g, "\n").trim();
+  return field === "accent_color" || field === "banner_color"
+    ? value.toLowerCase()
+    : value;
+}
+
+/**
+ * The card fields that differ from the saved profile, as the API stores
+ * them. Unchanged fields stay out of the PATCH, so a form loaded earlier
+ * does not undo a change made since in another tab.
+ */
+export function profileCardPatch(
+  form: CardForm,
+  saved: ProfileCard,
+): ProfilePatch {
+  const patch: ProfilePatch = {};
+  for (const field of CARD_FIELDS) {
+    const value = normalisedCardValue(field, form[field]);
+    if (value !== (saved[field] ?? "")) {
+      Object.assign(patch, { [field]: value });
+    }
+  }
+  return patch;
+}
+
+/** Field codes for the card form; empty when everything is acceptable. */
+export function validateCardForm(
+  form: CardForm,
+): Partial<Record<keyof CardForm, FieldCode>> {
+  const codes: Partial<Record<keyof CardForm, FieldCode>> = {};
+  const checks: [keyof CardForm, FieldCode | null][] = [
+    ["bio", validateBio(form.bio)],
+    ["pronouns", validatePronouns(form.pronouns)],
+    ["status_text", validateStatusText(form.status_text)],
+    ["accent_color", validateColor(form.accent_color)],
+    ["banner_color", validateColor(form.banner_color)],
+  ];
+  for (const [field, code] of checks) if (code) codes[field] = code;
+  if (
+    form.avatar_decoration !== "" &&
+    !AVATAR_DECORATIONS.includes(form.avatar_decoration)
+  ) {
+    codes.avatar_decoration = "invalid";
+  }
+  return codes;
+}
+
 type FieldName =
   | "email"
   | "password"
   | "current_password"
   | "name"
   | "avatar_url"
+  | "bio"
+  | "pronouns"
+  | "status_text"
+  | "accent_color"
+  | "banner_color"
+  | "banner_url"
+  | "avatar_decoration"
   | "kind"
   | "category_id"
   | "member_permissions"
@@ -133,6 +283,13 @@ const FIELD_LABEL: Record<FieldName, string> = {
   current_password: "Aktuelles Passwort",
   name: "Name",
   avatar_url: "Avatar-URL",
+  bio: "Über mich",
+  pronouns: "Pronomen",
+  status_text: "Status",
+  accent_color: "Akzentfarbe",
+  banner_color: "Bannerfarbe",
+  banner_url: "Banner",
+  avatar_decoration: "Avatar-Rahmen",
   kind: "Kanaltyp",
   category_id: "Kategorie",
   member_permissions: "Rechte",
@@ -183,6 +340,15 @@ export function fieldMessage(field: string, code: FieldCode): string {
           return "Das sieht nicht wie eine E-Mail-Adresse aus.";
         case "avatar_url":
           return "Bitte eine vollständige https-URL angeben.";
+        case "accent_color":
+        case "banner_color":
+          return "Bitte eine Farbe im Format #rrggbb wählen.";
+        case "bio":
+        case "pronouns":
+        case "status_text":
+          return field === "bio"
+            ? "Nur Text und Zeilenumbrüche, keine Steuerzeichen."
+            : "Nur eine Zeile Text, keine Steuerzeichen.";
         case "content_type":
           return "Dieser Dateityp ist nicht erlaubt.";
         default:

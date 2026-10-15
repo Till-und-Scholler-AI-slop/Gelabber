@@ -9,6 +9,7 @@ pub mod error;
 pub mod gateway;
 pub mod gifs;
 pub mod health;
+pub mod image_size;
 pub mod json;
 pub mod limits;
 pub mod media;
