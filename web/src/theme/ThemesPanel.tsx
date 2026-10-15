@@ -3,7 +3,7 @@ import { ScreenIcon } from "../components/Icons.tsx";
 import { useBlocker } from "@tanstack/react-router";
 import { confirmAction } from "../components/confirm.ts";
 import { randomUuid } from "../lib/uuid.ts";
-import { confirmDiscardThemeDraft } from "./discardDraft.ts";
+import { blockThemeLeave, confirmDiscardThemeDraft } from "./discardDraft.ts";
 import { BUILTIN_THEMES, builtinTheme } from "./presets.ts";
 import {
   COLOR_KEYS,
@@ -127,7 +127,7 @@ export function ThemesPanel({
   const issues = contrastIssues(shown);
   const canCreate = state.doc.customThemes.length < MAX_THEMES;
   useBlocker({
-    shouldBlockFn: async () => dirty && !(await confirmDiscardThemeDraft()),
+    shouldBlockFn: () => blockThemeLeave(dirty),
     enableBeforeUnload: dirty,
   });
   useEffect(() => {
