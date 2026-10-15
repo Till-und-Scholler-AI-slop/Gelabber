@@ -151,6 +151,10 @@ export function ProfileCardForm({ user }: { user: User }) {
 
   const unchanged = !dirty && !saved && !busy;
   const bioLength = profileTextLength(form.bio);
+  // No `maxLength` on the textarea: pasting a longer text and trimming it
+  // must work, and the browser would count UTF-16 units before the API's
+  // trim. Over the limit the field is marked invalid right away instead.
+  const bioInvalid = Boolean(errors.fields.bio) || bioLength > BIO_MAX;
 
   return (
     <section className="lr-account-page mx-auto mt-12 max-w-md">
@@ -160,7 +164,11 @@ export function ProfileCardForm({ user }: { user: User }) {
         und auf dem Handy.
       </p>
 
-      <div className="mt-6" aria-label="Vorschau deiner Profilkarte">
+      <div
+        className="mt-6"
+        role="group"
+        aria-label="Vorschau deiner Profilkarte"
+      >
         <ProfileCardView
           person={{
             ...form,
@@ -311,11 +319,11 @@ export function ProfileCardForm({ user }: { user: User }) {
             rows={4}
             value={form.bio}
             onChange={(event) => edit("bio", event.target.value)}
-            aria-invalid={errors.fields.bio ? true : undefined}
+            aria-invalid={bioInvalid ? true : undefined}
             aria-describedby={errors.fields.bio ? "bio-error" : bioCountId}
             className={[
               "resize-y rounded-lg border bg-white px-3 py-2 text-base text-neutral-900 outline-none transition focus:ring-2 focus:ring-offset-0 dark:bg-neutral-900 dark:text-neutral-100",
-              errors.fields.bio
+              bioInvalid
                 ? "border-red-400 focus:border-red-500 focus:ring-red-200 dark:border-red-600 dark:focus:border-red-400 dark:focus:ring-red-900"
                 : "border-neutral-300 focus:border-neutral-500 focus:ring-neutral-200 dark:border-neutral-600 dark:focus:border-neutral-400 dark:focus:ring-neutral-700",
             ].join(" ")}

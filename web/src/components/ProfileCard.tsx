@@ -7,6 +7,7 @@ import { Avatar } from "./Avatar.tsx";
 import { AvatarFrame } from "./AvatarFrame.tsx";
 import { PresenceAvatar } from "./PresenceAvatar.tsx";
 import { accentStyle, bannerOf } from "./profileStyle.ts";
+import "./profileCard.css";
 
 export type CardPerson = CardFields & {
   name: string;

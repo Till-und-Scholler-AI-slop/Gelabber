@@ -2,6 +2,7 @@ import { useUserProfile } from "../profile/queries.ts";
 import type { PresenceStatus } from "../ws/protocol.ts";
 import { GhostButton, Modal } from "./Modal.tsx";
 import { ProfileCardView, type CardPerson } from "./ProfileCard.tsx";
+import { withCard } from "./profileStyle.ts";
 
 /**
  * Someone's profile card outside a server (DM peers). Shows what is known
@@ -21,10 +22,7 @@ export function UserProfileDialog({
   onClose: () => void;
 }) {
   const { data: card } = useUserProfile(userId, open);
-  const person: CardPerson = {
-    ...known,
-    ...(card?.id === userId ? card : {}),
-  };
+  const person = withCard(known, card, userId);
   return (
     <Modal open={open} title={`Profil von ${person.name}`} onClose={onClose}>
       <div className="member-profile">

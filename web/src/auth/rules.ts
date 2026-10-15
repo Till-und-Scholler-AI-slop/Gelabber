@@ -136,10 +136,18 @@ function validateOptionalText(
   return null;
 }
 
-/** Rust's `char::is_control`: C0, DEL and C1. */
+/**
+ * Rust's `char::is_control` (C0, DEL and C1) plus explicit bidi
+ * embeddings, overrides and isolates, as the API's `optional_text`.
+ */
 function isControl(char: string): boolean {
   const code = char.codePointAt(0) ?? 0;
-  return code < 0x20 || (code >= 0x7f && code <= 0x9f);
+  return (
+    code < 0x20 ||
+    (code >= 0x7f && code <= 0x9f) ||
+    (code >= 0x202a && code <= 0x202e) ||
+    (code >= 0x2066 && code <= 0x2069)
+  );
 }
 
 export const validateBio = (raw: string) =>

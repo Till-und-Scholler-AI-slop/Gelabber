@@ -12,6 +12,7 @@ import { ChatIcon, SpeakerIcon } from "./Icons.tsx";
 import { MemberActions } from "./MemberActions.tsx";
 import { GhostButton, Modal } from "./Modal.tsx";
 import { ProfileCardView, type CardPerson } from "./ProfileCard.tsx";
+import { withCard } from "./profileStyle.ts";
 
 export function MemberProfileDialog({
   server,
@@ -68,7 +69,7 @@ export function MemberProfileDialog({
   const person: CardPerson | null = member
     ? self && sessionUser
       ? sessionUser
-      : { ...member, ...(card?.id === member.user_id ? card : {}) }
+      : withCard(member, card, member.user_id)
     : null;
 
   return (

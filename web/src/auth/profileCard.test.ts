@@ -30,6 +30,15 @@ describe("profile card rules (mirror of api/src/auth/validate.rs)", () => {
     expect(validateBio("x".repeat(BIO_MAX + 1))).toBe("too_long");
     expect(validateBio("a\tb")).toBe("invalid");
     expect(validateBio("a\u0085b")).toBe("invalid");
+    for (const bidi of ["\u202a", "\u202e", "\u2066", "\u2069"]) {
+      expect(validateStatusText(`a${bidi}b`)).toBe("invalid");
+      expect(validatePronouns(`a${bidi}b`)).toBe("invalid");
+      expect(validateBio(`a${bidi}b`)).toBe("invalid");
+    }
+    // Marks, ZWJ emoji and zero-width spaces stay allowed.
+    expect(validateStatusText("\u05e9\u200f!")).toBeNull();
+    expect(validateStatusText("👩\u200d💻")).toBeNull();
+    expect(validateStatusText("a\u200bb")).toBeNull();
     expect(validatePronouns("sie/ihr")).toBeNull();
     expect(validatePronouns("x".repeat(PRONOUNS_MAX + 1))).toBe("too_long");
     expect(validateStatusText("zwei\nZeilen")).toBe("invalid");
@@ -108,6 +117,17 @@ describe("banner", () => {
       color: "#222222",
     });
     expect(bannerOf({ banner_color: "not-a-color" })).toBeNull();
+    // Anything but our own upload path is ignored, like a bad color.
+    for (const banner_url of [
+      "https://cdn.example/banner.png",
+      "/api/banners/../x",
+      `/api/avatars/${ID}/${ID}`,
+      "javascript:alert(1)",
+    ]) {
+      expect(bannerOf({ banner_url, banner_color: "#111111" })).toEqual({
+        color: "#111111",
+      });
+    }
     expect(bannerOf({})).toBeNull();
   });
 

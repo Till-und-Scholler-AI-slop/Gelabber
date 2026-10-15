@@ -866,6 +866,9 @@ summary {
 .gel-deco-stars::before,
 .gel-deco-stars::after {
   content: "✦";
+  /* Decoration only: empty alternative text for screen readers. Browsers
+     without the syntax keep the line above. */
+  content: "✦" / "";
   position: absolute;
   z-index: 1;
   color: var(--deco-color);

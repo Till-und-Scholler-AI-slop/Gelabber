@@ -147,6 +147,9 @@ export function MemberPanel({ server }: { server: ServerDetail }) {
                                 className="member-status-text"
                                 title={member.status_text}
                               >
+                                {/* The status text takes the line; screen
+                                    readers still hear the presence. */}
+                                <span className="sr-only">{group.label}: </span>
                                 {member.status_text}
                               </span>
                             ) : (
