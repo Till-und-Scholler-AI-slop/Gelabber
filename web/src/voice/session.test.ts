@@ -766,6 +766,34 @@ describe("voice session", () => {
     expect(sent.at(-1)).toEqual({ op: "sig", t: "l", s: "srv", c: "voice" });
   });
 
+  it("asks for a reload when the call's SDK chunk failed to load", async () => {
+    const { errors, sent } = install({
+      holdStart: () => Promise.reject(new MediaError("sdk_load_failed")),
+    });
+    joinVoice({ serverId: "srv", channelId: "voice", channelName: "Lounge" });
+    await vi.waitFor(() => expect(useVoice.getState().status).toBe("idle"));
+    expect(errors).toEqual([
+      new Error(
+        "Die Anruffunktion konnte nicht geladen werden. Bitte Gelabber neu laden und den Sprachkanal erneut betreten.",
+      ),
+    ]);
+    expect(sent.at(-1)).toEqual({ op: "sig", t: "l", s: "srv", c: "voice" });
+  });
+
+  it("says a stream could not open while the SDK chunk is too slow", async () => {
+    const { errors } = install({
+      holdStart: () => Promise.reject(new MediaError("sdk_load_timeout")),
+    });
+    watchLive({ serverId: "srv", channelId: "stage", channelName: "Stage" });
+    await vi.waitFor(() => expect(errors).toHaveLength(1));
+    expect(errors[0]).toEqual(
+      new Error(
+        "Die Anruffunktion lädt gerade sehr langsam. Bitte gleich den Stream erneut öffnen.",
+      ),
+    );
+    expect(useVoice.getState().watching).toBe(false);
+  });
+
   it("rolls back the seat on a media-path err", async () => {
     const { emitMedia, errors, sent } = install();
     joinVoice({ serverId: "srv", channelId: "voice", channelName: "Lounge" });
