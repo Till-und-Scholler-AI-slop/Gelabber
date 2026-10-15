@@ -309,16 +309,18 @@ function MembersSection({ server }: { server: ServerDetail }) {
     <Section title={`Mitglieder (${server.members.length})`}>
       <ul className="divide-y divide-neutral-200 dark:divide-neutral-700 rounded-xl border border-neutral-200 dark:border-neutral-700 bg-white dark:bg-neutral-900">
         {server.members.map((member) => (
+          // On a phone the 44 px Kick/Ban buttons leave the name no room:
+          // below a name of 6rem they move to a line of their own.
           <li
             key={member.user_id}
-            className="flex items-center gap-3 px-4 py-2.5"
+            className="flex flex-wrap items-center gap-x-3 gap-y-2 px-4 py-2.5"
           >
             <PresenceAvatar
               name={member.name}
               url={member.avatar_url}
               status={presenceOf(byServer, server.id, member.user_id)}
             />
-            <span className="min-w-0 flex-1 truncate text-sm font-medium">
+            <span className="min-w-0 flex-1 basis-24 truncate text-sm font-medium">
               {member.name}
             </span>
             <span
@@ -331,7 +333,11 @@ function MembersSection({ server }: { server: ServerDetail }) {
             >
               {member.role === "owner" ? "Owner" : "Mitglied"}
             </span>
-            <MemberActions server={server} member={member} />
+            <MemberActions
+              server={server}
+              member={member}
+              className="ml-auto"
+            />
           </li>
         ))}
       </ul>
