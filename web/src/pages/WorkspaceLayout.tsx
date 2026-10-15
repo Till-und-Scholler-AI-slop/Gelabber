@@ -15,6 +15,7 @@ import { DmSidebar } from "../components/DmSidebar.tsx";
 import { ChevronIcon } from "../components/Icons.tsx";
 import { RequireUser } from "../components/RequireUser.tsx";
 import { ServerRail } from "../components/ServerRail.tsx";
+import { SidebarPlaceholder } from "../components/SidebarPlaceholder.tsx";
 import { UserPanel } from "../components/UserPanel.tsx";
 import { WorkspaceDrawer } from "../components/WorkspaceNavigation.tsx";
 import { notify } from "../components/toasts.ts";
@@ -157,14 +158,18 @@ function SelectedServer({
       sidebar={
         server ? (
           <ChannelSidebar server={server} activeChannelId={channelId} />
-        ) : error ? (
-          <SidebarFailed
-            message="Die Kanäle konnten gerade nicht geladen werden."
-            pending={isFetching}
-            onRetry={() => void refetch()}
-          />
         ) : (
-          <SidebarSkeleton />
+          <SidebarPlaceholder
+            failure={
+              error
+                ? {
+                    message: "Die Kanäle konnten gerade nicht geladen werden.",
+                    pending: isFetching,
+                    onRetry: () => void refetch(),
+                  }
+                : undefined
+            }
+          />
         )
       }
     />
@@ -179,54 +184,21 @@ function SelectedDms({ channelId }: { channelId: string | undefined }) {
       sidebar={
         dms ? (
           <DmSidebar dms={dms} activeChannelId={channelId} />
-        ) : error ? (
-          <SidebarFailed
-            message="Deine Unterhaltungen konnten gerade nicht geladen werden."
-            pending={isFetching}
-            onRetry={() => void refetch()}
-          />
         ) : (
-          <SidebarSkeleton />
+          <SidebarPlaceholder
+            failure={
+              error
+                ? {
+                    message:
+                      "Deine Unterhaltungen konnten gerade nicht geladen werden.",
+                    pending: isFetching,
+                    onRetry: () => void refetch(),
+                  }
+                : undefined
+            }
+          />
         )
       }
     />
-  );
-}
-
-/** The page beside it carries the alert; this only offers the retry. */
-function SidebarFailed({
-  message,
-  pending,
-  onRetry,
-}: {
-  message: string;
-  pending: boolean;
-  onRetry: () => void;
-}) {
-  return (
-    <aside className="channel-sidebar" aria-label="Navigation">
-      <div className="sidebar-brand">Gelabber</div>
-      <div className="sidebar-empty sidebar-failed">
-        <p>{message}</p>
-        <button type="button" disabled={pending} onClick={onRetry}>
-          {pending ? "Wird geladen…" : "Erneut versuchen"}
-        </button>
-      </div>
-      <UserPanel />
-    </aside>
-  );
-}
-
-function SidebarSkeleton() {
-  return (
-    <aside className="channel-sidebar" aria-label="Navigation wird geladen">
-      <div className="sidebar-brand">Gelabber</div>
-      <div className="sidebar-skeleton" aria-hidden>
-        {[0, 1, 2, 3].map((index) => (
-          <div key={index} className="animate-pulse" />
-        ))}
-      </div>
-      <UserPanel />
-    </aside>
   );
 }

@@ -33,14 +33,22 @@ export function WorkspaceIndexPage() {
       <h1 className="text-3xl font-semibold tracking-tight">
         {user ? `Hallo ${user.name}` : "Hallo"}
       </h1>
-      <p
-        role={isError ? "alert" : undefined}
-        className="text-neutral-600 dark:text-neutral-400"
-      >
-        {isError
-          ? "Deine Server konnten gerade nicht geladen werden."
-          : "Du bist noch in keinem Server. Erstelle einen — oder öffne einen Einladungslink, den dir jemand geschickt hat."}
-      </p>
+      {isError ? (
+        // Its own element, mounted with the failure: a role added to an
+        // existing node together with its text is not reliably announced.
+        <p
+          key="error"
+          role="alert"
+          className="text-neutral-600 dark:text-neutral-400"
+        >
+          Deine Server konnten gerade nicht geladen werden.
+        </p>
+      ) : (
+        <p key="empty" className="text-neutral-600 dark:text-neutral-400">
+          Du bist noch in keinem Server. Erstelle einen — oder öffne einen
+          Einladungslink, den dir jemand geschickt hat.
+        </p>
+      )}
       <div className="flex flex-wrap gap-3">
         {isError ? (
           <button
