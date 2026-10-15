@@ -194,7 +194,11 @@ export function MediaSettingsForm({
               onChange={(value) =>
                 settings.patch({ outputVolume: value / 100 })
               }
-              hint="Über 100 % wird der Ton digital verstärkt."
+              hint={
+                desktop
+                  ? "Über 100 % wird der Ton digital verstärkt."
+                  : "Über 100 % wird der Ton digital verstärkt. Nutze dafür Kopfhörer: Über Lautsprecher können die anderen sonst ihr eigenes Echo hören."
+              }
             />
             <Slider
               id="source-audio-volume"
