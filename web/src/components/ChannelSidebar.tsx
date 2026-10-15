@@ -51,6 +51,7 @@ import {
 } from "./Icons.tsx";
 import { UserPanel } from "./UserPanel.tsx";
 import { InviteDialog } from "./InviteDialog.tsx";
+import { confirmAction } from "./confirm.ts";
 import {
   CategoryDialog,
   ChannelDialog,
@@ -350,11 +351,13 @@ function ChannelList({
                   manage={manageChannels}
                   onAdd={() => onCreateChannel(row.category.id)}
                   onEdit={() => onEditCategory(row.category)}
-                  onDelete={() => {
+                  onDelete={async () => {
                     if (
-                      window.confirm(
-                        `Kategorie „${row.category.name}“ löschen? Die Kanäle bleiben erhalten.`,
-                      )
+                      await confirmAction({
+                        title: `Kategorie „${row.category.name}“ löschen?`,
+                        message: "Die Kanäle darin bleiben erhalten.",
+                        confirmLabel: "Kategorie löschen",
+                      })
                     )
                       deleteCategory.mutate(row.category.id);
                   }}
@@ -367,8 +370,17 @@ function ChannelList({
                   live={Boolean(liveChannels[row.channel.id])}
                   manage={manageChannels}
                   onEdit={() => onEditChannel(row.channel)}
-                  onDelete={() => {
-                    if (!window.confirm(`Kanal „${row.channel.name}“ löschen?`))
+                  onDelete={async () => {
+                    if (
+                      !(await confirmAction({
+                        title: `Kanal „${row.channel.name}“ löschen?`,
+                        message:
+                          row.channel.kind === "text"
+                            ? "Alle Nachrichten darin werden gelöscht."
+                            : undefined,
+                        confirmLabel: "Kanal löschen",
+                      }))
+                    )
                       return;
                     deleteChannel.mutate(row.channel.id);
                     if (row.channel.id === activeChannelId)

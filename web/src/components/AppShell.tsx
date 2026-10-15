@@ -16,6 +16,7 @@ import {
 import { useIdlePresence } from "../ws/useLive.ts";
 import { useMessageToastsBridge } from "../messages/useMessageToasts.ts";
 import { Avatar } from "./Avatar.tsx";
+import { ConfirmHost } from "./ConfirmHost.tsx";
 import { GearIcon } from "./Icons.tsx";
 import { isChromeLongPress } from "./longPress.ts";
 import { MessageToasts } from "./MessageToasts.tsx";
@@ -127,6 +128,7 @@ export function AppShell() {
       {user ? <AuthenticatedRealtime key={user.id} /> : null}
       <Toasts />
       <MessageToasts />
+      <ConfirmHost />
       {user ? <VoiceSettingsDialog /> : null}
       {user ? <VoiceSessionControls /> : null}
     </div>

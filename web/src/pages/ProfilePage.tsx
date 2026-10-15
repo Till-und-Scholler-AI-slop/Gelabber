@@ -36,6 +36,7 @@ import type { User } from "../auth/types.ts";
 import { useFormErrors } from "../auth/useFormErrors.ts";
 import { Avatar } from "../components/Avatar.tsx";
 import { BackToApp } from "../components/BackToApp.tsx";
+import { confirmAction } from "../components/confirm.ts";
 import { Field } from "../components/Field.tsx";
 import { FormError } from "../components/FormError.tsx";
 import { SubmitButton } from "../components/SubmitButton.tsx";
@@ -325,11 +326,13 @@ function AccountSecurity() {
     mutation.mutate();
   };
 
-  const onLogoutEverywhere = () => {
+  const onLogoutEverywhere = async () => {
     if (
-      !window.confirm(
-        "Auf allen Geräten abmelden, auch hier? Du musst dich danach überall neu anmelden.",
-      )
+      !(await confirmAction({
+        title: "Auf allen Geräten abmelden?",
+        message: "Auch hier. Du musst dich danach überall neu anmelden.",
+        confirmLabel: "Überall abmelden",
+      }))
     )
       return;
     leaveVoice();

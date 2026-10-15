@@ -74,6 +74,7 @@ import { asAttachmentList } from "../messages/types.ts";
 import { Avatar } from "./Avatar.tsx";
 import { sizeByDraft, type DraftHeight } from "./composerHeight.ts";
 import { EmojiPickerLoader, ReactionBar } from "./ReactionBar.tsx";
+import { confirmAction } from "./confirm.ts";
 import { Modal } from "./Modal.tsx";
 import { ImageLightbox, type LightboxImage } from "./ImageLightbox.tsx";
 import { isPlainClick } from "./plainClick.ts";
@@ -328,8 +329,8 @@ export function MessagePane({
                     onEdit={(content) =>
                       contextEdit.mutate({ id: message.id, content })
                     }
-                    onDelete={() => {
-                      if (window.confirm("Diese Nachricht wirklich löschen?"))
+                    onDelete={async () => {
+                      if (await confirmDelete(message, user?.id))
                         contextRemove.mutate(message.id);
                     }}
                   />
@@ -798,14 +799,9 @@ function MessageList({
                 canSend={canSend}
                 canDelete={message.author.id === meId || canModerate}
                 onEdit={(content) => edit.mutate({ id: message.id, content })}
-                onDelete={() => {
-                  const own = message.author.id === meId;
-                  const ok = window.confirm(
-                    own
-                      ? "Diese Nachricht wirklich löschen?"
-                      : `Nachricht von ${message.author.name} löschen?`,
-                  );
-                  if (ok) remove.mutate(message.id);
+                onDelete={async () => {
+                  if (await confirmDelete(message, meId))
+                    remove.mutate(message.id);
                 }}
               />
             </div>
@@ -814,6 +810,17 @@ function MessageList({
       </div>
     </div>
   );
+}
+
+function confirmDelete(message: Message, meId: string | undefined) {
+  const own = message.author.id === meId;
+  return confirmAction({
+    title: own
+      ? "Nachricht löschen?"
+      : `Nachricht von ${message.author.name} löschen?`,
+    message: "Das lässt sich nicht rückgängig machen.",
+    confirmLabel: "Löschen",
+  });
 }
 
 function MessageRow({

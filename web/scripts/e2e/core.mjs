@@ -1,6 +1,14 @@
 /* global document, URL */
 import { readFile } from "node:fs/promises";
-import { api, check, click, navigate, observe, until } from "./harness.mjs";
+import {
+  api,
+  check,
+  click,
+  confirmDialog,
+  navigate,
+  observe,
+  until,
+} from "./harness.mjs";
 
 async function send(actor, content) {
   await actor.page.locator("form textarea").last().fill(content);
@@ -100,8 +108,8 @@ export async function coreScenarios(h, f) {
       await click(f.owner, "Speichern");
       await visible(f.member, edited);
       await contentInRest(f.member, chat, edited);
-      f.owner.page.once("dialog", (d) => d.accept());
       await click(f.owner, "Nachricht löschen");
+      await confirmDialog(f.owner, "Löschen");
       await f.member.page
         .getByRole("log", { name: "Nachrichten" })
         .getByText(edited, { exact: false })
