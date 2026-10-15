@@ -59,7 +59,11 @@ return {redis.call('GET', KEYS[1]), epoch, redis.call('LRANGE', KEYS[2], 0, -1)}
 
 /// A reconnecting socket receives one presence frame per member that comes
 /// back with it while it is still busy subscribing, so this bounds how many
-/// members can reconnect at once (after a deploy) without overflowing.
+/// members can reconnect at once (after a deploy) without overflowing. 1024
+/// is headroom over the largest measured storm (200 members, no closes), not
+/// a measured peak depth. Overflow still closes the socket and the client
+/// resyncs. The channel grows in 32-slot blocks as frames queue, so only a
+/// backed-up socket pays for the larger bound.
 pub const OUTBOUND_CAPACITY: usize = 1024;
 const CATCH_UP_CAPACITY: usize = 128;
 

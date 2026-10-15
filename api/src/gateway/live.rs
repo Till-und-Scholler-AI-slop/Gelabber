@@ -172,15 +172,23 @@ impl Gateway {
         Ok(())
     }
 
-    /// Add the user to a server's presence set and mark this connection
-    /// online. Publishes at most one frame per server: an aggregate change
+    /// Mark this connection online and add the user to a server's presence
+    /// set. Publishes at most one frame per server: an aggregate change
     /// already reaches this server, otherwise a first announce publishes the
-    /// current status. Both publishes follow the SADD, so a concurrent
-    /// snapshot either lists the user or its socket receives the frame.
+    /// current status.
+    ///
+    /// Order matters. The status is written before the SADD: a concurrent
+    /// `presence_snapshot` treats a set member without status as stale and
+    /// removes it, which would hide this user from every later snapshot.
+    /// Both publishes follow the SADD, so a concurrent snapshot either lists
+    /// the user or its socket receives the frame.
     pub async fn announce_server(&self, id: ConnId, server_id: Uuid) -> Result<(), ApiError> {
         let Some((user_id, local)) = self.socket_meta(id).await else {
             return Ok(());
         };
+        let (prev, agg) = self
+            .write_presence(user_id, id, PresenceStatus::Online)
+            .await?;
         let px = ttl_ms(self.presence_ttl());
         let added: i64 = self
             .with_conn(|mut conn| {
@@ -214,9 +222,6 @@ impl Gateway {
             })
             .await
             .map_err(super::hub::redis_err)?;
-        let (prev, agg) = self
-            .write_presence(user_id, id, PresenceStatus::Online)
-            .await?;
         if prev != agg {
             let mut servers = self.presence_targets(user_id, &local).await?;
             servers.insert(server_id);
