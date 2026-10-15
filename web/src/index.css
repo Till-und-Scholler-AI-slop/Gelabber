@@ -91,14 +91,13 @@ body,
   background: var(--lr-bg);
 }
 /* Pulling down must neither reload the app, which would drop a call, nor
-   stretch its chrome. Touch only: on the root element, WebKit then ignores
-   mouse wheels, so pages scrolled by the document (the settings) froze in
-   the Linux desktop app. */
-@media (pointer: coarse) {
-  html,
-  body {
-    overscroll-behavior-y: none;
-  }
+   stretch its chrome. Not in the desktop app (main.tsx marks its root): on
+   the root element, WebKitGTK then ignores mouse wheels, so pages scrolled
+   by the document (the settings) froze in the Linux app. A browser keeps it
+   whatever its pointers are, touch laptops included. */
+html:not([data-desktop]),
+html:not([data-desktop]) body {
+  overscroll-behavior-y: none;
 }
 html {
   /* Quick taps on a control are taps, not a double-tap zoom. */
