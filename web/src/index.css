@@ -666,30 +666,23 @@ summary {
   color: var(--lr-muted);
   text-align: center;
 }
+/* Rendered only while the navigation is a drawer (DmIndexPage). */
 .dm-index-list {
-  display: none;
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  overflow-y: auto;
+  padding: 20px 12px calc(20px + var(--lr-safe-bottom));
 }
-@media (max-width: 800px) {
-  .dm-index-hint {
-    display: none;
-  }
-  .dm-index-list {
-    display: flex;
-    flex-direction: column;
-    gap: 2px;
-    overflow-y: auto;
-    padding: 20px 12px calc(20px + var(--lr-safe-bottom));
-  }
-  .dm-index-list h1 {
-    padding: 0 10px 12px;
-    font-size: 20px;
-    font-weight: 650;
-  }
-  .dm-index-list .dm-row {
-    height: 52px;
-    font-size: 16px;
-    color: var(--lr-text);
-  }
+.dm-index-list h1 {
+  padding: 0 10px 12px;
+  font-size: 20px;
+  font-weight: 650;
+}
+.dm-index-list .dm-row {
+  height: 52px;
+  font-size: 16px;
+  color: var(--lr-text);
 }
 
 .user-dock {
