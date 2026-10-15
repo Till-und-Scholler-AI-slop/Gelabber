@@ -340,9 +340,13 @@ function ChannelList({
     const last = lastFocused.current;
     if (!last || rows.some((row) => row.key === last.key)) return;
     lastFocused.current = null;
-    const active = document.activeElement;
-    if (active && active !== document.body) return;
-    if (scrollRef.current) focusRowNear(scrollRef.current, last.index);
+    // After the commit's other effects, e.g. a confirm dialog closing and
+    // handing focus back to the deleted row's button.
+    window.setTimeout(() => {
+      const active = document.activeElement;
+      if (active && active !== document.body) return;
+      if (scrollRef.current) focusRowNear(scrollRef.current, last.index);
+    }, 0);
   }, [rows]);
 
   if (rows.length === 0) {
