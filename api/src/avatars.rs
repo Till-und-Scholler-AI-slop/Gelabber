@@ -4,6 +4,13 @@
 //! foreign host and MinIO stays off the image path. The profile stores
 //! `/api/avatars/{user}/{file}` or `/api/banners/{user}/{file}`; each
 //! upload gets a new file name, so a URL never changes its content.
+//!
+//! Who may download: any signed-in account may load an avatar, as with
+//! names, because avatars travel with message authors, ban lists and other
+//! places that outlive a shared server. A banner appears only on the
+//! profile card, so it follows the card's rule (`user::card_visible`).
+//! Both are checked for their declared pixel size on upload and again on
+//! download (`image_size`), so no viewer decodes an oversized image.
 
 use axum::Router;
 use axum::body::Bytes;
@@ -24,6 +31,11 @@ use crate::storage::StoreError;
 pub const MAX_BYTES: usize = 512 * 1024;
 /// The web client sends 960×320 WebP or JPEG.
 pub const BANNER_MAX_BYTES: usize = 1024 * 1024;
+/// Largest accepted size in pixels: what the web client produces
+/// (`web/src/auth/avatarImage.ts`), smaller is fine.
+pub const AVATAR_MAX_EDGE: u32 = 256;
+pub const BANNER_MAX_WIDTH: u32 = 960;
+pub const BANNER_MAX_HEIGHT: u32 = 320;
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum ImageKind {
@@ -56,6 +68,20 @@ impl ImageKind {
 
     fn url_for(self, user: Uuid, file: Uuid) -> String {
         format!("{}{user}/{file}", self.url_prefix())
+    }
+
+    /// Width and height an image of this kind may declare.
+    fn max_size(self) -> (u32, u32) {
+        match self {
+            Self::Avatar => (AVATAR_MAX_EDGE, AVATAR_MAX_EDGE),
+            Self::Banner => (BANNER_MAX_WIDTH, BANNER_MAX_HEIGHT),
+        }
+    }
+
+    /// The bytes' declared size fits this kind (see `image_size`).
+    fn fits(self, bytes: &[u8]) -> bool {
+        let (width, height) = self.max_size();
+        crate::image_size::fits(bytes, width, height)
     }
 
     fn object_key(self, user: Uuid, file: Uuid) -> String {
@@ -136,6 +162,14 @@ async fn upload(
 ) -> Result<Json<User>, ApiError> {
     let content_type = sniff(&body)
         .ok_or_else(|| ApiError::BadRequest("image must be PNG, JPEG or WebP".into()))?;
+    // A small file can declare a huge canvas (decompression bomb); only
+    // what the header proves to be within the client's size is stored.
+    if !kind.fits(&body) {
+        let (width, height) = kind.max_size();
+        return Err(ApiError::BadRequest(format!(
+            "image must be at most {width}x{height} pixels"
+        )));
+    }
     let file = Uuid::new_v4();
     let key = kind.object_key(current.id, file);
     // Durable intent first: if the request dies after the PUT (client
@@ -283,12 +317,15 @@ async fn download_banner(
 async fn download(
     kind: ImageKind,
     State(state): State<AppState>,
-    CurrentUser(_): CurrentUser,
+    CurrentUser(viewer): CurrentUser,
     Path((user, file)): Path<(String, String)>,
 ) -> Result<Response, ApiError> {
     let (Ok(user), Ok(file)) = (Uuid::parse_str(&user), Uuid::parse_str(&file)) else {
         return Err(ApiError::NotFound);
     };
+    if kind == ImageKind::Banner && !user::card_visible(&state.db, viewer.id, user).await? {
+        return Err(ApiError::NotFound);
+    }
     let (_, bytes) = match state.store.fetch(&kind.object_key(user, file)).await {
         Ok(object) => object,
         Err(StoreError::NotFound) => return Err(ApiError::NotFound),
@@ -297,6 +334,11 @@ async fn download(
     // Served under our own origin: only what the bytes prove, never the
     // stored header, and no sniffing by the browser.
     let content_type = sniff(&bytes).ok_or(ApiError::NotFound)?;
+    // Uploads stored before the size check (avatars since v0.6.1) are not
+    // trusted either.
+    if !kind.fits(&bytes) {
+        return Err(ApiError::NotFound);
+    }
     Ok((
         [
             (CONTENT_TYPE, HeaderValue::from_static(content_type)),

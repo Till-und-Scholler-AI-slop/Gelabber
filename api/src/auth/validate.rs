@@ -132,12 +132,21 @@ fn optional_text(
     }
     if value
         .chars()
-        .any(|c| c.is_control() && !(multiline && c == '\n'))
+        .any(|c| (c.is_control() && !(multiline && c == '\n')) || is_bidi_control(c))
     {
         errors.insert(field, "invalid");
         return None;
     }
     Some(Some(value.to_owned()))
+}
+
+/// Explicit bidi embeddings, overrides and isolates (U+202A-U+202E,
+/// U+2066-U+2069). Shown inline next to names in the member list, an
+/// unterminated override could reorder the text after it. Marks (LRM, RLM,
+/// ALM) and zero-width characters stay: right-to-left text and emoji
+/// sequences (ZWJ) need them, and they cannot reorder anything.
+fn is_bidi_control(c: char) -> bool {
+    matches!(c, '\u{202a}'..='\u{202e}' | '\u{2066}'..='\u{2069}')
 }
 
 pub fn bio(raw: &str, errors: &mut FieldErrors) -> Option<Option<String>> {
@@ -302,6 +311,31 @@ mod tests {
         );
         assert_eq!(run(|e| bio("a\tb", e)).1.get("bio"), Some(&"invalid"));
         assert_eq!(run(|e| bio("a\u{85}b", e)).1.get("bio"), Some(&"invalid"));
+        for bidi in ['\u{202a}', '\u{202e}', '\u{2066}', '\u{2069}'] {
+            let raw = format!("a{bidi}b");
+            assert_eq!(
+                run(|e| status_text(&raw, e)).1.get("status_text"),
+                Some(&"invalid"),
+                "{bidi:?}"
+            );
+            assert_eq!(
+                run(|e| pronouns(&raw, e)).1.get("pronouns"),
+                Some(&"invalid")
+            );
+            assert_eq!(run(|e| bio(&raw, e)).1.get("bio"), Some(&"invalid"));
+        }
+        // Marks, ZWJ emoji and zero-width spaces are fine.
+        for fine in [
+            "\u{5e9}\u{200f}!",
+            "\u{1f469}\u{200d}\u{1f4bb}",
+            "a\u{200b}b",
+        ] {
+            assert_eq!(
+                run(|e| status_text(fine, e)).0,
+                Some(Some(fine.into())),
+                "{fine:?}"
+            );
+        }
         assert!(run(|e| bio(&"ä".repeat(BIO_MAX), e)).0.is_some());
         assert_eq!(
             run(|e| bio(&"x".repeat(BIO_MAX + 1), e)).1.get("bio"),

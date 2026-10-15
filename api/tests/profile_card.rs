@@ -11,8 +11,10 @@ use sqlx::PgPool;
 use common::Client;
 use gelabber_api::AppState;
 
-const PNG: &[u8] = b"\x89PNG\r\n\x1a\nnot really pixels";
-const WEBP: &[u8] = b"RIFF\x10\0\0\0WEBPVP8 pixels";
+/// A 64×64 PNG header (signature + IHDR): enough for the API's size check.
+const PNG: &[u8] = b"\x89PNG\r\n\x1a\n\0\0\0\x0dIHDR\0\0\0\x40\0\0\0\x40\x08\x06\0\0\0\0\0\0\0";
+/// A 64×64 lossy WebP header (`VP8 ` key frame).
+const WEBP: &[u8] = b"RIFF\x16\0\0\0WEBPVP8 \x0a\0\0\0\x10\x02\x00\x9d\x01\x2a\x40\x00\x40\x00";
 
 async fn signed_in(state: &AppState, email: &str, name: &str) -> Client {
     let mut client = Client::from_state(state.clone());
@@ -325,4 +327,127 @@ async fn cards_are_visible_to_server_members_and_dm_peers_only(pool: PgPool) {
     assert!(res.status.is_success(), "{}", res.body);
     let res = bob.send(Method::GET, &ada_card, None).await;
     assert_eq!(res.status, StatusCode::NOT_FOUND);
+}
+
+/// Decompression bombs: a file under the byte limit may declare a huge
+/// canvas. The API refuses anything beyond what the web client produces,
+/// and does not serve such an object even if it is already stored.
+#[sqlx::test(migrations = "./migrations")]
+async fn uploads_beyond_the_client_pixel_size_are_refused(pool: PgPool) {
+    use gelabber_api::image_size::fixtures;
+
+    let state = common::state(pool.clone());
+    let mut ada = signed_in(&state, "ada@example.com", "Ada").await;
+    let refused = [
+        ("/api/me/banner", "image/png", fixtures::png(15000, 15000)),
+        ("/api/me/banner", "image/png", fixtures::png(961, 320)),
+        ("/api/me/banner", "image/webp", fixtures::webp(960, 321)),
+        ("/api/me/banner", "image/jpeg", fixtures::jpeg(16000, 16000)),
+        ("/api/me/avatar", "image/png", fixtures::png(257, 256)),
+        ("/api/me/avatar", "image/webp", fixtures::webp(960, 320)),
+        ("/api/me/avatar", "image/jpeg", fixtures::jpeg(256, 0)),
+    ];
+    for (path, content_type, bytes) in refused {
+        let (status, body) = ada.send_bytes(Method::PUT, path, content_type, bytes).await;
+        assert_eq!(status, StatusCode::BAD_REQUEST, "{path} {body}");
+    }
+    let me = ada.send(Method::GET, "/api/me", None).await;
+    assert_eq!(me.body["avatar_url"], Value::Null);
+    assert_eq!(me.body["banner_url"], Value::Null);
+    let pending: i64 = sqlx::query_scalar("SELECT count(*) FROM storage_cleanup")
+        .fetch_one(&pool)
+        .await
+        .unwrap();
+    assert_eq!(pending, 0, "refused before anything was stored");
+
+    for (path, content_type, bytes) in [
+        ("/api/me/banner", "image/jpeg", fixtures::jpeg(960, 320)),
+        ("/api/me/banner", "image/webp", fixtures::webp(480, 160)),
+        ("/api/me/avatar", "image/jpeg", fixtures::jpeg(256, 256)),
+    ] {
+        let (status, body) = ada.send_bytes(Method::PUT, path, content_type, bytes).await;
+        assert_eq!(status, StatusCode::OK, "{path} {body}");
+    }
+
+    // Stored before the check existed (or by another write path).
+    let id = ada.user_id().to_owned();
+    let file = uuid::Uuid::new_v4();
+    state
+        .store
+        .put(
+            &format!("avatars/{id}/{file}"),
+            "image/png",
+            fixtures::png(15000, 15000),
+        )
+        .await
+        .unwrap();
+    let (status, _, _) = ada
+        .send_raw(Method::GET, &format!("/api/avatars/{id}/{file}"), None)
+        .await;
+    assert_eq!(status, StatusCode::NOT_FOUND);
+}
+
+/// A banner appears only on the profile card, so its bytes follow the
+/// card's visibility; avatars stay readable for every signed-in account.
+#[sqlx::test(migrations = "./migrations")]
+async fn banner_downloads_follow_card_visibility(pool: PgPool) {
+    let state = common::state(pool);
+    let mut ada = signed_in(&state, "ada@example.com", "Ada").await;
+    let mut bob = signed_in(&state, "bob@example.com", "Bob").await;
+    let (_, me) = ada
+        .send_bytes(Method::PUT, "/api/me/banner", "image/webp", WEBP.to_vec())
+        .await;
+    let banner = me["banner_url"].as_str().unwrap().to_owned();
+    let (_, me) = ada
+        .send_bytes(Method::PUT, "/api/me/avatar", "image/png", PNG.to_vec())
+        .await;
+    let avatar = me["avatar_url"].as_str().unwrap().to_owned();
+
+    let (status, _, _) = ada.send_raw(Method::GET, &banner, None).await;
+    assert_eq!(status, StatusCode::OK, "own banner");
+    let (status, _, _) = bob.send_raw(Method::GET, &banner, None).await;
+    assert_eq!(status, StatusCode::NOT_FOUND, "a stranger's banner");
+    let (status, _, _) = bob.send_raw(Method::GET, &avatar, None).await;
+    assert_eq!(status, StatusCode::OK, "avatars are not gated");
+
+    let res = bob
+        .send(
+            Method::POST,
+            "/api/dms",
+            Some(json!({ "user_id": ada.user_id() })),
+        )
+        .await;
+    assert_eq!(res.status, StatusCode::CREATED, "{}", res.body);
+    let (status, _, bytes) = bob.send_raw(Method::GET, &banner, None).await;
+    assert_eq!(status, StatusCode::OK, "a DM peer sees the card");
+    assert_eq!(bytes, WEBP);
+}
+
+/// One `PATCH /api/me` clearing both uploads deletes both objects.
+#[sqlx::test(migrations = "./migrations")]
+async fn clearing_avatar_and_banner_together_deletes_both(pool: PgPool) {
+    let state = common::state(pool.clone());
+    let mut ada = signed_in(&state, "ada@example.com", "Ada").await;
+    let (_, me) = ada
+        .send_bytes(Method::PUT, "/api/me/avatar", "image/png", PNG.to_vec())
+        .await;
+    let avatar = me["avatar_url"].as_str().unwrap().to_owned();
+    let (_, me) = ada
+        .send_bytes(Method::PUT, "/api/me/banner", "image/webp", WEBP.to_vec())
+        .await;
+    let banner = me["banner_url"].as_str().unwrap().to_owned();
+
+    let res = patch_me(&mut ada, json!({ "avatar_url": "", "banner_url": "" })).await;
+    assert_eq!(res.status, StatusCode::OK, "{}", res.body);
+    assert_eq!(res.body["avatar_url"], Value::Null);
+    assert_eq!(res.body["banner_url"], Value::Null);
+    for url in [&avatar, &banner] {
+        let (status, _, _) = ada.send_raw(Method::GET, url, None).await;
+        assert_eq!(status, StatusCode::NOT_FOUND, "{url} deleted");
+    }
+    let pending: i64 = sqlx::query_scalar("SELECT count(*) FROM storage_cleanup")
+        .fetch_one(&pool)
+        .await
+        .unwrap();
+    assert_eq!(pending, 0);
 }

@@ -20,6 +20,8 @@ ALTER TABLE users
     ADD CONSTRAINT users_status_text_length CHECK (char_length(status_text) BETWEEN 1 AND 80),
     ADD CONSTRAINT users_accent_color_hex CHECK (accent_color ~ '^#[0-9a-f]{6}$'),
     ADD CONSTRAINT users_banner_color_hex CHECK (banner_color ~ '^#[0-9a-f]{6}$'),
-    ADD CONSTRAINT users_banner_url_uploaded CHECK (banner_url LIKE '/api/banners/%'),
+    -- Same shape as `avatars::parse_banner_url`: two lower-case UUIDs.
+    ADD CONSTRAINT users_banner_url_uploaded
+        CHECK (banner_url ~ '^/api/banners/[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}/[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$'),
     ADD CONSTRAINT users_avatar_decoration_known
         CHECK (avatar_decoration IN ('ring', 'glow', 'rainbow', 'stars'));

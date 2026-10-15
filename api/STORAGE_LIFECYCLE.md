@@ -85,8 +85,8 @@ Uploaded avatars (#208, `api/src/avatars.rs`) and profile card banners use the
 same `storage_cleanup` table and worker, with keys `avatars/{user}/{file}` and
 `banners/{user}/{file}`. Everything below holds for both; `PUT /api/me/banner`
 behaves like `PUT /api/me/avatar`, and one profile update may replace (and
-delete) one of each. `PUT /api/me/avatar` records a pending row (`next_attempt` and `retain_until` ten minutes ahead)
-before storing the bytes. A failed PUT returns its error and leaves that row,
+delete) one of each. `PUT /api/me/avatar` records a pending row (`next_attempt`
+and `retain_until` ten minutes ahead) before storing the bytes. A failed PUT returns its error and leaves that row,
 because a PUT that only timed out on the client side may still complete in
 MinIO; the worker deletes the key once the row is due. The profile update
 withdraws the pending row in the same transaction that points the profile at
@@ -99,6 +99,27 @@ ever resetting it: once the worker has claimed a row (and may be deleting the
 object), a late profile save finds no row to withdraw and is refused instead
 of pointing the profile at an object that is being deleted. Changing the claim
 protocol so that `attempts` is incremented later, or reset, breaks this.
+
+Both uploads are checked for their declared pixel size before anything is
+stored (`api/src/image_size.rs`: PNG IHDR, JPEG SOF0-2, WebP VP8/VP8L/VP8X),
+at most 256x256 for avatars and 960x320 for banners, the sizes the web client
+produces. A file under the byte limit can otherwise declare a canvas that
+every viewer's browser has to decode (a 15000x15000 PNG is ~640 KiB). Downloads
+repeat the check, so an object stored before it (avatars since v0.6.1) is not
+served either. Any signed-in account may download an avatar, like a name, since
+avatars travel with message authors and ban lists beyond a shared server; a
+banner only to those who may see the card (`GET /api/users/{id}`: the person,
+members of a shared server, DM peers).
+
+Migration 0013 (profile card columns) is additive; the previous binary ignores
+the new columns. It does refuse to start while `_sqlx_migrations` lists a
+version it does not know. Rolling back to a binary without 0013 therefore
+means, in one transaction: drop the seven `users_*` checks of 0013, drop the
+columns `bio`, `pronouns`, `status_text`, `accent_color`, `banner_color`,
+`banner_url`, `avatar_decoration`, and `DELETE FROM _sqlx_migrations WHERE
+version = 13`. Only removing the row is not enough: a later upgrade would rerun
+0013 and fail on the existing columns. Card data is lost; uploaded banners stay
+under `banners/` in the bucket until removed by hand.
 
 ## Atomic daily quota
 

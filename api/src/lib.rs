@@ -8,6 +8,7 @@ pub mod dms;
 pub mod error;
 pub mod gateway;
 pub mod health;
+pub mod image_size;
 pub mod json;
 pub mod limits;
 pub mod media;

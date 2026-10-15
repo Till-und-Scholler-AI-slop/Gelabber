@@ -50,6 +50,23 @@ pub struct PublicProfile {
     pub card: ProfileCard,
 }
 
+/// Who may see `u`'s profile card (bound as `$1` = viewer): themselves,
+/// someone sharing a server, or the peer of a DM. A macro so the queries
+/// below stay `&'static str` (`concat!`).
+macro_rules! card_visible_to_viewer {
+    () => {
+        "( \
+     u.id = $1 \
+     OR EXISTS (SELECT 1 FROM server_members a \
+                JOIN server_members b ON b.server_id = a.server_id \
+                WHERE a.user_id = $1 AND b.user_id = u.id) \
+     OR EXISTS (SELECT 1 FROM channel_members a \
+                JOIN channel_members b ON b.channel_id = a.channel_id \
+                JOIN channels c ON c.id = a.channel_id AND c.kind = 'dm' \
+                WHERE a.user_id = $1 AND b.user_id = u.id))"
+    };
+}
+
 /// `PublicProfile` of `target` if `viewer` may see it: themselves, someone
 /// sharing a server, or the peer of a DM. Otherwise `None`, so a stranger's
 /// id is indistinguishable from a missing one.
@@ -58,23 +75,29 @@ pub async fn public_profile(
     viewer: Uuid,
     target: Uuid,
 ) -> Result<Option<PublicProfile>, ApiError> {
-    Ok(sqlx::query_as::<_, PublicProfile>(
+    Ok(sqlx::query_as::<_, PublicProfile>(concat!(
         "SELECT u.id, u.name, u.avatar_url, u.created_at, u.bio, u.pronouns, u.status_text, \
                 u.accent_color, u.banner_color, u.banner_url, u.avatar_decoration \
-         FROM users u \
-         WHERE u.id = $2 AND ( \
-             u.id = $1 \
-             OR EXISTS (SELECT 1 FROM server_members a \
-                        JOIN server_members b ON b.server_id = a.server_id \
-                        WHERE a.user_id = $1 AND b.user_id = u.id) \
-             OR EXISTS (SELECT 1 FROM channel_members a \
-                        JOIN channel_members b ON b.channel_id = a.channel_id \
-                        JOIN channels c ON c.id = a.channel_id AND c.kind = 'dm' \
-                        WHERE a.user_id = $1 AND b.user_id = u.id))",
-    )
+         FROM users u WHERE u.id = $2 AND ",
+        card_visible_to_viewer!()
+    ))
     .bind(viewer)
     .bind(target)
     .fetch_optional(db)
+    .await?)
+}
+
+/// Whether `viewer` may see `target`'s profile card, by the same rule as
+/// [`public_profile`]. Gates banner downloads, which only the card shows.
+pub async fn card_visible(db: &PgPool, viewer: Uuid, target: Uuid) -> Result<bool, ApiError> {
+    Ok(sqlx::query_scalar::<_, bool>(concat!(
+        "SELECT EXISTS (SELECT 1 FROM users u WHERE u.id = $2 AND ",
+        card_visible_to_viewer!(),
+        ")"
+    ))
+    .bind(viewer)
+    .bind(target)
+    .fetch_one(db)
     .await?)
 }
 
