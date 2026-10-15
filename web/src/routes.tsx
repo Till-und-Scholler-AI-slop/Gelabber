@@ -203,6 +203,9 @@ export const router = createRouter({
   // nothing rather than a spinner for that split second.
   defaultPendingComponent: () => null,
   defaultPendingMs: 0,
+  // The router keeps a shown pending component for 500 ms by default, which
+  // left every cold start blank long after the bootstrap request finished.
+  defaultPendingMinMs: 0,
   defaultNotFoundComponent: NotFoundPage,
 });
 
