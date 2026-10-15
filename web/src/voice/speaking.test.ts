@@ -260,6 +260,186 @@ describe("watchSpeaking", () => {
     expect(useSpeakingStore.getState().users).toEqual({});
   });
 
+  it("keeps asking the browser for the send level after a single miss", async () => {
+    const getStats = vi.fn(async () => {
+      // No media-source stat yet right after producing, then levels.
+      const level = getStats.mock.calls.length === 1 ? null : 0.3;
+      return new Map(
+        level === null
+          ? []
+          : [["a", { type: "media-source", kind: "audio", audioLevel: level }]],
+      );
+    });
+    fixture.microphones.sender = {
+      track: { readyState: "live" },
+      rtpSender: { getStats },
+    };
+    stop = watchSpeaking();
+    join();
+    await poll();
+    expect(useSpeakingStore.getState().users).toEqual({});
+    await poll();
+    expect(getStats).toHaveBeenCalledTimes(2);
+    expect(useSpeakingStore.getState().users).toEqual({ self: true });
+  });
+
+  it("reads a received microphone's decoder level at most every 360 ms", async () => {
+    const getStats = vi.fn(
+      async () => new Map([["a", { type: "inbound-rtp", audioLevel: 0.9 }]]),
+    );
+    fixture.microphones.received = [
+      {
+        ...remote("u1", () => 0),
+        rtpReceiver: { getSynchronizationSources: () => [], getStats },
+      },
+    ];
+    stop = watchSpeaking();
+    join();
+    for (let i = 0; i < 6; i++) await poll();
+    // Polls every 120 ms; the stats are walked on the first and fourth.
+    expect(getStats).toHaveBeenCalledTimes(2);
+    expect(useSpeakingStore.getState().users).toEqual({ u1: true });
+  });
+
+  describe("the own level where the browser reports none (Firefox)", () => {
+    type FakeContext = {
+      state: AudioContextState;
+      resume: ReturnType<typeof vi.fn>;
+      close: ReturnType<typeof vi.fn>;
+      sources: { track: unknown; disconnect: ReturnType<typeof vi.fn> }[];
+    };
+    let contexts: FakeContext[] = [];
+    let startState: AudioContextState = "running";
+    let rms = 0.1;
+    let page: EventTarget;
+
+    beforeEach(() => {
+      contexts = [];
+      startState = "running";
+      rms = 0.1;
+      page = new EventTarget();
+      vi.stubGlobal("window", page);
+      vi.stubGlobal(
+        "MediaStream",
+        class {
+          constructor(readonly tracks: unknown[]) {}
+        },
+      );
+      vi.stubGlobal(
+        "AudioContext",
+        class {
+          state = startState;
+          sources: FakeContext["sources"] = [];
+          resume = vi.fn(async () => {
+            if (resumable) this.state = "running";
+          });
+          close = vi.fn(async () => {
+            this.state = "closed";
+          });
+          constructor() {
+            contexts.push(this as unknown as FakeContext);
+          }
+          createAnalyser() {
+            return {
+              fftSize: 0,
+              disconnect: vi.fn(),
+              getFloatTimeDomainData: (samples: Float32Array) =>
+                samples.fill(rms),
+            };
+          }
+          createMediaStreamSource(stream: { tracks: unknown[] }) {
+            const source = {
+              track: stream.tracks[0],
+              connect: vi.fn(),
+              disconnect: vi.fn(),
+            };
+            this.sources.push(source);
+            return source;
+          }
+        },
+      );
+    });
+    afterEach(() => {
+      vi.unstubAllGlobals();
+      resumable = true;
+    });
+    let resumable = true;
+
+    const noLevel = () => ({ getStats: vi.fn(async () => new Map()) });
+
+    it("measures the send track and moves to a new device", async () => {
+      const first = { readyState: "live" };
+      const sender = { track: first as unknown, rtpSender: noLevel() };
+      fixture.microphones.sender = sender;
+      stop = watchSpeaking();
+      join();
+      await poll();
+      expect(useSpeakingStore.getState().users).toEqual({ self: true });
+      expect(contexts).toHaveLength(1);
+      expect(contexts[0]!.sources.map((s) => s.track)).toEqual([first]);
+
+      // Three misses in a row: the browser is not asked for this track again.
+      await poll();
+      await poll();
+      await poll();
+      expect(sender.rtpSender.getStats).toHaveBeenCalledTimes(3);
+
+      const second = { readyState: "live" };
+      sender.track = second;
+      await poll();
+      // A new device: the old source is let go, and the browser asked again.
+      expect(contexts).toHaveLength(1);
+      expect(contexts[0]!.sources[0]!.disconnect).toHaveBeenCalled();
+      expect(contexts[0]!.sources.map((s) => s.track)).toEqual([first, second]);
+      expect(sender.rtpSender.getStats).toHaveBeenCalledTimes(4);
+
+      rms = 0.001;
+      await vi.advanceTimersByTimeAsync(SPEAKING_HOLD_MS + 130);
+      expect(useSpeakingStore.getState().users).toEqual({});
+    });
+
+    it("closes the context on leave", async () => {
+      fixture.microphones.sender = {
+        track: { readyState: "live" },
+        rtpSender: noLevel(),
+      };
+      stop = watchSpeaking();
+      join();
+      await poll();
+      useVoice.setState({
+        status: "idle",
+        serverId: null,
+        channelId: null,
+      } as never);
+      expect(contexts[0]!.close).toHaveBeenCalledOnce();
+      expect(contexts[0]!.sources[0]!.disconnect).toHaveBeenCalled();
+    });
+
+    it("waits for a click or key to start a held-back context", async () => {
+      startState = "suspended";
+      resumable = false;
+      fixture.microphones.sender = {
+        track: { readyState: "live" },
+        rtpSender: noLevel(),
+      };
+      stop = watchSpeaking();
+      join();
+      for (let i = 0; i < 5; i++) await poll();
+      const context = contexts[0]!;
+      // Once on creation, not on every poll.
+      expect(context.resume).toHaveBeenCalledOnce();
+      expect(useSpeakingStore.getState().users).toEqual({});
+
+      resumable = true;
+      page.dispatchEvent(new Event("pointerdown"));
+      expect(context.resume).toHaveBeenCalledTimes(2);
+      await poll();
+      expect(useSpeakingStore.getState().users).toEqual({ self: true });
+      page.dispatchEvent(new Event("keydown"));
+      expect(context.resume).toHaveBeenCalledTimes(2);
+    });
+  });
+
   it("drops a poll that outlived a leave, even into the same channel", async () => {
     let release: (value: unknown) => void = () => {};
     const pending = {

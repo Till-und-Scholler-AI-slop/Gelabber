@@ -766,27 +766,39 @@ summary {
   user-select: none;
   transition: box-shadow 0.15s ease-out;
 }
-/* Speaking: a ring in the theme's green that breathes while the voice
-   lasts. Reduced motion (system or app setting) keeps the still ring. */
+/* Speaking: a ring in the theme's green and a glow around it that
+   breathes while the voice lasts. Only the glow's opacity is animated, so
+   the compositor runs it without a repaint per frame. Reduced motion
+   (system or app setting) keeps it still. */
 .gel-avatar.is-speaking {
-  box-shadow:
-    0 0 0 2px var(--lr-speaking),
-    0 0 0 4px color-mix(in srgb, var(--lr-speaking) 30%, transparent);
-  animation: lr-speaking 1.2s ease-in-out infinite;
+  position: relative;
+  /* The glow sits outside the circle; the image keeps its own round edge. */
+  overflow: visible;
+  box-shadow: 0 0 0 2px var(--lr-speaking);
 }
-@keyframes lr-speaking {
+.gel-avatar.is-speaking::after {
+  content: "";
+  position: absolute;
+  inset: 0;
+  border-radius: inherit;
+  pointer-events: none;
+  box-shadow:
+    0 0 0 4px color-mix(in srgb, var(--lr-speaking) 30%, transparent),
+    0 0 8px 4px color-mix(in srgb, var(--lr-speaking) 45%, transparent);
+  opacity: 0.45;
+  animation: lr-speaking-glow 1.2s ease-in-out infinite;
+}
+@keyframes lr-speaking-glow {
   50% {
-    box-shadow:
-      0 0 0 2px var(--lr-speaking),
-      0 0 8px 4px color-mix(in srgb, var(--lr-speaking) 45%, transparent);
+    opacity: 1;
   }
 }
 @media (prefers-reduced-motion: reduce) {
-  .gel-avatar.is-speaking {
+  .gel-avatar.is-speaking::after {
     animation: none;
   }
 }
-html[data-reduced-motion="true"] .gel-avatar.is-speaking {
+html[data-reduced-motion="true"] .gel-avatar.is-speaking::after {
   animation: none;
 }
 .gel-avatar-md {
@@ -806,6 +818,7 @@ html[data-reduced-motion="true"] .gel-avatar.is-speaking {
   width: 100%;
   height: 100%;
   object-fit: cover;
+  border-radius: inherit;
 }
 .gel-presence-avatar {
   display: inline-flex;

@@ -22,6 +22,12 @@ const STALE_MS = 500;
 const POLL_MS = 120;
 /** Each received level costs the native core a stats walk. */
 const NATIVE_POLL_MS = 250;
+/** The decoder's level (no audio-level header extension) costs a stats
+ * walk per received microphone; it is read at most this often. */
+const DECODER_LEVEL_MS = 360;
+/** Polls in a row without a send-track level before the analyser takes
+ * over for that track. */
+const SENDER_MISSES = 3;
 /** The native meters: min(100, round(RMS * 350)), see capture_dsp.h. */
 const NATIVE_METER_SCALE = 350;
 
@@ -82,9 +88,9 @@ export async function receiverLevel(
       (!latest || source.timestamp > latest.timestamp)
     )
       latest = source;
+  const { epoch, page } = now();
   if (latest) {
     // Browsers have reported this either on the epoch or on the page clock.
-    const { epoch, page } = now();
     const age = Math.min(
       Math.abs(epoch - latest.timestamp),
       Math.abs(page - latest.timestamp),
@@ -92,14 +98,22 @@ export async function receiverLevel(
     return age > STALE_MS ? 0 : (latest.audioLevel ?? 0);
   }
   // Without the audio-level header extension: the decoder's own level.
+  const cached = decoderLevels.get(receiver);
+  if (cached && page - cached.at < DECODER_LEVEL_MS) return cached.level;
   const report = await receiver.getStats();
   let level: number | null = null;
   report.forEach((entry: { type?: string; audioLevel?: unknown }) => {
     if (entry.type === "inbound-rtp" && typeof entry.audioLevel === "number")
       level = entry.audioLevel / PEAK_PER_RMS;
   });
+  decoderLevels.set(receiver, { at: page, level });
   return level;
 }
+
+const decoderLevels = new WeakMap<
+  object,
+  { at: number; level: number | null }
+>();
 
 function clocks() {
   const page = performance.now();
@@ -152,13 +166,14 @@ class TrackMeter {
   private analyser: AnalyserNode | null = null;
   private track: MediaStreamTrack | null = null;
   private samples: Float32Array<ArrayBuffer> | null = null;
+  /** Removes the gesture listeners while they wait to resume the context. */
+  private unlisten: (() => void) | null = null;
 
   level(track: MediaStreamTrack): number | null {
     if (track !== this.track) this.attach(track);
     const analyser = this.analyser;
     const samples = this.samples;
-    if (this.context?.state === "suspended")
-      void this.context.resume().catch(() => {});
+    if (this.context?.state === "suspended") this.resumeOnGesture();
     if (!analyser || !samples || this.context?.state !== "running") return null;
     analyser.getFloatTimeDomainData(samples);
     let sum = 0;
@@ -172,7 +187,13 @@ class TrackMeter {
     this.track = track;
     if (typeof AudioContext === "undefined") return;
     try {
-      this.context ??= new AudioContext();
+      if (!this.context) {
+        this.context = new AudioContext();
+        // Runs at once where the page may play (a click to join, or an
+        // active microphone in Firefox); otherwise see resumeOnGesture.
+        if (this.context.state === "suspended")
+          void this.context.resume().catch(() => {});
+      }
       this.analyser ??= this.context.createAnalyser();
       this.analyser.fftSize = 1024;
       this.samples ??= new Float32Array(this.analyser.fftSize);
@@ -186,7 +207,29 @@ class TrackMeter {
     }
   }
 
+  /**
+   * A context the autoplay policy holds back starts with the next click or
+   * key press on the page, not with a resume() on every poll.
+   */
+  private resumeOnGesture(): void {
+    if (this.unlisten || typeof window === "undefined") return;
+    const resume = () => {
+      this.unlisten?.();
+      if (this.context?.state === "suspended")
+        void this.context.resume().catch(() => {});
+    };
+    const options = { capture: true, passive: true } as const;
+    window.addEventListener("pointerdown", resume, options);
+    window.addEventListener("keydown", resume, options);
+    this.unlisten = () => {
+      window.removeEventListener("pointerdown", resume, options);
+      window.removeEventListener("keydown", resume, options);
+      this.unlisten = null;
+    };
+  }
+
   dispose(): void {
+    this.unlisten?.();
     this.node?.disconnect();
     this.analyser?.disconnect();
     if (this.context && this.context.state !== "closed")
@@ -209,8 +252,10 @@ export function watchSpeaking(): () => void {
   const lastLoud = new Map<string, number>();
   const meter = new TrackMeter();
   let nativeBlocks = -1;
-  /** Whether the browser reports the send track's level; null: not asked. */
-  let senderReports: boolean | null = null;
+  /** The send track the browser was last asked about, and how many polls
+   * in a row it reported no level for it. */
+  let senderTrack: MediaStreamTrack | null = null;
+  let senderMisses = 0;
 
   async function selfLevel(sender: MediaSender | undefined, mine: number) {
     if (isDesktopApp()) {
@@ -224,10 +269,18 @@ export function watchSpeaking(): () => void {
     }
     const track = sender?.track;
     if (!track || track.readyState !== "live") return null;
-    if (sender.rtpSender && senderReports !== false) {
+    if (track !== senderTrack) {
+      // A new device: ask the browser again.
+      senderTrack = track;
+      senderMisses = 0;
+    }
+    if (sender.rtpSender && senderMisses < SENDER_MISSES) {
       const level = await senderLevel(sender.rtpSender).catch(() => null);
-      senderReports = level !== null;
-      if (level !== null) return level;
+      if (level !== null) {
+        senderMisses = 0;
+        return level;
+      }
+      senderMisses++;
     }
     return session === mine ? meter.level(track) : null;
   }
@@ -315,7 +368,8 @@ export function watchSpeaking(): () => void {
     call = null;
     lastLoud.clear();
     nativeBlocks = -1;
-    senderReports = null;
+    senderTrack = null;
+    senderMisses = 0;
     meter.dispose();
     publish(null, NOBODY);
   }

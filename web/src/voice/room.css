@@ -653,35 +653,46 @@ html[data-compact-rooms="true"] .voice-room-participant {
 .voice-room-participant.is-speaking .voice-room-participant-status {
   color: var(--lr-speaking);
 }
+/* The camera tile: a still green edge (::after) and a glow inside it
+   (::before) whose opacity breathes, so the compositor animates it without
+   repainting the tile. Both lie over the picture, a mirrored (transformed)
+   video included, and its labels. */
+/* Keeps their z-index inside the tile. */
+.voice-video-tile {
+  isolation: isolate;
+}
+.voice-video-tile::before,
 .voice-video-tile::after {
   content: "";
   position: absolute;
   inset: 0;
   border-radius: inherit;
+  z-index: 1;
   pointer-events: none;
-  box-shadow: inset 0 0 0 0 transparent;
-  transition: box-shadow 0.15s ease-out;
+  opacity: 0;
+  transition: opacity 0.15s ease-out;
+}
+.voice-video-tile::before {
+  box-shadow: inset 0 0 22px 6px
+    color-mix(in srgb, var(--lr-speaking) 50%, transparent);
+}
+.voice-video-tile::after {
+  box-shadow: inset 0 0 0 3px var(--lr-speaking);
 }
 .voice-video-tile.is-speaking::after {
-  box-shadow:
-    inset 0 0 0 3px var(--lr-speaking),
-    inset 0 0 14px 2px color-mix(in srgb, var(--lr-speaking) 35%, transparent);
-  animation: lr-speaking-tile 1.2s ease-in-out infinite;
+  opacity: 1;
+}
+.voice-video-tile.is-speaking::before {
+  opacity: 0.45;
+  animation: lr-speaking-glow 1.2s ease-in-out infinite;
 }
 @media (prefers-reduced-motion: reduce) {
-  .voice-video-tile.is-speaking::after {
+  .voice-video-tile.is-speaking::before {
     animation: none;
   }
 }
-html[data-reduced-motion="true"] .voice-video-tile.is-speaking::after {
+html[data-reduced-motion="true"] .voice-video-tile.is-speaking::before {
   animation: none;
-}
-@keyframes lr-speaking-tile {
-  50% {
-    box-shadow:
-      inset 0 0 0 3px var(--lr-speaking),
-      inset 0 0 22px 6px color-mix(in srgb, var(--lr-speaking) 50%, transparent);
-  }
 }
 /* The call dock: who is in the call, the speakers ringed. */
 .voice-session-people {
