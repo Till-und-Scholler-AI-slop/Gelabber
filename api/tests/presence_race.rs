@@ -3,11 +3,19 @@
 //! `presence_snapshot` drops server-set members that have no status. If a
 //! user lands in `p:s:{server}` before its status is written, a concurrent
 //! snapshot removes it and every later snapshot shows it offline.
+//!
+//! The second case is a user that is still in the set from before (status
+//! expired after a deploy, set kept alive by other announces): the announce
+//! SADD is a no-op, so only the snapshot's own cleanup can avoid removing a
+//! user whose status was written after the snapshot read it.
 use std::sync::Arc;
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::time::Duration;
 
-use gelabber_api::gateway::{Gateway, protocol::ServerFrame};
+use gelabber_api::gateway::{
+    Gateway,
+    protocol::{REDIS_PREFIX, ServerFrame},
+};
 use tokio::sync::mpsc;
 use uuid::Uuid;
 
@@ -26,7 +34,31 @@ fn gateway() -> Gateway {
 
 #[tokio::test(flavor = "multi_thread", worker_threads = 4)]
 async fn concurrent_snapshots_never_drop_announcing_users() {
+    assert_eq!(
+        lost_users(false).await,
+        0,
+        "fresh snapshots must list every user that announced"
+    );
+}
+
+#[tokio::test(flavor = "multi_thread", worker_threads = 4)]
+async fn concurrent_snapshots_never_drop_users_left_in_the_set() {
+    assert_eq!(
+        lost_users(true).await,
+        0,
+        "users already in the set without status must survive their announce"
+    );
+}
+
+/// Runs the race and counts users missing from a fresh snapshot afterwards.
+/// `left_in_set` puts every user in the server set without a status first.
+async fn lost_users(left_in_set: bool) -> usize {
     let g = gateway();
+    let mut raw = redis::Client::open(std::env::var("REDIS_URL").unwrap())
+        .unwrap()
+        .get_multiplexed_async_connection()
+        .await
+        .unwrap();
     let mut lost = 0;
     for _ in 0..ROUNDS {
         let server_id = Uuid::new_v4();
@@ -39,6 +71,14 @@ async fn concurrent_snapshots_never_drop_announcing_users() {
             g.watch_server(id, server_id).await;
             conns.push((id, user_id));
             receivers.push(rx);
+        }
+        if left_in_set {
+            let mut sadd = redis::cmd("SADD");
+            sadd.arg(format!("{REDIS_PREFIX}p:s:{server_id}"));
+            for (_, user_id) in &conns {
+                sadd.arg(user_id.to_string());
+            }
+            let _: i64 = sadd.query_async(&mut raw).await.unwrap();
         }
 
         let done = Arc::new(AtomicBool::new(false));
@@ -81,8 +121,5 @@ async fn concurrent_snapshots_never_drop_announcing_users() {
                 .unwrap();
         }
     }
-    assert_eq!(
-        lost, 0,
-        "fresh snapshots must list every user that announced"
-    );
+    lost
 }

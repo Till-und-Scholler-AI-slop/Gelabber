@@ -77,6 +77,23 @@ end
 return {prev, agg}
 "#;
 
+/// Remove server-set members whose status is gone, checked in one atomic
+/// step. KEYS: server set, then one status key per candidate. ARGV: the
+/// candidate members, aligned with KEYS[2..].
+///
+/// A snapshot that read "no status" can race an announce that writes the
+/// status for a member already in the set (its SADD is then a no-op). The
+/// re-check here keeps that member instead of removing it for good.
+const PRUNE_STALE_LUA: &str = r#"
+local removed = 0
+for i = 2, #KEYS do
+  if redis.call('EXISTS', KEYS[i]) == 0 then
+    removed = removed + redis.call('SREM', KEYS[1], ARGV[i - 1])
+  end
+end
+return removed
+"#;
+
 /// Refresh TTLs without changing status. Empty string = key was gone.
 const TOUCH_PRESENCE_LUA: &str = r#"
 local st = redis.call('GET', KEYS[1])
@@ -180,6 +197,9 @@ impl Gateway {
     /// Order matters. The status is written before the SADD: a concurrent
     /// `presence_snapshot` treats a set member without status as stale and
     /// removes it, which would hide this user from every later snapshot.
+    /// (A member already in the set with an expired status is covered by
+    /// the snapshot itself, which re-checks the status atomically before
+    /// removing anyone.)
     /// Both publishes follow the SADD, so a concurrent snapshot either lists
     /// the user or its socket receives the frame.
     pub async fn announce_server(&self, id: ConnId, server_id: Uuid) -> Result<(), ApiError> {
@@ -242,29 +262,52 @@ impl Gateway {
             .map_err(super::hub::redis_err)?;
 
         let mut snap = Vec::new();
+        let mut malformed = Vec::new();
         let mut stale = Vec::new();
         for raw in users {
             let Ok(user_id) = raw.parse::<Uuid>() else {
-                stale.push(raw);
+                malformed.push(raw);
                 continue;
             };
             match self.user_status(user_id).await? {
                 Some(st) => snap.push(PresenceEntry { u: user_id, st }),
-                None => stale.push(raw),
+                None => stale.push(user_id),
             }
         }
-        if !stale.is_empty() {
+        if !malformed.is_empty() {
             let _ = self
                 .with_conn(|mut conn| {
                     let key = server_set_key(server_id);
-                    let stale = stale.clone();
+                    let malformed = malformed.clone();
                     async move {
                         let mut cmd = redis::cmd("SREM");
                         cmd.arg(key);
-                        for member in stale {
+                        for member in malformed {
                             cmd.arg(member);
                         }
                         cmd.query_async::<i64>(&mut conn).await
+                    }
+                })
+                .await;
+        }
+        // The status may have been written since it was read above (an
+        // announce for a member already in the set), so the removal re-checks
+        // it atomically instead of trusting this read.
+        if !stale.is_empty() {
+            let _ = self
+                .with_conn(|mut conn| {
+                    let stale = stale.clone();
+                    async move {
+                        let prune = redis::Script::new(PRUNE_STALE_LUA);
+                        let mut call = prune.prepare_invoke();
+                        call.key(server_set_key(server_id));
+                        for user_id in &stale {
+                            call.key(user_key(*user_id));
+                        }
+                        for user_id in &stale {
+                            call.arg(user_id.to_string());
+                        }
+                        call.invoke_async::<i64>(&mut conn).await
                     }
                 })
                 .await;
