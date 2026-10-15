@@ -1,7 +1,9 @@
 import { useEffect, useRef, useState } from "react";
 import { ScreenIcon } from "../components/Icons.tsx";
 import { useBlocker } from "@tanstack/react-router";
+import { confirmAction } from "../components/confirm.ts";
 import { randomUuid } from "../lib/uuid.ts";
+import { blockThemeLeave, confirmDiscardThemeDraft } from "./discardDraft.ts";
 import { BUILTIN_THEMES, builtinTheme } from "./presets.ts";
 import {
   COLOR_KEYS,
@@ -125,8 +127,7 @@ export function ThemesPanel({
   const issues = contrastIssues(shown);
   const canCreate = state.doc.customThemes.length < MAX_THEMES;
   useBlocker({
-    shouldBlockFn: () =>
-      dirty && !window.confirm("Ungespeicherten Theme-Entwurf verwerfen?"),
+    shouldBlockFn: () => blockThemeLeave(dirty),
     enableBeforeUnload: dirty,
   });
   useEffect(() => {
@@ -136,10 +137,9 @@ export function ThemesPanel({
   useEffect(() => {
     void syncThemes();
   }, []);
-  const abandon = () =>
-    !dirty || window.confirm("Ungespeicherten Theme-Entwurf verwerfen?");
-  const open = (theme: ThemeDefinition, isNew: boolean) => {
-    if (!abandon()) return;
+  const abandon = async () => !dirty || (await confirmDiscardThemeDraft());
+  const open = async (theme: ThemeDefinition, isNew: boolean) => {
+    if (!(await abandon())) return;
     setDraft(theme);
     setBaseline(isNew ? "" : JSON.stringify(theme));
     setNotice("");
@@ -148,8 +148,8 @@ export function ThemesPanel({
       editor.current?.querySelector<HTMLInputElement>("input")?.focus();
     });
   };
-  const choose = (id: string) => {
-    if (!abandon()) return;
+  const choose = async (id: string) => {
+    if (!(await abandon())) return;
     setDraft(null);
     setSelected(id);
     setNotice("");
@@ -196,7 +196,7 @@ export function ThemesPanel({
           }
           try {
             const theme = importTheme(await selectedFile.text());
-            open(theme, true);
+            void open(theme, true);
           } catch (error) {
             setNotice(
               error instanceof Error ? error.message : "Import fehlgeschlagen.",
@@ -218,11 +218,14 @@ export function ThemesPanel({
               </button>
               {state.pending && (
                 <button
-                  onClick={() => {
+                  onClick={async () => {
                     if (
-                      window.confirm(
-                        "Lokale Änderung verwerfen und Account-Stand laden?",
-                      )
+                      await confirmAction({
+                        title: "Lokale Änderung verwerfen?",
+                        message:
+                          "Gelabber lädt dann wieder den Theme-Stand deines Accounts.",
+                        confirmLabel: "Account-Stand laden",
+                      })
                     )
                       void discardPendingTheme();
                   }}
@@ -467,8 +470,8 @@ export function ThemesPanel({
                 </button>
                 <button
                   type="button"
-                  onClick={() => {
-                    if (abandon()) setDraft(null);
+                  onClick={async () => {
+                    if (await abandon()) setDraft(null);
                   }}
                 >
                   Abbrechen
@@ -509,7 +512,10 @@ export function ThemesPanel({
                   disabled={blocked}
                   onClick={async () => {
                     if (
-                      window.confirm(`„${chosen.name}“ löschen?`) &&
+                      (await confirmAction({
+                        title: `Theme „${chosen.name}“ löschen?`,
+                        confirmLabel: "Löschen",
+                      })) &&
                       (await changeTheme({ kind: "delete", id: chosen.id }))
                     ) {
                       setSelected("dark");
