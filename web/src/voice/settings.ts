@@ -38,7 +38,7 @@ export type AudioProcessingMode = "enhanced" | "browser" | "original";
 export const AUDIO_PROCESSING = {
   enhanced: {
     label: "Verbesserte Sprache",
-    hint: "Lokale Rauschunterdrückung; Browserfilter als Ersatz",
+    hint: "Lokale Rauschunterdrückung und Auto-Gain; Browserfilter als Ersatz",
   },
   browser: {
     label: "Browserfilter",
@@ -155,7 +155,7 @@ export type MediaSettings = {
   echoCancellation: boolean;
   noiseSuppression: boolean;
   autoGainControl: boolean;
-  /** Remote mix, 0–1. Mute/Deafen still win. */
+  /** Remote mix, 0–2. Above 1 is amplified. Mute/Deafen still win. */
   outputVolume: number;
   /** Pre-send gain, 0–2. 1 = identity (no Web Audio insert). */
   inputGain: number;
@@ -164,6 +164,7 @@ export type MediaSettings = {
   /** Desktop app: application whose sound is shared ("" = every application
    * but Gelabber). The browser picks the source in its own dialog. */
   sourceAudioApp: string;
+  /** Screen/Live audio, 0–2 like `outputVolume`. */
   sourceAudioVolume: number;
   sourceAudioMuted: boolean;
   quality: AudioQuality;
@@ -313,6 +314,14 @@ export function clampVolume(value: number): number {
   return Math.min(1, Math.max(0, value));
 }
 
+/** Highest playback volume: 200 %, amplified above 100 %. */
+export const MAX_PLAYBACK_VOLUME = 2;
+
+export function clampPlaybackVolume(value: number): number {
+  if (!Number.isFinite(value)) return 1;
+  return Math.min(MAX_PLAYBACK_VOLUME, Math.max(0, value));
+}
+
 export function clampGain(value: number): number {
   if (!Number.isFinite(value)) return 1;
   return Math.min(2, Math.max(0, value));
@@ -399,7 +408,7 @@ export const useMediaSettings = create<MediaSettingsState>()(
               : prev.autoGainControl,
           outputVolume:
             partial.outputVolume !== undefined
-              ? clampVolume(partial.outputVolume)
+              ? clampPlaybackVolume(partial.outputVolume)
               : prev.outputVolume,
           inputGain:
             partial.inputGain !== undefined
@@ -412,7 +421,7 @@ export const useMediaSettings = create<MediaSettingsState>()(
           sourceAudioApp: partial.sourceAudioApp ?? prev.sourceAudioApp,
           sourceAudioVolume:
             partial.sourceAudioVolume !== undefined
-              ? clampVolume(partial.sourceAudioVolume)
+              ? clampPlaybackVolume(partial.sourceAudioVolume)
               : prev.sourceAudioVolume,
           sourceAudioMuted: partial.sourceAudioMuted ?? prev.sourceAudioMuted,
           quality:
@@ -505,7 +514,8 @@ export const useMediaSettings = create<MediaSettingsState>()(
             typeof stored.sourceAudioApp === "string"
               ? stored.sourceAudioApp
               : "",
-          sourceAudioVolume: clampVolume(stored.sourceAudioVolume ?? 1),
+          outputVolume: clampPlaybackVolume(stored.outputVolume ?? 1),
+          sourceAudioVolume: clampPlaybackVolume(stored.sourceAudioVolume ?? 1),
           sourceAudioMuted: stored.sourceAudioMuted === true,
           cameraProfileApply: current.cameraProfileApply,
           screenProfileApply: current.screenProfileApply,
@@ -613,7 +623,7 @@ export function micConstraints(
   return {
     echoCancellation: settings.echoCancellation,
     noiseSuppression: mode === "browser" && settings.noiseSuppression,
-    autoGainControl: mode === "browser" && settings.autoGainControl,
+    autoGainControl: mode !== "original" && settings.autoGainControl,
     channelCount: mode === "original" ? { ideal: 2 } : 1,
     sampleRate: { ideal: 48_000 },
     ...(settings.audioInputId

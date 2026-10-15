@@ -23,6 +23,7 @@ import { liveOf, useVoiceRoster } from "../voice/roster.ts";
 import { useUserId } from "../auth/scope.ts";
 import { isDesktopApp } from "../voice/native/bridge.ts";
 import {
+  MAX_PLAYBACK_VOLUME,
   SOURCE_AUDIO_CARRIES_CALL,
   sharesSourceAudio,
   sourceAudioCarriesCall,
@@ -186,7 +187,7 @@ export function VoiceSessionControls({
               id={`${ids}-voices`}
               type="range"
               min={0}
-              max={100}
+              max={MAX_PLAYBACK_VOLUME * 100}
               value={Math.round(volume * 100)}
               style={rangeFill(volume)}
               aria-label="Wiedergabe-Lautstärke"
@@ -217,7 +218,7 @@ export function VoiceSessionControls({
                 id={`${ids}-stream`}
                 type="range"
                 min={0}
-                max={100}
+                max={MAX_PLAYBACK_VOLUME * 100}
                 value={Math.round(sourceVolume * 100)}
                 style={rangeFill(sourceVolume)}
                 aria-label="Stream-Ton-Lautstärke"
@@ -307,9 +308,12 @@ export function VoiceSessionControls({
   );
 }
 
-/** Filled share of a `.lr-range` track (WebKit has no progress pseudo). */
+/** Filled share of a 0–200 % `.lr-range` playback slider (WebKit has no
+ * progress pseudo). */
 function rangeFill(value: number): CSSProperties {
-  return { "--lr-range-value": `${Math.round(value * 100)}%` } as CSSProperties;
+  return {
+    "--lr-range-value": `${Math.round((value / MAX_PLAYBACK_VOLUME) * 100)}%`,
+  } as CSSProperties;
 }
 
 function LeaveButton() {

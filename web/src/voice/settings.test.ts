@@ -26,6 +26,7 @@ import {
   asStreamProfile,
   videoConstraintsFor,
   isOverconstrainedError,
+  MAX_PLAYBACK_VOLUME,
   type SourceAudioShare,
 } from "./settings.ts";
 afterEach(resetMediaSettingsForTests);
@@ -97,9 +98,12 @@ describe("capture and explicit bandwidth preferences", () => {
   it("avoids double noise filtering and offers original stereo with optional AEC", () => {
     expect(micConstraints()).toMatchObject({
       noiseSuppression: false,
-      autoGainControl: false,
+      autoGainControl: true,
       channelCount: 1,
     });
+    useMediaSettings.getState().patch({ autoGainControl: false });
+    expect(micConstraints()).toMatchObject({ autoGainControl: false });
+    useMediaSettings.getState().patch({ autoGainControl: true });
     useMediaSettings
       .getState()
       .patch({ processingMode: "browser", audioInputId: "mic-2" });
@@ -248,6 +252,26 @@ describe("capture and explicit bandwidth preferences", () => {
     useMediaSettings.getState().patch({ sourceAudioVolume: -5 });
     expect(useMediaSettings.getState().sourceAudioVolume).toBe(0);
     expect(useMediaSettings.getState().outputVolume).toBe(0.8);
+  });
+  it("allows playback up to 200 % and clamps stored values", async () => {
+    useMediaSettings
+      .getState()
+      .patch({ outputVolume: 1.6, sourceAudioVolume: 9 });
+    expect(useMediaSettings.getState()).toMatchObject({
+      outputVolume: 1.6,
+      sourceAudioVolume: MAX_PLAYBACK_VOLUME,
+    });
+    useMediaSettings.getState().patch({ callSoundVolume: 1.6 });
+    expect(useMediaSettings.getState().callSoundVolume).toBe(1);
+    const storage = useMediaSettings.persist.getOptions().storage!;
+    await storage.setItem("gelabber.media", {
+      state: { outputVolume: 7, sourceAudioVolume: 1.5 } as never,
+    });
+    await useMediaSettings.persist.rehydrate();
+    expect(useMediaSettings.getState()).toMatchObject({
+      outputVolume: 2,
+      sourceAudioVolume: 1.5,
+    });
   });
 });
 

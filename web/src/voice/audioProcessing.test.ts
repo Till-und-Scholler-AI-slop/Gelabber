@@ -131,7 +131,7 @@ describe("microphone processor ownership", () => {
     expect(contexts[0]?.closed).toBe(true);
     expect(second.track.stop).not.toHaveBeenCalled();
     expect(getMedia.mock.calls[0]?.[0]).toMatchObject({
-      audio: { noiseSuppression: false, autoGainControl: false },
+      audio: { noiseSuppression: false, autoGainControl: true },
     });
     expect(getMedia.mock.calls[1]?.[0]).toMatchObject({
       audio: { noiseSuppression: true, autoGainControl: true },

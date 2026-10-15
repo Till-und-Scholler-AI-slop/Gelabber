@@ -1972,7 +1972,7 @@ gm_source* gm_source_new_microphone(gm_engine* engine, const char* optionsJson)
 		webrtc::AudioOptions audio;
 		audio.echo_cancellation = echoCancellation;
 		audio.noise_suppression = mode == "browser" && options.value("noiseSuppression", true);
-		audio.auto_gain_control = mode == "browser" && options.value("autoGainControl", true);
+		audio.auto_gain_control = mode != "original" && options.value("autoGainControl", true);
 		audio.highpass_filter   = mode != "original";
 
 		ApplyCaptureMode(*engine, mode, options);

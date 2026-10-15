@@ -398,6 +398,15 @@ describe("desktop app media", () => {
       consumer,
       volume: 0.5,
     });
+    // The native core amplifies up to 200 %.
+    output.volume = 1.6;
+    expect(core.calledWith("media_consumer_set_volume").at(-1)).toEqual({
+      consumer,
+      volume: 1.6,
+    });
+    output.volume = 5;
+    expect(output.volume).toBe(2);
+    output.volume = 0.5;
     output.muted = true;
     expect(core.calledWith("media_consumer_set_volume").at(-1)).toEqual({
       consumer,

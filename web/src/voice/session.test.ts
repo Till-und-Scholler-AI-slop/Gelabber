@@ -4512,6 +4512,161 @@ describe("authoritative mediasoup session lifecycle", () => {
     expect(env.getUserMediaCalls()).toBe(1);
     expect(env.getDisplayMediaCalls()).toBe(0);
   });
+  /** `blocked`: contexts start suspended and cannot resume (no gesture). */
+  function boostAudio(blocked = false) {
+    class Node {
+      connect() {}
+      disconnect() {}
+    }
+    const param = () => ({ value: 0 });
+    const contexts: Context[] = [];
+    class Context {
+      state: AudioContextState = blocked ? "suspended" : "running";
+      currentTime = 0;
+      closed = false;
+      gains: Array<{ gain: { value: number } }> = [];
+      sources: MediaStream[] = [];
+      resumable = !blocked;
+      constructor() {
+        contexts.push(this);
+      }
+      createDynamicsCompressor() {
+        return Object.assign(new Node(), {
+          threshold: param(),
+          knee: param(),
+          ratio: param(),
+          attack: param(),
+          release: param(),
+        });
+      }
+      createMediaStreamDestination() {
+        return Object.assign(new Node(), { stream: { id: "boost" } });
+      }
+      createGain() {
+        const gain = Object.assign(new Node(), {
+          gain: {
+            value: 1,
+            setTargetAtTime(value: number) {
+              this.value = value;
+            },
+          },
+        });
+        this.gains.push(gain);
+        return gain;
+      }
+      createMediaStreamSource(stream: MediaStream) {
+        this.sources.push(stream);
+        return new Node();
+      }
+      resume() {
+        if (!this.resumable) return new Promise<void>(() => {});
+        this.state = "running";
+        return Promise.resolve();
+      }
+      async suspend() {
+        this.state = "suspended";
+      }
+      async close() {
+        this.closed = true;
+      }
+    }
+    class Stream {
+      constructor(private tracks: MediaStreamTrack[] = []) {}
+      getTracks() {
+        return [...this.tracks];
+      }
+      getAudioTracks() {
+        return this.tracks.filter((track) => track.kind === "audio");
+      }
+      getVideoTracks() {
+        return [];
+      }
+      addTrack(track: MediaStreamTrack) {
+        if (!this.tracks.includes(track)) this.tracks.push(track);
+      }
+      removeTrack(track: MediaStreamTrack) {
+        this.tracks = this.tracks.filter((item) => item !== track);
+      }
+    }
+    vi.stubGlobal("AudioContext", Context);
+    vi.stubGlobal("MediaStream", Stream);
+    return contexts;
+  }
+  it("plays conversations above 100 % through a Web Audio boost and below it on the element", async () => {
+    const elements = playback();
+    const env = await joined();
+    const contexts = boostAudio();
+    env.peers[0]!.receive("u-bob", "a", fakeStream("bob"));
+    const voice = elements.find((el) => el.srcObject)!;
+    expect(voice.volume).toBe(1);
+    expect(contexts).toHaveLength(0);
+
+    useMediaSettings.getState().patch({ outputVolume: 1.5 });
+    expect(voice.muted).toBe(true);
+    const ctx = contexts[0]!;
+    // The 1st gain is the limiter's makeup trim, the 2nd the element's.
+    expect(ctx.gains[1]!.gain.value).toBe(1.5);
+    expect(ctx.sources).toHaveLength(1);
+    const out = elements.find(
+      (el) => (el.srcObject as { id?: string } | null)?.id === "boost",
+    )!;
+    await vi.waitFor(() => expect(out.play).toHaveBeenCalled());
+
+    // A second speaker joins the boosted mix.
+    env.peers[0]!.receive("u-cara", "a", fakeStream("cara"));
+    expect(ctx.sources).toHaveLength(2);
+
+    // An output-device change reaches the boost output too.
+    const setSinkId = vi.fn(async () => {});
+    Object.assign(out, { setSinkId });
+    useMediaSettings.getState().patch({ audioOutputId: "headset" });
+    expect(setSinkId).toHaveBeenCalledWith("headset");
+
+    toggleDeafen();
+    expect(voice.muted).toBe(true);
+    expect(voice.volume).toBe(0);
+    expect(ctx.state).toBe("suspended");
+    toggleDeafen();
+    expect(voice.muted).toBe(true);
+    expect(ctx.gains.at(-1)!.gain.value).toBe(1.5);
+
+    // Down to 80 % and back reuses the idle context.
+    useMediaSettings.getState().patch({ outputVolume: 0.8 });
+    expect(voice.muted).toBe(false);
+    expect(voice.volume).toBe(0.8);
+    expect(ctx.state).toBe("suspended");
+    useMediaSettings.getState().patch({ outputVolume: 1.5 });
+    expect(voice.muted).toBe(true);
+    await vi.waitFor(() => expect(ctx.state).toBe("running"));
+    expect(contexts).toHaveLength(1);
+    expect(ctx.closed).toBe(false);
+  });
+  it("plays at 100 % while the browser blocks the boost and boosts again on the click", async () => {
+    const elements = playback();
+    const env = await joined();
+    const contexts = boostAudio(true);
+    env.peers[0]!.receive("u-bob", "a", fakeStream("bob"));
+    const voice = elements.find((el) => el.srcObject)!;
+    vi.useFakeTimers();
+    useMediaSettings.getState().patch({ outputVolume: 1.5 });
+    const ctx = contexts[0]!;
+    expect(voice.muted).toBe(true);
+    await vi.advanceTimersByTimeAsync(1000);
+    expect(useVoice.getState().playbackBlocked).toBe(true);
+    expect(voice.muted).toBe(false);
+    expect(voice.volume).toBe(1);
+    // Slider moves do not mute it again before the click.
+    useMediaSettings.getState().patch({ outputVolume: 1.8 });
+    expect(voice.muted).toBe(false);
+
+    ctx.resumable = true;
+    retryPlayback();
+    expect(voice.muted).toBe(true);
+    await vi.waitFor(() =>
+      expect(useVoice.getState().playbackBlocked).toBe(false),
+    );
+    expect(ctx.gains.at(-1)!.gain.value).toBe(1.8);
+  });
   it("retries blocked source playback on the user gesture and ignores late failure after Consumer close", async () => {
     const elements = playback();
     const env = await joined();
