@@ -7,6 +7,7 @@ pub mod csrf;
 pub mod dms;
 pub mod error;
 pub mod gateway;
+pub mod gifs;
 pub mod health;
 pub mod json;
 pub mod limits;
@@ -53,6 +54,7 @@ pub fn app(state: AppState) -> Router {
         .merge(messages::router())
         .merge(media::router())
         .merge(attachments::router())
+        .merge(gifs::router())
         .layer(middleware::from_fn(csrf::require))
         .layer(middleware::from_fn_with_state(state.clone(), limits::gate));
 

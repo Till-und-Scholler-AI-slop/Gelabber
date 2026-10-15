@@ -29,7 +29,47 @@ export type Message = {
   attachments: Attachment[];
   /** Optional for older API snapshots; absent means no reactions. */
   reactions?: Reaction[];
+  /** A GIF message (empty content, no attachments). */
+  gif?: Gif | null;
 };
+
+/** One GIF from the server's Klipy relay. URLs are Klipy's; load them
+ *  only through `gifMediaUrl`. */
+export type Gif = {
+  provider: string;
+  slug: string;
+  title: string;
+  width: number;
+  height: number;
+  /** Animated WebP (or GIF). */
+  url: string;
+  /** First frame, shown instead of the animation for reduced motion. */
+  still: string | null;
+};
+
+/** Redis cjson re-encoding may hand back anything; a GIF must be whole. */
+export function asGif(value: unknown): Gif | null {
+  if (value === null || typeof value !== "object") return null;
+  const gif = value as Partial<Gif>;
+  if (
+    typeof gif.slug !== "string" ||
+    typeof gif.url !== "string" ||
+    typeof gif.width !== "number" ||
+    typeof gif.height !== "number" ||
+    gif.width <= 0 ||
+    gif.height <= 0
+  )
+    return null;
+  return {
+    provider: typeof gif.provider === "string" ? gif.provider : "klipy",
+    slug: gif.slug,
+    title: typeof gif.title === "string" ? gif.title : "",
+    width: gif.width,
+    height: gif.height,
+    url: gif.url,
+    still: typeof gif.still === "string" ? gif.still : null,
+  };
+}
 
 export type Reaction = { emoji: string; user_ids: string[] };
 
