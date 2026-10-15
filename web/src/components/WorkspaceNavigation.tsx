@@ -2,6 +2,9 @@ import { useEffect, useId, useRef, useState, type ReactNode } from "react";
 
 import { ChevronIcon } from "./Icons.tsx";
 
+/** Up to this width the workspace navigation is a closed drawer. */
+export const NAVIGATION_DRAWER_MAX_WIDTH = 800;
+
 /** One content tree: ordinary desktop navigation, a native modal on mobile. */
 export function WorkspaceDrawer({
   open,

@@ -17,7 +17,10 @@ import { RequireUser } from "../components/RequireUser.tsx";
 import { ServerRail } from "../components/ServerRail.tsx";
 import { SidebarPlaceholder } from "../components/SidebarPlaceholder.tsx";
 import { UserPanel } from "../components/UserPanel.tsx";
-import { WorkspaceDrawer } from "../components/WorkspaceNavigation.tsx";
+import {
+  NAVIGATION_DRAWER_MAX_WIDTH,
+  WorkspaceDrawer,
+} from "../components/WorkspaceNavigation.tsx";
 import { notify } from "../components/toasts.ts";
 import { useDms } from "../dms/queries.ts";
 import { useReadState, useReadingChannel } from "../messages/readState.ts";
@@ -85,7 +88,7 @@ function WorkspaceFrame({
         open={navigationOpen}
         onClose={() => setNavigationOpen(false)}
         title="Navigation"
-        breakpoint={800}
+        breakpoint={NAVIGATION_DRAWER_MAX_WIDTH}
         className="workspace-navigation"
         closeOnNavigate
       >

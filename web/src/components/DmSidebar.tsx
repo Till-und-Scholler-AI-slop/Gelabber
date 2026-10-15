@@ -81,7 +81,7 @@ function DmList({
   );
 }
 
-function DmRow({ dm, active }: { dm: DirectMessage; active: boolean }) {
+export function DmRow({ dm, active }: { dm: DirectMessage; active: boolean }) {
   const status = usePresenceStore((state) =>
     presenceOf(state.byServer, dm.id, dm.peer.id),
   );
