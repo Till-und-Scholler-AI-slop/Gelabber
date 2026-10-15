@@ -24,7 +24,7 @@ import {
 } from "../voice/roster.ts";
 import { can } from "../servers/permissions.ts";
 import { useMenuDetails } from "./menuDetails.ts";
-import { moveWithinRow, ROW_ITEM } from "./rowKeys.ts";
+import { focusRowNear, ROW_ITEM, useRovingRow } from "./rowKeys.ts";
 import { buildRows, type Row } from "../servers/rows.ts";
 import {
   isPendingId,
@@ -327,6 +327,23 @@ function ChannelList({
   const deleteCategory = useDeleteCategory(server.id);
   const navigate = useNavigate();
   const rowHintId = useId();
+  // The key hint is read once, on the list's first row with actions, not
+  // on every Tab stop.
+  const hintKey = manageChannels
+    ? rows.find((row) => row.kind === "category" || row.kind === "channel")?.key
+    : undefined;
+  // The row that last held focus. When it is deleted (from here or by
+  // someone else) focus would fall to the page; it goes to the row now in
+  // its place instead, unless the user has moved on.
+  const lastFocused = useRef<{ key: string; index: number } | null>(null);
+  useEffect(() => {
+    const last = lastFocused.current;
+    if (!last || rows.some((row) => row.key === last.key)) return;
+    lastFocused.current = null;
+    const active = document.activeElement;
+    if (active && active !== document.body) return;
+    if (scrollRef.current) focusRowNear(scrollRef.current, last.index);
+  }, [rows]);
 
   if (rows.length === 0) {
     return <p className="sidebar-empty">Noch keine Kanäle.</p>;
@@ -336,7 +353,8 @@ function ChannelList({
     <div ref={scrollRef} className="sidebar-list-scroll">
       {manageChannels ? (
         <p id={rowHintId} className="sr-only">
-          Weitere Aktionen mit den Pfeiltasten links und rechts.
+          Pfeiltasten links und rechts wechseln zwischen dem Eintrag und seinen
+          Aktionen, Pos1 und Ende springen an den Anfang und das Ende der Zeile.
         </p>
       ) : null}
       <div style={{ height: virtualizer.getTotalSize() }} className="relative">
@@ -348,6 +366,9 @@ function ChannelList({
               key={item.key}
               data-index={item.index}
               className="sidebar-virtual-row"
+              onFocus={() => {
+                lastFocused.current = { key: row.key, index: item.index };
+              }}
               style={{ top: item.start, height: item.size }}
             >
               {row.kind === "section" ? (
@@ -356,7 +377,7 @@ function ChannelList({
                 <CategoryRow
                   category={row.category}
                   manage={manageChannels}
-                  hintId={rowHintId}
+                  hintId={row.key === hintKey ? rowHintId : undefined}
                   onAdd={() => onCreateChannel(row.category.id)}
                   onEdit={() => onEditCategory(row.category)}
                   onDelete={() => {
@@ -375,7 +396,7 @@ function ChannelList({
                   inVoice={row.channel.id === voiceChannelId}
                   live={Boolean(liveChannels[row.channel.id])}
                   manage={manageChannels}
-                  hintId={rowHintId}
+                  hintId={row.key === hintKey ? rowHintId : undefined}
                   onEdit={() => onEditChannel(row.channel)}
                   onDelete={() => {
                     if (!window.confirm(`Kanal „${row.channel.name}“ löschen?`))
@@ -439,19 +460,20 @@ function CategoryRow({
 }: {
   category: Category;
   manage: boolean;
-  hintId: string;
+  hintId: string | undefined;
   onAdd: () => void;
   onEdit: () => void;
   onDelete: () => void;
 }) {
   const pending = isPendingId(category.id);
+  const roving = useRovingRow(manage && !pending);
   return (
     <div
       className={[
         "group sidebar-category-row",
         pending ? "opacity-50" : "",
       ].join(" ")}
-      onKeyDown={moveWithinRow}
+      {...roving.keys}
     >
       <span className="sidebar-category-name">{category.name}</span>
       {manage && !pending ? (
@@ -461,6 +483,7 @@ function CategoryRow({
             onClick={onAdd}
             small
             describedBy={hintId}
+            tabIndex={roving.tabIndex(0)}
           >
             <PlusIcon size={14} />
           </IconButton>
@@ -468,11 +491,16 @@ function CategoryRow({
             label="Kategorie umbenennen"
             onClick={onEdit}
             small
-            roving
+            tabIndex={roving.tabIndex(1)}
           >
             <PencilIcon size={14} />
           </IconButton>
-          <IconButton label="Kategorie löschen" onClick={onDelete} small roving>
+          <IconButton
+            label="Kategorie löschen"
+            onClick={onDelete}
+            small
+            tabIndex={roving.tabIndex(2)}
+          >
             <TrashIcon size={14} />
           </IconButton>
         </span>
@@ -496,7 +524,7 @@ function ChannelRow({
   inVoice: boolean;
   live: boolean;
   manage: boolean;
-  hintId: string;
+  hintId: string | undefined;
   onEdit: () => void;
   onDelete: () => void;
 }) {
@@ -519,9 +547,10 @@ function ChannelRow({
     active ? "is-active" : "",
     pending ? "opacity-50" : "",
   ].join(" ");
+  const roving = useRovingRow(manage && !pending);
 
   return (
-    <div className={rowClass} onKeyDown={moveWithinRow}>
+    <div className={rowClass} {...roving.keys}>
       {pending ? (
         <span className="channel-row-link">{body}</span>
       ) : (
@@ -530,6 +559,7 @@ function ChannelRow({
           params={{ serverId: channel.server_id, channelId: channel.id }}
           aria-current={active ? "page" : undefined}
           aria-describedby={manage ? hintId : undefined}
+          tabIndex={roving.tabIndex(0)}
           className="channel-row-link"
           {...ROW_ITEM}
         >
@@ -542,10 +572,20 @@ function ChannelRow({
             "sidebar-row-actions flex shrink-0 items-center opacity-0 transition group-focus-within:opacity-100 group-hover:opacity-100",
           ].join(" ")}
         >
-          <IconButton label="Kanal bearbeiten" onClick={onEdit} small roving>
+          <IconButton
+            label="Kanal bearbeiten"
+            onClick={onEdit}
+            small
+            tabIndex={roving.tabIndex(1)}
+          >
             <PencilIcon size={14} />
           </IconButton>
-          <IconButton label="Kanal löschen" onClick={onDelete} small roving>
+          <IconButton
+            label="Kanal löschen"
+            onClick={onDelete}
+            small
+            tabIndex={roving.tabIndex(2)}
+          >
             <TrashIcon size={14} />
           </IconButton>
         </span>
@@ -559,15 +599,15 @@ function IconButton({
   onClick,
   children,
   small,
-  roving,
+  tabIndex,
   describedBy,
 }: {
   label: string;
   onClick: () => void;
   children: ReactNode;
   small?: boolean;
-  /** Reached with the arrow keys from the row's first item, not with Tab. */
-  roving?: boolean;
+  /** -1 for a row item that is not its row's Tab stop right now. */
+  tabIndex?: number;
   describedBy?: string;
 }) {
   return (
@@ -576,7 +616,7 @@ function IconButton({
       title={label}
       aria-label={label}
       aria-describedby={describedBy}
-      tabIndex={roving ? -1 : undefined}
+      tabIndex={tabIndex}
       onClick={onClick}
       {...ROW_ITEM}
       className={[
