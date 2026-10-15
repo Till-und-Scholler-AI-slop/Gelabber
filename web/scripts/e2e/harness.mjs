@@ -591,7 +591,7 @@ export async function snapshot(actor) {
 /** Answers the app's own confirm dialog (not a native `window.confirm`). */
 export async function confirmDialog(actor, label) {
   await actor.page
-    .getByRole("dialog")
+    .getByRole("alertdialog")
     .getByRole("button", { name: label, exact: true })
     .click();
 }
