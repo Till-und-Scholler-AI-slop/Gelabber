@@ -67,6 +67,11 @@ import {
   startBoostOutput,
 } from "./playbackBoost.ts";
 import {
+  effectiveVoiceVolume,
+  userVolumeOf,
+  useUserVolumes,
+} from "./userVolume.ts";
+import {
   createMediaConnection,
   preloadMediaSdk,
   type MediaConnection,
@@ -207,7 +212,6 @@ export type VoiceDeps = {
     ice_servers: IceServer[];
   }>;
   openMedia?: OpenMedia;
-  attachRemote?: (stream: MediaStream) => void;
   onError?: (error: unknown) => void;
 };
 
@@ -223,8 +227,11 @@ let activeMicGain: MicGainInsert | null = null;
 let cameraStream: MediaStream | null = null;
 let screenStream: MediaStream | null = null;
 let liveStream: MediaStream | null = null;
-let remoteAudio: HTMLAudioElement | null = null;
-const watchAudio = new Map<MediaStreamTrack, HTMLAudioElement>();
+/** One element per received microphone, so each participant keeps a
+ * volume of their own. Seat and Watch connections each hold theirs. */
+type VoiceAudio = { el: HTMLAudioElement; userId: string | null };
+const voiceAudio = new Map<MediaStreamTrack, VoiceAudio>();
+const watchAudio = new Map<MediaStreamTrack, VoiceAudio>();
 const receivedAudioSources = new Map<
   MediaStreamTrack,
   { role: "voice" | "watch"; source: AudioSource }
@@ -243,10 +250,10 @@ const sourceAudio = new Map<
   }
 >();
 const blockedPlayback = new Set<HTMLAudioElement>();
-let remoteMix: MediaStream | null = null;
 /** The browser blocked the boost output: play at 100 % until a click. */
 let boostBlocked = false;
 let bound = false;
+let unsubscribeUserVolumes: (() => void) | null = null;
 let micEpoch = 0;
 /** A microphone prompt that a seat rebuild overtook. Its answer belonged to
  * the old connection and was dropped with it, and a rebuild does not ask for
@@ -415,17 +422,48 @@ async function defaultGetDisplayMedia(
   return navigator.mediaDevices.getDisplayMedia(constraints);
 }
 
-function defaultAttachRemote(stream: MediaStream): void {
-  if (!remoteAudio) {
-    remoteAudio = createAudioOutput();
-    if (!remoteAudio) return;
-    remoteAudio.autoplay = true;
-    remoteAudio.setAttribute("playsinline", "true");
-  }
-  remoteAudio.srcObject = stream;
-  applyLocalAudio();
+/** Plays a received microphone on an element of its own; `held` is the
+ * seat's or the Watch connection's map. */
+function attachVoiceAudio(
+  held: Map<MediaStreamTrack, VoiceAudio>,
+  track: MediaStreamTrack,
+  stream?: MediaStream,
+): void {
+  if (held.has(track)) return;
+  const el = createAudioOutput();
+  if (!el) return;
+  el.autoplay = true;
+  el.setAttribute("playsinline", "true");
+  // One element per track: a MediaStream's multiple audio tracks must not
+  // compete for an HTML media element's single selected audio track.
+  el.srcObject = createStream([track]) ?? stream ?? null;
+  const userId = receivedIdentity.get(track)?.owner ?? null;
+  if (userId) el.setAttribute("data-voice", userId);
+  held.set(track, { el, userId });
+  track.addEventListener("ended", () => {
+    if (held.get(track)?.el !== el) return;
+    held.delete(track);
+    silenceAudio(el);
+    updatePlaybackBlocked();
+  });
+  if (held === voiceAudio) applyLocalAudio();
   applyPlayback();
-  playAudio(remoteAudio);
+  playAudio(el);
+}
+
+function dropVoiceAudio(
+  held: Map<MediaStreamTrack, VoiceAudio>,
+  track: MediaStreamTrack,
+): void {
+  const voice = held.get(track);
+  if (!voice) return;
+  silenceAudio(voice.el);
+  held.delete(track);
+}
+
+function clearVoiceAudio(held: Map<MediaStreamTrack, VoiceAudio>): void {
+  for (const { el } of held.values()) silenceAudio(el);
+  held.clear();
 }
 
 function updatePlaybackBlocked(): void {
@@ -470,10 +508,10 @@ export function retryPlayback(): void {
   // The click also allows the boost again; applyPlayback restarts it.
   boostBlocked = false;
   applyPlayback();
-  for (const el of [
-    remoteAudio,
+  for (const { el } of [
+    ...voiceAudio.values(),
     ...watchAudio.values(),
-    ...[...sourceAudio.values()].map((source) => source.el),
+    ...sourceAudio.values(),
   ]) {
     if (el?.srcObject) playAudio(el);
   }
@@ -514,8 +552,6 @@ export function configureVoice(next: Partial<VoiceDeps>): void {
       next.getDisplayMedia ?? deps?.getDisplayMedia ?? defaultGetDisplayMedia,
     fetchTicket: next.fetchTicket ?? deps?.fetchTicket ?? requestMediaTicket,
     openMedia: next.openMedia ?? deps?.openMedia ?? openMediaSocket,
-    attachRemote:
-      next.attachRemote ?? deps?.attachRemote ?? defaultAttachRemote,
     onError: next.onError ?? deps?.onError ?? notifyError,
   };
   ensureBound();
@@ -533,7 +569,6 @@ function ensureBound(): void {
       getDisplayMedia: defaultGetDisplayMedia,
       fetchTicket: requestMediaTicket,
       openMedia: openMediaSocket,
-      attachRemote: defaultAttachRemote,
       onError: notifyError,
     };
   }
@@ -541,6 +576,8 @@ function ensureBound(): void {
   gateway.onErr(onErr);
   gateway.onReady(onReady);
   onMediaSettingsChange(handleSettingsChange);
+  unsubscribeUserVolumes?.();
+  unsubscribeUserVolumes = useUserVolumes.subscribe(applyPlayback);
   // Re-adding the same listener after a rebind is a no-op.
   if (typeof document !== "undefined")
     document.addEventListener("visibilitychange", resumePlayback);
@@ -1122,17 +1159,13 @@ function closeReceivedSource(
   receivedAudioSources.delete(source.track);
   receivedSourceAudio.delete(source.track);
   if (source.kind === "audio") {
-    remoteMix?.removeTrack(source.track);
+    dropVoiceAudio(voiceAudio, source.track);
     const held = sourceAudio.get(source.track);
     if (held) {
       silenceAudio(held.el);
       sourceAudio.delete(source.track);
     }
-    const el = watchAudio.get(source.track);
-    if (el) {
-      silenceAudio(el);
-      watchAudio.delete(source.track);
-    }
+    dropVoiceAudio(watchAudio, source.track);
     updatePlaybackBlocked();
     return;
   }
@@ -1281,21 +1314,15 @@ function stopPeer(preserveCapture = false): void {
     stopTracks(liveStream);
     liveStream = null;
   }
-  remoteMix = null;
   clearSourcePlayback("voice");
   receivedSourceAudio.clear();
   for (const [track, source] of receivedAudioSources)
     if (source.role === "voice") receivedAudioSources.delete(track);
   clearReceived();
-  if (remoteAudio) {
-    // Paused and detached: an element left playing keeps the tab's
-    // "playing audio" indicator after the call is over.
-    remoteAudio.pause?.();
-    remoteAudio.srcObject = null;
-    releaseBoost(remoteAudio);
-    blockedPlayback.delete(remoteAudio);
-    updatePlaybackBlocked();
-  }
+  // Paused and detached: an element left playing keeps the tab's
+  // "playing audio" indicator after the call is over.
+  clearVoiceAudio(voiceAudio);
+  updatePlaybackBlocked();
   useVoice.setState({
     localCamera: cameraStream,
     localScreen: screenStream,
@@ -1386,20 +1413,22 @@ function applyLocalAudio(): void {
   applyPlayback();
 }
 
-function playbackVolume(): number {
-  if (useVoice.getState().deafened) return 0;
-  return useMediaSettings.getState().outputVolume;
-}
-
 function applyPlayback(): void {
-  const volume = playbackVolume();
   const deafened = useVoice.getState().deafened;
-  for (const el of [remoteAudio, ...watchAudio.values()]) {
-    if (!el) continue;
-    setOutputVolume(el, deafened, volume);
+  const settings = useMediaSettings.getState();
+  const users = useUserVolumes.getState().users;
+  for (const { el, userId } of [
+    ...voiceAudio.values(),
+    ...watchAudio.values(),
+  ]) {
+    const user = userVolumeOf(userId, users);
+    setOutputVolume(
+      el,
+      deafened || user.muted,
+      effectiveVoiceVolume({ output: settings.outputVolume, user, deafened }),
+    );
     void applySink(el);
   }
-  const settings = useMediaSettings.getState();
   for (const { el } of sourceAudio.values()) {
     setOutputVolume(
       el,
@@ -2946,7 +2975,7 @@ export function resetVoiceForTests(): void {
   stopPeer();
   resetPlaybackBoostForTests();
   boostBlocked = false;
-  remoteAudio = null;
+  voiceAudio.clear();
   sourceAudio.clear();
   watchAudio.clear();
   blockedPlayback.clear();
@@ -2957,6 +2986,8 @@ export function resetVoiceForTests(): void {
   deps = null;
   bound = false;
   onMediaSettingsChange(null);
+  unsubscribeUserVolumes?.();
+  unsubscribeUserVolumes = null;
 }
 
 function endedListener(kind: "v" | "s" | "l"): () => void {
@@ -3639,12 +3670,8 @@ function attachSourceAudio(
   const identity = receivedIdentity.get(track);
   const parsed = identity ? { userId: identity.owner, k: identity.k } : null;
   if (!parsed || (parsed.k !== "sa" && parsed.k !== "la")) return false;
-  if (remoteMix?.getTracks().includes(track)) remoteMix.removeTrack(track);
-  const voiceElement = watchAudio.get(track);
-  if (voiceElement) {
-    silenceAudio(voiceElement);
-    watchAudio.delete(track);
-  }
+  dropVoiceAudio(voiceAudio, track);
+  dropVoiceAudio(watchAudio, track);
   const state = useVoice.getState();
   const kind = parsed.k === "sa" ? "s" : "l";
   receivedAudioSources.set(track, {
@@ -3726,15 +3753,7 @@ function attachIncoming(track: MediaStreamTrack, stream?: MediaStream): void {
     if (attachSourceAudio(track, stream, "voice")) return;
     forgetSourceAudioReceiver(track);
     receivedAudioSources.set(track, { role: "voice", source: "voice" });
-    if (!remoteMix) remoteMix = createStream();
-    if (!remoteMix) {
-      if (stream) (deps?.attachRemote ?? defaultAttachRemote)(stream);
-      return;
-    }
-    if (!remoteMix.getTracks().includes(track)) {
-      remoteMix.addTrack(track);
-    }
-    (deps?.attachRemote ?? defaultAttachRemote)(remoteMix);
+    attachVoiceAudio(voiceAudio, track, stream);
     return;
   }
   const parsed = parseIncomingVideo(track);
@@ -4050,8 +4069,7 @@ function stopWatchPeer(preserveRetry = false): void {
   clearSourcePlayback("watch");
   for (const [track, source] of receivedAudioSources)
     if (source.role === "watch") receivedAudioSources.delete(track);
-  for (const el of watchAudio.values()) silenceAudio(el);
-  watchAudio.clear();
+  clearVoiceAudio(watchAudio);
   updatePlaybackBlocked();
 }
 
@@ -4063,23 +4081,7 @@ function attachWatchIncoming(
     if (attachSourceAudio(track, stream, "watch")) return;
     forgetSourceAudioReceiver(track);
     receivedAudioSources.set(track, { role: "watch", source: "voice" });
-    if (watchAudio.has(track)) return;
-    const el = createAudioOutput();
-    if (!el) return;
-    el.autoplay = true;
-    el.setAttribute("playsinline", "true");
-    // One element per track: a MediaStream's multiple audio tracks must not
-    // compete for an HTML media element's single selected audio track.
-    el.srcObject = createStream([track]) ?? stream ?? null;
-    watchAudio.set(track, el);
-    track.addEventListener("ended", () => {
-      if (watchAudio.get(track) !== el) return;
-      watchAudio.delete(track);
-      silenceAudio(el);
-      updatePlaybackBlocked();
-    });
-    applyPlayback();
-    playAudio(el);
+    attachVoiceAudio(watchAudio, track, stream);
     return;
   }
   const parsed = parseIncomingVideo(track);

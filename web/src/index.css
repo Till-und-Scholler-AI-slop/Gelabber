@@ -1574,3 +1574,49 @@ dialog,
   flex-shrink: 0;
   color: var(--lr-danger);
 }
+/* Per-participant volume in the profile dialog (#252). */
+.user-volume {
+  display: grid;
+  gap: 10px;
+}
+.user-volume .lr-range {
+  width: 100%;
+}
+.user-volume__row {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  font-size: 14px;
+}
+.user-volume__row output {
+  color: var(--lr-muted);
+  font-variant-numeric: tabular-nums;
+}
+.user-volume__mute {
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+  cursor: pointer;
+}
+.user-volume__reset {
+  color: var(--lr-accent);
+  font-size: 13px;
+  background: none;
+  border: 0;
+  cursor: pointer;
+}
+.user-volume__reset:disabled {
+  color: var(--lr-muted);
+  cursor: default;
+}
+.user-volume__hint {
+  color: var(--lr-muted);
+  font-size: 12px;
+}
+/* A participant this client muted for itself (#252). */
+.user-volume-muted {
+  display: inline-flex;
+  flex-shrink: 0;
+  color: var(--lr-muted);
+}

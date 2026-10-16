@@ -15,6 +15,7 @@ import {
   type ReactNode,
 } from "react";
 
+import { useSession } from "../auth/session.ts";
 import { useVoice } from "../voice/session.ts";
 import { useSpeaking } from "../voice/speaking.ts";
 import {
@@ -53,6 +54,8 @@ import {
   TrashIcon,
 } from "./Icons.tsx";
 import { UserPanel } from "./UserPanel.tsx";
+import { MemberProfileDialog } from "./MemberProfileDialog.tsx";
+import { LocallyMutedIcon } from "./UserVolumeControl.tsx";
 import { InviteDialog } from "./InviteDialog.tsx";
 import { confirmAction } from "./confirm.ts";
 import {
@@ -187,6 +190,7 @@ export function ChannelSidebar({
   const [categoryDialog, setCategoryDialog] =
     useState<CategoryDialogState | null>(null);
   const [inviting, setInviting] = useState(false);
+  const [profileId, setProfileId] = useState<string | null>(null);
   const createMenu = useMenuDetails();
 
   return (
@@ -265,6 +269,7 @@ export function ChannelSidebar({
         onEditCategory={(category) =>
           setCategoryDialog({ mode: "edit", category })
         }
+        onOpenProfile={setProfileId}
       />
 
       <UserPanel contextId={server.id} />
@@ -283,6 +288,13 @@ export function ChannelSidebar({
         open={inviting}
         onClose={() => setInviting(false)}
       />
+      {profileId ? (
+        <MemberProfileDialog
+          server={server}
+          memberId={profileId}
+          onClose={() => setProfileId(null)}
+        />
+      ) : null}
     </aside>
   );
 }
@@ -297,6 +309,7 @@ function ChannelList({
   onEditChannel,
   onCreateChannel,
   onEditCategory,
+  onOpenProfile,
 }: {
   server: ServerDetail;
   rows: SidebarRow[];
@@ -307,6 +320,7 @@ function ChannelList({
   onEditChannel: (channel: Channel) => void;
   onCreateChannel: (categoryId: string | null) => void;
   onEditCategory: (category: Category) => void;
+  onOpenProfile: (memberId: string) => void;
 }) {
   const scrollRef = useRef<HTMLDivElement>(null);
   const touch = useSyncExternalStore(
@@ -428,7 +442,11 @@ function ChannelList({
                   }}
                 />
               ) : row.kind === "participant" ? (
-                <ParticipantRowView row={row} serverId={server.id} />
+                <ParticipantRowView
+                  row={row}
+                  serverId={server.id}
+                  onOpenProfile={onOpenProfile}
+                />
               ) : (
                 <p className="sidebar-empty-category">Leer</p>
               )}
@@ -443,16 +461,28 @@ function ChannelList({
 function ParticipantRowView({
   row,
   serverId,
+  onOpenProfile,
 }: {
   row: ParticipantRow;
   serverId: string;
+  onOpenProfile: (memberId: string) => void;
 }) {
+  const me = useSession((s) => s.user?.id);
+  const self = row.member.user_id === me;
   const { member, flags, live } = row;
   const state = flags.deafened ? "taub" : flags.muted ? "stumm" : null;
   const speaking =
     useSpeaking(serverId, flags.channelId, member.user_id) && state === null;
   return (
-    <div className={`sidebar-participant${speaking ? " is-speaking" : ""}`}>
+    <div
+      className={`sidebar-participant${speaking ? " is-speaking" : ""}`}
+      onContextMenu={(event) => {
+        // Right-click or long-press: volume and local mute.
+        if (self) return;
+        event.preventDefault();
+        onOpenProfile(row.member.user_id);
+      }}
+    >
       <Avatar
         name={member.name}
         url={member.avatar_url}
@@ -465,6 +495,7 @@ function ParticipantRowView({
           <span className="sr-only">Live</span>
         </span>
       ) : null}
+      {self ? null : <LocallyMutedIcon userId={row.member.user_id} />}
       {state ? (
         <span className="sidebar-participant-state" title={state}>
           {flags.deafened ? (

@@ -22,6 +22,7 @@ import { isDesktopApp } from "./native/bridge.ts";
 import { EMPTY_OCCUPANCY, liveOf, useVoiceRoster } from "./roster.ts";
 import { useSpeakingUsers } from "./speaking.ts";
 import { VoiceTile } from "./VoiceTile.tsx";
+import { LocallyMutedIcon } from "../components/UserVolumeControl.tsx";
 import { MicrophoneTest } from "./MicrophoneTest.tsx";
 import "./room.css";
 
@@ -254,6 +255,12 @@ export function VoiceRoom({
             <li
               key={id}
               className={`voice-room-participant${speaking ? " is-speaking" : ""}`}
+              onContextMenu={(event) => {
+                // Right-click or long-press: volume and local mute.
+                if (!member || self) return;
+                event.preventDefault();
+                setProfile({ serverId: server.id, memberId: id });
+              }}
             >
               <button
                 type="button"
@@ -292,6 +299,7 @@ export function VoiceRoom({
               {media ? (
                 <span className="voice-room-participant-media">{media}</span>
               ) : null}
+              {self ? null : <LocallyMutedIcon userId={id} />}
               <VoiceStateIcons
                 inVoice
                 muted={muted}
