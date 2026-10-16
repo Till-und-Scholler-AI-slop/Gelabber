@@ -9,12 +9,13 @@ import { queryClient } from "./queryClient.ts";
 import { router } from "./routes.tsx";
 import { ThemeController } from "./theme/ThemeController.tsx";
 import { InterfacePreferences } from "./interface/InterfacePreferences.tsx";
-import { isDesktopApp } from "./voice/native/bridge.ts";
+import { isDesktopApp, markDesktopRoot } from "./voice/native/bridge.ts";
 import { trackInstallation } from "./pwa/install.ts";
 import { startPwa } from "./pwa/start.ts";
 import { watchSpeaking } from "./voice/speaking.ts";
 
 const desktop = isDesktopApp();
+markDesktopRoot(document.documentElement);
 const stopInstallTracking = trackInstallation(window, desktop);
 if (import.meta.hot) import.meta.hot.dispose(stopInstallTracking);
 const stopSpeaking = watchSpeaking();
