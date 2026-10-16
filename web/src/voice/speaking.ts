@@ -274,6 +274,8 @@ export function watchSpeaking(): () => void {
       senderTrack = track;
       senderMisses = 0;
     }
+    // After SENDER_MISSES polls in a row without a browser level, this track
+    // stays on the analyser until the send track changes (device switch).
     if (sender.rtpSender && senderMisses < SENDER_MISSES) {
       const level = await senderLevel(sender.rtpSender).catch(() => null);
       if (level !== null) {
