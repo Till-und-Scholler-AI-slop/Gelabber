@@ -12,6 +12,7 @@ const fixture = vi.hoisted(() => ({
   requestedServer: undefined as string | undefined,
   roster: {} as Record<string, Record<string, VoiceFlags>>,
   live: {} as Record<string, Record<string, string>>,
+  speaking: { call: null as string | null, users: {} as Record<string, true> },
 }));
 vi.mock("./session.ts", () => ({
   useVoice: (select?: (state: VoiceState) => unknown) =>
@@ -50,14 +51,26 @@ vi.mock("./roster.ts", () => ({
   liveOf: (live: typeof fixture.live, server: string, channel: string) =>
     live[server]?.[channel] ?? null,
 }));
+vi.mock("./speaking.ts", () => ({
+  useSpeakingUsers: (serverId: string, channelId: string) =>
+    fixture.speaking.call === `${serverId}/${channelId}`
+      ? fixture.speaking.users
+      : {},
+}));
 vi.mock("./VoiceTile.tsx", () => ({
   VoiceTile: ({
     stream,
     label,
+    speaking,
   }: {
     stream: MediaStream | null;
     label: string;
-  }) => <span data-source={stream?.id ?? "none"}>{label}</span>,
+    speaking?: boolean;
+  }) => (
+    <span data-source={stream?.id ?? "none"} data-speaking={speaking}>
+      {label}
+    </span>
+  ),
 }));
 
 import { VoiceRoom } from "./VoiceRoom.tsx";
@@ -116,7 +129,10 @@ beforeEach(() => {
     mediaDevices: { getDisplayMedia() {}, getUserMedia() {} },
   });
 });
-afterEach(() => vi.unstubAllGlobals());
+afterEach(() => {
+  vi.unstubAllGlobals();
+  fixture.speaking = { call: null, users: {} };
+});
 
 describe("active media UI", () => {
   it("renders only the Watch session's exact server, channel and publisher", () => {
@@ -346,5 +362,69 @@ describe("active media UI", () => {
     expect(renderToStaticMarkup(<VoiceSessionControls />)).not.toContain(
       "Ton starten",
     );
+  });
+
+  it("rings whoever speaks in the joined room, never a muted member", () => {
+    fixture.live = {};
+    fixture.roster = {
+      a: {
+        alice: { channelId: "stage", muted: false, deafened: false },
+        bob: { channelId: "stage", muted: true, deafened: false },
+        carol: { channelId: "stage", muted: false, deafened: false },
+      },
+    };
+    Object.assign(fixture.voice, {
+      status: "joined",
+      serverId: "a",
+      channelId: "stage",
+      watching: false,
+      muted: true,
+      participants: { alice: { pubs: ["v"] } },
+      remote: { alice: { v: stream } },
+    });
+    fixture.speaking = {
+      call: "a/stage",
+      users: { alice: true, bob: true, self: true },
+    };
+    const members = ["alice", "bob", "carol"].map((id) => ({
+      user_id: id,
+      name: id[0]!.toUpperCase() + id.slice(1),
+      avatar_url: null,
+      joined_at: "",
+      role: "member",
+    }));
+    const html = renderToStaticMarkup(
+      <VoiceRoom
+        server={{ ...server, members } as unknown as ServerDetail}
+        channelId="stage"
+        channelName="Stage"
+      />,
+    );
+    const tiles = html.match(/<li class="voice-room-participant[^"]*"/g);
+    // alice, bob (muted), carol, and the own seat (muted here).
+    expect(tiles).toEqual([
+      '<li class="voice-room-participant is-speaking"',
+      '<li class="voice-room-participant"',
+      '<li class="voice-room-participant"',
+      '<li class="voice-room-participant"',
+    ]);
+    expect(html).toContain("Spricht");
+    expect(html.match(/gel-avatar-lg is-speaking/g)).toHaveLength(1);
+    expect(html).toContain('data-source="source-from-a" data-speaking="true"');
+
+    // Another room of the same server shows no levels of this call.
+    const other = renderToStaticMarkup(
+      <VoiceRoom
+        server={{ ...server, members } as unknown as ServerDetail}
+        channelId="other"
+        channelName="Other"
+      />,
+    );
+    expect(other).not.toContain("is-speaking");
+
+    fixture.server = { ...server, members } as unknown as ServerDetail;
+    const dock = renderToStaticMarkup(<VoiceSessionControls />);
+    expect(dock).toContain('class="voice-session-people"');
+    expect(dock.match(/is-speaking/g)).toHaveLength(1);
   });
 });

@@ -957,6 +957,23 @@ function diagnosticAudioSources(): Record<string, AudioSource> {
   return sources;
 }
 
+/** The seat's microphones for the speaking indicator: the own sender and
+ * every received microphone, never screen or Live sound. */
+export function voiceMicrophones(): {
+  self: string | null;
+  sender: MediaSender | undefined;
+  received: ReceivedSource[];
+} {
+  const connection = seat.connection;
+  return {
+    self: currentUserId(),
+    sender: connection?.sender("a"),
+    received: (connection?.consumers() ?? []).filter(
+      (source) => source.kind === "audio" && source.k === "a",
+    ),
+  };
+}
+
 function voiceStreaming(): boolean {
   const state = useVoice.getState();
   return state.camera || state.sharing || state.live;
