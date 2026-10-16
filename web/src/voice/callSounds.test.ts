@@ -44,12 +44,19 @@ describe("call sounds", () => {
     settings.outputVolume = 0.5;
     player.play("join");
     expect(audio.volume).toBe(0.175);
+    // Playback above 100 % boosts calls, not the cues.
+    settings.callSoundVolume = 0.8;
+    settings.outputVolume = 2;
+    player.play("join");
+    expect(audio.volume).toBe(0.8);
+    settings.callSoundVolume = DEFAULT_MEDIA_SETTINGS.callSoundVolume;
+    settings.outputVolume = 0.5;
     player.setDeafened(true);
     player.play("join");
     player.play("leave");
-    expect(audio.play).toHaveBeenCalledTimes(1);
-    player.play("deafen");
     expect(audio.play).toHaveBeenCalledTimes(2);
+    player.play("deafen");
+    expect(audio.play).toHaveBeenCalledTimes(3);
     settings.callSounds = false;
     player.play("unmute");
     player.unlock();
@@ -59,7 +66,7 @@ describe("call sounds", () => {
     settings.callSoundVolume = 1;
     settings.outputVolume = 0;
     player.play("undeafen");
-    expect(audio.play).toHaveBeenCalledTimes(2);
+    expect(audio.play).toHaveBeenCalledTimes(3);
   });
 
   it("gives the source up once a cue ends or is stopped", () => {

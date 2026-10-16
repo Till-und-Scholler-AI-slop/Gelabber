@@ -26,6 +26,20 @@
   font-weight: 650;
   letter-spacing: -0.1px;
 }
+.dm-peer-button {
+  display: inline-flex;
+  align-items: center;
+  gap: 10px;
+  min-width: 0;
+  margin-left: -6px;
+  padding: 4px 6px;
+  border-radius: var(--lr-radius);
+  color: inherit;
+  text-align: left;
+}
+.dm-peer-button:hover {
+  background: var(--lr-hover);
+}
 .lr-header-search {
   display: inline-flex;
   align-items: center;
@@ -325,6 +339,85 @@
   border: 1px solid var(--lr-border);
   border-radius: var(--lr-radius);
   object-fit: contain;
+}
+.lr-message-gif {
+  position: relative;
+  display: block;
+  max-width: 100%;
+  margin-top: 4px;
+  padding: 0;
+  overflow: hidden;
+  border: 1px solid var(--lr-border);
+  border-radius: var(--lr-radius);
+  background: var(--lr-panel);
+}
+.lr-message-gif img,
+.lr-message-gif .lr-gif-placeholder {
+  display: block;
+  width: 100%;
+  height: 100%;
+}
+.lr-message-gif:focus-visible,
+.lr-gif-tile:focus-visible {
+  outline: 2px solid var(--lr-accent);
+  outline-offset: 2px;
+}
+.lr-message-gif-badge {
+  position: absolute;
+  bottom: 6px;
+  left: 6px;
+  padding: 1px 6px;
+  border-radius: var(--lr-radius-small);
+  background: rgb(0 0 0 / 0.65);
+  color: #fff;
+  font-size: 11px;
+  font-weight: 700;
+  letter-spacing: 0.04em;
+}
+.lr-gif-placeholder {
+  display: grid;
+  place-items: center;
+  color: var(--lr-muted);
+  font-size: 13px;
+  font-weight: 700;
+  letter-spacing: 0.04em;
+}
+.lr-gif-grid {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 6px;
+  max-height: 50dvh;
+  overflow-y: auto;
+}
+@media (min-width: 480px) {
+  .lr-gif-grid {
+    grid-template-columns: repeat(3, minmax(0, 1fr));
+  }
+}
+.lr-gif-tile {
+  height: 112px;
+  overflow: hidden;
+  border-radius: var(--lr-radius);
+  background: var(--lr-panel);
+}
+.lr-gif-tile img,
+.lr-gif-tile .lr-gif-placeholder {
+  display: block;
+  width: 100%;
+  height: 100%;
+}
+.lr-gif-tile:hover {
+  filter: brightness(1.08);
+}
+.lr-gif-attribution {
+  color: var(--lr-muted);
+  font-size: 11px;
+  text-align: right;
+}
+.lr-composer-gif {
+  font-size: 11px;
+  font-weight: 800;
+  letter-spacing: 0.04em;
 }
 .lr-lightbox {
   width: 100vw;
@@ -836,6 +929,15 @@
   border-radius: var(--lr-radius);
   font-size: 13px;
   font-weight: 600;
+}
+/* Beside both buttons a phone leaves the field a few letters wide. */
+@media (max-width: 520px) {
+  .lr-search-form input {
+    flex-basis: 100%;
+  }
+  .lr-search-submit {
+    flex: 1;
+  }
 }
 .lr-search-submit {
   background: var(--lr-accent);

@@ -12,7 +12,10 @@ export type FieldCode =
   | "too_long"
   | "taken"
   | "wrong"
-  | "stale";
+  | "stale"
+  | "exclusive"
+  | "unavailable"
+  | "not_editable";
 
 export type FieldErrors = Partial<Record<string, FieldCode>>;
 
@@ -31,6 +34,7 @@ export type ApiErrorCode =
   | "banned"
   | "rate_limited"
   | "quota_exceeded"
+  | "upstream_unavailable"
   | "internal"
   | "network"
   | "timeout";
@@ -308,6 +312,7 @@ const KNOWN_CODES: ReadonlySet<string> = new Set<ApiErrorCode>([
   "banned",
   "rate_limited",
   "quota_exceeded",
+  "upstream_unavailable",
   "internal",
 ]);
 

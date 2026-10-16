@@ -282,7 +282,7 @@ export function nativeInfo(
     channels: mode === "original" ? 2 : 1,
     echoCancellation: settings.echoCancellation,
     noiseSuppression: mode === "browser" && settings.noiseSuppression,
-    autoGainControl: mode === "browser" && settings.autoGainControl,
+    autoGainControl: mode !== "original" && settings.autoGainControl,
     addedBufferMs: mode === "enhanced" ? 10 : 0,
     inputGain: settings.inputGain,
     contextState: null,
@@ -320,7 +320,7 @@ export async function captureNativeMicrophone(
     noiseSuppression:
       settings.processingMode === "browser" && settings.noiseSuppression,
     autoGainControl:
-      settings.processingMode === "browser" && settings.autoGainControl,
+      settings.processingMode !== "original" && settings.autoGainControl,
   };
   const track = new NativeTrack("audio", "Mikrofon", { source }, trackSettings);
   const raw = new NativeStream([

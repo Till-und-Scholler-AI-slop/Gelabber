@@ -222,8 +222,9 @@ export class NativeAudioOutput {
   get volume(): number {
     return this.level;
   }
+  /** 0–2, unlike the element's 0–1: the native core scales playout itself. */
   set volume(value: number) {
-    this.level = Math.min(1, Math.max(0, value));
+    this.level = Math.min(2, Math.max(0, value));
     this.apply();
   }
   get muted(): boolean {
@@ -278,6 +279,10 @@ export class NativeAudioOutput {
       });
     }
   }
+}
+
+export function isNativeAudioOutput(el: unknown): el is NativeAudioOutput {
+  return el instanceof NativeAudioOutput;
 }
 
 /** `new MediaStream(tracks)` that also holds native tracks in the desktop app. */

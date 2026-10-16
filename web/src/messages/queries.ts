@@ -22,6 +22,7 @@ import { useSession } from "../auth/session.ts";
 import { notifyError } from "../components/toasts.ts";
 import { randomUuid } from "../lib/uuid.ts";
 import { isPendingId } from "../servers/queries.ts";
+import type { GifPick } from "../gifs/api.ts";
 import { refreshChatWorkflows } from "./readState.ts";
 import * as remote from "./api.ts";
 import {
@@ -368,6 +369,8 @@ export function messageQueryOptions(
 export type SendInput = {
   content: string;
   file?: File;
+  /** Sent alone: no text, no file. */
+  gif?: GifPick;
 };
 
 function localAttachment(file: File): Attachment {
@@ -414,10 +417,11 @@ export async function sendMessageAttempt(
       id,
       channelId,
       stamp,
-      content: normaliseContent(input.content),
-      file: input.file,
+      content: input.gif ? "" : normaliseContent(input.content),
+      file: input.gif ? undefined : input.file,
+      gif: input.gif,
       status: "sending",
-      stage: input.file ? "presign" : "bind",
+      stage: input.file && !input.gif ? "presign" : "bind",
       controller: new AbortController(),
     };
     addPending(channelId, {
@@ -427,7 +431,8 @@ export async function sendMessageAttempt(
       content: attempt.content,
       created_at: now(),
       edited_at: null,
-      attachments: input.file ? [localAttachment(input.file)] : [],
+      attachments: attempt.file ? [localAttachment(attempt.file)] : [],
+      gif: input.gif?.gif ?? null,
     });
   }
   requireAttempt(attempt);
@@ -464,6 +469,7 @@ export async function sendMessageAttempt(
       channelId,
       attempt.content,
       attempt.uploadedId ? [attempt.uploadedId] : [],
+      attempt.gif,
     );
     requireAttempt(attempt);
     confirmPending(channelId, attempt.id, message);

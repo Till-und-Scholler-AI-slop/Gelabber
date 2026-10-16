@@ -764,6 +764,50 @@ async fn presence_online_idle_offline_without_bumping_chat_seq(pool: PgPool) {
 }
 
 #[sqlx::test]
+async fn coming_online_publishes_one_presence_frame(pool: PgPool) {
+    let (mut owner, mut member) = two_users(pool.clone()).await;
+    let server = create_server(&mut owner, "Once").await;
+    let (server_id, channel_id) = ids(&server);
+    join_member(&mut owner, &mut member, &server_id.to_string()).await;
+
+    let (addr, _state) = common::serve_ws(pool).await;
+    let mut owner_ws = connect(addr, &session_cookie(&owner), None).await;
+    let mut member_ws = connect(addr, &session_cookie(&member), None).await;
+    send_json(&mut owner_ws, json!({ "op": "s", "s": server_id })).await;
+    recv_until(&mut owner_ws, |f| f["op"] == "p" && f.get("snap").is_some()).await;
+
+    send_json(&mut member_ws, json!({ "op": "s", "s": server_id })).await;
+    send_json(
+        &mut member_ws,
+        json!({ "op": "s", "s": server_id, "c": channel_id }),
+    )
+    .await;
+    recv_until(&mut member_ws, |f| {
+        f["op"] == "ok" && f["c"] == channel_id.to_string()
+    })
+    .await;
+    recv_until(&mut member_ws, |f| {
+        f["op"] == "p" && f.get("snap").is_some()
+    })
+    .await;
+    send_json(&mut member_ws, json!({ "op": "p", "st": "i" })).await;
+
+    let mut online = 0;
+    loop {
+        let frame = recv_json(&mut owner_ws).await;
+        if frame["op"] != "p" || frame["u"] != member.user_id() {
+            continue;
+        }
+        if frame["st"] == "i" {
+            break;
+        }
+        assert_eq!(frame["st"], "o", "{frame}");
+        online += 1;
+    }
+    assert_eq!(online, 1, "one frame per presence change");
+}
+
+#[sqlx::test]
 async fn two_clients_keep_user_online_until_the_last_goes_idle(pool: PgPool) {
     let (mut owner, _) = two_users(pool.clone()).await;
     let server = create_server(&mut owner, "Tabs").await;

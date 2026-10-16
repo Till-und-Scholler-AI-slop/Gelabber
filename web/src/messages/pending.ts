@@ -4,6 +4,7 @@
 import { create } from "zustand";
 
 import type { ScopeStamp } from "../auth/scope.ts";
+import type { GifPick } from "../gifs/api.ts";
 
 import { asAttachmentList, type Message } from "./types.ts";
 
@@ -18,6 +19,7 @@ export type SendAttempt = {
   stamp: ScopeStamp;
   content: string;
   file?: File;
+  gif?: GifPick;
   status: "sending" | "failed" | "uncertain";
   stage: SendStage;
   error?: string;

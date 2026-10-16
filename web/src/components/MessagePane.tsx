@@ -69,11 +69,16 @@ import {
   validateAttachment,
   validateContent,
 } from "../messages/rules.ts";
-import type { Attachment, Message } from "../messages/types.ts";
-import { asAttachmentList } from "../messages/types.ts";
+import type { Attachment, Gif, Message } from "../messages/types.ts";
+import { asAttachmentList, asGif } from "../messages/types.ts";
+import { gifBox, gifLabel, type GifPick } from "../gifs/api.ts";
+import { useGifStatus } from "../gifs/queries.ts";
+import { useReducedMotion } from "../interface/useReducedMotion.ts";
+import GifPicker, { GifMessageButton } from "./GifPicker.tsx";
 import { Avatar } from "./Avatar.tsx";
 import { sizeByDraft, type DraftHeight } from "./composerHeight.ts";
 import { EmojiPickerLoader, ReactionBar } from "./ReactionBar.tsx";
+import { confirmAction } from "./confirm.ts";
 import { Modal } from "./Modal.tsx";
 import { ImageLightbox, type LightboxImage } from "./ImageLightbox.tsx";
 import { isPlainClick } from "./plainClick.ts";
@@ -328,8 +333,8 @@ export function MessagePane({
                     onEdit={(content) =>
                       contextEdit.mutate({ id: message.id, content })
                     }
-                    onDelete={() => {
-                      if (window.confirm("Diese Nachricht wirklich löschen?"))
+                    onDelete={async () => {
+                      if (await confirmDelete(message, user?.id))
                         contextRemove.mutate(message.id);
                     }}
                   />
@@ -454,6 +459,13 @@ function MessageList({
       const breaks =
         (dayBreak(items[index - 1], message) ? 40 : 0) +
         (index === newIndex ? 28 : 0);
+      const gif = asGif(message.gif);
+      if (gif)
+        return (
+          breaks +
+          gifBox(gif).height +
+          (isContinued(items[index - 1], message) ? 16 : 60)
+        );
       // The image box is a fixed 240 px (chat.css), plus header and gaps.
       if (image)
         return breaks + (isContinued(items[index - 1], message) ? 256 : 300);
@@ -798,14 +810,9 @@ function MessageList({
                 canSend={canSend}
                 canDelete={message.author.id === meId || canModerate}
                 onEdit={(content) => edit.mutate({ id: message.id, content })}
-                onDelete={() => {
-                  const own = message.author.id === meId;
-                  const ok = window.confirm(
-                    own
-                      ? "Diese Nachricht wirklich löschen?"
-                      : `Nachricht von ${message.author.name} löschen?`,
-                  );
-                  if (ok) remove.mutate(message.id);
+                onDelete={async () => {
+                  if (await confirmDelete(message, meId))
+                    remove.mutate(message.id);
                 }}
               />
             </div>
@@ -814,6 +821,17 @@ function MessageList({
       </div>
     </div>
   );
+}
+
+function confirmDelete(message: Message, meId: string | undefined) {
+  const own = message.author.id === meId;
+  return confirmAction({
+    title: own
+      ? "Nachricht löschen?"
+      : `Nachricht von ${message.author.name} löschen?`,
+    message: "Das lässt sich nicht rückgängig machen.",
+    confirmLabel: "Löschen",
+  });
 }
 
 function MessageRow({
@@ -868,7 +886,8 @@ function MessageRow({
       : validateContent(draft)
     : null;
   const showDelete = canDelete && !pending && !editing;
-  const showEdit = mine && canSend && !pending && !editing;
+  const gif = asGif(message.gif);
+  const showEdit = mine && canSend && !pending && !editing && !gif;
   const canReact = canSend && !pending && !editing;
   const [reactionSlot, setReactionSlot] = useState<HTMLSpanElement | null>(
     null,
@@ -914,6 +933,7 @@ function MessageRow({
               ) : null}
             </p>
           ) : null}
+          {gif ? <GifMessage gif={gif} /> : null}
           <AttachmentList attachments={message.attachments ?? []} />
           <ReactionBar
             message={message}
@@ -989,14 +1009,15 @@ function MessageRow({
               </button>
             </div>
           </form>
-        ) : (
+        ) : message.content || !gif ? (
           <p className="lr-message-text">
             {message.content}
             {message.edited_at ? (
               <span className="lr-message-edited">(bearbeitet)</span>
             ) : null}
           </p>
-        )}
+        ) : null}
+        {!editing && gif ? <GifMessage gif={gif} /> : null}
         {!editing ? (
           <AttachmentList attachments={message.attachments ?? []} />
         ) : null}
@@ -1048,6 +1069,9 @@ function Composer({
   const setFile = (file: File | null) => updateDraft({ file });
   const [fileError, setFileError] = useState<string | null>(null);
   const [emojiOpen, setEmojiOpen] = useState(false);
+  const [gifOpen, setGifOpen] = useState(false);
+  const gifs = useGifStatus();
+  const gifsEnabled = gifs.data?.enabled === true;
   const fileInput = useRef<HTMLInputElement>(null);
   const composerInput = useRef<HTMLTextAreaElement>(null);
   const composerForm = useRef<HTMLFormElement>(null);
@@ -1188,6 +1212,13 @@ function Composer({
     keepKeyboard.current = false;
   };
 
+  const sendGif = (pick: GifPick) => {
+    setGifOpen(false);
+    if (!canSend || !author) return;
+    send.mutate({ content: "", gif: pick });
+    composerInput.current?.focus();
+  };
+
   const insertText = (text: string) => {
     const input = composerInput.current;
     const start = input?.selectionStart ?? draft.length;
@@ -1237,7 +1268,9 @@ function Composer({
                 ? "Die Nachricht kann bereits gespeichert sein. Prüfe den Verlauf vor erneutem Senden."
                 : "Text und Datei bleiben für dich erhalten."}
             </p>
-            <p className="lr-send-failure-content">{attempt.content}</p>
+            <p className="lr-send-failure-content">
+              {attempt.gif ? gifLabel(attempt.gif.gif) : attempt.content}
+            </p>
             {attempt.file ? <p>{attempt.file.name}</p> : null}
             <div className="lr-send-failure-actions">
               {attempt.status === "failed" ? (
@@ -1254,17 +1287,19 @@ function Composer({
                   Sendung wiederholen
                 </button>
               ) : null}
-              <button
-                type="button"
-                onClick={() => {
-                  setDraft(attempt.content);
-                  pickFile(attempt.file ?? null);
-                  discardAttempt(attempt.id);
-                  composerInput.current?.focus();
-                }}
-              >
-                Entwurf übernehmen
-              </button>
+              {attempt.gif ? null : (
+                <button
+                  type="button"
+                  onClick={() => {
+                    setDraft(attempt.content);
+                    pickFile(attempt.file ?? null);
+                    discardAttempt(attempt.id);
+                    composerInput.current?.focus();
+                  }}
+                >
+                  Entwurf übernehmen
+                </button>
+              )}
               <button type="button" onClick={() => discardAttempt(attempt.id)}>
                 Verwerfen
               </button>
@@ -1353,6 +1388,17 @@ function Composer({
           >
             <SmileIcon size={18} />
           </button>
+          {gifsEnabled ? (
+            <button
+              type="button"
+              title="GIF senden"
+              aria-label="GIF senden"
+              onClick={() => setGifOpen(true)}
+              className="lr-composer-icon lr-composer-gif"
+            >
+              <span aria-hidden="true">GIF</span>
+            </button>
+          ) : null}
           <button
             type="submit"
             disabled={disabled}
@@ -1387,6 +1433,16 @@ function Composer({
           />
         ) : null}
       </Modal>
+      {gifsEnabled ? (
+        <Modal
+          open={gifOpen}
+          onClose={() => setGifOpen(false)}
+          title="GIF senden"
+          wide
+        >
+          {gifOpen ? <GifPicker onSelect={sendGif} /> : null}
+        </Modal>
+      ) : null}
       {remaining < 200 || error || fileError ? (
         <div className="lr-composer-status">
           {remaining < 200 ? (
@@ -1406,6 +1462,10 @@ function Composer({
       ) : null}
     </form>
   );
+}
+
+function GifMessage({ gif }: { gif: Gif }) {
+  return <GifMessageButton gif={gif} reduced={useReducedMotion()} />;
 }
 
 function AttachmentList({ attachments }: { attachments: Attachment[] }) {

@@ -36,7 +36,8 @@ export function MemberPanel({ server }: { server: ServerDetail }) {
   const hidden = useMemberPanelHidden();
   const serverId = server.id;
   const members = server.members;
-  const me = useSession((state) => state.user?.id);
+  const meUser = useSession((state) => state.user);
+  const me = meUser?.id;
   const byServer = usePresenceStore((state) => state.byServer);
   const roster = useVoiceRoster((state) => state.byServer);
   const live = useVoiceRoster((state) => state.live);
@@ -90,8 +91,20 @@ export function MemberPanel({ server }: { server: ServerDetail }) {
                   {group.label} <span>{group.members.length}</span>
                 </p>
                 <ul>
-                  {group.members.map((member) => {
-                    const self = member.user_id === me;
+                  {group.members.map((listed) => {
+                    const self = listed.user_id === me;
+                    // Your own row follows your edits without a refetch.
+                    const member =
+                      self && meUser
+                        ? {
+                            ...listed,
+                            name: meUser.name,
+                            avatar_url: meUser.avatar_url,
+                            status_text: meUser.status_text,
+                            accent_color: meUser.accent_color,
+                            avatar_decoration: meUser.avatar_decoration,
+                          }
+                        : listed;
                     const flags = flagsFor(
                       roster,
                       serverId,
@@ -121,13 +134,27 @@ export function MemberPanel({ server }: { server: ServerDetail }) {
                             status={group.group}
                             size="md"
                             className="member-presence-avatar"
+                            decoration={member.avatar_decoration}
+                            accent={member.accent_color}
                           />
                           <span className="member-description">
                             <strong>
                               {member.name}
                               {self && <small> · Du</small>}
                             </strong>
-                            <span>{group.label}</span>
+                            {member.status_text ? (
+                              <span
+                                className="member-status-text"
+                                title={member.status_text}
+                              >
+                                {/* The status text takes the line; screen
+                                    readers still hear the presence. */}
+                                <span className="sr-only">{group.label}: </span>
+                                {member.status_text}
+                              </span>
+                            ) : (
+                              <span>{group.label}</span>
+                            )}
                             {isLive ? (
                               <small>Teilt live seinen Bildschirm</small>
                             ) : flags ? (

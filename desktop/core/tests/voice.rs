@@ -368,10 +368,12 @@ async fn voice_modes(server: &Server, mic_id: &str, speakers_id: &str) {
     // (a remapped null-sink monitor) records only zeros after a quick
     // capture restart.
 
-    // "enhanced": RNNoise takes the noise out.
+    // "enhanced": RNNoise takes the noise out (AGC off, so the levels
+    // compare RNNoise alone).
     let enhanced = Source::microphone(
         &engine,
-        &json!({"processingMode": "enhanced", "echoCancellation": false}),
+        &json!({"processingMode": "enhanced", "autoGainControl": false,
+                "echoCancellation": false}),
     )
     .unwrap();
     let enhanced_producer =
@@ -386,6 +388,25 @@ async fn voice_modes(server: &Server, mic_id: &str, speakers_id: &str) {
     );
     drop(browser_producer);
 
+    // "enhanced" as configured by default, with AGC ahead of RNNoise: the
+    // raised noise floor is still taken out.
+    let leveled = Source::microphone(
+        &engine,
+        &json!({"processingMode": "enhanced", "echoCancellation": false}),
+    )
+    .unwrap();
+    let leveled_producer =
+        produce(&send, &leveled, json!({"codecOptions": {"opusDtx": true}})).await;
+    drop(enhanced_producer);
+    let agc = levels_when(&engine, "enhanced mode with AGC", |l| {
+        l["denoised"] == true && level(l, "input") >= 10.0
+    })
+    .await;
+    assert!(
+        level(&agc, "processed") * 3.0 <= level(&agc, "input"),
+        "RNNoise suppresses white noise behind AGC: {agc}"
+    );
+
     // "original": stereo Opus, no processing.
     let original = Source::microphone(
         &engine,
@@ -398,7 +419,7 @@ async fn voice_modes(server: &Server, mic_id: &str, speakers_id: &str) {
         json!({"codecOptions": {"opusStereo": true, "opusDtx": false}}),
     )
     .await;
-    drop(enhanced_producer);
+    drop(leveled_producer);
     eprintln!(
         "original rtpParameters: {}",
         original_producer.rtp_parameters().unwrap()["codecs"]

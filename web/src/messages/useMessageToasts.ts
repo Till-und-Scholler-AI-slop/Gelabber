@@ -27,7 +27,7 @@ import {
 } from "./notify.ts";
 import { useMessageToasts } from "./toasts.ts";
 import type { Message } from "./types.ts";
-import { asAttachmentList } from "./types.ts";
+import { asAttachmentList, asGif } from "./types.ts";
 
 function asCreated(delta: unknown): Message | null {
   if (delta === null || typeof delta !== "object") return null;
@@ -50,6 +50,7 @@ function asCreated(delta: unknown): Message | null {
     created_at: value.created_at ?? new Date().toISOString(),
     edited_at: value.edited_at ?? null,
     attachments: asAttachmentList(value.attachments),
+    gif: asGif(value.gif),
   };
 }
 
@@ -133,6 +134,7 @@ export function useMessageToastsBridge(): void {
       const preview = previewText(
         message.content,
         asAttachmentList(message.attachments).length > 0,
+        Boolean(message.gif),
       );
       if (decision.toast)
         useMessageToasts.getState().push({

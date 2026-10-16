@@ -53,9 +53,22 @@ import {
   nativeGetUserMedia,
 } from "./native/capture.ts";
 import { loadNativeFeatures } from "./native/features.ts";
-import { createAudioOutput, createStream } from "./native/tracks.ts";
+import {
+  createAudioOutput,
+  createStream,
+  isNativeAudioOutput,
+} from "./native/tracks.ts";
+import {
+  boost,
+  boostOutput,
+  isBoosted,
+  releaseBoost,
+  resetPlaybackBoostForTests,
+  startBoostOutput,
+} from "./playbackBoost.ts";
 import {
   createMediaConnection,
+  preloadMediaSdk,
   type MediaConnection,
   type MediaConnectionOptions,
   type MediaPublication,
@@ -231,6 +244,8 @@ const sourceAudio = new Map<
 >();
 const blockedPlayback = new Set<HTMLAudioElement>();
 let remoteMix: MediaStream | null = null;
+/** The browser blocked the boost output: play at 100 % until a click. */
+let boostBlocked = false;
 let bound = false;
 let micEpoch = 0;
 /** A microphone prompt that a seat rebuild overtook. Its answer belonged to
@@ -420,6 +435,7 @@ function updatePlaybackBlocked(): void {
 function playAudio(el: HTMLAudioElement): void {
   const stream = el.srcObject;
   if (!stream) return;
+  const boosted = isBoosted(el);
   const failed = (error: unknown) => {
     if (
       el.srcObject !== stream ||
@@ -427,11 +443,17 @@ function playAudio(el: HTMLAudioElement): void {
     )
       return;
     blockedPlayback.add(el);
+    if (boosted && isBoosted(el)) {
+      // The muted element would stay silent: play it at 100 % meanwhile.
+      boostBlocked = true;
+      applyPlayback();
+    }
     updatePlaybackBlocked();
   };
   try {
-    void el
-      .play()
+    const started = el.play();
+    // A boosted element is heard through the shared boost output instead.
+    void (boosted ? Promise.all([started, startBoostOutput()]) : started)
       ?.then(() => {
         if (el.srcObject !== stream) return;
         blockedPlayback.delete(el);
@@ -445,6 +467,9 @@ function playAudio(el: HTMLAudioElement): void {
 
 /** Call synchronously from a click so the browser grants playback activation. */
 export function retryPlayback(): void {
+  // The click also allows the boost again; applyPlayback restarts it.
+  boostBlocked = false;
+  applyPlayback();
   for (const el of [
     remoteAudio,
     ...watchAudio.values(),
@@ -1100,16 +1125,12 @@ function closeReceivedSource(
     remoteMix?.removeTrack(source.track);
     const held = sourceAudio.get(source.track);
     if (held) {
-      held.el.pause?.();
-      held.el.srcObject = null;
-      blockedPlayback.delete(held.el);
+      silenceAudio(held.el);
       sourceAudio.delete(source.track);
     }
     const el = watchAudio.get(source.track);
     if (el) {
-      el.pause?.();
-      el.srcObject = null;
-      blockedPlayback.delete(el);
+      silenceAudio(el);
       watchAudio.delete(source.track);
     }
     updatePlaybackBlocked();
@@ -1271,6 +1292,7 @@ function stopPeer(preserveCapture = false): void {
     // "playing audio" indicator after the call is over.
     remoteAudio.pause?.();
     remoteAudio.srcObject = null;
+    releaseBoost(remoteAudio);
     blockedPlayback.delete(remoteAudio);
     updatePlaybackBlocked();
   }
@@ -1374,16 +1396,50 @@ function applyPlayback(): void {
   const deafened = useVoice.getState().deafened;
   for (const el of [remoteAudio, ...watchAudio.values()]) {
     if (!el) continue;
-    el.muted = deafened;
-    el.volume = volume;
+    setOutputVolume(el, deafened, volume);
     void applySink(el);
   }
   const settings = useMediaSettings.getState();
   for (const { el } of sourceAudio.values()) {
-    el.muted = deafened || settings.sourceAudioMuted;
-    el.volume = deafened ? 0 : settings.sourceAudioVolume;
+    setOutputVolume(
+      el,
+      deafened || settings.sourceAudioMuted,
+      deafened ? 0 : settings.sourceAudioVolume,
+    );
     void applySink(el);
   }
+  const boosted = boostOutput();
+  if (boosted) void applySink(boosted);
+}
+
+/** Up to 100 % on the element itself, above that through the Web Audio
+ * boost. Native outputs scale up to 200 % on their own. */
+function setOutputVolume(
+  el: HTMLAudioElement,
+  muted: boolean,
+  volume: number,
+): void {
+  if (!muted && volume > 1 && !boostBlocked && !isNativeAudioOutput(el)) {
+    const wasBoosted = isBoosted(el);
+    if (boost(el, volume)) {
+      // Still playing, so Chromium keeps feeding the boost; heard through it.
+      el.muted = true;
+      el.volume = 1;
+      if (!wasBoosted) playAudio(el);
+      return;
+    }
+  }
+  releaseBoost(el);
+  el.muted = muted;
+  el.volume = isNativeAudioOutput(el) ? volume : Math.min(1, volume);
+}
+
+/** Stops an element the session no longer plays. */
+function silenceAudio(el: HTMLAudioElement): void {
+  el.pause?.();
+  el.srcObject = null;
+  releaseBoost(el);
+  blockedPlayback.delete(el);
 }
 
 async function applySink(el: HTMLAudioElement): Promise<void> {
@@ -2888,6 +2944,8 @@ export function resetVoiceForTests(): void {
   clearWatchReconnectTimer();
   stopWatchPeer();
   stopPeer();
+  resetPlaybackBoostForTests();
+  boostBlocked = false;
   remoteAudio = null;
   sourceAudio.clear();
   watchAudio.clear();
@@ -3567,9 +3625,7 @@ function clearSourcePlayback(
       (kind && entry.kind !== kind)
     )
       continue;
-    entry.el.pause?.();
-    entry.el.srcObject = null;
-    blockedPlayback.delete(entry.el);
+    silenceAudio(entry.el);
     sourceAudio.delete(track);
   }
   updatePlaybackBlocked();
@@ -3586,9 +3642,7 @@ function attachSourceAudio(
   if (remoteMix?.getTracks().includes(track)) remoteMix.removeTrack(track);
   const voiceElement = watchAudio.get(track);
   if (voiceElement) {
-    voiceElement.pause?.();
-    voiceElement.srcObject = null;
-    blockedPlayback.delete(voiceElement);
+    silenceAudio(voiceElement);
     watchAudio.delete(track);
   }
   const state = useVoice.getState();
@@ -3643,9 +3697,7 @@ function attachSourceAudio(
     receivedSourceAudio.delete(track);
     receivedAudioSources.delete(track);
     sourceAudio.delete(track);
-    el.pause?.();
-    el.srcObject = null;
-    blockedPlayback.delete(el);
+    silenceAudio(el);
     updatePlaybackBlocked();
   });
   applyPlayback();
@@ -3735,6 +3787,21 @@ function scheduleSeatRebuild(): void {
   );
 }
 
+/** The browser SDK's chunk did not arrive (`sdk_load_*`); `again` says how
+ * to retry. A tab whose chunk a deploy replaced only recovers by reloading. */
+function sdkLoadError(error: unknown, again: string): Error | null {
+  if (!(error instanceof MediaError)) return null;
+  if (error.code === "sdk_load_failed")
+    return new Error(
+      `Die Anruffunktion konnte nicht geladen werden. Bitte Gelabber neu laden und ${again}`,
+    );
+  if (error.code === "sdk_load_timeout")
+    return new Error(
+      `Die Anruffunktion lädt gerade sehr langsam. Bitte gleich ${again}`,
+    );
+  return null;
+}
+
 function retryableTicketError(error: unknown): boolean {
   return (
     !(error instanceof ApiError) ||
@@ -3763,6 +3830,7 @@ async function startPeer(
   const openMedia = deps?.openMedia ?? openMediaSocket;
   const getUserMedia = deps?.getUserMedia ?? defaultGetUserMedia;
   let pc: MediaConnection;
+  if (!deps?.createMediaConnection) preloadMediaSdk();
   try {
     const ticket = await fetchTicket(channelId);
     if (seat.generation !== mine) return;
@@ -3808,6 +3876,11 @@ async function startPeer(
           "Bitte Gelabber aktualisieren und den Sprachkanal erneut betreten.",
         ),
       );
+      return;
+    }
+    const unloaded = sdkLoadError(error, "den Sprachkanal erneut betreten.");
+    if (unloaded) {
+      rollbackSeat(unloaded);
       return;
     }
     if (recovering && retryableTicketError(error)) {
@@ -3977,11 +4050,7 @@ function stopWatchPeer(preserveRetry = false): void {
   clearSourcePlayback("watch");
   for (const [track, source] of receivedAudioSources)
     if (source.role === "watch") receivedAudioSources.delete(track);
-  for (const el of watchAudio.values()) {
-    el.pause?.();
-    el.srcObject = null;
-    blockedPlayback.delete(el);
-  }
+  for (const el of watchAudio.values()) silenceAudio(el);
   watchAudio.clear();
   updatePlaybackBlocked();
 }
@@ -4006,9 +4075,7 @@ function attachWatchIncoming(
     track.addEventListener("ended", () => {
       if (watchAudio.get(track) !== el) return;
       watchAudio.delete(track);
-      el.pause?.();
-      el.srcObject = null;
-      blockedPlayback.delete(el);
+      silenceAudio(el);
       updatePlaybackBlocked();
     });
     applyPlayback();
@@ -4095,6 +4162,7 @@ async function startWatchPeer(
   try {
     const publisher = useVoice.getState().watchPublisherId;
     if (!publisher) throw new MediaError("watch_unavailable");
+    if (!deps?.createMediaConnection) preloadMediaSdk();
     const ticket = await fetchTicket(channelId);
     if (watchCall.generation !== mine) return;
     if (useVoice.getState().watchPublisherId !== publisher)
@@ -4128,6 +4196,12 @@ async function startWatchPeer(
       attachWatchDiagnostics(mine);
   } catch (error) {
     if (watchCall.generation !== mine) return;
+    const unloaded = sdkLoadError(error, "den Stream erneut öffnen.");
+    if (unloaded) {
+      stopWatching();
+      deps?.onError?.(unloaded);
+      return;
+    }
     if (
       recovering &&
       retryableTicketError(error) &&

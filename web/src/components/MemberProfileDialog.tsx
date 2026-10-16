@@ -4,13 +4,15 @@ import { useEffect, useRef } from "react";
 import { stampHolds, takeStamp } from "../auth/scope.ts";
 import { useSession } from "../auth/session.ts";
 import { findCachedDm, useOpenDm } from "../dms/queries.ts";
+import { useUserProfile } from "../profile/queries.ts";
 import type { ServerDetail } from "../servers/types.ts";
 import { useVoiceRoster, voiceOf } from "../voice/roster.ts";
 import { presenceOf, usePresenceStore } from "../ws/live.ts";
 import { ChatIcon, SpeakerIcon } from "./Icons.tsx";
 import { MemberActions } from "./MemberActions.tsx";
 import { GhostButton, Modal } from "./Modal.tsx";
-import { PresenceAvatar } from "./PresenceAvatar.tsx";
+import { ProfileCardView, type CardPerson } from "./ProfileCard.tsx";
+import { withCard } from "./profileStyle.ts";
 
 export function MemberProfileDialog({
   server,
@@ -61,6 +63,14 @@ export function MemberProfileDialog({
     : undefined;
   const joinedAt = member ? new Date(member.joined_at) : null;
   const self = member?.user_id === me;
+  const sessionUser = useSession((s) => s.user);
+  // Your own card comes from the session, which every save updates at once.
+  const { data: card } = useUserProfile(memberId, Boolean(member) && !self);
+  const person: CardPerson | null = member
+    ? self && sessionUser
+      ? sessionUser
+      : withCard(member, card, member.user_id)
+    : null;
 
   return (
     <Modal
@@ -68,26 +78,9 @@ export function MemberProfileDialog({
       title={self ? "Dein Profil" : `Profil von ${member?.name ?? "Mitglied"}`}
       onClose={close}
     >
-      {member ? (
+      {member && person ? (
         <div className="member-profile">
-          <div className="member-profile__person">
-            <PresenceAvatar
-              name={member.name}
-              url={member.avatar_url}
-              status={presence}
-              size="lg"
-            />
-            <div>
-              <h3>{member.name}</h3>
-              <p>
-                {presence === "o"
-                  ? "Online"
-                  : presence === "i"
-                    ? "Abwesend"
-                    : "Offline"}
-              </p>
-            </div>
-          </div>
+          <ProfileCardView person={person} presence={presence} />
           <dl className="member-profile__details">
             <div>
               <dt>Community</dt>

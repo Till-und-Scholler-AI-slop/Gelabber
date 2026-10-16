@@ -1,6 +1,7 @@
 //! One WebSocket: session already checked, then subscribe / heartbeat /
 //! catch-up / presence / typing.
 
+use std::collections::HashMap;
 use std::time::Instant;
 
 use axum::extract::ws::{Message, Utf8Bytes, WebSocket};
@@ -145,11 +146,8 @@ pub async fn run(socket: WebSocket, state: AppState, session: CurrentSession) {
             }
             frame = rx.recv() => {
                 let Some(frame) = frame else { break };
-                let Ok(Ok(Some(mut session_guard))) = tokio::time::timeout(std::time::Duration::from_secs(1), session.lock_live(&state.db)).await else { break; };
-                if state.gateway.reconcile_access(conn, &mut session_guard).await.is_err() { break; }
-                if !state.gateway.wants_frame(conn, &frame).await { continue; }
-                if !frame_allowed(&mut session_guard, user.id, &frame).await.unwrap_or(false) { continue; }
-                if send(&mut sink, frame).await.is_err() {
+                let Ok(batch) = take_batch(frame, &mut rx) else { break };
+                if deliver(&state, &session, user.id, conn, &mut sink, batch).await.is_err() {
                     break;
                 }
             }
@@ -310,10 +308,6 @@ async fn subscribe(
 
     // Presence is ephemeral: announce after the sequenced `ok` so a snapshot
     // never looks like catch-up and never bumps `n`.
-    state
-        .gateway
-        .set_conn_status(conn, PresenceStatus::Online)
-        .await?;
     state.gateway.announce_server(conn, server_id).await?;
     let snap = state.gateway.presence_snapshot(server_id).await?;
     send(sink, ServerFrame::presence_snap(server_id, snap)).await?;
@@ -407,13 +401,108 @@ async fn authorize(
     Ok(())
 }
 
-/// Check at dequeue time too: already queued events cannot leak after removal.
-async fn frame_allowed(
-    db: &mut sqlx::PgConnection,
+/// Frames already queued behind `first` share its dequeue check: one session
+/// lock, one authorization per scope, one write. Bounded so a batch takes no
+/// longer to write than one large frame did before. The byte bound is checked
+/// before taking the next frame, so a batch holds at most `BATCH_BYTES` plus
+/// one frame of any size.
+const BATCH_FRAMES: usize = 64;
+const BATCH_BYTES: usize = 16 * 1024;
+
+type Scope = (Uuid, Option<Uuid>);
+
+fn take_batch(
+    first: ServerFrame,
+    rx: &mut mpsc::Receiver<ServerFrame>,
+) -> Result<Vec<(ServerFrame, String)>, ApiError> {
+    let json = to_json(&first)?;
+    let mut bytes = json.len();
+    let mut batch = vec![(first, json)];
+    while batch.len() < BATCH_FRAMES && bytes < BATCH_BYTES {
+        let Ok(frame) = rx.try_recv() else { break };
+        let json = to_json(&frame)?;
+        bytes += json.len();
+        batch.push((frame, json));
+    }
+    Ok(batch)
+}
+
+/// Write a batch as consecutive runs of frames for one server, each in its
+/// own live-session transaction: one `reconcile_access`, one authorization
+/// per scope, then write and end it. The server row lock from a run's scope
+/// check is held until that run is flushed (so a kick cannot commit between
+/// check and write), but never across another server's frames, and no
+/// transaction holds more than one server row. Unscoped frames join the
+/// current run; queue order is kept.
+async fn deliver(
+    state: &AppState,
+    session: &CurrentSession,
     user_id: Uuid,
-    frame: &ServerFrame,
-) -> Result<bool, ApiError> {
-    let scope = match frame {
+    conn: ConnId,
+    sink: &mut futures_util::stream::SplitSink<WebSocket, Message>,
+    batch: Vec<(ServerFrame, String)>,
+) -> Result<(), ApiError> {
+    for run in server_runs(batch) {
+        let mut db = tokio::time::timeout(
+            std::time::Duration::from_secs(1),
+            session.lock_live(&state.db),
+        )
+        .await
+        .map_err(|_| ApiError::Internal("session lock timed out".into()))??
+        .ok_or(ApiError::Unauthenticated)?;
+        state.gateway.reconcile_access(conn, &mut db).await?;
+        let mut allowed = HashMap::new();
+        let mut out = Vec::with_capacity(run.len());
+        for (frame, json) in run {
+            if !state.gateway.wants_frame(conn, &frame).await {
+                continue;
+            }
+            let ok = match frame_scope(&frame) {
+                None => true,
+                Some(scope) => match allowed.get(&scope) {
+                    Some(&ok) => ok,
+                    // An error aborts the transaction: the caller ends the
+                    // socket and the client resyncs.
+                    None => *allowed
+                        .entry(scope)
+                        .or_insert(scope_allowed(&mut db, user_id, scope).await?),
+                },
+            };
+            if ok {
+                out.push(json);
+            }
+        }
+        send_texts(sink, out).await?;
+        // Read-only: end it now so this server's row lock is released before
+        // the next run takes its own.
+        db.rollback().await?;
+    }
+    Ok(())
+}
+
+/// Split a batch where the server of a scoped frame changes.
+fn server_runs(batch: Vec<(ServerFrame, String)>) -> Vec<Vec<(ServerFrame, String)>> {
+    let mut runs: Vec<Vec<(ServerFrame, String)>> = Vec::new();
+    let mut current = None;
+    for item in batch {
+        let server = frame_scope(&item.0).map(|(sid, _)| sid);
+        let split = match (current, server) {
+            (Some(run), Some(sid)) => run != sid,
+            _ => runs.is_empty(),
+        };
+        if server.is_some() {
+            current = server;
+        }
+        match runs.last_mut() {
+            Some(run) if !split => run.push(item),
+            _ => runs.push(vec![item]),
+        }
+    }
+    runs
+}
+
+fn frame_scope(frame: &ServerFrame) -> Option<Scope> {
+    match frame {
         ServerFrame::Dm { c } => Some((*c, Some(*c))),
         ServerFrame::Event { s, c, .. }
         | ServerFrame::Gap { s, c, .. }
@@ -421,23 +510,53 @@ async fn frame_allowed(
         ServerFrame::Presence { s, .. } => Some((*s, None)),
         ServerFrame::Typing { s, c, .. } => Some((*s, Some(*c))),
         _ => None,
-    };
-    if let Some((sid, cid)) = scope {
-        if cid != Some(sid) {
-            match membership::lock_server_conn(db, sid, false).await {
-                Ok(()) => {}
-                Err(ApiError::NotFound) => return Ok(false),
-                Err(err) => return Err(err),
-            }
-        }
-        match authorize(db, user_id, sid, cid).await {
-            Ok(()) => Ok(true),
-            Err(ApiError::NotFound) => Ok(false),
-            Err(err) => Err(err),
-        }
-    } else {
-        Ok(true)
     }
+}
+
+/// Check at dequeue time too: already queued events cannot leak after removal.
+/// The server row lock stays held in `db`'s transaction until the frames of
+/// this scope are written.
+async fn scope_allowed(
+    db: &mut sqlx::PgConnection,
+    user_id: Uuid,
+    (sid, cid): Scope,
+) -> Result<bool, ApiError> {
+    if cid != Some(sid) {
+        match membership::lock_server_conn(db, sid, false).await {
+            Ok(()) => {}
+            Err(ApiError::NotFound) => return Ok(false),
+            Err(err) => return Err(err),
+        }
+    }
+    match authorize(db, user_id, sid, cid).await {
+        Ok(()) => Ok(true),
+        Err(ApiError::NotFound) => Ok(false),
+        Err(err) => Err(err),
+    }
+}
+
+fn to_json(frame: &ServerFrame) -> Result<String, ApiError> {
+    frame
+        .to_json()
+        .map_err(|err| ApiError::Internal(format!("serialize ws frame: {err}")))
+}
+
+async fn send_texts(
+    sink: &mut futures_util::stream::SplitSink<WebSocket, Message>,
+    texts: Vec<String>,
+) -> Result<(), ApiError> {
+    if texts.is_empty() {
+        return Ok(());
+    }
+    tokio::time::timeout(std::time::Duration::from_secs(1), async {
+        for text in texts {
+            sink.feed(Message::Text(Utf8Bytes::from(text))).await?;
+        }
+        sink.flush().await
+    })
+    .await
+    .map_err(|_| ApiError::Internal("ws send timed out".into()))?
+    .map_err(|err| ApiError::Internal(format!("ws send: {err}")))
 }
 
 pub(super) async fn send(
@@ -454,4 +573,42 @@ pub(super) async fn send(
     .await
     .map_err(|_| ApiError::Internal("ws send timed out".into()))?
     .map_err(|err| ApiError::Internal(format!("ws send: {err}")))
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn item(frame: ServerFrame) -> (ServerFrame, String) {
+        let json = to_json(&frame).unwrap();
+        (frame, json)
+    }
+
+    #[test]
+    fn runs_split_only_where_the_server_changes() {
+        let (a, b, c, u) = (
+            Uuid::new_v4(),
+            Uuid::new_v4(),
+            Uuid::new_v4(),
+            Uuid::new_v4(),
+        );
+        let batch = vec![
+            item(ServerFrame::Heartbeat),
+            item(ServerFrame::presence(a, u, PresenceStatus::Online)),
+            item(ServerFrame::typing(a, c, u, true)),
+            item(ServerFrame::Heartbeat),
+            item(ServerFrame::presence(b, u, PresenceStatus::Online)),
+            item(ServerFrame::presence(a, u, PresenceStatus::Idle)),
+        ];
+        let expected: Vec<Vec<String>> = vec![
+            batch[..4].iter().map(|(_, json)| json.clone()).collect(),
+            vec![batch[4].1.clone()],
+            vec![batch[5].1.clone()],
+        ];
+        let runs: Vec<Vec<String>> = server_runs(batch)
+            .into_iter()
+            .map(|run| run.into_iter().map(|(_, json)| json).collect())
+            .collect();
+        assert_eq!(runs, expected);
+    }
 }

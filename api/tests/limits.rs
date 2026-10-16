@@ -184,7 +184,7 @@ async fn avatar_uploads_count_against_the_upload_rate(pool: PgPool) {
         .await;
     assert_eq!(res.status, StatusCode::CREATED, "{}", res.body);
 
-    let png = b"\x89PNG\r\n\x1a\nnot really pixels".to_vec();
+    let png = gelabber_api::image_size::fixtures::png(64, 64);
     for _ in 0..2 {
         let (status, body) = client
             .send_bytes(Method::PUT, "/api/me/avatar", "image/png", png.clone())
