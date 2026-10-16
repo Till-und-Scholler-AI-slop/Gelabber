@@ -9,6 +9,7 @@ import { MicrophoneTest } from "./MicrophoneTest.tsx";
 import { useEffect, useState, type ReactNode } from "react";
 import "./quality.css";
 import { playCallSound } from "./callSounds.ts";
+import { CloseToTray } from "../components/CloseToTray.tsx";
 
 import {
   AUDIO_PROCESSING,
@@ -532,6 +533,18 @@ export function MediaSettingsForm({
               }
             }}
           />
+          <Toggle
+            id="message-sound"
+            label="Ton bei Benachrichtigungen am Computer"
+            checked={settings.messageSound}
+            onChange={(messageSound) => settings.patch({ messageSound })}
+          />
+          <p className="text-xs text-neutral-600 dark:text-neutral-400">
+            Höchstens ein Ton für mehrere Nachrichten kurz hintereinander,
+            keiner während du taub geschaltet bist. Auf dem Handy klingt die
+            Benachrichtigung so, wie das Gerät eingestellt ist.
+          </p>
+          {desktop && <CloseToTray />}
         </fieldset>
       )}
     </div>
