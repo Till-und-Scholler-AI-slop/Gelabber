@@ -48,6 +48,23 @@ jobs:
             echo "::error::desktop/Cargo.toml says $app, the release is $RELEASE_TAG: the version there (and in desktop/Cargo.lock) comes first"
             exit 1
           fi
+      # The Windows app updates itself from the release (desktop/app/src/
+      # update.rs): desktop-native.yml signs the installer and fails without
+      # the key. Found out here, before the tag and the release exist.
+      - name: Desktop updater key
+        if: ${{ !inputs.refresh_latest_only }}
+        env:
+          HAS_SIGNING_KEY: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY != '' }}
+        run: |
+          set -euo pipefail
+          if [ ! -s desktop/app/updater.pub ]; then
+            echo "::error::desktop/app/updater.pub is missing: the public key the app checks updates with (desktop/README.md, Updates)"
+            exit 1
+          fi
+          if [ "$HAS_SIGNING_KEY" != true ]; then
+            echo "::error::the secret TAURI_SIGNING_PRIVATE_KEY is not set: the Windows installer cannot be signed for the updater (desktop/README.md, Updates)"
+            exit 1
+          fi
       - name: Download exact image set
         uses: actions/download-artifact@v4
         with:

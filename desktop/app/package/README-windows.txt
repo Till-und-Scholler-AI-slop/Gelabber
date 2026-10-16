@@ -47,19 +47,31 @@ Anwendungston
 Einstellungen und Daten
   Serveradresse:
     %APPDATA%\io.github.till-und-scholler-ai-slop.gelabber\desktop.json
+  Automatische Update-Suche (an oder aus):
+    %APPDATA%\io.github.till-und-scholler-ai-slop.gelabber\update.json
   WebView2-Profil (Anmeldung, Cookies, Cache):
     %LOCALAPPDATA%\io.github.till-und-scholler-ai-slop.gelabber\EBWebView
 
 Aktualisieren
-  Die App aktualisiert sich nicht selbst. Gelabber beenden, das Setup der
-  neuen Version von der Release-Seite laden und ausführen: Es ersetzt die
-  installierte Version. Serveradresse und Anmeldung bleiben erhalten.
+  Die App sucht kurz nach dem Start und danach alle 6 Stunden nach einer
+  neuen Version auf der Release-Seite. Gibt es eine, erscheint unten rechts
+  "Gelabber <Version> ist da" mit "Neu starten" und "Später". "Neu starten"
+  lädt das Setup, prüft seine Signatur, installiert es und startet die App
+  neu; ein Setup mit falscher oder fehlender Signatur wird nicht
+  ausgeführt. Während eines Anrufs erscheint der Hinweis nicht und die App
+  startet nicht neu; er kommt nach dem Auflegen. Serveradresse und
+  Anmeldung bleiben erhalten.
+
+  Die automatische Suche lässt sich auf der Serverauswahl (Strg+Umschalt+S)
+  abschalten, dort lässt sich auch sofort suchen. Von Hand geht es wie
+  bisher: Gelabber beenden, das Setup der neuen Version von der
+  Release-Seite laden und ausführen.
 
 Entfernen
   Einstellungen > Apps > Installierte Apps (Windows 10: Apps & Features) >
   Gelabber > Deinstallieren. Wer dabei das Löschen der Anwendungsdaten
-  ankreuzt, entfernt auch Serveradresse und Anmeldung, also die beiden
-  Ordner oben.
+  ankreuzt, entfernt auch Serveradresse, Update-Einstellung und Anmeldung,
+  also die beiden Ordner oben.
 
 Fehlersuche
   Protokoll der Medienschicht, in der Eingabeaufforderung (cmd.exe):

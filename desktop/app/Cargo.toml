@@ -18,10 +18,21 @@ pollster = "0.4"
 wgpu = "30"
 winit = "0.30"
 
+[target.'cfg(windows)'.dependencies]
+# Updates of the Windows app (src/update.rs). TLS through Windows itself
+# (native-tls: SChannel and the system's certificates), no archive formats:
+# the update is the NSIS installer.
+tauri-plugin-updater = { version = "2.14.0", default-features = false, features = ["native-tls"] }
+
 # WebKitGTK's own API for the web process (main.rs `end_web_process`). The
 # crate and version Tauri brings; the feature is the API level of the call.
 [target.'cfg(target_os = "linux")'.dependencies]
 webkit2gtk = { version = "2.0", features = ["v2_34"] }
+
+# Signatures checked as the updater checks them (src/update.rs tests).
+[dev-dependencies]
+base64 = "0.22.1"
+minisign-verify = "0.3.0"
 
 [build-dependencies]
 tauri-build = { version = "2", features = [] }

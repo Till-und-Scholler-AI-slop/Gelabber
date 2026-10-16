@@ -402,6 +402,13 @@ impl Media {
         }
     }
 
+    /// Whether the page is in a call or captures something: it has a
+    /// transport (voice, watching a stream) or a source (microphone, camera,
+    /// screen). Restarting the app for an update would end that (update.rs).
+    pub fn busy(&self) -> bool {
+        !self.transports.lock().unwrap().is_empty() || !self.sources.lock().unwrap().is_empty()
+    }
+
     /// Drops every object of a page that went away. A page load calls this
     /// on the UI thread, which must not wait for the core: closing a producer
     /// or consumer takes its transport's lock and may take the core a while,

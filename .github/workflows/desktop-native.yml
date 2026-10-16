@@ -513,6 +513,29 @@ jobs:
           env-vars: MESON_ARGS
           save-if: ${{ github.ref_type != 'tag' }}
 
+      # The key update installers are signed with, which the app is built
+      # with (desktop/app/src/update.rs). A release takes the public key of
+      # desktop/app/updater.pub and fails without it; signing takes the
+      # private key from the secrets ("Installer"). Every other run makes a
+      # key of its own: its installer is signed and checked as a release's
+      # is, and its app accepts no update signed with the release key.
+      - name: Updater key
+        run: |
+          $PSNativeCommandUseErrorActionPreference = $true
+          if ($env:RELEASE_TAG) {
+            $pub = 'desktop\app\updater.pub'
+            if (-not (Test-Path $pub) -or -not (Get-Content -Raw $pub).Trim()) {
+              throw "release $($env:RELEASE_TAG): $pub is missing, and with it the key the app checks updates with (desktop/README.md, Updates)"
+            }
+            "release: the key of $pub"
+          } else {
+            $key = Join-Path $env:RUNNER_TEMP 'updater-test.key'
+            npx.cmd --yes '@tauri-apps/cli@2.12.3' signer generate --ci --password test --write-keys $key --force
+            Add-Content $env:GITHUB_ENV "GELABBER_UPDATER_PUBKEY=$((Get-Content -Raw "$key.pub").Trim())"
+            Add-Content $env:GITHUB_ENV "GELABBER_UPDATER_TEST_KEY=$key"
+            "test key: $key"
+          }
+
       # The C++ core alone first: its compile and link errors come up before
       # the long Rust builds.
       - name: Native core (gelabber_media.dll)
@@ -530,6 +553,9 @@ jobs:
       - name: Installer
         id: installer
         timeout-minutes: 20
+        env:
+          TAURI_SIGNING_PRIVATE_KEY: ${{ (github.event_name == 'release' || (github.event_name == 'workflow_dispatch' && inputs.release_tag != '')) && secrets.TAURI_SIGNING_PRIVATE_KEY || '' }}
+          TAURI_SIGNING_PRIVATE_KEY_PASSWORD: ${{ (github.event_name == 'release' || (github.event_name == 'workflow_dispatch' && inputs.release_tag != '')) && secrets.TAURI_SIGNING_PRIVATE_KEY_PASSWORD || '' }}
         run: |
           $PSNativeCommandUseErrorActionPreference = $true
           $notices = 'desktop\app\package\THIRD-PARTY-NOTICES.txt'
@@ -563,6 +589,19 @@ jobs:
           }
           $name = 'gelabber-desktop-windows-x64-setup.exe'
           Copy-Item $built[0].FullName $name
+          # The updater's signature, <name>.sig, bound to the version: the app
+          # takes no update whose signature names another one (tauri.conf.json,
+          # requireSignedVersion). Only the CLI from 2.12.3 on writes it.
+          if ($env:RELEASE_TAG) {
+            if (-not $env:TAURI_SIGNING_PRIVATE_KEY) {
+              throw "release $($env:RELEASE_TAG): the secret TAURI_SIGNING_PRIVATE_KEY is not set, so the update cannot be signed (desktop/README.md, Updates)"
+            }
+            npx.cmd --yes '@tauri-apps/cli@2.12.3' signer sign --app-version $version $name
+          } else {
+            Remove-Item Env:TAURI_SIGNING_PRIVATE_KEY, Env:TAURI_SIGNING_PRIVATE_KEY_PASSWORD -ErrorAction SilentlyContinue
+            npx.cmd --yes '@tauri-apps/cli@2.12.3' signer sign --app-version $version --private-key-path $env:GELABBER_UPDATER_TEST_KEY --password test $name
+          }
+          if (-not (Test-Path "$name.sig")) { throw "no signature $name.sig" }
           $hash = (Get-FileHash $name -Algorithm SHA256).Hash.ToLowerInvariant()
           # A line as sha256sum writes it; checked again before the release upload.
           [IO.File]::WriteAllText((Join-Path $PWD "$name.sha256"), "$hash  $name`n")
@@ -671,6 +710,7 @@ jobs:
           path: |
             gelabber-desktop-windows-x64-setup.exe
             gelabber-desktop-windows-x64-setup.exe.sha256
+            gelabber-desktop-windows-x64-setup.exe.sig
           if-no-files-found: error
           retention-days: 14
 
@@ -883,11 +923,14 @@ jobs:
           cargo test --release --locked --manifest-path desktop/Cargo.toml -p gelabber-media-core --test mediasoup_loopback --test screen_capture -- --nocapture --test-threads=1
           exit 0
 
+      # With the installer signed above: its signature must hold for the key
+      # the app was built with, as the installed app checks it.
       - name: App unit tests
         if: ${{ !cancelled() && steps.app.outcome == 'success' }}
         timeout-minutes: 20
         env:
           RUST_BACKTRACE: "1"
+          GELABBER_UPDATE_TEST_INSTALLER: ${{ steps.installer.outcome == 'success' && format('{0}\gelabber-desktop-windows-x64-setup.exe', github.workspace) || '' }}
         run: cargo test --release --locked --manifest-path desktop/Cargo.toml -p gelabber-desktop -- --test-threads=1
 
       # Package by package like the builds and tests above: one call for the
@@ -1010,8 +1053,10 @@ jobs:
           TAG: ${{ env.RELEASE_TAG }}
         run: gh release upload "$TAG" gelabber-desktop-linux-x64.tar.gz --clobber --repo "$GITHUB_REPOSITORY"
 
-  # Release only: the Windows installer and its checksum become release
-  # assets. Apart from the Linux jobs in both directions: a failure here
+  # Release only: the Windows installer, its checksum and its updater
+  # signature become release assets, with latest.json, which the installed
+  # apps ask for at releases/latest/download/latest.json (desktop/app/src/
+  # update.rs): the latest release that is no pre-release. Apart from the Linux jobs in both directions: a failure here
   # leaves the tarball and the pacman repository alone, and the other way
   # round. The third-party notices are the one thing both wait for.
   release-asset-windows:
@@ -1038,8 +1083,15 @@ jobs:
             echo "release $TAG must be built from its tag, not $GITHUB_REF"; exit 1
           fi
           sha256sum --check gelabber-desktop-windows-x64-setup.exe.sha256
+          url="https://github.com/${GITHUB_REPOSITORY}/releases/download/${TAG}/gelabber-desktop-windows-x64-setup.exe"
+          jq -n --arg version "${TAG#v}" --arg url "$url" --arg date "$(date -u +%Y-%m-%dT%H:%M:%SZ)" \
+            --rawfile signature gelabber-desktop-windows-x64-setup.exe.sig \
+            '{version: $version, pub_date: $date,
+              platforms: {"windows-x86_64": {url: $url, signature: ($signature | rtrimstr("\n"))}}}' > latest.json
+          cat latest.json
           gh release upload "$TAG" gelabber-desktop-windows-x64-setup.exe \
-            gelabber-desktop-windows-x64-setup.exe.sha256 --clobber --repo "$GITHUB_REPOSITORY"
+            gelabber-desktop-windows-x64-setup.exe.sha256 gelabber-desktop-windows-x64-setup.exe.sig \
+            latest.json --clobber --repo "$GITHUB_REPOSITORY"
 
   # Public: the repository on GitHub Pages. Off until the repository
   # variable ARCH_REPO_PUBLISH is "true", and the github-pages environment
