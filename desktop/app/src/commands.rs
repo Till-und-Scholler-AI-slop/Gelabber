@@ -41,3 +41,11 @@ pub const MEDIA_COMMANDS: &[&str] = &[
     "media_view_frame",
     "media_view_close",
 ];
+
+/// Window, taskbar and tray commands of the server origin (src/shell.rs).
+pub const SHELL_COMMANDS: &[&str] = &[
+    "shell_info",
+    "shell_close_to_tray",
+    "shell_focus",
+    "shell_unread",
+];

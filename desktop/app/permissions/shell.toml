@@ -1,0 +1,11 @@
+# Window, taskbar and tray commands (src/commands.rs SHELL_COMMANDS). Granted
+# at runtime to the configured server origin with the `media` set.
+[[set]]
+identifier = "shell"
+description = "Unread badges, tray state and window focus for the Gelabber server's web client."
+permissions = [
+  "allow-shell-info",
+  "allow-shell-close-to-tray",
+  "allow-shell-focus",
+  "allow-shell-unread",
+]
