@@ -386,19 +386,8 @@ async fn mark_all_read(
 ) -> Result<Json<Vec<ReadState>>, ApiError> {
     bulk_read_limit(&state, user.id)?;
     let mut tx = state.db.begin().await?;
-    let all = body.scope == ReadScope::All;
-    if all {
-        // Servers before memberships, in id order, as every membership path
-        // does, so a server deleted meanwhile cannot deadlock with this.
-        sqlx::query(
-            "SELECT s.id FROM servers s JOIN server_members sm ON sm.server_id=s.id
-             WHERE sm.user_id=$1 ORDER BY s.id FOR SHARE OF s",
-        )
-        .bind(user.id)
-        .execute(&mut *tx)
-        .await?;
-    }
-    let moved = read_up_to_latest(&mut tx, user.id, None, true, all).await?;
+    let moved =
+        read_up_to_latest(&mut tx, user.id, None, true, body.scope == ReadScope::All).await?;
     finish_bulk_read(&state, tx, user.id, moved).await
 }
 

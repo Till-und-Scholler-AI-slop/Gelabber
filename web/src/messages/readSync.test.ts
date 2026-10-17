@@ -86,14 +86,22 @@ describe("read positions from another device", () => {
     const stamp = takeStamp()!;
     const close = vi.mocked(closeMessageNotifications);
     close.mockClear();
+    const at = (order: number, latest: number) => ({
+      read_order: order,
+      membership_at: "2026-10-01T00:00:00Z",
+      latest_order: latest,
+    });
     client.setQueryData<ReadState[]>(readKey(stamp), [
-      row("a", "2026-10-17T10:00:00Z", 4),
-      row("b", "2026-10-17T12:00:00Z", 1),
+      { ...row("a", "2026-10-17T10:00:00Z", 4), ...at(3, 7) },
+      { ...row("b", "2026-10-17T12:00:00Z", 1), ...at(6, 7) },
+      { ...row("d", "2026-10-17T10:00:00Z", 2), ...at(3, 9) },
     ]);
     applyReadSync(client, stamp, [
-      row("a", "2026-10-17T11:00:00Z", 0),
+      { ...row("a", "2026-10-17T11:00:00Z", 0), ...at(7, 7) },
       // Late frame: b got a newer message since, which is still unread.
-      row("b", "2026-10-17T11:00:00Z", 0),
+      { ...row("b", "2026-10-17T11:00:00Z", 0), ...at(5, 7) },
+      // Read up to 8, but this window already knows message 9.
+      { ...row("d", "2026-10-17T11:00:00Z", 0), ...at(8, 8) },
       // Not cached in this window: nothing contradicts it.
       row("c", "2026-10-17T11:00:00Z", 0),
     ]);
