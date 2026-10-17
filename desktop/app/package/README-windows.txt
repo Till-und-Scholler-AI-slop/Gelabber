@@ -54,11 +54,12 @@ Einstellungen und Daten
 
 Aktualisieren
   Die App sucht kurz nach dem Start und danach alle 6 Stunden nach einer
-  neuen Version auf der Release-Seite. Gibt es eine, erscheint unten rechts
-  "Gelabber <Version> ist da" mit "Neu starten" und "Später". "Neu starten"
-  lädt das Setup, prüft seine Signatur, installiert es und startet die App
-  neu; ein Setup mit falscher oder fehlender Signatur wird nicht
-  ausgeführt. Während eines Anrufs erscheint der Hinweis nicht und die App
+  neuen Version auf der Release-Seite. Gibt es eine, erscheint oben in der
+  Mitte "Gelabber <Version> ist da" mit "Neu starten" und "Später". "Neu
+  starten" fragt noch einmal in einem Fenster von Windows nach (Ja/Nein,
+  vorausgewählt ist Nein). Nach "Ja" lädt die App das Setup, prüft seine
+  Signatur, installiert es und startet neu; ein Setup mit falscher oder
+  fehlender Signatur wird nicht ausgeführt. Während eines Anrufs erscheint der Hinweis nicht und die App
   startet nicht neu; er kommt nach dem Auflegen. Serveradresse und
   Anmeldung bleiben erhalten.
 
