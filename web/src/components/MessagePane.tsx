@@ -986,7 +986,13 @@ function MessageRow({
         <div className="min-w-0 flex-1">
           {message.content ? (
             <p className="lr-message-text">
-              <MessageText content={message.content} />
+              <MessageText
+                content={message.content}
+                ping={{
+                  everyone: message.mention_everyone === true,
+                  mentions: message.mentions ?? [],
+                }}
+              />
               {message.edited_at ? (
                 <span className="lr-message-edited">(bearbeitet)</span>
               ) : null}
@@ -1078,7 +1084,13 @@ function MessageRow({
           </form>
         ) : message.content || !gif ? (
           <p className="lr-message-text">
-            <MessageText content={message.content} />
+            <MessageText
+              content={message.content}
+              ping={{
+                everyone: message.mention_everyone === true,
+                mentions: message.mentions ?? [],
+              }}
+            />
             {message.edited_at ? (
               <span className="lr-message-edited">(bearbeitet)</span>
             ) : null}

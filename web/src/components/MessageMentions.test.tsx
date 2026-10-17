@@ -1,13 +1,17 @@
 import { renderToStaticMarkup } from "react-dom/server";
 import { describe, expect, it } from "vitest";
 
-import { MessageText } from "./MessageMentions.tsx";
+import { type MessagePing, MessageText } from "./MessageMentions.tsx";
 import { MentionContext } from "./mentionContext.ts";
 
 const ADA = "0190f7a2-0000-7000-8000-00000000000a";
 const BOB = "0190f7a2-0000-7000-8000-00000000000b";
 
-function render(content: string, me = ADA) {
+function render(
+  content: string,
+  me = ADA,
+  ping: MessagePing | null = { everyone: true, mentions: [] },
+) {
   return renderToStaticMarkup(
     <MentionContext.Provider
       value={{
@@ -19,7 +23,7 @@ function render(content: string, me = ADA) {
         keywords: true,
       }}
     >
-      <MessageText content={content} />
+      <MessageText content={content} ping={ping ?? undefined} />
     </MentionContext.Provider>,
   );
 }
@@ -39,6 +43,23 @@ describe("message text", () => {
     expect(render("<@0190f7a2-0000-7000-8000-0000000000ff>", BOB)).toContain(
       "@Unbekannt",
     );
+  });
+
+  it("leaves @everyone and @here as text when they pinged nobody", () => {
+    const none = { everyone: false, mentions: [] };
+    expect(render("@everyone look", ADA, none)).toBe("@everyone look");
+    expect(
+      render(`@here <@${BOB}>`, ADA, { everyone: false, mentions: [BOB] }),
+    ).toBe('@here <span class="lr-mention ">@Bob</span>');
+    expect(render("@everyone", ADA, null)).toBe("@everyone");
+  });
+
+  it("marks @here as own only for those it reached", () => {
+    const reached = { everyone: false, mentions: [BOB] };
+    expect(render("@here", ADA, reached)).toBe(
+      '<span class="lr-mention " title="Alle, die gerade online waren">@here</span>',
+    );
+    expect(render("@here", BOB, reached)).toContain("is-me");
   });
 
   it("leaves code and plain text alone, escaped", () => {
