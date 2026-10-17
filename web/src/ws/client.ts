@@ -3,6 +3,7 @@
 // so a blip is invisible and never doubles a message.
 
 import {
+  type AccountFrame,
   type ChatEvent,
   type ClientFrame,
   type ErrFrame,
@@ -103,6 +104,7 @@ export class Gateway {
   private presenceListeners = new Set<(frame: PresenceFrame) => void>();
   private resyncListeners = new Set<() => void>();
   private dmListeners = new Set<(channelId: string) => void>();
+  private accountListeners = new Set<(frame: AccountFrame) => void>();
   private typingListeners = new Set<(frame: TypingFrame) => void>();
 
   constructor(opts: GatewayOptions = {}) {
@@ -209,6 +211,13 @@ export class Gateway {
     this.resyncListeners.add(listener);
     return () => {
       this.resyncListeners.delete(listener);
+    };
+  }
+
+  onAccount(listener: (frame: AccountFrame) => void): () => void {
+    this.accountListeners.add(listener);
+    return () => {
+      this.accountListeners.delete(listener);
     };
   }
 
@@ -530,6 +539,12 @@ export class Gateway {
         for (const listener of this.dmListeners) {
           if (!alive()) return;
           listener(frame.c);
+        }
+        return;
+      case "ns":
+        for (const listener of this.accountListeners) {
+          if (!alive()) return;
+          listener(frame);
         }
         return;
       case "p":

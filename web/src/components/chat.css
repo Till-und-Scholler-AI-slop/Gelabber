@@ -1132,3 +1132,69 @@
     margin-left: auto;
   }
 }
+
+/* Mentions (#241) */
+.lr-mention {
+  border-radius: 4px;
+  padding: 0 2px;
+  background: color-mix(in srgb, var(--lr-accent) 18%, transparent);
+  color: color-mix(in srgb, var(--lr-accent) 75%, var(--lr-text));
+  font-weight: 600;
+}
+.lr-mention.is-me {
+  background: color-mix(in srgb, var(--lr-away) 26%, transparent);
+  color: var(--lr-text);
+}
+.lr-message-row.is-mentioned {
+  background: color-mix(in srgb, var(--lr-away) 9%, var(--lr-bg));
+  box-shadow: inset 2px 0 0 var(--lr-away);
+}
+.lr-message-row.is-mentioned:hover,
+.lr-message-row.is-mentioned:focus-within {
+  background: color-mix(in srgb, var(--lr-away) 13%, var(--lr-bg));
+}
+.lr-mention-list {
+  margin: 0;
+  padding: 4px;
+  list-style: none;
+  max-height: 240px;
+  overflow-y: auto;
+  border-bottom: 1px solid var(--lr-border);
+}
+.lr-mention-list li {
+  display: flex;
+  align-items: baseline;
+  gap: 8px;
+  padding: 6px 10px;
+  border-radius: var(--lr-radius-small);
+  cursor: pointer;
+  font-size: 14px;
+}
+.lr-mention-list li.is-active {
+  background: var(--lr-hover);
+}
+.lr-mention-list small {
+  color: var(--lr-muted);
+  font-size: 12px;
+}
+
+/* Muted conversations (#242) */
+.channel-row.is-muted .channel-row-name,
+.dm-row.is-muted > span {
+  opacity: 0.5;
+}
+.server-tile.is-muted {
+  opacity: 0.6;
+}
+.notify-choice {
+  padding: 6px 10px;
+  border: 1px solid var(--lr-border);
+  border-radius: var(--lr-radius-small);
+  font-size: 13px;
+}
+.notify-choice:hover:not(:disabled) {
+  background: var(--lr-hover);
+}
+.notify-choice:disabled {
+  opacity: 0.6;
+}
