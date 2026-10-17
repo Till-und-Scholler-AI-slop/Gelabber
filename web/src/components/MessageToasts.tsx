@@ -46,6 +46,12 @@ export function MessageToasts() {
             </p>
             <p className="truncate text-sm font-semibold text-neutral-900 dark:text-neutral-100">
               {toast.author}
+              {toast.mentioned ? (
+                <span className="font-normal text-neutral-500 dark:text-neutral-400">
+                  {" "}
+                  hat dich erwähnt
+                </span>
+              ) : null}
             </p>
             <p className="truncate text-sm text-neutral-600 dark:text-neutral-400">
               {toast.preview}

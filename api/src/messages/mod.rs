@@ -11,6 +11,7 @@
 //! answer `404` — they have no message resource. A foreign/unknown channel
 //! is the same `404`.
 
+pub mod mentions;
 pub mod reactions;
 pub mod validate;
 mod workflows;
@@ -80,6 +81,10 @@ pub struct Message {
     /// A GIF message: empty content, no attachments.
     #[serde(skip_serializing_if = "Option::is_none")]
     pub gif: Option<Gif>,
+    /// Users the message mentions, resolved when it was written (`mentions.rs`).
+    pub mentions: Vec<Uuid>,
+    /// `@everyone`: every member of the conversation is mentioned.
+    pub mention_everyone: bool,
 }
 
 #[derive(Debug, Clone, Serialize, PartialEq, Eq)]
@@ -106,6 +111,8 @@ struct MessageRow {
     created_order: i64,
     reactions: sqlx::types::Json<Vec<reactions::Reaction>>,
     gif: Option<sqlx::types::Json<Gif>>,
+    mentions: Vec<Uuid>,
+    mentions_everyone: bool,
 }
 
 impl From<MessageRow> for Message {
@@ -126,6 +133,8 @@ impl From<MessageRow> for Message {
             attachments: Vec::new(),
             reactions: row.reactions.0,
             gif: row.gif.map(|gif| gif.0),
+            mentions: row.mentions,
+            mention_everyone: row.mentions_everyone,
         }
     }
 }
@@ -140,6 +149,8 @@ struct MessageInsert {
     revision: i64,
     created_order: i64,
     gif: Option<sqlx::types::Json<Gif>>,
+    mentions: Vec<Uuid>,
+    mentions_everyone: bool,
 }
 
 impl MessageInsert {
@@ -160,6 +171,8 @@ impl MessageInsert {
             attachments: Vec::new(),
             reactions: Vec::new(),
             gif: self.gif.map(|gif| gif.0),
+            mentions: self.mentions,
+            mention_everyone: self.mentions_everyone,
         }
     }
 }
@@ -240,16 +253,27 @@ async fn create_message(
         access.require_send_files()?;
     }
 
+    let mentioned = mentions::resolve(
+        &state,
+        &access,
+        user.id,
+        &content,
+        mentions::Granted::default(),
+    )
+    .await?;
     let mut tx = state.db.begin().await?;
     delivery::lock_channel(&mut tx, channel_id).await?;
     let row = sqlx::query_as::<_, MessageInsert>(
-        "INSERT INTO messages (channel_id, author_id, content, gif) VALUES ($1, $2, $3, $4) \
-         RETURNING id, channel_id, content, created_at, edited_at, revision, created_order, gif",
+        "INSERT INTO messages (channel_id, author_id, content, gif, mentions, mentions_everyone) \
+         VALUES ($1, $2, $3, $4, $5, $6) \
+         RETURNING id, channel_id, content, created_at, edited_at, revision, created_order, gif, mentions, mentions_everyone",
     )
     .bind(channel_id)
     .bind(user.id)
     .bind(&content)
     .bind(gif.as_ref().map(sqlx::types::Json))
+    .bind(&mentioned.users)
+    .bind(mentioned.everyone)
     .fetch_one(&mut *tx)
     .await?;
     let bound = attachments::bind_to_message(
@@ -331,14 +355,25 @@ async fn update_message(
         return Ok(Json(current));
     }
 
+    // An edit names its mentions anew. Only a mention still unread counts:
+    // one added to a message the user has read stays read.
+    let granted = mentions::Granted::of(
+        &current.content,
+        current.mention_everyone,
+        &current.mentions,
+    );
+    let mentioned = mentions::resolve(&state, &access, user.id, &content, granted).await?;
     let mut tx = state.db.begin().await?;
     delivery::lock_channel(&mut tx, current.channel_id).await?;
     let row = sqlx::query_as::<_, MessageInsert>(
-        "UPDATE messages SET content = $2, edited_at = now() WHERE id = $1 \
-         RETURNING id, channel_id, content, created_at, edited_at, revision, created_order, gif",
+        "UPDATE messages SET content = $2, edited_at = now(), mentions = $3, mentions_everyone = $4 \
+         WHERE id = $1 \
+         RETURNING id, channel_id, content, created_at, edited_at, revision, created_order, gif, mentions, mentions_everyone",
     )
     .bind(message_id)
     .bind(&content)
+    .bind(&mentioned.users)
+    .bind(mentioned.everyone)
     .fetch_optional(&mut *tx)
     .await?
     .ok_or(ApiError::NotFound)?;
@@ -489,7 +524,7 @@ pub(crate) async fn post_live_hint(state: &AppState, user: &User, server_id: Uui
     let result: Result<(),ApiError> = async {
         let mut tx=state.db.begin().await?;
         delivery::lock_channel(&mut tx,text_id).await?;
-        let row=sqlx::query_as::<_,MessageInsert>("INSERT INTO messages (channel_id, author_id, content) VALUES ($1,$2,$3) RETURNING id,channel_id,content,created_at,edited_at,revision,created_order,gif").bind(text_id).bind(user.id).bind(content).fetch_one(&mut *tx).await?;
+        let row=sqlx::query_as::<_,MessageInsert>("INSERT INTO messages (channel_id, author_id, content) VALUES ($1,$2,$3) RETURNING id,channel_id,content,created_at,edited_at,revision,created_order,gif,mentions,mentions_everyone").bind(text_id).bind(user.id).bind(content).fetch_one(&mut *tx).await?;
         let mut message=row.into_message(user);
         persist_event(&mut tx,server_id,EventKind::C,&mut message).await?;
         tx.commit().await?;
@@ -563,7 +598,7 @@ pub(crate) async fn messaging_channel(
 }
 
 const MESSAGE_BY_ID_SQL: &str = "SELECT m.id, m.channel_id, m.author_id, u.name AS author_name, \
-                u.avatar_url AS author_avatar_url, m.content, m.created_at, m.edited_at, m.revision, m.created_order, m.gif, COALESCE((SELECT jsonb_agg(jsonb_build_object('emoji', r.emoji, 'user_ids', r.user_ids) ORDER BY r.emoji) FROM (SELECT emoji,jsonb_agg(user_id ORDER BY user_id) AS user_ids FROM message_reactions WHERE message_id=m.id GROUP BY emoji) r),'[]'::jsonb) AS reactions \
+                u.avatar_url AS author_avatar_url, m.content, m.created_at, m.edited_at, m.revision, m.created_order, m.gif, m.mentions, m.mentions_everyone, COALESCE((SELECT jsonb_agg(jsonb_build_object('emoji', r.emoji, 'user_ids', r.user_ids) ORDER BY r.emoji) FROM (SELECT emoji,jsonb_agg(user_id ORDER BY user_id) AS user_ids FROM message_reactions WHERE message_id=m.id GROUP BY emoji) r),'[]'::jsonb) AS reactions \
          FROM messages m JOIN users u ON u.id = m.author_id \
          WHERE m.id = $1";
 
@@ -595,7 +630,7 @@ async fn load_page(
         let (at, id) = resolve_bound(db, channel_id, cursor, Bound::Before, "before").await?;
         sqlx::query_as::<_, MessageRow>(
             "SELECT m.id, m.channel_id, m.author_id, u.name AS author_name, \
-                    u.avatar_url AS author_avatar_url, m.content, m.created_at, m.edited_at, m.revision, m.created_order, m.gif, COALESCE((SELECT jsonb_agg(jsonb_build_object('emoji', r.emoji, 'user_ids', r.user_ids) ORDER BY r.emoji) FROM (SELECT emoji,jsonb_agg(user_id ORDER BY user_id) AS user_ids FROM message_reactions WHERE message_id=m.id GROUP BY emoji) r),'[]'::jsonb) AS reactions \
+                    u.avatar_url AS author_avatar_url, m.content, m.created_at, m.edited_at, m.revision, m.created_order, m.gif, m.mentions, m.mentions_everyone, COALESCE((SELECT jsonb_agg(jsonb_build_object('emoji', r.emoji, 'user_ids', r.user_ids) ORDER BY r.emoji) FROM (SELECT emoji,jsonb_agg(user_id ORDER BY user_id) AS user_ids FROM message_reactions WHERE message_id=m.id GROUP BY emoji) r),'[]'::jsonb) AS reactions \
              FROM messages m JOIN users u ON u.id = m.author_id \
              WHERE m.channel_id = $1 AND (m.created_at, m.id) < ($2, $3) \
              ORDER BY m.created_at DESC, m.id DESC \
@@ -611,7 +646,7 @@ async fn load_page(
         let (at, id) = resolve_bound(db, channel_id, cursor, Bound::After, "after").await?;
         let mut newer = sqlx::query_as::<_, MessageRow>(
             "SELECT m.id, m.channel_id, m.author_id, u.name AS author_name, \
-                    u.avatar_url AS author_avatar_url, m.content, m.created_at, m.edited_at, m.revision, m.created_order, m.gif, COALESCE((SELECT jsonb_agg(jsonb_build_object('emoji', r.emoji, 'user_ids', r.user_ids) ORDER BY r.emoji) FROM (SELECT emoji,jsonb_agg(user_id ORDER BY user_id) AS user_ids FROM message_reactions WHERE message_id=m.id GROUP BY emoji) r),'[]'::jsonb) AS reactions \
+                    u.avatar_url AS author_avatar_url, m.content, m.created_at, m.edited_at, m.revision, m.created_order, m.gif, m.mentions, m.mentions_everyone, COALESCE((SELECT jsonb_agg(jsonb_build_object('emoji', r.emoji, 'user_ids', r.user_ids) ORDER BY r.emoji) FROM (SELECT emoji,jsonb_agg(user_id ORDER BY user_id) AS user_ids FROM message_reactions WHERE message_id=m.id GROUP BY emoji) r),'[]'::jsonb) AS reactions \
              FROM messages m JOIN users u ON u.id = m.author_id \
              WHERE m.channel_id = $1 AND (m.created_at, m.id) > ($2, $3) \
              ORDER BY m.created_at ASC, m.id ASC \
@@ -636,7 +671,7 @@ async fn load_page(
     } else {
         sqlx::query_as::<_, MessageRow>(
             "SELECT m.id, m.channel_id, m.author_id, u.name AS author_name, \
-                    u.avatar_url AS author_avatar_url, m.content, m.created_at, m.edited_at, m.revision, m.created_order, m.gif, COALESCE((SELECT jsonb_agg(jsonb_build_object('emoji', r.emoji, 'user_ids', r.user_ids) ORDER BY r.emoji) FROM (SELECT emoji,jsonb_agg(user_id ORDER BY user_id) AS user_ids FROM message_reactions WHERE message_id=m.id GROUP BY emoji) r),'[]'::jsonb) AS reactions \
+                    u.avatar_url AS author_avatar_url, m.content, m.created_at, m.edited_at, m.revision, m.created_order, m.gif, m.mentions, m.mentions_everyone, COALESCE((SELECT jsonb_agg(jsonb_build_object('emoji', r.emoji, 'user_ids', r.user_ids) ORDER BY r.emoji) FROM (SELECT emoji,jsonb_agg(user_id ORDER BY user_id) AS user_ids FROM message_reactions WHERE message_id=m.id GROUP BY emoji) r),'[]'::jsonb) AS reactions \
              FROM messages m JOIN users u ON u.id = m.author_id \
              WHERE m.channel_id = $1 \
              ORDER BY m.created_at DESC, m.id DESC \

@@ -175,9 +175,28 @@ bar. If the stored server does not answer at start, the setup page opens with
 the reason and a retry button. **Strg+Umschalt+S** and "Server wechseln …" in
 the web client's user menu lead back to that page at any time; **F5** or
 **Strg+R** reload the current page.
-Only the configured origin gets the `media` permission set
-(`app/permissions/media.toml`) plus `allow-open-setup`; every page load closes the previous page's
-transports, producers and sources. WebKitGTK needs `libwebkit2gtk-4.1`.
+Only the configured origin gets the `media` and `shell` permission sets
+(`app/permissions/`) plus `allow-open-setup`; every page load closes the previous page's
+transports, producers and sources.
+
+The `shell` commands (`app/src/shell.rs`) carry the web client's unread state
+out of the window: a number on the launcher (Linux, where the desktop shows
+one, such as KDE or Dock-based launchers), a red dot on the taskbar button
+(Windows), and a tray icon with a light dot for unread messages and a red one
+for counted ones. A direct message while the window is not in front flashes
+the taskbar button (Windows) or marks the window urgent (Linux), once per
+message. The tray menu has "Gelabber öffnen" and "Beenden"; a left click
+brings the window back (Windows; AppIndicator only has the menu). On Linux
+the tray needs `libayatana-appindicator` (or `libappindicator-gtk3`) and a
+tray host (KDE, waybar's `tray` module on Omarchy/Hyprland); without the
+library the app starts without a tray, and plain GNOME shows none without an
+extension. With a tray, "Fenster schließen minimiert in den Infobereich"
+(settings, off by default, stored as `close_to_tray` in `desktop.json`) hides
+the window on close, and a call goes on; "Beenden" in the tray ends the app.
+The page's system notifications are web notifications: the app allows them
+for the server origin when the page asks (WebKitGTK refuses them otherwise),
+and on Linux it starts every web process with that origin allowed, since
+WebKitGTK does not keep the answer. WebView2 keeps it in its profile. WebKitGTK needs `libwebkit2gtk-4.1`.
 On the NVIDIA driver the app sets `WEBKIT_DMABUF_RENDERER_FORCE_SHM=1`
 before GTK starts: WebKitGTK's DMA-BUF renderer otherwise fails under Wayland
 with "Error 71 (Protocol error) dispatching to Wayland display". Handing its
