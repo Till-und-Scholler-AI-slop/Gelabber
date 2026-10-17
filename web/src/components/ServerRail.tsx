@@ -1,4 +1,6 @@
 import { UnreadBadge } from "../messages/UnreadBadge.tsx";
+import { notificationMenu } from "./notificationTarget.ts";
+import { useServerMuted } from "../messages/notificationSettings.ts";
 import { useQueryClient } from "@tanstack/react-query";
 import { Link } from "@tanstack/react-router";
 import { useVirtualizer } from "@tanstack/react-virtual";
@@ -69,6 +71,12 @@ function HomeTile({ active }: { active: boolean }) {
           if (userId) prefetchDms(client, userId);
         }}
         className={`relative server-home-link ${active ? "is-active" : ""}`}
+        onContextMenu={notificationMenu({
+          scope: "channel",
+          id: "dms",
+          name: "Direktnachrichten",
+          allDms: true,
+        })}
       >
         <ChatIcon size={27} />
         <UnreadBadge id={unreadId} dms rail />
@@ -122,6 +130,7 @@ function ServerTile({ server, active }: { server: Server; active: boolean }) {
   const unreadId = useId();
   const client = useQueryClient();
   const userId = useUserId();
+  const muted = useServerMuted(server.id);
   return (
     <Link
       to="/s/$serverId"
@@ -136,7 +145,12 @@ function ServerTile({ server, active }: { server: Server; active: boolean }) {
       onFocus={() => {
         if (userId) prefetchServer(client, userId, server.id);
       }}
-      className={`server-tile ${active ? "is-active" : ""}`}
+      className={`server-tile ${active ? "is-active" : ""} ${muted ? "is-muted" : ""}`}
+      onContextMenu={notificationMenu({
+        scope: "server",
+        id: server.id,
+        name: server.name,
+      })}
     >
       {initials(server.name)}
       <UnreadBadge id={unreadId} serverId={server.id} rail />

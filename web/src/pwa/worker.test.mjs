@@ -38,8 +38,15 @@ function appWindow(path, state = {}) {
   return client;
 }
 
-function worker({ windows = [] } = {}) {
+function worker({ windows = [], notifications = [] } = {}) {
   const handlers = new Map();
+  const shown = [...notifications];
+  const showNotification = vi.fn(async (title, options) => {
+    shown.push({ title, ...options });
+  });
+  const getNotifications = vi.fn(async ({ tag } = {}) =>
+    shown.filter((n) => tag === undefined || n.tag === tag),
+  );
   const entries = new Map();
   const fetch = vi.fn().mockResolvedValue(new Response("public offline page"));
   const add = vi.fn(async (request) => {
@@ -59,6 +66,7 @@ function worker({ windows = [] } = {}) {
     self: {
       location: { origin },
       clients: { claim, matchAll, openWindow },
+      registration: { showNotification, getNotifications },
       addEventListener: (name, handler) => handlers.set(name, handler),
     },
     caches: {
@@ -109,10 +117,24 @@ function worker({ windows = [] } = {}) {
     await pending;
     return close;
   }
+  async function push(data) {
+    let pending;
+    handlers.get("push")({
+      data: {
+        json: () => (typeof data === "string" ? JSON.parse(data) : data),
+      },
+      waitUntil: (value) => {
+        pending = value;
+      },
+    });
+    await pending;
+  }
   return {
     lifecycle,
     navigate,
     tap,
+    push,
+    showNotification,
     fetch,
     add,
     claim,
@@ -311,5 +333,90 @@ describe("PWA notification taps", () => {
       await w.tap(bad);
       expect(w.openWindow).toHaveBeenCalledExactlyOnceWith("/");
     }
+  });
+});
+
+describe("PWA push", () => {
+  const message = {
+    title: "Ada · #allgemein",
+    body: "@Bob schau mal",
+    path: "/s/s1/c/c1",
+    user: "u1",
+    channel: "c1",
+    message: "m2",
+    at: "2026-10-17T10:00:00.000002Z",
+  };
+
+  it("shows a pushed message like the page would, with the same tag", async () => {
+    const w = worker();
+    await w.push(message);
+    expect(w.showNotification).toHaveBeenCalledWith("Ada · #allgemein", {
+      body: "@Bob schau mal",
+      tag: "gelabber:u1:c1",
+      renotify: true,
+      icon: "/icons/icon-192.png",
+      data: {
+        path: "/s/s1/c/c1",
+        user: "u1",
+        message: "m2",
+        at: "2026-10-17T10:00:00.000002Z",
+      },
+    });
+  });
+
+  it("shows it with a visible window of the app too", async () => {
+    const w = worker({
+      windows: [appWindow("/d/c1", { visibilityState: "visible" })],
+    });
+    await w.push(message);
+    expect(w.showNotification).toHaveBeenCalledOnce();
+  });
+
+  it("shows what a window showed, or a newer one, again quietly", async () => {
+    for (const data of [
+      { message: "m2", at: message.at },
+      { message: "m3", at: "2026-10-17T10:00:00.000003Z" },
+    ]) {
+      const w = worker({
+        windows: [appWindow("/d/c1")],
+        notifications: [
+          {
+            title: "Ada · #allgemein",
+            body: "vorher",
+            tag: "gelabber:u1:c1",
+            data,
+          },
+        ],
+      });
+      await w.push(message);
+      expect(w.showNotification).toHaveBeenCalledExactlyOnceWith(
+        "Ada · #allgemein",
+        {
+          body: "vorher",
+          tag: "gelabber:u1:c1",
+          silent: true,
+          icon: "/icons/icon-192.png",
+          data,
+        },
+      );
+    }
+    const older = worker({
+      notifications: [
+        {
+          tag: "gelabber:u1:c1",
+          data: { message: "m1", at: "2026-10-17T09:59:59Z" },
+        },
+      ],
+    });
+    await older.push(message);
+    expect(older.showNotification).toHaveBeenCalledOnce();
+    expect(older.showNotification.mock.calls[0][1].renotify).toBe(true);
+  });
+
+  it("ignores pushes that are not Gelabber messages", async () => {
+    const w = worker();
+    await w.push({ title: "x" });
+    await w.push("not json");
+    expect(w.showNotification).not.toHaveBeenCalled();
   });
 });

@@ -2,9 +2,10 @@
 
 import { useNavigate, useParams } from "@tanstack/react-router";
 import { useQueryClient } from "@tanstack/react-query";
-import { useEffect, useState } from "react";
+import { useEffect, useMemo, useState } from "react";
 
 import { useUserId } from "../auth/scope.ts";
+import { useSession } from "../auth/session.ts";
 import { MessagePane } from "../components/MessagePane.tsx";
 import { LoadError } from "../components/LoadError.tsx";
 import { PresenceAvatar } from "../components/PresenceAvatar.tsx";
@@ -68,6 +69,14 @@ function DmChat({ dm }: { dm: DirectMessage }) {
     presenceOf(s.byServer, dm.id, dm.peer.id),
   );
   const [profileOpen, setProfileOpen] = useState(false);
+  const me = useSession((s) => s.user);
+  const mentionable = useMemo(
+    () => [
+      { id: dm.peer.id, name: dm.peer.name },
+      ...(me ? [{ id: me.id, name: me.name }] : []),
+    ],
+    [dm.peer.id, dm.peer.name, me],
+  );
 
   return (
     <div className="flex min-h-0 flex-1 overflow-hidden">
@@ -100,6 +109,13 @@ function DmChat({ dm }: { dm: DirectMessage }) {
               canSend
               canSendFiles
               mention="@"
+              members={mentionable}
+              notify={{
+                scope: "channel",
+                id: dm.id,
+                name: dm.peer.name,
+                dm: true,
+              }}
               footer={<TypingBar channelId={dm.id} members={members} />}
               onDraftChange={typing.onChange}
               onDraftStop={typing.stop}

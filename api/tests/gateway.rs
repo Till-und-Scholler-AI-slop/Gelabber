@@ -1443,3 +1443,97 @@ async fn pubsub_outage_preserves_open_socket_and_requests_rest_resync(pool: PgPo
     assert_eq!(recovered["d"]["id"], missed.body["id"]);
     recv_until(&mut ws, |f| f["op"] == "ok").await;
 }
+
+/// A settings change reaches every socket of the account, also ones that
+/// subscribed to nothing, and nobody else's.
+#[sqlx::test]
+async fn notification_settings_go_to_the_own_sockets_only(pool: PgPool) {
+    let (mut owner, mut member) = two_users(pool.clone()).await;
+    let server = create_server(&mut owner, "Settings").await;
+    let s = server["id"].as_str().unwrap().to_owned();
+    join_member(&mut owner, &mut member, &s).await;
+    let (addr, _) = common::serve_ws(pool).await;
+    let mut first = connect(addr, &session_cookie(&owner), None).await;
+    let mut second = connect(addr, &session_cookie(&owner), None).await;
+    let mut other = connect(addr, &session_cookie(&member), None).await;
+    // Every socket is registered once it answers a heartbeat.
+    for ws in [&mut first, &mut second, &mut other] {
+        send_json(ws, json!({"op":"h"})).await;
+        recv_until(ws, |f| f["op"] == "h").await;
+    }
+    let res = owner
+        .send(
+            Method::PUT,
+            &format!("/api/servers/{s}/notification-settings"),
+            Some(json!({"level":"mentions"})),
+        )
+        .await;
+    assert_eq!(res.status, StatusCode::OK, "{}", res.body);
+    recv_until(&mut first, |f| f["op"] == "ns").await;
+    recv_until(&mut second, |f| f["op"] == "ns").await;
+    assert!(
+        tokio::time::timeout(Duration::from_millis(200), async {
+            loop {
+                let f = recv_json(&mut other).await;
+                assert_ne!(f["op"], "ns", "settings of another account");
+            }
+        })
+        .await
+        .is_err()
+    );
+}
+
+#[sqlx::test]
+async fn a_read_position_reaches_the_readers_other_sockets_only(pool: PgPool) {
+    let (mut owner, mut member) = two_users(pool.clone()).await;
+    let server = create_server(&mut owner, "Gelesen").await;
+    let s = server["id"].as_str().unwrap().to_owned();
+    let c = server["channels"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .find(|c| c["kind"] == "text")
+        .unwrap()["id"]
+        .as_str()
+        .unwrap()
+        .to_owned();
+    join_member(&mut owner, &mut member, &s).await;
+    let posted = owner
+        .send(
+            Method::POST,
+            &format!("/api/channels/{c}/messages"),
+            Some(json!({"content":"hallo"})),
+        )
+        .await;
+    assert_eq!(posted.status, StatusCode::CREATED, "{}", posted.body);
+    let (addr, _) = common::serve_ws(pool).await;
+    let mut phone = connect(addr, &session_cookie(&member), None).await;
+    let mut other = connect(addr, &session_cookie(&owner), None).await;
+    for ws in [&mut phone, &mut other] {
+        send_json(ws, json!({"op":"h"})).await;
+        recv_until(ws, |f| f["op"] == "h").await;
+    }
+    let path = format!("/api/channels/{c}/read");
+    let mark = json!({"message_id": posted.body["id"]});
+    let res = member.send(Method::PUT, &path, Some(mark.clone())).await;
+    assert_eq!(res.status, StatusCode::OK, "{}", res.body);
+    let frame = recv_until(&mut phone, |f| f["op"] == "rd").await;
+    assert_eq!(frame["d"][0]["channel_id"], c.as_str());
+    assert_eq!(frame["d"][0]["read_message_id"], posted.body["id"]);
+    assert_eq!(frame["d"][0]["unread_count"], 0);
+    // The same mark again moves nothing and says nothing.
+    let res = member.send(Method::PUT, &path, Some(mark.clone())).await;
+    assert_eq!(res.status, StatusCode::OK, "{}", res.body);
+    for ws in [&mut phone, &mut other] {
+        assert!(
+            tokio::time::timeout(Duration::from_millis(200), async {
+                loop {
+                    let f = recv_json(ws).await;
+                    assert_ne!(f["op"], "rd", "an unmoved or foreign read position");
+                }
+            })
+            .await
+            .is_err()
+        );
+    }
+}

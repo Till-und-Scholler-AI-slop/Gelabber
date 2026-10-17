@@ -90,6 +90,48 @@ export function useIdlePresence(userId: string | null): void {
   }, [userId]);
 }
 
+/**
+ * Tell the server while this page is visible and someone uses it: it then
+ * holds Web Push back for the account (#243), as the page itself shows or
+ * announces what arrives. Visible rather than focused, so a push never
+ * reaches a service worker that must stay quiet for a visible window; idle
+ * after `CLIENT_IDLE_MS` without input, so a screen nobody sits at does not
+ * hold back the phone's pushes.
+ */
+export function useFocusReport(userId: string | null): void {
+  useEffect(() => {
+    if (!userId) return undefined;
+    const gateway = getGateway();
+    let idle = false;
+    let idleTimer: ReturnType<typeof setTimeout> | null = null;
+    const report = () => gateway.setInFront(!document.hidden && !idle);
+    const goIdle = () => {
+      idle = true;
+      report();
+    };
+    const onActivity = () => {
+      if (idleTimer) window.clearTimeout(idleTimer);
+      idleTimer = window.setTimeout(goIdle, CLIENT_IDLE_MS);
+      if (idle) {
+        idle = false;
+        report();
+      }
+    };
+    onActivity();
+    report();
+    for (const type of PRESENCE_ACTIVITY_EVENTS)
+      window.addEventListener(type, onActivity);
+    document.addEventListener("visibilitychange", report);
+    return () => {
+      if (idleTimer) window.clearTimeout(idleTimer);
+      for (const type of PRESENCE_ACTIVITY_EVENTS)
+        window.removeEventListener(type, onActivity);
+      document.removeEventListener("visibilitychange", report);
+      gateway.setInFront(false);
+    };
+  }, [userId]);
+}
+
 export function useTypingInput(
   serverId: string,
   channelId: string,

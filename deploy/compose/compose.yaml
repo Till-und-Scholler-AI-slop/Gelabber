@@ -61,6 +61,9 @@ services:
       KLIPY_CONTENT_FILTER: ${KLIPY_CONTENT_FILTER:-medium}
       API_RATE_GIF_PER_MIN: ${API_RATE_GIF_PER_MIN:-30}
       API_RATE_GIF_MEDIA_PER_MIN: ${API_RATE_GIF_MEDIA_PER_MIN:-240}
+      # Empty turns Web Push off.
+      VAPID_PRIVATE_KEY: ${VAPID_PRIVATE_KEY:-}
+      VAPID_SUBJECT: ${VAPID_SUBJECT:-}
     expose:
       - "8080"
     depends_on:
