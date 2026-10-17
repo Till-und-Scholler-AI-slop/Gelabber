@@ -62,6 +62,14 @@ describe("message text", () => {
     expect(render("@here", BOB, reached)).toContain("is-me");
   });
 
+  it("marks the own token only where the server kept the mention", () => {
+    const kept = { everyone: false, mentions: [ADA] };
+    expect(render(`<@${ADA}>`, ADA, kept)).toContain("is-me");
+    expect(
+      render(`<@${ADA}>`, ADA, { everyone: false, mentions: [] }),
+    ).not.toContain("is-me");
+  });
+
   it("leaves code and plain text alone, escaped", () => {
     expect(render(`\`<@${BOB}>\` <b>`)).toBe(`\`&lt;@${BOB}&gt;\` &lt;b&gt;`);
   });
