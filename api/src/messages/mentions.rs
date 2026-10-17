@@ -33,6 +33,28 @@ pub struct Parsed {
     pub here: bool,
 }
 
+/// What an earlier version of an edited message already reached. An edit
+/// that keeps such a ping does not spend the limit again: fixing a typo in
+/// an `@everyone` message must not drop the ping.
+#[derive(Debug, Default, Clone, Copy, PartialEq, Eq)]
+pub struct Granted {
+    pub everyone: bool,
+    pub here: bool,
+}
+
+impl Granted {
+    /// From the stored message: `@everyone` is its flag, `@here` shows as
+    /// mentions beyond the users the text names.
+    pub fn of(content: &str, mentions_everyone: bool, mentions: &[Uuid]) -> Self {
+        let parsed = parse(content);
+        Self {
+            everyone: mentions_everyone,
+            here: mentions_everyone
+                || (parsed.here && mentions.iter().any(|id| !parsed.users.contains(id))),
+        }
+    }
+}
+
 #[derive(Debug, Default, PartialEq, Eq)]
 pub struct Resolved {
     pub users: Vec<Uuid>,
@@ -110,11 +132,13 @@ pub fn parse(content: &str) -> Parsed {
 }
 
 /// The members a message by `author` mentions, for storing with it.
+/// `granted` is what the message reached before an edit.
 pub(crate) async fn resolve(
     state: &AppState,
     access: &MessagingChannel,
     author: Uuid,
     content: &str,
+    granted: Granted,
 ) -> Result<Resolved, ApiError> {
     let parsed = parse(content);
     match access {
@@ -136,18 +160,26 @@ pub(crate) async fn resolve(
         }
         MessagingChannel::Server { member } => {
             // `@everyone` / `@here` need the right and stay within a few per
-            // window; otherwise the message goes out without the ping.
+            // window; otherwise the message goes out without the ping. The
+            // limiter is in memory, so with several API nodes it counts per
+            // node. An edit keeping a ping it already had is not counted.
+            let kept = if parsed.everyone {
+                granted.everyone
+            } else {
+                granted.here
+            };
             let crowd = (parsed.everyone || parsed.here)
                 && member.can(Permission::MentionEveryone)
-                && state
-                    .limiter
-                    .hit(
-                        "mention-everyone",
-                        &format!("{}:{author}", member.server.id),
-                        EVERYONE_PER_WINDOW,
-                        EVERYONE_WINDOW,
-                    )
-                    .is_ok();
+                && (kept
+                    || state
+                        .limiter
+                        .hit(
+                            "mention-everyone",
+                            &format!("{}:{author}", member.server.id),
+                            EVERYONE_PER_WINDOW,
+                            EVERYONE_WINDOW,
+                        )
+                        .is_ok());
             let everyone = crowd && parsed.everyone;
             let here = crowd && parsed.here && !parsed.everyone;
             let mut wanted = parsed.users;
@@ -192,6 +224,26 @@ mod tests {
 
     fn ids(list: &[&str]) -> Vec<Uuid> {
         list.iter().map(|id| Uuid::parse_str(id).unwrap()).collect()
+    }
+
+    #[test]
+    fn granted_reads_here_from_mentions_beyond_the_named() {
+        let named = format!("@here <@{A}>");
+        assert_eq!(Granted::of(&named, false, &ids(&[A])), Granted::default());
+        assert_eq!(
+            Granted::of(&named, false, &ids(&[A, B])),
+            Granted {
+                everyone: false,
+                here: true
+            }
+        );
+        assert_eq!(
+            Granted::of("@everyone", true, &[]),
+            Granted {
+                everyone: true,
+                here: true
+            }
+        );
     }
 
     #[test]
