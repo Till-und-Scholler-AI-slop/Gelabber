@@ -47,7 +47,8 @@ pub(crate) struct ReadState {
     pub(crate) read_at: Option<DateTime<Utc>>,
     pub(crate) unread_count: i64,
     /// Unread messages that mention the user (`<@id>`, `@here` when they were
-    /// online, `@everyone`). Bounded like `unread_count`.
+    /// online, `@everyone`), among the newest 1000 unread ones: the scan
+    /// walks the channel's index from the end and stops there.
     pub(crate) mention_count: i64,
     /// Effective notification level: the channel's, else its server's, else
     /// `all` (`notifications/settings.rs`).
@@ -80,10 +81,12 @@ pub(crate) const UNREAD: &str = "WITH visible AS (
     (SELECT count(*) FROM (SELECT 1 FROM messages m WHERE m.channel_id=v.channel_id AND m.author_id<>$1
       AND m.created_at>=v.joined_at
       AND (r.created_order IS NULL OR m.created_order>r.created_order) LIMIT 100) bounded) AS unread_count,
-    (SELECT count(*) FROM (SELECT 1 FROM messages m WHERE m.channel_id=v.channel_id AND m.author_id<>$1
+    (SELECT count(*) FROM (SELECT m.mentions, m.mentions_everyone FROM messages m
+      WHERE m.channel_id=v.channel_id AND m.author_id<>$1
       AND m.created_at>=v.joined_at
       AND (r.created_order IS NULL OR m.created_order>r.created_order)
-      AND ($1=ANY(m.mentions) OR m.mentions_everyone) LIMIT 100) bounded) AS mention_count,
+      ORDER BY m.created_order DESC LIMIT 1000) recent
+      WHERE $1=ANY(recent.mentions) OR recent.mentions_everyone) AS mention_count,
     COALESCE(n.channel_level, n.server_level, 'all') AS level,
     (n.channel_muted OR n.server_muted) AS muted,
     CASE WHEN (n.channel_muted AND n.channel_until IS NULL) OR (n.server_muted AND n.server_until IS NULL)

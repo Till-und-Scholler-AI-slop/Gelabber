@@ -132,18 +132,39 @@ async fn a_mention_counts_for_the_one_mentioned_until_read(pool: PgPool) {
 }
 
 #[sqlx::test]
-async fn everyone_counts_for_every_member(pool: PgPool) {
+async fn everyone_needs_the_right_and_stays_rare(pool: PgPool) {
     let World {
         mut a,
         mut b,
+        server,
         channel,
-        ..
     } = setup(&pool).await;
+    // Without the right the message goes out as plain text.
+    let plain = post(&mut b, &channel, "@everyone Essen!").await;
+    assert_eq!(plain["mention_everyone"], false);
+    assert_eq!(row(&mut a, &channel).await["mention_count"], 0);
+    let granted = a
+        .send(
+            Method::PATCH,
+            &format!("/api/servers/{server}"),
+            Some(json!({"member_permissions":["send_messages","send_files","join_voice","go_live","mention_everyone"]})),
+        )
+        .await;
+    assert_eq!(granted.status, StatusCode::OK, "{}", granted.body);
     let message = post(&mut b, &channel, "@everyone Essen!").await;
     assert_eq!(message["mention_everyone"], true);
     assert_eq!(row(&mut a, &channel).await["mention_count"], 1);
     // Not for the author.
     assert_eq!(row(&mut b, &channel).await["mention_count"], 0);
+    // Escaped it is text.
+    let escaped = post(&mut b, &channel, "\\@everyone").await;
+    assert_eq!(escaped["mention_everyone"], false);
+    // A few per window; beyond that the ping is dropped, not the message.
+    post(&mut b, &channel, "@here eins").await;
+    post(&mut b, &channel, "@everyone zwei").await;
+    let limited = post(&mut b, &channel, "@everyone drei").await;
+    assert_eq!(limited["mention_everyone"], false);
+    assert_eq!(row(&mut a, &channel).await["mention_count"], 2);
 }
 
 /// Decision: an edit names its mentions anew. Adding one to an unread

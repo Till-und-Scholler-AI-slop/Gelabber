@@ -24,6 +24,11 @@ export const PERMISSIONS: ReadonlyArray<{
     hint: "Fremde Nachrichten im Chat löschen.",
   },
   {
+    id: "mention_everyone",
+    label: "@everyone und @here",
+    hint: "Alle Mitglieder auf einmal erwähnen und benachrichtigen.",
+  },
+  {
     id: "send_messages",
     label: "Nachrichten schreiben",
     hint: "In Textkanälen schreiben.",

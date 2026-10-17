@@ -1607,6 +1607,7 @@ name = "gelabber-desktop"
 version = "0.6.1"
 dependencies = [
  "gelabber-media-core",
+ "gio",
  "libloading 0.8.9",
  "pollster",
  "serde",

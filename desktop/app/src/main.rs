@@ -98,7 +98,10 @@ fn save_settings(app: &AppHandle, settings: &Settings) -> Result<(), String> {
         fs::create_dir_all(dir).map_err(|e| e.to_string())?;
     }
     let json = serde_json::to_vec_pretty(settings).map_err(|e| e.to_string())?;
-    fs::write(path, json).map_err(|e| e.to_string())
+    // Whole or not at all: a half-written file would lose the server.
+    let partial = path.with_extension("json.partial");
+    fs::write(&partial, json).map_err(|e| e.to_string())?;
+    fs::rename(&partial, path).map_err(|e| e.to_string())
 }
 
 /// Only http(s) origins; the window loads the server root.
@@ -168,18 +171,31 @@ fn permission(
 /// answer in its profile itself.
 #[cfg(target_os = "linux")]
 fn allow_notifications(window: &tauri::WebviewWindow, origin: &Url) {
+    use std::sync::atomic::{AtomicBool, Ordering};
     use webkit2gtk::{SecurityOrigin, WebContextExt, WebViewExt};
-    let origin = origin.origin().ascii_serialization();
+    // One handler for the app's lifetime; it allows whichever server is set
+    // when a web process starts, never one that was set before.
+    static CURRENT: std::sync::Mutex<String> = std::sync::Mutex::new(String::new());
+    static HOOKED: AtomicBool = AtomicBool::new(false);
+    if let Ok(mut current) = CURRENT.lock() {
+        *current = origin.origin().ascii_serialization();
+    }
+    let hook = !HOOKED.swap(true, Ordering::SeqCst);
     let result = window.with_webview(move |webview| {
         let Some(context) = webview.inner().context() else {
             return;
         };
-        let allowed = SecurityOrigin::for_uri(&origin);
-        let initialize = move |context: &webkit2gtk::WebContext| {
+        let initialize = |context: &webkit2gtk::WebContext| {
+            let Ok(origin) = CURRENT.lock().map(|origin| origin.clone()) else {
+                return;
+            };
+            let allowed = SecurityOrigin::for_uri(&origin);
             context.initialize_notification_permissions(&[&allowed], &[]);
         };
         initialize(&context);
-        context.connect_initialize_notification_permissions(initialize);
+        if hook {
+            context.connect_initialize_notification_permissions(initialize);
+        }
     });
     if let Err(error) = result {
         eprintln!("gelabber: notification permission: {error}");
