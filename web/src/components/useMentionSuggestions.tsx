@@ -19,6 +19,11 @@ export function useMentionSuggestions(
   const [active, setActive] = useState(0);
   // Escape closes the list until the `@…` it was shown for changes.
   const [dismissed, setDismissed] = useState<string | null>(null);
+  // Who was picked for a name: `toWire` sends that person even where two
+  // members share the name.
+  const [picked, setPicked] = useState<ReadonlyMap<string, string>>(
+    () => new Map(),
+  );
   const listId = useId();
   const at = caret === null ? null : mentionAt(draft, caret);
   const key = at ? `${at.start}:${at.query}` : null;
@@ -32,6 +37,8 @@ export function useMentionSuggestions(
   const pick = (suggestion: Suggestion) => {
     if (!at) return;
     const next = insertMention(draft, at, suggestion);
+    if (suggestion.kind === "user")
+      setPicked((was) => new Map(was).set(suggestion.name, suggestion.id));
     setDraft(next.text, next.caret);
     setCaret(next.caret);
     setActive(0);
@@ -116,5 +123,5 @@ export function useMentionSuggestions(
     </ul>
   ) : null;
 
-  return { fieldProps, onKeyDown, list, track };
+  return { fieldProps, onKeyDown, list, track, picked };
 }

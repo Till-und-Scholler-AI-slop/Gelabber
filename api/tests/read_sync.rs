@@ -157,6 +157,22 @@ async fn read_all_and_dms_only(pool: PgPool) {
         .await;
     assert_eq!(r.status, StatusCode::OK, "{}", r.body);
     assert_eq!(count(&unread(&mut b).await, &general), 0);
+    // Only the conversations that moved, with the position clients order by.
+    let moved = r.body.as_array().unwrap();
+    assert_eq!(moved.len(), 1, "{}", r.body);
+    assert_eq!(moved[0]["channel_id"], general.as_str());
+    assert!(moved[0]["read_order"].is_i64(), "{}", r.body);
+    assert_eq!(moved[0]["read_order"], moved[0]["latest_order"]);
+    assert!(moved[0]["membership_at"].is_string(), "{}", r.body);
+    // A loop is held back.
+    let mut status = StatusCode::OK;
+    for _ in 0..25 {
+        status = b
+            .send(Method::PUT, "/api/messages/read-all", Some(json!({})))
+            .await
+            .status;
+    }
+    assert_eq!(status, StatusCode::TOO_MANY_REQUESTS);
 }
 
 #[sqlx::test]

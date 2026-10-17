@@ -128,6 +128,7 @@ function TextChat({
       canSend={canWrite}
       canSendFiles={can(server, "send_files")}
       canModerate={can(server, "manage_messages")}
+      canMentionEveryone={can(server, "mention_everyone")}
       members={members}
       notify={{
         scope: "channel",

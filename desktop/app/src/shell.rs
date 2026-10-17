@@ -52,7 +52,14 @@ impl Unread {
 #[derive(Default)]
 pub struct Shell {
     tray: Mutex<Option<TrayIcon>>,
-    unread: Mutex<Unread>,
+    shown: Mutex<Shown>,
+}
+
+/// What the taskbar and the tray really show, as last applied.
+#[derive(Default)]
+struct Shown {
+    badge: u32,
+    dot: Option<[u8; 4]>,
 }
 
 impl Shell {
@@ -140,9 +147,47 @@ fn tray_supported() -> bool {
         ]
         .iter()
         // SAFETY: the libraries tray-icon would load itself; their
-        // initialisers run either way.
-        .any(|name| unsafe { libloading::Library::new(name) }.is_ok())
+        // initialisers run either way. Kept loaded: unloading GTK libraries
+        // again is not safe.
+        .any(|name| match unsafe { libloading::Library::new(name) } {
+            Ok(library) => {
+                std::mem::forget(library);
+                true
+            }
+            Err(_) => false,
+        })
     })
+}
+
+/// Whether a tray is on screen to bring the window back from: on Linux a
+/// StatusNotifier host must run. With the library installed but no host
+/// (GNOME without the AppIndicator extension) the icon is built and stays
+/// invisible.
+#[cfg(target_os = "linux")]
+fn tray_host() -> bool {
+    use gio::prelude::*;
+    let Ok(bus) = gio::bus_get_sync(gio::BusType::Session, gio::Cancellable::NONE) else {
+        return false;
+    };
+    bus.call_sync(
+        Some("org.freedesktop.DBus"),
+        "/org/freedesktop/DBus",
+        "org.freedesktop.DBus",
+        "NameHasOwner",
+        Some(&("org.kde.StatusNotifierWatcher",).to_variant()),
+        gio::glib::VariantTy::new("(b)").ok(),
+        gio::DBusCallFlags::NONE,
+        500,
+        gio::Cancellable::NONE,
+    )
+    .ok()
+    .and_then(|reply| reply.get::<(bool,)>())
+    .is_some_and(|(owned,)| owned)
+}
+
+#[cfg(not(target_os = "linux"))]
+fn tray_host() -> bool {
+    true
 }
 
 #[cfg(not(target_os = "linux"))]
@@ -209,7 +254,7 @@ fn quit(app: &AppHandle) {
 
 /// Whether closing the window hides it in the tray instead of ending the app.
 pub fn closes_to_tray(app: &AppHandle) -> bool {
-    load_settings(app).close_to_tray && app.state::<Shell>().has_tray()
+    load_settings(app).close_to_tray && app.state::<Shell>().has_tray() && tray_host()
 }
 
 #[derive(Serialize)]
@@ -222,7 +267,7 @@ pub struct ShellInfo {
 #[tauri::command]
 pub fn shell_info(app: AppHandle) -> ShellInfo {
     ShellInfo {
-        tray: app.state::<Shell>().has_tray(),
+        tray: app.state::<Shell>().has_tray() && tray_host(),
         close_to_tray: load_settings(&app).close_to_tray,
     }
 }
@@ -247,33 +292,35 @@ pub fn shell_focus(app: AppHandle) {
 pub fn shell_unread(app: AppHandle, count: u32, any: bool, attention: bool) -> Result<(), String> {
     let next = Unread { count, any };
     let shell = app.state::<Shell>();
-    let previous = {
-        let mut unread = shell.unread.lock().map_err(|e| e.to_string())?;
-        std::mem::replace(&mut *unread, next)
-    };
     let window = main_window(&app).ok_or("main window missing")?;
-    if attention && !window.is_focused().unwrap_or(true) {
-        window
-            .request_user_attention(Some(UserAttentionType::Informational))
-            .map_err(|e| e.to_string())?;
-    }
-    if previous == next {
-        return Ok(());
-    }
-    if previous.count != next.count {
-        badge(&window, next.count)?;
-    }
-    if previous.dot() != next.dot()
-        && let Ok(tray) = shell.tray.lock()
-        && let Some(tray) = tray.as_ref()
-        && let Some(icon) = app.default_window_icon()
+    // Each part on its own: one the desktop refuses (no xdg-activation, no
+    // launcher entry) must not hold back the others.
+    if attention
+        && !window.is_focused().unwrap_or(true)
+        && let Err(error) = window.request_user_attention(Some(UserAttentionType::Informational))
     {
-        tray.set_icon(Some(dotted(icon, next.dot())))
-            .map_err(|e| e.to_string())?;
+        eprintln!("gelabber: attention: {error}");
+    }
+    let mut shown = shell.shown.lock().map_err(|e| e.to_string())?;
+    // Only what was really applied counts as shown, so a failed part is
+    // tried again with the next update.
+    if shown.badge != next.count {
+        match badge(&window, next.count) {
+            Ok(()) => shown.badge = next.count,
+            Err(error) => eprintln!("gelabber: badge: {error}"),
+        }
     }
     if let Ok(tray) = shell.tray.lock()
         && let Some(tray) = tray.as_ref()
     {
+        if shown.dot != next.dot()
+            && let Some(icon) = app.default_window_icon()
+        {
+            match tray.set_icon(Some(dotted(icon, next.dot()))) {
+                Ok(()) => shown.dot = next.dot(),
+                Err(error) => eprintln!("gelabber: tray icon: {error}"),
+            }
+        }
         let tooltip = match next.count {
             0 if next.any => "Gelabber: ungelesene Nachrichten".to_owned(),
             0 => "Gelabber".to_owned(),

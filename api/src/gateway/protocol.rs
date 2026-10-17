@@ -534,6 +534,9 @@ pub struct ReadSync {
     pub server_id: Option<Uuid>,
     pub read_message_id: Option<Uuid>,
     pub read_at: Option<chrono::DateTime<chrono::Utc>>,
+    pub read_order: Option<i64>,
+    pub membership_at: chrono::DateTime<chrono::Utc>,
+    pub latest_order: Option<i64>,
     pub unread_count: i64,
     pub mention_count: i64,
 }

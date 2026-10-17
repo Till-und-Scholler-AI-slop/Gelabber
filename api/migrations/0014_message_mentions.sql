@@ -7,4 +7,5 @@ ALTER TABLE messages
     ADD COLUMN mentions UUID[] NOT NULL DEFAULT '{}',
     ADD COLUMN mentions_everyone BOOLEAN NOT NULL DEFAULT false;
 
-CREATE INDEX messages_mentions_idx ON messages USING GIN (mentions);
+-- No index of its own: the unread count looks only at a channel's newest
+-- unread messages through messages_channel_created_order_idx.

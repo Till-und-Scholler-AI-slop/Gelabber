@@ -12,10 +12,19 @@
 use uuid::Uuid;
 
 use super::MessagingChannel;
-use crate::{error::ApiError, gateway::PresenceStatus, state::AppState};
+use crate::{
+    error::ApiError, gateway::PresenceStatus, servers::permissions::Permission, state::AppState,
+};
 
 /// More named users than this are not kept; `@everyone` exists for that.
 pub const MAX_USERS: usize = 100;
+/// `@here` stores who was online; beyond this many it reaches the first
+/// ones only, and `@everyone` is the way to reach a crowd.
+pub const MAX_HERE: usize = 250;
+/// `@everyone` / `@here` per author and server within [`EVERYONE_WINDOW`];
+/// more are sent as plain text.
+pub const EVERYONE_PER_WINDOW: u32 = 3;
+pub const EVERYONE_WINDOW: std::time::Duration = std::time::Duration::from_secs(10 * 60);
 
 #[derive(Debug, Default, PartialEq, Eq)]
 pub struct Parsed {
@@ -56,15 +65,23 @@ fn outside_code(content: &str) -> String {
     out
 }
 
-/// `@word` on its own: not inside an address (`a@everyone.org`) or a longer
-/// word (`@everyoneelse`).
+/// Escaped with a backslash (`\@everyone`, `\<@id>`): plain text, as the
+/// web client's Markdown shows it.
+fn escaped(text: &str, at: usize) -> bool {
+    text[..at].chars().rev().take_while(|c| *c == '\\').count() % 2 == 1
+}
+
+/// `@word` on its own: not inside an address (`a@everyone.org`), a longer
+/// word (`@everyoneelse`) or after another `@` (`@@here`), and not escaped.
 fn has_keyword(text: &str, word: &str) -> bool {
     let needle = format!("@{word}");
     text.match_indices(&needle).any(|(at, _)| {
         let before = text[..at].chars().next_back();
         let after = text[at + needle.len()..].chars().next();
         let word_char = |c: char| c.is_alphanumeric() || c == '_' || c == '-';
-        !before.is_some_and(word_char) && !after.is_some_and(|c| word_char(c) || c == '@')
+        !before.is_some_and(|c| word_char(c) || c == '@')
+            && !after.is_some_and(|c| word_char(c) || c == '@')
+            && !escaped(text, at)
     })
 }
 
@@ -73,9 +90,11 @@ pub fn parse(content: &str) -> Parsed {
     let mut users = Vec::new();
     let mut rest = text.as_str();
     while let Some(start) = rest.find("<@") {
+        let plain = escaped(rest, start);
         rest = &rest[start + 2..];
         let Some(end) = rest.find('>') else { break };
-        if let Ok(id) = Uuid::parse_str(&rest[..end])
+        if !plain
+            && let Ok(id) = Uuid::parse_str(&rest[..end])
             && !users.contains(&id)
         {
             users.push(id);
@@ -116,16 +135,34 @@ pub(crate) async fn resolve(
             })
         }
         MessagingChannel::Server { member } => {
+            // `@everyone` / `@here` need the right and stay within a few per
+            // window; otherwise the message goes out without the ping.
+            let crowd = (parsed.everyone || parsed.here)
+                && member.can(Permission::MentionEveryone)
+                && state
+                    .limiter
+                    .hit(
+                        "mention-everyone",
+                        &format!("{}:{author}", member.server.id),
+                        EVERYONE_PER_WINDOW,
+                        EVERYONE_WINDOW,
+                    )
+                    .is_ok();
+            let everyone = crowd && parsed.everyone;
+            let here = crowd && parsed.here && !parsed.everyone;
             let mut wanted = parsed.users;
-            if parsed.here && !parsed.everyone {
+            if here {
                 // Best effort: without Redis `@here` reaches nobody, the
                 // message itself still goes out.
                 match state.gateway.presence_snapshot(member.server.id).await {
                     Ok(online) => wanted.extend(
                         online
                             .into_iter()
-                            .filter(|entry| entry.st != PresenceStatus::Offline)
-                            .map(|entry| entry.u),
+                            .filter(|entry| {
+                                entry.st != PresenceStatus::Offline && entry.u != author
+                            })
+                            .map(|entry| entry.u)
+                            .take(MAX_HERE),
                     ),
                     Err(error) => {
                         tracing::debug!(error = error.code(), "@here without presence")
@@ -141,10 +178,7 @@ pub(crate) async fn resolve(
             .bind(author)
             .fetch_all(&state.db)
             .await?;
-            Ok(Resolved {
-                users,
-                everyone: parsed.everyone,
-            })
+            Ok(Resolved { users, everyone })
         }
     }
 }
@@ -179,6 +213,15 @@ mod tests {
         assert!(!parse("@everyoneelse").everyone);
         assert!(!parse("@here_and_now").here);
         assert!(!parse("everyone").everyone);
+        assert!(!parse("@@here").here);
+    }
+
+    #[test]
+    fn escaped_mentions_are_text() {
+        assert!(!parse(r"\@everyone").everyone);
+        assert!(parse(r"\\@everyone").everyone);
+        assert!(parse(&format!(r"\<@{A}>")).users.is_empty());
+        assert_eq!(parse(&format!(r"\<@{A}> <@{B}>")).users, ids(&[B]));
     }
 
     #[test]

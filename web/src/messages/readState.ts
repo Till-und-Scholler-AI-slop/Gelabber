@@ -22,6 +22,11 @@ export type ReadState = {
   server_id: string | null;
   read_message_id: string | null;
   read_at: string | null;
+  /** Read position and the membership it belongs to; the newest message
+   * when the counts were taken. Absent from older APIs. */
+  read_order?: number | null;
+  membership_at?: string;
+  latest_order?: number | null;
   unread_count: number;
   /** Unread messages that mention the user. Absent from older APIs. */
   mention_count?: number;
@@ -293,11 +298,33 @@ export function useReadBridge() {
   }, [client, userId, generation]);
 }
 
-const readAt = (row: { read_at: string | null } | undefined) =>
-  row?.read_at ? Date.parse(row.read_at) : -Infinity;
+type Position = Pick<
+  ReadState,
+  "read_at" | "read_order" | "membership_at" | "latest_order"
+>;
+const order = (value: number | null | undefined) => value ?? -Infinity;
+const readAt = (row: Position) =>
+  row.read_at ? Date.parse(row.read_at) : -Infinity;
+
+/** How `next` relates to `current`, ordered as the server orders cursors:
+ * a newer membership wins, then the further position, then the later count.
+ * Older APIs carry no orders; their read time decides. */
+function compare(next: Position, current: Position): number {
+  if (next.membership_at && current.membership_at) {
+    const joined =
+      Date.parse(next.membership_at) - Date.parse(current.membership_at);
+    if (joined) return joined;
+    if (order(next.read_order) !== order(current.read_order))
+      return order(next.read_order) > order(current.read_order) ? 1 : -1;
+    return order(next.latest_order) >= order(current.latest_order) ? 0 : -1;
+  }
+  return readAt(next) >= readAt(current) ? 0 : -1;
+}
 
 /** Read positions from elsewhere into the cached rows. Forward only: a row
- * this window already has further along stays; settings stay as cached. */
+ * this window already has further along stays; settings stay as cached.
+ * When the cached row counted messages the frame did not know yet, the
+ * position is taken and the counts are asked for again. */
 export function applyReadSync(
   client: QueryClient,
   stamp: ScopeStamp,
@@ -307,19 +334,26 @@ export function applyReadSync(
 ): void {
   if (!stampHolds(stamp) || rows.length === 0) return;
   const byChannel = new Map(rows.map((row) => [row.channel_id, row]));
+  let recount = false;
   client.setQueryData<ReadState[]>(readKey(stamp), (cached) =>
     cached?.map((current) => {
       const next = byChannel.get(current.channel_id);
-      if (!next || readAt(next) < readAt(current)) return current;
+      if (!next || compare(next, current) < 0) return current;
+      if (order(current.latest_order) > order(next.latest_order))
+        recount = true;
       return {
         ...current,
         read_message_id: next.read_message_id,
         read_at: next.read_at,
+        read_order: next.read_order,
+        membership_at: next.membership_at,
+        latest_order: next.latest_order,
         unread_count: next.unread_count,
         mention_count: next.mention_count ?? 0,
       };
     }),
   );
+  if (recount) void refreshReadState(client, stamp);
   for (const row of rows)
     if (row.unread_count === 0)
       void closeMessageNotifications({

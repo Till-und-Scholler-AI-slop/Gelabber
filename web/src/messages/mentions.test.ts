@@ -6,6 +6,7 @@ import {
   mentionAt,
   mentionSuggestions,
   mentionsMe,
+  namesIn,
   splitMentions,
   toWire,
 } from "./mentions.ts";
@@ -75,6 +76,21 @@ describe("mentions", () => {
     expect(toWire("kein at", members)).toBe("kein at");
     expect(toWire("a@Bob.de", members)).toBe("a@Bob.de");
     expect(toWire("@Bob!", members)).toBe(`<@${BOB}>!`);
+  });
+
+  it("leaves a shared name as text unless one was picked", () => {
+    const OTHER = "0190f7a2-0000-7000-8000-00000000000d";
+    const twins = [...members, { id: OTHER, name: "Bob" }];
+    expect(toWire("@Bob hi", twins)).toBe("@Bob hi");
+    expect(toWire("@Bob hi", twins, new Map([["Bob", OTHER]]))).toBe(
+      `<@${OTHER}> hi`,
+    );
+    // An edit keeps whom the message named before.
+    const sent = namesIn(`<@${OTHER}> hi`, twins);
+    expect(toWire("@Bob hallo", twins, sent)).toBe(`<@${OTHER}> hallo`);
+    // A member called "everyone" does not swallow the keyword.
+    const crowd = [...members, { id: OTHER, name: "everyone" }];
+    expect(toWire("@everyone", crowd)).toBe("@everyone");
   });
 
   it("finds the mention being typed and completes it", () => {

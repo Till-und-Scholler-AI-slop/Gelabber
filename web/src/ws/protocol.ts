@@ -107,6 +107,9 @@ export type ReadSync = {
   server_id: string | null;
   read_message_id: string | null;
   read_at: string | null;
+  read_order?: number | null;
+  membership_at?: string;
+  latest_order?: number | null;
   unread_count: number;
   mention_count: number;
 };
