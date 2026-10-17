@@ -36,6 +36,8 @@ fn png() -> Vec<u8> {
 struct Site {
     origin: String,
     seen: Arc<Mutex<Vec<String>>>,
+    /// `/changing`'s title; empty answers 500.
+    title: Arc<Mutex<String>>,
 }
 
 async fn handle(State(site): State<Site>, uri: Uri) -> Response {
@@ -89,6 +91,17 @@ async fn handle(State(site): State<Site>, uri: Uri) -> Response {
             "late".into_response()
         }
         "/text" => ([(CONTENT_TYPE, "text/plain")], "og:title").into_response(),
+        "/changing" => {
+            let title = site.title.lock().unwrap().clone();
+            if title.is_empty() {
+                return StatusCode::INTERNAL_SERVER_ERROR.into_response();
+            }
+            (
+                [(CONTENT_TYPE, "text/html")],
+                format!(r#"<meta property="og:title" content="{title}">"#),
+            )
+                .into_response()
+        }
         _ => StatusCode::NOT_FOUND.into_response(),
     }
 }
@@ -101,6 +114,7 @@ async fn serve_site() -> (Site, Policy) {
     let site = Site {
         origin: format!("http://site.test:{}", addr.port()),
         seen: Arc::default(),
+        title: Arc::default(),
     };
     let router = Router::new().fallback(handle).with_state(site.clone());
     tokio::spawn(async move { axum::serve(listener, router).await.unwrap() });
@@ -246,6 +260,42 @@ async fn a_link_gets_a_card_with_an_image_from_the_api(pool: PgPool) {
     .await;
     assert_eq!(again["previews"][0]["title"], "Kaffee & Kuchen");
     assert_eq!(site.seen.lock().unwrap().len(), fetched);
+}
+
+/// A refetch is a new row: messages keep the card they got, and a failed
+/// refetch leaves the last good card for new messages.
+#[sqlx::test]
+async fn old_messages_keep_their_card_when_the_page_changes(pool: PgPool) {
+    let (site, policy) = serve_site().await;
+    let (mut client, channel) =
+        signed_in(pool.clone(), Some(LinkPreviews::with_policy(policy))).await;
+    let url = format!("{}/changing", site.origin);
+    let card_of = async |client: &mut Client, title: &str| {
+        *site.title.lock().unwrap() = title.to_owned();
+        sqlx::query("UPDATE link_previews SET fetched_at = fetched_at - interval '2 days'")
+            .execute(&pool)
+            .await
+            .unwrap();
+        let sent = post(client, &channel, &url).await;
+        let id = sent["id"].as_str().unwrap().to_owned();
+        let message = wait_previews(client, &channel, &id, Duration::from_secs(10)).await;
+        (id, message["previews"][0]["title"].clone())
+    };
+    let (first, title) = card_of(&mut client, "Eins").await;
+    assert_eq!(title, "Eins");
+    let (second, title) = card_of(&mut client, "Zwei").await;
+    assert_eq!(title, "Zwei");
+    let (_, title) = card_of(&mut client, "").await;
+    assert_eq!(title, "Zwei", "a failed refetch keeps the last card");
+
+    assert_eq!(
+        message(&mut client, &channel, &first).await["previews"][0]["title"],
+        "Eins"
+    );
+    assert_eq!(
+        message(&mut client, &channel, &second).await["previews"][0]["title"],
+        "Zwei"
+    );
 }
 
 #[sqlx::test]

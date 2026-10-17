@@ -17,7 +17,7 @@ mod workflows;
 
 use axum::Router;
 use axum::extract::{Query, State};
-use axum::http::StatusCode;
+use axum::http::{HeaderMap, StatusCode};
 use axum::response::{IntoResponse, Json, Response};
 use axum::routing::{delete, get, patch};
 use chrono::{DateTime, Utc};
@@ -221,6 +221,7 @@ async fn create_message(
     State(state): State<AppState>,
     CurrentUser(user): CurrentUser,
     Id(channel_id): Id,
+    headers: HeaderMap,
     Body(body): Body<CreateBody>,
 ) -> Result<Response, ApiError> {
     let access = messaging_channel(&state.db, channel_id, user.id).await?;
@@ -311,6 +312,7 @@ async fn create_message(
             channel_id,
             server_id: access.event_server_id(),
             urls: preview_urls(&message.content),
+            own_host: previews::request_host(&headers),
         },
     );
     Ok((StatusCode::CREATED, Json(message)).into_response())
@@ -320,6 +322,7 @@ async fn update_message(
     State(state): State<AppState>,
     CurrentUser(user): CurrentUser,
     Id(message_id): Id,
+    headers: HeaderMap,
     Body(body): Body<UpdateBody>,
 ) -> Result<Json<Message>, ApiError> {
     let (access, current) = message_for(&state.db, message_id, user.id).await?;
@@ -396,6 +399,7 @@ async fn update_message(
                 channel_id: message.channel_id,
                 server_id: access.event_server_id(),
                 urls,
+                own_host: previews::request_host(&headers),
             },
         );
     }
@@ -595,7 +599,7 @@ pub(crate) async fn attach_previews(
         .fetch_one(&mut *tx)
         .await?;
     let mut message = Message::from(row);
-    message.attachments = attachments::for_message(&state.db, job.message_id).await?;
+    message.attachments = attachments::for_message(&mut *tx, job.message_id).await?;
     persist_event(&mut tx, job.server_id, EventKind::E, &mut message).await?;
     tx.commit().await?;
     let _ = delivery::deliver_pending(state, 32).await;

@@ -3,10 +3,12 @@
 //! guard in [`net`], reads title, description, site name and image
 //! ([`html`], oEmbed for YouTube), copies the image into the object store
 //! and attaches the result to the message with an edit event. Sending never
-//! waits for it. Results are cached per URL for a day (an hour after a
-//! failure). Browsers load preview images from `/api/previews/{id}/{file}`,
-//! never from the linked site; a YouTube video loads from
-//! `youtube-nocookie.com` only once the viewer presses play.
+//! waits for it. Each fetch is a row of its own that its messages keep: a
+//! later fetch of the same URL, after a day (an hour after a failure),
+//! changes only the messages that link it from then on. Browsers load
+//! preview images from `/api/previews/{id}/{file}`, never from the linked
+//! site; a YouTube video loads from `youtube-nocookie.com` only once the
+//! viewer presses play.
 //!
 //! `API_LINK_PREVIEWS=false` turns all of it off; links stay links.
 
@@ -20,8 +22,8 @@ use std::time::Duration;
 
 use axum::Router;
 use axum::extract::{Path, State};
-use axum::http::HeaderValue;
-use axum::http::header::{CACHE_CONTROL, CONTENT_TYPE, X_CONTENT_TYPE_OPTIONS};
+use axum::http::header::{CACHE_CONTROL, CONTENT_TYPE, HOST, X_CONTENT_TYPE_OPTIONS};
+use axum::http::{HeaderMap, HeaderValue};
 use axum::response::{IntoResponse, Response};
 use axum::routing::get;
 use serde::{Deserialize, Serialize};
@@ -39,7 +41,7 @@ use crate::limits::{MINUTE, PREVIEW_SERVER_FACTOR};
 use crate::state::AppState;
 use crate::storage::StoreError;
 
-use self::net::{FetchError, Kind, Policy};
+use self::net::{FetchError, Fetcher, Kind, Policy};
 
 /// Previews older than this are fetched again when a new message links them.
 const FRESH_HOURS: i32 = 24;
@@ -47,8 +49,9 @@ const FRESH_HOURS: i32 = 24;
 const RETRY_HOURS: i32 = 1;
 /// Unreferenced previews are dropped after this long.
 const KEEP_UNUSED_DAYS: i32 = 7;
-/// One link: page, image and redirects together.
-const UNFURL_TIMEOUT: Duration = Duration::from_secs(15);
+/// One message, all its links: what a slow site can cost a worker. A
+/// request that times out also puts its host in backoff (`net::BACKOFF`).
+const JOB_BUDGET: Duration = Duration::from_secs(8);
 const WORKERS: usize = 4;
 const QUEUE: usize = 256;
 /// Largest preview image in pixels; the bytes are capped by `net`.
@@ -90,7 +93,7 @@ pub struct LinkPreviews {
 }
 
 struct Inner {
-    policy: Policy,
+    fetcher: Fetcher,
     /// oEmbed endpoint and thumbnail origin; tests use stand-ins.
     youtube: (String, String),
     queue: mpsc::Sender<Job>,
@@ -104,6 +107,9 @@ pub struct Job {
     /// Event scope: the server, or the DM channel.
     pub server_id: Uuid,
     pub urls: Vec<Url>,
+    /// The host the message was sent to: links to this server itself get
+    /// no preview (and no request back to it).
+    pub own_host: Option<String>,
 }
 
 impl LinkPreviews {
@@ -120,7 +126,7 @@ impl LinkPreviews {
         let (queue, receiver) = mpsc::channel(QUEUE);
         Self {
             inner: Arc::new(Inner {
-                policy,
+                fetcher: Fetcher::new(policy),
                 youtube: (YOUTUBE_OEMBED.to_owned(), YOUTUBE_THUMBNAILS.to_owned()),
                 queue,
                 receiver: Mutex::new(Some(receiver)),
@@ -140,7 +146,7 @@ impl LinkPreviews {
     }
 
     pub fn policy(&self) -> &Policy {
-        &self.inner.policy
+        self.inner.fetcher.policy()
     }
 }
 
@@ -214,14 +220,38 @@ pub fn enqueue(state: &AppState, author_id: Uuid, job: Job) {
     }
 }
 
+/// The host name a request was sent to, without the port.
+pub fn request_host(headers: &HeaderMap) -> Option<String> {
+    let host = headers.get(HOST)?.to_str().ok()?;
+    let name = match host.strip_prefix('[') {
+        Some(v6) => v6.split(']').next()?,
+        None => host.rsplit_once(':').map_or(host, |(name, _)| name),
+    };
+    (!name.is_empty()).then(|| name.trim_end_matches('.').to_ascii_lowercase())
+}
+
 async fn process(state: &AppState, job: Job) {
+    let fetcher = &state.previews.as_ref().expect("previews on").inner.fetcher;
+    let deadline = tokio::time::Instant::now() + JOB_BUDGET;
     let mut ids = Vec::new();
     for url in &job.urls {
-        match tokio::time::timeout(UNFURL_TIMEOUT, preview_for(state, url)).await {
+        if job.own_host.as_deref().is_some_and(|own| {
+            url.host_str().is_some_and(|host| {
+                host.trim_start_matches('[')
+                    .trim_end_matches(['.', ']'])
+                    .eq_ignore_ascii_case(own)
+            })
+        }) {
+            continue;
+        }
+        match tokio::time::timeout_at(deadline, preview_for(state, url)).await {
             Ok(Ok(Some(id))) => ids.push(id),
             Ok(Ok(None)) => {}
             Ok(Err(err)) => warn!(error = err.code(), "link preview failed"),
-            Err(_) => debug!(url = %url, "link preview timed out"),
+            Err(_) => {
+                debug!(url = %url, "link preview timed out");
+                fetcher.slow_down(url);
+            }
         }
     }
     if let Err(err) = crate::messages::attach_previews(state, &job, &ids).await {
@@ -235,29 +265,30 @@ fn url_hash(url: &Url) -> Vec<u8> {
 
 #[derive(FromRow)]
 struct Cached {
-    id: Uuid,
-    ok: bool,
     fresh: bool,
+    /// The newest successful fetch, which may be older than the newest row.
+    last_ok: Option<Uuid>,
 }
 
-/// The preview row for `url`, fetched now unless a fresh one exists;
-/// `None` when the page gave nothing to show.
+/// The preview for `url`: the newest fetch while it is fresh, otherwise a
+/// new one. A failed fetch leaves the last good one in use; `None` when
+/// there never was one.
 async fn preview_for(state: &AppState, url: &Url) -> Result<Option<Uuid>, ApiError> {
     let hash = url_hash(url);
     let cached = sqlx::query_as::<_, Cached>(
-        "SELECT id, status = 'ok' AS ok, \
-         fetched_at > now() - make_interval(hours => CASE WHEN status = 'ok' THEN $2 ELSE $3 END) AS fresh \
-         FROM link_previews WHERE url_hash = $1",
+        "SELECT fetched_at > now() - make_interval(hours => CASE WHEN status = 'ok' THEN $2 ELSE $3 END) AS fresh, \
+         (SELECT o.id FROM link_previews o WHERE o.url_hash = $1 AND o.status = 'ok' \
+          ORDER BY o.fetched_at DESC LIMIT 1) AS last_ok \
+         FROM link_previews WHERE url_hash = $1 ORDER BY fetched_at DESC LIMIT 1",
     )
     .bind(&hash)
     .bind(FRESH_HOURS)
     .bind(RETRY_HOURS)
     .fetch_optional(&state.db)
     .await?;
-    if let Some(cached) = &cached
-        && cached.fresh
-    {
-        return Ok(cached.ok.then_some(cached.id));
+    let last_ok = cached.as_ref().and_then(|c| c.last_ok);
+    if cached.as_ref().is_some_and(|c| c.fresh) {
+        return Ok(last_ok);
     }
     let previews = state.previews.as_ref().expect("previews on");
     let unfurled = match unfurl(&previews.inner, url).await {
@@ -267,7 +298,7 @@ async fn preview_for(state: &AppState, url: &Url) -> Result<Option<Uuid>, ApiErr
             None
         }
     };
-    let id = cached.as_ref().map_or_else(Uuid::new_v4, |c| c.id);
+    let id = Uuid::new_v4();
     let image = match unfurled.as_ref().and_then(|u| u.image.as_ref()) {
         Some(image) => store_image(state, id, image).await.ok(),
         None => None,
@@ -278,7 +309,12 @@ async fn preview_for(state: &AppState, url: &Url) -> Result<Option<Uuid>, ApiErr
     {
         discard(state, key).await;
     }
-    saved
+    saved?;
+    Ok(if unfurled.is_some() {
+        Some(id)
+    } else {
+        last_ok
+    })
 }
 
 struct Unfurled {
@@ -308,7 +344,7 @@ impl From<FetchError> for UnfurlError {
 }
 
 async fn unfurl(previews: &Inner, url: &Url) -> Result<Unfurled, UnfurlError> {
-    let policy = &previews.policy;
+    let policy = &previews.fetcher;
     let (meta, youtube_id) = match youtube_id(url) {
         Some(id) => (youtube(previews, &id).await, Some(id)),
         None => {
@@ -332,7 +368,7 @@ async fn unfurl(previews: &Inner, url: &Url) -> Result<Unfurled, UnfurlError> {
 }
 
 /// A raster image whose header proves a sane size (no SVG, no pixel bombs).
-async fn fetch_image(policy: &Policy, url: &Url) -> Option<Image> {
+async fn fetch_image(policy: &Fetcher, url: &Url) -> Option<Image> {
     let fetched = policy.get(url, Kind::Image).await.ok()?;
     let content_type = crate::avatars::sniff(&fetched.body)?;
     let (width, height) = crate::image_size::dimensions(&fetched.body)?;
@@ -392,7 +428,7 @@ async fn youtube(previews: &Inner, id: &str) -> html::Meta {
         .query_pairs_mut()
         .append_pair("format", "json")
         .append_pair("url", &format!("https://www.youtube.com/watch?v={id}"));
-    let data = match previews.policy.get(&oembed, Kind::Json).await {
+    let data = match previews.fetcher.get(&oembed, Kind::Json).await {
         Ok(fetched) => serde_json::from_slice::<OEmbed>(&fetched.body).ok(),
         Err(err) => {
             debug!(error = ?err, "youtube oembed failed");
@@ -435,14 +471,8 @@ async fn store_image(
     Ok((key, image.width, image.height))
 }
 
-#[derive(FromRow)]
-struct Saved {
-    id: Uuid,
-    old_image: Option<String>,
-}
-
-/// Inserts or refreshes the row; the image it replaces is queued for
-/// deletion and the new one's pending cleanup withdrawn, in one transaction.
+/// Stores one fetch as a new row and withdraws its image's pending
+/// cleanup, in one transaction. Rows are never changed afterwards.
 async fn save(
     db: &PgPool,
     id: Uuid,
@@ -450,21 +480,14 @@ async fn save(
     url: &Url,
     unfurled: Option<&Unfurled>,
     image: Option<&(String, u32, u32)>,
-) -> Result<Option<Uuid>, ApiError> {
+) -> Result<(), ApiError> {
     let meta = unfurled.map(|u| &u.meta);
     let mut tx = db.begin().await?;
-    let saved = sqlx::query_as::<_, Saved>(
-        "WITH old AS (SELECT image_key FROM link_previews WHERE url_hash = $2 FOR UPDATE) \
-         INSERT INTO link_previews AS lp \
+    sqlx::query(
+        "INSERT INTO link_previews \
            (id, url_hash, url, status, title, description, site_name, youtube_id, \
             image_key, image_width, image_height, fetched_at) \
-         VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, now()) \
-         ON CONFLICT (url_hash) DO UPDATE SET status = EXCLUDED.status, \
-           title = EXCLUDED.title, description = EXCLUDED.description, \
-           site_name = EXCLUDED.site_name, youtube_id = EXCLUDED.youtube_id, \
-           image_key = EXCLUDED.image_key, image_width = EXCLUDED.image_width, \
-           image_height = EXCLUDED.image_height, fetched_at = now() \
-         RETURNING lp.id, (SELECT image_key FROM old) AS old_image",
+         VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, now())",
     )
     .bind(id)
     .bind(hash)
@@ -477,7 +500,7 @@ async fn save(
     .bind(image.map(|i| i.0.clone()))
     .bind(image.map(|i| i.1 as i32))
     .bind(image.map(|i| i.2 as i32))
-    .fetch_one(&mut *tx)
+    .execute(&mut *tx)
     .await?;
     if let Some((key, _, _)) = image {
         sqlx::query("DELETE FROM storage_cleanup WHERE object_key = $1 AND attempts = 0")
@@ -485,13 +508,8 @@ async fn save(
             .execute(&mut *tx)
             .await?;
     }
-    if let Some(old) = &saved.old_image
-        && image.is_none_or(|(key, _, _)| key != old)
-    {
-        queue_delete(&mut tx, old).await?;
-    }
     tx.commit().await?;
-    Ok(unfurled.is_some().then_some(saved.id))
+    Ok(())
 }
 
 async fn queue_delete(db: &mut PgConnection, key: &str) -> Result<(), sqlx::Error> {
@@ -513,7 +531,8 @@ async fn discard(state: &AppState, key: &str) {
     }
 }
 
-/// Drops previews no message has used for [`KEEP_UNUSED_DAYS`].
+/// Drops fetches older than [`KEEP_UNUSED_DAYS`] that no message uses:
+/// superseded and failed ones, and previews nobody linked again.
 pub async fn sweep(db: &PgPool) -> Result<u64, sqlx::Error> {
     let mut tx = db.begin().await?;
     let keys: Vec<Option<String>> = sqlx::query_scalar(
@@ -646,8 +665,23 @@ async fn image(
 
 #[cfg(test)]
 mod tests {
-    use super::youtube_id;
+    use super::{request_host, youtube_id};
+    use axum::http::HeaderMap;
+    use axum::http::header::HOST;
     use url::Url;
+
+    #[test]
+    fn request_host_drops_the_port() {
+        let host = |value: &str| {
+            let mut headers = HeaderMap::new();
+            headers.insert(HOST, value.parse().unwrap());
+            request_host(&headers)
+        };
+        assert_eq!(host("Chat.Example:8443").as_deref(), Some("chat.example"));
+        assert_eq!(host("chat.example").as_deref(), Some("chat.example"));
+        assert_eq!(host("[::1]:80").as_deref(), Some("::1"));
+        assert_eq!(request_host(&HeaderMap::new()), None);
+    }
 
     #[test]
     fn finds_youtube_video_ids() {

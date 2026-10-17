@@ -23,21 +23,15 @@ impl Meta {
     }
 }
 
-/// The page's text: UTF-8 unless the header or a `<meta charset>` says
-/// Latin-1 / Windows-1252 (read as Latin-1, close enough for a title).
+/// The page's text in the charset the header or a `<meta charset>`
+/// declares (WHATWG labels, so `latin1` is windows-1252 as in browsers);
+/// UTF-8 when none is declared or the label is unknown.
 pub fn decode(body: &[u8], charset: Option<&str>) -> String {
-    let latin = |c: &str| {
-        matches!(
-            c,
-            "iso-8859-1" | "latin1" | "windows-1252" | "us-ascii" | "ascii"
-        )
-    };
     let declared = charset.map(str::to_owned).or_else(|| meta_charset(body));
-    if declared.as_deref().is_some_and(latin) {
-        body.iter().map(|b| char::from(*b)).collect()
-    } else {
-        String::from_utf8_lossy(body).into_owned()
-    }
+    let encoding = declared
+        .and_then(|label| encoding_rs::Encoding::for_label(label.as_bytes()))
+        .unwrap_or(encoding_rs::UTF_8);
+    encoding.decode(body).0.into_owned()
 }
 
 fn meta_charset(body: &[u8]) -> Option<String> {
@@ -388,5 +382,10 @@ mod tests {
         assert_eq!(decode(b"caf\xe9", Some("iso-8859-1")), "café");
         assert!(decode(b"<meta charset=\"windows-1252\">caf\xe9", None).ends_with("café"));
         assert_eq!(decode("café".as_bytes(), None), "café");
+        assert_eq!(
+            decode(b"\x93Euro\x94 \x80", Some("windows-1252")),
+            "\u{201c}Euro\u{201d} \u{20ac}"
+        );
+        assert_eq!(decode(b"\x82\xa0", Some("shift_jis")), "\u{3042}");
     }
 }

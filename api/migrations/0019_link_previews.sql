@@ -1,6 +1,7 @@
--- Link previews (#254). One row per fetched URL, shared by every message
--- that links it and refreshed after a day (`previews` module); the image is
--- a copy in the object store under `previews/`, served by the API.
+-- Link previews (#254). One row per fetch of a URL, never changed: the
+-- messages that got it keep it, and a refetch after a day (`previews`
+-- module) is a new row for the messages after. The image is a copy in the
+-- object store under `previews/`, served by the API.
 -- `message_previews` orders up to three of them under a message.
 -- `messages.suppress_embeds`: the author removed the previews; edits keep
 -- them off.
@@ -8,7 +9,7 @@
 CREATE TABLE link_previews (
     id            UUID        PRIMARY KEY DEFAULT gen_random_uuid(),
     -- SHA-256 of `url`: URLs can outgrow a btree key.
-    url_hash      BYTEA       NOT NULL UNIQUE,
+    url_hash      BYTEA       NOT NULL,
     url           TEXT        NOT NULL,
     status        TEXT        NOT NULL CHECK (status IN ('ok', 'failed')),
     title         TEXT,
@@ -22,6 +23,7 @@ CREATE TABLE link_previews (
     CHECK (image_key IS NULL OR (image_width > 0 AND image_height > 0))
 );
 
+CREATE INDEX link_previews_url_idx ON link_previews (url_hash, fetched_at DESC);
 CREATE INDEX link_previews_fetched_idx ON link_previews (fetched_at);
 
 CREATE TABLE message_previews (

@@ -1,21 +1,34 @@
 //! Outbound requests for link previews, guarded against SSRF. A message can
-//! name any URL, so before every request, redirects included, the host is
-//! resolved here and every address must be public; the connection is then
-//! pinned to the vetted address so a second DNS answer cannot move it.
-//! Only ports 80 and 443, no credentials, no cookies, no proxy, small
-//! bodies and short timeouts.
+//! name any URL, so every request, redirects included, is checked here
+//! first (scheme, port, no credentials, no local names), and the one client
+//! resolves names only through [`Fetcher`]'s resolver, which refuses a name
+//! unless every address is public. That answer is the one connected to, so
+//! a second DNS answer cannot move the connection. Only ports 80 and 443,
+//! no cookies, no proxy, small bodies and short timeouts; a host that let a
+//! request time out is skipped for a while.
 
 use std::collections::HashMap;
-use std::net::{IpAddr, Ipv4Addr, Ipv6Addr, SocketAddr};
-use std::time::Duration;
+use std::fmt;
+use std::net::{IpAddr, Ipv4Addr, Ipv6Addr, SocketAddr, ToSocketAddrs};
+use std::sync::{Arc, Mutex};
+use std::time::{Duration, Instant};
 
+use reqwest::dns::{Addrs, Name, Resolve, Resolving};
 use reqwest::header::{ACCEPT, CONTENT_TYPE, LOCATION};
+use tokio::sync::Semaphore;
 use url::{Host, Url};
 
 /// Each request, connect to last body byte.
 pub const REQUEST_TIMEOUT: Duration = Duration::from_secs(5);
 const CONNECT_TIMEOUT: Duration = Duration::from_secs(3);
 const DNS_TIMEOUT: Duration = Duration::from_secs(2);
+/// Name lookups at once. A lookup that hangs keeps its blocking thread
+/// until the system resolver gives up; this bounds how many can.
+const DNS_LOOKUPS: usize = 8;
+/// A host or address that let a request time out is skipped this long, so
+/// a slow site cannot keep taking the workers.
+pub const BACKOFF: Duration = Duration::from_secs(600);
+const BACKOFF_ENTRIES: usize = 4096;
 pub const MAX_REDIRECTS: usize = 3;
 /// Pages: only the head matters, so a longer page is cut, not refused.
 pub const HTML_MAX_BYTES: usize = 1024 * 1024;
@@ -49,8 +62,8 @@ pub struct Policy {
     pub deny_hosts: Vec<String>,
     /// Tests only: fixed DNS answers, consulted before the resolver.
     pub hosts: HashMap<String, Vec<IpAddr>>,
-    /// Tests only: socket addresses treated as public, any port. Empty in
-    /// production, where there is no way to set it.
+    /// Tests only: socket addresses treated as public, and their ports
+    /// allowed. Empty in production, where there is no way to set it.
     pub trusted: Vec<SocketAddr>,
 }
 
@@ -65,7 +78,17 @@ pub enum FetchError {
     TooManyRedirects,
     ContentType,
     TooLarge,
+    /// The host or its address timed out recently ([`BACKOFF`]).
+    Backoff,
 }
+
+impl fmt::Display for FetchError {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        write!(f, "{self:?}")
+    }
+}
+
+impl std::error::Error for FetchError {}
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum Kind {
@@ -111,31 +134,91 @@ pub struct Fetched {
     pub body: Vec<u8>,
 }
 
-impl Policy {
+/// The previews' HTTP client: one connection pool, names resolved only
+/// through the guard.
+#[derive(Clone)]
+pub struct Fetcher {
+    client: reqwest::Client,
+    guard: Arc<Guard>,
+}
+
+struct Guard {
+    policy: Policy,
+    lookups: Arc<Semaphore>,
+    /// Hosts and addresses in backoff, until when.
+    slow: Mutex<HashMap<Slow, Instant>>,
+    /// What each name resolved to last, so a timeout can back off from its
+    /// addresses too (another name for the same server).
+    resolved: Mutex<HashMap<String, Vec<IpAddr>>>,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Hash)]
+enum Slow {
+    Host(String),
+    Ip(IpAddr),
+}
+
+/// The client's DNS resolver: [`Guard::lookup`], so every connection goes
+/// to an address that was vetted for it.
+struct Vetting(Arc<Guard>);
+
+impl Resolve for Vetting {
+    fn resolve(&self, name: Name) -> Resolving {
+        let guard = self.0.clone();
+        let name = name.as_str().to_owned();
+        Box::pin(async move {
+            let ips = guard.lookup(&name).await?;
+            // Port 0: the client puts in the URL's port.
+            let addrs: Addrs = Box::new(ips.into_iter().map(|ip| SocketAddr::new(ip, 0)));
+            Ok(addrs)
+        })
+    }
+}
+
+impl Fetcher {
+    pub fn new(policy: Policy) -> Self {
+        let guard = Arc::new(Guard {
+            policy,
+            lookups: Arc::new(Semaphore::new(DNS_LOOKUPS)),
+            slow: Mutex::default(),
+            resolved: Mutex::default(),
+        });
+        let client = reqwest::Client::builder()
+            .no_proxy()
+            .redirect(reqwest::redirect::Policy::none())
+            .connect_timeout(CONNECT_TIMEOUT)
+            .timeout(REQUEST_TIMEOUT)
+            .pool_idle_timeout(Duration::from_secs(30))
+            .pool_max_idle_per_host(2)
+            .user_agent(USER_AGENT)
+            .dns_resolver(Vetting(guard.clone()))
+            .build()
+            .expect("link preview HTTP client");
+        Self { client, guard }
+    }
+
+    pub fn policy(&self) -> &Policy {
+        &self.guard.policy
+    }
+
     /// GET `url` as `kind`, following up to [`MAX_REDIRECTS`] redirects,
-    /// each vetted like the first request.
+    /// each checked like the first request.
     pub async fn get(&self, url: &Url, kind: Kind) -> Result<Fetched, FetchError> {
         let mut url = url.clone();
         for _ in 0..=MAX_REDIRECTS {
-            let addr = self.vet(&url).await?;
-            let mut builder = reqwest::Client::builder()
-                .no_proxy()
-                .redirect(reqwest::redirect::Policy::none())
-                .connect_timeout(CONNECT_TIMEOUT)
-                .timeout(REQUEST_TIMEOUT)
-                .user_agent(USER_AGENT);
-            if let Some(Host::Domain(domain)) = url.host() {
-                builder = builder.resolve(domain, addr);
+            self.guard.policy.check_url(&url)?;
+            if let Some(ip) = literal_ip(&url)
+                && self.guard.in_backoff(&Slow::Ip(ip))
+            {
+                return Err(FetchError::Backoff);
             }
-            let client = builder
-                .build()
-                .map_err(|err| FetchError::Http(err.to_string()))?;
-            let mut response = client
+            let mut response = self
+                .client
                 .get(url.clone())
                 .header(ACCEPT, kind.accept())
                 .send()
                 .await
-                .map_err(request_error)?;
+                .map_err(|err| self.failed(&url, err))?;
             let status = response.status();
             if status.is_redirection() {
                 let location = response
@@ -170,7 +253,11 @@ impl Policy {
                 return Err(FetchError::TooLarge);
             }
             let mut body = Vec::new();
-            while let Some(chunk) = response.chunk().await.map_err(request_error)? {
+            while let Some(chunk) = response
+                .chunk()
+                .await
+                .map_err(|err| self.failed(&url, err))?
+            {
                 body.extend_from_slice(&chunk);
                 if body.len() > max {
                     if kind == Kind::Html {
@@ -190,8 +277,140 @@ impl Policy {
         Err(FetchError::TooManyRedirects)
     }
 
-    /// The address to connect to for `url`, or why it is refused.
-    pub async fn vet(&self, url: &Url) -> Result<SocketAddr, FetchError> {
+    /// The addresses `url` would be fetched from, or why it is refused:
+    /// the checks of [`Self::get`] without the request.
+    pub async fn vet(&self, url: &Url) -> Result<Vec<IpAddr>, FetchError> {
+        self.guard.policy.check_url(url)?;
+        match literal_ip(url) {
+            Some(ip) => Ok(vec![ip]),
+            None => {
+                let domain = url.host_str().ok_or(FetchError::Refused("host"))?;
+                self.guard.lookup(domain).await
+            }
+        }
+    }
+
+    /// Puts the host of `url` and its last addresses in backoff.
+    pub fn slow_down(&self, url: &Url) {
+        let Some(host) = url.host() else {
+            return;
+        };
+        let mut keys = Vec::new();
+        match host {
+            Host::Ipv4(ip) => keys.push(Slow::Ip(IpAddr::V4(ip))),
+            Host::Ipv6(ip) => keys.push(Slow::Ip(IpAddr::V6(ip))),
+            Host::Domain(domain) => {
+                let domain = normalized(domain);
+                if let Some(ips) = self.guard.resolved.lock().expect("lock").get(&domain) {
+                    keys.extend(ips.iter().copied().map(Slow::Ip));
+                }
+                keys.push(Slow::Host(domain));
+            }
+        }
+        let until = Instant::now() + BACKOFF;
+        let mut slow = self.guard.slow.lock().expect("lock");
+        if slow.len() >= BACKOFF_ENTRIES {
+            let now = Instant::now();
+            slow.retain(|_, until| *until > now);
+            if slow.len() >= BACKOFF_ENTRIES {
+                slow.clear();
+            }
+        }
+        for key in keys {
+            slow.insert(key, until);
+        }
+    }
+
+    /// The guard's own refusal when the resolver gave one; a timeout puts
+    /// the host in backoff.
+    fn failed(&self, url: &Url, err: reqwest::Error) -> FetchError {
+        let mut source = std::error::Error::source(&err);
+        while let Some(inner) = source {
+            if let Some(refused) = inner.downcast_ref::<FetchError>() {
+                return refused.clone();
+            }
+            source = inner.source();
+        }
+        if err.is_timeout() {
+            self.slow_down(url);
+            FetchError::Timeout
+        } else {
+            FetchError::Http(err.to_string())
+        }
+    }
+}
+
+impl Guard {
+    /// `domain`'s addresses if it may be fetched: not a local or denied
+    /// name, every address public, nothing in backoff.
+    async fn lookup(&self, domain: &str) -> Result<Vec<IpAddr>, FetchError> {
+        let domain = normalized(domain);
+        if self.policy.denied_name(&domain) {
+            return Err(FetchError::Refused("host"));
+        }
+        if self.in_backoff(&Slow::Host(domain.clone())) {
+            return Err(FetchError::Backoff);
+        }
+        let ips = match self.policy.hosts.get(&domain) {
+            Some(fixed) => fixed.clone(),
+            None => self.dns(&domain).await?,
+        };
+        if ips.is_empty() {
+            return Err(FetchError::Dns);
+        }
+        // One private answer refuses the name: no picking the public one
+        // of a mixed set, which a rebinding server could hand out.
+        if !ips.iter().all(|ip| self.policy.allowed_ip(*ip)) {
+            return Err(FetchError::Refused("address"));
+        }
+        if ips.iter().any(|ip| self.in_backoff(&Slow::Ip(*ip))) {
+            return Err(FetchError::Backoff);
+        }
+        let mut resolved = self.resolved.lock().expect("lock");
+        if resolved.len() >= BACKOFF_ENTRIES {
+            resolved.clear();
+        }
+        resolved.insert(domain, ips.clone());
+        Ok(ips)
+    }
+
+    async fn dns(&self, domain: &str) -> Result<Vec<IpAddr>, FetchError> {
+        let permit = tokio::time::timeout(DNS_TIMEOUT, self.lookups.clone().acquire_owned())
+            .await
+            .map_err(|_| FetchError::Timeout)?
+            .map_err(|_| FetchError::Dns)?;
+        let name = domain.to_owned();
+        // The permit goes with the lookup: a timeout here does not stop the
+        // system resolver, so its slot frees only when that returns.
+        let lookup = tokio::task::spawn_blocking(move || {
+            let _permit = permit;
+            (name.as_str(), 0)
+                .to_socket_addrs()
+                .map(|addrs| addrs.map(|addr| addr.ip()).collect::<Vec<_>>())
+        });
+        let mut ips = tokio::time::timeout(DNS_TIMEOUT, lookup)
+            .await
+            .map_err(|_| FetchError::Timeout)?
+            .map_err(|_| FetchError::Dns)?
+            .map_err(|_| FetchError::Dns)?;
+        ips.sort();
+        ips.dedup();
+        Ok(ips)
+    }
+
+    fn in_backoff(&self, key: &Slow) -> bool {
+        self.slow
+            .lock()
+            .expect("lock")
+            .get(key)
+            .is_some_and(|until| *until > Instant::now())
+    }
+}
+
+impl Policy {
+    /// Everything about `url` that needs no DNS: scheme, credentials, port,
+    /// local and denied names, literal addresses.
+    pub fn check_url(&self, url: &Url) -> Result<(), FetchError> {
         if !matches!(url.scheme(), "http" | "https") {
             return Err(FetchError::Refused("scheme"));
         }
@@ -201,32 +420,37 @@ impl Policy {
         let port = url
             .port_or_known_default()
             .ok_or(FetchError::Refused("port"))?;
-        let candidates: Vec<IpAddr> = match url.host().ok_or(FetchError::Refused("host"))? {
-            Host::Ipv4(ip) => vec![IpAddr::V4(ip)],
-            Host::Ipv6(ip) => vec![IpAddr::V6(ip)],
+        let standard = port == 80 || port == 443;
+        match url.host().ok_or(FetchError::Refused("host"))? {
             Host::Domain(domain) => {
-                let domain = domain.trim_end_matches('.').to_ascii_lowercase();
-                if self.denied_name(&domain) {
+                if self.denied_name(&normalized(domain)) {
                     return Err(FetchError::Refused("host"));
                 }
-                self.resolve(&domain, port).await?
+                if !standard && !self.trusted.iter().any(|addr| addr.port() == port) {
+                    return Err(FetchError::Refused("port"));
+                }
             }
-        };
-        if candidates.is_empty() {
-            return Err(FetchError::Dns);
+            Host::Ipv4(ip) => self.check_literal(IpAddr::V4(ip), port, standard)?,
+            Host::Ipv6(ip) => self.check_literal(IpAddr::V6(ip), port, standard)?,
         }
-        let trusted = |ip: &IpAddr| self.trusted.contains(&SocketAddr::new(*ip, port));
-        if !candidates.iter().all(trusted) {
-            if port != 80 && port != 443 {
-                return Err(FetchError::Refused("port"));
-            }
-            // One private answer refuses the name: no picking the public one
-            // of a mixed set, which a rebinding server could hand out.
-            if !candidates.iter().all(|ip| trusted(ip) || is_public(*ip)) {
-                return Err(FetchError::Refused("address"));
-            }
+        Ok(())
+    }
+
+    fn check_literal(&self, ip: IpAddr, port: u16, standard: bool) -> Result<(), FetchError> {
+        if self.trusted.contains(&SocketAddr::new(ip, port)) {
+            return Ok(());
         }
-        Ok(SocketAddr::new(candidates[0], port))
+        if !standard {
+            return Err(FetchError::Refused("port"));
+        }
+        if !is_public(ip) {
+            return Err(FetchError::Refused("address"));
+        }
+        Ok(())
+    }
+
+    fn allowed_ip(&self, ip: IpAddr) -> bool {
+        is_public(ip) || self.trusted.iter().any(|addr| addr.ip() == ip)
     }
 
     fn denied_name(&self, domain: &str) -> bool {
@@ -240,26 +464,17 @@ impl Policy {
                     .is_some_and(|rest| rest.ends_with('.'))
         })
     }
-
-    async fn resolve(&self, domain: &str, port: u16) -> Result<Vec<IpAddr>, FetchError> {
-        if let Some(fixed) = self.hosts.get(domain) {
-            return Ok(fixed.clone());
-        }
-        let found = tokio::time::timeout(DNS_TIMEOUT, tokio::net::lookup_host((domain, port)))
-            .await
-            .map_err(|_| FetchError::Timeout)?
-            .map_err(|_| FetchError::Dns)?;
-        let mut ips: Vec<IpAddr> = found.map(|addr| addr.ip()).collect();
-        ips.dedup();
-        Ok(ips)
-    }
 }
 
-fn request_error(err: reqwest::Error) -> FetchError {
-    if err.is_timeout() {
-        FetchError::Timeout
-    } else {
-        FetchError::Http(err.to_string())
+fn normalized(domain: &str) -> String {
+    domain.trim_end_matches('.').to_ascii_lowercase()
+}
+
+fn literal_ip(url: &Url) -> Option<IpAddr> {
+    match url.host()? {
+        Host::Ipv4(ip) => Some(IpAddr::V4(ip)),
+        Host::Ipv6(ip) => Some(IpAddr::V6(ip)),
+        Host::Domain(_) => None,
     }
 }
 
@@ -375,8 +590,10 @@ mod tests {
         }
     }
 
-    async fn vet(policy: &Policy, url: &str) -> Result<SocketAddr, FetchError> {
-        policy.vet(&Url::parse(url).unwrap()).await
+    async fn vet(policy: &Policy, url: &str) -> Result<Vec<IpAddr>, FetchError> {
+        Fetcher::new(policy.clone())
+            .vet(&Url::parse(url).unwrap())
+            .await
     }
 
     #[tokio::test]
@@ -420,11 +637,52 @@ mod tests {
         }
         assert_eq!(
             vet(&policy, "https://fine.example/x").await,
-            Ok("93.184.216.34:443".parse().unwrap())
+            Ok(vec![ip("93.184.216.34")])
         );
         assert_eq!(
             vet(&policy, "http://fine.example./").await,
-            Ok("93.184.216.34:80".parse().unwrap())
+            Ok(vec![ip("93.184.216.34")])
+        );
+    }
+
+    /// The client connects only where its resolver, the guard, says: a
+    /// name refused there fails the request with the guard's reason.
+    #[tokio::test]
+    async fn the_client_resolves_through_the_guard() {
+        let mut policy = Policy::default();
+        policy
+            .hosts
+            .insert("rebound.example".into(), vec![ip("127.0.0.1")]);
+        let fetcher = Fetcher::new(policy);
+        assert_eq!(
+            fetcher
+                .get(&Url::parse("http://rebound.example/").unwrap(), Kind::Html)
+                .await
+                .unwrap_err(),
+            FetchError::Refused("address")
+        );
+    }
+
+    #[tokio::test]
+    async fn a_slow_host_is_skipped_for_a_while() {
+        let mut policy = Policy::default();
+        policy
+            .hosts
+            .insert("slow.example".into(), vec![ip("93.184.216.34")]);
+        policy
+            .hosts
+            .insert("alias.example".into(), vec![ip("93.184.216.34")]);
+        let fetcher = Fetcher::new(policy);
+        let slow = Url::parse("https://slow.example/").unwrap();
+        assert!(fetcher.vet(&slow).await.is_ok());
+        fetcher.slow_down(&slow);
+        assert_eq!(fetcher.vet(&slow).await, Err(FetchError::Backoff));
+        // Another name for the same address waits too.
+        assert_eq!(
+            fetcher
+                .vet(&Url::parse("https://alias.example/").unwrap())
+                .await,
+            Err(FetchError::Backoff)
         );
     }
 
