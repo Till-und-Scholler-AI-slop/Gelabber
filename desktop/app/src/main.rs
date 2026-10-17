@@ -428,11 +428,11 @@ fn main() {
                 if shell::closes_to_tray(window.app_handle()) {
                     api.prevent_close();
                     let _ = window.hide();
-                    return;
-                }
-                #[cfg(target_os = "linux")]
-                if nvidia_driver() {
-                    end_web_process(window);
+                } else {
+                    #[cfg(target_os = "linux")]
+                    if nvidia_driver() {
+                        end_web_process(window);
+                    }
                 }
             }
         })
