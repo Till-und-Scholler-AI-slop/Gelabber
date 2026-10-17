@@ -39,11 +39,20 @@ const CHECK_EVERY: Duration = Duration::from_secs(6 * 60 * 60);
 const LOOK_EVERY: Duration = Duration::from_secs(60);
 const IN_CALL: &str =
     "Während eines Anrufs startet Gelabber nicht neu. Das Update kommt nach dem Auflegen.";
-/// "Nein" in the app's question: not an error of the update.
+/// What the page hears after a "Nein" in the app's question.
 const DECLINED: &str = "Nicht installiert.";
 /// After a "Nein", the question is not asked again for this long, so a page
-/// cannot pop it up again and again.
-const ASK_AGAIN_AFTER: Duration = Duration::from_secs(5 * 60);
+/// cannot pop it up again and again; short, for a "Nein" by mistake.
+const ASK_AGAIN_AFTER: Duration = Duration::from_secs(2 * 60);
+
+/// How an install that did not fail ended.
+#[cfg_attr(not(windows), allow(dead_code))]
+enum Outcome {
+    /// The installer runs; the app is about to end.
+    Installed,
+    /// "Nein" in the app's question: not an error of the update.
+    Declined,
+}
 
 /// Runs in every page of the window next to the shortcuts (main.rs): asks
 /// for the update state every 30 seconds and shows the notice while the app
@@ -497,19 +506,22 @@ pub async fn update_install(app: AppHandle) -> Result<(), String> {
     let result = install(&app).await;
     let mut inner = updates.0.lock().unwrap();
     inner.phase = Phase::Idle;
-    match &result {
-        Err(error) if error == DECLINED => inner.declined = Some(Instant::now()),
+    match result {
+        Ok(Outcome::Installed) => Ok(()),
+        Ok(Outcome::Declined) => {
+            inner.declined = Some(Instant::now());
+            Err(DECLINED.into())
+        }
         Err(error) => {
             eprintln!("gelabber: update: {error}");
             inner.error = Some(error.clone());
+            Err(error)
         }
-        Ok(()) => {}
     }
-    result
 }
 
 #[cfg(windows)]
-async fn install(app: &AppHandle) -> Result<(), String> {
+async fn install(app: &AppHandle) -> Result<Outcome, String> {
     let updates = app.state::<Updates>();
     let (mut update, installer) = {
         let inner = updates.0.lock().unwrap();
@@ -522,7 +534,7 @@ async fn install(app: &AppHandle) -> Result<(), String> {
         .await
         .map_err(err)?;
     if !yes {
-        return Err(DECLINED.into());
+        return Ok(Outcome::Declined);
     }
     // A call may have begun while the question was open.
     if app.state::<Media>().busy() {
@@ -572,7 +584,8 @@ async fn install(app: &AppHandle) -> Result<(), String> {
     updates.0.lock().unwrap().phase = Phase::Installing;
     // Checks the signature again; ends the app once the installer runs,
     // after the plugin's `on_before_exit` (Tauri's `cleanup_before_exit`).
-    update.install(installer.as_slice()).map_err(err)
+    update.install(installer.as_slice()).map_err(err)?;
+    Ok(Outcome::Installed)
 }
 
 /// The app's own question, a message box over its window, whether to
@@ -607,7 +620,7 @@ fn confirm(app: &AppHandle, version: &str) -> bool {
 }
 
 #[cfg(not(windows))]
-async fn install(_app: &AppHandle) -> Result<(), String> {
+async fn install(_app: &AppHandle) -> Result<Outcome, String> {
     Err(unsupported().unwrap_or_default().into())
 }
 
