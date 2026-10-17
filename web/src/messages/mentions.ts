@@ -114,32 +114,56 @@ export function readableMentions(
   return fromWire(content, members).replace(TOKEN, "@Unbekannt");
 }
 
+/** Who each `@Name` of `content` names, from its tokens: an edit keeps the
+ * person it mentioned even where two members share the name. */
+export function namesIn(
+  content: string,
+  members: readonly MentionMember[],
+): Map<string, string> {
+  const names = new Map(members.map((m) => [m.id.toLowerCase(), m.name]));
+  const picked = new Map<string, string>();
+  for (const [, id] of content.matchAll(TOKEN)) {
+    const name = names.get(id.toLowerCase());
+    if (name) picked.set(name, id);
+  }
+  return picked;
+}
+
 /** What is sent: every `@Name` of a member becomes their token. Longer names
- * first, so `@Ada Lovelace` is not taken for `@Ada`. Code stays as typed. */
+ * first, so `@Ada Lovelace` is not taken for `@Ada`. Code stays as typed.
+ * `picked` names who was chosen from the suggestions for a name; a name two
+ * members share and nobody picked stays text rather than mention the wrong
+ * one. A member called "everyone" or "here" never hides the keyword. */
 export function toWire(
   text: string,
   members: readonly MentionMember[],
+  picked: ReadonlyMap<string, string> = new Map(),
 ): string {
   const named = members
     .filter((m) => m.name.trim())
+    .filter((m) => !/^(everyone|here)$/i.test(m.name))
     .sort((a, b) => b.name.length - a.name.length);
   if (!named.length || !text.includes("@")) return text;
   const pattern = new RegExp(
     `(^|[^\\p{L}\\p{N}_@-])@(${named.map((m) => escape(m.name)).join("|")})(?![\\p{L}\\p{N}_-])`,
     "gu",
   );
-  const byName = new Map<string, string>();
+  const byName = new Map<string, string | null>();
   for (const member of named) {
-    if (!byName.has(member.name)) byName.set(member.name, member.id);
+    // Seen before: the name is ambiguous.
+    byName.set(member.name, byName.has(member.name) ? null : member.id);
+  }
+  for (const [name, id] of picked) {
+    if (named.some((m) => m.id === id && m.name === name)) byName.set(name, id);
   }
   return codeSegments(text)
     .map((segment, index) =>
       index % 2
         ? segment
-        : segment.replace(
-            pattern,
-            (_, lead: string, name: string) => `${lead}<@${byName.get(name)}>`,
-          ),
+        : segment.replace(pattern, (whole, lead: string, name: string) => {
+            const id = byName.get(name);
+            return id ? `${lead}<@${id}>` : whole;
+          }),
     )
     .join("");
 }

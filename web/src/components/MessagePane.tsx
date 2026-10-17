@@ -97,6 +97,7 @@ import { MentionContext, useMentions } from "./mentionContext.ts";
 import { useMentionSuggestions } from "./useMentionSuggestions.tsx";
 import {
   fromWire,
+  namesIn,
   mentionsMe,
   toWire,
   type MentionMember,
@@ -121,6 +122,7 @@ export function MessagePane({
   canSend,
   canSendFiles = false,
   canModerate = false,
+  canMentionEveryone = false,
   mention = "#",
   members = NO_MEMBERS,
   notify,
@@ -139,6 +141,8 @@ export function MessagePane({
   canSend: boolean;
   canSendFiles?: boolean;
   canModerate?: boolean;
+  /** Offer `@everyone` / `@here` in a server channel's suggestions. */
+  canMentionEveryone?: boolean;
   /** `#` for a server channel, `@` for a DM. */
   mention?: "#" | "@";
   /** Who can be mentioned here: the server's members, a DM's two people. */
@@ -279,8 +283,12 @@ export function MessagePane({
     muteNow,
   );
   const mentions = useMemo(
-    () => ({ members, me: user?.id, keywords: mention === "#" }),
-    [members, user?.id, mention],
+    () => ({
+      members,
+      me: user?.id,
+      keywords: mention === "#" && canMentionEveryone,
+    }),
+    [members, user?.id, mention, canMentionEveryone],
   );
 
   return (
@@ -895,7 +903,15 @@ function MessageRow({
       editInput.current?.setSelectionRange(caret, caret),
     );
   });
-  const wireDraft = toWire(draft, members);
+  const sentNames = useMemo(
+    () => namesIn(message.content, members),
+    [message.content, members],
+  );
+  const wireDraft = toWire(
+    draft,
+    members,
+    new Map([...sentNames, ...editSuggestions.picked]),
+  );
   const editButton = useRef<HTMLButtonElement>(null);
   const restoreEditFocus = useRef(false);
   useLayoutEffect(() => {
@@ -1174,10 +1190,6 @@ function Composer({
   }, [canSend]);
   useLayoutEffect(() => draftHeight.current?.fit(), [draft, canSend]);
   const { members } = useMentions();
-  // The field shows `@Name`; what is sent and counted is `<@id>`.
-  const wire = toWire(draft, members);
-  const error = draft.length === 0 ? null : validateContent(wire);
-  const remaining = CONTENT_MAX - Array.from(normalisedLength(wire)).length;
   const suggestions = useMentionSuggestions(draft, (text, caret) => {
     setDraft(text);
     onDraftChange?.(text);
@@ -1185,6 +1197,10 @@ function Composer({
       composerInput.current?.setSelectionRange(caret, caret),
     );
   });
+  // The field shows `@Name`; what is sent and counted is `<@id>`.
+  const wire = toWire(draft, members, suggestions.picked);
+  const error = draft.length === 0 ? null : validateContent(wire);
+  const remaining = CONTENT_MAX - Array.from(normalisedLength(wire)).length;
   const emptyText = draft.trim().length === 0;
   const disabled =
     !canSend ||
