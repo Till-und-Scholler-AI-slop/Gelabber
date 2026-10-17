@@ -129,18 +129,30 @@ function alone(user, change) {
     .catch(() => change());
 }
 
+// Every push shows a notification: a browser takes one that shows nothing as
+// a silent push and may end the subscription (`userVisibleOnly`). That holds
+// with a window open too, since the server pushes only when no window is in
+// use. A window may announce the same message; the tag and the lock keep it
+// to one.
 async function showPushed(data) {
-  const windows = (
-    await self.clients.matchAll({ type: "window", includeUncontrolled: true })
-  ).filter((client) => APP_PAGE.test(new URL(client.url).pathname));
-  // A visible window announces the message itself, or shows it.
-  if (windows.some((client) => client.visibilityState === "visible")) return;
   const tag = `gelabber:${data.user}:${data.channel}`;
   await alone(data.user, async () => {
     const shown = await self.registration.getNotifications({ tag });
-    // A window in the background may have shown it already, or a newer one.
-    if (shown.some((n) => n.data && notOlder(n.data, data.message, data.at)))
+    // A window may have shown it already, or a newer one: show that again,
+    // quietly, in its place.
+    const current = shown.find(
+      (n) => n.data && notOlder(n.data, data.message, data.at),
+    );
+    if (current) {
+      await self.registration.showNotification(current.title, {
+        body: current.body,
+        tag,
+        silent: true,
+        icon: "/icons/icon-192.png",
+        data: current.data,
+      });
       return;
+    }
     await self.registration.showNotification(data.title, {
       body: data.body,
       tag,

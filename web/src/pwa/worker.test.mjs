@@ -364,25 +364,41 @@ describe("PWA push", () => {
     });
   });
 
-  it("leaves it to a visible window of the app", async () => {
+  it("shows it with a visible window of the app too", async () => {
     const w = worker({
       windows: [appWindow("/d/c1", { visibilityState: "visible" })],
     });
     await w.push(message);
-    expect(w.showNotification).not.toHaveBeenCalled();
+    expect(w.showNotification).toHaveBeenCalledOnce();
   });
 
-  it("does not show again what a window showed, nor over a newer one", async () => {
+  it("shows what a window showed, or a newer one, again quietly", async () => {
     for (const data of [
       { message: "m2", at: message.at },
       { message: "m3", at: "2026-10-17T10:00:00.000003Z" },
     ]) {
       const w = worker({
         windows: [appWindow("/d/c1")],
-        notifications: [{ tag: "gelabber:u1:c1", data }],
+        notifications: [
+          {
+            title: "Ada · #allgemein",
+            body: "vorher",
+            tag: "gelabber:u1:c1",
+            data,
+          },
+        ],
       });
       await w.push(message);
-      expect(w.showNotification).not.toHaveBeenCalled();
+      expect(w.showNotification).toHaveBeenCalledExactlyOnceWith(
+        "Ada · #allgemein",
+        {
+          body: "vorher",
+          tag: "gelabber:u1:c1",
+          silent: true,
+          icon: "/icons/icon-192.png",
+          data,
+        },
+      );
     }
     const older = worker({
       notifications: [
@@ -394,6 +410,7 @@ describe("PWA push", () => {
     });
     await older.push(message);
     expect(older.showNotification).toHaveBeenCalledOnce();
+    expect(older.showNotification.mock.calls[0][1].renotify).toBe(true);
   });
 
   it("ignores pushes that are not Gelabber messages", async () => {

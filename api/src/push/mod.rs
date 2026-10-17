@@ -45,9 +45,11 @@ const MAX_RECIPIENTS: usize = 500;
 /// them; beyond that only the members named in the message are pushed to.
 const EVERYONE_PER_WINDOW: u32 = 5;
 const EVERYONE_WINDOW: Duration = Duration::from_secs(10 * 60);
-/// Messages being pushed at once across the process. A burst beyond that is
-/// dropped (and counted as `push_dropped`): pushes are best effort, and the
-/// pages show everything on their own.
+/// Messages being pushed at once across the process, direct messages and
+/// server mentions each on their own: a few large `@everyone` fan-outs must
+/// not crowd out DMs. A burst beyond that is dropped (and counted as
+/// `push_dropped`): pushes are best effort, and the pages show everything on
+/// their own.
 const MAX_DELIVERIES: usize = 16;
 
 const PREVIEW_CHARS: usize = 180;
@@ -57,7 +59,8 @@ pub struct Push {
     vapid: Vapid,
     hosts: Vec<String>,
     http: reqwest::Client,
-    deliveries: std::sync::Arc<tokio::sync::Semaphore>,
+    dm_deliveries: std::sync::Arc<tokio::sync::Semaphore>,
+    server_deliveries: std::sync::Arc<tokio::sync::Semaphore>,
 }
 
 impl Push {
@@ -72,7 +75,8 @@ impl Push {
             vapid: config.vapid.clone(),
             hosts: config.hosts.clone(),
             http,
-            deliveries: std::sync::Arc::new(tokio::sync::Semaphore::new(MAX_DELIVERIES)),
+            dm_deliveries: std::sync::Arc::new(tokio::sync::Semaphore::new(MAX_DELIVERIES)),
+            server_deliveries: std::sync::Arc::new(tokio::sync::Semaphore::new(MAX_DELIVERIES)),
         })
     }
 
@@ -219,12 +223,17 @@ struct Target {
 }
 
 /// After a message is stored: push it in the background, unless
-/// [`MAX_DELIVERIES`] are under way already.
+/// [`MAX_DELIVERIES`] of its kind are under way already.
 pub fn announce(state: &AppState, message: &Message, server: Option<Uuid>) {
     let Some(push) = state.push.clone() else {
         return;
     };
-    let Ok(slot) = push.deliveries.clone().try_acquire_owned() else {
+    let deliveries = if server.is_none() {
+        &push.dm_deliveries
+    } else {
+        &push.server_deliveries
+    };
+    let Ok(slot) = deliveries.clone().try_acquire_owned() else {
         state.metrics.rate_limited("push_dropped");
         debug!(message_id = %message.id, "push dropped, deliveries busy");
         return;
@@ -537,6 +546,17 @@ mod tests {
             hosts: hosts.iter().map(|h| (*h).to_owned()).collect(),
         })
         .unwrap()
+    }
+
+    #[test]
+    fn busy_server_pushes_leave_direct_messages_their_slots() {
+        let push = push(&["fcm.googleapis.com"]);
+        let held: Vec<_> = (0..MAX_DELIVERIES)
+            .map(|_| push.server_deliveries.clone().try_acquire_owned().unwrap())
+            .collect();
+        assert!(push.server_deliveries.clone().try_acquire_owned().is_err());
+        assert!(push.dm_deliveries.clone().try_acquire_owned().is_ok());
+        drop(held);
     }
 
     #[test]
