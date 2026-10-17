@@ -240,6 +240,20 @@ async fn create_message(
         access.require_send_files()?;
     }
 
+    // The store is asked before the channel lock (see `check_uploads`).
+    if let Err(err) = attachments::check_uploads(
+        &state.db,
+        &state.store,
+        channel_id,
+        user.id,
+        &attachment_ids,
+    )
+    .await
+    {
+        discard_uploads(&state, channel_id, user.id, &attachment_ids).await;
+        return Err(err);
+    }
+
     let mut tx = state.db.begin().await?;
     delivery::lock_channel(&mut tx, channel_id).await?;
     let row = sqlx::query_as::<_, MessageInsert>(
@@ -252,31 +266,13 @@ async fn create_message(
     .bind(gif.as_ref().map(sqlx::types::Json))
     .fetch_one(&mut *tx)
     .await?;
-    let bound = attachments::bind_to_message(
-        &mut tx,
-        &state.store,
-        row.id,
-        channel_id,
-        user.id,
-        &attachment_ids,
-    )
-    .await;
+    let bound =
+        attachments::bind_to_message(&mut tx, row.id, channel_id, user.id, &attachment_ids).await;
     let bound = match bound {
         Ok(bound) => bound,
         Err(err) => {
             tx.rollback().await?;
-            // Quarantine only this uploader's invalid objects, after rollback;
-            // no physical delete can damage a rolled-back message transaction.
-            if let Err(cleanup_error) = attachments::cleanup::discard_mismatches(
-                &state,
-                channel_id,
-                user.id,
-                &attachment_ids,
-            )
-            .await
-            {
-                warn!(error=?cleanup_error, "invalid upload quarantine deferred to expiry cleanup");
-            }
+            discard_uploads(&state, channel_id, user.id, &attachment_ids).await;
             return Err(err);
         }
     };
@@ -296,6 +292,16 @@ async fn create_message(
     }
     let _ = delivery::deliver_pending(&state, 32).await;
     Ok((StatusCode::CREATED, Json(message)).into_response())
+}
+
+/// Quarantine only this uploader's invalid objects, after any rollback; no
+/// physical delete can damage a rolled-back message transaction.
+async fn discard_uploads(state: &AppState, channel_id: Uuid, user_id: Uuid, ids: &[Uuid]) {
+    if let Err(cleanup_error) =
+        attachments::cleanup::discard_mismatches(state, channel_id, user_id, ids).await
+    {
+        warn!(error=?cleanup_error, "invalid upload quarantine deferred to expiry cleanup");
+    }
 }
 
 async fn update_message(

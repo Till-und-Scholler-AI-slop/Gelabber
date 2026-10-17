@@ -17,6 +17,7 @@ import {
 } from "@tanstack/react-query";
 
 import { ApiError } from "../api/client.ts";
+import { fieldMessage } from "../auth/rules.ts";
 import { scopeGeneration, stampHolds, takeStamp } from "../auth/scope.ts";
 import { useSession } from "../auth/session.ts";
 import { notifyError } from "../components/toasts.ts";
@@ -509,15 +510,47 @@ export async function sendMessageAttempt(
         upload: "Dateiübertragung",
         bind: "Nachricht speichern",
       };
+      const rejected = rejectedUploads(error, attempt.files);
       saveAttempt({
         ...attempt,
+        // Uploads the server turned down (expired, gone, wrong size or
+        // content) cannot bind on a retry; it uploads the files again.
+        uploadedIds: rejected ? [] : attempt.uploadedIds,
         status: uncertain ? "uncertain" : "failed",
-        error: `${labels[attempt.stage]} fehlgeschlagen.`,
+        error: [
+          `${labels[attempt.stage]} fehlgeschlagen.`,
+          ...(rejected ?? []),
+        ].join(" "),
       });
       notifyError(error);
     }
     throw error;
   }
+}
+
+/** The bind's complaints about uploaded files, naming each file the
+ *  server pointed at (`attachment_ids.<n>`); null when it had none. */
+export function rejectedUploads(
+  error: unknown,
+  files: readonly File[],
+): string[] | null {
+  if (!(error instanceof ApiError) || error.code !== "validation_failed")
+    return null;
+  const fields = Object.entries(error.fields);
+  if (
+    !fields.some(
+      ([field, code]) =>
+        field.startsWith("attachment_ids.") ||
+        (field === "attachment_ids" && code === "invalid") ||
+        field === "size",
+    )
+  )
+    return null;
+  return fields.flatMap(([field, code]) => {
+    const at = /^attachment_ids\.(\d+)$/.exec(field);
+    const file = at ? files[Number(at[1])] : undefined;
+    return file && code ? [`${file.name}: ${fieldMessage(field, code)}`] : [];
+  });
 }
 
 export function useSendMessage(channelId: string, author: MessageAuthor) {

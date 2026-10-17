@@ -691,7 +691,8 @@ async fn declared_type_must_match_the_bytes(pool: PgPool) {
     let (mut owner, _) = two_users(pool).await;
     let server = create_server(&mut owner, "Team").await;
     let channel_id = text_channel_id(&server);
-    let id = upload(
+    let good = upload(&mut owner, &channel_id, "ok.png", "image/png", PNG).await;
+    let bad = upload(
         &mut owner,
         &channel_id,
         "cat.png",
@@ -699,9 +700,10 @@ async fn declared_type_must_match_the_bytes(pool: PgPool) {
         b"MZ\x90\0not a png",
     )
     .await;
-    let (status, body) = post_files(&mut owner, &channel_id, &[id]).await;
+    let (status, body) = post_files(&mut owner, &channel_id, &[good, bad]).await;
     assert_eq!(status, StatusCode::UNPROCESSABLE_ENTITY, "{body}");
-    assert_eq!(body["fields"]["content_type"], "mismatch");
+    // The field names the position of the rejected file.
+    assert_eq!(body["fields"]["attachment_ids.1"], "mismatch", "{body}");
     let page = owner
         .send(
             Method::GET,
@@ -725,7 +727,7 @@ async fn renamed_html_is_served_as_plain_text_download(pool: PgPool) {
         .send_raw(Method::GET, &format!("/api/attachments/{id}"), None)
         .await;
     assert_eq!(status, StatusCode::OK);
-    assert_eq!(headers["content-type"], "text/plain; charset=utf-8");
+    assert_eq!(headers["content-type"], "text/plain");
     assert_eq!(
         headers["content-disposition"],
         "attachment; filename=\"notes.txt\""
@@ -769,4 +771,49 @@ async fn video_and_audio_play_inline(pool: PgPool) {
             format!("inline; filename=\"{name}\"")
         );
     }
+}
+
+/// Review of #255: Excel CSVs on German systems are Windows-1252, its
+/// "Unicode text" is UTF-16; both are text.
+#[sqlx::test]
+async fn text_in_other_encodings_is_accepted(pool: PgPool) {
+    let (mut owner, _) = two_users(pool).await;
+    let server = create_server(&mut owner, "Team").await;
+    let channel_id = text_channel_id(&server);
+    let latin = upload(
+        &mut owner,
+        &channel_id,
+        "preise.csv",
+        "text/csv",
+        b"Gr\xF6\xDFe;Preis\n",
+    )
+    .await;
+    let utf16 = upload(
+        &mut owner,
+        &channel_id,
+        "liste.txt",
+        "text/plain",
+        b"\xFF\xFEa\0;\0b\0",
+    )
+    .await;
+    let (status, body) = post_files(&mut owner, &channel_id, &[latin, utf16]).await;
+    assert_eq!(status, StatusCode::CREATED, "{body}");
+}
+
+/// Review of #255: up to ten files go up one after another; the first must
+/// still bind after a slow set, not only within its own upload link.
+#[sqlx::test]
+async fn pending_upload_outlives_its_upload_link(pool: PgPool) {
+    let (mut owner, _) = two_users(pool.clone()).await;
+    let server = create_server(&mut owner, "Team").await;
+    let channel_id = text_channel_id(&server);
+    let id = upload(&mut owner, &channel_id, "a.png", "image/png", PNG).await;
+    let left: f64 = sqlx::query_scalar(
+        "SELECT extract(epoch FROM expires_at - now())::float8 FROM attachments WHERE id = $1",
+    )
+    .bind(uuid::Uuid::parse_str(&id).unwrap())
+    .fetch_one(&pool)
+    .await
+    .unwrap();
+    assert!(left > 3000.0 && left <= 3600.0, "{left}");
 }

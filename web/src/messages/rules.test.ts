@@ -3,6 +3,7 @@ import { describe, expect, it } from "vitest";
 import {
   CONTENT_MAX,
   SIZE_MAX,
+  decodeText,
   inferContentType,
   normaliseContent,
   validateAttachment,
@@ -90,5 +91,18 @@ describe("attachment types and limits (#255)", () => {
     expect(
       validateAttachmentSet(Array(5).fill({ size: 21 * 1024 * 1024 }))?.code,
     ).toBe("too_large");
+  });
+});
+
+describe("text preview encoding (#255 review)", () => {
+  const bytes = (...values: number[]) => new Uint8Array(values);
+  it("reads UTF-8, Windows-1252 and UTF-16 with its mark", () => {
+    expect(decodeText(new TextEncoder().encode("Größe;Preis"))).toBe(
+      "Größe;Preis",
+    );
+    // Excel CSV on a German system.
+    expect(decodeText(bytes(0x47, 0x72, 0xf6, 0xdf, 0x65))).toBe("Größe");
+    expect(decodeText(bytes(0xff, 0xfe, 0x61, 0, 0x3b, 0))).toBe("a;");
+    expect(decodeText(bytes(0xfe, 0xff, 0, 0x61))).toBe("a");
   });
 });

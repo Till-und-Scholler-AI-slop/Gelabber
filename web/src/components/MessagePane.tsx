@@ -6,9 +6,7 @@
 import { anchoredScrollTop } from "./scrollAnchor.ts";
 import { useVirtualizer } from "@tanstack/react-virtual";
 import {
-  createContext,
   useCallback,
-  useContext,
   useEffect,
   useEffectEvent,
   useLayoutEffect,
@@ -56,7 +54,6 @@ import {
   useMessages,
   useSendMessage,
 } from "../messages/queries.ts";
-import { attachmentDownloadUrl, attachmentUrl } from "../messages/api.ts";
 import {
   carriesFiles,
   droppedFiles,
@@ -65,16 +62,15 @@ import {
 import {
   ACCEPT,
   CONTENT_MAX,
+  formatSize,
   isAudioType,
   isImageType,
-  isTextType,
   isVideoType,
-  TEXT_PREVIEW_MAX,
   validateAttachment,
   validateAttachmentSet,
   validateContent,
 } from "../messages/rules.ts";
-import type { Attachment, Gif, Message } from "../messages/types.ts";
+import type { Gif, Message } from "../messages/types.ts";
 import { asAttachmentList, asGif } from "../messages/types.ts";
 import { gifBox, gifLabel, type GifPick } from "../gifs/api.ts";
 import { useGifStatus } from "../gifs/queries.ts";
@@ -86,7 +82,6 @@ import { EmojiPickerLoader, ReactionBar } from "./ReactionBar.tsx";
 import { confirmAction } from "./confirm.ts";
 import { Modal } from "./Modal.tsx";
 import { ImageLightbox, type LightboxImage } from "./ImageLightbox.tsx";
-import { isPlainClick } from "./plainClick.ts";
 import {
   ArrowDownIcon,
   CloseIcon,
@@ -97,11 +92,9 @@ import {
   SmileIcon,
   TrashIcon,
 } from "./Icons.tsx";
+import { AttachmentList } from "./Attachments.tsx";
+import { OpenImage } from "./openImage.ts";
 import "./chat.css";
-
-// Opens the one lightbox of the pane. It lives outside the virtual rows: a
-// row scrolled out of the overscan unmounts, and would close it with it.
-const OpenImage = createContext<(image: LightboxImage) => void>(() => {});
 
 export function MessagePane({
   title,
@@ -1156,35 +1149,39 @@ function Composer({
     Boolean(files.length > 0 && !canSendFiles) ||
     (emptyText && files.length === 0);
 
-  /** Add files to the draft: invalid ones are left out with a note, and
-   *  so is whatever would go over the message's limits. */
-  const addFiles = (next: File[]) => {
+  /** Add files to `base` (the composer's files): invalid ones are left
+   *  out, and so is whatever would go over the message's limits. One note
+   *  names every file left out. */
+  const addFiles = (next: File[], base: File[] = files) => {
     setFileError(null);
-    let kept = [...files];
-    let note: string | null = null;
+    let kept = [...base];
+    const notes: string[] = [];
+    const over = new Map<string, string[]>();
     for (const candidate of next) {
       const invalid = validateAttachment(candidate);
       if (invalid) {
-        note = `${candidate.name}: ${fieldMessage(invalid.field, invalid.code)}`;
+        notes.push(
+          `${candidate.name}: ${fieldMessage(invalid.field, invalid.code)}`,
+        );
         continue;
       }
-      const over = validateAttachmentSet([...kept, candidate]);
-      if (over) {
-        note = fieldMessage(over.field, over.code);
-        break;
+      // A smaller file further on may still fit under the size limit.
+      const limit = validateAttachmentSet([...kept, candidate]);
+      if (limit) {
+        const reason = fieldMessage(limit.field, limit.code);
+        over.set(reason, [...(over.get(reason) ?? []), candidate.name]);
+        continue;
       }
       kept = [...kept, candidate];
     }
-    if (note) setFileError(note);
+    for (const [reason, names] of over)
+      notes.push(`Nicht angehängt: ${names.join(", ")}. ${reason}`);
+    if (notes.length > 0) setFileError(notes.join(" "));
     setFiles(kept);
   };
   const removeFile = (index: number) => {
     setFileError(null);
     setFiles(files.filter((_, i) => i !== index));
-  };
-  const clearFiles = () => {
-    setFileError(null);
-    setFiles([]);
   };
 
   // Files dropped anywhere on the conversation attach like the paperclip.
@@ -1333,8 +1330,9 @@ function Composer({
                   type="button"
                   onClick={() => {
                     setDraft(attempt.content);
-                    clearFiles();
-                    addFiles(attempt.files);
+                    // Replaces what the composer holds: `files` here is
+                    // still this render's list.
+                    addFiles(attempt.files, []);
                     discardAttempt(attempt.id);
                     composerInput.current?.focus();
                   }}
@@ -1519,209 +1517,6 @@ function Composer({
 
 function GifMessage({ gif }: { gif: Gif }) {
   return <GifMessageButton gif={gif} reduced={useReducedMotion()} />;
-}
-
-function AttachmentList({ attachments }: { attachments: Attachment[] }) {
-  const files = asAttachmentList(attachments);
-  if (files.length === 0) return null;
-  const images = files.filter((a) => isImageType(a.content_type));
-  const others = files.filter((a) => !isImageType(a.content_type));
-  return (
-    <div className="lr-attachments">
-      {images.length > 0 ? (
-        <div className={images.length > 1 ? "lr-attachment-grid" : undefined}>
-          {images.map((attachment) => (
-            <AttachmentImage key={attachment.id} attachment={attachment} />
-          ))}
-        </div>
-      ) : null}
-      {others.map((attachment) => {
-        const type = attachment.content_type;
-        if (isVideoType(type) || isAudioType(type))
-          return (
-            <AttachmentMedia key={attachment.id} attachment={attachment} />
-          );
-        if (isTextType(type) && attachment.size <= TEXT_PREVIEW_MAX)
-          return <AttachmentText key={attachment.id} attachment={attachment} />;
-        return <AttachmentFile key={attachment.id} attachment={attachment} />;
-      })}
-    </div>
-  );
-}
-
-function UploadState({ attachment }: { attachment: Attachment }) {
-  if (!attachment.upload || attachment.upload === "done") return null;
-  return (
-    <span className="lr-attachment-upload" role="status">
-      {attachment.upload === "uploading" ? "Wird hochgeladen…" : "Wartet"}
-    </span>
-  );
-}
-
-function AttachmentImage({ attachment }: { attachment: Attachment }) {
-  const openImage = useContext(OpenImage);
-  const src = attachment.preview_url ?? attachmentUrl(attachment.id);
-  return (
-    <a
-      href={src}
-      // The link stays for "open in new tab"; a click shows the
-      // picture here, also where no new tab exists (desktop app,
-      // installed web app).
-      onClick={(event) => {
-        if (!isPlainClick(event)) return;
-        event.preventDefault();
-        if (isPendingId(attachment.id)) return;
-        openImage({
-          id: attachment.id,
-          src,
-          filename: attachment.filename,
-          download: attachmentDownloadUrl(attachment.id),
-        });
-      }}
-      aria-label={`${attachment.filename} vergrößern`}
-      className="lr-attachment-image"
-    >
-      {/* A fixed-height box: the row has its final height before the
-          picture arrives, so loading never moves the list. */}
-      <img
-        src={src}
-        alt={attachment.filename}
-        decoding="async"
-        loading="lazy"
-      />
-      <UploadState attachment={attachment} />
-    </a>
-  );
-}
-
-/** Whether this browser may play the type; "" means it certainly cannot
- *  (QuickTime on Linux, for one). A file it then fails on falls back too. */
-function playable(kind: "video" | "audio", type: string): boolean {
-  try {
-    return document.createElement(kind).canPlayType(type) !== "";
-  } catch {
-    return false;
-  }
-}
-
-function AttachmentMedia({ attachment }: { attachment: Attachment }) {
-  const kind = isVideoType(attachment.content_type) ? "video" : "audio";
-  const [failed, setFailed] = useState(
-    () => !playable(kind, attachment.content_type),
-  );
-  // Still uploading: nothing to stream yet.
-  if (failed || isPendingId(attachment.id))
-    return <AttachmentFile attachment={attachment} />;
-  const src = attachmentUrl(attachment.id);
-  return (
-    <figure className={`lr-attachment-media is-${kind}`}>
-      {kind === "video" ? (
-        <video
-          src={src}
-          controls
-          preload="metadata"
-          playsInline
-          onError={() => setFailed(true)}
-          aria-label={attachment.filename}
-        />
-      ) : (
-        <audio
-          src={src}
-          controls
-          preload="metadata"
-          onError={() => setFailed(true)}
-          aria-label={attachment.filename}
-        />
-      )}
-      <figcaption>
-        <a
-          href={attachmentDownloadUrl(attachment.id)}
-          download={attachment.filename}
-        >
-          {attachment.filename}
-        </a>
-        <span>{formatSize(attachment.size)}</span>
-      </figcaption>
-    </figure>
-  );
-}
-
-function AttachmentText({ attachment }: { attachment: Attachment }) {
-  const [text, setText] = useState<string | null>(null);
-  const [error, setError] = useState(false);
-  const load = () => {
-    if (text !== null || isPendingId(attachment.id)) return;
-    fetch(attachmentUrl(attachment.id), { credentials: "same-origin" })
-      .then((response) => {
-        if (!response.ok) throw new Error(String(response.status));
-        return response.text();
-      })
-      .then(setText, () => setError(true));
-  };
-  return (
-    <details
-      className="lr-attachment-text"
-      onToggle={(event) => {
-        if (event.currentTarget.open) load();
-      }}
-    >
-      <summary>
-        <PaperclipIcon size={15} />
-        <span>{attachment.filename}</span>
-        <span>{formatSize(attachment.size)}</span>
-        <UploadState attachment={attachment} />
-      </summary>
-      {error ? (
-        <p className="lr-attachment-text-state">
-          Vorschau nicht verfügbar.{" "}
-          <a
-            href={attachmentDownloadUrl(attachment.id)}
-            download={attachment.filename}
-          >
-            Herunterladen
-          </a>
-        </p>
-      ) : text === null ? (
-        <p className="lr-attachment-text-state">Vorschau wird geladen…</p>
-      ) : (
-        <>
-          <pre>
-            <code>{text}</code>
-          </pre>
-          <a
-            href={attachmentDownloadUrl(attachment.id)}
-            download={attachment.filename}
-          >
-            Herunterladen
-          </a>
-        </>
-      )}
-    </details>
-  );
-}
-
-function AttachmentFile({ attachment }: { attachment: Attachment }) {
-  return (
-    <a
-      // Saved, never opened: an installed app has no back button to
-      // return from a file, and after MinIO's redirect the browser
-      // ignores `download` and would leave the app (and a call).
-      href={attachmentDownloadUrl(attachment.id)}
-      download={attachment.filename}
-      className="lr-attachment-file"
-    >
-      <PaperclipIcon size={15} />
-      <span>{attachment.filename}</span>
-      <span>{formatSize(attachment.size)}</span>
-      <UploadState attachment={attachment} />
-    </a>
-  );
-}
-
-function formatSize(bytes: number): string {
-  if (bytes >= 1024 * 1024)
-    return `${(bytes / (1024 * 1024)).toFixed(1).replace(".", ",")} MB`;
-  return `${Math.max(1, Math.round(bytes / 1024))} KB`;
 }
 
 function dayKey(iso: string): string {

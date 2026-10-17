@@ -626,6 +626,10 @@ async fn real_minio_download_links_serve_the_object(pool: PgPool) {
         object.headers()[reqwest::header::CACHE_CONTROL],
         "private, max-age=1800"
     );
+    // The checked type is signed into the link; MinIO adds `nosniff` itself
+    // (the API's byte path sets it in `inline_bytes`).
+    assert_eq!(object.headers()[reqwest::header::CONTENT_TYPE], "image/png");
+    assert_eq!(object.headers()["x-content-type-options"], "nosniff");
     assert_eq!(object.bytes().await.unwrap().as_ref(), PNG);
 
     let (status, headers, _) = client

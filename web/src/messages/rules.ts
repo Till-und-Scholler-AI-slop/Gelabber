@@ -211,6 +211,23 @@ export function isTextType(contentType: string): boolean {
   return contentType.startsWith("text/") || contentType === "application/json";
 }
 
+/** A text file's bytes as text. The server accepts text in any encoding
+ *  and serves it without a charset: UTF-16 by its byte order mark, then
+ *  UTF-8, and anything else as Windows-1252 (Excel CSV on German systems,
+ *  which also reads Latin-1 logs correctly). */
+export function decodeText(bytes: ArrayBuffer | Uint8Array): string {
+  const view = bytes instanceof Uint8Array ? bytes : new Uint8Array(bytes);
+  if (view[0] === 0xff && view[1] === 0xfe)
+    return new TextDecoder("utf-16le").decode(view);
+  if (view[0] === 0xfe && view[1] === 0xff)
+    return new TextDecoder("utf-16be").decode(view);
+  try {
+    return new TextDecoder("utf-8", { fatal: true }).decode(view);
+  } catch {
+    return new TextDecoder("windows-1252").decode(view);
+  }
+}
+
 export function validateAttachment(file: {
   name: string;
   type: string;
@@ -240,4 +257,11 @@ export function validateAttachmentSet(
   if (total > MESSAGE_SIZE_MAX)
     return { field: "attachment_ids", code: "too_large" };
   return null;
+}
+
+/** A file size as the chat shows it: "2,5 MB", "12 KB". */
+export function formatSize(bytes: number): string {
+  if (bytes >= 1024 * 1024)
+    return `${(bytes / (1024 * 1024)).toFixed(1).replace(".", ",")} MB`;
+  return `${Math.max(1, Math.round(bytes / 1024))} KB`;
 }

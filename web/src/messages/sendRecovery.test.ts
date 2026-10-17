@@ -169,6 +169,43 @@ describe("durable send attempts with controlled HTTP responses", () => {
     expect(requests.filter((k) => k.startsWith("PUT"))).toHaveLength(1);
     expect(writes).toBe(2);
   });
+  it("uploads again when the bind turns down an upload, naming the file", async () => {
+    let presigns = 0;
+    let writes = 0;
+    routes((key) => {
+      if (key.endsWith("/attachments"))
+        return json(200, {
+          id: `attachment-${++presigns}`,
+          upload_url: "https://objects.test/put",
+          headers: {},
+        });
+      if (key.startsWith("PUT")) return new Response(null, { status: 200 });
+      return ++writes === 1
+        ? json(422, {
+            error: "validation_failed",
+            fields: { "attachment_ids.1": "mismatch" },
+          })
+        : json(200, row("server"));
+    });
+    await login(user.email, "password");
+    const files = [
+      new File(["a"], "a.png", { type: "image/png" }),
+      new File(["b"], "liste.csv", { type: "text/csv" }),
+    ];
+    await sendMessageAttempt("c", author, { content: "", files }).catch(
+      () => undefined,
+    );
+    const failed = attempts()[0]!;
+    expect(failed.status).toBe("failed");
+    expect(failed.uploadedIds).toEqual([]);
+    expect(failed.error).toContain("liste.csv: ");
+    await sendMessageAttempt("c", author, {
+      content: "",
+      attemptId: failed.id,
+    });
+    expect(presigns).toBe(4);
+    expect(requests.filter((k) => k.startsWith("PUT"))).toHaveLength(4);
+  });
   it.each(["presign", "upload"])(
     "stops after account release during held %s",
     async (stage) => {

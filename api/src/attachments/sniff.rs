@@ -1,7 +1,8 @@
 //! Content check of an upload (issue #255). The browser names the type at
 //! presign; before the file joins a message, its first bytes must agree.
-//! Text types only need to be text: a renamed `.html` stays harmless,
-//! because text is always served as `text/plain` and as a download.
+//! Text types only need to be text in any encoding: a renamed `.html`
+//! stays harmless, because text is always served as `text/plain` and as a
+//! download.
 
 /// Bytes read from the start of an object; `ustar` sits at offset 257.
 pub const PREFIX_LEN: usize = 512;
@@ -44,15 +45,11 @@ fn adts_frame(head: &[u8]) -> bool {
     matches!(head, [0xFF, b, ..] if b & 0xF6 == 0xF0)
 }
 
-/// UTF-8 without NUL. The prefix may end inside a character.
+/// Text in any encoding: no NUL byte, or UTF-16 with its byte order mark
+/// (Excel's "Unicode text"). Windows-1252 or Latin-1 CSVs and logs pass;
+/// the preview picks the encoding when it shows them.
 fn is_text(head: &[u8]) -> bool {
-    if head.contains(&0) {
-        return false;
-    }
-    match std::str::from_utf8(head) {
-        Ok(_) => true,
-        Err(err) => err.error_len().is_none() && head.len() - err.valid_up_to() < 4,
-    }
+    head.starts_with(&[0xFF, 0xFE]) || head.starts_with(&[0xFE, 0xFF]) || !head.contains(&0)
 }
 
 #[cfg(test)]
@@ -81,13 +78,16 @@ mod tests {
     }
 
     #[test]
-    fn text_is_utf8_without_nul_and_html_text_stays_text() {
+    fn text_is_any_encoding_without_nul_and_html_text_stays_text() {
         assert!(matches("text/plain", b"fn main() {}\n"));
         assert!(matches("text/plain", b"<!doctype html><script>x</script>"));
         assert!(matches("application/json", b"{\"a\": 1}"));
-        // Cut inside "ä" (C3 A4) at the end of the prefix.
         assert!(matches("text/markdown", b"# Titel \xC3"));
+        // Excel CSV on a German system: "Größe" in Windows-1252.
+        assert!(matches("text/csv", b"Gr\xF6\xDFe;Preis\n"));
+        // UTF-16 LE with BOM: "a,b".
+        assert!(matches("text/csv", b"\xFF\xFEa\0,\0b\0"));
         assert!(!matches("text/plain", b"MZ\x90\0\x03"));
-        assert!(!matches("text/csv", b"a,b\n\xFF\xFE"));
+        assert!(!matches("text/plain", b"\x89PNG\r\n\x1a\n\0\0\0\rIHDR"));
     }
 }
