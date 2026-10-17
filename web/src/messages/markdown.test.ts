@@ -285,4 +285,17 @@ describe("preview URLs", () => {
       expect(performance.now() - start, unit).toBeLessThan(500);
     }
   });
+
+  it("stays fast on a bare link with many trailing brackets", () => {
+    // Trimming used to rescan the URL for every trailing bracket, and every
+    // unclosed mark around it repeated that.
+    // Ten 2000-character messages took ~1.8 s that way and take ~1 ms now.
+    const src = "||**__~~*_http://a.b/" + ")".repeat(1960) + " _*~~__**||";
+    const start = performance.now();
+    for (let i = 0; i < 10; i++) parseInline(src);
+    expect(performance.now() - start).toBeLessThan(500);
+    expect(previewUrls(parseMessage("(http://a.b/(c)))]"))).toEqual([
+      "http://a.b/(c)",
+    ]);
+  });
 });

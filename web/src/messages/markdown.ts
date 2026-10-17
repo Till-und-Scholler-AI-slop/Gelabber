@@ -328,6 +328,12 @@ function bareUrlAt(
 }
 
 function trimUrl(url: string): string {
+  // Bracket balance counted once, so trimming stays linear in the URL length.
+  const count = (ch: string) => url.split(ch).length - 1;
+  const balance: Record<string, number> = {
+    ")": count(")") - count("("),
+    "]": count("]") - count("["),
+  };
   let end = url.length;
   for (;;) {
     const c = url[end - 1];
@@ -335,13 +341,10 @@ function trimUrl(url: string): string {
       end--;
       continue;
     }
-    const open = c === ")" ? "(" : c === "]" ? "[" : null;
-    if (open) {
-      const head = url.slice(0, end);
-      if (head.split(c).length > head.split(open).length) {
-        end--;
-        continue;
-      }
+    if ((c === ")" || c === "]") && balance[c] > 0) {
+      balance[c]--;
+      end--;
+      continue;
     }
     return url.slice(0, end);
   }
