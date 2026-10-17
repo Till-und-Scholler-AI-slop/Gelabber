@@ -14,6 +14,7 @@
 
 mod frames;
 mod media;
+mod update;
 mod viewer;
 
 use serde::{Deserialize, Serialize};
@@ -110,8 +111,8 @@ fn configured_server(app: &AppHandle) -> Option<String> {
         .or_else(|| load_settings(app).server)
 }
 
-/// The server's pages may call the media commands and open the setup page,
-/// nothing else.
+/// The server's pages may call the media commands, open the setup page and
+/// see and install an update of the app, nothing else.
 fn allow_server(app: &AppHandle, origin: &Url) -> tauri::Result<()> {
     let origin = origin.origin().ascii_serialization();
     app.add_capability(
@@ -120,6 +121,7 @@ fn allow_server(app: &AppHandle, origin: &Url) -> tauri::Result<()> {
             .local(false)
             .window(WINDOW)
             .permission("media")
+            .permission("update")
             .permission("allow-open-setup"),
     )
 }
@@ -371,8 +373,11 @@ fn main() {
             end_web_process(window);
         }
     });
+    #[cfg(windows)]
+    let builder = builder.plugin(update::plugin());
     builder
         .manage(media::Media::default())
+        .manage(update::Updates::default())
         .invoke_handler(tauri::generate_handler![
             set_server,
             open_setup,
@@ -415,6 +420,11 @@ fn main() {
             media::media_view_configure,
             media::media_view_frame,
             media::media_view_close,
+            update::update_state,
+            update::update_install,
+            update::update_dismiss,
+            update::update_check,
+            update::update_set_auto_check,
         ])
         .on_page_load(|webview, payload| {
             // A reload or navigation leaves the old page's calls and
@@ -444,12 +454,14 @@ fn main() {
                 .inner_size(1280.0, 800.0)
                 .min_inner_size(480.0, 360.0)
                 .initialization_script(SHORTCUTS)
+                .initialization_script(update::BANNER)
                 // Only WebView2 takes them; ignored on the other platforms.
                 .additional_browser_args(WEBVIEW2_ARGS)
                 // Tauri's native handler swallows file drops; the chat
                 // composer takes them as HTML5 drops instead.
                 .disable_drag_drop_handler()
                 .build()?;
+            update::start(&handle);
             #[cfg(target_os = "linux")]
             watch_web_process(&handle, &window);
             #[cfg(not(target_os = "linux"))]

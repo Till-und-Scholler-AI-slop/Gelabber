@@ -24,7 +24,7 @@ and watching. What users get to read ships from `app/package/`.
 | `core/tests/mediasoup_loopback.rs` | Loopback call against mediasoup 0.29 with the server's router codecs; on Windows also application sound through process loopback |
 | `core/tests/source_preview.rs` | Video sinks for views in the app: a local source without a producer, scaling and rate limits, sinks going away mid-frame |
 | `core/tests/screen_capture.rs` | Screen capture through the portal, H264, mediasoup, native decode, and the screen as the web client shares it: VP8 in two simulcast layers (`GELABBER_TEST_SCREEN=1`); on Windows the primary monitor through Windows.Graphics.Capture as VP8 in two layers (`GELABBER_TEST_SCREEN_MONITOR=1`) |
-| `app/` | Tauri 2 app `gelabber-desktop`: window on the server origin, bundled setup page, media commands (`src/media.rs`) |
+| `app/` | Tauri 2 app `gelabber-desktop`: window on the server origin, bundled setup page, media commands (`src/media.rs`), updates of the Windows app (`src/update.rs`, `updater.pub`) |
 | `app/scripts/smoke.sh` | Starts the app on a stand-in origin under Xvfb and checks which commands the page reaches and that the frames of a test-pattern view arrive; then kills the page's web process and checks that the app loads the page again |
 | `app/scripts/smoke.ps1` | The same on Windows, against a built or installed `gelabber-desktop.exe` |
 | `app/tauri.bundle.windows.json` | What the Windows installer (NSIS) holds: the app, `gelabber_media.dll` from `app/bundle-input/`, README and third-party notices |
@@ -175,8 +175,8 @@ bar. If the stored server does not answer at start, the setup page opens with
 the reason and a retry button. **Strg+Umschalt+S** and "Server wechseln …" in
 the web client's user menu lead back to that page at any time; **F5** or
 **Strg+R** reload the current page.
-Only the configured origin gets the `media` permission set
-(`app/permissions/media.toml`) plus `allow-open-setup`; every page load closes the previous page's
+Only the configured origin gets the `media` and `update` permission sets
+(`app/permissions/`) plus `allow-open-setup`; every page load closes the previous page's
 transports, producers and sources. WebKitGTK needs `libwebkit2gtk-4.1`.
 On the NVIDIA driver the app sets `WEBKIT_DMABUF_RENDERER_FORCE_SHM=1`
 before GTK starts: WebKitGTK's DMA-BUF renderer otherwise fails under Wayland
@@ -200,6 +200,88 @@ as a page load does, and loads the page again: the reload keys are a script
 of the page and gone with it. If it ends again within a minute, the setup
 page opens with the reason; if that does not stay up either, the view is
 left as it is.
+
+## Updates
+
+The Windows app updates itself (`app/src/update.rs`, issue #253). About 15 s
+after the start and then every 6 hours (unless switched off on the setup
+page; `update.json` next to `desktop.json`) it asks for
+`https://github.com/Till-und-Scholler-AI-slop/Gelabber/releases/latest/download/latest.json`,
+which `release-asset-windows` in `desktop-native.yml` attaches to every
+release with the installer's signature. "Latest" is the release GitHub marks
+as latest, by default the newest that is not a pre-release, so pre-releases
+are never offered. A hotfix of an older line (0.6.2 after 0.7.0) would take
+that mark, and the 0.7 apps would see nothing new until the next 0.7.x (they
+never go back: only a higher version is offered). Publish such a hotfix with
+`gh release create … --latest=false`, or set the mark back on the newest
+release afterwards. A newer version
+shows a notice over the page (an initialization script of the app, so it
+works with every server's web client); "Neu starten" asks once more in a
+message box of the app itself, which no script of the page can answer, then
+downloads the installer (with progress; no overall time limit, only for
+connecting and for each read), checks its signature and runs it (NSIS, passive, `/UPDATE`), which ends the
+app and starts the new version with the same arguments. Not during a call:
+while the page has a transport or a source, and for a minute after the last
+one closed (a call that reconnects or comes back after a reload; see
+`Media::busy`), the notice is hidden and `update_install` refuses. `GELABBER_UPDATE_ENDPOINT` points the
+check at another `latest.json` (HTTPS only), e.g. one of a test release; its
+installer needs the same signature.
+
+The signature is the Tauri updater's (minisign), separate from Authenticode.
+The app checks it against the public key it was built with and accepts it
+only when its trusted comment names the version `latest.json` announces
+(`requireSignedVersion` in `app/tauri.conf.json`), so an old, validly signed
+installer cannot be passed off as a new version. The page gets three
+commands (`permissions/update.toml`: state, install, dismiss), none of the
+plugin's own; server-side XSS can at most start the install of a signed
+newer release.
+
+Linux has no in-app updater, and the plugin is not linked there: pacman
+updates the package from the `[gelabber]` repository, the tarball is
+replaced by hand. Nothing in the app writes to its own files.
+
+### The updater key
+
+- Public key: `app/updater.pub`, one line as `tauri signer generate` writes
+  it, read by `app/build.rs` at compile time. Without it the app is built
+  without updates (the setup page says so) and a release stops in
+  `release.yml` and in `desktop-native.yml`.
+- Private key and its password: the repository secrets
+  `TAURI_SIGNING_PRIVATE_KEY` (the content of the key file) and
+  `TAURI_SIGNING_PRIVATE_KEY_PASSWORD` (`release.yml` requires both, so give
+  the key a password). Only the step "Sign update" of a release run from the
+  release's tag sees them; a run on any other ref stops before signing, so
+  there is one signed installer per version. Putting the two secrets into an
+  environment with required reviewers instead would gate that step on an
+  approval as well (not set up). Keep an
+  offline copy: a lost key means no installed app can be updated any more,
+  every user has to install the next version by hand.
+- Making it, once (any machine with Node):
+
+  ```sh
+  npx --yes @tauri-apps/cli@2.12.3 signer generate -w ~/.tauri/gelabber-updater.key
+  cp ~/.tauri/gelabber-updater.key.pub desktop/app/updater.pub   # commit this
+  gh secret set TAURI_SIGNING_PRIVATE_KEY < ~/.tauri/gelabber-updater.key
+  gh secret set TAURI_SIGNING_PRIVATE_KEY_PASSWORD
+  ```
+
+- Every other CI run (pull requests, pushes) makes a key of its own,
+  builds the app with it, signs the installer with it and checks that
+  signature in the app's unit tests. Those test installers therefore never
+  update to a release, and a release is never signed with a test key.
+- Rotation: the app knows one key. Release N+1 is still signed with the old
+  key but carries the new `updater.pub`; switch the secrets after N+1 is out.
+  Apps older than N+1 then reach N+1 and from there the releases signed with
+  the new key. A key that leaked: rotate the same way at once, and tell
+  users of versions before N+1 to install by hand.
+- Signing uses `@tauri-apps/cli` 2.12.3 (`signer sign --app-version`); the
+  bundle itself stays on the CLI that matches the `tauri` crate.
+
+Not done: Authenticode signing of the installer, so SmartScreen still warns
+on a manual install (`app/package/README-windows.txt`). An update installed
+by the app is downloaded by the app itself and carries no Mark of the Web,
+so SmartScreen should not stop it (not tried yet). Code signing needs a certificate and is a
+separate decision.
 
 ## Design rules
 

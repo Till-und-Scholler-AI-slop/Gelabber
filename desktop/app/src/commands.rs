@@ -41,3 +41,13 @@ pub const MEDIA_COMMANDS: &[&str] = &[
     "media_view_frame",
     "media_view_close",
 ];
+/// The update commands (update.rs). The server origin gets `update_state`,
+/// `update_install` and `update_dismiss` (permissions/update.toml), the
+/// bundled setup page all of them (capabilities/setup.json).
+pub const UPDATE_COMMANDS: &[&str] = &[
+    "update_state",
+    "update_install",
+    "update_dismiss",
+    "update_check",
+    "update_set_auto_check",
+];
