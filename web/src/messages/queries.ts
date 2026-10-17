@@ -37,6 +37,7 @@ import {
 import {
   addPending,
   confirmPending,
+  markUpload,
   forgetAttempt,
   saveAttempt,
   type SendAttempt,
@@ -368,7 +369,8 @@ export function messageQueryOptions(
 
 export type SendInput = {
   content: string;
-  file?: File;
+  /** Up to ATTACHMENTS_MAX files, uploaded in this order. */
+  files?: File[];
   /** Sent alone: no text, no file. */
   gif?: GifPick;
 };
@@ -418,10 +420,11 @@ export async function sendMessageAttempt(
       channelId,
       stamp,
       content: input.gif ? "" : normaliseContent(input.content),
-      file: input.gif ? undefined : input.file,
+      files: input.gif ? [] : (input.files ?? []),
+      uploadedIds: [],
       gif: input.gif,
       status: "sending",
-      stage: input.file && !input.gif ? "presign" : "bind",
+      stage: input.files?.length && !input.gif ? "presign" : "bind",
       controller: new AbortController(),
     };
     addPending(channelId, {
@@ -431,7 +434,10 @@ export async function sendMessageAttempt(
       content: attempt.content,
       created_at: now(),
       edited_at: null,
-      attachments: attempt.file ? [localAttachment(attempt.file)] : [],
+      attachments: attempt.files.map((file) => ({
+        ...localAttachment(file),
+        upload: "waiting" as const,
+      })),
       gif: input.gif?.gif ?? null,
     });
   }
@@ -441,10 +447,17 @@ export async function sendMessageAttempt(
   attempt = { ...attempt, status: "sending", error: undefined };
   saveAttempt(attempt);
   try {
-    if (attempt.file && !attempt.uploadedId) {
-      const file = attempt.file;
+    // One after another: the upload link is the bottleneck, and a retry
+    // continues after the files that already arrived.
+    for (
+      let index = attempt.uploadedIds.length;
+      index < attempt.files.length;
+      index++
+    ) {
+      const file = attempt.files[index]!;
       attempt = { ...attempt, stage: "presign" };
       saveAttempt(attempt);
+      markUpload(channelId, attempt.id, index, "uploading");
       const presign = await remote.presignAttachment(channelId, {
         filename: file.name,
         content_type: inferContentType(file),
@@ -460,7 +473,12 @@ export async function sendMessageAttempt(
         attempt.controller.signal,
       );
       requireAttempt(attempt);
-      attempt = { ...attempt, uploadedId: presign.id };
+      attempt = {
+        ...attempt,
+        uploadedIds: [...attempt.uploadedIds, presign.id],
+      };
+      saveAttempt(attempt);
+      markUpload(channelId, attempt.id, index, "done");
     }
     requireAttempt(attempt);
     attempt = { ...attempt, stage: "bind" };
@@ -468,7 +486,7 @@ export async function sendMessageAttempt(
     const message = await remote.createMessage(
       channelId,
       attempt.content,
-      attempt.uploadedId ? [attempt.uploadedId] : [],
+      attempt.uploadedIds,
       attempt.gif,
     );
     requireAttempt(attempt);

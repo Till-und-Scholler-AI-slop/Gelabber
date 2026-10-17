@@ -7,6 +7,11 @@ export const CONTENT_MAX = 2000;
 export const PAGE_SIZE = 50;
 export const SIZE_MAX = 25 * 1024 * 1024;
 export const FILENAME_MAX = 255;
+/** Files per message and their total size (issue #255). */
+export const ATTACHMENTS_MAX = 10;
+export const MESSAGE_SIZE_MAX = 100 * 1024 * 1024;
+/** Text files up to this size get a preview in the chat. */
+export const TEXT_PREVIEW_MAX = 100 * 1024;
 
 export const ALLOWED_TYPES = [
   "image/jpeg",
@@ -15,10 +20,23 @@ export const ALLOWED_TYPES = [
   "image/webp",
   "application/pdf",
   "text/plain",
+  "text/markdown",
+  "text/csv",
+  "application/json",
   "application/zip",
+  "application/gzip",
+  "application/x-tar",
+  "application/x-7z-compressed",
   "audio/mpeg",
   "audio/wav",
+  "audio/ogg",
+  "audio/flac",
+  "audio/mp4",
+  "audio/aac",
+  "audio/webm",
   "video/mp4",
+  "video/webm",
+  "video/quicktime",
 ] as const;
 
 const IMAGE_TYPES = new Set([
@@ -28,6 +46,63 @@ const IMAGE_TYPES = new Set([
   "image/webp",
 ]);
 
+/** Source code and other text: stored as text/plain, the name keeps the
+ *  extension. HTML and SVG are deliberately absent. */
+const TEXT_EXTENSIONS = [
+  "txt",
+  "log",
+  "ini",
+  "cfg",
+  "conf",
+  "toml",
+  "yaml",
+  "yml",
+  "env",
+  "rs",
+  "py",
+  "js",
+  "mjs",
+  "cjs",
+  "ts",
+  "tsx",
+  "jsx",
+  "c",
+  "h",
+  "cc",
+  "cpp",
+  "hpp",
+  "cs",
+  "java",
+  "kt",
+  "go",
+  "rb",
+  "php",
+  "swift",
+  "lua",
+  "sh",
+  "bash",
+  "zsh",
+  "fish",
+  "ps1",
+  "sql",
+  "css",
+  "scss",
+  "diff",
+  "patch",
+  "nix",
+  "zig",
+  "hs",
+  "ex",
+  "exs",
+  "dart",
+  "r",
+  "pl",
+  "vue",
+  "svelte",
+  "gradle",
+  "lock",
+];
+
 const EXT_TYPE: Record<string, string> = {
   jpg: "image/jpeg",
   jpeg: "image/jpeg",
@@ -35,12 +110,58 @@ const EXT_TYPE: Record<string, string> = {
   gif: "image/gif",
   webp: "image/webp",
   pdf: "application/pdf",
-  txt: "text/plain",
+  md: "text/markdown",
+  markdown: "text/markdown",
+  csv: "text/csv",
+  json: "application/json",
   zip: "application/zip",
+  gz: "application/gzip",
+  tgz: "application/gzip",
+  tar: "application/x-tar",
+  "7z": "application/x-7z-compressed",
   mp3: "audio/mpeg",
   wav: "audio/wav",
+  ogg: "audio/ogg",
+  oga: "audio/ogg",
+  opus: "audio/ogg",
+  flac: "audio/flac",
+  m4a: "audio/mp4",
+  aac: "audio/aac",
+  weba: "audio/webm",
   mp4: "video/mp4",
+  m4v: "video/mp4",
+  webm: "video/webm",
+  mov: "video/quicktime",
+  ...Object.fromEntries(TEXT_EXTENSIONS.map((ext) => [ext, "text/plain"])),
 };
+
+/** Other names browsers and systems use for an allowed type (same list as
+ *  the API's). */
+const ALIASES: Record<string, string> = {
+  "image/jpg": "image/jpeg",
+  "image/pjpeg": "image/jpeg",
+  "audio/mp3": "audio/mpeg",
+  "audio/x-mpeg": "audio/mpeg",
+  "audio/x-wav": "audio/wav",
+  "audio/wave": "audio/wav",
+  "audio/vnd.wave": "audio/wav",
+  "audio/x-flac": "audio/flac",
+  "audio/x-m4a": "audio/mp4",
+  "audio/m4a": "audio/mp4",
+  "audio/x-aac": "audio/aac",
+  "application/x-zip-compressed": "application/zip",
+  "application/x-zip": "application/zip",
+  "application/x-gzip": "application/gzip",
+  "application/x-tgz": "application/gzip",
+  "text/x-markdown": "text/markdown",
+};
+
+/** For the file picker: the types, and the extensions of files browsers
+ *  give no type (source code). */
+export const ACCEPT = [
+  ...ALLOWED_TYPES,
+  ...Object.keys(EXT_TYPE).map((ext) => `.${ext}`),
+].join(",");
 
 const chars = (value: string): number => Array.from(value).length;
 
@@ -59,15 +180,35 @@ export function validateContent(raw: string): FieldCode | null {
   return null;
 }
 
+const isAllowed = (type: string) =>
+  (ALLOWED_TYPES as readonly string[]).includes(type);
+
+/** The type to declare: the browser's when it is an allowed one, else the
+ *  extension's. Browsers name source files `text/x-rust`,
+ *  `text/javascript` or nothing at all; those become `text/plain`. */
 export function inferContentType(file: { name: string; type: string }): string {
-  const typed = file.type.trim().toLowerCase().split(";")[0]?.trim() ?? "";
-  if (typed) return typed;
+  const raw = file.type.trim().toLowerCase().split(";")[0]?.trim() ?? "";
+  const typed = ALIASES[raw] ?? raw;
+  if (isAllowed(typed)) return typed;
   const ext = file.name.split(".").pop()?.toLowerCase() ?? "";
-  return EXT_TYPE[ext] ?? "";
+  if (file.name.includes(".") && EXT_TYPE[ext]) return EXT_TYPE[ext];
+  return typed;
 }
 
 export function isImageType(contentType: string): boolean {
   return IMAGE_TYPES.has(contentType);
+}
+
+export function isVideoType(contentType: string): boolean {
+  return contentType.startsWith("video/");
+}
+
+export function isAudioType(contentType: string): boolean {
+  return contentType.startsWith("audio/");
+}
+
+export function isTextType(contentType: string): boolean {
+  return contentType.startsWith("text/") || contentType === "application/json";
 }
 
 export function validateAttachment(file: {
@@ -81,10 +222,22 @@ export function validateAttachment(file: {
     return { field: "filename", code: "too_long" };
   const type = inferContentType(file);
   if (!type) return { field: "content_type", code: "required" };
-  if (!(ALLOWED_TYPES as readonly string[]).includes(type)) {
+  if (!isAllowed(type)) {
     return { field: "content_type", code: "invalid" };
   }
   if (file.size <= 0) return { field: "size", code: "required" };
   if (file.size > SIZE_MAX) return { field: "size", code: "too_long" };
+  return null;
+}
+
+/** Limits of one message's files together; null when they fit. */
+export function validateAttachmentSet(
+  files: readonly { size: number }[],
+): { field: "attachment_ids"; code: FieldCode } | null {
+  if (files.length > ATTACHMENTS_MAX)
+    return { field: "attachment_ids", code: "too_long" };
+  const total = files.reduce((sum, file) => sum + file.size, 0);
+  if (total > MESSAGE_SIZE_MAX)
+    return { field: "attachment_ids", code: "too_large" };
   return null;
 }

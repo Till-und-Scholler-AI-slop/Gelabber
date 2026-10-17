@@ -133,13 +133,14 @@ describe("durable send attempts with controlled HTTP responses", () => {
     const file = new File([new Uint8Array([1, 2, 3])], "test.png", {
       type: "image/png",
     });
-    await sendMessageAttempt("c", author, { content: "image", file }).catch(
-      () => undefined,
-    );
+    await sendMessageAttempt("c", author, {
+      content: "image",
+      files: [file],
+    }).catch(() => undefined);
     const failed = attempts()[0]!;
     expect(failed).toMatchObject({
-      file,
-      uploadedId: "attachment",
+      files: [file],
+      uploadedIds: ["attachment"],
       stage: "bind",
       status: "failed",
     });
@@ -186,7 +187,7 @@ describe("durable send attempts with controlled HTTP responses", () => {
       await login(user.email, "password");
       const done = sendMessageAttempt("c", author, {
         content: "file",
-        file: new File(["a"], "a.png", { type: "image/png" }),
+        files: [new File(["a"], "a.png", { type: "image/png" })],
       }).catch((error: unknown) => error);
       await vi.waitFor(() => expect(attempts()[0]?.stage).toBe(stage));
       const controller = attempts()[0]!.controller;

@@ -6,6 +6,7 @@
 //! object URL without a membership check.
 
 pub mod cleanup;
+pub mod sniff;
 pub mod validate;
 
 use std::collections::HashMap;
@@ -13,7 +14,9 @@ use std::time::SystemTime;
 
 use axum::Router;
 use axum::extract::{Query, State};
-use axum::http::header::{CACHE_CONTROL, CONTENT_DISPOSITION, CONTENT_TYPE, VARY};
+use axum::http::header::{
+    CACHE_CONTROL, CONTENT_DISPOSITION, CONTENT_TYPE, VARY, X_CONTENT_TYPE_OPTIONS,
+};
 use axum::http::{HeaderMap, HeaderValue, StatusCode};
 use axum::response::{IntoResponse, Json, Redirect, Response};
 use axum::routing::{get, post};
@@ -31,7 +34,7 @@ use crate::path::Id;
 use crate::state::AppState;
 use crate::storage::{self, ObjectBody, ObjectStore, PUT_TTL, StoreError};
 
-use self::validate::is_image;
+use self::validate::{is_inline, is_text};
 
 pub fn router() -> Router<AppState> {
     Router::new()
@@ -229,25 +232,22 @@ async fn download(
     }
     messages::messaging_channel(&state.db, row.channel_id, user.id).await?;
 
-    let save = params.download.as_deref() == Some("1");
-    let disposition = content_disposition(
-        if save || !is_image(&row.content_type) {
-            "attachment"
-        } else {
-            "inline"
-        },
-        &row.filename,
-    );
+    // Pictures and media play in the page; everything else is only ever a
+    // download, whichever link asked for it.
+    let save = params.download.as_deref() == Some("1") || !is_inline(&row.content_type);
+    let disposition =
+        content_disposition(if save { "attachment" } else { "inline" }, &row.filename);
+    let served = served_type(&row.content_type);
     // One clock read: the link's signing window and the redirect's cache
     // time must come from the same window.
     let now = SystemTime::now();
     let body = if save {
         state
             .store
-            .download(&row.object_key, &disposition, now)
+            .download(&row.object_key, &disposition, served, now)
             .await
     } else {
-        state.store.get(&row.object_key, now).await
+        state.store.get(&row.object_key, served, now).await
     };
     match body {
         Ok(ObjectBody::Redirect(url)) => {
@@ -269,10 +269,7 @@ async fn download(
             }
             Ok(response)
         }
-        Ok(ObjectBody::Bytes {
-            content_type,
-            bytes,
-        }) => Ok(inline_bytes(&disposition, &content_type, bytes)),
+        Ok(ObjectBody::Bytes { bytes, .. }) => Ok(inline_bytes(&disposition, served, bytes)),
         Err(StoreError::NotFound) => Err(ApiError::NotFound),
         Err(err) => Err(store_internal(err)),
     }
@@ -289,10 +286,21 @@ fn inline_bytes(disposition: &str, content_type: &str, bytes: Vec<u8>) -> Respon
         HeaderValue::from_static("private, max-age=3600"),
     );
     headers.insert(VARY, HeaderValue::from_static("Cookie"));
+    headers.insert(X_CONTENT_TYPE_OPTIONS, HeaderValue::from_static("nosniff"));
     if let Ok(value) = HeaderValue::from_str(disposition) {
         headers.insert(CONTENT_DISPOSITION, value);
     }
     (headers, bytes).into_response()
+}
+
+/// The type a file is served with: the checked type from the database, and
+/// any text as plain text, so a renamed `.html` can never render as a page.
+fn served_type(content_type: &str) -> &str {
+    if is_text(content_type) {
+        "text/plain; charset=utf-8"
+    } else {
+        content_type
+    }
 }
 
 /// `Content-Disposition` with an ASCII `filename` every browser reads and,
@@ -375,6 +383,7 @@ pub async fn bind_to_message(
         return Ok(Vec::new());
     }
     let mut bound = Vec::with_capacity(ids.len());
+    let mut total: i64 = 0;
     for id in ids {
         let row = sqlx::query_as::<_, PendingRow>(
             "SELECT id, channel_id, uploader_id, object_key, filename, \
@@ -409,6 +418,31 @@ pub async fn bind_to_message(
             // The caller rolls back message creation before durable quarantine.
             return Err(ApiError::Validation(FieldErrors::from([(
                 "size", "invalid",
+            )])));
+        }
+        total += row.size_bytes;
+        if total > validate::MESSAGE_SIZE_MAX {
+            return Err(ApiError::Validation(FieldErrors::from([(
+                "attachment_ids",
+                "too_large",
+            )])));
+        }
+        // The declared type must be what the bytes are (issue #255). A
+        // mismatch stays unbound and goes with the expiry cleanup.
+        let head = match store.prefix(&row.object_key, sniff::PREFIX_LEN).await {
+            Ok(head) => head,
+            Err(StoreError::NotFound) => {
+                return Err(ApiError::Validation(FieldErrors::from([(
+                    "attachment_ids",
+                    "invalid",
+                )])));
+            }
+            Err(err) => return Err(store_internal(err)),
+        };
+        if !sniff::matches(&row.content_type, &head) {
+            return Err(ApiError::Validation(FieldErrors::from([(
+                "content_type",
+                "mismatch",
             )])));
         }
         let updated = sqlx::query_as::<_, AttachmentRow>(
