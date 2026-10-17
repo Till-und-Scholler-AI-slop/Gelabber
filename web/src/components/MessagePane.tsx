@@ -92,11 +92,26 @@ import {
   SmileIcon,
   TrashIcon,
 } from "./Icons.tsx";
+import { MessageText } from "./MessageMentions.tsx";
+import { MentionContext, useMentions } from "./mentionContext.ts";
+import { useMentionSuggestions } from "./useMentionSuggestions.tsx";
+import {
+  fromWire,
+  namesIn,
+  mentionsMe,
+  toWire,
+  type MentionMember,
+} from "../messages/mentions.ts";
+import { NotificationBell } from "./NotificationSettingsDialog.tsx";
+import type { NotificationTarget } from "./notificationTarget.ts";
+import { useMuteClock } from "../messages/notificationSettings.ts";
+import { isMuted } from "../messages/notifyLevel.ts";
 import "./chat.css";
 
 // Opens the one lightbox of the pane. It lives outside the virtual rows: a
 // row scrolled out of the overscan unmounts, and would close it with it.
 const OpenImage = createContext<(image: LightboxImage) => void>(() => {});
+const NO_MEMBERS: readonly MentionMember[] = [];
 
 export function MessagePane({
   title,
@@ -107,7 +122,10 @@ export function MessagePane({
   canSend,
   canSendFiles = false,
   canModerate = false,
+  canMentionEveryone = false,
   mention = "#",
+  members = NO_MEMBERS,
+  notify,
   footer,
   onDraftChange,
   onDraftStop,
@@ -123,8 +141,14 @@ export function MessagePane({
   canSend: boolean;
   canSendFiles?: boolean;
   canModerate?: boolean;
+  /** Offer `@everyone` / `@here` in a server channel's suggestions. */
+  canMentionEveryone?: boolean;
   /** `#` for a server channel, `@` for a DM. */
   mention?: "#" | "@";
+  /** Who can be mentioned here: the server's members, a DM's two people. */
+  members?: readonly MentionMember[];
+  /** The bell in the header: notification settings of this conversation. */
+  notify?: NotificationTarget;
   footer?: ReactNode;
   onDraftChange?: (value: string) => void;
   onDraftStop?: () => void;
@@ -253,133 +277,149 @@ export function MessagePane({
     fetchNextPage,
     query.isFetchNextPageError,
   ]);
+  const muteNow = useMuteClock();
+  const muted = isMuted(
+    readRows?.find((row) => row.channel_id === channelId),
+    muteNow,
+  );
+  const mentions = useMemo(
+    () => ({
+      members,
+      me: user?.id,
+      keywords: mention === "#" && canMentionEveryone,
+    }),
+    [members, user?.id, mention, canMentionEveryone],
+  );
 
   return (
-    <div className="lr-message-pane flex min-h-0 flex-1 flex-col">
-      <header className="lr-channel-header">
-        {title}
-        <button
-          ref={searchButton}
-          type="button"
-          onClick={() => setSearchingScope(searching ? null : searchScope)}
-          className="lr-header-search"
-          aria-expanded={searching}
-          aria-label="Nachrichten suchen"
-          title="Nachrichten suchen"
-        >
-          <SearchIcon size={16} />
-          <span>Suchen</span>
-          <kbd>Strg K</kbd>
-        </button>
-        {actions}
-      </header>
-      {notice}
-      {read.error ? (
-        <p className="lr-inline-notice" role="status">
-          <span>Lesestatus nicht gespeichert.</span>
-          <button type="button" onClick={read.retry}>
-            Erneut versuchen
-          </button>
-        </p>
-      ) : null}
-      <OpenImage.Provider value={openImage}>
-        <div ref={panesRef} className="relative flex min-h-0 flex-1 flex-col">
-          <div
-            className={`flex min-h-0 flex-1 flex-col ${searching ? "invisible" : ""}`}
-            inert={searching}
-            aria-hidden={searching || undefined}
+    <MentionContext.Provider value={mentions}>
+      <div className="lr-message-pane flex min-h-0 flex-1 flex-col">
+        <header className="lr-channel-header">
+          {title}
+          <button
+            ref={searchButton}
+            type="button"
+            onClick={() => setSearchingScope(searching ? null : searchScope)}
+            className="lr-header-search"
+            aria-expanded={searching}
+            aria-label="Nachrichten suchen"
+            title="Nachrichten suchen"
           >
-            <MessageList
-              key={searchScope}
-              active={!searching}
-              channelId={channelId}
-              items={items}
-              onAtLatest={setAtLatest}
-              latestRequest={latestRequest}
-              meId={user?.id}
-              newAfter={newAfter ?? null}
-              canModerate={canModerate}
-              canSend={canSend}
-              hasOlder={Boolean(hasNextPage)}
-              loadingOlder={isFetchingNextPage}
-              onLoadOlder={onLoadOlder}
-              ready={!query.isPending}
-              loadError={
-                query.error
-                  ? query.isFetchNextPageError
-                    ? "paging"
-                    : "history"
-                  : null
-              }
-              onRetry={() => {
-                if (query.isFetchNextPageError) void fetchNextPage();
-                else void query.refetch();
-              }}
-            />
-          </div>
-          {searching ? (
-            <div className="lr-search-overlay absolute inset-0 flex min-h-0 flex-col">
-              <MessageSearch
+            <SearchIcon size={16} />
+            <span>Suchen</span>
+            <kbd>Strg K</kbd>
+          </button>
+          {notify ? <NotificationBell target={notify} muted={muted} /> : null}
+          {actions}
+        </header>
+        {notice}
+        {read.error ? (
+          <p className="lr-inline-notice" role="status">
+            <span>Lesestatus nicht gespeichert.</span>
+            <button type="button" onClick={read.retry}>
+              Erneut versuchen
+            </button>
+          </p>
+        ) : null}
+        <OpenImage.Provider value={openImage}>
+          <div ref={panesRef} className="relative flex min-h-0 flex-1 flex-col">
+            <div
+              className={`flex min-h-0 flex-1 flex-col ${searching ? "invisible" : ""}`}
+              inert={searching}
+              aria-hidden={searching || undefined}
+            >
+              <MessageList
                 key={searchScope}
+                active={!searching}
                 channelId={channelId}
-                onClose={closeSearch}
-                renderMessage={(message) => (
-                  <MessageRow
-                    message={message}
-                    continued={false}
-                    canSend={canSend}
-                    mine={message.author.id === user?.id}
-                    canDelete={message.author.id === user?.id || canModerate}
-                    onEdit={(content) =>
-                      contextEdit.mutate({ id: message.id, content })
-                    }
-                    onDelete={async () => {
-                      if (await confirmDelete(message, user?.id))
-                        contextRemove.mutate(message.id);
-                    }}
-                  />
-                )}
+                items={items}
+                onAtLatest={setAtLatest}
+                latestRequest={latestRequest}
+                meId={user?.id}
+                newAfter={newAfter ?? null}
+                canModerate={canModerate}
+                canSend={canSend}
+                hasOlder={Boolean(hasNextPage)}
+                loadingOlder={isFetchingNextPage}
+                onLoadOlder={onLoadOlder}
+                ready={!query.isPending}
+                loadError={
+                  query.error
+                    ? query.isFetchNextPageError
+                      ? "paging"
+                      : "history"
+                    : null
+                }
+                onRetry={() => {
+                  if (query.isFetchNextPageError) void fetchNextPage();
+                  else void query.refetch();
+                }}
               />
             </div>
-          ) : null}
-          {!searching && !atLatest && items.length > 0 ? (
-            <button
-              type="button"
-              onClick={() => setLatestRequest((value) => value + 1)}
-              className="lr-jump-latest"
-            >
-              <ArrowDownIcon size={15} />
-              Zu den neuesten Nachrichten
-            </button>
-          ) : null}
-        </div>
-      </OpenImage.Provider>
-      {lightbox?.scope === searchScope ? (
-        <ImageLightbox
-          key={lightbox.image.id}
-          image={lightbox.image}
-          onClose={() => setLightbox(null)}
-          fallbackFocus={focusList}
+            {searching ? (
+              <div className="lr-search-overlay absolute inset-0 flex min-h-0 flex-col">
+                <MessageSearch
+                  key={searchScope}
+                  channelId={channelId}
+                  onClose={closeSearch}
+                  renderMessage={(message) => (
+                    <MessageRow
+                      message={message}
+                      continued={false}
+                      canSend={canSend}
+                      mine={message.author.id === user?.id}
+                      canDelete={message.author.id === user?.id || canModerate}
+                      onEdit={(content) =>
+                        contextEdit.mutate({ id: message.id, content })
+                      }
+                      onDelete={async () => {
+                        if (await confirmDelete(message, user?.id))
+                          contextRemove.mutate(message.id);
+                      }}
+                    />
+                  )}
+                />
+              </div>
+            ) : null}
+            {!searching && !atLatest && items.length > 0 ? (
+              <button
+                type="button"
+                onClick={() => setLatestRequest((value) => value + 1)}
+                className="lr-jump-latest"
+              >
+                <ArrowDownIcon size={15} />
+                Zu den neuesten Nachrichten
+              </button>
+            ) : null}
+          </div>
+        </OpenImage.Provider>
+        {lightbox?.scope === searchScope ? (
+          <ImageLightbox
+            key={lightbox.image.id}
+            image={lightbox.image}
+            onClose={() => setLightbox(null)}
+            fallbackFocus={focusList}
+          />
+        ) : null}
+        {footer}
+        <Composer
+          key={user?.id ?? "anonymous"}
+          channelId={channelId}
+          channelName={channelName}
+          canSend={canSend}
+          canSendFiles={canSendFiles}
+          mention={mention}
+          author={
+            user
+              ? { id: user.id, name: user.name, avatar_url: user.avatar_url }
+              : null
+          }
+          attempts={channelAttempts}
+          onDraftChange={onDraftChange}
+          onDraftStop={onDraftStop}
         />
-      ) : null}
-      {footer}
-      <Composer
-        key={user?.id ?? "anonymous"}
-        channelId={channelId}
-        channelName={channelName}
-        canSend={canSend}
-        canSendFiles={canSendFiles}
-        mention={mention}
-        author={
-          user
-            ? { id: user.id, name: user.name, avatar_url: user.avatar_url }
-            : null
-        }
-        attempts={channelAttempts}
-        onDraftChange={onDraftChange}
-        onDraftStop={onDraftStop}
-      />
-    </div>
+      </div>
+    </MentionContext.Provider>
   );
 }
 
@@ -852,8 +892,26 @@ function MessageRow({
   onDelete: () => void;
 }) {
   const pending = isPendingId(message.id);
+  const { members, me } = useMentions();
+  const mentioned = !mine && mentionsMe(message, me);
   const [editing, setEditing] = useState(false);
   const [draft, setDraft] = useState(message.content);
+  const editInput = useRef<HTMLTextAreaElement>(null);
+  const editSuggestions = useMentionSuggestions(draft, (text, caret) => {
+    setDraft(text);
+    requestAnimationFrame(() =>
+      editInput.current?.setSelectionRange(caret, caret),
+    );
+  });
+  const sentNames = useMemo(
+    () => namesIn(message.content, members),
+    [message.content, members],
+  );
+  const wireDraft = toWire(
+    draft,
+    members,
+    new Map([...sentNames, ...editSuggestions.picked]),
+  );
   const editButton = useRef<HTMLButtonElement>(null);
   const restoreEditFocus = useRef(false);
   useLayoutEffect(() => {
@@ -869,12 +927,12 @@ function MessageRow({
 
   const startEdit = () => {
     restoreEditFocus.current = false;
-    setDraft(message.content);
+    setDraft(fromWire(message.content, members));
     setEditing(true);
   };
   const cancelEdit = () => {
     finishEditing();
-    setDraft(message.content);
+    setDraft(fromWire(message.content, members));
   };
 
   const when = formatWhen(message.created_at);
@@ -882,8 +940,8 @@ function MessageRow({
     ? draft.length === 0
       ? message.attachments.length > 0
         ? null
-        : validateContent(draft)
-      : validateContent(draft)
+        : validateContent(wireDraft)
+      : validateContent(wireDraft)
     : null;
   const showDelete = canDelete && !pending && !editing;
   const gif = asGif(message.gif);
@@ -921,13 +979,20 @@ function MessageRow({
         className={[
           "lr-message-row lr-message-continued group flex items-start gap-3",
           pending ? "opacity-60" : "",
+          mentioned ? "is-mentioned" : "",
         ].join(" ")}
       >
         <span className="w-8 shrink-0" aria-hidden />
         <div className="min-w-0 flex-1">
           {message.content ? (
             <p className="lr-message-text">
-              {message.content}
+              <MessageText
+                content={message.content}
+                ping={{
+                  everyone: message.mention_everyone === true,
+                  mentions: message.mentions ?? [],
+                }}
+              />
               {message.edited_at ? (
                 <span className="lr-message-edited">(bearbeitet)</span>
               ) : null}
@@ -952,6 +1017,7 @@ function MessageRow({
       className={[
         "lr-message-row group flex items-start gap-3",
         pending ? "opacity-60" : "",
+        mentioned ? "is-mentioned" : "",
       ].join(" ")}
     >
       <Avatar name={message.author.name} url={message.author.avatar_url} />
@@ -968,14 +1034,21 @@ function MessageRow({
             onSubmit={(event) => {
               event.preventDefault();
               if (error) return;
-              onEdit(draft);
+              onEdit(wireDraft);
               finishEditing();
             }}
           >
+            {editSuggestions.list}
             <textarea
+              ref={editInput}
               value={draft}
-              onChange={(e) => setDraft(e.target.value)}
+              {...editSuggestions.fieldProps}
+              onChange={(e) => {
+                setDraft(e.target.value);
+                editSuggestions.track(e.target);
+              }}
               onKeyDown={(event) => {
+                if (editSuggestions.onKeyDown(event)) return;
                 if (event.key === "Escape") {
                   event.preventDefault();
                   cancelEdit();
@@ -987,7 +1060,7 @@ function MessageRow({
                 ) {
                   event.preventDefault();
                   if (!error) {
-                    onEdit(draft);
+                    onEdit(wireDraft);
                     finishEditing();
                   }
                 }
@@ -1011,7 +1084,13 @@ function MessageRow({
           </form>
         ) : message.content || !gif ? (
           <p className="lr-message-text">
-            {message.content}
+            <MessageText
+              content={message.content}
+              ping={{
+                everyone: message.mention_everyone === true,
+                mentions: message.mentions ?? [],
+              }}
+            />
             {message.edited_at ? (
               <span className="lr-message-edited">(bearbeitet)</span>
             ) : null}
@@ -1122,8 +1201,18 @@ function Composer({
     };
   }, [canSend]);
   useLayoutEffect(() => draftHeight.current?.fit(), [draft, canSend]);
-  const error = draft.length === 0 ? null : validateContent(draft);
-  const remaining = CONTENT_MAX - Array.from(normalisedLength(draft)).length;
+  const { members } = useMentions();
+  const suggestions = useMentionSuggestions(draft, (text, caret) => {
+    setDraft(text);
+    onDraftChange?.(text);
+    requestAnimationFrame(() =>
+      composerInput.current?.setSelectionRange(caret, caret),
+    );
+  });
+  // The field shows `@Name`; what is sent and counted is `<@id>`.
+  const wire = toWire(draft, members, suggestions.picked);
+  const error = draft.length === 0 ? null : validateContent(wire);
+  const remaining = CONTENT_MAX - Array.from(normalisedLength(wire)).length;
   const emptyText = draft.trim().length === 0;
   const disabled =
     !canSend ||
@@ -1202,7 +1291,7 @@ function Composer({
   const submit = (event?: FormEvent) => {
     event?.preventDefault();
     if (disabled) return;
-    const text = draft;
+    const text = wire;
     const attached = file;
     send.mutate({ content: text, file: attached ?? undefined });
     setDraft("");
@@ -1233,6 +1322,7 @@ function Composer({
   };
 
   const onKeyDown = (event: KeyboardEvent<HTMLTextAreaElement>) => {
+    if (suggestions.onKeyDown(event)) return;
     if (
       event.key === "Enter" &&
       !event.shiftKey &&
@@ -1269,7 +1359,11 @@ function Composer({
                 : "Text und Datei bleiben für dich erhalten."}
             </p>
             <p className="lr-send-failure-content">
-              {attempt.gif ? gifLabel(attempt.gif.gif) : attempt.content}
+              {attempt.gif ? (
+                gifLabel(attempt.gif.gif)
+              ) : (
+                <MessageText content={attempt.content} />
+              )}
             </p>
             {attempt.file ? <p>{attempt.file.name}</p> : null}
             <div className="lr-send-failure-actions">
@@ -1291,7 +1385,7 @@ function Composer({
                 <button
                   type="button"
                   onClick={() => {
-                    setDraft(attempt.content);
+                    setDraft(fromWire(attempt.content, members));
                     pickFile(attempt.file ?? null);
                     discardAttempt(attempt.id);
                     composerInput.current?.focus();
@@ -1333,6 +1427,7 @@ function Composer({
             </button>
           </div>
         ) : null}
+        {suggestions.list}
         <div className="lr-composer-row">
           {canSendFiles ? (
             <>
@@ -1363,11 +1458,16 @@ function Composer({
             ref={composerInput}
             id={`compose-${channelId}`}
             value={draft}
+            {...suggestions.fieldProps}
             onChange={(e) => {
               setDraft(e.target.value);
               onDraftChange?.(e.target.value);
+              suggestions.track(e.target);
             }}
-            onBlur={() => onDraftStop?.()}
+            onBlur={() => {
+              suggestions.fieldProps.onBlur();
+              onDraftStop?.();
+            }}
             onKeyDown={onKeyDown}
             onPaste={(event) => {
               if (!canSendFiles) return;

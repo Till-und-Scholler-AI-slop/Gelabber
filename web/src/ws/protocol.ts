@@ -87,6 +87,12 @@ export type TypingFrame = {
   on: boolean;
 };
 
+/** Frames for every socket of the account, whatever it subscribed to. */
+export type AccountFrame = {
+  /** Notification settings changed on some device: fetch them again. */
+  op: "ns";
+};
+
 export type ServerFrame =
   | { op: "h" }
   | { op: "ok"; s: string; c?: string; n: number; ep?: string }
@@ -97,7 +103,8 @@ export type ServerFrame =
   | { op: "dm"; c: string }
   | ErrFrame
   | PresenceFrame
-  | TypingFrame;
+  | TypingFrame
+  | AccountFrame;
 
 export function topicKey(topic: Topic): string {
   return topic.c ? `c:${topic.c}` : `s:${topic.s}`;
@@ -128,7 +135,8 @@ export function decode(raw: string): ServerFrame | null {
     op === "p" ||
     op === "y" ||
     op === "resync" ||
-    op === "dm"
+    op === "dm" ||
+    op === "ns"
   ) {
     return value as ServerFrame;
   }

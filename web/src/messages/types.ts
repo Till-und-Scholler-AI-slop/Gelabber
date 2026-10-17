@@ -31,6 +31,11 @@ export type Message = {
   reactions?: Reaction[];
   /** A GIF message (empty content, no attachments). */
   gif?: Gif | null;
+  /** Users the message mentions, as the server resolved them (mentions.ts).
+   * Absent in older API snapshots. */
+  mentions?: string[];
+  /** `@everyone`: every member is mentioned. */
+  mention_everyone?: boolean;
 };
 
 /** One GIF from the server's Klipy relay. URLs are Klipy's; load them
@@ -72,6 +77,13 @@ export function asGif(value: unknown): Gif | null {
 }
 
 export type Reaction = { emoji: string; user_ids: string[] };
+
+/** Redis cjson turns an empty array into `{}`; only strings are user ids. */
+export function asMentionList(value: unknown): string[] {
+  return Array.isArray(value)
+    ? value.filter((id): id is string => typeof id === "string")
+    : [];
+}
 
 export type MessagePage = {
   /** Oldest → newest within the page. */

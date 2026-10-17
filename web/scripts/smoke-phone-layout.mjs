@@ -190,6 +190,13 @@ async function phone(viewport, init) {
     await page.evaluate(() => window.matchMedia("(pointer: coarse)").matches),
     "the emulated phone has no touch pointer",
   );
+  assert.equal(
+    await page.evaluate(
+      () => getComputedStyle(document.documentElement).overscrollBehaviorY,
+    ),
+    "none",
+    "pulling down could reload the app and drop a call",
+  );
   return { context, page };
 }
 

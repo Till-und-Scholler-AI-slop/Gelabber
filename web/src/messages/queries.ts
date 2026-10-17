@@ -54,7 +54,7 @@ import type {
   MessageAuthor,
   MessagePage,
 } from "./types.ts";
-import { asAttachmentList, asReactionList } from "./types.ts";
+import { asAttachmentList, asMentionList, asReactionList } from "./types.ts";
 
 export const messageKeys = {
   channel: (userId: string, generation: number, channelId: string) =>
@@ -781,6 +781,12 @@ export function applyChannelEvent(
       ...event.d,
       ...(event.r !== undefined ? { revision: event.r } : {}),
       attachments: asAttachmentList(event.d.attachments),
+      ...(event.d.mentions === undefined
+        ? {}
+        : {
+            mentions: asMentionList(event.d.mentions),
+            mention_everyone: event.d.mention_everyone === true,
+          }),
       ...(event.d.reactions === undefined
         ? {}
         : { reactions: asReactionList(event.d.reactions) }),

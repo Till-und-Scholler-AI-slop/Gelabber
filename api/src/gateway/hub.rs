@@ -413,6 +413,28 @@ impl ConnTable {
             }
             return;
         }
+        if let Some(raw_user) = channel.strip_prefix(USER_PREFIX) {
+            match (
+                raw_user.parse::<Uuid>(),
+                serde_json::from_str::<super::protocol::UserFrame>(raw),
+            ) {
+                (Ok(user), Ok(frame)) => {
+                    let frame = ServerFrame::from(frame);
+                    for socket in self
+                        .inner
+                        .sockets
+                        .read()
+                        .await
+                        .values()
+                        .filter(|socket| socket.user_id == user)
+                    {
+                        socket.send(frame.clone());
+                    }
+                }
+                _ => warn!(channel, "redis payload is not a user frame"),
+            }
+            return;
+        }
         if let Some(channel_id) = voice_channel_id(channel) {
             match serde_json::from_str::<SigEvent>(raw) {
                 Ok(event) => {
@@ -1274,6 +1296,39 @@ impl Gateway {
 
 pub(super) fn redis_err(err: redis::RedisError) -> ApiError {
     ApiError::Internal(format!("redis: {err}"))
+}
+
+/// Frames for every socket of one account, whatever it subscribed to: its
+/// read positions and notification settings (`gb:u:{user}`).
+const USER_PREFIX: &str = "gb:u:";
+
+impl Gateway {
+    /// Best effort: a socket that misses one catches up with the next REST
+    /// snapshot (focus, poll, reconnect).
+    pub async fn publish_user(
+        &self,
+        user: Uuid,
+        frame: &super::protocol::UserFrame,
+    ) -> Result<(), ApiError> {
+        self.connections.ensure_subscriber();
+        let raw = serde_json::to_string(frame)
+            .map_err(|err| ApiError::Internal(format!("serialize user frame: {err}")))?;
+        let channel = format!("{USER_PREFIX}{user}");
+        self.connections
+            .with_conn(|mut conn| {
+                let channel = channel.clone();
+                let raw = raw.clone();
+                async move {
+                    redis::cmd("PUBLISH")
+                        .arg(channel)
+                        .arg(raw)
+                        .query_async::<()>(&mut conn)
+                        .await
+                }
+            })
+            .await
+            .map_err(redis_err)
+    }
 }
 
 pub fn voice_redis_channel(channel_id: Uuid) -> String {

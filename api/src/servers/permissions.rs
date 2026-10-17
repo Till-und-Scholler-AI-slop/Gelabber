@@ -23,13 +23,16 @@ pub enum Permission {
     GoLive = 32,
     /// Delete someone else's message (own delete needs no flag).
     ManageMessages = 64,
+    /// `@everyone` and `@here` notify; without it they are plain text.
+    MentionEveryone = 128,
 }
 
 impl Permission {
-    pub const ALL: [Permission; 7] = [
+    pub const ALL: [Permission; 8] = [
         Self::ManageServer,
         Self::ManageChannels,
         Self::ManageMessages,
+        Self::MentionEveryone,
         Self::SendMessages,
         Self::SendFiles,
         Self::JoinVoice,
@@ -41,6 +44,7 @@ impl Permission {
             Self::ManageServer => "manage_server",
             Self::ManageChannels => "manage_channels",
             Self::ManageMessages => "manage_messages",
+            Self::MentionEveryone => "mention_everyone",
             Self::SendMessages => "send_messages",
             Self::SendFiles => "send_files",
             Self::JoinVoice => "join_voice",
@@ -62,7 +66,7 @@ impl Permissions {
     /// What a fresh server grants its members: talk, share, join voice, go
     /// live — but not manage anything. Mirrored by the column default.
     pub const DEFAULT_MEMBER: Permissions = Permissions(4 | 8 | 16 | 32);
-    pub const ALL: Permissions = Permissions(1 | 2 | 4 | 8 | 16 | 32 | 64);
+    pub const ALL: Permissions = Permissions(1 | 2 | 4 | 8 | 16 | 32 | 64 | 128);
 
     pub fn contains(self, permission: Permission) -> bool {
         self.0 & permission as i32 != 0
