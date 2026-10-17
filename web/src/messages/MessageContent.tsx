@@ -1,5 +1,6 @@
-import { useMemo, useState, type ReactNode } from "react";
+import { useEffect, useMemo, useState, type ReactNode } from "react";
 
+import { isDesktopApp } from "../voice/native/bridge.ts";
 import { parseMessage, type Block, type Inline } from "./markdown.ts";
 
 export type MentionPart =
@@ -88,8 +89,7 @@ function renderInline(nodes: Inline[], ctx: Ctx): ReactNode[] {
           <a
             key={key}
             href={node.href}
-            target="_blank"
-            rel="noopener noreferrer nofollow"
+            {...newTab(node.href)}
             className="lr-md-link"
           >
             {node.text}
@@ -112,6 +112,14 @@ function renderInline(nodes: Inline[], ctx: Ctx): ReactNode[] {
   });
 }
 
+/** Web links open in a new tab. A mail link would leave an empty one in the
+ * browser; the desktop app only hands links in new windows to the system. */
+function newTab(href: string) {
+  if (/^https?:/i.test(href))
+    return { target: "_blank", rel: "noopener noreferrer nofollow" };
+  return isDesktopApp() ? { target: "_blank", rel: "noopener noreferrer" } : {};
+}
+
 function Spoiler({
   interactive,
   children,
@@ -121,28 +129,34 @@ function Spoiler({
 }) {
   const [shown, setShown] = useState(false);
   if (!interactive) return <span className="lr-md-spoiler">{children}</span>;
-  if (shown)
-    return (
-      <span className="lr-md-spoiler lr-md-spoiler-shown">{children}</span>
-    );
+  // One element before and after revealing: it keeps the keyboard focus
+  // (tabIndex -1) instead of dropping it to the page.
   return (
     <span
-      className="lr-md-spoiler"
-      role="button"
-      tabIndex={0}
-      aria-label="Spoiler anzeigen"
+      className={`lr-md-spoiler${shown ? " lr-md-spoiler-shown" : ""}`}
+      role={shown ? undefined : "button"}
+      tabIndex={shown ? -1 : 0}
+      aria-label={shown ? undefined : "Spoiler anzeigen"}
       onClick={(event) => {
+        if (shown) return;
         event.stopPropagation();
         setShown(true);
       }}
       onKeyDown={(event) => {
-        if (event.key === "Enter" || event.key === " ") {
+        if (!shown && (event.key === "Enter" || event.key === " ")) {
           event.preventDefault();
           setShown(true);
         }
       }}
     >
-      <span aria-hidden>{children}</span>
+      {shown ? (
+        children
+      ) : (
+        // Links inside stay out of reach, by keyboard too, until revealed.
+        <span aria-hidden inert>
+          {children}
+        </span>
+      )}
     </span>
   );
 }
@@ -156,7 +170,12 @@ function CodeBlock({
   text: string;
   interactive: boolean;
 }) {
-  const [copied, setCopied] = useState(false);
+  const [copy, setCopy] = useState<"idle" | "copied" | "failed">("idle");
+  useEffect(() => {
+    if (copy === "idle") return;
+    const timer = window.setTimeout(() => setCopy("idle"), 1500);
+    return () => window.clearTimeout(timer);
+  }, [copy]);
   if (!interactive)
     return (
       <span className="lr-md-codeblock">
@@ -170,16 +189,22 @@ function CodeBlock({
         <button
           type="button"
           onClick={() => {
-            void navigator.clipboard?.writeText(text).then(
-              () => {
-                setCopied(true);
-                window.setTimeout(() => setCopied(false), 1500);
-              },
-              () => {},
+            // Missing outside a secure context and in some web views.
+            if (!navigator.clipboard) {
+              setCopy("failed");
+              return;
+            }
+            navigator.clipboard.writeText(text).then(
+              () => setCopy("copied"),
+              () => setCopy("failed"),
             );
           }}
         >
-          {copied ? "Kopiert" : "Kopieren"}
+          {copy === "copied"
+            ? "Kopiert"
+            : copy === "failed"
+              ? "Kopieren nicht möglich"
+              : "Kopieren"}
         </button>
       </div>
       <pre>

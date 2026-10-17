@@ -15,6 +15,19 @@ describe("message content", () => {
     );
   });
 
+  it("opens mail links in place, not in an empty tab", () => {
+    expect(html("<mailto:a@example.com>")).toContain(
+      '<a href="mailto:a@example.com" class="lr-md-link">',
+    );
+  });
+
+  it("keeps links in a hidden spoiler out of reach until revealed", () => {
+    const out = html("||see https://example.com||");
+    expect(out).toContain(
+      '<span class="lr-md-spoiler" role="button" tabindex="0" aria-label="Spoiler anzeigen"><span aria-hidden="true" inert="">',
+    );
+  });
+
   it("escapes HTML instead of rendering it", () => {
     const out = html('<img src=x onerror="alert(1)"> **<b>x</b>**');
     expect(out).not.toContain("<img");
@@ -68,7 +81,7 @@ describe("message content", () => {
 
   it("hides spoilers until they are clicked", () => {
     expect(html("||secret||")).toContain(
-      '<span class="lr-md-spoiler" role="button" tabindex="0" aria-label="Spoiler anzeigen"><span aria-hidden="true">secret</span></span>',
+      '<span class="lr-md-spoiler" role="button" tabindex="0" aria-label="Spoiler anzeigen"><span aria-hidden="true" inert="">secret</span></span>',
     );
   });
 });

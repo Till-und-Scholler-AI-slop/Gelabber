@@ -32,7 +32,7 @@ const URL_START = /^https?:\/\/[^\s<>"]+/i;
 const ANGLE_LINK = /^<((?:https?:\/\/|mailto:)[^\s<>"]+)>/i;
 const MENTION =
   /^<@([0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12})>/i;
-// Same boundaries as `KEYWORD` in mentions.ts and the server (#241).
+// The word boundaries the server uses for mentions (#241).
 const KEYWORD = /^@(everyone|here)(?![\p{L}\p{N}_@-])/u;
 const KEYWORD_BEFORE = /[\p{L}\p{N}_@-]/u;
 const WORD = /[\p{L}\p{N}_]/u;
@@ -140,6 +140,9 @@ export function parseInline(src: string, depth = 0): Inline[] {
     text = "";
     out.push(node);
   };
+  // A mark with no closer after one opener has none after a later one
+  // either: not searching again keeps `*a *a *a …` linear.
+  const unclosed = new Set<string>();
   let i = 0;
   outer: while (i < src.length) {
     const c = src[i];
@@ -204,9 +207,11 @@ export function parseInline(src: string, depth = 0): Inline[] {
     }
     if (depth < MAX_DEPTH) {
       for (const { mark, type } of MARKS) {
+        if (unclosed.has(mark)) continue;
         if (!src.startsWith(mark, i) || !opens(src, i, mark)) continue;
         const from = i + mark.length;
         const close = findCloser(src, from, mark);
+        if (close === -1) unclosed.add(mark);
         if (close <= from) continue;
         push({
           type,
