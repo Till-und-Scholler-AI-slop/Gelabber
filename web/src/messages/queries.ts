@@ -31,6 +31,7 @@ import {
   encodeCursor,
   newerMessage,
   olderCursor,
+  refreshReplies,
   stampOlder,
   type MessageChange,
 } from "./pages.ts";
@@ -54,7 +55,7 @@ import type {
   MessageAuthor,
   MessagePage,
 } from "./types.ts";
-import { asAttachmentList, asReactionList } from "./types.ts";
+import { asAttachmentList, asReactionList, asReply, replyTo } from "./types.ts";
 
 export const messageKeys = {
   channel: (userId: string, generation: number, channelId: string) =>
@@ -371,6 +372,8 @@ export type SendInput = {
   file?: File;
   /** Sent alone: no text, no file. */
   gif?: GifPick;
+  /** Answer this message of the channel. */
+  replyTo?: Message;
 };
 
 function localAttachment(file: File): Attachment {
@@ -420,6 +423,7 @@ export async function sendMessageAttempt(
       content: input.gif ? "" : normaliseContent(input.content),
       file: input.gif ? undefined : input.file,
       gif: input.gif,
+      reply: input.replyTo ? replyTo(input.replyTo) : undefined,
       status: "sending",
       stage: input.file && !input.gif ? "presign" : "bind",
       controller: new AbortController(),
@@ -433,6 +437,7 @@ export async function sendMessageAttempt(
       edited_at: null,
       attachments: attempt.file ? [localAttachment(attempt.file)] : [],
       gif: input.gif?.gif ?? null,
+      reply: attempt.reply ?? null,
     });
   }
   requireAttempt(attempt);
@@ -470,6 +475,7 @@ export async function sendMessageAttempt(
       attempt.content,
       attempt.uploadedId ? [attempt.uploadedId] : [],
       attempt.gif,
+      attempt.reply?.id,
     );
     requireAttempt(attempt);
     confirmPending(channelId, attempt.id, message);
@@ -726,7 +732,7 @@ export function applyMessageEdited(
     created: false,
   });
   patchPages(client, userId, generation, channelId, (pages) =>
-    applyMessageChanges(pages, [change]),
+    refreshReplies(applyMessageChanges(pages, [change]), message.id, message),
   );
 }
 
@@ -747,7 +753,7 @@ export function applyMessageDeleted(
     revision,
   });
   patchPages(client, userId, generation, channelId, (pages) =>
-    applyMessageChanges(pages, [change]),
+    refreshReplies(applyMessageChanges(pages, [change]), messageId, null),
   );
 }
 
@@ -784,6 +790,7 @@ export function applyChannelEvent(
       ...(event.d.reactions === undefined
         ? {}
         : { reactions: asReactionList(event.d.reactions) }),
+      ...(event.d.reply === undefined ? {} : { reply: asReply(event.d.reply) }),
     };
     if (event.t === "c")
       applyMessageCreated(client, userId, generation, channelId, message);

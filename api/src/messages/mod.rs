@@ -12,6 +12,7 @@
 //! is the same `404`.
 
 pub mod reactions;
+pub mod replies;
 pub mod validate;
 mod workflows;
 
@@ -80,6 +81,9 @@ pub struct Message {
     /// A GIF message: empty content, no attachments.
     #[serde(skip_serializing_if = "Option::is_none")]
     pub gif: Option<Gif>,
+    /// The message this one answers (issue #251).
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub reply: Option<replies::Reply>,
 }
 
 #[derive(Debug, Clone, Serialize, PartialEq, Eq)]
@@ -126,6 +130,7 @@ impl From<MessageRow> for Message {
             attachments: Vec::new(),
             reactions: row.reactions.0,
             gif: row.gif.map(|gif| gif.0),
+            reply: None,
         }
     }
 }
@@ -160,6 +165,7 @@ impl MessageInsert {
             attachments: Vec::new(),
             reactions: Vec::new(),
             gif: self.gif.map(|gif| gif.0),
+            reply: None,
         }
     }
 }
@@ -173,6 +179,9 @@ pub struct CreateBody {
     /// Post this GIF instead of text or files.
     #[serde(default)]
     pub gif: Option<GifPick>,
+    /// Answer this message of the same channel.
+    #[serde(default)]
+    pub reply_to: Option<Uuid>,
 }
 
 #[derive(Debug, Deserialize)]
@@ -206,6 +215,7 @@ async fn list_messages(
 
     let mut page = load_page(&state.db, channel_id, before, after, limit).await?;
     attachments::for_messages(&state.db, &mut page.messages).await?;
+    replies::for_messages(&state.db, &mut page.messages).await?;
     Ok(Json(page))
 }
 
@@ -242,14 +252,19 @@ async fn create_message(
 
     let mut tx = state.db.begin().await?;
     delivery::lock_channel(&mut tx, channel_id).await?;
+    if let Some(target) = body.reply_to {
+        replies::check_target(&mut tx, channel_id, target).await?;
+    }
     let row = sqlx::query_as::<_, MessageInsert>(
-        "INSERT INTO messages (channel_id, author_id, content, gif) VALUES ($1, $2, $3, $4) \
+        "INSERT INTO messages (channel_id, author_id, content, gif, reply_to) \
+         VALUES ($1, $2, $3, $4, $5) \
          RETURNING id, channel_id, content, created_at, edited_at, revision, created_order, gif",
     )
     .bind(channel_id)
     .bind(user.id)
     .bind(&content)
     .bind(gif.as_ref().map(sqlx::types::Json))
+    .bind(body.reply_to)
     .fetch_one(&mut *tx)
     .await?;
     let bound = attachments::bind_to_message(
@@ -402,6 +417,7 @@ async fn persist_event(
     message: &mut Message,
 ) -> Result<(), ApiError> {
     reactions::populate(db, message).await?;
+    replies::for_messages(&mut *db, std::slice::from_mut(message)).await?;
     message.revision = delivery::revision(db).await?;
     sqlx::query("UPDATE messages SET revision=$2 WHERE id=$1")
         .bind(message.id)
@@ -580,6 +596,7 @@ async fn message_for(
     let access = messaging_channel(db, row.channel_id, user_id).await?;
     let mut message = Message::from(row);
     message.attachments = attachments::for_message(db, message.id).await?;
+    replies::for_messages(db, std::slice::from_mut(&mut message)).await?;
     Ok((access, message))
 }
 

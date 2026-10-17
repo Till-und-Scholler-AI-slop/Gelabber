@@ -31,12 +31,16 @@ export const createMessage = (
   content: string,
   attachmentIds: string[] = [],
   gif?: GifPick,
+  replyTo?: string,
 ) =>
   api<Message>(`/channels/${channelId}/messages`, {
     method: "POST",
-    body: gif
-      ? { content: "", gif: { slug: gif.slug, query: gif.query } }
-      : { content, attachment_ids: attachmentIds },
+    body: {
+      ...(gif
+        ? { content: "", gif: { slug: gif.slug, query: gif.query } }
+        : { content, attachment_ids: attachmentIds }),
+      ...(replyTo ? { reply_to: replyTo } : {}),
+    },
   });
 
 export const updateMessage = (id: string, content: string) =>

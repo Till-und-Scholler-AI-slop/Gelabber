@@ -27,6 +27,8 @@ import {
   type ScrollPosition,
 } from "../messages/scrollPosition.ts";
 import { MessageSearch } from "../messages/MessageSearch.tsx";
+import { MessageContextView } from "../messages/MessageContext.tsx";
+import { setReplyTarget, useReplyTarget } from "../messages/replyTarget.ts";
 import { useChatDraft } from "../messages/drafts.ts";
 import {
   readBoundary,
@@ -69,8 +71,8 @@ import {
   validateAttachment,
   validateContent,
 } from "../messages/rules.ts";
-import type { Attachment, Gif, Message } from "../messages/types.ts";
-import { asAttachmentList, asGif } from "../messages/types.ts";
+import type { Attachment, Gif, Message, Reply } from "../messages/types.ts";
+import { asAttachmentList, asGif, asReply } from "../messages/types.ts";
 import { gifBox, gifLabel, type GifPick } from "../gifs/api.ts";
 import { useGifStatus } from "../gifs/queries.ts";
 import { useReducedMotion } from "../interface/useReducedMotion.ts";
@@ -87,6 +89,7 @@ import {
   CloseIcon,
   PaperclipIcon,
   PencilIcon,
+  ReplyIcon,
   SearchIcon,
   SendIcon,
   SmileIcon,
@@ -97,6 +100,9 @@ import "./chat.css";
 // Opens the one lightbox of the pane. It lives outside the virtual rows: a
 // row scrolled out of the overscan unmounts, and would close it with it.
 const OpenImage = createContext<(image: LightboxImage) => void>(() => {});
+// Shows an answered message: in the list when it is loaded, else in its
+// context from the server.
+const JumpTo = createContext<(id: string) => void>(() => {});
 
 export function MessagePane({
   title,
@@ -157,6 +163,16 @@ export function MessagePane({
     );
     row?.focus({ preventScroll: true });
   }, []);
+  // A reply's original: scrolled to in the list, or shown in its context.
+  const [focusRequest, setFocusRequest] = useState<{
+    id: string;
+    n: number;
+  } | null>(null);
+  const [contextTarget, setContextTarget] = useState<{
+    scope: string;
+    id: string;
+  } | null>(null);
+  const showingContext = contextTarget?.scope === searchScope;
   const searchButton = useRef<HTMLButtonElement>(null);
   const restoreSearchFocus = useRef(false);
   const closeSearch = useCallback(() => {
@@ -213,6 +229,17 @@ export function MessagePane({
     () => visibleMessages(query.data?.pages ?? [], pending),
     [query.data?.pages, pending],
   );
+  const jumpTo = useCallback(
+    (id: string) => {
+      setSearchingScope(null);
+      if (items.some((message) => message.id === id)) {
+        setContextTarget(null);
+        setFocusRequest((previous) => ({ id, n: (previous?.n ?? 0) + 1 }));
+      } else setContextTarget({ scope: searchScope, id });
+    },
+    [items, searchScope],
+  );
+  const overlay = searching || showingContext;
 
   // Close the picture with its message when that is deleted. A result of
   // the search may not be in the loaded list: only "was there, now gone".
@@ -283,76 +310,106 @@ export function MessagePane({
         </p>
       ) : null}
       <OpenImage.Provider value={openImage}>
-        <div ref={panesRef} className="relative flex min-h-0 flex-1 flex-col">
-          <div
-            className={`flex min-h-0 flex-1 flex-col ${searching ? "invisible" : ""}`}
-            inert={searching}
-            aria-hidden={searching || undefined}
-          >
-            <MessageList
-              key={searchScope}
-              active={!searching}
-              channelId={channelId}
-              items={items}
-              onAtLatest={setAtLatest}
-              latestRequest={latestRequest}
-              meId={user?.id}
-              newAfter={newAfter ?? null}
-              canModerate={canModerate}
-              canSend={canSend}
-              hasOlder={Boolean(hasNextPage)}
-              loadingOlder={isFetchingNextPage}
-              onLoadOlder={onLoadOlder}
-              ready={!query.isPending}
-              loadError={
-                query.error
-                  ? query.isFetchNextPageError
-                    ? "paging"
-                    : "history"
-                  : null
-              }
-              onRetry={() => {
-                if (query.isFetchNextPageError) void fetchNextPage();
-                else void query.refetch();
-              }}
-            />
-          </div>
-          {searching ? (
-            <div className="lr-search-overlay absolute inset-0 flex min-h-0 flex-col">
-              <MessageSearch
+        <JumpTo.Provider value={jumpTo}>
+          <div ref={panesRef} className="relative flex min-h-0 flex-1 flex-col">
+            <div
+              className={`flex min-h-0 flex-1 flex-col ${overlay ? "invisible" : ""}`}
+              inert={overlay}
+              aria-hidden={overlay || undefined}
+            >
+              <MessageList
                 key={searchScope}
+                active={!overlay}
+                focusRequest={focusRequest}
                 channelId={channelId}
-                onClose={closeSearch}
-                renderMessage={(message) => (
-                  <MessageRow
-                    message={message}
-                    continued={false}
-                    canSend={canSend}
-                    mine={message.author.id === user?.id}
-                    canDelete={message.author.id === user?.id || canModerate}
-                    onEdit={(content) =>
-                      contextEdit.mutate({ id: message.id, content })
-                    }
-                    onDelete={async () => {
-                      if (await confirmDelete(message, user?.id))
-                        contextRemove.mutate(message.id);
-                    }}
-                  />
-                )}
+                items={items}
+                onAtLatest={setAtLatest}
+                latestRequest={latestRequest}
+                meId={user?.id}
+                newAfter={newAfter ?? null}
+                canModerate={canModerate}
+                canSend={canSend}
+                hasOlder={Boolean(hasNextPage)}
+                loadingOlder={isFetchingNextPage}
+                onLoadOlder={onLoadOlder}
+                ready={!query.isPending}
+                loadError={
+                  query.error
+                    ? query.isFetchNextPageError
+                      ? "paging"
+                      : "history"
+                    : null
+                }
+                onRetry={() => {
+                  if (query.isFetchNextPageError) void fetchNextPage();
+                  else void query.refetch();
+                }}
               />
             </div>
-          ) : null}
-          {!searching && !atLatest && items.length > 0 ? (
-            <button
-              type="button"
-              onClick={() => setLatestRequest((value) => value + 1)}
-              className="lr-jump-latest"
-            >
-              <ArrowDownIcon size={15} />
-              Zu den neuesten Nachrichten
-            </button>
-          ) : null}
-        </div>
+            {searching ? (
+              <div className="lr-search-overlay absolute inset-0 flex min-h-0 flex-col">
+                <MessageSearch
+                  key={searchScope}
+                  channelId={channelId}
+                  onClose={closeSearch}
+                  renderMessage={(message) => (
+                    <MessageRow
+                      message={message}
+                      continued={false}
+                      canSend={canSend}
+                      mine={message.author.id === user?.id}
+                      canDelete={message.author.id === user?.id || canModerate}
+                      onEdit={(content) =>
+                        contextEdit.mutate({ id: message.id, content })
+                      }
+                      onDelete={async () => {
+                        if (await confirmDelete(message, user?.id))
+                          contextRemove.mutate(message.id);
+                      }}
+                    />
+                  )}
+                />
+              </div>
+            ) : null}
+            {showingContext && !searching ? (
+              <div className="lr-search-overlay absolute inset-0 flex min-h-0 flex-col">
+                <MessageContextView
+                  key={contextTarget.id}
+                  channelId={channelId}
+                  messageId={contextTarget.id}
+                  closeLabel="Zurück zum Chat"
+                  onClose={() => setContextTarget(null)}
+                  renderMessage={(message) => (
+                    <MessageRow
+                      message={message}
+                      continued={false}
+                      canSend={canSend}
+                      mine={message.author.id === user?.id}
+                      canDelete={message.author.id === user?.id || canModerate}
+                      onEdit={(content) =>
+                        contextEdit.mutate({ id: message.id, content })
+                      }
+                      onDelete={async () => {
+                        if (await confirmDelete(message, user?.id))
+                          contextRemove.mutate(message.id);
+                      }}
+                    />
+                  )}
+                />
+              </div>
+            ) : null}
+            {!overlay && !atLatest && items.length > 0 ? (
+              <button
+                type="button"
+                onClick={() => setLatestRequest((value) => value + 1)}
+                className="lr-jump-latest"
+              >
+                <ArrowDownIcon size={15} />
+                Zu den neuesten Nachrichten
+              </button>
+            ) : null}
+          </div>
+        </JumpTo.Provider>
       </OpenImage.Provider>
       {lightbox?.scope === searchScope ? (
         <ImageLightbox
@@ -399,6 +456,7 @@ function MessageList({
   onRetry,
   onAtLatest,
   latestRequest,
+  focusRequest,
 }: {
   active: boolean;
   channelId: string;
@@ -416,6 +474,8 @@ function MessageList({
   onRetry: () => void;
   onAtLatest: (value: boolean) => void;
   latestRequest: number;
+  /** Scroll to this loaded row and highlight it (a reply's original). */
+  focusRequest: { id: string; n: number } | null;
 }) {
   const scrollRef = useRef<HTMLDivElement>(null);
   const stickToBottom = useRef(true);
@@ -458,7 +518,8 @@ function MessageList({
       );
       const breaks =
         (dayBreak(items[index - 1], message) ? 40 : 0) +
-        (index === newIndex ? 28 : 0);
+        (index === newIndex ? 28 : 0) +
+        (message.reply ? 22 : 0);
       const gif = asGif(message.gif);
       if (gif)
         return (
@@ -610,6 +671,25 @@ function MessageList({
     // `updateLatest()` pinned the row at scrollTop. Not the first rendered
     // row: that can be an overscan row far above the viewport.
   }, [items, virtualizer, startOf, updateLatest, totalSize, latestRequest]);
+
+  const [highlighted, setHighlighted] = useState<string | null>(null);
+  const handledFocus = useRef(focusRequest?.n);
+  useEffect(() => {
+    if (!focusRequest || focusRequest.n === handledFocus.current) return;
+    handledFocus.current = focusRequest.n;
+    const index = itemsRef.current.findIndex(
+      (message) => message.id === focusRequest.id,
+    );
+    if (index < 0) return;
+    // A jump into history is the reader's position, not the end's.
+    stickToBottom.current = false;
+    hold.current = null;
+    heldTop.current = null;
+    virtualizer.scrollToIndex(index, { align: "center" });
+    setHighlighted(focusRequest.id);
+    const done = window.setTimeout(() => setHighlighted(null), 2000);
+    return () => window.clearTimeout(done);
+  }, [focusRequest, virtualizer]);
 
   const firstVisible = virtualizer.getVirtualItems()[0]?.index ?? 0;
   const firstId = items[0]?.id;
@@ -786,7 +866,7 @@ function MessageList({
               key={row.key}
               data-index={row.index}
               ref={virtualizer.measureElement}
-              className="absolute inset-x-0"
+              className={`absolute inset-x-0${message.id === highlighted ? " lr-message-highlight" : ""}`}
               style={{ top: row.start }}
             >
               {newDay ? (
@@ -889,6 +969,8 @@ function MessageRow({
   const gif = asGif(message.gif);
   const showEdit = mine && canSend && !pending && !editing && !gif;
   const canReact = canSend && !pending && !editing;
+  const canReply = canSend && !pending && !editing;
+  const reply = asReply(message.reply);
   const [reactionSlot, setReactionSlot] = useState<HTMLSpanElement | null>(
     null,
   );
@@ -897,6 +979,14 @@ function MessageRow({
     showEdit || showDelete || canReact ? (
       <span className="lr-message-actions">
         <span ref={setReactionSlot} className="lr-message-reaction-slot" />
+        {canReply ? (
+          <IconButton
+            label="Antworten"
+            onClick={() => setReplyTarget(message.channel_id, message)}
+          >
+            <ReplyIcon size={14} />
+          </IconButton>
+        ) : null}
         {showEdit ? (
           <IconButton
             buttonRef={editButton}
@@ -956,6 +1046,7 @@ function MessageRow({
     >
       <Avatar name={message.author.name} url={message.author.avatar_url} />
       <div className="min-w-0 flex-1">
+        {reply ? <ReplyHeader reply={reply} /> : null}
         <div className="flex flex-wrap items-baseline gap-2">
           <span className="lr-message-author">{message.author.name}</span>
           <time dateTime={message.created_at} className="lr-message-time">
@@ -1072,6 +1163,7 @@ function Composer({
   const [gifOpen, setGifOpen] = useState(false);
   const gifs = useGifStatus();
   const gifsEnabled = gifs.data?.enabled === true;
+  const replyTarget = useReplyTarget(channelId);
   const fileInput = useRef<HTMLInputElement>(null);
   const composerInput = useRef<HTMLTextAreaElement>(null);
   const composerForm = useRef<HTMLFormElement>(null);
@@ -1095,6 +1187,10 @@ function Composer({
     else if (target.top - focusMargin < boundary.top)
       pane.scrollTop -= boundary.top - target.top + focusMargin;
   }, []);
+  // "Antworten" moves the keyboard to the field it fills.
+  useEffect(() => {
+    if (replyTarget) composerInput.current?.focus({ preventScroll: true });
+  }, [replyTarget]);
   // Toolbar/read-state changes can move a focused form without resizing it.
   useLayoutEffect(revealComposerFocus, [revealComposerFocus]);
   useLayoutEffect(() => {
@@ -1204,7 +1300,12 @@ function Composer({
     if (disabled) return;
     const text = draft;
     const attached = file;
-    send.mutate({ content: text, file: attached ?? undefined });
+    send.mutate({
+      content: text,
+      file: attached ?? undefined,
+      replyTo: replyTarget,
+    });
+    setReplyTarget(channelId, null);
     setDraft("");
     pickFile(null);
     onDraftStop?.();
@@ -1215,7 +1316,8 @@ function Composer({
   const sendGif = (pick: GifPick) => {
     setGifOpen(false);
     if (!canSend || !author) return;
-    send.mutate({ content: "", gif: pick });
+    send.mutate({ content: "", gif: pick, replyTo: replyTarget });
+    setReplyTarget(channelId, null);
     composerInput.current?.focus();
   };
 
@@ -1233,6 +1335,11 @@ function Composer({
   };
 
   const onKeyDown = (event: KeyboardEvent<HTMLTextAreaElement>) => {
+    if (event.key === "Escape" && replyTarget) {
+      event.preventDefault();
+      setReplyTarget(channelId, null);
+      return;
+    }
     if (
       event.key === "Enter" &&
       !event.shiftKey &&
@@ -1311,6 +1418,26 @@ function Composer({
         {channelName}
       </label>
       <div className="lr-composer-field">
+        {replyTarget ? (
+          <div className="lr-composer-reply">
+            <ReplyIcon size={14} />
+            <p>
+              Antwort an <strong>{replyTarget.author.name}</strong>
+              <span className="lr-composer-reply-hint"> · Esc bricht ab</span>
+            </p>
+            <button
+              type="button"
+              onClick={() => {
+                setReplyTarget(channelId, null);
+                composerInput.current?.focus();
+              }}
+              aria-label="Antworten abbrechen"
+              title="Antworten abbrechen"
+            >
+              <CloseIcon size={14} />
+            </button>
+          </div>
+        ) : null}
         {dropping ? (
           <p className="lr-composer-drop" aria-hidden="true">
             Loslassen zum Anhängen
@@ -1461,6 +1588,37 @@ function Composer({
         </div>
       ) : null}
     </form>
+  );
+}
+
+function ReplyHeader({ reply }: { reply: Reply }) {
+  const jumpTo = useContext(JumpTo);
+  if (reply.deleted || !reply.author)
+    return (
+      <p className="lr-reply-header is-deleted">
+        <ReplyIcon size={13} />
+        <span>Die ursprüngliche Nachricht wurde gelöscht.</span>
+      </p>
+    );
+  const summary =
+    reply.excerpt ||
+    (reply.has_gif ? "GIF" : reply.has_attachment ? "Anhang" : "");
+  return (
+    <button
+      type="button"
+      className="lr-reply-header"
+      onClick={() => jumpTo(reply.id)}
+      aria-label={`Antwort auf ${reply.author.name}: ${summary}. Zur Nachricht springen`}
+    >
+      <ReplyIcon size={13} />
+      <span className="lr-reply-author">{reply.author.name}</span>
+      <span className="lr-reply-excerpt">
+        {summary}
+        {reply.excerpt && (reply.has_attachment || reply.has_gif) ? (
+          <PaperclipIcon size={12} />
+        ) : null}
+      </span>
+    </button>
   );
 }
 
