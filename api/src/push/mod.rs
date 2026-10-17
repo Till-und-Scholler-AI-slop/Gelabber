@@ -38,8 +38,18 @@ const MAX_PER_USER: i64 = 20;
 const MAX_ENDPOINT: usize = 1024;
 /// A push older than this is not worth showing any more.
 const TTL_SECS: u64 = 3600;
-/// `@everyone` in a large server pushes to this many members at most.
-const MAX_RECIPIENTS: i64 = 500;
+/// `@everyone` in a server with more members than this pushes only to the
+/// ones named in the message: a crowd that large is not paged by phone.
+const MAX_RECIPIENTS: usize = 500;
+/// `@everyone` pushes per server within [`EVERYONE_WINDOW`], whoever wrote
+/// them; beyond that only the members named in the message are pushed to.
+const EVERYONE_PER_WINDOW: u32 = 5;
+const EVERYONE_WINDOW: Duration = Duration::from_secs(10 * 60);
+/// Messages being pushed at once across the process. A burst beyond that is
+/// dropped (and counted as `push_dropped`): pushes are best effort, and the
+/// pages show everything on their own.
+const MAX_DELIVERIES: usize = 16;
+
 const PREVIEW_CHARS: usize = 180;
 
 #[derive(Clone)]
@@ -47,6 +57,7 @@ pub struct Push {
     vapid: Vapid,
     hosts: Vec<String>,
     http: reqwest::Client,
+    deliveries: std::sync::Arc<tokio::sync::Semaphore>,
 }
 
 impl Push {
@@ -61,12 +72,13 @@ impl Push {
             vapid: config.vapid.clone(),
             hosts: config.hosts.clone(),
             http,
+            deliveries: std::sync::Arc::new(tokio::sync::Semaphore::new(MAX_DELIVERIES)),
         })
     }
 
     /// The push service's origin for an endpoint this server may post to.
-    /// HTTPS to one of the allowed hosts; plain HTTP only to a loopback
-    /// address listed explicitly (tests).
+    /// HTTPS on its default port to one of the allowed hosts; plain HTTP,
+    /// and any port, only to a loopback address listed explicitly (tests).
     pub fn audience(&self, endpoint: &str) -> Option<String> {
         let url = url::Url::parse(endpoint).ok()?;
         let host = url.host_str()?.to_ascii_lowercase();
@@ -78,7 +90,8 @@ impl Push {
             url.host(),
             Some(url::Host::Ipv4(ip)) if ip.is_loopback()
         );
-        let scheme_ok = url.scheme() == "https" || (url.scheme() == "http" && loopback);
+        let scheme_ok = loopback || (url.scheme() == "https" && url.port().is_none());
+        let scheme_ok = scheme_ok && matches!(url.scheme(), "https" | "http");
         (allowed && scheme_ok && url.username().is_empty() && url.password().is_none())
             .then(|| url.origin().ascii_serialization())
     }
@@ -134,12 +147,17 @@ async fn subscribe(
     }
     let user = session.user.id;
     let mut tx = state.db.begin().await?;
-    // A browser that signs in as someone else keeps its endpoint: it moves.
+    // A browser that signs in as someone else keeps its endpoint and its
+    // keys: it moves. Someone who only knows the endpoint cannot take it
+    // over; their request changes nothing.
     sqlx::query(
         "INSERT INTO push_subscriptions (endpoint,user_id,session_hash,p256dh,auth)
          VALUES ($1,$2,$3,$4,$5) ON CONFLICT (endpoint) DO UPDATE
          SET user_id=EXCLUDED.user_id, session_hash=EXCLUDED.session_hash,
-             p256dh=EXCLUDED.p256dh, auth=EXCLUDED.auth, created_at=now()",
+             p256dh=EXCLUDED.p256dh, auth=EXCLUDED.auth, created_at=now()
+         WHERE push_subscriptions.user_id=EXCLUDED.user_id
+            OR (push_subscriptions.p256dh=EXCLUDED.p256dh
+                AND push_subscriptions.auth=EXCLUDED.auth)",
     )
     .bind(&body.endpoint)
     .bind(user)
@@ -200,9 +218,15 @@ struct Target {
     auth: String,
 }
 
-/// After a message is stored: push it in the background.
+/// After a message is stored: push it in the background, unless
+/// [`MAX_DELIVERIES`] are under way already.
 pub fn announce(state: &AppState, message: &Message, server: Option<Uuid>) {
     let Some(push) = state.push.clone() else {
+        return;
+    };
+    let Ok(slot) = push.deliveries.clone().try_acquire_owned() else {
+        state.metrics.rate_limited("push_dropped");
+        debug!(message_id = %message.id, "push dropped, deliveries busy");
         return;
     };
     let state = state.clone();
@@ -211,6 +235,7 @@ pub fn announce(state: &AppState, message: &Message, server: Option<Uuid>) {
         if let Err(err) = deliver(&state, &push, &message, server).await {
             debug!(error = err.code(), "push not sent");
         }
+        drop(slot);
     });
 }
 
@@ -231,16 +256,21 @@ async fn deliver(
             .fetch_all(&state.db)
             .await?
         }
-        Some(server) if message.mention_everyone => {
-            sqlx::query_scalar(
+        Some(server) if message.mention_everyone && everyone_may_push(state, server) => {
+            let members: Vec<Uuid> = sqlx::query_scalar(
                 "SELECT user_id FROM server_members WHERE server_id=$1 AND user_id<>$2
-                 ORDER BY joined_at LIMIT $3",
+                 LIMIT $3",
             )
             .bind(server)
             .bind(author)
-            .bind(MAX_RECIPIENTS)
+            .bind(MAX_RECIPIENTS as i64 + 1)
             .fetch_all(&state.db)
-            .await?
+            .await?;
+            if members.len() > MAX_RECIPIENTS {
+                message.mentions.clone()
+            } else {
+                members
+            }
         }
         Some(_) => message.mentions.clone(),
     };
@@ -272,66 +302,99 @@ async fn deliver(
     }
     let (title, path) = heading(state, message, server).await?;
     let body = preview(state, message).await?;
-    let mut sent = 0usize;
-    let mut away = std::collections::HashMap::<Uuid, bool>::new();
-    let mut wanted = Vec::new();
-    for target in targets {
-        let skip = match away.get(&target.user_id) {
-            Some(skip) => *skip,
-            None => {
-                // Without Redis nobody counts as in front: push anyway.
-                let skip = state
-                    .gateway
-                    .has_focus(target.user_id)
-                    .await
-                    .unwrap_or(false);
-                away.insert(target.user_id, skip);
-                skip
-            }
-        };
-        if !skip {
-            wanted.push(target);
-        }
-    }
+    let users: Vec<Uuid> = {
+        let mut users: Vec<Uuid> = targets.iter().map(|t| t.user_id).collect();
+        users.sort_unstable();
+        users.dedup();
+        users
+    };
+    // Without Redis nobody counts as in front: push anyway.
+    let in_front = state.gateway.in_front(&users).await.unwrap_or_default();
     let urgency = if server.is_none() { "high" } else { "normal" };
-    let results = futures_util::stream::iter(wanted.into_iter().map(|target| {
-        let payload = Payload {
-            title: &title,
-            body: &body,
-            path: &path,
-            user: target.user_id,
-            channel: message.channel_id,
-            message: message.id,
-            at: message.created_at,
-        };
-        let raw = serde_json::to_vec(&payload).unwrap_or_default();
-        async move { (send(push, &target, &raw, urgency).await, target.endpoint) }
-    }))
+    let results = futures_util::stream::iter(
+        targets
+            .into_iter()
+            .filter(|target| !in_front.contains(&target.user_id))
+            .filter_map(|target| {
+                let payload = Payload {
+                    title: &title,
+                    body: &body,
+                    path: &path,
+                    user: target.user_id,
+                    channel: message.channel_id,
+                    message: message.id,
+                    at: message.created_at,
+                };
+                match serde_json::to_vec(&payload) {
+                    Ok(raw) => Some((target, raw)),
+                    Err(err) => {
+                        warn!(error = %err, "push payload not encoded");
+                        None
+                    }
+                }
+            })
+            .map(|(target, raw)| async move {
+                (send(push, &target, &raw, urgency).await, target.endpoint)
+            }),
+    )
     .buffer_unordered(8)
     .collect::<Vec<_>>()
     .await;
+    let mut sent = Vec::new();
+    let mut gone = Vec::new();
+    // A subscription that has not taken a push for 30 days goes on its next
+    // failure (a 403 after a key rotation, a 413, a service that is gone).
+    let mut failed = Vec::new();
     for (outcome, endpoint) in results {
         match outcome {
-            Outcome::Sent => {
-                sent += 1;
-                let _ =
-                    sqlx::query("UPDATE push_subscriptions SET last_ok_at=now() WHERE endpoint=$1")
-                        .bind(&endpoint)
-                        .execute(&state.db)
-                        .await;
-            }
-            Outcome::Gone => {
-                info!("push subscription expired, removed");
-                let _ = sqlx::query("DELETE FROM push_subscriptions WHERE endpoint=$1")
-                    .bind(&endpoint)
-                    .execute(&state.db)
-                    .await;
-            }
-            Outcome::Failed => {}
+            Outcome::Sent => sent.push(endpoint),
+            Outcome::Gone => gone.push(endpoint),
+            Outcome::Failed => failed.push(endpoint),
         }
     }
+    if !sent.is_empty() {
+        let _ =
+            sqlx::query("UPDATE push_subscriptions SET last_ok_at=now() WHERE endpoint=ANY($1)")
+                .bind(&sent)
+                .execute(&state.db)
+                .await;
+    }
+    if !gone.is_empty() {
+        info!(count = gone.len(), "push subscriptions expired, removed");
+        let _ = sqlx::query("DELETE FROM push_subscriptions WHERE endpoint=ANY($1)")
+            .bind(&gone)
+            .execute(&state.db)
+            .await;
+    }
+    if !failed.is_empty() {
+        let _ = sqlx::query(
+            "DELETE FROM push_subscriptions WHERE endpoint=ANY($1)
+             AND COALESCE(last_ok_at, created_at) < now() - interval '30 days'",
+        )
+        .bind(&failed)
+        .execute(&state.db)
+        .await;
+    }
+    let sent = sent.len();
     debug!(message_id = %message.id, sent, "push delivered");
     Ok(())
+}
+
+/// Whether this server's `@everyone` may still page its members by push.
+fn everyone_may_push(state: &AppState, server: Uuid) -> bool {
+    let allowed = state
+        .limiter
+        .hit(
+            "push-everyone",
+            &server.to_string(),
+            EVERYONE_PER_WINDOW,
+            EVERYONE_WINDOW,
+        )
+        .is_ok();
+    if !allowed {
+        state.metrics.rate_limited("push_everyone");
+    }
+    allowed
 }
 
 enum Outcome {
@@ -500,6 +563,8 @@ mod tests {
             "https://user:pw@fcm.googleapis.com/x",
             "https://127.0.0.1/x",
             "https://10.0.0.1/x",
+            "https://fcm.googleapis.com:8443/fcm/send/abc",
+            "https://fcm.googleapis.com:443x/x",
             "file:///etc/passwd",
             "not a url",
         ] {

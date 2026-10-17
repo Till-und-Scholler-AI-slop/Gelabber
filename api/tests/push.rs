@@ -26,7 +26,7 @@ struct Hit {
     body: Vec<u8>,
 }
 
-/// Answers 201, or 410 for an endpoint under `/gone/`.
+/// Answers 201, 410 for an endpoint under `/gone/`, 500 under `/fail/`.
 async fn fake_service() -> (String, mpsc::UnboundedReceiver<Hit>) {
     let (tx, rx) = mpsc::unbounded_channel();
     let router = Router::new()
@@ -38,6 +38,7 @@ async fn fake_service() -> (String, mpsc::UnboundedReceiver<Hit>) {
                  headers: HeaderMap,
                  body: axum::body::Bytes| async move {
                     let gone = path.starts_with("gone/");
+                    let fail = path.starts_with("fail/");
                     let _ = tx.send(Hit {
                         path,
                         headers,
@@ -45,6 +46,8 @@ async fn fake_service() -> (String, mpsc::UnboundedReceiver<Hit>) {
                     });
                     if gone {
                         StatusCode::GONE
+                    } else if fail {
+                        StatusCode::INTERNAL_SERVER_ERROR
                     } else {
                         StatusCode::CREATED
                     }
@@ -415,6 +418,74 @@ async fn a_gone_subscription_is_removed_and_a_logout_ends_pushes(pool: PgPool) {
     let r = b.send(Method::POST, "/api/auth/logout", None).await;
     assert!(r.status.is_success(), "{}", r.body);
     assert_eq!(subscriptions(&pool).await, 0);
+}
+
+/// Someone who only knows an endpoint cannot move it to their account; the
+/// same browser signing in as someone else (same keys) can.
+#[sqlx::test]
+async fn an_endpoint_moves_only_with_its_keys(pool: PgPool) {
+    let World {
+        mut a,
+        mut b,
+        service,
+        ..
+    } = setup(pool.clone()).await;
+    let browser = Browser::new(&service, "sub/bob");
+    subscribe(&mut b, &browser).await;
+    let thief = Browser::new(&service, "sub/bob");
+    subscribe(&mut a, &thief).await;
+    let (owner, key): (Uuid, String) =
+        sqlx::query_as("SELECT user_id, p256dh FROM push_subscriptions")
+            .fetch_one(&pool)
+            .await
+            .unwrap();
+    assert_eq!(owner.to_string(), b.user_id());
+    assert_eq!(key, browser.public);
+    subscribe(&mut a, &browser).await;
+    let owner: Uuid = sqlx::query_scalar("SELECT user_id FROM push_subscriptions")
+        .fetch_one(&pool)
+        .await
+        .unwrap();
+    assert_eq!(owner.to_string(), a.user_id());
+}
+
+/// A subscription that keeps failing goes once it has not taken a push for
+/// a month; a recent one stays.
+#[sqlx::test]
+async fn a_long_failing_subscription_is_removed(pool: PgPool) {
+    let World {
+        mut a,
+        mut b,
+        dm,
+        mut hits,
+        service,
+        ..
+    } = setup(pool.clone()).await;
+    subscribe(&mut b, &Browser::new(&service, "fail/old")).await;
+    subscribe(&mut b, &Browser::new(&service, "fail/new")).await;
+    sqlx::query(
+        "UPDATE push_subscriptions SET created_at=now()-interval '40 days' \
+         WHERE endpoint LIKE '%/fail/old'",
+    )
+    .execute(&pool)
+    .await
+    .unwrap();
+    post(&mut a, &dm, "eins").await;
+    next(&mut hits).await;
+    next(&mut hits).await;
+    let mut left = Vec::new();
+    for _ in 0..50 {
+        left = sqlx::query_scalar::<_, String>("SELECT endpoint FROM push_subscriptions")
+            .fetch_all(&pool)
+            .await
+            .unwrap();
+        if left.len() == 1 {
+            break;
+        }
+        tokio::time::sleep(Duration::from_millis(20)).await;
+    }
+    assert_eq!(left.len(), 1);
+    assert!(left[0].ends_with("/fail/new"), "{left:?}");
 }
 
 type Ws =

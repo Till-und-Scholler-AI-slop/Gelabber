@@ -176,23 +176,37 @@ impl Gateway {
 
     /// Whether any page of the user is in front right now.
     pub async fn has_focus(&self, user_id: Uuid) -> Result<bool, ApiError> {
-        let key = focus_key(user_id);
+        Ok(self.in_front(&[user_id]).await?.contains(&user_id))
+    }
+
+    /// Which of `users` have a page in front right now, in one round trip.
+    pub async fn in_front(
+        &self,
+        users: &[Uuid],
+    ) -> Result<std::collections::HashSet<Uuid>, ApiError> {
+        if users.is_empty() {
+            return Ok(Default::default());
+        }
         let now = chrono::Utc::now().timestamp_millis();
-        let count: i64 = self
+        let counts: Vec<i64> = self
             .with_conn(|mut conn| {
-                let key = key.clone();
-                async move {
-                    redis::cmd("ZCOUNT")
-                        .arg(key)
+                let mut pipe = redis::pipe();
+                for user in users {
+                    pipe.cmd("ZCOUNT")
+                        .arg(focus_key(*user))
                         .arg(format!("({now}"))
-                        .arg("+inf")
-                        .query_async(&mut conn)
-                        .await
+                        .arg("+inf");
                 }
+                async move { pipe.query_async(&mut conn).await }
             })
             .await
             .map_err(super::hub::redis_err)?;
-        Ok(count > 0)
+        Ok(users
+            .iter()
+            .zip(counts)
+            .filter(|(_, count)| *count > 0)
+            .map(|(user, _)| *user)
+            .collect())
     }
 
     /// Mark this connection online/idle and fan-out if the user aggregate changed.
