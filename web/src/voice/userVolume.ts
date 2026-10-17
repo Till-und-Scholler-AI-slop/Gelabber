@@ -4,7 +4,6 @@
 // Affects only what this client plays: nobody else hears a difference.
 
 import { create } from "zustand";
-import { useSession } from "../auth/session.ts";
 import { clampPlaybackVolume, MAX_PLAYBACK_VOLUME } from "./settings.ts";
 
 const STORAGE_PREFIX = "gelabber.user-volumes:";
@@ -109,32 +108,17 @@ export const useUserVolumes = create<UserVolumeState>((set) => {
   };
 });
 
-function follow(account: string | null): void {
+/**
+ * Switches to the levels of the account that now owns the tab (null:
+ * nobody). Called from `releaseUserScope` on every identity change, like
+ * the drafts and themes, so this module needs no session import.
+ */
+export function bindUserVolumeAccount(account: string | null): void {
   if (account === owner) return;
   flushUserVolumes();
   owner = account;
   useUserVolumes.setState({ users: load(account) });
 }
-
-// Another account on the same browser has levels of its own. Bound once
-// the session store exists: it imports the call code, which imports this,
-// so at first it may still be loading.
-function followSession(): void {
-  let session: typeof useSession | undefined;
-  try {
-    session = useSession;
-    session.getState();
-  } catch {
-    session = undefined;
-  }
-  if (!session?.getState) {
-    setTimeout(followSession, 0);
-    return;
-  }
-  follow(session.getState().user?.id ?? null);
-  session.subscribe((state) => follow(state.user?.id ?? null));
-}
-void Promise.resolve().then(followSession);
 
 // A drag the page is closed in the middle of still lands.
 if (typeof window !== "undefined" && window.addEventListener) {
@@ -168,10 +152,12 @@ export function effectiveVoiceVolume(input: {
   );
 }
 
-/** Tests: forget every participant's level in memory; storage stays. */
+/** Tests: forget every participant's level and the account in memory;
+ * storage stays. */
 export function resetUserVolumesForTests(): void {
   if (saveTimer !== null) clearTimeout(saveTimer);
   saveTimer = null;
   pending = null;
+  owner = null;
   useUserVolumes.setState({ users: {} });
 }
