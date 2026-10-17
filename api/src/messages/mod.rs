@@ -252,9 +252,6 @@ async fn create_message(
 
     let mut tx = state.db.begin().await?;
     delivery::lock_channel(&mut tx, channel_id).await?;
-    if let Some(target) = body.reply_to {
-        replies::check_target(&mut tx, channel_id, target).await?;
-    }
     let row = sqlx::query_as::<_, MessageInsert>(
         "INSERT INTO messages (channel_id, author_id, content, gif, reply_to) \
          VALUES ($1, $2, $3, $4, $5) \

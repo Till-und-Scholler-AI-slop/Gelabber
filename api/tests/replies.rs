@@ -84,33 +84,27 @@ async fn reply_carries_a_preview_of_the_original(pool: PgPool) {
 }
 
 #[sqlx::test]
-async fn reply_to_another_channel_is_rejected_and_a_gone_original_shows_deleted(pool: PgPool) {
+async fn foreign_or_gone_original_is_quoted_as_deleted(pool: PgPool) {
     let mut ada = user(&pool, "ada@example.com", "Ada").await;
     let here = text_channel(&mut ada, "Hier").await;
     let there = text_channel(&mut ada, "Dort").await;
-    let (_, elsewhere) = post(&mut ada, &there, json!({ "content": "dort" })).await;
+    let (_, elsewhere) = post(&mut ada, &there, json!({ "content": "geheim" })).await;
 
-    let (status, body) = post(
-        &mut ada,
-        &here,
-        json!({ "content": "x", "reply_to": elsewhere["id"] }),
-    )
-    .await;
-    assert_eq!(status, StatusCode::UNPROCESSABLE_ENTITY, "{body}");
-    assert_eq!(body["fields"]["reply_to"], "invalid");
-    assert!(history(&mut ada, &here).await.is_empty(), "nothing stored");
-
-    // The original was deleted while the reply was written (or before a
-    // retry): the reply is kept and quotes it as deleted.
-    let gone = uuid::Uuid::new_v4();
-    let (status, body) = post(
-        &mut ada,
-        &here,
-        json!({ "content": "zu spät", "reply_to": gone }),
-    )
-    .await;
-    assert_eq!(status, StatusCode::CREATED, "{body}");
-    assert_eq!(body["reply"], json!({ "id": gone, "deleted": true }));
+    // Another channel's message and one that is gone (deleted while the
+    // reply was written, or before a retry) answer the same: the reply is
+    // kept and quotes nothing but "deleted".
+    for target in [elsewhere["id"].clone(), json!(uuid::Uuid::new_v4())] {
+        let (status, body) = post(
+            &mut ada,
+            &here,
+            json!({ "content": "x", "reply_to": target }),
+        )
+        .await;
+        assert_eq!(status, StatusCode::CREATED, "{body}");
+        assert_eq!(body["reply"], json!({ "id": target, "deleted": true }));
+    }
+    let rows = history(&mut ada, &here).await;
+    assert!(rows.iter().all(|m| !m.to_string().contains("geheim")));
 }
 
 #[sqlx::test]

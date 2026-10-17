@@ -1,13 +1,17 @@
 //! Replies (issue #251). A message may name an earlier message of the same
-//! channel. Payloads carry a compact preview of the original, filled in
+//! channel. `reply_to` is stored as sent and never checked: an id that is
+//! gone, never existed or belongs to another channel is quoted as deleted,
+//! because the quote only joins this channel. So a reply whose original was
+//! deleted meanwhile still goes through, and the answer says nothing about
+//! messages elsewhere. Payloads carry a compact preview of the original, filled in
 //! after the row query like attachments, so the history SQL stays as is.
 
 use serde::Serialize;
-use sqlx::{FromRow, PgConnection, PgExecutor};
+use sqlx::{FromRow, PgExecutor};
 use uuid::Uuid;
 
 use super::Message;
-use crate::error::{ApiError, FieldErrors};
+use crate::error::ApiError;
 
 /// Characters of the original shown above the reply.
 pub const EXCERPT_MAX: usize = 100;
@@ -145,27 +149,6 @@ pub async fn for_messages(
         message.reply = by_message.remove(&message.id);
     }
     Ok(())
-}
-
-/// A new reply's target. A message of another channel is refused. One that
-/// is gone (deleted while the reply was written, or before a retry) is
-/// accepted and quoted as deleted, like an original deleted later; nothing
-/// of another channel can show, because the quote only joins this channel.
-pub async fn check_target(
-    db: &mut PgConnection,
-    channel_id: Uuid,
-    reply_to: Uuid,
-) -> Result<(), ApiError> {
-    let found: Option<Uuid> = sqlx::query_scalar("SELECT channel_id FROM messages WHERE id = $1")
-        .bind(reply_to)
-        .fetch_optional(db)
-        .await?;
-    match found {
-        Some(channel) if channel != channel_id => Err(ApiError::Validation(FieldErrors::from([(
-            "reply_to", "invalid",
-        )]))),
-        _ => Ok(()),
-    }
 }
 
 #[cfg(test)]
