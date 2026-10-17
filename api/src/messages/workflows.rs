@@ -294,6 +294,8 @@ async fn read_up_to_latest(
             WHERE m.channel_id=v.channel_id AND m.created_at>=v.joined_at
             ORDER BY m.created_order DESC LIMIT 1
         ) l
+        -- One lock order for every bulk read, so two at once cannot deadlock.
+        ORDER BY v.channel_id
         ON CONFLICT (user_id,channel_id) DO UPDATE
         SET membership_at=EXCLUDED.membership_at,message_at=EXCLUDED.message_at,message_id=EXCLUDED.message_id,created_order=EXCLUDED.created_order
         WHERE channel_read_state.membership_at<>EXCLUDED.membership_at
@@ -384,8 +386,19 @@ async fn mark_all_read(
 ) -> Result<Json<Vec<ReadState>>, ApiError> {
     bulk_read_limit(&state, user.id)?;
     let mut tx = state.db.begin().await?;
-    let moved =
-        read_up_to_latest(&mut tx, user.id, None, true, body.scope == ReadScope::All).await?;
+    let all = body.scope == ReadScope::All;
+    if all {
+        // Servers before memberships, in id order, as every membership path
+        // does, so a server deleted meanwhile cannot deadlock with this.
+        sqlx::query(
+            "SELECT s.id FROM servers s JOIN server_members sm ON sm.server_id=s.id
+             WHERE sm.user_id=$1 ORDER BY s.id FOR SHARE OF s",
+        )
+        .bind(user.id)
+        .execute(&mut *tx)
+        .await?;
+    }
+    let moved = read_up_to_latest(&mut tx, user.id, None, true, all).await?;
     finish_bulk_read(&state, tx, user.id, moved).await
 }
 

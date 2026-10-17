@@ -4,6 +4,12 @@ import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { login, resetSessionForTests } from "../auth/session.ts";
 import { takeStamp } from "../auth/scope.ts";
 import { applyReadSync, readKey, type ReadState } from "./readState.ts";
+import { closeMessageNotifications } from "../pwa/notifications.ts";
+
+vi.mock("../pwa/notifications.ts", async (importOriginal) => ({
+  ...(await importOriginal<typeof import("../pwa/notifications.ts")>()),
+  closeMessageNotifications: vi.fn(() => Promise.resolve()),
+}));
 
 beforeEach(async () => {
   resetSessionForTests();
@@ -73,6 +79,25 @@ describe("read positions from another device", () => {
       unread_count: 0,
     });
     expect(rows[2]).toMatchObject({ unread_count: 2 });
+  });
+
+  it("closes notifications only for rows it takes over", () => {
+    const client = new QueryClient();
+    const stamp = takeStamp()!;
+    const close = vi.mocked(closeMessageNotifications);
+    close.mockClear();
+    client.setQueryData<ReadState[]>(readKey(stamp), [
+      row("a", "2026-10-17T10:00:00Z", 4),
+      row("b", "2026-10-17T12:00:00Z", 1),
+    ]);
+    applyReadSync(client, stamp, [
+      row("a", "2026-10-17T11:00:00Z", 0),
+      // Late frame: b got a newer message since, which is still unread.
+      row("b", "2026-10-17T11:00:00Z", 0),
+      // Not cached in this window: nothing contradicts it.
+      row("c", "2026-10-17T11:00:00Z", 0),
+    ]);
+    expect(close.mock.calls.map(([of]) => of.channelId)).toEqual(["a", "c"]);
   });
 
   it("orders by position and membership, not by read time", () => {
