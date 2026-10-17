@@ -231,7 +231,6 @@ pub fn request_host(headers: &HeaderMap) -> Option<String> {
 }
 
 async fn process(state: &AppState, job: Job) {
-    let fetcher = &state.previews.as_ref().expect("previews on").inner.fetcher;
     let deadline = tokio::time::Instant::now() + JOB_BUDGET;
     let mut ids = Vec::new();
     for url in &job.urls {
@@ -248,9 +247,12 @@ async fn process(state: &AppState, job: Job) {
             Ok(Ok(Some(id))) => ids.push(id),
             Ok(Ok(None)) => {}
             Ok(Err(err)) => warn!(error = err.code(), "link preview failed"),
+            // The budget is spent, not necessarily by this URL: no backoff
+            // here (a host that timed out itself got one in the fetcher),
+            // and the rest of the message's links go without a card.
             Err(_) => {
-                debug!(url = %url, "link preview timed out");
-                fetcher.slow_down(url);
+                debug!(url = %url, "link preview budget spent");
+                break;
             }
         }
     }

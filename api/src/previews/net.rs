@@ -78,7 +78,7 @@ pub enum FetchError {
     TooManyRedirects,
     ContentType,
     TooLarge,
-    /// The host or its address timed out recently ([`BACKOFF`]).
+    /// The host timed out recently ([`BACKOFF`]).
     Backoff,
 }
 
@@ -145,17 +145,9 @@ pub struct Fetcher {
 struct Guard {
     policy: Policy,
     lookups: Arc<Semaphore>,
-    /// Hosts and addresses in backoff, until when.
-    slow: Mutex<HashMap<Slow, Instant>>,
-    /// What each name resolved to last, so a timeout can back off from its
-    /// addresses too (another name for the same server).
-    resolved: Mutex<HashMap<String, Vec<IpAddr>>>,
-}
-
-#[derive(Debug, Clone, PartialEq, Eq, Hash)]
-enum Slow {
-    Host(String),
-    Ip(IpAddr),
+    /// Hosts in backoff, until when. Only the host that timed out: its
+    /// addresses may be a CDN's, shared with much of the web.
+    slow: Mutex<HashMap<String, Instant>>,
 }
 
 /// The client's DNS resolver: [`Guard::lookup`], so every connection goes
@@ -181,7 +173,6 @@ impl Fetcher {
             policy,
             lookups: Arc::new(Semaphore::new(DNS_LOOKUPS)),
             slow: Mutex::default(),
-            resolved: Mutex::default(),
         });
         let client = reqwest::Client::builder()
             .no_proxy()
@@ -208,7 +199,7 @@ impl Fetcher {
         for _ in 0..=MAX_REDIRECTS {
             self.guard.policy.check_url(&url)?;
             if let Some(ip) = literal_ip(&url)
-                && self.guard.in_backoff(&Slow::Ip(ip))
+                && self.guard.in_backoff(&ip.to_string())
             {
                 return Err(FetchError::Backoff);
             }
@@ -290,23 +281,14 @@ impl Fetcher {
         }
     }
 
-    /// Puts the host of `url` and its last addresses in backoff.
-    pub fn slow_down(&self, url: &Url) {
-        let Some(host) = url.host() else {
-            return;
+    /// Puts the host of `url` in backoff.
+    fn slow_down(&self, url: &Url) {
+        let key = match url.host() {
+            Some(Host::Ipv4(ip)) => ip.to_string(),
+            Some(Host::Ipv6(ip)) => ip.to_string(),
+            Some(Host::Domain(domain)) => normalized(domain),
+            None => return,
         };
-        let mut keys = Vec::new();
-        match host {
-            Host::Ipv4(ip) => keys.push(Slow::Ip(IpAddr::V4(ip))),
-            Host::Ipv6(ip) => keys.push(Slow::Ip(IpAddr::V6(ip))),
-            Host::Domain(domain) => {
-                let domain = normalized(domain);
-                if let Some(ips) = self.guard.resolved.lock().expect("lock").get(&domain) {
-                    keys.extend(ips.iter().copied().map(Slow::Ip));
-                }
-                keys.push(Slow::Host(domain));
-            }
-        }
         let until = Instant::now() + BACKOFF;
         let mut slow = self.guard.slow.lock().expect("lock");
         if slow.len() >= BACKOFF_ENTRIES {
@@ -316,9 +298,7 @@ impl Fetcher {
                 slow.clear();
             }
         }
-        for key in keys {
-            slow.insert(key, until);
-        }
+        slow.insert(key, until);
     }
 
     /// The guard's own refusal when the resolver gave one; a timeout puts
@@ -342,13 +322,13 @@ impl Fetcher {
 
 impl Guard {
     /// `domain`'s addresses if it may be fetched: not a local or denied
-    /// name, every address public, nothing in backoff.
+    /// name, every address public, the name not in backoff.
     async fn lookup(&self, domain: &str) -> Result<Vec<IpAddr>, FetchError> {
         let domain = normalized(domain);
         if self.policy.denied_name(&domain) {
             return Err(FetchError::Refused("host"));
         }
-        if self.in_backoff(&Slow::Host(domain.clone())) {
+        if self.in_backoff(&domain) {
             return Err(FetchError::Backoff);
         }
         let ips = match self.policy.hosts.get(&domain) {
@@ -363,14 +343,6 @@ impl Guard {
         if !ips.iter().all(|ip| self.policy.allowed_ip(*ip)) {
             return Err(FetchError::Refused("address"));
         }
-        if ips.iter().any(|ip| self.in_backoff(&Slow::Ip(*ip))) {
-            return Err(FetchError::Backoff);
-        }
-        let mut resolved = self.resolved.lock().expect("lock");
-        if resolved.len() >= BACKOFF_ENTRIES {
-            resolved.clear();
-        }
-        resolved.insert(domain, ips.clone());
         Ok(ips)
     }
 
@@ -398,11 +370,11 @@ impl Guard {
         Ok(ips)
     }
 
-    fn in_backoff(&self, key: &Slow) -> bool {
+    fn in_backoff(&self, host: &str) -> bool {
         self.slow
             .lock()
             .expect("lock")
-            .get(key)
+            .get(host)
             .is_some_and(|until| *until > Instant::now())
     }
 }
@@ -677,12 +649,13 @@ mod tests {
         assert!(fetcher.vet(&slow).await.is_ok());
         fetcher.slow_down(&slow);
         assert_eq!(fetcher.vet(&slow).await, Err(FetchError::Backoff));
-        // Another name for the same address waits too.
-        assert_eq!(
+        // Another name on the same address (a CDN, shared hosting) is not
+        // held up by it.
+        assert!(
             fetcher
                 .vet(&Url::parse("https://alias.example/").unwrap())
-                .await,
-            Err(FetchError::Backoff)
+                .await
+                .is_ok()
         );
     }
 

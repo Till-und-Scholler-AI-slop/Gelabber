@@ -107,7 +107,8 @@ async fn handle(State(site): State<Site>, uri: Uri) -> Response {
 }
 
 /// The stand-in answers as `site.test` on a local port, which only this
-/// policy treats as public. `evil.test` resolves to a private address.
+/// policy treats as public, and so do `other.test` and `third.test` on the
+/// same address. `evil.test` resolves to a private address.
 async fn serve_site() -> (Site, Policy) {
     let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
     let addr: SocketAddr = listener.local_addr().unwrap();
@@ -122,7 +123,9 @@ async fn serve_site() -> (Site, Policy) {
         trusted: vec![addr],
         ..Policy::default()
     };
-    policy.hosts.insert("site.test".into(), vec![addr.ip()]);
+    for host in ["site.test", "other.test", "third.test"] {
+        policy.hosts.insert(host.into(), vec![addr.ip()]);
+    }
     policy
         .hosts
         .insert("evil.test".into(), vec!["10.1.2.3".parse().unwrap()]);
@@ -385,6 +388,61 @@ async fn a_slow_page_does_not_hold_up_sending(pool: PgPool) {
         start.elapsed() < Duration::from_secs(12),
         "{:?}",
         start.elapsed()
+    );
+}
+
+/// Only the host that timed out is skipped afterwards: not other names on
+/// its address (a CDN), and not links that were merely left when the
+/// message's budget ran out.
+#[sqlx::test]
+async fn a_timeout_holds_up_only_its_own_host(pool: PgPool) {
+    let (site, policy) = serve_site().await;
+    let (mut client, channel) =
+        signed_in(pool.clone(), Some(LinkPreviews::with_policy(policy))).await;
+    let port = site.origin.rsplit(':').next().unwrap();
+    let on = |host: &str, path: &str| format!("http://{host}:{port}{path}");
+    // The first link times out on its own, the second runs into the end of
+    // the budget, the third is never tried.
+    let start = Instant::now();
+    post(
+        &mut client,
+        &channel,
+        &format!(
+            "{} {} {}",
+            on("site.test", "/slow"),
+            on("other.test", "/slow"),
+            on("third.test", "/text")
+        ),
+    )
+    .await;
+    wait_settled(&pool, 1).await;
+    // Past the budget (8 s) with some room for the worker to finish.
+    tokio::time::sleep(Duration::from_secs(9).saturating_sub(start.elapsed())).await;
+
+    let card = async |client: &mut Client, url: String| {
+        let sent = post(client, &channel, &url).await;
+        let id = sent["id"].as_str().unwrap().to_owned();
+        wait_previews(client, &channel, &id, Duration::from_secs(10)).await["previews"].clone()
+    };
+    assert_eq!(
+        card(&mut client, on("other.test", "/page")).await[0]["title"],
+        "Kaffee & Kuchen"
+    );
+    assert_eq!(
+        card(&mut client, on("third.test", "/page")).await[0]["title"],
+        "Kaffee & Kuchen"
+    );
+    let seen = site.seen.lock().unwrap().len();
+    let held = post(&mut client, &channel, &on("site.test", "/page")).await;
+    tokio::time::sleep(Duration::from_millis(500)).await;
+    assert!(
+        message_has_no_previews(&mut client, &channel, held["id"].as_str().unwrap()).await,
+        "site.test is in backoff"
+    );
+    assert_eq!(
+        site.seen.lock().unwrap().len(),
+        seen,
+        "site.test was not asked"
     );
 }
 
