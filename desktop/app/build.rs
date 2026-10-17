@@ -46,11 +46,12 @@ fn main() {
         place_core_dll(Path::new(dir));
     }
     // `allow-<command>` permissions for the app's own commands; the server
-    // origin gets the `media` set (permissions/media.toml) plus
+    // origin gets the `media` and `shell` sets (permissions/) plus
     // `allow-open-setup`, the bundled setup page only `allow-set-server`
     // (capabilities/setup.json).
     let commands: Vec<&'static str> = MEDIA_COMMANDS
         .iter()
+        .chain(SHELL_COMMANDS)
         .copied()
         .chain(["set_server", "open_setup"])
         .collect();

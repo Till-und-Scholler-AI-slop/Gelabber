@@ -181,6 +181,8 @@ export type MediaSettings = {
   callSoundVolume: number;
   messageToasts: boolean;
   desktopNotify: boolean;
+  /** A short cue with a message notification on a desktop (issue #247). */
+  messageSound: boolean;
 };
 
 export const DEFAULT_MEDIA_SETTINGS: MediaSettings = {
@@ -206,6 +208,7 @@ export const DEFAULT_MEDIA_SETTINGS: MediaSettings = {
   callSoundVolume: 0.35,
   messageToasts: true,
   desktopNotify: false,
+  messageSound: true,
 };
 
 type MediaSettingsState = MediaSettings & {
@@ -369,6 +372,7 @@ function snapshot(state: MediaSettingsState): MediaSettings {
     callSoundVolume: state.callSoundVolume,
     messageToasts: state.messageToasts,
     desktopNotify: state.desktopNotify,
+    messageSound: state.messageSound,
   };
 }
 
@@ -458,6 +462,7 @@ export const useMediaSettings = create<MediaSettingsState>()(
             partial.desktopNotify !== undefined
               ? partial.desktopNotify
               : prev.desktopNotify,
+          messageSound: partial.messageSound ?? prev.messageSound,
         });
         listener?.(prev, snapshot(get()));
       },
@@ -495,6 +500,10 @@ export const useMediaSettings = create<MediaSettingsState>()(
           callSounds:
             typeof stored.callSounds === "boolean" ? stored.callSounds : true,
           callSoundVolume: clampVolume(stored.callSoundVolume ?? 0.35),
+          messageSound:
+            typeof stored.messageSound === "boolean"
+              ? stored.messageSound
+              : current.messageSound,
           cameraProfile: asStreamProfile(
             "cameraProfile" in stored
               ? stored.cameraProfile

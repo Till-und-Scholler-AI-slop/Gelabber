@@ -3,18 +3,21 @@ import { useMediaSettings, type MediaSettings } from "./settings.ts";
 
 export type CallSound =
   "join" | "leave" | "mute" | "unmute" | "deafen" | "undeafen";
-const notes: Record<CallSound, readonly number[]> = {
+/** A message notification on a desktop (issue #247). */
+type Cue = CallSound | "message";
+const notes: Record<Cue, readonly number[]> = {
   join: [523.25, 783.99],
   leave: [783.99, 523.25],
   mute: [392],
   unmute: [659.25],
   deafen: [440, 349.23],
   undeafen: [349.23, 440],
+  message: [880, 1174.66],
 };
 
 /** Original, short sine chimes. PCM WAV keeps playback on the selected speaker,
  * including browsers without AudioContext.setSinkId. No microphone/media graph. */
-export function callSoundWave(kind: CallSound | "silent"): Uint8Array {
+export function callSoundWave(kind: Cue | "silent"): Uint8Array {
   const frequencies = kind === "silent" ? [0] : notes[kind];
   const rate = 24000;
   const noteSamples = 2880; // 120 ms with silence between notes
@@ -55,7 +58,7 @@ export function callSoundWave(kind: CallSound | "silent"): Uint8Array {
 }
 
 const sources = new Map<string, string>();
-function source(kind: CallSound | "silent"): string {
+function source(kind: Cue | "silent"): string {
   let value = sources.get(kind);
   if (!value) {
     value = `data:audio/wav;base64,${btoa(String.fromCharCode(...callSoundWave(kind)))}`;
@@ -125,7 +128,7 @@ export class CallSoundPlayer {
     this.start(this.audio, source("silent"), 0);
   }
 
-  play(kind: CallSound): void {
+  play(kind: Cue): void {
     this.stop();
     const settings = this.settings();
     if (
@@ -188,6 +191,26 @@ useMediaSettings.subscribe((next, prev) => {
     player.stop();
 });
 export const playCallSound = (kind: CallSound): void => player.play(kind);
+
+// Its own element and switch: a message cue neither cuts off a call cue nor
+// plays when only call sounds are on. Same volume as the call cues.
+const messagePlayer = new CallSoundPlayer(
+  () => {
+    const settings = useMediaSettings.getState();
+    return { ...settings, callSounds: settings.messageSound };
+  },
+  () => (typeof Audio === "undefined" ? null : new Audio()),
+);
+useMediaSettings.subscribe((next, prev) => {
+  if (
+    next.messageSound !== prev.messageSound ||
+    next.callSoundVolume !== prev.callSoundVolume ||
+    next.outputVolume !== prev.outputVolume ||
+    next.audioOutputId !== prev.audioOutputId
+  )
+    messagePlayer.stop();
+});
+export const playMessageSound = (): void => messagePlayer.play("message");
 export const unlockCallSounds = (): void => player.unlock();
 export const stopCallSounds = (): void => player.stop();
 export const setCallSoundsDeafened = (value: boolean): void =>
