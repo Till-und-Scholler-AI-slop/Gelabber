@@ -91,3 +91,25 @@ its own protected version branch.
 The old `v0.2` development branch is frozen for historical reference. The active
 `Frozen v0.2` ruleset blocks updates and deletion with no bypass actors; releases
 remain available through their tags. Do not target new PRs at `v0.2`.
+
+## Cursor Cloud specific instructions
+
+The Cloud Agent start script brings the dev stack up on boot. Postgres 18.6
+listens on `127.0.0.1:5432` (role `gelabber`, database `gelabber`), Redis
+8.10.1 on `6379`, and MinIO `RELEASE.2025-10-15T17-29-55Z` on `9000`.
+`gelabber-api` listens on `8080`, `gelabber-media` on `8081`, and Vite on
+`5173`. Credentials match `api/.env.example` (MinIO password
+`gelabbergelabber`). Open `http://127.0.0.1:5173`; session cookies are issued
+only for loopback when `API_COOKIE_SECURE` is off.
+
+Node must be 26.8.2 from `/opt/node-v26.8.2`. The image's default Node is too
+old for `web/`. Lint, test, and build from `web/` with `npm run lint`,
+`npm test`, and `npm run build`.
+
+Media rebuilds use the pinned toolchain at `/opt/gelabber/native-build`.
+Cargo is already set to `gcc`/`g++`, `PYTHON=/opt/gelabber/native-build/native-python`,
+and two jobs. `cc` on this image is clang and cannot link `libstdc++`.
+
+API tests need `DATABASE_URL=postgres://gelabber:gelabber@127.0.0.1:5432/gelabber`
+and `REDIS_URL=redis://127.0.0.1:6379`. The `gelabber` role can create
+databases for `sqlx::test`.
