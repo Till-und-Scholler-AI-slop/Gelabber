@@ -22,7 +22,9 @@ describe("asAttachmentList", () => {
     expect(asAttachmentList([])).toEqual([]);
     expect(asAttachmentList({})).toEqual([]);
     expect(asAttachmentList(null)).toEqual([]);
-    const files = [{ id: "a", filename: "a.png", content_type: "image/png", size: 1 }];
+    const files = [
+      { id: "a", filename: "a.png", content_type: "image/png", size: 1 },
+    ];
     expect(asAttachmentList(files)).toBe(files);
   });
 });

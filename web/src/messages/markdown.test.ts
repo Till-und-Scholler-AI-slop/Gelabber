@@ -153,6 +153,37 @@ describe("inline markdown", () => {
       { type: "code", text: `<@${id}>` },
     ]);
     expect(parseInline("<@nope>")).toEqual([text("<@nope>")]);
+    expect(parseInline(`<@!${id}>`)).toEqual([text(`<@!${id}>`)]);
+  });
+
+  it("recognises @everyone and @here as whole words outside code", () => {
+    expect(parseInline("hey @everyone, (@here)")).toEqual([
+      text("hey "),
+      { type: "everyone" },
+      text(", ("),
+      { type: "here" },
+      text(")"),
+    ]);
+    expect(parseInline("**@here**")).toEqual([
+      { type: "strong", children: [{ type: "here" }] },
+    ]);
+    for (const src of [
+      "a@everyone",
+      "@@here",
+      "x-@here",
+      "@everyones",
+      "@here_",
+      "@here-now",
+      "`@everyone`",
+      "\\@everyone",
+      "mail@here.example",
+    ])
+      expect(
+        parseInline(src).some(
+          (n) => n.type === "everyone" || n.type === "here",
+        ),
+        src,
+      ).toBe(false);
   });
 
   it("keeps HTML and script links as text", () => {

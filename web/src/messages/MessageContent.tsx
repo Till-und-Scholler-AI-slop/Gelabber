@@ -2,7 +2,10 @@ import { useMemo, useState, type ReactNode } from "react";
 
 import { parseMessage, type Block, type Inline } from "./markdown.ts";
 
-export type MentionRenderer = (userId: string) => ReactNode;
+export type MentionPart =
+  { type: "mention"; userId: string } | { type: "everyone" | "here" };
+/** Draws a mention; without one, the raw token is shown. */
+export type MentionRenderer = (part: MentionPart) => ReactNode;
 
 /**
  * A message's text with its markdown (#250). `interactive={false}` is for
@@ -97,9 +100,12 @@ function renderInline(nodes: Inline[], ctx: Ctx): ReactNode[] {
           </span>
         );
       case "mention":
+      case "everyone":
+      case "here":
         return (
           <span key={key}>
-            {ctx.renderMention?.(node.userId) ?? `<@${node.userId}>`}
+            {ctx.renderMention?.(node) ??
+              (node.type === "mention" ? `<@${node.userId}>` : `@${node.type}`)}
           </span>
         );
     }

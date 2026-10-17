@@ -26,7 +26,9 @@ function cache(
   messages: Message[],
 ): void {
   client.setQueryData(messageKeys.channel("u1", 0, channelId), {
-    pages: [{ messages, has_more: true, older: "stamp" }] satisfies MessagePage[],
+    pages: [
+      { messages, has_more: true, older: "stamp" },
+    ] satisfies MessagePage[],
     pageParams: [undefined],
   });
 }
@@ -71,7 +73,12 @@ describe("apply channel events", () => {
   it("does not duplicate a create that is already in the page", () => {
     const client = new QueryClient();
     cache(client, "c1", [msg("a")]);
-    applyChannelEvent(client, "u1", 0, { t: "c", c: "c1", i: "a", d: msg("a") });
+    applyChannelEvent(client, "u1", 0, {
+      t: "c",
+      c: "c1",
+      i: "a",
+      d: msg("a"),
+    });
     const data = client.getQueryData<{ pages: MessagePage[] }>(
       messageKeys.channel("u1", 0, "c1"),
     );
