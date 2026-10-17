@@ -364,7 +364,7 @@ describe("settings form", () => {
       );
       expect(html).toContain("Standard-Ausgabegerät des Systems");
       expect(html).toContain(
-        "Benachrichtigung, wenn Gelabber im Hintergrund ist",
+        "Benachrichtigung, wenn das Gelabber-Fenster nicht im Vordergrund ist",
       );
       expect(html).not.toMatch(/Browser|Web Audio|\bTab\b/);
     },
