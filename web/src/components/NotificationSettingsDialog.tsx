@@ -12,6 +12,7 @@ import {
   type SettingChange,
 } from "../messages/notificationSettings.ts";
 import { isMuted, type NotifyLevel } from "../messages/notifyLevel.ts";
+import { useMarkManyRead } from "../messages/readState.ts";
 import { BellIcon, BellOffIcon } from "./Icons.tsx";
 import { GhostButton, Modal } from "./Modal.tsx";
 import {
@@ -57,7 +58,16 @@ export function NotificationSettingsHost() {
         target ? `Benachrichtigungen: ${target.name}` : "Benachrichtigungen"
       }
     >
-      {target ? (
+      {target?.allDms ? (
+        <div className="flex flex-col gap-5">
+          <MarkRead target={target} onDone={close} />
+          <div className="flex justify-end">
+            <GhostButton onClick={close} initialFocus>
+              Fertig
+            </GhostButton>
+          </div>
+        </div>
+      ) : target ? (
         <NotificationSettingsForm
           key={`${target.scope}:${target.id}`}
           target={target}
@@ -107,6 +117,7 @@ function NotificationSettingsForm({
 
   return (
     <div className="notify-settings flex flex-col gap-5">
+      <MarkRead target={target} onDone={onDone} />
       <section aria-labelledby="notify-mute" className="flex flex-col gap-2">
         <h3 id="notify-mute" className="text-sm font-semibold">
           Stummschalten
@@ -205,6 +216,55 @@ function NotificationSettingsForm({
           Fertig
         </GhostButton>
       </div>
+    </div>
+  );
+}
+
+/** "Als gelesen markieren" (#245): the conversation, the whole server or
+ * every direct message, then the dialog closes. */
+function MarkRead({
+  target,
+  onDone,
+}: {
+  target: NotificationTarget;
+  onDone: () => void;
+}) {
+  const markRead = useMarkManyRead();
+  const [busy, setBusy] = useState(false);
+  const [failed, setFailed] = useState(false);
+  const label = target.allDms
+    ? "Alle Direktnachrichten als gelesen markieren"
+    : target.scope === "server"
+      ? "Server als gelesen markieren"
+      : "Als gelesen markieren";
+  return (
+    <div className="flex flex-col gap-1">
+      <button
+        type="button"
+        disabled={busy}
+        className="notify-choice self-start"
+        onClick={() => {
+          setBusy(true);
+          setFailed(false);
+          markRead(
+            target.allDms
+              ? { all: "dms" }
+              : target.scope === "server"
+                ? { server: target.id }
+                : { channel: target.id },
+          )
+            .then(onDone)
+            .catch(() => setFailed(true))
+            .finally(() => setBusy(false));
+        }}
+      >
+        {label}
+      </button>
+      {failed ? (
+        <p role="alert" className="text-sm text-red-700 dark:text-red-300">
+          Nicht gespeichert. Versuch es noch einmal.
+        </p>
+      ) : null}
     </div>
   );
 }

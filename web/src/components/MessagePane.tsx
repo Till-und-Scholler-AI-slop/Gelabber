@@ -30,6 +30,7 @@ import { MessageSearch } from "../messages/MessageSearch.tsx";
 import { useChatDraft } from "../messages/drafts.ts";
 import {
   readBoundary,
+  useMarkManyRead,
   useMarkRead,
   useReadState,
 } from "../messages/readState.ts";
@@ -204,6 +205,34 @@ export function MessagePane({
     window.addEventListener("keydown", onKey);
     return () => window.removeEventListener("keydown", onKey);
   }, [searchScope]);
+  // Esc marks this conversation read, Shift+Esc its whole server (#245).
+  // Only an Esc nothing else used: a dialog, a menu, the search, an edit
+  // or the mention list closing takes it first.
+  const markManyRead = useMarkManyRead();
+  const markByKey = useEffectEvent((server: boolean) => {
+    const serverId = notify?.serverId;
+    void markManyRead(
+      server && serverId ? { server: serverId } : { channel: channelId },
+    ).catch(() => {});
+  });
+  useEffect(() => {
+    if (searching) return;
+    const onKey = (event: globalThis.KeyboardEvent) => {
+      if (
+        event.key !== "Escape" ||
+        event.defaultPrevented ||
+        event.isComposing ||
+        event.ctrlKey ||
+        event.metaKey ||
+        event.altKey ||
+        document.querySelector("dialog[open], details[open]")
+      )
+        return;
+      markByKey(event.shiftKey);
+    };
+    window.addEventListener("keydown", onKey);
+    return () => window.removeEventListener("keydown", onKey);
+  }, [searching]);
   // Where "Neu" goes: the read position when the channel was opened, kept
   // while reading so the divider does not jump.
   const { data: readRows } = useReadState();

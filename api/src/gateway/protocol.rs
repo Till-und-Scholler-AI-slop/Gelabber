@@ -517,6 +517,21 @@ pub enum ServerFrame {
     /// them again. Only to that account's own sockets.
     #[serde(rename = "ns")]
     NotificationSettings,
+    /// Read positions moved on some device (issue #244): the account's
+    /// other sockets clear badges and notifications without asking.
+    #[serde(rename = "rd")]
+    Read { d: Vec<ReadSync> },
+}
+
+/// A conversation's new read position and what is still unread after it.
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+pub struct ReadSync {
+    pub channel_id: Uuid,
+    pub server_id: Option<Uuid>,
+    pub read_message_id: Option<Uuid>,
+    pub read_at: Option<chrono::DateTime<chrono::Utc>>,
+    pub unread_count: i64,
+    pub mention_count: i64,
 }
 
 impl ServerFrame {
@@ -654,12 +669,15 @@ pub enum LiveFrame {
 pub enum UserFrame {
     #[serde(rename = "ns")]
     NotificationSettings,
+    #[serde(rename = "rd")]
+    Read { d: Vec<ReadSync> },
 }
 
 impl From<UserFrame> for ServerFrame {
     fn from(frame: UserFrame) -> Self {
         match frame {
             UserFrame::NotificationSettings => Self::NotificationSettings,
+            UserFrame::Read { d } => Self::Read { d },
         }
     }
 }

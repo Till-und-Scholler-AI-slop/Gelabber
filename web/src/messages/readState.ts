@@ -14,6 +14,8 @@ import {
 import { create } from "zustand";
 import type { Message } from "./types.ts";
 import { getGateway, type Gateway } from "../ws/client.ts";
+import type { ReadSync } from "../ws/protocol.ts";
+import { closeMessageNotifications } from "../pwa/notifications.ts";
 
 export type ReadState = {
   channel_id: string;
@@ -34,6 +36,16 @@ export const readKey = (stamp: ScopeStamp) =>
   ["user", stamp.userId, stamp.generation, "unread"] as const;
 export const listReadState = (signal?: AbortSignal) =>
   api<ReadState[]>("/messages/unread", { signal });
+/** Every text channel of a server read to its newest message (#245). The
+ * answer is the rows that moved. */
+export const markServerRead = (serverId: string) =>
+  api<ReadState[]>(`/servers/${serverId}/read`, { method: "PUT" });
+/** One conversation up to its newest message, wherever the view is. */
+export const markChannelRead = (channelId: string) =>
+  api<ReadState>(`/channels/${channelId}/read`, { method: "PUT", body: {} });
+/** Everything, or only the direct messages. */
+export const markAllRead = (scope: "all" | "dms") =>
+  api<ReadState[]>("/messages/read-all", { method: "PUT", body: { scope } });
 export const markRead = (channelId: string, messageId: string) =>
   api<ReadState>(`/channels/${channelId}/read`, {
     method: "PUT",
@@ -266,8 +278,84 @@ export function useReadBridge() {
   useReadState();
   useEffect(() => {
     if (!userId) return;
-    return attachReadRecovery(client, { userId, generation }, getGateway());
+    const stamp = { userId, generation };
+    const gateway = getGateway();
+    const stopRecovery = attachReadRecovery(client, stamp, gateway);
+    // Read on another device or tab (#244): the badge and the notification
+    // go here too, without waiting for the next snapshot.
+    const stopSync = gateway.onAccount((frame) => {
+      if (frame.op === "rd") applyReadSync(client, stamp, frame.d);
+    });
+    return () => {
+      stopRecovery();
+      stopSync();
+    };
   }, [client, userId, generation]);
+}
+
+const readAt = (row: { read_at: string | null } | undefined) =>
+  row?.read_at ? Date.parse(row.read_at) : -Infinity;
+
+/** Read positions from elsewhere into the cached rows. Forward only: a row
+ * this window already has further along stays; settings stay as cached. */
+export function applyReadSync(
+  client: QueryClient,
+  stamp: ScopeStamp,
+  rows: readonly (Omit<ReadSync, "mention_count"> & {
+    mention_count?: number;
+  })[],
+): void {
+  if (!stampHolds(stamp) || rows.length === 0) return;
+  const byChannel = new Map(rows.map((row) => [row.channel_id, row]));
+  client.setQueryData<ReadState[]>(readKey(stamp), (cached) =>
+    cached?.map((current) => {
+      const next = byChannel.get(current.channel_id);
+      if (!next || readAt(next) < readAt(current)) return current;
+      return {
+        ...current,
+        read_message_id: next.read_message_id,
+        read_at: next.read_at,
+        unread_count: next.unread_count,
+        mention_count: next.mention_count ?? 0,
+      };
+    }),
+  );
+  for (const row of rows)
+    if (row.unread_count === 0)
+      void closeMessageNotifications({
+        user: stamp.userId,
+        channelId: row.channel_id,
+      });
+}
+
+/** "Als gelesen markieren" for a server, or everything / all DMs. */
+export function useMarkManyRead() {
+  const client = useQueryClient();
+  const userId = useUserId();
+  const generation = scopeGeneration();
+  return async (
+    what: { server: string } | { channel: string } | { all: "all" | "dms" },
+  ) => {
+    const stamp = { userId, generation };
+    const rows =
+      "server" in what
+        ? await markServerRead(what.server)
+        : "channel" in what
+          ? [await markChannelRead(what.channel)]
+          : await markAllRead(what.all);
+    // A snapshot asked for before the write may still count these rows;
+    // asked again once the write is in.
+    const inFlight =
+      client.getQueryState(readKey(stamp))?.fetchStatus === "fetching";
+    await client.cancelQueries({ queryKey: readKey(stamp), exact: true });
+    applyReadSync(client, stamp, rows);
+    if (inFlight)
+      void client.invalidateQueries(
+        { queryKey: readKey(stamp), exact: true },
+        { cancelRefetch: false },
+      );
+    return rows.length;
+  };
 }
 
 /** Apply an acknowledged read row without losing a refresh other channels need. */

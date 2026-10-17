@@ -1482,3 +1482,58 @@ async fn notification_settings_go_to_the_own_sockets_only(pool: PgPool) {
         .is_err()
     );
 }
+
+#[sqlx::test]
+async fn a_read_position_reaches_the_readers_other_sockets_only(pool: PgPool) {
+    let (mut owner, mut member) = two_users(pool.clone()).await;
+    let server = create_server(&mut owner, "Gelesen").await;
+    let s = server["id"].as_str().unwrap().to_owned();
+    let c = server["channels"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .find(|c| c["kind"] == "text")
+        .unwrap()["id"]
+        .as_str()
+        .unwrap()
+        .to_owned();
+    join_member(&mut owner, &mut member, &s).await;
+    let posted = owner
+        .send(
+            Method::POST,
+            &format!("/api/channels/{c}/messages"),
+            Some(json!({"content":"hallo"})),
+        )
+        .await;
+    assert_eq!(posted.status, StatusCode::CREATED, "{}", posted.body);
+    let (addr, _) = common::serve_ws(pool).await;
+    let mut phone = connect(addr, &session_cookie(&member), None).await;
+    let mut other = connect(addr, &session_cookie(&owner), None).await;
+    for ws in [&mut phone, &mut other] {
+        send_json(ws, json!({"op":"h"})).await;
+        recv_until(ws, |f| f["op"] == "h").await;
+    }
+    let path = format!("/api/channels/{c}/read");
+    let mark = json!({"message_id": posted.body["id"]});
+    let res = member.send(Method::PUT, &path, Some(mark.clone())).await;
+    assert_eq!(res.status, StatusCode::OK, "{}", res.body);
+    let frame = recv_until(&mut phone, |f| f["op"] == "rd").await;
+    assert_eq!(frame["d"][0]["channel_id"], c.as_str());
+    assert_eq!(frame["d"][0]["read_message_id"], posted.body["id"]);
+    assert_eq!(frame["d"][0]["unread_count"], 0);
+    // The same mark again moves nothing and says nothing.
+    let res = member.send(Method::PUT, &path, Some(mark.clone())).await;
+    assert_eq!(res.status, StatusCode::OK, "{}", res.body);
+    for ws in [&mut phone, &mut other] {
+        assert!(
+            tokio::time::timeout(Duration::from_millis(200), async {
+                loop {
+                    let f = recv_json(ws).await;
+                    assert_ne!(f["op"], "rd", "an unmoved or foreign read position");
+                }
+            })
+            .await
+            .is_err()
+        );
+    }
+}

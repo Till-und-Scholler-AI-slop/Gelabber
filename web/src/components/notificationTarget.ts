@@ -11,6 +11,8 @@ export type NotificationTarget = {
   /** A server channel: inherits from this server. */
   serverId?: string;
   dm?: boolean;
+  /** All direct messages (the rail's home tile): only "mark as read". */
+  allDms?: boolean;
 };
 
 export const useNotificationTarget = create<{

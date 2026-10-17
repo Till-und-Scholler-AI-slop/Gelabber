@@ -71,6 +71,12 @@ function HomeTile({ active }: { active: boolean }) {
           if (userId) prefetchDms(client, userId);
         }}
         className={`relative server-home-link ${active ? "is-active" : ""}`}
+        onContextMenu={notificationMenu({
+          scope: "channel",
+          id: "dms",
+          name: "Direktnachrichten",
+          allDms: true,
+        })}
       >
         <ChatIcon size={27} />
         <UnreadBadge id={unreadId} dms rail />
