@@ -255,6 +255,27 @@ async fn read_up_to_latest(
     dms: bool,
     servers: bool,
 ) -> Result<Vec<Uuid>, ApiError> {
+    // As for a single read: holding the memberships keeps a leave or kick
+    // from landing between them and the write, so no position is written
+    // for a conversation just left. Membership first, then read state, the
+    // same order a leave takes.
+    sqlx::query(
+        "SELECT 1 FROM server_members WHERE user_id=$1 AND $3 AND ($2::uuid IS NULL OR server_id=$2) \
+         ORDER BY server_id FOR SHARE",
+    )
+    .bind(user)
+    .bind(server)
+    .bind(servers)
+    .execute(&mut *tx)
+    .await?;
+    sqlx::query(
+        "SELECT 1 FROM channel_members cm JOIN channels c ON c.id=cm.channel_id \
+         WHERE cm.user_id=$1 AND c.kind='dm' AND $2 ORDER BY cm.channel_id FOR SHARE OF cm",
+    )
+    .bind(user)
+    .bind(dms && server.is_none())
+    .execute(&mut *tx)
+    .await?;
     Ok(sqlx::query_scalar(
         "WITH visible AS (
             SELECT c.id AS channel_id, sm.joined_at
@@ -310,7 +331,8 @@ async fn finish_bulk_read(
 }
 
 /// Each bulk read writes every conversation in scope and tells every socket
-/// of the account; a click now and then is the use, a loop is not.
+/// of the account; a click now and then is the use, a loop is not. The
+/// limiter is in memory, so with several API nodes it counts per node.
 fn bulk_read_limit(state: &AppState, user: Uuid) -> Result<(), ApiError> {
     state
         .limiter
