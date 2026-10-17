@@ -244,7 +244,12 @@ pub fn decode_entities(src: &str) -> String {
     while let Some(at) = rest.find('&') {
         out.push_str(&rest[..at]);
         rest = &rest[at..];
-        let Some(semi) = rest[..rest.len().min(12)].find(';') else {
+        // Bytes, not `str`: byte 12 may fall inside a character, and `;`
+        // is ASCII, so its index is always a boundary.
+        let Some(semi) = rest.as_bytes()[..rest.len().min(12)]
+            .iter()
+            .position(|b| *b == b';')
+        else {
             out.push('&');
             rest = &rest[1..];
             continue;
@@ -387,5 +392,18 @@ mod tests {
             "\u{201c}Euro\u{201d} \u{20ac}"
         );
         assert_eq!(decode(b"\x82\xa0", Some("shift_jis")), "\u{3042}");
+    }
+
+    /// An `&` followed by multi-byte characters, where byte 12 falls
+    /// inside one, must not panic.
+    #[test]
+    fn entities_next_to_multibyte_text() {
+        assert_eq!(decode_entities("& Jérôme über"), "& Jérôme über");
+        assert_eq!(decode_entities("&amp;日本語"), "&日本語");
+        assert_eq!(decode_entities("&#252;日本語"), "ü日本語");
+        assert_eq!(
+            clean(Some("Tom & Jerry 🎉 &amp;日本語".into()), 100).as_deref(),
+            Some("Tom & Jerry 🎉 &日本語")
+        );
     }
 }
