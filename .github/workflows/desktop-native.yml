@@ -523,6 +523,11 @@ jobs:
         run: |
           $PSNativeCommandUseErrorActionPreference = $true
           if ($env:RELEASE_TAG) {
+            # Before anything is signed with the release key: only the
+            # released source gets its signature, one installer per version.
+            if ($env:GITHUB_REF -ne "refs/tags/$($env:RELEASE_TAG)") {
+              throw "release $($env:RELEASE_TAG) must be built from its tag, not $($env:GITHUB_REF)"
+            }
             $pub = 'desktop\app\updater.pub'
             if (-not (Test-Path $pub) -or -not (Get-Content -Raw $pub).Trim()) {
               throw "release $($env:RELEASE_TAG): $pub is missing, and with it the key the app checks updates with (desktop/README.md, Updates)"
@@ -553,9 +558,6 @@ jobs:
       - name: Installer
         id: installer
         timeout-minutes: 20
-        env:
-          TAURI_SIGNING_PRIVATE_KEY: ${{ (github.event_name == 'release' || (github.event_name == 'workflow_dispatch' && inputs.release_tag != '')) && secrets.TAURI_SIGNING_PRIVATE_KEY || '' }}
-          TAURI_SIGNING_PRIVATE_KEY_PASSWORD: ${{ (github.event_name == 'release' || (github.event_name == 'workflow_dispatch' && inputs.release_tag != '')) && secrets.TAURI_SIGNING_PRIVATE_KEY_PASSWORD || '' }}
         run: |
           $PSNativeCommandUseErrorActionPreference = $true
           $notices = 'desktop\app\package\THIRD-PARTY-NOTICES.txt'
@@ -589,9 +591,31 @@ jobs:
           }
           $name = 'gelabber-desktop-windows-x64-setup.exe'
           Copy-Item $built[0].FullName $name
-          # The updater's signature, <name>.sig, bound to the version: the app
-          # takes no update whose signature names another one (tauri.conf.json,
-          # requireSignedVersion). Only the CLI from 2.12.3 on writes it.
+          $hash = (Get-FileHash $name -Algorithm SHA256).Hash.ToLowerInvariant()
+          # A line as sha256sum writes it; checked again before the release upload.
+          [IO.File]::WriteAllText((Join-Path $PWD "$name.sha256"), "$hash  $name`n")
+          @(
+            '### Desktop app (Windows x64)', '',
+            '| file | size | sha256 |', '|---|---|---|',
+            "| $name ($($built[0].Name)) | $([math]::Round((Get-Item $name).Length / 1MB, 1)) MiB | $hash |"
+          ) | Add-Content $env:GITHUB_STEP_SUMMARY
+
+      # The updater's signature, <installer>.sig, bound to the version: the
+      # app takes no update whose signature names another one
+      # (tauri.conf.json, requireSignedVersion); only the CLI from 2.12.3 on
+      # writes it. Its own step, the only one that sees the release key, and
+      # only in a release run from the release's tag ("Updater key" stopped
+      # any other).
+      - name: Sign update
+        id: sign
+        timeout-minutes: 10
+        env:
+          TAURI_SIGNING_PRIVATE_KEY: ${{ (github.event_name == 'release' || (github.event_name == 'workflow_dispatch' && inputs.release_tag != '')) && github.ref == format('refs/tags/{0}', github.event.release.tag_name || inputs.release_tag) && secrets.TAURI_SIGNING_PRIVATE_KEY || '' }}
+          TAURI_SIGNING_PRIVATE_KEY_PASSWORD: ${{ (github.event_name == 'release' || (github.event_name == 'workflow_dispatch' && inputs.release_tag != '')) && github.ref == format('refs/tags/{0}', github.event.release.tag_name || inputs.release_tag) && secrets.TAURI_SIGNING_PRIVATE_KEY_PASSWORD || '' }}
+        run: |
+          $PSNativeCommandUseErrorActionPreference = $true
+          $name = 'gelabber-desktop-windows-x64-setup.exe'
+          $version = (Select-String -Path desktop\Cargo.toml -Pattern '^version = "(.+)"\s*$' | Select-Object -First 1).Matches[0].Groups[1].Value
           if ($env:RELEASE_TAG) {
             if (-not $env:TAURI_SIGNING_PRIVATE_KEY) {
               throw "release $($env:RELEASE_TAG): the secret TAURI_SIGNING_PRIVATE_KEY is not set, so the update cannot be signed (desktop/README.md, Updates)"
@@ -602,14 +626,6 @@ jobs:
             npx.cmd --yes '@tauri-apps/cli@2.12.3' signer sign --app-version $version --private-key-path $env:GELABBER_UPDATER_TEST_KEY --password test $name
           }
           if (-not (Test-Path "$name.sig")) { throw "no signature $name.sig" }
-          $hash = (Get-FileHash $name -Algorithm SHA256).Hash.ToLowerInvariant()
-          # A line as sha256sum writes it; checked again before the release upload.
-          [IO.File]::WriteAllText((Join-Path $PWD "$name.sha256"), "$hash  $name`n")
-          @(
-            '### Desktop app (Windows x64)', '',
-            '| file | size | sha256 |', '|---|---|---|',
-            "| $name ($($built[0].Name)) | $([math]::Round((Get-Item $name).Length / 1MB, 1)) MiB | $hash |"
-          ) | Add-Content $env:GITHUB_STEP_SUMMARY
 
       # Silent, into the account's own folders: the setup asks for no
       # administrator rights. It brings the WebView2 Runtime where the image
@@ -703,7 +719,7 @@ jobs:
       # Also from a run whose later steps fail, to look at the setup by hand;
       # a release only takes it from a run in which every step passed.
       - name: Upload the app
-        if: ${{ !cancelled() && steps.installer.outcome == 'success' }}
+        if: ${{ !cancelled() && steps.installer.outcome == 'success' && steps.sign.outcome == 'success' }}
         uses: actions/upload-artifact@v4
         with:
           name: gelabber-desktop-windows-x64
@@ -930,7 +946,7 @@ jobs:
         timeout-minutes: 20
         env:
           RUST_BACKTRACE: "1"
-          GELABBER_UPDATE_TEST_INSTALLER: ${{ steps.installer.outcome == 'success' && format('{0}\gelabber-desktop-windows-x64-setup.exe', github.workspace) || '' }}
+          GELABBER_UPDATE_TEST_INSTALLER: ${{ steps.sign.outcome == 'success' && format('{0}\gelabber-desktop-windows-x64-setup.exe', github.workspace) || '' }}
         run: cargo test --release --locked --manifest-path desktop/Cargo.toml -p gelabber-desktop -- --test-threads=1
 
       # Package by package like the builds and tests above: one call for the

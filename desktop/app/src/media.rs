@@ -20,6 +20,7 @@ use std::{
         atomic::{AtomicU64, Ordering},
         mpsc,
     },
+    time::{Duration, Instant},
 };
 use tauri::{
     State,
@@ -51,7 +52,15 @@ pub struct Media {
     consumers: Mutex<HashMap<u64, Shared<Consumer>>>,
     /// Video shown in the page and in viewer windows (frames.rs).
     frames: Frames,
+    /// When the page last closed a transport or a source, or went away
+    /// with some ([`Media::busy`]).
+    last_busy: Mutex<Option<Instant>>,
 }
+
+/// How long the page counts as busy after its last transport or source
+/// closed: a call that reconnects, rejoins or comes back after a reload has
+/// none for a moment.
+const BUSY_AFTER: Duration = Duration::from_secs(60);
 
 type Result<T> = std::result::Result<T, String>;
 
@@ -326,6 +335,7 @@ impl Media {
     fn close_transport(&self, transport: u64) {
         let removed = self.transports.lock().unwrap().remove(&transport);
         if let Some(transport) = removed {
+            self.note_busy();
             transport.orphan(TRANSPORT_CLOSED);
         }
     }
@@ -338,6 +348,9 @@ impl Media {
         // Out of the registry first: a view opening right now then finds the
         // source gone, or is closed with the others.
         let removed = self.sources.lock().unwrap().remove(&source);
+        if removed.is_some() {
+            self.note_busy();
+        }
         let frames = self.frames.clone();
         move || {
             frames.close_origin(Origin::Source(source));
@@ -404,9 +417,20 @@ impl Media {
 
     /// Whether the page is in a call or captures something: it has a
     /// transport (voice, watching a stream) or a source (microphone, camera,
-    /// screen). Restarting the app for an update would end that (update.rs).
+    /// screen), or had one less than [`BUSY_AFTER`] ago. Restarting the app
+    /// for an update would end that (update.rs).
     pub fn busy(&self) -> bool {
-        !self.transports.lock().unwrap().is_empty() || !self.sources.lock().unwrap().is_empty()
+        !self.transports.lock().unwrap().is_empty()
+            || !self.sources.lock().unwrap().is_empty()
+            || self
+                .last_busy
+                .lock()
+                .unwrap()
+                .is_some_and(|last| last.elapsed() < BUSY_AFTER)
+    }
+
+    fn note_busy(&self) {
+        *self.last_busy.lock().unwrap() = Some(Instant::now());
     }
 
     /// Drops every object of a page that went away. A page load calls this
@@ -440,6 +464,9 @@ impl Media {
             transports: take(&self.transports),
             devices: take(&self.devices),
         };
+        if !leftovers.transports.is_empty() || !leftovers.sources.is_empty() {
+            self.note_busy();
+        }
         // A produce or consume of the old page may still wait for its answer,
         // with the lock of its transport that freeing the leftovers needs.
         for transport in leftovers.transports.values() {

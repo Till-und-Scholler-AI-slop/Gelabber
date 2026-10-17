@@ -208,14 +208,22 @@ after the start and then every 6 hours (unless switched off on the setup
 page; `update.json` next to `desktop.json`) it asks for
 `https://github.com/Till-und-Scholler-AI-slop/Gelabber/releases/latest/download/latest.json`,
 which `release-asset-windows` in `desktop-native.yml` attaches to every
-release with the installer's signature. "Latest" is GitHub's latest release
-that is not a pre-release, so pre-releases are never offered. A newer version
+release with the installer's signature. "Latest" is the release GitHub marks
+as latest, by default the newest that is not a pre-release, so pre-releases
+are never offered. A hotfix of an older line (0.6.2 after 0.7.0) would take
+that mark, and the 0.7 apps would see nothing new until the next 0.7.x (they
+never go back: only a higher version is offered). Publish such a hotfix with
+`gh release create … --latest=false`, or set the mark back on the newest
+release afterwards. A newer version
 shows a notice over the page (an initialization script of the app, so it
-works with every server's web client); "Neu starten" downloads the installer,
-checks its signature and runs it (NSIS, passive, `/UPDATE`), which ends the
+works with every server's web client); "Neu starten" asks once more in a
+message box of the app itself, which no script of the page can answer, then
+downloads the installer (with progress; no overall time limit, only for
+connecting and for each read), checks its signature and runs it (NSIS, passive, `/UPDATE`), which ends the
 app and starts the new version with the same arguments. Not during a call:
-while the page has a transport or a source (`Media::busy`) the notice is
-hidden and `update_install` refuses. `GELABBER_UPDATE_ENDPOINT` points the
+while the page has a transport or a source, and for a minute after the last
+one closed (a call that reconnects or comes back after a reload; see
+`Media::busy`), the notice is hidden and `update_install` refuses. `GELABBER_UPDATE_ENDPOINT` points the
 check at another `latest.json` (HTTPS only), e.g. one of a test release; its
 installer needs the same signature.
 
@@ -240,7 +248,12 @@ replaced by hand. Nothing in the app writes to its own files.
   `release.yml` and in `desktop-native.yml`.
 - Private key and its password: the repository secrets
   `TAURI_SIGNING_PRIVATE_KEY` (the content of the key file) and
-  `TAURI_SIGNING_PRIVATE_KEY_PASSWORD`. Only release runs read them. Keep an
+  `TAURI_SIGNING_PRIVATE_KEY_PASSWORD` (`release.yml` requires both, so give
+  the key a password). Only the step "Sign update" of a release run from the
+  release's tag sees them; a run on any other ref stops before signing, so
+  there is one signed installer per version. Putting the two secrets into an
+  environment with required reviewers instead would gate that step on an
+  approval as well (not set up). Keep an
   offline copy: a lost key means no installed app can be updated any more,
   every user has to install the next version by hand.
 - Making it, once (any machine with Node):

@@ -42,7 +42,7 @@ const IN_CALL: &str =
 
 /// Runs in every page of the window next to the shortcuts (main.rs): asks
 /// for the update state every 30 seconds and shows the notice while the app
-/// offers an update. Styles are set through the CSSOM, which the server's
+/// offers an update, with the progress of an install that was asked for. Styles are set through the CSSOM, which the server's
 /// Content-Security-Policy does not restrict, in a closed shadow root, which
 /// the page's styles do not reach. Stops asking on a page that may not ask,
 /// and in an app without updates.
@@ -50,7 +50,10 @@ pub const BANNER: &str = r#"
 (() => {
   if (window.top !== window) return;
   const invoke = (command) => window.__TAURI_INTERNALS__.invoke(command);
-  let host, text, restart, later, shown = null;
+  // Polls every 30 s; after a failed call later and later (up to 10 min), and
+  // not at all once the app says this page may not ask.
+  const EVERY = 30000, AT_MOST = 600000;
+  let host, text, restart, later, shown = null, wait = EVERY;
   const button = (label, primary) => {
     const element = document.createElement("button");
     element.type = "button";
@@ -60,13 +63,23 @@ pub const BANNER: &str = r#"
                  : "border:1px solid #3a3f42;background:transparent;color:inherit");
     return element;
   };
+  // What a click on "Neu starten" is at, from the app's state.
+  const progress = (state) => {
+    if (state.phase === "confirming") return "Bitte im Fenster von Gelabber bestätigen …";
+    if (state.phase === "installing") return "Update wird installiert, Gelabber startet neu …";
+    if (state.phase !== "downloading") return null;
+    const percent = state.total ? ` ${Math.floor((100 * state.downloaded) / state.total)} %` : "";
+    return `Update wird geladen …${percent}`;
+  };
   const build = () => {
     host = document.createElement("div");
     const root = host.attachShadow({ mode: "closed" });
     const box = document.createElement("div");
     box.setAttribute("role", "status");
-    box.style.cssText = "position:fixed;right:16px;bottom:16px;z-index:2147483647;display:flex;"
-      + "gap:10px;align-items:center;max-width:min(440px,calc(100vw - 32px));box-sizing:border-box;"
+    // Top centre: clear of the composer and the call dock at the bottom.
+    box.style.cssText = "position:fixed;top:12px;left:50%;transform:translateX(-50%);"
+      + "z-index:2147483647;display:flex;gap:10px;align-items:center;"
+      + "width:max-content;max-width:calc(100vw - 32px);box-sizing:border-box;"
       + "padding:10px 12px;border-radius:12px;border:1px solid #2c3032;background:#1d2021;"
       + "color:#eef0ee;box-shadow:0 6px 24px rgba(0,0,0,.35);"
       + "font:14px/1.4 system-ui,-apple-system,'Segoe UI',sans-serif";
@@ -76,13 +89,20 @@ pub const BANNER: &str = r#"
     later = button("Später", false);
     restart.addEventListener("click", async () => {
       restart.disabled = later.disabled = true;
-      text.textContent = "Update wird geladen …";
+      text.textContent = "Bitte im Fenster von Gelabber bestätigen …";
+      const watching = setInterval(async () => {
+        const line = progress(await invoke("update_state").catch(() => ({})));
+        if (line) text.textContent = line;
+      }, 1000);
       try {
-        // Ends the app when it works; the installer starts it again.
+        // Asks natively first; ends the app when it works, and the
+        // installer starts it again.
         await invoke("update_install");
       } catch (error) {
         text.textContent = String(error);
         restart.disabled = later.disabled = false;
+      } finally {
+        clearInterval(watching);
       }
     });
     later.addEventListener("click", () => {
@@ -109,14 +129,19 @@ pub const BANNER: &str = r#"
     let state;
     try {
       state = await invoke("update_state");
-    } catch {
+      wait = EVERY;
+    } catch (error) {
+      // A page without the permission: Tauri's refusal names the command.
+      if (/not allowed|denied/i.test(String(error))) return;
+      wait = Math.min(wait * 2, AT_MOST);
+      setTimeout(poll, wait);
       return;
     }
     if (!state.supported) return;
     if (state.offer) show(state.available);
     // Not while the click on "Neu starten" is at work.
     else if (state.phase === "idle") hide();
-    setTimeout(poll, 30000);
+    setTimeout(poll, wait);
   };
   if (!window.__TAURI_INTERNALS__) return;
   if (document.readyState === "loading") addEventListener("DOMContentLoaded", poll, { once: true });
@@ -175,6 +200,9 @@ enum Phase {
     #[default]
     Idle,
     Checking,
+    /// The native question whether to install now is open.
+    Confirming,
+    #[cfg_attr(not(windows), allow(dead_code))]
     Downloading,
     #[cfg_attr(not(windows), allow(dead_code))]
     Installing,
@@ -190,7 +218,7 @@ struct Found {
     /// The installer, once downloaded and checked: a call that began during
     /// the download only puts the install off.
     #[cfg(windows)]
-    installer: Option<Vec<u8>>,
+    installer: Option<std::sync::Arc<Vec<u8>>>,
 }
 
 #[derive(Default)]
@@ -202,6 +230,9 @@ struct Inner {
     dismissed: Option<String>,
     last_check: Option<SystemTime>,
     error: Option<String>,
+    /// Bytes of the installer so far, and its size when the server said it.
+    downloaded: u64,
+    total: Option<u64>,
 }
 
 #[derive(Default)]
@@ -225,6 +256,8 @@ pub struct View {
     error: Option<String>,
     /// Seconds since 1970 of the last check that got an answer or failed.
     last_check: Option<u64>,
+    downloaded: u64,
+    total: Option<u64>,
 }
 
 fn view_of(
@@ -250,6 +283,8 @@ fn view_of(
             .last_check
             .and_then(|time| time.duration_since(SystemTime::UNIX_EPOCH).ok())
             .map(|since| since.as_secs()),
+        downloaded: inner.downloaded,
+        total: inner.total,
     }
 }
 
@@ -277,7 +312,9 @@ pub fn plugin<R: Runtime>() -> tauri::plugin::TauriPlugin<R, tauri_plugin_update
 async fn find<R: Runtime>(app: &AppHandle<R>) -> Result<Option<Found>, String> {
     use tauri_plugin_updater::UpdaterExt;
     // Another release channel to try an update with, such as a test
-    // release's latest.json; its installers need the same signature.
+    // release's latest.json. Deliberately in release builds too, to try an
+    // update with the app as it ships: HTTPS and the signature with this
+    // build's key apply all the same.
     let endpoint = std::env::var("GELABBER_UPDATE_ENDPOINT")
         .ok()
         .filter(|value| !value.is_empty())
@@ -287,6 +324,14 @@ async fn find<R: Runtime>(app: &AppHandle<R>) -> Result<Option<Found>, String> {
         .updater_builder()
         .endpoints(vec![endpoint])
         .map_err(err)?
+        // For the download too, which has no time limit as a whole (a big
+        // installer on a slow line) but must not stall.
+        .configure_client(|client| {
+            client
+                .connect_timeout(Duration::from_secs(30))
+                .read_timeout(Duration::from_secs(60))
+        })
+        // The whole check; the download drops it (`install`).
         .timeout(Duration::from_secs(60))
         .build()
         .map_err(err)?
@@ -410,9 +455,12 @@ pub fn update_set_auto_check(app: AppHandle, enabled: bool) -> Result<View, Stri
     Ok(view(&app))
 }
 
-/// Downloads the update found, checks its signature and runs its installer,
-/// which ends the app and starts the new version. Refused during a call.
-/// Returns only when that did not happen.
+/// Asks natively whether to install now, then downloads the update found,
+/// checks its signature and runs its installer, which ends the app and
+/// starts the new version. Refused during a call. Returns only when that did
+/// not happen. The question is the app's own window, not the page's: a page
+/// of the server, or a script injected into one, cannot answer it, so it
+/// cannot restart the app unasked.
 #[tauri::command]
 pub async fn update_install(app: AppHandle) -> Result<(), String> {
     if let Some(reason) = unsupported() {
@@ -430,7 +478,7 @@ pub async fn update_install(app: AppHandle) -> Result<(), String> {
         if inner.phase != Phase::Idle {
             return Err("Das Update wird schon geladen.".into());
         }
-        inner.phase = Phase::Downloading;
+        inner.phase = Phase::Confirming;
         inner.error = None;
     }
     let result = install(&app).await;
@@ -446,23 +494,56 @@ pub async fn update_install(app: AppHandle) -> Result<(), String> {
 #[cfg(windows)]
 async fn install(app: &AppHandle) -> Result<(), String> {
     let updates = app.state::<Updates>();
-    let (update, installer) = {
+    let (mut update, installer) = {
         let inner = updates.0.lock().unwrap();
         let found = inner.found.as_ref().ok_or("Es gibt kein Update.")?;
         (found.update.clone(), found.installer.clone())
     };
+    let asking = app.clone();
+    let version = update.version.clone();
+    let yes = tauri::async_runtime::spawn_blocking(move || confirm(&asking, &version))
+        .await
+        .map_err(err)?;
+    if !yes {
+        return Err("Abgebrochen.".into());
+    }
+    // A call may have begun while the question was open.
+    if app.state::<Media>().busy() {
+        return Err(IN_CALL.into());
+    }
     let installer = match installer {
         Some(installer) => installer,
         // Checks the signature too.
         None => {
-            let installer = update.download(|_, _| {}, || {}).await.map_err(err)?;
+            {
+                let mut inner = updates.0.lock().unwrap();
+                inner.phase = Phase::Downloading;
+                inner.downloaded = 0;
+                inner.total = None;
+            }
+            // Only the read and connect limits of the client (`find`).
+            update.timeout = None;
+            let progress = app.clone();
+            let installer = update
+                .download(
+                    move |chunk, total| {
+                        let updates = progress.state::<Updates>();
+                        let mut inner = updates.0.lock().unwrap();
+                        inner.downloaded += chunk as u64;
+                        inner.total = total;
+                    },
+                    || {},
+                )
+                .await
+                .map_err(err)?;
+            let installer = std::sync::Arc::new(installer);
             let mut inner = updates.0.lock().unwrap();
             if let Some(found) = inner
                 .found
                 .as_mut()
                 .filter(|found| found.version == update.version)
             {
-                found.installer = Some(installer.clone());
+                found.installer = Some(std::sync::Arc::clone(&installer));
             }
             installer
         }
@@ -472,8 +553,38 @@ async fn install(app: &AppHandle) -> Result<(), String> {
         return Err(IN_CALL.into());
     }
     updates.0.lock().unwrap().phase = Phase::Installing;
-    // Checks the signature again; ends the app once the installer runs.
-    update.install(&installer).map_err(err)
+    // Checks the signature again; ends the app once the installer runs,
+    // after the plugin's `on_before_exit` (Tauri's `cleanup_before_exit`).
+    update.install(installer.as_slice()).map_err(err)
+}
+
+/// The app's own question, a message box over its window, whether to
+/// install `version` now. Blocks until it is answered.
+#[cfg(windows)]
+fn confirm(app: &AppHandle, version: &str) -> bool {
+    use windows_sys::Win32::UI::WindowsAndMessaging::{
+        IDYES, MB_DEFBUTTON1, MB_ICONQUESTION, MB_SETFOREGROUND, MB_YESNO, MessageBoxW,
+    };
+    let wide = |text: &str| text.encode_utf16().chain([0]).collect::<Vec<u16>>();
+    let owner = app
+        .get_webview_window("main")
+        .and_then(|window| window.hwnd().ok())
+        .map_or(std::ptr::null_mut(), |hwnd| hwnd.0);
+    let text = wide(&format!(
+        "Gelabber {version} jetzt installieren?\n\nDie App wird dafür beendet und startet danach neu."
+    ));
+    let title = wide("Gelabber-Update");
+    // SAFETY: both strings are NUL-terminated UTF-16 and outlive the call;
+    // the owner is the app's window or none.
+    let answer = unsafe {
+        MessageBoxW(
+            owner,
+            text.as_ptr(),
+            title.as_ptr(),
+            MB_YESNO | MB_ICONQUESTION | MB_DEFBUTTON1 | MB_SETFOREGROUND,
+        )
+    };
+    answer == IDYES
 }
 
 #[cfg(not(windows))]
@@ -573,7 +684,8 @@ mod tests {
             .split('\t')
             .find_map(|field| field.strip_prefix("version:"))
             .ok_or("signed without a version")?;
-        (signed == version)
+        // As the plugin compares them, for the versions we write.
+        (signed.trim_start_matches('v') == version.trim_start_matches('v'))
             .then_some(())
             .ok_or_else(|| format!("signed for {signed}, not {version}"))
     }
