@@ -120,9 +120,23 @@ export function bindUserVolumeAccount(account: string | null): void {
   useUserVolumes.setState({ users: load(account) });
 }
 
+/**
+ * Another tab of this browser saved levels (null key: storage cleared).
+ * Takes them over, so this tab's next change does not write back an old
+ * map; a change of our own still waiting to be saved wins instead.
+ */
+export function syncUserVolumesFromStorage(key: string | null): void {
+  if (!owner || pending) return;
+  if (key !== null && key !== STORAGE_PREFIX + owner) return;
+  useUserVolumes.setState({ users: load(owner) });
+}
+
 // A drag the page is closed in the middle of still lands.
 if (typeof window !== "undefined" && window.addEventListener) {
   window.addEventListener("pagehide", flushUserVolumes);
+  window.addEventListener("storage", (event) =>
+    syncUserVolumesFromStorage(event.key),
+  );
   document.addEventListener("visibilitychange", () => {
     if (document.visibilityState === "hidden") flushUserVolumes();
   });

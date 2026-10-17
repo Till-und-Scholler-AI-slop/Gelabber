@@ -6,6 +6,7 @@ import {
   flushUserVolumes,
   effectiveVoiceVolume,
   resetUserVolumesForTests,
+  syncUserVolumesFromStorage,
   userVolumeOf,
   useUserVolumes,
 } from "./userVolume.ts";
@@ -152,6 +153,45 @@ describe("useUserVolumes", () => {
     } finally {
       vi.useRealTimers();
     }
+  });
+
+  it("takes over levels another tab saved instead of overwriting them", () => {
+    const storage = memoryStorage();
+    vi.stubGlobal("localStorage", storage);
+    bindUserVolumeAccount("u-me");
+    useUserVolumes.getState().setVolume("u-bob", 1.5);
+    flushUserVolumes();
+    // Another tab of the same account mutes Cara.
+    storage.setItem(
+      "gelabber.user-volumes:u-me",
+      JSON.stringify({
+        "u-bob": { volume: 1.5, muted: false },
+        "u-cara": { volume: 1, muted: true },
+      }),
+    );
+    syncUserVolumesFromStorage("gelabber.user-volumes:other-key");
+    expect(userVolumeOf("u-cara").muted).toBe(false);
+    syncUserVolumesFromStorage("gelabber.user-volumes:u-me");
+    expect(userVolumeOf("u-cara").muted).toBe(true);
+    // This tab's next change keeps the other tab's mute.
+    useUserVolumes.getState().setVolume("u-bob", 0.5);
+    flushUserVolumes();
+    expect(
+      JSON.parse(storage.items.get("gelabber.user-volumes:u-me")!),
+    ).toEqual({
+      "u-bob": { volume: 0.5, muted: false },
+      "u-cara": { volume: 1, muted: true },
+    });
+  });
+
+  it("keeps its own unsaved change over another tab's write", () => {
+    const storage = memoryStorage();
+    vi.stubGlobal("localStorage", storage);
+    bindUserVolumeAccount("u-me");
+    useUserVolumes.getState().setVolume("u-bob", 1.5);
+    storage.setItem("gelabber.user-volumes:u-me", JSON.stringify({}));
+    syncUserVolumesFromStorage(null);
+    expect(userVolumeOf("u-bob").volume).toBe(1.5);
   });
 
   it("keeps each own account's levels apart", () => {
