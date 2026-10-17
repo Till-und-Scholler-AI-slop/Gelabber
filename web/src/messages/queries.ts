@@ -456,6 +456,20 @@ export async function sendMessageAttempt(
       index++
     ) {
       const file = attempt.files[index]!;
+      const known = arrived.get(file);
+      if (
+        known &&
+        known.userId === attempt.stamp.userId &&
+        known.channelId === channelId
+      ) {
+        attempt = {
+          ...attempt,
+          uploadedIds: [...attempt.uploadedIds, known.id],
+        };
+        saveAttempt(attempt);
+        markUpload(channelId, attempt.id, index, "done");
+        continue;
+      }
       attempt = { ...attempt, stage: "presign" };
       saveAttempt(attempt);
       markUpload(channelId, attempt.id, index, "uploading");
@@ -474,6 +488,11 @@ export async function sendMessageAttempt(
         attempt.controller.signal,
       );
       requireAttempt(attempt);
+      arrived.set(file, {
+        userId: attempt.stamp.userId,
+        channelId,
+        id: presign.id,
+      });
       attempt = {
         ...attempt,
         uploadedIds: [...attempt.uploadedIds, presign.id],
@@ -511,10 +530,13 @@ export async function sendMessageAttempt(
         bind: "Nachricht speichern",
       };
       const rejected = rejectedUploads(error, attempt.files);
+      if (rejected)
+        for (const file of rejectedFiles(error, attempt.files))
+          arrived.delete(file);
       saveAttempt({
         ...attempt,
         // Uploads the server turned down (expired, gone, wrong size or
-        // content) cannot bind on a retry; it uploads the files again.
+        // content) go up again on a retry; the others bind as they are.
         uploadedIds: rejected ? [] : attempt.uploadedIds,
         status: uncertain ? "uncertain" : "failed",
         error: [
@@ -526,6 +548,31 @@ export async function sendMessageAttempt(
     }
     throw error;
   }
+}
+
+/** Uploads that arrived, by file. A retry, or a draft taken back from a
+ *  failed send, binds them again instead of uploading (and reserving
+ *  quota for) the same file twice; an upload waits an hour for its
+ *  message on the server. One the bind turns down is forgotten. */
+const arrived = new WeakMap<
+  File,
+  { userId: string; channelId: string; id: string }
+>();
+
+/** The files a rejection is about: those the server pointed at, or all of
+ *  them when it could not say which (expired, gone, wrong size). */
+function rejectedFiles(error: unknown, files: readonly File[]): File[] {
+  if (!(error instanceof ApiError)) return [];
+  const named = Object.keys(error.fields).flatMap((field) => {
+    const at = /^attachment_ids\.(\d+)$/.exec(field);
+    const file = at ? files[Number(at[1])] : undefined;
+    return file ? [file] : [];
+  });
+  const blanket = Object.entries(error.fields).some(
+    ([field, code]) =>
+      (field === "attachment_ids" && code === "invalid") || field === "size",
+  );
+  return blanket ? [...files] : named;
 }
 
 /** The bind's complaints about uploaded files, naming each file the
