@@ -37,6 +37,8 @@ export type ClientFrame =
   | { op: "s"; s: string; c?: string; n?: number; ep?: string }
   | { op: "u"; s: string; c?: string }
   | { op: "p"; st?: "o" | "i" }
+  /** The page is in front (#243): no Web Push for the account meanwhile. */
+  | { op: "f"; on: boolean }
   | { op: "y"; s: string; c: string; on: boolean }
   | SigClientFrame;
 

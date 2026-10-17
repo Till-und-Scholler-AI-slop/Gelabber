@@ -312,6 +312,11 @@ async fn create_message(
         gifs.shared(&gif.slug, pick.query.trim(), user.id);
     }
     let _ = delivery::deliver_pending(&state, 32).await;
+    let server = match &access {
+        MessagingChannel::Server { member, .. } => Some(member.server.id),
+        MessagingChannel::Dm { .. } => None,
+    };
+    crate::push::announce(&state, &message, server);
     Ok((StatusCode::CREATED, Json(message)).into_response())
 }
 

@@ -410,6 +410,10 @@ pub enum ClientFrame {
         #[serde(default)]
         on: Option<bool>,
     },
+    /// The page is in front (focused and visible) or not (#243): while one
+    /// is, no Web Push goes to the account.
+    #[serde(rename = "f")]
+    Focus { on: bool },
     /// Presence: `o` / `i`. Absent `st` means "I am active".
     #[serde(rename = "p")]
     Presence {

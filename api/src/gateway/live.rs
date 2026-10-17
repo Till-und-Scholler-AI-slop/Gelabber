@@ -130,11 +130,71 @@ fn typing_key(channel_id: Uuid, user_id: Uuid) -> String {
     format!("{REDIS_PREFIX}y:{channel_id}:{user_id}")
 }
 
+/// Sockets of a user whose page is in front (focused and visible), as a
+/// sorted set: member the socket, score when its claim runs out (Unix ms).
+/// Web Push (#243) skips a user with one of them.
+fn focus_key(user_id: Uuid) -> String {
+    format!("{REDIS_PREFIX}fx:{user_id}")
+}
+
 fn ttl_ms(d: std::time::Duration) -> i64 {
     i64::try_from(d.as_millis()).unwrap_or(i64::MAX).max(1)
 }
 
 impl Gateway {
+    /// This socket's page came to the front (`on`) or left it. A claim runs
+    /// out on its own after `ttl` unless renewed: a socket that dies without
+    /// a word does not keep push away for long.
+    pub async fn set_focus(
+        &self,
+        user_id: Uuid,
+        id: ConnId,
+        on: bool,
+        ttl: std::time::Duration,
+    ) -> Result<(), ApiError> {
+        let key = focus_key(user_id);
+        let member = id.redis_id().to_string();
+        let until = chrono::Utc::now().timestamp_millis() + ttl_ms(ttl);
+        let px = ttl_ms(ttl);
+        self.with_conn(|mut conn| {
+            let key = key.clone();
+            let member = member.clone();
+            async move {
+                let mut pipe = redis::pipe();
+                if on {
+                    pipe.cmd("ZADD").arg(&key).arg(until).arg(&member).ignore();
+                    pipe.cmd("PEXPIRE").arg(&key).arg(px).ignore();
+                } else {
+                    pipe.cmd("ZREM").arg(&key).arg(&member).ignore();
+                }
+                pipe.query_async::<()>(&mut conn).await
+            }
+        })
+        .await
+        .map_err(super::hub::redis_err)
+    }
+
+    /// Whether any page of the user is in front right now.
+    pub async fn has_focus(&self, user_id: Uuid) -> Result<bool, ApiError> {
+        let key = focus_key(user_id);
+        let now = chrono::Utc::now().timestamp_millis();
+        let count: i64 = self
+            .with_conn(|mut conn| {
+                let key = key.clone();
+                async move {
+                    redis::cmd("ZCOUNT")
+                        .arg(key)
+                        .arg(format!("({now}"))
+                        .arg("+inf")
+                        .query_async(&mut conn)
+                        .await
+                }
+            })
+            .await
+            .map_err(super::hub::redis_err)?;
+        Ok(count > 0)
+    }
+
     /// Mark this connection online/idle and fan-out if the user aggregate changed.
     pub async fn set_conn_status(
         &self,

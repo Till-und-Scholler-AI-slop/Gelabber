@@ -42,6 +42,18 @@ pub const API_RATE_LOGIN_FAILURES_PER_ACCOUNT: &str = "API_RATE_LOGIN_FAILURES_P
 pub const API_RATE_GIF_PER_MIN: &str = "API_RATE_GIF_PER_MIN";
 pub const API_RATE_GIF_MEDIA_PER_MIN: &str = "API_RATE_GIF_MEDIA_PER_MIN";
 pub const KLIPY_API_KEY: &str = "KLIPY_API_KEY";
+pub const VAPID_PRIVATE_KEY: &str = "VAPID_PRIVATE_KEY";
+pub const VAPID_SUBJECT: &str = "VAPID_SUBJECT";
+pub const PUSH_ALLOWED_HOSTS: &str = "PUSH_ALLOWED_HOSTS";
+/// The push services of Chrome/Android, Firefox, Edge/Windows and Safari.
+/// Subscriptions name the URL the server POSTs to; any other host is
+/// refused, so a client cannot point the server at an internal address.
+pub const DEFAULT_PUSH_HOSTS: &[&str] = &[
+    "fcm.googleapis.com",
+    "push.services.mozilla.com",
+    "notify.windows.com",
+    "push.apple.com",
+];
 pub const KLIPY_CONTENT_FILTER: &str = "KLIPY_CONTENT_FILTER";
 /// Read by `telemetry::init`, not by `Config`, because the subscriber has to
 /// exist before anything else can be logged.
@@ -113,6 +125,15 @@ pub struct Config {
     pub limits: Limits,
     /// GIF search through the API (Klipy). `None` turns GIFs off.
     pub gifs: Option<GifConfig>,
+    /// Web Push (#243). `None` without `VAPID_PRIVATE_KEY`: no push.
+    pub push: Option<PushConfig>,
+}
+
+#[derive(Clone, Debug)]
+pub struct PushConfig {
+    pub vapid: crate::push::webpush::Vapid,
+    /// Hosts (and their subdomains) a subscription may point at.
+    pub hosts: Vec<String>,
 }
 
 /// Klipy is only ever called by the API: the key stays on the server and
@@ -298,6 +319,7 @@ impl Config {
         };
         let limits = parse_limits(&get)?;
         let gifs = parse_gifs(&get)?;
+        let push = parse_push(&get)?;
         if cookie_secure {
             refuse_public_defaults(
                 &database_url,
@@ -330,8 +352,40 @@ impl Config {
             allow_memory_store,
             limits,
             gifs,
+            push,
         })
     }
+}
+
+fn parse_push(get: &impl Fn(&str) -> Option<String>) -> Result<Option<PushConfig>, ConfigError> {
+    let Some(private) = get(VAPID_PRIVATE_KEY).filter(|raw| !raw.trim().is_empty()) else {
+        return Ok(None);
+    };
+    let subject = get(VAPID_SUBJECT).unwrap_or_default();
+    let subject = subject.trim();
+    if !(subject.starts_with("mailto:") || subject.starts_with("https://")) {
+        return Err(invalid(
+            VAPID_SUBJECT,
+            subject,
+            "set a mailto: or https:// contact for the push services",
+        ));
+    }
+    let vapid = crate::push::webpush::Vapid::parse(&private, subject).ok_or_else(|| {
+        invalid(
+            VAPID_PRIVATE_KEY,
+            "<redacted>",
+            "expected a base64url P-256 private key (gelabber-api vapid-keys)",
+        )
+    })?;
+    let hosts = match get(PUSH_ALLOWED_HOSTS) {
+        Some(raw) => raw
+            .split(',')
+            .map(|host| host.trim().to_ascii_lowercase())
+            .filter(|host| !host.is_empty())
+            .collect(),
+        None => DEFAULT_PUSH_HOSTS.iter().map(|h| (*h).to_owned()).collect(),
+    };
+    Ok(Some(PushConfig { vapid, hosts }))
 }
 
 fn parse_gifs(get: &impl Fn(&str) -> Option<String>) -> Result<Option<GifConfig>, ConfigError> {

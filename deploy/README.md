@@ -150,6 +150,20 @@ After changing these values, recreate the API: `docker compose up -d --no-deps -
 
 Migration 0012 adds the nullable `messages.gif` column. As with every migration, an older API binary does not start against the migrated database (SQLx ledger); roll back with the backed-up snapshot pair as described below.
 
+
+## Push notifications
+
+Direct messages and mentions can reach a phone or browser whose Gelabber tab or PWA is closed (Web Push). It is off until `VAPID_PRIVATE_KEY` and `VAPID_SUBJECT` are set in `.env`:
+
+```sh
+docker compose run --rm api gelabber-api vapid-keys
+```
+
+Copy the printed `VAPID_PRIVATE_KEY=…` line into `.env`, set `VAPID_SUBJECT=mailto:you@example.org` (a contact the push services can reach), then `docker compose up -d api`. Keep the key: a new one silently ends every existing subscription, and people only get pushes again after they open Gelabber once more.
+
+What is pushed: every direct message, and in servers only mentions (`@name`, `@everyone`, `@here`). Nothing is pushed for a conversation someone muted or set to "nothing", nor while any page of theirs is in front on some device. A push holds the sender, the channel and up to 180 characters of the message, encrypted for that browser (RFC 8291); the push service (Google, Mozilla, Microsoft or Apple) sees only who to wake and when. The API posts only to those services' hosts; `PUSH_ALLOWED_HOSTS` changes the list. Signing out ends the pushes for that browser.
+
+On iPhone and iPad (iOS 16.4 or later), push works only in Gelabber added to the home screen, not in a Safari tab.
 ## Backup
 
 PostgreSQL metadata and MinIO attachments form **one snapshot pair**. Before

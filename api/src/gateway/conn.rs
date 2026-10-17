@@ -30,6 +30,8 @@ enum FrameEffect {
     LiveStarted { server_id: Uuid, channel_id: Uuid },
     /// This client is going idle (explicit `st:i`).
     Idle,
+    /// The page came to the front or left it.
+    Focus(bool),
 }
 
 pub async fn run(socket: WebSocket, state: AppState, session: CurrentSession) {
@@ -49,6 +51,9 @@ pub async fn run(socket: WebSocket, state: AppState, session: CurrentSession) {
     let mut last_client = Instant::now();
     let mut last_activity = Instant::now();
     let mut idle = false;
+    let mut focused = false;
+    // A focus claim outlives a few missed heartbeats, not a dead socket.
+    let focus_ttl = state.ws_dead * 2;
     let mut beat = tokio::time::interval(state.ws_heartbeat);
     beat.set_missed_tick_behavior(tokio::time::MissedTickBehavior::Delay);
     // The first tick fires immediately; skip it so we do not heartbeat
@@ -104,6 +109,15 @@ pub async fn run(socket: WebSocket, state: AppState, session: CurrentSession) {
                                 idle = true;
                                 let _ = state.gateway.set_conn_status(conn, PresenceStatus::Idle).await;
                             }
+                            Ok(FrameEffect::Focus(on)) => {
+                                focused = on;
+                                if on {
+                                    last_activity = Instant::now();
+                                }
+                                if let Err(err) = state.gateway.set_focus(user.id, conn, on, focus_ttl).await {
+                                    debug!(error = err.code(), "focus not stored");
+                                }
+                            }
                             Err(err) => {
                                 warn!(error = err.code(), user_id = %user.id, "ws frame failed");
                                 let _ = send(&mut sink, ServerFrame::error("internal", None, None)).await;
@@ -140,6 +154,9 @@ pub async fn run(socket: WebSocket, state: AppState, session: CurrentSession) {
                     idle = true;
                     let _ = state.gateway.set_conn_status(conn, PresenceStatus::Idle).await;
                 }
+                if focused {
+                    let _ = state.gateway.set_focus(user.id, conn, true, focus_ttl).await;
+                }
                 if send(&mut sink, ServerFrame::Heartbeat).await.is_err() {
                     break;
                 }
@@ -159,6 +176,12 @@ pub async fn run(socket: WebSocket, state: AppState, session: CurrentSession) {
         sink.send(Message::Close(None)),
     )
     .await;
+    if focused {
+        let _ = state
+            .gateway
+            .set_focus(user.id, conn, false, focus_ttl)
+            .await;
+    }
     if let Some((user_id, servers, typing)) = state.gateway.detach(conn).await {
         state
             .gateway
@@ -212,6 +235,7 @@ async fn handle_text(
                 None => FrameEffect::Activity,
             },
         ),
+        ClientFrame::Focus { on } => Ok(FrameEffect::Focus(on)),
         ClientFrame::Presence { st } => Ok(match st {
             Some(PresenceStatus::Idle) => FrameEffect::Idle,
             _ => FrameEffect::Activity,

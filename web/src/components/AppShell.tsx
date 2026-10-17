@@ -15,7 +15,8 @@ import {
   useAuthenticatedSubscriptions,
   useGatewaySession,
 } from "../ws/useGateway.ts";
-import { useIdlePresence } from "../ws/useLive.ts";
+import { useFocusReport, useIdlePresence } from "../ws/useLive.ts";
+import { usePushSubscription } from "../pwa/push.ts";
 import { useMessageToastsBridge } from "../messages/useMessageToasts.ts";
 import { Avatar } from "./Avatar.tsx";
 import { ConfirmHost } from "./ConfirmHost.tsx";
@@ -49,6 +50,8 @@ export function AppShell() {
   );
   useGatewaySession(user?.id ?? null);
   useIdlePresence(user?.id ?? null);
+  useFocusReport(user?.id ?? null);
+  usePushSubscription(user?.id ?? null);
   useMessageToastsBridge();
   useCallWakeLock(
     useVoice((state) => state.status === "joined" || state.watching),

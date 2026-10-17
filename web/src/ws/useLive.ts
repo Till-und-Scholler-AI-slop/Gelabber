@@ -90,6 +90,30 @@ export function useIdlePresence(userId: string | null): void {
   }, [userId]);
 }
 
+/**
+ * Tell the server while this page is in front, visible and focused: it then
+ * holds Web Push back for the account (#243), as the page itself shows what
+ * arrives.
+ */
+export function useFocusReport(userId: string | null): void {
+  useEffect(() => {
+    if (!userId) return undefined;
+    const gateway = getGateway();
+    const report = () =>
+      gateway.setInFront(!document.hidden && document.hasFocus());
+    report();
+    window.addEventListener("focus", report);
+    window.addEventListener("blur", report);
+    document.addEventListener("visibilitychange", report);
+    return () => {
+      window.removeEventListener("focus", report);
+      window.removeEventListener("blur", report);
+      document.removeEventListener("visibilitychange", report);
+      gateway.setInFront(false);
+    };
+  }, [userId]);
+}
+
 export function useTypingInput(
   serverId: string,
   channelId: string,
