@@ -32,6 +32,18 @@ export function setReplyTarget(
   useReplyTargets.getState().set(channelId, message);
 }
 
+/** An edit or delete of the answered message reaches the composer bar
+ *  too: an edit shows there, a delete ends the reply. */
+export function refreshReplyTarget(
+  channelId: string,
+  id: string,
+  original: Message | null,
+): void {
+  const state = useReplyTargets.getState();
+  if (state.byChannel[channelId]?.id !== id) return;
+  state.set(channelId, original);
+}
+
 /** Account switch: a reply target must not follow into another account. */
 export function resetReplyTargets(): void {
   useReplyTargets.setState({ byChannel: {} });

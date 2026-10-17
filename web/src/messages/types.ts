@@ -49,13 +49,21 @@ export type Reply = {
 /** Characters of the original the server puts in `excerpt`. */
 export const REPLY_EXCERPT_MAX = 100;
 
-/** Same rule as the server: one line, cut after REPLY_EXCERPT_MAX. */
+/** Same rule as the server (`replies::excerpt`): one line, spoilers
+ *  hidden, cut after REPLY_EXCERPT_MAX without splitting a mention token. */
 export function replyExcerpt(content: string): string {
-  const line = content.split(/\s+/).filter(Boolean).join(" ");
+  const parts = content.split(/\s+/).filter(Boolean).join(" ").split("||");
+  const line = parts
+    .map((part, index) =>
+      index % 2 === 0 ? part : index + 1 < parts.length ? "▒▒▒" : `||${part}`,
+    )
+    .join("");
   const chars = Array.from(line);
-  return chars.length > REPLY_EXCERPT_MAX
-    ? `${chars.slice(0, REPLY_EXCERPT_MAX).join("")}…`
-    : line;
+  if (chars.length <= REPLY_EXCERPT_MAX) return line;
+  let cut = chars.slice(0, REPLY_EXCERPT_MAX).join("");
+  const token = cut.lastIndexOf("<@");
+  if (token >= 0 && !cut.slice(token).includes(">")) cut = cut.slice(0, token);
+  return `${cut}…`;
 }
 
 /** The preview a reply to `original` shows before the server answers. */

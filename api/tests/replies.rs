@@ -84,7 +84,7 @@ async fn reply_carries_a_preview_of_the_original(pool: PgPool) {
 }
 
 #[sqlx::test]
-async fn reply_to_another_channel_or_unknown_message_is_rejected(pool: PgPool) {
+async fn reply_to_another_channel_is_rejected_and_a_gone_original_shows_deleted(pool: PgPool) {
     let mut ada = user(&pool, "ada@example.com", "Ada").await;
     let here = text_channel(&mut ada, "Hier").await;
     let there = text_channel(&mut ada, "Dort").await;
@@ -98,15 +98,19 @@ async fn reply_to_another_channel_or_unknown_message_is_rejected(pool: PgPool) {
     .await;
     assert_eq!(status, StatusCode::UNPROCESSABLE_ENTITY, "{body}");
     assert_eq!(body["fields"]["reply_to"], "invalid");
+    assert!(history(&mut ada, &here).await.is_empty(), "nothing stored");
 
+    // The original was deleted while the reply was written (or before a
+    // retry): the reply is kept and quotes it as deleted.
+    let gone = uuid::Uuid::new_v4();
     let (status, body) = post(
         &mut ada,
         &here,
-        json!({ "content": "x", "reply_to": uuid::Uuid::new_v4() }),
+        json!({ "content": "zu spät", "reply_to": gone }),
     )
     .await;
-    assert_eq!(status, StatusCode::UNPROCESSABLE_ENTITY, "{body}");
-    assert!(history(&mut ada, &here).await.is_empty(), "nothing stored");
+    assert_eq!(status, StatusCode::CREATED, "{body}");
+    assert_eq!(body["reply"], json!({ "id": gone, "deleted": true }));
 }
 
 #[sqlx::test]

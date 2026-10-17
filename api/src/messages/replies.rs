@@ -77,13 +77,38 @@ impl Reply {
     }
 }
 
-/// First [`EXCERPT_MAX`] characters on one line.
+/// First [`EXCERPT_MAX`] characters on one line. Spoilers (`||text||`) stay
+/// hidden, and the cut never splits a mention token (`<@id>`), so the
+/// client can still render what it shows.
 pub fn excerpt(content: &str) -> String {
-    let line = content.split_whitespace().collect::<Vec<_>>().join(" ");
+    let line = mask_spoilers(&content.split_whitespace().collect::<Vec<_>>().join(" "));
     let mut chars = line.chars();
     let mut out: String = chars.by_ref().take(EXCERPT_MAX).collect();
     if chars.next().is_some() {
+        if let Some(start) = out.rfind("<@")
+            && !out[start..].contains('>')
+        {
+            out.truncate(start);
+        }
         out.push('…');
+    }
+    out
+}
+
+/// Every closed `||…||` pair becomes `▒▒▒`; an unpaired `||` stays as typed.
+fn mask_spoilers(line: &str) -> String {
+    let parts: Vec<&str> = line.split("||").collect();
+    let mut out = String::with_capacity(line.len());
+    for (index, part) in parts.iter().enumerate() {
+        let inside = index % 2 == 1;
+        if inside && index + 1 < parts.len() {
+            out.push_str("▒▒▒");
+        } else {
+            if inside {
+                out.push_str("||");
+            }
+            out.push_str(part);
+        }
     }
     out
 }
@@ -122,23 +147,25 @@ pub async fn for_messages(
     Ok(())
 }
 
-/// A new reply's target: a message of this channel. Run under the channel
-/// lock, which deletes take too, so the original cannot vanish before the
-/// insert commits.
+/// A new reply's target. A message of another channel is refused. One that
+/// is gone (deleted while the reply was written, or before a retry) is
+/// accepted and quoted as deleted, like an original deleted later; nothing
+/// of another channel can show, because the quote only joins this channel.
 pub async fn check_target(
     db: &mut PgConnection,
     channel_id: Uuid,
     reply_to: Uuid,
 ) -> Result<(), ApiError> {
-    let found: Option<Uuid> =
-        sqlx::query_scalar("SELECT id FROM messages WHERE id = $1 AND channel_id = $2")
-            .bind(reply_to)
-            .bind(channel_id)
-            .fetch_optional(db)
-            .await?;
-    found
-        .map(|_| ())
-        .ok_or_else(|| ApiError::Validation(FieldErrors::from([("reply_to", "invalid")])))
+    let found: Option<Uuid> = sqlx::query_scalar("SELECT channel_id FROM messages WHERE id = $1")
+        .bind(reply_to)
+        .fetch_optional(db)
+        .await?;
+    match found {
+        Some(channel) if channel != channel_id => Err(ApiError::Validation(FieldErrors::from([(
+            "reply_to", "invalid",
+        )]))),
+        _ => Ok(()),
+    }
 }
 
 #[cfg(test)]
@@ -156,5 +183,17 @@ mod tests {
             excerpt(&"ä".repeat(EXCERPT_MAX)).chars().count(),
             EXCERPT_MAX
         );
+    }
+
+    #[test]
+    fn spoilers_stay_hidden_and_mentions_stay_whole() {
+        assert_eq!(excerpt("sag ||Snape stirbt|| nicht"), "sag ▒▒▒ nicht");
+        assert_eq!(excerpt("a || b"), "a || b");
+        assert_eq!(excerpt("||x|| und ||y"), "▒▒▒ und ||y");
+        let id = "<@00000000-0000-0000-0000-000000000001>";
+        let cut = excerpt(&format!("{} {id} danach", "a".repeat(EXCERPT_MAX - 10)));
+        assert!(!cut.contains("<@"), "{cut}");
+        assert!(cut.ends_with('…'));
+        assert_eq!(excerpt(&format!("hi {id}")), format!("hi {id}"));
     }
 }

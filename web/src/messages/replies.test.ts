@@ -2,6 +2,12 @@ import { describe, expect, it } from "vitest";
 
 import { isContinued, refreshReplies } from "./pages.ts";
 import {
+  refreshReplyTarget,
+  resetReplyTargets,
+  setReplyTarget,
+  useReplyTargets,
+} from "./replyTarget.ts";
+import {
   REPLY_EXCERPT_MAX,
   asReply,
   replyExcerpt,
@@ -29,6 +35,27 @@ describe("replies", () => {
     const long = replyExcerpt("ä".repeat(REPLY_EXCERPT_MAX + 3));
     expect(Array.from(long)).toHaveLength(REPLY_EXCERPT_MAX + 1);
     expect(long.endsWith("…")).toBe(true);
+  });
+
+  it("keeps spoilers hidden and mention tokens whole, like the server", () => {
+    expect(replyExcerpt("sag ||Snape stirbt|| nicht")).toBe("sag ▒▒▒ nicht");
+    expect(replyExcerpt("a || b")).toBe("a || b");
+    expect(replyExcerpt("||x|| und ||y")).toBe("▒▒▒ und ||y");
+    const id = "<@00000000-0000-0000-0000-000000000001>";
+    const cut = replyExcerpt(`${"a".repeat(REPLY_EXCERPT_MAX - 10)} ${id} x`);
+    expect(cut).not.toContain("<@");
+    expect(cut.endsWith("…")).toBe(true);
+  });
+
+  it("ends the composer's reply when the original is deleted", () => {
+    resetReplyTargets();
+    setReplyTarget("c1", msg("o", { content: "alt" }));
+    refreshReplyTarget("c1", "other", null);
+    expect(useReplyTargets.getState().byChannel.c1?.id).toBe("o");
+    refreshReplyTarget("c1", "o", msg("o", { content: "neu" }));
+    expect(useReplyTargets.getState().byChannel.c1?.content).toBe("neu");
+    refreshReplyTarget("c1", "o", null);
+    expect(useReplyTargets.getState().byChannel.c1).toBeUndefined();
   });
 
   it("builds the optimistic preview from the original", () => {

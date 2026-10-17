@@ -17,6 +17,7 @@ import {
 } from "@tanstack/react-query";
 
 import { ApiError } from "../api/client.ts";
+import { refreshReplyTarget } from "./replyTarget.ts";
 import { scopeGeneration, stampHolds, takeStamp } from "../auth/scope.ts";
 import { useSession } from "../auth/session.ts";
 import { notifyError } from "../components/toasts.ts";
@@ -734,6 +735,7 @@ export function applyMessageEdited(
   patchPages(client, userId, generation, channelId, (pages) =>
     refreshReplies(applyMessageChanges(pages, [change]), message.id, message),
   );
+  refreshReplyTarget(channelId, message.id, message);
 }
 
 /** WS / optimistic delete: drop the row, keep page cursors. */
@@ -755,6 +757,7 @@ export function applyMessageDeleted(
   patchPages(client, userId, generation, channelId, (pages) =>
     refreshReplies(applyMessageChanges(pages, [change]), messageId, null),
   );
+  refreshReplyTarget(channelId, messageId, null);
 }
 
 export function applyChannelEvent(
