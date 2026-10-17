@@ -129,6 +129,16 @@ pub fn show<R: Runtime>(app: &AppHandle<R>) {
         let _ = window.unminimize();
         let _ = window.show();
         let _ = window.set_focus();
+        // Hidden to the tray, the window loses its taskbar button and the
+        // red dot with it; the new button needs the dot set again.
+        #[cfg(windows)]
+        if let Some(shell) = app.try_state::<Shell>()
+            && let Ok(shown) = shell.shown.lock()
+            && shown.badge > 0
+            && let Err(error) = badge(&window, shown.badge)
+        {
+            eprintln!("gelabber: badge: {error}");
+        }
     }
 }
 
@@ -340,7 +350,7 @@ pub fn shell_unread(app: AppHandle, count: u32, any: bool, attention: bool) -> R
 
 /// The number on the launcher (Linux, where the desktop shows one) or a red
 /// dot on the taskbar button (Windows, which has no number there).
-fn badge(window: &WebviewWindow, count: u32) -> Result<(), String> {
+fn badge<R: Runtime>(window: &WebviewWindow<R>, count: u32) -> Result<(), String> {
     #[cfg(windows)]
     let result = window.set_overlay_icon((count > 0).then(overlay));
     #[cfg(not(windows))]

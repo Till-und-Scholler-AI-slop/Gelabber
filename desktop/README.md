@@ -184,8 +184,8 @@ out of the window: a number on the launcher (Linux, where the desktop shows
 one, such as KDE or Dock-based launchers), a red dot on the taskbar button
 (Windows), and a tray icon with a light dot for unread messages and a red one
 for counted ones. A direct message while the window is not in front flashes
-the taskbar button (Windows) or marks the window urgent (Linux), once per
-message. The tray menu has "Gelabber öffnen" and "Beenden"; a left click
+the taskbar button (Windows) or marks the window urgent (Linux), at most
+once every 5 seconds. The tray menu has "Gelabber öffnen" and "Beenden"; a left click
 brings the window back (Windows; AppIndicator only has the menu). On Linux
 the tray needs `libayatana-appindicator` (or `libappindicator-gtk3`) and a
 tray host (KDE, waybar's `tray` module on Omarchy/Hyprland); without the
