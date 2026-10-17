@@ -1,6 +1,8 @@
+import { QueryClient, type InfiniteData } from "@tanstack/react-query";
 import { describe, expect, it } from "vitest";
 
 import { isContinued, refreshReplies } from "./pages.ts";
+import { applyMessageDeleted, applyMessageEdited } from "./queries.ts";
 import {
   refreshReplyTarget,
   resetReplyTargets,
@@ -110,5 +112,30 @@ describe("replies", () => {
     expect(edited[1]).toBe(other);
     const deleted = refreshReplies(edited, "o", null);
     expect(deleted[0]!.messages[1]!.reply).toEqual({ id: "o", deleted: true });
+  });
+
+  it("updates the previews in search hits and the jump-to context", () => {
+    const client = new QueryClient();
+    const original = msg("o", { content: "alt" });
+    const reply = msg("r", { reply: replyTo(original) });
+    const searchKey = ["user", "me", 1, "message-search", "c1", "alt"];
+    const contextKey = ["user", "me", 1, "message-context", "c1", "r"];
+    client.setQueryData<InfiniteData<MessagePage>>(searchKey, {
+      pages: [{ messages: [reply], has_more: false }],
+      pageParams: [undefined],
+    });
+    client.setQueryData(contextKey, { messages: [original, reply] });
+    applyMessageEdited(client, "me", 1, "c1", { ...original, content: "neu" });
+    const hit = () =>
+      client.getQueryData<InfiniteData<MessagePage>>(searchKey)!.pages[0]!
+        .messages[0]!.reply;
+    const context = () =>
+      client.getQueryData<{ messages: Message[] }>(contextKey)!.messages[1]!
+        .reply;
+    expect(hit()?.excerpt).toBe("neu");
+    expect(context()?.excerpt).toBe("neu");
+    applyMessageDeleted(client, "me", 1, "c1", "o");
+    expect(hit()).toEqual({ id: "o", deleted: true });
+    expect(context()).toEqual({ id: "o", deleted: true });
   });
 });

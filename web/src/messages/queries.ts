@@ -718,6 +718,37 @@ export function applyMessageCreated(
   );
 }
 
+/** Search hits and the jump-to context show reply previews too. */
+function refreshSideReplies(
+  client: QueryClient,
+  userId: string,
+  generation: number,
+  channelId: string,
+  id: string,
+  original: Message | null,
+): void {
+  const prefix = ["user", userId, generation];
+  client.setQueriesData<InfiniteData<MessagePage>>(
+    { queryKey: [...prefix, "message-search", channelId] },
+    (data) =>
+      data && { ...data, pages: refreshReplies(data.pages, id, original) },
+  );
+  client.setQueriesData<{ messages: Message[] }>(
+    { queryKey: [...prefix, "message-context", channelId] },
+    (data) => {
+      if (!data) return data;
+      const [page] = refreshReplies(
+        [{ messages: data.messages, has_more: false }],
+        id,
+        original,
+      );
+      return page!.messages === data.messages
+        ? data
+        : { ...data, messages: page!.messages };
+    },
+  );
+}
+
 /** WS edit: replace the row in place. */
 export function applyMessageEdited(
   client: QueryClient,
@@ -734,6 +765,14 @@ export function applyMessageEdited(
   });
   patchPages(client, userId, generation, channelId, (pages) =>
     refreshReplies(applyMessageChanges(pages, [change]), message.id, message),
+  );
+  refreshSideReplies(
+    client,
+    userId,
+    generation,
+    channelId,
+    message.id,
+    message,
   );
   refreshReplyTarget(channelId, message.id, message);
 }
@@ -757,6 +796,7 @@ export function applyMessageDeleted(
   patchPages(client, userId, generation, channelId, (pages) =>
     refreshReplies(applyMessageChanges(pages, [change]), messageId, null),
   );
+  refreshSideReplies(client, userId, generation, channelId, messageId, null);
   refreshReplyTarget(channelId, messageId, null);
 }
 
