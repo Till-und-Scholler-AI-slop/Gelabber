@@ -253,7 +253,14 @@ async fn create_message(
         access.require_send_files()?;
     }
 
-    let mentioned = mentions::resolve(&state, &access, user.id, &content).await?;
+    let mentioned = mentions::resolve(
+        &state,
+        &access,
+        user.id,
+        &content,
+        mentions::Granted::default(),
+    )
+    .await?;
     let mut tx = state.db.begin().await?;
     delivery::lock_channel(&mut tx, channel_id).await?;
     let row = sqlx::query_as::<_, MessageInsert>(
@@ -355,7 +362,12 @@ async fn update_message(
 
     // An edit names its mentions anew. Only a mention still unread counts:
     // one added to a message the user has read stays read.
-    let mentioned = mentions::resolve(&state, &access, user.id, &content).await?;
+    let granted = mentions::Granted::of(
+        &current.content,
+        current.mention_everyone,
+        &current.mentions,
+    );
+    let mentioned = mentions::resolve(&state, &access, user.id, &content, granted).await?;
     let mut tx = state.db.begin().await?;
     delivery::lock_channel(&mut tx, current.channel_id).await?;
     let row = sqlx::query_as::<_, MessageInsert>(

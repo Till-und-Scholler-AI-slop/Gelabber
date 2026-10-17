@@ -165,6 +165,27 @@ async fn everyone_needs_the_right_and_stays_rare(pool: PgPool) {
     let limited = post(&mut b, &channel, "@everyone drei").await;
     assert_eq!(limited["mention_everyone"], false);
     assert_eq!(row(&mut a, &channel).await["mention_count"], 2);
+    // With the limit spent, fixing a typo keeps a ping the message had,
+    // and an edit cannot add one the limit dropped.
+    let edit = |id: &str| format!("/api/messages/{id}");
+    let kept = b
+        .send(
+            Method::PATCH,
+            &edit(message["id"].as_str().unwrap()),
+            Some(json!({"content": "@everyone Essen jetzt!"})),
+        )
+        .await;
+    assert_eq!(kept.status, StatusCode::OK, "{}", kept.body);
+    assert_eq!(kept.body["mention_everyone"], true);
+    let still = b
+        .send(
+            Method::PATCH,
+            &edit(limited["id"].as_str().unwrap()),
+            Some(json!({"content": "@everyone drei!"})),
+        )
+        .await;
+    assert_eq!(still.body["mention_everyone"], false);
+    assert_eq!(row(&mut a, &channel).await["mention_count"], 2);
 }
 
 /// Decision: an edit names its mentions anew. Adding one to an unread
