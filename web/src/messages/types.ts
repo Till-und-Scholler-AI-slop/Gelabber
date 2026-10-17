@@ -31,7 +31,55 @@ export type Message = {
   reactions?: Reaction[];
   /** A GIF message (empty content, no attachments). */
   gif?: Gif | null;
+  /** Link previews (#254), added by an edit event after sending. */
+  previews?: LinkPreview[];
 };
+
+/** A link preview as the API stores it. Text is the page's plain text;
+ *  the image loads from the API (`/api/previews/…`), never from the site. */
+export type LinkPreview = {
+  url: string;
+  title?: string;
+  description?: string;
+  site_name?: string;
+  image?: { url: string; width: number; height: number };
+  youtube_id?: string;
+};
+
+const YOUTUBE_ID = /^[A-Za-z0-9_-]{11}$/;
+
+/** Previews from the wire, whole or dropped: cjson turns `[]` into `{}`, and
+ *  only http(s) pages, API images and YouTube ids are kept. */
+export function asPreviewList(value: unknown): LinkPreview[] {
+  if (!Array.isArray(value)) return [];
+  const text = (v: unknown) => (typeof v === "string" && v ? v : undefined);
+  const out: LinkPreview[] = [];
+  for (const raw of value as unknown[]) {
+    if (raw === null || typeof raw !== "object") continue;
+    const p = raw as Record<string, unknown>;
+    if (typeof p.url !== "string" || !/^https?:\/\//i.test(p.url)) continue;
+    const image = p.image as Record<string, unknown> | null | undefined;
+    const youtube = text(p.youtube_id);
+    out.push({
+      url: p.url,
+      title: text(p.title),
+      description: text(p.description),
+      site_name: text(p.site_name),
+      image:
+        image &&
+        typeof image.url === "string" &&
+        image.url.startsWith("/api/previews/") &&
+        typeof image.width === "number" &&
+        typeof image.height === "number" &&
+        image.width > 0 &&
+        image.height > 0
+          ? { url: image.url, width: image.width, height: image.height }
+          : undefined,
+      youtube_id: youtube && YOUTUBE_ID.test(youtube) ? youtube : undefined,
+    });
+  }
+  return out;
+}
 
 /** One GIF from the server's Klipy relay. URLs are Klipy's; load them
  *  only through `gifMediaUrl`. */

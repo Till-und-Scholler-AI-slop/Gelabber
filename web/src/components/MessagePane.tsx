@@ -82,6 +82,7 @@ import { EmojiPickerLoader, ReactionBar } from "./ReactionBar.tsx";
 import { confirmAction } from "./confirm.ts";
 import { Modal } from "./Modal.tsx";
 import { ImageLightbox, type LightboxImage } from "./ImageLightbox.tsx";
+import { LinkPreviews } from "./LinkPreviews.tsx";
 import { isPlainClick } from "./plainClick.ts";
 import {
   ArrowDownIcon,
@@ -936,6 +937,11 @@ function MessageRow({
           ) : null}
           {gif ? <GifMessage gif={gif} /> : null}
           <AttachmentList attachments={message.attachments ?? []} />
+          <LinkPreviews
+            messageId={message.id}
+            previews={message.previews}
+            canRemove={canDelete && !pending}
+          />
           <ReactionBar
             message={message}
             canSend={canSend}
@@ -1021,6 +1027,13 @@ function MessageRow({
         {!editing && gif ? <GifMessage gif={gif} /> : null}
         {!editing ? (
           <AttachmentList attachments={message.attachments ?? []} />
+        ) : null}
+        {!editing ? (
+          <LinkPreviews
+            messageId={message.id}
+            previews={message.previews}
+            canRemove={canDelete && !pending}
+          />
         ) : null}
         {!editing && (
           <ReactionBar
