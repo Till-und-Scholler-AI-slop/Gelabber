@@ -273,4 +273,13 @@ describe("preview URLs", () => {
       "https://f.example/",
     ]);
   });
+
+  it("stays fast on many unclosed marks", () => {
+    for (const unit of ["*a ", "_a "]) {
+      const src = unit.repeat(Math.floor(2000 / unit.length));
+      const start = performance.now();
+      expect(parseInline(src)).toEqual([text(src)]);
+      expect(performance.now() - start, unit).toBeLessThan(50);
+    }
+  });
 });

@@ -166,12 +166,12 @@ fn open_setup(app: AppHandle) -> Result<(), String> {
         .map_err(|e| e.to_string())
 }
 
-/// Catches typos and wrong ports before the address is stored: something has
-/// to accept a connection there.
 /// Whether a link the page opens in a new tab goes to the system browser:
-/// web and mail links only, never files or app schemes.
-fn opens_externally(url: &Url) -> bool {
+/// web and mail links only, never files or app schemes, and never the
+/// server's own pages, which need the app's session.
+fn opens_externally(url: &Url, server: Option<&Url>) -> bool {
     matches!(url.scheme(), "http" | "https" | "mailto")
+        && server.is_none_or(|server| server.origin() != url.origin())
 }
 
 /// Hands `url` to the desktop's default handler without a shell, so nothing
@@ -206,6 +206,8 @@ fn open_externally(url: &Url) {
     }
 }
 
+/// Catches typos and wrong ports before the address is stored: something has
+/// to accept a connection there.
 fn check_reachable(origin: &Url) -> Result<(), String> {
     let host = origin.host_str().ok_or("Serveradresse ohne Host")?;
     let port = origin
@@ -490,11 +492,14 @@ fn main() {
                 .disable_drag_drop_handler()
                 // `target="_blank"` links: the system browser, never a
                 // second app window.
-                .on_new_window(|url, _| {
-                    if opens_externally(&url) {
-                        open_externally(&url);
+                .on_new_window({
+                    let handle = handle.clone();
+                    move |url, _| {
+                        if opens_externally(&url, current_server(&handle).as_ref()) {
+                            open_externally(&url);
+                        }
+                        tauri::webview::NewWindowResponse::Deny
                     }
-                    tauri::webview::NewWindowResponse::Deny
                 })
                 .build()?;
             #[cfg(target_os = "linux")]
@@ -590,15 +595,24 @@ mod tests {
             "http://example.com/a",
             "mailto:a@example.com",
         ] {
-            assert!(opens_externally(&url.parse().unwrap()), "{url}");
+            assert!(opens_externally(&url.parse().unwrap(), None), "{url}");
         }
+        let server = server_origin("https://chat.example").unwrap();
+        assert!(opens_externally(
+            &"https://example.com/".parse().unwrap(),
+            Some(&server)
+        ));
+        assert!(!opens_externally(
+            &"https://chat.example/api/files/x".parse().unwrap(),
+            Some(&server)
+        ));
         for url in [
             "file:///etc/passwd",
             "javascript:alert(1)",
             "smb://host/share",
             "tauri://localhost",
         ] {
-            assert!(!opens_externally(&url.parse().unwrap()), "{url}");
+            assert!(!opens_externally(&url.parse().unwrap(), None), "{url}");
         }
     }
 
