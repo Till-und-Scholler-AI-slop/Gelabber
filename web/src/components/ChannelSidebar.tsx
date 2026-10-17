@@ -458,7 +458,7 @@ function ChannelList({
   );
 }
 
-function ParticipantRowView({
+export function ParticipantRowView({
   row,
   serverId,
   onOpenProfile,
@@ -474,13 +474,16 @@ function ParticipantRowView({
   const speaking =
     useSpeaking(serverId, flags.channelId, member.user_id) && state === null;
   return (
-    <div
+    // A button, so a tap (iOS sends no contextmenu on long-press) and the
+    // keyboard reach the profile with its volume controls too.
+    <button
+      type="button"
       className={`sidebar-participant${speaking ? " is-speaking" : ""}`}
+      title={self ? "Dein Profil" : "Profil und Lautstärke"}
+      onClick={() => onOpenProfile(member.user_id)}
       onContextMenu={(event) => {
-        // Right-click or long-press: volume and local mute.
-        if (self) return;
         event.preventDefault();
-        onOpenProfile(row.member.user_id);
+        onOpenProfile(member.user_id);
       }}
     >
       <Avatar
@@ -506,7 +509,7 @@ function ParticipantRowView({
           <span className="sr-only">{state}</span>
         </span>
       ) : null}
-    </div>
+    </button>
   );
 }
 

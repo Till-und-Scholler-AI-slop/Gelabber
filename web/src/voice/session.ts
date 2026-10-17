@@ -577,7 +577,7 @@ function ensureBound(): void {
   gateway.onReady(onReady);
   onMediaSettingsChange(handleSettingsChange);
   unsubscribeUserVolumes?.();
-  unsubscribeUserVolumes = useUserVolumes.subscribe(applyPlayback);
+  unsubscribeUserVolumes = useUserVolumes.subscribe(applyUserVolumes);
   // Re-adding the same listener after a rebind is a no-op.
   if (typeof document !== "undefined")
     document.addEventListener("visibilitychange", resumePlayback);
@@ -1413,9 +1413,10 @@ function applyLocalAudio(): void {
   applyPlayback();
 }
 
-function applyPlayback(): void {
+/** Each microphone at the output volume times its participant's own. */
+function applyVoiceVolumes(): void {
   const deafened = useVoice.getState().deafened;
-  const settings = useMediaSettings.getState();
+  const output = useMediaSettings.getState().outputVolume;
   const users = useUserVolumes.getState().users;
   for (const { el, userId } of [
     ...voiceAudio.values(),
@@ -1425,10 +1426,27 @@ function applyPlayback(): void {
     setOutputVolume(
       el,
       deafened || user.muted,
-      effectiveVoiceVolume({ output: settings.outputVolume, user, deafened }),
+      effectiveVoiceVolume({ output, user, deafened }),
     );
-    void applySink(el);
   }
+}
+
+/** A per-user slider moves volumes only: setting the same output device
+ * again is not free in every browser (a short dropout). Only a boost output
+ * the slider just created still needs it. */
+function applyUserVolumes(): void {
+  const before = boostOutput();
+  applyVoiceVolumes();
+  const boosted = boostOutput();
+  if (boosted && boosted !== before) void applySink(boosted);
+}
+
+function applyPlayback(): void {
+  const deafened = useVoice.getState().deafened;
+  const settings = useMediaSettings.getState();
+  applyVoiceVolumes();
+  for (const { el } of [...voiceAudio.values(), ...watchAudio.values()])
+    void applySink(el);
   for (const { el } of sourceAudio.values()) {
     setOutputVolume(
       el,

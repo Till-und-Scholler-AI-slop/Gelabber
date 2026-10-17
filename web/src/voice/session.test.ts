@@ -4553,6 +4553,26 @@ describe("authoritative mediasoup session lifecycle", () => {
     const back = again.peers[0]!.receive("u-bob", "a", fakeStream("bob-2"));
     expect(of(back).volume).toBeCloseTo(0.4);
   });
+  it("keeps one subscription to the per-user levels across rebinds", async () => {
+    let active = 0;
+    const subscribe = useUserVolumes.subscribe;
+    vi.spyOn(useUserVolumes, "subscribe").mockImplementation((listener) => {
+      active += 1;
+      const unsubscribe = subscribe(listener);
+      return () => {
+        active -= 1;
+        unsubscribe();
+      };
+    });
+    await joined();
+    expect(active).toBe(1);
+    leaveVoice();
+    resetVoiceForTests();
+    expect(active).toBe(0);
+    await joined();
+    configureVoice({});
+    expect(active).toBe(1);
+  });
   it("applies a participant's volume to their microphone while watching", async () => {
     const elements = playback();
     const env = await joined();

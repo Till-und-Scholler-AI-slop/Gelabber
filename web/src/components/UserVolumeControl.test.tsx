@@ -1,13 +1,16 @@
 import { renderToStaticMarkup } from "react-dom/server";
-import { afterEach, describe, expect, it, vi } from "vitest";
+import { afterEach, describe, expect, it } from "vitest";
 
 import { resetUserVolumesForTests } from "../voice/userVolume.ts";
-import { LocallyMutedIcon, UserVolumeControl } from "./UserVolumeControl.tsx";
+import {
+  LocallyMutedIcon,
+  LocallyMutedMark,
+  UserVolumeControl,
+  UserVolumeView,
+} from "./UserVolumeControl.tsx";
 
 afterEach(() => {
   resetUserVolumesForTests();
-  vi.unstubAllGlobals();
-  vi.resetModules();
 });
 
 describe("per-user volume control", () => {
@@ -16,6 +19,9 @@ describe("per-user volume control", () => {
       <UserVolumeControl userId="u-bob" name="Bob" />,
     );
     expect(html).toContain('aria-label="Lautstärke von Bob"');
+    // The visible label names the slider; the screen reader hears percent.
+    expect(html).toContain('aria-valuetext="100 %"');
+    expect(html).toContain("nicht für Stream-Ton");
     expect(html).toContain('max="200"');
     expect(html).toContain('value="100"');
     expect(html).toContain("100 %");
@@ -23,27 +29,22 @@ describe("per-user volume control", () => {
     expect(renderToStaticMarkup(<LocallyMutedIcon userId="u-bob" />)).toBe("");
   });
 
-  it("shows the remembered level and the local mute", async () => {
-    // A server render reads the store's initial state: what storage held.
-    const saved = JSON.stringify({ "u-bob": { volume: 1.4, muted: true } });
-    vi.stubGlobal("localStorage", {
-      getItem: () => saved,
-      setItem: () => undefined,
-      removeItem: () => undefined,
-    });
-    vi.resetModules();
-    const { LocallyMutedIcon, UserVolumeControl } =
-      await import("./UserVolumeControl.tsx");
+  it("shows the remembered level and the local mute", () => {
+    // A server render reads the store's initial state, so the level is given.
     const html = renderToStaticMarkup(
-      <UserVolumeControl userId="u-bob" name="Bob" />,
+      <UserVolumeView
+        userId="u-bob"
+        name="Bob"
+        level={{ volume: 1.4, muted: true }}
+      />,
     );
     expect(html).toContain('value="140"');
+    expect(html).toContain('aria-valuetext="140 %"');
     expect(html).toContain("140 %");
     expect(html).toMatch(/type="checkbox"[^>]*checked/);
     expect(html).not.toMatch(/<button[^>]*disabled[^>]*>Zurücksetzen/);
-    expect(renderToStaticMarkup(<LocallyMutedIcon userId="u-bob" />)).toContain(
+    expect(renderToStaticMarkup(<LocallyMutedMark />)).toContain(
       "Lokal stummgeschaltet",
     );
-    expect(renderToStaticMarkup(<LocallyMutedIcon userId="u-cara" />)).toBe("");
   });
 });

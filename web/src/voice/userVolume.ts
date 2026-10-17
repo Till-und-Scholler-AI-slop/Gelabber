@@ -1,12 +1,15 @@
 // Volume and local mute per participant, on top of the output volume.
-// Persisted per browser like the media settings; only users away from the
-// default (100 %, not muted) are stored. Affects only what this client plays:
-// nobody else hears a difference.
+// Persisted per browser and per own account, like a preference of that
+// account; only users away from the default (100 %, not muted) are stored.
+// Affects only what this client plays: nobody else hears a difference.
 
 import { create } from "zustand";
+import { useSession } from "../auth/session.ts";
 import { clampPlaybackVolume, MAX_PLAYBACK_VOLUME } from "./settings.ts";
 
-const STORAGE_KEY = "gelabber.user-volumes";
+const STORAGE_PREFIX = "gelabber.user-volumes:";
+/** A slider drag writes once it rests, not on every step. */
+const SAVE_DELAY_MS = 400;
 
 export type UserVolume = { volume: number; muted: boolean };
 export const DEFAULT_USER_VOLUME: UserVolume = { volume: 1, muted: false };
@@ -35,20 +38,44 @@ function sanitize(saved: unknown): UserVolumes {
   return users;
 }
 
-function load(): UserVolumes {
+/** Whose levels the store holds: the signed-in account, or nobody. */
+let owner: string | null = null;
+let pending: { owner: string; users: UserVolumes } | null = null;
+let saveTimer: ReturnType<typeof setTimeout> | null = null;
+
+function load(account: string | null): UserVolumes {
+  if (!account) return {};
   try {
-    return sanitize(JSON.parse(localStorage.getItem(STORAGE_KEY) ?? "null"));
+    return sanitize(
+      JSON.parse(localStorage.getItem(STORAGE_PREFIX + account) ?? "null"),
+    );
   } catch {
     return {};
   }
 }
 
-function save(users: UserVolumes): void {
+/** Writes a change still waiting for its delay. */
+export function flushUserVolumes(): void {
+  if (saveTimer !== null) clearTimeout(saveTimer);
+  saveTimer = null;
+  const write = pending;
+  pending = null;
+  if (!write) return;
   try {
-    localStorage.setItem(STORAGE_KEY, JSON.stringify(users));
+    const key = STORAGE_PREFIX + write.owner;
+    if (Object.keys(write.users).length === 0) localStorage.removeItem(key);
+    else localStorage.setItem(key, JSON.stringify(write.users));
   } catch {
     // Keep the controls usable when storage is disabled.
   }
+}
+
+function scheduleSave(users: UserVolumes): void {
+  // Signed out, levels last for the page only.
+  if (!owner) return;
+  pending = { owner, users };
+  if (saveTimer !== null) clearTimeout(saveTimer);
+  saveTimer = setTimeout(flushUserVolumes, SAVE_DELAY_MS);
 }
 
 function update(
@@ -66,11 +93,11 @@ function update(
 
 export const useUserVolumes = create<UserVolumeState>((set) => {
   const write = (users: UserVolumes) => {
-    save(users);
+    scheduleSave(users);
     set({ users });
   };
   return {
-    users: load(),
+    users: {},
     setVolume: (userId, volume) =>
       write(update(useUserVolumes.getState().users, userId, { volume })),
     setMuted: (userId, muted) =>
@@ -81,6 +108,41 @@ export const useUserVolumes = create<UserVolumeState>((set) => {
       ),
   };
 });
+
+function follow(account: string | null): void {
+  if (account === owner) return;
+  flushUserVolumes();
+  owner = account;
+  useUserVolumes.setState({ users: load(account) });
+}
+
+// Another account on the same browser has levels of its own. Bound once
+// the session store exists: it imports the call code, which imports this,
+// so at first it may still be loading.
+function followSession(): void {
+  let session: typeof useSession | undefined;
+  try {
+    session = useSession;
+    session.getState();
+  } catch {
+    session = undefined;
+  }
+  if (!session?.getState) {
+    setTimeout(followSession, 0);
+    return;
+  }
+  follow(session.getState().user?.id ?? null);
+  session.subscribe((state) => follow(state.user?.id ?? null));
+}
+void Promise.resolve().then(followSession);
+
+// A drag the page is closed in the middle of still lands.
+if (typeof window !== "undefined" && window.addEventListener) {
+  window.addEventListener("pagehide", flushUserVolumes);
+  document.addEventListener("visibilitychange", () => {
+    if (document.visibilityState === "hidden") flushUserVolumes();
+  });
+}
 
 export function userVolumeOf(
   userId: string | null | undefined,
@@ -106,12 +168,10 @@ export function effectiveVoiceVolume(input: {
   );
 }
 
-/** Tests: forget every participant's level, in memory and in storage. */
+/** Tests: forget every participant's level in memory; storage stays. */
 export function resetUserVolumesForTests(): void {
-  try {
-    localStorage.removeItem(STORAGE_KEY);
-  } catch {
-    // No storage in this environment.
-  }
+  if (saveTimer !== null) clearTimeout(saveTimer);
+  saveTimer = null;
+  pending = null;
   useUserVolumes.setState({ users: {} });
 }

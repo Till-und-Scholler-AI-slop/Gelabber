@@ -1,6 +1,10 @@
 import { useId, type CSSProperties } from "react";
 import { MAX_PLAYBACK_VOLUME } from "../voice/settings.ts";
-import { userVolumeOf, useUserVolumes } from "../voice/userVolume.ts";
+import {
+  userVolumeOf,
+  useUserVolumes,
+  type UserVolume,
+} from "../voice/userVolume.ts";
 import { SpeakerOffIcon } from "./Icons.tsx";
 
 /** One participant's playback volume and local mute, for this client only. */
@@ -11,8 +15,21 @@ export function UserVolumeControl({
   userId: string;
   name: string;
 }) {
-  const id = useId();
   const level = useUserVolumes((s) => userVolumeOf(userId, s.users));
+  return <UserVolumeView userId={userId} name={name} level={level} />;
+}
+
+/** The control for a given level; the store's actions change it. */
+export function UserVolumeView({
+  userId,
+  name,
+  level,
+}: {
+  userId: string;
+  name: string;
+  level: UserVolume;
+}) {
+  const id = useId();
   const { setVolume, setMuted, reset } = useUserVolumes.getState();
   const changed = level.volume !== 1 || level.muted;
   return (
@@ -31,7 +48,7 @@ export function UserVolumeControl({
         step={1}
         value={Math.round(level.volume * 100)}
         style={rangeFill(level.volume)}
-        aria-label={`Lautstärke von ${name}`}
+        aria-valuetext={`${Math.round(level.volume * 100)} %`}
         disabled={level.muted}
         onChange={(event) =>
           setVolume(userId, Number(event.target.value) / 100)
@@ -56,7 +73,9 @@ export function UserVolumeControl({
           Zurücksetzen
         </button>
       </div>
-      <p className="user-volume__hint">Nur du hörst den Unterschied.</p>
+      <p className="user-volume__hint">
+        Gilt für die Stimme, nicht für Stream-Ton. Nur du hörst den Unterschied.
+      </p>
     </section>
   );
 }
@@ -64,7 +83,10 @@ export function UserVolumeControl({
 /** A small marker for a participant this client has muted. */
 export function LocallyMutedIcon({ userId }: { userId: string }) {
   const muted = useUserVolumes((s) => userVolumeOf(userId, s.users).muted);
-  if (!muted) return null;
+  return muted ? <LocallyMutedMark /> : null;
+}
+
+export function LocallyMutedMark() {
   return (
     <span className="user-volume-muted" title="Lokal stummgeschaltet">
       <SpeakerOffIcon size={13} />
