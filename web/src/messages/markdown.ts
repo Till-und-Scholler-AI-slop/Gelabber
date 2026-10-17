@@ -6,7 +6,7 @@
 // Blocks: ```lang fenced code```, `> quote` lines and `>>> ` (rest of the
 // message). Inline: **bold**, *italic* / _italic_, __underline__, ~~strike~~,
 // ||spoiler||, `code`, bare http(s) URLs, <url> (a link without preview),
-// <@user-id> mentions and \-escapes. No headings, lists, tables or images.
+// <@user-id> mentions, @everyone / @here and \-escapes. No headings, lists, tables or images.
 
 export type Inline =
   | { type: "text"; text: string }
@@ -16,7 +16,8 @@ export type Inline =
     }
   | { type: "code"; text: string }
   | { type: "link"; href: string; text: string; suppressed: boolean }
-  | { type: "mention"; userId: string };
+  | { type: "mention"; userId: string }
+  | { type: "everyone" | "here" };
 
 export type Block =
   | { type: "paragraph"; children: Inline[] }
@@ -30,7 +31,10 @@ const LANG = /^([A-Za-z0-9_+#.-]{1,32})\n/;
 const URL_START = /^https?:\/\/[^\s<>"]+/i;
 const ANGLE_LINK = /^<((?:https?:\/\/|mailto:)[^\s<>"]+)>/i;
 const MENTION =
-  /^<@!?([0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12})>/i;
+  /^<@([0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12})>/i;
+// Same boundaries as `KEYWORD` in mentions.ts and the server (#241).
+const KEYWORD = /^@(everyone|here)(?![\p{L}\p{N}_@-])/u;
+const KEYWORD_BEFORE = /[\p{L}\p{N}_@-]/u;
 const WORD = /[\p{L}\p{N}_]/u;
 const ALNUM = /[\p{L}\p{N}]/u;
 const SPACE = /\s/;
@@ -181,6 +185,14 @@ export function parseInline(src: string, depth = 0): Inline[] {
       if (angle && href) {
         push({ type: "link", href, text: angle[1], suppressed: true });
         i += angle[0].length;
+        continue;
+      }
+    }
+    if (c === "@" && (i === 0 || !KEYWORD_BEFORE.test(src[i - 1]))) {
+      const keyword = KEYWORD.exec(src.slice(i, i + 10));
+      if (keyword) {
+        push({ type: keyword[1] as "everyone" | "here" });
+        i += keyword[0].length;
         continue;
       }
     }

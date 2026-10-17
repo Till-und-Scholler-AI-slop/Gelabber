@@ -39,10 +39,23 @@ describe("message content", () => {
       renderToStaticMarkup(
         <MessageContent
           content={`hi <@${id}>`}
-          renderMention={(userId) => <b>@{userId.slice(0, 4)}</b>}
+          renderMention={(part) =>
+            part.type === "mention" ? <b>@{part.userId.slice(0, 4)}</b> : null
+          }
         />,
       ),
     ).toContain("<b>@0f8f</b>");
+    expect(html("an @everyone und @here")).toContain(
+      "an <span>@everyone</span> und <span>@here</span>",
+    );
+    expect(
+      renderToStaticMarkup(
+        <MessageContent
+          content="@here"
+          renderMention={(part) => <b>{part.type}</b>}
+        />,
+      ),
+    ).toContain("<b>here</b>");
   });
 
   it("has no links or buttons when it sits inside a button", () => {
