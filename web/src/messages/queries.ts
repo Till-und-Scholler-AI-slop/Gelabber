@@ -531,6 +531,9 @@ export async function sendMessageAttempt(
         upload: "Dateiübertragung",
         bind: "Nachricht speichern",
       };
+      // The bind may have gone through: these ids may be taken already, so
+      // a retry or a draft taken back uploads the files again.
+      if (uncertain) for (const file of attempt.files) arrived.delete(file);
       const rejected = rejectedUploads(error, attempt.files);
       if (rejected)
         for (const file of rejectedFiles(error, attempt.files))

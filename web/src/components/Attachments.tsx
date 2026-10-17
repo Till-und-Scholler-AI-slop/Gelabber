@@ -2,7 +2,13 @@
 // browser's own player, text as a preview to open, every other file as a
 // download (issue #255).
 
-import { useContext, useEffect, useState } from "react";
+import {
+  useContext,
+  useEffect,
+  useRef,
+  useState,
+  type SyntheticEvent,
+} from "react";
 
 import { attachmentDownloadUrl, attachmentUrl } from "../messages/api.ts";
 import { isPendingId } from "../messages/queries.ts";
@@ -18,6 +24,7 @@ import {
 import type { Attachment } from "../messages/types.ts";
 import { asAttachmentList } from "../messages/types.ts";
 import { PaperclipIcon } from "./Icons.tsx";
+import { reloadMedia } from "./mediaReload.ts";
 import { OpenImage } from "./openImage.ts";
 import { isPlainClick } from "./plainClick.ts";
 
@@ -109,6 +116,13 @@ function AttachmentMedia({ attachment }: { attachment: Attachment }) {
   const [failed, setFailed] = useState(
     () => !playable(kind, attachment.content_type),
   );
+  const lastReload = useRef(-Infinity);
+  const onError = (event: SyntheticEvent<HTMLMediaElement>) => {
+    const now = Date.now();
+    if (reloadMedia(event.currentTarget, lastReload.current, now))
+      lastReload.current = now;
+    else setFailed(true);
+  };
   // Still uploading: nothing to stream yet.
   if (failed || isPendingId(attachment.id))
     return <AttachmentFile attachment={attachment} />;
@@ -121,7 +135,7 @@ function AttachmentMedia({ attachment }: { attachment: Attachment }) {
           controls
           preload="metadata"
           playsInline
-          onError={() => setFailed(true)}
+          onError={onError}
           aria-label={attachment.filename}
         />
       ) : (
@@ -129,7 +143,7 @@ function AttachmentMedia({ attachment }: { attachment: Attachment }) {
           src={src}
           controls
           preload="metadata"
-          onError={() => setFailed(true)}
+          onError={onError}
           aria-label={attachment.filename}
         />
       )}

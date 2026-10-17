@@ -1,8 +1,9 @@
 import { renderToStaticMarkup } from "react-dom/server";
-import { describe, expect, it } from "vitest";
+import { describe, expect, it, vi } from "vitest";
 
 import type { Attachment } from "../messages/types.ts";
 import { AttachmentList } from "./Attachments.tsx";
+import { reloadMedia } from "./mediaReload.ts";
 
 const file = (
   id: string,
@@ -54,5 +55,40 @@ describe("attachment list (#255)", () => {
 
   it("renders nothing without attachments", () => {
     expect(renderToStaticMarkup(<AttachmentList attachments={[]} />)).toBe("");
+  });
+});
+
+describe("reloadMedia", () => {
+  const media = (readyState: number, paused = false) => {
+    let onMetadata = () => {};
+    return {
+      currentTime: 754,
+      paused,
+      readyState,
+      load: vi.fn(),
+      play: vi.fn(() => Promise.resolve()),
+      addEventListener: (_: "loadedmetadata", listener: () => void) => {
+        onMetadata = listener;
+      },
+      metadata: () => onMetadata(),
+    };
+  };
+
+  it("fetches a fresh link once and returns to the same spot", () => {
+    const el = media(4);
+    expect(reloadMedia(el, -Infinity, 100_000)).toBe(true);
+    expect(el.load).toHaveBeenCalledTimes(1);
+    el.currentTime = 0;
+    el.metadata();
+    expect(el.currentTime).toBe(754);
+    expect(el.play).toHaveBeenCalled();
+    // A second failure right after: the file is unplayable after all.
+    expect(reloadMedia(el, 100_000, 110_000)).toBe(false);
+  });
+
+  it("gives up on a file that never loaded", () => {
+    const el = media(0, true);
+    expect(reloadMedia(el, -Infinity, 100_000)).toBe(false);
+    expect(el.load).not.toHaveBeenCalled();
   });
 });
