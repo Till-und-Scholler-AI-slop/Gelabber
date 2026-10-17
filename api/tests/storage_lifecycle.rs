@@ -1145,7 +1145,7 @@ async fn inflight_put_after_expiry_is_not_lost_from_daily_usage(pool: PgPool) {
     let mut socket = tokio::net::TcpStream::connect((host, port)).await.unwrap();
     let target = format!("{}?{}", signed.path(), signed.query().unwrap());
     let request = format!(
-        "PUT {target} HTTP/1.1\r\nHost: {host}:{port}\r\nContent-Type: image/png\r\nContent-Length: 4\r\nConnection: close\r\n\r\n"
+        "PUT {target} HTTP/1.1\r\nHost: {host}:{port}\r\nContent-Type: text/plain\r\nContent-Length: 4\r\nConnection: close\r\n\r\n"
     );
     socket.write_all(request.as_bytes()).await.unwrap();
     socket.write_all(&[1, 2]).await.unwrap();
