@@ -31,7 +31,74 @@ export type Message = {
   reactions?: Reaction[];
   /** A GIF message (empty content, no attachments). */
   gif?: Gif | null;
+  /** The message this one answers; absent when it answers none. */
+  reply?: Reply | null;
 };
+
+/** Preview of an answered message. A deleted original is only
+ *  `{ id, deleted: true }`. */
+export type Reply = {
+  id: string;
+  deleted: boolean;
+  author?: { id: string; name: string };
+  excerpt?: string;
+  has_attachment?: boolean;
+  has_gif?: boolean;
+};
+
+/** Characters of the original the server puts in `excerpt`. */
+export const REPLY_EXCERPT_MAX = 100;
+
+/** Same rule as the server (`replies::excerpt`): one line, spoilers
+ *  hidden, cut after REPLY_EXCERPT_MAX without splitting a mention token. */
+export function replyExcerpt(content: string): string {
+  const parts = content.split(/\s+/).filter(Boolean).join(" ").split("||");
+  const line = parts
+    .map((part, index) =>
+      index % 2 === 0 ? part : index + 1 < parts.length ? "▒▒▒" : `||${part}`,
+    )
+    .join("");
+  const chars = Array.from(line);
+  if (chars.length <= REPLY_EXCERPT_MAX) return line;
+  let cut = chars.slice(0, REPLY_EXCERPT_MAX).join("");
+  const token = cut.lastIndexOf("<@");
+  if (token >= 0 && !cut.slice(token).includes(">")) cut = cut.slice(0, token);
+  return `${cut}…`;
+}
+
+/** The preview a reply to `original` shows before the server answers. */
+export function replyTo(original: Message): Reply {
+  return {
+    id: original.id,
+    deleted: false,
+    author: { id: original.author.id, name: original.author.name },
+    excerpt: replyExcerpt(original.content),
+    has_attachment: asAttachmentList(original.attachments).length > 0,
+    has_gif: Boolean(original.gif),
+  };
+}
+
+/** Redis cjson re-encoding may hand back anything; keep a usable reply. */
+export function asReply(value: unknown): Reply | null {
+  if (value === null || typeof value !== "object") return null;
+  const reply = value as Partial<Reply>;
+  if (typeof reply.id !== "string") return null;
+  if (reply.deleted === true) return { id: reply.id, deleted: true };
+  const author =
+    reply.author &&
+    typeof reply.author.id === "string" &&
+    typeof reply.author.name === "string"
+      ? { id: reply.author.id, name: reply.author.name }
+      : undefined;
+  return {
+    id: reply.id,
+    deleted: false,
+    author,
+    excerpt: typeof reply.excerpt === "string" ? reply.excerpt : "",
+    has_attachment: reply.has_attachment === true,
+    has_gif: reply.has_gif === true,
+  };
+}
 
 /** One GIF from the server's Klipy relay. URLs are Klipy's; load them
  *  only through `gifMediaUrl`. */

@@ -17,6 +17,7 @@ import {
 } from "@tanstack/react-query";
 
 import { ApiError } from "../api/client.ts";
+import { refreshReplyTarget } from "./replyTarget.ts";
 import { scopeGeneration, stampHolds, takeStamp } from "../auth/scope.ts";
 import { useSession } from "../auth/session.ts";
 import { notifyError } from "../components/toasts.ts";
@@ -31,6 +32,7 @@ import {
   encodeCursor,
   newerMessage,
   olderCursor,
+  refreshReplies,
   stampOlder,
   type MessageChange,
 } from "./pages.ts";
@@ -54,7 +56,7 @@ import type {
   MessageAuthor,
   MessagePage,
 } from "./types.ts";
-import { asAttachmentList, asReactionList } from "./types.ts";
+import { asAttachmentList, asReactionList, asReply, replyTo } from "./types.ts";
 
 export const messageKeys = {
   channel: (userId: string, generation: number, channelId: string) =>
@@ -371,6 +373,8 @@ export type SendInput = {
   file?: File;
   /** Sent alone: no text, no file. */
   gif?: GifPick;
+  /** Answer this message of the channel. */
+  replyTo?: Message;
 };
 
 function localAttachment(file: File): Attachment {
@@ -420,6 +424,7 @@ export async function sendMessageAttempt(
       content: input.gif ? "" : normaliseContent(input.content),
       file: input.gif ? undefined : input.file,
       gif: input.gif,
+      reply: input.replyTo ? replyTo(input.replyTo) : undefined,
       status: "sending",
       stage: input.file && !input.gif ? "presign" : "bind",
       controller: new AbortController(),
@@ -433,6 +438,7 @@ export async function sendMessageAttempt(
       edited_at: null,
       attachments: attempt.file ? [localAttachment(attempt.file)] : [],
       gif: input.gif?.gif ?? null,
+      reply: attempt.reply ?? null,
     });
   }
   requireAttempt(attempt);
@@ -470,6 +476,7 @@ export async function sendMessageAttempt(
       attempt.content,
       attempt.uploadedId ? [attempt.uploadedId] : [],
       attempt.gif,
+      attempt.reply?.id,
     );
     requireAttempt(attempt);
     confirmPending(channelId, attempt.id, message);
@@ -711,6 +718,37 @@ export function applyMessageCreated(
   );
 }
 
+/** Search hits and the jump-to context show reply previews too. */
+function refreshSideReplies(
+  client: QueryClient,
+  userId: string,
+  generation: number,
+  channelId: string,
+  id: string,
+  original: Message | null,
+): void {
+  const prefix = ["user", userId, generation];
+  client.setQueriesData<InfiniteData<MessagePage>>(
+    { queryKey: [...prefix, "message-search", channelId] },
+    (data) =>
+      data && { ...data, pages: refreshReplies(data.pages, id, original) },
+  );
+  client.setQueriesData<{ messages: Message[] }>(
+    { queryKey: [...prefix, "message-context", channelId] },
+    (data) => {
+      if (!data) return data;
+      const [page] = refreshReplies(
+        [{ messages: data.messages, has_more: false }],
+        id,
+        original,
+      );
+      return page!.messages === data.messages
+        ? data
+        : { ...data, messages: page!.messages };
+    },
+  );
+}
+
 /** WS edit: replace the row in place. */
 export function applyMessageEdited(
   client: QueryClient,
@@ -726,8 +764,17 @@ export function applyMessageEdited(
     created: false,
   });
   patchPages(client, userId, generation, channelId, (pages) =>
-    applyMessageChanges(pages, [change]),
+    refreshReplies(applyMessageChanges(pages, [change]), message.id, message),
   );
+  refreshSideReplies(
+    client,
+    userId,
+    generation,
+    channelId,
+    message.id,
+    message,
+  );
+  refreshReplyTarget(channelId, message.id, message);
 }
 
 /** WS / optimistic delete: drop the row, keep page cursors. */
@@ -747,8 +794,10 @@ export function applyMessageDeleted(
     revision,
   });
   patchPages(client, userId, generation, channelId, (pages) =>
-    applyMessageChanges(pages, [change]),
+    refreshReplies(applyMessageChanges(pages, [change]), messageId, null),
   );
+  refreshSideReplies(client, userId, generation, channelId, messageId, null);
+  refreshReplyTarget(channelId, messageId, null);
 }
 
 export function applyChannelEvent(
@@ -784,6 +833,7 @@ export function applyChannelEvent(
       ...(event.d.reactions === undefined
         ? {}
         : { reactions: asReactionList(event.d.reactions) }),
+      ...(event.d.reply === undefined ? {} : { reply: asReply(event.d.reply) }),
     };
     if (event.t === "c")
       applyMessageCreated(client, userId, generation, channelId, message);
