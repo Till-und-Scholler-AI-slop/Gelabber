@@ -194,6 +194,9 @@ describe("durable send attempts with controlled HTTP responses", () => {
     await sendMessageAttempt("c", author, { content: "neu", files });
     expect(presigns).toBe(1);
     expect(requests.filter((k) => k.startsWith("PUT"))).toHaveLength(1);
+    // Bound now: attaching the same file again uploads it again.
+    await sendMessageAttempt("c", author, { content: "nochmal", files });
+    expect(presigns).toBe(2);
   });
 
   it("uploads only the turned-down file again, naming it", async () => {

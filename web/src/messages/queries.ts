@@ -510,6 +510,8 @@ export async function sendMessageAttempt(
       attempt.gif,
     );
     requireAttempt(attempt);
+    // Bound now; attaching the same file again needs a new upload.
+    for (const file of attempt.files) arrived.delete(file);
     confirmPending(channelId, attempt.id, message);
     forgetAttempt(attempt.id);
     return message;
