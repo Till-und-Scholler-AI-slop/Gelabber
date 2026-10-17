@@ -22,7 +22,7 @@ use std::{
     fs,
     path::PathBuf,
     sync::Mutex,
-    time::{Duration, SystemTime},
+    time::{Duration, Instant, SystemTime},
 };
 use tauri::{AppHandle, Manager, Runtime, State};
 
@@ -39,6 +39,11 @@ const CHECK_EVERY: Duration = Duration::from_secs(6 * 60 * 60);
 const LOOK_EVERY: Duration = Duration::from_secs(60);
 const IN_CALL: &str =
     "Während eines Anrufs startet Gelabber nicht neu. Das Update kommt nach dem Auflegen.";
+/// "Nein" in the app's question: not an error of the update.
+const DECLINED: &str = "Nicht installiert.";
+/// After a "Nein", the question is not asked again for this long, so a page
+/// cannot pop it up again and again.
+const ASK_AGAIN_AFTER: Duration = Duration::from_secs(5 * 60);
 
 /// Runs in every page of the window next to the shortcuts (main.rs): asks
 /// for the update state every 30 seconds and shows the notice while the app
@@ -230,6 +235,8 @@ struct Inner {
     dismissed: Option<String>,
     last_check: Option<SystemTime>,
     error: Option<String>,
+    /// When the question was last answered "Nein".
+    declined: Option<Instant>,
     /// Bytes of the installer so far, and its size when the server said it.
     downloaded: u64,
     total: Option<u64>,
@@ -478,15 +485,25 @@ pub async fn update_install(app: AppHandle) -> Result<(), String> {
         if inner.phase != Phase::Idle {
             return Err("Das Update wird schon geladen.".into());
         }
+        if inner
+            .declined
+            .is_some_and(|declined| declined.elapsed() < ASK_AGAIN_AFTER)
+        {
+            return Err("Gerade abgelehnt. In ein paar Minuten geht es wieder.".into());
+        }
         inner.phase = Phase::Confirming;
         inner.error = None;
     }
     let result = install(&app).await;
     let mut inner = updates.0.lock().unwrap();
     inner.phase = Phase::Idle;
-    if let Err(error) = &result {
-        eprintln!("gelabber: update: {error}");
-        inner.error = Some(error.clone());
+    match &result {
+        Err(error) if error == DECLINED => inner.declined = Some(Instant::now()),
+        Err(error) => {
+            eprintln!("gelabber: update: {error}");
+            inner.error = Some(error.clone());
+        }
+        Ok(()) => {}
     }
     result
 }
@@ -505,7 +522,7 @@ async fn install(app: &AppHandle) -> Result<(), String> {
         .await
         .map_err(err)?;
     if !yes {
-        return Err("Abgebrochen.".into());
+        return Err(DECLINED.into());
     }
     // A call may have begun while the question was open.
     if app.state::<Media>().busy() {
@@ -563,7 +580,7 @@ async fn install(app: &AppHandle) -> Result<(), String> {
 #[cfg(windows)]
 fn confirm(app: &AppHandle, version: &str) -> bool {
     use windows_sys::Win32::UI::WindowsAndMessaging::{
-        IDYES, MB_DEFBUTTON1, MB_ICONQUESTION, MB_SETFOREGROUND, MB_YESNO, MessageBoxW,
+        IDYES, MB_DEFBUTTON2, MB_ICONQUESTION, MB_SETFOREGROUND, MB_YESNO, MessageBoxW,
     };
     let wide = |text: &str| text.encode_utf16().chain([0]).collect::<Vec<u16>>();
     let owner = app
@@ -574,6 +591,8 @@ fn confirm(app: &AppHandle, version: &str) -> bool {
         "Gelabber {version} jetzt installieren?\n\nDie App wird dafür beendet und startet danach neu."
     ));
     let title = wide("Gelabber-Update");
+    // "Nein" is the default: an Enter meant for the page (the question can
+    // come up while someone types) must not restart the app.
     // SAFETY: both strings are NUL-terminated UTF-16 and outlive the call;
     // the owner is the app's window or none.
     let answer = unsafe {
@@ -581,7 +600,7 @@ fn confirm(app: &AppHandle, version: &str) -> bool {
             owner,
             text.as_ptr(),
             title.as_ptr(),
-            MB_YESNO | MB_ICONQUESTION | MB_DEFBUTTON1 | MB_SETFOREGROUND,
+            MB_YESNO | MB_ICONQUESTION | MB_DEFBUTTON2 | MB_SETFOREGROUND,
         )
     };
     answer == IDYES
