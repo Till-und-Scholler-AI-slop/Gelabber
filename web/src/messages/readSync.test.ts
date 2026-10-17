@@ -74,4 +74,81 @@ describe("read positions from another device", () => {
     });
     expect(rows[2]).toMatchObject({ unread_count: 2 });
   });
+
+  it("orders by position and membership, not by read time", () => {
+    const client = new QueryClient();
+    const stamp = takeStamp()!;
+    const at = (
+      order: number | null,
+      latest: number,
+      joined = "2026-10-01T00:00:00Z",
+    ) => ({
+      read_order: order,
+      membership_at: joined,
+      latest_order: latest,
+    });
+    client.setQueryData<ReadState[]>(readKey(stamp), [
+      { ...row("a", "2026-10-17T12:00:00Z", 2), ...at(5, 7) },
+      { ...row("b", "2026-10-17T12:00:00Z", 2), ...at(5, 7) },
+    ]);
+    applyReadSync(client, stamp, [
+      // Further along although its message is older (an edited clock).
+      { ...row("a", "2026-10-17T09:00:00Z", 0), ...at(7, 7) },
+      // A rejoin: the new membership's position wins.
+      {
+        ...row("b", "2026-10-17T08:00:00Z", 1),
+        ...at(1, 7, "2026-10-10T00:00:00Z"),
+      },
+    ]);
+    const rows = client.getQueryData<ReadState[]>(readKey(stamp))!;
+    expect(rows[0]).toMatchObject({ read_order: 7, unread_count: 0 });
+    expect(rows[1]).toMatchObject({ read_order: 1, unread_count: 1 });
+    // Same position, counted before newer messages: stays.
+    applyReadSync(client, stamp, [
+      { ...row("a", "2026-10-17T09:00:00Z", 0), ...at(7, 6) },
+    ]);
+    expect(client.getQueryData<ReadState[]>(readKey(stamp))![0]).toMatchObject({
+      latest_order: 7,
+    });
+  });
+
+  it("asks for the counts again when the frame counted fewer messages", () => {
+    const client = new QueryClient();
+    const stamp = takeStamp()!;
+    const invalidate = vi.spyOn(client, "invalidateQueries");
+    // The snapshot already saw message 9; the read frame was taken at 8.
+    client.setQueryData<ReadState[]>(readKey(stamp), [
+      {
+        ...row("a", "2026-10-17T10:00:00Z", 1),
+        read_order: 8,
+        membership_at: "2026-10-01T00:00:00Z",
+        latest_order: 9,
+      },
+    ]);
+    applyReadSync(client, stamp, [
+      {
+        ...row("a", "2026-10-17T10:00:01Z", 0),
+        read_order: 8,
+        membership_at: "2026-10-01T00:00:00Z",
+        latest_order: 8,
+      },
+    ]);
+    // Same position with an older count: nothing changes, nothing to ask.
+    expect(client.getQueryData<ReadState[]>(readKey(stamp))![0]).toMatchObject({
+      unread_count: 1,
+    });
+    applyReadSync(client, stamp, [
+      {
+        ...row("a", "2026-10-17T10:00:02Z", 0),
+        read_order: 8.5,
+        membership_at: "2026-10-01T00:00:00Z",
+        latest_order: 8,
+      },
+    ]);
+    expect(client.getQueryData<ReadState[]>(readKey(stamp))![0]).toMatchObject({
+      read_order: 8.5,
+      unread_count: 0,
+    });
+    return vi.waitFor(() => expect(invalidate).toHaveBeenCalled());
+  });
 });

@@ -45,6 +45,12 @@ pub(crate) struct ReadState {
     pub(crate) server_id: Option<Uuid>,
     pub(crate) read_message_id: Option<Uuid>,
     pub(crate) read_at: Option<DateTime<Utc>>,
+    /// The read position and the start of the membership it belongs to:
+    /// clients order positions by these, as the server does.
+    pub(crate) read_order: Option<i64>,
+    pub(crate) membership_at: DateTime<Utc>,
+    /// The newest message of the conversation when the counts were taken.
+    pub(crate) latest_order: Option<i64>,
     pub(crate) unread_count: i64,
     /// Unread messages that mention the user (`<@id>`, `@here` when they were
     /// online, `@everyone`), among the newest 1000 unread ones: the scan
@@ -78,6 +84,8 @@ pub(crate) const UNREAD: &str = "WITH visible AS (
     LEFT JOIN notification_settings cs ON cs.user_id=$1 AND cs.scope_kind='channel' AND cs.scope_id=v.channel_id
     LEFT JOIN notification_settings ss ON ss.user_id=$1 AND ss.scope_kind='server' AND ss.scope_id=v.server_id
 ) SELECT v.channel_id, v.server_id, r.message_id AS read_message_id, r.message_at AS read_at,
+    r.created_order AS read_order, v.joined_at AS membership_at,
+    (SELECT max(m.created_order) FROM messages m WHERE m.channel_id=v.channel_id) AS latest_order,
     (SELECT count(*) FROM (SELECT 1 FROM messages m WHERE m.channel_id=v.channel_id AND m.author_id<>$1
       AND m.created_at>=v.joined_at
       AND (r.created_order IS NULL OR m.created_order>r.created_order) LIMIT 100) bounded) AS unread_count,
@@ -97,7 +105,7 @@ pub(crate) const UNREAD: &str = "WITH visible AS (
   FROM visible v JOIN mutes n ON n.channel_id=v.channel_id
   LEFT JOIN channel_read_state r ON r.user_id=$1 AND r.channel_id=v.channel_id
     AND r.membership_at=v.joined_at
-  WHERE ($2::uuid IS NULL OR v.channel_id=$2)";
+  WHERE ($2::uuid IS NULL OR v.channel_id=$2) AND ($3::uuid[] IS NULL OR v.channel_id=ANY($3))";
 
 async fn unread(
     State(state): State<AppState>,
@@ -107,6 +115,7 @@ async fn unread(
         sqlx::query_as(UNREAD)
             .bind(user.id)
             .bind(None::<Uuid>)
+            .bind(None::<Vec<Uuid>>)
             .fetch_all(&state.db)
             .await?,
     ))
@@ -182,6 +191,7 @@ async fn mark_read(
         let row: ReadState = sqlx::query_as(UNREAD)
             .bind(user.id)
             .bind(channel_id)
+            .bind(None::<Vec<Uuid>>)
             .fetch_one(&mut *tx)
             .await?;
         tx.commit().await?;
@@ -197,6 +207,7 @@ async fn mark_read(
     let row: ReadState = sqlx::query_as(UNREAD)
         .bind(user.id)
         .bind(channel_id)
+        .bind(None::<Vec<Uuid>>)
         .fetch_one(&mut *tx)
         .await?;
     tx.commit().await?;
@@ -220,6 +231,9 @@ async fn announce_read(state: &AppState, user: Uuid, rows: &[ReadState]) {
                 server_id: row.server_id,
                 read_message_id: row.read_message_id,
                 read_at: row.read_at,
+                read_order: row.read_order,
+                membership_at: row.membership_at,
+                latest_order: row.latest_order,
                 unread_count: row.unread_count,
                 mention_count: row.mention_count,
             })
@@ -279,18 +293,37 @@ async fn finish_bulk_read(
     user: Uuid,
     moved: Vec<Uuid>,
 ) -> Result<Json<Vec<ReadState>>, ApiError> {
-    let rows: Vec<ReadState> = sqlx::query_as(UNREAD)
-        .bind(user)
-        .bind(None::<Uuid>)
-        .fetch_all(&mut *tx)
-        .await?;
+    // Only the conversations that moved: the counts of the others did not.
+    let changed: Vec<ReadState> = if moved.is_empty() {
+        Vec::new()
+    } else {
+        sqlx::query_as(UNREAD)
+            .bind(user)
+            .bind(None::<Uuid>)
+            .bind(&moved)
+            .fetch_all(&mut *tx)
+            .await?
+    };
     tx.commit().await?;
-    let changed: Vec<ReadState> = rows
-        .into_iter()
-        .filter(|row| moved.contains(&row.channel_id))
-        .collect();
     announce_read(state, user, &changed).await;
     Ok(Json(changed))
+}
+
+/// Each bulk read writes every conversation in scope and tells every socket
+/// of the account; a click now and then is the use, a loop is not.
+fn bulk_read_limit(state: &AppState, user: Uuid) -> Result<(), ApiError> {
+    state
+        .limiter
+        .hit(
+            "read_bulk",
+            &user.to_string(),
+            20,
+            std::time::Duration::from_secs(60),
+        )
+        .map_err(|retry_after| {
+            state.metrics.rate_limited("read_bulk");
+            ApiError::RateLimited { retry_after }
+        })
 }
 
 /// "Als gelesen markieren" on a server (issue #245): its text channels.
@@ -300,6 +333,7 @@ async fn mark_server_read(
     Id(server_id): Id,
 ) -> Result<Json<Vec<ReadState>>, ApiError> {
     membership::load(&state.db, server_id, user.id).await?;
+    bulk_read_limit(&state, user.id)?;
     let mut tx = state.db.begin().await?;
     membership::lock_server_conn(&mut tx, server_id, false).await?;
     let moved = read_up_to_latest(&mut tx, user.id, Some(server_id), false, true).await?;
@@ -326,6 +360,7 @@ async fn mark_all_read(
     CurrentUser(user): CurrentUser,
     Body(body): Body<ReadAllBody>,
 ) -> Result<Json<Vec<ReadState>>, ApiError> {
+    bulk_read_limit(&state, user.id)?;
     let mut tx = state.db.begin().await?;
     let moved =
         read_up_to_latest(&mut tx, user.id, None, true, body.scope == ReadScope::All).await?;
