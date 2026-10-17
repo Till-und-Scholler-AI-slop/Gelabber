@@ -6,6 +6,7 @@
 //! object URL without a membership check.
 
 pub mod cleanup;
+pub mod sniff;
 pub mod validate;
 
 use std::collections::HashMap;
@@ -13,7 +14,9 @@ use std::time::SystemTime;
 
 use axum::Router;
 use axum::extract::{Query, State};
-use axum::http::header::{CACHE_CONTROL, CONTENT_DISPOSITION, CONTENT_TYPE, VARY};
+use axum::http::header::{
+    CACHE_CONTROL, CONTENT_DISPOSITION, CONTENT_TYPE, VARY, X_CONTENT_TYPE_OPTIONS,
+};
 use axum::http::{HeaderMap, HeaderValue, StatusCode};
 use axum::response::{IntoResponse, Json, Redirect, Response};
 use axum::routing::{get, post};
@@ -31,7 +34,14 @@ use crate::path::Id;
 use crate::state::AppState;
 use crate::storage::{self, ObjectBody, ObjectStore, PUT_TTL, StoreError};
 
-use self::validate::is_image;
+use self::validate::{is_inline, is_text};
+
+/// How long an upload may wait for its message. Up to ten files go up one
+/// after another, so the first one must outlive the whole set on a slow
+/// line, not just its own ten-minute upload link (`PUT_TTL`). The link
+/// expires first; expiry cleanup and its grace for unfinished uploads run
+/// from this later deadline.
+pub const PENDING_TTL: std::time::Duration = std::time::Duration::from_secs(3600);
 
 pub fn router() -> Router<AppState> {
     Router::new()
@@ -158,8 +168,9 @@ async fn presign(
     let quota_day = limits::reserve_upload_quota(&state, &mut tx, user.id, size).await?;
     sqlx::query(
         "INSERT INTO attachments \
-         (id, channel_id, uploader_id, object_key, filename, content_type, size_bytes, quota_day) \
-         VALUES ($1, $2, $3, $4, $5, $6, $7, $8)",
+         (id, channel_id, uploader_id, object_key, filename, content_type, size_bytes, quota_day, \
+          expires_at) \
+         VALUES ($1, $2, $3, $4, $5, $6, $7, $8, now() + make_interval(secs => $9))",
     )
     .bind(id)
     .bind(channel_id)
@@ -169,6 +180,7 @@ async fn presign(
     .bind(&content_type)
     .bind(size)
     .bind(quota_day)
+    .bind(PENDING_TTL.as_secs_f64())
     .execute(&mut *tx)
     .await?;
     tx.commit().await?;
@@ -229,25 +241,22 @@ async fn download(
     }
     messages::messaging_channel(&state.db, row.channel_id, user.id).await?;
 
-    let save = params.download.as_deref() == Some("1");
-    let disposition = content_disposition(
-        if save || !is_image(&row.content_type) {
-            "attachment"
-        } else {
-            "inline"
-        },
-        &row.filename,
-    );
+    // Pictures and media play in the page; everything else is only ever a
+    // download, whichever link asked for it.
+    let save = params.download.as_deref() == Some("1") || !is_inline(&row.content_type);
+    let disposition =
+        content_disposition(if save { "attachment" } else { "inline" }, &row.filename);
+    let served = served_type(&row.content_type);
     // One clock read: the link's signing window and the redirect's cache
     // time must come from the same window.
     let now = SystemTime::now();
     let body = if save {
         state
             .store
-            .download(&row.object_key, &disposition, now)
+            .download(&row.object_key, &disposition, served, now)
             .await
     } else {
-        state.store.get(&row.object_key, now).await
+        state.store.get(&row.object_key, served, now).await
     };
     match body {
         Ok(ObjectBody::Redirect(url)) => {
@@ -269,10 +278,7 @@ async fn download(
             }
             Ok(response)
         }
-        Ok(ObjectBody::Bytes {
-            content_type,
-            bytes,
-        }) => Ok(inline_bytes(&disposition, &content_type, bytes)),
+        Ok(ObjectBody::Bytes { bytes, .. }) => Ok(inline_bytes(&disposition, served, bytes)),
         Err(StoreError::NotFound) => Err(ApiError::NotFound),
         Err(err) => Err(store_internal(err)),
     }
@@ -289,10 +295,22 @@ fn inline_bytes(disposition: &str, content_type: &str, bytes: Vec<u8>) -> Respon
         HeaderValue::from_static("private, max-age=3600"),
     );
     headers.insert(VARY, HeaderValue::from_static("Cookie"));
+    headers.insert(X_CONTENT_TYPE_OPTIONS, HeaderValue::from_static("nosniff"));
     if let Ok(value) = HeaderValue::from_str(disposition) {
         headers.insert(CONTENT_DISPOSITION, value);
     }
     (headers, bytes).into_response()
+}
+
+/// The type a file is served with: the checked type from the database, and
+/// any text as plain text, so a renamed `.html` can never render as a page.
+/// No charset: text may be in any encoding (see `sniff`).
+fn served_type(content_type: &str) -> &str {
+    if is_text(content_type) {
+        "text/plain"
+    } else {
+        content_type
+    }
 }
 
 /// `Content-Disposition` with an ASCII `filename` every browser reads and,
@@ -360,20 +378,117 @@ pub async fn for_message(db: &PgPool, message_id: Uuid) -> Result<Vec<Attachment
     Ok(rows.into_iter().map(Attachment::from).collect())
 }
 
-/// Bind pending uploads to a new message. Each id must belong to this
-/// channel and uploader, still be unbound, and the object must exist
-/// in the store with the claimed size.
+/// One field per position in `attachment_ids`, so the client can name the
+/// file a check rejected (issue #255).
+const AT: [&str; validate::ATTACHMENTS_MAX] = [
+    "attachment_ids.0",
+    "attachment_ids.1",
+    "attachment_ids.2",
+    "attachment_ids.3",
+    "attachment_ids.4",
+    "attachment_ids.5",
+    "attachment_ids.6",
+    "attachment_ids.7",
+    "attachment_ids.8",
+    "attachment_ids.9",
+];
+
+fn invalid() -> ApiError {
+    ApiError::Validation(FieldErrors::from([("attachment_ids", "invalid")]))
+}
+
+/// The store side of binding, asked before the message transaction takes
+/// the channel lock: each object exists with its declared size and its
+/// first bytes are the declared type, and all of them fit one message.
+/// All objects are asked at once; a slow store holds this request only,
+/// never the channel. The database conditions are checked again under the
+/// lock in `bind_to_message`.
+///
+/// The upload link stays valid until its expiry, so the uploader could
+/// still replace the bytes with others of the same signed length after
+/// this check. The served type (always the checked type, text as plain
+/// text) and `nosniff` keep that harmless; this check catches mistakes.
+pub async fn check_uploads(
+    db: &PgPool,
+    store: &ObjectStore,
+    channel_id: Uuid,
+    uploader_id: Uuid,
+    ids: &[Uuid],
+) -> Result<(), ApiError> {
+    if ids.is_empty() {
+        return Ok(());
+    }
+    let rows = sqlx::query_as::<_, PendingRow>(
+        "SELECT id, channel_id, uploader_id, object_key, filename, \
+                content_type, size_bytes, message_id, expires_at <= now() AS expired \
+         FROM attachments WHERE id = ANY($1)",
+    )
+    .bind(ids)
+    .fetch_all(db)
+    .await?;
+    let mut ordered = Vec::with_capacity(ids.len());
+    let mut total: i64 = 0;
+    for id in ids {
+        let row = rows.iter().find(|row| row.id == *id).ok_or_else(invalid)?;
+        if row.channel_id != channel_id
+            || row.uploader_id != uploader_id
+            || row.message_id.is_some()
+            || row.expired
+        {
+            return Err(invalid());
+        }
+        total += row.size_bytes;
+        ordered.push(row);
+    }
+    if total > validate::MESSAGE_SIZE_MAX {
+        return Err(ApiError::Validation(FieldErrors::from([(
+            "attachment_ids",
+            "too_large",
+        )])));
+    }
+    let checks = ordered.iter().enumerate().map(|(index, row)| async move {
+        let meta = match store.head(&row.object_key).await {
+            Ok(meta) => meta,
+            Err(StoreError::NotFound) => return Err(invalid()),
+            Err(err) => return Err(store_internal(err)),
+        };
+        if meta.size != row.size_bytes {
+            // The caller quarantines objects of the wrong size.
+            return Err(ApiError::Validation(FieldErrors::from([(
+                "size", "invalid",
+            )])));
+        }
+        // The declared type must be what the bytes are. A mismatch stays
+        // unbound and goes with the expiry cleanup.
+        let head = match store.prefix(&row.object_key, sniff::PREFIX_LEN).await {
+            Ok(head) => head,
+            Err(StoreError::NotFound) => return Err(invalid()),
+            Err(err) => return Err(store_internal(err)),
+        };
+        if !sniff::matches(&row.content_type, &head) {
+            return Err(ApiError::Validation(FieldErrors::from([(
+                AT[index], "mismatch",
+            )])));
+        }
+        Ok(())
+    });
+    // The first failing file in the order the client sent them.
+    for result in futures_util::future::join_all(checks).await {
+        result?;
+    }
+    Ok(())
+}
+
+/// Bind pending uploads to a new message, under the channel lock. Each id
+/// must still belong to this channel and uploader, be unbound and not
+/// expired. `check_uploads` has already asked the store.
 pub async fn bind_to_message(
     tx: &mut Transaction<'_, Postgres>,
-    store: &ObjectStore,
     message_id: Uuid,
     channel_id: Uuid,
     uploader_id: Uuid,
     ids: &[Uuid],
 ) -> Result<Vec<Attachment>, ApiError> {
-    if ids.is_empty() {
-        return Ok(Vec::new());
-    }
     let mut bound = Vec::with_capacity(ids.len());
     for id in ids {
         let row = sqlx::query_as::<_, PendingRow>(
@@ -384,32 +499,13 @@ pub async fn bind_to_message(
         .bind(id)
         .fetch_optional(&mut **tx)
         .await?
-        .ok_or_else(|| ApiError::Validation(FieldErrors::from([("attachment_ids", "invalid")])))?;
+        .ok_or_else(invalid)?;
         if row.channel_id != channel_id
             || row.uploader_id != uploader_id
             || row.message_id.is_some()
             || row.expired
         {
-            return Err(ApiError::Validation(FieldErrors::from([(
-                "attachment_ids",
-                "invalid",
-            )])));
-        }
-        let meta = match store.head(&row.object_key).await {
-            Ok(meta) => meta,
-            Err(StoreError::NotFound) => {
-                return Err(ApiError::Validation(FieldErrors::from([(
-                    "attachment_ids",
-                    "invalid",
-                )])));
-            }
-            Err(err) => return Err(store_internal(err)),
-        };
-        if meta.size != row.size_bytes {
-            // The caller rolls back message creation before durable quarantine.
-            return Err(ApiError::Validation(FieldErrors::from([(
-                "size", "invalid",
-            )])));
+            return Err(invalid());
         }
         let updated = sqlx::query_as::<_, AttachmentRow>(
             "UPDATE attachments SET message_id = $2, quota_state='consumed' \
@@ -420,7 +516,7 @@ pub async fn bind_to_message(
         .bind(message_id)
         .fetch_optional(&mut **tx)
         .await?
-        .ok_or_else(|| ApiError::Validation(FieldErrors::from([("attachment_ids", "invalid")])))?;
+        .ok_or_else(invalid)?;
         bound.push(updated.into());
     }
     Ok(bound)

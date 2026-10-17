@@ -133,13 +133,14 @@ describe("durable send attempts with controlled HTTP responses", () => {
     const file = new File([new Uint8Array([1, 2, 3])], "test.png", {
       type: "image/png",
     });
-    await sendMessageAttempt("c", author, { content: "image", file }).catch(
-      () => undefined,
-    );
+    await sendMessageAttempt("c", author, {
+      content: "image",
+      files: [file],
+    }).catch(() => undefined);
     const failed = attempts()[0]!;
     expect(failed).toMatchObject({
-      file,
-      uploadedId: "attachment",
+      files: [file],
+      uploadedIds: ["attachment"],
       stage: "bind",
       status: "failed",
     });
@@ -168,6 +169,74 @@ describe("durable send attempts with controlled HTTP responses", () => {
     expect(requests.filter((k) => k.startsWith("PUT"))).toHaveLength(1);
     expect(writes).toBe(2);
   });
+  it("binds the uploads of a draft taken back from a failed send", async () => {
+    let presigns = 0;
+    let writes = 0;
+    routes((key) => {
+      if (key.endsWith("/attachments"))
+        return json(200, {
+          id: `attachment-${++presigns}`,
+          upload_url: "https://objects.test/put",
+          headers: {},
+        });
+      if (key.startsWith("PUT")) return new Response(null, { status: 200 });
+      return ++writes === 1
+        ? json(429, { error: "rate_limited" })
+        : json(200, row("server"));
+    });
+    await login(user.email, "password");
+    const files = [new File(["a"], "a.png", { type: "image/png" })];
+    await sendMessageAttempt("c", author, { content: "", files }).catch(
+      () => undefined,
+    );
+    discardAttempt(attempts()[0]!.id);
+    // "Entwurf übernehmen" keeps the same File objects.
+    await sendMessageAttempt("c", author, { content: "neu", files });
+    expect(presigns).toBe(1);
+    expect(requests.filter((k) => k.startsWith("PUT"))).toHaveLength(1);
+    // Bound now: attaching the same file again uploads it again.
+    await sendMessageAttempt("c", author, { content: "nochmal", files });
+    expect(presigns).toBe(2);
+  });
+
+  it("uploads only the turned-down file again, naming it", async () => {
+    let presigns = 0;
+    let writes = 0;
+    routes((key) => {
+      if (key.endsWith("/attachments"))
+        return json(200, {
+          id: `attachment-${++presigns}`,
+          upload_url: "https://objects.test/put",
+          headers: {},
+        });
+      if (key.startsWith("PUT")) return new Response(null, { status: 200 });
+      return ++writes === 1
+        ? json(422, {
+            error: "validation_failed",
+            fields: { "attachment_ids.1": "mismatch" },
+          })
+        : json(200, row("server"));
+    });
+    await login(user.email, "password");
+    const files = [
+      new File(["a"], "a.png", { type: "image/png" }),
+      new File(["b"], "liste.csv", { type: "text/csv" }),
+    ];
+    await sendMessageAttempt("c", author, { content: "", files }).catch(
+      () => undefined,
+    );
+    const failed = attempts()[0]!;
+    expect(failed.status).toBe("failed");
+    expect(failed.uploadedIds).toEqual([]);
+    expect(failed.error).toContain("liste.csv: ");
+    await sendMessageAttempt("c", author, {
+      content: "",
+      attemptId: failed.id,
+    });
+    // Only the rejected file goes up again; a.png binds as it arrived.
+    expect(presigns).toBe(3);
+    expect(requests.filter((k) => k.startsWith("PUT"))).toHaveLength(3);
+  });
   it.each(["presign", "upload"])(
     "stops after account release during held %s",
     async (stage) => {
@@ -186,7 +255,7 @@ describe("durable send attempts with controlled HTTP responses", () => {
       await login(user.email, "password");
       const done = sendMessageAttempt("c", author, {
         content: "file",
-        file: new File(["a"], "a.png", { type: "image/png" }),
+        files: [new File(["a"], "a.png", { type: "image/png" })],
       }).catch((error: unknown) => error);
       await vi.waitFor(() => expect(attempts()[0]?.stage).toBe(stage));
       const controller = attempts()[0]!.controller;

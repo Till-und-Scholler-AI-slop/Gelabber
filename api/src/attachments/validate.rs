@@ -4,11 +4,17 @@
 pub use crate::auth::validate::finish;
 use crate::error::FieldErrors;
 
-/// Locked for v1: the ticket named 8–25 MB; 25 MiB is the ceiling.
+/// Per file: the ticket named 8–25 MB; 25 MiB is the ceiling.
 pub const SIZE_MAX: i64 = 25 * 1024 * 1024;
 pub const FILENAME_MAX: usize = 255;
-pub const ATTACHMENTS_MAX: usize = 1;
+/// Files per message (issue #255). Constants, not configuration: the web
+/// client mirrors them in `rules.ts` and would otherwise disagree.
+pub const ATTACHMENTS_MAX: usize = 10;
+/// All files of one message together.
+pub const MESSAGE_SIZE_MAX: i64 = 100 * 1024 * 1024;
 
+/// Source code and other plain text is stored as `text/plain`; the file
+/// name keeps its extension. `text/html` and SVG are never accepted.
 pub const ALLOWED_TYPES: &[&str] = &[
     "image/jpeg",
     "image/png",
@@ -16,17 +22,58 @@ pub const ALLOWED_TYPES: &[&str] = &[
     "image/webp",
     "application/pdf",
     "text/plain",
+    "text/markdown",
+    "text/csv",
+    "application/json",
     "application/zip",
+    "application/gzip",
+    "application/x-tar",
+    "application/x-7z-compressed",
     "audio/mpeg",
     "audio/wav",
+    "audio/ogg",
+    "audio/flac",
+    "audio/mp4",
+    "audio/aac",
+    "audio/webm",
     "video/mp4",
+    "video/webm",
+    "video/quicktime",
 ];
+
+/// Names browsers and systems use for an allowed type.
+fn canonical(value: &str) -> &str {
+    match value {
+        "image/jpg" | "image/pjpeg" => "image/jpeg",
+        "audio/mp3" | "audio/x-mpeg" => "audio/mpeg",
+        "audio/x-wav" | "audio/wave" | "audio/vnd.wave" => "audio/wav",
+        "audio/x-flac" => "audio/flac",
+        "audio/x-m4a" | "audio/m4a" => "audio/mp4",
+        "audio/x-aac" => "audio/aac",
+        "application/x-zip-compressed" | "application/x-zip" => "application/zip",
+        "application/x-gzip" | "application/x-tgz" => "application/gzip",
+        "text/x-markdown" => "text/markdown",
+        other => other,
+    }
+}
 
 pub fn is_image(content_type: &str) -> bool {
     matches!(
         content_type,
         "image/jpeg" | "image/png" | "image/gif" | "image/webp"
     )
+}
+
+/// Shown in the page rather than saved: pictures and the media players.
+pub fn is_inline(content_type: &str) -> bool {
+    is_image(content_type)
+        || content_type.starts_with("video/")
+        || content_type.starts_with("audio/")
+}
+
+/// Text types are served as plain text, whatever they hold.
+pub fn is_text(content_type: &str) -> bool {
+    content_type.starts_with("text/") || content_type == "application/json"
 }
 
 pub fn filename(raw: &str, errors: &mut FieldErrors) -> Option<String> {
@@ -54,11 +101,12 @@ pub fn content_type(raw: &str, errors: &mut FieldErrors) -> Option<String> {
         errors.insert("content_type", "required");
         return None;
     }
-    if !ALLOWED_TYPES.contains(&value.as_str()) {
+    let value = canonical(&value);
+    if !ALLOWED_TYPES.contains(&value) {
         errors.insert("content_type", "invalid");
         return None;
     }
-    Some(value)
+    Some(value.to_owned())
 }
 
 pub fn size(raw: i64, errors: &mut FieldErrors) -> Option<i64> {
@@ -141,6 +189,17 @@ mod tests {
             run(|e| content_type("  ", e)).1.get("content_type"),
             Some(&"required")
         );
+        assert_eq!(
+            run(|e| content_type("audio/x-m4a", e)).0.as_deref(),
+            Some("audio/mp4")
+        );
+        for never in ["text/html", "image/svg+xml", "application/xhtml+xml"] {
+            assert_eq!(
+                run(|e| content_type(never, e)).1.get("content_type"),
+                Some(&"invalid"),
+                "{never}"
+            );
+        }
     }
 
     #[test]
@@ -163,7 +222,12 @@ mod tests {
             Some(&[a][..])
         );
         assert_eq!(
-            run(|e| attachment_ids(&[a, b], e)).1.get("attachment_ids"),
+            run(|e| attachment_ids(&[a, b], e)).0.map(|ids| ids.len()),
+            Some(2)
+        );
+        let eleven: Vec<Uuid> = (0..=ATTACHMENTS_MAX as u128).map(Uuid::from_u128).collect();
+        assert_eq!(
+            run(|e| attachment_ids(&eleven, e)).1.get("attachment_ids"),
             Some(&"too_long")
         );
         assert_eq!(
