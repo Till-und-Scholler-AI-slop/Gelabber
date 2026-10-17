@@ -275,11 +275,14 @@ describe("preview URLs", () => {
   });
 
   it("stays fast on many unclosed marks", () => {
+    // 20k characters take ~5 ms here and took over a second while the parser
+    // was quadratic, so the generous limit still catches a regression on a
+    // slow runner.
     for (const unit of ["*a ", "_a "]) {
-      const src = unit.repeat(Math.floor(2000 / unit.length));
+      const src = unit.repeat(Math.floor(20000 / unit.length));
       const start = performance.now();
       expect(parseInline(src)).toEqual([text(src)]);
-      expect(performance.now() - start, unit).toBeLessThan(50);
+      expect(performance.now() - start, unit).toBeLessThan(500);
     }
   });
 });
