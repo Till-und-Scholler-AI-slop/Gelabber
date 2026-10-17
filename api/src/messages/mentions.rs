@@ -36,10 +36,14 @@ pub struct Parsed {
 /// What an earlier version of an edited message already reached. An edit
 /// that keeps such a ping does not spend the limit again: fixing a typo in
 /// an `@everyone` message must not drop the ping.
-#[derive(Debug, Default, Clone, Copy, PartialEq, Eq)]
+#[derive(Debug, Default, Clone, PartialEq, Eq)]
 pub struct Granted {
     pub everyone: bool,
     pub here: bool,
+    /// Whom an earlier `@here` reached: the mentions beyond the named users.
+    /// A kept `@here` reaches them again instead of whoever is online at
+    /// the edit, so editing cannot ping more people.
+    pub here_users: Vec<Uuid>,
 }
 
 impl Granted {
@@ -47,10 +51,19 @@ impl Granted {
     /// mentions beyond the users the text names.
     pub fn of(content: &str, mentions_everyone: bool, mentions: &[Uuid]) -> Self {
         let parsed = parse(content);
+        let here_users: Vec<Uuid> = if parsed.here {
+            mentions
+                .iter()
+                .filter(|id| !parsed.users.contains(id))
+                .copied()
+                .collect()
+        } else {
+            Vec::new()
+        };
         Self {
             everyone: mentions_everyone,
-            here: mentions_everyone
-                || (parsed.here && mentions.iter().any(|id| !parsed.users.contains(id))),
+            here: mentions_everyone || !here_users.is_empty(),
+            here_users,
         }
     }
 }
@@ -183,7 +196,10 @@ pub(crate) async fn resolve(
             let everyone = crowd && parsed.everyone;
             let here = crowd && parsed.here && !parsed.everyone;
             let mut wanted = parsed.users;
-            if here {
+            if here && !granted.here_users.is_empty() {
+                // An edit keeping `@here`: the same people as before.
+                wanted.extend(granted.here_users.iter().copied());
+            } else if here {
                 // Best effort: without Redis `@here` reaches nobody, the
                 // message itself still goes out.
                 match state.gateway.presence_snapshot(member.server.id).await {
@@ -234,14 +250,16 @@ mod tests {
             Granted::of(&named, false, &ids(&[A, B])),
             Granted {
                 everyone: false,
-                here: true
+                here: true,
+                here_users: ids(&[B]),
             }
         );
         assert_eq!(
             Granted::of("@everyone", true, &[]),
             Granted {
                 everyone: true,
-                here: true
+                here: true,
+                here_users: Vec::new(),
             }
         );
     }

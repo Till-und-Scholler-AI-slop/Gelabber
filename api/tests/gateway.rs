@@ -1482,3 +1482,51 @@ async fn notification_settings_go_to_the_own_sockets_only(pool: PgPool) {
         .is_err()
     );
 }
+
+/// An edit that keeps `@here` reaches whom it reached before, not whoever
+/// is online at the edit: editing must not ping new people.
+#[sqlx::test]
+async fn an_edit_keeping_here_keeps_whom_it_reached(pool: PgPool) {
+    let (mut owner, mut member) = two_users(pool.clone()).await;
+    let server = create_server(&mut owner, "Here").await;
+    let (server_id, channel_id) = ids(&server);
+    join_member(&mut owner, &mut member, &server_id.to_string()).await;
+    let (addr, _) = common::serve_ws(pool).await;
+    let mut owner_ws = connect(addr, &session_cookie(&owner), None).await;
+    send_json(&mut owner_ws, json!({ "op": "s", "s": server_id })).await;
+    recv_until(&mut owner_ws, |f| f["op"] == "ok").await;
+    let mut member_ws = connect(addr, &session_cookie(&member), None).await;
+    send_json(&mut member_ws, json!({ "op": "s", "s": server_id })).await;
+    recv_until(&mut member_ws, |f| f["op"] == "ok").await;
+    recv_until(&mut owner_ws, |f| {
+        f["op"] == "p" && f["u"] == member.user_id() && f["st"] == "o"
+    })
+    .await;
+
+    let sent = owner
+        .send(
+            Method::POST,
+            &format!("/api/channels/{channel_id}/messages"),
+            Some(json!({ "content": "@here kurz?" })),
+        )
+        .await;
+    assert_eq!(sent.status, StatusCode::CREATED, "{}", sent.body);
+    assert_eq!(sent.body["mentions"], json!([member.user_id()]));
+
+    // The member goes offline; the kept `@here` still names them, and the
+    // edit takes no new presence snapshot.
+    member_ws.close(None).await.ok();
+    recv_until(&mut owner_ws, |f| {
+        f["op"] == "p" && f["u"] == member.user_id() && f["st"] == "x"
+    })
+    .await;
+    let edited = owner
+        .send(
+            Method::PATCH,
+            &format!("/api/messages/{}", sent.body["id"].as_str().unwrap()),
+            Some(json!({ "content": "@here kurz? (Tippfehler)" })),
+        )
+        .await;
+    assert_eq!(edited.status, StatusCode::OK, "{}", edited.body);
+    assert_eq!(edited.body["mentions"], json!([member.user_id()]));
+}
