@@ -13,6 +13,8 @@ export type Attachment = {
   size: number;
   /** Client-only: local object URL while the PUT is still in flight. */
   preview_url?: string;
+  /** Client-only: where this file of an unsent message stands. */
+  upload?: "waiting" | "uploading" | "done";
 };
 
 export type Message = {

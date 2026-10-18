@@ -132,6 +132,14 @@ If you cannot wait, do step 4 right after step 3: browsers that were already ope
 
 A path prefix (`https://example.com/s3/…`) does not work: presigns sign host and path.
 
+## Attachments
+
+A message carries up to 10 files, at most 25 MiB each and 100 MiB together. Uploads count against a per-user daily quota, `API_UPLOAD_QUOTA_BYTES_PER_DAY` (default 1 GiB, `0` turns it off):
+
+- The size is reserved when the upload is signed.
+- An upload that never joins a message waits up to one hour for it (ten files go up one after another on slow lines), plus 15 minutes for an unfinished transfer. Only then is it removed: bytes that never arrived go back to the quota, bytes that did stay counted.
+- So a user who abandons a large set can see "quota exceeded" for up to 75 minutes afterwards.
+
 ## Link previews
 
 Links in messages get a preview card (title, description, image; YouTube with a thumbnail and a player that loads only on click). The API fetches the pages itself, in the background after sending: up to three links per message, only public addresses on ports 80 and 443, every redirect checked again, 5 s and 1 MB per page, 5 MB per image. Private, loopback, link-local, CGNAT and multicast addresses, single-label and local names (`postgres`, `minio`, `*.internal`, …) and the hosts of the database, Redis, MinIO and TURN settings are refused; add more with `API_LINK_PREVIEW_DENY_HOSTS`. Images are copied into MinIO under `previews/` and served by the API, so browsers never contact the linked site. At most 8 s per message; a site that times out is skipped for 10 minutes. Results are cached for a day, and a message keeps the card it got even when the page changes later; unused previews are dropped after a week. Links to the instance itself get no preview.

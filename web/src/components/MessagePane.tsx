@@ -7,8 +7,8 @@ import { anchoredScrollTop } from "./scrollAnchor.ts";
 import { useVirtualizer } from "@tanstack/react-virtual";
 import {
   createContext,
-  useCallback,
   useContext,
+  useCallback,
   useEffect,
   useEffectEvent,
   useLayoutEffect,
@@ -59,20 +59,23 @@ import {
   useMessages,
   useSendMessage,
 } from "../messages/queries.ts";
-import { attachmentDownloadUrl, attachmentUrl } from "../messages/api.ts";
 import {
   carriesFiles,
-  droppedFile,
-  pastedFile,
+  droppedFiles,
+  pastedFiles,
 } from "../messages/clipboard.ts";
 import {
-  ALLOWED_TYPES,
+  ACCEPT,
   CONTENT_MAX,
+  formatSize,
+  isAudioType,
   isImageType,
+  isVideoType,
   validateAttachment,
+  validateAttachmentSet,
   validateContent,
 } from "../messages/rules.ts";
-import type { Attachment, Gif, Message, Reply } from "../messages/types.ts";
+import type { Gif, Message, Reply } from "../messages/types.ts";
 import { asAttachmentList, asGif, asReply } from "../messages/types.ts";
 import { gifBox, gifLabel, type GifPick } from "../gifs/api.ts";
 import { useGifStatus } from "../gifs/queries.ts";
@@ -85,7 +88,6 @@ import { confirmAction } from "./confirm.ts";
 import { Modal } from "./Modal.tsx";
 import { ImageLightbox, type LightboxImage } from "./ImageLightbox.tsx";
 import { LinkPreviews } from "./LinkPreviews.tsx";
-import { isPlainClick } from "./plainClick.ts";
 import {
   ArrowDownIcon,
   CloseIcon,
@@ -97,11 +99,10 @@ import {
   SmileIcon,
   TrashIcon,
 } from "./Icons.tsx";
+import { AttachmentList } from "./Attachments.tsx";
+import { OpenImage } from "./openImage.ts";
 import "./chat.css";
 
-// Opens the one lightbox of the pane. It lives outside the virtual rows: a
-// row scrolled out of the overscan unmounts, and would close it with it.
-const OpenImage = createContext<(image: LightboxImage) => void>(() => {});
 // Shows an answered message: in the list when it is loaded, else in its
 // context from the server.
 const JumpTo = createContext<(id: string) => void>(() => {});
@@ -515,12 +516,26 @@ function MessageList({
     getScrollElement: () => scrollRef.current,
     estimateSize: (index) => {
       const message = items[index]!;
-      const image = (message.attachments ?? []).some((a) =>
-        isImageType(a.content_type),
+      const files = asAttachmentList(message.attachments);
+      const images = files.filter((a) => isImageType(a.content_type)).length;
+      const image = images > 0;
+      // Players and file rows below the pictures.
+      const extra = files.reduce(
+        (sum, a) =>
+          sum +
+          (isVideoType(a.content_type)
+            ? 280
+            : isAudioType(a.content_type)
+              ? 84
+              : isImageType(a.content_type)
+                ? 0
+                : 44),
+        0,
       );
       const breaks =
         (dayBreak(items[index - 1], message) ? 40 : 0) +
         (index === newIndex ? 28 : 0) +
+        extra +
         (message.reply ? 22 : 0);
       const gif = asGif(message.gif);
       if (gif)
@@ -529,9 +544,14 @@ function MessageList({
           gifBox(gif).height +
           (isContinued(items[index - 1], message) ? 16 : 60)
         );
-      // The image box is a fixed 240 px (chat.css), plus header and gaps.
-      if (image)
-        return breaks + (isContinued(items[index - 1], message) ? 256 : 300);
+      // The image box is a fixed 240 px (chat.css), several pictures a grid
+      // of 160 px rows, plus header and gaps.
+      if (image) {
+        const box = images > 1 ? Math.ceil(images / 2) * 164 : 240;
+        return (
+          breaks + box + (isContinued(items[index - 1], message) ? 16 : 60)
+        );
+      }
       return breaks + (isContinued(items[index - 1], message) ? 28 : 72);
     },
     getItemKey: (index) => items[index]?.id ?? index,
@@ -1164,14 +1184,14 @@ function Composer({
     channelId,
     author ?? { id: "", name: "", avatar_url: null },
   );
-  const [savedDraft, updateDraft, preview] = useChatDraft(
+  const [savedDraft, updateDraft, previews] = useChatDraft(
     author?.id ?? "",
     channelId,
   );
   const draft = savedDraft.text;
-  const file = savedDraft.file;
+  const files = savedDraft.files;
   const setDraft = (text: string) => updateDraft({ text });
-  const setFile = (file: File | null) => updateDraft({ file });
+  const setFiles = (files: File[]) => updateDraft({ files });
   const [fileError, setFileError] = useState<string | null>(null);
   const [emojiOpen, setEmojiOpen] = useState(false);
   const [gifOpen, setGifOpen] = useState(false);
@@ -1239,28 +1259,48 @@ function Composer({
     !canSend ||
     !author ||
     Boolean(error) ||
-    Boolean(file && !canSendFiles) ||
-    (emptyText && !file);
+    Boolean(files.length > 0 && !canSendFiles) ||
+    (emptyText && files.length === 0);
 
-  const pickFile = (next: File | null) => {
+  /** Add files to `base` (the composer's files): invalid ones are left
+   *  out, and so is whatever would go over the message's limits. One note
+   *  names every file left out. */
+  const addFiles = (next: File[], base: File[] = files) => {
     setFileError(null);
-    if (!next) {
-      setFile(null);
-      return;
+    let kept = [...base];
+    const notes: string[] = [];
+    const over = new Map<string, string[]>();
+    for (const candidate of next) {
+      const invalid = validateAttachment(candidate);
+      if (invalid) {
+        notes.push(
+          `${candidate.name}: ${fieldMessage(invalid.field, invalid.code)}`,
+        );
+        continue;
+      }
+      // A smaller file further on may still fit under the size limit.
+      const limit = validateAttachmentSet([...kept, candidate]);
+      if (limit) {
+        const reason = fieldMessage(limit.field, limit.code);
+        over.set(reason, [...(over.get(reason) ?? []), candidate.name]);
+        continue;
+      }
+      kept = [...kept, candidate];
     }
-    const invalid = validateAttachment(next);
-    if (invalid) {
-      setFile(null);
-      setFileError(fieldMessage(invalid.field, invalid.code));
-      return;
-    }
-    setFile(next);
+    for (const [reason, names] of over)
+      notes.push(`Nicht angehängt: ${names.join(", ")}. ${reason}`);
+    if (notes.length > 0) setFileError(notes.join(" "));
+    setFiles(kept);
+  };
+  const removeFile = (index: number) => {
+    setFileError(null);
+    setFiles(files.filter((_, i) => i !== index));
   };
 
   // Files dropped anywhere on the conversation attach like the paperclip.
   const [dropping, setDropping] = useState(false);
-  const attachDropped = useEffectEvent((next: File) => {
-    pickFile(next);
+  const attachDropped = useEffectEvent((next: File[]) => {
+    addFiles(next);
     composerInput.current?.focus();
   });
   useEffect(() => {
@@ -1293,8 +1333,8 @@ function Composer({
       event.preventDefault();
       depth = 0;
       show(false);
-      const file = droppedFile(event.dataTransfer);
-      if (file) attachDropped(file);
+      const dropped = droppedFiles(event.dataTransfer);
+      if (dropped.length > 0) attachDropped(dropped);
     };
     pane.addEventListener("dragenter", enter);
     pane.addEventListener("dragover", over);
@@ -1313,15 +1353,10 @@ function Composer({
     event?.preventDefault();
     if (disabled) return;
     const text = draft;
-    const attached = file;
-    send.mutate({
-      content: text,
-      file: attached ?? undefined,
-      replyTo: replyTarget,
-    });
+    send.mutate({ content: text, files, replyTo: replyTarget });
     setReplyTarget(channelId, null);
-    setDraft("");
-    pickFile(null);
+    updateDraft({ text: "", files: [] });
+    setFileError(null);
     onDraftStop?.();
     if (keepKeyboard.current) composerInput.current?.focus();
     keepKeyboard.current = false;
@@ -1392,12 +1427,14 @@ function Composer({
             <p className="lr-send-failure-content">
               {attempt.gif ? gifLabel(attempt.gif.gif) : attempt.content}
             </p>
-            {attempt.file ? <p>{attempt.file.name}</p> : null}
+            {attempt.files.length > 0 ? (
+              <p>{attempt.files.map((file) => file.name).join(", ")}</p>
+            ) : null}
             <div className="lr-send-failure-actions">
               {attempt.status === "failed" ? (
                 <button
                   type="button"
-                  disabled={Boolean(attempt.file && !canSendFiles)}
+                  disabled={attempt.files.length > 0 && !canSendFiles}
                   onClick={() =>
                     send.mutate({
                       content: attempt.content,
@@ -1413,7 +1450,9 @@ function Composer({
                   type="button"
                   onClick={() => {
                     setDraft(attempt.content);
-                    pickFile(attempt.file ?? null);
+                    // Replaces what the composer holds: `files` here is
+                    // still this render's list.
+                    addFiles(attempt.files, []);
                     discardAttempt(attempt.id);
                     composerInput.current?.focus();
                   }}
@@ -1457,22 +1496,32 @@ function Composer({
             Loslassen zum Anhängen
           </p>
         ) : null}
-        {file ? (
-          <div className="lr-composer-attachment">
-            {preview ? <img src={preview} alt="" /> : null}
-            <div>
-              <p>{file.name}</p>
-              <p>{(file.size / 1024).toFixed(0)} KB</p>
-            </div>
-            <button
-              type="button"
-              onClick={() => pickFile(null)}
-              aria-label="Anhang entfernen"
-              title="Anhang entfernen"
-            >
-              <CloseIcon size={14} />
-            </button>
-          </div>
+        {files.length > 0 ? (
+          <ul className="lr-composer-attachments" aria-label="Anhänge">
+            {files.map((attached, index) => {
+              const preview = previews.get(attached);
+              return (
+                <li
+                  key={`${index}:${attached.name}:${attached.size}:${attached.lastModified}`}
+                  className="lr-composer-attachment"
+                >
+                  {preview ? <img src={preview} alt="" /> : null}
+                  <div>
+                    <p>{attached.name}</p>
+                    <p>{formatSize(attached.size)}</p>
+                  </div>
+                  <button
+                    type="button"
+                    onClick={() => removeFile(index)}
+                    aria-label={`${attached.name} entfernen`}
+                    title="Anhang entfernen"
+                  >
+                    <CloseIcon size={14} />
+                  </button>
+                </li>
+              );
+            })}
+          </ul>
         ) : null}
         <div className="lr-composer-row">
           {canSendFiles ? (
@@ -1480,13 +1529,14 @@ function Composer({
               <input
                 ref={fileInput}
                 type="file"
-                accept={ALLOWED_TYPES.join(",")}
+                accept={ACCEPT}
+                multiple
                 className="sr-only"
                 onChange={(event) => {
-                  const selected = event.target.files?.[0] ?? null;
-                  pickFile(selected);
+                  const selected = Array.from(event.target.files ?? []);
+                  addFiles(selected);
                   event.target.value = "";
-                  if (selected) composerInput.current?.focus();
+                  if (selected.length > 0) composerInput.current?.focus();
                 }}
               />
               <button
@@ -1512,10 +1562,10 @@ function Composer({
             onKeyDown={onKeyDown}
             onPaste={(event) => {
               if (!canSendFiles) return;
-              const pasted = pastedFile(event.clipboardData);
-              if (!pasted) return;
+              const pasted = pastedFiles(event.clipboardData);
+              if (pasted.length === 0) return;
               event.preventDefault();
-              pickFile(pasted);
+              addFiles(pasted);
             }}
             rows={1}
             placeholder={`Nachricht an ${mention}${channelName}`}
@@ -1638,66 +1688,6 @@ function ReplyHeader({ reply }: { reply: Reply }) {
 
 function GifMessage({ gif }: { gif: Gif }) {
   return <GifMessageButton gif={gif} reduced={useReducedMotion()} />;
-}
-
-function AttachmentList({ attachments }: { attachments: Attachment[] }) {
-  const openImage = useContext(OpenImage);
-  const files = asAttachmentList(attachments);
-  if (files.length === 0) return null;
-  return (
-    <div className="lr-attachments">
-      {files.map((attachment) => {
-        const src = attachment.preview_url ?? attachmentUrl(attachment.id);
-        if (isImageType(attachment.content_type)) {
-          return (
-            <a
-              key={attachment.id}
-              href={src}
-              // The link stays for "open in new tab"; a click shows the
-              // picture here, also where no new tab exists (desktop app,
-              // installed web app).
-              onClick={(event) => {
-                if (!isPlainClick(event)) return;
-                event.preventDefault();
-                openImage({
-                  id: attachment.id,
-                  src,
-                  filename: attachment.filename,
-                  download: attachmentDownloadUrl(attachment.id),
-                });
-              }}
-              aria-label={`${attachment.filename} vergrößern`}
-              className="lr-attachment-image"
-            >
-              {/* A fixed-height box: the row has its final height before the
-                  picture arrives, so loading never moves the list. */}
-              <img
-                src={src}
-                alt={attachment.filename}
-                decoding="async"
-                loading="lazy"
-              />
-            </a>
-          );
-        }
-        return (
-          <a
-            key={attachment.id}
-            // Saved, never opened: an installed app has no back button to
-            // return from a file, and after MinIO's redirect the browser
-            // ignores `download` and would leave the app (and a call).
-            href={attachmentDownloadUrl(attachment.id)}
-            download={attachment.filename}
-            className="lr-attachment-file"
-          >
-            <PaperclipIcon size={15} />
-            <span>{attachment.filename}</span>
-            <span>{(attachment.size / 1024).toFixed(0)} KB</span>
-          </a>
-        );
-      })}
-    </div>
-  );
 }
 
 function dayKey(iso: string): string {

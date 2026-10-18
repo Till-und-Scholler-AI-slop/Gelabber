@@ -16,27 +16,43 @@ const EXT: Record<string, string> = {
   "image/webp": "webp",
 };
 
+/** The pasted files, none when the paste carries text. */
+export function pastedFiles(
+  data: ClipboardFiles | null | undefined,
+  now = new Date(),
+): File[] {
+  if (!data || data.getData?.("text/plain").trim()) return [];
+  let files = Array.from(data.files ?? []);
+  if (files.length === 0)
+    files = Array.from(data.items ?? [])
+      .filter((item) => item.kind === "file")
+      .map((item) => item.getAsFile())
+      .filter((file): file is File => file !== null);
+  return files.map((file) => named(file, now));
+}
+
 /** The first pasted file, or null when the paste carries text. */
 export function pastedFile(
   data: ClipboardFiles | null | undefined,
   now = new Date(),
 ): File | null {
-  if (!data || data.getData?.("text/plain").trim()) return null;
-  let file: File | null = data.files?.[0] ?? null;
-  for (let i = 0; !file && data.items && i < data.items.length; i++) {
-    const item = data.items[i];
-    if (item?.kind === "file") file = item.getAsFile();
-  }
-  return file && named(file, now);
+  return pastedFiles(data, now)[0] ?? null;
 }
 
-/** The first dropped file; a drag of text or links carries none. */
+/** The dropped files; a drag of text or links carries none. */
+export function droppedFiles(
+  data: ClipboardFiles | null | undefined,
+  now = new Date(),
+): File[] {
+  return Array.from(data?.files ?? []).map((file) => named(file, now));
+}
+
+/** The first dropped file. */
 export function droppedFile(
   data: ClipboardFiles | null | undefined,
   now = new Date(),
 ): File | null {
-  const file = data?.files?.[0] ?? null;
-  return file && named(file, now);
+  return droppedFiles(data, now)[0] ?? null;
 }
 
 /** Whether a drag carries files, readable before the drop. */

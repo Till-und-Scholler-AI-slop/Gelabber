@@ -321,7 +321,13 @@ export function fieldMessage(field: string, code: FieldCode): string {
     case "too_long":
       return field === "size"
         ? "Die Datei ist zu groß (max. 25 MB)."
-        : `${label} ist zu lang.`;
+        : field === "attachment_ids"
+          ? "Höchstens 10 Dateien pro Nachricht."
+          : `${label} ist zu lang.`;
+    case "too_large":
+      return "Alle Dateien zusammen sind zu groß (max. 100 MB).";
+    case "mismatch":
+      return "Der Inhalt der Datei passt nicht zu ihrem Typ.";
     case "taken":
       return "Diese E-Mail-Adresse ist schon registriert.";
     case "wrong":

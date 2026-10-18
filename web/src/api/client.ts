@@ -15,7 +15,9 @@ export type FieldCode =
   | "stale"
   | "exclusive"
   | "unavailable"
-  | "not_editable";
+  | "not_editable"
+  | "too_large"
+  | "mismatch";
 
 export type FieldErrors = Partial<Record<string, FieldCode>>;
 
