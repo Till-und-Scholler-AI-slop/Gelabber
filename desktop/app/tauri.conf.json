@@ -15,5 +15,14 @@
     "active": false,
     "publisher": "Gelabber",
     "icon": ["icons/icon.png", "icons/icon.ico"]
+  },
+  "plugins": {
+    "updater": {
+      "pubkey": "",
+      "requireSignedVersion": true,
+      "windows": {
+        "installMode": "passive"
+      }
+    }
   }
 }
