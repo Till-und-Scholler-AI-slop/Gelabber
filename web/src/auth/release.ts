@@ -6,6 +6,7 @@ import { bindThemeAccount } from "../theme/account.ts";
 import { clearToasts } from "../components/toasts.ts";
 import { clearMessageToasts } from "../messages/toasts.ts";
 import { resetPendingMessages } from "../messages/pending.ts";
+import { resetReplyTargets } from "../messages/replyTarget.ts";
 import { dropForeignUserQueries, setQueryScope } from "../queryClient.ts";
 import { stopCallSounds } from "../voice/callSounds.ts";
 import { useMediaSettings } from "../voice/settings.ts";
@@ -34,6 +35,7 @@ export function releaseUserScope(nextUserId: string | null): void {
   getGateway().resetSession();
   dropForeignUserQueries();
   resetPendingMessages();
+  resetReplyTargets();
   clearMessageToasts();
   clearToasts();
   resetLiveStores();

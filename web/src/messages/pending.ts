@@ -6,7 +6,7 @@ import { create } from "zustand";
 import type { ScopeStamp } from "../auth/scope.ts";
 import type { GifPick } from "../gifs/api.ts";
 
-import { asAttachmentList, type Message } from "./types.ts";
+import { asAttachmentList, type Message, type Reply } from "./types.ts";
 
 /** Stable empty list so a Zustand selector does not return a new `[]` every
  *  time a channel has no in-flight send (that looped MessagePane on mount). */
@@ -20,6 +20,8 @@ export type SendAttempt = {
   content: string;
   file?: File;
   gif?: GifPick;
+  /** The answered message, kept for a retry. */
+  reply?: Reply;
   status: "sending" | "failed" | "uncertain";
   stage: SendStage;
   error?: string;
