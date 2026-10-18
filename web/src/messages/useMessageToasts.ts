@@ -9,7 +9,10 @@ import { dmKeys } from "../dms/queries.ts";
 import type { DirectMessage } from "../dms/types.ts";
 import { serverKeys } from "../servers/queries.ts";
 import type { ServerDetail } from "../servers/types.ts";
+import { playMessageSound } from "../voice/callSounds.ts";
 import { useMediaSettings } from "../voice/settings.ts";
+import { useVoice } from "../voice/session.ts";
+import { useInstallation } from "../pwa/install.ts";
 import { getGateway } from "../ws/client.ts";
 import type { ChatEvent } from "../ws/protocol.ts";
 import {
@@ -25,6 +28,7 @@ import {
   messageNotificationDecision,
   previewText,
 } from "./notify.ts";
+import { focusDesktopWindow, requestDesktopAttention } from "./desktopShell.ts";
 import { useMessageToasts } from "./toasts.ts";
 import type { Message } from "./types.ts";
 import { asAttachmentList, asGif } from "./types.ts";
@@ -95,6 +99,9 @@ export function useMessageToastsBridge(): void {
     generation: number;
     first: ReturnType<typeof createNotificationDedupe>;
     pacing: ReturnType<typeof createNotificationPacing>;
+    /** One sound, one flash for a burst across conversations. */
+    sound: ReturnType<typeof createNotificationPacing>;
+    attention: ReturnType<typeof createNotificationPacing>;
   } | null>(null);
 
   useEffect(() => {
@@ -109,6 +116,8 @@ export function useMessageToastsBridge(): void {
         generation,
         first: createNotificationDedupe(),
         pacing: createNotificationPacing(),
+        sound: createNotificationPacing(),
+        attention: createNotificationPacing(),
       };
     }
     const firstDelivery = deliveries.current.first;
@@ -119,17 +128,32 @@ export function useMessageToastsBridge(): void {
       if (!message) return;
       if (!firstDelivery(event.c, message.id)) return;
       const settings = useMediaSettings.getState();
+      const focused = typeof document === "undefined" || document.hasFocus();
+      const hidden = typeof document !== "undefined" && document.hidden;
+      const own = message.author.id === userId;
+      const dm = isDmTopic(event.s, event.c);
+      // The desktop app's taskbar button flashes for a direct message while
+      // the window is not in front, whatever the notification settings say,
+      // once for a burst.
+      if (
+        dm &&
+        !own &&
+        (hidden || !focused) &&
+        serverNow() - Date.parse(message.created_at) < 30_000 &&
+        deliveries.current!.attention.take("", Date.now())
+      )
+        requestDesktopAttention();
       const decision = messageNotificationDecision({
         toastEnabled: settings.messageToasts,
         desktopEnabled: settings.desktopNotify,
-        hidden: typeof document !== "undefined" && document.hidden,
+        hidden,
+        focused,
         type: event.t,
-        own: message.author.id === userId,
+        own,
         channelId: event.c,
         viewingChannelId,
       });
       if (!decision.toast && !decision.desktop) return;
-      const dm = isDmTopic(event.s, event.c);
       const label = channelLabel(client, userId, generation, event, dm);
       const preview = previewText(
         message.content,
@@ -169,6 +193,7 @@ export function useMessageToastsBridge(): void {
           () => {
             if (!stampHolds({ userId, generation })) return;
             window.focus();
+            focusDesktopWindow();
             if (dm) {
               void navigate({ to: "/d/$channelId", params: { channelId } });
             } else {
@@ -182,6 +207,17 @@ export function useMessageToastsBridge(): void {
           // Read in another window instead of announced. Should that window
           // be gone a second later, the next message is not held back.
           if (shown === "viewed") pacing.giveBack(channelId, now);
+          // A phone's notification sounds as the device is set. On a
+          // desktop it is silent; this window showed it, so it plays the
+          // cue, once for a burst and never into a deafened call.
+          if (
+            (shown === "worker" || shown === "page") &&
+            !useInstallation.getState().mobile &&
+            !useVoice.getState().deafened &&
+            stampHolds({ userId, generation }) &&
+            deliveries.current?.sound.take("", Date.now())
+          )
+            playMessageSound();
         });
       }
     });

@@ -6,6 +6,7 @@ import {
 } from "@tanstack/react-router";
 
 import { useReadBridge } from "../messages/readState.ts";
+import { useUnreadIndicators } from "../messages/unreadIndicators.ts";
 import { logout, useSession } from "../auth/session.ts";
 import { leaveVoice, stopWatching, useVoice } from "../voice/session.ts";
 import { useCallWakeLock } from "../voice/wakeLock.ts";
@@ -28,6 +29,7 @@ import { SessionRecoveryNotice } from "./SessionRecoveryNotice.tsx";
 function AuthenticatedRealtime() {
   useAuthenticatedSubscriptions();
   useReadBridge();
+  useUnreadIndicators();
   return null;
 }
 
