@@ -9,6 +9,7 @@ import { MicrophoneTest } from "./MicrophoneTest.tsx";
 import { useEffect, useState, type ReactNode } from "react";
 import "./quality.css";
 import { playCallSound } from "./callSounds.ts";
+import { CloseToTray } from "../components/CloseToTray.tsx";
 
 import {
   AUDIO_PROCESSING,
@@ -521,8 +522,8 @@ export function MediaSettingsForm({
             id="desktop-notify"
             label={
               desktop
-                ? "Benachrichtigung, wenn Gelabber im Hintergrund ist"
-                : "Browser-Benachrichtigung, wenn der Tab im Hintergrund ist"
+                ? "Benachrichtigung, wenn das Gelabber-Fenster nicht im Vordergrund ist"
+                : "Browser-Benachrichtigung, wenn der Tab nicht im Vordergrund ist"
             }
             checked={settings.desktopNotify}
             onChange={(desktopNotify) => {
@@ -532,6 +533,20 @@ export function MediaSettingsForm({
               }
             }}
           />
+          <Toggle
+            id="message-sound"
+            label="Ton bei Benachrichtigungen am Computer"
+            checked={settings.messageSound}
+            disabled={!settings.desktopNotify}
+            onChange={(messageSound) => settings.patch({ messageSound })}
+          />
+          <p className="text-xs text-neutral-600 dark:text-neutral-400">
+            Höchstens ein Ton für mehrere Nachrichten kurz hintereinander,
+            keiner während du taub geschaltet bist, so laut wie die Töne für
+            Gespräche. Auf dem Handy klingt die Benachrichtigung so, wie das
+            Gerät eingestellt ist.
+          </p>
+          {desktop && <CloseToTray />}
         </fieldset>
       )}
     </div>
@@ -751,18 +766,24 @@ function Toggle({
   label,
   checked,
   onChange,
+  disabled,
 }: {
   id: string;
   label: string;
   checked: boolean;
   onChange: (value: boolean) => void;
+  disabled?: boolean;
 }) {
   return (
-    <label htmlFor={id} className="flex items-center gap-2 text-sm">
+    <label
+      htmlFor={id}
+      className={`flex items-center gap-2 text-sm ${disabled ? "opacity-60" : ""}`}
+    >
       <input
         id={id}
         type="checkbox"
         checked={checked}
+        disabled={disabled}
         onChange={(event) => onChange(event.target.checked)}
       />
       {label}

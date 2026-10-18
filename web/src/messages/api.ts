@@ -31,12 +31,16 @@ export const createMessage = (
   content: string,
   attachmentIds: string[] = [],
   gif?: GifPick,
+  replyTo?: string,
 ) =>
   api<Message>(`/channels/${channelId}/messages`, {
     method: "POST",
-    body: gif
-      ? { content: "", gif: { slug: gif.slug, query: gif.query } }
-      : { content, attachment_ids: attachmentIds },
+    body: {
+      ...(gif
+        ? { content: "", gif: { slug: gif.slug, query: gif.query } }
+        : { content, attachment_ids: attachmentIds }),
+      ...(replyTo ? { reply_to: replyTo } : {}),
+    },
   });
 
 export const updateMessage = (id: string, content: string) =>
@@ -44,6 +48,10 @@ export const updateMessage = (id: string, content: string) =>
 
 export const deleteMessage = (id: string) =>
   api<null>(`/messages/${id}`, { method: "DELETE" });
+
+/** Removes the message's link previews for good (author or moderator). */
+export const removePreviews = (id: string) =>
+  api<null>(`/messages/${id}/previews`, { method: "DELETE" });
 
 export const presignAttachment = (channelId: string, body: PresignRequest) =>
   api<PresignResponse>(`/channels/${channelId}/attachments`, {

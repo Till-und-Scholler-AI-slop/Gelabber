@@ -367,7 +367,10 @@ pub async fn for_messages(db: &PgPool, messages: &mut [Message]) -> Result<(), A
     Ok(())
 }
 
-pub async fn for_message(db: &PgPool, message_id: Uuid) -> Result<Vec<Attachment>, ApiError> {
+pub async fn for_message(
+    db: impl sqlx::PgExecutor<'_>,
+    message_id: Uuid,
+) -> Result<Vec<Attachment>, ApiError> {
     let rows = sqlx::query_as::<_, AttachmentRow>(
         "SELECT id, message_id, filename, content_type, size_bytes \
          FROM attachments WHERE message_id = $1 ORDER BY created_at, id",

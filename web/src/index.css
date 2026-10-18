@@ -92,10 +92,13 @@ body,
   min-height: 100%;
   background: var(--lr-bg);
 }
-html,
-body {
-  /* Pulling down must neither reload the app, which would drop a call, nor
-     stretch its chrome. */
+/* Pulling down must neither reload the app, which would drop a call, nor
+   stretch its chrome. Not in the desktop app (main.tsx marks its root): on
+   the root element, WebKitGTK then ignores mouse wheels, so pages scrolled
+   by the document (the settings) froze in the Linux app. A browser keeps it
+   whatever its pointers are, touch laptops included. */
+html:not([data-desktop]),
+html:not([data-desktop]) body {
   overscroll-behavior-y: none;
 }
 html {
@@ -1545,10 +1548,24 @@ dialog,
   display: flex;
   align-items: center;
   gap: 8px;
+  width: 100%;
   height: 28px;
   padding: 0 8px 0 36px;
   color: var(--lr-muted);
+  font: inherit;
   font-size: 13px;
+  text-align: left;
+  background: none;
+  border: 0;
+  border-radius: var(--lr-radius);
+  cursor: pointer;
+}
+.sidebar-participant:hover {
+  background: var(--lr-hover);
+}
+.sidebar-participant:focus-visible {
+  outline: 2px solid var(--lr-accent);
+  outline-offset: -2px;
 }
 .sidebar-participant .gel-avatar {
   --avatar-size: 20px;
@@ -1573,4 +1590,50 @@ dialog,
   display: inline-flex;
   flex-shrink: 0;
   color: var(--lr-danger);
+}
+/* Per-participant volume in the profile dialog (#252). */
+.user-volume {
+  display: grid;
+  gap: 10px;
+}
+.user-volume .lr-range {
+  width: 100%;
+}
+.user-volume__row {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  font-size: 14px;
+}
+.user-volume__row output {
+  color: var(--lr-muted);
+  font-variant-numeric: tabular-nums;
+}
+.user-volume__mute {
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+  cursor: pointer;
+}
+.user-volume__reset {
+  color: var(--lr-accent);
+  font-size: 13px;
+  background: none;
+  border: 0;
+  cursor: pointer;
+}
+.user-volume__reset:disabled {
+  color: var(--lr-muted);
+  cursor: default;
+}
+.user-volume__hint {
+  color: var(--lr-muted);
+  font-size: 12px;
+}
+/* A participant this client muted for itself (#252). */
+.user-volume-muted {
+  display: inline-flex;
+  flex-shrink: 0;
+  color: var(--lr-muted);
 }

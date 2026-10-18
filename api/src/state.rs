@@ -15,6 +15,7 @@ use crate::gateway::{ConnTable, EventLog, Gateway, VoiceRoster};
 use crate::gifs::Gifs;
 use crate::limits::{Limiter, Limits};
 use crate::metrics::HttpMetrics;
+use crate::previews::LinkPreviews;
 use crate::storage::ObjectStore;
 
 /// Shared handles for request handlers. Both clients are created lazily so
@@ -57,6 +58,8 @@ pub struct AppState {
     pub metrics: Arc<HttpMetrics>,
     /// Klipy relay; `None` when `KLIPY_API_KEY` is unset.
     pub gifs: Option<Gifs>,
+    /// Link previews; `None` when `API_LINK_PREVIEWS=false`.
+    pub previews: Option<LinkPreviews>,
 }
 
 #[derive(Debug)]
@@ -145,6 +148,7 @@ impl AppState {
             limiter: Arc::new(Limiter::new()),
             metrics,
             gifs,
+            previews: config.previews.as_ref().map(LinkPreviews::new),
         })
     }
 

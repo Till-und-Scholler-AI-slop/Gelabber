@@ -24,6 +24,7 @@ pkgbase = gelabber-desktop
 	optdepends = xdg-desktop-portal-gnome: screen share on GNOME
 	optdepends = xdg-desktop-portal-kde: screen share on KDE Plasma
 	optdepends = vulkan-driver: video window (nvidia-utils, vulkan-intel, vulkan-radeon)
+	optdepends = libayatana-appindicator: tray icon with unread state (KDE, waybar tray)
 	conflicts = gelabber-desktop-bin
 	conflicts = gelabber-desktop-git
 	options = !strip

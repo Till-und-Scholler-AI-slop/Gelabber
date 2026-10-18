@@ -37,6 +37,12 @@ export function isDesktopApp(): boolean {
   return typeof internals === "object" && internals !== null;
 }
 
+/** Marks the desktop app's `<html data-desktop>` for the styles that differ
+ * there (index.css). */
+export function markDesktopRoot(root: HTMLElement): void {
+  if (isDesktopApp()) root.dataset.desktop = "";
+}
+
 export function nativeBridge(): NativeBridge {
   if (override) return override;
   if (!isDesktopApp()) throw new Error("native media is desktop-app only");

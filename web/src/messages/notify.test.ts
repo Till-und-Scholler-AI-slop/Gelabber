@@ -31,6 +31,10 @@ describe("message toast rules", () => {
     expect(
       messageNotificationDecision({ ...base, hidden: false }).desktop,
     ).toBe(false);
+    expect(
+      messageNotificationDecision({ ...base, hidden: false, focused: true })
+        .desktop,
+    ).toBe(false);
     expect(messageNotificationDecision({ ...base, own: true }).desktop).toBe(
       false,
     );
@@ -48,6 +52,34 @@ describe("message toast rules", () => {
         desktopEnabled: false,
       }),
     ).toEqual({ toast: true, desktop: false });
+  });
+
+  // Behind another window, on a second monitor, the desktop app not in front:
+  // the window is visible, but nobody reads it, so the message stays unread.
+  it("notifies a visible window without focus, the open chat included", () => {
+    const base = {
+      toastEnabled: true,
+      desktopEnabled: true,
+      hidden: false,
+      focused: false,
+      type: "c" as const,
+      own: false,
+      channelId: "c1",
+      viewingChannelId: "c1",
+    };
+    expect(messageNotificationDecision(base)).toEqual({
+      toast: false,
+      desktop: true,
+    });
+    expect(
+      messageNotificationDecision({ ...base, viewingChannelId: "c2" }),
+    ).toEqual({ toast: true, desktop: true });
+    expect(messageNotificationDecision({ ...base, own: true }).desktop).toBe(
+      false,
+    );
+    expect(
+      messageNotificationDecision({ ...base, desktopEnabled: false }).desktop,
+    ).toBe(false);
   });
 
   it("does not replay delivery and bounds session deduplication", () => {

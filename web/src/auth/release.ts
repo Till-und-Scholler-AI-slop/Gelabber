@@ -6,9 +6,11 @@ import { bindThemeAccount } from "../theme/account.ts";
 import { clearToasts } from "../components/toasts.ts";
 import { clearMessageToasts } from "../messages/toasts.ts";
 import { resetPendingMessages } from "../messages/pending.ts";
+import { resetReplyTargets } from "../messages/replyTarget.ts";
 import { dropForeignUserQueries, setQueryScope } from "../queryClient.ts";
 import { stopCallSounds } from "../voice/callSounds.ts";
 import { useMediaSettings } from "../voice/settings.ts";
+import { bindUserVolumeAccount } from "../voice/userVolume.ts";
 import { leaveVoice, stopWatching } from "../voice/session.ts";
 import { resetVoiceRoster } from "../voice/roster.ts";
 import { getGateway } from "../ws/client.ts";
@@ -23,6 +25,7 @@ export function releaseUserScope(nextUserId: string | null): void {
   const generation = nextScopeGeneration();
   bindThemeAccount(nextUserId);
   bindDraftAccount(nextUserId);
+  bindUserVolumeAccount(nextUserId);
   setQueryScope(nextUserId, generation);
   // Stop local media first so a still-open socket can send leave, then drop
   // topics and resume cursors so the next account cannot resume A's seq.
@@ -32,6 +35,7 @@ export function releaseUserScope(nextUserId: string | null): void {
   getGateway().resetSession();
   dropForeignUserQueries();
   resetPendingMessages();
+  resetReplyTargets();
   clearMessageToasts();
   clearToasts();
   resetLiveStores();

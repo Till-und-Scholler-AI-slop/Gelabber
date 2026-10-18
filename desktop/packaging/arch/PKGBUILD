@@ -32,6 +32,7 @@ optdepends=(
   'xdg-desktop-portal-gnome: screen share on GNOME'
   'xdg-desktop-portal-kde: screen share on KDE Plasma'
   'vulkan-driver: video window (nvidia-utils, vulkan-intel, vulkan-radeon)'
+  'libayatana-appindicator: tray icon with unread state (KDE, waybar tray)'
 )
 conflicts=('gelabber-desktop-bin' 'gelabber-desktop-git')
 options=('!strip' '!debug')

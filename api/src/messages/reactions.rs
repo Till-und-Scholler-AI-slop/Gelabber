@@ -121,6 +121,7 @@ async fn mutate(
         .ok_or(ApiError::NotFound)?;
     let mut current = Message::from(row);
     current.attachments = initial.attachments;
+    super::replies::for_messages(&mut *tx, std::slice::from_mut(&mut current)).await?;
     if add {
         // The channel lock serializes the limit check with every reaction write.
         // Existing emoji and idempotent retries remain valid at the limit.
