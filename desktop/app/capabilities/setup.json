@@ -1,8 +1,8 @@
 {
   "$schema": "../gen/schemas/desktop-schema.json",
   "identifier": "setup",
-  "description": "Bundled setup page: choose the Gelabber server.",
+  "description": "Bundled setup page: choose the Gelabber server, look after updates of the app.",
   "windows": ["main"],
   "local": true,
-  "permissions": ["allow-set-server"]
+  "permissions": ["allow-set-server", "update", "allow-update-check", "allow-update-set-auto-check"]
 }
