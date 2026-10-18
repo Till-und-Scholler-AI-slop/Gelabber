@@ -13,6 +13,7 @@ import { MemberActions } from "./MemberActions.tsx";
 import { GhostButton, Modal } from "./Modal.tsx";
 import { ProfileCardView, type CardPerson } from "./ProfileCard.tsx";
 import { withCard } from "./profileStyle.ts";
+import { UserVolumeControl } from "./UserVolumeControl.tsx";
 
 export function MemberProfileDialog({
   server,
@@ -112,6 +113,9 @@ export function MemberProfileDialog({
               In {channel.name}
             </Link>
           ) : null}
+          {self ? null : (
+            <UserVolumeControl userId={member.user_id} name={member.name} />
+          )}
           <div className="member-profile__actions">
             {self ? (
               <Link className="lr-primary" to="/profile" onClick={close}>

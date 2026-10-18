@@ -185,6 +185,7 @@ async fn search(
     messages.reverse();
     attachments::for_messages(&state.db, &mut messages).await?;
     super::replies::for_messages(&state.db, &mut messages).await?;
+    crate::previews::for_messages(&state.db, &mut messages).await?;
     Ok(Json(MessagePage { messages, has_more }))
 }
 
@@ -230,6 +231,7 @@ async fn context(
     let after = format!("{}|{}", last.created_at.to_rfc3339(), last.id);
     attachments::for_messages(&state.db, &mut messages).await?;
     super::replies::for_messages(&state.db, &mut messages).await?;
+    crate::previews::for_messages(&state.db, &mut messages).await?;
     Ok(Json(MessageContext {
         target_id: message_id,
         messages,

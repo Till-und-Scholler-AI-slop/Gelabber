@@ -49,6 +49,10 @@ export const updateMessage = (id: string, content: string) =>
 export const deleteMessage = (id: string) =>
   api<null>(`/messages/${id}`, { method: "DELETE" });
 
+/** Removes the message's link previews for good (author or moderator). */
+export const removePreviews = (id: string) =>
+  api<null>(`/messages/${id}/previews`, { method: "DELETE" });
+
 export const presignAttachment = (channelId: string, body: PresignRequest) =>
   api<PresignResponse>(`/channels/${channelId}/attachments`, {
     method: "POST",

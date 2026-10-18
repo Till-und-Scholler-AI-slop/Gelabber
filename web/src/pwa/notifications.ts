@@ -129,9 +129,7 @@ async function announced(
   try {
     return (await registration.getNotifications({ tag })).some((shown) => {
       const data = shown.data as
-        | { message?: unknown; at?: unknown }
-        | null
-        | undefined;
+        { message?: unknown; at?: unknown } | null | undefined;
       if (typeof data?.message !== "string") return false;
       if (data.message === message.messageId) return true;
       return (
@@ -275,10 +273,12 @@ function viewing(user: string, channelId: string): () => void {
 
 /**
  * A conversation that is on screen needs no notification. While the page is
- * visible its notification is withdrawn and the other windows of the app are
- * kept from raising one; both again whenever the page becomes visible with
- * that conversation open (a phone user coming back through the app switcher
- * instead of the tap).
+ * visible and has the focus its notification is withdrawn and the other
+ * windows of the app are kept from raising one; both again whenever the page
+ * comes back that way with that conversation open (a phone user coming back
+ * through the app switcher instead of the tap). A visible window without the
+ * focus (behind another one, on a second monitor) is not being read: the
+ * message stays unread there, so it is announced.
  */
 export function silenceWhileViewing(
   user: string,
@@ -286,19 +286,30 @@ export function silenceWhileViewing(
   page: Pick<
     Document,
     "hidden" | "addEventListener" | "removeEventListener"
-  > = document,
+  > & {
+    hasFocus?: () => boolean;
+  } = document,
+  // Focus and blur come to the window, not to the document.
+  focusEvents: Pick<
+    EventTarget,
+    "addEventListener" | "removeEventListener"
+  > | null = typeof window === "undefined" ? null : window,
 ): () => void {
   let leave: (() => void) | undefined;
   const seen = () => {
-    if (page.hidden) {
+    if (page.hidden || page.hasFocus?.() === false) {
       leave?.();
       leave = undefined;
     } else leave ??= viewing(user, channelId);
   };
   seen();
   page.addEventListener("visibilitychange", seen);
+  focusEvents?.addEventListener("focus", seen);
+  focusEvents?.addEventListener("blur", seen);
   return () => {
     page.removeEventListener("visibilitychange", seen);
+    focusEvents?.removeEventListener("focus", seen);
+    focusEvents?.removeEventListener("blur", seen);
     leave?.();
   };
 }

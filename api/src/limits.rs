@@ -40,6 +40,10 @@ pub const GIF_PER_MIN: u32 = 30;
 /// [`GIF_PER_MIN`]: one picker page is 24 tiles and a chat history can hold
 /// dozens of GIFs, each with a still and an animated rendition.
 pub const GIF_MEDIA_PER_MIN: u32 = 240;
+/// Messages with links per user per minute that get previews; past it the
+/// links stay plain links. Each can mean three page and three image fetches.
+pub const PREVIEW_PER_MIN: u32 = 10;
+pub const PREVIEW_SERVER_FACTOR: u32 = 6;
 /// Window of the per-account failure count, and so the longest wait.
 pub const LOGIN_FAILURE_WINDOW: Duration = Duration::from_secs(15 * 60);
 
@@ -60,6 +64,9 @@ pub struct Limits {
     pub gif_per_min: u32,
     /// GIF media loads through the relay per user per minute (`0` = off).
     pub gif_media_per_min: u32,
+    /// Messages per user per minute whose links get previews (`0` = off);
+    /// a server allows [`PREVIEW_SERVER_FACTOR`] times as many.
+    pub preview_per_min: u32,
 }
 
 impl Default for Limits {
@@ -73,6 +80,7 @@ impl Default for Limits {
             login_failures_per_account: LOGIN_FAILURES_PER_ACCOUNT,
             gif_per_min: GIF_PER_MIN,
             gif_media_per_min: GIF_MEDIA_PER_MIN,
+            preview_per_min: PREVIEW_PER_MIN,
         }
     }
 }
