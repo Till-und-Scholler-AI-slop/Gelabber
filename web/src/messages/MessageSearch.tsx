@@ -9,6 +9,7 @@ import {
 import { searchMessages } from "./search.ts";
 import { scopeGeneration, useUserId } from "../auth/scope.ts";
 import type { Message } from "./types.ts";
+import { MessageContent } from "./MessageContent.tsx";
 import { MessageContextView } from "./MessageContext.tsx";
 
 export function MessageSearch({
@@ -139,7 +140,9 @@ export function MessageSearch({
                   {new Date(message.created_at).toLocaleString("de-DE")}
                 </time>
               </p>
-              <p>{message.content}</p>
+              <p>
+                <MessageContent content={message.content} interactive={false} />
+              </p>
               <span>Nachricht im Kontext öffnen</span>
             </button>
           </article>

@@ -9,7 +9,8 @@
 //! the reason, and Ctrl+Shift+S or the web client's user menu ("Server
 //! wechseln …") lead back to it at any time, so a wrong server never locks the
 //! app. F5 / Ctrl+R reload. Those keys are a script of the page: when WebKit's
-//! web process dies, the app loads the page again itself (Linux).
+//! web process dies, the app loads the page again itself (Linux). Links the
+//! page opens in a new tab (chat links) go to the system browser.
 #![cfg_attr(not(debug_assertions), windows_subsystem = "windows")]
 
 mod frames;
@@ -163,6 +164,46 @@ fn open_setup(app: AppHandle) -> Result<(), String> {
         .ok_or("main window missing")?
         .navigate(setup_url(server.as_ref().map(Url::as_str), None))
         .map_err(|e| e.to_string())
+}
+
+/// Whether a link the page opens in a new tab goes to the system browser:
+/// web and mail links only, never files or app schemes, and never the
+/// server's own pages, which need the app's session.
+fn opens_externally(url: &Url, server: Option<&Url>) -> bool {
+    matches!(url.scheme(), "http" | "https" | "mailto")
+        && server.is_none_or(|server| server.origin() != url.origin())
+}
+
+/// Hands `url` to the desktop's default handler without a shell, so nothing
+/// in it is interpreted.
+fn open_externally(url: &Url) {
+    #[cfg(target_os = "windows")]
+    let mut command = {
+        let mut command = std::process::Command::new("rundll32.exe");
+        command.args(["url.dll,FileProtocolHandler", url.as_str()]);
+        command
+    };
+    #[cfg(target_os = "macos")]
+    let mut command = {
+        let mut command = std::process::Command::new("open");
+        command.arg(url.as_str());
+        command
+    };
+    #[cfg(not(any(target_os = "windows", target_os = "macos")))]
+    let mut command = {
+        let mut command = std::process::Command::new("xdg-open");
+        command.arg(url.as_str());
+        command
+    };
+    match command.spawn() {
+        // Reaped on its own thread; the opener exits once the browser has it.
+        Ok(mut child) => {
+            std::thread::spawn(move || {
+                let _ = child.wait();
+            });
+        }
+        Err(error) => eprintln!("gelabber: opening {url}: {error}"),
+    }
 }
 
 /// Catches typos and wrong ports before the address is stored: something has
@@ -449,6 +490,17 @@ fn main() {
                 // Tauri's native handler swallows file drops; the chat
                 // composer takes them as HTML5 drops instead.
                 .disable_drag_drop_handler()
+                // `target="_blank"` links: the system browser, never a
+                // second app window.
+                .on_new_window({
+                    let handle = handle.clone();
+                    move |url, _| {
+                        if opens_externally(&url, current_server(&handle).as_ref()) {
+                            open_externally(&url);
+                        }
+                        tauri::webview::NewWindowResponse::Deny
+                    }
+                })
                 .build()?;
             #[cfg(target_os = "linux")]
             watch_web_process(&handle, &window);
@@ -479,7 +531,7 @@ fn main() {
 
 #[cfg(test)]
 mod tests {
-    use super::{check_reachable, server_addrs, server_origin, setup_url};
+    use super::{check_reachable, opens_externally, server_addrs, server_origin, setup_url};
     use std::net::TcpListener;
 
     #[cfg(target_os = "linux")]
@@ -534,6 +586,34 @@ mod tests {
         assert!(server_origin("file:///etc/passwd").is_err());
         assert!(server_origin("javascript:alert(1)").is_err());
         assert!(server_origin("chat.example.org").is_err());
+    }
+
+    #[test]
+    fn only_web_and_mail_links_open_externally() {
+        for url in [
+            "https://example.com/",
+            "http://example.com/a",
+            "mailto:a@example.com",
+        ] {
+            assert!(opens_externally(&url.parse().unwrap(), None), "{url}");
+        }
+        let server = server_origin("https://chat.example").unwrap();
+        assert!(opens_externally(
+            &"https://example.com/".parse().unwrap(),
+            Some(&server)
+        ));
+        assert!(!opens_externally(
+            &"https://chat.example/api/files/x".parse().unwrap(),
+            Some(&server)
+        ));
+        for url in [
+            "file:///etc/passwd",
+            "javascript:alert(1)",
+            "smb://host/share",
+            "tauri://localhost",
+        ] {
+            assert!(!opens_externally(&url.parse().unwrap(), None), "{url}");
+        }
     }
 
     #[test]
