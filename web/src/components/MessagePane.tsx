@@ -26,6 +26,7 @@ import {
   scrollEndIntent,
   type ScrollPosition,
 } from "../messages/scrollPosition.ts";
+import { MessageContent } from "../messages/MessageContent.tsx";
 import { MessageSearch } from "../messages/MessageSearch.tsx";
 import { useChatDraft } from "../messages/drafts.ts";
 import {
@@ -81,6 +82,7 @@ import { EmojiPickerLoader, ReactionBar } from "./ReactionBar.tsx";
 import { confirmAction } from "./confirm.ts";
 import { Modal } from "./Modal.tsx";
 import { ImageLightbox, type LightboxImage } from "./ImageLightbox.tsx";
+import { LinkPreviews } from "./LinkPreviews.tsx";
 import { isPlainClick } from "./plainClick.ts";
 import {
   ArrowDownIcon,
@@ -926,15 +928,20 @@ function MessageRow({
         <span className="w-8 shrink-0" aria-hidden />
         <div className="min-w-0 flex-1">
           {message.content ? (
-            <p className="lr-message-text">
-              {message.content}
+            <div className="lr-message-text">
+              <MessageContent content={message.content} />
               {message.edited_at ? (
                 <span className="lr-message-edited">(bearbeitet)</span>
               ) : null}
-            </p>
+            </div>
           ) : null}
           {gif ? <GifMessage gif={gif} /> : null}
           <AttachmentList attachments={message.attachments ?? []} />
+          <LinkPreviews
+            messageId={message.id}
+            previews={message.previews}
+            canRemove={canDelete && !pending}
+          />
           <ReactionBar
             message={message}
             canSend={canSend}
@@ -1010,16 +1017,23 @@ function MessageRow({
             </div>
           </form>
         ) : message.content || !gif ? (
-          <p className="lr-message-text">
-            {message.content}
+          <div className="lr-message-text">
+            <MessageContent content={message.content} />
             {message.edited_at ? (
               <span className="lr-message-edited">(bearbeitet)</span>
             ) : null}
-          </p>
+          </div>
         ) : null}
         {!editing && gif ? <GifMessage gif={gif} /> : null}
         {!editing ? (
           <AttachmentList attachments={message.attachments ?? []} />
+        ) : null}
+        {!editing ? (
+          <LinkPreviews
+            messageId={message.id}
+            previews={message.previews}
+            canRemove={canDelete && !pending}
+          />
         ) : null}
         {!editing && (
           <ReactionBar

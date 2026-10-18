@@ -11,7 +11,8 @@ publish = false
 gelabber-media-core = { path = "../core" }
 serde = { version = "1", features = ["derive"] }
 serde_json = "1.0.151"
-tauri = { version = "2.12.1", features = [] }
+# The tray icon and its unread variants (src/shell.rs).
+tauri = { version = "2.12.1", features = ["tray-icon"] }
 url = "2"
 # Native video viewer: its own window and GPU renderer next to the webview.
 pollster = "0.4"
@@ -31,6 +32,10 @@ windows-sys = { version = "0.61.2", features = ["Win32_Foundation", "Win32_UI_Wi
 # crate and version Tauri brings; the feature is the API level of the call.
 [target.'cfg(target_os = "linux")'.dependencies]
 webkit2gtk = { version = "2.0", features = ["v2_34"] }
+# Whether a tray host library exists before tray-icon loads it (src/shell.rs).
+libloading = "0.8"
+# Whether a StatusNotifier host runs (src/shell.rs); the version GTK brings.
+gio = "0.18"
 
 # Signatures checked as the updater checks them (src/update.rs tests).
 [dev-dependencies]
