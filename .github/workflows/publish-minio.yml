@@ -1,5 +1,6 @@
-# Publish the pinned MinIO CE image so `docker compose up` can pull it.
-# Source-only: deploy/compose/minio/Dockerfile (no FROM minio/minio).
+# Publish the pinned MinIO CE server and client (mc, for minio-init) images
+# so `docker compose up` can pull them. Source-only: deploy/compose/minio and
+# deploy/compose/mc (no FROM minio/minio or minio/mc).
 # Org packages start private. PATCH visibility is attempted; GitHub returns
 # 404 for org containers, so a maintainer must flip Public once in the UI.
 name: Publish MinIO CE image
@@ -9,12 +10,16 @@ on:
     branches: [main]
     paths:
       - deploy/compose/minio/**
+      - deploy/compose/mc/**
+      - deploy/compose/minio-init.sh
       - deploy/compose/compose.yaml
       - Cargo.toml
       - .github/workflows/publish-minio.yml
   pull_request:
     paths:
       - deploy/compose/minio/**
+      - deploy/compose/mc/**
+      - deploy/compose/minio-init.sh
       - deploy/compose/compose.yaml
       - Cargo.toml
       - .github/workflows/publish-minio.yml
@@ -26,6 +31,7 @@ concurrency:
 
 env:
   MINIO_RELEASE: RELEASE.2025-10-15T17-29-55Z
+  MC_RELEASE: RELEASE.2025-08-13T08-35-41Z
 
 jobs:
   publish:
@@ -43,6 +49,8 @@ jobs:
           ver="v$(sed -n '/^\[workspace.package\]/,/^\[/{s/^version = "\([^"]*\)"/\1/p}' Cargo.toml | head -n 1)"
           echo "GHCR_IMAGE=ghcr.io/${repo}/minio" >> "$GITHUB_ENV"
           echo "LOCAL_IMAGE=gelabber/minio" >> "$GITHUB_ENV"
+          echo "GHCR_MC_IMAGE=ghcr.io/${repo}/mc" >> "$GITHUB_ENV"
+          echo "LOCAL_MC_IMAGE=gelabber/mc" >> "$GITHUB_ENV"
           echo "GELABBER_VERSION=${ver}" >> "$GITHUB_ENV"
           # Push only from main (includes workflow_dispatch on main).
           if [ '${{ github.ref }}' = 'refs/heads/main' ]; then
@@ -57,6 +65,9 @@ jobs:
           grep -F "${GHCR_IMAGE}:${MINIO_RELEASE}" deploy/compose/compose.yaml
           grep -F "MINIO_RELEASE: ${MINIO_RELEASE}" deploy/compose/compose.yaml
           grep -F "ARG MINIO_RELEASE=${MINIO_RELEASE}" deploy/compose/minio/Dockerfile
+          grep -F "${GHCR_MC_IMAGE}:${MC_RELEASE}" deploy/compose/compose.yaml
+          grep -F "MC_RELEASE: ${MC_RELEASE}" deploy/compose/compose.yaml
+          grep -F "ARG MC_RELEASE=${MC_RELEASE}" deploy/compose/mc/Dockerfile
           test "${GELABBER_VERSION}" = "v$(sed -n '/^\[workspace.package\]/,/^\[/{s/^version = "\([^"]*\)"/\1/p}' Cargo.toml | head -n 1)"
 
       - name: Set up Buildx
@@ -81,6 +92,63 @@ jobs:
           printf '%s\n' "$out"
           printf '%s\n' "$out" | grep -F "${MINIO_RELEASE}"
 
+      - name: Build mc
+        uses: docker/build-push-action@v7
+        with:
+          context: deploy/compose/mc
+          file: deploy/compose/mc/Dockerfile
+          build-args: |
+            MC_RELEASE=${{ env.MC_RELEASE }}
+          load: true
+          provenance: false
+          tags: gelabber/mc:${{ env.MC_RELEASE }}
+
+      - name: Verify mc --version
+        run: |
+          set -euo pipefail
+          out="$(docker run --rm "${LOCAL_MC_IMAGE}:${MC_RELEASE}" --version)"
+          printf '%s\n' "$out"
+          printf '%s\n' "$out" | grep -F "${MC_RELEASE}"
+
+      # #196: minio-init on an existing install keeps its objects, the API
+      # user reaches its bucket only, and a rerun rotates the password.
+      - name: minio-init grants the bucket only
+        run: |
+          set -euo pipefail
+          docker network create gelabber-init-test
+          docker run -d --name minio --network gelabber-init-test \
+            -e MINIO_ROOT_USER=root-ci -e MINIO_ROOT_PASSWORD=root-ci-password \
+            "${LOCAL_IMAGE}:${MINIO_RELEASE}" server /data
+          mc() { docker run --rm --network gelabber-init-test -e "MC_HOST_$1=$2" \
+            "${LOCAL_MC_IMAGE}:${MC_RELEASE}" "${@:3}"; }
+          root=http://root-ci:root-ci-password@minio:9000
+          deadline=$((SECONDS + 120))
+          until mc r "$root" ready r >/dev/null 2>&1; do
+            [ "$SECONDS" -lt "$deadline" ] || { docker logs minio; exit 1; }
+            sleep 2
+          done
+          mc r "$root" mb r/gelabber r/other
+          docker run --rm --network gelabber-init-test -e "MC_HOST_r=$root" --entrypoint sh \
+            "${LOCAL_MC_IMAGE}:${MC_RELEASE}" -c 'echo old | mc pipe r/gelabber/att/old'
+          init() { docker run --rm --network gelabber-init-test \
+            -v "$PWD/deploy/compose/minio-init.sh:/minio-init.sh:ro" --entrypoint /bin/sh \
+            -e MINIO_ROOT_USER=root-ci -e MINIO_ROOT_PASSWORD=root-ci-password \
+            -e MINIO_BUCKET=gelabber -e MINIO_APP_USER=gelabber-api -e "MINIO_APP_PASSWORD=$1" \
+            "${LOCAL_MC_IMAGE}:${MC_RELEASE}" /minio-init.sh; }
+          init app-ci-password
+          init app-ci-password
+          app=http://gelabber-api:app-ci-password@minio:9000
+          test "$(mc a "$app" cat a/gelabber/att/old)" = old
+          docker run --rm --network gelabber-init-test -e "MC_HOST_a=$app" --entrypoint sh \
+            "${LOCAL_MC_IMAGE}:${MC_RELEASE}" -c 'echo new | mc pipe a/gelabber/att/new && mc rm a/gelabber/att/new'
+          for denied in "ls a/other" "mb a/evil" "rb a/gelabber" "admin user list a" "anonymous set download a/gelabber"; do
+            if mc a "$app" $denied >/dev/null 2>&1; then echo "app user may: $denied"; exit 1; fi
+          done
+          init app-ci-rotated
+          if mc a "$app" cat a/gelabber/att/old >/dev/null 2>&1; then echo "old password still works"; exit 1; fi
+          test "$(mc a http://gelabber-api:app-ci-rotated@minio:9000 cat a/gelabber/att/old)" = old
+          if init short >/dev/null 2>&1; then echo "short password accepted"; exit 1; fi
+
       - name: Login to GHCR
         if: env.PUSH == 'true'
         uses: docker/login-action@v4
@@ -103,26 +171,37 @@ jobs:
             cat /tmp/minio-error >&2
             exit 1
           fi
+          if docker buildx imagetools inspect "${GHCR_MC_IMAGE}:${MC_RELEASE}" > /tmp/mc-existing 2>/tmp/mc-error; then
+            echo "Pinned mc image already exists; preserving it."
+          elif grep -Fq 'manifest unknown' /tmp/mc-error || grep -Fxq "ERROR: ${GHCR_MC_IMAGE}:${MC_RELEASE}: not found" /tmp/mc-error; then
+            docker tag "${LOCAL_MC_IMAGE}:${MC_RELEASE}" "${GHCR_MC_IMAGE}:${MC_RELEASE}"
+            docker push "${GHCR_MC_IMAGE}:${MC_RELEASE}"
+          else
+            cat /tmp/mc-error >&2
+            exit 1
+          fi
 
-      - name: Make package public
+      - name: Make packages public
         if: env.PUSH == 'true'
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         run: |
           set -euo pipefail
-          encoded='gelabber%2Fminio'
-          path="orgs/${{ github.repository_owner }}/packages/container/${encoded}"
-          vis="$(gh api "$path" --jq .visibility || true)"
-          if [ "$vis" = "public" ]; then
-            echo "GHCR package gelabber/minio is public."
-            exit 0
-          fi
-          echo "Current visibility: ${vis:-unknown}. Setting public…"
-          gh api --method PATCH "$path" -f visibility=public || true
-          gh api --method PATCH "${path}/visibility" -f visibility=public || true
-          vis="$(gh api "$path" --jq .visibility || true)"
-          if [ "$vis" = "public" ]; then
-            echo "GHCR package gelabber/minio is public."
-            exit 0
-          fi
-          echo "::warning::GHCR package gelabber/minio is still ${vis:-unknown/private}. Fresh clones cannot pull until a maintainer sets it Public: https://github.com/orgs/${{ github.repository_owner }}/packages/container/package/gelabber%2Fminio → Package settings → Change visibility → Public. Until then: docker login ghcr.io, or compose falls back to the source build."
+          for package in minio mc; do
+            encoded="gelabber%2F${package}"
+            path="orgs/${{ github.repository_owner }}/packages/container/${encoded}"
+            vis="$(gh api "$path" --jq .visibility || true)"
+            if [ "$vis" = "public" ]; then
+              echo "GHCR package gelabber/${package} is public."
+              continue
+            fi
+            echo "Current visibility of gelabber/${package}: ${vis:-unknown}. Setting public…"
+            gh api --method PATCH "$path" -f visibility=public || true
+            gh api --method PATCH "${path}/visibility" -f visibility=public || true
+            vis="$(gh api "$path" --jq .visibility || true)"
+            if [ "$vis" = "public" ]; then
+              echo "GHCR package gelabber/${package} is public."
+              continue
+            fi
+            echo "::warning::GHCR package gelabber/${package} is still ${vis:-unknown/private}. Fresh clones cannot pull until a maintainer sets it Public: https://github.com/orgs/${{ github.repository_owner }}/packages/container/package/${encoded} → Package settings → Change visibility → Public. Until then: docker login ghcr.io, or compose falls back to the source build."
+          done

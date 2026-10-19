@@ -14,8 +14,9 @@ App: `http://localhost` (Caddy :80). Data and MinIO on `127.0.0.1` only. Set the
 
 Since v0.6 (#188) the stack no longer starts with known values:
 
-- **No default passwords.** `POSTGRES_PASSWORD`, `MINIO_ROOT_PASSWORD` and `TURN_PASSWORD` (plus `GRAFANA_ADMIN_PASSWORD` with observability) must be set in `.env`; otherwise `docker compose` stops with a message. Generate one with `openssl rand -hex 24`. `POSTGRES_PASSWORD` only applies when the database volume is created; an existing volume keeps its password until you change it with `ALTER USER gelabber PASSWORD '…'`.
+- **No default passwords.** `POSTGRES_PASSWORD`, `MINIO_ROOT_PASSWORD`, `MINIO_APP_PASSWORD` and `TURN_PASSWORD` (plus `GRAFANA_ADMIN_PASSWORD` with observability) must be set in `.env`; otherwise `docker compose` stops with a message. Generate one with `openssl rand -hex 24`. `POSTGRES_PASSWORD` only applies when the database volume is created; an existing volume keeps its password until you change it with `ALTER USER gelabber PASSWORD '…'`.
 - **With `API_COOKIE_SECURE=true`** (that is, behind TLS) the API refuses to start while one of these passwords is still a former repository default (`gelabber`, `gelabbergelabber`, `gelabberturn`, `change-me…`). Change the password first (Postgres as above, MinIO and TURN in `.env`), then restart.
+- **The API has no MinIO root access** (#196). The one-shot service `minio-init` signs in as root, creates the bucket and the user `MINIO_APP_USER` (default `gelabber-api`) with a policy for `MINIO_BUCKET` only (read, write, delete objects; no other bucket, no admin API), and exits. The API gets only that user (`MINIO_ACCESS_KEY` / `MINIO_SECRET_KEY` in the container); the root credentials stay in `minio` and `minio-init`. A leaked API environment therefore exposes the attachments, not the whole MinIO instance. Upgrading an existing install: see "MinIO user" below.
 - **Plain HTTP on this machine only.** The bundled Caddy listens on `127.0.0.1` by default. Without `API_COOKIE_SECURE=true` the API signs in only on `localhost`/`127.0.0.1`; other machines get `insecure_transport`, because the session cookie would otherwise cross the network unencrypted. For other machines put TLS in front (your own Caddy, see below) and set `API_COOKIE_SECURE=true`. For a trusted test network only: `API_ALLOW_PLAIN_HTTP=true`.
 - **HSTS.** With `API_COOKIE_SECURE=true` the API sends `Strict-Transport-Security: max-age=31536000` (without subdomains), whichever proxy terminates TLS.
 - **Sign-in protection.** Besides 20 attempts per minute and address, the API locks an account for 15 minutes after 10 failed attempts (`API_RATE_LOGIN_FAILURES_PER_ACCOUNT`, `0` turns it off). The address is the rightmost `X-Forwarded-For` entry, the one the Caddy in front of the API wrote.
@@ -119,9 +120,29 @@ For a digest rollout use the same `--env-file` / `-f` arguments as the rollout. 
 - `GELABBER_MINIO_DOMAIN` (Caddy host, for example `minio.example.com`) and `MINIO_PUBLIC_ENDPOINT` (full URL, for example `https://minio.example.com`) must match the active MinIO site in the **real** Caddy config (the Compose `.env` alone is not enough for an external Caddy); no path prefix, presigns sign host and path. `MINIO_API_CORS_ALLOW_ORIGIN` = the Gelabber origin
 - `TURN_PUBLIC_HOST`, `TURN_EXTERNAL_IP`, `MEDIA_ADVERTISED_IP` = the address clients reach
 
+### MinIO user
+
+Since #196 the API signs in to MinIO as a bucket-scoped user, not as root. `minio-init` (image `ghcr.io/till-und-scholler-ai-slop/gelabber/mc`, the pinned MinIO client built from source like the server; `GELABBER_MC_IMAGE` overrides it) runs before the API on every `docker compose up`. It creates the bucket if missing, writes the policy `gelabber-app-<bucket>`, sets the user's password from `.env` and attaches the policy. It never touches objects, so it is safe on an existing volume and on every rerun.
+
+**Upgrading an existing install** (data stays where it is, same bucket, same volume):
+
+1. Nothing breaks if you do nothing: a new API image under the old `compose.yaml` (for example Watchtower pulling `latest`) still accepts `MINIO_ROOT_USER` / `MINIO_ROOT_PASSWORD`, but logs a warning at startup that it runs as root.
+2. Update the checkout to the release tag and add a new password to `.env`:
+   ```bash
+   cd deploy/compose
+   grep -q '^MINIO_APP_PASSWORD=' .env || echo "MINIO_APP_PASSWORD=$(openssl rand -hex 24)" >> .env
+   ```
+   Without it, `docker compose` stops with `set MINIO_APP_PASSWORD in .env`. `MINIO_APP_USER` defaults to `gelabber-api` and must differ from `MINIO_ROOT_USER`.
+3. `docker compose up -d`. Compose starts `minio-init` after MinIO is healthy and recreates the API with the new user once `minio-init` has finished. `docker compose logs minio-init` ends with `MinIO user gelabber-api may use bucket gelabber only.`; the API log no longer shows the root warning.
+4. Check in the app that an existing attachment still loads and a new upload works.
+
+If `minio-init` fails (for example `MINIO_APP_PASSWORD` shorter than 8 characters), Compose has already removed the old API container and does not start the new one: Gelabber is down until you fix `.env` and run `docker compose up -d` again. `docker compose logs minio-init` names the cause. Changing `MINIO_APP_PASSWORD` later: edit `.env`, `docker compose up -d` (`minio-init` sets the new password, the API is recreated with it). Renaming `MINIO_APP_USER` leaves the old user in MinIO; remove it with `mc admin user remove` if you want. Links the API signed as root before the switch stay valid until they expire, because root still exists. A changed `MINIO_APP_PASSWORD` ends links signed with the old one at once: open pages show missing images until a reload, and uploads in flight fail once.
+
+Rollback to an API before v0.7 needs the old `compose.yaml` too (it reads only `MINIO_ROOT_*`); see "Rollout and rollback". The MinIO user can stay, it is unused then.
+
 ### MinIO on 443
 
-Browsers upload and download attachments directly from MinIO through presigned URLs, so `MINIO_PUBLIC_ENDPOINT` is public by design. Put it on its own subdomain behind your TLS Caddy, not on a published port such as `https://example.com:9000`: networks that only allow 80/443 then load no images, and the S3 API (plus the console on 9001, if published) faces the internet without the proxy in front. The move fixes reachability and removes the directly published 9000/9001 (console included), but it does not shrink the S3 API's attack surface: the Caddy MinIO site forwards every path and method, so `https://minio.example.com` still serves the whole S3/admin API, and the API keeps signing with the MinIO root account. The API logs a warning at startup when an `https://` endpoint carries a port other than 443.
+Browsers upload and download attachments directly from MinIO through presigned URLs, so `MINIO_PUBLIC_ENDPOINT` is public by design. Put it on its own subdomain behind your TLS Caddy, not on a published port such as `https://example.com:9000`: networks that only allow 80/443 then load no images, and the S3 API (plus the console on 9001, if published) faces the internet without the proxy in front. The move fixes reachability and removes the directly published 9000/9001 (console included), but it does not shrink the S3 API's attack surface: the Caddy MinIO site forwards every path and method, so `https://minio.example.com` still serves the whole S3/admin API. Since #196 the API signs with a bucket-scoped user instead of root, so presigned links and a leaked API environment reach only the Gelabber bucket; the root password still guards the admin API, keep it private. The API logs a warning at startup when an `https://` endpoint carries a port other than 443.
 
 1. DNS for `minio.example.com`, and the MinIO site from `Caddyfile.homelab` in your Caddy with `minio.example.com` as its address (the default is `minio.home.arpa`; `header_up Host {hostport}`, URI unchanged).
 2. `.env`: `MINIO_PUBLIC_ENDPOINT=https://minio.example.com`, `MINIO_API_CORS_ALLOW_ORIGIN=https://example.com`. Leave `MINIO_API_BIND` and `MINIO_CONSOLE_BIND` as they are for now: open browsers cache the attachment redirect for the rest of its signing window and keep following the old `:9000` link for up to 30 minutes, so the old port must stay reachable that long.
@@ -260,8 +281,8 @@ cd deploy/compose
 docker compose --env-file .env --env-file next.env config -q
 docker compose --env-file .env --env-file next.env config --images
 # Backup as in the Backup section; keep the old manifest/env files.
-docker compose --env-file .env --env-file next.env pull --policy always api web media minio
-docker compose --env-file .env --env-file next.env up -d --no-deps --no-build --pull never --force-recreate api web media minio
+docker compose --env-file .env --env-file next.env pull --policy always api web media minio minio-init
+docker compose --env-file .env --env-file next.env up -d --no-deps --no-build --pull never --force-recreate minio minio-init api web media
 # Bundled coturn only (skip with the homelab overlay unless COMPOSE_PROFILES=bundled-coturn):
 docker compose --env-file .env --env-file next.env up -d --no-deps --force-recreate coturn
 ./turn-check.sh
@@ -293,11 +314,11 @@ complete API/web/media set (no single old media image):
 
 ```bash
 docker compose --env-file .env --env-file previous.env config -q
-docker compose --env-file .env --env-file previous.env pull --policy always api web media minio
-docker compose --env-file .env --env-file previous.env up -d --no-deps --no-build --pull never --force-recreate api web media minio
+docker compose --env-file .env --env-file previous.env pull --policy always api web media minio minio-init
+docker compose --env-file .env --env-file previous.env up -d --no-deps --no-build --pull never --force-recreate minio minio-init api web media
 ```
 
-Here too the Caddyfile belongs to the set. The v0.6 Caddyfile (`{hostport}`) fits an API from 0.6 on: an older API compares `Origin` and `Host` literally and refuses every WebSocket handshake with 403 as soon as a proxy in front writes out the default port (`Host: example.com:443`). With the old Caddyfile the same configuration worked. For a rollback to 0.5.x, therefore also reset the checkout to the old tag and recreate the proxy as above, with `previous.env`; with the homelab overlay, restore the old line in your own Caddy instead.
+Here too the Caddyfile belongs to the set. The v0.6 Caddyfile (`{hostport}`) fits an API from 0.6 on: an older API compares `Origin` and `Host` literally and refuses every WebSocket handshake with 403 as soon as a proxy in front writes out the default port (`Host: example.com:443`). With the old Caddyfile the same configuration worked. For a rollback to 0.5.x, therefore also reset the checkout to the old tag and recreate the proxy as above, with `previous.env`; with the homelab overlay, restore the old line in your own Caddy instead. The same holds for `compose.yaml` from v0.7 on: it hands the API only the bucket-scoped MinIO user (#196), which an API before v0.7 does not read, so for a rollback below v0.7 reset the checkout to the old tag before the commands above (the old one has no `minio-init` service; drop it from the commands).
 
 No `down -v`, do not delete or rename volumes: Postgres/MinIO data stays on the same volumes. An image rollback does **not** replace a database restore; before releases, migrations must be checked for backward compatibility and backups made. After incompatible migrations the separately tested restore is required. Readiness alone is not a media/storage acceptance.
 

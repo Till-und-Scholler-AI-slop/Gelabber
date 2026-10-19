@@ -11,7 +11,7 @@ ROOT = Path(__file__).resolve().parents[1]
 
 # The examples ship without passwords (#188); an operator fills them in.
 SECRETS = ''.join(f'{key}=test-{key.lower()}\n' for key in (
-    'POSTGRES_PASSWORD', 'MINIO_ROOT_PASSWORD', 'TURN_PASSWORD'))
+    'POSTGRES_PASSWORD', 'MINIO_ROOT_PASSWORD', 'MINIO_APP_PASSWORD', 'TURN_PASSWORD'))
 
 
 def secrets_env(tmp):
@@ -87,13 +87,28 @@ class SecureDefaults(unittest.TestCase):
             return subprocess.run(cmd, capture_output=True, text=True, env=environ)
 
     def test_every_password_is_required(self):
-        for key in ('POSTGRES_PASSWORD', 'MINIO_ROOT_PASSWORD', 'TURN_PASSWORD'):
+        for key in ('POSTGRES_PASSWORD', 'MINIO_ROOT_PASSWORD', 'MINIO_APP_PASSWORD', 'TURN_PASSWORD'):
             missing = ''.join(line + '\n' for line in SECRETS.splitlines()
                               if not line.startswith(key + '='))
             for env_text in (missing, missing + f'{key}=\n'):
                 result = self.config(env_text)
                 self.assertNotEqual(result.returncode, 0, key)
                 self.assertIn(key, result.stderr)
+
+    def test_api_gets_the_bucket_user_not_root(self):
+        # #196: root stays in minio and minio-init; the API waits for the user.
+        result = self.config(SECRETS)
+        self.assertEqual(result.returncode, 0, result.stderr)
+        services = json.loads(result.stdout)['services']
+        api = services['api']['environment']
+        self.assertFalse({'MINIO_ROOT_USER', 'MINIO_ROOT_PASSWORD'} & api.keys())
+        self.assertEqual(api['MINIO_ACCESS_KEY'], 'gelabber-api')
+        self.assertEqual(api['MINIO_SECRET_KEY'], 'test-minio_app_password')
+        init = services['minio-init']['environment']
+        self.assertEqual(init['MINIO_APP_PASSWORD'], api['MINIO_SECRET_KEY'])
+        self.assertEqual(init['MINIO_BUCKET'], api['MINIO_BUCKET'])
+        self.assertEqual(services['api']['depends_on']['minio-init']['condition'],
+                         'service_completed_successfully')
 
     def test_plain_http_entry_binds_loopback(self):
         result = self.config(SECRETS)
