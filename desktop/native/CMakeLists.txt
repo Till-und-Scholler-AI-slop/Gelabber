@@ -87,8 +87,9 @@ if(WIN32 AND NOT EXISTS "${GELABBER_LIBWEBRTC_DIR}/lib/libwebrtc.lib")
   set(LIBWEBRTC_BINARY_PATH "${CMAKE_CURRENT_BINARY_DIR}/libwebrtc" CACHE PATH "" FORCE)
 endif()
 
-# Patches on the pinned commit (patches/libmediasoupclient, issue #197). A
-# Windows checkout may turn them into CRLF; git apply needs the LF original.
+# Patches on the pinned commit (patches/libmediasoupclient, issue #197). Git
+# on Windows runners checks out with core.autocrlf=true: the patches (CRLF in
+# this checkout) are written with LF, and the clone keeps LF so they apply.
 # The reset keeps a rerun of the patch step on a fetched tree idempotent.
 set(mediasoupclient_patches "")
 file(GLOB mediasoupclient_patch_files
@@ -97,8 +98,10 @@ list(SORT mediasoupclient_patch_files)
 foreach(patch IN LISTS mediasoupclient_patch_files)
   get_filename_component(name "${patch}" NAME)
   file(READ "${patch}" text)
-  string(REPLACE "\r\n" "\n" text "${text}")
-  file(WRITE "${CMAKE_CURRENT_BINARY_DIR}/patches/libmediasoupclient/${name}" "${text}")
+  # @ONLY: no @name@ in a patch; NEWLINE_STYLE because file(WRITE) on
+  # Windows writes CRLF again.
+  file(CONFIGURE OUTPUT "${CMAKE_CURRENT_BINARY_DIR}/patches/libmediasoupclient/${name}"
+    CONTENT "${text}" @ONLY NEWLINE_STYLE UNIX)
   list(APPEND mediasoupclient_patches
     COMMAND git apply "${CMAKE_CURRENT_BINARY_DIR}/patches/libmediasoupclient/${name}")
 endforeach()
@@ -107,6 +110,7 @@ FetchContent_Declare(
   mediasoupclient
   GIT_REPOSITORY https://github.com/versatica/libmediasoupclient.git
   GIT_TAG ${LIBMEDIASOUPCLIENT_COMMIT}
+  GIT_CONFIG core.autocrlf=false
   PATCH_COMMAND git reset --hard --quiet ${mediasoupclient_patches}
 )
 FetchContent_MakeAvailable(mediasoupclient)
