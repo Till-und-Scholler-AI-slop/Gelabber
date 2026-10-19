@@ -18,7 +18,7 @@ and watching. What users get to read ships from `app/package/`.
 | `native/` | C++ media core: libmediasoupclient + libwebrtc behind a C ABI (`include/gelabber_media.h`), built as one shared library |
 | `native/libwebrtc.env` | Pins: libwebrtc M140 commit, libmediasoupclient commit, libsdptransform tag |
 | `native/scripts/` | Reproducible libwebrtc builds (Linux, Windows); a test desktop session with a ScreenCast portal |
-| `native/patches/` | Patches applied to libwebrtc |
+| `native/patches/` | Patches applied to libwebrtc; `libmediasoupclient/` to libmediasoupclient |
 | `native/tests/app_audio_mix_test.cc` | The source-audio mix against simulated sound cards whose clocks are off; plain C++, built and run by `core/tests/voice.rs` with the host's compiler |
 | `core/` | Rust crate `gelabber-media-core`: safe API over the C ABI |
 | `core/tests/mediasoup_loopback.rs` | Loopback call against mediasoup 0.29 with the server's router codecs; on Windows also application sound through process loopback |

@@ -54,7 +54,7 @@ jobs:
       - name: Cache key
         id: key
         run: |
-          echo "key=libwebrtc-linux-x64-${{ hashFiles('desktop/native/libwebrtc.env', 'desktop/native/scripts/build-libwebrtc-linux.sh', 'desktop/native/patches/**') }}" >> "$GITHUB_OUTPUT"
+          echo "key=libwebrtc-linux-x64-${{ hashFiles('desktop/native/libwebrtc.env', 'desktop/native/scripts/build-libwebrtc-linux.sh', 'desktop/native/patches/*.patch') }}" >> "$GITHUB_OUTPUT"
 
       - name: Restore libwebrtc package
         id: cache
@@ -120,7 +120,7 @@ jobs:
         id: key
         shell: bash
         run: |
-          echo "key=libwebrtc-windows-x64-${{ hashFiles('desktop/native/libwebrtc.env', 'desktop/native/scripts/build-libwebrtc-windows.ps1', 'desktop/native/patches/**') }}" >> "$GITHUB_OUTPUT"
+          echo "key=libwebrtc-windows-x64-${{ hashFiles('desktop/native/libwebrtc.env', 'desktop/native/scripts/build-libwebrtc-windows.ps1', 'desktop/native/patches/*.patch') }}" >> "$GITHUB_OUTPUT"
 
       - name: Restore libwebrtc package
         id: cache

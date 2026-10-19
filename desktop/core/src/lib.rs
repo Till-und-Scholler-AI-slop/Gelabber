@@ -17,7 +17,8 @@ pub const ABI_VERSION: u32 = ffi::GM_ABI_VERSION;
 use serde_json::Value;
 use std::{
     ffi::{CStr, CString, c_char, c_int, c_void},
-    ptr::NonNull,
+    mem::ManuallyDrop,
+    ptr::{self, NonNull},
     sync::{Arc, Mutex, mpsc},
 };
 
@@ -671,6 +672,26 @@ impl Producer {
         &self.id
     }
 
+    /// Closes like dropping and tells whether that released the RTP sender;
+    /// `false` means the core still holds it until the transport closes.
+    /// For tests (issue #197).
+    pub fn close_released(self) -> Result<bool> {
+        let this = ManuallyDrop::new(self);
+        let code = {
+            let _guard = this.transport.0.lock.lock().unwrap();
+            // SAFETY: owned producer, freed here instead of in Drop.
+            unsafe { ffi::gm_producer_free_released(this.ptr.as_ptr()) }
+        };
+        let released = check(code).map(|()| code == 1);
+        // SAFETY: each field is read once; Drop does not run for `this`.
+        unsafe {
+            drop(ptr::read(&this.id));
+            drop(ptr::read(&this._source));
+            drop(ptr::read(&this.transport));
+        }
+        released
+    }
+
     pub fn rtp_parameters(&self) -> Result<Value> {
         // SAFETY: live producer.
         owned_json(unsafe { ffi::gm_producer_rtp_parameters(self.ptr.as_ptr()) })
@@ -833,6 +854,29 @@ impl Drop for Consumer {
 impl Consumer {
     pub fn id(&self) -> &str {
         &self.id
+    }
+
+    /// Closes like dropping and tells whether that released the RTP
+    /// receiver; `false` means the core still holds it until the transport
+    /// closes. For tests (issue #197).
+    pub fn close_released(mut self) -> Result<bool> {
+        if self.sink.is_some() {
+            self.set_video_sink(None)?;
+        }
+        let this = ManuallyDrop::new(self);
+        let code = {
+            let _guard = this.transport.0.lock.lock().unwrap();
+            // SAFETY: owned consumer without a sink, freed here instead of in Drop.
+            unsafe { ffi::gm_consumer_free_released(this.ptr.as_ptr()) }
+        };
+        let released = check(code).map(|()| code == 1);
+        // SAFETY: each field is read once; Drop does not run for `this`.
+        unsafe {
+            drop(ptr::read(&this.id));
+            drop(ptr::read(&this.sink));
+            drop(ptr::read(&this.transport));
+        }
+        released
     }
 
     pub fn set_paused(&self, paused: bool) -> Result<()> {

@@ -2216,6 +2216,21 @@ void gm_producer_free(gm_producer* producer)
 	});
 }
 
+int gm_producer_free_released(gm_producer* producer)
+{
+	return guarded<int>(-1, [&] {
+		if (!producer)
+			throw std::invalid_argument("producer is null");
+		// Our own reference outlives the free: dropping it last proves nobody
+		// else (transceiver map, PeerConnection) still holds the sender.
+		webrtc::scoped_refptr<webrtc::RtpSenderInterface> sender(producer->producer->GetRtpSender());
+		gm_producer_free(producer);
+		if (!lastError.empty())
+			return -1;
+		return sender.release()->Release() == webrtc::RefCountReleaseStatus::kDroppedLastRef ? 1 : 0;
+	});
+}
+
 const char* gm_producer_id(gm_producer* producer)
 {
 	return producer ? producer->id.c_str() : nullptr;
@@ -2421,6 +2436,20 @@ void gm_consumer_free(gm_consumer* consumer)
 		delete consumer->consumer;
 		delete consumer;
 		return 0;
+	});
+}
+
+int gm_consumer_free_released(gm_consumer* consumer)
+{
+	return guarded<int>(-1, [&] {
+		if (!consumer)
+			throw std::invalid_argument("consumer is null");
+		webrtc::scoped_refptr<webrtc::RtpReceiverInterface> receiver(
+		  consumer->consumer->GetRtpReceiver());
+		gm_consumer_free(consumer);
+		if (!lastError.empty())
+			return -1;
+		return receiver.release()->Release() == webrtc::RefCountReleaseStatus::kDroppedLastRef ? 1 : 0;
 	});
 }
 

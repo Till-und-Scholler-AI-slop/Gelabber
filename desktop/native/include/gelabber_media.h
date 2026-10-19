@@ -39,7 +39,7 @@
 extern "C" {
 #endif
 
-#define GM_ABI_VERSION 8
+#define GM_ABI_VERSION 9
 
 typedef struct gm_engine gm_engine;
 typedef struct gm_device gm_device;
@@ -199,6 +199,9 @@ GM_API int gm_source_set_enabled(gm_source* source, int enabled);
 GM_API gm_producer* gm_transport_produce(gm_transport* transport, gm_source* source,
                                          const char* options_json);
 GM_API void gm_producer_free(gm_producer* producer);
+/* For tests: gm_producer_free, then 1 if that released the RTP sender, 0 if
+ * something still holds it (a leak until the transport closes), -1 on error. */
+GM_API int gm_producer_free_released(gm_producer* producer);
 GM_API const char* gm_producer_id(gm_producer* producer);
 /* RtpParameters the server accepted (as sent in PRODUCE). */
 GM_API char* gm_producer_rtp_parameters(gm_producer* producer);
@@ -221,6 +224,9 @@ GM_API int gm_producer_set_parameters(gm_producer* producer, const char* paramet
  * {"id","producerId","kind":"audio|video","rtpParameters":{...},"appData"?:{...}} */
 GM_API gm_consumer* gm_transport_consume(gm_transport* transport, const char* consumer_json);
 GM_API void gm_consumer_free(gm_consumer* consumer);
+/* For tests: gm_consumer_free, then 1 if that released the RTP receiver, 0
+ * if something still holds it, -1 on error. */
+GM_API int gm_consumer_free_released(gm_consumer* consumer);
 GM_API const char* gm_consumer_id(gm_consumer* consumer);
 GM_API int gm_consumer_pause(gm_consumer* consumer, int paused);
 /* Playback volume of an audio consumer, 0..2 (1 = as received; 0 = silent). */
