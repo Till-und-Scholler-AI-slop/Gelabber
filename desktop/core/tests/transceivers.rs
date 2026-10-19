@@ -2,7 +2,8 @@
 //! once, not only when its transport closes. Unpatched, libmediasoupclient
 //! keeps every RtpTransceiver a transport ever had in its mid map, so a long
 //! call that toggles screen share and camera or sees people come and go only
-//! grows (patches/libmediasoupclient in desktop/native).
+//! grows (patches/libmediasoupclient in desktop/native). Only the first,
+//! BUNDLE-tagged one per transport stays, which is bounded.
 
 mod common;
 
@@ -125,9 +126,13 @@ async fn toggle(server: &Server) {
             held.push((cycle, consumer_released, producer_released));
         }
     }
-    assert!(
-        held.is_empty(),
-        "(cycle, receiver released, sender released) still held by the core: {held:?}"
+    // The first m-section of a transport carries the BUNDLE transport, so
+    // libmediasoupclient only disables it instead of closing it: libwebrtc
+    // keeps that one transceiver per transport. Every later one goes.
+    assert_eq!(
+        held,
+        [(0, false, false)],
+        "(cycle, receiver released, sender released) still held by the core"
     );
 
     drop((send, recv));
