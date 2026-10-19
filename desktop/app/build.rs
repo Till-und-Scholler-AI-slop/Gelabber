@@ -29,7 +29,30 @@ fn place_core_dll(lib_dir: &Path) {
     }
 }
 
+/// The public key update packages must be signed with (src/update.rs), for
+/// `env!("GELABBER_UPDATER_PUBKEY")`: `GELABBER_UPDATER_PUBKEY` when set (CI
+/// test builds, with a key of their own run), else `updater.pub`, the key of
+/// the releases. Empty when neither is there: the app then never updates
+/// itself. As `tauri signer generate` writes it: one line of base64.
+fn updater_pubkey() {
+    const FILE: &str = "updater.pub";
+    println!("cargo:rerun-if-env-changed=GELABBER_UPDATER_PUBKEY");
+    println!("cargo:rerun-if-changed={FILE}");
+    let key = std::env::var("GELABBER_UPDATER_PUBKEY")
+        .ok()
+        .or_else(|| std::fs::read_to_string(FILE).ok())
+        .unwrap_or_default();
+    let key = key.trim();
+    assert!(
+        key.bytes()
+            .all(|byte| byte.is_ascii_alphanumeric() || b"+/=".contains(&byte)),
+        "the updater public key is one line of base64, as `tauri signer generate` writes it"
+    );
+    println!("cargo:rustc-env=GELABBER_UPDATER_PUBKEY={key}");
+}
+
 fn main() {
+    updater_pubkey();
     // Find the native core during development and tests; packages ship it
     // next to the binary ($ORIGIN on Linux, the loader's rule on Windows).
     let target_os = std::env::var("CARGO_CFG_TARGET_OS");
@@ -46,12 +69,13 @@ fn main() {
         place_core_dll(Path::new(dir));
     }
     // `allow-<command>` permissions for the app's own commands; the server
-    // origin gets the `media` and `shell` sets (permissions/) plus
-    // `allow-open-setup`, the bundled setup page only `allow-set-server`
-    // (capabilities/setup.json).
+    // origin gets the `media`, `shell` and `update` sets (permissions/) plus
+    // `allow-open-setup`, the bundled setup page `allow-set-server` and the
+    // update commands (capabilities/setup.json).
     let commands: Vec<&'static str> = MEDIA_COMMANDS
         .iter()
         .chain(SHELL_COMMANDS)
+        .chain(UPDATE_COMMANDS)
         .copied()
         .chain(["set_server", "open_setup"])
         .collect();

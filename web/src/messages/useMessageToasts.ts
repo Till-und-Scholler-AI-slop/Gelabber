@@ -170,8 +170,8 @@ export function useMessageToastsBridge(): void {
         ?.find((current) => current.channel_id === event.c);
       if (!wantsNotification(row, { dm, mentioned }, serverNow())) return;
       // The desktop app's taskbar button flashes for a direct message while
-      // the window is not in front, whatever the notification settings say,
-      // once for a burst.
+      // the window is not in front, whatever the toast and desktop settings
+      // say (a mute or the level "nothing" returned above), once for a burst.
       if (
         dm &&
         !own &&

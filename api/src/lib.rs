@@ -18,6 +18,7 @@ pub mod metrics;
 pub mod notifications;
 pub mod password;
 pub mod path;
+pub mod previews;
 pub mod profile;
 pub mod servers;
 pub mod state;
@@ -44,6 +45,7 @@ pub use state::AppState;
 pub fn app(state: AppState) -> Router {
     state.gateway.ensure_delivery(state.clone());
     attachments::cleanup::start(state.clone());
+    previews::start(state.clone());
     // Everything under /api is a browser-facing JSON route and goes through
     // the CSRF check; /health, /ready and /metrics stay outside (GET only).
     let api = Router::new()
@@ -58,6 +60,7 @@ pub fn app(state: AppState) -> Router {
         .merge(attachments::router())
         .merge(gifs::router())
         .merge(notifications::router())
+        .merge(previews::router())
         .layer(middleware::from_fn(csrf::require))
         .layer(middleware::from_fn_with_state(state.clone(), limits::gate));
 

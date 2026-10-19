@@ -36,9 +36,9 @@ describe("account and chat scoped drafts", () => {
     const file = new File(["original bytes"], "report.txt", {
       type: "text/plain",
     });
-    saveDraft("a", "one", { text: "draft", file });
-    saveDraft("a", "two", { text: "another", file: null });
-    expect(loadDraft("a", "one")).toEqual({ text: "draft", file });
+    saveDraft("a", "one", { text: "draft", files: [file] });
+    saveDraft("a", "two", { text: "another", files: [] });
+    expect(loadDraft("a", "one")).toEqual({ text: "draft", files: [file] });
     expect(loadDraft("a", "two").text).toBe("another");
     expect(Object.values(stored).sort()).toEqual(["another", "draft"]);
   });
@@ -46,17 +46,20 @@ describe("account and chat scoped drafts", () => {
     stored["gelabber:chat-draft:a:reload"] = "restored";
     stored["gelabber:chat-draft:b:reload"] = "foreign";
     bindDraftAccount("a");
-    expect(loadDraft("a", "reload")).toEqual({ text: "restored", file: null });
+    expect(loadDraft("a", "reload")).toEqual({ text: "restored", files: [] });
     expect(loadDraft("b", "reload").text).toBe("");
   });
   it("releases files and storage on logout and on a different account", () => {
     bindDraftAccount("a");
-    saveDraft("a", "one", { text: "private", file: new File(["a"], "a.txt") });
+    saveDraft("a", "one", {
+      text: "private",
+      files: [new File(["a"], "a.txt")],
+    });
     bindDraftAccount("b");
-    expect(loadDraft("a", "one")).toEqual({ text: "", file: null });
-    saveDraft("b", "one", { text: "next", file: null });
+    expect(loadDraft("a", "one")).toEqual({ text: "", files: [] });
+    saveDraft("b", "one", { text: "next", files: [] });
     bindDraftAccount(null);
-    expect(loadDraft("b", "one")).toEqual({ text: "", file: null });
+    expect(loadDraft("b", "one")).toEqual({ text: "", files: [] });
     expect(Object.keys(stored)).toEqual([]);
   });
   it("owns image preview URLs through navigation and releases them on replacement/logout", () => {
@@ -68,11 +71,16 @@ describe("account and chat scoped drafts", () => {
       .spyOn(URL, "revokeObjectURL")
       .mockImplementation(() => {});
     const file = new File(["image"], "image.png", { type: "image/png" });
-    saveDraft("a", "image", { text: "caption", file });
+    saveDraft("a", "image", { text: "caption", files: [file] });
     loadDraft("a", "image");
-    saveDraft("a", "image", { text: "changed caption", file });
+    saveDraft("a", "image", { text: "changed caption", files: [file] });
     expect(create).toHaveBeenCalledTimes(1);
     expect(revoke).not.toHaveBeenCalled();
+    saveDraft("a", "image", {
+      text: "two",
+      files: [file, new File(["doc"], "doc.pdf", { type: "application/pdf" })],
+    });
+    expect(create).toHaveBeenCalledTimes(1);
     bindDraftAccount(null);
     expect(revoke).toHaveBeenCalledWith("blob:draft");
     create.mockRestore();
@@ -80,9 +88,9 @@ describe("account and chat scoped drafts", () => {
   });
   it("clears the submitted draft without dropping another channel", () => {
     bindDraftAccount("a");
-    saveDraft("a", "one", { text: "send", file: null });
-    saveDraft("a", "two", { text: "keep", file: null });
-    saveDraft("a", "one", { text: "", file: null });
+    saveDraft("a", "one", { text: "send", files: [] });
+    saveDraft("a", "two", { text: "keep", files: [] });
+    saveDraft("a", "one", { text: "", files: [] });
     expect(loadDraft("a", "one").text).toBe("");
     expect(loadDraft("a", "two").text).toBe("keep");
   });
@@ -98,7 +106,7 @@ describe("account and chat scoped drafts", () => {
         throw new Error("disabled");
       },
     });
-    saveDraft("a", "one", { text: "still here", file: null });
+    saveDraft("a", "one", { text: "still here", files: [] });
     expect(loadDraft("a", "one").text).toBe("still here");
   });
 });

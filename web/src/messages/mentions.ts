@@ -45,6 +45,10 @@ export function splitMentions(
       new RegExp(`${TOKEN.source}|${KEYWORD.source}`, "giu"),
     )) {
       const index = match.index ?? 0;
+      // Escaped with a backslash (`\<@id>`, `\@here`): text, as the
+      // server reads it. The keyword match starts one character early.
+      const start = match[1] ? index : index + (match[2]?.length ?? 0);
+      if (/(^|[^\\])(\\\\)*\\$/.test(text.slice(0, start))) continue;
       if (match[1]) {
         pushText(text.slice(at, index));
         const id = match[1].toLowerCase();

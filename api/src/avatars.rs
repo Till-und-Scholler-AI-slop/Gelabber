@@ -126,7 +126,7 @@ pub fn parse_banner_url(url: &str) -> Option<(Uuid, Uuid)> {
 
 /// The type comes from the bytes, never from the request header. No SVG:
 /// it can carry script.
-fn sniff(bytes: &[u8]) -> Option<&'static str> {
+pub(crate) fn sniff(bytes: &[u8]) -> Option<&'static str> {
     if bytes.starts_with(b"\x89PNG\r\n\x1a\n") {
         Some("image/png")
     } else if bytes.starts_with(&[0xff, 0xd8, 0xff]) {

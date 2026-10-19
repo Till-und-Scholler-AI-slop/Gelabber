@@ -40,8 +40,11 @@ export function MessageText({
     if (part.kind === "text") return part.text;
     if (part.kind === "everyone" && !ping?.everyone) return "@everyone";
     if (part.kind === "here" && !hereReached) return "@here";
+    // A user token is "me" only where the server kept it as a mention.
     const own =
-      part.kind === "user" ? part.id === me : !!ping?.everyone || mentionsMe;
+      part.kind === "user"
+        ? part.id === me && (!ping || ping.everyone || mentionsMe)
+        : !!ping?.everyone || mentionsMe;
     const label =
       part.kind === "user" ? `@${part.name ?? "Unbekannt"}` : `@${part.kind}`;
     return (
