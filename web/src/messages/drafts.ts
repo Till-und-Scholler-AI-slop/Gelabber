@@ -2,9 +2,11 @@ import { useCallback, useState } from "react";
 import { inferContentType, isImageType } from "./rules.ts";
 import { scopeGeneration, stampHolds } from "../auth/scope.ts";
 
-export type Draft = { text: string; file: File | null };
+export type Draft = { text: string; files: File[] };
 const memory = new Map<string, Draft>();
-const previews = new Map<string, { file: File; url: string }>();
+/** Object URLs of a draft's pictures, by file. */
+const previews = new Map<string, Map<File, string>>();
+const none: ReadonlyMap<File, string> = new Map();
 const prefix = "gelabber:chat-draft:";
 let account: string | null = null;
 const key = (userId: string, channelId: string) =>
@@ -28,7 +30,7 @@ export function loadDraft(userId: string, channelId: string): Draft {
   } catch {
     /* Storage quota/privacy. */
   }
-  const draft = { text, file: null };
+  const draft: Draft = { text, files: [] };
   memory.set(id, draft);
   return draft;
 }
@@ -39,22 +41,19 @@ export function saveDraft(
   draft: Draft,
 ): void {
   const id = key(userId, channelId);
-  const previous = previews.get(id);
-  if (previous && previous.file !== draft.file) {
-    URL.revokeObjectURL(previous.url);
-    previews.delete(id);
+  const previous = previews.get(id) ?? new Map<File, string>();
+  const next = new Map<File, string>();
+  for (const file of draft.files) {
+    const url = previous.get(file);
+    if (url) next.set(file, url);
+    else if (isImageType(inferContentType(file)))
+      next.set(file, URL.createObjectURL(file));
   }
-  if (
-    draft.file &&
-    !previews.has(id) &&
-    isImageType(inferContentType(draft.file))
-  ) {
-    previews.set(id, {
-      file: draft.file,
-      url: URL.createObjectURL(draft.file),
-    });
-  }
-  if (!draft.text && !draft.file) memory.delete(id);
+  for (const [file, url] of previous)
+    if (!next.has(file)) URL.revokeObjectURL(url);
+  if (next.size > 0) previews.set(id, next);
+  else previews.delete(id);
+  if (!draft.text && draft.files.length === 0) memory.delete(id);
   else memory.set(id, draft);
   try {
     if (draft.text) storage()?.setItem(id, draft.text);
@@ -73,9 +72,9 @@ export function bindDraftAccount(next: string | null): void {
     : null;
   for (const id of memory.keys())
     if (!retainedPrefix || !id.startsWith(retainedPrefix)) memory.delete(id);
-  for (const [id, preview] of previews) {
+  for (const [id, urls] of previews) {
     if (!retainedPrefix || !id.startsWith(retainedPrefix)) {
-      URL.revokeObjectURL(preview.url);
+      for (const url of urls.values()) URL.revokeObjectURL(url);
       previews.delete(id);
     }
   }
@@ -105,9 +104,5 @@ export function useChatDraft(userId: string, channelId: string) {
     },
     [userId, generation, channelId],
   );
-  return [
-    draft,
-    update,
-    previews.get(key(userId, channelId))?.url ?? null,
-  ] as const;
+  return [draft, update, previews.get(key(userId, channelId)) ?? none] as const;
 }

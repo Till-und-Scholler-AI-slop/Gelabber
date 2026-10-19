@@ -7,8 +7,8 @@ import { anchoredScrollTop } from "./scrollAnchor.ts";
 import { useVirtualizer } from "@tanstack/react-virtual";
 import {
   createContext,
-  useCallback,
   useContext,
+  useCallback,
   useEffect,
   useEffectEvent,
   useLayoutEffect,
@@ -26,7 +26,10 @@ import {
   scrollEndIntent,
   type ScrollPosition,
 } from "../messages/scrollPosition.ts";
+import { MessageContent } from "../messages/MessageContent.tsx";
 import { MessageSearch } from "../messages/MessageSearch.tsx";
+import { MessageContextView } from "../messages/MessageContext.tsx";
+import { setReplyTarget, useReplyTarget } from "../messages/replyTarget.ts";
 import { useChatDraft } from "../messages/drafts.ts";
 import {
   readBoundary,
@@ -56,21 +59,24 @@ import {
   useMessages,
   useSendMessage,
 } from "../messages/queries.ts";
-import { attachmentDownloadUrl, attachmentUrl } from "../messages/api.ts";
 import {
   carriesFiles,
-  droppedFile,
-  pastedFile,
+  droppedFiles,
+  pastedFiles,
 } from "../messages/clipboard.ts";
 import {
-  ALLOWED_TYPES,
+  ACCEPT,
   CONTENT_MAX,
+  formatSize,
+  isAudioType,
   isImageType,
+  isVideoType,
   validateAttachment,
+  validateAttachmentSet,
   validateContent,
 } from "../messages/rules.ts";
-import type { Attachment, Gif, Message } from "../messages/types.ts";
-import { asAttachmentList, asGif } from "../messages/types.ts";
+import type { Gif, Message, Reply } from "../messages/types.ts";
+import { asAttachmentList, asGif, asReply } from "../messages/types.ts";
 import { gifBox, gifLabel, type GifPick } from "../gifs/api.ts";
 import { useGifStatus } from "../gifs/queries.ts";
 import { useReducedMotion } from "../interface/useReducedMotion.ts";
@@ -81,24 +87,29 @@ import { EmojiPickerLoader, ReactionBar } from "./ReactionBar.tsx";
 import { confirmAction } from "./confirm.ts";
 import { Modal } from "./Modal.tsx";
 import { ImageLightbox, type LightboxImage } from "./ImageLightbox.tsx";
-import { isPlainClick } from "./plainClick.ts";
+import { LinkPreviews } from "./LinkPreviews.tsx";
 import {
   ArrowDownIcon,
   CloseIcon,
   PaperclipIcon,
   PencilIcon,
+  ReplyIcon,
   SearchIcon,
   SendIcon,
   SmileIcon,
   TrashIcon,
 } from "./Icons.tsx";
+import { AttachmentList } from "./Attachments.tsx";
+import { OpenImage } from "./openImage.ts";
 import { MessageText } from "./MessageMentions.tsx";
+import { useMentionRenderer } from "./mentionRenderer.tsx";
 import { MentionContext, useMentions } from "./mentionContext.ts";
 import { useMentionSuggestions } from "./useMentionSuggestions.tsx";
 import {
   fromWire,
   namesIn,
   mentionsMe,
+  readableMentions,
   toWire,
   type MentionMember,
 } from "../messages/mentions.ts";
@@ -108,9 +119,9 @@ import { useMuteClock } from "../messages/notificationSettings.ts";
 import { isMuted } from "../messages/notifyLevel.ts";
 import "./chat.css";
 
-// Opens the one lightbox of the pane. It lives outside the virtual rows: a
-// row scrolled out of the overscan unmounts, and would close it with it.
-const OpenImage = createContext<(image: LightboxImage) => void>(() => {});
+// Shows an answered message: in the list when it is loaded, else in its
+// context from the server.
+const JumpTo = createContext<(id: string) => void>(() => {});
 const NO_MEMBERS: readonly MentionMember[] = [];
 
 export function MessagePane({
@@ -181,6 +192,16 @@ export function MessagePane({
     );
     row?.focus({ preventScroll: true });
   }, []);
+  // A reply's original: scrolled to in the list, or shown in its context.
+  const [focusRequest, setFocusRequest] = useState<{
+    id: string;
+    n: number;
+  } | null>(null);
+  const [contextTarget, setContextTarget] = useState<{
+    scope: string;
+    id: string;
+  } | null>(null);
+  const showingContext = contextTarget?.scope === searchScope;
   const searchButton = useRef<HTMLButtonElement>(null);
   const restoreSearchFocus = useRef(false);
   const closeSearch = useCallback(() => {
@@ -237,6 +258,17 @@ export function MessagePane({
     () => visibleMessages(query.data?.pages ?? [], pending),
     [query.data?.pages, pending],
   );
+  const jumpTo = useCallback(
+    (id: string) => {
+      setSearchingScope(null);
+      if (items.some((message) => message.id === id)) {
+        setContextTarget(null);
+        setFocusRequest((previous) => ({ id, n: (previous?.n ?? 0) + 1 }));
+      } else setContextTarget({ scope: searchScope, id });
+    },
+    [items, searchScope],
+  );
+  const overlay = searching || showingContext;
 
   // Close the picture with its message when that is deleted. A result of
   // the search may not be in the loaded list: only "was there, now gone".
@@ -322,76 +354,113 @@ export function MessagePane({
           </p>
         ) : null}
         <OpenImage.Provider value={openImage}>
-          <div ref={panesRef} className="relative flex min-h-0 flex-1 flex-col">
+          <JumpTo.Provider value={jumpTo}>
             <div
-              className={`flex min-h-0 flex-1 flex-col ${searching ? "invisible" : ""}`}
-              inert={searching}
-              aria-hidden={searching || undefined}
+              ref={panesRef}
+              className="relative flex min-h-0 flex-1 flex-col"
             >
-              <MessageList
-                key={searchScope}
-                active={!searching}
-                channelId={channelId}
-                items={items}
-                onAtLatest={setAtLatest}
-                latestRequest={latestRequest}
-                meId={user?.id}
-                newAfter={newAfter ?? null}
-                canModerate={canModerate}
-                canSend={canSend}
-                hasOlder={Boolean(hasNextPage)}
-                loadingOlder={isFetchingNextPage}
-                onLoadOlder={onLoadOlder}
-                ready={!query.isPending}
-                loadError={
-                  query.error
-                    ? query.isFetchNextPageError
-                      ? "paging"
-                      : "history"
-                    : null
-                }
-                onRetry={() => {
-                  if (query.isFetchNextPageError) void fetchNextPage();
-                  else void query.refetch();
-                }}
-              />
-            </div>
-            {searching ? (
-              <div className="lr-search-overlay absolute inset-0 flex min-h-0 flex-col">
-                <MessageSearch
+              <div
+                className={`flex min-h-0 flex-1 flex-col ${overlay ? "invisible" : ""}`}
+                inert={overlay}
+                aria-hidden={overlay || undefined}
+              >
+                <MessageList
                   key={searchScope}
+                  active={!overlay}
+                  focusRequest={focusRequest}
                   channelId={channelId}
-                  onClose={closeSearch}
-                  renderMessage={(message) => (
-                    <MessageRow
-                      message={message}
-                      continued={false}
-                      canSend={canSend}
-                      mine={message.author.id === user?.id}
-                      canDelete={message.author.id === user?.id || canModerate}
-                      onEdit={(content) =>
-                        contextEdit.mutate({ id: message.id, content })
-                      }
-                      onDelete={async () => {
-                        if (await confirmDelete(message, user?.id))
-                          contextRemove.mutate(message.id);
-                      }}
-                    />
-                  )}
+                  items={items}
+                  onAtLatest={setAtLatest}
+                  latestRequest={latestRequest}
+                  meId={user?.id}
+                  newAfter={newAfter ?? null}
+                  canModerate={canModerate}
+                  canSend={canSend}
+                  hasOlder={Boolean(hasNextPage)}
+                  loadingOlder={isFetchingNextPage}
+                  onLoadOlder={onLoadOlder}
+                  ready={!query.isPending}
+                  loadError={
+                    query.error
+                      ? query.isFetchNextPageError
+                        ? "paging"
+                        : "history"
+                      : null
+                  }
+                  onRetry={() => {
+                    if (query.isFetchNextPageError) void fetchNextPage();
+                    else void query.refetch();
+                  }}
                 />
               </div>
-            ) : null}
-            {!searching && !atLatest && items.length > 0 ? (
-              <button
-                type="button"
-                onClick={() => setLatestRequest((value) => value + 1)}
-                className="lr-jump-latest"
-              >
-                <ArrowDownIcon size={15} />
-                Zu den neuesten Nachrichten
-              </button>
-            ) : null}
-          </div>
+              {searching ? (
+                <div className="lr-search-overlay absolute inset-0 flex min-h-0 flex-col">
+                  <MessageSearch
+                    key={searchScope}
+                    channelId={channelId}
+                    onClose={closeSearch}
+                    renderMessage={(message) => (
+                      <MessageRow
+                        message={message}
+                        continued={false}
+                        canSend={canSend}
+                        mine={message.author.id === user?.id}
+                        canDelete={
+                          message.author.id === user?.id || canModerate
+                        }
+                        onEdit={(content) =>
+                          contextEdit.mutate({ id: message.id, content })
+                        }
+                        onDelete={async () => {
+                          if (await confirmDelete(message, user?.id))
+                            contextRemove.mutate(message.id);
+                        }}
+                      />
+                    )}
+                  />
+                </div>
+              ) : null}
+              {showingContext && !searching ? (
+                <div className="lr-search-overlay absolute inset-0 flex min-h-0 flex-col">
+                  <MessageContextView
+                    key={contextTarget.id}
+                    channelId={channelId}
+                    messageId={contextTarget.id}
+                    closeLabel="Zurück zum Chat"
+                    onClose={() => setContextTarget(null)}
+                    renderMessage={(message) => (
+                      <MessageRow
+                        message={message}
+                        continued={false}
+                        canSend={canSend}
+                        mine={message.author.id === user?.id}
+                        canDelete={
+                          message.author.id === user?.id || canModerate
+                        }
+                        onEdit={(content) =>
+                          contextEdit.mutate({ id: message.id, content })
+                        }
+                        onDelete={async () => {
+                          if (await confirmDelete(message, user?.id))
+                            contextRemove.mutate(message.id);
+                        }}
+                      />
+                    )}
+                  />
+                </div>
+              ) : null}
+              {!overlay && !atLatest && items.length > 0 ? (
+                <button
+                  type="button"
+                  onClick={() => setLatestRequest((value) => value + 1)}
+                  className="lr-jump-latest"
+                >
+                  <ArrowDownIcon size={15} />
+                  Zu den neuesten Nachrichten
+                </button>
+              ) : null}
+            </div>
+          </JumpTo.Provider>
         </OpenImage.Provider>
         {lightbox?.scope === searchScope ? (
           <ImageLightbox
@@ -439,6 +508,7 @@ function MessageList({
   onRetry,
   onAtLatest,
   latestRequest,
+  focusRequest,
 }: {
   active: boolean;
   channelId: string;
@@ -456,6 +526,8 @@ function MessageList({
   onRetry: () => void;
   onAtLatest: (value: boolean) => void;
   latestRequest: number;
+  /** Scroll to this loaded row and highlight it (a reply's original). */
+  focusRequest: { id: string; n: number } | null;
 }) {
   const scrollRef = useRef<HTMLDivElement>(null);
   const stickToBottom = useRef(true);
@@ -493,12 +565,27 @@ function MessageList({
     getScrollElement: () => scrollRef.current,
     estimateSize: (index) => {
       const message = items[index]!;
-      const image = (message.attachments ?? []).some((a) =>
-        isImageType(a.content_type),
+      const files = asAttachmentList(message.attachments);
+      const images = files.filter((a) => isImageType(a.content_type)).length;
+      const image = images > 0;
+      // Players and file rows below the pictures.
+      const extra = files.reduce(
+        (sum, a) =>
+          sum +
+          (isVideoType(a.content_type)
+            ? 280
+            : isAudioType(a.content_type)
+              ? 84
+              : isImageType(a.content_type)
+                ? 0
+                : 44),
+        0,
       );
       const breaks =
         (dayBreak(items[index - 1], message) ? 40 : 0) +
-        (index === newIndex ? 28 : 0);
+        (index === newIndex ? 28 : 0) +
+        extra +
+        (message.reply ? 22 : 0);
       const gif = asGif(message.gif);
       if (gif)
         return (
@@ -506,9 +593,14 @@ function MessageList({
           gifBox(gif).height +
           (isContinued(items[index - 1], message) ? 16 : 60)
         );
-      // The image box is a fixed 240 px (chat.css), plus header and gaps.
-      if (image)
-        return breaks + (isContinued(items[index - 1], message) ? 256 : 300);
+      // The image box is a fixed 240 px (chat.css), several pictures a grid
+      // of 160 px rows, plus header and gaps.
+      if (image) {
+        const box = images > 1 ? Math.ceil(images / 2) * 164 : 240;
+        return (
+          breaks + box + (isContinued(items[index - 1], message) ? 16 : 60)
+        );
+      }
       return breaks + (isContinued(items[index - 1], message) ? 28 : 72);
     },
     getItemKey: (index) => items[index]?.id ?? index,
@@ -650,6 +742,25 @@ function MessageList({
     // `updateLatest()` pinned the row at scrollTop. Not the first rendered
     // row: that can be an overscan row far above the viewport.
   }, [items, virtualizer, startOf, updateLatest, totalSize, latestRequest]);
+
+  const [highlighted, setHighlighted] = useState<string | null>(null);
+  const handledFocus = useRef(focusRequest?.n);
+  useEffect(() => {
+    if (!focusRequest || focusRequest.n === handledFocus.current) return;
+    handledFocus.current = focusRequest.n;
+    const index = itemsRef.current.findIndex(
+      (message) => message.id === focusRequest.id,
+    );
+    if (index < 0) return;
+    // A jump into history is the reader's position, not the end's.
+    stickToBottom.current = false;
+    hold.current = null;
+    heldTop.current = null;
+    virtualizer.scrollToIndex(index, { align: "center" });
+    setHighlighted(focusRequest.id);
+    const done = window.setTimeout(() => setHighlighted(null), 2000);
+    return () => window.clearTimeout(done);
+  }, [focusRequest, virtualizer]);
 
   const firstVisible = virtualizer.getVirtualItems()[0]?.index ?? 0;
   const firstId = items[0]?.id;
@@ -826,7 +937,7 @@ function MessageList({
               key={row.key}
               data-index={row.index}
               ref={virtualizer.measureElement}
-              className="absolute inset-x-0"
+              className={`absolute inset-x-0${message.id === highlighted ? " lr-message-highlight" : ""}`}
               style={{ top: row.start }}
             >
               {newDay ? (
@@ -894,6 +1005,7 @@ function MessageRow({
   const pending = isPendingId(message.id);
   const { members, me } = useMentions();
   const mentioned = !mine && mentionsMe(message, me);
+  const renderMention = useMentionRenderer(message);
   const [editing, setEditing] = useState(false);
   const [draft, setDraft] = useState(message.content);
   const editInput = useRef<HTMLTextAreaElement>(null);
@@ -947,6 +1059,8 @@ function MessageRow({
   const gif = asGif(message.gif);
   const showEdit = mine && canSend && !pending && !editing && !gif;
   const canReact = canSend && !pending && !editing;
+  const canReply = canSend && !pending && !editing;
+  const reply = asReply(message.reply);
   const [reactionSlot, setReactionSlot] = useState<HTMLSpanElement | null>(
     null,
   );
@@ -955,6 +1069,14 @@ function MessageRow({
     showEdit || showDelete || canReact ? (
       <span className="lr-message-actions">
         <span ref={setReactionSlot} className="lr-message-reaction-slot" />
+        {canReply ? (
+          <IconButton
+            label="Antworten"
+            onClick={() => setReplyTarget(message.channel_id, message)}
+          >
+            <ReplyIcon size={14} />
+          </IconButton>
+        ) : null}
         {showEdit ? (
           <IconButton
             buttonRef={editButton}
@@ -985,21 +1107,23 @@ function MessageRow({
         <span className="w-8 shrink-0" aria-hidden />
         <div className="min-w-0 flex-1">
           {message.content ? (
-            <p className="lr-message-text">
-              <MessageText
+            <div className="lr-message-text">
+              <MessageContent
                 content={message.content}
-                ping={{
-                  everyone: message.mention_everyone === true,
-                  mentions: message.mentions ?? [],
-                }}
+                renderMention={renderMention}
               />
               {message.edited_at ? (
                 <span className="lr-message-edited">(bearbeitet)</span>
               ) : null}
-            </p>
+            </div>
           ) : null}
           {gif ? <GifMessage gif={gif} /> : null}
           <AttachmentList attachments={message.attachments ?? []} />
+          <LinkPreviews
+            messageId={message.id}
+            previews={message.previews}
+            canRemove={canDelete && !pending}
+          />
           <ReactionBar
             message={message}
             canSend={canSend}
@@ -1022,6 +1146,7 @@ function MessageRow({
     >
       <Avatar name={message.author.name} url={message.author.avatar_url} />
       <div className="min-w-0 flex-1">
+        {reply ? <ReplyHeader reply={reply} /> : null}
         <div className="flex flex-wrap items-baseline gap-2">
           <span className="lr-message-author">{message.author.name}</span>
           <time dateTime={message.created_at} className="lr-message-time">
@@ -1083,22 +1208,26 @@ function MessageRow({
             </div>
           </form>
         ) : message.content || !gif ? (
-          <p className="lr-message-text">
-            <MessageText
+          <div className="lr-message-text">
+            <MessageContent
               content={message.content}
-              ping={{
-                everyone: message.mention_everyone === true,
-                mentions: message.mentions ?? [],
-              }}
+              renderMention={renderMention}
             />
             {message.edited_at ? (
               <span className="lr-message-edited">(bearbeitet)</span>
             ) : null}
-          </p>
+          </div>
         ) : null}
         {!editing && gif ? <GifMessage gif={gif} /> : null}
         {!editing ? (
           <AttachmentList attachments={message.attachments ?? []} />
+        ) : null}
+        {!editing ? (
+          <LinkPreviews
+            messageId={message.id}
+            previews={message.previews}
+            canRemove={canDelete && !pending}
+          />
         ) : null}
         {!editing && (
           <ReactionBar
@@ -1138,19 +1267,20 @@ function Composer({
     channelId,
     author ?? { id: "", name: "", avatar_url: null },
   );
-  const [savedDraft, updateDraft, preview] = useChatDraft(
+  const [savedDraft, updateDraft, previews] = useChatDraft(
     author?.id ?? "",
     channelId,
   );
   const draft = savedDraft.text;
-  const file = savedDraft.file;
+  const files = savedDraft.files;
   const setDraft = (text: string) => updateDraft({ text });
-  const setFile = (file: File | null) => updateDraft({ file });
+  const setFiles = (files: File[]) => updateDraft({ files });
   const [fileError, setFileError] = useState<string | null>(null);
   const [emojiOpen, setEmojiOpen] = useState(false);
   const [gifOpen, setGifOpen] = useState(false);
   const gifs = useGifStatus();
   const gifsEnabled = gifs.data?.enabled === true;
+  const replyTarget = useReplyTarget(channelId);
   const fileInput = useRef<HTMLInputElement>(null);
   const composerInput = useRef<HTMLTextAreaElement>(null);
   const composerForm = useRef<HTMLFormElement>(null);
@@ -1174,6 +1304,10 @@ function Composer({
     else if (target.top - focusMargin < boundary.top)
       pane.scrollTop -= boundary.top - target.top + focusMargin;
   }, []);
+  // "Antworten" moves the keyboard to the field it fills.
+  useEffect(() => {
+    if (replyTarget) composerInput.current?.focus({ preventScroll: true });
+  }, [replyTarget]);
   // Toolbar/read-state changes can move a focused form without resizing it.
   useLayoutEffect(revealComposerFocus, [revealComposerFocus]);
   useLayoutEffect(() => {
@@ -1218,28 +1352,48 @@ function Composer({
     !canSend ||
     !author ||
     Boolean(error) ||
-    Boolean(file && !canSendFiles) ||
-    (emptyText && !file);
+    Boolean(files.length > 0 && !canSendFiles) ||
+    (emptyText && files.length === 0);
 
-  const pickFile = (next: File | null) => {
+  /** Add files to `base` (the composer's files): invalid ones are left
+   *  out, and so is whatever would go over the message's limits. One note
+   *  names every file left out. */
+  const addFiles = (next: File[], base: File[] = files) => {
     setFileError(null);
-    if (!next) {
-      setFile(null);
-      return;
+    let kept = [...base];
+    const notes: string[] = [];
+    const over = new Map<string, string[]>();
+    for (const candidate of next) {
+      const invalid = validateAttachment(candidate);
+      if (invalid) {
+        notes.push(
+          `${candidate.name}: ${fieldMessage(invalid.field, invalid.code)}`,
+        );
+        continue;
+      }
+      // A smaller file further on may still fit under the size limit.
+      const limit = validateAttachmentSet([...kept, candidate]);
+      if (limit) {
+        const reason = fieldMessage(limit.field, limit.code);
+        over.set(reason, [...(over.get(reason) ?? []), candidate.name]);
+        continue;
+      }
+      kept = [...kept, candidate];
     }
-    const invalid = validateAttachment(next);
-    if (invalid) {
-      setFile(null);
-      setFileError(fieldMessage(invalid.field, invalid.code));
-      return;
-    }
-    setFile(next);
+    for (const [reason, names] of over)
+      notes.push(`Nicht angehängt: ${names.join(", ")}. ${reason}`);
+    if (notes.length > 0) setFileError(notes.join(" "));
+    setFiles(kept);
+  };
+  const removeFile = (index: number) => {
+    setFileError(null);
+    setFiles(files.filter((_, i) => i !== index));
   };
 
   // Files dropped anywhere on the conversation attach like the paperclip.
   const [dropping, setDropping] = useState(false);
-  const attachDropped = useEffectEvent((next: File) => {
-    pickFile(next);
+  const attachDropped = useEffectEvent((next: File[]) => {
+    addFiles(next);
     composerInput.current?.focus();
   });
   useEffect(() => {
@@ -1272,8 +1426,8 @@ function Composer({
       event.preventDefault();
       depth = 0;
       show(false);
-      const file = droppedFile(event.dataTransfer);
-      if (file) attachDropped(file);
+      const dropped = droppedFiles(event.dataTransfer);
+      if (dropped.length > 0) attachDropped(dropped);
     };
     pane.addEventListener("dragenter", enter);
     pane.addEventListener("dragover", over);
@@ -1292,10 +1446,10 @@ function Composer({
     event?.preventDefault();
     if (disabled) return;
     const text = wire;
-    const attached = file;
-    send.mutate({ content: text, file: attached ?? undefined });
-    setDraft("");
-    pickFile(null);
+    send.mutate({ content: text, files, replyTo: replyTarget });
+    setReplyTarget(channelId, null);
+    updateDraft({ text: "", files: [] });
+    setFileError(null);
     onDraftStop?.();
     if (keepKeyboard.current) composerInput.current?.focus();
     keepKeyboard.current = false;
@@ -1304,7 +1458,8 @@ function Composer({
   const sendGif = (pick: GifPick) => {
     setGifOpen(false);
     if (!canSend || !author) return;
-    send.mutate({ content: "", gif: pick });
+    send.mutate({ content: "", gif: pick, replyTo: replyTarget });
+    setReplyTarget(channelId, null);
     composerInput.current?.focus();
   };
 
@@ -1323,6 +1478,11 @@ function Composer({
 
   const onKeyDown = (event: KeyboardEvent<HTMLTextAreaElement>) => {
     if (suggestions.onKeyDown(event)) return;
+    if (event.key === "Escape" && replyTarget) {
+      event.preventDefault();
+      setReplyTarget(channelId, null);
+      return;
+    }
     if (
       event.key === "Enter" &&
       !event.shiftKey &&
@@ -1365,12 +1525,14 @@ function Composer({
                 <MessageText content={attempt.content} />
               )}
             </p>
-            {attempt.file ? <p>{attempt.file.name}</p> : null}
+            {attempt.files.length > 0 ? (
+              <p>{attempt.files.map((file) => file.name).join(", ")}</p>
+            ) : null}
             <div className="lr-send-failure-actions">
               {attempt.status === "failed" ? (
                 <button
                   type="button"
-                  disabled={Boolean(attempt.file && !canSendFiles)}
+                  disabled={attempt.files.length > 0 && !canSendFiles}
                   onClick={() =>
                     send.mutate({
                       content: attempt.content,
@@ -1386,7 +1548,9 @@ function Composer({
                   type="button"
                   onClick={() => {
                     setDraft(fromWire(attempt.content, members));
-                    pickFile(attempt.file ?? null);
+                    // Replaces what the composer holds: `files` here is
+                    // still this render's list.
+                    addFiles(attempt.files, []);
                     discardAttempt(attempt.id);
                     composerInput.current?.focus();
                   }}
@@ -1405,27 +1569,57 @@ function Composer({
         {channelName}
       </label>
       <div className="lr-composer-field">
+        {replyTarget ? (
+          <div className="lr-composer-reply">
+            <ReplyIcon size={14} />
+            <p>
+              Antwort an <strong>{replyTarget.author.name}</strong>
+              <span className="lr-composer-reply-hint"> · Esc bricht ab</span>
+            </p>
+            <button
+              type="button"
+              onClick={() => {
+                setReplyTarget(channelId, null);
+                composerInput.current?.focus();
+              }}
+              aria-label="Antworten abbrechen"
+              title="Antworten abbrechen"
+            >
+              <CloseIcon size={14} />
+            </button>
+          </div>
+        ) : null}
         {dropping ? (
           <p className="lr-composer-drop" aria-hidden="true">
             Loslassen zum Anhängen
           </p>
         ) : null}
-        {file ? (
-          <div className="lr-composer-attachment">
-            {preview ? <img src={preview} alt="" /> : null}
-            <div>
-              <p>{file.name}</p>
-              <p>{(file.size / 1024).toFixed(0)} KB</p>
-            </div>
-            <button
-              type="button"
-              onClick={() => pickFile(null)}
-              aria-label="Anhang entfernen"
-              title="Anhang entfernen"
-            >
-              <CloseIcon size={14} />
-            </button>
-          </div>
+        {files.length > 0 ? (
+          <ul className="lr-composer-attachments" aria-label="Anhänge">
+            {files.map((attached, index) => {
+              const preview = previews.get(attached);
+              return (
+                <li
+                  key={`${index}:${attached.name}:${attached.size}:${attached.lastModified}`}
+                  className="lr-composer-attachment"
+                >
+                  {preview ? <img src={preview} alt="" /> : null}
+                  <div>
+                    <p>{attached.name}</p>
+                    <p>{formatSize(attached.size)}</p>
+                  </div>
+                  <button
+                    type="button"
+                    onClick={() => removeFile(index)}
+                    aria-label={`${attached.name} entfernen`}
+                    title="Anhang entfernen"
+                  >
+                    <CloseIcon size={14} />
+                  </button>
+                </li>
+              );
+            })}
+          </ul>
         ) : null}
         {suggestions.list}
         <div className="lr-composer-row">
@@ -1434,13 +1628,14 @@ function Composer({
               <input
                 ref={fileInput}
                 type="file"
-                accept={ALLOWED_TYPES.join(",")}
+                accept={ACCEPT}
+                multiple
                 className="sr-only"
                 onChange={(event) => {
-                  const selected = event.target.files?.[0] ?? null;
-                  pickFile(selected);
+                  const selected = Array.from(event.target.files ?? []);
+                  addFiles(selected);
                   event.target.value = "";
-                  if (selected) composerInput.current?.focus();
+                  if (selected.length > 0) composerInput.current?.focus();
                 }}
               />
               <button
@@ -1471,10 +1666,10 @@ function Composer({
             onKeyDown={onKeyDown}
             onPaste={(event) => {
               if (!canSendFiles) return;
-              const pasted = pastedFile(event.clipboardData);
-              if (!pasted) return;
+              const pasted = pastedFiles(event.clipboardData);
+              if (pasted.length === 0) return;
               event.preventDefault();
-              pickFile(pasted);
+              addFiles(pasted);
             }}
             rows={1}
             placeholder={`Nachricht an ${mention}${channelName}`}
@@ -1564,68 +1759,40 @@ function Composer({
   );
 }
 
-function GifMessage({ gif }: { gif: Gif }) {
-  return <GifMessageButton gif={gif} reduced={useReducedMotion()} />;
+function ReplyHeader({ reply }: { reply: Reply }) {
+  const jumpTo = useContext(JumpTo);
+  const { members } = useMentions();
+  if (reply.deleted || !reply.author)
+    return (
+      <p className="lr-reply-header is-deleted">
+        <ReplyIcon size={13} />
+        <span>Die ursprüngliche Nachricht wurde gelöscht.</span>
+      </p>
+    );
+  const summary =
+    (reply.excerpt && readableMentions(reply.excerpt, members)) ||
+    (reply.has_gif ? "GIF" : reply.has_attachment ? "Anhang" : "");
+  return (
+    <button
+      type="button"
+      className="lr-reply-header"
+      onClick={() => jumpTo(reply.id)}
+      aria-label={`Antwort auf ${reply.author.name}: ${summary}. Zur Nachricht springen`}
+    >
+      <ReplyIcon size={13} />
+      <span className="lr-reply-author">{reply.author.name}</span>
+      <span className="lr-reply-excerpt">
+        {summary}
+        {reply.excerpt && (reply.has_attachment || reply.has_gif) ? (
+          <PaperclipIcon size={12} />
+        ) : null}
+      </span>
+    </button>
+  );
 }
 
-function AttachmentList({ attachments }: { attachments: Attachment[] }) {
-  const openImage = useContext(OpenImage);
-  const files = asAttachmentList(attachments);
-  if (files.length === 0) return null;
-  return (
-    <div className="lr-attachments">
-      {files.map((attachment) => {
-        const src = attachment.preview_url ?? attachmentUrl(attachment.id);
-        if (isImageType(attachment.content_type)) {
-          return (
-            <a
-              key={attachment.id}
-              href={src}
-              // The link stays for "open in new tab"; a click shows the
-              // picture here, also where no new tab exists (desktop app,
-              // installed web app).
-              onClick={(event) => {
-                if (!isPlainClick(event)) return;
-                event.preventDefault();
-                openImage({
-                  id: attachment.id,
-                  src,
-                  filename: attachment.filename,
-                  download: attachmentDownloadUrl(attachment.id),
-                });
-              }}
-              aria-label={`${attachment.filename} vergrößern`}
-              className="lr-attachment-image"
-            >
-              {/* A fixed-height box: the row has its final height before the
-                  picture arrives, so loading never moves the list. */}
-              <img
-                src={src}
-                alt={attachment.filename}
-                decoding="async"
-                loading="lazy"
-              />
-            </a>
-          );
-        }
-        return (
-          <a
-            key={attachment.id}
-            // Saved, never opened: an installed app has no back button to
-            // return from a file, and after MinIO's redirect the browser
-            // ignores `download` and would leave the app (and a call).
-            href={attachmentDownloadUrl(attachment.id)}
-            download={attachment.filename}
-            className="lr-attachment-file"
-          >
-            <PaperclipIcon size={15} />
-            <span>{attachment.filename}</span>
-            <span>{(attachment.size / 1024).toFixed(0)} KB</span>
-          </a>
-        );
-      })}
-    </div>
-  );
+function GifMessage({ gif }: { gif: Gif }) {
+  return <GifMessageButton gif={gif} reduced={useReducedMotion()} />;
 }
 
 function dayKey(iso: string): string {

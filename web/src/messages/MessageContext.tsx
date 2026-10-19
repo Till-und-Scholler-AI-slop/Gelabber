@@ -10,12 +10,15 @@ export function MessageContextView({
   messageId,
   onBack,
   onClose,
+  closeLabel = "Zurück zum Chat",
   renderMessage,
 }: {
   channelId: string;
   messageId: string;
-  onBack: () => void;
+  /** Back to the search hits; absent when no search led here. */
+  onBack?: () => void;
   onClose: () => void;
+  closeLabel?: string;
   renderMessage: (message: Message) => ReactNode;
 }) {
   const userId = useUserId(),
@@ -52,19 +55,21 @@ export function MessageContextView({
       aria-label="Nachrichtenkontext"
     >
       <div className="flex flex-wrap gap-2 border-b p-3">
-        <button
-          type="button"
-          onClick={onBack}
-          className="rounded border px-3 py-2"
-        >
-          Zurück zu den Treffern
-        </button>
+        {onBack ? (
+          <button
+            type="button"
+            onClick={onBack}
+            className="rounded border px-3 py-2"
+          >
+            Zurück zu den Treffern
+          </button>
+        ) : null}
         <button
           type="button"
           onClick={onClose}
           className="rounded border px-3 py-2"
         >
-          Zurück zum Chat
+          {closeLabel}
         </button>
       </div>
       <div

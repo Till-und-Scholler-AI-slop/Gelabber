@@ -129,6 +129,16 @@ pub fn show<R: Runtime>(app: &AppHandle<R>) {
         let _ = window.unminimize();
         let _ = window.show();
         let _ = window.set_focus();
+        // Hidden to the tray, the window loses its taskbar button and the
+        // red dot with it; the new button needs the dot set again.
+        #[cfg(windows)]
+        if let Some(shell) = app.try_state::<Shell>()
+            && let Ok(shown) = shell.shown.lock()
+            && shown.badge > 0
+            && let Err(error) = badge(&window, shown.badge)
+        {
+            eprintln!("gelabber: badge: {error}");
+        }
     }
 }
 
@@ -162,27 +172,30 @@ fn tray_supported() -> bool {
 /// Whether a tray is on screen to bring the window back from: on Linux a
 /// StatusNotifier host must run. With the library installed but no host
 /// (GNOME without the AppIndicator extension) the icon is built and stays
-/// invisible.
+/// invisible. [`watch_tray_host`] keeps this current from the session bus;
+/// asking here never blocks the window.
+#[cfg(target_os = "linux")]
+static TRAY_HOST: std::sync::atomic::AtomicBool = std::sync::atomic::AtomicBool::new(false);
+
 #[cfg(target_os = "linux")]
 fn tray_host() -> bool {
-    use gio::prelude::*;
-    let Ok(bus) = gio::bus_get_sync(gio::BusType::Session, gio::Cancellable::NONE) else {
-        return false;
-    };
-    bus.call_sync(
-        Some("org.freedesktop.DBus"),
-        "/org/freedesktop/DBus",
-        "org.freedesktop.DBus",
-        "NameHasOwner",
-        Some(&("org.kde.StatusNotifierWatcher",).to_variant()),
-        gio::glib::VariantTy::new("(b)").ok(),
-        gio::DBusCallFlags::NONE,
-        500,
-        gio::Cancellable::NONE,
-    )
-    .ok()
-    .and_then(|reply| reply.get::<(bool,)>())
-    .is_some_and(|(owned,)| owned)
+    TRAY_HOST.load(std::sync::atomic::Ordering::Relaxed)
+}
+
+/// Follows `org.kde.StatusNotifierWatcher` on the session bus. Called once
+/// on the main thread, whose GLib loop delivers the changes; without a
+/// session bus the host counts as gone.
+#[cfg(target_os = "linux")]
+fn watch_tray_host() {
+    use std::sync::atomic::Ordering;
+    // Watches for the app's lifetime; never unwatched.
+    let _ = gio::bus_watch_name(
+        gio::BusType::Session,
+        "org.kde.StatusNotifierWatcher",
+        gio::BusNameWatcherFlags::NONE,
+        |_, _, _| TRAY_HOST.store(true, Ordering::Relaxed),
+        |_, _| TRAY_HOST.store(false, Ordering::Relaxed),
+    );
 }
 
 #[cfg(not(target_os = "linux"))]
@@ -202,6 +215,8 @@ pub fn build_tray(app: &AppHandle) {
         eprintln!("gelabber: no AppIndicator library, running without a tray icon");
         return;
     }
+    #[cfg(target_os = "linux")]
+    watch_tray_host();
     let Some(icon) = app.default_window_icon().cloned() else {
         return;
     };
@@ -335,7 +350,7 @@ pub fn shell_unread(app: AppHandle, count: u32, any: bool, attention: bool) -> R
 
 /// The number on the launcher (Linux, where the desktop shows one) or a red
 /// dot on the taskbar button (Windows, which has no number there).
-fn badge(window: &WebviewWindow, count: u32) -> Result<(), String> {
+fn badge<R: Runtime>(window: &WebviewWindow<R>, count: u32) -> Result<(), String> {
     #[cfg(windows)]
     let result = window.set_overlay_icon((count > 0).then(overlay));
     #[cfg(not(windows))]

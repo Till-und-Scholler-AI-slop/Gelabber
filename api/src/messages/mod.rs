@@ -13,14 +13,15 @@
 
 pub mod mentions;
 pub mod reactions;
+pub mod replies;
 pub mod validate;
 mod workflows;
 
 use axum::Router;
 use axum::extract::{Query, State};
-use axum::http::StatusCode;
+use axum::http::{HeaderMap, StatusCode};
 use axum::response::{IntoResponse, Json, Response};
-use axum::routing::{get, patch};
+use axum::routing::{delete, get, patch};
 use chrono::{DateTime, Utc};
 use serde::{Deserialize, Serialize};
 use sqlx::{FromRow, PgPool};
@@ -35,6 +36,7 @@ use crate::gateway::{EventDraft, EventKind, delivery};
 use crate::gifs::{self, Gif, GifPick};
 use crate::json::Body;
 use crate::path::Id;
+use crate::previews::{self, LinkPreview, urls::preview_urls};
 use crate::servers::channel::{self, ChannelKind};
 use crate::servers::membership::{self, Membership};
 use crate::servers::permissions::Permission;
@@ -53,6 +55,7 @@ pub fn router() -> Router<AppState> {
             "/api/messages/{id}",
             patch(update_message).delete(delete_message),
         )
+        .route("/api/messages/{id}/previews", delete(suppress_previews))
         .merge(workflows::router())
 }
 
@@ -85,6 +88,12 @@ pub struct Message {
     pub mentions: Vec<Uuid>,
     /// `@everyone`: every member of the conversation is mentioned.
     pub mention_everyone: bool,
+    /// The message this one answers (issue #251).
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub reply: Option<replies::Reply>,
+    /// Link previews (#254), filled in after sending by an edit event.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub previews: Vec<LinkPreview>,
 }
 
 #[derive(Debug, Clone, Serialize, PartialEq, Eq)]
@@ -135,6 +144,8 @@ impl From<MessageRow> for Message {
             gif: row.gif.map(|gif| gif.0),
             mentions: row.mentions,
             mention_everyone: row.mentions_everyone,
+            reply: None,
+            previews: Vec::new(),
         }
     }
 }
@@ -173,6 +184,8 @@ impl MessageInsert {
             gif: self.gif.map(|gif| gif.0),
             mentions: self.mentions,
             mention_everyone: self.mentions_everyone,
+            reply: None,
+            previews: Vec::new(),
         }
     }
 }
@@ -186,6 +199,9 @@ pub struct CreateBody {
     /// Post this GIF instead of text or files.
     #[serde(default)]
     pub gif: Option<GifPick>,
+    /// Answer this message of the same channel.
+    #[serde(default)]
+    pub reply_to: Option<Uuid>,
 }
 
 #[derive(Debug, Deserialize)]
@@ -219,6 +235,8 @@ async fn list_messages(
 
     let mut page = load_page(&state.db, channel_id, before, after, limit).await?;
     attachments::for_messages(&state.db, &mut page.messages).await?;
+    replies::for_messages(&state.db, &mut page.messages).await?;
+    previews::for_messages(&state.db, &mut page.messages).await?;
     Ok(Json(page))
 }
 
@@ -226,6 +244,7 @@ async fn create_message(
     State(state): State<AppState>,
     CurrentUser(user): CurrentUser,
     Id(channel_id): Id,
+    headers: HeaderMap,
     Body(body): Body<CreateBody>,
 ) -> Result<Response, ApiError> {
     let access = messaging_channel(&state.db, channel_id, user.id).await?;
@@ -261,11 +280,25 @@ async fn create_message(
         mentions::Granted::default(),
     )
     .await?;
+    // The store is asked before the channel lock (see `check_uploads`).
+    if let Err(err) = attachments::check_uploads(
+        &state.db,
+        &state.store,
+        channel_id,
+        user.id,
+        &attachment_ids,
+    )
+    .await
+    {
+        discard_uploads(&state, channel_id, user.id, &attachment_ids).await;
+        return Err(err);
+    }
+
     let mut tx = state.db.begin().await?;
     delivery::lock_channel(&mut tx, channel_id).await?;
     let row = sqlx::query_as::<_, MessageInsert>(
-        "INSERT INTO messages (channel_id, author_id, content, gif, mentions, mentions_everyone) \
-         VALUES ($1, $2, $3, $4, $5, $6) \
+        "INSERT INTO messages (channel_id, author_id, content, gif, mentions, mentions_everyone, reply_to) \
+         VALUES ($1, $2, $3, $4, $5, $6, $7) \
          RETURNING id, channel_id, content, created_at, edited_at, revision, created_order, gif, mentions, mentions_everyone",
     )
     .bind(channel_id)
@@ -274,33 +307,16 @@ async fn create_message(
     .bind(gif.as_ref().map(sqlx::types::Json))
     .bind(&mentioned.users)
     .bind(mentioned.everyone)
+    .bind(body.reply_to)
     .fetch_one(&mut *tx)
     .await?;
-    let bound = attachments::bind_to_message(
-        &mut tx,
-        &state.store,
-        row.id,
-        channel_id,
-        user.id,
-        &attachment_ids,
-    )
-    .await;
+    let bound =
+        attachments::bind_to_message(&mut tx, row.id, channel_id, user.id, &attachment_ids).await;
     let bound = match bound {
         Ok(bound) => bound,
         Err(err) => {
             tx.rollback().await?;
-            // Quarantine only this uploader's invalid objects, after rollback;
-            // no physical delete can damage a rolled-back message transaction.
-            if let Err(cleanup_error) = attachments::cleanup::discard_mismatches(
-                &state,
-                channel_id,
-                user.id,
-                &attachment_ids,
-            )
-            .await
-            {
-                warn!(error=?cleanup_error, "invalid upload quarantine deferred to expiry cleanup");
-            }
+            discard_uploads(&state, channel_id, user.id, &attachment_ids).await;
             return Err(err);
         }
     };
@@ -319,13 +335,35 @@ async fn create_message(
         gifs.shared(&gif.slug, pick.query.trim(), user.id);
     }
     let _ = delivery::deliver_pending(&state, 32).await;
+    previews::enqueue(
+        &state,
+        user.id,
+        previews::Job {
+            message_id: message.id,
+            channel_id,
+            server_id: access.event_server_id(),
+            urls: preview_urls(&message.content),
+            own_host: previews::request_host(&headers),
+        },
+    );
     Ok((StatusCode::CREATED, Json(message)).into_response())
+}
+
+/// Quarantine only this uploader's invalid objects, after any rollback; no
+/// physical delete can damage a rolled-back message transaction.
+async fn discard_uploads(state: &AppState, channel_id: Uuid, user_id: Uuid, ids: &[Uuid]) {
+    if let Err(cleanup_error) =
+        attachments::cleanup::discard_mismatches(state, channel_id, user_id, ids).await
+    {
+        warn!(error=?cleanup_error, "invalid upload quarantine deferred to expiry cleanup");
+    }
 }
 
 async fn update_message(
     State(state): State<AppState>,
     CurrentUser(user): CurrentUser,
     Id(message_id): Id,
+    headers: HeaderMap,
     Body(body): Body<UpdateBody>,
 ) -> Result<Json<Message>, ApiError> {
     let (access, current) = message_for(&state.db, message_id, user.id).await?;
@@ -377,6 +415,22 @@ async fn update_message(
     .fetch_optional(&mut *tx)
     .await?
     .ok_or(ApiError::NotFound)?;
+    // Previews of links the edit removed go now; new links get theirs from
+    // the worker, as on send.
+    let urls = preview_urls(&row.content);
+    let kept: Vec<String> = urls.iter().map(|url| url.as_str().to_owned()).collect();
+    sqlx::query(
+        "DELETE FROM message_previews mp USING link_previews lp \
+         WHERE mp.preview_id = lp.id AND mp.message_id = $1 AND NOT (lp.url = ANY($2))",
+    )
+    .bind(message_id)
+    .bind(&kept)
+    .execute(&mut *tx)
+    .await?;
+    let suppressed: bool = sqlx::query_scalar("SELECT suppress_embeds FROM messages WHERE id = $1")
+        .bind(message_id)
+        .fetch_one(&mut *tx)
+        .await?;
     let mut message = row.into_message(&user);
     message.attachments = current.attachments;
     persist_event(
@@ -388,6 +442,19 @@ async fn update_message(
     .await?;
     tx.commit().await?;
     let _ = delivery::deliver_pending(&state, 32).await;
+    if !suppressed {
+        previews::enqueue(
+            &state,
+            user.id,
+            previews::Job {
+                message_id,
+                channel_id: message.channel_id,
+                server_id: access.event_server_id(),
+                urls,
+                own_host: previews::request_host(&headers),
+            },
+        );
+    }
     Ok(Json(message))
 }
 
@@ -437,6 +504,8 @@ async fn persist_event(
     message: &mut Message,
 ) -> Result<(), ApiError> {
     reactions::populate(db, message).await?;
+    replies::for_messages(&mut *db, std::slice::from_mut(message)).await?;
+    previews::for_messages(&mut *db, std::slice::from_mut(message)).await?;
     message.revision = delivery::revision(db).await?;
     sqlx::query("UPDATE messages SET revision=$2 WHERE id=$1")
         .bind(message.id)
@@ -481,6 +550,113 @@ async fn resolve_gif(
     }
     gifs::rate_limit(state, user_id)?;
     gifs.resolve(slug).await?.ok_or_else(|| fail("invalid"))
+}
+
+/// `DELETE /api/messages/{id}/previews`: the author (or, on a server,
+/// `manage_messages`) removes the message's link previews; later edits do
+/// not bring them back.
+async fn suppress_previews(
+    State(state): State<AppState>,
+    CurrentUser(user): CurrentUser,
+    Id(message_id): Id,
+) -> Result<StatusCode, ApiError> {
+    let (access, current) = message_for(&state.db, message_id, user.id).await?;
+    if current.author.id != user.id {
+        access.require_manage_messages()?;
+    }
+    let mut tx = state.db.begin().await?;
+    delivery::lock_channel(&mut tx, current.channel_id).await?;
+    let changed = sqlx::query(
+        "UPDATE messages SET suppress_embeds = true WHERE id = $1 AND NOT suppress_embeds",
+    )
+    .bind(message_id)
+    .execute(&mut *tx)
+    .await?
+    .rows_affected()
+        > 0;
+    let removed = sqlx::query("DELETE FROM message_previews WHERE message_id = $1")
+        .bind(message_id)
+        .execute(&mut *tx)
+        .await?
+        .rows_affected()
+        > 0;
+    if !changed && !removed {
+        tx.rollback().await?;
+        return Ok(StatusCode::NO_CONTENT);
+    }
+    if removed {
+        let mut message = current;
+        persist_event(
+            &mut tx,
+            access.event_server_id(),
+            EventKind::E,
+            &mut message,
+        )
+        .await?;
+    }
+    tx.commit().await?;
+    if removed {
+        let _ = delivery::deliver_pending(&state, 32).await;
+    }
+    Ok(StatusCode::NO_CONTENT)
+}
+
+/// The worker's result for one message (`previews::process`): `ids` in link
+/// order replace its previews, with an edit event, unless the message was
+/// deleted, edited to other links or had its previews removed meanwhile.
+pub(crate) async fn attach_previews(
+    state: &AppState,
+    job: &previews::Job,
+    ids: &[Uuid],
+) -> Result<(), ApiError> {
+    let mut tx = state.db.begin().await?;
+    delivery::lock_channel(&mut tx, job.channel_id).await?;
+    let current: Option<(String, bool)> = sqlx::query_as(
+        "SELECT content, suppress_embeds FROM messages WHERE id = $1 AND channel_id = $2",
+    )
+    .bind(job.message_id)
+    .bind(job.channel_id)
+    .fetch_optional(&mut *tx)
+    .await?;
+    let Some((content, suppressed)) = current else {
+        return Ok(());
+    };
+    if suppressed || preview_urls(&content) != job.urls {
+        return Ok(());
+    }
+    let existing: Vec<Uuid> = sqlx::query_scalar(
+        "SELECT preview_id FROM message_previews WHERE message_id = $1 ORDER BY position",
+    )
+    .bind(job.message_id)
+    .fetch_all(&mut *tx)
+    .await?;
+    if existing == ids {
+        return Ok(());
+    }
+    sqlx::query("DELETE FROM message_previews WHERE message_id = $1")
+        .bind(job.message_id)
+        .execute(&mut *tx)
+        .await?;
+    for (position, id) in ids.iter().enumerate() {
+        sqlx::query(
+            "INSERT INTO message_previews (message_id, preview_id, position) VALUES ($1, $2, $3)",
+        )
+        .bind(job.message_id)
+        .bind(id)
+        .bind(position as i16)
+        .execute(&mut *tx)
+        .await?;
+    }
+    let row = sqlx::query_as::<_, MessageRow>(MESSAGE_BY_ID_SQL)
+        .bind(job.message_id)
+        .fetch_one(&mut *tx)
+        .await?;
+    let mut message = Message::from(row);
+    message.attachments = attachments::for_message(&mut *tx, job.message_id).await?;
+    persist_event(&mut tx, job.server_id, EventKind::E, &mut message).await?;
+    tx.commit().await?;
+    let _ = delivery::deliver_pending(state, 32).await;
+    Ok(())
 }
 
 /// Best-effort notice in the server's oldest text channel when Go Live starts.
@@ -615,6 +791,8 @@ async fn message_for(
     let access = messaging_channel(db, row.channel_id, user_id).await?;
     let mut message = Message::from(row);
     message.attachments = attachments::for_message(db, message.id).await?;
+    replies::for_messages(db, std::slice::from_mut(&mut message)).await?;
+    previews::for_messages(db, std::slice::from_mut(&mut message)).await?;
     Ok((access, message))
 }
 

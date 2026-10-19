@@ -1,0 +1,11 @@
+# What the server origin may do about updates of the app (src/update.rs): see
+# whether one is ready, install it, put the notice away. Checking and the
+# automatic check are the bundled setup page's (capabilities/setup.json).
+[[set]]
+identifier = "update"
+description = "See, install or put away an update of the Gelabber app."
+permissions = [
+  "allow-update-state",
+  "allow-update-install",
+  "allow-update-dismiss",
+]
