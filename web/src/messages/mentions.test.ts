@@ -64,6 +64,16 @@ describe("mentions", () => {
     ]);
   });
 
+  it("leaves escaped mentions as text, as the server does", () => {
+    expect(splitMentions(`\\<@${BOB}> \\@here`, members)).toEqual([
+      { kind: "text", text: `\\<@${BOB}> \\@here` },
+    ]);
+    expect(splitMentions(`\\\\<@${BOB}>`, members)).toEqual([
+      { kind: "text", text: "\\\\" },
+      { kind: "user", id: BOB, name: "Bob" },
+    ]);
+  });
+
   it("swaps names and tokens both ways", () => {
     const wire = toWire("@Ada Lovelace und @Ada, nicht @Adam `@Bob`", members);
     expect(wire).toBe(`<@${LOVELACE}> und <@${ADA}>, nicht @Adam \`@Bob\``);

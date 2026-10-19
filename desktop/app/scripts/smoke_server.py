@@ -1,9 +1,10 @@
 """Stand-in Gelabber origin for the desktop app's smoke test.
 
 Serves a page that calls the media commands through Tauri's IPC the way the
-web client will, plus one command reserved for the bundled setup page, and
-checks the report the page posts back. Exits 0 when the server origin reaches
-the media core and nothing else, and video frames reach the page: views of a
+web client will, the update state, and two commands reserved for the bundled
+setup page, and checks the report the page posts back. Exits 0 when the server
+origin reaches the media core and the update state and nothing else, and video
+frames reach the page: views of a
 test pattern (the app runs with GELABBER_VIDEO_TEST_PATTERN) deliver packets
 with the right header and pixels.
 
@@ -66,6 +67,8 @@ const LEAVE = __LEAVE__, LEFT = __LEFT__, WINDOWS = __WINDOWS__;
     await call("devices", "media_audio_devices");
     await call("levels", "media_audio_levels");
     await call("setServer", "set_server", { server: "https://elsewhere.invalid" });
+    await call("updateState", "update_state");
+    await call("updateAutoCheck", "update_set_auto_check", { enabled: false });
     if (WINDOWS) {
       await call("audioApps", "media_audio_apps");
       await call("screen", "media_source_screen", { options: { type: "any", fps: 30, cursor: true, contentHint: "detail" } });
@@ -324,6 +327,12 @@ class Handler(BaseHTTPRequestHandler):
             problems.append("media_audio_levels failed")
         if "ok" in report.get("setServer", {}):
             problems.append("the server origin may call set_server")
+        # Linux has no updater; on Windows it depends on the build's key.
+        update = report.get("updateState", {}).get("ok", {})
+        if not isinstance(update.get("supported"), bool) or (update["supported"] and not WINDOWS):
+            problems.append(f"update_state: {report.get('updateState')}")
+        if "ok" in report.get("updateAutoCheck", {}):
+            problems.append("the server origin may switch the automatic update check")
         if WINDOWS:
             check_windows_app_audio(report, problems)
             check_windows_screen(report, problems)

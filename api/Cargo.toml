@@ -36,6 +36,8 @@ p256 = { version = "0.14.0", default-features = false, features = ["ecdh", "ecds
 hkdf = "0.13.0"
 aes-gcm = "0.11.1"
 base64 = "0.22.1"
+# Page charsets for link previews (#254).
+encoding_rs = "0.8.35"
 gelabber-shared.workspace = true
 
 [dev-dependencies]

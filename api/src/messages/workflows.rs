@@ -294,6 +294,8 @@ async fn read_up_to_latest(
             WHERE m.channel_id=v.channel_id AND m.created_at>=v.joined_at
             ORDER BY m.created_order DESC LIMIT 1
         ) l
+        -- One lock order for every bulk read, so two at once cannot deadlock.
+        ORDER BY v.channel_id
         ON CONFLICT (user_id,channel_id) DO UPDATE
         SET membership_at=EXCLUDED.membership_at,message_at=EXCLUDED.message_at,message_id=EXCLUDED.message_id,created_order=EXCLUDED.created_order
         WHERE channel_read_state.membership_at<>EXCLUDED.membership_at
@@ -436,6 +438,8 @@ async fn search(
         .collect();
     messages.reverse();
     attachments::for_messages(&state.db, &mut messages).await?;
+    super::replies::for_messages(&state.db, &mut messages).await?;
+    crate::previews::for_messages(&state.db, &mut messages).await?;
     Ok(Json(MessagePage { messages, has_more }))
 }
 
@@ -480,6 +484,8 @@ async fn context(
     let last = messages.last().expect("nonempty snapshot");
     let after = format!("{}|{}", last.created_at.to_rfc3339(), last.id);
     attachments::for_messages(&state.db, &mut messages).await?;
+    super::replies::for_messages(&state.db, &mut messages).await?;
+    crate::previews::for_messages(&state.db, &mut messages).await?;
     Ok(Json(MessageContext {
         target_id: message_id,
         messages,

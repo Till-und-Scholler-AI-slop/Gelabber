@@ -9,12 +9,14 @@
 //! the reason, and Ctrl+Shift+S or the web client's user menu ("Server
 //! wechseln …") lead back to it at any time, so a wrong server never locks the
 //! app. F5 / Ctrl+R reload. Those keys are a script of the page: when WebKit's
-//! web process dies, the app loads the page again itself (Linux).
+//! web process dies, the app loads the page again itself (Linux). Links the
+//! page opens in a new tab (chat links) go to the system browser.
 #![cfg_attr(not(debug_assertions), windows_subsystem = "windows")]
 
 mod frames;
 mod media;
 mod shell;
+mod update;
 mod viewer;
 
 use serde::{Deserialize, Serialize};
@@ -130,7 +132,8 @@ fn configured_server(app: &AppHandle) -> Option<String> {
 }
 
 /// The server's pages may call the media commands, the window and tray
-/// commands, and open the setup page; nothing else.
+/// commands, open the setup page and see and install an update of the app,
+/// nothing else.
 fn allow_server(app: &AppHandle, origin: &Url) -> tauri::Result<()> {
     let origin = origin.origin().ascii_serialization();
     app.add_capability(
@@ -140,6 +143,7 @@ fn allow_server(app: &AppHandle, origin: &Url) -> tauri::Result<()> {
             .window(WINDOW)
             .permission("media")
             .permission("shell")
+            .permission("update")
             .permission("allow-open-setup"),
     )
 }
@@ -241,6 +245,46 @@ fn open_setup(app: AppHandle) -> Result<(), String> {
         .ok_or("main window missing")?
         .navigate(setup_url(server.as_ref().map(Url::as_str), None))
         .map_err(|e| e.to_string())
+}
+
+/// Whether a link the page opens in a new tab goes to the system browser:
+/// web and mail links only, never files or app schemes, and never the
+/// server's own pages, which need the app's session.
+fn opens_externally(url: &Url, server: Option<&Url>) -> bool {
+    matches!(url.scheme(), "http" | "https" | "mailto")
+        && server.is_none_or(|server| server.origin() != url.origin())
+}
+
+/// Hands `url` to the desktop's default handler without a shell, so nothing
+/// in it is interpreted.
+fn open_externally(url: &Url) {
+    #[cfg(target_os = "windows")]
+    let mut command = {
+        let mut command = std::process::Command::new("rundll32.exe");
+        command.args(["url.dll,FileProtocolHandler", url.as_str()]);
+        command
+    };
+    #[cfg(target_os = "macos")]
+    let mut command = {
+        let mut command = std::process::Command::new("open");
+        command.arg(url.as_str());
+        command
+    };
+    #[cfg(not(any(target_os = "windows", target_os = "macos")))]
+    let mut command = {
+        let mut command = std::process::Command::new("xdg-open");
+        command.arg(url.as_str());
+        command
+    };
+    match command.spawn() {
+        // Reaped on its own thread; the opener exits once the browser has it.
+        Ok(mut child) => {
+            std::thread::spawn(move || {
+                let _ = child.wait();
+            });
+        }
+        Err(error) => eprintln!("gelabber: opening {url}: {error}"),
+    }
 }
 
 /// Catches typos and wrong ports before the address is stored: something has
@@ -437,23 +481,26 @@ fn main() {
     if std::env::var_os("GELABBER_MEDIA_LOG").is_some() {
         gelabber_media_core::set_log_level(gelabber_media_core::LogLevel::Info);
     }
-    tauri::Builder::default()
-        .on_window_event(|window, event| {
-            if let tauri::WindowEvent::CloseRequested { api, .. } = event {
-                // A call keeps running in the hidden window.
-                if shell::closes_to_tray(window.app_handle()) {
-                    api.prevent_close();
-                    let _ = window.hide();
-                } else {
-                    #[cfg(target_os = "linux")]
-                    if nvidia_driver() {
-                        end_web_process(window);
-                    }
+    let builder = tauri::Builder::default().on_window_event(|window, event| {
+        if let tauri::WindowEvent::CloseRequested { api, .. } = event {
+            // A call keeps running in the hidden window.
+            if shell::closes_to_tray(window.app_handle()) {
+                api.prevent_close();
+                let _ = window.hide();
+            } else {
+                #[cfg(target_os = "linux")]
+                if nvidia_driver() {
+                    end_web_process(window);
                 }
             }
-        })
+        }
+    });
+    #[cfg(windows)]
+    let builder = builder.plugin(update::plugin());
+    builder
         .manage(media::Media::default())
         .manage(shell::Shell::default())
+        .manage(update::Updates::default())
         .invoke_handler(tauri::generate_handler![
             set_server,
             open_setup,
@@ -500,6 +547,11 @@ fn main() {
             media::media_view_configure,
             media::media_view_frame,
             media::media_view_close,
+            update::update_state,
+            update::update_install,
+            update::update_dismiss,
+            update::update_check,
+            update::update_set_auto_check,
         ])
         .on_page_load(|webview, payload| {
             // A reload or navigation leaves the old page's calls and
@@ -533,12 +585,25 @@ fn main() {
                 .inner_size(1280.0, 800.0)
                 .min_inner_size(480.0, 360.0)
                 .initialization_script(SHORTCUTS)
+                .initialization_script(update::BANNER)
                 // Only WebView2 takes them; ignored on the other platforms.
                 .additional_browser_args(WEBVIEW2_ARGS)
                 // Tauri's native handler swallows file drops; the chat
                 // composer takes them as HTML5 drops instead.
                 .disable_drag_drop_handler()
+                // `target="_blank"` links: the system browser, never a
+                // second app window.
+                .on_new_window({
+                    let handle = handle.clone();
+                    move |url, _| {
+                        if opens_externally(&url, current_server(&handle).as_ref()) {
+                            open_externally(&url);
+                        }
+                        tauri::webview::NewWindowResponse::Deny
+                    }
+                })
                 .build()?;
+            update::start(&handle);
             #[cfg(target_os = "linux")]
             {
                 watch_web_process(&handle, &window);
@@ -574,7 +639,7 @@ fn main() {
 
 #[cfg(test)]
 mod tests {
-    use super::{check_reachable, server_addrs, server_origin, setup_url};
+    use super::{check_reachable, opens_externally, server_addrs, server_origin, setup_url};
     use std::net::TcpListener;
 
     #[cfg(target_os = "linux")]
@@ -657,6 +722,34 @@ mod tests {
         assert!(server_origin("file:///etc/passwd").is_err());
         assert!(server_origin("javascript:alert(1)").is_err());
         assert!(server_origin("chat.example.org").is_err());
+    }
+
+    #[test]
+    fn only_web_and_mail_links_open_externally() {
+        for url in [
+            "https://example.com/",
+            "http://example.com/a",
+            "mailto:a@example.com",
+        ] {
+            assert!(opens_externally(&url.parse().unwrap(), None), "{url}");
+        }
+        let server = server_origin("https://chat.example").unwrap();
+        assert!(opens_externally(
+            &"https://example.com/".parse().unwrap(),
+            Some(&server)
+        ));
+        assert!(!opens_externally(
+            &"https://chat.example/api/files/x".parse().unwrap(),
+            Some(&server)
+        ));
+        for url in [
+            "file:///etc/passwd",
+            "javascript:alert(1)",
+            "smb://host/share",
+            "tauri://localhost",
+        ] {
+            assert!(!opens_externally(&url.parse().unwrap(), None), "{url}");
+        }
     }
 
     #[test]

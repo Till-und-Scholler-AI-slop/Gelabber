@@ -55,6 +55,9 @@ pub const DEFAULT_PUSH_HOSTS: &[&str] = &[
     "push.apple.com",
 ];
 pub const KLIPY_CONTENT_FILTER: &str = "KLIPY_CONTENT_FILTER";
+pub const API_LINK_PREVIEWS: &str = "API_LINK_PREVIEWS";
+pub const API_LINK_PREVIEW_DENY_HOSTS: &str = "API_LINK_PREVIEW_DENY_HOSTS";
+pub const API_RATE_PREVIEW_PER_MIN: &str = "API_RATE_PREVIEW_PER_MIN";
 /// Read by `telemetry::init`, not by `Config`, because the subscriber has to
 /// exist before anything else can be logged.
 pub const RUST_LOG: &str = "RUST_LOG";
@@ -127,6 +130,8 @@ pub struct Config {
     pub gifs: Option<GifConfig>,
     /// Web Push (#243). `None` without `VAPID_PRIVATE_KEY`: no push.
     pub push: Option<PushConfig>,
+    /// Link previews (#254). `None` turns them off; links still work.
+    pub previews: Option<PreviewConfig>,
 }
 
 #[derive(Clone, Debug)]
@@ -134,6 +139,15 @@ pub struct PushConfig {
     pub vapid: crate::push::webpush::Vapid,
     /// Hosts (and their subdomains) a subscription may point at.
     pub hosts: Vec<String>,
+}
+
+/// The API fetches the pages that messages link to (`previews::net`).
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct PreviewConfig {
+    /// Host names never fetched, on top of single-label and local names:
+    /// the hosts of `DATABASE_URL`, `REDIS_URL`, the MinIO endpoints and
+    /// `TURN_URLS`, plus `API_LINK_PREVIEW_DENY_HOSTS`. Lowercase.
+    pub deny_hosts: Vec<String>,
 }
 
 /// Klipy is only ever called by the API: the key stays on the server and
@@ -320,6 +334,7 @@ impl Config {
         let limits = parse_limits(&get)?;
         let gifs = parse_gifs(&get)?;
         let push = parse_push(&get)?;
+        let previews = parse_previews(&get, &[&database_url, &redis_url], minio.as_ref())?;
         if cookie_secure {
             refuse_public_defaults(
                 &database_url,
@@ -353,6 +368,7 @@ impl Config {
             limits,
             gifs,
             push,
+            previews,
         })
     }
 }
@@ -386,6 +402,62 @@ fn parse_push(get: &impl Fn(&str) -> Option<String>) -> Result<Option<PushConfig
         None => DEFAULT_PUSH_HOSTS.iter().map(|h| (*h).to_owned()).collect(),
     };
     Ok(Some(PushConfig { vapid, hosts }))
+}
+
+/// On unless `API_LINK_PREVIEWS=false`.
+fn parse_previews(
+    get: &impl Fn(&str) -> Option<String>,
+    internal_urls: &[&str],
+    minio: Option<&MinioConfig>,
+) -> Result<Option<PreviewConfig>, ConfigError> {
+    let enabled = match get(API_LINK_PREVIEWS) {
+        Some(raw) => parse_bool(API_LINK_PREVIEWS, &raw)?,
+        None => true,
+    };
+    if !enabled {
+        return Ok(None);
+    }
+    let mut deny_hosts: Vec<String> = Vec::new();
+    let mut add = |host: &str| {
+        let host = host
+            .trim()
+            .trim_start_matches('[')
+            .trim_end_matches(']')
+            .trim_end_matches('.')
+            .to_ascii_lowercase();
+        if !host.is_empty() && !deny_hosts.contains(&host) {
+            deny_hosts.push(host);
+        }
+    };
+    let endpoints = minio
+        .map(|m| [m.endpoint.as_str(), m.public_endpoint.as_str()])
+        .unwrap_or_default();
+    for url in internal_urls.iter().chain(endpoints.iter()) {
+        if let Some(host) = url::Url::parse(url)
+            .ok()
+            .and_then(|u| u.host_str().map(str::to_owned))
+        {
+            add(&host);
+        }
+    }
+    // `turn:host:port?transport=udp`, `turns:host`: no `//`, so by hand.
+    for turn in get(TURN_URLS).unwrap_or_default().split(',') {
+        let rest = turn.trim().split_once(':').map_or("", |(_, rest)| rest);
+        let rest = rest.split('?').next().unwrap_or("");
+        let host = if let Some(v6) = rest.strip_prefix('[') {
+            v6.split(']').next().unwrap_or("")
+        } else {
+            rest.split(':').next().unwrap_or("")
+        };
+        add(host);
+    }
+    for host in get(API_LINK_PREVIEW_DENY_HOSTS)
+        .unwrap_or_default()
+        .split(',')
+    {
+        add(host);
+    }
+    Ok(Some(PreviewConfig { deny_hosts }))
 }
 
 fn parse_gifs(get: &impl Fn(&str) -> Option<String>) -> Result<Option<GifConfig>, ConfigError> {
@@ -462,6 +534,10 @@ fn parse_limits(get: &impl Fn(&str) -> Option<String>) -> Result<Limits, ConfigE
         Some(raw) => parse_u32_allow_zero(API_RATE_GIF_MEDIA_PER_MIN, &raw)?,
         None => defaults.gif_media_per_min,
     };
+    let preview_per_min = match get(API_RATE_PREVIEW_PER_MIN) {
+        Some(raw) => parse_u32_allow_zero(API_RATE_PREVIEW_PER_MIN, &raw)?,
+        None => defaults.preview_per_min,
+    };
     Ok(Limits {
         auth_per_min,
         api_per_min,
@@ -471,6 +547,7 @@ fn parse_limits(get: &impl Fn(&str) -> Option<String>) -> Result<Limits, ConfigE
         login_failures_per_account,
         gif_per_min,
         gif_media_per_min,
+        preview_per_min,
     })
 }
 

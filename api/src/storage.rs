@@ -126,12 +126,18 @@ impl ObjectStore {
         }
     }
 
-    /// The object for display (`<img src>`): one stable link per window,
-    /// the window of `now`.
-    pub async fn get(&self, key: &str, now: SystemTime) -> Result<ObjectBody, StoreError> {
+    /// The object for display (`<img src>`, `<video>`): one stable link per
+    /// window, the window of `now`. MinIO answers with `content_type`, the
+    /// type the API vouches for, not the one stored with the upload.
+    pub async fn get(
+        &self,
+        key: &str,
+        content_type: &str,
+        now: SystemTime,
+    ) -> Result<ObjectBody, StoreError> {
         match self {
             Self::Memory(store) => store.get(key),
-            Self::Minio(store) => store.get_at(key, None, now),
+            Self::Minio(store) => store.get_at(key, None, Some(content_type), now),
         }
     }
 
@@ -143,11 +149,22 @@ impl ObjectStore {
         &self,
         key: &str,
         disposition: &str,
+        content_type: &str,
         now: SystemTime,
     ) -> Result<ObjectBody, StoreError> {
         match self {
             Self::Memory(store) => store.get(key),
-            Self::Minio(store) => store.get_at(key, Some(disposition), now),
+            Self::Minio(store) => store.get_at(key, Some(disposition), Some(content_type), now),
+        }
+    }
+
+    /// The first `len` bytes (fewer for a smaller object), to check content.
+    pub async fn prefix(&self, key: &str, len: usize) -> Result<Vec<u8>, StoreError> {
+        match self {
+            Self::Memory(store) => store
+                .fetch(key)
+                .map(|(_, bytes)| bytes.into_iter().take(len).collect()),
+            Self::Minio(store) => store.prefix(key, len).await,
         }
     }
 
@@ -362,9 +379,15 @@ impl MinioStore {
         &self,
         key: &str,
         disposition: Option<&str>,
+        content_type: Option<&str>,
         now: SystemTime,
     ) -> Result<ObjectBody, StoreError> {
         let mut action = self.inner.public.get_object(Some(&self.inner.creds), key);
+        if let Some(content_type) = content_type {
+            action
+                .query_mut()
+                .insert("response-content-type", content_type.to_owned());
+        }
         // Signed into the URL, so MinIO answers with it: the object never
         // changes, and the link outlives this cache time (see GET_WINDOW).
         action.query_mut().insert(
@@ -381,6 +404,37 @@ impl MinioStore {
             .map_err(|err| StoreError::Other(format!("signing time: {err}")))?;
         let url = action.sign_with_time(GET_TTL, &time);
         Ok(ObjectBody::Redirect(url.to_string()))
+    }
+
+    async fn prefix(&self, key: &str, len: usize) -> Result<Vec<u8>, StoreError> {
+        let action = self.inner.internal.get_object(Some(&self.inner.creds), key);
+        let url = action.sign(Duration::from_secs(30));
+        let response = self
+            .inner
+            .http
+            .get(url)
+            .header(
+                reqwest::header::RANGE,
+                format!("bytes=0-{}", len.max(1) - 1),
+            )
+            .send()
+            .await
+            .map_err(|err| StoreError::Other(format!("get object: {}", err.without_url())))?;
+        if response.status().as_u16() == 404 {
+            return Err(StoreError::NotFound);
+        }
+        if !response.status().is_success() {
+            return Err(StoreError::Other(format!(
+                "get object returned {}",
+                response.status()
+            )));
+        }
+        let bytes = response
+            .bytes()
+            .await
+            .map_err(|err| StoreError::Other(format!("get object: {}", err.without_url())))?;
+        // A server that ignores Range sends everything; keep the prefix.
+        Ok(bytes.into_iter().take(len).collect())
     }
 
     async fn fetch(&self, key: &str) -> Result<(String, Vec<u8>), StoreError> {
@@ -586,7 +640,7 @@ mod tests {
         // 2026-10-12T10:00:00Z, the start of a window.
         let start = UNIX_EPOCH + Duration::from_secs(1_791_799_200);
         assert_eq!(get_window(start).1, 1_800);
-        let at = |secs| link(store.get_at("att/x", None, start + Duration::from_secs(secs)));
+        let at = |secs| link(store.get_at("att/x", None, None, start + Duration::from_secs(secs)));
         let first = at(0);
         assert_eq!(first, at(1));
         assert_eq!(first, at(1_799));
@@ -609,18 +663,29 @@ mod tests {
     }
 
     #[test]
+    fn minio_link_signs_the_vouched_content_type() {
+        let store = minio();
+        let now = UNIX_EPOCH + Duration::from_secs(1_791_799_200);
+        let url = link(store.get_at("att/x", None, Some("text/plain; charset=utf-8"), now));
+        assert_eq!(
+            query(&url, "response-content-type").as_deref(),
+            Some("text/plain; charset=utf-8")
+        );
+    }
+
+    #[test]
     fn minio_download_variant_signs_its_disposition() {
         let store = minio();
         let now = UNIX_EPOCH + Duration::from_secs(1_791_799_200);
         let disposition = "attachment; filename=\"B_r.png\"; filename*=UTF-8''B%C3%A4r.png";
-        let url = link(store.get_at("att/x", Some(disposition), now));
+        let url = link(store.get_at("att/x", Some(disposition), None, now));
         assert_eq!(
             query(&url, "response-content-disposition").as_deref(),
             Some(disposition)
         );
         assert!(query(&url, "X-Amz-Signature").is_some(), "{url}");
         // The display link of the same window stays as it was.
-        assert_ne!(url, link(store.get_at("att/x", None, now)));
+        assert_ne!(url, link(store.get_at("att/x", None, None, now)));
     }
 
     /// MinIO HEAD carries the object size in `Content-Length` and an empty

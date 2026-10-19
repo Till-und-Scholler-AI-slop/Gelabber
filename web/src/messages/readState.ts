@@ -335,12 +335,21 @@ export function applyReadSync(
   if (!stampHolds(stamp) || rows.length === 0) return;
   const byChannel = new Map(rows.map((row) => [row.channel_id, row]));
   let recount = false;
+  // A stale row, or one counted before messages this window knows, closes
+  // no notifications: one of those newer messages may still be unread.
+  const keepOpen = new Set<string>();
   client.setQueryData<ReadState[]>(readKey(stamp), (cached) =>
     cached?.map((current) => {
       const next = byChannel.get(current.channel_id);
-      if (!next || compare(next, current) < 0) return current;
-      if (order(current.latest_order) > order(next.latest_order))
+      if (!next) return current;
+      if (compare(next, current) < 0) {
+        keepOpen.add(next.channel_id);
+        return current;
+      }
+      if (order(current.latest_order) > order(next.latest_order)) {
         recount = true;
+        keepOpen.add(next.channel_id);
+      }
       return {
         ...current,
         read_message_id: next.read_message_id,
@@ -355,7 +364,7 @@ export function applyReadSync(
   );
   if (recount) void refreshReadState(client, stamp);
   for (const row of rows)
-    if (row.unread_count === 0)
+    if (row.unread_count === 0 && !keepOpen.has(row.channel_id))
       void closeMessageNotifications({
         user: stamp.userId,
         channelId: row.channel_id,

@@ -64,6 +64,10 @@ services:
       # Empty turns Web Push off.
       VAPID_PRIVATE_KEY: ${VAPID_PRIVATE_KEY:-}
       VAPID_SUBJECT: ${VAPID_SUBJECT:-}
+      # Link previews: the API fetches linked pages (public addresses only).
+      API_LINK_PREVIEWS: ${API_LINK_PREVIEWS:-true}
+      API_LINK_PREVIEW_DENY_HOSTS: ${API_LINK_PREVIEW_DENY_HOSTS:-}
+      API_RATE_PREVIEW_PER_MIN: ${API_RATE_PREVIEW_PER_MIN:-10}
     expose:
       - "8080"
     depends_on:
