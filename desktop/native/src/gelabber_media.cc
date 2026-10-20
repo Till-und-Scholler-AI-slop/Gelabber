@@ -6,6 +6,7 @@
 #include "app_audio.h"
 #include "capture_dsp.h"
 #include "local_video_source.h"
+#include "playout_limiter.h"
 
 #include "mediasoupclient.hpp"
 
@@ -838,9 +839,10 @@ namespace
 	// Between the audio device module and the voice engine. Capture runs
 	// through the APM (echo cancellation against the playout, noise
 	// suppression, the post-processor) here and goes to the microphone
-	// sources only, instead of to every send stream. Playout passes through
-	// to the engine's own transport, which also feeds the APM's echo
-	// reference.
+	// sources only, instead of to every send stream. Playout comes from the
+	// engine's own transport, which also feeds the APM's echo reference, and
+	// leaves through the playout limiter: the master gain of volumes above
+	// 100 % applies there, after the echo reference was taken.
 	class CaptureTransport : public webrtc::AudioTransport
 	{
 	public:
@@ -938,7 +940,8 @@ namespace
 		  int64_t* ntpTimeMs) override
 		{
 			if (auto* transport = render.load())
-				return transport->NeedMorePlayData(
+			{
+				const auto result = transport->NeedMorePlayData(
 				  samplesPerChannel,
 				  bytesPerSample,
 				  channels,
@@ -947,6 +950,12 @@ namespace
 				  samplesOut,
 				  elapsedTimeMs,
 				  ntpTimeMs);
+				// bytesPerSample is per frame, as for capture.
+				if (result == 0 && bytesPerSample == channels * sizeof(int16_t))
+					playout.Process(
+					  static_cast<int16_t*>(audio), std::min(samplesOut, samplesPerChannel), channels, sampleRate);
+				return result;
+			}
 			std::memset(audio, 0, samplesPerChannel * bytesPerSample);
 			samplesOut = samplesPerChannel;
 			return 0;
@@ -966,6 +975,11 @@ namespace
 				  bitsPerSample, sampleRate, channels, frames, audio, elapsedTimeMs, ntpTimeMs);
 		}
 
+		gelabber::PlayoutLimiter& Playout()
+		{
+			return playout;
+		}
+
 	private:
 		static void ApplyGain(webrtc::AudioFrame& target, float gain)
 		{
@@ -980,6 +994,7 @@ namespace
 		const std::shared_ptr<gelabber::CaptureDsp> dsp;
 		const std::shared_ptr<MicrophoneHub> hub;
 		std::atomic<webrtc::AudioTransport*> render{ nullptr };
+		gelabber::PlayoutLimiter playout;
 		// Capture thread only.
 		webrtc::AudioFrame frame;
 		webrtc::AudioFrame stereoFrame;
@@ -1517,6 +1532,9 @@ struct gm_engine
 	std::mutex audioMutex;
 	std::string inputId;
 	std::string outputId;
+	// The audio consumers and their volumes (ApplyPlaybackVolumes).
+	std::mutex playbackMutex;
+	std::vector<gm_consumer*> audioConsumers;
 
 	mediasoupclient::PeerConnection::Options Options() const
 	{
@@ -1590,14 +1608,47 @@ struct gm_producer
 
 struct gm_consumer
 {
+	gm_engine* engine{ nullptr };
 	mediasoupclient::Consumer* consumer{ nullptr };
 	std::unique_ptr<FrameCounter> counter;
 	std::unique_ptr<AudioLevelSink> audio;
 	std::string id;
+	// Audio: the volume asked for (0..2), and the one its receive stream
+	// plays at (libwebrtc starts it at 1). Under the engine's playbackMutex.
+	double volume{ 1.0 };
+	double streamVolume{ 1.0 };
 };
 
 namespace
 {
+	// Playback above 100 % (#223). libwebrtc scales a receive stream with
+	// saturation, so a loud speaker clips on its own above 1. The largest
+	// volume above 1 is therefore the master gain of the playout limiter,
+	// after the mix, and every stream plays at its volume over that gain:
+	// each still ends at its own volume, and only the sum can reach the
+	// limiter. Without the platform device module there is no playout to
+	// limit, and streams take their volume as it is. Called with the
+	// engine's playbackMutex held.
+	void ApplyPlaybackVolumes(gm_engine& engine)
+	{
+		double master = 1.0;
+		if (engine.monitor)
+			for (const auto* consumer : engine.audioConsumers)
+				master = std::max(master, consumer->volume);
+		for (auto* consumer : engine.audioConsumers)
+		{
+			const double stream = consumer->volume / master;
+			if (stream == consumer->streamVolume)
+				continue;
+			// RemoteAudioSource scales the decoded audio by this factor.
+			static_cast<webrtc::AudioTrackInterface*>(consumer->consumer->GetTrack())
+			  ->GetSource()
+			  ->SetVolume(stream);
+			consumer->streamVolume = stream;
+		}
+		engine.capture->Playout().SetGain(master);
+	}
+
 	std::string CaptureMode(const json& options)
 	{
 		auto mode = options.value("processingMode", std::string("enhanced"));
@@ -1847,13 +1898,19 @@ int gm_audio_monitor(gm_engine* engine, const char* optionsJson)
 char* gm_audio_levels(gm_engine* engine)
 {
 	return guarded<char*>(nullptr, [&] {
-		const auto levels = engine->dsp->Levels();
+		const auto levels  = engine->dsp->Levels();
+		const auto playout = engine->capture->Playout().Levels();
 		return dupString(json{ { "input", levels.raw },
 		                       { "processed", levels.processed },
 		                       { "clipping", levels.clipping },
 		                       { "denoised", levels.denoised },
 		                       { "blocks", levels.blocks },
-		                       { "channels", levels.channels } }
+		                       { "channels", levels.channels },
+		                       { "playout",
+		                         { { "gain", playout.gain },
+		                           { "peak", playout.peak },
+		                           { "reduction", playout.reduction },
+		                           { "windows", playout.windows } } } }
 		                   .dump());
 	});
 }
@@ -2457,6 +2514,7 @@ gm_consumer* gm_transport_consume(gm_transport* transport, const char* consumerJ
 		  &rtp,
 		  params.value("appData", json::object()));
 		auto out      = std::make_unique<gm_consumer>();
+		out->engine   = transport->device->engine;
 		out->consumer = consumer;
 		out->id       = consumer->GetId();
 		if (consumer->GetKind() == "video")
@@ -2470,6 +2528,10 @@ gm_consumer* gm_transport_consume(gm_transport* transport, const char* consumerJ
 			out->audio  = std::make_unique<AudioLevelSink>();
 			auto* track = static_cast<webrtc::AudioTrackInterface*>(consumer->GetTrack());
 			track->AddSink(out->audio.get());
+			// At 1 like a new stream, under a master gain already above it.
+			std::lock_guard lock(out->engine->playbackMutex);
+			out->engine->audioConsumers.push_back(out.get());
+			ApplyPlaybackVolumes(*out->engine);
 		}
 		return out.release();
 	});
@@ -2489,6 +2551,10 @@ void gm_consumer_free(gm_consumer* consumer)
 		{
 			auto* track = static_cast<webrtc::AudioTrackInterface*>(consumer->consumer->GetTrack());
 			track->RemoveSink(consumer->audio.get());
+			// The master gain may drop with it.
+			std::lock_guard lock(consumer->engine->playbackMutex);
+			std::erase(consumer->engine->audioConsumers, consumer);
+			ApplyPlaybackVolumes(*consumer->engine);
 		}
 		if (!consumer->consumer->IsClosed())
 			consumer->consumer->Close();
@@ -2595,9 +2661,9 @@ int gm_consumer_set_volume(gm_consumer* consumer, double volume)
 			throw std::invalid_argument("volume needs an audio consumer");
 		if (!std::isfinite(volume))
 			throw std::invalid_argument("volume must be a number");
-		auto* track = static_cast<webrtc::AudioTrackInterface*>(consumer->consumer->GetTrack());
-		// RemoteAudioSource scales the decoded audio by this factor (0..10).
-		track->GetSource()->SetVolume(std::clamp(volume, 0.0, 2.0));
+		std::lock_guard lock(consumer->engine->playbackMutex);
+		consumer->volume = std::clamp(volume, 0.0, 2.0);
+		ApplyPlaybackVolumes(*consumer->engine);
 		return 0;
 	});
 }

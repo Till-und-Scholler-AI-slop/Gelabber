@@ -7,7 +7,7 @@ import {
   wantsNotification,
 } from "./notifyLevel.ts";
 import {
-  serverSetting,
+  conversationSetting,
   type NotificationSetting,
 } from "./notificationSettings.ts";
 
@@ -111,25 +111,76 @@ describe("notification levels", () => {
 });
 
 describe("a conversation without an unread row", () => {
+  const setting = (
+    scope: "server" | "channel",
+    id: string,
+    change: Partial<NotificationSetting>,
+  ): NotificationSetting => ({
+    scope,
+    id,
+    level: null,
+    muted: false,
+    muted_until: null,
+    ...change,
+  });
+
   it("follows its server's own setting", () => {
-    const settings: NotificationSetting[] = [
-      {
-        scope: "server",
-        id: "s1",
-        level: null,
-        muted: true,
-        muted_until: null,
-      },
-    ];
-    const muted = serverSetting(settings, "s1");
+    const settings = [setting("server", "s1", { muted: true })];
+    const muted = conversationSetting(settings, "c1", "s1", 0);
     expect(wantsNotification(muted, { dm: false, mentioned: false }, 0)).toBe(
       false,
     );
-    expect(serverSetting(settings, "s2")).toEqual({
+    expect(conversationSetting(settings, "c1", "s2", 0)).toEqual({
       level: "all",
       muted: false,
       muted_until: null,
     });
-    expect(serverSetting(undefined, "s1")).toBeUndefined();
+    expect(conversationSetting(undefined, "c1", "s1", 0)).toBeUndefined();
+  });
+
+  it("takes its own setting before its server's", () => {
+    const settings = [
+      setting("server", "s1", { level: "none" }),
+      setting("channel", "c1", { level: "all" }),
+      setting("channel", "c2", { muted: true }),
+      setting("channel", "dm", { level: "mentions" }),
+    ];
+    const plain = { dm: false, mentioned: false };
+    expect(conversationSetting(settings, "c1", "s1", 0)?.level).toBe("all");
+    expect(
+      wantsNotification(conversationSetting(settings, "c1", "s1", 0), plain, 0),
+    ).toBe(true);
+    // Inheriting the level, muted by itself.
+    expect(conversationSetting(settings, "c2", "s1", 0)).toEqual({
+      level: "none",
+      muted: true,
+      muted_until: null,
+    });
+    // A DM has no server, only its own setting.
+    expect(conversationSetting(settings, "dm", null, 0)?.level).toBe(
+      "mentions",
+    );
+  });
+
+  it("is muted until the later of two running mutes", () => {
+    const soon = new Date(NOW + 60_000).toISOString();
+    const later = new Date(NOW + 3_600_000).toISOString();
+    const gone = new Date(NOW - 60_000).toISOString();
+    const both = [
+      setting("server", "s1", { muted: true, muted_until: soon }),
+      setting("channel", "c1", { muted: true, muted_until: later }),
+    ];
+    expect(conversationSetting(both, "c1", "s1", NOW)).toMatchObject({
+      muted: true,
+      muted_until: later,
+    });
+    const expired = [
+      setting("server", "s1", { muted: true, muted_until: soon }),
+      setting("channel", "c1", { muted: true, muted_until: gone }),
+    ];
+    expect(conversationSetting(expired, "c1", "s1", NOW)).toMatchObject({
+      muted: true,
+      muted_until: soon,
+    });
   });
 });

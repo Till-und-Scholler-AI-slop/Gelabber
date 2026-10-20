@@ -110,6 +110,11 @@ import {
   videoConstraintLadder,
   videoConstraintsFor,
 } from "./settings.ts";
+import {
+  configurePushToTalk,
+  onPushToTalkGate,
+  pushToTalkOpen,
+} from "./pushToTalk.ts";
 
 export type SourceAudioStatus =
   "off" | "sharing" | "unavailable" | "ended" | "unsupported";
@@ -254,6 +259,7 @@ const blockedPlayback = new Set<HTMLAudioElement>();
 let boostBlocked = false;
 let bound = false;
 let unsubscribeUserVolumes: (() => void) | null = null;
+let unsubscribePushToTalk: (() => void) | null = null;
 let micEpoch = 0;
 /** A microphone prompt that a seat rebuild overtook. Its answer belonged to
  * the old connection and was dropped with it, and a rebuild does not ask for
@@ -578,6 +584,12 @@ function ensureBound(): void {
   onMediaSettingsChange(handleSettingsChange);
   unsubscribeUserVolumes?.();
   unsubscribeUserVolumes = useUserVolumes.subscribe(applyUserVolumes);
+  onPushToTalkGate(applyLocalAudio);
+  unsubscribePushToTalk?.();
+  unsubscribePushToTalk = useVoice.subscribe((next, prev) => {
+    if (next.status !== prev.status) syncPushToTalk();
+  });
+  syncPushToTalk();
   // Re-adding the same listener after a rebind is a no-op.
   if (typeof document !== "undefined")
     document.addEventListener("visibilitychange", resumePlayback);
@@ -1206,6 +1218,12 @@ function makeMediaConnection(
     onError: (error) => {
       if (current()) deps?.onError?.(error);
     },
+    onRepublished: () => {
+      // New senders: the upload budget and priorities go on them again.
+      if (!current() || role !== "voice" || !peer.connection) return;
+      void enqueueVideoLimits(peer.connection).catch(() => {});
+      void applySendBitrate().catch(() => {});
+    },
   });
   peer.connection = connection;
   return connection;
@@ -1384,14 +1402,28 @@ const requestedMicPause = new WeakMap<
   MediaConnection,
   { producer: string; paused: boolean }
 >();
+/** Push-to-talk follows the call and the settings: on in a call with the
+ * mode chosen, off otherwise. */
+function syncPushToTalk(): void {
+  const settings = useMediaSettings.getState();
+  configurePushToTalk(
+    useVoice.getState().status === "joined" && settings.voiceInput === "ptt"
+      ? { key: settings.pttKey, releaseDelay: settings.pttReleaseDelay }
+      : null,
+  );
+}
+
 function applyLocalAudio(): void {
   const state = useVoice.getState();
   const micOff = state.muted || state.deafened;
+  // Push-to-talk with its key up silences the track only: the producer
+  // stays resumed, so pressing the key needs no round trip to the server.
+  const silent = micOff || !pushToTalkOpen();
   localStream?.getAudioTracks().forEach((track) => {
-    track.enabled = !micOff;
+    track.enabled = !silent;
   });
   rawMicStream?.getAudioTracks().forEach((track) => {
-    track.enabled = !micOff;
+    track.enabled = !silent;
   });
   const connection = seat.connection;
   const sender = connection?.sender("a");
@@ -2363,6 +2395,7 @@ function cameraSender(): RtpSender | undefined {
 }
 
 function handleSettingsChange(prev: MediaSettings, next: MediaSettings): void {
+  syncPushToTalk();
   applyLocalAudio();
   const joined = useVoice.getState().status === "joined";
   const recaptureMic =
@@ -3006,6 +3039,10 @@ export function resetVoiceForTests(): void {
   onMediaSettingsChange(null);
   unsubscribeUserVolumes?.();
   unsubscribeUserVolumes = null;
+  unsubscribePushToTalk?.();
+  unsubscribePushToTalk = null;
+  onPushToTalkGate(null);
+  configurePushToTalk(null);
 }
 
 function endedListener(kind: "v" | "s" | "l"): () => void {

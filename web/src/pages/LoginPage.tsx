@@ -2,6 +2,7 @@ import { useMutation } from "@tanstack/react-query";
 import { Link, useNavigate, useSearch } from "@tanstack/react-router";
 import { useState, type FormEvent } from "react";
 
+import { useAccountMail } from "../auth/mail.ts";
 import { fieldMessage, validateEmail } from "../auth/rules.ts";
 import { login } from "../auth/session.ts";
 import { useFormErrors } from "../auth/useFormErrors.ts";
@@ -18,6 +19,7 @@ export function LoginPage() {
   const [password, setPassword] = useState("");
   const { errors, clearField, setFields, fromError } = useFormErrors();
   const installHint = useInstallation(installHintUseful);
+  const accountMail = useAccountMail();
 
   const mutation = useMutation({
     mutationFn: () => login(email, password),
@@ -88,6 +90,14 @@ export function LoginPage() {
         <SubmitButton pending={mutation.isPending} pendingLabel="Anmelden…">
           Anmelden
         </SubmitButton>
+        {accountMail && (
+          <Link
+            to="/forgot-password"
+            className="self-start text-sm text-neutral-600 dark:text-neutral-400 underline underline-offset-2"
+          >
+            Passwort vergessen?
+          </Link>
+        )}
       </form>
       {installHint && <InstallApp />}
     </section>

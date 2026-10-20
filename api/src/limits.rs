@@ -46,6 +46,10 @@ pub const PREVIEW_PER_MIN: u32 = 10;
 pub const PREVIEW_SERVER_FACTOR: u32 = 6;
 /// Window of the per-account failure count, and so the longest wait.
 pub const LOGIN_FAILURE_WINDOW: Duration = Duration::from_secs(15 * 60);
+/// Account mails (confirmation, reset, "already registered") per address
+/// and hour. Past it the request is answered as usual and nothing is sent,
+/// so nobody can flood an inbox through the instance.
+pub const MAIL_PER_ADDRESS_PER_HOUR: u32 = 5;
 
 pub(crate) const MINUTE: Duration = Duration::from_secs(60);
 const HOUR: Duration = Duration::from_secs(3600);
@@ -175,7 +179,7 @@ pub async fn gate(
     let session = cookies::get(request.headers(), SESSION_COOKIE);
     let actor = session.as_deref().unwrap_or(ip.as_str());
 
-    let outcome = if path == "/api/auth/login" || path == "/api/auth/register" {
+    let outcome = if is_auth_path(path) {
         check(
             &state.limiter,
             "auth",
@@ -237,6 +241,19 @@ pub async fn gate(
     Ok(next.run(request).await)
 }
 
+/// Routes an anonymous caller uses to sign in or to make the API send mail;
+/// they share the per-IP auth window.
+fn is_auth_path(path: &str) -> bool {
+    matches!(
+        path,
+        "/api/auth/login"
+            | "/api/auth/register"
+            | "/api/auth/verify-email"
+            | "/api/auth/password-reset"
+            | "/api/auth/password-reset/confirm"
+    )
+}
+
 fn is_safe(method: &Method) -> bool {
     matches!(*method, Method::GET | Method::HEAD | Method::OPTIONS)
 }
@@ -275,6 +292,19 @@ pub fn login_failed(state: &AppState, email: &str) {
     let _ = state
         .limiter
         .hit("login", &account_key(email), max, LOGIN_FAILURE_WINDOW);
+}
+
+/// Counts one account mail to `email`; `false` once the hourly allowance of
+/// that address is used up and the mail should be dropped.
+pub fn mail_allowed(state: &AppState, email: &str) -> bool {
+    let allowed = state
+        .limiter
+        .hit("mail", &account_key(email), MAIL_PER_ADDRESS_PER_HOUR, HOUR)
+        .is_ok();
+    if !allowed {
+        state.metrics.rate_limited("mail");
+    }
+    allowed
 }
 
 /// The address is normalized by validation; hashed so the limiter's keys

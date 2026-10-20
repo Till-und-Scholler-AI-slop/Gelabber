@@ -15,6 +15,7 @@
 
 mod frames;
 mod media;
+mod ptt;
 mod shell;
 mod update;
 mod viewer;
@@ -132,8 +133,8 @@ fn configured_server(app: &AppHandle) -> Option<String> {
 }
 
 /// The server's pages may call the media commands, the window and tray
-/// commands, open the setup page and see and install an update of the app,
-/// nothing else.
+/// commands, bind the push-to-talk key, open the setup page and see and
+/// install an update of the app, nothing else.
 fn allow_server(app: &AppHandle, origin: &Url) -> tauri::Result<()> {
     let origin = origin.origin().ascii_serialization();
     app.add_capability(
@@ -143,6 +144,7 @@ fn allow_server(app: &AppHandle, origin: &Url) -> tauri::Result<()> {
             .window(WINDOW)
             .permission("media")
             .permission("shell")
+            .permission("ptt")
             .permission("update")
             .permission("allow-open-setup"),
     )
@@ -505,6 +507,7 @@ fn main() {
     builder
         .manage(media::Media::default())
         .manage(shell::Shell::default())
+        .manage(ptt::Ptt::default())
         .manage(update::Updates::default())
         .invoke_handler(tauri::generate_handler![
             set_server,
@@ -513,6 +516,8 @@ fn main() {
             shell::shell_close_to_tray,
             shell::shell_focus,
             shell::shell_unread,
+            ptt::ptt_bind,
+            ptt::ptt_unbind,
             media::media_info,
             media::media_audio_devices,
             media::media_audio_configure,
@@ -565,6 +570,7 @@ fn main() {
             // core happens elsewhere (`Media::reset`).
             if payload.event() == PageLoadEvent::Started {
                 webview.state::<media::Media>().reset();
+                webview.state::<ptt::Ptt>().reset();
             }
         })
         .setup(|app| {

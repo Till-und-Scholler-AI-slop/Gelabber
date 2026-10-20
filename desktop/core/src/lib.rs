@@ -195,7 +195,8 @@ impl Engine {
     }
 
     /// Microphone meters while capture runs, 0..100:
-    /// `{"input","processed","clipping","denoised","blocks","channels"}`.
+    /// `{"input","processed","clipping","denoised","blocks","channels"}`,
+    /// and the playout limiter's `"playout": {"gain","peak","reduction","windows"}`.
     pub fn audio_levels(&self) -> Result<Value> {
         // SAFETY: live engine.
         owned_json(unsafe { ffi::gm_audio_levels(self.raw()) })
@@ -896,7 +897,8 @@ impl Consumer {
         check(unsafe { ffi::gm_consumer_pause(self.ptr.as_ptr(), paused as i32) })
     }
 
-    /// Playback volume of an audio consumer, 0..2.
+    /// Playback volume of an audio consumer, 0..2. Above 1 the boost applies
+    /// after the mix, through the playout limiter.
     pub fn set_volume(&self, volume: f64) -> Result<()> {
         // SAFETY: live consumer.
         check(unsafe { ffi::gm_consumer_set_volume(self.ptr.as_ptr(), volume) })

@@ -1908,3 +1908,131 @@ describe("the browser SDK's chunk", () => {
     expect(load).toHaveBeenCalledOnce();
   });
 });
+
+describe("video codec negotiation", () => {
+  const h264 = (profile: string) => ({
+    kind: "video" as const,
+    mimeType: "video/H264",
+    preferredPayloadType: 102,
+    clockRate: 90000,
+    parameters: { "packetization-mode": 1, "profile-level-id": profile },
+  });
+  const withH264: RtpCapabilities = {
+    codecs: [...capabilities.codecs!, h264("42001f"), h264("42e01f")],
+  };
+  function negotiating(hardware: boolean, video: string[]) {
+    const onRepublished = vi.fn();
+    const f = fixture("voice", undefined, {
+      hardwareH264: async () => hardware,
+      onRepublished,
+    });
+    f.device.sendRtpCapabilities = withH264;
+    f.intercept((method) =>
+      method === "capabilities"
+        ? Promise.resolve({ codecs: { video, revision: 1 } })
+        : undefined,
+    );
+    return { ...f, onRepublished };
+  }
+  const sent = (f: ReturnType<typeof fixture>) =>
+    f.device.transports
+      .flatMap((transport) => transport.produce.mock.calls)
+      .map(([options]) => options);
+
+  it("keeps VP8 when the server does not name codecs", async () => {
+    const f = fixture("voice", undefined, { hardwareH264: async () => true });
+    f.device.sendRtpCapabilities = withH264;
+    await f.start();
+    await f.connection.publish(publication("v", new Capture("cam", "video")));
+    expect(sent(f)[0].codec?.mimeType).toBe("video/VP8");
+  });
+
+  it("sends Constrained Baseline H.264 in two layers with hardware, else VP8", async () => {
+    const hw = negotiating(true, ["video/vp8", "video/h264"]);
+    await hw.start();
+    await hw.connection.publish(publication("v", new Capture("cam", "video")));
+    expect(sent(hw)[0].codec).toEqual(h264("42e01f"));
+    expect(sent(hw)[0].encodings).toEqual([
+      { scaleResolutionDownBy: 4 },
+      { scaleResolutionDownBy: 1 },
+    ]);
+    const sw = negotiating(false, ["video/vp8", "video/h264"]);
+    await sw.start();
+    await sw.connection.publish(publication("v", new Capture("cam", "video")));
+    expect(sent(sw)[0].codec?.mimeType).toBe("video/VP8");
+  });
+
+  it("sends a screen and its sound again when the room's codecs change", async () => {
+    const f = negotiating(true, ["video/vp8", "video/h264"]);
+    await f.start();
+    const mic = await f.connection.publish(
+      publication("a", new Capture("mic", "audio")),
+    );
+    const screen = new Capture("screen", "video"),
+      sound = new Capture("screen-sound", "audio");
+    const video = await f.connection.publish(publication("s", screen));
+    const audio = await f.connection.publish(
+      publication("sa", sound, { parent: video.producerId }),
+    );
+    expect(sent(f)[1].codec?.mimeType).toBe("video/H264");
+    // Someone joins who decodes VP8 only.
+    f.connection.handleEvent({
+      op: "codecs",
+      video: ["video/vp8"],
+      revision: 2,
+    });
+    await vi.waitFor(() => expect(f.onRepublished).toHaveBeenCalledTimes(1));
+    const again = sent(f).slice(3);
+    expect(again.map((options) => options.track)).toEqual([
+      screen.native(),
+      sound.native(),
+    ]);
+    expect(again[0].codec?.mimeType).toBe("video/VP8");
+    const produced = f.calls("produce").slice(3);
+    expect(produced[0]).toMatchObject({
+      k: "s",
+      epoch: EPOCH,
+      expectedOldProducerId: video.producerId,
+    });
+    const newVideo = f.connection.sender("s")!;
+    expect(produced[1]).toMatchObject({ k: "sa", parent: newVideo.producerId });
+    expect(produced[1]).not.toHaveProperty("expectedOldProducerId");
+    expect(f.connection.sender("sa")!.producerId).not.toBe(audio.producerId);
+    expect(f.connection.sender("a")).toBe(mic);
+    expect(screen.stop).not.toHaveBeenCalled();
+    expect(sound.stop).not.toHaveBeenCalled();
+    // An older set, and the same set again, change nothing.
+    f.connection.handleEvent({
+      op: "codecs",
+      video: ["video/vp8", "video/h264"],
+      revision: 1,
+    });
+    f.connection.handleEvent({
+      op: "codecs",
+      video: ["video/vp8"],
+      revision: 3,
+    });
+    await f.connection.publish(publication("v", new Capture("cam", "video")));
+    expect(f.onRepublished).toHaveBeenCalledTimes(1);
+    expect(sent(f).at(-1)!.codec?.mimeType).toBe("video/VP8");
+    expect(f.onError).not.toHaveBeenCalled();
+  });
+
+  it("keeps a newer event over an older capabilities result", async () => {
+    const f = negotiating(true, ["video/vp8", "video/h264"]);
+    f.intercept((method) => {
+      if (method !== "capabilities") return undefined;
+      f.connection.handleEvent({
+        op: "codecs",
+        video: ["video/vp8"],
+        revision: 2,
+      });
+      return Promise.resolve({
+        codecs: { video: ["video/vp8", "video/h264"], revision: 1 },
+      });
+    });
+    await f.start();
+    await f.connection.publish(publication("v", new Capture("cam", "video")));
+    expect(sent(f)[0].codec?.mimeType).toBe("video/VP8");
+  });
+});

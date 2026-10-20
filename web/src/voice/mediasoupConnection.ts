@@ -11,10 +11,12 @@ import type {
 import type { TrackKind } from "../ws/protocol.ts";
 import {
   MediaError,
+  isVideoCodecs,
   type ConsumerAnnouncement,
   type IceServer,
   type MediaEvent,
   type MediaRequest,
+  type VideoCodecs,
 } from "./media.ts";
 import { statsEntriesFromReport, type StatsEntry } from "./diagnostics.ts";
 import type { MediaPriority } from "./mediaPriority.ts";
@@ -22,6 +24,7 @@ import { ViewerLayerController } from "./viewerLayers.ts";
 import { isDesktopApp } from "./native/bridge.ts";
 import { createNativeDevice } from "./native/device.ts";
 import { createStream } from "./native/tracks.ts";
+import { chooseVideoCodec, hardwareH264 } from "./videoCodec.ts";
 
 export type RtpSenderParameters = {
   encodings: Array<{
@@ -71,7 +74,12 @@ export type MediaConnectionOptions = {
   onConsumerClosed(source: ReceivedSource): void;
   onTransportState(direction: "send" | "recv", state: string): void;
   onError(error: unknown): void;
+  /** Video sources went out again in another codec: their senders are new
+   * and have none of the old ones' parameters. */
+  onRepublished?(): void;
   deviceFactory?: () => Promise<Device>;
+  /** Test injection; production asks the browser or the desktop app. */
+  hardwareH264?: () => Promise<boolean>;
   /** Test injection; production SDK operations are bounded to ten seconds. */
   sdkTimeoutMs?: number;
   /** Test injection; production waits SDK_LOAD_TIMEOUT_MS for the chunk. */
@@ -141,8 +149,13 @@ type Publication = {
   sender: MediaSender;
   input: MediaPublication;
   codec: string;
+  /** The mime type it is sent in. */
+  mime: string;
   paused: boolean;
 };
+const VIDEO_KINDS: readonly TrackKind[] = ["v", "s", "l"];
+/** The sound sent with a video source; the server ends it with its parent. */
+const CHILD: Partial<Record<TrackKind, TrackKind>> = { s: "sa", l: "la" };
 function emitMediaHook(name: string, detail: unknown): void {
   if (typeof window !== "undefined" && typeof CustomEvent !== "undefined")
     window.dispatchEvent(new CustomEvent(name, { detail }));
@@ -184,6 +197,8 @@ export class MediasoupConnection implements MediaConnection {
   private samplingLayers = false;
   private sdkWaits = new Set<() => void>();
   private sendDeadlineEpochMs: number | undefined;
+  /** What every receiver decodes; null until a server says. */
+  private videoCodecs: VideoCodecs | null = null;
   constructor(private readonly options: MediaConnectionOptions) {}
 
   private live(): void {
@@ -308,10 +323,12 @@ export class MediasoupConnection implements MediaConnection {
       throw error;
     }
     this.device = device;
-    await this.options.request("capabilities", {
+    const announced = await this.options.request("capabilities", {
       rtp: device.recvRtpCapabilities,
     });
     this.live();
+    if (isVideoCodecs(announced?.codecs))
+      this.noteVideoCodecs(announced.codecs);
     this.recv = await this.makeTransport("recv");
     this.live();
     for (const event of this.queued.splice(0)) this.handleEvent(event);
@@ -491,6 +508,15 @@ export class MediasoupConnection implements MediaConnection {
       throw new MediaError("unsupported_codec");
     if ((input.kind === "sa" || input.kind === "la") && !input.parent)
       throw new MediaError("missing_parent");
+    const codec =
+      input.track.kind === "video"
+        ? await this.videoCodec(device)
+        : device.sendRtpCapabilities.codecs?.find(
+            (c) => c.mimeType.toLowerCase() === "audio/opus",
+          );
+    this.checkPublication(input);
+    if (!codec) throw new MediaError("unsupported_codec");
+    const mime = codec.mimeType.toLowerCase();
     const codecOptions = {
       ...this.options.codecOptions(input.kind),
       // Public SDK hint for the initial libwebrtc video bandwidth estimate.
@@ -499,7 +525,7 @@ export class MediasoupConnection implements MediaConnection {
         ? { videoGoogleStartBitrate: 1000 }
         : {}),
     };
-    const signature = JSON.stringify(codecOptions);
+    const signature = JSON.stringify([mime, codecOptions]);
     let previous = this.publications.get(input.kind);
     if (
       previous &&
@@ -549,25 +575,8 @@ export class MediasoupConnection implements MediaConnection {
     }
     const transport = await this.sendTransport();
     this.checkPublication(input);
-    const codec =
-      input.track.kind === "video"
-        ? (device.sendRtpCapabilities.codecs?.find(
-            (c) => c.mimeType.toLowerCase() === "video/vp8",
-          ) ??
-          device.sendRtpCapabilities.codecs?.find(
-            (c) => c.mimeType.toLowerCase() === "video/h264",
-          ) ??
-          device.sendRtpCapabilities.codecs?.find(
-            (c) => c.mimeType.toLowerCase() === "video/vp9",
-          ) ??
-          device.sendRtpCapabilities.codecs?.find(
-            (c) => c.mimeType.toLowerCase() === "video/av1",
-          ))
-        : device.sendRtpCapabilities.codecs?.find(
-            (c) => c.mimeType.toLowerCase() === "audio/opus",
-          );
-    if (!codec) throw new MediaError("unsupported_codec");
-    const vp8 = codec.mimeType.toLowerCase() === "video/vp8";
+    // Two simulcast layers where browsers and the native core encode them.
+    const layered = mime === "video/vp8" || mime === "video/h264";
     const base = {
       track: input.track,
       streamId: input.streamId,
@@ -625,7 +634,7 @@ export class MediasoupConnection implements MediaConnection {
     try {
       producer = await produce({
         ...base,
-        ...(vp8
+        ...(layered
           ? {
               encodings: [
                 { scaleResolutionDownBy: 4 },
@@ -636,7 +645,10 @@ export class MediasoupConnection implements MediaConnection {
       });
     } catch (error) {
       const name = sdkErrorName(error);
-      if (!vp8 || (name !== "UnsupportedError" && name !== "NotSupportedError"))
+      if (
+        !layered ||
+        (name !== "UnsupportedError" && name !== "NotSupportedError")
+      )
         throw error;
       this.live();
       this.sendUses += 1;
@@ -696,6 +708,7 @@ export class MediasoupConnection implements MediaConnection {
       sender,
       input: { ...input, deadlineEpochMs: undefined, isCurrent: undefined },
       codec: signature,
+      mime,
       paused: input.paused ?? false,
     };
     this.publications.set(input.kind, held);
@@ -711,6 +724,59 @@ export class MediasoupConnection implements MediaConnection {
     previous?.producer.close();
     await this.pauseNow(input.kind, input.paused ?? false);
     return sender;
+  }
+
+  private async videoCodec(device: Device) {
+    const allowed = this.videoCodecs?.video ?? null;
+    const hardware =
+      allowed?.includes("video/h264") === true &&
+      (await (this.options.hardwareH264 ?? hardwareH264)());
+    return chooseVideoCodec(
+      device.sendRtpCapabilities.codecs ?? [],
+      allowed,
+      hardware,
+    );
+  }
+  private noteVideoCodecs(next: VideoCodecs): void {
+    // The event can overtake the `capabilities` result, and the other way.
+    if (this.videoCodecs && next.revision <= this.videoCodecs.revision) return;
+    this.videoCodecs = { video: [...next.video], revision: next.revision };
+    if (this.publications.size > 0)
+      void this.serialize("v", () => this.recodeVideo()).catch(
+        (error: unknown) => {
+          if (!this.closed) this.options.onError(error);
+        },
+      );
+  }
+  /** Sends each video source again whose best codec changed, with its
+   * sound after it. Viewers get it as a new source of the same capture. */
+  private async recodeVideo(): Promise<void> {
+    const device = this.device;
+    if (!device || this.closed) return;
+    const codec = await this.videoCodec(device);
+    this.live();
+    if (!codec) return;
+    let republished = false;
+    for (const kind of VIDEO_KINDS) {
+      const held = this.publications.get(kind);
+      const track = held?.producer.track;
+      if (!held || !track || held.mime === codec.mimeType.toLowerCase())
+        continue;
+      const childKind = CHILD[kind];
+      const child = childKind ? this.publications.get(childKind) : undefined;
+      const childTrack = child?.producer.track;
+      await this.publishNow({ ...held.input, track });
+      republished = true;
+      if (!childKind || !child) continue;
+      // The server ended it with its parent; the event may still be on its way.
+      if (this.publications.get(childKind) === child) {
+        this.publications.delete(childKind);
+        child.producer.close();
+      }
+      if (childTrack && childTrack.readyState !== "ended")
+        await this.publishNow({ ...child.input, track: childTrack });
+    }
+    if (republished) this.options.onRepublished?.();
   }
 
   /** The pinned Firefox handler does not reuse stopped m-lines. Compact through
@@ -876,6 +942,10 @@ export class MediasoupConnection implements MediaConnection {
           this.publications.delete(kind);
           held.producer.close();
         }
+      return;
+    }
+    if (event.op === "codecs") {
+      this.noteVideoCodecs(event);
       return;
     }
     if (event.op === "consumerClosed") {

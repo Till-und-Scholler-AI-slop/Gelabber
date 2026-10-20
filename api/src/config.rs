@@ -60,6 +60,13 @@ pub const KLIPY_CONTENT_FILTER: &str = "KLIPY_CONTENT_FILTER";
 pub const API_LINK_PREVIEWS: &str = "API_LINK_PREVIEWS";
 pub const API_LINK_PREVIEW_DENY_HOSTS: &str = "API_LINK_PREVIEW_DENY_HOSTS";
 pub const API_RATE_PREVIEW_PER_MIN: &str = "API_RATE_PREVIEW_PER_MIN";
+pub const SMTP_HOST: &str = "SMTP_HOST";
+pub const SMTP_PORT: &str = "SMTP_PORT";
+pub const SMTP_SECURITY: &str = "SMTP_SECURITY";
+pub const SMTP_USERNAME: &str = "SMTP_USERNAME";
+pub const SMTP_PASSWORD: &str = "SMTP_PASSWORD";
+pub const MAIL_FROM: &str = "MAIL_FROM";
+pub const APP_PUBLIC_URL: &str = "APP_PUBLIC_URL";
 /// Read by `telemetry::init`, not by `Config`, because the subscriber has to
 /// exist before anything else can be logged.
 pub const RUST_LOG: &str = "RUST_LOG";
@@ -134,6 +141,65 @@ pub struct Config {
     pub push: Option<PushConfig>,
     /// Link previews (#254). `None` turns them off; links still work.
     pub previews: Option<PreviewConfig>,
+    /// Account mail (#195): address confirmation and password reset.
+    /// `None` without `SMTP_HOST`; registration then signs in at once.
+    pub mail: Option<MailConfig>,
+}
+
+/// How the API reaches the SMTP relay.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum SmtpSecurity {
+    /// Plain connection upgraded with STARTTLS, which must succeed (587).
+    StartTls,
+    /// TLS from the first byte (465).
+    Tls,
+    /// No encryption, for a relay on the same host or private network (25).
+    None,
+}
+
+impl SmtpSecurity {
+    pub fn default_port(self) -> u16 {
+        match self {
+            Self::StartTls => 587,
+            Self::Tls => 465,
+            Self::None => 25,
+        }
+    }
+}
+
+/// Outgoing account mail through the operator's SMTP relay.
+#[derive(Clone, PartialEq, Eq)]
+pub struct MailConfig {
+    pub host: String,
+    pub port: u16,
+    pub security: SmtpSecurity,
+    /// Username and password for `AUTH`, both or neither.
+    pub credentials: Option<(String, String)>,
+    /// `Gelabber <noreply@example.org>` or a bare address.
+    pub from: String,
+    /// Where people open Gelabber, without a trailing slash. Links in the
+    /// mails point here, never at the `Host` of the request that caused
+    /// them, which a client chooses.
+    pub public_url: url::Url,
+}
+
+impl fmt::Debug for MailConfig {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        f.debug_struct("MailConfig")
+            .field("host", &self.host)
+            .field("port", &self.port)
+            .field("security", &self.security)
+            .field(
+                "credentials",
+                &self
+                    .credentials
+                    .as_ref()
+                    .map(|(user, _)| (user, "<redacted>")),
+            )
+            .field("from", &self.from)
+            .field("public_url", &self.public_url.as_str())
+            .finish()
+    }
 }
 
 #[derive(Clone, Debug)]
@@ -340,6 +406,7 @@ impl Config {
         let gifs = parse_gifs(&get)?;
         let push = parse_push(&get)?;
         let previews = parse_previews(&get, &[&database_url, &redis_url], minio.as_ref())?;
+        let mail = parse_mail(&get, cookie_secure)?;
         if cookie_secure {
             refuse_public_defaults(
                 &database_url,
@@ -374,8 +441,80 @@ impl Config {
             gifs,
             push,
             previews,
+            mail,
         })
     }
+}
+
+fn parse_mail(
+    get: &impl Fn(&str) -> Option<String>,
+    cookie_secure: bool,
+) -> Result<Option<MailConfig>, ConfigError> {
+    let Some(host) = get(SMTP_HOST).map(|host| host.trim().to_owned()) else {
+        return Ok(None);
+    };
+    let security = match get(SMTP_SECURITY) {
+        Some(raw) => match raw.trim().to_ascii_lowercase().as_str() {
+            "starttls" => SmtpSecurity::StartTls,
+            "tls" => SmtpSecurity::Tls,
+            "none" => SmtpSecurity::None,
+            _ => {
+                return Err(invalid(
+                    SMTP_SECURITY,
+                    &raw,
+                    "expected starttls, tls or none",
+                ));
+            }
+        },
+        None => SmtpSecurity::StartTls,
+    };
+    let port = match get(SMTP_PORT) {
+        Some(raw) => parse_positive::<u16>(SMTP_PORT, &raw)?,
+        None => security.default_port(),
+    };
+    let credentials = match (get(SMTP_USERNAME), get(SMTP_PASSWORD)) {
+        (None, None) => None,
+        (Some(user), Some(password)) => Some((user.trim().to_owned(), password)),
+        (Some(_), None) => return Err(ConfigError::Missing(SMTP_PASSWORD)),
+        (None, Some(_)) => return Err(ConfigError::Missing(SMTP_USERNAME)),
+    };
+    if security == SmtpSecurity::None && credentials.is_some() {
+        return Err(invalid(
+            SMTP_SECURITY,
+            "none",
+            "refusing to send SMTP_PASSWORD unencrypted; use starttls or tls",
+        ));
+    }
+    let from = get(MAIL_FROM).ok_or(ConfigError::Missing(MAIL_FROM))?;
+    let from = from.trim().to_owned();
+    if from.parse::<lettre::message::Mailbox>().is_err() {
+        return Err(invalid(
+            MAIL_FROM,
+            &from,
+            "expected an address like noreply@example.org or Gelabber <noreply@example.org>",
+        ));
+    }
+    let raw_url = get(APP_PUBLIC_URL).ok_or(ConfigError::Missing(APP_PUBLIC_URL))?;
+    let public_url = url::Url::parse(raw_url.trim())
+        .ok()
+        .filter(|url| matches!(url.scheme(), "http" | "https") && url.host_str().is_some())
+        .filter(|url| url.query().is_none() && url.fragment().is_none())
+        .ok_or_else(|| invalid(APP_PUBLIC_URL, &raw_url, "expected an http(s) URL"))?;
+    if cookie_secure && public_url.scheme() != "https" {
+        return Err(invalid(
+            APP_PUBLIC_URL,
+            &raw_url,
+            format!("must be https:// while {API_COOKIE_SECURE}=true"),
+        ));
+    }
+    Ok(Some(MailConfig {
+        host,
+        port,
+        security,
+        credentials,
+        from,
+        public_url,
+    }))
 }
 
 fn parse_push(get: &impl Fn(&str) -> Option<String>) -> Result<Option<PushConfig>, ConfigError> {
@@ -1160,6 +1299,149 @@ mod tests {
         .expect("valid config");
         assert!(!config.cookie_secure);
         assert!(config.allow_plain_http);
+    }
+
+    fn mail_source(extra: &[(&str, &str)]) -> impl Fn(&str) -> Option<String> + use<> {
+        let mut map: HashMap<String, String> = [
+            (DATABASE_URL, "postgres://u:p@localhost/db"),
+            (REDIS_URL, "redis://localhost"),
+            (SMTP_HOST, "smtp.example.org"),
+            (MAIL_FROM, "Gelabber <noreply@example.org>"),
+            (APP_PUBLIC_URL, "https://chat.example.org/"),
+        ]
+        .iter()
+        .map(|(k, v)| ((*k).to_owned(), (*v).to_owned()))
+        .collect();
+        for (key, value) in extra {
+            map.insert((*key).to_owned(), (*value).to_owned());
+        }
+        move |key| map.get(key).cloned()
+    }
+
+    #[test]
+    fn mail_is_off_without_an_smtp_host() {
+        let config = Config::from_source(source(&[
+            (DATABASE_URL, "postgres://u:p@localhost/db"),
+            (REDIS_URL, "redis://localhost"),
+            (SMTP_HOST, " "),
+            (MAIL_FROM, "noreply@example.org"),
+        ]))
+        .expect("valid config");
+        assert!(config.mail.is_none());
+    }
+
+    #[test]
+    fn parses_mail_with_starttls_on_587_by_default() {
+        let mail = Config::from_source(mail_source(&[
+            (SMTP_USERNAME, "gelabber"),
+            (SMTP_PASSWORD, "smtp-secret"),
+        ]))
+        .expect("valid config")
+        .mail
+        .expect("mail on");
+        assert_eq!(mail.host, "smtp.example.org");
+        assert_eq!(mail.security, SmtpSecurity::StartTls);
+        assert_eq!(mail.port, 587);
+        assert_eq!(mail.public_url.as_str(), "https://chat.example.org/");
+        assert!(!format!("{mail:?}").contains("smtp-secret"));
+
+        let mail = Config::from_source(mail_source(&[(SMTP_SECURITY, "TLS")]))
+            .unwrap()
+            .mail
+            .unwrap();
+        assert_eq!((mail.security, mail.port), (SmtpSecurity::Tls, 465));
+        let mail =
+            Config::from_source(mail_source(&[(SMTP_SECURITY, "none"), (SMTP_PORT, "2525")]))
+                .unwrap()
+                .mail
+                .unwrap();
+        assert_eq!((mail.security, mail.port), (SmtpSecurity::None, 2525));
+    }
+
+    #[test]
+    fn mail_needs_a_sender_and_the_public_url() {
+        let err = Config::from_source(mail_source(&[(MAIL_FROM, "")])).unwrap_err();
+        assert_eq!(err, ConfigError::Missing(MAIL_FROM));
+        let err = Config::from_source(mail_source(&[(MAIL_FROM, "not an address")])).unwrap_err();
+        assert!(
+            matches!(err, ConfigError::Invalid { key: MAIL_FROM, .. }),
+            "{err}"
+        );
+        let err = Config::from_source(mail_source(&[(APP_PUBLIC_URL, "")])).unwrap_err();
+        assert_eq!(err, ConfigError::Missing(APP_PUBLIC_URL));
+        for url in [
+            "chat.example.org",
+            "ftp://chat.example.org",
+            "https://x.org/?a=b",
+        ] {
+            let err = Config::from_source(mail_source(&[(APP_PUBLIC_URL, url)])).unwrap_err();
+            assert!(
+                matches!(
+                    err,
+                    ConfigError::Invalid {
+                        key: APP_PUBLIC_URL,
+                        ..
+                    }
+                ),
+                "{url}: {err}"
+            );
+        }
+    }
+
+    #[test]
+    fn mail_refuses_cleartext_passwords_and_http_links_behind_tls() {
+        let err = Config::from_source(mail_source(&[
+            (SMTP_SECURITY, "none"),
+            (SMTP_USERNAME, "gelabber"),
+            (SMTP_PASSWORD, "smtp-secret"),
+        ]))
+        .unwrap_err();
+        assert!(
+            matches!(
+                err,
+                ConfigError::Invalid {
+                    key: SMTP_SECURITY,
+                    ..
+                }
+            ),
+            "{err}"
+        );
+        let err = Config::from_source(mail_source(&[(SMTP_PASSWORD, "smtp-secret")])).unwrap_err();
+        assert_eq!(err, ConfigError::Missing(SMTP_USERNAME));
+        let err = Config::from_source(mail_source(&[(SMTP_SECURITY, "ssl")])).unwrap_err();
+        assert!(
+            matches!(
+                err,
+                ConfigError::Invalid {
+                    key: SMTP_SECURITY,
+                    ..
+                }
+            ),
+            "{err}"
+        );
+
+        let http = Config::from_source(mail_source(&[(APP_PUBLIC_URL, "http://localhost:8088")]))
+            .expect("plain http in development");
+        assert_eq!(
+            http.mail.unwrap().public_url.as_str(),
+            "http://localhost:8088/"
+        );
+        let err = Config::from_source(secure_source(&[
+            (SMTP_HOST, "smtp.example.org"),
+            (MAIL_FROM, "noreply@example.org"),
+            (APP_PUBLIC_URL, "http://chat.example.org"),
+        ]))
+        .unwrap_err();
+        assert!(
+            matches!(
+                err,
+                ConfigError::Invalid {
+                    key: APP_PUBLIC_URL,
+                    ..
+                }
+            ),
+            "{err}"
+        );
     }
 
     #[test]
