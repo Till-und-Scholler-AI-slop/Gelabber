@@ -250,13 +250,18 @@ sh ../backup.sh
 
 Encrypt backups that leave the server: with
 `GELABBER_BACKUP_AGE_RECIPIENT=age1…` (an [age](https://age-encryption.org)
-public key) the dump and the MinIO archive are stored only as `*.age`. Before a
-restore, decrypt them with `age -d -i key.txt -o database.pgdump
-database.pgdump.age` (likewise `minio-data.tgz`), then run
-`sha256sum -c SHA256SUMS`.
+public key) the dump and the MinIO archive are encrypted while they are
+written, inside the maintenance window, and stored only as `*.age`; they never
+reach the disk in plain text. A recipient that age does not accept ends the
+script before anything is stopped. `SHA256SUMS` names the files as stored, so
+it can be checked without the key: before a restore, run
+`sha256sum -c SHA256SUMS`, then decrypt with `age -d -i key.txt -o
+database.pgdump database.pgdump.age` (likewise `minio-data.tgz`). Backups made
+by 0.7.0 or earlier list the plain names; check those after decrypting.
 
 On an error the writers stay stopped until the incomplete backup has been
-examined. Archive the released `image-set.json`/`image-set.env`, the active
+examined. A backup directory without `SHA256SUMS`, or with `*.part` files, is
+incomplete. Archive the released `image-set.json`/`image-set.env`, the active
 Compose configuration and the backup time with the pair; keep secrets private.
 A local image ID alone is not a portable replacement for the archived registry
 digest.

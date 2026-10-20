@@ -23,6 +23,8 @@ on:
       - docker/**
       - .dockerignore
       - deploy/compose/**
+      # The backup script, which deploy/compose/tests runs.
+      - deploy/backup.sh
       # Operator advice that deploy/compose/tests reads (Caddy's Host header).
       - deploy/README.md
       - Cargo.toml
