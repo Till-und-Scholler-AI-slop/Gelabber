@@ -130,6 +130,7 @@ pub const CHANNEL_AUTHORITY_PREFIX: &str = "gb:auth:channel:";
 pub const SESSION_AUTHORITY_PREFIX: &str = "gb:auth:session:";
 pub const MEDIA_DEMAND_PREFIX: &str = "gb:auth:demand:";
 pub const SESSION_OWNER_PREFIX: &str = "gb:auth:owner:";
+pub const LIVE_CLAIM_PREFIX: &str = "gb:live:";
 
 pub fn member_authority_key(server: Uuid, user: Uuid) -> String {
     format!("{MEMBER_AUTHORITY_PREFIX}{server}:{user}")
@@ -150,6 +151,11 @@ pub fn media_demand_key(session: &str) -> String {
 /// refresh and cleanup. Media never reads it.
 pub fn session_owner_key(session: &str) -> String {
     format!("{SESSION_OWNER_PREFIX}{session}")
+}
+/// A channel's Go Live owner: the API writes it, media checks it before a
+/// peer may publish. Distinct from media's own `gb:live:peer:{nonce}` lease.
+pub fn live_claim_key(channel: Uuid) -> String {
+    format!("{LIVE_CLAIM_PREFIX}{channel}")
 }
 
 #[cfg(test)]
@@ -220,6 +226,10 @@ mod authorization_tests {
         assert_eq!(
             session_owner_key(&session),
             "gb:auth:owner:0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef"
+        );
+        assert_eq!(
+            live_claim_key(channel),
+            "gb:live:00000000-0000-0000-0000-000000000003"
         );
     }
 }
