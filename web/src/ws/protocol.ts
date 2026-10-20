@@ -37,6 +37,8 @@ export type ClientFrame =
   | { op: "s"; s: string; c?: string; n?: number; ep?: string }
   | { op: "u"; s: string; c?: string }
   | { op: "p"; st?: "o" | "i" }
+  /** The page is in front (#243): no Web Push for the account meanwhile. */
+  | { op: "f"; on: boolean }
   | { op: "y"; s: string; c: string; on: boolean }
   | SigClientFrame;
 
@@ -87,6 +89,31 @@ export type TypingFrame = {
   on: boolean;
 };
 
+/** Frames for every socket of the account, whatever it subscribed to. */
+export type AccountFrame =
+  | {
+      /** Notification settings changed on some device: fetch them again. */
+      op: "ns";
+    }
+  | {
+      /** Read positions moved on some device (#244). */
+      op: "rd";
+      d: ReadSync[];
+    };
+
+/** A conversation's new read position, as `PUT …/read` answers it. */
+export type ReadSync = {
+  channel_id: string;
+  server_id: string | null;
+  read_message_id: string | null;
+  read_at: string | null;
+  read_order?: number | null;
+  membership_at?: string;
+  latest_order?: number | null;
+  unread_count: number;
+  mention_count: number;
+};
+
 export type ServerFrame =
   | { op: "h" }
   | { op: "ok"; s: string; c?: string; n: number; ep?: string }
@@ -97,7 +124,8 @@ export type ServerFrame =
   | { op: "dm"; c: string }
   | ErrFrame
   | PresenceFrame
-  | TypingFrame;
+  | TypingFrame
+  | AccountFrame;
 
 export function topicKey(topic: Topic): string {
   return topic.c ? `c:${topic.c}` : `s:${topic.s}`;
@@ -128,7 +156,9 @@ export function decode(raw: string): ServerFrame | null {
     op === "p" ||
     op === "y" ||
     op === "resync" ||
-    op === "dm"
+    op === "dm" ||
+    op === "ns" ||
+    op === "rd"
   ) {
     return value as ServerFrame;
   }

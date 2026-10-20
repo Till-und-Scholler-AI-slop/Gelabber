@@ -77,6 +77,23 @@ end
 return {prev, agg}
 "#;
 
+/// Remove server-set members whose status is gone, checked in one atomic
+/// step. KEYS: server set, then one status key per candidate. ARGV: the
+/// candidate members, aligned with KEYS[2..].
+///
+/// A snapshot that read "no status" can race an announce that writes the
+/// status for a member already in the set (its SADD is then a no-op). The
+/// re-check here keeps that member instead of removing it for good.
+const PRUNE_STALE_LUA: &str = r#"
+local removed = 0
+for i = 2, #KEYS do
+  if redis.call('EXISTS', KEYS[i]) == 0 then
+    removed = removed + redis.call('SREM', KEYS[1], ARGV[i - 1])
+  end
+end
+return removed
+"#;
+
 /// Refresh TTLs without changing status. Empty string = key was gone.
 const TOUCH_PRESENCE_LUA: &str = r#"
 local st = redis.call('GET', KEYS[1])
@@ -113,11 +130,93 @@ fn typing_key(channel_id: Uuid, user_id: Uuid) -> String {
     format!("{REDIS_PREFIX}y:{channel_id}:{user_id}")
 }
 
+/// Sockets of a user whose page is in front (focused and visible), as a
+/// sorted set: member the socket, score when its claim runs out (Unix ms).
+/// Web Push (#243) skips a user with one of them.
+fn focus_key(user_id: Uuid) -> String {
+    format!("{REDIS_PREFIX}fx:{user_id}")
+}
+
 fn ttl_ms(d: std::time::Duration) -> i64 {
     i64::try_from(d.as_millis()).unwrap_or(i64::MAX).max(1)
 }
 
 impl Gateway {
+    /// This socket's page came to the front (`on`) or left it. A claim runs
+    /// out on its own after `ttl` unless renewed: a socket that dies without
+    /// a word does not keep push away for long.
+    pub async fn set_focus(
+        &self,
+        user_id: Uuid,
+        id: ConnId,
+        on: bool,
+        ttl: std::time::Duration,
+    ) -> Result<(), ApiError> {
+        let key = focus_key(user_id);
+        let member = id.redis_id().to_string();
+        let now = chrono::Utc::now().timestamp_millis();
+        let until = now + ttl_ms(ttl);
+        let px = ttl_ms(ttl);
+        self.with_conn(|mut conn| {
+            let key = key.clone();
+            let member = member.clone();
+            async move {
+                let mut pipe = redis::pipe();
+                if on {
+                    // Renewals keep the key alive, so claims of sockets that
+                    // died go here rather than with the key.
+                    pipe.cmd("ZREMRANGEBYSCORE")
+                        .arg(&key)
+                        .arg("-inf")
+                        .arg(now)
+                        .ignore();
+                    pipe.cmd("ZADD").arg(&key).arg(until).arg(&member).ignore();
+                    pipe.cmd("PEXPIRE").arg(&key).arg(px).ignore();
+                } else {
+                    pipe.cmd("ZREM").arg(&key).arg(&member).ignore();
+                }
+                pipe.query_async::<()>(&mut conn).await
+            }
+        })
+        .await
+        .map_err(super::hub::redis_err)
+    }
+
+    /// Whether any page of the user is in front right now.
+    pub async fn has_focus(&self, user_id: Uuid) -> Result<bool, ApiError> {
+        Ok(self.in_front(&[user_id]).await?.contains(&user_id))
+    }
+
+    /// Which of `users` have a page in front right now, in one round trip.
+    pub async fn in_front(
+        &self,
+        users: &[Uuid],
+    ) -> Result<std::collections::HashSet<Uuid>, ApiError> {
+        if users.is_empty() {
+            return Ok(Default::default());
+        }
+        let now = chrono::Utc::now().timestamp_millis();
+        let counts: Vec<i64> = self
+            .with_conn(|mut conn| {
+                let mut pipe = redis::pipe();
+                for user in users {
+                    pipe.cmd("ZCOUNT")
+                        .arg(focus_key(*user))
+                        .arg(format!("({now}"))
+                        .arg("+inf");
+                }
+                async move { pipe.query_async(&mut conn).await }
+            })
+            .await
+            .map_err(super::hub::redis_err)?;
+        Ok(users
+            .iter()
+            .zip(counts)
+            .filter(|(_, count)| *count > 0)
+            .map(|(user, _)| *user)
+            .collect())
+    }
+
     /// Mark this connection online/idle and fan-out if the user aggregate changed.
     pub async fn set_conn_status(
         &self,
@@ -172,11 +271,26 @@ impl Gateway {
         Ok(())
     }
 
-    /// Add the user to a server's presence set. First time: publish current status.
+    /// Mark this connection online and add the user to a server's presence
+    /// set. Publishes at most one frame per server: an aggregate change
+    /// already reaches this server, otherwise a first announce publishes the
+    /// current status.
+    ///
+    /// Order matters. The status is written before the SADD: a concurrent
+    /// `presence_snapshot` treats a set member without status as stale and
+    /// removes it, which would hide this user from every later snapshot.
+    /// (A member already in the set with an expired status is covered by
+    /// the snapshot itself, which re-checks the status atomically before
+    /// removing anyone.)
+    /// Both publishes follow the SADD, so a concurrent snapshot either lists
+    /// the user or its socket receives the frame.
     pub async fn announce_server(&self, id: ConnId, server_id: Uuid) -> Result<(), ApiError> {
-        let Some((user_id, _)) = self.socket_meta(id).await else {
+        let Some((user_id, local)) = self.socket_meta(id).await else {
             return Ok(());
         };
+        let (prev, agg) = self
+            .write_presence(user_id, id, PresenceStatus::Online)
+            .await?;
         let px = ttl_ms(self.presence_ttl());
         let added: i64 = self
             .with_conn(|mut conn| {
@@ -210,12 +324,12 @@ impl Gateway {
             })
             .await
             .map_err(super::hub::redis_err)?;
-        if added == 1 {
-            let st = self
-                .user_status(user_id)
-                .await?
-                .unwrap_or(PresenceStatus::Online);
-            self.publish_presence(server_id, user_id, st).await?;
+        if prev != agg {
+            let mut servers = self.presence_targets(user_id, &local).await?;
+            servers.insert(server_id);
+            self.broadcast_presence(user_id, agg, &servers).await?;
+        } else if added == 1 {
+            self.publish_presence(server_id, user_id, agg).await?;
         }
         Ok(())
     }
@@ -230,29 +344,52 @@ impl Gateway {
             .map_err(super::hub::redis_err)?;
 
         let mut snap = Vec::new();
+        let mut malformed = Vec::new();
         let mut stale = Vec::new();
         for raw in users {
             let Ok(user_id) = raw.parse::<Uuid>() else {
-                stale.push(raw);
+                malformed.push(raw);
                 continue;
             };
             match self.user_status(user_id).await? {
                 Some(st) => snap.push(PresenceEntry { u: user_id, st }),
-                None => stale.push(raw),
+                None => stale.push(user_id),
             }
         }
-        if !stale.is_empty() {
+        if !malformed.is_empty() {
             let _ = self
                 .with_conn(|mut conn| {
                     let key = server_set_key(server_id);
-                    let stale = stale.clone();
+                    let malformed = malformed.clone();
                     async move {
                         let mut cmd = redis::cmd("SREM");
                         cmd.arg(key);
-                        for member in stale {
+                        for member in malformed {
                             cmd.arg(member);
                         }
                         cmd.query_async::<i64>(&mut conn).await
+                    }
+                })
+                .await;
+        }
+        // The status may have been written since it was read above (an
+        // announce for a member already in the set), so the removal re-checks
+        // it atomically instead of trusting this read.
+        if !stale.is_empty() {
+            let _ = self
+                .with_conn(|mut conn| {
+                    let stale = stale.clone();
+                    async move {
+                        let prune = redis::Script::new(PRUNE_STALE_LUA);
+                        let mut call = prune.prepare_invoke();
+                        call.key(server_set_key(server_id));
+                        for user_id in &stale {
+                            call.key(user_key(*user_id));
+                        }
+                        for user_id in &stale {
+                            call.arg(user_id.to_string());
+                        }
+                        call.invoke_async::<i64>(&mut conn).await
                     }
                 })
                 .await;

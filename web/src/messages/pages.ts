@@ -1,7 +1,7 @@
 // Pure helpers for the infinite-query cache: flatten oldest→newest, pick
 // the cursor for the next older page, overlay in-flight optimistic rows.
 
-import type { Message, MessagePage } from "./types.ts";
+import { replyTo, type Message, type MessagePage } from "./types.ts";
 
 export type MessageChange = {
   id: string;
@@ -212,8 +212,31 @@ export function isContinued(
   message: Message,
 ): boolean {
   if (!previous) return false;
+  // A reply shows whom it answers above its text, so it starts a group.
+  if (message.reply) return false;
   if (previous.author.id !== message.author.id) return false;
   const delta =
     Date.parse(message.created_at) - Date.parse(previous.created_at);
   return delta >= 0 && delta < 5 * 60 * 1000;
+}
+
+/** The original was edited (`original`) or deleted (`null`): update the
+ *  preview of every loaded reply to it. Pages without one stay the same
+ *  object. */
+export function refreshReplies(
+  pages: MessagePage[],
+  id: string,
+  original: Message | null,
+): MessagePage[] {
+  const preview = original ? replyTo(original) : { id, deleted: true };
+  return pages.map((page) =>
+    page.messages.some((row) => row.reply?.id === id)
+      ? {
+          ...page,
+          messages: page.messages.map((row) =>
+            row.reply?.id === id ? { ...row, reply: preview } : row,
+          ),
+        }
+      : page,
+  );
 }

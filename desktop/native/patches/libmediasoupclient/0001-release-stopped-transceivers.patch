@@ -1,0 +1,59 @@
+Release stopped transceivers (Gelabber issue #197).
+
+SendHandler::StopSending and RecvHandler::StopReceiving close the m-section
+but keep the transceiver in mapMidTransceiver, so every producer and consumer
+a transport ever had stays alive until the transport closes. Drop it once the
+negotiation went through, as mediasoup-client (JS) does. The fallback local id
+of a consumer without a mid no longer derives from the shrinking map size.
+
+Applied by CMakeLists.txt to the pinned LIBMEDIASOUPCLIENT_COMMIT.
+
+diff --git a/include/Handler.hpp b/include/Handler.hpp
+index 1d73138..df8097d 100644
+--- a/include/Handler.hpp
++++ b/include/Handler.hpp
+@@ -142,6 +142,10 @@ namespace mediasoupclient
+ 		void RestartIce(const nlohmann::json& iceParameters) override;
+ 		DataChannel ReceiveDataChannel(
+ 		  const std::string& label, webrtc::DataChannelInit dataChannelInit, size_t maxMessageSize = 0u);
++
++	private:
++		// Fallback local ids (mids) for consumers without a mid.
++		size_t nextLocalId{ 0u };
+ 	};
+ } // namespace mediasoupclient
+ 
+diff --git a/src/Handler.cpp b/src/Handler.cpp
+index ef7d4f5..9098a34 100644
+--- a/src/Handler.cpp
++++ b/src/Handler.cpp
+@@ -506,6 +506,9 @@ namespace mediasoupclient
+ 
+ 		// May throw.
+ 		this->pc->SetRemoteDescription(webrtc::SdpType::kAnswer, answer);
++
++		// The m-section is closed; do not keep the stopped transceiver alive.
++		this->mapMidTransceiver.erase(localId);
+ 	}
+ 
+ 	void SendHandler::ReplaceTrack(const std::string& localId, webrtc::MediaStreamTrackInterface* track)
+@@ -683,7 +686,8 @@ namespace mediasoupclient
+ 		}
+ 		else
+ 		{
+-			localId = std::to_string(this->mapMidTransceiver.size());
++			// The map shrinks when consumers close; closed mids stay in the SDP.
++			localId = std::to_string(this->nextLocalId++);
+ 		}
+ 
+ 		const auto& cname = (*rtpParameters)["rtcp"]["cname"];
+@@ -871,6 +875,9 @@ namespace mediasoupclient
+ 
+ 		// May throw.
+ 		this->pc->SetLocalDescription(webrtc::SdpType::kAnswer, answer);
++
++		// The m-section is closed; do not keep the stopped transceiver alive.
++		this->mapMidTransceiver.erase(localId);
+ 	}
+ 
+ 	json RecvHandler::GetReceiverStats(const std::string& localId)

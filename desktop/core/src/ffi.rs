@@ -3,7 +3,7 @@
 
 use std::os::raw::{c_char, c_int, c_void};
 
-pub const GM_ABI_VERSION: u32 = 8;
+pub const GM_ABI_VERSION: u32 = 9;
 
 #[repr(C)]
 pub struct gm_video_frame {
@@ -142,6 +142,7 @@ unsafe extern "C" {
         options_json: *const c_char,
     ) -> *mut gm_producer;
     pub fn gm_producer_free(producer: *mut gm_producer);
+    pub fn gm_producer_free_released(producer: *mut gm_producer) -> c_int;
     pub fn gm_producer_id(producer: *mut gm_producer) -> *const c_char;
     pub fn gm_producer_rtp_parameters(producer: *mut gm_producer) -> *mut c_char;
     pub fn gm_producer_pause(producer: *mut gm_producer, paused: c_int) -> c_int;
@@ -158,6 +159,7 @@ unsafe extern "C" {
         consumer_json: *const c_char,
     ) -> *mut gm_consumer;
     pub fn gm_consumer_free(consumer: *mut gm_consumer);
+    pub fn gm_consumer_free_released(consumer: *mut gm_consumer) -> c_int;
     pub fn gm_consumer_id(consumer: *mut gm_consumer) -> *const c_char;
     pub fn gm_consumer_pause(consumer: *mut gm_consumer, paused: c_int) -> c_int;
     pub fn gm_consumer_set_volume(consumer: *mut gm_consumer, volume: f64) -> c_int;

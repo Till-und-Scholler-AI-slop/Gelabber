@@ -5,8 +5,11 @@ import { useQueryClient } from "@tanstack/react-query";
 import { useEffect } from "react";
 
 import { useUserId } from "../auth/scope.ts";
+import { DmRow } from "../components/DmSidebar.tsx";
 import { Redirect } from "../components/Redirect.tsx";
 import { LoadError } from "../components/LoadError.tsx";
+import { useMediaQuery } from "../components/useMediaQuery.ts";
+import { NAVIGATION_DRAWER_MAX_WIDTH } from "../components/WorkspaceNavigation.tsx";
 import { lastDmId, useLastDm } from "../dms/lastDm.ts";
 import {
   isGoneError,
@@ -26,6 +29,9 @@ export function DmIndexPage() {
   // stays in cache and must block the auto-open Redirect.
   const lastDetail = useDm(lastId ?? undefined, false);
   const detailFailed = Boolean(lastId && lastDetail.isError);
+  // Where the sidebar sits in a closed drawer, this page lists the DMs. Only
+  // there: each row subscribes to presence and unread state of its own.
+  const drawer = useMediaQuery(`(max-width: ${NAVIGATION_DRAWER_MAX_WIDTH}px)`);
 
   useEffect(() => {
     if (!lastId) return;
@@ -54,15 +60,25 @@ export function DmIndexPage() {
       </div>
     );
 
+  if (dms && dms.length > 0)
+    return (
+      <div className="dm-index">
+        {drawer ? (
+          <nav aria-label="Unterhaltungen" className="dm-index-list">
+            <h1>Nachrichten</h1>
+            {dms.map((dm) => (
+              <DmRow key={dm.id} dm={dm} active={false} />
+            ))}
+          </nav>
+        ) : (
+          <p className="dm-index-hint">Wähle eine Unterhaltung.</p>
+        )}
+      </div>
+    );
+
   return (
     <div className="flex flex-1 items-center justify-center p-8 text-center text-neutral-500 dark:text-neutral-400">
-      <p>
-        {isError
-          ? "Deine Direktnachrichten konnten gerade nicht geladen werden."
-          : dms && dms.length > 0
-            ? "Wähle eine Unterhaltung."
-            : "Öffne eine Direktnachricht über die Mitgliederliste eines Servers."}
-      </p>
+      <p>Öffne eine Direktnachricht über die Mitgliederliste eines Servers.</p>
     </div>
   );
 }

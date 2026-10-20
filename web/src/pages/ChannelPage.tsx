@@ -2,10 +2,11 @@
 // Voice uses the own-protocol room, not LiveKit.
 
 import { useParams } from "@tanstack/react-router";
-import { useEffect, type ReactNode } from "react";
+import { useEffect, useMemo, type ReactNode } from "react";
 
 import { useUserId } from "../auth/scope.ts";
 import { HashIcon, SpeakerIcon } from "../components/Icons.tsx";
+import { LoadError } from "../components/LoadError.tsx";
 import { MemberPanel, MemberPanelToggle } from "../components/MemberPanel.tsx";
 import { MessagePane } from "../components/MessagePane.tsx";
 import "../components/chat.css";
@@ -23,7 +24,7 @@ export function ChannelPage() {
   const { serverId, channelId } = useParams({
     from: "/workspace/s/$serverId/c/$channelId",
   });
-  const { data: server } = useServer(serverId);
+  const { data: server, error, isFetching, refetch } = useServer(serverId);
   const userId = useUserId();
   const remember = useLastChannel((s) => s.remember);
   const channel = server?.channels.find((c) => c.id === channelId);
@@ -32,6 +33,16 @@ export function ChannelPage() {
     if (channel && userId) remember(userId, serverId, channel.id);
   }, [channel, serverId, remember, userId]);
 
+  if (error && !server)
+    return (
+      <div className="p-6">
+        <LoadError
+          message="Dieser Kanal konnte gerade nicht geladen werden."
+          pending={isFetching}
+          onRetry={() => void refetch()}
+        />
+      </div>
+    );
   if (!server) return null;
   if (!channel) {
     return <Redirect to="/s/$serverId" params={{ serverId }} />;
@@ -102,6 +113,10 @@ function TextChat({
 }) {
   const canWrite = can(server, "send_messages");
   const typing = useTypingInput(server.id, channel.id, canWrite);
+  const members = useMemo(
+    () => server.members.map((m) => ({ id: m.user_id, name: m.name })),
+    [server.members],
+  );
   return (
     <MessagePane
       key={channel.id}
@@ -113,6 +128,14 @@ function TextChat({
       canSend={canWrite}
       canSendFiles={can(server, "send_files")}
       canModerate={can(server, "manage_messages")}
+      canMentionEveryone={can(server, "mention_everyone")}
+      members={members}
+      notify={{
+        scope: "channel",
+        id: channel.id,
+        name: `#${channel.name}`,
+        serverId: server.id,
+      }}
       footer={<TypingBar channelId={channel.id} members={server.members} />}
       onDraftChange={typing.onChange}
       onDraftStop={typing.stop}

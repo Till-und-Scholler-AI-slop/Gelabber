@@ -12,11 +12,14 @@ import { InterfacePreferences } from "./interface/InterfacePreferences.tsx";
 import { isDesktopApp, markDesktopRoot } from "./voice/native/bridge.ts";
 import { trackInstallation } from "./pwa/install.ts";
 import { startPwa } from "./pwa/start.ts";
+import { watchSpeaking } from "./voice/speaking.ts";
 
 const desktop = isDesktopApp();
 markDesktopRoot(document.documentElement);
 const stopInstallTracking = trackInstallation(window, desktop);
 if (import.meta.hot) import.meta.hot.dispose(stopInstallTracking);
+const stopSpeaking = watchSpeaking();
+if (import.meta.hot) import.meta.hot.dispose(stopSpeaking);
 startPwa({
   desktop,
   user: () => useSession.getState().user?.id,

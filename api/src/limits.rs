@@ -33,10 +33,21 @@ pub const MSG_PER_MIN: u32 = 60;
 pub const UPLOAD_PER_HOUR: u32 = 60;
 pub const UPLOAD_BYTES_PER_DAY: u64 = 1024 * 1024 * 1024; // 1 GiB
 pub const LOGIN_FAILURES_PER_ACCOUNT: u32 = 10;
+/// GIF search, trending and sends per user. Each one is a request against
+/// the operator's Klipy key, whose testing tier allows 100 per hour in total.
+pub const GIF_PER_MIN: u32 = 30;
+/// GIF image loads through `/api/gifs/media` per user. Far above
+/// [`GIF_PER_MIN`]: one picker page is 24 tiles and a chat history can hold
+/// dozens of GIFs, each with a still and an animated rendition.
+pub const GIF_MEDIA_PER_MIN: u32 = 240;
+/// Messages with links per user per minute that get previews; past it the
+/// links stay plain links. Each can mean three page and three image fetches.
+pub const PREVIEW_PER_MIN: u32 = 10;
+pub const PREVIEW_SERVER_FACTOR: u32 = 6;
 /// Window of the per-account failure count, and so the longest wait.
 pub const LOGIN_FAILURE_WINDOW: Duration = Duration::from_secs(15 * 60);
 
-const MINUTE: Duration = Duration::from_secs(60);
+pub(crate) const MINUTE: Duration = Duration::from_secs(60);
 const HOUR: Duration = Duration::from_secs(3600);
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -49,6 +60,13 @@ pub struct Limits {
     /// Failed logins per account within [`LOGIN_FAILURE_WINDOW`]; `0` turns
     /// the per-account count off.
     pub login_failures_per_account: u32,
+    /// GIF search/trending/send requests per user per minute (`0` = off).
+    pub gif_per_min: u32,
+    /// GIF media loads through the relay per user per minute (`0` = off).
+    pub gif_media_per_min: u32,
+    /// Messages per user per minute whose links get previews (`0` = off);
+    /// a server allows [`PREVIEW_SERVER_FACTOR`] times as many.
+    pub preview_per_min: u32,
 }
 
 impl Default for Limits {
@@ -60,6 +78,9 @@ impl Default for Limits {
             upload_per_hour: UPLOAD_PER_HOUR,
             upload_bytes_per_day: UPLOAD_BYTES_PER_DAY,
             login_failures_per_account: LOGIN_FAILURES_PER_ACCOUNT,
+            gif_per_min: GIF_PER_MIN,
+            gif_media_per_min: GIF_MEDIA_PER_MIN,
+            preview_per_min: PREVIEW_PER_MIN,
         }
     }
 }
@@ -163,7 +184,7 @@ pub async fn gate(
             MINUTE,
         )
     } else if (request.method() == Method::POST && path.ends_with("/attachments"))
-        || (request.method() == Method::PUT && path == "/api/me/avatar")
+        || (request.method() == Method::PUT && matches!(path, "/api/me/avatar" | "/api/me/banner"))
     {
         check(
             &state.limiter,

@@ -12,8 +12,10 @@ use gelabber_shared::ice::{self, IceServer};
 
 use crate::config::Config;
 use crate::gateway::{ConnTable, EventLog, Gateway, VoiceRoster};
+use crate::gifs::Gifs;
 use crate::limits::{Limiter, Limits};
 use crate::metrics::HttpMetrics;
+use crate::previews::LinkPreviews;
 use crate::storage::ObjectStore;
 
 /// Shared handles for request handlers. Both clients are created lazily so
@@ -54,6 +56,12 @@ pub struct AppState {
     pub limits: Limits,
     pub limiter: Arc<Limiter>,
     pub metrics: Arc<HttpMetrics>,
+    /// Klipy relay; `None` when `KLIPY_API_KEY` is unset.
+    pub gifs: Option<Gifs>,
+    /// Web Push sender (#243); `None` without `VAPID_PRIVATE_KEY`.
+    pub push: Option<crate::push::Push>,
+    /// Link previews; `None` when `API_LINK_PREVIEWS=false`.
+    pub previews: Option<LinkPreviews>,
 }
 
 #[derive(Debug)]
@@ -61,6 +69,7 @@ pub enum StateError {
     Database(sqlx::Error),
     Redis(redis::RedisError),
     Store(String),
+    Http(String),
 }
 
 impl fmt::Display for StateError {
@@ -69,6 +78,7 @@ impl fmt::Display for StateError {
             Self::Database(err) => write!(f, "invalid DATABASE_URL: {err}"),
             Self::Redis(err) => write!(f, "invalid REDIS_URL: {err}"),
             Self::Store(err) => write!(f, "invalid object store: {err}"),
+            Self::Http(err) => write!(f, "http client: {err}"),
         }
     }
 }
@@ -100,6 +110,19 @@ impl AppState {
             ObjectStore::from_minio(config.minio.as_ref())
         }
         .map_err(|err| StateError::Store(err.to_string()))?;
+        let metrics = Arc::new(HttpMetrics::new());
+        let gifs = config
+            .gifs
+            .as_ref()
+            .map(|gifs| Gifs::new(gifs, metrics.clone()))
+            .transpose()
+            .map_err(|err| StateError::Http(err.to_string()))?;
+        let push = config
+            .push
+            .as_ref()
+            .map(crate::push::Push::new)
+            .transpose()
+            .map_err(StateError::Http)?;
         let gateway = Gateway::new(
             redis.clone(),
             config.ws_replay,
@@ -131,7 +154,10 @@ impl AppState {
             storage_worker_started: Arc::new(AtomicBool::new(false)),
             limits: config.limits,
             limiter: Arc::new(Limiter::new()),
-            metrics: Arc::new(HttpMetrics::new()),
+            metrics,
+            gifs,
+            push,
+            previews: config.previews.as_ref().map(LinkPreviews::new),
         })
     }
 

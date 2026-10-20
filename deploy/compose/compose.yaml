@@ -19,33 +19,34 @@ services:
     restart: unless-stopped
 
   web:
-    image: ${GELABBER_WEB_IMAGE:-ghcr.io/till-und-scholler-ai-slop/gelabber/web:v0.6.1}
+    image: ${GELABBER_WEB_IMAGE:-ghcr.io/till-und-scholler-ai-slop/gelabber/web:v0.7.0}
     pull_policy: missing
     build:
       context: ../../web
       dockerfile: Dockerfile
       tags:
-        - gelabber/web:v0.6.1
+        - gelabber/web:v0.7.0
     expose:
       - "80"
     restart: unless-stopped
 
   api:
-    image: ${GELABBER_API_IMAGE:-ghcr.io/till-und-scholler-ai-slop/gelabber/api:v0.6.1}
+    image: ${GELABBER_API_IMAGE:-ghcr.io/till-und-scholler-ai-slop/gelabber/api:v0.7.0}
     pull_policy: missing
     build:
       context: ../..
       dockerfile: api/Dockerfile
       tags:
-        - gelabber/api:v0.6.1
+        - gelabber/api:v0.7.0
     environment:
       API_ADDR: 0.0.0.0:8080
       DATABASE_URL: postgres://${POSTGRES_USER:-gelabber}:${POSTGRES_PASSWORD:?set POSTGRES_PASSWORD in .env (see deploy/README.md)}@postgres:5432/${POSTGRES_DB:-gelabber}
       REDIS_URL: redis://redis:6379
       MINIO_ENDPOINT: http://minio:9000
       MINIO_PUBLIC_ENDPOINT: ${MINIO_PUBLIC_ENDPOINT:-http://localhost:9000}
-      MINIO_ROOT_USER: ${MINIO_ROOT_USER:-gelabber}
-      MINIO_ROOT_PASSWORD: ${MINIO_ROOT_PASSWORD:?set MINIO_ROOT_PASSWORD in .env (see deploy/README.md)}
+      # Bucket-scoped user from minio-init, never the MinIO root (#196).
+      MINIO_ACCESS_KEY: ${MINIO_APP_USER:-gelabber-api}
+      MINIO_SECRET_KEY: ${MINIO_APP_PASSWORD:?set MINIO_APP_PASSWORD in .env (see deploy/README.md)}
       MINIO_BUCKET: ${MINIO_BUCKET:-gelabber}
       API_COOKIE_SECURE: ${API_COOKIE_SECURE:-false}
       TURN_URLS: ${TURN_URLS:-stun:${TURN_PUBLIC_HOST:-127.0.0.1}:${TURN_PORT:-3478},turn:${TURN_PUBLIC_HOST:-127.0.0.1}:${TURN_PORT:-3478}?transport=udp,turn:${TURN_PUBLIC_HOST:-127.0.0.1}:${TURN_PORT:-3478}?transport=tcp}
@@ -56,6 +57,20 @@ services:
       TURN_AUTH_SECRET: ${TURN_AUTH_SECRET:-}
       TURN_CRED_TTL_SECS: ${TURN_CRED_TTL_SECS:-21600}
       MEDIA_TICKET_TTL_SECS: "30"
+      # Empty turns GIF search off. The key never reaches a browser.
+      KLIPY_API_KEY: ${KLIPY_API_KEY:-}
+      KLIPY_CONTENT_FILTER: ${KLIPY_CONTENT_FILTER:-medium}
+      API_RATE_GIF_PER_MIN: ${API_RATE_GIF_PER_MIN:-30}
+      API_RATE_GIF_MEDIA_PER_MIN: ${API_RATE_GIF_MEDIA_PER_MIN:-240}
+      # Empty turns Web Push off.
+      VAPID_PRIVATE_KEY: ${VAPID_PRIVATE_KEY:-}
+      VAPID_SUBJECT: ${VAPID_SUBJECT:-}
+      # Empty: the push services of Chrome, Firefox, Edge/Windows and Safari.
+      PUSH_ALLOWED_HOSTS: ${PUSH_ALLOWED_HOSTS:-}
+      # Link previews: the API fetches linked pages (public addresses only).
+      API_LINK_PREVIEWS: ${API_LINK_PREVIEWS:-true}
+      API_LINK_PREVIEW_DENY_HOSTS: ${API_LINK_PREVIEW_DENY_HOSTS:-}
+      API_RATE_PREVIEW_PER_MIN: ${API_RATE_PREVIEW_PER_MIN:-10}
     expose:
       - "8080"
     depends_on:
@@ -63,18 +78,18 @@ services:
         condition: service_healthy
       redis:
         condition: service_healthy
-      minio:
-        condition: service_healthy
+      minio-init:
+        condition: service_completed_successfully
     restart: unless-stopped
 
   media:
-    image: ${GELABBER_MEDIA_IMAGE:-ghcr.io/till-und-scholler-ai-slop/gelabber/media:v0.6.1}
+    image: ${GELABBER_MEDIA_IMAGE:-ghcr.io/till-und-scholler-ai-slop/gelabber/media:v0.7.0}
     pull_policy: missing
     build:
       context: ../..
       dockerfile: media/Dockerfile
       tags:
-        - gelabber/media:v0.6.1
+        - gelabber/media:v0.7.0
     environment:
       MEDIA_ADDR: 0.0.0.0:8081
       REDIS_URL: redis://redis:6379
@@ -171,6 +186,32 @@ services:
       timeout: 5s
       retries: 12
     restart: unless-stopped
+
+  # Creates the bucket and the API's MinIO user, then exits. Runs on every
+  # `up`; re-applies policy and password, never touches objects.
+  minio-init:
+    image: ${GELABBER_MC_IMAGE:-ghcr.io/till-und-scholler-ai-slop/gelabber/mc:RELEASE.2025-08-13T08-35-41Z}
+    pull_policy: missing
+    build:
+      context: ./mc
+      dockerfile: Dockerfile
+      args:
+        MC_RELEASE: RELEASE.2025-08-13T08-35-41Z
+      tags:
+        - gelabber/mc:RELEASE.2025-08-13T08-35-41Z
+    entrypoint: ["/bin/sh", "/minio-init.sh"]
+    environment:
+      MINIO_ROOT_USER: ${MINIO_ROOT_USER:-gelabber}
+      MINIO_ROOT_PASSWORD: ${MINIO_ROOT_PASSWORD:?set MINIO_ROOT_PASSWORD in .env (see deploy/README.md)}
+      MINIO_BUCKET: ${MINIO_BUCKET:-gelabber}
+      MINIO_APP_USER: ${MINIO_APP_USER:-gelabber-api}
+      MINIO_APP_PASSWORD: ${MINIO_APP_PASSWORD:?set MINIO_APP_PASSWORD in .env (see deploy/README.md)}
+    volumes:
+      - ./minio-init.sh:/minio-init.sh:ro
+    depends_on:
+      minio:
+        condition: service_healthy
+    restart: "no"
 
 volumes:
   postgres_data:

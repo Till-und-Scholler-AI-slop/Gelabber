@@ -27,11 +27,17 @@ export function shouldToastMessage(input: {
   return true;
 }
 
-/** Desktop delivery has its own preference and includes a hidden open chat. */
+/**
+ * Desktop delivery has its own preference and includes the open chat while
+ * the window is not in front: hidden, or visible but another window has the
+ * focus. That is also when a message stays unread (readState.ts `mayMarkRead`).
+ */
 export function messageNotificationDecision(input: {
   toastEnabled: boolean;
   desktopEnabled: boolean;
   hidden: boolean;
+  /** The window has the keyboard focus. Absent counts as focused. */
+  focused?: boolean;
   type: "c" | "e" | "d";
   own: boolean;
   channelId: string;
@@ -40,7 +46,10 @@ export function messageNotificationDecision(input: {
   return {
     toast: shouldToastMessage({ ...input, enabled: input.toastEnabled }),
     desktop:
-      input.desktopEnabled && input.hidden && input.type === "c" && !input.own,
+      input.desktopEnabled &&
+      (input.hidden || input.focused === false) &&
+      input.type === "c" &&
+      !input.own,
   };
 }
 
@@ -123,11 +132,16 @@ export function createNotificationPacing(gapMs = 5_000) {
   };
 }
 
-export function previewText(content: string, hasAttachment: boolean): string {
+export function previewText(
+  content: string,
+  hasAttachment: boolean,
+  isGif = false,
+): string {
   const trimmed = content.trim().replace(/\s+/g, " ");
   if (trimmed) {
     return trimmed.length > 140 ? `${trimmed.slice(0, 137)}…` : trimmed;
   }
+  if (isGif) return "GIF";
   return hasAttachment ? "Datei" : "Neue Nachricht";
 }
 

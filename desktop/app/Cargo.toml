@@ -11,17 +11,38 @@ publish = false
 gelabber-media-core = { path = "../core" }
 serde = { version = "1", features = ["derive"] }
 serde_json = "1.0.151"
-tauri = { version = "2.12.1", features = [] }
+# The tray icon and its unread variants (src/shell.rs).
+tauri = { version = "2.12.1", features = ["tray-icon"] }
 url = "2"
+# One app per user: a second start shows the running window (src/main.rs).
+tauri-plugin-single-instance = "2.5.4"
 # Native video viewer: its own window and GPU renderer next to the webview.
 pollster = "0.4"
 wgpu = "30"
 winit = "0.30"
 
+[target.'cfg(windows)'.dependencies]
+# Updates of the Windows app (src/update.rs). TLS through Windows itself
+# (native-tls: SChannel and the system's certificates), no archive formats:
+# the update is the NSIS installer.
+tauri-plugin-updater = { version = "2.14.0", default-features = false, features = ["native-tls"] }
+# The question before an update restarts the app (src/update.rs `confirm`):
+# the version and features the updater plugin already uses.
+windows-sys = { version = "0.61.2", features = ["Win32_Foundation", "Win32_UI_WindowsAndMessaging"] }
+
 # WebKitGTK's own API for the web process (main.rs `end_web_process`). The
 # crate and version Tauri brings; the feature is the API level of the call.
 [target.'cfg(target_os = "linux")'.dependencies]
 webkit2gtk = { version = "2.0", features = ["v2_34"] }
+# Whether a tray host library exists before tray-icon loads it (src/shell.rs).
+libloading = "0.8"
+# Whether a StatusNotifier host runs (src/shell.rs); the version GTK brings.
+gio = "0.18"
+
+# Signatures checked as the updater checks them (src/update.rs tests).
+[dev-dependencies]
+base64 = "0.22.1"
+minisign-verify = "0.3.0"
 
 [build-dependencies]
 tauri-build = { version = "2", features = [] }

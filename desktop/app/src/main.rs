@@ -9,11 +9,14 @@
 //! the reason, and Ctrl+Shift+S or the web client's user menu ("Server
 //! wechseln …") lead back to it at any time, so a wrong server never locks the
 //! app. F5 / Ctrl+R reload. Those keys are a script of the page: when WebKit's
-//! web process dies, the app loads the page again itself (Linux).
+//! web process dies, the app loads the page again itself (Linux). Links the
+//! page opens in a new tab (chat links) go to the system browser.
 #![cfg_attr(not(debug_assertions), windows_subsystem = "windows")]
 
 mod frames;
 mod media;
+mod shell;
+mod update;
 mod viewer;
 
 use serde::{Deserialize, Serialize};
@@ -26,8 +29,9 @@ use std::{
     time::Duration,
 };
 use tauri::{
-    AppHandle, Manager, WebviewUrl, WebviewWindowBuilder, ipc::CapabilityBuilder,
-    webview::PageLoadEvent,
+    AppHandle, Manager, WebviewUrl, WebviewWindowBuilder,
+    ipc::CapabilityBuilder,
+    webview::{PageLoadEvent, PermissionKind, PermissionResponse},
 };
 use url::Url;
 
@@ -69,6 +73,9 @@ const CONNECT_TIMEOUT: Duration = Duration::from_secs(5);
 #[derive(Default, Serialize, Deserialize)]
 struct Settings {
     server: Option<String>,
+    /// Closing the window hides it in the tray (`shell.rs`); off by default.
+    #[serde(default)]
+    close_to_tray: bool,
 }
 
 fn settings_path(app: &AppHandle) -> Option<PathBuf> {
@@ -83,6 +90,20 @@ fn load_settings(app: &AppHandle) -> Settings {
         .and_then(|path| fs::read(path).ok())
         .and_then(|bytes| serde_json::from_slice(&bytes).ok())
         .unwrap_or_default()
+}
+
+fn save_settings(app: &AppHandle, settings: &Settings) -> Result<(), String> {
+    let Some(path) = settings_path(app) else {
+        return Ok(());
+    };
+    if let Some(dir) = path.parent() {
+        fs::create_dir_all(dir).map_err(|e| e.to_string())?;
+    }
+    let json = serde_json::to_vec_pretty(settings).map_err(|e| e.to_string())?;
+    // Whole or not at all: a half-written file would lose the server.
+    let partial = path.with_extension("json.partial");
+    fs::write(&partial, json).map_err(|e| e.to_string())?;
+    fs::rename(&partial, path).map_err(|e| e.to_string())
 }
 
 /// Only http(s) origins; the window loads the server root.
@@ -110,7 +131,8 @@ fn configured_server(app: &AppHandle) -> Option<String> {
         .or_else(|| load_settings(app).server)
 }
 
-/// The server's pages may call the media commands and open the setup page,
+/// The server's pages may call the media commands, the window and tray
+/// commands, open the setup page and see and install an update of the app,
 /// nothing else.
 fn allow_server(app: &AppHandle, origin: &Url) -> tauri::Result<()> {
     let origin = origin.origin().ascii_serialization();
@@ -120,8 +142,68 @@ fn allow_server(app: &AppHandle, origin: &Url) -> tauri::Result<()> {
             .local(false)
             .window(WINDOW)
             .permission("media")
+            .permission("shell")
+            .permission("update")
             .permission("allow-open-setup"),
     )
+}
+
+/// The webview's own permission requests. Notifications are the server
+/// page's to ask for, as in a browser: without an answer from the app
+/// WebKitGTK refuses them unasked and WebView2 shows no prompt. The page only
+/// asks from a button in its settings. Everything else keeps the webview's
+/// default.
+fn permission(
+    server: Option<&Url>,
+    page: Option<&Url>,
+    kind: PermissionKind,
+) -> PermissionResponse {
+    let same = |a: &Url, b: &Url| a.origin() == b.origin();
+    match (kind, server, page) {
+        (PermissionKind::Notifications, Some(server), Some(page)) if same(server, page) => {
+            PermissionResponse::Allow
+        }
+        (PermissionKind::Notifications, ..) => PermissionResponse::Deny,
+        _ => PermissionResponse::Default,
+    }
+}
+
+/// WebKitGTK forgets granted notification permissions with the web process:
+/// every start the page would find `Notification.permission` at "default"
+/// and show nothing until asked again. A permission it asked for is the
+/// server's, so the server origin starts out allowed. WebView2 keeps the
+/// answer in its profile itself.
+#[cfg(target_os = "linux")]
+fn allow_notifications(window: &tauri::WebviewWindow, origin: &Url) {
+    use std::sync::atomic::{AtomicBool, Ordering};
+    use webkit2gtk::{SecurityOrigin, WebContextExt, WebViewExt};
+    // One handler for the app's lifetime; it allows whichever server is set
+    // when a web process starts, never one that was set before.
+    static CURRENT: std::sync::Mutex<String> = std::sync::Mutex::new(String::new());
+    static HOOKED: AtomicBool = AtomicBool::new(false);
+    if let Ok(mut current) = CURRENT.lock() {
+        *current = origin.origin().ascii_serialization();
+    }
+    let hook = !HOOKED.swap(true, Ordering::SeqCst);
+    let result = window.with_webview(move |webview| {
+        let Some(context) = webview.inner().context() else {
+            return;
+        };
+        let initialize = |context: &webkit2gtk::WebContext| {
+            let Ok(origin) = CURRENT.lock().map(|origin| origin.clone()) else {
+                return;
+            };
+            let allowed = SecurityOrigin::for_uri(&origin);
+            context.initialize_notification_permissions(&[&allowed], &[]);
+        };
+        initialize(&context);
+        if hook {
+            context.connect_initialize_notification_permissions(initialize);
+        }
+    });
+    if let Err(error) = result {
+        eprintln!("gelabber: notification permission: {error}");
+    }
 }
 
 /// The setup page, with the current server and the reason it is shown
@@ -165,6 +247,46 @@ fn open_setup(app: AppHandle) -> Result<(), String> {
         .map_err(|e| e.to_string())
 }
 
+/// Whether a link the page opens in a new tab goes to the system browser:
+/// web and mail links only, never files or app schemes, and never the
+/// server's own pages, which need the app's session.
+fn opens_externally(url: &Url, server: Option<&Url>) -> bool {
+    matches!(url.scheme(), "http" | "https" | "mailto")
+        && server.is_none_or(|server| server.origin() != url.origin())
+}
+
+/// Hands `url` to the desktop's default handler without a shell, so nothing
+/// in it is interpreted.
+fn open_externally(url: &Url) {
+    #[cfg(target_os = "windows")]
+    let mut command = {
+        let mut command = std::process::Command::new("rundll32.exe");
+        command.args(["url.dll,FileProtocolHandler", url.as_str()]);
+        command
+    };
+    #[cfg(target_os = "macos")]
+    let mut command = {
+        let mut command = std::process::Command::new("open");
+        command.arg(url.as_str());
+        command
+    };
+    #[cfg(not(any(target_os = "windows", target_os = "macos")))]
+    let mut command = {
+        let mut command = std::process::Command::new("xdg-open");
+        command.arg(url.as_str());
+        command
+    };
+    match command.spawn() {
+        // Reaped on its own thread; the opener exits once the browser has it.
+        Ok(mut child) => {
+            std::thread::spawn(move || {
+                let _ = child.wait();
+            });
+        }
+        Err(error) => eprintln!("gelabber: opening {url}: {error}"),
+    }
+}
+
 /// Catches typos and wrong ports before the address is stored: something has
 /// to accept a connection there.
 fn check_reachable(origin: &Url) -> Result<(), String> {
@@ -199,20 +321,15 @@ async fn set_server(app: AppHandle, server: String) -> Result<(), String> {
     tauri::async_runtime::spawn_blocking(move || check_reachable(&probe))
         .await
         .map_err(|e| e.to_string())??;
-    if let Some(path) = settings_path(&app) {
-        if let Some(dir) = path.parent() {
-            fs::create_dir_all(dir).map_err(|e| e.to_string())?;
-        }
-        let settings = Settings {
-            server: Some(origin.to_string()),
-        };
-        let json = serde_json::to_vec_pretty(&settings).map_err(|e| e.to_string())?;
-        fs::write(path, json).map_err(|e| e.to_string())?;
-    }
+    let mut settings = load_settings(&app);
+    settings.server = Some(origin.to_string());
+    save_settings(&app, &settings)?;
     allow_server(&app, &origin).map_err(|e| e.to_string())?;
     let window = app
         .get_webview_window(WINDOW)
         .ok_or("main window missing")?;
+    #[cfg(target_os = "linux")]
+    allow_notifications(&window, &origin);
     window.navigate(origin).map_err(|e| e.to_string())
 }
 
@@ -364,18 +481,38 @@ fn main() {
     if std::env::var_os("GELABBER_MEDIA_LOG").is_some() {
         gelabber_media_core::set_log_level(gelabber_media_core::LogLevel::Info);
     }
-    let builder = tauri::Builder::default();
-    #[cfg(target_os = "linux")]
-    let builder = builder.on_window_event(|window, event| {
-        if matches!(event, tauri::WindowEvent::CloseRequested { .. }) && nvidia_driver() {
-            end_web_process(window);
+    let builder = tauri::Builder::default().on_window_event(|window, event| {
+        if let tauri::WindowEvent::CloseRequested { api, .. } = event {
+            // A call keeps running in the hidden window.
+            if shell::closes_to_tray(window.app_handle()) {
+                api.prevent_close();
+                let _ = window.hide();
+            } else {
+                #[cfg(target_os = "linux")]
+                if nvidia_driver() {
+                    end_web_process(window);
+                }
+            }
         }
     });
+    // First plugin: a second start hands over to the running app (it may sit
+    // hidden in the tray) and exits before it opens a window or a socket.
+    let builder = builder.plugin(tauri_plugin_single_instance::init(|app, _, _| {
+        shell::show(app);
+    }));
+    #[cfg(windows)]
+    let builder = builder.plugin(update::plugin());
     builder
         .manage(media::Media::default())
+        .manage(shell::Shell::default())
+        .manage(update::Updates::default())
         .invoke_handler(tauri::generate_handler![
             set_server,
             open_setup,
+            shell::shell_info,
+            shell::shell_close_to_tray,
+            shell::shell_focus,
+            shell::shell_unread,
             media::media_info,
             media::media_audio_devices,
             media::media_audio_configure,
@@ -415,6 +552,11 @@ fn main() {
             media::media_view_configure,
             media::media_view_frame,
             media::media_view_close,
+            update::update_state,
+            update::update_install,
+            update::update_dismiss,
+            update::update_check,
+            update::update_set_auto_check,
         ])
         .on_page_load(|webview, payload| {
             // A reload or navigation leaves the old page's calls and
@@ -441,19 +583,42 @@ fn main() {
             };
             let window = WebviewWindowBuilder::new(app, WINDOW, url.clone())
                 .title("Gelabber")
+                .on_permission_request(|webview, kind| {
+                    let server = current_server(webview.app_handle());
+                    permission(server.as_ref(), webview.url().ok().as_ref(), kind)
+                })
                 .inner_size(1280.0, 800.0)
                 .min_inner_size(480.0, 360.0)
                 .initialization_script(SHORTCUTS)
+                .initialization_script(update::BANNER)
                 // Only WebView2 takes them; ignored on the other platforms.
                 .additional_browser_args(WEBVIEW2_ARGS)
                 // Tauri's native handler swallows file drops; the chat
                 // composer takes them as HTML5 drops instead.
                 .disable_drag_drop_handler()
+                // `target="_blank"` links: the system browser, never a
+                // second app window.
+                .on_new_window({
+                    let handle = handle.clone();
+                    move |url, _| {
+                        if opens_externally(&url, current_server(&handle).as_ref()) {
+                            open_externally(&url);
+                        }
+                        tauri::webview::NewWindowResponse::Deny
+                    }
+                })
                 .build()?;
+            update::start(&handle);
             #[cfg(target_os = "linux")]
-            watch_web_process(&handle, &window);
+            {
+                watch_web_process(&handle, &window);
+                if let WebviewUrl::External(origin) = &url {
+                    allow_notifications(&window, origin);
+                }
+            }
             #[cfg(not(target_os = "linux"))]
             let _ = window;
+            shell::build_tray(&handle);
             // Opening a stored server that does not answer would end on
             // WebKit's error page; show the setup page with the reason instead.
             if let WebviewUrl::External(origin) = url {
@@ -479,7 +644,7 @@ fn main() {
 
 #[cfg(test)]
 mod tests {
-    use super::{check_reachable, server_addrs, server_origin, setup_url};
+    use super::{check_reachable, opens_externally, server_addrs, server_origin, setup_url};
     use std::net::TcpListener;
 
     #[cfg(target_os = "linux")]
@@ -519,6 +684,34 @@ mod tests {
         assert_eq!(recovery(None, true), Recovery::Setup);
     }
 
+    /// Notifications for the server's own pages, never for another origin
+    /// the window may show; other permissions keep the webview's default.
+    #[test]
+    fn notifications_are_allowed_for_the_server_origin_only() {
+        use super::permission;
+        use tauri::webview::{PermissionKind, PermissionResponse};
+        let server = server_origin("https://chat.example.org").unwrap();
+        let page = url::Url::parse("https://chat.example.org/s/1/c/2").unwrap();
+        let other = url::Url::parse("https://evil.example/").unwrap();
+        let allowed = |page: &url::Url| {
+            matches!(
+                permission(Some(&server), Some(page), PermissionKind::Notifications),
+                PermissionResponse::Allow
+            )
+        };
+        assert!(allowed(&page));
+        assert!(!allowed(&other));
+        assert!(!allowed(&super::setup_url(None, None)));
+        assert!(matches!(
+            permission(None, Some(&page), PermissionKind::Notifications),
+            PermissionResponse::Deny
+        ));
+        assert!(matches!(
+            permission(Some(&server), Some(&page), PermissionKind::Microphone),
+            PermissionResponse::Default
+        ));
+    }
+
     #[test]
     fn server_origin_keeps_only_the_origin() {
         assert_eq!(
@@ -534,6 +727,34 @@ mod tests {
         assert!(server_origin("file:///etc/passwd").is_err());
         assert!(server_origin("javascript:alert(1)").is_err());
         assert!(server_origin("chat.example.org").is_err());
+    }
+
+    #[test]
+    fn only_web_and_mail_links_open_externally() {
+        for url in [
+            "https://example.com/",
+            "http://example.com/a",
+            "mailto:a@example.com",
+        ] {
+            assert!(opens_externally(&url.parse().unwrap(), None), "{url}");
+        }
+        let server = server_origin("https://chat.example").unwrap();
+        assert!(opens_externally(
+            &"https://example.com/".parse().unwrap(),
+            Some(&server)
+        ));
+        assert!(!opens_externally(
+            &"https://chat.example/api/files/x".parse().unwrap(),
+            Some(&server)
+        ));
+        for url in [
+            "file:///etc/passwd",
+            "javascript:alert(1)",
+            "smb://host/share",
+            "tauri://localhost",
+        ] {
+            assert!(!opens_externally(&url.parse().unwrap(), None), "{url}");
+        }
     }
 
     #[test]

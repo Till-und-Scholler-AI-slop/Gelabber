@@ -44,6 +44,8 @@ import {
   useVoiceDiagnostics,
 } from "./diagnostics.ts";
 import { setNativeBridgeForTests } from "./native/bridge.ts";
+import { NativeStream, NativeTrack } from "./native/tracks.ts";
+import { resetUserVolumesForTests, useUserVolumes } from "./userVolume.ts";
 import { resetVoiceRoster, useVoiceRoster, voiceOf } from "./roster.ts";
 import {
   allocateVideoBitrates,
@@ -764,6 +766,34 @@ describe("voice session", () => {
     await vi.waitFor(() => expect(useVoice.getState().status).toBe("idle"));
     expect(errors).toHaveLength(1);
     expect(sent.at(-1)).toEqual({ op: "sig", t: "l", s: "srv", c: "voice" });
+  });
+
+  it("asks for a reload when the call's SDK chunk failed to load", async () => {
+    const { errors, sent } = install({
+      holdStart: () => Promise.reject(new MediaError("sdk_load_failed")),
+    });
+    joinVoice({ serverId: "srv", channelId: "voice", channelName: "Lounge" });
+    await vi.waitFor(() => expect(useVoice.getState().status).toBe("idle"));
+    expect(errors).toEqual([
+      new Error(
+        "Die Anruffunktion konnte nicht geladen werden. Bitte Gelabber neu laden und den Sprachkanal erneut betreten.",
+      ),
+    ]);
+    expect(sent.at(-1)).toEqual({ op: "sig", t: "l", s: "srv", c: "voice" });
+  });
+
+  it("says a stream could not open while the SDK chunk is too slow", async () => {
+    const { errors } = install({
+      holdStart: () => Promise.reject(new MediaError("sdk_load_timeout")),
+    });
+    watchLive({ serverId: "srv", channelId: "stage", channelName: "Stage" });
+    await vi.waitFor(() => expect(errors).toHaveLength(1));
+    expect(errors[0]).toEqual(
+      new Error(
+        "Die Anruffunktion lädt gerade sehr langsam. Bitte gleich den Stream erneut öffnen.",
+      ),
+    );
+    expect(useVoice.getState().watching).toBe(false);
   });
 
   it("rolls back the seat on a media-path err", async () => {
@@ -4204,6 +4234,7 @@ describe("authoritative mediasoup session lifecycle", () => {
     resetVoiceForTests();
     resetVoiceRoster();
     resetMediaSettingsForTests();
+    resetUserVolumesForTests();
     vi.unstubAllGlobals();
     vi.restoreAllMocks();
     vi.useRealTimers();
@@ -4483,6 +4514,255 @@ describe("authoritative mediasoup session lifecycle", () => {
     expect(elements.every((el) => el.srcObject === null)).toBe(true);
     expect(env.getUserMediaCalls()).toBe(1);
     expect(env.getDisplayMediaCalls()).toBe(0);
+  });
+  it("plays each participant at their own volume, mutes locally and lets Deafen win", async () => {
+    const elements = playback();
+    const env = await joined();
+    const bob = env.peers[0]!.receive("u-bob", "a", fakeStream("bob"));
+    const cara = env.peers[0]!.receive("u-cara", "a", fakeStream("cara"));
+    const of = (source: { stream: MediaStream }) =>
+      elements.find((el) => el.srcObject === source.stream)!;
+    expect(of(bob)).not.toBe(of(cara));
+    expect(of(bob).attributes["data-voice"]).toBe("u-bob");
+
+    useMediaSettings.getState().patch({ outputVolume: 0.8 });
+    useUserVolumes.getState().setVolume("u-bob", 0.5);
+    expect(of(bob).volume).toBeCloseTo(0.4);
+    expect(of(cara).volume).toBeCloseTo(0.8);
+
+    useUserVolumes.getState().setMuted("u-cara", true);
+    expect(of(cara).muted).toBe(true);
+    expect(of(bob).muted).toBe(false);
+
+    toggleDeafen();
+    expect(of(bob).volume).toBe(0);
+    expect(of(bob).muted).toBe(true);
+    toggleDeafen();
+    expect(of(bob).volume).toBeCloseTo(0.4);
+    expect(of(bob).muted).toBe(false);
+    expect(of(cara).muted).toBe(true);
+
+    useUserVolumes.getState().reset("u-cara");
+    expect(of(cara).muted).toBe(false);
+    expect(of(cara).volume).toBeCloseTo(0.8);
+
+    // A participant joining later starts at their remembered volume.
+    leaveVoice();
+    expect(elements.every((el) => el.srcObject === null)).toBe(true);
+    const again = await joined();
+    const back = again.peers[0]!.receive("u-bob", "a", fakeStream("bob-2"));
+    expect(of(back).volume).toBeCloseTo(0.4);
+  });
+  it("keeps one subscription to the per-user levels across rebinds", async () => {
+    let active = 0;
+    const subscribe = useUserVolumes.subscribe;
+    vi.spyOn(useUserVolumes, "subscribe").mockImplementation((listener) => {
+      active += 1;
+      const unsubscribe = subscribe(listener);
+      return () => {
+        active -= 1;
+        unsubscribe();
+      };
+    });
+    await joined();
+    expect(active).toBe(1);
+    leaveVoice();
+    resetVoiceForTests();
+    expect(active).toBe(0);
+    await joined();
+    configureVoice({});
+    expect(active).toBe(1);
+  });
+  it("applies a participant's volume to their microphone while watching", async () => {
+    const elements = playback();
+    const env = await joined();
+    watchLive({ serverId: "srv", channelId: "stage", channelName: "Stage" });
+    await vi.waitFor(() => expect(env.peers[1]?.started).toBe(true));
+    const watch = env.peers[1]!;
+    const bob = watch.receive("u-bob", "a", fakeStream("watch-bob"));
+    const cara = watch.receive("u-cara", "a", fakeStream("watch-cara"));
+    useUserVolumes.getState().setVolume("u-cara", 0.25);
+    const of = (source: { stream: MediaStream }) =>
+      elements.find((el) => el.srcObject === source.stream)!;
+    expect(of(bob).volume).toBe(1);
+    expect(of(cara).volume).toBe(0.25);
+  });
+  /** `blocked`: contexts start suspended and cannot resume (no gesture). */
+  function boostAudio(blocked = false) {
+    class Node {
+      connect() {}
+      disconnect() {}
+    }
+    const param = () => ({ value: 0 });
+    const contexts: Context[] = [];
+    class Context {
+      state: AudioContextState = blocked ? "suspended" : "running";
+      currentTime = 0;
+      closed = false;
+      gains: Array<{ gain: { value: number } }> = [];
+      sources: MediaStream[] = [];
+      resumable = !blocked;
+      constructor() {
+        contexts.push(this);
+      }
+      createDynamicsCompressor() {
+        return Object.assign(new Node(), {
+          threshold: param(),
+          knee: param(),
+          ratio: param(),
+          attack: param(),
+          release: param(),
+        });
+      }
+      createMediaStreamDestination() {
+        return Object.assign(new Node(), { stream: { id: "boost" } });
+      }
+      createGain() {
+        const gain = Object.assign(new Node(), {
+          gain: {
+            value: 1,
+            setTargetAtTime(value: number) {
+              this.value = value;
+            },
+          },
+        });
+        this.gains.push(gain);
+        return gain;
+      }
+      createMediaStreamSource(stream: MediaStream) {
+        this.sources.push(stream);
+        return new Node();
+      }
+      resume() {
+        if (!this.resumable) return new Promise<void>(() => {});
+        this.state = "running";
+        return Promise.resolve();
+      }
+      async suspend() {
+        this.state = "suspended";
+      }
+      async close() {
+        this.closed = true;
+      }
+    }
+    class Stream {
+      constructor(private tracks: MediaStreamTrack[] = []) {}
+      getTracks() {
+        return [...this.tracks];
+      }
+      getAudioTracks() {
+        return this.tracks.filter((track) => track.kind === "audio");
+      }
+      getVideoTracks() {
+        return [];
+      }
+      addTrack(track: MediaStreamTrack) {
+        if (!this.tracks.includes(track)) this.tracks.push(track);
+      }
+      removeTrack(track: MediaStreamTrack) {
+        this.tracks = this.tracks.filter((item) => item !== track);
+      }
+    }
+    vi.stubGlobal("AudioContext", Context);
+    vi.stubGlobal("MediaStream", Stream);
+    return contexts;
+  }
+  it("plays conversations above 100 % through a Web Audio boost and below it on the element", async () => {
+    const elements = playback();
+    const env = await joined();
+    const contexts = boostAudio();
+    env.peers[0]!.receive("u-bob", "a", fakeStream("bob"));
+    const voice = elements.find((el) => el.srcObject)!;
+    expect(voice.volume).toBe(1);
+    expect(contexts).toHaveLength(0);
+
+    useMediaSettings.getState().patch({ outputVolume: 1.5 });
+    expect(voice.muted).toBe(true);
+    const ctx = contexts[0]!;
+    // The 1st gain is the limiter's makeup trim, the 2nd the element's.
+    expect(ctx.gains[1]!.gain.value).toBe(1.5);
+    expect(ctx.sources).toHaveLength(1);
+    const out = elements.find(
+      (el) => (el.srcObject as { id?: string } | null)?.id === "boost",
+    )!;
+    await vi.waitFor(() => expect(out.play).toHaveBeenCalled());
+
+    // A second speaker joins the boosted mix.
+    env.peers[0]!.receive("u-cara", "a", fakeStream("cara"));
+    expect(ctx.sources).toHaveLength(2);
+
+    // An output-device change reaches the boost output too.
+    const setSinkId = vi.fn(async () => {});
+    Object.assign(out, { setSinkId });
+    useMediaSettings.getState().patch({ audioOutputId: "headset" });
+    expect(setSinkId).toHaveBeenCalledWith("headset");
+
+    toggleDeafen();
+    expect(voice.muted).toBe(true);
+    expect(voice.volume).toBe(0);
+    expect(ctx.state).toBe("suspended");
+    toggleDeafen();
+    expect(voice.muted).toBe(true);
+    expect(ctx.gains.at(-1)!.gain.value).toBe(1.5);
+
+    // Down to 80 % and back reuses the idle context.
+    useMediaSettings.getState().patch({ outputVolume: 0.8 });
+    expect(voice.muted).toBe(false);
+    expect(voice.volume).toBe(0.8);
+    expect(ctx.state).toBe("suspended");
+    useMediaSettings.getState().patch({ outputVolume: 1.5 });
+    expect(voice.muted).toBe(true);
+    await vi.waitFor(() => expect(ctx.state).toBe("running"));
+    expect(contexts).toHaveLength(1);
+    expect(ctx.closed).toBe(false);
+  });
+  it("plays at 100 % while the browser blocks the boost and boosts again on the click", async () => {
+    const elements = playback();
+    const env = await joined();
+    const contexts = boostAudio(true);
+    env.peers[0]!.receive("u-bob", "a", fakeStream("bob"));
+    const voice = elements.find((el) => el.srcObject)!;
+    vi.useFakeTimers();
+    useMediaSettings.getState().patch({ outputVolume: 1.5 });
+    const ctx = contexts[0]!;
+    expect(voice.muted).toBe(true);
+    await vi.advanceTimersByTimeAsync(1000);
+    expect(useVoice.getState().playbackBlocked).toBe(true);
+    expect(voice.muted).toBe(false);
+    expect(voice.volume).toBe(1);
+    // Slider moves do not mute it again before the click.
+    useMediaSettings.getState().patch({ outputVolume: 1.8 });
+    expect(voice.muted).toBe(false);
+
+    ctx.resumable = true;
+    retryPlayback();
+    expect(voice.muted).toBe(true);
+    await vi.waitFor(() =>
+      expect(useVoice.getState().playbackBlocked).toBe(false),
+    );
+    expect(ctx.gains.at(-1)!.gain.value).toBe(1.8);
+  });
+  it("boosts one participant above 100 % and leaves the others on their element", async () => {
+    const elements = playback();
+    const env = await joined();
+    const contexts = boostAudio();
+    env.peers[0]!.receive("u-bob", "a", fakeStream("bob"));
+    env.peers[0]!.receive("u-cara", "a", fakeStream("cara"));
+    // Each microphone plays from a stream of its own here.
+    const of = (userId: string) =>
+      elements.find((el) => el.attributes["data-voice"] === userId)!;
+    useMediaSettings.getState().patch({ outputVolume: 0.9 });
+    useUserVolumes.getState().setVolume("u-bob", 2);
+    const ctx = contexts[0]!;
+    // The 1st gain is the limiter's makeup trim, the 2nd Bob's.
+    expect(ctx.gains[1]!.gain.value).toBeCloseTo(1.8);
+    expect(ctx.sources).toHaveLength(1);
+    expect(of("u-bob").muted).toBe(true);
+    expect(of("u-cara").muted).toBe(false);
+    expect(of("u-cara").volume).toBeCloseTo(0.9);
+    useUserVolumes.getState().setVolume("u-bob", 1);
+    expect(of("u-bob").muted).toBe(false);
+    expect(of("u-bob").volume).toBeCloseTo(0.9);
   });
   it("retries blocked source playback on the user gesture and ignores late failure after Consumer close", async () => {
     const elements = playback();
@@ -4946,6 +5226,7 @@ describe("stream sound in the desktop app", () => {
     resetVoiceForTests();
     resetVoiceRoster();
     resetMediaSettingsForTests();
+    resetUserVolumesForTests();
     setNativeBridgeForTests(undefined);
     vi.restoreAllMocks();
     vi.useRealTimers();
@@ -5042,6 +5323,38 @@ describe("stream sound in the desktop app", () => {
   const soundOf = (kind: "s" | "l") => (kind === "s" ? "sa" : "la");
   const produced = (env: ReturnType<typeof install>, kind: TrackKind) =>
     env.mediaSent.filter((frame) => frame.op === "produce" && frame.k === kind);
+
+  it("sets each participant's native playout volume on their own consumer", async () => {
+    const { env, app } = await joined(APP_06);
+    const voice = (consumer: number) =>
+      new NativeStream([
+        new NativeTrack("audio", "voice", { consumer }),
+      ]) as unknown as MediaStream;
+    env.peers[0]!.receive("u-bob", "a", voice(11));
+    env.peers[0]!.receive("u-cara", "a", voice(12));
+    const volumeOf = (consumer: number) =>
+      app
+        .called("media_consumer_set_volume")
+        .filter((call) => call.consumer === consumer)
+        .at(-1)?.volume;
+    await vi.waitFor(() => expect(volumeOf(11)).toBe(1));
+    useUserVolumes.getState().setVolume("u-bob", 1.5);
+    useMediaSettings.getState().patch({ outputVolume: 0.8 });
+    // The native core scales above 100 % by itself, up to 200 %.
+    expect(volumeOf(11)).toBeCloseTo(1.2);
+    expect(volumeOf(12)).toBeCloseTo(0.8);
+    useUserVolumes.getState().setVolume("u-bob", 2);
+    useMediaSettings.getState().patch({ outputVolume: 2 });
+    expect(volumeOf(11)).toBe(2);
+    useUserVolumes.getState().setMuted("u-cara", true);
+    expect(volumeOf(12)).toBe(0);
+    expect(volumeOf(11)).toBe(2);
+    toggleDeafen();
+    expect(volumeOf(11)).toBe(0);
+    toggleDeafen();
+    expect(volumeOf(11)).toBe(2);
+    expect(volumeOf(12)).toBe(0);
+  });
 
   it.each([
     ["0.5.x app, nothing chosen", APP_05, "auto", "", null],

@@ -63,7 +63,23 @@ async fn presign_named(client: &mut Client, channel: &str, filename: &str) -> Va
         .send(
             Method::POST,
             &format!("/api/channels/{channel}/attachments"),
-            Some(json!({"filename":filename,"content_type":"image/png","size":4})),
+            Some(json!({"filename":filename,"content_type":"text/plain","size":4})),
+        )
+        .await;
+    assert_eq!(res.status, StatusCode::CREATED);
+    res.body
+}
+
+/// Smallest bytes that pass the content check for `image/png` (#255).
+const PNG: &[u8] = b"\x89PNG\r\n\x1a\n\0\0\0\rIHDR";
+
+/// A picture: shown inline, unlike the text files the quota tests use.
+async fn presign_png(client: &mut Client, channel: &str, filename: &str) -> Value {
+    let res = client
+        .send(
+            Method::POST,
+            &format!("/api/channels/{channel}/attachments"),
+            Some(json!({"filename":filename,"content_type":"image/png","size":PNG.len()})),
         )
         .await;
     assert_eq!(res.status, StatusCode::CREATED);
@@ -108,7 +124,7 @@ async fn concurrent_reservations_are_atomic_and_deleted_messages_keep_daily_cons
             seat.send(
                 Method::POST,
                 &format!("/api/channels/{channel}/attachments"),
-                Some(json!({"filename":"x.png","content_type":"image/png","size":4})),
+                Some(json!({"filename":"x.png","content_type":"text/plain","size":4})),
             )
             .await
         });
@@ -130,7 +146,7 @@ async fn concurrent_reservations_are_atomic_and_deleted_messages_keep_daily_cons
         let id = signed["id"].as_str().unwrap();
         state
             .store
-            .put(&format!("att/{id}"), "image/png", vec![1, 2, 3, 4])
+            .put(&format!("att/{id}"), "text/plain", vec![1, 2, 3, 4])
             .await
             .unwrap();
         let msg = message(&mut client, &channel, id).await;
@@ -151,7 +167,7 @@ async fn concurrent_reservations_are_atomic_and_deleted_messages_keep_daily_cons
         .send(
             Method::POST,
             &format!("/api/channels/{channel}/attachments"),
-            Some(json!({"filename":"x.png","content_type":"image/png","size":1})),
+            Some(json!({"filename":"x.png","content_type":"text/plain","size":1})),
         )
         .await;
     assert_eq!(rejected.status, StatusCode::TOO_MANY_REQUESTS);
@@ -167,7 +183,7 @@ async fn pending_expiry_refunds_missing_uploads_but_charges_uploaded_bytes(pool:
     let key = format!("att/{present_id}");
     state
         .store
-        .put(&key, "image/png", vec![1, 2, 3, 4])
+        .put(&key, "text/plain", vec![1, 2, 3, 4])
         .await
         .unwrap();
     sqlx::query("UPDATE attachments SET expires_at=now()-interval '16 minutes'")
@@ -218,7 +234,7 @@ async fn cascades_enqueue_objects_and_rollback_never_deletes_bytes(pool: PgPool)
     let key = format!("att/{id}");
     state
         .store
-        .put(&key, "image/png", vec![1, 2, 3, 4])
+        .put(&key, "text/plain", vec![1, 2, 3, 4])
         .await
         .unwrap();
     let msg = message(&mut client, &channel, id).await;
@@ -264,7 +280,7 @@ async fn cascades_enqueue_objects_and_rollback_never_deletes_bytes(pool: PgPool)
     let key = format!("att/{}", signed["id"].as_str().unwrap());
     state
         .store
-        .put(&key, "image/png", vec![1, 2, 3, 4])
+        .put(&key, "text/plain", vec![1, 2, 3, 4])
         .await
         .unwrap();
     assert_eq!(
@@ -296,12 +312,12 @@ async fn valid_and_foreign_pending_objects_survive_failed_attachment_bind(pool: 
     let badkey = format!("att/{}", bad["id"].as_str().unwrap());
     state
         .store
-        .put(&goodkey, "image/png", vec![1, 2, 3, 4])
+        .put(&goodkey, "text/plain", vec![1, 2, 3, 4])
         .await
         .unwrap();
     state
         .store
-        .put(&badkey, "image/png", vec![1])
+        .put(&badkey, "text/plain", vec![1])
         .await
         .unwrap();
     let failed = client
@@ -355,7 +371,7 @@ async fn valid_and_foreign_pending_objects_survive_failed_attachment_bind(pool: 
     let foreignkey = format!("att/{}", foreign["id"].as_str().unwrap());
     state
         .store
-        .put(&foreignkey, "image/png", vec![1])
+        .put(&foreignkey, "text/plain", vec![1])
         .await
         .unwrap();
     let denied = client
@@ -450,6 +466,7 @@ fn minio_config(endpoint: &str) -> gelabber_api::config::MinioConfig {
         access_key: std::env::var("MINIO_ROOT_USER").expect("local test username"),
         secret_key: std::env::var("MINIO_ROOT_PASSWORD").expect("local test password"),
         bucket: format!("gb-test-{}", Uuid::new_v4().simple()),
+        root_credentials: true,
     }
 }
 
@@ -469,12 +486,12 @@ async fn real_minio_failed_delete_retains_job_and_later_retry_removes_only_its_o
     let foreign = format!("att/{}", Uuid::new_v4());
     state
         .store
-        .put(&key, "image/png", vec![1, 2, 3, 4])
+        .put(&key, "text/plain", vec![1, 2, 3, 4])
         .await
         .unwrap();
     state
         .store
-        .put(&foreign, "image/png", vec![5, 6, 7, 8])
+        .put(&foreign, "text/plain", vec![5, 6, 7, 8])
         .await
         .unwrap();
     let msg = message(&mut client, &channel, signed["id"].as_str().unwrap()).await;
@@ -574,12 +591,12 @@ async fn real_minio_download_links_serve_the_object(pool: PgPool) {
     state.store = ObjectStore::from_minio(Some(&config)).unwrap();
     state.store.ensure_ready().await.unwrap();
     let (mut client, _, channel) = owner(&state).await;
-    let signed = presign(&mut client, &channel).await;
+    let signed = presign_png(&mut client, &channel, "x.png").await;
     let id = signed["id"].as_str().unwrap().to_owned();
     let key = format!("att/{id}");
     state
         .store
-        .put(&key, "image/png", vec![1, 2, 3, 4])
+        .put(&key, "image/png", PNG.to_vec())
         .await
         .unwrap();
     message(&mut client, &channel, &id).await;
@@ -610,7 +627,11 @@ async fn real_minio_download_links_serve_the_object(pool: PgPool) {
         object.headers()[reqwest::header::CACHE_CONTROL],
         "private, max-age=1800"
     );
-    assert_eq!(object.bytes().await.unwrap().as_ref(), [1, 2, 3, 4]);
+    // The checked type is signed into the link; MinIO adds `nosniff` itself
+    // (the API's byte path sets it in `inline_bytes`).
+    assert_eq!(object.headers()[reqwest::header::CONTENT_TYPE], "image/png");
+    assert_eq!(object.headers()["x-content-type-options"], "nosniff");
+    assert_eq!(object.bytes().await.unwrap().as_ref(), PNG);
 
     let (status, headers, _) = client
         .send_raw(
@@ -630,17 +651,17 @@ async fn real_minio_download_links_serve_the_object(pool: PgPool) {
         object.headers()[reqwest::header::CONTENT_DISPOSITION],
         "attachment; filename=\"x.png\""
     );
-    assert_eq!(object.bytes().await.unwrap().as_ref(), [1, 2, 3, 4]);
+    assert_eq!(object.bytes().await.unwrap().as_ref(), PNG);
     state.store.delete(&key).await.unwrap();
 
     // A name with a quote and a non-ASCII letter survives signing into the
     // link and MinIO's answer: quoted fallback plus RFC 6266 `filename*`.
-    let signed = presign_named(&mut client, &channel, "Bär \"1\".png").await;
+    let signed = presign_png(&mut client, &channel, "Bär \"1\".png").await;
     let id = signed["id"].as_str().unwrap().to_owned();
     let key = format!("att/{id}");
     state
         .store
-        .put(&key, "image/png", vec![5, 6, 7, 8])
+        .put(&key, "image/png", PNG.to_vec())
         .await
         .unwrap();
     message(&mut client, &channel, &id).await;
@@ -662,7 +683,7 @@ async fn real_minio_download_links_serve_the_object(pool: PgPool) {
         object.headers()[reqwest::header::CONTENT_DISPOSITION],
         "attachment; filename=\"B_r _1_.png\"; filename*=UTF-8''B%C3%A4r%20%221%22.png"
     );
-    assert_eq!(object.bytes().await.unwrap().as_ref(), [5, 6, 7, 8]);
+    assert_eq!(object.bytes().await.unwrap().as_ref(), PNG);
     state.store.delete(&key).await.unwrap();
 }
 
@@ -722,6 +743,7 @@ async fn stale_cleanup_ack_cannot_remove_a_new_claim_and_s3_does_not_hold_pool_c
         access_key: "test".into(),
         secret_key: "test".into(),
         bucket: "test".into(),
+        root_credentials: true,
     }))
     .unwrap();
     let key = format!("att/{}", Uuid::new_v4());
@@ -749,9 +771,12 @@ async fn stale_cleanup_ack_cannot_remove_a_new_claim_and_s3_does_not_hold_pool_c
 
 #[sqlx::test(migrations = false)]
 async fn migration_backfills_existing_bytes_and_rollback_preserves_metadata_and_jobs(pool: PgPool) {
+    // 0013 only adds `users` columns, which the current binary's sign-up
+    // below reads back; it does not touch the storage schema under test.
+    const USER_COLUMNS: i64 = 13;
     for migration in sqlx::migrate!("./migrations")
         .iter()
-        .filter(|m| m.version < 8)
+        .filter(|m| m.version < 8 || m.version == USER_COLUMNS)
     {
         sqlx::raw_sql(migration.sql.clone())
             .execute(&pool)
@@ -809,7 +834,7 @@ async fn migration_backfills_existing_bytes_and_rollback_preserves_metadata_and_
     // The current binary also needs the current schema (including later chat DTO fields).
     for later in sqlx::migrate!("./migrations")
         .iter()
-        .filter(|m| m.version > 8)
+        .filter(|m| m.version > 8 && m.version != USER_COLUMNS)
     {
         sqlx::raw_sql(later.sql.clone())
             .execute(&pool)
@@ -852,7 +877,7 @@ async fn cleanup_batches_are_bounded_and_never_delete_a_referenced_object(pool: 
         .bind(channel).bind(user).bind(&referenced).execute(&state.db).await.unwrap();
     state
         .store
-        .put(&referenced, "image/png", vec![1, 2, 3, 4])
+        .put(&referenced, "text/plain", vec![1, 2, 3, 4])
         .await
         .unwrap();
     let mut keys = vec![referenced.clone()];
@@ -860,7 +885,7 @@ async fn cleanup_batches_are_bounded_and_never_delete_a_referenced_object(pool: 
         let key = format!("att/{}", Uuid::new_v4());
         state
             .store
-            .put(&key, "image/png", vec![1, 2, 3, 4])
+            .put(&key, "text/plain", vec![1, 2, 3, 4])
             .await
             .unwrap();
         keys.push(key);
@@ -909,7 +934,7 @@ async fn presign_parent_lock_precedes_quota_and_cannot_deadlock_a_channel_cascad
         seat.send(
             Method::POST,
             &format!("/api/channels/{channel}/attachments"),
-            Some(json!({"filename":"x.png","content_type":"image/png","size":4})),
+            Some(json!({"filename":"x.png","content_type":"text/plain","size":4})),
         )
         .await
     });
@@ -996,7 +1021,7 @@ async fn pending_upload_expiring_during_storage_head_cannot_bind(pool: PgPool) {
                 Response::builder()
                     .status(200)
                     .header("content-length", "4")
-                    .header("content-type", "image/png")
+                    .header("content-type", "text/plain")
                     .body(Body::empty())
                     .unwrap()
             } else {
@@ -1016,6 +1041,7 @@ async fn pending_upload_expiring_during_storage_head_cannot_bind(pool: PgPool) {
         access_key: "test".into(),
         secret_key: "test".into(),
         bucket: "test".into(),
+        root_credentials: true,
     }))
     .unwrap();
     let (mut client, _, channel) = owner(&state).await;
@@ -1100,7 +1126,7 @@ async fn inflight_put_after_expiry_is_not_lost_from_daily_usage(pool: PgPool) {
     let mut action = bucket.put_object(Some(&credentials), &key);
     action
         .headers_mut()
-        .insert("content-type", "image/png".to_owned());
+        .insert("content-type", "text/plain".to_owned());
     action
         .headers_mut()
         .insert("content-length", "4".to_owned());
@@ -1126,7 +1152,7 @@ async fn inflight_put_after_expiry_is_not_lost_from_daily_usage(pool: PgPool) {
     let mut socket = tokio::net::TcpStream::connect((host, port)).await.unwrap();
     let target = format!("{}?{}", signed.path(), signed.query().unwrap());
     let request = format!(
-        "PUT {target} HTTP/1.1\r\nHost: {host}:{port}\r\nContent-Type: image/png\r\nContent-Length: 4\r\nConnection: close\r\n\r\n"
+        "PUT {target} HTTP/1.1\r\nHost: {host}:{port}\r\nContent-Type: text/plain\r\nContent-Length: 4\r\nConnection: close\r\n\r\n"
     );
     socket.write_all(request.as_bytes()).await.unwrap();
     socket.write_all(&[1, 2]).await.unwrap();
@@ -1158,7 +1184,7 @@ async fn inflight_put_after_expiry_is_not_lost_from_daily_usage(pool: PgPool) {
         .send(
             Method::POST,
             &format!("/api/channels/{channel}/attachments"),
-            Some(json!({"filename":"second.png","content_type":"image/png","size":4})),
+            Some(json!({"filename":"second.png","content_type":"text/plain","size":4})),
         )
         .await;
     if second.status == StatusCode::CREATED {
@@ -1259,7 +1285,7 @@ async fn absent_upload_keeps_quota_through_grace_and_concurrent_expiry_refunds_o
         .send(
             Method::POST,
             &format!("/api/channels/{channel}/attachments"),
-            Some(json!({"filename":"y.png","content_type":"image/png","size":4})),
+            Some(json!({"filename":"y.png","content_type":"text/plain","size":4})),
         )
         .await;
     assert_eq!(denied.status, StatusCode::TOO_MANY_REQUESTS);

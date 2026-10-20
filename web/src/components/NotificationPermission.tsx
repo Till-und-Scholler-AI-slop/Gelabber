@@ -5,6 +5,7 @@ import {
   type NotificationPermissionState,
 } from "../messages/notify.ts";
 import { useInstallation } from "../pwa/install.ts";
+import { syncPush, type PushResult } from "../pwa/push.ts";
 
 function permission(): NotificationPermissionState {
   return typeof Notification === "undefined"
@@ -17,6 +18,19 @@ export function NotificationPermissionStatus() {
   const [pending, setPending] = useState(false);
   const [failed, setFailed] = useState(false);
   const device = useInstallation();
+  const [push, setPush] = useState<PushResult | null>(null);
+  useEffect(() => {
+    if (state !== "granted") return;
+    let live = true;
+    syncPush()
+      .catch((): PushResult => "unavailable")
+      .then((result) => {
+        if (live) setPush(result);
+      });
+    return () => {
+      live = false;
+    };
+  }, [state]);
   useEffect(() => {
     const refresh = () => setState(permission());
     window.addEventListener("focus", refresh);
@@ -50,12 +64,21 @@ export function NotificationPermissionStatus() {
           standalone: device.standalone,
         })}
       </p>
-      {device.mobile && (state === "granted" || state === "default") && (
+      {state === "granted" && push === "on" ? (
         <p className="mt-2">
-          Auf dem Handy kommen Benachrichtigungen nur an, solange Gelabber im
-          Hintergrund noch läuft, zum Beispiel während eines Gesprächs. Ist die
-          App geschlossen, kommt nichts an.
+          Direktnachrichten und @Erwähnungen kommen auch an, wenn Gelabber
+          geschlossen ist.
         </p>
+      ) : (
+        device.mobile &&
+        (state === "granted" || state === "default") &&
+        (state === "default" || push !== null) && (
+          <p className="mt-2">
+            {state === "default"
+              ? "Nach der Erlaubnis kommen Direktnachrichten und @Erwähnungen auch an, wenn Gelabber geschlossen ist, sofern der Server das anbietet."
+              : "Auf diesem Gerät kommen Benachrichtigungen nur an, solange Gelabber im Hintergrund noch läuft, zum Beispiel während eines Gesprächs. Ist die App geschlossen, kommt nichts an."}
+          </p>
+        )
       )}
       {state === "default" && (
         <button

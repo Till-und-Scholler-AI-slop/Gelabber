@@ -222,8 +222,9 @@ describe("message notifications", () => {
     expect(await showMessageNotification(m1, vi.fn())).toBe("none");
     expect(await showMessageNotification(m2, vi.fn())).toBe("none");
     expect(active.showNotification).toHaveBeenCalledTimes(2);
-    expect(onScreen.map((one) => (one.data as { message: string }).message))
-      .toEqual(["msg-2"]);
+    expect(
+      onScreen.map((one) => (one.data as { message: string }).message),
+    ).toEqual(["msg-2"]);
     // A notification of an older client names only its message.
     onScreen.splice(0, 1, {
       tag: "gelabber:user-1:chan",
@@ -432,6 +433,35 @@ describe("a conversation on screen", () => {
     front.stop();
     expect(await showMessageNotification(message, vi.fn())).toBe("worker");
     expect(active.showNotification).toHaveBeenCalledTimes(4);
+  });
+
+  // Visible, but another window has the focus: nobody reads it, the message
+  // stays unread there, so it is announced like one in the background.
+  it("announces a conversation in a visible window without focus", async () => {
+    pageApi();
+    const active = worker();
+    const events = new EventTarget();
+    let focused = true;
+    const stop = silenceWhileViewing(
+      "user-1",
+      "chan",
+      {
+        hidden: false,
+        hasFocus: () => focused,
+        addEventListener: events.addEventListener.bind(events),
+        removeEventListener: events.removeEventListener.bind(events),
+      },
+      events,
+    );
+    windows.push(stop);
+    expect(await showMessageNotification(message, vi.fn())).toBe("viewed");
+    focused = false;
+    events.dispatchEvent(new Event("blur"));
+    expect(await showMessageNotification(message, vi.fn())).toBe("worker");
+    focused = true;
+    events.dispatchEvent(new Event("focus"));
+    expect(await showMessageNotification(message, vi.fn())).toBe("viewed");
+    expect(active.showNotification).toHaveBeenCalledOnce();
   });
 
   it("keeps a page-level notification back the same way", async () => {

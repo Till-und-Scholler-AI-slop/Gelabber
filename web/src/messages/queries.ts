@@ -17,11 +17,14 @@ import {
 } from "@tanstack/react-query";
 
 import { ApiError } from "../api/client.ts";
+import { fieldMessage } from "../auth/rules.ts";
+import { refreshReplyTarget } from "./replyTarget.ts";
 import { scopeGeneration, stampHolds, takeStamp } from "../auth/scope.ts";
 import { useSession } from "../auth/session.ts";
 import { notifyError } from "../components/toasts.ts";
 import { randomUuid } from "../lib/uuid.ts";
 import { isPendingId } from "../servers/queries.ts";
+import type { GifPick } from "../gifs/api.ts";
 import { refreshChatWorkflows } from "./readState.ts";
 import * as remote from "./api.ts";
 import {
@@ -30,12 +33,14 @@ import {
   encodeCursor,
   newerMessage,
   olderCursor,
+  refreshReplies,
   stampOlder,
   type MessageChange,
 } from "./pages.ts";
 import {
   addPending,
   confirmPending,
+  markUpload,
   forgetAttempt,
   saveAttempt,
   type SendAttempt,
@@ -53,7 +58,14 @@ import type {
   MessageAuthor,
   MessagePage,
 } from "./types.ts";
-import { asAttachmentList, asReactionList } from "./types.ts";
+import {
+  asAttachmentList,
+  asMentionList,
+  asPreviewList,
+  asReactionList,
+  asReply,
+  replyTo,
+} from "./types.ts";
 
 export const messageKeys = {
   channel: (userId: string, generation: number, channelId: string) =>
@@ -367,7 +379,12 @@ export function messageQueryOptions(
 
 export type SendInput = {
   content: string;
-  file?: File;
+  /** Up to ATTACHMENTS_MAX files, uploaded in this order. */
+  files?: File[];
+  /** Sent alone: no text, no file. */
+  gif?: GifPick;
+  /** Answer this message of the channel. */
+  replyTo?: Message;
 };
 
 function localAttachment(file: File): Attachment {
@@ -414,10 +431,13 @@ export async function sendMessageAttempt(
       id,
       channelId,
       stamp,
-      content: normaliseContent(input.content),
-      file: input.file,
+      content: input.gif ? "" : normaliseContent(input.content),
+      files: input.gif ? [] : (input.files ?? []),
+      uploadedIds: [],
+      gif: input.gif,
+      reply: input.replyTo ? replyTo(input.replyTo) : undefined,
       status: "sending",
-      stage: input.file ? "presign" : "bind",
+      stage: input.files?.length && !input.gif ? "presign" : "bind",
       controller: new AbortController(),
     };
     addPending(channelId, {
@@ -427,7 +447,12 @@ export async function sendMessageAttempt(
       content: attempt.content,
       created_at: now(),
       edited_at: null,
-      attachments: input.file ? [localAttachment(input.file)] : [],
+      attachments: attempt.files.map((file) => ({
+        ...localAttachment(file),
+        upload: "waiting" as const,
+      })),
+      gif: input.gif?.gif ?? null,
+      reply: attempt.reply ?? null,
     });
   }
   requireAttempt(attempt);
@@ -436,10 +461,31 @@ export async function sendMessageAttempt(
   attempt = { ...attempt, status: "sending", error: undefined };
   saveAttempt(attempt);
   try {
-    if (attempt.file && !attempt.uploadedId) {
-      const file = attempt.file;
+    // One after another: the upload link is the bottleneck, and a retry
+    // continues after the files that already arrived.
+    for (
+      let index = attempt.uploadedIds.length;
+      index < attempt.files.length;
+      index++
+    ) {
+      const file = attempt.files[index]!;
+      const known = arrived.get(file);
+      if (
+        known &&
+        known.userId === attempt.stamp.userId &&
+        known.channelId === channelId
+      ) {
+        attempt = {
+          ...attempt,
+          uploadedIds: [...attempt.uploadedIds, known.id],
+        };
+        saveAttempt(attempt);
+        markUpload(channelId, attempt.id, index, "done");
+        continue;
+      }
       attempt = { ...attempt, stage: "presign" };
       saveAttempt(attempt);
+      markUpload(channelId, attempt.id, index, "uploading");
       const presign = await remote.presignAttachment(channelId, {
         filename: file.name,
         content_type: inferContentType(file),
@@ -455,7 +501,17 @@ export async function sendMessageAttempt(
         attempt.controller.signal,
       );
       requireAttempt(attempt);
-      attempt = { ...attempt, uploadedId: presign.id };
+      arrived.set(file, {
+        userId: attempt.stamp.userId,
+        channelId,
+        id: presign.id,
+      });
+      attempt = {
+        ...attempt,
+        uploadedIds: [...attempt.uploadedIds, presign.id],
+      };
+      saveAttempt(attempt);
+      markUpload(channelId, attempt.id, index, "done");
     }
     requireAttempt(attempt);
     attempt = { ...attempt, stage: "bind" };
@@ -463,9 +519,13 @@ export async function sendMessageAttempt(
     const message = await remote.createMessage(
       channelId,
       attempt.content,
-      attempt.uploadedId ? [attempt.uploadedId] : [],
+      attempt.uploadedIds,
+      attempt.gif,
+      attempt.reply?.id,
     );
     requireAttempt(attempt);
+    // Bound now; attaching the same file again needs a new upload.
+    for (const file of attempt.files) arrived.delete(file);
     confirmPending(channelId, attempt.id, message);
     forgetAttempt(attempt.id);
     return message;
@@ -485,15 +545,78 @@ export async function sendMessageAttempt(
         upload: "Dateiübertragung",
         bind: "Nachricht speichern",
       };
+      // The bind may have gone through: these ids may be taken already, so
+      // a retry or a draft taken back uploads the files again.
+      if (uncertain) for (const file of attempt.files) arrived.delete(file);
+      const rejected = rejectedUploads(error, attempt.files);
+      if (rejected)
+        for (const file of rejectedFiles(error, attempt.files))
+          arrived.delete(file);
       saveAttempt({
         ...attempt,
+        // Uploads the server turned down (expired, gone, wrong size or
+        // content) go up again on a retry; the others bind as they are.
+        uploadedIds: rejected ? [] : attempt.uploadedIds,
         status: uncertain ? "uncertain" : "failed",
-        error: `${labels[attempt.stage]} fehlgeschlagen.`,
+        error: [
+          `${labels[attempt.stage]} fehlgeschlagen.`,
+          ...(rejected ?? []),
+        ].join(" "),
       });
       notifyError(error);
     }
     throw error;
   }
+}
+
+/** Uploads that arrived, by file. A retry, or a draft taken back from a
+ *  failed send, binds them again instead of uploading (and reserving
+ *  quota for) the same file twice; an upload waits an hour for its
+ *  message on the server. One the bind turns down is forgotten. */
+const arrived = new WeakMap<
+  File,
+  { userId: string; channelId: string; id: string }
+>();
+
+/** The files a rejection is about: those the server pointed at, or all of
+ *  them when it could not say which (expired, gone, wrong size). */
+function rejectedFiles(error: unknown, files: readonly File[]): File[] {
+  if (!(error instanceof ApiError)) return [];
+  const named = Object.keys(error.fields).flatMap((field) => {
+    const at = /^attachment_ids\.(\d+)$/.exec(field);
+    const file = at ? files[Number(at[1])] : undefined;
+    return file ? [file] : [];
+  });
+  const blanket = Object.entries(error.fields).some(
+    ([field, code]) =>
+      (field === "attachment_ids" && code === "invalid") || field === "size",
+  );
+  return blanket ? [...files] : named;
+}
+
+/** The bind's complaints about uploaded files, naming each file the
+ *  server pointed at (`attachment_ids.<n>`); null when it had none. */
+export function rejectedUploads(
+  error: unknown,
+  files: readonly File[],
+): string[] | null {
+  if (!(error instanceof ApiError) || error.code !== "validation_failed")
+    return null;
+  const fields = Object.entries(error.fields);
+  if (
+    !fields.some(
+      ([field, code]) =>
+        field.startsWith("attachment_ids.") ||
+        (field === "attachment_ids" && code === "invalid") ||
+        field === "size",
+    )
+  )
+    return null;
+  return fields.flatMap(([field, code]) => {
+    const at = /^attachment_ids\.(\d+)$/.exec(field);
+    const file = at ? files[Number(at[1])] : undefined;
+    return file && code ? [`${file.name}: ${fieldMessage(field, code)}`] : [];
+  });
 }
 
 export function useSendMessage(channelId: string, author: MessageAuthor) {
@@ -705,6 +828,37 @@ export function applyMessageCreated(
   );
 }
 
+/** Search hits and the jump-to context show reply previews too. */
+function refreshSideReplies(
+  client: QueryClient,
+  userId: string,
+  generation: number,
+  channelId: string,
+  id: string,
+  original: Message | null,
+): void {
+  const prefix = ["user", userId, generation];
+  client.setQueriesData<InfiniteData<MessagePage>>(
+    { queryKey: [...prefix, "message-search", channelId] },
+    (data) =>
+      data && { ...data, pages: refreshReplies(data.pages, id, original) },
+  );
+  client.setQueriesData<{ messages: Message[] }>(
+    { queryKey: [...prefix, "message-context", channelId] },
+    (data) => {
+      if (!data) return data;
+      const [page] = refreshReplies(
+        [{ messages: data.messages, has_more: false }],
+        id,
+        original,
+      );
+      return page!.messages === data.messages
+        ? data
+        : { ...data, messages: page!.messages };
+    },
+  );
+}
+
 /** WS edit: replace the row in place. */
 export function applyMessageEdited(
   client: QueryClient,
@@ -720,8 +874,17 @@ export function applyMessageEdited(
     created: false,
   });
   patchPages(client, userId, generation, channelId, (pages) =>
-    applyMessageChanges(pages, [change]),
+    refreshReplies(applyMessageChanges(pages, [change]), message.id, message),
   );
+  refreshSideReplies(
+    client,
+    userId,
+    generation,
+    channelId,
+    message.id,
+    message,
+  );
+  refreshReplyTarget(channelId, message.id, message);
 }
 
 /** WS / optimistic delete: drop the row, keep page cursors. */
@@ -741,8 +904,10 @@ export function applyMessageDeleted(
     revision,
   });
   patchPages(client, userId, generation, channelId, (pages) =>
-    applyMessageChanges(pages, [change]),
+    refreshReplies(applyMessageChanges(pages, [change]), messageId, null),
   );
+  refreshSideReplies(client, userId, generation, channelId, messageId, null);
+  refreshReplyTarget(channelId, messageId, null);
 }
 
 export function applyChannelEvent(
@@ -775,9 +940,19 @@ export function applyChannelEvent(
       ...event.d,
       ...(event.r !== undefined ? { revision: event.r } : {}),
       attachments: asAttachmentList(event.d.attachments),
+      ...(event.d.mentions === undefined
+        ? {}
+        : {
+            mentions: asMentionList(event.d.mentions),
+            mention_everyone: event.d.mention_everyone === true,
+          }),
       ...(event.d.reactions === undefined
         ? {}
         : { reactions: asReactionList(event.d.reactions) }),
+      ...(event.d.reply === undefined ? {} : { reply: asReply(event.d.reply) }),
+      ...(event.d.previews === undefined
+        ? {}
+        : { previews: asPreviewList(event.d.previews) }),
     };
     if (event.t === "c")
       applyMessageCreated(client, userId, generation, channelId, message);

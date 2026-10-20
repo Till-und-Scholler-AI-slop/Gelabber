@@ -57,7 +57,14 @@ redis.call('SET', KEYS[1], '0', 'NX')
 return {redis.call('GET', KEYS[1]), epoch, redis.call('LRANGE', KEYS[2], 0, -1)}
 "#;
 
-pub const OUTBOUND_CAPACITY: usize = 128;
+/// A reconnecting socket receives one presence frame per member that comes
+/// back with it while it is still busy subscribing, so this bounds how many
+/// members can reconnect at once (after a deploy) without overflowing. 1024
+/// is headroom over the largest measured storm (200 members, no closes), not
+/// a measured peak depth. Overflow still closes the socket and the client
+/// resyncs. The channel grows in 32-slot blocks as frames queue, so only a
+/// backed-up socket pays for the larger bound.
+pub const OUTBOUND_CAPACITY: usize = 1024;
 const CATCH_UP_CAPACITY: usize = 128;
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
@@ -403,6 +410,28 @@ impl ConnTable {
                 {
                     socket.send(ServerFrame::Dm { c });
                 }
+            }
+            return;
+        }
+        if let Some(raw_user) = channel.strip_prefix(USER_PREFIX) {
+            match (
+                raw_user.parse::<Uuid>(),
+                serde_json::from_str::<super::protocol::UserFrame>(raw),
+            ) {
+                (Ok(user), Ok(frame)) => {
+                    let frame = ServerFrame::from(frame);
+                    for socket in self
+                        .inner
+                        .sockets
+                        .read()
+                        .await
+                        .values()
+                        .filter(|socket| socket.user_id == user)
+                    {
+                        socket.send(frame.clone());
+                    }
+                }
+                _ => warn!(channel, "redis payload is not a user frame"),
             }
             return;
         }
@@ -1267,6 +1296,39 @@ impl Gateway {
 
 pub(super) fn redis_err(err: redis::RedisError) -> ApiError {
     ApiError::Internal(format!("redis: {err}"))
+}
+
+/// Frames for every socket of one account, whatever it subscribed to: its
+/// read positions and notification settings (`gb:u:{user}`).
+const USER_PREFIX: &str = "gb:u:";
+
+impl Gateway {
+    /// Best effort: a socket that misses one catches up with the next REST
+    /// snapshot (focus, poll, reconnect).
+    pub async fn publish_user(
+        &self,
+        user: Uuid,
+        frame: &super::protocol::UserFrame,
+    ) -> Result<(), ApiError> {
+        self.connections.ensure_subscriber();
+        let raw = serde_json::to_string(frame)
+            .map_err(|err| ApiError::Internal(format!("serialize user frame: {err}")))?;
+        let channel = format!("{USER_PREFIX}{user}");
+        self.connections
+            .with_conn(|mut conn| {
+                let channel = channel.clone();
+                let raw = raw.clone();
+                async move {
+                    redis::cmd("PUBLISH")
+                        .arg(channel)
+                        .arg(raw)
+                        .query_async::<()>(&mut conn)
+                        .await
+                }
+            })
+            .await
+            .map_err(redis_err)
+    }
 }
 
 pub fn voice_redis_channel(channel_id: Uuid) -> String {

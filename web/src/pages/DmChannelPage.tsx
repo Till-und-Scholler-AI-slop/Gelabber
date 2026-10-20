@@ -2,13 +2,15 @@
 
 import { useNavigate, useParams } from "@tanstack/react-router";
 import { useQueryClient } from "@tanstack/react-query";
-import { useEffect } from "react";
+import { useEffect, useMemo, useState } from "react";
 
 import { useUserId } from "../auth/scope.ts";
+import { useSession } from "../auth/session.ts";
 import { MessagePane } from "../components/MessagePane.tsx";
 import { LoadError } from "../components/LoadError.tsx";
 import { PresenceAvatar } from "../components/PresenceAvatar.tsx";
 import { TypingBar } from "../components/TypingBar.tsx";
+import { UserProfileDialog } from "../components/UserProfileDialog.tsx";
 import { useLastDm } from "../dms/lastDm.ts";
 import { isGoneError } from "../dms/open.ts";
 import { forgetDm, useDm } from "../dms/queries.ts";
@@ -66,6 +68,15 @@ function DmChat({ dm }: { dm: DirectMessage }) {
   const status = usePresenceStore((s) =>
     presenceOf(s.byServer, dm.id, dm.peer.id),
   );
+  const [profileOpen, setProfileOpen] = useState(false);
+  const me = useSession((s) => s.user);
+  const mentionable = useMemo(
+    () => [
+      { id: dm.peer.id, name: dm.peer.name },
+      ...(me ? [{ id: me.id, name: me.name }] : []),
+    ],
+    [dm.peer.id, dm.peer.name, me],
+  );
 
   return (
     <div className="flex min-h-0 flex-1 overflow-hidden">
@@ -78,20 +89,33 @@ function DmChat({ dm }: { dm: DirectMessage }) {
             <MessagePane
               key={dm.id}
               title={
-                <>
+                <button
+                  type="button"
+                  className="dm-peer-button"
+                  aria-haspopup="dialog"
+                  title={`Profil von ${dm.peer.name}`}
+                  onClick={() => setProfileOpen(true)}
+                >
                   <PresenceAvatar
                     name={dm.peer.name}
                     url={dm.peer.avatar_url}
                     status={status}
                   />
                   <h1>{dm.peer.name}</h1>
-                </>
+                </button>
               }
               channelId={dm.id}
               channelName={dm.peer.name}
               canSend
               canSendFiles
               mention="@"
+              members={mentionable}
+              notify={{
+                scope: "channel",
+                id: dm.id,
+                name: dm.peer.name,
+                dm: true,
+              }}
               footer={<TypingBar channelId={dm.id} members={members} />}
               onDraftChange={typing.onChange}
               onDraftStop={typing.stop}
@@ -99,6 +123,13 @@ function DmChat({ dm }: { dm: DirectMessage }) {
           </div>
         </div>
       </div>
+      <UserProfileDialog
+        userId={dm.peer.id}
+        known={{ name: dm.peer.name, avatar_url: dm.peer.avatar_url }}
+        presence={status}
+        open={profileOpen}
+        onClose={() => setProfileOpen(false)}
+      />
     </div>
   );
 }

@@ -7,15 +7,20 @@ pub mod csrf;
 pub mod dms;
 pub mod error;
 pub mod gateway;
+pub mod gifs;
 pub mod health;
+pub mod image_size;
 pub mod json;
 pub mod limits;
 pub mod media;
 pub mod messages;
 pub mod metrics;
+pub mod notifications;
 pub mod password;
 pub mod path;
+pub mod previews;
 pub mod profile;
+pub mod push;
 pub mod servers;
 pub mod state;
 pub mod storage;
@@ -41,6 +46,7 @@ pub use state::AppState;
 pub fn app(state: AppState) -> Router {
     state.gateway.ensure_delivery(state.clone());
     attachments::cleanup::start(state.clone());
+    previews::start(state.clone());
     // Everything under /api is a browser-facing JSON route and goes through
     // the CSRF check; /health, /ready and /metrics stay outside (GET only).
     let api = Router::new()
@@ -53,6 +59,10 @@ pub fn app(state: AppState) -> Router {
         .merge(messages::router())
         .merge(media::router())
         .merge(attachments::router())
+        .merge(gifs::router())
+        .merge(notifications::router())
+        .merge(push::router())
+        .merge(previews::router())
         .layer(middleware::from_fn(csrf::require))
         .layer(middleware::from_fn_with_state(state.clone(), limits::gate));
 

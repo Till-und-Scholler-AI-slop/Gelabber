@@ -1,4 +1,6 @@
 import { UnreadBadge } from "../messages/UnreadBadge.tsx";
+import { notificationMenu } from "./notificationTarget.ts";
+import { useChannelMuted } from "../messages/notificationSettings.ts";
 import { Link } from "@tanstack/react-router";
 import { useVirtualizer } from "@tanstack/react-virtual";
 import { useRef } from "react";
@@ -81,16 +83,23 @@ function DmList({
   );
 }
 
-function DmRow({ dm, active }: { dm: DirectMessage; active: boolean }) {
+export function DmRow({ dm, active }: { dm: DirectMessage; active: boolean }) {
   const status = usePresenceStore((state) =>
     presenceOf(state.byServer, dm.id, dm.peer.id),
   );
+  const muted = useChannelMuted(dm.id);
   return (
     <Link
       to="/d/$channelId"
       params={{ channelId: dm.id }}
       aria-current={active ? "page" : undefined}
-      className={`dm-row ${active ? "is-active" : ""}`}
+      className={`dm-row ${active ? "is-active" : ""} ${muted ? "is-muted" : ""}`}
+      onContextMenu={notificationMenu({
+        scope: "channel",
+        id: dm.id,
+        name: dm.peer.name,
+        dm: true,
+      })}
     >
       <PresenceAvatar
         name={dm.peer.name}

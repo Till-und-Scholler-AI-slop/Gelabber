@@ -764,6 +764,50 @@ async fn presence_online_idle_offline_without_bumping_chat_seq(pool: PgPool) {
 }
 
 #[sqlx::test]
+async fn coming_online_publishes_one_presence_frame(pool: PgPool) {
+    let (mut owner, mut member) = two_users(pool.clone()).await;
+    let server = create_server(&mut owner, "Once").await;
+    let (server_id, channel_id) = ids(&server);
+    join_member(&mut owner, &mut member, &server_id.to_string()).await;
+
+    let (addr, _state) = common::serve_ws(pool).await;
+    let mut owner_ws = connect(addr, &session_cookie(&owner), None).await;
+    let mut member_ws = connect(addr, &session_cookie(&member), None).await;
+    send_json(&mut owner_ws, json!({ "op": "s", "s": server_id })).await;
+    recv_until(&mut owner_ws, |f| f["op"] == "p" && f.get("snap").is_some()).await;
+
+    send_json(&mut member_ws, json!({ "op": "s", "s": server_id })).await;
+    send_json(
+        &mut member_ws,
+        json!({ "op": "s", "s": server_id, "c": channel_id }),
+    )
+    .await;
+    recv_until(&mut member_ws, |f| {
+        f["op"] == "ok" && f["c"] == channel_id.to_string()
+    })
+    .await;
+    recv_until(&mut member_ws, |f| {
+        f["op"] == "p" && f.get("snap").is_some()
+    })
+    .await;
+    send_json(&mut member_ws, json!({ "op": "p", "st": "i" })).await;
+
+    let mut online = 0;
+    loop {
+        let frame = recv_json(&mut owner_ws).await;
+        if frame["op"] != "p" || frame["u"] != member.user_id() {
+            continue;
+        }
+        if frame["st"] == "i" {
+            break;
+        }
+        assert_eq!(frame["st"], "o", "{frame}");
+        online += 1;
+    }
+    assert_eq!(online, 1, "one frame per presence change");
+}
+
+#[sqlx::test]
 async fn two_clients_keep_user_online_until_the_last_goes_idle(pool: PgPool) {
     let (mut owner, _) = two_users(pool.clone()).await;
     let server = create_server(&mut owner, "Tabs").await;
@@ -1398,4 +1442,146 @@ async fn pubsub_outage_preserves_open_socket_and_requests_rest_resync(pool: PgPo
     let recovered = recv_until(&mut ws, |f| f["op"] == "e").await;
     assert_eq!(recovered["d"]["id"], missed.body["id"]);
     recv_until(&mut ws, |f| f["op"] == "ok").await;
+}
+
+/// A settings change reaches every socket of the account, also ones that
+/// subscribed to nothing, and nobody else's.
+#[sqlx::test]
+async fn notification_settings_go_to_the_own_sockets_only(pool: PgPool) {
+    let (mut owner, mut member) = two_users(pool.clone()).await;
+    let server = create_server(&mut owner, "Settings").await;
+    let s = server["id"].as_str().unwrap().to_owned();
+    join_member(&mut owner, &mut member, &s).await;
+    let (addr, _) = common::serve_ws(pool).await;
+    let mut first = connect(addr, &session_cookie(&owner), None).await;
+    let mut second = connect(addr, &session_cookie(&owner), None).await;
+    let mut other = connect(addr, &session_cookie(&member), None).await;
+    // Every socket is registered once it answers a heartbeat.
+    for ws in [&mut first, &mut second, &mut other] {
+        send_json(ws, json!({"op":"h"})).await;
+        recv_until(ws, |f| f["op"] == "h").await;
+    }
+    let res = owner
+        .send(
+            Method::PUT,
+            &format!("/api/servers/{s}/notification-settings"),
+            Some(json!({"level":"mentions"})),
+        )
+        .await;
+    assert_eq!(res.status, StatusCode::OK, "{}", res.body);
+    recv_until(&mut first, |f| f["op"] == "ns").await;
+    recv_until(&mut second, |f| f["op"] == "ns").await;
+    assert!(
+        tokio::time::timeout(Duration::from_millis(200), async {
+            loop {
+                let f = recv_json(&mut other).await;
+                assert_ne!(f["op"], "ns", "settings of another account");
+            }
+        })
+        .await
+        .is_err()
+    );
+}
+
+#[sqlx::test]
+async fn a_read_position_reaches_the_readers_other_sockets_only(pool: PgPool) {
+    let (mut owner, mut member) = two_users(pool.clone()).await;
+    let server = create_server(&mut owner, "Gelesen").await;
+    let s = server["id"].as_str().unwrap().to_owned();
+    let c = server["channels"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .find(|c| c["kind"] == "text")
+        .unwrap()["id"]
+        .as_str()
+        .unwrap()
+        .to_owned();
+    join_member(&mut owner, &mut member, &s).await;
+    let posted = owner
+        .send(
+            Method::POST,
+            &format!("/api/channels/{c}/messages"),
+            Some(json!({"content":"hallo"})),
+        )
+        .await;
+    assert_eq!(posted.status, StatusCode::CREATED, "{}", posted.body);
+    let (addr, _) = common::serve_ws(pool).await;
+    let mut phone = connect(addr, &session_cookie(&member), None).await;
+    let mut other = connect(addr, &session_cookie(&owner), None).await;
+    for ws in [&mut phone, &mut other] {
+        send_json(ws, json!({"op":"h"})).await;
+        recv_until(ws, |f| f["op"] == "h").await;
+    }
+    let path = format!("/api/channels/{c}/read");
+    let mark = json!({"message_id": posted.body["id"]});
+    let res = member.send(Method::PUT, &path, Some(mark.clone())).await;
+    assert_eq!(res.status, StatusCode::OK, "{}", res.body);
+    let frame = recv_until(&mut phone, |f| f["op"] == "rd").await;
+    assert_eq!(frame["d"][0]["channel_id"], c.as_str());
+    assert_eq!(frame["d"][0]["read_message_id"], posted.body["id"]);
+    assert_eq!(frame["d"][0]["unread_count"], 0);
+    // The same mark again moves nothing and says nothing.
+    let res = member.send(Method::PUT, &path, Some(mark.clone())).await;
+    assert_eq!(res.status, StatusCode::OK, "{}", res.body);
+    for ws in [&mut phone, &mut other] {
+        assert!(
+            tokio::time::timeout(Duration::from_millis(200), async {
+                loop {
+                    let f = recv_json(ws).await;
+                    assert_ne!(f["op"], "rd", "an unmoved or foreign read position");
+                }
+            })
+            .await
+            .is_err()
+        );
+    }
+}
+
+/// An edit that keeps `@here` reaches whom it reached before, not whoever
+/// is online at the edit: editing must not ping new people.
+#[sqlx::test]
+async fn an_edit_keeping_here_keeps_whom_it_reached(pool: PgPool) {
+    let (mut owner, mut member) = two_users(pool.clone()).await;
+    let server = create_server(&mut owner, "Here").await;
+    let (server_id, channel_id) = ids(&server);
+    join_member(&mut owner, &mut member, &server_id.to_string()).await;
+    let (addr, _) = common::serve_ws(pool).await;
+    let mut owner_ws = connect(addr, &session_cookie(&owner), None).await;
+    send_json(&mut owner_ws, json!({ "op": "s", "s": server_id })).await;
+    recv_until(&mut owner_ws, |f| f["op"] == "ok").await;
+    let mut member_ws = connect(addr, &session_cookie(&member), None).await;
+    send_json(&mut member_ws, json!({ "op": "s", "s": server_id })).await;
+    recv_until(&mut member_ws, |f| f["op"] == "ok").await;
+    recv_until(&mut owner_ws, |f| {
+        f["op"] == "p" && f["u"] == member.user_id() && f["st"] == "o"
+    })
+    .await;
+
+    let sent = owner
+        .send(
+            Method::POST,
+            &format!("/api/channels/{channel_id}/messages"),
+            Some(json!({ "content": "@here kurz?" })),
+        )
+        .await;
+    assert_eq!(sent.status, StatusCode::CREATED, "{}", sent.body);
+    assert_eq!(sent.body["mentions"], json!([member.user_id()]));
+
+    // The member goes offline; the kept `@here` still names them, and the
+    // edit takes no new presence snapshot.
+    member_ws.close(None).await.ok();
+    recv_until(&mut owner_ws, |f| {
+        f["op"] == "p" && f["u"] == member.user_id() && f["st"] == "x"
+    })
+    .await;
+    let edited = owner
+        .send(
+            Method::PATCH,
+            &format!("/api/messages/{}", sent.body["id"].as_str().unwrap()),
+            Some(json!({ "content": "@here kurz? (Tippfehler)" })),
+        )
+        .await;
+    assert_eq!(edited.status, StatusCode::OK, "{}", edited.body);
+    assert_eq!(edited.body["mentions"], json!([member.user_id()]));
 }

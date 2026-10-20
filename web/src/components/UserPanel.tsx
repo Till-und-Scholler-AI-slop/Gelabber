@@ -5,6 +5,7 @@ import { invokeNative, isDesktopApp } from "../voice/native/bridge.ts";
 import { leaveVoice, stopWatching } from "../voice/session.ts";
 import { usePresenceStore } from "../ws/live.ts";
 import { Avatar } from "./Avatar.tsx";
+import { AvatarFrame } from "./AvatarFrame.tsx";
 import { ChevronIcon, GearIcon } from "./Icons.tsx";
 import { useMenuDetails } from "./menuDetails.ts";
 import { PresenceAvatar } from "./PresenceAvatar.tsx";
@@ -37,20 +38,29 @@ export function UserPanel({ contextId }: { contextId?: string }) {
               url={user.avatar_url}
               status={status}
               size="md"
+              decoration={user.avatar_decoration}
+              accent={user.accent_color}
             />
           ) : (
-            <Avatar name={user.name} url={user.avatar_url} size="md" />
+            <AvatarFrame
+              decoration={user.avatar_decoration}
+              accent={user.accent_color}
+            >
+              <Avatar name={user.name} url={user.avatar_url} size="md" />
+            </AvatarFrame>
           )}
           <span>
             <strong>{user.name}</strong>
             <small>
-              {status === "o"
-                ? "Online"
-                : status === "i"
-                  ? "Abwesend"
-                  : status === "x"
-                    ? "Offline"
-                    : "Dein Profil"}
+              {user.status_text
+                ? user.status_text
+                : status === "o"
+                  ? "Online"
+                  : status === "i"
+                    ? "Abwesend"
+                    : status === "x"
+                      ? "Offline"
+                      : "Dein Profil"}
             </small>
           </span>
         </Link>

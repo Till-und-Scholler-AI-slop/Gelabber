@@ -6,6 +6,8 @@ import {
 } from "@tanstack/react-router";
 
 import { useReadBridge } from "../messages/readState.ts";
+import { useUnreadIndicators } from "../messages/unreadIndicators.ts";
+import { useNotificationSettingsBridge } from "../messages/notificationSettings.ts";
 import { logout, useSession } from "../auth/session.ts";
 import { leaveVoice, stopWatching, useVoice } from "../voice/session.ts";
 import { useCallWakeLock } from "../voice/wakeLock.ts";
@@ -13,12 +15,15 @@ import {
   useAuthenticatedSubscriptions,
   useGatewaySession,
 } from "../ws/useGateway.ts";
-import { useIdlePresence } from "../ws/useLive.ts";
+import { useFocusReport, useIdlePresence } from "../ws/useLive.ts";
+import { usePushSubscription } from "../pwa/push.ts";
 import { useMessageToastsBridge } from "../messages/useMessageToasts.ts";
 import { Avatar } from "./Avatar.tsx";
+import { ConfirmHost } from "./ConfirmHost.tsx";
 import { GearIcon } from "./Icons.tsx";
 import { isChromeLongPress } from "./longPress.ts";
 import { MessageToasts } from "./MessageToasts.tsx";
+import { NotificationSettingsHost } from "./NotificationSettingsDialog.tsx";
 import { Toasts } from "./Toasts.tsx";
 import { VoiceSettingsDialog } from "./VoiceSettingsDialog.tsx";
 import { VoiceSessionControls } from "./VoiceSessionControls.tsx";
@@ -27,6 +32,8 @@ import { SessionRecoveryNotice } from "./SessionRecoveryNotice.tsx";
 function AuthenticatedRealtime() {
   useAuthenticatedSubscriptions();
   useReadBridge();
+  useUnreadIndicators();
+  useNotificationSettingsBridge();
   return null;
 }
 
@@ -43,6 +50,8 @@ export function AppShell() {
   );
   useGatewaySession(user?.id ?? null);
   useIdlePresence(user?.id ?? null);
+  useFocusReport(user?.id ?? null);
+  usePushSubscription(user?.id ?? null);
   useMessageToastsBridge();
   useCallWakeLock(
     useVoice((state) => state.status === "joined" || state.watching),
@@ -127,7 +136,9 @@ export function AppShell() {
       {user ? <AuthenticatedRealtime key={user.id} /> : null}
       <Toasts />
       <MessageToasts />
+      <ConfirmHost />
       {user ? <VoiceSettingsDialog /> : null}
+      {user ? <NotificationSettingsHost key={user.id} /> : null}
       {user ? <VoiceSessionControls /> : null}
     </div>
   );

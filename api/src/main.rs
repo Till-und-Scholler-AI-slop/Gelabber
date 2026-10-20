@@ -7,6 +7,13 @@ use gelabber_api::{AppState, Config, app, telemetry};
 
 #[tokio::main]
 async fn main() -> ExitCode {
+    // `gelabber-api vapid-keys`: a key pair for Web Push (deploy/README.md).
+    if std::env::args().nth(1).as_deref() == Some("vapid-keys") {
+        let (private, public) = gelabber_api::push::webpush::Vapid::generate();
+        println!("VAPID_PRIVATE_KEY={private}");
+        println!("# public key, served at /api/push/key: {public}");
+        return ExitCode::SUCCESS;
+    }
     if let Err(err) = telemetry::init() {
         error!(error = %err, "gelabber-api failed to start");
         return ExitCode::FAILURE;
@@ -26,6 +33,15 @@ async fn run() -> Result<(), Box<dyn std::error::Error>> {
     if let Some(port) = config.minio.as_ref().and_then(|minio| minio.public_port()) {
         tracing::warn!(
             "MINIO_PUBLIC_ENDPOINT uses port {port} instead of 443: attachments load and upload only on networks that allow this port (deploy/README.md, MinIO on 443)"
+        );
+    }
+    if config
+        .minio
+        .as_ref()
+        .is_some_and(|minio| minio.root_credentials)
+    {
+        tracing::warn!(
+            "signed in to MinIO as root (MINIO_ROOT_USER): set MINIO_APP_PASSWORD and update deploy/compose so the API uses its bucket-scoped user (deploy/README.md, MinIO user)"
         );
     }
     let state = AppState::from_config(&config)?;

@@ -9,6 +9,7 @@ import { MicrophoneTest } from "./MicrophoneTest.tsx";
 import { useEffect, useState, type ReactNode } from "react";
 import "./quality.css";
 import { playCallSound } from "./callSounds.ts";
+import { CloseToTray } from "../components/CloseToTray.tsx";
 
 import {
   AUDIO_PROCESSING,
@@ -27,6 +28,7 @@ import {
   type VideoFrameRate,
   formatVideoBitrate,
   listMediaDevices,
+  MAX_PLAYBACK_VOLUME,
   sharesSourceAudio,
   SOURCE_AUDIO_CARRIES_CALL,
   sourceAudioCarriesCall,
@@ -187,18 +189,23 @@ export function MediaSettingsForm({
               id="output-volume"
               label="Gespräche"
               min={0}
-              max={100}
+              max={MAX_PLAYBACK_VOLUME * 100}
               value={Math.round(settings.outputVolume * 100)}
               suffix={`${Math.round(settings.outputVolume * 100)} %`}
               onChange={(value) =>
                 settings.patch({ outputVolume: value / 100 })
+              }
+              hint={
+                desktop
+                  ? "Über 100 % wird der Ton digital verstärkt."
+                  : "Über 100 % wird der Ton digital verstärkt. Nutze dafür Kopfhörer: Über Lautsprecher können die anderen sonst ihr eigenes Echo hören."
               }
             />
             <Slider
               id="source-audio-volume"
               label="Stream-Ton"
               min={0}
-              max={100}
+              max={MAX_PLAYBACK_VOLUME * 100}
               value={Math.round(settings.sourceAudioVolume * 100)}
               suffix={`${Math.round(settings.sourceAudioVolume * 100)} %`}
               onChange={(value) =>
@@ -283,19 +290,21 @@ export function MediaSettingsForm({
                 sie ausschalten.
               </p>
               {settings.processingMode === "browser" && (
+                <Toggle
+                  id="ns"
+                  label={
+                    desktop
+                      ? "Rauschunterdrückung von WebRTC"
+                      : "Rauschunterdrückung des Browsers"
+                  }
+                  checked={settings.noiseSuppression}
+                  onChange={(noiseSuppression) =>
+                    settings.patch({ noiseSuppression })
+                  }
+                />
+              )}
+              {settings.processingMode !== "original" && (
                 <>
-                  <Toggle
-                    id="ns"
-                    label={
-                      desktop
-                        ? "Rauschunterdrückung von WebRTC"
-                        : "Rauschunterdrückung des Browsers"
-                    }
-                    checked={settings.noiseSuppression}
-                    onChange={(noiseSuppression) =>
-                      settings.patch({ noiseSuppression })
-                    }
-                  />
                   <Toggle
                     id="agc"
                     label={
@@ -308,6 +317,10 @@ export function MediaSettingsForm({
                       settings.patch({ autoGainControl })
                     }
                   />
+                  <p className="text-xs text-neutral-500">
+                    Gleicht leise und laute Mikrofone auf einen hörbaren Pegel
+                    an.
+                  </p>
                 </>
               )}
             </fieldset>
@@ -509,8 +522,8 @@ export function MediaSettingsForm({
             id="desktop-notify"
             label={
               desktop
-                ? "Benachrichtigung, wenn Gelabber im Hintergrund ist"
-                : "Browser-Benachrichtigung, wenn der Tab im Hintergrund ist"
+                ? "Benachrichtigung, wenn das Gelabber-Fenster nicht im Vordergrund ist"
+                : "Browser-Benachrichtigung, wenn der Tab nicht im Vordergrund ist"
             }
             checked={settings.desktopNotify}
             onChange={(desktopNotify) => {
@@ -520,6 +533,20 @@ export function MediaSettingsForm({
               }
             }}
           />
+          <Toggle
+            id="message-sound"
+            label="Ton bei Benachrichtigungen am Computer"
+            checked={settings.messageSound}
+            disabled={!settings.desktopNotify}
+            onChange={(messageSound) => settings.patch({ messageSound })}
+          />
+          <p className="text-xs text-neutral-600 dark:text-neutral-400">
+            Höchstens ein Ton für mehrere Nachrichten kurz hintereinander,
+            keiner während du taub geschaltet bist, so laut wie die Töne für
+            Gespräche. Auf dem Handy klingt die Benachrichtigung so, wie das
+            Gerät eingestellt ist.
+          </p>
+          {desktop && <CloseToTray />}
         </fieldset>
       )}
     </div>
@@ -739,18 +766,24 @@ function Toggle({
   label,
   checked,
   onChange,
+  disabled,
 }: {
   id: string;
   label: string;
   checked: boolean;
   onChange: (value: boolean) => void;
+  disabled?: boolean;
 }) {
   return (
-    <label htmlFor={id} className="flex items-center gap-2 text-sm">
+    <label
+      htmlFor={id}
+      className={`flex items-center gap-2 text-sm ${disabled ? "opacity-60" : ""}`}
+    >
       <input
         id={id}
         type="checkbox"
         checked={checked}
+        disabled={disabled}
         onChange={(event) => onChange(event.target.checked)}
       />
       {label}

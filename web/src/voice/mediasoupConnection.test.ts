@@ -8,8 +8,12 @@ import type {
   RtpParameters,
   TransportOptions,
 } from "mediasoup-client/types";
+import { setNativeBridgeForTests } from "./native/bridge.ts";
 import {
   MediasoupConnection,
+  preloadMediaSdk,
+  setBrowserSdkImportForTests,
+  type MediaConnectionOptions,
   type MediaPublication,
   type ReceivedSource,
   type RtpSenderParameters,
@@ -226,7 +230,11 @@ class PublicDevice {
   }
 }
 type Rpc = { method: MediaMethod; data: unknown; deadlineEpochMs?: number };
-function fixture(role: "voice" | "watch" = "voice", sdkTimeoutMs?: number) {
+function fixture(
+  role: "voice" | "watch" = "voice",
+  sdkTimeoutMs?: number,
+  extra: Partial<MediaConnectionOptions> = {},
+) {
   const trace: string[] = [],
     requests: Rpc[] = [],
     attached: ReceivedSource[] = [];
@@ -278,6 +286,7 @@ function fixture(role: "voice" | "watch" = "voice", sdkTimeoutMs?: number) {
     onConsumerClosed,
     onError,
     onTransportState,
+    ...extra,
   });
   active.add(connection);
   return {
@@ -1810,5 +1819,92 @@ describe("public mediasoup connection lifecycle", () => {
     );
     expect(f.device.load).not.toHaveBeenCalled();
     expect(f.device.transports).toEqual([]);
+  });
+});
+
+describe("the browser SDK's chunk", () => {
+  type Sdk = typeof import("mediasoup-client");
+  /** The SDK as its chunk would export it, with the fixture's device. */
+  const sdkWith = (device: unknown) =>
+    ({ Device: { factory: async () => device } }) as unknown as Sdk;
+  /** A connection on the browser SDK, not on an injected device. */
+  const browser = (extra: Partial<MediaConnectionOptions> = {}) => {
+    const f = fixture("voice", extra.sdkTimeoutMs, {
+      deviceFactory: undefined,
+      ...extra,
+    });
+    return { ...f, sdk: sdkWith(f.device) };
+  };
+  afterEach(() => {
+    setBrowserSdkImportForTests(undefined);
+    setNativeBridgeForTests(undefined);
+  });
+
+  it("waits for a slow download outside the SDK operations' budget", async () => {
+    const f = browser({ sdkTimeoutMs: 20 });
+    const chunk = deferred<Sdk>();
+    setBrowserSdkImportForTests(() => chunk.promise);
+    const started = f.start();
+    // Longer than the SDK budget; the chunk then arrives.
+    await new Promise((resolve) => setTimeout(resolve, 60));
+    chunk.resolve(f.sdk);
+    await expect(started).resolves.toBeUndefined();
+    expect(f.device.load).toHaveBeenCalledOnce();
+  });
+
+  it("gives up after its own budget; the download carries on for the next call", async () => {
+    const chunk = deferred<Sdk>();
+    const load = vi.fn(() => chunk.promise);
+    setBrowserSdkImportForTests(load);
+    const slow = browser({ sdkLoadTimeoutMs: 10 });
+    await expect(slow.start()).rejects.toMatchObject({
+      code: "sdk_load_timeout",
+    });
+    const next = browser();
+    chunk.resolve(next.sdk);
+    await expect(next.start()).resolves.toBeUndefined();
+    expect(load).toHaveBeenCalledOnce();
+  });
+
+  it("forgets a failed import, so the next call loads it again", async () => {
+    const first = browser();
+    const missing = new TypeError(
+      "Failed to fetch dynamically imported module",
+    );
+    const load = vi
+      .fn<() => Promise<Sdk>>()
+      .mockRejectedValueOnce(missing)
+      .mockResolvedValue(first.sdk);
+    setBrowserSdkImportForTests(load);
+    await expect(first.start()).rejects.toMatchObject({
+      code: "sdk_load_failed",
+      cause: missing,
+    });
+    await expect(browser().start()).resolves.toBeUndefined();
+    expect(load).toHaveBeenCalledTimes(2);
+  });
+
+  it("stops waiting when the connection closes", async () => {
+    const f = browser();
+    setBrowserSdkImportForTests(() => new Promise<Sdk>(() => {}));
+    const started = f.start();
+    await tick();
+    f.connection.close();
+    await expect(started).rejects.toMatchObject({ code: "connection_closed" });
+  });
+
+  it("is preloaded in a browser and never in the desktop app", () => {
+    const load = vi.fn(() => new Promise<Sdk>(() => {}));
+    setBrowserSdkImportForTests(load);
+    setNativeBridgeForTests({
+      invoke: () => Promise.reject(new Error("unused")),
+      channel: () => Promise.reject(new Error("unused")),
+    });
+    preloadMediaSdk();
+    expect(load).not.toHaveBeenCalled();
+    setNativeBridgeForTests(null);
+    preloadMediaSdk();
+    preloadMediaSdk();
+    expect(load).toHaveBeenCalledOnce();
   });
 });

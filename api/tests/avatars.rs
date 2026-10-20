@@ -10,8 +10,10 @@ use sqlx::PgPool;
 use common::Client;
 use gelabber_api::AppState;
 
-const PNG: &[u8] = b"\x89PNG\r\n\x1a\nnot really pixels";
-const WEBP: &[u8] = b"RIFF\x10\0\0\0WEBPVP8 pixels";
+/// A 64×64 PNG header (signature + IHDR): enough for the API's size check.
+const PNG: &[u8] = b"\x89PNG\r\n\x1a\n\0\0\0\x0dIHDR\0\0\0\x40\0\0\0\x40\x08\x06\0\0\0\0\0\0\0";
+/// A 64×64 lossy WebP header (`VP8 ` key frame).
+const WEBP: &[u8] = b"RIFF\x16\0\0\0WEBPVP8 \x0a\0\0\0\x10\x02\x00\x9d\x01\x2a\x40\x00\x40\x00";
 
 async fn signed_in(state: &AppState, email: &str) -> Client {
     let mut client = Client::from_state(state.clone());
@@ -207,6 +209,7 @@ async fn overlapping_writes_delete_what_they_really_replaced(pool: PgPool) {
     let patch = gelabber_api::auth::user::ProfilePatch {
         name: None,
         avatar_url: Some(None),
+        ..Default::default()
     };
     let updated = gelabber_api::avatars::save_profile(&state, id, &patch, None)
         .await
@@ -268,6 +271,7 @@ async fn abandoned_upload_is_removed_by_the_cleanup_worker(pool: PgPool) {
     let patch = gelabber_api::auth::user::ProfilePatch {
         name: None,
         avatar_url: Some(Some(url)),
+        ..Default::default()
     };
     assert!(
         gelabber_api::avatars::save_profile(&state, id, &patch, Some(&key))
@@ -332,6 +336,7 @@ async fn concurrent_write_reads_its_predecessor_under_the_row_lock(pool: PgPool)
         let patch = gelabber_api::auth::user::ProfilePatch {
             name: None,
             avatar_url: Some(None),
+            ..Default::default()
         };
         gelabber_api::avatars::save_profile(&writer, id, &patch, None).await
     });
@@ -339,6 +344,52 @@ async fn concurrent_write_reads_its_predecessor_under_the_row_lock(pool: PgPool)
     other.commit().await.unwrap();
     let updated = clearing.await.unwrap().unwrap().unwrap();
     assert_eq!(updated.avatar_url, None);
+
+    let (status, _, _) = ada.send_raw(Method::GET, &b, None).await;
+    assert_eq!(status, StatusCode::NOT_FOUND, "B was really replaced");
+    let (status, _, _) = ada.send_raw(Method::GET, &a, None).await;
+    assert_eq!(status, StatusCode::OK, "A was not this write's predecessor");
+    assert!(cleanup_rows(&pool).await.is_empty());
+}
+
+/// The banner analogue: an upload holding the row lock commits banner B
+/// while our clear waits; the clear must delete B, not the earlier A.
+#[sqlx::test(migrations = "./migrations")]
+async fn concurrent_banner_write_reads_its_predecessor_under_the_row_lock(pool: PgPool) {
+    let state = common::state(pool.clone());
+    let mut ada = signed_in(&state, "ada@example.com").await;
+    let id = uuid::Uuid::parse_str(ada.user_id()).unwrap();
+    let (_, first) = ada
+        .send_bytes(Method::PUT, "/api/me/banner", "image/png", PNG.to_vec())
+        .await;
+    let a = first["banner_url"].as_str().unwrap().to_owned();
+    let file = uuid::Uuid::new_v4();
+    let b = format!("/api/banners/{id}/{file}");
+    state
+        .store
+        .put(&format!("banners/{id}/{file}"), "image/webp", WEBP.to_vec())
+        .await
+        .unwrap();
+
+    let mut other = pool.begin().await.unwrap();
+    sqlx::query("UPDATE users SET banner_url=$2 WHERE id=$1")
+        .bind(id)
+        .bind(&b)
+        .execute(&mut *other)
+        .await
+        .unwrap();
+    let writer = state.clone();
+    let clearing = tokio::spawn(async move {
+        let patch = gelabber_api::auth::user::ProfilePatch {
+            banner_url: Some(None),
+            ..Default::default()
+        };
+        gelabber_api::avatars::save_profile(&writer, id, &patch, None).await
+    });
+    until_a_session_waits_for_a_lock(&pool).await;
+    other.commit().await.unwrap();
+    let updated = clearing.await.unwrap().unwrap().unwrap();
+    assert_eq!(updated.card.banner_url, None);
 
     let (status, _, _) = ada.send_raw(Method::GET, &b, None).await;
     assert_eq!(status, StatusCode::NOT_FOUND, "B was really replaced");
@@ -365,6 +416,7 @@ async fn profile_write_does_not_wait_for_foreign_key_share_locks(pool: PgPool) {
     let patch = gelabber_api::auth::user::ProfilePatch {
         name: Some("Ada L".into()),
         avatar_url: None,
+        ..Default::default()
     };
     let updated = tokio::time::timeout(
         std::time::Duration::from_secs(5),
@@ -415,6 +467,7 @@ async fn late_save_is_refused_once_the_worker_claimed_the_upload(pool: PgPool) {
     let patch = gelabber_api::auth::user::ProfilePatch {
         name: None,
         avatar_url: Some(Some(url)),
+        ..Default::default()
     };
     assert!(
         gelabber_api::avatars::save_profile(&state, id, &patch, Some(&key))
@@ -465,6 +518,7 @@ async fn failed_put_keeps_its_pending_cleanup(pool: PgPool) {
             access_key: "test".into(),
             secret_key: "test".into(),
             bucket: "test".into(),
+            root_credentials: true,
         }))
         .unwrap();
     // Same session cookies, now against the failing store.
@@ -504,6 +558,7 @@ async fn real_minio_avatar_upload_fetch_and_replace(pool: PgPool) {
         access_key: std::env::var("MINIO_ROOT_USER").expect("local test username"),
         secret_key: std::env::var("MINIO_ROOT_PASSWORD").expect("local test password"),
         bucket: format!("gb-test-{}", uuid::Uuid::new_v4().simple()),
+        root_credentials: true,
     };
     let mut state = common::state(pool);
     state.store = gelabber_api::storage::ObjectStore::from_minio(Some(&config)).unwrap();

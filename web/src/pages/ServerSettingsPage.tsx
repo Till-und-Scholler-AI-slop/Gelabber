@@ -12,6 +12,7 @@ import { fieldMessage } from "../auth/rules.ts";
 import { useFormErrors } from "../auth/useFormErrors.ts";
 import { PresenceAvatar } from "../components/PresenceAvatar.tsx";
 import { Field } from "../components/Field.tsx";
+import { confirmAction } from "../components/confirm.ts";
 import { LoadError } from "../components/LoadError.tsx";
 import { FormError } from "../components/FormError.tsx";
 import { GhostButton } from "../components/Modal.tsx";
@@ -179,7 +180,7 @@ function PermissionsSection({ server }: { server: ServerDetail }) {
                   type="checkbox"
                   checked={checked}
                   onChange={() => toggle(permission.id)}
-                  className="mt-1 size-4 accent-neutral-900 dark:accent-neutral-100"
+                  className="mt-1 size-4 shrink-0 accent-neutral-900 dark:accent-neutral-100"
                 />
                 <span className="flex flex-col">
                   <span className="text-sm font-medium text-neutral-900 dark:text-neutral-100">
@@ -308,16 +309,18 @@ function MembersSection({ server }: { server: ServerDetail }) {
     <Section title={`Mitglieder (${server.members.length})`}>
       <ul className="divide-y divide-neutral-200 dark:divide-neutral-700 rounded-xl border border-neutral-200 dark:border-neutral-700 bg-white dark:bg-neutral-900">
         {server.members.map((member) => (
+          // On a phone the 44 px Kick/Ban buttons leave the name no room:
+          // below a name of 6rem they move to a line of their own.
           <li
             key={member.user_id}
-            className="flex items-center gap-3 px-4 py-2.5"
+            className="flex flex-wrap items-center gap-x-3 gap-y-2 px-4 py-2.5"
           >
             <PresenceAvatar
               name={member.name}
               url={member.avatar_url}
               status={presenceOf(byServer, server.id, member.user_id)}
             />
-            <span className="min-w-0 flex-1 truncate text-sm font-medium">
+            <span className="min-w-0 flex-1 basis-24 truncate text-sm font-medium">
               {member.name}
             </span>
             <span
@@ -330,7 +333,11 @@ function MembersSection({ server }: { server: ServerDetail }) {
             >
               {member.role === "owner" ? "Owner" : "Mitglied"}
             </span>
-            <MemberActions server={server} member={member} />
+            <MemberActions
+              server={server}
+              member={member}
+              className="ml-auto"
+            />
           </li>
         ))}
       </ul>
@@ -380,8 +387,15 @@ function BansSection({ server }: { server: ServerDetail }) {
               </span>
               <GhostButton
                 tone="danger"
-                onClick={() => {
-                  if (window.confirm(`${ban.name} wieder zulassen?`))
+                onClick={async () => {
+                  if (
+                    await confirmAction({
+                      title: `${ban.name} wieder zulassen?`,
+                      message: "Mit einem Einladungslink geht es dann wieder.",
+                      confirmLabel: "Entsperren",
+                      tone: "neutral",
+                    })
+                  )
                     unban.mutate(ban.user_id);
                 }}
               >
@@ -422,13 +436,26 @@ function DangerSection({ server }: { server: ServerDetail }) {
       <div>
         <button
           type="button"
-          onClick={() => {
+          onClick={async () => {
             if (owner) {
-              if (!window.confirm(`Server „${server.name}“ endgültig löschen?`))
+              if (
+                !(await confirmAction({
+                  title: `Server „${server.name}“ endgültig löschen?`,
+                  message:
+                    "Kanäle, Nachrichten, Einladungen und Mitgliedschaften sind danach weg.",
+                  confirmLabel: "Server löschen",
+                }))
+              )
                 return;
               remove.mutate(server.id);
             } else {
-              if (!window.confirm(`Server „${server.name}“ verlassen?`)) return;
+              if (
+                !(await confirmAction({
+                  title: `Server „${server.name}“ verlassen?`,
+                  confirmLabel: "Verlassen",
+                }))
+              )
+                return;
               leave.mutate(server.id);
             }
             // Optimistic: the server is already gone from the rail.

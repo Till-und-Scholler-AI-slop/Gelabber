@@ -15,8 +15,12 @@ import { DmSidebar } from "../components/DmSidebar.tsx";
 import { ChevronIcon } from "../components/Icons.tsx";
 import { RequireUser } from "../components/RequireUser.tsx";
 import { ServerRail } from "../components/ServerRail.tsx";
+import { SidebarPlaceholder } from "../components/SidebarPlaceholder.tsx";
 import { UserPanel } from "../components/UserPanel.tsx";
-import { WorkspaceDrawer } from "../components/WorkspaceNavigation.tsx";
+import {
+  NAVIGATION_DRAWER_MAX_WIDTH,
+  WorkspaceDrawer,
+} from "../components/WorkspaceNavigation.tsx";
 import { notify } from "../components/toasts.ts";
 import { useDms } from "../dms/queries.ts";
 import { useReadState, useReadingChannel } from "../messages/readState.ts";
@@ -84,7 +88,7 @@ function WorkspaceFrame({
         open={navigationOpen}
         onClose={() => setNavigationOpen(false)}
         title="Navigation"
-        breakpoint={800}
+        breakpoint={NAVIGATION_DRAWER_MAX_WIDTH}
         className="workspace-navigation"
         closeOnNavigate
       >
@@ -136,7 +140,7 @@ function SelectedServer({
   const client = useQueryClient();
   const navigate = useNavigate();
   const userId = useUserId();
-  const { data: server, error } = useServer(serverId);
+  const { data: server, error, isFetching, refetch } = useServer(serverId);
   const gone =
     error instanceof ApiError &&
     (error.code === "not_found" || error.code === "forbidden");
@@ -158,7 +162,17 @@ function SelectedServer({
         server ? (
           <ChannelSidebar server={server} activeChannelId={channelId} />
         ) : (
-          <SidebarSkeleton />
+          <SidebarPlaceholder
+            failure={
+              error
+                ? {
+                    message: "Die Kanäle konnten gerade nicht geladen werden.",
+                    pending: isFetching,
+                    onRetry: () => void refetch(),
+                  }
+                : undefined
+            }
+          />
         )
       }
     />
@@ -166,7 +180,7 @@ function SelectedServer({
 }
 
 function SelectedDms({ channelId }: { channelId: string | undefined }) {
-  const { data: dms } = useDms();
+  const { data: dms, error, isFetching, refetch } = useDms();
   return (
     <WorkspaceFrame
       dmActive
@@ -174,23 +188,20 @@ function SelectedDms({ channelId }: { channelId: string | undefined }) {
         dms ? (
           <DmSidebar dms={dms} activeChannelId={channelId} />
         ) : (
-          <SidebarSkeleton />
+          <SidebarPlaceholder
+            failure={
+              error
+                ? {
+                    message:
+                      "Deine Unterhaltungen konnten gerade nicht geladen werden.",
+                    pending: isFetching,
+                    onRetry: () => void refetch(),
+                  }
+                : undefined
+            }
+          />
         )
       }
     />
-  );
-}
-
-function SidebarSkeleton() {
-  return (
-    <aside className="channel-sidebar" aria-label="Navigation wird geladen">
-      <div className="sidebar-brand">Gelabber</div>
-      <div className="sidebar-skeleton" aria-hidden>
-        {[0, 1, 2, 3].map((index) => (
-          <div key={index} className="animate-pulse" />
-        ))}
-      </div>
-      <UserPanel />
-    </aside>
   );
 }

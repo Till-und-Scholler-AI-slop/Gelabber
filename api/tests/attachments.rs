@@ -94,6 +94,9 @@ async fn presign_ok(
     res.body
 }
 
+/// Smallest bytes that pass the content check for `image/png`.
+const PNG: &[u8] = b"\x89PNG\r\n\x1a\n\0\0\0\rIHDR";
+
 async fn put_object(client: &Client, attachment_id: &str, content_type: &str, bytes: &[u8]) {
     let key = format!("att/{attachment_id}");
     client
@@ -223,7 +226,7 @@ async fn message_carries_attachment_after_upload(pool: PgPool) {
     let (mut owner, _) = two_users(pool).await;
     let server = create_server(&mut owner, "Team").await;
     let channel_id = text_channel_id(&server);
-    let png = [0x89, b'P', b'N', b'G'];
+    let png = PNG;
 
     let signed = presign_ok(
         &mut owner,
@@ -253,7 +256,7 @@ async fn message_carries_attachment_after_upload(pool: PgPool) {
     assert_eq!(missing.status, StatusCode::UNPROCESSABLE_ENTITY);
     assert_eq!(missing.body["fields"]["attachment_ids"], "invalid");
 
-    put_object(&owner, &attachment_id, "image/png", &png).await;
+    put_object(&owner, &attachment_id, "image/png", png).await;
 
     let posted = owner
         .send(
@@ -315,10 +318,17 @@ async fn attachment_only_message_and_file_only_edit(pool: PgPool) {
     let (mut owner, _) = two_users(pool).await;
     let server = create_server(&mut owner, "Team").await;
     let channel_id = text_channel_id(&server);
-    let png = [1, 2, 3, 4];
-    let signed = presign_ok(&mut owner, &channel_id, "a.png", "image/png", 4).await;
+    let png = PNG;
+    let signed = presign_ok(
+        &mut owner,
+        &channel_id,
+        "a.png",
+        "image/png",
+        PNG.len() as i64,
+    )
+    .await;
     let attachment_id = signed["id"].as_str().unwrap();
-    put_object(&owner, attachment_id, "image/png", &png).await;
+    put_object(&owner, attachment_id, "image/png", png).await;
 
     let posted = owner
         .send(
@@ -352,8 +362,8 @@ async fn jpeg_png_and_webp_bind_for_the_other_member(pool: PgPool) {
     let channel_id = text_channel_id(&server);
     let images: &[(&str, &str, &[u8])] = &[
         ("cat.jpg", "image/jpeg", &[0xff, 0xd8, 0xff, 0xd9]),
-        ("cat.png", "image/png", &[0x89, b'P', b'N', b'G']),
-        ("cat.webp", "image/webp", b"RIFFWEBP"),
+        ("cat.png", "image/png", PNG),
+        ("cat.webp", "image/webp", b"RIFF\x04\0\0\0WEBP"),
     ];
     for (filename, content_type, bytes) in images {
         let signed = presign_ok(
@@ -481,10 +491,17 @@ async fn member_can_download_after_message_is_posted(pool: PgPool) {
     let (mut owner, mut member) = two_users(pool).await;
     let server = server_with_member(&mut owner, &mut member).await;
     let channel_id = text_channel_id(&server);
-    let png = [0x89, 1, 2, 3];
-    let signed = presign_ok(&mut owner, &channel_id, "pic.png", "image/png", 4).await;
+    let png = PNG;
+    let signed = presign_ok(
+        &mut owner,
+        &channel_id,
+        "pic.png",
+        "image/png",
+        PNG.len() as i64,
+    )
+    .await;
     let attachment_id = signed["id"].as_str().unwrap();
-    put_object(&owner, attachment_id, "image/png", &png).await;
+    put_object(&owner, attachment_id, "image/png", png).await;
     let posted = owner
         .send(
             Method::POST,
@@ -517,11 +534,11 @@ async fn download_variant_asks_to_save_the_file(pool: PgPool) {
     let (mut owner, mut member) = two_users(pool).await;
     let server = server_with_member(&mut owner, &mut member).await;
     let channel_id = text_channel_id(&server);
-    let png = [0x89, 1, 2, 3];
+    let png = PNG;
     let name = "Bär \"1\".png";
-    let signed = presign_ok(&mut owner, &channel_id, name, "image/png", 4).await;
+    let signed = presign_ok(&mut owner, &channel_id, name, "image/png", PNG.len() as i64).await;
     let attachment_id = signed["id"].as_str().unwrap();
-    put_object(&owner, attachment_id, "image/png", &png).await;
+    put_object(&owner, attachment_id, "image/png", png).await;
     let posted = owner
         .send(
             Method::POST,
@@ -560,4 +577,243 @@ async fn download_variant_asks_to_save_the_file(pool: PgPool) {
     );
     assert_eq!(headers["content-type"], "image/png");
     assert_eq!(bytes, png);
+}
+
+async fn upload(
+    client: &mut Client,
+    channel_id: &str,
+    filename: &str,
+    content_type: &str,
+    bytes: &[u8],
+) -> String {
+    let signed = presign_ok(
+        client,
+        channel_id,
+        filename,
+        content_type,
+        bytes.len() as i64,
+    )
+    .await;
+    let id = signed["id"].as_str().unwrap().to_owned();
+    put_object(client, &id, content_type, bytes).await;
+    id
+}
+
+async fn post_files(client: &mut Client, channel_id: &str, ids: &[String]) -> (StatusCode, Value) {
+    let res = client
+        .send(
+            Method::POST,
+            &format!("/api/channels/{channel_id}/messages"),
+            Some(json!({ "content": "", "attachment_ids": ids })),
+        )
+        .await;
+    (res.status, res.body)
+}
+
+/// Issue #255: several files in one message, in the order they were sent.
+#[sqlx::test]
+async fn three_images_and_a_pdf_in_one_message(pool: PgPool) {
+    let (mut owner, mut member) = two_users(pool).await;
+    let server = server_with_member(&mut owner, &mut member).await;
+    let channel_id = text_channel_id(&server);
+    let mut ids = Vec::new();
+    for name in ["a.png", "b.png", "c.png"] {
+        ids.push(upload(&mut owner, &channel_id, name, "image/png", PNG).await);
+    }
+    ids.push(
+        upload(
+            &mut owner,
+            &channel_id,
+            "doc.pdf",
+            "application/pdf",
+            b"%PDF-1.7\n",
+        )
+        .await,
+    );
+    let (status, body) = post_files(&mut owner, &channel_id, &ids).await;
+    assert_eq!(status, StatusCode::CREATED, "{body}");
+    let names: Vec<&str> = body["attachments"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .map(|a| a["filename"].as_str().unwrap())
+        .collect();
+    assert_eq!(names, ["a.png", "b.png", "c.png", "doc.pdf"]);
+
+    // A PDF is only ever a download, also from the display link.
+    let (status, headers, _) = member
+        .send_raw(Method::GET, &format!("/api/attachments/{}", ids[3]), None)
+        .await;
+    assert_eq!(status, StatusCode::OK);
+    assert_eq!(headers["content-type"], "application/pdf");
+    assert_eq!(
+        headers["content-disposition"],
+        "attachment; filename=\"doc.pdf\""
+    );
+    assert_eq!(headers["x-content-type-options"], "nosniff");
+}
+
+#[sqlx::test]
+async fn eleventh_file_and_oversized_message_are_rejected(pool: PgPool) {
+    let (mut owner, _) = two_users(pool).await;
+    let server = create_server(&mut owner, "Team").await;
+    let channel_id = text_channel_id(&server);
+    let eleven: Vec<String> = (0..11).map(|_| uuid::Uuid::new_v4().to_string()).collect();
+    let (status, body) = post_files(&mut owner, &channel_id, &eleven).await;
+    assert_eq!(status, StatusCode::UNPROCESSABLE_ENTITY, "{body}");
+    assert_eq!(body["fields"]["attachment_ids"], "too_long");
+
+    // Five files of 21 MiB: each is allowed, together over 100 MiB.
+    let mut big = PNG.to_vec();
+    big.resize(21 * 1024 * 1024, 0);
+    let mut ids = Vec::new();
+    for i in 0..5 {
+        ids.push(
+            upload(
+                &mut owner,
+                &channel_id,
+                &format!("{i}.png"),
+                "image/png",
+                &big,
+            )
+            .await,
+        );
+    }
+    let (status, body) = post_files(&mut owner, &channel_id, &ids).await;
+    assert_eq!(status, StatusCode::UNPROCESSABLE_ENTITY, "{body}");
+    assert_eq!(body["fields"]["attachment_ids"], "too_large");
+    let (status, body) = post_files(&mut owner, &channel_id, &ids[..4]).await;
+    assert_eq!(status, StatusCode::CREATED, "{body}");
+}
+
+#[sqlx::test]
+async fn declared_type_must_match_the_bytes(pool: PgPool) {
+    let (mut owner, _) = two_users(pool).await;
+    let server = create_server(&mut owner, "Team").await;
+    let channel_id = text_channel_id(&server);
+    let good = upload(&mut owner, &channel_id, "ok.png", "image/png", PNG).await;
+    let bad = upload(
+        &mut owner,
+        &channel_id,
+        "cat.png",
+        "image/png",
+        b"MZ\x90\0not a png",
+    )
+    .await;
+    let (status, body) = post_files(&mut owner, &channel_id, &[good, bad]).await;
+    assert_eq!(status, StatusCode::UNPROCESSABLE_ENTITY, "{body}");
+    // The field names the position of the rejected file.
+    assert_eq!(body["fields"]["attachment_ids.1"], "mismatch", "{body}");
+    let page = owner
+        .send(
+            Method::GET,
+            &format!("/api/channels/{channel_id}/messages"),
+            None,
+        )
+        .await;
+    assert!(page.body["messages"].as_array().unwrap().is_empty());
+}
+
+#[sqlx::test]
+async fn renamed_html_is_served_as_plain_text_download(pool: PgPool) {
+    let (mut owner, mut member) = two_users(pool).await;
+    let server = server_with_member(&mut owner, &mut member).await;
+    let channel_id = text_channel_id(&server);
+    let html = b"<!doctype html><script>alert(1)</script>";
+    let id = upload(&mut owner, &channel_id, "notes.txt", "text/plain", html).await;
+    let (status, body) = post_files(&mut owner, &channel_id, std::slice::from_ref(&id)).await;
+    assert_eq!(status, StatusCode::CREATED, "{body}");
+    let (status, headers, bytes) = member
+        .send_raw(Method::GET, &format!("/api/attachments/{id}"), None)
+        .await;
+    assert_eq!(status, StatusCode::OK);
+    assert_eq!(headers["content-type"], "text/plain");
+    assert_eq!(
+        headers["content-disposition"],
+        "attachment; filename=\"notes.txt\""
+    );
+    assert_eq!(headers["x-content-type-options"], "nosniff");
+    assert_eq!(bytes, html);
+
+    // text/html itself never gets a presign.
+    let res = owner
+        .send(
+            Method::POST,
+            &format!("/api/channels/{channel_id}/attachments"),
+            Some(json!({ "filename": "x.html", "content_type": "text/html", "size": 4 })),
+        )
+        .await;
+    assert_eq!(res.status, StatusCode::UNPROCESSABLE_ENTITY);
+}
+
+#[sqlx::test]
+async fn video_and_audio_play_inline(pool: PgPool) {
+    let (mut owner, mut member) = two_users(pool).await;
+    let server = server_with_member(&mut owner, &mut member).await;
+    let channel_id = text_channel_id(&server);
+    let webm = [0x1A, 0x45, 0xDF, 0xA3, 0x9F, 0x42, 0x86, 0x81];
+    let ogg = b"OggS\0\x02\0\0";
+    let video = upload(&mut owner, &channel_id, "clip.webm", "video/webm", &webm).await;
+    let audio = upload(&mut owner, &channel_id, "voice.ogg", "audio/ogg", ogg).await;
+    let (status, body) = post_files(&mut owner, &channel_id, &[video.clone(), audio.clone()]).await;
+    assert_eq!(status, StatusCode::CREATED, "{body}");
+    for (id, kind, name) in [
+        (&video, "video/webm", "clip.webm"),
+        (&audio, "audio/ogg", "voice.ogg"),
+    ] {
+        let (status, headers, _) = member
+            .send_raw(Method::GET, &format!("/api/attachments/{id}"), None)
+            .await;
+        assert_eq!(status, StatusCode::OK);
+        assert_eq!(headers["content-type"], kind);
+        assert_eq!(
+            headers["content-disposition"],
+            format!("inline; filename=\"{name}\"")
+        );
+    }
+}
+
+/// Review of #255: Excel CSVs on German systems are Windows-1252, its
+/// "Unicode text" is UTF-16; both are text.
+#[sqlx::test]
+async fn text_in_other_encodings_is_accepted(pool: PgPool) {
+    let (mut owner, _) = two_users(pool).await;
+    let server = create_server(&mut owner, "Team").await;
+    let channel_id = text_channel_id(&server);
+    let latin = upload(
+        &mut owner,
+        &channel_id,
+        "preise.csv",
+        "text/csv",
+        b"Gr\xF6\xDFe;Preis\n",
+    )
+    .await;
+    let utf16 = upload(
+        &mut owner,
+        &channel_id,
+        "liste.txt",
+        "text/plain",
+        b"\xFF\xFEa\0;\0b\0",
+    )
+    .await;
+    let (status, body) = post_files(&mut owner, &channel_id, &[latin, utf16]).await;
+    assert_eq!(status, StatusCode::CREATED, "{body}");
+}
+
+/// Review of #255: up to ten files go up one after another; the first must
+/// still bind after a slow set, not only within its own upload link.
+#[sqlx::test]
+async fn pending_upload_outlives_its_upload_link(pool: PgPool) {
+    let (mut owner, _) = two_users(pool.clone()).await;
+    let server = create_server(&mut owner, "Team").await;
+    let channel_id = text_channel_id(&server);
+    let id = upload(&mut owner, &channel_id, "a.png", "image/png", PNG).await;
+    let left: f64 = sqlx::query_scalar(
+        "SELECT extract(epoch FROM expires_at - now())::float8 FROM attachments WHERE id = $1",
+    )
+    .bind(uuid::Uuid::parse_str(&id).unwrap())
+    .fetch_one(&pool)
+    .await
+    .unwrap();
+    assert!(left > 3000.0 && left <= 3600.0, "{left}");
 }

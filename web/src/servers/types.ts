@@ -1,5 +1,7 @@
 // Wire shapes of `/api/servers/*` (see `api/src/servers`).
 
+import type { ProfileCard } from "../auth/types.ts";
+
 export type Permission =
   | "manage_server"
   | "manage_channels"
@@ -7,7 +9,8 @@ export type Permission =
   | "send_messages"
   | "send_files"
   | "join_voice"
-  | "go_live";
+  | "go_live"
+  | "mention_everyone";
 
 export type Role = "owner" | "member";
 
@@ -42,7 +45,10 @@ export type Channel = {
   created_at: string;
 };
 
-export type Member = {
+export type Member = Pick<
+  ProfileCard,
+  "status_text" | "accent_color" | "avatar_decoration"
+> & {
   user_id: string;
   name: string;
   avatar_url: string | null;

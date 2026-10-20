@@ -4,8 +4,9 @@
 import { create } from "zustand";
 
 import type { ScopeStamp } from "../auth/scope.ts";
+import type { GifPick } from "../gifs/api.ts";
 
-import { asAttachmentList, type Message } from "./types.ts";
+import { asAttachmentList, type Message, type Reply } from "./types.ts";
 
 /** Stable empty list so a Zustand selector does not return a new `[]` every
  *  time a channel has no in-flight send (that looped MessagePane on mount). */
@@ -17,11 +18,15 @@ export type SendAttempt = {
   channelId: string;
   stamp: ScopeStamp;
   content: string;
-  file?: File;
+  files: File[];
+  gif?: GifPick;
+  /** The answered message, kept for a retry. */
+  reply?: Reply;
   status: "sending" | "failed" | "uncertain";
   stage: SendStage;
   error?: string;
-  uploadedId?: string;
+  /** Ids of the files already uploaded, in order: a retry goes on after them. */
+  uploadedIds: string[];
   controller: AbortController;
 };
 
@@ -45,6 +50,12 @@ type PendingState = {
   confirm: (channelId: string, tmpId: string, message: Message) => void;
   remove: (channelId: string, id: string) => void;
   clear: (channelId: string) => void;
+  upload: (
+    channelId: string,
+    id: string,
+    index: number,
+    state: "waiting" | "uploading" | "done",
+  ) => void;
 };
 
 export const usePendingMessages = create<PendingState>((set) => ({
@@ -96,6 +107,26 @@ export const usePendingMessages = create<PendingState>((set) => ({
       },
     }));
   },
+  upload: (channelId, id, index, upload) =>
+    set((state) => {
+      const rows = state.byChannel[channelId];
+      if (!rows?.some((row) => row.id === id)) return state;
+      return {
+        byChannel: {
+          ...state.byChannel,
+          [channelId]: rows.map((row) =>
+            row.id === id
+              ? {
+                  ...row,
+                  attachments: row.attachments.map((attachment, i) =>
+                    i === index ? { ...attachment, upload } : attachment,
+                  ),
+                }
+              : row,
+          ),
+        },
+      };
+    }),
   clear: (channelId) =>
     set((state) => {
       if (!(channelId in state.byChannel)) return state;
@@ -120,6 +151,16 @@ export function displayPending(channelId: string): () => void {
     for (const row of usePendingMessages.getState().byChannel[channelId] ?? [])
       if (!row.id.startsWith("tmp:")) removePending(channelId, row.id);
   };
+}
+
+/** Per-file progress of an optimistic row. */
+export function markUpload(
+  channelId: string,
+  id: string,
+  index: number,
+  state: "waiting" | "uploading" | "done",
+): void {
+  usePendingMessages.getState().upload(channelId, id, index, state);
 }
 
 export function addPending(channelId: string, message: Message): void {

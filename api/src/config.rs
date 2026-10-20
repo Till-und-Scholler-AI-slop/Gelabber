@@ -30,6 +30,8 @@ pub const TURN_CRED_TTL_SECS: &str = "TURN_CRED_TTL_SECS";
 pub const MEDIA_TICKET_TTL_SECS: &str = "MEDIA_TICKET_TTL_SECS";
 pub const MINIO_ENDPOINT: &str = "MINIO_ENDPOINT";
 pub const MINIO_PUBLIC_ENDPOINT: &str = "MINIO_PUBLIC_ENDPOINT";
+pub const MINIO_ACCESS_KEY: &str = "MINIO_ACCESS_KEY";
+pub const MINIO_SECRET_KEY: &str = "MINIO_SECRET_KEY";
 pub const MINIO_ROOT_USER: &str = "MINIO_ROOT_USER";
 pub const MINIO_ROOT_PASSWORD: &str = "MINIO_ROOT_PASSWORD";
 pub const MINIO_BUCKET: &str = "MINIO_BUCKET";
@@ -39,6 +41,25 @@ pub const API_RATE_MSG_PER_MIN: &str = "API_RATE_MSG_PER_MIN";
 pub const API_RATE_UPLOAD_PER_HOUR: &str = "API_RATE_UPLOAD_PER_HOUR";
 pub const API_UPLOAD_QUOTA_BYTES_PER_DAY: &str = "API_UPLOAD_QUOTA_BYTES_PER_DAY";
 pub const API_RATE_LOGIN_FAILURES_PER_ACCOUNT: &str = "API_RATE_LOGIN_FAILURES_PER_ACCOUNT";
+pub const API_RATE_GIF_PER_MIN: &str = "API_RATE_GIF_PER_MIN";
+pub const API_RATE_GIF_MEDIA_PER_MIN: &str = "API_RATE_GIF_MEDIA_PER_MIN";
+pub const KLIPY_API_KEY: &str = "KLIPY_API_KEY";
+pub const VAPID_PRIVATE_KEY: &str = "VAPID_PRIVATE_KEY";
+pub const VAPID_SUBJECT: &str = "VAPID_SUBJECT";
+pub const PUSH_ALLOWED_HOSTS: &str = "PUSH_ALLOWED_HOSTS";
+/// The push services of Chrome/Android, Firefox, Edge/Windows and Safari.
+/// Subscriptions name the URL the server POSTs to; any other host is
+/// refused, so a client cannot point the server at an internal address.
+pub const DEFAULT_PUSH_HOSTS: &[&str] = &[
+    "fcm.googleapis.com",
+    "push.services.mozilla.com",
+    "notify.windows.com",
+    "push.apple.com",
+];
+pub const KLIPY_CONTENT_FILTER: &str = "KLIPY_CONTENT_FILTER";
+pub const API_LINK_PREVIEWS: &str = "API_LINK_PREVIEWS";
+pub const API_LINK_PREVIEW_DENY_HOSTS: &str = "API_LINK_PREVIEW_DENY_HOSTS";
+pub const API_RATE_PREVIEW_PER_MIN: &str = "API_RATE_PREVIEW_PER_MIN";
 /// Read by `telemetry::init`, not by `Config`, because the subscriber has to
 /// exist before anything else can be logged.
 pub const RUST_LOG: &str = "RUST_LOG";
@@ -107,7 +128,63 @@ pub struct Config {
     pub allow_memory_store: bool,
     /// Request windows and daily upload bytes (issue #16).
     pub limits: Limits,
+    /// GIF search through the API (Klipy). `None` turns GIFs off.
+    pub gifs: Option<GifConfig>,
+    /// Web Push (#243). `None` without `VAPID_PRIVATE_KEY`: no push.
+    pub push: Option<PushConfig>,
+    /// Link previews (#254). `None` turns them off; links still work.
+    pub previews: Option<PreviewConfig>,
 }
+
+#[derive(Clone, Debug)]
+pub struct PushConfig {
+    pub vapid: crate::push::webpush::Vapid,
+    /// Hosts (and their subdomains) a subscription may point at.
+    pub hosts: Vec<String>,
+}
+
+/// The API fetches the pages that messages link to (`previews::net`).
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct PreviewConfig {
+    /// Host names never fetched, on top of single-label and local names:
+    /// the hosts of `DATABASE_URL`, `REDIS_URL`, the MinIO endpoints and
+    /// `TURN_URLS`, plus `API_LINK_PREVIEW_DENY_HOSTS`. Lowercase.
+    pub deny_hosts: Vec<String>,
+}
+
+/// Klipy is only ever called by the API: the key stays on the server and
+/// browsers load GIF bytes from `/api/gifs/media`, never from Klipy.
+#[derive(Clone, PartialEq, Eq)]
+pub struct GifConfig {
+    pub api_key: String,
+    /// `https://api.klipy.com`; tests point it at a local stand-in.
+    pub api_base: String,
+    /// Origins `/api/gifs/media` fetches from. Klipy's documented media
+    /// hosts; anything else is refused, so the proxy cannot be aimed
+    /// elsewhere.
+    pub media_origins: Vec<String>,
+    /// Klipy's `content_filter`: `off`, `low`, `medium` or `high`.
+    pub content_filter: String,
+}
+
+impl fmt::Debug for GifConfig {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        f.debug_struct("GifConfig")
+            .field("api_key", &"<redacted>")
+            .field("api_base", &self.api_base)
+            .field("media_origins", &self.media_origins)
+            .field("content_filter", &self.content_filter)
+            .finish()
+    }
+}
+
+pub const KLIPY_API_BASE: &str = "https://api.klipy.com";
+pub const KLIPY_MEDIA_ORIGINS: &[&str] = &[
+    "https://static.klipy.com",
+    "https://static1.klipy.com",
+    "https://static2.klipy.com",
+];
+const DEFAULT_KLIPY_CONTENT_FILTER: &str = "medium";
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct MinioConfig {
@@ -118,6 +195,9 @@ pub struct MinioConfig {
     pub access_key: String,
     pub secret_key: String,
     pub bucket: String,
+    /// Signed in with `MINIO_ROOT_*` because `MINIO_ACCESS_KEY` is unset:
+    /// a Compose file from before #196. Works, but the API holds root.
+    pub root_credentials: bool,
 }
 
 impl MinioConfig {
@@ -257,6 +337,9 @@ impl Config {
             None => false,
         };
         let limits = parse_limits(&get)?;
+        let gifs = parse_gifs(&get)?;
+        let push = parse_push(&get)?;
+        let previews = parse_previews(&get, &[&database_url, &redis_url], minio.as_ref())?;
         if cookie_secure {
             refuse_public_defaults(
                 &database_url,
@@ -288,8 +371,139 @@ impl Config {
             minio,
             allow_memory_store,
             limits,
+            gifs,
+            push,
+            previews,
         })
     }
+}
+
+fn parse_push(get: &impl Fn(&str) -> Option<String>) -> Result<Option<PushConfig>, ConfigError> {
+    let Some(private) = get(VAPID_PRIVATE_KEY).filter(|raw| !raw.trim().is_empty()) else {
+        return Ok(None);
+    };
+    let subject = get(VAPID_SUBJECT).unwrap_or_default();
+    let subject = subject.trim();
+    if !(subject.starts_with("mailto:") || subject.starts_with("https://")) {
+        return Err(invalid(
+            VAPID_SUBJECT,
+            subject,
+            "set a mailto: or https:// contact for the push services",
+        ));
+    }
+    let vapid = crate::push::webpush::Vapid::parse(&private, subject).ok_or_else(|| {
+        invalid(
+            VAPID_PRIVATE_KEY,
+            "<redacted>",
+            "expected a base64url P-256 private key (gelabber-api vapid-keys)",
+        )
+    })?;
+    // Empty, as Compose passes an unset variable: the default services.
+    let hosts = match get(PUSH_ALLOWED_HOSTS).filter(|raw| !raw.trim().is_empty()) {
+        Some(raw) => raw
+            .split(',')
+            .map(|host| host.trim().to_ascii_lowercase())
+            .filter(|host| !host.is_empty())
+            .collect(),
+        None => DEFAULT_PUSH_HOSTS.iter().map(|h| (*h).to_owned()).collect(),
+    };
+    Ok(Some(PushConfig { vapid, hosts }))
+}
+
+/// On unless `API_LINK_PREVIEWS=false`.
+fn parse_previews(
+    get: &impl Fn(&str) -> Option<String>,
+    internal_urls: &[&str],
+    minio: Option<&MinioConfig>,
+) -> Result<Option<PreviewConfig>, ConfigError> {
+    let enabled = match get(API_LINK_PREVIEWS) {
+        Some(raw) => parse_bool(API_LINK_PREVIEWS, &raw)?,
+        None => true,
+    };
+    if !enabled {
+        return Ok(None);
+    }
+    let mut deny_hosts: Vec<String> = Vec::new();
+    let mut add = |host: &str| {
+        let host = host
+            .trim()
+            .trim_start_matches('[')
+            .trim_end_matches(']')
+            .trim_end_matches('.')
+            .to_ascii_lowercase();
+        if !host.is_empty() && !deny_hosts.contains(&host) {
+            deny_hosts.push(host);
+        }
+    };
+    let endpoints = minio
+        .map(|m| [m.endpoint.as_str(), m.public_endpoint.as_str()])
+        .unwrap_or_default();
+    for url in internal_urls.iter().chain(endpoints.iter()) {
+        if let Some(host) = url::Url::parse(url)
+            .ok()
+            .and_then(|u| u.host_str().map(str::to_owned))
+        {
+            add(&host);
+        }
+    }
+    // `turn:host:port?transport=udp`, `turns:host`: no `//`, so by hand.
+    for turn in get(TURN_URLS).unwrap_or_default().split(',') {
+        let rest = turn.trim().split_once(':').map_or("", |(_, rest)| rest);
+        let rest = rest.split('?').next().unwrap_or("");
+        let host = if let Some(v6) = rest.strip_prefix('[') {
+            v6.split(']').next().unwrap_or("")
+        } else {
+            rest.split(':').next().unwrap_or("")
+        };
+        add(host);
+    }
+    for host in get(API_LINK_PREVIEW_DENY_HOSTS)
+        .unwrap_or_default()
+        .split(',')
+    {
+        add(host);
+    }
+    Ok(Some(PreviewConfig { deny_hosts }))
+}
+
+fn parse_gifs(get: &impl Fn(&str) -> Option<String>) -> Result<Option<GifConfig>, ConfigError> {
+    let Some(api_key) = get(KLIPY_API_KEY).map(|key| key.trim().to_owned()) else {
+        return Ok(None);
+    };
+    // The key is a path segment of every Klipy URL.
+    if !api_key
+        .chars()
+        .all(|c| c.is_ascii_alphanumeric() || c == '-' || c == '_')
+    {
+        return Err(ConfigError::Invalid {
+            key: KLIPY_API_KEY,
+            value: "<redacted>".to_owned(),
+            reason: "expected letters, digits, '-' or '_'".to_owned(),
+        });
+    }
+    let content_filter = match get(KLIPY_CONTENT_FILTER) {
+        Some(raw) => {
+            let value = raw.trim().to_ascii_lowercase();
+            if !["off", "low", "medium", "high"].contains(&value.as_str()) {
+                return Err(invalid(
+                    KLIPY_CONTENT_FILTER,
+                    &raw,
+                    "expected off, low, medium or high",
+                ));
+            }
+            value
+        }
+        None => DEFAULT_KLIPY_CONTENT_FILTER.to_owned(),
+    };
+    Ok(Some(GifConfig {
+        api_key,
+        api_base: KLIPY_API_BASE.to_owned(),
+        media_origins: KLIPY_MEDIA_ORIGINS
+            .iter()
+            .map(|o| (*o).to_owned())
+            .collect(),
+        content_filter,
+    }))
 }
 
 fn parse_limits(get: &impl Fn(&str) -> Option<String>) -> Result<Limits, ConfigError> {
@@ -318,6 +532,18 @@ fn parse_limits(get: &impl Fn(&str) -> Option<String>) -> Result<Limits, ConfigE
         Some(raw) => parse_u32_allow_zero(API_RATE_LOGIN_FAILURES_PER_ACCOUNT, &raw)?,
         None => defaults.login_failures_per_account,
     };
+    let gif_per_min = match get(API_RATE_GIF_PER_MIN) {
+        Some(raw) => parse_u32_allow_zero(API_RATE_GIF_PER_MIN, &raw)?,
+        None => defaults.gif_per_min,
+    };
+    let gif_media_per_min = match get(API_RATE_GIF_MEDIA_PER_MIN) {
+        Some(raw) => parse_u32_allow_zero(API_RATE_GIF_MEDIA_PER_MIN, &raw)?,
+        None => defaults.gif_media_per_min,
+    };
+    let preview_per_min = match get(API_RATE_PREVIEW_PER_MIN) {
+        Some(raw) => parse_u32_allow_zero(API_RATE_PREVIEW_PER_MIN, &raw)?,
+        None => defaults.preview_per_min,
+    };
     Ok(Limits {
         auth_per_min,
         api_per_min,
@@ -325,6 +551,9 @@ fn parse_limits(get: &impl Fn(&str) -> Option<String>) -> Result<Limits, ConfigE
         upload_per_hour,
         upload_bytes_per_day,
         login_failures_per_account,
+        gif_per_min,
+        gif_media_per_min,
+        preview_per_min,
     })
 }
 
@@ -342,8 +571,20 @@ fn parse_u64_allow_zero(key: &'static str, raw: &str) -> Result<u64, ConfigError
 
 fn parse_minio(get: &impl Fn(&str) -> Option<String>) -> Result<Option<MinioConfig>, ConfigError> {
     let endpoint = get(MINIO_ENDPOINT);
-    let user = get(MINIO_ROOT_USER);
-    let password = get(MINIO_ROOT_PASSWORD);
+    // Bucket-scoped keys (#196) win. Root stays accepted so a new image under
+    // an old Compose file (Watchtower) keeps working until the operator
+    // switches over.
+    let (user, password, root_credentials) = match get(MINIO_ACCESS_KEY) {
+        Some(user) => match get(MINIO_SECRET_KEY) {
+            Some(password) => (Some(user), Some(password), false),
+            None => return Err(ConfigError::Missing(MINIO_SECRET_KEY)),
+        },
+        // A lone secret would otherwise fall back to root unnoticed.
+        None if get(MINIO_SECRET_KEY).is_some() => {
+            return Err(ConfigError::Missing(MINIO_ACCESS_KEY));
+        }
+        None => (get(MINIO_ROOT_USER), get(MINIO_ROOT_PASSWORD), true),
+    };
     let bucket = get(MINIO_BUCKET);
     match (endpoint, user, password, bucket) {
         (None, None, None, None) => Ok(None),
@@ -365,6 +606,7 @@ fn parse_minio(get: &impl Fn(&str) -> Option<String>) -> Result<Option<MinioConf
                 access_key,
                 secret_key,
                 bucket,
+                root_credentials,
             }))
         }
         _ => Err(ConfigError::Missing(MINIO_ENDPOINT)),
@@ -448,8 +690,14 @@ fn refuse_public_defaults(
     if db_password.is_some_and(|password| PUBLIC_POSTGRES_PASSWORDS.contains(&password.as_str())) {
         return Err(refuse(DATABASE_URL));
     }
-    if minio.is_some_and(|minio| PUBLIC_MINIO_ROOT_PASSWORDS.contains(&minio.secret_key.as_str())) {
-        return Err(refuse(MINIO_ROOT_PASSWORD));
+    if let Some(minio) = minio
+        && PUBLIC_MINIO_ROOT_PASSWORDS.contains(&minio.secret_key.as_str())
+    {
+        return Err(refuse(if minio.root_credentials {
+            MINIO_ROOT_PASSWORD
+        } else {
+            MINIO_SECRET_KEY
+        }));
     }
     // REST mode never hands out the static password.
     if !turn_rest
@@ -506,6 +754,62 @@ mod tests {
         assert_eq!(config.media_ticket_ttl, Duration::from_secs(30));
         assert!(config.minio.is_none());
         assert_eq!(config.limits, Limits::default());
+        assert!(config.gifs.is_none());
+    }
+
+    #[test]
+    fn klipy_key_turns_gifs_on_with_the_klipy_hosts() {
+        let config = Config::from_source(source(&[
+            (DATABASE_URL, "postgres://u:p@localhost/db"),
+            (REDIS_URL, "redis://localhost"),
+            (KLIPY_API_KEY, " key-123_A "),
+        ]))
+        .expect("valid config");
+        let gifs = config.gifs.expect("gifs on");
+        assert_eq!(gifs.api_key, "key-123_A");
+        assert_eq!(gifs.api_base, "https://api.klipy.com");
+        assert_eq!(gifs.content_filter, "medium");
+        assert!(
+            gifs.media_origins
+                .contains(&"https://static.klipy.com".to_owned())
+        );
+        assert!(!format!("{gifs:?}").contains("key-123_A"));
+
+        // Compose passes an unset key through as an empty value.
+        let config = Config::from_source(source(&[
+            (DATABASE_URL, "postgres://u:p@localhost/db"),
+            (REDIS_URL, "redis://localhost"),
+            (KLIPY_API_KEY, " "),
+        ]))
+        .expect("valid config");
+        assert!(config.gifs.is_none());
+    }
+
+    #[test]
+    fn rejects_an_unknown_klipy_filter_and_a_key_that_is_no_path_segment() {
+        let err = Config::from_source(source(&[
+            (DATABASE_URL, "postgres://u:p@localhost/db"),
+            (REDIS_URL, "redis://localhost"),
+            (KLIPY_API_KEY, "key"),
+            (KLIPY_CONTENT_FILTER, "strict"),
+        ]))
+        .unwrap_err();
+        assert!(matches!(
+            err,
+            ConfigError::Invalid {
+                key: KLIPY_CONTENT_FILTER,
+                ..
+            }
+        ));
+        let err = Config::from_source(source(&[
+            (DATABASE_URL, "postgres://u:p@localhost/db"),
+            (REDIS_URL, "redis://localhost"),
+            (KLIPY_API_KEY, "a/b?c"),
+        ]))
+        .unwrap_err();
+        assert!(
+            matches!(err, ConfigError::Invalid { key: KLIPY_API_KEY, ref value, .. } if value == "<redacted>")
+        );
     }
 
     #[test]
@@ -515,10 +819,13 @@ mod tests {
             (REDIS_URL, "redis://localhost"),
             (API_RATE_AUTH_PER_MIN, "3"),
             (API_UPLOAD_QUOTA_BYTES_PER_DAY, "0"),
+            (API_RATE_GIF_MEDIA_PER_MIN, "500"),
         ]))
         .expect("valid config");
         assert_eq!(config.limits.auth_per_min, 3);
         assert_eq!(config.limits.upload_bytes_per_day, 0);
+        assert_eq!(config.limits.gif_media_per_min, 500);
+        assert_eq!(config.limits.gif_per_min, Limits::default().gif_per_min);
         assert_eq!(config.limits.api_per_min, Limits::default().api_per_min);
     }
 
@@ -568,6 +875,7 @@ mod tests {
                 access_key: String::new(),
                 secret_key: String::new(),
                 bucket: String::new(),
+                root_credentials: false,
             }
             .public_port()
         };
@@ -595,6 +903,44 @@ mod tests {
         assert_eq!(minio.endpoint, "http://minio:9000");
         assert_eq!(minio.public_endpoint, "http://minio:9000");
         assert_eq!(minio.bucket, "gelabber");
+        assert!(minio.root_credentials);
+    }
+
+    #[test]
+    fn bucket_scoped_minio_keys_win_over_root() {
+        let config = Config::from_source(source(&[
+            (DATABASE_URL, "postgres://u:p@localhost/db"),
+            (REDIS_URL, "redis://localhost"),
+            (MINIO_ENDPOINT, "http://minio:9000"),
+            (MINIO_ACCESS_KEY, "gelabber-api"),
+            (MINIO_SECRET_KEY, "private-app"),
+            (MINIO_ROOT_USER, "gelabber"),
+            (MINIO_ROOT_PASSWORD, "private-root"),
+            (MINIO_BUCKET, "gelabber"),
+        ]))
+        .expect("valid config");
+        let minio = config.minio.expect("minio");
+        assert_eq!(minio.access_key, "gelabber-api");
+        assert_eq!(minio.secret_key, "private-app");
+        assert!(!minio.root_credentials);
+    }
+
+    #[test]
+    fn minio_access_key_needs_its_secret() {
+        let err = Config::from_source(source(&[
+            (DATABASE_URL, "postgres://u:p@localhost/db"),
+            (REDIS_URL, "redis://localhost"),
+            (MINIO_ENDPOINT, "http://minio:9000"),
+            (MINIO_ACCESS_KEY, "gelabber-api"),
+            (MINIO_ROOT_USER, "gelabber"),
+            (MINIO_ROOT_PASSWORD, "private-root"),
+            (MINIO_BUCKET, "gelabber"),
+        ]))
+        .unwrap_err();
+        assert!(
+            matches!(err, ConfigError::Missing(MINIO_SECRET_KEY)),
+            "{err}"
+        );
     }
 
     #[test]
@@ -755,6 +1101,43 @@ mod tests {
     }
 
     #[test]
+    fn minio_secret_key_needs_its_access_key() {
+        let err = Config::from_source(source(&[
+            (DATABASE_URL, "postgres://u:p@localhost/db"),
+            (REDIS_URL, "redis://localhost"),
+            (MINIO_ENDPOINT, "http://minio:9000"),
+            (MINIO_SECRET_KEY, "private-app"),
+            (MINIO_ROOT_USER, "gelabber"),
+            (MINIO_ROOT_PASSWORD, "private-root"),
+            (MINIO_BUCKET, "gelabber"),
+        ]))
+        .unwrap_err();
+        assert!(
+            matches!(err, ConfigError::Missing(MINIO_ACCESS_KEY)),
+            "{err}"
+        );
+    }
+
+    #[test]
+    fn behind_tls_public_default_as_app_secret_is_refused() {
+        let err = Config::from_source(secure_source(&[
+            (MINIO_ACCESS_KEY, "gelabber-api"),
+            (MINIO_SECRET_KEY, "gelabbergelabber"),
+        ]))
+        .unwrap_err();
+        assert!(
+            matches!(
+                &err,
+                ConfigError::Invalid {
+                    key: MINIO_SECRET_KEY,
+                    ..
+                }
+            ),
+            "{err}"
+        );
+    }
+
+    #[test]
     fn turn_rest_mode_does_not_use_the_static_password() {
         Config::from_source(secure_source(&[
             (TURN_PASSWORD, "gelabberturn"),
@@ -777,5 +1160,27 @@ mod tests {
         .expect("valid config");
         assert!(!config.cookie_secure);
         assert!(config.allow_plain_http);
+    }
+
+    #[test]
+    fn empty_push_hosts_mean_the_default_services() {
+        let (private, _) = crate::push::webpush::Vapid::generate();
+        let hosts = |value: Option<&str>| {
+            let mut pairs = vec![
+                (VAPID_PRIVATE_KEY, private.as_str()),
+                (VAPID_SUBJECT, "mailto:admin@example.org"),
+            ];
+            if let Some(value) = value {
+                pairs.push((PUSH_ALLOWED_HOSTS, value));
+            }
+            parse_push(&source(&pairs)).unwrap().unwrap().hosts
+        };
+        let default: Vec<String> = DEFAULT_PUSH_HOSTS.iter().map(|h| (*h).to_owned()).collect();
+        assert_eq!(hosts(None), default);
+        assert_eq!(hosts(Some("")), default);
+        assert_eq!(
+            hosts(Some(" Push.Example ")),
+            vec!["push.example".to_owned()]
+        );
     }
 }
