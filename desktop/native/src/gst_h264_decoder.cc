@@ -11,9 +11,11 @@
 
 #include <algorithm>
 #include <atomic>
+#include <chrono>
 #include <cstdlib>
 #include <cstring>
 #include <deque>
+#include <initializer_list>
 #include <mutex>
 #include <optional>
 #include <thread>
@@ -30,8 +32,8 @@ namespace gelabber
 		}
 
 		// Inputs without a decoded frame after which a decoder counts as
-		// stuck (two seconds at 30 fps): hardware decoders hold back a
-		// frame or two, not dozens.
+		// stuck (two seconds at 30 fps): the decoders hold back a frame or
+		// two, not dozens.
 		constexpr int kStuckAfter = 60;
 
 		// No frame delay: a call shows each frame as soon as it is decoded.
@@ -55,7 +57,8 @@ namespace gelabber
 		class GstH264Decoder : public webrtc::VideoDecoder
 		{
 		public:
-			explicit GstH264Decoder(std::string element) : element(std::move(element))
+			GstH264Decoder(std::string element, bool behindFallback)
+			  : element(std::move(element)), behindFallback(behindFallback)
 			{
 			}
 
@@ -64,9 +67,10 @@ namespace gelabber
 				Release();
 			}
 
-			bool Configure(const Settings&) override
+			bool Configure(const Settings& settings) override
 			{
 				Release();
+				this->settings = settings;
 				// h264parse turns libwebrtc's access units (Annex B) into what
 				// the decoders take; videoconvert brings frames from GPU memory
 				// to I420 in system memory.
@@ -113,12 +117,32 @@ namespace gelabber
 
 			int32_t Decode(const webrtc::EncodedImage& input, int64_t renderTimeMs) override
 			{
+				if (failed)
+				{
+					// Behind a fallback wrapper, which moves to the software
+					// element and asks for a key frame; otherwise the pipeline
+					// starts afresh, at most once a second.
+					if (behindFallback)
+						return WEBRTC_VIDEO_CODEC_FALLBACK_SOFTWARE;
+					const auto now = std::chrono::steady_clock::now();
+					if (now - lastRestart < std::chrono::seconds(1))
+						return WEBRTC_VIDEO_CODEC_ERROR;
+					lastRestart = now;
+					if (!Configure(settings))
+						return WEBRTC_VIDEO_CODEC_ERROR;
+					RTC_LOG(LS_WARNING) << "GStreamer " << element << " restarted";
+					awaitingKey = true;
+				}
 				if (!pipeline)
 					return WEBRTC_VIDEO_CODEC_UNINITIALIZED;
-				// The wrapper moves to libwebrtc's own decoder and asks for a
-				// key frame.
-				if (failed)
-					return WEBRTC_VIDEO_CODEC_FALLBACK_SOFTWARE;
+				// A fresh pipeline cannot decode a delta frame; the error makes
+				// libwebrtc ask the sender for a key frame.
+				if (awaitingKey)
+				{
+					if (input.FrameType() != webrtc::VideoFrameType::kVideoFrameKey)
+						return WEBRTC_VIDEO_CODEC_ERROR;
+					awaitingKey = false;
+				}
 				if (!input.data() || input.size() == 0)
 					return WEBRTC_VIDEO_CODEC_ERR_PARAMETER;
 				const auto& gst   = Gst();
@@ -149,8 +173,8 @@ namespace gelabber
 					while (pending.size() > 64)
 						pending.pop_front();
 					// A decoder that stops putting out frames without an error
-					// on the bus hands over like a failed one.
-					if (++sinceOutput > kStuckAfter && !IsSoftware(element))
+					// on the bus hands over (or restarts) like a failed one.
+					if (++sinceOutput > kStuckAfter)
 					{
 						RTC_LOG(LS_WARNING) << "GStreamer " << element << " puts out no frames";
 						failed = true;
@@ -311,6 +335,10 @@ namespace gelabber
 			}
 
 			const std::string element;
+			const bool behindFallback;
+			std::chrono::steady_clock::time_point lastRestart{};
+			bool awaitingKey{ false };
+			Settings settings;
 			GstElement* pipeline{ nullptr };
 			GstElement* src{ nullptr };
 			GstElement* decoder{ nullptr };
@@ -327,19 +355,37 @@ namespace gelabber
 		};
 	} // namespace
 
+	namespace
+	{
+		bool CanDecode()
+		{
+			if (!Gst().ok)
+				return false;
+			if (!HasElement("appsrc") || !HasElement("appsink") || !HasElement("h264parse") ||
+			    !HasElement("videoconvert"))
+			{
+				RTC_LOG(LS_INFO) << "GStreamer lacks appsrc/appsink/h264parse/videoconvert; no H264 decoder";
+				return false;
+			}
+			return true;
+		}
+
+		std::string FirstElement(std::initializer_list<const char*> candidates)
+		{
+			for (const char* candidate : candidates)
+				if (HasElement(candidate))
+					return candidate;
+			return {};
+		}
+	} // namespace
+
 	std::string FindGstH264Decoder()
 	{
 		const char* forced = std::getenv("GELABBER_H264_DECODER");
 		if (forced && std::strcmp(forced, "none") == 0)
 			return {};
-		if (!Gst().ok)
+		if (!CanDecode())
 			return {};
-		if (!HasElement("appsrc") || !HasElement("appsink") || !HasElement("h264parse") ||
-		    !HasElement("videoconvert"))
-		{
-			RTC_LOG(LS_INFO) << "GStreamer lacks appsrc/appsink/h264parse/videoconvert; software H264 decoding";
-			return {};
-		}
 		if (forced && *forced)
 		{
 			if (HasElement(forced))
@@ -347,15 +393,29 @@ namespace gelabber
 			RTC_LOG(LS_WARNING) << "GELABBER_H264_DECODER=" << forced << " not found";
 			return {};
 		}
-		for (const char* candidate : { "nvh264dec", "vah264dec", "vaapih264dec" })
-			if (HasElement(candidate))
-				return candidate;
-		RTC_LOG(LS_INFO) << "no hardware H264 decoder in GStreamer; software H264 decoding";
-		return {};
+		if (auto hardware = FirstElement({ "nvh264dec", "vah264dec", "vaapih264dec" }); !hardware.empty())
+			return hardware;
+		RTC_LOG(LS_INFO) << "no hardware H264 decoder in GStreamer";
+		return FindGstH264SoftwareDecoder();
 	}
 
-	std::unique_ptr<webrtc::VideoDecoder> CreateGstH264Decoder(const std::string& element)
+	std::string FindGstH264SoftwareDecoder()
 	{
-		return std::make_unique<GstH264Decoder>(element);
+		const char* forced = std::getenv("GELABBER_H264_DECODER");
+		if (forced && std::strcmp(forced, "none") == 0)
+			return {};
+		if (!CanDecode())
+			return {};
+		return FirstElement({ "avdec_h264", "openh264dec" });
+	}
+
+	bool IsHardwareH264Decoder(const std::string& element)
+	{
+		return !element.empty() && !IsSoftware(element);
+	}
+
+	std::unique_ptr<webrtc::VideoDecoder> CreateGstH264Decoder(const std::string& element, bool behindFallback)
+	{
+		return std::make_unique<GstH264Decoder>(element, behindFallback);
 	}
 } // namespace gelabber

@@ -9,8 +9,8 @@ machine.
 
 Status: **published** since v0.5.0. Every release from `main` updates the
 repository after a maintainer approves the `github-pages` deployment. The
-build contains libwebrtc's H264 decoder (FFmpeg); the licensing question in
-#165 is still open.
+build contains no H264 codec of its own: H264 goes through the system's
+GStreamer (see the optional dependencies), otherwise calls use VP8.
 
 Signing key fingerprint: `5992A8FD7578E86E36D45A4001C81EE2C2C0BBC5`
 

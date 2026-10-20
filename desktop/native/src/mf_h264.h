@@ -2,8 +2,8 @@
 // Quick Sync) where there is one, else Microsoft's software encoder, and
 // Microsoft's decoder, which decodes on the GPU through DXVA where it can.
 //
-// libwebrtc's own H264 (OpenH264, FFmpeg) is not part of the Windows core;
-// these MFTs ship with Windows and the GPU drivers. An encoder covers one
+// The core carries no H264 codec of its own (rtc_use_h264=false); these
+// MFTs ship with Windows and the GPU drivers. An encoder covers one
 // picture; `CreateMfH264Encoder` lays one per simulcast layer.
 #ifndef GELABBER_MF_H264_H
 #define GELABBER_MF_H264_H

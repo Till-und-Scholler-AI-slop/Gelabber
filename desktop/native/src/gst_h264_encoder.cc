@@ -15,6 +15,7 @@
 
 #include <glib-object.h>
 #include <libyuv/convert_from.h>
+#include <libyuv/planar_functions.h>
 
 #include <algorithm>
 #include <atomic>
@@ -35,6 +36,12 @@ namespace gelabber
 		bool IsSoftware(const std::string& element)
 		{
 			return element == "x264enc" || element == "openh264enc";
+		}
+
+		// openh264enc takes only I420; the others take NV12.
+		bool TakesI420(const std::string& element)
+		{
+			return element == "openh264enc";
 		}
 
 		// Bitrate property unit per element (kbit/s except openh264enc).
@@ -132,7 +139,8 @@ namespace gelabber
 				// baseline (the router's preferred H264 profile).
 				const std::string description =
 				  "appsrc name=src is-live=true format=time block=false max-buffers=3 "
-				  "caps=video/x-raw,format=NV12,width=" +
+				  "caps=video/x-raw,format=" +
+				  std::string(TakesI420(element) ? "I420" : "NV12") + ",width=" +
 				  std::to_string(width) + ",height=" + std::to_string(height) + ",framerate=" +
 				  std::to_string(fps) + "/1 ! queue max-size-buffers=2 leaky=downstream ! " + element +
 				  " name=enc ! video/x-h264,profile=(string){constrained-baseline,baseline} ! "
@@ -253,19 +261,36 @@ namespace gelabber
 						gst.mini_object_unref(buffer);
 					return WEBRTC_VIDEO_CODEC_ERROR;
 				}
-				libyuv::I420ToNV12(
-				  i420->DataY(),
-				  i420->StrideY(),
-				  i420->DataU(),
-				  i420->StrideU(),
-				  i420->DataV(),
-				  i420->StrideV(),
-				  map.data,
-				  width,
-				  map.data + ySize,
-				  width,
-				  width,
-				  height);
+				if (TakesI420(element))
+					libyuv::I420Copy(
+					  i420->DataY(),
+					  i420->StrideY(),
+					  i420->DataU(),
+					  i420->StrideU(),
+					  i420->DataV(),
+					  i420->StrideV(),
+					  map.data,
+					  width,
+					  map.data + ySize,
+					  width / 2,
+					  map.data + ySize + ySize / 4,
+					  width / 2,
+					  width,
+					  height);
+				else
+					libyuv::I420ToNV12(
+					  i420->DataY(),
+					  i420->StrideY(),
+					  i420->DataU(),
+					  i420->StrideU(),
+					  i420->DataV(),
+					  i420->StrideV(),
+					  map.data,
+					  width,
+					  map.data + ySize,
+					  width,
+					  width,
+					  height);
 				gst.buffer_unmap(buffer, &map);
 
 				const int64_t nowUs = frame.timestamp_us();
@@ -439,19 +464,38 @@ namespace gelabber
 		};
 	} // namespace
 
+	namespace
+	{
+		// What every encoder pipeline needs; h264parse (gst-plugins-bad)
+		// splits the encoder output into access units.
+		bool CanEncode()
+		{
+			if (!Gst().ok)
+				return false;
+			if (!HasElement("appsrc") || !HasElement("appsink") || !HasElement("h264parse"))
+			{
+				RTC_LOG(LS_INFO) << "GStreamer lacks appsrc/appsink/h264parse; no H264 encoder";
+				return false;
+			}
+			return true;
+		}
+
+		std::string FirstElement(std::initializer_list<const char*> candidates)
+		{
+			for (const char* candidate : candidates)
+				if (HasElement(candidate))
+					return candidate;
+			return {};
+		}
+	} // namespace
+
 	std::string FindGstH264Encoder()
 	{
 		const char* forced = std::getenv("GELABBER_H264_ENCODER");
 		if (forced && std::strcmp(forced, "none") == 0)
 			return {};
-		if (!Gst().ok)
+		if (!CanEncode())
 			return {};
-		// h264parse (gst-plugins-bad) splits the encoder output into access units.
-		if (!HasElement("appsrc") || !HasElement("appsink") || !HasElement("h264parse"))
-		{
-			RTC_LOG(LS_INFO) << "GStreamer lacks appsrc/appsink/h264parse; software H264 only";
-			return {};
-		}
 		if (forced && *forced)
 		{
 			if (HasElement(forced))
@@ -459,11 +503,21 @@ namespace gelabber
 			RTC_LOG(LS_WARNING) << "GELABBER_H264_ENCODER=" << forced << " not found";
 			return {};
 		}
-		for (const char* candidate : { "nvh264enc", "vah264enc", "vah264lpenc", "vaapih264enc" })
-			if (HasElement(candidate))
-				return candidate;
-		RTC_LOG(LS_INFO) << "no hardware H264 encoder in GStreamer; software H264 only";
-		return {};
+		if (auto hardware = FirstElement({ "nvh264enc", "vah264enc", "vah264lpenc", "vaapih264enc" });
+		    !hardware.empty())
+			return hardware;
+		RTC_LOG(LS_INFO) << "no hardware H264 encoder in GStreamer";
+		return FindGstH264SoftwareEncoder();
+	}
+
+	std::string FindGstH264SoftwareEncoder()
+	{
+		const char* forced = std::getenv("GELABBER_H264_ENCODER");
+		if (forced && std::strcmp(forced, "none") == 0)
+			return {};
+		if (!CanEncode())
+			return {};
+		return FirstElement({ "openh264enc", "x264enc" });
 	}
 
 	bool IsHardwareH264Encoder(const std::string& element)

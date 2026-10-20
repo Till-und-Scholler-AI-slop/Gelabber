@@ -35,6 +35,7 @@ optdepends=(
   'libayatana-appindicator: tray icon with unread state (KDE, waybar tray)'
   'gst-plugins-bad: H264 on the GPU (h264parse; NVIDIA through nvcodec)'
   'gst-plugin-va: H264 on Intel and AMD GPUs (VA-API)'
+  'gst-libav: H264 decoding on the CPU (avdec_h264)'
 )
 conflicts=('gelabber-desktop-bin' 'gelabber-desktop-git')
 options=('!strip' '!debug')
