@@ -62,3 +62,18 @@ async fn metrics_export_rooms_peers_bytes_and_ice_fails() {
     assert!(text.contains("gelabber_media_rooms 0"));
     assert!(text.contains("gelabber_media_peers 0"));
 }
+
+#[tokio::test]
+async fn media_prefixed_metrics_alias_is_not_served() {
+    // A proxy that forwards `/media/*` must not publish the scrape.
+    let response = app(state().await)
+        .oneshot(
+            Request::builder()
+                .uri("/media/metrics")
+                .body(Body::empty())
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+    assert_eq!(response.status(), StatusCode::NOT_FOUND);
+}
