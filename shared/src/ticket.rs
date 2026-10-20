@@ -125,17 +125,31 @@ impl AuthorizedTicketClaim {
     }
 }
 
+pub const MEMBER_AUTHORITY_PREFIX: &str = "gb:auth:member:";
+pub const CHANNEL_AUTHORITY_PREFIX: &str = "gb:auth:channel:";
+pub const SESSION_AUTHORITY_PREFIX: &str = "gb:auth:session:";
+pub const MEDIA_DEMAND_PREFIX: &str = "gb:auth:demand:";
+pub const SESSION_OWNER_PREFIX: &str = "gb:auth:owner:";
+
 pub fn member_authority_key(server: Uuid, user: Uuid) -> String {
-    format!("gb:auth:member:{server}:{user}")
+    format!("{MEMBER_AUTHORITY_PREFIX}{server}:{user}")
 }
 pub fn channel_authority_key(channel: Uuid) -> String {
-    format!("gb:auth:channel:{channel}")
+    format!("{CHANNEL_AUTHORITY_PREFIX}{channel}")
 }
 pub fn session_authority_key(session: &str) -> String {
-    format!("gb:auth:session:{session}")
+    format!("{SESSION_AUTHORITY_PREFIX}{session}")
 }
+/// Media refreshes this demand key (SET 1 EX 35) every second while at
+/// least one authenticated peer is using this session. Do not delete it on
+/// peer leave: another tab or an outstanding ticket may still need it.
 pub fn media_demand_key(session: &str) -> String {
-    format!("gb:auth:demand:{session}")
+    format!("{MEDIA_DEMAND_PREFIX}{session}")
+}
+/// API-internal: the worker generation that owns this session's lease
+/// refresh and cleanup. Media never reads it.
+pub fn session_owner_key(session: &str) -> String {
+    format!("{SESSION_OWNER_PREFIX}{session}")
 }
 
 #[cfg(test)]
@@ -176,5 +190,36 @@ mod authorization_tests {
         bad = claim;
         bad.auth.expires_at = 9_007_199_254_740_992;
         assert!(!bad.well_formed());
+    }
+
+    // The API and media build these keys only through the helpers above.
+    // media/tests/browser-lifecycle.mjs and web/scripts/e2e/*.mjs hard-code
+    // the same strings, so a format change has to update them as well.
+    #[test]
+    fn authority_key_formats_are_pinned() {
+        let server = Uuid::from_u128(1);
+        let user = Uuid::from_u128(2);
+        let channel = Uuid::from_u128(3);
+        let session = "0123456789abcdef".repeat(4);
+        assert_eq!(
+            member_authority_key(server, user),
+            "gb:auth:member:00000000-0000-0000-0000-000000000001:00000000-0000-0000-0000-000000000002"
+        );
+        assert_eq!(
+            channel_authority_key(channel),
+            "gb:auth:channel:00000000-0000-0000-0000-000000000003"
+        );
+        assert_eq!(
+            session_authority_key(&session),
+            "gb:auth:session:0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef"
+        );
+        assert_eq!(
+            media_demand_key(&session),
+            "gb:auth:demand:0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef"
+        );
+        assert_eq!(
+            session_owner_key(&session),
+            "gb:auth:owner:0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef"
+        );
     }
 }
