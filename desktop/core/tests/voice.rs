@@ -801,6 +801,20 @@ async fn voice_modes(server: &Server, mic_id: &str, speakers_id: &str) {
         level(l, "input") >= 10.0
     })
     .await;
+
+    // Another microphone while the call sends (#296): capture restarts on it
+    // and the selection follows. Last, because the test microphone records
+    // only zeros after the restart, so only capture processing is checked.
+    for input in ["", mic_id] {
+        engine.configure_audio(&json!({"input": input})).unwrap();
+        assert_eq!(engine.audio_devices().unwrap()["input"], input);
+        levels_when(
+            &engine,
+            &format!("capture after switching to {input:?}"),
+            |_| true,
+        )
+        .await;
+    }
     drop(original_producer);
 }
 
@@ -859,4 +873,12 @@ fn the_source_audio_mix_follows_a_sound_card_whose_clock_is_off() {
 #[test]
 fn the_playout_limiter_keeps_a_boost_below_full_scale() {
     run_host_test("playout_limiter_test", "the playout limiter");
+}
+
+/// Switching the microphone or the speakers while they run (#296):
+/// desktop/native/tests/audio_device_switch_test.cc runs the switch against
+/// a fake device module that refuses devices, on every platform.
+#[test]
+fn a_failed_device_switch_keeps_the_previous_device() {
+    run_host_test("audio_device_switch_test", "device switching with rollback");
 }

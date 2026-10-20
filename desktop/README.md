@@ -21,6 +21,7 @@ and watching. What users get to read ships from `app/package/`.
 | `native/patches/` | Patches applied to libwebrtc; `libmediasoupclient/` to libmediasoupclient |
 | `native/tests/app_audio_mix_test.cc` | The source-audio mix against simulated sound cards whose clocks are off; plain C++, built and run by `core/tests/voice.rs` with the host's compiler |
 | `native/tests/playout_limiter_test.cc` | The playout limiter for volumes above 100 % on generated mixes; plain C++, built and run by `core/tests/voice.rs` like the mix test |
+| `native/tests/audio_device_switch_test.cc` | Switching the microphone or speakers against a fake device module that refuses devices: restart, and rollback to the previous device; plain C++, built and run by `core/tests/voice.rs` like the mix test |
 | `core/` | Rust crate `gelabber-media-core`: safe API over the C ABI |
 | `core/tests/mediasoup_loopback.rs` | Loopback call against mediasoup 0.29 with the server's router codecs; on Windows also application sound through process loopback |
 | `core/tests/source_preview.rs` | Video sinks for views in the app: a local source without a producer, scaling and rate limits, sinks going away mid-frame |
@@ -473,7 +474,12 @@ separate decision.
   RNNoise, gain and meters for the remaining microphone stream. The
   microphone test (`gm_audio_monitor`) keeps the device module recording
   without a call through a pass-through module that only holds back the
-  voice pipeline's stop while the test runs. The test
+  voice pipeline's stop while the test runs. Choosing another microphone or
+  output (`gm_audio_configure`) restarts the side that a stream or the test
+  wants running, also after a restart that failed before; a device that
+  cannot be selected or started gives the previous one back, running
+  (`native/src/audio_device_switch.h`). CI switches devices on
+  pipewire-pulse only, not on Windows. The test
   session also provides null-sink "speakers" and a
   noise-playing "microphone" for `core/tests/voice.rs`. The noise lasts
   ten minutes from the session's start; the test says so when it is started
