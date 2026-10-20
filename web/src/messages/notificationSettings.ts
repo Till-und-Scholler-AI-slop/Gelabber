@@ -82,6 +82,23 @@ export function settingOf(
   );
 }
 
+/** A server's own level and mute in the shape of an unread row's, for a
+ * conversation without a row yet. Unknown settings: undefined. */
+export function serverSetting(
+  settings: readonly NotificationSetting[] | undefined,
+  serverId: string,
+):
+  | { level: NotifyLevel; muted: boolean; muted_until: string | null }
+  | undefined {
+  if (!settings) return undefined;
+  const own = settingOf(settings, "server", serverId);
+  return {
+    level: own.level ?? "all",
+    muted: own.muted,
+    muted_until: own.muted_until,
+  };
+}
+
 async function refreshAll(client: QueryClient, stamp: ScopeStamp) {
   if (!stampHolds(stamp)) return;
   await Promise.all([

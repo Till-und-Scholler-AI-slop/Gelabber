@@ -272,14 +272,6 @@ async fn create_message(
         access.require_send_files()?;
     }
 
-    let mentioned = mentions::resolve(
-        &state,
-        &access,
-        user.id,
-        &content,
-        mentions::Granted::default(),
-    )
-    .await?;
     // The store is asked before the channel lock (see `check_uploads`).
     if let Err(err) = attachments::check_uploads(
         &state.db,
@@ -293,6 +285,23 @@ async fn create_message(
         discard_uploads(&state, channel_id, user.id, &attachment_ids).await;
         return Err(err);
     }
+    // After the uploads check: a send that fails on its files does not use
+    // up an `@everyone` of the limit.
+    let mentioned = match mentions::resolve(
+        &state,
+        &access,
+        user.id,
+        &content,
+        mentions::Granted::default(),
+    )
+    .await
+    {
+        Ok(mentioned) => mentioned,
+        Err(err) => {
+            discard_uploads(&state, channel_id, user.id, &attachment_ids).await;
+            return Err(err);
+        }
+    };
 
     let mut tx = state.db.begin().await?;
     delivery::lock_channel(&mut tx, channel_id).await?;
