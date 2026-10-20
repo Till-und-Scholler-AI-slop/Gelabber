@@ -495,6 +495,11 @@ fn main() {
             }
         }
     });
+    // First plugin: a second start hands over to the running app (it may sit
+    // hidden in the tray) and exits before it opens a window or a socket.
+    let builder = builder.plugin(tauri_plugin_single_instance::init(|app, _, _| {
+        shell::show(app);
+    }));
     #[cfg(windows)]
     let builder = builder.plugin(update::plugin());
     builder
