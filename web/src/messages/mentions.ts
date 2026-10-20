@@ -3,6 +3,7 @@
 // `@everyone` (all members) and `@here` (members online) stay as written.
 // The server decides who is mentioned (api/src/messages/mentions.rs) and
 // sends the result with the message as `mentions` / `mention_everyone`.
+import { linkLengthAt } from "./markdown.ts";
 import type { Message } from "./types.ts";
 
 export type MentionMember = { id: string; name: string };
@@ -26,7 +27,7 @@ export type TextPart =
   | { kind: "everyone" | "here" };
 
 /** Message text split into plain runs and mentions, for rendering. Code
- * (between backticks) is left alone, as the server does. */
+ * (between backticks) and links are left alone, as the server does. */
 export function splitMentions(
   content: string,
   members: readonly MentionMember[],
@@ -40,6 +41,7 @@ export function splitMentions(
     else parts.push({ kind: "text", text });
   };
   const prose = (text: string) => {
+    const links = linkSpans(text);
     let at = 0;
     for (const match of text.matchAll(
       new RegExp(`${TOKEN.source}|${KEYWORD.source}`, "giu"),
@@ -49,6 +51,8 @@ export function splitMentions(
       // server reads it. The keyword match starts one character early.
       const start = match[1] ? index : index + (match[2]?.length ?? 0);
       if (/(^|[^\\])(\\\\)*\\$/.test(text.slice(0, start))) continue;
+      // Inside a link (`https://x.org/?q=@here`): part of the link.
+      if (links.some(([from, to]) => start >= from && start < to)) continue;
       if (match[1]) {
         pushText(text.slice(at, index));
         const id = match[1].toLowerCase();
@@ -68,6 +72,17 @@ export function splitMentions(
     else prose(segment);
   }
   return parts;
+}
+
+/** Where `text` has links, as `[start, end)` pairs. */
+function linkSpans(text: string): [number, number][] {
+  const spans: [number, number][] = [];
+  for (let i = 0; i < text.length; ) {
+    const length = linkLengthAt(text, i);
+    if (length) spans.push([i, i + length]);
+    i += length || 1;
+  }
+  return spans;
 }
 
 /** Alternating prose and code: even entries are prose, odd ones code with
