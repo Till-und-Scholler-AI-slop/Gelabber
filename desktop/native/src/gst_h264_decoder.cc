@@ -30,6 +30,11 @@ namespace gelabber
 			return element == "avdec_h264" || element == "openh264dec";
 		}
 
+		// Inputs without a decoded frame after which a decoder counts as
+		// stuck (two seconds at 30 fps): hardware decoders hold back a
+		// frame or two, not dozens.
+		constexpr int kStuckAfter = 60;
+
 		// No frame delay: a call shows each frame as soon as it is decoded.
 		void ConfigureDecoder(GstElement* decoder, const std::string& element)
 		{
@@ -151,6 +156,13 @@ namespace gelabber
 					// Bounded: the decoder drops what it cannot decode.
 					while (pending.size() > 64)
 						pending.pop_front();
+					// A decoder that stops putting out frames without an error
+					// on the bus hands over like a failed one.
+					if (++sinceOutput > kStuckAfter && !IsSoftware(element))
+					{
+						RTC_LOG(LS_WARNING) << "GStreamer " << element << " puts out no frames";
+						failed = true;
+					}
 				}
 				buffer->pts      = pts;
 				buffer->dts      = pts;
@@ -190,6 +202,7 @@ namespace gelabber
 				pipeline = nullptr;
 				std::lock_guard lock(mutex);
 				pending.clear();
+				sinceOutput = 0;
 				return WEBRTC_VIDEO_CODEC_OK;
 			}
 
@@ -278,14 +291,22 @@ namespace gelabber
 				const GstClockTime pts = buffer->pts;
 				gst.buffer_unmap(buffer, &map);
 
-				std::lock_guard lock(mutex);
-				// Frames the decoder dropped stay in front of the match.
-				while (!pending.empty() && pending.front().pts < pts)
+				Pending meta;
+				webrtc::DecodedImageCallback* target;
+				{
+					std::lock_guard lock(mutex);
+					// Frames the decoder dropped stay in front of the match.
+					while (!pending.empty() && pending.front().pts < pts)
+						pending.pop_front();
+					if (pending.empty() || pending.front().pts != pts || !callback)
+						return;
+					meta = pending.front();
 					pending.pop_front();
-				if (pending.empty() || pending.front().pts != pts || !callback)
-					return;
-				const Pending meta = pending.front();
-				pending.pop_front();
+					sinceOutput = 0;
+					target      = callback;
+				}
+				// Outside the lock: Decode() on libwebrtc's decoder thread
+				// does not wait for the renderer.
 				auto frame = webrtc::VideoFrame::Builder()
 				               .set_video_frame_buffer(i420)
 				               .set_rtp_timestamp(meta.rtpTimestamp)
@@ -294,7 +315,7 @@ namespace gelabber
 				               .set_rotation(meta.rotation)
 				               .set_color_space(meta.colorSpace)
 				               .build();
-				callback->Decoded(frame, std::nullopt, std::nullopt);
+				target->Decoded(frame, std::nullopt, std::nullopt);
 			}
 
 			const std::string element;
@@ -305,6 +326,7 @@ namespace gelabber
 			GstElement* sink{ nullptr };
 			GstBus* bus{ nullptr };
 			uint64_t count{ 0 };
+			int sinceOutput{ 0 };
 			std::atomic<bool> running{ false };
 			std::atomic<bool> failed{ false };
 			std::thread puller;
