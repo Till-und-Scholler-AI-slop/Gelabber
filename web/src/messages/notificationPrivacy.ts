@@ -63,30 +63,62 @@ export function useChangeNotificationPrivacy() {
   };
 }
 
-/** Another device (or tab) changed it: the gateway's `ns` says so. */
-export function refreshNotificationPrivacy(
+/** Another device (or tab) changed it: the gateway's `ns` says so. Once
+ * it is on, what this device shows already goes, as in the window that
+ * turned it on. */
+export async function refreshNotificationPrivacy(
   client: QueryClient,
   stamp: ScopeStamp,
 ): Promise<void> {
-  return client.invalidateQueries({
-    queryKey: privacyKey(stamp),
-    exact: true,
-  });
+  const key = privacyKey(stamp);
+  const before = client.getQueryData<NotificationPrivacy>(key)?.hide_content;
+  await client.invalidateQueries({ queryKey: key, exact: true });
+  const now = client.getQueryData<NotificationPrivacy>(key)?.hide_content;
+  if (now && !before && stampHolds(stamp))
+    await closeMessageNotifications({ user: stamp.userId });
 }
 
 /**
  * Whether a notification must leave the message out, from what the query
  * knows. Unknown counts as hidden: not loaded yet (a phone app resuming in the
- * background), or the last fetch failed. Only a server from before the switch
+ * background), the last fetch failed, or another device changed it and the
+ * answer is still on its way. Only a server from before the switch
  * shows the message without asking, as it always did. A page notification
  * that showed too much would also replace the server's hidden push for the
  * same message (`showPushed` in public/sw.js).
  */
 export function hidesContent(
-  state: Pick<QueryState<NotificationPrivacy>, "data" | "error"> | undefined,
+  state:
+    | Pick<QueryState<NotificationPrivacy>, "data" | "error" | "isInvalidated">
+    | undefined,
 ): boolean {
   if (state?.error) return !unsupported(state.error);
+  if (state?.isInvalidated) return true;
   return state?.data?.hide_content ?? true;
+}
+
+/**
+ * Title and text of the page's own system notification for a new message
+ * (`useMessageToasts`), from what the query cache knows about the switch.
+ */
+export function messageNotificationText(
+  client: QueryClient,
+  stamp: ScopeStamp,
+  message: {
+    author: string;
+    mentioned: boolean;
+    label: string;
+    preview: string;
+  },
+): { title: string; body: string } {
+  return notificationText(
+    hidesContent(client.getQueryState<NotificationPrivacy>(privacyKey(stamp))),
+    {
+      title: `${message.author}${message.mentioned ? " hat dich erwähnt" : ""} · ${message.label}`,
+      body: message.preview,
+      author: message.author,
+    },
+  );
 }
 
 /** Title and text of a notification, without the message when it hides it. */

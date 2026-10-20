@@ -36,11 +36,8 @@ import {
 } from "./mentions.ts";
 import { wantsNotification } from "./notifyLevel.ts";
 import {
-  hidesContent,
-  notificationText,
-  privacyKey,
+  messageNotificationText,
   useNotificationPrivacy,
-  type NotificationPrivacy,
 } from "./notificationPrivacy.ts";
 import {
   serverSetting,
@@ -252,17 +249,10 @@ export function useMessageToastsBridge(): void {
           {
             // The in-app toast above stays as it is: it shows on an open
             // page, never on a locked screen.
-            ...notificationText(
-              hidesContent(
-                client.getQueryState<NotificationPrivacy>(
-                  privacyKey({ userId, generation }),
-                ),
-              ),
-              {
-                title: `${message.author.name}${mentioned ? " hat dich erwähnt" : ""} · ${label}`,
-                body: preview,
-                author: message.author.name,
-              },
+            ...messageNotificationText(
+              client,
+              { userId, generation },
+              { author: message.author.name, mentioned, label, preview },
             ),
             channelId,
             messageId: message.id,
