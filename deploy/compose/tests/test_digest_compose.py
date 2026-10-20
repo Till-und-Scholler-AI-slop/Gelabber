@@ -117,6 +117,19 @@ class SecureDefaults(unittest.TestCase):
         self.assertEqual([p['host_ip'] for p in ports], ['127.0.0.1'])
         self.assertEqual(json.loads(result.stdout)['services']['api']['environment']['API_COOKIE_SECURE'], 'false')
 
+    def test_bundled_caddy_trusts_private_proxies_unless_emptied(self):
+        # #287: unset means private_ranges; an explicitly empty value must
+        # stay empty (trust none) rather than fall back to the default.
+        cases = (('', 'private_ranges'),
+                 ('GELABBER_TRUSTED_PROXIES=\n', ''),
+                 ('GELABBER_TRUSTED_PROXIES=192.0.2.10\n', '192.0.2.10'))
+        for extra, expected in cases:
+            with self.subTest(extra=extra):
+                result = self.config(SECRETS + extra)
+                self.assertEqual(result.returncode, 0, result.stderr)
+                proxy = json.loads(result.stdout)['services']['proxy']['environment']
+                self.assertEqual(proxy['GELABBER_TRUSTED_PROXIES'], expected)
+
     def test_examples_ship_no_passwords(self):
         for example in ('.env.example', '.env.homelab.example'):
             lines = (ROOT / example).read_text().splitlines()

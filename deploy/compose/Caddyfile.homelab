@@ -5,6 +5,20 @@
 # With API_COOKIE_SECURE=true, the overlay's default, `/ws` also refuses pages
 # from `http://` origins: the app is served over HTTPS only.
 #
+# The API keys its rate limits by the rightmost X-Forwarded-For entry, so
+# every API upstream below gets exactly one, the client as this Caddy sees
+# it ({client_ip}). Behind a CDN or tunnel that is the CDN; to let Caddy
+# believe the client address the CDN reports, add its ranges to the global
+# options at the top of your Caddyfile:
+#   {
+#       servers {
+#           trusted_proxies static <CDN or tunnel ranges>
+#           trusted_proxies_strict
+#       }
+#   }
+# The API believes X-Forwarded-For from whoever reaches it: never publish its
+# port (GELABBER_API_BIND) beyond loopback or a network only this Caddy uses.
+#
 # Caddy container on network `gelabber`:
 #   GELABBER_API_UPSTREAM=api:8080
 #   GELABBER_WEB_UPSTREAM=web:80
@@ -17,6 +31,7 @@
 	handle /health {
 		reverse_proxy {$GELABBER_API_UPSTREAM:127.0.0.1:18080} {
 			header_up Host {hostport}
+			header_up X-Forwarded-For {client_ip}
 			transport http {
 				dial_timeout 2s
 				response_header_timeout 5s
@@ -29,6 +44,7 @@
 	handle /ready {
 		reverse_proxy {$GELABBER_API_UPSTREAM:127.0.0.1:18080} {
 			header_up Host {hostport}
+			header_up X-Forwarded-For {client_ip}
 			transport http {
 				dial_timeout 2s
 				response_header_timeout 5s
@@ -41,6 +57,7 @@
 	handle /ws {
 		reverse_proxy {$GELABBER_API_UPSTREAM:127.0.0.1:18080} {
 			header_up Host {hostport}
+			header_up X-Forwarded-For {client_ip}
 			transport http {
 				dial_timeout 5s
 				read_timeout 0
@@ -53,6 +70,7 @@
 	handle @api {
 		reverse_proxy {$GELABBER_API_UPSTREAM:127.0.0.1:18080} {
 			header_up Host {hostport}
+			header_up X-Forwarded-For {client_ip}
 			transport http {
 				dial_timeout 5s
 				response_header_timeout 30s

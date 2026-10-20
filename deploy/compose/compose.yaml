@@ -10,6 +10,10 @@ services:
     image: caddy:2.11.4-alpine
     ports:
       - "${GELABBER_HTTP_BIND:-127.0.0.1}:${GELABBER_HTTP_PORT:-80}:80"
+    environment:
+      # Proxies whose X-Forwarded-For Caddy believes. No colon: an empty
+      # value in .env trusts none (deploy/README.md, "Client addresses").
+      GELABBER_TRUSTED_PROXIES: ${GELABBER_TRUSTED_PROXIES-private_ranges}
     volumes:
       - ./Caddyfile:/etc/caddy/Caddyfile:ro
     depends_on:
