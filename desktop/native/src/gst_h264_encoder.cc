@@ -439,19 +439,38 @@ namespace gelabber
 		};
 	} // namespace
 
+	namespace
+	{
+		// What every encoder pipeline needs; h264parse (gst-plugins-bad)
+		// splits the encoder output into access units.
+		bool CanEncode()
+		{
+			if (!Gst().ok)
+				return false;
+			if (!HasElement("appsrc") || !HasElement("appsink") || !HasElement("h264parse"))
+			{
+				RTC_LOG(LS_INFO) << "GStreamer lacks appsrc/appsink/h264parse; no H264 encoder";
+				return false;
+			}
+			return true;
+		}
+
+		std::string FirstElement(std::initializer_list<const char*> candidates)
+		{
+			for (const char* candidate : candidates)
+				if (HasElement(candidate))
+					return candidate;
+			return {};
+		}
+	} // namespace
+
 	std::string FindGstH264Encoder()
 	{
 		const char* forced = std::getenv("GELABBER_H264_ENCODER");
 		if (forced && std::strcmp(forced, "none") == 0)
 			return {};
-		if (!Gst().ok)
+		if (!CanEncode())
 			return {};
-		// h264parse (gst-plugins-bad) splits the encoder output into access units.
-		if (!HasElement("appsrc") || !HasElement("appsink") || !HasElement("h264parse"))
-		{
-			RTC_LOG(LS_INFO) << "GStreamer lacks appsrc/appsink/h264parse; software H264 only";
-			return {};
-		}
 		if (forced && *forced)
 		{
 			if (HasElement(forced))
@@ -459,11 +478,21 @@ namespace gelabber
 			RTC_LOG(LS_WARNING) << "GELABBER_H264_ENCODER=" << forced << " not found";
 			return {};
 		}
-		for (const char* candidate : { "nvh264enc", "vah264enc", "vah264lpenc", "vaapih264enc" })
-			if (HasElement(candidate))
-				return candidate;
-		RTC_LOG(LS_INFO) << "no hardware H264 encoder in GStreamer; software H264 only";
-		return {};
+		if (auto hardware = FirstElement({ "nvh264enc", "vah264enc", "vah264lpenc", "vaapih264enc" });
+		    !hardware.empty())
+			return hardware;
+		RTC_LOG(LS_INFO) << "no hardware H264 encoder in GStreamer";
+		return FindGstH264SoftwareEncoder();
+	}
+
+	std::string FindGstH264SoftwareEncoder()
+	{
+		const char* forced = std::getenv("GELABBER_H264_ENCODER");
+		if (forced && std::strcmp(forced, "none") == 0)
+			return {};
+		if (!CanEncode())
+			return {};
+		return FirstElement({ "openh264enc", "x264enc" });
 	}
 
 	bool IsHardwareH264Encoder(const std::string& element)

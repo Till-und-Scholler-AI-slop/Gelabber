@@ -44,7 +44,7 @@ jobs:
       group: desktop-libwebrtc-linux-${{ github.ref }}
       cancel-in-progress: false
     runs-on: ubuntu-24.04
-    timeout-minutes: 330
+    timeout-minutes: 350
     outputs:
       key: ${{ steps.key.outputs.key }}
     steps:
@@ -101,6 +101,47 @@ jobs:
         with:
           path: /mnt/libwebrtc-package
           key: ${{ steps.key.outputs.key }}
+
+      # Part 2 of the third-party notices is made from this checkout and
+      # build, which no other job has: a changed libwebrtc build (the cache
+      # key) is when that part needs renewing. With a debug build of the core
+      # against the fresh package, the script writes the whole file afresh;
+      # the step summary says whether it differs from the committed one, the
+      # artifact holds it and the log its diff (gzip, base64), to be
+      # committed. The "Third-party notices" job holds the branch to it.
+      - name: Rust toolchain (notices)
+        if: steps.cache.outputs.cache-hit != 'true'
+        uses: dtolnay/rust-toolchain@1.98.1
+
+      - name: Renew the third-party notices
+        id: notices
+        if: steps.cache.outputs.cache-hit != 'true'
+        env:
+          GELABBER_LIBWEBRTC_DIR: /mnt/libwebrtc-package
+        run: |
+          set -euo pipefail
+          sudo apt-get update
+          sudo apt-get install -y --no-install-recommends ninja-build python3-venv
+          cargo build --manifest-path desktop/Cargo.toml -p gelabber-media-core
+          build=$(ls -d desktop/target/debug/build/gelabber-media-core-*/out/build | head -n 1)
+          python3 desktop/packaging/third-party-notices.py --webrtc-src /mnt/webrtc/src --core-build "$build"
+          notices=desktop/app/package/THIRD-PARTY-NOTICES.txt
+          if git diff --quiet -- "$notices"; then
+            echo "Third-party notices: unchanged." >> "$GITHUB_STEP_SUMMARY"
+          else
+            echo "Third-party notices: renewed, $(git diff --numstat -- "$notices" | awk '{print "+" $1 " -" $2}') lines; commit the artifact third-party-notices." >> "$GITHUB_STEP_SUMMARY"
+            echo "::group::diff of $notices (gzip, base64)"
+            git diff -- "$notices" | gzip -9 | base64 -w 0
+            echo
+            echo "::endgroup::"
+          fi
+
+      - name: Upload the renewed notices
+        if: steps.notices.outcome == 'success'
+        uses: actions/upload-artifact@v4
+        with:
+          name: third-party-notices
+          path: desktop/app/package/THIRD-PARTY-NOTICES.txt
 
   libwebrtc-windows:
     name: libwebrtc (Windows x64)
@@ -741,8 +782,9 @@ jobs:
 
       # What ships, read with dumpbin:
       # - the DLL exports the C ABI (gm_*) and nothing else;
-      # - no H264 encoder or decoder is linked in: the libwebrtc package holds
-      #   OpenH264 and FFmpeg, the Windows core is built without H264;
+      # - no H264 encoder or decoder of libwebrtc's is linked in: the package
+      #   is built without OpenH264 and FFmpeg (rtc_use_h264=false), and the
+      #   core takes H264 from Media Foundation;
       # - neither file needs anything a clean Windows 10 or 11 lacks.
       #   Acceptable are DLLs of Windows itself (in System32 of this image),
       #   API sets (api-ms-win-*, ext-ms-win-*) and with them the Universal

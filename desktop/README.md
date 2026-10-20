@@ -336,29 +336,34 @@ separate decision.
   produces what it is asked for, and a caller that names no codec gets H264
   before VP8. `media_info` reports the feature `h264-hardware` and, under
   `videoCodecs`, what `gm_video_codecs` found.
-  - Linux encode: through the system's GStreamer when that has a hardware
-    element (`nvh264enc`, `vah264enc`, `vah264lpenc`, `vaapih264enc`; with
-    `h264parse` from gst-plugins-bad), otherwise OpenH264 for H264 and
-    libvpx for VP8/VP9. `GELABBER_H264_ENCODER=<element>|none` overrides the
-    choice; an element named this way that encodes on the CPU (`x264enc`)
-    does not count as hardware.
-  - Linux decode: H264 through GStreamer when that has a hardware decoder
-    (`nvh264dec`, `vah264dec`, `vaapih264dec`), behind libwebrtc's software
-    fallback to FFmpeg (Chrome branding); `GELABBER_H264_DECODER=<element>|none`
-    overrides it (`avdec_h264` in CI). VP8/VP9 are libvpx's, AV1 dav1d's.
+  - Neither libwebrtc build carries H264 (`rtc_use_h264=false`, no OpenH264
+    or FFmpeg) and the core is compiled without `WEBRTC_USE_H264`: H264 is
+    the system's alone, so the packages ship no H264 codec. A system
+    without one has no H264 in its RTP capabilities, and the room falls
+    back to VP8 through the negotiation above.
+  - Linux encode: through the system's GStreamer, a hardware element
+    (`nvh264enc`, `vah264enc`, `vah264lpenc`, `vaapih264enc`; with
+    `h264parse` from gst-plugins-bad) else a software one (`openh264enc`,
+    `x264enc`), each simulcast layer on its own encoder behind
+    `SimulcastEncoderAdapter`, which hands a failing hardware encoder over
+    to the software element. `GELABBER_H264_ENCODER=<element>|none`
+    overrides the choice; an element named this way that encodes on the CPU
+    (`x264enc`) does not count as hardware. VP8/VP9 are libvpx's.
+  - Linux decode: through GStreamer, a hardware decoder (`nvh264dec`,
+    `vah264dec`, `vaapih264dec`) behind libwebrtc's software fallback to a
+    software element (`avdec_h264`, `openh264dec`), else the software
+    element alone; `GELABBER_H264_DECODER=<element>|none` overrides it
+    (`avdec_h264` in CI). VP8/VP9 are libvpx's, AV1 dav1d's.
   - Windows: H264 through Media Foundation (`native/src/mf_h264.cc`), which
     ships with Windows and the GPU drivers: the GPU's encoder MFT (NVENC,
     AMF, Quick Sync) where there is one, else Microsoft's software encoder,
     and Microsoft's decoder, on the GPU through DXVA where it gets a
     Direct3D 11 device. An encoder MFT covers one picture, so the core runs
     one per simulcast layer itself. A hardware MFT that fails is replaced by
-    the next one. VP8, VP9 and AV1 are in software; the core is built
-    without WEBRTC_USE_H264, so none of the package's OpenH264 or FFmpeg
-    code is linked.
-  - Licensing of H264 in shipped builds is still open (issue #165).
-- Simulcast: libvpx and OpenH264 encode a producer's layers in one encoder,
-  and only when every layer has exactly the top layer's aspect. A layer is
-  the picture divided by its `scaleResolutionDownBy`, so a 1366x768 screen
+    the next one. VP8, VP9 and AV1 are in software.
+- Simulcast: libvpx encodes a producer's layers in one encoder, and only
+  when every layer has exactly the top layer's aspect. A layer is the
+  picture divided by its `scaleResolutionDownBy`, so a 1366x768 screen
   over the web client's 4 and 1 would be 342x192 below 1366x768: refused,
   and nothing is sent. Local video sources therefore crop to multiples of 4
   (1364x768), and the software encoders tell libwebrtc that their alignment

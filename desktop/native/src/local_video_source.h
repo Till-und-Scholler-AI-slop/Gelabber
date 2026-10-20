@@ -17,8 +17,8 @@ namespace gelabber
 	public:
 		// Both sides of every frame are a multiple of this: up to three
 		// columns and rows are cropped away. A simulcast layer is the frame
-		// divided by its scaleResolutionDownBy, and libvpx (VP8) and OpenH264
-		// encode a producer's layers only when each has exactly the top
+		// divided by its scaleResolutionDownBy, and libvpx (VP8) encodes a
+		// producer's layers only when each has exactly the top
 		// layer's aspect; a 1366x768 screen over layers of 4 and 1 would be
 		// 342x192 below 1366x768, which they refuse, and nothing is sent. 4
 		// is the largest factor the web client asks for

@@ -162,16 +162,16 @@ target_include_directories(gelabber_media
 target_link_libraries(gelabber_media PRIVATE mediasoupclient rnnoise)
 
 if(UNIX AND NOT APPLE)
-  # WEBRTC_USE_H264 matches rtc_use_h264=true; without it the OpenH264
-  # template adapters advertise no H264 formats.
-  target_compile_definitions(gelabber_media PRIVATE WEBRTC_LINUX WEBRTC_USE_H264)
+  # libwebrtc is built with rtc_use_h264=false and WEBRTC_USE_H264 stays
+  # undefined: H264 comes from the system's GStreamer alone.
+  target_compile_definitions(gelabber_media PRIVATE WEBRTC_LINUX)
   target_compile_definitions(mediasoupclient PUBLIC WEBRTC_LINUX)
 
   # Screen capture: xdg-desktop-portal over GLib/GIO, PipeWire dlopened by
   # libwebrtc (rtc_link_pipewire=false), GBM/DRM for DMA-BUF frames. The
   # defines match libwebrtc's pipewire_config; DesktopCaptureOptions changes
-  # layout with them. Hardware H264 (encoding and decoding) loads the system
-  # GStreamer with dlopen.
+  # layout with them. H264 (encoding and decoding, on the GPU where the
+  # system can) loads the system GStreamer with dlopen.
   target_sources(gelabber_media PRIVATE src/screen_source_pipewire.cc src/gst_common.cc
     src/gst_h264_encoder.cc src/gst_h264_decoder.cc src/app_audio_pipewire.cc)
   target_compile_definitions(gelabber_media PRIVATE WEBRTC_USE_PIPEWIRE WEBRTC_USE_GIO)
@@ -202,8 +202,8 @@ if(WIN32)
   # Application sound: WASAPI process loopback (src/app_audio_win.cc), which
   # needs a Windows SDK of 10.0.20348 or later to build.
   # H264: Media Foundation's encoder and decoder MFTs (src/mf_h264.cc), which
-  # come with Windows and the GPU drivers. WEBRTC_USE_H264 stays undefined, so
-  # no OpenH264 or FFmpeg H264 code of the libwebrtc package is referenced.
+  # come with Windows and the GPU drivers. libwebrtc is built with
+  # rtc_use_h264=false and WEBRTC_USE_H264 stays undefined.
   target_sources(gelabber_media PRIVATE src/screen_source_win.cc src/app_audio_win.cc src/mf_h264.cc)
   # WEBRTC_WIN, NOMINMAX and WIN32_LEAN_AND_MEAN come from libmediasoupclient;
   # these are the other Windows defines libwebrtc is built with. The screen
