@@ -30,7 +30,11 @@ on:
       - rust-toolchain.toml
       # Its version against the server's (deploy/compose/tests).
       - desktop/Cargo.toml
-      - .github/workflows/**
+      # This workflow, and what its deployment tests read (the image
+      # workflow and its script). Other workflows cannot change its result.
+      - .github/workflows/ci.yml
+      - .github/workflows/publish-images.yml
+      - .github/workflows/scripts/**
   push:
     branches: [main]
 
@@ -153,6 +157,10 @@ jobs:
           # Keep compiled dependencies when a runtime assertion fails; checks
           # remain failing and every test is rerun on the next candidate.
           cache-on-failure: true
+          # Written by main only, read by every pull request: one copy per
+          # pull request (some 900 MB) pushed the repository past its cache
+          # quota, and evictions then took the main and desktop caches too.
+          save-if: ${{ github.event_name == 'push' }}
           shared-key: native-debian-${{ hashFiles('media/Dockerfile', 'docker/mediasoup-*', 'docker/install-mediasoup-debian-build-tools.sh') }}
           workspaces: . -> target/native-debian
 
