@@ -35,6 +35,15 @@ async fn run() -> Result<(), Box<dyn std::error::Error>> {
             "MINIO_PUBLIC_ENDPOINT uses port {port} instead of 443: attachments load and upload only on networks that allow this port (deploy/README.md, MinIO on 443)"
         );
     }
+    if config
+        .minio
+        .as_ref()
+        .is_some_and(|minio| minio.root_credentials)
+    {
+        tracing::warn!(
+            "signed in to MinIO as root (MINIO_ROOT_USER): set MINIO_APP_PASSWORD and update deploy/compose so the API uses its bucket-scoped user (deploy/README.md, MinIO user)"
+        );
+    }
     let state = AppState::from_config(&config)?;
 
     // Schema first, traffic second. Compose only starts the API once

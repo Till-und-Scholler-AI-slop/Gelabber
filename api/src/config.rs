@@ -30,6 +30,8 @@ pub const TURN_CRED_TTL_SECS: &str = "TURN_CRED_TTL_SECS";
 pub const MEDIA_TICKET_TTL_SECS: &str = "MEDIA_TICKET_TTL_SECS";
 pub const MINIO_ENDPOINT: &str = "MINIO_ENDPOINT";
 pub const MINIO_PUBLIC_ENDPOINT: &str = "MINIO_PUBLIC_ENDPOINT";
+pub const MINIO_ACCESS_KEY: &str = "MINIO_ACCESS_KEY";
+pub const MINIO_SECRET_KEY: &str = "MINIO_SECRET_KEY";
 pub const MINIO_ROOT_USER: &str = "MINIO_ROOT_USER";
 pub const MINIO_ROOT_PASSWORD: &str = "MINIO_ROOT_PASSWORD";
 pub const MINIO_BUCKET: &str = "MINIO_BUCKET";
@@ -193,6 +195,9 @@ pub struct MinioConfig {
     pub access_key: String,
     pub secret_key: String,
     pub bucket: String,
+    /// Signed in with `MINIO_ROOT_*` because `MINIO_ACCESS_KEY` is unset:
+    /// a Compose file from before #196. Works, but the API holds root.
+    pub root_credentials: bool,
 }
 
 impl MinioConfig {
@@ -566,8 +571,20 @@ fn parse_u64_allow_zero(key: &'static str, raw: &str) -> Result<u64, ConfigError
 
 fn parse_minio(get: &impl Fn(&str) -> Option<String>) -> Result<Option<MinioConfig>, ConfigError> {
     let endpoint = get(MINIO_ENDPOINT);
-    let user = get(MINIO_ROOT_USER);
-    let password = get(MINIO_ROOT_PASSWORD);
+    // Bucket-scoped keys (#196) win. Root stays accepted so a new image under
+    // an old Compose file (Watchtower) keeps working until the operator
+    // switches over.
+    let (user, password, root_credentials) = match get(MINIO_ACCESS_KEY) {
+        Some(user) => match get(MINIO_SECRET_KEY) {
+            Some(password) => (Some(user), Some(password), false),
+            None => return Err(ConfigError::Missing(MINIO_SECRET_KEY)),
+        },
+        // A lone secret would otherwise fall back to root unnoticed.
+        None if get(MINIO_SECRET_KEY).is_some() => {
+            return Err(ConfigError::Missing(MINIO_ACCESS_KEY));
+        }
+        None => (get(MINIO_ROOT_USER), get(MINIO_ROOT_PASSWORD), true),
+    };
     let bucket = get(MINIO_BUCKET);
     match (endpoint, user, password, bucket) {
         (None, None, None, None) => Ok(None),
@@ -589,6 +606,7 @@ fn parse_minio(get: &impl Fn(&str) -> Option<String>) -> Result<Option<MinioConf
                 access_key,
                 secret_key,
                 bucket,
+                root_credentials,
             }))
         }
         _ => Err(ConfigError::Missing(MINIO_ENDPOINT)),
@@ -672,8 +690,14 @@ fn refuse_public_defaults(
     if db_password.is_some_and(|password| PUBLIC_POSTGRES_PASSWORDS.contains(&password.as_str())) {
         return Err(refuse(DATABASE_URL));
     }
-    if minio.is_some_and(|minio| PUBLIC_MINIO_ROOT_PASSWORDS.contains(&minio.secret_key.as_str())) {
-        return Err(refuse(MINIO_ROOT_PASSWORD));
+    if let Some(minio) = minio
+        && PUBLIC_MINIO_ROOT_PASSWORDS.contains(&minio.secret_key.as_str())
+    {
+        return Err(refuse(if minio.root_credentials {
+            MINIO_ROOT_PASSWORD
+        } else {
+            MINIO_SECRET_KEY
+        }));
     }
     // REST mode never hands out the static password.
     if !turn_rest
@@ -851,6 +875,7 @@ mod tests {
                 access_key: String::new(),
                 secret_key: String::new(),
                 bucket: String::new(),
+                root_credentials: false,
             }
             .public_port()
         };
@@ -878,6 +903,44 @@ mod tests {
         assert_eq!(minio.endpoint, "http://minio:9000");
         assert_eq!(minio.public_endpoint, "http://minio:9000");
         assert_eq!(minio.bucket, "gelabber");
+        assert!(minio.root_credentials);
+    }
+
+    #[test]
+    fn bucket_scoped_minio_keys_win_over_root() {
+        let config = Config::from_source(source(&[
+            (DATABASE_URL, "postgres://u:p@localhost/db"),
+            (REDIS_URL, "redis://localhost"),
+            (MINIO_ENDPOINT, "http://minio:9000"),
+            (MINIO_ACCESS_KEY, "gelabber-api"),
+            (MINIO_SECRET_KEY, "private-app"),
+            (MINIO_ROOT_USER, "gelabber"),
+            (MINIO_ROOT_PASSWORD, "private-root"),
+            (MINIO_BUCKET, "gelabber"),
+        ]))
+        .expect("valid config");
+        let minio = config.minio.expect("minio");
+        assert_eq!(minio.access_key, "gelabber-api");
+        assert_eq!(minio.secret_key, "private-app");
+        assert!(!minio.root_credentials);
+    }
+
+    #[test]
+    fn minio_access_key_needs_its_secret() {
+        let err = Config::from_source(source(&[
+            (DATABASE_URL, "postgres://u:p@localhost/db"),
+            (REDIS_URL, "redis://localhost"),
+            (MINIO_ENDPOINT, "http://minio:9000"),
+            (MINIO_ACCESS_KEY, "gelabber-api"),
+            (MINIO_ROOT_USER, "gelabber"),
+            (MINIO_ROOT_PASSWORD, "private-root"),
+            (MINIO_BUCKET, "gelabber"),
+        ]))
+        .unwrap_err();
+        assert!(
+            matches!(err, ConfigError::Missing(MINIO_SECRET_KEY)),
+            "{err}"
+        );
     }
 
     #[test]
@@ -1035,6 +1098,43 @@ mod tests {
                 "{key}: {err}"
             );
         }
+    }
+
+    #[test]
+    fn minio_secret_key_needs_its_access_key() {
+        let err = Config::from_source(source(&[
+            (DATABASE_URL, "postgres://u:p@localhost/db"),
+            (REDIS_URL, "redis://localhost"),
+            (MINIO_ENDPOINT, "http://minio:9000"),
+            (MINIO_SECRET_KEY, "private-app"),
+            (MINIO_ROOT_USER, "gelabber"),
+            (MINIO_ROOT_PASSWORD, "private-root"),
+            (MINIO_BUCKET, "gelabber"),
+        ]))
+        .unwrap_err();
+        assert!(
+            matches!(err, ConfigError::Missing(MINIO_ACCESS_KEY)),
+            "{err}"
+        );
+    }
+
+    #[test]
+    fn behind_tls_public_default_as_app_secret_is_refused() {
+        let err = Config::from_source(secure_source(&[
+            (MINIO_ACCESS_KEY, "gelabber-api"),
+            (MINIO_SECRET_KEY, "gelabbergelabber"),
+        ]))
+        .unwrap_err();
+        assert!(
+            matches!(
+                &err,
+                ConfigError::Invalid {
+                    key: MINIO_SECRET_KEY,
+                    ..
+                }
+            ),
+            "{err}"
+        );
     }
 
     #[test]

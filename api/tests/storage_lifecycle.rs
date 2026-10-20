@@ -466,6 +466,7 @@ fn minio_config(endpoint: &str) -> gelabber_api::config::MinioConfig {
         access_key: std::env::var("MINIO_ROOT_USER").expect("local test username"),
         secret_key: std::env::var("MINIO_ROOT_PASSWORD").expect("local test password"),
         bucket: format!("gb-test-{}", Uuid::new_v4().simple()),
+        root_credentials: true,
     }
 }
 
@@ -742,6 +743,7 @@ async fn stale_cleanup_ack_cannot_remove_a_new_claim_and_s3_does_not_hold_pool_c
         access_key: "test".into(),
         secret_key: "test".into(),
         bucket: "test".into(),
+        root_credentials: true,
     }))
     .unwrap();
     let key = format!("att/{}", Uuid::new_v4());
@@ -1039,6 +1041,7 @@ async fn pending_upload_expiring_during_storage_head_cannot_bind(pool: PgPool) {
         access_key: "test".into(),
         secret_key: "test".into(),
         bucket: "test".into(),
+        root_credentials: true,
     }))
     .unwrap();
     let (mut client, _, channel) = owner(&state).await;

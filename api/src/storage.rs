@@ -586,6 +586,7 @@ mod tests {
             access_key: "gelabber".into(),
             secret_key: "gelabbergelabber".into(),
             bucket: "gelabber".into(),
+            root_credentials: false,
         }))
         .expect("minio store");
         let signed = store
@@ -615,6 +616,7 @@ mod tests {
             access_key: "gelabber".into(),
             secret_key: "gelabbergelabber".into(),
             bucket: "gelabber".into(),
+            root_credentials: false,
         })
         .expect("minio store")
     }
