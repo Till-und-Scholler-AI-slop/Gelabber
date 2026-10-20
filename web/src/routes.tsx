@@ -12,14 +12,17 @@ import { RequireUser } from "./components/RequireUser.tsx";
 import { ChannelPage } from "./pages/ChannelPage.tsx";
 import { DmChannelPage } from "./pages/DmChannelPage.tsx";
 import { DmIndexPage } from "./pages/DmIndexPage.tsx";
+import { ForgotPasswordPage } from "./pages/ForgotPasswordPage.tsx";
 import { InvitePage } from "./pages/InvitePage.tsx";
 import { LoginPage } from "./pages/LoginPage.tsx";
 import { NotFoundCard, NotFoundPage } from "./pages/NotFoundPage.tsx";
 import { ProfilePage } from "./pages/ProfilePage.tsx";
 import { RegisterPage } from "./pages/RegisterPage.tsx";
+import { ResetPasswordPage } from "./pages/ResetPasswordPage.tsx";
 import { ServerPage } from "./pages/ServerPage.tsx";
 import { ServerSettingsPage } from "./pages/ServerSettingsPage.tsx";
 import { UserSettingsPage } from "./pages/UserSettingsPage.tsx";
+import { VerifyEmailPage } from "./pages/VerifyEmailPage.tsx";
 import { WorkspaceIndexPage } from "./pages/WorkspaceIndexPage.tsx";
 import { WorkspaceLayout } from "./pages/WorkspaceLayout.tsx";
 
@@ -116,6 +119,30 @@ const registerRoute = createRoute({
   component: RegisterPage,
 });
 
+const forgotPasswordRoute = createRoute({
+  getParentRoute: () => centeredLayout,
+  path: "/forgot-password",
+  validateSearch: validateAuthSearch,
+  beforeLoad: requireAnonymous,
+  component: ForgotPasswordPage,
+});
+
+// Mailed links work signed in or not: either ends with this tab signed in
+// to the account the link belongs to.
+const resetPasswordRoute = createRoute({
+  getParentRoute: () => centeredLayout,
+  path: "/reset-password",
+  beforeLoad: () => ensureSession(),
+  component: ResetPasswordPage,
+});
+
+const verifyEmailRoute = createRoute({
+  getParentRoute: () => centeredLayout,
+  path: "/verify-email",
+  beforeLoad: () => ensureSession(),
+  component: VerifyEmailPage,
+});
+
 const inviteRoute = createRoute({
   getParentRoute: () => centeredLayout,
   path: "/invite/$code",
@@ -185,6 +212,9 @@ const routeTree = rootRoute.addChildren([
     userSettingsRoute,
     loginRoute,
     registerRoute,
+    forgotPasswordRoute,
+    resetPasswordRoute,
+    verifyEmailRoute,
     inviteRoute,
   ]),
   workspaceLayout.addChildren([

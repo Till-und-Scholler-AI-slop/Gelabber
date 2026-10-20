@@ -312,6 +312,16 @@ function codeSpanEnd(src: string, i: number, run: number): number {
   return -1;
 }
 
+/** The length of the link the parser sees at `i` (bare, or `<url>`), 0 if
+ * none: mentions inside it are part of the link (`mentions.ts`). */
+export function linkLengthAt(src: string, i: number): number {
+  if (src[i] === "<") {
+    const angle = ANGLE_LINK.exec(src.slice(i, i + 2050));
+    if (angle && safeHref(angle[1])) return angle[0].length;
+  }
+  return bareUrlAt(src, i)?.text.length ?? 0;
+}
+
 /** A bare http(s) URL starting at `i`, trailing punctuation left out. */
 function bareUrlAt(
   src: string,

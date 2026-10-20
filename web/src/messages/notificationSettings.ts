@@ -17,6 +17,7 @@ import {
   type ScopeStamp,
 } from "../auth/scope.ts";
 import { getGateway } from "../ws/client.ts";
+import { refreshNotificationPrivacy } from "./notificationPrivacy.ts";
 import { isMuted, type NotifyLevel } from "./notifyLevel.ts";
 import { refreshReadState, useReadState } from "./readState.ts";
 
@@ -82,20 +83,34 @@ export function settingOf(
   );
 }
 
-/** A server's own level and mute in the shape of an unread row's, for a
- * conversation without a row yet. Unknown settings: undefined. */
-export function serverSetting(
+/** The effective level and mute of a conversation without an unread row
+ * yet, in the shape of an unread row's, as the server works them out: the
+ * conversation's own level, else its server's, else "all"; muted while its
+ * own mute or its server's holds at `now`. A DM has no server. Unknown
+ * settings: undefined. */
+export function conversationSetting(
   settings: readonly NotificationSetting[] | undefined,
-  serverId: string,
+  channelId: string,
+  serverId: string | null,
+  now: number,
 ):
   | { level: NotifyLevel; muted: boolean; muted_until: string | null }
   | undefined {
   if (!settings) return undefined;
-  const own = settingOf(settings, "server", serverId);
+  const own = settingOf(settings, "channel", channelId);
+  const server = serverId ? settingOf(settings, "server", serverId) : null;
+  const holding = [own, server].filter(
+    (setting): setting is NotificationSetting =>
+      !!setting && isMuted(setting, now),
+  );
+  const ends = holding.map((setting) => setting.muted_until);
   return {
-    level: own.level ?? "all",
-    muted: own.muted,
-    muted_until: own.muted_until,
+    level: own.level ?? server?.level ?? "all",
+    muted: holding.length > 0,
+    muted_until:
+      holding.length === 0 || ends.includes(null)
+        ? null
+        : ends.reduce((a, b) => (Date.parse(a!) >= Date.parse(b!) ? a : b)),
   };
 }
 
@@ -103,6 +118,7 @@ async function refreshAll(client: QueryClient, stamp: ScopeStamp) {
   if (!stampHolds(stamp)) return;
   await Promise.all([
     client.invalidateQueries({ queryKey: settingsKey(stamp), exact: true }),
+    refreshNotificationPrivacy(client, stamp),
     refreshReadState(client, stamp),
   ]);
 }

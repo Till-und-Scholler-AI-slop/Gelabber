@@ -26,7 +26,8 @@ struct Hit {
     body: Vec<u8>,
 }
 
-/// Answers 201, 410 for an endpoint under `/gone/`, 500 under `/fail/`.
+/// Answers 201, 410 for an endpoint under `/gone/`, 500 under `/fail/`,
+/// 400 under `/bad/`, 403 under `/denied/`.
 async fn fake_service() -> (String, mpsc::UnboundedReceiver<Hit>) {
     let (tx, rx) = mpsc::unbounded_channel();
     let router = Router::new()
@@ -39,6 +40,8 @@ async fn fake_service() -> (String, mpsc::UnboundedReceiver<Hit>) {
                  body: axum::body::Bytes| async move {
                     let gone = path.starts_with("gone/");
                     let fail = path.starts_with("fail/");
+                    let bad = path.starts_with("bad/");
+                    let denied = path.starts_with("denied/");
                     let _ = tx.send(Hit {
                         path,
                         headers,
@@ -46,6 +49,10 @@ async fn fake_service() -> (String, mpsc::UnboundedReceiver<Hit>) {
                     });
                     if gone {
                         StatusCode::GONE
+                    } else if bad {
+                        StatusCode::BAD_REQUEST
+                    } else if denied {
+                        StatusCode::FORBIDDEN
                     } else if fail {
                         StatusCode::INTERNAL_SERVER_ERROR
                     } else {
@@ -374,6 +381,10 @@ async fn in_a_server_only_mentions_push_and_settings_hold_them_back(pool: PgPool
         .await;
     assert_eq!(r.status, StatusCode::OK, "{}", r.body);
     post(&mut a, &channel, &format!("<@{bob}> stumm")).await;
+    // The push is sent in the background; let it pass the mute check
+    // before the mute is lifted.
+    post(&mut a, &dm, "marker 1b").await;
+    assert_eq!(browser.open(&next(&mut hits).await)["body"], "marker 1b");
     b.send(
         Method::PUT,
         &format!("/api/channels/{channel}/notification-settings"),
@@ -389,6 +400,70 @@ async fn in_a_server_only_mentions_push_and_settings_hold_them_back(pool: PgPool
     post(&mut a, &channel, &format!("<@{bob}> nichts")).await;
     post(&mut a, &dm, "marker 2").await;
     assert_eq!(browser.open(&next(&mut hits).await)["body"], "marker 2");
+}
+
+#[sqlx::test]
+async fn hidden_content_pushes_only_who_wrote(pool: PgPool) {
+    let World {
+        mut a,
+        mut b,
+        server,
+        channel,
+        dm,
+        mut hits,
+        service,
+        ..
+    } = setup(pool).await;
+    let browser = Browser::new(&service, "sub/bob");
+    subscribe(&mut b, &browser).await;
+    let bob = b.user_id().to_owned();
+
+    let r = b.send(Method::GET, "/api/notification-privacy", None).await;
+    assert_eq!(r.status, StatusCode::OK, "{}", r.body);
+    assert_eq!(r.body, json!({"hide_content": false}));
+    let r = b
+        .send(Method::PUT, "/api/notification-privacy", Some(json!({})))
+        .await;
+    assert_eq!(r.status, StatusCode::BAD_REQUEST, "{}", r.body);
+    let r = b
+        .send(
+            Method::PUT,
+            "/api/notification-privacy",
+            Some(json!({"hide_content": true})),
+        )
+        .await;
+    assert_eq!(r.status, StatusCode::OK, "{}", r.body);
+    assert_eq!(r.body, json!({"hide_content": true}));
+    let r = b.send(Method::GET, "/api/notification-privacy", None).await;
+    assert_eq!(r.body, json!({"hide_content": true}));
+    // Someone else's switch stays as it was.
+    let r = a.send(Method::GET, "/api/notification-privacy", None).await;
+    assert_eq!(r.body, json!({"hide_content": false}));
+
+    let message = post(&mut a, &dm, "geheim").await;
+    let payload = browser.open(&next(&mut hits).await);
+    assert_eq!(payload["title"], "Neue Nachricht von Ada");
+    assert_eq!(payload["body"], "");
+    // A tap still leads to the conversation, and the page still dedupes.
+    assert_eq!(payload["path"], format!("/d/{dm}"));
+    assert_eq!(payload["message"], message["id"]);
+
+    post(&mut a, &channel, &format!("<@{bob}> auch geheim")).await;
+    let payload = browser.open(&next(&mut hits).await);
+    assert_eq!(payload["title"], "Neue Nachricht von Ada");
+    assert_eq!(payload["body"], "");
+    assert_eq!(payload["path"], format!("/s/{server}/c/{channel}"));
+
+    b.send(
+        Method::PUT,
+        "/api/notification-privacy",
+        Some(json!({"hide_content": false})),
+    )
+    .await;
+    post(&mut a, &dm, "wieder lesbar").await;
+    let payload = browser.open(&next(&mut hits).await);
+    assert_eq!(payload["title"], "Ada");
+    assert_eq!(payload["body"], "wieder lesbar");
 }
 
 #[sqlx::test]
@@ -486,6 +561,81 @@ async fn a_long_failing_subscription_is_removed(pool: PgPool) {
     }
     assert_eq!(left.len(), 1);
     assert!(left[0].ends_with("/fail/new"), "{left:?}");
+}
+
+async fn endpoints_left(pool: &PgPool, expected: usize) -> Vec<String> {
+    let mut left = Vec::new();
+    for _ in 0..50 {
+        left = sqlx::query_scalar::<_, String>(
+            "SELECT endpoint FROM push_subscriptions ORDER BY endpoint",
+        )
+        .fetch_all(pool)
+        .await
+        .unwrap();
+        if left.len() == expected {
+            break;
+        }
+        tokio::time::sleep(Duration::from_millis(20)).await;
+    }
+    left
+}
+
+/// A service that refuses a subscription (400, 403 after a key change)
+/// while it takes another push of the same message will not take it later
+/// either: it goes on that refusal, while a recent one that only failed
+/// stays.
+#[sqlx::test]
+async fn a_refused_subscription_is_removed_at_once(pool: PgPool) {
+    let World {
+        mut a,
+        mut b,
+        dm,
+        mut hits,
+        service,
+        ..
+    } = setup(pool.clone()).await;
+    for path in ["bad/1", "denied/1", "fail/1", "sub/1"] {
+        subscribe(&mut b, &Browser::new(&service, path)).await;
+    }
+    post(&mut a, &dm, "eins").await;
+    for _ in 0..4 {
+        next(&mut hits).await;
+    }
+    let left = endpoints_left(&pool, 2).await;
+    assert_eq!(left.len(), 2, "{left:?}");
+    assert!(left[0].ends_with("/fail/1"), "{left:?}");
+    assert!(left[1].ends_with("/sub/1"), "{left:?}");
+}
+
+/// Refused by the service across the board, the fault is the server's (a
+/// rejected VAPID token, a clock off): a refusal counts as a failure, and
+/// only a subscription silent for a month goes.
+#[sqlx::test]
+async fn a_refusal_of_every_push_keeps_the_subscriptions(pool: PgPool) {
+    let World {
+        mut a,
+        mut b,
+        dm,
+        mut hits,
+        service,
+        ..
+    } = setup(pool.clone()).await;
+    subscribe(&mut b, &Browser::new(&service, "denied/new")).await;
+    subscribe(&mut b, &Browser::new(&service, "denied/old")).await;
+    sqlx::query(
+        "UPDATE push_subscriptions SET created_at=now()-interval '40 days' \
+         WHERE endpoint LIKE '%/denied/old'",
+    )
+    .execute(&pool)
+    .await
+    .unwrap();
+    post(&mut a, &dm, "eins").await;
+    next(&mut hits).await;
+    next(&mut hits).await;
+    // The old one going shows the cleanup ran; the recent one stays.
+    let left = endpoints_left(&pool, 1).await;
+    assert_eq!(left.len(), 1, "{left:?}");
+    assert!(left[0].ends_with("/denied/new"), "{left:?}");
 }
 
 type Ws =

@@ -13,6 +13,7 @@ import { confirmDiscardThemeDraft } from "../theme/discardDraft.ts";
 import { ThemesPanel } from "../theme/ThemesPanel.tsx";
 import { useInterfacePreferences } from "../interface/preferences.ts";
 import { NotificationPermissionStatus } from "../components/NotificationPermission.tsx";
+import { NotificationPrivacySetting } from "../components/NotificationPrivacy.tsx";
 import { InstallApp } from "../pwa/InstallApp.tsx";
 import { useInstallation } from "../pwa/install.ts";
 import "./settings.css";
@@ -152,7 +153,12 @@ export function UserSettingsPage() {
           ) : (
             <>
               <MediaSettingsForm key={area} section={area} />
-              {area === "notifications" && <NotificationPermissionStatus />}
+              {area === "notifications" && (
+                <>
+                  <NotificationPrivacySetting />
+                  <NotificationPermissionStatus />
+                </>
+              )}
             </>
           )}
           {area !== "install" && (

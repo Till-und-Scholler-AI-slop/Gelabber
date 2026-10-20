@@ -248,6 +248,11 @@ pub enum ServerFrame {
         producer_id: String,
         epoch: Uuid,
     },
+    /// The video codecs every receiver in the room can decode, sent when
+    /// the set changes. A publisher sends one of them. A frame can overtake
+    /// the `capabilities` result: the higher revision is the newer set.
+    #[serde(rename = "codecs")]
+    Codecs { video: Vec<String>, revision: u64 },
     #[serde(rename = "layers")]
     Layers {
         #[serde(rename = "consumerId")]

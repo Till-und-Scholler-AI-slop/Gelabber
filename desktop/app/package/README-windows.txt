@@ -51,6 +51,13 @@ Anwendungston
   mitgeschickt. Unter Windows vor Version 2004 geht die Freigabe ohne Ton
   hinaus.
 
+Push-to-Talk
+  In den Spracheinstellungen "Push-to-Talk" wählen und eine Taste oder
+  eine seitliche Maustaste festlegen. Im Gespräch hört die App die Taste
+  auch, wenn ein anderes Fenster vorne ist; die Taste erreicht dieses
+  Fenster trotzdem. Ausnahme: Läuft das Programm vorne mit
+  Administratorrechten, lässt Windows die App die Taste nicht sehen.
+
 Einstellungen und Daten
   Serveradresse:
     %APPDATA%\io.github.till-und-scholler-ai-slop.gelabber\desktop.json

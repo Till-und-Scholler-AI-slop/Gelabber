@@ -38,6 +38,9 @@ aes-gcm = "0.11.1"
 base64 = "0.22.1"
 # Page charsets for link previews (#254).
 encoding_rs = "0.8.35"
+# Account mail (#195): SMTP submission to the operator's relay, rustls with
+# the same aws-lc-rs provider and platform verifier as reqwest.
+lettre = { version = "0.11.23", default-features = false, features = ["builder", "smtp-transport", "tokio1-rustls", "rustls-platform-verifier", "aws-lc-rs"] }
 gelabber-shared.workspace = true
 
 [dev-dependencies]

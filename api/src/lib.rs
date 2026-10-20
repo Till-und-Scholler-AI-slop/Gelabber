@@ -12,6 +12,7 @@ pub mod health;
 pub mod image_size;
 pub mod json;
 pub mod limits;
+pub mod mail;
 pub mod media;
 pub mod messages;
 pub mod metrics;

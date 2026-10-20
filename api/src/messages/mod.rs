@@ -306,8 +306,8 @@ async fn create_message(
     let mut tx = state.db.begin().await?;
     delivery::lock_channel(&mut tx, channel_id).await?;
     let row = sqlx::query_as::<_, MessageInsert>(
-        "INSERT INTO messages (channel_id, author_id, content, gif, mentions, mentions_everyone, reply_to) \
-         VALUES ($1, $2, $3, $4, $5, $6, $7) \
+        "INSERT INTO messages (channel_id, author_id, content, gif, mentions, mentions_everyone, reply_to, here_users) \
+         VALUES ($1, $2, $3, $4, $5, $6, $7, $8) \
          RETURNING id, channel_id, content, created_at, edited_at, revision, created_order, gif, mentions, mentions_everyone",
     )
     .bind(channel_id)
@@ -317,6 +317,7 @@ async fn create_message(
     .bind(&mentioned.users)
     .bind(mentioned.everyone)
     .bind(body.reply_to)
+    .bind(&mentioned.here_users)
     .fetch_one(&mut *tx)
     .await?;
     let bound =
@@ -409,16 +410,23 @@ async fn update_message(
 
     // An edit names its mentions anew. Only a mention still unread counts:
     // one added to a message the user has read stays read.
+    let here_users: Option<Vec<Uuid>> =
+        sqlx::query_scalar("SELECT here_users FROM messages WHERE id = $1")
+            .bind(message_id)
+            .fetch_optional(&state.db)
+            .await?
+            .flatten();
     let granted = mentions::Granted::of(
         &current.content,
         current.mention_everyone,
         &current.mentions,
+        here_users.as_deref(),
     );
     let mentioned = mentions::resolve(&state, &access, user.id, &content, granted).await?;
     let mut tx = state.db.begin().await?;
     delivery::lock_channel(&mut tx, current.channel_id).await?;
     let row = sqlx::query_as::<_, MessageInsert>(
-        "UPDATE messages SET content = $2, edited_at = now(), mentions = $3, mentions_everyone = $4 \
+        "UPDATE messages SET content = $2, edited_at = now(), mentions = $3, mentions_everyone = $4, here_users = $5 \
          WHERE id = $1 \
          RETURNING id, channel_id, content, created_at, edited_at, revision, created_order, gif, mentions, mentions_everyone",
     )
@@ -426,6 +434,7 @@ async fn update_message(
     .bind(&content)
     .bind(&mentioned.users)
     .bind(mentioned.everyone)
+    .bind(&mentioned.here_users)
     .fetch_optional(&mut *tx)
     .await?
     .ok_or(ApiError::NotFound)?;
