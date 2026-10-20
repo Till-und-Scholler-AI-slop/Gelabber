@@ -392,6 +392,68 @@ async fn deleting_server_cleans_open_voice_and_ticket_authority(pool: PgPool) {
     deletion(pool, true).await;
 }
 
+/// A channel row that disappears without a push (another API process, a
+/// manual delete) is dropped by the once-a-second recheck, and only that one.
+#[sqlx::test]
+async fn silently_deleted_channel_rows_are_dropped_and_only_those(pool: PgPool) {
+    let (addr, state) = common::serve_ws(pool.clone()).await;
+    let mut owner = register(&state, "owner").await;
+    let (sid, first, voice, _) = server(&mut owner, "Recheck").await;
+    let mut texts = vec![first];
+    for name in ["zwei", "drei"] {
+        let res = owner
+            .send(
+                Method::POST,
+                &format!("/api/servers/{sid}/channels"),
+                Some(json!({"name":name, "kind":"text"})),
+            )
+            .await;
+        assert_eq!(res.status, StatusCode::CREATED, "{}", res.body);
+        texts.push(res.body["id"].as_str().unwrap().parse().unwrap());
+    }
+    let mut ws = connect(addr, &owner).await;
+    for cid in &texts {
+        subscribe(&mut ws, sid, *cid).await;
+    }
+    voice_join(&mut ws, sid, voice).await;
+    let gone = texts[1];
+    sqlx::query("DELETE FROM channels WHERE id = $1")
+        .bind(gone)
+        .execute(&pool)
+        .await
+        .unwrap();
+    // Two security ticks, with no frame from the client in between.
+    tokio::time::sleep(Duration::from_secs(2)).await;
+    for cid in &texts {
+        publish(&state, sid, *cid).await;
+    }
+    let seen = std::cell::RefCell::new(std::collections::HashSet::new());
+    until(&mut ws, |f| {
+        if f["op"] == "e" {
+            assert_ne!(f["c"], gone.to_string(), "event of a deleted channel: {f}");
+            seen.borrow_mut()
+                .insert(f["c"].as_str().unwrap().to_owned());
+        }
+        seen.borrow().len() == 2
+    })
+    .await;
+    assert_eq!(state.gateway.voice_snapshot(sid).await.unwrap().len(), 1);
+
+    sqlx::query("DELETE FROM channels WHERE id = $1")
+        .bind(voice)
+        .execute(&pool)
+        .await
+        .unwrap();
+    // Below the 5 s seat lease: only the recheck can clear it this fast.
+    tokio::time::timeout(Duration::from_secs(3), async {
+        while !state.gateway.voice_snapshot(sid).await.unwrap().is_empty() {
+            tokio::time::sleep(Duration::from_millis(50)).await;
+        }
+    })
+    .await
+    .expect("the seat in a deleted voice channel is dropped");
+}
+
 #[sqlx::test]
 async fn concurrent_invites_for_same_user_consume_one_use(pool: PgPool) {
     let state = common::ws_state(pool.clone());

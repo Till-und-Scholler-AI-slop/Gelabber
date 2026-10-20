@@ -1019,8 +1019,35 @@ impl Gateway {
         else {
             return Ok(());
         };
+        // One query for the memberships and one for the channels, not one per
+        // server, topic and room: this runs on every tick, frame and batch.
+        let revisions = if access.is_empty() {
+            HashMap::new()
+        } else {
+            let sids: Vec<Uuid> = access.keys().copied().collect();
+            crate::servers::membership::revisions(&mut *db, user_id, &sids).await?
+        };
+        let wanted: Vec<Uuid> = topics
+            .iter()
+            .filter_map(|topic| match topic {
+                Topic::Channel(cid) => Some(*cid),
+                Topic::Server(_) => None,
+            })
+            .chain(rooms.iter().map(|(cid, _)| *cid))
+            .collect();
+        // DMs are channel rows too.
+        let existing: HashSet<Uuid> = if wanted.is_empty() {
+            HashSet::new()
+        } else {
+            sqlx::query_scalar("SELECT id FROM channels WHERE id = ANY($1)")
+                .bind(&wanted)
+                .fetch_all(&mut *db)
+                .await?
+                .into_iter()
+                .collect()
+        };
         for (sid, revision) in access {
-            let current = crate::servers::membership::revision(&mut *db, sid, user_id).await?;
+            let current = revisions.get(&sid).copied();
             if current.is_none_or(|now| now.0 != revision.0) {
                 // Include deleted channels: their rows can no longer be queried.
                 let mut cids: Vec<Uuid> =
@@ -1030,9 +1057,7 @@ impl Gateway {
                         .await?;
                 for topic in &topics {
                     if let Topic::Channel(cid) = topic
-                        && crate::servers::channel::get(&mut *db, *cid)
-                            .await?
-                            .is_none()
+                        && !existing.contains(cid)
                     {
                         cids.push(*cid);
                     }
@@ -1050,7 +1075,7 @@ impl Gateway {
         }
         for topic in topics {
             if let Topic::Channel(cid) = topic
-                && crate::servers::channel::get(&mut *db, cid).await?.is_none()
+                && !existing.contains(&cid)
             {
                 self.unsubscribe(id, topic).await;
             }
@@ -1062,7 +1087,7 @@ impl Gateway {
                 Err(ApiError::NotFound) => false,
                 Err(err) => return Err(err),
             };
-            if !allowed || crate::servers::channel::get(&mut *db, cid).await?.is_none() {
+            if !allowed || !existing.contains(&cid) {
                 self.leave_voice(id, user_id, sid, cid).await?;
             }
         }
