@@ -6,6 +6,9 @@
 //! Nothing is pushed to a user with a page of the app in front on any
 //! device (`ClientFrame::Focus`), nor for a conversation they muted or set
 //! to "nothing" (#242). In a server channel only a mention pushes.
+//!
+//! An account that hides the content of its notifications (#268) gets only
+//! "Neue Nachricht von Ada": no preview, no conversation.
 
 pub mod webpush;
 
@@ -225,6 +228,7 @@ struct Target {
     user_id: Uuid,
     p256dh: String,
     auth: String,
+    hide_content: bool,
 }
 
 /// After a message is stored: push it in the background, unless
@@ -294,9 +298,11 @@ async fn deliver(
     // Live sessions only, and not where the conversation is muted or set
     // to "nothing"; the channel's own level wins over its server's.
     let targets: Vec<Target> = sqlx::query_as(
-        "SELECT p.endpoint, p.user_id, p.p256dh, p.auth
+        "SELECT p.endpoint, p.user_id, p.p256dh, p.auth,
+                u.notifications_hide_content AS hide_content
          FROM push_subscriptions p
          JOIN sessions s ON s.token_hash=p.session_hash AND s.expires_at>now()
+         JOIN users u ON u.id=p.user_id
          LEFT JOIN notification_settings cs ON cs.user_id=p.user_id
            AND cs.scope_kind='channel' AND cs.scope_id=$2
          LEFT JOIN notification_settings ss ON ss.user_id=p.user_id
@@ -315,7 +321,12 @@ async fn deliver(
         return Ok(());
     }
     let (title, path) = heading(state, message, server).await?;
-    let body = preview(state, message).await?;
+    let body = if targets.iter().all(|t| t.hide_content) {
+        String::new()
+    } else {
+        preview(state, message).await?
+    };
+    let hidden = hidden_title(&message.author.name);
     let users: Vec<Uuid> = {
         let mut users: Vec<Uuid> = targets.iter().map(|t| t.user_id).collect();
         users.sort_unstable();
@@ -330,9 +341,14 @@ async fn deliver(
             .into_iter()
             .filter(|target| !in_front.contains(&target.user_id))
             .filter_map(|target| {
+                let (title, body) = if target.hide_content {
+                    (hidden.as_str(), "")
+                } else {
+                    (title.as_str(), body.as_str())
+                };
                 let payload = Payload {
-                    title: &title,
-                    body: &body,
+                    title,
+                    body,
                     path: &path,
                     user: target.user_id,
                     channel: message.channel_id,
@@ -532,6 +548,13 @@ async fn heading(
         ),
         format!("/s/{server}/c/{}", message.channel_id),
     ))
+}
+
+/// All a notification says for an account that hides the content: who wrote.
+/// The pages show the same (`notificationText` in
+/// web/src/messages/notificationPrivacy.ts).
+pub fn hidden_title(author: &str) -> String {
+    format!("Neue Nachricht von {author}")
 }
 
 /// The text with mentions as names, cut short; a file or GIF named as such.
