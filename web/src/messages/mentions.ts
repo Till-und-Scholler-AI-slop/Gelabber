@@ -9,7 +9,7 @@ export type MentionMember = { id: string; name: string };
 
 const TOKEN =
   /<@([0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12})>/gi;
-const KEYWORD = /(^|[^\p{L}\p{N}_@-])@(everyone|here)(?![\p{L}\p{N}_@-])/gu;
+const KEYWORD = /(^|[^\p{L}\p{N}_@/-])@(everyone|here)(?![\p{L}\p{N}_@-])/gu;
 
 /** Whether the message mentions `me`, as the server resolved it. */
 export function mentionsMe(

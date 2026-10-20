@@ -35,6 +35,12 @@ import {
   type MentionMember,
 } from "./mentions.ts";
 import { wantsNotification } from "./notifyLevel.ts";
+import {
+  serverSetting,
+  settingsKey,
+  useNotificationSettings,
+  type NotificationSetting,
+} from "./notificationSettings.ts";
 import { readKey, type ReadState } from "./readState.ts";
 import { useMessageToasts } from "./toasts.ts";
 import type { Message } from "./types.ts";
@@ -113,6 +119,8 @@ function conversationMembers(
 /** Toast + optional desktop notification for creates in another chat. */
 export function useMessageToastsBridge(): void {
   const client = useQueryClient();
+  // Keeps the settings cached for a channel without an unread row yet.
+  useNotificationSettings();
   const navigate = useNavigate();
   const me = useSession((s) => s.user?.id);
   const viewingChannelId = useParams({ strict: false }).channelId;
@@ -165,9 +173,19 @@ export function useMessageToastsBridge(): void {
       const dm = isDmTopic(event.s, event.c);
       const mentioned = !own && mentionsMe(message, userId);
       // Level and mute of the conversation (#242), from the unread rows.
-      const row = client
-        .getQueryData<ReadState[]>(readKey({ userId, generation }))
-        ?.find((current) => current.channel_id === event.c);
+      // A channel too new for a row yet follows its server's setting.
+      const row =
+        client
+          .getQueryData<ReadState[]>(readKey({ userId, generation }))
+          ?.find((current) => current.channel_id === event.c) ??
+        (dm
+          ? undefined
+          : serverSetting(
+              client.getQueryData<NotificationSetting[]>(
+                settingsKey({ userId, generation }),
+              ),
+              event.s,
+            ));
       if (!wantsNotification(row, { dm, mentioned }, serverNow())) return;
       // The desktop app's taskbar button flashes for a direct message while
       // the window is not in front, whatever the toast and desktop settings

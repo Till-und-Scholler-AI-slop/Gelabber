@@ -106,18 +106,29 @@ fn escaped(text: &str, at: usize) -> bool {
     text[..at].chars().rev().take_while(|c| *c == '\\').count() % 2 == 1
 }
 
-/// `@word` on its own: not inside an address (`a@everyone.org`), a longer
-/// word (`@everyoneelse`) or after another `@` (`@@here`), and not escaped.
+/// `@word` on its own: not inside an address (`a@everyone.org`), a link, a
+/// longer word (`@everyoneelse`) or after another `@` (`@@here`), and not
+/// escaped.
 fn has_keyword(text: &str, word: &str) -> bool {
     let needle = format!("@{word}");
     text.match_indices(&needle).any(|(at, _)| {
         let before = text[..at].chars().next_back();
         let after = text[at + needle.len()..].chars().next();
         let word_char = |c: char| c.is_alphanumeric() || c == '_' || c == '-';
-        !before.is_some_and(|c| word_char(c) || c == '@')
+        !before.is_some_and(|c| word_char(c) || c == '@' || c == '/')
             && !after.is_some_and(|c| word_char(c) || c == '@')
             && !escaped(text, at)
+            && !in_url(text, at)
     })
+}
+
+/// Part of a link (`https://mastodon.social/@here`): the word it sits in
+/// has a scheme. The web client shows such text as a link, not a ping.
+fn in_url(text: &str, at: usize) -> bool {
+    let start = text[..at]
+        .rfind(char::is_whitespace)
+        .map_or(0, |space| space + 1);
+    text[start..at].contains("://")
 }
 
 pub fn parse(content: &str) -> Parsed {
@@ -284,6 +295,10 @@ mod tests {
         assert!(!parse("@here_and_now").here);
         assert!(!parse("everyone").everyone);
         assert!(!parse("@@here").here);
+        assert!(!parse("https://mastodon.social/@here").here);
+        assert!(!parse("see https://example.org/?to=@everyone").everyone);
+        assert!(!parse("mastodon.social/@here").here);
+        assert!(parse("https://example.org @here").here);
     }
 
     #[test]

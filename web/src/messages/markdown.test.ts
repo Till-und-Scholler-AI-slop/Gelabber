@@ -177,6 +177,8 @@ describe("inline markdown", () => {
       "`@everyone`",
       "\\@everyone",
       "mail@here.example",
+      "mastodon.social/@here",
+      "https://mastodon.social/@here",
     ])
       expect(
         parseInline(src).some(

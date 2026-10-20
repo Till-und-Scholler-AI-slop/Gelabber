@@ -34,7 +34,7 @@ const MENTION =
   /^<@([0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12})>/i;
 // The word boundaries the server uses for mentions (#241).
 const KEYWORD = /^@(everyone|here)(?![\p{L}\p{N}_@-])/u;
-const KEYWORD_BEFORE = /[\p{L}\p{N}_@-]/u;
+const KEYWORD_BEFORE = /[\p{L}\p{N}_@/-]/u;
 const WORD = /[\p{L}\p{N}_]/u;
 const ALNUM = /[\p{L}\p{N}]/u;
 const SPACE = /\s/;

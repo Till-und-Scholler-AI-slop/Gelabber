@@ -6,6 +6,10 @@ import {
   sumBadges,
   wantsNotification,
 } from "./notifyLevel.ts";
+import {
+  serverSetting,
+  type NotificationSetting,
+} from "./notificationSettings.ts";
 
 const NOW = Date.parse("2026-10-17T12:00:00Z");
 const later = "2026-10-17T13:00:00Z";
@@ -103,5 +107,29 @@ describe("notification levels", () => {
     expect(
       wantsNotification({ muted: true, muted_until: earlier }, plain, NOW),
     ).toBe(true);
+  });
+});
+
+describe("a conversation without an unread row", () => {
+  it("follows its server's own setting", () => {
+    const settings: NotificationSetting[] = [
+      {
+        scope: "server",
+        id: "s1",
+        level: null,
+        muted: true,
+        muted_until: null,
+      },
+    ];
+    const muted = serverSetting(settings, "s1");
+    expect(wantsNotification(muted, { dm: false, mentioned: false }, 0)).toBe(
+      false,
+    );
+    expect(serverSetting(settings, "s2")).toEqual({
+      level: "all",
+      muted: false,
+      muted_until: null,
+    });
+    expect(serverSetting(undefined, "s1")).toBeUndefined();
   });
 });
