@@ -841,6 +841,9 @@ jobs:
           $dllNeeds = @(Needs $dll.FullName)
           $exeNeeds = @(Needs $exe.FullName)
           $dllMissing = @(Missing $dllNeeds @())
+          # Windows N lacks mfplat.dll without the Media Feature Pack: the
+          # core loads it only when it looks for H264 (/DELAYLOAD).
+          $delayed = (& $dumpbin /nologo /dependents $dll.FullName | Out-String) -match '(?s)delay load dependencies:.*\bmfplat\.dll'
           $exeMissing = @(Missing $exeNeeds @('gelabber_media.dll'))
 
           $content = [Text.Encoding]::Latin1.GetString([IO.File]::ReadAllBytes($dll.FullName))
@@ -864,6 +867,7 @@ jobs:
             if ($h264) { "gelabber_media.dll carries H264 code of OpenH264 or FFmpeg: $($h264 -join ', ')" }
             if (-not $dllNeeds -or $exeNeeds -notcontains 'gelabber_media.dll') { 'could not read the dependencies with dumpbin' }
             if ($dllMissing) { "gelabber_media.dll needs what a clean Windows lacks: $($dllMissing -join ', ')" }
+            if (-not $delayed) { 'gelabber_media.dll does not delay-load mfplat.dll' }
             if ($exeMissing) { "gelabber-desktop.exe needs what a clean Windows lacks: $($exeMissing -join ', ')" }
           )
           if ($problems) {
