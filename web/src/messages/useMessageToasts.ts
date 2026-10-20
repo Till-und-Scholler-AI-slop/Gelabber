@@ -29,9 +29,16 @@ import {
   previewText,
 } from "./notify.ts";
 import { focusDesktopWindow, requestDesktopAttention } from "./desktopShell.ts";
+import {
+  mentionsMe,
+  readableMentions,
+  type MentionMember,
+} from "./mentions.ts";
+import { wantsNotification } from "./notifyLevel.ts";
+import { readKey, type ReadState } from "./readState.ts";
 import { useMessageToasts } from "./toasts.ts";
 import type { Message } from "./types.ts";
-import { asAttachmentList, asGif } from "./types.ts";
+import { asAttachmentList, asGif, asMentionList } from "./types.ts";
 
 function asCreated(delta: unknown): Message | null {
   if (delta === null || typeof delta !== "object") return null;
@@ -55,6 +62,8 @@ function asCreated(delta: unknown): Message | null {
     edited_at: value.edited_at ?? null,
     attachments: asAttachmentList(value.attachments),
     gif: asGif(value.gif),
+    mentions: asMentionList(value.mentions),
+    mention_everyone: value.mention_everyone === true,
   };
 }
 
@@ -77,6 +86,28 @@ function channelLabel(
   );
   const channel = server?.channels.find((row) => row.id === event.c);
   return channel ? `#${channel.name}` : "Kanal";
+}
+
+/** Names for the mention tokens of a preview, from what is cached. */
+function conversationMembers(
+  client: ReturnType<typeof useQueryClient>,
+  userId: string,
+  generation: number,
+  event: ChatEvent,
+  dm: boolean,
+): MentionMember[] {
+  const me = useSession.getState().user;
+  const own = me ? [{ id: me.id, name: me.name }] : [];
+  if (dm) {
+    const peer = client
+      .getQueryData<DirectMessage[]>(dmKeys.list(userId, generation))
+      ?.find((row) => row.id === event.c)?.peer;
+    return peer ? [...own, { id: peer.id, name: peer.name }] : own;
+  }
+  const server = client.getQueryData<ServerDetail>(
+    serverKeys.detail(userId, generation, event.s),
+  );
+  return (server?.members ?? []).map((m) => ({ id: m.user_id, name: m.name }));
 }
 
 /** Toast + optional desktop notification for creates in another chat. */
@@ -132,9 +163,15 @@ export function useMessageToastsBridge(): void {
       const hidden = typeof document !== "undefined" && document.hidden;
       const own = message.author.id === userId;
       const dm = isDmTopic(event.s, event.c);
+      const mentioned = !own && mentionsMe(message, userId);
+      // Level and mute of the conversation (#242), from the unread rows.
+      const row = client
+        .getQueryData<ReadState[]>(readKey({ userId, generation }))
+        ?.find((current) => current.channel_id === event.c);
+      if (!wantsNotification(row, { dm, mentioned }, serverNow())) return;
       // The desktop app's taskbar button flashes for a direct message while
-      // the window is not in front, whatever the notification settings say,
-      // once for a burst.
+      // the window is not in front, whatever the toast and desktop settings
+      // say (a mute or the level "nothing" returned above), once for a burst.
       if (
         dm &&
         !own &&
@@ -156,7 +193,10 @@ export function useMessageToastsBridge(): void {
       if (!decision.toast && !decision.desktop) return;
       const label = channelLabel(client, userId, generation, event, dm);
       const preview = previewText(
-        message.content,
+        readableMentions(
+          message.content,
+          conversationMembers(client, userId, generation, event, dm),
+        ),
         asAttachmentList(message.attachments).length > 0,
         Boolean(message.gif),
       );
@@ -167,6 +207,7 @@ export function useMessageToastsBridge(): void {
           dm,
           channelLabel: label,
           author: message.author.name,
+          mentioned,
           preview,
         });
       const now = Date.now();
@@ -182,7 +223,7 @@ export function useMessageToastsBridge(): void {
         const channelId = event.c;
         void showMessageNotification(
           {
-            title: `${message.author.name} · ${label}`,
+            title: `${message.author.name}${mentioned ? " hat dich erwähnt" : ""} · ${label}`,
             body: preview,
             channelId,
             messageId: message.id,

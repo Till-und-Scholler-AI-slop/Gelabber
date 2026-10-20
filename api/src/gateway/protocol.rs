@@ -513,6 +513,10 @@ pub enum ServerFrame {
     /// Typing start / stop in a channel.
     #[serde(rename = "y")]
     Typing { s: Uuid, c: Uuid, u: Uuid, on: bool },
+    /// The account's notification settings changed on some device: fetch
+    /// them again. Only to that account's own sockets.
+    #[serde(rename = "ns")]
+    NotificationSettings,
 }
 
 impl ServerFrame {
@@ -641,6 +645,23 @@ pub enum LiveFrame {
     },
     #[serde(rename = "y")]
     Typing { s: Uuid, c: Uuid, u: Uuid, on: bool },
+}
+
+/// What goes to every socket of one account (`Gateway::publish_user`). Owned,
+/// unlike `ServerFrame`, so it comes back out of Redis.
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+#[serde(tag = "op")]
+pub enum UserFrame {
+    #[serde(rename = "ns")]
+    NotificationSettings,
+}
+
+impl From<UserFrame> for ServerFrame {
+    fn from(frame: UserFrame) -> Self {
+        match frame {
+            UserFrame::NotificationSettings => Self::NotificationSettings,
+        }
+    }
 }
 
 impl From<LiveFrame> for ServerFrame {

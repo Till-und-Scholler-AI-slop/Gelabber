@@ -4,23 +4,22 @@
 import { useEffect } from "react";
 
 import { reportDesktopUnread, type UnreadMark } from "./desktopShell.ts";
-import {
-  type ReadState,
-  useReadState,
-  useReadingChannel,
-} from "./readState.ts";
+import { badgeOf, sumBadges } from "./notifyLevel.ts";
+import { useMuteClock } from "./notificationSettings.ts";
+import { useReadState, useReadingChannel } from "./readState.ts";
 
-/** What is unread, without the conversation being read right now. */
+/** What is unread, without the conversation being read right now: the
+ * number counts mentions and direct messages, `any` also the conversations
+ * that only show a dot (notifyLevel.ts). Muted ones count for nothing. */
 export function unreadMark(
-  rows: readonly Pick<ReadState, "channel_id" | "unread_count">[],
+  rows: readonly Parameters<typeof badgeOf>[0][],
   reading: string | null,
+  now: number,
 ): UnreadMark {
-  const count = rows.reduce(
-    (total, row) =>
-      total + (row.channel_id === reading ? 0 : Math.max(0, row.unread_count)),
-    0,
+  const { count, dot } = sumBadges(
+    rows.map((row) => badgeOf(row, reading, now)),
   );
-  return { count, any: count > 0 };
+  return { count, any: count > 0 || dot };
 }
 
 // What this module puts in front of a title: "(3) " or "• ".
@@ -126,8 +125,9 @@ function apply(mark: UnreadMark): void {
 /** Mounted once per signed-in account; signing out clears everything. */
 export function useUnreadIndicators(): void {
   const reading = useReadingChannel();
+  const now = useMuteClock();
   const { data } = useReadState();
-  const { count, any } = unreadMark(data ?? [], reading);
+  const { count, any } = unreadMark(data ?? [], reading, now);
   useEffect(() => {
     apply({ count, any });
   }, [count, any]);

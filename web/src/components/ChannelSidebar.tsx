@@ -1,4 +1,12 @@
 import { UnreadBadge } from "../messages/UnreadBadge.tsx";
+import {
+  notificationMenu,
+  openNotificationSettings,
+} from "./notificationTarget.ts";
+import {
+  useChannelMuted,
+  useServerMuted,
+} from "../messages/notificationSettings.ts";
 // Second column: the selected server's categories and channels as one flat,
 // virtualised list. Highlight follows the URL param; rows with a `tmp:` id
 // are optimistic and not yet clickable.
@@ -41,6 +49,8 @@ import type {
 } from "../servers/types.ts";
 import { Avatar } from "./Avatar.tsx";
 import {
+  BellIcon,
+  BellOffIcon,
   ChatIcon,
   GearIcon,
   HashIcon,
@@ -192,6 +202,7 @@ export function ChannelSidebar({
   const [inviting, setInviting] = useState(false);
   const [profileId, setProfileId] = useState<string | null>(null);
   const createMenu = useMenuDetails();
+  const serverMuted = useServerMuted(server.id);
 
   return (
     <aside aria-label="Kanäle" className="channel-sidebar">
@@ -200,6 +211,18 @@ export function ChannelSidebar({
           {server.name}
         </h2>
         <div className="server-sidebar-actions">
+          <IconButton
+            label={`Benachrichtigungen für ${server.name}${serverMuted ? " (stumm)" : ""}`}
+            onClick={() =>
+              openNotificationSettings({
+                scope: "server",
+                id: server.id,
+                name: server.name,
+              })
+            }
+          >
+            {serverMuted ? <BellOffIcon /> : <BellIcon />}
+          </IconButton>
           <IconButton label="Leute einladen" onClick={() => setInviting(true)}>
             <LinkIcon />
           </IconButton>
@@ -592,6 +615,7 @@ function ChannelRow({
   onDelete: () => void;
 }) {
   const pending = isPendingId(channel.id);
+  const muted = useChannelMuted(channel.id);
   const Icon = channel.kind === "voice" ? SpeakerIcon : HashIcon;
   const body = (
     <>
@@ -609,6 +633,7 @@ function ChannelRow({
     "group channel-row",
     active ? "is-active" : "",
     pending ? "opacity-50" : "",
+    muted && channel.kind === "text" ? "is-muted" : "",
   ].join(" ");
   const roving = useRovingRow(manage && !pending);
 
@@ -624,6 +649,16 @@ function ChannelRow({
           aria-describedby={manage ? hintId : undefined}
           tabIndex={roving.tabIndex(0)}
           className="channel-row-link"
+          onContextMenu={
+            channel.kind === "text"
+              ? notificationMenu({
+                  scope: "channel",
+                  id: channel.id,
+                  name: `#${channel.name}`,
+                  serverId: channel.server_id,
+                })
+              : undefined
+          }
           {...ROW_ITEM}
         >
           {body}

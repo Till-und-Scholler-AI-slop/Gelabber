@@ -74,6 +74,7 @@ fn denied_message(permission: Permission) -> &'static str {
         Permission::SendFiles => "You need the send_files permission.",
         Permission::JoinVoice => "You need the join_voice permission.",
         Permission::GoLive => "You need the go_live permission.",
+        Permission::MentionEveryone => "You need the mention_everyone permission.",
     }
 }
 
@@ -134,8 +135,8 @@ pub async fn revision<'e, E: sqlx::Executor<'e, Database = sqlx::Postgres>>(
     server_id: Uuid,
     user_id: Uuid,
 ) -> Result<Option<(chrono::DateTime<chrono::Utc>, i32)>, ApiError> {
-    Ok(sqlx::query_as("SELECT m.joined_at, CASE WHEN s.owner_id = m.user_id THEN 127 ELSE s.member_permissions END FROM server_members m JOIN servers s ON s.id = m.server_id WHERE m.server_id = $1 AND m.user_id = $2")
-        .bind(server_id).bind(user_id).fetch_optional(db).await?)
+    Ok(sqlx::query_as("SELECT m.joined_at, CASE WHEN s.owner_id = m.user_id THEN $3 ELSE s.member_permissions END FROM server_members m JOIN servers s ON s.id = m.server_id WHERE m.server_id = $1 AND m.user_id = $2")
+        .bind(server_id).bind(user_id).bind(crate::servers::permissions::Permissions::ALL.bits()).fetch_optional(db).await?)
 }
 
 #[cfg(test)]

@@ -15,6 +15,7 @@ pub mod limits;
 pub mod media;
 pub mod messages;
 pub mod metrics;
+pub mod notifications;
 pub mod password;
 pub mod path;
 pub mod previews;
@@ -58,6 +59,7 @@ pub fn app(state: AppState) -> Router {
         .merge(media::router())
         .merge(attachments::router())
         .merge(gifs::router())
+        .merge(notifications::router())
         .merge(previews::router())
         .layer(middleware::from_fn(csrf::require))
         .layer(middleware::from_fn_with_state(state.clone(), limits::gate));

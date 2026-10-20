@@ -60,6 +60,7 @@ import type {
 } from "./types.ts";
 import {
   asAttachmentList,
+  asMentionList,
   asPreviewList,
   asReactionList,
   asReply,
@@ -939,6 +940,12 @@ export function applyChannelEvent(
       ...event.d,
       ...(event.r !== undefined ? { revision: event.r } : {}),
       attachments: asAttachmentList(event.d.attachments),
+      ...(event.d.mentions === undefined
+        ? {}
+        : {
+            mentions: asMentionList(event.d.mentions),
+            mention_everyone: event.d.mention_everyone === true,
+          }),
       ...(event.d.reactions === undefined
         ? {}
         : { reactions: asReactionList(event.d.reactions) }),

@@ -21,6 +21,14 @@ export type ReadState = {
   read_message_id: string | null;
   read_at: string | null;
   unread_count: number;
+  /** Unread messages that mention the user. Absent from older APIs. */
+  mention_count?: number;
+  /** Effective notification level of the conversation (notifyLevel.ts). */
+  level?: "all" | "mentions" | "none";
+  /** A mute of the conversation or its server; see `muted_until`. */
+  muted?: boolean;
+  /** When that mute ends; null while muted: until turned back on. */
+  muted_until?: string | null;
 };
 export const readKey = (stamp: ScopeStamp) =>
   ["user", stamp.userId, stamp.generation, "unread"] as const;

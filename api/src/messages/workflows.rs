@@ -35,16 +35,27 @@ pub(super) fn router() -> Router<AppState> {
 }
 
 #[derive(Debug, Serialize, FromRow)]
-struct ReadState {
-    channel_id: Uuid,
-    server_id: Option<Uuid>,
+pub(crate) struct ReadState {
+    pub(crate) channel_id: Uuid,
+    pub(crate) server_id: Option<Uuid>,
     read_message_id: Option<Uuid>,
     read_at: Option<DateTime<Utc>>,
-    unread_count: i64,
+    pub(crate) unread_count: i64,
+    /// Unread messages that mention the user (`<@id>`, `@here` when they were
+    /// online, `@everyone`), among the newest 1000 unread ones: the scan
+    /// walks the channel's index from the end and stops there.
+    pub(crate) mention_count: i64,
+    /// Effective notification level: the channel's, else its server's, else
+    /// `all` (`notifications/settings.rs`).
+    pub(crate) level: String,
+    /// A mute of the channel or its server holds now.
+    pub(crate) muted: bool,
+    /// When the mute ends; none while muted means until turned back on.
+    pub(crate) muted_until: Option<DateTime<Utc>>,
 }
 
 // One statement takes a consistent snapshot of membership, cursors and rows.
-const UNREAD: &str = "WITH visible AS (
+pub(crate) const UNREAD: &str = "WITH visible AS (
     SELECT c.id AS channel_id, c.server_id, sm.joined_at
     FROM channels c JOIN server_members sm ON sm.server_id=c.server_id AND sm.user_id=$1
     WHERE c.kind='text'
@@ -52,11 +63,34 @@ const UNREAD: &str = "WITH visible AS (
     SELECT c.id, c.server_id, cm.joined_at
     FROM channels c JOIN channel_members cm ON cm.channel_id=c.id AND cm.user_id=$1
     WHERE c.kind='dm'
+), mutes AS (
+    SELECT v.channel_id,
+      cs.level AS channel_level, ss.level AS server_level,
+      (cs.muted AND (cs.muted_until IS NULL OR cs.muted_until>now())) IS TRUE AS channel_muted,
+      (ss.muted AND (ss.muted_until IS NULL OR ss.muted_until>now())) IS TRUE AS server_muted,
+      cs.muted_until AS channel_until, ss.muted_until AS server_until
+    FROM visible v
+    LEFT JOIN notification_settings cs ON cs.user_id=$1 AND cs.scope_kind='channel' AND cs.scope_id=v.channel_id
+    LEFT JOIN notification_settings ss ON ss.user_id=$1 AND ss.scope_kind='server' AND ss.scope_id=v.server_id
 ) SELECT v.channel_id, v.server_id, r.message_id AS read_message_id, r.message_at AS read_at,
     (SELECT count(*) FROM (SELECT 1 FROM messages m WHERE m.channel_id=v.channel_id AND m.author_id<>$1
       AND m.created_at>=v.joined_at
-      AND (r.created_order IS NULL OR m.created_order>r.created_order) LIMIT 100) bounded) AS unread_count
-  FROM visible v LEFT JOIN channel_read_state r ON r.user_id=$1 AND r.channel_id=v.channel_id
+      AND (r.created_order IS NULL OR m.created_order>r.created_order) LIMIT 100) bounded) AS unread_count,
+    (SELECT count(*) FROM (SELECT m.mentions, m.mentions_everyone FROM messages m
+      WHERE m.channel_id=v.channel_id AND m.author_id<>$1
+      AND m.created_at>=v.joined_at
+      AND (r.created_order IS NULL OR m.created_order>r.created_order)
+      ORDER BY m.created_order DESC LIMIT 1000) recent
+      WHERE $1=ANY(recent.mentions) OR recent.mentions_everyone) AS mention_count,
+    COALESCE(n.channel_level, n.server_level, 'all') AS level,
+    (n.channel_muted OR n.server_muted) AS muted,
+    CASE WHEN (n.channel_muted AND n.channel_until IS NULL) OR (n.server_muted AND n.server_until IS NULL)
+      THEN NULL
+      ELSE GREATEST(CASE WHEN n.channel_muted THEN n.channel_until END,
+                    CASE WHEN n.server_muted THEN n.server_until END)
+    END AS muted_until
+  FROM visible v JOIN mutes n ON n.channel_id=v.channel_id
+  LEFT JOIN channel_read_state r ON r.user_id=$1 AND r.channel_id=v.channel_id
     AND r.membership_at=v.joined_at
   WHERE ($2::uuid IS NULL OR v.channel_id=$2)";
 
@@ -169,7 +203,7 @@ async fn search(
         None
     };
     let rows: Vec<MessageRow> = sqlx::query_as("SELECT m.id,m.channel_id,m.author_id,u.name AS author_name,
-        u.avatar_url AS author_avatar_url,m.content,m.created_at,m.edited_at,m.revision,m.created_order,m.gif, COALESCE((SELECT jsonb_agg(jsonb_build_object('emoji', r.emoji, 'user_ids', r.user_ids) ORDER BY r.emoji) FROM (SELECT emoji,jsonb_agg(user_id ORDER BY user_id) AS user_ids FROM message_reactions WHERE message_id=m.id GROUP BY emoji) r),'[]'::jsonb) AS reactions
+        u.avatar_url AS author_avatar_url,m.content,m.created_at,m.edited_at,m.revision,m.created_order,m.gif,m.mentions,m.mentions_everyone, COALESCE((SELECT jsonb_agg(jsonb_build_object('emoji', r.emoji, 'user_ids', r.user_ids) ORDER BY r.emoji) FROM (SELECT emoji,jsonb_agg(user_id ORDER BY user_id) AS user_ids FROM message_reactions WHERE message_id=m.id GROUP BY emoji) r),'[]'::jsonb) AS reactions
         FROM messages m JOIN users u ON u.id=m.author_id
         WHERE m.channel_id=$1 AND to_tsvector('simple',m.content) @@ websearch_to_tsquery('simple',$2)
           AND ($3::timestamptz IS NULL OR (m.created_at,m.id)<($3,$4))
@@ -216,7 +250,7 @@ async fn context(
              AND (m.created_at,m.id)>=(t.created_at,t.id)
            ORDER BY m.created_at,m.id LIMIT 31)
         ) SELECT m.id,m.channel_id,m.author_id,u.name AS author_name,
-            u.avatar_url AS author_avatar_url,m.content,m.created_at,m.edited_at,m.revision,m.created_order,m.gif, COALESCE((SELECT jsonb_agg(jsonb_build_object('emoji', r.emoji, 'user_ids', r.user_ids) ORDER BY r.emoji) FROM (SELECT emoji,jsonb_agg(user_id ORDER BY user_id) AS user_ids FROM message_reactions WHERE message_id=m.id GROUP BY emoji) r),'[]'::jsonb) AS reactions
+            u.avatar_url AS author_avatar_url,m.content,m.created_at,m.edited_at,m.revision,m.created_order,m.gif,m.mentions,m.mentions_everyone, COALESCE((SELECT jsonb_agg(jsonb_build_object('emoji', r.emoji, 'user_ids', r.user_ids) ORDER BY r.emoji) FROM (SELECT emoji,jsonb_agg(user_id ORDER BY user_id) AS user_ids FROM message_reactions WHERE message_id=m.id GROUP BY emoji) r),'[]'::jsonb) AS reactions
           FROM selected JOIN messages m ON m.id=selected.id JOIN users u ON u.id=m.author_id
           ORDER BY m.created_at,m.id",
     )
