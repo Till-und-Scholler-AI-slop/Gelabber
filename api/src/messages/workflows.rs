@@ -53,8 +53,9 @@ pub(crate) struct ReadState {
     pub(crate) latest_order: Option<i64>,
     pub(crate) unread_count: i64,
     /// Unread messages that mention the user (`<@id>`, `@here` when they were
-    /// online, `@everyone`), among the newest 1000 unread ones: the scan
-    /// walks the channel's index from the end and stops there.
+    /// online, `@everyone`), among the newest 1000 unread ones that mention
+    /// anybody: the scan walks `messages_channel_mentioning_idx`, which
+    /// holds only those, from the end and stops there.
     pub(crate) mention_count: i64,
     /// Effective notification level: the channel's, else its server's, else
     /// `all` (`notifications/settings.rs`).
@@ -90,7 +91,7 @@ pub(crate) const UNREAD: &str = "WITH visible AS (
       AND m.created_at>=v.joined_at
       AND (r.created_order IS NULL OR m.created_order>r.created_order) LIMIT 100) bounded) AS unread_count,
     (SELECT count(*) FROM (SELECT m.mentions, m.mentions_everyone FROM messages m
-      WHERE m.channel_id=v.channel_id AND m.author_id<>$1
+      WHERE m.channel_id=v.channel_id AND (m.mentions_everyone OR m.mentions<>'{}') AND m.author_id<>$1
       AND m.created_at>=v.joined_at
       AND (r.created_order IS NULL OR m.created_order>r.created_order)
       ORDER BY m.created_order DESC LIMIT 1000) recent
