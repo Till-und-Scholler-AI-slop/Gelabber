@@ -15,11 +15,13 @@ Redis TIME determines expirations, not API wall clocks.
   Claim is SET-if-absent in Lua. Refresh/release compare the entire serialized
   owner. Even the same user's other tab/session cannot claim or release it.
 
-Gateway renews active seats / claims every second under the 03a DB-session and
-membership checks. Lost claims clear Live and emit `sig u/k:l`; a refresh never
-reclaims an expired claim. Explicit start issues a new nonce. A dead process or
-failed cleanup leaves at most 5 seconds of occupancy / claim. Passive server
-watchers receive `sig r/snap` replacements on roster changes every second.
+Gateway renews active seats / claims every second, right after the 03a
+DB-session and membership checks of the same tick (the session transaction
+ends before Redis I/O; roster frames are authorized again at dequeue). Lost
+claims clear Live and emit `sig u/k:l`; a refresh never reclaims an expired
+claim. Explicit start issues a new nonce. A dead process or failed cleanup
+leaves at most 5 seconds of occupancy / claim. Passive server watchers receive
+`sig r/snap` replacements on roster changes every second.
 
 Live start acknowledgement / peer snapshot: `{"op":"sig","t":"p",
 "s":"…","c":"…","u":"…","k":"l","lc":"<nonce>"}`.
