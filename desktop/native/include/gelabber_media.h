@@ -75,9 +75,9 @@ GM_API void gm_string_free(char* s);
 GM_API void gm_set_log_level(int level);
 /* The system's video codecs beside libwebrtc's own, as an engine would use
  * them: {"h264":{"encoder","hardwareEncoder","decoder"}}, encoder and decoder
- * being the GStreamer element or null; "h264" is null where the core has no
- * such codecs (Windows). Needs no engine; the first call may take a while
- * (GStreamer scans its plugins). */
+ * being the GStreamer element (Linux) or the Media Foundation MFT's name
+ * (Windows), or null; "h264" is null where the core has no such codecs. Needs
+ * no engine; the first call may take a while (GStreamer scans its plugins). */
 GM_API char* gm_video_codecs(void);
 
 /* Engine: libwebrtc threads, PeerConnectionFactory, audio device module and
