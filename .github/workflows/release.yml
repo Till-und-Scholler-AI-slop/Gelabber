@@ -55,7 +55,6 @@ jobs:
         if: ${{ !inputs.refresh_latest_only }}
         env:
           HAS_SIGNING_KEY: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY != '' }}
-          HAS_SIGNING_PASSWORD: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY_PASSWORD != '' }}
         run: |
           set -euo pipefail
           if [ ! -s desktop/app/updater.pub ]; then
@@ -64,10 +63,6 @@ jobs:
           fi
           if [ "$HAS_SIGNING_KEY" != true ]; then
             echo "::error::the secret TAURI_SIGNING_PRIVATE_KEY is not set: the Windows installer cannot be signed for the updater (desktop/README.md, Updates)"
-            exit 1
-          fi
-          if [ "$HAS_SIGNING_PASSWORD" != true ]; then
-            echo "::error::the secret TAURI_SIGNING_PRIVATE_KEY_PASSWORD is not set: the updater key is used with its password (desktop/README.md, Updates)"
             exit 1
           fi
       - name: Download exact image set

@@ -265,22 +265,24 @@ replaced by hand. Nothing in the app writes to its own files.
   it, read by `app/build.rs` at compile time. Without it the app is built
   without updates (the setup page says so) and a release stops in
   `release.yml` and in `desktop-native.yml`.
-- Private key and its password: the repository secrets
-  `TAURI_SIGNING_PRIVATE_KEY` (the content of the key file) and
-  `TAURI_SIGNING_PRIVATE_KEY_PASSWORD` (`release.yml` requires both, so give
-  the key a password). Only the step "Sign update" of a release run from the
-  release's tag sees them; a run on any other ref stops before signing, so
-  there is one signed installer per version. Putting the two secrets into an
-  environment with required reviewers instead would gate that step on an
-  approval as well (not set up). Keep an
-  offline copy: a lost key means no installed app can be updated any more,
-  every user has to install the next version by hand.
+- Private key and its password: the repository secret
+  `TAURI_SIGNING_PRIVATE_KEY` (the content of the key file) is required.
+  `TAURI_SIGNING_PRIVATE_KEY_PASSWORD` is optional: the Tauri CLI (v2.12+)
+  treats a missing or empty password as a passwordless key, so keys
+  generated without a password work without the secret. Only the step
+  "Sign update" of a release run from the release's tag sees these secrets;
+  a run on any other ref stops before signing, so there is one signed
+  installer per version. Putting these secrets into an environment with
+  required reviewers instead would gate that step on an approval as well
+  (not set up). Keep an offline copy: a lost key means no installed app can
+  be updated any more, every user has to install the next version by hand.
 - Making it, once (any machine with Node):
 
   ```sh
   npx --yes @tauri-apps/cli@2.12.3 signer generate -w ~/.tauri/gelabber-updater.key
   cp ~/.tauri/gelabber-updater.key.pub desktop/app/updater.pub   # commit this
   gh secret set TAURI_SIGNING_PRIVATE_KEY < ~/.tauri/gelabber-updater.key
+  # Only if the key has a password:
   gh secret set TAURI_SIGNING_PRIVATE_KEY_PASSWORD
   ```
 
