@@ -16,8 +16,9 @@
 #include <windows.h>
 #include <unknwn.h>
 #include <codecapi.h>
-#include <d3d10.h>
+// d3d11.h must come first: it pulls in d3d10_1.h, which refuses to follow d3d10.h.
 #include <d3d11.h>
+#include <d3d10.h>
 #include <mfapi.h>
 #include <mferror.h>
 #include <mfidl.h>
