@@ -1221,7 +1221,7 @@ dependencies = [
 
 [[package]]
 name = "gelabber-api"
-version = "0.7.0"
+version = "0.7.1"
 dependencies = [
  "aes-gcm",
  "argon2",
@@ -1256,7 +1256,7 @@ dependencies = [
 
 [[package]]
 name = "gelabber-media"
-version = "0.7.0"
+version = "0.7.1"
 dependencies = [
  "axum",
  "futures-util",
@@ -1277,7 +1277,7 @@ dependencies = [
 
 [[package]]
 name = "gelabber-shared"
-version = "0.7.0"
+version = "0.7.1"
 dependencies = [
  "base64 0.22.1",
  "hmac 0.12.1",
