@@ -241,6 +241,38 @@ impl VoiceRoster {
         })
         .transpose()
     }
+    /// [`Self::live_owner`] for several channels in one `MGET`.
+    async fn live_owners(
+        &self,
+        channels: HashSet<Uuid>,
+    ) -> Result<HashMap<Uuid, Option<LiveOwner>>, ApiError> {
+        if channels.is_empty() {
+            return Ok(HashMap::new());
+        }
+        let channels: Vec<Uuid> = channels.into_iter().collect();
+        let keys: Vec<String> = channels.iter().map(|c| live_key(*c)).collect();
+        let raws: Vec<Option<String>> = self
+            .connections
+            .with_conn(|mut conn| {
+                let keys = keys.clone();
+                async move { redis::cmd("MGET").arg(keys).query_async(&mut conn).await }
+            })
+            .await
+            .map_err(redis_err)?;
+        channels
+            .into_iter()
+            .zip(raws)
+            .map(|(c, raw)| {
+                let owner = raw
+                    .map(|raw| {
+                        serde_json::from_str(&raw)
+                            .map_err(|err| ApiError::Internal(format!("live claim: {err}")))
+                    })
+                    .transpose()?;
+                Ok((c, owner))
+            })
+            .collect()
+    }
     async fn aggregate_signal(
         &self,
         u: Uuid,
@@ -630,11 +662,14 @@ impl VoiceRoster {
             flags.0 &= row.m;
             flags.1 &= row.d;
         }
+        let live = self
+            .live_owners(groups.keys().map(|(_, c)| *c).collect())
+            .await?;
         let mut users: HashMap<Uuid, VoiceEntry> = HashMap::new();
         for ((u, c), (m, d)) in groups {
-            let l = self
-                .live_owner(c)
-                .await?
+            let l = live
+                .get(&c)
+                .and_then(Option::as_ref)
                 .is_some_and(|owner| owner.u == u && owner.s == s);
             let entry = VoiceEntry { u, c, m, d, l };
             match users.entry(u) {
@@ -709,14 +744,15 @@ impl VoiceRoster {
 impl Gateway {
     pub async fn refresh_voice(&self, id: ConnId) -> Result<(), ApiError> {
         self.voice.refresh(id).await?;
-        let servers = self
+        // A DM has no voice roster; its subscribe already sent the empty one.
+        let servers: Vec<Uuid> = self
             .connections
             .inner
             .sockets
             .read()
             .await
             .get(&id)
-            .map(|socket| socket.servers.clone())
+            .map(|socket| socket.servers.difference(&socket.dms).copied().collect())
             .unwrap_or_default();
         for server in servers {
             let snapshot = self.voice.voice_snapshot(server).await?;
@@ -1053,6 +1089,58 @@ mod tests {
         );
         drop(busy);
         g.detach(id).await;
+    }
+
+    #[tokio::test]
+    async fn roster_refresh_skips_dms_and_reads_each_channels_live_owner() {
+        let g = gateway();
+        let (s, dm) = (Uuid::new_v4(), Uuid::new_v4());
+        let (a, b, c1, c2) = (
+            Uuid::new_v4(),
+            Uuid::new_v4(),
+            Uuid::new_v4(),
+            Uuid::new_v4(),
+        );
+        let (sa, _ra) = socket(&g, a).await;
+        let (sb, _rb) = socket(&g, b).await;
+        g.join_voice(sa, a, s, c1).await.unwrap();
+        g.join_voice(sb, b, s, c2).await.unwrap();
+        assert_eq!(
+            g.set_voice_pub(sa, a, s, c1, TrackKind::L, true)
+                .await
+                .unwrap(),
+            Some(true)
+        );
+        // A seat under the DM id's server key: without the skip, the watcher
+        // would get a roster for the DM.
+        let other = Uuid::new_v4();
+        let (sd, _rd) = socket(&g, other).await;
+        g.join_voice(sd, other, dm, Uuid::new_v4()).await.unwrap();
+        assert_eq!(g.voice_snapshot(dm).await.unwrap().len(), 1);
+
+        let (watcher, mut rx) = socket(&g, Uuid::new_v4()).await;
+        g.mark_dm(watcher, dm).await;
+        g.watch_server(watcher, dm).await;
+        g.watch_server(watcher, s).await;
+        g.refresh_voice(watcher).await.unwrap();
+        let mut snaps = HashMap::new();
+        while let Ok(frame) = rx.try_recv() {
+            // Pub/Sub join and publish frames carry no snapshot.
+            if let ServerFrame::Sig {
+                s,
+                snap: Some(rows),
+                ..
+            } = frame
+            {
+                snaps.insert(s, rows);
+            }
+        }
+        assert_eq!(snaps.keys().collect::<Vec<_>>(), vec![&s]);
+        let live: HashMap<Uuid, bool> = snaps[&s].iter().map(|row| (row.u, row.l)).collect();
+        assert_eq!(live, HashMap::from([(a, true), (b, false)]));
+        for id in [sa, sb, sd, watcher] {
+            g.detach(id).await;
+        }
     }
 
     #[tokio::test]

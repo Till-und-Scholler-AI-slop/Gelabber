@@ -108,6 +108,9 @@ pub(super) struct Socket {
     access: HashMap<Uuid, (chrono::DateTime<chrono::Utc>, i32)>,
     /// Servers this socket has subscribed to (channel or server topic).
     pub(super) servers: HashSet<Uuid>,
+    /// DM ids in `servers` (a DM topic is `s == c`). They keep presence and
+    /// signaling fan-out, but have no voice roster to refresh.
+    pub(super) dms: HashSet<Uuid>,
     pub(super) voice_rosters: HashMap<Uuid, Vec<VoiceEntry>>,
     /// Channels this socket started typing in (`server`, `channel`).
     typing: HashSet<(Uuid, Uuid)>,
@@ -224,6 +227,7 @@ impl ConnTable {
                 session: None,
                 access: HashMap::new(),
                 servers: HashSet::new(),
+                dms: HashSet::new(),
                 voice_rosters: HashMap::new(),
                 typing: HashSet::new(),
                 topics: HashSet::new(),
@@ -240,6 +244,12 @@ impl ConnTable {
     pub async fn watch_server(&self, id: ConnId, server_id: Uuid) {
         if let Some(socket) = self.inner.sockets.write().await.get_mut(&id) {
             socket.servers.insert(server_id);
+        }
+    }
+
+    pub async fn mark_dm(&self, id: ConnId, dm_id: Uuid) {
+        if let Some(socket) = self.inner.sockets.write().await.get_mut(&id) {
+            socket.dms.insert(dm_id);
         }
     }
 
@@ -835,6 +845,7 @@ impl Gateway {
             sockets.get_mut(&id).map(|socket| {
                 socket.access.remove(&server_id);
                 socket.servers.remove(&server_id);
+                socket.dms.remove(&server_id);
                 socket.topics.remove(&Topic::Server(server_id));
                 socket.catching_up.remove(&Topic::Server(server_id));
                 for channel_id in channel_ids {
@@ -1151,6 +1162,10 @@ impl Gateway {
 
     pub async fn watch_server(&self, id: ConnId, server_id: Uuid) {
         self.connections.watch_server(id, server_id).await
+    }
+
+    pub async fn mark_dm(&self, id: ConnId, dm_id: Uuid) {
+        self.connections.mark_dm(id, dm_id).await
     }
 
     pub async fn socket_meta(&self, id: ConnId) -> Option<(Uuid, HashSet<Uuid>)> {

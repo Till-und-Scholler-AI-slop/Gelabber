@@ -328,6 +328,8 @@ async fn subscribe(
             .gateway
             .bind_server(conn, &mut *db, server_id, user.id)
             .await?;
+    } else {
+        state.gateway.mark_dm(conn, server_id).await;
     }
     state.gateway.watch_server(conn, server_id).await;
     let topic = Topic::of(server_id, channel_id);
