@@ -1585,3 +1585,78 @@ async fn an_edit_keeping_here_keeps_whom_it_reached(pool: PgPool) {
     assert_eq!(edited.status, StatusCode::OK, "{}", edited.body);
     assert_eq!(edited.body["mentions"], json!([member.user_id()]));
 }
+
+/// An edit that keeps `@here` but drops `<@member>` still mentions the
+/// member when `@here` reached them too (#276); one whom `@here` reached
+/// only through the token goes with it.
+#[sqlx::test]
+async fn an_edit_dropping_a_token_keeps_whom_here_reached(pool: PgPool) {
+    let (mut owner, mut member) = two_users(pool.clone()).await;
+    let server = create_server(&mut owner, "Here").await;
+    let (server_id, channel_id) = ids(&server);
+    join_member(&mut owner, &mut member, &server_id.to_string()).await;
+    let (addr, _) = common::serve_ws(pool).await;
+    let mut owner_ws = connect(addr, &session_cookie(&owner), None).await;
+    send_json(&mut owner_ws, json!({ "op": "s", "s": server_id })).await;
+    recv_until(&mut owner_ws, |f| f["op"] == "ok").await;
+    let mut member_ws = connect(addr, &session_cookie(&member), None).await;
+    send_json(&mut member_ws, json!({ "op": "s", "s": server_id })).await;
+    recv_until(&mut member_ws, |f| f["op"] == "ok").await;
+    recv_until(&mut owner_ws, |f| {
+        f["op"] == "p" && f["u"] == member.user_id() && f["st"] == "o"
+    })
+    .await;
+
+    let named = format!("@here <@{}> kurz?", member.user_id());
+    let sent = owner
+        .send(
+            Method::POST,
+            &format!("/api/channels/{channel_id}/messages"),
+            Some(json!({ "content": named })),
+        )
+        .await;
+    assert_eq!(sent.status, StatusCode::CREATED, "{}", sent.body);
+    assert_eq!(sent.body["mentions"], json!([member.user_id()]));
+    let edited = owner
+        .send(
+            Method::PATCH,
+            &format!("/api/messages/{}", sent.body["id"].as_str().unwrap()),
+            Some(json!({ "content": "@here kurz?" })),
+        )
+        .await;
+    assert_eq!(edited.status, StatusCode::OK, "{}", edited.body);
+    assert_eq!(edited.body["mentions"], json!([member.user_id()]));
+
+    // Offline at the send: `@here` reached nobody, only the token did.
+    member_ws.close(None).await.ok();
+    recv_until(&mut owner_ws, |f| {
+        f["op"] == "p" && f["u"] == member.user_id() && f["st"] == "x"
+    })
+    .await;
+    let sent = owner
+        .send(
+            Method::POST,
+            &format!("/api/channels/{channel_id}/messages"),
+            Some(json!({ "content": named })),
+        )
+        .await;
+    assert_eq!(sent.status, StatusCode::CREATED, "{}", sent.body);
+    assert_eq!(sent.body["mentions"], json!([member.user_id()]));
+    // Back online: the edit does not take a new snapshot either.
+    let mut member_ws = connect(addr, &session_cookie(&member), None).await;
+    send_json(&mut member_ws, json!({ "op": "s", "s": server_id })).await;
+    recv_until(&mut member_ws, |f| f["op"] == "ok").await;
+    recv_until(&mut owner_ws, |f| {
+        f["op"] == "p" && f["u"] == member.user_id() && f["st"] == "o"
+    })
+    .await;
+    let edited = owner
+        .send(
+            Method::PATCH,
+            &format!("/api/messages/{}", sent.body["id"].as_str().unwrap()),
+            Some(json!({ "content": "@here kurz?" })),
+        )
+        .await;
+    assert_eq!(edited.status, StatusCode::OK, "{}", edited.body);
+    assert_eq!(edited.body["mentions"], json!([]));
+}

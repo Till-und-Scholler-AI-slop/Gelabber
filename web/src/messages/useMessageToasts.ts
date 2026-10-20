@@ -40,7 +40,7 @@ import {
   useNotificationPrivacy,
 } from "./notificationPrivacy.ts";
 import {
-  serverSetting,
+  conversationSetting,
   settingsKey,
   useNotificationSettings,
   type NotificationSetting,
@@ -179,19 +179,20 @@ export function useMessageToastsBridge(): void {
       const dm = isDmTopic(event.s, event.c);
       const mentioned = !own && mentionsMe(message, userId);
       // Level and mute of the conversation (#242), from the unread rows.
-      // A channel too new for a row yet follows its server's setting.
+      // A conversation too new for a row yet follows its own setting and
+      // its server's, as the row would (#276).
       const row =
         client
           .getQueryData<ReadState[]>(readKey({ userId, generation }))
           ?.find((current) => current.channel_id === event.c) ??
-        (dm
-          ? undefined
-          : serverSetting(
-              client.getQueryData<NotificationSetting[]>(
-                settingsKey({ userId, generation }),
-              ),
-              event.s,
-            ));
+        conversationSetting(
+          client.getQueryData<NotificationSetting[]>(
+            settingsKey({ userId, generation }),
+          ),
+          event.c,
+          dm ? null : event.s,
+          serverNow(),
+        );
       if (!wantsNotification(row, { dm, mentioned }, serverNow())) return;
       // The desktop app's taskbar button flashes for a direct message while
       // the window is not in front, whatever the toast and desktop settings
