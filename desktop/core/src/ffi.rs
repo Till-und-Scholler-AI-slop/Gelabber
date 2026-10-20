@@ -3,7 +3,7 @@
 
 use std::os::raw::{c_char, c_int, c_void};
 
-pub const GM_ABI_VERSION: u32 = 9;
+pub const GM_ABI_VERSION: u32 = 10;
 
 #[repr(C)]
 pub struct gm_video_frame {
@@ -73,6 +73,7 @@ unsafe extern "C" {
     pub fn gm_last_error() -> *const c_char;
     pub fn gm_string_free(s: *mut c_char);
     pub fn gm_set_log_level(level: c_int);
+    pub fn gm_video_codecs() -> *mut c_char;
 
     pub fn gm_engine_new(options_json: *const c_char) -> *mut gm_engine;
     pub fn gm_engine_free(engine: *mut gm_engine);

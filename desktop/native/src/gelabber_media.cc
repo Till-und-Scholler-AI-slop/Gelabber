@@ -53,9 +53,12 @@
 #include <rtc_base/time_utils.h>
 
 #if defined(WEBRTC_LINUX)
-// Hardware H264 through GStreamer, behind libwebrtc's simulcast adapter. The
-// Windows libwebrtc package does not carry the adapter.
+// Hardware H264 through GStreamer: encoders behind libwebrtc's simulcast
+// adapter (which the Windows libwebrtc package does not carry), decoders
+// behind its software fallback.
+#  include "gst_h264_decoder.h"
 #  include "gst_h264_encoder.h"
+#  include <api/video_codecs/video_decoder_software_fallback_wrapper.h>
 #  include <media/engine/simulcast_encoder_adapter.h>
 #endif
 #if defined(WEBRTC_WIN)
@@ -1445,6 +1448,51 @@ namespace
 #endif
 	};
 
+	using SoftwareDecoderFactory = webrtc::VideoDecoderFactoryTemplate<
+	  webrtc::OpenH264DecoderTemplateAdapter,
+	  webrtc::LibvpxVp8DecoderTemplateAdapter,
+	  webrtc::LibvpxVp9DecoderTemplateAdapter,
+	  webrtc::Dav1dDecoderTemplateAdapter>;
+
+	// libwebrtc's software decoders. On Linux H264 moves to a hardware
+	// decoder (GStreamer: NVDEC/VA-API) when the system has one, which hands
+	// over to the software decoder when it fails.
+	class DecoderFactory : public webrtc::VideoDecoderFactory
+	{
+	public:
+		DecoderFactory()
+		{
+#if defined(WEBRTC_LINUX)
+			hardware = gelabber::FindGstH264Decoder();
+			if (!hardware.empty())
+				RTC_LOG(LS_INFO) << "H264 decoder: GStreamer " << hardware;
+#endif
+		}
+
+		std::vector<webrtc::SdpVideoFormat> GetSupportedFormats() const override
+		{
+			return software.GetSupportedFormats();
+		}
+
+		std::unique_ptr<webrtc::VideoDecoder> Create(
+		  const webrtc::Environment& env, const webrtc::SdpVideoFormat& format) override
+		{
+			auto decoder = software.Create(env, format);
+#if defined(WEBRTC_LINUX)
+			if (decoder && !hardware.empty() && lower(format.name) == "h264")
+				return webrtc::CreateVideoDecoderSoftwareFallbackWrapper(
+				  env, std::move(decoder), gelabber::CreateGstH264Decoder(hardware));
+#endif
+			return decoder;
+		}
+
+	private:
+		SoftwareDecoderFactory software;
+#if defined(WEBRTC_LINUX)
+		std::string hardware;
+#endif
+	};
+
 	NoopProducerListener producerListener;
 	NoopConsumerListener consumerListener;
 
@@ -1700,7 +1748,6 @@ gm_engine* gm_engine_new(const char* optionsJson)
 		}
 
 
-		// TODO(desktop): hardware H264 decoding.
 		engine->factory = webrtc::CreatePeerConnectionFactory(
 		  engine->network.get(),
 		  engine->worker.get(),
@@ -1709,11 +1756,7 @@ gm_engine* gm_engine_new(const char* optionsJson)
 		  webrtc::CreateBuiltinAudioEncoderFactory(),
 		  webrtc::CreateBuiltinAudioDecoderFactory(),
 		  std::make_unique<EncoderFactory>(),
-		  std::make_unique<webrtc::VideoDecoderFactoryTemplate<
-		    webrtc::OpenH264DecoderTemplateAdapter,
-		    webrtc::LibvpxVp8DecoderTemplateAdapter,
-		    webrtc::LibvpxVp9DecoderTemplateAdapter,
-		    webrtc::Dav1dDecoderTemplateAdapter>>(),
+		  std::make_unique<DecoderFactory>(),
 		  nullptr,
 		  engine->apm);
 		if (!engine->factory)
@@ -2126,6 +2169,22 @@ gm_source* gm_source_new_app_audio(gm_engine* engine, const char* optionsJson)
 		auto* out     = new gm_source{ engine, track, nullptr };
 		out->appAudio = std::move(capture);
 		return out;
+	});
+}
+
+char* gm_video_codecs(void)
+{
+	return guarded<char*>(nullptr, [&] {
+		json h264 = nullptr;
+#if defined(WEBRTC_LINUX)
+		// The same choice the engine's factories make; GStreamer loads once.
+		const auto encoder = gelabber::FindGstH264Encoder();
+		const auto decoder = gelabber::FindGstH264Decoder();
+		h264 = { { "encoder", encoder.empty() ? json(nullptr) : json(encoder) },
+			     { "hardwareEncoder", gelabber::IsHardwareH264Encoder(encoder) },
+			     { "decoder", decoder.empty() ? json(nullptr) : json(decoder) } };
+#endif
+		return dupString(json({ { "h264", h264 } }).dump());
 	});
 }
 

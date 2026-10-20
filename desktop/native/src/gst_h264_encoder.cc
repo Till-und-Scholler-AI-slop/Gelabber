@@ -1,5 +1,7 @@
 #include "gst_h264_encoder.h"
 
+#include "gst_common.h"
+
 #include <api/environment/environment.h>
 #include <api/video/encoded_image.h>
 #include <api/video/i420_buffer.h>
@@ -11,7 +13,6 @@
 #include <modules/video_coding/include/video_error_codes.h>
 #include <rtc_base/logging.h>
 
-#include <dlfcn.h>
 #include <glib-object.h>
 #include <libyuv/convert_from.h>
 
@@ -29,186 +30,11 @@ namespace gelabber
 {
 	namespace
 	{
-		// The few GStreamer entry points the encoder needs, resolved at
-		// runtime: GStreamer stays an optional system dependency and its
-		// 1.x C ABI is stable. Types are opaque except the two public structs
-		// read below (GstMapInfo, GstBuffer timestamps), which are ABI-frozen.
-		struct GstElement;
-		struct GstBus;
-		struct GstMessage;
-		struct GstSample;
-		struct GstEvent;
-		struct GstMemory;
-		using GstClockTime = uint64_t;
-		constexpr GstClockTime kClockTimeNone = ~GstClockTime(0);
-		constexpr GstClockTime kSecond        = 1'000'000'000;
-		// Input timestamps start here. Encoders built on GstVideoEncoder
-		// (x264enc, va, nvcodec) shift output timestamps below their
-		// "min PTS" (1000 hours) upwards, which would break matching an
-		// output buffer to its input frame by PTS.
-		constexpr GstClockTime kPtsBase = GstClockTime(10'000) * 3600 * kSecond;
-
-		struct GstMiniObject
-		{
-			GType type;
-			gint refcount;
-			gint lockstate;
-			guint flags;
-			void* copy;
-			void* dispose;
-			void* free;
-			guint priv_uint;
-			gpointer priv_pointer;
-		};
-		struct GstBuffer
-		{
-			GstMiniObject mini_object;
-			void* pool;
-			GstClockTime pts;
-			GstClockTime dts;
-			GstClockTime duration;
-			guint64 offset;
-			guint64 offset_end;
-		};
-		struct GstMapInfo
-		{
-			GstMemory* memory;
-			int flags;
-			guint8* data;
-			gsize size;
-			gsize maxsize;
-			gpointer user_data[4];
-			gpointer reserved[4];
-		};
-		constexpr int kMapRead            = 1;
-		constexpr int kMapWrite           = 2;
-		constexpr int kStateNull          = 1;
-		constexpr int kStatePlaying       = 4;
-		constexpr int kStateChangeFailure = 0;
-		constexpr int kMessageError       = 1 << 1;
-
-		struct GstApi
-		{
-			gboolean (*init_check)(int*, char***, GError**);
-			GstElement* (*parse_launch)(const char*, GError**);
-			GstElement* (*bin_get_by_name)(GstElement*, const char*);
-			int (*element_set_state)(GstElement*, int);
-			GstBus* (*element_get_bus)(GstElement*);
-			gboolean (*element_send_event)(GstElement*, GstEvent*);
-			void* (*element_factory_find)(const char*);
-			void (*object_unref)(gpointer);
-			GstMessage* (*bus_pop_filtered)(GstBus*, int);
-			void (*message_parse_error)(GstMessage*, GError**, char**);
-			void (*mini_object_unref)(void*);
-			GstBuffer* (*buffer_new_allocate)(void*, gsize, void*);
-			gboolean (*buffer_map)(GstBuffer*, GstMapInfo*, int);
-			void (*buffer_unmap)(GstBuffer*, GstMapInfo*);
-			GstBuffer* (*sample_get_buffer)(GstSample*);
-			void (*util_set_object_arg)(GObject*, const char*, const char*);
-			int (*app_src_push_buffer)(GstElement*, GstBuffer*);
-			GstSample* (*app_sink_try_pull_sample)(GstElement*, GstClockTime);
-			GstEvent* (*video_event_new_upstream_force_key_unit)(GstClockTime, gboolean, guint);
-
-			bool ok{ false };
-		};
-
-		template<typename F>
-		bool resolve(void* lib, const char* name, F*& out)
-		{
-			out = reinterpret_cast<F*>(dlsym(lib, name));
-			return out != nullptr;
-		}
-
-		const GstApi& Gst()
-		{
-			static const GstApi api = [] {
-				GstApi api{};
-				void* core  = dlopen("libgstreamer-1.0.so.0", RTLD_NOW | RTLD_GLOBAL);
-				void* app   = core ? dlopen("libgstapp-1.0.so.0", RTLD_NOW | RTLD_GLOBAL) : nullptr;
-				void* video = core ? dlopen("libgstvideo-1.0.so.0", RTLD_NOW | RTLD_GLOBAL) : nullptr;
-				if (!core || !app || !video)
-				{
-					RTC_LOG(LS_INFO) << "GStreamer not available; software H264 only";
-					return api;
-				}
-				api.ok = resolve(core, "gst_init_check", api.init_check) &&
-				         resolve(core, "gst_parse_launch", api.parse_launch) &&
-				         resolve(core, "gst_bin_get_by_name", api.bin_get_by_name) &&
-				         resolve(core, "gst_element_set_state", api.element_set_state) &&
-				         resolve(core, "gst_element_get_bus", api.element_get_bus) &&
-				         resolve(core, "gst_element_send_event", api.element_send_event) &&
-				         resolve(core, "gst_element_factory_find", api.element_factory_find) &&
-				         resolve(core, "gst_object_unref", api.object_unref) &&
-				         resolve(core, "gst_bus_pop_filtered", api.bus_pop_filtered) &&
-				         resolve(core, "gst_message_parse_error", api.message_parse_error) &&
-				         resolve(core, "gst_mini_object_unref", api.mini_object_unref) &&
-				         resolve(core, "gst_buffer_new_allocate", api.buffer_new_allocate) &&
-				         resolve(core, "gst_buffer_map", api.buffer_map) &&
-				         resolve(core, "gst_buffer_unmap", api.buffer_unmap) &&
-				         resolve(core, "gst_sample_get_buffer", api.sample_get_buffer) &&
-				         resolve(core, "gst_util_set_object_arg", api.util_set_object_arg) &&
-				         resolve(app, "gst_app_src_push_buffer", api.app_src_push_buffer) &&
-				         resolve(app, "gst_app_sink_try_pull_sample", api.app_sink_try_pull_sample) &&
-				         resolve(
-				           video,
-				           "gst_video_event_new_upstream_force_key_unit",
-				           api.video_event_new_upstream_force_key_unit);
-				if (!api.ok)
-				{
-					RTC_LOG(LS_WARNING) << "GStreamer is missing symbols; software H264 only";
-					return api;
-				}
-				GError* error = nullptr;
-				if (!api.init_check(nullptr, nullptr, &error))
-				{
-					RTC_LOG(LS_WARNING) << "gst_init failed: " << (error ? error->message : "?");
-					if (error)
-						g_error_free(error);
-					api.ok = false;
-				}
-				return api;
-			}();
-			return api;
-		}
-
-		bool HasElement(const std::string& name)
-		{
-			const auto& gst = Gst();
-			void* factory   = gst.element_factory_find(name.c_str());
-			if (!factory)
-				return false;
-			gst.object_unref(factory);
-			return true;
-		}
+		using namespace gst;
 
 		bool IsSoftware(const std::string& element)
 		{
 			return element == "x264enc" || element == "openh264enc";
-		}
-
-		// Sets a property by its string form (numbers, booleans, enum nicks)
-		// when the element has it; elements differ between plugin versions.
-		bool SetArg(GstElement* element, const char* name, const char* value)
-		{
-			auto* object      = G_OBJECT(element);
-			GParamSpec* param = g_object_class_find_property(G_OBJECT_GET_CLASS(object), name);
-			if (!param)
-				return false;
-			if (G_IS_PARAM_SPEC_ENUM(param))
-			{
-				auto* enumClass = G_PARAM_SPEC_ENUM(param)->enum_class;
-				if (!g_enum_get_value_by_nick(enumClass, value) && !g_enum_get_value_by_name(enumClass, value))
-					return false;
-			}
-			Gst().util_set_object_arg(object, name, value);
-			return true;
-		}
-
-		void SetFirst(GstElement* element, const char* name, std::initializer_list<const char*> values)
-		{
-			for (const char* value : values)
-				if (SetArg(element, name, value))
-					return;
 		}
 
 		// Bitrate property unit per element (kbit/s except openh264enc).
@@ -503,22 +329,7 @@ namespace gelabber
 			// True when the pipeline reported an error.
 			bool CheckBus()
 			{
-				const auto& gst = Gst();
-				bool error      = false;
-				while (GstMessage* message = gst.bus_pop_filtered(bus, kMessageError))
-				{
-					GError* gerror = nullptr;
-					char* debug    = nullptr;
-					gst.message_parse_error(message, &gerror, &debug);
-					RTC_LOG(LS_WARNING) << "GStreamer " << element << ": "
-					                    << (gerror ? gerror->message : "error") << " " << (debug ? debug : "");
-					if (gerror)
-						g_error_free(gerror);
-					g_free(debug);
-					gst.mini_object_unref(message);
-					error = true;
-				}
-				return error;
+				return PopErrors(bus, element);
 			}
 
 			void Pull()
@@ -653,6 +464,11 @@ namespace gelabber
 				return candidate;
 		RTC_LOG(LS_INFO) << "no hardware H264 encoder in GStreamer; software H264 only";
 		return {};
+	}
+
+	bool IsHardwareH264Encoder(const std::string& element)
+	{
+		return !element.empty() && !IsSoftware(element);
 	}
 
 	std::unique_ptr<webrtc::VideoEncoderFactory> CreateGstH264EncoderFactory(

@@ -17,9 +17,10 @@ them as optional):
   webkit2gtk-4.1 gtk3 libsoup3 gst-plugins-base gst-plugins-good
   pipewire pipewire-pulse xdg-desktop-portal xdg-desktop-portal-hyprland
   vulkan-icd-loader plus the GPU's Vulkan driver (nvidia-utils, vulkan-intel)
-Camera, screen and Go Live are sent as VP8, encoded in software. No
-package adds hardware encoding: the app does not use the H264 encoders of
-gst-plugins-bad.
+Video on the GPU (optional): with gst-plugins-bad (h264parse, NVIDIA's
+nvcodec) and gst-plugin-va (Intel, AMD) the app encodes and decodes H264 on
+the graphics card. It sends H264 only when everyone in the call can decode
+it; otherwise, and without those packages, it sends VP8 encoded on the CPU.
 
 Push-to-talk: choose "Push-to-Talk" in the voice settings. In a call the
 app takes the key through the desktop's GlobalShortcuts portal, so it also

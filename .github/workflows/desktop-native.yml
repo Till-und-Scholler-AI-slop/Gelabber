@@ -220,15 +220,15 @@ jobs:
         run: cargo clippy --manifest-path desktop/Cargo.toml --all-targets -- -D warnings
 
       # GStreamer and the test desktop (PipeWire, pipewire-pulse,
-      # xdg-desktop-portal). x264enc
-      # stands in for VA-API/NVENC, which runners lack, to test the GStreamer
-      # encoder path itself.
+      # xdg-desktop-portal). x264enc and avdec_h264 stand in for
+      # VA-API/NVENC/NVDEC, which runners lack, to test the GStreamer encoder
+      # and decoder paths themselves.
       - name: Test packages
         run: |
           sudo apt-get install -y --no-install-recommends pipewire wireplumber pipewire-pulse \
             pulseaudio-utils xdg-desktop-portal \
             libpipewire-0.3-dev gstreamer1.0-plugins-base gstreamer1.0-plugins-bad \
-            gstreamer1.0-plugins-ugly python3-gi
+            gstreamer1.0-plugins-ugly gstreamer1.0-libav python3-gi
 
       # Every test of the workspace: the loopback call, the video sinks of
       # views inside the app (source_preview), the app's unit tests. The
@@ -244,6 +244,14 @@ jobs:
           GELABBER_EXPECT_H264: "1"
           GELABBER_H264_ENCODER: x264enc
           GELABBER_EXPECT_ENCODER: GStreamer x264enc
+          GELABBER_MEDIA_LOG: "1"
+        run: cargo test --manifest-path desktop/Cargo.toml --test mediasoup_loopback -- --nocapture
+
+      - name: Loopback call with the GStreamer H264 decoder
+        env:
+          GELABBER_EXPECT_H264: "1"
+          GELABBER_H264_DECODER: avdec_h264
+          GELABBER_EXPECT_DECODER: GStreamer avdec_h264
           GELABBER_MEDIA_LOG: "1"
         run: cargo test --manifest-path desktop/Cargo.toml --test mediasoup_loopback -- --nocapture
 
