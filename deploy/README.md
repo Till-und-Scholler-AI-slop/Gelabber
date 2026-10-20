@@ -201,6 +201,36 @@ What is pushed: every direct message, and in servers only mentions (`@name`, `@e
 Limits: `@everyone` and `@here` need the server permission "@everyone und @here" (owners always have it) and count at most 3 per author and server in 10 minutes. `@everyone` pushes at most 5 times per server in 10 minutes, and in a server with more than 500 members it pushes only to the people named in the message. At most 16 messages are being pushed at once; a burst beyond that is dropped and counted as `gelabber_rate_limited_total{bucket="push_dropped"}`. A page counts as in front while it is visible and someone used it in the last 5 minutes. Subscriptions that keep failing are removed once they have not taken a push for 30 days.
 
 On iPhone and iPad (iOS 16.4 or later), push works only in Gelabber added to the home screen, not in a Safari tab.
+
+## Account mail
+
+With outgoing mail, new accounts confirm their address and people who forgot their password get a reset link. It is off until `SMTP_HOST` is set in `.env`; the API then sends through that relay (your mail provider, a transactional mail service, or a Postfix on the same network). Gelabber runs no mail server of its own.
+
+```sh
+SMTP_HOST=smtp.example.org
+SMTP_USERNAME=gelabber@example.org
+SMTP_PASSWORD=…
+MAIL_FROM=Gelabber <gelabber@example.org>
+APP_PUBLIC_URL=https://chat.example.org
+```
+
+- `SMTP_SECURITY`: `starttls` (default, port 587, the upgrade must succeed), `tls` (port 465) or `none` (port 25, only for a relay on a private network; refused together with `SMTP_PASSWORD`). `SMTP_PORT` overrides the port.
+- `MAIL_FROM`: the sender. Most providers only accept addresses they host; set SPF/DKIM for its domain or the mails land in spam.
+- `APP_PUBLIC_URL`: the address people open Gelabber at. The links in the mails point there, never at the host a request named. It must be `https://` while `API_COOKIE_SECURE=true`.
+
+Then `docker compose up -d --no-deps --force-recreate api`. A wrong value stops the API at start with the variable's name; an unreachable relay does not, failed mails are logged (`account mail failed`, with the user id, never the address).
+
+What changes with mail on:
+
+- Registration answers the same whether or not the address already has an account ("check your inbox"), so it no longer tells strangers who is registered. A new address gets a confirmation link (valid 24 hours); a confirmed one gets a note that the account exists, with links to sign in and to reset the password, and the account does not change. A registration that nobody confirmed yet is replaced by the newer one (name, password, a fresh link), so a stranger who registers someone's address first never holds the password of the account its owner later confirms.
+- An unconfirmed account cannot sign in. The right password answers "confirm your address first" and sends a new link. The link page asks for the account's password; with it the address is confirmed and that browser signed in. The link alone is not enough, so someone who registered a stranger's address cannot share the account the stranger confirms, and mail scanners that open links do not use it up. A wrong password counts like a failed sign-in and leaves the link usable.
+- "Passwort vergessen?" on the sign-in page mails a reset link (valid one hour, once) if the address has an account; the answer is the same either way. Setting the new password confirms the address, ends every session of the account on every device and signs this browser in. Changing the password in the settings makes open reset links invalid.
+- At most 5 mails per address and hour; further requests are answered as usual and nothing is sent (`gelabber_rate_limited_total{bucket="mail"}`). The links carry their token after `#`, so it does not reach proxy logs, and only its SHA-256 is stored.
+
+Accounts that existed before migration 0021 count as confirmed. Accounts registered later while mail was off are unconfirmed: once mail is turned on, their owners confirm once at their next sign-in. Without mail, registration signs in at once and answers `409` for a known address, as before.
+
+Migration 0021 adds `users.email_verified_at` and the `account_tokens` table. As with every migration, an older API binary does not start against the migrated database; roll back with the backed-up snapshot pair as described below.
+
 ## Backup
 
 PostgreSQL metadata and MinIO attachments form **one snapshot pair**. Before

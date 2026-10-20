@@ -13,6 +13,12 @@ import {
 import { isDesktopApp } from "./native/bridge.ts";
 import { listNativeDevices } from "./native/capture.ts";
 import { hasNativeFeature } from "./native/features.ts";
+import {
+  asVoiceInputMode,
+  clampReleaseDelay,
+  PTT_RELEASE_DELAY_DEFAULT,
+  type VoiceInputMode,
+} from "./pushToTalk.ts";
 
 /** Explicit economy presets retained for migration; never applied by default. */
 export const AUDIO_QUALITY = {
@@ -183,6 +189,14 @@ export type MediaSettings = {
   desktopNotify: boolean;
   /** A short cue with a message notification on a desktop (issue #247). */
   messageSound: boolean;
+  /** Voice activity, or push-to-talk (pushToTalk.ts). */
+  voiceInput: VoiceInputMode;
+  /** The push-to-talk key: a `KeyboardEvent.code`, or `Mouse4`/`Mouse5`. */
+  pttKey: string;
+  /** The key as it was pressed when bound, for the settings. */
+  pttKeyLabel: string;
+  /** Milliseconds the microphone stays open after the key comes up. */
+  pttReleaseDelay: number;
 };
 
 export const DEFAULT_MEDIA_SETTINGS: MediaSettings = {
@@ -209,6 +223,10 @@ export const DEFAULT_MEDIA_SETTINGS: MediaSettings = {
   messageToasts: true,
   desktopNotify: false,
   messageSound: true,
+  voiceInput: "activity",
+  pttKey: "",
+  pttKeyLabel: "",
+  pttReleaseDelay: PTT_RELEASE_DELAY_DEFAULT,
 };
 
 type MediaSettingsState = MediaSettings & {
@@ -373,6 +391,10 @@ function snapshot(state: MediaSettingsState): MediaSettings {
     messageToasts: state.messageToasts,
     desktopNotify: state.desktopNotify,
     messageSound: state.messageSound,
+    voiceInput: state.voiceInput,
+    pttKey: state.pttKey,
+    pttKeyLabel: state.pttKeyLabel,
+    pttReleaseDelay: state.pttReleaseDelay,
   };
 }
 
@@ -463,6 +485,16 @@ export const useMediaSettings = create<MediaSettingsState>()(
               ? partial.desktopNotify
               : prev.desktopNotify,
           messageSound: partial.messageSound ?? prev.messageSound,
+          voiceInput:
+            partial.voiceInput !== undefined
+              ? asVoiceInputMode(partial.voiceInput)
+              : prev.voiceInput,
+          pttKey: partial.pttKey ?? prev.pttKey,
+          pttKeyLabel: partial.pttKeyLabel ?? prev.pttKeyLabel,
+          pttReleaseDelay:
+            partial.pttReleaseDelay !== undefined
+              ? clampReleaseDelay(partial.pttReleaseDelay)
+              : prev.pttReleaseDelay,
         });
         listener?.(prev, snapshot(get()));
       },
@@ -526,6 +558,13 @@ export const useMediaSettings = create<MediaSettingsState>()(
           outputVolume: clampPlaybackVolume(stored.outputVolume ?? 1),
           sourceAudioVolume: clampPlaybackVolume(stored.sourceAudioVolume ?? 1),
           sourceAudioMuted: stored.sourceAudioMuted === true,
+          voiceInput: asVoiceInputMode(stored.voiceInput),
+          pttKey: typeof stored.pttKey === "string" ? stored.pttKey : "",
+          pttKeyLabel:
+            typeof stored.pttKeyLabel === "string" ? stored.pttKeyLabel : "",
+          pttReleaseDelay: clampReleaseDelay(
+            stored.pttReleaseDelay ?? PTT_RELEASE_DELAY_DEFAULT,
+          ),
           cameraProfileApply: current.cameraProfileApply,
           screenProfileApply: current.screenProfileApply,
           dialogOpen: current.dialogOpen,

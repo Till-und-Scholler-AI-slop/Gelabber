@@ -6,6 +6,9 @@
 //! Nothing is pushed to a user with a page of the app in front on any
 //! device (`ClientFrame::Focus`), nor for a conversation they muted or set
 //! to "nothing" (#242). In a server channel only a mention pushes.
+//!
+//! An account that hides the content of its notifications (#268) gets only
+//! "Neue Nachricht von Ada": no preview, no conversation.
 
 pub mod webpush;
 
@@ -225,6 +228,7 @@ struct Target {
     user_id: Uuid,
     p256dh: String,
     auth: String,
+    hide_content: bool,
 }
 
 /// After a message is stored: push it in the background, unless
@@ -281,12 +285,12 @@ async fn deliver(
             .fetch_all(&state.db)
             .await?;
             if members.len() > MAX_RECIPIENTS {
-                message.mentions.clone()
+                named(state, message, server).await?
             } else {
                 members
             }
         }
-        Some(_) => message.mentions.clone(),
+        Some(server) => named(state, message, server).await?,
     };
     if recipients.is_empty() {
         return Ok(());
@@ -294,9 +298,11 @@ async fn deliver(
     // Live sessions only, and not where the conversation is muted or set
     // to "nothing"; the channel's own level wins over its server's.
     let targets: Vec<Target> = sqlx::query_as(
-        "SELECT p.endpoint, p.user_id, p.p256dh, p.auth
+        "SELECT p.endpoint, p.user_id, p.p256dh, p.auth,
+                u.notifications_hide_content AS hide_content
          FROM push_subscriptions p
          JOIN sessions s ON s.token_hash=p.session_hash AND s.expires_at>now()
+         JOIN users u ON u.id=p.user_id
          LEFT JOIN notification_settings cs ON cs.user_id=p.user_id
            AND cs.scope_kind='channel' AND cs.scope_id=$2
          LEFT JOIN notification_settings ss ON ss.user_id=p.user_id
@@ -315,7 +321,12 @@ async fn deliver(
         return Ok(());
     }
     let (title, path) = heading(state, message, server).await?;
-    let body = preview(state, message).await?;
+    let body = if targets.iter().all(|t| t.hide_content) {
+        String::new()
+    } else {
+        preview(state, message).await?
+    };
+    let hidden = hidden_title(&message.author.name);
     let users: Vec<Uuid> = {
         let mut users: Vec<Uuid> = targets.iter().map(|t| t.user_id).collect();
         users.sort_unstable();
@@ -330,9 +341,14 @@ async fn deliver(
             .into_iter()
             .filter(|target| !in_front.contains(&target.user_id))
             .filter_map(|target| {
+                let (title, body) = if target.hide_content {
+                    (hidden.as_str(), "")
+                } else {
+                    (title.as_str(), body.as_str())
+                };
                 let payload = Payload {
-                    title: &title,
-                    body: &body,
+                    title,
+                    body,
                     path: &path,
                     user: target.user_id,
                     channel: message.channel_id,
@@ -357,13 +373,30 @@ async fn deliver(
     let mut sent = Vec::new();
     let mut gone = Vec::new();
     // A subscription that has not taken a push for 30 days goes on its next
-    // failure (a 403 after a key rotation, a 413, a service that is gone).
+    // failure (a 413, a 429, a service that is gone).
     let mut failed = Vec::new();
+    let mut refused = Vec::new();
     for (outcome, endpoint) in results {
         match outcome {
             Outcome::Sent => sent.push(endpoint),
             Outcome::Gone => gone.push(endpoint),
+            Outcome::Refused => refused.push(endpoint),
             Outcome::Failed => failed.push(endpoint),
+        }
+    }
+    // A refusal is the subscription's fault only where the same service took
+    // another push of this message. Refused across the board, it is ours (a
+    // VAPID token the service rejects, a clock off, a bad header), and
+    // deleting would silence every phone until its app is opened again.
+    let accepting: Vec<String> = sent.iter().filter_map(|e| push.audience(e)).collect();
+    for endpoint in refused {
+        if push
+            .audience(&endpoint)
+            .is_some_and(|origin| accepting.contains(&origin))
+        {
+            gone.push(endpoint);
+        } else {
+            failed.push(endpoint);
         }
     }
     if !sent.is_empty() {
@@ -374,7 +407,10 @@ async fn deliver(
                 .await;
     }
     if !gone.is_empty() {
-        info!(count = gone.len(), "push subscriptions expired, removed");
+        info!(
+            count = gone.len(),
+            "push subscriptions expired or refused, removed"
+        );
         let _ = sqlx::query("DELETE FROM push_subscriptions WHERE endpoint=ANY($1)")
             .bind(&gone)
             .execute(&state.db)
@@ -392,6 +428,24 @@ async fn deliver(
     let sent = sent.len();
     debug!(message_id = %message.id, sent, "push delivered");
     Ok(())
+}
+
+/// The users the message names who are still in the server: the names
+/// were resolved before the message was stored, and someone removed since
+/// gets no preview.
+async fn named(state: &AppState, message: &Message, server: Uuid) -> Result<Vec<Uuid>, ApiError> {
+    if message.mentions.is_empty() {
+        return Ok(Vec::new());
+    }
+    Ok(sqlx::query_scalar(
+        "SELECT user_id FROM server_members WHERE server_id=$1 AND user_id=ANY($2)
+         AND user_id<>$3",
+    )
+    .bind(server)
+    .bind(&message.mentions)
+    .bind(message.author.id)
+    .fetch_all(&state.db)
+    .await?)
 }
 
 /// Whether this server's `@everyone` may still page its members by push.
@@ -415,6 +469,11 @@ enum Outcome {
     Sent,
     /// 404/410: the browser dropped the subscription.
     Gone,
+    /// 400/403: the service will not take it, e.g. one subscribed under an
+    /// old VAPID key. With up to 20 per account and 500 recipients a
+    /// message, such rows are not kept for a month of retries; a browser
+    /// still subscribed sends it again on its next start (`syncPush`).
+    Refused,
     Failed,
 }
 
@@ -446,6 +505,13 @@ async fn send(push: &Push, target: &Target, payload: &[u8], urgency: &str) -> Ou
     match response {
         Ok(response) if response.status().is_success() => Outcome::Sent,
         Ok(response) if matches!(response.status().as_u16(), 404 | 410) => Outcome::Gone,
+        Ok(response) if matches!(response.status().as_u16(), 400 | 403) => {
+            debug!(
+                status = response.status().as_u16(),
+                "push service refused the subscription"
+            );
+            Outcome::Refused
+        }
         Ok(response) => {
             warn!(status = response.status().as_u16(), "push service refused");
             Outcome::Failed
@@ -482,6 +548,13 @@ async fn heading(
         ),
         format!("/s/{server}/c/{}", message.channel_id),
     ))
+}
+
+/// All a notification says for an account that hides the content: who wrote.
+/// The pages show the same (`notificationText` in
+/// web/src/messages/notificationPrivacy.ts).
+pub fn hidden_title(author: &str) -> String {
+    format!("Neue Nachricht von {author}")
 }
 
 /// The text with mentions as names, cut short; a file or GIF named as such.

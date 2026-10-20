@@ -1,5 +1,6 @@
 import { describe, expect, it } from "vitest";
 
+import { parseMessage, type Inline } from "./markdown.ts";
 import {
   fromWire,
   insertMention,
@@ -62,6 +63,61 @@ describe("mentions", () => {
       { kind: "here" },
       { kind: "text", text: ")" },
     ]);
+  });
+
+  it("leaves keywords inside links alone, as the server does", () => {
+    expect(splitMentions("https://x.org/?q=@here", members)).toEqual([
+      { kind: "text", text: "https://x.org/?q=@here" },
+    ]);
+    expect(splitMentions("<https://x.org/?q=@everyone>", members)).toEqual([
+      { kind: "text", text: "<https://x.org/?q=@everyone>" },
+    ]);
+    // Not a link the client draws: a ping.
+    expect(splitMentions("ftp://x/?q=@here", members)).toEqual([
+      { kind: "text", text: "ftp://x/?q=" },
+      { kind: "here" },
+    ]);
+    expect(splitMentions('https://x.org"@here', members)).toEqual([
+      { kind: "text", text: 'https://x.org"' },
+      { kind: "here" },
+    ]);
+  });
+
+  // The cases of `links_follow_the_web_client` in api/src/messages/mentions.rs:
+  // the markdown view highlights exactly what the server pings.
+  it("highlights in markdown exactly where the server pings", () => {
+    const pings = (content: string) => {
+      const found: string[] = [];
+      const walk = (nodes: Inline[]) => {
+        for (const node of nodes) {
+          if (node.type === "here" || node.type === "everyone")
+            found.push(node.type);
+          else if ("children" in node) walk(node.children);
+        }
+      };
+      for (const block of parseMessage(content))
+        if (block.type !== "codeblock") walk(block.children);
+      return found.length > 0;
+    };
+    for (const content of [
+      "https://mastodon.social/@here",
+      "see https://example.org/?to=@everyone",
+      "mastodon.social/@here",
+      "<https://example.org/?q=@here>",
+      "<mailto:x.@here>",
+      "https://x`c`@here",
+      "(https://example.org/@here)",
+    ])
+      expect(pings(content), content).toBe(false);
+    for (const content of [
+      "https://example.org @here",
+      "ftp://x/?q=@here",
+      'https://x.org"@here',
+      "xhttps://x.org?q=@here",
+      "https:// @here",
+      "\\`@here`",
+    ])
+      expect(pings(content), content).toBe(true);
   });
 
   it("leaves escaped mentions as text, as the server does", () => {

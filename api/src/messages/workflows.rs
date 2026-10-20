@@ -53,8 +53,9 @@ pub(crate) struct ReadState {
     pub(crate) latest_order: Option<i64>,
     pub(crate) unread_count: i64,
     /// Unread messages that mention the user (`<@id>`, `@here` when they were
-    /// online, `@everyone`), among the newest 1000 unread ones: the scan
-    /// walks the channel's index from the end and stops there.
+    /// online, `@everyone`), among the newest 1000 unread ones that mention
+    /// anybody: the scan walks `messages_channel_mentioning_idx`, which
+    /// holds only those, from the end and stops there.
     pub(crate) mention_count: i64,
     /// Effective notification level: the channel's, else its server's, else
     /// `all` (`notifications/settings.rs`).
@@ -90,7 +91,7 @@ pub(crate) const UNREAD: &str = "WITH visible AS (
       AND m.created_at>=v.joined_at
       AND (r.created_order IS NULL OR m.created_order>r.created_order) LIMIT 100) bounded) AS unread_count,
     (SELECT count(*) FROM (SELECT m.mentions, m.mentions_everyone FROM messages m
-      WHERE m.channel_id=v.channel_id AND m.author_id<>$1
+      WHERE m.channel_id=v.channel_id AND (m.mentions_everyone OR m.mentions<>'{}') AND m.author_id<>$1
       AND m.created_at>=v.joined_at
       AND (r.created_order IS NULL OR m.created_order>r.created_order)
       ORDER BY m.created_order DESC LIMIT 1000) recent
@@ -254,7 +255,7 @@ async fn read_up_to_latest(
     server: Option<Uuid>,
     dms: bool,
     servers: bool,
-) -> Result<Vec<Uuid>, ApiError> {
+) -> sqlx::Result<Vec<Uuid>> {
     // As for a single read: holding the memberships keeps a leave or kick
     // from landing between them and the write, so no position is written
     // for a conversation just left. Membership first, then read state, the
@@ -276,7 +277,7 @@ async fn read_up_to_latest(
     .bind(dms && server.is_none())
     .execute(&mut *tx)
     .await?;
-    Ok(sqlx::query_scalar(
+    sqlx::query_scalar(
         "WITH visible AS (
             SELECT c.id AS channel_id, sm.joined_at
             FROM channels c JOIN server_members sm ON sm.server_id=c.server_id AND sm.user_id=$1
@@ -307,7 +308,7 @@ async fn read_up_to_latest(
     .bind(dms)
     .bind(servers)
     .fetch_all(&mut *tx)
-    .await?)
+    .await
 }
 
 async fn finish_bulk_read(
@@ -385,10 +386,28 @@ async fn mark_all_read(
     Body(body): Body<ReadAllBody>,
 ) -> Result<Json<Vec<ReadState>>, ApiError> {
     bulk_read_limit(&state, user.id)?;
-    let mut tx = state.db.begin().await?;
-    let moved =
-        read_up_to_latest(&mut tx, user.id, None, true, body.scope == ReadScope::All).await?;
-    finish_bulk_read(&state, tx, user.id, moved).await
+    let mut attempt = 1;
+    loop {
+        let mut tx = state.db.begin().await?;
+        match read_up_to_latest(&mut tx, user.id, None, true, body.scope == ReadScope::All).await {
+            Ok(moved) => return finish_bulk_read(&state, tx, user.id, moved).await,
+            Err(err) if attempt < READ_ALL_ATTEMPTS && raced(&err) => {
+                tracing::debug!(attempt, error = %err, "read-all raced a delete, again");
+                attempt += 1;
+            }
+            Err(err) => return Err(err.into()),
+        }
+    }
+}
+
+/// Unlike a single server, everything read holds no server row: a channel
+/// or server deleted while the upsert runs fails its foreign key (or meets
+/// the delete's cascade in a deadlock). A fresh attempt no longer sees it.
+const READ_ALL_ATTEMPTS: u32 = 3;
+
+fn raced(err: &sqlx::Error) -> bool {
+    // 23503 foreign_key_violation, 40P01 deadlock_detected.
+    matches!(err, sqlx::Error::Database(db) if matches!(db.code().as_deref(), Some("23503" | "40P01")))
 }
 
 #[derive(Deserialize)]

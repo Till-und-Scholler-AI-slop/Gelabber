@@ -31,6 +31,8 @@ export type ApiErrorCode =
   | "forbidden"
   | "not_found"
   | "email_taken"
+  | "email_unverified"
+  | "token_invalid"
   | "theme_conflict"
   | "invite_invalid"
   | "banned"
@@ -225,10 +227,22 @@ function withSessionCookieLock<T>(
 function changesAuthCookies(path: string): boolean {
   return (
     path === "/auth/session" ||
-    path === "/auth/login" ||
-    path === "/auth/register" ||
+    isSignInPath(path) ||
     path === "/auth/password" ||
     isLogoutPath(path)
+  );
+}
+
+/**
+ * Explicit sign-ins: credentials or a mailed link. Registration with
+ * account mail answers `user: null` and leaves the browser signed out.
+ */
+function isSignInPath(path: string): boolean {
+  return (
+    path === "/auth/login" ||
+    path === "/auth/register" ||
+    path === "/auth/verify-email" ||
+    path === "/auth/password-reset/confirm"
   );
 }
 
@@ -309,6 +323,8 @@ const KNOWN_CODES: ReadonlySet<string> = new Set<ApiErrorCode>([
   "forbidden",
   "not_found",
   "email_taken",
+  "email_unverified",
+  "token_invalid",
   "theme_conflict",
   "invite_invalid",
   "banned",
@@ -504,7 +520,7 @@ async function retryWithSession(
   if (!session.ok || !isSessionPayload(payload)) return first;
 
   const isLogout = isLogoutPath(path);
-  const isSignIn = path === "/auth/login" || path === "/auth/register";
+  const isSignIn = isSignInPath(path);
   const expectedId =
     isLogout && options.logoutUserId !== undefined
       ? options.logoutUserId

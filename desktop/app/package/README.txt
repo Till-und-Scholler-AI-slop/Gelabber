@@ -25,6 +25,16 @@ card cannot. It sends H264 only when it encodes on the card and everyone in
 the call can decode it; otherwise, and without those packages, it sends VP8
 encoded on the CPU.
 
+Push-to-talk: choose "Push-to-Talk" in the voice settings. In a call the
+app takes the key through the desktop's GlobalShortcuts portal, so it also
+works while another window is in front. KDE and GNOME (48 or later) ask
+once which key to use, suggesting the one chosen in the settings. On
+Hyprland bind it yourself in hyprland.conf:
+  bind = , F13, global, gelabber-desktop:push-to-talk
+(any key instead of F13; "hyprctl globalshortcuts" lists the exact name,
+which is ":push-to-talk" with xdg-desktop-portal before 1.19). Without the
+portal the key works only while the window has the focus.
+
 Logs: GELABBER_MEDIA_LOG=1 ./gelabber-desktop ...
 Small video: when a video tile says "Geringe Bildqualität" and, with the
 pointer over it, names the server's Content-Security-Policy, that policy

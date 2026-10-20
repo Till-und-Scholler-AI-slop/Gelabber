@@ -36,7 +36,11 @@ import {
 } from "./mentions.ts";
 import { wantsNotification } from "./notifyLevel.ts";
 import {
-  serverSetting,
+  messageNotificationText,
+  useNotificationPrivacy,
+} from "./notificationPrivacy.ts";
+import {
+  conversationSetting,
   settingsKey,
   useNotificationSettings,
   type NotificationSetting,
@@ -121,6 +125,8 @@ export function useMessageToastsBridge(): void {
   const client = useQueryClient();
   // Keeps the settings cached for a channel without an unread row yet.
   useNotificationSettings();
+  // Whether notifications show the message at all (#268).
+  useNotificationPrivacy();
   const navigate = useNavigate();
   const me = useSession((s) => s.user?.id);
   const viewingChannelId = useParams({ strict: false }).channelId;
@@ -173,19 +179,20 @@ export function useMessageToastsBridge(): void {
       const dm = isDmTopic(event.s, event.c);
       const mentioned = !own && mentionsMe(message, userId);
       // Level and mute of the conversation (#242), from the unread rows.
-      // A channel too new for a row yet follows its server's setting.
+      // A conversation too new for a row yet follows its own setting and
+      // its server's, as the row would (#276).
       const row =
         client
           .getQueryData<ReadState[]>(readKey({ userId, generation }))
           ?.find((current) => current.channel_id === event.c) ??
-        (dm
-          ? undefined
-          : serverSetting(
-              client.getQueryData<NotificationSetting[]>(
-                settingsKey({ userId, generation }),
-              ),
-              event.s,
-            ));
+        conversationSetting(
+          client.getQueryData<NotificationSetting[]>(
+            settingsKey({ userId, generation }),
+          ),
+          event.c,
+          dm ? null : event.s,
+          serverNow(),
+        );
       if (!wantsNotification(row, { dm, mentioned }, serverNow())) return;
       // The desktop app's taskbar button flashes for a direct message while
       // the window is not in front, whatever the toast and desktop settings
@@ -241,8 +248,13 @@ export function useMessageToastsBridge(): void {
         const channelId = event.c;
         void showMessageNotification(
           {
-            title: `${message.author.name}${mentioned ? " hat dich erwähnt" : ""} · ${label}`,
-            body: preview,
+            // The in-app toast above stays as it is: it shows on an open
+            // page, never on a locked screen.
+            ...messageNotificationText(
+              client,
+              { userId, generation },
+              { author: message.author.name, mentioned, label, preview },
+            ),
             channelId,
             messageId: message.id,
             createdAt: message.created_at,
