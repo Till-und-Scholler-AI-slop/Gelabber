@@ -303,9 +303,12 @@ async fn round_trip(server: &Server) {
     viewer
         .set_video_sink(Some(Box::new(move |frame: &VideoFrame<'_>| {
             let (w, h) = (frame.width as usize, frame.height as usize);
-            assert!(frame.stride_y >= w && frame.stride_u >= w.div_ceil(2));
-            assert!(frame.y.len() >= frame.stride_y * h);
-            assert!(frame.v.len() >= frame.stride_v * h.div_ceil(2));
+            let (cw, ch) = (w.div_ceil(2), h.div_ceil(2));
+            assert!(frame.stride_y >= w && frame.stride_u >= cw && frame.stride_v >= cw);
+            // Up to the end of the last row (gm_video_frame).
+            assert!(frame.y.len() >= frame.stride_y * (h - 1) + w);
+            assert!(frame.u.len() >= frame.stride_u * (ch - 1) + cw);
+            assert!(frame.v.len() >= frame.stride_v * (ch - 1) + cw);
             let row = &frame.y[..w];
             let mut seen = sink_seen.lock().unwrap();
             seen.frames += 1;
