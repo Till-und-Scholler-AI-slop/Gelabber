@@ -170,7 +170,7 @@ function finishAuthIntent(intent: number): void {
   synchronizeSharedSession();
 }
 
-async function signIn(path: string, body: unknown): Promise<User> {
+async function signIn(path: string, body: unknown): Promise<User | null> {
   const intent = startAuthIntent();
   useSessionProblems.setState({ bootstrap: null });
   try {
@@ -183,22 +183,59 @@ async function signIn(path: string, body: unknown): Promise<User> {
       throw new DOMException("The session changed. Try again.", "AbortError");
     failedLogoutUserId = null;
     useSessionProblems.setState({ logout: null });
-    return session.user as User;
+    return session.user;
   } finally {
     finishAuthIntent(intent);
   }
 }
 
-export function login(email: string, password: string): Promise<User> {
-  return signIn("/auth/login", { email, password });
+export async function login(email: string, password: string): Promise<User> {
+  return (await signIn("/auth/login", { email, password })) as User;
 }
 
+/**
+ * Signs the new account in, or resolves to `null` when the server mails a
+ * confirmation link first (account mail on); the tab stays signed out then.
+ */
 export function register(
   email: string,
   password: string,
   name: string,
-): Promise<User> {
+): Promise<User | null> {
   return signIn("/auth/register", { email, password, name });
+}
+
+/**
+ * Opens a mailed confirmation link with the account's password; this tab
+ * is signed in afterwards.
+ */
+export async function verifyEmail(
+  token: string,
+  password: string,
+): Promise<User> {
+  return (await signIn("/auth/verify-email", { token, password })) as User;
+}
+
+/**
+ * Sets a new password through a mailed reset link. Every session of the
+ * account ends; this tab is signed in with a fresh one.
+ */
+export async function resetPassword(
+  token: string,
+  password: string,
+): Promise<User> {
+  return (await signIn("/auth/password-reset/confirm", {
+    token,
+    password,
+  })) as User;
+}
+
+/** Asks for a reset link. The answer is the same for unknown addresses. */
+export async function requestPasswordReset(email: string): Promise<void> {
+  await api<Record<string, never>>("/auth/password-reset", {
+    method: "POST",
+    body: { email },
+  });
 }
 
 /** Optimistically release the current account, then revoke its cookie. */

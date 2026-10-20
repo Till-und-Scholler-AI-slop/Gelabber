@@ -62,6 +62,8 @@ pub struct AppState {
     pub push: Option<crate::push::Push>,
     /// Link previews; `None` when `API_LINK_PREVIEWS=false`.
     pub previews: Option<LinkPreviews>,
+    /// Account mail (#195); `None` without `SMTP_HOST`.
+    pub mail: Option<crate::mail::Mailer>,
 }
 
 #[derive(Debug)]
@@ -70,6 +72,7 @@ pub enum StateError {
     Redis(redis::RedisError),
     Store(String),
     Http(String),
+    Mail(String),
 }
 
 impl fmt::Display for StateError {
@@ -79,6 +82,7 @@ impl fmt::Display for StateError {
             Self::Redis(err) => write!(f, "invalid REDIS_URL: {err}"),
             Self::Store(err) => write!(f, "invalid object store: {err}"),
             Self::Http(err) => write!(f, "http client: {err}"),
+            Self::Mail(err) => write!(f, "mail: {err}"),
         }
     }
 }
@@ -123,6 +127,12 @@ impl AppState {
             .map(crate::push::Push::new)
             .transpose()
             .map_err(StateError::Http)?;
+        let mail = config
+            .mail
+            .as_ref()
+            .map(crate::mail::Mailer::new)
+            .transpose()
+            .map_err(StateError::Mail)?;
         let gateway = Gateway::new(
             redis.clone(),
             config.ws_replay,
@@ -158,6 +168,7 @@ impl AppState {
             gifs,
             push,
             previews: config.previews.as_ref().map(LinkPreviews::new),
+            mail,
         })
     }
 

@@ -67,6 +67,14 @@ services:
       VAPID_SUBJECT: ${VAPID_SUBJECT:-}
       # Empty: the push services of Chrome, Firefox, Edge/Windows and Safari.
       PUSH_ALLOWED_HOSTS: ${PUSH_ALLOWED_HOSTS:-}
+      # Empty SMTP_HOST turns account mail (confirmation, password reset) off.
+      SMTP_HOST: ${SMTP_HOST:-}
+      SMTP_PORT: ${SMTP_PORT:-}
+      SMTP_SECURITY: ${SMTP_SECURITY:-}
+      SMTP_USERNAME: ${SMTP_USERNAME:-}
+      SMTP_PASSWORD: ${SMTP_PASSWORD:-}
+      MAIL_FROM: ${MAIL_FROM:-}
+      APP_PUBLIC_URL: ${APP_PUBLIC_URL:-}
       # Link previews: the API fetches linked pages (public addresses only).
       API_LINK_PREVIEWS: ${API_LINK_PREVIEWS:-true}
       API_LINK_PREVIEW_DENY_HOSTS: ${API_LINK_PREVIEW_DENY_HOSTS:-}

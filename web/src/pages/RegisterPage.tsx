@@ -22,10 +22,16 @@ export function RegisterPage() {
   const [email, setEmail] = useState("");
   const [password, setPassword] = useState("");
   const { errors, clearField, setFields, fromError } = useFormErrors();
+  const [mailedTo, setMailedTo] = useState<string | null>(null);
 
   const mutation = useMutation({
     mutationFn: () => register(email, password, name),
-    onSuccess: () => {
+    onSuccess: (user) => {
+      // `null`: the server mailed a confirmation link and nobody is signed in.
+      if (user === null) {
+        setMailedTo(email.trim());
+        return;
+      }
       void navigate({ href: redirect ?? "/", replace: true });
     },
     onError: fromError,
@@ -48,6 +54,35 @@ export function RegisterPage() {
     }
     mutation.mutate();
   };
+
+  if (mailedTo !== null) {
+    return (
+      <section className="lr-auth-card mx-auto max-w-sm">
+        <h1 className="text-2xl font-semibold tracking-tight">
+          Postfach prüfen
+        </h1>
+        <div role="status" className="mt-6 flex flex-col gap-3 text-sm">
+          <p>
+            Wir haben eine Mail an <strong>{mailedTo}</strong> geschickt. Öffne
+            den Link darin, um dein Konto zu bestätigen. Er gilt 24 Stunden.
+          </p>
+          <p className="text-neutral-600 dark:text-neutral-400">
+            Nichts angekommen? Schau im Spam-Ordner nach. Wenn du dich
+            anmeldest, schicken wir dir einen neuen Link.
+          </p>
+        </div>
+        <p className="mt-6 text-sm">
+          <Link
+            to="/login"
+            search={redirect ? { redirect } : {}}
+            className="font-medium text-neutral-900 dark:text-neutral-100 underline underline-offset-2"
+          >
+            Zur Anmeldung
+          </Link>
+        </p>
+      </section>
+    );
+  }
 
   return (
     <section className="lr-auth-card mx-auto max-w-sm">

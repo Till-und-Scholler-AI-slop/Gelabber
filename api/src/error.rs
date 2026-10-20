@@ -47,6 +47,11 @@ pub enum ApiError {
     NotFound,
     /// 409: e-mail already registered.
     EmailTaken,
+    /// 403: right password, but the address is not confirmed yet while
+    /// account mail is on. A new confirmation link is on its way.
+    EmailUnverified,
+    /// 410: a mailed confirmation or reset link is unknown, expired or used.
+    TokenInvalid,
     /// 409: another device saved a newer theme revision.
     ThemeConflict,
     /// 410: the invite link exists but is expired or used up.
@@ -86,6 +91,8 @@ impl ApiError {
             Self::Forbidden(_) => "forbidden",
             Self::NotFound => "not_found",
             Self::EmailTaken => "email_taken",
+            Self::EmailUnverified => "email_unverified",
+            Self::TokenInvalid => "token_invalid",
             Self::ThemeConflict => "theme_conflict",
             Self::InviteInvalid => "invite_invalid",
             Self::Banned => "banned",
@@ -101,12 +108,14 @@ impl ApiError {
             Self::Validation(_) => StatusCode::UNPROCESSABLE_ENTITY,
             Self::BadRequest(_) => StatusCode::BAD_REQUEST,
             Self::Unauthenticated | Self::InvalidCredentials => StatusCode::UNAUTHORIZED,
-            Self::Csrf | Self::InsecureTransport | Self::Forbidden(_) | Self::Banned => {
-                StatusCode::FORBIDDEN
-            }
+            Self::Csrf
+            | Self::InsecureTransport
+            | Self::Forbidden(_)
+            | Self::Banned
+            | Self::EmailUnverified => StatusCode::FORBIDDEN,
             Self::NotFound => StatusCode::NOT_FOUND,
             Self::EmailTaken | Self::ThemeConflict => StatusCode::CONFLICT,
-            Self::InviteInvalid => StatusCode::GONE,
+            Self::InviteInvalid | Self::TokenInvalid => StatusCode::GONE,
             Self::RateLimited { .. } | Self::QuotaExceeded => StatusCode::TOO_MANY_REQUESTS,
             Self::Upstream(_) => StatusCode::BAD_GATEWAY,
             Self::Internal(_) => StatusCode::INTERNAL_SERVER_ERROR,
@@ -126,6 +135,8 @@ impl ApiError {
             Self::Forbidden(message) => message,
             Self::NotFound => "Not found.",
             Self::EmailTaken => "This e-mail address is already registered.",
+            Self::EmailUnverified => "Confirm your e-mail address first. We sent you a new link.",
+            Self::TokenInvalid => "This link has expired or has already been used.",
             Self::ThemeConflict => "Themes changed on another device. Reload and try again.",
             Self::InviteInvalid => "This invite link has expired or been used up.",
             Self::Banned => "You are banned from this server.",

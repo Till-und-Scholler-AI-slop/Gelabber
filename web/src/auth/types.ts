@@ -38,6 +38,16 @@ export type SessionResponse = {
   csrf_token: string;
 };
 
+/**
+ * `POST /api/auth/register` while the server sends account mail: nobody is
+ * signed in until the mailed link is opened.
+ */
+export type VerificationSentResponse = {
+  user: null;
+  csrf_token: string;
+  verification_sent: true;
+};
+
 export type LogoutResponse = {
   csrf_token: string;
 };
