@@ -8,10 +8,6 @@ use uuid::Uuid;
 pub const ALPHABET: &[u8] = b"abcdefghjkmnpqrstuvwxyz23456789";
 pub const CODE_LEN: usize = 12;
 pub const REDIS_PREFIX: &str = "gb:mt:";
-/// Legacy kick/ban deny, retained for API compatibility during integration.
-/// The authorized media envelope uses membership generations instead.
-pub const DENY_PREFIX: &str = "gb:deny:";
-pub const DENY_TTL_SECS: u64 = 120;
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct TicketClaim {
@@ -25,10 +21,6 @@ pub struct TicketClaim {
 
 pub fn redis_key(code: &str) -> String {
     format!("{REDIS_PREFIX}{code}")
-}
-
-pub fn deny_key(server_id: Uuid, user_id: Uuid) -> String {
-    format!("{DENY_PREFIX}{server_id}:{user_id}")
 }
 
 pub fn is_valid(raw: &str) -> bool {

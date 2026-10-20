@@ -47,9 +47,10 @@ worker UUID. Logout cleanup targets a permanently deleted session hash.
 4. Refreshing demand does not itself renew a session lease. Only the API can do
    that after DB validation. API/DB failure therefore revokes within the 3-second
    authority TTL plus the media check interval; this bound needs media testing.
-5. Replace the old `gb:deny:{s}:{u}` 120-second block with generation enforcement
-   in the integrated change. API currently retains that block for the existing
-   SFU. Immediate media rejoin/unban remains blocked until 03b switches over.
+5. Generation enforcement replaces the old `gb:deny:{s}:{u}` 120-second block.
+   The SFU has not read that key since v0.2.5, and v0.7.1 removed the API write.
+   Revocation is enforced only by member/channel generation rotation, so an
+   immediate media rejoin after unban or a new join works.
 
 Leave/kick/ban/delete serialize against invite join, gateway room registration,
 outbound sends and ticket mint using the server row. Session row locks serialize

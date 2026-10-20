@@ -14,7 +14,8 @@ the same authority once per second; each Redis operation has a 500 ms deadline.
 Missing authority, mismatched generations, session expiration or Redis failure
 revokes the peer. Only successful validation refreshes demand with EX 35.
 Media never renews the three-second session lease or deletes shared demand on
-one tab's leave. The old 120-second deny key no longer blocks a fresh generation.
+one tab's leave. Media ignores the old 120-second deny key, which the API
+stopped writing in v0.7.1; a fresh generation rejoins immediately.
 
 Revocation removes the room peer and publications, signals both forwarding
 directions to stop, then waits for SDP cleanup and actual peer close. Gathering

@@ -157,8 +157,8 @@ async fn mint(
 // 03b must enforce this envelope at ticket consume, peer attach and throughout
 // peer lifetime, fail closed on missing keys/Redis errors, and reject legacy
 // tickets. A missing epoch creates a fresh nonce, so a Redis reset cannot revive
-// a ticket from an earlier Redis lifetime. The existing 120 s deny is retained
-// until 03b replaces it with these generations (immediate rejoin then works).
+// a ticket from an earlier Redis lifetime. These generations alone enforce
+// kick/ban/leave, so a fresh membership can rejoin immediately.
 const MINT_LUA: &str = r#"
 if redis.call('EXISTS', KEYS[1]) == 1 then return nil end
 redis.call('SET', KEYS[2], ARGV[3], 'NX')
