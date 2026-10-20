@@ -74,12 +74,16 @@ class Gates(unittest.TestCase):
 
     def test_shared_and_build_dependencies_trigger_workflows(self):
         # Inspect the actual filters, not a duplicate list pretending to execute Actions.
-        for name in ('ci', 'publish-images'):
+        # Each runs for its own workflow file and the script it shares; CI
+        # also for the image workflow, which its deployment tests read.
+        workflows = {'ci': ('ci', 'publish-images'), 'publish-images': ('publish-images',)}
+        for name, own in workflows.items():
             text = (ROOT / f'.github/workflows/{name}.yml').read_text()
             paths = text.split('  pull_request:', 1)[1].split('\n\n', 1)[0]
             for path in ('shared/**', 'api/**', 'media/**', 'web/**', 'docker/**',
                          '.dockerignore', 'Cargo.toml', 'Cargo.lock', 'rust-toolchain.toml',
-                         '.github/workflows/**', 'deploy/compose/**'):
+                         '.github/workflows/scripts/**', 'deploy/compose/**',
+                         *(f'.github/workflows/{workflow}.yml' for workflow in own)):
                 self.assertIn('      - ' + path + '\n', paths + '\n')
         text = (ROOT / '.github/workflows/ci.yml').read_text()
         self.assertNotIn('paths:', text.split('  push:', 1)[1].split('concurrency:', 1)[0])

@@ -203,10 +203,21 @@ jobs:
   core-linux:
     name: Native core (Linux x64)
     needs: libwebrtc-linux
+    # A newer push to a pull request cancels this job of the older run (not
+    # its libwebrtc build, see above). Runs of a branch are never cancelled.
+    concurrency:
+      group: desktop-core-linux-${{ github.event_name == 'pull_request' && github.ref || github.run_id }}
+      cancel-in-progress: ${{ github.event_name == 'pull_request' }}
     runs-on: ubuntu-24.04
     timeout-minutes: 60
     env:
       GELABBER_LIBWEBRTC_DIR: /mnt/libwebrtc-package
+      # Build scripts and proc macros with the debug info of everything
+      # else. By default they get none, unless a crate the step builds also
+      # needs them at run time: `cargo test --test <name>` then wants other
+      # builds of quote, syn and the like than `cargo test` did, and with
+      # them a second mediasoup worker (some six minutes).
+      CARGO_PROFILE_DEV_BUILD_OVERRIDE_DEBUG: "true"
     steps:
       - name: Checkout
         uses: actions/checkout@v7
@@ -235,10 +246,14 @@ jobs:
           components: rustfmt, clippy
 
       # The mediasoup worker (dev-dependency) takes minutes to build.
+      # Written by pushes to main and the release branches, read by pull
+      # requests: a copy per pull request (some 2.7 GB) pushed the
+      # repository past its cache quota and evicted the others.
       - name: Rust cache
         uses: Swatinem/rust-cache@v2
         with:
           workspaces: desktop
+          save-if: ${{ github.event_name == 'push' }}
 
       - name: Format
         run: cargo fmt --manifest-path desktop/Cargo.toml --all -- --check
@@ -482,6 +497,10 @@ jobs:
   core-windows:
     name: Native core and app (Windows x64)
     needs: libwebrtc-windows
+    # As core-linux: a newer push to a pull request cancels the older run's.
+    concurrency:
+      group: desktop-core-windows-${{ github.event_name == 'pull_request' && github.ref || github.run_id }}
+      cancel-in-progress: ${{ github.event_name == 'pull_request' }}
     runs-on: windows-2022
     timeout-minutes: 120
     defaults:
@@ -550,8 +569,8 @@ jobs:
           cargo --version --verbose
 
       # The cache of a key (this job, the toolchain, Cargo.toml and
-      # Cargo.lock, RUSTFLAGS, MESON_ARGS) is written once, by the first run
-      # that does not find it, and never refreshed. What takes long must
+      # Cargo.lock, RUSTFLAGS, MESON_ARGS) is written once, by the first push
+      # run that does not find it, and never refreshed. What takes long must
       # therefore be in it: the app's release dependencies and the mediasoup
       # worker of the tests. A failed run saves nothing until both are built
       # ("Rust cache also from a run that fails from here on"). `key` is the
@@ -559,15 +578,16 @@ jobs:
       # the next run then starts from nothing. MESON_ARGS is part of the key
       # because the worker's build script does not tell cargo that it reads
       # the variable: a cache would go on handing out the worker built with
-      # the old value. A cache saved by a tag run could only be read by that
-      # tag.
+      # the old value. Only pushes to main and the release branches save:
+      # a cache saved by a tag run could only be read by that tag, and one
+      # per pull request pushed the repository past its cache quota.
       - name: Rust cache
         uses: Swatinem/rust-cache@v2
         with:
           workspaces: desktop -> ../../../t
           key: "1"
           env-vars: MESON_ARGS
-          save-if: ${{ github.ref_type != 'tag' }}
+          save-if: ${{ github.event_name == 'push' }}
 
       # The key update installers are signed with, which the app is built
       # with (desktop/app/src/update.rs). A release takes the public key of
