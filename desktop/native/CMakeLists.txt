@@ -268,8 +268,10 @@ if(WIN32)
     d3d11 runtimeobject
     # application sound: ActivateAudioInterfaceAsync
     mmdevapi
-    # H264: Media Foundation (MFT enumeration, samples, DXGI device manager)
-    mfplat mfuuid
+    # H264: Media Foundation (MFT enumeration, samples, DXGI device manager).
+    # mfplat.dll is delay-loaded (below): Windows N lacks it without the
+    # Media Feature Pack, and the core must load there all the same.
+    mfplat mfuuid delayimp
     # abseil
     dbghelp bcrypt
     ole32 oleaut32 uuid user32 gdi32 advapi32 shell32 shlwapi version)
@@ -293,6 +295,7 @@ if(WIN32)
   # Only the GM_API functions (__declspec(dllexport)) leave the DLL; nothing
   # else in it is declared for export, so there is no version script here.
   target_link_options(gelabber_media PRIVATE
+    /DELAYLOAD:mfplat.dll
     /OPT:REF
     /OPT:ICF
     # A DLL with a static CRT needs no manifest, and without one the build

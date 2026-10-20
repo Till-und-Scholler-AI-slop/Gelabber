@@ -43,10 +43,21 @@ namespace gelabber
 {
 	namespace
 	{
+		// mfplat.dll is delay-loaded; Windows N without the Media Feature
+		// Pack lacks it, and the first MF call would then fail the process.
+		bool HasMfPlat()
+		{
+			static const bool present =
+			  LoadLibraryExW(L"mfplat.dll", nullptr, LOAD_LIBRARY_SEARCH_SYSTEM32) != nullptr;
+			return present;
+		}
+
 		// COM on the calling thread (libwebrtc's encoder and decoder queues
 		// have none) and Media Foundation once per process; neither is undone.
 		bool EnsureMf()
 		{
+			if (!HasMfPlat())
+				return false;
 			const HRESULT com = CoInitializeEx(nullptr, COINIT_MULTITHREADED);
 			if (FAILED(com) && com != RPC_E_CHANGED_MODE)
 				return false;
