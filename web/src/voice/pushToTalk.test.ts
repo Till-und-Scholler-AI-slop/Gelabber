@@ -25,9 +25,10 @@ let page: EventTarget;
 let gate: ReturnType<typeof vi.fn<() => void>>;
 
 function press(type: "keydown" | "keyup", code: string, target?: EventTarget) {
-  const event = Object.assign(new Event(type), { code });
+  const event = Object.assign(new Event(type, { cancelable: true }), { code });
   if (target) Object.defineProperty(event, "target", { value: target });
   page.dispatchEvent(event);
+  return event;
 }
 
 function mouse(type: "mousedown" | "mouseup", button: number) {
@@ -124,6 +125,54 @@ describe("push-to-talk", () => {
 
     configurePushToTalk({ key: "F8", releaseDelay: 0 });
     press("keydown", "F8", new FakeInput());
+    expect(pushToTalkOpen()).toBe(true);
+  });
+
+  it("keeps the bound key from clicking a focused button", () => {
+    configurePushToTalk({ key: "Space", releaseDelay: 0 });
+    const button = new FakeElement();
+    expect(press("keydown", "Space", button).defaultPrevented).toBe(true);
+    expect(press("keyup", "Space", button).defaultPrevented).toBe(true);
+    // Typed into a field, Space stays a space.
+    expect(press("keydown", "Space", new FakeInput()).defaultPrevented).toBe(
+      false,
+    );
+    expect(press("keyup", "Space", new FakeInput()).defaultPrevented).toBe(
+      false,
+    );
+    expect(pushToTalkOpen()).toBe(false);
+    // Other keys keep their default.
+    expect(press("keydown", "Tab", button).defaultPrevented).toBe(false);
+  });
+
+  it("ignores the app's global key while typing it into this page", async () => {
+    const { channels } = fakeNative();
+    const field = { focused: true, active: new FakeTextArea() as EventTarget };
+    // A getter of its own: Object.assign would copy its first value.
+    const document = Object.defineProperty(
+      Object.assign(new EventTarget(), {
+        visibilityState: "visible",
+        hasFocus: () => field.focused,
+      }),
+      "activeElement",
+      { get: () => field.active },
+    );
+    vi.stubGlobal("document", document);
+    configurePushToTalk({ key: "KeyV", releaseDelay: 0 });
+    await vi.waitFor(() => expect(channels).toHaveLength(1));
+    const native = channels[0];
+    native({ type: "press" });
+    expect(pushToTalkOpen()).toBe(false);
+    native({ type: "release" });
+    // Another window in front: the key is the push-to-talk key again.
+    field.focused = false;
+    native({ type: "press" });
+    expect(pushToTalkOpen()).toBe(true);
+    native({ type: "release" });
+    // In the window, away from a text field, too.
+    field.focused = true;
+    field.active = new FakeElement();
+    native({ type: "press" });
     expect(pushToTalkOpen()).toBe(true);
   });
 

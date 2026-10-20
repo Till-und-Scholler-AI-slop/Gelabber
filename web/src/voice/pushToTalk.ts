@@ -220,6 +220,9 @@ function onNativeEvent(event: NativeEvent): void {
       setHeld("native", false);
       return;
     case "press":
+      // The app hears the key in every window, its own too: typed into a
+      // field of this page, it is text, as for the page's own listener.
+      if (binding && typingInFocusedPage(binding.key)) return;
       setHeld("native", true);
       return;
     case "release":
@@ -276,17 +279,34 @@ function typingInto(target: EventTarget | null): boolean {
   );
 }
 
+/** A key that writes into the field it goes to is the user's text there,
+ * not the push-to-talk key. */
+function typingHere(key: string, target: EventTarget | null): boolean {
+  return typingInto(target) && !writesNothing(key);
+}
+
+function typingInFocusedPage(key: string): boolean {
+  if (typeof document === "undefined") return false;
+  return (
+    (document.hasFocus?.() ?? false) && typingHere(key, document.activeElement)
+  );
+}
+
 /** The key while this page has the focus, in a browser and in the app. */
 function listenInPage(key: string): () => void {
   if (typeof window === "undefined") return () => {};
   const button = MOUSE_BUTTONS[key];
+  // The bound key does nothing else: Space would otherwise click a focused
+  // button on every release, Tab move the focus, arrows scroll.
   const onKeyDown = (event: KeyboardEvent) => {
-    if (event.code !== key) return;
-    if (typingInto(event.target) && !writesNothing(key)) return;
+    if (event.code !== key || typingHere(key, event.target)) return;
+    event.preventDefault();
     setHeld("page", true);
   };
   const onKeyUp = (event: KeyboardEvent) => {
-    if (event.code === key) setHeld("page", false);
+    if (event.code !== key) return;
+    if (!typingHere(key, event.target)) event.preventDefault();
+    setHeld("page", false);
   };
   const onMouse = (down: boolean) => (event: MouseEvent) => {
     if (button === undefined || event.button !== button) return;
