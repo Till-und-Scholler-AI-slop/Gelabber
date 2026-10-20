@@ -138,7 +138,6 @@ enum StopResource {
     Publication(Arc<Publication>),
     Subscription(Arc<Subscription>),
 }
-#[derive(Default)]
 struct RoomData {
     peers: HashMap<PeerId, PeerData>,
     publications: HashMap<String, Arc<Publication>>,
@@ -146,6 +145,18 @@ struct RoomData {
     /// and how often they changed.
     video_codecs: Vec<String>,
     codecs_revision: u64,
+}
+impl Default for RoomData {
+    /// What a room without receivers has: every router codec. Peers that
+    /// state no capabilities change nothing, so no frame goes out for them.
+    fn default() -> Self {
+        Self {
+            peers: HashMap::new(),
+            publications: HashMap::new(),
+            video_codecs: common_video_codecs(std::iter::empty()),
+            codecs_revision: 0,
+        }
+    }
 }
 impl RoomData {
     /// Recomputes the common video codecs; the peers to tell and the frame
@@ -2274,6 +2285,9 @@ mod tests {
             ["video/vp8", "video/av1"]
         );
         assert_eq!(common_video_codecs([&high_only].into_iter()), ["video/vp8"]);
+        // A room starts with the set of no receivers: peers that state no
+        // capabilities (old clients, tests) are never sent a codecs frame.
+        assert!(RoomData::default().update_video_codecs(None).is_none());
     }
 
     #[test]
@@ -2437,8 +2451,7 @@ mod tests {
                 },
             )]),
             publications: HashMap::from([(publication.id(), publication.clone())]),
-            video_codecs: Vec::new(),
-            codecs_revision: 0,
+            ..RoomData::default()
         };
         sfu.rooms.lock().await.insert(
             channel,
