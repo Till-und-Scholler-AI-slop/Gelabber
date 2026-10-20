@@ -6,9 +6,11 @@ import {
   useQuery,
   useQueryClient,
   type QueryClient,
+  type QueryState,
 } from "@tanstack/react-query";
 
-import { api } from "../api/client.ts";
+import { api, ApiError } from "../api/client.ts";
+import { closeMessageNotifications } from "../pwa/notifications.ts";
 import {
   scopeGeneration,
   stampHolds,
@@ -38,8 +40,14 @@ export function useNotificationPrivacy() {
     queryFn: ({ signal }) => getNotificationPrivacy(signal),
     enabled: Boolean(userId),
     staleTime: 60_000,
+    // A server without the switch stays that way; asking again won't help.
+    retry: (failures, error) => !unsupported(error) && failures < 3,
   });
 }
+
+/** A server from before the switch (the desktop app may talk to one). */
+const unsupported = (error: unknown) =>
+  error instanceof ApiError && error.status === 404;
 
 export function useChangeNotificationPrivacy() {
   const client = useQueryClient();
@@ -49,6 +57,8 @@ export function useChangeNotificationPrivacy() {
     const stamp = { userId, generation };
     const saved = await putNotificationPrivacy(change);
     if (stampHolds(stamp)) client.setQueryData(privacyKey(stamp), saved);
+    // What is on screen already still shows the message: take it down.
+    if (saved.hide_content) void closeMessageNotifications({ user: userId });
     return saved;
   };
 }
@@ -65,14 +75,25 @@ export function refreshNotificationPrivacy(
 }
 
 /**
- * Title and text of a notification for an account that hides the content.
- * Unknown (not loaded yet, or a server without the switch) counts as not
- * hidden, as the server's default is.
+ * Whether a notification must leave the message out, from what the query
+ * knows. Unknown counts as hidden: not loaded yet (a phone app resuming in the
+ * background), or the last fetch failed. Only a server from before the switch
+ * shows the message without asking, as it always did. A page notification
+ * that showed too much would also replace the server's hidden push for the
+ * same message (`showPushed` in public/sw.js).
  */
+export function hidesContent(
+  state: Pick<QueryState<NotificationPrivacy>, "data" | "error"> | undefined,
+): boolean {
+  if (state?.error) return !unsupported(state.error);
+  return state?.data?.hide_content ?? true;
+}
+
+/** Title and text of a notification, without the message when it hides it. */
 export function notificationText(
-  privacy: NotificationPrivacy | undefined,
+  hide: boolean,
   shown: { title: string; body: string; author: string },
 ): { title: string; body: string } {
-  if (!privacy?.hide_content) return { title: shown.title, body: shown.body };
+  if (!hide) return { title: shown.title, body: shown.body };
   return { title: `Neue Nachricht von ${shown.author}`, body: "" };
 }
