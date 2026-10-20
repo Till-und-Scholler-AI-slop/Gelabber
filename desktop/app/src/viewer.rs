@@ -4,6 +4,7 @@
 //! (winit), apart from the webview's GTK loop; decoded I420 frames go to the
 //! GPU as three planes and are converted there.
 
+use crate::frames;
 use gelabber_media_core::VideoFrame;
 use std::{
     collections::HashMap,
@@ -22,6 +23,8 @@ use winit::{
 struct Frame {
     width: u32,
     height: u32,
+    /// Clockwise degrees to turn it by for display (CVO).
+    rotation: u32,
     y: Vec<u8>,
     u: Vec<u8>,
     v: Vec<u8>,
@@ -32,14 +35,6 @@ struct Slot {
     frame: Frame,
     /// A frame arrived that the window has not drawn yet.
     fresh: bool,
-}
-
-fn copy_plane(dst: &mut Vec<u8>, src: &[u8], stride: usize, width: usize, rows: usize) {
-    dst.clear();
-    for row in 0..rows {
-        let start = row * stride;
-        dst.extend_from_slice(&src[start..start + width]);
-    }
 }
 
 /// What a viewer window reports to the page.
@@ -123,6 +118,11 @@ impl Viewer {
             })
             .map_err(|_| "viewer stopped".to_string())?;
         Ok(Box::new(move |frame: &VideoFrame<'_>| {
+            // Checked before the lock: a copy that panics while it is held
+            // would poison it, and the window's thread with it.
+            if !frames::planes_hold(frame) {
+                return;
+            }
             let (width, height) = (frame.width as usize, frame.height as usize);
             let (chroma_width, chroma_height) = (width.div_ceil(2), height.div_ceil(2));
             let wake = {
@@ -130,15 +130,19 @@ impl Viewer {
                 let out = &mut slot.frame;
                 out.width = frame.width;
                 out.height = frame.height;
-                copy_plane(&mut out.y, frame.y, frame.stride_y, width, height);
-                copy_plane(
+                out.rotation = frame.rotation;
+                for plane in [&mut out.y, &mut out.u, &mut out.v] {
+                    plane.clear();
+                }
+                frames::copy_plane(&mut out.y, frame.y, frame.stride_y, width, height);
+                frames::copy_plane(
                     &mut out.u,
                     frame.u,
                     frame.stride_u,
                     chroma_width,
                     chroma_height,
                 );
-                copy_plane(
+                frames::copy_plane(
                     &mut out.v,
                     frame.v,
                     frame.stride_v,
@@ -209,8 +213,9 @@ const SHADER: &str = r#"
 @group(0) @binding(1) var plane_u: texture_2d<f32>;
 @group(0) @binding(2) var plane_v: texture_2d<f32>;
 @group(0) @binding(3) var bilinear: sampler;
-// x: 1 for BT.709, 0 for BT.601 (both limited range).
-@group(0) @binding(4) var<uniform> colors: vec4<f32>;
+// x: 1 for BT.709, 0 for BT.601 (both limited range). y: the clockwise
+// quarter turns the frame is shown at, 0 to 3.
+@group(0) @binding(4) var<uniform> params: vec4<f32>;
 
 struct Out {
     @builtin(position) position: vec4<f32>,
@@ -229,11 +234,20 @@ fn vs(@builtin(vertex_index) index: u32) -> Out {
 
 @fragment
 fn fs(input: Out) -> @location(0) vec4<f32> {
-    let y = (textureSample(plane_y, bilinear, input.uv).r - 16.0 / 255.0) * (255.0 / 219.0);
-    let u = (textureSample(plane_u, bilinear, input.uv).r - 128.0 / 255.0) * (255.0 / 224.0);
-    let v = (textureSample(plane_v, bilinear, input.uv).r - 128.0 / 255.0) * (255.0 / 224.0);
+    // The point of the frame that shows here once it is turned.
+    var uv = input.uv;
+    if (params.y > 2.5) {
+        uv = vec2<f32>(1.0 - input.uv.y, input.uv.x);
+    } else if (params.y > 1.5) {
+        uv = vec2<f32>(1.0) - input.uv;
+    } else if (params.y > 0.5) {
+        uv = vec2<f32>(input.uv.y, 1.0 - input.uv.x);
+    }
+    let y = (textureSample(plane_y, bilinear, uv).r - 16.0 / 255.0) * (255.0 / 219.0);
+    let u = (textureSample(plane_u, bilinear, uv).r - 128.0 / 255.0) * (255.0 / 224.0);
+    let v = (textureSample(plane_v, bilinear, uv).r - 128.0 / 255.0) * (255.0 / 224.0);
     var rgb: vec3<f32>;
-    if (colors.x > 0.5) {
+    if (params.x > 0.5) {
         rgb = vec3<f32>(y + 1.5748 * v, y - 0.1873 * u - 0.4681 * v, y + 1.8556 * u);
     } else {
         rgb = vec3<f32>(y + 1.402 * v, y - 0.3441 * u - 0.7141 * v, y + 1.772 * u);
@@ -420,7 +434,11 @@ impl Gpu {
 struct Planes {
     width: u32,
     height: u32,
+    /// Clockwise quarter turns the frame is shown at, as in `params`.
+    turns: u32,
     textures: [wgpu::Texture; 3],
+    /// The shader's `params`.
+    params: wgpu::Buffer,
     bind_group: wgpu::BindGroup,
 }
 
@@ -448,19 +466,12 @@ impl Planes {
             plane("u", cw, ch),
             plane("v", cw, ch),
         ];
-        // BT.601 at any size, as the views in the page (frames.rs): what
-        // Chromium takes video as that does not say. By size, a stream
-        // changed its colours with its simulcast layer.
-        let bt709: f32 = 0.0;
-        let colors = gpu.device.create_buffer(&wgpu::BufferDescriptor {
-            label: Some("viewer colors"),
+        let params = gpu.device.create_buffer(&wgpu::BufferDescriptor {
+            label: Some("viewer params"),
             size: 16,
             usage: wgpu::BufferUsages::UNIFORM | wgpu::BufferUsages::COPY_DST,
             mapped_at_creation: false,
         });
-        let mut bytes = [0u8; 16];
-        bytes[..4].copy_from_slice(&bt709.to_le_bytes());
-        gpu.queue.write_buffer(&colors, 0, &bytes);
         let views: Vec<_> = textures
             .iter()
             .map(|t| t.create_view(&wgpu::TextureViewDescriptor::default()))
@@ -487,15 +498,50 @@ impl Planes {
                 },
                 wgpu::BindGroupEntry {
                     binding: 4,
-                    resource: colors.as_entire_binding(),
+                    resource: params.as_entire_binding(),
                 },
             ],
         });
-        Self {
+        let planes = Self {
             width,
             height,
+            turns: 0,
             textures,
+            params,
             bind_group,
+        };
+        planes.write_params(gpu);
+        planes
+    }
+
+    /// `params`: [BT.709, quarter turns, 0, 0].
+    fn write_params(&self, gpu: &Gpu) {
+        // BT.601 at any size, as the views in the page (frames.rs): what
+        // Chromium takes video as that does not say. By size, a stream
+        // changed its colours with its simulcast layer.
+        let bt709: f32 = 0.0;
+        let mut bytes = [0u8; 16];
+        bytes[..4].copy_from_slice(&bt709.to_le_bytes());
+        bytes[4..8].copy_from_slice(&(self.turns as f32).to_le_bytes());
+        gpu.queue.write_buffer(&self.params, 0, &bytes);
+    }
+
+    /// Shows the frame turned by `rotation` degrees clockwise (the frame's
+    /// CVO rotation, which the core leaves to the sink).
+    fn turn(&mut self, gpu: &Gpu, rotation: u32) {
+        let turns = (rotation / 90) & 3;
+        if turns != self.turns {
+            self.turns = turns;
+            self.write_params(gpu);
+        }
+    }
+
+    /// Width and height as shown, turned.
+    fn shown_size(&self) -> (u32, u32) {
+        if self.turns % 2 == 1 {
+            (self.height, self.width)
+        } else {
+            (self.width, self.height)
         }
     }
 
@@ -669,7 +715,8 @@ impl App {
                 if !matches {
                     view.planes = Some(Planes::new(gpu, frame.width, frame.height));
                 }
-                if let Some(planes) = &view.planes {
+                if let Some(planes) = &mut view.planes {
+                    planes.turn(gpu, frame.rotation);
                     planes.upload(gpu, frame);
                 }
             }
@@ -688,11 +735,11 @@ impl App {
         let format = config.format;
         let (surface_width, surface_height) = (config.width as f32, config.height as f32);
         let pipeline = gpu.pipeline(format).clone();
-        // Letterbox: the whole frame, centered, aspect kept.
+        // Letterbox: the whole frame as shown, centered, aspect kept.
         let shown = view.planes.as_ref().map(|planes| {
-            let scale =
-                (surface_width / planes.width as f32).min(surface_height / planes.height as f32);
-            (planes.width as f32 * scale, planes.height as f32 * scale)
+            let (width, height) = planes.shown_size();
+            let scale = (surface_width / width as f32).min(surface_height / height as f32);
+            (width as f32 * scale, height as f32 * scale)
         });
         if let Some((_, h)) = shown {
             let height = h.round() as u32;
@@ -929,26 +976,27 @@ mod tests {
                 Box::new(move |event| events_tx.send(event).unwrap()),
             )
             .unwrap();
-        // The same frame `times`, 50 ms apart.
-        let mut show = |w: usize, h: usize, y: &[u8], u: &[u8], v: &[u8], times: u32| {
-            for _ in 0..times {
-                sink(&VideoFrame {
-                    width: w as u32,
-                    height: h as u32,
-                    y,
-                    u,
-                    v,
-                    stride_y: w,
-                    stride_u: w / 2,
-                    stride_v: w / 2,
-                    rotation: 0,
-                    timestamp_us: 0,
-                    source_width: w as u32,
-                    source_height: h as u32,
-                });
-                std::thread::sleep(Duration::from_millis(50));
-            }
-        };
+        // The same frame `times`, 50 ms apart, turned by `rotation`.
+        let mut show =
+            |w: usize, h: usize, y: &[u8], u: &[u8], v: &[u8], rotation: u32, times: u32| {
+                for _ in 0..times {
+                    sink(&VideoFrame {
+                        width: w as u32,
+                        height: h as u32,
+                        y,
+                        u,
+                        v,
+                        stride_y: w,
+                        stride_u: w / 2,
+                        stride_v: w / 2,
+                        rotation,
+                        timestamp_us: 0,
+                        source_width: w as u32,
+                        source_height: h as u32,
+                    });
+                    std::thread::sleep(Duration::from_millis(50));
+                }
+            };
         // 640x360: left half red, right half blue (BT.601 limited range).
         let (w, h) = (640usize, 360usize);
         let mut y = vec![0u8; w * h];
@@ -966,7 +1014,7 @@ mod tests {
                 v[row * w / 2 + col] = if left { 240 } else { 110 };
             }
         }
-        show(w, h, &y, &u, &v, 30);
+        show(w, h, &y, &u, &v, 0, 30);
         let mut events = Vec::new();
         if on_wayland() {
             // The compositor places and sizes the window (and animates it
@@ -1007,13 +1055,26 @@ mod tests {
             let (r, g, b) = rgb(&right);
             assert!(r < 60 && g < 60 && b > 180, "right half blue: {right}");
 
+            // The same frame turned a quarter clockwise (CVO from a phone held
+            // upright): red on top, blue below, 405x720 in the middle of
+            // the window with black on either side.
+            show(w, h, &y, &u, &v, 90, 20);
+            let (top, bottom, side) = (pixel(640, 180), pixel(640, 540), pixel(200, 360));
+            eprintln!("turned: top {top}bottom {bottom}side {side}");
+            let (r, g, b) = rgb(&top);
+            assert!(r > 180 && g < 60 && b < 60, "turned, top red: {top}");
+            let (r, g, b) = rgb(&bottom);
+            assert!(r < 60 && g < 60 && b > 180, "turned, bottom blue: {bottom}");
+            let (r, g, b) = rgb(&side);
+            assert!(r < 30 && g < 30 && b < 30, "turned, letterboxed: {side}");
+
             // 1280x720, all of it the green of BT.601 (Y 145, Cb 54, Cr 34):
             // 255 with that matrix. With BT.709, the window's matrix from
             // 720 lines up in v0.5, it comes out at 216.
             let (w, h) = (1280usize, 720usize);
             let chroma = w / 2 * h / 2;
             let (y, u, v) = (vec![145u8; w * h], vec![54u8; chroma], vec![34u8; chroma]);
-            show(w, h, &y, &u, &v, 20);
+            show(w, h, &y, &u, &v, 0, 20);
             let middle = pixel(640, 360);
             eprintln!("middle {middle}");
             let (r, g, b) = rgb(&middle);
@@ -1042,7 +1103,8 @@ mod tests {
                 "heights, then closed: {events:?}"
             );
         } else {
-            // 1280x720 window, 16:9 frame: the image fills it.
+            // 1280x720 window, 16:9 frame: the image fills it. Turned, it is
+            // as high.
             assert_eq!(events, [ViewerEvent::Height(720), ViewerEvent::Closed]);
         }
     }

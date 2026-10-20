@@ -445,7 +445,8 @@ separate decision.
   window (`app/src/viewer.rs`), for web clients from before the views in the
   page and as a pop-out for newer ones: winit on its own thread next to the
   webview's GTK loop, wgpu drawing the decoded I420 planes (BT.601, as the
-  views in the page), letterboxed. It shares the consumer's sink with the page views and
+  views in the page), turned by the frame's rotation (CVO, a phone held
+  upright) and letterboxed. It shares the consumer's sink with the page views and
   shows the stream unscaled, so while a window is open the views of that
   consumer get full-size frames too, whatever size they asked for; only a
   view's own `maxFps` still holds. The web client therefore keeps no view
