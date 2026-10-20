@@ -48,6 +48,20 @@ namespace gelabber
 		static constexpr float kCeiling         = 0.966f;
 		static constexpr double kLookAheadSeconds = 0.0015;
 		static constexpr double kReleaseSeconds   = 0.1;
+		// The largest layout the state is reserved for when it is made, so
+		// a format change on the render thread allocates nothing. Beyond it
+		// the state grows there once.
+		static constexpr uint32_t kMaxReservedRate   = 192000;
+		static constexpr size_t kMaxReservedChannels = 8;
+
+		// Allocates; not on the render thread.
+		PlayoutLimiter()
+		{
+			const size_t frames = WindowFrames(kMaxReservedRate);
+			delay.reserve(frames * kMaxReservedChannels);
+			needed.reserve(frames);
+			smoothed.reserve(frames);
+		}
 
 		// Any thread. Clamped to 1..2. Takes effect in one step at the next
 		// block, like the streams' new volumes over it, which are set
@@ -143,12 +157,25 @@ namespace gelabber
 			return window - 1;
 		}
 
+		// For tests: where the look-ahead's samples are kept.
+		const float* DelayStorage() const
+		{
+			return delay.data();
+		}
+
 	private:
+		// Frames in the look-ahead window at `rate`, the newest included.
+		static size_t WindowFrames(uint32_t rate)
+		{
+			return static_cast<size_t>(std::lround(rate * kLookAheadSeconds)) + 1;
+		}
+
+		// Within the reserved capacity: no allocation.
 		void Reset(size_t newChannels, uint32_t newRate)
 		{
 			layoutChannels  = newChannels;
 			layoutRate      = newRate;
-			window          = std::max<size_t>(1, static_cast<size_t>(std::lround(newRate * kLookAheadSeconds)) + 1);
+			window          = WindowFrames(newRate);
 			delay.assign(window * newChannels, 0.0f);
 			needed.assign(window, 1.0f);
 			smoothed.assign(window, 1.0f);

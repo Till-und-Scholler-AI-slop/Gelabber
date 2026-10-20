@@ -235,6 +235,27 @@ namespace
 			loudest = std::max(loudest, std::abs(static_cast<int>(sample)));
 		Expect(loudest <= kCeilingSample, "mono 44.1 kHz: loudest sample " + std::to_string(loudest));
 	}
+
+	// The render thread allocates nothing on a format change up to the
+	// reserved layout: the look-ahead stays where it was made.
+	void FormatChangeAllocatesNothing()
+	{
+		PlayoutLimiter limiter;
+		const float* reserved = limiter.DelayStorage();
+		std::vector<int16_t> samples(PlayoutLimiter::kMaxReservedRate / 100 * PlayoutLimiter::kMaxReservedChannels);
+		const struct
+		{
+			size_t channels;
+			uint32_t rate;
+		} layouts[] = { { 2, 48000 }, { 1, 44100 }, { 8, 192000 }, { 6, 96000 }, { 2, 16000 } };
+		for (const auto& layout : layouts)
+		{
+			limiter.Process(samples.data(), layout.rate / 100, layout.channels, layout.rate);
+			Expect(
+			  limiter.DelayStorage() == reserved,
+			  "no allocation for " + std::to_string(layout.channels) + " channels at " + std::to_string(layout.rate));
+		}
+	}
 } // namespace
 
 int main()
@@ -247,6 +268,7 @@ int main()
 	BackToUnity();
 	GainIsClamped();
 	FormatChange();
+	FormatChangeAllocatesNothing();
 	if (failures > 0)
 	{
 		std::printf("%d check(s) failed\n", failures);
