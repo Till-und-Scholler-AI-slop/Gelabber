@@ -654,6 +654,21 @@ impl VoiceRoster {
         Ok(rows)
     }
     pub async fn refresh(&self, id: ConnId) -> Result<(), ApiError> {
+        // Most sockets hold no seat; they skip the process-wide mutex. A join
+        // racing this read writes its own seat, and the next tick renews it.
+        // Seats are read again under the lock, so a refresh never brings back
+        // one that leave or detach removed.
+        if self
+            .connections
+            .inner
+            .sockets
+            .read()
+            .await
+            .get(&id)
+            .is_none_or(|socket| socket.rooms.is_empty())
+        {
+            return Ok(());
+        }
         let _guard = self.connections.inner.voice_ops.lock().await;
         let Some((u, rooms)) = self
             .connections
@@ -1019,6 +1034,25 @@ mod tests {
         );
         a.detach(id).await;
         b.detach(watcher).await;
+    }
+
+    #[tokio::test]
+    async fn refresh_without_a_seat_does_not_wait_on_voice_ops() {
+        let g = gateway();
+        let (u, s) = (Uuid::new_v4(), Uuid::new_v4());
+        let (id, mut rx) = socket(&g, u).await;
+        g.watch_server(id, s).await;
+        let busy = g.connections.inner.voice_ops.lock().await;
+        assert!(matches!(
+            tokio::time::timeout(Duration::from_millis(200), g.refresh_voice(id)).await,
+            Ok(Ok(()))
+        ));
+        // The roster snapshot still runs for a socket without a seat.
+        assert!(
+            matches!(rx.try_recv(), Ok(ServerFrame::Sig { s: got, snap: Some(rows), .. }) if got == s && rows.is_empty())
+        );
+        drop(busy);
+        g.detach(id).await;
     }
 
     #[tokio::test]
