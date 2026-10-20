@@ -59,9 +59,15 @@ pub async fn run(socket: WebSocket, state: AppState, session: CurrentSession) {
     // The first tick fires immediately; skip it so we do not heartbeat
     // before the client has had a chance to subscribe.
     beat.tick().await;
-    let mut security = tokio::time::interval(std::time::Duration::from_secs(1));
+    // A per-socket phase spreads the checks over the second, so sockets that
+    // reconnect together do not ask the pool on the same millisecond. The
+    // first check still lands within 1 s of connect.
+    let phase = std::time::Duration::from_millis((conn.redis_id().as_u128() % 1000) as u64);
+    let mut security = tokio::time::interval_at(
+        tokio::time::Instant::now() + phase,
+        std::time::Duration::from_secs(1),
+    );
     security.set_missed_tick_behavior(tokio::time::MissedTickBehavior::Delay);
-    security.tick().await;
 
     let (mut sink, mut stream) = socket.split();
 
