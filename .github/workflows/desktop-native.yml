@@ -44,7 +44,8 @@ jobs:
       group: desktop-libwebrtc-linux-${{ github.ref }}
       cancel-in-progress: false
     runs-on: ubuntu-24.04
-    timeout-minutes: 350
+    # GitHub's limit: the build plus the renewal of the notices after it.
+    timeout-minutes: 360
     outputs:
       key: ${{ steps.key.outputs.key }}
     steps:
@@ -378,6 +379,11 @@ jobs:
           echo "$exported"
           if echo "$exported" | grep -v '^gm_'; then
             echo "only gm_* symbols may be exported"; exit 1
+          fi
+          # libwebrtc is built with rtc_use_h264=false: no OpenH264, FFmpeg or
+          # libwebrtc's wrappers around them in the symbol table.
+          if nm -C "$lib" | grep -E 'WelsInitEncoderExt|CWelsH264SVCEncoder|H264EncoderImpl|H264DecoderImpl|avcodec_open2|ff_h264_decoder'; then
+            echo "the core carries H264 code of OpenH264 or FFmpeg"; exit 1
           fi
           stripped="$(mktemp)"
           strip --strip-unneeded -o "$stripped" "$lib"

@@ -11,6 +11,7 @@
 
 #include <algorithm>
 #include <atomic>
+#include <chrono>
 #include <cstdlib>
 #include <cstring>
 #include <deque>
@@ -31,8 +32,8 @@ namespace gelabber
 		}
 
 		// Inputs without a decoded frame after which a decoder counts as
-		// stuck (two seconds at 30 fps): hardware decoders hold back a
-		// frame or two, not dozens.
+		// stuck (two seconds at 30 fps): the decoders hold back a frame or
+		// two, not dozens.
 		constexpr int kStuckAfter = 60;
 
 		// No frame delay: a call shows each frame as soon as it is decoded.
@@ -116,17 +117,31 @@ namespace gelabber
 
 			int32_t Decode(const webrtc::EncodedImage& input, int64_t renderTimeMs) override
 			{
-				if (!pipeline)
-					return WEBRTC_VIDEO_CODEC_UNINITIALIZED;
 				if (failed)
 				{
 					// Behind a fallback wrapper, which moves to the software
 					// element and asks for a key frame; otherwise the pipeline
-					// starts afresh.
+					// starts afresh, at most once a second.
 					if (behindFallback)
 						return WEBRTC_VIDEO_CODEC_FALLBACK_SOFTWARE;
+					const auto now = std::chrono::steady_clock::now();
+					if (now - lastRestart < std::chrono::seconds(1))
+						return WEBRTC_VIDEO_CODEC_ERROR;
+					lastRestart = now;
 					if (!Configure(settings))
 						return WEBRTC_VIDEO_CODEC_ERROR;
+					RTC_LOG(LS_WARNING) << "GStreamer " << element << " restarted";
+					awaitingKey = true;
+				}
+				if (!pipeline)
+					return WEBRTC_VIDEO_CODEC_UNINITIALIZED;
+				// A fresh pipeline cannot decode a delta frame; the error makes
+				// libwebrtc ask the sender for a key frame.
+				if (awaitingKey)
+				{
+					if (input.FrameType() != webrtc::VideoFrameType::kVideoFrameKey)
+						return WEBRTC_VIDEO_CODEC_ERROR;
+					awaitingKey = false;
 				}
 				if (!input.data() || input.size() == 0)
 					return WEBRTC_VIDEO_CODEC_ERR_PARAMETER;
@@ -158,8 +173,8 @@ namespace gelabber
 					while (pending.size() > 64)
 						pending.pop_front();
 					// A decoder that stops putting out frames without an error
-					// on the bus hands over like a failed one.
-					if (++sinceOutput > kStuckAfter && !IsSoftware(element))
+					// on the bus hands over (or restarts) like a failed one.
+					if (++sinceOutput > kStuckAfter)
 					{
 						RTC_LOG(LS_WARNING) << "GStreamer " << element << " puts out no frames";
 						failed = true;
@@ -321,6 +336,8 @@ namespace gelabber
 
 			const std::string element;
 			const bool behindFallback;
+			std::chrono::steady_clock::time_point lastRestart{};
+			bool awaitingKey{ false };
 			Settings settings;
 			GstElement* pipeline{ nullptr };
 			GstElement* src{ nullptr };
