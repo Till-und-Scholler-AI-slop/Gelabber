@@ -35,6 +35,13 @@ Bildschirm teilen und Go Live
   Geteilte gelb ein. Wird ein geteiltes Fenster geschlossen, endet die
   Freigabe.
 
+Video auf der Grafikkarte
+  Die App kodiert und dekodiert H264 über Media Foundation von Windows: mit
+  dem Encoder der Grafikkarte (NVIDIA, AMD, Intel), wo der Treiber einen
+  mitbringt, und sonst mit dem von Windows. Sie sendet H264 nur, wenn alle
+  im Anruf es dekodieren können, sonst VP8. Ohne die Media-Foundation-
+  Komponenten (Windows N ohne Media Feature Pack) bleibt es bei VP8.
+
 Anwendungston
   Beim Teilen und bei Go Live kann der Ton anderer Programme mitgehen:
   entweder der Ton aller Programme oder der eines gewählten Programms. Zur

@@ -100,9 +100,9 @@ pub fn set_log_level(level: LogLevel) {
 
 /// The system's video codecs beside libwebrtc's own, as an engine uses them:
 /// `{"h264":{"encoder","hardwareEncoder","decoder"}}`, encoder and decoder
-/// being GStreamer elements or null; `"h264"` is null where the core has no
-/// such codecs (Windows). Blocks while GStreamer scans its plugins the first
-/// time.
+/// being GStreamer elements (Linux), Media Foundation MFTs (Windows) or null;
+/// `"h264"` is null where the core has no such codecs. Blocks while GStreamer
+/// scans its plugins the first time.
 pub fn video_codecs() -> Result<Value> {
     // SAFETY: no arguments; the result is a malloc'ed string or null.
     owned_json(unsafe { ffi::gm_video_codecs() })

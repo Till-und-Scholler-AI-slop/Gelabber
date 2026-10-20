@@ -346,7 +346,15 @@ separate decision.
     (`nvh264dec`, `vah264dec`, `vaapih264dec`), behind libwebrtc's software
     fallback to FFmpeg (Chrome branding); `GELABBER_H264_DECODER=<element>|none`
     overrides it (`avdec_h264` in CI). VP8/VP9 are libvpx's, AV1 dav1d's.
-  - Windows: VP8, VP9 and AV1 in software; the core is built without H264.
+  - Windows: H264 through Media Foundation (`native/src/mf_h264.cc`), which
+    ships with Windows and the GPU drivers: the GPU's encoder MFT (NVENC,
+    AMF, Quick Sync) where there is one, else Microsoft's software encoder,
+    and Microsoft's decoder, on the GPU through DXVA where it gets a
+    Direct3D 11 device. An encoder MFT covers one picture, so the core runs
+    one per simulcast layer itself. A hardware MFT that fails is replaced by
+    the next one. VP8, VP9 and AV1 are in software; the core is built
+    without WEBRTC_USE_H264, so none of the package's OpenH264 or FFmpeg
+    code is linked.
   - Licensing of H264 in shipped builds is still open (issue #165).
 - Simulcast: libvpx and OpenH264 encode a producer's layers in one encoder,
   and only when every layer has exactly the top layer's aspect. A layer is

@@ -201,9 +201,10 @@ if(WIN32)
   # C++/WinRT, Direct3D 11 for the frames (src/screen_source_win.cc).
   # Application sound: WASAPI process loopback (src/app_audio_win.cc), which
   # needs a Windows SDK of 10.0.20348 or later to build.
-  # WEBRTC_USE_H264 stays undefined: video is VP8 (which the web client asks
-  # for everywhere), and no OpenH264 or FFmpeg H264 code is referenced.
-  target_sources(gelabber_media PRIVATE src/screen_source_win.cc src/app_audio_win.cc)
+  # H264: Media Foundation's encoder and decoder MFTs (src/mf_h264.cc), which
+  # come with Windows and the GPU drivers. WEBRTC_USE_H264 stays undefined, so
+  # no OpenH264 or FFmpeg H264 code of the libwebrtc package is referenced.
+  target_sources(gelabber_media PRIVATE src/screen_source_win.cc src/app_audio_win.cc src/mf_h264.cc)
   # WEBRTC_WIN, NOMINMAX and WIN32_LEAN_AND_MEAN come from libmediasoupclient;
   # these are the other Windows defines libwebrtc is built with. The screen
   # source does not use libwebrtc's DesktopCapturer, so RTC_ENABLE_WIN_WGC
@@ -267,6 +268,8 @@ if(WIN32)
     d3d11 runtimeobject
     # application sound: ActivateAudioInterfaceAsync
     mmdevapi
+    # H264: Media Foundation (MFT enumeration, samples, DXGI device manager)
+    mfplat mfuuid
     # abseil
     dbghelp bcrypt
     ole32 oleaut32 uuid user32 gdi32 advapi32 shell32 shlwapi version)

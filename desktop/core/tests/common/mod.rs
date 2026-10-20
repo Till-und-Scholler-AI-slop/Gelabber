@@ -417,8 +417,9 @@ pub fn h264_demanded_by(
     }
 }
 
-/// Whether the H264 half of a test runs. The Windows core has no H264, so a
-/// device without it only skips that half; GELABBER_EXPECT_H264=1 (set where
+/// Whether the H264 half of a test runs. The Windows core has H264 only where
+/// Media Foundation has its codecs, so a device without it only skips that
+/// half; GELABBER_EXPECT_H264=1 (set where
 /// the core is built with H264, as on Linux) turns a missing codec into a
 /// failure instead, and so do GELABBER_EXPECT_ENCODER and _DECODER: their
 /// checks need an H264 producer and consumer.

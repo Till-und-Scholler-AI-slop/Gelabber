@@ -1213,7 +1213,7 @@ mod tests {
             features,
             serde_json::json!(today).as_array().unwrap().clone()
         );
-        if cfg!(target_os = "linux") {
+        if cfg!(any(target_os = "linux", windows)) {
             assert!(info["videoCodecs"]["h264"].is_object(), "{info}");
         } else {
             assert!(info["videoCodecs"]["h264"].is_null(), "{info}");

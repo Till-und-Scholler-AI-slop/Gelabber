@@ -217,8 +217,9 @@ jobs:
 
       # Every test of the workspace: the loopback call, the video sinks of
       # views inside the app (source_preview), the app's unit tests. The
-      # loopback call covers H264 only where the core has it (the Windows core
-      # has none), so this core, built with H264, must be held to it.
+      # loopback call covers H264 only where the core has it (on Windows only
+      # with Media Foundation's codecs), so this core, built with H264, must be
+      # held to it.
       - name: Loopback call against mediasoup 0.29
         env:
           GELABBER_EXPECT_H264: "1"
@@ -913,8 +914,10 @@ jobs:
 
       # The call the Linux job makes, on dummy audio and test patterns through
       # an in-process mediasoup worker: ICE, DTLS, SRTP, Opus, VP8 simulcast,
-      # decode, and the video sinks of views inside the app. This core has no
-      # H264, so neither GELABBER_EXPECT_H264 nor GELABBER_EXPECT_ENCODER.
+      # decode, and the video sinks of views inside the app. This core has
+      # H264 only where Media Foundation has its codecs (a runner may lack
+      # them), so neither GELABBER_EXPECT_H264 nor GELABBER_EXPECT_ENCODER;
+      # where it has them, the call covers H264 through them as well.
       # The voice test needs devices and skips without its GELABBER_TEST_*
       # switch. GELABBER_TEST_SCREEN_MONITOR lets the core capture the
       # primary monitor without the system picker, which nobody could click
