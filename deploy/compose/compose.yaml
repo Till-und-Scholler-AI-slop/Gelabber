@@ -49,6 +49,8 @@ services:
       MINIO_SECRET_KEY: ${MINIO_APP_PASSWORD:?set MINIO_APP_PASSWORD in .env (see deploy/README.md)}
       MINIO_BUCKET: ${MINIO_BUCKET:-gelabber}
       API_COOKIE_SECURE: ${API_COOKIE_SECURE:-false}
+      # One API process; keep it well below Postgres max_connections (100).
+      API_DB_MAX_CONNECTIONS: ${API_DB_MAX_CONNECTIONS:-20}
       TURN_URLS: ${TURN_URLS:-stun:${TURN_PUBLIC_HOST:-127.0.0.1}:${TURN_PORT:-3478},turn:${TURN_PUBLIC_HOST:-127.0.0.1}:${TURN_PORT:-3478}?transport=udp,turn:${TURN_PUBLIC_HOST:-127.0.0.1}:${TURN_PORT:-3478}?transport=tcp}
       TURN_USERNAME: ${TURN_USERNAME:-gelabber}
       TURN_PASSWORD: ${TURN_PASSWORD:?set TURN_PASSWORD in .env (see deploy/README.md)}

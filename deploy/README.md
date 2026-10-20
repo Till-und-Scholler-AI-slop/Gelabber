@@ -231,6 +231,10 @@ Accounts that existed before migration 0021 count as confirmed. Accounts registe
 
 Migration 0021 adds `users.email_verified_at` and the `account_tokens` table. As with every migration, an older API binary does not start against the migrated database; roll back with the backed-up snapshot pair as described below.
 
+## Database connections
+
+The API keeps up to `API_DB_MAX_CONNECTIONS` (default 20) Postgres connections; every open WebSocket checks its session once a second. The stack runs one API process, so keep the value well below Postgres' `max_connections` (100 in the bundled Postgres), then `docker compose up -d --no-deps --force-recreate api`.
+
 ## Backup
 
 PostgreSQL metadata and MinIO attachments form **one snapshot pair**. Before

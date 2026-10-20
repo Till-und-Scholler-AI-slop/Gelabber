@@ -73,7 +73,7 @@ pub const RUST_LOG: &str = "RUST_LOG";
 
 const DEFAULT_API_ADDR: &str = "0.0.0.0:8080";
 const DEFAULT_READY_TIMEOUT_MS: u64 = 2000;
-const DEFAULT_DB_MAX_CONNECTIONS: u32 = 5;
+const DEFAULT_DB_MAX_CONNECTIONS: u32 = 20;
 const DEFAULT_SESSION_TTL_HOURS: u64 = 24 * 30;
 const DEFAULT_WS_HEARTBEAT_MS: u64 = 15_000;
 const DEFAULT_WS_DEAD_MS: u64 = 30_000;
@@ -878,7 +878,7 @@ mod tests {
 
         assert_eq!(config.api_addr, "0.0.0.0:8080".parse().unwrap());
         assert_eq!(config.ready_timeout, Duration::from_millis(2000));
-        assert_eq!(config.db_max_connections, 5);
+        assert_eq!(config.db_max_connections, 20);
         assert!(!config.cookie_secure);
         assert_eq!(config.session_ttl, Duration::from_secs(30 * 24 * 3600));
         assert_eq!(config.ws_heartbeat, Duration::from_millis(15_000));
