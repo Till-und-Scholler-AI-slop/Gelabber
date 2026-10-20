@@ -393,7 +393,8 @@ fn parse_push(get: &impl Fn(&str) -> Option<String>) -> Result<Option<PushConfig
             "expected a base64url P-256 private key (gelabber-api vapid-keys)",
         )
     })?;
-    let hosts = match get(PUSH_ALLOWED_HOSTS) {
+    // Empty, as Compose passes an unset variable: the default services.
+    let hosts = match get(PUSH_ALLOWED_HOSTS).filter(|raw| !raw.trim().is_empty()) {
         Some(raw) => raw
             .split(',')
             .map(|host| host.trim().to_ascii_lowercase())
@@ -1059,5 +1060,27 @@ mod tests {
         .expect("valid config");
         assert!(!config.cookie_secure);
         assert!(config.allow_plain_http);
+    }
+
+    #[test]
+    fn empty_push_hosts_mean_the_default_services() {
+        let (private, _) = crate::push::webpush::Vapid::generate();
+        let hosts = |value: Option<&str>| {
+            let mut pairs = vec![
+                (VAPID_PRIVATE_KEY, private.as_str()),
+                (VAPID_SUBJECT, "mailto:admin@example.org"),
+            ];
+            if let Some(value) = value {
+                pairs.push((PUSH_ALLOWED_HOSTS, value));
+            }
+            parse_push(&source(&pairs)).unwrap().unwrap().hosts
+        };
+        let default: Vec<String> = DEFAULT_PUSH_HOSTS.iter().map(|h| (*h).to_owned()).collect();
+        assert_eq!(hosts(None), default);
+        assert_eq!(hosts(Some("")), default);
+        assert_eq!(
+            hosts(Some(" Push.Example ")),
+            vec!["push.example".to_owned()]
+        );
     }
 }

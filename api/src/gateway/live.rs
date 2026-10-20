@@ -154,7 +154,8 @@ impl Gateway {
     ) -> Result<(), ApiError> {
         let key = focus_key(user_id);
         let member = id.redis_id().to_string();
-        let until = chrono::Utc::now().timestamp_millis() + ttl_ms(ttl);
+        let now = chrono::Utc::now().timestamp_millis();
+        let until = now + ttl_ms(ttl);
         let px = ttl_ms(ttl);
         self.with_conn(|mut conn| {
             let key = key.clone();
@@ -162,6 +163,13 @@ impl Gateway {
             async move {
                 let mut pipe = redis::pipe();
                 if on {
+                    // Renewals keep the key alive, so claims of sockets that
+                    // died go here rather than with the key.
+                    pipe.cmd("ZREMRANGEBYSCORE")
+                        .arg(&key)
+                        .arg("-inf")
+                        .arg(now)
+                        .ignore();
                     pipe.cmd("ZADD").arg(&key).arg(until).arg(&member).ignore();
                     pipe.cmd("PEXPIRE").arg(&key).arg(px).ignore();
                 } else {

@@ -64,6 +64,8 @@ services:
       # Empty turns Web Push off.
       VAPID_PRIVATE_KEY: ${VAPID_PRIVATE_KEY:-}
       VAPID_SUBJECT: ${VAPID_SUBJECT:-}
+      # Empty: the push services of Chrome, Firefox, Edge/Windows and Safari.
+      PUSH_ALLOWED_HOSTS: ${PUSH_ALLOWED_HOSTS:-}
       # Link previews: the API fetches linked pages (public addresses only).
       API_LINK_PREVIEWS: ${API_LINK_PREVIEWS:-true}
       API_LINK_PREVIEW_DENY_HOSTS: ${API_LINK_PREVIEW_DENY_HOSTS:-}

@@ -150,7 +150,12 @@ async fn subscribe(
         return Err(ApiError::Validation(errors));
     }
     let user = session.user.id;
-    let mut tx = state.db.begin().await?;
+    // Holds the session row: a logout or revocation in the meantime ends in
+    // 401, not in a foreign key violation.
+    let mut tx = session
+        .lock_live(&state.db)
+        .await?
+        .ok_or(ApiError::Unauthenticated)?;
     // A browser that signs in as someone else keeps its endpoint and its
     // keys: it moves. Someone who only knows the endpoint cannot take it
     // over; their request changes nothing.
