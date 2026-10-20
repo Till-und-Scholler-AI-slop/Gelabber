@@ -56,7 +56,8 @@ namespace gelabber
 		class GstH264Decoder : public webrtc::VideoDecoder
 		{
 		public:
-			explicit GstH264Decoder(std::string element) : element(std::move(element))
+			GstH264Decoder(std::string element, bool behindFallback)
+			  : element(std::move(element)), behindFallback(behindFallback)
 			{
 			}
 
@@ -119,10 +120,10 @@ namespace gelabber
 					return WEBRTC_VIDEO_CODEC_UNINITIALIZED;
 				if (failed)
 				{
-					// A hardware decoder sits in a fallback wrapper, which moves to
-					// the software element and asks for a key frame. A software
-					// element starts afresh.
-					if (!IsSoftware(element))
+					// Behind a fallback wrapper, which moves to the software
+					// element and asks for a key frame; otherwise the pipeline
+					// starts afresh.
+					if (behindFallback)
 						return WEBRTC_VIDEO_CODEC_FALLBACK_SOFTWARE;
 					if (!Configure(settings))
 						return WEBRTC_VIDEO_CODEC_ERROR;
@@ -319,6 +320,7 @@ namespace gelabber
 			}
 
 			const std::string element;
+			const bool behindFallback;
 			Settings settings;
 			GstElement* pipeline{ nullptr };
 			GstElement* src{ nullptr };
@@ -395,8 +397,8 @@ namespace gelabber
 		return !element.empty() && !IsSoftware(element);
 	}
 
-	std::unique_ptr<webrtc::VideoDecoder> CreateGstH264Decoder(const std::string& element)
+	std::unique_ptr<webrtc::VideoDecoder> CreateGstH264Decoder(const std::string& element, bool behindFallback)
 	{
-		return std::make_unique<GstH264Decoder>(element);
+		return std::make_unique<GstH264Decoder>(element, behindFallback);
 	}
 } // namespace gelabber

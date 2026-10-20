@@ -27,8 +27,11 @@ namespace gelabber
 	// Whether `element` decodes on a GPU, not on the CPU.
 	bool IsHardwareH264Decoder(const std::string& element);
 
-	// A decoder on `element`; wrap it for the software fallback.
-	std::unique_ptr<webrtc::VideoDecoder> CreateGstH264Decoder(const std::string& element);
+	// A decoder on `element`.
+	// `behindFallback`: wrapped in VideoDecoderSoftwareFallbackWrapper, so a
+	// failure hands over to the wrapper's software decoder instead of
+	// restarting the pipeline.
+	std::unique_ptr<webrtc::VideoDecoder> CreateGstH264Decoder(const std::string& element, bool behindFallback);
 } // namespace gelabber
 
 #endif

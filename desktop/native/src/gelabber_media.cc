@@ -1527,9 +1527,9 @@ namespace
 			return gelabber::CreateMfH264Decoder();
 #elif defined(WEBRTC_LINUX)
 			if (fallback.empty())
-				return gelabber::CreateGstH264Decoder(element);
+				return gelabber::CreateGstH264Decoder(element, false);
 			return webrtc::CreateVideoDecoderSoftwareFallbackWrapper(
-			  env, gelabber::CreateGstH264Decoder(fallback), gelabber::CreateGstH264Decoder(element));
+			  env, gelabber::CreateGstH264Decoder(fallback, false), gelabber::CreateGstH264Decoder(element, true));
 #else
 			return nullptr;
 #endif
