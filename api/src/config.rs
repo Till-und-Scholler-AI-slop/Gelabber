@@ -524,6 +524,10 @@ fn parse_minio(get: &impl Fn(&str) -> Option<String>) -> Result<Option<MinioConf
             Some(password) => (Some(user), Some(password), false),
             None => return Err(ConfigError::Missing(MINIO_SECRET_KEY)),
         },
+        // A lone secret would otherwise fall back to root unnoticed.
+        None if get(MINIO_SECRET_KEY).is_some() => {
+            return Err(ConfigError::Missing(MINIO_ACCESS_KEY));
+        }
         None => (get(MINIO_ROOT_USER), get(MINIO_ROOT_PASSWORD), true),
     };
     let bucket = get(MINIO_BUCKET);
@@ -1039,6 +1043,24 @@ mod tests {
                 "{key}: {err}"
             );
         }
+    }
+
+    #[test]
+    fn minio_secret_key_needs_its_access_key() {
+        let err = Config::from_source(source(&[
+            (DATABASE_URL, "postgres://u:p@localhost/db"),
+            (REDIS_URL, "redis://localhost"),
+            (MINIO_ENDPOINT, "http://minio:9000"),
+            (MINIO_SECRET_KEY, "private-app"),
+            (MINIO_ROOT_USER, "gelabber"),
+            (MINIO_ROOT_PASSWORD, "private-root"),
+            (MINIO_BUCKET, "gelabber"),
+        ]))
+        .unwrap_err();
+        assert!(
+            matches!(err, ConfigError::Missing(MINIO_ACCESS_KEY)),
+            "{err}"
+        );
     }
 
     #[test]

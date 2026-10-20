@@ -148,6 +148,7 @@ jobs:
           if mc a "$app" cat a/gelabber/att/old >/dev/null 2>&1; then echo "old password still works"; exit 1; fi
           test "$(mc a http://gelabber-api:app-ci-rotated@minio:9000 cat a/gelabber/att/old)" = old
           if init short >/dev/null 2>&1; then echo "short password accepted"; exit 1; fi
+          if init root-ci-password >/dev/null 2>&1; then echo "root password accepted"; exit 1; fi
 
       - name: Login to GHCR
         if: env.PUSH == 'true'

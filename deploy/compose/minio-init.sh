@@ -18,6 +18,14 @@ if [ "$user" = "${MINIO_ROOT_USER:-}" ]; then
   echo "MINIO_APP_USER must differ from MINIO_ROOT_USER." >&2
   exit 1
 fi
+if [ "$pass" = "${MINIO_ROOT_PASSWORD:-}" ]; then
+  echo "MINIO_APP_PASSWORD must differ from MINIO_ROOT_PASSWORD." >&2
+  exit 1
+fi
+
+# mc takes both passwords as arguments, so they show in `ps` on the host for
+# the moment each call runs. Only root on the host sees other containers'
+# processes; the values are in `docker inspect` there anyway.
 
 export MC_CONFIG_DIR=/tmp/mc
 mc --quiet alias set local "${MINIO_INIT_ENDPOINT:-http://minio:9000}" \
