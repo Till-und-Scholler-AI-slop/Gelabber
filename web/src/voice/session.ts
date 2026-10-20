@@ -1218,6 +1218,12 @@ function makeMediaConnection(
     onError: (error) => {
       if (current()) deps?.onError?.(error);
     },
+    onRepublished: () => {
+      // New senders: the upload budget and priorities go on them again.
+      if (!current() || role !== "voice" || !peer.connection) return;
+      void enqueueVideoLimits(peer.connection).catch(() => {});
+      void applySendBitrate().catch(() => {});
+    },
   });
   peer.connection = connection;
   return connection;
