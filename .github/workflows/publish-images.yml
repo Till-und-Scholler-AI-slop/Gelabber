@@ -18,7 +18,8 @@ on:
       - Cargo.lock
       - rust-toolchain.toml
       - deploy/compose/**
-      - .github/workflows/**
+      - .github/workflows/publish-images.yml
+      - .github/workflows/scripts/**
 
 # Serialize promotion across main revisions, including reruns.
 concurrency:
@@ -97,7 +98,9 @@ jobs:
             OCI_CREATED=${{ env.OCI_CREATED }}
             OCI_SOURCE=https://github.com/${{ github.repository }}
           cache-from: type=gha,scope=${{ matrix.name }}
-          cache-to: type=gha,mode=max,scope=${{ matrix.name }}
+          # Only main writes the layer cache; pull requests read it. Their
+          # copies of the Rust dependency layers evicted main's.
+          cache-to: ${{ github.event_name == 'workflow_run' && format('type=gha,mode=max,scope={0}', matrix.name) || '' }}
       - name: Verify actual media image readiness and normal shutdown
         if: github.event_name == 'pull_request' && matrix.name == 'media'
         run: python3 docker/check-media-image.py --image "${GHCR_IMAGE}:${IMAGE_TAG}" --revision "$SOURCE_SHA"
