@@ -226,21 +226,23 @@ async fn register(
 
     // Every branch answers alike; only the mail differs. A confirmed
     // address keeps its account untouched, whoever typed it; a pending one
-    // now carries this registrant's credentials.
-    match user::insert_unverified(&state.db, &email, &name, &hash).await? {
-        Some(user_id) => {
-            info!(%user_id, "user registered, awaiting confirmation");
-            send_confirmation(&state, mailer, user_id, &email).await?;
-        }
-        None => match user::verified_by_email(&state.db, &email).await? {
-            Some((user_id, true)) => {
-                if limits::mail_allowed(&state, &email) {
-                    mailer.spawn(user_id, &email, Mail::AlreadyRegistered);
-                }
+    // now carries this registrant's credentials. Once the address had its
+    // hourly mails nothing is written either: a takeover without a new
+    // link would leave the owner without a working one.
+    if limits::mail_allowed(&state, &email) {
+        match user::insert_unverified(&state.db, &email, &name, &hash).await? {
+            Some(user_id) => {
+                info!(%user_id, "user registered, awaiting confirmation");
+                mail_confirmation(&state, mailer, user_id, &email).await?;
             }
-            Some((user_id, false)) => send_confirmation(&state, mailer, user_id, &email).await?,
-            None => {}
-        },
+            None => match user::verified_by_email(&state.db, &email).await? {
+                Some((user_id, true)) => mailer.spawn(user_id, &email, Mail::AlreadyRegistered),
+                Some((user_id, false)) => {
+                    mail_confirmation(&state, mailer, user_id, &email).await?;
+                }
+                None => {}
+            },
+        }
     }
 
     // The browser is left signed out, as for a fresh visitor.
@@ -255,16 +257,14 @@ async fn register(
     Ok((StatusCode::ACCEPTED, cookies, Json(body)).into_response())
 }
 
-/// Mails a fresh confirmation link unless the address had its hourly share.
-async fn send_confirmation(
+/// Mails a fresh confirmation link; the caller counted it against the
+/// address's hourly mails ([`limits::mail_allowed`]).
+async fn mail_confirmation(
     state: &AppState,
     mailer: &Mailer,
     user_id: uuid::Uuid,
     email: &str,
 ) -> Result<(), ApiError> {
-    if !limits::mail_allowed(state, email) {
-        return Ok(());
-    }
     let token = tokens::issue(&state.db, user_id, Purpose::VerifyEmail).await?;
     mailer.spawn(user_id, email, Mail::ConfirmEmail { token });
     Ok(())
@@ -308,7 +308,9 @@ async fn login(
     if !credentials.email_verified
         && let Some(mailer) = state.mail.as_ref()
     {
-        send_confirmation(&state, mailer, credentials.id, &email).await?;
+        if limits::mail_allowed(&state, &email) {
+            mail_confirmation(&state, mailer, credentials.id, &email).await?;
+        }
         return Err(ApiError::EmailUnverified);
     }
     let user = session::reload(&state.db, credentials.id).await?;

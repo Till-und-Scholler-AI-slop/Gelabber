@@ -228,6 +228,34 @@ async fn whoever_confirms_a_pending_address_gets_the_password_they_typed(pool: P
 }
 
 #[sqlx::test]
+async fn past_the_mail_limit_a_registration_changes_nothing(pool: PgPool) {
+    let (state, mailer) = mail_state(pool);
+    let mut stranger = client(&state).await;
+    for _ in 0..4 {
+        stranger.register(ADA, "stranger password", "Mallory").await;
+    }
+    let mut ada = client(&state).await;
+    ada.register(ADA, PASSWORD, "Ada").await;
+    let sent = outbox(&mailer, 5).await;
+
+    // The address had its five mails: no new link, so no takeover either.
+    let res = stranger.register(ADA, "another password", "Mallory").await;
+    assert_eq!(res.status, StatusCode::ACCEPTED, "{}", res.body);
+    assert_eq!(res.body["verification_sent"], true);
+    tokio::time::sleep(Duration::from_millis(100)).await;
+    assert_eq!(mailer.outbox().len(), 5);
+
+    let res = post(
+        &mut ada,
+        "/api/auth/verify-email",
+        json!({ "token": token(&sent[4]), "password": PASSWORD }),
+    )
+    .await;
+    assert_eq!(res.status, StatusCode::OK, "{}", res.body);
+    assert_eq!(res.body["user"]["name"], "Ada");
+}
+
+#[sqlx::test]
 async fn a_reset_link_sets_the_password_once_and_ends_every_session(pool: PgPool) {
     let (state, mailer) = mail_state(pool);
     let mut ada = confirmed_ada(&state, &mailer).await;

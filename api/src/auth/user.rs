@@ -139,7 +139,8 @@ pub async fn insert(
 
 /// Registration while account mail is on: inserts an unconfirmed account,
 /// or takes over a pending one (`registration_pending`, migration 0021)
-/// with this registrant's name and password, dropping its earlier links.
+/// with this registrant's name and password, dropping its earlier
+/// confirmation links (a reset link the owner asked for stays).
 /// Nobody has proven they own a pending address, so the person who finally
 /// confirms it gets the credentials they typed, never a stranger's.
 /// Returns `None` when the address has a confirmed account or one from a
@@ -165,7 +166,7 @@ pub async fn insert_unverified(
     .fetch_optional(&mut *tx)
     .await?;
     if let Some(id) = id {
-        sqlx::query("DELETE FROM account_tokens WHERE user_id = $1")
+        sqlx::query("DELETE FROM account_tokens WHERE user_id = $1 AND purpose = 'verify_email'")
             .bind(id)
             .execute(&mut *tx)
             .await?;
