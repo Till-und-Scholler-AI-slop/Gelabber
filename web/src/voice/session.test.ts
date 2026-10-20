@@ -1480,6 +1480,55 @@ describe("voice session", () => {
     ]);
   });
 
+  it("opens the microphone only while the push-to-talk key is held", async () => {
+    vi.useFakeTimers({ toFake: ["setTimeout", "clearTimeout"] });
+    const page = new EventTarget();
+    vi.stubGlobal("window", page);
+    vi.stubGlobal(
+      "document",
+      Object.assign(new EventTarget(), {
+        visibilityState: "visible",
+      }),
+    );
+    const key = (type: string) =>
+      page.dispatchEvent(Object.assign(new Event(type), { code: "F13" }));
+    try {
+      useMediaSettings.getState().patch({
+        voiceInput: "ptt",
+        pttKey: "F13",
+        pttReleaseDelay: 100,
+      });
+      const { sent, peers } = install();
+      joinVoice({ serverId: "srv", channelId: "voice", channelName: "Lounge" });
+      await vi.waitFor(() => expect(peers[0]?.audio).toBeTruthy());
+      expect(peers[0]?.audio?.enabled).toBe(false);
+      const before = sent.length;
+      key("keydown");
+      expect(peers[0]?.audio?.enabled).toBe(true);
+      key("keyup");
+      // The release delay keeps the end of a word.
+      expect(peers[0]?.audio?.enabled).toBe(true);
+      vi.advanceTimersByTime(100);
+      expect(peers[0]?.audio?.enabled).toBe(false);
+      // Mute wins over the key.
+      toggleMute();
+      key("keydown");
+      expect(peers[0]?.audio?.enabled).toBe(false);
+      key("keyup");
+      toggleMute();
+      // The key is the user's alone: no mute flag for the others.
+      expect(sent.slice(before)).toEqual([
+        { op: "sig", t: "m", s: "srv", c: "voice", on: true },
+        { op: "sig", t: "m", s: "srv", c: "voice", on: false },
+      ]);
+      // Back to voice activity: the microphone sends again.
+      useMediaSettings.getState().patch({ voiceInput: "activity" });
+      expect(peers[0]?.audio?.enabled).toBe(true);
+    } finally {
+      vi.unstubAllGlobals();
+    }
+  });
+
   it("deafens immediately and mutes the session without waiting", async () => {
     const { sent } = install();
     joinVoice({ serverId: "srv", channelId: "voice", channelName: "Lounge" });

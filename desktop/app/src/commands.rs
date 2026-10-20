@@ -49,6 +49,8 @@ pub const SHELL_COMMANDS: &[&str] = &[
     "shell_focus",
     "shell_unread",
 ];
+/// Global push-to-talk (src/ptt.rs), granted to the server origin.
+pub const PTT_COMMANDS: &[&str] = &["ptt_bind", "ptt_unbind"];
 /// The update commands (update.rs). The server origin gets `update_state`,
 /// `update_install` and `update_dismiss` (permissions/update.toml), the
 /// bundled setup page all of them (capabilities/setup.json).
