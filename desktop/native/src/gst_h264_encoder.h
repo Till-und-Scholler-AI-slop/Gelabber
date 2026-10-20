@@ -21,6 +21,9 @@ namespace gelabber
 	// x264enc, for tests) or "none".
 	std::string FindGstH264Encoder();
 
+	// Whether `element` encodes on a GPU or media engine, not on the CPU.
+	bool IsHardwareH264Encoder(const std::string& element);
+
 	// Creates single-stream encoders on `element`; wrap in
 	// SimulcastEncoderAdapter for simulcast and software fallback.
 	std::unique_ptr<webrtc::VideoEncoderFactory> CreateGstH264EncoderFactory(

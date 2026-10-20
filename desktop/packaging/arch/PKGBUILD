@@ -33,6 +33,8 @@ optdepends=(
   'xdg-desktop-portal-kde: screen share on KDE Plasma'
   'vulkan-driver: video window (nvidia-utils, vulkan-intel, vulkan-radeon)'
   'libayatana-appindicator: tray icon with unread state (KDE, waybar tray)'
+  'gst-plugins-bad: H264 on the GPU (h264parse; NVIDIA through nvcodec)'
+  'gst-plugin-va: H264 on Intel and AMD GPUs (VA-API)'
 )
 conflicts=('gelabber-desktop-bin' 'gelabber-desktop-git')
 options=('!strip' '!debug')

@@ -329,21 +329,25 @@ separate decision.
   a refused Go Live left a claim that blocked the channel. (A capture that
   fails or is cancelled still does that with such a client, on either
   system.)
-- Video encode: the app sends VP8, encoded in software by libwebrtc's
-  libvpx. The web client names the codec of every producer and takes VP8
-  wherever the device has it (`codec` in
-  `web/src/voice/mediasoupConnection.ts`), and the core produces what it is
-  asked for. The Linux core has H264 all the same, and its tests run it:
-  through the system's GStreamer when that has a hardware element
-  (`nvh264enc`, `vah264enc`, `vah264lpenc`, `vaapih264enc`; gst-plugins-bad),
-  otherwise OpenH264; `GELABBER_H264_ENCODER=<element>|none` overrides the
-  choice, and a caller that names no codec gets H264 before VP8. None of
-  that reaches the app: there gst-plugins-bad and the variable change
-  nothing. Hardware encoding in the app would start in the web client (ask
-  for `video/h264` when the core reports a hardware encoder), and shipping
-  H264 needs a licensing decision first. The Windows core is built without
-  H264. Decode is libwebrtc's: libvpx for VP8/VP9, on Linux FFmpeg (Chrome
-  branding) for H264.
+- Video codecs: the web client names the codec of every producer
+  (`chooseVideoCodec` in `web/src/voice/videoCodec.ts`) among those every
+  receiver in the room decodes, which the media server announces. It takes
+  H264 where the device encodes it in hardware and VP8 otherwise; the core
+  produces what it is asked for, and a caller that names no codec gets H264
+  before VP8. `media_info` reports the feature `h264-hardware` and, under
+  `videoCodecs`, what `gm_video_codecs` found.
+  - Linux encode: through the system's GStreamer when that has a hardware
+    element (`nvh264enc`, `vah264enc`, `vah264lpenc`, `vaapih264enc`; with
+    `h264parse` from gst-plugins-bad), otherwise OpenH264 for H264 and
+    libvpx for VP8/VP9. `GELABBER_H264_ENCODER=<element>|none` overrides the
+    choice; an element named this way that encodes on the CPU (`x264enc`)
+    does not count as hardware.
+  - Linux decode: H264 through GStreamer when that has a hardware decoder
+    (`nvh264dec`, `vah264dec`, `vaapih264dec`), behind libwebrtc's software
+    fallback to FFmpeg (Chrome branding); `GELABBER_H264_DECODER=<element>|none`
+    overrides it (`avdec_h264` in CI). VP8/VP9 are libvpx's, AV1 dav1d's.
+  - Windows: VP8, VP9 and AV1 in software; the core is built without H264.
+  - Licensing of H264 in shipped builds is still open (issue #165).
 - Simulcast: libvpx and OpenH264 encode a producer's layers in one encoder,
   and only when every layer has exactly the top layer's aspect. A layer is
   the picture divided by its `scaleResolutionDownBy`, so a 1366x768 screen
