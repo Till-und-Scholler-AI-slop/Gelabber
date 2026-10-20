@@ -179,7 +179,9 @@ the web client's user menu lead back to that page at any time; **F5** or
 **Strg+R** reload the current page.
 Only the configured origin gets the `media`, `shell` and `update` permission sets
 (`app/permissions/`) plus `allow-open-setup`; every page load closes the previous page's
-transports, producers and sources.
+transports, producers and sources. Tauri cannot take such a grant back, so
+after a change of server the app itself refuses every command that does not
+come from the setup page or the current server's pages.
 
 The `shell` commands (`app/src/shell.rs`) carry the web client's unread state
 out of the window: a number on the launcher (Linux, where the desktop shows
