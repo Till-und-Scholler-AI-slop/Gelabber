@@ -104,6 +104,22 @@ describe("media v4 envelopes", () => {
     ])
       expect(decodeMediaFrame({ ...consumer, ...change })).toBeNull();
   });
+  it("takes the room's video codecs with a revision", () => {
+    const codecs = {
+      op: "codecs",
+      video: ["video/vp8", "video/h264"],
+      revision: 3,
+    };
+    expect(decodeMediaFrame(codecs)).toEqual(codecs);
+    for (const change of [
+      { video: "video/vp8" },
+      { video: [1] },
+      { revision: -1 },
+      { revision: 1.5 },
+      { revision: undefined },
+    ])
+      expect(decodeMediaFrame({ ...codecs, ...change })).toBeNull();
+  });
   it("rejects malformed state and layer events", () => {
     const base = { consumerId: "c", generation: GENERATION };
     expect(

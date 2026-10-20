@@ -50,7 +50,8 @@ export type MediaResults = {
     generation: string;
     routerRtpCapabilities: RtpCapabilities;
   };
-  capabilities: Record<string, never>;
+  /** Absent from servers before the codec negotiation. */
+  capabilities: { codecs?: VideoCodecs };
   transport: TransportOptions;
   connect: Record<string, never>;
   restartIce: { iceParameters: IceParameters };
@@ -84,8 +85,12 @@ export type ConsumerAnnouncement = {
   rtpParameters: RtpParameters;
   paused: boolean;
 };
+/** The video codecs every receiver in the room decodes, as mime types in
+ * lower case. A higher revision is newer. */
+export type VideoCodecs = { video: string[]; revision: number };
 export type MediaEvent =
   | ConsumerAnnouncement
+  | ({ op: "codecs" } & VideoCodecs)
   | { op: "consumerClosed"; consumerId: string; generation: string }
   | {
       op: "consumerState";
@@ -139,6 +144,17 @@ const requestId = (v: unknown): v is number =>
 const layer = (v: unknown) =>
   v === null || (Number.isInteger(v) && Number(v) >= 0 && Number(v) <= 255);
 
+export function isVideoCodecs(v: unknown): v is VideoCodecs {
+  return (
+    record(v) &&
+    Array.isArray(v.video) &&
+    v.video.length <= 16 &&
+    v.video.every((mime) => typeof mime === "string" && mime.length <= 64) &&
+    Number.isSafeInteger(v.revision) &&
+    Number(v.revision) >= 0
+  );
+}
+
 /** Reject malformed identities before dispatch. RTP details also pass SDK validation. */
 export function decodeMediaFrame(raw: unknown): MediaServerFrame | null {
   if (!record(raw)) return null;
@@ -154,6 +170,8 @@ export function decodeMediaFrame(raw: unknown): MediaServerFrame | null {
       : null;
   if (raw.op === "producerClosed")
     return id(raw.producerId) && uuid(raw.epoch) ? (raw as MediaEvent) : null;
+  if (raw.op === "codecs")
+    return isVideoCodecs(raw) ? (raw as MediaEvent) : null;
   if (!id(raw.consumerId) || !uuid(raw.generation)) return null;
   if (raw.op === "consumerClosed") return raw as MediaEvent;
   if (raw.op === "consumerState")
